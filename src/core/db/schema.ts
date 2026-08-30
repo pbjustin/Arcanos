@@ -10,6 +10,7 @@ import type { Pool } from 'pg';
 import { redactString } from '@shared/redaction.js';
 import { getPool, isDatabaseConnected } from './client.js';
 import { BACKSTAGE_NOTION_PARTITION_STORAGE_TABLE_DEFINITIONS } from './backstageNotionPartitionStorageSchema.js';
+import { BACKSTAGE_NOTION_PARTITION_CUTOVER_EVIDENCE_TABLE_DEFINITIONS } from './backstageNotionPartitionCutoverEvidenceSchema.js';
 import {
   BACKSTAGE_NOTION_SYNC_ATTEMPT_OUTCOMES,
   BACKSTAGE_NOTION_SYNC_FAILURE_PHASES,
@@ -17,6 +18,7 @@ import {
 } from '@shared/backstage/backstageNotionSnapshotStatus.js';
 
 export { BACKSTAGE_NOTION_PARTITION_STORAGE_TABLE_DEFINITIONS } from './backstageNotionPartitionStorageSchema.js';
+export { BACKSTAGE_NOTION_PARTITION_CUTOVER_EVIDENCE_TABLE_DEFINITIONS } from './backstageNotionPartitionCutoverEvidenceSchema.js';
 
 // Zod Schemas for Database Entities
 const POSTGRES_BIGINT_MAX = 9_223_372_036_854_775_807n;
@@ -3302,6 +3304,7 @@ $$;`,
   // The partitioned store is additive and shadow-only. Its single transactional
   // bootstrap statement preserves migration parity without changing legacy reads.
   ...BACKSTAGE_NOTION_PARTITION_STORAGE_TABLE_DEFINITIONS,
+  ...BACKSTAGE_NOTION_PARTITION_CUTOVER_EVIDENCE_TABLE_DEFINITIONS,
 
   `CREATE INDEX IF NOT EXISTS idx_agent_status_updated_at ON "Agent"("status", "updatedAt" DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_action_plan_status_created_at ON "ActionPlan"("status", "createdAt" DESC)`,

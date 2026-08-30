@@ -6,6 +6,9 @@ import {
 import {
   resolveBackstageNotionPartitionRouting,
 } from '../src/shared/backstage/backstageNotionPartitionRoutingCore.js';
+import type {
+  BackstageNotionPartitionCutoverGateEvidence,
+} from '../src/shared/backstage/backstageNotionPartitionCutoverGate.js';
 import {
   BackstageNotionIndexUnavailableError,
   type BackstageNotionRagQuery,
@@ -24,6 +27,8 @@ import type {
   BackstageNotionPartitionRetrievalDependencies,
   BackstageNotionPartitionRetrievalPlan,
 } from '../src/services/backstageNotionPartitionRetrieval.js';
+import { DEFAULT_OPENAI_EMBEDDING_MODEL } from
+  '../src/services/openai/embeddings.js';
 
 const UNIVERSE_ID = 'my-universe-2k26';
 const OTHER_UNIVERSE_ID = 'other-universe';
@@ -173,7 +178,7 @@ const partitionRetrieval: BackstageNotionPartitionRagRetrieval = {
       snapshotId: '77777777-7777-4777-8777-777777777777',
       retrievalTier: 'hot',
       required: true,
-      decision: 'retained_last_known_good',
+      decision: 'fresh',
       verifiedAt: '2026-08-24T11:59:00.000Z',
     },
   ],
@@ -219,8 +224,73 @@ function authorizedDependencies(
 ): BackstageNotionPartitionCutoverDependencies {
   return {
     isAuthorized: () => true,
+    resolveCutoverEvidence: input => completeCutoverEvidence(input),
     ...overrides,
   };
+}
+
+function completeCutoverEvidence(input: Readonly<{
+  universeId: string;
+  configurationHash: string;
+  configuredShardKeys: readonly string[];
+}>): BackstageNotionPartitionCutoverGateEvidence {
+  const now = Date.now();
+  const sourceGenerationId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  return Object.freeze({
+    evidenceVersion: 1,
+    reconciliationGeneration: 7,
+    activeReconciliationGeneration: 7,
+    publishedReconciliationGeneration: 7,
+    universeId: input.universeId,
+    manifestId: partitionRetrieval.manifestId,
+    activeManifestId: partitionRetrieval.manifestId,
+    manifestState: 'sealed' as const,
+    manifestReadable: true,
+    manifestConfigurationVersionId: partitionRetrieval.configurationVersionId,
+    activeConfigurationVersionId: partitionRetrieval.configurationVersionId,
+    configurationHash: input.configurationHash,
+    activeConfigurationHash: input.configurationHash,
+    sourceGenerationId,
+    sourceDigest: 'a'.repeat(64),
+    sourcePageCount: input.configuredShardKeys.length * 2,
+    sourceChunkCount: input.configuredShardKeys.length * 20,
+    sourceVerifiedAt: new Date(now - 120_000),
+    sourceVerificationHash: 'b'.repeat(64),
+    manifestPageCount: input.configuredShardKeys.length * 2,
+    manifestChunkCount: input.configuredShardKeys.length * 20,
+    embeddingModel: DEFAULT_OPENAI_EMBEDDING_MODEL,
+    indexFormatVersion: 1,
+    memberCount: input.configuredShardKeys.length,
+    omissionCount: 0,
+    members: Object.freeze(input.configuredShardKeys.map((shardKey, index) => Object.freeze({
+      shardKey,
+      snapshotId: index === 0
+        ? partitionRetrieval.selectedShards[0]!.snapshotId
+        : `aaaaaaaa-aaaa-4aaa-8aaa-${String(index).padStart(12, '0')}`,
+      sourceGenerationId,
+      indexFormatVersion: 1,
+      pageCount: 2,
+      chunkCount: 20,
+      decision: 'fresh' as const,
+      readable: true,
+    }))),
+    leaseFencingClear: true,
+    unresolvedActivationCount: 0,
+    parity: Object.freeze({
+      shadowComparisonCompleted: true,
+      exactScopeParityPassed: true,
+      relevantRetrievalParityPassed: true,
+      completeScopeParityPassed: true,
+      cursorStabilityPassed: true,
+    }),
+    rollbackMonolithSnapshotId: monolithRetrieval.snapshotId,
+    rollbackMonolithReadable: true,
+    rollbackMonolithChunkCount: monolithRetrieval.activeSnapshotChunkCount,
+    rollbackMonolithVerifiedAt: new Date(now - 120_000),
+    rollbackMonolithValidUntil: new Date(now + 60 * 60_000),
+    verifiedAt: new Date(now - 60_000),
+    expiresAt: new Date(now + 60 * 60_000),
+  });
 }
 
 async function drainUntil(condition: () => boolean): Promise<void> {
@@ -542,6 +612,65 @@ describe('Backstage Notion partition cutover facade', () => {
     expect(result).toBe(partitionRetrieval);
     expect(retrievePartition).toHaveBeenCalledTimes(1);
     expect(retrieveMonolith).not.toHaveBeenCalled();
+  });
+
+  it('keeps requested partitioned mode on monolith without cutover evidence', async () => {
+    const retrieveMonolith = jest.fn(async () => monolithRetrieval);
+    const retrievePartition = jest.fn(async () => partitionRetrieval);
+
+    await expect(retrieveBackstageNotionAuthorityRagContext(
+      UNIVERSE_ID,
+      'Book Raw in 2026',
+      authorizedDependencies({
+        readEnvironment: createEnvironment('partitioned'),
+        retrieveMonolith,
+        retrievePartition,
+        resolveCutoverEvidence: undefined,
+      })
+    )).resolves.toBe(monolithRetrieval);
+    expect(retrieveMonolith).toHaveBeenCalledTimes(1);
+    expect(retrievePartition).not.toHaveBeenCalled();
+  });
+
+  it('keeps requested partitioned mode on monolith when gate evidence is unavailable', async () => {
+    const retrieveMonolith = jest.fn(async () => monolithRetrieval);
+    const retrievePartition = jest.fn(async () => partitionRetrieval);
+
+    await expect(retrieveBackstageNotionAuthorityRagContext(
+      UNIVERSE_ID,
+      'Book Raw in 2026',
+      authorizedDependencies({
+        readEnvironment: createEnvironment('partitioned'),
+        retrieveMonolith,
+        retrievePartition,
+        resolveCutoverEvidence: async () => {
+          throw new Error('bounded evidence unavailable');
+        },
+      })
+    )).resolves.toBe(monolithRetrieval);
+    expect(retrieveMonolith).toHaveBeenCalledTimes(1);
+    expect(retrievePartition).not.toHaveBeenCalled();
+  });
+
+  it('keeps requested partitioned mode on monolith for an unsupported manifest embedding model', async () => {
+    const retrieveMonolith = jest.fn(async () => monolithRetrieval);
+    const retrievePartition = jest.fn(async () => partitionRetrieval);
+
+    await expect(retrieveBackstageNotionAuthorityRagContext(
+      UNIVERSE_ID,
+      'Book Raw in 2026',
+      authorizedDependencies({
+        readEnvironment: createEnvironment('partitioned'),
+        retrieveMonolith,
+        retrievePartition,
+        resolveCutoverEvidence: input => ({
+          ...completeCutoverEvidence(input),
+          embeddingModel: 'text-embedding-legacy',
+        }),
+      })
+    )).resolves.toBe(monolithRetrieval);
+    expect(retrieveMonolith).toHaveBeenCalledTimes(1);
+    expect(retrievePartition).not.toHaveBeenCalled();
   });
 
   it('serves protected queued booking relevance without distributing cursor keys to the worker', async () => {
@@ -887,7 +1016,7 @@ describe('Backstage Notion partition cutover facade', () => {
       configurationVersionId: '22222222-2222-4222-8222-222222222222',
       configurationHash: 'a'.repeat(64),
       configurationCurrent: true,
-      embeddingModel: 'text-embedding-test',
+      embeddingModel: DEFAULT_OPENAI_EMBEDDING_MODEL,
       embeddingVersion: 1,
       embeddingDimension: 2,
       indexFormatVersion: 1,

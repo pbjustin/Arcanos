@@ -12,6 +12,8 @@ import {
   resolveBackstageNotionPartitionScopeRequest,
   type BackstageNotionPartitionRoutingDependencies,
 } from '../src/services/backstageNotionPartitionRouting.js';
+import { DEFAULT_OPENAI_EMBEDDING_MODEL } from
+  '../src/services/openai/embeddings.js';
 import { normalizeBackstageNotionScopeKey } from
   '../src/shared/backstage/backstageNotionScopeIndex.js';
 
@@ -38,7 +40,7 @@ function routingState(
     configurationGeneration: 'partition-generation-1',
     configurationHash: CONFIGURATION_HASH,
     configurationCurrent: true,
-    embeddingModel: 'text-embedding-test',
+    embeddingModel: DEFAULT_OPENAI_EMBEDDING_MODEL,
     embeddingVersion: 1,
     embeddingDimension: 2,
     indexFormatVersion: 1,
@@ -149,6 +151,28 @@ describe('Backstage Notion partition request routing', () => {
     expect(mockRepository.loadActiveManifestRoutingState).toHaveBeenCalledTimes(1);
     expect(mockRepository.resolveManifestScopeOwner).not.toHaveBeenCalled();
     expect(readMaximumStalenessMs).toHaveBeenCalledTimes(1);
+  });
+
+  test('fails active and pinned routing closed for an unsupported manifest embedding model', async () => {
+    const incompatible = routingState({ embeddingModel: 'text-embedding-legacy' });
+    const mockRepository = repository(incompatible);
+    const dependencies = authorizedDependencies(mockRepository, {
+      now: () => NOW,
+      maximumStalenessMs: 5 * 60 * 1_000,
+    });
+
+    await expect(resolveBackstageNotionPartitionRequest(
+      UNIVERSE_ID,
+      rawIntent(),
+      dependencies
+    )).rejects.toBeInstanceOf(BackstageNotionPartitionRoutingUnavailableError);
+    await expect(resolveBackstageNotionPartitionPinnedRequest(
+      UNIVERSE_ID,
+      MANIFEST_ID,
+      rawIntent(),
+      dependencies
+    )).rejects.toBeInstanceOf(BackstageNotionPartitionRoutingUnavailableError);
+    expect(mockRepository.resolveManifestScopeOwner).not.toHaveBeenCalled();
   });
 
   test('fails only when a stale or excessive-future shard is selected', async () => {

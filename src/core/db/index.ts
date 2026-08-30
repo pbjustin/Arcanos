@@ -35,6 +35,7 @@ export {
   RagDocSchema,
   BACKSTAGE_NOTION_RAG_TABLE_DEFINITIONS,
   BACKSTAGE_NOTION_PARTITION_STORAGE_TABLE_DEFINITIONS,
+  BACKSTAGE_NOTION_PARTITION_CUTOVER_EVIDENCE_TABLE_DEFINITIONS,
   BackstageNotionAuthoritySchema,
   BackstageNotionUniverseHeadSchema,
   BackstageNotionSnapshotSchema,
@@ -166,10 +167,21 @@ export {
   type FindBackstageNotionReusablePageMaterialInput,
   type RegisterBackstageNotionPartitionConfigurationInput,
   type RegisteredBackstageNotionPartitionConfiguration,
+  type RollbackBackstageNotionUniverseManifestInput,
+  type RolledBackBackstageNotionUniverseManifest,
   type StoreBackstageNotionChunkVersionInput,
   type StoreBackstageNotionEmbeddingInput,
   type StoreBackstageNotionPageVersionInput,
 } from './repositories/backstageNotionPartitionRepository.js';
+
+export {
+  BackstageNotionPartitionCutoverEvidenceUnavailableError,
+  PostgresBackstageNotionPartitionCutoverEvidenceRepository,
+  getBackstageNotionPartitionCutoverEvidenceRepository,
+  type BackstageNotionPartitionCutoverEvidenceRepository,
+  type BackstageNotionPartitionCutoverValidationAnchorRecord,
+  type SealBackstageNotionPartitionCutoverEvidenceInput,
+} from './repositories/backstageNotionPartitionCutoverEvidenceRepository.js';
 
 export {
   applyBackstageRosterMutation,

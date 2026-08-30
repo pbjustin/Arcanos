@@ -505,9 +505,17 @@ describe('Backstage Notion synchronization loop', () => {
       'initializeWorkerOpenAIAdapterIfConfigured();',
       databaseBootstrapIndex
     );
-    const partitionPolicyIndex = source.indexOf(
-      'resolveBackstageNotionPartitionShadowPolicy();',
+    const preliminaryPartitionPolicyIndex = source.indexOf(
+      'const preliminaryBackstageNotionPartitionPolicy =',
       adapterInitializationIndex
+    );
+    const partitionEvidenceIndex = source.indexOf(
+      'await loadBackstageNotionPartitionCutoverGateEvidenceSet(',
+      preliminaryPartitionPolicyIndex
+    );
+    const partitionPolicyIndex = source.indexOf(
+      'const backstageNotionPartitionPolicy =',
+      partitionEvidenceIndex
     );
     const readinessGateIndex = source.indexOf(
       'await runBackstageNotionWorkerReadinessGate(',
@@ -565,6 +573,8 @@ describe('Backstage Notion synchronization loop', () => {
     expect([
       databaseBootstrapIndex,
       adapterInitializationIndex,
+      preliminaryPartitionPolicyIndex,
+      partitionEvidenceIndex,
       partitionPolicyIndex,
       readinessGateIndex,
       notionReadinessIndex,
@@ -581,7 +591,9 @@ describe('Backstage Notion synchronization loop', () => {
       shadowDrainIndex,
     ]).not.toContain(-1);
     expect(databaseBootstrapIndex).toBeLessThan(adapterInitializationIndex);
-    expect(adapterInitializationIndex).toBeLessThan(partitionPolicyIndex);
+    expect(adapterInitializationIndex).toBeLessThan(preliminaryPartitionPolicyIndex);
+    expect(preliminaryPartitionPolicyIndex).toBeLessThan(partitionEvidenceIndex);
+    expect(partitionEvidenceIndex).toBeLessThan(partitionPolicyIndex);
     expect(partitionPolicyIndex).toBeLessThan(readinessGateIndex);
     expect(readinessGateIndex).toBeLessThan(notionReadinessIndex);
     expect(notionReadinessIndex).toBeLessThan(coordinatorIndex);
@@ -599,6 +611,9 @@ describe('Backstage Notion synchronization loop', () => {
       .toBeLessThan(syncDrainIndex);
     expect(source).not.toContain('await startBackstageNotionSyncLoop(');
     expect(source).not.toContain('await startBackstageNotionPartitionShadowLoop(');
+    expect(source).toContain(
+      'cutoverEvidence: backstageNotionPartitionCutoverEvidence'
+    );
   });
 
   it('does not require an OpenAI adapter for a keyless worker startup', () => {

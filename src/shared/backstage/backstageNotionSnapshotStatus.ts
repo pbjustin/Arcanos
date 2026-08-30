@@ -59,6 +59,27 @@ export type BackstageNotionSyncFailurePhase =
 export type BackstageNotionSyncFailureReason =
   (typeof BACKSTAGE_NOTION_SYNC_FAILURE_REASONS)[number];
 
+export const BACKSTAGE_NOTION_RAG_MAX_STALENESS_ENV_NAME =
+  'ARCANOS_BACKSTAGE_NOTION_RAG_MAX_STALENESS_MS';
+export const BACKSTAGE_NOTION_RAG_MAX_STALENESS_DEFAULT_MS =
+  24 * 60 * 60 * 1_000;
+export const BACKSTAGE_NOTION_RAG_MAX_STALENESS_MIN_MS = 5 * 60 * 1_000;
+export const BACKSTAGE_NOTION_RAG_MAX_STALENESS_MAX_MS =
+  7 * 24 * 60 * 60 * 1_000;
+
+/** Apply the one bounded freshness policy shared by serving and cutover proof. */
+export function boundBackstageNotionRagMaximumStalenessMs(
+  candidate: number
+): number {
+  if (!Number.isFinite(candidate) || candidate <= 0) {
+    return BACKSTAGE_NOTION_RAG_MAX_STALENESS_DEFAULT_MS;
+  }
+  return Math.max(
+    BACKSTAGE_NOTION_RAG_MAX_STALENESS_MIN_MS,
+    Math.min(BACKSTAGE_NOTION_RAG_MAX_STALENESS_MAX_MS, Math.trunc(candidate))
+  );
+}
+
 export interface BackstageNotionLatestSyncAttemptState {
   attemptId: string;
   startedAt: Date;

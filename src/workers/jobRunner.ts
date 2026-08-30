@@ -139,6 +139,9 @@ import {
   runWithBackstageLegacyQueuedExecution,
   runWithBackstageProtectedQueuedExecution,
 } from '@services/backstageNotionEnrichmentAuthorization.js';
+import {
+  loadBackstageNotionPartitionCutoverGateEvidenceSet,
+} from '@services/backstageNotionPartitionCutoverEvidence.js';
 import { logger } from '@platform/logging/structuredLogging.js';
 import { recordJobEvent } from '@core/db/repositories/jobEventRepository.js';
 import { initializeModuleRegistry } from '@services/moduleRegistry.js';
@@ -2787,8 +2790,19 @@ async function run(): Promise<void> {
 
   initializeWorkerOpenAIAdapterIfConfigured();
 
-  const backstageNotionPartitionPolicy =
+  const preliminaryBackstageNotionPartitionPolicy =
     resolveBackstageNotionPartitionShadowPolicy();
+  const backstageNotionPartitionCutoverEvidence =
+    preliminaryBackstageNotionPartitionPolicy.configuration
+      ? await loadBackstageNotionPartitionCutoverGateEvidenceSet(
+          preliminaryBackstageNotionPartitionPolicy.configuration
+        )
+      : Object.freeze([]);
+  const backstageNotionPartitionPolicy =
+    resolveBackstageNotionPartitionShadowPolicy(
+      undefined,
+      backstageNotionPartitionCutoverEvidence
+    );
   try {
     const backstageNotionReadiness = await runBackstageNotionWorkerReadinessGate(
       backstageNotionPartitionPolicy,
@@ -2803,6 +2817,10 @@ async function run(): Promise<void> {
       reasonCode: backstageNotionPartitionPolicy.reasonCode,
       configuredUniverses: backstageNotionPartitionPolicy.configuredUniverses,
       configuredShards: backstageNotionPartitionPolicy.configuredShards,
+      effectiveReadMode: backstageNotionPartitionPolicy.effectiveReadMode,
+      cutoverAvailable: backstageNotionPartitionPolicy.cutoverAvailable,
+      cutoverGateReasonCodes:
+        backstageNotionPartitionPolicy.cutoverGateReasonCodes,
     };
     if (backstageNotionReadiness.monolithReadinessRequired) {
       logger.info('worker.backstage_notion_readiness.completed', {
@@ -2950,6 +2968,7 @@ async function run(): Promise<void> {
     backstageNotionPartitionShadowHandle = startBackstageNotionPartitionShadowLoop({
       signal: workerProcessShutdownController.signal,
       coordinator: backstageNotionSynchronizationCoordinator,
+      cutoverEvidence: backstageNotionPartitionCutoverEvidence,
     });
 
     await Promise.all(slotRuntimePromises);

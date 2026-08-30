@@ -15,11 +15,19 @@ import {
   projectBackstageNotionPartitionFailedShardTelemetry,
 } from '@shared/backstage/backstageNotionPartitionTelemetryCore.js';
 import {
+  evaluateBackstageNotionPartitionCutoverGate,
+  type BackstageNotionPartitionCutoverGateEvidence,
+  type BackstageNotionPartitionCutoverGateReasonCode,
+} from '@shared/backstage/backstageNotionPartitionCutoverGate.js';
+import {
   createBackstageNotionPartitionProviderCaptureDependencies,
   syncBackstageNotionPartitionConfiguration,
   type BackstageNotionPartitionSyncSelection,
   type BackstageNotionPartitionSynchronizationResult,
 } from '@services/backstageNotionPartitionSync.js';
+import {
+  resolveBackstageNotionRagMaximumStalenessMs,
+} from '@services/backstageNotionRag.js';
 import {
   createEmbeddings,
   DEFAULT_OPENAI_EMBEDDING_DIMENSION,
@@ -52,6 +60,7 @@ export type BackstageNotionPartitionShadowReasonCode =
   | 'SHADOW_ENABLED'
   | 'PARTITIONED_CONFIGURATION_ABSENT'
   | 'PARTITIONED_CONFIGURATION_INVALID'
+  | 'PARTITIONED_CUTOVER_GATE_CLOSED'
   | 'PARTITIONED_ENABLED'
   | 'ENVIRONMENT_READ_FAILED';
 
@@ -68,6 +77,10 @@ export interface BackstageNotionPartitionShadowPolicy {
   readonly semanticDigest: string | null;
   readonly configuredUniverses: number;
   readonly configuredShards: number;
+  readonly effectiveReadMode: 'monolith' | 'partitioned';
+  readonly cutoverAvailable: boolean;
+  readonly cutoverGateReasonCodes:
+    readonly BackstageNotionPartitionCutoverGateReasonCode[];
   readonly reasonCode: BackstageNotionPartitionShadowReasonCode;
   readonly configuration: ValidPartitionConfiguration | null;
 }
@@ -111,6 +124,7 @@ export interface BackstageNotionPartitionShadowLoopDependencies {
   }) => Promise<BackstageNotionPartitionShadowCycleResult>;
   readonly logger?: Pick<typeof logger, 'info' | 'warn'>;
   readonly coordinator?: BackstageNotionSynchronizationCoordinator;
+  readonly cutoverEvidence?: readonly BackstageNotionPartitionCutoverGateEvidence[];
 }
 
 function safeLog(
@@ -140,6 +154,9 @@ function disabledPolicy(input: {
     semanticDigest: null,
     configuredUniverses: 0,
     configuredShards: 0,
+    effectiveReadMode: 'monolith',
+    cutoverAvailable: false,
+    cutoverGateReasonCodes: Object.freeze([]),
     reasonCode: input.reasonCode,
     configuration: null,
   });
@@ -147,7 +164,8 @@ function disabledPolicy(input: {
 
 /** Resolve the partition writer policy without exposing raw environment values. */
 export function resolveBackstageNotionPartitionShadowPolicy(
-  readEnvironment: (name: string) => string | undefined = name => getEnv(name)
+  readEnvironment: (name: string) => string | undefined = name => getEnv(name),
+  cutoverEvidence: readonly BackstageNotionPartitionCutoverGateEvidence[] = []
 ): BackstageNotionPartitionShadowPolicy {
   let rawMode: string | undefined;
   try {
@@ -215,6 +233,28 @@ export function resolveBackstageNotionPartitionShadowPolicy(
           : 'SHADOW_CONFIGURATION_INVALID',
     });
   }
+  const evidence = Array.isArray(cutoverEvidence) ? cutoverEvidence : [];
+  const gateResults = configuration.universes.map(universe => {
+    const matches = evidence.filter(candidate => (
+      candidate.universeId === universe.universeId
+    ));
+    return evaluateBackstageNotionPartitionCutoverGate({
+      universeId: universe.universeId,
+      configurationHash: configuration.semanticDigest,
+      configuredShardKeys: universe.shards.map(shard => shard.shardKey),
+      maximumStalenessMs: resolveBackstageNotionRagMaximumStalenessMs(),
+      supportedEmbeddingModel: DEFAULT_OPENAI_EMBEDDING_MODEL,
+      evidence: matches.length === 1 ? matches[0] : null,
+    });
+  });
+  const cutoverAvailable = gateResults.length > 0
+    && gateResults.every(result => result.available);
+  const cutoverGateReasonCodes = Object.freeze([
+    ...new Set(gateResults.flatMap(result => result.reasonCodes)),
+  ]);
+  const effectiveReadMode = mode.mode === 'partitioned' && cutoverAvailable
+    ? 'partitioned' as const
+    : 'monolith' as const;
   return Object.freeze({
     enabled: true,
     requestedMode,
@@ -226,34 +266,27 @@ export function resolveBackstageNotionPartitionShadowPolicy(
       (total, universe) => total + universe.shards.length,
       0
     ),
+    effectiveReadMode,
+    cutoverAvailable,
+    cutoverGateReasonCodes,
     reasonCode: mode.mode === 'partitioned'
-      ? 'PARTITIONED_ENABLED'
+      ? cutoverAvailable
+        ? 'PARTITIONED_ENABLED'
+        : 'PARTITIONED_CUTOVER_GATE_CLOSED'
       : 'SHADOW_ENABLED',
     configuration,
   });
 }
 
 /**
- * Keep the legacy monolith startup fence for every fallback policy. Only an
- * exact, internally consistent shadow or partitioned policy may admit queue
- * consumers without first awaiting a universe-wide monolith crawl.
+ * Every monolith-authoritative mode proves the monolith before queue admission.
+ * Partitioned mode may skip the duplicate crawl only after the explicit gate
+ * already proves a readable rollback monolith.
  */
 export function requiresBackstageNotionMonolithWorkerReadiness(
   policy: BackstageNotionPartitionShadowPolicy
 ): boolean {
-  const exactEnabledPartitionPolicy = policy.enabled
-    && policy.modeStatus === 'valid'
-    && policy.configurationStatus === 'valid'
-    && policy.configuration !== null
-    && policy.semanticDigest !== null
-    && (
-      (policy.requestedMode === 'shadow' && policy.reasonCode === 'SHADOW_ENABLED')
-      || (
-        policy.requestedMode === 'partitioned'
-        && policy.reasonCode === 'PARTITIONED_ENABLED'
-      )
-    );
-  return !exactEnabledPartitionPolicy;
+  return policy.effectiveReadMode !== 'partitioned';
 }
 
 /** Run the unchanged legacy readiness proof only when the resolved policy requires it. */
@@ -462,10 +495,11 @@ export function startBackstageNotionPartitionShadowLoop(
 ): BackstageNotionPartitionShadowLoopHandle {
   const loopLogger = dependencies.logger ?? logger;
   const readEnvironment = dependencies.readEnvironment ?? (name => getEnv(name));
-  const policy = resolveBackstageNotionPartitionShadowPolicy(readEnvironment);
-  const effectiveReadMode = policy.enabled && policy.requestedMode === 'partitioned'
-    ? 'partitioned'
-    : 'monolith';
+  const policy = resolveBackstageNotionPartitionShadowPolicy(
+    readEnvironment,
+    dependencies.cutoverEvidence
+  );
+  const effectiveReadMode = policy.effectiveReadMode;
   const policyMetadata = Object.freeze({
     module: 'backstage-notion-partition-shadow',
     modeStatus: policy.modeStatus,
@@ -474,7 +508,8 @@ export function startBackstageNotionPartitionShadowLoop(
     partitionSyncEnabled: policy.enabled,
     shadowSyncEnabled: policy.enabled && policy.requestedMode === 'shadow',
     partitionedReadEnabled: effectiveReadMode === 'partitioned',
-    cutoverAvailable: true,
+    cutoverAvailable: policy.cutoverAvailable,
+    cutoverGateReasonCodes: policy.cutoverGateReasonCodes,
     configurationStatus: policy.configurationStatus,
     semanticDigest: policy.semanticDigest,
     configuredUniverses: policy.configuredUniverses,

@@ -32,9 +32,12 @@ import {
   normalizeBackstageNotionScopePath,
 } from '@shared/backstage/backstageNotionScopeIndex.js';
 import {
+  BACKSTAGE_NOTION_RAG_MAX_STALENESS_DEFAULT_MS,
+  BACKSTAGE_NOTION_RAG_MAX_STALENESS_ENV_NAME,
   BACKSTAGE_NOTION_SYNC_ATTEMPT_OUTCOMES,
   BACKSTAGE_NOTION_SYNC_FAILURE_PHASES,
   BACKSTAGE_NOTION_SYNC_FAILURE_REASONS,
+  boundBackstageNotionRagMaximumStalenessMs,
   resolveBackstageNotionSnapshotStatus,
   type BackstageNotionSnapshotStatus,
   type BackstageNotionSnapshotStatusResolution,
@@ -70,17 +73,18 @@ import {
 export {
   BACKSTAGE_NOTION_RAG_SYSTEM_POLICY_PROMPT,
 } from '@shared/backstage/backstageNotionRagCore.js';
+export {
+  BACKSTAGE_NOTION_RAG_MAX_STALENESS_DEFAULT_MS,
+  BACKSTAGE_NOTION_RAG_MAX_STALENESS_ENV_NAME,
+  BACKSTAGE_NOTION_RAG_MAX_STALENESS_MAX_MS,
+  BACKSTAGE_NOTION_RAG_MAX_STALENESS_MIN_MS,
+} from '@shared/backstage/backstageNotionSnapshotStatus.js';
 
 export const BACKSTAGE_NOTION_RAG_MAX_ACTIVE_CHUNKS =
   BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT;
 export const BACKSTAGE_NOTION_RAG_RETRIEVED_CHUNKS = 12;
 export const BACKSTAGE_NOTION_RAG_MAX_CHUNKS_PER_PAGE = 3;
 export const BACKSTAGE_NOTION_RAG_MAX_QUERY_CODE_POINTS = 32_000;
-export const BACKSTAGE_NOTION_RAG_MAX_STALENESS_ENV_NAME =
-  'ARCANOS_BACKSTAGE_NOTION_RAG_MAX_STALENESS_MS';
-export const BACKSTAGE_NOTION_RAG_MAX_STALENESS_DEFAULT_MS = 24 * 60 * 60 * 1_000;
-export const BACKSTAGE_NOTION_RAG_MAX_STALENESS_MIN_MS = 5 * 60 * 1_000;
-export const BACKSTAGE_NOTION_RAG_MAX_STALENESS_MAX_MS = 7 * 24 * 60 * 60 * 1_000;
 export const BACKSTAGE_NOTION_INDEX_UNAVAILABLE_ERROR_CODE =
   'BACKSTAGE_NOTION_INDEX_UNAVAILABLE';
 export const BACKSTAGE_NOTION_INDEX_UNAVAILABLE_ERROR_MESSAGE =
@@ -352,13 +356,7 @@ function resolveMaximumStalenessMs(value: number | undefined): number {
     BACKSTAGE_NOTION_RAG_MAX_STALENESS_ENV_NAME,
     BACKSTAGE_NOTION_RAG_MAX_STALENESS_DEFAULT_MS
   );
-  if (!Number.isFinite(candidate) || candidate <= 0) {
-    return BACKSTAGE_NOTION_RAG_MAX_STALENESS_DEFAULT_MS;
-  }
-  return Math.max(
-    BACKSTAGE_NOTION_RAG_MAX_STALENESS_MIN_MS,
-    Math.min(BACKSTAGE_NOTION_RAG_MAX_STALENESS_MAX_MS, Math.trunc(candidate))
-  );
+  return boundBackstageNotionRagMaximumStalenessMs(candidate);
 }
 
 function sha256(value: string): string {
@@ -1122,6 +1120,13 @@ function validateActiveSnapshotHeader<T extends BackstageNotionActiveSnapshotHea
     throw new BackstageNotionIndexUnavailableError();
   }
   return active;
+}
+
+/** Resolve the exact bounded freshness window used by authoritative retrievals. */
+export function resolveBackstageNotionRagMaximumStalenessMs(
+  value?: number
+): number {
+  return resolveMaximumStalenessMs(value);
 }
 
 function logBackstageNotionSnapshotStatus(

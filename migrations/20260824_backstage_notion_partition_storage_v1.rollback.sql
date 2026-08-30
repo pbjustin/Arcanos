@@ -20,6 +20,7 @@ BEGIN
     'backstage_notion_partition_versions',
     'backstage_notion_partitioned_universe_heads',
     'backstage_notion_provider_coordinator_leases',
+    'backstage_notion_partition_source_generations',
     'backstage_notion_shard_heads',
     'backstage_notion_shard_snapshot_chunk_occurrences',
     'backstage_notion_shard_snapshot_pages',
@@ -50,6 +51,7 @@ BEGIN
     'backstage_notion_partition_versions',
     'backstage_notion_partitioned_universe_heads',
     'backstage_notion_provider_coordinator_leases',
+    'backstage_notion_partition_source_generations',
     'backstage_notion_shard_heads',
     'backstage_notion_shard_snapshot_chunk_occurrences',
     'backstage_notion_shard_snapshot_pages',
@@ -84,6 +86,7 @@ DROP TABLE IF EXISTS public.backstage_notion_manifest_page_ownership;
 DROP TABLE IF EXISTS public.backstage_notion_universe_manifest_omissions;
 DROP TABLE IF EXISTS public.backstage_notion_universe_manifest_shards;
 DROP TABLE IF EXISTS public.backstage_notion_universe_manifests;
+DROP TABLE IF EXISTS public.backstage_notion_partition_source_generations;
 DROP TABLE IF EXISTS public.backstage_notion_shard_sync_leases;
 DROP TABLE IF EXISTS public.backstage_notion_shard_heads;
 DROP TABLE IF EXISTS public.backstage_notion_shard_snapshot_verifications;

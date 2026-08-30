@@ -42,6 +42,22 @@ const rollbackMigration = readFileSync(
   ),
   'utf8'
 );
+const sourceGenerationMigration = readFileSync(
+  join(
+    process.cwd(),
+    'migrations',
+    '20260829_backstage_notion_partition_source_generation_v1.sql'
+  ),
+  'utf8'
+);
+const sourceGenerationRollback = readFileSync(
+  join(
+    process.cwd(),
+    'migrations',
+    '20260829_backstage_notion_partition_source_generation_v1.rollback.sql'
+  ),
+  'utf8'
+);
 const scopeMigrationRoot = join(
   process.cwd(),
   'migrations',
@@ -81,6 +97,7 @@ const partitionTables = [
   'backstage_notion_shard_heads',
   'backstage_notion_shard_sync_leases',
   'backstage_notion_provider_coordinator_leases',
+  'backstage_notion_partition_source_generations',
   'backstage_notion_universe_manifests',
   'backstage_notion_universe_manifest_shards',
   'backstage_notion_universe_manifest_omissions',
@@ -188,6 +205,9 @@ type SealedFixture = Readonly<{
   pageVersionId: string;
   snapshotId: string;
   manifestId: string;
+  sourceGenerationId: string;
+  sourceDigest: string;
+  sourceVerificationHash: string;
   verifiedAt: string;
 }>;
 
@@ -214,6 +234,9 @@ async function insertSealedFixture(
   const pageVersionId = randomUUID();
   const snapshotId = randomUUID();
   const manifestId = randomUUID();
+  const sourceGenerationId = randomUUID();
+  const sourceDigest = fingerprint(`source-generation:${label}`);
+  const sourceVerificationHash = fingerprint(`source-verification:${label}`);
   const sourceEditedAt = '2026-08-24T12:00:00.000Z';
   const driftVerifiedAt = '2026-08-24T12:01:00.000Z';
   const verifiedAt = '2026-08-24T12:02:00.000Z';
@@ -445,6 +468,7 @@ async function insertSealedFixture(
        shard_key,
        partition_version_id,
        root_page_id,
+       source_generation_id,
        source_manifest_hash,
        embedding_model,
        embedding_version,
@@ -462,7 +486,8 @@ async function insertSealedFixture(
        $3,
        $4::UUID,
        $5::UUID,
-       $6,
+       $6::UUID,
+       $7,
        'pg18-test-model',
        1,
        2,
@@ -471,7 +496,7 @@ async function insertSealedFixture(
        1,
        5,
        0,
-       $7::TIMESTAMPTZ,
+       $8::TIMESTAMPTZ,
        2
      )`,
     [
@@ -480,6 +505,7 @@ async function insertSealedFixture(
       shardKey,
       partitionVersionId,
       rootPageId,
+      sourceGenerationId,
       fingerprint(`snapshot:${label}`),
       sourceEditedAt,
     ]
@@ -628,12 +654,42 @@ async function insertSealedFixture(
   );
 
   await client.query(
+    `INSERT INTO public.backstage_notion_partition_source_generations (
+       universe_id,
+       source_generation_id,
+       partition_configuration_version_id,
+       source_digest,
+       source_page_count,
+       source_chunk_count,
+       member_count,
+       source_verified_at,
+       source_verification_hash
+     ) VALUES (
+       $1, $2::UUID, $3::UUID, $4, 1, 1, 1, $5::TIMESTAMPTZ, $6
+     )`,
+    [
+      universeId,
+      sourceGenerationId,
+      configurationId,
+      sourceDigest,
+      verifiedAt,
+      sourceVerificationHash,
+    ]
+  );
+
+  await client.query(
     `INSERT INTO public.backstage_notion_universe_manifests (
        id,
        universe_id,
        partition_configuration_version_id,
        configuration_generation,
        configuration_hash,
+       source_generation_id,
+       source_digest,
+       source_page_count,
+       source_chunk_count,
+       source_verified_at,
+       source_verification_hash,
        embedding_model,
        embedding_version,
        embedding_dimension,
@@ -643,7 +699,9 @@ async function insertSealedFixture(
        page_count,
        chunk_count
      ) VALUES (
-       $1::UUID, $2, $3::UUID, $4, $5, 'pg18-test-model', 1, 2, 1, 1, $6, 1, 1
+       $1::UUID, $2, $3::UUID, $4, $5,
+       $6::UUID, $7, 1, 1, $8::TIMESTAMPTZ, $9,
+       'pg18-test-model', 1, 2, 1, 1, $10, 1, 1
      )`,
     [
       manifestId,
@@ -651,6 +709,10 @@ async function insertSealedFixture(
       configurationId,
       configurationGeneration,
       configurationHash,
+      sourceGenerationId,
+      sourceDigest,
+      verifiedAt,
+      sourceVerificationHash,
       optionalPartition ? 1 : 0,
     ]
   );
@@ -755,27 +817,41 @@ async function insertSealedFixture(
      WHERE universe_id = $1 AND id = $2::UUID`,
     [universeId, manifestId]
   );
-  await client.query(
-    `INSERT INTO public.backstage_notion_partitioned_universe_heads (
-       universe_id,
-       desired_configuration_version_id,
-       desired_configuration_generation,
-       desired_configuration_hash,
-       active_manifest_id,
-       active_configuration_version_id,
-       head_generation,
-       manifest_generation,
-       last_verified_at
-     ) VALUES ($1, $2::UUID, $3, $4, $5::UUID, $2::UUID, 1, 1, $6::TIMESTAMPTZ)`,
-    [
-      universeId,
-      configurationId,
-      configurationGeneration,
-      configurationHash,
-      manifestId,
-      verifiedAt,
-    ]
-  );
+  if (optionalPartition) {
+    // Partial manifests remain immutable diagnostic history, but the complete-
+    // manifest head guard must not expose one as authoritative.
+    await client.query(
+      `INSERT INTO public.backstage_notion_partitioned_universe_heads (
+         universe_id,
+         desired_configuration_version_id,
+         desired_configuration_generation,
+         desired_configuration_hash
+       ) VALUES ($1, $2::UUID, $3, $4)`,
+      [universeId, configurationId, configurationGeneration, configurationHash]
+    );
+  } else {
+    await client.query(
+      `INSERT INTO public.backstage_notion_partitioned_universe_heads (
+         universe_id,
+         desired_configuration_version_id,
+         desired_configuration_generation,
+         desired_configuration_hash,
+         active_manifest_id,
+         active_configuration_version_id,
+         head_generation,
+         manifest_generation,
+         last_verified_at
+       ) VALUES ($1, $2::UUID, $3, $4, $5::UUID, $2::UUID, 1, 1, $6::TIMESTAMPTZ)`,
+      [
+        universeId,
+        configurationId,
+        configurationGeneration,
+        configurationHash,
+        manifestId,
+        verifiedAt,
+      ]
+    );
+  }
 
   return {
     universeId,
@@ -789,6 +865,9 @@ async function insertSealedFixture(
     pageVersionId,
     snapshotId,
     manifestId,
+    sourceGenerationId,
+    sourceDigest,
+    sourceVerificationHash,
     verifiedAt,
   };
 }
@@ -818,6 +897,7 @@ type CandidateBoundaryFixture = Readonly<{
   configurationId: string;
   configurationHash: string;
   manifestId: string;
+  sourceGenerationId: string;
   chunksPerShard: number;
   shards: readonly CandidateBoundaryShardFixture[];
 }>;
@@ -832,6 +912,9 @@ async function insertCandidateBoundaryFixture(
   const configurationGeneration = `generation-${label}`;
   const configurationHash = fingerprint(`configuration:${label}`);
   const manifestId = randomUUID();
+  const sourceGenerationId = randomUUID();
+  const sourceDigest = fingerprint(`source-generation:${label}`);
+  const sourceVerificationHash = fingerprint(`source-verification:${label}`);
   const sourceEditedAt = '2026-08-24T13:00:00.000Z';
   const verifiedAt = '2026-08-24T13:02:00.000Z';
   const shardSeeds = [
@@ -1059,6 +1142,7 @@ async function insertCandidateBoundaryFixture(
          shard_key,
          partition_version_id,
          root_page_id,
+         source_generation_id,
          source_manifest_hash,
          embedding_model,
          embedding_version,
@@ -1071,8 +1155,8 @@ async function insertCandidateBoundaryFixture(
          source_max_last_edited_at,
          verification_count
        ) VALUES (
-         $1::UUID, $2, $3, $4::UUID, $5::UUID, $6,
-         'pg18-test-model', 1, 2, 1, 1, $7, $8, 0, $9::TIMESTAMPTZ, 2
+         $1::UUID, $2, $3, $4::UUID, $5::UUID, $6::UUID, $7,
+         'pg18-test-model', 1, 2, 1, 1, $8, $9, 0, $10::TIMESTAMPTZ, 2
        )`,
       [
         shard.snapshotId,
@@ -1080,6 +1164,7 @@ async function insertCandidateBoundaryFixture(
         shard.shardKey,
         shard.partitionVersionId,
         shard.rootPageId,
+        sourceGenerationId,
         fingerprint(`snapshot:${shard.shardKey}`),
         chunksPerShard,
         Array.from(markdown).length,
@@ -1208,12 +1293,43 @@ async function insertCandidateBoundaryFixture(
   }
 
   await client.query(
+    `INSERT INTO public.backstage_notion_partition_source_generations (
+       universe_id,
+       source_generation_id,
+       partition_configuration_version_id,
+       source_digest,
+       source_page_count,
+       source_chunk_count,
+       member_count,
+       source_verified_at,
+       source_verification_hash
+     ) VALUES (
+       $1, $2::UUID, $3::UUID, $4, 2, $5, 2, $6::TIMESTAMPTZ, $7
+     )`,
+    [
+      universeId,
+      sourceGenerationId,
+      configurationId,
+      sourceDigest,
+      chunksPerShard * shards.length,
+      verifiedAt,
+      sourceVerificationHash,
+    ]
+  );
+
+  await client.query(
     `INSERT INTO public.backstage_notion_universe_manifests (
        id,
        universe_id,
        partition_configuration_version_id,
        configuration_generation,
        configuration_hash,
+       source_generation_id,
+       source_digest,
+       source_page_count,
+       source_chunk_count,
+       source_verified_at,
+       source_verification_hash,
        embedding_model,
        embedding_version,
        embedding_dimension,
@@ -1224,7 +1340,8 @@ async function insertCandidateBoundaryFixture(
        chunk_count
      ) VALUES (
        $1::UUID, $2, $3::UUID, $4, $5,
-       'pg18-test-model', 1, 2, 1, 2, 0, 2, $6
+       $6::UUID, $7, 2, $8, $9::TIMESTAMPTZ, $10,
+       'pg18-test-model', 1, 2, 1, 2, 0, 2, $8
      )`,
     [
       manifestId,
@@ -1232,7 +1349,11 @@ async function insertCandidateBoundaryFixture(
       configurationId,
       configurationGeneration,
       configurationHash,
+      sourceGenerationId,
+      sourceDigest,
       chunksPerShard * shards.length,
+      verifiedAt,
+      sourceVerificationHash,
     ]
   );
   for (const shard of shards) {
@@ -1308,6 +1429,7 @@ async function insertCandidateBoundaryFixture(
     configurationId,
     configurationHash,
     manifestId,
+    sourceGenerationId,
     chunksPerShard,
     shards: Object.freeze(shards.map(shard => Object.freeze({
       shardKey: shard.shardKey,
@@ -1425,6 +1547,9 @@ async function activateScopeHierarchyFixture(
     throw new Error('Scope hierarchy fixture could not acquire its shard lease.');
   }
   const snapshotId = randomUUID();
+  const sourceGenerationId = randomUUID();
+  const sourceManifestHash = fingerprint('scope-hierarchy-source');
+  const sourceDriftHash = fingerprint('scope-hierarchy-drift');
   const sourceEditedAt = new Date(Date.now() - 60_000);
   const verifiedAt = new Date();
   const activated = await repository.activateShardSnapshot({
@@ -1433,7 +1558,8 @@ async function activateScopeHierarchyFixture(
     shardKey: fixture.shardKey,
     partitionVersionId: fixture.partitionVersionId,
     rootPageId: fixture.rootPageId,
-    sourceManifestHash: fingerprint('scope-hierarchy-source'),
+    sourceGenerationId,
+    sourceManifestHash,
     embeddingModel: 'pg18-test-model',
     embeddingVersion: 1,
     indexFormatVersion: 1,
@@ -1520,7 +1646,7 @@ async function activateScopeHierarchyFixture(
     }],
     verifications: [{
       kind: 'source_drift',
-      resultHash: fingerprint('scope-hierarchy-drift'),
+      resultHash: sourceDriftHash,
       verifiedAt,
     }, {
       kind: 'completeness',
@@ -1535,6 +1661,26 @@ async function activateScopeHierarchyFixture(
   if (!terminal?.shards[0]) {
     throw new Error('Scope hierarchy fixture lost its activated shard.');
   }
+  await repository.releaseShardLease(
+    fixture.universeId,
+    fixture.shardKey,
+    lease
+  );
+  const sourceGeneration = await repository.verifySourceGeneration({
+    universeId: fixture.universeId,
+    configurationVersionId: fixture.configurationId,
+    sourceGenerationId,
+    members: [{
+      shardKey: fixture.shardKey,
+      partitionVersionId: fixture.partitionVersionId,
+      snapshotId: activated.snapshotId,
+      sourceManifestHash,
+      pageCount: activated.pageCount,
+      chunkCount: activated.chunkCount,
+      terminalDriftHash: sourceDriftHash,
+      verifiedAt: activated.verifiedAt,
+    }],
+  });
   const manifestId = randomUUID();
   await repository.activateUniverseManifest({
     manifestId,
@@ -1542,6 +1688,12 @@ async function activateScopeHierarchyFixture(
     configurationVersionId: fixture.configurationId,
     configurationGeneration: fixture.configurationGeneration,
     configurationHash: fixture.configurationHash,
+    sourceGenerationId: sourceGeneration.sourceGenerationId,
+    sourceDigest: sourceGeneration.sourceDigest,
+    sourcePageCount: sourceGeneration.sourcePageCount,
+    sourceChunkCount: sourceGeneration.sourceChunkCount,
+    sourceVerifiedAt: sourceGeneration.sourceVerifiedAt,
+    sourceVerificationHash: sourceGeneration.sourceVerificationHash,
     indexFormatVersion: 1,
     expectedUniverseHead: terminal.expectedUniverseHead,
     members: [{
@@ -1554,11 +1706,6 @@ async function activateScopeHierarchyFixture(
     }],
     omissions: [],
   });
-  await repository.releaseShardLease(
-    fixture.universeId,
-    fixture.shardKey,
-    lease
-  );
   return Object.freeze({
     manifestId,
     snapshotId,
@@ -1632,6 +1779,7 @@ async function insertOptionalOverlapSnapshot(
        shard_key,
        partition_version_id,
        root_page_id,
+       source_generation_id,
        source_manifest_hash,
        embedding_model,
        embedding_version,
@@ -1644,8 +1792,8 @@ async function insertOptionalOverlapSnapshot(
        source_max_last_edited_at,
        verification_count
      ) VALUES (
-       $1::UUID, $2, $3, $4::UUID, $5::UUID, $6,
-       'pg18-test-model', 1, 2, 1, 2, 2, 12, 1, $7::TIMESTAMPTZ, 2
+       $1::UUID, $2, $3, $4::UUID, $5::UUID, $6::UUID, $7,
+       'pg18-test-model', 1, 2, 1, 2, 2, 12, 1, $8::TIMESTAMPTZ, 2
      )`,
     [
       snapshotId,
@@ -1653,6 +1801,7 @@ async function insertOptionalOverlapSnapshot(
       optionalPartition.shardKey,
       optionalPartition.partitionVersionId,
       optionalPartition.rootPageId,
+      fixture.sourceGenerationId,
       fingerprint('snapshot:optional-overlap'),
       sourceEditedAt,
     ]
@@ -1856,6 +2005,8 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
     await client.query(forwardMigration);
     await client.query(forwardMigration);
     await client.query(runtimeSql);
+    await client.query(sourceGenerationMigration);
+    await client.query(sourceGenerationMigration);
     await client.query(scopeIndexPrecheck);
     await client.query(scopeIndexCreate);
     await client.query(scopeIndexVerify);
@@ -1879,6 +2030,7 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
     try {
       await client.query('ROLLBACK');
       await client.query(scopeIndexRollback);
+      await client.query(sourceGenerationRollback);
       await client.query(rollbackMigration);
       await client.query('DROP TABLE IF EXISTS public.job_data');
       await client.query('DROP TABLE IF EXISTS public.backstage_notion_universe_heads');
@@ -2434,6 +2586,7 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
            shard_key,
            partition_version_id,
            root_page_id,
+           source_generation_id,
            source_manifest_hash,
            embedding_model,
            embedding_version,
@@ -2446,8 +2599,8 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
            source_max_last_edited_at,
            verification_count
          ) VALUES (
-           $1::UUID, $2, $3, $4::UUID, $5::UUID, $6,
-           'pg18-test-model', 1, $7, 1, 2, 2, 10, 1, $8::TIMESTAMPTZ, 2
+           $1::UUID, $2, $3, $4::UUID, $5::UUID, $6::UUID, $7,
+           'pg18-test-model', 1, $8, 1, 2, 2, 10, 1, $9::TIMESTAMPTZ, 2
          )`,
         [
           snapshotId,
@@ -2455,6 +2608,7 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
           fixture.shardKey,
           fixture.partitionVersionId,
           fixture.rootPageId,
+          fixture.sourceGenerationId,
           fingerprint(`snapshot:path-integrity:${snapshotId}`),
           embeddingDimension,
           sourceEditedAt,
@@ -2631,6 +2785,7 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
              shard_key,
              partition_version_id,
              root_page_id,
+             source_generation_id,
              source_manifest_hash,
              embedding_model,
              embedding_version,
@@ -2643,8 +2798,8 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
              source_max_last_edited_at,
              verification_count
            ) VALUES (
-             $1::UUID, $2, $3, $4::UUID, $5::UUID, $6,
-             'pg18-test-model', 1, 2, 1, 1, 1, 5, 0, $7::TIMESTAMPTZ, 2
+             $1::UUID, $2, $3, $4::UUID, $5::UUID, $6::UUID, $7,
+             'pg18-test-model', 1, 2, 1, 1, 1, 5, 0, $8::TIMESTAMPTZ, 2
            )`,
           [
             candidateSnapshotId,
@@ -2652,6 +2807,7 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
             fixture.shardKey,
             fixture.partitionVersionId,
             fixture.rootPageId,
+            fixture.sourceGenerationId,
             fingerprint('snapshot:authority-fence-candidate'),
             sourceEditedAt,
           ]
@@ -2816,6 +2972,12 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
                partition_configuration_version_id,
                configuration_generation,
                configuration_hash,
+               source_generation_id,
+               source_digest,
+               source_page_count,
+               source_chunk_count,
+               source_verified_at,
+               source_verification_hash,
                embedding_model,
                embedding_version,
                embedding_dimension,
@@ -2825,7 +2987,9 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
                page_count,
                chunk_count
              ) VALUES (
-               $1::UUID, $2, $3::UUID, $4, $5, $6, $7, $8, $9, 1, 0, 1, 1
+               $1::UUID, $2, $3::UUID, $4, $5,
+               $6::UUID, $7, 1, 1, $8::TIMESTAMPTZ, $9,
+               $10, $11, $12, $13, 1, 0, 1, 1
              )`,
             [
               manifestId,
@@ -2833,6 +2997,10 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
               fixture.configurationId,
               fixture.configurationGeneration,
               fixture.configurationHash,
+              fixture.sourceGenerationId,
+              fixture.sourceDigest,
+              fixture.verifiedAt,
+              fixture.sourceVerificationHash,
               embeddingModel,
               embeddingVersion,
               embeddingDimension,
@@ -3192,6 +3360,7 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
          shard_key,
          partition_version_id,
          root_page_id,
+         source_generation_id,
          source_manifest_hash,
          embedding_model,
          embedding_version,
@@ -3204,8 +3373,8 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
          source_max_last_edited_at,
          verification_count
        ) VALUES (
-         $1::UUID, $2, $3, $4::UUID, $5::UUID, $6,
-         'pg18-test-model', 1, 2, 1, 1, 1, 5, 0, $7::TIMESTAMPTZ, 2
+         $1::UUID, $2, $3, $4::UUID, $5::UUID, $6::UUID, $7,
+         'pg18-test-model', 1, 2, 1, 1, 1, 5, 0, $8::TIMESTAMPTZ, 2
        )`,
       [
         snapshotId,
@@ -3213,6 +3382,7 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
         fixture.shardKey,
         partitionVersionId,
         rootPageId,
+        fixture.sourceGenerationId,
         fingerprint('snapshot:atomic-rotation-b'),
         sourceEditedAt,
       ]
@@ -3676,6 +3846,35 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
     });
     expect(published.rows[0]?.active_snapshot_id).not.toBe(fixture.snapshotId);
 
+    const publishedHead = await repository.loadUniverseHead(fixture.universeId);
+    if (!publishedHead || !syncResult.universes[0]?.manifestId) {
+      throw new Error('Published repository-cycle head is unavailable.');
+    }
+    await expect(repository.rollbackUniverseManifest({
+      universeId: fixture.universeId,
+      targetManifestId: fixture.manifestId,
+      expectedUniverseHead: {
+        ...publishedHead,
+        headGeneration: String(Number(publishedHead.headGeneration) - 1),
+      },
+    })).rejects.toMatchObject({
+      code: 'BACKSTAGE_NOTION_PARTITION_STALE_HEAD',
+    });
+    await expect(repository.rollbackUniverseManifest({
+      universeId: fixture.universeId,
+      targetManifestId: fixture.manifestId,
+      expectedUniverseHead: publishedHead,
+    })).resolves.toMatchObject({
+      previousManifestId: syncResult.universes[0].manifestId,
+      manifestId: fixture.manifestId,
+      configurationVersionId: fixture.configurationId,
+    });
+    const rolledBackHead = await repository.loadUniverseHead(fixture.universeId);
+    expect(rolledBackHead).toMatchObject({
+      desiredConfigurationVersionId: fixture.configurationId,
+      activeManifestId: fixture.manifestId,
+    });
+
     const reassigned = parseBackstageNotionPartitionConfiguration(JSON.stringify({
       version: 1,
       generation: 'generation-repository-cycle-c',
@@ -3718,7 +3917,7 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
     expect(historicalRootOwners.rows).toEqual([{ count: '2' }]);
   }, 60_000);
 
-  test('publishes required canon while atomically omitting an overlapping optional archive', async () => {
+  test('blocks a mixed-generation overlapping archive without exposing a partial manifest', async () => {
     await client.query('BEGIN');
     const optionalPartition: OptionalFixturePartition = {
       shardKey: 'archive/ownership-isolation',
@@ -3744,12 +3943,21 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
       throw new Error('Ownership-isolation universe head is unavailable.');
     }
     const manifestId = randomUUID();
-    const activated = await repository.activateUniverseManifest({
+    const candidateSourceGenerationId = randomUUID();
+    await expect(repository.activateUniverseManifest({
       manifestId,
       universeId: fixture.universeId,
       configurationVersionId: fixture.configurationId,
       configurationGeneration: fixture.configurationGeneration,
       configurationHash: fixture.configurationHash,
+      sourceGenerationId: candidateSourceGenerationId,
+      sourceDigest: fingerprint('source-generation:ownership-isolation-candidate'),
+      sourcePageCount: 3,
+      sourceChunkCount: 3,
+      sourceVerifiedAt: new Date(fixture.verifiedAt),
+      sourceVerificationHash: fingerprint(
+        'source-verification:ownership-isolation-candidate'
+      ),
       indexFormatVersion: 1,
       expectedUniverseHead: universeHead,
       members: [{
@@ -3778,90 +3986,39 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
         },
       }],
       omissions: [],
+    })).rejects.toMatchObject({
+      code: 'BACKSTAGE_NOTION_PARTITION_STALE_HEAD',
     });
 
-    expect(activated).toMatchObject({
-      manifestId,
-      memberCount: 1,
-      omissionCount: 1,
-      omissions: [{
-        shardKey: optionalPartition.shardKey,
-        safeReasonCode: 'SHARD_OWNERSHIP_CONFLICT',
-      }],
-      pageCount: 1,
-      chunkCount: 1,
-    });
-    const manifest = await client.query<{
-      active_manifest_id: string;
-      member_count: string;
-      omission_count: string;
-      page_count: string;
-      chunk_count: string;
-      member_shards: string[];
-      omitted_shards: string[];
-      omission_reason: string;
-      ownership_count: string;
-      old_manifest_state: string;
+    const retained = await client.query<{
+      active_manifest_id: string | null;
+      candidate_count: string;
+      historical_manifest_state: string;
     }>(
       `SELECT
          head.active_manifest_id::TEXT,
-         manifest.member_count::TEXT,
-         manifest.omission_count::TEXT,
-         manifest.page_count::TEXT,
-         manifest.chunk_count::TEXT,
-         ARRAY(
-           SELECT member.shard_key
-           FROM public.backstage_notion_universe_manifest_shards AS member
-           WHERE member.universe_id = manifest.universe_id
-             AND member.manifest_id = manifest.id
-           ORDER BY member.shard_key
-         ) AS member_shards,
-         ARRAY(
-           SELECT omission.shard_key
-           FROM public.backstage_notion_universe_manifest_omissions AS omission
-           WHERE omission.universe_id = manifest.universe_id
-             AND omission.manifest_id = manifest.id
-           ORDER BY omission.shard_key
-         ) AS omitted_shards,
-         (
-           SELECT omission.safe_reason_code
-           FROM public.backstage_notion_universe_manifest_omissions AS omission
-           WHERE omission.universe_id = manifest.universe_id
-             AND omission.manifest_id = manifest.id
-           LIMIT 1
-         ) AS omission_reason,
          (
            SELECT pg_catalog.count(*)::TEXT
-           FROM public.backstage_notion_manifest_page_ownership AS ownership
-           WHERE ownership.universe_id = manifest.universe_id
-             AND ownership.manifest_id = manifest.id
-         ) AS ownership_count,
-         old_manifest.state AS old_manifest_state
+           FROM public.backstage_notion_universe_manifests AS candidate
+           WHERE candidate.universe_id = head.universe_id
+             AND candidate.id = $2::UUID
+         ) AS candidate_count,
+         historical.state AS historical_manifest_state
        FROM public.backstage_notion_partitioned_universe_heads AS head
-       JOIN public.backstage_notion_universe_manifests AS manifest
-         ON manifest.universe_id = head.universe_id
-        AND manifest.id = head.active_manifest_id
-       JOIN public.backstage_notion_universe_manifests AS old_manifest
-         ON old_manifest.universe_id = head.universe_id
-        AND old_manifest.id = $3::UUID
-       WHERE head.universe_id = $1 AND manifest.id = $2::UUID`,
+       JOIN public.backstage_notion_universe_manifests AS historical
+         ON historical.universe_id = head.universe_id
+        AND historical.id = $3::UUID
+       WHERE head.universe_id = $1`,
       [fixture.universeId, manifestId, fixture.manifestId]
     );
-    expect(manifest.rows).toEqual([{
-      active_manifest_id: manifestId,
-      member_count: '1',
-      omission_count: '1',
-      page_count: '1',
-      chunk_count: '1',
-      member_shards: [fixture.shardKey],
-      omitted_shards: [optionalPartition.shardKey],
-      omission_reason: 'SHARD_OWNERSHIP_CONFLICT',
-      ownership_count: '1',
-      old_manifest_state: 'sealed',
+    expect(retained.rows).toEqual([{
+      active_manifest_id: null,
+      candidate_count: '0',
+      historical_manifest_state: 'sealed',
     }]);
   }, 60_000);
 
-  test('omits a changed optional definition without moving its historical last-known-good head', async () => {
+  test('keeps the previous manifest active when a changed optional definition is omitted', async () => {
     await client.query('BEGIN');
     const fixture = await insertSealedFixture(client, 'optional-rotation');
     const configurationId = randomUUID();
@@ -3874,6 +4031,11 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
     const requiredRootPageId = randomUUID();
     const requiredPageVersionId = randomUUID();
     const requiredSnapshotId = randomUUID();
+    const sourceGenerationId = randomUUID();
+    const sourceDigest = fingerprint('source-generation:optional-rotation-b');
+    const sourceVerificationHash = fingerprint(
+      'source-verification:optional-rotation-b'
+    );
     const manifestId = randomUUID();
     const rejectedManifestId = randomUUID();
     const sourceEditedAt = '2026-08-24T13:00:00.000Z';
@@ -4030,6 +4192,7 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
          shard_key,
          partition_version_id,
          root_page_id,
+         source_generation_id,
          source_manifest_hash,
          embedding_model,
          embedding_version,
@@ -4042,8 +4205,8 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
          source_max_last_edited_at,
          verification_count
        ) VALUES (
-         $1::UUID, $2, $3, $4::UUID, $5::UUID, $6,
-         'pg18-test-model', 1, 2, 1, 1, 1, 5, 0, $7::TIMESTAMPTZ, 2
+         $1::UUID, $2, $3, $4::UUID, $5::UUID, $6::UUID, $7,
+         'pg18-test-model', 1, 2, 1, 1, 1, 5, 0, $8::TIMESTAMPTZ, 2
        )`,
       [
         requiredSnapshotId,
@@ -4051,6 +4214,7 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
         requiredShardKey,
         requiredPartitionVersionId,
         requiredRootPageId,
+        sourceGenerationId,
         fingerprint('snapshot:required-optional-rotation-b'),
         sourceEditedAt,
       ]
@@ -4164,6 +4328,27 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
       ]
     );
     await client.query(
+      `INSERT INTO public.backstage_notion_partition_source_generations (
+         universe_id,
+         source_generation_id,
+         partition_configuration_version_id,
+         source_digest,
+         source_page_count,
+         source_chunk_count,
+         member_count,
+         source_verified_at,
+         source_verification_hash
+       ) VALUES ($1, $2::UUID, $3::UUID, $4, 1, 1, 1, $5::TIMESTAMPTZ, $6)`,
+      [
+        fixture.universeId,
+        sourceGenerationId,
+        configurationId,
+        sourceDigest,
+        verifiedAt,
+        sourceVerificationHash,
+      ]
+    );
+    await client.query(
       `UPDATE public.backstage_notion_partitioned_universe_heads
        SET
          desired_configuration_version_id = $2::UUID,
@@ -4190,6 +4375,12 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
            partition_configuration_version_id,
            configuration_generation,
            configuration_hash,
+           source_generation_id,
+           source_digest,
+           source_page_count,
+           source_chunk_count,
+           source_verified_at,
+           source_verification_hash,
            embedding_model,
            embedding_version,
            embedding_dimension,
@@ -4200,6 +4391,7 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
            chunk_count
          ) VALUES (
            $1::UUID, $2, $3::UUID, $4, $5,
+           $6::UUID, $7, 1, 1, $8::TIMESTAMPTZ, $9,
            'pg18-test-model', 1, 2, 1, 1, 1, 1, 1
          )`,
         [
@@ -4208,6 +4400,10 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
           configurationId,
           configurationGeneration,
           configurationHash,
+          sourceGenerationId,
+          sourceDigest,
+          verifiedAt,
+          sourceVerificationHash,
         ]
       );
       await client.query(
@@ -4290,16 +4486,21 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
        WHERE universe_id = $1 AND id = $2::UUID`,
       [fixture.universeId, manifestId]
     );
-    await client.query(
-      `UPDATE public.backstage_notion_partitioned_universe_heads
-       SET
-         active_manifest_id = $2::UUID,
-         active_configuration_version_id = $3::UUID,
-         head_generation = head_generation + 1,
-         manifest_generation = manifest_generation + 1,
-         last_verified_at = $4::TIMESTAMPTZ
-       WHERE universe_id = $1`,
-      [fixture.universeId, manifestId, configurationId, verifiedAt]
+    await expectSqlStateAtSavepoint(
+      client,
+      'optional_rotation_incomplete_manifest_head',
+      '23514',
+      () => client.query(
+        `UPDATE public.backstage_notion_partitioned_universe_heads
+         SET
+           active_manifest_id = $2::UUID,
+           active_configuration_version_id = $3::UUID,
+           head_generation = head_generation + 1,
+           manifest_generation = manifest_generation + 1,
+           last_verified_at = $4::TIMESTAMPTZ
+         WHERE universe_id = $1`,
+        [fixture.universeId, manifestId, configurationId, verifiedAt]
+      )
     );
 
     const retainedHistory = await client.query<{
@@ -4307,14 +4508,14 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
       optional_head_partition_version_id: string;
       optional_head_snapshot_id: string;
       old_manifest_state: string;
-      new_manifest_state: string;
+      candidate_manifest_state: string;
     }>(
       `SELECT
          universe_head.active_manifest_id::TEXT,
          optional_head.current_partition_version_id::TEXT AS optional_head_partition_version_id,
          optional_head.active_snapshot_id::TEXT AS optional_head_snapshot_id,
          old_manifest.state AS old_manifest_state,
-         new_manifest.state AS new_manifest_state
+         candidate_manifest.state AS candidate_manifest_state
        FROM public.backstage_notion_partitioned_universe_heads AS universe_head
        JOIN public.backstage_notion_shard_heads AS optional_head
          ON optional_head.universe_id = universe_head.universe_id
@@ -4322,22 +4523,22 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
        JOIN public.backstage_notion_universe_manifests AS old_manifest
          ON old_manifest.universe_id = universe_head.universe_id
         AND old_manifest.id = $3::UUID
-       JOIN public.backstage_notion_universe_manifests AS new_manifest
-         ON new_manifest.universe_id = universe_head.universe_id
-        AND new_manifest.id = universe_head.active_manifest_id
+       JOIN public.backstage_notion_universe_manifests AS candidate_manifest
+         ON candidate_manifest.universe_id = universe_head.universe_id
+        AND candidate_manifest.id = $4::UUID
        WHERE universe_head.universe_id = $1`,
-      [fixture.universeId, fixture.shardKey, fixture.manifestId]
+      [fixture.universeId, fixture.shardKey, fixture.manifestId, manifestId]
     );
     expect(retainedHistory.rows).toEqual([{
-      active_manifest_id: manifestId,
+      active_manifest_id: fixture.manifestId,
       optional_head_partition_version_id: fixture.partitionVersionId,
       optional_head_snapshot_id: fixture.snapshotId,
       old_manifest_state: 'sealed',
-      new_manifest_state: 'sealed',
+      candidate_manifest_state: 'sealed',
     }]);
   });
 
-  test('reuses an unchanged current definition and snapshot when only the archive definition changes', async () => {
+  test('reuses unchanged material while keeping an incomplete archive manifest inactive', async () => {
     await client.query('BEGIN');
     const archiveShardKey = 'archive/semantic-reuse';
     const previousArchivePartitionVersionId = randomUUID();
@@ -4354,6 +4555,9 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
     const archivePartitionVersionId = randomUUID();
     const archiveRootPageId = randomUUID();
     const manifestId = randomUUID();
+    const sourceGenerationId = randomUUID();
+    const sourceDigest = fingerprint('source-generation:semantic-reuse-b');
+    const sourceVerificationHash = fingerprint('source-verification:semantic-reuse-b');
 
     await client.query(
       `INSERT INTO public.backstage_notion_partition_configuration_versions (
@@ -4460,12 +4664,39 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
     );
 
     await client.query(
+      `INSERT INTO public.backstage_notion_partition_source_generations (
+         universe_id,
+         source_generation_id,
+         partition_configuration_version_id,
+         source_digest,
+         source_page_count,
+         source_chunk_count,
+         member_count,
+         source_verified_at,
+         source_verification_hash
+       ) VALUES ($1, $2::UUID, $3::UUID, $4, 1, 1, 1, $5::TIMESTAMPTZ, $6)`,
+      [
+        fixture.universeId,
+        sourceGenerationId,
+        configurationId,
+        sourceDigest,
+        fixture.verifiedAt,
+        sourceVerificationHash,
+      ]
+    );
+    await client.query(
       `INSERT INTO public.backstage_notion_universe_manifests (
          id,
          universe_id,
          partition_configuration_version_id,
          configuration_generation,
          configuration_hash,
+         source_generation_id,
+         source_digest,
+         source_page_count,
+         source_chunk_count,
+         source_verified_at,
+         source_verification_hash,
          embedding_model,
          embedding_version,
          embedding_dimension,
@@ -4476,6 +4707,7 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
          chunk_count
        ) VALUES (
          $1::UUID, $2, $3::UUID, $4, $5,
+         $6::UUID, $7, 1, 1, $8::TIMESTAMPTZ, $9,
          'pg18-test-model', 1, 2, 1, 1, 1, 1, 1
        )`,
       [
@@ -4484,6 +4716,10 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
         configurationId,
         configurationGeneration,
         configurationHash,
+        sourceGenerationId,
+        sourceDigest,
+        fixture.verifiedAt,
+        sourceVerificationHash,
       ]
     );
     await client.query(
@@ -4544,26 +4780,36 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
         fixture.snapshotId,
       ]
     );
-    await client.query(
-      `UPDATE public.backstage_notion_universe_manifests
-       SET state = 'sealed', sealed_at = clock_timestamp()
-       WHERE universe_id = $1 AND id = $2::UUID`,
-      [fixture.universeId, manifestId]
+    await expectSqlStateAtSavepoint(
+      client,
+      'semantic_reuse_incomplete_manifest_seal',
+      '23514',
+      () => client.query(
+        `UPDATE public.backstage_notion_universe_manifests
+         SET state = 'sealed', sealed_at = clock_timestamp()
+         WHERE universe_id = $1 AND id = $2::UUID`,
+        [fixture.universeId, manifestId]
+      )
     );
-    await client.query(
-      `UPDATE public.backstage_notion_partitioned_universe_heads
-       SET
-         active_manifest_id = $2::UUID,
-         active_configuration_version_id = $3::UUID,
-         head_generation = head_generation + 1,
-         manifest_generation = manifest_generation + 1,
-         last_verified_at = $4::TIMESTAMPTZ
-       WHERE universe_id = $1`,
-      [fixture.universeId, manifestId, configurationId, fixture.verifiedAt]
+    await expectSqlStateAtSavepoint(
+      client,
+      'semantic_reuse_incomplete_manifest_head',
+      '23514',
+      () => client.query(
+        `UPDATE public.backstage_notion_partitioned_universe_heads
+         SET
+           active_manifest_id = $2::UUID,
+           active_configuration_version_id = $3::UUID,
+           head_generation = head_generation + 1,
+           manifest_generation = manifest_generation + 1,
+           last_verified_at = $4::TIMESTAMPTZ
+         WHERE universe_id = $1`,
+        [fixture.universeId, manifestId, configurationId, fixture.verifiedAt]
+      )
     );
 
     const reused = await client.query<{
-      active_manifest_id: string;
+      active_manifest_id: string | null;
       current_partition_version_id: string;
       active_snapshot_id: string;
       head_generation: string;
@@ -4626,7 +4872,7 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
       ]
     );
     expect(reused.rows).toEqual([{
-      active_manifest_id: manifestId,
+      active_manifest_id: null,
       current_partition_version_id: fixture.partitionVersionId,
       active_snapshot_id: fixture.snapshotId,
       head_generation: '1',
@@ -5228,6 +5474,8 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
 
     await client.query(forwardMigration);
     await client.query(runtimeSql);
+    await client.query(sourceGenerationMigration);
+    await client.query(sourceGenerationMigration);
     await client.query(scopeIndexPrecheck);
     await client.query(scopeIndexCreate);
     await client.query(scopeIndexVerify);

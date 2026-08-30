@@ -9,6 +9,7 @@ import type {
   BackstageNotionPartitionSynchronizationState,
   BackstageNotionProviderLease,
   BackstageNotionUniverseHeadExpectation,
+  VerifyBackstageNotionSourceGenerationInput,
 } from '@core/db/repositories/backstageNotionPartitionRepository.js';
 import {
   BackstageNotionPartitionRepositoryError,
@@ -23,6 +24,10 @@ import {
   decideBackstageNotionPartitionManifestMembership,
   planBackstageNotionPartitionFullReconciliation,
 } from '@shared/backstage/backstageNotionPartitionSyncCore.js';
+import {
+  hashBackstageNotionPartitionSourceGeneration,
+  hashBackstageNotionPartitionSourceVerification,
+} from '@shared/backstage/backstageNotionPartitionSourceGeneration.js';
 import {
   chunkBackstageNotionInspectedPage,
   inspectBackstageNotionRagPage,
@@ -192,6 +197,8 @@ class FakePartitionRepository {
   private configurationHash = '0'.repeat(64);
   private universeHeadGeneration = 0;
   private manifestGeneration = 0;
+  private reconciliationGeneration = 0;
+  private publishedReconciliationGeneration = 0;
   private activeManifestId: string | null = null;
   private definitions = new Map<string, BackstageNotionPartitionDefinition>();
   private heads = new Map<string, FakeHead>();
@@ -238,6 +245,7 @@ class FakePartitionRepository {
     this.definitions = nextDefinitions;
     this.configurationGeneration = input.configurationGeneration;
     this.configurationHash = input.configurationHash;
+    this.reconciliationGeneration += 1;
     return {
       configurationVersionId: this.configurationVersionId,
       universeId: input.universe.universeId,
@@ -245,6 +253,7 @@ class FakePartitionRepository {
       configurationHash: input.configurationHash,
       reused: false,
       universeHeadGeneration: String(this.universeHeadGeneration),
+      reconciliationGeneration: String(this.reconciliationGeneration),
       definitions: input.universe.shards.map(value => ({
         shardKey: value.shardKey,
         partitionVersionId: this.partitionVersionId(value),
@@ -490,6 +499,45 @@ class FakePartitionRepository {
     };
   });
 
+  readonly verifySourceGeneration = jest.fn(async (
+    input: VerifyBackstageNotionSourceGenerationInput
+  ) => {
+    const members = [...input.members].sort((left, right) =>
+      left.shardKey < right.shardKey ? -1 : left.shardKey > right.shardKey ? 1 : 0
+    );
+    for (const member of members) {
+      const activation = this.shardActivationInputs.find(candidate =>
+        candidate.snapshotId === member.snapshotId
+      );
+      expect(activation).toMatchObject({
+        sourceGenerationId: input.sourceGenerationId,
+        sourceManifestHash: member.sourceManifestHash,
+      });
+      expect(activation?.verifications.find(item => item.kind === 'source_drift')?.resultHash)
+        .toBe(member.terminalDriftHash);
+    }
+    const sourceVerifiedAt = new Date(Math.max(...members.map(member =>
+      new Date(member.verifiedAt).getTime()
+    )));
+    return Object.freeze({
+      universeId: input.universeId,
+      configurationVersionId: input.configurationVersionId,
+      sourceGenerationId: input.sourceGenerationId,
+      sourceDigest: hashBackstageNotionPartitionSourceGeneration({
+        universeId: input.universeId,
+        members,
+      }),
+      sourcePageCount: members.reduce((total, member) => total + member.pageCount, 0),
+      sourceChunkCount: members.reduce((total, member) => total + member.chunkCount, 0),
+      sourceVerifiedAt,
+      sourceVerificationHash: hashBackstageNotionPartitionSourceVerification({
+        universeId: input.universeId,
+        sourceGenerationId: input.sourceGenerationId,
+        members,
+      }),
+    });
+  });
+
   readonly activateUniverseManifest = jest.fn(async (
     input: ActivateBackstageNotionUniverseManifestInput
   ) => {
@@ -506,9 +554,15 @@ class FakePartitionRepository {
         'BACKSTAGE_NOTION_PARTITION_OWNERSHIP_CONFLICT'
       );
     }
+    if (Number(input.reconciliationGeneration) !== this.reconciliationGeneration) {
+      throw new BackstageNotionPartitionRepositoryError(
+        'BACKSTAGE_NOTION_PARTITION_STALE_HEAD'
+      );
+    }
     this.activeManifestId = input.manifestId;
     this.universeHeadGeneration += 1;
     this.manifestGeneration += 1;
+    this.publishedReconciliationGeneration = this.reconciliationGeneration;
     this.immutableManifestIds.push(input.manifestId);
     const ownershipOmissions = input.members
       .filter(member => this.ownershipOmittedShardKeys.has(member.shardKey))
@@ -539,6 +593,16 @@ class FakePartitionRepository {
       manifestGeneration: String(this.manifestGeneration),
     };
   });
+
+  reconciliationStateForTest(): Readonly<{
+    reconciliationGeneration: number;
+    publishedReconciliationGeneration: number;
+  }> {
+    return {
+      reconciliationGeneration: this.reconciliationGeneration,
+      publishedReconciliationGeneration: this.publishedReconciliationGeneration,
+    };
+  }
 
   seedLastKnownGood(definition: BackstageNotionPartitionDefinition): string {
     this.definitions.set(definition.shardKey, definition);
@@ -1308,11 +1372,12 @@ describe('partition synchronization orchestration', () => {
     expect(parsed.status).toBe('valid');
   });
 
-  test('activates more than 2,048 aggregate chunks when every shard is independently bounded', async () => {
-    const definitions = [shard(1), shard(2), shard(3)];
-    const markdownByShard = new Map(definitions.map(definition => [
+  test('activates one verified five-shard generation containing 2,307 aggregate chunks', async () => {
+    const definitions = [shard(1), shard(2), shard(3), shard(4), shard(5)];
+    const chunkCounts = [462, 462, 461, 461, 461] as const;
+    const markdownByShard = new Map(definitions.map((definition, shardIndex) => [
       definition.shardKey,
-      Array.from({ length: 700 }, (_, index) =>
+      Array.from({ length: chunkCounts[shardIndex]! }, (_, index) =>
         `${definition.shardKey}-${index} ${'x'.repeat(1_650)}`
       ).join('\n\n'),
     ]));
@@ -1324,24 +1389,114 @@ describe('partition synchronization orchestration', () => {
           definition,
           markdownByShard.get(definition.shardKey)
         ),
-        concurrency: 3,
+        concurrency: 5,
       })
     );
-    const chunks = result.universes[0]!.shardResults.map(item => item.chunkCount);
+    const universeResult = result.universes[0]!;
+    const chunks = universeResult.shardResults.map(item => item.chunkCount);
+    const aggregateChunks = chunks.reduce((total, count) => total + count, 0);
+    const sourceGenerationIds = new Set(universeResult.shardResults.map(
+      item => item.sourceGenerationId
+    ));
+    const manifestInput = repository.manifestActivationInputs[0]!;
+
+    expect(chunks).toEqual(chunkCounts);
     expect(chunks.every(count => count <= 2_048)).toBe(true);
-    expect(chunks.reduce((total, count) => total + count, 0)).toBeGreaterThan(2_048);
-    expect(result.universes[0]).toMatchObject({
+    expect(aggregateChunks).toBe(2_307);
+    expect(repository.shardActivationInputs).toHaveLength(5);
+    expect(sourceGenerationIds.size).toBe(1);
+    expect(sourceGenerationIds.has(null)).toBe(false);
+    expect(new Set(repository.shardActivationInputs.map(
+      input => input.sourceGenerationId
+    ))).toEqual(sourceGenerationIds);
+    expect(manifestInput).toMatchObject({
+      sourceGenerationId: universeResult.shardResults[0]!.sourceGenerationId,
+      sourcePageCount: 5,
+      sourceChunkCount: 2_307,
+    });
+    expect(manifestInput.members).toHaveLength(5);
+    expect(universeResult).toMatchObject({
       manifestStatus: 'published',
-      memberCount: 3,
+      memberCount: 5,
       omissionCount: 0,
+      sourceGenerationVerified: true,
     });
   });
 
-  test('synchronizes only the selected shard and retains an exact required LKG', async () => {
+  test('registers a new reconciliation epoch for every sync and publishes that exact epoch', async () => {
+    const repository = new FakePartitionRepository();
+    const configured = configuration([shard(1)]);
+
+    await syncBackstageNotionPartitionConfiguration(configured, dependencies(repository));
+    await syncBackstageNotionPartitionConfiguration(configured, dependencies(repository));
+
+    expect(repository.registerConfiguration).toHaveBeenCalledTimes(2);
+    expect(repository.manifestActivationInputs.map(input =>
+      input.reconciliationGeneration
+    )).toEqual(['1', '2']);
+    expect(repository.reconciliationStateForTest()).toEqual({
+      reconciliationGeneration: 2,
+      publishedReconciliationGeneration: 2,
+    });
+  });
+
+  test('keeps the previous manifest active when the terminal generation barrier drifts', async () => {
+    const definitions = [shard(1), shard(2)];
+    const repository = new FakePartitionRepository();
+    const first = await syncBackstageNotionPartitionConfiguration(
+      configuration(definitions),
+      dependencies(repository)
+    );
+    const previousManifestId = first.universes[0]!.manifestId;
+    expect(previousManifestId).not.toBeNull();
+
+    repository.manifestActivationInputs.length = 0;
+    repository.verifySourceGeneration.mockClear();
+    const verificationCalls = new Map<string, number>();
+    const verifyFullHierarchy = jest.fn(async ({ definition, captured }: {
+      definition: BackstageNotionPartitionDefinition;
+      captured: BackstageNotionPartitionFullCapture;
+    }) => {
+      const callCount = (verificationCalls.get(definition.shardKey) ?? 0) + 1;
+      verificationCalls.set(definition.shardKey, callCount);
+      return definition.shardKey === definitions[1]!.shardKey && callCount === 2
+        ? secondPass(captured, metadata => ({
+            ...metadata,
+            lastEditedAt: new Date(metadata.lastEditedAt.getTime() + 1_000),
+          }))
+        : secondPass(captured);
+    });
+
+    const failed = await syncBackstageNotionPartitionConfiguration(
+      configuration(definitions),
+      dependencies(repository, { verifyFullHierarchy })
+    );
+    const failedUniverse = failed.universes[0]!;
+    const retainedState = await repository.loadUniverseSynchronizationState(
+      definitions[0]!.universeId
+    );
+
+    expect(repository.shardActivationInputs).toHaveLength(4);
+    expect([...verificationCalls.values()]).toEqual([2, 2]);
+    expect(failedUniverse).toMatchObject({
+      manifestStatus: 'blocked',
+      manifestId: null,
+      memberCount: 0,
+      omissionCount: 0,
+      sourceGenerationVerified: false,
+    });
+    expect(repository.verifySourceGeneration).not.toHaveBeenCalled();
+    expect(repository.manifestActivationInputs).toHaveLength(0);
+    expect(repository.immutableManifestIds).toEqual([previousManifestId]);
+    expect(retainedState.expectedUniverseHead.activeManifestId)
+      .toBe(previousManifestId);
+  });
+
+  test('synchronizes only the selected shard without publishing a mixed fresh and LKG manifest', async () => {
     const selected = shard(1, { shardKey: 'current' });
     const untouched = shard(2, { shardKey: 'shared' });
     const repository = new FakePartitionRepository();
-    const retainedSnapshotId = repository.seedLastKnownGood(untouched);
+    repository.seedLastKnownGood(untouched);
     const captureFullHierarchy = jest.fn(async ({ definition }: {
       definition: BackstageNotionPartitionDefinition;
     }) => fullCapture(definition));
@@ -1369,15 +1524,13 @@ describe('partition synchronization orchestration', () => {
         safeReasonCode: 'SHARD_NOT_REQUESTED',
       }),
     ]);
-    expect(repository.manifestActivationInputs[0]!.members).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          shardKey: 'shared',
-          snapshotId: retainedSnapshotId,
-          decision: 'retained_last_known_good',
-        }),
-      ])
-    );
+    expect(result.universes[0]).toMatchObject({
+      manifestStatus: 'blocked',
+      manifestId: null,
+      memberCount: 0,
+      omissionCount: 0,
+    });
+    expect(repository.manifestActivationInputs).toHaveLength(0);
   });
 
   test('blocks targeted publication when an untouched required shard has no LKG', async () => {
@@ -1404,7 +1557,7 @@ describe('partition synchronization orchestration', () => {
     expect(repository.manifestActivationInputs).toHaveLength(0);
   });
 
-  test('honestly omits an untouched optional shard with no LKG', async () => {
+  test('blocks targeted publication when an untouched optional shard has no fresh capture', async () => {
     const selected = shard(1, { shardKey: 'current' });
     const optional = shard(2, { shardKey: 'archive', required: false });
     const repository = new FakePartitionRepository();
@@ -1420,19 +1573,15 @@ describe('partition synchronization orchestration', () => {
     );
 
     expect(result.universes[0]).toMatchObject({
-      manifestStatus: 'published',
-      memberCount: 1,
-      omissionCount: 1,
+      manifestStatus: 'blocked',
+      manifestId: null,
+      memberCount: 0,
+      omissionCount: 0,
     });
-    expect(repository.manifestActivationInputs[0]!.omissions).toEqual([
-      expect.objectContaining({
-        shardKey: 'archive',
-        safeReasonCode: 'SHARD_NOT_REQUESTED',
-      }),
-    ]);
+    expect(repository.manifestActivationInputs).toHaveLength(0);
   });
 
-  test('returns the exact ownership omission for a targeted optional shard', async () => {
+  test('blocks targeted publication instead of retaining required LKG or omitting ownership conflicts', async () => {
     const required = shard(1, { shardKey: 'current' });
     const selected = shard(2, { shardKey: 'archive', required: false });
     const repository = new FakePartitionRepository();
@@ -1450,13 +1599,11 @@ describe('partition synchronization orchestration', () => {
     );
 
     expect(result.universes[0]).toMatchObject({
-      manifestStatus: 'published',
-      memberCount: 1,
-      omissionCount: 1,
-      manifestOmissions: [{
-        shardKey: selected.shardKey,
-        safeReasonCode: 'SHARD_OWNERSHIP_CONFLICT',
-      }],
+      manifestStatus: 'blocked',
+      manifestId: null,
+      memberCount: 0,
+      omissionCount: 0,
+      manifestOmissions: [],
     });
     expect(result.universes[0]!.shardResults.find(
       shardResult => shardResult.shardKey === selected.shardKey
@@ -1464,9 +1611,10 @@ describe('partition synchronization orchestration', () => {
       status: 'fresh',
       fullSourceScan: true,
     });
+    expect(repository.manifestActivationInputs).toHaveLength(0);
   });
 
-  test('isolates an unsupported optional archive while activating required hot canon', async () => {
+  test('blocks publication when an optional archive capture is incomplete', async () => {
     const hot = shard(1, { shardKey: 'current', retrievalTier: 'hot' });
     const archive = shard(2, {
       shardKey: 'archive',
@@ -1483,9 +1631,10 @@ describe('partition synchronization orchestration', () => {
       })
     );
     expect(result.universes[0]).toMatchObject({
-      manifestStatus: 'published',
-      memberCount: 1,
-      omissionCount: 1,
+      manifestStatus: 'blocked',
+      manifestId: null,
+      memberCount: 0,
+      omissionCount: 0,
     });
     expect(result.universes[0]!.shardResults).toEqual(expect.arrayContaining([
       expect.objectContaining({ shardKey: 'current', status: 'fresh' }),
@@ -1495,6 +1644,7 @@ describe('partition synchronization orchestration', () => {
         safeReasonCode: 'SHARD_CAPTURE_INCOMPLETE',
       }),
     ]));
+    expect(repository.manifestActivationInputs).toHaveLength(0);
   });
 
   test('classifies unresolved required ownership ambiguity as a blocked manifest', async () => {
@@ -1515,7 +1665,7 @@ describe('partition synchronization orchestration', () => {
     });
   });
 
-  test('isolates an oversized optional archive at its per-shard chunk bound', async () => {
+  test('blocks publication when an optional archive exceeds its per-shard chunk bound', async () => {
     const hot = shard(1, { shardKey: 'current' });
     const archive = shard(2, {
       shardKey: 'archive',
@@ -1541,9 +1691,10 @@ describe('partition synchronization orchestration', () => {
       })
     );
     expect(result.universes[0]).toMatchObject({
-      manifestStatus: 'published',
-      memberCount: 1,
-      omissionCount: 1,
+      manifestStatus: 'blocked',
+      manifestId: null,
+      memberCount: 0,
+      omissionCount: 0,
     });
     expect(result.universes[0]!.shardResults.find(item =>
       item.shardKey === 'archive'
@@ -1554,6 +1705,7 @@ describe('partition synchronization orchestration', () => {
     });
     expect(embedBatch).toHaveBeenCalledTimes(1);
     expect(embedBatch.mock.calls[0]?.[0]).toHaveLength(1);
+    expect(repository.manifestActivationInputs).toHaveLength(0);
   });
 
   test.each([
@@ -1721,11 +1873,11 @@ describe('partition synchronization orchestration', () => {
     expect(repository.manifestActivationInputs).toHaveLength(0);
   });
 
-  test('blocks required unavailability, retains same-version LKG, and omits optional absence', async () => {
+  test('blocks publication when fresh captures are unavailable despite a same-version LKG', async () => {
     const required = shard(1, { shardKey: 'required' });
     const optional = shard(2, { shardKey: 'optional', required: false });
     const repository = new FakePartitionRepository();
-    const lkgId = repository.seedLastKnownGood(required);
+    repository.seedLastKnownGood(required);
     repository.busyShardKeys.add('required');
     repository.busyShardKeys.add('optional');
     const result = await syncBackstageNotionPartitionConfiguration(
@@ -1733,18 +1885,15 @@ describe('partition synchronization orchestration', () => {
       dependencies(repository)
     );
     expect(result.universes[0]).toMatchObject({
-      manifestStatus: 'published',
-      memberCount: 1,
-      omissionCount: 1,
+      manifestStatus: 'blocked',
+      manifestId: null,
+      memberCount: 0,
+      omissionCount: 0,
     });
-    expect(repository.manifestActivationInputs[0]!.members[0]).toMatchObject({
-      shardKey: 'required',
-      snapshotId: lkgId,
-      decision: 'retained_last_known_good',
-    });
+    expect(repository.manifestActivationInputs).toHaveLength(0);
   });
 
-  test('omits an optional incompatible LKG instead of blocking fresh hot canon', async () => {
+  test('blocks publication when an optional shard has only an incompatible LKG', async () => {
     const hot = shard(1, { shardKey: 'hot' });
     const archive = shard(2, {
       shardKey: 'archive',
@@ -1762,14 +1911,12 @@ describe('partition synchronization orchestration', () => {
     );
 
     expect(result.universes[0]).toMatchObject({
-      manifestStatus: 'published',
-      memberCount: 1,
-      omissionCount: 1,
+      manifestStatus: 'blocked',
+      manifestId: null,
+      memberCount: 0,
+      omissionCount: 0,
     });
-    expect(repository.manifestActivationInputs[0]!.omissions[0]).toMatchObject({
-      shardKey: 'archive',
-      safeReasonCode: 'SHARD_INDEX_INCOMPATIBLE',
-    });
+    expect(repository.manifestActivationInputs).toHaveLength(0);
   });
 
   test('classifies unchanged, moved, and deleted pages while reusing captured material', async () => {

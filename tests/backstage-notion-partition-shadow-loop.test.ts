@@ -14,6 +14,11 @@ import {
   createBackstageNotionSynchronizationCoordinator,
   startBackstageNotionSyncLoop,
 } from '../src/workers/backstageNotionSyncLoop.js';
+import type {
+  BackstageNotionPartitionCutoverGateEvidence,
+} from '../src/shared/backstage/backstageNotionPartitionCutoverGate.js';
+import { DEFAULT_OPENAI_EMBEDDING_MODEL } from
+  '../src/services/openai/embeddings.js';
 
 const INTERVAL_MS = 60_000;
 const ROOT_PAGE_ID = '11111111-1111-4111-8111-111111111111';
@@ -50,6 +55,64 @@ const VALID_SEMANTIC_DIGEST = resolveBackstageNotionPartitionShadowPolicy(
     ARCANOS_BACKSTAGE_NOTION_PARTITIONS_JSON: VALID_CONFIGURATION,
   })
 ).semanticDigest!;
+
+function completeCutoverEvidence(): BackstageNotionPartitionCutoverGateEvidence {
+  const now = Date.now();
+  const sourceGenerationId = '66666666-6666-4666-8666-666666666666';
+  return Object.freeze({
+    evidenceVersion: 1,
+    reconciliationGeneration: 7,
+    activeReconciliationGeneration: 7,
+    publishedReconciliationGeneration: 7,
+    universeId: 'my-universe-2k26',
+    manifestId: PARTITION_MANIFEST_ID,
+    activeManifestId: PARTITION_MANIFEST_ID,
+    manifestState: 'sealed' as const,
+    manifestReadable: true,
+    manifestConfigurationVersionId: CONFIGURATION_VERSION_ID,
+    activeConfigurationVersionId: CONFIGURATION_VERSION_ID,
+    configurationHash: VALID_SEMANTIC_DIGEST,
+    activeConfigurationHash: VALID_SEMANTIC_DIGEST,
+    sourceGenerationId,
+    sourceDigest: 'a'.repeat(64),
+    sourcePageCount: 2,
+    sourceChunkCount: 3,
+    sourceVerifiedAt: new Date(now - 120_000),
+    sourceVerificationHash: 'b'.repeat(64),
+    manifestPageCount: 2,
+    manifestChunkCount: 3,
+    embeddingModel: DEFAULT_OPENAI_EMBEDDING_MODEL,
+    indexFormatVersion: 1,
+    memberCount: 1,
+    omissionCount: 0,
+    members: Object.freeze([Object.freeze({
+      shardKey: 'raw/2026',
+      snapshotId: FRESH_SNAPSHOT_ID,
+      sourceGenerationId,
+      indexFormatVersion: 1,
+      pageCount: 2,
+      chunkCount: 3,
+      decision: 'fresh' as const,
+      readable: true,
+    })]),
+    leaseFencingClear: true,
+    unresolvedActivationCount: 0,
+    parity: Object.freeze({
+      shadowComparisonCompleted: true,
+      exactScopeParityPassed: true,
+      relevantRetrievalParityPassed: true,
+      completeScopeParityPassed: true,
+      cursorStabilityPassed: true,
+    }),
+    rollbackMonolithSnapshotId: MONOLITH_SNAPSHOT_ID,
+    rollbackMonolithReadable: true,
+    rollbackMonolithChunkCount: 4,
+    rollbackMonolithVerifiedAt: new Date(now - 120_000),
+    rollbackMonolithValidUntil: new Date(now + 60 * 60_000),
+    verifiedAt: new Date(now - 60_000),
+    expiresAt: new Date(now + 60 * 60_000),
+  });
+}
 
 function environment(values: Readonly<Record<string, string | undefined>>) {
   return (name: string): string | undefined => values[name];
@@ -154,7 +217,7 @@ describe('Backstage Notion partition shadow worker policy', () => {
     [{
       ARCANOS_BACKSTAGE_NOTION_PARTITIONED_INDEX_MODE: 'partitioned',
       ARCANOS_BACKSTAGE_NOTION_PARTITIONS_JSON: VALID_CONFIGURATION,
-    }, true, 'partitioned', 'PARTITIONED_ENABLED'],
+    }, true, 'partitioned', 'PARTITIONED_CUTOVER_GATE_CLOSED'],
     [{
       ARCANOS_BACKSTAGE_NOTION_PARTITIONED_INDEX_MODE: 'shadow',
       ARCANOS_BACKSTAGE_NOTION_PARTITIONS_JSON: VALID_CONFIGURATION,
@@ -179,24 +242,47 @@ describe('Backstage Notion partition shadow worker policy', () => {
 
   test.each([
     ['shadow', shadowEnvironment()],
-    ['partitioned', partitionedEnvironment()],
+    ['partitioned-without-evidence', partitionedEnvironment()],
   ] as const)(
-    'does not invoke monolith readiness for an exact enabled %s policy',
+    'requires monolith readiness for %s',
     async (_mode, readEnvironment) => {
       const policy = resolveBackstageNotionPartitionShadowPolicy(readEnvironment);
       const ensureReadiness = jest.fn(async () => ({ configuredUniverses: 1 }));
 
-      expect(requiresBackstageNotionMonolithWorkerReadiness(policy)).toBe(false);
+      expect(requiresBackstageNotionMonolithWorkerReadiness(policy)).toBe(true);
       await expect(runBackstageNotionWorkerReadinessGate(
         policy,
         ensureReadiness
       )).resolves.toEqual({
-        monolithReadinessRequired: false,
-        evidence: null,
+        monolithReadinessRequired: true,
+        evidence: { configuredUniverses: 1 },
       });
-      expect(ensureReadiness).not.toHaveBeenCalled();
+      expect(ensureReadiness).toHaveBeenCalledTimes(1);
     }
   );
+
+  test('skips a duplicate monolith crawl only for admitted partitioned mode', async () => {
+    const policy = resolveBackstageNotionPartitionShadowPolicy(
+      partitionedEnvironment(),
+      [completeCutoverEvidence()]
+    );
+    const ensureReadiness = jest.fn(async () => ({ configuredUniverses: 1 }));
+
+    expect(policy).toMatchObject({
+      cutoverAvailable: true,
+      effectiveReadMode: 'partitioned',
+      reasonCode: 'PARTITIONED_ENABLED',
+    });
+    expect(requiresBackstageNotionMonolithWorkerReadiness(policy)).toBe(false);
+    await expect(runBackstageNotionWorkerReadinessGate(
+      policy,
+      ensureReadiness
+    )).resolves.toEqual({
+      monolithReadinessRequired: false,
+      evidence: null,
+    });
+    expect(ensureReadiness).not.toHaveBeenCalled();
+  });
 
   test.each([
     ['absent', environment({})],
@@ -281,12 +367,29 @@ describe('Backstage Notion partition shadow worker policy', () => {
 
 describe('Backstage Notion partition shadow worker lifecycle', () => {
   test.each([
-    ['shadow', shadowEnvironment(), 'monolith', true, false],
-    ['partitioned', partitionedEnvironment(), 'partitioned', false, true],
+    ['shadow', shadowEnvironment(), undefined, 'monolith', true, false, false],
+    [
+      'partitioned-gate-closed',
+      partitionedEnvironment(),
+      undefined,
+      'monolith',
+      false,
+      false,
+      false,
+    ],
+    [
+      'partitioned-admitted',
+      partitionedEnvironment(),
+      [completeCutoverEvidence()],
+      'partitioned',
+      false,
+      true,
+      true,
+    ],
   ] as const)(
     'enables the shard writer with accurate safe rollout metadata in %s mode',
-    async (_mode, readEnvironment, effectiveReadMode, shadowSyncEnabled,
-      partitionedReadEnabled) => {
+    async (_mode, readEnvironment, cutoverEvidence, effectiveReadMode,
+      shadowSyncEnabled, partitionedReadEnabled, cutoverAvailable) => {
       jest.useFakeTimers();
       const info = jest.fn();
       const runCycle = jest.fn(async () => successfulCycleResult());
@@ -296,6 +399,7 @@ describe('Backstage Notion partition shadow worker lifecycle', () => {
         initialDelayMs: 0,
         runCycle,
         logger: { info, warn: jest.fn() } as never,
+        cutoverEvidence,
       });
 
       expect(handle.enabled).toBe(true);
@@ -306,7 +410,7 @@ describe('Backstage Notion partition shadow worker lifecycle', () => {
           partitionSyncEnabled: true,
           shadowSyncEnabled,
           partitionedReadEnabled,
-          cutoverAvailable: true,
+          cutoverAvailable,
         })
       );
       expect(JSON.stringify(info.mock.calls)).not.toContain(ROOT_PAGE_ID);

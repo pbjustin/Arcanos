@@ -73,6 +73,7 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/shared/backstage/backstageNotionPartitionTelemetryCore.ts',
   'src/shared/backstage/backstageNotionPreviewCanary.ts',
   'src/shared/backstage/backstageNotionRagCore.ts',
+  'src/shared/backstage/backstageNotionSnapshotStatus.ts',
   'src/shared/backstage/backstageNotionSyncCore.ts',
   'src/shared/backstage/backstageReviewContract.ts',
   'src/shared/backstage/backstageStoryline.ts',
@@ -734,7 +735,7 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ],
   [
     'src/shared/backstage/backstageContinuityQueryCore.ts',
-    '65539139100841a1f96925747ce6382093611e7427155a31dd24ab290e6ab12e',
+    '225836dc38f56734b5276c8c0af0b27d2e3211b83aa5e8bb4e54e691605b6a1b',
   ],
   [
     'src/shared/backstage/backstageGenerationError.ts',
