@@ -1,3 +1,16 @@
+import {
+  BACKSTAGE_NOTION_SYNC_ATTEMPT_OUTCOMES,
+  BACKSTAGE_NOTION_SYNC_FAILURE_PHASES,
+  BACKSTAGE_NOTION_SYNC_FAILURE_REASONS,
+  type BackstageNotionSnapshotStatus,
+  type BackstageNotionSyncAttemptOutcome,
+  type BackstageNotionSyncFailurePhase,
+  type BackstageNotionSyncFailureReason,
+} from './backstageNotionSnapshotStatus.js';
+import {
+  BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT,
+} from './backstageNotionSyncCore.js';
+
 const BACKSTAGE_CONTINUITY_CURSOR_PATTERN = /^[A-Za-z0-9_-]{1,1024}$/u;
 
 const BACKSTAGE_CONTINUITY_PRIMARY_RESPONSE_CONTRACT = [
@@ -62,6 +75,12 @@ export interface BackstageContinuityQueryCoreCitation {
 }
 
 export interface BackstageContinuityQueryCoreRetrieval {
+  readonly snapshotStatus?: BackstageNotionSnapshotStatus;
+  readonly activeSnapshotVerifiedAt?: Date;
+  readonly activeSnapshotChunkCount?: number;
+  readonly latestSyncOutcome?: BackstageNotionSyncAttemptOutcome | null;
+  readonly latestSyncFailurePhase?: BackstageNotionSyncFailurePhase | null;
+  readonly latestSyncFailureReason?: BackstageNotionSyncFailureReason | null;
   readonly resolvedScope: BackstageContinuityQueryCoreResolvedScope | null;
   readonly coverage: BackstageContinuityQueryCoreCoverage;
   readonly citations: readonly BackstageContinuityQueryCoreCitation[];
@@ -86,6 +105,64 @@ export interface BackstageContinuityQueryCoreResponse {
     readonly category: string;
     readonly contentHash: string;
   }>;
+}
+
+type BackstageContinuityFreshnessInput = Pick<
+  BackstageContinuityQueryCoreRetrieval,
+  | 'snapshotStatus'
+  | 'activeSnapshotVerifiedAt'
+  | 'activeSnapshotChunkCount'
+  | 'latestSyncOutcome'
+  | 'latestSyncFailurePhase'
+  | 'latestSyncFailureReason'
+>;
+
+function buildBackstageContinuityFreshnessNotice(
+  retrieval: BackstageContinuityFreshnessInput
+): string | null {
+  if (retrieval.snapshotStatus !== 'last_known_good') {
+    return null;
+  }
+  const verifiedAt = retrieval.activeSnapshotVerifiedAt;
+  const chunkCount = retrieval.activeSnapshotChunkCount;
+  const latestOutcome = retrieval.latestSyncOutcome;
+  const failurePhase = retrieval.latestSyncFailurePhase;
+  const failureReason = retrieval.latestSyncFailureReason;
+  let validFailure: boolean;
+  if (latestOutcome === 'failed') {
+    validFailure = failurePhase !== null
+      && failurePhase !== undefined
+      && BACKSTAGE_NOTION_SYNC_FAILURE_PHASES.includes(failurePhase)
+      && failureReason !== null
+      && failureReason !== undefined
+      && BACKSTAGE_NOTION_SYNC_FAILURE_REASONS.includes(failureReason);
+  } else {
+    validFailure = (failurePhase === null || failurePhase === undefined)
+      && (failureReason === null || failureReason === undefined);
+  }
+  if (
+    !(verifiedAt instanceof Date)
+    || !Number.isFinite(verifiedAt.getTime())
+    || typeof chunkCount !== 'number'
+    || !Number.isSafeInteger(chunkCount)
+    || chunkCount < 1
+    || chunkCount > BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT
+    || latestOutcome === null
+    || latestOutcome === undefined
+    || !BACKSTAGE_NOTION_SYNC_ATTEMPT_OUTCOMES.includes(latestOutcome)
+    || !validFailure
+  ) {
+    throw new Error('Last-known-good continuity metadata is incomplete.');
+  }
+  return [
+    'Snapshot status: last_known_good',
+    `active snapshot verified at ${verifiedAt.toISOString()}`,
+    `active snapshot chunks: ${chunkCount}`,
+    `latest sync outcome: ${latestOutcome}`,
+    `failure phase: ${failurePhase ?? 'none'}`,
+    `failure reason: ${failureReason ?? 'none'}`,
+    'This is older verified continuity, not current workspace state.',
+  ].join('; ');
 }
 
 /**
@@ -113,7 +190,16 @@ export function isBackstageContinuityCursorRequestValid(payload: unknown): boole
 
 export function buildBackstageContinuityPolicyPrompt(
   input: BackstageContinuityQueryCoreInput,
-  retrieval: Pick<BackstageContinuityQueryCoreRetrieval, 'coverage'>,
+  retrieval: Pick<
+    BackstageContinuityQueryCoreRetrieval,
+    | 'coverage'
+    | 'snapshotStatus'
+    | 'activeSnapshotVerifiedAt'
+    | 'activeSnapshotChunkCount'
+    | 'latestSyncOutcome'
+    | 'latestSyncFailurePhase'
+    | 'latestSyncFailureReason'
+  >,
   compactRetry: boolean
 ): string {
   const pageCoverage = retrieval.coverage.scopePages === undefined
@@ -122,6 +208,7 @@ export function buildBackstageContinuityPolicyPrompt(
   const coverageInstruction = retrieval.coverage.exhaustive
     ? 'This retrieval is exhaustive for the resolved scope; a fact absent from these excerpts may be described as not present in that scope.'
     : 'This retrieval is sampled; never treat a fact missing from these excerpts as absent from Notion.';
+  const freshnessNotice = buildBackstageContinuityFreshnessNotice(retrieval);
   return [
     '<<EXECUTION_MODE>>',
     'Perform a read-only factual continuity lookup. Do not create, revise, or propose booking canon.',
@@ -132,6 +219,13 @@ export function buildBackstageContinuityPolicyPrompt(
     '<<RETRIEVAL_COVERAGE>>',
     `status=${retrieval.coverage.status}; scope_chunks=${retrieval.coverage.scopeChunks}; selected_chunks=${retrieval.coverage.selectedChunks}; omitted_chunks=${retrieval.coverage.omittedChunks}${pageCoverage}; prompt_truncated=${retrieval.coverage.promptTruncated}; has_more=${retrieval.coverage.hasMore}`,
     coverageInstruction,
+    ...(freshnessNotice
+      ? [
+          '<<SNAPSHOT_FRESHNESS>>',
+          freshnessNotice,
+          'Never describe this result as current workspace state. The server attaches this bounded notice to the answer; do not repeat or reinterpret it.',
+        ]
+      : []),
     '<<RESPONSE_STYLE>>',
     BACKSTAGE_CONTINUITY_PRIMARY_RESPONSE_CONTRACT,
     ...(compactRetry ? [BACKSTAGE_CONTINUITY_COMPACT_RETRY_CONTRACT] : []),
@@ -143,6 +237,7 @@ export function buildBackstageContinuityResponse(
   retrieval: BackstageContinuityQueryCoreRetrieval,
   answer: string
 ): BackstageContinuityQueryCoreResponse {
+  const freshnessNotice = buildBackstageContinuityFreshnessNotice(retrieval);
   const subtreeScope = retrieval.resolvedScope?.scopeKind === 'subtree';
   if (
     subtreeScope
@@ -174,10 +269,16 @@ export function buildBackstageContinuityResponse(
         omittedPages: retrieval.coverage.omittedPages!,
       }
     : baseCoverage;
+  const normalizedAnswer = answer.trim();
+  const answerWithFreshness = freshnessNotice === null
+    ? normalizedAnswer
+    : normalizedAnswer.startsWith('- ')
+      ? `- ${freshnessNotice} ${normalizedAnswer.slice(2)}`
+      : `${freshnessNotice} ${normalizedAnswer}`.trim();
   return {
     universeId: input.universeId,
     authority: 'notion',
-    answer: answer.trim(),
+    answer: answerWithFreshness,
     ...(retrieval.resolvedScope
       ? {
           resolvedScope: {

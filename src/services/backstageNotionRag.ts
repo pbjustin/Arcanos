@@ -14,6 +14,11 @@ import {
   type BackstageNotionSnapshotScopeLookup,
   type BackstageNotionSnapshotScopeResolution,
 } from '@core/db/repositories/backstageNotionRagRepository.js';
+import {
+  getBackstageNotionSyncStatusRepository,
+  type BackstageNotionSyncAttemptRecord,
+  type BackstageNotionSyncStatusRepository,
+} from '@core/db/repositories/backstageNotionSyncStatusRepository.js';
 import { getEnvNumber } from '@platform/runtime/env.js';
 import { logger } from '@platform/logging/structuredLogging.js';
 import {
@@ -26,6 +31,17 @@ import {
   normalizeBackstageNotionScopeKey,
   normalizeBackstageNotionScopePath,
 } from '@shared/backstage/backstageNotionScopeIndex.js';
+import {
+  BACKSTAGE_NOTION_SYNC_ATTEMPT_OUTCOMES,
+  BACKSTAGE_NOTION_SYNC_FAILURE_PHASES,
+  BACKSTAGE_NOTION_SYNC_FAILURE_REASONS,
+  resolveBackstageNotionSnapshotStatus,
+  type BackstageNotionSnapshotStatus,
+  type BackstageNotionSnapshotStatusResolution,
+  type BackstageNotionSyncAttemptOutcome,
+  type BackstageNotionSyncFailurePhase,
+  type BackstageNotionSyncFailureReason,
+} from '@shared/backstage/backstageNotionSnapshotStatus.js';
 import {
   BACKSTAGE_NOTION_BOOKING_BRANDS,
   BACKSTAGE_NOTION_BOOKING_NEUTRAL_CHUNK_RESERVE,
@@ -81,6 +97,11 @@ const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 const UTC_TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/u;
 const CURSOR_PATTERN = /^[A-Za-z0-9_-]{1,1024}$/u;
+const SYNC_ATTEMPT_OUTCOMES = new Set<string>(
+  BACKSTAGE_NOTION_SYNC_ATTEMPT_OUTCOMES
+);
+const SYNC_FAILURE_PHASES = new Set<string>(BACKSTAGE_NOTION_SYNC_FAILURE_PHASES);
+const SYNC_FAILURE_REASONS = new Set<string>(BACKSTAGE_NOTION_SYNC_FAILURE_REASONS);
 const CATEGORIES = new Set<BackstageNotionRagCategory>([
   'championships',
   'events',
@@ -178,6 +199,10 @@ export interface BackstageNotionRagRetrievalDependencies {
     | 'loadSnapshotChunkPage'
     | 'rankSnapshotCandidates'
   >;
+  syncStatusRepository?: Pick<
+    BackstageNotionSyncStatusRepository,
+    'loadLatestSyncAttempt'
+  >;
   resolveAuthorityRoot?: (
     universeId: string
   ) => BackstageNotionAuthorityRoot | null | Promise<BackstageNotionAuthorityRoot | null>;
@@ -231,6 +256,12 @@ export interface BackstageNotionRagRetrieval {
   universeId: string;
   snapshotId: string;
   verifiedAt: Date;
+  snapshotStatus: BackstageNotionSnapshotStatus;
+  activeSnapshotVerifiedAt: Date;
+  activeSnapshotChunkCount: number;
+  latestSyncOutcome: BackstageNotionSyncAttemptOutcome | null;
+  latestSyncFailurePhase: BackstageNotionSyncFailurePhase | null;
+  latestSyncFailureReason: BackstageNotionSyncFailureReason | null;
   prompt: string;
   chunkCount: number;
   truncated: boolean;
@@ -1068,9 +1099,7 @@ function sortByPageOrdinal<T extends ScopeCandidate>(chunks: readonly T[]): T[] 
 function validateActiveSnapshotHeader<T extends BackstageNotionActiveSnapshotHeader>(
   active: T | null,
   universeId: string,
-  rootPageId: string,
-  now: Date,
-  maximumStalenessMs: number
+  rootPageId: string
 ): T {
   if (
     !active
@@ -1086,16 +1115,70 @@ function validateActiveSnapshotHeader<T extends BackstageNotionActiveSnapshotHea
     || !Number.isSafeInteger(active.snapshot.chunkCount)
     || active.snapshot.chunkCount < 1
     || active.snapshot.chunkCount > BACKSTAGE_NOTION_RAG_MAX_ACTIVE_CHUNKS
-    || !Number.isFinite(now.getTime())
     || !Number.isFinite(active.verifiedAt.getTime())
     || !Number.isFinite(active.snapshot.createdAt.getTime())
     || active.verifiedAt.getTime() < active.snapshot.createdAt.getTime()
-    || now.getTime() - active.verifiedAt.getTime() > maximumStalenessMs
-    || active.verifiedAt.getTime() - now.getTime() > 5 * 60 * 1_000
   ) {
     throw new BackstageNotionIndexUnavailableError();
   }
   return active;
+}
+
+function logBackstageNotionSnapshotStatus(
+  resolution: BackstageNotionSnapshotStatusResolution,
+  active: BackstageNotionActiveSnapshotHeader | null,
+  latestSyncAttempt: BackstageNotionSyncAttemptRecord | null
+): void {
+  try {
+    const metadata = projectBackstageNotionSnapshotStatusMetadata(
+      resolution,
+      active,
+      latestSyncAttempt
+    );
+    logger.info('backstage.notion_rag.snapshot_status', {
+      authorityIndex: 'monolith',
+      ...metadata,
+      activeSnapshotReadable: active !== null,
+      freshnessSatisfied: resolution.fresh,
+      newerRefreshIncomplete: resolution.newerRefreshIncomplete,
+    });
+  } catch {
+    // Snapshot-state diagnostics must never change authority availability.
+  }
+}
+
+function projectBackstageNotionSnapshotStatusMetadata(
+  resolution: BackstageNotionSnapshotStatusResolution,
+  active: BackstageNotionActiveSnapshotHeader | null,
+  latestSyncAttempt: BackstageNotionSyncAttemptRecord | null
+): Readonly<{
+  snapshotStatus: BackstageNotionSnapshotStatus;
+  activeSnapshotVerifiedAt: string | null;
+  activeSnapshotChunkCount: number;
+  latestSyncOutcome: BackstageNotionSyncAttemptOutcome | null;
+  latestSyncFailurePhase: BackstageNotionSyncFailurePhase | null;
+  latestSyncFailureReason: BackstageNotionSyncFailureReason | null;
+}> {
+  const latestSyncOutcome = latestSyncAttempt
+    && SYNC_ATTEMPT_OUTCOMES.has(latestSyncAttempt.outcome)
+    ? latestSyncAttempt.outcome
+    : null;
+  const latestSyncFailurePhase = latestSyncAttempt?.failurePhase
+    && SYNC_FAILURE_PHASES.has(latestSyncAttempt.failurePhase)
+    ? latestSyncAttempt.failurePhase
+    : null;
+  const latestSyncFailureReason = latestSyncAttempt?.failureReason
+    && SYNC_FAILURE_REASONS.has(latestSyncAttempt.failureReason)
+    ? latestSyncAttempt.failureReason
+    : null;
+  return Object.freeze({
+    snapshotStatus: resolution.status,
+    activeSnapshotVerifiedAt: active?.verifiedAt.toISOString() ?? null,
+    activeSnapshotChunkCount: active?.snapshot.chunkCount ?? 0,
+    latestSyncOutcome,
+    latestSyncFailurePhase,
+    latestSyncFailureReason,
+  });
 }
 
 async function retrieveBackstageNotionRagContextUnsafe(
@@ -1121,17 +1204,48 @@ async function retrieveBackstageNotionRagContextUnsafe(
   }
 
   const repository = dependencies.repository ?? getBackstageNotionRagRepository();
+  const syncStatusRepository = dependencies.syncStatusRepository
+    ?? getBackstageNotionSyncStatusRepository();
   const now = dependencies.now?.() ?? new Date();
   const maximumStalenessMs = resolveMaximumStalenessMs(
     dependencies.maximumStalenessMs
   );
-  const active = validateActiveSnapshotHeader(
-    await repository.loadActiveSnapshotHeader(universeId),
-    universeId,
-    authorityRoot.rootPageId,
+  const [loadedActive, latestSyncAttempt] = await Promise.all([
+    repository.loadActiveSnapshotHeader(universeId),
+    syncStatusRepository.loadLatestSyncAttempt(universeId),
+  ]);
+  let active: BackstageNotionActiveSnapshotHeader;
+  try {
+    active = validateActiveSnapshotHeader(
+      loadedActive,
+      universeId,
+      authorityRoot.rootPageId
+    );
+  } catch (error) {
+    logBackstageNotionSnapshotStatus({
+      status: 'unavailable',
+      fresh: false,
+      newerRefreshIncomplete: false,
+    }, null, latestSyncAttempt);
+    throw error;
+  }
+  const snapshotStatus = resolveBackstageNotionSnapshotStatus({
+    activeSnapshotId: active.snapshot.id,
+    activeSnapshotReadable: true,
+    activeSnapshotVerifiedAt: active.verifiedAt,
     now,
-    maximumStalenessMs
-  );
+    maximumStalenessMs,
+    latestSyncAttempt,
+  });
+  const readableContinuityLastKnownGood = snapshotStatus.status === 'last_known_good'
+    && retrievalProfile === 'continuity';
+  if (
+    snapshotStatus.status !== 'current_complete'
+    && !readableContinuityLastKnownGood
+  ) {
+    logBackstageNotionSnapshotStatus(snapshotStatus, active, latestSyncAttempt);
+    throw new BackstageNotionIndexUnavailableError();
+  }
 
   let selected: SelectedChunk[];
   let offset = 0;
@@ -1560,6 +1674,7 @@ async function retrieveBackstageNotionRagContextUnsafe(
   } catch {
     throw new BackstageNotionIndexUnavailableError();
   }
+  logBackstageNotionSnapshotStatus(snapshotStatus, active, latestSyncAttempt);
   try {
     logger.info('backstage.notion_rag.retrieved', {
       authorityIndex: 'monolith',
@@ -1620,6 +1735,12 @@ async function retrieveBackstageNotionRagContextUnsafe(
     universeId,
     snapshotId: active.snapshot.id,
     verifiedAt: active.verifiedAt,
+    snapshotStatus: snapshotStatus.status,
+    activeSnapshotVerifiedAt: active.verifiedAt,
+    activeSnapshotChunkCount: active.snapshot.chunkCount,
+    latestSyncOutcome: latestSyncAttempt?.outcome ?? null,
+    latestSyncFailurePhase: latestSyncAttempt?.failurePhase ?? null,
+    latestSyncFailureReason: latestSyncAttempt?.failureReason ?? null,
     prompt: promptContext.prompt,
     chunkCount: promptContext.chunkCount,
     truncated: omittedChunks > 0 || promptContext.truncated,

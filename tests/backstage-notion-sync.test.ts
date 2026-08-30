@@ -15,6 +15,10 @@ import {
   type BackstageNotionSnapshotRecord,
   type BackstageNotionSyncLease,
 } from '../src/core/db/repositories/backstageNotionRagRepository.js';
+import type {
+  BackstageNotionSyncAttemptRecord,
+  BackstageNotionSyncStatusRepository,
+} from '../src/core/db/repositories/backstageNotionSyncStatusRepository.js';
 import {
   getOpenAIAdapter,
   resetOpenAIAdapter,
@@ -334,6 +338,7 @@ function rootAuthority(options: {
 
 function dependencies(input: {
   repository: BackstageNotionRagRepository;
+  syncStatusRepository?: BackstageNotionSyncStatusRepository;
   fetchImpl?: typeof fetch;
   embedBatch?: (inputs: readonly string[]) => Promise<number[][]>;
   readEnvironment?: (name: string) => string | undefined;
@@ -346,6 +351,9 @@ function dependencies(input: {
 }): BackstageNotionSyncDependencies {
   return {
     repository: input.repository,
+    ...(input.syncStatusRepository
+      ? { syncStatusRepository: input.syncStatusRepository }
+      : {}),
     fetchImpl: input.fetchImpl,
     embedBatch: input.embedBatch ?? (async values => values.map(() => [1, 0])),
     readEnvironment: input.readEnvironment
@@ -399,6 +407,199 @@ describe('Backstage Notion authority synchronization', () => {
   beforeEach(() => {
     jest.spyOn(logger, 'info').mockImplementation(() => undefined);
     jest.spyOn(logger, 'warn').mockImplementation(() => undefined);
+  });
+
+  it('records successful activation separately from the active snapshot pointer', async () => {
+    const started: BackstageNotionSyncAttemptRecord = {
+      universeId,
+      attemptId: '33333333-3333-4333-8333-333333333333',
+      generation: '1',
+      startedAt: new Date('2026-08-29T15:56:00.000Z'),
+      completedAt: null,
+      outcome: 'running',
+      failurePhase: null,
+      failureReason: null,
+      pagesDiscovered: 0,
+      pagesFetched: 0,
+      blocksFetched: 0,
+      chunksProduced: 0,
+      chunksEmbedded: 0,
+      candidateSnapshotCreated: false,
+      candidateSnapshotValidated: false,
+      candidateSnapshotActivated: false,
+      activatedSnapshotId: null,
+    };
+    const beginSyncAttempt = jest.fn(async () => started);
+    const completeSyncAttempt = jest.fn(async input => ({
+      ...started,
+      ...input,
+      completedAt: new Date('2026-08-29T15:58:00.000Z'),
+    } as BackstageNotionSyncAttemptRecord));
+    const syncStatusRepository: BackstageNotionSyncStatusRepository = {
+      beginSyncAttempt,
+      completeSyncAttempt,
+      loadLatestSyncAttempt: jest.fn(async () => null),
+    };
+    const { fetchMock } = notionFetch([{
+      pageId: pageId(0),
+      parentPageId: null,
+      title: 'WWE Universe Mode',
+      markdown: '# Current canon\n\nSynthetic current statement.',
+    }]);
+    const repository = repositoryHarness();
+
+    await expect(syncBackstageNotionAuthorityRoot(
+      rootAuthority(),
+      dependencies({
+        repository: repository.repository,
+        syncStatusRepository,
+        fetchImpl: fetchMock as unknown as typeof fetch,
+      })
+    )).resolves.toMatchObject({ status: 'activated' });
+
+    expect(beginSyncAttempt).toHaveBeenCalledWith({
+      universeId,
+      lease: expect.objectContaining({ leaseToken: lease.leaseToken }),
+    });
+    expect(completeSyncAttempt).toHaveBeenCalledTimes(1);
+    expect(completeSyncAttempt).toHaveBeenCalledWith(expect.objectContaining({
+      universeId,
+      attemptId: started.attemptId,
+      generation: started.generation,
+      outcome: 'activated',
+      failurePhase: null,
+      failureReason: null,
+      candidateSnapshotCreated: true,
+      candidateSnapshotValidated: true,
+      candidateSnapshotActivated: true,
+      activatedSnapshotId: expect.any(String),
+    }));
+    expect(beginSyncAttempt.mock.invocationCallOrder[0]).toBeLessThan(
+      repository.activateSnapshot.mock.invocationCallOrder[0]!
+    );
+    expect(repository.activateSnapshot.mock.invocationCallOrder[0]).toBeLessThan(
+      completeSyncAttempt.mock.invocationCallOrder[0]!
+    );
+  });
+
+  it('keeps a committed activation successful when latest-attempt telemetry cannot complete', async () => {
+    const started: BackstageNotionSyncAttemptRecord = {
+      universeId,
+      attemptId: '33333333-3333-4333-8333-333333333333',
+      generation: '1',
+      startedAt: new Date('2026-08-29T15:56:00.000Z'),
+      completedAt: null,
+      outcome: 'running',
+      failurePhase: null,
+      failureReason: null,
+      pagesDiscovered: 0,
+      pagesFetched: 0,
+      blocksFetched: 0,
+      chunksProduced: 0,
+      chunksEmbedded: 0,
+      candidateSnapshotCreated: false,
+      candidateSnapshotValidated: false,
+      candidateSnapshotActivated: false,
+      activatedSnapshotId: null,
+    };
+    const syncStatusRepository: BackstageNotionSyncStatusRepository = {
+      beginSyncAttempt: jest.fn(async () => started),
+      completeSyncAttempt: jest.fn(async () => {
+        throw new Error('PRIVATE-DATABASE-DETAIL');
+      }),
+      loadLatestSyncAttempt: jest.fn(async () => null),
+    };
+    const { fetchMock } = notionFetch([{
+      pageId: pageId(0),
+      parentPageId: null,
+      title: 'WWE Universe Mode',
+      markdown: '# Current canon\n\nSynthetic current statement.',
+    }]);
+    const repository = repositoryHarness();
+
+    await expect(syncBackstageNotionAuthorityRoot(
+      rootAuthority(),
+      dependencies({
+        repository: repository.repository,
+        syncStatusRepository,
+        fetchImpl: fetchMock as unknown as typeof fetch,
+      })
+    )).resolves.toMatchObject({ status: 'activated' });
+
+    expect(repository.activateSnapshot).toHaveBeenCalledTimes(1);
+    expect(syncStatusRepository.completeSyncAttempt).toHaveBeenCalledTimes(1);
+    expect(logger.warn).toHaveBeenCalledWith(
+      'backstage.notion_rag.sync_status_record_failed',
+      { universeId, outcome: 'activated' }
+    );
+    expect(JSON.stringify((logger.warn as jest.Mock).mock.calls))
+      .not.toContain('PRIVATE-DATABASE-DETAIL');
+  });
+
+  it('records a bounded failed attempt without creating or activating a candidate', async () => {
+    const started: BackstageNotionSyncAttemptRecord = {
+      universeId,
+      attemptId: '33333333-3333-4333-8333-333333333333',
+      generation: '1',
+      startedAt: new Date('2026-08-29T15:56:00.000Z'),
+      completedAt: null,
+      outcome: 'running',
+      failurePhase: null,
+      failureReason: null,
+      pagesDiscovered: 0,
+      pagesFetched: 0,
+      blocksFetched: 0,
+      chunksProduced: 0,
+      chunksEmbedded: 0,
+      candidateSnapshotCreated: false,
+      candidateSnapshotValidated: false,
+      candidateSnapshotActivated: false,
+      activatedSnapshotId: null,
+    };
+    const completeSyncAttempt = jest.fn(async input => ({
+      ...started,
+      ...input,
+      completedAt: new Date('2026-08-29T15:58:00.000Z'),
+    } as BackstageNotionSyncAttemptRecord));
+    const syncStatusRepository: BackstageNotionSyncStatusRepository = {
+      beginSyncAttempt: jest.fn(async () => started),
+      completeSyncAttempt,
+      loadLatestSyncAttempt: jest.fn(async () => null),
+    };
+    const { fetchMock } = notionFetch([{
+      pageId: pageId(0),
+      parentPageId: null,
+      title: 'WWE Universe Mode',
+      markdown: '<image source="notion://private-media">Image</image>',
+    }]);
+    const repository = repositoryHarness();
+
+    await expect(syncBackstageNotionAuthorityRoot(
+      rootAuthority(),
+      dependencies({
+        repository: repository.repository,
+        syncStatusRepository,
+        fetchImpl: fetchMock as unknown as typeof fetch,
+      })
+    )).rejects.toMatchObject({
+      code: BACKSTAGE_NOTION_SYNC_INCOMPLETE_ERROR_CODE,
+      diagnostics: expect.objectContaining({
+        candidateSnapshotCreated: false,
+        candidateSnapshotValidated: false,
+        candidateSnapshotActivated: false,
+      }),
+    });
+
+    expect(repository.activateSnapshot).not.toHaveBeenCalled();
+    expect(completeSyncAttempt).toHaveBeenCalledWith(expect.objectContaining({
+      outcome: 'failed',
+      failurePhase: 'normalization',
+      failureReason: 'permanent_notion_error',
+      candidateSnapshotCreated: false,
+      candidateSnapshotValidated: false,
+      candidateSnapshotActivated: false,
+      activatedSnapshotId: null,
+    }));
   });
 
   it('captures and atomically activates a complete recursive 18-page hierarchy', async () => {

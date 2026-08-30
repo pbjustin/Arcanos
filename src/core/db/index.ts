@@ -41,6 +41,7 @@ export {
   BackstageNotionSnapshotPageSchema,
   BackstageNotionSnapshotChunkSchema,
   BackstageNotionSyncLeaseSchema,
+  BackstageNotionLatestSyncAttemptSchema,
   type MemoryEntry,
   type ExecutionLog,
   type JobData,
@@ -52,7 +53,8 @@ export {
   type BackstageNotionSnapshot,
   type BackstageNotionSnapshotPage,
   type BackstageNotionSnapshotChunk,
-  type BackstageNotionSyncLeaseRow
+  type BackstageNotionSyncLeaseRow,
+  type BackstageNotionLatestSyncAttempt
 } from './schema.js';
 
 // Query exports
@@ -116,6 +118,18 @@ export {
   type BackstageNotionSnapshotRecord,
   type BackstageNotionSyncLease
 } from './repositories/backstageNotionRagRepository.js';
+
+export {
+  BackstageNotionSyncStatusLeaseError,
+  BackstageNotionSyncStatusRepositoryUnavailableError,
+  PostgresBackstageNotionSyncStatusRepository,
+  getBackstageNotionSyncStatusRepository,
+  type BackstageNotionSyncAttemptDiagnosticsState,
+  type BackstageNotionSyncAttemptRecord,
+  type BackstageNotionSyncStatusRepository,
+  type BeginBackstageNotionSyncAttemptInput,
+  type CompleteBackstageNotionSyncAttemptInput,
+} from './repositories/backstageNotionSyncStatusRepository.js';
 
 export {
   BACKSTAGE_NOTION_PARTITION_LEASE_MIN_MS,

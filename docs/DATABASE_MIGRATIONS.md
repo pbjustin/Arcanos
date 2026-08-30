@@ -368,6 +368,23 @@ serving web and worker revision must therefore contain the 4,096-capable reader
 release before a worker with the raised writer fence is deployed or allowed to
 sync.
 
+`migrations/20260829_backstage_notion_rag_v4_sync_status.sql` adds only the
+bounded latest synchronization-attempt projection. It does not own or replace
+the immutable snapshot rows or the authority head. Attempt start and completion
+are fenced by the existing live sync lease and by an increasing per-universe
+generation, so an older attempt cannot overwrite a newer result. A failed or
+interrupted refresh records only bounded counts and enumerated phase/reason
+metadata; it cannot clear, invalidate, or detach the active snapshot pointer.
+Readers combine this independent attempt state with the active snapshot header
+to distinguish `current_complete`, `last_known_good`, and `unavailable` without
+describing stale continuity as current. Continuity reads carry explicit bounded
+`last_known_good` metadata, while protected booking generation remains fail
+closed while a refresh is incomplete, after a failed refresh, or after
+freshness expiry. An in-progress refresh does not interrupt continuity reads
+already pinned to the prior complete active snapshot. The
+V4 rollback drops only the status table; it leaves the complete active snapshot
+and authority head untouched.
+
 The V2 fence rollback takes `ACCESS EXCLUSIVE` on the head table and refuses with
 SQLSTATE `55000` while any snapshot is active. Apply that rollback before the
 V1 storage rollback only on an unused installation; removing the fence from a

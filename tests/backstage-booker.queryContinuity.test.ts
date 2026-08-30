@@ -76,6 +76,12 @@ const retrieval = {
   universeId: 'my-universe-2k26',
   snapshotId: '11111111-1111-4111-8111-111111111111',
   verifiedAt: new Date('2026-08-19T18:11:02.000Z'),
+  snapshotStatus: 'current_complete',
+  activeSnapshotVerifiedAt: new Date('2026-08-19T18:11:02.000Z'),
+  activeSnapshotChunkCount: 7,
+  latestSyncOutcome: 'unchanged',
+  latestSyncFailurePhase: null,
+  latestSyncFailureReason: null,
   prompt: 'PRIVATE RETRIEVED NOTION EXCERPTS',
   chunkCount: 2,
   truncated: false,
@@ -219,6 +225,63 @@ describe('Backstage continuity query core', () => {
     );
     expect(JSON.stringify(response)).not.toContain(retrieval.citations[0].pageId);
     expect(JSON.stringify(response)).not.toContain(retrieval.prompt);
+  });
+
+  it('labels last-known-good continuity without changing the public response shape', () => {
+    const lastKnownGood = {
+      ...retrieval,
+      snapshotStatus: 'last_known_good' as const,
+      activeSnapshotVerifiedAt: new Date('2026-08-19T18:11:02.000Z'),
+      activeSnapshotChunkCount: 2_307,
+      latestSyncOutcome: 'failed' as const,
+      latestSyncFailurePhase: 'chunking' as const,
+      latestSyncFailureReason: 'chunk_limit_reached' as const,
+    };
+
+    const policy = buildBackstageContinuityPolicyPrompt(
+      request,
+      lastKnownGood,
+      false
+    );
+    const response = buildBackstageContinuityResponse(
+      request,
+      lastKnownGood,
+      '- The prior verified title holder remains recorded.'
+    );
+
+    expect(policy).toContain('<<SNAPSHOT_FRESHNESS>>');
+    expect(policy).toContain('Snapshot status: last_known_good');
+    expect(policy).toContain('failure reason: chunk_limit_reached');
+    expect(policy).toContain('Never describe this result as current workspace state.');
+    expect(response).toMatchObject({
+      universeId: request.universeId,
+      authority: 'notion',
+      answer: expect.stringContaining(
+        'Snapshot status: last_known_good; active snapshot verified at 2026-08-19T18:11:02.000Z; active snapshot chunks: 2307; latest sync outcome: failed; failure phase: chunking; failure reason: chunk_limit_reached; This is older verified continuity, not current workspace state.'
+      ),
+    });
+    expect(response).not.toHaveProperty('snapshotStatus');
+    expect(response.answer).toContain('The prior verified title holder remains recorded.');
+  });
+
+  it('fails closed when last-known-good freshness metadata is incomplete', () => {
+    const incomplete = {
+      ...retrieval,
+      snapshotStatus: 'last_known_good' as const,
+      latestSyncOutcome: 'failed' as const,
+      activeSnapshotVerifiedAt: new Date(Number.NaN),
+    };
+
+    expect(() => buildBackstageContinuityPolicyPrompt(
+      request,
+      incomplete,
+      false
+    )).toThrow('Last-known-good continuity metadata is incomplete.');
+    expect(() => buildBackstageContinuityResponse(
+      request,
+      incomplete,
+      '- This answer must not be returned.'
+    )).toThrow('Last-known-good continuity metadata is incomplete.');
   });
 
   it('projects explicit subtree scope with page and chunk coverage', () => {

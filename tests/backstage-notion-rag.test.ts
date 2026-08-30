@@ -13,6 +13,9 @@ import type {
   BackstageNotionSnapshotScopeResolution,
   RankBackstageNotionSnapshotCandidatesInput,
 } from '../src/core/db/repositories/backstageNotionRagRepository.js';
+import type {
+  BackstageNotionSyncAttemptRecord,
+} from '../src/core/db/repositories/backstageNotionSyncStatusRepository.js';
 import {
   getOpenAIAdapter,
   resetOpenAIAdapter,
@@ -148,6 +151,36 @@ function activeSnapshotHeader(
     authority: active.authority,
     verifiedAt: active.verifiedAt,
     snapshot: active.snapshot,
+  };
+}
+
+function latestSyncAttempt(
+  outcome: BackstageNotionSyncAttemptRecord['outcome'],
+  options: Partial<BackstageNotionSyncAttemptRecord> = {}
+): BackstageNotionSyncAttemptRecord {
+  return {
+    universeId: UNIVERSE_ID,
+    attemptId: '33333333-3333-4333-8333-333333333333',
+    generation: '1',
+    startedAt: new Date(NOW.getTime() - 2 * 60 * 1_000),
+    completedAt: outcome === 'running'
+      ? null
+      : new Date(NOW.getTime() - 60 * 1_000),
+    outcome,
+    failurePhase: outcome === 'failed' ? 'chunking' : null,
+    failureReason: outcome === 'failed' ? 'chunk_limit_reached' : null,
+    pagesDiscovered: 366,
+    pagesFetched: 366,
+    blocksFetched: 366,
+    chunksProduced: outcome === 'unchanged' ? 0 : 2_307,
+    chunksEmbedded: outcome === 'activated' ? 2_307 : 0,
+    candidateSnapshotCreated: outcome === 'activated',
+    candidateSnapshotValidated: outcome === 'activated',
+    candidateSnapshotActivated: outcome === 'activated',
+    activatedSnapshotId: outcome === 'activated' || outcome === 'unchanged'
+      ? SNAPSHOT_ID
+      : null,
+    ...options,
   };
 }
 
@@ -354,6 +387,7 @@ function harness(
     rankSnapshotCandidates?: (
       input: RankBackstageNotionSnapshotCandidatesInput
     ) => Promise<BackstageNotionSnapshotCandidateSearch>;
+    latestSyncAttempt?: BackstageNotionSyncAttemptRecord | null;
     root?: BackstageNotionAuthorityRoot | null;
   } = {}
 ) {
@@ -435,6 +469,9 @@ function harness(
     })
   );
   const embedQuery = jest.fn(options.embedQuery ?? (async () => [1, 0]));
+  const loadLatestSyncAttempt = jest.fn(async () => (
+    options.latestSyncAttempt ?? null
+  ));
   const resolveAuthorityRoot = jest.fn(() => (
     options.root === undefined ? ROOT : options.root
   ));
@@ -445,6 +482,7 @@ function harness(
       loadSnapshotChunkPage,
       rankSnapshotCandidates,
     },
+    syncStatusRepository: { loadLatestSyncAttempt },
     embedQuery,
     resolveAuthorityRoot,
     now: () => new Date(NOW),
@@ -458,6 +496,7 @@ function harness(
     resolveSnapshotScope,
     loadSnapshotChunkPage,
     rankSnapshotCandidates,
+    loadLatestSyncAttempt,
     resolveAuthorityRoot,
   };
 }
@@ -585,6 +624,187 @@ describe('Backstage Notion authority RAG retrieval', () => {
     }
   });
 
+  it('admits a readable fresh snapshot confirmed by the latest complete sync', async () => {
+    const active = activeSnapshot();
+    active.verifiedAt = new Date(NOW.getTime() - 60 * 1_000);
+    const state = harness(active, {
+      latestSyncAttempt: latestSyncAttempt('unchanged'),
+    });
+
+    await expect(retrieveAuthorized(state.dependencies)).resolves.toMatchObject({
+      snapshotId: SNAPSHOT_ID,
+      snapshotStatus: 'current_complete',
+      activeSnapshotVerifiedAt: active.verifiedAt,
+      activeSnapshotChunkCount: active.snapshot.chunkCount,
+      latestSyncOutcome: 'unchanged',
+      latestSyncFailurePhase: null,
+      latestSyncFailureReason: null,
+    });
+
+    expect(state.loadLatestSyncAttempt).toHaveBeenCalledWith(UNIVERSE_ID);
+    expect(state.embedQuery).toHaveBeenCalledTimes(1);
+    const statusLog = jest.mocked(logger.info).mock.calls.find(([event]) => (
+      event === 'backstage.notion_rag.snapshot_status'
+    ));
+    expect(statusLog?.[1]).toMatchObject({
+      snapshotStatus: 'current_complete',
+      activeSnapshotReadable: true,
+      latestSyncOutcome: 'unchanged',
+      freshnessSatisfied: true,
+      newerRefreshIncomplete: false,
+    });
+  });
+
+  it('keeps reads pinned to the prior active snapshot while a candidate is building', async () => {
+    const active = activeSnapshot();
+    active.verifiedAt = new Date(NOW.getTime() - 3 * 60 * 1_000);
+    const state = harness(active, {
+      latestSyncAttempt: latestSyncAttempt('running'),
+    });
+
+    await expect(retrieveAuthorized(state.dependencies)).resolves.toMatchObject({
+      snapshotId: SNAPSHOT_ID,
+      snapshotStatus: 'last_known_good',
+      activeSnapshotVerifiedAt: active.verifiedAt,
+      activeSnapshotChunkCount: active.snapshot.chunkCount,
+      latestSyncOutcome: 'running',
+      latestSyncFailurePhase: null,
+      latestSyncFailureReason: null,
+    });
+
+    expect(state.loadLatestSyncAttempt).toHaveBeenCalledWith(UNIVERSE_ID);
+    expect(state.rankSnapshotCandidates).toHaveBeenCalledWith(
+      expect.objectContaining({
+        universeId: UNIVERSE_ID,
+        snapshotId: SNAPSHOT_ID,
+      })
+    );
+    expect(state.embedQuery).toHaveBeenCalledTimes(1);
+    const statusLog = jest.mocked(logger.info).mock.calls.find(([event]) => (
+      event === 'backstage.notion_rag.snapshot_status'
+    ));
+    expect(statusLog?.[1]).toMatchObject({
+      snapshotStatus: 'last_known_good',
+      latestSyncOutcome: 'running',
+      freshnessSatisfied: true,
+      newerRefreshIncomplete: true,
+    });
+  });
+
+  it('keeps protected booking generation fail closed while latest state is incomplete', async () => {
+    const active = activeSnapshot();
+    active.verifiedAt = new Date(NOW.getTime() - 3 * 60 * 1_000);
+    const state = harness(active, {
+      latestSyncAttempt: latestSyncAttempt('running'),
+    });
+
+    await expect(retrieveBookingAuthorized(
+      state.dependencies,
+      'Book Raw while refresh is incomplete'
+    )).rejects.toMatchObject({
+      code: BACKSTAGE_NOTION_INDEX_UNAVAILABLE_ERROR_CODE,
+      httpStatus: 503,
+      retryable: true,
+    });
+
+    expect(state.embedQuery).not.toHaveBeenCalled();
+    expect(state.rankSnapshotCandidates).not.toHaveBeenCalled();
+  });
+
+  it('returns explicit last_known_good metadata for continuity reads after a newer failed refresh', async () => {
+    const active = activeSnapshot();
+    active.verifiedAt = new Date(NOW.getTime() - 10 * 60 * 1_000);
+    const priorVerifiedAt = active.verifiedAt.getTime();
+    const priorSnapshot = { ...active.snapshot };
+    const state = harness(active, {
+      latestSyncAttempt: latestSyncAttempt('failed'),
+    });
+
+    await expect(retrieveAuthorized(state.dependencies)).resolves.toMatchObject({
+      snapshotId: SNAPSHOT_ID,
+      snapshotStatus: 'last_known_good',
+      activeSnapshotVerifiedAt: active.verifiedAt,
+      activeSnapshotChunkCount: active.snapshot.chunkCount,
+      latestSyncOutcome: 'failed',
+      latestSyncFailurePhase: 'chunking',
+      latestSyncFailureReason: 'chunk_limit_reached',
+    });
+
+    expect(active.verifiedAt.getTime()).toBe(priorVerifiedAt);
+    expect(active.snapshot).toEqual(priorSnapshot);
+    expect(state.loadLatestSyncAttempt).toHaveBeenCalledWith(UNIVERSE_ID);
+    expect(state.embedQuery).toHaveBeenCalledTimes(1);
+    expect(state.rankSnapshotCandidates).toHaveBeenCalledTimes(1);
+    const statusCalls = jest.mocked(logger.info).mock.calls.filter(([event]) => (
+      event === 'backstage.notion_rag.snapshot_status'
+    ));
+    expect(statusCalls).toHaveLength(1);
+    expect(statusCalls[0]?.[1]).toMatchObject({
+      snapshotStatus: 'last_known_good',
+      activeSnapshotReadable: true,
+      activeSnapshotChunkCount: active.snapshot.chunkCount,
+      latestSyncOutcome: 'failed',
+      latestSyncFailurePhase: 'chunking',
+      latestSyncFailureReason: 'chunk_limit_reached',
+      freshnessSatisfied: true,
+      newerRefreshIncomplete: true,
+    });
+    expect(JSON.stringify(statusCalls[0]?.[1])).not.toContain(SNAPSHOT_ID);
+    expect(JSON.stringify(statusCalls[0]?.[1])).not.toContain(
+      '33333333-3333-4333-8333-333333333333'
+    );
+    expect(jest.mocked(logger.info).mock.calls.some(([event]) => (
+      event === 'backstage.notion_rag.retrieved'
+    ))).toBe(true);
+  });
+
+  it('keeps protected booking generation fail closed after a failed refresh', async () => {
+    const active = activeSnapshot();
+    active.verifiedAt = new Date(NOW.getTime() - 10 * 60 * 1_000);
+    const state = harness(active, {
+      latestSyncAttempt: latestSyncAttempt('failed'),
+    });
+
+    await expect(retrieveBookingAuthorized(
+      state.dependencies,
+      'Book Raw after the failed refresh'
+    )).rejects.toMatchObject({
+      code: BACKSTAGE_NOTION_INDEX_UNAVAILABLE_ERROR_CODE,
+      httpStatus: 503,
+      retryable: true,
+    });
+
+    expect(state.embedQuery).not.toHaveBeenCalled();
+    expect(state.rankSnapshotCandidates).not.toHaveBeenCalled();
+  });
+
+  it('does not reflect malformed latest-sync state into availability telemetry', async () => {
+    const privateMarker = 'PRIVATE-NOTION-CONTENT-MUST-NOT-LOG';
+    const malformedAttempt = {
+      ...latestSyncAttempt('failed'),
+      failureReason: privateMarker,
+    } as unknown as BackstageNotionSyncAttemptRecord;
+    const state = harness(activeSnapshot(), {
+      latestSyncAttempt: malformedAttempt,
+    });
+
+    await expect(retrieveAuthorized(state.dependencies)).rejects.toBeInstanceOf(
+      BackstageNotionIndexUnavailableError
+    );
+
+    expect(state.embedQuery).not.toHaveBeenCalled();
+    const statusLog = jest.mocked(logger.info).mock.calls.find(([event]) => (
+      event === 'backstage.notion_rag.snapshot_status'
+    ));
+    expect(statusLog?.[1]).toMatchObject({
+      snapshotStatus: 'unavailable',
+      latestSyncOutcome: 'failed',
+      latestSyncFailurePhase: 'chunking',
+      latestSyncFailureReason: null,
+    });
+    expect(JSON.stringify(statusLog?.[1])).not.toContain(privateMarker);
+  });
+
   it.each([
     ['missing', () => null],
     ['wrong authority', () => ({ ...activeSnapshot(), authority: 'postgres' })],
@@ -645,6 +865,10 @@ describe('Backstage Notion authority RAG retrieval', () => {
       expect(state.rankSnapshotCandidates).toHaveBeenCalledTimes(1);
       expect(state.loadActiveSnapshot).not.toHaveBeenCalled();
     }
+    expect(jest.mocked(logger.info).mock.calls.some(([, metadata]) => (
+      (metadata as { snapshotStatus?: unknown } | undefined)?.snapshotStatus
+        === 'current_complete'
+    ))).toBe(false);
   });
 
   it('rejects inconsistent metadata for chunks that claim the same page identity', async () => {

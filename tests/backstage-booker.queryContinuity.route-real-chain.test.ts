@@ -18,6 +18,9 @@ const responsesCreate = jest.fn();
 const createEmbedding = jest.fn();
 const loadAuthorityHead = jest.fn();
 const loadActiveSnapshot = jest.fn();
+const loadActiveSnapshotHeader = jest.fn();
+const rankSnapshotCandidates = jest.fn();
+const loadLatestSyncAttempt = jest.fn();
 const persistModuleConversation = jest.fn();
 const queryDatabase = jest.fn();
 const storePattern = jest.fn();
@@ -32,9 +35,18 @@ const { AUDITED_TRANSIENT_READ_QUERIES } = await import(
 jest.unstable_mockModule('@core/db/repositories/backstageNotionRagRepository.js', () => ({
   BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT,
   BACKSTAGE_NOTION_MAX_PAGES_PER_SNAPSHOT: 5_000,
+  BACKSTAGE_NOTION_RELEVANT_CANDIDATE_SEARCH_MAX_RESULTS: 128,
   getBackstageNotionRagRepository: () => ({
     loadAuthorityHead,
     loadActiveSnapshot,
+    loadActiveSnapshotHeader,
+    rankSnapshotCandidates,
+  }),
+}));
+
+jest.unstable_mockModule('@core/db/repositories/backstageNotionSyncStatusRepository.js', () => ({
+  getBackstageNotionSyncStatusRepository: () => ({
+    loadLatestSyncAttempt,
   }),
 }));
 
@@ -265,6 +277,17 @@ describe('Backstage continuity canonical route real chain', () => {
       rootPageId: ROOT_PAGE_ID,
     });
     loadActiveSnapshot.mockResolvedValue(activeSnapshotFixture);
+    loadActiveSnapshotHeader.mockResolvedValue({
+      authority: activeSnapshotFixture.authority,
+      verifiedAt: activeSnapshotFixture.verifiedAt,
+      snapshot: activeSnapshotFixture.snapshot,
+    });
+    rankSnapshotCandidates.mockResolvedValue({
+      scopeChunkCount: 1,
+      candidatePoolCount: 1,
+      candidates: activeSnapshotFixture.chunks,
+    });
+    loadLatestSyncAttempt.mockResolvedValue(null);
     createEmbedding.mockResolvedValue([1, 0]);
     recordTrinityJudgedFeedback.mockResolvedValue({
       enabled: false,
@@ -341,10 +364,17 @@ describe('Backstage continuity canonical route real chain', () => {
     expect(JSON.stringify(response.body)).not.toContain(NOTION_CONTENT);
 
     expect(loadAuthorityHead).toHaveBeenCalledWith(UNIVERSE_ID);
-    expect(loadActiveSnapshot).toHaveBeenCalledWith(
-      UNIVERSE_ID,
-      BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT
-    );
+    expect(loadActiveSnapshotHeader).toHaveBeenCalledWith(UNIVERSE_ID);
+    expect(loadActiveSnapshot).not.toHaveBeenCalled();
+    expect(loadLatestSyncAttempt).toHaveBeenCalledWith(UNIVERSE_ID);
+    expect(rankSnapshotCandidates).toHaveBeenCalledWith(expect.objectContaining({
+      universeId: UNIVERSE_ID,
+      snapshotId: SNAPSHOT_ID,
+      expectedScopeChunkCount: 1,
+      queryText: QUERY,
+      queryEmbedding: [1, 0],
+      limit: 128,
+    }));
     expect(createEmbedding).toHaveBeenCalledWith(QUERY);
     expect(queryDatabase).not.toHaveBeenCalled();
     expect(persistModuleConversation).not.toHaveBeenCalled();
