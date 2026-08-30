@@ -14,6 +14,7 @@ import { getEnv } from '@platform/runtime/env.js';
 import {
   BACKSTAGE_NOTION_PARTITIONED_INDEX_MODE_ENV_NAME,
   BACKSTAGE_NOTION_PARTITIONS_ENV_NAME,
+  isBackstageNotionPartitionSyncWriterEnabled,
   isBackstageNotionUniverseId,
   parseBackstageNotionPartitionConfiguration,
   parseBackstageNotionPartitionedIndexMode,
@@ -222,7 +223,7 @@ function resolveEnabledConfiguration(
     return Object.freeze({ status: 'unavailable' as const });
   }
   const mode = parseBackstageNotionPartitionedIndexMode(rawMode);
-  if (mode.status !== 'valid' || mode.mode === 'monolith') {
+  if (!isBackstageNotionPartitionSyncWriterEnabled(mode)) {
     return Object.freeze({ status: 'disabled' as const });
   }
 

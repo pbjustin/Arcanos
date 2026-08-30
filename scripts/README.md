@@ -176,6 +176,19 @@ bearer and an absolute four-second DNS/TLS/header deadline. It accepts only the
 expected JSON `401` and cancels without reading,
 parsing, or returning the provider body and does not retry or follow redirects.
 
+The same partition-authority selector executes the production-shared,
+semantic-digest-pinned exact-shadow writer-admission and cutover validation
+scope predicates, plus the pure cutover gate. It proves that only exact
+`shadow` admits partition writes, sampled `relevant` validation rejects a
+caller scope, exhaustive cases require one, same-snapshot rollback
+verification may advance, and regressed, future, or expiry-extending evidence
+closes the gate. The additive
+`x-arcanos-preview-backstage-partition-cutover-repair-version` response header
+identifies this proof without changing the trusted base verifier's response
+body contract. This is credential-empty component evidence; it does not run a
+worker, scheduler, canonical route, repository SQL, PostgreSQL, evidence seal,
+Notion read, or model-provider call.
+
 The partition-failure telemetry selector parses a valid server-owned
 configuration where one shard key equals its Notion root page ID, then invokes
 the same semantic-digest-pinned pure projection used by the production worker.

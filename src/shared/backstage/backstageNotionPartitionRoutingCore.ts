@@ -55,6 +55,22 @@ export type BackstageNotionPartitionRoutingIntent =
       shardKey: string;
     }>;
 
+export type BackstageNotionPartitionCutoverValidationCaseKind =
+  | 'exact_scope'
+  | 'relevant'
+  | 'complete_scope';
+
+/**
+ * Keep sampled relevant cutover validation unscoped while requiring an exact
+ * scope for exhaustive validation cases.
+ */
+export function isBackstageNotionPartitionCutoverValidationScopeCompatible(
+  kind: BackstageNotionPartitionCutoverValidationCaseKind,
+  hasScope: boolean
+): boolean {
+  return kind === 'relevant' ? !hasScope : hasScope;
+}
+
 export interface BackstageNotionPartitionRoutingMemberState {
   readonly shardKey: string;
   readonly partitionVersionId: string;

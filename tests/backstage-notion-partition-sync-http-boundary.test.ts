@@ -9,6 +9,7 @@ import {
   describe,
   expect,
   it,
+  jest,
 } from '@jest/globals';
 
 import {
@@ -738,32 +739,71 @@ describe('Backstage Notion partition synchronization protected route', () => {
     expect(capturedInput.actorKey).not.toContain(CONTROL_PLANE_TOKEN);
   });
 
-  it('does not inspect partition configuration while synchronization is disabled', async () => {
-    let configurationReads = 0;
+  it.each(['monolith', 'partitioned'] as const)(
+    'rejects %s mode before confirmation, configuration inspection, or enqueue',
+    async mode => {
+      let configurationReads = 0;
+      const enqueueOperation = jest.fn(async () => {
+        throw new Error('disabled synchronization must not enqueue');
+      });
+      const app = buildRouteApp({
+        readEnvironment: name => {
+          if (name === BACKSTAGE_NOTION_PARTITIONED_INDEX_MODE_ENV_NAME) {
+            return mode;
+          }
+          if (name === BACKSTAGE_NOTION_PARTITIONS_ENV_NAME) {
+            configurationReads += 1;
+            throw new Error('configuration must remain unread');
+          }
+          return undefined;
+        },
+        enqueueOperation,
+      });
+
+      const response = await validCreate(app, 'partition-sync-disabled-key');
+
+      expect(response.status).toBe(409);
+      expect(response.body.error.code).toBe(
+        'BACKSTAGE_NOTION_PARTITION_SYNC_DISABLED'
+      );
+      expect(response.headers['x-confirmation-challenge']).toBeUndefined();
+      expect(configurationReads).toBe(0);
+      expect(enqueueOperation).not.toHaveBeenCalled();
+    }
+  );
+
+  it('rechecks exact shadow after confirmation and before queue admission', async () => {
+    let modeReads = 0;
+    const enqueueOperation = jest.fn(async () => {
+      throw new Error('transitioned synchronization must not enqueue');
+    });
     const app = buildRouteApp({
       readEnvironment: name => {
         if (name === BACKSTAGE_NOTION_PARTITIONED_INDEX_MODE_ENV_NAME) {
-          return 'monolith';
+          modeReads += 1;
+          return modeReads <= 2 ? 'shadow' : 'partitioned';
         }
         if (name === BACKSTAGE_NOTION_PARTITIONS_ENV_NAME) {
-          configurationReads += 1;
-          throw new Error('configuration must remain unread');
+          return buildPartitionConfiguration();
         }
         return undefined;
       },
-      enqueueOperation: async () => {
-        throw new Error('disabled synchronization must not enqueue');
-      },
+      enqueueOperation,
     });
 
-    const response = await validCreate(app, 'partition-sync-disabled-key');
+    const pending = await validCreate(app, 'partition-sync-transition-key');
+    const challenge = pending.headers['x-confirmation-challenge'];
+    const rejected = await validCreate(app, 'partition-sync-transition-key')
+      .set('x-confirmed', `token:${challenge}`);
 
-    expect(response.status).toBe(409);
-    expect(response.body.error.code).toBe(
+    expect(pending.status).toBe(403);
+    expect(challenge).toEqual(expect.any(String));
+    expect(rejected.status).toBe(409);
+    expect(rejected.body.error.code).toBe(
       'BACKSTAGE_NOTION_PARTITION_SYNC_DISABLED'
     );
-    expect(response.headers['x-confirmation-challenge']).toBeUndefined();
-    expect(configurationReads).toBe(0);
+    expect(modeReads).toBe(3);
+    expect(enqueueOperation).not.toHaveBeenCalled();
   });
 
   it('projects bounded status results and retry guidance without exposing inputs', async () => {

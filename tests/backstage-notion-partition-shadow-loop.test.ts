@@ -107,6 +107,7 @@ function completeCutoverEvidence(): BackstageNotionPartitionCutoverGateEvidence 
     rollbackMonolithSnapshotId: MONOLITH_SNAPSHOT_ID,
     rollbackMonolithReadable: true,
     rollbackMonolithChunkCount: 4,
+    rollbackMonolithValidationVerifiedAt: new Date(now - 120_000),
     rollbackMonolithVerifiedAt: new Date(now - 120_000),
     rollbackMonolithValidUntil: new Date(now + 60 * 60_000),
     verifiedAt: new Date(now - 60_000),
@@ -367,12 +368,13 @@ describe('Backstage Notion partition shadow worker policy', () => {
 
 describe('Backstage Notion partition shadow worker lifecycle', () => {
   test.each([
-    ['shadow', shadowEnvironment(), undefined, 'monolith', true, false, false],
+    ['shadow', shadowEnvironment(), undefined, 'monolith', true, true, false, false],
     [
       'partitioned-gate-closed',
       partitionedEnvironment(),
       undefined,
       'monolith',
+      false,
       false,
       false,
       false,
@@ -383,13 +385,15 @@ describe('Backstage Notion partition shadow worker lifecycle', () => {
       [completeCutoverEvidence()],
       'partitioned',
       false,
+      false,
       true,
       true,
     ],
   ] as const)(
-    'enables the shard writer with accurate safe rollout metadata in %s mode',
+    'keeps the loop active with writes enabled only in exact shadow mode: %s',
     async (_mode, readEnvironment, cutoverEvidence, effectiveReadMode,
-      shadowSyncEnabled, partitionedReadEnabled, cutoverAvailable) => {
+      partitionSyncEnabled, shadowSyncEnabled, partitionedReadEnabled,
+      cutoverAvailable) => {
       jest.useFakeTimers();
       const info = jest.fn();
       const runCycle = jest.fn(async () => successfulCycleResult());
@@ -407,7 +411,7 @@ describe('Backstage Notion partition shadow worker lifecycle', () => {
         'backstage.notion_partition.shadow_enabled',
         expect.objectContaining({
           effectiveReadMode,
-          partitionSyncEnabled: true,
+          partitionSyncEnabled,
           shadowSyncEnabled,
           partitionedReadEnabled,
           cutoverAvailable,
@@ -415,14 +419,109 @@ describe('Backstage Notion partition shadow worker lifecycle', () => {
       );
       expect(JSON.stringify(info.mock.calls)).not.toContain(ROOT_PAGE_ID);
       await jest.advanceTimersByTimeAsync(0);
-      expect(runCycle).toHaveBeenCalledTimes(1);
-      expect(info).toHaveBeenCalledWith(
-        'backstage.notion_partition.shadow_cycle_completed',
-        expect.objectContaining({ effectiveReadMode })
-      );
+      if (partitionSyncEnabled) {
+        expect(runCycle).toHaveBeenCalledTimes(1);
+        expect(info).toHaveBeenCalledWith(
+          'backstage.notion_partition.shadow_cycle_completed',
+          expect.objectContaining({ effectiveReadMode })
+        );
+      } else {
+        expect(runCycle).not.toHaveBeenCalled();
+        expect(info).toHaveBeenCalledWith(
+          'backstage.notion_partition.shadow_cycle_skipped',
+          expect.objectContaining({
+            effectiveReadMode,
+            partitionSyncEnabled: false,
+          })
+        );
+      }
       await handle.stopAndDrain();
     }
   );
+
+  test('refreshes durable evidence in partitioned mode without running a write cycle', async () => {
+    jest.useFakeTimers();
+    const info = jest.fn();
+    const loadCutoverEvidence = jest.fn(async () => Object.freeze([]));
+    const runCycle = jest.fn(async () => successfulCycleResult());
+    const handle = startBackstageNotionPartitionShadowLoop({
+      readEnvironment: partitionedEnvironment(),
+      intervalMs: INTERVAL_MS,
+      runCycle,
+      logger: { info, warn: jest.fn() } as never,
+      cutoverEvidence: [completeCutoverEvidence()],
+      loadCutoverEvidence,
+    });
+
+    expect(info).toHaveBeenCalledWith(
+      'backstage.notion_partition.shadow_enabled',
+      expect.objectContaining({
+        effectiveReadMode: 'partitioned',
+        cutoverAvailable: true,
+      })
+    );
+    await jest.advanceTimersByTimeAsync(0);
+
+    expect(loadCutoverEvidence).toHaveBeenCalledTimes(1);
+    expect(loadCutoverEvidence).toHaveBeenCalledWith(
+      expect.objectContaining({ semanticDigest: VALID_SEMANTIC_DIGEST })
+    );
+    expect(info).toHaveBeenCalledWith(
+      'backstage.notion_partition.shadow_cycle_skipped',
+      expect.objectContaining({
+        effectiveReadMode: 'monolith',
+        cutoverAvailable: false,
+        partitionSyncEnabled: false,
+        reasonCode: 'PARTITIONED_CUTOVER_GATE_CLOSED',
+      })
+    );
+    expect(runCycle).not.toHaveBeenCalled();
+    await jest.advanceTimersByTimeAsync(INTERVAL_MS);
+    expect(loadCutoverEvidence).toHaveBeenCalledTimes(2);
+    expect(runCycle).not.toHaveBeenCalled();
+    await handle.stopAndDrain();
+    expect(info).toHaveBeenCalledWith(
+      'backstage.notion_partition.shadow_drained',
+      expect.objectContaining({ effectiveReadMode: 'monolith' })
+    );
+  });
+
+  test('rechecks exact shadow mode inside the coordinator before writer effects', async () => {
+    jest.useFakeTimers();
+    const info = jest.fn();
+    const values: Record<string, string | undefined> = {
+      ARCANOS_BACKSTAGE_NOTION_PARTITIONED_INDEX_MODE: 'shadow',
+      ARCANOS_BACKSTAGE_NOTION_PARTITIONS_JSON: VALID_CONFIGURATION,
+    };
+    const runCycle = jest.fn(async () => successfulCycleResult());
+    const coordinator = {
+      runExclusive: async <T>(operation: () => Promise<T>): Promise<T> => {
+        values.ARCANOS_BACKSTAGE_NOTION_PARTITIONED_INDEX_MODE = 'partitioned';
+        return operation();
+      },
+    };
+    const handle = startBackstageNotionPartitionShadowLoop({
+      readEnvironment: environment(values),
+      intervalMs: INTERVAL_MS,
+      initialDelayMs: 0,
+      coordinator,
+      runCycle,
+      logger: { info, warn: jest.fn() } as never,
+    });
+
+    await jest.advanceTimersByTimeAsync(0);
+
+    expect(runCycle).not.toHaveBeenCalled();
+    expect(info).toHaveBeenCalledWith(
+      'backstage.notion_partition.shadow_cycle_skipped',
+      expect.objectContaining({
+        effectiveReadMode: 'monolith',
+        partitionSyncEnabled: false,
+        reasonCode: 'PARTITIONED_CUTOVER_GATE_CLOSED',
+      })
+    );
+    await handle.stopAndDrain();
+  });
 
   test('delays the first cycle and measures recurrence from terminal completion', async () => {
     jest.useFakeTimers();
@@ -578,8 +677,10 @@ describe('Backstage Notion partition shadow worker lifecycle', () => {
     expect(monolithSync).toHaveBeenCalledTimes(1);
     expect(shadowSync).not.toHaveBeenCalled();
     releaseMonolith();
-    await Promise.resolve();
-    await Promise.resolve();
+    for (let attempt = 0; attempt < 10 && shadowSync.mock.calls.length === 0;
+      attempt += 1) {
+      await Promise.resolve();
+    }
     expect(shadowSync).toHaveBeenCalledTimes(1);
     expect(maximumActive).toBe(1);
     const drain = Promise.all([

@@ -184,6 +184,7 @@ import {
   BACKSTAGE_NOTION_PARTITION_MAX_CHUNKS,
   BACKSTAGE_NOTION_PARTITION_MAX_SHARDS_PER_UNIVERSE,
   BACKSTAGE_NOTION_PARTITION_MAX_TOTAL_SHARDS,
+  isBackstageNotionPartitionSyncWriterEnabled,
   parseBackstageNotionPartitionConfiguration,
   parseBackstageNotionPartitionedIndexMode,
   resolveBackstageNotionPartitionUniverse,
@@ -197,8 +198,13 @@ import {
   hashBackstageNotionPageMaterial,
 } from './shared/backstage/backstageNotionPartitionMaterialCore.js';
 import {
+  isBackstageNotionPartitionCutoverValidationScopeCompatible,
   resolveBackstageNotionPartitionRouting,
 } from './shared/backstage/backstageNotionPartitionRoutingCore.js';
+import {
+  evaluateBackstageNotionPartitionCutoverGate,
+  type BackstageNotionPartitionCutoverGateEvidence,
+} from './shared/backstage/backstageNotionPartitionCutoverGate.js';
 import {
   decideBackstageNotionPartitionManifestMembership,
   planBackstageNotionPartitionFullReconciliation,
@@ -3427,8 +3433,150 @@ function assertBackstageNotionPartitionedAuthorityFixture():
       const resolution = parseBackstageNotionPartitionedIndexMode(mode);
       return resolution.status !== 'valid' || resolution.mode !== mode;
     })
+    || modes.filter(mode => isBackstageNotionPartitionSyncWriterEnabled(
+      parseBackstageNotionPartitionedIndexMode(mode)
+    )).join(',') !== 'shadow'
+    || !isBackstageNotionPartitionCutoverValidationScopeCompatible(
+      'relevant',
+      false
+    )
+    || isBackstageNotionPartitionCutoverValidationScopeCompatible(
+      'relevant',
+      true
+    )
+    || !isBackstageNotionPartitionCutoverValidationScopeCompatible(
+      'exact_scope',
+      true
+    )
+    || isBackstageNotionPartitionCutoverValidationScopeCompatible(
+      'exact_scope',
+      false
+    )
+    || !isBackstageNotionPartitionCutoverValidationScopeCompatible(
+      'complete_scope',
+      true
+    )
+    || isBackstageNotionPartitionCutoverValidationScopeCompatible(
+      'complete_scope',
+      false
+    )
   ) {
     throw new Error('PREVIEW_BACKSTAGE_NOTION_PARTITION_SYNC_CONTRACT_INVALID');
+  }
+
+  const rollbackValidationVerifiedAt =
+    new Date('2026-08-25T00:10:00.000Z');
+  const rollbackVerifiedAt = new Date('2026-08-25T00:30:00.000Z');
+  const gateNow = new Date('2026-08-25T01:00:00.000Z');
+  const gateEvidence: BackstageNotionPartitionCutoverGateEvidence = {
+    evidenceVersion: 1,
+    reconciliationGeneration: 7,
+    activeReconciliationGeneration: 7,
+    publishedReconciliationGeneration: 7,
+    universeId: universe.universeId,
+    manifestId: routingState.manifestId,
+    activeManifestId: routingState.manifestId,
+    manifestState: 'sealed',
+    manifestReadable: true,
+    manifestConfigurationVersionId: routingState.configurationVersionId,
+    activeConfigurationVersionId: routingState.configurationVersionId,
+    configurationHash: parsed.semanticDigest,
+    activeConfigurationHash: parsed.semanticDigest,
+    sourceGenerationId: 'ffffffff-ffff-4fff-8fff-fffffffffff1',
+    sourceDigest: 'a'.repeat(64),
+    sourcePageCount: 4,
+    sourceChunkCount: 6,
+    sourceVerifiedAt: new Date('2026-08-25T00:20:00.000Z'),
+    sourceVerificationHash: 'b'.repeat(64),
+    manifestPageCount: 4,
+    manifestChunkCount: 6,
+    embeddingModel: expectedIndex.embeddingModel,
+    indexFormatVersion: expectedIndex.indexFormatVersion,
+    memberCount: 2,
+    omissionCount: 0,
+    members: [
+      {
+        shardKey: rawDefinition.shardKey,
+        snapshotId: rawSnapshotId,
+        sourceGenerationId: 'ffffffff-ffff-4fff-8fff-fffffffffff1',
+        indexFormatVersion: expectedIndex.indexFormatVersion,
+        pageCount: 2,
+        chunkCount: 3,
+        decision: 'fresh',
+        readable: true,
+      },
+      {
+        shardKey: sharedDefinition.shardKey,
+        snapshotId: sharedSnapshotId,
+        sourceGenerationId: 'ffffffff-ffff-4fff-8fff-fffffffffff1',
+        indexFormatVersion: expectedIndex.indexFormatVersion,
+        pageCount: 2,
+        chunkCount: 3,
+        decision: 'fresh',
+        readable: true,
+      },
+    ],
+    leaseFencingClear: true,
+    unresolvedActivationCount: 0,
+    parity: {
+      shadowComparisonCompleted: true,
+      exactScopeParityPassed: true,
+      relevantRetrievalParityPassed: true,
+      completeScopeParityPassed: true,
+      cursorStabilityPassed: true,
+    },
+    rollbackMonolithSnapshotId:
+      'ffffffff-ffff-4fff-8fff-fffffffffff2',
+    rollbackMonolithReadable: true,
+    rollbackMonolithChunkCount: 6,
+    rollbackMonolithValidationVerifiedAt: rollbackValidationVerifiedAt,
+    rollbackMonolithVerifiedAt: rollbackVerifiedAt,
+    rollbackMonolithValidUntil: new Date('2026-08-25T02:00:00.000Z'),
+    verifiedAt: new Date('2026-08-25T00:30:00.000Z'),
+    expiresAt: new Date('2026-08-25T01:30:00.000Z'),
+  };
+  const evaluateGate = (
+    evidence: BackstageNotionPartitionCutoverGateEvidence
+  ) => evaluateBackstageNotionPartitionCutoverGate({
+    universeId: universe.universeId,
+    configurationHash: parsed.semanticDigest,
+    configuredShardKeys: [rawDefinition.shardKey, sharedDefinition.shardKey],
+    maximumStalenessMs: 2 * 60 * 60 * 1_000,
+    supportedEmbeddingModel: expectedIndex.embeddingModel,
+    evidence,
+    now: gateNow,
+  });
+  const refreshedGate = evaluateGate(gateEvidence);
+  const regressedGate = evaluateGate({
+    ...gateEvidence,
+    rollbackMonolithVerifiedAt:
+      new Date(rollbackValidationVerifiedAt.getTime() - 1),
+  });
+  const futureGate = evaluateGate({
+    ...gateEvidence,
+    rollbackMonolithVerifiedAt: new Date(gateNow.getTime() + 1),
+  });
+  const extendedExpiryGate = evaluateGate({
+    ...gateEvidence,
+    rollbackMonolithValidUntil: new Date('2026-08-25T01:20:00.000Z'),
+  });
+  if (
+    !refreshedGate.available
+    || refreshedGate.effectiveReadMode !== 'partitioned'
+    || regressedGate.available
+    || !regressedGate.reasonCodes.includes(
+      'CUTOVER_ROLLBACK_MONOLITH_UNAVAILABLE'
+    )
+    || futureGate.available
+    || !futureGate.reasonCodes.includes(
+      'CUTOVER_ROLLBACK_MONOLITH_UNAVAILABLE'
+    )
+    || extendedExpiryGate.available
+    || !extendedExpiryGate.reasonCodes.includes(
+      'CUTOVER_ROLLBACK_MONOLITH_UNAVAILABLE'
+    )
+  ) {
+    throw new Error('PREVIEW_BACKSTAGE_NOTION_PARTITION_CUTOVER_GATE_INVALID');
   }
   return NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT
     .partitionedAuthorityProofVersion;
@@ -8480,6 +8628,12 @@ export function createNativePrPreviewApplication(
               NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.proofHeaders
                 .partitionedAuthorityVersion,
               result.partitionedAuthorityProofVersion
+            );
+            response.setHeader(
+              NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.proofHeaders
+                .partitionCutoverRepairVersion,
+              NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT
+                .partitionCutoverRepairProofVersion
             );
           }
           if (

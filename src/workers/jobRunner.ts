@@ -2969,6 +2969,8 @@ async function run(): Promise<void> {
       signal: workerProcessShutdownController.signal,
       coordinator: backstageNotionSynchronizationCoordinator,
       cutoverEvidence: backstageNotionPartitionCutoverEvidence,
+      loadCutoverEvidence:
+        loadBackstageNotionPartitionCutoverGateEvidenceSet,
     });
 
     await Promise.all(slotRuntimePromises);

@@ -614,6 +614,9 @@ describe('Backstage Notion synchronization loop', () => {
     expect(source).toContain(
       'cutoverEvidence: backstageNotionPartitionCutoverEvidence'
     );
+    expect(source).toContain(
+      'loadCutoverEvidence:\n        loadBackstageNotionPartitionCutoverGateEvidenceSet'
+    );
   });
 
   it('does not require an OpenAI adapter for a keyless worker startup', () => {

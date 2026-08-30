@@ -25,6 +25,7 @@ const UNIVERSE_ID = 'my-universe-2k26';
 const MONOLITH_SNAPSHOT_ID = '11111111-1111-4111-8111-111111111111';
 const PARTITION_MANIFEST_ID = '22222222-2222-4222-8222-222222222222';
 const CONFIGURATION_VERSION_ID = '33333333-3333-4333-8333-333333333333';
+const CONFIGURATION_GENERATION = 'generation-7';
 const SOURCE_GENERATION_ID = '44444444-4444-4444-8444-444444444444';
 const OTHER_MANIFEST_ID = '55555555-5555-4555-8555-555555555555';
 const VERIFIED_AT = new Date('2026-08-30T12:00:00.000Z');
@@ -41,6 +42,7 @@ const ANCHOR: BackstageNotionPartitionCutoverValidationAnchor = Object.freeze({
   monolithSnapshotId: MONOLITH_SNAPSHOT_ID,
   partitionManifestId: PARTITION_MANIFEST_ID,
   partitionConfigurationVersionId: CONFIGURATION_VERSION_ID,
+  partitionConfigurationGeneration: CONFIGURATION_GENERATION,
   partitionConfigurationHash: hash('configuration'),
   partitionSourceGenerationId: SOURCE_GENERATION_ID,
   partitionSourceDigest: hash('source'),
@@ -384,6 +386,7 @@ describe('backstage Notion partition cutover validation producer', () => {
       cursorStabilityPassed: true,
       rollbackMonolithVerifiedAt: VERIFIED_AT,
       rollbackMonolithValidUntil: ROLLBACK_MONOLITH_VALID_UNTIL,
+      partitionConfigurationGeneration: CONFIGURATION_GENERATION,
     });
     expect(firstResult.attestationDigest).toMatch(/^[0-9a-f]{64}$/u);
     expect(secondResult.attestationDigest).toBe(firstResult.attestationDigest);
@@ -447,6 +450,23 @@ describe('backstage Notion partition cutover validation producer', () => {
     await expect(validateAndSealBackstageNotionPartitionCutover({
       universeId: UNIVERSE_ID,
       cases: CASES.filter(item => item.kind !== 'exact_scope'),
+      dependencies: fixture.dependencies,
+    })).rejects.toEqual(expectCode(
+      'BACKSTAGE_NOTION_PARTITION_CUTOVER_VALIDATION_INPUT_INVALID'
+    ));
+    expect(fixture.loadAnchor).not.toHaveBeenCalled();
+    expect(fixture.sealEvidence).not.toHaveBeenCalled();
+  });
+
+  it('rejects a scoped relevant case before it can satisfy relevant-routing coverage', async () => {
+    const fixture = createFixtureDependencies();
+    const scopedRelevantCases: readonly BackstageNotionPartitionCutoverValidationCase[] =
+      Object.freeze(CASES.map(item => item.kind === 'relevant'
+        ? Object.freeze({ ...item, query: EXACT_QUERY })
+        : item));
+    await expect(validateAndSealBackstageNotionPartitionCutover({
+      universeId: UNIVERSE_ID,
+      cases: scopedRelevantCases,
       dependencies: fixture.dependencies,
     })).rejects.toEqual(expectCode(
       'BACKSTAGE_NOTION_PARTITION_CUTOVER_VALIDATION_INPUT_INVALID'

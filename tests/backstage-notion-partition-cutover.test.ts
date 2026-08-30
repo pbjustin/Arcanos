@@ -286,6 +286,7 @@ function completeCutoverEvidence(input: Readonly<{
     rollbackMonolithSnapshotId: monolithRetrieval.snapshotId,
     rollbackMonolithReadable: true,
     rollbackMonolithChunkCount: monolithRetrieval.activeSnapshotChunkCount,
+    rollbackMonolithValidationVerifiedAt: new Date(now - 120_000),
     rollbackMonolithVerifiedAt: new Date(now - 120_000),
     rollbackMonolithValidUntil: new Date(now + 60 * 60_000),
     verifiedAt: new Date(now - 60_000),

@@ -7,6 +7,7 @@ import {
   type BackstageNotionPartitionCutoverMemberEvidence,
 } from '@shared/backstage/backstageNotionPartitionCutoverGate.js';
 import {
+  isBackstageNotionPartitionGeneration,
   BACKSTAGE_NOTION_PARTITION_MAX_SHARDS_PER_UNIVERSE,
 } from '@shared/backstage/backstageNotionPartitionCore.js';
 import {
@@ -30,6 +31,7 @@ export interface BackstageNotionPartitionCutoverValidationAnchorRecord {
   readonly monolithSnapshotId: string;
   readonly partitionManifestId: string;
   readonly partitionConfigurationVersionId: string;
+  readonly partitionConfigurationGeneration: string;
   readonly partitionConfigurationHash: string;
   readonly partitionSourceGenerationId: string;
   readonly partitionSourceDigest: string;
@@ -45,7 +47,10 @@ export interface SealBackstageNotionPartitionCutoverEvidenceInput {
   readonly monolithSnapshotId: string;
   readonly partitionManifestId: string;
   readonly partitionConfigurationVersionId: string;
+  readonly partitionConfigurationGeneration: string;
   readonly partitionConfigurationHash: string;
+  readonly expectedConfigurationGeneration: string;
+  readonly expectedConfigurationHash: string;
   readonly partitionSourceGenerationId: string;
   readonly partitionSourceDigest: string;
   readonly partitionSourceVerificationHash: string;
@@ -70,7 +75,11 @@ export interface SealBackstageNotionPartitionCutoverEvidenceInput {
 
 export interface BackstageNotionPartitionCutoverEvidenceRepository {
   loadValidationAnchor(
-    universeId: string
+    input: Readonly<{
+      universeId: string;
+      expectedConfigurationGeneration: string;
+      expectedConfigurationHash: string;
+    }>
   ): Promise<BackstageNotionPartitionCutoverValidationAnchorRecord | null>;
   sealEvidence(
     input: SealBackstageNotionPartitionCutoverEvidenceInput
@@ -88,6 +97,7 @@ interface ValidationAnchorRow {
   monolith_snapshot_id: string;
   partition_manifest_id: string;
   partition_configuration_version_id: string;
+  partition_configuration_generation: string;
   partition_configuration_hash: string;
   partition_source_generation_id: string;
   partition_source_digest: string;
@@ -134,6 +144,7 @@ interface GateEvidenceRow {
   unresolved_activation_count: number | string;
   rollback_monolith_snapshot_id: string;
   rollback_monolith_chunk_count: number | string;
+  rollback_monolith_validation_verified_at: TimestampValue;
   rollback_monolith_verified_at: TimestampValue;
   rollback_monolith_valid_until: TimestampValue;
   rollback_monolith_readable: boolean;
@@ -169,6 +180,7 @@ const GATE_MEMBER_ROW_FIELDS = new Set<keyof GateEvidenceRow>([
 const GATE_TIMESTAMP_ROW_FIELDS = new Set<keyof GateEvidenceRow>([
   'observed_at',
   'source_verified_at',
+  'rollback_monolith_validation_verified_at',
   'rollback_monolith_verified_at',
   'validated_at',
   'expires_at',
@@ -222,6 +234,13 @@ function requireUuid(value: string, label: string): string {
 
 function requireSha256(value: string, label: string): string {
   if (!SHA256_PATTERN.test(value)) {
+    throw new TypeError(`${label} is invalid.`);
+  }
+  return value;
+}
+
+function requireConfigurationGeneration(value: string, label: string): string {
+  if (!isBackstageNotionPartitionGeneration(value)) {
     throw new TypeError(`${label} is invalid.`);
   }
   return value;
@@ -354,6 +373,28 @@ function normalizeSealInput(
   ) {
     throw new TypeError('rollback monolith freshness is invalid.');
   }
+  const partitionConfigurationGeneration = requireConfigurationGeneration(
+    input.partitionConfigurationGeneration,
+    'partitionConfigurationGeneration'
+  );
+  const partitionConfigurationHash = requireSha256(
+    input.partitionConfigurationHash,
+    'partitionConfigurationHash'
+  );
+  const expectedConfigurationGeneration = requireConfigurationGeneration(
+    input.expectedConfigurationGeneration,
+    'expectedConfigurationGeneration'
+  );
+  const expectedConfigurationHash = requireSha256(
+    input.expectedConfigurationHash,
+    'expectedConfigurationHash'
+  );
+  if (
+    partitionConfigurationGeneration !== expectedConfigurationGeneration
+    || partitionConfigurationHash !== expectedConfigurationHash
+  ) {
+    throw new TypeError('cutover evidence configuration binding is inconsistent.');
+  }
   return Object.freeze({
     version: requireInputInteger(
       input.version,
@@ -374,10 +415,10 @@ function normalizeSealInput(
       input.partitionConfigurationVersionId,
       'partitionConfigurationVersionId'
     ),
-    partitionConfigurationHash: requireSha256(
-      input.partitionConfigurationHash,
-      'partitionConfigurationHash'
-    ),
+    partitionConfigurationGeneration,
+    partitionConfigurationHash,
+    expectedConfigurationGeneration,
+    expectedConfigurationHash,
     partitionSourceGenerationId: requireUuid(
       input.partitionSourceGenerationId,
       'partitionSourceGenerationId'
@@ -561,15 +602,29 @@ implements BackstageNotionPartitionCutoverEvidenceRepository {
   constructor(private readonly pool: Pool) {}
 
   async loadValidationAnchor(
-    universeId: string
+    input: Readonly<{
+      universeId: string;
+      expectedConfigurationGeneration: string;
+      expectedConfigurationHash: string;
+    }>
   ): Promise<BackstageNotionPartitionCutoverValidationAnchorRecord | null> {
-    const normalizedUniverseId = requireUniverseId(universeId);
+    const normalizedUniverseId = requireUniverseId(input.universeId);
+    const expectedConfigurationGeneration = requireConfigurationGeneration(
+      input.expectedConfigurationGeneration,
+      'expectedConfigurationGeneration'
+    );
+    const expectedConfigurationHash = requireSha256(
+      input.expectedConfigurationHash,
+      'expectedConfigurationHash'
+    );
     const result = await this.pool.query<ValidationAnchorRow>(
       `SELECT
          authority_head.universe_id,
          rollback_snapshot.id AS monolith_snapshot_id,
          manifest.id AS partition_manifest_id,
          configuration.id AS partition_configuration_version_id,
+         configuration.configuration_generation
+           AS partition_configuration_generation,
          configuration.configuration_hash AS partition_configuration_hash,
          manifest.source_generation_id AS partition_source_generation_id,
          manifest.source_digest AS partition_source_digest,
@@ -596,7 +651,10 @@ implements BackstageNotionPartitionCutoverEvidenceRepository {
          ON source_generation.universe_id = manifest.universe_id
         AND source_generation.source_generation_id = manifest.source_generation_id
        WHERE authority_head.universe_id = $1
-         AND ${COMPLETE_LIVE_MANIFEST_PREDICATE}
+          AND partition_head.desired_configuration_generation = $2
+          AND configuration.configuration_generation = $2
+          AND configuration.configuration_hash = $3
+          AND ${COMPLETE_LIVE_MANIFEST_PREDICATE}
          AND NOT EXISTS (
            SELECT 1
            FROM public.backstage_notion_shard_sync_leases AS lease
@@ -621,7 +679,11 @@ implements BackstageNotionPartitionCutoverEvidenceRepository {
            WHERE unresolved.universe_id = authority_head.universe_id
              AND unresolved.state = 'building'
          )`,
-      [normalizedUniverseId]
+      [
+        normalizedUniverseId,
+        expectedConfigurationGeneration,
+        expectedConfigurationHash,
+      ]
     );
     const row = result.rows[0];
     if (!row) {
@@ -643,6 +705,10 @@ implements BackstageNotionPartitionCutoverEvidenceRepository {
       partitionConfigurationVersionId: requireUuid(
         row.partition_configuration_version_id,
         'partition_configuration_version_id'
+      ),
+      partitionConfigurationGeneration: requireConfigurationGeneration(
+        row.partition_configuration_generation,
+        'partition_configuration_generation'
       ),
       partitionConfigurationHash: requireSha256(
         row.partition_configuration_hash,
@@ -778,6 +844,9 @@ implements BackstageNotionPartitionCutoverEvidenceRepository {
          AND manifest.source_verification_hash = $8
          AND partition_head.reconciliation_generation = $25::BIGINT
          AND authority_head.last_verified_at = $26::TIMESTAMPTZ
+          AND partition_head.desired_configuration_generation = $28
+          AND configuration.configuration_generation = $28
+          AND configuration.configuration_hash = $29
          AND $27::TIMESTAMPTZ > $23::TIMESTAMPTZ
          AND $27::TIMESTAMPTZ <=
            $26::TIMESTAMPTZ + INTERVAL '7 days'
@@ -877,6 +946,8 @@ implements BackstageNotionPartitionCutoverEvidenceRepository {
           evidence.rollbackMonolithValidUntil,
           'rollbackMonolithValidUntil'
         ).toISOString(),
+        evidence.expectedConfigurationGeneration,
+        evidence.expectedConfigurationHash,
       ]
     );
     if (result.rows.length !== 1 || result.rows[0]?.universe_id !== evidence.universeId) {
@@ -1006,8 +1077,8 @@ implements BackstageNotionPartitionCutoverEvidenceRepository {
              manifest.source_verification_hash
            AND evidence.reconciliation_generation =
              partition_head.reconciliation_generation
-           AND evidence.rollback_validation_verified_at =
-             authority_head.last_verified_at
+           AND authority_head.last_verified_at >=
+             evidence.rollback_validation_verified_at
             AND evidence.expires_at <= evidence.rollback_validation_valid_until
             AND evidence.expires_at >= statement_timestamp()
             AND authority_head.last_verified_at
@@ -1061,9 +1132,11 @@ implements BackstageNotionPartitionCutoverEvidenceRepository {
          pinned.unresolved_activation_count,
          pinned.rollback_monolith_snapshot_id,
          pinned.rollback_monolith_chunk_count,
-          pinned.rollback_monolith_verified_at,
-          pinned.rollback_validation_valid_until
-            AS rollback_monolith_valid_until,
+         pinned.rollback_validation_verified_at
+           AS rollback_monolith_validation_verified_at,
+         pinned.rollback_monolith_verified_at,
+         pinned.rollback_validation_valid_until
+           AS rollback_monolith_valid_until,
          pinned.rollback_monolith_readable,
          pinned.shadow_comparison_completed,
          pinned.exact_scope_parity_passed,
@@ -1173,6 +1246,10 @@ implements BackstageNotionPartitionCutoverEvidenceRepository {
         readable: row.member_readable === true,
       }));
     }
+    const rollbackValidationVerifiedAt = requireDate(
+      first.rollback_monolith_validation_verified_at,
+      'rollback_monolith_validation_verified_at'
+    );
     const rollbackVerifiedAt = requireDate(
       first.rollback_monolith_verified_at,
       'rollback_monolith_verified_at'
@@ -1371,6 +1448,7 @@ implements BackstageNotionPartitionCutoverEvidenceRepository {
         1,
         BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT
       ),
+      rollbackMonolithValidationVerifiedAt: rollbackValidationVerifiedAt,
       rollbackMonolithVerifiedAt: rollbackVerifiedAt,
       rollbackMonolithValidUntil: requireDate(
         first.rollback_monolith_valid_until,

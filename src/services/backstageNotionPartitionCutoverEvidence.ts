@@ -19,8 +19,9 @@ import { getEnvNumber } from '@platform/runtime/env.js';
 import type {
   BackstageNotionPartitionCutoverGateEvidence,
 } from '@shared/backstage/backstageNotionPartitionCutoverGate.js';
-import type {
-  BackstageNotionPartitionConfiguration,
+import {
+  isBackstageNotionPartitionGeneration,
+  type BackstageNotionPartitionConfiguration,
 } from '@shared/backstage/backstageNotionPartitionCore.js';
 import {
   BACKSTAGE_NOTION_RAG_MAX_STALENESS_DEFAULT_MS,
@@ -68,6 +69,11 @@ interface ValidationRuntimeCache {
   readonly monolith: BackstageNotionActiveSnapshotHeader;
 }
 
+export interface BackstageNotionPartitionCutoverExpectedConfiguration {
+  readonly generation: string;
+  readonly semanticDigest: string;
+}
+
 export interface BackstageNotionPartitionCutoverValidationRuntimeOverrides {
   readonly evidenceRepository?: BackstageNotionPartitionCutoverEvidenceRepository;
   readonly monolithRepository?: BackstageNotionRagRepository;
@@ -80,6 +86,26 @@ export interface BackstageNotionPartitionCutoverValidationRuntimeOverrides {
   readonly embedQuery?: (query: string) => Promise<number[]>;
   readonly maximumStalenessMs?: number;
   readonly now?: () => Date;
+  readonly assertRuntimePolicyCurrent?: () => void | Promise<void>;
+}
+
+const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
+
+function normalizeExpectedConfiguration(
+  input: BackstageNotionPartitionCutoverExpectedConfiguration
+): BackstageNotionPartitionCutoverExpectedConfiguration {
+  if (
+    !input
+    || typeof input !== 'object'
+    || !isBackstageNotionPartitionGeneration(input.generation)
+    || !SHA256_PATTERN.test(input.semanticDigest)
+  ) {
+    throw new TypeError('The expected partition configuration is invalid.');
+  }
+  return Object.freeze({
+    generation: input.generation,
+    semanticDigest: input.semanticDigest,
+  });
 }
 
 function withCursor(
@@ -176,8 +202,12 @@ export async function loadBackstageNotionPartitionCutoverGateEvidenceSet(
  * comparisons and the terminal anchor reload have passed.
  */
 export function createBackstageNotionPartitionCutoverValidationDependencies(
+  expectedConfigurationInput: BackstageNotionPartitionCutoverExpectedConfiguration,
   overrides: BackstageNotionPartitionCutoverValidationRuntimeOverrides = {}
 ): BackstageNotionPartitionCutoverValidationDependencies {
+  const expectedConfiguration = normalizeExpectedConfiguration(
+    expectedConfigurationInput
+  );
   const evidenceRepository = overrides.evidenceRepository
     ?? getBackstageNotionPartitionCutoverEvidenceRepository();
   const monolithRepository = overrides.monolithRepository
@@ -215,7 +245,11 @@ export function createBackstageNotionPartitionCutoverValidationDependencies(
   return Object.freeze({
     loadAnchor: async (universeId: string) => {
       const [anchor, monolith, partition, latestSyncAttempt] = await Promise.all([
-        evidenceRepository.loadValidationAnchor(universeId),
+        evidenceRepository.loadValidationAnchor({
+          universeId,
+          expectedConfigurationGeneration: expectedConfiguration.generation,
+          expectedConfigurationHash: expectedConfiguration.semanticDigest,
+        }),
         monolithRepository.loadActiveSnapshotHeader(universeId),
         partitionRepository.loadActiveManifestRoutingState(universeId),
         syncStatusRepository.loadLatestSyncAttempt(universeId),
@@ -240,7 +274,13 @@ export function createBackstageNotionPartitionCutoverValidationDependencies(
         || partition.manifestId !== anchor.partitionManifestId
         || partition.configurationVersionId
           !== anchor.partitionConfigurationVersionId
+        || partition.configurationGeneration
+          !== anchor.partitionConfigurationGeneration
+        || anchor.partitionConfigurationGeneration
+          !== expectedConfiguration.generation
         || partition.configurationHash !== anchor.partitionConfigurationHash
+        || anchor.partitionConfigurationHash
+          !== expectedConfiguration.semanticDigest
         || !partition.configurationCurrent
         || monolith.verifiedAt.getTime()
           !== anchor.rollbackMonolithVerifiedAt.getTime()
@@ -376,9 +416,16 @@ export function createBackstageNotionPartitionCutoverValidationDependencies(
         )
       ));
     },
-    sealEvidence: (
+    sealEvidence: async (
       evidence: BackstageNotionPartitionCutoverValidationAttestation
-    ) => evidenceRepository.sealEvidence(evidence),
+    ) => {
+      await overrides.assertRuntimePolicyCurrent?.();
+      await evidenceRepository.sealEvidence({
+        ...evidence,
+        expectedConfigurationGeneration: expectedConfiguration.generation,
+        expectedConfigurationHash: expectedConfiguration.semanticDigest,
+      });
+    },
     ...(overrides.now ? { now: overrides.now } : {}),
   });
 }
@@ -387,12 +434,14 @@ export function createBackstageNotionPartitionCutoverValidationDependencies(
 export async function validateAndPersistBackstageNotionPartitionCutover(input: {
   readonly universeId: string;
   readonly cases: readonly BackstageNotionPartitionCutoverValidationCase[];
+  readonly expectedConfiguration: BackstageNotionPartitionCutoverExpectedConfiguration;
   readonly overrides?: BackstageNotionPartitionCutoverValidationRuntimeOverrides;
 }): Promise<BackstageNotionPartitionCutoverValidationAttestation> {
   return validateAndSealBackstageNotionPartitionCutover({
     universeId: input.universeId,
     cases: input.cases,
     dependencies: createBackstageNotionPartitionCutoverValidationDependencies(
+      input.expectedConfiguration,
       input.overrides
     ),
   });

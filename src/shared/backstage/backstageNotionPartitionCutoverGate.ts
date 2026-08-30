@@ -105,6 +105,7 @@ export interface BackstageNotionPartitionCutoverGateEvidence {
   readonly rollbackMonolithSnapshotId: string | null;
   readonly rollbackMonolithReadable: boolean;
   readonly rollbackMonolithChunkCount: number;
+  readonly rollbackMonolithValidationVerifiedAt: Date | string | null;
   readonly rollbackMonolithVerifiedAt: Date | string | null;
   readonly rollbackMonolithValidUntil: Date | string | null;
   readonly verifiedAt: Date | string;
@@ -276,6 +277,8 @@ function validEvidenceShape(
     && evidence.rollbackMonolithChunkCount >= 0
     && evidence.rollbackMonolithChunkCount
       <= BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT
+    && (evidence.rollbackMonolithValidationVerifiedAt === null
+      || timeOf(evidence.rollbackMonolithValidationVerifiedAt) !== null)
     && (evidence.rollbackMonolithVerifiedAt === null
       || timeOf(evidence.rollbackMonolithVerifiedAt) !== null)
     && (evidence.rollbackMonolithValidUntil === null
@@ -453,6 +456,10 @@ export function evaluateBackstageNotionPartitionCutoverGate(input: {
   if (!evidence.parity.cursorStabilityPassed) {
     add('CUTOVER_CURSOR_STABILITY_FAILED');
   }
+  const rollbackMonolithValidationVerifiedAt =
+    evidence.rollbackMonolithValidationVerifiedAt === null
+      ? null
+      : timeOf(evidence.rollbackMonolithValidationVerifiedAt);
   const rollbackMonolithVerifiedAt = evidence.rollbackMonolithVerifiedAt === null
     ? null
     : timeOf(evidence.rollbackMonolithVerifiedAt);
@@ -463,10 +470,14 @@ export function evaluateBackstageNotionPartitionCutoverGate(input: {
     evidence.rollbackMonolithSnapshotId === null
     || !evidence.rollbackMonolithReadable
     || evidence.rollbackMonolithChunkCount < 1
+    || rollbackMonolithValidationVerifiedAt === null
     || rollbackMonolithVerifiedAt === null
     || rollbackMonolithValidUntil === null
-    || rollbackMonolithVerifiedAt > verifiedAt
-    || rollbackMonolithValidUntil <= rollbackMonolithVerifiedAt
+    || rollbackMonolithValidationVerifiedAt > verifiedAt
+    || rollbackMonolithVerifiedAt < rollbackMonolithValidationVerifiedAt
+    || rollbackMonolithVerifiedAt > now.getTime()
+    || rollbackMonolithValidUntil <= rollbackMonolithValidationVerifiedAt
+    || expiresAt > rollbackMonolithValidUntil
     || rollbackMonolithValidUntil < now.getTime()
     || now.getTime() - rollbackMonolithVerifiedAt > input.maximumStalenessMs
   ) {

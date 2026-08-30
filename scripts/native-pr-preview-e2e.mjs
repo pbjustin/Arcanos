@@ -3997,6 +3997,17 @@ async function executeRequestCase(
       );
     }
     if (
+      requestCase.fixtureName === 'notionAuthorityRag'
+      && response.headers.get(
+        contract.proofHeaders.partitionCutoverRepairVersion
+      ) !== contract.partitionCutoverRepairProofVersion
+    ) {
+      fail(
+        'NATIVE_PR_PREVIEW_BACKSTAGE_PARTITION_CUTOVER_REPAIR_PROOF_INVALID',
+        requestCase.caseId
+      );
+    }
+    if (
       requestCase.fixtureName === 'partitionFailureTelemetry'
       && response.headers.get(
         contract.proofHeaders.partitionFailureTelemetryVersion
@@ -4190,7 +4201,10 @@ async function executeRequestCase(
       : {}),
     ...(requestCase.expectedType === 'backstage-generation-contract'
       && requestCase.fixtureName === 'notionAuthorityRag'
-      ? { partitionedAuthorityVerified: true }
+      ? {
+          partitionCutoverRepairVerified: true,
+          partitionedAuthorityVerified: true,
+        }
       : {}),
     ...(requestCase.expectedType === 'backstage-generation-contract'
       && requestCase.fixtureName === 'partitionFailureTelemetry'

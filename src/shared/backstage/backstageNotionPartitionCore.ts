@@ -91,6 +91,13 @@ export type BackstageNotionPartitionedIndexModeResolution = Readonly<{
   status: 'absent' | 'valid' | 'invalid';
 }>;
 
+/** Keep partition writers confined to the exact shadow rollout mode. */
+export function isBackstageNotionPartitionSyncWriterEnabled(
+  resolution: BackstageNotionPartitionedIndexModeResolution
+): boolean {
+  return resolution.status === 'valid' && resolution.mode === 'shadow';
+}
+
 export interface BackstageNotionPartitionCapacity {
   readonly maxPages: number;
   readonly maxChunks: number;

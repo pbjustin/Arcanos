@@ -183,11 +183,17 @@ if (CONFIGURATION.status !== 'valid') {
   throw new Error('The runtime test partition configuration must be valid.');
 }
 
+const EXPECTED_CONFIGURATION = Object.freeze({
+  generation: CONFIGURATION.generation,
+  semanticDigest: CONFIGURATION.semanticDigest,
+});
+
 const ANCHOR = Object.freeze({
   universeId: UNIVERSE_ID,
   monolithSnapshotId: MONOLITH_SNAPSHOT_ID,
   partitionManifestId: PARTITION_MANIFEST_ID,
   partitionConfigurationVersionId: CONFIGURATION_VERSION_ID,
+  partitionConfigurationGeneration: CONFIGURATION.generation,
   partitionConfigurationHash: CONFIGURATION.semanticDigest,
   partitionSourceGenerationId: SOURCE_GENERATION_ID,
   partitionSourceDigest: hash('source'),
@@ -391,7 +397,9 @@ describe('Backstage Notion partition cutover evidence runtime', () => {
     monolith,
     routingState
   ) => {
-    const dependencies = createBackstageNotionPartitionCutoverValidationDependencies({
+    const dependencies = createBackstageNotionPartitionCutoverValidationDependencies(
+      EXPECTED_CONFIGURATION,
+      {
       evidenceRepository: evidenceRepository({
         loadValidationAnchor: jest.fn(async () => ({
           ...ANCHOR,
@@ -403,21 +411,26 @@ describe('Backstage Notion partition cutover evidence runtime', () => {
       syncStatusRepository: syncStatusRepository(),
       maximumStalenessMs: MAXIMUM_STALENESS_MS,
       now: () => new Date(NOW),
-    });
+      }
+    );
 
     await expect(dependencies.loadAnchor(UNIVERSE_ID)).resolves.toBeNull();
   });
 
   it('accepts a current complete monolith and preserves its exact freshness bound', async () => {
     const latestSync = syncStatusRepository();
-    const dependencies = createBackstageNotionPartitionCutoverValidationDependencies({
-      evidenceRepository: evidenceRepository(),
+    const repository = evidenceRepository();
+    const dependencies = createBackstageNotionPartitionCutoverValidationDependencies(
+      EXPECTED_CONFIGURATION,
+      {
+      evidenceRepository: repository,
       monolithRepository: monolithRepository(),
       partitionRepository: partitionRepository(),
       syncStatusRepository: latestSync,
       maximumStalenessMs: MAXIMUM_STALENESS_MS,
       now: () => new Date(NOW.getTime() + 15 * 60 * 1_000),
-    });
+      }
+    );
 
     await expect(dependencies.loadAnchor(UNIVERSE_ID)).resolves.toEqual({
       ...ANCHOR,
@@ -427,6 +440,11 @@ describe('Backstage Notion partition cutover evidence runtime', () => {
       ),
     });
     expect(latestSync.loadLatestSyncAttempt).toHaveBeenCalledWith(UNIVERSE_ID);
+    expect(repository.loadValidationAnchor).toHaveBeenCalledWith({
+      universeId: UNIVERSE_ID,
+      expectedConfigurationGeneration: CONFIGURATION.generation,
+      expectedConfigurationHash: CONFIGURATION.semanticDigest,
+    });
   });
 
   it.each([
@@ -443,33 +461,41 @@ describe('Backstage Notion partition cutover evidence runtime', () => {
       activatedSnapshotId: OTHER_MONOLITH_SNAPSHOT_ID,
     })],
   ])('rejects validation anchoring after a %s', async (_label, attempt) => {
-    const dependencies = createBackstageNotionPartitionCutoverValidationDependencies({
+    const dependencies = createBackstageNotionPartitionCutoverValidationDependencies(
+      EXPECTED_CONFIGURATION,
+      {
       evidenceRepository: evidenceRepository(),
       monolithRepository: monolithRepository(),
       partitionRepository: partitionRepository(),
       syncStatusRepository: syncStatusRepository(attempt),
       maximumStalenessMs: MAXIMUM_STALENESS_MS,
       now: () => new Date(NOW.getTime() + 15 * 60 * 1_000),
-    });
+      }
+    );
 
     await expect(dependencies.loadAnchor(UNIVERSE_ID)).resolves.toBeNull();
   });
 
   it('rejects validation anchoring after the monolith freshness bound expires', async () => {
-    const dependencies = createBackstageNotionPartitionCutoverValidationDependencies({
+    const dependencies = createBackstageNotionPartitionCutoverValidationDependencies(
+      EXPECTED_CONFIGURATION,
+      {
       evidenceRepository: evidenceRepository(),
       monolithRepository: monolithRepository(),
       partitionRepository: partitionRepository(),
       syncStatusRepository: syncStatusRepository(),
       maximumStalenessMs: MAXIMUM_STALENESS_MS,
       now: () => new Date(NOW.getTime() + MAXIMUM_STALENESS_MS + 1),
-    });
+      }
+    );
 
     await expect(dependencies.loadAnchor(UNIVERSE_ID)).resolves.toBeNull();
   });
 
   it('pins monolith and partition retrieval to the anchor loaded for the universe', async () => {
-    const dependencies = createBackstageNotionPartitionCutoverValidationDependencies({
+    const dependencies = createBackstageNotionPartitionCutoverValidationDependencies(
+      EXPECTED_CONFIGURATION,
+      {
       evidenceRepository: evidenceRepository(),
       monolithRepository: monolithRepository(),
       partitionRepository: partitionRepository(),
@@ -478,7 +504,8 @@ describe('Backstage Notion partition cutover evidence runtime', () => {
       embedQuery: async () => [1, 0],
       maximumStalenessMs: MAXIMUM_STALENESS_MS,
       now: () => new Date(NOW),
-    });
+      }
+    );
 
     await expect(dependencies.loadAnchor(UNIVERSE_ID)).resolves.toEqual(ANCHOR);
     await expect(dependencies.retrieveMonolithPinned({
@@ -505,7 +532,9 @@ describe('Backstage Notion partition cutover evidence runtime', () => {
 
   it('reuses one embedding promise across pinned monolith and partition paths', async () => {
     const embedQuery = jest.fn(async () => [1, 0]);
-    const dependencies = createBackstageNotionPartitionCutoverValidationDependencies({
+    const dependencies = createBackstageNotionPartitionCutoverValidationDependencies(
+      EXPECTED_CONFIGURATION,
+      {
       evidenceRepository: evidenceRepository(),
       monolithRepository: monolithRepository(),
       partitionRepository: partitionRepository(),
@@ -514,7 +543,8 @@ describe('Backstage Notion partition cutover evidence runtime', () => {
       embedQuery,
       maximumStalenessMs: MAXIMUM_STALENESS_MS,
       now: () => new Date(NOW),
-    });
+      }
+    );
 
     await dependencies.loadAnchor(UNIVERSE_ID);
     const query = 'same representative query';
@@ -548,22 +578,79 @@ describe('Backstage Notion partition cutover evidence runtime', () => {
     expect(retrievePartitionMock).toHaveBeenCalledTimes(1);
   });
 
+  it('rechecks runtime policy immediately before the exact configuration-bound seal', async () => {
+    const events: string[] = [];
+    const repository = evidenceRepository();
+    jest.mocked(repository.sealEvidence).mockImplementation(async () => {
+      events.push('seal');
+    });
+    const assertRuntimePolicyCurrent = jest.fn(async () => {
+      events.push('policy');
+    });
+    const dependencies = createBackstageNotionPartitionCutoverValidationDependencies(
+      EXPECTED_CONFIGURATION,
+      {
+        evidenceRepository: repository,
+        monolithRepository: monolithRepository(),
+        partitionRepository: partitionRepository(),
+        syncStatusRepository: syncStatusRepository(),
+        maximumStalenessMs: MAXIMUM_STALENESS_MS,
+        assertRuntimePolicyCurrent,
+      }
+    );
+
+    await dependencies.sealEvidence(sealedAttestation);
+
+    expect(events).toEqual(['policy', 'seal']);
+    expect(repository.sealEvidence).toHaveBeenCalledWith({
+      ...sealedAttestation,
+      expectedConfigurationGeneration: CONFIGURATION.generation,
+      expectedConfigurationHash: CONFIGURATION.semanticDigest,
+    });
+  });
+
+  it('does not reach the repository seal after the final policy recheck fails', async () => {
+    const repository = evidenceRepository();
+    const dependencies = createBackstageNotionPartitionCutoverValidationDependencies(
+      EXPECTED_CONFIGURATION,
+      {
+        evidenceRepository: repository,
+        monolithRepository: monolithRepository(),
+        partitionRepository: partitionRepository(),
+        syncStatusRepository: syncStatusRepository(),
+        maximumStalenessMs: MAXIMUM_STALENESS_MS,
+        assertRuntimePolicyCurrent: async () => {
+          throw new Error('mode drifted');
+        },
+      }
+    );
+
+    await expect(dependencies.sealEvidence(sealedAttestation)).rejects.toThrow(
+      'mode drifted'
+    );
+    expect(repository.sealEvidence).not.toHaveBeenCalled();
+  });
+
   it('does not run validation until the explicit facade is invoked', async () => {
     expect(validateAndSealMock).not.toHaveBeenCalled();
 
-    createBackstageNotionPartitionCutoverValidationDependencies({
+    createBackstageNotionPartitionCutoverValidationDependencies(
+      EXPECTED_CONFIGURATION,
+      {
       evidenceRepository: evidenceRepository(),
       monolithRepository: monolithRepository(),
       partitionRepository: partitionRepository(),
       syncStatusRepository: syncStatusRepository(),
       maximumStalenessMs: MAXIMUM_STALENESS_MS,
       now: () => new Date(NOW),
-    });
+      }
+    );
     expect(validateAndSealMock).not.toHaveBeenCalled();
 
     await expect(validateAndPersistBackstageNotionPartitionCutover({
       universeId: UNIVERSE_ID,
       cases: [],
+      expectedConfiguration: EXPECTED_CONFIGURATION,
       overrides: {
         evidenceRepository: evidenceRepository(),
         monolithRepository: monolithRepository(),

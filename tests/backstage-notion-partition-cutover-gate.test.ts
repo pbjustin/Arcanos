@@ -83,6 +83,8 @@ function completeEvidence(
     rollbackMonolithSnapshotId: MONOLITH_SNAPSHOT_ID,
     rollbackMonolithReadable: true,
     rollbackMonolithChunkCount: 10,
+    rollbackMonolithValidationVerifiedAt:
+      new Date('2026-08-29T10:58:00.000Z'),
     rollbackMonolithVerifiedAt: new Date('2026-08-29T10:58:00.000Z'),
     rollbackMonolithValidUntil: new Date('2026-08-29T13:00:00.000Z'),
     verifiedAt: new Date('2026-08-29T11:00:00.000Z'),
@@ -122,6 +124,53 @@ describe('Backstage Notion partition cutover gate', () => {
       effectiveReadMode: 'partitioned',
       manifestId: MANIFEST_ID,
       reasonCodes: [],
+    });
+  });
+
+  it('admits the same rollback snapshot after its current verification advances', () => {
+    const evidence = completeEvidence({
+      rollbackMonolithValidationVerifiedAt:
+        new Date('2026-08-29T10:58:00.000Z'),
+      rollbackMonolithVerifiedAt: new Date('2026-08-29T11:30:00.000Z'),
+    });
+
+    expect(evaluate(evidence)).toEqual({
+      available: true,
+      effectiveReadMode: 'partitioned',
+      manifestId: MANIFEST_ID,
+      reasonCodes: [],
+    });
+  });
+
+  it.each([
+    [
+      'current verification regresses behind the sealed validation anchor',
+      new Date('2026-08-29T10:57:59.999Z'),
+    ],
+    [
+      'current verification is in the future',
+      new Date('2026-08-29T12:00:00.001Z'),
+    ],
+  ] as const)('keeps cutover closed when %s', (_label, currentVerifiedAt) => {
+    expect(evaluate(completeEvidence({
+      rollbackMonolithValidationVerifiedAt:
+        new Date('2026-08-29T10:58:00.000Z'),
+      rollbackMonolithVerifiedAt: currentVerifiedAt,
+    }))).toMatchObject({
+      available: false,
+      effectiveReadMode: 'monolith',
+      reasonCodes: ['CUTOVER_ROLLBACK_MONOLITH_UNAVAILABLE'],
+    });
+  });
+
+  it('keeps the sealed evidence expiry within the original rollback validity', () => {
+    expect(evaluate(completeEvidence({
+      rollbackMonolithValidUntil: new Date('2026-08-29T12:30:00.000Z'),
+      expiresAt: new Date('2026-08-29T12:30:00.001Z'),
+    }))).toMatchObject({
+      available: false,
+      effectiveReadMode: 'monolith',
+      reasonCodes: ['CUTOVER_ROLLBACK_MONOLITH_UNAVAILABLE'],
     });
   });
 

@@ -3,8 +3,10 @@ import { createHash } from 'node:crypto';
 import {
   BACKSTAGE_NOTION_PARTITION_MAX_CHUNKS,
   BACKSTAGE_NOTION_PARTITION_MAX_SHARDS_PER_UNIVERSE,
+  isBackstageNotionPartitionGeneration,
 } from '@shared/backstage/backstageNotionPartitionCore.js';
 import {
+  isBackstageNotionPartitionCutoverValidationScopeCompatible,
   normalizeBackstageNotionPartitionRoutingIntent,
   type BackstageNotionPartitionRoutingIntent,
 } from '@shared/backstage/backstageNotionPartitionRoutingCore.js';
@@ -86,6 +88,7 @@ export interface BackstageNotionPartitionCutoverValidationAnchor {
   readonly monolithSnapshotId: string;
   readonly partitionManifestId: string;
   readonly partitionConfigurationVersionId: string;
+  readonly partitionConfigurationGeneration: string;
   readonly partitionConfigurationHash: string;
   readonly partitionSourceGenerationId: string;
   readonly partitionSourceDigest: string;
@@ -121,6 +124,7 @@ export interface BackstageNotionPartitionCutoverValidationAttestation {
   readonly monolithSnapshotId: string;
   readonly partitionManifestId: string;
   readonly partitionConfigurationVersionId: string;
+  readonly partitionConfigurationGeneration: string;
   readonly partitionConfigurationHash: string;
   readonly partitionSourceGenerationId: string;
   readonly partitionSourceDigest: string;
@@ -247,6 +251,9 @@ function normalizeAnchor(
     || !UUID_PATTERN.test(value.monolithSnapshotId)
     || !UUID_PATTERN.test(value.partitionManifestId)
     || !UUID_PATTERN.test(value.partitionConfigurationVersionId)
+    || !isBackstageNotionPartitionGeneration(
+      value.partitionConfigurationGeneration
+    )
     || !SHA256_PATTERN.test(value.partitionConfigurationHash)
     || !UUID_PATTERN.test(value.partitionSourceGenerationId)
     || !SHA256_PATTERN.test(value.partitionSourceDigest)
@@ -273,6 +280,8 @@ function sameAnchor(
     && left.monolithSnapshotId === right.monolithSnapshotId
     && left.partitionManifestId === right.partitionManifestId
     && left.partitionConfigurationVersionId === right.partitionConfigurationVersionId
+    && left.partitionConfigurationGeneration
+      === right.partitionConfigurationGeneration
     && left.partitionConfigurationHash === right.partitionConfigurationHash
     && left.partitionSourceGenerationId === right.partitionSourceGenerationId
     && left.partitionSourceDigest === right.partitionSourceDigest
@@ -510,9 +519,9 @@ function validateCases(
         candidateObject.kind !== 'complete_scope'
         && request.retrievalMode !== 'relevant'
       )
-      || (
-        (candidateObject.kind === 'exact_scope' || candidateObject.kind === 'complete_scope')
-        && !request.hasScope
+      || !isBackstageNotionPartitionCutoverValidationScopeCompatible(
+        candidateObject.kind,
+        request.hasScope
       )
     ) {
       fail('BACKSTAGE_NOTION_PARTITION_CUTOVER_VALIDATION_INPUT_INVALID');
@@ -534,6 +543,28 @@ function validateCases(
     fail('BACKSTAGE_NOTION_PARTITION_CUTOVER_VALIDATION_INPUT_INVALID');
   }
   return Object.freeze(normalized);
+}
+
+/** Pure preflight used by explicit operator tooling before any runtime effects. */
+export function validateBackstageNotionPartitionCutoverValidationInput(input: {
+  readonly universeId: unknown;
+  readonly cases: unknown;
+}): Readonly<{
+  universeId: string;
+  cases: readonly BackstageNotionPartitionCutoverValidationCase[];
+}> {
+  if (
+    typeof input.universeId !== 'string'
+    || !UNIVERSE_ID_PATTERN.test(input.universeId)
+  ) {
+    fail('BACKSTAGE_NOTION_PARTITION_CUTOVER_VALIDATION_INPUT_INVALID');
+  }
+  return Object.freeze({
+    universeId: input.universeId,
+    cases: validateCases(
+      input.cases as readonly BackstageNotionPartitionCutoverValidationCase[]
+    ),
+  });
 }
 
 function relevantIntentShape(
@@ -933,8 +964,7 @@ export async function validateAndSealBackstageNotionPartitionCutover(input: {
   readonly dependencies: BackstageNotionPartitionCutoverValidationDependencies;
 }): Promise<BackstageNotionPartitionCutoverValidationAttestation> {
   if (
-    !UNIVERSE_ID_PATTERN.test(input.universeId)
-    || !input.dependencies
+    !input.dependencies
     || typeof input.dependencies.loadAnchor !== 'function'
     || typeof input.dependencies.retrieveMonolithPinned !== 'function'
     || typeof input.dependencies.derivePartitionPlan !== 'function'
@@ -947,8 +977,12 @@ export async function validateAndSealBackstageNotionPartitionCutover(input: {
   ) {
     fail('BACKSTAGE_NOTION_PARTITION_CUTOVER_VALIDATION_INPUT_INVALID');
   }
-  const cases = validateCases(input.cases);
-  const anchor = await loadAnchor(input.universeId, input.dependencies);
+  const normalizedInput = validateBackstageNotionPartitionCutoverValidationInput({
+    universeId: input.universeId,
+    cases: input.cases,
+  });
+  const cases = normalizedInput.cases;
+  const anchor = await loadAnchor(normalizedInput.universeId, input.dependencies);
   const caseAttestations: BackstageNotionPartitionCutoverValidationCaseAttestation[] = [];
 
   for (const candidate of cases) {
@@ -1042,6 +1076,7 @@ export async function validateAndSealBackstageNotionPartitionCutover(input: {
     monolithSnapshotId: anchor.monolithSnapshotId,
     partitionManifestId: anchor.partitionManifestId,
     partitionConfigurationVersionId: anchor.partitionConfigurationVersionId,
+    partitionConfigurationGeneration: anchor.partitionConfigurationGeneration,
     partitionConfigurationHash: anchor.partitionConfigurationHash,
     partitionSourceGenerationId: anchor.partitionSourceGenerationId,
     partitionSourceDigest: anchor.partitionSourceDigest,
@@ -1073,7 +1108,7 @@ export async function validateAndSealBackstageNotionPartitionCutover(input: {
     validatedAt: new Date(now.getTime()),
   });
 
-  const terminalAnchor = await loadAnchor(input.universeId, input.dependencies);
+  const terminalAnchor = await loadAnchor(normalizedInput.universeId, input.dependencies);
   if (!sameAnchor(anchor, terminalAnchor)) {
     fail('BACKSTAGE_NOTION_PARTITION_CUTOVER_VALIDATION_ANCHOR_CHANGED');
   }

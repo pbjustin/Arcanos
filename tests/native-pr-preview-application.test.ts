@@ -1703,6 +1703,11 @@ describe('native PR contained application', () => {
       ]
     ).toBe(contract.partitionedAuthorityProofVersion);
     expect(
+      notionAuthorityRag.headers[
+        contract.proofHeaders.partitionCutoverRepairVersion
+      ]
+    ).toBe(contract.partitionCutoverRepairProofVersion);
+    expect(
       partitionFailureTelemetry.headers[
         contract.proofHeaders.partitionFailureTelemetryVersion
       ]
@@ -1748,6 +1753,11 @@ describe('native PR contained application', () => {
       expect(
         response.headers[
           contract.proofHeaders.partitionedAuthorityVersion
+        ]
+      ).toBeUndefined();
+      expect(
+        response.headers[
+          contract.proofHeaders.partitionCutoverRepairVersion
         ]
       ).toBeUndefined();
     }
@@ -1980,6 +1990,8 @@ describe('native PR contained application', () => {
     ).toBeUndefined();
     expect(response.headers[contract.proofHeaders.partitionedAuthorityVersion])
       .toBeUndefined();
+    expect(response.headers[contract.proofHeaders.partitionCutoverRepairVersion])
+      .toBeUndefined();
     expect(
       response.headers[
         contract.proofHeaders.partitionFailureTelemetryVersion
@@ -2113,6 +2125,9 @@ describe('native PR contained application', () => {
       ).toBeUndefined();
       expect(
         response.headers[contract.proofHeaders.partitionedAuthorityVersion]
+      ).toBeUndefined();
+      expect(
+        response.headers[contract.proofHeaders.partitionCutoverRepairVersion]
       ).toBeUndefined();
       expect(
         response.headers[

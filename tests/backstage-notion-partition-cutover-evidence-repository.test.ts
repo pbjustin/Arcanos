@@ -10,6 +10,7 @@ const UNIVERSE_ID = 'my-universe-2k26';
 const MONOLITH_SNAPSHOT_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const MANIFEST_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const CONFIGURATION_VERSION_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+const CONFIGURATION_GENERATION = 'generation-7';
 const SOURCE_GENERATION_ID = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
 const CONFIGURATION_HASH = '1'.repeat(64);
 const SOURCE_DIGEST = '2'.repeat(64);
@@ -19,6 +20,7 @@ const RECONCILIATION_GENERATION = 12;
 const OBSERVED_AT = new Date('2026-08-30T12:00:00.000Z');
 const SOURCE_VERIFIED_AT = new Date('2026-08-30T11:50:00.000Z');
 const ROLLBACK_VERIFIED_AT = new Date('2026-08-30T11:55:00.000Z');
+const ROLLBACK_CURRENT_VERIFIED_AT = new Date('2026-08-30T11:58:00.000Z');
 const ROLLBACK_VALID_UNTIL = new Date('2026-09-06T11:55:00.000Z');
 const VALIDATED_AT = new Date('2026-08-30T11:59:00.000Z');
 const EXPIRES_AT = new Date('2026-08-31T11:59:00.000Z');
@@ -110,6 +112,7 @@ function validationAnchorRow(
     monolith_snapshot_id: MONOLITH_SNAPSHOT_ID,
     partition_manifest_id: MANIFEST_ID,
     partition_configuration_version_id: CONFIGURATION_VERSION_ID,
+    partition_configuration_generation: CONFIGURATION_GENERATION,
     partition_configuration_hash: CONFIGURATION_HASH,
     partition_source_generation_id: SOURCE_GENERATION_ID,
     partition_source_digest: SOURCE_DIGEST,
@@ -129,7 +132,10 @@ function sealInput(
     monolithSnapshotId: MONOLITH_SNAPSHOT_ID,
     partitionManifestId: MANIFEST_ID,
     partitionConfigurationVersionId: CONFIGURATION_VERSION_ID,
+    partitionConfigurationGeneration: CONFIGURATION_GENERATION,
     partitionConfigurationHash: CONFIGURATION_HASH,
+    expectedConfigurationGeneration: CONFIGURATION_GENERATION,
+    expectedConfigurationHash: CONFIGURATION_HASH,
     partitionSourceGenerationId: SOURCE_GENERATION_ID,
     partitionSourceDigest: SOURCE_DIGEST,
     partitionSourceVerificationHash: SOURCE_VERIFICATION_HASH,
@@ -197,7 +203,8 @@ function gateRow(
     unresolved_activation_count: '0',
     rollback_monolith_snapshot_id: MONOLITH_SNAPSHOT_ID,
     rollback_monolith_chunk_count: '4096',
-    rollback_monolith_verified_at: ROLLBACK_VERIFIED_AT,
+    rollback_monolith_validation_verified_at: ROLLBACK_VERIFIED_AT,
+    rollback_monolith_verified_at: ROLLBACK_CURRENT_VERIFIED_AT,
     rollback_monolith_valid_until: ROLLBACK_VALID_UNTIL,
     rollback_monolith_readable: true,
     shadow_comparison_completed: true,
@@ -227,11 +234,16 @@ describe('PostgresBackstageNotionPartitionCutoverEvidenceRepository', () => {
       harness.pool
     );
 
-    await expect(repository.loadValidationAnchor(UNIVERSE_ID)).resolves.toEqual({
+    await expect(repository.loadValidationAnchor({
+      universeId: UNIVERSE_ID,
+      expectedConfigurationGeneration: CONFIGURATION_GENERATION,
+      expectedConfigurationHash: CONFIGURATION_HASH,
+    })).resolves.toEqual({
       universeId: UNIVERSE_ID,
       monolithSnapshotId: MONOLITH_SNAPSHOT_ID,
       partitionManifestId: MANIFEST_ID,
       partitionConfigurationVersionId: CONFIGURATION_VERSION_ID,
+      partitionConfigurationGeneration: CONFIGURATION_GENERATION,
       partitionConfigurationHash: CONFIGURATION_HASH,
       partitionSourceGenerationId: SOURCE_GENERATION_ID,
       partitionSourceDigest: SOURCE_DIGEST,
@@ -243,12 +255,21 @@ describe('PostgresBackstageNotionPartitionCutoverEvidenceRepository', () => {
     expect(harness.query).toHaveBeenCalledTimes(1);
     const [rawSql, values] = harness.query.mock.calls[0] as [string, unknown[]];
     const sql = normalizeSql(rawSql);
-    expect(values).toEqual([UNIVERSE_ID]);
+    expect(values).toEqual([
+      UNIVERSE_ID,
+      CONFIGURATION_GENERATION,
+      CONFIGURATION_HASH,
+    ]);
     expectCurrentSuccessfulMonolithPin(sql);
     expect(sql).toContain('partition_head.active_manifest_id = manifest.id');
     expect(sql).toContain(
       'partition_head.active_configuration_version_id = configuration.id'
     );
+    expect(sql).toContain(
+      'partition_head.desired_configuration_generation = $2'
+    );
+    expect(sql).toContain('configuration.configuration_generation = $2');
+    expect(sql).toContain('configuration.configuration_hash = $3');
     expect(sql).toContain(
       'source_generation.source_generation_id = manifest.source_generation_id'
     );
@@ -265,7 +286,11 @@ describe('PostgresBackstageNotionPartitionCutoverEvidenceRepository', () => {
       harness.pool
     );
 
-    await expect(repository.loadValidationAnchor(UNIVERSE_ID)).resolves.toBeNull();
+    await expect(repository.loadValidationAnchor({
+      universeId: UNIVERSE_ID,
+      expectedConfigurationGeneration: CONFIGURATION_GENERATION,
+      expectedConfigurationHash: CONFIGURATION_HASH,
+    })).resolves.toBeNull();
   });
 
   test.each([
@@ -277,7 +302,11 @@ describe('PostgresBackstageNotionPartitionCutoverEvidenceRepository', () => {
       harness.pool
     );
 
-    await expect(repository.loadValidationAnchor(UNIVERSE_ID)).rejects.toThrow(
+    await expect(repository.loadValidationAnchor({
+      universeId: UNIVERSE_ID,
+      expectedConfigurationGeneration: CONFIGURATION_GENERATION,
+      expectedConfigurationHash: CONFIGURATION_HASH,
+    })).rejects.toThrow(
       'Partition cutover validation anchor is inconsistent.'
     );
   });
@@ -312,6 +341,11 @@ describe('PostgresBackstageNotionPartitionCutoverEvidenceRepository', () => {
     expect(sql).toContain('manifest.id = $3::UUID');
     expect(sql).toContain('configuration.id = $4::UUID');
     expect(sql).toContain('configuration.configuration_hash = $5');
+    expect(sql).toContain(
+      'partition_head.desired_configuration_generation = $28'
+    );
+    expect(sql).toContain('configuration.configuration_generation = $28');
+    expect(sql).toContain('configuration.configuration_hash = $29');
     expect(sql).toContain('manifest.source_generation_id = $6::UUID');
     expect(sql).toContain('manifest.source_digest = $7');
     expect(sql).toContain('manifest.source_verification_hash = $8');
@@ -332,7 +366,7 @@ describe('PostgresBackstageNotionPartitionCutoverEvidenceRepository', () => {
     expect(rawSql).not.toContain(privateCaseContent);
     expect(values).not.toContain(privateCaseContent);
     expect(JSON.stringify(values)).not.toContain('prompt');
-    expect(values).toHaveLength(27);
+    expect(values).toHaveLength(29);
     expect(values.slice(0, 8)).toEqual([
       UNIVERSE_ID,
       MONOLITH_SNAPSHOT_ID,
@@ -343,16 +377,26 @@ describe('PostgresBackstageNotionPartitionCutoverEvidenceRepository', () => {
       SOURCE_DIGEST,
       SOURCE_VERIFICATION_HASH,
     ]);
-    expect(values.slice(-3)).toEqual([
+    expect(values.slice(-5)).toEqual([
       RECONCILIATION_GENERATION,
       ROLLBACK_VERIFIED_AT.toISOString(),
       ROLLBACK_VALID_UNTIL.toISOString(),
+      CONFIGURATION_GENERATION,
+      CONFIGURATION_HASH,
     ]);
   });
 
   test.each([
     ['zero total cases', { caseCount: 0 }],
     ['zero reconciliation generation', { reconciliationGeneration: 0 }],
+    [
+      'mismatched expected configuration generation',
+      { expectedConfigurationGeneration: 'generation-8' },
+    ],
+    [
+      'mismatched expected configuration digest',
+      { expectedConfigurationHash: '9'.repeat(64) },
+    ],
     [
       'rollback verification after validation',
       { rollbackMonolithVerifiedAt: new Date('2026-08-30T12:00:00.000Z') },
@@ -439,6 +483,8 @@ describe('PostgresBackstageNotionPartitionCutoverEvidenceRepository', () => {
       rollbackMonolithSnapshotId: MONOLITH_SNAPSHOT_ID,
       rollbackMonolithReadable: true,
       rollbackMonolithChunkCount: 4096,
+      rollbackMonolithValidationVerifiedAt: ROLLBACK_VERIFIED_AT,
+      rollbackMonolithVerifiedAt: ROLLBACK_CURRENT_VERIFIED_AT,
       parity: {
         shadowComparisonCompleted: true,
         exactScopeParityPassed: true,
@@ -469,7 +515,7 @@ describe('PostgresBackstageNotionPartitionCutoverEvidenceRepository', () => {
     const sql = normalizeSql(rawSql);
     expectCurrentSuccessfulMonolithPin(sql);
     expect(sql).toContain(
-      'evidence.rollback_validation_verified_at = authority_head.last_verified_at'
+      'authority_head.last_verified_at >= evidence.rollback_validation_verified_at'
     );
     expect(sql).toContain(
       'evidence.expires_at <= evidence.rollback_validation_valid_until'
@@ -494,7 +540,7 @@ describe('PostgresBackstageNotionPartitionCutoverEvidenceRepository', () => {
     const sql = normalizeSql(rawSql);
     expectCurrentSuccessfulMonolithPin(sql);
     expect(sql).toContain(
-      'evidence.rollback_validation_verified_at = authority_head.last_verified_at'
+      'authority_head.last_verified_at >= evidence.rollback_validation_verified_at'
     );
     expect(sql).toContain('evidence.expires_at >= statement_timestamp()');
   });

@@ -67,6 +67,7 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/shared/backstage/backstageGenerationError.ts',
   'src/shared/backstage/backstageNotionContextCore.ts',
   'src/shared/backstage/backstageNotionPartitionCore.ts',
+  'src/shared/backstage/backstageNotionPartitionCutoverGate.ts',
   'src/shared/backstage/backstageNotionPartitionMaterialCore.ts',
   'src/shared/backstage/backstageNotionPartitionRoutingCore.ts',
   'src/shared/backstage/backstageNotionPartitionSyncCore.ts',
@@ -751,7 +752,11 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ],
   [
     'src/shared/backstage/backstageNotionPartitionCore.ts',
-    '09f967c8ceaf705034ef981e5ed7729dbf9aba2e5c6189663be03a1abb178a26',
+    '4d5e2e0fe95472e6c9f604950c137bfec2791b6862349891137cf5601bb30677',
+  ],
+  [
+    'src/shared/backstage/backstageNotionPartitionCutoverGate.ts',
+    '365af15d4cc9bacd477ddd79a3f340627ac12d2130617a82349dd0bd0a49469c',
   ],
   [
     'src/shared/backstage/backstageNotionPartitionMaterialCore.ts',
@@ -759,7 +764,7 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ],
   [
     'src/shared/backstage/backstageNotionPartitionRoutingCore.ts',
-    '28c0e5a78453e83446d4c45c1495cf594756309bf956974c1c5ad388fe4b2f50',
+    'b990aa15b17c8ab5ab607a3a012cf825f14b626af205c5d0068e3e8bff3b273b',
   ],
   [
     'src/shared/backstage/backstageNotionPartitionSyncCore.ts',
