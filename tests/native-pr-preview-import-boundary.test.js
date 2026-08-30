@@ -1031,8 +1031,8 @@ describe('native PR preview import boundary', () => {
     );
     const weakenedWriterFence = replaceRequired(
       syncCoreSource,
-      'export const BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT = 2_048;',
-      'export const BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT = 4_096;'
+      'export const BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT = 4_096;',
+      'export const BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT = 8_192;'
     );
     for (const [filePath, sourceText] of [
       [canaryFile, broadenedCanary],

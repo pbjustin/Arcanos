@@ -32,6 +32,7 @@ import {
 import {
   BACKSTAGE_NOTION_RAG_HEADING_INDEX_VERSION,
   BACKSTAGE_NOTION_RAG_PAGE_FORMAT,
+  prepareBackstageNotionRagPage,
 } from '../src/shared/backstage/backstageNotionRagCore.js';
 import {
   BACKSTAGE_NOTION_AUTHORITY_ROOTS_ENV_NAME,
@@ -626,30 +627,53 @@ describe('Backstage Notion authority synchronization', () => {
 
   it.each([
     {
-      chunkCount: BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT,
+      chunkCount: 2_307,
+      pageCount: 366,
       accepted: true,
     },
     {
-      chunkCount: 2_117,
-      accepted: false,
+      chunkCount: BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT,
+      pageCount: 64,
+      accepted: true,
     },
     {
       chunkCount: BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT + 1,
+      pageCount: 64,
       accepted: false,
     },
-  ])('enforces the compatibility-release writer boundary at $chunkCount chunks', async ({
+  ])('enforces the bounded writer release at $chunkCount chunks', async ({
     chunkCount,
+    pageCount,
     accepted,
   }) => {
-    const pageCount = 32;
-    const baseChunksPerPage = Math.floor(chunkCount / pageCount);
-    const extraChunkPages = chunkCount % pageCount;
-    const pages = Array.from({ length: pageCount }, (_, index): TestNotionPage => {
+    const pageStubs = Array.from({ length: pageCount }, (_, index): TestNotionPage => ({
+      pageId: pageId(index),
+      parentPageId: index === 0 ? null : pageId(0),
+      title: index === 0 ? 'WWE Universe Mode' : `Child Universe ${index}`,
+      markdown: '',
+    }));
+    const navigationMarkdown = pageStubs.slice(1).map(pageTag).join('\n');
+    const rootStub = pageStubs[0] ?? {
+      pageId: pageId(0),
+      parentPageId: null,
+      title: 'WWE Universe Mode',
+      markdown: '',
+    };
+    const navigationChunkOverhead = prepareBackstageNotionRagPage({
+      universeId,
+      pageId: rootStub.pageId,
+      parentPageId: null,
+      title: rootStub.title,
+      path: [rootStub.title],
+      markdown: `## Synthetic probe\n\nvalue-probe\n\n${navigationMarkdown}`,
+    }).chunks.length - 1;
+    const syntheticChunkCount = chunkCount - navigationChunkOverhead;
+    const baseChunksPerPage = Math.floor(syntheticChunkCount / pageCount);
+    const extraChunkPages = syntheticChunkCount % pageCount;
+    const pages = pageStubs.map((stub, index): TestNotionPage => {
       const chunksForPage = baseChunksPerPage + (index < extraChunkPages ? 1 : 0);
       return {
-        pageId: pageId(index),
-        parentPageId: index === 0 ? null : pageId(0),
-        title: index === 0 ? 'WWE Universe Mode' : `Child Universe ${index}`,
+        ...stub,
         markdown: Array.from(
           { length: chunksForPage },
           (_unused, chunkIndex) => (
@@ -658,7 +682,7 @@ describe('Backstage Notion authority synchronization', () => {
         ).join('\n\n'),
       };
     });
-    pages[0].markdown += `\n\n${pages.slice(1).map(pageTag).join('\n')}`;
+    pages[0].markdown += `\n\n${navigationMarkdown}`;
     const continuationId = pageId(2_000);
     const continuationPage: TestNotionPage | null = accepted
       ? {
@@ -695,6 +719,7 @@ describe('Backstage Notion authority synchronization', () => {
     if (accepted) {
       await expect(sync).resolves.toMatchObject({
         status: 'activated',
+        pageCount,
         chunkCount,
       });
       expect(repository.activateSnapshot).toHaveBeenCalledTimes(1);
@@ -725,8 +750,17 @@ describe('Backstage Notion authority synchronization', () => {
           pagesDiscovered: pageCount,
           pagesFetched: pageCount,
           blocksFetched: pageCount,
+          normalizedSegments: expect.any(Number),
+          emptySegmentsRemoved: expect.any(Number),
+          exactDuplicatesRemoved: 0,
+          adjacentSegmentsMerged: expect.any(Number),
           chunksProduced: chunkCount,
           chunksEmbedded: 0,
+          minimumChunkCodePoints: expect.any(Number),
+          maximumChunkCodePoints: expect.any(Number),
+          medianChunkCodePoints: expect.any(Number),
+          reusedEmbeddingCount: 0,
+          newEmbeddingCount: 0,
           notionRetryCount: 0,
           rateLimitWaitMs: 0,
           candidateSnapshotCreated: false,
@@ -737,6 +771,7 @@ describe('Backstage Notion authority synchronization', () => {
         },
       });
       expect(embedBatch).not.toHaveBeenCalled();
+      expect(repository.loadReusableEmbeddings).not.toHaveBeenCalled();
       expect(repository.activateSnapshot).not.toHaveBeenCalled();
     }
   });

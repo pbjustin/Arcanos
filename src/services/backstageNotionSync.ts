@@ -138,8 +138,17 @@ export interface BackstageNotionSyncFailureDiagnostics {
   pagesFetched: number;
   blocksFetched: number;
   paginationRequests: number;
+  normalizedSegments: number;
+  emptySegmentsRemoved: number;
+  exactDuplicatesRemoved: number;
+  adjacentSegmentsMerged: number;
   chunksProduced: number;
   chunksEmbedded: number;
+  minimumChunkCodePoints: number;
+  maximumChunkCodePoints: number;
+  medianChunkCodePoints: number;
+  reusedEmbeddingCount: number;
+  newEmbeddingCount: number;
   notionRetryCount: number;
   rateLimitWaitMs: number;
   elapsedMs: number;
@@ -250,8 +259,17 @@ function createSyncProgress(): BackstageNotionSyncProgress {
     pagesFetched: 0,
     blocksFetched: 0,
     paginationRequests: 0,
+    normalizedSegments: 0,
+    emptySegmentsRemoved: 0,
+    exactDuplicatesRemoved: 0,
+    adjacentSegmentsMerged: 0,
     chunksProduced: 0,
     chunksEmbedded: 0,
+    minimumChunkCodePoints: 0,
+    maximumChunkCodePoints: 0,
+    medianChunkCodePoints: 0,
+    reusedEmbeddingCount: 0,
+    newEmbeddingCount: 0,
     notionRetryCount: 0,
     rateLimitWaitMs: 0,
     candidateSnapshotCreated: false,
@@ -272,8 +290,17 @@ function snapshotSyncFailureDiagnostics(
     pagesFetched: progress.pagesFetched,
     blocksFetched: progress.blocksFetched,
     paginationRequests: progress.paginationRequests,
+    normalizedSegments: progress.normalizedSegments,
+    emptySegmentsRemoved: progress.emptySegmentsRemoved,
+    exactDuplicatesRemoved: progress.exactDuplicatesRemoved,
+    adjacentSegmentsMerged: progress.adjacentSegmentsMerged,
     chunksProduced: progress.chunksProduced,
     chunksEmbedded: progress.chunksEmbedded,
+    minimumChunkCodePoints: progress.minimumChunkCodePoints,
+    maximumChunkCodePoints: progress.maximumChunkCodePoints,
+    medianChunkCodePoints: progress.medianChunkCodePoints,
+    reusedEmbeddingCount: progress.reusedEmbeddingCount,
+    newEmbeddingCount: progress.newEmbeddingCount,
     notionRetryCount: progress.notionRetryCount,
     rateLimitWaitMs: progress.rateLimitWaitMs,
     elapsedMs: Math.max(0, Date.now() - progress.startedAt),
@@ -923,8 +950,38 @@ async function buildSnapshotChunks(input: {
   progress: BackstageNotionSyncProgress;
 }): Promise<BackstageNotionSnapshotChunkInput[]> {
   const chunks = input.pages.flatMap(page => [...page.prepared.chunks]);
+  const sortedChunkSizes = chunks
+    .map(chunk => chunk.codePoints)
+    .sort((left, right) => left - right);
+  const middleChunkIndex = Math.floor(sortedChunkSizes.length / 2);
+  input.progress.normalizedSegments = input.pages.reduce(
+    (total, page) => total + page.prepared.chunkDiagnostics.normalizedSegments,
+    0
+  );
+  input.progress.emptySegmentsRemoved = input.pages.reduce(
+    (total, page) => total + page.prepared.chunkDiagnostics.emptySegmentsRemoved,
+    0
+  );
+  input.progress.exactDuplicatesRemoved = input.pages.reduce(
+    (total, page) => total + page.prepared.chunkDiagnostics.exactDuplicatesRemoved,
+    0
+  );
+  input.progress.adjacentSegmentsMerged = input.pages.reduce(
+    (total, page) => total + page.prepared.chunkDiagnostics.adjacentSegmentsMerged,
+    0
+  );
   input.progress.phase = 'chunking';
   input.progress.chunksProduced = chunks.length;
+  input.progress.minimumChunkCodePoints = sortedChunkSizes[0] ?? 0;
+  input.progress.maximumChunkCodePoints = sortedChunkSizes.at(-1) ?? 0;
+  input.progress.medianChunkCodePoints = sortedChunkSizes.length === 0
+    ? 0
+    : sortedChunkSizes.length % 2 === 1
+      ? sortedChunkSizes[middleChunkIndex]!
+      : Math.floor(
+          ((sortedChunkSizes[middleChunkIndex - 1] ?? 0)
+            + (sortedChunkSizes[middleChunkIndex] ?? 0)) / 2
+        );
   if (chunks.length < 1 || chunks.length > BACKSTAGE_NOTION_SYNC_MAX_CHUNKS) {
     throw incompleteSyncError(
       input.progress,
@@ -947,6 +1004,8 @@ async function buildSnapshotChunks(input: {
     input.signal
   );
   const missingHashes = hashes.filter(hash => !embeddings.has(hash));
+  input.progress.reusedEmbeddingCount = hashes.length - missingHashes.length;
+  input.progress.newEmbeddingCount = missingHashes.length;
   let embeddingDimension: number | null = null;
   const validateEmbedding = (embedding: number[] | undefined): number[] => {
     if (
@@ -1607,6 +1666,17 @@ export async function syncBackstageNotionAuthorityRoot(
       universeId: root.universeId,
       pageCount: snapshot.pageCount,
       chunkCount: snapshot.chunkCount,
+      normalizedSegments: progress.normalizedSegments,
+      emptySegmentsRemoved: progress.emptySegmentsRemoved,
+      exactDuplicatesRemoved: progress.exactDuplicatesRemoved,
+      adjacentSegmentsMerged: progress.adjacentSegmentsMerged,
+      chunksProduced: progress.chunksProduced,
+      chunksEmbedded: progress.chunksEmbedded,
+      minimumChunkCodePoints: progress.minimumChunkCodePoints,
+      maximumChunkCodePoints: progress.maximumChunkCodePoints,
+      medianChunkCodePoints: progress.medianChunkCodePoints,
+      reusedEmbeddingCount: progress.reusedEmbeddingCount,
+      newEmbeddingCount: progress.newEmbeddingCount,
       durationMs: Date.now() - startedAt,
     });
     return {

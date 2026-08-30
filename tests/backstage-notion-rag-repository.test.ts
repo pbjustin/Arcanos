@@ -1309,7 +1309,7 @@ describe('PostgresBackstageNotionRagRepository', () => {
     ]);
   });
 
-  it('admits the expanded reader ceiling while retaining the compatibility writer fence', async () => {
+  it('keeps the bounded writer at or below the expanded reader ceiling', async () => {
     let observedValues: unknown[] = [];
     const pool = createPool(async (_rawSql, values) => {
       observedValues = values;
@@ -1322,7 +1322,7 @@ describe('PostgresBackstageNotionRagRepository', () => {
       BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT
     )).resolves.toBeNull();
 
-    expect(BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT).toBe(2_048);
+    expect(BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT).toBe(4_096);
     expect(BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT).toBe(4_096);
     expect(observedValues).toEqual([
       UNIVERSE_ID,

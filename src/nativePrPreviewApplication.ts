@@ -4974,14 +4974,14 @@ async function runBackstageOutputAdmissionFixture(
 async function runBackstageNotionSyncPhaseAFixture(
   fixture: string
 ): Promise<Record<string, unknown>> {
-  const capacityCases = [2_048, 2_117, 4_096, 4_097].map(chunkCount => ({
+  const capacityCases = [2_048, 2_307, 4_096, 4_097].map(chunkCount => ({
     chunkCount,
     readable: isBackstageNotionSnapshotChunkCountReadable(chunkCount),
     writable: isBackstageNotionSnapshotChunkCountWritable(chunkCount),
   }));
   let writerRejectionMessage: string | null = null;
   try {
-    assertBackstageNotionSnapshotChunkCountWritable(2_117);
+    assertBackstageNotionSnapshotChunkCountWritable(4_097);
   } catch (error) {
     writerRejectionMessage = error instanceof Error ? error.message : null;
   }
@@ -5097,8 +5097,8 @@ async function runBackstageNotionSyncPhaseAFixture(
   const contracts = {
     capacitySplitVerified: JSON.stringify(capacityCases) === JSON.stringify([
       { chunkCount: 2_048, readable: true, writable: true },
-      { chunkCount: 2_117, readable: true, writable: false },
-      { chunkCount: 4_096, readable: true, writable: false },
+      { chunkCount: 2_307, readable: true, writable: true },
+      { chunkCount: 4_096, readable: true, writable: true },
       { chunkCount: 4_097, readable: false, writable: false },
     ]),
     lateLeaseReleasedExactlyOnce:
@@ -5113,7 +5113,7 @@ async function runBackstageNotionSyncPhaseAFixture(
     preAbortedAcquisitionSkipped: alreadyAbortedAcquireCalls === 0,
     readableUnchangedSnapshotVerified: unchangedDecision === 'verify_unchanged',
     writerFenceRejectedBeforeEffects:
-      writerRejectionMessage === 'chunks must contain 1-2048 records.',
+      writerRejectionMessage === 'chunks must contain 1-4096 records.',
   };
   if (Object.values(contracts).some(value => !value)) {
     throw new Error('PREVIEW_BACKSTAGE_NOTION_SYNC_PHASE_A_INVALID');

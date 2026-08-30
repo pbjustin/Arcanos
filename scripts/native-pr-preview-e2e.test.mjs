@@ -1323,8 +1323,8 @@ test('executes the bounded credential-free matrix and detects identity stability
     notionSyncPhaseAPayload.notionSyncPhaseA.capacity.cases,
     [
       { chunkCount: 2_048, readable: true, writable: true },
-      { chunkCount: 2_117, readable: true, writable: false },
-      { chunkCount: 4_096, readable: true, writable: false },
+      { chunkCount: 2_307, readable: true, writable: true },
+      { chunkCount: 4_096, readable: true, writable: true },
       { chunkCount: 4_097, readable: false, writable: false },
     ]
   );

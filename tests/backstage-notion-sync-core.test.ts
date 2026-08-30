@@ -25,8 +25,9 @@ function deferred<T>(): {
 describe('Backstage Notion sync Phase-A core', () => {
   it.each([
     [2_048, true, true],
-    [2_117, true, false],
-    [4_096, true, false],
+    [2_117, true, true],
+    [2_307, true, true],
+    [4_096, true, true],
     [4_097, false, false],
   ])('classifies the reader and writer boundary at %d chunks', (
     chunkCount,
@@ -39,13 +40,13 @@ describe('Backstage Notion sync Phase-A core', () => {
       .toBe(writable);
   });
 
-  it('keeps readable and writable ceilings explicit and rejects before effects', () => {
+  it('advances the bounded writer only to the proven reader ceiling', () => {
     expect(BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT).toBe(4_096);
-    expect(BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT).toBe(2_048);
-    expect(() => assertBackstageNotionSnapshotChunkCountWritable(2_048))
+    expect(BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT).toBe(4_096);
+    expect(() => assertBackstageNotionSnapshotChunkCountWritable(4_096))
       .not.toThrow();
-    expect(() => assertBackstageNotionSnapshotChunkCountWritable(2_117))
-      .toThrow('chunks must contain 1-2048 records.');
+    expect(() => assertBackstageNotionSnapshotChunkCountWritable(4_097))
+      .toThrow('chunks must contain 1-4096 records.');
   });
 
   it.each([

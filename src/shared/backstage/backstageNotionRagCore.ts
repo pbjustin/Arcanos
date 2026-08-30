@@ -84,13 +84,25 @@ export interface BackstageNotionPreparedRagPage {
   childPages: readonly BackstageNotionChildPageReference[];
   childPageTagCount: number;
   invalidChildPageTagCount: number;
+  chunkDiagnostics: BackstageNotionChunkQualityDiagnostics;
   chunks: readonly BackstageNotionRagChunk[];
 }
 
 export type BackstageNotionInspectedRagPage = Omit<
   BackstageNotionPreparedRagPage,
-  'chunks'
+  'chunkDiagnostics' | 'chunks'
 >;
+
+export interface BackstageNotionChunkQualityDiagnostics {
+  normalizedSegments: number;
+  emptySegmentsRemoved: number;
+  exactDuplicatesRemoved: 0;
+  adjacentSegmentsMerged: number;
+  chunksProduced: number;
+  minimumChunkCodePoints: number;
+  maximumChunkCodePoints: number;
+  medianChunkCodePoints: number;
+}
 
 export interface BackstageNotionRagChunkingOptions {
   maximumCodePoints?: number;
@@ -1087,9 +1099,17 @@ function sameHeadingScope(
 function buildChunkContents(
   markdown: string,
   maximum: number
-): MarkdownChunkContent[] {
+): {
+  chunks: MarkdownChunkContent[];
+  normalizedSegments: number;
+  emptySegmentsRemoved: number;
+  adjacentSegmentsMerged: number;
+} {
   const results: MarkdownChunkContent[] = [];
   let pending: MarkdownChunkContent | null = null;
+  let normalizedSegments = 0;
+  let emptySegmentsRemoved = 0;
+  let adjacentSegmentsMerged = 0;
   const flushPending = () => {
     if (pending) {
       results.push(pending);
@@ -1098,11 +1118,16 @@ function buildChunkContents(
   };
 
   for (const block of splitMarkdownBlocks(markdown)) {
+    if (!block.content.trim()) {
+      emptySegmentsRemoved += 1;
+      continue;
+    }
     if (pending && !sameHeadingScope(pending, block)) {
       flushPending();
     }
     const blockLength = codePointLength(block.content);
     if (block.atomicWhenBounded && blockLength <= maximum) {
+      normalizedSegments += 1;
       flushPending();
       results.push({
         content: block.content,
@@ -1113,13 +1138,21 @@ function buildChunkContents(
     }
     if (blockLength > maximum) {
       flushPending();
-      results.push(...splitOversizedBlock(block.content, maximum).map(content => ({
+      const split = splitOversizedBlock(block.content, maximum);
+      normalizedSegments += split.length;
+      emptySegmentsRemoved += Math.max(
+        0,
+        Math.ceil(blockLength / maximum) - split.length
+      );
+      results.push(...split.map(content => ({
         content,
         headingPath: block.headingPath,
         headingOccurrencePath: block.headingOccurrencePath,
       })));
       continue;
     }
+
+    normalizedSegments += 1;
 
     const candidate: string = pending
       ? `${pending.content}\n\n${block.content}`
@@ -1132,6 +1165,9 @@ function buildChunkContents(
         headingOccurrencePath: block.headingOccurrencePath,
       };
     } else {
+      if (pending) {
+        adjacentSegmentsMerged += 1;
+      }
       pending = {
         content: candidate,
         headingPath: block.headingPath,
@@ -1140,7 +1176,12 @@ function buildChunkContents(
     }
   }
   flushPending();
-  return results;
+  return {
+    chunks: results,
+    normalizedSegments,
+    emptySegmentsRemoved,
+    adjacentSegmentsMerged,
+  };
 }
 
 function normalizeChunkMaximum(value: number | undefined): number {
@@ -1231,7 +1272,8 @@ export function chunkBackstageNotionInspectedPage(
   options: BackstageNotionRagChunkingOptions = {}
 ): BackstageNotionPreparedRagPage {
   const maximum = normalizeChunkMaximum(options.maximumCodePoints);
-  const chunks = buildChunkContents(inspected.sanitizedMarkdown, maximum)
+  const chunked = buildChunkContents(inspected.sanitizedMarkdown, maximum);
+  const chunks = chunked.chunks
     .map(({
       content,
       headingPath,
@@ -1267,8 +1309,32 @@ export function chunkBackstageNotionInspectedPage(
       });
     });
 
+  const sortedChunkSizes = chunks
+    .map(chunk => chunk.codePoints)
+    .sort((left, right) => left - right);
+  const middle = Math.floor(sortedChunkSizes.length / 2);
+  const medianChunkCodePoints = sortedChunkSizes.length === 0
+    ? 0
+    : sortedChunkSizes.length % 2 === 1
+      ? sortedChunkSizes[middle]!
+      : Math.floor(
+          ((sortedChunkSizes[middle - 1] ?? 0) + (sortedChunkSizes[middle] ?? 0))
+            / 2
+        );
+  const chunkDiagnostics: BackstageNotionChunkQualityDiagnostics = Object.freeze({
+    normalizedSegments: chunked.normalizedSegments,
+    emptySegmentsRemoved: chunked.emptySegmentsRemoved,
+    exactDuplicatesRemoved: 0,
+    adjacentSegmentsMerged: chunked.adjacentSegmentsMerged,
+    chunksProduced: chunks.length,
+    minimumChunkCodePoints: sortedChunkSizes[0] ?? 0,
+    maximumChunkCodePoints: sortedChunkSizes.at(-1) ?? 0,
+    medianChunkCodePoints,
+  });
+
   return Object.freeze({
     ...inspected,
+    chunkDiagnostics,
     chunks: Object.freeze(chunks),
   });
 }

@@ -1,8 +1,8 @@
 export const BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT = 4_096;
 
-// Compatibility release fence: deploy 4,096-capable readers everywhere before
-// a later release raises this writer ceiling.
-export const BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT = 2_048;
+// Reader compatibility was deployed first; this bounded release now advances
+// the writer to the already-supported reader ceiling.
+export const BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT = 4_096;
 
 export function assertBackstageNotionSnapshotCapacityInvariant(
   readableChunks: number = BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT,
