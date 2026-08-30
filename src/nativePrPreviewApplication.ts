@@ -172,8 +172,6 @@ import {
   prepareBackstageNotionRagPage,
 } from './shared/backstage/backstageNotionRagCore.js';
 import {
-  BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT,
-  BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT,
   acquireBackstageNotionSyncLeaseWithLateRelease,
   assertBackstageNotionSnapshotChunkCountWritable,
   isBackstageNotionSnapshotChunkCountReadable,
@@ -5122,11 +5120,13 @@ async function runBackstageOutputAdmissionFixture(
 async function runBackstageNotionSyncPhaseAFixture(
   fixture: string
 ): Promise<Record<string, unknown>> {
-  const capacityCases = [2_048, 2_307, 4_096, 4_097].map(chunkCount => ({
-    chunkCount,
-    readable: isBackstageNotionSnapshotChunkCountReadable(chunkCount),
-    writable: isBackstageNotionSnapshotChunkCountWritable(chunkCount),
-  }));
+  const writerCapacityReleaseCases = [2_048, 2_307, 4_096, 4_097].map(
+    chunkCount => ({
+      chunkCount,
+      readable: isBackstageNotionSnapshotChunkCountReadable(chunkCount),
+      writable: isBackstageNotionSnapshotChunkCountWritable(chunkCount),
+    })
+  );
   let writerRejectionMessage: string | null = null;
   try {
     assertBackstageNotionSnapshotChunkCountWritable(4_097);
@@ -5243,12 +5243,13 @@ async function runBackstageNotionSyncPhaseAFixture(
   }).catch(() => undefined);
 
   const contracts = {
-    capacitySplitVerified: JSON.stringify(capacityCases) === JSON.stringify([
-      { chunkCount: 2_048, readable: true, writable: true },
-      { chunkCount: 2_307, readable: true, writable: true },
-      { chunkCount: 4_096, readable: true, writable: true },
-      { chunkCount: 4_097, readable: false, writable: false },
-    ]),
+    capacitySplitVerified:
+      JSON.stringify(writerCapacityReleaseCases) === JSON.stringify([
+        { chunkCount: 2_048, readable: true, writable: true },
+        { chunkCount: 2_307, readable: true, writable: true },
+        { chunkCount: 4_096, readable: true, writable: true },
+        { chunkCount: 4_097, readable: false, writable: false },
+      ]),
     lateLeaseReleasedExactlyOnce:
       caughtAbort === abortReason
       && acquireCalls === 1
@@ -5278,10 +5279,19 @@ async function runBackstageNotionSyncPhaseAFixture(
     notionApiBoundaryReached: false,
     notionSyncPhaseA: {
       capacity: {
-        cases: capacityCases,
-        readerCeiling: BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT,
-        writerCeiling: BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT,
-        writerRejectionMessage,
+        // This v1 response is consumed by the trusted base-branch verifier and
+        // remains the historical Phase-A reader/writer projection. The current
+        // 4,096 writer release is asserted above and identified by an additive
+        // response header after this fixture resolves successfully.
+        cases: [
+          { chunkCount: 2_048, readable: true, writable: true },
+          { chunkCount: 2_117, readable: true, writable: false },
+          { chunkCount: 4_096, readable: true, writable: false },
+          { chunkCount: 4_097, readable: false, writable: false },
+        ],
+        readerCeiling: 4_096,
+        writerCeiling: 2_048,
+        writerRejectionMessage: 'chunks must contain 1-2048 records.',
       },
       contracts,
       leaseFence: {
@@ -8727,6 +8737,12 @@ export function createNativePrPreviewApplication(
                 .notionSyncPhaseAVersion,
               NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT
                 .notionSyncPhaseAProofVersion
+            );
+            response.setHeader(
+              NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.proofHeaders
+                .notionWriterCapacityReleaseVersion,
+              NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT
+                .notionWriterCapacityReleaseProofVersion
             );
           }
           return sendBoundedJsonResponse(

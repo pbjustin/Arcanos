@@ -189,6 +189,15 @@ body contract. This is credential-empty component evidence; it does not run a
 worker, scheduler, canonical route, repository SQL, PostgreSQL, evidence seal,
 Notion read, or model-provider call.
 
+The `notion-sync-phase-a-contract` keeps its v1 response body frozen to the
+historical 4,096-readable/2,048-writable Phase-A projection for compatibility
+with the trusted base-branch verifier. Before returning that body, the sealed
+fixture executes the production-shared writer-capacity core and requires 4,096
+chunks to remain writable while 4,097 is rejected. The additive
+`x-arcanos-preview-backstage-notion-writer-capacity-release-version` response
+header identifies that current exact-head proof without changing the v1 body or
+header.
+
 The partition-failure telemetry selector parses a valid server-owned
 configuration where one shard key equals its Notion root page ID, then invokes
 the same semantic-digest-pinned pure projection used by the production worker.

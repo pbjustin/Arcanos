@@ -1855,13 +1855,13 @@ describe('native PR contained application', () => {
         capacity: {
           cases: [
             { chunkCount: 2_048, readable: true, writable: true },
-            { chunkCount: 2_307, readable: true, writable: true },
-            { chunkCount: 4_096, readable: true, writable: true },
+            { chunkCount: 2_117, readable: true, writable: false },
+            { chunkCount: 4_096, readable: true, writable: false },
             { chunkCount: 4_097, readable: false, writable: false },
           ],
           readerCeiling: 4_096,
-          writerCeiling: 4_096,
-          writerRejectionMessage: 'chunks must contain 1-4096 records.',
+          writerCeiling: 2_048,
+          writerRejectionMessage: 'chunks must contain 1-2048 records.',
         },
         contracts: {
           capacitySplitVerified: true,
@@ -1898,6 +1898,11 @@ describe('native PR contained application', () => {
     expect(
       notionSyncPhaseA.headers[contract.proofHeaders.notionSyncPhaseAVersion]
     ).toBe(contract.notionSyncPhaseAProofVersion);
+    expect(
+      notionSyncPhaseA.headers[
+        contract.proofHeaders.notionWriterCapacityReleaseVersion
+      ]
+    ).toBe(contract.notionWriterCapacityReleaseProofVersion);
 
     for (const response of [outputAdmission, notionSyncPhaseA]) {
       expectContainedResponseHeaders(

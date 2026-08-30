@@ -61,6 +61,8 @@ export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
       'backstage-booker-output-admission/v1',
     notionSyncPhaseAProofVersion:
       'backstage-notion-sync-phase-a/v1',
+    notionWriterCapacityReleaseProofVersion:
+      'backstage-notion-writer-capacity-release/v1',
     fixtures: Object.freeze({
       routeBudget: 'route-budget-provider-delay',
       hrcRetryCache: 'hrc-timeout-retry-cache',
@@ -99,6 +101,8 @@ export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
         'x-arcanos-preview-backstage-output-admission-version',
       notionSyncPhaseAVersion:
         'x-arcanos-preview-backstage-notion-sync-phase-a-version',
+      notionWriterCapacityReleaseVersion:
+        'x-arcanos-preview-backstage-notion-writer-capacity-release-version',
     }),
   }),
   backstageBookerOpenApi: Object.freeze({
