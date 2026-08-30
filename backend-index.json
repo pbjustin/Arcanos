@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-29T23:42:16.239Z",
+  "generatedAt": "2026-08-30T05:23:43.355Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -431,6 +431,9 @@
           "relativePath": "src/core/db/auditStore.ts"
         },
         {
+          "relativePath": "src/core/db/backstageNotionPartitionCutoverEvidenceSchema.ts"
+        },
+        {
           "relativePath": "src/core/db/backstageNotionPartitionStorageSchema.ts"
         },
         {
@@ -449,10 +452,16 @@
           "relativePath": "src/core/db/repositories/backstageBookerRepository.ts"
         },
         {
+          "relativePath": "src/core/db/repositories/backstageNotionPartitionCutoverEvidenceRepository.ts"
+        },
+        {
           "relativePath": "src/core/db/repositories/backstageNotionPartitionRepository.ts"
         },
         {
           "relativePath": "src/core/db/repositories/backstageNotionRagRepository.ts"
+        },
+        {
+          "relativePath": "src/core/db/repositories/backstageNotionSyncStatusRepository.ts"
         },
         {
           "relativePath": "src/core/db/repositories/backstageRosterRepository.ts"
@@ -1592,6 +1601,12 @@
           "relativePath": "src/services/backstageNotionPartitionCutover.ts"
         },
         {
+          "relativePath": "src/services/backstageNotionPartitionCutoverEvidence.ts"
+        },
+        {
+          "relativePath": "src/services/backstageNotionPartitionCutoverValidation.ts"
+        },
+        {
           "relativePath": "src/services/backstageNotionPartitionDiagnostics.ts"
         },
         {
@@ -2492,10 +2507,16 @@
           "relativePath": "src/shared/backstage/backstageNotionPartitionCore.ts"
         },
         {
+          "relativePath": "src/shared/backstage/backstageNotionPartitionCutoverGate.ts"
+        },
+        {
           "relativePath": "src/shared/backstage/backstageNotionPartitionMaterialCore.ts"
         },
         {
           "relativePath": "src/shared/backstage/backstageNotionPartitionRoutingCore.ts"
+        },
+        {
+          "relativePath": "src/shared/backstage/backstageNotionPartitionSourceGeneration.ts"
         },
         {
           "relativePath": "src/shared/backstage/backstageNotionPartitionSyncCore.ts"
@@ -2511,6 +2532,9 @@
         },
         {
           "relativePath": "src/shared/backstage/backstageNotionScopeIndex.ts"
+        },
+        {
+          "relativePath": "src/shared/backstage/backstageNotionSnapshotStatus.ts"
         },
         {
           "relativePath": "src/shared/backstage/backstageNotionSyncCore.ts"
@@ -3463,6 +3487,21 @@
           "relativePath": "tests/backstage-notion-partition-core.test.ts"
         },
         {
+          "relativePath": "tests/backstage-notion-partition-cutover-evidence-repository.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-notion-partition-cutover-evidence-runtime.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-notion-partition-cutover-evidence-schema.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-notion-partition-cutover-gate.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-notion-partition-cutover-validation.test.ts"
+        },
+        {
           "relativePath": "tests/backstage-notion-partition-cutover.test.ts"
         },
         {
@@ -3535,10 +3574,19 @@
           "relativePath": "tests/backstage-notion-scope-index.test.ts"
         },
         {
+          "relativePath": "tests/backstage-notion-snapshot-status.test.ts"
+        },
+        {
           "relativePath": "tests/backstage-notion-sync-core.test.ts"
         },
         {
           "relativePath": "tests/backstage-notion-sync-loop.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-notion-sync-status-repository.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-notion-sync-status-schema.test.ts"
         },
         {
           "relativePath": "tests/backstage-notion-sync.test.ts"

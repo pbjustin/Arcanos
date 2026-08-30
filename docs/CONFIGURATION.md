@@ -543,6 +543,26 @@ sync root. Configure `ARCANOS_BACKSTAGE_NOTION_ACCESS_TOKEN` on the worker only
 for an authority-only deployment. Do not also map that universe through
 `ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON`.
 
+The monolithic reader and writer ceilings are both fixed at 4,096 chunks. The
+writer-to-reader invariant is asserted in executable code. Counts from 1 through
+4,096 are eligible for complete candidate construction; 4,097 or more fails
+closed at `chunking/chunk_limit_reached` before embedding, candidate persistence,
+validation, or activation. Nothing clamps or prioritizes the corpus. This is the
+second half of a reader-first compatibility rollout: every serving web and worker
+revision must already contain the 4,096-capable reader before a worker with the
+raised writer fence is permitted to synchronize. Partition `maxChunks` remains a
+separate per-shard bound of at most 2,048.
+
+The immutable active snapshot and the durable latest synchronization attempt are
+separate records. Readers combine them into `current_complete`,
+`last_known_good`, or `unavailable`. A failed or in-progress newer refresh cannot
+clear, invalidate, detach, or rewrite the readable active snapshot. Continuity
+reads may use an older readable snapshot only with explicit `last_known_good`
+freshness and failed-refresh metadata; they never call it current. Protected
+booking generation requires `current_complete` under the existing strict
+authority policy and fails closed for `last_known_good`, missing, incompatible,
+or expired state.
+
 The additive `ARCANOS_BACKSTAGE_NOTION_PARTITIONS_JSON` contract does not
 replace that monolithic authority mapping. Its version-1 envelope contains an
 operator-owned `generation` plus an array of exact universes and their shards.
@@ -553,6 +573,12 @@ distinct universe namespaces may reuse the same provider page ID. Duplicate
 universe IDs, same-universe shard keys, roots, or tags are rejected rather than
 silently merged. Ancestor/descendant overlap still requires source-hierarchy
 ownership validation during synchronization.
+
+The controlled deployment target uses the existing five shards declared by its
+closed configuration. The implementation never hard-codes those shard names or
+derives the required set from prose: registration, source capture, publication,
+routing, diagnostics, validation, and cutover compare the exact configured
+membership and count.
 
 Every shard declares `retrievalTier` (`hot`, `cold`, or `archive`), `required`,
 and a complete `capacity` object. Archive-tier shards are structurally optional:
@@ -586,9 +612,10 @@ recurring synchronization path remains intact under all three modes, and both
 loops start only after consumer readiness using their shared coordinator. No
 partition manifest or shard state gates worker `/readyz`. Neither the partition
 envelope nor this read-index mode downgrades the durable one-way Notion authority
-latch or restores legacy reads and writes. This code change does not set a
-deployed variable, and production must remain at exact `monolith` until a
-separate cutover is approved.
+latch or restores legacy reads and writes. This code change does not set or
+change a deployed value. Code readiness and a positive gate decision are not
+authorization to change production mode; any later transition to exact
+`partitioned` remains a separate controlled cutover.
 
 In exact `shadow` or `partitioned`, the web control plane exposes one-shard
 manual enqueue and actor-scoped status reads under
@@ -617,6 +644,24 @@ does not expose an authoritative hierarchy delta feed: every shard still runs a
 bounded full hierarchy/content capture and metadata verification pass. Reuse is
 incremental only after capture, where unchanged immutable page, chunk, and
 embedding material is retained rather than regenerated.
+
+One immutable source-generation record binds the full verified authority capture
+to its source digest, page/chunk coverage, verification time, and configuration.
+Every configured shard candidate for a manifest must reference that same source
+generation. A missing shard, failed shard, mixed source digest/generation,
+coverage mismatch, unsupported index or embedding contract, or lost lease blocks
+publication. The worker seals all required shards and the complete manifest
+before one compare-and-swap transaction advances the active manifest pointer;
+no shard can become independently authoritative. A failed build leaves the prior
+complete manifest active. Rollback atomically reactivates a prior complete
+manifest instead of reconstructing a shard collection.
+
+Each configuration registration advances a reconciliation epoch before shard
+work begins. Manifest activation publishes only the exact epoch it reconciled;
+rollback advances and republishes a new epoch. Cutover evidence is valid only
+while its epoch equals both the active and published reconciliation epochs, so a
+new, failed, or incomplete refresh invalidates older evidence without disturbing
+the last complete active manifest.
 
 After each partition reconciliation, the worker runs one statement-pinned,
 identity-only PostgreSQL comparison per universe. It projects generation IDs,
@@ -650,6 +695,18 @@ versions, or embeddings. The exact read mode remains the authorization point:
 `shadow` compares this result without returning it, while `partitioned` returns
 it without a monolith fallback.
 
+The cutover gate consumes durable, content-free evidence sealed against that
+exact configuration, source generation/digest, manifest, reconciliation epoch,
+supported embedding model and index format, and a fresh readable rollback
+monolith whose latest synchronization state is `current_complete`. Validation
+must include representative relevant queries, exact-scope parity,
+complete-scope coverage parity through the final cursor, cursor-version
+stability, and accepted bounded relevant-retrieval parity. Missing, expired, or
+mismatched evidence keeps `cutoverAvailable` false, keeps partitioned reads
+disabled, and leaves the effective authority on the monolith. Evidence sealing
+is an explicit validation action; startup and synchronization do not manufacture
+or auto-promote it.
+
 Unscoped relevant retrieval uses a closed server-owned routing vocabulary.
 Recognized lane tags are `brand:raw`, `brand:smackdown`, `brand:nxt`, and
 `lane:ples`, plus four-digit `year:YYYY` tags derived from the bounded query.
@@ -682,6 +739,12 @@ registered purpose. Removing the previous value rejects any remaining cursor it
 sealed. Monolith and partition cursor formats are intentionally incompatible;
 after changing between `monolith`/`shadow` and `partitioned`, restart any
 complete-scope pagination from its first page.
+
+Every partition request resolves one manifest before routing. A continuation
+cursor carries and must match that exact immutable manifest version for every
+page; activation or rollback cannot make it continue against another generation.
+Cross-manifest continuation fails closed, while a request already pinned to its
+original still-readable manifest may finish without duplicate or omitted chunks.
 
 The worker recursively discovers direct child `<page>` links, fetches every
 page separately from fixed `api.notion.com` endpoints, verifies parent IDs and

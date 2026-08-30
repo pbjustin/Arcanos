@@ -346,7 +346,11 @@ partition shard ceilings remain separate and unchanged. This compatibility
 rollout first retained a 2,048-chunk writer fence while 4,096-capable readers
 were deployed. The follow-up bounded release advances
 `BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT` to the already-supported
-4,096 reader ceiling. The writer validates the complete candidate in memory,
+4,096 reader ceiling, so readers and writers now share the same bounded limit.
+The shared invariant prevents the writer ceiling from exceeding reader capacity.
+Candidates of 4,097 chunks or more fail at chunking before embedding, candidate
+creation, persistence, validation, or activation; no path truncates the source
+to satisfy the fence. The writer validates the complete candidate in memory,
 serializes page and chunk records into record- and byte-bounded batches,
 inserts every batch inside the existing single
 transaction, and compares exact persisted page and chunk counts before the
@@ -427,6 +431,42 @@ shards. Membership also stores the immutable snapshot verification time used by
 future freshness decisions. Mutable shard and universe heads accept only sealed
 objects and require exact compare-and-swap generation increments. Shard and
 provider leases independently fence distributed synchronization.
+
+`migrations/20260829_backstage_notion_partition_complete_manifest_head_guard.sql`
+upgrades existing installations to the complete-manifest head guard already used
+by fresh runtime/bootstrap storage. A head cannot be cleared after activation and
+can advance only by exact compare-and-swap generations to a sealed manifest for
+the desired configuration. The manifest must contain every configured shard,
+have no omissions, and bind fresh readable snapshots with one supported index
+and embedding contract. A partial collection therefore cannot become active,
+and the guarded rollback restores only the prior guard definition; it does not
+rewrite data or synthesize a manifest.
+
+`migrations/20260829_backstage_notion_partition_source_generation_v1.sql` adds
+the immutable source-generation barrier. One verified authority capture records
+the exact universe, configuration version, source digest, page/chunk coverage,
+verification time, and verification hash. Every sealed shard and its manifest
+must bind the same generation and digest, while manifest coverage must equal the
+captured authority corpus. Triggers reject mixed-generation, missing-generation,
+or incomplete manifests before they can become active. The compensation removes
+only the additive enforcement hooks; it intentionally retains provenance columns
+and every immutable source-generation record rather than deleting history to
+enable a downgrade.
+
+`migrations/20260830_backstage_notion_partition_cutover_evidence_v1.sql` adds
+durable, content-free cutover evidence plus current and published reconciliation
+generations on the partition universe head. Registration advances the current
+generation before shard work; manifest activation atomically publishes only that
+exact generation with the active pointer. Rollback atomically reactivates a prior
+complete manifest and advances/publishes a new generation, invalidating evidence
+from the superseded epoch. Evidence is tied by foreign keys and constraints to
+the exact manifest, configuration, source generation/digest, supported embedding
+and index contract, fresh readable rollback monolith, and finite validity window.
+It records representative-query, exact-scope, relevant-retrieval,
+complete-scope, and cursor-stability parity. Missing, stale, mixed, failed, or
+expired evidence keeps the cutover gate closed; neither schema creation nor
+synchronization changes the deployed read mode. The rollback refuses while any
+verified evidence row exists instead of deleting that evidence implicitly.
 
 Partition candidate ranking uses stock PostgreSQL 18 and remains additive to
 the shadow schema. One read-only, repeatable-read statement fences the exact
