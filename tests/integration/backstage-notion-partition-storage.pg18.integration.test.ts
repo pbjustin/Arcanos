@@ -193,6 +193,24 @@ async function expectSqlStateAtSavepoint(
   expect(errorCode(caught)).toBe(expectedCode);
 }
 
+async function beginPartitionReconciliationAttempt(
+  client: Client,
+  universeId: string
+): Promise<string> {
+  const result = await client.query<{ reconciliation_generation: string }>(
+    `UPDATE public.backstage_notion_partitioned_universe_heads
+     SET reconciliation_generation = reconciliation_generation + 1
+     WHERE universe_id = $1
+     RETURNING reconciliation_generation::TEXT`,
+    [universeId]
+  );
+  const reconciliationGeneration = result.rows[0]?.reconciliation_generation;
+  if (!reconciliationGeneration) {
+    throw new Error('Partition reconciliation fixture could not advance its epoch.');
+  }
+  return reconciliationGeneration;
+}
+
 type SealedFixture = Readonly<{
   universeId: string;
   configurationId: string;
@@ -1681,6 +1699,10 @@ async function activateScopeHierarchyFixture(
       verifiedAt: activated.verifiedAt,
     }],
   });
+  const reconciliationGeneration = await beginPartitionReconciliationAttempt(
+    client,
+    fixture.universeId
+  );
   const manifestId = randomUUID();
   await repository.activateUniverseManifest({
     manifestId,
@@ -1695,6 +1717,7 @@ async function activateScopeHierarchyFixture(
     sourceVerifiedAt: sourceGeneration.sourceVerifiedAt,
     sourceVerificationHash: sourceGeneration.sourceVerificationHash,
     indexFormatVersion: 1,
+    reconciliationGeneration,
     expectedUniverseHead: terminal.expectedUniverseHead,
     members: [{
       shardKey: fixture.shardKey,
@@ -2115,7 +2138,7 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
          AND NOT installed_trigger.tgisinternal`,
       [partitionTables]
     );
-    expect(Number(triggers.rows[0]?.trigger_count)).toBe(24);
+    expect(Number(triggers.rows[0]?.trigger_count)).toBe(28);
   });
 
   test('database-validates embedding shape, finiteness, non-zero norm, and tolerance', async () => {
@@ -3942,6 +3965,10 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
     if (!universeHead) {
       throw new Error('Ownership-isolation universe head is unavailable.');
     }
+    const reconciliationGeneration = await beginPartitionReconciliationAttempt(
+      client,
+      fixture.universeId
+    );
     const manifestId = randomUUID();
     const candidateSourceGenerationId = randomUUID();
     await expect(repository.activateUniverseManifest({
@@ -3959,6 +3986,7 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
         'source-verification:ownership-isolation-candidate'
       ),
       indexFormatVersion: 1,
+      reconciliationGeneration,
       expectedUniverseHead: universeHead,
       members: [{
         shardKey: fixture.shardKey,
