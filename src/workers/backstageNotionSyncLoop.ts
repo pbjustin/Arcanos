@@ -19,6 +19,9 @@ import {
 import {
   BACKSTAGE_NOTION_RAG_HEADING_INDEX_VERSION,
 } from '@shared/backstage/backstageNotionRagCore.js';
+import {
+  isBackstageNotionSnapshotChunkCountReadable,
+} from '@shared/backstage/backstageNotionSyncCore.js';
 
 export const BACKSTAGE_NOTION_SYNC_INTERVAL_ENV_NAME =
   'ARCANOS_BACKSTAGE_NOTION_SYNC_INTERVAL_MS';
@@ -113,7 +116,9 @@ function isCurrentBackstageNotionInventory(
     || inventory.snapshot.universeId !== root.universeId
     || inventory.snapshot.rootPageId !== root.rootPageId
     || inventory.snapshot.pageCount < 1
-    || inventory.snapshot.chunkCount < 1
+    || !isBackstageNotionSnapshotChunkCountReadable(
+      inventory.snapshot.chunkCount
+    )
     || inventory.snapshot.pageCount !== inventory.pages.length
     || !inventory.pages.some(page => page.pageId === root.rootPageId)
     || new Set(inventory.pages.map(page => page.pageId)).size

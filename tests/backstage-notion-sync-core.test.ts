@@ -4,6 +4,7 @@ import {
   BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT,
   BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT,
   acquireBackstageNotionSyncLeaseWithLateRelease,
+  assertBackstageNotionSnapshotCapacityInvariant,
   assertBackstageNotionSnapshotChunkCountWritable,
   isBackstageNotionSnapshotChunkCountReadable,
   isBackstageNotionSnapshotChunkCountWritable,
@@ -45,6 +46,38 @@ describe('Backstage Notion sync Phase-A core', () => {
       .not.toThrow();
     expect(() => assertBackstageNotionSnapshotChunkCountWritable(2_117))
       .toThrow('chunks must contain 1-2048 records.');
+  });
+
+  it.each([
+    0,
+    -1,
+    1.5,
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+    BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT + 1,
+  ])('rejects an invalid snapshot chunk count of %p', chunkCount => {
+    expect(isBackstageNotionSnapshotChunkCountReadable(chunkCount)).toBe(false);
+    expect(isBackstageNotionSnapshotChunkCountWritable(chunkCount)).toBe(false);
+  });
+
+  it('enforces the shared writer-at-or-below-reader capacity invariant', () => {
+    expect(() => assertBackstageNotionSnapshotCapacityInvariant()).not.toThrow();
+    expect(() => assertBackstageNotionSnapshotCapacityInvariant(4_096, 4_096))
+      .not.toThrow();
+    expect(() => assertBackstageNotionSnapshotCapacityInvariant(4_096, 4_097))
+      .toThrow('writer <= reader');
+
+    for (const [readable, writable] of [
+      [0, 0],
+      [4_096.5, 4_096],
+      [4_096, 0],
+      [4_096, Number.NaN],
+    ] as const) {
+      expect(() => assertBackstageNotionSnapshotCapacityInvariant(
+        readable,
+        writable
+      )).toThrow('positive integer ceilings');
+    }
   });
 
   it('selects unchanged verification for a readable Phase-B snapshot', () => {

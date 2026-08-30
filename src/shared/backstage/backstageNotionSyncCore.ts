@@ -4,6 +4,25 @@ export const BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT = 4_096;
 // a later release raises this writer ceiling.
 export const BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT = 2_048;
 
+export function assertBackstageNotionSnapshotCapacityInvariant(
+  readableChunks: number = BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT,
+  writableChunks: number = BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT
+): void {
+  if (
+    !Number.isSafeInteger(readableChunks)
+    || readableChunks < 1
+    || !Number.isSafeInteger(writableChunks)
+    || writableChunks < 1
+    || writableChunks > readableChunks
+  ) {
+    throw new Error(
+      'Backstage Notion snapshot capacity requires positive integer ceilings with writer <= reader.'
+    );
+  }
+}
+
+assertBackstageNotionSnapshotCapacityInvariant();
+
 export interface BackstageNotionUnchangedSnapshotDecisionInput {
   chunkCount: number;
   embeddingModelMatches: boolean;

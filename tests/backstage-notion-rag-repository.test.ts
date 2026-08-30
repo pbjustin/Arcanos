@@ -6,6 +6,9 @@ import type { Pool } from 'pg';
 import {
   BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT,
   BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT,
+  BACKSTAGE_NOTION_RELEVANT_CANDIDATE_SEARCH_MAX_LEXICAL_TOKEN_CODE_POINTS,
+  BACKSTAGE_NOTION_RELEVANT_CANDIDATE_SEARCH_MAX_LEXICAL_TOKENS,
+  BACKSTAGE_NOTION_RELEVANT_CANDIDATE_SEARCH_MAX_RESULTS,
   BACKSTAGE_NOTION_SNAPSHOT_INSERT_BATCH_MAX_BYTES,
   BACKSTAGE_NOTION_SNAPSHOT_INSERT_BATCH_MAX_RECORDS,
   BackstageNotionSnapshotCommitUnknownError,
@@ -1147,6 +1150,163 @@ describe('PostgresBackstageNotionRagRepository', () => {
     expect(observedSql).toContain('chunk.snapshot_id = head.active_snapshot_id');
     expect(observedSql).toContain("head.authority = 'notion'");
     expect(observedValues).toEqual([UNIVERSE_ID, 2]);
+  });
+
+  it('projects exactly 4,096 active chunks without silent truncation', async () => {
+    let observedValues: unknown[] = [];
+    const content = 'Current active context.';
+    const contentHash = hash(content);
+    const rows = Array.from(
+      { length: BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT },
+      (_unused, ordinal) => ({
+        authority: 'notion' as const,
+        verified_at: NOW,
+        snapshot_id: SNAPSHOT_ID,
+        universe_id: UNIVERSE_ID,
+        root_page_id: ROOT_PAGE_ID,
+        manifest_hash: HASH_A,
+        embedding_model: 'text-embedding-test',
+        page_count: 1,
+        chunk_count: BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT,
+        source_max_edited_at: NOW,
+        sync_holder_id: 'sync-worker-1',
+        snapshot_created_at: NOW,
+        chunk_id: hash(JSON.stringify({
+          format: 'backstage-notion-rag-chunk-v1',
+          pageId: ROOT_PAGE_ID,
+          ordinal,
+          contentHash,
+        })),
+        page_id: ROOT_PAGE_ID,
+        page_title: ROOT_TITLE,
+        canonical_url: null,
+        page_path: ROOT_PATH,
+        ordinal,
+        content_hash: contentHash,
+        content,
+        code_points: 23,
+        chunk_embedding_model: 'text-embedding-test',
+        embedding: [0.1, 0.2],
+        heading_path: [],
+        chunk_metadata: {},
+      })
+    );
+    const pool = createPool(async (_rawSql, values) => {
+      observedValues = values;
+      return { rows, rowCount: rows.length };
+    });
+    const repository = new PostgresBackstageNotionRagRepository(pool);
+
+    const active = await repository.loadActiveSnapshot(
+      UNIVERSE_ID,
+      BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT
+    );
+
+    expect(active?.chunks).toHaveLength(
+      BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT
+    );
+    expect(active?.chunks.at(-1)?.ordinal).toBe(
+      BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT - 1
+    );
+    expect(active?.truncated).toBe(false);
+    expect(observedValues).toEqual([
+      UNIVERSE_ID,
+      BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT + 1,
+    ]);
+  });
+
+  it('ranks an exact 4,096-chunk snapshot into a bounded candidate projection', async () => {
+    let observedSql = '';
+    let observedValues: unknown[] = [];
+    const content = 'Current active context.';
+    const contentHash = hash(content);
+    const rows = Array.from(
+      { length: BACKSTAGE_NOTION_RELEVANT_CANDIDATE_SEARCH_MAX_RESULTS },
+      (_unused, ordinal) => ({
+        chunk_id: hash(JSON.stringify({
+          format: 'backstage-notion-rag-chunk-v1',
+          pageId: ROOT_PAGE_ID,
+          ordinal,
+          contentHash,
+        })),
+        page_id: ROOT_PAGE_ID,
+        page_title: ROOT_TITLE,
+        page_path: ROOT_PATH,
+        ordinal,
+        content_hash: contentHash,
+        content,
+        code_points: 23,
+        chunk_embedding_model: 'text-embedding-test',
+        embedding: [0.1, 0.2],
+        heading_path: [],
+        chunk_metadata: {},
+        scope_chunk_count: String(BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT),
+        candidate_pool_count: String(BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT),
+      })
+    );
+    const repository = new PostgresBackstageNotionRagRepository(createPool(
+      async (rawSql, values) => {
+        observedSql = normalizeSql(rawSql);
+        observedValues = values;
+        return { rows, rowCount: rows.length };
+      }
+    ));
+    const queryText = Array.from({ length: 300 }, (_unused, index) => (
+      `${`token${index}`.padEnd(80, 'x')}`
+    )).join(' ');
+
+    const result = await repository.rankSnapshotCandidates({
+      universeId: UNIVERSE_ID,
+      snapshotId: SNAPSHOT_ID,
+      selector: {
+        pageId: null,
+        scopeKind: 'all',
+        sectionOccurrencePath: null,
+      },
+      expectedScopeChunkCount: BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT,
+      embeddingModel: 'text-embedding-test',
+      queryText,
+      queryEmbedding: [1, 0],
+      limit: BACKSTAGE_NOTION_RELEVANT_CANDIDATE_SEARCH_MAX_RESULTS,
+    });
+
+    expect(result.scopeChunkCount).toBe(
+      BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT
+    );
+    expect(result.candidatePoolCount).toBe(
+      BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT
+    );
+    expect(result.candidates).toHaveLength(
+      BACKSTAGE_NOTION_RELEVANT_CANDIDATE_SEARCH_MAX_RESULTS
+    );
+    expect(observedSql).toContain('snapshot.id = $2::UUID');
+    expect(observedSql).toContain('LIMIT $11');
+    expect(observedSql).not.toContain('head.active_snapshot_id');
+    const lexicalProjection = String(observedValues[9]);
+    const lexicalTokens = lexicalProjection ? lexicalProjection.split(' OR ') : [];
+    expect(lexicalTokens).toHaveLength(
+      BACKSTAGE_NOTION_RELEVANT_CANDIDATE_SEARCH_MAX_LEXICAL_TOKENS
+    );
+    expect(lexicalTokens.every(token => (
+      Array.from(token.slice(1, -1)).length
+        <= BACKSTAGE_NOTION_RELEVANT_CANDIDATE_SEARCH_MAX_LEXICAL_TOKEN_CODE_POINTS
+    ))).toBe(true);
+    expect(observedValues).toEqual([
+      UNIVERSE_ID,
+      SNAPSHOT_ID,
+      null,
+      'all',
+      null,
+      BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT,
+      'text-embedding-test',
+      [1, 0],
+      1,
+      lexicalProjection,
+      BACKSTAGE_NOTION_RELEVANT_CANDIDATE_SEARCH_MAX_RESULTS,
+      null,
+      BACKSTAGE_NOTION_RELEVANT_CANDIDATE_SEARCH_MAX_RESULTS,
+      0,
+    ]);
   });
 
   it('admits the expanded reader ceiling while retaining the compatibility writer fence', async () => {

@@ -33,7 +33,10 @@ const validConfiguration: BackstageNotionAuthorityConfiguration = {
   }],
 };
 
-function inventory(current: boolean): BackstageNotionActiveInventory {
+function inventory(
+  current: boolean,
+  chunkCount = 1
+): BackstageNotionActiveInventory {
   const timestamp = new Date('2026-08-19T12:00:00.000Z');
   return {
     authority: 'notion',
@@ -45,7 +48,7 @@ function inventory(current: boolean): BackstageNotionActiveInventory {
       manifestHash: 'a'.repeat(64),
       embeddingModel: 'text-embedding-3-small',
       pageCount: 1,
-      chunkCount: 1,
+      chunkCount,
       sourceMaxEditedAt: timestamp,
       syncHolderId: 'test-holder',
       createdAt: timestamp,
@@ -150,6 +153,42 @@ describe('Backstage Notion synchronization loop', () => {
     expect(loadActiveInventory).toHaveBeenCalledWith(universeId);
     expect(sync).not.toHaveBeenCalled();
   });
+
+  it.each([2_049, 2_307, 4_096])(
+    'treats a complete %d-chunk active inventory as reader-compatible',
+    async chunkCount => {
+      const loadActiveInventory = jest.fn(async () => inventory(true, chunkCount));
+      const sync = jest.fn(async () => []);
+
+      await expect(ensureBackstageNotionWorkerReadiness({
+        readConfiguration: () => validConfiguration,
+        repository: { loadActiveInventory },
+        sync,
+      })).resolves.toMatchObject({
+        currentBeforeSync: 1,
+        syncAttempted: false,
+      });
+      expect(sync).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each([0, -1, 1.5, 4_097])(
+    'never treats an invalid %p-chunk active inventory as current',
+    async chunkCount => {
+      const loadActiveInventory = jest.fn(async () => inventory(true, chunkCount));
+      const sync = jest.fn(async () => [syncResult('lease-busy')]);
+
+      await expect(ensureBackstageNotionWorkerReadiness({
+        readConfiguration: () => validConfiguration,
+        repository: { loadActiveInventory },
+        sync,
+      })).rejects.toMatchObject({
+        code: BACKSTAGE_NOTION_WORKER_READINESS_ERROR_CODE,
+        reason: 'sync-result-incomplete',
+      });
+      expect(sync).toHaveBeenCalledTimes(1);
+    }
+  );
 
   it.each(['activated', 'unchanged'] as const)(
     'admits readiness after a successful %s upgrade and current inventory reload',
