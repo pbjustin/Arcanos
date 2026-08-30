@@ -2102,6 +2102,68 @@ describe('GPT fast-path route branching', () => {
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 
+  it.each([
+    [
+      'detailed alternative cards',
+      'detailed-alternative-cards-universe',
+      'Give me three detailed alternative cards with full match lineups.',
+    ],
+    [
+      'short alternative cards with nested matches',
+      'nested-short-alternative-cards-universe',
+      'Give me three short alternative cards, each with eight matches.',
+    ],
+    [
+      'short alternative cards with next-sentence nested matches',
+      'next-sentence-nested-alternative-cards-universe',
+      'Give me three short alternative cards. Each has eight matches.',
+    ],
+    [
+      'natural alternative-card request phrasing',
+      'natural-alternative-cards-universe',
+      'Answer directly. Can I get three alternative cards?',
+    ],
+    [
+      'open-ended alternative-card request phrasing',
+      'open-ended-alternative-cards-universe',
+      'How about three alternative cards?',
+    ],
+    [
+      'alternative cards with a per-card component list',
+      'per-card-components-alternative-cards-universe',
+      'Give me three short alternative cards, plus matches, storylines, finishes, and consequences for each.',
+    ],
+  ])('queues %s as booking containers', async (_caseName, universeId, prompt) => {
+    const accessToken = `backstage-${'v'.repeat(48)}`;
+    process.env.ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN = accessToken;
+    process.env.ARCANOS_BACKSTAGE_BOOKER_ASYNC_GENERATION_ENABLED = 'true';
+    process.env.ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY =
+      Buffer.alloc(32, 0x6b).toString('base64');
+    mockResolveGptRouting.mockResolvedValueOnce(
+      buildBackstageRouting('generateBooking')
+    );
+
+    const response = await request(buildApp())
+      .post('/gpt/backstage-booker')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .send({
+        action: 'generateBooking',
+        payload: {
+          universeId,
+          prompt,
+        },
+      });
+
+    expect(response.status).toBe(202);
+    expect(response.headers['x-gpt-route-decision-reason']).toBe(
+      'backstage_complete_booking_container'
+    );
+    expect(response.headers['x-gpt-queue-bypassed']).toBe('false');
+    expect(executeFastGptPromptMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).toHaveBeenCalledTimes(1);
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
   it('uses the nested canonical literal prompt instead of a heavy message alias', async () => {
     const accessToken = `backstage-${'i'.repeat(48)}`;
     process.env.ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN = accessToken;

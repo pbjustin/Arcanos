@@ -75,9 +75,11 @@ const NUMBER_WORDS = new Map<string, number>([
 const BACKSTAGE_BOOKER_COMPACT_RETRY_NUMBER_WORD_PATTERN =
   Array.from(NUMBER_WORDS.keys()).join('|');
 const BACKSTAGE_BOOKER_COMPACT_RETRY_COUNT_LIKE_ITEM_PATTERN =
-  '(?:angles?|alternatives?|beats?|bouts?|bullets?|chapters?|feuds?|finish(?:es)?|ideas?|items?|match(?:es)?|matchups?|options?|phases?|programs?|promos?|rivalr(?:y|ies)|scenarios?|segments?|storylines?)';
+  '(?:alternative\\s+cards?|angles?|alternatives?|beats?|bouts?|bullets?|chapters?|feuds?|finish(?:es)?|ideas?|items?|match(?:es)?|matchups?|options?|phases?|programs?|promos?|rivalr(?:y|ies)|scenarios?|segments?|storylines?)';
 const BACKSTAGE_BOOKER_COMPACT_RETRY_COUNT_LIKE_MODIFIER_PATTERN =
-  '(?:main[- ]event|booking|match|title|storyline|rivalry|creative|different|possible|detailed|numbered|men[\'’]?s|women[\'’]?s|raw|smackdown|nxt)';
+  '(?:main[- ]event|booking|match|finish|title|storyline|rivalry|creative|different|possible|detailed|short|brief|concise|compact|numbered|men[\'’]?s|women[\'’]?s|raw|smackdown|nxt)';
+const BACKSTAGE_BOOKER_COMPACT_RETRY_DIRECTIVE_PATTERN_SOURCE =
+  `\\b(?<requestVerb>book|create|generate|give|list|offer|provide|propose|return|schedule|suggest|write|want|need)(?:\\s+(?<recipient>me|us))?\\s+(?:(?<qualifier>exactly|only|up\\s+to|at\\s+most|no\\s+more\\s+than)\\s+)?(?:(?<digitCount>\\d+)|(?<wordCount>one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve))\\s+(?<modifiers>(?:${BACKSTAGE_BOOKER_COMPACT_RETRY_COUNT_LIKE_MODIFIER_PATTERN}\\s+){0,3})(?<itemNoun>alternative\\s+cards?|bullets?|items?|match(?:es)?|rivalr(?:y|ies)|options?|ideas?|alternatives?|scenarios?)\\b`;
 const BACKSTAGE_DIRECT_GENERATION_VERB_PATTERN =
   '(?:book|build|continue|create|design|draft|generate|give|make|need|plan|produce|provide|rebook|return|rewrite|schedule|want|write)';
 const BACKSTAGE_BOOKING_COMPONENT_NOUN_PATTERN =
@@ -175,6 +177,7 @@ const BACKSTAGE_BOOKER_COMPACT_RETRY_MAX_TOTAL_WORDS = 1_000;
 interface BackstageCompactRetryDirectiveCount {
   count: number;
   mode: 'exact' | 'atMost';
+  compactPresentation: boolean;
   negated: boolean;
   quoteAmbiguous: boolean;
 }
@@ -182,6 +185,13 @@ interface BackstageCompactRetryDirectiveCount {
 interface BackstageCompactRetryCountLikeRequest {
   count: number;
   quoteAmbiguous: boolean;
+}
+
+interface BackstageAlternativeCardRequest {
+  compactPresentation: boolean;
+  containerRequest: boolean;
+  count: number | null;
+  mode: 'exact' | 'atMost';
 }
 
 interface BackstageCompactRetryItemReferenceSummary {
@@ -194,8 +204,66 @@ export interface BackstageCompactOutputContract
   itemPolicy: BackstageCompactRetryItemPolicy;
   wordBounds: BackstageCompactOutputWordBounds;
   embeddedContentState: BackstageCompactRetryEmbeddedContentState;
+  alternativeCardContainerRequest: boolean;
   completeBookingContainerComponentCount: boolean;
   explicitCompactOutputRequest: boolean;
+}
+
+export function shouldUseBackstageBookerCompactOutputMode(
+  prompt: string,
+  contract: BackstageCompactOutputContract,
+  directAnswerMode: boolean
+): boolean {
+  return !contract.alternativeCardContainerRequest && (
+    directAnswerMode
+    || hasBackstageExplicitTopLevelCompactItemCount(prompt, contract)
+  );
+}
+
+/**
+ * Identify a caller-owned top-level compact list without treating match,
+ * segment, or other nested counts inside a complete booking container as the
+ * returned list. An explicit compact shape attached to the container remains
+ * authoritative. Only unambiguous give-me/us list-return directives activate
+ * compact presentation here; book/create/generate counts retain booking
+ * capacity unless a separate direct-answer cue applies.
+ */
+export function hasBackstageExplicitTopLevelCompactItemCount(
+  prompt: string,
+  contract: Pick<
+    BackstageCompactOutputContract,
+    | 'itemPolicy'
+    | 'completeBookingContainerComponentCount'
+    | 'explicitCompactOutputRequest'
+  >
+): boolean {
+  if (
+    contract.itemPolicy.mode !== 'exact'
+    && contract.itemPolicy.mode !== 'atMost'
+  ) {
+    return false;
+  }
+  if (
+    contract.completeBookingContainerComponentCount
+    || contract.explicitCompactOutputRequest
+  ) {
+    return contract.explicitCompactOutputRequest;
+  }
+
+  const embeddedContentState = buildBackstageCompactRetryEmbeddedContentState(prompt);
+  const compactPresentationDirectives = collectBackstageCompactRetryDirectiveCounts(
+    prompt,
+    embeddedContentState
+  ).filter(directive =>
+    directive.compactPresentation
+    && !directive.negated
+    && !directive.quoteAmbiguous
+  );
+  const directive = compactPresentationDirectives[0];
+  return compactPresentationDirectives.length === 1
+    && directive !== undefined
+    && directive.count === contract.itemPolicy.count
+    && directive.mode === contract.itemPolicy.mode;
 }
 
 export interface BackstageCompactRetryEmbeddedContentState {
@@ -211,6 +279,15 @@ const BACKSTAGE_QUOTE_INSIDE_STATE = 2;
 interface BackstageCompactRetryItemCountGroups extends Record<string, string | undefined> {
   digitCount?: string;
   wordCount?: string;
+}
+
+interface BackstageCompactRetryDirectiveGroups
+  extends BackstageCompactRetryItemCountGroups {
+  itemNoun?: string;
+  modifiers?: string;
+  qualifier?: string;
+  recipient?: string;
+  requestVerb?: string;
 }
 
 function parseBackstageCompactRetryItemCountGroups(
@@ -881,33 +958,75 @@ export function hasBackstageExplicitCompactOutputRequest(
     return false;
   }
 
-  return resolveBackstageExplicitCompactOutputItemPolicy(
+  const alternativeCardRequests = collectBackstageAlternativeCardRequests(
+    normalizedPrompt,
+    embeddedContentState
+  );
+  if (alternativeCardRequests.some(request => request.containerRequest)) {
+    return false;
+  }
+
+  return alternativeCardRequests.some(request => request.compactPresentation)
+    || resolveBackstageExplicitCompactOutputItemPolicy(
     normalizedPrompt,
     embeddedContentState
   ) !== null;
+}
+
+function isBackstageCompactRetryDirectiveDiscardedContext(
+  prompt: string,
+  matchIndex: number
+): boolean {
+  const precedingText = prompt.slice(Math.max(0, matchIndex - 220), matchIndex);
+  const clauseStart = Math.max(
+    precedingText.lastIndexOf('.'),
+    precedingText.lastIndexOf('!'),
+    precedingText.lastIndexOf('?'),
+    precedingText.lastIndexOf(';'),
+    precedingText.lastIndexOf('\n')
+  );
+  const clause = precedingText.slice(clauseStart + 1);
+  let discardScope = clause;
+  for (const boundary of clause.matchAll(/\b(?:but|however|instead|then)\b/giu)) {
+    discardScope = clause.slice(boundary.index! + boundary[0].length);
+  }
+  return /\b(?:disregard|ignore)\b[^.!?;\n]{0,128}\b(?:instructions?|requests?)\b[^.!?;\n]{0,96}$/iu.test(
+    discardScope
+  );
 }
 
 function collectBackstageCompactRetryDirectiveCounts(
   prompt: string,
   embeddedContentState: BackstageCompactRetryEmbeddedContentState
 ): BackstageCompactRetryDirectiveCount[] {
-  const matches = prompt.matchAll(
-    /\b(?:book|create|generate|give|list|offer|provide|propose|return|schedule|suggest|write|want|need)(?:\s+(?:me|us))?\s+(?:(?<qualifier>exactly|only|up\s+to|at\s+most|no\s+more\s+than)\s+)?(?:(?<digitCount>\d+)|(?<wordCount>one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve))\s+(?:(?:main[- ]event|booking|match|title|storyline|rivalry|creative|different|possible|detailed|numbered|men['’]?s|women['’]?s|raw|smackdown|nxt)\s+){0,3}(?:bullets?|items?|match(?:es)?|rivalr(?:y|ies)|options?|ideas?|alternatives?|scenarios?)\b/giu
-  );
+  const matches = prompt.matchAll(new RegExp(
+    BACKSTAGE_BOOKER_COMPACT_RETRY_DIRECTIVE_PATTERN_SOURCE,
+    'giu'
+  ));
   const directiveCounts: BackstageCompactRetryDirectiveCount[] = [];
 
   for (const match of matches) {
-    const groups = match.groups as BackstageCompactRetryItemCountGroups & {
-      qualifier?: string;
-    };
+    const groups = match.groups as BackstageCompactRetryDirectiveGroups;
     const matchIndex = match.index!;
     const count = parseBackstageCompactRetryItemCountGroups(groups);
     const quoteDisposition = embeddedContentState.quotedDispositionByCodeUnit[matchIndex];
     if (
       count === null
+      || isBackstageCompactRetryDirectiveDiscardedContext(prompt, matchIndex)
       || quoteDisposition === 'embedded'
       || isBackstageCompactRetryDirectiveCreativeContent(prompt, matchIndex)
     ) {
+      continue;
+    }
+
+    const alternativeCardRequest = /^alternative\s+cards?$/iu.test(
+      groups.itemNoun ?? ''
+    );
+    const explicitAlternativeCardCompactIntent =
+      /\b(?:brief|compact|concise|short)\b/iu.test(groups.modifiers ?? '');
+    // A card is a booking container, not a compact list item. Preserve its
+    // count unless the caller explicitly asks for a compact presentation.
+    if (alternativeCardRequest && !explicitAlternativeCardCompactIntent) {
       continue;
     }
 
@@ -917,6 +1036,9 @@ function collectBackstageCompactRetryDirectiveCounts(
       mode: /^(?:up\s+to|at\s+most|no\s+more\s+than)$/u.test(qualifier)
         ? 'atMost'
         : 'exact',
+      compactPresentation:
+        groups.requestVerb?.toLowerCase() === 'give'
+        && /^(?:me|us)$/u.test(groups.recipient?.toLowerCase() ?? ''),
       negated: isBackstageCompactRetryDirectiveNegated(
         prompt,
         matchIndex
@@ -926,6 +1048,540 @@ function collectBackstageCompactRetryDirectiveCounts(
   }
 
   return directiveCounts;
+}
+
+function collectBackstageAlternativeCardRequests(
+  prompt: string,
+  embeddedContentState: BackstageCompactRetryEmbeddedContentState
+): BackstageAlternativeCardRequest[] {
+  const requests: BackstageAlternativeCardRequest[] = [];
+  const generationVerbPattern = '(?:assemble|book|brainstorm|build|come\\s+up\\s+with|compose|construct|craft|create|deliver|design|develop|devise|draft|draw\\s+up|flesh\\s+out|formulate|frame|generate|give|invent|lay\\s+out|list|make|map|need|offer|outline|pitch|plan|prepare|present|produce|provide|propose|put\\s+together|recommend|return|rewrite|schedule|show|sketch|suggest|want|work\\s+up|write)';
+  const alternativeCardComponentNounPattern = `(?:${BACKSTAGE_BOOKING_COMPONENT_NOUN_PATTERN}|consequences?|fights?|lineups?|main[- ]events?|stories|storylines?|themes?|undercards?)`;
+  const bookingGenerationParticiplePattern = '(?:assembled|booked|brainstormed|built|composed|constructed|crafted|created|delivered|described|designed|developed|devised|drafted|drawn\\s+up|fleshed\\s+out|formulated|framed|generated|invented|laid\\s+out|listed|made|mapped|offered|outlined|pitched|planned|prepared|presented|produced|provided|proposed|put\\s+together|recommended|returned|rewritten|scheduled|shown|sketched|suggested|worked\\s+up|written)';
+  const alternativeCardDozenMultiplierPattern =
+    '(?:\\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)';
+  const alternativeCardQuantityLeadPattern =
+    `(?:a\\s+(?:(?:couple|pair|trio)\\s+of|dozen)|another|both|half\\s+a\\s+dozen|${alternativeCardDozenMultiplierPattern}\\s+dozen|several|some)`;
+  for (const nounMatch of prompt.matchAll(/\balternative\s+cards?\b/giu)) {
+    const nounIndex = nounMatch.index!;
+    const suffixStart = nounIndex + nounMatch[0].length;
+    const rawSuffix = prompt.slice(suffixStart, suffixStart + 480);
+    const recoveryTargetPattern = `(?:it|that|them|these|this|those|each(?:\\s+one)?|every\\s+one|all(?:\\s+of)?\\s+them|all\\s+(?:\\d+|${BACKSTAGE_BOOKER_COMPACT_RETRY_NUMBER_WORD_PATTERN})|(?:each|every)\\s+(?:alternative\\s+)?card|(?:the\\s+)?(?:whole\\s+)?(?:set|trio)|(?:the\\s+)?(?:(?:actual|complete|full)\\s+)?(?:bookings?|cards?))`;
+    const recoveryGenerationVerbPattern = '(?:assemble|book|brainstorm|build|compose|construct|craft|create|deliver|design|develop|devise|draft|draw|expand|flesh|formulate|frame|generate|give|invent|make|map|plan|prepare|produce|put|rewrite|schedule|turn|work|write)';
+    const hasPositiveAnaphoricRecovery = rawSuffix
+      .split(/[;.!?\n]/u)
+      .some(clause => new RegExp(
+        `^[\\s,:;\\-–—]*(?:(?:but|instead|rather)\\b[\\s,]*)?(?:(?:kindly|please)\\s+)?(?:[\\p{L}'’]+ly\\s+){0,3}${recoveryGenerationVerbPattern}\\b[^;.!?\\n]{0,64}\\b${recoveryTargetPattern}\\b`,
+        'iu'
+      ).test(clause))
+      || new RegExp(
+        `\\b(?:but|however|instead|rather)\\b[\\s,:;\\-–—]*(?:(?:kindly|please)\\s+)?(?:[\\p{L}'’]+ly\\s+){0,3}${recoveryGenerationVerbPattern}\\b[^;.!?\\n]{0,64}\\b${recoveryTargetPattern}\\b`,
+        'iu'
+      ).test(rawSuffix);
+    if (
+      embeddedContentState.quotedDispositionByCodeUnit[nounIndex] !== 'topLevel'
+      || isBackstageCompactRetryDirectiveCreativeContent(prompt, nounIndex)
+      || isBackstageCompactRetryDirectiveDiscardedContext(prompt, nounIndex)
+      || (
+        isBackstageCompactRetryDirectiveNegated(prompt, nounIndex)
+        && !hasPositiveAnaphoricRecovery
+      )
+    ) {
+      continue;
+    }
+
+    const rawPrefix = prompt.slice(Math.max(0, nounIndex - 240), nounIndex);
+    const prefixBoundary = Math.max(
+      rawPrefix.lastIndexOf('.'),
+      rawPrefix.lastIndexOf('!'),
+      rawPrefix.lastIndexOf('?'),
+      rawPrefix.lastIndexOf('\n'),
+      rawPrefix.lastIndexOf(';'),
+      rawPrefix.lastIndexOf(':')
+    );
+    const bodyBeforeNoun = rawPrefix.slice(prefixBoundary + 1);
+    const boundaryCharacter = prefixBoundary >= 0
+      ? rawPrefix[prefixBoundary]
+      : undefined;
+    const contextualLeadIn = prefixBoundary >= 0
+      ? rawPrefix.slice(0, prefixBoundary + 1)
+      : '';
+    if (
+      boundaryCharacter
+      && /[,;:]/u.test(boundaryCharacter)
+      && /\b(?:according\s+to|asks?|asked|context|examples?|ignore|quote|says?|said|tells?|told|(?:instructions?|request)\s+(?:from|says?))\b[^.!?\n]{0,120}[,;:]\s*$/iu.test(
+        contextualLeadIn
+      )
+    ) {
+      continue;
+    }
+    if (
+      /\bwithout(?:\s+(?:also|directly|first|initially))?\s+(?:booking|building|creating|describing|drafting|generating|giving|listing|offering|outlining|presenting|producing|providing|showing|writing)\s+(?:(?:me|us)\s+)?$/iu.test(
+        bodyBeforeNoun
+      )
+      || /\bavoid(?:ing)?\s+(?:booking|building|creating|describing|drafting|generating|giving|listing|offering|outlining|presenting|producing|providing|showing|writing)\s+(?:(?:me|us)\s+)?$/iu.test(
+        bodyBeforeNoun
+      )
+    ) {
+      continue;
+    }
+
+    const suffixBoundary = rawSuffix.search(/[.!?\n]/u);
+    const clauseSuffix = rawSuffix.slice(
+      0,
+      suffixBoundary < 0 ? rawSuffix.length : suffixBoundary
+    );
+    const followingText = suffixBoundary < 0
+      ? ''
+      : rawSuffix.slice(suffixBoundary + 1);
+    const followingClauses = followingText
+      .split(/[.!?\n]/u)
+      .map(clause => clause.trim())
+      .filter(clause => clause.length > 0);
+    const anaphoricFollowingClauses = followingClauses.filter(clause => (
+      /^\s*(?:all(?:\s+of\s+them)?|each|every|for\s+(?:each|every)|it\b|that\b|the\s+cards?|them\b|these\b|they\b|this\b|those\b)/iu.test(clause)
+      || /\b(?:all\s+(?:(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b(?:\s+(?:alternative\s+)?cards?)?)?|apiece|each|every|in\s+(?:all|each|every)\s+(?:alternative\s+)?cards?|on\s+(?:each|every)\s+(?:alternative\s+)?card|per\s+(?:alternative\s+)?card)\b/iu.test(
+        clause
+      )
+    ));
+    const compactFollowingClauses = followingClauses.filter(clause =>
+      /^\s*(?:(?:return|write)\s+(?:them|the\s+(?:answer|cards?|output|response))|(?:keep|make)\s+(?:each|them|the\s+cards?|the\s+(?:answer|output|response)))\b/iu.test(
+        clause
+      )
+    );
+    const compactClauseScope = [clauseSuffix, ...compactFollowingClauses].join(' ');
+    const requestClause = [
+      bodyBeforeNoun,
+      nounMatch[0],
+      clauseSuffix,
+      ...anaphoricFollowingClauses,
+    ].join(' ');
+    const hasContainerDetail = /\b(?:complete|comprehensive|detailed|entire|full|fully[- ]developed|whole)\b/iu.test(
+      requestClause
+    ) || /\bfully\s+(?:book|build|create|develop|draft|flesh\s+out|write)\b/iu.test(
+      requestClause
+    );
+    const nestedCardScope = [clauseSuffix, ...anaphoricFollowingClauses].join('. ');
+    const hasPositiveScopedBookingComponent = Array.from(
+      nestedCardScope.matchAll(new RegExp(
+        `\\b${alternativeCardComponentNounPattern}\\b`,
+        'giu'
+      ))
+    ).some(match => {
+      const matchIndex = match.index!;
+      const localPrefix = nestedCardScope.slice(
+        Math.max(0, matchIndex - 96),
+        matchIndex
+      );
+      const localSuffix = nestedCardScope.slice(
+        matchIndex + match[0].length,
+        matchIndex + match[0].length + 64
+      );
+      const positiveBoundaryMatches = Array.from(localPrefix.matchAll(
+        /\b(?:but|however|instead|rather)\b/giu
+      ));
+      const positiveBoundary = positiveBoundaryMatches.at(-1);
+      const componentPrefix = positiveBoundary
+        ? localPrefix.slice(positiveBoundary.index! + positiveBoundary[0].length)
+        : localPrefix;
+      const negatedComponent = /\b(?:avoid(?:ing)?|do\s+not|don['’]t|exclude(?:d|s|ing)?|must\s+not|never|no|not|omit(?:ted|s|ting)?|without|zero)\b[^;.!?\n]{0,80}$/iu.test(
+        componentPrefix
+      );
+      const definedComponent = /\b(?:define|definition\s+of|explain\s+(?:to\s+(?:me|us)\s+)?what|meaning\s+of|tell\s+(?:me|us)\s+what|whether)\b[^;.!?\n]{0,72}$/iu.test(
+        componentPrefix
+      );
+      const negativelyQualifiedAfter = /^\s*(?:[- ]free\b|(?:are|is|was|were)\s+(?:excluded|not\s+(?:included|required|wanted)|omitted|optional|unnecessary)\b)/iu.test(
+        localSuffix
+      );
+      return !negatedComponent && !definedComponent && !negativelyQualifiedAfter;
+    });
+    const hasNestedCardStructure = hasPositiveScopedBookingComponent
+      || /\bfully\s+(?:book|build|create|develop|draft|flesh\s+out|write)\s+(?:each(?:\s+one)?|it|them|the\s+cards?)\b/iu.test(
+        requestClause
+      );
+    const hasCompactModifier = /\b(?:brief|compact|concise|short)\b(?:\s+[\p{L}\p{N}'’]+(?:-[\p{L}\p{N}'’]+)?){0,3}\s*$/iu.test(
+      bodyBeforeNoun
+    );
+    const countedCompactSuffixMatch = new RegExp(
+      `\\b(?:as|formatted\\s+as|in|using)\\s+(?:(?<qualifier>up\\s+to|at\\s+most|no\\s+more\\s+than)\\s+)?(?:(?<digitCount>\\d+)|(?<wordCount>${BACKSTAGE_BOOKER_COMPACT_RETRY_NUMBER_WORD_PATTERN}))\\s+(?:(?:brief|compact|concise|numbered|short|top[- ]level)\\s+){0,3}(?:bullets?|items?|paragraphs?|summaries?)\\b`,
+      'iu'
+    ).exec(compactClauseScope);
+    const hasCompactSuffix = countedCompactSuffixMatch !== null
+      || /\b(?:as|formatted\s+as|in|using)\s+(?:brief|compact|concise|short)(?:\s+(?:numbered|top[- ]level)){0,2}\s+(?:bullets?|items?|paragraphs?|summaries?)\b/iu.test(
+        compactClauseScope
+      )
+      || /\b(?:keep|make)\s+(?:each|them|the\s+cards?|the\s+(?:answer|output|response))\s+(?:brief|compact|concise|short)\b/iu.test(
+        compactClauseScope
+      )
+      || /\beach\s+(?:one\s+)?(?:brief|compact|concise|short)\b/iu.test(
+        compactClauseScope
+      );
+    const hasCompactNegation = /\b(?:do\s+not|don['’]t|never|not|without)\b[^.!?\n]{0,64}\b(?:brief|compact|concise|short)\b/iu.test(
+      [clauseSuffix, ...followingClauses].join(' ')
+    );
+
+    const countMatches = Array.from(bodyBeforeNoun.matchAll(new RegExp(
+      `\\b(?:(?<qualifier>exactly|only|up\\s+to|at\\s+most|no\\s+more\\s+than)\\s+)?(?:(?<digitCount>\\d+)|(?<wordCount>${BACKSTAGE_BOOKER_COMPACT_RETRY_NUMBER_WORD_PATTERN}))\\b`,
+      'giu'
+    )));
+    const countMatch = countMatches[countMatches.length - 1];
+    const compoundDozenMatch = new RegExp(
+      `\\b(?:(?<digitCount>\\d+)|(?<wordCount>one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve))\\s+dozen\\s*$`,
+      'iu'
+    ).exec(bodyBeforeNoun);
+    const compoundDozenMultiplier = compoundDozenMatch
+      ? parseBackstageCompactRetryItemCountGroups(
+          compoundDozenMatch.groups as BackstageCompactRetryItemCountGroups
+        )
+      : null;
+    const compoundQuantityCount = /\bhalf\s+a\s+dozen\s*$/iu.test(bodyBeforeNoun)
+      ? 6
+      : /\ba\s+trio\s+of\s*$/iu.test(bodyBeforeNoun)
+        ? 3
+        : /\b(?:a\s+(?:couple|pair)\s+of|both)\s*$/iu.test(bodyBeforeNoun)
+          ? 2
+          : /\banother\s*$/iu.test(bodyBeforeNoun)
+            ? 1
+            : compoundDozenMultiplier === null
+              ? null
+              : compoundDozenMultiplier * 12;
+    const hasQuantityLead = new RegExp(
+      `\\b${alternativeCardQuantityLeadPattern}\\s*$`,
+      'iu'
+    ).test(bodyBeforeNoun);
+    const postNounRequestMatch = new RegExp(
+      `^[\\s,:;\\-–—]*(?:(?:can|could|would|will)\\s+you\\s+)?(?:(?:kindly|please)\\s+)?${generationVerbPattern}(?:\\s+(?:me|us))?\\s+(?:(?<qualifier>exactly|only|up\\s+to|at\\s+most|no\\s+more\\s+than)\\s+)?(?:(?<digitCount>\\d+)|(?<wordCount>${BACKSTAGE_BOOKER_COMPACT_RETRY_NUMBER_WORD_PATTERN}))\\b`,
+      'iu'
+    ).exec(clauseSuffix);
+    const suffixCount = countedCompactSuffixMatch
+      ? parseBackstageCompactRetryItemCountGroups(
+          countedCompactSuffixMatch.groups as BackstageCompactRetryItemCountGroups
+        )
+      : null;
+    const prefixCount = countMatch
+      ? parseBackstageCompactRetryItemCountGroups(
+          countMatch.groups as BackstageCompactRetryItemCountGroups
+        )
+      : null;
+    const postNounCount = postNounRequestMatch
+      ? parseBackstageCompactRetryItemCountGroups(
+          postNounRequestMatch.groups as BackstageCompactRetryItemCountGroups
+        )
+      : null;
+    const implicitSingularCount = /^alternative\s+card$/iu.test(nounMatch[0])
+      && /\b(?:a|an)\b(?:\s+[\p{L}\p{N}'’]+(?:-[\p{L}\p{N}'’]+)?){0,4}\s*$/iu.test(
+        bodyBeforeNoun
+      )
+        ? 1
+        : null;
+    const explicitCount = suffixCount
+      ?? compoundQuantityCount
+      ?? prefixCount
+      ?? postNounCount;
+    const count = explicitCount ?? implicitSingularCount;
+    const hasGenerationRequestVerb = new RegExp(
+      `\\b${generationVerbPattern}\\b`,
+      'iu'
+    ).test(bodyBeforeNoun) || postNounRequestMatch !== null;
+    const hasNaturalRequestLead = /\b(?:(?:can|could|may|might|would|will)\s+(?:(?:i|we)\s+(?:get|have|receive|see)|you\s+(?:(?:kindly|please)\s+)?(?:bring|get|send|show)(?:\s+(?:me|us))?)|(?:i|we)(?:['’]d|\s+would)\s+(?:like|love|prefer)(?:\s+to\s+(?:get|have|receive|see))?|let\s+(?:me|us)\s+(?:get|have|see)|(?:how|what)\s+about)\b/iu.test(
+      bodyBeforeNoun
+    );
+    const hasDescriptiveRequestVerb = /\b(?:describe|outline|present|show)\b/iu.test(
+      bodyBeforeNoun
+    );
+    const hasPoliteFragment = /\bplease\b/iu.test(
+      `${bodyBeforeNoun} ${clauseSuffix}`
+    );
+    const hasStrongRequestEvidence = hasGenerationRequestVerb
+      || hasNaturalRequestLead
+      || explicitCount !== null;
+    const numberedPhraseDiscussion = new RegExp(
+      `\\b(?:(?:(?:brief|clear|compact|concise|detailed|full|short)\\s+){0,4}(?:explanation|understanding)\\s+of|compare|learn\\s+(?:more\\s+)?about|(?:(?:better|fully|more\\s+clearly)\\s+)?understand|explain|tell\\s+(?:me|us)\\s+about)\\s+(?:(?:all|a|an|the)\\s+)?(?:(?:exactly|only|up\\s+to|at\\s+most|no\\s+more\\s+than)\\s+)?(?:(?:\\d+|${BACKSTAGE_BOOKER_COMPACT_RETRY_NUMBER_WORD_PATTERN})\\s+)?(?:(?:brief|compact|concise|detailed|full|numbered|short)\\s+){0,4}$`,
+      'iu'
+    ).test(bodyBeforeNoun);
+    const contextualReferenceDiscussion = /\b(?:there\s+(?:are|exist|remain|were)|why\s+(?:are|were)|which\s+(?:of\s+)?(?:all\s+|the\s+)?(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)?|(?:article|catalog|chart|database|document|example|file|notes?|page|passage|post|report|source|spreadsheets?|table|text|worksheets?)\s+(?:compares?|contains?|describes?|discusses?|has|includes?|lists?|mentions?|presents?|shows?))\b/iu.test(
+      bodyBeforeNoun
+    ) || /\b(?:according\s+to|from|in)\s+(?:an?|the)?\s*(?:article|catalog|chart|database|document|example|file|notes?|page|passage|post|report|source|spreadsheets?|table|text|worksheets?)\b/iu.test(
+      clauseSuffix
+    );
+    const referenceNounLeadMatch = new RegExp(
+      `(?:(?:(?:exactly|only|up\\s+to|at\\s+most|no\\s+more\\s+than)\\s+)?(?:(?:a|an)|(?:(?:all|the)\\s+)?(?:\\d+|${BACKSTAGE_BOOKER_COMPACT_RETRY_NUMBER_WORD_PATTERN}))(?:\\s+(?:brief|compact|concise|detailed|full|numbered|short)){0,4}|${alternativeCardQuantityLeadPattern})\\s*$`,
+      'iu'
+    ).exec(bodyBeforeNoun);
+    const referenceSubjectPredicate = referenceNounLeadMatch
+      ? bodyBeforeNoun.slice(0, referenceNounLeadMatch.index).trim()
+      : '';
+    const hasFrontedRequestLead = /^(?:if\s+(?:(?:at\s+all\s+)?possible|(?:you|we)\s+can)|as\s+a\s+starting\s+point|to\s+begin|for\s+(?:raw|smackdown|nxt)(?:\s*(?:,|\/|and)\s*(?:raw|smackdown|nxt))*)\s*,\s*$/iu.test(
+      referenceSubjectPredicate
+    );
+    const hasPostContextRequestReversal = new RegExp(
+      `\\b(?:but|however|instead|rather)\\b[\\s,:;\\-–—]*(?:(?:i|we)\\s+(?:need|want)|(?:(?:kindly|please)\\s+)?${generationVerbPattern})\\b[^;.!?\\n]{0,64}$`,
+      'iu'
+    ).test(referenceSubjectPredicate);
+    const referenceSubjectPredicateWordCount = Array.from(
+      referenceSubjectPredicate.matchAll(/[\p{L}\p{N}'’.-]+/gu)
+    ).length;
+    const clauseInitialRequestLead = new RegExp(
+      `^(?:(?:kindly|please)\\s+)?(?:${generationVerbPattern}|bring|fetch|send|try|use)\\b`,
+      'iu'
+    ).test(referenceSubjectPredicate)
+      || /^(?:(?:can|could|may|might|should|would|will)\b|let(?:['’]s|\s+(?:me|us))\b|maybe\b|(?:i|we)(?:['’]d|\s+would)\b|(?:i|we)\s+(?:can|choose|could|hope|need|prefer|take|want|will)\b)/iu.test(
+        referenceSubjectPredicate
+      )
+      || new RegExp(
+        `^you\\s+(?:can|could|must|should|will|would)\\s+${generationVerbPattern}\\b`,
+        'iu'
+      ).test(referenceSubjectPredicate)
+      || new RegExp(
+        `^(?:(?:kindly|please)\\s+)?(?:(?:ask|get|tell)\\b[^;.!?\\n]{0,48}\\bto\\s+|(?:have|let)\\b[^;.!?\\n]{0,48}\\b)${generationVerbPattern}\\b`,
+        'iu'
+      ).test(referenceSubjectPredicate)
+      || /^it\s+(?:could|would)\s+(?:(?:be\s+(?:great|helpful|ideal|nice|useful)\s+to\s+have)|help\s+to\s+have)\b/iu.test(
+        referenceSubjectPredicate
+      );
+    const explicitRequestSubject = /\b(?:request|requested\s+output)\b/iu.test(
+      referenceSubjectPredicate
+    );
+    const barePreferenceNounPhrase = /^(?:the\s+)?(?:best|favorite|favourite|ideal|strongest|top)\b/iu.test(
+      referenceSubjectPredicate
+    );
+    const interrogativeReferenceLead = /^(?:how|what|which|why)\b/iu.test(
+      referenceSubjectPredicate
+    );
+    const declarativeReferenceDiscussion = referenceSubjectPredicateWordCount >= 2
+      && !clauseInitialRequestLead
+      && !explicitRequestSubject
+      && !barePreferenceNounPhrase
+      && !interrogativeReferenceLead
+      && !hasFrontedRequestLead
+      && !hasPostContextRequestReversal;
+    const informationalQuestion = new RegExp(
+      `\\b(?:(?:explain|tell\\s+(?:me|us))\\s+(?:how|whether|why)|(?:how|why)\\s+(?:are|do|does|did|is|was|were)|(?:are|can|could|did|do|does|should|was|were|will|would)\\s+(?:(?:all|a|an|the)\\s+)?(?:(?:\\d+|${BACKSTAGE_BOOKER_COMPACT_RETRY_NUMBER_WORD_PATTERN})\\s+)?)\\b[^.!?\\n]{0,120}$`,
+      'iu'
+    ).test(bodyBeforeNoun) && /\b(?:compare[sd]?|differ(?:ed|s)?|exist(?:ed|s)?|mean(?:s|t)?|represent(?:ed|s)?|work(?:ed|s)?|be\s+(?:enough|viable)|suffice[sd]?)\b/iu.test(
+      clauseSuffix
+    );
+    const sourceExplanation = /\b(?:explain|tell\s+(?:me|us))\s+(?:how|whether|why)\b/iu.test(
+      bodyBeforeNoun
+    ) && /\b(?:article|catalog|chart|database|document|example|file|notes?|page|passage|post|report|source|spreadsheets?|table|text|worksheets?)\b[^.!?\n]{0,80}\b(?:contains?|has|had|includes?|lists?|mentions?|presents?|shows?)\b/iu.test(
+      bodyBeforeNoun
+    );
+    const postNounClause = clauseSuffix
+      .replace(/^[\s,:;\-–—()[\]{}]+/u, '')
+      .trim();
+    const postNounWords = Array.from(
+      postNounClause.matchAll(/[\p{L}\p{N}'’.-]+/gu),
+      match => ({ lower: match[0].toLowerCase(), value: match[0] })
+    );
+    const postNounFiniteSubjectBlockers = new Set([
+      'a', 'an', 'and', 'around', 'as', 'at', 'based', 'built', 'by',
+      'comprising', 'containing', 'consisting', 'each', 'every', 'featuring',
+      'for', 'from', 'in', 'including', 'made', 'no', 'of', 'on', 'or', 'per',
+      'plus', 'that', 'the', 'to', 'which', 'who', 'with', 'without',
+    ]);
+    const postNounHasFinitePredicate = postNounWords.some((word, index) => {
+      if (index === 0) {
+        return false;
+      }
+      if (/^(?:are|can|could|did|does|had|has|have|is|may|might|must|shall|should|was|were|will|would)$/u.test(
+        word.lower
+      )) {
+        const previousWord = postNounWords[index - 1]?.lower;
+        const previousPreviousWord = postNounWords[index - 2]?.lower;
+        if (
+          /^(?:that|which|who)$/u.test(previousWord ?? '')
+          || (
+            previousWord?.endsWith('ly') === true
+            && /^(?:that|which|who)$/u.test(previousPreviousWord ?? '')
+          )
+        ) {
+          return false;
+        }
+        return index < postNounWords.length - 1;
+      }
+      if (!/(?:ed|became|caught|came|drew|found|got|grew|led|left|made|ran|sat|saw|sent|stood|took|went|won|wrote)$/u.test(
+        word.lower
+      )) {
+        return false;
+      }
+      const bookingGenerationParticiple = new RegExp(
+        `^${bookingGenerationParticiplePattern}$`,
+        'iu'
+      ).test(word.lower);
+      if (
+        index === postNounWords.length - 1
+        && bookingGenerationParticiple
+      ) {
+        return false;
+      }
+
+      let subjectIndex = index - 1;
+      while (
+        subjectIndex > 0
+        && (
+          /^(?:all|already|each|just|still)$/u.test(
+            postNounWords[subjectIndex]!.lower
+          )
+          || postNounWords[subjectIndex]!.lower.endsWith('ly')
+        )
+      ) {
+        subjectIndex -= 1;
+      }
+      const subjectWord = postNounWords[subjectIndex]!;
+      const nextWord = postNounWords[index + 1];
+      return subjectIndex > 0
+        && !postNounFiniteSubjectBlockers.has(subjectWord.lower)
+        && !subjectWord.lower.endsWith('ly')
+        && !/^\d+$/u.test(subjectWord.lower)
+        && !new RegExp(
+          `^(?:${BACKSTAGE_BOOKER_COMPACT_RETRY_NUMBER_WORD_PATTERN})$`,
+          'iu'
+        ).test(subjectWord.lower)
+        && (
+          nextWord === undefined
+          || !/^(?:against|for|in|on|versus|with)$/u.test(nextWord.lower)
+          || !bookingGenerationParticiple
+        );
+    });
+    const postNounStructuredFragment = new RegExp(
+      `^(?:(?:about|across|all|each|every|for|including|per|plus|where|with|without)\\b|(?:divided|split)\\s+(?:across|among)\\b|(?:based|built)\\s+(?:around|on)\\b|(?:comprising|containing|featuring)\\b|consisting\\s+of\\b|in\\s+which\\b|made\\s+up\\s+of\\b|${alternativeCardComponentNounPattern}\\b|(?:that|which|who)\\b)`,
+      'iu'
+    ).test(postNounClause) && !postNounHasFinitePredicate;
+    const postNounDirectRequest = postNounRequestMatch !== null
+      || new RegExp(
+        `^(?:(?:kindly|please)\\s+)?(?:[\\p{L}'’]+ly\\s+){0,3}${recoveryGenerationVerbPattern}\\b[^;.!?\\n]{0,64}\\b${recoveryTargetPattern}\\b`,
+        'iu'
+      ).test(postNounClause)
+      || new RegExp(
+        `^(?:(?:can|could|may|might|will|would)\\s+you\\s+(?:(?:kindly|please)\\s+)?|(?:i|we)(?:['’]d|\\s+would)\\s+like\\s+you\\s+to\\s+)(?:[\\p{L}'’]+ly\\s+){0,3}${recoveryGenerationVerbPattern}\\b[^;.!?\\n]{0,64}\\b${recoveryTargetPattern}\\b`,
+        'iu'
+      ).test(postNounClause)
+      || new RegExp(
+        `^would\\s+you\\s+mind\\s+(?:[\\p{L}'’]+ly\\s+){0,3}(?:assembling|booking|building|creating|developing|drafting|fleshing\\s+out|generating|planning|writing)\\b[^;.!?\\n]{0,64}\\b${recoveryTargetPattern}\\b`,
+        'iu'
+      ).test(postNounClause);
+    const postNounModalBookingRequest = new RegExp(
+      `^(?:(?:must|shall|should)|ought(?:\\s+(?:all|each))?\\s+to|(?:are|is)\\s+to|(?:have|has)\\s+to)\\s+(?:(?:(?:also|now|still)|[\\p{L}'’.-]+ly)\\s+){0,3}(?:(?:all|each)\\s+)?(?:(?:(?:also|now|still)|[\\p{L}'’.-]+ly)\\s+){0,3}(?:be\\s+(?:(?:(?:also|now|still)|[\\p{L}'’.-]+ly)\\s+){0,3}${bookingGenerationParticiplePattern}\\b|(?:contain|feature|include|receive|consist\\s+of|have(?!\\s+been\\b))\\b[^;.!?\\n]{0,64}\\b${alternativeCardComponentNounPattern}\\b|be\\s+(?:complete|detailed|distinct|fully[- ]developed|full)\\b)`,
+      'iu'
+    ).test(postNounClause);
+    const postNounBookingRequirement = new RegExp(
+      `^(?:(?:will|would)\\s+)?(?:deserve(?:s)?|need(?:s)?|require(?:s)?)\\s+(?:to\\s+be\\s+(?:(?:[\\p{L}'’.-]+ly)\\s+){0,3}${bookingGenerationParticiplePattern}\\b|(?:(?:a|an|all|complete|comprehensive|detailed|exactly|full|the|\\d+|${BACKSTAGE_BOOKER_COMPACT_RETRY_NUMBER_WORD_PATTERN})\\s+){0,5}(?:bookings?|${alternativeCardComponentNounPattern})\\b)`,
+      'iu'
+    ).test(postNounClause);
+    const postNounCopularRequest = new RegExp(
+      `^(?:are|is)\\s+(?:needed|required|wanted)\\b|^(?:are|is)\\s+(?:(?:exactly|just|precisely)\\s+)?(?:what\\s+(?:(?:i|we)\\s+(?:need|requested|want|asked\\s+for)|(?:i|we)(?:['’]d|\\s+would)\\s+like)|(?:the\\s+)?(?:exact\\s+)?(?:cards?|output)\\s+(?:(?:i|we)\\s+(?:need|requested|want)|(?:i|we)(?:['’]d|\\s+would)\\s+like)|(?:my|our)\\s+requested\\s+(?:cards?|output)|all(?:\\s+that)?\\s+(?:(?:i|we)\\s+(?:need|requested|want)|(?:i|we)(?:['’]d|\\s+would)\\s+like))\\b`,
+      'iu'
+    ).test(postNounClause);
+    const postNounDesireRequest = /\b(?:could|would)\s+(?:be\s+(?:(?:a\s+)?great\s+help|appreciated|enough|great|helpful|ideal|nice|useful|welcome)|help\b|suffice\b)|\bwill\s+(?:do|help|suffice)\b/iu.test(
+      postNounClause
+    );
+    const postNounImplicitRequest = postNounModalBookingRequest
+      || postNounBookingRequirement
+      || postNounCopularRequest
+      || postNounDesireRequest;
+    const postNounDelimitedListRequest = (
+      /^\s*[:\/|→–—-]\s*[^,;/|.!?\n]{1,64}[,;/|]\s*[^,;/|.!?\n]{1,64}/u.test(
+        clauseSuffix
+      )
+      || /^[^,;/|.!?\n]{1,64}[\/|]\s*[^,;/|.!?\n]{1,64}[\/|]\s*[^,;/|.!?\n]{1,64}/u.test(
+        postNounClause
+      )
+    ) && !postNounHasFinitePredicate;
+    const postNounVerblessRequest = new RegExp(
+      `^(?:ideally|preferably)\\b|^if\\s+(?:(?:at\\s+all\\s+)?possible|you\\s+can)\\b|^(?:(?:a|an)\\s+different\\s+)?one(?:\\s+[\\p{L}'’.-]+ed){0,2}\\s+for\\s+each\\b|^(?:\\d+|${BACKSTAGE_BOOKER_COMPACT_RETRY_NUMBER_WORD_PATTERN})\\s+(?:apiece\\b|each\\b|(?:each\\s+)?(?:for|per|to)\\b)`,
+      'iu'
+    ).test(postNounClause) || postNounDelimitedListRequest;
+    const interrogativePassiveDiscussion = /^(?:how|why)\s+(?:are|is|was|were)\b/iu.test(
+      referenceSubjectPredicate
+    ) && postNounHasFinitePredicate;
+    const postNominalPredicateDiscussion = referenceNounLeadMatch !== null
+      && !hasGenerationRequestVerb
+      && !hasNaturalRequestLead
+      && !clauseInitialRequestLead
+      && !explicitRequestSubject
+      && !interrogativeReferenceLead
+      && !hasFrontedRequestLead
+      && !hasPostContextRequestReversal
+      && postNounClause.length > 0
+      && !hasPositiveAnaphoricRecovery
+      && !hasPoliteFragment
+      && !hasCompactSuffix
+      && !hasCompactNegation
+      && !postNounStructuredFragment
+      && !postNounDirectRequest
+      && !postNounImplicitRequest
+      && !postNounVerblessRequest;
+    const phraseDiscussion = /\b(?:compare\s+(?:the\s+)?(?:phrase|term)|define|explain\s+(?:the\s+)?(?:phrase|term)|(?:definition|meaning)\s+of)\b/iu.test(
+      bodyBeforeNoun
+    ) || (contextualReferenceDiscussion && !hasPostContextRequestReversal)
+      || postNominalPredicateDiscussion
+      || interrogativePassiveDiscussion
+      || (
+        declarativeReferenceDiscussion
+        && !hasNaturalRequestLead
+        && !hasPositiveAnaphoricRecovery
+      )
+      || informationalQuestion
+      || sourceExplanation
+      || (
+        numberedPhraseDiscussion
+        && !hasNestedCardStructure
+        && !hasPositiveAnaphoricRecovery
+      )
+      || /\b(?:the\s+)?(?:phrase|term)\s*$/iu.test(bodyBeforeNoun)
+      || (
+        /\bwhat\s+(?:are|does|do|is)\b/iu.test(bodyBeforeNoun)
+        && !hasStrongRequestEvidence
+      );
+    const hasRequestContext = !phraseDiscussion && (
+      hasGenerationRequestVerb
+      || hasNaturalRequestLead
+      || hasPositiveAnaphoricRecovery
+      || hasContainerDetail
+      || hasNestedCardStructure
+      || ((hasDescriptiveRequestVerb || hasPoliteFragment) && (
+        count !== null
+        || hasContainerDetail
+        || hasCompactModifier
+        || hasCompactSuffix
+      ))
+      || hasQuantityLead
+      || count !== null
+    );
+    if (!hasRequestContext) {
+      continue;
+    }
+
+    const compactPresentation = !hasContainerDetail
+      && !hasNestedCardStructure
+      && !hasCompactNegation
+      && (hasCompactModifier || hasCompactSuffix);
+    const qualifier = (
+      countedCompactSuffixMatch?.groups?.qualifier
+      ?? countMatch?.groups?.qualifier
+      ?? postNounRequestMatch?.groups?.qualifier
+      ?? ''
+    ).toLowerCase();
+    requests.push({
+      compactPresentation,
+      containerRequest: !compactPresentation,
+      count,
+      mode: /^(?:up\s+to|at\s+most|no\s+more\s+than)$/u.test(qualifier)
+        ? 'atMost'
+        : 'exact',
+    });
+  }
+  return requests;
+}
+
+function hasBackstageAlternativeCardContainerRequest(
+  prompt: string,
+  embeddedContentState: BackstageCompactRetryEmbeddedContentState
+): boolean {
+  return collectBackstageAlternativeCardRequests(
+    prompt,
+    embeddedContentState
+  ).some(request => request.containerRequest);
 }
 
 function collectBackstageCompactRetryCountLikeRequests(
@@ -946,6 +1602,7 @@ function collectBackstageCompactRetryCountLikeRequests(
     if (
       count === null
       || isBackstageCompactRetryDirectiveNegated(prompt, matchIndex)
+      || isBackstageCompactRetryDirectiveDiscardedContext(prompt, matchIndex)
       || quoteDisposition === 'embedded'
       || isBackstageCompactRetryDirectiveCreativeContent(prompt, matchIndex)
     ) {
@@ -978,6 +1635,7 @@ function countBackstageCompactRetryItemReferences(
     if (
       quoteDisposition === 'embedded'
       || isBackstageCompactRetryDirectiveCreativeContent(prompt, matchIndex)
+      || isBackstageCompactRetryDirectiveDiscardedContext(prompt, matchIndex)
     ) {
       continue;
     }
@@ -1013,6 +1671,7 @@ function collectBackstageCompactRetryRangeBudgetCounts(
         embeddedContentState.quotedDispositionByCodeUnit[matchIndex] === 'embedded'
         || isBackstageCompactRetryDirectiveCreativeContent(prompt, matchIndex)
         || isBackstageCompactRetryDirectiveNegated(prompt, matchIndex)
+        || isBackstageCompactRetryDirectiveDiscardedContext(prompt, matchIndex)
       ) {
         continue;
       }
@@ -1086,7 +1745,8 @@ function hasBackstageCompactRetryAmbiguousCountSyntax(
     const matchIndex = match.index!;
     return embeddedContentState.quotedDispositionByCodeUnit[matchIndex] !== 'embedded'
       && !isBackstageCompactRetryDirectiveCreativeContent(prompt, matchIndex)
-      && !isBackstageCompactRetryDirectiveNegated(prompt, matchIndex);
+      && !isBackstageCompactRetryDirectiveNegated(prompt, matchIndex)
+      && !isBackstageCompactRetryDirectiveDiscardedContext(prompt, matchIndex);
   }));
 }
 
@@ -1120,7 +1780,22 @@ function resolveBackstageCompactRetryItemPolicy(
     prompt,
     embeddedContentState
   );
+  const alternativeCardRequests = collectBackstageAlternativeCardRequests(
+    prompt,
+    embeddedContentState
+  );
+  const alternativeCardContainerRequests = alternativeCardRequests.filter(
+    request => request.containerRequest
+  );
+  const alternativeCardCompactRequests = alternativeCardRequests.filter(
+    request => request.compactPresentation
+  );
   const topLevelDirectiveCounts = directiveCounts.filter(({ quoteAmbiguous }) => !quoteAmbiguous);
+  const hasExplicitSupersedingDirective = topLevelDirectiveCounts.length === 1
+    && new RegExp(
+      `\\b(?:but\\s+)?(?:instead|rather)\\b[^.!?\\n]{0,48}${BACKSTAGE_BOOKER_COMPACT_RETRY_DIRECTIVE_PATTERN_SOURCE}`,
+      'iu'
+    ).test(prompt);
   const hasAmbiguousConstraint = hasBackstageCompactRetryAmbiguousCountSyntax(
     prompt,
     embeddedContentState
@@ -1128,8 +1803,40 @@ function resolveBackstageCompactRetryItemPolicy(
     || topLevelDirectiveCounts.some(({ negated }) => negated)
     || topLevelDirectiveCounts.length > 1;
 
+  if (alternativeCardContainerRequests.length > 0) {
+    return {
+      mode: 'preserve',
+      budgetItemCount: Math.max(
+        1,
+        ...alternativeCardContainerRequests.flatMap(
+          request => request.count === null ? [] : [request.count]
+        ),
+        ...directiveCounts.map(({ count }) => count),
+        ...countLikeRequests.map(({ count }) => count),
+        ...rangeBudgetCounts
+      ),
+    };
+  }
+
+  const alternativeCardCompactRequest = alternativeCardCompactRequests[0];
+  if (
+    alternativeCardCompactRequests.length === 1
+    && alternativeCardCompactRequest
+    && alternativeCardCompactRequest.count !== null
+  ) {
+    return {
+      mode: alternativeCardCompactRequest.mode,
+      count: alternativeCardCompactRequest.count,
+      budgetItemCount: alternativeCardCompactRequest.count,
+    };
+  }
+
   const directiveCount = topLevelDirectiveCounts[0];
-  if (topLevelDirectiveCounts.length === 1 && directiveCount && !hasAmbiguousConstraint) {
+  if (
+    topLevelDirectiveCounts.length === 1
+    && directiveCount
+    && (!hasAmbiguousConstraint || hasExplicitSupersedingDirective)
+  ) {
     return {
       mode: directiveCount.mode,
       count: directiveCount.count,
@@ -1293,6 +2000,8 @@ export function resolveBackstageCompactOutputContract(
       embeddedContentState
     ),
     embeddedContentState,
+    alternativeCardContainerRequest:
+      hasBackstageAlternativeCardContainerRequest(prompt, embeddedContentState),
     completeBookingContainerComponentCount:
       hasBackstageCompleteBookingContainerComponentCountRequest(
         prompt,
@@ -1530,12 +2239,31 @@ export function isBackstageBookerCompactRetryOutputValid(
 export function assertBackstageBookerCompactRetryOutputValid(
   output: string,
   contract: BackstageCompactRetryValidationContract,
-  usedCompactOutputRetry: boolean
+  validationRequired: boolean
 ): void {
   if (
-    usedCompactOutputRetry
+    validationRequired
     && !isBackstageBookerCompactRetryOutputValid(output, contract)
   ) {
     throw new BackstageBookerOutputIncompleteError();
   }
+}
+
+export function assertBackstageBookerFinalCompactOutputValid(
+  output: string,
+  contract: BackstageCompactRetryValidationContract,
+  options: {
+    compactDirectResponse: boolean;
+    enforceParsedItemContract: boolean;
+    usedCompactOutputRetry: boolean;
+  }
+): void {
+  if (!options.enforceParsedItemContract) {
+    return;
+  }
+  assertBackstageBookerCompactRetryOutputValid(
+    output,
+    contract,
+    options.usedCompactOutputRetry || options.compactDirectResponse
+  );
 }

@@ -15,7 +15,7 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 5_000;
 const DEFAULT_TOTAL_TIMEOUT_MS = 60_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 64 * 1024;
 const MAX_AGGREGATE_RESPONSE_BYTES = 512 * 1024;
-const MAX_REQUESTS = 134;
+const MAX_REQUESTS = 136;
 const MAX_BACKSTAGE_BOOKER_OPENAPI_SOURCE_BYTES = 128 * 1024;
 const BACKSTAGE_BOOKER_OPENAPI_GIT_PATH =
   'contracts/backstage_booker.openapi.v1.json';
@@ -922,6 +922,14 @@ export function buildNativePrPreviewRequestPlan() {
     backstageGenerationCase(
       'backstage-generation-production-output-contracts',
       'productionOutputContracts'
+    ),
+    backstageGenerationCase(
+      'backstage-generation-output-admission',
+      'outputAdmission'
+    ),
+    backstageGenerationCase(
+      'backstage-generation-notion-sync-phase-a',
+      'notionSyncPhaseA'
     ),
     backstageGenerationCase(
       'backstage-generation-notion-authority-rag',
@@ -2190,6 +2198,164 @@ function expectedBackstageGenerationContractPayload(requestCase) {
             requestedOutputShapeInstructionBound: true,
             responseFormat: 'compact_direct',
           }),
+        },
+      },
+      workerBoundaryReached: false,
+    };
+  }
+  if (requestCase.fixtureName === 'outputAdmission') {
+    const alternativeCase = (
+      id,
+      alternativeCardContainerRequest,
+      budgetItemCount,
+      itemPolicyMode,
+      itemCount,
+      compactOutputMode,
+      enforceParsedItemContract,
+      responseFormat,
+      recoveryMode
+    ) => ({
+      alternativeCardContainerRequest,
+      budgetItemCount,
+      compactOutputMode,
+      enforceParsedItemContract,
+      id,
+      itemCount,
+      itemPolicyMode,
+      recoveryMode,
+      responseFormat,
+    });
+    const rejectedFirstSuccess = id => ({
+      accepted: false,
+      causeFreeIncomplete: true,
+      errorCode: 'BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE',
+      id,
+      outputEscaped: false,
+      outputReturnedByteForByte: false,
+      retryable: false,
+      syntheticAttemptCount: 1,
+      syntheticRetryCalls: 0,
+    });
+    const validExact = {
+      accepted: true,
+      causeFreeIncomplete: false,
+      errorCode: null,
+      id: 'valid-exact',
+      outputEscaped: false,
+      outputReturnedByteForByte: true,
+      retryable: null,
+      syntheticAttemptCount: 1,
+      syntheticRetryCalls: 0,
+    };
+    return {
+      ...base,
+      outputAdmission: {
+        alternativeCases: [
+          alternativeCase(
+            'detailed-alternatives', true, 3, 'preserve', null,
+            false, false, 'structured_booking', 'structured'
+          ),
+          alternativeCase(
+            'nested-short-alternatives', true, 3, 'preserve', null,
+            false, false, 'structured_booking', 'structured'
+          ),
+          alternativeCase(
+            'slash-delimited-alternatives', true, 3, 'preserve', null,
+            false, false, 'structured_booking', 'structured'
+          ),
+          alternativeCase(
+            'two-dozen-alternatives', true, 24, 'preserve', null,
+            false, false, 'structured_booking', 'structured'
+          ),
+          alternativeCase(
+            'explicit-short-alternatives', false, 3, 'exact', 3,
+            true, true, 'compact_direct', 'compact'
+          ),
+          alternativeCase(
+            'ignore-supersession', false, 3, 'exact', 3,
+            true, true, 'compact_direct', 'compact'
+          ),
+          alternativeCase(
+            'attribution-supersession', false, 3, 'exact', 3,
+            true, true, 'compact_direct', 'compact'
+          ),
+          alternativeCase(
+            'considered-supersession', false, 3, 'exact', 3,
+            true, true, 'compact_direct', 'compact'
+          ),
+        ],
+        contracts: {
+          alternativeClassificationVerified: true,
+          malformedFirstSuccessRejected: true,
+          noFirstSuccessRetry: true,
+          validFirstSuccessAccepted: true,
+        },
+        firstSuccess: {
+          malformedAtMost: rejectedFirstSuccess('malformed-at-most'),
+          overlongAtMost: rejectedFirstSuccess('overlong-at-most'),
+          supersession: {
+            allCauseFreeIncomplete: true,
+            allOutputContained: true,
+            allRejected: true,
+            caseCount: 3,
+            syntheticAttemptCounts: [1, 1, 1],
+            syntheticRetryCalls: [0, 0, 0],
+          },
+          validExact,
+        },
+        productionSharedFinalGate: true,
+        productionSharedModeCore: true,
+        productionSharedOutputContractCore: true,
+      },
+      workerBoundaryReached: false,
+    };
+  }
+  if (requestCase.fixtureName === 'notionSyncPhaseA') {
+    return {
+      ...base,
+      embeddingBoundaryReached: false,
+      notionApiBoundaryReached: false,
+      notionSyncPhaseA: {
+        capacity: {
+          cases: [
+            { chunkCount: 2_048, readable: true, writable: true },
+            { chunkCount: 2_117, readable: true, writable: false },
+            { chunkCount: 4_096, readable: true, writable: false },
+            { chunkCount: 4_097, readable: false, writable: false },
+          ],
+          readerCeiling: 4_096,
+          writerCeiling: 2_048,
+          writerRejectionMessage: 'chunks must contain 1-2048 records.',
+        },
+        contracts: {
+          capacitySplitVerified: true,
+          lateLeaseReleasedExactlyOnce: true,
+          lateNullNotReleased: true,
+          preAbortedAcquisitionSkipped: true,
+          readableUnchangedSnapshotVerified: true,
+          writerFenceRejectedBeforeEffects: true,
+        },
+        leaseFence: {
+          acquireCalls: 1,
+          alreadyAbortedAcquireCalls: 0,
+          nullReleaseCalls: 0,
+          outwardAbortName: 'AbortError',
+          releaseCalls: 1,
+          releaseCallsBeforeLateSettlement: 0,
+          released: [
+            {
+              universeId: 'native-preview-notion-phase-a',
+              holderId: 'native-preview-holder',
+              leaseToken: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaad',
+            },
+          ],
+        },
+        productionSharedCapacityCore: true,
+        productionSharedLateAcquisitionFence: true,
+        productionSharedUnchangedDecision: true,
+        unchangedDecision: {
+          chunkCount: 2_117,
+          disposition: 'verify_unchanged',
         },
       },
       workerBoundaryReached: false,
@@ -3877,6 +4043,28 @@ async function executeRequestCase(
         requestCase.caseId
       );
     }
+    if (
+      requestCase.fixtureName === 'outputAdmission'
+      && response.headers.get(
+        contract.proofHeaders.outputAdmissionVersion
+      ) !== contract.outputAdmissionProofVersion
+    ) {
+      fail(
+        'NATIVE_PR_PREVIEW_BACKSTAGE_OUTPUT_ADMISSION_PROOF_INVALID',
+        requestCase.caseId
+      );
+    }
+    if (
+      requestCase.fixtureName === 'notionSyncPhaseA'
+      && response.headers.get(
+        contract.proofHeaders.notionSyncPhaseAVersion
+      ) !== contract.notionSyncPhaseAProofVersion
+    ) {
+      fail(
+        'NATIVE_PR_PREVIEW_BACKSTAGE_NOTION_SYNC_PHASE_A_PROOF_INVALID',
+        requestCase.caseId
+      );
+    }
   }
   if (requestCase.expectedType === 'dispatch-gpt-identifier-contract') {
     const contract = NATIVE_PR_PREVIEW_E2E_CONTRACT.dispatchGptIdentifier;
@@ -3922,6 +4110,16 @@ async function executeRequestCase(
     options.maxResponseBytes,
     aggregateState
   );
+  if (
+    requestCase.expectedType === 'backstage-generation-contract'
+    && bodyBytes.length
+      > NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration.maxResponseBytes
+  ) {
+    fail(
+      'NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_RESPONSE_TOO_LARGE',
+      requestCase.caseId
+    );
+  }
   if (requestCase.boundedResponse) {
     const declaredBytes = response.headers.get('x-response-bytes') ?? '';
     if (
@@ -4009,6 +4207,14 @@ async function executeRequestCase(
     ...(requestCase.expectedType === 'backstage-generation-contract'
       && requestCase.fixtureName === 'productionOutputContracts'
       ? { outputCapacityPresentationVerified: true }
+      : {}),
+    ...(requestCase.expectedType === 'backstage-generation-contract'
+      && requestCase.fixtureName === 'outputAdmission'
+      ? { outputAdmissionVerified: true }
+      : {}),
+    ...(requestCase.expectedType === 'backstage-generation-contract'
+      && requestCase.fixtureName === 'notionSyncPhaseA'
+      ? { notionSyncPhaseAVerified: true }
       : {}),
     ...(requestCase.expectedType === 'status-auth-boundary-contract'
       ? { statusAuthBoundaryVerified: true }

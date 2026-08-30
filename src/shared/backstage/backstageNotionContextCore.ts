@@ -70,6 +70,7 @@ export interface BackstageNotionMarkdownResponse {
   markdown: string;
   truncated: boolean;
   unknownBlockCount: number;
+  unknownBlockIds?: readonly string[];
 }
 
 export interface BackstageNotionPageMetadata {
@@ -81,12 +82,34 @@ export interface BackstageNotionPageMetadata {
 
 export class BackstageNotionReadError extends Error {
   readonly category: string;
+  readonly retryAfterMs?: number;
 
-  constructor(category: string) {
+  constructor(category: string, retryAfterMs?: number) {
     super('Backstage Notion reference is unavailable.');
     this.name = 'BackstageNotionReadError';
     this.category = category;
+    if (retryAfterMs !== undefined) {
+      this.retryAfterMs = retryAfterMs;
+    }
   }
+}
+
+function parseNotionRetryAfterMs(response: Response): number | undefined {
+  if (response.status !== 429 && response.status !== 529) {
+    return undefined;
+  }
+  const retryAfter = response.headers.get('retry-after');
+  if (!retryAfter || !/^\d+$/u.test(retryAfter)) {
+    return undefined;
+  }
+  if (retryAfter.length > 15) {
+    return Number.MAX_SAFE_INTEGER;
+  }
+  const seconds = Number.parseInt(retryAfter, 10);
+  return Number.isSafeInteger(seconds)
+    && seconds <= Math.floor(Number.MAX_SAFE_INTEGER / 1_000)
+    ? seconds * 1_000
+    : Number.MAX_SAFE_INTEGER;
 }
 
 function normalizeBackstageNotionAccessToken(
@@ -169,6 +192,27 @@ function normalizeNotionPageId(value: string): string | null {
     compact.slice(16, 20),
     compact.slice(20),
   ].join('-');
+}
+
+async function fetchNotionResponse(
+  fetchImpl: BackstageNotionFetchImplementation,
+  endpoint: URL,
+  init: RequestInit
+): Promise<Response> {
+  try {
+    return await fetchImpl(endpoint, init);
+  } catch (error) {
+    if (
+      (error instanceof Error || error instanceof DOMException)
+      && error.name === 'AbortError'
+    ) {
+      throw error;
+    }
+    if (error instanceof BackstageNotionReadError) {
+      throw error;
+    }
+    throw new BackstageNotionReadError('request_failed');
+  }
 }
 
 function isPlainConfigurationObject(
@@ -372,6 +416,9 @@ function parseNotionMarkdownResponse(
     markdown: parsed.markdown,
     truncated: parsed.truncated,
     unknownBlockCount: unknownBlockIds.length,
+    unknownBlockIds: unknownBlockIds.map(value => (
+      normalizeNotionPageId(value as string) as string
+    )),
   };
 }
 
@@ -386,7 +433,7 @@ async function fetchNotionMarkdownPage(
     NOTION_API_ORIGIN
   );
   endpoint.searchParams.set('include_transcript', 'false');
-  const response = await fetchImpl(endpoint, {
+  const response = await fetchNotionResponse(fetchImpl, endpoint, {
     method: 'GET',
     headers: {
       Accept: 'application/json',
@@ -402,7 +449,8 @@ async function fetchNotionMarkdownPage(
     throw new BackstageNotionReadError(
       response.status >= 300 && response.status < 400
         ? 'redirect_rejected'
-        : `http_${response.status}`
+        : `http_${response.status}`,
+      parseNotionRetryAfterMs(response)
     );
   }
 
@@ -496,7 +544,7 @@ export async function fetchBackstageNotionPageMetadata(
     throw new BackstageNotionReadError('invalid_page_id');
   }
   const endpoint = new URL(`/v1/pages/${normalizedPageId}`, NOTION_API_ORIGIN);
-  const response = await fetchImpl(endpoint, {
+  const response = await fetchNotionResponse(fetchImpl, endpoint, {
     method: 'GET',
     headers: {
       Accept: 'application/json',
@@ -512,7 +560,8 @@ export async function fetchBackstageNotionPageMetadata(
     throw new BackstageNotionReadError(
       response.status >= 300 && response.status < 400
         ? 'redirect_rejected'
-        : `http_${response.status}`
+        : `http_${response.status}`,
+      parseNotionRetryAfterMs(response)
     );
   }
 

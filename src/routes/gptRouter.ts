@@ -514,7 +514,8 @@ function classifyBackstageRouteWorkload(params: {
     expectedOutputWords: outputContract.wordBounds.totalWordLimit,
     notionAuthorityContext,
     completeBookingContainerComponentCount:
-      outputContract.completeBookingContainerComponentCount,
+      outputContract.completeBookingContainerComponentCount
+      || outputContract.alternativeCardContainerRequest,
     providerInvocationRequired:
       !prompt || tryExtractExactLiteralPromptShortcut(prompt) === null,
   });

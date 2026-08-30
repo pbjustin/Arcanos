@@ -250,6 +250,22 @@ function responseHeadersForCase(
               }
             : {}
           ),
+          ...(requestCase.fixtureName === 'outputAdmission'
+            ? {
+                [NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration
+                  .proofHeaders.outputAdmissionVersion]:
+                  NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration
+                    .outputAdmissionProofVersion,
+              }
+            : {}),
+          ...(requestCase.fixtureName === 'notionSyncPhaseA'
+            ? {
+                [NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration
+                  .proofHeaders.notionSyncPhaseAVersion]:
+                  NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration
+                    .notionSyncPhaseAProofVersion,
+              }
+            : {}),
         }
       : {}),
     ...(
@@ -582,7 +598,7 @@ test('reads exact candidate Git evidence without executing candidate files', asy
 
 test('executes the bounded credential-free matrix and detects identity stability', async () => {
   const requestPlan = buildNativePrPreviewRequestPlan();
-  assert.equal(requestPlan.length, 134);
+  assert.equal(requestPlan.length, 136);
   assert.equal(
     requestPlan.filter(({ caseId, expectedType }) =>
       expectedType !== 'research-contract'
@@ -658,7 +674,7 @@ test('executes the bounded credential-free matrix and detects identity stability
     requestPlan.filter(({ expectedType }) =>
       expectedType === 'backstage-generation-contract'
     ).length,
-    11
+    13
   );
   assert.equal(
     requestPlan.filter(({ expectedType }) =>
@@ -1044,6 +1060,12 @@ test('executes the bounded credential-free matrix and detects identity stability
   const productionOutputContractsCase = requestPlan.find(({ caseId }) =>
     caseId === 'backstage-generation-production-output-contracts'
   );
+  const outputAdmissionCase = requestPlan.find(({ caseId }) =>
+    caseId === 'backstage-generation-output-admission'
+  );
+  const notionSyncPhaseACase = requestPlan.find(({ caseId }) =>
+    caseId === 'backstage-generation-notion-sync-phase-a'
+  );
   const notionAuthorityRagCase = requestPlan.find(({ caseId }) =>
     caseId === 'backstage-generation-notion-authority-rag'
   );
@@ -1061,6 +1083,8 @@ test('executes the bounded credential-free matrix and detects identity stability
   assert.ok(reviewCompletionCase);
   assert.ok(compactRetryCase);
   assert.ok(productionOutputContractsCase);
+  assert.ok(outputAdmissionCase);
+  assert.ok(notionSyncPhaseACase);
   assert.ok(notionAuthorityRagCase);
   assert.ok(partitionFailureTelemetryCase);
   assert.ok(continuityQueryCase);
@@ -1266,6 +1290,59 @@ test('executes the bounded credential-free matrix and detects identity stability
       tokenLimit: 6_000,
     }
   );
+  const outputAdmissionPayload = expectedNativePrPreviewResponseBody(
+    outputAdmissionCase,
+    { commitSha: COMMIT_SHA, prNumber: PR_NUMBER }
+  );
+  assert.deepEqual(outputAdmissionPayload.outputAdmission.contracts, {
+    alternativeClassificationVerified: true,
+    malformedFirstSuccessRejected: true,
+    noFirstSuccessRetry: true,
+    validFirstSuccessAccepted: true,
+  });
+  assert.equal(
+    outputAdmissionPayload.outputAdmission.alternativeCases.length,
+    8
+  );
+  assert.deepEqual(
+    outputAdmissionPayload.outputAdmission.firstSuccess.supersession,
+    {
+      allCauseFreeIncomplete: true,
+      allOutputContained: true,
+      allRejected: true,
+      caseCount: 3,
+      syntheticAttemptCounts: [1, 1, 1],
+      syntheticRetryCalls: [0, 0, 0],
+    }
+  );
+  const notionSyncPhaseAPayload = expectedNativePrPreviewResponseBody(
+    notionSyncPhaseACase,
+    { commitSha: COMMIT_SHA, prNumber: PR_NUMBER }
+  );
+  assert.deepEqual(
+    notionSyncPhaseAPayload.notionSyncPhaseA.capacity.cases,
+    [
+      { chunkCount: 2_048, readable: true, writable: true },
+      { chunkCount: 2_117, readable: true, writable: false },
+      { chunkCount: 4_096, readable: true, writable: false },
+      { chunkCount: 4_097, readable: false, writable: false },
+    ]
+  );
+  assert.deepEqual(notionSyncPhaseAPayload.notionSyncPhaseA.leaseFence, {
+    acquireCalls: 1,
+    alreadyAbortedAcquireCalls: 0,
+    nullReleaseCalls: 0,
+    outwardAbortName: 'AbortError',
+    releaseCalls: 1,
+    releaseCallsBeforeLateSettlement: 0,
+    released: [
+      {
+        universeId: 'native-preview-notion-phase-a',
+        holderId: 'native-preview-holder',
+        leaseToken: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaad',
+      },
+    ],
+  });
   assert.deepEqual(
     expectedNativePrPreviewResponseBody(notionAuthorityRagCase, {
       commitSha: COMMIT_SHA,
@@ -1720,14 +1797,14 @@ test('executes the bounded credential-free matrix and detects identity stability
   assert.equal(result.executed, true);
   assert.equal(result.networkAttempted, true);
   assert.equal(result.summary.status, 'PASS');
-  assert.equal(result.summary.requestsMade, 134);
+  assert.equal(result.summary.requestsMade, 136);
   assert.equal(result.summary.simulatedAuthRequests, 23);
-  assert.equal(result.checks.length, 134);
+  assert.equal(result.checks.length, 136);
   assert.equal(
     result.checks.filter(({ simulatedAuth }) => simulatedAuth).length,
     23
   );
-  assert.equal(mock.requestCount, 134);
+  assert.equal(mock.requestCount, 136);
   const backstageBookerOpenApiCheck = result.checks.find(({ caseId }) =>
     caseId === 'web-backstage-booker-openapi'
   );
@@ -1818,6 +1895,36 @@ test('executes the bounded credential-free matrix and detects identity stability
     responseBytes: Buffer.byteLength(JSON.stringify(
       productionOutputContractsPayload
     )),
+    role: 'web',
+    simulatedAuth: false,
+  });
+  const outputAdmissionCheck = result.checks.find(({ caseId }) =>
+    caseId === 'backstage-generation-output-admission'
+  );
+  assert.deepEqual(outputAdmissionCheck, {
+    bodySha256: outputAdmissionCheck.bodySha256,
+    caseId: 'backstage-generation-output-admission',
+    clearPolicyVersionVerified: true,
+    httpStatus: 200,
+    method: 'POST',
+    outputAdmissionVerified: true,
+    pathTemplate: '/backstage/generation-contract',
+    responseBytes: Buffer.byteLength(JSON.stringify(outputAdmissionPayload)),
+    role: 'web',
+    simulatedAuth: false,
+  });
+  const notionSyncPhaseACheck = result.checks.find(({ caseId }) =>
+    caseId === 'backstage-generation-notion-sync-phase-a'
+  );
+  assert.deepEqual(notionSyncPhaseACheck, {
+    bodySha256: notionSyncPhaseACheck.bodySha256,
+    caseId: 'backstage-generation-notion-sync-phase-a',
+    clearPolicyVersionVerified: true,
+    httpStatus: 200,
+    method: 'POST',
+    notionSyncPhaseAVerified: true,
+    pathTemplate: '/backstage/generation-contract',
+    responseBytes: Buffer.byteLength(JSON.stringify(notionSyncPhaseAPayload)),
     role: 'web',
     simulatedAuth: false,
   });
@@ -1951,12 +2058,12 @@ test('executes the bounded credential-free matrix and detects identity stability
   const backstageGenerationCalls = mock.calls.filter(({ url }) =>
     url.endsWith('/backstage/generation-contract')
   );
-  assert.equal(backstageGenerationCalls.length, 12);
+  assert.equal(backstageGenerationCalls.length, 14);
   assert.equal(
     backstageGenerationCalls.filter(({ url }) =>
       url.startsWith(WEB_BASE_URL)
     ).length,
-    11
+    13
   );
   assert.equal(
     backstageGenerationCalls.filter(({ url }) =>
@@ -2541,6 +2648,48 @@ test('rejects missing synthetic provenance and correlation or security header dr
       },
     },
     {
+      caseId: 'backstage-generation-output-admission',
+      code: 'NATIVE_PR_PREVIEW_BACKSTAGE_OUTPUT_ADMISSION_PROOF_INVALID',
+      mutate(headers) {
+        delete headers[
+          NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration.proofHeaders
+            .outputAdmissionVersion
+        ];
+      },
+    },
+    {
+      caseId: 'backstage-generation-output-admission',
+      code: 'NATIVE_PR_PREVIEW_BACKSTAGE_OUTPUT_ADMISSION_PROOF_INVALID',
+      mutate(headers) {
+        headers[
+          NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration.proofHeaders
+            .outputAdmissionVersion
+        ] = 'backstage-booker-output-admission/drifted';
+      },
+    },
+    {
+      caseId: 'backstage-generation-notion-sync-phase-a',
+      code:
+        'NATIVE_PR_PREVIEW_BACKSTAGE_NOTION_SYNC_PHASE_A_PROOF_INVALID',
+      mutate(headers) {
+        delete headers[
+          NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration.proofHeaders
+            .notionSyncPhaseAVersion
+        ];
+      },
+    },
+    {
+      caseId: 'backstage-generation-notion-sync-phase-a',
+      code:
+        'NATIVE_PR_PREVIEW_BACKSTAGE_NOTION_SYNC_PHASE_A_PROOF_INVALID',
+      mutate(headers) {
+        headers[
+          NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration.proofHeaders
+            .notionSyncPhaseAVersion
+        ] = 'backstage-notion-sync-phase-a/drifted';
+      },
+    },
+    {
       caseId: 'backstage-generation-notion-authority-rag',
       code: 'NATIVE_PR_PREVIEW_BACKSTAGE_PARTITION_PROOF_INVALID',
       mutate(headers) {
@@ -2732,6 +2881,46 @@ test('rejects missing synthetic provenance and correlation or security header dr
         && error.caseId === testCase.caseId
     );
   }
+});
+
+test('rejects a padded Backstage generation response beyond the contained app ceiling', async () => {
+  const requestPlan = buildNativePrPreviewRequestPlan();
+  const caseId = 'backstage-generation-output-admission';
+  const mock = buildMockFetch(requestPlan, (requestCase) => {
+    if (requestCase.caseId !== caseId) {
+      return undefined;
+    }
+    const exactBody = responseBodyForCase(requestCase);
+    const paddingLength =
+      NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration.maxResponseBytes
+      - Buffer.byteLength(exactBody)
+      + 1;
+    const body = `${exactBody}${' '.repeat(paddingLength)}`;
+    const response = new Response(body, {
+      headers: responseHeadersForCase(requestCase, Buffer.byteLength(body)),
+      status: requestCase.expectedStatus,
+    });
+    Object.defineProperty(response, 'url', {
+      value: `${WEB_BASE_URL}${requestCase.path}`,
+    });
+    return response;
+  });
+
+  await assert.rejects(
+    runNativePrPreviewE2e({
+      args: validArguments('--execute', '--allow-network'),
+      expectedBackstageBookerOpenApiDocument:
+        EXPECTED_BACKSTAGE_BOOKER_OPENAPI_DOCUMENT,
+      fetchImpl: mock.fetchImpl,
+      localGitState: LOCAL_GIT_STATE,
+      monotonicNow: mock.monotonicNow,
+    }),
+    (error) =>
+      error instanceof NativePrPreviewE2eError
+      && error.code
+        === 'NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_RESPONSE_TOO_LARGE'
+      && error.caseId === caseId
+  );
 });
 
 test('rejects dispatch identifier reflection and invalid timestamp evidence', async () => {

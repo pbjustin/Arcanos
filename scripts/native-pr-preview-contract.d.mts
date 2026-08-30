@@ -36,6 +36,7 @@ export interface NativePrPreviewE2eContract {
   }>;
   readonly backstageGeneration: Readonly<{
     path: '/backstage/generation-contract';
+    maxResponseBytes: 4096;
     clearPolicyVersion: 'backstage-booker-clear-generation/v1';
     partitionedAuthorityProofVersion:
       'backstage-notion-partitioned-authority/v1';
@@ -51,6 +52,10 @@ export interface NativePrPreviewE2eContract {
       'backstage-booker-gpt-client-identity/v1';
     outputCapacityPresentationProofVersion:
       'backstage-booker-output-capacity-presentation/v1';
+    outputAdmissionProofVersion:
+      'backstage-booker-output-admission/v1';
+    notionSyncPhaseAProofVersion:
+      'backstage-notion-sync-phase-a/v1';
     fixtures: Readonly<{
       routeBudget: 'route-budget-provider-delay';
       hrcRetryCache: 'hrc-timeout-retry-cache';
@@ -63,6 +68,8 @@ export interface NativePrPreviewE2eContract {
       managedAsyncContinuation: 'managed-async-continuation-contract';
       gptClientIdentity: 'gpt-client-identity-contract';
       productionOutputContracts: 'production-output-contracts';
+      outputAdmission: 'output-classification-first-success-contract';
+      notionSyncPhaseA: 'notion-sync-phase-a-contract';
     }>;
     proofHeaders: Readonly<{
       clearPolicyVersion:
@@ -81,6 +88,10 @@ export interface NativePrPreviewE2eContract {
         'x-arcanos-preview-backstage-gpt-client-identity-version';
       outputCapacityPresentationVersion:
         'x-arcanos-preview-backstage-output-capacity-presentation-version';
+      outputAdmissionVersion:
+        'x-arcanos-preview-backstage-output-admission-version';
+      notionSyncPhaseAVersion:
+        'x-arcanos-preview-backstage-notion-sync-phase-a-version';
     }>;
   }>;
   readonly backstageBookerOpenApi: Readonly<{

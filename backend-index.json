@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-28T17:42:20.992Z",
+  "generatedAt": "2026-08-29T23:42:16.239Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -2513,6 +2513,9 @@
           "relativePath": "src/shared/backstage/backstageNotionScopeIndex.ts"
         },
         {
+          "relativePath": "src/shared/backstage/backstageNotionSyncCore.ts"
+        },
+        {
           "relativePath": "src/shared/backstage/backstageOutputBudget.ts"
         },
         {
@@ -3530,6 +3533,9 @@
         },
         {
           "relativePath": "tests/backstage-notion-scope-index.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-notion-sync-core.test.ts"
         },
         {
           "relativePath": "tests/backstage-notion-sync-loop.test.ts"

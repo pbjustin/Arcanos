@@ -73,6 +73,7 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/shared/backstage/backstageNotionPartitionTelemetryCore.ts',
   'src/shared/backstage/backstageNotionPreviewCanary.ts',
   'src/shared/backstage/backstageNotionRagCore.ts',
+  'src/shared/backstage/backstageNotionSyncCore.ts',
   'src/shared/backstage/backstageReviewContract.ts',
   'src/shared/backstage/backstageStoryline.ts',
   'src/shared/backstage/backstageUniverseReadProjection.ts',
@@ -725,7 +726,7 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ],
   [
     'src/shared/backstage/backstageCompactOutputContract.ts',
-    'f521ee2b59118a0b74c77f95e7dc23642f325eb8349776aa78066cd56d0901e6',
+    '9a9fbc5355264db0fffdabd1c1aea2192280f2eef5c0394df9742348c8697300',
   ],
   [
     'src/shared/backstage/backstageOutputBudget.ts',
@@ -741,7 +742,7 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ],
   [
     'src/shared/backstage/backstageNotionContextCore.ts',
-    'bf3e1a0e812961519147c061d4b63fc54c76ae2b652fa45b3f9b5af9a6d8e6d1',
+    '9cdee5dd2a0fd6abc3d860eb255272a6cea67f1b5409e8ed2865f4d3bf3d52ea',
   ],
   [
     'src/shared/backstage/backstageNotionPreviewCanary.ts',
@@ -770,6 +771,10 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   [
     'src/shared/backstage/backstageNotionRagCore.ts',
     'a6eda06c2021987dc952c5f32c9653a7409ed1932cb6bb27002cf9e279b51598',
+  ],
+  [
+    'src/shared/backstage/backstageNotionSyncCore.ts',
+    '615d39c4144d6032af7b48d2d71c479e9b54cbd3535ce0935c994d6358d53e55',
   ],
   [
     'src/shared/backstage/backstageReviewContract.ts',

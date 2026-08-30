@@ -39,6 +39,7 @@ export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
   }),
   backstageGeneration: Object.freeze({
     path: '/backstage/generation-contract',
+    maxResponseBytes: 4_096,
     clearPolicyVersion: 'backstage-booker-clear-generation/v1',
     partitionedAuthorityProofVersion:
       'backstage-notion-partitioned-authority/v1',
@@ -54,6 +55,10 @@ export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
       'backstage-booker-gpt-client-identity/v1',
     outputCapacityPresentationProofVersion:
       'backstage-booker-output-capacity-presentation/v1',
+    outputAdmissionProofVersion:
+      'backstage-booker-output-admission/v1',
+    notionSyncPhaseAProofVersion:
+      'backstage-notion-sync-phase-a/v1',
     fixtures: Object.freeze({
       routeBudget: 'route-budget-provider-delay',
       hrcRetryCache: 'hrc-timeout-retry-cache',
@@ -66,6 +71,8 @@ export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
       managedAsyncContinuation: 'managed-async-continuation-contract',
       gptClientIdentity: 'gpt-client-identity-contract',
       productionOutputContracts: 'production-output-contracts',
+      outputAdmission: 'output-classification-first-success-contract',
+      notionSyncPhaseA: 'notion-sync-phase-a-contract',
     }),
     proofHeaders: Object.freeze({
       clearPolicyVersion:
@@ -84,6 +91,10 @@ export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
         'x-arcanos-preview-backstage-gpt-client-identity-version',
       outputCapacityPresentationVersion:
         'x-arcanos-preview-backstage-output-capacity-presentation-version',
+      outputAdmissionVersion:
+        'x-arcanos-preview-backstage-output-admission-version',
+      notionSyncPhaseAVersion:
+        'x-arcanos-preview-backstage-notion-sync-phase-a-version',
     }),
   }),
   backstageBookerOpenApi: Object.freeze({

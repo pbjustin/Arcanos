@@ -29,11 +29,23 @@ const indexVersionFenceRollback = readFileSync(
   ),
   'utf8'
 );
+const snapshotCapacityMigration = readFileSync(
+  join(
+    process.cwd(),
+    'migrations',
+    '20260829_backstage_notion_rag_v3_snapshot_capacity.sql'
+  ),
+  'utf8'
+);
+const snapshotCapacityRollback = readFileSync(
+  join(
+    process.cwd(),
+    'migrations',
+    '20260829_backstage_notion_rag_v3_snapshot_capacity.rollback.sql'
+  ),
+  'utf8'
+);
 const runtimeSql = BACKSTAGE_NOTION_RAG_TABLE_DEFINITIONS.join('\n');
-const completeForwardMigration = [
-  forwardMigration,
-  indexVersionFenceMigration,
-].join('\n');
 
 const dedicatedTables = [
   'backstage_notion_universe_heads',
@@ -57,10 +69,11 @@ const protectedLegacyTables = [
 ];
 
 describe('Backstage Notion RAG database contract', () => {
-  it('orders the additive index-version fence after the V1 storage migration', () => {
+  it('orders the additive fences after the V1 storage migration', () => {
     const migrationNames = [
       '20260819_backstage_notion_rag_v1.sql',
       '20260819_backstage_notion_rag_v2_index_version_fence.sql',
+      '20260829_backstage_notion_rag_v3_snapshot_capacity.sql',
     ];
     expect([...migrationNames].sort()).toEqual(migrationNames);
   });
@@ -98,10 +111,19 @@ describe('Backstage Notion RAG database contract', () => {
     expect(sql).toContain('INSERT INTO backstage_notion_authority_epoch');
     expect(sql).toContain('ON CONFLICT (singleton) DO NOTHING');
     expect(sql).toContain('CHECK (singleton)');
-    expect(sql).toContain(
+    expect(sql).not.toContain('chunk_count BETWEEN 1 AND 50000');
+  });
+
+  it('keeps V1 historical while runtime and V3 end at a bounded 4,096 chunks', () => {
+    expect(forwardMigration).toContain(
       'CHECK (page_count BETWEEN 1 AND 5000 AND chunk_count BETWEEN 1 AND 2048)'
     );
-    expect(sql).not.toContain('chunk_count BETWEEN 1 AND 50000');
+    for (const sql of [runtimeSql, snapshotCapacityMigration]) {
+      expect(sql).toContain('ck_backstage_notion_snapshots_counts_v3');
+      expect(sql).toContain(
+        'CHECK (page_count BETWEEN 1 AND 5000 AND chunk_count BETWEEN 1 AND 4096)'
+      );
+    }
   });
 
   it.each([
@@ -219,6 +241,25 @@ describe('Backstage Notion RAG database contract', () => {
     expect(indexVersionFenceRollback).not.toContain('CASCADE');
   });
 
+  it('fences V3 activation on exact chunk inventory and rollback on expanded history', () => {
+    for (const sql of [runtimeSql, snapshotCapacityMigration]) {
+      expect(sql).toContain('expected_chunk_count INTEGER');
+      expect(sql).toContain('actual_chunk_count BIGINT');
+      expect(sql).toContain(
+        'actual_chunk_count IS DISTINCT FROM expected_chunk_count::BIGINT'
+      );
+      expect(sql).toContain(
+        'Backstage Notion snapshot chunk inventory is incomplete for index activation'
+      );
+      expect(sql).toContain("USING ERRCODE = 'BN002'");
+    }
+    expect(snapshotCapacityRollback).toContain(
+      'cannot restore the 2048-chunk limit while expanded immutable snapshots exist'
+    );
+    expect(snapshotCapacityRollback).toContain("USING ERRCODE = '55000'");
+    expect(snapshotCapacityRollback).not.toContain('DELETE FROM');
+  });
+
   it('keeps rollback fail-closed once authoritative history exists', () => {
     for (const table of dedicatedTables) {
       expect(rollbackMigration).toContain(`LOCK TABLE ${table} IN ACCESS EXCLUSIVE MODE`);
@@ -245,19 +286,16 @@ describe('Backstage Notion RAG database contract', () => {
     );
   });
 
-  it('keeps runtime bootstrap and the forward migration semantically identical', () => {
-    const normalizeSql = (value: string): string => value
-      .replace(/^\s*--.*$/gmu, '')
-      .replace(/^\s*(?:BEGIN|COMMIT)\s*;\s*$/gimu, '')
-      .replace(/\s+/gu, ' ')
-      .trim()
-      .replace(/;$/u, '');
-    const runtimeStatements = BACKSTAGE_NOTION_RAG_TABLE_DEFINITIONS
-      .map(statement => statement.trim().replace(/;$/u, ''))
-      .join(';\n');
-
-    expect(normalizeSql(runtimeStatements)).toBe(
-      normalizeSql(completeForwardMigration)
-    );
+  it('keeps runtime bootstrap and V3 migration aligned on final capacity', () => {
+    for (const fragment of [
+      'ck_backstage_notion_snapshots_counts_v3',
+      'chunk_count BETWEEN 1 AND 4096',
+      'expected_chunk_count INTEGER',
+      'actual_chunk_count BIGINT',
+      'snapshot chunk inventory is incomplete for index activation',
+    ]) {
+      expect(runtimeSql).toContain(fragment);
+      expect(snapshotCapacityMigration).toContain(fragment);
+    }
   });
 });

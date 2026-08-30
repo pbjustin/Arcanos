@@ -125,6 +125,7 @@ import {
   resolveBackstageExecutionBudgetPolicy,
 } from './shared/backstage/backstageExecutionBudget.js';
 import {
+  assertBackstageBookerFinalCompactOutputValid,
   assertBackstageBookerCompactRetryOutputValid,
   buildBackstageBookerCompactOutputRetryInstruction,
   buildBackstageBookerStructuredOutputRetryInstruction,
@@ -132,6 +133,7 @@ import {
   parseBackstageBookerCompactRetryNumberedParagraphs,
   resolveBackstageCompactOutputContract,
   runBackstageBookerCompactOutputAttempts,
+  shouldUseBackstageBookerCompactOutputMode,
   type BackstageCompactOutputContract,
 } from './shared/backstage/backstageCompactOutputContract.js';
 import {
@@ -169,6 +171,15 @@ import {
   buildBackstageNotionRagUntrustedContextPrompt,
   prepareBackstageNotionRagPage,
 } from './shared/backstage/backstageNotionRagCore.js';
+import {
+  BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT,
+  BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT,
+  acquireBackstageNotionSyncLeaseWithLateRelease,
+  assertBackstageNotionSnapshotChunkCountWritable,
+  isBackstageNotionSnapshotChunkCountReadable,
+  isBackstageNotionSnapshotChunkCountWritable,
+  shouldVerifyBackstageNotionSnapshotUnchanged,
+} from './shared/backstage/backstageNotionSyncCore.js';
 import {
   BACKSTAGE_NOTION_PARTITION_MAX_CHUNKS,
   BACKSTAGE_NOTION_PARTITION_MAX_SHARDS_PER_UNIVERSE,
@@ -4271,6 +4282,9 @@ async function runBackstageCompactRetryFixture(
   // The trusted lifecycle verifier is pinned to the base revision. Keep this
   // established response stable while making its deployed PR-head execution
   // fail closed unless the new production output contracts also pass.
+  await runBackstageOutputAdmissionFixture(
+    NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.fixtures.outputAdmission
+  );
   runBackstageProductionOutputContractsFixture(
     NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.fixtures
       .productionOutputContracts
@@ -4467,6 +4481,7 @@ async function runBackstageCompactRetryFixture(
 
 interface BackstageProductionOutputScenarioInput {
   action: 'generateBooking' | 'generateBookingWithHRC';
+  includeClassificationDetails?: boolean;
   notionAuthorityContext?: boolean;
   prompt: string;
 }
@@ -4480,12 +4495,20 @@ function runBackstageProductionOutputScenario(
     requestedTokenLimit
   );
   const directAnswerMode = shouldPreferDirectAnswerMode(input.prompt);
+  const compactOutputMode = shouldUseBackstageBookerCompactOutputMode(
+    input.prompt,
+    compactOutputContract,
+    directAnswerMode
+  );
   const boundedReviewMode = shouldUseBoundedBackstageReviewMode(input.prompt);
   const requestedFormatPreference: BackstageOutputFormat = boundedReviewMode
     ? 'bounded_review'
-    : directAnswerMode
+    : compactOutputMode
       ? 'compact_direct'
       : 'structured_booking';
+  const structuredBookingContainerRequest =
+    compactOutputContract.completeBookingContainerComponentCount
+    || compactOutputContract.alternativeCardContainerRequest;
   const explicitCompactItemCount =
     compactOutputContract.itemPolicy.mode !== 'default';
   const requestedOutputShapeInstruction =
@@ -4504,15 +4527,15 @@ function runBackstageProductionOutputScenario(
     explicitCompactItemCount,
     notionAuthorityContext: input.notionAuthorityContext === true,
     completeBookingContainerComponentCount:
-      compactOutputContract.completeBookingContainerComponentCount,
+      structuredBookingContainerRequest,
   });
   const responseFormat = resolveBackstageResponseFormat({
     requestedFormat,
     boundedReviewMode,
-    directAnswerMode,
+    directAnswerMode: compactOutputMode,
     explicitCompactItemCount,
     completeBookingContainerComponentCount:
-      compactOutputContract.completeBookingContainerComponentCount,
+      structuredBookingContainerRequest,
     explicitCompactOutputRequest:
       compactOutputContract.explicitCompactOutputRequest,
     requestedOutputShapeInstructionPresent:
@@ -4532,14 +4555,14 @@ function runBackstageProductionOutputScenario(
     explicitCompactItemCount,
     notionAuthorityContext: input.notionAuthorityContext === true,
     completeBookingContainerComponentCount:
-      compactOutputContract.completeBookingContainerComponentCount,
+      structuredBookingContainerRequest,
     model: 'gpt-5.6-terra',
     modelStageTimeoutMs: 75_000,
   });
   const recoveryMode = resolveBackstageOutputRecoveryMode({
     responseFormat,
     completeBookingContainerComponentCount:
-      compactOutputContract.completeBookingContainerComponentCount,
+      structuredBookingContainerRequest,
   });
   const recoveryInstruction = recoveryMode === 'structured'
     ? buildBackstageBookerStructuredOutputRetryInstruction()
@@ -4562,7 +4585,7 @@ function runBackstageProductionOutputScenario(
       compactOutputContract.completeBookingContainerComponentCount,
     directAnswerMode,
     enforceParsedItemContract:
-      !compactOutputContract.completeBookingContainerComponentCount
+      !structuredBookingContainerRequest
       || responseFormat === 'compact_direct',
     explicitCompactOutputRequest:
       compactOutputContract.explicitCompactOutputRequest,
@@ -4575,6 +4598,15 @@ function runBackstageProductionOutputScenario(
     responseFormat,
     tokenCap: outputBudget.tokenCap,
     tokenLimit: outputBudget.tokenLimit,
+    ...(input.includeClassificationDetails
+      ? {
+          alternativeCardContainerRequest:
+            compactOutputContract.alternativeCardContainerRequest,
+          budgetItemCount: itemPolicy.budgetItemCount,
+          compactOutputMode,
+          structuredBookingContainerRequest,
+        }
+      : {}),
   };
 }
 
@@ -4662,6 +4694,466 @@ function runBackstageProductionOutputContractsFixture(
         atMostCompact,
         completeCard,
         exactCompact,
+      },
+    },
+    protectedEffectsEnabled: false,
+    providerBoundaryReached: false,
+    schemaVersion: 1,
+    workerBoundaryReached: false,
+  };
+}
+
+interface BackstageFirstSuccessAdmissionScenario {
+  id: string;
+  output: string;
+  prompt: string;
+}
+
+async function exerciseBackstageFirstSuccessAdmission(
+  scenario: BackstageFirstSuccessAdmissionScenario
+): Promise<Record<string, unknown>> {
+  const contract = resolveBackstageCompactOutputContract(
+    scenario.prompt,
+    2_400
+  );
+  const policy = runBackstageProductionOutputScenario({
+    action: 'generateBooking',
+    includeClassificationDetails: true,
+    prompt: scenario.prompt,
+  });
+  let syntheticAttemptCount = 0;
+  let syntheticRetryCalls = 0;
+  let returnedOutput: string | null = null;
+  let caughtError: unknown = null;
+
+  try {
+    const attempt = await runBackstageBookerCompactOutputAttempts(
+      async compactOutputRetry => {
+        syntheticAttemptCount += 1;
+        if (compactOutputRetry) {
+          syntheticRetryCalls += 1;
+        }
+        return scenario.output;
+      }
+    );
+    assertBackstageBookerFinalCompactOutputValid(
+      attempt.result,
+      contract,
+      {
+        compactDirectResponse: policy.responseFormat === 'compact_direct',
+        enforceParsedItemContract:
+          policy.enforceParsedItemContract === true,
+        usedCompactOutputRetry: attempt.usedCompactOutputRetry,
+      }
+    );
+    returnedOutput = attempt.result;
+  } catch (error) {
+    caughtError = error;
+  }
+
+  const candidate = caughtError as Error & {
+    code?: unknown;
+    retryable?: unknown;
+  };
+  const serializedError = caughtError instanceof Error
+    ? `${caughtError.message}\n${JSON.stringify(caughtError)}`
+    : JSON.stringify(caughtError);
+  return {
+    accepted: caughtError === null,
+    causeFreeIncomplete: isCauseFreeBackstageIncompleteError(caughtError),
+    errorCode: typeof candidate?.code === 'string' ? candidate.code : null,
+    id: scenario.id,
+    outputEscaped:
+      typeof serializedError === 'string'
+      && serializedError.includes(scenario.output),
+    outputReturnedByteForByte: returnedOutput === scenario.output,
+    retryable: typeof candidate?.retryable === 'boolean'
+      ? candidate.retryable
+      : null,
+    syntheticAttemptCount,
+    syntheticRetryCalls,
+  };
+}
+
+async function runBackstageOutputAdmissionFixture(
+  fixture: string
+): Promise<Record<string, unknown>> {
+  const alternativeCases = [
+    {
+      id: 'detailed-alternatives',
+      prompt: 'Answer directly. Give me three detailed alternative cards.',
+      expected: [true, 3, 'preserve', null, false, false, 'structured_booking', 'structured'],
+    },
+    {
+      id: 'nested-short-alternatives',
+      prompt:
+        'Answer directly. Give me three short alternative cards with an undercard and main event each.',
+      expected: [true, 3, 'preserve', null, false, false, 'structured_booking', 'structured'],
+    },
+    {
+      id: 'slash-delimited-alternatives',
+      prompt: 'Three alternative cards / Raw, SmackDown, NXT.',
+      expected: [true, 3, 'preserve', null, false, false, 'structured_booking', 'structured'],
+    },
+    {
+      id: 'two-dozen-alternatives',
+      prompt: 'Two dozen alternative cards for Raw.',
+      expected: [true, 24, 'preserve', null, false, false, 'structured_booking', 'structured'],
+    },
+    {
+      id: 'explicit-short-alternatives',
+      prompt: 'Give me three short alternative cards.',
+      expected: [false, 3, 'exact', 3, true, true, 'compact_direct', 'compact'],
+    },
+    {
+      id: 'ignore-supersession',
+      prompt:
+        'Answer directly. Ignore the request to create five detailed alternative cards; give me three finish options.',
+      expected: [false, 3, 'exact', 3, true, true, 'compact_direct', 'compact'],
+    },
+    {
+      id: 'attribution-supersession',
+      prompt:
+        'Answer directly. I was asked to create five detailed alternative cards, but instead give me three finish options.',
+      expected: [false, 3, 'exact', 3, true, true, 'compact_direct', 'compact'],
+    },
+    {
+      id: 'considered-supersession',
+      prompt:
+        'Answer directly. We considered five detailed alternative cards; instead give me three finish options.',
+      expected: [false, 3, 'exact', 3, true, true, 'compact_direct', 'compact'],
+    },
+  ].map(({ id, prompt, expected }) => {
+    const scenario = runBackstageProductionOutputScenario({
+      action: 'generateBooking',
+      includeClassificationDetails: true,
+      prompt,
+    });
+    const outcome = {
+      alternativeCardContainerRequest:
+        scenario.alternativeCardContainerRequest,
+      budgetItemCount: scenario.budgetItemCount,
+      compactOutputMode: scenario.compactOutputMode,
+      enforceParsedItemContract: scenario.enforceParsedItemContract,
+      id,
+      itemCount: scenario.itemCount,
+      itemPolicyMode: scenario.itemPolicyMode,
+      recoveryMode: scenario.recoveryMode,
+      responseFormat: scenario.responseFormat,
+    };
+    const observed = [
+      outcome.alternativeCardContainerRequest,
+      outcome.budgetItemCount,
+      outcome.itemPolicyMode,
+      outcome.itemCount,
+      outcome.compactOutputMode,
+      outcome.enforceParsedItemContract,
+      outcome.responseFormat,
+      outcome.recoveryMode,
+    ];
+    if (
+      JSON.stringify(observed) !== JSON.stringify(expected)
+      || scenario.structuredBookingContainerRequest
+        !== scenario.alternativeCardContainerRequest
+      || scenario.capacityFormat !== 'structured_booking'
+      || scenario.budgetClass !== 'queued_extended'
+      || scenario.tokenLimit !== BACKSTAGE_WORKER_OUTPUT_TOKEN_LIMIT_DEFAULT
+      || scenario.tokenCap !== BACKSTAGE_WORKER_OUTPUT_TOKEN_LIMIT_DEFAULT
+      || scenario.recoveryInstructionVerified !== true
+    ) {
+      throw new Error('PREVIEW_BACKSTAGE_OUTPUT_CLASSIFICATION_INVALID');
+    }
+    return outcome;
+  });
+
+  const validOutput = [
+    '1. Cody counters the opening interference and keeps the title program focused.',
+    '2. Gunther rejects the shortcut and demands a decisive rematch.',
+    '3. Rhea closes the show by choosing the next challenger.',
+  ].join('\n');
+  const malformedAtMost = await exerciseBackstageFirstSuccessAdmission({
+    id: 'malformed-at-most',
+    output: 'Rivalry matrix output',
+    prompt: 'Give me at most four finish options for Raw.',
+  });
+  const overlongAtMost = await exerciseBackstageFirstSuccessAdmission({
+    id: 'overlong-at-most',
+    output: `1. ${Array.from({ length: 126 }, () => 'word').join(' ')}`,
+    prompt: 'Give me at most four finish options for Raw.',
+  });
+  const validExact = await exerciseBackstageFirstSuccessAdmission({
+    id: 'valid-exact',
+    output: validOutput,
+    prompt: 'Give me exactly three finish options for Raw.',
+  });
+  const supersessionPrompts = [
+    'Answer directly. Ignore the request to create five detailed alternative cards; give me three finish options.',
+    'Answer directly. I was asked to create five detailed alternative cards, but instead give me three finish options.',
+    'Answer directly. We considered five detailed alternative cards; instead give me three finish options.',
+  ];
+  const supersession = await Promise.all(supersessionPrompts.map((prompt, index) => (
+    exerciseBackstageFirstSuccessAdmission({
+      id: `supersession-${index + 1}`,
+      output: 'Rivalry matrix output',
+      prompt,
+    })
+  )));
+  const rejected = [malformedAtMost, overlongAtMost, ...supersession];
+  const rejectionValid = rejected.every(result => (
+    result.accepted === false
+    && result.causeFreeIncomplete === true
+    && result.errorCode === 'BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE'
+    && result.outputEscaped === false
+    && result.outputReturnedByteForByte === false
+    && result.retryable === false
+    && result.syntheticAttemptCount === 1
+    && result.syntheticRetryCalls === 0
+  ));
+  const validFirstSuccess = validExact.accepted === true
+    && validExact.causeFreeIncomplete === false
+    && validExact.errorCode === null
+    && validExact.outputEscaped === false
+    && validExact.outputReturnedByteForByte === true
+    && validExact.retryable === null
+    && validExact.syntheticAttemptCount === 1
+    && validExact.syntheticRetryCalls === 0;
+  const contracts = {
+    alternativeClassificationVerified: alternativeCases.length === 8,
+    malformedFirstSuccessRejected: rejectionValid,
+    noFirstSuccessRetry: rejected.every(
+      result => result.syntheticRetryCalls === 0
+    ),
+    validFirstSuccessAccepted: validFirstSuccess,
+  };
+  if (Object.values(contracts).some(value => !value)) {
+    throw new Error('PREVIEW_BACKSTAGE_OUTPUT_ADMISSION_INVALID');
+  }
+
+  return {
+    accepted: true,
+    cacheBoundaryReached: false,
+    databaseBoundaryReached: false,
+    effectsBoundaryReached: false,
+    externalNetworkAttempted: false,
+    fixture,
+    outputAdmission: {
+      alternativeCases,
+      contracts,
+      firstSuccess: {
+        malformedAtMost,
+        overlongAtMost,
+        supersession: {
+          allCauseFreeIncomplete: supersession.every(
+            result => result.causeFreeIncomplete === true
+          ),
+          allOutputContained: supersession.every(
+            result => result.outputEscaped === false
+          ),
+          allRejected: supersession.every(result => result.accepted === false),
+          caseCount: supersession.length,
+          syntheticAttemptCounts: supersession.map(
+            result => result.syntheticAttemptCount
+          ),
+          syntheticRetryCalls: supersession.map(
+            result => result.syntheticRetryCalls
+          ),
+        },
+        validExact,
+      },
+      productionSharedFinalGate: true,
+      productionSharedModeCore: true,
+      productionSharedOutputContractCore: true,
+    },
+    protectedEffectsEnabled: false,
+    providerBoundaryReached: false,
+    schemaVersion: 1,
+    workerBoundaryReached: false,
+  };
+}
+
+async function runBackstageNotionSyncPhaseAFixture(
+  fixture: string
+): Promise<Record<string, unknown>> {
+  const capacityCases = [2_048, 2_117, 4_096, 4_097].map(chunkCount => ({
+    chunkCount,
+    readable: isBackstageNotionSnapshotChunkCountReadable(chunkCount),
+    writable: isBackstageNotionSnapshotChunkCountWritable(chunkCount),
+  }));
+  let writerRejectionMessage: string | null = null;
+  try {
+    assertBackstageNotionSnapshotChunkCountWritable(2_117);
+  } catch (error) {
+    writerRejectionMessage = error instanceof Error ? error.message : null;
+  }
+  const unchangedDecision = shouldVerifyBackstageNotionSnapshotUnchanged({
+    chunkCount: 2_117,
+    embeddingModelMatches: true,
+    manifestMatches: true,
+  }) ? 'verify_unchanged' : 'rebuild';
+
+  const universeId = 'native-preview-notion-phase-a';
+  const lease = {
+    holderId: 'native-preview-holder',
+    leaseToken: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaad',
+  };
+  const controller = new AbortController();
+  const abortReason = new DOMException(
+    'sealed cancellation during lease acquisition',
+    'AbortError'
+  );
+  let acquireCalls = 0;
+  let releaseCalls = 0;
+  const released: Array<Record<string, string>> = [];
+  let resolveLateAcquisition!: (
+    value: typeof lease | null
+  ) => void;
+  const pendingLateAcquisition = new Promise<typeof lease | null>(resolve => {
+    resolveLateAcquisition = resolve;
+  });
+  const waitForSignal = <T>(pending: Promise<T>): Promise<T> => new Promise(
+    (resolve, reject) => {
+      let settled = false;
+      const finish = (callback: () => void): void => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        controller.signal.removeEventListener('abort', onAbort);
+        callback();
+      };
+      const onAbort = (): void => finish(() => reject(controller.signal.reason));
+      controller.signal.addEventListener('abort', onAbort, { once: true });
+      if (controller.signal.aborted) {
+        onAbort();
+        return;
+      }
+      void pending.then(
+        value => finish(() => resolve(value)),
+        error => finish(() => reject(error))
+      );
+    }
+  );
+  const lateAcquisition = acquireBackstageNotionSyncLeaseWithLateRelease({
+    acquire: () => {
+      acquireCalls += 1;
+      return pendingLateAcquisition;
+    },
+    assertCanAcquire: () => {
+      if (controller.signal.aborted) {
+        throw controller.signal.reason;
+      }
+    },
+    releaseLate: async acquiredLease => {
+      releaseCalls += 1;
+      released.push({ universeId, ...acquiredLease });
+    },
+    waitForAcquisition: waitForSignal,
+  });
+  controller.abort(abortReason);
+  const caughtAbort = await lateAcquisition.catch(error => error);
+  const releaseCallsBeforeLateSettlement = releaseCalls;
+  resolveLateAcquisition(lease);
+  await pendingLateAcquisition;
+  await Promise.resolve();
+  await Promise.resolve();
+
+  let nullReleaseCalls = 0;
+  let resolveLateNull!: (value: typeof lease | null) => void;
+  const pendingLateNull = new Promise<typeof lease | null>(resolve => {
+    resolveLateNull = resolve;
+  });
+  const nullAbort = new DOMException('sealed late-null cancellation', 'AbortError');
+  await acquireBackstageNotionSyncLeaseWithLateRelease({
+    acquire: () => pendingLateNull,
+    assertCanAcquire: () => undefined,
+    releaseLate: async () => {
+      nullReleaseCalls += 1;
+    },
+    waitForAcquisition: async () => {
+      throw nullAbort;
+    },
+  }).catch(() => undefined);
+  resolveLateNull(null);
+  await pendingLateNull;
+  await Promise.resolve();
+
+  let alreadyAbortedAcquireCalls = 0;
+  const alreadyAbortedReason = new DOMException(
+    'sealed already-aborted acquisition',
+    'AbortError'
+  );
+  await acquireBackstageNotionSyncLeaseWithLateRelease({
+    acquire: async () => {
+      alreadyAbortedAcquireCalls += 1;
+      return lease;
+    },
+    assertCanAcquire: () => {
+      throw alreadyAbortedReason;
+    },
+    releaseLate: async () => undefined,
+    waitForAcquisition: async pending => pending,
+  }).catch(() => undefined);
+
+  const contracts = {
+    capacitySplitVerified: JSON.stringify(capacityCases) === JSON.stringify([
+      { chunkCount: 2_048, readable: true, writable: true },
+      { chunkCount: 2_117, readable: true, writable: false },
+      { chunkCount: 4_096, readable: true, writable: false },
+      { chunkCount: 4_097, readable: false, writable: false },
+    ]),
+    lateLeaseReleasedExactlyOnce:
+      caughtAbort === abortReason
+      && acquireCalls === 1
+      && releaseCallsBeforeLateSettlement === 0
+      && releaseCalls === 1
+      && JSON.stringify(released) === JSON.stringify([
+        { universeId, ...lease },
+      ]),
+    lateNullNotReleased: nullReleaseCalls === 0,
+    preAbortedAcquisitionSkipped: alreadyAbortedAcquireCalls === 0,
+    readableUnchangedSnapshotVerified: unchangedDecision === 'verify_unchanged',
+    writerFenceRejectedBeforeEffects:
+      writerRejectionMessage === 'chunks must contain 1-2048 records.',
+  };
+  if (Object.values(contracts).some(value => !value)) {
+    throw new Error('PREVIEW_BACKSTAGE_NOTION_SYNC_PHASE_A_INVALID');
+  }
+
+  return {
+    accepted: true,
+    cacheBoundaryReached: false,
+    databaseBoundaryReached: false,
+    effectsBoundaryReached: false,
+    embeddingBoundaryReached: false,
+    externalNetworkAttempted: false,
+    fixture,
+    notionApiBoundaryReached: false,
+    notionSyncPhaseA: {
+      capacity: {
+        cases: capacityCases,
+        readerCeiling: BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT,
+        writerCeiling: BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT,
+        writerRejectionMessage,
+      },
+      contracts,
+      leaseFence: {
+        acquireCalls,
+        alreadyAbortedAcquireCalls,
+        nullReleaseCalls,
+        outwardAbortName:
+          caughtAbort instanceof Error || caughtAbort instanceof DOMException
+            ? caughtAbort.name
+            : null,
+        releaseCalls,
+        releaseCallsBeforeLateSettlement,
+        released,
+      },
+      productionSharedCapacityCore: true,
+      productionSharedLateAcquisitionFence: true,
+      productionSharedUnchangedDecision: true,
+      unchangedDecision: {
+        chunkCount: 2_117,
+        disposition: unchangedDecision,
       },
     },
     protectedEffectsEnabled: false,
@@ -5904,15 +6396,27 @@ async function runBackstageGenerationFixture(
         partitionedAuthorityProofVersion: null,
       };
     case fixtures.productionOutputContracts:
+      await runBackstageOutputAdmissionFixture(fixtures.outputAdmission);
       return {
         payload: runBackstageProductionOutputContractsFixture(fixture),
         partitionedAuthorityProofVersion: null,
       };
+    case fixtures.outputAdmission:
+      return {
+        payload: await runBackstageOutputAdmissionFixture(fixture),
+        partitionedAuthorityProofVersion: null,
+      };
     case fixtures.notionAuthorityRag:
+      await runBackstageNotionSyncPhaseAFixture(fixtures.notionSyncPhaseA);
       return runBackstageNotionAuthorityRagFixture(
         fixture,
         connectivityProbe
       );
+    case fixtures.notionSyncPhaseA:
+      return {
+        payload: await runBackstageNotionSyncPhaseAFixture(fixture),
+        partitionedAuthorityProofVersion: null,
+      };
     case fixtures.partitionFailureTelemetry:
       return {
         payload: runBackstageNotionPartitionFailureTelemetryFixture(fixture),
@@ -8045,6 +8549,30 @@ export function createNativePrPreviewApplication(
                 .outputCapacityPresentationVersion,
               NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT
                 .outputCapacityPresentationProofVersion
+            );
+          }
+          if (
+            fixture
+              === NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.fixtures
+                .outputAdmission
+          ) {
+            response.setHeader(
+              NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.proofHeaders
+                .outputAdmissionVersion,
+              NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT
+                .outputAdmissionProofVersion
+            );
+          }
+          if (
+            fixture
+              === NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.fixtures
+                .notionSyncPhaseA
+          ) {
+            response.setHeader(
+              NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.proofHeaders
+                .notionSyncPhaseAVersion,
+              NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT
+                .notionSyncPhaseAProofVersion
             );
           }
           return sendBoundedJsonResponse(

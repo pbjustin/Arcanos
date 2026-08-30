@@ -82,6 +82,10 @@ const BACKSTAGE_NOTION_RAG_CORE_URL = new URL(
   '../src/shared/backstage/backstageNotionRagCore.ts',
   import.meta.url
 );
+const BACKSTAGE_NOTION_SYNC_CORE_URL = new URL(
+  '../src/shared/backstage/backstageNotionSyncCore.ts',
+  import.meta.url
+);
 const BACKSTAGE_NOTION_PARTITION_CORE_URL = new URL(
   '../src/shared/backstage/backstageNotionPartitionCore.ts',
   import.meta.url
@@ -286,6 +290,11 @@ async function readBackstageNotionPreviewCanarySource() {
 
 async function readBackstageNotionRagCoreSource() {
   return (await readFile(BACKSTAGE_NOTION_RAG_CORE_URL, 'utf8'))
+    .replace(/\r\n/gu, '\n');
+}
+
+async function readBackstageNotionSyncCoreSource() {
+  return (await readFile(BACKSTAGE_NOTION_SYNC_CORE_URL, 'utf8'))
     .replace(/\r\n/gu, '\n');
 }
 
@@ -988,12 +997,13 @@ describe('native PR preview import boundary', () => {
     ]));
   });
 
-  it('pins the fixed Notion edge canary and production-shared RAG core', async () => {
+  it('pins the fixed Notion edge canary and production-shared RAG and sync cores', async () => {
     const canaryFile =
       'src/shared/backstage/backstageNotionPreviewCanary.ts';
     const ragCoreFile = 'src/shared/backstage/backstageNotionRagCore.ts';
+    const syncCoreFile = 'src/shared/backstage/backstageNotionSyncCore.ts';
     expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).toEqual(
-      expect.arrayContaining([canaryFile, ragCoreFile])
+      expect.arrayContaining([canaryFile, ragCoreFile, syncCoreFile])
     );
     expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toEqual(
       expect.arrayContaining([
@@ -1004,8 +1014,10 @@ describe('native PR preview import boundary', () => {
 
     const canarySource = await readBackstageNotionPreviewCanarySource();
     const ragCoreSource = await readBackstageNotionRagCoreSource();
+    const syncCoreSource = await readBackstageNotionSyncCoreSource();
     expect(findUnsafeRuntimeSyntax(canaryFile, canarySource)).toEqual([]);
     expect(findUnsafeRuntimeSyntax(ragCoreFile, ragCoreSource)).toEqual([]);
+    expect(findUnsafeRuntimeSyntax(syncCoreFile, syncCoreSource)).toEqual([]);
 
     const broadenedCanary = replaceRequired(
       canarySource,
@@ -1017,9 +1029,15 @@ describe('native PR preview import boundary', () => {
       'export const BACKSTAGE_NOTION_RAG_PROMPT_CODE_POINTS = 12_000;',
       'export const BACKSTAGE_NOTION_RAG_PROMPT_CODE_POINTS = 24_000;'
     );
+    const weakenedWriterFence = replaceRequired(
+      syncCoreSource,
+      'export const BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT = 2_048;',
+      'export const BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT = 4_096;'
+    );
     for (const [filePath, sourceText] of [
       [canaryFile, broadenedCanary],
       [ragCoreFile, weakenedPromptLimit],
+      [syncCoreFile, weakenedWriterFence],
     ]) {
       expect(findUnsafeRuntimeSyntax(filePath, sourceText)).toEqual(
         expect.arrayContaining([
