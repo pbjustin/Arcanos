@@ -21,6 +21,38 @@ const rollbackMigration = readFileSync(
   ),
   'utf8'
 );
+const completeManifestHeadGuardMigration = readFileSync(
+  join(
+    process.cwd(),
+    'migrations',
+    '20260829_backstage_notion_partition_complete_manifest_head_guard.sql'
+  ),
+  'utf8'
+);
+const completeManifestHeadGuardRollback = readFileSync(
+  join(
+    process.cwd(),
+    'migrations',
+    '20260829_backstage_notion_partition_complete_manifest_head_guard.rollback.sql'
+  ),
+  'utf8'
+);
+const sourceGenerationMigration = readFileSync(
+  join(
+    process.cwd(),
+    'migrations',
+    '20260829_backstage_notion_partition_source_generation_v1.sql'
+  ),
+  'utf8'
+);
+const sourceGenerationRollback = readFileSync(
+  join(
+    process.cwd(),
+    'migrations',
+    '20260829_backstage_notion_partition_source_generation_v1.rollback.sql'
+  ),
+  'utf8'
+);
 const runtimeSql = BACKSTAGE_NOTION_PARTITION_STORAGE_TABLE_DEFINITIONS.join('\n');
 
 const dedicatedTables = [
@@ -39,6 +71,7 @@ const dedicatedTables = [
   'backstage_notion_shard_heads',
   'backstage_notion_shard_sync_leases',
   'backstage_notion_provider_coordinator_leases',
+  'backstage_notion_partition_source_generations',
   'backstage_notion_universe_manifests',
   'backstage_notion_universe_manifest_shards',
   'backstage_notion_universe_manifest_omissions',
@@ -297,6 +330,14 @@ describe('Backstage Notion partition storage database contract', () => {
     expect(sql).toContain(
       'can only reference a sealed exact manifest'
     );
+    expect(sql).toContain(
+      'partitioned universe head requires a complete readable fresh manifest'
+    );
+    expect(sql).toContain('manifest.index_format_version = 1');
+    expect(sql).toContain('manifest.omission_count = 0');
+    expect(sql).toContain('manifest.member_count = configuration.shard_count');
+    expect(sql).toContain("member.decision <> 'fresh'");
+    expect(sql).toContain("snapshot.state <> 'sealed'");
     expect(sql).toContain('shard head pointers require active Notion authority');
     expect(sql).toContain('universe manifests require active Notion authority');
     expect(sql).toContain('backstage_notion_guard_lease_fencing');
@@ -355,5 +396,78 @@ describe('Backstage Notion partition storage database contract', () => {
       'DROP FUNCTION IF EXISTS public.backstage_notion_reject_immutable_mutation()'
     );
     expect(rollbackMigration.trim().endsWith('COMMIT;')).toBe(true);
+  });
+
+  it('ships an idempotent reversible complete-manifest head guard upgrade', () => {
+    expect(completeManifestHeadGuardMigration).toContain(
+      'CREATE OR REPLACE FUNCTION public.backstage_notion_guard_partitioned_universe_head()'
+    );
+    expect(completeManifestHeadGuardMigration).toContain(
+      'partitioned universe head requires a complete readable fresh manifest'
+    );
+    expect(completeManifestHeadGuardMigration).toContain('manifest.index_format_version = 1');
+    expect(completeManifestHeadGuardMigration).toContain('manifest.omission_count = 0');
+    expect(completeManifestHeadGuardMigration).toContain(
+      'manifest.member_count = configuration.shard_count'
+    );
+    expect(completeManifestHeadGuardMigration).toContain("member.decision <> 'fresh'");
+    expect(completeManifestHeadGuardMigration).not.toMatch(/DROP\s+TABLE|ALTER\s+TABLE/iu);
+    expect(completeManifestHeadGuardMigration.trim().endsWith('COMMIT;')).toBe(true);
+
+    expect(completeManifestHeadGuardRollback).toContain(
+      'CREATE OR REPLACE FUNCTION public.backstage_notion_guard_partitioned_universe_head()'
+    );
+    expect(completeManifestHeadGuardRollback).toContain(
+      'partitioned universe head can only reference a sealed exact manifest'
+    );
+    expect(completeManifestHeadGuardRollback).not.toContain(
+      'partitioned universe head requires a complete readable fresh manifest'
+    );
+    expect(completeManifestHeadGuardRollback).not.toMatch(/DROP\s+TABLE|ALTER\s+TABLE/iu);
+    expect(completeManifestHeadGuardRollback.trim().endsWith('COMMIT;')).toBe(true);
+  });
+
+  it('ships an additive source-generation upgrade with durable barrier evidence', () => {
+    expect(sourceGenerationMigration).toContain(
+      'ALTER TABLE public.backstage_notion_shard_snapshots'
+    );
+    expect(sourceGenerationMigration).toContain(
+      'ADD COLUMN IF NOT EXISTS source_generation_id UUID'
+    );
+    expect(sourceGenerationMigration).toContain(
+      'CREATE TABLE IF NOT EXISTS public.backstage_notion_partition_source_generations'
+    );
+    expect(sourceGenerationMigration).toContain(
+      'ADD CONSTRAINT backstage_notion_universe_manifests_source_generation_fkey'
+    );
+    expect(sourceGenerationMigration).toContain('NOT VALID');
+    expect(sourceGenerationMigration).toContain(
+      'backstage_notion_guard_shard_source_generation'
+    );
+    expect(sourceGenerationMigration).toContain(
+      'backstage_notion_guard_manifest_source_generation'
+    );
+    expect(sourceGenerationMigration).toContain(
+      'backstage_notion_guard_active_manifest_source_generation'
+    );
+    expect(sourceGenerationMigration).toContain(
+      'snapshot.source_generation_id IS DISTINCT FROM NEW.source_generation_id'
+    );
+    expect(sourceGenerationMigration).toContain(
+      'snapshot.source_generation_id IS DISTINCT FROM manifest.source_generation_id'
+    );
+    expect(sourceGenerationMigration.trim().endsWith('COMMIT;')).toBe(true);
+
+    expect(sourceGenerationRollback).toContain(
+      'DROP TRIGGER IF EXISTS backstage_notion_immutable_guard'
+    );
+    expect(sourceGenerationRollback).toContain(
+      'DROP FUNCTION IF EXISTS public.backstage_notion_guard_active_manifest_source_generation()'
+    );
+    expect(sourceGenerationRollback).toContain(
+      'columns and any immutable evidence are intentionally retained'
+    );
+    expect(sourceGenerationRollback).not.toMatch(/DROP\s+TABLE|DROP\s+COLUMN/iu);
+    expect(sourceGenerationRollback.trim().endsWith('COMMIT;')).toBe(true);
   });
 });

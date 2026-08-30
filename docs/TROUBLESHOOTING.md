@@ -157,6 +157,9 @@ If failing, inspect Railway build/deploy logs first.
   request-local and synchronous-only, so do not enqueue it or look for a worker
   job to resume. If Builder does not expose `scopeKind`, deploy schema 1.6.0
   first, re-import it into the existing Action, and preserve the saved bearer.
+  Partition cursors are additionally pinned to one immutable manifest version;
+  a cursor from another active or rolled-back generation fails closed rather
+  than continuing across shard generations.
 - Backstage Booker `BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE`: the original attempt
   exhausted the provider output limit. The backend permits at most one compact
   retry only when its finite runtime and output recovery budgets remain
@@ -198,6 +201,15 @@ If failing, inspect Railway build/deploy logs first.
   verify the exact web mapping and database availability without printing the
   mapping or connection details. Removing the mapping is not a rollback after
   activation and must never be used to reopen legacy state.
+- Backstage snapshot status is `last_known_good`: the active snapshot remains
+  readable, but a newer synchronization is running or failed. Treat the
+  reported verification time and bounded latest-sync phase/reason as stale-state
+  disclosure, not current workspace proof. Continuity may return that explicitly
+  labeled state; protected booking generation intentionally fails closed until a
+  successful complete refresh makes the active snapshot `current_complete`.
+  `unavailable` means there is no complete readable compatible active snapshot,
+  not merely that the latest refresh failed. A refresh failure must never clear
+  or rewrite active-snapshot metadata.
 - Backstage Notion sync reports incomplete/source drift: an inaccessible,
   moved, trashed, malformed, truncated, unknown, database, or media/file page
   was observed, or a page changed during the two-pass capture. The prior active
@@ -206,17 +218,29 @@ If failing, inspect Railway build/deploy logs first.
   as deletion or activate a partial manifest.
   Internal `phase` and `reason` fields are a closed, content-free diagnostic
   taxonomy. In particular, `chunking/chunk_limit_reached` means a complete
-  candidate exceeded a bounded snapshot ceiling. During the V3 compatibility
-  release, readers and storage accept 4,096 chunks but the production writer
-  intentionally remains fenced at 2,048; a 2,117-chunk corpus therefore keeps
-  this diagnostic until the separately reviewed expansion release is deployed
-  after every serving web reader is confirmed compatible. Do not bypass the
-  writer fence or combine the two releases. A
+  candidate exceeded the bounded 4,096-chunk monolith ceiling. Readers and
+  writers now both accept complete snapshots from 1 through 4,096 chunks; 4,097
+  or more fails before embedding, candidate creation, validation, or activation
+  and is never truncated. A 2,307-chunk candidate is valid under this release.
+  If it still reports this reason, verify that every serving web and worker
+  replica has the 4,096-capable reader and that the synchronizing worker has the
+  raised 4,096 writer revision; do not trigger another production sync merely to
+  diagnose deployment drift. A
   `completeness_validation/completeness_mismatch` means the prepared and
   persisted inventories differed. A `deadline_exhausted` reason retains the
   operational phase that consumed the fixed cycle budget; the deadline is not
   extended by retries, progress, or lease renewal. Investigate the named phase without logging
   Notion content, raw page/block identifiers, upstream bodies, or credentials.
+- Partition diagnostics report `cutoverAvailable: false`: this is the safe
+  default and does not mean the active monolith or previous complete manifest
+  was deleted. Confirm that the existing five configured shards—not hard-coded
+  names—are all sealed from one source generation/digest with exact source
+  coverage. Then inspect only bounded status for missing/failed shards,
+  reconciliation epoch mismatch, unsupported embedding/index contract, stale or
+  non-`current_complete` rollback monolith, expired evidence, exact/relevant/
+  complete-scope parity, and cursor stability. A failed/new reconciliation
+  invalidates older evidence while leaving the prior complete manifest active.
+  Do not change production mode, rebuild a partial manifest, or bypass the gate.
 - Backstage `BACKSTAGE_NOTION_AUTHORITY_READ_ONLY` or
   `BACKSTAGE_NOTION_AUTHORITY_READ_QUARANTINED`: this is the expected authority
   boundary, not data loss. Make the requested fact/content change in Notion and

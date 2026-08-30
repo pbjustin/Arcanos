@@ -17,6 +17,8 @@ import {
   type BackstageNotionPartitionRetrievalDependencies,
   type BackstageNotionPartitionRetrievalPlan,
 } from '../src/services/backstageNotionPartitionRetrieval.js';
+import { DEFAULT_OPENAI_EMBEDDING_MODEL } from
+  '../src/services/openai/embeddings.js';
 import {
   runWithBackstageNotionEnrichmentAuthorization,
   wasBackstageNotionEnrichmentUsed,
@@ -98,7 +100,7 @@ function routing(input: {
     configurationVersionId: CONFIGURATION_VERSION_ID,
     configurationHash: CONFIGURATION_HASH,
     configurationCurrent: input.configurationCurrent ?? true,
-    embeddingModel: 'text-embedding-test',
+    embeddingModel: DEFAULT_OPENAI_EMBEDDING_MODEL,
     embeddingVersion: 1,
     embeddingDimension: 2,
     indexFormatVersion: 1,
@@ -393,6 +395,26 @@ describe('Backstage Notion partition retrieval', () => {
       }],
     };
     const state = harness({ activeRouting: incompleteRouting });
+
+    await expect(retrieveAuthorized({
+      query: 'Book Raw from current canon',
+      relevantRoutingIntent: RELEVANT_INTENT,
+    }, state.dependencies)).rejects.toBeInstanceOf(
+      BackstageNotionIndexUnavailableError
+    );
+    expect(state.resolveRequest).toHaveBeenCalledTimes(1);
+    expect(state.embedQuery).not.toHaveBeenCalled();
+    expect(state.rankManifestShardCandidates).not.toHaveBeenCalled();
+    expect(state.loadManifestScopeChunkPage).not.toHaveBeenCalled();
+  });
+
+  test('fails injected routing closed before embedding when the manifest model is unsupported', async () => {
+    const state = harness({
+      activeRouting: {
+        ...routing(),
+        embeddingModel: 'text-embedding-legacy',
+      },
+    });
 
     await expect(retrieveAuthorized({
       query: 'Book Raw from current canon',

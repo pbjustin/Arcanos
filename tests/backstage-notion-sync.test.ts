@@ -15,6 +15,10 @@ import {
   type BackstageNotionSnapshotRecord,
   type BackstageNotionSyncLease,
 } from '../src/core/db/repositories/backstageNotionRagRepository.js';
+import type {
+  BackstageNotionSyncAttemptRecord,
+  BackstageNotionSyncStatusRepository,
+} from '../src/core/db/repositories/backstageNotionSyncStatusRepository.js';
 import {
   getOpenAIAdapter,
   resetOpenAIAdapter,
@@ -32,6 +36,7 @@ import {
 import {
   BACKSTAGE_NOTION_RAG_HEADING_INDEX_VERSION,
   BACKSTAGE_NOTION_RAG_PAGE_FORMAT,
+  prepareBackstageNotionRagPage,
 } from '../src/shared/backstage/backstageNotionRagCore.js';
 import {
   BACKSTAGE_NOTION_AUTHORITY_ROOTS_ENV_NAME,
@@ -333,6 +338,7 @@ function rootAuthority(options: {
 
 function dependencies(input: {
   repository: BackstageNotionRagRepository;
+  syncStatusRepository?: BackstageNotionSyncStatusRepository;
   fetchImpl?: typeof fetch;
   embedBatch?: (inputs: readonly string[]) => Promise<number[][]>;
   readEnvironment?: (name: string) => string | undefined;
@@ -345,6 +351,9 @@ function dependencies(input: {
 }): BackstageNotionSyncDependencies {
   return {
     repository: input.repository,
+    ...(input.syncStatusRepository
+      ? { syncStatusRepository: input.syncStatusRepository }
+      : {}),
     fetchImpl: input.fetchImpl,
     embedBatch: input.embedBatch ?? (async values => values.map(() => [1, 0])),
     readEnvironment: input.readEnvironment
@@ -398,6 +407,199 @@ describe('Backstage Notion authority synchronization', () => {
   beforeEach(() => {
     jest.spyOn(logger, 'info').mockImplementation(() => undefined);
     jest.spyOn(logger, 'warn').mockImplementation(() => undefined);
+  });
+
+  it('records successful activation separately from the active snapshot pointer', async () => {
+    const started: BackstageNotionSyncAttemptRecord = {
+      universeId,
+      attemptId: '33333333-3333-4333-8333-333333333333',
+      generation: '1',
+      startedAt: new Date('2026-08-29T15:56:00.000Z'),
+      completedAt: null,
+      outcome: 'running',
+      failurePhase: null,
+      failureReason: null,
+      pagesDiscovered: 0,
+      pagesFetched: 0,
+      blocksFetched: 0,
+      chunksProduced: 0,
+      chunksEmbedded: 0,
+      candidateSnapshotCreated: false,
+      candidateSnapshotValidated: false,
+      candidateSnapshotActivated: false,
+      activatedSnapshotId: null,
+    };
+    const beginSyncAttempt = jest.fn(async () => started);
+    const completeSyncAttempt = jest.fn(async input => ({
+      ...started,
+      ...input,
+      completedAt: new Date('2026-08-29T15:58:00.000Z'),
+    } as BackstageNotionSyncAttemptRecord));
+    const syncStatusRepository: BackstageNotionSyncStatusRepository = {
+      beginSyncAttempt,
+      completeSyncAttempt,
+      loadLatestSyncAttempt: jest.fn(async () => null),
+    };
+    const { fetchMock } = notionFetch([{
+      pageId: pageId(0),
+      parentPageId: null,
+      title: 'WWE Universe Mode',
+      markdown: '# Current canon\n\nSynthetic current statement.',
+    }]);
+    const repository = repositoryHarness();
+
+    await expect(syncBackstageNotionAuthorityRoot(
+      rootAuthority(),
+      dependencies({
+        repository: repository.repository,
+        syncStatusRepository,
+        fetchImpl: fetchMock as unknown as typeof fetch,
+      })
+    )).resolves.toMatchObject({ status: 'activated' });
+
+    expect(beginSyncAttempt).toHaveBeenCalledWith({
+      universeId,
+      lease: expect.objectContaining({ leaseToken: lease.leaseToken }),
+    });
+    expect(completeSyncAttempt).toHaveBeenCalledTimes(1);
+    expect(completeSyncAttempt).toHaveBeenCalledWith(expect.objectContaining({
+      universeId,
+      attemptId: started.attemptId,
+      generation: started.generation,
+      outcome: 'activated',
+      failurePhase: null,
+      failureReason: null,
+      candidateSnapshotCreated: true,
+      candidateSnapshotValidated: true,
+      candidateSnapshotActivated: true,
+      activatedSnapshotId: expect.any(String),
+    }));
+    expect(beginSyncAttempt.mock.invocationCallOrder[0]).toBeLessThan(
+      repository.activateSnapshot.mock.invocationCallOrder[0]!
+    );
+    expect(repository.activateSnapshot.mock.invocationCallOrder[0]).toBeLessThan(
+      completeSyncAttempt.mock.invocationCallOrder[0]!
+    );
+  });
+
+  it('keeps a committed activation successful when latest-attempt telemetry cannot complete', async () => {
+    const started: BackstageNotionSyncAttemptRecord = {
+      universeId,
+      attemptId: '33333333-3333-4333-8333-333333333333',
+      generation: '1',
+      startedAt: new Date('2026-08-29T15:56:00.000Z'),
+      completedAt: null,
+      outcome: 'running',
+      failurePhase: null,
+      failureReason: null,
+      pagesDiscovered: 0,
+      pagesFetched: 0,
+      blocksFetched: 0,
+      chunksProduced: 0,
+      chunksEmbedded: 0,
+      candidateSnapshotCreated: false,
+      candidateSnapshotValidated: false,
+      candidateSnapshotActivated: false,
+      activatedSnapshotId: null,
+    };
+    const syncStatusRepository: BackstageNotionSyncStatusRepository = {
+      beginSyncAttempt: jest.fn(async () => started),
+      completeSyncAttempt: jest.fn(async () => {
+        throw new Error('PRIVATE-DATABASE-DETAIL');
+      }),
+      loadLatestSyncAttempt: jest.fn(async () => null),
+    };
+    const { fetchMock } = notionFetch([{
+      pageId: pageId(0),
+      parentPageId: null,
+      title: 'WWE Universe Mode',
+      markdown: '# Current canon\n\nSynthetic current statement.',
+    }]);
+    const repository = repositoryHarness();
+
+    await expect(syncBackstageNotionAuthorityRoot(
+      rootAuthority(),
+      dependencies({
+        repository: repository.repository,
+        syncStatusRepository,
+        fetchImpl: fetchMock as unknown as typeof fetch,
+      })
+    )).resolves.toMatchObject({ status: 'activated' });
+
+    expect(repository.activateSnapshot).toHaveBeenCalledTimes(1);
+    expect(syncStatusRepository.completeSyncAttempt).toHaveBeenCalledTimes(1);
+    expect(logger.warn).toHaveBeenCalledWith(
+      'backstage.notion_rag.sync_status_record_failed',
+      { universeId, outcome: 'activated' }
+    );
+    expect(JSON.stringify((logger.warn as jest.Mock).mock.calls))
+      .not.toContain('PRIVATE-DATABASE-DETAIL');
+  });
+
+  it('records a bounded failed attempt without creating or activating a candidate', async () => {
+    const started: BackstageNotionSyncAttemptRecord = {
+      universeId,
+      attemptId: '33333333-3333-4333-8333-333333333333',
+      generation: '1',
+      startedAt: new Date('2026-08-29T15:56:00.000Z'),
+      completedAt: null,
+      outcome: 'running',
+      failurePhase: null,
+      failureReason: null,
+      pagesDiscovered: 0,
+      pagesFetched: 0,
+      blocksFetched: 0,
+      chunksProduced: 0,
+      chunksEmbedded: 0,
+      candidateSnapshotCreated: false,
+      candidateSnapshotValidated: false,
+      candidateSnapshotActivated: false,
+      activatedSnapshotId: null,
+    };
+    const completeSyncAttempt = jest.fn(async input => ({
+      ...started,
+      ...input,
+      completedAt: new Date('2026-08-29T15:58:00.000Z'),
+    } as BackstageNotionSyncAttemptRecord));
+    const syncStatusRepository: BackstageNotionSyncStatusRepository = {
+      beginSyncAttempt: jest.fn(async () => started),
+      completeSyncAttempt,
+      loadLatestSyncAttempt: jest.fn(async () => null),
+    };
+    const { fetchMock } = notionFetch([{
+      pageId: pageId(0),
+      parentPageId: null,
+      title: 'WWE Universe Mode',
+      markdown: '<image source="notion://private-media">Image</image>',
+    }]);
+    const repository = repositoryHarness();
+
+    await expect(syncBackstageNotionAuthorityRoot(
+      rootAuthority(),
+      dependencies({
+        repository: repository.repository,
+        syncStatusRepository,
+        fetchImpl: fetchMock as unknown as typeof fetch,
+      })
+    )).rejects.toMatchObject({
+      code: BACKSTAGE_NOTION_SYNC_INCOMPLETE_ERROR_CODE,
+      diagnostics: expect.objectContaining({
+        candidateSnapshotCreated: false,
+        candidateSnapshotValidated: false,
+        candidateSnapshotActivated: false,
+      }),
+    });
+
+    expect(repository.activateSnapshot).not.toHaveBeenCalled();
+    expect(completeSyncAttempt).toHaveBeenCalledWith(expect.objectContaining({
+      outcome: 'failed',
+      failurePhase: 'normalization',
+      failureReason: 'permanent_notion_error',
+      candidateSnapshotCreated: false,
+      candidateSnapshotValidated: false,
+      candidateSnapshotActivated: false,
+      activatedSnapshotId: null,
+    }));
   });
 
   it('captures and atomically activates a complete recursive 18-page hierarchy', async () => {
@@ -626,30 +828,53 @@ describe('Backstage Notion authority synchronization', () => {
 
   it.each([
     {
-      chunkCount: BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT,
+      chunkCount: 2_307,
+      pageCount: 366,
       accepted: true,
     },
     {
-      chunkCount: 2_117,
-      accepted: false,
+      chunkCount: BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT,
+      pageCount: 64,
+      accepted: true,
     },
     {
       chunkCount: BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT + 1,
+      pageCount: 64,
       accepted: false,
     },
-  ])('enforces the compatibility-release writer boundary at $chunkCount chunks', async ({
+  ])('enforces the bounded writer release at $chunkCount chunks', async ({
     chunkCount,
+    pageCount,
     accepted,
   }) => {
-    const pageCount = 32;
-    const baseChunksPerPage = Math.floor(chunkCount / pageCount);
-    const extraChunkPages = chunkCount % pageCount;
-    const pages = Array.from({ length: pageCount }, (_, index): TestNotionPage => {
+    const pageStubs = Array.from({ length: pageCount }, (_, index): TestNotionPage => ({
+      pageId: pageId(index),
+      parentPageId: index === 0 ? null : pageId(0),
+      title: index === 0 ? 'WWE Universe Mode' : `Child Universe ${index}`,
+      markdown: '',
+    }));
+    const navigationMarkdown = pageStubs.slice(1).map(pageTag).join('\n');
+    const rootStub = pageStubs[0] ?? {
+      pageId: pageId(0),
+      parentPageId: null,
+      title: 'WWE Universe Mode',
+      markdown: '',
+    };
+    const navigationChunkOverhead = prepareBackstageNotionRagPage({
+      universeId,
+      pageId: rootStub.pageId,
+      parentPageId: null,
+      title: rootStub.title,
+      path: [rootStub.title],
+      markdown: `## Synthetic probe\n\nvalue-probe\n\n${navigationMarkdown}`,
+    }).chunks.length - 1;
+    const syntheticChunkCount = chunkCount - navigationChunkOverhead;
+    const baseChunksPerPage = Math.floor(syntheticChunkCount / pageCount);
+    const extraChunkPages = syntheticChunkCount % pageCount;
+    const pages = pageStubs.map((stub, index): TestNotionPage => {
       const chunksForPage = baseChunksPerPage + (index < extraChunkPages ? 1 : 0);
       return {
-        pageId: pageId(index),
-        parentPageId: index === 0 ? null : pageId(0),
-        title: index === 0 ? 'WWE Universe Mode' : `Child Universe ${index}`,
+        ...stub,
         markdown: Array.from(
           { length: chunksForPage },
           (_unused, chunkIndex) => (
@@ -658,7 +883,7 @@ describe('Backstage Notion authority synchronization', () => {
         ).join('\n\n'),
       };
     });
-    pages[0].markdown += `\n\n${pages.slice(1).map(pageTag).join('\n')}`;
+    pages[0].markdown += `\n\n${navigationMarkdown}`;
     const continuationId = pageId(2_000);
     const continuationPage: TestNotionPage | null = accepted
       ? {
@@ -695,6 +920,7 @@ describe('Backstage Notion authority synchronization', () => {
     if (accepted) {
       await expect(sync).resolves.toMatchObject({
         status: 'activated',
+        pageCount,
         chunkCount,
       });
       expect(repository.activateSnapshot).toHaveBeenCalledTimes(1);
@@ -725,8 +951,17 @@ describe('Backstage Notion authority synchronization', () => {
           pagesDiscovered: pageCount,
           pagesFetched: pageCount,
           blocksFetched: pageCount,
+          normalizedSegments: expect.any(Number),
+          emptySegmentsRemoved: expect.any(Number),
+          exactDuplicatesRemoved: 0,
+          adjacentSegmentsMerged: expect.any(Number),
           chunksProduced: chunkCount,
           chunksEmbedded: 0,
+          minimumChunkCodePoints: expect.any(Number),
+          maximumChunkCodePoints: expect.any(Number),
+          medianChunkCodePoints: expect.any(Number),
+          reusedEmbeddingCount: 0,
+          newEmbeddingCount: 0,
           notionRetryCount: 0,
           rateLimitWaitMs: 0,
           candidateSnapshotCreated: false,
@@ -737,6 +972,7 @@ describe('Backstage Notion authority synchronization', () => {
         },
       });
       expect(embedBatch).not.toHaveBeenCalled();
+      expect(repository.loadReusableEmbeddings).not.toHaveBeenCalled();
       expect(repository.activateSnapshot).not.toHaveBeenCalled();
     }
   });

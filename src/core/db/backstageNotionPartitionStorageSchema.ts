@@ -416,6 +416,7 @@ export const BACKSTAGE_NOTION_PARTITION_STORAGE_TABLE_DEFINITIONS = [
     shard_key TEXT NOT NULL,
     partition_version_id UUID NOT NULL,
     root_page_id UUID NOT NULL,
+    source_generation_id UUID NOT NULL,
     source_manifest_hash TEXT NOT NULL,
     embedding_model TEXT NOT NULL,
     embedding_version INTEGER NOT NULL,
@@ -461,6 +462,11 @@ export const BACKSTAGE_NOTION_PARTITION_STORAGE_TABLE_DEFINITIONS = [
     CHECK (pg_catalog.isfinite(created_at)),
     CHECK (sealed_at IS NULL OR pg_catalog.isfinite(sealed_at))
   );
+
+  -- Existing storage-v1 installations gain a nullable historical column. New
+  -- snapshots cannot seal without an explicit reconciliation generation.
+  ALTER TABLE public.backstage_notion_shard_snapshots
+    ADD COLUMN IF NOT EXISTS source_generation_id UUID;
 
   CREATE TABLE IF NOT EXISTS public.backstage_notion_shard_snapshot_pages (
     universe_id TEXT NOT NULL,
@@ -709,12 +715,55 @@ export const BACKSTAGE_NOTION_PARTITION_STORAGE_TABLE_DEFINITIONS = [
     CHECK (expires_at > acquired_at)
   );
 
+  CREATE TABLE IF NOT EXISTS public.backstage_notion_partition_source_generations (
+    universe_id TEXT NOT NULL,
+    source_generation_id UUID NOT NULL,
+    partition_configuration_version_id UUID NOT NULL,
+    source_digest TEXT NOT NULL,
+    source_page_count INTEGER NOT NULL,
+    source_chunk_count INTEGER NOT NULL,
+    member_count INTEGER NOT NULL,
+    source_verified_at TIMESTAMPTZ NOT NULL,
+    source_verification_hash TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (universe_id, source_generation_id),
+    UNIQUE (
+      universe_id,
+      source_generation_id,
+      partition_configuration_version_id,
+      source_digest,
+      source_page_count,
+      source_chunk_count,
+      source_verified_at,
+      source_verification_hash
+    ),
+    FOREIGN KEY (universe_id)
+      REFERENCES public.backstage_notion_universe_heads(universe_id)
+      ON UPDATE RESTRICT ON DELETE RESTRICT,
+    FOREIGN KEY (universe_id, partition_configuration_version_id)
+      REFERENCES public.backstage_notion_partition_configuration_versions(universe_id, id)
+      ON UPDATE RESTRICT ON DELETE RESTRICT,
+    CHECK (source_digest ~ '^[0-9a-f]{64}$'),
+    CHECK (source_verification_hash ~ '^[0-9a-f]{64}$'),
+    CHECK (source_page_count > 0),
+    CHECK (source_chunk_count > 0),
+    CHECK (member_count BETWEEN 1 AND 512),
+    CHECK (pg_catalog.isfinite(source_verified_at)),
+    CHECK (pg_catalog.isfinite(created_at))
+  );
+
   CREATE TABLE IF NOT EXISTS public.backstage_notion_universe_manifests (
     id UUID PRIMARY KEY,
     universe_id TEXT NOT NULL,
     partition_configuration_version_id UUID NOT NULL,
     configuration_generation TEXT NOT NULL,
     configuration_hash TEXT NOT NULL,
+    source_generation_id UUID NOT NULL,
+    source_digest TEXT NOT NULL,
+    source_page_count INTEGER NOT NULL,
+    source_chunk_count INTEGER NOT NULL,
+    source_verified_at TIMESTAMPTZ NOT NULL,
+    source_verification_hash TEXT NOT NULL,
     embedding_model TEXT NOT NULL,
     embedding_version INTEGER NOT NULL,
     embedding_dimension INTEGER NOT NULL,
@@ -743,8 +792,32 @@ export const BACKSTAGE_NOTION_PARTITION_STORAGE_TABLE_DEFINITIONS = [
       configuration_generation,
       configuration_hash
     ) ON UPDATE RESTRICT ON DELETE RESTRICT,
+    FOREIGN KEY (
+      universe_id,
+      source_generation_id,
+      partition_configuration_version_id,
+      source_digest,
+      source_page_count,
+      source_chunk_count,
+      source_verified_at,
+      source_verification_hash
+    ) REFERENCES public.backstage_notion_partition_source_generations(
+      universe_id,
+      source_generation_id,
+      partition_configuration_version_id,
+      source_digest,
+      source_page_count,
+      source_chunk_count,
+      source_verified_at,
+      source_verification_hash
+    ) ON UPDATE RESTRICT ON DELETE RESTRICT,
     CHECK (configuration_generation ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'),
     CHECK (configuration_hash ~ '^[0-9a-f]{64}$'),
+    CHECK (source_digest ~ '^[0-9a-f]{64}$'),
+    CHECK (source_verification_hash ~ '^[0-9a-f]{64}$'),
+    CHECK (source_page_count > 0),
+    CHECK (source_chunk_count > 0),
+    CHECK (pg_catalog.isfinite(source_verified_at)),
     CHECK (pg_catalog.length(embedding_model) BETWEEN 1 AND 200),
     CHECK (embedding_version > 0),
     CHECK (embedding_dimension BETWEEN 1 AND 8192),
@@ -762,6 +835,15 @@ export const BACKSTAGE_NOTION_PARTITION_STORAGE_TABLE_DEFINITIONS = [
     CHECK (pg_catalog.isfinite(created_at)),
     CHECK (sealed_at IS NULL OR pg_catalog.isfinite(sealed_at))
   );
+
+  -- Historical manifests are not assigned invented generation evidence.
+  ALTER TABLE public.backstage_notion_universe_manifests
+    ADD COLUMN IF NOT EXISTS source_generation_id UUID,
+    ADD COLUMN IF NOT EXISTS source_digest TEXT,
+    ADD COLUMN IF NOT EXISTS source_page_count INTEGER,
+    ADD COLUMN IF NOT EXISTS source_chunk_count INTEGER,
+    ADD COLUMN IF NOT EXISTS source_verified_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS source_verification_hash TEXT;
 
   CREATE TABLE IF NOT EXISTS public.backstage_notion_universe_manifest_shards (
     universe_id TEXT NOT NULL,
@@ -853,6 +935,8 @@ export const BACKSTAGE_NOTION_PARTITION_STORAGE_TABLE_DEFINITIONS = [
     active_configuration_version_id UUID,
     head_generation BIGINT NOT NULL DEFAULT 0,
     manifest_generation BIGINT NOT NULL DEFAULT 0,
+    reconciliation_generation BIGINT NOT NULL DEFAULT 0,
+    published_reconciliation_generation BIGINT NOT NULL DEFAULT 0,
     last_verified_at TIMESTAMPTZ,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (universe_id)
@@ -882,6 +966,11 @@ export const BACKSTAGE_NOTION_PARTITION_STORAGE_TABLE_DEFINITIONS = [
     CHECK (desired_configuration_hash ~ '^[0-9a-f]{64}$'),
     CHECK (head_generation >= 0),
     CHECK (manifest_generation >= 0),
+    CHECK (reconciliation_generation >= 0),
+    CHECK (
+      published_reconciliation_generation >= 0
+      AND published_reconciliation_generation <= reconciliation_generation
+    ),
     CHECK (
       (
         active_manifest_id IS NULL
@@ -1245,6 +1334,7 @@ export const BACKSTAGE_NOTION_PARTITION_STORAGE_TABLE_DEFINITIONS = [
        OR NEW.shard_key IS DISTINCT FROM OLD.shard_key
        OR NEW.partition_version_id IS DISTINCT FROM OLD.partition_version_id
        OR NEW.root_page_id IS DISTINCT FROM OLD.root_page_id
+       OR NEW.source_generation_id IS DISTINCT FROM OLD.source_generation_id
        OR NEW.source_manifest_hash IS DISTINCT FROM OLD.source_manifest_hash
        OR NEW.embedding_model IS DISTINCT FROM OLD.embedding_model
        OR NEW.embedding_version IS DISTINCT FROM OLD.embedding_version
@@ -1378,7 +1468,8 @@ export const BACKSTAGE_NOTION_PARTITION_STORAGE_TABLE_DEFINITIONS = [
       AND verification.shard_key = NEW.shard_key
       AND verification.shard_snapshot_id = NEW.id;
 
-    IF actual_page_count <> NEW.page_count
+    IF NEW.source_generation_id IS NULL
+       OR actual_page_count <> NEW.page_count
        OR actual_chunk_count <> NEW.chunk_count
        OR actual_occurrence_count <> NEW.chunk_count
        OR actual_code_points <> NEW.content_code_points
@@ -1470,6 +1561,12 @@ export const BACKSTAGE_NOTION_PARTITION_STORAGE_TABLE_DEFINITIONS = [
        OR NEW.partition_configuration_version_id IS DISTINCT FROM OLD.partition_configuration_version_id
        OR NEW.configuration_generation IS DISTINCT FROM OLD.configuration_generation
        OR NEW.configuration_hash IS DISTINCT FROM OLD.configuration_hash
+       OR NEW.source_generation_id IS DISTINCT FROM OLD.source_generation_id
+       OR NEW.source_digest IS DISTINCT FROM OLD.source_digest
+       OR NEW.source_page_count IS DISTINCT FROM OLD.source_page_count
+       OR NEW.source_chunk_count IS DISTINCT FROM OLD.source_chunk_count
+       OR NEW.source_verified_at IS DISTINCT FROM OLD.source_verified_at
+       OR NEW.source_verification_hash IS DISTINCT FROM OLD.source_verification_hash
        OR NEW.embedding_model IS DISTINCT FROM OLD.embedding_model
        OR NEW.embedding_version IS DISTINCT FROM OLD.embedding_version
        OR NEW.embedding_dimension IS DISTINCT FROM OLD.embedding_dimension
@@ -1597,6 +1694,7 @@ export const BACKSTAGE_NOTION_PARTITION_STORAGE_TABLE_DEFINITIONS = [
         OR configured_member.partition_version_id IS NULL
         OR definition.is_required <> member.is_required
         OR snapshot.state <> 'sealed'
+        OR snapshot.source_generation_id IS DISTINCT FROM NEW.source_generation_id
         OR snapshot.embedding_model <> NEW.embedding_model
         OR snapshot.embedding_version <> NEW.embedding_version
         OR snapshot.embedding_dimension <> NEW.embedding_dimension
@@ -1660,7 +1758,16 @@ export const BACKSTAGE_NOTION_PARTITION_STORAGE_TABLE_DEFINITIONS = [
       AND member.manifest_id = NEW.id
       AND ownership.page_id IS NULL;
 
-    IF configured_shard_count <> actual_configuration_member_count
+    IF NEW.source_generation_id IS NULL
+       OR NEW.source_digest IS NULL
+       OR NEW.source_digest !~ '^[0-9a-f]{64}$'
+       OR NEW.source_verified_at IS NULL
+       OR NOT pg_catalog.isfinite(NEW.source_verified_at)
+       OR NEW.source_verification_hash IS NULL
+       OR NEW.source_verification_hash !~ '^[0-9a-f]{64}$'
+       OR NEW.source_page_count IS DISTINCT FROM NEW.page_count
+       OR NEW.source_chunk_count IS DISTINCT FROM NEW.chunk_count
+       OR configured_shard_count <> actual_configuration_member_count
        OR actual_member_count <> NEW.member_count
        OR actual_omission_count <> NEW.omission_count
        OR actual_member_count + actual_omission_count <> configured_shard_count
@@ -1784,6 +1891,8 @@ export const BACKSTAGE_NOTION_PARTITION_STORAGE_TABLE_DEFINITIONS = [
   END;
   $function$;
 
+  -- Fresh installations receive the complete-manifest guard here; the additive
+  -- 20260829 migration upgrades databases that already installed storage v1.
   CREATE OR REPLACE FUNCTION public.backstage_notion_guard_partitioned_universe_head()
   RETURNS TRIGGER
   LANGUAGE plpgsql
@@ -1793,6 +1902,7 @@ export const BACKSTAGE_NOTION_PARTITION_STORAGE_TABLE_DEFINITIONS = [
     desired_state TEXT;
     manifest_state TEXT;
     manifest_configuration_version_id UUID;
+    active_manifest_changed BOOLEAN;
   BEGIN
     IF TG_OP = 'DELETE' THEN
       RAISE EXCEPTION USING
@@ -1800,7 +1910,10 @@ export const BACKSTAGE_NOTION_PARTITION_STORAGE_TABLE_DEFINITIONS = [
         MESSAGE = 'partitioned universe heads cannot be deleted';
     END IF;
 
+    active_manifest_changed := TG_OP = 'INSERT';
+
     IF TG_OP = 'UPDATE' THEN
+      active_manifest_changed := NEW.active_manifest_id IS DISTINCT FROM OLD.active_manifest_id;
       IF NEW.universe_id IS DISTINCT FROM OLD.universe_id THEN
         RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = 'partitioned universe head identity is immutable';
       END IF;
@@ -1876,6 +1989,77 @@ export const BACKSTAGE_NOTION_PARTITION_STORAGE_TABLE_DEFINITIONS = [
         RAISE EXCEPTION USING
           ERRCODE = '23514',
           MESSAGE = 'partitioned universe head can only reference a sealed exact manifest';
+      END IF;
+
+      IF active_manifest_changed THEN
+        PERFORM 1
+        FROM public.backstage_notion_universe_manifests AS manifest
+        JOIN public.backstage_notion_partition_configuration_versions AS configuration
+          ON configuration.universe_id = manifest.universe_id
+         AND configuration.id = manifest.partition_configuration_version_id
+         AND configuration.configuration_generation = manifest.configuration_generation
+         AND configuration.configuration_hash = manifest.configuration_hash
+        WHERE manifest.universe_id = NEW.universe_id
+          AND manifest.id = NEW.active_manifest_id
+          AND manifest.partition_configuration_version_id = NEW.active_configuration_version_id
+          AND manifest.state = 'sealed'
+          AND configuration.state = 'sealed'
+          AND manifest.index_format_version = 1
+          AND manifest.omission_count = 0
+          AND manifest.member_count = configuration.shard_count
+          AND NOT EXISTS (
+            SELECT 1
+            FROM public.backstage_notion_universe_manifest_omissions AS omission
+            WHERE omission.universe_id = manifest.universe_id
+              AND omission.manifest_id = manifest.id
+          )
+          AND (
+            SELECT pg_catalog.count(*)
+            FROM public.backstage_notion_universe_manifest_shards AS member
+            WHERE member.universe_id = manifest.universe_id
+              AND member.manifest_id = manifest.id
+          ) = configuration.shard_count
+          AND NOT EXISTS (
+            SELECT 1
+            FROM public.backstage_notion_partition_configuration_members AS configured
+            LEFT JOIN public.backstage_notion_universe_manifest_shards AS member
+              ON member.universe_id = configured.universe_id
+             AND member.manifest_id = manifest.id
+             AND member.shard_key = configured.shard_key
+             AND member.partition_version_id = configured.partition_version_id
+            LEFT JOIN public.backstage_notion_shard_snapshots AS snapshot
+              ON snapshot.universe_id = member.universe_id
+             AND snapshot.shard_key = member.shard_key
+             AND snapshot.partition_version_id = member.partition_version_id
+             AND snapshot.id = member.shard_snapshot_id
+            WHERE configured.universe_id = manifest.universe_id
+              AND configured.partition_configuration_version_id =
+                manifest.partition_configuration_version_id
+              AND (
+                member.shard_key IS NULL
+                OR member.decision <> 'fresh'
+                OR snapshot.id IS NULL
+                OR snapshot.state <> 'sealed'
+                OR snapshot.sealed_at IS NULL
+                OR manifest.source_generation_id IS NULL
+                OR manifest.source_digest IS NULL
+                OR manifest.source_verified_at IS NULL
+                OR manifest.source_verification_hash IS NULL
+                OR manifest.source_page_count IS DISTINCT FROM manifest.page_count
+                OR manifest.source_chunk_count IS DISTINCT FROM manifest.chunk_count
+                OR snapshot.source_generation_id IS DISTINCT FROM manifest.source_generation_id
+                OR snapshot.embedding_model <> manifest.embedding_model
+                OR snapshot.embedding_version <> manifest.embedding_version
+                OR snapshot.embedding_dimension <> manifest.embedding_dimension
+                OR snapshot.index_format_version <> manifest.index_format_version
+              )
+          );
+
+        IF NOT FOUND THEN
+          RAISE EXCEPTION USING
+            ERRCODE = '23514',
+            MESSAGE = 'partitioned universe head requires a complete readable fresh manifest';
+        END IF;
       END IF;
     END IF;
 
@@ -1962,6 +2146,7 @@ export const BACKSTAGE_NOTION_PARTITION_STORAGE_TABLE_DEFINITIONS = [
           ('backstage_notion_shard_heads', 'backstage_notion_shard_head_guard', 'INSERT OR UPDATE OR DELETE', 'backstage_notion_guard_shard_head', 31),
           ('backstage_notion_shard_sync_leases', 'backstage_notion_lease_fencing_guard', 'INSERT OR UPDATE OR DELETE', 'backstage_notion_guard_lease_fencing', 31),
           ('backstage_notion_provider_coordinator_leases', 'backstage_notion_lease_fencing_guard', 'INSERT OR UPDATE OR DELETE', 'backstage_notion_guard_lease_fencing', 31),
+          ('backstage_notion_partition_source_generations', 'backstage_notion_immutable_guard', 'UPDATE OR DELETE', 'backstage_notion_partition_reject_immutable_mutation', 27),
           ('backstage_notion_universe_manifests', 'backstage_notion_building_insert_guard', 'INSERT', 'backstage_notion_require_building_insert', 7),
           ('backstage_notion_universe_manifests', 'backstage_notion_universe_manifest_seal_guard', 'UPDATE OR DELETE', 'backstage_notion_guard_universe_manifest_seal', 27),
           ('backstage_notion_universe_manifest_shards', 'backstage_notion_universe_manifest_child_guard', 'INSERT OR UPDATE OR DELETE', 'backstage_notion_guard_universe_manifest_child_mutation', 31),
@@ -2012,6 +2197,7 @@ export const BACKSTAGE_NOTION_PARTITION_STORAGE_TABLE_DEFINITIONS = [
           ('backstage_notion_shard_heads', 'backstage_notion_shard_head_guard', 'backstage_notion_guard_shard_head', 31),
           ('backstage_notion_shard_sync_leases', 'backstage_notion_lease_fencing_guard', 'backstage_notion_guard_lease_fencing', 31),
           ('backstage_notion_provider_coordinator_leases', 'backstage_notion_lease_fencing_guard', 'backstage_notion_guard_lease_fencing', 31),
+          ('backstage_notion_partition_source_generations', 'backstage_notion_immutable_guard', 'backstage_notion_partition_reject_immutable_mutation', 27),
           ('backstage_notion_universe_manifests', 'backstage_notion_building_insert_guard', 'backstage_notion_require_building_insert', 7),
           ('backstage_notion_universe_manifests', 'backstage_notion_universe_manifest_seal_guard', 'backstage_notion_guard_universe_manifest_seal', 27),
           ('backstage_notion_universe_manifest_shards', 'backstage_notion_universe_manifest_child_guard', 'backstage_notion_guard_universe_manifest_child_mutation', 31),

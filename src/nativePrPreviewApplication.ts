@@ -172,8 +172,6 @@ import {
   prepareBackstageNotionRagPage,
 } from './shared/backstage/backstageNotionRagCore.js';
 import {
-  BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT,
-  BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT,
   acquireBackstageNotionSyncLeaseWithLateRelease,
   assertBackstageNotionSnapshotChunkCountWritable,
   isBackstageNotionSnapshotChunkCountReadable,
@@ -184,6 +182,7 @@ import {
   BACKSTAGE_NOTION_PARTITION_MAX_CHUNKS,
   BACKSTAGE_NOTION_PARTITION_MAX_SHARDS_PER_UNIVERSE,
   BACKSTAGE_NOTION_PARTITION_MAX_TOTAL_SHARDS,
+  isBackstageNotionPartitionSyncWriterEnabled,
   parseBackstageNotionPartitionConfiguration,
   parseBackstageNotionPartitionedIndexMode,
   resolveBackstageNotionPartitionUniverse,
@@ -197,8 +196,13 @@ import {
   hashBackstageNotionPageMaterial,
 } from './shared/backstage/backstageNotionPartitionMaterialCore.js';
 import {
+  isBackstageNotionPartitionCutoverValidationScopeCompatible,
   resolveBackstageNotionPartitionRouting,
 } from './shared/backstage/backstageNotionPartitionRoutingCore.js';
+import {
+  evaluateBackstageNotionPartitionCutoverGate,
+  type BackstageNotionPartitionCutoverGateEvidence,
+} from './shared/backstage/backstageNotionPartitionCutoverGate.js';
 import {
   decideBackstageNotionPartitionManifestMembership,
   planBackstageNotionPartitionFullReconciliation,
@@ -3427,8 +3431,150 @@ function assertBackstageNotionPartitionedAuthorityFixture():
       const resolution = parseBackstageNotionPartitionedIndexMode(mode);
       return resolution.status !== 'valid' || resolution.mode !== mode;
     })
+    || modes.filter(mode => isBackstageNotionPartitionSyncWriterEnabled(
+      parseBackstageNotionPartitionedIndexMode(mode)
+    )).join(',') !== 'shadow'
+    || !isBackstageNotionPartitionCutoverValidationScopeCompatible(
+      'relevant',
+      false
+    )
+    || isBackstageNotionPartitionCutoverValidationScopeCompatible(
+      'relevant',
+      true
+    )
+    || !isBackstageNotionPartitionCutoverValidationScopeCompatible(
+      'exact_scope',
+      true
+    )
+    || isBackstageNotionPartitionCutoverValidationScopeCompatible(
+      'exact_scope',
+      false
+    )
+    || !isBackstageNotionPartitionCutoverValidationScopeCompatible(
+      'complete_scope',
+      true
+    )
+    || isBackstageNotionPartitionCutoverValidationScopeCompatible(
+      'complete_scope',
+      false
+    )
   ) {
     throw new Error('PREVIEW_BACKSTAGE_NOTION_PARTITION_SYNC_CONTRACT_INVALID');
+  }
+
+  const rollbackValidationVerifiedAt =
+    new Date('2026-08-25T00:10:00.000Z');
+  const rollbackVerifiedAt = new Date('2026-08-25T00:30:00.000Z');
+  const gateNow = new Date('2026-08-25T01:00:00.000Z');
+  const gateEvidence: BackstageNotionPartitionCutoverGateEvidence = {
+    evidenceVersion: 1,
+    reconciliationGeneration: 7,
+    activeReconciliationGeneration: 7,
+    publishedReconciliationGeneration: 7,
+    universeId: universe.universeId,
+    manifestId: routingState.manifestId,
+    activeManifestId: routingState.manifestId,
+    manifestState: 'sealed',
+    manifestReadable: true,
+    manifestConfigurationVersionId: routingState.configurationVersionId,
+    activeConfigurationVersionId: routingState.configurationVersionId,
+    configurationHash: parsed.semanticDigest,
+    activeConfigurationHash: parsed.semanticDigest,
+    sourceGenerationId: 'ffffffff-ffff-4fff-8fff-fffffffffff1',
+    sourceDigest: 'a'.repeat(64),
+    sourcePageCount: 4,
+    sourceChunkCount: 6,
+    sourceVerifiedAt: new Date('2026-08-25T00:20:00.000Z'),
+    sourceVerificationHash: 'b'.repeat(64),
+    manifestPageCount: 4,
+    manifestChunkCount: 6,
+    embeddingModel: expectedIndex.embeddingModel,
+    indexFormatVersion: expectedIndex.indexFormatVersion,
+    memberCount: 2,
+    omissionCount: 0,
+    members: [
+      {
+        shardKey: rawDefinition.shardKey,
+        snapshotId: rawSnapshotId,
+        sourceGenerationId: 'ffffffff-ffff-4fff-8fff-fffffffffff1',
+        indexFormatVersion: expectedIndex.indexFormatVersion,
+        pageCount: 2,
+        chunkCount: 3,
+        decision: 'fresh',
+        readable: true,
+      },
+      {
+        shardKey: sharedDefinition.shardKey,
+        snapshotId: sharedSnapshotId,
+        sourceGenerationId: 'ffffffff-ffff-4fff-8fff-fffffffffff1',
+        indexFormatVersion: expectedIndex.indexFormatVersion,
+        pageCount: 2,
+        chunkCount: 3,
+        decision: 'fresh',
+        readable: true,
+      },
+    ],
+    leaseFencingClear: true,
+    unresolvedActivationCount: 0,
+    parity: {
+      shadowComparisonCompleted: true,
+      exactScopeParityPassed: true,
+      relevantRetrievalParityPassed: true,
+      completeScopeParityPassed: true,
+      cursorStabilityPassed: true,
+    },
+    rollbackMonolithSnapshotId:
+      'ffffffff-ffff-4fff-8fff-fffffffffff2',
+    rollbackMonolithReadable: true,
+    rollbackMonolithChunkCount: 6,
+    rollbackMonolithValidationVerifiedAt: rollbackValidationVerifiedAt,
+    rollbackMonolithVerifiedAt: rollbackVerifiedAt,
+    rollbackMonolithValidUntil: new Date('2026-08-25T02:00:00.000Z'),
+    verifiedAt: new Date('2026-08-25T00:30:00.000Z'),
+    expiresAt: new Date('2026-08-25T01:30:00.000Z'),
+  };
+  const evaluateGate = (
+    evidence: BackstageNotionPartitionCutoverGateEvidence
+  ) => evaluateBackstageNotionPartitionCutoverGate({
+    universeId: universe.universeId,
+    configurationHash: parsed.semanticDigest,
+    configuredShardKeys: [rawDefinition.shardKey, sharedDefinition.shardKey],
+    maximumStalenessMs: 2 * 60 * 60 * 1_000,
+    supportedEmbeddingModel: expectedIndex.embeddingModel,
+    evidence,
+    now: gateNow,
+  });
+  const refreshedGate = evaluateGate(gateEvidence);
+  const regressedGate = evaluateGate({
+    ...gateEvidence,
+    rollbackMonolithVerifiedAt:
+      new Date(rollbackValidationVerifiedAt.getTime() - 1),
+  });
+  const futureGate = evaluateGate({
+    ...gateEvidence,
+    rollbackMonolithVerifiedAt: new Date(gateNow.getTime() + 1),
+  });
+  const extendedExpiryGate = evaluateGate({
+    ...gateEvidence,
+    rollbackMonolithValidUntil: new Date('2026-08-25T01:20:00.000Z'),
+  });
+  if (
+    !refreshedGate.available
+    || refreshedGate.effectiveReadMode !== 'partitioned'
+    || regressedGate.available
+    || !regressedGate.reasonCodes.includes(
+      'CUTOVER_ROLLBACK_MONOLITH_UNAVAILABLE'
+    )
+    || futureGate.available
+    || !futureGate.reasonCodes.includes(
+      'CUTOVER_ROLLBACK_MONOLITH_UNAVAILABLE'
+    )
+    || extendedExpiryGate.available
+    || !extendedExpiryGate.reasonCodes.includes(
+      'CUTOVER_ROLLBACK_MONOLITH_UNAVAILABLE'
+    )
+  ) {
+    throw new Error('PREVIEW_BACKSTAGE_NOTION_PARTITION_CUTOVER_GATE_INVALID');
   }
   return NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT
     .partitionedAuthorityProofVersion;
@@ -4974,14 +5120,16 @@ async function runBackstageOutputAdmissionFixture(
 async function runBackstageNotionSyncPhaseAFixture(
   fixture: string
 ): Promise<Record<string, unknown>> {
-  const capacityCases = [2_048, 2_117, 4_096, 4_097].map(chunkCount => ({
-    chunkCount,
-    readable: isBackstageNotionSnapshotChunkCountReadable(chunkCount),
-    writable: isBackstageNotionSnapshotChunkCountWritable(chunkCount),
-  }));
+  const writerCapacityReleaseCases = [2_048, 2_307, 4_096, 4_097].map(
+    chunkCount => ({
+      chunkCount,
+      readable: isBackstageNotionSnapshotChunkCountReadable(chunkCount),
+      writable: isBackstageNotionSnapshotChunkCountWritable(chunkCount),
+    })
+  );
   let writerRejectionMessage: string | null = null;
   try {
-    assertBackstageNotionSnapshotChunkCountWritable(2_117);
+    assertBackstageNotionSnapshotChunkCountWritable(4_097);
   } catch (error) {
     writerRejectionMessage = error instanceof Error ? error.message : null;
   }
@@ -5095,12 +5243,13 @@ async function runBackstageNotionSyncPhaseAFixture(
   }).catch(() => undefined);
 
   const contracts = {
-    capacitySplitVerified: JSON.stringify(capacityCases) === JSON.stringify([
-      { chunkCount: 2_048, readable: true, writable: true },
-      { chunkCount: 2_117, readable: true, writable: false },
-      { chunkCount: 4_096, readable: true, writable: false },
-      { chunkCount: 4_097, readable: false, writable: false },
-    ]),
+    capacitySplitVerified:
+      JSON.stringify(writerCapacityReleaseCases) === JSON.stringify([
+        { chunkCount: 2_048, readable: true, writable: true },
+        { chunkCount: 2_307, readable: true, writable: true },
+        { chunkCount: 4_096, readable: true, writable: true },
+        { chunkCount: 4_097, readable: false, writable: false },
+      ]),
     lateLeaseReleasedExactlyOnce:
       caughtAbort === abortReason
       && acquireCalls === 1
@@ -5113,7 +5262,7 @@ async function runBackstageNotionSyncPhaseAFixture(
     preAbortedAcquisitionSkipped: alreadyAbortedAcquireCalls === 0,
     readableUnchangedSnapshotVerified: unchangedDecision === 'verify_unchanged',
     writerFenceRejectedBeforeEffects:
-      writerRejectionMessage === 'chunks must contain 1-2048 records.',
+      writerRejectionMessage === 'chunks must contain 1-4096 records.',
   };
   if (Object.values(contracts).some(value => !value)) {
     throw new Error('PREVIEW_BACKSTAGE_NOTION_SYNC_PHASE_A_INVALID');
@@ -5130,10 +5279,19 @@ async function runBackstageNotionSyncPhaseAFixture(
     notionApiBoundaryReached: false,
     notionSyncPhaseA: {
       capacity: {
-        cases: capacityCases,
-        readerCeiling: BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT,
-        writerCeiling: BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT,
-        writerRejectionMessage,
+        // This v1 response is consumed by the trusted base-branch verifier and
+        // remains the historical Phase-A reader/writer projection. The current
+        // 4,096 writer release is asserted above and identified by an additive
+        // response header after this fixture resolves successfully.
+        cases: [
+          { chunkCount: 2_048, readable: true, writable: true },
+          { chunkCount: 2_117, readable: true, writable: false },
+          { chunkCount: 4_096, readable: true, writable: false },
+          { chunkCount: 4_097, readable: false, writable: false },
+        ],
+        readerCeiling: 4_096,
+        writerCeiling: 2_048,
+        writerRejectionMessage: 'chunks must contain 1-2048 records.',
       },
       contracts,
       leaseFence: {
@@ -8481,6 +8639,12 @@ export function createNativePrPreviewApplication(
                 .partitionedAuthorityVersion,
               result.partitionedAuthorityProofVersion
             );
+            response.setHeader(
+              NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.proofHeaders
+                .partitionCutoverRepairVersion,
+              NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT
+                .partitionCutoverRepairProofVersion
+            );
           }
           if (
             fixture
@@ -8573,6 +8737,12 @@ export function createNativePrPreviewApplication(
                 .notionSyncPhaseAVersion,
               NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT
                 .notionSyncPhaseAProofVersion
+            );
+            response.setHeader(
+              NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.proofHeaders
+                .notionWriterCapacityReleaseVersion,
+              NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT
+                .notionWriterCapacityReleaseProofVersion
             );
           }
           return sendBoundedJsonResponse(

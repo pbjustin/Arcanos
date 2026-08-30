@@ -157,41 +157,44 @@ describe('queued Backstage Notion partition synchronization execution', () => {
     expect(runSynchronization).not.toHaveBeenCalled();
   });
 
-  test('re-reads live policy inside the coordinator before effectful synchronization', async () => {
-    const values: Record<string, string | undefined> = {
-      ARCANOS_BACKSTAGE_NOTION_PARTITIONED_INDEX_MODE: 'shadow',
-      ARCANOS_BACKSTAGE_NOTION_PARTITIONS_JSON: CONFIGURATION,
-    };
-    const runSynchronization = jest.fn(async () => synchronizationResult());
-    const coordinator: BackstageNotionSynchronizationCoordinator = {
-      runExclusive: async operation => {
-        values.ARCANOS_BACKSTAGE_NOTION_PARTITIONED_INDEX_MODE = 'monolith';
-        return operation();
-      },
-    };
-    const execute = createBackstageNotionPartitionSyncJobExecutor({
-      coordinator,
-      readEnvironment: environment(values),
-      runSynchronization,
-    });
+  test.each(['monolith', 'partitioned'] as const)(
+    're-reads live %s policy inside the coordinator before effectful synchronization',
+    async liveMode => {
+      const values: Record<string, string | undefined> = {
+        ARCANOS_BACKSTAGE_NOTION_PARTITIONED_INDEX_MODE: 'shadow',
+        ARCANOS_BACKSTAGE_NOTION_PARTITIONS_JSON: CONFIGURATION,
+      };
+      const runSynchronization = jest.fn(async () => synchronizationResult());
+      const coordinator: BackstageNotionSynchronizationCoordinator = {
+        runExclusive: async operation => {
+          values.ARCANOS_BACKSTAGE_NOTION_PARTITIONED_INDEX_MODE = liveMode;
+          return operation();
+        },
+      };
+      const execute = createBackstageNotionPartitionSyncJobExecutor({
+        coordinator,
+        readEnvironment: environment(values),
+        runSynchronization,
+      });
 
-    const outcome = await execute({
-      rawInput: jobInput(),
-      cancellationSignal: new AbortController().signal,
-    });
+      const outcome = await execute({
+        rawInput: jobInput(),
+        cancellationSignal: new AbortController().signal,
+      });
 
-    expect(outcome).toMatchObject({
-      status: 'completed',
-      retryable: false,
-      output: {
-        outcome: 'completed_with_errors',
-        safeReasonCode: 'MODE_DISABLED',
-        fullSourceScan: false,
-        manifestStatus: 'not_attempted',
-      },
-    });
-    expect(runSynchronization).not.toHaveBeenCalled();
-  });
+      expect(outcome).toMatchObject({
+        status: 'completed',
+        retryable: false,
+        output: {
+          outcome: 'completed_with_errors',
+          safeReasonCode: 'MODE_DISABLED',
+          fullSourceScan: false,
+          manifestStatus: 'not_attempted',
+        },
+      });
+      expect(runSynchronization).not.toHaveBeenCalled();
+    }
+  );
 
   test.each([
     ['digest', jobInput({ configurationDigest: 'f'.repeat(64) })],

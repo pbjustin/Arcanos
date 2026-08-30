@@ -33,6 +33,7 @@ import {
 import {
   BACKSTAGE_NOTION_PARTITIONED_INDEX_MODE_ENV_NAME,
   BACKSTAGE_NOTION_PARTITIONS_ENV_NAME,
+  isBackstageNotionPartitionSyncWriterEnabled,
   parseBackstageNotionPartitionConfiguration,
   parseBackstageNotionPartitionedIndexMode,
   resolveBackstageNotionPartitionUniverse,
@@ -94,7 +95,7 @@ function resolveConfirmationTarget(
   }
 
   const mode = parseBackstageNotionPartitionedIndexMode(rawMode);
-  if (mode.status !== 'valid' || mode.mode === 'monolith') {
+  if (!isBackstageNotionPartitionSyncWriterEnabled(mode)) {
     return Object.freeze({ status: 'disabled' as const });
   }
   let rawConfiguration: string | undefined;
@@ -299,6 +300,27 @@ export function createApiBackstageNotionPartitionsRouter(
         );
         return;
       }
+      const liveResolution = resolveConfirmationTarget(
+        readEnvironment,
+        operation.universeId,
+        parsedRequest.body.shardKey
+      );
+      if (liveResolution.status !== 'ready') {
+        sendConfirmationTargetFailure(res, liveResolution);
+        return;
+      }
+      if (
+        liveResolution.context.generation !== confirmedContext.generation
+        || liveResolution.context.digest !== confirmedContext.digest
+      ) {
+        sendFixedError(
+          res,
+          503,
+          'BACKSTAGE_NOTION_PARTITION_SYNC_CONFIGURATION_UNAVAILABLE',
+          'Partition synchronization configuration is unavailable.'
+        );
+        return;
+      }
       try {
         const result = await enqueueOperation({
           universeId: operation.universeId,
@@ -307,7 +329,7 @@ export function createApiBackstageNotionPartitionsRouter(
           idempotencyKey: parsedRequest.idempotencyKey,
           correlationId: req.traceId ?? req.requestId ?? null,
           dependencies: {
-            readEnvironment: confirmedContext.readEnvironment,
+            readEnvironment: liveResolution.context.readEnvironment,
           },
         });
         try {

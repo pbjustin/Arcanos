@@ -1,5 +1,8 @@
 import { createHash } from 'node:crypto';
 
+import {
+  getBackstageNotionPartitionCutoverEvidenceRepository,
+} from '@core/db/repositories/backstageNotionPartitionCutoverEvidenceRepository.js';
 import { logger } from '@platform/logging/structuredLogging.js';
 import { getEnv } from '@platform/runtime/env.js';
 import {
@@ -18,6 +21,11 @@ import {
   resolveBackstageNotionBookingScopePlan,
 } from '@shared/backstage/backstageNotionBookingScope.js';
 import {
+  evaluateBackstageNotionPartitionCutoverGate,
+  type BackstageNotionPartitionCutoverGateEvidence,
+  type BackstageNotionPartitionCutoverGateEvaluation,
+} from '@shared/backstage/backstageNotionPartitionCutoverGate.js';
+import {
   MAX_PURPOSE_BOUND_CREDENTIAL_LENGTH,
   MIN_PURPOSE_BOUND_CREDENTIAL_LENGTH,
   PURPOSE_BOUND_CREDENTIAL_ENV_NAMES,
@@ -33,6 +41,7 @@ import {
   BackstageNotionIndexUnavailableError,
   retrieveBackstageNotionBookingRagContext,
   retrieveBackstageNotionRagContext,
+  resolveBackstageNotionRagMaximumStalenessMs,
   type BackstageNotionRagQuery,
   type BackstageNotionRagRetrieval,
   type BackstageNotionRagRetrievalDependencies,
@@ -43,7 +52,10 @@ import {
   type BackstageNotionPartitionRetrievalDependencies,
   type BackstageNotionPartitionRetrievalPlan,
 } from './backstageNotionPartitionRetrieval.js';
-import { createEmbedding } from './openai/embeddings.js';
+import {
+  createEmbedding,
+  DEFAULT_OPENAI_EMBEDDING_MODEL,
+} from './openai/embeddings.js';
 
 export const BACKSTAGE_NOTION_PARTITION_CURSOR_SECRET_ENV_NAME =
   'ARCANOS_BACKSTAGE_NOTION_PARTITION_CURSOR_SECRET' as const;
@@ -97,9 +109,19 @@ export interface BackstageNotionPartitionCutoverDependencies {
   readonly retrievePartition?: PartitionRetriever;
   readonly embedQuery?: (query: string) => Promise<number[]>;
   readonly logInfo?: LogInfo;
+  readonly resolveCutoverEvidence?: (input: Readonly<{
+    universeId: string;
+    configurationHash: string;
+    configuredShardKeys: readonly string[];
+    maximumStalenessMs: number;
+  }>) => Promise<BackstageNotionPartitionCutoverGateEvidence | null>
+    | BackstageNotionPartitionCutoverGateEvidence
+    | null;
 }
 
 interface PartitionActivation {
+  readonly configurationHash: string;
+  readonly configuredShardKeys: readonly string[];
   readonly cursorSecret?: string;
   readonly previousCursorSecret?: string;
 }
@@ -274,11 +296,24 @@ function resolvePartitionActivation(
   const configuration = parseBackstageNotionPartitionConfiguration(
     rawConfiguration
   );
-  if (!resolveBackstageNotionPartitionUniverse(configuration, universeId)) {
+  if (configuration.status !== 'valid') {
     return null;
   }
+  const universe = resolveBackstageNotionPartitionUniverse(
+    configuration,
+    universeId
+  );
+  if (!universe) {
+    return null;
+  }
+  const baseActivation = {
+    configurationHash: configuration.semanticDigest,
+    configuredShardKeys: Object.freeze(
+      universe.shards.map(shard => shard.shardKey)
+    ),
+  };
   if (!requireCursorSecret) {
-    return Object.freeze({});
+    return Object.freeze(baseActivation);
   }
 
   const credentialSnapshot = readCredentialSnapshot(readEnvironment);
@@ -309,8 +344,42 @@ function resolvePartitionActivation(
     return null;
   }
   return Object.freeze({
+    ...baseActivation,
     cursorSecret,
     ...(previousCursorSecret ? { previousCursorSecret } : {}),
+  });
+}
+
+async function resolveCutoverGate(
+  universeId: string,
+  activation: PartitionActivation,
+  dependencies: BackstageNotionPartitionCutoverDependencies
+): Promise<BackstageNotionPartitionCutoverGateEvaluation> {
+  const maximumStalenessMs = resolveBackstageNotionRagMaximumStalenessMs();
+  const resolver = readDataFunction<NonNullable<
+    BackstageNotionPartitionCutoverDependencies['resolveCutoverEvidence']
+  >>(dependencies, 'resolveCutoverEvidence') ?? (input => (
+    getBackstageNotionPartitionCutoverEvidenceRepository()
+      .loadGateEvidence(input)
+  ));
+  let evidence: BackstageNotionPartitionCutoverGateEvidence | null = null;
+  try {
+    evidence = await resolver(Object.freeze({
+      universeId,
+      configurationHash: activation.configurationHash,
+      configuredShardKeys: activation.configuredShardKeys,
+      maximumStalenessMs,
+    }));
+  } catch {
+    evidence = null;
+  }
+  return evaluateBackstageNotionPartitionCutoverGate({
+    universeId,
+    configurationHash: activation.configurationHash,
+    configuredShardKeys: activation.configuredShardKeys,
+    maximumStalenessMs,
+    supportedEmbeddingModel: DEFAULT_OPENAI_EMBEDDING_MODEL,
+    evidence,
   });
 }
 
@@ -564,8 +633,9 @@ async function retrievePartitioned(
   readEnvironment: ReadEnvironment,
   embedQuery: (query: string) => Promise<number[]>,
   dependencies: BackstageNotionPartitionCutoverDependencies,
-  protectedQueuedExecution: boolean
-): Promise<BackstageNotionPartitionRagRetrieval> {
+  protectedQueuedExecution: boolean,
+  requireCutoverGate: boolean
+): Promise<BackstageNotionPartitionRagRetrieval | null> {
   const requestPlan = buildPartitionPlan(query);
   const activation = requestPlan
     ? resolvePartitionActivation(
@@ -577,15 +647,40 @@ async function retrievePartitioned(
   if (!activation || !requestPlan) {
     throw new BackstageNotionIndexUnavailableError();
   }
+  const gate = requireCutoverGate
+    ? await resolveCutoverGate(universeId, activation, dependencies)
+    : null;
+  if (gate && !gate.available) {
+    return null;
+  }
   const retrievePartition = readDataFunction<PartitionRetriever>(
     dependencies,
     'retrievePartition'
   ) ?? retrieveBackstageNotionPartitionRagContext;
-  return retrievePartition(
+  const retrieval = await retrievePartition(
     universeId,
     requestPlan.plan,
     partitionDependencies(activation, embedQuery)
   );
+  if (
+    gate?.manifestId
+    && !requestPlan.hasCursor
+    && retrieval.manifestId !== gate.manifestId
+  ) {
+    throw new BackstageNotionIndexUnavailableError();
+  }
+  return retrieval;
+}
+
+/**
+ * Reuse the exact production request planner for explicit cutover validation.
+ * Callers receive only the closed server-derived retrieval plan; they cannot
+ * supply a routing intent through the validation case.
+ */
+export function deriveBackstageNotionPartitionCutoverValidationPlan(
+  query: BackstageNotionRagQuery
+): BackstageNotionPartitionRetrievalPlan | null {
+  return buildPartitionPlan(query)?.plan ?? null;
 }
 
 function startShadowComparison(input: {
@@ -673,14 +768,24 @@ async function retrieveAuthority(
     dependencies
   );
   if (mode === 'partitioned') {
-    return retrievePartitioned(
+    const partitioned = await retrievePartitioned(
       universeId,
       query,
       readEnvironment,
       sharedEmbedding,
       dependencies,
-      protectedQueuedExecution
+      protectedQueuedExecution,
+      true
     );
+    if (partitioned) {
+      return partitioned;
+    }
+    return booking
+      ? (retrieveMonolith as BookingMonolithRetriever)(
+          universeId,
+          query as string
+        )
+      : (retrieveMonolith as MonolithRetriever)(universeId, query);
   }
 
   const monolith = booking
@@ -734,7 +839,10 @@ async function retrieveAuthority(
 /**
  * Retrieve authority context through the exact rollout mode captured for this
  * request. Shadow diagnostics can never replace or delay into a backlog behind
- * the monolithic authority result, and partitioned mode has no silent fallback.
+ * the monolithic authority result. A requested partitioned read whose cutover
+ * gate is absent or closed is resolved to monolith before admission; once a
+ * request is admitted to partitions, runtime partition failures fail closed and
+ * never silently fall back across authority generations.
  */
 export async function retrieveBackstageNotionAuthorityRagContext(
   universeId: string,

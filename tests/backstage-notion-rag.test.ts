@@ -6,11 +6,16 @@ import type {
   BackstageNotionActiveChunk,
   BackstageNotionActiveSnapshot,
   BackstageNotionActiveSnapshotHeader,
+  BackstageNotionSnapshotCandidateSearch,
   BackstageNotionSnapshotChunkPage,
   BackstageNotionSnapshotChunkPageSelector,
   BackstageNotionSnapshotScopeLookup,
   BackstageNotionSnapshotScopeResolution,
+  RankBackstageNotionSnapshotCandidatesInput,
 } from '../src/core/db/repositories/backstageNotionRagRepository.js';
+import type {
+  BackstageNotionSyncAttemptRecord,
+} from '../src/core/db/repositories/backstageNotionSyncStatusRepository.js';
 import {
   getOpenAIAdapter,
   resetOpenAIAdapter,
@@ -38,6 +43,10 @@ import {
   BACKSTAGE_NOTION_RAG_HEADING_INDEX_VERSION,
   BACKSTAGE_NOTION_RAG_PROMPT_CODE_POINTS,
 } from '../src/shared/backstage/backstageNotionRagCore.js';
+import {
+  classifyBackstageNotionBookingCandidateScope,
+  type BackstageNotionBookingScopePlan,
+} from '../src/shared/backstage/backstageNotionBookingScope.js';
 import {
   normalizeBackstageNotionScopeKey,
   normalizeBackstageNotionScopePath,
@@ -145,12 +154,53 @@ function activeSnapshotHeader(
   };
 }
 
+function latestSyncAttempt(
+  outcome: BackstageNotionSyncAttemptRecord['outcome'],
+  options: Partial<BackstageNotionSyncAttemptRecord> = {}
+): BackstageNotionSyncAttemptRecord {
+  return {
+    universeId: UNIVERSE_ID,
+    attemptId: '33333333-3333-4333-8333-333333333333',
+    generation: '1',
+    startedAt: new Date(NOW.getTime() - 2 * 60 * 1_000),
+    completedAt: outcome === 'running'
+      ? null
+      : new Date(NOW.getTime() - 60 * 1_000),
+    outcome,
+    failurePhase: outcome === 'failed' ? 'chunking' : null,
+    failureReason: outcome === 'failed' ? 'chunk_limit_reached' : null,
+    pagesDiscovered: 366,
+    pagesFetched: 366,
+    blocksFetched: 366,
+    chunksProduced: outcome === 'unchanged' ? 0 : 2_307,
+    chunksEmbedded: outcome === 'activated' ? 2_307 : 0,
+    candidateSnapshotCreated: outcome === 'activated',
+    candidateSnapshotValidated: outcome === 'activated',
+    candidateSnapshotActivated: outcome === 'activated',
+    activatedSnapshotId: outcome === 'activated' || outcome === 'unchanged'
+      ? SNAPSHOT_ID
+      : null,
+    ...options,
+  };
+}
+
 function snapshotScopeResolution(
   active: BackstageNotionActiveSnapshot | null,
   snapshotId: string,
   lookup: BackstageNotionSnapshotScopeLookup
 ): BackstageNotionSnapshotScopeResolution {
   if (!active || snapshotId !== active.snapshot.id) {
+    return { status: 'invalid' };
+  }
+  if (active.chunks.some(candidate => (
+    candidate.pagePath.length < 1
+    || Array.from(candidate.pagePath).some(segment => (
+      typeof segment !== 'string' || !segment.trim()
+    ))
+    || Array.from(candidate.headingPath).some(segment => (
+      typeof segment !== 'string' || !segment.trim()
+    ))
+  ))) {
     return { status: 'invalid' };
   }
   const scopeKind = lookup.scopeKind ?? 'page';
@@ -334,6 +384,10 @@ function harness(
       offset: number,
       limit: number
     ) => Promise<BackstageNotionSnapshotChunkPage>;
+    rankSnapshotCandidates?: (
+      input: RankBackstageNotionSnapshotCandidatesInput
+    ) => Promise<BackstageNotionSnapshotCandidateSearch>;
+    latestSyncAttempt?: BackstageNotionSyncAttemptRecord | null;
     root?: BackstageNotionAuthorityRoot | null;
   } = {}
 ) {
@@ -360,17 +414,75 @@ function harness(
       limit: number
     ) => snapshotChunkPage(active, snapshotId, selector, offset, limit))
   );
+  const rankSnapshotCandidates = jest.fn(
+    options.rankSnapshotCandidates ?? (async (
+      input: RankBackstageNotionSnapshotCandidatesInput
+    ): Promise<BackstageNotionSnapshotCandidateSearch> => {
+      const page = snapshotChunkPage(
+        active,
+        input.snapshotId,
+        input.selector,
+        0,
+        active?.snapshot.chunkCount ?? input.limit
+      );
+      const activeById = new Map(active?.chunks.map(candidate => [candidate.id, candidate]));
+      let scoped = page.chunks.map(candidate => activeById.get(candidate.id)!);
+      if (input.allowedBookingBrands && input.allowedBookingBrands.length > 0) {
+        const scopePlan: BackstageNotionBookingScopePlan = {
+          strategy: input.allowedBookingBrands.length > 1 ? 'cross_brand' : 'brand',
+          detectedBrands: input.allowedBookingBrands,
+          allowedBrands: input.allowedBookingBrands,
+          explicitCrossBrand: input.allowedBookingBrands.length > 1,
+          fallbackReason: null,
+        };
+        const classified = scoped.map(candidate => ({
+          candidate,
+          disposition: classifyBackstageNotionBookingCandidateScope(scopePlan, {
+            pageTitle: candidate.pageTitle,
+            pagePath: candidate.pagePath,
+            headingPath: candidate.headingPath,
+            category: typeof candidate.metadata.category === 'string'
+              ? candidate.metadata.category
+              : undefined,
+          }).disposition,
+        })).filter(item => item.disposition !== 'excluded');
+        const neutralLimit = Math.min(16, Math.max(1, Math.floor(input.limit / 8)));
+        scoped = [
+          ...classified
+            .filter(item => item.disposition === 'preferred')
+            .slice(0, input.limit - neutralLimit),
+          ...classified
+            .filter(item => item.disposition === 'neutral')
+            .slice(0, neutralLimit),
+        ].map(item => item.candidate);
+        return {
+          scopeChunkCount: page.scopeChunkCount,
+          candidatePoolCount: classified.length,
+          candidates: scoped,
+        };
+      }
+      return {
+        scopeChunkCount: page.scopeChunkCount,
+        candidatePoolCount: scoped.length,
+        candidates: scoped.slice(0, input.limit),
+      };
+    })
+  );
   const embedQuery = jest.fn(options.embedQuery ?? (async () => [1, 0]));
+  const loadLatestSyncAttempt = jest.fn(async () => (
+    options.latestSyncAttempt ?? null
+  ));
   const resolveAuthorityRoot = jest.fn(() => (
     options.root === undefined ? ROOT : options.root
   ));
   const dependencies: BackstageNotionRagRetrievalDependencies = {
     repository: {
-      loadActiveSnapshot,
       loadActiveSnapshotHeader,
       resolveSnapshotScope,
       loadSnapshotChunkPage,
+      rankSnapshotCandidates,
     },
+    syncStatusRepository: { loadLatestSyncAttempt },
     embedQuery,
     resolveAuthorityRoot,
     now: () => new Date(NOW),
@@ -383,6 +495,8 @@ function harness(
     loadActiveSnapshotHeader,
     resolveSnapshotScope,
     loadSnapshotChunkPage,
+    rankSnapshotCandidates,
+    loadLatestSyncAttempt,
     resolveAuthorityRoot,
   };
 }
@@ -510,10 +624,190 @@ describe('Backstage Notion authority RAG retrieval', () => {
     }
   });
 
+  it('admits a readable fresh snapshot confirmed by the latest complete sync', async () => {
+    const active = activeSnapshot();
+    active.verifiedAt = new Date(NOW.getTime() - 60 * 1_000);
+    const state = harness(active, {
+      latestSyncAttempt: latestSyncAttempt('unchanged'),
+    });
+
+    await expect(retrieveAuthorized(state.dependencies)).resolves.toMatchObject({
+      snapshotId: SNAPSHOT_ID,
+      snapshotStatus: 'current_complete',
+      activeSnapshotVerifiedAt: active.verifiedAt,
+      activeSnapshotChunkCount: active.snapshot.chunkCount,
+      latestSyncOutcome: 'unchanged',
+      latestSyncFailurePhase: null,
+      latestSyncFailureReason: null,
+    });
+
+    expect(state.loadLatestSyncAttempt).toHaveBeenCalledWith(UNIVERSE_ID);
+    expect(state.embedQuery).toHaveBeenCalledTimes(1);
+    const statusLog = jest.mocked(logger.info).mock.calls.find(([event]) => (
+      event === 'backstage.notion_rag.snapshot_status'
+    ));
+    expect(statusLog?.[1]).toMatchObject({
+      snapshotStatus: 'current_complete',
+      activeSnapshotReadable: true,
+      latestSyncOutcome: 'unchanged',
+      freshnessSatisfied: true,
+      newerRefreshIncomplete: false,
+    });
+  });
+
+  it('keeps reads pinned to the prior active snapshot while a candidate is building', async () => {
+    const active = activeSnapshot();
+    active.verifiedAt = new Date(NOW.getTime() - 3 * 60 * 1_000);
+    const state = harness(active, {
+      latestSyncAttempt: latestSyncAttempt('running'),
+    });
+
+    await expect(retrieveAuthorized(state.dependencies)).resolves.toMatchObject({
+      snapshotId: SNAPSHOT_ID,
+      snapshotStatus: 'last_known_good',
+      activeSnapshotVerifiedAt: active.verifiedAt,
+      activeSnapshotChunkCount: active.snapshot.chunkCount,
+      latestSyncOutcome: 'running',
+      latestSyncFailurePhase: null,
+      latestSyncFailureReason: null,
+    });
+
+    expect(state.loadLatestSyncAttempt).toHaveBeenCalledWith(UNIVERSE_ID);
+    expect(state.rankSnapshotCandidates).toHaveBeenCalledWith(
+      expect.objectContaining({
+        universeId: UNIVERSE_ID,
+        snapshotId: SNAPSHOT_ID,
+      })
+    );
+    expect(state.embedQuery).toHaveBeenCalledTimes(1);
+    const statusLog = jest.mocked(logger.info).mock.calls.find(([event]) => (
+      event === 'backstage.notion_rag.snapshot_status'
+    ));
+    expect(statusLog?.[1]).toMatchObject({
+      snapshotStatus: 'last_known_good',
+      latestSyncOutcome: 'running',
+      freshnessSatisfied: true,
+      newerRefreshIncomplete: true,
+    });
+  });
+
+  it('keeps protected booking generation fail closed while latest state is incomplete', async () => {
+    const active = activeSnapshot();
+    active.verifiedAt = new Date(NOW.getTime() - 3 * 60 * 1_000);
+    const state = harness(active, {
+      latestSyncAttempt: latestSyncAttempt('running'),
+    });
+
+    await expect(retrieveBookingAuthorized(
+      state.dependencies,
+      'Book Raw while refresh is incomplete'
+    )).rejects.toMatchObject({
+      code: BACKSTAGE_NOTION_INDEX_UNAVAILABLE_ERROR_CODE,
+      httpStatus: 503,
+      retryable: true,
+    });
+
+    expect(state.embedQuery).not.toHaveBeenCalled();
+    expect(state.rankSnapshotCandidates).not.toHaveBeenCalled();
+  });
+
+  it('returns explicit last_known_good metadata for continuity reads after a newer failed refresh', async () => {
+    const active = activeSnapshot();
+    active.verifiedAt = new Date(NOW.getTime() - 10 * 60 * 1_000);
+    const priorVerifiedAt = active.verifiedAt.getTime();
+    const priorSnapshot = { ...active.snapshot };
+    const state = harness(active, {
+      latestSyncAttempt: latestSyncAttempt('failed'),
+    });
+
+    await expect(retrieveAuthorized(state.dependencies)).resolves.toMatchObject({
+      snapshotId: SNAPSHOT_ID,
+      snapshotStatus: 'last_known_good',
+      activeSnapshotVerifiedAt: active.verifiedAt,
+      activeSnapshotChunkCount: active.snapshot.chunkCount,
+      latestSyncOutcome: 'failed',
+      latestSyncFailurePhase: 'chunking',
+      latestSyncFailureReason: 'chunk_limit_reached',
+    });
+
+    expect(active.verifiedAt.getTime()).toBe(priorVerifiedAt);
+    expect(active.snapshot).toEqual(priorSnapshot);
+    expect(state.loadLatestSyncAttempt).toHaveBeenCalledWith(UNIVERSE_ID);
+    expect(state.embedQuery).toHaveBeenCalledTimes(1);
+    expect(state.rankSnapshotCandidates).toHaveBeenCalledTimes(1);
+    const statusCalls = jest.mocked(logger.info).mock.calls.filter(([event]) => (
+      event === 'backstage.notion_rag.snapshot_status'
+    ));
+    expect(statusCalls).toHaveLength(1);
+    expect(statusCalls[0]?.[1]).toMatchObject({
+      snapshotStatus: 'last_known_good',
+      activeSnapshotReadable: true,
+      activeSnapshotChunkCount: active.snapshot.chunkCount,
+      latestSyncOutcome: 'failed',
+      latestSyncFailurePhase: 'chunking',
+      latestSyncFailureReason: 'chunk_limit_reached',
+      freshnessSatisfied: true,
+      newerRefreshIncomplete: true,
+    });
+    expect(JSON.stringify(statusCalls[0]?.[1])).not.toContain(SNAPSHOT_ID);
+    expect(JSON.stringify(statusCalls[0]?.[1])).not.toContain(
+      '33333333-3333-4333-8333-333333333333'
+    );
+    expect(jest.mocked(logger.info).mock.calls.some(([event]) => (
+      event === 'backstage.notion_rag.retrieved'
+    ))).toBe(true);
+  });
+
+  it('keeps protected booking generation fail closed after a failed refresh', async () => {
+    const active = activeSnapshot();
+    active.verifiedAt = new Date(NOW.getTime() - 10 * 60 * 1_000);
+    const state = harness(active, {
+      latestSyncAttempt: latestSyncAttempt('failed'),
+    });
+
+    await expect(retrieveBookingAuthorized(
+      state.dependencies,
+      'Book Raw after the failed refresh'
+    )).rejects.toMatchObject({
+      code: BACKSTAGE_NOTION_INDEX_UNAVAILABLE_ERROR_CODE,
+      httpStatus: 503,
+      retryable: true,
+    });
+
+    expect(state.embedQuery).not.toHaveBeenCalled();
+    expect(state.rankSnapshotCandidates).not.toHaveBeenCalled();
+  });
+
+  it('does not reflect malformed latest-sync state into availability telemetry', async () => {
+    const privateMarker = 'PRIVATE-NOTION-CONTENT-MUST-NOT-LOG';
+    const malformedAttempt = {
+      ...latestSyncAttempt('failed'),
+      failureReason: privateMarker,
+    } as unknown as BackstageNotionSyncAttemptRecord;
+    const state = harness(activeSnapshot(), {
+      latestSyncAttempt: malformedAttempt,
+    });
+
+    await expect(retrieveAuthorized(state.dependencies)).rejects.toBeInstanceOf(
+      BackstageNotionIndexUnavailableError
+    );
+
+    expect(state.embedQuery).not.toHaveBeenCalled();
+    const statusLog = jest.mocked(logger.info).mock.calls.find(([event]) => (
+      event === 'backstage.notion_rag.snapshot_status'
+    ));
+    expect(statusLog?.[1]).toMatchObject({
+      snapshotStatus: 'unavailable',
+      latestSyncOutcome: 'failed',
+      latestSyncFailurePhase: 'chunking',
+      latestSyncFailureReason: null,
+    });
+    expect(JSON.stringify(statusLog?.[1])).not.toContain(privateMarker);
+  });
+
   it.each([
     ['missing', () => null],
     ['wrong authority', () => ({ ...activeSnapshot(), authority: 'postgres' })],
-    ['truncated', () => ({ ...activeSnapshot(), truncated: true })],
     ['wrong universe', () => ({
       ...activeSnapshot(),
       snapshot: { ...activeSnapshot().snapshot, universeId: 'another-universe' },
@@ -538,39 +832,19 @@ describe('Backstage Notion authority RAG retrieval', () => {
       ...activeSnapshot(),
       verifiedAt: new Date('2026-08-19T15:44:59.999Z'),
     })],
-    ['incomplete', () => ({
-      ...activeSnapshot(),
-      snapshot: { ...activeSnapshot().snapshot, chunkCount: 2 },
-    })],
-    ['legacy heading index format', () => {
-      const legacy = activeSnapshot();
-      delete legacy.chunks[0]?.metadata.headingIndexVersion;
-      return legacy;
-    }],
-    ['legacy heading occurrence format', () => {
-      const legacy = activeSnapshot();
-      delete legacy.chunks[0]?.metadata.headingOccurrencePath;
-      return legacy;
-    }],
-    ['missing source edit metadata', () => {
-      const legacy = activeSnapshot();
-      delete legacy.chunks[0]?.metadata.sourceLastEditedAt;
-      return legacy;
-    }],
-  ])('fails closed for a %s active snapshot', async (_label, build) => {
+  ])('fails closed for a %s active snapshot header', async (_label, build) => {
     const state = harness(build() as BackstageNotionActiveSnapshot | null);
 
     await expect(retrieveAuthorized(state.dependencies)).rejects.toBeInstanceOf(
       BackstageNotionIndexUnavailableError
     );
-    expect(state.loadActiveSnapshot).toHaveBeenCalledWith(
-      UNIVERSE_ID,
-      BACKSTAGE_NOTION_RAG_MAX_ACTIVE_CHUNKS
-    );
+    expect(state.loadActiveSnapshotHeader).toHaveBeenCalledWith(UNIVERSE_ID);
+    expect(state.loadActiveSnapshot).not.toHaveBeenCalled();
+    expect(state.rankSnapshotCandidates).not.toHaveBeenCalled();
     expect(state.embedQuery).not.toHaveBeenCalled();
   });
 
-  it('rejects corrupt chunk identity, model, and vector data before query embedding', async () => {
+  it('rejects corrupt chunk identity, model, and vector data from the bounded candidate search', async () => {
     const corruptions: Array<(value: BackstageNotionActiveChunk) => void> = [
       value => { value.id = 'a'.repeat(64); },
       value => { value.contentHash = 'b'.repeat(64); },
@@ -587,8 +861,14 @@ describe('Backstage Notion authority RAG retrieval', () => {
       await expect(retrieveAuthorized(state.dependencies)).rejects.toBeInstanceOf(
         BackstageNotionIndexUnavailableError
       );
-      expect(state.embedQuery).not.toHaveBeenCalled();
+      expect(state.embedQuery).toHaveBeenCalledTimes(1);
+      expect(state.rankSnapshotCandidates).toHaveBeenCalledTimes(1);
+      expect(state.loadActiveSnapshot).not.toHaveBeenCalled();
     }
+    expect(jest.mocked(logger.info).mock.calls.some(([, metadata]) => (
+      (metadata as { snapshotStatus?: unknown } | undefined)?.snapshotStatus
+        === 'current_complete'
+    ))).toBe(false);
   });
 
   it('rejects inconsistent metadata for chunks that claim the same page identity', async () => {
@@ -609,7 +889,7 @@ describe('Backstage Notion authority RAG retrieval', () => {
     await expect(retrieveAuthorized(state.dependencies)).rejects.toBeInstanceOf(
       BackstageNotionIndexUnavailableError
     );
-    expect(state.embedQuery).not.toHaveBeenCalled();
+    expect(state.embedQuery).toHaveBeenCalledTimes(1);
   });
 
   it('fails closed when sparse indexed paths cannot satisfy an exact scope', async () => {
@@ -670,7 +950,7 @@ describe('Backstage Notion authority RAG retrieval', () => {
     await expect(retrieveAuthorized(mismatchedState.dependencies)).rejects.toBeInstanceOf(
       BackstageNotionIndexUnavailableError
     );
-    expect(mismatchedState.embedQuery).not.toHaveBeenCalled();
+    expect(mismatchedState.embedQuery).toHaveBeenCalledTimes(1);
 
     const overflowState = harness(activeSnapshot([
       chunk({ embedding: [Number.MAX_VALUE, Number.MAX_VALUE] }),
@@ -707,7 +987,7 @@ describe('Backstage Notion authority RAG retrieval', () => {
     [
       'repository',
       {
-        loadActiveSnapshot: async () => {
+        rankSnapshotCandidates: async () => {
           throw new Error('postgres://private-user:private-password@internal/index');
         },
       },
@@ -775,6 +1055,42 @@ describe('Backstage Notion authority RAG retrieval', () => {
     expect(state.embedQuery).toHaveBeenCalledWith('Lyra rivalry');
   });
 
+  it('ranks a 4,096-chunk snapshot through a bounded pinned candidate search', async () => {
+    const chunks = Array.from(
+      { length: BACKSTAGE_NOTION_RAG_MAX_ACTIVE_CHUNKS },
+      (_unused, index) => chunk({
+        pageIndex: index + 1,
+        content: `Bounded continuity ${index}.`,
+        embedding: [1, index % 2],
+      })
+    );
+    const state = harness(activeSnapshot(chunks));
+
+    const result = await retrieveAuthorized(state.dependencies, 'bounded continuity');
+
+    expect(result.coverage).toMatchObject({
+      status: 'sampled',
+      exhaustive: false,
+      scopeChunks: BACKSTAGE_NOTION_RAG_MAX_ACTIVE_CHUNKS,
+    });
+    expect(result.citations.length).toBeLessThanOrEqual(12);
+    expect(state.loadActiveSnapshot).not.toHaveBeenCalled();
+    expect(state.loadActiveSnapshotHeader).toHaveBeenCalledTimes(1);
+    expect(state.rankSnapshotCandidates).toHaveBeenCalledWith(expect.objectContaining({
+      universeId: UNIVERSE_ID,
+      snapshotId: SNAPSHOT_ID,
+      expectedScopeChunkCount: BACKSTAGE_NOTION_RAG_MAX_ACTIVE_CHUNKS,
+      limit: 128,
+      selector: {
+        pageId: null,
+        scopeKind: 'all',
+        sectionOccurrencePath: null,
+      },
+    }));
+    const ranked = await state.rankSnapshotCandidates.mock.results[0]?.value;
+    expect(ranked?.candidates).toHaveLength(128);
+  });
+
   it('fails safely for missing or ambiguous exact page scopes', async () => {
     const rawA = chunk({
       pageIndex: 1,
@@ -786,9 +1102,12 @@ describe('Backstage Notion authority RAG retrieval', () => {
       pageTitle: 'Monday Night Raw',
       pagePath: ['WWE Universe Mode', 'Archive', 'Monday Night Raw'],
     });
-    const state = harness(activeSnapshot([rawA, rawB]));
+    const active = activeSnapshot([rawA, rawB]);
+    const ambiguousState = harness(active, {
+      resolveSnapshotScope: async () => ({ status: 'ambiguous' }),
+    });
 
-    await expect(retrieveAuthorized(state.dependencies, {
+    await expect(retrieveAuthorized(ambiguousState.dependencies, {
       query: 'current champions',
       retrievalScope: { pageTitle: 'Monday Night Raw' },
     })).rejects.toMatchObject({
@@ -796,11 +1115,14 @@ describe('Backstage Notion authority RAG retrieval', () => {
       reason: 'ambiguous',
       retryable: false,
     });
-    await expect(retrieveAuthorized(state.dependencies, {
+    const missingState = harness(active, {
+      resolveSnapshotScope: async () => ({ status: 'not_found' }),
+    });
+    await expect(retrieveAuthorized(missingState.dependencies, {
       query: 'current champions',
       retrievalScope: { pageTitle: 'NXT' },
     })).rejects.toBeInstanceOf(BackstageNotionScopeResolutionError);
-    await expect(retrieveAuthorized(state.dependencies, {
+    await expect(retrieveAuthorized(missingState.dependencies, {
       query: 'current champions',
       retrievalScope: {
         pageTitle: 'Monday Night Raw',
@@ -808,8 +1130,10 @@ describe('Backstage Notion authority RAG retrieval', () => {
         sectionPath: ['Missing section'],
       },
     })).rejects.toMatchObject({ reason: 'not_found' });
-    expect(state.embedQuery).not.toHaveBeenCalled();
+    expect(ambiguousState.embedQuery).not.toHaveBeenCalled();
+    expect(missingState.embedQuery).not.toHaveBeenCalled();
 
+    const state = harness(active);
     const resolved = await retrieveAuthorized(state.dependencies, {
       query: 'current champions',
       retrievalScope: {
@@ -833,6 +1157,7 @@ describe('Backstage Notion authority RAG retrieval', () => {
       headingPath: ordinal < 5
         ? ['Championships', ordinal === 0 ? 'World' : 'Current champions']
         : ['Recent Results'],
+      headingOccurrencePath: ordinal < 5 ? [1, 1] : [2],
       content: `Raw continuity ${ordinal}.`,
     }));
     const adjacent = chunk({
@@ -911,7 +1236,14 @@ describe('Backstage Notion authority RAG retrieval', () => {
         content: '## Current champions\nStephanie Vaquer.',
       }),
     ];
-    const state = harness(activeSnapshot(chunks));
+    const active = activeSnapshot(chunks);
+    const state = harness(active, {
+      resolveSnapshotScope: async (_universeId, snapshotId, lookup) => (
+        lookup.sectionPathKey?.length === 2
+          ? { status: 'ambiguous' }
+          : snapshotScopeResolution(active, snapshotId, lookup)
+      ),
+    });
 
     const parent = await retrieveAuthorized(state.dependencies, {
       query: 'read every championship fact',
@@ -1079,6 +1411,11 @@ describe('Backstage Notion authority RAG retrieval', () => {
         scopeChunkCount: 2,
         scopePageCount: 2,
       }),
+      rankSnapshotCandidates: async () => ({
+        scopeChunkCount: 2,
+        candidatePoolCount: 2,
+        candidates: descendants,
+      }),
     });
 
     const result = await retrieveAuthorized(state.dependencies, {
@@ -1155,7 +1492,7 @@ describe('Backstage Notion authority RAG retrieval', () => {
         },
       })).rejects.toBeInstanceOf(BackstageNotionIndexUnavailableError);
 
-      expect(state.embedQuery).not.toHaveBeenCalled();
+      expect(state.embedQuery).toHaveBeenCalledTimes(1);
     }
   );
 
@@ -1971,6 +2308,71 @@ describe('Backstage Notion authority RAG retrieval', () => {
     );
   });
 
+  it('paginates all 4,096 complete-scope chunks without duplication or omission', async () => {
+    const active = activeSnapshot([chunk({ pageIndex: 1, ordinal: 0 })]);
+    active.snapshot.chunkCount = BACKSTAGE_NOTION_RAG_MAX_ACTIVE_CHUNKS;
+    const state = harness(active, {
+      loadSnapshotChunkPage: async (
+        _universeId,
+        snapshotId,
+        selector,
+        knownScopeChunkCount,
+        offset,
+        limit
+      ) => {
+        expect(snapshotId).toBe(SNAPSHOT_ID);
+        expect(selector).toEqual({
+          pageId: null,
+          scopeKind: 'all',
+          sectionOccurrencePath: null,
+        });
+        expect(knownScopeChunkCount).toBe(BACKSTAGE_NOTION_RAG_MAX_ACTIVE_CHUNKS);
+        const count = Math.min(
+          limit,
+          BACKSTAGE_NOTION_RAG_MAX_ACTIVE_CHUNKS - offset
+        );
+        return {
+          scopeChunkCount: BACKSTAGE_NOTION_RAG_MAX_ACTIVE_CHUNKS,
+          chunks: Array.from({ length: count }, (_unused, index) => {
+            const generated = chunk({
+              pageIndex: 1,
+              ordinal: offset + index,
+              content: `Maximum continuity entry ${offset + index}.`,
+            });
+            const { embedding: _embedding, ...selected } = generated;
+            return selected;
+          }),
+        };
+      },
+    });
+    const seen = new Set<string>();
+    let cursor: string | undefined;
+    let calls = 0;
+
+    do {
+      const result = await retrieveAuthorized(state.dependencies, {
+        query: 'read every continuity entry',
+        retrievalMode: 'complete_scope',
+        ...(cursor ? { cursor } : {}),
+      });
+      for (const citation of result.citations) {
+        expect(seen.has(citation.chunkId)).toBe(false);
+        seen.add(citation.chunkId);
+      }
+      calls += 1;
+      cursor = result.nextCursor ?? undefined;
+      expect(result.coverage.hasMore).toBe(Boolean(cursor));
+    } while (cursor);
+
+    expect(seen.size).toBe(BACKSTAGE_NOTION_RAG_MAX_ACTIVE_CHUNKS);
+    expect(calls).toBe(Math.ceil(
+      BACKSTAGE_NOTION_RAG_MAX_ACTIVE_CHUNKS / 12
+    ));
+    expect(state.loadActiveSnapshot).not.toHaveBeenCalled();
+    expect(state.loadActiveSnapshotHeader).toHaveBeenCalledTimes(calls);
+    expect(state.loadSnapshotChunkPage).toHaveBeenCalledTimes(calls);
+  });
+
   it('keeps the maximum signed duplicate-heading cursor bounded without serializing its selector', async () => {
     const headingPath = Array.from(
       { length: 32 },
@@ -2395,6 +2797,47 @@ describe('Backstage Notion authority RAG retrieval', () => {
         'NXT weekly show',
       ])
     );
+  });
+
+  it('fences booking scope before the bounded candidate limit', async () => {
+    const unrelated = Array.from({ length: 160 }, (_unused, index) => chunk({
+      pageIndex: index + 1,
+      pageTitle: `SmackDown high scorer ${index}`,
+      pagePath: ['WWE Universe Mode', 'SmackDown', `Week ${index}`],
+      content: `SmackDown high relevance continuity ${index}.`,
+      embedding: [1, 0],
+    }));
+    const raw = chunk({
+      pageIndex: 201,
+      pageTitle: 'Raw requested continuity',
+      pagePath: ['WWE Universe Mode', 'Raw'],
+      content: 'Lower-ranked Raw continuity.',
+      embedding: [0.1, 0.9],
+    });
+    const shared = chunk({
+      pageIndex: 202,
+      pageTitle: 'Shared canon',
+      pagePath: ['WWE Universe Mode', 'Shared'],
+      content: 'Lower-ranked shared continuity.',
+      embedding: [0.1, 0.9],
+    });
+    const state = harness(activeSnapshot([...unrelated, raw, shared]));
+
+    const result = await retrieveBookingAuthorized(
+      state.dependencies,
+      'Book the Raw show next week.'
+    );
+
+    expect(result.citations.map(citation => citation.pageTitle)).toEqual([
+      raw.pageTitle,
+      shared.pageTitle,
+    ]);
+    expect(result.prompt).not.toContain('SmackDown high relevance continuity');
+    expect(state.loadActiveSnapshot).not.toHaveBeenCalled();
+    expect(state.rankSnapshotCandidates).toHaveBeenCalledWith(expect.objectContaining({
+      allowedBookingBrands: ['raw'],
+      limit: 128,
+    }));
   });
 
   it('reserves named cross-brand coverage and excludes an unmentioned third brand', async () => {

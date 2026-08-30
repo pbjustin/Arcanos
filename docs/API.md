@@ -731,9 +731,10 @@ Status lookup is actor-, type-, universe-, and input-contract-scoped. It returns
 only queue state, safe reason codes, bounded counts, opaque snapshot/manifest
 IDs, and timestamps; stored inputs, root/page IDs, content, idempotency values,
 configuration, and raw failures are never projected. All responses are
-`no-store`. The operation is available only in exact `shadow` or `partitioned`
-mode; this release does not change a deployed mode or perform production
-cutover.
+`no-store`. Manual enqueue is available only in exact `shadow`; exact
+`partitioned` rejects it before confirmation or queue admission. Actor-scoped
+status for existing jobs remains readable after a transition to `partitioned`;
+this release does not change a deployed mode or perform production cutover.
 
 The bodyless and query-free diagnostics read uses the same authentication and
 scope but is not tied to one actor-owned sync ID. It reads one repeatable,

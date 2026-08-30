@@ -235,6 +235,8 @@ function configurationUnavailableReason(
   return reasonCode === 'MODE_ABSENT'
     || reasonCode === 'MODE_INVALID'
     || reasonCode === 'MODE_MONOLITH'
+    || reasonCode === 'PARTITIONED_CUTOVER_GATE_CLOSED'
+    || reasonCode === 'PARTITIONED_ENABLED'
     ? 'MODE_DISABLED'
     : 'CONFIGURATION_UNAVAILABLE';
 }
@@ -268,7 +270,11 @@ export function createBackstageNotionPartitionSyncJobExecutor(
         const policy = resolveBackstageNotionPartitionShadowPolicy(
           readEnvironment
         );
-        if (!policy.enabled || !policy.configuration) {
+        if (
+          !policy.enabled
+          || !policy.partitionSyncEnabled
+          || !policy.configuration
+        ) {
           return completedWithReason(
             parsedInput,
             configurationUnavailableReason(policy.reasonCode)

@@ -67,7 +67,10 @@ import {
   resolveBackstageNotionPartitionScopeRequest,
   type BackstageNotionPartitionScopeRoutingResolution,
 } from './backstageNotionPartitionRouting.js';
-import { createEmbedding } from './openai/embeddings.js';
+import {
+  createEmbedding,
+  DEFAULT_OPENAI_EMBEDDING_MODEL,
+} from './openai/embeddings.js';
 
 export const BACKSTAGE_NOTION_PARTITION_RETRIEVAL_CURSOR_VERSION = 1;
 export const BACKSTAGE_NOTION_PARTITION_RETRIEVAL_CURSOR_MAX_LENGTH = 1_024;
@@ -1254,6 +1257,7 @@ async function retrieveUnsafe(
   }
   if (
     routing.universeId !== universeId
+    || routing.embeddingModel !== DEFAULT_OPENAI_EMBEDDING_MODEL
     || routing.shards.length < 1
     || !routing.complete
   ) {

@@ -397,6 +397,30 @@ describe('Backstage Notion hierarchy RAG core', () => {
       prepared.chunks[1]?.contentHash
     );
     expect(prepared.chunks[0]?.chunkId).not.toBe(prepared.chunks[1]?.chunkId);
+    expect(prepared.chunkDiagnostics.exactDuplicatesRemoved).toBe(0);
+  });
+
+  it('reports source-preserving adjacent compaction without changing chunk content', () => {
+    const prepared = prepare([
+      '# Raw plans',
+      'First complete statement.',
+      '',
+      'Second complete statement.',
+    ].join('\n'), 400);
+
+    expect(prepared.chunks).toHaveLength(1);
+    expect(prepared.chunks[0]?.content).toContain('First complete statement.');
+    expect(prepared.chunks[0]?.content).toContain('Second complete statement.');
+    expect(prepared.chunkDiagnostics).toEqual({
+      normalizedSegments: 2,
+      emptySegmentsRemoved: 0,
+      exactDuplicatesRemoved: 0,
+      adjacentSegmentsMerged: 1,
+      chunksProduced: 1,
+      minimumChunkCodePoints: prepared.chunks[0]?.codePoints,
+      maximumChunkCodePoints: prepared.chunks[0]?.codePoints,
+      medianChunkCodePoints: prepared.chunks[0]?.codePoints,
+    });
   });
 
   it('starts a fresh chunk when same-heading blocks do not fit together', () => {

@@ -15,6 +15,11 @@ import {
   type BackstageNotionSyncLease,
 } from '@core/db/repositories/backstageNotionRagRepository.js';
 import {
+  getBackstageNotionSyncStatusRepository,
+  type BackstageNotionSyncAttemptRecord,
+  type BackstageNotionSyncStatusRepository,
+} from '@core/db/repositories/backstageNotionSyncStatusRepository.js';
+import {
   BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT,
   acquireBackstageNotionSyncLeaseWithLateRelease,
   shouldVerifyBackstageNotionSnapshotUnchanged,
@@ -52,6 +57,17 @@ import {
   DEFAULT_OPENAI_EMBEDDING_MODEL,
 } from './openai/embeddings.js';
 import { sleep } from '@shared/sleep.js';
+import type {
+  BackstageNotionSyncFailurePhase,
+  BackstageNotionSyncFailureReason,
+} from '@shared/backstage/backstageNotionSnapshotStatus.js';
+
+export {
+  BACKSTAGE_NOTION_SYNC_FAILURE_PHASES,
+  BACKSTAGE_NOTION_SYNC_FAILURE_REASONS,
+  type BackstageNotionSyncFailurePhase,
+  type BackstageNotionSyncFailureReason,
+} from '@shared/backstage/backstageNotionSnapshotStatus.js';
 
 export const BACKSTAGE_NOTION_SYNC_MAX_PAGES = 512;
 export const BACKSTAGE_NOTION_SYNC_MAX_DEPTH = 16;
@@ -89,48 +105,6 @@ export const BACKSTAGE_NOTION_SYNC_SOURCE_DRIFT_ERROR_CODE =
 export const BACKSTAGE_NOTION_SYNC_ROOT_FAILED_ERROR_CODE =
   'BACKSTAGE_NOTION_SYNC_ROOT_FAILED';
 
-export const BACKSTAGE_NOTION_SYNC_FAILURE_PHASES = [
-  'authorization',
-  'root_resolution',
-  'discovery',
-  'page_fetch',
-  'block_fetch',
-  'pagination',
-  'normalization',
-  'chunking',
-  'embedding',
-  'persistence',
-  'completeness_validation',
-  'activation',
-  'cleanup',
-  'deadline',
-  'lease',
-] as const;
-
-export const BACKSTAGE_NOTION_SYNC_FAILURE_REASONS = [
-  'deadline_exhausted',
-  'rate_limit_exhausted',
-  'transient_retry_exhausted',
-  'permanent_notion_error',
-  'inaccessible_page',
-  'pagination_incomplete',
-  'discovered_page_missing',
-  'source_changed',
-  'chunk_limit_reached',
-  'embedding_failed',
-  'persistence_failed',
-  'completeness_mismatch',
-  'activation_failed',
-  'lease_lost',
-  'invalid_configuration',
-  'unexpected_failure',
-] as const;
-
-export type BackstageNotionSyncFailurePhase =
-  (typeof BACKSTAGE_NOTION_SYNC_FAILURE_PHASES)[number];
-export type BackstageNotionSyncFailureReason =
-  (typeof BACKSTAGE_NOTION_SYNC_FAILURE_REASONS)[number];
-
 export interface BackstageNotionSyncFailureDiagnostics {
   phase: BackstageNotionSyncFailurePhase;
   reason: BackstageNotionSyncFailureReason;
@@ -138,8 +112,17 @@ export interface BackstageNotionSyncFailureDiagnostics {
   pagesFetched: number;
   blocksFetched: number;
   paginationRequests: number;
+  normalizedSegments: number;
+  emptySegmentsRemoved: number;
+  exactDuplicatesRemoved: number;
+  adjacentSegmentsMerged: number;
   chunksProduced: number;
   chunksEmbedded: number;
+  minimumChunkCodePoints: number;
+  maximumChunkCodePoints: number;
+  medianChunkCodePoints: number;
+  reusedEmbeddingCount: number;
+  newEmbeddingCount: number;
   notionRetryCount: number;
   rateLimitWaitMs: number;
   elapsedMs: number;
@@ -171,6 +154,7 @@ class BackstageNotionGlobalConfigurationError extends BackstageNotionSyncError {
 
 export interface BackstageNotionSyncDependencies {
   repository?: BackstageNotionRagRepository;
+  syncStatusRepository?: BackstageNotionSyncStatusRepository;
   fetchImpl?: BackstageNotionFetchImplementation;
   readEnvironment?: BackstageNotionAuthorityEnvironmentReader;
   embedBatch?: (
@@ -250,8 +234,17 @@ function createSyncProgress(): BackstageNotionSyncProgress {
     pagesFetched: 0,
     blocksFetched: 0,
     paginationRequests: 0,
+    normalizedSegments: 0,
+    emptySegmentsRemoved: 0,
+    exactDuplicatesRemoved: 0,
+    adjacentSegmentsMerged: 0,
     chunksProduced: 0,
     chunksEmbedded: 0,
+    minimumChunkCodePoints: 0,
+    maximumChunkCodePoints: 0,
+    medianChunkCodePoints: 0,
+    reusedEmbeddingCount: 0,
+    newEmbeddingCount: 0,
     notionRetryCount: 0,
     rateLimitWaitMs: 0,
     candidateSnapshotCreated: false,
@@ -272,11 +265,45 @@ function snapshotSyncFailureDiagnostics(
     pagesFetched: progress.pagesFetched,
     blocksFetched: progress.blocksFetched,
     paginationRequests: progress.paginationRequests,
+    normalizedSegments: progress.normalizedSegments,
+    emptySegmentsRemoved: progress.emptySegmentsRemoved,
+    exactDuplicatesRemoved: progress.exactDuplicatesRemoved,
+    adjacentSegmentsMerged: progress.adjacentSegmentsMerged,
     chunksProduced: progress.chunksProduced,
     chunksEmbedded: progress.chunksEmbedded,
+    minimumChunkCodePoints: progress.minimumChunkCodePoints,
+    maximumChunkCodePoints: progress.maximumChunkCodePoints,
+    medianChunkCodePoints: progress.medianChunkCodePoints,
+    reusedEmbeddingCount: progress.reusedEmbeddingCount,
+    newEmbeddingCount: progress.newEmbeddingCount,
     notionRetryCount: progress.notionRetryCount,
     rateLimitWaitMs: progress.rateLimitWaitMs,
     elapsedMs: Math.max(0, Date.now() - progress.startedAt),
+    candidateSnapshotCreated: progress.candidateSnapshotCreated,
+    candidateSnapshotValidated: progress.candidateSnapshotValidated,
+    candidateSnapshotActivated: progress.candidateSnapshotActivated,
+  };
+}
+
+function syncAttemptDiagnosticsState(
+  progress: Pick<
+    BackstageNotionSyncProgress,
+    | 'pagesDiscovered'
+    | 'pagesFetched'
+    | 'blocksFetched'
+    | 'chunksProduced'
+    | 'chunksEmbedded'
+    | 'candidateSnapshotCreated'
+    | 'candidateSnapshotValidated'
+    | 'candidateSnapshotActivated'
+  >
+) {
+  return {
+    pagesDiscovered: progress.pagesDiscovered,
+    pagesFetched: progress.pagesFetched,
+    blocksFetched: progress.blocksFetched,
+    chunksProduced: progress.chunksProduced,
+    chunksEmbedded: progress.chunksEmbedded,
     candidateSnapshotCreated: progress.candidateSnapshotCreated,
     candidateSnapshotValidated: progress.candidateSnapshotValidated,
     candidateSnapshotActivated: progress.candidateSnapshotActivated,
@@ -923,8 +950,38 @@ async function buildSnapshotChunks(input: {
   progress: BackstageNotionSyncProgress;
 }): Promise<BackstageNotionSnapshotChunkInput[]> {
   const chunks = input.pages.flatMap(page => [...page.prepared.chunks]);
+  const sortedChunkSizes = chunks
+    .map(chunk => chunk.codePoints)
+    .sort((left, right) => left - right);
+  const middleChunkIndex = Math.floor(sortedChunkSizes.length / 2);
+  input.progress.normalizedSegments = input.pages.reduce(
+    (total, page) => total + page.prepared.chunkDiagnostics.normalizedSegments,
+    0
+  );
+  input.progress.emptySegmentsRemoved = input.pages.reduce(
+    (total, page) => total + page.prepared.chunkDiagnostics.emptySegmentsRemoved,
+    0
+  );
+  input.progress.exactDuplicatesRemoved = input.pages.reduce(
+    (total, page) => total + page.prepared.chunkDiagnostics.exactDuplicatesRemoved,
+    0
+  );
+  input.progress.adjacentSegmentsMerged = input.pages.reduce(
+    (total, page) => total + page.prepared.chunkDiagnostics.adjacentSegmentsMerged,
+    0
+  );
   input.progress.phase = 'chunking';
   input.progress.chunksProduced = chunks.length;
+  input.progress.minimumChunkCodePoints = sortedChunkSizes[0] ?? 0;
+  input.progress.maximumChunkCodePoints = sortedChunkSizes.at(-1) ?? 0;
+  input.progress.medianChunkCodePoints = sortedChunkSizes.length === 0
+    ? 0
+    : sortedChunkSizes.length % 2 === 1
+      ? sortedChunkSizes[middleChunkIndex]!
+      : Math.floor(
+          ((sortedChunkSizes[middleChunkIndex - 1] ?? 0)
+            + (sortedChunkSizes[middleChunkIndex] ?? 0)) / 2
+        );
   if (chunks.length < 1 || chunks.length > BACKSTAGE_NOTION_SYNC_MAX_CHUNKS) {
     throw incompleteSyncError(
       input.progress,
@@ -947,6 +1004,8 @@ async function buildSnapshotChunks(input: {
     input.signal
   );
   const missingHashes = hashes.filter(hash => !embeddings.has(hash));
+  input.progress.reusedEmbeddingCount = hashes.length - missingHashes.length;
+  input.progress.newEmbeddingCount = missingHashes.length;
   let embeddingDimension: number | null = null;
   const validateEmbedding = (embedding: number[] | undefined): number[] => {
     if (
@@ -1390,6 +1449,10 @@ export async function syncBackstageNotionAuthorityRoot(
 ): Promise<BackstageNotionSyncResult> {
   const progress = createSyncProgress();
   const repository = dependencies.repository ?? getBackstageNotionRagRepository();
+  const syncStatusRepository = dependencies.syncStatusRepository
+    ?? (dependencies.repository
+      ? null
+      : getBackstageNotionSyncStatusRepository());
   const readEnvironment = dependencies.readEnvironment ?? getEnv;
   let accessToken: string;
   try {
@@ -1446,8 +1509,18 @@ export async function syncBackstageNotionAuthorityRoot(
     )),
     cycleDeadline.signal
   );
+  let syncAttempt: BackstageNotionSyncAttemptRecord | null = null;
 
   try {
+    if (syncStatusRepository) {
+      syncAttempt = await raceWithSignal(
+        () => syncStatusRepository.beginSyncAttempt({
+          universeId: root.universeId,
+          lease,
+        }),
+        heartbeat.signal
+      );
+    }
     progress.phase = 'root_resolution';
     const authorityHead = await raceWithSignal(
       () => repository.loadAuthorityHead(root.universeId),
@@ -1551,6 +1624,34 @@ export async function syncBackstageNotionAuthorityRoot(
           'The active Notion snapshot changed before verification could be recorded.'
         );
       }
+      if (syncStatusRepository && syncAttempt) {
+        try {
+          const completed = await raceWithSignal(
+            () => syncStatusRepository.completeSyncAttempt({
+              universeId: root.universeId,
+              attemptId: syncAttempt!.attemptId,
+              generation: syncAttempt!.generation,
+              outcome: 'unchanged',
+              failurePhase: null,
+              failureReason: null,
+              ...syncAttemptDiagnosticsState(progress),
+              activatedSnapshotId: activeInventory.snapshot.id,
+            }),
+            heartbeat.signal
+          );
+          if (!completed) {
+            safeLog('warn', 'backstage.notion_rag.sync_status_record_failed', {
+              universeId: root.universeId,
+              outcome: 'unchanged',
+            });
+          }
+        } catch {
+          safeLog('warn', 'backstage.notion_rag.sync_status_record_failed', {
+            universeId: root.universeId,
+            outcome: 'unchanged',
+          });
+        }
+      }
       safeLog('info', 'backstage.notion_rag.sync_unchanged', {
         universeId: root.universeId,
         pageCount: pages.length,
@@ -1603,10 +1704,49 @@ export async function syncBackstageNotionAuthorityRoot(
     });
     progress.phase = 'activation';
     progress.candidateSnapshotActivated = true;
+    if (syncStatusRepository && syncAttempt) {
+      try {
+        const completed = await raceWithSignal(
+          () => syncStatusRepository.completeSyncAttempt({
+            universeId: root.universeId,
+            attemptId: syncAttempt!.attemptId,
+            generation: syncAttempt!.generation,
+            outcome: 'activated',
+            failurePhase: null,
+            failureReason: null,
+            ...syncAttemptDiagnosticsState(progress),
+            activatedSnapshotId: snapshot.id,
+          }),
+          heartbeat.signal
+        );
+        if (!completed) {
+          safeLog('warn', 'backstage.notion_rag.sync_status_record_failed', {
+            universeId: root.universeId,
+            outcome: 'activated',
+          });
+        }
+      } catch {
+        safeLog('warn', 'backstage.notion_rag.sync_status_record_failed', {
+          universeId: root.universeId,
+          outcome: 'activated',
+        });
+      }
+    }
     safeLog('info', 'backstage.notion_rag.sync_activated', {
       universeId: root.universeId,
       pageCount: snapshot.pageCount,
       chunkCount: snapshot.chunkCount,
+      normalizedSegments: progress.normalizedSegments,
+      emptySegmentsRemoved: progress.emptySegmentsRemoved,
+      exactDuplicatesRemoved: progress.exactDuplicatesRemoved,
+      adjacentSegmentsMerged: progress.adjacentSegmentsMerged,
+      chunksProduced: progress.chunksProduced,
+      chunksEmbedded: progress.chunksEmbedded,
+      minimumChunkCodePoints: progress.minimumChunkCodePoints,
+      maximumChunkCodePoints: progress.maximumChunkCodePoints,
+      medianChunkCodePoints: progress.medianChunkCodePoints,
+      reusedEmbeddingCount: progress.reusedEmbeddingCount,
+      newEmbeddingCount: progress.newEmbeddingCount,
       durationMs: Date.now() - startedAt,
     });
     return {
@@ -1619,7 +1759,30 @@ export async function syncBackstageNotionAuthorityRoot(
       verifiedAt: snapshot.createdAt,
     };
   } catch (error) {
-    throw wrapSyncFailure(error, progress);
+    const wrapped = wrapSyncFailure(error, progress);
+    if (syncStatusRepository && syncAttempt) {
+      try {
+        if (!progress.candidateSnapshotActivated) {
+          const failure = rootFailureDiagnostics(wrapped);
+          await syncStatusRepository.completeSyncAttempt({
+            universeId: root.universeId,
+            attemptId: syncAttempt.attemptId,
+            generation: syncAttempt.generation,
+            outcome: 'failed',
+            failurePhase: failure.phase,
+            failureReason: failure.reason,
+            ...syncAttemptDiagnosticsState(failure),
+            activatedSnapshotId: null,
+          });
+        }
+      } catch {
+        safeLog('warn', 'backstage.notion_rag.sync_status_record_failed', {
+          universeId: root.universeId,
+          outcome: progress.candidateSnapshotActivated ? 'activated' : 'failed',
+        });
+      }
+    }
+    throw wrapped;
   } finally {
     await heartbeat.stop();
     try {

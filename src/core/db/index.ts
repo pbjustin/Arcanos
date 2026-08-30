@@ -35,12 +35,14 @@ export {
   RagDocSchema,
   BACKSTAGE_NOTION_RAG_TABLE_DEFINITIONS,
   BACKSTAGE_NOTION_PARTITION_STORAGE_TABLE_DEFINITIONS,
+  BACKSTAGE_NOTION_PARTITION_CUTOVER_EVIDENCE_TABLE_DEFINITIONS,
   BackstageNotionAuthoritySchema,
   BackstageNotionUniverseHeadSchema,
   BackstageNotionSnapshotSchema,
   BackstageNotionSnapshotPageSchema,
   BackstageNotionSnapshotChunkSchema,
   BackstageNotionSyncLeaseSchema,
+  BackstageNotionLatestSyncAttemptSchema,
   type MemoryEntry,
   type ExecutionLog,
   type JobData,
@@ -52,7 +54,8 @@ export {
   type BackstageNotionSnapshot,
   type BackstageNotionSnapshotPage,
   type BackstageNotionSnapshotChunk,
-  type BackstageNotionSyncLeaseRow
+  type BackstageNotionSyncLeaseRow,
+  type BackstageNotionLatestSyncAttempt
 } from './schema.js';
 
 // Query exports
@@ -118,6 +121,18 @@ export {
 } from './repositories/backstageNotionRagRepository.js';
 
 export {
+  BackstageNotionSyncStatusLeaseError,
+  BackstageNotionSyncStatusRepositoryUnavailableError,
+  PostgresBackstageNotionSyncStatusRepository,
+  getBackstageNotionSyncStatusRepository,
+  type BackstageNotionSyncAttemptDiagnosticsState,
+  type BackstageNotionSyncAttemptRecord,
+  type BackstageNotionSyncStatusRepository,
+  type BeginBackstageNotionSyncAttemptInput,
+  type CompleteBackstageNotionSyncAttemptInput,
+} from './repositories/backstageNotionSyncStatusRepository.js';
+
+export {
   BACKSTAGE_NOTION_PARTITION_LEASE_MIN_MS,
   BACKSTAGE_NOTION_PARTITION_LEASE_MAX_MS,
   BACKSTAGE_NOTION_PARTITION_MATERIAL_LOOKUP_MAX_CHUNKS,
@@ -152,10 +167,21 @@ export {
   type FindBackstageNotionReusablePageMaterialInput,
   type RegisterBackstageNotionPartitionConfigurationInput,
   type RegisteredBackstageNotionPartitionConfiguration,
+  type RollbackBackstageNotionUniverseManifestInput,
+  type RolledBackBackstageNotionUniverseManifest,
   type StoreBackstageNotionChunkVersionInput,
   type StoreBackstageNotionEmbeddingInput,
   type StoreBackstageNotionPageVersionInput,
 } from './repositories/backstageNotionPartitionRepository.js';
+
+export {
+  BackstageNotionPartitionCutoverEvidenceUnavailableError,
+  PostgresBackstageNotionPartitionCutoverEvidenceRepository,
+  getBackstageNotionPartitionCutoverEvidenceRepository,
+  type BackstageNotionPartitionCutoverEvidenceRepository,
+  type BackstageNotionPartitionCutoverValidationAnchorRecord,
+  type SealBackstageNotionPartitionCutoverEvidenceInput,
+} from './repositories/backstageNotionPartitionCutoverEvidenceRepository.js';
 
 export {
   applyBackstageRosterMutation,

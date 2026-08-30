@@ -213,6 +213,10 @@ function responseHeadersForCase(
                   .proofHeaders.partitionedAuthorityVersion]:
                   NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration
                     .partitionedAuthorityProofVersion,
+                [NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration
+                  .proofHeaders.partitionCutoverRepairVersion]:
+                  NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration
+                    .partitionCutoverRepairProofVersion,
               }
             : {}),
           ...(requestCase.fixtureName === 'partitionFailureTelemetry'
@@ -264,6 +268,10 @@ function responseHeadersForCase(
                   .proofHeaders.notionSyncPhaseAVersion]:
                   NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration
                     .notionSyncPhaseAProofVersion,
+                [NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration
+                  .proofHeaders.notionWriterCapacityReleaseVersion]:
+                  NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration
+                    .notionWriterCapacityReleaseProofVersion,
               }
             : {}),
         }
@@ -1923,6 +1931,7 @@ test('executes the bounded credential-free matrix and detects identity stability
     httpStatus: 200,
     method: 'POST',
     notionSyncPhaseAVerified: true,
+    notionWriterCapacityReleaseVerified: true,
     pathTemplate: '/backstage/generation-contract',
     responseBytes: Buffer.byteLength(JSON.stringify(notionSyncPhaseAPayload)),
     role: 'web',
@@ -1971,6 +1980,7 @@ test('executes the bounded credential-free matrix and detects identity stability
       clearPolicyVersionVerified: true,
       httpStatus: 200,
       method: 'POST',
+      partitionCutoverRepairVerified: true,
       partitionedAuthorityVerified: true,
       pathTemplate: '/backstage/generation-contract',
       responseBytes: Buffer.byteLength(JSON.stringify(
@@ -2690,6 +2700,28 @@ test('rejects missing synthetic provenance and correlation or security header dr
       },
     },
     {
+      caseId: 'backstage-generation-notion-sync-phase-a',
+      code:
+        'NATIVE_PR_PREVIEW_BACKSTAGE_NOTION_WRITER_CAPACITY_RELEASE_PROOF_INVALID',
+      mutate(headers) {
+        delete headers[
+          NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration.proofHeaders
+            .notionWriterCapacityReleaseVersion
+        ];
+      },
+    },
+    {
+      caseId: 'backstage-generation-notion-sync-phase-a',
+      code:
+        'NATIVE_PR_PREVIEW_BACKSTAGE_NOTION_WRITER_CAPACITY_RELEASE_PROOF_INVALID',
+      mutate(headers) {
+        headers[
+          NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration.proofHeaders
+            .notionWriterCapacityReleaseVersion
+        ] = 'backstage-notion-writer-capacity-release/drifted';
+      },
+    },
+    {
       caseId: 'backstage-generation-notion-authority-rag',
       code: 'NATIVE_PR_PREVIEW_BACKSTAGE_PARTITION_PROOF_INVALID',
       mutate(headers) {
@@ -2707,6 +2739,28 @@ test('rejects missing synthetic provenance and correlation or security header dr
           NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration.proofHeaders
             .partitionedAuthorityVersion
         ] = 'backstage-notion-partitioned-authority/drifted';
+      },
+    },
+    {
+      caseId: 'backstage-generation-notion-authority-rag',
+      code:
+        'NATIVE_PR_PREVIEW_BACKSTAGE_PARTITION_CUTOVER_REPAIR_PROOF_INVALID',
+      mutate(headers) {
+        delete headers[
+          NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration.proofHeaders
+            .partitionCutoverRepairVersion
+        ];
+      },
+    },
+    {
+      caseId: 'backstage-generation-notion-authority-rag',
+      code:
+        'NATIVE_PR_PREVIEW_BACKSTAGE_PARTITION_CUTOVER_REPAIR_PROOF_INVALID',
+      mutate(headers) {
+        headers[
+          NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration.proofHeaders
+            .partitionCutoverRepairVersion
+        ] = 'backstage-notion-partition-cutover-repair/drifted';
       },
     },
     {

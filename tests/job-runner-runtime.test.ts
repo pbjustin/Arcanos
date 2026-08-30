@@ -690,9 +690,17 @@ describe('jobRunnerRuntime', () => {
     const databaseBootstrapIndex = source.indexOf(
       "await initializeJobRunnerDatabaseWithRetry('job-runner'"
     );
-    const backstageNotionPartitionPolicyIndex = source.indexOf(
-      'resolveBackstageNotionPartitionShadowPolicy();',
+    const preliminaryBackstageNotionPartitionPolicyIndex = source.indexOf(
+      'const preliminaryBackstageNotionPartitionPolicy =',
       databaseBootstrapIndex
+    );
+    const backstageNotionPartitionEvidenceIndex = source.indexOf(
+      'await loadBackstageNotionPartitionCutoverGateEvidenceSet(',
+      preliminaryBackstageNotionPartitionPolicyIndex
+    );
+    const backstageNotionPartitionPolicyIndex = source.indexOf(
+      'const backstageNotionPartitionPolicy =',
+      backstageNotionPartitionEvidenceIndex
     );
     const backstageNotionReadinessGateIndex = source.indexOf(
       'await runBackstageNotionWorkerReadinessGate(',
@@ -751,6 +759,8 @@ describe('jobRunnerRuntime', () => {
       enabledGuardIndex,
       operatorDispatchProviderIndex,
       databaseBootstrapIndex,
+      preliminaryBackstageNotionPartitionPolicyIndex,
+      backstageNotionPartitionEvidenceIndex,
       backstageNotionPartitionPolicyIndex,
       backstageNotionReadinessGateIndex,
       backstageNotionReadinessIndex,
@@ -770,7 +780,12 @@ describe('jobRunnerRuntime', () => {
     expect(runtimeSettingsIndex).toBeLessThan(databaseBootstrapIndex);
     expect(enabledGuardIndex).toBeLessThan(operatorDispatchProviderIndex);
     expect(operatorDispatchProviderIndex).toBeLessThan(databaseBootstrapIndex);
-    expect(databaseBootstrapIndex).toBeLessThan(backstageNotionPartitionPolicyIndex);
+    expect(databaseBootstrapIndex)
+      .toBeLessThan(preliminaryBackstageNotionPartitionPolicyIndex);
+    expect(preliminaryBackstageNotionPartitionPolicyIndex)
+      .toBeLessThan(backstageNotionPartitionEvidenceIndex);
+    expect(backstageNotionPartitionEvidenceIndex)
+      .toBeLessThan(backstageNotionPartitionPolicyIndex);
     expect(backstageNotionPartitionPolicyIndex)
       .toBeLessThan(backstageNotionReadinessGateIndex);
     expect(backstageNotionReadinessGateIndex)
@@ -785,6 +800,9 @@ describe('jobRunnerRuntime', () => {
     expect(readinessLogIndex).toBeLessThan(readinessProtocolIndex);
     expect(readinessProtocolIndex).toBeLessThan(partitionShadowStartIndex);
     expect(partitionShadowStartIndex).toBeLessThan(consumerRuntimeBarrierIndex);
+    expect(source).toContain(
+      'cutoverEvidence: backstageNotionPartitionCutoverEvidence'
+    );
     expect(source).not.toContain('slotRuntimePromise.catch(rejectSlotReadiness)');
   });
 

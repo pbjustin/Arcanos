@@ -17,6 +17,7 @@ import {
   resolveEffectiveBackstageNotionAuthorityRoot,
   type BackstageNotionAuthorityRoot,
 } from './backstageNotionAuthority.js';
+import { DEFAULT_OPENAI_EMBEDDING_MODEL } from './openai/embeddings.js';
 
 export const BACKSTAGE_NOTION_PARTITION_ROUTING_DEFAULT_STALENESS_MS =
   24 * 60 * 60 * 1_000;
@@ -288,7 +289,7 @@ async function loadRoutingState(
 ): Promise<BackstageNotionActiveManifestRoutingState> {
   try {
     const state = await repository.loadActiveManifestRoutingState(universeId);
-    if (!state) {
+    if (!state || state.embeddingModel !== DEFAULT_OPENAI_EMBEDDING_MODEL) {
       throw new BackstageNotionPartitionRoutingUnavailableError();
     }
     return state;
@@ -310,7 +311,11 @@ async function loadPinnedRoutingState(
       universeId,
       manifestId
     );
-    if (!state || state.manifestId !== manifestId) {
+    if (
+      !state
+      || state.manifestId !== manifestId
+      || state.embeddingModel !== DEFAULT_OPENAI_EMBEDDING_MODEL
+    ) {
       throw new BackstageNotionPartitionRoutingUnavailableError();
     }
     return state;

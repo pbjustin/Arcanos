@@ -2,6 +2,7 @@ import {
   BACKSTAGE_NOTION_PARTITION_MAX_CONFIG_BYTES,
   BACKSTAGE_NOTION_PARTITION_MAX_CONTENT_CODE_POINTS,
   BACKSTAGE_NOTION_PARTITION_MAX_PAGES,
+  isBackstageNotionPartitionSyncWriterEnabled,
   parseBackstageNotionPartitionConfiguration,
   parseBackstageNotionPartitionedIndexMode,
   resolveBackstageNotionPartitionUniverse,
@@ -60,6 +61,17 @@ describe('Backstage Notion partition configuration core', () => {
         status: 'invalid',
         mode: 'monolith',
       });
+    }
+  });
+
+  it('admits partition writers only in exact valid shadow mode', () => {
+    expect(isBackstageNotionPartitionSyncWriterEnabled(
+      parseBackstageNotionPartitionedIndexMode('shadow')
+    )).toBe(true);
+    for (const mode of [undefined, 'monolith', 'partitioned', 'SHADOW']) {
+      expect(isBackstageNotionPartitionSyncWriterEnabled(
+        parseBackstageNotionPartitionedIndexMode(mode)
+      )).toBe(false);
     }
   });
 

@@ -52,6 +52,10 @@ jest.unstable_mockModule('@core/db/repositories/jobRepository.js', () => ({
 }));
 
 jest.unstable_mockModule('@core/db/index.js', () => ({
+  getBackstageNotionPartitionCutoverEvidenceRepository: jest.fn(),
+  getBackstageNotionPartitionRepository: jest.fn(),
+  getBackstageNotionRagRepository: jest.fn(),
+  getBackstageNotionSyncStatusRepository: jest.fn(),
   getStatus: jest.fn(),
   initializeDatabaseWithSchema: jest.fn(),
 }));

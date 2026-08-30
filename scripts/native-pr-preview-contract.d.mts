@@ -40,6 +40,8 @@ export interface NativePrPreviewE2eContract {
     clearPolicyVersion: 'backstage-booker-clear-generation/v1';
     partitionedAuthorityProofVersion:
       'backstage-notion-partitioned-authority/v1';
+    partitionCutoverRepairProofVersion:
+      'backstage-notion-partition-cutover-repair/v1';
     partitionFailureTelemetryProofVersion:
       'backstage-notion-partition-failure-telemetry/v1';
     queueWaitPolicyProofVersion:
@@ -56,6 +58,8 @@ export interface NativePrPreviewE2eContract {
       'backstage-booker-output-admission/v1';
     notionSyncPhaseAProofVersion:
       'backstage-notion-sync-phase-a/v1';
+    notionWriterCapacityReleaseProofVersion:
+      'backstage-notion-writer-capacity-release/v1';
     fixtures: Readonly<{
       routeBudget: 'route-budget-provider-delay';
       hrcRetryCache: 'hrc-timeout-retry-cache';
@@ -76,6 +80,8 @@ export interface NativePrPreviewE2eContract {
         'x-arcanos-preview-backstage-clear-policy-version';
       partitionedAuthorityVersion:
         'x-arcanos-preview-backstage-partition-contract-version';
+      partitionCutoverRepairVersion:
+        'x-arcanos-preview-backstage-partition-cutover-repair-version';
       partitionFailureTelemetryVersion:
         'x-arcanos-preview-backstage-partition-failure-telemetry-version';
       queueWaitPolicyVersion:
@@ -92,6 +98,8 @@ export interface NativePrPreviewE2eContract {
         'x-arcanos-preview-backstage-output-admission-version';
       notionSyncPhaseAVersion:
         'x-arcanos-preview-backstage-notion-sync-phase-a-version';
+      notionWriterCapacityReleaseVersion:
+        'x-arcanos-preview-backstage-notion-writer-capacity-release-version';
     }>;
   }>;
   readonly backstageBookerOpenApi: Readonly<{

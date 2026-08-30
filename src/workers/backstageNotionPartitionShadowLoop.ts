@@ -7,6 +7,7 @@ import { getEnv } from '@platform/runtime/env.js';
 import {
   BACKSTAGE_NOTION_PARTITIONED_INDEX_MODE_ENV_NAME,
   BACKSTAGE_NOTION_PARTITIONS_ENV_NAME,
+  isBackstageNotionPartitionSyncWriterEnabled,
   parseBackstageNotionPartitionConfiguration,
   parseBackstageNotionPartitionedIndexMode,
   type BackstageNotionPartitionConfiguration,
@@ -15,11 +16,19 @@ import {
   projectBackstageNotionPartitionFailedShardTelemetry,
 } from '@shared/backstage/backstageNotionPartitionTelemetryCore.js';
 import {
+  evaluateBackstageNotionPartitionCutoverGate,
+  type BackstageNotionPartitionCutoverGateEvidence,
+  type BackstageNotionPartitionCutoverGateReasonCode,
+} from '@shared/backstage/backstageNotionPartitionCutoverGate.js';
+import {
   createBackstageNotionPartitionProviderCaptureDependencies,
   syncBackstageNotionPartitionConfiguration,
   type BackstageNotionPartitionSyncSelection,
   type BackstageNotionPartitionSynchronizationResult,
 } from '@services/backstageNotionPartitionSync.js';
+import {
+  resolveBackstageNotionRagMaximumStalenessMs,
+} from '@services/backstageNotionRag.js';
 import {
   createEmbeddings,
   DEFAULT_OPENAI_EMBEDDING_DIMENSION,
@@ -52,11 +61,13 @@ export type BackstageNotionPartitionShadowReasonCode =
   | 'SHADOW_ENABLED'
   | 'PARTITIONED_CONFIGURATION_ABSENT'
   | 'PARTITIONED_CONFIGURATION_INVALID'
+  | 'PARTITIONED_CUTOVER_GATE_CLOSED'
   | 'PARTITIONED_ENABLED'
   | 'ENVIRONMENT_READ_FAILED';
 
 export interface BackstageNotionPartitionShadowPolicy {
   readonly enabled: boolean;
+  readonly partitionSyncEnabled: boolean;
   readonly requestedMode: SafeRequestedMode;
   readonly modeStatus: 'absent' | 'valid' | 'invalid';
   readonly configurationStatus:
@@ -68,6 +79,10 @@ export interface BackstageNotionPartitionShadowPolicy {
   readonly semanticDigest: string | null;
   readonly configuredUniverses: number;
   readonly configuredShards: number;
+  readonly effectiveReadMode: 'monolith' | 'partitioned';
+  readonly cutoverAvailable: boolean;
+  readonly cutoverGateReasonCodes:
+    readonly BackstageNotionPartitionCutoverGateReasonCode[];
   readonly reasonCode: BackstageNotionPartitionShadowReasonCode;
   readonly configuration: ValidPartitionConfiguration | null;
 }
@@ -111,6 +126,10 @@ export interface BackstageNotionPartitionShadowLoopDependencies {
   }) => Promise<BackstageNotionPartitionShadowCycleResult>;
   readonly logger?: Pick<typeof logger, 'info' | 'warn'>;
   readonly coordinator?: BackstageNotionSynchronizationCoordinator;
+  readonly cutoverEvidence?: readonly BackstageNotionPartitionCutoverGateEvidence[];
+  readonly loadCutoverEvidence?: (
+    configuration: ValidPartitionConfiguration
+  ) => Promise<readonly BackstageNotionPartitionCutoverGateEvidence[]>;
 }
 
 function safeLog(
@@ -134,12 +153,16 @@ function disabledPolicy(input: {
 }): BackstageNotionPartitionShadowPolicy {
   return Object.freeze({
     enabled: false,
+    partitionSyncEnabled: false,
     requestedMode: input.requestedMode,
     modeStatus: input.modeStatus,
     configurationStatus: input.configurationStatus,
     semanticDigest: null,
     configuredUniverses: 0,
     configuredShards: 0,
+    effectiveReadMode: 'monolith',
+    cutoverAvailable: false,
+    cutoverGateReasonCodes: Object.freeze([]),
     reasonCode: input.reasonCode,
     configuration: null,
   });
@@ -147,7 +170,8 @@ function disabledPolicy(input: {
 
 /** Resolve the partition writer policy without exposing raw environment values. */
 export function resolveBackstageNotionPartitionShadowPolicy(
-  readEnvironment: (name: string) => string | undefined = name => getEnv(name)
+  readEnvironment: (name: string) => string | undefined = name => getEnv(name),
+  cutoverEvidence: readonly BackstageNotionPartitionCutoverGateEvidence[] = []
 ): BackstageNotionPartitionShadowPolicy {
   let rawMode: string | undefined;
   try {
@@ -215,8 +239,31 @@ export function resolveBackstageNotionPartitionShadowPolicy(
           : 'SHADOW_CONFIGURATION_INVALID',
     });
   }
+  const evidence = Array.isArray(cutoverEvidence) ? cutoverEvidence : [];
+  const gateResults = configuration.universes.map(universe => {
+    const matches = evidence.filter(candidate => (
+      candidate.universeId === universe.universeId
+    ));
+    return evaluateBackstageNotionPartitionCutoverGate({
+      universeId: universe.universeId,
+      configurationHash: configuration.semanticDigest,
+      configuredShardKeys: universe.shards.map(shard => shard.shardKey),
+      maximumStalenessMs: resolveBackstageNotionRagMaximumStalenessMs(),
+      supportedEmbeddingModel: DEFAULT_OPENAI_EMBEDDING_MODEL,
+      evidence: matches.length === 1 ? matches[0] : null,
+    });
+  });
+  const cutoverAvailable = gateResults.length > 0
+    && gateResults.every(result => result.available);
+  const cutoverGateReasonCodes = Object.freeze([
+    ...new Set(gateResults.flatMap(result => result.reasonCodes)),
+  ]);
+  const effectiveReadMode = mode.mode === 'partitioned' && cutoverAvailable
+    ? 'partitioned' as const
+    : 'monolith' as const;
   return Object.freeze({
     enabled: true,
+    partitionSyncEnabled: isBackstageNotionPartitionSyncWriterEnabled(mode),
     requestedMode,
     modeStatus: mode.status,
     configurationStatus: configuration.status,
@@ -226,34 +273,27 @@ export function resolveBackstageNotionPartitionShadowPolicy(
       (total, universe) => total + universe.shards.length,
       0
     ),
+    effectiveReadMode,
+    cutoverAvailable,
+    cutoverGateReasonCodes,
     reasonCode: mode.mode === 'partitioned'
-      ? 'PARTITIONED_ENABLED'
+      ? cutoverAvailable
+        ? 'PARTITIONED_ENABLED'
+        : 'PARTITIONED_CUTOVER_GATE_CLOSED'
       : 'SHADOW_ENABLED',
     configuration,
   });
 }
 
 /**
- * Keep the legacy monolith startup fence for every fallback policy. Only an
- * exact, internally consistent shadow or partitioned policy may admit queue
- * consumers without first awaiting a universe-wide monolith crawl.
+ * Every monolith-authoritative mode proves the monolith before queue admission.
+ * Partitioned mode may skip the duplicate crawl only after the explicit gate
+ * already proves a readable rollback monolith.
  */
 export function requiresBackstageNotionMonolithWorkerReadiness(
   policy: BackstageNotionPartitionShadowPolicy
 ): boolean {
-  const exactEnabledPartitionPolicy = policy.enabled
-    && policy.modeStatus === 'valid'
-    && policy.configurationStatus === 'valid'
-    && policy.configuration !== null
-    && policy.semanticDigest !== null
-    && (
-      (policy.requestedMode === 'shadow' && policy.reasonCode === 'SHADOW_ENABLED')
-      || (
-        policy.requestedMode === 'partitioned'
-        && policy.reasonCode === 'PARTITIONED_ENABLED'
-      )
-    );
-  return !exactEnabledPartitionPolicy;
+  return policy.effectiveReadMode !== 'partitioned';
 }
 
 /** Run the unchanged legacy readiness proof only when the resolved policy requires it. */
@@ -462,19 +502,21 @@ export function startBackstageNotionPartitionShadowLoop(
 ): BackstageNotionPartitionShadowLoopHandle {
   const loopLogger = dependencies.logger ?? logger;
   const readEnvironment = dependencies.readEnvironment ?? (name => getEnv(name));
-  const policy = resolveBackstageNotionPartitionShadowPolicy(readEnvironment);
-  const effectiveReadMode = policy.enabled && policy.requestedMode === 'partitioned'
-    ? 'partitioned'
-    : 'monolith';
+  const policy = resolveBackstageNotionPartitionShadowPolicy(
+    readEnvironment,
+    dependencies.cutoverEvidence
+  );
+  const effectiveReadMode = policy.effectiveReadMode;
   const policyMetadata = Object.freeze({
     module: 'backstage-notion-partition-shadow',
     modeStatus: policy.modeStatus,
     requestedMode: policy.requestedMode,
     effectiveReadMode,
-    partitionSyncEnabled: policy.enabled,
-    shadowSyncEnabled: policy.enabled && policy.requestedMode === 'shadow',
+    partitionSyncEnabled: policy.partitionSyncEnabled,
+    shadowSyncEnabled: policy.partitionSyncEnabled,
     partitionedReadEnabled: effectiveReadMode === 'partitioned',
-    cutoverAvailable: true,
+    cutoverAvailable: policy.cutoverAvailable,
+    cutoverGateReasonCodes: policy.cutoverGateReasonCodes,
     configurationStatus: policy.configurationStatus,
     semanticDigest: policy.semanticDigest,
     configuredUniverses: policy.configuredUniverses,
@@ -512,6 +554,57 @@ export function startBackstageNotionPartitionShadowLoop(
   let timeoutHandle: NodeJS.Timeout | null = null;
   let inFlight: Promise<void> | null = null;
   let drainPromise: Promise<void> | null = null;
+  let currentPolicy = policy;
+
+  const refreshCutoverPolicy = async (): Promise<
+    BackstageNotionPartitionShadowPolicy
+  > => {
+    let refreshedPolicy = resolveBackstageNotionPartitionShadowPolicy(
+      readEnvironment,
+      dependencies.cutoverEvidence
+    );
+    if (
+      refreshedPolicy.requestedMode === 'partitioned'
+      && refreshedPolicy.configuration
+      && dependencies.loadCutoverEvidence
+    ) {
+      let evidence: readonly BackstageNotionPartitionCutoverGateEvidence[] = [];
+      try {
+        evidence = await dependencies.loadCutoverEvidence(
+          refreshedPolicy.configuration
+        );
+      } catch {
+        // Evidence reload failures are missing evidence, so telemetry fails closed.
+      }
+      refreshedPolicy = resolveBackstageNotionPartitionShadowPolicy(
+        readEnvironment,
+        evidence
+      );
+    }
+    currentPolicy = refreshedPolicy;
+    return currentPolicy;
+  };
+
+  const logSkippedCycle = (
+    cyclePolicy: BackstageNotionPartitionShadowPolicy,
+    startedAt: number
+  ): void => {
+    safeLog(
+      loopLogger,
+      'info',
+      'backstage.notion_partition.shadow_cycle_skipped',
+      Object.freeze({
+        module: 'backstage-notion-partition-shadow',
+        effectiveReadMode: cyclePolicy.effectiveReadMode,
+        cutoverAvailable: cyclePolicy.cutoverAvailable,
+        cutoverGateReasonCodes: cyclePolicy.cutoverGateReasonCodes,
+        partitionSyncEnabled: cyclePolicy.partitionSyncEnabled,
+        semanticDigest: cyclePolicy.semanticDigest,
+        durationMs: Date.now() - startedAt,
+        reasonCode: cyclePolicy.reasonCode,
+      })
+    );
+  };
 
   const schedule = (delayMs: number): void => {
     if (stopped || controller.signal.aborted) {
@@ -532,15 +625,34 @@ export function startBackstageNotionPartitionShadowLoop(
     let cyclePromise!: Promise<void>;
     cyclePromise = (async () => {
       try {
-        const result = await coordinator.runExclusive(() => {
+        const cyclePolicy = await refreshCutoverPolicy();
+        throwIfAborted(controller.signal);
+        if (!cyclePolicy.partitionSyncEnabled || !cyclePolicy.configuration) {
+          logSkippedCycle(cyclePolicy, startedAt);
+          return;
+        }
+        const execution = await coordinator.runExclusive(async () => {
+          const lockedPolicy = await refreshCutoverPolicy();
           throwIfAborted(controller.signal);
-          return runCycle({
-            configuration: policy.configuration!,
+          if (!lockedPolicy.partitionSyncEnabled || !lockedPolicy.configuration) {
+            return null;
+          }
+          const result = await runCycle({
+            configuration: lockedPolicy.configuration,
             signal: controller.signal,
           });
+          return Object.freeze({ policy: lockedPolicy, result });
         });
+        if (!execution) {
+          logSkippedCycle(currentPolicy, startedAt);
+          return;
+        }
         throwIfAborted(controller.signal);
-        const summary = summarizeCycle(result, policy.semanticDigest!);
+        const refreshedPolicy = await refreshCutoverPolicy();
+        const summary = summarizeCycle(
+          execution.result,
+          execution.policy.semanticDigest!
+        );
         const hasFailures = Number(summary.shardsFailed) > 0
           || Number(summary.shardsAborted) > 0
           || Number(summary.manifestsBlocked) > 0
@@ -555,22 +667,28 @@ export function startBackstageNotionPartitionShadowLoop(
             : 'backstage.notion_partition.shadow_cycle_completed',
           Object.freeze({
             module: 'backstage-notion-partition-shadow',
-            effectiveReadMode,
-            semanticDigest: policy.semanticDigest,
+            effectiveReadMode: refreshedPolicy.effectiveReadMode,
+            cutoverAvailable: refreshedPolicy.cutoverAvailable,
+            cutoverGateReasonCodes: refreshedPolicy.cutoverGateReasonCodes,
+            reasonCode: refreshedPolicy.reasonCode,
+            semanticDigest: execution.policy.semanticDigest,
             durationMs: Date.now() - startedAt,
             ...summary,
           })
         );
       } catch {
         if (!controller.signal.aborted) {
+          const refreshedPolicy = await refreshCutoverPolicy();
           safeLog(
             loopLogger,
             'warn',
             'backstage.notion_partition.shadow_cycle_failed',
             Object.freeze({
               module: 'backstage-notion-partition-shadow',
-              effectiveReadMode,
-              semanticDigest: policy.semanticDigest,
+              effectiveReadMode: refreshedPolicy.effectiveReadMode,
+              cutoverAvailable: refreshedPolicy.cutoverAvailable,
+              cutoverGateReasonCodes: refreshedPolicy.cutoverGateReasonCodes,
+              semanticDigest: currentPolicy.semanticDigest,
               durationMs: Date.now() - startedAt,
               reasonCode: 'SHADOW_CYCLE_FAILED',
             })
@@ -613,7 +731,7 @@ export function startBackstageNotionPartitionShadowLoop(
         'backstage.notion_partition.shadow_drained',
         Object.freeze({
           module: 'backstage-notion-partition-shadow',
-          effectiveReadMode,
+          effectiveReadMode: currentPolicy.effectiveReadMode,
           drained: true,
         })
       );
@@ -629,7 +747,7 @@ export function startBackstageNotionPartitionShadowLoop(
     stopInternal();
   } else {
     dependencies.signal?.addEventListener('abort', onParentAbort, { once: true });
-    schedule(initialDelayMs);
+    schedule(policy.partitionSyncEnabled ? initialDelayMs : 0);
   }
 
   return Object.freeze({ enabled: true, stopAndDrain });

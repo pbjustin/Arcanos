@@ -282,7 +282,7 @@ describe('Backstage Notion partition synchronization operations', () => {
         dependencies: {
           readEnvironment: (name: string) => (
             name === BACKSTAGE_NOTION_PARTITIONED_INDEX_MODE_ENV_NAME
-              ? 'partitioned'
+              ? 'shadow'
               : '{'
           ),
           findOrCreateSyncJob,
@@ -316,6 +316,32 @@ describe('Backstage Notion partition synchronization operations', () => {
     expect(malformed.statusCode).toBe(400);
     expect(unknown.statusCode).toBe(404);
     expect(malformedUniverse.payload).toEqual(unknown.payload);
+    expect(findOrCreateSyncJob).not.toHaveBeenCalled();
+  });
+
+  it('rejects exact partitioned mode before configuration or queue admission', async () => {
+    const findOrCreateSyncJob = buildAdmissionMock();
+    const readEnvironment = jest.fn((name: string) => (
+      name === BACKSTAGE_NOTION_PARTITIONED_INDEX_MODE_ENV_NAME
+        ? 'partitioned'
+        : (() => { throw new Error('configuration must remain unread'); })()
+    ));
+
+    const response = await enqueueBackstageNotionPartitionSyncOperation(
+      enqueueInput(findOrCreateSyncJob, {
+        dependencies: {
+          readEnvironment,
+          findOrCreateSyncJob,
+          now: () => NOW,
+        },
+      })
+    );
+
+    expect(response.statusCode).toBe(409);
+    expect(response.payload).toMatchObject({
+      error: { code: 'BACKSTAGE_NOTION_PARTITION_SYNC_DISABLED' },
+    });
+    expect(readEnvironment).toHaveBeenCalledTimes(1);
     expect(findOrCreateSyncJob).not.toHaveBeenCalled();
   });
 

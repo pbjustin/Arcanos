@@ -1,6 +1,7 @@
 import {
   BACKSTAGE_NOTION_PARTITION_ROUTING_MAX_SELECTORS,
   BACKSTAGE_NOTION_PARTITION_ROUTING_VERSION,
+  isBackstageNotionPartitionCutoverValidationScopeCompatible,
   resolveBackstageNotionPartitionRouting,
 } from '../src/shared/backstage/backstageNotionPartitionRoutingCore.js';
 
@@ -124,6 +125,27 @@ function relevantIntent(
 }
 
 describe('backstage Notion partition routing core', () => {
+  it('keeps sampled relevant validation unscoped and exhaustive cases scoped', () => {
+    expect(isBackstageNotionPartitionCutoverValidationScopeCompatible(
+      'relevant',
+      false
+    )).toBe(true);
+    expect(isBackstageNotionPartitionCutoverValidationScopeCompatible(
+      'relevant',
+      true
+    )).toBe(false);
+    for (const kind of ['exact_scope', 'complete_scope'] as const) {
+      expect(isBackstageNotionPartitionCutoverValidationScopeCompatible(
+        kind,
+        true
+      )).toBe(true);
+      expect(isBackstageNotionPartitionCutoverValidationScopeCompatible(
+        kind,
+        false
+      )).toBe(false);
+    }
+  });
+
   it('matches every tag within a selector, ORs selectors, and canonicalizes output', () => {
     const first = resolveBackstageNotionPartitionRouting(
       routingState({

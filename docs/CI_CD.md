@@ -324,11 +324,11 @@ proof header and reports no provider, database, worker, or protected-effect
 boundary. The output-admission selector exercises the production-shared
 alternative-card classifier and final first-success admission gate across
 structured containers, compact exact requests, and supersession prompts. The
-Notion Phase-A selector exercises the production-shared 4,096-reader/2,048-writer
-capacity fence, readable unchanged decision, and late-acquisition lease cleanup
-with injected no-effect seams. The established production-output and
-Notion-authority selectors execute those assertions fail-closed without changing
-their legacy bodies. The common generation dispatcher also executes the
+Notion Phase-A selector exercises the production-shared 4,096-reader/4,096-writer
+capacity fence, strict 4,097 pre-effect rejection, readable unchanged decision,
+and late-acquisition lease cleanup with injected no-effect seams. The established
+production-output and Notion-authority selectors execute those assertions
+fail-closed without changing their legacy bodies. The common generation dispatcher also executes the
 semantic-digest-pinned pure CLEAR policy composer shared with production before
 every one of the thirteen
 selectors. It assembles server-owned authority and CLEAR policy through the

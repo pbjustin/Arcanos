@@ -3997,6 +3997,17 @@ async function executeRequestCase(
       );
     }
     if (
+      requestCase.fixtureName === 'notionAuthorityRag'
+      && response.headers.get(
+        contract.proofHeaders.partitionCutoverRepairVersion
+      ) !== contract.partitionCutoverRepairProofVersion
+    ) {
+      fail(
+        'NATIVE_PR_PREVIEW_BACKSTAGE_PARTITION_CUTOVER_REPAIR_PROOF_INVALID',
+        requestCase.caseId
+      );
+    }
+    if (
       requestCase.fixtureName === 'partitionFailureTelemetry'
       && response.headers.get(
         contract.proofHeaders.partitionFailureTelemetryVersion
@@ -4062,6 +4073,17 @@ async function executeRequestCase(
     ) {
       fail(
         'NATIVE_PR_PREVIEW_BACKSTAGE_NOTION_SYNC_PHASE_A_PROOF_INVALID',
+        requestCase.caseId
+      );
+    }
+    if (
+      requestCase.fixtureName === 'notionSyncPhaseA'
+      && response.headers.get(
+        contract.proofHeaders.notionWriterCapacityReleaseVersion
+      ) !== contract.notionWriterCapacityReleaseProofVersion
+    ) {
+      fail(
+        'NATIVE_PR_PREVIEW_BACKSTAGE_NOTION_WRITER_CAPACITY_RELEASE_PROOF_INVALID',
         requestCase.caseId
       );
     }
@@ -4190,7 +4212,10 @@ async function executeRequestCase(
       : {}),
     ...(requestCase.expectedType === 'backstage-generation-contract'
       && requestCase.fixtureName === 'notionAuthorityRag'
-      ? { partitionedAuthorityVerified: true }
+      ? {
+          partitionCutoverRepairVerified: true,
+          partitionedAuthorityVerified: true,
+        }
       : {}),
     ...(requestCase.expectedType === 'backstage-generation-contract'
       && requestCase.fixtureName === 'partitionFailureTelemetry'
@@ -4214,7 +4239,10 @@ async function executeRequestCase(
       : {}),
     ...(requestCase.expectedType === 'backstage-generation-contract'
       && requestCase.fixtureName === 'notionSyncPhaseA'
-      ? { notionSyncPhaseAVerified: true }
+      ? {
+          notionSyncPhaseAVerified: true,
+          notionWriterCapacityReleaseVerified: true,
+        }
       : {}),
     ...(requestCase.expectedType === 'status-auth-boundary-contract'
       ? { statusAuthBoundaryVerified: true }

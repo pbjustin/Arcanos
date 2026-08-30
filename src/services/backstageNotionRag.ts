@@ -4,16 +4,21 @@ import { isAbortError } from '@arcanos/runtime';
 import {
   BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT,
   BACKSTAGE_NOTION_MAX_PAGES_PER_SNAPSHOT,
+  BACKSTAGE_NOTION_RELEVANT_CANDIDATE_SEARCH_MAX_RESULTS,
   getBackstageNotionRagRepository,
   type BackstageNotionActiveChunk,
   type BackstageNotionActiveChunkMetadata,
-  type BackstageNotionActiveSnapshot,
   type BackstageNotionActiveSnapshotHeader,
   type BackstageNotionRagRepository,
   type BackstageNotionSnapshotChunkPageSelector,
   type BackstageNotionSnapshotScopeLookup,
   type BackstageNotionSnapshotScopeResolution,
 } from '@core/db/repositories/backstageNotionRagRepository.js';
+import {
+  getBackstageNotionSyncStatusRepository,
+  type BackstageNotionSyncAttemptRecord,
+  type BackstageNotionSyncStatusRepository,
+} from '@core/db/repositories/backstageNotionSyncStatusRepository.js';
 import { getEnvNumber } from '@platform/runtime/env.js';
 import { logger } from '@platform/logging/structuredLogging.js';
 import {
@@ -26,6 +31,20 @@ import {
   normalizeBackstageNotionScopeKey,
   normalizeBackstageNotionScopePath,
 } from '@shared/backstage/backstageNotionScopeIndex.js';
+import {
+  BACKSTAGE_NOTION_RAG_MAX_STALENESS_DEFAULT_MS,
+  BACKSTAGE_NOTION_RAG_MAX_STALENESS_ENV_NAME,
+  BACKSTAGE_NOTION_SYNC_ATTEMPT_OUTCOMES,
+  BACKSTAGE_NOTION_SYNC_FAILURE_PHASES,
+  BACKSTAGE_NOTION_SYNC_FAILURE_REASONS,
+  boundBackstageNotionRagMaximumStalenessMs,
+  resolveBackstageNotionSnapshotStatus,
+  type BackstageNotionSnapshotStatus,
+  type BackstageNotionSnapshotStatusResolution,
+  type BackstageNotionSyncAttemptOutcome,
+  type BackstageNotionSyncFailurePhase,
+  type BackstageNotionSyncFailureReason,
+} from '@shared/backstage/backstageNotionSnapshotStatus.js';
 import {
   BACKSTAGE_NOTION_BOOKING_BRANDS,
   BACKSTAGE_NOTION_BOOKING_NEUTRAL_CHUNK_RESERVE,
@@ -54,17 +73,18 @@ import {
 export {
   BACKSTAGE_NOTION_RAG_SYSTEM_POLICY_PROMPT,
 } from '@shared/backstage/backstageNotionRagCore.js';
+export {
+  BACKSTAGE_NOTION_RAG_MAX_STALENESS_DEFAULT_MS,
+  BACKSTAGE_NOTION_RAG_MAX_STALENESS_ENV_NAME,
+  BACKSTAGE_NOTION_RAG_MAX_STALENESS_MAX_MS,
+  BACKSTAGE_NOTION_RAG_MAX_STALENESS_MIN_MS,
+} from '@shared/backstage/backstageNotionSnapshotStatus.js';
 
 export const BACKSTAGE_NOTION_RAG_MAX_ACTIVE_CHUNKS =
   BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT;
 export const BACKSTAGE_NOTION_RAG_RETRIEVED_CHUNKS = 12;
 export const BACKSTAGE_NOTION_RAG_MAX_CHUNKS_PER_PAGE = 3;
 export const BACKSTAGE_NOTION_RAG_MAX_QUERY_CODE_POINTS = 32_000;
-export const BACKSTAGE_NOTION_RAG_MAX_STALENESS_ENV_NAME =
-  'ARCANOS_BACKSTAGE_NOTION_RAG_MAX_STALENESS_MS';
-export const BACKSTAGE_NOTION_RAG_MAX_STALENESS_DEFAULT_MS = 24 * 60 * 60 * 1_000;
-export const BACKSTAGE_NOTION_RAG_MAX_STALENESS_MIN_MS = 5 * 60 * 1_000;
-export const BACKSTAGE_NOTION_RAG_MAX_STALENESS_MAX_MS = 7 * 24 * 60 * 60 * 1_000;
 export const BACKSTAGE_NOTION_INDEX_UNAVAILABLE_ERROR_CODE =
   'BACKSTAGE_NOTION_INDEX_UNAVAILABLE';
 export const BACKSTAGE_NOTION_INDEX_UNAVAILABLE_ERROR_MESSAGE =
@@ -81,6 +101,11 @@ const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 const UTC_TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/u;
 const CURSOR_PATTERN = /^[A-Za-z0-9_-]{1,1024}$/u;
+const SYNC_ATTEMPT_OUTCOMES = new Set<string>(
+  BACKSTAGE_NOTION_SYNC_ATTEMPT_OUTCOMES
+);
+const SYNC_FAILURE_PHASES = new Set<string>(BACKSTAGE_NOTION_SYNC_FAILURE_PHASES);
+const SYNC_FAILURE_REASONS = new Set<string>(BACKSTAGE_NOTION_SYNC_FAILURE_REASONS);
 const CATEGORIES = new Set<BackstageNotionRagCategory>([
   'championships',
   'events',
@@ -173,10 +198,14 @@ export type BackstageNotionRagQuery = string | BackstageNotionRagQueryRequest;
 export interface BackstageNotionRagRetrievalDependencies {
   repository?: Pick<
     BackstageNotionRagRepository,
-    | 'loadActiveSnapshot'
     | 'loadActiveSnapshotHeader'
     | 'resolveSnapshotScope'
     | 'loadSnapshotChunkPage'
+    | 'rankSnapshotCandidates'
+  >;
+  syncStatusRepository?: Pick<
+    BackstageNotionSyncStatusRepository,
+    'loadLatestSyncAttempt'
   >;
   resolveAuthorityRoot?: (
     universeId: string
@@ -231,6 +260,12 @@ export interface BackstageNotionRagRetrieval {
   universeId: string;
   snapshotId: string;
   verifiedAt: Date;
+  snapshotStatus: BackstageNotionSnapshotStatus;
+  activeSnapshotVerifiedAt: Date;
+  activeSnapshotChunkCount: number;
+  latestSyncOutcome: BackstageNotionSyncAttemptOutcome | null;
+  latestSyncFailurePhase: BackstageNotionSyncFailurePhase | null;
+  latestSyncFailureReason: BackstageNotionSyncFailureReason | null;
   prompt: string;
   chunkCount: number;
   truncated: boolean;
@@ -284,12 +319,6 @@ interface ScopeCandidate {
   sourceLastEditedAt: string | null;
 }
 
-interface ResolvedScopedChunks<T extends ScopeCandidate> {
-  chunks: T[];
-  scope: BackstageNotionRagResolvedScope;
-  selector: BackstageNotionSnapshotChunkPageSelector;
-}
-
 interface CursorPayloadBody {
   v: number;
   snapshotId: string;
@@ -327,13 +356,7 @@ function resolveMaximumStalenessMs(value: number | undefined): number {
     BACKSTAGE_NOTION_RAG_MAX_STALENESS_ENV_NAME,
     BACKSTAGE_NOTION_RAG_MAX_STALENESS_DEFAULT_MS
   );
-  if (!Number.isFinite(candidate) || candidate <= 0) {
-    return BACKSTAGE_NOTION_RAG_MAX_STALENESS_DEFAULT_MS;
-  }
-  return Math.max(
-    BACKSTAGE_NOTION_RAG_MAX_STALENESS_MIN_MS,
-    Math.min(BACKSTAGE_NOTION_RAG_MAX_STALENESS_MAX_MS, Math.trunc(candidate))
-  );
+  return boundBackstageNotionRagMaximumStalenessMs(candidate);
 }
 
 function sha256(value: string): string {
@@ -888,78 +911,6 @@ function validatePageMetadataConsistency(chunks: readonly ScopeCandidate[]): voi
   }
 }
 
-function resolveScopedChunks<T extends ScopeCandidate>(
-  chunks: readonly T[],
-  requested: NormalizedPageRetrievalScope
-): ResolvedScopedChunks<T> {
-  const pages = new Map<string, T[]>();
-  for (const candidate of chunks) {
-    if (
-      normalizeBackstageNotionScopeKey(candidate.active.pageTitle)
-        !== normalizeBackstageNotionScopeKey(requested.pageTitle)
-      || (
-        requested.pagePath
-        && !pathsMatch(requested.pagePath, candidate.active.pagePath)
-      )
-    ) {
-      continue;
-    }
-    const pageChunks = pages.get(candidate.active.pageId) ?? [];
-    pageChunks.push(candidate);
-    pages.set(candidate.active.pageId, pageChunks);
-  }
-  if (pages.size === 0) {
-    throw new BackstageNotionScopeResolutionError('not_found');
-  }
-  if (pages.size > 1) {
-    throw new BackstageNotionScopeResolutionError('ambiguous');
-  }
-
-  const pageChunks = [...pages.values()][0]!;
-  const representative = pageChunks[0]!;
-  let scopedChunks = pageChunks;
-  let resolvedSectionPath: string[] | undefined;
-  const requestedSectionPath = requested.sectionPath;
-  if (requestedSectionPath) {
-    scopedChunks = pageChunks.filter(candidate => (
-      pathStartsWith(candidate.active.headingPath, requestedSectionPath)
-    ));
-    if (scopedChunks.length === 0) {
-      throw new BackstageNotionScopeResolutionError('not_found');
-    }
-    const occurrences = new Set(scopedChunks.map(candidate => (
-      JSON.stringify(candidate.headingOccurrencePath.slice(
-        0,
-        requestedSectionPath.length
-      ))
-    )));
-    if (occurrences.size > 1) {
-      throw new BackstageNotionScopeResolutionError('ambiguous');
-    }
-    const canonicalHeadingPath = scopedChunks[0]!.active.headingPath;
-    resolvedSectionPath = canonicalHeadingPath.slice(0, requestedSectionPath.length);
-  }
-
-  return {
-    chunks: scopedChunks,
-    scope: {
-      pageTitle: representative.active.pageTitle,
-      pagePath: [...representative.active.pagePath],
-      ...(resolvedSectionPath ? { sectionPath: resolvedSectionPath } : {}),
-    },
-    selector: {
-      pageId: representative.active.pageId,
-      scopeKind: 'page',
-      sectionOccurrencePath: requestedSectionPath
-        ? [...scopedChunks[0]!.headingOccurrencePath.slice(
-            0,
-            requestedSectionPath.length
-          )]
-        : null,
-    },
-  };
-}
-
 function validateSelectedScopePage(
   chunks: readonly ScopeCandidate[],
   requested: NormalizedRetrievalScope,
@@ -1146,9 +1097,7 @@ function sortByPageOrdinal<T extends ScopeCandidate>(chunks: readonly T[]): T[] 
 function validateActiveSnapshotHeader<T extends BackstageNotionActiveSnapshotHeader>(
   active: T | null,
   universeId: string,
-  rootPageId: string,
-  now: Date,
-  maximumStalenessMs: number
+  rootPageId: string
 ): T {
   if (
     !active
@@ -1164,40 +1113,77 @@ function validateActiveSnapshotHeader<T extends BackstageNotionActiveSnapshotHea
     || !Number.isSafeInteger(active.snapshot.chunkCount)
     || active.snapshot.chunkCount < 1
     || active.snapshot.chunkCount > BACKSTAGE_NOTION_RAG_MAX_ACTIVE_CHUNKS
-    || !Number.isFinite(now.getTime())
     || !Number.isFinite(active.verifiedAt.getTime())
     || !Number.isFinite(active.snapshot.createdAt.getTime())
     || active.verifiedAt.getTime() < active.snapshot.createdAt.getTime()
-    || now.getTime() - active.verifiedAt.getTime() > maximumStalenessMs
-    || active.verifiedAt.getTime() - now.getTime() > 5 * 60 * 1_000
   ) {
     throw new BackstageNotionIndexUnavailableError();
   }
   return active;
 }
 
-function validateActiveSnapshotProjection<T extends BackstageNotionActiveSnapshot>(
-  active: T | null,
-  universeId: string,
-  rootPageId: string,
-  now: Date,
-  maximumStalenessMs: number
-): T {
-  const validated = validateActiveSnapshotHeader(
-    active,
-    universeId,
-    rootPageId,
-    now,
-    maximumStalenessMs
-  );
-  if (
-    validated.truncated
-    || validated.snapshot.chunkCount !== validated.chunks.length
-    || validated.chunks.length < 1
-  ) {
-    throw new BackstageNotionIndexUnavailableError();
+/** Resolve the exact bounded freshness window used by authoritative retrievals. */
+export function resolveBackstageNotionRagMaximumStalenessMs(
+  value?: number
+): number {
+  return resolveMaximumStalenessMs(value);
+}
+
+function logBackstageNotionSnapshotStatus(
+  resolution: BackstageNotionSnapshotStatusResolution,
+  active: BackstageNotionActiveSnapshotHeader | null,
+  latestSyncAttempt: BackstageNotionSyncAttemptRecord | null
+): void {
+  try {
+    const metadata = projectBackstageNotionSnapshotStatusMetadata(
+      resolution,
+      active,
+      latestSyncAttempt
+    );
+    logger.info('backstage.notion_rag.snapshot_status', {
+      authorityIndex: 'monolith',
+      ...metadata,
+      activeSnapshotReadable: active !== null,
+      freshnessSatisfied: resolution.fresh,
+      newerRefreshIncomplete: resolution.newerRefreshIncomplete,
+    });
+  } catch {
+    // Snapshot-state diagnostics must never change authority availability.
   }
-  return validated;
+}
+
+function projectBackstageNotionSnapshotStatusMetadata(
+  resolution: BackstageNotionSnapshotStatusResolution,
+  active: BackstageNotionActiveSnapshotHeader | null,
+  latestSyncAttempt: BackstageNotionSyncAttemptRecord | null
+): Readonly<{
+  snapshotStatus: BackstageNotionSnapshotStatus;
+  activeSnapshotVerifiedAt: string | null;
+  activeSnapshotChunkCount: number;
+  latestSyncOutcome: BackstageNotionSyncAttemptOutcome | null;
+  latestSyncFailurePhase: BackstageNotionSyncFailurePhase | null;
+  latestSyncFailureReason: BackstageNotionSyncFailureReason | null;
+}> {
+  const latestSyncOutcome = latestSyncAttempt
+    && SYNC_ATTEMPT_OUTCOMES.has(latestSyncAttempt.outcome)
+    ? latestSyncAttempt.outcome
+    : null;
+  const latestSyncFailurePhase = latestSyncAttempt?.failurePhase
+    && SYNC_FAILURE_PHASES.has(latestSyncAttempt.failurePhase)
+    ? latestSyncAttempt.failurePhase
+    : null;
+  const latestSyncFailureReason = latestSyncAttempt?.failureReason
+    && SYNC_FAILURE_REASONS.has(latestSyncAttempt.failureReason)
+    ? latestSyncAttempt.failureReason
+    : null;
+  return Object.freeze({
+    snapshotStatus: resolution.status,
+    activeSnapshotVerifiedAt: active?.verifiedAt.toISOString() ?? null,
+    activeSnapshotChunkCount: active?.snapshot.chunkCount ?? 0,
+    latestSyncOutcome,
+    latestSyncFailurePhase,
+    latestSyncFailureReason,
+  });
 }
 
 async function retrieveBackstageNotionRagContextUnsafe(
@@ -1223,32 +1209,47 @@ async function retrieveBackstageNotionRagContextUnsafe(
   }
 
   const repository = dependencies.repository ?? getBackstageNotionRagRepository();
+  const syncStatusRepository = dependencies.syncStatusRepository
+    ?? getBackstageNotionSyncStatusRepository();
   const now = dependencies.now?.() ?? new Date();
   const maximumStalenessMs = resolveMaximumStalenessMs(
     dependencies.maximumStalenessMs
   );
+  const [loadedActive, latestSyncAttempt] = await Promise.all([
+    repository.loadActiveSnapshotHeader(universeId),
+    syncStatusRepository.loadLatestSyncAttempt(universeId),
+  ]);
   let active: BackstageNotionActiveSnapshotHeader;
-  let relevantSnapshot: BackstageNotionActiveSnapshot | null = null;
-  if (request.retrievalMode === 'complete_scope') {
+  try {
     active = validateActiveSnapshotHeader(
-      await repository.loadActiveSnapshotHeader(universeId),
+      loadedActive,
       universeId,
-      authorityRoot.rootPageId,
-      now,
-      maximumStalenessMs
+      authorityRoot.rootPageId
     );
-  } else {
-    relevantSnapshot = validateActiveSnapshotProjection(
-      await repository.loadActiveSnapshot(
-        universeId,
-        BACKSTAGE_NOTION_RAG_MAX_ACTIVE_CHUNKS
-      ),
-      universeId,
-      authorityRoot.rootPageId,
-      now,
-      maximumStalenessMs
-    );
-    active = relevantSnapshot;
+  } catch (error) {
+    logBackstageNotionSnapshotStatus({
+      status: 'unavailable',
+      fresh: false,
+      newerRefreshIncomplete: false,
+    }, null, latestSyncAttempt);
+    throw error;
+  }
+  const snapshotStatus = resolveBackstageNotionSnapshotStatus({
+    activeSnapshotId: active.snapshot.id,
+    activeSnapshotReadable: true,
+    activeSnapshotVerifiedAt: active.verifiedAt,
+    now,
+    maximumStalenessMs,
+    latestSyncAttempt,
+  });
+  const readableContinuityLastKnownGood = snapshotStatus.status === 'last_known_good'
+    && retrievalProfile === 'continuity';
+  if (
+    snapshotStatus.status !== 'current_complete'
+    && !readableContinuityLastKnownGood
+  ) {
+    logBackstageNotionSnapshotStatus(snapshotStatus, active, latestSyncAttempt);
+    throw new BackstageNotionIndexUnavailableError();
   }
 
   let selected: SelectedChunk[];
@@ -1411,8 +1412,58 @@ async function retrieveBackstageNotionRagContextUnsafe(
       };
     });
   } else {
-    const relevantActive = relevantSnapshot!;
-    const validatedChunks = relevantActive.chunks.map((chunk): RankedChunk => {
+    let relevantSelector: BackstageNotionSnapshotChunkPageSelector = {
+      pageId: null,
+      scopeKind: 'all',
+      sectionOccurrencePath: null,
+    };
+    if (request.retrievalScope) {
+      const validatedResolution = await resolveRequestedScope(request.retrievalScope);
+      resolvedScope = validatedResolution.scope;
+      relevantSelector = validatedResolution.selector;
+      scopeChunks = validatedResolution.scopeChunkCount;
+      scopePages = validatedResolution.scopePageCount;
+    } else {
+      scopeChunks = active.snapshot.chunkCount;
+    }
+    const queryEmbedding = await (dependencies.embedQuery ?? createEmbedding)(request.query);
+    if (!isFiniteNonzeroVector(queryEmbedding)) {
+      throw new BackstageNotionIndexUnavailableError();
+    }
+    const candidateSearch = await repository.rankSnapshotCandidates({
+      universeId,
+      snapshotId: active.snapshot.id,
+      selector: relevantSelector,
+      expectedScopeChunkCount: scopeChunks,
+      embeddingModel: active.snapshot.embeddingModel,
+      queryText: request.query,
+      queryEmbedding,
+      allowedBookingBrands: bookingScopePlan !== null
+        && bookingEffectiveScopeStrategy !== 'fallback_all'
+        ? bookingScopePlan.allowedBrands
+        : null,
+      limit: BACKSTAGE_NOTION_RELEVANT_CANDIDATE_SEARCH_MAX_RESULTS,
+    });
+    const expectedRelevantCandidateCount = Math.min(
+      scopeChunks,
+      BACKSTAGE_NOTION_RELEVANT_CANDIDATE_SEARCH_MAX_RESULTS
+    );
+    if (
+      !Number.isSafeInteger(candidateSearch.scopeChunkCount)
+      || candidateSearch.scopeChunkCount !== scopeChunks
+      || !Number.isSafeInteger(candidateSearch.candidatePoolCount)
+      || candidateSearch.candidatePoolCount < candidateSearch.candidates.length
+      || candidateSearch.candidatePoolCount > scopeChunks
+      || candidateSearch.candidates.length < 1
+      || candidateSearch.candidates.length > expectedRelevantCandidateCount
+      || (
+        bookingScopePlan === null
+        && candidateSearch.candidates.length !== expectedRelevantCandidateCount
+      )
+    ) {
+      throw new BackstageNotionIndexUnavailableError();
+    }
+    const validatedChunks = candidateSearch.candidates.map((chunk): RankedChunk => {
       if (!isFiniteNonzeroVector(chunk.embedding)) {
         throw new BackstageNotionIndexUnavailableError();
       }
@@ -1433,30 +1484,26 @@ async function retrieveBackstageNotionRagContextUnsafe(
     ) {
       throw new BackstageNotionIndexUnavailableError();
     }
+    if (queryEmbedding.length !== embeddingDimensions) {
+      throw new BackstageNotionIndexUnavailableError();
+    }
     validatePageMetadataConsistency(validatedChunks);
-    let resolved: ResolvedScopedChunks<RankedChunk> | null = null;
     let scopeCandidates: RankedChunk[] = validatedChunks;
     if (request.retrievalScope?.scopeKind === 'subtree') {
-      const validatedResolution = await resolveRequestedScope(request.retrievalScope);
-      resolvedScope = validatedResolution.scope;
-      scopeChunks = validatedResolution.scopeChunkCount;
-      scopePages = validatedResolution.scopePageCount;
-      scopeCandidates = validatedChunks.filter(candidate => (
-        pathStartsWith(candidate.active.pagePath, validatedResolution.scope.pagePath)
-      ));
-      if (
-        scopeCandidates.length !== scopeChunks
-        || new Set(scopeCandidates.map(candidate => candidate.active.pageId)).size
-          !== scopePages
-      ) {
+      validateSelectedSubtreePage(
+        scopeCandidates,
+        resolvedScope!,
+        relevantSelector
+      );
+    } else if (request.retrievalScope?.scopeKind === 'page') {
+      const selectedScope = validateSelectedScopePage(
+        scopeCandidates,
+        request.retrievalScope,
+        relevantSelector
+      );
+      if (JSON.stringify(selectedScope) !== JSON.stringify(resolvedScope)) {
         throw new BackstageNotionIndexUnavailableError();
       }
-    } else if (request.retrievalScope?.scopeKind === 'page') {
-      resolved = resolveScopedChunks(validatedChunks, request.retrievalScope);
-      resolvedScope = resolved.scope;
-      scopeCandidates = resolved.chunks;
-      scopeChunks = scopeCandidates.length;
-      scopePages = 1;
     }
     if (bookingScopePlan) {
       for (const candidate of validatedChunks) {
@@ -1485,7 +1532,7 @@ async function retrieveBackstageNotionRagContextUnsafe(
         if (hasPreferredCandidate) {
           scopeCandidates = scopedCandidates;
           bookingScopeExcludedChunks =
-            validatedChunks.length - scopedCandidates.length;
+            scopeChunks - candidateSearch.candidatePoolCount;
         } else {
           const neutralCandidates = scopedCandidates.filter(candidate => (
             bookingCandidateScopes.get(candidate.active.id)?.disposition
@@ -1497,18 +1544,10 @@ async function retrieveBackstageNotionRagContextUnsafe(
           scopeCandidates = neutralCandidates;
           bookingFallbackReason = 'no_matching_brand_context';
           bookingScopeExcludedChunks =
-            validatedChunks.length - neutralCandidates.length;
+            scopeChunks - candidateSearch.candidatePoolCount;
         }
       }
       bookingScopedCandidateChunks = scopeCandidates.length;
-    }
-    scopeChunks = scopeCandidates.length;
-    const queryEmbedding = await (dependencies.embedQuery ?? createEmbedding)(request.query);
-    if (
-      !isFiniteNonzeroVector(queryEmbedding)
-      || queryEmbedding.length !== embeddingDimensions
-    ) {
-      throw new BackstageNotionIndexUnavailableError();
     }
     const queryTokens = tokenize(request.query);
     const rankedWithDuplicates = scopeCandidates.map((candidate): RankedChunk => {
@@ -1539,11 +1578,10 @@ async function retrieveBackstageNotionRagContextUnsafe(
       ranked = deduplicated.candidates;
       bookingDuplicatesRemoved = deduplicated.duplicatesRemoved;
       bookingUniqueCandidateChunks = ranked.length;
-      scopeChunks = ranked.length;
     }
     selected = request.retrievalScope?.scopeKind === 'subtree'
       ? selectDiversifiedChunks(ranked)
-      : resolved
+      : request.retrievalScope?.scopeKind === 'page'
         ? ranked.slice(0, BACKSTAGE_NOTION_RAG_RETRIEVED_CHUNKS)
         : bookingScopePlan
           && bookingEffectiveScopeStrategy !== 'fallback_all'
@@ -1641,6 +1679,7 @@ async function retrieveBackstageNotionRagContextUnsafe(
   } catch {
     throw new BackstageNotionIndexUnavailableError();
   }
+  logBackstageNotionSnapshotStatus(snapshotStatus, active, latestSyncAttempt);
   try {
     logger.info('backstage.notion_rag.retrieved', {
       authorityIndex: 'monolith',
@@ -1701,6 +1740,12 @@ async function retrieveBackstageNotionRagContextUnsafe(
     universeId,
     snapshotId: active.snapshot.id,
     verifiedAt: active.verifiedAt,
+    snapshotStatus: snapshotStatus.status,
+    activeSnapshotVerifiedAt: active.verifiedAt,
+    activeSnapshotChunkCount: active.snapshot.chunkCount,
+    latestSyncOutcome: latestSyncAttempt?.outcome ?? null,
+    latestSyncFailurePhase: latestSyncAttempt?.failurePhase ?? null,
+    latestSyncFailureReason: latestSyncAttempt?.failureReason ?? null,
     prompt: promptContext.prompt,
     chunkCount: promptContext.chunkCount,
     truncated: omittedChunks > 0 || promptContext.truncated,
