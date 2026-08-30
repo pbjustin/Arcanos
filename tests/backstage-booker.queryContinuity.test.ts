@@ -264,6 +264,40 @@ describe('Backstage continuity query core', () => {
     expect(response.answer).toContain('The prior verified title holder remains recorded.');
   });
 
+  it('labels last-known-good continuity when the latest non-failed attempt has no failure metadata', () => {
+    const lastKnownGood = {
+      ...retrieval,
+      snapshotStatus: 'last_known_good' as const,
+      activeSnapshotVerifiedAt: new Date('2026-08-19T18:11:02.000Z'),
+      activeSnapshotChunkCount: 2_307,
+      latestSyncOutcome: 'unchanged' as const,
+      latestSyncFailurePhase: null,
+      latestSyncFailureReason: null,
+    };
+
+    const response = buildBackstageContinuityResponse(
+      request,
+      lastKnownGood,
+      'The prior verified title holder remains recorded.'
+    );
+    const policyWithUndefinedFailureMetadata = buildBackstageContinuityPolicyPrompt(
+      request,
+      {
+        ...lastKnownGood,
+        latestSyncFailurePhase: undefined,
+        latestSyncFailureReason: undefined,
+      },
+      false
+    );
+
+    expect(response.answer).toBe(
+      'Snapshot status: last_known_good; active snapshot verified at 2026-08-19T18:11:02.000Z; active snapshot chunks: 2307; latest sync outcome: unchanged; failure phase: none; failure reason: none; This is older verified continuity, not current workspace state. The prior verified title holder remains recorded.'
+    );
+    expect(policyWithUndefinedFailureMetadata).toContain(
+      'failure phase: none; failure reason: none'
+    );
+  });
+
   it('fails closed when last-known-good freshness metadata is incomplete', () => {
     const incomplete = {
       ...retrieval,
