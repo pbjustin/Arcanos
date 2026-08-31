@@ -49,7 +49,7 @@ export interface NativePrPreviewE2eContract {
     partitionFailureTelemetryProofVersion:
       'backstage-notion-partition-failure-telemetry/v1';
     queueWaitPolicyProofVersion:
-      'backstage-booker-queue-wait-policy/v1';
+      'backstage-booker-queue-wait-policy/v2';
     trinityReasoningPolicyProofVersion:
       'trinity-reasoning-provider-policy/v1';
     managedAsyncContinuationProofVersion:

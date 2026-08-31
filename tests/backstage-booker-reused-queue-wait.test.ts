@@ -28,10 +28,12 @@ import {
   buildGptIdempotencyScopeHash,
 } from '../src/shared/gpt/gptIdempotency.js';
 import {
+  BACKSTAGE_INITIAL_ACCEPTANCE_WAIT_MS,
   DEFAULT_ASYNC_GPT_WAIT_POLL_MS,
   DEFAULT_GPT_ASYNC_HEAVY_WAIT_FOR_RESULT_MS,
   MAX_ASYNC_GPT_WAIT_POLLS,
   MAX_ASYNC_GPT_WAIT_FOR_RESULT_MS,
+  resolveBackstageInitialAcceptanceWaitMs,
   resolveGptAsyncHeavyWaitForResultMs,
 } from '../src/shared/gpt/gptAsyncWaitPolicy.js';
 import {
@@ -167,12 +169,17 @@ afterAll(() => {
 });
 
 describe('Backstage Booker reused queue wait', () => {
-  it('uses the existing maximum bounded hybrid wait before returning HTTP 202', () => {
+  it('separates the short POST acceptance wait from the managed result polling window', () => {
     const policy = resolveBackstageExecutionBudgetPolicy({
       profile: 'queued_generation',
       action: 'generateBooking',
     });
 
+    expect(BACKSTAGE_INITIAL_ACCEPTANCE_WAIT_MS).toBe(1_000);
+    expect(resolveBackstageInitialAcceptanceWaitMs()).toBe(1_000);
+    expect(resolveBackstageInitialAcceptanceWaitMs(30_000)).toBe(1_000);
+    expect(resolveBackstageInitialAcceptanceWaitMs(750.9)).toBe(750);
+    expect(resolveBackstageInitialAcceptanceWaitMs(0)).toBe(0);
     expect(BACKSTAGE_RESULT_POLL_WAIT_MS).toBe(30_000);
     expect(BACKSTAGE_RESULT_POLL_WAIT_MS).toBe(MAX_ASYNC_GPT_WAIT_FOR_RESULT_MS);
     expect(resolveAsyncGptWaitForResultMs(BACKSTAGE_RESULT_POLL_WAIT_MS))
@@ -195,7 +202,7 @@ describe('Backstage Booker reused queue wait', () => {
     expect(resolveGptAsyncHeavyWaitForResultMs({
       protectedBackstageQueueRequired: true,
       configuredGenericWaitForResultMs: 1,
-    })).toBe(BACKSTAGE_RESULT_POLL_WAIT_MS);
+    })).toBe(BACKSTAGE_INITIAL_ACCEPTANCE_WAIT_MS);
     expect(resolveGptAsyncHeavyWaitForResultMs({
       protectedBackstageQueueRequired: false,
     })).toBe(DEFAULT_GPT_ASYNC_HEAVY_WAIT_FOR_RESULT_MS);
@@ -203,6 +210,10 @@ describe('Backstage Booker reused queue wait', () => {
       protectedBackstageQueueRequired: false,
       configuredGenericWaitForResultMs: '750.9',
     })).toBe(750);
+    expect(resolveGptAsyncHeavyWaitForResultMs({
+      protectedBackstageQueueRequired: false,
+      configuredGenericWaitForResultMs: MAX_ASYNC_GPT_WAIT_FOR_RESULT_MS,
+    })).toBe(MAX_ASYNC_GPT_WAIT_FOR_RESULT_MS);
     expect(resolveGptAsyncHeavyWaitForResultMs({
       protectedBackstageQueueRequired: false,
       configuredGenericWaitForResultMs: 'invalid',

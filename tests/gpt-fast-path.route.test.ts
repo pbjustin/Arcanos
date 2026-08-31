@@ -1,3 +1,4 @@
+import { request as httpRequest, type ClientRequest, type Server } from 'node:http';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
@@ -115,17 +116,81 @@ const { buildGptIdempotencyScopeHash } = await import(
 const { BACKSTAGE_BOOKER_ACCESS_PRINCIPAL_ACTOR_KEY } = await import(
   '../src/services/backstageBookerAccessAuth.js'
 );
+const { BACKSTAGE_INITIAL_ACCEPTANCE_WAIT_MS } = await import(
+  '../src/shared/gpt/gptAsyncWaitPolicy.js'
+);
 const { metricsRegistry, resetAppMetricsForTests } = await import(
   '../src/platform/observability/appMetrics.js'
 );
 
-function buildApp() {
+function buildApp(options: { onResponseClose?: () => void } = {}) {
   const app = express();
   app.use(express.json());
   app.use(requestContext);
+  app.use((_req, res, next) => {
+    if (options.onResponseClose) {
+      res.once('close', options.onResponseClose);
+    }
+    next();
+  });
   app.post('/gpt/:gptId', canonicalGptIdentifierBoundary);
   app.use('/gpt', gptRouter);
   return app;
+}
+
+async function startAbortableBookerPost(input: {
+  accessToken: string;
+  body: Record<string, unknown>;
+}): Promise<{
+  client: ClientRequest;
+  clientClosed: Promise<void>;
+  serverResponseClosed: Promise<void>;
+  server: Server;
+}> {
+  let observeServerResponseClose!: () => void;
+  const serverResponseClosed = new Promise<void>((resolve) => {
+    observeServerResponseClose = resolve;
+  });
+  const server = buildApp({
+    onResponseClose: observeServerResponseClose,
+  }).listen(0, '127.0.0.1');
+  await new Promise<void>((resolve, reject) => {
+    server.once('listening', resolve);
+    server.once('error', reject);
+  });
+  const address = server.address();
+  if (!address || typeof address === 'string') {
+    server.close();
+    throw new Error('Expected a TCP test listener.');
+  }
+
+  const serializedBody = JSON.stringify(input.body);
+  const client = httpRequest({
+    host: '127.0.0.1',
+    port: address.port,
+    method: 'POST',
+    path: '/gpt/backstage-booker',
+    headers: {
+      Authorization: `Bearer ${input.accessToken}`,
+      'Content-Type': 'application/json',
+      'Content-Length': Buffer.byteLength(serializedBody),
+    },
+  }, (response) => {
+    response.resume();
+  });
+  client.on('error', () => undefined);
+  const clientClosed = new Promise<void>((resolve) => {
+    client.once('close', resolve);
+  });
+  client.end(serializedBody);
+
+  return { client, clientClosed, serverResponseClosed, server };
+}
+
+async function closeTestServer(server: Server): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => error ? reject(error) : resolve());
+  });
 }
 
 function expectManagedBookerJobResponse(
@@ -1113,6 +1178,7 @@ describe('GPT fast-path route branching', () => {
       .send({
         action: 'generateBooking',
         executionMode: 'sync',
+        waitForResultMs: 30_000,
         payload: {
           universeId: 'my-universe-2k26',
           prompt: 'Review the current show state.',
@@ -2520,7 +2586,12 @@ describe('GPT fast-path route branching', () => {
     }
   });
 
-  it('queues authenticated heavy Booker generation exactly once without persisting plaintext or calling the web model', async () => {
+  it.each([
+    'generateBooking',
+    'generateBookingWithHRC',
+  ] as const)(
+    'queues authenticated heavy Booker %s exactly once and returns accepted promptly',
+    async (action) => {
     const accessToken = `backstage-${'q'.repeat(48)}`;
     const privatePrompt = 'private-production-booking-prompt-sentinel';
     const spoofedClientId = 'attacker-client-provenance-sentinel';
@@ -2528,9 +2599,7 @@ describe('GPT fast-path route branching', () => {
     process.env.ARCANOS_BACKSTAGE_BOOKER_ASYNC_GENERATION_ENABLED = 'true';
     process.env.ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY =
       Buffer.alloc(32, 0x54).toString('base64');
-    mockResolveGptRouting.mockResolvedValueOnce(
-      buildBackstageRouting('generateBooking')
-    );
+    mockResolveGptRouting.mockResolvedValueOnce(buildBackstageRouting(action));
     planAutonomousWorkerJobMock.mockResolvedValueOnce({
       status: 'pending',
       retryCount: 0,
@@ -2552,7 +2621,7 @@ describe('GPT fast-path route branching', () => {
       .post('/gpt/backstage-booker')
       .set('Authorization', `Bearer ${accessToken}`)
       .send({
-        action: 'generateBooking',
+        action,
         executionMode: 'sync',
         clientId: spoofedClientId,
         runtimeModel: 'pro',
@@ -2587,13 +2656,13 @@ describe('GPT fast-path route branching', () => {
     expect(createOptions.input).toMatchObject({
       gptId: 'backstage-booker',
       protectedBackstage: {
-        action: 'generateBooking',
+        action,
         universeId: 'my-universe-2k26',
       },
       requestId: expect.any(String),
       traceId: expect.any(String),
       correlationId: expect.any(String),
-      routeHint: 'generateBooking',
+      routeHint: action,
       requestPath: '/gpt/backstage-booker',
     });
     expect(createOptions.createOptions.correlationId).toBe(createOptions.input.traceId);
@@ -2623,18 +2692,24 @@ describe('GPT fast-path route branching', () => {
     expect(serializedInput.toLowerCase()).not.toContain('authorization');
     expect(createOptions.input).not.toHaveProperty('body');
     expect(createOptions.input).not.toHaveProperty('prompt');
-    expect(resolveAsyncGptWaitForResultMsMock).toHaveBeenCalledWith(30_000);
+    expect(resolveAsyncGptWaitForResultMsMock)
+      .toHaveBeenCalledWith(BACKSTAGE_INITIAL_ACCEPTANCE_WAIT_MS);
     expect(resolveAsyncGptPollIntervalMsMock).toHaveBeenCalledWith(undefined);
     expect(waitForQueuedGptJobCompletionMock).toHaveBeenCalledWith(
       'job-orchestrated',
       expect.objectContaining({
-        waitForResultMs: 30_000,
+        waitForResultMs: BACKSTAGE_INITIAL_ACCEPTANCE_WAIT_MS,
         pollIntervalMs: 250,
         signal: expect.any(AbortSignal),
       })
     );
+    expectManagedBookerJobResponse(response.body, 'job-orchestrated');
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(response.headers['x-response-bytes']).toBeTruthy();
+    expect(response.headers['x-response-truncated']).toBeUndefined();
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
-  });
+    }
+  );
 
   it('projects an authenticated Booker route-timeout continuation onto the managed bearer lane', async () => {
     const accessToken = `backstage-${'y'.repeat(48)}`;
@@ -2688,7 +2763,7 @@ describe('GPT fast-path route branching', () => {
       directReturn: {
         requested: true,
         timedOut: true,
-        waitForResultMs: 30_000,
+        waitForResultMs: BACKSTAGE_INITIAL_ACCEPTANCE_WAIT_MS,
         pollIntervalMs: 250,
         poll: managedPoll,
         result: managedPoll,
@@ -2700,8 +2775,145 @@ describe('GPT fast-path route branching', () => {
     expect(serializedResponse).not.toContain('jobReadToken');
     expect(serializedResponse).not.toContain('"stream"');
     expect(findOrCreateGptJobMock).toHaveBeenCalledTimes(1);
-    expect(waitForQueuedGptJobCompletionMock).toHaveBeenCalledTimes(1);
+    expect(waitForQueuedGptJobCompletionMock).toHaveBeenCalledWith(
+      jobId,
+      expect.objectContaining({
+        waitForResultMs: BACKSTAGE_INITIAL_ACCEPTANCE_WAIT_MS,
+      })
+    );
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it('does not create a protected Booker job when the client disconnects before planning finishes', async () => {
+    const accessToken = `backstage-${'z'.repeat(48)}`;
+    process.env.ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN = accessToken;
+    process.env.ARCANOS_BACKSTAGE_BOOKER_ASYNC_GENERATION_ENABLED = 'true';
+    process.env.ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY =
+      Buffer.alloc(32, 0x6a).toString('base64');
+    mockResolveGptRouting.mockResolvedValueOnce(
+      buildBackstageRouting('generateBooking')
+    );
+
+    let releasePlanning!: (value: unknown) => void;
+    const planningStarted = new Promise<void>((resolve) => {
+      planAutonomousWorkerJobMock.mockImplementationOnce(() => new Promise((resolvePlan) => {
+        releasePlanning = resolvePlan;
+        resolve();
+      }));
+    });
+    const connection = await startAbortableBookerPost({
+      accessToken,
+      body: {
+        action: 'generateBooking',
+        payload: {
+          universeId: 'my-universe-2k26',
+          prompt: 'Return exactly six matches for Raw.',
+        },
+      },
+    });
+
+    try {
+      await planningStarted;
+      connection.client.destroy();
+      await Promise.all([
+        connection.clientClosed,
+        connection.serverResponseClosed,
+      ]);
+      releasePlanning({
+        status: 'pending',
+        retryCount: 0,
+        maxRetries: 2,
+        priority: 85,
+        autonomyState: { planner: { reasons: [] } },
+        planningReasons: [],
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+      expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
+      expect(mockRouteGptRequest).not.toHaveBeenCalled();
+    } finally {
+      await closeTestServer(connection.server);
+    }
+  });
+
+  it('keeps an accepted protected Booker job after the client disconnects during the initial wait', async () => {
+    const accessToken = `backstage-${'r'.repeat(48)}`;
+    const jobId = '33333333-3333-4333-8333-333333333333';
+    let durableJob: unknown = null;
+    process.env.ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN = accessToken;
+    process.env.ARCANOS_BACKSTAGE_BOOKER_ASYNC_GENERATION_ENABLED = 'true';
+    process.env.ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY =
+      Buffer.alloc(32, 0x6b).toString('base64');
+    mockResolveGptRouting.mockResolvedValueOnce(
+      buildBackstageRouting('generateBookingWithHRC')
+    );
+    findOrCreateGptJobMock.mockImplementationOnce(async (options: { input: unknown }) => {
+      durableJob = options.input;
+      return {
+        job: {
+          id: jobId,
+          job_type: 'gpt',
+          status: 'pending',
+          input: options.input,
+        },
+        created: true,
+        deduped: false,
+        dedupeReason: 'new_job',
+      };
+    });
+    let observeAbort!: () => void;
+    const waitingForResult = new Promise<void>((resolve) => {
+      observeAbort = resolve;
+    });
+    waitForQueuedGptJobCompletionMock.mockImplementationOnce((
+      _id: string,
+      options: { signal?: AbortSignal },
+    ) => new Promise((_, reject) => {
+      options.signal?.addEventListener('abort', () => {
+        observeAbort();
+        reject(options.signal?.reason);
+      }, { once: true });
+    }));
+    const connection = await startAbortableBookerPost({
+      accessToken,
+      body: {
+        action: 'generateBookingWithHRC',
+        payload: {
+          universeId: 'my-universe-2k26',
+          prompt: 'Return exactly six HRC matches for Raw.',
+        },
+      },
+    });
+
+    try {
+      await new Promise<void>((resolve) => {
+        const poll = () => {
+          if (waitForQueuedGptJobCompletionMock.mock.calls.length === 1) {
+            resolve();
+            return;
+          }
+          setImmediate(poll);
+        };
+        poll();
+      });
+      connection.client.destroy();
+      await waitingForResult;
+      await connection.clientClosed;
+
+      expect(durableJob).not.toBeNull();
+      expect(findOrCreateGptJobMock).toHaveBeenCalledTimes(1);
+      expect(waitForQueuedGptJobCompletionMock).toHaveBeenCalledWith(
+        jobId,
+        expect.objectContaining({
+          waitForResultMs: BACKSTAGE_INITIAL_ACCEPTANCE_WAIT_MS,
+          signal: expect.any(AbortSignal),
+        })
+      );
+      expect(mockRouteGptRequest).not.toHaveBeenCalled();
+    } finally {
+      await closeTestServer(connection.server);
+    }
   });
 
   it('projects a completed authenticated Booker job onto the managed bearer continuation lane', async () => {
@@ -3081,7 +3293,7 @@ describe('GPT fast-path route branching', () => {
       2,
       'job-orchestrated',
       expect.objectContaining({
-        waitForResultMs: 30_000,
+        waitForResultMs: BACKSTAGE_INITIAL_ACCEPTANCE_WAIT_MS,
         pollIntervalMs: 250,
         signal: expect.any(AbortSignal),
       })

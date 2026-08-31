@@ -229,6 +229,7 @@ import {
   resolveGptRouteHardTimeoutMs,
 } from './shared/http/gptRouteTimeout.js';
 import {
+  BACKSTAGE_INITIAL_ACCEPTANCE_WAIT_MS,
   DEFAULT_ASYNC_GPT_WAIT_POLL_MS,
   MAX_ASYNC_GPT_WAIT_POLLS,
   resolveGptAsyncHeavyWaitForResultMs,
@@ -2488,16 +2489,17 @@ async function assertBackstageQueueWaitPolicyFixture(): Promise<
     MAX_ASYNC_GPT_WAIT_POLLS
   );
   if (
-    protectedBackstageWaitMs !== BACKSTAGE_RESULT_POLL_WAIT_MS
+    protectedBackstageWaitMs !== BACKSTAGE_INITIAL_ACCEPTANCE_WAIT_MS
     || genericHeavyWaitMs !== 500
-    || executionBudget.resultPollWaitMs !== protectedBackstageWaitMs
+    || executionBudget.resultPollWaitMs !== BACKSTAGE_RESULT_POLL_WAIT_MS
+    || executionBudget.resultPollWaitMs <= protectedBackstageWaitMs
     || executionBudget.resultPollWaitMs >= executionBudget.operationTimeoutMs
     || pollIntervalMs !== 250
     || invalidConfiguredPollIntervalMs !== pollIntervalMs
     || minimumPollIntervalMs !== 50
     || maximumPollIntervalMs !== 1_000
-    || protectedPollLimit !== 121
-    || minimumIntervalPollLimit !== MAX_ASYNC_GPT_WAIT_POLLS
+    || protectedPollLimit !== 5
+    || minimumIntervalPollLimit !== 21
     || genericPollLimit !== 3
   ) {
     throw new Error('PREVIEW_BACKSTAGE_QUEUE_WAIT_POLICY_INVALID');

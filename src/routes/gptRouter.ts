@@ -109,6 +109,7 @@ import {
 } from '@shared/backstage/backstageActionPolicy.js';
 import { resolveBackstageCompactOutputContract } from '@shared/backstage/backstageCompactOutputContract.js';
 import {
+  resolveBackstageInitialAcceptanceWaitMs,
   resolveGptAsyncHeavyWaitForResultMs,
 } from '@shared/gpt/gptAsyncWaitPolicy.js';
 import {
@@ -1587,6 +1588,8 @@ router.post(
     | null = null;
   let queuedAsyncWaitForResultMs: number | null = null;
   let queuedAsyncPollIntervalMs: number | null = null;
+  let backstageInitialAcceptanceStartedAtMs: number | null = null;
+  let backstageInitialAcceptanceAction: string | null = null;
   const timeoutMessage = `GPT route timeout after ${routeTimeoutMs}ms`;
   const clientAbortController = new AbortController();
   const abortForClosedClient = () => {
@@ -2953,6 +2956,11 @@ router.post(
               });
           }
         }
+        if (protectedBackstageQueueRequired) {
+          requestedAsyncWaitForResultMs = resolveBackstageInitialAcceptanceWaitMs(
+            requestedAsyncWaitForResultMs
+          );
+        }
         const asyncWaitForResultMs = clampAsyncWaitForRouteTimeout(
           resolveAsyncGptWaitForResultMs(requestedAsyncWaitForResultMs),
           routeTimeoutMs
@@ -3039,6 +3047,16 @@ router.post(
           : null;
 
         if (shouldUseJobBackedExecution) {
+          if (protectedBackstageJobExecution) {
+            backstageInitialAcceptanceStartedAtMs = Date.now();
+            backstageInitialAcceptanceAction = protectedBackstageGenerationAction;
+            requestLogger?.info?.('backstage.initial_acceptance.started', {
+              requestId,
+              traceId,
+              action: protectedBackstageGenerationAction,
+              acceptanceWaitMs: asyncWaitForResultMs,
+            });
+          }
           res.setHeader('Cache-Control', 'no-store');
           if (
             automaticBackstageGenerationWouldCrossQueueBoundary
@@ -3283,6 +3301,9 @@ router.post(
             let plannedJob!: Awaited<ReturnType<typeof planAutonomousWorkerJob>>;
             let createResult;
             try {
+              if (protectedBackstageJobExecution) {
+                getRequestAbortSignal()?.throwIfAborted();
+              }
               const plannedJobBase = await planAutonomousWorkerJob('gpt', queuedGptJobInput);
               const priorityAwarePlannedJob = priorityQueueActive
                 ? {
@@ -3324,6 +3345,9 @@ router.post(
                       ),
                   }
                 : priorityAwarePlannedJob;
+              if (protectedBackstageJobExecution) {
+                getRequestAbortSignal()?.throwIfAborted();
+              }
               createResult = await findOrCreateGptJob({
                 workerId: process.env.WORKER_ID || 'api',
                 input: queuedGptJobInput,
@@ -3476,6 +3500,33 @@ router.post(
                 idempotencyKey: idempotencyDescriptor.publicIdempotencyKey,
                 idempotencySource: idempotencyDescriptor.source
               });
+              if (protectedBackstageJobExecution) {
+                const postLatencyMs = backstageInitialAcceptanceStartedAtMs === null
+                  ? null
+                  : Math.max(0, Date.now() - backstageInitialAcceptanceStartedAtMs);
+                requestLogger?.info?.('backstage.initial_acceptance.accepted', {
+                  requestId,
+                  traceId,
+                  jobId: job.id,
+                  action: protectedBackstageGenerationAction,
+                  deduped: createResult.deduped,
+                  acceptanceWaitMs: asyncWaitForResultMs,
+                  postLatencyMs,
+                  jobStatus: job.status,
+                });
+                if (createResult.deduped) {
+                  requestLogger?.info?.('backstage.initial_acceptance.replay_deduped', {
+                    requestId,
+                    traceId,
+                    jobId: job.id,
+                    action: protectedBackstageGenerationAction,
+                    deduped: true,
+                    acceptanceWaitMs: asyncWaitForResultMs,
+                    postLatencyMs,
+                    jobStatus: job.status,
+                  });
+                }
+              }
               if (priorityDirectSlot) {
                 if (createResult.created) {
                   const reservedSlot = priorityDirectSlot;
@@ -3687,6 +3738,20 @@ router.post(
                   dedupeReason: createResult.dedupeReason,
                   ...summarizeGptJobTimings(waitedJob.job)
                 });
+                if (protectedBackstageJobExecution) {
+                  requestLogger?.info?.('backstage.initial_acceptance.completed_inline', {
+                    requestId,
+                    traceId,
+                    jobId: job.id,
+                    action: protectedBackstageGenerationAction,
+                    deduped: createResult.deduped,
+                    acceptanceWaitMs: asyncWaitForResultMs,
+                    postLatencyMs: backstageInitialAcceptanceStartedAtMs === null
+                      ? null
+                      : Math.max(0, Date.now() - backstageInitialAcceptanceStartedAtMs),
+                    jobStatus: waitedJob.job.status,
+                  });
+                }
                 if (createResult.deduped && createResult.dedupeReason === 'reused_completed_result') {
                   requestLogger?.info?.('gpt.job.reused_completed_result', {
                     endpoint: req.originalUrl,
@@ -4306,6 +4371,20 @@ router.post(
         abortKind: routeTimedOut ? 'route_timeout' : clientDisconnected ? 'client_disconnect' : 'request_abort',
         queuedJobId
       });
+      if (clientDisconnected && backstageInitialAcceptanceStartedAtMs !== null) {
+        req.logger?.warn?.('backstage.initial_acceptance.client_disconnected', {
+          requestId,
+          traceId,
+          jobId: queuedJobId,
+          action: backstageInitialAcceptanceAction,
+          acceptanceWaitMs: queuedAsyncWaitForResultMs,
+          postLatencyMs: Math.max(
+            0,
+            Date.now() - backstageInitialAcceptanceStartedAtMs
+          ),
+          jobStatus: queuedJobId === null ? 'not_accepted' : 'accepted',
+        });
+      }
       const responseOpen = !res.headersSent && !res.writableEnded && !res.destroyed;
       if (routeTimedOut && responseOpen && queuedPendingResponse) {
         const pendingResponse = queuedPendingResponse as ReturnType<typeof buildQueuedGptPendingResponse>;

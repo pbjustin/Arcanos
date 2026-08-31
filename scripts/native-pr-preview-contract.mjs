@@ -53,7 +53,7 @@ export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
     partitionFailureTelemetryProofVersion:
       'backstage-notion-partition-failure-telemetry/v1',
     queueWaitPolicyProofVersion:
-      'backstage-booker-queue-wait-policy/v1',
+      'backstage-booker-queue-wait-policy/v2',
     trinityReasoningPolicyProofVersion:
       'trinity-reasoning-provider-policy/v1',
     managedAsyncContinuationProofVersion:
