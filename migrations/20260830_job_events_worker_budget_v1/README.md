@@ -30,7 +30,25 @@ that continuous quiet interval, complete and verify the migration, then
 activate only compatible binaries. Every replica sharing a `stats_worker_id`
 must use the same hard limits.
 
+The repository-owned Railway rollout hold is
+`20260830-job-events-worker-budget-v1`. Keep it active before this change
+reaches `main`, throughout the drain, quiet window, migration, compatible
+worker-first/web-second activation, and any rollback decision. It blocks
+automatic promotion. The exact manual attestation
+`COORDINATED WRITERS DRAINED: 20260830-job-events-worker-budget-v1` does not
+perform or verify those steps and must be used only after separate
+target-specific authorization, a complete
+uninterrupted one-hour quiet window, and two successful ordered passes through
+all six migration phases. Return the marker to `none` only in a separately
+reviewed change after the installed schema and indexes are verified, every
+writer is running the compatible revision with identical group limits, no
+legacy path can restart, and the paired deployment is healthy. This introducing
+change must not remove its own hold.
+
 Rollback is destructive and is not routine recovery. Drain every reader and
 writer that knows this contract. Apply `rollback/01_drop_budget_indexes.sql`
 and then `rollback/02_drop_budget_evidence_contract.sql`. Rollback refuses any
-strict budget evidence or unexpected same-name object.
+strict budget evidence or unexpected same-name object. Phase 2 independently
+refuses to run while either phase-1 index name remains or any auxiliary object
+depends on an evidence column; rerunning it after the complete contract is
+already absent is a no-op.

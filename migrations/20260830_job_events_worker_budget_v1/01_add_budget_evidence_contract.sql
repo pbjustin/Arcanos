@@ -95,15 +95,20 @@ $$;
 
 DO $$
 DECLARE
+  constraint_oid OID;
   constraint_type "char";
   constraint_valid BOOLEAN;
   constraint_columns SMALLINT[];
-  constraint_definition TEXT;
-  expected_definition TEXT;
+  constraint_expression TEXT;
+  constraint_no_inherit BOOLEAN;
+  constraint_is_local BOOLEAN;
+  constraint_inheritance_count INTEGER;
+  constraint_parent OID;
+  constraint_enforced BOOLEAN;
+  expected_expression TEXT;
   event_type_attribute SMALLINT;
   stats_worker_attribute SMALLINT;
   generation_attribute SMALLINT;
-  compact_definition TEXT;
 BEGIN
   CREATE TEMP TABLE worker_budget_shape_expected_guard (
     event_type TEXT NOT NULL,
@@ -128,8 +133,8 @@ BEGIN
         )
       )
     );
-  SELECT pg_get_constraintdef(oid, false)
-  INTO expected_definition
+  SELECT pg_get_expr(conbin, conrelid, false)
+  INTO expected_expression
   FROM pg_constraint
   WHERE conrelid = 'pg_temp.worker_budget_shape_expected_guard'::regclass
     AND conname = 'worker_budget_shape_expected_guard_check';
@@ -144,13 +149,13 @@ BEGIN
   FROM pg_attribute
   WHERE attrelid = 'job_events'::regclass AND attname = 'claim_generation' AND NOT attisdropped;
 
-  SELECT contype, convalidated, conkey, pg_get_constraintdef(oid, false)
-  INTO constraint_type, constraint_valid, constraint_columns, constraint_definition
+  SELECT oid
+  INTO constraint_oid
   FROM pg_constraint
   WHERE conrelid = 'job_events'::regclass
     AND conname = 'job_events_worker_budget_shape_check';
 
-  IF constraint_definition IS NULL THEN
+  IF constraint_oid IS NULL THEN
     ALTER TABLE job_events
       ADD CONSTRAINT job_events_worker_budget_shape_check
       CHECK (
@@ -171,18 +176,47 @@ BEGIN
       ) NOT VALID;
   END IF;
 
-  SELECT contype, conkey, pg_get_constraintdef(oid, false)
-  INTO constraint_type, constraint_columns, constraint_definition
+  SELECT
+    oid,
+    contype,
+    convalidated,
+    conkey,
+    pg_get_expr(conbin, conrelid, false),
+    connoinherit,
+    conislocal,
+    coninhcount,
+    conparentid,
+    COALESCE((to_jsonb(pg_constraint) ->> 'conenforced')::BOOLEAN, TRUE)
+  INTO
+    constraint_oid,
+    constraint_type,
+    constraint_valid,
+    constraint_columns,
+    constraint_expression,
+    constraint_no_inherit,
+    constraint_is_local,
+    constraint_inheritance_count,
+    constraint_parent,
+    constraint_enforced
   FROM pg_constraint
   WHERE conrelid = 'job_events'::regclass
     AND conname = 'job_events_worker_budget_shape_check';
-  IF constraint_type IS DISTINCT FROM 'c'::"char"
+
+  -- Phase 01 accepts both exact lifecycle states. Phase 02 owns validation.
+  IF constraint_oid IS NULL
+    OR constraint_type IS DISTINCT FROM 'c'::"char"
+    OR constraint_valid IS NULL
     OR constraint_columns IS DISTINCT FROM ARRAY[
       event_type_attribute,
       stats_worker_attribute,
       generation_attribute
     ]::SMALLINT[]
-    OR constraint_definition IS DISTINCT FROM expected_definition THEN
+    OR constraint_expression IS DISTINCT FROM expected_expression
+    OR constraint_no_inherit IS DISTINCT FROM FALSE
+    OR constraint_is_local IS DISTINCT FROM TRUE
+    OR constraint_inheritance_count IS DISTINCT FROM 0
+    OR constraint_parent IS DISTINCT FROM 0
+    OR constraint_enforced IS DISTINCT FROM TRUE THEN
     RAISE EXCEPTION
       'job_events_worker_budget_shape_check has an unexpected definition'
       USING ERRCODE = '42804';

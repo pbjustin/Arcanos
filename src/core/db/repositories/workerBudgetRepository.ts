@@ -1,14 +1,22 @@
 import { randomUUID } from 'node:crypto';
 
-import type { PoolClient } from 'pg';
+import type { PoolClient, QueryResult } from 'pg';
 
 import { getPool } from '@core/db/client.js';
 import { safeJSONStringify } from '@shared/jsonHelpers.js';
 
 export const WORKER_BUDGET_WINDOW_MS = 60 * 60 * 1_000;
+export const WORKER_BUDGET_LOCK_TIMEOUT_MS = 1_000;
+export const WORKER_BUDGET_STATEMENT_TIMEOUT_MS = 5_000;
+export const WORKER_BUDGET_TRANSACTION_TIMEOUT_MS = 10_000;
 /** Reserved job_events subject for worker-owned provider work outside a queued job. */
 export const WORKER_BUDGET_NON_JOB_SUBJECT_ID = '00000000-0000-0000-0000-000000000000';
 
+/**
+ * Persisted event names are a compatibility contract. In particular,
+ * `worker.budget.ai_provider_attempt` records conservative admitted provider
+ * capacity; it is not proof that native transport dispatch began.
+ */
 export type WorkerBudgetKind = 'job_claim' | 'ai_provider_attempt';
 
 export interface WorkerBudgetPolicy {
@@ -53,6 +61,11 @@ interface WorkerBudgetWindowRow {
   recovery_reservation_at: Date | string | null;
 }
 
+const WORKER_BUDGET_TRANSACTION_BOUNDS_SQL = `SELECT
+  set_config('lock_timeout', $1::text, TRUE),
+  set_config('statement_timeout', $2::text, TRUE),
+  set_config('transaction_timeout', $3::text, TRUE)`;
+
 export interface WorkerBudgetInspection {
   kind: WorkerBudgetKind;
   policy: WorkerBudgetPolicy;
@@ -89,6 +102,22 @@ function readControlledBudgetClock(now: Date | undefined): string | null {
     throw new Error('Controlled worker budget clocks are available only during tests.');
   }
   return parseTimestamp(now, 'Controlled worker budget clock').toISOString();
+}
+
+/** Apply fail-closed PostgreSQL 18 bounds to the caller's current transaction. */
+export async function configureWorkerBudgetTransactionBoundsWithClient(
+  client: Pick<PoolClient, 'query'>,
+  transactionTimeoutMs = WORKER_BUDGET_TRANSACTION_TIMEOUT_MS
+): Promise<void> {
+  const normalizedTransactionTimeoutMs = normalizeLimit(transactionTimeoutMs);
+  await client.query(
+    WORKER_BUDGET_TRANSACTION_BOUNDS_SQL,
+    [
+      WORKER_BUDGET_LOCK_TIMEOUT_MS,
+      WORKER_BUDGET_STATEMENT_TIMEOUT_MS,
+      normalizedTransactionTimeoutMs
+    ]
+  );
 }
 
 function buildAdmission(input: {
@@ -310,36 +339,55 @@ export async function getWorkerBudgetWindowUsage(
   if (!pool) {
     throw new Error('Database pool unavailable for worker budget diagnostics.');
   }
-  const result = await pool.query(
-    `WITH budget_clock AS (
-       SELECT COALESCE($2::timestamptz, clock_timestamp()) AS evaluated_at
-     )
-     SELECT
-       budget_clock.evaluated_at,
-       COUNT(*) FILTER (
-         WHERE event.event_type = 'worker.budget.job_claim'
-       )::int AS job_claim_count,
-       COUNT(*) FILTER (
-         WHERE event.event_type = 'worker.budget.ai_provider_attempt'
-       )::int AS ai_provider_attempt_count,
-       ARRAY_AGG(event.occurred_at ORDER BY event.occurred_at ASC, event.id ASC) FILTER (
-         WHERE event.event_type = 'worker.budget.job_claim'
-       ) AS job_claim_times,
-       ARRAY_AGG(event.occurred_at ORDER BY event.occurred_at ASC, event.id ASC) FILTER (
-         WHERE event.event_type = 'worker.budget.ai_provider_attempt'
-       ) AS ai_provider_attempt_times
-     FROM budget_clock
-     LEFT JOIN job_events AS event
-       ON event.stats_worker_id = $1::text
-      AND event.event_type IN (
-        'worker.budget.job_claim',
-        'worker.budget.ai_provider_attempt'
-      )
-      AND event.occurred_at > budget_clock.evaluated_at - ($3::bigint * INTERVAL '1 millisecond')
-      AND event.occurred_at <= budget_clock.evaluated_at
-     GROUP BY budget_clock.evaluated_at`,
-    [statsWorkerId, readControlledBudgetClock(options.now), WORKER_BUDGET_WINDOW_MS]
-  );
+  const client = await pool.connect();
+  let result: QueryResult;
+  let releaseError: Error | undefined;
+  try {
+    await client.query('BEGIN ISOLATION LEVEL READ COMMITTED');
+    await configureWorkerBudgetTransactionBoundsWithClient(client);
+    result = await client.query(
+      `WITH budget_clock AS (
+         SELECT COALESCE($2::timestamptz, clock_timestamp()) AS evaluated_at
+       )
+       SELECT
+         budget_clock.evaluated_at,
+         COUNT(*) FILTER (
+           WHERE event.event_type = 'worker.budget.job_claim'
+         )::int AS job_claim_count,
+         COUNT(*) FILTER (
+           WHERE event.event_type = 'worker.budget.ai_provider_attempt'
+         )::int AS ai_provider_attempt_count,
+         ARRAY_AGG(event.occurred_at ORDER BY event.occurred_at ASC, event.id ASC) FILTER (
+           WHERE event.event_type = 'worker.budget.job_claim'
+         ) AS job_claim_times,
+         ARRAY_AGG(event.occurred_at ORDER BY event.occurred_at ASC, event.id ASC) FILTER (
+           WHERE event.event_type = 'worker.budget.ai_provider_attempt'
+         ) AS ai_provider_attempt_times
+       FROM budget_clock
+       LEFT JOIN job_events AS event
+         ON event.stats_worker_id = $1::text
+        AND event.event_type IN (
+          'worker.budget.job_claim',
+          'worker.budget.ai_provider_attempt'
+        )
+        AND event.occurred_at > budget_clock.evaluated_at - ($3::bigint * INTERVAL '1 millisecond')
+        AND event.occurred_at <= budget_clock.evaluated_at
+       GROUP BY budget_clock.evaluated_at`,
+      [statsWorkerId, readControlledBudgetClock(options.now), WORKER_BUDGET_WINDOW_MS]
+    );
+    await client.query('COMMIT');
+  } catch (error) {
+    try {
+      await client.query('ROLLBACK');
+    } catch (rollbackError) {
+      releaseError = rollbackError instanceof Error
+        ? rollbackError
+        : new Error('Worker budget diagnostics rollback failed.');
+    }
+    throw error;
+  } finally {
+    client.release(releaseError);
+  }
   const row = result.rows[0] as {
     evaluated_at?: Date | string;
     job_claim_count?: number | string;
@@ -387,8 +435,9 @@ export async function getWorkerBudgetWindowUsage(
 }
 
 /**
- * Atomically admit one actual worker-originated provider transport attempt.
- * An admitted attempt consumes budget before dispatch even if the provider later fails.
+ * Atomically reserve conservative capacity for one worker-originated provider
+ * transport handoff. Once the database commit succeeds, that unit remains
+ * charged if cancellation wins before native dispatch or the provider later fails.
  */
 export async function reserveWorkerAiProviderAttempt(
   input: WorkerBudgetReservationInput
@@ -403,8 +452,10 @@ export async function reserveWorkerAiProviderAttempt(
   const normalizedStatsWorkerId = normalizeRequiredString(input.statsWorkerId, 'statsWorkerId');
   const normalizedWorkerId = normalizeRequiredString(input.workerId, 'workerId');
   const normalizedOperation = input.operation?.trim() || null;
+  let releaseError: Error | undefined;
   try {
     await client.query('BEGIN ISOLATION LEVEL READ COMMITTED');
+    await configureWorkerBudgetTransactionBoundsWithClient(client);
     await lockWorkerBudgetWithClient(client, 'ai_provider_attempt', normalizedStatsWorkerId);
     const admission = await inspectWorkerBudgetWithClient(
       client,
@@ -483,11 +534,14 @@ export async function reserveWorkerAiProviderAttempt(
   } catch (error) {
     try {
       await client.query('ROLLBACK');
-    } catch {
+    } catch (rollbackError) {
       // Preserve the owner-seam failure that caused the transaction to abort.
+      releaseError = rollbackError instanceof Error
+        ? rollbackError
+        : new Error('Worker AI-call budget rollback failed.');
     }
     throw error;
   } finally {
-    client.release();
+    client.release(releaseError);
   }
 }

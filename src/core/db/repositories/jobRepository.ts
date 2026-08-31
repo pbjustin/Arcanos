@@ -45,14 +45,26 @@ import {
   type JobEventType,
 } from './jobEventRepository.js';
 import {
+  configureWorkerBudgetTransactionBoundsWithClient,
   inspectWorkerBudgetsWithClient,
   lockWorkerBudgetWithClient,
   recordWorkerBudgetReservationWithClient,
+  WORKER_BUDGET_TRANSACTION_TIMEOUT_MS,
   type WorkerBudgetAdmission,
 } from './workerBudgetRepository.js';
 
 const LEGACY_QUEUED_GPT_CANCELLATION_MESSAGE =
   'Legacy queued GPT cancellation requested during compatibility drain.';
+
+function resolveWorkerBudgetClaimTransactionTimeoutMs(leaseMs: number): number {
+  return Math.max(
+    1,
+    Math.min(
+      WORKER_BUDGET_TRANSACTION_TIMEOUT_MS,
+      Math.floor(leaseMs / 2)
+    )
+  );
+}
 
 interface JobEventSource {
   id: string;
@@ -2278,9 +2290,14 @@ export async function claimNextPendingJobWithAdmission(
     let claimedJob: JobData | null = null;
     let budgetAdmission: WorkerBudgetAdmission | null = null;
     let claimAt: string | null = null;
+    let releaseError: Error | undefined;
 
     try {
       await client.query('BEGIN ISOLATION LEVEL READ COMMITTED');
+      await configureWorkerBudgetTransactionBoundsWithClient(
+        client,
+        resolveWorkerBudgetClaimTransactionTimeoutMs(leaseMs)
+      );
 
       if (options.maxJobsPerHour !== undefined) {
         await lockWorkerBudgetWithClient(client, 'job_claim', statsWorkerId);
@@ -2376,13 +2393,16 @@ export async function claimNextPendingJobWithAdmission(
     } catch (error: unknown) {
       try {
         await client.query('ROLLBACK');
-      } catch {
+      } catch (rollbackError) {
         // Preserve the owner-seam failure that aborted admission or claim.
+        releaseError = rollbackError instanceof Error
+          ? rollbackError
+          : new Error('Job claim rollback failed.');
       }
       logJobRepositoryError('claim_pending_job', error);
       throw error;
     } finally {
-      client.release();
+      client.release(releaseError);
     }
 
     if (priorityQueueEnabled) {

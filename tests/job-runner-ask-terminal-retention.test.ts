@@ -90,9 +90,12 @@ jest.unstable_mockModule('@core/scheduler/postgresAdapter.js', () => ({
 jest.unstable_mockModule('@core/adapters/openai.adapter.js', () => ({
   assertValidResponsesCreateParams: jest.fn(),
   classifyWorkerAiBudgetError: jest.fn(() => null),
+  createOpenAIAdapter: getOpenAIAdapterMock,
   normalizeWorkerAiBudgetError: jest.fn((error: unknown) => error),
   normalizeResponsesCreateParams: jest.fn((value: unknown) => value),
-  getOpenAIAdapter: getOpenAIAdapterMock
+  getOpenAIAdapter: getOpenAIAdapterMock,
+  isOpenAIAdapterInitialized: jest.fn(() => true),
+  resetOpenAIAdapter: jest.fn()
 }));
 
 jest.unstable_mockModule('@services/openai/serviceHealth.js', () => ({
@@ -153,6 +156,7 @@ jest.unstable_mockModule('@shared/sleep.js', () => ({
 const {
   classifyWorkerProviderRuntimeFailure,
   createWorkerProviderDependencyState,
+  recoverSharedWorkerProviderDependency,
   runWorkerConsumerSlot,
 } = await import('../src/workers/jobRunner.js');
 const { getAiExecutionContext } = await import(
@@ -242,6 +246,72 @@ describe('worker provider dependency classification', () => {
     })).toBeNull();
   });
 
+  it('preserves the authoritative retry time when a recovery probe fails normally', async () => {
+    const priorRuntime = { ...providerRuntime };
+    const retryAt = '2026-09-01T00:05:00.000Z';
+    Object.assign(providerRuntime as unknown as Record<string, unknown>, {
+      nextRetryAt: null,
+      lastFailureAt: '2026-09-01T00:00:00.000Z',
+      lastFailureCategory: 'network',
+      consecutiveFailures: 1
+    });
+    const sharedProviderState = createWorkerProviderDependencyState();
+    sharedProviderState.unavailable = true;
+    sharedProviderState.reason = 'openai_provider_unavailable:network';
+    sharedProviderState.retryAt = null;
+    sharedProviderState.revision = 7;
+    const onOperationalFailure = jest.fn(() => {
+      sharedProviderState.revision += 1;
+      sharedProviderState.retryAt = null;
+    });
+    probeOpenAIProviderHealthMock.mockImplementationOnce(async () => {
+      getAiExecutionContext()?.workerBudget?.onOperationalFailure?.(
+        new APIConnectionError({ cause: new Error('socket closed') })
+      );
+      Object.assign(providerRuntime as unknown as Record<string, unknown>, {
+        nextRetryAt: retryAt,
+        lastFailureAt: '2026-09-01T00:01:00.000Z',
+        lastFailureCategory: 'network',
+        consecutiveFailures: 2
+      });
+      return {
+        ok: false,
+        runtime: { ...providerRuntime }
+      };
+    });
+
+    try {
+      await expect(recoverSharedWorkerProviderDependency({
+        state: sharedProviderState,
+        workerId: 'worker-test-slot-recovery',
+        currentConfigVersion: null,
+        workerBudget: {
+          statsWorkerId: 'worker-test-stats',
+          workerId: 'worker-test-slot-recovery',
+          maxCallsPerHour: 2,
+          onOperationalFailure
+        }
+      })).resolves.toMatchObject({
+        client: null,
+        pausedUntil: retryAt
+      });
+
+      expect(onOperationalFailure).not.toHaveBeenCalled();
+      expect(sharedProviderState).toMatchObject({
+        unavailable: true,
+        reason: 'openai_provider_unavailable:network',
+        retryAt,
+        revision: 7,
+        recoveryPromise: null
+      });
+    } finally {
+      Object.assign(
+        providerRuntime as unknown as Record<string, unknown>,
+        priorRuntime
+      );
+    }
+  });
+
   it('gives a shared provider dependency latch precedence over RSS and budget evaluation', async () => {
     probeOpenAIProviderHealthMock.mockClear();
     probeOpenAIProviderHealthMock.mockResolvedValueOnce({
@@ -270,6 +340,11 @@ describe('worker provider dependency classification', () => {
       })),
       setClaimAcceptanceState: jest.fn(async () => undefined),
       recordProviderCircuitBreakerReset: jest.fn(async () => undefined),
+      getWorkerAiCallBudget: jest.fn(() => ({
+        statsWorkerId: 'worker-test-stats',
+        workerId: 'worker-test-slot-2',
+        maxCallsPerHour: 2
+      })),
       flushSnapshotPipeline: jest.fn(async () => undefined)
     };
 
@@ -330,6 +405,11 @@ describe('worker provider dependency classification', () => {
       setClaimAcceptanceState: jest.fn(async () => undefined),
       recordProviderCircuitBreakerReset: jest.fn(async () => undefined),
       recordClaimResult: jest.fn(),
+      getWorkerAiCallBudget: jest.fn(() => ({
+        statsWorkerId: 'worker-test-stats',
+        workerId: 'worker-test-slot-1',
+        maxCallsPerHour: 2
+      })),
       flushSnapshotPipeline: jest.fn(async () => undefined)
     };
 
@@ -365,7 +445,7 @@ describe('worker provider dependency classification', () => {
 });
 
 describe('job runner terminal persistence', () => {
-  it('executes partition synchronization through its dedicated provider-free lane and fenced terminal writer', async () => {
+  it('executes final admitted partition synchronization without waiting for budget snapshot persistence', async () => {
     jest.useFakeTimers();
     jest.setSystemTime(new Date('2026-08-24T12:00:00.000Z'));
     process.env.QUEUE_BACKSTAGE_NOTION_PARTITION_SYNC_TERMINAL_RETENTION_MS =
@@ -492,7 +572,10 @@ describe('job runner terminal persistence', () => {
       getWorkerAiCallBudget: jest.fn(() => ({
         statsWorkerId: 'worker-test', workerId: 'worker-test-slot-1', maxCallsPerHour: 120
       })),
-      setClaimAcceptanceState: jest.fn(async () => undefined),
+      setClaimAcceptanceState: jest.fn(() => {
+        claimCapacityEvents.push('snapshot-started');
+        return new Promise<void>(() => {});
+      }),
       recordClaimAttempt: jest.fn(),
       getClaimOptions: jest.fn(() => ({
         workerId: 'worker-test-slot-1',
@@ -500,7 +583,10 @@ describe('job runner terminal persistence', () => {
       })),
       recordClaimResult: jest.fn(),
       markJobStarted: jest.fn(async () => undefined),
-      recordHeartbeat: jest.fn(async () => claimedJob),
+      recordHeartbeat: jest.fn(async () => {
+        claimCapacityEvents.push('lease-heartbeat');
+        return claimedJob;
+      }),
       recordProviderCircuitBreakerReset: jest.fn(async () => undefined),
       handleJobFailure: jest.fn(async () => ({ action: 'failed' as const })),
       markJobLeaseLost: jest.fn(async () => undefined),
@@ -534,6 +620,8 @@ describe('job runner terminal persistence', () => {
       expect(partitionSyncExecutor).toHaveBeenCalledTimes(1);
       expect(claimCapacityEvents).toEqual([
         'readiness-paused',
+        'snapshot-started',
+        'lease-heartbeat',
         'job-executed'
       ]);
       expect(autonomyService.setClaimAcceptanceState).toHaveBeenCalledWith(

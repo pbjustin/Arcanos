@@ -8,9 +8,13 @@ import {
   renderGitHubOutputs,
 } from '../scripts/railway-coordinated-rollout-guard.mjs';
 
-const ACTIVE_HOLD = '20260727-dag-snapshot-generation-v1';
+const ACTIVE_HOLD = '20260830-job-events-worker-budget-v1';
 const workflowText = readFileSync(
   '.github/workflows/railway-auto-deploy.yml',
+  'utf8',
+).replaceAll('\r\n', '\n');
+const guardText = readFileSync(
+  'scripts/railway-coordinated-rollout-guard.mjs',
   'utf8',
 ).replaceAll('\r\n', '\n');
 const workflow = yaml.load(workflowText);
@@ -56,7 +60,7 @@ function namedStep(jobName, stepName) {
   return value ?? {};
 }
 
-describe('Railway coordinated DAG writer rollout policy', () => {
+describe('Railway coordinated writer rollout policy', () => {
   it('fails closed when the repository hold marker is absent or malformed', () => {
     for (const holdId of [undefined, '', ' none', 'NONE', 'bad hold']) {
       expect(() =>
@@ -64,7 +68,7 @@ describe('Railway coordinated DAG writer rollout policy', () => {
           eventName: 'workflow_run',
           holdId,
         }),
-      ).toThrow(/COORDINATED_DAG_WRITER_ROLLOUT_HOLD_(?:REQUIRED|INVALID)/u);
+      ).toThrow(/COORDINATED_WRITER_ROLLOUT_HOLD_(?:REQUIRED|INVALID)/u);
     }
   });
 
@@ -82,11 +86,15 @@ describe('Railway coordinated DAG writer rollout policy', () => {
     });
   });
 
-  it('skips automatic promotion while the coordinated writer hold is active', () => {
+  it('keeps automatic promotion blocked by the exact worker-budget hold until reviewed removal', () => {
+    const repositoryHold =
+      workflow.env?.ARCANOS_COORDINATED_WRITER_ROLLOUT_HOLD;
+    expect(repositoryHold).toBe(ACTIVE_HOLD);
+    expect(repositoryHold).not.toBe(INACTIVE_ROLLOUT_HOLD);
     expect(
       evaluateCoordinatedRolloutGuard({
         eventName: 'workflow_run',
-        holdId: ACTIVE_HOLD,
+        holdId: repositoryHold,
       }),
     ).toEqual({
       shouldDeploy: false,
@@ -101,10 +109,10 @@ describe('Railway coordinated DAG writer rollout policy', () => {
 
     for (const manualConfirmation of [
       '',
-      'DAG WRITERS DRAINED',
+      'COORDINATED WRITERS DRAINED',
       expectedConfirmation.toLowerCase(),
       `${expectedConfirmation} `,
-      `DAG WRITERS DRAINED: another-hold`,
+      `COORDINATED WRITERS DRAINED: another-hold`,
     ]) {
       expect(() =>
         evaluateCoordinatedRolloutGuard({
@@ -112,7 +120,7 @@ describe('Railway coordinated DAG writer rollout policy', () => {
           holdId: ACTIVE_HOLD,
           manualConfirmation,
         }),
-      ).toThrow('COORDINATED_DAG_WRITER_ROLLOUT_CONFIRMATION_REQUIRED');
+      ).toThrow('COORDINATED_WRITER_ROLLOUT_CONFIRMATION_REQUIRED');
     }
 
     expect(
@@ -147,12 +155,12 @@ describe('Railway coordinated DAG writer rollout policy', () => {
         '',
       ].join('\n'),
     );
-    expect(output).not.toContain('DAG WRITERS DRAINED');
+    expect(output).not.toContain('COORDINATED WRITERS DRAINED');
   });
 
   it('wires the repository hold through a preflight job before deploy concurrency', () => {
-    expect(workflow.env?.ARCANOS_COORDINATED_DAG_WRITER_ROLLOUT_HOLD).toBe(
-      INACTIVE_ROLLOUT_HOLD,
+    expect(workflow.env?.ARCANOS_COORDINATED_WRITER_ROLLOUT_HOLD).toBe(
+      ACTIVE_HOLD,
     );
     expect(Object.keys(workflow.jobs ?? {})).toEqual([
       'rollout-policy',
@@ -163,7 +171,7 @@ describe('Railway coordinated DAG writer rollout policy', () => {
     const deployJob = job('deploy-production');
     const guardStep = namedStep(
       'rollout-policy',
-      'Enforce coordinated DAG writer rollout policy',
+      'Enforce coordinated writer rollout policy',
     );
 
     expect(policyJob.concurrency).toBeUndefined();
@@ -176,9 +184,14 @@ describe('Railway coordinated DAG writer rollout policy', () => {
     );
     expect(guardStep.env).toMatchObject({
       ARCANOS_DEPLOY_EVENT_NAME: '${{ github.event_name }}',
-      ARCANOS_COORDINATED_DAG_WRITER_ROLLOUT_HOLD:
-        '${{ env.ARCANOS_COORDINATED_DAG_WRITER_ROLLOUT_HOLD }}',
+      ARCANOS_COORDINATED_WRITER_ROLLOUT_HOLD:
+        '${{ env.ARCANOS_COORDINATED_WRITER_ROLLOUT_HOLD }}',
+      ARCANOS_COORDINATED_WRITER_ROLLOUT_CONFIRMATION:
+        "${{ github.event.inputs.coordinated_writer_rollout_confirmation || '' }}",
     });
+    expect(`${workflowText}\n${guardText}`).not.toMatch(
+      /ARCANOS_COORDINATED_DAG_WRITER_ROLLOUT_HOLD|ARCANOS_DAG_WRITER_ROLLOUT_CONFIRMATION|dag_writer_rollout_confirmation|DAG WRITERS DRAINED|COORDINATED_DAG_WRITER_ROLLOUT/u,
+    );
 
     expect(deployJob.needs).toBe('rollout-policy');
     expect(deployJob.if).toContain(
@@ -326,7 +339,7 @@ describe('Railway coordinated DAG writer rollout policy', () => {
   it('keeps the conditional manual input and every Railway action behind the job gate', () => {
     const dispatchInput =
       workflow.on?.workflow_dispatch?.inputs
-        ?.dag_writer_rollout_confirmation;
+        ?.coordinated_writer_rollout_confirmation;
     expect(dispatchInput?.required).toBe(false);
     expect(dispatchInput?.description).toContain(
       buildRolloutConfirmation(ACTIVE_HOLD),

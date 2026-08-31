@@ -35,6 +35,94 @@ function readFilteredAggregate(sql: string, alias: string): string {
   return normalizeWhitespace(sql.slice(aggregateStart, aliasStart + aliasMarker.length));
 }
 
+describe('job worker hard-budget evidence migration contract', () => {
+  it('compares the exact check expression independently from its validation lifecycle', () => {
+    const migrationRoot = 'migrations/20260830_job_events_worker_budget_v1';
+    const addContract = readRepositoryFile(`${migrationRoot}/01_add_budget_evidence_contract.sql`);
+    const validateContract = readRepositoryFile(
+      `${migrationRoot}/02_validate_budget_evidence_contract.sql`
+    );
+    const rollbackContract = readRepositoryFile(
+      `${migrationRoot}/rollback/02_drop_budget_evidence_contract.sql`
+    );
+    const runtimeSchema = readRepositoryFile('src/core/db/schema.ts');
+    const runtimeBudgetContract = readDelimitedSection(
+      runtimeSchema,
+      'CREATE TEMP TABLE worker_budget_runtime_shape_guard',
+      '// DAG verification snapshot storage'
+    );
+
+    for (const contract of [addContract, runtimeBudgetContract, rollbackContract]) {
+      expect(contract).toContain('SELECT pg_get_expr(conbin, conrelid, false)');
+      expect(contract).toContain('pg_get_expr(conbin, conrelid, false),');
+      expect(contract).not.toContain('pg_get_constraintdef');
+    }
+
+    for (const contract of [addContract, runtimeBudgetContract]) {
+      expect(contract).toContain('ADD CONSTRAINT job_events_worker_budget_shape_check');
+      expect(contract).toContain(') NOT VALID;');
+    }
+
+    expect(addContract).not.toContain(
+      'VALIDATE CONSTRAINT job_events_worker_budget_shape_check'
+    );
+    expect(validateContract).toContain(
+      'VALIDATE CONSTRAINT job_events_worker_budget_shape_check'
+    );
+    expect(runtimeBudgetContract).toContain(
+      'VALIDATE CONSTRAINT job_events_worker_budget_shape_check'
+    );
+  });
+
+  it('requires guarded index rollback and rejects every auxiliary evidence-column dependency', () => {
+    const rollbackContract = readRepositoryFile(
+      'migrations/20260830_job_events_worker_budget_v1/rollback/02_drop_budget_evidence_contract.sql'
+    );
+    const normalizedRollbackContract = normalizeWhitespace(rollbackContract);
+    const phaseOrderGuard = rollbackContract.indexOf('candidate.relname IN (');
+    const shapeGuard = rollbackContract.indexOf(
+      'CREATE TEMP TABLE worker_budget_rollback_shape_guard'
+    );
+    const dependencyGuard = rollbackContract.indexOf('FROM pg_depend AS dependency');
+    const destructiveAlter = rollbackContract.lastIndexOf('ALTER TABLE job_events');
+
+    expect(phaseOrderGuard).toBeGreaterThanOrEqual(0);
+    expect(phaseOrderGuard).toBeLessThan(shapeGuard);
+    expect(rollbackContract).toContain('idx_job_events_worker_budget_group_window');
+    expect(rollbackContract).toContain('idx_job_events_worker_budget_claim_generation');
+    expect(rollbackContract).toContain(
+      "table_class.relnamespace = candidate.relnamespace"
+    );
+    expect(rollbackContract).toContain(
+      'worker budget rollback phase 2 refused because phase 1 index names remain'
+    );
+    expect(rollbackContract).toContain(
+      'INTO operation_attribute, operation_type, operation_modifier, operation_not_null'
+    );
+    expect(dependencyGuard).toBeGreaterThan(shapeGuard);
+    expect(dependencyGuard).toBeLessThan(destructiveAlter);
+    expect(rollbackContract).toContain(
+      "dependency.refclassid = 'pg_class'::regclass"
+    );
+    expect(rollbackContract).toContain(
+      "dependency.refobjid = 'job_events'::regclass"
+    );
+    expect(normalizedRollbackContract).toContain(
+      'dependency.refobjsubid IN ( stats_attribute, generation_attribute, operation_attribute )'
+    );
+    expect(rollbackContract).toContain(
+      "dependency.classid = 'pg_constraint'::regclass"
+    );
+    expect(rollbackContract).toContain('dependency.objid = constraint_oid');
+    expect(rollbackContract).toContain('dependency.objsubid = 0');
+    expect(rollbackContract).toContain(
+      'worker budget evidence columns have unexpected dependent objects; rollback refused'
+    );
+    expect(normalizedRollbackContract).toContain('AND constraint_oid IS NULL THEN RETURN;');
+    expect(rollbackContract).not.toMatch(/\bCASCADE\b/u);
+  });
+});
+
 describe('job worker stats identity migration contract', () => {
   it('keeps the nullable column in runtime schema without a blocking startup index build', () => {
     const runtimeSchema = readRepositoryFile('src/core/db/schema.ts');
@@ -120,6 +208,11 @@ describe('job worker stats identity migration contract', () => {
       'async inspect(',
       'async runWatchdogCycle('
     );
+    const hourlyStatsBody = readDelimitedSection(
+      workerAutonomySource,
+      'private async readCurrentHourlyStats()',
+      'async evaluateBudgetsBeforeClaim()'
+    );
 
     expect(bootstrapBody).toContain("this.inspect('bootstrap'");
     const watchdogRecoveryStart = inspectorBody.indexOf(
@@ -130,13 +223,14 @@ describe('job worker stats identity migration contract', () => {
       'const expiredGptJobs = await cleanupExpiredGptJobs()'
     );
     const exactStatsReadStart = inspectorBody.indexOf(
-      'const stats = await getJobExecutionStatsSince'
+      'const { stats } = await this.readCurrentHourlyStats()'
     );
 
     expect(watchdogRecoveryStart).toBeGreaterThanOrEqual(0);
     expect(recoveryStart).toBeGreaterThan(watchdogRecoveryStart);
     expect(gptCleanupStart).toBeGreaterThan(recoveryStart);
     expect(exactStatsReadStart).toBeGreaterThan(gptCleanupStart);
+    expect(hourlyStatsBody).toContain('await getJobExecutionStatsSince(');
 
     const unsafeQuietWindowGuidance =
       /(?:drain|stop)[^.]{0,240}workers?[^.]{0,240}(?:one|1) (?:full )?hour[^.]{0,240}(?:start|enable|activate)/iu;

@@ -11,7 +11,9 @@ jest.unstable_mockModule('@platform/resilience/cache.js', () => ({
   responseCache: { getStats: jest.fn(() => ({})) }
 }));
 jest.unstable_mockModule('@core/adapters/openai.adapter.js', () => ({
+  instrumentOpenAIOperation: jest.fn(async ({ callback }: { callback: () => Promise<unknown> }) => callback()),
   isOpenAIAdapterInitialized: jest.fn(() => true),
+  rethrowWorkerAiBudgetError: jest.fn(),
   resetOpenAIAdapter: resetOpenAIAdapterMock
 }));
 jest.unstable_mockModule('@services/openai/resilience.js', () => ({
@@ -20,6 +22,8 @@ jest.unstable_mockModule('@services/openai/resilience.js', () => ({
 }));
 jest.unstable_mockModule('@arcanos/openai/unifiedClient', () => ({
   getApiTimeoutMs: jest.fn(() => 4000),
+  getUnifiedClient: jest.fn(),
+  isUnifiedClientConfigured: jest.fn(() => false),
   validateClientHealth: jest.fn(() => ({
     apiKeyConfigured,
     apiKeySource: apiKeyConfigured ? 'OPENAI_API_KEY' : null,
@@ -32,6 +36,7 @@ jest.unstable_mockModule('@arcanos/openai/unifiedClient', () => ({
 }));
 jest.unstable_mockModule('@services/openai/credentialProvider.js', () => ({
   getOpenAIKeySource: jest.fn(() => 'OPENAI_API_KEY'),
+  resetCredentialCache: jest.fn(),
   resolveOpenAIBaseURL: jest.fn(() => 'http://127.0.0.1:9/v1')
 }));
 jest.unstable_mockModule('@services/openai/clientBridge.js', () => ({

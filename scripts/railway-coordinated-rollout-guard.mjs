@@ -4,22 +4,22 @@ import { appendFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
 export const INACTIVE_ROLLOUT_HOLD = 'none';
-export const ROLLOUT_CONFIRMATION_PREFIX = 'DAG WRITERS DRAINED: ';
+export const ROLLOUT_CONFIRMATION_PREFIX = 'COORDINATED WRITERS DRAINED: ';
 
 const ROLLOUT_HOLD_PATTERN = /^[a-z0-9][a-z0-9._-]{0,127}$/u;
 
 function resolveRolloutHold(rawHold) {
   if (typeof rawHold !== 'string' || rawHold.length === 0) {
-    throw new Error('COORDINATED_DAG_WRITER_ROLLOUT_HOLD_REQUIRED');
+    throw new Error('COORDINATED_WRITER_ROLLOUT_HOLD_REQUIRED');
   }
   if (rawHold.trim() !== rawHold) {
-    throw new Error('COORDINATED_DAG_WRITER_ROLLOUT_HOLD_INVALID');
+    throw new Error('COORDINATED_WRITER_ROLLOUT_HOLD_INVALID');
   }
   if (rawHold === INACTIVE_ROLLOUT_HOLD) {
     return null;
   }
   if (!ROLLOUT_HOLD_PATTERN.test(rawHold)) {
-    throw new Error('COORDINATED_DAG_WRITER_ROLLOUT_HOLD_INVALID');
+    throw new Error('COORDINATED_WRITER_ROLLOUT_HOLD_INVALID');
   }
   return rawHold;
 }
@@ -27,7 +27,7 @@ function resolveRolloutHold(rawHold) {
 export function buildRolloutConfirmation(holdId) {
   const resolvedHold = resolveRolloutHold(holdId);
   if (!resolvedHold) {
-    throw new Error('COORDINATED_DAG_WRITER_ROLLOUT_HOLD_INACTIVE');
+    throw new Error('COORDINATED_WRITER_ROLLOUT_HOLD_INACTIVE');
   }
   return `${ROLLOUT_CONFIRMATION_PREFIX}${resolvedHold}`;
 }
@@ -66,11 +66,11 @@ export function evaluateCoordinatedRolloutGuard({
   }
 
   if (eventName !== 'workflow_dispatch') {
-    throw new Error('COORDINATED_DAG_WRITER_ROLLOUT_EVENT_INVALID');
+    throw new Error('COORDINATED_WRITER_ROLLOUT_EVENT_INVALID');
   }
 
   if (manualConfirmation !== buildRolloutConfirmation(resolvedHold)) {
-    throw new Error('COORDINATED_DAG_WRITER_ROLLOUT_CONFIRMATION_REQUIRED');
+    throw new Error('COORDINATED_WRITER_ROLLOUT_CONFIRMATION_REQUIRED');
   }
 
   return {
@@ -99,8 +99,8 @@ function runFromEnvironment(env = process.env) {
 
   const result = evaluateCoordinatedRolloutGuard({
     eventName: env.ARCANOS_DEPLOY_EVENT_NAME,
-    holdId: env.ARCANOS_COORDINATED_DAG_WRITER_ROLLOUT_HOLD,
-    manualConfirmation: env.ARCANOS_DAG_WRITER_ROLLOUT_CONFIRMATION ?? '',
+    holdId: env.ARCANOS_COORDINATED_WRITER_ROLLOUT_HOLD,
+    manualConfirmation: env.ARCANOS_COORDINATED_WRITER_ROLLOUT_CONFIRMATION ?? '',
   });
 
   appendFileSync(outputPath, renderGitHubOutputs(result), 'utf8');

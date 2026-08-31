@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-31T00:52:45.545Z",
+  "generatedAt": "2026-08-31T03:26:14.541Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -4969,6 +4969,9 @@
           "relativePath": "tests/worker-autonomy-service.test.ts"
         },
         {
+          "relativePath": "tests/worker-budget-repository-timeouts.test.ts"
+        },
+        {
           "relativePath": "tests/worker-context.mcp.test.ts"
         },
         {
@@ -4988,6 +4991,9 @@
         },
         {
           "relativePath": "tests/worker-helper-route.test.ts"
+        },
+        {
+          "relativePath": "tests/worker-openai-budget-wiring.test.ts"
         },
         {
           "relativePath": "tests/worker-repair-actuator.test.ts"

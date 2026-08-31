@@ -586,7 +586,7 @@ on the default branch.
 
 The Railway automatic deployment workflow runs a repository-owned rollout-policy
 job before it creates the concurrent production deployment job. The
-`ARCANOS_COORDINATED_DAG_WRITER_ROLLOUT_HOLD` value has two supported states:
+`ARCANOS_COORDINATED_WRITER_ROLLOUT_HOLD` value has two supported states:
 
 - An exact reviewed hold ID blocks `workflow_run` promotion. The policy job
   succeeds with a bounded skip decision, but the deployment job remains
@@ -594,6 +594,19 @@ job before it creates the concurrent production deployment job. The
   concurrency.
 - The exact sentinel `none` restores normal automatic promotion. Missing, blank,
   whitespace-padded, or malformed values fail closed.
+
+The current reviewed hold is `20260830-job-events-worker-budget-v1` for the
+incompatible worker hard-budget evidence rollout. Consequently a successful
+`main` CI run cannot automatically enter production deployment concurrency.
+The hold remains active through the separately authorized legacy-path drain,
+one uninterrupted one-hour quiet window, two ordered passes through all six
+migration phases, compatible worker-first/web-second activation, verification,
+and any rollback decision. The manual typed attestation does not perform or
+verify that procedure. Restore `none` only in a separate reviewed change after
+the exact schema and indexes, compatible revision on every writer, identical
+group limits, absence of restartable legacy paths, and paired health/readiness
+have all been verified. The PR introducing this rollout cannot remove its own
+hold.
 
 Both jobs use reviewed immutable commits for `actions/checkout` and
 `actions/setup-node`. The deployment job downloads the Railway CLI `4.30.2`
@@ -684,14 +697,15 @@ incompatible schema. Post-deploy web log retrieval is limited to 30 seconds and
 4 MiB and fails closed if either bound is exceeded.
 
 The historical `20260727-dag-snapshot-generation-v1` hold protected the
-coordinated DAG snapshot-generation migration. That rollout is complete and
-the tracked marker is now the exact inactive sentinel `none`, so successful
-default-branch CI admits normal paired promotion. If that hold is reactivated,
-a deliberate `workflow_dispatch` may pass it only when the operator types
-`DAG WRITERS DRAINED: 20260727-dag-snapshot-generation-v1` exactly. That phrase
-is an operator attestation, not a drain command: separately confirm the approved
-revision, project, environment, database, every DAG-writing service, and the
-actual stopped/drained state before dispatch.
+coordinated DAG snapshot-generation migration and was later returned to `none`.
+The generalized guard now carries the active
+`20260830-job-events-worker-budget-v1` hold. A deliberate `workflow_dispatch`
+may pass it only when the operator types
+`COORDINATED WRITERS DRAINED: 20260830-job-events-worker-budget-v1` exactly.
+That phrase is an operator attestation, not a drain command: separately confirm
+the approved revision, project, environment, database, every legacy queue
+claimer and worker provider path, and the actual stopped/drained state before
+dispatch.
 
 This GitHub policy does not control Railway-native GitHub auto-deploy. Keep
 native triggers disabled for both `ARCANOS V2` and `ARCANOS Worker` while this
@@ -700,11 +714,12 @@ trigger would create an independent single-service deployment that can bypass
 the pair's ordering, exact-ID observation, and shared concurrency lock.
 
 Keep the hold active during rollout and any rollback decision. After the schema
-and compatible revision are verified on every DAG writer, no old writer can
-still run, and post-deploy health is accepted, change the workflow marker to
-`none` in a reviewed follow-up commit. Do not delete or blank the marker. The
-guard remains in place for future coordinated migrations, while the `none`
-state preserves the workflow's normal automatic deployment behavior.
+and indexes, compatible revision on every writer, absence of restartable legacy
+paths, identical group limits, and post-deploy health/readiness are verified,
+change the workflow marker to `none` in a reviewed follow-up commit. Do not
+delete or blank the marker. The guard remains in place for future coordinated
+migrations, while the `none` state preserves the workflow's normal automatic
+deployment behavior.
 
 ## Troubleshooting
 - Workflow fails on missing secret or paired target: restore the exact scoped

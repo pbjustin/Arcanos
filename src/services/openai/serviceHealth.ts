@@ -1,13 +1,21 @@
 import { createHash } from 'node:crypto';
 import { responseCache } from '@platform/resilience/cache.js';
 import {
+  instrumentOpenAIOperation,
   isOpenAIAdapterInitialized,
+  rethrowWorkerAiBudgetError,
   resetOpenAIAdapter
 } from '@core/adapters/openai.adapter.js';
 import { RESILIENCE_CONSTANTS, getCircuitBreakerSnapshot } from './resilience.js';
-import { getApiTimeoutMs, validateClientHealth } from '@arcanos/openai/unifiedClient';
+import {
+  getApiTimeoutMs,
+  getUnifiedClient,
+  isUnifiedClientConfigured,
+  validateClientHealth
+} from '@arcanos/openai/unifiedClient';
 import {
   getOpenAIKeySource,
+  resetCredentialCache,
   resolveOpenAIBaseURL
 } from './credentialProvider.js';
 import { getOpenAIClientOrAdapter } from './clientBridge.js';
@@ -15,6 +23,7 @@ import { getConfig } from '@platform/runtime/unifiedConfig.js';
 import { getEnv, getEnvNumber } from '@platform/runtime/env.js';
 import { logger } from '@platform/logging/structuredLogging.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
+import { getAiExecutionContext } from './aiExecutionContext.js';
 
 export type OpenAIProviderFailureCategory =
   | 'missing_client'
@@ -61,6 +70,11 @@ type OpenAIProviderRuntimeState = OpenAIProviderRuntimeStatus & {
 const DEFAULT_PROVIDER_RETRY_BASE_MS = 1_000;
 const DEFAULT_PROVIDER_RETRY_MAX_MS = 60_000;
 const DEFAULT_PROVIDER_PROBE_TIMEOUT_MS = 4_000;
+// The pinned SDK has no disabled-timeout sentinel: zero fires immediately and
+// values above the signed 32-bit timer ceiling are clamped by Node. Keep its
+// pre-fetch timer inert while the probe's transport-gated controller owns the
+// meaningful provider timeout.
+const OPENAI_PROVIDER_PROBE_SDK_TIMEOUT_MS = 0x7fffffff;
 let providerRuntimeState: OpenAIProviderRuntimeState | null = null;
 
 function createInitialProviderRuntimeState(): OpenAIProviderRuntimeState {
@@ -150,25 +164,52 @@ function resolveProviderConfigFingerprint(): {
   };
 }
 
+function resetConfiguredUnifiedOpenAIClient(): boolean {
+  if (!isUnifiedClientConfigured()) {
+    return false;
+  }
+
+  // The configured flag and singleton snapshot are read synchronously, so this
+  // cannot materialize the package's env-only fallback during runtime reload.
+  getUnifiedClient().resetClient();
+  return true;
+}
+
 async function runProbeWithTimeout<T>(
-  operation: Promise<T>,
+  operation: (armTimeout: () => void) => Promise<T>,
   timeoutMs: number,
-  timeoutError: Error
+  resolveTimeoutError: () => Error,
+  onTimeout?: (error: Error) => void,
+  deferTimeoutUntilTransport = false
 ): Promise<T> {
   let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+  let settled = false;
+  let rejectTimeout: ((error: Error) => void) | null = null;
   const timeoutPromise = new Promise<never>((_, reject) => {
+    rejectTimeout = reject;
+  });
+  const armTimeout = () => {
+    if (settled || timeoutHandle !== null) {
+      return;
+    }
     timeoutHandle = setTimeout(() => {
-      reject(timeoutError);
+      const timeoutError = resolveTimeoutError();
+      onTimeout?.(timeoutError);
+      rejectTimeout?.(timeoutError);
     }, timeoutMs);
 
     if (timeoutHandle && typeof timeoutHandle.unref === 'function') {
       timeoutHandle.unref();
     }
-  });
+  };
 
   try {
-    return await Promise.race([operation, timeoutPromise]);
+    if (!deferTimeoutUntilTransport) {
+      armTimeout();
+    }
+    return await Promise.race([operation(armTimeout), timeoutPromise]);
   } finally {
+    settled = true;
     if (timeoutHandle) {
       clearTimeout(timeoutHandle);
     }
@@ -383,7 +424,10 @@ export function syncOpenAIProviderRuntime(options: {
     };
   }
 
-  resetOpenAIAdapter();
+  resetCredentialCache();
+  if (!resetConfiguredUnifiedOpenAIClient()) {
+    resetOpenAIAdapter();
+  }
   state.reloadCount += 1;
   state.lastReloadAt = new Date().toISOString();
 
@@ -457,9 +501,40 @@ export async function probeOpenAIProviderHealth(options: {
 
   const timeoutMs = Math.max(1_000, options.timeoutMs ?? resolveProviderProbeTimeoutMs());
   const timeoutError = new Error(`OpenAI provider probe timed out after ${timeoutMs}ms`);
+  const probeController = new AbortController();
+  const probeExecutionContext = getAiExecutionContext();
+  const previousTransportReady = probeExecutionContext?.workerBudgetTransportReady;
+  let scopedTransportReady: ((operation: string) => void) | undefined;
 
   try {
-    await runProbeWithTimeout(client.models.list({ page: 1 } as any), timeoutMs, timeoutError);
+    await runProbeWithTimeout(
+      armTimeout => {
+        if (probeExecutionContext?.workerBudget) {
+          scopedTransportReady = (operation: string) => {
+            try {
+              previousTransportReady?.(operation);
+            } finally {
+              // This health probe owns one provider call. Arm synchronously
+              // immediately before its first admitted native transport.
+              armTimeout();
+            }
+          };
+          probeExecutionContext.workerBudgetTransportReady = scopedTransportReady;
+        }
+        return instrumentOpenAIOperation({
+          operation: 'models_list',
+          callback: () => client.models.list({
+            signal: probeController.signal,
+            maxRetries: 0,
+            timeout: OPENAI_PROVIDER_PROBE_SDK_TIMEOUT_MS
+          })
+        });
+      },
+      timeoutMs,
+      () => timeoutError,
+      error => probeController.abort(error),
+      Boolean(probeExecutionContext?.workerBudget)
+    );
 
     return {
       ok: true,
@@ -471,6 +546,10 @@ export async function probeOpenAIProviderHealth(options: {
       })
     };
   } catch (error) {
+    // Local worker-budget denials are admission outcomes, not provider health
+    // failures. Preserve them for the worker's paused-budget control flow and
+    // do not poison the shared provider backoff/circuit state.
+    rethrowWorkerAiBudgetError(error);
     return {
       ok: false,
       skipped: false,
@@ -480,6 +559,13 @@ export async function probeOpenAIProviderHealth(options: {
         source
       })
     };
+  } finally {
+    if (
+      probeExecutionContext
+      && probeExecutionContext.workerBudgetTransportReady === scopedTransportReady
+    ) {
+      probeExecutionContext.workerBudgetTransportReady = previousTransportReady;
+    }
   }
 }
 

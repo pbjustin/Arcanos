@@ -637,8 +637,8 @@ missing database URL into a hard failure instead of a skipped database suite.
 ### Worker hard-budget evidence migration
 
 `migrations/20260830_job_events_worker_budget_v1/` adds the strict evidence
-contract used to serialize queue-claim and native OpenAI-attempt admission for
-each `JOB_WORKER_STATS_ID`. It adds nullable `stats_worker_id`,
+contract used to serialize queue claims and conservative native OpenAI
+transport-capacity admission for each `JOB_WORKER_STATS_ID`. It adds nullable `stats_worker_id`,
 `claim_generation`, and `operation` columns to `job_events`, validates the named
 event-shape constraint separately, and builds two partial B-tree indexes with
 standalone `CREATE INDEX CONCURRENTLY` phases. Runtime startup creates those
@@ -652,9 +652,20 @@ Per-kind/per-group transaction advisory locks serialize concurrent slots and
 replicas. A `worker.budget.job_claim` row commits in the same transaction as the
 ordered queue claim and generation increment. A
 `worker.budget.ai_provider_attempt` row commits before its corresponding native
-provider transport starts; provider failure does not refund it. The reserved
+transport handoff. Cancellation after that commit can still prevent native
+dispatch, but neither that cancellation nor a later provider failure refunds
+the conservative reservation. The reserved
 nil UUID is a documented non-job subject for worker-owned startup/scheduled
 embedding work and never identifies a stored queue row.
+
+Budget admission transactions install transaction-local PostgreSQL 18 bounds
+before advisory locking: a one-second lock wait, five-second statement limit,
+and ten-second whole-transaction ceiling. Claim transactions further cap the
+whole-transaction ceiling at half their effective lease, so their single
+database-clock lease cannot commit already expired. The readiness budget-usage
+query runs inside the same bounded read-committed transaction contract. Lock,
+statement, and whole-transaction timeouts are retryable database dependency
+failures and never admit unrecorded work.
 
 This additive schema is not sufficient for a mixed-version hard-quota rollout.
 Drain all legacy claim and provider-call paths and keep them quiet for one full
@@ -667,6 +678,22 @@ DDL if budget evidence remains or the contract has drifted. Run migration,
 verification, and rollback only against an explicitly confirmed target; the
 PostgreSQL 18 integration suite uses only the guarded disposable
 `JOB_WORKER_BUDGET_TEST_DATABASE_URL` target and never ambient `DATABASE_URL`.
+Rollback phase 2 refuses to bypass guarded phase-1 index removal or to remove
+columns with auxiliary dependent objects; after the complete owned contract is
+absent, rerunning phase 2 is a no-op.
+
+The repository-owned Railway hold for this incompatible rollout is the exact
+`20260830-job-events-worker-budget-v1` value of
+`ARCANOS_COORDINATED_WRITER_ROLLOUT_HOLD`. It must be active before this
+change reaches `main` and remain active through the drain, uninterrupted
+one-hour quiet window, two ordered passes through all six phases, compatible
+worker-first/web-second activation, verification, and any rollback decision.
+Automatic promotion remains blocked while it is active. The exact manual
+attestation does not perform or verify the migration. Restore the inactive
+`none` sentinel only in a separately reviewed change after the exact installed
+contract and indexes, every compatible writer revision, identical group limits,
+absence of restartable legacy paths, and paired health/readiness are verified.
+The change introducing this migration cannot remove its own hold.
 
 ### DAG snapshot-generation fencing migration
 
@@ -696,19 +723,22 @@ are stopped or confirmed compatible with the rolled-back schema.
 
 The repository-level Railway fail-safe used for this completed rollout was the
 `20260727-dag-snapshot-generation-v1` value of
-`ARCANOS_COORDINATED_DAG_WRITER_ROLLOUT_HOLD` in
+`ARCANOS_COORDINATED_WRITER_ROLLOUT_HOLD` in
 `.github/workflows/railway-auto-deploy.yml`. With that hold active, successful
 `main` CI could not automatically start the Railway deployment job. A
 deliberate manual dispatch required the exact typed attestation
-`DAG WRITERS DRAINED: 20260727-dag-snapshot-generation-v1`; the workflow does
-not perform or verify the drain itself.
+`DAG WRITERS DRAINED: 20260727-dag-snapshot-generation-v1`; the workflow did
+not perform or verify the drain itself. The guard has since been generalized;
+current coordinated rollouts use the `COORDINATED WRITERS DRAINED: <hold-id>`
+prefix documented above.
 
-That rollout is now verified and the marker is the exact sentinel `none`, which
-restores normal worker-first web/worker pair promotion. For a future
-incompatible writer migration, set a reviewed non-`none` hold before the change
-reaches `main`, keep it active through rollout and any rollback, and return to
-`none` only after every writer is compatible and healthy. Deleting, blanking,
-or malforming the marker fails closed instead of silently lifting the hold.
+That DAG rollout was verified and its marker was returned to `none`. The same
+repository control is now assigned the worker hard-budget hold documented
+above. For a future incompatible writer migration, set a reviewed non-`none`
+hold before the change reaches `main`, keep it active through rollout and any
+rollback, and return to `none` only after every writer is compatible and
+healthy. Deleting, blanking, or malforming the marker fails closed instead of
+silently lifting the hold.
 
 `migrations/20260727_dag_run_snapshot_generation_v1.rollback.sql` verifies
 the complete installed column and validated constraint before destructive

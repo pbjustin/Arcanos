@@ -137,6 +137,14 @@ const workerBudgetMigrationPhases = [
   '05_create_claim_generation_index.sql',
   '06_verify_budget_indexes.sql'
 ] as const;
+const workerBudgetAddContractSql = readFileSync(
+  resolve(workerBudgetMigrationDirectory, '01_add_budget_evidence_contract.sql'),
+  'utf8'
+);
+const workerBudgetValidateContractSql = readFileSync(
+  resolve(workerBudgetMigrationDirectory, '02_validate_budget_evidence_contract.sql'),
+  'utf8'
+);
 const workerBudgetPrecheckIndexSql = readFileSync(
   resolve(workerBudgetMigrationDirectory, '03_precheck_budget_indexes.sql'),
   'utf8'
@@ -216,6 +224,17 @@ async function connectBudgetReplicaClient(): Promise<Client> {
   return client;
 }
 
+async function readWorkerBudgetConstraintValidation(client: Client): Promise<boolean> {
+  const result = await client.query<{ convalidated: boolean }>(
+    `SELECT convalidated
+     FROM pg_constraint
+     WHERE conrelid = 'job_events'::regclass
+       AND conname = 'job_events_worker_budget_shape_check'`
+  );
+  expect(result.rows).toHaveLength(1);
+  return result.rows[0]!.convalidated;
+}
+
 let databaseClient: Client;
 let poolClientQueue: Client[] = [];
 
@@ -254,8 +273,18 @@ const {
   resetPriorityQueueFairnessState
 } = await import('../../src/core/db/repositories/jobRepository.js');
 const {
-  reserveWorkerAiProviderAttempt
+  getWorkerBudgetWindowUsage,
+  reserveWorkerAiProviderAttempt,
+  WORKER_BUDGET_LOCK_TIMEOUT_MS
 } = await import('../../src/core/db/repositories/workerBudgetRepository.js');
+const {
+  createWorkerBudgetedOpenAIFetch,
+  WORKER_AI_BUDGET_DEPENDENCY_CODE
+} = await import('../../src/core/adapters/openai.adapter.js');
+const {
+  createAiExecutionContext,
+  runWithAiExecutionContext
+} = await import('../../src/services/openai/aiExecutionContext.js');
 
 describe('job worker budget disposable database guard', () => {
   test('accepts only the exact loopback PostgreSQL 18 test database shape', () => {
@@ -336,9 +365,20 @@ describeWithDatabase('job worker budget identity on PostgreSQL 18', () => {
         await databaseClient.query(readFileSync(resolve(migrationDirectory, phase), 'utf8'));
       }
       for (const phase of workerBudgetMigrationPhases) {
-        await databaseClient.query(
-          readFileSync(resolve(workerBudgetMigrationDirectory, phase), 'utf8')
-        );
+        const phaseSql = readFileSync(resolve(workerBudgetMigrationDirectory, phase), 'utf8');
+        await databaseClient.query(phaseSql);
+
+        if (phase === '01_add_budget_evidence_contract.sql') {
+          const expectedValidatedState = pass > 0;
+          await expect(readWorkerBudgetConstraintValidation(databaseClient)).resolves.toBe(
+            expectedValidatedState
+          );
+
+          if (pass === 0) {
+            await databaseClient.query(phaseSql);
+            await expect(readWorkerBudgetConstraintValidation(databaseClient)).resolves.toBe(false);
+          }
+        }
       }
     }
   });
@@ -990,6 +1030,128 @@ describeWithDatabase('job worker budget identity on PostgreSQL 18', () => {
     }
   });
 
+  test('fails provider admission closed within the server lock bound without reservation or transport', async () => {
+    const blocker = await connectBudgetReplicaClient();
+    const statsWorkerId = 'blocked-provider-budget';
+    const jobId = randomUUID();
+    const nativeFetch = jest.fn(async () => new Response(null, { status: 204 }));
+    const budgetedFetch = createWorkerBudgetedOpenAIFetch(
+      nativeFetch as unknown as typeof globalThis.fetch
+    );
+    const context = createAiExecutionContext({
+      sourceType: 'job',
+      sourceName: 'ask',
+      requestId: jobId,
+      jobId,
+      budget: { maxCalls: 4 },
+      workerBudget: {
+        statsWorkerId,
+        workerId: 'blocked-provider-slot-1',
+        maxCallsPerHour: 1
+      }
+    });
+
+    await blocker.query('BEGIN');
+    await blocker.query(
+      `SELECT pg_advisory_xact_lock(
+         hashtextextended('arcanos-worker-budget-v1:' || $1::text || ':' || $2::text, 0)
+       )`,
+      ['ai_provider_attempt', statsWorkerId]
+    );
+    const startedAt = Date.now();
+    try {
+      const response = await runWithAiExecutionContext(
+        context,
+        () => budgetedFetch('https://api.openai.com/v1/responses', { method: 'POST' })
+      );
+      expect(Date.now() - startedAt).toBeLessThan(WORKER_BUDGET_LOCK_TIMEOUT_MS * 4);
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toEqual({
+        error: expect.objectContaining({ code: WORKER_AI_BUDGET_DEPENDENCY_CODE })
+      });
+      expect(nativeFetch).not.toHaveBeenCalled();
+
+      const evidence = await databaseClient.query<{ count: number }>(
+        `SELECT COUNT(*)::int AS count
+         FROM job_events
+         WHERE event_type = 'worker.budget.ai_provider_attempt'
+           AND stats_worker_id = $1::text`,
+        [statsWorkerId]
+      );
+      expect(evidence.rows[0]?.count).toBe(0);
+    } finally {
+      await blocker.query('ROLLBACK').catch(() => undefined);
+      await blocker.end();
+    }
+  });
+
+  test('rolls back a blocked claim within the server lock bound without consuming capacity', async () => {
+    const blocker = await connectBudgetReplicaClient();
+    const statsWorkerId = 'blocked-claim-budget';
+    const jobId = randomUUID();
+    await databaseClient.query(
+      `INSERT INTO job_data (id, worker_id, job_type, status, input)
+       VALUES ($1, 'producer', 'ask', 'pending', '{}'::jsonb)`,
+      [jobId]
+    );
+    await blocker.query('BEGIN');
+    await blocker.query(
+      `SELECT pg_advisory_xact_lock(
+         hashtextextended('arcanos-worker-budget-v1:' || $1::text || ':' || $2::text, 0)
+       )`,
+      ['job_claim', statsWorkerId]
+    );
+    const startedAt = Date.now();
+    try {
+      await expect(claimNextPendingJobWithAdmission({
+        workerId: 'blocked-claim-slot-1',
+        statsWorkerId,
+        leaseMs: 30_000,
+        priorityQueueEnabled: false,
+        maxJobsPerHour: 1,
+        maxAiCallsPerHour: 1
+      })).rejects.toEqual(expect.objectContaining({ code: '55P03' }));
+      expect(Date.now() - startedAt).toBeLessThan(WORKER_BUDGET_LOCK_TIMEOUT_MS * 4);
+
+      const job = await databaseClient.query<{ status: string; claim_generation: string }>(
+        `SELECT status, claim_generation::text
+         FROM job_data
+         WHERE id = $1::uuid`,
+        [jobId]
+      );
+      expect(job.rows[0]).toEqual({ status: 'pending', claim_generation: '0' });
+      const evidence = await databaseClient.query<{ count: number }>(
+        `SELECT COUNT(*)::int AS count
+         FROM job_events
+         WHERE event_type = 'worker.budget.job_claim'
+           AND stats_worker_id = $1::text`,
+        [statsWorkerId]
+      );
+      expect(evidence.rows[0]?.count).toBe(0);
+    } finally {
+      await blocker.query('ROLLBACK').catch(() => undefined);
+      await blocker.end();
+    }
+  });
+
+  test('bounds the readiness budget-usage query while job_events is lock-blocked', async () => {
+    const blocker = await connectBudgetReplicaClient();
+    await blocker.query('BEGIN');
+    await blocker.query('LOCK TABLE job_events IN ACCESS EXCLUSIVE MODE');
+    const startedAt = Date.now();
+    try {
+      await expect(getWorkerBudgetWindowUsage('blocked-readiness-budget', {
+        jobLimit: 1,
+        aiLimit: 1
+      })).rejects.toEqual(expect.objectContaining({ code: '55P03' }));
+      expect(Date.now() - startedAt).toBeLessThan(WORKER_BUDGET_LOCK_TIMEOUT_MS * 4);
+      await expect(databaseClient.query('SELECT 1')).resolves.toBeDefined();
+    } finally {
+      await blocker.query('ROLLBACK').catch(() => undefined);
+      await blocker.end();
+    }
+  });
+
   test('rolls back a provider reservation when strict evidence insertion fails', async () => {
     const reservationId = randomUUID();
     const input = {
@@ -1099,6 +1261,47 @@ describeWithDatabase('job worker budget identity on PostgreSQL 18', () => {
     }
   });
 
+  test('rejects a same-name budget CHECK with a foreign expression', async () => {
+    await databaseClient.query(
+      `ALTER TABLE job_events
+       DROP CONSTRAINT job_events_worker_budget_shape_check`
+    );
+    try {
+      await databaseClient.query(
+        `ALTER TABLE job_events
+         ADD CONSTRAINT job_events_worker_budget_shape_check
+         CHECK (
+           event_type NOT IN (
+             'worker.budget.job_claim',
+             'worker.budget.ai_provider_attempt'
+           )
+           OR (
+             stats_worker_id IS NOT NULL
+             AND (
+               (event_type = 'worker.budget.job_claim'
+                 AND claim_generation IS NOT NULL
+                 AND claim_generation >= 0)
+               OR (event_type = 'worker.budget.ai_provider_attempt'
+                 AND claim_generation IS NULL)
+             )
+           )
+         ) NOT VALID`
+      );
+      await expectPostgresError(
+        databaseClient.query(workerBudgetAddContractSql),
+        'job_events_worker_budget_shape_check has an unexpected definition',
+        '42804'
+      );
+    } finally {
+      await databaseClient.query(
+        `ALTER TABLE job_events
+         DROP CONSTRAINT IF EXISTS job_events_worker_budget_shape_check`
+      );
+      await databaseClient.query(workerBudgetAddContractSql);
+      await databaseClient.query(workerBudgetValidateContractSql);
+    }
+  });
+
   test.each([
     {
       label: 'group-window',
@@ -1153,6 +1356,187 @@ describeWithDatabase('job worker budget identity on PostgreSQL 18', () => {
       await databaseClient.query(workerBudgetCreateGroupIndexSql);
       await databaseClient.query(workerBudgetCreateClaimIndexSql);
       await databaseClient.query(workerBudgetVerifyIndexSql);
+    }
+  });
+
+  test.each([
+    {
+      label: 'group-window',
+      dropSql: 'DROP INDEX CONCURRENTLY idx_job_events_worker_budget_claim_generation',
+      restoreSql: workerBudgetCreateClaimIndexSql,
+      expectedGroupIndexPresent: true,
+      expectedClaimIndexPresent: false
+    },
+    {
+      label: 'claim-generation',
+      dropSql: 'DROP INDEX CONCURRENTLY idx_job_events_worker_budget_group_window',
+      restoreSql: workerBudgetCreateGroupIndexSql,
+      expectedGroupIndexPresent: false,
+      expectedClaimIndexPresent: true
+    }
+  ])('refuses phase-2 rollback while only the $label phase-1 index remains', async fixture => {
+    await databaseClient.query(fixture.dropSql);
+    try {
+      await expectPostgresError(
+        databaseClient.query(workerBudgetRollbackContractSql),
+        'worker budget rollback phase 2 refused because phase 1 index names remain',
+        '55000'
+      );
+      await databaseClient.query('ROLLBACK');
+
+      const retained = await databaseClient.query<{
+        group_index_present: boolean;
+        claim_index_present: boolean;
+        evidence_column_count: number;
+        constraint_present: boolean;
+      }>(
+        `SELECT
+           to_regclass('idx_job_events_worker_budget_group_window') IS NOT NULL
+             AS group_index_present,
+           to_regclass('idx_job_events_worker_budget_claim_generation') IS NOT NULL
+             AS claim_index_present,
+           (
+             SELECT COUNT(*)::int
+             FROM pg_attribute
+             WHERE attrelid = 'job_events'::regclass
+               AND attname IN ('stats_worker_id', 'claim_generation', 'operation')
+               AND NOT attisdropped
+           ) AS evidence_column_count,
+           EXISTS (
+             SELECT 1
+             FROM pg_constraint
+             WHERE conrelid = 'job_events'::regclass
+               AND conname = 'job_events_worker_budget_shape_check'
+           ) AS constraint_present`
+      );
+      expect(retained.rows[0]).toEqual({
+        group_index_present: fixture.expectedGroupIndexPresent,
+        claim_index_present: fixture.expectedClaimIndexPresent,
+        evidence_column_count: 3,
+        constraint_present: true
+      });
+    } finally {
+      await databaseClient.query('ROLLBACK').catch(() => undefined);
+      await databaseClient.query(fixture.restoreSql);
+      await databaseClient.query(workerBudgetVerifyIndexSql);
+    }
+  });
+
+  test('refuses phase-2 rollback when a guarded index name is a foreign relation kind', async () => {
+    await databaseClient.query(workerBudgetRollbackIndexSql);
+    await databaseClient.query(
+      'CREATE TABLE idx_job_events_worker_budget_group_window (marker INTEGER)'
+    );
+    try {
+      await expectPostgresError(
+        databaseClient.query(workerBudgetRollbackContractSql),
+        'worker budget rollback phase 2 refused because phase 1 index names remain',
+        '55000'
+      );
+      await databaseClient.query('ROLLBACK');
+
+      const retained = await databaseClient.query<{
+        relation_kind: string;
+        evidence_column_count: number;
+      }>(
+        `SELECT
+           (
+             SELECT relkind::text
+             FROM pg_class
+             WHERE oid = 'idx_job_events_worker_budget_group_window'::regclass
+           ) AS relation_kind,
+           (
+             SELECT COUNT(*)::int
+             FROM pg_attribute
+             WHERE attrelid = 'job_events'::regclass
+               AND attname IN ('stats_worker_id', 'claim_generation', 'operation')
+               AND NOT attisdropped
+           ) AS evidence_column_count`
+      );
+      expect(retained.rows[0]).toEqual({
+        relation_kind: 'r',
+        evidence_column_count: 3
+      });
+    } finally {
+      await databaseClient.query('ROLLBACK').catch(() => undefined);
+      await databaseClient.query(
+        'DROP TABLE IF EXISTS idx_job_events_worker_budget_group_window'
+      );
+      for (const phase of workerBudgetMigrationPhases) {
+        await databaseClient.query(
+          readFileSync(resolve(workerBudgetMigrationDirectory, phase), 'utf8')
+        );
+      }
+    }
+  });
+
+  test.each([
+    {
+      label: 'expression index',
+      createSql: `CREATE INDEX worker_budget_test_expression_dependency
+                  ON job_events ((lower(stats_worker_id)))`,
+      dropSql: 'DROP INDEX IF EXISTS worker_budget_test_expression_dependency',
+      presenceSql: `SELECT to_regclass('worker_budget_test_expression_dependency')
+                      IS NOT NULL AS present`
+    },
+    {
+      label: 'foreign CHECK',
+      createSql: `ALTER TABLE job_events
+                  ADD CONSTRAINT worker_budget_test_operation_dependency
+                  CHECK (operation IS NULL OR char_length(operation) > 0) NOT VALID`,
+      dropSql: `ALTER TABLE job_events
+                DROP CONSTRAINT IF EXISTS worker_budget_test_operation_dependency`,
+      presenceSql: `SELECT EXISTS (
+                      SELECT 1
+                      FROM pg_constraint
+                      WHERE conrelid = 'job_events'::regclass
+                        AND conname = 'worker_budget_test_operation_dependency'
+                    ) AS present`
+    }
+  ])('refuses phase-2 rollback with an auxiliary $label after phase 1', async fixture => {
+    await databaseClient.query(workerBudgetRollbackIndexSql);
+    await databaseClient.query(fixture.createSql);
+    try {
+      await expectPostgresError(
+        databaseClient.query(workerBudgetRollbackContractSql),
+        'worker budget evidence columns have unexpected dependent objects; rollback refused',
+        '55000'
+      );
+      await databaseClient.query('ROLLBACK');
+
+      const auxiliary = await databaseClient.query<{ present: boolean }>(fixture.presenceSql);
+      expect(auxiliary.rows[0]?.present).toBe(true);
+      const retained = await databaseClient.query<{
+        evidence_column_count: number;
+        constraint_present: boolean;
+      }>(
+        `SELECT
+           (
+             SELECT COUNT(*)::int
+             FROM pg_attribute
+             WHERE attrelid = 'job_events'::regclass
+               AND attname IN ('stats_worker_id', 'claim_generation', 'operation')
+               AND NOT attisdropped
+           ) AS evidence_column_count,
+           EXISTS (
+             SELECT 1
+             FROM pg_constraint
+             WHERE conrelid = 'job_events'::regclass
+               AND conname = 'job_events_worker_budget_shape_check'
+           ) AS constraint_present`
+      );
+      expect(retained.rows[0]).toEqual({
+        evidence_column_count: 3,
+        constraint_present: true
+      });
+    } finally {
+      await databaseClient.query('ROLLBACK').catch(() => undefined);
+      await databaseClient.query(fixture.dropSql);
+      for (const phase of workerBudgetMigrationPhases) {
+        await databaseClient.query(
+          readFileSync(resolve(workerBudgetMigrationDirectory, phase), 'utf8')
+        );
+      }
     }
   });
 
@@ -1229,6 +1613,7 @@ describeWithDatabase('job worker budget identity on PostgreSQL 18', () => {
       await databaseClient.query('DELETE FROM job_events WHERE id = $1::uuid', [evidenceId]);
       await databaseClient.query(workerBudgetRollbackIndexSql);
       await databaseClient.query(workerBudgetRollbackContractSql);
+      await expect(databaseClient.query(workerBudgetRollbackContractSql)).resolves.toBeDefined();
       await expect(readRollbackState()).resolves.toEqual({
         group_index_present: false,
         claim_index_present: false,

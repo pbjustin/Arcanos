@@ -1052,14 +1052,13 @@ not guess a prior revision, use generic `railway redeploy`, or automatically
 roll application code across a potentially incompatible schema.
 
 The workflow also runs a repository-owned coordinated-writer policy before the
-production deployment job can enter its concurrency group. The completed DAG
-snapshot-generation rollout now uses the inactive `none` sentinel, which admits
-normal paired promotion. If
-`ARCANOS_COORDINATED_DAG_WRITER_ROLLOUT_HOLD` is changed back to the active
-`20260727-dag-snapshot-generation-v1` ID, automatic `workflow_run` promotion is
-skipped without starting or cancelling a deployment. A manual dispatch then
-fails unless the operator types the exact confirmation
-`DAG WRITERS DRAINED: 20260727-dag-snapshot-generation-v1`.
+production deployment job can enter its concurrency group. The current
+`ARCANOS_COORDINATED_WRITER_ROLLOUT_HOLD` value is the active
+`20260830-job-events-worker-budget-v1` ID for the incompatible worker
+hard-budget evidence rollout. Automatic `workflow_run` promotion is skipped
+without starting or cancelling a deployment. A manual dispatch fails unless
+the operator types the exact confirmation
+`COORDINATED WRITERS DRAINED: 20260830-job-events-worker-budget-v1`.
 
 The repository policy cannot suppress Railway's separate GitHub-source
 auto-deploy trigger. Keep native auto-deploy disabled on both `ARCANOS V2` and
@@ -1071,23 +1070,29 @@ The typed phrase does not stop a process, apply a migration, validate a target,
 or authorize production work. Before using it:
 
 1. Obtain the normal target-specific deployment and database authorization.
-2. Inventory every process capable of writing DAG snapshots, including all web
-   replicas and any separately operated service.
+2. Inventory every legacy queue claimer and worker-originated provider path,
+   including every web/worker replica and separately operated process.
 3. Verify Railway-native auto-deploy remains disabled on every production
    writer so a source push cannot bypass the repository hold.
-4. Drain or stop every writer and verify that an older binary cannot restart.
-5. Confirm the compatible revision and migration are the approved rollout pair.
-6. Dispatch the workflow only for the approved revision. The workflow deploys
+4. Drain or stop every legacy path, allow already admitted work to finish, and
+   verify that an older binary cannot restart.
+5. Keep every legacy claim/provider path continuously quiet for one complete
+   one-hour budget window.
+6. Apply and verify all six worker-budget migration phases in documented order,
+   then run all six again to prove idempotence.
+7. Confirm the compatible revision, identical hard limits for every replica in
+   each stats group, and the migration are the approved rollout pair.
+8. Dispatch the workflow only for that approved revision. The workflow deploys
    the explicitly configured worker first and web second; inventory and
    coordinate any additional writer through its separately approved mechanism.
-7. Verify the installed schema, exact revision on every writer, absence of old
-   replicas, deployment health, and bounded application diagnostics.
+9. Verify the installed schema and indexes, exact revision on every writer,
+   absence of old replicas, deployment health/readiness, and bounded application
+   diagnostics. Keep the hold active through any rollback decision.
 
-Keep the hold active if rollout or verification fails. Rollback also requires
-all writers to remain stopped or compatible with the rolled-back schema. Only
-after the coordinated rollout is accepted should a reviewed follow-up set the
-workflow marker to the exact sentinel `none`. Missing, blank, or malformed
-markers fail closed; `none` restores normal future automatic promotion.
+Return the hold to the inactive `none` sentinel only in a separately reviewed
+repository change after all of those checks pass. The change introducing this
+rollout cannot remove its own hold. Missing, blank, whitespace-padded, or
+malformed hold values fail closed rather than restoring automatic promotion.
 
 A push or manual workflow dispatch can therefore be deployment-affecting. Before triggering either:
 

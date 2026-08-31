@@ -1237,7 +1237,7 @@ Protected GPT Action and operator calls must use `/gpt-access/*` for backend ope
 | `JOB_WORKER_STATS_ID` | No | `JOB_WORKER_ID` | Exact worker-group identity shared by inspection, alert cooldowns, and hourly job/AI-call budgets. Every generic queue claim persists this value separately from its slot lease ID. Values longer than 255 characters or containing control characters fail worker startup before readiness. |
 | `JOB_WORKER_CONCURRENCY` | No | `WORKER_COUNT` or `1` | Number of queue-consumer slots in one worker process. |
 | `JOB_WORKER_MAX_JOBS_PER_HOUR` | No | `120` | Hard maximum generic queue claims admitted for one `JOB_WORKER_STATS_ID` in the shared PostgreSQL rolling window. The decision, reservation, and claim are one transaction. Must be an integer from 1 through 2,147,483,647; zero, malformed, or out-of-range values fail worker startup. |
-| `JOB_WORKER_MAX_AI_CALLS_PER_HOUR` | No | `120` | Hard maximum admitted native OpenAI transport attempts for one `JOB_WORKER_STATS_ID` in the shared PostgreSQL rolling window. SDK and higher-level retries and every multi-stage transport call each consume one; one batched embedding request consumes one. Must be an integer from 1 through 2,147,483,647. |
+| `JOB_WORKER_MAX_AI_CALLS_PER_HOUR` | No | `120` | Hard maximum database-admitted worker OpenAI capacity reservations for one `JOB_WORKER_STATS_ID` in the shared PostgreSQL rolling window. Every SDK or higher-level retry and every multi-stage native transport requires a reservation; one batched embedding request requires one. A reservation committed before a later cancellation remains charged even if no network request starts. Must be an integer from 1 through 2,147,483,647. |
 | `JOB_WORKER_MAX_RSS_MB` | No | `2048` | Hard per-process resident-memory claim ceiling in MiB. The worker pauses at or above the limit and resumes only after RSS falls below it. Must be a positive safe integer. |
 | `WORKER_TRINITY_RUNTIME_BUDGET_MS` | No | `420000` | Max worker Trinity runtime budget. |
 | `WORKER_TRINITY_STAGE_TIMEOUT_MS` | No | `180000` | Per-stage/model timeout passed from worker-originated Trinity calls. |
@@ -1345,7 +1345,7 @@ database URL as a command-line argument.
 | `JOB_WORKER_STATS_ID` | `JOB_WORKER_ID` | Exact worker-group identity persisted on every generic claim and used for shared slot-level inspection and hourly budget accounting. Groups may span processes only when they use the same configured value. Values longer than 255 characters or containing control characters fail worker startup before readiness. |
 | `JOB_WORKER_CONCURRENCY` | `WORKER_COUNT` or `1` | Number of queue-consumer slots in one worker process. |
 | `JOB_WORKER_MAX_JOBS_PER_HOUR` | `120` | Hard shared rolling-hour claim maximum. Admission and claim are atomically serialized in PostgreSQL across slots and replicas sharing `JOB_WORKER_STATS_ID`. |
-| `JOB_WORKER_MAX_AI_CALLS_PER_HOUR` | `120` | Hard shared rolling-hour native OpenAI transport-attempt maximum. Admitted attempts remain charged when the provider fails; denied, reservation-store-failed, and already-aborted requests consume nothing. |
+| `JOB_WORKER_MAX_AI_CALLS_PER_HOUR` | `120` | Hard shared rolling-hour worker OpenAI admission maximum. Every native transport requires one committed reservation. Provider failures and cancellations after commit remain charged, so the ledger can conservatively exceed transports that actually started; denied, reservation-store-failed, replayed, and already-aborted-before-admission requests consume no new reservation. |
 | `JOB_WORKER_MAX_RSS_MB` | `2048` | Hard per-process RSS claim ceiling in MiB. Claiming pauses at equality and resumes after RSS drops below the ceiling. |
 | `JOB_WORKER_POLL_MS` | `250` | Poll delay after a claimed job cycle. |
 | `JOB_WORKER_IDLE_BACKOFF_MS` | `1000` | Sleep interval when no job is available. |
@@ -1416,13 +1416,16 @@ slot and replica sharing a stats group must configure identical hard limits.
 A generic job claim consumes one job reservation in the same transaction that
 selects, fences, and claims the ordered queue row. Failed, retired, deleted, or
 reclaimed jobs do not refund it; a later claim generation consumes a new
-reservation. The AI-call budget counts each database-admitted native OpenAI
-transport attempt made in worker-owned execution: SDK retries, higher-level
-retries, separate multi-stage calls, and each scheduled or startup Notion
-embedding batch all consume individually. One batched embedding HTTP request is
-one attempt. A provider failure after admission remains charged. A denied,
-reservation-store-failed, replayed, or pre-aborted request is not sent and does
-not consume another reservation. OpenAI service-health recovery probes outside
+reservation. The AI-call budget counts database-admitted capacity for native
+OpenAI attempts in worker-owned execution: SDK retries, higher-level retries,
+separate multi-stage calls, and each scheduled or startup Notion embedding batch
+all require individual reservations. One batched embedding HTTP request requires
+one. A provider failure or cancellation after the reservation commits remains
+charged even when cancellation prevents transport from starting. Consequently,
+the reported `aiCalls` value is a conservative admission count and can exceed
+observed network transports. A denied, reservation-store-failed, replayed, or
+already-aborted-before-admission request is not sent and consumes no new
+reservation. OpenAI service-health recovery probes outside
 worker execution, API-process direct execution, the separate `workers/`
 workspace, and `arcanos-ai-runtime/` are outside this dedicated queue-worker
 budget. The existing logical per-request `AiExecutionBudget.maxCalls` remains a
@@ -1441,9 +1444,11 @@ publishes `dependency_failure`. Worker `/readyz` is unavailable for all three
 states, while `/healthz` remains process liveness; window expiry, RSS reduction,
 or successful dependency recovery returns the slot to `accepting_claims` and restores
 readiness once every configured slot is accepting claims. A final admitted job
-claim or provider attempt that fills its window publishes and persists the
-budget pause before that admitted work continues; it does not wait for a later
-denied admission to revoke readiness. If the required startup
+claim or provider attempt that fills its window publishes the budget pause
+synchronously before that admitted work continues; best-effort snapshot
+persistence starts immediately but cannot hold the claimed lease or provider
+transport. The worker does not wait for a later denied admission to revoke
+readiness. If the required startup
 Notion rebuild reaches the rolling AI limit or observes a provider dependency
 outage, every configured slot publishes the matching pause before the child
 readiness signal, waits for the database retry time or dependency recovery, and

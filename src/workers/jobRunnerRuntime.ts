@@ -314,7 +314,10 @@ const POSTGRES_TRANSIENT_ERROR_CODES = new Set([
   '08006',
   '08007',
   '08p01',
+  '25p04',
   '53300',
+  '55p03',
+  '57014',
   '57p01',
   '57p02',
   '57p03'

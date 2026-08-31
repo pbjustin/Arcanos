@@ -1126,6 +1126,8 @@ export class WorkerAutonomyService {
    * Compose terminal-job diagnostics with the exact database-clock hard-budget window.
    * The terminal counters retain their existing approximate hourly display semantics;
    * jobClaims and aiCalls always match the strict admission ledger `(T - 1h, T]`.
+   * aiCalls is admitted capacity, so a post-commit cancellation can make it
+   * conservatively exceed the number of native transports that actually started.
    */
   private async readCurrentHourlyStats(): Promise<{
     stats: JobExecutionStats;

@@ -42,6 +42,8 @@ export interface AiExecutionContext {
   jobId?: string;
   budget?: AiExecutionBudget;
   workerBudget?: WorkerAiCallBudget;
+  /** Probe-scoped hook invoked immediately before one admitted native transport. */
+  workerBudgetTransportReady?: (operation: string) => void;
   /** First hard worker-budget admission failure, even if a downstream fallback swallows it. */
   workerBudgetFailure: unknown | null;
   totals: AiUsageTotals;

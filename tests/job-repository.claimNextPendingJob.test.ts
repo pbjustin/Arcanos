@@ -330,6 +330,8 @@ describe('jobRepository.claimNextPendingJob', () => {
 
     const calls = clientQueryMock.mock.calls.map(([sql]) => String(sql));
     expect(calls.filter(sql => sql.includes('SELECT COALESCE'))).toHaveLength(1);
+    const beginIndex = calls.findIndex(sql => sql === 'BEGIN ISOLATION LEVEL READ COMMITTED');
+    const timeoutBoundsIndex = calls.findIndex(sql => sql.includes("set_config('lock_timeout'"));
     const jobLockIndex = calls.findIndex(sql => sql.includes('pg_advisory_xact_lock') &&
       clientQueryMock.mock.calls[calls.indexOf(sql)]?.[1]?.[0] === 'job_claim');
     const aiLockIndex = clientQueryMock.mock.calls.findIndex(([, params]) =>
@@ -338,11 +340,18 @@ describe('jobRepository.claimNextPendingJob', () => {
     const updateIndex = calls.findIndex(sql => sql.includes('UPDATE job_data'));
     const reservationIndex = calls.findIndex(sql => sql.includes('INSERT INTO job_events'));
     const commitIndex = calls.findIndex(sql => sql === 'COMMIT');
-    expect(jobLockIndex).toBeGreaterThan(0);
+    expect(beginIndex).toBeGreaterThanOrEqual(0);
+    expect(timeoutBoundsIndex).toBeGreaterThan(beginIndex);
+    expect(jobLockIndex).toBeGreaterThan(timeoutBoundsIndex);
     expect(aiLockIndex).toBeGreaterThan(jobLockIndex);
     expect(updateIndex).toBeGreaterThan(aiLockIndex);
     expect(reservationIndex).toBeGreaterThan(updateIndex);
     expect(commitIndex).toBeGreaterThan(reservationIndex);
+    expect(clientQueryMock.mock.calls[timeoutBoundsIndex]?.[1]).toEqual([
+      1_000,
+      5_000,
+      6_000
+    ]);
     const updateCall = clientQueryMock.mock.calls[updateIndex];
     expect(updateCall?.[0]).toContain('$4::timestamptz');
     expect(updateCall?.[1]).toEqual([
@@ -360,6 +369,19 @@ describe('jobRepository.claimNextPendingJob', () => {
       '4',
       evaluatedAt.toISOString()
     ]));
+  });
+
+  it('caps the whole claim transaction below the effective lease', async () => {
+    await claimNextPendingJob({
+      workerId: 'worker-1',
+      leaseMs: 1_000,
+      priorityQueueEnabled: false
+    });
+
+    const timeoutBoundsCall = clientQueryMock.mock.calls.find(([sql]) =>
+      typeof sql === 'string' && sql.includes("set_config('transaction_timeout'")
+    );
+    expect(timeoutBoundsCall?.[1]).toEqual([1_000, 5_000, 500]);
   });
 
   it('returns the recovery time when a final allowed claim fills the rolling window', async () => {
@@ -480,5 +502,30 @@ describe('jobRepository.claimNextPendingJob', () => {
     })).rejects.toThrow('reservation insert failed');
     expect(clientQueryMock).toHaveBeenCalledWith('ROLLBACK');
     expect(clientQueryMock).not.toHaveBeenCalledWith('COMMIT');
+    expect(clientReleaseMock).toHaveBeenCalledWith(undefined);
+  });
+
+  it('discards a claim client whose rollback fails while preserving the claim error', async () => {
+    const claimError = Object.assign(
+      new Error('canceling statement due to lock timeout'),
+      { code: '55P03' }
+    );
+    const rollbackError = new Error('connection closed before rollback');
+    clientQueryMock.mockImplementation(async (sql: unknown) => {
+      if (sql === 'ROLLBACK') {
+        throw rollbackError;
+      }
+      if (typeof sql === 'string' && sql.includes('UPDATE job_data')) {
+        throw claimError;
+      }
+      return { rows: [] };
+    });
+
+    await expect(claimNextPendingJob({
+      workerId: 'worker-1',
+      priorityQueueEnabled: false
+    })).rejects.toBe(claimError);
+
+    expect(clientReleaseMock).toHaveBeenCalledWith(rollbackError);
   });
 });

@@ -123,10 +123,11 @@ function readWorkerBudgetOperation(input: RequestInfo | URL): string {
 }
 
 /**
- * Reserve hard worker AI-call capacity immediately before each native transport attempt.
+ * Reserve hard worker AI-call capacity before each native transport attempt.
  * The OpenAI SDK invokes this wrapper again for each SDK retry, so retries and distinct
  * multi-stage calls consume independently while logical adapter instrumentation does not
- * double count them.
+ * double count them. Once the database reservation commits, a later cancellation remains
+ * conservatively charged even when it prevents the native transport from starting.
  */
 export function createWorkerBudgetedOpenAIFetch(
   nativeFetch: typeof globalThis.fetch = globalThis.fetch.bind(globalThis)
@@ -147,13 +148,14 @@ export function createWorkerBudgetedOpenAIFetch(
       throw abortError;
     }
 
+    const operation = readWorkerBudgetOperation(input);
     try {
       const admission = await reserveWorkerAiProviderAttempt({
         statsWorkerId: workerBudget.statsWorkerId,
         workerId: workerBudget.workerId,
         limit: workerBudget.maxCallsPerHour,
         jobId: context.jobId ?? WORKER_BUDGET_NON_JOB_SUBJECT_ID,
-        operation: readWorkerBudgetOperation(input),
+        operation,
         reservationId: randomUUID()
       });
       if (admission.alreadyReserved) {
@@ -172,10 +174,22 @@ export function createWorkerBudgetedOpenAIFetch(
       }
       if (admission.remaining === 0) {
         try {
-          await workerBudget.onCapacityExhausted?.(admission.nextAvailableAt);
+          const capacityReport = workerBudget.onCapacityExhausted?.(
+            admission.nextAvailableAt
+          );
+          void Promise.resolve(capacityReport).catch(() => {
+            // Readiness reporting remains best effort after admission.
+          });
         } catch {
           // Readiness reporting must not cancel the final admitted transport attempt.
         }
+      }
+      if (signal?.aborted) {
+        return buildWorkerAiBudgetResponse({
+          code: WORKER_AI_BUDGET_DEPENDENCY_CODE,
+          message: 'Worker AI-call budget admission did not complete before cancellation.',
+          retryAt: null
+        });
       }
     } catch {
       return buildWorkerAiBudgetResponse({
@@ -185,6 +199,25 @@ export function createWorkerBudgetedOpenAIFetch(
       });
     }
 
+    if (signal?.aborted) {
+      return buildWorkerAiBudgetResponse({
+        code: WORKER_AI_BUDGET_DEPENDENCY_CODE,
+        message: 'Worker AI-call budget admission did not complete before cancellation.',
+        retryAt: null
+      });
+    }
+    try {
+      context.workerBudgetTransportReady?.(operation);
+    } catch {
+      // Probe timing observers must never strand an admitted reservation.
+    }
+    if (signal?.aborted) {
+      return buildWorkerAiBudgetResponse({
+        code: WORKER_AI_BUDGET_DEPENDENCY_CODE,
+        message: 'Worker provider request was cancelled before transport.',
+        retryAt: null
+      });
+    }
     return nativeFetch(input, init);
   };
 }

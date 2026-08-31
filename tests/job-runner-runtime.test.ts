@@ -527,6 +527,13 @@ describe('jobRunnerRuntime', () => {
         Object.assign(new Error(''), { code: '08006' })
       )
     ).toBe(true);
+    for (const code of ['55P03', '57014', '25P04']) {
+      expect(
+        isRetryableJobRunnerDatabaseBootstrapError(
+          Object.assign(new Error('worker budget database timeout'), { code })
+        )
+      ).toBe(true);
+    }
     expect(
       isRetryableJobRunnerDatabaseBootstrapError(
         Object.assign(new Error('OpenAI provider ECONNRESET'), { code: 'ECONNRESET' })
@@ -775,6 +782,20 @@ describe('jobRunnerRuntime', () => {
     expect(
       source.match(/jobCancellationController\.abort\(/gu)
     ).toHaveLength(1);
+  });
+
+  it('wires worker provider probes and semantic planning through the hard AI budget', () => {
+    const source = fs
+      .readFileSync(path.resolve('src/workers/jobRunner.ts'), 'utf8')
+      .replace(/\r\n/gu, '\n');
+
+    expect(source).toContain('configureBackendUnifiedOpenAIClient();');
+    expect(source).toContain("sourceName: 'openai-provider-health'");
+    expect(source).toContain('createWorkerProviderProbeBudget(params.workerBudget)');
+    expect(source).toContain('workerBudget: workerAiCallBudget');
+    expect(source).toContain(
+      'ai_calls_per_hour_exceeded_during_startup_provider_recovery'
+    );
   });
 
   it('declares the worker ready only after every consumer slot starts its dispatcher', () => {
