@@ -20,6 +20,10 @@ const builderGuidePath = join(
   process.cwd(),
   'docs/BACKSTAGE_BOOKER_CUSTOM_GPT.md'
 );
+const builderInstructionPatchPath = join(
+  process.cwd(),
+  'docs/BACKSTAGE_BOOKER_GPT_BUILDER_INSTRUCTIONS.md'
+);
 const protocolSchemaDirectory = join(
   process.cwd(),
   'packages/protocol/schemas/v1/backstage-booker'
@@ -107,13 +111,42 @@ describe('Backstage Booker Custom GPT builder contract', () => {
     expect(Buffer.byteLength(policy, 'utf8')).toBeLessThanOrEqual(8_000);
   });
 
+  it('ships an operational full-block Builder instruction replacement checklist', () => {
+    const patch = readFileSync(builderInstructionPatchPath, 'utf8');
+    const normalizedPatch = patch.replace(/\s+/gu, ' ');
+
+    for (const requiredText of [
+      'Protected Backstage authority is mandatory for official booking output.',
+      'current ChatGPT conversation',
+      'model memory',
+      'general wrestling knowledge',
+      'an earlier draft',
+      'runBackstageBooker',
+      'getBackstageBookerJobResult',
+      'returns not_found',
+      'returns official=false',
+      'retry the identical run operation once',
+      'backend idempotency',
+      'no official result was established',
+      'only after the user explicitly requests that degraded mode',
+      'Repository code cannot edit the live GPT',
+      "Replace the GPT's full existing canonical Backstage instruction block",
+      'Do not append either that block or the excerpt below',
+      '8,000-character limit',
+    ]) {
+      expect(normalizedPatch).toContain(requiredText);
+    }
+    expect(patch).toContain('version `1.7.0`');
+    expect(normalizedPatch).not.toContain('Add the block below');
+  });
+
   it('exposes only the fixed public, durable-result, exact-read, and canon-write operations', () => {
     const contractText = readFileSync(contractPath, 'utf8');
     const contract = JSON.parse(contractText);
     const crlfContractText = contractText.replace(/\r?\n/gu, '\r\n');
 
     expect(contract.openapi).toBe('3.1.0');
-    expect(contract.info.version).toBe('1.6.0');
+    expect(contract.info.version).toBe('1.7.0');
     expect(Buffer.byteLength(contractText, 'utf8')).toBeLessThanOrEqual(110_000);
     expect(Buffer.byteLength(crlfContractText, 'utf8')).toBeLessThanOrEqual(110_000);
     expect(contract.servers).toEqual([
@@ -135,6 +168,18 @@ describe('Backstage Booker Custom GPT builder contract', () => {
     expect(publicOperation.operationId).toBe('runBackstageBooker');
     expect(publicOperation.security).toEqual([{ bearerAuth: [] }]);
     expect(publicOperation['x-openai-isConsequential']).toBe(false);
+    expect(publicOperation.description).toContain(
+      'returns a durable jobId promptly'
+    );
+    expect(publicOperation.description).toContain(
+      'Poll it with getBackstageBookerJobResult'
+    );
+    expect(publicOperation.description).toContain(
+      'Retry once only after abort before jobId'
+    );
+    expect(publicOperation.description).toContain(
+      'never create a conversation fallback'
+    );
     expect(publicOperation.requestBody.content['application/json'].schema).toEqual({
       $ref: '#/components/schemas/BackstagePublicRequest',
     });
@@ -251,7 +296,7 @@ describe('Backstage Booker Custom GPT builder contract', () => {
       '504',
     ]);
     expect(publicOperation.responses['202']).toMatchObject({
-      description: expect.stringContaining('Do not resubmit'),
+      description: expect.stringContaining('Preserve jobId'),
       content: {
         'application/json': {
           schema: { $ref: '#/components/schemas/BackstageAsyncAcceptedResponse' },
@@ -261,9 +306,7 @@ describe('Backstage Booker Custom GPT builder contract', () => {
     expect(publicOperation.responses['202'].description).toContain(
       'getBackstageBookerJobResult'
     );
-    expect(publicOperation.responses['202'].description).toContain(
-      'configured bearer authenticates continuation'
-    );
+    expect(publicOperation.responses['202'].description).toContain('pending is not failure');
     expect(publicOperation.responses['401']).toMatchObject({
       content: {
         'application/json': {
@@ -277,7 +320,7 @@ describe('Backstage Booker Custom GPT builder contract', () => {
       },
       content: {
         'application/json': {
-          schema: { $ref: '#/components/schemas/BackstagePublicErrorResponse' },
+          schema: { $ref: '#/components/schemas/BackstagePostErrorResponse' },
         },
       },
     });
@@ -289,16 +332,19 @@ describe('Backstage Booker Custom GPT builder contract', () => {
     expect(resultOperation['x-openai-isConsequential']).toBe(false);
     expect(resultOperation.description).toContain('exact jobId');
     expect(resultOperation.description).toContain(
-      'configured Action bearer authenticates automatically'
+      'with the same bearer'
     );
     expect(resultOperation.description).toContain(
-      'never creates, retries, or replaces work'
+      'Poll the exact jobId'
     );
     expect(resultOperation.description).toContain(
-      'call getBackstageBookerJobResult again'
+      'Pending is not failure'
     );
     expect(resultOperation.description).toContain(
-      'never resubmit runBackstageBooker'
+      'establishes no official booking'
+    );
+    expect(resultOperation.description).toContain(
+      'no official booking or local fallback'
     );
     expect(resultOperation.parameters).toEqual([
       expect.objectContaining({
@@ -326,6 +372,16 @@ describe('Backstage Booker Custom GPT builder contract', () => {
       '429',
       '503',
     ]);
+    for (const status of ['400', '503']) {
+      expect(resultOperation.responses[status].content['application/json'].schema)
+        .toEqual({
+          $ref: '#/components/schemas/BackstagePostErrorResponse',
+        });
+    }
+    expect(resultOperation.responses['401'].content['application/json'].schema)
+      .toEqual({
+        $ref: '#/components/schemas/BackstagePublicErrorResponse',
+      });
     expect(contract.components.parameters).toBeUndefined();
 
     const validateAccepted = compileComponent(
@@ -359,9 +415,224 @@ describe('Backstage Booker Custom GPT builder contract', () => {
     const resultSchema = contract.components.schemas.BackstageJobResultLookup;
     expect(resultSchema.required).not.toContain('stream');
     expect(resultSchema.properties).not.toHaveProperty('stream');
+    expect(resultSchema.properties.result.oneOf[0].allOf[1]
+      .properties.result.oneOf).toEqual([
+      { $ref: '#/components/schemas/GeneratedBookingResult' },
+      { $ref: '#/components/schemas/GeneratedBookingWithHrcResult' },
+    ]);
     expect(resultSchema.properties.poll.description).toContain(
       'getBackstageBookerJobResult'
     );
+    const provenanceSchema = contract.components.schemas.ProtectedGenerationProvenance;
+    expect(provenanceSchema.description).toContain('Server-owned completed authority state');
+    const validateProvenance = compileComponent(
+      contract,
+      'ProtectedGenerationProvenance'
+    );
+    const notionProvenance = {
+      version: 1,
+      protected: true,
+      protectedGenerationCompleted: true,
+      official: true,
+      continuityVerified: true,
+      authority: 'notion',
+      snapshotStatus: 'current_complete',
+      fallbackUsed: false,
+      fallbackPermitted: false,
+    };
+    expect(validateProvenance(notionProvenance)).toBe(true);
+    expect(validateProvenance({
+      ...notionProvenance,
+      authority: 'none',
+    })).toBe(false);
+    expect(validateProvenance({
+      ...notionProvenance,
+      fallbackUsed: true,
+    })).toBe(false);
+    expect(contract.components.schemas.GeneratedBookingResult.properties)
+      .toHaveProperty('protectedGeneration', {
+        $ref: '#/components/schemas/ProtectedGenerationProvenance',
+      });
+    expect(contract.components.schemas.GeneratedBookingResult.required)
+      .toContain('protectedGeneration');
+    expect(contract.components.schemas.GeneratedBookingWithHrcResult.properties)
+      .toHaveProperty('protectedGeneration', {
+        $ref: '#/components/schemas/ProtectedGenerationProvenance',
+      });
+    expect(contract.components.schemas.GeneratedBookingWithHrcResult.required)
+      .toContain('protectedGeneration');
+
+    const validateManagedResult = compileComponent(
+      contract,
+      'BackstageJobResultLookup'
+    );
+    const completedEnvelope = {
+      ok: true,
+      result: {
+        universeId: 'my-universe-2k26',
+        storyline: 'Synthetic official booking result.',
+        protectedGeneration: notionProvenance,
+      },
+      _route: {
+        gptId: 'backstage-booker',
+        module: 'BACKSTAGE:BOOKER',
+        route: 'backstage-booker',
+        action: 'generateBooking',
+        timestamp: '2026-08-31T16:00:00.000Z',
+      },
+    };
+    const completedManagedResult = {
+      jobId: '11111111-1111-4111-8111-111111111111',
+      status: 'completed',
+      jobStatus: 'completed',
+      lifecycleStatus: 'completed',
+      poll:
+        '/gpt-access/capabilities/v1/backstage-booker/jobs/11111111-1111-4111-8111-111111111111/result',
+      result: completedEnvelope,
+      error: null,
+    };
+    expect(validateManagedResult(completedManagedResult)).toBe(true);
+    const completedHrcEnvelope = {
+      ...completedEnvelope,
+      result: {
+        ...completedEnvelope.result,
+        hrc: {
+          fidelity: 0.9,
+          resilience: 0.8,
+          verdict: 'Synthetic protected HRC result.',
+        },
+      },
+      _route: {
+        ...completedEnvelope._route,
+        action: 'generateBookingWithHRC',
+      },
+    };
+    expect(validateManagedResult({
+      ...completedManagedResult,
+      result: completedHrcEnvelope,
+    })).toBe(true);
+    expect(validateManagedResult({
+      ...completedManagedResult,
+      result: null,
+    })).toBe(false);
+    const {
+      protectedGeneration: _protectedGeneration,
+      ...unverifiedBooking
+    } = completedEnvelope.result;
+    expect(validateManagedResult({
+      ...completedManagedResult,
+      result: {
+        ...completedEnvelope,
+        result: unverifiedBooking,
+      },
+    })).toBe(false);
+    const deprecatedPublicEnvelope = {
+      ...completedEnvelope,
+      result: 'Deprecated public module result.',
+    };
+    expect(compileComponent(
+      contract,
+      'BackstagePublicSuccessResponse'
+    )(deprecatedPublicEnvelope)).toBe(true);
+    expect(validateManagedResult({
+      ...completedManagedResult,
+      result: deprecatedPublicEnvelope,
+    })).toBe(false);
+    expect(validateManagedResult({
+      ...completedManagedResult,
+      result: {
+        ...completedEnvelope,
+        _route: {
+          ...completedEnvelope._route,
+          action: 'queryContinuity',
+        },
+      },
+    })).toBe(false);
+    expect(validateManagedResult({
+      ...completedManagedResult,
+      error: {
+        code: 'BACKSTAGE_ASYNC_EXECUTION_FAILED',
+        message: 'Protected Backstage generation did not complete.',
+      },
+    })).toBe(false);
+    const failedManagedResult = {
+      jobId: '11111111-1111-4111-8111-111111111111',
+      status: 'failed',
+      jobStatus: 'failed',
+      lifecycleStatus: 'terminal',
+      poll:
+        '/gpt-access/capabilities/v1/backstage-booker/jobs/11111111-1111-4111-8111-111111111111/result',
+      result: null,
+      error: {
+        code: 'BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE',
+        message: 'Protected Backstage generation did not complete.',
+      },
+      protected: true,
+      protectedGenerationCompleted: false,
+      official: false,
+      continuityVerified: false,
+      authority: 'none',
+      snapshotStatus: 'not_applicable',
+      fallbackUsed: false,
+      fallbackPermitted: false,
+    };
+    expect(validateManagedResult(failedManagedResult)).toBe(true);
+    for (const forbiddenField of [
+      'output',
+      'storyline',
+      'answer',
+      'draft',
+      'partial',
+      'preview',
+    ]) {
+      expect(validateManagedResult({
+        ...failedManagedResult,
+        [forbiddenField]: 'must be rejected',
+      })).toBe(false);
+    }
+    expect(validateManagedResult({ ...failedManagedResult, result: {} })).toBe(false);
+    for (const requiredFailureField of [
+      'protected',
+      'protectedGenerationCompleted',
+      'official',
+      'continuityVerified',
+      'authority',
+      'snapshotStatus',
+      'fallbackUsed',
+      'fallbackPermitted',
+    ]) {
+      const incompleteFailure = { ...failedManagedResult } as Record<string, unknown>;
+      delete incompleteFailure[requiredFailureField];
+      expect(validateManagedResult(incompleteFailure)).toBe(false);
+    }
+    expect(validateManagedResult({
+      ...failedManagedResult,
+      authority: 'notion',
+    })).toBe(false);
+    const validatePostError = compileComponent(
+      contract,
+      'BackstagePostErrorResponse'
+    );
+    expect(validatePostError({ ok: false, ...failedManagedResult })).toBe(true);
+    expect(validatePostError({
+      ok: false,
+      error: { code: 'BACKSTAGE_CONTINUITY_QUERY_FAILED', message: 'Query failed.' },
+    })).toBe(true);
+    expect(validatePostError({
+      ok: false,
+      ...failedManagedResult,
+      preview: 'must be rejected',
+    })).toBe(false);
+    expect(contract.components.schemas.BackstageProtectedFailureCode.enum)
+      .toEqual([
+        'BACKSTAGE_ASYNC_TIMEOUT',
+        'BACKSTAGE_ASYNC_EXECUTION_FAILED',
+        'BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE',
+        'BACKSTAGE_BOOKER_INTEGRITY_FAILED',
+        'BACKSTAGE_NOTION_INDEX_UNAVAILABLE',
+        'BACKSTAGE_NOTION_AUTHORITY_UNAVAILABLE',
+        'BACKSTAGE_ASYNC_RESULT_UNAVAILABLE',
+      ]);
     expect(contractText).not.toContain('jobReadToken');
     expect(contractText).not.toContain('jobReadTokenHeader');
     expect(contractText).not.toContain('x-arcanos-job-read-token');
@@ -964,12 +1235,8 @@ describe('Backstage Booker Custom GPT builder contract', () => {
     expect(operation.responses['409'].description).toContain(
       'repeated heading occurrences'
     );
-    expect(operation.responses['500'].description).toContain(
-      'BACKSTAGE_CONTINUITY_QUERY_FAILED'
-    );
-    expect(operation.responses['500'].description).toContain(
-      'BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE'
-    );
+    expect(operation.responses['500'].description).toContain('explicit no-authority state');
+    expect(operation.responses['500'].description).toContain('no partial output');
   });
 
   it('keeps the exact-ID universe read closed, bounded, and non-consequential', () => {
@@ -1499,10 +1766,16 @@ describe('Backstage Booker Custom GPT builder contract', () => {
     expect(publicOperation.responses['200'].content['application/json'].schema).toEqual({
       $ref: '#/components/schemas/BackstagePublicSuccessResponse',
     });
-    for (const status of ['400', '404', '409', '503', '504']) {
+    for (const status of ['404']) {
       expect(publicOperation.responses[status].content['application/json'].schema)
         .toEqual({
           $ref: '#/components/schemas/BackstagePublicErrorResponse',
+        });
+    }
+    for (const status of ['400', '409', '413', '500', '503', '504']) {
+      expect(publicOperation.responses[status].content['application/json'].schema)
+        .toEqual({
+          $ref: '#/components/schemas/BackstagePostErrorResponse',
         });
     }
     expect(schemas.BackstagePublicSuccessResponse).toEqual(expect.objectContaining({
@@ -1523,6 +1796,17 @@ describe('Backstage Booker Custom GPT builder contract', () => {
       result: {
         universeId: 'my-universe-2k26',
         storyline: 'The champion answers the challenger.',
+        protectedGeneration: {
+          version: 1,
+          protected: true,
+          protectedGenerationCompleted: true,
+          official: true,
+          continuityVerified: true,
+          authority: 'notion',
+          snapshotStatus: 'current_complete',
+          fallbackUsed: false,
+          fallbackPermitted: false,
+        },
       },
       _route: {
         requestId: 'request-backstage-public',
@@ -1597,7 +1881,7 @@ describe('Backstage Booker Custom GPT builder contract', () => {
       });
     }
     expect(publicOperation.responses['500'].content['application/json'].schema).toEqual({
-      $ref: '#/components/schemas/BackstagePublicErrorResponse',
+      $ref: '#/components/schemas/BackstagePostErrorResponse',
     });
     expect(canonOperation.responses['403'].content['application/json'].schema).toEqual({
       $ref: '#/components/schemas/BackstageCanonForbiddenResponse',

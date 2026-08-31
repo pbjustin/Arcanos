@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Backstage Booker Custom GPT Action",
-    "version": "1.6.0",
-    "description": "Builder-specific contract for Backstage Booker. The configured Action uses one dedicated bearer for continuity queries, generation, simulation, exact reads, queued-result continuation, and canon writes. Production-sized generation is durably queued; the same managed bearer retrieves its result without forwarding a dynamic job token. Only canon writes require ChatGPT's consequential-action approval banner."
+    "version": "1.7.0",
+    "description": "Backstage Booker Builder contract. Heavy generation queues durably; managed GET polls. Protected failure establishes no official booking. Only canon writes are consequential."
   },
   "servers": [
     {
@@ -16,7 +16,7 @@
       "post": {
         "operationId": "runBackstageBooker",
         "summary": "Query, generate, or simulate with Backstage Booker",
-        "description": "Run continuity, generation, or simulation with the Action bearer. Continuity and simulation stay synchronous. Generation may return HTTP 202: retain jobId, call getBackstageBookerJobResult with the same bearer until terminal, and never resubmit the active job. Use writeBackstageCanon for writes.",
+        "description": "Heavy generation returns a durable jobId promptly. Poll it with getBackstageBookerJobResult and the same bearer. Retry once only after abort before jobId; never create a conversation fallback.",
         "x-openai-isConsequential": false,
         "security": [
           {
@@ -100,7 +100,7 @@
             }
           },
           "202": {
-            "description": "Production-sized booking generation was accepted by the existing durable worker queue. Do not resubmit it. Call getBackstageBookerJobResult with the returned jobId; the configured bearer authenticates continuation.",
+            "description": "Durably accepted. Preserve jobId and poll it with getBackstageBookerJobResult; pending is not failure.",
             "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } },
             "content": {
               "application/json": { "schema": { "$ref": "#/components/schemas/BackstageAsyncAcceptedResponse" } }
@@ -111,7 +111,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BackstagePublicErrorResponse"
+                  "$ref": "#/components/schemas/BackstagePostErrorResponse"
                 }
               }
             }
@@ -141,7 +141,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BackstagePublicErrorResponse"
+                  "$ref": "#/components/schemas/BackstagePostErrorResponse"
                 }
               }
             }
@@ -156,7 +156,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BackstagePublicErrorResponse"
+                  "$ref": "#/components/schemas/BackstagePostErrorResponse"
                 }
               }
             }
@@ -177,31 +177,31 @@
             }
           },
           "500": {
-            "description": "Backstage Booker encountered a sanitized internal execution failure. BACKSTAGE_CONTINUITY_QUERY_FAILED means a continuity answer could not be completed; BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE means the original response exhausted the output limit and its one compact retry either exhausted the limit or violated an enforceable exact/maximum compact contract. No partial provider output is returned and no third generation attempt is made.",
+            "description": "Sanitized internal failure. Protected generation returns explicit no-authority state and no partial output.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BackstagePublicErrorResponse"
+                  "$ref": "#/components/schemas/BackstagePostErrorResponse"
                 }
               }
             }
           },
           "503": {
-            "description": "Backstage Booker is temporarily unavailable. BACKSTAGE_NOTION_INDEX_UNAVAILABLE means the authoritative index cannot be used; BACKSTAGE_NOTION_AUTHORITY_UNAVAILABLE means the authority latch cannot be resolved. Neither falls back to legacy state.",
+            "description": "Temporarily unavailable. Protected generation returns explicit no-authority state without fallback.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BackstagePublicErrorResponse"
+                  "$ref": "#/components/schemas/BackstagePostErrorResponse"
                 }
               }
             }
           },
           "504": {
-            "description": "Synchronous Backstage Booker execution exceeded the route deadline.",
+            "description": "Route deadline exceeded; protected generation returns explicit no-authority state.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BackstagePublicErrorResponse"
+                  "$ref": "#/components/schemas/BackstagePostErrorResponse"
                 }
               }
             }
@@ -213,7 +213,7 @@
       "get": {
         "operationId": "getBackstageBookerJobResult",
         "summary": "Retrieve queued Backstage Booker generation",
-        "description": "Use the exact jobId returned by runBackstageBooker. The configured Action bearer authenticates automatically. This route never creates, retries, or replaces work. If status remains pending, call getBackstageBookerJobResult again; never resubmit runBackstageBooker for the active job.",
+        "description": "Poll the exact jobId with the same bearer. Pending is not failure. Any failed, unavailable, unverified, or unofficial result establishes no official booking or local fallback.",
         "x-openai-isConsequential": false,
         "security": [
           {
@@ -255,7 +255,7 @@
           "400": {
             "description": "The job identifier, wait bound, query shape, or request body is invalid.",
             "content": {
-              "application/json": { "schema": { "$ref": "#/components/schemas/BackstagePublicErrorResponse" } }
+              "application/json": { "schema": { "$ref": "#/components/schemas/BackstagePostErrorResponse" } }
             }
           },
           "401": {
@@ -276,7 +276,7 @@
           "503": {
             "description": "Backstage Booker authentication, durable job reads, or protected result materialization is unavailable.",
             "content": {
-              "application/json": { "schema": { "$ref": "#/components/schemas/BackstagePublicErrorResponse" } }
+              "application/json": { "schema": { "$ref": "#/components/schemas/BackstagePostErrorResponse" } }
             }
           }
         }
@@ -825,7 +825,6 @@
       "BackstageAsyncAcceptedResponse": {
         "type": "object",
         "additionalProperties": true,
-        "description": "Accepted Backstage Booker generation. Builder continuation uses jobId plus the managed bearer-authenticated getBackstageBookerJobResult operation. Dynamic job-token forwarding and async stream URLs are intentionally absent from this Builder contract.",
         "required": ["ok", "status", "jobId", "poll"],
         "properties": {
           "ok": { "type": "boolean", "const": true },
@@ -835,7 +834,7 @@
           "lifecycleStatus": { "type": "string" },
           "poll": {
             "type": "string",
-            "description": "Managed-bearer result path for getBackstageBookerJobResult. Call that operation with the returned jobId."
+            "description": "getBackstageBookerJobResult managed path."
           },
           "timedOut": { "type": "boolean" },
           "deduped": { "type": "boolean" }
@@ -845,18 +844,33 @@
         "type": "object",
         "additionalProperties": true,
         "required": ["jobId", "status", "jobStatus", "lifecycleStatus", "poll", "result", "error"],
-        "properties": {
-          "jobId": { "type": "string" },
-          "status": { "type": "string", "enum": ["pending", "completed", "failed", "expired", "not_found"] },
-          "jobStatus": { "type": ["string", "null"] },
-          "lifecycleStatus": { "type": "string" },
-          "poll": {
-            "type": "string",
-            "description": "Managed-bearer path for the same getBackstageBookerJobResult operation. Reuse it while status is pending."
-          },
-          "result": {},
-          "error": {}
-        }
+        "properties": { "jobId": { "type": "string" }, "status": { "type": "string", "enum": ["pending", "completed", "failed", "expired", "not_found"] }, "jobStatus": { "type": ["string", "null"] }, "lifecycleStatus": { "type": "string" }, "poll": { "type": "string", "description": "getBackstageBookerJobResult managed path." }, "result": { "oneOf": [{ "allOf": [{ "$ref": "#/components/schemas/BackstagePublicSuccessResponse" }, { "properties": { "result": { "oneOf": [{ "$ref": "#/components/schemas/GeneratedBookingResult" }, { "$ref": "#/components/schemas/GeneratedBookingWithHrcResult" }] }, "_route": { "properties": { "action": { "enum": ["generateBooking", "generateBookingWithHRC"] } } } } }] }, { "type": "null" }] }, "error": { "anyOf": [{ "$ref": "#/components/schemas/BackstageProtectedFailureError" }, { "type": "object" }, { "type": "null" }] }, "protected": { "const": true }, "protectedGenerationCompleted": { "type": "boolean" }, "official": { "type": "boolean" }, "continuityVerified": { "type": "boolean" }, "authority": { "enum": ["notion", "legacy_postgresql", "none"] }, "snapshotStatus": { "enum": ["current_complete", "not_applicable"] }, "fallbackUsed": { "type": "boolean" }, "fallbackPermitted": { "const": false } },
+        "allOf": [{ "if": { "required": ["status"], "properties": { "status": { "const": "completed" } } }, "then": { "properties": { "result": { "not": { "type": "null" } }, "error": { "type": "null" } } } }, { "if": { "required": ["status"], "properties": { "status": { "enum": ["failed", "expired"] } } }, "then": { "allOf": [{ "$ref": "#/components/schemas/BackstageProtectedFailureState" }, { "properties": { "error": { "$ref": "#/components/schemas/BackstageProtectedFailureError" } } }] } }]
+      },
+      "BackstageProtectedFailureState": {
+        "type": "object",
+        "required": ["result", "error", "protected", "protectedGenerationCompleted", "official", "continuityVerified", "authority", "snapshotStatus", "fallbackUsed", "fallbackPermitted"],
+        "properties": { "result": { "type": "null" }, "error": { "$ref": "#/components/schemas/BackstageError" }, "protected": { "const": true }, "protectedGenerationCompleted": { "const": false }, "official": { "const": false }, "continuityVerified": { "const": false }, "authority": { "const": "none" }, "snapshotStatus": { "const": "not_applicable" }, "fallbackUsed": { "const": false }, "fallbackPermitted": { "const": false } },
+        "not": { "anyOf": [{ "required": ["output"] }, { "required": ["storyline"] }, { "required": ["answer"] }, { "required": ["draft"] }, { "required": ["partial"] }, { "required": ["preview"] }] }
+      },
+      "BackstageProtectedFailureResponse": {
+        "allOf": [{ "$ref": "#/components/schemas/BackstageProtectedFailureState" }],
+        "type": "object",
+        "required": ["ok"],
+        "properties": { "ok": { "const": false } }
+      },
+      "BackstagePostErrorResponse": {
+        "oneOf": [{ "$ref": "#/components/schemas/BackstageProtectedFailureResponse" }, { "allOf": [{ "$ref": "#/components/schemas/BackstagePublicErrorResponse" }, { "not": { "required": ["protectedGenerationCompleted"] } }] }]
+      },
+      "BackstageProtectedFailureCode": {
+        "type": "string",
+        "enum": ["BACKSTAGE_ASYNC_TIMEOUT", "BACKSTAGE_ASYNC_EXECUTION_FAILED", "BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE", "BACKSTAGE_BOOKER_INTEGRITY_FAILED", "BACKSTAGE_NOTION_INDEX_UNAVAILABLE", "BACKSTAGE_NOTION_AUTHORITY_UNAVAILABLE", "BACKSTAGE_ASYNC_RESULT_UNAVAILABLE"]
+      },
+      "BackstageProtectedFailureError": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "message"],
+        "properties": { "code": { "$ref": "#/components/schemas/BackstageProtectedFailureCode" }, "message": { "const": "Protected Backstage generation did not complete." } }
       },
       "BackstageJobReadUnavailable": {
         "type": "object",
@@ -3022,7 +3036,8 @@
         "additionalProperties": false,
         "required": [
           "universeId",
-          "storyline"
+          "storyline",
+          "protectedGeneration"
         ],
         "properties": {
           "universeId": {
@@ -3033,8 +3048,19 @@
             "minLength": 1,
             "maxLength": 100000,
             "pattern": "\\S"
+          },
+          "protectedGeneration": {
+            "$ref": "#/components/schemas/ProtectedGenerationProvenance"
           }
         }
+      },
+      "ProtectedGenerationProvenance": {
+        "description": "Server-owned completed authority state; protected fallback is forbidden.",
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["version", "protected", "protectedGenerationCompleted", "official", "continuityVerified", "authority", "snapshotStatus", "fallbackUsed", "fallbackPermitted"],
+        "properties": { "version": { "const": 1 }, "protected": { "const": true }, "protectedGenerationCompleted": { "const": true }, "official": { "const": true }, "continuityVerified": { "const": true }, "authority": { "enum": ["notion", "legacy_postgresql"] }, "snapshotStatus": { "enum": ["current_complete", "not_applicable"] }, "fallbackUsed": { "const": false }, "fallbackPermitted": { "const": false } },
+        "oneOf": [{ "properties": { "authority": { "const": "notion" }, "snapshotStatus": { "const": "current_complete" } } }, { "properties": { "authority": { "const": "legacy_postgresql" }, "snapshotStatus": { "const": "not_applicable" } } }]
       },
       "QueryContinuityResult": {
         "type": "object",
@@ -3282,7 +3308,8 @@
         "required": [
           "universeId",
           "storyline",
-          "hrc"
+          "hrc",
+          "protectedGeneration"
         ],
         "properties": {
           "universeId": {
@@ -3296,6 +3323,9 @@
           },
           "hrc": {
             "$ref": "#/components/schemas/HrcResult"
+          },
+          "protectedGeneration": {
+            "$ref": "#/components/schemas/ProtectedGenerationProvenance"
           }
         }
       },

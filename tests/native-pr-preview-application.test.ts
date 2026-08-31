@@ -610,7 +610,7 @@ describe('native PR contained application', () => {
     expect(response.body).toEqual(
       NATIVE_PR_PREVIEW_BACKSTAGE_BOOKER_OPENAPI_CONTRACT.document
     );
-    expect(response.body.info.version).toBe('1.6.0');
+    expect(response.body.info.version).toBe('1.7.0');
     expect(response.body.paths[
       '/gpt-access/capabilities/v1/backstage-booker/jobs/{jobId}/result'
     ].get).toMatchObject({

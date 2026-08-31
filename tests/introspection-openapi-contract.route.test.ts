@@ -154,7 +154,7 @@ describe('custom GPT OpenAPI contract route', () => {
     expect(response.headers['content-type']).toContain('application/json');
     expect(response.body).toEqual(canonicalContract);
     expect(response.body.openapi).toBe('3.1.0');
-    expect(response.body.info?.version).toBe('1.6.0');
+    expect(response.body.info?.version).toBe('1.7.0');
     expect(Object.keys(response.body.paths ?? {})).toEqual([
       '/gpt/backstage-booker',
       asyncResultPath,
@@ -199,10 +199,12 @@ describe('custom GPT OpenAPI contract route', () => {
     expect(Object.keys(asyncResultOperation?.responses ?? {})).toEqual(
       expect.arrayContaining(['200', '400', '401', '429', '503'])
     );
-    for (const status of ['400', '401', '503']) {
+    for (const status of ['400', '503']) {
       expect(asyncResultOperation?.responses?.[status]?.content?.['application/json']?.schema)
-        .toEqual({ $ref: '#/components/schemas/BackstagePublicErrorResponse' });
+        .toEqual({ $ref: '#/components/schemas/BackstagePostErrorResponse' });
     }
+    expect(asyncResultOperation?.responses?.['401']?.content?.['application/json']?.schema)
+      .toEqual({ $ref: '#/components/schemas/BackstagePublicErrorResponse' });
     expect(asyncResultOperation?.responses?.['429']?.content?.['application/json']?.schema)
       .toEqual({ $ref: '#/components/schemas/RateLimitResponse' });
     expect(asyncResultOperation?.responses?.['429']?.headers?.['Retry-After'])
@@ -210,6 +212,11 @@ describe('custom GPT OpenAPI contract route', () => {
     expect(response.body.paths?.['/gpt/backstage-booker']?.post?.responses?.['401']
       ?.content?.['application/json']?.schema)
       .toEqual({ $ref: '#/components/schemas/BackstagePublicErrorResponse' });
+    for (const status of ['400', '409', '413', '500', '503', '504']) {
+      expect(response.body.paths?.['/gpt/backstage-booker']?.post?.responses?.[status]
+        ?.content?.['application/json']?.schema)
+        .toEqual({ $ref: '#/components/schemas/BackstagePostErrorResponse' });
+    }
     const acceptedSchema =
       response.body.components?.schemas?.BackstageAsyncAcceptedResponse;
     expect(acceptedSchema?.required).not.toContain('jobReadToken');
@@ -238,6 +245,21 @@ describe('custom GPT OpenAPI contract route', () => {
     expect(resultSchema?.properties?.poll?.description).toContain(
       'getBackstageBookerJobResult'
     );
+    expect(response.body.components?.schemas?.GeneratedBookingResult?.required)
+      .toContain('protectedGeneration');
+    expect(response.body.components?.schemas?.GeneratedBookingWithHrcResult?.required)
+      .toContain('protectedGeneration');
+    expect(response.body.components?.schemas?.BackstageProtectedFailureState?.not?.anyOf)
+      .toEqual([
+        { required: ['output'] },
+        { required: ['storyline'] },
+        { required: ['answer'] },
+        { required: ['draft'] },
+        { required: ['partial'] },
+        { required: ['preview'] },
+      ]);
+    expect(response.body.components?.schemas?.BackstageProtectedFailureCode?.enum)
+      .toContain('BACKSTAGE_BOOKER_INTEGRITY_FAILED');
     expect(response.body.components?.parameters).toBeUndefined();
     expect(JSON.stringify(response.body)).not.toContain('x-arcanos-job-read-token');
     expect(JSON.stringify(response.body)).not.toContain('jobReadToken');

@@ -50,7 +50,7 @@ project/service/deployment ownership.
 The web plan also fetches
 `GET /contracts/backstage_booker.openapi.v1.json` and deep-compares the
 response with the bounded JSON blob read from the exact Git-evidence HEAD.
-It independently checks the 1.6.0 managed bearer/result-path shape and rejects
+It independently checks the 1.7.0 managed bearer/result-path shape and rejects
 legacy job-token, legacy result-path, or stream fields; the worker must return
 404 for the same path.
 

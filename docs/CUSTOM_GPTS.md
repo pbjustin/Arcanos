@@ -85,7 +85,7 @@ The Arcanos Gaming builder uses the dedicated `1.5.0` fixed-path schema with fiv
 - `https://<your-backend>/contracts/arcanos_gaming.openapi.v1.json`
 - [ARCANOS_GAMING_CUSTOM_GPT.md](ARCANOS_GAMING_CUSTOM_GPT.md)
 
-The Backstage Booker builder uses the canonical `1.6.0` contract, served
+The Backstage Booker builder uses the canonical `1.7.0` contract, served
 directly by its live no-store endpoint. It exposes one
 Builder-authenticated continuity-query/generation/simulation operation, one
 poll-only managed queued-result read, two protected non-consequential exact
@@ -376,16 +376,23 @@ bypass a missing/stale index through legacy state. Answer generation performs
 one compact retry only when the provider reports max-output exhaustion; it does
 not retry other provider failures. A second length exhaustion or an enforceable
 exact/maximum compact-contract violation returns the sanitized incomplete-output
-error without a third generation attempt. The canonical schema `1.6.0` materializes
-these public payload/result fields, declares the bearer and authority-specific
-errors, and uses the managed-bearer namespace for async-result polling. The
+error without a third generation attempt. The canonical schema `1.7.0`
+materializes these public payload/result fields, returns production-sized
+generation job IDs after a short acceptance wait, declares server-owned
+official/authority state, and exposes bounded protected domain failures with no
+draft result. Long polling remains on the managed-bearer result operation. Its
+Action descriptions prohibit conversation-context replacement after a protected
+failure or transport abort. The
 tracked file and served endpoint are the same Builder contract. After a contract
 revision is deployed, a human operator must refresh or re-import the live
 no-store endpoint into the existing Builder Action; repository changes do not
 update that Action automatically. Generic clients retain their separate
 job-result/status contracts and capability-token continuation.
 
-See [BACKSTAGE_BOOKER_CUSTOM_GPT.md](BACKSTAGE_BOOKER_CUSTOM_GPT.md) for the
+See [BACKSTAGE_BOOKER_CUSTOM_GPT.md](BACKSTAGE_BOOKER_CUSTOM_GPT.md) and the
+copy-ready
+[Builder 1.7.0 instruction patch](BACKSTAGE_BOOKER_GPT_BUILDER_INSTRUCTIONS.md)
+for the
 end-user action guide, exact Notion backend-query examples, Builder instructions,
 security tradeoff, rotation, and rollback guidance. Never put the credential in
 the imported schema, GPT instructions, chat, source, or logs.

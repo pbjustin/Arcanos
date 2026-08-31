@@ -3574,7 +3574,7 @@ function validateResponseBody(requestCase, bodyBytes, options) {
       : [];
     if (
       body?.openapi !== '3.1.0'
-      || body?.info?.version !== '1.6.0'
+      || body?.info?.version !== '1.7.0'
       || !isDeepStrictEqual(observedPaths, BACKSTAGE_BOOKER_OPENAPI_PATHS)
       || managedResultOperation?.operationId
         !== 'getBackstageBookerJobResult'

@@ -94,14 +94,14 @@ If failing, inspect Railway build/deploy logs first.
   mapping, or page body. Missing/invalid bearer or Notion configuration,
   unmapped universes, provider failures, and PostgreSQL-context fallback all
   intentionally keep generation database-only. If Builder omits the bearer on
-  `runBackstageBooker`, deploy and re-import schema `1.6.0` from the live
+  `runBackstageBooker`, deploy and re-import schema `1.7.0` from the live
   no-store contract endpoint, verify the operation declares `bearerAuth`, and
-  resave the Action. The endpoint serves the tracked canonical `1.6.0` Builder
+  resave the Action. The endpoint serves the tracked canonical `1.7.0` Builder
   contract directly; do not weaken the backend gate.
 - Backstage Booker accepted generation asks for `jobReadToken`, follows
   `/jobs/{jobId}/result`, or tries an SSE stream: the Builder is using the
   generic job contract or stale instructions. Re-import the
-  live `1.6.0` schema and verify `getBackstageBookerJobResult` uses
+  live `1.7.0` schema and verify `getBackstageBookerJobResult` uses
   `/gpt-access/capabilities/v1/backstage-booker/jobs/{jobId}/result` with the
   saved bearer, returns no dynamic token or stream, and is called with the exact
   original `jobId`. Do not resubmit the generation while polling.
@@ -155,7 +155,7 @@ If failing, inspect Railway build/deploy logs first.
   another request. Cursor version 2 is deliberately invalid after the 1.4.0
   rollout and requires the same cursor-free restart. `queryContinuity` is
   request-local and synchronous-only, so do not enqueue it or look for a worker
-  job to resume. If Builder does not expose `scopeKind`, deploy schema 1.6.0
+  job to resume. If Builder does not expose `scopeKind`, deploy schema 1.7.0
   first, re-import it into the existing Action, and preserve the saved bearer.
   Partition cursors are additionally pinned to one immutable manifest version;
   a cursor from another active or rolled-back generation fails closed rather

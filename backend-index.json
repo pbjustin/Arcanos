@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-31T03:26:14.541Z",
+  "generatedAt": "2026-08-31T16:08:09.866Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -2546,6 +2546,9 @@
           "relativePath": "src/shared/backstage/backstageOutputBudget.ts"
         },
         {
+          "relativePath": "src/shared/backstage/backstageProtectedFailure.ts"
+        },
+        {
           "relativePath": "src/shared/backstage/backstageQueuedJobResultProtection.ts"
         },
         {
@@ -3596,6 +3599,9 @@
         },
         {
           "relativePath": "tests/backstage-output-budget.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-protected-generation-provenance.test.ts"
         },
         {
           "relativePath": "tests/backstage-storyline-schema.test.ts"

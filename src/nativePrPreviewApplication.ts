@@ -6244,7 +6244,8 @@ async function runBackstageManagedAsyncContinuationFixture(
   const completedOutput = {
     ok: true,
     result: {
-      answer: 'sealed managed continuation complete',
+      universeId: 'native-preview-managed-async',
+      storyline: 'Synthetic protected generation completion.',
       protectedGeneration: {
         version: 1,
         protected: true,
@@ -6259,8 +6260,10 @@ async function runBackstageManagedAsyncContinuationFixture(
     },
     _route: {
       gptId: 'backstage-booker',
+      module: 'BACKSTAGE:BOOKER',
+      route: 'backstage-booker',
       action: 'generateBooking',
-      route: 'worker',
+      timestamp: FIXTURE_COMPLETED_TIMESTAMP.toISOString(),
     },
   };
   const completedJob = buildFixture(jobId, 'completed', {
@@ -6503,9 +6506,34 @@ async function runBackstageManagedAsyncContinuationFixture(
       identityA.legacyActorKey !== identityB.legacyActorKey
       && legacyScopeA !== legacyScopeB,
   };
+  const transitionedEnvelope = isPreviewRecord(transitionedResult.result)
+    ? transitionedResult.result
+    : null;
+  const transitionedBooking = isPreviewRecord(transitionedEnvelope?.result)
+    ? transitionedEnvelope.result
+    : null;
+  const transitionedProvenance = isPreviewRecord(
+    transitionedBooking?.protectedGeneration
+  ) ? transitionedBooking.protectedGeneration : null;
+  const transitionedRoute = isPreviewRecord(transitionedEnvelope?._route)
+    ? transitionedEnvelope._route
+    : null;
   const terminalMaterializationVerified =
     transitionedResult.status === 'completed'
     && JSON.stringify(transitionedResult.result) === JSON.stringify(completedOutput)
+    && transitionedBooking?.universeId === 'native-preview-managed-async'
+    && transitionedBooking.storyline === 'Synthetic protected generation completion.'
+    && transitionedProvenance?.official === true
+    && transitionedProvenance.continuityVerified === true
+    && transitionedProvenance.authority === 'notion'
+    && transitionedProvenance.snapshotStatus === 'current_complete'
+    && transitionedProvenance.fallbackUsed === false
+    && transitionedProvenance.fallbackPermitted === false
+    && transitionedRoute?.gptId === 'backstage-booker'
+    && transitionedRoute.module === 'BACKSTAGE:BOOKER'
+    && transitionedRoute.route === 'backstage-booker'
+    && transitionedRoute.action === 'generateBooking'
+    && transitionedRoute.timestamp === FIXTURE_COMPLETED_TIMESTAMP.toISOString()
     && repositoryReads === 2
     && waiterCalls === 1;
   const matchesProtectedFailureState = (

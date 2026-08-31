@@ -44,7 +44,7 @@ as ChatGPT Builder API Key/Bearer authentication:
 Authorization: Bearer <ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN>
 ```
 
-Builder schema `1.6.0` declares this credential on every operation, including
+Builder schema `1.7.0` declares this credential on every operation, including
 the poll-only managed result read at
 `GET /gpt-access/capabilities/v1/backstage-booker/jobs/{jobId}/result`, the exact-ID
 `GET /gpt-access/capabilities/v1/backstage-booker/universes/{universeId}` read
@@ -68,7 +68,7 @@ private Notion context; it never authorizes a mutation. Non-authoritative direct
 callers keep the existing public non-Notion generation behavior, while
 authority-mode queries and generation fail closed without verified provenance.
 The tracked `contracts/backstage_booker.openapi.v1.json` is the canonical
-Builder `1.6.0` contract, and the live no-store endpoint serves it directly.
+Builder `1.7.0` contract, and the live no-store endpoint serves it directly.
 Generic job clients use the separate job-result/status capability contracts.
 
 The legacy supplement requires separate outbound
@@ -78,7 +78,7 @@ dedicated worker for queued heavy generation. It reads at most three fixed
 Notion page UUIDs, fails open
 to the already-loaded PostgreSQL context, and never writes or becomes canon.
 The Notion token is a provider credential, not Builder authentication; never
-send it inbound. Schema `1.6.0` has five operations and must be re-imported
+send it inbound. Schema `1.7.0` has five operations and must be re-imported
 because it moves async-result polling to the managed-bearer namespace while
 retaining the nested public payload fields and authority-specific errors.
 
