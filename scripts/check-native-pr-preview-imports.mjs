@@ -684,7 +684,7 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ],
   [
     'scripts/start-railway-service.mjs',
-    'd0c474ec47e955a98e3e9392c87ee1b180306f466f7485d93f4b8403983595bc',
+    '166b16c70b7ff72dea14e1a24f815139b1c3e881244ceefade13037ee21ccef4',
   ],
   [
     'src/start-native-pr-preview.ts',

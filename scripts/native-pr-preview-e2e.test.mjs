@@ -180,6 +180,12 @@ function responseHeadersForCase(
           'x-trace-id': correlation.traceId,
         }
       : {}),
+    ...(requestCase.expectedType === 'worker-readiness'
+      ? {
+          [NATIVE_PR_PREVIEW_E2E_CONTRACT.workerBudgetReadiness.proofHeader]:
+            NATIVE_PR_PREVIEW_E2E_CONTRACT.workerBudgetReadiness.proofVersion,
+        }
+      : {}),
     ...(requestCase.boundedResponse
       ? { 'x-response-bytes': String(bodyBytes) }
       : {}),
@@ -1813,6 +1819,18 @@ test('executes the bounded credential-free matrix and detects identity stability
     23
   );
   assert.equal(mock.requestCount, 136);
+  assert.equal(
+    result.checks.find(({ caseId }) =>
+      caseId === 'worker-readiness-initial'
+    )?.workerBudgetReadinessVerified,
+    true
+  );
+  assert.equal(
+    result.checks.find(({ caseId }) =>
+      caseId === 'worker-readiness-final'
+    )?.workerBudgetReadinessVerified,
+    true
+  );
   const backstageBookerOpenApiCheck = result.checks.find(({ caseId }) =>
     caseId === 'web-backstage-booker-openapi'
   );
@@ -2549,6 +2567,15 @@ test('rejects missing synthetic provenance and correlation or security header dr
   const requestPlan = buildNativePrPreviewRequestPlan();
   const cases = [
     {
+      caseId: 'worker-readiness-initial',
+      code: 'NATIVE_PR_PREVIEW_WORKER_BUDGET_READINESS_PROOF_INVALID',
+      mutate(headers) {
+        delete headers[
+          NATIVE_PR_PREVIEW_E2E_CONTRACT.workerBudgetReadiness.proofHeader
+        ];
+      },
+    },
+    {
       caseId: 'gaming-canary-success',
       code: 'NATIVE_PR_PREVIEW_SYNTHETIC_MARKER_MISSING',
       mutate(headers) {
@@ -2915,7 +2942,9 @@ test('rejects missing synthetic provenance and correlation or security header dr
         status: requestCase.expectedStatus,
       });
       Object.defineProperty(response, 'url', {
-        value: `${WEB_BASE_URL}${requestCase.path}`,
+        value: `${
+          requestCase.role === 'worker' ? WORKER_BASE_URL : WEB_BASE_URL
+        }${requestCase.path}`,
       });
       return response;
     });

@@ -23,7 +23,12 @@ import {
   WORKER_OPERATIONAL_STATE_PREFIX,
 } from '../scripts/start-railway-service.mjs';
 import {
+  NATIVE_PR_PREVIEW_E2E_CONTRACT,
+} from '../scripts/native-pr-preview-contract.mjs';
+import {
+  createWorkerOperationalStateReporter,
   WORKER_BOOTSTRAP_READY_SENTINEL as JOB_RUNNER_BOOTSTRAP_READY_SENTINEL,
+  WORKER_OPERATIONAL_STATE_PREFIX as JOB_RUNNER_OPERATIONAL_STATE_PREFIX,
 } from '../src/workers/jobRunnerRuntime.js';
 
 function buildWorkerOperationalStateLine({
@@ -285,6 +290,13 @@ describe('start-railway-service launcher helpers', () => {
 
       const readinessResponse = await fetch(`${origin}/readyz`);
       expect(readinessResponse.status).toBe(200);
+      expect(readinessResponse.headers.get(
+        NATIVE_PR_PREVIEW_E2E_CONTRACT.workerBudgetReadiness.proofHeader,
+      )).toBe(
+        processKind === 'worker'
+          ? NATIVE_PR_PREVIEW_E2E_CONTRACT.workerBudgetReadiness.proofVersion
+          : null,
+      );
       expect(await readinessResponse.json()).toEqual({
         ready: true,
         mode: 'passive-pr-preview',
@@ -707,6 +719,48 @@ describe('start-railway-service launcher helpers', () => {
 
     expect(destination.write).toHaveBeenCalled();
     expect(buildWorkerReadinessResponse(stderrReadiness).statusCode).toBe(503);
+  });
+
+  it('bridges the real job-runner budget reporter into launcher readiness', () => {
+    expect(WORKER_OPERATIONAL_STATE_PREFIX).toBe(
+      JOB_RUNNER_OPERATIONAL_STATE_PREFIX,
+    );
+    const readiness = createWorkerReadinessState({
+      OPENAI_API_KEY: 'sealed-test-provider-configured',
+    });
+    const reporter = createWorkerOperationalStateReporter(
+      'bridge-slot-1',
+      {
+        write(chunk) {
+          recordWorkerOutput(readiness, chunk);
+          return true;
+        },
+      },
+    );
+    const retryAt = '2026-08-31T06:00:00.000Z';
+
+    recordWorkerOutput(readiness, `${WORKER_BOOTSTRAP_READY_SENTINEL}\n`);
+    reporter('paused_budget', 'ai_calls_per_hour_exceeded:1', retryAt);
+    expect(buildWorkerReadinessResponse(readiness)).toMatchObject({
+      statusCode: 503,
+      body: {
+        ready: false,
+        reason: 'ai_calls_per_hour_exceeded:1',
+        retryAt,
+        checks: { queueAcceptance: 'paused_budget' },
+      },
+    });
+
+    reporter('accepting_claims');
+    expect(buildWorkerReadinessResponse(readiness)).toMatchObject({
+      statusCode: 200,
+      body: {
+        ready: true,
+        reason: null,
+        retryAt: null,
+        checks: { queueAcceptance: 'accepting_claims' },
+      },
+    });
   });
 
   it('revokes and restores readiness for shared slot budget, RSS, and dependency states', () => {

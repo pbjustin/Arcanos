@@ -6,6 +6,10 @@ export interface NativePrPreviewE2eContract {
     name: 'x-arcanos-preview-fixture';
     value: 'sealed-synthetic';
   }>;
+  readonly workerBudgetReadiness: Readonly<{
+    proofHeader: 'x-arcanos-preview-worker-budget-readiness-version';
+    proofVersion: 'worker-budget-readiness/v1';
+  }>;
   readonly invalidJobId: 'not-a-uuid';
   readonly unlistedJobId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab';
   readonly research: Readonly<{

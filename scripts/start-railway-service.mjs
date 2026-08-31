@@ -48,6 +48,11 @@ const WORKER_OPERATIONAL_STATES = new Set([
   'paused_rss',
   'dependency_failure'
 ]);
+const PASSIVE_PR_WORKER_READINESS_PROOF_HEADER =
+  'x-arcanos-preview-worker-budget-readiness-version';
+const PASSIVE_PR_WORKER_READINESS_PROOF_VERSION =
+  'worker-budget-readiness/v1';
+const PASSIVE_PR_WORKER_READINESS_RETRY_AT = '2026-08-31T06:00:00.000Z';
 const DEFAULT_CLI_BRIDGE_HOST = '127.0.0.1';
 const DEFAULT_CLI_BRIDGE_PORT = 8765;
 const LOOPBACK_CLI_BRIDGE_HOSTS = new Set(['127.0.0.1', 'localhost', '::1']);
@@ -296,6 +301,201 @@ function resolvePassivePrProcessKindOrThrow(env = process.env) {
   return processKind;
 }
 
+function buildPassivePrWorkerOperationalStateLine({
+  workerId,
+  sequence,
+  state,
+  reason = null,
+  retryAt = null
+}) {
+  return `${WORKER_OPERATIONAL_STATE_PREFIX}${JSON.stringify({
+    workerId,
+    sequence,
+    state,
+    reason,
+    retryAt
+  })}\n`;
+}
+
+function assertPassivePrWorkerReadinessSnapshot(readinessState, expected) {
+  const snapshot = buildWorkerReadinessResponse(readinessState);
+  if (
+    snapshot.statusCode !== expected.statusCode ||
+    snapshot.body.ready !== expected.ready ||
+    snapshot.body.reason !== expected.reason ||
+    snapshot.body.retryAt !== expected.retryAt ||
+    snapshot.body.checks.queueAcceptance !== expected.queueAcceptance
+  ) {
+    throw new Error('PREVIEW_WORKER_BUDGET_READINESS_PROOF_FAILED');
+  }
+}
+
+/**
+ * Exercise the deployed launcher's capability-free worker readiness reducer.
+ *
+ * This proof intentionally reaches no database, queue, provider, or worker
+ * runtime. PostgreSQL CI remains authoritative for shared-ledger atomicity.
+ */
+function runPassivePrWorkerReadinessProof() {
+  const readinessState = createWorkerReadinessState({
+    [OPENAI_API_KEY_ENV_NAMES[0]]: 'sealed-preview-provider-configured',
+    JOB_WORKER_CONCURRENCY: '2'
+  });
+  const operationalLine = (input) =>
+    buildPassivePrWorkerOperationalStateLine(input);
+
+  recordWorkerOutput(
+    readinessState,
+    `${WORKER_BOOTSTRAP_READY_SENTINEL}\n`
+  );
+  assertPassivePrWorkerReadinessSnapshot(readinessState, {
+    statusCode: 503,
+    ready: false,
+    reason: 'worker_claim_acceptance_pending',
+    retryAt: null,
+    queueAcceptance: 'unknown'
+  });
+
+  recordWorkerOutput(readinessState, operationalLine({
+    workerId: 'sealed-preview-slot-1',
+    sequence: 1,
+    state: 'accepting_claims'
+  }));
+  assertPassivePrWorkerReadinessSnapshot(readinessState, {
+    statusCode: 503,
+    ready: false,
+    reason: 'worker_claim_acceptance_pending',
+    retryAt: null,
+    queueAcceptance: 'unknown'
+  });
+
+  recordWorkerOutput(readinessState, operationalLine({
+    workerId: 'sealed-preview-slot-2',
+    sequence: 1,
+    state: 'accepting_claims'
+  }));
+  assertPassivePrWorkerReadinessSnapshot(readinessState, {
+    statusCode: 200,
+    ready: true,
+    reason: null,
+    retryAt: null,
+    queueAcceptance: 'accepting_claims'
+  });
+
+  recordWorkerOutput(readinessState, operationalLine({
+    workerId: 'sealed-preview-slot-2',
+    sequence: 2,
+    state: 'paused_budget',
+    reason: 'ai_calls_per_hour_exceeded:2',
+    retryAt: PASSIVE_PR_WORKER_READINESS_RETRY_AT
+  }));
+  assertPassivePrWorkerReadinessSnapshot(readinessState, {
+    statusCode: 503,
+    ready: false,
+    reason: 'ai_calls_per_hour_exceeded:2',
+    retryAt: PASSIVE_PR_WORKER_READINESS_RETRY_AT,
+    queueAcceptance: 'paused_budget'
+  });
+
+  recordWorkerOutput(readinessState, operationalLine({
+    workerId: 'sealed-preview-slot-2',
+    sequence: 1,
+    state: 'accepting_claims'
+  }));
+  assertPassivePrWorkerReadinessSnapshot(readinessState, {
+    statusCode: 503,
+    ready: false,
+    reason: 'ai_calls_per_hour_exceeded:2',
+    retryAt: PASSIVE_PR_WORKER_READINESS_RETRY_AT,
+    queueAcceptance: 'paused_budget'
+  });
+
+  recordWorkerOutput(readinessState, operationalLine({
+    workerId: 'sealed-preview-slot-2',
+    sequence: 3,
+    state: 'accepting_claims'
+  }));
+  assertPassivePrWorkerReadinessSnapshot(readinessState, {
+    statusCode: 200,
+    ready: true,
+    reason: null,
+    retryAt: null,
+    queueAcceptance: 'accepting_claims'
+  });
+
+  recordWorkerOutput(readinessState, operationalLine({
+    workerId: 'sealed-preview-slot-2',
+    sequence: 4,
+    state: 'paused_rss',
+    reason: 'rss_mb_limit_exceeded:2048'
+  }));
+  assertPassivePrWorkerReadinessSnapshot(readinessState, {
+    statusCode: 503,
+    ready: false,
+    reason: 'rss_mb_limit_exceeded:2048',
+    retryAt: null,
+    queueAcceptance: 'paused_rss'
+  });
+
+  recordWorkerOutput(readinessState, operationalLine({
+    workerId: 'sealed-preview-slot-1',
+    sequence: 2,
+    state: 'dependency_failure',
+    reason: 'worker_budget_database_unavailable'
+  }));
+  assertPassivePrWorkerReadinessSnapshot(readinessState, {
+    statusCode: 503,
+    ready: false,
+    reason: 'worker_budget_database_unavailable',
+    retryAt: null,
+    queueAcceptance: 'dependency_failure'
+  });
+
+  recordWorkerOutput(readinessState, operationalLine({
+    workerId: 'sealed-preview-slot-1',
+    sequence: 3,
+    state: 'accepting_claims'
+  }));
+  assertPassivePrWorkerReadinessSnapshot(readinessState, {
+    statusCode: 503,
+    ready: false,
+    reason: 'rss_mb_limit_exceeded:2048',
+    retryAt: null,
+    queueAcceptance: 'paused_rss'
+  });
+
+  recordWorkerOutput(readinessState, operationalLine({
+    workerId: 'sealed-preview-slot-2',
+    sequence: 5,
+    state: 'accepting_claims'
+  }));
+  assertPassivePrWorkerReadinessSnapshot(readinessState, {
+    statusCode: 200,
+    ready: true,
+    reason: null,
+    retryAt: null,
+    queueAcceptance: 'accepting_claims'
+  });
+
+  recordWorkerShutdown(readinessState, 'SIGTERM');
+  recordWorkerOutput(readinessState, operationalLine({
+    workerId: 'sealed-preview-slot-1',
+    sequence: 4,
+    state: 'paused_budget',
+    reason: 'late_output_must_be_ignored',
+    retryAt: PASSIVE_PR_WORKER_READINESS_RETRY_AT
+  }));
+  assertPassivePrWorkerReadinessSnapshot(readinessState, {
+    statusCode: 503,
+    ready: false,
+    reason: 'worker_shutdown_requested',
+    retryAt: null,
+    queueAcceptance: 'accepting_claims'
+  });
+
+  return PASSIVE_PR_WORKER_READINESS_PROOF_VERSION;
+}
+
 /**
  * Create the health-only server used by an automatically generated PR environment.
  *
@@ -321,6 +521,26 @@ export function createPassivePrPreviewServer(processKind, identity = undefined) 
     }
 
     if (isReadMethod && requestPath === READINESS_PATH) {
+      if (processKind === 'worker') {
+        try {
+          response.setHeader(
+            PASSIVE_PR_WORKER_READINESS_PROOF_HEADER,
+            runPassivePrWorkerReadinessProof()
+          );
+        } catch {
+          response.statusCode = 503;
+          response.setHeader('content-type', 'application/json; charset=utf-8');
+          response.end(requestMethod === 'HEAD' ? undefined : JSON.stringify({
+            ready: false,
+            mode: 'passive-pr-preview',
+            processKind,
+            reason: 'worker_budget_readiness_contract_failed',
+            ...(identity?.prNumber ? { prNumber: identity.prNumber } : {}),
+            ...(identity?.sourceCommit ? { sourceCommit: identity.sourceCommit } : {})
+          }));
+          return;
+        }
+      }
       response.statusCode = 200;
       response.setHeader('content-type', 'application/json; charset=utf-8');
       response.end(requestMethod === 'HEAD' ? undefined : JSON.stringify({

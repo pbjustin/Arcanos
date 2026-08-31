@@ -3926,6 +3926,17 @@ async function executeRequestCase(
     }
   }
   if (
+    requestCase.expectedType === 'worker-readiness'
+    && response.headers.get(
+      NATIVE_PR_PREVIEW_E2E_CONTRACT.workerBudgetReadiness.proofHeader
+    ) !== NATIVE_PR_PREVIEW_E2E_CONTRACT.workerBudgetReadiness.proofVersion
+  ) {
+    fail(
+      'NATIVE_PR_PREVIEW_WORKER_BUDGET_READINESS_PROOF_INVALID',
+      requestCase.caseId
+    );
+  }
+  if (
     (
       requestCase.expectedType === 'gaming-source'
       || requestCase.expectedType === 'dispatch-gpt-identifier-contract'
@@ -4249,6 +4260,9 @@ async function executeRequestCase(
       : {}),
     ...(requestCase.expectedType === 'backstage-booker-openapi'
       ? { backstageBookerOpenApiVerified: true }
+      : {}),
+    ...(requestCase.expectedType === 'worker-readiness'
+      ? { workerBudgetReadinessVerified: true }
       : {}),
     ...(generationProofStartedAt === null
       ? {}
