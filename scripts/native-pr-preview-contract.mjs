@@ -9,6 +9,11 @@ export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
     name: 'x-arcanos-preview-fixture',
     value: 'sealed-synthetic',
   }),
+  workerBudgetReadiness: Object.freeze({
+    proofHeader:
+      'x-arcanos-preview-worker-budget-readiness-version',
+    proofVersion: 'worker-budget-readiness/v1',
+  }),
   invalidJobId: 'not-a-uuid',
   unlistedJobId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab',
   research: Object.freeze({

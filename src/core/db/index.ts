@@ -261,6 +261,7 @@ export {
   createJob,
   createClaimedJobFence,
   claimNextPendingJob,
+  claimNextPendingJobWithAdmission,
   deferJobForProviderRecovery,
   failPendingJobIfUnclaimed,
   normalizeJobClaimGeneration,
@@ -277,6 +278,7 @@ export {
   type JobExecutionStats,
   type CreateJobOptions,
   type ClaimNextPendingJobOptions,
+  type ClaimNextPendingJobResult,
   type ClaimedJobFence,
   type ClaimedJobTerminalStatus,
   type DeferJobForProviderRecoveryOptions,
@@ -287,6 +289,18 @@ export {
   type RecoverStaleJobsOptions,
   type RecoverStaleJobsResult
 } from './repositories/jobRepository.js';
+
+export {
+  getWorkerBudgetWindowUsage,
+  reserveWorkerAiProviderAttempt,
+  WORKER_BUDGET_NON_JOB_SUBJECT_ID,
+  WORKER_BUDGET_WINDOW_MS,
+  type WorkerBudgetAdmission,
+  type WorkerBudgetKind,
+  type WorkerBudgetPolicy,
+  type WorkerBudgetReservationInput,
+  type WorkerBudgetWindowUsage
+} from './repositories/workerBudgetRepository.js';
 
 export {
   cleanupJobEvents,

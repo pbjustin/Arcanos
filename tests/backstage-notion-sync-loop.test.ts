@@ -9,6 +9,10 @@ import {
 } from '../src/services/backstageNotionSync.js';
 import { BACKSTAGE_NOTION_RAG_HEADING_INDEX_VERSION } from '../src/shared/backstage/backstageNotionRagCore.js';
 import {
+  WorkerAiCallBudgetPausedError,
+  instrumentOpenAIOperation,
+} from '../src/core/adapters/openai.adapter.js';
+import {
   BACKSTAGE_NOTION_SYNC_INTERVAL_DEFAULT_MS,
   BACKSTAGE_NOTION_SYNC_INTERVAL_MAX_MS,
   BACKSTAGE_NOTION_SYNC_INTERVAL_MIN_MS,
@@ -383,6 +387,54 @@ describe('Backstage Notion synchronization loop', () => {
     handle.stop();
   });
 
+  it('surfaces a swallowed worker budget pause before classifying a sync result', async () => {
+    const budgetError = new WorkerAiCallBudgetPausedError(
+      '2026-08-30T15:00:00.000Z'
+    );
+    const onOperationalFailure = jest.fn();
+    const sync = jest.fn(async () => {
+      try {
+        await instrumentOpenAIOperation({
+          operation: 'embeddings_create',
+          model: 'text-embedding-3-small',
+          callback: async () => {
+            throw budgetError;
+          },
+        });
+      } catch {
+        // Production synchronization may project an isolated provider failure.
+      }
+      return [syncResult('failed')];
+    });
+    const handle = startBackstageNotionSyncLoop({
+      intervalMs: BACKSTAGE_NOTION_SYNC_INTERVAL_MIN_MS,
+      sync,
+      logger: testLogger,
+      workerBudget: {
+        statsWorkerId: 'async-queue',
+        workerId: 'async-queue-slot-1',
+        maxCallsPerHour: 120,
+        onOperationalFailure,
+      },
+    });
+
+    await jest.advanceTimersByTimeAsync(0);
+
+    expect(onOperationalFailure).toHaveBeenCalledWith(budgetError);
+    expect(loggerWarn).toHaveBeenCalledWith(
+      'backstage.notion_rag.sync_cycle_failed',
+      expect.objectContaining({ module: 'backstage-notion-sync' }),
+      { errorMessage: budgetError.message },
+      budgetError
+    );
+    expect(loggerWarn).not.toHaveBeenCalledWith(
+      'backstage.notion_rag.sync_cycle_completed_with_failures',
+      expect.anything()
+    );
+
+    handle.stop();
+  });
+
   it('reports isolated root failures without losing the configured universe count', async () => {
     const sync = jest.fn(async () => [{
       universeId: 'failed-universe',
@@ -517,9 +569,13 @@ describe('Backstage Notion synchronization loop', () => {
       'const backstageNotionPartitionPolicy =',
       partitionEvidenceIndex
     );
-    const readinessGateIndex = source.indexOf(
-      'await runBackstageNotionWorkerReadinessGate(',
+    const startupReadinessRecoveryIndex = source.indexOf(
+      'await waitForWorkerStartupReadiness({',
       partitionPolicyIndex
+    );
+    const readinessGateIndex = source.indexOf(
+      'attempt: () => runBackstageNotionWorkerReadinessGate(',
+      startupReadinessRecoveryIndex
     );
     const notionReadinessIndex = source.indexOf(
       '() => ensureBackstageNotionWorkerReadiness({',
@@ -576,6 +632,7 @@ describe('Backstage Notion synchronization loop', () => {
       preliminaryPartitionPolicyIndex,
       partitionEvidenceIndex,
       partitionPolicyIndex,
+      startupReadinessRecoveryIndex,
       readinessGateIndex,
       notionReadinessIndex,
       coordinatorIndex,
@@ -594,7 +651,8 @@ describe('Backstage Notion synchronization loop', () => {
     expect(adapterInitializationIndex).toBeLessThan(preliminaryPartitionPolicyIndex);
     expect(preliminaryPartitionPolicyIndex).toBeLessThan(partitionEvidenceIndex);
     expect(partitionEvidenceIndex).toBeLessThan(partitionPolicyIndex);
-    expect(partitionPolicyIndex).toBeLessThan(readinessGateIndex);
+    expect(partitionPolicyIndex).toBeLessThan(startupReadinessRecoveryIndex);
+    expect(startupReadinessRecoveryIndex).toBeLessThan(readinessGateIndex);
     expect(readinessGateIndex).toBeLessThan(notionReadinessIndex);
     expect(notionReadinessIndex).toBeLessThan(coordinatorIndex);
     expect(coordinatorIndex).toBeLessThan(executorIndex);

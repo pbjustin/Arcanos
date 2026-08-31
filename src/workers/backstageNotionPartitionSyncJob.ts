@@ -23,6 +23,10 @@ import {
 import type {
   BackstageNotionSynchronizationCoordinator,
 } from './backstageNotionSyncLoop.js';
+import {
+  classifyWorkerAiBudgetError,
+  normalizeWorkerAiBudgetError,
+} from '@core/adapters/openai.adapter.js';
 
 const EMPTY_PAGE_CHANGES = Object.freeze({
   added: 0,
@@ -322,6 +326,10 @@ export function createBackstageNotionPartitionSyncJobExecutor(
           errorMessage: 'Partition synchronization cancellation requested.',
           retryable: false,
         });
+      }
+      const normalizedWorkerBudgetError = normalizeWorkerAiBudgetError(error);
+      if (classifyWorkerAiBudgetError(normalizedWorkerBudgetError)) {
+        throw normalizedWorkerBudgetError;
       }
       if (isTransientInfrastructureError(error)) {
         return Object.freeze({

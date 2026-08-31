@@ -1233,9 +1233,12 @@ Protected GPT Action and operator calls must use `/gpt-access/*` for backend ope
 | `ARCANOS_GPT_ACCESS_SCOPES` | Yes for job creation, capability discovery, capability runs, and worker recovery | all recognized scopes are granted when unset, except `jobs.create`, `capabilities.read`, `capabilities.run`, and `workers.recover` remain denied unless explicitly listed | Generic gateway scope allowlist. The dedicated Backstage protected and Gaming source lifecycle credentials do not use these scopes. `capabilities.read` authorizes capability metadata, not stored Backstage universe content. A generic token can still reach the Backstage canon route only with `capabilities.run`, `MCP_ALLOW_MODULE_ACTIONS`, and backend confirmation. Use `runtime.read,workers.read,queue.read,jobs.create,jobs.result,diagnostics.read` for the protected async Trinity flow; add `workers.recover` only for confirmed worker recovery dispatch; add `capabilities.read` for discovery. |
 | `OPENAI_API_KEY` | Yes for live worker execution | none | Preferred OpenAI key setting. The config layer also supports the fallback key names listed above. |
 | `DATABASE_URL` or complete `PG*` set | Yes for durable async jobs | none | Required by `/gpt-access/jobs/create` persistence and by the worker queue. Web and worker services must share the same database. |
-| `JOB_WORKER_ID` | No | `async-queue` | Base worker identity for queue claims, logs, and heartbeat state. |
-| `JOB_WORKER_STATS_ID` | No | `JOB_WORKER_ID` | Exact worker-group identity shared by inspection, alert cooldowns, and hourly job/AI-call budgets. Every generic queue claim persists this value separately from its slot lease ID. Values longer than 255 characters fail worker startup before readiness. |
+| `JOB_WORKER_ID` | No | `async-queue` | Base worker identity for queue claims, logs, and heartbeat state. Every derived `-slot-N` lease/operational identity must fit the 255-character PostgreSQL/protocol limit; overlong or control-character values fail startup rather than truncating. |
+| `JOB_WORKER_STATS_ID` | No | `JOB_WORKER_ID` | Exact worker-group identity shared by inspection, alert cooldowns, and hourly job/AI-call budgets. Every generic queue claim persists this value separately from its slot lease ID. Values longer than 255 characters or containing control characters fail worker startup before readiness. |
 | `JOB_WORKER_CONCURRENCY` | No | `WORKER_COUNT` or `1` | Number of queue-consumer slots in one worker process. |
+| `JOB_WORKER_MAX_JOBS_PER_HOUR` | No | `120` | Hard maximum generic queue claims admitted for one `JOB_WORKER_STATS_ID` in the shared PostgreSQL rolling window. The decision, reservation, and claim are one transaction. Must be an integer from 1 through 2,147,483,647; zero, malformed, or out-of-range values fail worker startup. |
+| `JOB_WORKER_MAX_AI_CALLS_PER_HOUR` | No | `120` | Hard maximum database-admitted worker OpenAI capacity reservations for one `JOB_WORKER_STATS_ID` in the shared PostgreSQL rolling window. Every SDK or higher-level retry and every multi-stage native transport requires a reservation; one batched embedding request requires one. A reservation committed before a later cancellation remains charged even if no network request starts. Must be an integer from 1 through 2,147,483,647. |
+| `JOB_WORKER_MAX_RSS_MB` | No | `2048` | Hard per-process resident-memory claim ceiling in MiB. The worker pauses at or above the limit and resumes only after RSS falls below it. Must be a positive safe integer. |
 | `WORKER_TRINITY_RUNTIME_BUDGET_MS` | No | `420000` | Max worker Trinity runtime budget. |
 | `WORKER_TRINITY_STAGE_TIMEOUT_MS` | No | `180000` | Per-stage/model timeout passed from worker-originated Trinity calls. |
 | `PLANNER_TIMEOUT_MS` | No | `WORKER_TRINITY_STAGE_TIMEOUT_MS` | Planner DAG node timeout. |
@@ -1338,9 +1341,12 @@ database URL as a command-line argument.
 ### Dedicated job runner
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `JOB_WORKER_ID` | `async-queue` | Base worker identity used in logs, heartbeats, and queue claiming. |
-| `JOB_WORKER_STATS_ID` | `JOB_WORKER_ID` | Exact worker-group identity persisted on every generic claim and used for shared slot-level inspection and hourly budget accounting. Groups may span processes only when they use the same configured value. Values longer than 255 characters fail worker startup before readiness. |
+| `JOB_WORKER_ID` | `async-queue` | Base worker identity used in logs, heartbeats, and queue claiming. Every derived `-slot-N` identity must fit the exact 255-character persisted/readiness limit; overlong or control-character values fail startup. |
+| `JOB_WORKER_STATS_ID` | `JOB_WORKER_ID` | Exact worker-group identity persisted on every generic claim and used for shared slot-level inspection and hourly budget accounting. Groups may span processes only when they use the same configured value. Values longer than 255 characters or containing control characters fail worker startup before readiness. |
 | `JOB_WORKER_CONCURRENCY` | `WORKER_COUNT` or `1` | Number of queue-consumer slots in one worker process. |
+| `JOB_WORKER_MAX_JOBS_PER_HOUR` | `120` | Hard shared rolling-hour claim maximum. Admission and claim are atomically serialized in PostgreSQL across slots and replicas sharing `JOB_WORKER_STATS_ID`. |
+| `JOB_WORKER_MAX_AI_CALLS_PER_HOUR` | `120` | Hard shared rolling-hour worker OpenAI admission maximum. Every native transport requires one committed reservation. Provider failures and cancellations after commit remain charged, so the ledger can conservatively exceed transports that actually started; denied, reservation-store-failed, replayed, and already-aborted-before-admission requests consume no new reservation. |
+| `JOB_WORKER_MAX_RSS_MB` | `2048` | Hard per-process RSS claim ceiling in MiB. Claiming pauses at equality and resumes after RSS drops below the ceiling. |
 | `JOB_WORKER_POLL_MS` | `250` | Poll delay after a claimed job cycle. |
 | `JOB_WORKER_IDLE_BACKOFF_MS` | `1000` | Sleep interval when no job is available. |
 | `JOB_WORKER_LEASE_MS` | `15000` | Claimed-job lease duration, clamped to `3000`-`300000` ms. Active execution and terminal persistence renew at one-third of the normalized lease, bounded to `1000`-`10000` ms. |
@@ -1397,6 +1403,57 @@ a writer race. The compatible worker must be the first released mutator.
 Complete compatible worker activation and bootstrap/readiness verification
 before releasing the remaining compatible writers. Existing null rows are never
 inferred from producer or lease prefixes.
+
+The hard worker budgets use one PostgreSQL clock and the exact rolling interval
+`(T - 1 hour, T]`. `migrations/20260830_job_events_worker_budget_v1/` adds the
+strict claim and provider-attempt ledger fields and indexes. Drain every legacy
+claim and provider-call path and keep it quiet for one complete window, then
+apply and verify all six phases before compatible workers begin claiming. A legacy
+provider attempt or retry cannot be reconstructed exactly, so schema
+compatibility alone is not sufficient for mixed-version activation. Every
+slot and replica sharing a stats group must configure identical hard limits.
+
+A generic job claim consumes one job reservation in the same transaction that
+selects, fences, and claims the ordered queue row. Failed, retired, deleted, or
+reclaimed jobs do not refund it; a later claim generation consumes a new
+reservation. The AI-call budget counts database-admitted capacity for native
+OpenAI attempts in worker-owned execution: SDK retries, higher-level retries,
+separate multi-stage calls, and each scheduled or startup Notion embedding batch
+all require individual reservations. One batched embedding HTTP request requires
+one. A provider failure or cancellation after the reservation commits remains
+charged even when cancellation prevents transport from starting. Consequently,
+the reported `aiCalls` value is a conservative admission count and can exceed
+observed network transports. A denied, reservation-store-failed, replayed, or
+already-aborted-before-admission request is not sent and consumes no new
+reservation. OpenAI service-health recovery probes outside
+worker execution, API-process direct execution, the separate `workers/`
+workspace, and `arcanos-ai-runtime/` are outside this dedicated queue-worker
+budget. The existing logical per-request `AiExecutionBudget.maxCalls` remains a
+separate limit. Model metadata requests made inside worker-owned Trinity or
+recovery work are ordinary worker provider attempts and consume capacity.
+
+These safety controls are not advisory and have no zero/false disable value.
+Unset variables use the documented defaults; blank, zero, negative, fractional,
+nonnumeric, or above-setting-maximum values fail worker startup closed. The two
+hourly maxima are capped at PostgreSQL integer maximum 2,147,483,647; RSS accepts
+positive safe-integer MiB values.
+When a rolling budget is exhausted, the worker publishes `paused_budget`, stops
+new claims, and reports the database-derived retry time. At or above the RSS
+ceiling it publishes `paused_rss`. An observed queue/provider/database failure
+publishes `dependency_failure`. Worker `/readyz` is unavailable for all three
+states, while `/healthz` remains process liveness; window expiry, RSS reduction,
+or successful dependency recovery returns the slot to `accepting_claims` and restores
+readiness once every configured slot is accepting claims. A final admitted job
+claim or provider attempt that fills its window publishes the budget pause
+synchronously before that admitted work continues; best-effort snapshot
+persistence starts immediately but cannot hold the claimed lease or provider
+transport. The worker does not wait for a later denied admission to revoke
+readiness. If the required startup
+Notion rebuild reaches the rolling AI limit or observes a provider dependency
+outage, every configured slot publishes the matching pause before the child
+readiness signal, waits for the database retry time or dependency recovery, and
+reruns the gate in-process. Deterministic Notion configuration or index-contract
+failures remain fatal.
 
 Use `npm run build` before `npm run job-events:timeline -- --job-id <uuid> --output text` to reconstruct a redacted chronological job timeline from the compiled backend. The script first invokes the shared database initializer, which can apply built-in schema DDL and write an initialization heartbeat; treat it as a configured-database operation and run it only with explicit authorization and exact target confirmation.
 
@@ -1609,6 +1666,9 @@ This table mirrors high-impact runtime keys and active operator controls in `.en
 | `JOB_WORKER_ID` | `async-queue` (commented) | Dedicated worker identity. |
 | `JOB_WORKER_STATS_ID` | `JOB_WORKER_ID` (commented) | Exact persisted worker-group identity for shared inspection and hourly budgets; maximum 255 characters. |
 | `JOB_WORKER_CONCURRENCY` | `1` (commented) | Queue-consumer slots per worker process. |
+| `JOB_WORKER_MAX_JOBS_PER_HOUR` | `120` (commented) | Hard shared rolling-hour queue-claim maximum; integer 1 through 2,147,483,647 only. |
+| `JOB_WORKER_MAX_AI_CALLS_PER_HOUR` | `120` (commented) | Hard shared rolling-hour worker OpenAI transport-attempt maximum; integer 1 through 2,147,483,647 only. |
+| `JOB_WORKER_MAX_RSS_MB` | `2048` (commented) | Hard per-process RSS claim ceiling in MiB; positive safe integer only. |
 | `JOB_WORKER_POLL_MS` | `250` (commented) | Worker polling delay after claim cycles. |
 | `JOB_WORKER_HEARTBEAT_MS` | `5000` | Worker heartbeat interval. |
 | `JOB_WORKER_LEASE_MS` | `15000` (commented) | Claimed-job lease duration, clamped to `3000`-`300000` ms and renewed through fenced terminal persistence. |

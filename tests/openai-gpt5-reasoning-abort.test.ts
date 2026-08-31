@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { runWithRequestAbortTimeout } from '@arcanos/runtime';
 import { createGPT5Reasoning } from '../src/services/openai.js';
+import { WorkerAiCallBudgetPausedError } from '../src/core/adapters/openai.adapter.js';
 
 describe('createGPT5Reasoning abort propagation', () => {
   beforeEach(() => {
@@ -59,6 +60,23 @@ describe('createGPT5Reasoning abort propagation', () => {
     await expect(createGPT5Reasoning(client, 'Explain mutexes.')).resolves.toMatchObject({
       error: 'provider failure'
     });
+    expect(createSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves worker budget control errors instead of converting them to fallback text', async () => {
+    const budgetError = new WorkerAiCallBudgetPausedError(
+      '2026-08-30T14:30:00.000Z'
+    );
+    const createSpy = jest.fn().mockRejectedValue(budgetError);
+    const client = {
+      responses: {
+        create: createSpy
+      }
+    } as any;
+
+    await expect(createGPT5Reasoning(client, 'Explain mutexes.')).rejects.toBe(
+      budgetError
+    );
     expect(createSpy).toHaveBeenCalledTimes(1);
   });
 });

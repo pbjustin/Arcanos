@@ -28,6 +28,7 @@ const isWorkerRuntimeSuppressedForServiceRoleMock = jest.fn((workerRuntimeMode) 
 
 function createStructuredLoggerMock() {
   const channel = {
+    debug: jest.fn(),
     info: loggerInfoMock,
     warn: loggerWarnMock,
     error: loggerErrorMock,
@@ -53,6 +54,13 @@ jest.unstable_mockModule('@platform/runtime/unifiedConfig.js', () => ({
 }));
 
 jest.unstable_mockModule('@platform/logging/structuredLogging.js', () => ({
+  LogLevel: {
+    DEBUG: 'debug',
+    INFO: 'info',
+    WARN: 'warn',
+    ERROR: 'error'
+  },
+  getConfiguredLogLevel: jest.fn(() => 'info'),
   logger: structuredLoggerMock,
   aiLogger: structuredLoggerMock,
   apiLogger: structuredLoggerMock,

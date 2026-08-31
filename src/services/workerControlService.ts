@@ -158,6 +158,9 @@ export interface WorkerControlWorkerSnapshot {
   workerType: string;
   healthStatus: string;
   operationalStatus: WorkerAutonomyHealthReport['overallStatus'];
+  claimAcceptance: 'accepting' | 'paused_budget' | 'paused_rss' | 'dependency_failure' | null;
+  claimPauseReason: string | null;
+  claimRetryAt: string | null;
   activeJobs: string[];
   dispatcherStarted: boolean;
   activeListeners: number;
@@ -677,12 +680,21 @@ function deriveWorkerOperationalStatus(
   watchdog: WorkerControlWorkerSnapshot['watchdog'],
   stale: boolean,
   dispatcherStarted: boolean,
-  activeListeners: number
+  activeListeners: number,
+  claimAcceptance: WorkerControlWorkerSnapshot['claimAcceptance']
 ): WorkerAutonomyHealthReport['overallStatus'] {
   const activeQueueWork = hasActiveQueueWork(queueSummary);
 
   if (workerSnapshot.healthStatus === 'offline') {
     return 'offline';
+  }
+
+  if (claimAcceptance === 'dependency_failure') {
+    return 'unhealthy';
+  }
+
+  if (claimAcceptance === 'paused_budget' || claimAcceptance === 'paused_rss') {
+    return 'degraded';
   }
 
   if (activeQueueWork && (!dispatcherStarted || activeListeners <= 0)) {
@@ -717,6 +729,13 @@ function buildWorkerControlWorkerSnapshot(
   const dispatcherStarted = snapshot.dispatcherStarted === true;
   const activeListeners = readSnapshotNumber(snapshot, 'activeListeners') ?? 0;
   const activeJobs = readSnapshotStringArray(snapshot, 'activeJobs');
+  const claimAcceptanceCandidate = readSnapshotString(snapshot, 'claimAcceptance');
+  const claimAcceptance = (
+    claimAcceptanceCandidate === 'accepting' ||
+    claimAcceptanceCandidate === 'paused_budget' ||
+    claimAcceptanceCandidate === 'paused_rss' ||
+    claimAcceptanceCandidate === 'dependency_failure'
+  ) ? claimAcceptanceCandidate : null;
   const heartbeatAgeMs = deriveObservationAgeMs({
     lastHeartbeatAt: workerSnapshot.lastHeartbeatAt,
     lastActivityAt,
@@ -738,8 +757,12 @@ function buildWorkerControlWorkerSnapshot(
       watchdog,
       stale,
       dispatcherStarted,
-      activeListeners
+      activeListeners,
+      claimAcceptance
     ),
+    claimAcceptance,
+    claimPauseReason: readSnapshotString(snapshot, 'claimPauseReason'),
+    claimRetryAt: readSnapshotString(snapshot, 'claimRetryAt'),
     activeJobs: activeJobs.length > 0
       ? activeJobs
       : workerSnapshot.currentJobId

@@ -14,6 +14,18 @@ export interface AiExecutionBudget {
   maxTotalTokens?: number;
 }
 
+export interface WorkerAiCallBudget {
+  statsWorkerId: string;
+  workerId: string;
+  maxCallsPerHour: number;
+  /** Reports that one admitted transport consumed the final rolling-window unit. */
+  onCapacityExhausted?: (
+    nextAvailableAt: string | null
+  ) => void | Promise<void>;
+  /** Receives final adapter-operation failures inside worker-owned execution only. */
+  onOperationalFailure?: (error: unknown) => void;
+}
+
 export interface AiUsageTotals {
   calls: number;
   promptTokens: number;
@@ -29,6 +41,11 @@ export interface AiExecutionContext {
   traceId?: string;
   jobId?: string;
   budget?: AiExecutionBudget;
+  workerBudget?: WorkerAiCallBudget;
+  /** Probe-scoped hook invoked immediately before one admitted native transport. */
+  workerBudgetTransportReady?: (operation: string) => void;
+  /** First hard worker-budget admission failure, even if a downstream fallback swallows it. */
+  workerBudgetFailure: unknown | null;
   totals: AiUsageTotals;
   operationCounts: Record<string, number>;
   models: Record<string, number>;
@@ -109,6 +126,7 @@ export function createAiExecutionContext(input: {
   traceId?: string;
   jobId?: string;
   budget?: AiExecutionBudget;
+  workerBudget?: WorkerAiCallBudget;
 }): AiExecutionContext {
   return {
     provider: 'openai',
@@ -118,6 +136,8 @@ export function createAiExecutionContext(input: {
     traceId: input.traceId,
     jobId: input.jobId,
     budget: cloneBudget(input.budget),
+    workerBudget: input.workerBudget ? { ...input.workerBudget } : undefined,
+    workerBudgetFailure: null,
     totals: {
       calls: 0,
       promptTokens: 0,

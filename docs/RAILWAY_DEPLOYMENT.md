@@ -92,7 +92,7 @@ Launcher behavior:
 - The Backstage `phase-one-universe-binding` selector routes independent mutations through two universe-aware in-memory adapters and uses the pure confirmation-envelope builder shared with the production gate to prove that changing only `universeId` changes the fingerprint input. It does not issue or verify a confirmation token, connect to PostgreSQL, claim durable persistence, or cross an effects boundary.
 - The Backstage `continuity-query-contract` selector executes the production-shared cursor-shape preflight, sampled/exhaustive and compact-retry policy prompts, prompt assembly, and exact-page public response projection over server-owned sealed input. The additive `continuity-subtree-contract` selector executes the same production-shared prompt/response core over sealed relevant, first-page, and final-page subtree projections. It proves subtree-only scope/page fields stay coupled, coverage totals and source paths remain bounded, incomplete subtree coverage fails closed, and the continuation request passes only shape/mode preflight. A paired worker request proves that the passive worker denies the generation-contract path with the contained 404. This is component evidence only: it does not invoke the canonical authenticated route, select or diversify live chunks, resolve hierarchy or execute recursive SQL, sign or verify a cursor MAC, read live PostgreSQL or Notion data, or call OpenAI or any other model provider.
 - The Gaming fixtures intentionally do not import the exact production route handlers: that graph reaches configured authentication, source repositories, jobs, providers/fetching, and persistence capabilities excluded by the containment gate. The canary instead executes the semantic-digest-pinned pure production dispatcher, bundled-fixture validator/grounding runner, and response guard, so its `passed` checks represent work actually performed while network/provider stages remain `skipped`. Contract-faithful synthetic responses cover guide/build/meta queries, closed validation, operational guarding, and exact source-route unauthorized, unsafe, outage, idempotency, and queued/running/completed lifecycle semantics. A missing preview selector returns the production-shaped 401 before JSON parsing, including for malformed and over-limit bodies. The fixed `x-native-preview-fixture` selector is a noncredential simulation of post-auth behavior, not bearer-auth evidence, and each validation selector requires its exact server-owned invalid body. Every newly enabled Gaming response carries `X-Arcanos-Preview-Fixture: sealed-synthetic`; source responses also carry `Pragma: no-cache`. The strict canary body stays identical to the public schema and production guard, which allow no preview-only field, so the response header is its machine-readable provenance. These fixtures do not invoke a provider, fetch, database, queue, worker, repository, or persistence mutation.
-- The native PR worker role remains the passive health-only server. The historical `--pr-preview-safe` flag remains available as an explicit passive fallback for both roles.
+- The native PR worker role remains the passive health-only server. Each exact worker `/readyz` read runs a sealed, capability-free self-check through the launcher's production readiness reducer before it returns 200. The check proves two-slot admission, budget-pause 503 plus `retryAt`, stale-sequence rejection, recovery, dependency-failure priority, and shutdown/late-output rejection; successful responses carry `x-arcanos-preview-worker-budget-readiness-version: worker-budget-readiness/v1`, which the exact-head verifier requires and reports as `workerBudgetReadinessVerified`. It does not import or start the job runner and explicitly does not prove PostgreSQL ledger atomicity, advisory locking, provider dispatch, or active queue claiming; PostgreSQL 18 CI remains authoritative for those behaviors. The historical `--pr-preview-safe` flag remains available as an explicit passive fallback for both roles.
 - Native application readiness reports `trustScope: trusted-pr-accidental-effects`, `protectsMaliciousPr: false`, and `requiresPlatformSecretIsolationForUntrustedCode: true`. Repository code cannot prevent a malicious PR from reading an inherited parent environment or removing its own guard. Do not enable native application previews for forks or untrusted contributors unless Railway prevents production/provider/database/Redis credentials and data from reaching the PR container before code starts.
 - `npm run railway:probe:native-pr -- --pr-number <N> --commit-sha <SHA> --web-base-url https://<confirmed-web-pr-host> --worker-base-url https://<confirmed-worker-pr-host>` performs a no-network dry run. It fails unless the canonical Arcanos `origin`, local HEAD, and an entirely clean tracked/untracked worktree match the supplied commit evidence. Add both `--execute --allow-network` only after independently confirming those two hosts. The exact-PR-head live runner makes 136 bounded, sequential, credential-free, no-redirect requests: the prior 134-request matrix plus the output-admission and Notion Phase-A selectors. The contract response is deep-compared with bounded JSON read from the revalidated exact commit and independently checked for OpenAPI 3.1.0, version 1.6.0, the exact five paths, managed result operation, UUID parameter, 30-second wait bounds/default, bearer security, and absence of legacy token/result/stream fields. The original matrix retains 69 core requests, seven public Gaming requests, 28 Gaming-source requests (eight true unauthenticated checks, including auth-first `OPTIONS` and encoded-status cases, and 20 explicitly labeled `simulatedAuth` fixtures), two worker-role Gaming denials, six sealed self-heal approval cases, one worker-role approval-contract denial, thirteen sealed Backstage generation cases (including the managed-async and GPT-client-identity cases as the twenty-second and twenty-third `simulatedAuth` requests), one worker-role generation-contract denial, one saved-storyline projection case, one canon-summary pagination case, two sealed dispatch GPT identifier cases, one worker-role dispatch selector denial, one sealed status auth-before-parser case (the twenty-first `simulatedAuth` request), and one worker-role status selector denial. The saved projection trims 2,500 leading ECMAScript whitespace code points before returning exactly 1,500 of 1,501 meaningful code points. The pagination case proves exact 4,000/4,000/2,000 Unicode-code-point pages across BMP/astral boundaries, exact reconstruction, version fencing, scope and offset rejection, and null-versus-empty preservation. Both explicitly report that neither SQL nor a database boundary ran. The route-budget case runs a 13,250 ms synthetic provider seam under the production-shared Trinity run options and 40-second provider/60-second route policy, and the runner independently requires at least 13,000 ms of wall-clock response time; its sealed 20-second request timeout is exposed as `effectivePerCaseMaxRequestTimeoutMs` separately from the caller default. The HRC case proves a classified timed-out fallback is not cached before one retry succeeds and the next read is cached. The review-completion case exercises the production-shared full-review classifier, Trinity list normalizer, 1,600-token/style policy, and Booker output contract against fixed named-event and narrow-event scopes, mixed and state-field directives, balanced and unmatched quotes, astral-letter apostrophes, quoted contractions, Markdown markers, inline/collapsed honesty caveats, and spaced/single initials. It also silently executes the compact-retry, managed-async, and GPT-client-identity assertions without changing its response so an older trusted lifecycle verifier still covers all three deployed PR-head seams. The detailed compact-retry case derives the exact contract and recovery instruction from a sealed prompt, runs the production-shared one-retry coordinator and strict final validator, and proves valid, malformed, under-count, over-count, word-overflow, second-length, and non-length behavior with no third call. The production-output case executes the semantic-digest-pinned compact parser plus the production-shared capacity, presentation, and recovery resolvers over HRC-exact, Notion-authoritative at-most, and complete-card nested-component scenarios. It proves a 6,000-token structured capacity can retain compact exact/maximum presentation, while complete-card component counts retain structured hierarchy and structured recovery. The established compact-retry request executes this proof fail-closed without changing its legacy body; the dedicated selector and versioned header provide inspectable exact-head evidence. The output-admission case replays eight alternative-card container, lexical-quantity, delimiter, compact-list, and supersession classifications, then runs the production-shared final gate over valid and malformed first-success results. It proves every synthetic provider call stops after one attempt, malformed output is rejected cause-free without exposure, and no length retry is started. The Notion Phase-A case executes semantic-digest-pinned production cores for the 4,096-reader/4,096-writer fence, 2,307/4,096 acceptance, strict 4,097 pre-effect rejection, a readable 2,117-chunk unchanged disposition, and exact late-acquisition lease cleanup after cancellation. It uses only injected deferred promises and reports that no database, Notion API, embedding, provider, or worker boundary ran. The established production-output and Notion-authority selectors execute these new assertions fail-closed without changing their legacy bodies. The managed-async case executes production-shared bearer parsing, stable principal and legacy cutover identity, exact owned-job filtering, managed poll projection, virtual-time pending-to-completed polling, terminal state projection, and AES-GCM result materialization through injected in-memory dependencies; its versioned proof header and response scan reject returned credentials, capabilities, key material, ciphertext, and stream links. The GPT-client-identity case executes the production-shared strict bearer parser, immutable registry lookup, authenticated identity resolution, bounded telemetry projection, server-owned queued-job provenance merge, and strict provenance parser; its versioned proof header and response scan reject returned credentials and untrusted model claims. The failure-telemetry case proves the exact production-shared pure projection over root-ID alias, duplicate-key, fallback-reason, deterministic-order, and maximum-512 inputs; it never runs a worker or logger sink. The two continuity cases execute the production-shared cursor-shape preflight, sampled/exhaustive and compact-retry policy prompts, prompt assembly, and exact-page/subtree public response projections over sealed input. All thirteen generation cases remain credential-free and do not call a model provider or cross a protected effect; only the Notion-authority case performs the fixed Notion edge canary below. The unauthenticated set includes malformed and 16,385-byte bodies to prove auth-before-parser behavior. After the selector, the source fixtures mirror the production 16 KiB limit, closed 413/415 parser errors, and one-decode status-path containment. The runner verifies correlation, security, `no-store`, source, dispatch, and status `no-cache`, bounded-body, and synthetic-provenance headers. It reports served-public-identity and effect-free component evidence; it does not assert Railway control-plane ownership or a live bearer credential, normal Backstage or `/status` composition, confirmation, filesystem mutation, PostgreSQL, provider, storage, queue, admission/quota-store behavior, structured logger transport, normal self-heal loop, actuator, or worker execution.
 - The `notion-authority-rag-contract` selector makes one cached, fixed-origin
@@ -259,13 +259,30 @@ Launcher behavior:
   skip only this universe-wide legacy gate. Protected shard jobs can run and
   repair partition state only in exact `shadow`; exact `partitioned` freezes
   partition writers. Legacy reads keep their existing fail-closed behavior.
-  The child communicates the final transition through an exact newline-delimited
-  protocol independent of `LOG_LEVEL`; stderr and embedded marker-like text
-  cannot activate readiness. The normal OpenAI readiness check does not perform
-  a paid probe, though a required monolith format rebuild necessarily performs
-  the configured Notion and embedding work. Transient provider failure after
-  activation remains handled through the worker's probe/backoff and job-deferral
-  path.
+  Each child communicates ordered queue-acceptance transitions through an exact
+  newline-delimited protocol independent of `LOG_LEVEL`; stderr, malformed or
+  stale records, and embedded marker-like text cannot activate readiness. The
+  launcher aggregates every configured slot with fail-closed precedence:
+  `dependency_failure`, `paused_rss`, `paused_budget`, then `accepting_claims`.
+  `/readyz` returns `503` whenever any slot cannot accept its configured queue
+  role. Rolling job/AI-budget pauses and RSS pressure are degraded, recoverable
+  states; dependency failure is unhealthy. `/healthz` remains process liveness.
+  Window expiry, RSS reduction, or a successful dependency probe produces a new
+  `accepting_claims` transition and can restore readiness once all other gates pass.
+  When a final allowed claim or provider attempt consumes the last rolling-window
+  unit, the child reports `paused_budget` before that admitted work continues, so
+  readiness does not remain green until a later denied admission.
+  The normal OpenAI startup readiness check does not perform a paid probe,
+  though a required monolith format rebuild necessarily performs configured
+  Notion and embedding work under the same worker AI-call budget. If that
+  pre-readiness rebuild exhausts the rolling limit or observes a recoverable
+  provider dependency outage, every configured slot publishes the matching
+  non-ready state and the child retries the gate after the database retry time
+  or dependency recovery; it does not require a process restart. Deterministic
+  Notion configuration/index-contract failures remain fatal. After a real
+  job observes provider failure, the slot publishes `dependency_failure`, stops
+  new claims, and probes with backoff until recovery rather than repeatedly
+  claiming and deferring jobs while reporting ready.
 - The additive partition writer starts only after consumer readiness and only
   for exact `shadow` plus a valid partition envelope. Partition
   manifests and shard freshness never participate in `/readyz` or weaken the
@@ -1035,14 +1052,13 @@ not guess a prior revision, use generic `railway redeploy`, or automatically
 roll application code across a potentially incompatible schema.
 
 The workflow also runs a repository-owned coordinated-writer policy before the
-production deployment job can enter its concurrency group. The completed DAG
-snapshot-generation rollout now uses the inactive `none` sentinel, which admits
-normal paired promotion. If
-`ARCANOS_COORDINATED_DAG_WRITER_ROLLOUT_HOLD` is changed back to the active
-`20260727-dag-snapshot-generation-v1` ID, automatic `workflow_run` promotion is
-skipped without starting or cancelling a deployment. A manual dispatch then
-fails unless the operator types the exact confirmation
-`DAG WRITERS DRAINED: 20260727-dag-snapshot-generation-v1`.
+production deployment job can enter its concurrency group. The current
+`ARCANOS_COORDINATED_WRITER_ROLLOUT_HOLD` value is the active
+`20260830-job-events-worker-budget-v1` ID for the incompatible worker
+hard-budget evidence rollout. Automatic `workflow_run` promotion is skipped
+without starting or cancelling a deployment. A manual dispatch fails unless
+the operator types the exact confirmation
+`COORDINATED WRITERS DRAINED: 20260830-job-events-worker-budget-v1`.
 
 The repository policy cannot suppress Railway's separate GitHub-source
 auto-deploy trigger. Keep native auto-deploy disabled on both `ARCANOS V2` and
@@ -1054,23 +1070,29 @@ The typed phrase does not stop a process, apply a migration, validate a target,
 or authorize production work. Before using it:
 
 1. Obtain the normal target-specific deployment and database authorization.
-2. Inventory every process capable of writing DAG snapshots, including all web
-   replicas and any separately operated service.
+2. Inventory every legacy queue claimer and worker-originated provider path,
+   including every web/worker replica and separately operated process.
 3. Verify Railway-native auto-deploy remains disabled on every production
    writer so a source push cannot bypass the repository hold.
-4. Drain or stop every writer and verify that an older binary cannot restart.
-5. Confirm the compatible revision and migration are the approved rollout pair.
-6. Dispatch the workflow only for the approved revision. The workflow deploys
+4. Drain or stop every legacy path, allow already admitted work to finish, and
+   verify that an older binary cannot restart.
+5. Keep every legacy claim/provider path continuously quiet for one complete
+   one-hour budget window.
+6. Apply and verify all six worker-budget migration phases in documented order,
+   then run all six again to prove idempotence.
+7. Confirm the compatible revision, identical hard limits for every replica in
+   each stats group, and the migration are the approved rollout pair.
+8. Dispatch the workflow only for that approved revision. The workflow deploys
    the explicitly configured worker first and web second; inventory and
    coordinate any additional writer through its separately approved mechanism.
-7. Verify the installed schema, exact revision on every writer, absence of old
-   replicas, deployment health, and bounded application diagnostics.
+9. Verify the installed schema and indexes, exact revision on every writer,
+   absence of old replicas, deployment health/readiness, and bounded application
+   diagnostics. Keep the hold active through any rollback decision.
 
-Keep the hold active if rollout or verification fails. Rollback also requires
-all writers to remain stopped or compatible with the rolled-back schema. Only
-after the coordinated rollout is accepted should a reviewed follow-up set the
-workflow marker to the exact sentinel `none`. Missing, blank, or malformed
-markers fail closed; `none` restores normal future automatic promotion.
+Return the hold to the inactive `none` sentinel only in a separately reviewed
+repository change after all of those checks pass. The change introducing this
+rollout cannot remove its own hold. Missing, blank, whitespace-padded, or
+malformed hold values fail closed rather than restoring automatic promotion.
 
 A push or manual workflow dispatch can therefore be deployment-affecting. Before triggering either:
 

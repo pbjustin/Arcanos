@@ -29,6 +29,11 @@ jest.unstable_mockModule('@core/logic/trinityWritingPipeline.js', () => ({
   runTrinityWritingPipeline: runTrinityWritingPipelineMock
 }));
 
+jest.unstable_mockModule('@core/adapters/openai.adapter.js', () => ({
+  classifyWorkerAiBudgetError: jest.fn(() => null),
+  normalizeWorkerAiBudgetError: jest.fn((error: unknown) => error)
+}));
+
 jest.unstable_mockModule('@platform/resilience/runtimeBudget.js', () => ({
   createRuntimeBudgetWithLimit: createRuntimeBudgetWithLimitMock
 }));
@@ -38,6 +43,7 @@ jest.unstable_mockModule('../src/workers/workerExecutionLimits.js', () => ({
 }));
 
 jest.unstable_mockModule('@arcanos/runtime', () => ({
+  OpenAIAbortError: class OpenAIAbortError extends Error {},
   createAbortError: createAbortErrorMock,
   getRequestAbortContext: getRequestAbortContextMock,
   getRequestAbortSignal: getRequestAbortSignalMock,

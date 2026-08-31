@@ -44,9 +44,27 @@ import {
   recordJobEventWithClient,
   type JobEventType,
 } from './jobEventRepository.js';
+import {
+  configureWorkerBudgetTransactionBoundsWithClient,
+  inspectWorkerBudgetsWithClient,
+  lockWorkerBudgetWithClient,
+  recordWorkerBudgetReservationWithClient,
+  WORKER_BUDGET_TRANSACTION_TIMEOUT_MS,
+  type WorkerBudgetAdmission,
+} from './workerBudgetRepository.js';
 
 const LEGACY_QUEUED_GPT_CANCELLATION_MESSAGE =
   'Legacy queued GPT cancellation requested during compatibility drain.';
+
+function resolveWorkerBudgetClaimTransactionTimeoutMs(leaseMs: number): number {
+  return Math.max(
+    1,
+    Math.min(
+      WORKER_BUDGET_TRANSACTION_TIMEOUT_MS,
+      Math.floor(leaseMs / 2)
+    )
+  );
+}
 
 interface JobEventSource {
   id: string;
@@ -146,6 +164,13 @@ export interface UpdateJobMetadata {
 export interface ClaimNextPendingJobOptions
   extends Omit<SchedulerClaimOptions, 'workerId'> {
   workerId: string;
+  /** Controlled owner-seam clock for disposable PostgreSQL integration tests only. */
+  budgetNowForTesting?: Date;
+}
+
+export interface ClaimNextPendingJobResult {
+  job: JobData | null;
+  budgetAdmission: WorkerBudgetAdmission | null;
 }
 
 export interface ClaimedJobFence {
@@ -226,6 +251,7 @@ export interface JobExecutionStats {
   failed: number;
   running: number;
   totalTerminal: number;
+  jobClaims: number;
   aiCalls: number;
 }
 
@@ -2168,13 +2194,19 @@ async function claimPendingJobWithLane(
     leaseMs: number;
     workerId: string;
     statsWorkerId: string;
+    claimAt: string | null;
     lane: PriorityQueueClaimLane;
     priorityLaneMaxPriority: number;
   }
 ): Promise<JobData | null> {
   const queryParams: unknown[] = [params.leaseMs, params.workerId, params.statsWorkerId];
+  const claimTimestampSql = params.claimAt ? '$4::timestamptz' : 'NOW()';
+  if (params.claimAt) {
+    queryParams.push(params.claimAt);
+  }
+  const priorityLaneParameter = `$${queryParams.length + 1}`;
   const normalLaneFilter = params.lane === 'normal'
-    ? `AND NOT (job_type = 'gpt' AND priority <= $4)`
+    ? `AND NOT (job_type = 'gpt' AND priority <= ${priorityLaneParameter})`
     : '';
   if (params.lane === 'normal') {
     queryParams.push(params.priorityLaneMaxPriority);
@@ -2184,10 +2216,10 @@ async function claimPendingJobWithLane(
     `UPDATE job_data
      SET
        status = 'running',
-       updated_at = NOW(),
-       started_at = COALESCE(started_at, NOW()),
-       last_heartbeat_at = NOW(),
-       lease_expires_at = NOW() + ($1::bigint * INTERVAL '1 millisecond'),
+       updated_at = ${claimTimestampSql},
+       started_at = COALESCE(started_at, ${claimTimestampSql}),
+       last_heartbeat_at = ${claimTimestampSql},
+       lease_expires_at = ${claimTimestampSql} + ($1::bigint * INTERVAL '1 millisecond'),
        last_worker_id = $2,
        stats_worker_id = $3,
        claim_generation = claim_generation + 1
@@ -2196,7 +2228,7 @@ async function claimPendingJobWithLane(
        FROM job_data
        WHERE status = 'pending'
          AND job_type <> 'local-agent'
-         AND next_run_at <= NOW()
+         AND next_run_at <= ${claimTimestampSql}
          ${normalLaneFilter}
        ORDER BY priority ASC, next_run_at ASC, created_at ASC
        FOR UPDATE SKIP LOCKED
@@ -2232,9 +2264,9 @@ function updatePriorityQueueFairnessAfterClaim(
  * Inputs/outputs: optional worker id and lease duration; returns the claimed job or `null`.
  * Edge case behavior: ignores pending jobs scheduled for the future and returns `null` when none are due.
  */
-export async function claimNextPendingJob(
+export async function claimNextPendingJobWithAdmission(
   options: ClaimNextPendingJobOptions
-): Promise<JobData | null> {
+): Promise<ClaimNextPendingJobResult> {
   const workerId = normalizeNullableString(options?.workerId);
   if (!workerId) {
     throw new TypeError('claimNextPendingJob requires a non-empty workerId.');
@@ -2253,12 +2285,64 @@ export async function claimNextPendingJob(
   const priorityLaneMaxPriority = normalizePriorityLaneMaxPriority(
     options.priorityLaneMaxPriority
   );
-  const claimOperation = async (): Promise<JobData | null> => {
+  const claimOperation = async (): Promise<ClaimNextPendingJobResult> => {
     const client = await pool.connect();
     let claimedJob: JobData | null = null;
+    let budgetAdmission: WorkerBudgetAdmission | null = null;
+    let claimAt: string | null = null;
+    let releaseError: Error | undefined;
 
     try {
-      await client.query('BEGIN');
+      await client.query('BEGIN ISOLATION LEVEL READ COMMITTED');
+      await configureWorkerBudgetTransactionBoundsWithClient(
+        client,
+        resolveWorkerBudgetClaimTransactionTimeoutMs(leaseMs)
+      );
+
+      if (options.maxJobsPerHour !== undefined) {
+        await lockWorkerBudgetWithClient(client, 'job_claim', statsWorkerId);
+      }
+      if (options.maxAiCallsPerHour !== undefined) {
+        await lockWorkerBudgetWithClient(client, 'ai_provider_attempt', statsWorkerId);
+      }
+
+      const budgetAdmissions = await inspectWorkerBudgetsWithClient(
+        client,
+        [
+          ...(options.maxJobsPerHour !== undefined
+            ? [{
+                kind: 'job_claim' as const,
+                policy: { statsWorkerId, limit: options.maxJobsPerHour }
+              }]
+            : []),
+          ...(options.maxAiCallsPerHour !== undefined
+            ? [{
+                kind: 'ai_provider_attempt' as const,
+                policy: { statsWorkerId, limit: options.maxAiCallsPerHour }
+              }]
+            : [])
+        ],
+        { now: options.budgetNowForTesting }
+      );
+      const jobAdmission = budgetAdmissions.find(({ kind }) => kind === 'job_claim') ?? null;
+      const aiAdmission = budgetAdmissions.find(({ kind }) => kind === 'ai_provider_attempt') ?? null;
+
+      if (jobAdmission) {
+        budgetAdmission = jobAdmission;
+        if (!jobAdmission.allowed) {
+          await client.query('COMMIT');
+          return { job: null, budgetAdmission };
+        }
+        claimAt = jobAdmission.evaluatedAt;
+      }
+
+      if (aiAdmission) {
+        if (!aiAdmission.allowed) {
+          await client.query('COMMIT');
+          return { job: null, budgetAdmission: aiAdmission };
+        }
+        claimAt ??= aiAdmission.evaluatedAt;
+      }
 
       const firstLane = resolvePriorityQueueClaimLane({
         priorityQueueEnabled,
@@ -2269,6 +2353,7 @@ export async function claimNextPendingJob(
         leaseMs,
         workerId,
         statsWorkerId,
+        claimAt,
         lane: firstLane,
         priorityLaneMaxPriority
       });
@@ -2278,18 +2363,46 @@ export async function claimNextPendingJob(
           leaseMs,
           workerId,
           statsWorkerId,
+          claimAt,
           lane: 'priority',
           priorityLaneMaxPriority
         });
       }
 
+      if (claimedJob && budgetAdmission?.kind === 'job_claim') {
+        await recordWorkerBudgetReservationWithClient(
+          client,
+          'job_claim',
+          {
+            statsWorkerId,
+            limit: options.maxJobsPerHour!,
+            jobId: claimedJob.id,
+            workerId,
+            claimGeneration: claimedJob.claim_generation
+          },
+          budgetAdmission.evaluatedAt
+        );
+        budgetAdmission = {
+          ...budgetAdmission,
+          used: budgetAdmission.used + 1,
+          remaining: Math.max(0, budgetAdmission.remaining - 1)
+        };
+      }
+
       await client.query('COMMIT');
     } catch (error: unknown) {
-      await client.query('ROLLBACK');
+      try {
+        await client.query('ROLLBACK');
+      } catch (rollbackError) {
+        // Preserve the owner-seam failure that aborted admission or claim.
+        releaseError = rollbackError instanceof Error
+          ? rollbackError
+          : new Error('Job claim rollback failed.');
+      }
       logJobRepositoryError('claim_pending_job', error);
       throw error;
     } finally {
-      client.release();
+      client.release(releaseError);
     }
 
     if (priorityQueueEnabled) {
@@ -2299,12 +2412,18 @@ export async function claimNextPendingJob(
       leaseMs,
       priorityQueueEnabled
     });
-    return claimedJob;
+    return { job: claimedJob, budgetAdmission: claimedJob ? budgetAdmission : null };
   };
 
   return priorityQueueEnabled
     ? withPriorityQueueFairnessLock(claimOperation)
     : claimOperation();
+}
+
+export async function claimNextPendingJob(
+  options: ClaimNextPendingJobOptions
+): Promise<JobData | null> {
+  return (await claimNextPendingJobWithAdmission(options)).job;
 }
 
 /**
@@ -3373,23 +3492,38 @@ export async function getJobExecutionStatsSince(
       failed: 0,
       running: 0,
       totalTerminal: 0,
+      jobClaims: 0,
       aiCalls: 0
     };
   }
 
   const result = await query(
-    `SELECT
-       COUNT(*) FILTER (WHERE status = 'completed')::int AS completed_count,
-       COUNT(*) FILTER (WHERE status = 'failed')::int AS failed_count,
-       COUNT(*) FILTER (WHERE status = 'running')::int AS running_count,
-       COUNT(*) FILTER (WHERE status IN ('completed', 'failed', 'cancelled', 'expired'))::int AS total_terminal_count,
-       COUNT(*) FILTER (
-         WHERE status IN ('completed', 'failed', 'cancelled', 'expired')
-           AND job_type IN ('ask', 'dag-node', 'gpt')
-       )::int AS ai_call_count
-     FROM job_data
-     WHERE updated_at >= $1::timestamptz
-       AND ($2::text IS NULL OR stats_worker_id = $2)`,
+    `WITH job_stats AS (
+       SELECT
+         COUNT(*) FILTER (WHERE status = 'completed')::int AS completed_count,
+         COUNT(*) FILTER (WHERE status = 'failed')::int AS failed_count,
+         COUNT(*) FILTER (WHERE status = 'running')::int AS running_count,
+         COUNT(*) FILTER (
+           WHERE status IN ('completed', 'failed', 'cancelled', 'expired')
+         )::int AS total_terminal_count
+       FROM job_data
+       WHERE updated_at >= $1::timestamptz
+         AND ($2::text IS NULL OR stats_worker_id = $2)
+     ), budget_stats AS (
+       SELECT
+         COUNT(*) FILTER (
+           WHERE event_type = 'worker.budget.job_claim'
+         )::int AS job_claim_count,
+         COUNT(*) FILTER (
+           WHERE event_type = 'worker.budget.ai_provider_attempt'
+         )::int AS ai_call_count
+       FROM job_events
+       WHERE occurred_at >= $1::timestamptz
+         AND ($2::text IS NULL OR stats_worker_id = $2)
+     )
+     SELECT job_stats.*, budget_stats.*
+     FROM job_stats
+     CROSS JOIN budget_stats`,
     [normalizeNullableDate(since), normalizeNullableString(statsWorkerId)]
   );
 
@@ -3398,6 +3532,7 @@ export async function getJobExecutionStatsSince(
     failed_count: number;
     running_count: number;
     total_terminal_count: number;
+    job_claim_count: number;
     ai_call_count: number;
   } | undefined;
 
@@ -3406,6 +3541,7 @@ export async function getJobExecutionStatsSince(
     failed: row?.failed_count ?? 0,
     running: row?.running_count ?? 0,
     totalTerminal: row?.total_terminal_count ?? 0,
+    jobClaims: row?.job_claim_count ?? 0,
     aiCalls: row?.ai_call_count ?? 0
   };
 }

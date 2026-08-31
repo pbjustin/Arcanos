@@ -33,6 +33,7 @@ import { getEnvNumber } from '@platform/runtime/env.js';
 import { runArcanosCoreQuery } from '@services/arcanos-core.js';
 import { getOpenAIClientOrAdapter } from '@services/openai/clientBridge.js';
 import { createSingleChatCompletion, getFallbackModel } from '@services/openai.js';
+import { instrumentOpenAIOperation } from '@core/adapters/openai.adapter.js';
 import { renderPromptGuidanceSections } from '@shared/promptGuidance.js';
 import {
   getOpenAIServiceHealth,
@@ -3345,7 +3346,10 @@ export async function probePredictiveHealingAIProvider(): Promise<PredictiveHeal
 
   try {
     await runWithTimeout(
-      () => client.models.list({ page: 1 } as any),
+      () => instrumentOpenAIOperation({
+        operation: 'models_list',
+        callback: () => client.models.list({ page: 1 } as any),
+      }),
       4_000,
       'OpenAI model-list probe timed out after 4000ms'
     );

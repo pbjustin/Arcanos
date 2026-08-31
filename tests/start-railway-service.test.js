@@ -20,10 +20,32 @@ import {
   resolveHealthListenerConfig,
   waitForExit,
   WORKER_BOOTSTRAP_READY_SENTINEL,
+  WORKER_OPERATIONAL_STATE_PREFIX,
 } from '../scripts/start-railway-service.mjs';
 import {
+  NATIVE_PR_PREVIEW_E2E_CONTRACT,
+} from '../scripts/native-pr-preview-contract.mjs';
+import {
+  createWorkerOperationalStateReporter,
   WORKER_BOOTSTRAP_READY_SENTINEL as JOB_RUNNER_BOOTSTRAP_READY_SENTINEL,
+  WORKER_OPERATIONAL_STATE_PREFIX as JOB_RUNNER_OPERATIONAL_STATE_PREFIX,
 } from '../src/workers/jobRunnerRuntime.js';
+
+function buildWorkerOperationalStateLine({
+  workerId = 'async-queue-slot-1',
+  sequence = 1,
+  state = 'accepting_claims',
+  reason = null,
+  retryAt = null,
+} = {}) {
+  return `${WORKER_OPERATIONAL_STATE_PREFIX}${JSON.stringify({
+    workerId,
+    sequence,
+    state,
+    reason,
+    retryAt,
+  })}\n`;
+}
 
 describe('start-railway-service launcher helpers', () => {
   const nativeApplicationPreviewEnvironment = {
@@ -268,6 +290,13 @@ describe('start-railway-service launcher helpers', () => {
 
       const readinessResponse = await fetch(`${origin}/readyz`);
       expect(readinessResponse.status).toBe(200);
+      expect(readinessResponse.headers.get(
+        NATIVE_PR_PREVIEW_E2E_CONTRACT.workerBudgetReadiness.proofHeader,
+      )).toBe(
+        processKind === 'worker'
+          ? NATIVE_PR_PREVIEW_E2E_CONTRACT.workerBudgetReadiness.proofVersion
+          : null,
+      );
       expect(await readinessResponse.json()).toEqual({
         ready: true,
         mode: 'passive-pr-preview',
@@ -558,6 +587,7 @@ describe('start-railway-service launcher helpers', () => {
     recordWorkerOutput(readiness, 'worker-runtime polling loop started\n');
     expect(buildWorkerReadinessResponse(readiness).statusCode).toBe(503);
 
+    recordWorkerOutput(readiness, buildWorkerOperationalStateLine());
     recordWorkerOutput(readiness, `${WORKER_BOOTSTRAP_READY_SENTINEL}\n`);
     expect(buildWorkerReadinessResponse(readiness)).toMatchObject({
       statusCode: 200,
@@ -603,6 +633,7 @@ describe('start-railway-service launcher helpers', () => {
       expect(liveness.status).toBe(200);
       expect(await liveness.text()).toBe('ok');
 
+      recordWorkerOutput(readiness, buildWorkerOperationalStateLine());
       recordWorkerOutput(readiness, `${WORKER_BOOTSTRAP_READY_SENTINEL}\n`);
       const ready = await fetch(`${origin}/readyz`);
       expect(ready.status).toBe(200);
@@ -651,6 +682,7 @@ describe('start-railway-service launcher helpers', () => {
     expect(buildWorkerReadinessResponse(readiness).statusCode).toBe(503);
 
     recordWorkerOutput(readiness, '\r\n');
+    recordWorkerOutput(readiness, buildWorkerOperationalStateLine());
     expect(buildWorkerReadinessResponse(readiness)).toMatchObject({
       statusCode: 200,
       body: {
@@ -689,9 +721,184 @@ describe('start-railway-service launcher helpers', () => {
     expect(buildWorkerReadinessResponse(stderrReadiness).statusCode).toBe(503);
   });
 
+  it('bridges the real job-runner budget reporter into launcher readiness', () => {
+    expect(WORKER_OPERATIONAL_STATE_PREFIX).toBe(
+      JOB_RUNNER_OPERATIONAL_STATE_PREFIX,
+    );
+    const readiness = createWorkerReadinessState({
+      OPENAI_API_KEY: 'sealed-test-provider-configured',
+    });
+    const reporter = createWorkerOperationalStateReporter(
+      'bridge-slot-1',
+      {
+        write(chunk) {
+          recordWorkerOutput(readiness, chunk);
+          return true;
+        },
+      },
+    );
+    const retryAt = '2026-08-31T06:00:00.000Z';
+
+    recordWorkerOutput(readiness, `${WORKER_BOOTSTRAP_READY_SENTINEL}\n`);
+    reporter('paused_budget', 'ai_calls_per_hour_exceeded:1', retryAt);
+    expect(buildWorkerReadinessResponse(readiness)).toMatchObject({
+      statusCode: 503,
+      body: {
+        ready: false,
+        reason: 'ai_calls_per_hour_exceeded:1',
+        retryAt,
+        checks: { queueAcceptance: 'paused_budget' },
+      },
+    });
+
+    reporter('accepting_claims');
+    expect(buildWorkerReadinessResponse(readiness)).toMatchObject({
+      statusCode: 200,
+      body: {
+        ready: true,
+        reason: null,
+        retryAt: null,
+        checks: { queueAcceptance: 'accepting_claims' },
+      },
+    });
+  });
+
+  it('revokes and restores readiness for shared slot budget, RSS, and dependency states', () => {
+    const readiness = createWorkerReadinessState({
+      OPENAI_API_KEY: 'sk-test',
+      JOB_WORKER_CONCURRENCY: '2',
+    });
+    const retryAt = '2026-08-30T15:00:00.000Z';
+
+    recordWorkerOutput(readiness, buildWorkerOperationalStateLine({
+      workerId: 'async-queue-slot-1',
+    }));
+    recordWorkerOutput(readiness, `${WORKER_BOOTSTRAP_READY_SENTINEL}\n`);
+    expect(buildWorkerReadinessResponse(readiness)).toMatchObject({
+      statusCode: 503,
+      body: {
+        ready: false,
+        reason: 'worker_claim_acceptance_pending',
+        checks: { queueAcceptance: 'unknown' },
+      },
+    });
+
+    recordWorkerOutput(readiness, buildWorkerOperationalStateLine({
+      workerId: 'async-queue-slot-2',
+    }));
+    expect(buildWorkerReadinessResponse(readiness).statusCode).toBe(200);
+
+    recordWorkerOutput(readiness, buildWorkerOperationalStateLine({
+      workerId: 'async-queue-slot-2',
+      sequence: 2,
+      state: 'paused_budget',
+      reason: 'ai_calls_per_hour_exceeded:120',
+      retryAt,
+    }));
+    expect(buildWorkerReadinessResponse(readiness)).toMatchObject({
+      statusCode: 503,
+      body: {
+        ready: false,
+        reason: 'ai_calls_per_hour_exceeded:120',
+        retryAt,
+        checks: { queueAcceptance: 'paused_budget' },
+      },
+    });
+
+    recordWorkerOutput(readiness, buildWorkerOperationalStateLine({
+      workerId: 'async-queue-slot-2',
+      sequence: 1,
+      state: 'accepting_claims',
+    }));
+    expect(buildWorkerReadinessResponse(readiness).statusCode).toBe(503);
+    recordWorkerOutput(readiness, buildWorkerOperationalStateLine({
+      workerId: 'async-queue-slot-2',
+      sequence: 3,
+      state: 'accepting_claims',
+    }));
+    expect(buildWorkerReadinessResponse(readiness).statusCode).toBe(200);
+
+    recordWorkerOutput(readiness, buildWorkerOperationalStateLine({
+      workerId: 'async-queue-slot-1',
+      sequence: 2,
+      state: 'paused_rss',
+      reason: 'rss_mb_limit_exceeded:2048',
+    }));
+    expect(buildWorkerReadinessResponse(readiness)).toMatchObject({
+      statusCode: 503,
+      body: { checks: { queueAcceptance: 'paused_rss' } },
+    });
+    recordWorkerOutput(readiness, buildWorkerOperationalStateLine({
+      workerId: 'async-queue-slot-1',
+      sequence: 3,
+      state: 'accepting_claims',
+    }));
+    expect(buildWorkerReadinessResponse(readiness).statusCode).toBe(200);
+
+    recordWorkerOutput(readiness, buildWorkerOperationalStateLine({
+      workerId: 'async-queue-slot-1',
+      sequence: 4,
+      state: 'dependency_failure',
+      reason: 'worker_budget_database_unavailable',
+    }));
+    expect(buildWorkerReadinessResponse(readiness)).toMatchObject({
+      statusCode: 503,
+      body: { checks: { queueAcceptance: 'dependency_failure' } },
+    });
+    recordWorkerOutput(readiness, buildWorkerOperationalStateLine({
+      workerId: 'async-queue-slot-1',
+      sequence: 5,
+      state: 'accepting_claims',
+    }));
+    expect(buildWorkerReadinessResponse(readiness).statusCode).toBe(200);
+  });
+
+  it('uses the runtime positive-integer cascade for the expected worker slot count', () => {
+    expect(createWorkerReadinessState({
+      OPENAI_API_KEY: 'sk-test',
+      JOB_WORKER_CONCURRENCY: '2',
+      WORKER_COUNT: '3',
+    }).expectedSlotCount).toBe(2);
+    expect(createWorkerReadinessState({
+      OPENAI_API_KEY: 'sk-test',
+      JOB_WORKER_CONCURRENCY: 'invalid',
+      WORKER_COUNT: '3',
+    }).expectedSlotCount).toBe(3);
+    expect(createWorkerReadinessState({
+      OPENAI_API_KEY: 'sk-test',
+      JOB_WORKER_CONCURRENCY: '0',
+      WORKER_COUNT: '-1',
+    }).expectedSlotCount).toBe(1);
+  });
+
+  it('handles coalesced and split operational messages and ignores malformed protocol lines', () => {
+    const readiness = createWorkerReadinessState({ OPENAI_API_KEY: 'sk-test' });
+    const acceptingLine = buildWorkerOperationalStateLine();
+    const splitAt = Math.floor(acceptingLine.length / 2);
+
+    recordWorkerOutput(readiness, acceptingLine.slice(0, splitAt));
+    expect(buildWorkerReadinessResponse(readiness).statusCode).toBe(503);
+    recordWorkerOutput(
+      readiness,
+      `${acceptingLine.slice(splitAt)}${WORKER_BOOTSTRAP_READY_SENTINEL}\n`,
+    );
+    expect(buildWorkerReadinessResponse(readiness).statusCode).toBe(200);
+
+    recordWorkerOutput(
+      readiness,
+      `${WORKER_OPERATIONAL_STATE_PREFIX}{"workerId":"slot","sequence":2}\n`,
+    );
+    recordWorkerOutput(
+      readiness,
+      `${WORKER_OPERATIONAL_STATE_PREFIX}${'x'.repeat(3_000)}\n`,
+    );
+    expect(buildWorkerReadinessResponse(readiness).statusCode).toBe(200);
+  });
+
   it('does not mark worker ready when provider configuration is missing', () => {
     const readiness = createWorkerReadinessState({});
 
+    recordWorkerOutput(readiness, buildWorkerOperationalStateLine());
     recordWorkerOutput(readiness, `${WORKER_BOOTSTRAP_READY_SENTINEL}\n`);
 
     expect(buildWorkerReadinessResponse(readiness)).toMatchObject({
@@ -711,6 +918,7 @@ describe('start-railway-service launcher helpers', () => {
   it('accepts supported OpenAI key aliases for worker provider readiness', () => {
     const readiness = createWorkerReadinessState({ RAILWAY_OPENAI_API_KEY: 'sk-railway-test' });
 
+    recordWorkerOutput(readiness, buildWorkerOperationalStateLine());
     recordWorkerOutput(readiness, `${WORKER_BOOTSTRAP_READY_SENTINEL}\n`);
 
     expect(buildWorkerReadinessResponse(readiness)).toMatchObject({

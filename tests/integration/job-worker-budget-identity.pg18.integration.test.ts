@@ -125,6 +125,50 @@ const rollbackColumnSql = readFileSync(
   resolve(migrationDirectory, 'rollback/02_drop_stats_worker_id.sql'),
   'utf8'
 );
+const workerBudgetMigrationDirectory = resolve(
+  process.cwd(),
+  'migrations/20260830_job_events_worker_budget_v1'
+);
+const workerBudgetMigrationPhases = [
+  '01_add_budget_evidence_contract.sql',
+  '02_validate_budget_evidence_contract.sql',
+  '03_precheck_budget_indexes.sql',
+  '04_create_group_window_index.sql',
+  '05_create_claim_generation_index.sql',
+  '06_verify_budget_indexes.sql'
+] as const;
+const workerBudgetAddContractSql = readFileSync(
+  resolve(workerBudgetMigrationDirectory, '01_add_budget_evidence_contract.sql'),
+  'utf8'
+);
+const workerBudgetValidateContractSql = readFileSync(
+  resolve(workerBudgetMigrationDirectory, '02_validate_budget_evidence_contract.sql'),
+  'utf8'
+);
+const workerBudgetPrecheckIndexSql = readFileSync(
+  resolve(workerBudgetMigrationDirectory, '03_precheck_budget_indexes.sql'),
+  'utf8'
+);
+const workerBudgetCreateGroupIndexSql = readFileSync(
+  resolve(workerBudgetMigrationDirectory, '04_create_group_window_index.sql'),
+  'utf8'
+);
+const workerBudgetCreateClaimIndexSql = readFileSync(
+  resolve(workerBudgetMigrationDirectory, '05_create_claim_generation_index.sql'),
+  'utf8'
+);
+const workerBudgetVerifyIndexSql = readFileSync(
+  resolve(workerBudgetMigrationDirectory, '06_verify_budget_indexes.sql'),
+  'utf8'
+);
+const workerBudgetRollbackIndexSql = readFileSync(
+  resolve(workerBudgetMigrationDirectory, 'rollback/01_drop_budget_indexes.sql'),
+  'utf8'
+);
+const workerBudgetRollbackContractSql = readFileSync(
+  resolve(workerBudgetMigrationDirectory, 'rollback/02_drop_budget_evidence_contract.sql'),
+  'utf8'
+);
 
 function collectExplainNodes(value: unknown): Array<Record<string, unknown>> {
   if (Array.isArray(value)) {
@@ -173,13 +217,36 @@ async function waitForInvalidIndex(
   throw new Error('Timed out waiting for the concurrent index to enter an invalid state.');
 }
 
+async function connectBudgetReplicaClient(): Promise<Client> {
+  const client = new Client(databaseConfig!);
+  await client.connect();
+  await client.query(`SET search_path TO ${quotedSchema}, public`);
+  return client;
+}
+
+async function readWorkerBudgetConstraintValidation(client: Client): Promise<boolean> {
+  const result = await client.query<{ convalidated: boolean }>(
+    `SELECT convalidated
+     FROM pg_constraint
+     WHERE conrelid = 'job_events'::regclass
+       AND conname = 'job_events_worker_budget_shape_check'`
+  );
+  expect(result.rows).toHaveLength(1);
+  return result.rows[0]!.convalidated;
+}
+
 let databaseClient: Client;
+let poolClientQueue: Client[] = [];
 
 const getPoolMock = jest.fn(() => ({
-  connect: async () => ({
-    query: (text: string, params: unknown[] = []) => databaseClient.query(text, params),
+  connect: async () => {
+    const client = poolClientQueue.shift() ?? databaseClient;
+    return {
+    query: (text: string, params: unknown[] = []) => client.query(text, params),
     release: jest.fn()
-  })
+  };
+  },
+  query: (text: string, params: unknown[] = []) => databaseClient.query(text, params)
 }));
 const repositoryQueryMock = jest.fn(
   (text: string, params: unknown[] = []) => databaseClient.query(text, params)
@@ -201,9 +268,23 @@ jest.unstable_mockModule(
 
 const {
   claimNextPendingJob,
+  claimNextPendingJobWithAdmission,
   getJobExecutionStatsSince,
   resetPriorityQueueFairnessState
 } = await import('../../src/core/db/repositories/jobRepository.js');
+const {
+  getWorkerBudgetWindowUsage,
+  reserveWorkerAiProviderAttempt,
+  WORKER_BUDGET_LOCK_TIMEOUT_MS
+} = await import('../../src/core/db/repositories/workerBudgetRepository.js');
+const {
+  createWorkerBudgetedOpenAIFetch,
+  WORKER_AI_BUDGET_DEPENDENCY_CODE
+} = await import('../../src/core/adapters/openai.adapter.js');
+const {
+  createAiExecutionContext,
+  runWithAiExecutionContext
+} = await import('../../src/services/openai/aiExecutionContext.js');
 
 describe('job worker budget disposable database guard', () => {
   test('accepts only the exact loopback PostgreSQL 18 test database shape', () => {
@@ -266,10 +347,38 @@ describeWithDatabase('job worker budget identity on PostgreSQL 18', () => {
          completed_at TIMESTAMPTZ
        )`
     );
+    await databaseClient.query(
+      `CREATE TABLE job_events (
+         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+         job_id UUID NOT NULL,
+         trace_id TEXT,
+         event_type TEXT NOT NULL,
+         worker_id TEXT,
+         occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+         duration_ms INTEGER,
+         metadata JSONB NOT NULL DEFAULT '{}'::jsonb
+       )`
+    );
 
     for (let pass = 0; pass < 2; pass += 1) {
       for (const phase of migrationPhases) {
         await databaseClient.query(readFileSync(resolve(migrationDirectory, phase), 'utf8'));
+      }
+      for (const phase of workerBudgetMigrationPhases) {
+        const phaseSql = readFileSync(resolve(workerBudgetMigrationDirectory, phase), 'utf8');
+        await databaseClient.query(phaseSql);
+
+        if (phase === '01_add_budget_evidence_contract.sql') {
+          const expectedValidatedState = pass > 0;
+          await expect(readWorkerBudgetConstraintValidation(databaseClient)).resolves.toBe(
+            expectedValidatedState
+          );
+
+          if (pass === 0) {
+            await databaseClient.query(phaseSql);
+            await expect(readWorkerBudgetConstraintValidation(databaseClient)).resolves.toBe(false);
+          }
+        }
       }
     }
   });
@@ -277,7 +386,8 @@ describeWithDatabase('job worker budget identity on PostgreSQL 18', () => {
   beforeEach(async () => {
     resetPriorityQueueFairnessState();
     jest.clearAllMocks();
-    await databaseClient.query('TRUNCATE job_data');
+    poolClientQueue = [];
+    await databaseClient.query('TRUNCATE job_data, job_events');
   });
 
   afterAll(async () => {
@@ -288,7 +398,7 @@ describeWithDatabase('job worker budget identity on PostgreSQL 18', () => {
     }
   });
 
-  test('counts base and suffixed claims in one exact configured worker-group budget', async () => {
+  test('preserves lease and stats identities while ignoring legacy terminal rows for hard budgets', async () => {
     const jobs = [
       {
         id: randomUUID(),
@@ -393,7 +503,8 @@ describeWithDatabase('job worker budget identity on PostgreSQL 18', () => {
       failed: 1,
       running: 1,
       totalTerminal: 3,
-      aiCalls: 3
+      jobClaims: 0,
+      aiCalls: 0
     });
 
     await expect(getJobExecutionStatsSince(since, 'separate-budget')).resolves.toEqual({
@@ -401,7 +512,8 @@ describeWithDatabase('job worker budget identity on PostgreSQL 18', () => {
       failed: 0,
       running: 0,
       totalTerminal: 1,
-      aiCalls: 1
+      jobClaims: 0,
+      aiCalls: 0
     });
 
     const statsQueryCall = repositoryQueryMock.mock.calls.find(([sql]) =>
@@ -424,6 +536,1100 @@ describeWithDatabase('job worker budget identity on PostgreSQL 18', () => {
       expect(String(indexNode?.['Index Cond'])).toMatch(/updated_at\s*>=/u);
     } finally {
       await databaseClient.query('ROLLBACK');
+    }
+  });
+
+  test('does not reserve budget when no queued job is due', async () => {
+    const evaluatedAt = new Date('2026-08-30T13:00:00.000Z');
+    const jobId = randomUUID();
+    await databaseClient.query(
+      `INSERT INTO job_data (
+         id, worker_id, job_type, status, input, next_run_at, created_at, updated_at
+       ) VALUES (
+         $1, 'producer', 'ask', 'pending', '{}'::jsonb,
+         $2::timestamptz + INTERVAL '1 minute', $2, $2
+       )`,
+      [jobId, evaluatedAt]
+    );
+
+    await expect(claimNextPendingJobWithAdmission({
+      workerId: 'async-queue-slot-1',
+      statsWorkerId: 'async-queue',
+      priorityQueueEnabled: false,
+      maxJobsPerHour: 1,
+      maxAiCallsPerHour: 1,
+      budgetNowForTesting: evaluatedAt
+    })).resolves.toEqual({ job: null, budgetAdmission: null });
+
+    const state = await databaseClient.query<{
+      status: string;
+      claim_generation: string;
+      evidence_count: number;
+    }>(
+      `SELECT job.status,
+              job.claim_generation::text,
+              COUNT(event.id)::int AS evidence_count
+       FROM job_data AS job
+       LEFT JOIN job_events AS event
+         ON event.job_id = job.id
+        AND event.event_type = 'worker.budget.job_claim'
+       WHERE job.id = $1
+       GROUP BY job.status, job.claim_generation`,
+      [jobId]
+    );
+    expect(state.rows[0]).toEqual({
+      status: 'pending',
+      claim_generation: '0',
+      evidence_count: 0
+    });
+  });
+
+  test('atomically caps two replicas in one stats group and recovers at the exact rolling boundary', async () => {
+    const windowStart = new Date('2026-08-30T14:00:00.000Z');
+    const firstJobId = randomUUID();
+    const secondJobId = randomUUID();
+    await databaseClient.query(
+      `INSERT INTO job_data (
+         id, worker_id, job_type, status, input, next_run_at, created_at, updated_at
+       ) VALUES
+         ($1, 'producer-a', 'ask', 'pending', '{}'::jsonb, $3, $3, $3),
+         ($2, 'producer-b', 'ask', 'pending', '{}'::jsonb,
+          $3::timestamptz + INTERVAL '1 millisecond',
+          $3::timestamptz + INTERVAL '1 millisecond',
+          $3::timestamptz + INTERVAL '1 millisecond')`,
+      [firstJobId, secondJobId, new Date(windowStart.getTime() - 1_000)]
+    );
+
+    const replicaA = await connectBudgetReplicaClient();
+    const replicaB = await connectBudgetReplicaClient();
+    try {
+      poolClientQueue = [replicaA, replicaB];
+      const results = await Promise.all([
+        claimNextPendingJobWithAdmission({
+          workerId: 'replica-a-slot-1',
+          statsWorkerId: 'shared-budget',
+          priorityQueueEnabled: false,
+          maxJobsPerHour: 1,
+          maxAiCallsPerHour: 10,
+          budgetNowForTesting: windowStart
+        }),
+        claimNextPendingJobWithAdmission({
+          workerId: 'replica-b-slot-1',
+          statsWorkerId: 'shared-budget',
+          priorityQueueEnabled: false,
+          maxJobsPerHour: 1,
+          maxAiCallsPerHour: 10,
+          budgetNowForTesting: windowStart
+        })
+      ]);
+
+      const claimed = results.filter(result => result.job !== null);
+      const paused = results.filter(result => result.budgetAdmission?.allowed === false);
+      expect(claimed).toHaveLength(1);
+      expect(paused).toHaveLength(1);
+      expect(claimed[0]?.job?.id).toBe(firstJobId);
+      expect(claimed[0]?.budgetAdmission).toEqual(expect.objectContaining({
+        kind: 'job_claim',
+        allowed: true,
+        used: 1,
+        remaining: 0,
+        nextAvailableAt: '2026-08-30T15:00:00.000Z'
+      }));
+      expect(paused[0]?.budgetAdmission).toEqual(expect.objectContaining({
+        kind: 'job_claim',
+        used: 1,
+        limit: 1,
+        nextAvailableAt: '2026-08-30T15:00:00.000Z'
+      }));
+
+      const evidence = await databaseClient.query<{
+        job_id: string;
+        worker_id: string;
+        stats_worker_id: string;
+        claim_generation: string;
+        occurred_at: Date;
+      }>(
+        `SELECT job_id::text, worker_id, stats_worker_id,
+                claim_generation::text, occurred_at
+         FROM job_events
+         WHERE event_type = 'worker.budget.job_claim'`
+      );
+      expect(evidence.rows).toHaveLength(1);
+      expect(evidence.rows[0]).toEqual(expect.objectContaining({
+        job_id: firstJobId,
+        worker_id: expect.stringMatching(/^replica-[ab]-slot-1$/u),
+        stats_worker_id: 'shared-budget',
+        claim_generation: '1',
+        occurred_at: windowStart
+      }));
+
+      await databaseClient.query('DELETE FROM job_data WHERE id = $1', [firstJobId]);
+      await expect(claimNextPendingJobWithAdmission({
+        workerId: 'replica-c-slot-1',
+        statsWorkerId: 'shared-budget',
+        priorityQueueEnabled: false,
+        maxJobsPerHour: 1,
+        maxAiCallsPerHour: 10,
+        budgetNowForTesting: new Date(windowStart.getTime() + 60 * 60 * 1_000 - 1)
+      })).resolves.toMatchObject({
+        job: null,
+        budgetAdmission: { allowed: false, used: 1 }
+      });
+
+      await expect(claimNextPendingJobWithAdmission({
+        workerId: 'replica-c-slot-1',
+        statsWorkerId: 'shared-budget',
+        priorityQueueEnabled: false,
+        maxJobsPerHour: 1,
+        maxAiCallsPerHour: 10,
+        budgetNowForTesting: new Date(windowStart.getTime() + 60 * 60 * 1_000)
+      })).resolves.toMatchObject({
+        job: { id: secondJobId },
+        budgetAdmission: {
+          allowed: true,
+          used: 1,
+          remaining: 0,
+          nextAvailableAt: '2026-08-30T16:00:00.000Z'
+        }
+      });
+
+      const retainedEvidence = await databaseClient.query<{ count: number }>(
+        `SELECT COUNT(*)::int AS count
+         FROM job_events
+         WHERE event_type = 'worker.budget.job_claim'
+           AND stats_worker_id = 'shared-budget'`
+      );
+      expect(retainedEvidence.rows[0]?.count).toBe(2);
+    } finally {
+      await replicaA.end();
+      await replicaB.end();
+      poolClientQueue = [];
+    }
+  });
+
+  test('atomically caps two slots from the same replica in one stats group', async () => {
+    const evaluatedAt = new Date('2026-08-30T15:30:00.000Z');
+    const firstJobId = randomUUID();
+    const secondJobId = randomUUID();
+    await databaseClient.query(
+      `INSERT INTO job_data (
+         id, worker_id, job_type, status, input, next_run_at, created_at, updated_at
+       ) VALUES
+         ($1, 'producer-a', 'ask', 'pending', '{}'::jsonb, $3, $3, $3),
+         ($2, 'producer-b', 'ask', 'pending', '{}'::jsonb,
+          $3::timestamptz + INTERVAL '1 millisecond',
+          $3::timestamptz + INTERVAL '1 millisecond',
+          $3::timestamptz + INTERVAL '1 millisecond')`,
+      [firstJobId, secondJobId, new Date(evaluatedAt.getTime() - 1_000)]
+    );
+
+    const slotA = await connectBudgetReplicaClient();
+    const slotB = await connectBudgetReplicaClient();
+    try {
+      poolClientQueue = [slotA, slotB];
+      const results = await Promise.all([
+        claimNextPendingJobWithAdmission({
+          workerId: 'replica-a-slot-1',
+          statsWorkerId: 'replica-a',
+          priorityQueueEnabled: false,
+          maxJobsPerHour: 1,
+          maxAiCallsPerHour: 10,
+          budgetNowForTesting: evaluatedAt
+        }),
+        claimNextPendingJobWithAdmission({
+          workerId: 'replica-a-slot-2',
+          statsWorkerId: 'replica-a',
+          priorityQueueEnabled: false,
+          maxJobsPerHour: 1,
+          maxAiCallsPerHour: 10,
+          budgetNowForTesting: evaluatedAt
+        })
+      ]);
+
+      expect(results.filter(result => result.job !== null)).toHaveLength(1);
+      expect(results.filter(result => result.budgetAdmission?.allowed === false)).toHaveLength(1);
+      const evidence = await databaseClient.query<{
+        worker_id: string;
+        stats_worker_id: string;
+        count: number;
+      }>(
+        `SELECT MIN(worker_id) AS worker_id,
+                MIN(stats_worker_id) AS stats_worker_id,
+                COUNT(*)::int AS count
+         FROM job_events
+         WHERE event_type = 'worker.budget.job_claim'`
+      );
+      expect(evidence.rows[0]).toEqual({
+        worker_id: expect.stringMatching(/^replica-a-slot-[12]$/u),
+        stats_worker_id: 'replica-a',
+        count: 1
+      });
+    } finally {
+      await slotA.end();
+      await slotB.end();
+      poolClientQueue = [];
+    }
+  });
+
+  test('retains one claim reservation per failed attempt across requeue and reclaim', async () => {
+    const jobId = randomUUID();
+    const firstClock = await databaseClient.query<{ evaluated_at: Date }>(
+      'SELECT clock_timestamp() AS evaluated_at'
+    );
+    const firstClaimAt = firstClock.rows[0]!.evaluated_at;
+    await databaseClient.query(
+      `INSERT INTO job_data (
+         id, worker_id, job_type, status, input, next_run_at, created_at, updated_at
+       ) VALUES (
+         $1, 'producer', 'ask', 'pending', '{}'::jsonb,
+         $2::timestamptz - INTERVAL '1 second', $2, $2
+       )`,
+      [jobId, firstClaimAt]
+    );
+
+    const firstClaim = await claimNextPendingJobWithAdmission({
+      workerId: 'replica-a-slot-1',
+      statsWorkerId: 'shared-retry-budget',
+      priorityQueueEnabled: false,
+      maxJobsPerHour: 5,
+      maxAiCallsPerHour: 10,
+      budgetNowForTesting: firstClaimAt
+    });
+    expect(firstClaim).toMatchObject({
+      job: { id: jobId, claim_generation: '1' },
+      budgetAdmission: { allowed: true, used: 1 }
+    });
+    if (!firstClaim.job) {
+      throw new Error('Expected the first retry fixture claim to succeed.');
+    }
+
+    const requeued = await databaseClient.query<{
+      status: string;
+      claim_generation: string;
+      retry_count: number;
+    }>(
+      `UPDATE job_data
+       SET status = 'pending',
+           error_message = 'retryable failure',
+           retry_count = retry_count + 1,
+           next_run_at = clock_timestamp(),
+           updated_at = clock_timestamp(),
+           started_at = NULL,
+           last_heartbeat_at = NULL,
+           lease_expires_at = NULL
+       WHERE id = $1
+         AND status = 'running'
+         AND last_worker_id = $2
+         AND claim_generation = $3::bigint
+       RETURNING status, claim_generation::text, retry_count`,
+      [jobId, 'replica-a-slot-1', firstClaim.job.claim_generation]
+    );
+    expect(requeued.rows).toEqual([{
+      status: 'pending',
+      claim_generation: '1',
+      retry_count: 1
+    }]);
+
+    const secondClock = await databaseClient.query<{ evaluated_at: Date }>(
+      'SELECT clock_timestamp() AS evaluated_at'
+    );
+    const secondClaimAt = new Date(secondClock.rows[0]!.evaluated_at.getTime() + 1_000);
+    const secondClaim = await claimNextPendingJobWithAdmission({
+      workerId: 'replica-b-slot-1',
+      statsWorkerId: 'shared-retry-budget',
+      priorityQueueEnabled: false,
+      maxJobsPerHour: 5,
+      maxAiCallsPerHour: 10,
+      budgetNowForTesting: secondClaimAt
+    });
+    expect(secondClaim).toMatchObject({
+      job: { id: jobId, claim_generation: '2', retry_count: 1 },
+      budgetAdmission: { allowed: true, used: 2 }
+    });
+    if (!secondClaim.job) {
+      throw new Error('Expected the requeued fixture claim to succeed.');
+    }
+
+    const failed = await databaseClient.query<{ status: string }>(
+      `UPDATE job_data
+       SET status = 'failed',
+           error_message = 'terminal failure',
+           completed_at = clock_timestamp(),
+           updated_at = clock_timestamp(),
+           last_heartbeat_at = NULL,
+           lease_expires_at = NULL
+       WHERE id = $1
+         AND status = 'running'
+         AND last_worker_id = $2
+         AND claim_generation = $3::bigint
+       RETURNING status`,
+      [jobId, 'replica-b-slot-1', secondClaim.job.claim_generation]
+    );
+    expect(failed.rows).toEqual([{ status: 'failed' }]);
+    await databaseClient.query('DELETE FROM job_data WHERE id = $1', [jobId]);
+
+    const evidence = await databaseClient.query<{
+      claim_generation: string;
+      worker_id: string;
+      stats_worker_id: string;
+    }>(
+      `SELECT claim_generation::text, worker_id, stats_worker_id
+       FROM job_events
+       WHERE event_type = 'worker.budget.job_claim'
+         AND job_id = $1
+       ORDER BY claim_generation ASC`,
+      [jobId]
+    );
+    expect(evidence.rows).toEqual([
+      {
+        claim_generation: '1',
+        worker_id: 'replica-a-slot-1',
+        stats_worker_id: 'shared-retry-budget'
+      },
+      {
+        claim_generation: '2',
+        worker_id: 'replica-b-slot-1',
+        stats_worker_id: 'shared-retry-budget'
+      }
+    ]);
+  });
+
+  test('reports the first true recovery time when active usage exceeds a lowered limit', async () => {
+    const evaluatedAt = new Date('2026-08-30T18:00:00.000Z');
+    const jobId = randomUUID();
+    await databaseClient.query(
+      `INSERT INTO job_events (
+         id, job_id, event_type, worker_id, stats_worker_id,
+         claim_generation, occurred_at, metadata
+       ) VALUES
+         (gen_random_uuid(), gen_random_uuid(), 'worker.budget.job_claim',
+          'legacy-slot-1', 'lowered-budget', 1,
+          $1::timestamptz - INTERVAL '50 minutes', '{}'::jsonb),
+         (gen_random_uuid(), gen_random_uuid(), 'worker.budget.job_claim',
+          'legacy-slot-2', 'lowered-budget', 1,
+          $1::timestamptz - INTERVAL '40 minutes', '{}'::jsonb),
+         (gen_random_uuid(), gen_random_uuid(), 'worker.budget.job_claim',
+          'legacy-slot-3', 'lowered-budget', 1,
+          $1::timestamptz - INTERVAL '30 minutes', '{}'::jsonb)`,
+      [evaluatedAt]
+    );
+    await databaseClient.query(
+      `INSERT INTO job_data (
+         id, worker_id, job_type, status, input, next_run_at, created_at, updated_at
+       ) VALUES (
+         $1, 'producer', 'ask', 'pending', '{}'::jsonb,
+         $2::timestamptz - INTERVAL '1 second', $2, $2
+       )`,
+      [jobId, evaluatedAt]
+    );
+
+    await expect(claimNextPendingJobWithAdmission({
+      workerId: 'current-slot-1',
+      statsWorkerId: 'lowered-budget',
+      priorityQueueEnabled: false,
+      maxJobsPerHour: 1,
+      maxAiCallsPerHour: 10,
+      budgetNowForTesting: evaluatedAt
+    })).resolves.toEqual({
+      job: null,
+      budgetAdmission: expect.objectContaining({
+        kind: 'job_claim',
+        allowed: false,
+        used: 3,
+        limit: 1,
+        nextAvailableAt: '2026-08-30T18:30:00.000Z'
+      })
+    });
+
+    await expect(claimNextPendingJobWithAdmission({
+      workerId: 'current-slot-1',
+      statsWorkerId: 'lowered-budget',
+      priorityQueueEnabled: false,
+      maxJobsPerHour: 1,
+      maxAiCallsPerHour: 10,
+      budgetNowForTesting: new Date('2026-08-30T18:30:00.000Z')
+    })).resolves.toMatchObject({
+      job: { id: jobId, claim_generation: '1' },
+      budgetAdmission: { allowed: true, used: 1, remaining: 0 }
+    });
+  });
+
+  test('atomically caps provider attempts across replicas and replays one reservation idempotently', async () => {
+    const evaluatedAt = new Date('2026-08-30T16:00:00.000Z');
+    const firstReservationId = randomUUID();
+    const secondReservationId = randomUUID();
+    const firstInput = {
+      statsWorkerId: 'shared-provider-budget',
+      workerId: 'replica-a-slot-1',
+      limit: 1,
+      jobId: randomUUID(),
+      operation: '/v1/responses',
+      reservationId: firstReservationId,
+      now: evaluatedAt
+    };
+    const secondInput = {
+      ...firstInput,
+      workerId: 'replica-b-slot-1',
+      jobId: randomUUID(),
+      reservationId: secondReservationId
+    };
+    const replicaA = await connectBudgetReplicaClient();
+    const replicaB = await connectBudgetReplicaClient();
+    try {
+      poolClientQueue = [replicaA, replicaB];
+      const results = await Promise.all([
+        reserveWorkerAiProviderAttempt(firstInput),
+        reserveWorkerAiProviderAttempt(secondInput)
+      ]);
+      expect(results.filter(result => result.allowed)).toHaveLength(1);
+      expect(results.filter(result => !result.allowed)).toHaveLength(1);
+      expect(results.find(result => result.allowed)).toEqual(expect.objectContaining({
+        used: 1,
+        remaining: 0,
+        nextAvailableAt: '2026-08-30T17:00:00.000Z'
+      }));
+
+      const admittedInput = results[0]?.allowed ? firstInput : secondInput;
+      await expect(reserveWorkerAiProviderAttempt(admittedInput)).resolves.toMatchObject({
+        allowed: false,
+        alreadyReserved: true,
+        reservationId: admittedInput.reservationId
+      });
+      const evidence = await databaseClient.query<{
+        worker_id: string;
+        stats_worker_id: string;
+        count: number;
+      }>(
+        `SELECT MIN(worker_id) AS worker_id,
+                MIN(stats_worker_id) AS stats_worker_id,
+                COUNT(*)::int AS count
+         FROM job_events
+         WHERE event_type = 'worker.budget.ai_provider_attempt'`
+      );
+      expect(evidence.rows[0]).toEqual({
+        worker_id: admittedInput.workerId,
+        stats_worker_id: 'shared-provider-budget',
+        count: 1
+      });
+
+      await expect(reserveWorkerAiProviderAttempt({
+        ...secondInput,
+        workerId: 'replica-c-slot-1',
+        reservationId: randomUUID(),
+        now: new Date(evaluatedAt.getTime() + 60 * 60 * 1_000)
+      })).resolves.toMatchObject({
+        allowed: true,
+        used: 1,
+        remaining: 0,
+        nextAvailableAt: '2026-08-30T18:00:00.000Z'
+      });
+    } finally {
+      await replicaA.end();
+      await replicaB.end();
+      poolClientQueue = [];
+    }
+  });
+
+  test('fails provider admission closed within the server lock bound without reservation or transport', async () => {
+    const blocker = await connectBudgetReplicaClient();
+    const statsWorkerId = 'blocked-provider-budget';
+    const jobId = randomUUID();
+    const nativeFetch = jest.fn(async () => new Response(null, { status: 204 }));
+    const budgetedFetch = createWorkerBudgetedOpenAIFetch(
+      nativeFetch as unknown as typeof globalThis.fetch
+    );
+    const context = createAiExecutionContext({
+      sourceType: 'job',
+      sourceName: 'ask',
+      requestId: jobId,
+      jobId,
+      budget: { maxCalls: 4 },
+      workerBudget: {
+        statsWorkerId,
+        workerId: 'blocked-provider-slot-1',
+        maxCallsPerHour: 1
+      }
+    });
+
+    await blocker.query('BEGIN');
+    await blocker.query(
+      `SELECT pg_advisory_xact_lock(
+         hashtextextended('arcanos-worker-budget-v1:' || $1::text || ':' || $2::text, 0)
+       )`,
+      ['ai_provider_attempt', statsWorkerId]
+    );
+    const startedAt = Date.now();
+    try {
+      const response = await runWithAiExecutionContext(
+        context,
+        () => budgetedFetch('https://api.openai.com/v1/responses', { method: 'POST' })
+      );
+      expect(Date.now() - startedAt).toBeLessThan(WORKER_BUDGET_LOCK_TIMEOUT_MS * 4);
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toEqual({
+        error: expect.objectContaining({ code: WORKER_AI_BUDGET_DEPENDENCY_CODE })
+      });
+      expect(nativeFetch).not.toHaveBeenCalled();
+
+      const evidence = await databaseClient.query<{ count: number }>(
+        `SELECT COUNT(*)::int AS count
+         FROM job_events
+         WHERE event_type = 'worker.budget.ai_provider_attempt'
+           AND stats_worker_id = $1::text`,
+        [statsWorkerId]
+      );
+      expect(evidence.rows[0]?.count).toBe(0);
+    } finally {
+      await blocker.query('ROLLBACK').catch(() => undefined);
+      await blocker.end();
+    }
+  });
+
+  test('rolls back a blocked claim within the server lock bound without consuming capacity', async () => {
+    const blocker = await connectBudgetReplicaClient();
+    const statsWorkerId = 'blocked-claim-budget';
+    const jobId = randomUUID();
+    await databaseClient.query(
+      `INSERT INTO job_data (id, worker_id, job_type, status, input)
+       VALUES ($1, 'producer', 'ask', 'pending', '{}'::jsonb)`,
+      [jobId]
+    );
+    await blocker.query('BEGIN');
+    await blocker.query(
+      `SELECT pg_advisory_xact_lock(
+         hashtextextended('arcanos-worker-budget-v1:' || $1::text || ':' || $2::text, 0)
+       )`,
+      ['job_claim', statsWorkerId]
+    );
+    const startedAt = Date.now();
+    try {
+      await expect(claimNextPendingJobWithAdmission({
+        workerId: 'blocked-claim-slot-1',
+        statsWorkerId,
+        leaseMs: 30_000,
+        priorityQueueEnabled: false,
+        maxJobsPerHour: 1,
+        maxAiCallsPerHour: 1
+      })).rejects.toEqual(expect.objectContaining({ code: '55P03' }));
+      expect(Date.now() - startedAt).toBeLessThan(WORKER_BUDGET_LOCK_TIMEOUT_MS * 4);
+
+      const job = await databaseClient.query<{ status: string; claim_generation: string }>(
+        `SELECT status, claim_generation::text
+         FROM job_data
+         WHERE id = $1::uuid`,
+        [jobId]
+      );
+      expect(job.rows[0]).toEqual({ status: 'pending', claim_generation: '0' });
+      const evidence = await databaseClient.query<{ count: number }>(
+        `SELECT COUNT(*)::int AS count
+         FROM job_events
+         WHERE event_type = 'worker.budget.job_claim'
+           AND stats_worker_id = $1::text`,
+        [statsWorkerId]
+      );
+      expect(evidence.rows[0]?.count).toBe(0);
+    } finally {
+      await blocker.query('ROLLBACK').catch(() => undefined);
+      await blocker.end();
+    }
+  });
+
+  test('bounds the readiness budget-usage query while job_events is lock-blocked', async () => {
+    const blocker = await connectBudgetReplicaClient();
+    await blocker.query('BEGIN');
+    await blocker.query('LOCK TABLE job_events IN ACCESS EXCLUSIVE MODE');
+    const startedAt = Date.now();
+    try {
+      await expect(getWorkerBudgetWindowUsage('blocked-readiness-budget', {
+        jobLimit: 1,
+        aiLimit: 1
+      })).rejects.toEqual(expect.objectContaining({ code: '55P03' }));
+      expect(Date.now() - startedAt).toBeLessThan(WORKER_BUDGET_LOCK_TIMEOUT_MS * 4);
+      await expect(databaseClient.query('SELECT 1')).resolves.toBeDefined();
+    } finally {
+      await blocker.query('ROLLBACK').catch(() => undefined);
+      await blocker.end();
+    }
+  });
+
+  test('rolls back a provider reservation when strict evidence insertion fails', async () => {
+    const reservationId = randomUUID();
+    const input = {
+      statsWorkerId: 'provider-rollback-budget',
+      workerId: 'replica-a-slot-1',
+      limit: 1,
+      jobId: randomUUID(),
+      operation: '/v1/responses',
+      reservationId,
+      now: new Date('2026-08-30T16:30:00.000Z')
+    };
+
+    await databaseClient.query(
+      `ALTER TABLE job_events
+       ADD CONSTRAINT worker_budget_test_reject_ai_provider_attempt
+       CHECK (event_type <> 'worker.budget.ai_provider_attempt')`
+    );
+    try {
+      await expect(reserveWorkerAiProviderAttempt(input)).rejects.toEqual(
+        expect.objectContaining({ code: '23514' })
+      );
+      const rolledBack = await databaseClient.query<{ count: number }>(
+        `SELECT COUNT(*)::int AS count
+         FROM job_events
+         WHERE id = $1::uuid
+            OR (
+              event_type = 'worker.budget.ai_provider_attempt'
+              AND stats_worker_id = $2
+            )`,
+        [reservationId, input.statsWorkerId]
+      );
+      expect(rolledBack.rows[0]?.count).toBe(0);
+    } finally {
+      await databaseClient.query(
+        `ALTER TABLE job_events
+         DROP CONSTRAINT IF EXISTS worker_budget_test_reject_ai_provider_attempt`
+      );
+    }
+
+    await expect(reserveWorkerAiProviderAttempt(input)).resolves.toMatchObject({
+      allowed: true,
+      used: 1,
+      remaining: 0,
+      reservationId,
+      alreadyReserved: false
+    });
+    const persisted = await databaseClient.query<{
+      event_type: string;
+      stats_worker_id: string;
+      worker_id: string;
+      operation: string;
+      count: number;
+    }>(
+      `SELECT MIN(event_type) AS event_type,
+              MIN(stats_worker_id) AS stats_worker_id,
+              MIN(worker_id) AS worker_id,
+              MIN(operation) AS operation,
+              COUNT(*)::int AS count
+       FROM job_events
+       WHERE id = $1::uuid`,
+      [reservationId]
+    );
+    expect(persisted.rows[0]).toEqual({
+      event_type: 'worker.budget.ai_provider_attempt',
+      stats_worker_id: input.statsWorkerId,
+      worker_id: input.workerId,
+      operation: input.operation,
+      count: 1
+    });
+  });
+
+  test('rolls back a queue claim when strict budget evidence cannot be persisted', async () => {
+    const jobId = randomUUID();
+    const claimAt = new Date('2026-08-30T17:00:00.000Z');
+    await databaseClient.query(
+      `INSERT INTO job_data (id, worker_id, job_type, status, input, next_run_at)
+       VALUES ($1, 'producer', 'ask', 'pending', '{}'::jsonb, $2::timestamptz)`,
+      [jobId, claimAt.toISOString()]
+    );
+    await databaseClient.query('ALTER TABLE job_events DROP COLUMN operation');
+    try {
+      await expect(claimNextPendingJobWithAdmission({
+        workerId: 'async-queue-slot-1',
+        statsWorkerId: 'async-queue',
+        priorityQueueEnabled: false,
+        maxJobsPerHour: 1,
+        maxAiCallsPerHour: 1,
+        budgetNowForTesting: claimAt
+      })).rejects.toEqual(expect.objectContaining({ code: '42703' }));
+      const job = await databaseClient.query<{ status: string; claim_generation: string }>(
+        `SELECT status, claim_generation::text FROM job_data WHERE id = $1`,
+        [jobId]
+      );
+      expect(job.rows[0]).toEqual({ status: 'pending', claim_generation: '0' });
+      const evidence = await databaseClient.query<{ count: number }>(
+        `SELECT COUNT(*)::int AS count
+         FROM job_events
+         WHERE event_type = 'worker.budget.job_claim'`
+      );
+      expect(evidence.rows[0]?.count).toBe(0);
+    } finally {
+      await databaseClient.query(
+        readFileSync(
+          resolve(workerBudgetMigrationDirectory, '01_add_budget_evidence_contract.sql'),
+          'utf8'
+        )
+      );
+    }
+  });
+
+  test('rejects a same-name budget CHECK with a foreign expression', async () => {
+    await databaseClient.query(
+      `ALTER TABLE job_events
+       DROP CONSTRAINT job_events_worker_budget_shape_check`
+    );
+    try {
+      await databaseClient.query(
+        `ALTER TABLE job_events
+         ADD CONSTRAINT job_events_worker_budget_shape_check
+         CHECK (
+           event_type NOT IN (
+             'worker.budget.job_claim',
+             'worker.budget.ai_provider_attempt'
+           )
+           OR (
+             stats_worker_id IS NOT NULL
+             AND (
+               (event_type = 'worker.budget.job_claim'
+                 AND claim_generation IS NOT NULL
+                 AND claim_generation >= 0)
+               OR (event_type = 'worker.budget.ai_provider_attempt'
+                 AND claim_generation IS NULL)
+             )
+           )
+         ) NOT VALID`
+      );
+      await expectPostgresError(
+        databaseClient.query(workerBudgetAddContractSql),
+        'job_events_worker_budget_shape_check has an unexpected definition',
+        '42804'
+      );
+    } finally {
+      await databaseClient.query(
+        `ALTER TABLE job_events
+         DROP CONSTRAINT IF EXISTS job_events_worker_budget_shape_check`
+      );
+      await databaseClient.query(workerBudgetAddContractSql);
+      await databaseClient.query(workerBudgetValidateContractSql);
+    }
+  });
+
+  test.each([
+    {
+      label: 'group-window',
+      indexName: 'idx_job_events_worker_budget_group_window',
+      ddl: `CREATE INDEX idx_job_events_worker_budget_group_window
+            ON job_events (stats_worker_id, event_type, occurred_at, id)
+            WHERE event_type = 'worker.budget.job_claim'`
+    },
+    {
+      label: 'claim-generation',
+      indexName: 'idx_job_events_worker_budget_claim_generation',
+      ddl: `CREATE UNIQUE INDEX idx_job_events_worker_budget_claim_generation
+            ON job_events (job_id, claim_generation)
+            WHERE event_type = 'worker.budget.ai_provider_attempt'`
+    }
+  ])('refuses a same-name $label index with a foreign predicate', async fixture => {
+    await databaseClient.query(
+      `DROP INDEX CONCURRENTLY IF EXISTS ${fixture.indexName}`
+    );
+    try {
+      await databaseClient.query(fixture.ddl);
+      await expectPostgresError(
+        databaseClient.query(workerBudgetPrecheckIndexSql),
+        `${fixture.indexName} has an unexpected definition`,
+        '42804'
+      );
+      await expectPostgresError(
+        databaseClient.query(workerBudgetVerifyIndexSql),
+        `${fixture.indexName} is missing, unexpected, or invalid`,
+        '42804'
+      );
+      await expectPostgresError(
+        databaseClient.query(workerBudgetRollbackIndexSql),
+        `${fixture.indexName} has an unexpected definition; rollback refused`,
+        '42804'
+      );
+      await databaseClient.query('ROLLBACK');
+
+      const retained = await databaseClient.query<{ present: boolean }>(
+        'SELECT to_regclass($1) IS NOT NULL AS present',
+        [fixture.indexName]
+      );
+      expect(retained.rows[0]?.present).toBe(true);
+    } finally {
+      await databaseClient.query('ROLLBACK').catch(() => undefined);
+      await databaseClient.query(
+        'DROP INDEX CONCURRENTLY IF EXISTS idx_job_events_worker_budget_claim_generation'
+      );
+      await databaseClient.query(
+        'DROP INDEX CONCURRENTLY IF EXISTS idx_job_events_worker_budget_group_window'
+      );
+      await databaseClient.query(workerBudgetCreateGroupIndexSql);
+      await databaseClient.query(workerBudgetCreateClaimIndexSql);
+      await databaseClient.query(workerBudgetVerifyIndexSql);
+    }
+  });
+
+  test.each([
+    {
+      label: 'group-window',
+      dropSql: 'DROP INDEX CONCURRENTLY idx_job_events_worker_budget_claim_generation',
+      restoreSql: workerBudgetCreateClaimIndexSql,
+      expectedGroupIndexPresent: true,
+      expectedClaimIndexPresent: false
+    },
+    {
+      label: 'claim-generation',
+      dropSql: 'DROP INDEX CONCURRENTLY idx_job_events_worker_budget_group_window',
+      restoreSql: workerBudgetCreateGroupIndexSql,
+      expectedGroupIndexPresent: false,
+      expectedClaimIndexPresent: true
+    }
+  ])('refuses phase-2 rollback while only the $label phase-1 index remains', async fixture => {
+    await databaseClient.query(fixture.dropSql);
+    try {
+      await expectPostgresError(
+        databaseClient.query(workerBudgetRollbackContractSql),
+        'worker budget rollback phase 2 refused because phase 1 index names remain',
+        '55000'
+      );
+      await databaseClient.query('ROLLBACK');
+
+      const retained = await databaseClient.query<{
+        group_index_present: boolean;
+        claim_index_present: boolean;
+        evidence_column_count: number;
+        constraint_present: boolean;
+      }>(
+        `SELECT
+           to_regclass('idx_job_events_worker_budget_group_window') IS NOT NULL
+             AS group_index_present,
+           to_regclass('idx_job_events_worker_budget_claim_generation') IS NOT NULL
+             AS claim_index_present,
+           (
+             SELECT COUNT(*)::int
+             FROM pg_attribute
+             WHERE attrelid = 'job_events'::regclass
+               AND attname IN ('stats_worker_id', 'claim_generation', 'operation')
+               AND NOT attisdropped
+           ) AS evidence_column_count,
+           EXISTS (
+             SELECT 1
+             FROM pg_constraint
+             WHERE conrelid = 'job_events'::regclass
+               AND conname = 'job_events_worker_budget_shape_check'
+           ) AS constraint_present`
+      );
+      expect(retained.rows[0]).toEqual({
+        group_index_present: fixture.expectedGroupIndexPresent,
+        claim_index_present: fixture.expectedClaimIndexPresent,
+        evidence_column_count: 3,
+        constraint_present: true
+      });
+    } finally {
+      await databaseClient.query('ROLLBACK').catch(() => undefined);
+      await databaseClient.query(fixture.restoreSql);
+      await databaseClient.query(workerBudgetVerifyIndexSql);
+    }
+  });
+
+  test('refuses phase-2 rollback when a guarded index name is a foreign relation kind', async () => {
+    await databaseClient.query(workerBudgetRollbackIndexSql);
+    await databaseClient.query(
+      'CREATE TABLE idx_job_events_worker_budget_group_window (marker INTEGER)'
+    );
+    try {
+      await expectPostgresError(
+        databaseClient.query(workerBudgetRollbackContractSql),
+        'worker budget rollback phase 2 refused because phase 1 index names remain',
+        '55000'
+      );
+      await databaseClient.query('ROLLBACK');
+
+      const retained = await databaseClient.query<{
+        relation_kind: string;
+        evidence_column_count: number;
+      }>(
+        `SELECT
+           (
+             SELECT relkind::text
+             FROM pg_class
+             WHERE oid = 'idx_job_events_worker_budget_group_window'::regclass
+           ) AS relation_kind,
+           (
+             SELECT COUNT(*)::int
+             FROM pg_attribute
+             WHERE attrelid = 'job_events'::regclass
+               AND attname IN ('stats_worker_id', 'claim_generation', 'operation')
+               AND NOT attisdropped
+           ) AS evidence_column_count`
+      );
+      expect(retained.rows[0]).toEqual({
+        relation_kind: 'r',
+        evidence_column_count: 3
+      });
+    } finally {
+      await databaseClient.query('ROLLBACK').catch(() => undefined);
+      await databaseClient.query(
+        'DROP TABLE IF EXISTS idx_job_events_worker_budget_group_window'
+      );
+      for (const phase of workerBudgetMigrationPhases) {
+        await databaseClient.query(
+          readFileSync(resolve(workerBudgetMigrationDirectory, phase), 'utf8')
+        );
+      }
+    }
+  });
+
+  test.each([
+    {
+      label: 'expression index',
+      createSql: `CREATE INDEX worker_budget_test_expression_dependency
+                  ON job_events ((lower(stats_worker_id)))`,
+      dropSql: 'DROP INDEX IF EXISTS worker_budget_test_expression_dependency',
+      presenceSql: `SELECT to_regclass('worker_budget_test_expression_dependency')
+                      IS NOT NULL AS present`
+    },
+    {
+      label: 'foreign CHECK',
+      createSql: `ALTER TABLE job_events
+                  ADD CONSTRAINT worker_budget_test_operation_dependency
+                  CHECK (operation IS NULL OR char_length(operation) > 0) NOT VALID`,
+      dropSql: `ALTER TABLE job_events
+                DROP CONSTRAINT IF EXISTS worker_budget_test_operation_dependency`,
+      presenceSql: `SELECT EXISTS (
+                      SELECT 1
+                      FROM pg_constraint
+                      WHERE conrelid = 'job_events'::regclass
+                        AND conname = 'worker_budget_test_operation_dependency'
+                    ) AS present`
+    }
+  ])('refuses phase-2 rollback with an auxiliary $label after phase 1', async fixture => {
+    await databaseClient.query(workerBudgetRollbackIndexSql);
+    await databaseClient.query(fixture.createSql);
+    try {
+      await expectPostgresError(
+        databaseClient.query(workerBudgetRollbackContractSql),
+        'worker budget evidence columns have unexpected dependent objects; rollback refused',
+        '55000'
+      );
+      await databaseClient.query('ROLLBACK');
+
+      const auxiliary = await databaseClient.query<{ present: boolean }>(fixture.presenceSql);
+      expect(auxiliary.rows[0]?.present).toBe(true);
+      const retained = await databaseClient.query<{
+        evidence_column_count: number;
+        constraint_present: boolean;
+      }>(
+        `SELECT
+           (
+             SELECT COUNT(*)::int
+             FROM pg_attribute
+             WHERE attrelid = 'job_events'::regclass
+               AND attname IN ('stats_worker_id', 'claim_generation', 'operation')
+               AND NOT attisdropped
+           ) AS evidence_column_count,
+           EXISTS (
+             SELECT 1
+             FROM pg_constraint
+             WHERE conrelid = 'job_events'::regclass
+               AND conname = 'job_events_worker_budget_shape_check'
+           ) AS constraint_present`
+      );
+      expect(retained.rows[0]).toEqual({
+        evidence_column_count: 3,
+        constraint_present: true
+      });
+    } finally {
+      await databaseClient.query('ROLLBACK').catch(() => undefined);
+      await databaseClient.query(fixture.dropSql);
+      for (const phase of workerBudgetMigrationPhases) {
+        await databaseClient.query(
+          readFileSync(resolve(workerBudgetMigrationDirectory, phase), 'utf8')
+        );
+      }
+    }
+  });
+
+  test('refuses to drop budget indexes while strict evidence exists, then rolls back exactly', async () => {
+    const evidenceId = randomUUID();
+    await databaseClient.query(
+      `INSERT INTO job_events (
+         id, job_id, event_type, worker_id, stats_worker_id,
+         claim_generation, occurred_at, metadata
+       ) VALUES (
+         $1, $2, 'worker.budget.job_claim', 'rollback-slot-1',
+         'rollback-budget', 1, clock_timestamp(), '{}'::jsonb
+       )`,
+      [evidenceId, randomUUID()]
+    );
+
+    const readRollbackState = async (): Promise<{
+      group_index_present: boolean;
+      claim_index_present: boolean;
+      evidence_column_count: number;
+      constraint_present: boolean;
+      evidence_present: boolean;
+    }> => {
+      const result = await databaseClient.query<{
+        group_index_present: boolean;
+        claim_index_present: boolean;
+        evidence_column_count: number;
+        constraint_present: boolean;
+        evidence_present: boolean;
+      }>(
+        `SELECT
+           to_regclass('idx_job_events_worker_budget_group_window') IS NOT NULL
+             AS group_index_present,
+           to_regclass('idx_job_events_worker_budget_claim_generation') IS NOT NULL
+             AS claim_index_present,
+           (
+             SELECT COUNT(*)::int
+             FROM pg_attribute
+             WHERE attrelid = 'job_events'::regclass
+               AND attname IN ('stats_worker_id', 'claim_generation', 'operation')
+               AND NOT attisdropped
+           ) AS evidence_column_count,
+           EXISTS (
+             SELECT 1
+             FROM pg_constraint
+             WHERE conrelid = 'job_events'::regclass
+               AND conname = 'job_events_worker_budget_shape_check'
+           ) AS constraint_present,
+           EXISTS (
+             SELECT 1
+             FROM job_events
+             WHERE id = $1::uuid
+           ) AS evidence_present`,
+        [evidenceId]
+      );
+      return result.rows[0]!;
+    };
+
+    try {
+      await expectPostgresError(
+        databaseClient.query(workerBudgetRollbackIndexSql),
+        'worker budget rollback refused because strict budget evidence exists',
+        '55000'
+      );
+      await databaseClient.query('ROLLBACK');
+      await expect(readRollbackState()).resolves.toEqual({
+        group_index_present: true,
+        claim_index_present: true,
+        evidence_column_count: 3,
+        constraint_present: true,
+        evidence_present: true
+      });
+
+      await databaseClient.query('DELETE FROM job_events WHERE id = $1::uuid', [evidenceId]);
+      await databaseClient.query(workerBudgetRollbackIndexSql);
+      await databaseClient.query(workerBudgetRollbackContractSql);
+      await expect(databaseClient.query(workerBudgetRollbackContractSql)).resolves.toBeDefined();
+      await expect(readRollbackState()).resolves.toEqual({
+        group_index_present: false,
+        claim_index_present: false,
+        evidence_column_count: 0,
+        constraint_present: false,
+        evidence_present: false
+      });
+    } finally {
+      await databaseClient.query('ROLLBACK').catch(() => undefined);
+      await databaseClient.query('DELETE FROM job_events WHERE id = $1::uuid', [evidenceId]);
+      for (const phase of workerBudgetMigrationPhases) {
+        await databaseClient.query(
+          readFileSync(resolve(workerBudgetMigrationDirectory, phase), 'utf8')
+        );
+      }
     }
   });
 

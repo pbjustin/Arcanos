@@ -21,6 +21,7 @@ jest.unstable_mockModule('../src/core/db/repositories/jobRepository.js', () => (
   IdempotencyKeyConflictError: MockIdempotencyKeyConflictError,
   JobRepositoryUnavailableError: MockJobRepositoryUnavailableError,
   claimNextPendingJob: jest.fn(),
+  claimNextPendingJobWithAdmission: jest.fn(),
   createClaimedJobFence: jest.fn(),
   createJob: jest.fn(),
   deferJobForProviderRecovery: jest.fn(),

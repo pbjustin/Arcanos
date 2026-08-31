@@ -9,6 +9,7 @@ import {
   commitAllWorkerSlotsReadyOrThrow,
   computeDeterministicIntervalJitterMs,
   createNonOverlappingTaskRunner,
+  createWorkerOperationalStateReporter,
   emitWorkerBootstrapReadySignal,
   isEntrypointModule,
   isRetryableJobRunnerDatabaseBootstrapError,
@@ -20,6 +21,7 @@ import {
   resolveJobRunnerRuntimeSettings,
   selectJobRunnerSlotTransientRetryEvent,
   shouldPersistClaimedJobCancellation,
+  waitForWorkerStartupReadiness,
   WORKER_BOOTSTRAP_READY_SENTINEL
 } from '../src/workers/jobRunnerRuntime.js';
 
@@ -122,6 +124,104 @@ describe('jobRunnerRuntime', () => {
     } as NodeJS.ProcessEnv)).toThrow(
       `JOB_WORKER_STATS_ID must not exceed ${JOB_WORKER_STATS_ID_MAX_CHARACTERS} characters.`
     );
+  });
+
+  it('validates every derived multi-slot lease and operational identity without truncation', () => {
+    const maximumBaseLength = JOB_WORKER_STATS_ID_MAX_CHARACTERS - '-slot-2'.length;
+    const validBaseWorkerId = '🧠'.repeat(maximumBaseLength);
+    const runtimeSettings = resolveJobRunnerRuntimeSettings({
+      JOB_WORKER_CONCURRENCY: '2',
+      JOB_WORKER_ID: validBaseWorkerId,
+      JOB_WORKER_STATS_ID: 'shared-budget-group'
+    } as NodeJS.ProcessEnv);
+    const slots = buildJobRunnerSlotDefinitions(runtimeSettings);
+    expect(slots.map(slot => Array.from(slot.workerId).length)).toEqual([
+      JOB_WORKER_STATS_ID_MAX_CHARACTERS,
+      JOB_WORKER_STATS_ID_MAX_CHARACTERS,
+    ]);
+    expect(new Set(slots.map(slot => slot.workerId)).size).toBe(2);
+
+    expect(() => resolveJobRunnerRuntimeSettings({
+      JOB_WORKER_CONCURRENCY: '2',
+      JOB_WORKER_ID: `${validBaseWorkerId}x`,
+      JOB_WORKER_STATS_ID: 'shared-budget-group'
+    } as NodeJS.ProcessEnv)).toThrow(
+      `Derived JOB_WORKER_ID must not exceed ${JOB_WORKER_STATS_ID_MAX_CHARACTERS} characters.`
+    );
+    expect(() => resolveJobRunnerRuntimeSettings({
+      JOB_WORKER_ID: 'worker\nidentity',
+      JOB_WORKER_STATS_ID: 'shared-budget-group'
+    } as NodeJS.ProcessEnv)).toThrow(
+      'JOB_WORKER_ID must not contain control characters.'
+    );
+  });
+
+  it('preserves one exact Unicode worker identity and monotonic state sequence', () => {
+    const workerId = '🧠'.repeat(JOB_WORKER_STATS_ID_MAX_CHARACTERS);
+    const output: string[] = [];
+    const reporter = createWorkerOperationalStateReporter(workerId, {
+      write(chunk: string) {
+        output.push(chunk);
+        return true;
+      }
+    });
+
+    reporter('paused_budget', 'ai_calls_per_hour_exceeded', '2026-08-30T15:00:00.000Z');
+    reporter('accepting_claims');
+
+    const signals = output.map(line => JSON.parse(line.slice(line.indexOf('{'))));
+    expect(signals).toEqual([
+      expect.objectContaining({ workerId, sequence: 1, state: 'paused_budget' }),
+      expect.objectContaining({ workerId, sequence: 2, state: 'accepting_claims' }),
+    ]);
+    expect(() => createWorkerOperationalStateReporter(`${workerId}x`)).toThrow(
+      `Worker operational readiness id must not exceed ${JOB_WORKER_STATS_ID_MAX_CHARACTERS} characters.`
+    );
+  });
+
+  it('keeps startup readiness paused until the controlled rolling-window retry time', async () => {
+    const budgetFailure = new Error('test-only startup budget pause');
+    const retryAtMs = Date.parse('2026-08-30T15:00:00.000Z');
+    let nowMs = Date.parse('2026-08-30T14:59:00.000Z');
+    const attempts: number[] = [];
+    const reports: Array<{ state: string; retryAt: string | null }> = [];
+    const waits: number[] = [];
+
+    await expect(waitForWorkerStartupReadiness({
+      attempt: async () => {
+        attempts.push(nowMs);
+        if (nowMs < retryAtMs) {
+          throw budgetFailure;
+        }
+        return 'ready';
+      },
+      resolveRetry: error => error === budgetFailure
+        ? {
+            state: 'paused_budget',
+            reason: 'ai_calls_per_hour_exceeded_during_startup_readiness',
+            retryAt: new Date(retryAtMs).toISOString(),
+            delayMs: retryAtMs - nowMs,
+          }
+        : null,
+      reportPause: decision => reports.push({
+        state: decision.state,
+        retryAt: decision.retryAt,
+      }),
+      wait: async delayMs => {
+        waits.push(delayMs);
+        nowMs += delayMs;
+      },
+    })).resolves.toBe('ready');
+
+    expect(attempts).toEqual([
+      Date.parse('2026-08-30T14:59:00.000Z'),
+      retryAtMs,
+    ]);
+    expect(waits).toEqual([60_000]);
+    expect(reports).toEqual([{
+      state: 'paused_budget',
+      retryAt: '2026-08-30T15:00:00.000Z',
+    }]);
   });
 
   it.each(['warn', 'error'])(
@@ -427,6 +527,13 @@ describe('jobRunnerRuntime', () => {
         Object.assign(new Error(''), { code: '08006' })
       )
     ).toBe(true);
+    for (const code of ['55P03', '57014', '25P04']) {
+      expect(
+        isRetryableJobRunnerDatabaseBootstrapError(
+          Object.assign(new Error('worker budget database timeout'), { code })
+        )
+      ).toBe(true);
+    }
     expect(
       isRetryableJobRunnerDatabaseBootstrapError(
         Object.assign(new Error('OpenAI provider ECONNRESET'), { code: 'ECONNRESET' })
@@ -677,6 +784,20 @@ describe('jobRunnerRuntime', () => {
     ).toHaveLength(1);
   });
 
+  it('wires worker provider probes and semantic planning through the hard AI budget', () => {
+    const source = fs
+      .readFileSync(path.resolve('src/workers/jobRunner.ts'), 'utf8')
+      .replace(/\r\n/gu, '\n');
+
+    expect(source).toContain('configureBackendUnifiedOpenAIClient();');
+    expect(source).toContain("sourceName: 'openai-provider-health'");
+    expect(source).toContain('createWorkerProviderProbeBudget(params.workerBudget)');
+    expect(source).toContain('workerBudget: workerAiCallBudget');
+    expect(source).toContain(
+      'ai_calls_per_hour_exceeded_during_startup_provider_recovery'
+    );
+  });
+
   it('declares the worker ready only after every consumer slot starts its dispatcher', () => {
     const source = fs.readFileSync(path.resolve('src/workers/jobRunner.ts'), 'utf8');
     const runtimeSettingsIndex = source.indexOf(
@@ -702,9 +823,13 @@ describe('jobRunnerRuntime', () => {
       'const backstageNotionPartitionPolicy =',
       backstageNotionPartitionEvidenceIndex
     );
-    const backstageNotionReadinessGateIndex = source.indexOf(
-      'await runBackstageNotionWorkerReadinessGate(',
+    const startupReadinessRecoveryIndex = source.indexOf(
+      'await waitForWorkerStartupReadiness({',
       backstageNotionPartitionPolicyIndex
+    );
+    const backstageNotionReadinessGateIndex = source.indexOf(
+      'attempt: () => runBackstageNotionWorkerReadinessGate(',
+      startupReadinessRecoveryIndex
     );
     const backstageNotionReadinessIndex = source.indexOf(
       '() => ensureBackstageNotionWorkerReadiness({',
@@ -762,6 +887,7 @@ describe('jobRunnerRuntime', () => {
       preliminaryBackstageNotionPartitionPolicyIndex,
       backstageNotionPartitionEvidenceIndex,
       backstageNotionPartitionPolicyIndex,
+      startupReadinessRecoveryIndex,
       backstageNotionReadinessGateIndex,
       backstageNotionReadinessIndex,
       autonomyBootstrapIndex,
@@ -787,6 +913,8 @@ describe('jobRunnerRuntime', () => {
     expect(backstageNotionPartitionEvidenceIndex)
       .toBeLessThan(backstageNotionPartitionPolicyIndex);
     expect(backstageNotionPartitionPolicyIndex)
+      .toBeLessThan(startupReadinessRecoveryIndex);
+    expect(startupReadinessRecoveryIndex)
       .toBeLessThan(backstageNotionReadinessGateIndex);
     expect(backstageNotionReadinessGateIndex)
       .toBeLessThan(backstageNotionReadinessIndex);

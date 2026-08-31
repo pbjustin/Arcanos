@@ -361,6 +361,9 @@ function normalizeWorkerRuntimeSnapshotPayloadForHash(
     deadLetterJobs: snapshot.deadLetterJobs,
     recoveryActions: snapshot.recoveryActions,
     lastBudgetPauseReason: snapshot.lastBudgetPauseReason,
+    claimAcceptance: snapshot.claimAcceptance,
+    claimPauseReason: snapshot.claimPauseReason,
+    claimRetryAt: snapshot.claimRetryAt,
     statsWorkerId: snapshot.statsWorkerId,
     watchdog: normalizeWatchdogSnapshotForHash(snapshot.watchdog)
   };

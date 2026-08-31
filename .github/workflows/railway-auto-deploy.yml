@@ -10,25 +10,27 @@ on:
       - main
   workflow_dispatch:
     inputs:
-      dag_writer_rollout_confirmation:
+      coordinated_writer_rollout_confirmation:
         description: >-
-          While the coordinated DAG writer hold is active, type exactly:
-          DAG WRITERS DRAINED: 20260727-dag-snapshot-generation-v1
+          While the worker hard-budget rollout hold is active, type exactly:
+          COORDINATED WRITERS DRAINED: 20260830-job-events-worker-budget-v1
         required: false
         type: string
 
 env:
-  # Keep one explicit repository-owned state. "none" restores normal automatic
-  # promotion after the coordinated rollout has been verified in every writer.
+  # Keep this exact repository-owned hold active through the separately
+  # authorized worker drain, one-hour quiet window, six-phase migration, and
+  # compatible-pair verification. Only a reviewed change to "none" restores
+  # normal automatic promotion after every writer is verified compatible.
   # Missing, blank, or malformed values fail closed in the policy job.
-  ARCANOS_COORDINATED_DAG_WRITER_ROLLOUT_HOLD: 'none'
+  ARCANOS_COORDINATED_WRITER_ROLLOUT_HOLD: '20260830-job-events-worker-budget-v1'
 
 permissions:
   contents: read
 
 jobs:
   rollout-policy:
-    name: Coordinated DAG writer rollout policy
+    name: Coordinated writer rollout policy
     if: >-
       (github.event_name == 'workflow_dispatch'
       && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))
@@ -59,12 +61,12 @@ jobs:
         with:
           node-version: '24.18.1'
 
-      - name: Enforce coordinated DAG writer rollout policy
+      - name: Enforce coordinated writer rollout policy
         id: rollout_guard
         env:
           ARCANOS_DEPLOY_EVENT_NAME: ${{ github.event_name }}
-          ARCANOS_COORDINATED_DAG_WRITER_ROLLOUT_HOLD: ${{ env.ARCANOS_COORDINATED_DAG_WRITER_ROLLOUT_HOLD }}
-          ARCANOS_DAG_WRITER_ROLLOUT_CONFIRMATION: ${{ github.event.inputs.dag_writer_rollout_confirmation || '' }}
+          ARCANOS_COORDINATED_WRITER_ROLLOUT_HOLD: ${{ env.ARCANOS_COORDINATED_WRITER_ROLLOUT_HOLD }}
+          ARCANOS_COORDINATED_WRITER_ROLLOUT_CONFIRMATION: ${{ github.event.inputs.coordinated_writer_rollout_confirmation || '' }}
         run: node scripts/railway-coordinated-rollout-guard.mjs
 
   deploy-production:

@@ -4,6 +4,11 @@
  */
 
 import type OpenAI from 'openai';
+import {
+  classifyWorkerAiBudgetError,
+  instrumentOpenAIOperation,
+  normalizeWorkerAiBudgetError
+} from '@core/adapters/openai.adapter.js';
 import { logGPT5Invocation } from "@platform/logging/aiLogger.js";
 import {
   getDefaultModel,
@@ -285,9 +290,13 @@ export async function validateModel(
         abortMessage: `Trinity model validation timed out after ${timeoutMs}ms`
       },
       async () => {
-        await client.models.retrieve(defaultModel, {
-          signal: getRequestAbortSignal()
-        } as any);
+        await instrumentOpenAIOperation({
+          operation: 'models_retrieve',
+          model: defaultModel,
+          callback: () => client.models.retrieve(defaultModel, {
+            signal: getRequestAbortSignal()
+          } as any),
+        });
       }
     );
     logger.info('Fine-tuned model validation successful', {
@@ -299,8 +308,9 @@ export async function validateModel(
     validatedModelCache.set(defaultModel, Date.now() + MODEL_VALIDATION_CACHE_TTL_MS);
     return defaultModel;
   } catch (err) {
-    if (isAbortError(err)) {
-      throw err;
+    const normalizedError = normalizeWorkerAiBudgetError(err);
+    if (classifyWorkerAiBudgetError(normalizedError) || isAbortError(normalizedError)) {
+      throw normalizedError;
     }
 
     logger.warn('MODEL_FALLBACK_TRIGGERED', {
@@ -309,7 +319,7 @@ export async function validateModel(
       stage: 'TRINITY-MODEL-VALIDATION',
       requestedModel: defaultModel,
       fallbackModel: APPLICATION_CONSTANTS.MODEL_GPT_4_1_MINI,
-      reason: resolveErrorMessage(err)
+      reason: resolveErrorMessage(normalizedError)
     });
     return APPLICATION_CONSTANTS.MODEL_GPT_4_1_MINI;
   }

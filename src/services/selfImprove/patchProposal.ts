@@ -5,6 +5,7 @@ import path from "path";
 import { execFile } from "child_process";
 import { promisify } from "util";
 import { callOpenAI } from "@services/openai/chatFlow/index.js";
+import { rethrowWorkerAiBudgetError } from "@core/adapters/openai.adapter.js";
 import { getDefaultModel } from "@services/openai/credentialProvider.js";
 import { getEnv, getEnvNumber } from "@platform/runtime/env.js";
 import { getConfig } from "@platform/runtime/unifiedConfig.js";
@@ -804,7 +805,8 @@ export async function generatePatchProposal(args: {
         },
       });
       responseOutput = resp.output || "";
-    } catch {
+    } catch (error: unknown) {
+      rethrowWorkerAiBudgetError(error);
       // Never retain or replay provider error text; it may contain request or transport details.
       lastDiagnosticCode = "PROVIDER_REQUEST_FAILED";
       continue;
@@ -849,6 +851,7 @@ export async function generatePatchProposal(args: {
 
       return proposal;
     } catch (error: unknown) {
+      rethrowWorkerAiBudgetError(error);
       //audit Assumption: model output can intermittently violate schema/JSON contract; risk: premature cycle failure; invariant: retries should preserve deterministic constraints; handling: retry until max attempts then raise structured error.
       lastDiagnosticCode = error instanceof PatchProposalValidationError
         ? error.diagnosticCode

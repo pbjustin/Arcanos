@@ -114,6 +114,9 @@ const express = (await import('express')).default;
 const request = (await import('supertest')).default;
 const router = (await import('../src/routes/api-arcanos.js')).default;
 const { runThroughBrain } = await import('../src/core/logic/trinity.js');
+const { WorkerAiCallBudgetPausedError } = await import(
+  '../src/core/adapters/openai.adapter.js'
+);
 const { createRuntimeBudget, createRuntimeBudgetWithLimit } = await import(
   '@platform/resilience/runtimeBudget.js'
 );
@@ -682,6 +685,34 @@ describe('/api/arcanos/ask honesty e2e', () => {
       infoSpy.mockRestore();
       warnSpy.mockRestore();
     }
+  });
+
+  it('preserves a worker AI budget pause raised by bounded integrity repair', async () => {
+    const budgetError = new WorkerAiCallBudgetPausedError(
+      '2026-08-30T15:00:00.000Z'
+    );
+    mockCreateChatCompletionWithFallback.mockReset();
+    mockCreateChatCompletionWithFallback
+      .mockResolvedValueOnce(buildIntegrityCompletion({
+        content: 'The closing angle should',
+        id: 'integrity-budget-primary',
+      }))
+      .mockRejectedValueOnce(budgetError);
+
+    await expect(runThroughBrain(
+      {} as Parameters<typeof runThroughBrain>[0],
+      'Answer directly with this established ending: The closing angle should continue.',
+      undefined,
+      undefined,
+      {
+        answerMode: 'direct',
+        strictUserVisibleOutput: true,
+        sourceEndpoint: 'test.backstage-integrity-budget-pause',
+        directAnswerIntegrityRepair: buildIntegrityRepairOptions(),
+      },
+      createRuntimeBudgetWithLimit(60_000, 0)
+    )).rejects.toBe(budgetError);
+    expect(mockCreateChatCompletionWithFallback).toHaveBeenCalledTimes(2);
   });
 
   it('appends a missing exact final item without changing established items', async () => {

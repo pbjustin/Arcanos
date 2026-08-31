@@ -26,10 +26,23 @@ jest.unstable_mockModule('@shared/tokenParameterHelper.js', () => ({
 }));
 
 jest.unstable_mockModule('@platform/logging/structuredLogging.js', () => ({
+  LogLevel: {
+    DEBUG: 'debug',
+    INFO: 'info',
+    WARN: 'warn',
+    ERROR: 'error'
+  },
+  getConfiguredLogLevel: jest.fn(() => 'info'),
   aiLogger: {
     info: jest.fn(),
     warn: jest.fn(),
     error: jest.fn()
+  },
+  dbLogger: {
+    info: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn(),
+    debug: jest.fn()
   },
   logger: {
     info: loggerInfoMock,

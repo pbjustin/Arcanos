@@ -1,4 +1,12 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import {
+  WorkerAiCallBudgetPausedError,
+  instrumentOpenAIOperation,
+} from '../src/core/adapters/openai.adapter.js';
+import {
+  createAiExecutionContext,
+  runWithAiExecutionContext,
+} from '../src/services/openai/aiExecutionContext.js';
 
 const createEmbeddingMock = jest.fn();
 const requireOpenAIClientOrAdapterMock = jest.fn();
@@ -10,6 +18,7 @@ const getStatusMock = jest.fn();
 const fetchAndCleanMock = jest.fn();
 const cosineSimilarityMock = jest.fn();
 const hasValidApiKeyMock = jest.fn();
+const openAIAdapterMock = { responses: { create: jest.fn() } };
 
 const loggerChildMock = {
   debug: jest.fn(),
@@ -19,6 +28,7 @@ const loggerChildMock = {
 let chunkText: typeof import('../src/services/webRag.js').chunkText;
 let ingestContent: typeof import('../src/services/webRag.js').ingestContent;
 let queryRagDocuments: typeof import('../src/services/webRag.js').queryRagDocuments;
+let recordConversationSnippet: typeof import('../src/services/webRag.js').recordConversationSnippet;
 let recordPersistentMemorySnippet: typeof import('../src/services/webRag.js').recordPersistentMemorySnippet;
 
 beforeEach(async () => {
@@ -30,7 +40,7 @@ beforeEach(async () => {
   requireOpenAIClientOrAdapterMock.mockReset();
   requireOpenAIClientOrAdapterMock.mockReturnValue({
     client: {},
-    adapter: { responses: { create: jest.fn() } },
+    adapter: openAIAdapterMock,
   });
 
   saveRagDocMock.mockReset();
@@ -119,7 +129,13 @@ beforeEach(async () => {
     },
   }));
 
-  ({ chunkText, ingestContent, queryRagDocuments, recordPersistentMemorySnippet } = await import('../src/services/webRag.js'));
+  ({
+    chunkText,
+    ingestContent,
+    queryRagDocuments,
+    recordConversationSnippet,
+    recordPersistentMemorySnippet,
+  } = await import('../src/services/webRag.js'));
 });
 
 describe('webRag chunking and incremental ingestion', () => {
@@ -142,6 +158,7 @@ describe('webRag chunking and incremental ingestion', () => {
 
     expect(result).toEqual(expect.objectContaining({ parentId: 'guide-doc', chunkCount: 3 }));
     expect(createEmbeddingMock).toHaveBeenCalledTimes(3);
+    expect(createEmbeddingMock.mock.calls.every(call => call[1] === openAIAdapterMock)).toBe(true);
     expect(saveRagDocMock).toHaveBeenCalledTimes(3);
 
     const firstSavedDoc = saveRagDocMock.mock.calls[0][0];
@@ -243,5 +260,46 @@ describe('webRag chunking and incremental ingestion', () => {
 
     expect(ingested).toBe(false);
     expect(createEmbeddingMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps a swallowed transcript budget denial sticky in the worker context', async () => {
+    const budgetError = new WorkerAiCallBudgetPausedError(
+      '2026-08-30T15:00:00.000Z'
+    );
+    const onOperationalFailure = jest.fn();
+    createEmbeddingMock.mockImplementationOnce(async () =>
+      instrumentOpenAIOperation({
+        operation: 'embeddings_create',
+        model: 'text-embedding-3-small',
+        callback: async () => {
+          throw budgetError;
+        },
+      })
+    );
+    const context = createAiExecutionContext({
+      sourceType: 'background',
+      sourceName: 'worker-transcript-test',
+      workerBudget: {
+        statsWorkerId: 'async-queue',
+        workerId: 'async-queue-slot-1',
+        maxCallsPerHour: 120,
+        onOperationalFailure,
+      },
+    });
+
+    await expect(runWithAiExecutionContext(context, () =>
+      recordConversationSnippet({
+        sessionId: 'worker-session',
+        role: 'assistant',
+        content: 'A generated transcript that is best-effort persisted.',
+      })
+    )).resolves.toBe(false);
+
+    expect(createEmbeddingMock).toHaveBeenCalledWith(
+      expect.any(String),
+      openAIAdapterMock
+    );
+    expect(onOperationalFailure).toHaveBeenCalledWith(budgetError);
+    expect(context.workerBudgetFailure).toBe(budgetError);
   });
 });

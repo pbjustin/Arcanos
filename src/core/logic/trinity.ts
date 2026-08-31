@@ -111,6 +111,10 @@ import {
 import { resolveTrinityDirectAnswerPreference } from '@services/directAnswerMode.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import {
+  classifyWorkerAiBudgetError,
+  normalizeWorkerAiBudgetError,
+} from '@core/adapters/openai.adapter.js';
+import {
   applyTrinityDirectAnswerOutputContract,
   TRINITY_DIRECT_ANSWER_AUDIT_FLAG,
   TRINITY_DIRECT_ANSWER_STAGE
@@ -1299,8 +1303,12 @@ export async function runThroughBrain(
               )
             });
           } catch (error) {
+            const normalizedWorkerBudgetError = normalizeWorkerAiBudgetError(error);
+            if (classifyWorkerAiBudgetError(normalizedWorkerBudgetError)) {
+              throw normalizedWorkerBudgetError;
+            }
             const repairFailureReason =
-              classifyTrinityIntegrityRepairFailure(error);
+              classifyTrinityIntegrityRepairFailure(normalizedWorkerBudgetError);
             logger.warn('trinity.direct_answer.integrity_repair_failed', {
               module: 'trinity',
               operation: 'direct-answer-integrity-repair',
@@ -1766,6 +1774,10 @@ export async function runThroughBrain(
         });
       } catch (error) {
         throwIfRequestAborted();
+        const normalizedWorkerBudgetError = normalizeWorkerAiBudgetError(error);
+        if (classifyWorkerAiBudgetError(normalizedWorkerBudgetError)) {
+          throw normalizedWorkerBudgetError;
+        }
         logger.warn('[core] clear-audit skipped', {
           module: 'ARCANOS:CORE',
           requestId,

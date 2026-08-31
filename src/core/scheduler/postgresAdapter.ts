@@ -1,8 +1,10 @@
 import type { JobData } from '@core/db/schema.js';
 import {
   claimNextPendingJob,
+  claimNextPendingJobWithAdmission,
   getJobQueueSummary,
   type ClaimNextPendingJobOptions,
+  type ClaimNextPendingJobResult,
   type JobQueueSummary
 } from '@core/db/repositories/jobRepository.js';
 import { PRIORITY_QUEUE_LANE_MAX_PRIORITY } from '@shared/gpt/priorityGpt.js';
@@ -18,11 +20,15 @@ import type {
 
 export interface PostgresSchedulerRepository {
   claimNextPendingJob(options: ClaimNextPendingJobOptions): Promise<JobData | null>;
+  claimNextPendingJobWithAdmission?(
+    options: ClaimNextPendingJobOptions
+  ): Promise<ClaimNextPendingJobResult>;
   getJobQueueSummary(): Promise<JobQueueSummary | null>;
 }
 
 const defaultRepository: PostgresSchedulerRepository = {
   claimNextPendingJob,
+  claimNextPendingJobWithAdmission,
   getJobQueueSummary
 };
 
@@ -106,11 +112,20 @@ export class PostgresQueueSchedulerAdapter implements QueueSchedulerAdapter<JobD
       ...options,
       workerId
     };
-    const job = await this.repository.claimNextPendingJob(claimOptions);
+    const claimResult = this.repository.claimNextPendingJobWithAdmission
+      ? await this.repository.claimNextPendingJobWithAdmission(claimOptions)
+      : {
+          job: await this.repository.claimNextPendingJob(claimOptions),
+          budgetAdmission: null
+        };
+    const job = claimResult.job;
 
     return {
       adapter: this.adapter,
       job,
+      ...(claimResult.budgetAdmission
+        ? { budgetAdmission: claimResult.budgetAdmission }
+        : {}),
       lane: job ? toJobSchedulingMetadata(job, {
         priorityLaneMaxPriority: claimOptions.priorityLaneMaxPriority
       }).lane : null

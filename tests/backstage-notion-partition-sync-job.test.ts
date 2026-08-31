@@ -7,6 +7,9 @@ import {
   BackstageNotionPartitionRepositoryUnavailableError,
 } from '../src/core/db/repositories/backstageNotionPartitionRepository.js';
 import {
+  WorkerAiCallBudgetPausedError,
+} from '../src/core/adapters/openai.adapter.js';
+import {
   BACKSTAGE_NOTION_PARTITION_SYNC_JOB_PROTOCOL,
   BACKSTAGE_NOTION_PARTITION_SYNC_MAX_AI_CALLS,
   parseBackstageNotionPartitionSyncJobResult,
@@ -402,6 +405,25 @@ describe('queued Backstage Notion partition synchronization execution', () => {
         'Partition synchronization infrastructure is temporarily unavailable.',
       retryable: true,
     });
+  });
+
+  test('preserves a worker AI budget pause for job-level deferral', async () => {
+    const budgetError = new WorkerAiCallBudgetPausedError(
+      '2026-08-30T15:00:00.000Z'
+    );
+    const runSynchronization = jest.fn(async () => {
+      throw budgetError;
+    });
+    const execute = createBackstageNotionPartitionSyncJobExecutor({
+      coordinator: immediateCoordinator(),
+      readEnvironment: configuredEnvironment(),
+      runSynchronization,
+    });
+
+    await expect(execute({
+      rawInput: jobInput(),
+      cancellationSignal: new AbortController().signal,
+    })).rejects.toBe(budgetError);
   });
 
   test('redacts unexpected failures and treats them as terminal', async () => {

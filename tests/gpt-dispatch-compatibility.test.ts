@@ -138,6 +138,9 @@ jest.unstable_mockModule('../src/services/moduleRegistry.js', () => ({
 }));
 
 const { resolveGptRouting, routeGptRequest } = await import('../src/routes/_core/gptDispatch.js');
+const { WorkerAiCallBudgetPausedError } = await import(
+  '../src/core/adapters/openai.adapter.js'
+);
 const { dispatchLegacyRouteToGpt } = await import('../src/routes/_core/legacyGptCompat.js');
 const { queryBackstageContinuity } = await import(
   '../src/services/backstageContinuityQuery.js'
@@ -518,6 +521,22 @@ describe('gpt dispatch compatibility', () => {
       traceId: 'trace_integrity_failed'
     }));
     expect(JSON.stringify(response)).not.toContain('OBSERVABILITY_SMOKE_TEST_OK');
+  });
+
+  it('preserves worker AI budget pauses instead of returning a module error', async () => {
+    const budgetError = new WorkerAiCallBudgetPausedError(
+      '2026-08-30T15:00:00.000Z'
+    );
+    mockDispatchModuleAction.mockRejectedValueOnce(budgetError);
+
+    await expect(routeGptRequest({
+      gptId: 'arcanos-core',
+      body: {
+        action: 'query',
+        prompt: 'Summarize the supplied paragraph.'
+      },
+      requestId: 'req_worker_ai_budget_pause'
+    })).rejects.toBe(budgetError);
   });
 
   it('maps typed research validation failures to the stable research code', async () => {

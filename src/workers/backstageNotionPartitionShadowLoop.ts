@@ -35,6 +35,11 @@ import {
   DEFAULT_OPENAI_EMBEDDING_MODEL,
 } from '@services/openai/embeddings.js';
 import {
+  createAiExecutionContext,
+  runWithAiExecutionContext,
+  type WorkerAiCallBudget,
+} from '@services/openai/aiExecutionContext.js';
+import {
   createBackstageNotionSynchronizationCoordinator,
   resolveBackstageNotionSyncIntervalMs,
   type BackstageNotionSynchronizationCoordinator,
@@ -117,6 +122,7 @@ export interface BackstageNotionPartitionShadowLoopHandle {
 
 export interface BackstageNotionPartitionShadowLoopDependencies {
   readonly signal?: AbortSignal;
+  readonly workerBudget?: WorkerAiCallBudget;
   readonly intervalMs?: number;
   readonly initialDelayMs?: number;
   readonly readEnvironment?: (name: string) => string | undefined;
@@ -637,10 +643,18 @@ export function startBackstageNotionPartitionShadowLoop(
           if (!lockedPolicy.partitionSyncEnabled || !lockedPolicy.configuration) {
             return null;
           }
-          const result = await runCycle({
-            configuration: lockedPolicy.configuration,
+          const lockedConfiguration = lockedPolicy.configuration;
+          const executeCycle = (): Promise<BackstageNotionPartitionShadowCycleResult> => runCycle({
+            configuration: lockedConfiguration,
             signal: controller.signal,
           });
+          const result = dependencies.workerBudget
+            ? await runWithAiExecutionContext(createAiExecutionContext({
+                sourceType: 'background',
+                sourceName: 'backstage-notion-partition-shadow-loop',
+                workerBudget: dependencies.workerBudget,
+              }), executeCycle)
+            : await executeCycle();
           return Object.freeze({ policy: lockedPolicy, result });
         });
         if (!execution) {

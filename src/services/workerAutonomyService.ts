@@ -16,6 +16,10 @@ import {
   type JobQueueSummary,
   type RecoverStaleJobsResult
 } from '@core/db/repositories/jobRepository.js';
+import {
+  getWorkerBudgetWindowUsage,
+  type WorkerBudgetWindowUsage
+} from '@core/db/repositories/workerBudgetRepository.js';
 import type { SchedulerClaimOptions } from '@core/scheduler/types.js';
 import { computeGptJobLifecycleDeadlines } from '@shared/gpt/gptJobLifecycle.js';
 import { normalizeJobLeaseMs } from '@shared/jobs/jobLeaseTiming.js';
@@ -56,6 +60,11 @@ import {
 } from '../queue/cleanup.js';
 
 export type WorkerAutonomyHealthStatus = 'healthy' | 'degraded' | 'unhealthy' | 'offline';
+export type WorkerClaimAcceptanceState =
+  | 'accepting'
+  | 'paused_budget'
+  | 'paused_rss'
+  | 'dependency_failure';
 
 export interface WorkerAutonomySettings {
   workerId: string;
@@ -91,6 +100,8 @@ export interface WorkerAutonomyBudgetResult {
   reason: string | null;
   stats: JobExecutionStats;
   rssMb: number;
+  claimAcceptance: WorkerClaimAcceptanceState;
+  retryAt: string | null;
 }
 
 export interface WorkerAutonomyHealthReport {
@@ -184,6 +195,9 @@ interface RuntimeSnapshotState {
   lastWatchdogEvent: WorkerWatchdogRecoveryEvent | null;
   maxObservedQueueDepth: number;
   lastBudgetPauseReason: string | null;
+  claimAcceptance: WorkerClaimAcceptanceState;
+  claimPauseReason: string | null;
+  claimRetryAt: string | null;
   lastRecoveryActionAt: string | null;
 }
 
@@ -303,6 +317,7 @@ function buildWorkerEventIdSample(ids: string[] | undefined): {
 const DEFAULT_JOB_WORKER_HEARTBEAT_MS = 5_000;
 const DEFAULT_JOB_WORKER_WATCHDOG_MS = 10_000;
 const DEFAULT_JOB_WORKER_WATCHDOG_IDLE_MS = 120_000;
+const POSTGRES_INTEGER_MAX = 2_147_483_647;
 
 let defaultAutonomySettingsCache: WorkerAutonomySettings | null = null;
 
@@ -328,9 +343,17 @@ function buildDefaultAutonomySettings(): WorkerAutonomySettings {
     defaultMaxRetries: readNumberEnv('JOB_WORKER_MAX_RETRIES', 2),
     retryBackoffBaseMs: readNumberEnv('JOB_WORKER_RETRY_BASE_MS', 2_000),
     retryBackoffMaxMs: readNumberEnv('JOB_WORKER_RETRY_MAX_MS', 60_000),
-    maxJobsPerHour: readNumberEnv('JOB_WORKER_MAX_JOBS_PER_HOUR', 120),
-    maxAiCallsPerHour: readNumberEnv('JOB_WORKER_MAX_AI_CALLS_PER_HOUR', 120),
-    maxRssMb: readNumberEnv('JOB_WORKER_MAX_RSS_MB', 2_048),
+    maxJobsPerHour: readSafetyLimitEnv(
+      'JOB_WORKER_MAX_JOBS_PER_HOUR',
+      120,
+      POSTGRES_INTEGER_MAX
+    ),
+    maxAiCallsPerHour: readSafetyLimitEnv(
+      'JOB_WORKER_MAX_AI_CALLS_PER_HOUR',
+      120,
+      POSTGRES_INTEGER_MAX
+    ),
+    maxRssMb: readSafetyLimitEnv('JOB_WORKER_MAX_RSS_MB', 2_048),
     queueDepthDeferralThreshold: readNumberEnv('JOB_WORKER_PLAN_QUEUE_THRESHOLD', 25),
     queueDepthDeferralMs: readNumberEnv('JOB_WORKER_PLAN_DEFER_MS', 5_000),
     failureWebhookUrl: process.env.WORKER_FAILURE_WEBHOOK_URL?.trim() || null,
@@ -347,6 +370,37 @@ function readNumberEnv(name: string, fallback: number): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function readSafetyLimitEnv(
+  name: string,
+  fallback: number,
+  maximum = Number.MAX_SAFE_INTEGER
+): number {
+  const rawValue = process.env[name];
+  if (rawValue === undefined) {
+    return fallback;
+  }
+  const normalized = rawValue.trim();
+  if (!/^\d+$/u.test(normalized)) {
+    throw new Error(`${name} must be a positive integer when configured.`);
+  }
+  const parsed = Number(normalized);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+    throw new Error(`${name} must be a positive safe integer when configured.`);
+  }
+  if (parsed > maximum) {
+    throw new Error(`${name} must not exceed ${maximum} when configured.`);
+  }
+  return parsed;
+}
+
+function resolveBudgetRecoverySleepMs(nextAvailableAt: string | null): number {
+  const nextAvailableAtMs = nextAvailableAt ? Date.parse(nextAvailableAt) : Number.NaN;
+  if (!Number.isFinite(nextAvailableAtMs)) {
+    return 60_000;
+  }
+  return Math.min(60_000, Math.max(1_000, nextAvailableAtMs - Date.now()));
+}
+
 export interface WorkerAutonomySettingsLoadOptions {
   refreshEnv?: boolean;
 }
@@ -355,7 +409,8 @@ export interface WorkerAutonomySettingsLoadOptions {
  * Load the async worker autonomy settings.
  * Purpose: centralize environment-driven autonomy policy for queue planning and worker recovery.
  * Inputs/outputs: optional overrides plus an optional worker id override; returns normalized settings.
- * Edge case behavior: invalid or missing env values fall back to safe defaults; pass refreshEnv to re-read env.
+ * Edge case behavior: missing values use defaults, while the three hard safety limits reject invalid
+ * configured values; pass refreshEnv to re-read env.
  */
 export function getWorkerAutonomySettings(
   overrides: Partial<WorkerAutonomySettings> = {},
@@ -545,6 +600,9 @@ export class WorkerAutonomyService {
       lastWatchdogEvent: null,
       maxObservedQueueDepth: 0,
       lastBudgetPauseReason: null,
+      claimAcceptance: 'accepting',
+      claimPauseReason: null,
+      claimRetryAt: null,
       lastRecoveryActionAt: null
     };
   }
@@ -583,9 +641,66 @@ export class WorkerAutonomyService {
       workerId: this.settings.workerId,
       statsWorkerId: this.getStatsWorkerId(),
       leaseMs: this.settings.leaseMs,
+      maxJobsPerHour: this.settings.maxJobsPerHour,
+      maxAiCallsPerHour: this.settings.maxAiCallsPerHour,
       priorityQueueEnabled: isPriorityQueueEnabled(),
       priorityQueueWeight: resolvePriorityQueueWeight()
     };
+  }
+
+  getWorkerAiCallBudget(): {
+    statsWorkerId: string;
+    workerId: string;
+    maxCallsPerHour: number;
+  } {
+    return {
+      statsWorkerId: this.getStatsWorkerId(),
+      workerId: this.settings.workerId,
+      maxCallsPerHour: this.settings.maxAiCallsPerHour
+    };
+  }
+
+  async setClaimAcceptanceState(
+    claimAcceptance: WorkerClaimAcceptanceState,
+    options: {
+      reason?: string | null;
+      retryAt?: string | null;
+      stats?: JobExecutionStats;
+    } = {}
+  ): Promise<void> {
+    const reason = options.reason?.trim() || null;
+    const retryAt = options.retryAt && Number.isFinite(Date.parse(options.retryAt))
+      ? new Date(options.retryAt).toISOString()
+      : null;
+    const changed =
+      this.state.claimAcceptance !== claimAcceptance ||
+      this.state.claimPauseReason !== reason ||
+      this.state.claimRetryAt !== retryAt;
+    this.state.claimAcceptance = claimAcceptance;
+    this.state.claimPauseReason = reason;
+    this.state.claimRetryAt = retryAt;
+    this.state.lastBudgetPauseReason =
+      claimAcceptance === 'paused_budget' || claimAcceptance === 'paused_rss'
+        ? reason
+        : null;
+    if (!changed) {
+      return;
+    }
+    const accepting = claimAcceptance === 'accepting';
+    await this.persistSnapshot({
+      ...(options.stats ? { stats: options.stats } : {}),
+      healthStatus: accepting
+        ? 'healthy'
+        : claimAcceptance === 'dependency_failure'
+          ? 'unhealthy'
+          : 'degraded',
+      alerts: accepting || !reason
+        ? []
+        : [`Worker claim acceptance is ${claimAcceptance}: ${reason}`]
+    }, {
+      force: true,
+      source: accepting ? 'claim-acceptance-recovered' : `claim-acceptance-${claimAcceptance}`
+    });
   }
 
   getHeartbeatIntervalMs(): number {
@@ -699,10 +814,7 @@ export class WorkerAutonomyService {
       deletedJobEvents: jobEventCleanup.deletedRows,
       jobEventCleanupDryRun: jobEventCleanup.dryRun
     };
-    const stats = await getJobExecutionStatsSince(
-      new Date(Date.now() - 60 * 60 * 1000),
-      this.getStatsWorkerId()
-    );
+    const { stats } = await this.readCurrentHourlyStats();
     const queueSummary = await getJobQueueSummary();
 
     this.state.lastInspectorRunAt = new Date().toISOString();
@@ -1011,57 +1123,88 @@ export class WorkerAutonomyService {
   }
 
   /**
+   * Compose terminal-job diagnostics with the exact database-clock hard-budget window.
+   * The terminal counters retain their existing approximate hourly display semantics;
+   * jobClaims and aiCalls always match the strict admission ledger `(T - 1h, T]`.
+   * aiCalls is admitted capacity, so a post-commit cancellation can make it
+   * conservatively exceed the number of native transports that actually started.
+   */
+  private async readCurrentHourlyStats(): Promise<{
+    stats: JobExecutionStats;
+    budgetUsage: WorkerBudgetWindowUsage;
+  }> {
+    const budgetUsage = await getWorkerBudgetWindowUsage(this.getStatsWorkerId(), {
+      jobLimit: this.settings.maxJobsPerHour,
+      aiLimit: this.settings.maxAiCallsPerHour
+    });
+    const stats = {
+      ...(await getJobExecutionStatsSince(
+        new Date(Date.now() - 60 * 60 * 1000),
+        this.getStatsWorkerId()
+      )),
+      jobClaims: budgetUsage.jobClaims,
+      aiCalls: budgetUsage.aiProviderAttempts
+    };
+    return { stats, budgetUsage };
+  }
+
+  /**
    * Decide whether the worker should pause before claiming more work.
    * Purpose: enforce memory, throughput, and AI-call budgets without interfering with currently running jobs.
    * Inputs/outputs: no inputs, returns an allow/deny decision with sleep duration and recent stats.
    * Edge case behavior: denials persist degraded snapshot state so operators can see why the worker paused.
    */
   async evaluateBudgetsBeforeClaim(): Promise<WorkerAutonomyBudgetResult> {
-    const stats = await getJobExecutionStatsSince(
-      new Date(Date.now() - 60 * 60 * 1000),
-      this.getStatsWorkerId()
-    );
-    const rssMb = Math.round(process.memoryUsage().rss / 1024 / 1024);
+    const { budgetUsage, stats } = await this.readCurrentHourlyStats();
+    const rssBytes = process.memoryUsage().rss;
+    const rssMb = Math.round(rssBytes / 1024 / 1024);
+    const maxRssBytes = this.settings.maxRssMb * 1024 * 1024;
 
     let reason: string | null = null;
     let sleepMs = 0;
+    let claimAcceptance: WorkerClaimAcceptanceState = 'accepting';
+    let retryAt: string | null = null;
 
     //audit Assumption: memory pressure should pause new claims before the process becomes unstable; failure risk: OOM kills during large tasks; expected invariant: existing in-flight work can finish while new claims are delayed; handling strategy: refuse new claims until memory drops below the threshold.
-    if (rssMb >= this.settings.maxRssMb) {
+    if (rssBytes >= maxRssBytes) {
       reason = `rss_mb_limit_exceeded:${rssMb}`;
       sleepMs = this.settings.inspectorIntervalMs;
-    } else if (stats.totalTerminal >= this.settings.maxJobsPerHour) {
-      reason = `jobs_per_hour_exceeded:${stats.totalTerminal}`;
-      sleepMs = 60_000;
+      claimAcceptance = 'paused_rss';
+    } else if (stats.jobClaims >= this.settings.maxJobsPerHour) {
+      reason = `jobs_per_hour_exceeded:${stats.jobClaims}`;
+      retryAt = budgetUsage.nextJobClaimAvailableAt;
+      sleepMs = resolveBudgetRecoverySleepMs(retryAt);
+      claimAcceptance = 'paused_budget';
     } else if (stats.aiCalls >= this.settings.maxAiCallsPerHour) {
       reason = `ai_calls_per_hour_exceeded:${stats.aiCalls}`;
-      sleepMs = 60_000;
+      retryAt = budgetUsage.nextAiProviderAttemptAvailableAt;
+      sleepMs = resolveBudgetRecoverySleepMs(retryAt);
+      claimAcceptance = 'paused_budget';
     }
 
     if (!reason) {
-      this.state.lastBudgetPauseReason = null;
+      await this.setClaimAcceptanceState('accepting', { stats });
       return {
         allowed: true,
         sleepMs: 0,
         reason: null,
         stats,
-        rssMb
+        rssMb,
+        claimAcceptance: 'accepting',
+        retryAt: null
       };
     }
 
-    this.state.lastBudgetPauseReason = reason;
-    await this.persistSnapshot({
-      stats,
-      healthStatus: 'degraded',
-      alerts: [`Budget pause active: ${reason}`]
-    }, { force: true, source: 'budget' });
+    await this.setClaimAcceptanceState(claimAcceptance, { reason, retryAt, stats });
 
     return {
       allowed: false,
       sleepMs,
       reason,
       stats,
-      rssMb
+      rssMb,
+      claimAcceptance,
+      retryAt
     };
   }
 
@@ -1353,7 +1496,7 @@ export class WorkerAutonomyService {
       this.state.terminalFailures >= this.settings.failureWebhookThreshold ? 'unhealthy' : 'degraded',
       [`Job ${job.id} failed: ${errorMessage}`],
       await getJobQueueSummary(),
-      await getJobExecutionStatsSince(new Date(Date.now() - 60 * 60 * 1000), this.getStatsWorkerId()),
+      (await this.readCurrentHourlyStats()).stats,
       'job-failure'
     );
 
@@ -1687,11 +1830,28 @@ export class WorkerAutonomyService {
       return;
     }
 
+    const claimAlert = this.state.claimAcceptance === 'dependency_failure'
+      ? `Worker claim dependency failure: ${this.state.claimPauseReason ?? 'unknown'}`
+      : this.state.claimAcceptance === 'paused_budget' || this.state.claimAcceptance === 'paused_rss'
+        ? `Worker claim acceptance is ${this.state.claimAcceptance}: ${this.state.claimPauseReason ?? 'unknown'}`
+        : null;
+    const effectiveHealthStatus: WorkerAutonomyHealthStatus =
+      context.healthStatus === 'offline'
+        ? 'offline'
+        : this.state.claimAcceptance === 'dependency_failure'
+          ? 'unhealthy'
+          : (this.state.claimAcceptance === 'paused_budget' || this.state.claimAcceptance === 'paused_rss')
+              && context.healthStatus === 'healthy'
+            ? 'degraded'
+            : context.healthStatus;
+    const effectiveAlerts = claimAlert && !context.alerts.includes(claimAlert)
+      ? [...context.alerts, claimAlert]
+      : context.alerts;
     const watchdogState = context.watchdogState ?? this.buildWatchdogState(context.queueSummary ?? null);
     const snapshotRecord: WorkerRuntimeSnapshotRecord = {
       workerId: this.settings.workerId,
       workerType: this.settings.workerType,
-      healthStatus: context.healthStatus,
+      healthStatus: effectiveHealthStatus,
       currentJobId: this.state.currentJobId,
       lastError: this.state.lastError,
       startedAt: this.startedAt,
@@ -1723,13 +1883,16 @@ export class WorkerAutonomyService {
         lastWatchdogEvent: this.state.lastWatchdogEvent,
         maxObservedQueueDepth: this.state.maxObservedQueueDepth,
         lastBudgetPauseReason: this.state.lastBudgetPauseReason,
+        claimAcceptance: this.state.claimAcceptance,
+        claimPauseReason: this.state.claimPauseReason,
+        claimRetryAt: this.state.claimRetryAt,
         lastActivityAt: this.state.lastActivityAt,
         lastProcessedJobAt: this.state.lastProcessedJobAt,
         lastWatchdogRunAt: this.state.lastWatchdogRunAt,
         watchdog: watchdogState,
         statsWorkerId: this.getStatsWorkerId(),
         lastPersistSource: source,
-        alerts: context.alerts
+        alerts: effectiveAlerts
       }
     };
 
@@ -1737,7 +1900,7 @@ export class WorkerAutonomyService {
       if (isWorkerLivenessSource(source)) {
         await this.snapshotPipeline.recordLiveness(
           this.settings.workerId,
-          context.healthStatus,
+          effectiveHealthStatus,
           this.state.lastHeartbeatAt ?? snapshotRecord.updatedAt
         );
       }
@@ -1757,7 +1920,7 @@ export class WorkerAutonomyService {
         module: 'worker-autonomy',
         workerId: this.settings.workerId,
         source,
-        healthStatus: context.healthStatus,
+        healthStatus: effectiveHealthStatus,
         durationMs
       };
       if (durationMs >= WORKER_RUNTIME_SNAPSHOT_SLOW_LOG_MIN_MS) {
@@ -1771,7 +1934,7 @@ export class WorkerAutonomyService {
         module: 'worker-autonomy',
         workerId: this.settings.workerId,
         source,
-        healthStatus: context.healthStatus,
+        healthStatus: effectiveHealthStatus,
         durationMs: Date.now() - persistStartedAtMs,
         error: resolveErrorMessage(error)
       });
