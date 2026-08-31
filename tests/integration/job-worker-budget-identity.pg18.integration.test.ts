@@ -1225,10 +1225,11 @@ describeWithDatabase('job worker budget identity on PostgreSQL 18', () => {
 
   test('rolls back a queue claim when strict budget evidence cannot be persisted', async () => {
     const jobId = randomUUID();
+    const claimAt = new Date('2026-08-30T17:00:00.000Z');
     await databaseClient.query(
-      `INSERT INTO job_data (id, worker_id, job_type, status, input)
-       VALUES ($1, 'producer', 'ask', 'pending', '{}'::jsonb)`,
-      [jobId]
+      `INSERT INTO job_data (id, worker_id, job_type, status, input, next_run_at)
+       VALUES ($1, 'producer', 'ask', 'pending', '{}'::jsonb, $2::timestamptz)`,
+      [jobId, claimAt.toISOString()]
     );
     await databaseClient.query('ALTER TABLE job_events DROP COLUMN operation');
     try {
@@ -1238,7 +1239,7 @@ describeWithDatabase('job worker budget identity on PostgreSQL 18', () => {
         priorityQueueEnabled: false,
         maxJobsPerHour: 1,
         maxAiCallsPerHour: 1,
-        budgetNowForTesting: new Date('2026-08-30T17:00:00.000Z')
+        budgetNowForTesting: claimAt
       })).rejects.toEqual(expect.objectContaining({ code: '42703' }));
       const job = await databaseClient.query<{ status: string; claim_generation: string }>(
         `SELECT status, claim_generation::text FROM job_data WHERE id = $1`,
