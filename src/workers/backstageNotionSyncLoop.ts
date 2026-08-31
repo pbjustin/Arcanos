@@ -22,6 +22,16 @@ import {
 import {
   isBackstageNotionSnapshotChunkCountReadable,
 } from '@shared/backstage/backstageNotionSyncCore.js';
+import {
+  createAiExecutionContext,
+  runWithAiExecutionContext,
+  type AiExecutionContext,
+  type WorkerAiCallBudget,
+} from '@services/openai/aiExecutionContext.js';
+import {
+  classifyWorkerAiBudgetError,
+  normalizeWorkerAiBudgetError,
+} from '@core/adapters/openai.adapter.js';
 
 export const BACKSTAGE_NOTION_SYNC_INTERVAL_ENV_NAME =
   'ARCANOS_BACKSTAGE_NOTION_SYNC_INTERVAL_MS';
@@ -58,6 +68,7 @@ export interface BackstageNotionWorkerReadinessEvidence {
 
 export interface BackstageNotionWorkerReadinessDependencies {
   signal?: AbortSignal;
+  workerBudget?: WorkerAiCallBudget;
   readConfiguration?: () => BackstageNotionAuthorityConfiguration;
   repository?: Pick<BackstageNotionRagRepository, 'loadActiveInventory'>;
   sync?: typeof syncConfiguredBackstageNotionAuthorities;
@@ -72,8 +83,19 @@ export interface BackstageNotionSynchronizationCoordinator {
   runExclusive<T>(operation: () => Promise<T>): Promise<T>;
 }
 
+function rethrowRecordedWorkerBudgetFailure(context: AiExecutionContext): void {
+  if (context.workerBudgetFailure === null) {
+    return;
+  }
+  const normalized = normalizeWorkerAiBudgetError(context.workerBudgetFailure);
+  if (classifyWorkerAiBudgetError(normalized)) {
+    throw normalized;
+  }
+}
+
 export interface BackstageNotionSyncLoopDependencies {
   signal?: AbortSignal;
+  workerBudget?: WorkerAiCallBudget;
   intervalMs?: number;
   sync?: typeof syncConfiguredBackstageNotionAuthorities;
   logger?: Pick<typeof logger, 'info' | 'warn'>;
@@ -218,9 +240,20 @@ export async function ensureBackstageNotionWorkerReadiness(
 
   throwIfReadinessAborted(dependencies.signal);
   const sync = dependencies.sync ?? syncConfiguredBackstageNotionAuthorities;
-  const results = await sync({
+  const synchronize = (): Promise<readonly BackstageNotionSyncResult[]> => sync({
     ...(dependencies.signal ? { signal: dependencies.signal } : {}),
   });
+  let readinessContext: AiExecutionContext | null = null;
+  const results = dependencies.workerBudget
+    ? await runWithAiExecutionContext(readinessContext = createAiExecutionContext({
+        sourceType: 'background',
+        sourceName: 'backstage-notion-worker-readiness',
+        workerBudget: dependencies.workerBudget,
+      }), synchronize)
+    : await synchronize();
+  if (readinessContext) {
+    rethrowRecordedWorkerBudgetFailure(readinessContext);
+  }
   throwIfReadinessAborted(dependencies.signal);
   validateReadinessSyncResults(configuration.roots, results);
 
@@ -311,9 +344,22 @@ export function startBackstageNotionSyncLoop(
         }
         return sync({ signal: loopAbortController.signal });
       };
-      const results = dependencies.coordinator
-        ? await dependencies.coordinator.runExclusive(synchronize)
-        : await synchronize();
+      const runSynchronized = (): Promise<readonly BackstageNotionSyncResult[]> => (
+        dependencies.coordinator
+          ? dependencies.coordinator.runExclusive(synchronize)
+          : synchronize()
+      );
+      let syncContext: AiExecutionContext | null = null;
+      const results = dependencies.workerBudget
+        ? await runWithAiExecutionContext(syncContext = createAiExecutionContext({
+            sourceType: 'background',
+            sourceName: 'backstage-notion-sync-loop',
+            workerBudget: dependencies.workerBudget,
+          }), runSynchronized)
+        : await runSynchronized();
+      if (syncContext) {
+        rethrowRecordedWorkerBudgetFailure(syncContext);
+      }
       if (loopAbortController.signal.aborted) {
         throw loopAbortController.signal.reason
           ?? new DOMException('The operation was aborted.', 'AbortError');

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const getJobQueueSummaryMock = jest.fn();
 const getJobExecutionStatsSinceMock = jest.fn();
+const getWorkerBudgetWindowUsageMock = jest.fn();
 const recordJobHeartbeatMock = jest.fn();
 const recoverStalledJobsForWorkersMock = jest.fn();
 const recoverStaleJobsMock = jest.fn();
@@ -40,6 +41,10 @@ jest.unstable_mockModule('@core/db/repositories/jobRepository.js', () => ({
   deferJobForProviderRecovery: deferJobForProviderRecoveryMock,
   updateClaimedJobTerminal: updateJobMock,
   cleanupExpiredGptJobs: cleanupExpiredGptJobsMock
+}));
+
+jest.unstable_mockModule('@core/db/repositories/workerBudgetRepository.js', () => ({
+  getWorkerBudgetWindowUsage: getWorkerBudgetWindowUsageMock
 }));
 
 jest.unstable_mockModule('@core/db/repositories/workerRuntimeRepository.js', () => ({
@@ -89,7 +94,10 @@ const workerTimingEnvKeys = [
   'JOB_WORKER_HEARTBEAT_MS',
   'JOB_WORKER_STALE_AFTER_MS',
   'JOB_WORKER_WATCHDOG_MS',
-  'JOB_WORKER_WATCHDOG_IDLE_MS'
+  'JOB_WORKER_WATCHDOG_IDLE_MS',
+  'JOB_WORKER_MAX_JOBS_PER_HOUR',
+  'JOB_WORKER_MAX_AI_CALLS_PER_HOUR',
+  'JOB_WORKER_MAX_RSS_MB'
 ] as const;
 
 function withWorkerTimingEnv<T>(
@@ -149,7 +157,16 @@ describe('workerAutonomyService', () => {
       failed: 0,
       running: 0,
       totalTerminal: 1,
+      jobClaims: 1,
       aiCalls: 1
+    });
+    getWorkerBudgetWindowUsageMock.mockResolvedValue({
+      statsWorkerId: 'async-queue',
+      evaluatedAt: '2026-03-07T12:00:00.000Z',
+      jobClaims: 1,
+      aiProviderAttempts: 1,
+      nextJobClaimAvailableAt: null,
+      nextAiProviderAttemptAvailableAt: null
     });
     recordJobHeartbeatMock.mockResolvedValue(null);
     recoverStalledJobsForWorkersMock.mockResolvedValue({
@@ -295,6 +312,68 @@ describe('workerAutonomyService', () => {
         );
       }
     );
+  });
+
+  it('uses hard worker safety defaults and accepts explicit positive integers', () => {
+    withWorkerTimingEnv({}, () => {
+      expect(getWorkerAutonomySettings({}, { refreshEnv: true })).toEqual(
+        expect.objectContaining({
+          maxJobsPerHour: 120,
+          maxAiCallsPerHour: 120,
+          maxRssMb: 2_048
+        })
+      );
+    });
+
+    withWorkerTimingEnv({
+      JOB_WORKER_MAX_JOBS_PER_HOUR: '17',
+      JOB_WORKER_MAX_AI_CALLS_PER_HOUR: '23',
+      JOB_WORKER_MAX_RSS_MB: '4096'
+    }, () => {
+      expect(getWorkerAutonomySettings({}, { refreshEnv: true })).toEqual(
+        expect.objectContaining({
+          maxJobsPerHour: 17,
+          maxAiCallsPerHour: 23,
+          maxRssMb: 4_096
+        })
+      );
+    });
+  });
+
+  it.each(['', '   ', '0', '-1', '1.5', 'NaN', 'Infinity'])(
+    'fails closed for an invalid hard worker safety limit: %p',
+    (value) => {
+      withWorkerTimingEnv({ JOB_WORKER_MAX_JOBS_PER_HOUR: value }, () => {
+        expect(() => getWorkerAutonomySettings({}, { refreshEnv: true })).toThrow(
+          /JOB_WORKER_MAX_JOBS_PER_HOUR must be a positive/
+        );
+      });
+    }
+  );
+
+  it('accepts the exact PostgreSQL counter maximum for hourly limits', () => {
+    withWorkerTimingEnv({
+      JOB_WORKER_MAX_JOBS_PER_HOUR: '2147483647',
+      JOB_WORKER_MAX_AI_CALLS_PER_HOUR: '2147483647',
+    }, () => {
+      expect(getWorkerAutonomySettings({}, { refreshEnv: true })).toEqual(
+        expect.objectContaining({
+          maxJobsPerHour: 2_147_483_647,
+          maxAiCallsPerHour: 2_147_483_647,
+        })
+      );
+    });
+  });
+
+  it.each([
+    'JOB_WORKER_MAX_JOBS_PER_HOUR',
+    'JOB_WORKER_MAX_AI_CALLS_PER_HOUR',
+  ] as const)('fails closed above the PostgreSQL counter maximum for %s', (name) => {
+    withWorkerTimingEnv({ [name]: '2147483648' }, () => {
+      expect(() => getWorkerAutonomySettings({}, { refreshEnv: true })).toThrow(
+        `${name} must not exceed 2147483647 when configured.`
+      );
+    });
   });
 
   it('defers low-priority jobs when queue pressure is high', async () => {
@@ -1568,14 +1647,160 @@ describe('workerAutonomyService', () => {
 
     await service.evaluateBudgetsBeforeClaim();
 
+    expect(getWorkerBudgetWindowUsageMock).toHaveBeenCalledWith('async-queue', {
+      jobLimit: 120,
+      aiLimit: 120
+    });
     expect(getJobExecutionStatsSinceMock).toHaveBeenCalledWith(
       expect.any(Date),
       'async-queue'
     );
     expect(service.getClaimOptions()).toEqual(expect.objectContaining({
       workerId: 'async-queue-slot-2',
-      statsWorkerId: 'async-queue'
+      statsWorkerId: 'async-queue',
+      maxJobsPerHour: 120,
+      maxAiCallsPerHour: 120
     }));
+  });
+
+  it('pauses at exact job and AI thresholds and persists rolling-window recovery', async () => {
+    const service = new WorkerAutonomyService({
+      workerId: 'async-queue-slot-1',
+      statsWorkerId: 'async-queue',
+      workerType: 'async_queue',
+      heartbeatIntervalMs: 10_000,
+      leaseMs: 30_000,
+      inspectorIntervalMs: 30_000,
+      staleAfterMs: 60_000,
+      defaultMaxRetries: 2,
+      retryBackoffBaseMs: 2_000,
+      retryBackoffMaxMs: 60_000,
+      maxJobsPerHour: 2,
+      maxAiCallsPerHour: 2,
+      maxRssMb: 2_048,
+      queueDepthDeferralThreshold: 25,
+      queueDepthDeferralMs: 5_000,
+      failureWebhookUrl: null,
+      failureWebhookThreshold: 3,
+      failureWebhookCooldownMs: 300_000
+    });
+    getWorkerBudgetWindowUsageMock.mockResolvedValueOnce({
+      statsWorkerId: 'async-queue',
+      evaluatedAt: '2026-08-30T14:00:00.000Z',
+      jobClaims: 2,
+      aiProviderAttempts: 1,
+      nextJobClaimAvailableAt: '2026-08-30T14:00:30.000Z',
+      nextAiProviderAttemptAvailableAt: null
+    });
+
+    await expect(service.evaluateBudgetsBeforeClaim()).resolves.toMatchObject({
+      allowed: false,
+      reason: 'jobs_per_hour_exceeded:2',
+      claimAcceptance: 'paused_budget',
+      retryAt: '2026-08-30T14:00:30.000Z'
+    });
+    expect(upsertWorkerRuntimeSnapshotMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        healthStatus: 'degraded',
+        snapshot: expect.objectContaining({
+          claimAcceptance: 'paused_budget',
+          claimPauseReason: 'jobs_per_hour_exceeded:2'
+        })
+      }),
+      { source: 'claim-acceptance-paused_budget' }
+    );
+
+    getWorkerBudgetWindowUsageMock.mockResolvedValueOnce({
+      statsWorkerId: 'async-queue',
+      evaluatedAt: '2026-08-30T14:00:31.000Z',
+      jobClaims: 1,
+      aiProviderAttempts: 2,
+      nextJobClaimAvailableAt: null,
+      nextAiProviderAttemptAvailableAt: '2026-08-30T14:01:00.000Z'
+    });
+    await expect(service.evaluateBudgetsBeforeClaim()).resolves.toMatchObject({
+      allowed: false,
+      reason: 'ai_calls_per_hour_exceeded:2',
+      claimAcceptance: 'paused_budget'
+    });
+
+    getWorkerBudgetWindowUsageMock.mockResolvedValueOnce({
+      statsWorkerId: 'async-queue',
+      evaluatedAt: '2026-08-30T14:01:01.000Z',
+      jobClaims: 1,
+      aiProviderAttempts: 1,
+      nextJobClaimAvailableAt: null,
+      nextAiProviderAttemptAvailableAt: null
+    });
+    await expect(service.evaluateBudgetsBeforeClaim()).resolves.toMatchObject({
+      allowed: true,
+      claimAcceptance: 'accepting',
+      retryAt: null
+    });
+    expect(upsertWorkerRuntimeSnapshotMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        healthStatus: 'healthy',
+        snapshot: expect.objectContaining({
+          claimAcceptance: 'accepting',
+          claimPauseReason: null,
+          claimRetryAt: null
+        })
+      }),
+      { source: 'claim-acceptance-recovered' }
+    );
+  });
+
+  it('pauses at the RSS boundary, recovers after RSS falls, and fails closed on budget-store errors', async () => {
+    const memoryUsageSpy = jest.spyOn(process, 'memoryUsage');
+    const service = new WorkerAutonomyService({
+      workerId: 'async-queue-slot-1',
+      statsWorkerId: 'async-queue',
+      workerType: 'async_queue',
+      heartbeatIntervalMs: 10_000,
+      leaseMs: 30_000,
+      inspectorIntervalMs: 30_000,
+      staleAfterMs: 60_000,
+      defaultMaxRetries: 2,
+      retryBackoffBaseMs: 2_000,
+      retryBackoffMaxMs: 60_000,
+      maxJobsPerHour: 2,
+      maxAiCallsPerHour: 2,
+      maxRssMb: 100,
+      queueDepthDeferralThreshold: 25,
+      queueDepthDeferralMs: 5_000,
+      failureWebhookUrl: null,
+      failureWebhookThreshold: 3,
+      failureWebhookCooldownMs: 300_000
+    });
+    const memoryUsage = (rssBytes: number) => ({
+      rss: rssBytes,
+      heapTotal: 1,
+      heapUsed: 1,
+      external: 1,
+      arrayBuffers: 1
+    });
+
+    try {
+      memoryUsageSpy.mockReturnValue(memoryUsage(100 * 1024 * 1024));
+      await expect(service.evaluateBudgetsBeforeClaim()).resolves.toMatchObject({
+        allowed: false,
+        claimAcceptance: 'paused_rss',
+        reason: 'rss_mb_limit_exceeded:100'
+      });
+
+      memoryUsageSpy.mockReturnValue(memoryUsage((100 * 1024 * 1024) - 1));
+      await expect(service.evaluateBudgetsBeforeClaim()).resolves.toMatchObject({
+        allowed: true,
+        claimAcceptance: 'accepting',
+        rssMb: 100
+      });
+
+      getWorkerBudgetWindowUsageMock.mockRejectedValueOnce(new Error('database unavailable'));
+      await expect(service.evaluateBudgetsBeforeClaim()).rejects.toThrow('database unavailable');
+      expect(getJobExecutionStatsSinceMock).toHaveBeenCalledTimes(2);
+    } finally {
+      memoryUsageSpy.mockRestore();
+    }
   });
 
   it('throttles healthy snapshot writes but preserves forced state transitions', async () => {

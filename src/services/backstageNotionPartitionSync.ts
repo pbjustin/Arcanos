@@ -64,6 +64,10 @@ import {
 import {
   hashBackstageNotionPartitionSourceGeneration,
 } from '@shared/backstage/backstageNotionPartitionSourceGeneration.js';
+import {
+  classifyWorkerAiBudgetError,
+  normalizeWorkerAiBudgetError,
+} from '@core/adapters/openai.adapter.js';
 
 export const BACKSTAGE_NOTION_PARTITION_SYNC_INDEX_FORMAT_VERSION = 1;
 export const BACKSTAGE_NOTION_PARTITION_SYNC_EMBEDDING_VERSION = 1;
@@ -1238,6 +1242,8 @@ async function syncShard(
   );
   let terminalFence: BackstageNotionPartitionLeaseFence = lease;
   let fullSourceScan = false;
+  let deferredWorkerBudgetError: unknown;
+  let hasDeferredWorkerBudgetError = false;
   const attempt = await (async (): Promise<BackstageNotionPartitionShardSyncResult> => {
     try {
     const capture = await dependencies.captureFullHierarchy({
@@ -1427,6 +1433,11 @@ async function syncShard(
       if (dependencies.signal?.aborted) {
         return abortedResult(task, fullSourceScan);
       }
+      const normalizedWorkerBudgetError = normalizeWorkerAiBudgetError(error);
+      if (classifyWorkerAiBudgetError(normalizedWorkerBudgetError)) {
+        deferredWorkerBudgetError = normalizedWorkerBudgetError;
+        hasDeferredWorkerBudgetError = true;
+      }
       return Object.freeze({
         universeId: task.universeId,
         shardKey: task.shardKey,
@@ -1451,6 +1462,9 @@ async function syncShard(
     task.shardKey,
     terminalFence
   ).catch(() => false);
+  if (hasDeferredWorkerBudgetError) {
+    throw deferredWorkerBudgetError;
+  }
   return Object.freeze({ ...attempt, leaseReleaseVerified });
 }
 

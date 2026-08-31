@@ -31,7 +31,29 @@ export interface JobRunnerEntrypointRuntimeMode {
 }
 
 export const WORKER_BOOTSTRAP_READY_SENTINEL = 'ARCANOS_WORKER_BOOTSTRAP_READY_V1';
+export const WORKER_OPERATIONAL_STATE_PREFIX = 'ARCANOS_WORKER_OPERATIONAL_STATE_V1 ';
 export const JOB_WORKER_STATS_ID_MAX_CHARACTERS = 255;
+
+export type WorkerOperationalState =
+  | 'accepting_claims'
+  | 'paused_budget'
+  | 'paused_rss'
+  | 'dependency_failure';
+
+export interface WorkerOperationalStateSignal {
+  workerId: string;
+  sequence: number;
+  state: WorkerOperationalState;
+  reason: string | null;
+  retryAt: string | null;
+}
+
+export interface WorkerStartupReadinessRetryDecision {
+  state: 'paused_budget' | 'dependency_failure';
+  reason: string;
+  retryAt: string | null;
+  delayMs: number;
+}
 
 export interface WorkerBootstrapReadyDestination {
   write(chunk: string): unknown;
@@ -47,6 +69,78 @@ export function emitWorkerBootstrapReadySignal(
   destination: WorkerBootstrapReadyDestination = process.stdout
 ): void {
   destination.write(`${WORKER_BOOTSTRAP_READY_SENTINEL}\n`);
+}
+
+function sanitizeOperationalProtocolValue(value: string | null | undefined, maxLength: number): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const normalized = value.replace(/[\u0000-\u001f\u007f]/gu, ' ').trim();
+  return normalized ? Array.from(normalized).slice(0, maxLength).join('') : null;
+}
+
+export function createWorkerOperationalStateReporter(
+  workerIdInput: string,
+  destination: WorkerBootstrapReadyDestination = process.stdout
+): (state: WorkerOperationalState, reason?: string | null, retryAt?: string | null) => void {
+  const exactWorkerId = workerIdInput.replace(/[\u0000-\u001f\u007f]/gu, ' ').trim();
+  if (Array.from(exactWorkerId).length > JOB_WORKER_STATS_ID_MAX_CHARACTERS) {
+    throw new RangeError(
+      `Worker operational readiness id must not exceed ${JOB_WORKER_STATS_ID_MAX_CHARACTERS} characters.`
+    );
+  }
+  const workerId = sanitizeOperationalProtocolValue(workerIdInput, JOB_WORKER_STATS_ID_MAX_CHARACTERS);
+  if (!workerId) {
+    throw new Error('Worker operational readiness requires a non-empty worker id.');
+  }
+  let sequence = 0;
+  let lastPayload = '';
+  return (state, reason = null, retryAt = null) => {
+    const normalizedRetryAt = retryAt && Number.isFinite(Date.parse(retryAt))
+      ? new Date(retryAt).toISOString()
+      : null;
+    const nextState = {
+      workerId,
+      state,
+      reason: sanitizeOperationalProtocolValue(reason, 256),
+      retryAt: normalizedRetryAt
+    };
+    const comparisonPayload = JSON.stringify(nextState);
+    if (comparisonPayload === lastPayload) {
+      return;
+    }
+    lastPayload = comparisonPayload;
+    sequence += 1;
+    const signal: WorkerOperationalStateSignal = { ...nextState, sequence };
+    destination.write(`${WORKER_OPERATIONAL_STATE_PREFIX}${JSON.stringify(signal)}\n`);
+  };
+}
+
+/**
+ * Retry only startup-readiness failures explicitly classified as recoverable.
+ * Paused state is published before each wait; accepting state remains owned by
+ * the fully initialized consumer slots after the startup gate succeeds.
+ */
+export async function waitForWorkerStartupReadiness<T>(params: {
+  attempt: () => Promise<T>;
+  resolveRetry: (
+    error: unknown
+  ) => WorkerStartupReadinessRetryDecision | null | Promise<WorkerStartupReadinessRetryDecision | null>;
+  reportPause: (decision: WorkerStartupReadinessRetryDecision) => void;
+  wait: (delayMs: number) => Promise<void>;
+}): Promise<T> {
+  for (;;) {
+    try {
+      return await params.attempt();
+    } catch (error) {
+      const decision = await params.resolveRetry(error);
+      if (!decision) {
+        throw error;
+      }
+      params.reportPause(decision);
+      await params.wait(Math.max(0, Math.trunc(decision.delayMs)));
+    }
+  }
 }
 
 /**
@@ -429,9 +523,23 @@ export function resolveJobRunnerRuntimeSettings(
     env.WORKER_ID?.trim() ||
     'async-queue';
   const statsWorkerId = env.JOB_WORKER_STATS_ID?.trim() || baseWorkerId;
+  if (/[\u0000-\u001f\u007f]/u.test(statsWorkerId)) {
+    throw new RangeError('JOB_WORKER_STATS_ID must not contain control characters.');
+  }
   if (Array.from(statsWorkerId).length > JOB_WORKER_STATS_ID_MAX_CHARACTERS) {
     throw new RangeError(
       `JOB_WORKER_STATS_ID must not exceed ${JOB_WORKER_STATS_ID_MAX_CHARACTERS} characters.`
+    );
+  }
+  if (/[\u0000-\u001f\u007f]/u.test(baseWorkerId)) {
+    throw new RangeError('JOB_WORKER_ID must not contain control characters.');
+  }
+  const longestLeaseWorkerId = concurrency === 1
+    ? baseWorkerId
+    : `${baseWorkerId}-slot-${concurrency}`;
+  if (Array.from(longestLeaseWorkerId).length > JOB_WORKER_STATS_ID_MAX_CHARACTERS) {
+    throw new RangeError(
+      `Derived JOB_WORKER_ID must not exceed ${JOB_WORKER_STATS_ID_MAX_CHARACTERS} characters.`
     );
   }
 

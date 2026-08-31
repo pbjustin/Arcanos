@@ -4,6 +4,7 @@
  */
 
 import { callOpenAI } from './openai/chatFlow/index.js';
+import { rethrowWorkerAiBudgetError } from '@core/adapters/openai.adapter.js';
 import { getDefaultModel } from './openai/credentialProvider.js';
 import { saveSelfReflection } from "@core/db/repositories/selfReflectionRepository.js";
 import {
@@ -203,6 +204,7 @@ export async function buildPatchSet(options: PatchSetOptions = {}): Promise<Patc
     return patch;
 
   } catch (error: unknown) {
+    rethrowWorkerAiBudgetError(error);
     //audit Assumption: AI call failures are recoverable; risk: missing AI insight; invariant: returns fallback patch; handling: log and return fallback.
     const errorMessage = getErrorMessage(error);
     console.error('❌ Error generating patch set:', errorMessage);

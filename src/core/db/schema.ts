@@ -2844,6 +2844,192 @@ $$;`,
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb
   )`,
 
+  `ALTER TABLE job_events
+     ADD COLUMN IF NOT EXISTS stats_worker_id VARCHAR(255) COLLATE "C"`,
+  `ALTER TABLE job_events
+     ADD COLUMN IF NOT EXISTS claim_generation BIGINT`,
+  `ALTER TABLE job_events
+     ADD COLUMN IF NOT EXISTS operation VARCHAR(200)`,
+  `DO $$
+   DECLARE
+     stats_type OID;
+     stats_modifier INTEGER;
+     stats_collation OID;
+     stats_not_null BOOLEAN;
+     stats_generated "char";
+     stats_identity "char";
+     stats_has_default BOOLEAN;
+     generation_type OID;
+     generation_modifier INTEGER;
+     generation_collation OID;
+     generation_not_null BOOLEAN;
+     generation_generated "char";
+     generation_identity "char";
+     generation_has_default BOOLEAN;
+     operation_type OID;
+     operation_modifier INTEGER;
+     operation_not_null BOOLEAN;
+     operation_generated "char";
+     operation_identity "char";
+     operation_has_default BOOLEAN;
+   BEGIN
+     SELECT atttypid, atttypmod, attcollation, attnotnull,
+            attgenerated, attidentity, atthasdef
+     INTO stats_type, stats_modifier, stats_collation, stats_not_null,
+          stats_generated, stats_identity, stats_has_default
+     FROM pg_attribute
+     WHERE attrelid = 'job_events'::regclass
+       AND attname = 'stats_worker_id'
+       AND NOT attisdropped;
+
+     SELECT atttypid, atttypmod, attcollation, attnotnull,
+            attgenerated, attidentity, atthasdef
+     INTO generation_type, generation_modifier, generation_collation, generation_not_null,
+          generation_generated, generation_identity, generation_has_default
+     FROM pg_attribute
+     WHERE attrelid = 'job_events'::regclass
+       AND attname = 'claim_generation'
+       AND NOT attisdropped;
+
+     SELECT atttypid, atttypmod, attnotnull,
+            attgenerated, attidentity, atthasdef
+     INTO operation_type, operation_modifier, operation_not_null,
+          operation_generated, operation_identity, operation_has_default
+     FROM pg_attribute
+     WHERE attrelid = 'job_events'::regclass
+       AND attname = 'operation'
+       AND NOT attisdropped;
+
+     IF stats_type IS DISTINCT FROM 'varchar'::regtype
+       OR stats_modifier IS DISTINCT FROM 259
+       OR stats_collation IS DISTINCT FROM '"C"'::regcollation
+       OR stats_not_null IS DISTINCT FROM FALSE
+       OR stats_generated IS DISTINCT FROM ''::"char"
+       OR stats_identity IS DISTINCT FROM ''::"char"
+       OR stats_has_default IS DISTINCT FROM FALSE THEN
+       RAISE EXCEPTION
+         'job_events.stats_worker_id must be a plain writable nullable VARCHAR(255) COLLATE "C" without a default'
+         USING ERRCODE = '42804';
+     END IF;
+
+     IF generation_type IS DISTINCT FROM 'bigint'::regtype
+       OR generation_modifier IS DISTINCT FROM -1
+       OR generation_collation IS DISTINCT FROM 0
+       OR generation_not_null IS DISTINCT FROM FALSE
+       OR generation_generated IS DISTINCT FROM ''::"char"
+       OR generation_identity IS DISTINCT FROM ''::"char"
+       OR generation_has_default IS DISTINCT FROM FALSE THEN
+       RAISE EXCEPTION
+         'job_events.claim_generation must be a plain writable nullable BIGINT without a default'
+         USING ERRCODE = '42804';
+     END IF;
+
+     IF operation_type IS DISTINCT FROM 'varchar'::regtype
+       OR operation_modifier IS DISTINCT FROM 204
+       OR operation_not_null IS DISTINCT FROM FALSE
+       OR operation_generated IS DISTINCT FROM ''::"char"
+       OR operation_identity IS DISTINCT FROM ''::"char"
+       OR operation_has_default IS DISTINCT FROM FALSE THEN
+       RAISE EXCEPTION
+         'job_events.operation must be a plain writable nullable VARCHAR(200) without a default'
+         USING ERRCODE = '42804';
+     END IF;
+   END
+   $$`,
+  `DO $$
+   DECLARE
+     constraint_type "char";
+     constraint_columns SMALLINT[];
+     constraint_definition TEXT;
+     expected_definition TEXT;
+     event_type_attribute SMALLINT;
+     stats_worker_attribute SMALLINT;
+     generation_attribute SMALLINT;
+   BEGIN
+     CREATE TEMP TABLE worker_budget_runtime_shape_guard (
+       event_type TEXT NOT NULL,
+       stats_worker_id TEXT,
+       claim_generation BIGINT
+     ) ON COMMIT DROP;
+     ALTER TABLE pg_temp.worker_budget_runtime_shape_guard
+       ADD CONSTRAINT worker_budget_runtime_shape_guard_check
+       CHECK (
+         event_type NOT IN (
+           'worker.budget.job_claim',
+           'worker.budget.ai_provider_attempt'
+         )
+         OR (
+           stats_worker_id IS NOT NULL
+           AND (
+             (event_type = 'worker.budget.job_claim'
+               AND claim_generation IS NOT NULL
+               AND claim_generation > 0)
+             OR (event_type = 'worker.budget.ai_provider_attempt'
+               AND claim_generation IS NULL)
+           )
+         )
+       );
+     SELECT pg_get_constraintdef(oid, false)
+     INTO expected_definition
+     FROM pg_constraint
+     WHERE conrelid = 'pg_temp.worker_budget_runtime_shape_guard'::regclass
+       AND conname = 'worker_budget_runtime_shape_guard_check';
+
+     SELECT attnum INTO event_type_attribute FROM pg_attribute
+     WHERE attrelid = 'job_events'::regclass AND attname = 'event_type' AND NOT attisdropped;
+     SELECT attnum INTO stats_worker_attribute FROM pg_attribute
+     WHERE attrelid = 'job_events'::regclass AND attname = 'stats_worker_id' AND NOT attisdropped;
+     SELECT attnum INTO generation_attribute FROM pg_attribute
+     WHERE attrelid = 'job_events'::regclass AND attname = 'claim_generation' AND NOT attisdropped;
+
+     SELECT contype, conkey, pg_get_constraintdef(oid, false)
+     INTO constraint_type, constraint_columns, constraint_definition
+     FROM pg_constraint
+     WHERE conrelid = 'job_events'::regclass
+       AND conname = 'job_events_worker_budget_shape_check';
+
+     IF constraint_definition IS NULL THEN
+       ALTER TABLE job_events
+         ADD CONSTRAINT job_events_worker_budget_shape_check
+         CHECK (
+           event_type NOT IN (
+             'worker.budget.job_claim',
+             'worker.budget.ai_provider_attempt'
+           )
+           OR (
+             stats_worker_id IS NOT NULL
+             AND (
+               (event_type = 'worker.budget.job_claim'
+                 AND claim_generation IS NOT NULL
+                 AND claim_generation > 0)
+               OR (event_type = 'worker.budget.ai_provider_attempt'
+                 AND claim_generation IS NULL)
+             )
+           )
+         ) NOT VALID;
+     END IF;
+
+     SELECT contype, conkey, pg_get_constraintdef(oid, false)
+     INTO constraint_type, constraint_columns, constraint_definition
+     FROM pg_constraint
+     WHERE conrelid = 'job_events'::regclass
+       AND conname = 'job_events_worker_budget_shape_check';
+     IF constraint_type IS DISTINCT FROM 'c'::"char"
+       OR constraint_columns IS DISTINCT FROM ARRAY[
+         event_type_attribute,
+         stats_worker_attribute,
+         generation_attribute
+       ]::SMALLINT[]
+       OR constraint_definition IS DISTINCT FROM expected_definition THEN
+       RAISE EXCEPTION
+         'job_events_worker_budget_shape_check has an unexpected definition'
+         USING ERRCODE = '42804';
+     END IF;
+   END
+   $$`,
+  `ALTER TABLE job_events
+     VALIDATE CONSTRAINT job_events_worker_budget_shape_check`,
+
   // DAG verification snapshot storage for cross-instance orchestration inspection
   `CREATE TABLE IF NOT EXISTS dag_runs (
     run_id TEXT PRIMARY KEY,
@@ -3092,6 +3278,146 @@ $$;`,
   `CREATE INDEX IF NOT EXISTS idx_job_events_event_type_occurred ON job_events(event_type, occurred_at)`,
   `CREATE INDEX IF NOT EXISTS idx_job_events_worker_occurred ON job_events(worker_id, occurred_at)`,
   `CREATE INDEX IF NOT EXISTS idx_job_events_occurred_at ON job_events(occurred_at)`,
+  // Existing populated installations must use the phased concurrent migration.
+  // A brand-new empty schema can safely create these indexes during bootstrap.
+  `DO $$
+   DECLARE
+     budget_index RECORD;
+     expected_predicate TEXT;
+   BEGIN
+     CREATE TEMP TABLE worker_budget_runtime_group_guard (
+       id UUID,
+       event_type TEXT,
+       stats_worker_id VARCHAR(255) COLLATE "C",
+       occurred_at TIMESTAMPTZ
+     ) ON COMMIT DROP;
+     CREATE INDEX worker_budget_runtime_expected_group_guard
+       ON pg_temp.worker_budget_runtime_group_guard
+         (stats_worker_id, event_type, occurred_at, id)
+       WHERE event_type IN (
+         'worker.budget.job_claim',
+         'worker.budget.ai_provider_attempt'
+       );
+     SELECT pg_get_expr(i.indpred, i.indrelid)
+     INTO expected_predicate
+     FROM pg_index i
+     WHERE i.indexrelid = 'pg_temp.worker_budget_runtime_expected_group_guard'::regclass;
+
+     SELECT c.relkind, i.indrelid, i.indisvalid, i.indisready, i.indislive,
+            i.indisunique, i.indisprimary, i.indisexclusion, i.indnkeyatts,
+            i.indnatts, am.amname AS access_method,
+            pg_get_expr(i.indpred, i.indrelid) AS predicate,
+            pg_get_indexdef(c.oid, 1, true) AS key_1,
+            pg_get_indexdef(c.oid, 2, true) AS key_2,
+            pg_get_indexdef(c.oid, 3, true) AS key_3,
+            pg_get_indexdef(c.oid, 4, true) AS key_4
+     INTO budget_index
+     FROM pg_class c
+     INNER JOIN pg_class table_class
+       ON table_class.oid = 'job_events'::regclass
+      AND table_class.relnamespace = c.relnamespace
+     LEFT JOIN pg_index i ON i.indexrelid = c.oid
+     LEFT JOIN pg_am am ON am.oid = c.relam
+     WHERE c.relname = 'idx_job_events_worker_budget_group_window'
+     LIMIT 1;
+
+     IF budget_index.relkind IS NULL THEN
+       IF EXISTS (SELECT 1 FROM job_events LIMIT 1) THEN
+         RAISE EXCEPTION
+           'idx_job_events_worker_budget_group_window is required; apply the phased concurrent worker-budget migration before startup'
+           USING ERRCODE = '55000';
+       END IF;
+       CREATE INDEX idx_job_events_worker_budget_group_window
+         ON job_events(stats_worker_id, event_type, occurred_at, id)
+         WHERE event_type IN (
+           'worker.budget.job_claim',
+           'worker.budget.ai_provider_attempt'
+         );
+     ELSIF budget_index.relkind IS DISTINCT FROM 'i'::"char"
+       OR budget_index.indrelid IS DISTINCT FROM 'job_events'::regclass
+       OR budget_index.indisvalid IS DISTINCT FROM TRUE
+       OR budget_index.indisready IS DISTINCT FROM TRUE
+       OR budget_index.indislive IS DISTINCT FROM TRUE
+       OR budget_index.indisunique IS DISTINCT FROM FALSE
+       OR budget_index.indisprimary IS DISTINCT FROM FALSE
+       OR budget_index.indisexclusion IS DISTINCT FROM FALSE
+       OR budget_index.access_method IS DISTINCT FROM 'btree'
+       OR budget_index.indnkeyatts IS DISTINCT FROM 4
+       OR budget_index.indnatts IS DISTINCT FROM 4
+       OR budget_index.key_1 IS DISTINCT FROM 'stats_worker_id'
+       OR budget_index.key_2 IS DISTINCT FROM 'event_type'
+       OR budget_index.key_3 IS DISTINCT FROM 'occurred_at'
+       OR budget_index.key_4 IS DISTINCT FROM 'id'
+       OR budget_index.predicate IS DISTINCT FROM expected_predicate THEN
+       RAISE EXCEPTION
+         'idx_job_events_worker_budget_group_window has an unexpected or invalid definition'
+         USING ERRCODE = '42804';
+     END IF;
+   END
+   $$`,
+  `DO $$
+   DECLARE
+     budget_index RECORD;
+     expected_predicate TEXT;
+   BEGIN
+     CREATE TEMP TABLE worker_budget_runtime_claim_guard (
+       job_id UUID,
+       event_type TEXT,
+       claim_generation BIGINT
+     ) ON COMMIT DROP;
+     CREATE UNIQUE INDEX worker_budget_runtime_expected_claim_guard
+       ON pg_temp.worker_budget_runtime_claim_guard (job_id, claim_generation)
+       WHERE event_type = 'worker.budget.job_claim';
+     SELECT pg_get_expr(i.indpred, i.indrelid)
+     INTO expected_predicate
+     FROM pg_index i
+     WHERE i.indexrelid = 'pg_temp.worker_budget_runtime_expected_claim_guard'::regclass;
+
+     SELECT c.relkind, i.indrelid, i.indisvalid, i.indisready, i.indislive,
+            i.indisunique, i.indisprimary, i.indisexclusion, i.indnkeyatts,
+            i.indnatts, am.amname AS access_method,
+            pg_get_expr(i.indpred, i.indrelid) AS predicate,
+            pg_get_indexdef(c.oid, 1, true) AS key_1,
+            pg_get_indexdef(c.oid, 2, true) AS key_2
+     INTO budget_index
+     FROM pg_class c
+     INNER JOIN pg_class table_class
+       ON table_class.oid = 'job_events'::regclass
+      AND table_class.relnamespace = c.relnamespace
+     LEFT JOIN pg_index i ON i.indexrelid = c.oid
+     LEFT JOIN pg_am am ON am.oid = c.relam
+     WHERE c.relname = 'idx_job_events_worker_budget_claim_generation'
+     LIMIT 1;
+
+     IF budget_index.relkind IS NULL THEN
+       IF EXISTS (SELECT 1 FROM job_events LIMIT 1) THEN
+         RAISE EXCEPTION
+           'idx_job_events_worker_budget_claim_generation is required; apply the phased concurrent worker-budget migration before startup'
+           USING ERRCODE = '55000';
+       END IF;
+       CREATE UNIQUE INDEX idx_job_events_worker_budget_claim_generation
+         ON job_events(job_id, claim_generation)
+         WHERE event_type = 'worker.budget.job_claim';
+     ELSIF budget_index.relkind IS DISTINCT FROM 'i'::"char"
+       OR budget_index.indrelid IS DISTINCT FROM 'job_events'::regclass
+       OR budget_index.indisvalid IS DISTINCT FROM TRUE
+       OR budget_index.indisready IS DISTINCT FROM TRUE
+       OR budget_index.indislive IS DISTINCT FROM TRUE
+       OR budget_index.indisunique IS DISTINCT FROM TRUE
+       OR budget_index.indisprimary IS DISTINCT FROM FALSE
+       OR budget_index.indisexclusion IS DISTINCT FROM FALSE
+       OR budget_index.access_method IS DISTINCT FROM 'btree'
+       OR budget_index.indnkeyatts IS DISTINCT FROM 2
+       OR budget_index.indnatts IS DISTINCT FROM 2
+       OR budget_index.key_1 IS DISTINCT FROM 'job_id'
+       OR budget_index.key_2 IS DISTINCT FROM 'claim_generation'
+       OR budget_index.predicate IS DISTINCT FROM expected_predicate THEN
+       RAISE EXCEPTION
+         'idx_job_events_worker_budget_claim_generation has an unexpected or invalid definition'
+         USING ERRCODE = '42804';
+     END IF;
+   END
+   $$`,
   `CREATE INDEX IF NOT EXISTS idx_dag_runs_session_updated ON dag_runs(session_id, updated_at DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_dag_runs_status_updated ON dag_runs(status, updated_at DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_dag_runs_updated_at_desc ON dag_runs(updated_at DESC)`,

@@ -79,4 +79,22 @@ describe('ai-reflections persistence mode', () => {
     expect(harness.callOpenAIMock).toHaveBeenCalledTimes(1);
     expect(harness.saveSelfReflectionMock).toHaveBeenCalledTimes(1);
   });
+
+  it('does not convert worker budget control flow into a fallback reflection', async () => {
+    const harness = await loadAIReflectionsHarness();
+    const { WorkerAiCallBudgetPausedError } = await import(
+      '../src/core/adapters/openai.adapter.js'
+    );
+    const budgetError = new WorkerAiCallBudgetPausedError(
+      '2026-08-30T14:30:00.000Z'
+    );
+    harness.callOpenAIMock.mockRejectedValueOnce(budgetError);
+
+    await expect(harness.module.buildPatchSet({
+      useMemory: false,
+      useCache: false,
+      category: 'worker-budget-test'
+    })).rejects.toBe(budgetError);
+    expect(harness.saveSelfReflectionMock).not.toHaveBeenCalled();
+  });
 });

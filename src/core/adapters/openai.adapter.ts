@@ -24,6 +24,7 @@ import {
  */
 
 import OpenAI from 'openai';
+import { randomUUID } from 'node:crypto';
 import type { ChatCompletion, ChatCompletionCreateParams } from 'openai/resources/chat/completions.js';
 import type { CreateEmbeddingResponse, EmbeddingCreateParams } from 'openai/resources/embeddings.js';
 import type { Transcription, TranscriptionCreateParamsNonStreaming } from 'openai/resources/audio/transcriptions.js';
@@ -39,6 +40,10 @@ import {
   recordAiOperationResult,
 } from '@services/openai/aiExecutionContext.js';
 import { recordJobEvent } from '@core/db/repositories/jobEventRepository.js';
+import {
+  reserveWorkerAiProviderAttempt,
+  WORKER_BUDGET_NON_JOB_SUBJECT_ID
+} from '@core/db/repositories/workerBudgetRepository.js';
 
 /**
  * OpenAI adapter configuration
@@ -55,9 +60,204 @@ export interface OpenAIAdapterConfig {
   maxRetries?: number;
   /** Default model for completions */
   defaultModel?: string;
+  /** Native transport override, primarily for focused tests. */
+  fetch?: typeof globalThis.fetch;
 }
 
-async function instrumentOpenAIOperation<T>(input: {
+export const WORKER_AI_BUDGET_EXCEEDED_CODE = 'worker_ai_call_budget_exceeded';
+export const WORKER_AI_BUDGET_DEPENDENCY_CODE = 'worker_ai_call_budget_dependency_unavailable';
+const WORKER_AI_BUDGET_RESPONSE_HEADER = 'x-arcanos-local-worker-budget';
+
+export class WorkerAiCallBudgetPausedError extends Error {
+  readonly code = WORKER_AI_BUDGET_EXCEEDED_CODE;
+
+  constructor(public readonly retryAt: string | null) {
+    super('Worker AI-call budget is exhausted for the active rolling window.');
+    this.name = 'WorkerAiCallBudgetPausedError';
+  }
+}
+
+export class WorkerAiCallBudgetDependencyError extends Error {
+  readonly code = WORKER_AI_BUDGET_DEPENDENCY_CODE;
+
+  constructor() {
+    super('Worker AI-call budget admission is unavailable.');
+    this.name = 'WorkerAiCallBudgetDependencyError';
+  }
+}
+
+export interface WorkerAiBudgetErrorClassification {
+  kind: 'budget_paused' | 'dependency_failure';
+  retryAt: string | null;
+}
+
+function buildWorkerAiBudgetResponse(input: {
+  code: typeof WORKER_AI_BUDGET_EXCEEDED_CODE | typeof WORKER_AI_BUDGET_DEPENDENCY_CODE;
+  message: string;
+  retryAt: string | null;
+}): Response {
+  return new Response(JSON.stringify({
+    error: {
+      message: input.message,
+      type: 'worker_ai_call_budget',
+      code: input.code,
+      param: input.retryAt
+    }
+  }), {
+    status: 400,
+    headers: {
+      'content-type': 'application/json',
+      [WORKER_AI_BUDGET_RESPONSE_HEADER]: 'v1',
+      'x-should-retry': 'false'
+    }
+  });
+}
+
+function readWorkerBudgetOperation(input: RequestInfo | URL): string {
+  const rawUrl = input instanceof Request ? input.url : String(input);
+  try {
+    return new URL(rawUrl).pathname.slice(0, 200) || 'openai.transport';
+  } catch {
+    return 'openai.transport';
+  }
+}
+
+/**
+ * Reserve hard worker AI-call capacity immediately before each native transport attempt.
+ * The OpenAI SDK invokes this wrapper again for each SDK retry, so retries and distinct
+ * multi-stage calls consume independently while logical adapter instrumentation does not
+ * double count them.
+ */
+export function createWorkerBudgetedOpenAIFetch(
+  nativeFetch: typeof globalThis.fetch = globalThis.fetch.bind(globalThis)
+): typeof globalThis.fetch {
+  return async (input, init) => {
+    const context = getAiExecutionContext();
+    const workerBudget = context?.workerBudget;
+    const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
+    if (!context || !workerBudget) {
+      return nativeFetch(input, init);
+    }
+    if (signal?.aborted) {
+      if (signal.reason instanceof Error) {
+        throw signal.reason;
+      }
+      const abortError = new Error('Worker provider request was aborted before budget admission.');
+      abortError.name = 'AbortError';
+      throw abortError;
+    }
+
+    try {
+      const admission = await reserveWorkerAiProviderAttempt({
+        statsWorkerId: workerBudget.statsWorkerId,
+        workerId: workerBudget.workerId,
+        limit: workerBudget.maxCallsPerHour,
+        jobId: context.jobId ?? WORKER_BUDGET_NON_JOB_SUBJECT_ID,
+        operation: readWorkerBudgetOperation(input),
+        reservationId: randomUUID()
+      });
+      if (admission.alreadyReserved) {
+        return buildWorkerAiBudgetResponse({
+          code: WORKER_AI_BUDGET_DEPENDENCY_CODE,
+          message: 'Worker AI-call reservation replay was refused.',
+          retryAt: null
+        });
+      }
+      if (!admission.allowed) {
+        return buildWorkerAiBudgetResponse({
+          code: WORKER_AI_BUDGET_EXCEEDED_CODE,
+          message: 'Worker AI-call budget is exhausted for the active rolling window.',
+          retryAt: admission.nextAvailableAt
+        });
+      }
+      if (admission.remaining === 0) {
+        try {
+          await workerBudget.onCapacityExhausted?.(admission.nextAvailableAt);
+        } catch {
+          // Readiness reporting must not cancel the final admitted transport attempt.
+        }
+      }
+    } catch {
+      return buildWorkerAiBudgetResponse({
+        code: WORKER_AI_BUDGET_DEPENDENCY_CODE,
+        message: 'Worker AI-call budget admission is unavailable.',
+        retryAt: null
+      });
+    }
+
+    return nativeFetch(input, init);
+  };
+}
+
+export function classifyWorkerAiBudgetError(
+  error: unknown
+): WorkerAiBudgetErrorClassification | null {
+  if (!error || typeof error !== 'object') {
+    return null;
+  }
+  if (error instanceof WorkerAiCallBudgetPausedError) {
+    return { kind: 'budget_paused', retryAt: error.retryAt };
+  }
+  if (error instanceof WorkerAiCallBudgetDependencyError) {
+    return { kind: 'dependency_failure', retryAt: null };
+  }
+  const candidate = error as {
+    status?: unknown;
+    code?: unknown;
+    param?: unknown;
+    error?: { code?: unknown; param?: unknown };
+    headers?: Headers | Record<string, string>;
+  };
+  const admissionHeader = candidate.headers instanceof Headers
+    ? candidate.headers.get(WORKER_AI_BUDGET_RESPONSE_HEADER)
+    : candidate.headers?.[WORKER_AI_BUDGET_RESPONSE_HEADER];
+  if (candidate.status !== 400 || admissionHeader !== 'v1') {
+    return null;
+  }
+  const code = typeof candidate.code === 'string'
+    ? candidate.code
+    : candidate.error?.code;
+  const retryAtCandidate = typeof candidate.param === 'string'
+    ? candidate.param
+    : candidate.error?.param;
+  const retryAt = typeof retryAtCandidate === 'string' && Number.isFinite(Date.parse(retryAtCandidate))
+    ? new Date(retryAtCandidate).toISOString()
+    : null;
+  if (code === WORKER_AI_BUDGET_EXCEEDED_CODE) {
+    return { kind: 'budget_paused', retryAt };
+  }
+  if (code === WORKER_AI_BUDGET_DEPENDENCY_CODE) {
+    return { kind: 'dependency_failure', retryAt: null };
+  }
+  return null;
+}
+
+export function normalizeWorkerAiBudgetError(error: unknown): unknown {
+  if (
+    error instanceof WorkerAiCallBudgetPausedError ||
+    error instanceof WorkerAiCallBudgetDependencyError
+  ) {
+    return error;
+  }
+  const classification = classifyWorkerAiBudgetError(error);
+  if (classification?.kind === 'budget_paused') {
+    return new WorkerAiCallBudgetPausedError(classification.retryAt);
+  }
+  if (classification?.kind === 'dependency_failure') {
+    return new WorkerAiCallBudgetDependencyError();
+  }
+  return error;
+}
+
+/** Preserve local worker-budget control flow across generic provider fallbacks. */
+export function rethrowWorkerAiBudgetError(error: unknown): void {
+  const normalized = normalizeWorkerAiBudgetError(error);
+  if (classifyWorkerAiBudgetError(normalized)) {
+    throw normalized;
+  }
+}
+
+export async function instrumentOpenAIOperation<T>(input: {
   operation: string;
   model?: string | null;
   callback: () => Promise<T>;
@@ -125,13 +325,25 @@ async function instrumentOpenAIOperation<T>(input: {
     }
     return result;
   } catch (error) {
-    recordDependencyCall({
-      dependency: 'openai',
-      operation: input.operation,
-      outcome: 'error',
-      durationMs: Date.now() - startedAtMs,
-      error,
-    });
+    const reportedError = normalizeWorkerAiBudgetError(error);
+    const workerBudgetFailure = classifyWorkerAiBudgetError(reportedError);
+    if (workerBudgetFailure && aiExecutionContext?.workerBudgetFailure === null) {
+      aiExecutionContext.workerBudgetFailure = reportedError;
+    }
+    try {
+      aiExecutionContext?.workerBudget?.onOperationalFailure?.(reportedError);
+    } catch {
+      // Operational reporting must not replace the provider or admission failure.
+    }
+    if (!workerBudgetFailure) {
+      recordDependencyCall({
+        dependency: 'openai',
+        operation: input.operation,
+        outcome: 'error',
+        durationMs: Date.now() - startedAtMs,
+        error: reportedError,
+      });
+    }
     recordAiOperationResult({
       operation: input.operation,
       model: input.model,
@@ -150,11 +362,11 @@ async function instrumentOpenAIOperation<T>(input: {
           model: input.model ?? null,
           sourceType: aiExecutionContext.sourceType,
           sourceName: aiExecutionContext.sourceName,
-          errorType: error instanceof Error ? error.name : typeof error
+          errorType: reportedError instanceof Error ? reportedError.name : typeof reportedError
         }
       });
     }
-    throw error;
+    throw reportedError;
   }
 }
 
@@ -475,6 +687,7 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): OpenAIAdapter 
     apiKey: config.apiKey,
     timeout: config.timeout || 60000,
     maxRetries: config.maxRetries,
+    fetch: createWorkerBudgetedOpenAIFetch(config.fetch ?? globalThis.fetch.bind(globalThis)),
     ...(config.baseURL ? { baseURL: config.baseURL } : {})
   });
 

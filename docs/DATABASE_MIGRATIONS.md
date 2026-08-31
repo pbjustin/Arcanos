@@ -634,6 +634,40 @@ suite uses only `JOB_WORKER_BUDGET_TEST_DATABASE_URL` and refuses non-loopback o
 unexpected database targets. The shared required-PostgreSQL sentinel turns a
 missing database URL into a hard failure instead of a skipped database suite.
 
+### Worker hard-budget evidence migration
+
+`migrations/20260830_job_events_worker_budget_v1/` adds the strict evidence
+contract used to serialize queue-claim and native OpenAI-attempt admission for
+each `JOB_WORKER_STATS_ID`. It adds nullable `stats_worker_id`,
+`claim_generation`, and `operation` columns to `job_events`, validates the named
+event-shape constraint separately, and builds two partial B-tree indexes with
+standalone `CREATE INDEX CONCURRENTLY` phases. Runtime startup creates those
+indexes only with a newly created, empty `job_events` table; a populated
+existing table must use the reviewed six-phase migration. Startup and the
+migration verifiers reject same-name columns, constraints, or indexes with a
+different catalog shape.
+
+The ledger uses one PostgreSQL clock and strict `(T - 1 hour, T]` windows.
+Per-kind/per-group transaction advisory locks serialize concurrent slots and
+replicas. A `worker.budget.job_claim` row commits in the same transaction as the
+ordered queue claim and generation increment. A
+`worker.budget.ai_provider_attempt` row commits before its corresponding native
+provider transport starts; provider failure does not refund it. The reserved
+nil UUID is a documented non-job subject for worker-owned startup/scheduled
+embedding work and never identifies a stored queue row.
+
+This additive schema is not sufficient for a mixed-version hard-quota rollout.
+Drain all legacy claim and provider-call paths and keep them quiet for one full
+hour, then apply and verify all six phases before compatible workers accept
+claims. Provider attempts and retries made by legacy code cannot be exactly
+backfilled. Configure identical maxima on every slot and replica sharing a stats
+group. The rollback scripts take an access-exclusive table lock, compare the
+owned objects to their canonical catalog definitions, and refuse destructive
+DDL if budget evidence remains or the contract has drifted. Run migration,
+verification, and rollback only against an explicitly confirmed target; the
+PostgreSQL 18 integration suite uses only the guarded disposable
+`JOB_WORKER_BUDGET_TEST_DATABASE_URL` target and never ambient `DATABASE_URL`.
+
 ### DAG snapshot-generation fencing migration
 
 `migrations/20260727_dag_run_snapshot_generation_v1.sql` adds the

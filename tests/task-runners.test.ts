@@ -6,6 +6,9 @@ import {
   runDagNodeJob,
   type DagTaskRunnerDependencies
 } from '../src/workers/taskRunners.js';
+import {
+  WorkerAiCallBudgetPausedError,
+} from '../src/core/adapters/openai.adapter.js';
 
 const TEST_AUDIT_EXECUTION_KEY = 'audit-regression-test';
 const TEST_PLANNER_EXECUTION_KEY = 'planner-regression-test';
@@ -279,6 +282,22 @@ describe('runDagNodeJob', () => {
     await expect(
       runDagNodeJob(buildDagNodeJobInput(), dependencies)
     ).rejects.toBe(abortError);
+    expect(dependencies.artifactStore?.writeArtifact).not.toHaveBeenCalled();
+    expect(dependencies.metrics?.incrementCounter).not.toHaveBeenCalledWith('node_failure');
+  });
+
+  it('rethrows a worker AI budget pause without failure artifacts or metrics', async () => {
+    const budgetError = new WorkerAiCallBudgetPausedError(
+      '2026-08-30T15:00:00.000Z'
+    );
+    dagAgentManager.registerAgent(TEST_AUDIT_EXECUTION_KEY, async () => {
+      throw budgetError;
+    });
+    const dependencies = buildTaskRunnerDependencies();
+
+    await expect(
+      runDagNodeJob(buildDagNodeJobInput(), dependencies)
+    ).rejects.toBe(budgetError);
     expect(dependencies.artifactStore?.writeArtifact).not.toHaveBeenCalled();
     expect(dependencies.metrics?.incrementCounter).not.toHaveBeenCalledWith('node_failure');
   });

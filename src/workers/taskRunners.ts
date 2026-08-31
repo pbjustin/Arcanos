@@ -16,6 +16,10 @@ import { dagLogger, type DagLogger } from '../utils/logger.js';
 import { dagMetrics, type DagMetricsRecorder } from '../utils/metrics.js';
 import type { PlannerExecutionFailureDetails } from './trinityWorkerPipeline.js';
 import { createAbortError } from '@arcanos/runtime';
+import {
+  classifyWorkerAiBudgetError,
+  normalizeWorkerAiBudgetError,
+} from '@core/adapters/openai.adapter.js';
 
 export interface DagTaskRunnerDependencies {
   runPrompt(prompt: string, options: DagAgentPromptOptions): Promise<unknown>;
@@ -369,6 +373,10 @@ export async function runDagNodeJob(
       throw error instanceof Error
         ? error
         : createAbortError('DAG node execution was cancelled.');
+    }
+    const normalizedWorkerBudgetError = normalizeWorkerAiBudgetError(error);
+    if (classifyWorkerAiBudgetError(normalizedWorkerBudgetError)) {
+      throw normalizedWorkerBudgetError;
     }
     const durationMs = Date.now() - startedAt;
     const errorMessage = error instanceof Error ? error.message : String(error);

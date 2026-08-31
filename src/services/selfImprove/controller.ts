@@ -19,6 +19,7 @@ import PRAssistant from "@services/prAssistant.js";
 import { createPullRequestFromPatch } from "@services/git.js";
 import { getConfig } from "@platform/runtime/unifiedConfig.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
+import { rethrowWorkerAiBudgetError } from "@core/adapters/openai.adapter.js";
 
 export interface SelfImproveTrigger {
   trigger: 'manual' | 'self_test' | 'clear' | 'incident';
@@ -181,6 +182,7 @@ export async function runSelfImproveCycle(input: SelfImproveTrigger): Promise<Se
         notes += ` | PR gates failed: ${analysis.summary}`;
       }
     } catch (e: unknown) {
+      rethrowWorkerAiBudgetError(e);
       metric('self_improve.patch_structured_error', { id });
       errors.push({ stage: 'patch_proposal_or_pr', message: resolveErrorMessage(e), detail: { trigger: input.trigger, component: input.component } });
       notes += ` | Structured patch proposal failed: ${resolveErrorMessage(e)}`;

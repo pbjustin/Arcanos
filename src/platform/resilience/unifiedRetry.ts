@@ -46,6 +46,8 @@ export interface RetryOptions {
   useCircuitBreaker?: boolean;
   /** Custom retry predicate function */
   shouldRetry?: (error: unknown, attempt: number) => boolean;
+  /** Optional circuit-breaker failure classifier for local control-flow errors. */
+  shouldCountCircuitBreakerFailure?: (error: unknown) => boolean;
   /** Operation name for logging and telemetry */
   operationName?: string;
   /** Abort signal used to stop retries and retry backoff */
@@ -276,6 +278,8 @@ export async function withRetry<T>(
           markOperation(`${operationName}.failure`);
           throw error;
         }
+      }, {
+        shouldCountFailure: options.shouldCountCircuitBreakerFailure
       });
     }
     return operation();

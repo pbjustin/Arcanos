@@ -5,6 +5,10 @@ import {
   type TrinityToolBackedCapabilities
 } from '@core/logic/trinity.js';
 import { runTrinityWritingPipeline } from '@core/logic/trinityWritingPipeline.js';
+import {
+  classifyWorkerAiBudgetError,
+  normalizeWorkerAiBudgetError
+} from '@core/adapters/openai.adapter.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import { logger } from '@platform/logging/structuredLogging.js';
 import { createRuntimeBudgetWithLimit } from '@platform/resilience/runtimeBudget.js';
@@ -337,7 +341,11 @@ async function runPlannerWithRetries(
           })
       );
     } catch (error: unknown) {
-      const classifiedFailure = classifyPlannerFailure(error);
+      const normalizedError = normalizeWorkerAiBudgetError(error);
+      if (classifyWorkerAiBudgetError(normalizedError)) {
+        throw normalizedError;
+      }
+      const classifiedFailure = classifyPlannerFailure(normalizedError);
       const durationMs = Date.now() - plannerStartedAtMs;
       const retryScheduled =
         classifiedFailure.transientFailure &&
@@ -361,7 +369,7 @@ async function runPlannerWithRetries(
       });
 
       if (!retryScheduled) {
-        throw createPlannerExecutionError(error, {
+        throw createPlannerExecutionError(normalizedError, {
           sourceEndpoint,
           timeoutMs: workerExecutionLimits.plannerTimeoutMs,
           maxRetries: workerExecutionLimits.plannerMaxRetries,

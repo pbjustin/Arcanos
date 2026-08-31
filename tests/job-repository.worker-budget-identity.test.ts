@@ -23,6 +23,7 @@ describe('jobRepository worker budget identity', () => {
         failed_count: 1,
         running_count: 1,
         total_terminal_count: 3,
+        job_claim_count: 4,
         ai_call_count: 3
       }]
     });
@@ -36,6 +37,7 @@ describe('jobRepository worker budget identity', () => {
       failed: 1,
       running: 1,
       totalTerminal: 3,
+      jobClaims: 4,
       aiCalls: 3
     });
 
@@ -81,6 +83,7 @@ describe('jobRepository worker budget identity', () => {
       failed: 0,
       running: 0,
       totalTerminal: 0,
+      jobClaims: 0,
       aiCalls: 0
     });
     expect(queryMock).not.toHaveBeenCalled();

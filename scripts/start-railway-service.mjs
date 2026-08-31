@@ -40,6 +40,14 @@ const DEFAULT_HEALTH_PORT = 8080;
 const DEFAULT_HEALTH_HOST = '0.0.0.0';
 const SHUTDOWN_SIGNALS = new Set(['SIGTERM', 'SIGINT']);
 export const WORKER_BOOTSTRAP_READY_SENTINEL = 'ARCANOS_WORKER_BOOTSTRAP_READY_V1';
+export const WORKER_OPERATIONAL_STATE_PREFIX = 'ARCANOS_WORKER_OPERATIONAL_STATE_V1 ';
+const WORKER_OPERATIONAL_PROTOCOL_MAX_LINE_LENGTH = 2_048;
+const WORKER_OPERATIONAL_STATES = new Set([
+  'accepting_claims',
+  'paused_budget',
+  'paused_rss',
+  'dependency_failure'
+]);
 const DEFAULT_CLI_BRIDGE_HOST = '127.0.0.1';
 const DEFAULT_CLI_BRIDGE_PORT = 8765;
 const LOOPBACK_CLI_BRIDGE_HOSTS = new Set(['127.0.0.1', 'localhost', '::1']);
@@ -810,17 +818,130 @@ async function runNativePrApplicationPreview() {
 
 export function createWorkerReadinessState(env = process.env) {
   const providerConfigured = OPENAI_API_KEY_ENV_NAMES.some((envName) => Boolean(env[envName]?.trim()));
+  const readPositiveInteger = (rawValue, fallback) => {
+    const parsedValue = rawValue ? Number(rawValue) : Number.NaN;
+    return Number.isInteger(parsedValue) && parsedValue > 0 ? parsedValue : fallback;
+  };
+  const expectedSlotCount = readPositiveInteger(
+    env.JOB_WORKER_CONCURRENCY,
+    readPositiveInteger(env.WORKER_COUNT, 1)
+  );
 
   return {
     child: 'starting',
     bootstrap: 'unknown',
     database: 'unknown',
     provider: providerConfigured ? 'configured' : 'missing',
+    queueAcceptance: 'unknown',
+    retryAt: null,
+    expectedSlotCount,
+    operationalSlots: new Map(),
     ready: false,
     reason: providerConfigured ? 'worker_bootstrap_pending' : 'openai_api_key_missing',
     readinessProtocolBuffer: '',
     readinessProtocolDiscardingLine: false
   };
+}
+
+function recomputeWorkerReadiness(readinessState) {
+  if (readinessState.child === 'draining' || readinessState.child === 'exited') {
+    readinessState.ready = false;
+    readinessState.retryAt = null;
+    return readinessState;
+  }
+  const slots = [...readinessState.operationalSlots.values()];
+  const selectState = state => slots.find(slot => slot.state === state);
+  const dependencyFailure = selectState('dependency_failure');
+  const rssPause = selectState('paused_rss');
+  const budgetPause = selectState('paused_budget');
+  if (dependencyFailure) {
+    readinessState.queueAcceptance = 'dependency_failure';
+    readinessState.retryAt = null;
+    readinessState.ready = false;
+    readinessState.reason = dependencyFailure.reason || 'worker_dependency_failure';
+    return readinessState;
+  }
+  if (rssPause) {
+    readinessState.queueAcceptance = 'paused_rss';
+    readinessState.retryAt = rssPause.retryAt;
+    readinessState.ready = false;
+    readinessState.reason = rssPause.reason || 'worker_paused_rss';
+    return readinessState;
+  }
+  if (budgetPause) {
+    readinessState.queueAcceptance = 'paused_budget';
+    readinessState.retryAt = budgetPause.retryAt;
+    readinessState.ready = false;
+    readinessState.reason = budgetPause.reason || 'worker_paused_budget';
+    return readinessState;
+  }
+  const allSlotsAccepting =
+    slots.length === readinessState.expectedSlotCount &&
+    slots.every(slot => slot.state === 'accepting_claims');
+  readinessState.queueAcceptance = allSlotsAccepting ? 'accepting_claims' : 'unknown';
+  readinessState.retryAt = null;
+  readinessState.ready =
+    readinessState.bootstrap === 'ready' &&
+    readinessState.database === 'ready' &&
+    readinessState.provider === 'configured' &&
+    allSlotsAccepting;
+  readinessState.reason = readinessState.ready
+    ? null
+    : readinessState.provider !== 'configured'
+      ? 'openai_api_key_missing'
+      : 'worker_claim_acceptance_pending';
+  return readinessState;
+}
+
+function recordWorkerOperationalStateLine(readinessState, normalizedLine) {
+  if (!normalizedLine.startsWith(WORKER_OPERATIONAL_STATE_PREFIX)) {
+    return false;
+  }
+  const rawPayload = normalizedLine.slice(WORKER_OPERATIONAL_STATE_PREFIX.length);
+  let payload;
+  try {
+    payload = JSON.parse(rawPayload);
+  } catch {
+    return true;
+  }
+  if (!payload || typeof payload !== 'object') {
+    return true;
+  }
+  const workerId = typeof payload.workerId === 'string' ? payload.workerId.trim() : '';
+  const sequence = payload.sequence;
+  const state = payload.state;
+  const reasonValid = payload.reason === null || typeof payload.reason === 'string';
+  const retryAtValid = payload.retryAt === null || (
+    typeof payload.retryAt === 'string' && Number.isFinite(Date.parse(payload.retryAt))
+  );
+  const reason = reasonValid ? payload.reason : null;
+  const retryAt = retryAtValid ? payload.retryAt : null;
+  if (
+    !workerId ||
+    Array.from(workerId).length > 255 ||
+    /[\u0000-\u001f\u007f]/u.test(workerId) ||
+    !Number.isSafeInteger(sequence) ||
+    sequence <= 0 ||
+    !WORKER_OPERATIONAL_STATES.has(state) ||
+    !reasonValid ||
+    !retryAtValid ||
+    (typeof reason === 'string' && Array.from(reason).length > 256)
+  ) {
+    return true;
+  }
+  const prior = readinessState.operationalSlots.get(workerId);
+  if (prior && prior.sequence >= sequence) {
+    return true;
+  }
+  readinessState.operationalSlots.set(workerId, {
+    workerId,
+    sequence,
+    state,
+    reason,
+    retryAt
+  });
+  recomputeWorkerReadiness(readinessState);
+  return true;
 }
 
 export function recordWorkerOutput(readinessState, chunk) {
@@ -840,10 +961,9 @@ export function recordWorkerOutput(readinessState, chunk) {
           readinessState.child = 'running';
           readinessState.bootstrap = 'ready';
           readinessState.database = 'ready';
-          readinessState.ready = readinessState.provider === 'configured';
-          readinessState.reason = readinessState.ready ? null : 'openai_api_key_missing';
-          readinessState.readinessProtocolBuffer = '';
-          return readinessState;
+          recomputeWorkerReadiness(readinessState);
+        } else {
+          recordWorkerOperationalStateLine(readinessState, normalizedLine);
         }
       }
 
@@ -860,7 +980,7 @@ export function recordWorkerOutput(readinessState, chunk) {
       `${readinessState.readinessProtocolBuffer ?? ''}${character}`;
     if (
       readinessState.readinessProtocolBuffer.length >
-      WORKER_BOOTSTRAP_READY_SENTINEL.length + 1
+      WORKER_OPERATIONAL_PROTOCOL_MAX_LINE_LENGTH
     ) {
       readinessState.readinessProtocolBuffer = '';
       readinessState.readinessProtocolDiscardingLine = true;
@@ -878,6 +998,7 @@ export function recordWorkerShutdown(readinessState, _signal) {
   readinessState.child = 'draining';
   readinessState.ready = false;
   readinessState.reason = 'worker_shutdown_requested';
+  readinessState.retryAt = null;
   readinessState.readinessProtocolBuffer = '';
   readinessState.readinessProtocolDiscardingLine = false;
   return readinessState;
@@ -886,6 +1007,7 @@ export function recordWorkerShutdown(readinessState, _signal) {
 export function recordWorkerExit(readinessState, exitCode, signal) {
   readinessState.child = 'exited';
   readinessState.ready = false;
+  readinessState.retryAt = null;
   readinessState.reason = signal
     ? `worker_exited_signal_${signal}`
     : `worker_exited_code_${typeof exitCode === 'number' ? exitCode : 'unknown'}`;
@@ -903,9 +1025,11 @@ export function buildWorkerReadinessResponse(readinessState) {
       checks: {
         bootstrap: readinessState.bootstrap,
         database: readinessState.database,
-        provider: readinessState.provider
+        provider: readinessState.provider,
+        queueAcceptance: readinessState.queueAcceptance
       },
       reason: readinessState.reason,
+      retryAt: readinessState.retryAt,
       timestamp: new Date().toISOString()
     }
   };

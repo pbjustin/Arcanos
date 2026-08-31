@@ -455,8 +455,8 @@ export async function queryRagDocuments(question: string, options: RagQueryOptio
   }
 
   try {
-    const { client } = requireOpenAIClientOrAdapter('OpenAI adapter not initialized');
-    const queryEmbedding = await createEmbedding(queryText, client);
+    const { adapter } = requireOpenAIClientOrAdapter('OpenAI adapter not initialized');
+    const queryEmbedding = await createEmbedding(queryText, adapter);
 
     if (!Array.isArray(queryEmbedding) || queryEmbedding.length === 0) {
       return {
@@ -553,7 +553,7 @@ interface IngestContentOptions {
 export async function ingestContent(options: IngestContentOptions): Promise<IngestResult> {
   const { id, content, source, metadata } = options;
   await ensureStore();
-  const { client } = requireOpenAIClientOrAdapter('OpenAI adapter not initialized');
+  const { adapter } = requireOpenAIClientOrAdapter('OpenAI adapter not initialized');
 
   const parentId = (id && id.trim()) || randomUUID();
   const sourceLabel = (source && source.trim()) || parentId;
@@ -605,7 +605,7 @@ export async function ingestContent(options: IngestContentOptions): Promise<Inge
       id: docId,
       url: sourceLabel,
       content: chunk,
-      embedding: await createEmbedding(chunk, client),
+      embedding: await createEmbedding(chunk, adapter),
       metadata: chunkMetadata,
     };
 

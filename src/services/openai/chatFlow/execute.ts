@@ -1,10 +1,16 @@
-import type { OpenAIAdapter } from "@core/adapters/openai.adapter.js";
+import {
+  classifyWorkerAiBudgetError,
+  type OpenAIAdapter
+} from "@core/adapters/openai.adapter.js";
 import type { CallOpenAIOptions } from "../types.js";
 import { withRetry } from "@platform/resilience/unifiedRetry.js";
 import { DEFAULT_MAX_RETRIES, REQUEST_ID_HEADER } from "../constants.js";
 import { getApiTimeoutMs } from "@arcanos/openai/unifiedClient";
 import { buildResponsesRequest } from "../requestBuilders/index.js";
-import { classifyOpenAIError } from "@core/lib/errors/reusable.js";
+import {
+  classifyOpenAIError,
+  shouldRetry as shouldRetryOpenAIError
+} from "@core/lib/errors/reusable.js";
 import { logRequestAttempt, logRequestPermanentFailure } from "./trace.js";
 import { createLinkedAbortController, getRequestAbortSignal } from "@arcanos/runtime";
 
@@ -18,17 +24,26 @@ export async function executeChatFlow(
   tokenLimit: number,
   options: CallOpenAIOptions
 ): Promise<any> {
+  const maxRetries =
+    typeof options.maxRetries === 'number' && Number.isFinite(options.maxRetries)
+      ? Math.max(0, Math.trunc(options.maxRetries))
+      : DEFAULT_MAX_RETRIES;
+  const isWorkerBudgetControlError = (error: unknown): boolean =>
+    classifyWorkerAiBudgetError(error) !== null;
+
   return await withRetry(
     async () => {
       return await performResponsesRequest(adapter, model, messages, tokenLimit, options);
     },
     {
-      maxRetries:
-        typeof options.maxRetries === 'number' && Number.isFinite(options.maxRetries)
-          ? Math.max(0, Math.trunc(options.maxRetries))
-          : DEFAULT_MAX_RETRIES,
+      maxRetries,
       operationName: "callOpenAI",
       useCircuitBreaker: true,
+      shouldRetry: (error, attempt) =>
+        !isWorkerBudgetControlError(error) &&
+        shouldRetryOpenAIError(error, attempt, maxRetries),
+      shouldCountCircuitBreakerFailure: (error) =>
+        !isWorkerBudgetControlError(error),
       signal: options.signal ?? getRequestAbortSignal()
     }
   );

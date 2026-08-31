@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-30T05:23:43.355Z",
+  "generatedAt": "2026-08-31T00:52:45.545Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -507,6 +507,9 @@
         },
         {
           "relativePath": "src/core/db/repositories/sessionRepository.ts"
+        },
+        {
+          "relativePath": "src/core/db/repositories/workerBudgetRepository.ts"
         },
         {
           "relativePath": "src/core/db/repositories/workerRuntimeRepository.ts"
@@ -4412,6 +4415,9 @@
         },
         {
           "relativePath": "tests/openai-structured-reasoning-preview-chaos.test.ts"
+        },
+        {
+          "relativePath": "tests/openai-worker-budget-attempts.test.ts"
         },
         {
           "relativePath": "tests/openai-worker-handler.test.ts"

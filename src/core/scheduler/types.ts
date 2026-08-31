@@ -43,6 +43,10 @@ export interface SchedulerClaimOptions {
   workerId?: string;
   statsWorkerId?: string;
   leaseMs?: number;
+  /** Hard shared rolling-window maximum for successful queue claims. */
+  maxJobsPerHour?: number;
+  /** Hard shared rolling-window maximum for actual provider transport attempts. */
+  maxAiCallsPerHour?: number;
   priorityQueueEnabled?: boolean;
   priorityQueueWeight?: number;
   priorityLaneMaxPriority?: number;
@@ -64,6 +68,16 @@ export interface SchedulerClaimResult<TJob = unknown> {
   adapter: SchedulerBackendKind;
   lane: QueueLane | null;
   job: TJob | null;
+  budgetAdmission?: {
+    kind: 'job_claim' | 'ai_provider_attempt';
+    statsWorkerId: string;
+    allowed: boolean;
+    used: number;
+    limit: number;
+    remaining: number;
+    evaluatedAt: string;
+    nextAvailableAt: string | null;
+  } | null;
 }
 
 export interface QueueSchedulerAdapter<TJob = unknown> {

@@ -15,6 +15,9 @@ import {
   BackstageNotionPartitionRepositoryError,
 } from '@core/db/repositories/backstageNotionPartitionRepository.js';
 import {
+  WorkerAiCallBudgetPausedError,
+} from '@core/adapters/openai.adapter.js';
+import {
   parseBackstageNotionPartitionConfiguration,
   type BackstageNotionPartitionConfiguration,
   type BackstageNotionPartitionDefinition,
@@ -1761,6 +1764,25 @@ describe('partition synchronization orchestration', () => {
       safeReasonCode: 'SHARD_SYNC_FAILED',
       fullSourceScan: true,
     });
+  });
+
+  test('releases the shard lease before preserving a worker AI budget pause', async () => {
+    const required = shard(1, { shardKey: 'current' });
+    const repository = new FakePartitionRepository();
+    const budgetError = new WorkerAiCallBudgetPausedError(
+      '2026-08-30T15:00:00.000Z'
+    );
+
+    await expect(syncBackstageNotionPartitionConfiguration(
+      configuration([required]),
+      dependencies(repository, {
+        concurrency: 1,
+        embedBatch: jest.fn(async () => {
+          throw budgetError;
+        }),
+      })
+    )).rejects.toBe(budgetError);
+    expect(repository.releaseShardLease).toHaveBeenCalledTimes(1);
   });
 
   test('serializes sibling Notion calls through process and database provider permits', async () => {

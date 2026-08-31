@@ -89,6 +89,8 @@ jest.unstable_mockModule('@core/scheduler/postgresAdapter.js', () => ({
 
 jest.unstable_mockModule('@core/adapters/openai.adapter.js', () => ({
   assertValidResponsesCreateParams: jest.fn(),
+  classifyWorkerAiBudgetError: jest.fn(() => null),
+  normalizeWorkerAiBudgetError: jest.fn((error: unknown) => error),
   normalizeResponsesCreateParams: jest.fn((value: unknown) => value),
   getOpenAIAdapter: getOpenAIAdapterMock
 }));
@@ -148,7 +150,15 @@ jest.unstable_mockModule('@shared/sleep.js', () => ({
   sleep: sleepMock
 }));
 
-const { runWorkerConsumerSlot } = await import('../src/workers/jobRunner.js');
+const {
+  classifyWorkerProviderRuntimeFailure,
+  createWorkerProviderDependencyState,
+  runWorkerConsumerSlot,
+} = await import('../src/workers/jobRunner.js');
+const { getAiExecutionContext } = await import(
+  '../src/services/openai/aiExecutionContext.js'
+);
+const { APIConnectionError, APIUserAbortError } = await import('openai');
 const { buildProtectedBackstageQueuedGptJobInput } = await import(
   '../src/shared/gpt/asyncGptJob.js'
 );
@@ -216,6 +226,144 @@ afterAll(() => {
   }
 });
 
+describe('worker provider dependency classification', () => {
+  it('recognizes the SDK default connection error without treating aborts or bad requests as dependency outages', () => {
+    expect(classifyWorkerProviderRuntimeFailure(
+      new APIConnectionError({ cause: new Error('socket closed') })
+    )).toEqual({ category: 'network' });
+    expect(classifyWorkerProviderRuntimeFailure({
+      status: 503,
+      message: 'service unavailable'
+    })).toEqual({ category: 'provider_error' });
+    expect(classifyWorkerProviderRuntimeFailure(new APIUserAbortError())).toBeNull();
+    expect(classifyWorkerProviderRuntimeFailure({
+      status: 400,
+      message: 'invalid request payload'
+    })).toBeNull();
+  });
+
+  it('gives a shared provider dependency latch precedence over RSS and budget evaluation', async () => {
+    probeOpenAIProviderHealthMock.mockClear();
+    probeOpenAIProviderHealthMock.mockResolvedValueOnce({
+      ok: false,
+      runtime: {
+        ...providerRuntime,
+        lastFailureCategory: 'network',
+        nextRetryAt: null
+      }
+    });
+    const sharedProviderState = createWorkerProviderDependencyState();
+    sharedProviderState.unavailable = true;
+    sharedProviderState.reason = 'openai_provider_unavailable:network';
+    sharedProviderState.revision = 1;
+    const onDispatcherReady = jest.fn();
+    const autonomyService = {
+      markDispatcherStarted: jest.fn(async () => undefined),
+      getHeartbeatIntervalMs: jest.fn(() => 30_000),
+      getRecommendedWorkerHeartbeatDelayMs: jest.fn(() => 30_000),
+      recordWorkerHeartbeat: jest.fn(async () => undefined),
+      evaluateBudgetsBeforeClaim: jest.fn(async () => ({
+        allowed: false,
+        claimAcceptance: 'paused_rss',
+        reason: 'rss_mb_limit_exceeded:100',
+        retryAt: null
+      })),
+      setClaimAcceptanceState: jest.fn(async () => undefined),
+      recordProviderCircuitBreakerReset: jest.fn(async () => undefined),
+      flushSnapshotPipeline: jest.fn(async () => undefined)
+    };
+
+    await expect(runWorkerConsumerSlot(
+      {
+        slotIndex: 1,
+        slotNumber: 2,
+        workerId: 'worker-test-slot-2',
+        statsWorkerId: 'worker-test-stats',
+        isInspectorSlot: false
+      },
+      {
+        pollMs: 1,
+        idleBackoffMs: 1,
+        concurrency: 2,
+        baseWorkerId: 'worker-test',
+        statsWorkerId: 'worker-test-stats'
+      },
+      autonomyService as never,
+      onDispatcherReady,
+      undefined,
+      sharedProviderState
+    )).rejects.toBe(stopAfterOneIteration);
+
+    expect(probeOpenAIProviderHealthMock).toHaveBeenCalledTimes(1);
+    expect(autonomyService.evaluateBudgetsBeforeClaim).not.toHaveBeenCalled();
+    expect(autonomyService.setClaimAcceptanceState).toHaveBeenCalledWith(
+      'dependency_failure',
+      expect.objectContaining({
+        reason: expect.stringMatching(/^openai_provider_unavailable:/)
+      })
+    );
+    expect(onDispatcherReady).toHaveBeenCalledTimes(1);
+  });
+
+  it('clears the shared dependency latch after a successful probe before exposing the current budget pause', async () => {
+    probeOpenAIProviderHealthMock.mockClear();
+    probeOpenAIProviderHealthMock.mockResolvedValueOnce({
+      ok: true,
+      runtime: providerRuntime
+    });
+    const sharedProviderState = createWorkerProviderDependencyState();
+    sharedProviderState.unavailable = true;
+    sharedProviderState.reason = 'openai_provider_unavailable:network';
+    sharedProviderState.revision = 1;
+    const autonomyService = {
+      markDispatcherStarted: jest.fn(async () => undefined),
+      getHeartbeatIntervalMs: jest.fn(() => 30_000),
+      getRecommendedWorkerHeartbeatDelayMs: jest.fn(() => 30_000),
+      recordWorkerHeartbeat: jest.fn(async () => undefined),
+      evaluateBudgetsBeforeClaim: jest.fn(async () => ({
+        allowed: false,
+        sleepMs: 1,
+        claimAcceptance: 'paused_budget',
+        reason: 'jobs_per_hour_exceeded:2',
+        retryAt: '2026-09-01T00:00:00.000Z'
+      })),
+      setClaimAcceptanceState: jest.fn(async () => undefined),
+      recordProviderCircuitBreakerReset: jest.fn(async () => undefined),
+      recordClaimResult: jest.fn(),
+      flushSnapshotPipeline: jest.fn(async () => undefined)
+    };
+
+    await expect(runWorkerConsumerSlot(
+      {
+        slotIndex: 0,
+        slotNumber: 1,
+        workerId: 'worker-test-slot-1',
+        statsWorkerId: 'worker-test-stats',
+        isInspectorSlot: true
+      },
+      {
+        pollMs: 1,
+        idleBackoffMs: 1,
+        concurrency: 2,
+        baseWorkerId: 'worker-test',
+        statsWorkerId: 'worker-test-stats'
+      },
+      autonomyService as never,
+      undefined,
+      undefined,
+      sharedProviderState
+    )).rejects.toBe(stopAfterOneIteration);
+
+    expect(sharedProviderState).toMatchObject({
+      unavailable: false,
+      reason: null,
+      retryAt: null
+    });
+    expect(autonomyService.evaluateBudgetsBeforeClaim).toHaveBeenCalledTimes(1);
+    expect(autonomyService.recordClaimResult).toHaveBeenCalledWith('budget_paused');
+  });
+});
+
 describe('job runner terminal persistence', () => {
   it('executes partition synchronization through its dedicated provider-free lane and fenced terminal writer', async () => {
     jest.useFakeTimers();
@@ -279,10 +427,17 @@ describe('job runner terminal persistence', () => {
       },
     };
     let executorSignal: AbortSignal | null = null;
+    const claimCapacityEvents: string[] = [];
+    const operationalStateReporter = jest.fn((state: string) => {
+      if (state === 'paused_budget') {
+        claimCapacityEvents.push('readiness-paused');
+      }
+    });
     const partitionSyncExecutor = jest.fn(async (input: {
       rawInput: unknown;
       cancellationSignal: AbortSignal;
     }) => {
+      claimCapacityEvents.push('job-executed');
       executorSignal = input.cancellationSignal;
       expect(input.rawInput).toEqual(claimedJob.input);
       return {
@@ -293,7 +448,19 @@ describe('job runner terminal persistence', () => {
     });
     let terminalSql = '';
     let terminalParams: unknown[] = [];
-    claimNextMock.mockResolvedValueOnce({ job: claimedJob });
+    claimNextMock.mockResolvedValueOnce({
+      job: claimedJob,
+      budgetAdmission: {
+        kind: 'job_claim',
+        statsWorkerId: 'worker-test-stats',
+        allowed: true,
+        used: 1,
+        limit: 1,
+        remaining: 0,
+        evaluatedAt: '2026-08-24T12:00:00.000Z',
+        nextAvailableAt: '2026-08-24T13:00:00.000Z'
+      }
+    });
     queryMock.mockImplementation(async (sql: unknown, params: unknown[] = []) => {
       const normalizedSql = String(sql);
       if (normalizedSql.startsWith('SELECT * FROM job_data')) {
@@ -322,6 +489,10 @@ describe('job runner terminal persistence', () => {
       getRecommendedWorkerHeartbeatDelayMs: jest.fn(() => 30_000),
       recordWorkerHeartbeat: jest.fn(async () => undefined),
       evaluateBudgetsBeforeClaim: jest.fn(async () => ({ allowed: true })),
+      getWorkerAiCallBudget: jest.fn(() => ({
+        statsWorkerId: 'worker-test', workerId: 'worker-test-slot-1', maxCallsPerHour: 120
+      })),
+      setClaimAcceptanceState: jest.fn(async () => undefined),
       recordClaimAttempt: jest.fn(),
       getClaimOptions: jest.fn(() => ({
         workerId: 'worker-test-slot-1',
@@ -355,10 +526,23 @@ describe('job runner terminal persistence', () => {
         },
         autonomyService as never,
         undefined,
-        partitionSyncExecutor
+        partitionSyncExecutor,
+        createWorkerProviderDependencyState(),
+        operationalStateReporter as never
       )).rejects.toBe(stopAfterOneIteration);
 
       expect(partitionSyncExecutor).toHaveBeenCalledTimes(1);
+      expect(claimCapacityEvents).toEqual([
+        'readiness-paused',
+        'job-executed'
+      ]);
+      expect(autonomyService.setClaimAcceptanceState).toHaveBeenCalledWith(
+        'paused_budget',
+        {
+          reason: 'jobs_per_hour_exceeded:1',
+          retryAt: '2026-08-24T13:00:00.000Z'
+        }
+      );
       expect(executorSignal?.aborted).toBe(false);
       expect(getOpenAIAdapterMock).not.toHaveBeenCalled();
       expect(probeOpenAIProviderHealthMock).not.toHaveBeenCalled();
@@ -482,6 +666,10 @@ describe('job runner terminal persistence', () => {
       getRecommendedWorkerHeartbeatDelayMs: jest.fn(() => 30_000),
       recordWorkerHeartbeat: jest.fn(async () => undefined),
       evaluateBudgetsBeforeClaim: jest.fn(async () => ({ allowed: true })),
+      getWorkerAiCallBudget: jest.fn(() => ({
+        statsWorkerId: 'worker-test', workerId: 'worker-test-slot-1', maxCallsPerHour: 120
+      })),
+      setClaimAcceptanceState: jest.fn(async () => undefined),
       recordClaimAttempt: jest.fn(),
       getClaimOptions: jest.fn(() => ({
         workerId: 'worker-test-slot-1',
@@ -626,6 +814,10 @@ describe('job runner terminal persistence', () => {
       getRecommendedWorkerHeartbeatDelayMs: jest.fn(() => 30_000),
       recordWorkerHeartbeat: jest.fn(async () => undefined),
       evaluateBudgetsBeforeClaim: jest.fn(async () => ({ allowed: true })),
+      getWorkerAiCallBudget: jest.fn(() => ({
+        statsWorkerId: 'worker-test', workerId: 'worker-test-slot-1', maxCallsPerHour: 120
+      })),
+      setClaimAcceptanceState: jest.fn(async () => undefined),
       recordClaimAttempt: jest.fn(),
       getClaimOptions: jest.fn(() => ({
         workerId: 'worker-test-slot-1',
@@ -800,6 +992,10 @@ describe('job runner terminal persistence', () => {
       getRecommendedWorkerHeartbeatDelayMs: jest.fn(() => 30_000),
       recordWorkerHeartbeat: jest.fn(async () => undefined),
       evaluateBudgetsBeforeClaim: jest.fn(async () => ({ allowed: true })),
+      getWorkerAiCallBudget: jest.fn(() => ({
+        statsWorkerId: 'worker-test', workerId: 'worker-test-slot-1', maxCallsPerHour: 120
+      })),
+      setClaimAcceptanceState: jest.fn(async () => undefined),
       recordClaimAttempt: jest.fn(),
       getClaimOptions: jest.fn(() => ({
         workerId: 'worker-test-slot-1',
@@ -999,6 +1195,10 @@ describe('job runner terminal persistence', () => {
       getRecommendedWorkerHeartbeatDelayMs: jest.fn(() => 30_000),
       recordWorkerHeartbeat: jest.fn(async () => undefined),
       evaluateBudgetsBeforeClaim: jest.fn(async () => ({ allowed: true })),
+      getWorkerAiCallBudget: jest.fn(() => ({
+        statsWorkerId: 'worker-test', workerId: 'worker-test-slot-1', maxCallsPerHour: 120
+      })),
+      setClaimAcceptanceState: jest.fn(async () => undefined),
       recordClaimAttempt: jest.fn(),
       getClaimOptions: jest.fn(() => ({
         workerId: 'worker-test-slot-1',
@@ -1143,6 +1343,10 @@ describe('job runner terminal persistence', () => {
       getRecommendedWorkerHeartbeatDelayMs: jest.fn(() => 30_000),
       recordWorkerHeartbeat: jest.fn(async () => undefined),
       evaluateBudgetsBeforeClaim: jest.fn(async () => ({ allowed: true })),
+      getWorkerAiCallBudget: jest.fn(() => ({
+        statsWorkerId: 'worker-test', workerId: 'worker-test-slot-1', maxCallsPerHour: 120
+      })),
+      setClaimAcceptanceState: jest.fn(async () => undefined),
       recordClaimAttempt: jest.fn(),
       getClaimOptions: jest.fn(() => ({
         workerId: 'worker-test-slot-1',
@@ -1215,18 +1419,24 @@ describe('job runner terminal persistence', () => {
     };
     let terminalSql = '';
     let terminalParams: unknown[] = [];
+    const operationalStateReporter = jest.fn();
 
     claimNextMock.mockResolvedValueOnce({ job: claimedJob });
-    runWorkerTrinityPromptMock.mockResolvedValueOnce({
-      result: 'Provider-free Ask completed.',
-      module: 'arcanos-final',
-      meta: {
-        id: 'response-provider-free-success',
-        created: 1786363200
-      },
-      activeModel: 'mock-openai-model',
-      fallbackFlag: false,
-      dryRun: false
+    runWorkerTrinityPromptMock.mockImplementationOnce(async () => {
+      await getAiExecutionContext()?.workerBudget?.onCapacityExhausted?.(
+        '2026-08-10T13:00:00.000Z'
+      );
+      return {
+        result: 'Provider-free Ask completed.',
+        module: 'arcanos-final',
+        meta: {
+          id: 'response-provider-free-success',
+          created: 1786363200
+        },
+        activeModel: 'mock-openai-model',
+        fallbackFlag: false,
+        dryRun: false
+      };
     });
     queryMock.mockImplementation(async (sql: unknown, params: unknown[] = []) => {
       const normalizedSql = String(sql);
@@ -1260,6 +1470,10 @@ describe('job runner terminal persistence', () => {
       getRecommendedWorkerHeartbeatDelayMs: jest.fn(() => 30_000),
       recordWorkerHeartbeat: jest.fn(async () => undefined),
       evaluateBudgetsBeforeClaim: jest.fn(async () => ({ allowed: true })),
+      getWorkerAiCallBudget: jest.fn(() => ({
+        statsWorkerId: 'worker-test', workerId: 'worker-test-slot-1', maxCallsPerHour: 120
+      })),
+      setClaimAcceptanceState: jest.fn(async () => undefined),
       recordClaimAttempt: jest.fn(),
       getClaimOptions: jest.fn(() => ({
         workerId: 'worker-test-slot-1',
@@ -1290,7 +1504,11 @@ describe('job runner terminal persistence', () => {
           baseWorkerId: 'worker-test',
           statsWorkerId: 'worker-test-stats'
         },
-        autonomyService as never
+        autonomyService as never,
+        undefined,
+        undefined,
+        createWorkerProviderDependencyState(),
+        operationalStateReporter as never
       )).rejects.toBe(stopAfterOneIteration);
 
       expect(runWorkerTrinityPromptMock).toHaveBeenCalledWith(
@@ -1299,6 +1517,18 @@ describe('job runner terminal persistence', () => {
           prompt: 'Return a provider-free successful Ask response.',
           sourceEndpoint: 'ask'
         })
+      );
+      expect(operationalStateReporter).toHaveBeenCalledWith(
+        'paused_budget',
+        'ai_calls_per_hour_exceeded:120',
+        '2026-08-10T13:00:00.000Z'
+      );
+      expect(autonomyService.setClaimAcceptanceState).toHaveBeenCalledWith(
+        'paused_budget',
+        {
+          reason: 'ai_calls_per_hour_exceeded:120',
+          retryAt: '2026-08-10T13:00:00.000Z'
+        }
       );
       expect(terminalSql).toContain("WHEN 'ask' THEN CASE");
       expect(terminalSql).toContain(
@@ -1647,6 +1877,10 @@ describe('job runner terminal persistence', () => {
         getRecommendedWorkerHeartbeatDelayMs: jest.fn(() => 30_000),
         recordWorkerHeartbeat: jest.fn(async () => undefined),
         evaluateBudgetsBeforeClaim: jest.fn(async () => ({ allowed: true })),
+        getWorkerAiCallBudget: jest.fn(() => ({
+          statsWorkerId: 'worker-test', workerId: 'worker-test-slot-1', maxCallsPerHour: 120
+        })),
+        setClaimAcceptanceState: jest.fn(async () => undefined),
         recordClaimAttempt: jest.fn(),
         getClaimOptions: jest.fn(() => ({
           workerId: 'worker-test-slot-1',

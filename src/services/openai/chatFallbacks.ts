@@ -2,6 +2,8 @@ import type OpenAI from 'openai';
 import type { ResponseCreateParamsNonStreaming } from 'openai/resources/responses/responses';
 import {
   assertValidResponsesCreateParams,
+  classifyWorkerAiBudgetError,
+  normalizeWorkerAiBudgetError,
   normalizeResponsesCreateParams,
   type OpenAIAdapter
 } from "@core/adapters/openai.adapter.js";
@@ -58,6 +60,9 @@ function shouldCountCompletionFailure(
   error: unknown,
   aggregateSignal: AbortSignal | undefined
 ): boolean {
+  if (classifyWorkerAiBudgetError(error)) {
+    return false;
+  }
   if (!aggregateSignal?.aborted || !isAbortError(error)) {
     return true;
   }
@@ -529,12 +534,13 @@ const executeModelFallbacks = async <T>(
       const result = await executor();
       return transform(result);
     } catch (error: unknown) {
-      if (isAbortError(error)) {
-        throw error;
+      const normalizedError = normalizeWorkerAiBudgetError(error);
+      if (classifyWorkerAiBudgetError(normalizedError) || isAbortError(normalizedError)) {
+        throw normalizedError;
       }
       //audit Assumption: failed attempts should continue to next fallback; risk: error masking; invariant: only one attempt succeeds; handling: capture error and proceed.
-      lastError = error;
-      aiLogger.warn(`${label} Failed: ${formatErrorMessage(error)}`);
+      lastError = normalizedError;
+      aiLogger.warn(`${label} Failed: ${formatErrorMessage(normalizedError)}`);
     }
   }
 

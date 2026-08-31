@@ -259,13 +259,30 @@ Launcher behavior:
   skip only this universe-wide legacy gate. Protected shard jobs can run and
   repair partition state only in exact `shadow`; exact `partitioned` freezes
   partition writers. Legacy reads keep their existing fail-closed behavior.
-  The child communicates the final transition through an exact newline-delimited
-  protocol independent of `LOG_LEVEL`; stderr and embedded marker-like text
-  cannot activate readiness. The normal OpenAI readiness check does not perform
-  a paid probe, though a required monolith format rebuild necessarily performs
-  the configured Notion and embedding work. Transient provider failure after
-  activation remains handled through the worker's probe/backoff and job-deferral
-  path.
+  Each child communicates ordered queue-acceptance transitions through an exact
+  newline-delimited protocol independent of `LOG_LEVEL`; stderr, malformed or
+  stale records, and embedded marker-like text cannot activate readiness. The
+  launcher aggregates every configured slot with fail-closed precedence:
+  `dependency_failure`, `paused_rss`, `paused_budget`, then `accepting_claims`.
+  `/readyz` returns `503` whenever any slot cannot accept its configured queue
+  role. Rolling job/AI-budget pauses and RSS pressure are degraded, recoverable
+  states; dependency failure is unhealthy. `/healthz` remains process liveness.
+  Window expiry, RSS reduction, or a successful dependency probe produces a new
+  `accepting_claims` transition and can restore readiness once all other gates pass.
+  When a final allowed claim or provider attempt consumes the last rolling-window
+  unit, the child reports `paused_budget` before that admitted work continues, so
+  readiness does not remain green until a later denied admission.
+  The normal OpenAI startup readiness check does not perform a paid probe,
+  though a required monolith format rebuild necessarily performs configured
+  Notion and embedding work under the same worker AI-call budget. If that
+  pre-readiness rebuild exhausts the rolling limit or observes a recoverable
+  provider dependency outage, every configured slot publishes the matching
+  non-ready state and the child retries the gate after the database retry time
+  or dependency recovery; it does not require a process restart. Deterministic
+  Notion configuration/index-contract failures remain fatal. After a real
+  job observes provider failure, the slot publishes `dependency_failure`, stops
+  new claims, and probes with backoff until recovery rather than repeatedly
+  claiming and deferring jobs while reporting ready.
 - The additive partition writer starts only after consumer readiness and only
   for exact `shadow` plus a valid partition envelope. Partition
   manifests and shard freshness never participate in `/readyz` or weaken the

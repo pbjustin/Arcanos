@@ -24,6 +24,7 @@ jest.unstable_mockModule('../src/core/db/repositories/jobEventRepository.js', ()
 
 const {
   claimNextPendingJob,
+  claimNextPendingJobWithAdmission,
   resetPriorityQueueFairnessState
 } = await import('../src/core/db/repositories/jobRepository.js');
 
@@ -271,5 +272,213 @@ describe('jobRepository.claimNextPendingJob', () => {
     await Promise.all([firstClaim, secondClaim]);
 
     expect(updateQueryCount).toBe(2);
+  });
+
+  it('atomically reserves a job claim after both shared budgets admit one production database-clock instant', async () => {
+    const evaluatedAt = new Date('2026-08-30T14:00:00.000Z');
+    clientQueryMock.mockImplementation(async (sql: unknown) => {
+      if (typeof sql !== 'string') {
+        return { rows: [] };
+      }
+      if (sql.includes('SELECT COALESCE')) {
+        return { rows: [{ evaluated_at: evaluatedAt }] };
+      }
+      if (sql.includes('COUNT(*)::int AS used_count')) {
+        return { rows: [{ used_count: 0, recovery_reservation_at: null }] };
+      }
+      if (sql.includes('UPDATE job_data')) {
+        return {
+          rows: [{
+            id: '10000000-0000-4000-8000-000000000001',
+            job_type: 'ask',
+            priority: 100,
+            claim_generation: '4'
+          }]
+        };
+      }
+      return { rows: [] };
+    });
+
+    const originalNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    try {
+      await expect(claimNextPendingJobWithAdmission({
+        workerId: 'async-queue-slot-1',
+        statsWorkerId: 'async-queue',
+        leaseMs: 12_000,
+        priorityQueueEnabled: false,
+        maxJobsPerHour: 2,
+        maxAiCallsPerHour: 3
+      })).resolves.toMatchObject({
+        job: { claim_generation: '4' },
+        budgetAdmission: {
+          kind: 'job_claim',
+          allowed: true,
+          used: 1,
+          limit: 2,
+          remaining: 1,
+          evaluatedAt: evaluatedAt.toISOString()
+        }
+      });
+    } finally {
+      if (originalNodeEnv === undefined) {
+        delete process.env.NODE_ENV;
+      } else {
+        process.env.NODE_ENV = originalNodeEnv;
+      }
+    }
+
+    const calls = clientQueryMock.mock.calls.map(([sql]) => String(sql));
+    expect(calls.filter(sql => sql.includes('SELECT COALESCE'))).toHaveLength(1);
+    const jobLockIndex = calls.findIndex(sql => sql.includes('pg_advisory_xact_lock') &&
+      clientQueryMock.mock.calls[calls.indexOf(sql)]?.[1]?.[0] === 'job_claim');
+    const aiLockIndex = clientQueryMock.mock.calls.findIndex(([, params]) =>
+      Array.isArray(params) && params[0] === 'ai_provider_attempt'
+    );
+    const updateIndex = calls.findIndex(sql => sql.includes('UPDATE job_data'));
+    const reservationIndex = calls.findIndex(sql => sql.includes('INSERT INTO job_events'));
+    const commitIndex = calls.findIndex(sql => sql === 'COMMIT');
+    expect(jobLockIndex).toBeGreaterThan(0);
+    expect(aiLockIndex).toBeGreaterThan(jobLockIndex);
+    expect(updateIndex).toBeGreaterThan(aiLockIndex);
+    expect(reservationIndex).toBeGreaterThan(updateIndex);
+    expect(commitIndex).toBeGreaterThan(reservationIndex);
+    const updateCall = clientQueryMock.mock.calls[updateIndex];
+    expect(updateCall?.[0]).toContain('$4::timestamptz');
+    expect(updateCall?.[1]).toEqual([
+      12_000,
+      'async-queue-slot-1',
+      'async-queue',
+      evaluatedAt.toISOString()
+    ]);
+    const reservationCall = clientQueryMock.mock.calls[reservationIndex];
+    expect(reservationCall?.[1]).toEqual(expect.arrayContaining([
+      '10000000-0000-4000-8000-000000000001',
+      'worker.budget.job_claim',
+      'async-queue-slot-1',
+      'async-queue',
+      '4',
+      evaluatedAt.toISOString()
+    ]));
+  });
+
+  it('returns the recovery time when a final allowed claim fills the rolling window', async () => {
+    const evaluatedAt = new Date('2026-08-30T14:00:00.000Z');
+    clientQueryMock.mockImplementation(async (sql: unknown) => {
+      if (typeof sql !== 'string') {
+        return { rows: [] };
+      }
+      if (sql.includes('SELECT COALESCE')) {
+        return { rows: [{ evaluated_at: evaluatedAt }] };
+      }
+      if (sql.includes('COUNT(*)::int AS used_count')) {
+        return { rows: [{ used_count: 0, recovery_reservation_at: null }] };
+      }
+      if (sql.includes('UPDATE job_data')) {
+        return {
+          rows: [{
+            id: '10000000-0000-4000-8000-000000000001',
+            job_type: 'ask',
+            claim_generation: '1'
+          }]
+        };
+      }
+      return { rows: [] };
+    });
+
+    await expect(claimNextPendingJobWithAdmission({
+      workerId: 'async-queue-slot-1',
+      statsWorkerId: 'async-queue',
+      maxJobsPerHour: 1,
+      maxAiCallsPerHour: 3,
+      budgetNowForTesting: evaluatedAt
+    })).resolves.toMatchObject({
+      job: { id: '10000000-0000-4000-8000-000000000001' },
+      budgetAdmission: {
+        kind: 'job_claim',
+        allowed: true,
+        used: 1,
+        limit: 1,
+        remaining: 0,
+        evaluatedAt: evaluatedAt.toISOString(),
+        nextAvailableAt: '2026-08-30T15:00:00.000Z'
+      }
+    });
+  });
+
+  it('returns a structured pause at the exact claim threshold without touching a queue row', async () => {
+    const evaluatedAt = new Date('2026-08-30T14:00:00.000Z');
+    clientQueryMock.mockImplementation(async (sql: unknown) => {
+      if (typeof sql === 'string' && sql.includes('SELECT COALESCE')) {
+        return { rows: [{ evaluated_at: evaluatedAt }] };
+      }
+      if (typeof sql === 'string' && sql.includes('COUNT(*)::int AS used_count')) {
+        return {
+          rows: [{
+            used_count: 2,
+            recovery_reservation_at: new Date('2026-08-30T13:30:00.000Z')
+          }]
+        };
+      }
+      return { rows: [] };
+    });
+
+    await expect(claimNextPendingJobWithAdmission({
+      workerId: 'async-queue-slot-2',
+      statsWorkerId: 'async-queue',
+      maxJobsPerHour: 2,
+      maxAiCallsPerHour: 3,
+      budgetNowForTesting: evaluatedAt
+    })).resolves.toEqual({
+      job: null,
+      budgetAdmission: expect.objectContaining({
+        kind: 'job_claim',
+        allowed: false,
+        used: 2,
+        remaining: 0,
+        nextAvailableAt: '2026-08-30T14:30:00.000Z'
+      })
+    });
+    expect(clientQueryMock.mock.calls.some(([sql]) => String(sql).includes('UPDATE job_data'))).toBe(false);
+    expect(clientQueryMock.mock.calls.some(([sql]) => String(sql).includes('INSERT INTO job_events'))).toBe(false);
+    expect(clientQueryMock).toHaveBeenCalledWith('COMMIT');
+  });
+
+  it('rolls back the claimed row when strict reservation persistence fails', async () => {
+    const evaluatedAt = new Date('2026-08-30T14:00:00.000Z');
+    clientQueryMock.mockImplementation(async (sql: unknown) => {
+      if (typeof sql !== 'string') {
+        return { rows: [] };
+      }
+      if (sql.includes('SELECT COALESCE')) {
+        return { rows: [{ evaluated_at: evaluatedAt }] };
+      }
+      if (sql.includes('COUNT(*)::int AS used_count')) {
+        return { rows: [{ used_count: 0, recovery_reservation_at: null }] };
+      }
+      if (sql.includes('UPDATE job_data')) {
+        return {
+          rows: [{
+            id: '10000000-0000-4000-8000-000000000001',
+            job_type: 'ask',
+            claim_generation: '1'
+          }]
+        };
+      }
+      if (sql.includes('INSERT INTO job_events')) {
+        throw new Error('reservation insert failed');
+      }
+      return { rows: [] };
+    });
+
+    await expect(claimNextPendingJobWithAdmission({
+      workerId: 'async-queue-slot-1',
+      statsWorkerId: 'async-queue',
+      maxJobsPerHour: 2,
+      maxAiCallsPerHour: 2,
+      budgetNowForTesting: evaluatedAt
+    })).rejects.toThrow('reservation insert failed');
+    expect(clientQueryMock).toHaveBeenCalledWith('ROLLBACK');
+    expect(clientQueryMock).not.toHaveBeenCalledWith('COMMIT');
   });
 });

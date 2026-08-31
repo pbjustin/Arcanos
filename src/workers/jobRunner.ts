@@ -22,7 +22,11 @@ import {
   getStatus as getDatabaseStatus
 } from '@core/db/index.js';
 import { getConfig, getStableWorkerRuntimeMode } from '@platform/runtime/unifiedConfig.js';
-import { getOpenAIAdapter } from '@core/adapters/openai.adapter.js';
+import {
+  classifyWorkerAiBudgetError,
+  getOpenAIAdapter,
+  normalizeWorkerAiBudgetError
+} from '@core/adapters/openai.adapter.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import {
   buildCompletedQueuedAskOutput,
@@ -86,6 +90,7 @@ import {
   commitAllWorkerSlotsReadyOrThrow,
   computeDeterministicIntervalJitterMs,
   createNonOverlappingTaskRunner,
+  createWorkerOperationalStateReporter,
   emitWorkerBootstrapReadySignal,
   isEntrypointModule,
   isRetryableJobRunnerDatabaseBootstrapError,
@@ -96,6 +101,7 @@ import {
   resolveJobRunnerRuntimeSettings,
   selectJobRunnerSlotTransientRetryEvent,
   shouldPersistClaimedJobCancellation,
+  waitForWorkerStartupReadiness,
   type ClaimedJobAbortCause,
   type ClaimedJobAbortState,
   type JobRunnerDatabaseBootstrapSettings,
@@ -113,8 +119,11 @@ import {
 } from '@platform/observability/appMetrics.js';
 import {
   createAiExecutionContext,
+  getAiExecutionContext,
   runWithAiExecutionContext,
-  summarizeAiExecutionContext
+  summarizeAiExecutionContext,
+  type AiExecutionContext,
+  type WorkerAiCallBudget,
 } from '@services/openai/aiExecutionContext.js';
 import {
   createAbortError,
@@ -130,7 +139,8 @@ import {
 import {
   getOpenAIProviderRuntimeStatus,
   probeOpenAIProviderHealth,
-  syncOpenAIProviderRuntime
+  syncOpenAIProviderRuntime,
+  type OpenAIProviderFailureCategory
 } from '@services/openai/serviceHealth.js';
 import { routeGptRequest } from '@routes/_core/gptDispatch.js';
 import { getGptModuleMap } from '@platform/runtime/gptRouterConfig.js';
@@ -187,6 +197,33 @@ interface JobExecutionOutcome {
 }
 
 type OpenAIClient = ReturnType<typeof initOpenAIClient>;
+
+interface WorkerProviderClientState {
+  client: OpenAIClient | null;
+  configVersion: string | null;
+  pausedUntil: string | null;
+  providerRecovered: boolean;
+  providerRecoveryCategory: string | null;
+  providerRecoveryNextRetryAt: string | null;
+}
+
+export interface WorkerProviderDependencyState {
+  unavailable: boolean;
+  reason: string | null;
+  retryAt: string | null;
+  revision: number;
+  recoveryPromise: Promise<WorkerProviderClientState> | null;
+}
+
+export function createWorkerProviderDependencyState(): WorkerProviderDependencyState {
+  return {
+    unavailable: false,
+    reason: null,
+    retryAt: null,
+    revision: 0,
+    recoveryPromise: null
+  };
+}
 
 const QUEUED_GPT_PROMPT_KEYS = ['prompt', 'message', 'query', 'text', 'content', 'userInput'] as const;
 const LEGACY_BACKSTAGE_JOB_CANCELLATION_MESSAGE =
@@ -597,16 +634,119 @@ async function bootstrapWorkerAutonomyWithRetry(
   }
 }
 
-function isProviderRuntimeError(message: string): boolean {
+function readProviderErrorStatus(error: unknown): number | null {
+  if (!error || typeof error !== 'object') {
+    return null;
+  }
+  const candidate = error as {
+    status?: unknown;
+    statusCode?: unknown;
+    response?: { status?: unknown };
+  };
+  const status = candidate.status ?? candidate.statusCode ?? candidate.response?.status;
+  return typeof status === 'number' && Number.isFinite(status) ? status : null;
+}
+
+function readProviderErrorCode(error: unknown): string | null {
+  if (!error || typeof error !== 'object') {
+    return null;
+  }
+  const candidate = error as {
+    code?: unknown;
+    cause?: { code?: unknown };
+  };
+  const code = candidate.code ?? candidate.cause?.code;
+  return typeof code === 'string' && code.trim().length > 0
+    ? code.trim().toUpperCase()
+    : null;
+}
+
+/**
+ * Identify failures that mean the worker's configured OpenAI dependency needs
+ * a process-wide recovery probe. Deterministic request/content errors are left
+ * to the normal job failure classifier and do not pause sibling queue slots.
+ */
+export function classifyWorkerProviderRuntimeFailure(
+  error: unknown,
+  message = resolveErrorMessage(error)
+): { category: OpenAIProviderFailureCategory } | null {
+  const status = readProviderErrorStatus(error);
+  const code = readProviderErrorCode(error);
   const normalizedMessage = message.toLowerCase();
-  return (
-    normalizedMessage.includes('openai') ||
-    normalizedMessage.includes('api key') ||
+  const candidate = error && typeof error === 'object'
+    ? error as { name?: unknown; constructor?: { name?: unknown } }
+    : null;
+  const errorType = [candidate?.name, candidate?.constructor?.name]
+    .filter((value): value is string => typeof value === 'string')
+    .join(' ')
+    .toLowerCase();
+
+  if (errorType.includes('apiuseraborterror')) {
+    return null;
+  }
+  if (
+    errorType.includes('apiconnectiontimeouterror') ||
+    status === 408 ||
+    code === 'ETIMEDOUT' ||
+    code === 'UND_ERR_CONNECT_TIMEOUT' ||
+    normalizedMessage.includes('request timed out') ||
+    normalizedMessage.includes('connection timed out')
+  ) {
+    return { category: 'timeout' };
+  }
+  if (
+    errorType.includes('apiconnectionerror') ||
+    code === 'ECONNRESET' ||
+    code === 'ECONNREFUSED' ||
+    code === 'ENOTFOUND' ||
+    code === 'EAI_AGAIN' ||
+    code === 'UND_ERR_SOCKET' ||
+    normalizedMessage.includes('connection error') ||
+    normalizedMessage.includes('fetch failed') ||
+    normalizedMessage.includes('socket hang up') ||
+    normalizedMessage.includes('getaddrinfo')
+  ) {
+    return { category: 'network' };
+  }
+  if (
+    status === 401 ||
+    status === 403 ||
+    errorType.includes('authenticationerror') ||
+    errorType.includes('permissiondeniederror') ||
     normalizedMessage.includes('incorrect api key') ||
-    normalizedMessage.includes('authentication') ||
+    normalizedMessage.includes('invalid api key') ||
+    normalizedMessage.includes('api key missing') ||
+    normalizedMessage.includes('authentication')
+  ) {
+    return { category: 'authentication' };
+  }
+  if (
+    status === 429 ||
+    errorType.includes('ratelimiterror') ||
+    normalizedMessage.includes('rate limit')
+  ) {
+    return { category: 'rate_limited' };
+  }
+  if (
+    status !== null && status >= 500 ||
+    errorType.includes('internalservererror') ||
     normalizedMessage.includes('provider probe') ||
-    normalizedMessage.includes('circuit breaker')
-  );
+    normalizedMessage.includes('openai internal error') ||
+    normalizedMessage.includes('openai service unavailable')
+  ) {
+    return { category: 'provider_error' };
+  }
+  if (normalizedMessage.includes('circuit breaker')) {
+    return { category: 'circuit_open' };
+  }
+  if (
+    normalizedMessage.includes('openai_client_unavailable') ||
+    normalizedMessage.includes('openai api key') ||
+    normalizedMessage.includes('adapter unavailable')
+  ) {
+    return { category: 'missing_client' };
+  }
+  return null;
 }
 
 function hasQueuedGptPromptField(body: Record<string, unknown>): boolean {
@@ -675,14 +815,7 @@ async function ensureOpenAIClientForSlot(params: {
   currentClient: OpenAIClient | null;
   currentConfigVersion: string | null;
   forceReload?: boolean;
-}): Promise<{
-  client: OpenAIClient | null;
-  configVersion: string | null;
-  pausedUntil: string | null;
-  providerRecovered: boolean;
-  providerRecoveryCategory: string | null;
-  providerRecoveryNextRetryAt: string | null;
-}> {
+}): Promise<WorkerProviderClientState> {
   const sync = syncOpenAIProviderRuntime({
     forceReload: params.forceReload ?? false,
     reason: `job_runner:${params.workerId}`
@@ -781,6 +914,148 @@ async function ensureOpenAIClientForSlot(params: {
       providerRecoveryCategory: null,
       providerRecoveryNextRetryAt: null
     };
+  }
+}
+
+function markWorkerProviderDependencyUnavailable(
+  state: WorkerProviderDependencyState,
+  reason: string,
+  retryAt: string | null
+): void {
+  state.unavailable = true;
+  state.reason = reason;
+  state.retryAt = retryAt;
+  state.revision += 1;
+}
+
+function rethrowRecordedWorkerBudgetFailure(context: AiExecutionContext): void {
+  if (context.workerBudgetFailure === null) {
+    return;
+  }
+  const normalized = normalizeWorkerAiBudgetError(context.workerBudgetFailure);
+  if (classifyWorkerAiBudgetError(normalized)) {
+    throw normalized;
+  }
+}
+
+function attachWorkerOperationalFailureReporting(
+  workerBudget: WorkerAiCallBudget,
+  providerDependencyState: WorkerProviderDependencyState,
+  reportOperationalFailure?: ReturnType<typeof createWorkerOperationalStateReporter>,
+  persistBudgetPause?: (
+    reason: string,
+    retryAt: string | null
+  ) => Promise<void>
+): WorkerAiCallBudget {
+  const priorCapacityReporter = workerBudget.onCapacityExhausted;
+  const priorReporter = workerBudget.onOperationalFailure;
+  return {
+    ...workerBudget,
+    async onCapacityExhausted(nextAvailableAt: string | null): Promise<void> {
+      try {
+        await priorCapacityReporter?.(nextAvailableAt);
+      } catch {
+        // A prior observer cannot cancel the final admitted provider attempt.
+      }
+      const reason = `ai_calls_per_hour_exceeded:${workerBudget.maxCallsPerHour}`;
+      try {
+        reportOperationalFailure?.('paused_budget', reason, nextAvailableAt);
+      } catch {
+        // Snapshot persistence still runs if an optional process-state observer fails.
+      }
+      try {
+        await persistBudgetPause?.(reason, nextAvailableAt);
+      } catch (error) {
+        logger.warn('worker.ai_budget.final_capacity_snapshot_failed', {
+          module: 'job-runner',
+          workerId: workerBudget.workerId,
+          statsWorkerId: workerBudget.statsWorkerId,
+          retryAt: nextAvailableAt,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+    },
+    onOperationalFailure(error: unknown): void {
+      try {
+        priorReporter?.(error);
+      } catch {
+        // A prior observer cannot replace the provider failure being reported.
+      }
+
+      const normalizedWorkerBudgetError = normalizeWorkerAiBudgetError(error);
+      const workerBudgetFailure = classifyWorkerAiBudgetError(
+        normalizedWorkerBudgetError
+      );
+      if (workerBudgetFailure) {
+        const budgetPaused = workerBudgetFailure.kind === 'budget_paused';
+        reportOperationalFailure?.(
+          budgetPaused ? 'paused_budget' : 'dependency_failure',
+          budgetPaused
+            ? 'ai_calls_per_hour_exceeded_during_provider_attempt'
+            : 'worker_ai_budget_database_unavailable',
+          workerBudgetFailure.retryAt
+        );
+        return;
+      }
+      const providerFailure = classifyWorkerProviderRuntimeFailure(error);
+      if (!providerFailure) {
+        return;
+      }
+      const reason = `openai_provider_unavailable:${providerFailure.category}`;
+      let retryAt: string | null = null;
+      try {
+        retryAt = getOpenAIProviderRuntimeStatus().nextRetryAt;
+      } catch {
+        // The shared latch remains authoritative even when diagnostics are unavailable.
+      }
+      markWorkerProviderDependencyUnavailable(
+        providerDependencyState,
+        reason,
+        retryAt
+      );
+      reportOperationalFailure?.('dependency_failure', reason, retryAt);
+    }
+  };
+}
+
+export async function recoverSharedWorkerProviderDependency(params: {
+  state: WorkerProviderDependencyState;
+  workerId: string;
+  currentConfigVersion: string | null;
+}): Promise<WorkerProviderClientState> {
+  if (!params.state.recoveryPromise) {
+    const recoveryRevision = params.state.revision;
+    params.state.recoveryPromise = ensureOpenAIClientForSlot({
+      workerId: params.workerId,
+      currentClient: null,
+      currentConfigVersion: params.currentConfigVersion,
+      forceReload: true
+    }).then((result) => {
+      if (params.state.revision !== recoveryRevision) {
+        return result;
+      }
+      if (result.client) {
+        params.state.unavailable = false;
+        params.state.reason = null;
+        params.state.retryAt = null;
+      } else {
+        const providerFailureCategory =
+          getOpenAIProviderRuntimeStatus().lastFailureCategory ?? 'unknown';
+        params.state.unavailable = true;
+        params.state.reason = `openai_provider_unavailable:${providerFailureCategory}`;
+        params.state.retryAt = result.pausedUntil;
+      }
+      return result;
+    });
+  }
+
+  const recoveryPromise = params.state.recoveryPromise;
+  try {
+    return await recoveryPromise;
+  } finally {
+    if (params.state.recoveryPromise === recoveryPromise) {
+      params.state.recoveryPromise = null;
+    }
   }
 }
 
@@ -1196,6 +1471,10 @@ export async function executeQueuedGptRequest(params: {
         )
       : await dispatchWithQueuedAuthorization();
   } catch (error: unknown) {
+    const normalizedWorkerBudgetError = normalizeWorkerAiBudgetError(error);
+    if (classifyWorkerAiBudgetError(normalizedWorkerBudgetError)) {
+      throw normalizedWorkerBudgetError;
+    }
     if (params.cancellationSignal?.aborted && isAbortError(error)) {
       return {
         status: 'cancelled',
@@ -1272,6 +1551,11 @@ export async function executeQueuedGptRequest(params: {
     }
 
     throw error;
+  }
+
+  const activeAiExecutionContext = getAiExecutionContext();
+  if (activeAiExecutionContext) {
+    rethrowRecordedWorkerBudgetFailure(activeAiExecutionContext);
   }
 
   const resolvedLegacyBackstageQueuedExecution =
@@ -1796,21 +2080,35 @@ function buildAutonomyServiceForSlot(
 
 async function pauseClaimIfBudgetDisallowed(
   autonomyService: WorkerAutonomyService,
-  slotDefinition: JobRunnerSlotDefinition
+  slotDefinition: JobRunnerSlotDefinition,
+  reportOperationalState: ReturnType<typeof createWorkerOperationalStateReporter>,
+  suppliedDecision?: Awaited<ReturnType<WorkerAutonomyService['evaluateBudgetsBeforeClaim']>>
 ): Promise<boolean> {
-  const budgetDecision = await autonomyService.evaluateBudgetsBeforeClaim();
-  if (budgetDecision.allowed) {
+  const decision = suppliedDecision ?? await autonomyService.evaluateBudgetsBeforeClaim();
+  if (decision.allowed) {
+    reportOperationalState('accepting_claims');
     return false;
   }
 
   autonomyService.recordClaimResult('budget_paused');
-  logger.warn('worker.claim.paused_budget', {
-    module: 'job-runner',
-    workerId: slotDefinition.workerId,
-    reason: budgetDecision.reason,
-    sleepMs: budgetDecision.sleepMs
-  });
-  await sleepUntilWorkerProcessSignal(budgetDecision.sleepMs);
+  reportOperationalState(
+    decision.claimAcceptance === 'paused_rss' ? 'paused_rss' : 'paused_budget',
+    decision.reason,
+    decision.retryAt
+  );
+  logger.warn(
+    decision.claimAcceptance === 'paused_rss'
+      ? 'worker.claim.paused_rss'
+      : 'worker.claim.paused_budget',
+    {
+      module: 'job-runner',
+      workerId: slotDefinition.workerId,
+      reason: decision.reason,
+      sleepMs: decision.sleepMs,
+      retryAt: decision.retryAt
+    }
+  );
+  await sleepUntilWorkerProcessSignal(decision.sleepMs);
   return true;
 }
 
@@ -1827,7 +2125,9 @@ export async function runWorkerConsumerSlot(
   runtimeSettings: JobRunnerRuntimeSettings,
   autonomyService: WorkerAutonomyService = buildAutonomyServiceForSlot(slotDefinition),
   onDispatcherReady: () => void = () => undefined,
-  partitionSyncExecutor?: BackstageNotionPartitionSyncJobExecutor
+  partitionSyncExecutor?: BackstageNotionPartitionSyncJobExecutor,
+  providerDependencyState: WorkerProviderDependencyState = createWorkerProviderDependencyState(),
+  operationalStateReporter?: ReturnType<typeof createWorkerOperationalStateReporter>
 ): Promise<void> {
   let openai: OpenAIClient | null = null;
   let providerConfigVersion: string | null = null;
@@ -1835,6 +2135,9 @@ export async function runWorkerConsumerSlot(
   let lastNoJobLogAtMs = 0;
   let lastClaimAttemptLogAtMs = 0;
   let consecutiveIdleClaims = 0;
+  let dispatcherReadinessReported = false;
+  const reportOperationalState = operationalStateReporter
+    ?? createWorkerOperationalStateReporter(slotDefinition.workerId);
 
   logger.info('worker.slot.started', {
     module: 'job-runner',
@@ -1854,10 +2157,78 @@ export async function runWorkerConsumerSlot(
   const workerHeartbeatHandle = startWorkerHeartbeatLoop(autonomyService, slotDefinition.workerId);
 
   try {
-    onDispatcherReady();
     while (!isWorkerProcessShutdownRequested()) {
       try {
-        if (await pauseClaimIfBudgetDisallowed(autonomyService, slotDefinition)) {
+        if (providerDependencyState.unavailable) {
+          reportOperationalState(
+            'dependency_failure',
+            providerDependencyState.reason ?? 'openai_provider_unavailable:unknown',
+            providerDependencyState.retryAt
+          );
+          await autonomyService.setClaimAcceptanceState('dependency_failure', {
+            reason: providerDependencyState.reason ?? 'openai_provider_unavailable:unknown',
+            retryAt: providerDependencyState.retryAt
+          });
+          if (!dispatcherReadinessReported) {
+            onDispatcherReady();
+            dispatcherReadinessReported = true;
+          }
+
+          const recoveryClientState = await recoverSharedWorkerProviderDependency({
+            state: providerDependencyState,
+            workerId: slotDefinition.workerId,
+            currentConfigVersion: providerConfigVersion
+          });
+          providerConfigVersion = recoveryClientState.configVersion;
+          if (recoveryClientState.providerRecovered) {
+            await autonomyService.recordProviderCircuitBreakerReset({
+              providerFailureCategory: recoveryClientState.providerRecoveryCategory,
+              providerNextRetryAt: recoveryClientState.providerRecoveryNextRetryAt,
+              source: 'job-runner'
+            });
+          }
+          if (providerDependencyState.unavailable || !recoveryClientState.client) {
+            openai = null;
+            const reason =
+              providerDependencyState.reason ?? 'openai_provider_unavailable:unknown';
+            reportOperationalState(
+              'dependency_failure',
+              reason,
+              providerDependencyState.retryAt
+            );
+            await autonomyService.setClaimAcceptanceState('dependency_failure', {
+              reason,
+              retryAt: providerDependencyState.retryAt
+            });
+            await sleepUntilWorkerProcessSignal(resolveProviderPauseMs(
+              providerDependencyState.retryAt,
+              runtimeSettings.idleBackoffMs
+            ));
+            continue;
+          }
+          openai = recoveryClientState.client;
+        }
+
+        const budgetDecision = await autonomyService.evaluateBudgetsBeforeClaim();
+        reportOperationalState(
+          budgetDecision.allowed
+            ? 'accepting_claims'
+            : budgetDecision.claimAcceptance === 'paused_rss'
+              ? 'paused_rss'
+              : 'paused_budget',
+          budgetDecision.reason,
+          budgetDecision.retryAt
+        );
+        if (!dispatcherReadinessReported) {
+          onDispatcherReady();
+          dispatcherReadinessReported = true;
+        }
+        if (await pauseClaimIfBudgetDisallowed(
+          autonomyService,
+          slotDefinition,
+          reportOperationalState,
+          budgetDecision
+        )) {
           continue;
         }
 
@@ -1877,9 +2248,41 @@ export async function runWorkerConsumerSlot(
         });
       }
 
-      const { job } = await postgresQueueSchedulerAdapter.claimNext(
+      const { job, budgetAdmission } = await postgresQueueSchedulerAdapter.claimNext(
         autonomyService.getClaimOptions()
       );
+
+      if (!job && budgetAdmission && !budgetAdmission.allowed) {
+        const reason = budgetAdmission.kind === 'job_claim'
+          ? `jobs_per_hour_exceeded:${budgetAdmission.used}`
+          : `ai_calls_per_hour_exceeded:${budgetAdmission.used}`;
+        const sleepMs = Math.min(
+          60_000,
+          resolveProviderPauseMs(budgetAdmission.nextAvailableAt, 1_000)
+        );
+        autonomyService.recordClaimResult('budget_paused');
+        await autonomyService.setClaimAcceptanceState('paused_budget', {
+          reason,
+          retryAt: budgetAdmission.nextAvailableAt
+        });
+        reportOperationalState(
+          'paused_budget',
+          reason,
+          budgetAdmission.nextAvailableAt
+        );
+        logger.warn('worker.claim.atomic_budget_paused', {
+          module: 'job-runner',
+          workerId: slotDefinition.workerId,
+          statsWorkerId: budgetAdmission.statsWorkerId,
+          budgetKind: budgetAdmission.kind,
+          used: budgetAdmission.used,
+          limit: budgetAdmission.limit,
+          retryAt: budgetAdmission.nextAvailableAt,
+          sleepMs
+        });
+        await sleepUntilWorkerProcessSignal(sleepMs);
+        continue;
+      }
 
       if (!job) {
         consecutiveIdleClaims += 1;
@@ -1910,6 +2313,41 @@ export async function runWorkerConsumerSlot(
         await autonomyService.markIdle();
         await sleepUntilWorkerProcessSignal(idleSleepMs);
         continue;
+      }
+
+      if (budgetAdmission?.allowed && budgetAdmission.remaining === 0) {
+        const reason = `jobs_per_hour_exceeded:${budgetAdmission.used}`;
+        reportOperationalState(
+          'paused_budget',
+          reason,
+          budgetAdmission.nextAvailableAt
+        );
+        try {
+          await autonomyService.setClaimAcceptanceState('paused_budget', {
+            reason,
+            retryAt: budgetAdmission.nextAvailableAt
+          });
+        } catch (error) {
+          logger.warn('worker.claim.final_budget_snapshot_failed', {
+            module: 'job-runner',
+            workerId: slotDefinition.workerId,
+            statsWorkerId: budgetAdmission.statsWorkerId,
+            budgetKind: budgetAdmission.kind,
+            used: budgetAdmission.used,
+            limit: budgetAdmission.limit,
+            retryAt: budgetAdmission.nextAvailableAt,
+            error: error instanceof Error ? error.message : String(error)
+          });
+        }
+        logger.warn('worker.claim.atomic_budget_exhausted', {
+          module: 'job-runner',
+          workerId: slotDefinition.workerId,
+          statsWorkerId: budgetAdmission.statsWorkerId,
+          budgetKind: budgetAdmission.kind,
+          used: budgetAdmission.used,
+          limit: budgetAdmission.limit,
+          retryAt: budgetAdmission.nextAvailableAt
+        });
       }
 
       const claimFence = createClaimedJobFence(
@@ -2100,6 +2538,15 @@ export async function runWorkerConsumerSlot(
             budget: {
               maxCalls: BACKSTAGE_NOTION_PARTITION_SYNC_MAX_AI_CALLS,
             },
+            workerBudget: attachWorkerOperationalFailureReporting(
+              autonomyService.getWorkerAiCallBudget(),
+              providerDependencyState,
+              reportOperationalState,
+              async (reason, retryAt) => autonomyService.setClaimAcceptanceState(
+                'paused_budget',
+                { reason, retryAt }
+              )
+            ),
           });
           dedicatedPartitionSyncOutcome = await runWithAiExecutionContext(
             partitionSyncAiExecutionContext,
@@ -2125,6 +2572,7 @@ export async function runWorkerConsumerSlot(
                   } satisfies JobExecutionOutcome
             )
           );
+          rethrowRecordedWorkerBudgetFailure(partitionSyncAiExecutionContext);
           const partitionSyncAiUsageSummary = summarizeAiExecutionContext(
             partitionSyncAiExecutionContext
           );
@@ -2206,6 +2654,23 @@ export async function runWorkerConsumerSlot(
         }
 
         if (!openai) {
+          const providerFailureCategory =
+            getOpenAIProviderRuntimeStatus().lastFailureCategory ?? 'unknown';
+          const dependencyReason = `openai_provider_unavailable:${providerFailureCategory}`;
+          markWorkerProviderDependencyUnavailable(
+            providerDependencyState,
+            dependencyReason,
+            ensuredClientState.pausedUntil
+          );
+          reportOperationalState(
+            'dependency_failure',
+            dependencyReason,
+            ensuredClientState.pausedUntil
+          );
+          await autonomyService.setClaimAcceptanceState('dependency_failure', {
+            reason: dependencyReason,
+            retryAt: ensuredClientState.pausedUntil
+          });
           const delayMs = resolveProviderPauseMs(
             ensuredClientState.pausedUntil,
             runtimeSettings.idleBackoffMs
@@ -2285,7 +2750,16 @@ export async function runWorkerConsumerSlot(
           jobId: job.id,
           budget: {
             maxCalls: 24
-          }
+          },
+          workerBudget: attachWorkerOperationalFailureReporting(
+            autonomyService.getWorkerAiCallBudget(),
+            providerDependencyState,
+            reportOperationalState,
+            async (reason, retryAt) => autonomyService.setClaimAcceptanceState(
+              'paused_budget',
+              { reason, retryAt }
+            )
+          )
         });
         outcome = await runWithAiExecutionContext(aiExecutionContext, async () =>
           runWithRequestAbortContext(
@@ -2348,6 +2822,7 @@ export async function runWorkerConsumerSlot(
             }
           )
         );
+        rethrowRecordedWorkerBudgetFailure(aiExecutionContext);
         const aiUsageSummary = summarizeAiExecutionContext(aiExecutionContext);
         if (aiUsageSummary && aiUsageSummary.totals.calls > 0) {
           logger.info('worker.ai.summary', {
@@ -2635,17 +3110,106 @@ export async function runWorkerConsumerSlot(
           continue;
         }
 
+        const workerAiBudgetError = classifyWorkerAiBudgetError(error);
+        if (workerAiBudgetError) {
+          const budgetPaused = workerAiBudgetError.kind === 'budget_paused';
+          const reason = budgetPaused
+            ? 'ai_calls_per_hour_exceeded_during_provider_attempt'
+            : 'worker_ai_budget_database_unavailable';
+          const delayMs = budgetPaused
+            ? resolveProviderPauseMs(workerAiBudgetError.retryAt, 60_000)
+            : Math.max(runtimeSettings.idleBackoffMs, 5_000);
+          reportOperationalState(
+            budgetPaused ? 'paused_budget' : 'dependency_failure',
+            reason,
+            workerAiBudgetError.retryAt
+          );
+          await autonomyService.setClaimAcceptanceState(
+            budgetPaused ? 'paused_budget' : 'dependency_failure',
+            { reason, retryAt: workerAiBudgetError.retryAt }
+          );
+          const deferralResult = await autonomyService.deferJobForProviderRecovery(job, {
+            delayMs,
+            errorMessage: budgetPaused
+              ? 'Worker AI-call budget exhausted during provider admission; job deferred without consuming retry budget.'
+              : 'Worker AI-call budget database unavailable; job deferred without consuming retry budget.',
+            providerNextRetryAt: workerAiBudgetError.retryAt,
+            providerFailureCategory: budgetPaused
+              ? 'worker_ai_budget_exhausted'
+              : 'worker_ai_budget_dependency_failure'
+          });
+          if (deferralResult.action === 'lease_lost') {
+            await finalizeCancellationAfterTerminalCasMiss({
+              job,
+              fence: claimFence,
+              autonomyService,
+              jobStartedAtMs,
+              queuedGptCancellationPrivacy:
+                queuedGptExecutionPrivacyState.cancellationPrivacy,
+              allowPreExecutionInputFallback: !jobExecutionStarted,
+            });
+          }
+          await sleepUntilWorkerProcessSignal(runtimeSettings.pollMs);
+          continue;
+        }
+
         const classifiedError = classifyWorkerExecutionError(error);
 
-      if (isProviderRuntimeError(classifiedError.message)) {
-        const recoveredClientState = await ensureOpenAIClientForSlot({
-          workerId: slotDefinition.workerId,
-          currentClient: null,
-          currentConfigVersion: providerConfigVersion,
-          forceReload: true
+      const providerRuntimeFailure = classifyWorkerProviderRuntimeFailure(
+        error,
+        classifiedError.message
+      );
+      if (providerRuntimeFailure) {
+        const classifiedDependencyReason =
+          `openai_provider_unavailable:${providerRuntimeFailure.category}`;
+        if (!providerDependencyState.unavailable) {
+          markWorkerProviderDependencyUnavailable(
+            providerDependencyState,
+            classifiedDependencyReason,
+            getOpenAIProviderRuntimeStatus().nextRetryAt
+          );
+        }
+        const dependencyReason =
+          providerDependencyState.reason ?? classifiedDependencyReason;
+        openai = null;
+        reportOperationalState(
+          'dependency_failure',
+          dependencyReason,
+          providerDependencyState.retryAt
+        );
+        await autonomyService.setClaimAcceptanceState('dependency_failure', {
+          reason: dependencyReason,
+          retryAt: providerDependencyState.retryAt
         });
-        openai = recoveredClientState.client;
+
+        const recoveredClientState = await recoverSharedWorkerProviderDependency({
+          state: providerDependencyState,
+          workerId: slotDefinition.workerId,
+          currentConfigVersion: providerConfigVersion
+        });
         providerConfigVersion = recoveredClientState.configVersion;
+        if (recoveredClientState.providerRecovered) {
+          await autonomyService.recordProviderCircuitBreakerReset({
+            providerFailureCategory: recoveredClientState.providerRecoveryCategory,
+            providerNextRetryAt: recoveredClientState.providerRecoveryNextRetryAt,
+            source: 'job-runner'
+          });
+        }
+        if (!providerDependencyState.unavailable && recoveredClientState.client) {
+          openai = recoveredClientState.client;
+        } else {
+          const unresolvedReason =
+            providerDependencyState.reason ?? dependencyReason;
+          reportOperationalState(
+            'dependency_failure',
+            unresolvedReason,
+            providerDependencyState.retryAt
+          );
+          await autonomyService.setClaimAcceptanceState('dependency_failure', {
+            reason: unresolvedReason,
+            retryAt: providerDependencyState.retryAt
+          });
+        }
       }
 
       const failureResult = await autonomyService.handleJobFailure(
@@ -2713,6 +3277,22 @@ export async function runWorkerConsumerSlot(
         if (isRetryableJobRunnerDatabaseBootstrapError(error)) {
           const backoffMs = Math.max(runtimeSettings.idleBackoffMs, 5_000);
           const retryLogEvent = selectJobRunnerSlotTransientRetryEvent(error);
+          const dependencyReason = 'worker_budget_or_queue_database_unavailable';
+          reportOperationalState('dependency_failure', dependencyReason);
+          try {
+            await autonomyService.setClaimAcceptanceState('dependency_failure', {
+              reason: dependencyReason
+            });
+          } catch (snapshotError: unknown) {
+            logger.warn(
+              'worker.claim_dependency_state.persist_failed',
+              {
+                module: 'job-runner',
+                workerId: slotDefinition.workerId
+              },
+              { errorMessage: resolveErrorMessage(snapshotError) }
+            );
+          }
           logger.warn(
             retryLogEvent,
             {
@@ -2790,6 +3370,33 @@ async function run(): Promise<void> {
 
   initializeWorkerOpenAIAdapterIfConfigured();
 
+  const slotDefinitions = buildJobRunnerSlotDefinitions(runtimeSettings);
+  const inspectorSlot = slotDefinitions[0];
+  const inspectorAutonomyService = buildAutonomyServiceForSlot(inspectorSlot);
+  const providerDependencyState = createWorkerProviderDependencyState();
+  const operationalStateReporters = new Map(
+    slotDefinitions.map(slotDefinition => [
+      slotDefinition.workerId,
+      createWorkerOperationalStateReporter(slotDefinition.workerId)
+    ] as const)
+  );
+  const reportAllWorkerOperationalStates: ReturnType<
+    typeof createWorkerOperationalStateReporter
+  > = (state, reason, retryAt) => {
+    for (const reportOperationalState of operationalStateReporters.values()) {
+      reportOperationalState(state, reason, retryAt);
+    }
+  };
+  const workerAiCallBudget = attachWorkerOperationalFailureReporting(
+    inspectorAutonomyService.getWorkerAiCallBudget(),
+    providerDependencyState,
+    reportAllWorkerOperationalStates,
+    async (reason, retryAt) => inspectorAutonomyService.setClaimAcceptanceState(
+      'paused_budget',
+      { reason, retryAt }
+    )
+  );
+
   const preliminaryBackstageNotionPartitionPolicy =
     resolveBackstageNotionPartitionShadowPolicy();
   const backstageNotionPartitionCutoverEvidence =
@@ -2804,12 +3411,72 @@ async function run(): Promise<void> {
       backstageNotionPartitionCutoverEvidence
     );
   try {
-    const backstageNotionReadiness = await runBackstageNotionWorkerReadinessGate(
-      backstageNotionPartitionPolicy,
-      () => ensureBackstageNotionWorkerReadiness({
-        signal: workerProcessShutdownController.signal,
-      })
-    );
+    const backstageNotionReadiness = await waitForWorkerStartupReadiness({
+      attempt: () => runBackstageNotionWorkerReadinessGate(
+        backstageNotionPartitionPolicy,
+        () => ensureBackstageNotionWorkerReadiness({
+          signal: workerProcessShutdownController.signal,
+          workerBudget: workerAiCallBudget,
+        })
+      ),
+      resolveRetry: async (error) => {
+        if (isWorkerProcessShutdownRequested()) {
+          return null;
+        }
+        const workerBudgetFailure = classifyWorkerAiBudgetError(
+          normalizeWorkerAiBudgetError(error)
+        );
+        if (workerBudgetFailure) {
+          const budgetPaused = workerBudgetFailure.kind === 'budget_paused';
+          return {
+            state: budgetPaused ? 'paused_budget' : 'dependency_failure',
+            reason: budgetPaused
+              ? 'ai_calls_per_hour_exceeded_during_startup_readiness'
+              : 'worker_ai_budget_database_unavailable',
+            retryAt: workerBudgetFailure.retryAt,
+            delayMs: budgetPaused
+              ? resolveProviderPauseMs(workerBudgetFailure.retryAt, 60_000)
+              : Math.max(runtimeSettings.idleBackoffMs, 5_000),
+          };
+        }
+        if (!providerDependencyState.unavailable) {
+          return null;
+        }
+
+        const initialReason =
+          providerDependencyState.reason ?? 'openai_provider_unavailable:unknown';
+        const initialRetryAt = providerDependencyState.retryAt;
+        const recoveredClientState = await recoverSharedWorkerProviderDependency({
+          state: providerDependencyState,
+          workerId: inspectorSlot.workerId,
+          currentConfigVersion: null
+        });
+        if (recoveredClientState.providerRecovered) {
+          await inspectorAutonomyService.recordProviderCircuitBreakerReset({
+            providerFailureCategory: recoveredClientState.providerRecoveryCategory,
+            providerNextRetryAt: recoveredClientState.providerRecoveryNextRetryAt,
+            source: 'job-runner-startup-readiness'
+          });
+        }
+        const retryAt = providerDependencyState.retryAt ?? initialRetryAt;
+        return {
+          state: 'dependency_failure',
+          reason: providerDependencyState.reason ?? initialReason,
+          retryAt,
+          delayMs: providerDependencyState.unavailable
+            ? resolveProviderPauseMs(retryAt, runtimeSettings.idleBackoffMs)
+            : 0,
+        };
+      },
+      reportPause: decision => {
+        reportAllWorkerOperationalStates(
+          decision.state,
+          decision.reason,
+          decision.retryAt
+        );
+      },
+      wait: sleepUntilWorkerProcessSignal,
+    });
     const safePolicyMetadata = {
       modeStatus: backstageNotionPartitionPolicy.modeStatus,
       requestedMode: backstageNotionPartitionPolicy.requestedMode,
@@ -2847,9 +3514,6 @@ async function run(): Promise<void> {
     throw error;
   }
 
-  const slotDefinitions = buildJobRunnerSlotDefinitions(runtimeSettings);
-  const inspectorSlot = slotDefinitions[0];
-  const inspectorAutonomyService = buildAutonomyServiceForSlot(inspectorSlot);
   const bootstrapResult = await bootstrapWorkerAutonomyWithRetry(
     inspectorAutonomyService,
     [`Worker bootstrap completed with ${slotDefinitions.length} consumer slot(s).`],
@@ -2912,7 +3576,9 @@ async function run(): Promise<void> {
           ? inspectorAutonomyService
           : buildAutonomyServiceForSlot(slotDefinition),
         resolveSlotReadiness,
-        partitionSyncExecutor
+        partitionSyncExecutor,
+        providerDependencyState,
+        operationalStateReporters.get(slotDefinition.workerId)
       );
       return slotRuntimePromise;
     });
@@ -2964,10 +3630,12 @@ async function run(): Promise<void> {
     backstageNotionSyncHandle = startBackstageNotionSyncLoop({
       signal: workerProcessShutdownController.signal,
       coordinator: backstageNotionSynchronizationCoordinator,
+      workerBudget: workerAiCallBudget,
     });
     backstageNotionPartitionShadowHandle = startBackstageNotionPartitionShadowLoop({
       signal: workerProcessShutdownController.signal,
       coordinator: backstageNotionSynchronizationCoordinator,
+      workerBudget: workerAiCallBudget,
       cutoverEvidence: backstageNotionPartitionCutoverEvidence,
       loadCutoverEvidence:
         loadBackstageNotionPartitionCutoverGateEvidenceSet,

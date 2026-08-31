@@ -16,6 +16,7 @@ import type { ResponseCreateParamsNonStreaming } from 'openai/resources/response
 import {
   assertValidResponsesCreateParams,
   normalizeResponsesCreateParams,
+  rethrowWorkerAiBudgetError,
   type OpenAIAdapter
 } from "@core/adapters/openai.adapter.js";
 import type {
@@ -290,6 +291,7 @@ export const createGPT5Reasoning = async (
     });
     return { content, model: resolvedModel };
   } catch (err: unknown) {
+    rethrowWorkerAiBudgetError(err);
     const error = err instanceof Error ? err : new Error(String(err));
     if (isAbortError(error)) {
       throw error;
@@ -366,6 +368,7 @@ export const createGPT5ReasoningLayer = async (
       model: resolvedModel
     };
   } catch (err: unknown) {
+    rethrowWorkerAiBudgetError(err);
     const error = err instanceof Error ? err : new Error(String(err));
     if (isAbortError(error)) {
       throw error;
@@ -432,6 +435,7 @@ export async function call_gpt5_strict(
     logOpenAIEvent('info', OPENAI_LOG_MESSAGES.GPT5.STRICT_SUCCESS(response.model));
     return response;
   } catch (error: unknown) {
+    rethrowWorkerAiBudgetError(error);
     // Re-throw with clear error message indicating no fallback
     const errorMessage = resolveErrorMessage(error);
     throw new Error(`GPT-5.1 call failed — no fallback allowed. ${errorMessage}`);

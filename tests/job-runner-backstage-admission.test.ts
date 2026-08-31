@@ -142,6 +142,14 @@ jest.unstable_mockModule('../src/shared/typeGuards.js', () => ({
 const { executeQueuedGptRequest, startHeartbeatLoop } = await import(
   '../src/workers/jobRunner.js'
 );
+const { WorkerAiCallBudgetPausedError } = await import(
+  '../src/core/adapters/openai.adapter.js'
+);
+const {
+  createAiExecutionContext,
+  getAiExecutionContext,
+  runWithAiExecutionContext,
+} = await import('../src/services/openai/aiExecutionContext.js');
 const { createAbortError, getRequestAbortSignal } = await import('@arcanos/runtime');
 const {
   buildProtectedBackstageQueuedGptJobInput,
@@ -667,6 +675,70 @@ describe('normal worker queued Backstage mutation admission', () => {
     expect(outcome.status).toBe('completed');
     expect(mockDispatchModuleAction).toHaveBeenCalledTimes(1);
     expect(mockPersistModuleConversation).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves a worker AI budget pause for job-level deferral', async () => {
+    const budgetError = new WorkerAiCallBudgetPausedError(
+      '2026-08-30T15:00:00.000Z'
+    );
+    mockDispatchModuleAction.mockRejectedValueOnce(budgetError);
+
+    await expect(executeQueuedGptRequest({
+      jobId: '47474747-4747-4474-8474-474747474748',
+      rawInput: {
+        gptId: 'arcanos-core',
+        body: {
+          action: 'query',
+          prompt: 'Explain deterministic finite automata.',
+        },
+      },
+    })).rejects.toBe(budgetError);
+    expect(mockPersistModuleConversation).not.toHaveBeenCalled();
+  });
+
+  it('preserves a protected worker budget pause after a module rewrites the thrown error', async () => {
+    const budgetError = new WorkerAiCallBudgetPausedError(
+      '2026-08-30T15:00:00.000Z'
+    );
+    mockDispatchModuleAction.mockImplementationOnce(async () => {
+      const activeContext = getAiExecutionContext();
+      expect(activeContext).not.toBeNull();
+      activeContext!.workerBudgetFailure = budgetError;
+      throw new Error('Booking generation failed');
+    });
+    const rawInput = buildProtectedBackstageQueuedGptJobInput({
+      action: 'generateBooking',
+      body: {
+        action: 'generateBooking',
+        payload: {
+          universeId: 'my-universe-2k26',
+          prompt: 'Return exactly six matches.',
+        },
+      },
+      prompt: 'Return exactly six matches.',
+      universeId: 'my-universe-2k26',
+      notionEnrichmentAuthorized: true,
+      requestId: 'request-worker-budget-fallback',
+      traceId: 'trace-worker-budget-fallback',
+    });
+    const executionContext = createAiExecutionContext({
+      sourceType: 'job',
+      sourceName: 'gpt',
+      jobId: '57575757-5757-4575-8575-575757575757',
+      workerBudget: {
+        statsWorkerId: 'shared-budget-group',
+        workerId: 'worker-slot-1',
+        maxCallsPerHour: 120,
+      },
+    });
+
+    await expect(runWithAiExecutionContext(executionContext, () =>
+      executeQueuedGptRequest({
+        jobId: '57575757-5757-4575-8575-575757575757',
+        rawInput,
+      })
+    )).rejects.toBe(budgetError);
+    expect(mockPersistModuleConversation).not.toHaveBeenCalled();
   });
 
   it('preserves explicit queued CORE intent routing despite booking language', async () => {

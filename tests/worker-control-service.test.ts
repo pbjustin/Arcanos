@@ -313,6 +313,103 @@ describe('workerControlService', () => {
     ]);
   });
 
+  it('projects budget pauses, dependency failure, and recovery in worker diagnostics', async () => {
+    const buildReport = (
+      claimAcceptance: 'accepting' | 'paused_budget' | 'dependency_failure',
+      healthStatus: 'healthy' | 'degraded' | 'unhealthy',
+      claimPauseReason: string | null,
+      claimRetryAt: string | null
+    ) => ({
+      timestamp: '2026-08-30T15:00:00.000Z',
+      overallStatus: healthStatus,
+      alerts: [],
+      queueSummary: null,
+      workers: [{
+        workerId: 'async-queue-slot-1',
+        workerType: 'async_queue',
+        healthStatus,
+        currentJobId: null,
+        lastError: null,
+        startedAt: '2026-08-30T14:00:00.000Z',
+        lastHeartbeatAt: '2026-08-30T15:00:00.000Z',
+        lastInspectorRunAt: '2026-08-30T15:00:00.000Z',
+        updatedAt: '2026-08-30T15:00:00.000Z',
+        snapshot: {
+          dispatcherStarted: true,
+          activeListeners: 1,
+          claimAcceptance,
+          claimPauseReason,
+          claimRetryAt,
+          lastActivityAt: '2026-08-30T15:00:00.000Z',
+          watchdog: {
+            triggered: false,
+            reason: null,
+            restartRecommended: false,
+            idleThresholdMs: 120000
+          }
+        }
+      }],
+      settings: {
+        heartbeatIntervalMs: 10000,
+        leaseMs: 30000,
+        inspectorIntervalMs: 30000,
+        staleAfterMs: 60000,
+        watchdogIdleMs: 120000,
+        defaultMaxRetries: 2,
+        maxJobsPerHour: 120,
+        maxAiCallsPerHour: 120,
+        maxRssMb: 2048
+      }
+    });
+    const retryAt = '2026-08-30T15:30:00.000Z';
+
+    getWorkerAutonomyHealthReportMock.mockResolvedValueOnce(buildReport(
+      'paused_budget',
+      'degraded',
+      'ai_calls_per_hour_exceeded:120',
+      retryAt
+    ));
+    await expect(getWorkerControlHealth()).resolves.toMatchObject({
+      overallStatus: 'degraded',
+      workers: [{
+        operationalStatus: 'degraded',
+        claimAcceptance: 'paused_budget',
+        claimPauseReason: 'ai_calls_per_hour_exceeded:120',
+        claimRetryAt: retryAt
+      }]
+    });
+
+    getWorkerAutonomyHealthReportMock.mockResolvedValueOnce(buildReport(
+      'dependency_failure',
+      'unhealthy',
+      'worker_budget_database_unavailable',
+      null
+    ));
+    await expect(getWorkerControlHealth()).resolves.toMatchObject({
+      overallStatus: 'unhealthy',
+      workers: [{
+        operationalStatus: 'unhealthy',
+        claimAcceptance: 'dependency_failure'
+      }]
+    });
+
+    getWorkerAutonomyHealthReportMock.mockResolvedValueOnce(buildReport(
+      'accepting',
+      'healthy',
+      null,
+      null
+    ));
+    await expect(getWorkerControlHealth()).resolves.toMatchObject({
+      overallStatus: 'healthy',
+      workers: [{
+        operationalStatus: 'healthy',
+        claimAcceptance: 'accepting',
+        claimPauseReason: null,
+        claimRetryAt: null
+      }]
+    });
+  });
+
   it('requeues retained failed jobs through the operator helper', async () => {
     getJobByIdMock.mockResolvedValueOnce({
       id: 'job-failed-1',

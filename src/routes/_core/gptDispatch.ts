@@ -68,6 +68,10 @@ import {
 import { isDiagnosticRequest } from "@shared/http/diagnosticRequest.js";
 import { isRecord } from "@shared/typeGuards.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
+import {
+  classifyWorkerAiBudgetError,
+  normalizeWorkerAiBudgetError,
+} from '@core/adapters/openai.adapter.js';
 import { TrinityControlLeakError } from "@core/logic/trinityWritingPipeline.js";
 import type { Request } from "express";
 import {
@@ -2003,6 +2007,10 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       },
     };
   } catch (err: any) {
+      const normalizedWorkerBudgetError = normalizeWorkerAiBudgetError(err);
+      if (classifyWorkerAiBudgetError(normalizedWorkerBudgetError)) {
+        throw normalizedWorkerBudgetError;
+      }
       const errorMessage = String(err?.message ?? err);
       const isDispatchCancellation = isDispatchCancellationError(err);
       const isPrivateBackstageQueuedGenerationFailure =
