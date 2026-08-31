@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { NextFunction, Request, RequestHandler, Response } from 'express';
+import type { BackstageProtectedGenerationProvenance } from '@arcanos/protocol';
 
 import { BACKSTAGE_MODULE_ROUTE } from '@shared/backstage/backstageActionPolicy.js';
 import {
@@ -11,9 +12,15 @@ import {
 interface BackstageNotionEnrichmentAuthorizationContext {
   authorized: boolean;
   enrichmentUsed: boolean;
+  protectedGenerationExecution: boolean;
   protectedQueuedExecution: boolean;
   legacyQueuedExecution: boolean;
+  protectedGenerationAuthority: BackstageProtectedGenerationAuthority | null;
 }
+
+export type BackstageProtectedGenerationAuthority =
+  | 'notion'
+  | 'legacy_postgresql';
 
 const backstageNotionEnrichmentAuthorizationStorage =
   new AsyncLocalStorage<BackstageNotionEnrichmentAuthorizationContext>();
@@ -55,6 +62,47 @@ export function isBackstageLegacyQueuedExecution(): boolean {
     ?.legacyQueuedExecution === true;
 }
 
+/** Identify any managed-bearer generation, whether request-local or queued. */
+export function isBackstageProtectedGenerationExecution(): boolean {
+  return backstageNotionEnrichmentAuthorizationStorage.getStore()
+    ?.protectedGenerationExecution === true;
+}
+
+/** Record retrieval provenance only after a server-owned context read succeeds. */
+export function recordBackstageProtectedGenerationAuthority(
+  authority: BackstageProtectedGenerationAuthority
+): void {
+  const context = backstageNotionEnrichmentAuthorizationStorage.getStore();
+  if (context?.protectedGenerationExecution) {
+    context.protectedGenerationAuthority = authority;
+  }
+}
+
+/** Return closed protected provenance; it cannot be selected by request input. */
+export function getBackstageProtectedGenerationProvenance():
+  | BackstageProtectedGenerationProvenance
+  | null {
+  const context = backstageNotionEnrichmentAuthorizationStorage.getStore();
+  if (!context?.protectedGenerationExecution || !context.protectedGenerationAuthority) {
+    return null;
+  }
+  if (context.protectedGenerationAuthority === 'notion') {
+    return {
+      version: 1, protected: true, protectedGenerationCompleted: true,
+      official: true, continuityVerified: true, authority: 'notion',
+      snapshotStatus: 'current_complete', fallbackUsed: false, fallbackPermitted: false,
+    };
+  }
+  if (context.protectedGenerationAuthority === 'legacy_postgresql') {
+    return {
+      version: 1, protected: true, protectedGenerationCompleted: true,
+      official: true, continuityVerified: true, authority: 'legacy_postgresql',
+      snapshotStatus: 'not_applicable', fallbackUsed: false, fallbackPermitted: false,
+    };
+  }
+  return null;
+}
+
 /** Run trusted local work inside an explicit enrichment-authorization context. */
 export function runWithBackstageNotionEnrichmentAuthorization<T>(
   authorized: boolean,
@@ -64,8 +112,27 @@ export function runWithBackstageNotionEnrichmentAuthorization<T>(
     {
       authorized,
       enrichmentUsed: false,
+      protectedGenerationExecution: false,
       protectedQueuedExecution: false,
       legacyQueuedExecution: false,
+      protectedGenerationAuthority: null,
+    },
+    operation
+  );
+}
+
+/** Run a managed-bearer request inside server-owned generation provenance. */
+export function runWithBackstageProtectedGenerationRequest<T>(
+  operation: () => T
+): T {
+  return backstageNotionEnrichmentAuthorizationStorage.run(
+    {
+      authorized: true,
+      enrichmentUsed: false,
+      protectedGenerationExecution: true,
+      protectedQueuedExecution: false,
+      legacyQueuedExecution: false,
+      protectedGenerationAuthority: null,
     },
     operation
   );
@@ -80,8 +147,10 @@ export function runWithBackstageProtectedQueuedExecution<T>(
     {
       authorized: notionEnrichmentAuthorized,
       enrichmentUsed: false,
+      protectedGenerationExecution: true,
       protectedQueuedExecution: true,
       legacyQueuedExecution: false,
+      protectedGenerationAuthority: null,
     },
     operation
   );
@@ -99,8 +168,10 @@ export function runWithBackstageLegacyQueuedExecution<T>(
     {
       authorized: false,
       enrichmentUsed: false,
+      protectedGenerationExecution: false,
       protectedQueuedExecution: false,
       legacyQueuedExecution: true,
+      protectedGenerationAuthority: null,
     },
     operation
   );
@@ -137,7 +208,7 @@ export const optionalBackstageNotionEnrichmentAuth: RequestHandler = (
   }
 
   if (isBackstageBookerAccessAuthenticated(req)) {
-    runWithBackstageNotionEnrichmentAuthorization(true, next);
+    runWithBackstageProtectedGenerationRequest(next);
     return;
   }
 
@@ -147,6 +218,6 @@ export const optionalBackstageNotionEnrichmentAuth: RequestHandler = (
   }
 
   backstageBookerAccessAuthMiddleware(req, res, () => {
-    runWithBackstageNotionEnrichmentAuthorization(true, next);
+    runWithBackstageProtectedGenerationRequest(next);
   });
 };

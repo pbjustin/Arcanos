@@ -235,7 +235,9 @@ const {
 const {
   isBackstageNotionEnrichmentAuthorized,
   markBackstageNotionEnrichmentUsed,
+  getBackstageProtectedGenerationProvenance,
   runWithBackstageLegacyQueuedExecution,
+  runWithBackstageProtectedGenerationRequest,
   runWithBackstageProtectedQueuedExecution,
   runWithBackstageNotionEnrichmentAuthorization,
 } = await import('../src/services/backstageNotionEnrichmentAuthorization.js');
@@ -747,6 +749,20 @@ describe('Backstage Booker service persistence outcomes', () => {
     });
   });
 
+  it('uses the non-caching sensitive HRC path for managed request-local generation', async () => {
+    await runWithBackstageProtectedGenerationRequest(
+      () => BackstageBookerModule.actions.generateBookingWithHRC({
+        universeId: 'hrc-protected-request-universe',
+        prompt: 'Review the complete Raw card.'
+      })
+    );
+
+    expect(mockEvaluateWithHRC).toHaveBeenCalledWith('1. Generated booking', {
+      timeoutMs: 10_000,
+      sensitiveContext: true,
+    });
+  });
+
   it('uses the non-caching sensitive HRC path for legacy queued generation without Notion', async () => {
     mockLoadBackstageNotionPromptContext.mockImplementationOnce(async () => {
       expect(isBackstageNotionEnrichmentAuthorized()).toBe(false);
@@ -1175,6 +1191,99 @@ describe('Backstage Booker service persistence outcomes', () => {
     expect(generatedPrompt).toContain('Pending betrayal');
     expect(generatedPrompt).toContain('pending-story: Pending championship arc.');
     expect(generatedPrompt.match(/Durable-only-marker/gu)).toHaveLength(1);
+  });
+
+  it('uses only durable legacy continuity for protected generation provenance', async () => {
+    const universeId = 'protected-legacy-durable-only';
+    mockRepository.bookEvent.mockRejectedValueOnce(
+      new MockBackstageBookerWriteError(
+        'bookEvent',
+        new MockBackstageBookerUniverseScopeNotActivatedError()
+      )
+    );
+    await bookEvent({ marker: 'Pending-process-memory-marker' }, universeId);
+    mockRepository.loadContext.mockResolvedValueOnce({
+      roster: [],
+      events: [{
+        id: 'durable-protected-event',
+        universeId,
+        data: { marker: 'Durable-postgresql-marker' },
+        createdAt: new Date('2026-08-14T12:00:00.000Z')
+      }],
+      storyBeats: [],
+      storylines: [],
+      canonContext: emptyCanonContext(universeId)
+    });
+
+    let protectedProvenance: unknown;
+    await expect(runWithBackstageProtectedQueuedExecution(
+      false,
+      async () => {
+        const result = await generateBooking('Book the next chapter.', universeId);
+        protectedProvenance = getBackstageProtectedGenerationProvenance();
+        return result;
+      }
+    )).resolves.toBe('Generated booking');
+
+    const pipelineInput = mockRunTrinityWritingPipeline.mock.calls.at(-1)?.[0] as {
+      input?: { prompt?: string };
+    } | undefined;
+    const generatedPrompt = pipelineInput?.input?.prompt ?? '';
+    expect(generatedPrompt).toContain('Durable-postgresql-marker');
+    expect(generatedPrompt).not.toContain('Pending-process-memory-marker');
+    expect(protectedProvenance).toMatchObject({
+      authority: 'legacy_postgresql',
+      official: true,
+      continuityVerified: true,
+      fallbackUsed: false,
+    });
+  });
+
+  it('returns server-owned provenance from the protected generateBooking module action', async () => {
+    const universeId = 'protected-module-provenance';
+
+    const result = await runWithBackstageProtectedQueuedExecution(
+      false,
+      () => BackstageBookerModule.actions.generateBooking({
+        universeId,
+        prompt: 'Book the next protected chapter.',
+      })
+    );
+
+    expect(result).toEqual({
+      universeId,
+      storyline: 'Generated booking',
+      protectedGeneration: {
+        version: 1,
+        protected: true,
+        protectedGenerationCompleted: true,
+        official: true,
+        continuityVerified: true,
+        authority: 'legacy_postgresql',
+        snapshotStatus: 'not_applicable',
+        fallbackUsed: false,
+        fallbackPermitted: false,
+      },
+    });
+  });
+
+  it('fails protected generation closed when legacy authority cannot be read', async () => {
+    mockRepository.loadContext.mockRejectedValueOnce(new Error('database unavailable'));
+
+    await expect(runWithBackstageProtectedQueuedExecution(
+      false,
+      () => BackstageBookerModule.actions.generateBooking({
+        universeId: 'protected-legacy-authority-unavailable',
+        prompt: 'Do not reconstruct this booking from process memory.',
+      })
+    )).rejects.toMatchObject({
+      code: 'BACKSTAGE_NOTION_INDEX_UNAVAILABLE',
+      httpStatus: 503,
+      retryable: true,
+    });
+
+    expect(mockLoadBackstageNotionPromptContext).not.toHaveBeenCalled();
+    expect(mockRunTrinityWritingPipeline).not.toHaveBeenCalled();
   });
 
   it('uses accepted non-durable roster entries when a repository roster read succeeds empty', async () => {

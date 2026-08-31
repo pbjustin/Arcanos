@@ -57,7 +57,7 @@ export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
     trinityReasoningPolicyProofVersion:
       'trinity-reasoning-provider-policy/v1',
     managedAsyncContinuationProofVersion:
-      'backstage-booker-managed-async-continuation/v1',
+      'backstage-booker-managed-async-continuation/v2',
     gptClientIdentityProofVersion:
       'backstage-booker-gpt-client-identity/v1',
     outputCapacityPresentationProofVersion:

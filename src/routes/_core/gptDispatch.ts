@@ -13,6 +13,7 @@ import type { GptMatchMethod } from "@platform/logging/gptLogger.js";
 import { persistModuleConversation } from "@services/moduleConversationPersistence.js";
 import {
   isBackstageLegacyQueuedExecution,
+  isBackstageProtectedGenerationExecution,
   isBackstageProtectedQueuedExecution,
   wasBackstageNotionEnrichmentUsed,
 } from '@services/backstageNotionEnrichmentAuthorization.js';
@@ -1077,8 +1078,12 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
   const legacyBackstageQueuedExecution = isBackstageLegacyQueuedExecution();
   const privateBackstageQueuedExecution =
     protectedBackstageQueuedExecution || legacyBackstageQueuedExecution;
+  const protectedBackstageGenerationExecution =
+    isBackstageProtectedGenerationExecution();
+  const privateBackstageGenerationExecution =
+    protectedBackstageGenerationExecution || privateBackstageQueuedExecution;
   const suppressPromptDebugTrace = shouldSuppressPromptDebugTrace(body, preDispatchPayload)
-    || privateBackstageQueuedExecution;
+    || privateBackstageGenerationExecution;
   const diagnosticTextInput = boundedPromptOverride
     ? boundedPromptOverride.promptText
     : extractPreparedGptDispatchPromptText(body, preDispatchPayload);
@@ -1928,6 +1933,10 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       privateBackstageQueuedExecution
       && activeEntry.module === BACKSTAGE_MODULE_NAME
       && (action === 'generateBooking' || action === 'generateBookingWithHRC');
+    const isPrivateBackstageGeneration =
+      privateBackstageGenerationExecution
+      && activeEntry.module === BACKSTAGE_MODULE_NAME
+      && (action === 'generateBooking' || action === 'generateBookingWithHRC');
     const result = isResearchRun
       ? await runResearchWithAbortDrain(abortOptions, executeModuleAction)
       : isPrivateBackstageQueuedGeneration
@@ -1943,7 +1952,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
 
     // Research owns and fences its persistence inside its aggregate workflow.
     // Starting generic transcript writes here would escape that deadline/signal.
-    if (!isResearchRun && !notionEnrichmentUsed && !isPrivateBackstageQueuedGeneration) {
+    if (!isResearchRun && !notionEnrichmentUsed && !isPrivateBackstageGeneration) {
       const resolvedSessionId = resolveSessionId(body, payload);
       await persistModuleConversation({
         moduleName: activeEntry.module,
@@ -2015,6 +2024,10 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       const isDispatchCancellation = isDispatchCancellationError(err);
       const isPrivateBackstageQueuedGenerationFailure =
         privateBackstageQueuedExecution
+        && activeEntry.module === BACKSTAGE_MODULE_NAME
+        && (action === 'generateBooking' || action === 'generateBookingWithHRC');
+      const isPrivateBackstageGenerationFailure =
+        privateBackstageGenerationExecution
         && activeEntry.module === BACKSTAGE_MODULE_NAME
         && (action === 'generateBooking' || action === 'generateBookingWithHRC');
       const isDispatchTimeout = !isDispatchCancellation && (
@@ -2090,7 +2103,8 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
         && action === RESEARCH_ACTION_NAME
         && isResearchRequestValidationError(err);
       const dispatchLogEvent = isDispatchTimeout ? "gpt.dispatch.timeout" : "gpt.dispatch.error";
-      const queuedBackstageGenerationFailureMessage = protectedBackstageQueuedExecution
+      const privateBackstageGenerationFailureMessage =
+        protectedBackstageGenerationExecution || protectedBackstageQueuedExecution
         ? 'Protected Backstage generation failed.'
         : 'Legacy Backstage generation failed during compatibility drain.';
       const dispatchErrorMessage = isDispatchTimeout
@@ -2115,8 +2129,8 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
         ? BACKSTAGE_BOOKER_INTEGRITY_FAILED_ERROR_MESSAGE
         : isBackstageContinuityQueryFailure
         ? BACKSTAGE_CONTINUITY_QUERY_FAILED_ERROR_MESSAGE
-        : isPrivateBackstageQueuedGenerationFailure
-        ? queuedBackstageGenerationFailureMessage
+        : isPrivateBackstageGenerationFailure
+        ? privateBackstageGenerationFailureMessage
         : err?.message ?? "Module dispatch failed";
 
     logger?.error?.("gpt.dispatch.error", {
@@ -2125,7 +2139,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       module: activeEntry.module,
       action,
       matchMethod,
-      error: isPrivateBackstageQueuedGenerationFailure
+      error: isPrivateBackstageGenerationFailure
         ? dispatchErrorMessage
         : errorMessage,
       timeoutMs,
@@ -2139,7 +2153,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
         module: activeEntry.module,
         action,
         matchMethod,
-        error: isPrivateBackstageQueuedGenerationFailure
+        error: isPrivateBackstageGenerationFailure
           ? dispatchErrorMessage
           : errorMessage,
         timeoutMs,

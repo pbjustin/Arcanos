@@ -1040,6 +1040,33 @@ describe('client response guards', () => {
     });
   });
 
+  it('uses a caller-owned fail-closed projection instead of a text preview on overflow', () => {
+    const overflowPayload = {
+      ok: false,
+      status: 'failed',
+      result: null,
+      error: { code: 'BACKSTAGE_ASYNC_RESULT_UNAVAILABLE' },
+      protected: true,
+      protectedGenerationCompleted: false,
+      official: false,
+      continuityVerified: false,
+      authority: 'none',
+      fallbackUsed: false,
+      fallbackPermitted: false,
+    };
+    const prepared = prepareBoundedClientJsonPayload({
+      ok: true,
+      result: { storyline: 'private-booking-sentinel'.repeat(2_000) },
+    }, {
+      maxBytes: 2_048,
+      overflowPayload,
+    });
+
+    expect(prepared.truncated).toBe(true);
+    expect(prepared.payload).toEqual(overflowPayload);
+    expect(JSON.stringify(prepared.payload)).not.toContain('private-booking-sentinel');
+  });
+
   it('stamps lightweight probe payloads with their JSON response size', () => {
     const payload = withJsonResponseBytes({
       status: 'ok',

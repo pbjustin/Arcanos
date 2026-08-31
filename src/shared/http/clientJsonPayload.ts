@@ -219,6 +219,7 @@ export function prepareBoundedClientJsonPayload<T extends Record<string, unknown
     logEvent?: string;
     maxBytes?: number;
     maxBytesCeiling?: number;
+    overflowPayload?: Record<string, unknown>;
   } = {}
 ): PreparedClientJsonPayload<T> {
   const maxResponseBytes = resolveClientResponseMaxBytes(
@@ -230,7 +231,13 @@ export function prepareBoundedClientJsonPayload<T extends Record<string, unknown
   let truncated = false;
 
   if (originalResponseBytes > maxResponseBytes) {
-    normalizedPayload = buildTruncatedPayload(payload, maxResponseBytes);
+    normalizedPayload = options.overflowPayload
+      && measureJsonBytes(options.overflowPayload) <= maxResponseBytes
+      ? options.overflowPayload
+      : buildTruncatedPayload(
+          options.overflowPayload ?? payload,
+          maxResponseBytes
+        );
     truncated = true;
   }
 

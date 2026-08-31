@@ -99,6 +99,7 @@ export type {
   BackstageMutationId,
   BackstageNonDurablePersistence,
   BackstagePersistence,
+  BackstageProtectedGenerationProvenance,
   BackstageQueryContinuityRequest,
   BackstageQueryContinuityResponse,
   BackstageRealResult,

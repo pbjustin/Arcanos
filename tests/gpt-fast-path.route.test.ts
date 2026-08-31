@@ -110,6 +110,9 @@ const { parseQueuedGptJobInput } = await import(
 const { protectBackstageQueuedGptJobOutput } = await import(
   '../src/shared/backstage/backstageQueuedJobResultProtection.js'
 );
+const { buildProtectedBackstageFailureEnvelope } = await import(
+  '../src/shared/backstage/backstageProtectedFailure.js'
+);
 const { buildGptIdempotencyScopeHash } = await import(
   '../src/shared/gpt/gptIdempotency.js'
 );
@@ -205,6 +208,55 @@ function expectManagedBookerJobResponse(
   expect(body).not.toHaveProperty('jobReadToken');
   expect(body).not.toHaveProperty('jobReadTokenHeader');
   expect(body).not.toHaveProperty('stream');
+  expect(body).not.toHaveProperty('idempotencyKey');
+  expect(body).not.toHaveProperty('idempotencySource');
+}
+
+function expectProtectedBookerFailureState(body: Record<string, unknown>): void {
+  expect(body).toMatchObject({
+    result: null,
+    protected: true,
+    protectedGenerationCompleted: false,
+    official: false,
+    continuityVerified: false,
+    authority: 'none',
+    snapshotStatus: 'not_applicable',
+    fallbackUsed: false,
+    fallbackPermitted: false,
+  });
+  expect(body).not.toHaveProperty('storyline');
+  expect(body).not.toHaveProperty('output');
+  expect(body).not.toHaveProperty('draft');
+  expect(body).not.toHaveProperty('partial');
+  expect(body).not.toHaveProperty('preview');
+}
+
+function buildProtectedGenerationProvenance(
+  authority: 'notion' | 'legacy_postgresql' = 'legacy_postgresql'
+) {
+  return {
+    version: 1,
+    protected: true,
+    protectedGenerationCompleted: true,
+    official: true,
+    continuityVerified: true,
+    authority,
+    snapshotStatus: authority === 'notion' ? 'current_complete' : 'not_applicable',
+    fallbackUsed: false,
+    fallbackPermitted: false,
+  } as const;
+}
+
+function buildProtectedBookingResult(input: {
+  universeId: string;
+  storyline: string;
+  authority?: 'notion' | 'legacy_postgresql';
+}) {
+  return {
+    universeId: input.universeId,
+    storyline: input.storyline,
+    protectedGeneration: buildProtectedGenerationProvenance(input.authority),
+  };
 }
 
 function buildFastPathEnvelope() {
@@ -1697,10 +1749,11 @@ describe('GPT fast-path route branching', () => {
       authorizedInsideDispatch = isBackstageNotionEnrichmentAuthorized();
       return {
         ok: true,
-        result: {
+        result: buildProtectedBookingResult({
           universeId: 'my-universe-2k26',
           storyline: 'Authoritative Notion context was retrieved.',
-        },
+          authority: 'notion',
+        }),
         _route: {
           requestId: 'request-notion-authorized',
           traceId: 'trace-notion-authorized',
@@ -2018,7 +2071,7 @@ describe('GPT fast-path route branching', () => {
       headers: { 'Idempotency-Key': 'literal-booking-request-local' },
       bodyOverrides: {},
     },
-  ])('keeps authenticated no-provider booking request-local with $label', async ({
+  ])('rejects an authenticated no-provider result without authority provenance for $label', async ({
     path,
     headers,
     bodyOverrides,
@@ -2058,14 +2111,17 @@ describe('GPT fast-path route branching', () => {
       ...bodyOverrides,
     });
 
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(503);
+    expect(response.body.error.code).toBe('BACKSTAGE_ASYNC_RESULT_UNAVAILABLE');
+    expectProtectedBookerFailureState(response.body);
+    expect(JSON.stringify(response.body)).not.toContain('LITERAL-BOOKING-OK');
     expect(response.headers['x-gpt-queue-bypassed']).toBe('true');
     expect(mockRouteGptRequest).toHaveBeenCalledTimes(1);
     expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
     expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
   });
 
-  it('keeps an authenticated no-provider booking out of the provider fast path', async () => {
+  it('rejects an authenticated no-provider fast-path bypass without authority provenance', async () => {
     const accessToken = `backstage-${'g'.repeat(48)}`;
     process.env.ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN = accessToken;
     process.env.ARCANOS_BACKSTAGE_BOOKER_ASYNC_GENERATION_ENABLED = 'true';
@@ -2095,7 +2151,10 @@ describe('GPT fast-path route branching', () => {
         prompt: 'Write exactly this text and nothing else: LITERAL-FALLBACK-PROMPT',
       });
 
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(503);
+    expect(response.body.error.code).toBe('BACKSTAGE_ASYNC_RESULT_UNAVAILABLE');
+    expectProtectedBookerFailureState(response.body);
+    expect(JSON.stringify(response.body)).not.toContain('LITERAL-FALLBACK-OK');
     expect(response.headers['x-gpt-route-decision-reason']).toBe(
       'backstage_provider_not_required'
     );
@@ -2231,7 +2290,7 @@ describe('GPT fast-path route branching', () => {
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 
-  it('uses the nested canonical literal prompt instead of a heavy message alias', async () => {
+  it('rejects a nested canonical literal result without authority provenance', async () => {
     const accessToken = `backstage-${'i'.repeat(48)}`;
     process.env.ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN = accessToken;
     process.env.ARCANOS_BACKSTAGE_BOOKER_ASYNC_GENERATION_ENABLED = 'true';
@@ -2266,7 +2325,10 @@ describe('GPT fast-path route branching', () => {
         },
       });
 
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(503);
+    expect(response.body.error.code).toBe('BACKSTAGE_ASYNC_RESULT_UNAVAILABLE');
+    expectProtectedBookerFailureState(response.body);
+    expect(JSON.stringify(response.body)).not.toContain('ALIAS-PROMPT-LITERAL');
     expect(response.headers['x-gpt-route-decision-reason']).toBe(
       'backstage_provider_not_required'
     );
@@ -2286,7 +2348,7 @@ describe('GPT fast-path route branching', () => {
     ['messages', {
       messages: [{ role: 'user', content: 'Write exactly this token and nothing else: MESSAGES-ALIAS-OK' }],
     }],
-  ])('keeps the flattened %s prompt alias request-local', async (_alias, promptBody) => {
+  ])('rejects flattened %s prompt alias output without authority provenance', async (_alias, promptBody) => {
     const accessToken = `backstage-${'j'.repeat(48)}`;
     process.env.ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN = accessToken;
     process.env.ARCANOS_BACKSTAGE_BOOKER_ASYNC_GENERATION_ENABLED = 'true';
@@ -2310,7 +2372,10 @@ describe('GPT fast-path route branching', () => {
       .set('Authorization', `Bearer ${accessToken}`)
       .send({ action: 'generateBooking', ...promptBody });
 
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(503);
+    expect(response.body.error.code).toBe('BACKSTAGE_ASYNC_RESULT_UNAVAILABLE');
+    expectProtectedBookerFailureState(response.body);
+    expect(JSON.stringify(response.body)).not.toContain('alias result');
     expect(response.headers['x-gpt-route-decision-reason']).toBe(
       'backstage_provider_not_required'
     );
@@ -2460,6 +2525,7 @@ describe('GPT fast-path route branching', () => {
         message: 'Protected Backstage generation request identity is invalid.',
       },
     });
+    expectProtectedBookerFailureState(response.body);
     expect(JSON.stringify(response.body)).not.toContain(privatePrompt);
     expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
     expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
@@ -2509,6 +2575,7 @@ describe('GPT fast-path route branching', () => {
       ok: false,
       error: { code: 'BACKSTAGE_ASYNC_UNAVAILABLE' },
     });
+    expectProtectedBookerFailureState(response.body);
     expect(JSON.stringify(response.body)).not.toContain(privatePrompt);
     expect(JSON.stringify(response.body)).not.toContain('legacy plaintext result');
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
@@ -2524,7 +2591,10 @@ describe('GPT fast-path route branching', () => {
     );
     mockRouteGptRequest.mockResolvedValueOnce({
       ok: true,
-      result: 'Safe mocked booking result.',
+      result: buildProtectedBookingResult({
+        universeId: 'builder-workload-log-universe',
+        storyline: 'Safe mocked booking result.',
+      }),
       _route: {
         requestId: 'request-workload-log',
         traceId: 'trace-workload-log',
@@ -2919,6 +2989,7 @@ describe('GPT fast-path route branching', () => {
   it('projects a completed authenticated Booker job onto the managed bearer continuation lane', async () => {
     const accessToken = `backstage-${'v'.repeat(48)}`;
     const jobId = '11111111-1111-4111-8111-111111111111';
+    const intactBooking = 'Official protected booking delivery sentinel. '.repeat(150);
     let queuedInput: unknown;
     process.env.ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN = accessToken;
     process.env.ARCANOS_BACKSTAGE_BOOKER_ASYNC_GENERATION_ENABLED = 'true';
@@ -2952,7 +3023,20 @@ describe('GPT fast-path route branching', () => {
           rawInput: queuedInput,
           output: {
             ok: true,
-            result: { booking: 'Six-match Raw card.' },
+            result: {
+              booking: intactBooking,
+              protectedGeneration: {
+                version: 1,
+                protected: true,
+                protectedGenerationCompleted: true,
+                official: true,
+                continuityVerified: true,
+                authority: 'notion',
+                snapshotStatus: 'current_complete',
+                fallbackUsed: false,
+                fallbackPermitted: false,
+              },
+            },
             _route: {
               gptId: 'backstage-booker',
               module: 'BACKSTAGE:BOOKER',
@@ -2979,15 +3063,98 @@ describe('GPT fast-path route branching', () => {
 
     expect(response.status).toBe(200);
     expectManagedBookerJobResponse(response.body, jobId);
-    expect(response.body.result).toEqual({ booking: 'Six-match Raw card.' });
+    expect(response.body.result).toMatchObject({ booking: intactBooking });
+    expect(response.body.result).toMatchObject({
+      protectedGeneration: {
+        official: true,
+        continuityVerified: true,
+        authority: 'notion',
+        fallbackUsed: false,
+        fallbackPermitted: false,
+      },
+    });
+    expect(response.headers['x-response-truncated']).toBeUndefined();
+  });
+
+  it('fails closed without a booking preview when an inline completion exceeds the response guard', async () => {
+    const accessToken = `backstage-${'u'.repeat(48)}`;
+    const jobId = '12121212-1212-4121-8121-121212121212';
+    let queuedInput: unknown;
+    process.env.ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN = accessToken;
+    process.env.ARCANOS_BACKSTAGE_BOOKER_ASYNC_GENERATION_ENABLED = 'true';
+    process.env.ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY =
+      Buffer.alloc(32, 0x71).toString('base64');
+    mockResolveGptRouting.mockResolvedValueOnce(
+      buildBackstageRouting('generateBooking')
+    );
+    findOrCreateGptJobMock.mockImplementationOnce(async (options: { input: unknown }) => {
+      queuedInput = options.input;
+      return {
+        job: { id: jobId, job_type: 'gpt', status: 'pending', input: options.input },
+        created: true,
+        deduped: false,
+        dedupeReason: 'new_job',
+      };
+    });
+    waitForQueuedGptJobCompletionMock.mockImplementationOnce(async () => ({
+      state: 'completed',
+      job: {
+        id: jobId,
+        status: 'completed',
+        input: queuedInput,
+        output: protectBackstageQueuedGptJobOutput({
+          jobId,
+          rawInput: queuedInput,
+          output: {
+            ok: true,
+            result: {
+              booking: 'oversized-inline-booking-sentinel-'.repeat(2_000),
+              protectedGeneration: buildProtectedGenerationProvenance('notion'),
+            },
+            _route: {
+              gptId: 'backstage-booker',
+              module: 'BACKSTAGE:BOOKER',
+              action: 'generateBooking',
+              route: 'backstage-booker',
+              timestamp: '2026-08-26T12:00:00.000Z',
+            },
+          },
+        }),
+      },
+    }));
+
+    const response = await request(buildApp())
+      .post('/gpt/backstage-booker')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .send({
+        action: 'generateBooking',
+        executionMode: 'sync',
+        payload: {
+          universeId: 'my-universe-2k26',
+          prompt: 'Return exactly six matches for Raw.',
+        },
+      });
+
+    expect(response.status).toBe(503);
+    expect(response.headers['x-response-truncated']).toBe('true');
+    expectManagedBookerJobResponse(response.body, jobId);
+    expectProtectedBookerFailureState(response.body);
+    expect(response.body).toMatchObject({
+      ok: false,
+      status: 'failed',
+      error: { code: 'BACKSTAGE_ASYNC_RESULT_UNAVAILABLE' },
+    });
+    expect(JSON.stringify(response.body)).not.toContain(
+      'oversized-inline-booking-sentinel'
+    );
   });
 
   it.each([
-    ['invalid protected output', 'unavailable', 503, 'BACKSTAGE_ASYNC_RESULT_UNAVAILABLE'],
-    ['invalid completed envelope', 'invalid', 500, 'ASYNC_GPT_JOB_OUTPUT_INVALID'],
+    ['invalid protected output', 'unavailable'],
+    ['invalid completed envelope', 'invalid'],
   ] as const)(
-    'projects %s without exposing a dynamic job capability',
-    async (_caseName, outputKind, expectedStatus, expectedCode) => {
+    'returns accepted continuation for %s observed inside the short POST wait',
+    async (_caseName, outputKind) => {
       const accessToken = `backstage-${'w'.repeat(48)}`;
       const jobId = '22222222-2222-4222-8222-222222222222';
       let queuedInput: unknown;
@@ -3035,22 +3202,22 @@ describe('GPT fast-path route branching', () => {
           },
         });
 
-      expect(response.status).toBe(expectedStatus);
-      expect(response.body.error.code).toBe(expectedCode);
+      expect(response.status).toBe(202);
+      expect(response.body).not.toHaveProperty('error');
       expectManagedBookerJobResponse(response.body, jobId);
     }
   );
 
   it.each([
-    ['failed', 500, 'ASYNC_GPT_JOB_FAILED'],
-    ['cancelled', 409, 'ASYNC_GPT_JOB_CANCELLED'],
-    ['expired', 410, 'ASYNC_GPT_JOB_EXPIRED'],
-    ['missing', 500, 'ASYNC_GPT_JOB_MISSING'],
+    ['failed', 'BACKSTAGE_NOTION_INDEX_UNAVAILABLE'],
+    ['cancelled', 'BACKSTAGE_ASYNC_EXECUTION_FAILED'],
+    ['expired', 'BACKSTAGE_ASYNC_TIMEOUT'],
   ] as const)(
-    'projects an authenticated Booker %s job response onto the managed bearer lane',
-    async (state, expectedStatus, expectedCode) => {
+    'returns accepted continuation when the short POST wait observes a %s job',
+    async (state, expectedCode) => {
       const accessToken = `backstage-${'t'.repeat(48)}`;
       const jobId = '33333333-3333-4333-8333-333333333333';
+      let queuedInput: unknown;
       process.env.ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN = accessToken;
       process.env.ARCANOS_BACKSTAGE_BOOKER_ASYNC_GENERATION_ENABLED = 'true';
       process.env.ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY =
@@ -3058,22 +3225,33 @@ describe('GPT fast-path route branching', () => {
       mockResolveGptRouting.mockResolvedValueOnce(
         buildBackstageRouting('generateBooking')
       );
-      findOrCreateGptJobMock.mockImplementationOnce(async (options: { input: unknown }) => ({
-        job: { id: jobId, job_type: 'gpt', status: 'pending', input: options.input },
-        created: true,
-        deduped: false,
-        dedupeReason: 'new_job',
-      }));
-      waitForQueuedGptJobCompletionMock.mockResolvedValueOnce({
-        state,
-        job: state === 'missing'
-          ? null
-          : {
-              id: jobId,
-              status: state,
-              error_message: `private-${state}-sentinel`,
-            },
+      findOrCreateGptJobMock.mockImplementationOnce(async (options: { input: unknown }) => {
+        queuedInput = options.input;
+        return {
+          job: { id: jobId, job_type: 'gpt', status: 'pending', input: options.input },
+          created: true,
+          deduped: false,
+          dedupeReason: 'new_job',
+        };
       });
+      waitForQueuedGptJobCompletionMock.mockImplementationOnce(async () => ({
+        state,
+        job: {
+          id: jobId,
+          status: state,
+          input: queuedInput,
+          output: protectBackstageQueuedGptJobOutput({
+            jobId,
+            rawInput: queuedInput,
+            output: buildProtectedBackstageFailureEnvelope({
+              gptId: 'backstage-booker',
+              action: 'generateBooking',
+              code: expectedCode,
+            }),
+          }),
+          error_message: `private-${state}-sentinel`,
+        },
+      }));
 
       const response = await request(buildApp())
         .post('/gpt/backstage-booker')
@@ -3087,13 +3265,49 @@ describe('GPT fast-path route branching', () => {
           },
         });
 
-      expect(response.status).toBe(expectedStatus);
-      expect(response.body.error.code).toBe(expectedCode);
+      expect(response.status).toBe(202);
+      expect(response.body).not.toHaveProperty('error');
+      expect(response.body.result).toEqual({});
+      expect(JSON.stringify(response.body)).not.toContain(`private-${state}-sentinel`);
+      expect(JSON.stringify(response.body)).not.toContain(expectedCode);
       expectManagedBookerJobResponse(response.body, jobId);
     }
   );
 
-  it('projects waiter repository failure without exposing a dynamic job capability', async () => {
+  it('returns accepted continuation when the short POST wait cannot re-read the job', async () => {
+    const accessToken = `backstage-${'t'.repeat(48)}`;
+    const jobId = '33333333-3333-4333-8333-333333333333';
+    process.env.ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN = accessToken;
+    process.env.ARCANOS_BACKSTAGE_BOOKER_ASYNC_GENERATION_ENABLED = 'true';
+    process.env.ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY =
+      Buffer.alloc(32, 0x63).toString('base64');
+    mockResolveGptRouting.mockResolvedValueOnce(buildBackstageRouting('generateBooking'));
+    findOrCreateGptJobMock.mockImplementationOnce(async (options: { input: unknown }) => ({
+      job: { id: jobId, job_type: 'gpt', status: 'pending', input: options.input },
+      created: true,
+      deduped: false,
+      dedupeReason: 'new_job',
+    }));
+    waitForQueuedGptJobCompletionMock.mockResolvedValueOnce({ state: 'missing', job: null });
+
+    const response = await request(buildApp())
+      .post('/gpt/backstage-booker')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .send({
+        action: 'generateBooking',
+        executionMode: 'sync',
+        payload: {
+          universeId: 'my-universe-2k26',
+          prompt: 'Return exactly six matches for Raw.',
+        },
+      });
+
+    expect(response.status).toBe(202);
+    expect(response.body).not.toHaveProperty('error');
+    expectManagedBookerJobResponse(response.body, jobId);
+  });
+
+  it('returns accepted continuation when the short POST waiter repository is unavailable', async () => {
     const accessToken = `backstage-${'z'.repeat(48)}`;
     const jobId = '44444444-4444-4444-8444-444444444444';
     process.env.ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN = accessToken;
@@ -3125,8 +3339,8 @@ describe('GPT fast-path route branching', () => {
         },
       });
 
-    expect(response.status).toBe(503);
-    expect(response.body.error.code).toBe('ASYNC_GPT_JOBS_UNAVAILABLE');
+    expect(response.status).toBe(202);
+    expect(response.body).not.toHaveProperty('error');
     expectManagedBookerJobResponse(response.body, jobId);
     expect(JSON.stringify(response.body)).not.toContain('private-waiter-repository-sentinel');
   });
@@ -3152,7 +3366,10 @@ describe('GPT fast-path route branching', () => {
     );
     mockRouteGptRequest.mockResolvedValueOnce({
       ok: true,
-      result: 'Synchronous rollback result.',
+      result: buildProtectedBookingResult({
+        universeId: 'my-universe-2k26',
+        storyline: 'Synchronous rollback result.',
+      }),
       _route: {
         gptId: 'backstage-booker',
         module: 'BACKSTAGE:BOOKER',
@@ -3301,6 +3518,71 @@ describe('GPT fast-path route branching', () => {
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 
+  it('rejects changed protected input under one explicit idempotency key without leaking the key', async () => {
+    const accessToken = `backstage-${'f'.repeat(48)}`;
+    const explicitKey = 'protected-booking-conflict-key';
+    process.env.ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN = accessToken;
+    process.env.ARCANOS_BACKSTAGE_BOOKER_ASYNC_GENERATION_ENABLED = 'true';
+    process.env.ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY =
+      Buffer.alloc(32, 0x73).toString('base64');
+    mockResolveGptRouting
+      .mockResolvedValueOnce(buildBackstageRouting('generateBooking'))
+      .mockResolvedValueOnce(buildBackstageRouting('generateBooking'));
+    findOrCreateGptJobMock
+      .mockImplementationOnce(async (options: { input: unknown }) => ({
+        job: {
+          id: 'job-explicit-conflict',
+          job_type: 'gpt',
+          status: 'pending',
+          input: options.input,
+        },
+        created: true,
+        deduped: false,
+        dedupeReason: 'new_job',
+      }))
+      .mockRejectedValueOnce(new MockIdempotencyKeyConflictError());
+
+    const first = await request(buildApp())
+      .post('/gpt/backstage-booker')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .set('Idempotency-Key', explicitKey)
+      .send({
+        action: 'generateBooking',
+        payload: {
+          universeId: 'my-universe-2k26',
+          prompt: 'Book the exact Raw week 18 card.',
+        },
+      });
+    const changed = await request(buildApp())
+      .post('/gpt/backstage-booker')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .set('Idempotency-Key', explicitKey)
+      .send({
+        action: 'generateBooking',
+        payload: {
+          universeId: 'my-universe-2k26',
+          prompt: 'Book a changed Raw week 19 card.',
+        },
+      });
+
+    expect(first.status).toBe(202);
+    expect(changed.status).toBe(409);
+    expect(changed.body).toMatchObject({
+      ok: false,
+      error: { code: 'IDEMPOTENCY_KEY_CONFLICT' },
+    });
+    expectProtectedBookerFailureState(changed.body);
+    expect(changed.body).not.toHaveProperty('idempotencyKey');
+    expect(changed.body).not.toHaveProperty('idempotencySource');
+    expect(JSON.stringify(changed.body)).not.toContain(explicitKey);
+    expect(findOrCreateGptJobMock).toHaveBeenCalledTimes(2);
+    expect(findOrCreateGptJobMock.mock.calls[0]?.[0]?.requestFingerprintHash)
+      .not.toBe(findOrCreateGptJobMock.mock.calls[1]?.[0]?.requestFingerprintHash);
+    expect(findOrCreateGptJobMock.mock.calls[0]?.[0]?.idempotencyScopeHash)
+      .toBe(findOrCreateGptJobMock.mock.calls[1]?.[0]?.idempotencyScopeHash);
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
   it('deduplicates omitted and aliased Booker actions after canonical binding', async () => {
     const accessToken = `backstage-${'c'.repeat(48)}`;
     const idempotencyKey = 'canonical-booker-action-identity';
@@ -3399,6 +3681,7 @@ describe('GPT fast-path route branching', () => {
       ok: false,
       error: { code: 'BACKSTAGE_ASYNC_UNAVAILABLE' },
     });
+    expectProtectedBookerFailureState(response.body);
     expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
     expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
@@ -3433,6 +3716,7 @@ describe('GPT fast-path route branching', () => {
       ok: false,
       error: { code: 'BACKSTAGE_ASYNC_UNAVAILABLE' },
     });
+    expectProtectedBookerFailureState(response.body);
     expect(JSON.stringify(response.body)).not.toContain('private-repository-failure-sentinel');
     expect(findOrCreateGptJobMock).toHaveBeenCalledTimes(1);
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
@@ -3448,7 +3732,10 @@ describe('GPT fast-path route branching', () => {
     mockRouteGptRequest
       .mockResolvedValueOnce({
         ok: true,
-        result: 'Legacy synchronous rollback result.',
+        result: buildProtectedBookingResult({
+          universeId: 'my-universe-2k26',
+          storyline: 'Legacy synchronous rollback result.',
+        }),
         _route: {
           gptId: 'backstage-booker',
           module: 'BACKSTAGE:BOOKER',

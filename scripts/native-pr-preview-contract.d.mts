@@ -53,7 +53,7 @@ export interface NativePrPreviewE2eContract {
     trinityReasoningPolicyProofVersion:
       'trinity-reasoning-provider-policy/v1';
     managedAsyncContinuationProofVersion:
-      'backstage-booker-managed-async-continuation/v1';
+      'backstage-booker-managed-async-continuation/v2';
     gptClientIdentityProofVersion:
       'backstage-booker-gpt-client-identity/v1';
     outputCapacityPresentationProofVersion:

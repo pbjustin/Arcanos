@@ -276,9 +276,31 @@ export interface BackstageGenerateBookingRequest {
   prompt: string;
 }
 
+interface BackstageProtectedGenerationProvenanceBase {
+  version: 1;
+  protected: true;
+  protectedGenerationCompleted: true;
+  official: true;
+  continuityVerified: true;
+  fallbackUsed: false;
+  fallbackPermitted: false;
+}
+
+/** Server-owned provenance for a completed protected queued generation. */
+export type BackstageProtectedGenerationProvenance =
+  | (BackstageProtectedGenerationProvenanceBase & {
+      authority: 'notion';
+      snapshotStatus: 'current_complete';
+    })
+  | (BackstageProtectedGenerationProvenanceBase & {
+      authority: 'legacy_postgresql';
+      snapshotStatus: 'not_applicable';
+    });
+
 export interface BackstageGenerateBookingStructuredResponse {
   universeId: BackstageUniverseId;
   storyline: string;
+  protectedGeneration?: BackstageProtectedGenerationProvenance;
 }
 
 /** @deprecated Prefer the structured response when the caller supports it. */

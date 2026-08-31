@@ -12,6 +12,8 @@ export function sendBoundedJsonResponse<T extends object>(
     statusCode?: number;
     maxBytes?: number;
     maxBytesCeiling?: number;
+    overflowPayload?: Record<string, unknown>;
+    overflowStatusCode?: number;
   }
 ) {
   const preparedPayload = prepareBoundedClientJsonPayload(payload as Record<string, unknown>, {
@@ -19,11 +21,17 @@ export function sendBoundedJsonResponse<T extends object>(
     logEvent: options.logEvent,
     maxBytes: options.maxBytes,
     maxBytesCeiling: options.maxBytesCeiling,
+    overflowPayload: options.overflowPayload,
   });
 
-  const targetResponse = options.statusCode === undefined
+  const statusCode = preparedPayload.truncated
+    && options.overflowPayload
+    && options.overflowStatusCode !== undefined
+    ? options.overflowStatusCode
+    : options.statusCode;
+  const targetResponse = statusCode === undefined
     ? res
-    : res.status(options.statusCode);
+    : res.status(statusCode);
 
   return sendPreparedJsonResponse(targetResponse, preparedPayload);
 }

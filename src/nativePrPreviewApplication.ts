@@ -94,6 +94,9 @@ import {
   projectBackstageBookerManagedPendingResponse,
 } from './shared/backstage/backstageBookerAsyncContinuation.js';
 import {
+  buildProtectedBackstageFailureEnvelope,
+} from './shared/backstage/backstageProtectedFailure.js';
+import {
   isBackstageBookerBearerReadableJob,
   readBackstageBookerAsyncResultCore,
 } from './shared/backstage/backstageBookerAsyncResultCore.js';
@@ -6240,7 +6243,25 @@ async function runBackstageManagedAsyncContinuationFixture(
   });
   const completedOutput = {
     ok: true,
-    result: { answer: 'sealed managed continuation complete' },
+    result: {
+      answer: 'sealed managed continuation complete',
+      protectedGeneration: {
+        version: 1,
+        protected: true,
+        protectedGenerationCompleted: true,
+        official: true,
+        continuityVerified: true,
+        authority: 'notion',
+        snapshotStatus: 'current_complete',
+        fallbackUsed: false,
+        fallbackPermitted: false,
+      },
+    },
+    _route: {
+      gptId: 'backstage-booker',
+      action: 'generateBooking',
+      route: 'worker',
+    },
   };
   const completedJob = buildFixture(jobId, 'completed', {
     input: protectedInput,
@@ -6348,22 +6369,55 @@ async function runBackstageManagedAsyncContinuationFixture(
     }
   );
 
+  const failedPrivateError = 'PRIVATE_MANAGED_FAILURE_SENTINEL';
+  const cancelledPrivateError = 'PRIVATE_MANAGED_CANCELLATION_SENTINEL';
+  const expiredPrivateError = 'PRIVATE_MANAGED_EXPIRY_SENTINEL';
   const failedResult = await readOnce(buildFixture(jobId, 'failed', {
     input: protectedInput,
     idempotency_scope_hash: stableScopeA,
-    error_message: 'Synthetic managed failure.',
+    output: protectBackstageQueuedGptJobOutput({
+      jobId,
+      rawInput: protectedInput,
+      output: buildProtectedBackstageFailureEnvelope({
+        gptId: 'backstage-booker',
+        action: 'generateBooking',
+        code: 'BACKSTAGE_NOTION_INDEX_UNAVAILABLE',
+      }),
+      config: payloadProtectionConfig,
+    }),
+    error_message: failedPrivateError,
     completed_at: FIXTURE_COMPLETED_TIMESTAMP,
   }));
   const cancelledResult = await readOnce(buildFixture(jobId, 'cancelled', {
     input: protectedInput,
     idempotency_scope_hash: stableScopeA,
-    error_message: 'Synthetic managed cancellation.',
+    output: protectBackstageQueuedGptJobOutput({
+      jobId,
+      rawInput: protectedInput,
+      output: buildProtectedBackstageFailureEnvelope({
+        gptId: 'backstage-booker',
+        action: 'generateBooking',
+        code: 'BACKSTAGE_ASYNC_EXECUTION_FAILED',
+      }),
+      config: payloadProtectionConfig,
+    }),
+    error_message: cancelledPrivateError,
     completed_at: FIXTURE_COMPLETED_TIMESTAMP,
   }));
   const expiredResult = await readOnce(buildFixture(jobId, 'expired', {
     input: protectedInput,
     idempotency_scope_hash: stableScopeA,
-    error_message: 'Synthetic managed expiry.',
+    output: protectBackstageQueuedGptJobOutput({
+      jobId,
+      rawInput: protectedInput,
+      output: buildProtectedBackstageFailureEnvelope({
+        gptId: 'backstage-booker',
+        action: 'generateBooking',
+        code: 'BACKSTAGE_ASYNC_TIMEOUT',
+      }),
+      config: payloadProtectionConfig,
+    }),
+    error_message: expiredPrivateError,
     completed_at: FIXTURE_COMPLETED_TIMESTAMP,
   }));
 
@@ -6454,14 +6508,51 @@ async function runBackstageManagedAsyncContinuationFixture(
     && JSON.stringify(transitionedResult.result) === JSON.stringify(completedOutput)
     && repositoryReads === 2
     && waiterCalls === 1;
+  const matchesProtectedFailureState = (
+    payload: typeof failedResult,
+    status: 'failed' | 'expired',
+    code: string,
+    privateError: string
+  ) => {
+    const serialized = JSON.stringify(payload);
+    return payload.status === status
+      && payload.result === null
+      && payload.error?.code === code
+      && payload.error.message === 'Protected Backstage generation did not complete.'
+      && JSON.stringify(Object.keys(payload.error).sort())
+        === JSON.stringify(['code', 'message'])
+      && payload.protected === true
+      && payload.protectedGenerationCompleted === false
+      && payload.official === false
+      && payload.continuityVerified === false
+      && payload.authority === 'none'
+      && payload.snapshotStatus === 'not_applicable'
+      && payload.fallbackUsed === false
+      && payload.fallbackPermitted === false
+      && !serialized.includes(privateError)
+      && ['output', 'storyline', 'answer', 'draft', 'partial', 'preview']
+        .every(field => !serialized.includes(`\"${field}\"`));
+  };
   const stateProjectionVerified =
     pendingResult.status === 'pending'
-    && failedResult.status === 'failed'
-    && failedResult.error?.code === 'JOB_FAILED'
-    && cancelledResult.status === 'failed'
-    && cancelledResult.error?.code === 'JOB_CANCELLED'
-    && expiredResult.status === 'expired'
-    && expiredResult.error?.code === 'JOB_EXPIRED'
+    && matchesProtectedFailureState(
+      failedResult,
+      'failed',
+      'BACKSTAGE_NOTION_INDEX_UNAVAILABLE',
+      failedPrivateError
+    )
+    && matchesProtectedFailureState(
+      cancelledResult,
+      'failed',
+      'BACKSTAGE_ASYNC_EXECUTION_FAILED',
+      cancelledPrivateError
+    )
+    && matchesProtectedFailureState(
+      expiredResult,
+      'expired',
+      'BACKSTAGE_ASYNC_TIMEOUT',
+      expiredPrivateError
+    )
     && missingResult.status === 'not_found'
     && legacyPendingResult.status === 'pending';
   const publicProjection = JSON.stringify({
@@ -6476,6 +6567,9 @@ async function runBackstageManagedAsyncContinuationFixture(
     wrongToken,
     capability,
     payloadKey,
+    failedPrivateError,
+    cancelledPrivateError,
+    expiredPrivateError,
     'ciphertext',
     'jobReadToken',
     'jobReadTokenHeader',

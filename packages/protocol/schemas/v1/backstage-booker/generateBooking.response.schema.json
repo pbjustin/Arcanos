@@ -27,6 +27,9 @@
           "minLength": 1,
           "maxLength": 100000,
           "pattern": "\\S"
+        },
+        "protectedGeneration": {
+          "$ref": "https://schemas.arcanos.dev/protocol/v1/backstage-booker/common.schema.json#/$defs/protectedGenerationProvenance"
         }
       }
     }

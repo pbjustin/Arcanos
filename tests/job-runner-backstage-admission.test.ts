@@ -18,6 +18,7 @@ import {
   BackstageNotionIndexUnavailableError,
 } from '../src/services/backstageNotionRag.js';
 import {
+  BackstageBookerIntegrityFailedError,
   BackstageBookerOutputIncompleteError,
 } from '../src/shared/backstage/backstageGenerationError.js';
 
@@ -318,7 +319,20 @@ describe('normal worker queued Backstage mutation admission', () => {
     mockDispatchModuleAction.mockImplementationOnce(async () => {
       authorizedInsideDispatch = isBackstageNotionEnrichmentAuthorized();
       protectedQueueInsideDispatch = isBackstageProtectedQueuedExecution();
-      return privateResult;
+      return {
+        booking: privateResult,
+        protectedGeneration: {
+          version: 1,
+          protected: true,
+          protectedGenerationCompleted: true,
+          official: true,
+          continuityVerified: true,
+          authority: 'notion',
+          snapshotStatus: 'current_complete',
+          fallbackUsed: false,
+          fallbackPermitted: false,
+        },
+      };
     });
     const rawInput = buildProtectedBackstageQueuedGptJobInput({
       action: 'generateBooking',
@@ -356,7 +370,7 @@ describe('normal worker queued Backstage mutation admission', () => {
       output: outcome.output,
     })).toMatchObject({
       ok: true,
-      result: privateResult,
+      result: { booking: privateResult },
       _route: {
         gptId: 'backstage-booker',
         module: 'BACKSTAGE:BOOKER',
@@ -692,6 +706,33 @@ describe('normal worker queued Backstage mutation admission', () => {
           prompt: 'Explain deterministic finite automata.',
         },
       },
+    })).rejects.toBe(budgetError);
+    expect(mockPersistModuleConversation).not.toHaveBeenCalled();
+  });
+
+  it('preserves a direct protected worker AI budget pause for job-level deferral', async () => {
+    const budgetError = new WorkerAiCallBudgetPausedError(
+      '2026-08-30T15:00:00.000Z'
+    );
+    mockDispatchModuleAction.mockRejectedValueOnce(budgetError);
+
+    await expect(executeQueuedGptRequest({
+      jobId: '57575757-5757-4575-8575-575757575756',
+      rawInput: buildProtectedBackstageQueuedGptJobInput({
+        action: 'generateBooking',
+        body: {
+          action: 'generateBooking',
+          payload: {
+            universeId: 'my-universe-2k26',
+            prompt: 'Return exactly six matches.',
+          },
+        },
+        prompt: 'Return exactly six matches.',
+        universeId: 'my-universe-2k26',
+        notionEnrichmentAuthorized: true,
+        requestId: 'request-direct-worker-budget-pause',
+        traceId: 'trace-direct-worker-budget-pause',
+      }),
     })).rejects.toBe(budgetError);
     expect(mockPersistModuleConversation).not.toHaveBeenCalled();
   });
@@ -1278,7 +1319,20 @@ describe('normal worker queued Backstage mutation admission', () => {
     mockDispatchModuleAction.mockImplementationOnce(async () => {
       authorizedInsideDispatch = isBackstageNotionEnrichmentAuthorized();
       protectedQueueInsideDispatch = isBackstageProtectedQueuedExecution();
-      return privateResult;
+      return {
+        booking: privateResult,
+        protectedGeneration: {
+          version: 1,
+          protected: true,
+          protectedGenerationCompleted: true,
+          official: true,
+          continuityVerified: true,
+          authority: 'legacy_postgresql',
+          snapshotStatus: 'not_applicable',
+          fallbackUsed: false,
+          fallbackPermitted: false,
+        },
+      };
     });
     const rawInput = buildProtectedBackstageQueuedGptJobInput({
       action: 'generateBooking',
@@ -1310,13 +1364,24 @@ describe('normal worker queued Backstage mutation admission', () => {
       jobId: '88888888-8888-4888-8888-888888888888',
       rawInput,
       output: outcome.output,
-    })).toMatchObject({ ok: true, result: privateResult });
+    })).toMatchObject({ ok: true, result: { booking: privateResult } });
   });
 
   it('propagates the protected HRC action through worker dispatch metadata', async () => {
     mockDispatchModuleAction.mockResolvedValueOnce({
       storyline: 'Protected HRC result.',
       headcanon: { score: 88 },
+      protectedGeneration: {
+        version: 1,
+        protected: true,
+        protectedGenerationCompleted: true,
+        official: true,
+        continuityVerified: true,
+        authority: 'notion',
+        snapshotStatus: 'current_complete',
+        fallbackUsed: false,
+        fallbackPermitted: false,
+      },
     });
     const rawInput = buildProtectedBackstageQueuedGptJobInput({
       action: 'generateBookingWithHRC',
@@ -1376,7 +1441,7 @@ describe('normal worker queued Backstage mutation admission', () => {
     expect(outcome).toMatchObject({
       status: 'failed',
       retryable: false,
-      errorMessage: 'MODULE_ERROR: Protected Backstage generation failed.',
+      errorMessage: 'BACKSTAGE_ASYNC_EXECUTION_FAILED: Protected Backstage generation failed.',
     });
     expect(JSON.stringify(outcome)).not.toContain(privateFailure);
     expect(unprotectBackstageQueuedGptJobOutput({
@@ -1385,9 +1450,60 @@ describe('normal worker queued Backstage mutation admission', () => {
       output: outcome.output,
     })).toMatchObject({
       ok: false,
-      error: { code: 'MODULE_ERROR' },
+      error: { code: 'BACKSTAGE_ASYNC_EXECUTION_FAILED' },
     });
     expect(mockDispatchModuleAction).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves a protected structural-integrity domain failure without draft text', async () => {
+    mockDispatchModuleAction.mockRejectedValueOnce(
+      new BackstageBookerIntegrityFailedError({
+        integrityIssues: ['incomplete_final_section'],
+        repairAttempted: true,
+        repairFailureReason: 'revalidation_failed',
+      })
+    );
+    const rawInput = buildProtectedBackstageQueuedGptJobInput({
+      action: 'generateBooking',
+      body: {
+        action: 'generateBooking',
+        payload: {
+          universeId: 'my-universe-2k26',
+          prompt: 'Return a production-sized card.',
+        },
+      },
+      prompt: 'Return a production-sized card.',
+      universeId: 'my-universe-2k26',
+      notionEnrichmentAuthorized: true,
+      requestId: 'request-worker-integrity-failure',
+      traceId: 'trace-worker-integrity-failure',
+    });
+
+    const outcome = await executeQueuedGptRequest({
+      jobId: '24242424-2424-4242-8242-242424242424',
+      rawInput,
+    });
+
+    expect(outcome).toMatchObject({
+      status: 'failed',
+      retryable: false,
+      errorMessage:
+        'BACKSTAGE_BOOKER_INTEGRITY_FAILED: Protected Backstage generation failed.',
+    });
+    expect(unprotectBackstageQueuedGptJobOutput({
+      jobId: '24242424-2424-4242-8242-242424242424',
+      rawInput,
+      output: outcome.output,
+    })).toEqual({
+      ok: false,
+      error: { code: 'BACKSTAGE_BOOKER_INTEGRITY_FAILED' },
+      _route: {
+        gptId: 'backstage-booker',
+        action: 'generateBooking',
+        route: 'worker',
+      },
+    });
+    expect(JSON.stringify(outcome)).not.toContain('incomplete_final_section');
   });
 
   it('aborts a stalled provider at the finite worker deadline and returns a terminal error', async () => {
@@ -1531,7 +1647,7 @@ describe('normal worker queued Backstage mutation admission', () => {
     expect(outcome).toMatchObject({
       status: 'failed',
       retryable: false,
-      errorMessage: 'MODULE_ERROR: Protected Backstage generation failed.',
+      errorMessage: 'BACKSTAGE_ASYNC_EXECUTION_FAILED: Protected Backstage generation failed.',
     });
     expect(unprotectBackstageQueuedGptJobOutput({
       jobId: '77777777-7777-4777-8777-777777777777',
@@ -1539,7 +1655,7 @@ describe('normal worker queued Backstage mutation admission', () => {
       output: outcome.output,
     })).toMatchObject({
       ok: false,
-      error: { code: 'MODULE_ERROR' },
+      error: { code: 'BACKSTAGE_ASYNC_EXECUTION_FAILED' },
     });
   });
 
@@ -1583,11 +1699,18 @@ describe('normal worker queued Backstage mutation admission', () => {
     const outcome = await outcomePromise;
 
     expect(activeProviderSignal?.aborted).toBe(true);
-    expect(outcome).toEqual({
+    expect(outcome).toMatchObject({
       status: 'cancelled',
-      output: null,
-      errorMessage: 'Protected Backstage generation cancellation requested.',
+      errorMessage: 'BACKSTAGE_ASYNC_EXECUTION_FAILED: Protected Backstage generation failed.',
       retryable: false,
+    });
+    expect(unprotectBackstageQueuedGptJobOutput({
+      jobId: '55555555-5555-4555-8555-555555555555',
+      rawInput,
+      output: outcome.output,
+    })).toMatchObject({
+      ok: false,
+      error: { code: 'BACKSTAGE_ASYNC_EXECUTION_FAILED' },
     });
   });
 
@@ -1672,11 +1795,18 @@ describe('normal worker queued Backstage mutation admission', () => {
       rawInput,
     });
 
-    expect(outcome).toEqual({
+    expect(outcome).toMatchObject({
       status: 'cancelled',
-      output: null,
-      errorMessage: 'Protected Backstage generation cancellation requested.',
+      errorMessage: 'BACKSTAGE_ASYNC_EXECUTION_FAILED: Protected Backstage generation failed.',
       retryable: false,
+    });
+    expect(unprotectBackstageQueuedGptJobOutput({
+      jobId: '33333333-3333-4333-8333-333333333333',
+      rawInput,
+      output: outcome.output,
+    })).toMatchObject({
+      ok: false,
+      error: { code: 'BACKSTAGE_ASYNC_EXECUTION_FAILED' },
     });
     expect(JSON.stringify(outcome)).not.toContain(privateCancellationReason);
     expect(mockDispatchModuleAction).not.toHaveBeenCalled();

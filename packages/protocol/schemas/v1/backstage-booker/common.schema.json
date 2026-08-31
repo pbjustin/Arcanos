@@ -273,6 +273,42 @@
         }
       }
     },
+    "protectedGenerationProvenance": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["version", "protected", "protectedGenerationCompleted", "official", "continuityVerified", "authority", "snapshotStatus", "fallbackUsed", "fallbackPermitted"],
+          "properties": {
+            "version": { "const": 1 },
+            "protected": { "const": true },
+            "protectedGenerationCompleted": { "const": true },
+            "official": { "const": true },
+            "continuityVerified": { "const": true },
+            "authority": { "const": "notion" },
+            "snapshotStatus": { "const": "current_complete" },
+            "fallbackUsed": { "const": false },
+            "fallbackPermitted": { "const": false }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["version", "protected", "protectedGenerationCompleted", "official", "continuityVerified", "authority", "snapshotStatus", "fallbackUsed", "fallbackPermitted"],
+          "properties": {
+            "version": { "const": 1 },
+            "protected": { "const": true },
+            "protectedGenerationCompleted": { "const": true },
+            "official": { "const": true },
+            "continuityVerified": { "const": true },
+            "authority": { "const": "legacy_postgresql" },
+            "snapshotStatus": { "const": "not_applicable" },
+            "fallbackUsed": { "const": false },
+            "fallbackPermitted": { "const": false }
+          }
+        }
+      ]
+    },
     "durablePersistence": {
       "type": "object",
       "additionalProperties": false,

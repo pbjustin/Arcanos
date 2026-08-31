@@ -13,6 +13,7 @@ import express from 'express';
 import request from 'supertest';
 
 import type { JobData } from '../src/core/db/schema.js';
+import { JobRepositoryUnavailableError } from '../src/core/db/repositories/jobRepository.js';
 import { buildAuthenticatedCredentialActorKey } from '../src/platform/runtime/security.js';
 import {
   BACKSTAGE_RESULT_POLL_WAIT_MS,
@@ -122,7 +123,26 @@ function completeProtectedJob(
   output: unknown = {
     ok: true,
     result: {
-      booking: 'Official protected Backstage Booker result.',
+      universeId: UNIVERSE_ID,
+      storyline: 'Official protected Backstage Booker result.',
+      protectedGeneration: {
+        version: 1,
+        protected: true,
+        protectedGenerationCompleted: true,
+        official: true,
+        continuityVerified: true,
+        authority: 'notion',
+        snapshotStatus: 'current_complete',
+        fallbackUsed: false,
+        fallbackPermitted: false,
+      },
+    },
+    _route: {
+      gptId: 'backstage-booker',
+      module: 'BACKSTAGE:BOOKER',
+      route: 'backstage-booker',
+      action: 'generateBooking',
+      timestamp: '2026-08-26T00:00:42.000Z',
     },
   }
 ): JobData {
@@ -283,16 +303,87 @@ describe('Backstage Booker reused queue wait', () => {
     expect(response.status).toBe(200);
     expect(response.headers['cache-control']).toContain('no-store');
     expect(response.body.status).toBe('completed');
-    expect(response.body.result).toEqual({
+    expect(response.body.result).toMatchObject({
       ok: true,
       result: {
-        booking: 'Official protected Backstage Booker result.',
+        universeId: UNIVERSE_ID,
+        storyline: 'Official protected Backstage Booker result.',
+        protectedGeneration: {
+          official: true,
+          continuityVerified: true,
+          authority: 'notion',
+          fallbackUsed: false,
+          fallbackPermitted: false,
+        },
       },
     });
     expect(response.body.poll).toBe(RESULT_PATH);
     expect(response.body).not.toHaveProperty('stream');
     expect(getJobByIdFn).toHaveBeenCalledTimes(1);
     expect(waitForCompletion).not.toHaveBeenCalled();
+  });
+
+  it('fails closed without a booking preview when a completed managed result exceeds the response guard', async () => {
+    const privateBooking = 'oversized-private-booking-sentinel-'.repeat(2_000);
+    const completedJob = completeProtectedJob(buildProtectedJob(), {
+      ok: true,
+      result: {
+        universeId: UNIVERSE_ID,
+        storyline: privateBooking,
+        protectedGeneration: {
+          version: 1,
+          protected: true,
+          protectedGenerationCompleted: true,
+          official: true,
+          continuityVerified: true,
+          authority: 'notion',
+          snapshotStatus: 'current_complete',
+          fallbackUsed: false,
+          fallbackPermitted: false,
+        },
+      },
+      _route: {
+        gptId: 'backstage-booker',
+        module: 'BACKSTAGE:BOOKER',
+        route: 'backstage-booker',
+        action: 'generateBooking',
+        timestamp: '2026-08-26T00:00:42.000Z',
+      },
+    });
+    const app = express();
+    app.use(createBackstageBookerAsyncResultRouter({
+      boundary: buildTestBoundary(),
+      getJobByIdFn: async () => completedJob,
+      recordJobLookup: jest.fn(),
+    }));
+
+    const response = await request(app)
+      .get(RESULT_PATH)
+      .set('Authorization', `Bearer ${ACCESS_TOKEN}`);
+
+    expect(response.status).toBe(503);
+    expect(response.headers['x-response-truncated']).toBe('true');
+    expect(response.body).toMatchObject({
+      jobId: JOB_ID,
+      status: 'failed',
+      poll: RESULT_PATH,
+      result: null,
+      error: {
+        code: 'BACKSTAGE_ASYNC_RESULT_UNAVAILABLE',
+        message: 'Protected Backstage generation did not complete.',
+      },
+      protected: true,
+      protectedGenerationCompleted: false,
+      official: false,
+      continuityVerified: false,
+      authority: 'none',
+      fallbackUsed: false,
+      fallbackPermitted: false,
+    });
+    expect(JSON.stringify(response.body)).not.toContain(
+      'oversized-private-booking-sentinel'
+    );
+    expect(response.body).not.toHaveProperty('stream');
   });
 
   it('keeps stable-principal jobs readable after the managed bearer rotates', async () => {
@@ -494,6 +585,46 @@ describe('Backstage Booker reused queue wait', () => {
 
     expect(response.status).toBe(503);
     expect(response.body.error.code).toBe('BACKSTAGE_ASYNC_RESULT_UNAVAILABLE');
+    expect(response.body).toMatchObject({
+      result: null,
+      protected: true,
+      protectedGenerationCompleted: false,
+      official: false,
+      continuityVerified: false,
+      authority: 'none',
+      fallbackUsed: false,
+      fallbackPermitted: false,
+    });
     expect(JSON.stringify(response.body)).not.toContain('tampered');
+  });
+
+  it('returns explicit no-authority state when durable result storage is unavailable', async () => {
+    const app = express();
+    app.use(createBackstageBookerAsyncResultRouter({
+      boundary: buildTestBoundary(),
+      getJobByIdFn: async () => {
+        throw new JobRepositoryUnavailableError();
+      },
+      recordJobLookup: jest.fn(),
+    }));
+
+    const response = await request(app)
+      .get(RESULT_PATH)
+      .set('Authorization', `Bearer ${ACCESS_TOKEN}`);
+
+    expect(response.status).toBe(503);
+    expect(response.body).toMatchObject({
+      status: 'unavailable',
+      result: null,
+      error: { code: 'JOB_REPOSITORY_UNAVAILABLE' },
+      protected: true,
+      protectedGenerationCompleted: false,
+      official: false,
+      continuityVerified: false,
+      authority: 'none',
+      fallbackUsed: false,
+      fallbackPermitted: false,
+    });
+    expect(response.headers['cache-control']).toContain('no-store');
   });
 });
