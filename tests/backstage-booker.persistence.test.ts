@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { DEFAULT_BACKSTAGE_UNIVERSE_ID } from '@arcanos/protocol';
 import { BACKSTAGE_BOOKER_CLEAR_GENERATION_POLICY_MARKER } from '../src/services/backstageBookerClear.js';
 import { BACKSTAGE_BOOK_EVENT_MAX_BYTES } from '../src/shared/backstage/backstageEvent.js';
 import {
@@ -1265,6 +1266,35 @@ describe('Backstage Booker service persistence outcomes', () => {
         fallbackPermitted: false,
       },
     });
+  });
+
+  it('preserves the raw legacy module response outside protected execution', async () => {
+    await expect(BackstageBookerModule.actions.generateBooking({
+      universeId: 'legacy-module-response',
+      prompt: 'Book the next legacy chapter.',
+    })).resolves.toBe('Generated booking');
+  });
+
+  it('uses the default universe in a protected module response when omitted', async () => {
+    const result = await runWithBackstageProtectedQueuedExecution(
+      false,
+      () => BackstageBookerModule.actions.generateBooking({
+        prompt: 'Book the next protected default-universe chapter.',
+      })
+    );
+
+    expect(result).toMatchObject({
+      universeId: DEFAULT_BACKSTAGE_UNIVERSE_ID,
+      storyline: 'Generated booking',
+      protectedGeneration: {
+        authority: 'legacy_postgresql',
+        snapshotStatus: 'not_applicable',
+        official: true,
+      },
+    });
+    expect(mockRepository.loadContext).toHaveBeenCalledWith(
+      DEFAULT_BACKSTAGE_UNIVERSE_ID
+    );
   });
 
   it('fails protected generation closed when legacy authority cannot be read', async () => {

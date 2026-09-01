@@ -79,8 +79,10 @@ import {
   unprotectBackstageQueuedGptJobOutput,
 } from '@shared/backstage/backstageQueuedJobResultProtection.js';
 import {
+  buildBackstageBookerProtectedOverflowFailure,
   buildBackstageBookerProtectedFailureState,
   projectBackstageBookerManagedPendingResponse,
+  resolveBackstageBookerProtectedPayloadRejection,
 } from '@shared/backstage/backstageBookerAsyncContinuation.js';
 import {
   readProtectedBackstageCompletionProvenance,
@@ -1138,59 +1140,6 @@ function resolveDefaultGptQueryAndWaitRouteTimeoutMs(): number {
   return resolveGptWaitTimeoutMs() + DIRECT_RETURN_ROUTE_TIMEOUT_HEADROOM_MS;
 }
 
-function buildProtectedBackstageOverflowFailure(
-  payload: Record<string, unknown>
-): Record<string, unknown> | undefined {
-  const route = payload._route;
-  if (!route || typeof route !== 'object' || Array.isArray(route)) {
-    return undefined;
-  }
-  const routeRecord = route as Record<string, unknown>;
-  const action = routeRecord.action;
-  if (
-    routeRecord.gptId !== 'backstage-booker'
-    || (action !== 'generateBooking' && action !== 'generateBookingWithHRC')
-    || !readProtectedBackstageCompletionProvenance(payload, {
-      gptId: 'backstage-booker',
-      action,
-    })
-  ) {
-    return undefined;
-  }
-
-  const jobId = typeof payload.jobId === 'string' ? payload.jobId : null;
-  const poll = typeof payload.poll === 'string' ? payload.poll : null;
-  return {
-    ok: false,
-    ...(jobId ? { jobId } : {}),
-    status: 'failed',
-    ...(poll ? { poll } : {}),
-    ...buildBackstageBookerProtectedFailureState({
-      code: 'BACKSTAGE_ASYNC_RESULT_UNAVAILABLE',
-      message: 'Protected Backstage generation result exceeded the public response limit, so no official result was delivered.',
-    }),
-    ...(typeof payload.requestId === 'string'
-      ? { requestId: payload.requestId }
-      : {}),
-    ...(typeof payload.traceId === 'string'
-      ? { traceId: payload.traceId }
-      : {}),
-    _route: {
-      ...(typeof routeRecord.requestId === 'string'
-        ? { requestId: routeRecord.requestId }
-        : {}),
-      ...(typeof routeRecord.traceId === 'string'
-        ? { traceId: routeRecord.traceId }
-        : {}),
-      gptId: 'backstage-booker',
-      action,
-      ...(typeof routeRecord.timestamp === 'string'
-        ? { timestamp: routeRecord.timestamp }
-        : {}),
-    },
-  };
-}
-
 function sendGuardedGptJsonResponse(
   req: express.Request,
   res: express.Response,
@@ -1227,7 +1176,7 @@ function sendGuardedGptJsonResponse(
       }
     : payloadRecord;
   const protectedOverflowPayload =
-    buildProtectedBackstageOverflowFailure(correlatedPayload);
+    buildBackstageBookerProtectedOverflowFailure(correlatedPayload);
   return sendBoundedJsonResponse(req, res, correlatedPayload, {
     logEvent,
     statusCode,
@@ -3339,40 +3288,24 @@ router.post(
                 protectedBackstageJobExecution
                 && error instanceof BackstageJobPayloadProtectionError
               ) {
-                const clientIdentityError =
-                  error.code === 'BACKSTAGE_JOB_PAYLOAD_IDENTITY_INVALID'
-                  || error.code === 'BACKSTAGE_JOB_PAYLOAD_SERIALIZATION_FAILED';
-                const payloadTooLarge = error.code === 'BACKSTAGE_JOB_PAYLOAD_TOO_LARGE';
+                const publicRejection =
+                  resolveBackstageBookerProtectedPayloadRejection(error.code);
                 requestLogger?.warn?.('gpt.request.backstage_async_payload_rejected', {
                   endpoint: req.originalUrl,
                   gptId: incomingGptId,
                   requestId,
                   errorCode: error.code,
                 });
-                const publicError = payloadTooLarge
-                  ? {
-                      code: 'BACKSTAGE_ASYNC_PAYLOAD_TOO_LARGE',
-                      message: 'Protected Backstage generation request exceeds the queue payload size limit.',
-                    }
-                  : clientIdentityError
-                  ? {
-                      code: 'BAD_REQUEST',
-                      message: 'Protected Backstage generation request identity is invalid.',
-                    }
-                  : {
-                      code: 'BACKSTAGE_ASYNC_UNAVAILABLE',
-                      message: 'Protected Backstage generation is temporarily unavailable.',
-                    };
                 return sendGuardedGptJsonResponse(req, res, {
                   ok: false,
-                  ...buildBackstageBookerProtectedFailureState(publicError),
+                  ...buildBackstageBookerProtectedFailureState(publicRejection),
                   _route: {
                     requestId,
                     traceId,
                     gptId: incomingGptId,
                     timestamp: new Date().toISOString(),
                   },
-                }, 'gpt.response.backstage_async_payload_rejected', payloadTooLarge ? 413 : clientIdentityError ? 400 : 503);
+                }, 'gpt.response.backstage_async_payload_rejected', publicRejection.statusCode);
               }
               throw error;
             }
@@ -3608,9 +3541,10 @@ router.post(
                 idempotencySource: idempotencyDescriptor.source
               });
               if (protectedBackstageJobExecution) {
-                const postLatencyMs = backstageInitialAcceptanceStartedAtMs === null
-                  ? null
-                  : Math.max(0, Date.now() - backstageInitialAcceptanceStartedAtMs);
+                const postLatencyMs = Math.max(
+                  0,
+                  Date.now() - backstageInitialAcceptanceStartedAtMs!
+                );
                 requestLogger?.info?.('backstage.initial_acceptance.accepted', {
                   requestId,
                   traceId,
@@ -3895,9 +3829,10 @@ router.post(
                     action: protectedBackstageGenerationAction,
                     deduped: createResult.deduped,
                     acceptanceWaitMs: asyncWaitForResultMs,
-                    postLatencyMs: backstageInitialAcceptanceStartedAtMs === null
-                      ? null
-                      : Math.max(0, Date.now() - backstageInitialAcceptanceStartedAtMs),
+                    postLatencyMs: Math.max(
+                      0,
+                      Date.now() - backstageInitialAcceptanceStartedAtMs!
+                    ),
                     jobStatus: waitedJob.job.status,
                   });
                 }
@@ -4574,7 +4509,7 @@ router.post(
             : shapeClientRouteResult(envelope.result),
         };
         const protectedOverflowPayload =
-          buildProtectedBackstageOverflowFailure(publicPayload);
+          buildBackstageBookerProtectedOverflowFailure(publicPayload);
         const publicEnvelope = prepareBoundedClientJsonPayload(publicPayload, {
           logger: req.logger,
           logEvent: 'gpt.response',

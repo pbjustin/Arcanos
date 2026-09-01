@@ -140,6 +140,22 @@ coverage:
           - "packages/protocol/src/index.ts"
           - "packages/protocol/src/schemaCatalog.ts"
           - "packages/protocol/src/validation.ts"
+      backstage-protected-runtime:
+        target: 80%
+        threshold: 0%
+        flags:
+          - node
+        paths:
+          - "src/nativePrPreviewApplication.ts"
+          - "src/routes/backstageBookerAsyncResult.ts"
+          - "src/shared/backstage/backstageBookerAsyncContinuation.ts"
+          - "src/shared/backstage/backstageBookerAsyncResultCore.ts"
+          - "src/shared/backstage/backstageProtectedFailure.ts"
+          - "src/shared/backstage/backstageQueuedJobResultProtection.ts"
+          - "src/shared/gpt/gptAsyncWaitPolicy.ts"
+          - "src/shared/http/clientJsonPayload.ts"
+          - "src/shared/http/sendBoundedJsonResponse.ts"
+          - "src/workers/jobRunner.ts"
     patch:
       default:
         target: 80%

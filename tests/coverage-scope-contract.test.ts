@@ -11,6 +11,9 @@ import {
 import {
   backstageNotionCoverageScopeFiles,
 } from '../config/backstageNotionCoverageScope.js';
+import {
+  backstageProtectedRuntimeCoverageScopeFiles,
+} from '../config/backstageProtectedRuntimeCoverageScope.js';
 
 const ROUTING_STATUS_PATHS = [
   'src/routes/_core/gptDispatch.ts',
@@ -68,16 +71,34 @@ describe('Jest and Codecov coverage scope contract', () => {
       ...readProjectStatusPaths('backstage-notion-core'),
       ...readProjectStatusPaths('backstage-routing'),
       ...readProjectStatusPaths('backstage-protocol'),
+      ...readProjectStatusPaths('backstage-protected-runtime'),
     ];
     const combinedPaths = [...curatedCoverageScopeFiles, ...statusPaths];
 
     expect(readProjectStatusPaths('backstage-notion-core')).toEqual(corePaths);
     expect(readProjectStatusPaths('backstage-routing')).toEqual(routingPaths);
     expect(readProjectStatusPaths('backstage-protocol')).toEqual(protocolPaths);
+    expect(readProjectStatusPaths('backstage-protected-runtime')).toEqual(
+      backstageProtectedRuntimeCoverageScopeFiles
+    );
     expect(statusPaths).toHaveLength(new Set(statusPaths).size);
     expect(combinedPaths).toHaveLength(new Set(combinedPaths).size);
     expect([...combinedPaths].sort()).toEqual(
       [...jestCoverageScopeFiles].sort()
     );
+  });
+
+  it('uploads only the canonical LCOV report to Codecov', () => {
+    const workflow = readFileSync(
+      join(process.cwd(), '.github/workflows/ci-cd.yml'),
+      'utf8'
+    );
+    const uploadStep = workflow.match(
+      /uses: codecov\/codecov-action@v5[\s\S]*?fail_ci_if_error: false/u
+    )?.[0];
+
+    expect(uploadStep).toBeDefined();
+    expect(uploadStep).toContain('files: coverage/lcov.info');
+    expect(uploadStep).toContain('disable_search: true');
   });
 });

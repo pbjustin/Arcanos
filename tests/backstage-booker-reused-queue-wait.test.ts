@@ -284,6 +284,56 @@ describe('Backstage Booker reused queue wait', () => {
     }
   });
 
+  it('returns a protected method-not-allowed envelope after bearer authentication', async () => {
+    const getJobByIdFn = jest.fn(async () => buildProtectedJob());
+    const app = express();
+    app.use((req, _res, next) => {
+      if (req.get('x-test-request-context') === 'present') {
+        req.requestId = 'request-method-not-allowed';
+        req.traceId = 'trace-method-not-allowed';
+      }
+      next();
+    });
+    app.use(createBackstageBookerAsyncResultRouter({
+      boundary: buildTestBoundary(),
+      getJobByIdFn,
+      recordJobLookup: jest.fn(),
+    }));
+
+    const response = await request(app)
+      .post(RESULT_PATH)
+      .set('Authorization', `Bearer ${ACCESS_TOKEN}`);
+
+    expect(response.status).toBe(405);
+    expect(response.headers.allow).toBe('GET, HEAD');
+    expect(response.body).toMatchObject({
+      ok: false,
+      result: null,
+      error: {
+        code: 'METHOD_NOT_ALLOWED',
+        message: 'This Backstage Booker async result endpoint supports GET and HEAD only.',
+      },
+      protected: true,
+      protectedGenerationCompleted: false,
+      official: false,
+      continuityVerified: false,
+      authority: 'none',
+      snapshotStatus: 'not_applicable',
+      fallbackUsed: false,
+      fallbackPermitted: false,
+    });
+    const correlatedResponse = await request(app)
+      .post(RESULT_PATH)
+      .set('Authorization', `Bearer ${ACCESS_TOKEN}`)
+      .set('x-test-request-context', 'present');
+    expect(correlatedResponse.status).toBe(405);
+    expect(correlatedResponse.body).toMatchObject({
+      requestId: 'request-method-not-allowed',
+      traceId: 'trace-method-not-allowed',
+    });
+    expect(getJobByIdFn).not.toHaveBeenCalled();
+  });
+
   it('returns an owned completed protected job with the managed bearer only', async () => {
     const completedJob = completeProtectedJob(buildProtectedJob());
     const getJobByIdFn = jest.fn(async () => completedJob);

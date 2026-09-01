@@ -126,9 +126,18 @@ const { metricsRegistry, resetAppMetricsForTests } = await import(
   '../src/platform/observability/appMetrics.js'
 );
 
-function buildApp(options: { onResponseClose?: () => void } = {}) {
+function buildApp(options: {
+  onResponseClose?: () => void;
+  bodyOverride?: unknown;
+} = {}) {
   const app = express();
   app.use(express.json());
+  if (Object.prototype.hasOwnProperty.call(options, 'bodyOverride')) {
+    app.use((req, _res, next) => {
+      req.body = options.bodyOverride;
+      next();
+    });
+  }
   app.use(requestContext);
   app.use((_req, res, next) => {
     if (options.onResponseClose) {
@@ -365,6 +374,24 @@ function buildBackstageRouting(
       timestamp: '2026-08-15T20:00:00.000Z',
     },
   };
+}
+
+function configureManagedBackstageGeneration(options: {
+  jobBacked?: boolean;
+  payloadKeyByte?: number;
+} = {}): string {
+  const accessToken = `backstage-${'z'.repeat(48)}`;
+  process.env.ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN = accessToken;
+  process.env.ARCANOS_BACKSTAGE_BOOKER_ASYNC_GENERATION_ENABLED =
+    options.jobBacked === true ? 'true' : 'false';
+  if (options.jobBacked === true) {
+    process.env.ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY =
+      Buffer.alloc(32, options.payloadKeyByte ?? 0x74).toString('base64');
+  }
+  mockResolveGptRouting.mockResolvedValueOnce(
+    buildBackstageRouting('generateBooking')
+  );
+  return accessToken;
 }
 
 function buildBackstageContinuityQueryEnvelope() {
@@ -2134,6 +2161,402 @@ describe('GPT fast-path route branching', () => {
     expect(response.headers['x-gpt-queue-bypassed']).toBe('true');
     expect(mockRouteGptRequest).toHaveBeenCalledTimes(1);
     expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+  });
+
+  it('fails protected async generation closed when job-read authentication is unavailable', async () => {
+    const accessToken = configureManagedBackstageGeneration({
+      jobBacked: true,
+      payloadKeyByte: 0x64,
+    });
+    delete process.env.ARCANOS_JOB_READ_CAPABILITY_SECRET;
+
+    const response = await request(buildApp())
+      .post('/gpt/backstage-booker')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .send({
+        action: 'generateBooking',
+        executionMode: 'async',
+        payload: {
+          universeId: 'missing-job-read-auth-universe',
+          prompt: 'Book the next protected show.',
+        },
+      });
+
+    expect(response.status).toBe(503);
+    expect(response.body).toMatchObject({
+      ok: false,
+      error: {
+        code: 'JOB_READ_AUTH_UNAVAILABLE',
+        message: 'Async job reads are temporarily unavailable.',
+      },
+    });
+    expectProtectedBookerFailureState(response.body);
+    expect(response.body).not.toHaveProperty('jobId');
+    expect(response.body).not.toHaveProperty('jobReadToken');
+    expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it('rejects a non-object protected generation body with the fixed no-authority contract', async () => {
+    const accessToken = configureManagedBackstageGeneration({
+      jobBacked: true,
+      payloadKeyByte: 0x66,
+    });
+
+    const response = await request(buildApp({ bodyOverride: 'invalid-protected-body' }))
+      .post('/gpt/backstage-booker')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .send({ action: 'generateBooking' });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({
+      ok: false,
+      error: {
+        code: 'BAD_REQUEST',
+        message: 'Protected Backstage generation requires a JSON object request body.',
+      },
+    });
+    expectProtectedBookerFailureState(response.body);
+    expect(response.body).not.toHaveProperty('idempotencyKey');
+    expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it('rejects a non-object generic idempotent body without queue submission', async () => {
+    const explicitKey = 'invalid-generic-body-idempotency-key';
+
+    const response = await request(buildApp({ bodyOverride: ['invalid-generic-body'] }))
+      .post('/gpt/arcanos-core')
+      .set('Idempotency-Key', explicitKey)
+      .send({ prompt: 'Queue this request once.' });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({
+      ok: false,
+      error: {
+        code: 'BAD_REQUEST',
+        message: 'Idempotent GPT requests require a JSON object request body.',
+      },
+      idempotencyKey: explicitKey,
+    });
+    expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it('denies generic continuation capability for a protected job with ineligible provenance', async () => {
+    const accessToken = configureManagedBackstageGeneration({
+      jobBacked: true,
+      payloadKeyByte: 0x65,
+    });
+    findOrCreateGptJobMock.mockImplementationOnce(async (options: { input: unknown }) => ({
+      job: {
+        id: 'job-protected-provenance-denied',
+        job_type: 'internal',
+        status: 'pending',
+        input: options.input,
+      },
+      created: false,
+      deduped: true,
+      dedupeReason: 'reused_inflight_job',
+    }));
+
+    const response = await request(buildApp())
+      .post('/gpt/backstage-booker')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .send({
+        action: 'generateBooking',
+        executionMode: 'async',
+        payload: {
+          universeId: 'protected-provenance-denied-universe',
+          prompt: 'Book the next protected show.',
+        },
+      });
+
+    expect(response.status).toBe(503);
+    expect(response.body).toMatchObject({
+      ok: false,
+      error: {
+        code: 'JOB_READ_PROVENANCE_UNAVAILABLE',
+        message: 'Async job continuation is temporarily unavailable.',
+      },
+    });
+    expectProtectedBookerFailureState(response.body);
+    expect(response.body).not.toHaveProperty('jobId');
+    expect(response.body).not.toHaveProperty('jobReadToken');
+    expect(response.body).not.toHaveProperty('poll');
+    expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it('redacts a direct protected dispatcher error into the fixed failure contract', async () => {
+    const privateFailure = 'private-direct-dispatcher-error-sentinel';
+    const accessToken = configureManagedBackstageGeneration();
+    mockRouteGptRequest.mockResolvedValueOnce({
+      ok: false,
+      error: {
+        code: 'MODULE_ERROR',
+        message: privateFailure,
+        details: { providerMessage: privateFailure },
+      },
+      _route: {
+        gptId: 'backstage-booker',
+        module: 'BACKSTAGE:BOOKER',
+        action: 'generateBooking',
+        route: 'backstage-booker',
+        timestamp: '2026-08-31T12:00:00.000Z',
+      },
+    });
+
+    const response = await request(buildApp())
+      .post('/gpt/backstage-booker')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .send({
+        action: 'generateBooking',
+        executionMode: 'sync',
+        payload: {
+          universeId: 'direct-dispatcher-error-universe',
+          prompt: 'Book the next protected show.',
+        },
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({
+      ok: false,
+      error: {
+        code: 'BACKSTAGE_ASYNC_EXECUTION_FAILED',
+        message: 'Protected Backstage generation did not complete.',
+      },
+      requestId: expect.any(String),
+      traceId: expect.any(String),
+      _route: {
+        requestId: expect.any(String),
+        traceId: expect.any(String),
+        gptId: 'backstage-booker',
+        action: 'generateBooking',
+      },
+    });
+    expectProtectedBookerFailureState(response.body);
+    expect(response.body._route.requestId).toBe(response.body.requestId);
+    expect(JSON.stringify(response.body)).not.toContain(privateFailure);
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects a direct protected success without completion provenance', async () => {
+    const privateResult = 'private-direct-unverified-booking-sentinel';
+    const accessToken = configureManagedBackstageGeneration();
+    mockRouteGptRequest.mockResolvedValueOnce({
+      ok: true,
+      result: {
+        universeId: 'direct-unverified-result-universe',
+        storyline: privateResult,
+      },
+      _route: {
+        gptId: 'backstage-booker',
+        module: 'BACKSTAGE:BOOKER',
+        action: 'generateBooking',
+        route: 'backstage-booker',
+        timestamp: '2026-08-31T12:01:00.000Z',
+      },
+    });
+
+    const response = await request(buildApp())
+      .post('/gpt/backstage-booker')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .send({
+        action: 'generateBooking',
+        executionMode: 'sync',
+        payload: {
+          universeId: 'direct-unverified-result-universe',
+          prompt: 'Book the next protected show.',
+        },
+      });
+
+    expect(response.status).toBe(503);
+    expect(response.body).toMatchObject({
+      ok: false,
+      error: { code: 'BACKSTAGE_ASYNC_RESULT_UNAVAILABLE' },
+      requestId: expect.any(String),
+      traceId: expect.any(String),
+      _route: {
+        requestId: expect.any(String),
+        traceId: expect.any(String),
+        gptId: 'backstage-booker',
+        action: 'generateBooking',
+      },
+    });
+    expectProtectedBookerFailureState(response.body);
+    expect(response.body._route.requestId).toBe(response.body.requestId);
+    expect(JSON.stringify(response.body)).not.toContain(privateResult);
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+  });
+
+  it('fails a direct protected overflow closed with bounded correlation metadata', async () => {
+    const privateResult = 'private-direct-overflow-booking-sentinel-'.repeat(2_000);
+    const accessToken = configureManagedBackstageGeneration();
+    mockRouteGptRequest.mockResolvedValueOnce({
+      ok: true,
+      requestId: 'dispatcher-overflow-request',
+      traceId: 'dispatcher-overflow-trace',
+      result: buildProtectedBookingResult({
+        universeId: 'direct-overflow-universe',
+        storyline: privateResult,
+        authority: 'notion',
+      }),
+      _route: {
+        requestId: 'route-overflow-request',
+        traceId: 'route-overflow-trace',
+        gptId: 'backstage-booker',
+        module: 'BACKSTAGE:BOOKER',
+        action: 'generateBooking',
+        route: 'backstage-booker',
+      },
+    });
+
+    const response = await request(buildApp())
+      .post('/gpt/backstage-booker')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .send({
+        action: 'generateBooking',
+        executionMode: 'sync',
+        payload: {
+          universeId: 'direct-overflow-universe',
+          prompt: 'Book the next protected show.',
+        },
+      });
+
+    expect(response.status).toBe(503);
+    expect(response.headers['x-response-truncated']).toBe('true');
+    expect(response.body).toMatchObject({
+      ok: false,
+      status: 'failed',
+      error: { code: 'BACKSTAGE_ASYNC_RESULT_UNAVAILABLE' },
+      requestId: 'dispatcher-overflow-request',
+      traceId: 'dispatcher-overflow-trace',
+      _route: {
+        requestId: 'route-overflow-request',
+        traceId: 'route-overflow-trace',
+        gptId: 'backstage-booker',
+        action: 'generateBooking',
+      },
+    });
+    expectProtectedBookerFailureState(response.body);
+    expect(response.body._route).not.toHaveProperty('timestamp');
+    expect(JSON.stringify(response.body)).not.toContain(
+      'private-direct-overflow-booking-sentinel'
+    );
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+  });
+
+  it('maps a direct protected route timeout onto the fixed timeout contract', async () => {
+    const privateFailure = 'private-protected-timeout-sentinel';
+    const accessToken = configureManagedBackstageGeneration();
+    process.env.GPT_ROUTE_HARD_TIMEOUT_MS = '6000';
+    const timeoutError = new Error(
+      `GPT route timeout after 60000ms ${privateFailure}`
+    );
+    timeoutError.name = 'AbortError';
+    mockRouteGptRequest.mockRejectedValueOnce(timeoutError);
+
+    const response = await request(buildApp())
+      .post('/gpt/backstage-booker')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .send({
+        action: 'generateBooking',
+        executionMode: 'sync',
+        payload: {
+          universeId: 'direct-timeout-universe',
+          prompt: 'Book the next protected show.',
+        },
+      });
+
+    expect(response.status).toBe(504);
+    expect(response.body).toMatchObject({
+      ok: false,
+      error: {
+        code: 'BACKSTAGE_ASYNC_TIMEOUT',
+        message: 'Protected Backstage generation did not complete before the request deadline.',
+      },
+      _route: {
+        gptId: 'backstage-booker',
+        action: 'generateBooking',
+      },
+    });
+    expectProtectedBookerFailureState(response.body);
+    expect(JSON.stringify(response.body)).not.toContain(privateFailure);
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+  });
+
+  it('maps a direct protected non-timeout AbortError onto the fixed execution failure', async () => {
+    const privateFailure = 'private-protected-provider-abort-sentinel';
+    const accessToken = configureManagedBackstageGeneration();
+    const abortError = new Error(privateFailure);
+    abortError.name = 'AbortError';
+    mockRouteGptRequest.mockRejectedValueOnce(abortError);
+
+    const response = await request(buildApp())
+      .post('/gpt/backstage-booker')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .send({
+        action: 'generateBooking',
+        executionMode: 'sync',
+        payload: {
+          universeId: 'direct-provider-abort-universe',
+          prompt: 'Book the next protected show.',
+        },
+      });
+
+    expect(response.status).toBe(503);
+    expect(response.body).toMatchObject({
+      ok: false,
+      error: {
+        code: 'BACKSTAGE_ASYNC_EXECUTION_FAILED',
+        message: 'Protected Backstage generation did not complete.',
+      },
+      _route: {
+        gptId: 'backstage-booker',
+        action: 'generateBooking',
+      },
+    });
+    expectProtectedBookerFailureState(response.body);
+    expect(JSON.stringify(response.body)).not.toContain(privateFailure);
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+  });
+
+  it('maps a direct protected ordinary error onto the fixed unexpected failure contract', async () => {
+    const privateFailure = 'private-protected-unexpected-error-sentinel';
+    const accessToken = configureManagedBackstageGeneration();
+    mockRouteGptRequest.mockRejectedValueOnce(new Error(privateFailure));
+
+    const response = await request(buildApp())
+      .post('/gpt/backstage-booker')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .send({
+        action: 'generateBooking',
+        executionMode: 'sync',
+        payload: {
+          universeId: 'direct-unexpected-error-universe',
+          prompt: 'Book the next protected show.',
+        },
+      });
+
+    expect(response.status).toBe(500);
+    expect(response.body).toMatchObject({
+      ok: false,
+      error: {
+        code: 'BACKSTAGE_ASYNC_EXECUTION_FAILED',
+        message: 'Protected Backstage generation did not complete.',
+      },
+      _route: {
+        gptId: 'backstage-booker',
+        action: 'generateBooking',
+      },
+    });
+    expectProtectedBookerFailureState(response.body);
+    expect(JSON.stringify(response.body)).not.toContain(privateFailure);
     expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
   });
 

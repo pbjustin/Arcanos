@@ -1,5 +1,9 @@
 import type { GptJobResultLookupPayload } from '@shared/gpt/gptJobResult.js';
+import type {
+  BackstageJobPayloadProtectionErrorCode,
+} from './backstageJobPayloadProtection.js';
 import {
+  readProtectedBackstageCompletionProvenance,
   resolveBackstageProtectedFailureCode,
   type BackstageProtectedFailureCode,
 } from './backstageProtectedFailure.js';
@@ -94,6 +98,94 @@ export function buildBackstageBookerProtectedFailureState(input: {
     snapshotStatus: 'not_applicable',
     fallbackUsed: false,
     fallbackPermitted: false,
+  };
+}
+
+export interface BackstageBookerProtectedPayloadRejection {
+  code: 'BACKSTAGE_ASYNC_PAYLOAD_TOO_LARGE' | 'BAD_REQUEST' | 'BACKSTAGE_ASYNC_UNAVAILABLE';
+  message: string;
+  statusCode: 400 | 413 | 503;
+}
+
+/** Map private payload-protection failures onto the fixed public POST contract. */
+export function resolveBackstageBookerProtectedPayloadRejection(
+  errorCode: BackstageJobPayloadProtectionErrorCode
+): BackstageBookerProtectedPayloadRejection {
+  if (errorCode === 'BACKSTAGE_JOB_PAYLOAD_TOO_LARGE') {
+    return {
+      code: 'BACKSTAGE_ASYNC_PAYLOAD_TOO_LARGE',
+      message: 'Protected Backstage generation request exceeds the queue payload size limit.',
+      statusCode: 413,
+    };
+  }
+  if (
+    errorCode === 'BACKSTAGE_JOB_PAYLOAD_IDENTITY_INVALID'
+    || errorCode === 'BACKSTAGE_JOB_PAYLOAD_SERIALIZATION_FAILED'
+  ) {
+    return {
+      code: 'BAD_REQUEST',
+      message: 'Protected Backstage generation request identity is invalid.',
+      statusCode: 400,
+    };
+  }
+  return {
+    code: 'BACKSTAGE_ASYNC_UNAVAILABLE',
+    message: 'Protected Backstage generation is temporarily unavailable.',
+    statusCode: 503,
+  };
+}
+
+/** Replace an oversized official result with a bounded no-authority envelope. */
+export function buildBackstageBookerProtectedOverflowFailure(
+  payload: Record<string, unknown>
+): Record<string, unknown> | undefined {
+  const route = payload._route;
+  if (!route || typeof route !== 'object' || Array.isArray(route)) {
+    return undefined;
+  }
+  const routeRecord = route as Record<string, unknown>;
+  const action = routeRecord.action;
+  if (
+    routeRecord.gptId !== 'backstage-booker'
+    || (action !== 'generateBooking' && action !== 'generateBookingWithHRC')
+    || !readProtectedBackstageCompletionProvenance(payload, {
+      gptId: 'backstage-booker',
+      action,
+    })
+  ) {
+    return undefined;
+  }
+
+  const jobId = typeof payload.jobId === 'string' ? payload.jobId : null;
+  const poll = typeof payload.poll === 'string' ? payload.poll : null;
+  return {
+    ok: false,
+    ...(jobId ? { jobId } : {}),
+    status: 'failed',
+    ...(poll ? { poll } : {}),
+    ...buildBackstageBookerProtectedFailureState({
+      code: 'BACKSTAGE_ASYNC_RESULT_UNAVAILABLE',
+      message: 'Protected Backstage generation result exceeded the public response limit, so no official result was delivered.',
+    }),
+    ...(typeof payload.requestId === 'string'
+      ? { requestId: payload.requestId }
+      : {}),
+    ...(typeof payload.traceId === 'string'
+      ? { traceId: payload.traceId }
+      : {}),
+    _route: {
+      ...(typeof routeRecord.requestId === 'string'
+        ? { requestId: routeRecord.requestId }
+        : {}),
+      ...(typeof routeRecord.traceId === 'string'
+        ? { traceId: routeRecord.traceId }
+        : {}),
+      gptId: 'backstage-booker',
+      action,
+      ...(typeof routeRecord.timestamp === 'string'
+        ? { timestamp: routeRecord.timestamp }
+        : {}),
+    },
   };
 }
 

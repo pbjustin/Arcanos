@@ -5,15 +5,19 @@ import {
   runWithBackstageProtectedQueuedExecution,
 } from '../src/services/backstageNotionEnrichmentAuthorization.js';
 import {
+  buildBackstageBookerProtectedOverflowFailure,
   projectBackstageBookerManagedProtectedFailurePayload,
+  resolveBackstageBookerProtectedPayloadRejection,
 } from '../src/shared/backstage/backstageBookerAsyncContinuation.js';
 import {
   buildProtectedBackstageFailureEnvelope,
+  readProtectedBackstageFailureCode,
   readProtectedBackstageGenerationProvenance,
   resolveBackstageProtectedFailureCode,
 } from '../src/shared/backstage/backstageProtectedFailure.js';
 import {
   BackstageBookerAsyncResultUnavailableError,
+  projectTrustedProtectedBackstageTerminalFailure,
   readBackstageBookerAsyncResultCore,
 } from '../src/shared/backstage/backstageBookerAsyncResultCore.js';
 import {
@@ -27,6 +31,18 @@ import { buildGptJobResultLookupPayload } from '../src/shared/gpt/gptJobResult.j
 
 describe('protected Backstage generation provenance', () => {
   const jobId = '11111111-1111-4111-8111-111111111111';
+
+  const completedProvenance = {
+    version: 1,
+    protected: true,
+    protectedGenerationCompleted: true,
+    official: true,
+    continuityVerified: true,
+    authority: 'notion',
+    snapshotStatus: 'current_complete',
+    fallbackUsed: false,
+    fallbackPermitted: false,
+  } as const;
 
   it('does not let authorization or caller-shaped context spoof retrieval authority', () => {
     runWithBackstageNotionEnrichmentAuthorization(true, () => {
@@ -144,10 +160,158 @@ describe('protected Backstage generation provenance', () => {
     expect(JSON.stringify(envelope)).not.toContain('preview draft partial storyline sentinel');
   });
 
+  it('rejects a protected failure envelope with any non-canonical field', () => {
+    const envelope = buildProtectedBackstageFailureEnvelope({
+      gptId: 'backstage-booker',
+      action: 'generateBooking',
+      code: 'BACKSTAGE_ASYNC_EXECUTION_FAILED',
+    });
+
+    expect(readProtectedBackstageFailureCode({
+      ...envelope,
+      providerMessage: 'private provider sentinel',
+    }, {
+      gptId: 'backstage-booker',
+      action: 'generateBooking',
+    })).toBeNull();
+  });
+
   it('preserves the bounded structural integrity domain code', () => {
     expect(resolveBackstageProtectedFailureCode(
       'BACKSTAGE_BOOKER_INTEGRITY_FAILED'
     )).toBe('BACKSTAGE_BOOKER_INTEGRITY_FAILED');
+  });
+
+  it.each([
+    ['BACKSTAGE_JOB_PAYLOAD_TOO_LARGE', {
+      code: 'BACKSTAGE_ASYNC_PAYLOAD_TOO_LARGE',
+      message: 'Protected Backstage generation request exceeds the queue payload size limit.',
+      statusCode: 413,
+    }],
+    ['BACKSTAGE_JOB_PAYLOAD_IDENTITY_INVALID', {
+      code: 'BAD_REQUEST',
+      message: 'Protected Backstage generation request identity is invalid.',
+      statusCode: 400,
+    }],
+    ['BACKSTAGE_JOB_PAYLOAD_SERIALIZATION_FAILED', {
+      code: 'BAD_REQUEST',
+      message: 'Protected Backstage generation request identity is invalid.',
+      statusCode: 400,
+    }],
+    ['BACKSTAGE_JOB_PAYLOAD_CONFIG_MISSING', {
+      code: 'BACKSTAGE_ASYNC_UNAVAILABLE',
+      message: 'Protected Backstage generation is temporarily unavailable.',
+      statusCode: 503,
+    }],
+    ['BACKSTAGE_JOB_PAYLOAD_CONFIG_INVALID', {
+      code: 'BACKSTAGE_ASYNC_UNAVAILABLE',
+      message: 'Protected Backstage generation is temporarily unavailable.',
+      statusCode: 503,
+    }],
+    ['BACKSTAGE_JOB_PAYLOAD_CONFIG_COLLISION', {
+      code: 'BACKSTAGE_ASYNC_UNAVAILABLE',
+      message: 'Protected Backstage generation is temporarily unavailable.',
+      statusCode: 503,
+    }],
+    ['BACKSTAGE_JOB_PAYLOAD_ENVELOPE_INVALID', {
+      code: 'BACKSTAGE_ASYNC_UNAVAILABLE',
+      message: 'Protected Backstage generation is temporarily unavailable.',
+      statusCode: 503,
+    }],
+    ['BACKSTAGE_JOB_PAYLOAD_AUTHENTICATION_FAILED', {
+      code: 'BACKSTAGE_ASYNC_UNAVAILABLE',
+      message: 'Protected Backstage generation is temporarily unavailable.',
+      statusCode: 503,
+    }],
+  ] as const)(
+    'maps private payload protection code %s onto a fixed public rejection',
+    (errorCode, expected) => {
+      expect(resolveBackstageBookerProtectedPayloadRejection(errorCode))
+        .toEqual(expected);
+    }
+  );
+
+  it.each([
+    [{}],
+    [{ _route: null }],
+    [{ _route: 'backstage-booker' }],
+    [{ _route: [] }],
+    [{ _route: { gptId: 'arcanos-core', action: 'generateBooking' } }],
+    [{ _route: { gptId: 'backstage-booker', action: 'queryContinuity' } }],
+    [{
+      ok: true,
+      result: {},
+      _route: { gptId: 'backstage-booker', action: 'generateBooking' },
+    }],
+  ])('does not manufacture a protected overflow failure for %j', (payload) => {
+    expect(buildBackstageBookerProtectedOverflowFailure(payload)).toBeUndefined();
+  });
+
+  it('preserves safe correlation fields in a protected overflow failure', () => {
+    const overflow = buildBackstageBookerProtectedOverflowFailure({
+      ok: true,
+      jobId,
+      poll: `/managed/${jobId}`,
+      requestId: 'request-overflow',
+      traceId: 'trace-overflow',
+      result: { protectedGeneration: completedProvenance },
+      _route: {
+        requestId: 'route-request-overflow',
+        traceId: 'route-trace-overflow',
+        gptId: 'backstage-booker',
+        action: 'generateBooking',
+        timestamp: '2026-08-31T12:00:00.000Z',
+      },
+    });
+
+    expect(overflow).toMatchObject({
+      ok: false,
+      jobId,
+      poll: `/managed/${jobId}`,
+      status: 'failed',
+      requestId: 'request-overflow',
+      traceId: 'trace-overflow',
+      result: null,
+      error: { code: 'BACKSTAGE_ASYNC_RESULT_UNAVAILABLE' },
+      _route: {
+        requestId: 'route-request-overflow',
+        traceId: 'route-trace-overflow',
+        gptId: 'backstage-booker',
+        action: 'generateBooking',
+        timestamp: '2026-08-31T12:00:00.000Z',
+      },
+    });
+  });
+
+  it('omits absent optional fields from a protected HRC overflow failure', () => {
+    expect(buildBackstageBookerProtectedOverflowFailure({
+      ok: true,
+      result: { protectedGeneration: completedProvenance },
+      _route: {
+        gptId: 'backstage-booker',
+        action: 'generateBookingWithHRC',
+      },
+    })).toEqual({
+      ok: false,
+      status: 'failed',
+      result: null,
+      error: {
+        code: 'BACKSTAGE_ASYNC_RESULT_UNAVAILABLE',
+        message: 'Protected Backstage generation result exceeded the public response limit, so no official result was delivered.',
+      },
+      protected: true,
+      protectedGenerationCompleted: false,
+      official: false,
+      continuityVerified: false,
+      authority: 'none',
+      snapshotStatus: 'not_applicable',
+      fallbackUsed: false,
+      fallbackPermitted: false,
+      _route: {
+        gptId: 'backstage-booker',
+        action: 'generateBookingWithHRC',
+      },
+    });
   });
 
   it('requires authenticated unsealing and a valid protected failure envelope before projecting its code', async () => {
@@ -207,6 +371,22 @@ describe('protected Backstage generation provenance', () => {
         error: { code: 'BACKSTAGE_NOTION_INDEX_UNAVAILABLE' },
         authority: 'none',
       });
+      (job as { output: unknown }).output = protectBackstageQueuedGptJobOutput({
+        jobId,
+        rawInput: input,
+        output: {
+          ok: false,
+          error: { code: 'PRIVATE_PROVIDER_FAILURE' },
+          _route: {
+            gptId: 'backstage-booker',
+            action: 'generateBooking',
+            route: 'worker',
+          },
+        },
+      });
+      await expect(read()).rejects.toBeInstanceOf(
+        BackstageBookerAsyncResultUnavailableError
+      );
       const tamperedOutput = {
         ...output,
         sealedPayload: {
@@ -225,6 +405,15 @@ describe('protected Backstage generation provenance', () => {
         process.env.ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY = originalKey;
       }
     }
+  });
+
+  it('rejects non-terminal jobs from the trusted terminal failure projector', () => {
+    expect(() => projectTrustedProtectedBackstageTerminalFailure({
+      id: jobId,
+      status: 'running',
+      job_type: 'gpt',
+      input: {},
+    } as never)).toThrow(BackstageBookerAsyncResultUnavailableError);
   });
 
   it('rejects a sealed completed result whose provenance or action binding was spoofed', async () => {

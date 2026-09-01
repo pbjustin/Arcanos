@@ -1320,10 +1320,8 @@ export async function executeQueuedGptRequest(params: {
     backstageMutationAdmission,
   } = parsedGptJobInput.value;
   const buildProtectedCancellationOutcome = (): JobExecutionOutcome => {
-    const protectedBackstage = parsedGptJobInput.value.protectedBackstage;
-    if (!protectedBackstage) {
-      throw new Error('Protected cancellation outcome requires a protected Booker job.');
-    }
+    // Every caller is gated by protectedBackstageQueuedExecution above.
+    const protectedBackstage = parsedGptJobInput.value.protectedBackstage!;
     const code = 'BACKSTAGE_ASYNC_EXECUTION_FAILED' as const;
     logger.warn('backstage.protected_result.failed', {
       action: protectedBackstage.action,
@@ -1681,12 +1679,10 @@ export async function executeQueuedGptRequest(params: {
 
   if (!envelope.ok) {
     if (
+      !protectedBackstageQueuedExecution &&
       params.cancellationSignal?.aborted &&
       envelope.error.code === 'REQUEST_ABORTED'
     ) {
-      if (protectedBackstageQueuedExecution) {
-        return buildProtectedCancellationOutcome();
-      }
       return {
         status: 'cancelled',
         output: null,
