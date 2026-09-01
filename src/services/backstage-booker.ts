@@ -104,6 +104,9 @@ import {
   resolveBackstageGenerationTokenLimit,
 } from '@shared/backstage/backstageActionPolicy.js';
 import {
+  resolveBackstageDurableContinuityFailure,
+} from '@shared/backstage/backstageProtectedContinuityPolicy.js';
+import {
   hasBackstageRecoveryBudget,
   resolveBackstageExecutionBudgetPolicy,
   type BackstageGenerationAction,
@@ -1494,21 +1497,33 @@ async function buildStructuredBookingPrompt(
     durableContextLoaded = true;
     recordBackstageProtectedGenerationAuthority('legacy_postgresql');
   } catch (error) {
-    if (isBackstageBookerLegacyReadQuarantinedError(error)) {
+    const protectedGenerationExecution =
+      isBackstageProtectedGenerationExecution();
+    const continuityFailure = resolveBackstageDurableContinuityFailure({
+      protectedGenerationExecution,
+      legacyReadQuarantined:
+        isBackstageBookerLegacyReadQuarantinedError(error),
+      readProcessFallback: () => {
+        console.warn(
+          'Backstage Booker: falling back to in-memory context',
+          resolveErrorMessage(error)
+        );
+        return promptBlocksFromFallback(readFallbackUniverseState(universeId));
+      },
+    });
+    if (continuityFailure.state === 'unavailable') {
+      if (continuityFailure.reason === 'protected_generation') {
+        // A protected generation establishes one durable authority or fails; a
+        // process-local snapshot can never become its public continuity basis.
+        logger.warn('backstage.protected_result.authority_status', {
+          authority: 'none',
+          status: 'legacy_postgresql_unavailable',
+        });
+      }
       throw new BackstageNotionIndexUnavailableError();
     }
-    if (isBackstageProtectedGenerationExecution()) {
-      // A protected generation establishes one durable authority or fails; a
-      // process-local snapshot can never become its public continuity basis.
-      logger.warn('backstage.protected_result.authority_status', {
-        authority: 'none',
-        status: 'legacy_postgresql_unavailable',
-      });
-      throw new BackstageNotionIndexUnavailableError();
-    }
-    console.warn('Backstage Booker: falling back to in-memory context', resolveErrorMessage(error));
     //audit Assumption: continuity reads may degrade independently of writes; failure risk: generation crosses universe boundaries or fails during a database outage; expected invariant: fallback context remains isolated by universe and clearly process-local; handling strategy: render only the selected universe's bounded process state.
-    blocks = promptBlocksFromFallback(readFallbackUniverseState(universeId));
+    blocks = continuityFailure.value;
     canonBlocks = null;
   }
 

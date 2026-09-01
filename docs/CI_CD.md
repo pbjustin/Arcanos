@@ -261,7 +261,8 @@ server-owned `route-budget-provider-delay`, `hrc-timeout-retry-cache`,
 `notion-sync-phase-a-contract`, `notion-authority-rag-contract`,
 `partition-failure-telemetry-contract`, `continuity-query-contract`,
 `continuity-subtree-contract`, `managed-async-continuation-contract`,
-and `gpt-client-identity-contract` selectors.
+`protected-failure-no-fallback-contract`, and `gpt-client-identity-contract`
+selectors.
 The route-budget case uses the
 production Backstage route-ID policy,
 the real route timeout resolver, the shared Trinity run-options builder, and the
@@ -330,7 +331,7 @@ and late-acquisition lease cleanup with injected no-effect seams. The establishe
 production-output and Notion-authority selectors execute those assertions
 fail-closed without changing their legacy bodies. The common generation dispatcher also executes the
 semantic-digest-pinned pure CLEAR policy composer shared with production before
-every one of the thirteen
+every one of the fourteen
 selectors. It assembles server-owned authority and CLEAR policy through the
 production Trinity direct-answer message helper, forces one synthetic
 length-exhaustion retry, and requires the same single marker/version and five
@@ -437,16 +438,16 @@ required PR workflows run that contract suite. A live run requires both
 `--execute --allow-network`, exact independently confirmed web/worker preview
 origins, the PR number, a clean tracked/untracked worktree, the canonical
 Arcanos `origin`, and the local HEAD commit. Its result is served-identity
-evidence, not Railway control-plane provenance. The current fixed 136-request
+evidence, not Railway control-plane provenance. The current fixed 137-request
 plan is the
 original 69-request matrix plus seven public Gaming requests, 28 Gaming-source
 requests (eight true unauthenticated checks, including auth-first `OPTIONS` and
 encoded-status cases, and 20 labeled `simulatedAuth` fixtures), two worker-role
 Gaming denials, six sealed predictive/reactive self-heal approval cases, and one
-worker-role approval-contract denial, thirteen sealed Backstage generation
-timeout/cache/review-completion/compact-retry/production-output/output-admission/Notion-Phase-A/Notion-authority/failure-telemetry/continuity/managed-async/GPT-client-identity cases
-(the managed-async and GPT-client-identity cases are the twenty-second and
-twenty-third `simulatedAuth` requests), one
+worker-role approval-contract denial, fourteen sealed Backstage generation
+timeout/cache/review-completion/compact-retry/production-output/output-admission/Notion-Phase-A/Notion-authority/failure-telemetry/continuity/managed-async/protected-failure-no-fallback/GPT-client-identity cases
+(the managed-async, protected-failure-no-fallback, and GPT-client-identity cases
+are the twenty-second, twenty-third, and twenty-fourth `simulatedAuth` requests), one
 worker-role Backstage generation denial, one sealed
 saved-storyline excerpt projection case, one canon-summary pagination case, two
 sealed dispatch GPT identifier boundary cases, one worker-role dispatch
@@ -483,6 +484,18 @@ result materialization. The verifier requires the versioned managed-async proof
 header and rejects any returned capability, bearer, key, ciphertext, or stream
 marker. The normal authenticated route, PostgreSQL, active worker, provider,
 and Notion integrations remain outside this component E2E boundary.
+
+The protected-failure/no-fallback selector accepts only a sealed fixture name.
+It invokes the production-shared continuity failure resolver and proves that
+protected, quarantined, and combined failures perform zero process-fallback
+reads while an unprotected control performs exactly one. It then reuses the
+protected failure-envelope, queued-result protection, and managed result
+projection cores to prove `generateBooking` and `generateBookingWithHRC` remain
+failed with a null result and no draft-like material. The verifier requires the additive
+versioned proof header. The fixture reports that provider, HRC, database,
+repository, queue, worker, external-network, and protected-effect boundaries
+remain false; normal route composition and live integrations remain outside
+this component E2E boundary.
 
 The GPT-client-identity generation selector accepts only a sealed fixture name
 and uses server-owned synthetic credentials. It executes the production-shared

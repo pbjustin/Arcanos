@@ -97,6 +97,9 @@ import {
   buildProtectedBackstageFailureEnvelope,
 } from './shared/backstage/backstageProtectedFailure.js';
 import {
+  resolveBackstageDurableContinuityFailure,
+} from './shared/backstage/backstageProtectedContinuityPolicy.js';
+import {
   isBackstageBookerBearerReadableJob,
   readBackstageBookerAsyncResultCore,
 } from './shared/backstage/backstageBookerAsyncResultCore.js';
@@ -6151,6 +6154,252 @@ function runBackstageGptClientIdentityFixture(
   };
 }
 
+async function runBackstageProtectedFailureNoFallbackFixture(
+  fixture: string
+): Promise<Record<string, unknown>> {
+  const processFallbackValue = Object.freeze({ source: 'process-fallback-control' });
+  const continuityCases = [
+    {
+      key: 'protectedGeneration',
+      protectedGenerationExecution: true,
+      legacyReadQuarantined: false,
+      expectedReason: 'protected_generation',
+    },
+    {
+      key: 'quarantinedLegacy',
+      protectedGenerationExecution: false,
+      legacyReadQuarantined: true,
+      expectedReason: 'legacy_read_quarantined',
+    },
+    {
+      key: 'protectedAndQuarantined',
+      protectedGenerationExecution: true,
+      legacyReadQuarantined: true,
+      expectedReason: 'legacy_read_quarantined',
+    },
+    {
+      key: 'unprotectedControl',
+      protectedGenerationExecution: false,
+      legacyReadQuarantined: false,
+      expectedReason: null,
+    },
+  ] as const;
+  const continuityPolicy: Record<string, Record<string, unknown>> = {};
+  let totalProcessFallbackReads = 0;
+
+  for (const continuityCase of continuityCases) {
+    let processFallbackReads = 0;
+    const resolution = resolveBackstageDurableContinuityFailure({
+      protectedGenerationExecution:
+        continuityCase.protectedGenerationExecution,
+      legacyReadQuarantined: continuityCase.legacyReadQuarantined,
+      readProcessFallback: () => {
+        processFallbackReads += 1;
+        totalProcessFallbackReads += 1;
+        return processFallbackValue;
+      },
+    });
+
+    if (continuityCase.expectedReason === null) {
+      if (
+        resolution.state !== 'process_fallback'
+        || resolution.value !== processFallbackValue
+        || processFallbackReads !== 1
+      ) {
+        throw new Error(
+          'PREVIEW_BACKSTAGE_PROTECTED_NO_FALLBACK_CONTROL_INVALID'
+        );
+      }
+      continuityPolicy[continuityCase.key] = {
+        processFallbackReads,
+        source: resolution.value.source,
+        state: resolution.state,
+      };
+      continue;
+    }
+
+    if (
+      resolution.state !== 'unavailable'
+      || resolution.reason !== continuityCase.expectedReason
+      || processFallbackReads !== 0
+    ) {
+      throw new Error(
+        'PREVIEW_BACKSTAGE_PROTECTED_NO_FALLBACK_POLICY_INVALID'
+      );
+    }
+    continuityPolicy[continuityCase.key] = {
+      processFallbackReads,
+      reason: resolution.reason,
+      state: resolution.state,
+    };
+  }
+
+  if (totalProcessFallbackReads !== 1) {
+    throw new Error(
+      'PREVIEW_BACKSTAGE_PROTECTED_NO_FALLBACK_READ_COUNT_INVALID'
+    );
+  }
+
+  const payloadKey = Buffer.alloc(32, 0x4e).toString('base64');
+  const payloadProtectionConfig = resolveBackstageJobPayloadProtectionConfig(
+    environmentName =>
+      environmentName === BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY_ENV_NAME
+        ? payloadKey
+        : undefined
+  );
+  const actorKey = BACKSTAGE_BOOKER_ACCESS_PRINCIPAL_ACTOR_KEY;
+  const idempotencyScopeHash = buildGptIdempotencyScopeHash({
+    surface: 'public-gpt',
+    actorKey,
+  });
+  const protectedActionCases = [
+    {
+      action: 'generateBooking',
+      code: 'BACKSTAGE_NOTION_INDEX_UNAVAILABLE',
+      jobId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaae',
+    },
+    {
+      action: 'generateBookingWithHRC',
+      code: 'BACKSTAGE_ASYNC_EXECUTION_FAILED',
+      jobId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaf',
+    },
+  ] as const;
+  const projections: Array<Record<string, unknown>> = [];
+  let inMemoryJobReads = 0;
+
+  for (const actionCase of protectedActionCases) {
+    const protectedInput = {
+      gptId: 'backstage-booker',
+      requestPath: '/gpt/backstage-booker',
+      executionModeReason: 'backstage_notion_authority_context',
+      protectedBackstage: {
+        version: 1,
+        source: 'backstage-booker-http',
+        envelopeId: `native-preview-no-fallback-${actionCase.action}`,
+        action: actionCase.action,
+        universeId: 'native-preview-no-fallback',
+        sealedPayload: { fixture: 'server-owned' },
+      },
+    };
+    const privateError =
+      `PRIVATE_NO_FALLBACK_${actionCase.action.toUpperCase()}_SENTINEL`;
+    const failedJob = buildFixture(actionCase.jobId, 'failed', {
+      input: protectedInput,
+      idempotency_scope_hash: idempotencyScopeHash,
+      output: protectBackstageQueuedGptJobOutput({
+        jobId: actionCase.jobId,
+        rawInput: protectedInput,
+        output: buildProtectedBackstageFailureEnvelope({
+          gptId: 'backstage-booker',
+          action: actionCase.action,
+          code: actionCase.code,
+        }),
+        config: payloadProtectionConfig,
+      }),
+      error_message: privateError,
+      completed_at: FIXTURE_COMPLETED_TIMESTAMP,
+    });
+    const projected = await readBackstageBookerAsyncResultCore(
+      {
+        jobId: actionCase.jobId,
+        actorKey,
+        waitForResultMs: 0,
+        pollIntervalMs: 50,
+      },
+      {
+        getJobByIdFn: async () => {
+          inMemoryJobReads += 1;
+          return failedJob;
+        },
+        waitForQueuedGptJobCompletionFn: async () => {
+          throw new Error('PREVIEW_PROTECTED_NO_FALLBACK_UNEXPECTED_WAIT');
+        },
+        payloadProtectionConfig,
+      }
+    );
+    const serialized = JSON.stringify(projected);
+    const noDraftMaterial = [
+      'output',
+      'storyline',
+      'answer',
+      'draft',
+      'partial',
+      'preview',
+    ].every(field => !serialized.includes(`\"${field}\"`));
+    if (
+      projected.status !== 'failed'
+      || projected.result !== null
+      || projected.error?.code !== actionCase.code
+      || projected.error.message
+        !== 'Protected Backstage generation did not complete.'
+      || JSON.stringify(Object.keys(projected.error).sort())
+        !== JSON.stringify(['code', 'message'])
+      || projected.protected !== true
+      || projected.protectedGenerationCompleted !== false
+      || projected.official !== false
+      || projected.continuityVerified !== false
+      || projected.authority !== 'none'
+      || projected.snapshotStatus !== 'not_applicable'
+      || projected.fallbackUsed !== false
+      || projected.fallbackPermitted !== false
+      || !noDraftMaterial
+      || serialized.includes(privateError)
+      || serialized.includes(payloadKey)
+      || serialized.includes('ciphertext')
+    ) {
+      throw new Error(
+        'PREVIEW_BACKSTAGE_PROTECTED_NO_FALLBACK_PROJECTION_INVALID'
+      );
+    }
+    projections.push({
+      action: actionCase.action,
+      authority: projected.authority,
+      continuityVerified: projected.continuityVerified,
+      errorCode: projected.error.code,
+      errorMessage: projected.error.message,
+      fallbackPermitted: projected.fallbackPermitted,
+      fallbackUsed: projected.fallbackUsed,
+      noDraftMaterial,
+      official: projected.official,
+      protected: projected.protected,
+      protectedGenerationCompleted: projected.protectedGenerationCompleted,
+      resultIsNull: projected.result === null,
+      snapshotStatus: projected.snapshotStatus,
+      status: projected.status,
+    });
+  }
+
+  if (inMemoryJobReads !== protectedActionCases.length) {
+    throw new Error(
+      'PREVIEW_BACKSTAGE_PROTECTED_NO_FALLBACK_JOB_READ_COUNT_INVALID'
+    );
+  }
+
+  return {
+    accepted: true,
+    continuityPolicy,
+    databaseBoundaryReached: false,
+    effectsBoundaryReached: false,
+    externalNetworkAttempted: false,
+    failureProjection: {
+      bothProtectedActionsVerified:
+        projections.length === protectedActionCases.length,
+      failureOnly: true,
+      projections,
+    },
+    fixture,
+    hrcBoundaryReached: false,
+    inMemoryJobReads,
+    processFallbackReads: totalProcessFallbackReads,
+    protectedEffectsEnabled: false,
+    providerBoundaryReached: false,
+    queueBoundaryReached: false,
+    repositoryBoundaryReached: false,
+    schemaVersion: 1,
+    workerBoundaryReached: false,
+  };
+}
+
 async function runBackstageManagedAsyncContinuationFixture(
   fixture: string
 ): Promise<Record<string, unknown>> {
@@ -6658,6 +6907,9 @@ async function runBackstageGenerationFixture(
       await runBackstageManagedAsyncContinuationFixture(
         fixtures.managedAsyncContinuation
       );
+      await runBackstageProtectedFailureNoFallbackFixture(
+        fixtures.protectedFailureNoFallback
+      );
       runBackstageGptClientIdentityFixture(fixtures.gptClientIdentity);
       return {
         payload: await runBackstageReviewCompletionFixture(fixture),
@@ -6708,6 +6960,11 @@ async function runBackstageGenerationFixture(
     case fixtures.managedAsyncContinuation:
       return {
         payload: await runBackstageManagedAsyncContinuationFixture(fixture),
+        partitionedAuthorityProofVersion: null,
+      };
+    case fixtures.protectedFailureNoFallback:
+      return {
+        payload: await runBackstageProtectedFailureNoFallbackFixture(fixture),
         partitionedAuthorityProofVersion: null,
       };
     case fixtures.gptClientIdentity:
@@ -8801,6 +9058,18 @@ export function createNativePrPreviewApplication(
                 .managedAsyncContinuationVersion,
               NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT
                 .managedAsyncContinuationProofVersion
+            );
+          }
+          if (
+            fixture
+              === NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.fixtures
+                .protectedFailureNoFallback
+          ) {
+            response.setHeader(
+              NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.proofHeaders
+                .protectedFailureNoFallbackVersion,
+              NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT
+                .protectedFailureNoFallbackProofVersion
             );
           }
           if (

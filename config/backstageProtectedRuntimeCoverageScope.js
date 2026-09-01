@@ -31,6 +31,12 @@ export const backstageProtectedRuntimeCoverageThresholds = Object.freeze({
     lines: 95,
     statements: 95,
   }),
+  'src/shared/backstage/backstageProtectedContinuityPolicy.ts': Object.freeze({
+    branches: 100,
+    functions: 100,
+    lines: 100,
+    statements: 100,
+  }),
   'src/shared/backstage/backstageProtectedFailure.ts': Object.freeze({
     branches: 90,
     functions: 100,

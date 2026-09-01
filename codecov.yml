@@ -150,6 +150,7 @@ coverage:
           - "src/routes/backstageBookerAsyncResult.ts"
           - "src/shared/backstage/backstageBookerAsyncContinuation.ts"
           - "src/shared/backstage/backstageBookerAsyncResultCore.ts"
+          - "src/shared/backstage/backstageProtectedContinuityPolicy.ts"
           - "src/shared/backstage/backstageProtectedFailure.ts"
           - "src/shared/backstage/backstageQueuedJobResultProtection.ts"
           - "src/shared/gpt/gptAsyncWaitPolicy.ts"

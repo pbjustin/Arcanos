@@ -58,6 +58,7 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/shared/backstage/backstageBookerAccessAuthCore.ts',
   'src/shared/backstage/backstageBookerAsyncContinuation.ts',
   'src/shared/backstage/backstageBookerAsyncResultCore.ts',
+  'src/shared/backstage/backstageProtectedContinuityPolicy.ts',
   'src/shared/backstage/backstageProtectedFailure.ts',
   'src/shared/backstage/backstageExecutionBudget.ts',
   'src/shared/backstage/backstageJobPayloadProtection.ts',
@@ -718,6 +719,10 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   [
     'src/shared/backstage/backstageBookerAsyncResultCore.ts',
     '89123df209f5d6f1aaacaebdc4872a010e9035ebd54f36edf2145f350f2cae89',
+  ],
+  [
+    'src/shared/backstage/backstageProtectedContinuityPolicy.ts',
+    '481a15ce90868fe804862d87a04e3ef0a978adce50507e9a06138df43db68ed1',
   ],
   [
     'src/shared/backstage/backstageProtectedFailure.ts',

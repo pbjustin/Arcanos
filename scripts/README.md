@@ -39,7 +39,7 @@ The live GPT job hardening validator requires both network flags and an explicit
 The native PR probe is credential-free and never reads target URLs, tokens, or
 fixture IDs from environment variables. Its dry run validates local HEAD, exact
 HTTPS PR origins, the canonical Arcanos `origin`, a fully clean tracked and
-untracked worktree, limits, and the fixed 136-request plan without network access.
+untracked worktree, limits, and the fixed 137-request plan without network access.
 For an authorized live preview, append both `--execute --allow-network`. The
 runner performs sequential no-redirect requests with per-response, aggregate,
 request-count, and time limits; it sends no bearer, capability, confirmation,
@@ -59,7 +59,7 @@ and contract from the default-branch checkout even though the controller deploys
 the exact PR SHA. A separate credential-free job uses a clean PR-head checkout
 only as exact-SHA Git evidence. When a PR adds a selector, the trusted run cannot
 exercise that new selector until the verifier reaches the default branch. After
-the lifecycle reports the exact preview hosts, run the current 136-request probe
+the lifecycle reports the exact preview hosts, run the current 137-request probe
 from a separate, clean checkout of the exact PR head to obtain explicit
 supplemental evidence for all PR-head selectors and worker denials. That run is
 credential-free and does not replace the lifecycle's Railway ownership,
@@ -131,7 +131,8 @@ The sealed `POST /backstage/generation-contract` selectors are
 `notion-sync-phase-a-contract`, `notion-authority-rag-contract`,
 `partition-failure-telemetry-contract`,
 `continuity-query-contract`, `continuity-subtree-contract`,
-`managed-async-continuation-contract`, and `gpt-client-identity-contract`. The first
+`managed-async-continuation-contract`, `protected-failure-no-fallback-contract`,
+and `gpt-client-identity-contract`. The first
 uses the
 production Backstage route-ID policy, route timeout resolver, provider-stage
 policy, shared Trinity run-options builder, and reviewed request-abort runtime to
@@ -223,11 +224,11 @@ state is reused, valid exact and at-most retries are accepted, malformed,
 under-count, over-count, and word-overflow retries fail with the cause-free
 terminal error, non-length failures are not retried, a second length failure is
 collapsed, and no third call occurs. The existing review-completion selector
-also runs this assertion and the managed-async continuation assertion without
-changing its response shape so a trusted base-pinned lifecycle verifier still
-exercises both PR-head seams. This
-is synthetic component evidence: it does not call a model provider, the
-canonical route, HRC, RAG, a database, persistence, or protected effects.
+also runs this assertion plus the managed-async continuation and protected
+failure/no-fallback assertions without changing its response shape so a trusted
+base-pinned lifecycle verifier still exercises all three PR-head seams. This is
+synthetic component evidence: it does not call a model provider, the canonical
+route, HRC, RAG, a database, persistence, or protected effects.
 
 The production-output selector executes the semantic-digest-pinned compact
 contract parser plus the production-shared capacity, presentation, and recovery
@@ -254,6 +255,18 @@ stream, ciphertext, key material, and bearer values. A successful response
 carries `x-arcanos-preview-backstage-managed-async-version`. This is contained
 component evidence, not a literal external bearer request or normal route,
 PostgreSQL, active worker, provider, or Notion execution.
+
+The protected-failure/no-fallback selector invokes the production-shared
+continuity failure resolver with server-owned protected, quarantined, combined,
+and unprotected-control cases. It proves zero process-fallback reads for every
+protected or quarantined case and exactly one for the unprotected control, then
+reuses the protected failure-envelope, queued-result protection, and managed
+result projection cores to prove `generateBooking` and
+`generateBookingWithHRC` remain failed with a null result and no draft-like material. Its additive
+`x-arcanos-preview-backstage-protected-failure-no-fallback-version` header is
+required by the exact-head verifier. The fixture explicitly reports that no
+provider, HRC, database, repository, queue, worker, network, or protected effect
+ran; it is component evidence, not normal-route or live-integration proof.
 
 The GPT client identity selector uses only a sealed fixture name at the HTTP
 boundary. Server-owned synthetic bearer values exercise the production-shared
