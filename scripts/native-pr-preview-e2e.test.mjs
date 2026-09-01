@@ -326,7 +326,8 @@ function responseHeadersForCase(
 function buildMockFetch(
   requestPlan,
   override = undefined,
-  expectedResponseOptions = undefined
+  expectedResponseOptions = undefined,
+  responseHeaderOverrides = undefined
 ) {
   let requestIndex = 0;
   let monotonicTimeMs = 0;
@@ -362,7 +363,11 @@ function buildMockFetch(
     }
     const body = responseBodyForCase(requestCase, expectedResponseOptions);
     const bodyBytes = Buffer.byteLength(body ?? '');
-    const headers = responseHeadersForCase(requestCase, bodyBytes);
+    const headers = responseHeadersForCase(
+      requestCase,
+      bodyBytes,
+      responseHeaderOverrides?.(requestCase)
+    );
     const response = new Response(body, {
       headers,
       status: requestCase.expectedStatus,
@@ -506,6 +511,7 @@ test('reads exact candidate Git evidence without executing candidate files', asy
     const evidenceDocument = structuredClone(
       NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageBookerOpenApi.document
     );
+    evidenceDocument.info.version = '1.7.0';
     evidenceDocument['x-exact-head-evidence'] = 'candidate-only';
     mkdirSync(path.join(repositoryRoot, 'contracts'));
     writeFileSync(
@@ -564,7 +570,23 @@ test('reads exact candidate Git evidence without executing candidate files', asy
         });
         return response;
       },
-      { commitSha: head }
+      { commitSha: head },
+      (requestCase) => {
+        const contract = NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration;
+        if (requestCase.fixtureName === 'routeBudget') {
+          return {
+            [contract.proofHeaders.queueWaitPolicyVersion]:
+              'backstage-booker-queue-wait-policy/v2',
+          };
+        }
+        if (requestCase.fixtureName === 'managedAsyncContinuation') {
+          return {
+            [contract.proofHeaders.managedAsyncContinuationVersion]:
+              'backstage-booker-managed-async-continuation/v2',
+          };
+        }
+        return undefined;
+      }
     );
     const exactHeadResult = await runNativePrPreviewE2e({
       args: liveEvidenceArguments,
@@ -577,12 +599,40 @@ test('reads exact candidate Git evidence without executing candidate files', asy
       )?.backstageBookerOpenApiVerified,
       true
     );
-
-    const trustedCopyMock = buildMockFetch(
-      requestPlan,
-      undefined,
-      { commitSha: head }
+    assert.equal(
+      exactHeadResult.checks.find(({ caseId }) =>
+        caseId === 'backstage-generation-route-budget'
+      )?.queueWaitPolicyVerified,
+      true
     );
+    assert.equal(
+      exactHeadResult.checks.find(({ caseId }) =>
+        caseId === 'backstage-generation-managed-async-continuation'
+      )?.managedAsyncContinuationVerified,
+      true
+    );
+
+    const trustedCopyDocument = structuredClone(
+      NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageBookerOpenApi.document
+    );
+    trustedCopyDocument.info.version = evidenceDocument.info.version;
+    const trustedCopyMock = buildMockFetch(requestPlan, (requestCase) => {
+      if (requestCase.caseId !== 'web-backstage-booker-openapi') {
+        return undefined;
+      }
+      const body = JSON.stringify(trustedCopyDocument);
+      const response = new Response(body, {
+        headers: responseHeadersForCase(
+          requestCase,
+          Buffer.byteLength(body)
+        ),
+        status: requestCase.expectedStatus,
+      });
+      Object.defineProperty(response, 'url', {
+        value: `${WEB_BASE_URL}${requestCase.path}`,
+      });
+      return response;
+    }, { commitSha: head });
     await assert.rejects(
       runNativePrPreviewE2e({
         args: liveEvidenceArguments,
@@ -607,6 +657,40 @@ test('reads exact candidate Git evidence without executing candidate files', asy
     );
   } finally {
     rmSync(repositoryRoot, { recursive: true, force: true });
+  }
+});
+
+test('rejects malformed or unsupported exact-head Backstage Booker versions', async () => {
+  const invalidVersionCases = [
+    ['missing', (document) => delete document.info.version],
+    ['malformed', (document) => { document.info.version = '1.7'; }],
+    ['unsupported major', (document) => { document.info.version = '2.0.0'; }],
+  ];
+
+  for (const [name, mutate] of invalidVersionCases) {
+    const expectedDocument = structuredClone(
+      NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageBookerOpenApi.document
+    );
+    mutate(expectedDocument);
+    const requestPlan = buildNativePrPreviewRequestPlan();
+    const mock = buildMockFetch(requestPlan, undefined, {
+      expectedBackstageBookerOpenApiDocument: expectedDocument,
+    });
+
+    await assert.rejects(
+      runNativePrPreviewE2e({
+        args: validArguments('--execute', '--allow-network'),
+        expectedBackstageBookerOpenApiDocument: expectedDocument,
+        fetchImpl: mock.fetchImpl,
+        localGitState: LOCAL_GIT_STATE,
+        monotonicNow: mock.monotonicNow,
+      }),
+      (error) =>
+        error instanceof NativePrPreviewE2eError
+        && error.code === 'NATIVE_PR_PREVIEW_BACKSTAGE_BOOKER_OPENAPI_INVALID'
+        && error.caseId === 'web-backstage-booker-openapi',
+      name
+    );
   }
 });
 
