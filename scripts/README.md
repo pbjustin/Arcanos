@@ -50,9 +50,12 @@ project/service/deployment ownership.
 The web plan also fetches
 `GET /contracts/backstage_booker.openapi.v1.json` and deep-compares the
 response with the bounded JSON blob read from the exact Git-evidence HEAD.
-It independently checks the 1.7.0 managed bearer/result-path shape and rejects
-legacy job-token, legacy result-path, or stream fields; the worker must return
-404 for the same path.
+It derives the required numeric `1.x.y` `info.version` from that exact-head
+document, independently checks the managed bearer/result-path shape, and
+rejects legacy job-token, legacy result-path, or stream fields; the worker must
+return 404 for the same path. The trusted probe accepts only the reviewed v1/v2
+queue-wait and managed-async proof-header transition values; missing or unknown
+values remain fail-closed.
 
 The trusted Railway lifecycle intentionally executes the probe implementation
 and contract from the default-branch checkout even though the controller deploys

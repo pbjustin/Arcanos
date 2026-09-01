@@ -19,6 +19,15 @@ const MAX_REQUESTS = 137;
 const MAX_BACKSTAGE_BOOKER_OPENAPI_SOURCE_BYTES = 128 * 1024;
 const BACKSTAGE_BOOKER_OPENAPI_GIT_PATH =
   'contracts/backstage_booker.openapi.v1.json';
+const BACKSTAGE_BOOKER_OPENAPI_VERSION_PATTERN = /^1\.\d+\.\d+$/u;
+const BACKSTAGE_QUEUE_WAIT_POLICY_PROOF_VERSIONS = Object.freeze([
+  'backstage-booker-queue-wait-policy/v1',
+  'backstage-booker-queue-wait-policy/v2',
+]);
+const BACKSTAGE_MANAGED_ASYNC_PROOF_VERSIONS = Object.freeze([
+  'backstage-booker-managed-async-continuation/v1',
+  'backstage-booker-managed-async-continuation/v2',
+]);
 const BACKSTAGE_BOOKER_OPENAPI_PATHS = Object.freeze([
   '/gpt-access/capabilities/v1/backstage-booker/jobs/{jobId}/result',
   '/gpt-access/capabilities/v1/backstage-booker/run',
@@ -3647,9 +3656,12 @@ function validateResponseBody(requestCase, bodyBytes, options) {
     const observedPaths = body?.paths && typeof body.paths === 'object'
       ? Object.keys(body.paths).sort()
       : [];
+    const expectedInfoVersion = expectedBody?.info?.version;
     if (
       body?.openapi !== '3.1.0'
-      || body?.info?.version !== '1.7.0'
+      || typeof expectedInfoVersion !== 'string'
+      || !BACKSTAGE_BOOKER_OPENAPI_VERSION_PATTERN.test(expectedInfoVersion)
+      || body?.info?.version !== expectedInfoVersion
       || !isDeepStrictEqual(observedPaths, BACKSTAGE_BOOKER_OPENAPI_PATHS)
       || managedResultOperation?.operationId
         !== 'getBackstageBookerJobResult'
@@ -4095,9 +4107,9 @@ async function executeRequestCase(
     }
     if (
       requestCase.fixtureName === 'routeBudget'
-      && response.headers.get(
-        contract.proofHeaders.queueWaitPolicyVersion
-      ) !== contract.queueWaitPolicyProofVersion
+      && !BACKSTAGE_QUEUE_WAIT_POLICY_PROOF_VERSIONS.includes(
+        response.headers.get(contract.proofHeaders.queueWaitPolicyVersion)
+      )
     ) {
       fail(
         'NATIVE_PR_PREVIEW_BACKSTAGE_QUEUE_WAIT_POLICY_PROOF_INVALID',
@@ -4150,9 +4162,11 @@ async function executeRequestCase(
     }
     if (
       requestCase.fixtureName === 'managedAsyncContinuation'
-      && response.headers.get(
-        contract.proofHeaders.managedAsyncContinuationVersion
-      ) !== contract.managedAsyncContinuationProofVersion
+      && !BACKSTAGE_MANAGED_ASYNC_PROOF_VERSIONS.includes(
+        response.headers.get(
+          contract.proofHeaders.managedAsyncContinuationVersion
+        )
+      )
     ) {
       fail(
         'NATIVE_PR_PREVIEW_BACKSTAGE_MANAGED_ASYNC_PROOF_INVALID',
