@@ -55,6 +55,12 @@ import {
   protectBackstageQueuedGptJobOutput,
 } from '@shared/backstage/backstageQueuedJobResultProtection.js';
 import {
+  buildProtectedBackstageFailureEnvelope,
+  buildProtectedBackstageFailureMessage,
+  readProtectedBackstageCompletionProvenance,
+  resolveBackstageProtectedFailureCode,
+} from '@shared/backstage/backstageProtectedFailure.js';
+import {
   resolveBackstageProviderDeferralDelayMs,
   resolveBackstageExecutionBudgetPolicy,
   resolveBackstageWorkerOperationDeadlineAt,
@@ -356,6 +362,27 @@ function setQueuedGptExecutionPrivacy(
 ): void {
   if (state) {
     state.cancellationPrivacy = cancellationPrivacy;
+  }
+}
+
+function buildProtectedBackstageCancellationOutput(params: {
+  jobId: string;
+  rawInput: unknown;
+  action: 'generateBooking' | 'generateBookingWithHRC';
+}): unknown | null {
+  const code = 'BACKSTAGE_ASYNC_EXECUTION_FAILED' as const;
+  try {
+    return protectBackstageQueuedGptJobOutput({
+      jobId: params.jobId,
+      rawInput: params.rawInput,
+      output: buildProtectedBackstageFailureEnvelope({
+        gptId: 'backstage-booker',
+        action: params.action,
+        code,
+      }),
+    });
+  } catch {
+    return null;
   }
 }
 
@@ -1292,6 +1319,35 @@ export async function executeQueuedGptRequest(params: {
     routeHint,
     backstageMutationAdmission,
   } = parsedGptJobInput.value;
+  const buildProtectedCancellationOutcome = (): JobExecutionOutcome => {
+    // Every caller is gated by protectedBackstageQueuedExecution above.
+    const protectedBackstage = parsedGptJobInput.value.protectedBackstage!;
+    const code = 'BACKSTAGE_ASYNC_EXECUTION_FAILED' as const;
+    logger.warn('backstage.protected_result.failed', {
+      action: protectedBackstage.action,
+      code,
+      reason: 'cancelled',
+    });
+    const output = buildProtectedBackstageCancellationOutput({
+      jobId: params.jobId,
+      rawInput: params.rawInput,
+      action: protectedBackstage.action,
+    });
+    if (output === null) {
+      return {
+        status: 'cancelled',
+        output: null,
+        errorMessage: 'BACKSTAGE_ASYNC_RESULT_PROTECTION_FAILED: Protected Backstage generation result could not be sealed.',
+        retryable: false,
+      };
+    }
+    return {
+      status: 'cancelled',
+      output,
+      errorMessage: buildProtectedBackstageFailureMessage(code),
+      retryable: false,
+    };
+  };
   const {
     canonicalQueuedAction,
     isUnprotectedBackstageGeneration,
@@ -1356,6 +1412,9 @@ export async function executeQueuedGptRequest(params: {
   if (latestJob?.cancel_requested_at) {
     if (legacyBackstageQueuedExecution) {
       setQueuedGptExecutionPrivacy(params.executionPrivacyState, 'legacy');
+    }
+    if (protectedBackstageQueuedExecution) {
+      return buildProtectedCancellationOutcome();
     }
     return {
       status: 'cancelled',
@@ -1519,6 +1578,9 @@ export async function executeQueuedGptRequest(params: {
       throw normalizedWorkerBudgetError;
     }
     if (params.cancellationSignal?.aborted && isAbortError(error)) {
+      if (protectedBackstageQueuedExecution) {
+        return buildProtectedCancellationOutcome();
+      }
       return {
         status: 'cancelled',
         output: null,
@@ -1535,24 +1597,18 @@ export async function executeQueuedGptRequest(params: {
         error,
         'backstage_worker'
       );
-      const output = {
-        ok: false,
-        error: {
-          code: deadlineExceeded
-            ? 'BACKSTAGE_ASYNC_TIMEOUT'
-            : 'BACKSTAGE_ASYNC_EXECUTION_FAILED',
-          message: deadlineExceeded
-            ? 'Protected Backstage generation reached its worker deadline.'
-            : 'Protected Backstage generation failed in the worker.',
-        },
-        _route: {
-          gptId,
-          action: parsedGptJobInput.value.protectedBackstage.action,
-          route: 'worker',
-          ...(requestId ? { requestId } : {}),
-          ...(traceId ? { traceId } : {}),
-        },
-      };
+      const code = deadlineExceeded
+        ? 'BACKSTAGE_ASYNC_TIMEOUT' as const
+        : 'BACKSTAGE_ASYNC_EXECUTION_FAILED' as const;
+      const output = buildProtectedBackstageFailureEnvelope({
+        gptId,
+        action: parsedGptJobInput.value.protectedBackstage.action,
+        code,
+      });
+      routeLogger.warn('backstage.protected_result.failed', {
+        action: parsedGptJobInput.value.protectedBackstage.action,
+        code,
+      });
       try {
         return {
           status: 'failed',
@@ -1563,7 +1619,7 @@ export async function executeQueuedGptRequest(params: {
           }),
           errorMessage: deadlineExceeded
             ? 'BACKSTAGE_ASYNC_TIMEOUT: Protected Backstage generation reached its worker deadline.'
-            : 'BACKSTAGE_ASYNC_EXECUTION_FAILED: Protected Backstage generation failed.',
+            : buildProtectedBackstageFailureMessage(code),
           retryable: false,
         };
       } catch {
@@ -1623,6 +1679,7 @@ export async function executeQueuedGptRequest(params: {
 
   if (!envelope.ok) {
     if (
+      !protectedBackstageQueuedExecution &&
       params.cancellationSignal?.aborted &&
       envelope.error.code === 'REQUEST_ABORTED'
     ) {
@@ -1663,11 +1720,21 @@ export async function executeQueuedGptRequest(params: {
     }
     let failureOutput: unknown = envelope;
     if (parsedGptJobInput.value.protectedBackstage) {
+      const code = resolveBackstageProtectedFailureCode(envelope.error.code);
+      const protectedFailure = buildProtectedBackstageFailureEnvelope({
+        gptId,
+        action: parsedGptJobInput.value.protectedBackstage.action,
+        code,
+      });
+      routeLogger.warn('backstage.protected_result.failed', {
+        action: parsedGptJobInput.value.protectedBackstage.action,
+        code,
+      });
       try {
         failureOutput = protectBackstageQueuedGptJobOutput({
           jobId: params.jobId,
           rawInput: params.rawInput,
-          output: envelope,
+          output: protectedFailure,
         });
       } catch {
         return {
@@ -1682,12 +1749,52 @@ export async function executeQueuedGptRequest(params: {
       status: 'failed',
       output: failureOutput,
       errorMessage: parsedGptJobInput.value.protectedBackstage
-        ? `${envelope.error.code}: Protected Backstage generation failed.`
+        ? buildProtectedBackstageFailureMessage(
+            resolveBackstageProtectedFailureCode(envelope.error.code)
+          )
         : `${envelope.error.code}: ${envelope.error.message}`,
       retryable: parsedGptJobInput.value.protectedBackstage
         ? false
         : isQueuedGptDispatchFailureRetryable(envelope.error)
     };
+  }
+
+  const protectedCompletionProvenance = parsedGptJobInput.value.protectedBackstage
+    ? readProtectedBackstageCompletionProvenance(envelope, {
+        gptId: 'backstage-booker',
+        action: parsedGptJobInput.value.protectedBackstage.action,
+      })
+    : null;
+  if (parsedGptJobInput.value.protectedBackstage && !protectedCompletionProvenance) {
+    const code = 'BACKSTAGE_ASYNC_RESULT_UNAVAILABLE' as const;
+    routeLogger.warn('backstage.protected_result.failed', {
+      action: parsedGptJobInput.value.protectedBackstage.action,
+      code,
+      reason: 'missing_or_invalid_provenance',
+    });
+    try {
+      return {
+        status: 'failed',
+        output: protectBackstageQueuedGptJobOutput({
+          jobId: params.jobId,
+          rawInput: params.rawInput,
+          output: buildProtectedBackstageFailureEnvelope({
+            gptId,
+            action: parsedGptJobInput.value.protectedBackstage.action,
+            code,
+          }),
+        }),
+        errorMessage: buildProtectedBackstageFailureMessage(code),
+        retryable: false,
+      };
+    } catch {
+      return {
+        status: 'failed',
+        output: null,
+        errorMessage: 'BACKSTAGE_ASYNC_RESULT_PROTECTION_FAILED: Protected Backstage generation result could not be sealed.',
+        retryable: false,
+      };
+    }
   }
 
   routeLogger.info('gpt.job.completed', {
@@ -1697,6 +1804,18 @@ export async function executeQueuedGptRequest(params: {
     module: envelope._route.module ?? undefined,
     route: envelope._route.route ?? null
   });
+  if (protectedCompletionProvenance) {
+    routeLogger.info('backstage.protected_result.completed', {
+      action: parsedGptJobInput.value.protectedBackstage!.action,
+    });
+    routeLogger.info('backstage.protected_result.authority_status', {
+      authority: protectedCompletionProvenance.authority,
+      snapshotStatus: protectedCompletionProvenance.snapshotStatus,
+      official: protectedCompletionProvenance.official,
+      continuityVerified: protectedCompletionProvenance.continuityVerified,
+      fallbackUsed: protectedCompletionProvenance.fallbackUsed,
+    });
+  }
 
   const commitOutcomeUnknown = isBackstageCanonCommitOutcomeUnknown(
     backstageMutationAdmission?.action,
@@ -1904,7 +2023,7 @@ async function recordCancelledJobCompletion(params: {
   });
 }
 
-async function persistClaimedJobCancellation(params: {
+export async function persistClaimedJobCancellation(params: {
   job: JobData;
   fence: ClaimedJobFence;
   autonomyService: WorkerAutonomyService;
@@ -1926,6 +2045,22 @@ async function persistClaimedJobCancellation(params: {
     : queuedGptCancellationPrivacy === 'legacy'
       ? LEGACY_BACKSTAGE_JOB_CANCELLATION_MESSAGE
       : params.cancellationReason;
+  let output = params.output;
+  if (queuedGptCancellationPrivacy === 'protected' && output == null) {
+    const action = resolveProtectedBackstageQueuedGptJobAction(params.job.input);
+    if (action) {
+      logger.warn('backstage.protected_result.failed', {
+        action,
+        code: 'BACKSTAGE_ASYNC_EXECUTION_FAILED',
+        reason: 'cancelled',
+      });
+      output = buildProtectedBackstageCancellationOutput({
+        jobId: params.job.id,
+        rawInput: params.job.input,
+        action,
+      });
+    }
+  }
   const cancellationRequestedAt = (() => {
     const persistedRequestedAt =
       params.cancellationRequestedAt ?? params.job.cancel_requested_at;
@@ -1942,7 +2077,7 @@ async function persistClaimedJobCancellation(params: {
     'cancelled',
     {
       fence: params.fence,
-      output: params.output,
+      output,
       errorMessage: cancellationReason,
       autonomyState: queuedGptCancellationPrivacy
         ? {

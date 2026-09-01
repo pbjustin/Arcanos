@@ -1041,7 +1041,20 @@ describe('job runner terminal persistence', () => {
       );
       return {
         ok: true,
-        result: recovered.result,
+        result: {
+          storyline: recovered.result,
+          protectedGeneration: {
+            version: 1,
+            protected: true,
+            protectedGenerationCompleted: true,
+            official: true,
+            continuityVerified: true,
+            authority: 'notion',
+            snapshotStatus: 'current_complete',
+            fallbackUsed: false,
+            fallbackPermitted: false,
+          },
+        },
         _route: {
           gptId: 'backstage-booker',
           module: 'BACKSTAGE:BOOKER',
@@ -1154,7 +1167,10 @@ describe('job runner terminal persistence', () => {
         jobId,
         rawInput: queuedInput,
         output: persistedOutput,
-      })).toMatchObject({ ok: true, result: privateResult });
+      })).toMatchObject({
+        ok: true,
+        result: { storyline: privateResult },
+      });
       expect(terminalRow).toMatchObject({
         id: jobId,
         request_fingerprint_hash: claimedJob.request_fingerprint_hash,

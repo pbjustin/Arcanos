@@ -1,6 +1,9 @@
 import {
   backstageNotionCoverageScopeFiles,
 } from './backstageNotionCoverageScope.js';
+import {
+  backstageProtectedRuntimeCoverageScopeFiles,
+} from './backstageProtectedRuntimeCoverageScope.js';
 
 /**
  * Files counted toward the reported Jest/Codecov project coverage.
@@ -121,4 +124,5 @@ export const codecovCoverageScopeFiles = Object.freeze([
 export const jestCoverageScopeFiles = Object.freeze([
   ...curatedCoverageScopeFiles,
   ...backstageNotionCoverageScopeFiles,
+  ...backstageProtectedRuntimeCoverageScopeFiles,
 ]);

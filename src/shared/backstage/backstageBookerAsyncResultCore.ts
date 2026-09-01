@@ -2,12 +2,18 @@ import type { JobData } from '@core/db/schema.js';
 import {
   isProtectedBackstageQueuedGptJobEnvelope,
   markProtectedBackstageQueuedGptJobResultMaterialized,
+  resolveProtectedBackstageQueuedGptJobEnvelopeAction,
   unprotectBackstageQueuedGptJobOutput,
 } from '@shared/backstage/backstageQueuedJobResultProtection.js';
 import {
   projectBackstageBookerManagedJobResultPayload,
+  projectBackstageBookerManagedProtectedFailurePayload,
   type BackstageBookerManagedJobResultPayload,
 } from '@shared/backstage/backstageBookerAsyncContinuation.js';
+import {
+  readProtectedBackstageFailureCode,
+  readProtectedBackstageCompletionProvenance,
+} from '@shared/backstage/backstageProtectedFailure.js';
 import type {
   BackstageJobPayloadProtectionConfig,
 } from '@shared/backstage/backstageJobPayloadProtection.js';
@@ -95,6 +101,48 @@ function materializeProtectedBackstageJob(
 }
 
 /**
+ * Project a terminal protected job after its originating authenticated request
+ * has already established ownership. This is shared by the managed GET and the
+ * short POST acceptance wait so neither path can disclose raw failure text.
+ */
+export function projectTrustedProtectedBackstageTerminalFailure(
+  job: JobData,
+  payloadProtectionConfig?: BackstageJobPayloadProtectionConfig
+): BackstageBookerManagedJobResultPayload {
+  if (
+    job.status !== 'failed'
+    && job.status !== 'cancelled'
+    && job.status !== 'expired'
+  ) {
+    throw new BackstageBookerAsyncResultUnavailableError();
+  }
+  if (job.status === 'expired' || job.output == null) {
+    return projectBackstageBookerManagedProtectedFailurePayload(
+      buildGptJobResultLookupPayload(job.id, job),
+      'BACKSTAGE_ASYNC_RESULT_UNAVAILABLE'
+    );
+  }
+  const materializedJob = materializeProtectedBackstageJob(
+    job,
+    payloadProtectionConfig
+  );
+  const action = resolveProtectedBackstageQueuedGptJobEnvelopeAction(job.input);
+  const code = action
+    ? readProtectedBackstageFailureCode(materializedJob.output, {
+        gptId: 'backstage-booker',
+        action,
+      })
+    : null;
+  if (!code) {
+    throw new BackstageBookerAsyncResultUnavailableError();
+  }
+  return projectBackstageBookerManagedProtectedFailurePayload(
+    buildGptJobResultLookupPayload(job.id, materializedJob),
+    code
+  );
+}
+
+/**
  * Read one protected Booker job through an injected bounded queue waiter.
  * Unowned, malformed, and unrelated jobs share the non-disclosing not-found
  * projection and never enter the wait loop.
@@ -156,13 +204,36 @@ export async function readBackstageBookerAsyncResultCore(
     );
   }
 
+  if (
+    selectedJob.status === 'failed'
+    || selectedJob.status === 'cancelled'
+    || selectedJob.status === 'expired'
+  ) {
+    return projectTrustedProtectedBackstageTerminalFailure(
+      selectedJob,
+      dependencies.payloadProtectionConfig
+    );
+  }
+
+  const materializedJob = materializeProtectedBackstageJob(
+    selectedJob,
+    dependencies.payloadProtectionConfig
+  );
+  const action = resolveProtectedBackstageQueuedGptJobEnvelopeAction(selectedJob.input);
+  if (
+    selectedJob.status === 'completed'
+    && (!action || !readProtectedBackstageCompletionProvenance(
+      materializedJob.output,
+      { gptId: 'backstage-booker', action }
+    ))
+  ) {
+    throw new BackstageBookerAsyncResultUnavailableError();
+  }
+
   return projectBackstageBookerManagedJobResultPayload(
     buildGptJobResultLookupPayload(
       input.jobId,
-      materializeProtectedBackstageJob(
-        selectedJob,
-        dependencies.payloadProtectionConfig
-      )
+      materializedJob
     )
   );
 }

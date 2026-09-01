@@ -70,7 +70,10 @@ import {
 import { loadBackstageNotionPromptContext } from './backstageNotionContext.js';
 import {
   isBackstageLegacyQueuedExecution,
+  isBackstageProtectedGenerationExecution,
   isBackstageProtectedQueuedExecution,
+  getBackstageProtectedGenerationProvenance,
+  recordBackstageProtectedGenerationAuthority,
   wasBackstageNotionEnrichmentUsed,
 } from './backstageNotionEnrichmentAuthorization.js';
 import {
@@ -100,6 +103,9 @@ import {
   buildBackstageBookerTrinityRunOptions,
   resolveBackstageGenerationTokenLimit,
 } from '@shared/backstage/backstageActionPolicy.js';
+import {
+  resolveBackstageDurableContinuityFailure,
+} from '@shared/backstage/backstageProtectedContinuityPolicy.js';
 import {
   hasBackstageRecoveryBudget,
   resolveBackstageExecutionBudgetPolicy,
@@ -1448,6 +1454,8 @@ async function buildStructuredBookingPrompt(
       universeId,
       basePrompt
     );
+    // This seam only returns after it has selected a current-complete snapshot.
+    recordBackstageProtectedGenerationAuthority('notion');
     return {
       instructions: buildNotionAuthorityBookingPrompt(basePrompt, universeId),
       includesNotion: true,
@@ -1481,15 +1489,41 @@ async function buildStructuredBookingPrompt(
     if (canonContext.storylines.length > 0 || canonContext.activeBeats.length > 0) {
       canonBlocks = promptBlocksFromCanonContext(canonContext);
     }
-    blocks = promptBlocksFromContext(overlayPendingContext(universeId, context));
+    blocks = promptBlocksFromContext(
+      isBackstageProtectedGenerationExecution()
+        ? context
+        : overlayPendingContext(universeId, context)
+    );
     durableContextLoaded = true;
+    recordBackstageProtectedGenerationAuthority('legacy_postgresql');
   } catch (error) {
-    if (isBackstageBookerLegacyReadQuarantinedError(error)) {
+    const protectedGenerationExecution =
+      isBackstageProtectedGenerationExecution();
+    const continuityFailure = resolveBackstageDurableContinuityFailure({
+      protectedGenerationExecution,
+      legacyReadQuarantined:
+        isBackstageBookerLegacyReadQuarantinedError(error),
+      readProcessFallback: () => {
+        console.warn(
+          'Backstage Booker: falling back to in-memory context',
+          resolveErrorMessage(error)
+        );
+        return promptBlocksFromFallback(readFallbackUniverseState(universeId));
+      },
+    });
+    if (continuityFailure.state === 'unavailable') {
+      if (continuityFailure.reason === 'protected_generation') {
+        // A protected generation establishes one durable authority or fails; a
+        // process-local snapshot can never become its public continuity basis.
+        logger.warn('backstage.protected_result.authority_status', {
+          authority: 'none',
+          status: 'legacy_postgresql_unavailable',
+        });
+      }
       throw new BackstageNotionIndexUnavailableError();
     }
-    console.warn('Backstage Booker: falling back to in-memory context', resolveErrorMessage(error));
     //audit Assumption: continuity reads may degrade independently of writes; failure risk: generation crosses universe boundaries or fails during a database outage; expected invariant: fallback context remains isolated by universe and clearly process-local; handling strategy: render only the selected universe's bounded process state.
-    blocks = promptBlocksFromFallback(readFallbackUniverseState(universeId));
+    blocks = continuityFailure.value;
     canonBlocks = null;
   }
 
@@ -2541,8 +2575,9 @@ export async function generateBooking(
     defaultTokenLimit
   );
   const protectedQueuedExecution = isBackstageProtectedQueuedExecution();
-  const privateQueuedExecution =
-    protectedQueuedExecution || isBackstageLegacyQueuedExecution();
+  const protectedGenerationExecution = isBackstageProtectedGenerationExecution();
+  const privateGenerationExecution =
+    protectedGenerationExecution || isBackstageLegacyQueuedExecution();
   const executionBudget = resolveBackstageExecutionBudgetPolicy({
     profile: protectedQueuedExecution
       ? 'queued_generation'
@@ -2802,7 +2837,7 @@ export async function generateBooking(
           }
         : {}),
     },
-    ...(privateQueuedExecution || structuredPrompt.includesNotion
+    ...(privateGenerationExecution || structuredPrompt.includesNotion
       ? {
           disableOptionalSideEffects: true as const,
           redactAuditContent: true as const,
@@ -2933,7 +2968,7 @@ export async function generateBooking(
     if (integrityFailure) {
       throw integrityFailure;
     }
-    if (privateQueuedExecution || structuredPrompt.includesNotion) {
+    if (privateGenerationExecution || structuredPrompt.includesNotion) {
       console.error('Failed to generate booking storyline with sensitive supplemental context.');
       throw new Error('Booking generation failed');
     }
@@ -3451,10 +3486,19 @@ export const BackstageBookerModule = {
     async generateBooking(payload: unknown) {
       const input = normalizeBackstageBookerModuleActionPayload('generateBooking', payload);
       // Maintain backward-compatible behavior: return the raw storyline string.
-      return BackstageBooker.generateBooking(
+      const storyline = await BackstageBooker.generateBooking(
         input.prompt,
         input.universeId ?? DEFAULT_BACKSTAGE_UNIVERSE_ID
       );
+      const protectedGeneration = getBackstageProtectedGenerationProvenance();
+      if (!protectedGeneration) {
+        return storyline;
+      }
+      return assertValidBackstageBookerActionData('generateBooking', {
+        universeId: input.universeId ?? DEFAULT_BACKSTAGE_UNIVERSE_ID,
+        storyline,
+        protectedGeneration,
+      });
     },
     async generateBookingWithHRC(payload: unknown) {
       const input = normalizeBackstageBookerModuleActionPayload(
@@ -3469,15 +3513,18 @@ export const BackstageBookerModule = {
       );
       const sensitiveContext =
         wasBackstageNotionEnrichmentUsed()
+        || isBackstageProtectedGenerationExecution()
         || isBackstageProtectedQueuedExecution()
         || isBackstageLegacyQueuedExecution();
+      const protectedGeneration = getBackstageProtectedGenerationProvenance();
       const result: BackstageGenerateBookingWithHrcResponse = {
         universeId,
         storyline,
         hrc: normalizeHrcResult(await evaluateWithHRC(storyline, {
           timeoutMs: BACKSTAGE_HRC_EVALUATION_TIMEOUT_MS,
           ...(sensitiveContext ? { sensitiveContext: true } : {})
-        }))
+        })),
+        ...(protectedGeneration ? { protectedGeneration } : {})
       };
       return assertValidBackstageBookerActionData('generateBookingWithHRC', result);
     },

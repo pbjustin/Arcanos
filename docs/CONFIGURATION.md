@@ -484,10 +484,10 @@ and control-plane behavior remain available under their own credentials and
 confirmation rules.
 
 Authenticated Backstage generation can optionally add a read-only Notion
-supplement. Schema `1.6.0` has five Builder operations, materializes the nested
+supplement. Schema `1.7.0` has five Builder operations, materializes the nested
 public payload, and uses the managed-bearer namespace for async-result polling.
 The tracked `contracts/backstage_booker.openapi.v1.json` is the canonical
-Builder `1.6.0` contract and is served directly by the live no-store endpoint.
+Builder `1.7.0` contract and is served directly by the live no-store endpoint.
 After a deployed contract change, a human operator must refresh or re-import
 that endpoint in GPT Builder; repository changes do not update the Action.
 Configure
@@ -860,7 +860,7 @@ exists. Only a subtree response additionally sets
 and `omittedPages`; other scope kinds omit those fields. Public sources contain
 only sanitized path/category metadata and opaque hashes, never source excerpts
 or raw Notion page IDs. Use the generation maintenance and legacy-continuation
-drain described above before deploying and re-importing schema 1.6.0 into the
+drain described above before deploying and re-importing schema 1.7.0 into the
 existing Builder Action. Continuity and booking answer generation make at most
 one bounded output-length recovery attempt only for provider max-output
 exhaustion when finite recovery budget remains available, reuse the same

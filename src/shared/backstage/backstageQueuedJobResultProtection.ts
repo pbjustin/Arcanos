@@ -97,6 +97,13 @@ export function isProtectedBackstageQueuedGptJobEnvelope(
   return readBinding(rawInput) !== null;
 }
 
+/** Read the bound action without importing the worker-side queued-input parser. */
+export function resolveProtectedBackstageQueuedGptJobEnvelopeAction(
+  rawInput: unknown
+): ProtectedBackstageBinding['action'] | null {
+  return readBinding(rawInput)?.action ?? null;
+}
+
 function parseProtectedOutput(rawOutput: unknown): Record<string, unknown> | null {
   if (
     !isRecord(rawOutput)

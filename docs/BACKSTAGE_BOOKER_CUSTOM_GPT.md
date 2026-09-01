@@ -54,7 +54,7 @@ generates and then saves, so it remains a protected mutation.
 - Import schema: `https://acranos-production.up.railway.app/contracts/backstage_booker.openapi.v1.json`
 - Canonical tracked Builder contract:
   [`contracts/backstage_booker.openapi.v1.json`](../contracts/backstage_booker.openapi.v1.json)
-- Builder schema version: `1.6.0`. The no-store endpoint above serves this
+- Builder schema version: `1.7.0`. The no-store endpoint above serves this
   canonical contract directly.
 - Canonical server: `https://acranos-production.up.railway.app`
 - Authentication: in ChatGPT Builder select **API Key**, then **Bearer**. Enter
@@ -99,21 +99,25 @@ The contract defines exactly five operations:
 
 Every `runBackstageBooker` request retains `executionMode: "sync"` for Builder
 compatibility. Lightweight continuity and simulation stay inline. When a
-generation is production-sized, the server overrides that preference to avoid
-the known unsafe synchronous timeout condition and returns `202` with `jobId`
-and a managed-bearer `poll` URL. Call `getBackstageBookerJobResult` with that
-exact `jobId` until the job becomes terminal; never resubmit the generation
-while polling. The Builder contract omits `jobReadToken`,
+generation is production-sized, the server durably creates or reuses the job,
+waits only for the short initial-acceptance window, and promptly returns `202`
+with `jobId` and a managed-bearer `poll` URL unless the result completed inside
+that window. The initial operation does not perform the managed 30-second
+result wait. Call `getBackstageBookerJobResult` with that exact `jobId` until
+the job becomes terminal. The Builder contract omits `jobReadToken`,
   `jobReadTokenHeader`, and `stream` because the managed continuation requires no
   dynamic header and has no bearer-authenticated SSE route or cancellation
   operation.
 
-The Builder continuation flow is exact: use an HTTP `200` result immediately;
-after HTTP `202`, preserve the returned `jobId`, call
+The Builder continuation flow is exact: use a verified official HTTP `200`
+result immediately; after HTTP `202`, preserve the returned `jobId`, call
 `getBackstageBookerJobResult` with the same managed bearer, and call that same
-result operation again while `status` is `pending`. Stop at `completed`,
-`failed`, `expired`, or `not_found`, or when `lifecycleStatus` is `cancelled`.
-Never resubmit generation merely because the accepted job is still active.
+result operation again while `status` is `pending`. Pending is not failure. If
+the initial transport aborts before returning any response or `jobId`, retry the
+identical run operation once so the existing idempotency identity can recover
+the accepted job. Do not retry it again. A protected failure, abort, timeout,
+`not_found`, or `official: false` result establishes no official booking and
+must never be replaced from conversation context.
 
 `getBackstageUniverse` is marked `x-openai-isConsequential: false`. It accepts
 only the dedicated Backstage bearer, never the generic GPT Access token, and
@@ -202,7 +206,7 @@ authorization, tenant identity, or proof that the caller owns that universe.
 
 This legacy supplement is backend-only at the operation level and does not add
 a sixth operation. After any deployed contract change, refresh or re-import
-schema `1.6.0` because repository changes do not update the configured Action.
+schema `1.7.0` because repository changes do not update the configured Action.
 The schema declares
 the saved bearer on every Builder operation, moves result polling to the
 managed-bearer namespace, materializes the nested public payload fields for
@@ -242,7 +246,7 @@ and verify the web service emits the sanitized
 `backstage.notion_context.loaded` event without inspecting raw prompt content.
 For a non-authoritative test universe, make the same request directly without
 the dedicated bearer and verify no Notion request/event occurs while the
-legacy generation behavior remains available. Schema `1.6.0` explicitly marks
+legacy generation behavior remains available. Schema `1.7.0` explicitly marks
 the Builder operation with `bearerAuth`; after import, verify the outgoing
 Builder request carries the credential without exposing it. Do not weaken the
 backend gate if that verification fails.
@@ -491,7 +495,7 @@ counter.
 | Status | Meaning and safe next step |
 | --- | --- |
 | `200` | Read `result.answer`, `result.coverage`, and `result.sources`. Do not infer more coverage than the metadata supports. An answer ending in `...[truncated]` was shortened by transport projection and is not a complete answer. |
-| `202` | Heavy generation was accepted. Preserve `jobId`, then call the managed-bearer `getBackstageBookerJobResult`; do not resubmit the booking request. The Builder contract exposes no dynamic job token or bearer stream. |
+| `202` | Heavy generation was durably accepted and the job ID was returned after the short acceptance window. Preserve `jobId`, then call the managed-bearer `getBackstageBookerJobResult`; pending is not failure. The Builder contract exposes no dynamic job token or bearer stream. |
 | `400` | The closed request envelope or action payload is invalid. Correct the request shape. |
 | `404` | The exact page or section was not found. Correct the title, full path, or section path. |
 | `409` | The scope is ambiguous or the cursor is invalid/stale. Disambiguate the scope, or discard a failed traversal and restart cursor-free. |
@@ -584,7 +588,7 @@ the exact backend revision and contract route are deployed:
 2. Open the existing Backstage Booker GPT in ChatGPT Builder and edit its
    existing Action. Import
    `https://acranos-production.up.railway.app/contracts/backstage_booker.openapi.v1.json`.
-   Import schema `1.6.0` only after that backend version is deployed. Do not
+   Import schema `1.7.0` only after that backend version is deployed. Do not
    create a second ARCANOS Action schema.
 3. Confirm Authentication remains **API Key** and **Bearer** and that Builder
    still reports the saved credential as configured; do not replace or reveal
@@ -623,18 +627,26 @@ the exact backend revision and contract route are deployed:
 
 Use the following compact policy text in the GPT instructions without placing
 the credential there. Keep the GPT's complete saved instructions within
-Builder's practical 8,000-character limit:
+Builder's practical 8,000-character limit. The same no-local-fallback policy and
+exact re-import and full-block replacement checklist are available in
+[`BACKSTAGE_BOOKER_GPT_BUILDER_INSTRUCTIONS.md`](BACKSTAGE_BOOKER_GPT_BUILDER_INSTRUCTIONS.md):
 
 ```text
 Use runBackstageBooker only for queryContinuity, generateBooking,
-generateBookingWithHRC, and simulateMatch.
-Always keep executionMode set to "sync" for runBackstageBooker, as required by
-the Action schema. Use an HTTP 200 result immediately. For HTTP 202, preserve
-jobId and call getBackstageBookerJobResult with the same saved Action bearer.
-Repeat that result operation while status is pending. Stop at completed,
-failed, expired, or not_found, or when lifecycleStatus is cancelled. Do not
-request or forward a jobReadToken, do not use the generic job stream, and never
-resubmit a queued generation while polling.
+generateBookingWithHRC, and simulateMatch. Protected Backstage authority is
+mandatory for official booking output. Never use the current ChatGPT
+conversation, model memory, general wrestling knowledge, or an earlier draft
+as a replacement when runBackstageBooker or getBackstageBookerJobResult fails,
+aborts, times out, returns not_found, or returns official=false.
+
+Keep executionMode "sync" for runBackstageBooker. Use a verified official HTTP
+200 result immediately. For HTTP 202, preserve jobId and call
+getBackstageBookerJobResult with the same saved Action bearer. Repeat that
+result operation while status is pending; pending is not failure. If the
+initial run aborted before returning a jobId, retry the identical run operation
+once to recover through backend idempotency. If that returns a jobId, poll that
+same job. Do not make another run retry. Do not request or forward a
+jobReadToken or use the generic job stream.
 
 For a Notion-authoritative universe, use queryContinuity for factual retrieval
 and continuity reviews. Send the exact universeId and full question in
@@ -645,14 +657,13 @@ scopeKind subtree only for the exact parent plus all descendant pages; it
 excludes siblings, supports blank navigation parents, and rejects sectionPath.
 Never send or request a raw Notion page ID or URL.
 
-Use relevant for a bounded best-match answer; subtree samples are diversified
-across pages. Use complete_scope for the full scope. Start without cursor and,
+Use relevant for a bounded best-match answer. Use complete_scope for the full
+scope. Start without cursor and,
 while coverage.hasMore is true, repeat the unchanged universeId, query,
 retrievalScope, and retrievalMode with coverage.nextCursor. Treat sampled
 status, positive omitted chunk/page counts, promptTruncated, or hasMore as a
-completeness limit. Only subtree results have resolvedScope.scopeKind and
-scopePages, selectedPages, and omittedPages. Never call one response exhaustive
-unless coverage.exhaustive is true. A successful unchanged cursor chain from a
+completeness limit. Never call one response exhaustive unless
+coverage.exhaustive is true. A successful unchanged cursor chain from a
 cursor-free first request through hasMore false completes a multi-response
 traversal even though each response remains sampled and non-exhaustive. Retain
 every page and do not sum omitted counts. Sources are opaque provenance with no
@@ -677,22 +688,20 @@ If queryContinuity reports an unresolved scope, add the exact page
 path for duplicate page titles. If a full page path and `sectionPath` still
 produce ambiguity, repeated headings are distinct: query their parent/page
 scope or ask the user to distinguish those headings in Notion rather than
-silently merging them. If the backend
-returns BACKSTAGE_NOTION_INDEX_UNAVAILABLE, report
-that the authoritative index is temporarily unavailable; never retry against
-legacy PostgreSQL, process memory, another universe, or a mutation action.
-If it returns BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE, report only that the backend
-could not produce a complete response within the output limit. The backend may
-have skipped its one max-output-only compact retry when finite recovery budget
-was unavailable; do not claim a retry occurred, present partial output, or
-automatically retry, decompose the request, or fan it out into replacement
-generation calls.
-If it returns BACKSTAGE_CONTINUITY_QUERY_FAILED, report that the bounded
-continuity answer could not be completed; do not expose or infer a provider
-cause and do not substitute legacy canon.
-If it returns BACKSTAGE_NOTION_AUTHORITY_READ_QUARANTINED or
-BACKSTAGE_NOTION_AUTHORITY_READ_ONLY, explain that the old backend canon is
-intentionally quarantined and Notion remains the source of truth.
+silently merging them. If no protected result is recovered, state that no
+official booking was established and stop. Do not reconstruct a plausible
+card, present partial output, call the result official, or claim continuity was
+verified. Produce a conversation-only working draft only after the user
+explicitly requests that degraded mode after the failure is disclosed, and
+label it unofficial and non-authoritative. For
+BACKSTAGE_NOTION_INDEX_UNAVAILABLE, report temporary authority-index
+unavailability; never retry against legacy PostgreSQL, process memory, another
+universe, or a mutation. For BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE, report only
+that no complete protected response was produced; do not present or continue
+partial output. For BACKSTAGE_CONTINUITY_QUERY_FAILED, report that the bounded
+answer failed and do not infer provider cause or substitute legacy canon. For
+authority-read quarantine/read-only errors, explain that legacy canon remains
+quarantined and Notion remains the source of truth.
 For simulateMatch in that universe, include an explicit payload.rosters array
 with numeric overall ratings; never infer ratings from RAG prose or legacy
 state.
@@ -748,6 +757,14 @@ and retain the backend's separate confirmation flow.
 ```
 
 ## Rotation, revocation, and rollback
+
+Schema `1.7.0` is a backend-plus-Builder cutover. Deploy and verify the backend
+first, then re-import the canonical no-store contract and apply the documented
+instruction patch to the same private GPT. The schema exposes transport and
+authority state, but it cannot prevent the live model from generating locally
+after an Action transport failure until a human updates the GPT instructions.
+Do not reopen protected generation during a cutover with an old schema or old
+instruction policy.
 
 Heavy-generation rollout also requires one distinct canonical base64-encoded
 32-byte `ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY` on both web and worker plus

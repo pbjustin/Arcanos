@@ -5,6 +5,9 @@ import {
 import {
   backstageNotionCoverageThresholds,
 } from './config/backstageNotionCoverageScope.js';
+import {
+  backstageProtectedRuntimeCoverageThresholds,
+} from './config/backstageProtectedRuntimeCoverageScope.js';
 
 //audit assumption: the root Jest project owns only repository and worker suites while the AI runtime package runs its own node:test entrypoints.
 //audit failure risk: discovering mirrored workspaces or the nested runtime package causes duplicate execution or unsupported runner failures in CI.
@@ -28,6 +31,7 @@ const curatedCoverageThreshold = Object.fromEntries(
 const coverageThreshold = {
   ...curatedCoverageThreshold,
   ...backstageNotionCoverageThresholds,
+  ...backstageProtectedRuntimeCoverageThresholds,
 };
 
 export default {

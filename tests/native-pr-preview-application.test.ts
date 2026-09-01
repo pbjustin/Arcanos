@@ -610,7 +610,7 @@ describe('native PR contained application', () => {
     expect(response.body).toEqual(
       NATIVE_PR_PREVIEW_BACKSTAGE_BOOKER_OPENAPI_CONTRACT.document
     );
-    expect(response.body.info.version).toBe('1.6.0');
+    expect(response.body.info.version).toBe('1.7.0');
     expect(response.body.paths[
       '/gpt-access/capabilities/v1/backstage-booker/jobs/{jobId}/result'
     ].get).toMatchObject({
@@ -1988,6 +1988,11 @@ describe('native PR contained application', () => {
         contract.proofHeaders.managedAsyncContinuationVersion
       ]
     ).toBe(contract.managedAsyncContinuationProofVersion);
+    expect(
+      response.headers[
+        contract.proofHeaders.protectedFailureNoFallbackVersion
+      ]
+    ).toBeUndefined();
     expect(response.headers[contract.proofHeaders.queueWaitPolicyVersion])
       .toBeUndefined();
     expect(
@@ -2011,6 +2016,121 @@ describe('native PR contained application', () => {
     expect(response.text).not.toContain('jobReadToken');
     expect(response.text).not.toContain('ciphertext');
     expect(response.text).not.toContain('/stream');
+  });
+
+  it('executes the protected continuity failure policy without process fallback or draft output', async () => {
+    const { app } = buildApplication();
+    const contract = NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT;
+    const response = await request(app)
+      .post(contract.path)
+      .send({ fixture: contract.fixtures.protectedFailureNoFallback });
+    const projectedFailure = (
+      action: 'generateBooking' | 'generateBookingWithHRC',
+      errorCode:
+        | 'BACKSTAGE_NOTION_INDEX_UNAVAILABLE'
+        | 'BACKSTAGE_ASYNC_EXECUTION_FAILED'
+    ) => ({
+      action,
+      authority: 'none',
+      continuityVerified: false,
+      errorCode,
+      errorMessage: 'Protected Backstage generation did not complete.',
+      fallbackPermitted: false,
+      fallbackUsed: false,
+      noDraftMaterial: true,
+      official: false,
+      protected: true,
+      protectedGenerationCompleted: false,
+      resultIsNull: true,
+      snapshotStatus: 'not_applicable',
+      status: 'failed',
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({
+      accepted: true,
+      continuityPolicy: {
+        protectedGeneration: {
+          processFallbackReads: 0,
+          reason: 'protected_generation',
+          state: 'unavailable',
+        },
+        quarantinedLegacy: {
+          processFallbackReads: 0,
+          reason: 'legacy_read_quarantined',
+          state: 'unavailable',
+        },
+        protectedAndQuarantined: {
+          processFallbackReads: 0,
+          reason: 'legacy_read_quarantined',
+          state: 'unavailable',
+        },
+        unprotectedControl: {
+          processFallbackReads: 1,
+          source: 'process-fallback-control',
+          state: 'process_fallback',
+        },
+      },
+      databaseBoundaryReached: false,
+      effectsBoundaryReached: false,
+      externalNetworkAttempted: false,
+      failureProjection: {
+        bothProtectedActionsVerified: true,
+        failureOnly: true,
+        projections: [
+          projectedFailure(
+            'generateBooking',
+            'BACKSTAGE_NOTION_INDEX_UNAVAILABLE'
+          ),
+          projectedFailure(
+            'generateBookingWithHRC',
+            'BACKSTAGE_ASYNC_EXECUTION_FAILED'
+          ),
+        ],
+      },
+      fixture: contract.fixtures.protectedFailureNoFallback,
+      hrcBoundaryReached: false,
+      inMemoryJobReads: 2,
+      processFallbackReads: 1,
+      protectedEffectsEnabled: false,
+      providerBoundaryReached: false,
+      queueBoundaryReached: false,
+      repositoryBoundaryReached: false,
+      schemaVersion: 1,
+      workerBoundaryReached: false,
+    });
+    expectContainedResponseHeaders(
+      response,
+      'native-pr-preview',
+      'native-pr-preview',
+      true
+    );
+    expect(response.headers[contract.proofHeaders.clearPolicyVersion]).toBe(
+      contract.clearPolicyVersion
+    );
+    expect(
+      response.headers[
+        contract.proofHeaders.protectedFailureNoFallbackVersion
+      ]
+    ).toBe(contract.protectedFailureNoFallbackProofVersion);
+    expect(
+      response.headers[contract.proofHeaders.managedAsyncContinuationVersion]
+    ).toBeUndefined();
+    expect(response.headers[contract.proofHeaders.queueWaitPolicyVersion])
+      .toBeUndefined();
+    expect(response.headers[contract.proofHeaders.gptClientIdentityVersion])
+      .toBeUndefined();
+    expect(response.headers['x-response-bytes']).toBe(
+      String(Buffer.byteLength(response.text, 'utf8'))
+    );
+    expect(response.text).not.toContain('PRIVATE_NO_FALLBACK_');
+    expect(response.text).not.toContain('ciphertext');
+    expect(response.text).not.toContain('jobReadToken');
+    expect(response.text).not.toContain('"storyline"');
+    expect(response.text).not.toContain('"answer"');
+    expect(response.text).not.toContain('"draft"');
+    expect(response.text).not.toContain('"partial"');
+    expect(response.text).not.toContain('"preview"');
   });
 
   it('executes the sealed GPT client identity and durable provenance contract', async () => {
@@ -2142,6 +2262,11 @@ describe('native PR contained application', () => {
       expect(
         response.headers[
           contract.proofHeaders.managedAsyncContinuationVersion
+        ]
+      ).toBeUndefined();
+      expect(
+        response.headers[
+          contract.proofHeaders.protectedFailureNoFallbackVersion
         ]
       ).toBeUndefined();
       expect(

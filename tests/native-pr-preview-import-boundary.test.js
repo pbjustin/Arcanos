@@ -178,6 +178,14 @@ const BACKSTAGE_BOOKER_ASYNC_RESULT_CORE_URL = new URL(
   '../src/shared/backstage/backstageBookerAsyncResultCore.ts',
   import.meta.url
 );
+const BACKSTAGE_PROTECTED_CONTINUITY_POLICY_URL = new URL(
+  '../src/shared/backstage/backstageProtectedContinuityPolicy.ts',
+  import.meta.url
+);
+const BACKSTAGE_PROTECTED_FAILURE_URL = new URL(
+  '../src/shared/backstage/backstageProtectedFailure.ts',
+  import.meta.url
+);
 const BACKSTAGE_QUEUED_JOB_RESULT_PROTECTION_URL = new URL(
   '../src/shared/backstage/backstageQueuedJobResultProtection.ts',
   import.meta.url
@@ -413,7 +421,7 @@ describe('native PR preview import boundary', () => {
         reviewedFiles[0],
         replaceRequired(
           sources[0],
-          'return MAX_ASYNC_GPT_WAIT_FOR_RESULT_MS;',
+          'return resolveBackstageInitialAcceptanceWaitMs();',
           'return 1;'
         ),
       ],
@@ -495,6 +503,8 @@ describe('native PR preview import boundary', () => {
       'src/shared/backstage/backstageBookerAccessAuthCore.ts',
       'src/shared/backstage/backstageBookerAsyncContinuation.ts',
       'src/shared/backstage/backstageBookerAsyncResultCore.ts',
+      'src/shared/backstage/backstageProtectedContinuityPolicy.ts',
+      'src/shared/backstage/backstageProtectedFailure.ts',
       'src/shared/backstage/backstageQueuedJobResultProtection.ts',
     ];
     expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).toEqual(
@@ -522,6 +532,12 @@ describe('native PR preview import boundary', () => {
         BACKSTAGE_BOOKER_ASYNC_RESULT_CORE_URL
       )],
       [reviewedFiles[3], await readNormalizedSource(
+        BACKSTAGE_PROTECTED_CONTINUITY_POLICY_URL
+      )],
+      [reviewedFiles[4], await readNormalizedSource(
+        BACKSTAGE_PROTECTED_FAILURE_URL
+      )],
+      [reviewedFiles[5], await readNormalizedSource(
         BACKSTAGE_QUEUED_JOB_RESULT_PROTECTION_URL
       )],
     ]);
@@ -562,6 +578,22 @@ describe('native PR preview import boundary', () => {
         reviewedFiles[3],
         replaceRequired(
           sources.get(reviewedFiles[3]),
+          '  if (input.protectedGenerationExecution) {',
+          '  if (!input.protectedGenerationExecution) {'
+        ),
+      ],
+      [
+        reviewedFiles[4],
+        replaceRequired(
+          sources.get(reviewedFiles[4]),
+          "  'BACKSTAGE_ASYNC_RESULT_UNAVAILABLE',",
+          "  'UNSAFE_FAILURE_CODE',"
+        ),
+      ],
+      [
+        reviewedFiles[5],
+        replaceRequired(
+          sources.get(reviewedFiles[5]),
           "const PROTECTED_BACKSTAGE_JOB_RESULT_SOURCE = 'backstage-booker-worker';",
           "const PROTECTED_BACKSTAGE_JOB_RESULT_SOURCE = 'backstage-booker-preview';"
         ),

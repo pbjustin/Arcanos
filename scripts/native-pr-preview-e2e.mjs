@@ -15,7 +15,7 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 5_000;
 const DEFAULT_TOTAL_TIMEOUT_MS = 60_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 64 * 1024;
 const MAX_AGGREGATE_RESPONSE_BYTES = 512 * 1024;
-const MAX_REQUESTS = 136;
+const MAX_REQUESTS = 137;
 const MAX_BACKSTAGE_BOOKER_OPENAPI_SOURCE_BYTES = 128 * 1024;
 const BACKSTAGE_BOOKER_OPENAPI_GIT_PATH =
   'contracts/backstage_booker.openapi.v1.json';
@@ -959,6 +959,11 @@ export function buildNativePrPreviewRequestPlan() {
     backstageGenerationCase(
       'backstage-generation-managed-async-continuation',
       'managedAsyncContinuation',
+      true
+    ),
+    backstageGenerationCase(
+      'backstage-generation-protected-failure-no-fallback',
+      'protectedFailureNoFallback',
       true
     ),
     backstageGenerationCase(
@@ -2667,6 +2672,76 @@ function expectedBackstageGenerationContractPayload(requestCase) {
       workerBoundaryReached: false,
     };
   }
+  if (requestCase.fixtureName === 'protectedFailureNoFallback') {
+    const publicFailure = ({ action, errorCode }) => ({
+      action,
+      authority: 'none',
+      continuityVerified: false,
+      errorCode,
+      errorMessage: 'Protected Backstage generation did not complete.',
+      fallbackPermitted: false,
+      fallbackUsed: false,
+      noDraftMaterial: true,
+      official: false,
+      protected: true,
+      protectedGenerationCompleted: false,
+      resultIsNull: true,
+      snapshotStatus: 'not_applicable',
+      status: 'failed',
+    });
+    return {
+      accepted: true,
+      continuityPolicy: {
+        protectedGeneration: {
+          processFallbackReads: 0,
+          reason: 'protected_generation',
+          state: 'unavailable',
+        },
+        quarantinedLegacy: {
+          processFallbackReads: 0,
+          reason: 'legacy_read_quarantined',
+          state: 'unavailable',
+        },
+        protectedAndQuarantined: {
+          processFallbackReads: 0,
+          reason: 'legacy_read_quarantined',
+          state: 'unavailable',
+        },
+        unprotectedControl: {
+          processFallbackReads: 1,
+          source: 'process-fallback-control',
+          state: 'process_fallback',
+        },
+      },
+      databaseBoundaryReached: false,
+      effectsBoundaryReached: false,
+      externalNetworkAttempted: false,
+      failureProjection: {
+        bothProtectedActionsVerified: true,
+        failureOnly: true,
+        projections: [
+          publicFailure({
+            action: 'generateBooking',
+            errorCode: 'BACKSTAGE_NOTION_INDEX_UNAVAILABLE',
+          }),
+          publicFailure({
+            action: 'generateBookingWithHRC',
+            errorCode: 'BACKSTAGE_ASYNC_EXECUTION_FAILED',
+          }),
+        ],
+      },
+      fixture: requestCase.fixture,
+      hrcBoundaryReached: false,
+      inMemoryJobReads: 2,
+      processFallbackReads: 1,
+      protectedEffectsEnabled: false,
+      providerBoundaryReached: false,
+      queueBoundaryReached: false,
+      repositoryBoundaryReached: false,
+      schemaVersion: 1,
+      workerBoundaryReached: false,
+    };
+  }
   if (requestCase.fixtureName === 'gptClientIdentity') {
     return {
       ...base,
@@ -3772,6 +3847,50 @@ function validateResponseBody(requestCase, bodyBytes, options) {
   }
   if (
     requestCase.expectedType === 'backstage-generation-contract'
+    && requestCase.fixtureName === 'protectedFailureNoFallback'
+  ) {
+    const projections = body?.failureProjection?.projections;
+    if (
+      bodyText.includes('PRIVATE_NO_FALLBACK_')
+      || bodyText.includes('ciphertext')
+      || bodyText.includes('jobReadToken')
+      || bodyText.includes('"storyline"')
+      || bodyText.includes('"answer"')
+      || bodyText.includes('"draft"')
+      || bodyText.includes('"partial"')
+      || bodyText.includes('"preview"')
+      || body?.continuityPolicy?.protectedGeneration?.processFallbackReads !== 0
+      || body?.continuityPolicy?.quarantinedLegacy?.processFallbackReads !== 0
+      || body?.continuityPolicy?.protectedAndQuarantined?.processFallbackReads !== 0
+      || body?.continuityPolicy?.unprotectedControl?.processFallbackReads !== 1
+      || body?.processFallbackReads !== 1
+      || body?.failureProjection?.bothProtectedActionsVerified !== true
+      || body?.failureProjection?.failureOnly !== true
+      || !Array.isArray(projections)
+      || projections.length !== 2
+      || projections.some(projection => (
+        projection?.resultIsNull !== true
+        || projection?.noDraftMaterial !== true
+        || projection?.protectedGenerationCompleted !== false
+        || projection?.official !== false
+        || projection?.continuityVerified !== false
+        || projection?.authority !== 'none'
+        || projection?.fallbackUsed !== false
+        || projection?.fallbackPermitted !== false
+      ))
+      || body?.databaseBoundaryReached !== false
+      || body?.providerBoundaryReached !== false
+      || body?.hrcBoundaryReached !== false
+      || body?.workerBoundaryReached !== false
+    ) {
+      fail(
+        'NATIVE_PR_PREVIEW_BACKSTAGE_PROTECTED_NO_FALLBACK_OUTCOME_INVALID',
+        requestCase.caseId
+      );
+    }
+  }
+  if (
+    requestCase.expectedType === 'backstage-generation-contract'
     && requestCase.fixtureName === 'gptClientIdentity'
   ) {
     if (
@@ -4055,6 +4174,17 @@ async function executeRequestCase(
       );
     }
     if (
+      requestCase.fixtureName === 'protectedFailureNoFallback'
+      && response.headers.get(
+        contract.proofHeaders.protectedFailureNoFallbackVersion
+      ) !== contract.protectedFailureNoFallbackProofVersion
+    ) {
+      fail(
+        'NATIVE_PR_PREVIEW_BACKSTAGE_PROTECTED_NO_FALLBACK_PROOF_INVALID',
+        requestCase.caseId
+      );
+    }
+    if (
       requestCase.fixtureName === 'gptClientIdentity'
       && response.headers.get(
         contract.proofHeaders.gptClientIdentityVersion
@@ -4249,6 +4379,10 @@ async function executeRequestCase(
     ...(requestCase.expectedType === 'backstage-generation-contract'
       && requestCase.fixtureName === 'managedAsyncContinuation'
       ? { managedAsyncContinuationVerified: true }
+      : {}),
+    ...(requestCase.expectedType === 'backstage-generation-contract'
+      && requestCase.fixtureName === 'protectedFailureNoFallback'
+      ? { protectedFailureNoFallbackVerified: true }
       : {}),
     ...(requestCase.expectedType === 'backstage-generation-contract'
       && requestCase.fixtureName === 'gptClientIdentity'

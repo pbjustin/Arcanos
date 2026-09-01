@@ -12,6 +12,12 @@ import {
   isBackstageBookerBearerReadableJob,
   readBackstageBookerAsyncResultCore,
 } from '@shared/backstage/backstageBookerAsyncResultCore.js';
+import {
+  buildBackstageBookerProtectedFailureState,
+} from '@shared/backstage/backstageBookerAsyncContinuation.js';
+import {
+  readProtectedBackstageCompletionProvenance,
+} from '@shared/backstage/backstageProtectedFailure.js';
 import type {
   BackstageJobPayloadProtectionConfig,
 } from '@shared/backstage/backstageJobPayloadProtection.js';
@@ -162,6 +168,7 @@ function sendBackstageAsyncResultError(
       ? { status: 'unavailable', service: 'backstage-booker' }
       : {}),
     error: { code, message },
+    ...buildBackstageBookerProtectedFailureState({ code, message }),
     ...(req.requestId ? { requestId: req.requestId } : {}),
     ...(req.traceId ? { traceId: req.traceId } : {}),
   }, {
@@ -239,9 +246,27 @@ export function createBackstageBookerAsyncResultRouter(
           lookup: 'result',
           outcome: lookup.status,
         });
+        const protectedCompletion = lookup.status === 'completed'
+          ? readProtectedBackstageCompletionProvenance(lookup.result)
+          : null;
+        const overflowPayload = protectedCompletion
+          ? {
+              ok: false,
+              jobId: lookup.jobId,
+              status: 'failed',
+              poll: lookup.poll,
+              ...buildBackstageBookerProtectedFailureState({
+                code: 'BACKSTAGE_ASYNC_RESULT_UNAVAILABLE',
+                message: 'Protected Backstage generation did not complete.',
+              }),
+            }
+          : undefined;
         sendBoundedJsonResponse(req, res, lookup, {
           logEvent: 'backstage_booker_async_result.response',
           statusCode: 200,
+          ...(overflowPayload
+            ? { overflowPayload, overflowStatusCode: 503 }
+            : {}),
         });
       } catch (error: unknown) {
         if (error instanceof JobRepositoryUnavailableError) {
@@ -288,10 +313,10 @@ export function createBackstageBookerAsyncResultRouter(
       res.setHeader('Allow', 'GET, HEAD');
       sendBoundedJsonResponse(req, res, {
         ok: false,
-        error: {
+        ...buildBackstageBookerProtectedFailureState({
           code: 'METHOD_NOT_ALLOWED',
           message: 'This Backstage Booker async result endpoint supports GET and HEAD only.',
-        },
+        }),
         ...(req.requestId ? { requestId: req.requestId } : {}),
         ...(req.traceId ? { traceId: req.traceId } : {}),
       }, {

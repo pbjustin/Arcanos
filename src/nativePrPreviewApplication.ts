@@ -94,6 +94,12 @@ import {
   projectBackstageBookerManagedPendingResponse,
 } from './shared/backstage/backstageBookerAsyncContinuation.js';
 import {
+  buildProtectedBackstageFailureEnvelope,
+} from './shared/backstage/backstageProtectedFailure.js';
+import {
+  resolveBackstageDurableContinuityFailure,
+} from './shared/backstage/backstageProtectedContinuityPolicy.js';
+import {
   isBackstageBookerBearerReadableJob,
   readBackstageBookerAsyncResultCore,
 } from './shared/backstage/backstageBookerAsyncResultCore.js';
@@ -229,6 +235,7 @@ import {
   resolveGptRouteHardTimeoutMs,
 } from './shared/http/gptRouteTimeout.js';
 import {
+  BACKSTAGE_INITIAL_ACCEPTANCE_WAIT_MS,
   DEFAULT_ASYNC_GPT_WAIT_POLL_MS,
   MAX_ASYNC_GPT_WAIT_POLLS,
   resolveGptAsyncHeavyWaitForResultMs,
@@ -2488,16 +2495,17 @@ async function assertBackstageQueueWaitPolicyFixture(): Promise<
     MAX_ASYNC_GPT_WAIT_POLLS
   );
   if (
-    protectedBackstageWaitMs !== BACKSTAGE_RESULT_POLL_WAIT_MS
+    protectedBackstageWaitMs !== BACKSTAGE_INITIAL_ACCEPTANCE_WAIT_MS
     || genericHeavyWaitMs !== 500
-    || executionBudget.resultPollWaitMs !== protectedBackstageWaitMs
+    || executionBudget.resultPollWaitMs !== BACKSTAGE_RESULT_POLL_WAIT_MS
+    || executionBudget.resultPollWaitMs <= protectedBackstageWaitMs
     || executionBudget.resultPollWaitMs >= executionBudget.operationTimeoutMs
     || pollIntervalMs !== 250
     || invalidConfiguredPollIntervalMs !== pollIntervalMs
     || minimumPollIntervalMs !== 50
     || maximumPollIntervalMs !== 1_000
-    || protectedPollLimit !== 121
-    || minimumIntervalPollLimit !== MAX_ASYNC_GPT_WAIT_POLLS
+    || protectedPollLimit !== 5
+    || minimumIntervalPollLimit !== 21
     || genericPollLimit !== 3
   ) {
     throw new Error('PREVIEW_BACKSTAGE_QUEUE_WAIT_POLICY_INVALID');
@@ -6146,6 +6154,252 @@ function runBackstageGptClientIdentityFixture(
   };
 }
 
+async function runBackstageProtectedFailureNoFallbackFixture(
+  fixture: string
+): Promise<Record<string, unknown>> {
+  const processFallbackValue = Object.freeze({ source: 'process-fallback-control' });
+  const continuityCases = [
+    {
+      key: 'protectedGeneration',
+      protectedGenerationExecution: true,
+      legacyReadQuarantined: false,
+      expectedReason: 'protected_generation',
+    },
+    {
+      key: 'quarantinedLegacy',
+      protectedGenerationExecution: false,
+      legacyReadQuarantined: true,
+      expectedReason: 'legacy_read_quarantined',
+    },
+    {
+      key: 'protectedAndQuarantined',
+      protectedGenerationExecution: true,
+      legacyReadQuarantined: true,
+      expectedReason: 'legacy_read_quarantined',
+    },
+    {
+      key: 'unprotectedControl',
+      protectedGenerationExecution: false,
+      legacyReadQuarantined: false,
+      expectedReason: null,
+    },
+  ] as const;
+  const continuityPolicy: Record<string, Record<string, unknown>> = {};
+  let totalProcessFallbackReads = 0;
+
+  for (const continuityCase of continuityCases) {
+    let processFallbackReads = 0;
+    const resolution = resolveBackstageDurableContinuityFailure({
+      protectedGenerationExecution:
+        continuityCase.protectedGenerationExecution,
+      legacyReadQuarantined: continuityCase.legacyReadQuarantined,
+      readProcessFallback: () => {
+        processFallbackReads += 1;
+        totalProcessFallbackReads += 1;
+        return processFallbackValue;
+      },
+    });
+
+    if (continuityCase.expectedReason === null) {
+      if (
+        resolution.state !== 'process_fallback'
+        || resolution.value !== processFallbackValue
+        || processFallbackReads !== 1
+      ) {
+        throw new Error(
+          'PREVIEW_BACKSTAGE_PROTECTED_NO_FALLBACK_CONTROL_INVALID'
+        );
+      }
+      continuityPolicy[continuityCase.key] = {
+        processFallbackReads,
+        source: resolution.value.source,
+        state: resolution.state,
+      };
+      continue;
+    }
+
+    if (
+      resolution.state !== 'unavailable'
+      || resolution.reason !== continuityCase.expectedReason
+      || processFallbackReads !== 0
+    ) {
+      throw new Error(
+        'PREVIEW_BACKSTAGE_PROTECTED_NO_FALLBACK_POLICY_INVALID'
+      );
+    }
+    continuityPolicy[continuityCase.key] = {
+      processFallbackReads,
+      reason: resolution.reason,
+      state: resolution.state,
+    };
+  }
+
+  if (totalProcessFallbackReads !== 1) {
+    throw new Error(
+      'PREVIEW_BACKSTAGE_PROTECTED_NO_FALLBACK_READ_COUNT_INVALID'
+    );
+  }
+
+  const payloadKey = Buffer.alloc(32, 0x4e).toString('base64');
+  const payloadProtectionConfig = resolveBackstageJobPayloadProtectionConfig(
+    environmentName =>
+      environmentName === BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY_ENV_NAME
+        ? payloadKey
+        : undefined
+  );
+  const actorKey = BACKSTAGE_BOOKER_ACCESS_PRINCIPAL_ACTOR_KEY;
+  const idempotencyScopeHash = buildGptIdempotencyScopeHash({
+    surface: 'public-gpt',
+    actorKey,
+  });
+  const protectedActionCases = [
+    {
+      action: 'generateBooking',
+      code: 'BACKSTAGE_NOTION_INDEX_UNAVAILABLE',
+      jobId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaae',
+    },
+    {
+      action: 'generateBookingWithHRC',
+      code: 'BACKSTAGE_ASYNC_EXECUTION_FAILED',
+      jobId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaf',
+    },
+  ] as const;
+  const projections: Array<Record<string, unknown>> = [];
+  let inMemoryJobReads = 0;
+
+  for (const actionCase of protectedActionCases) {
+    const protectedInput = {
+      gptId: 'backstage-booker',
+      requestPath: '/gpt/backstage-booker',
+      executionModeReason: 'backstage_notion_authority_context',
+      protectedBackstage: {
+        version: 1,
+        source: 'backstage-booker-http',
+        envelopeId: `native-preview-no-fallback-${actionCase.action}`,
+        action: actionCase.action,
+        universeId: 'native-preview-no-fallback',
+        sealedPayload: { fixture: 'server-owned' },
+      },
+    };
+    const privateError =
+      `PRIVATE_NO_FALLBACK_${actionCase.action.toUpperCase()}_SENTINEL`;
+    const failedJob = buildFixture(actionCase.jobId, 'failed', {
+      input: protectedInput,
+      idempotency_scope_hash: idempotencyScopeHash,
+      output: protectBackstageQueuedGptJobOutput({
+        jobId: actionCase.jobId,
+        rawInput: protectedInput,
+        output: buildProtectedBackstageFailureEnvelope({
+          gptId: 'backstage-booker',
+          action: actionCase.action,
+          code: actionCase.code,
+        }),
+        config: payloadProtectionConfig,
+      }),
+      error_message: privateError,
+      completed_at: FIXTURE_COMPLETED_TIMESTAMP,
+    });
+    const projected = await readBackstageBookerAsyncResultCore(
+      {
+        jobId: actionCase.jobId,
+        actorKey,
+        waitForResultMs: 0,
+        pollIntervalMs: 50,
+      },
+      {
+        getJobByIdFn: async () => {
+          inMemoryJobReads += 1;
+          return failedJob;
+        },
+        waitForQueuedGptJobCompletionFn: async () => {
+          throw new Error('PREVIEW_PROTECTED_NO_FALLBACK_UNEXPECTED_WAIT');
+        },
+        payloadProtectionConfig,
+      }
+    );
+    const serialized = JSON.stringify(projected);
+    const noDraftMaterial = [
+      'output',
+      'storyline',
+      'answer',
+      'draft',
+      'partial',
+      'preview',
+    ].every(field => !serialized.includes(`\"${field}\"`));
+    if (
+      projected.status !== 'failed'
+      || projected.result !== null
+      || projected.error?.code !== actionCase.code
+      || projected.error.message
+        !== 'Protected Backstage generation did not complete.'
+      || JSON.stringify(Object.keys(projected.error).sort())
+        !== JSON.stringify(['code', 'message'])
+      || projected.protected !== true
+      || projected.protectedGenerationCompleted !== false
+      || projected.official !== false
+      || projected.continuityVerified !== false
+      || projected.authority !== 'none'
+      || projected.snapshotStatus !== 'not_applicable'
+      || projected.fallbackUsed !== false
+      || projected.fallbackPermitted !== false
+      || !noDraftMaterial
+      || serialized.includes(privateError)
+      || serialized.includes(payloadKey)
+      || serialized.includes('ciphertext')
+    ) {
+      throw new Error(
+        'PREVIEW_BACKSTAGE_PROTECTED_NO_FALLBACK_PROJECTION_INVALID'
+      );
+    }
+    projections.push({
+      action: actionCase.action,
+      authority: projected.authority,
+      continuityVerified: projected.continuityVerified,
+      errorCode: projected.error.code,
+      errorMessage: projected.error.message,
+      fallbackPermitted: projected.fallbackPermitted,
+      fallbackUsed: projected.fallbackUsed,
+      noDraftMaterial,
+      official: projected.official,
+      protected: projected.protected,
+      protectedGenerationCompleted: projected.protectedGenerationCompleted,
+      resultIsNull: projected.result === null,
+      snapshotStatus: projected.snapshotStatus,
+      status: projected.status,
+    });
+  }
+
+  if (inMemoryJobReads !== protectedActionCases.length) {
+    throw new Error(
+      'PREVIEW_BACKSTAGE_PROTECTED_NO_FALLBACK_JOB_READ_COUNT_INVALID'
+    );
+  }
+
+  return {
+    accepted: true,
+    continuityPolicy,
+    databaseBoundaryReached: false,
+    effectsBoundaryReached: false,
+    externalNetworkAttempted: false,
+    failureProjection: {
+      bothProtectedActionsVerified:
+        projections.length === protectedActionCases.length,
+      failureOnly: true,
+      projections,
+    },
+    fixture,
+    hrcBoundaryReached: false,
+    inMemoryJobReads,
+    processFallbackReads: totalProcessFallbackReads,
+    protectedEffectsEnabled: false,
+    providerBoundaryReached: false,
+    queueBoundaryReached: false,
+    repositoryBoundaryReached: false,
+    schemaVersion: 1,
+    workerBoundaryReached: false,
+  };
+}
+
 async function runBackstageManagedAsyncContinuationFixture(
   fixture: string
 ): Promise<Record<string, unknown>> {
@@ -6238,7 +6492,28 @@ async function runBackstageManagedAsyncContinuationFixture(
   });
   const completedOutput = {
     ok: true,
-    result: { answer: 'sealed managed continuation complete' },
+    result: {
+      universeId: 'native-preview-managed-async',
+      storyline: 'Synthetic protected generation completion.',
+      protectedGeneration: {
+        version: 1,
+        protected: true,
+        protectedGenerationCompleted: true,
+        official: true,
+        continuityVerified: true,
+        authority: 'notion',
+        snapshotStatus: 'current_complete',
+        fallbackUsed: false,
+        fallbackPermitted: false,
+      },
+    },
+    _route: {
+      gptId: 'backstage-booker',
+      module: 'BACKSTAGE:BOOKER',
+      route: 'backstage-booker',
+      action: 'generateBooking',
+      timestamp: FIXTURE_COMPLETED_TIMESTAMP.toISOString(),
+    },
   };
   const completedJob = buildFixture(jobId, 'completed', {
     input: protectedInput,
@@ -6346,22 +6621,46 @@ async function runBackstageManagedAsyncContinuationFixture(
     }
   );
 
+  const failedPrivateError = 'PRIVATE_MANAGED_FAILURE_SENTINEL';
+  const cancelledPrivateError = 'PRIVATE_MANAGED_CANCELLATION_SENTINEL';
+  const expiredPrivateError = 'PRIVATE_MANAGED_EXPIRY_SENTINEL';
   const failedResult = await readOnce(buildFixture(jobId, 'failed', {
     input: protectedInput,
     idempotency_scope_hash: stableScopeA,
-    error_message: 'Synthetic managed failure.',
+    output: protectBackstageQueuedGptJobOutput({
+      jobId,
+      rawInput: protectedInput,
+      output: buildProtectedBackstageFailureEnvelope({
+        gptId: 'backstage-booker',
+        action: 'generateBooking',
+        code: 'BACKSTAGE_NOTION_INDEX_UNAVAILABLE',
+      }),
+      config: payloadProtectionConfig,
+    }),
+    error_message: failedPrivateError,
     completed_at: FIXTURE_COMPLETED_TIMESTAMP,
   }));
   const cancelledResult = await readOnce(buildFixture(jobId, 'cancelled', {
     input: protectedInput,
     idempotency_scope_hash: stableScopeA,
-    error_message: 'Synthetic managed cancellation.',
+    output: protectBackstageQueuedGptJobOutput({
+      jobId,
+      rawInput: protectedInput,
+      output: buildProtectedBackstageFailureEnvelope({
+        gptId: 'backstage-booker',
+        action: 'generateBooking',
+        code: 'BACKSTAGE_ASYNC_EXECUTION_FAILED',
+      }),
+      config: payloadProtectionConfig,
+    }),
+    error_message: cancelledPrivateError,
     completed_at: FIXTURE_COMPLETED_TIMESTAMP,
   }));
   const expiredResult = await readOnce(buildFixture(jobId, 'expired', {
     input: protectedInput,
     idempotency_scope_hash: stableScopeA,
-    error_message: 'Synthetic managed expiry.',
+    output: completedJob.output,
+    error_message: expiredPrivateError,
     completed_at: FIXTURE_COMPLETED_TIMESTAMP,
   }));
 
@@ -6447,19 +6746,81 @@ async function runBackstageManagedAsyncContinuationFixture(
       identityA.legacyActorKey !== identityB.legacyActorKey
       && legacyScopeA !== legacyScopeB,
   };
+  const transitionedEnvelope = isPreviewRecord(transitionedResult.result)
+    ? transitionedResult.result
+    : null;
+  const transitionedBooking = isPreviewRecord(transitionedEnvelope?.result)
+    ? transitionedEnvelope.result
+    : null;
+  const transitionedProvenance = isPreviewRecord(
+    transitionedBooking?.protectedGeneration
+  ) ? transitionedBooking.protectedGeneration : null;
+  const transitionedRoute = isPreviewRecord(transitionedEnvelope?._route)
+    ? transitionedEnvelope._route
+    : null;
   const terminalMaterializationVerified =
     transitionedResult.status === 'completed'
     && JSON.stringify(transitionedResult.result) === JSON.stringify(completedOutput)
+    && transitionedBooking?.universeId === 'native-preview-managed-async'
+    && transitionedBooking.storyline === 'Synthetic protected generation completion.'
+    && transitionedProvenance?.official === true
+    && transitionedProvenance.continuityVerified === true
+    && transitionedProvenance.authority === 'notion'
+    && transitionedProvenance.snapshotStatus === 'current_complete'
+    && transitionedProvenance.fallbackUsed === false
+    && transitionedProvenance.fallbackPermitted === false
+    && transitionedRoute?.gptId === 'backstage-booker'
+    && transitionedRoute.module === 'BACKSTAGE:BOOKER'
+    && transitionedRoute.route === 'backstage-booker'
+    && transitionedRoute.action === 'generateBooking'
+    && transitionedRoute.timestamp === FIXTURE_COMPLETED_TIMESTAMP.toISOString()
     && repositoryReads === 2
     && waiterCalls === 1;
+  const matchesProtectedFailureState = (
+    payload: typeof failedResult,
+    status: 'failed' | 'expired',
+    code: string,
+    privateError: string
+  ) => {
+    const serialized = JSON.stringify(payload);
+    return payload.status === status
+      && payload.result === null
+      && payload.error?.code === code
+      && payload.error.message === 'Protected Backstage generation did not complete.'
+      && JSON.stringify(Object.keys(payload.error).sort())
+        === JSON.stringify(['code', 'message'])
+      && payload.protected === true
+      && payload.protectedGenerationCompleted === false
+      && payload.official === false
+      && payload.continuityVerified === false
+      && payload.authority === 'none'
+      && payload.snapshotStatus === 'not_applicable'
+      && payload.fallbackUsed === false
+      && payload.fallbackPermitted === false
+      && !serialized.includes(privateError)
+      && ['output', 'storyline', 'answer', 'draft', 'partial', 'preview']
+        .every(field => !serialized.includes(`\"${field}\"`));
+  };
   const stateProjectionVerified =
     pendingResult.status === 'pending'
-    && failedResult.status === 'failed'
-    && failedResult.error?.code === 'JOB_FAILED'
-    && cancelledResult.status === 'failed'
-    && cancelledResult.error?.code === 'JOB_CANCELLED'
-    && expiredResult.status === 'expired'
-    && expiredResult.error?.code === 'JOB_EXPIRED'
+    && matchesProtectedFailureState(
+      failedResult,
+      'failed',
+      'BACKSTAGE_NOTION_INDEX_UNAVAILABLE',
+      failedPrivateError
+    )
+    && matchesProtectedFailureState(
+      cancelledResult,
+      'failed',
+      'BACKSTAGE_ASYNC_EXECUTION_FAILED',
+      cancelledPrivateError
+    )
+    && matchesProtectedFailureState(
+      expiredResult,
+      'expired',
+      'BACKSTAGE_ASYNC_RESULT_UNAVAILABLE',
+      expiredPrivateError
+    )
     && missingResult.status === 'not_found'
     && legacyPendingResult.status === 'pending';
   const publicProjection = JSON.stringify({
@@ -6474,6 +6835,9 @@ async function runBackstageManagedAsyncContinuationFixture(
     wrongToken,
     capability,
     payloadKey,
+    failedPrivateError,
+    cancelledPrivateError,
+    expiredPrivateError,
     'ciphertext',
     'jobReadToken',
     'jobReadTokenHeader',
@@ -6543,6 +6907,9 @@ async function runBackstageGenerationFixture(
       await runBackstageManagedAsyncContinuationFixture(
         fixtures.managedAsyncContinuation
       );
+      await runBackstageProtectedFailureNoFallbackFixture(
+        fixtures.protectedFailureNoFallback
+      );
       runBackstageGptClientIdentityFixture(fixtures.gptClientIdentity);
       return {
         payload: await runBackstageReviewCompletionFixture(fixture),
@@ -6593,6 +6960,11 @@ async function runBackstageGenerationFixture(
     case fixtures.managedAsyncContinuation:
       return {
         payload: await runBackstageManagedAsyncContinuationFixture(fixture),
+        partitionedAuthorityProofVersion: null,
+      };
+    case fixtures.protectedFailureNoFallback:
+      return {
+        payload: await runBackstageProtectedFailureNoFallbackFixture(fixture),
         partitionedAuthorityProofVersion: null,
       };
     case fixtures.gptClientIdentity:
@@ -8686,6 +9058,18 @@ export function createNativePrPreviewApplication(
                 .managedAsyncContinuationVersion,
               NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT
                 .managedAsyncContinuationProofVersion
+            );
+          }
+          if (
+            fixture
+              === NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.fixtures
+                .protectedFailureNoFallback
+          ) {
+            response.setHeader(
+              NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.proofHeaders
+                .protectedFailureNoFallbackVersion,
+              NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT
+                .protectedFailureNoFallbackProofVersion
             );
           }
           if (

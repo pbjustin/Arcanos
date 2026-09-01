@@ -57,8 +57,8 @@ The original seven action schema files remain unchanged.
 The dedicated Backstage Booker Custom GPT OpenAPI contract is the canonical
 Builder-facing view of this module-action family, not another protocol family.
 Keep its closed payloads aligned with the catalog schemas. The tracked
-`contracts/backstage_booker.openapi.v1.json` is version `1.6.0`, and the live
-no-store contract endpoint serves it directly. Schema `1.6.0` exposes exactly
+`contracts/backstage_booker.openapi.v1.json` is version `1.7.0`, and the live
+no-store contract endpoint serves it directly. Schema `1.7.0` exposes exactly
 five operations: the four continuity-query/generation/simulation actions
 through Builder-authenticated `runBackstageBooker`; poll-only managed result
 retrieval through

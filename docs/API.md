@@ -444,7 +444,7 @@ envelope shapes. GPT Access and HTTP MCP retain their
 own existing bearer, scope, and allowlist boundaries rather than requiring two
 bearer credentials on one request.
 
-The Builder-specific schema `1.6.0` at
+The Builder-specific schema `1.7.0` at
 `GET /contracts/backstage_booker.openapi.v1.json` defines five operations. Its
 saved dedicated bearer is declared on every operation, including managed
 queued-result polling, so Notion-authoritative continuity queries and
@@ -453,16 +453,21 @@ dynamic job credential. The underlying generation and simulation route remains
 publicly compatible for non-authoritative direct clients; `queryContinuity` has
 no non-authoritative or legacy fallback.
 The tracked `contracts/backstage_booker.openapi.v1.json` is the canonical
-Builder `1.6.0` contract, and the no-store endpoint serves that file directly.
+Builder `1.7.0` contract, and the no-store endpoint serves that file directly.
 After a revision changing this contract is deployed, a human operator must
 refresh or re-import the endpoint in the existing GPT Builder Action; repository
 and backend changes do not update an already configured Custom GPT Action.
 Generic clients use the separate job-result and job-status contracts.
 When `ARCANOS_BACKSTAGE_BOOKER_ASYNC_GENERATION_ENABLED=true`, the pure Booker
 workload policy overrides an unsafe explicit synchronous preference for heavy
-`generateBooking` or `generateBookingWithHRC` requests. The route returns the
-existing `202` durable-job acknowledgement and performs no provider call in the
-web process. Private input and terminal output are encrypted before persistence;
+`generateBooking` or `generateBookingWithHRC` requests. After durable creation
+or exact replay reuse, the initial POST waits at most the shared short
+acceptance window. It may return `200` only for completion inside that window;
+otherwise it promptly returns the existing `202` durable-job acknowledgement.
+The managed result GET, not this initial POST, owns configurable 0–30,000 ms
+long polling. A client disconnect after durable acceptance aborts only the HTTP
+wait; it does not cancel or delete the queued job. Private input and terminal
+output are encrypted before persistence;
 only bounded action, universe, correlation, and planning metadata remain visible
 on the queue row. Repeated authenticated semantic submissions reuse the existing
 in-flight job. For the Builder contract, the accepted envelope returns `jobId`
@@ -478,9 +483,13 @@ The managed result GET accepts one canonical UUID `jobId` and optional bounded
 no enqueue, cancellation, provider, or module action, and decrypts only a
 protected public-GPT Booker result owned by the managed principal. Its pending,
 terminal, and retryable-unavailable envelopes keep the same managed `poll` URL
-and expose no dynamic token or stream. Authentication represents one shared,
+and expose no dynamic token or stream. A terminal protected failure returns a
+null result, server-owned `official: false`, incomplete/unverified authority
+state, and a bounded Backstage domain code where safe; it never returns partial
+booking text. Generic job clients keep their generic failure projection.
+Authentication represents one shared,
 purpose-bound managed principal for the configured private Action, not an end
-user, session, tenant, or universe. New `1.6.0` jobs bind to that stable
+user, session, tenant, or universe. Jobs from schema `1.6.0` onward bind to that stable
 principal, so later bearer-token rotation does not change job ownership. During
 the upgrade only, an exact-current-token compatibility check preserves reads
 for pre-`1.6.0` jobs that used the earlier credential-derived owner. It neither
@@ -671,7 +680,7 @@ chunks, so a blank anchor can resolve without increasing them. These fields
 prevent a bounded sample or page from being represented as complete. Sources
 expose only opaque chunk/content
 hashes plus bounded page titles, page paths, heading paths, and categories; raw
-excerpts and Notion page IDs remain server-side. Deploy schema 1.6.0 before
+excerpts and Notion page IDs remain server-side. Deploy schema 1.7.0 before
 re-importing it into the existing Builder Action. Answer
 generation performs one compact retry only when the provider reports
 max-output exhaustion, reusing the same retrieval and runtime budget. Other

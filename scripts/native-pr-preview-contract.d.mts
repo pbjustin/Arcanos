@@ -49,11 +49,13 @@ export interface NativePrPreviewE2eContract {
     partitionFailureTelemetryProofVersion:
       'backstage-notion-partition-failure-telemetry/v1';
     queueWaitPolicyProofVersion:
-      'backstage-booker-queue-wait-policy/v1';
+      'backstage-booker-queue-wait-policy/v2';
     trinityReasoningPolicyProofVersion:
       'trinity-reasoning-provider-policy/v1';
     managedAsyncContinuationProofVersion:
-      'backstage-booker-managed-async-continuation/v1';
+      'backstage-booker-managed-async-continuation/v2';
+    protectedFailureNoFallbackProofVersion:
+      'backstage-protected-failure-no-fallback/v1';
     gptClientIdentityProofVersion:
       'backstage-booker-gpt-client-identity/v1';
     outputCapacityPresentationProofVersion:
@@ -74,6 +76,7 @@ export interface NativePrPreviewE2eContract {
       continuityQuery: 'continuity-query-contract';
       continuitySubtree: 'continuity-subtree-contract';
       managedAsyncContinuation: 'managed-async-continuation-contract';
+      protectedFailureNoFallback: 'protected-failure-no-fallback-contract';
       gptClientIdentity: 'gpt-client-identity-contract';
       productionOutputContracts: 'production-output-contracts';
       outputAdmission: 'output-classification-first-success-contract';
@@ -94,6 +97,8 @@ export interface NativePrPreviewE2eContract {
         'x-arcanos-preview-trinity-reasoning-policy-version';
       managedAsyncContinuationVersion:
         'x-arcanos-preview-backstage-managed-async-version';
+      protectedFailureNoFallbackVersion:
+        'x-arcanos-preview-backstage-protected-failure-no-fallback-version';
       gptClientIdentityVersion:
         'x-arcanos-preview-backstage-gpt-client-identity-version';
       outputCapacityPresentationVersion:

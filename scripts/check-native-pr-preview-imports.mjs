@@ -58,6 +58,8 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/shared/backstage/backstageBookerAccessAuthCore.ts',
   'src/shared/backstage/backstageBookerAsyncContinuation.ts',
   'src/shared/backstage/backstageBookerAsyncResultCore.ts',
+  'src/shared/backstage/backstageProtectedContinuityPolicy.ts',
+  'src/shared/backstage/backstageProtectedFailure.ts',
   'src/shared/backstage/backstageExecutionBudget.ts',
   'src/shared/backstage/backstageJobPayloadProtection.ts',
   'src/shared/backstage/backstageQueuedJobResultProtection.ts',
@@ -712,11 +714,19 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ],
   [
     'src/shared/backstage/backstageBookerAsyncContinuation.ts',
-    '8f5b904d98811916b5dcc285350991756de73ce8bbaaed33cb9d7853a3197157',
+    'e140025a46aac2d33a2c6387f7e5155860e40bdbf3fcd2d86ce265e152d960da',
   ],
   [
     'src/shared/backstage/backstageBookerAsyncResultCore.ts',
-    '08cff40b53f090516d1041a705a5e3c890425c02211fa416733a5f016957c7be',
+    '89123df209f5d6f1aaacaebdc4872a010e9035ebd54f36edf2145f350f2cae89',
+  ],
+  [
+    'src/shared/backstage/backstageProtectedContinuityPolicy.ts',
+    '481a15ce90868fe804862d87a04e3ef0a978adce50507e9a06138df43db68ed1',
+  ],
+  [
+    'src/shared/backstage/backstageProtectedFailure.ts',
+    '42b84fa3ed38c9b9ac6df5a1cecc09569556e1b9d6dd1004a5d601dc2f5d078c',
   ],
   [
     'src/shared/backstage/backstageJobPayloadProtection.ts',
@@ -724,7 +734,7 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ],
   [
     'src/shared/backstage/backstageQueuedJobResultProtection.ts',
-    '490df519795106156a7e58e85e34bebfdabc7f6d052595c558b700a936232bfb',
+    '89539d7101fc57abd7051a88019c7f4fff065631ccc9c61ff192a6bf5024277d',
   ],
   [
     'src/shared/backstage/backstageCompactOutputContract.ts',
@@ -800,7 +810,7 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ],
   [
     'src/shared/gpt/gptAsyncWaitPolicy.ts',
-    'f8e5a89f661a48033d6d2db03e19a2e301c943f0c76bd6cf1f63b45c9102bfdd',
+    '153036c00040750cbd2c2dc65f46e5caa2aee3d32ae13dc68764f6bccc9357af',
   ],
   [
     'src/shared/gpt/gptClientRegistry.ts',

@@ -241,6 +241,14 @@ function responseHeadersForCase(
                     .managedAsyncContinuationProofVersion,
               }
             : {}),
+          ...(requestCase.fixtureName === 'protectedFailureNoFallback'
+            ? {
+                [NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration
+                  .proofHeaders.protectedFailureNoFallbackVersion]:
+                  NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration
+                    .protectedFailureNoFallbackProofVersion,
+              }
+            : {}),
           ...(requestCase.fixtureName === 'gptClientIdentity'
             ? {
                 [NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration
@@ -696,7 +704,7 @@ test('rejects malformed or unsupported exact-head Backstage Booker versions', as
 
 test('executes the bounded credential-free matrix and detects identity stability', async () => {
   const requestPlan = buildNativePrPreviewRequestPlan();
-  assert.equal(requestPlan.length, 136);
+  assert.equal(requestPlan.length, 137);
   assert.equal(
     requestPlan.filter(({ caseId, expectedType }) =>
       expectedType !== 'research-contract'
@@ -772,7 +780,7 @@ test('executes the bounded credential-free matrix and detects identity stability
     requestPlan.filter(({ expectedType }) =>
       expectedType === 'backstage-generation-contract'
     ).length,
-    13
+    14
   );
   assert.equal(
     requestPlan.filter(({ expectedType }) =>
@@ -794,7 +802,7 @@ test('executes the bounded credential-free matrix and detects identity stability
   );
   assert.equal(
     requestPlan.filter(({ simulatedAuth }) => simulatedAuth === true).length,
-    23
+    24
   );
   assert.equal(
     requestPlan.filter(({ expectedType, simulatedAuth }) =>
@@ -828,6 +836,35 @@ test('executes the bounded credential-free matrix and detects identity stability
   assert.equal(
     /authorization|cookie|credential|secret|session|token/iu.test(
       managedAsyncContinuationRequestBody
+    ),
+    false
+  );
+  const protectedFailureNoFallbackCase = requestPlan.find(({ caseId }) =>
+    caseId === 'backstage-generation-protected-failure-no-fallback'
+  );
+  assert.ok(protectedFailureNoFallbackCase);
+  assert.deepEqual(protectedFailureNoFallbackCase, {
+    body: { fixture: 'protected-failure-no-fallback-contract' },
+    boundedResponse: true,
+    caseId: 'backstage-generation-protected-failure-no-fallback',
+    expectedStatus: 200,
+    expectedType: 'backstage-generation-contract',
+    fixture: 'protected-failure-no-fallback-contract',
+    fixtureName: 'protectedFailureNoFallback',
+    method: 'POST',
+    path: '/backstage/generation-contract',
+    pathTemplate: '/backstage/generation-contract',
+    requestTimeoutMs: 20_000,
+    role: 'web',
+    simulatedAuth: true,
+  });
+  const protectedFailureNoFallbackRequestBody = JSON.stringify(
+    protectedFailureNoFallbackCase.body
+  );
+  assert.deepEqual(Object.keys(protectedFailureNoFallbackCase.body), ['fixture']);
+  assert.equal(
+    /authorization|cookie|credential|secret|session|token/iu.test(
+      protectedFailureNoFallbackRequestBody
     ),
     false
   );
@@ -1881,7 +1918,27 @@ test('executes the bounded credential-free matrix and detects identity stability
       .productionDebugDenied,
     true
   );
-  const mock = buildMockFetch(requestPlan);
+  const mock = buildMockFetch(
+    requestPlan,
+    undefined,
+    undefined,
+    (requestCase) => {
+      const contract = NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration;
+      if (requestCase.fixtureName === 'routeBudget') {
+        return {
+          [contract.proofHeaders.queueWaitPolicyVersion]:
+            'backstage-booker-queue-wait-policy/v1',
+        };
+      }
+      if (requestCase.fixtureName === 'managedAsyncContinuation') {
+        return {
+          [contract.proofHeaders.managedAsyncContinuationVersion]:
+            'backstage-booker-managed-async-continuation/v1',
+        };
+      }
+      return undefined;
+    }
+  );
 
   const result = await runNativePrPreviewE2e({
     args: validArguments('--execute', '--allow-network'),
@@ -1895,14 +1952,14 @@ test('executes the bounded credential-free matrix and detects identity stability
   assert.equal(result.executed, true);
   assert.equal(result.networkAttempted, true);
   assert.equal(result.summary.status, 'PASS');
-  assert.equal(result.summary.requestsMade, 136);
-  assert.equal(result.summary.simulatedAuthRequests, 23);
-  assert.equal(result.checks.length, 136);
+  assert.equal(result.summary.requestsMade, 137);
+  assert.equal(result.summary.simulatedAuthRequests, 24);
+  assert.equal(result.checks.length, 137);
   assert.equal(
     result.checks.filter(({ simulatedAuth }) => simulatedAuth).length,
-    23
+    24
   );
-  assert.equal(mock.requestCount, 136);
+  assert.equal(mock.requestCount, 137);
   assert.equal(
     result.checks.find(({ caseId }) =>
       caseId === 'worker-readiness-initial'
@@ -1964,6 +2021,26 @@ test('executes the bounded credential-free matrix and detects identity stability
     pathTemplate: '/backstage/generation-contract',
     responseBytes: Buffer.byteLength(JSON.stringify(
       expectedNativePrPreviewResponseBody(managedAsyncContinuationCase, {
+        commitSha: COMMIT_SHA,
+        prNumber: PR_NUMBER,
+      })
+    )),
+    role: 'web',
+    simulatedAuth: true,
+  });
+  const protectedFailureNoFallbackCheck = result.checks.find(({ caseId }) =>
+    caseId === 'backstage-generation-protected-failure-no-fallback'
+  );
+  assert.deepEqual(protectedFailureNoFallbackCheck, {
+    bodySha256: protectedFailureNoFallbackCheck.bodySha256,
+    caseId: 'backstage-generation-protected-failure-no-fallback',
+    clearPolicyVersionVerified: true,
+    httpStatus: 200,
+    method: 'POST',
+    pathTemplate: '/backstage/generation-contract',
+    protectedFailureNoFallbackVerified: true,
+    responseBytes: Buffer.byteLength(JSON.stringify(
+      expectedNativePrPreviewResponseBody(protectedFailureNoFallbackCase, {
         commitSha: COMMIT_SHA,
         prNumber: PR_NUMBER,
       })
@@ -2170,12 +2247,12 @@ test('executes the bounded credential-free matrix and detects identity stability
   const backstageGenerationCalls = mock.calls.filter(({ url }) =>
     url.endsWith('/backstage/generation-contract')
   );
-  assert.equal(backstageGenerationCalls.length, 14);
+  assert.equal(backstageGenerationCalls.length, 15);
   assert.equal(
     backstageGenerationCalls.filter(({ url }) =>
       url.startsWith(WEB_BASE_URL)
     ).length,
-    13
+    14
   );
   assert.equal(
     backstageGenerationCalls.filter(({ url }) =>
@@ -2893,6 +2970,26 @@ test('rejects missing synthetic provenance and correlation or security header dr
           NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration.proofHeaders
             .managedAsyncContinuationVersion
         ];
+      },
+    },
+    {
+      caseId: 'backstage-generation-protected-failure-no-fallback',
+      code: 'NATIVE_PR_PREVIEW_BACKSTAGE_PROTECTED_NO_FALLBACK_PROOF_INVALID',
+      mutate(headers) {
+        delete headers[
+          NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration.proofHeaders
+            .protectedFailureNoFallbackVersion
+        ];
+      },
+    },
+    {
+      caseId: 'backstage-generation-protected-failure-no-fallback',
+      code: 'NATIVE_PR_PREVIEW_BACKSTAGE_PROTECTED_NO_FALLBACK_PROOF_INVALID',
+      mutate(headers) {
+        headers[
+          NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration.proofHeaders
+            .protectedFailureNoFallbackVersion
+        ] = 'backstage-protected-failure-no-fallback/drifted';
       },
     },
     {
