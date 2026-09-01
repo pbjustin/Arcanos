@@ -24,6 +24,10 @@ const builderInstructionPatchPath = join(
   process.cwd(),
   'docs/BACKSTAGE_BOOKER_GPT_BUILDER_INSTRUCTIONS.md'
 );
+const gptClientIdentityGuidePath = join(
+  process.cwd(),
+  'docs/GPT_CLIENT_IDENTITY.md'
+);
 const protocolSchemaDirectory = join(
   process.cwd(),
   'packages/protocol/schemas/v1/backstage-booker'
@@ -138,6 +142,13 @@ describe('Backstage Booker Custom GPT builder contract', () => {
     }
     expect(patch).toContain('version `1.7.0`');
     expect(normalizedPatch).not.toContain('Add the block below');
+  });
+
+  it('keeps current-facing client-identity guidance aligned with the Builder contract', () => {
+    const identityGuide = readFileSync(gptClientIdentityGuidePath, 'utf8');
+
+    expect(identityGuide).toContain('Backstage Builder schema `1.7.0`');
+    expect(identityGuide).not.toContain('Backstage Builder schema `1.6.0`');
   });
 
   it('exposes only the fixed public, durable-result, exact-read, and canon-write operations', () => {

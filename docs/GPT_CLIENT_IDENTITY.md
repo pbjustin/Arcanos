@@ -205,10 +205,11 @@ integrity-protected Action request claim for that model identity.
 
 ## Compatibility and operating boundaries
 
-- Backstage Builder schema `1.6.0`, dedicated bearer behavior, managed async
-  continuation, protected input/output, Notion authority, canon mutation
-  authorization, partition configuration, worker execution, and generic job
-  routes remain unchanged.
+- Backstage Builder schema `1.7.0` carries protected-generation provenance and
+  fail-closed terminal-state semantics. Dedicated bearer registration, the
+  stable managed principal, Notion authority, canon mutation authorization,
+  partition configuration, and generic job routes remain unchanged by this
+  identity contract.
 - No database migration, public identity endpoint, new queue, result store, or
   authentication stack is introduced.
 - Credential rotation preserves `clientId: backstage-booker` and the stable
