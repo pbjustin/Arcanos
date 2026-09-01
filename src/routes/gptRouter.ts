@@ -133,6 +133,7 @@ import {
   BACKSTAGE_NOTION_SCOPE_RESOLUTION_ERROR_CODE,
 } from '@services/backstageNotionRag.js';
 import {
+  BACKSTAGE_BOOKER_INTEGRITY_FAILED_ERROR_CODE,
   BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE_ERROR_CODE,
   BACKSTAGE_CONTINUITY_QUERY_FAILED_ERROR_CODE,
 } from '@shared/backstage/backstageGenerationError.js';
@@ -2988,6 +2989,19 @@ router.post(
               heavyPrompt: true,
             }
           : classifiedExecutionPlan;
+        const shouldUseJobBackedExecution =
+          !backstageContinuityQuerySyncOnly
+          && !protectedBackstageRequestLocalOnly
+          && memoryPlaneAuthorized !== true
+          && (
+            (queryAndWaitRequested && executionPlan.mode === 'async')
+            || executionPlan.mode === 'async'
+            || fastPathFallbackToOrchestrated
+            || Boolean(explicitIdempotencyKey)
+          );
+        const protectedBackstageJobExecution =
+          protectedBackstageGenerationAction !== null
+          && shouldUseJobBackedExecution;
         const priorityJobBackedExecutionRequested =
           !backstageContinuityQuerySyncOnly
           && memoryPlaneAuthorized !== true
@@ -3030,7 +3044,7 @@ router.post(
               });
           }
         }
-        if (protectedBackstageQueueRequired) {
+        if (protectedBackstageJobExecution) {
           requestedAsyncWaitForResultMs = resolveBackstageInitialAcceptanceWaitMs(
             requestedAsyncWaitForResultMs
           );
@@ -3102,20 +3116,6 @@ router.post(
             resolvedPollIntervalMs: asyncPollIntervalMs
           });
         }
-
-        const shouldUseJobBackedExecution =
-          !backstageContinuityQuerySyncOnly
-          && !protectedBackstageRequestLocalOnly
-          && memoryPlaneAuthorized !== true
-          && (
-            (queryAndWaitRequested && executionPlan.mode === 'async')
-            || executionPlan.mode === 'async'
-            || fastPathFallbackToOrchestrated
-            || Boolean(explicitIdempotencyKey)
-          );
-        const protectedBackstageJobExecution =
-          protectedBackstageGenerationAction !== null
-          && shouldUseJobBackedExecution;
         const protectedBackstageUniverseId = protectedBackstageGenerationAction
           ? readBackstageUniverseId(effectiveBody) ?? DEFAULT_BACKSTAGE_UNIVERSE_ID
           : null;
@@ -4317,6 +4317,7 @@ router.post(
                : envelope.error.code === BACKSTAGE_NOTION_CURSOR_INVALID_ERROR_CODE
                ? 409
               : envelope.error.code === BACKSTAGE_BOOKER_OUTPUT_INCOMPLETE_ERROR_CODE
+                || envelope.error.code === BACKSTAGE_BOOKER_INTEGRITY_FAILED_ERROR_CODE
               ? 500
               : envelope.error.code === BACKSTAGE_CONTINUITY_QUERY_FAILED_ERROR_CODE
               ? 500

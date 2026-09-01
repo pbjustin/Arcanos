@@ -6410,16 +6410,7 @@ async function runBackstageManagedAsyncContinuationFixture(
   const expiredResult = await readOnce(buildFixture(jobId, 'expired', {
     input: protectedInput,
     idempotency_scope_hash: stableScopeA,
-    output: protectBackstageQueuedGptJobOutput({
-      jobId,
-      rawInput: protectedInput,
-      output: buildProtectedBackstageFailureEnvelope({
-        gptId: 'backstage-booker',
-        action: 'generateBooking',
-        code: 'BACKSTAGE_ASYNC_TIMEOUT',
-      }),
-      config: payloadProtectionConfig,
-    }),
+    output: completedJob.output,
     error_message: expiredPrivateError,
     completed_at: FIXTURE_COMPLETED_TIMESTAMP,
   }));
@@ -6578,7 +6569,7 @@ async function runBackstageManagedAsyncContinuationFixture(
     && matchesProtectedFailureState(
       expiredResult,
       'expired',
-      'BACKSTAGE_ASYNC_TIMEOUT',
+      'BACKSTAGE_ASYNC_RESULT_UNAVAILABLE',
       expiredPrivateError
     )
     && missingResult.status === 'not_found'

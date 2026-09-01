@@ -23,6 +23,7 @@ import {
 } from '../src/shared/backstage/backstageGenerationError.js';
 
 const mockGetJobById = jest.fn(async (_jobId: string) => null);
+const mockUpdateClaimedJobTerminal = jest.fn();
 const mockGetGptModuleMap = jest.fn();
 const mockRebuildGptModuleMap = jest.fn();
 const mockValidateGptRegistry = jest.fn();
@@ -49,7 +50,7 @@ jest.unstable_mockModule('@core/db/repositories/jobRepository.js', () => ({
   createClaimedJobFence: jest.fn(),
   getJobById: mockGetJobById,
   JobRepositoryUnavailableError: MockJobRepositoryUnavailableError,
-  updateClaimedJobTerminal: jest.fn(),
+  updateClaimedJobTerminal: mockUpdateClaimedJobTerminal,
 }));
 
 jest.unstable_mockModule('@core/db/index.js', () => ({
@@ -140,7 +141,11 @@ jest.unstable_mockModule('../src/shared/typeGuards.js', () => ({
   },
 }));
 
-const { executeQueuedGptRequest, startHeartbeatLoop } = await import(
+const {
+  executeQueuedGptRequest,
+  persistClaimedJobCancellation,
+  startHeartbeatLoop,
+} = await import(
   '../src/workers/jobRunner.js'
 );
 const { WorkerAiCallBudgetPausedError } = await import(
@@ -309,6 +314,68 @@ describe('normal worker queued Backstage mutation admission', () => {
       loop.stop();
       jest.useRealTimers();
     }
+  });
+
+  it('seals a protected cancellation synthesized at terminal persistence', async () => {
+    const privateCancellationReason = 'private late cancellation sentinel';
+    const jobId = '12121212-1212-4212-8212-121212121212';
+    const rawInput = buildProtectedBackstageQueuedGptJobInput({
+      action: 'generateBooking',
+      body: {
+        action: 'generateBooking',
+        payload: {
+          universeId: 'my-universe-2k26',
+          prompt: 'Return a production-sized card.',
+        },
+      },
+      universeId: 'my-universe-2k26',
+      notionEnrichmentAuthorized: true,
+    });
+    const job = {
+      id: jobId,
+      job_type: 'gpt',
+      status: 'running',
+      input: rawInput,
+      claim_generation: '1',
+      cancel_requested_at: new Date('2026-08-31T12:00:00.000Z'),
+      created_at: new Date('2026-08-31T11:59:00.000Z'),
+    };
+    mockUpdateClaimedJobTerminal.mockResolvedValueOnce({
+      ...job,
+      status: 'cancelled',
+    });
+    const markJobCancelled = jest.fn(async () => undefined);
+
+    await expect(persistClaimedJobCancellation({
+      job: job as never,
+      fence: { workerId: 'worker-terminal-race', claimGeneration: '1' },
+      autonomyService: { markJobCancelled } as never,
+      jobStartedAtMs: Date.now(),
+      cancellationReason: privateCancellationReason,
+      output: null,
+      queuedGptCancellationPrivacy: 'protected',
+    })).resolves.toBe(true);
+
+    expect(mockUpdateClaimedJobTerminal).toHaveBeenCalledWith(
+      jobId,
+      'cancelled',
+      expect.objectContaining({
+        errorMessage: 'Protected Backstage generation cancellation requested.',
+        output: expect.any(Object),
+      })
+    );
+    const persistedOutput = mockUpdateClaimedJobTerminal.mock.calls[0]?.[2]?.output;
+    expect(unprotectBackstageQueuedGptJobOutput({
+      jobId,
+      rawInput,
+      output: persistedOutput,
+    })).toMatchObject({
+      ok: false,
+      error: { code: 'BACKSTAGE_ASYNC_EXECUTION_FAILED' },
+    });
+    expect(JSON.stringify(mockUpdateClaimedJobTerminal.mock.calls))
+      .not.toContain(privateCancellationReason);
+    expect(markJobCancelled).toHaveBeenCalledWith(jobId);
   });
 
   it('decrypts protected generation only in the worker authorization context and seals the retrievable result', async () => {

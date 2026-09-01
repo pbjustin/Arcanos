@@ -116,6 +116,12 @@ export function projectTrustedProtectedBackstageTerminalFailure(
   ) {
     throw new BackstageBookerAsyncResultUnavailableError();
   }
+  if (job.status === 'expired' || job.output == null) {
+    return projectBackstageBookerManagedProtectedFailurePayload(
+      buildGptJobResultLookupPayload(job.id, job),
+      'BACKSTAGE_ASYNC_RESULT_UNAVAILABLE'
+    );
+  }
   const materializedJob = materializeProtectedBackstageJob(
     job,
     payloadProtectionConfig

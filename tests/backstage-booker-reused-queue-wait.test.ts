@@ -598,6 +598,62 @@ describe('Backstage Booker reused queue wait', () => {
     expect(JSON.stringify(response.body)).not.toContain('tampered');
   });
 
+  it.each([
+    ['failed', 'failed', false],
+    ['cancelled', 'failed', false],
+    ['expired', 'expired', false],
+    ['expired', 'expired', true],
+  ] as const)(
+    'projects a cleanup-created %s protected job as an explicit terminal state',
+    async (jobStatus, publicStatus, retainsCompletedOutput) => {
+      const privateFailure = `private-${jobStatus}-cleanup-sentinel`;
+      const runningJob = buildProtectedJob();
+      const output = retainsCompletedOutput
+        ? completeProtectedJob(runningJob).output
+        : null;
+      const terminalJob = buildProtectedJob({
+        status: jobStatus,
+        output,
+        error_message: privateFailure,
+        completed_at: new Date('2026-08-26T00:00:42.000Z'),
+      });
+      const app = express();
+      app.use(createBackstageBookerAsyncResultRouter({
+        boundary: buildTestBoundary(),
+        getJobByIdFn: async () => terminalJob,
+        recordJobLookup: jest.fn(),
+      }));
+
+      const response = await request(app)
+        .get(RESULT_PATH)
+        .set('Authorization', `Bearer ${ACCESS_TOKEN}`);
+
+      expect(response.status).toBe(200);
+      expect(response.body).toMatchObject({
+        status: publicStatus,
+        jobStatus,
+        lifecycleStatus: jobStatus,
+        result: null,
+        error: {
+          code: 'BACKSTAGE_ASYNC_RESULT_UNAVAILABLE',
+          message: 'Protected Backstage generation did not complete.',
+        },
+        protected: true,
+        protectedGenerationCompleted: false,
+        official: false,
+        continuityVerified: false,
+        authority: 'none',
+        fallbackUsed: false,
+        fallbackPermitted: false,
+      });
+      expect(response.body).not.toHaveProperty('stream');
+      expect(JSON.stringify(response.body)).not.toContain(privateFailure);
+      expect(JSON.stringify(response.body)).not.toContain(
+        'Official protected Backstage Booker result.'
+      );
+    }
+  );
+
   it('returns explicit no-authority state when durable result storage is unavailable', async () => {
     const app = express();
     app.use(createBackstageBookerAsyncResultRouter({

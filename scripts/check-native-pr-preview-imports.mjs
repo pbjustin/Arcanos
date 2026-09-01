@@ -717,7 +717,7 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ],
   [
     'src/shared/backstage/backstageBookerAsyncResultCore.ts',
-    'befb51008b11eda28ee9516aecaee1ce548ca9cfac9894723ce7bcd51e3f1177',
+    '89123df209f5d6f1aaacaebdc4872a010e9035ebd54f36edf2145f350f2cae89',
   ],
   [
     'src/shared/backstage/backstageProtectedFailure.ts',

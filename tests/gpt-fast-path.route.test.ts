@@ -1265,6 +1265,13 @@ describe('GPT fast-path route branching', () => {
       500,
     ],
     [
+      'generated output integrity failure',
+      'BACKSTAGE_BOOKER_INTEGRITY_FAILED',
+      'Backstage Booker generated output failed structural integrity validation.',
+      { retryable: false },
+      500,
+    ],
+    [
       'internal query failure',
       'BACKSTAGE_CONTINUITY_QUERY_FAILED',
       'Backstage Booker could not complete the continuity query.',
@@ -1978,7 +1985,7 @@ describe('GPT fast-path route branching', () => {
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 
-  it('protects a bounded-small explicit async booking without granting Notion authorization', async () => {
+  it('caps a bounded-small explicit async booking to the protected acceptance window', async () => {
     const privatePrompt = 'private-small-async-booking-sentinel';
     process.env.ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY =
       Buffer.alloc(32, 0x72).toString('base64');
@@ -1992,6 +1999,7 @@ describe('GPT fast-path route branching', () => {
       .send({
         action: 'generateBooking',
         executionMode: 'async',
+        waitForResultMs: 30_000,
         payload: {
           universeId: 'my-universe-2k26',
           prompt: privatePrompt,
@@ -1999,6 +2007,14 @@ describe('GPT fast-path route branching', () => {
       });
 
     expect(response.status).toBe(202);
+    expect(resolveAsyncGptWaitForResultMsMock)
+      .toHaveBeenCalledWith(BACKSTAGE_INITIAL_ACCEPTANCE_WAIT_MS);
+    expect(waitForQueuedGptJobCompletionMock).toHaveBeenCalledWith(
+      'job-orchestrated',
+      expect.objectContaining({
+        waitForResultMs: BACKSTAGE_INITIAL_ACCEPTANCE_WAIT_MS,
+      })
+    );
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
     const queuedInput = findOrCreateGptJobMock.mock.calls[0]?.[0]?.input;
     expect(JSON.stringify(queuedInput)).not.toContain(privatePrompt);
