@@ -389,6 +389,50 @@ already pinned to the prior complete active snapshot. The
 V4 rollback drops only the status table; it leaves the complete active snapshot
 and authority head untouched.
 
+`migrations/20260902_backstage_notion_rag_candidate_search_v1.sql` adds derived
+native search material for monolithic snapshot candidates. It leaves canonical
+snapshot/page/chunk rows and the active authority pointer unchanged. The new
+sidecar converts each validated JSONB embedding once to `DOUBLE PRECISION[]`,
+stores its norm, precomputes a `TSVECTOR` with a GIN index, and persists the
+bounded booking-brand mask. Exact cosine scoring and deterministic tie-breaking
+remain application/database behavior over the supported maximum of 4,096
+chunks. This release intentionally does not assume that the `pgvector`
+extension or an ANN operator class is installed in PostgreSQL 18.
+
+The migration deliberately leaves the new table empty; it does not scan or
+rewrite historical immutable snapshots. Roll it out in this order:
+
+1. Apply and verify the additive migration before starting a compatible worker.
+2. Deploy the compatible worker while the old web reader remains in service.
+   The new writer populates canonical chunks and their derived search rows in
+   one transaction, checks exact inventory parity, and cannot activate a
+   partially indexed candidate snapshot.
+3. With separately confirmed production authorization and the exact active
+   Notion `universe_id`, `snapshot_id`, and expected chunk count, run
+   `scripts/backstage-notion-candidate-search-backfill.mjs` with its dedicated
+   database environment variable and explicit `--execute`. The idempotent
+   script inserts only missing rows in batches of at most 128. Every database
+   phase uses a 1-second lock timeout and 15-second statement/idle timeout. Its
+   final bounded transaction holds `FOR SHARE` on the exact active authority
+   head while it requires canonical chunk count, sidecar count, and recomputed
+   valid-sidecar count to equal the operator-confirmed count. A head rotation,
+   malformed embedding, incomplete sidecar, timeout, or count mismatch prevents
+   the `completed:true` report.
+4. Deploy the compatible web reader only after that exact completion report and
+   an independent read-only review establish that the same snapshot is still
+   active. New readers fall back to the legacy JSONB query only when the entire
+   sidecar query fails with SQLSTATE `42P01` because the table is absent. Once
+   the table exists, an empty, incomplete, malformed, or mismatched sidecar
+   fails closed; it never silently selects the legacy query.
+
+Do not apply this migration or run the backfill as routine validation, and do
+not execute either production operation without separate target-specific
+authorization. For rollback, first drain every new reader and writer and deploy
+the old web and worker revisions. Only then may the conservative compensation
+drop the derived table and its helper functions. It does not delete or alter
+canonical snapshots, chunks, or the authority head; removing it while a new
+reader or writer remains active is unsupported.
+
 The V2 fence rollback takes `ACCESS EXCLUSIVE` on the head table and refuses with
 SQLSTATE `55000` while any snapshot is active. Apply that rollback before the
 V1 storage rollback only on an unused installation; removing the fence from a

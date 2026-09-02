@@ -782,6 +782,53 @@ PostgreSQL remains authoritative and Notion failures fall back to its already
 loaded context. This path does not mirror, migrate, or write data. Ensure the
 mapped page content is approved for the existing OpenAI provider data path.
 
+The monolithic Notion candidate-search sidecar requires a staged Railway
+rollout; deployment alone does not backfill the currently active immutable
+snapshot. Apply the reviewed additive
+`20260902_backstage_notion_rag_candidate_search_v1` schema first, deploy the
+dual-writing worker while the old web remains active, run the bounded
+idempotent backfill for the separately confirmed exact active snapshot, and
+require its final active-head lock plus exact canonical/search/valid-search
+parity report. Only then deploy the native-reader web. Do not move the web step
+ahead of completeness verification: before the schema exists the new reader
+can use its whole-query SQLSTATE `42P01` compatibility path, but a present and
+incomplete sidecar fails closed. The design uses PostgreSQL-native arrays and a
+precomputed `TSVECTOR`; it does not assume `pgvector` or an ANN extension.
+
+No production migration, backfill, deployment, restart, sync, probe, or variable
+change is authorized merely by this procedure. After a separately authorized
+rollout, use only read-only service, deployment, database, and sanitized-log
+inspection to verify all of the following:
+
+- the worker and web run the exact reviewed revision and both services remain
+  healthy;
+- `backstage.notion_rag.candidate_query` reports `outcome:success` with
+  `queryStrategy:native_sidecar_v1`, bounded `queryDurationMs` and
+  `queryTimeoutMs`, and internally consistent `scopeChunkCount`,
+  `semanticCandidateCount`, `lexicalCandidateCount`, `mergedCandidateCount`,
+  and `returnedCandidateCount`;
+- no new candidate query reports `outcome:timeout`; if one does, retain its safe
+  `timeoutClassification` (`budget_exhausted`, `statement_timeout`, or
+  `query_cancelled`) and the
+  bounded timing/count fields, and correlate only against aggregate PostgreSQL
+  cancellation frequency, not raw SQL parameters or content;
+- `backstage.notion_rag.snapshot_status` preserves `snapshotStatus`,
+  `activeSnapshotReadable`, `freshnessSatisfied`, `activeSnapshotChunkCount`,
+  `latestSyncOutcome`, `latestSyncFailurePhase`, `latestSyncFailureReason`, and
+  `newerRefreshIncomplete` without relabeling `last_known_good` as current; and
+- `backstage.notion_rag.sync_root_failed`, when present, exposes only the safe
+  `notionHttpStatus`, `notionProviderCode`, `notionFailureCategory`,
+  `notionResponseContentType`, `notionResponseSchemaValid`, and
+  `notionEndpointKind` classification fields. It must not expose tokens, root or
+  page IDs, URLs, response bodies, page content, raw provider messages, prompts,
+  embeddings, or SQL parameters.
+
+Rollback is old-reader/old-writer first. Drain the new web and worker, deploy the
+old compatible pair, and only then apply the reviewed sidecar compensation. The
+compensation removes derived search material and helper functions while keeping
+canonical snapshots/chunks and the active authority head intact. Never drop the
+sidecar while any new reader or dual writer can still use it.
+
 Partition shadow validation is a separate non-cutover procedure. This release
 does not change any deployed variable; preserve the current production mode
 until a separate cutover is reviewed and authorized. First deploy the compatible
