@@ -973,6 +973,111 @@ export const BACKSTAGE_NOTION_RAG_TABLE_DEFINITIONS = [
    END
    $$`,
 
+  `CREATE OR REPLACE FUNCTION backstage_notion_guard_candidate_search_activation()
+   RETURNS TRIGGER
+   LANGUAGE plpgsql
+   SET search_path = pg_catalog, public
+   AS $$
+   DECLARE
+     expected_chunk_count INTEGER;
+     canonical_chunk_count BIGINT;
+     sidecar_chunk_count BIGINT;
+     exact_membership_count BIGINT;
+   BEGIN
+     IF NEW.active_snapshot_id IS NOT DISTINCT FROM OLD.active_snapshot_id THEN
+       RETURN NEW;
+     END IF;
+     IF NEW.active_snapshot_id IS NULL THEN
+       RETURN NEW;
+     END IF;
+
+     SELECT snapshot.chunk_count
+       INTO expected_chunk_count
+       FROM public.backstage_notion_snapshots AS snapshot
+       WHERE snapshot.universe_id = NEW.universe_id
+         AND snapshot.id = NEW.active_snapshot_id;
+
+     SELECT COUNT(*)
+       INTO canonical_chunk_count
+       FROM public.backstage_notion_snapshot_chunks AS chunk
+       WHERE chunk.universe_id = NEW.universe_id
+         AND chunk.snapshot_id = NEW.active_snapshot_id;
+
+     SELECT COUNT(*)
+       INTO sidecar_chunk_count
+       FROM public.backstage_notion_snapshot_chunk_search AS search
+       WHERE search.universe_id = NEW.universe_id
+         AND search.snapshot_id = NEW.active_snapshot_id;
+
+     SELECT COUNT(*)
+       INTO exact_membership_count
+       FROM public.backstage_notion_snapshot_chunks AS chunk
+       INNER JOIN public.backstage_notion_snapshot_chunk_search AS search
+         ON search.universe_id = chunk.universe_id
+        AND search.snapshot_id = chunk.snapshot_id
+        AND search.chunk_id = chunk.id
+        AND search.page_id = chunk.page_id
+        AND search.ordinal = chunk.ordinal
+        AND search.embedding_model = chunk.embedding_model
+       WHERE chunk.universe_id = NEW.universe_id
+         AND chunk.snapshot_id = NEW.active_snapshot_id;
+
+     IF expected_chunk_count IS NULL
+        OR canonical_chunk_count IS DISTINCT FROM expected_chunk_count::BIGINT
+        OR sidecar_chunk_count IS DISTINCT FROM expected_chunk_count::BIGINT
+        OR exact_membership_count IS DISTINCT FROM expected_chunk_count::BIGINT THEN
+       RAISE EXCEPTION 'Backstage Notion candidate-search sidecar is incomplete for snapshot activation'
+         USING ERRCODE = 'BN003';
+     END IF;
+
+     RETURN NEW;
+   END
+   $$`,
+
+  `DO $$
+   DECLARE
+     existing_trigger_function OID;
+     existing_trigger_type SMALLINT;
+     existing_trigger_enabled "char";
+     existing_trigger_columns TEXT;
+     existing_trigger_when TEXT;
+   BEGIN
+     LOCK TABLE backstage_notion_universe_heads IN SHARE ROW EXCLUSIVE MODE;
+     SELECT
+       trigger_row.tgfoid,
+       trigger_row.tgtype,
+       trigger_row.tgenabled,
+       trigger_row.tgattr::TEXT,
+       pg_get_expr(trigger_row.tgqual, trigger_row.tgrelid)
+       INTO
+         existing_trigger_function,
+         existing_trigger_type,
+         existing_trigger_enabled,
+         existing_trigger_columns,
+         existing_trigger_when
+       FROM pg_trigger AS trigger_row
+       WHERE trigger_row.tgrelid = 'backstage_notion_universe_heads'::regclass
+         AND trigger_row.tgname = 'trg_backstage_notion_candidate_search_activation'
+         AND NOT trigger_row.tgisinternal;
+
+     IF existing_trigger_function IS NULL THEN
+       CREATE TRIGGER trg_backstage_notion_candidate_search_activation
+         BEFORE UPDATE ON backstage_notion_universe_heads
+         FOR EACH ROW
+         EXECUTE FUNCTION backstage_notion_guard_candidate_search_activation();
+     ELSIF existing_trigger_function
+         <> 'backstage_notion_guard_candidate_search_activation()'::regprocedure
+       OR existing_trigger_type <> 19
+       OR existing_trigger_enabled <> 'O'
+       OR existing_trigger_columns <> ''
+       OR existing_trigger_when IS NOT NULL
+     THEN
+       RAISE EXCEPTION 'trg_backstage_notion_candidate_search_activation has an unexpected definition'
+         USING ERRCODE = '42804';
+     END IF;
+   END
+   $$`,
+
   `CREATE OR REPLACE FUNCTION backstage_notion_guard_authority_persistence()
    RETURNS TRIGGER
    LANGUAGE plpgsql

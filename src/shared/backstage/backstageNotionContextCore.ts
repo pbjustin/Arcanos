@@ -154,7 +154,26 @@ export class BackstageNotionReadError extends Error {
   }
 }
 
-const NOTION_PROVIDER_CODE_PATTERN = /^[a-z][a-z0-9_]{0,79}$/u;
+const NOTION_PROVIDER_CODES = new Set<string>([
+  'invalid_json',
+  'invalid_request_url',
+  'invalid_request',
+  'invalid_grant',
+  'validation_error',
+  'missing_version',
+  'invalid_beta',
+  'unauthorized',
+  'restricted_resource',
+  'object_not_found',
+  'conflict_error',
+  'rate_limited',
+  'internal_server_error',
+  'bad_gateway',
+  'service_unavailable',
+  'database_connection_unavailable',
+  'gateway_timeout',
+  'service_overload',
+]);
 const NOTION_RESPONSE_CONTENT_TYPE_PATTERN =
   /^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/u;
 
@@ -170,7 +189,7 @@ function notionHttpStatusFromCategory(category: string): number | null {
 }
 
 function normalizeNotionProviderCode(value: unknown): string | null {
-  return typeof value === 'string' && NOTION_PROVIDER_CODE_PATTERN.test(value)
+  return typeof value === 'string' && NOTION_PROVIDER_CODES.has(value)
     ? value
     : null;
 }
@@ -232,7 +251,7 @@ function classifyBackstageNotionFailureCategory(
   if (status === 429) {
     return 'rate_limited';
   }
-  if ([500, 502, 503, 504, 529].includes(status ?? -1)) {
+  if ([409, 500, 502, 503, 504, 529].includes(status ?? -1)) {
     return 'transient_provider';
   }
   if (status !== null || category === 'redirect_rejected') {

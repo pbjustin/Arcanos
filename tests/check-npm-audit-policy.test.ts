@@ -303,9 +303,15 @@ describe('npm audit policy', () => {
     );
   });
 
-  it('pins patched registry artifacts and unchanged parent packages', () => {
+  it('pins patched dependency artifacts and unchanged parent packages', () => {
     const rootPackage = JSON.parse(
       readFileSync(path.join(repositoryRoot, 'package.json'), 'utf8'),
+    );
+    const runtimePackage = JSON.parse(
+      readFileSync(
+        path.join(repositoryRoot, 'arcanos-ai-runtime/package.json'),
+        'utf8',
+      ),
     );
     const vendorPackage = JSON.parse(
       readFileSync(
@@ -316,12 +322,37 @@ describe('npm audit policy', () => {
     const packageLock = JSON.parse(
       readFileSync(path.join(repositoryRoot, 'package-lock.json'), 'utf8'),
     );
+    const runtimePackageLock = JSON.parse(
+      readFileSync(
+        path.join(repositoryRoot, 'arcanos-ai-runtime/package-lock.json'),
+        'utf8',
+      ),
+    );
+
+    const fastUriArtifact = {
+      version: '3.1.7',
+      resolved:
+        'https://codeload.github.com/fastify/fast-uri/tar.gz/412e40abd4eb8beabfb952d80abf949a2baf27a3',
+      integrity:
+        'sha512-5unwS9zaFqbeaj/WllGpj11NYZg78jpAM8leZ+xZvL4p1Vc6QFMS6Bpd84SN4jzkWsPCgZT7ilSHpn542Kp8Mg==',
+    };
+    const qsArtifact = {
+      version: '6.16.0',
+      resolved:
+        'https://codeload.github.com/ljharb/qs/tar.gz/bb9379e01fad04c601478acd6152143cb20c984b',
+      integrity:
+        'sha512-fkOHat/7xtPQRrpGGvW5ua3EeevYbTiV3GSIhUdL5ocT+sNZu374dFCheYnSzk/EqpYN5SY9my8bSRBGoISxVA==',
+    };
 
     expect(rootPackage.overrides).toMatchObject({
       'express-rate-limit': '8.3.0',
-      'fast-uri': '3.1.5',
+      'fast-uri': fastUriArtifact.resolved,
       'ip-address': '10.3.1',
+      qs: qsArtifact.resolved,
       undici: '7.29.0',
+    });
+    expect(runtimePackage.overrides).toMatchObject({
+      qs: qsArtifact.resolved,
     });
     expect(rootPackage.overrides['brace-expansion']).toBeUndefined();
     expect(vendorPackage.dependencies['brace-expansion']).toBe('5.0.9');
@@ -341,13 +372,7 @@ describe('npm audit policy', () => {
         integrity:
           'sha512-KJzBawY6fB9FiZGdE/0aftepZ91YlaGIrV8vgblRM3J8X+dHx/aiowJWwkx6LIGyuqGiANsjSwwrbb8mifOJ4Q==',
       },
-      'node_modules/fast-uri': {
-        version: '3.1.5',
-        resolved:
-          'https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.5.tgz',
-        integrity:
-          'sha512-gHwA1O9LDIcKunMKhObS/HimwtehO1nPUECKAu5TpKgaO19fcWEl4bliWe1jWxVFvIXztJjjQ4L8XQ1EU9f7Jw==',
-      },
+      'node_modules/fast-uri': fastUriArtifact,
       'node_modules/ip-address': {
         version: '10.3.1',
         resolved:
@@ -362,6 +387,7 @@ describe('npm audit policy', () => {
         integrity:
           'sha512-IDxfleLmmbSskfWSUATiN1nfn2rDuvnMOqb5CWR92iIfojA0Ud+ulOAAEQ57LPr9rWmsreUyf5lwyao+7GNNVw==',
       },
+      'node_modules/qs': qsArtifact,
     };
     for (const [node, identity] of Object.entries(expectedLockIdentities)) {
       expect(packageLock.packages[node]).toMatchObject(identity);
@@ -372,6 +398,15 @@ describe('npm audit policy', () => {
     );
     expect(packageLock.packages['node_modules/ajv'].version).toBe('8.18.0');
     expect(packageLock.packages['node_modules/cheerio'].version).toBe('1.1.2');
+    expect(runtimePackageLock.packages['node_modules/qs']).toMatchObject(
+      qsArtifact,
+    );
+    expect(runtimePackageLock.packages['node_modules/express'].version).toBe(
+      '4.22.2',
+    );
+    expect(runtimePackageLock.packages['node_modules/body-parser'].version).toBe(
+      '1.20.6',
+    );
   });
 
   it('preserves mapped IPv4 identities and IPv6 subnet grouping', () => {

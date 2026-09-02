@@ -403,6 +403,12 @@ The migration deliberately leaves the new table empty; it does not scan or
 rewrite historical immutable snapshots. Roll it out in this order:
 
 1. Apply and verify the additive migration before starting a compatible worker.
+   The migration installs the `BN003` activation fence without changing the
+   current head. After installation, any worker revision changing
+   `active_snapshot_id` must supply exact declared/canonical/sidecar count and
+   membership parity. A legacy canonical-only writer therefore fails closed
+   and leaves the prior active head unchanged instead of activating a snapshot
+   that the native reader cannot use.
 2. Deploy the compatible worker while the old web reader remains in service.
    The new writer populates canonical chunks and their derived search rows in
    one transaction, checks exact inventory parity, and cannot activate a
@@ -417,10 +423,15 @@ rewrite historical immutable snapshots. Roll it out in this order:
    head while it requires canonical chunk count, sidecar count, and recomputed
    valid-sidecar count to equal the operator-confirmed count. A head rotation,
    malformed embedding, incomplete sidecar, timeout, or count mismatch prevents
-   the `completed:true` report.
-4. Deploy the compatible web reader only after that exact completion report and
-   an independent read-only review establish that the same snapshot is still
-   active. New readers fall back to the legacy JSONB query only when the entire
+   the `completed:true` report. A successful report includes `targetDigest`,
+   defined as the SHA-256 digest of the UTF-8 JSON encoding of the normalized
+   versioned tuple `["backstage-notion-candidate-backfill-target/v1",
+   trimmedUniverseId, lowercaseSnapshotId, expectedChunksInteger]`; it does not
+   emit the raw identifiers.
+4. Deploy the compatible web reader only after independently recomputing and
+   matching `targetDigest` from the separately confirmed exact values, and
+   after a read-only review establishes that the same snapshot is still active.
+   New readers fall back to the legacy JSONB query only when the entire
    sidecar query fails with SQLSTATE `42P01` because the table is absent. Once
    the table exists, an empty, incomplete, malformed, or mismatched sidecar
    fails closed; it never silently selects the legacy query.

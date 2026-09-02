@@ -296,10 +296,11 @@
       "hono": "4.12.34"
     },
     "express-rate-limit": "8.3.0",
-    "fast-uri": "3.1.5",
+    "fast-uri": "https://codeload.github.com/fastify/fast-uri/tar.gz/412e40abd4eb8beabfb952d80abf949a2baf27a3",
     "ip-address": "10.3.1",
     "undici": "7.29.0",
     "proxy-from-env": "https://codeload.github.com/Rob--W/proxy-from-env/tar.gz/refs/tags/v2.1.0",
+    "qs": "https://codeload.github.com/ljharb/qs/tar.gz/bb9379e01fad04c601478acd6152143cb20c984b",
     "express": {
       "path-to-regexp": "https://codeload.github.com/pillarjs/path-to-regexp/tar.gz/refs/tags/v.0.1.13"
     },

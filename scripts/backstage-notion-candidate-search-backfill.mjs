@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { createHash } from 'node:crypto';
 import process from 'node:process';
 
 import pg from 'pg';
@@ -11,6 +12,8 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 const UNIVERSE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const MAX_BATCH_SIZE = 128;
 const MAX_SNAPSHOT_CHUNKS = 4_096;
+const BACKFILL_PROTOCOL = 'backstage-notion-candidate-backfill/v1';
+const TARGET_DIGEST_DOMAIN = 'backstage-notion-candidate-backfill-target/v1';
 
 function fail(message) {
   process.stderr.write(`${message}\n`);
@@ -26,6 +29,17 @@ function parseInteger(value, label, minimum, maximum) {
     throw new Error(`${label} must be between ${minimum} and ${maximum}.`);
   }
   return parsed;
+}
+
+function createTargetDigest(input) {
+  return createHash('sha256')
+    .update(JSON.stringify([
+      TARGET_DIGEST_DOMAIN,
+      input.universeId,
+      input.snapshotId,
+      input.expectedChunks,
+    ]), 'utf8')
+    .digest('hex');
 }
 
 function parseArguments(argv) {
@@ -130,7 +144,7 @@ async function backfillBatch(client, input, cursor) {
         AND existing.chunk_id = chunk.id
        WHERE chunk.universe_id = $1
          AND chunk.snapshot_id = $2::UUID
-         AND chunk.id > $3
+         AND (chunk.id COLLATE "C") > ($3::TEXT COLLATE "C")
          AND existing.chunk_id IS NULL
        ORDER BY chunk.id COLLATE "C"
        LIMIT $4::INTEGER
@@ -293,6 +307,7 @@ async function verifyCompleteSidecar(client, input) {
 
 async function main() {
   const input = parseArguments(process.argv.slice(2));
+  const targetDigest = createTargetDigest(input);
   const connectionString = process.env[DATABASE_ENV_NAME]?.trim();
   if (!connectionString) {
     throw new Error(`${DATABASE_ENV_NAME} is required.`);
@@ -352,7 +367,8 @@ async function main() {
       throw error;
     }
     process.stdout.write(`${JSON.stringify({
-      protocol: 'backstage-notion-candidate-backfill/v1',
+      protocol: BACKFILL_PROTOCOL,
+      targetDigest,
       completed: true,
       batchCount,
       insertedCount,

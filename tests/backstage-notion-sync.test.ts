@@ -81,7 +81,7 @@ interface FetchOptions {
   metadataParentOverrides?: ReadonlyMap<string, string | null>;
   driftPageId?: string;
   retryMetadataPageId?: string;
-  retryMetadataStatus?: 429 | 500 | 502 | 503 | 504 | 529;
+  retryMetadataStatus?: 409 | 429 | 500 | 502 | 503 | 504 | 529;
   retryMetadataFailures?: number;
   retryAfterSeconds?: number;
 }
@@ -155,6 +155,8 @@ function notionErrorResponse(
 
 function retryProviderCode(status: number): string {
   switch (status) {
+    case 409:
+      return 'conflict_error';
     case 429:
       return 'rate_limited';
     case 500:
@@ -1901,32 +1903,35 @@ describe('Backstage Notion authority synchronization', () => {
     }
   );
 
-  it('recovers from a bounded transient 503 retry', async () => {
-    const page: TestNotionPage = {
-      pageId: pageId(0),
-      parentPageId: null,
-      title: 'WWE Universe Mode',
-      markdown: '# Root',
-    };
-    const { fetchMock, metadataCalls } = notionFetch([page], {
-      retryMetadataPageId: page.pageId,
-      retryMetadataStatus: 503,
-    });
-    const repository = repositoryHarness();
+  it.each([409, 503] as const)(
+    'recovers from a bounded transient %s retry',
+    async retryMetadataStatus => {
+      const page: TestNotionPage = {
+        pageId: pageId(0),
+        parentPageId: null,
+        title: 'WWE Universe Mode',
+        markdown: '# Root',
+      };
+      const { fetchMock, metadataCalls } = notionFetch([page], {
+        retryMetadataPageId: page.pageId,
+        retryMetadataStatus,
+      });
+      const repository = repositoryHarness();
 
-    await expect(syncBackstageNotionAuthorityRoot(
-      rootAuthority(),
-      dependencies({
-        repository: repository.repository,
-        fetchImpl: fetchMock as unknown as typeof fetch,
-        wait: async () => undefined,
-        random: () => 0,
-      })
-    )).resolves.toMatchObject({ status: 'activated' });
+      await expect(syncBackstageNotionAuthorityRoot(
+        rootAuthority(),
+        dependencies({
+          repository: repository.repository,
+          fetchImpl: fetchMock as unknown as typeof fetch,
+          wait: async () => undefined,
+          random: () => 0,
+        })
+      )).resolves.toMatchObject({ status: 'activated' });
 
-    expect(metadataCalls.get(page.pageId)).toBe(3);
-    expect(repository.activateSnapshot).toHaveBeenCalledTimes(1);
-  });
+      expect(metadataCalls.get(page.pageId)).toBe(3);
+      expect(repository.activateSnapshot).toHaveBeenCalledTimes(1);
+    }
+  );
 
   it('fails before persistence when embedding generation fails', async () => {
     const page: TestNotionPage = {
@@ -2160,6 +2165,7 @@ describe('Backstage Notion authority synchronization', () => {
   );
 
   it.each([
+    [409, 'conflict_error'],
     [500, 'internal_server_error'],
     [502, 'bad_gateway'],
     [503, 'service_unavailable'],

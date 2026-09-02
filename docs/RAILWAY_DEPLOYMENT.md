@@ -808,10 +808,13 @@ inspection to verify all of the following:
   `semanticCandidateCount`, `lexicalCandidateCount`, `mergedCandidateCount`,
   and `returnedCandidateCount`;
 - no new candidate query reports `outcome:timeout`; if one does, retain its safe
-  `timeoutClassification` (`budget_exhausted`, `statement_timeout`, or
-  `query_cancelled`) and the
+  `timeoutClassification` (`budget_exhausted`, `lock_timeout`,
+  `statement_timeout`, or `query_cancelled`) and the
   bounded timing/count fields, and correlate only against aggregate PostgreSQL
   cancellation frequency, not raw SQL parameters or content;
+- server lock and statement timeouts bound admitted PostgreSQL work, but there
+  is no independent transport/client-settlement deadline if `node-postgres`
+  itself never settles;
 - `backstage.notion_rag.snapshot_status` preserves `snapshotStatus`,
   `activeSnapshotReadable`, `freshnessSatisfied`, `activeSnapshotChunkCount`,
   `latestSyncOutcome`, `latestSyncFailurePhase`, `latestSyncFailureReason`, and

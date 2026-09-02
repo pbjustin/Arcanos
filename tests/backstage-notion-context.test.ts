@@ -453,6 +453,42 @@ describe('Backstage Notion prompt context', () => {
     expect(JSON.stringify(caught)).not.toContain(privateProviderCode);
   });
 
+  it('rejects an identifier-like provider code instead of retaining it as telemetry', async () => {
+    const privateProviderCode = `a${'0'.repeat(31)}`;
+    const fetchMock = jest.fn(async () => new Response(JSON.stringify({
+      object: 'error',
+      status: 409,
+      code: privateProviderCode,
+      message: 'PRIVATE-NOTION-PROVIDER-MESSAGE',
+    }), {
+      status: 409,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    let caught: unknown;
+    try {
+      await fetchBackstageNotionPageMetadata(
+        asFetch(fetchMock),
+        notionToken,
+        firstPageId,
+        new AbortController().signal
+      );
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toMatchObject({
+      category: 'http_409',
+      notionHttpStatus: 409,
+      notionProviderCode: null,
+      notionFailureCategory: 'transient_provider',
+      notionResponseContentType: 'application/json',
+      notionResponseSchemaValid: false,
+      notionEndpointKind: 'page_metadata',
+    });
+    expect(JSON.stringify(caught)).not.toContain(privateProviderCode);
+  });
+
   it('retains the HTTP class when a non-success error body exceeds the read bound', async () => {
     const fetchMock = jest.fn(async () => new Response('{}', {
       status: 403,

@@ -350,7 +350,7 @@ function classifyNotionReadFailure(
   if (error.category === 'http_429') {
     return { phase: currentPhase, reason: 'rate_limit_exhausted' };
   }
-  if (/^(?:http_(?:500|502|503|504|529)|request_failed)$/u.test(error.category)) {
+  if (/^(?:http_(?:409|500|502|503|504|529)|request_failed)$/u.test(error.category)) {
     return { phase: currentPhase, reason: 'transient_retry_exhausted' };
   }
   if (/^http_(?:401|403)$/u.test(error.category)) {
@@ -814,7 +814,7 @@ function shouldRetryFetch(error: unknown): boolean {
     ) {
       return false;
     }
-    return /^(?:http_(?:429|500|502|503|504|529)|request_failed)$/u.test(
+    return /^(?:http_(?:409|429|500|502|503|504|529)|request_failed)$/u.test(
       error.category
     );
   }

@@ -253,4 +253,72 @@ CREATE TRIGGER trg_backstage_notion_immutable
   FOR EACH ROW
   EXECUTE FUNCTION public.backstage_notion_reject_immutable_mutation();
 
+CREATE OR REPLACE FUNCTION public.backstage_notion_guard_candidate_search_activation()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SET search_path = pg_catalog, public
+AS $function$
+DECLARE
+  expected_chunk_count INTEGER;
+  canonical_chunk_count BIGINT;
+  sidecar_chunk_count BIGINT;
+  exact_membership_count BIGINT;
+BEGIN
+  IF NEW.active_snapshot_id IS NOT DISTINCT FROM OLD.active_snapshot_id THEN
+    RETURN NEW;
+  END IF;
+  IF NEW.active_snapshot_id IS NULL THEN
+    RETURN NEW;
+  END IF;
+
+  SELECT snapshot.chunk_count
+    INTO expected_chunk_count
+    FROM public.backstage_notion_snapshots AS snapshot
+    WHERE snapshot.universe_id = NEW.universe_id
+      AND snapshot.id = NEW.active_snapshot_id;
+
+  SELECT COUNT(*)
+    INTO canonical_chunk_count
+    FROM public.backstage_notion_snapshot_chunks AS chunk
+    WHERE chunk.universe_id = NEW.universe_id
+      AND chunk.snapshot_id = NEW.active_snapshot_id;
+
+  SELECT COUNT(*)
+    INTO sidecar_chunk_count
+    FROM public.backstage_notion_snapshot_chunk_search AS search
+    WHERE search.universe_id = NEW.universe_id
+      AND search.snapshot_id = NEW.active_snapshot_id;
+
+  SELECT COUNT(*)
+    INTO exact_membership_count
+    FROM public.backstage_notion_snapshot_chunks AS chunk
+    INNER JOIN public.backstage_notion_snapshot_chunk_search AS search
+      ON search.universe_id = chunk.universe_id
+     AND search.snapshot_id = chunk.snapshot_id
+     AND search.chunk_id = chunk.id
+     AND search.page_id = chunk.page_id
+     AND search.ordinal = chunk.ordinal
+     AND search.embedding_model = chunk.embedding_model
+    WHERE chunk.universe_id = NEW.universe_id
+      AND chunk.snapshot_id = NEW.active_snapshot_id;
+
+  IF expected_chunk_count IS NULL
+     OR canonical_chunk_count IS DISTINCT FROM expected_chunk_count::BIGINT
+     OR sidecar_chunk_count IS DISTINCT FROM expected_chunk_count::BIGINT
+     OR exact_membership_count IS DISTINCT FROM expected_chunk_count::BIGINT THEN
+    RAISE EXCEPTION 'Backstage Notion candidate-search sidecar is incomplete for snapshot activation'
+      USING ERRCODE = 'BN003';
+  END IF;
+
+  RETURN NEW;
+END;
+$function$;
+
+DROP TRIGGER IF EXISTS trg_backstage_notion_candidate_search_activation
+  ON public.backstage_notion_universe_heads;
+CREATE TRIGGER trg_backstage_notion_candidate_search_activation
+  BEFORE UPDATE ON public.backstage_notion_universe_heads
+  FOR EACH ROW
+  EXECUTE FUNCTION public.backstage_notion_guard_candidate_search_activation();
+
 COMMIT;

@@ -126,6 +126,7 @@ type CorpusFixture = Readonly<{
 
 type BackfillReport = Readonly<{
   completed?: boolean;
+  targetDigest?: string;
   batchCount?: number;
   insertedCount?: number;
   chunkCount?: number;
@@ -142,6 +143,20 @@ type BackfillExecution = Readonly<{
 
 function fingerprint(value: string): string {
   return createHash('sha256').update(value).digest('hex');
+}
+
+function expectedBackfillTargetDigest(
+  fixture: CorpusFixture,
+  expectedChunks = fixture.count
+): string {
+  return createHash('sha256')
+    .update(JSON.stringify([
+      'backstage-notion-candidate-backfill-target/v1',
+      fixture.universeId,
+      fixture.snapshotId,
+      expectedChunks,
+    ]), 'utf8')
+    .digest('hex');
 }
 
 async function runBackfill(
@@ -513,6 +528,19 @@ async function insertCorpus(
   };
 }
 
+async function insertLegacyActiveCorpus(
+  client: Client,
+  count: number,
+  label: string
+): Promise<CorpusFixture> {
+  await client.query(candidateSearchRollback);
+  try {
+    return await insertCorpus(client, count, label, false);
+  } finally {
+    await client.query(candidateSearchMigration);
+  }
+}
+
 async function insertFirstDerivedSidecarRow(
   client: Client,
   fixture: CorpusFixture,
@@ -584,7 +612,8 @@ async function insertFirstDerivedSidecarRow(
 
 async function cloneCompleteSnapshot(
   client: Client,
-  fixture: CorpusFixture
+  fixture: CorpusFixture,
+  populateSidecar = true
 ): Promise<string> {
   const replacementSnapshotId = randomUUID();
   await client.query(
@@ -659,29 +688,31 @@ async function cloneCompleteSnapshot(
        AND chunk.snapshot_id = $2::UUID`,
     [fixture.universeId, fixture.snapshotId, replacementSnapshotId]
   );
-  await client.query(
-    `INSERT INTO public.backstage_notion_snapshot_chunk_search (
-       universe_id, snapshot_id, chunk_id, page_id, ordinal,
-       embedding_model, embedding_dimension, embedding_norm, embedding,
-       search_vector, booking_brand_mask
-     )
-     SELECT
-       search.universe_id,
-       $3::UUID,
-       search.chunk_id,
-       search.page_id,
-       search.ordinal,
-       search.embedding_model,
-       search.embedding_dimension,
-       search.embedding_norm,
-       search.embedding,
-       search.search_vector,
-       search.booking_brand_mask
-     FROM public.backstage_notion_snapshot_chunk_search AS search
-     WHERE search.universe_id = $1
-       AND search.snapshot_id = $2::UUID`,
-    [fixture.universeId, fixture.snapshotId, replacementSnapshotId]
-  );
+  if (populateSidecar) {
+    await client.query(
+      `INSERT INTO public.backstage_notion_snapshot_chunk_search (
+         universe_id, snapshot_id, chunk_id, page_id, ordinal,
+         embedding_model, embedding_dimension, embedding_norm, embedding,
+         search_vector, booking_brand_mask
+       )
+       SELECT
+         search.universe_id,
+         $3::UUID,
+         search.chunk_id,
+         search.page_id,
+         search.ordinal,
+         search.embedding_model,
+         search.embedding_dimension,
+         search.embedding_norm,
+         search.embedding,
+         search.search_vector,
+         search.booking_brand_mask
+       FROM public.backstage_notion_snapshot_chunk_search AS search
+       WHERE search.universe_id = $1
+         AND search.snapshot_id = $2::UUID`,
+      [fixture.universeId, fixture.snapshotId, replacementSnapshotId]
+    );
+  }
   return replacementSnapshotId;
 }
 
@@ -975,9 +1006,71 @@ describeWithDatabase('Backstage Notion candidate search on PostgreSQL 18', () =>
     }
   }, 120_000);
 
+  test('keeps rollback repeat-safe when the sidecar table is already absent', async () => {
+    await resetNotionRows(observer);
+    try {
+      await observer.query(candidateSearchRollback);
+      await expect(observer.query(candidateSearchRollback)).resolves.toBeDefined();
+    } finally {
+      await observer.query(candidateSearchMigration);
+    }
+    const restored = await observer.query<{ sidecar_table: string | null }>(
+      `SELECT pg_catalog.to_regclass(
+         'public.backstage_notion_snapshot_chunk_search'
+       )::TEXT AS sidecar_table`
+    );
+    expect(restored.rows).toEqual([{
+      sidecar_table: 'backstage_notion_snapshot_chunk_search',
+    }]);
+  }, 30_000);
+
+  test('rejects a legacy canonical-only activation and retains the current head', async () => {
+    await resetNotionRows(observer);
+    const current = await insertCorpus(observer, 2, 'guard-current', true);
+    const legacyCandidateSnapshotId = await cloneCompleteSnapshot(
+      observer,
+      current,
+      false
+    );
+
+    await expect(observer.query(
+      `UPDATE public.backstage_notion_universe_heads
+       SET active_snapshot_id = $2::UUID,
+           activated_at = clock_timestamp(),
+           last_verified_at = clock_timestamp(),
+           updated_at = clock_timestamp()
+       WHERE universe_id = $1`,
+      [current.universeId, legacyCandidateSnapshotId]
+    )).rejects.toMatchObject({
+      code: 'BN003',
+      message: expect.stringContaining(
+        'candidate-search sidecar is incomplete for snapshot activation'
+      ),
+    });
+
+    const retained = await observer.query<{
+      active_snapshot_id: string;
+      legacy_sidecar_count: string;
+    }>(
+      `SELECT
+         head.active_snapshot_id::TEXT,
+         (SELECT COUNT(*)::TEXT
+            FROM public.backstage_notion_snapshot_chunk_search AS search
+            WHERE search.universe_id = $1
+              AND search.snapshot_id = $2::UUID) AS legacy_sidecar_count
+       FROM public.backstage_notion_universe_heads AS head
+       WHERE head.universe_id = $1`,
+      [current.universeId, legacyCandidateSnapshotId]
+    );
+    expect(retained.rows).toEqual([{
+      active_snapshot_id: current.snapshotId,
+      legacy_sidecar_count: '0',
+    }]);
+  }, 30_000);
+
   test('rejects non-finite persisted embedding norms at the PostgreSQL boundary', async () => {
     await resetNotionRows(observer);
-    const fixture = await insertCorpus(observer, 1, 'nonfinite-norm', false);
+    const fixture = await insertLegacyActiveCorpus(observer, 1, 'nonfinite-norm');
 
     for (const embeddingNorm of ['NaN', 'Infinity']) {
       await expect(insertFirstDerivedSidecarRow(observer, fixture, {
@@ -999,7 +1092,7 @@ describeWithDatabase('Backstage Notion candidate search on PostgreSQL 18', () =>
 
   test('fails closed when an idempotent backfill encounters mismatched derived material', async () => {
     await resetNotionRows(observer);
-    const fixture = await insertCorpus(observer, 4, 'invalid-partial-sidecar', false);
+    const fixture = await insertLegacyActiveCorpus(observer, 4, 'invalid-partial-sidecar');
     await insertFirstDerivedSidecarRow(observer, fixture, {
       corruptSearchVector: true,
     });
@@ -1038,7 +1131,7 @@ describeWithDatabase('Backstage Notion candidate search on PostgreSQL 18', () =>
 
   test('rolls back a sidecar batch when its bounded statement deadline expires', async () => {
     await resetNotionRows(observer);
-    const fixture = await insertCorpus(observer, 1, 'backfill-timeout', false);
+    const fixture = await insertLegacyActiveCorpus(observer, 1, 'backfill-timeout');
     await observer.query(
       `CREATE OR REPLACE FUNCTION public.backstage_notion_candidate_test_timeout()
        RETURNS TRIGGER
@@ -1169,12 +1262,9 @@ describeWithDatabase('Backstage Notion candidate search on PostgreSQL 18', () =>
     for (const count of [2_751, 4_096]) {
       await resetNotionRows(observer);
       const populateSidecar = count === 2_751;
-      const fixture = await insertCorpus(
-        observer,
-        count,
-        count === 2_751 ? 'production-scale' : 'supported-ceiling',
-        populateSidecar
-      );
+      const fixture = populateSidecar
+        ? await insertCorpus(observer, count, 'production-scale', true)
+        : await insertLegacyActiveCorpus(observer, count, 'supported-ceiling');
 
       if (!populateSidecar) {
         const backfillStartedAtMs = Date.now();
@@ -1187,12 +1277,15 @@ describeWithDatabase('Backstage Notion candidate search on PostgreSQL 18', () =>
         }
         expect(backfill).toMatchObject({
           completed: true,
+          targetDigest: expectedBackfillTargetDigest(fixture, count),
           batchCount: 32,
           insertedCount: count,
           chunkCount: count,
         });
         expect(backfill.maxBatchDurationMs).toBeGreaterThan(0);
         expect(backfill.maxBatchDurationMs).toBeLessThan(15_000);
+        expect(execution.stdout).not.toContain(fixture.universeId);
+        expect(execution.stdout).not.toContain(fixture.snapshotId);
         process.stdout.write(`CANDIDATE_BACKFILL_BENCHMARK ${JSON.stringify({
           protocol: 'backstage-notion-candidate-backfill-benchmark/v1',
           corpusChunks: count,
@@ -1209,6 +1302,7 @@ describeWithDatabase('Backstage Notion candidate search on PostgreSQL 18', () =>
         expect(repeated.stderr).toBe('');
         expect(repeated.report).toMatchObject({
           completed: true,
+          targetDigest: expectedBackfillTargetDigest(fixture, count),
           batchCount: 0,
           insertedCount: 0,
           chunkCount: count,

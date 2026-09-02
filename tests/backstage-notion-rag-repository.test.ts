@@ -1499,19 +1499,26 @@ describe('PostgresBackstageNotionRagRepository', () => {
 
   it.each([
     {
+      code: '55P03',
+      message: 'canceling statement due to lock timeout',
+      classification: 'lock_timeout',
+    },
+    {
+      code: '57014',
       message: 'canceling statement due to statement timeout',
       classification: 'statement_timeout',
     },
     {
+      code: '57014',
       message: 'canceling statement due to user request',
       classification: 'query_cancelled',
     },
   ] as const)(
     'classifies PostgreSQL cancellation as $classification without exposing its message',
-    async ({ message, classification }) => {
+    async ({ code, message, classification }) => {
       const repository = new PostgresBackstageNotionRagRepository(createPool(
         async () => {
-          throw Object.assign(new Error(message), { code: '57014' });
+          throw Object.assign(new Error(message), { code });
         }
       ));
 

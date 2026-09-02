@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-01T05:19:57.784Z",
+  "generatedAt": "2026-09-02T17:09:14.085Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -4130,6 +4130,9 @@
         },
         {
           "relativePath": "tests/integration/backstage-notion-partition-storage.pg18.integration.test.ts"
+        },
+        {
+          "relativePath": "tests/integration/backstage-notion-rag-candidate-search.pg18.integration.test.ts"
         },
         {
           "relativePath": "tests/integration/backstage-roster-atomicity.pg18.integration.test.ts"

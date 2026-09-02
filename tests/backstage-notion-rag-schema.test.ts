@@ -61,6 +61,14 @@ const candidateSearchRollback = readFileSync(
   ),
   'utf8'
 );
+const candidateSearchBackfill = readFileSync(
+  join(
+    process.cwd(),
+    'scripts',
+    'backstage-notion-candidate-search-backfill.mjs'
+  ),
+  'utf8'
+);
 const runtimeSql = BACKSTAGE_NOTION_RAG_TABLE_DEFINITIONS.join('\n');
 
 const dedicatedTables = [
@@ -352,6 +360,29 @@ describe('Backstage Notion RAG database contract', () => {
     );
   });
 
+  it.each([
+    ['runtime bootstrap', runtimeSql],
+    ['candidate-search migration', candidateSearchMigration]
+  ])('%s fences activation on exact canonical/sidecar membership', (_label, sql) => {
+    for (const fragment of [
+      'backstage_notion_guard_candidate_search_activation',
+      'canonical_chunk_count BIGINT',
+      'sidecar_chunk_count BIGINT',
+      'exact_membership_count BIGINT',
+      'search.chunk_id = chunk.id',
+      'search.page_id = chunk.page_id',
+      'search.ordinal = chunk.ordinal',
+      'search.embedding_model = chunk.embedding_model',
+      'candidate-search sidecar is incomplete for snapshot activation',
+      "USING ERRCODE = 'BN003'",
+      'trg_backstage_notion_candidate_search_activation',
+      'BEFORE UPDATE ON',
+      'backstage_notion_universe_heads',
+    ]) {
+      expect(sql).toContain(fragment);
+    }
+  });
+
   it('keeps the candidate-search migration additive and defers bounded backfill', () => {
     expect(candidateSearchMigration).toContain(
       'This migration deliberately does not backfill historical snapshots.'
@@ -369,6 +400,12 @@ describe('Backstage Notion RAG database contract', () => {
 
   it('compensates only derived candidate-search state', () => {
     expect(candidateSearchRollback).toContain(
+      'DROP TRIGGER IF EXISTS trg_backstage_notion_candidate_search_activation'
+    );
+    expect(candidateSearchRollback).toContain(
+      'DROP FUNCTION IF EXISTS public.backstage_notion_guard_candidate_search_activation()'
+    );
+    expect(candidateSearchRollback).toContain(
       'DROP TABLE IF EXISTS public.backstage_notion_snapshot_chunk_search'
     );
     expect(candidateSearchRollback).toContain(
@@ -378,5 +415,22 @@ describe('Backstage Notion RAG database contract', () => {
       /(?:DROP|DELETE\s+FROM|TRUNCATE)\s+(?:TABLE\s+)?(?:public\.)?backstage_notion_snapshot_(?:chunks|pages)/iu
     );
     expect(candidateSearchRollback).not.toContain('CASCADE');
+    expect(candidateSearchRollback).not.toMatch(
+      /DROP TRIGGER IF EXISTS trg_backstage_notion_immutable\s+ON public\.backstage_notion_snapshot_chunk_search/iu
+    );
+  });
+
+  it('keeps candidate backfill pagination and completion evidence deterministic', () => {
+    expect(candidateSearchBackfill).toContain(
+      'AND (chunk.id COLLATE "C") > ($3::TEXT COLLATE "C")'
+    );
+    expect(candidateSearchBackfill).toContain('ORDER BY chunk.id COLLATE "C"');
+    expect(candidateSearchBackfill).toContain(
+      "TARGET_DIGEST_DOMAIN = 'backstage-notion-candidate-backfill-target/v1'"
+    );
+    expect(candidateSearchBackfill).toContain('input.universeId');
+    expect(candidateSearchBackfill).toContain('input.snapshotId');
+    expect(candidateSearchBackfill).toContain('input.expectedChunks');
+    expect(candidateSearchBackfill).toContain('targetDigest,');
   });
 });

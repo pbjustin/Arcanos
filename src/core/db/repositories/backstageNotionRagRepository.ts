@@ -530,6 +530,7 @@ export class BackstageNotionSnapshotCommitUnknownError extends Error {
 
 export type BackstageNotionCandidateTimeoutClassification =
   | 'budget_exhausted'
+  | 'lock_timeout'
   | 'statement_timeout'
   | 'query_cancelled';
 
@@ -1230,13 +1231,18 @@ async function configureSnapshotWriteDeadline(
 
 function classifyPostgresQueryCancellation(
   error: unknown
-): 'statement_timeout' | 'query_cancelled' | null {
+): 'lock_timeout' | 'statement_timeout' | 'query_cancelled' | null {
   if (
     typeof error !== 'object'
     || error === null
     || !('code' in error)
-    || (error as { code?: unknown }).code !== '57014'
   ) {
+    return null;
+  }
+  if ((error as { code?: unknown }).code === '55P03') {
+    return 'lock_timeout';
+  }
+  if ((error as { code?: unknown }).code !== '57014') {
     return null;
   }
   return 'message' in error
