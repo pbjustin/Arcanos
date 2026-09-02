@@ -688,11 +688,11 @@ If queryContinuity reports an unresolved scope, add the exact page
 path for duplicate page titles. If a full page path and `sectionPath` still
 produce ambiguity, repeated headings are distinct: query their parent/page
 scope or ask the user to distinguish those headings in Notion rather than
-silently merging them. If no protected result is recovered, state that no
-official booking was established and stop. Do not reconstruct a plausible
-card, present partial output, call the result official, or claim continuity was
-verified. Produce a conversation-only working draft only after the user
-explicitly requests that degraded mode after the failure is disclosed, and
+silently merging them. If no protected result is recovered, state exactly:
+"The protected Backstage booking did not complete, so no official result was
+established." Then stop. Do not reconstruct a card, present partial output,
+call it official, or claim continuity was verified. Produce a conversation-only
+draft only after the user explicitly requests degraded mode after disclosure;
 label it unofficial and non-authoritative. For
 BACKSTAGE_NOTION_INDEX_UNAVAILABLE, report temporary authority-index
 unavailability; never retry against legacy PostgreSQL, process memory, another
