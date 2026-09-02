@@ -2,6 +2,7 @@ import process from 'node:process';
 
 const AUTHORITY_ENV = 'ARCANOS_BACKSTAGE_NOTION_AUTHORITY_ROOTS_JSON';
 const NOTION_ORIGIN = 'https://api.notion.com';
+const PRELOAD_SPECIFIER = new URL(import.meta.url).pathname;
 const UUID_COMPACT = /^[0-9a-f]{32}$/i;
 
 function compactId(value) {
@@ -25,6 +26,12 @@ function rootsFromEnvironment() {
   }
 }
 
+function ensureChildPreload() {
+  const current = process.env.NODE_OPTIONS ?? '';
+  if (current.includes('notion-root-status-diagnostic.mjs')) return;
+  process.env.NODE_OPTIONS = `${current} --import=${PRELOAD_SPECIFIER}`.trim();
+}
+
 const roots = rootsFromEnvironment();
 const originalFetch = globalThis.fetch?.bind(globalThis);
 
@@ -39,6 +46,7 @@ async function providerCode(response) {
 }
 
 if (originalFetch && roots.size > 0) {
+  ensureChildPreload();
   globalThis.fetch = async function notionRootStatusDiagnostic(input, init) {
     const response = await originalFetch(input, init);
     let url;
