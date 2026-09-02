@@ -1,11 +1,12 @@
 import { createHash, createHmac } from 'node:crypto';
 
-import { isAbortError } from '@arcanos/runtime';
+import { getRequestRemainingMs, isAbortError } from '@arcanos/runtime';
 import {
   BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT,
   BACKSTAGE_NOTION_MAX_PAGES_PER_SNAPSHOT,
   BACKSTAGE_NOTION_RELEVANT_CANDIDATE_SEARCH_MAX_RESULTS,
   getBackstageNotionRagRepository,
+  isBackstageNotionCandidateQueryTimeoutError,
   type BackstageNotionActiveChunk,
   type BackstageNotionActiveChunkMetadata,
   type BackstageNotionActiveSnapshotHeader,
@@ -211,6 +212,7 @@ export interface BackstageNotionRagRetrievalDependencies {
     universeId: string
   ) => BackstageNotionAuthorityRoot | null | Promise<BackstageNotionAuthorityRoot | null>;
   embedQuery?: (query: string) => Promise<number[]>;
+  remainingOperationBudgetMs?: () => number | null;
   now?: () => Date;
   maximumStalenessMs?: number;
 }
@@ -1430,20 +1432,62 @@ async function retrieveBackstageNotionRagContextUnsafe(
     if (!isFiniteNonzeroVector(queryEmbedding)) {
       throw new BackstageNotionIndexUnavailableError();
     }
-    const candidateSearch = await repository.rankSnapshotCandidates({
-      universeId,
-      snapshotId: active.snapshot.id,
-      selector: relevantSelector,
-      expectedScopeChunkCount: scopeChunks,
-      embeddingModel: active.snapshot.embeddingModel,
-      queryText: request.query,
-      queryEmbedding,
-      allowedBookingBrands: bookingScopePlan !== null
-        && bookingEffectiveScopeStrategy !== 'fallback_all'
-        ? bookingScopePlan.allowedBrands
-        : null,
-      limit: BACKSTAGE_NOTION_RELEVANT_CANDIDATE_SEARCH_MAX_RESULTS,
-    });
+    let candidateSearch: Awaited<ReturnType<
+      BackstageNotionRagRepository['rankSnapshotCandidates']
+    >>;
+    try {
+      candidateSearch = await repository.rankSnapshotCandidates({
+        universeId,
+        snapshotId: active.snapshot.id,
+        selector: relevantSelector,
+        expectedScopeChunkCount: scopeChunks,
+        embeddingModel: active.snapshot.embeddingModel,
+        queryText: request.query,
+        queryEmbedding,
+        allowedBookingBrands: bookingScopePlan !== null
+          && bookingEffectiveScopeStrategy !== 'fallback_all'
+          ? bookingScopePlan.allowedBrands
+          : null,
+        remainingOperationBudgetMs: dependencies.remainingOperationBudgetMs
+          ? dependencies.remainingOperationBudgetMs()
+          : getRequestRemainingMs(),
+        limit: BACKSTAGE_NOTION_RELEVANT_CANDIDATE_SEARCH_MAX_RESULTS,
+      });
+      try {
+        logger.info('backstage.notion_rag.candidate_query', {
+          outcome: 'success',
+          queryStrategy: candidateSearch.queryStrategy,
+          queryDurationMs: candidateSearch.queryDurationMs,
+          queryTimeoutMs: candidateSearch.queryTimeoutMs,
+          scopeChunkCount: candidateSearch.scopeChunkCount,
+          semanticCandidateCount: candidateSearch.semanticCandidateCount,
+          lexicalCandidateCount: candidateSearch.lexicalCandidateCount,
+          mergedCandidateCount: candidateSearch.mergedCandidateCount,
+          returnedCandidateCount: candidateSearch.candidates.length,
+        });
+      } catch {
+        // Candidate diagnostics must not affect or disclose authority content.
+      }
+    } catch (error) {
+      if (isBackstageNotionCandidateQueryTimeoutError(error)) {
+        try {
+          logger.warn('backstage.notion_rag.candidate_query', {
+            outcome: error.classification === 'query_cancelled'
+              ? 'cancelled'
+              : 'timeout',
+            timeoutClassification: error.classification,
+            queryStrategy: error.queryStrategy,
+            queryDurationMs: error.queryDurationMs,
+            queryTimeoutMs: error.queryTimeoutMs,
+            scopeChunkCount: scopeChunks,
+          });
+        } catch {
+          // Candidate diagnostics must not affect or disclose authority content.
+        }
+        throw new BackstageNotionIndexUnavailableError();
+      }
+      throw error;
+    }
     const expectedRelevantCandidateCount = Math.min(
       scopeChunks,
       BACKSTAGE_NOTION_RELEVANT_CANDIDATE_SEARCH_MAX_RESULTS

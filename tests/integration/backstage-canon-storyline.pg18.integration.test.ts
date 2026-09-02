@@ -99,6 +99,22 @@ const notionRagSnapshotCapacityRollback = readFileSync(
   ),
   'utf8'
 );
+const notionRagCandidateSearchMigration = readFileSync(
+  join(
+    process.cwd(),
+    'migrations',
+    '20260902_backstage_notion_rag_candidate_search_v1.sql'
+  ),
+  'utf8'
+);
+const notionRagCandidateSearchRollback = readFileSync(
+  join(
+    process.cwd(),
+    'migrations',
+    '20260902_backstage_notion_rag_candidate_search_v1.rollback.sql'
+  ),
+  'utf8'
+);
 const notionRagSnapshotCapacityRollbackBegin =
   notionRagSnapshotCapacityRollback.indexOf('\nBEGIN;');
 const notionRagSnapshotCapacityRollbackCommit =
@@ -142,6 +158,7 @@ async function applyCanonForwardMigration(client: Client): Promise<void> {
 
 const ownedTableNames = [
   'backstage_notion_authority_epoch',
+  'backstage_notion_snapshot_chunk_search',
   'backstage_notion_snapshot_chunks',
   'backstage_notion_snapshot_pages',
   'backstage_notion_snapshots',
@@ -166,6 +183,7 @@ const phaseTwoTables = [
 ] as const;
 const notionRagTables = [
   'backstage_notion_authority_epoch',
+  'backstage_notion_snapshot_chunk_search',
   'backstage_notion_snapshot_chunks',
   'backstage_notion_snapshot_pages',
   'backstage_notion_snapshots',
@@ -192,6 +210,7 @@ function fingerprint(label: string): string {
 async function resetDisposableNotionRagState(client: Client): Promise<void> {
   await client.query(
     `TRUNCATE TABLE
+       backstage_notion_snapshot_chunk_search,
        backstage_notion_snapshot_chunks,
        backstage_notion_snapshot_pages,
        backstage_notion_sync_leases,
@@ -526,6 +545,7 @@ describeWithDatabase('Backstage canon/storyline persistence on PostgreSQL 18', (
     await observer.query(notionRagForwardMigration);
     await observer.query(notionRagIndexVersionFenceMigration);
     await observer.query(notionRagSnapshotCapacityMigration);
+    await observer.query(notionRagCandidateSearchMigration);
 
     pool = new Pool({
       connectionString: configuredConnectionString,
@@ -579,6 +599,7 @@ describeWithDatabase('Backstage canon/storyline persistence on PostgreSQL 18', (
         );
         if (notionRagTable.rows[0]?.installed) {
           await resetDisposableNotionRagState(observer);
+          await observer.query(notionRagCandidateSearchRollback);
           await observer.query(notionRagSnapshotCapacityRollback);
           await observer.query(notionRagIndexVersionFenceRollback);
           await observer.query(notionRagRollbackMigration);
@@ -617,6 +638,7 @@ describeWithDatabase('Backstage canon/storyline persistence on PostgreSQL 18', (
     await observer.query(notionRagForwardMigration);
     await observer.query(notionRagIndexVersionFenceMigration);
     await observer.query(notionRagSnapshotCapacityMigration);
+    await observer.query(notionRagCandidateSearchMigration);
 
     const tables = await observer.query<{ table_name: string }>(
       `SELECT table_name
@@ -1469,6 +1491,7 @@ describeWithDatabase('Backstage canon/storyline persistence on PostgreSQL 18', (
        CASCADE`
     );
     await resetDisposableNotionRagState(observer);
+    await observer.query(notionRagCandidateSearchRollback);
     await observer.query(notionRagSnapshotCapacityRollback);
     await observer.query(notionRagIndexVersionFenceRollback);
     await observer.query(notionRagRollbackMigration);

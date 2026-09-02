@@ -40,6 +40,10 @@ const POSTGRES_SUITES = [
     databaseEnvironment: 'BACKSTAGE_CANON_STORYLINE_PG18_TEST_DATABASE_URL',
   },
   {
+    path: 'tests/integration/backstage-notion-rag-candidate-search.pg18.integration.test.ts',
+    databaseEnvironment: 'BACKSTAGE_CANON_STORYLINE_PG18_TEST_DATABASE_URL',
+  },
+  {
     path: 'tests/integration/backstage-notion-partition-storage.pg18.integration.test.ts',
     databaseEnvironment: 'BACKSTAGE_NOTION_PARTITION_PG18_TEST_DATABASE_URL',
   },

@@ -1,9 +1,12 @@
 import { createHash } from 'node:crypto';
 
-import { describe, expect, it } from '@jest/globals';
+import { describe, expect, it, jest } from '@jest/globals';
 import type { Pool } from 'pg';
 
 import {
+  BACKSTAGE_NOTION_CANDIDATE_READ_BUDGET_HEADROOM_MS,
+  BACKSTAGE_NOTION_CANDIDATE_READ_TIMEOUT_MAX_MS,
+  BACKSTAGE_NOTION_CANDIDATE_READ_TIMEOUT_MIN_MS,
   BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT,
   BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT,
   BACKSTAGE_NOTION_RELEVANT_CANDIDATE_SEARCH_MAX_LEXICAL_TOKEN_CODE_POINTS,
@@ -11,10 +14,12 @@ import {
   BACKSTAGE_NOTION_RELEVANT_CANDIDATE_SEARCH_MAX_RESULTS,
   BACKSTAGE_NOTION_SNAPSHOT_INSERT_BATCH_MAX_BYTES,
   BACKSTAGE_NOTION_SNAPSHOT_INSERT_BATCH_MAX_RECORDS,
+  BackstageNotionCandidateQueryTimeoutError,
   BackstageNotionSnapshotCommitUnknownError,
   BackstageNotionSnapshotDeadlineError,
   BackstageNotionSyncLeaseError,
   PostgresBackstageNotionRagRepository,
+  resolveBackstageNotionCandidateReadTimeoutMs,
   type ActivateBackstageNotionSnapshotInput
 } from '../src/core/db/repositories/backstageNotionRagRepository.js';
 import { BACKSTAGE_NOTION_RAG_HEADING_INDEX_VERSION } from '../src/shared/backstage/backstageNotionRagCore.js';
@@ -142,7 +147,7 @@ function commitAmbiguityHarness(
       }
       if (sql.includes('AS page_count') && sql.includes('AS chunk_count')) {
         return {
-          rows: [{ page_count: '2', chunk_count: '2' }],
+          rows: [{ page_count: '2', chunk_count: '2', search_count: '2' }],
           rowCount: 1,
         };
       }
@@ -574,7 +579,7 @@ describe('PostgresBackstageNotionRagRepository', () => {
         }
         if (sql.includes('AS page_count') && sql.includes('AS chunk_count')) {
           return {
-            rows: [{ page_count: '2', chunk_count: '2' }],
+            rows: [{ page_count: '2', chunk_count: '2', search_count: '2' }],
             rowCount: 1,
           };
         }
@@ -606,7 +611,7 @@ describe('PostgresBackstageNotionRagRepository', () => {
       command.sql.startsWith('INSERT INTO backstage_notion_snapshot_pages')
     );
     const chunkInsert = commands.find(command =>
-      command.sql.startsWith('INSERT INTO backstage_notion_snapshot_chunks')
+      command.sql.includes('inserted_chunks AS MATERIALIZED')
     );
     const activation = commands.find(command =>
       command.sql.startsWith('UPDATE backstage_notion_universe_heads AS head')
@@ -714,7 +719,9 @@ describe('PostgresBackstageNotionRagRepository', () => {
           const sql = normalizeSql(rawSql);
           commands.push(sql);
           if (matches(sql)) {
-            throw Object.assign(new Error('PRIVATE-POSTGRES-TIMEOUT'), {
+            throw Object.assign(new Error(
+              'canceling statement due to statement timeout'
+            ), {
               code: '57014',
             });
           }
@@ -740,7 +747,7 @@ describe('PostgresBackstageNotionRagRepository', () => {
           }
           if (sql.includes('AS page_count') && sql.includes('AS chunk_count')) {
             return {
-              rows: [{ page_count: '2', chunk_count: '2' }],
+              rows: [{ page_count: '2', chunk_count: '2', search_count: '2' }],
               rowCount: 1,
             };
           }
@@ -825,6 +832,9 @@ describe('PostgresBackstageNotionRagRepository', () => {
               chunk_count: String(
                 BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT
               ),
+              search_count: String(
+                BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT
+              ),
             }],
             rowCount: 1,
           };
@@ -849,7 +859,7 @@ describe('PostgresBackstageNotionRagRepository', () => {
     });
 
     const chunkInserts = commands.filter(command =>
-      command.sql.startsWith('INSERT INTO backstage_notion_snapshot_chunks')
+      command.sql.includes('inserted_chunks AS MATERIALIZED')
     );
     expect(chunkInserts).toHaveLength(Math.ceil(
       BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT
@@ -905,7 +915,7 @@ describe('PostgresBackstageNotionRagRepository', () => {
         }
         if (sql.includes('AS page_count') && sql.includes('AS chunk_count')) {
           return {
-            rows: [{ page_count: '2', chunk_count: '1' }],
+            rows: [{ page_count: '2', chunk_count: '1', search_count: '1' }],
             rowCount: 1,
           };
         }
@@ -955,7 +965,7 @@ describe('PostgresBackstageNotionRagRepository', () => {
             rowCount: 1
           };
         }
-        if (sql.startsWith('INSERT INTO backstage_notion_snapshot_chunks')) {
+        if (sql.includes('inserted_chunks AS MATERIALIZED')) {
           const chunks = JSON.parse(String(values[3])) as Array<{ chunk_id: string }>;
           chunkInserts.push({
             snapshotId: String(values[0]),
@@ -964,7 +974,7 @@ describe('PostgresBackstageNotionRagRepository', () => {
         }
         if (sql.includes('AS page_count') && sql.includes('AS chunk_count')) {
           return {
-            rows: [{ page_count: '2', chunk_count: '2' }],
+            rows: [{ page_count: '2', chunk_count: '2', search_count: '2' }],
             rowCount: 1,
           };
         }
@@ -1242,6 +1252,7 @@ describe('PostgresBackstageNotionRagRepository', () => {
         chunk_metadata: {},
         scope_chunk_count: String(BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT),
         candidate_pool_count: String(BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT),
+        lexical_candidate_count: '12',
       })
     );
     const repository = new PostgresBackstageNotionRagRepository(createPool(
@@ -1279,6 +1290,12 @@ describe('PostgresBackstageNotionRagRepository', () => {
     expect(result.candidates).toHaveLength(
       BACKSTAGE_NOTION_RELEVANT_CANDIDATE_SEARCH_MAX_RESULTS
     );
+    expect(result).toMatchObject({
+      queryStrategy: 'native_sidecar_v1',
+      semanticCandidateCount: BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT,
+      lexicalCandidateCount: 12,
+      mergedCandidateCount: BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT,
+    });
     expect(observedSql).toContain('snapshot.id = $2::UUID');
     expect(observedSql).toContain('LIMIT $11');
     expect(observedSql).not.toContain('head.active_snapshot_id');
@@ -1306,8 +1323,214 @@ describe('PostgresBackstageNotionRagRepository', () => {
       null,
       BACKSTAGE_NOTION_RELEVANT_CANDIDATE_SEARCH_MAX_RESULTS,
       0,
+      0,
     ]);
   });
+
+  it('bounds candidate deadlines by both the named ceiling and remaining budget', () => {
+    expect(resolveBackstageNotionCandidateReadTimeoutMs(null)).toBe(
+      BACKSTAGE_NOTION_CANDIDATE_READ_TIMEOUT_MAX_MS
+    );
+    expect(resolveBackstageNotionCandidateReadTimeoutMs(
+      BACKSTAGE_NOTION_CANDIDATE_READ_TIMEOUT_MAX_MS
+        + BACKSTAGE_NOTION_CANDIDATE_READ_BUDGET_HEADROOM_MS
+        + 50_000
+    )).toBe(BACKSTAGE_NOTION_CANDIDATE_READ_TIMEOUT_MAX_MS);
+    expect(resolveBackstageNotionCandidateReadTimeoutMs(8_000)).toBe(
+      8_000 - BACKSTAGE_NOTION_CANDIDATE_READ_BUDGET_HEADROOM_MS
+    );
+    expect(resolveBackstageNotionCandidateReadTimeoutMs(
+      BACKSTAGE_NOTION_CANDIDATE_READ_BUDGET_HEADROOM_MS
+        + BACKSTAGE_NOTION_CANDIDATE_READ_TIMEOUT_MIN_MS
+        - 1
+    )).toBe(BACKSTAGE_NOTION_CANDIDATE_READ_TIMEOUT_MIN_MS - 1);
+    expect(() => resolveBackstageNotionCandidateReadTimeoutMs(-1)).toThrow(
+      'remainingOperationBudgetMs'
+    );
+  });
+
+  it('falls back as one whole query only when the sidecar table is undefined', async () => {
+    const content = 'Current active context.';
+    const contentHash = hash(content);
+    const row = {
+      chunk_id: hash(JSON.stringify({
+        format: 'backstage-notion-rag-chunk-v1',
+        pageId: ROOT_PAGE_ID,
+        ordinal: 0,
+        contentHash,
+      })),
+      page_id: ROOT_PAGE_ID,
+      page_title: ROOT_TITLE,
+      page_path: ROOT_PATH,
+      ordinal: 0,
+      content_hash: contentHash,
+      content,
+      code_points: Array.from(content).length,
+      chunk_embedding_model: 'text-embedding-test',
+      embedding: [0.1, 0.2],
+      heading_path: [],
+      chunk_metadata: {},
+      scope_chunk_count: '1',
+      candidate_pool_count: '1',
+    };
+    let candidateQueryCount = 0;
+    const repository = new PostgresBackstageNotionRagRepository(createPool(
+      async rawSql => {
+        const sql = normalizeSql(rawSql);
+        candidateQueryCount += 1;
+        if (sql.includes('backstage_notion_snapshot_chunk_search')) {
+          throw Object.assign(new Error('sidecar unavailable'), { code: '42P01' });
+        }
+        return { rows: [row], rowCount: 1 };
+      }
+    ));
+
+    await expect(repository.rankSnapshotCandidates({
+      universeId: UNIVERSE_ID,
+      snapshotId: SNAPSHOT_ID,
+      selector: { pageId: null, scopeKind: 'all', sectionOccurrencePath: null },
+      expectedScopeChunkCount: 1,
+      embeddingModel: 'text-embedding-test',
+      queryText: 'active context',
+      queryEmbedding: [1, 0],
+      remainingOperationBudgetMs: 5_000,
+      limit: 1,
+    })).resolves.toMatchObject({
+      queryStrategy: 'legacy_jsonb_v1',
+      lexicalCandidateCount: null,
+      candidatePoolCount: 1,
+    });
+    expect(candidateQueryCount).toBe(2);
+  });
+
+  it('fails closed on an incomplete sidecar without running the legacy projection', async () => {
+    let candidateQueryCount = 0;
+    const repository = new PostgresBackstageNotionRagRepository(createPool(
+      async () => {
+        candidateQueryCount += 1;
+        return { rows: [], rowCount: 0 };
+      }
+    ));
+
+    await expect(repository.rankSnapshotCandidates({
+      universeId: UNIVERSE_ID,
+      snapshotId: SNAPSHOT_ID,
+      selector: { pageId: null, scopeKind: 'all', sectionOccurrencePath: null },
+      expectedScopeChunkCount: 1,
+      embeddingModel: 'text-embedding-test',
+      queryText: 'active context',
+      queryEmbedding: [1, 0],
+      limit: 1,
+    })).rejects.toThrow('bounded expected projection');
+    expect(candidateQueryCount).toBe(1);
+  });
+
+  it('rejects insufficient candidate budget before opening a connection', async () => {
+    let connected = false;
+    const repository = new PostgresBackstageNotionRagRepository({
+      connect: async () => {
+        connected = true;
+        throw new Error('SENTINEL_CONNECT');
+      },
+    } as unknown as Pool);
+
+    await expect(repository.rankSnapshotCandidates({
+      universeId: UNIVERSE_ID,
+      snapshotId: SNAPSHOT_ID,
+      selector: { pageId: null, scopeKind: 'all', sectionOccurrencePath: null },
+      expectedScopeChunkCount: 1,
+      embeddingModel: 'text-embedding-test',
+      queryText: 'active context',
+      queryEmbedding: [1, 0],
+      remainingOperationBudgetMs:
+        BACKSTAGE_NOTION_CANDIDATE_READ_BUDGET_HEADROOM_MS
+        + BACKSTAGE_NOTION_CANDIDATE_READ_TIMEOUT_MIN_MS
+        - 1,
+      limit: 1,
+    })).rejects.toBeInstanceOf(BackstageNotionCandidateQueryTimeoutError);
+    expect(connected).toBe(false);
+  });
+
+  it('bounds connection acquisition and releases a client that arrives late', async () => {
+    jest.useFakeTimers();
+    try {
+      const release = jest.fn();
+      let resolveConnect!: (client: { release: () => void }) => void;
+      const connectPromise = new Promise<{ release: () => void }>(resolve => {
+        resolveConnect = resolve;
+      });
+      const repository = new PostgresBackstageNotionRagRepository({
+        connect: () => connectPromise,
+      } as unknown as Pool);
+
+      const ranking = repository.rankSnapshotCandidates({
+        universeId: UNIVERSE_ID,
+        snapshotId: SNAPSHOT_ID,
+        selector: { pageId: null, scopeKind: 'all', sectionOccurrencePath: null },
+        expectedScopeChunkCount: 1,
+        embeddingModel: 'text-embedding-test',
+        queryText: 'active context',
+        queryEmbedding: [1, 0],
+        remainingOperationBudgetMs:
+          BACKSTAGE_NOTION_CANDIDATE_READ_BUDGET_HEADROOM_MS
+          + BACKSTAGE_NOTION_CANDIDATE_READ_TIMEOUT_MIN_MS,
+        limit: 1,
+      });
+      const rejection = expect(ranking).rejects.toMatchObject({
+        classification: 'budget_exhausted',
+        queryStrategy: 'native_sidecar_v1',
+        queryDurationMs: 0,
+        queryTimeoutMs: BACKSTAGE_NOTION_CANDIDATE_READ_TIMEOUT_MIN_MS,
+      });
+
+      await jest.advanceTimersByTimeAsync(
+        BACKSTAGE_NOTION_CANDIDATE_READ_TIMEOUT_MIN_MS
+      );
+      await rejection;
+
+      resolveConnect({ release });
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(release).toHaveBeenCalledTimes(1);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it.each([
+    {
+      message: 'canceling statement due to statement timeout',
+      classification: 'statement_timeout',
+    },
+    {
+      message: 'canceling statement due to user request',
+      classification: 'query_cancelled',
+    },
+  ] as const)(
+    'classifies PostgreSQL cancellation as $classification without exposing its message',
+    async ({ message, classification }) => {
+      const repository = new PostgresBackstageNotionRagRepository(createPool(
+        async () => {
+          throw Object.assign(new Error(message), { code: '57014' });
+        }
+      ));
+
+      await expect(repository.rankSnapshotCandidates({
+        universeId: UNIVERSE_ID,
+        snapshotId: SNAPSHOT_ID,
+        selector: { pageId: null, scopeKind: 'all', sectionOccurrencePath: null },
+        expectedScopeChunkCount: 1,
+        embeddingModel: 'text-embedding-test',
+        queryText: 'active context',
+        queryEmbedding: [1, 0],
+        remainingOperationBudgetMs: 5_000,
+        limit: 1,
+      })).rejects.toMatchObject({
+        classification,
+        queryStrategy: 'native_sidecar_v1',
+      });
+    }
+  );
 
   it('keeps the bounded writer at or below the expanded reader ceiling', async () => {
     let observedValues: unknown[] = [];

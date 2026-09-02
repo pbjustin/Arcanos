@@ -13,6 +13,9 @@ import type {
   BackstageNotionSnapshotScopeResolution,
   RankBackstageNotionSnapshotCandidatesInput,
 } from '../src/core/db/repositories/backstageNotionRagRepository.js';
+import {
+  BackstageNotionCandidateQueryTimeoutError,
+} from '../src/core/db/repositories/backstageNotionRagRepository.js';
 import type {
   BackstageNotionSyncAttemptRecord,
 } from '../src/core/db/repositories/backstageNotionSyncStatusRepository.js';
@@ -458,12 +461,24 @@ function harness(
         return {
           scopeChunkCount: page.scopeChunkCount,
           candidatePoolCount: classified.length,
+          semanticCandidateCount: classified.length,
+          lexicalCandidateCount: 0,
+          mergedCandidateCount: classified.length,
+          queryDurationMs: 1,
+          queryTimeoutMs: 15_000,
+          queryStrategy: 'native_sidecar_v1',
           candidates: scoped,
         };
       }
       return {
         scopeChunkCount: page.scopeChunkCount,
         candidatePoolCount: scoped.length,
+        semanticCandidateCount: scoped.length,
+        lexicalCandidateCount: 0,
+        mergedCandidateCount: scoped.length,
+        queryDurationMs: 1,
+        queryTimeoutMs: 15_000,
+        queryStrategy: 'native_sidecar_v1',
         candidates: scoped.slice(0, input.limit),
       };
     })
@@ -568,6 +583,7 @@ function resignTestCursor(
 describe('Backstage Notion authority RAG retrieval', () => {
   beforeEach(() => {
     jest.spyOn(logger, 'info').mockImplementation(() => undefined);
+    jest.spyOn(logger, 'warn').mockImplementation(() => undefined);
   });
 
   afterEach(() => {
@@ -653,6 +669,76 @@ describe('Backstage Notion authority RAG retrieval', () => {
       freshnessSatisfied: true,
       newerRefreshIncomplete: false,
     });
+  });
+
+  it('classifies candidate statement timeouts internally and projects the established outage', async () => {
+    const state = harness(activeSnapshot(), {
+      rankSnapshotCandidates: async () => {
+        throw new BackstageNotionCandidateQueryTimeoutError(
+          'statement_timeout',
+          'native_sidecar_v1',
+          5_004,
+          5_000
+        );
+      },
+    });
+    const privateQuery = 'Do not log this booking prompt.';
+
+    await expect(retrieveAuthorized(state.dependencies, privateQuery)).rejects.toMatchObject({
+      code: BACKSTAGE_NOTION_INDEX_UNAVAILABLE_ERROR_CODE,
+      httpStatus: 503,
+      retryable: true,
+    });
+    expect(logger.warn).toHaveBeenCalledWith(
+      'backstage.notion_rag.candidate_query',
+      {
+        outcome: 'timeout',
+        timeoutClassification: 'statement_timeout',
+        queryStrategy: 'native_sidecar_v1',
+        queryDurationMs: 5_004,
+        queryTimeoutMs: 5_000,
+        scopeChunkCount: 1,
+      }
+    );
+    const serializedTelemetry = JSON.stringify(jest.mocked(logger.warn).mock.calls);
+    expect(serializedTelemetry).not.toContain(privateQuery);
+    expect(serializedTelemetry).not.toContain(ROOT_PAGE_ID);
+    expect(serializedTelemetry).not.toContain(SNAPSHOT_ID);
+  });
+
+  it('distinguishes an external candidate cancellation without disclosing query inputs', async () => {
+    const state = harness(activeSnapshot(), {
+      rankSnapshotCandidates: async () => {
+        throw new BackstageNotionCandidateQueryTimeoutError(
+          'query_cancelled',
+          'native_sidecar_v1',
+          217,
+          12_000
+        );
+      },
+    });
+    const privateQuery = 'Keep this cancelled prompt private.';
+
+    await expect(retrieveAuthorized(state.dependencies, privateQuery)).rejects.toMatchObject({
+      code: BACKSTAGE_NOTION_INDEX_UNAVAILABLE_ERROR_CODE,
+      httpStatus: 503,
+      retryable: true,
+    });
+    expect(logger.warn).toHaveBeenCalledWith(
+      'backstage.notion_rag.candidate_query',
+      {
+        outcome: 'cancelled',
+        timeoutClassification: 'query_cancelled',
+        queryStrategy: 'native_sidecar_v1',
+        queryDurationMs: 217,
+        queryTimeoutMs: 12_000,
+        scopeChunkCount: 1,
+      }
+    );
+    const serializedTelemetry = JSON.stringify(jest.mocked(logger.warn).mock.calls);
+    expect(serializedTelemetry).not.toContain(privateQuery);
+    expect(serializedTelemetry).not.toContain(ROOT_PAGE_ID);
+    expect(serializedTelemetry).not.toContain(SNAPSHOT_ID);
   });
 
   it('keeps reads pinned to the prior active snapshot while a candidate is building', async () => {

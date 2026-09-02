@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 
-import type { Pool, PoolClient } from 'pg';
+import type { Pool, PoolClient, QueryResult } from 'pg';
 
 import { BACKSTAGE_NOTION_RAG_HEADING_INDEX_VERSION } from '@shared/backstage/backstageNotionRagCore.js';
 import type { BackstageNotionBookingBrand } from '@shared/backstage/backstageNotionBookingScope.js';
@@ -25,6 +25,9 @@ export const BACKSTAGE_NOTION_SNAPSHOT_INSERT_BATCH_MAX_BYTES = 16 * 1024 * 1024
 export const BACKSTAGE_NOTION_RELEVANT_CANDIDATE_SEARCH_MAX_RESULTS = 128;
 export const BACKSTAGE_NOTION_RELEVANT_CANDIDATE_SEARCH_MAX_LEXICAL_TOKENS = 256;
 export const BACKSTAGE_NOTION_RELEVANT_CANDIDATE_SEARCH_MAX_LEXICAL_TOKEN_CODE_POINTS = 64;
+export const BACKSTAGE_NOTION_CANDIDATE_READ_TIMEOUT_MAX_MS = 15_000;
+export const BACKSTAGE_NOTION_CANDIDATE_READ_TIMEOUT_MIN_MS = 1_000;
+export const BACKSTAGE_NOTION_CANDIDATE_READ_BUDGET_HEADROOM_MS = 500;
 export {
   BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT,
   BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT,
@@ -36,9 +39,6 @@ const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
 const AUTHORITY_READ_TIMEOUT_SQL = `SET LOCAL lock_timeout = '1s';
 SET LOCAL statement_timeout = '5s';
 SET LOCAL idle_in_transaction_session_timeout = '5s'`;
-const CANDIDATE_READ_TIMEOUT_SQL = `${AUTHORITY_READ_TIMEOUT_SQL};
-SET LOCAL work_mem = '8MB';
-SET LOCAL temp_file_limit = '256MB'`;
 const BACKSTAGE_NOTION_CHUNK_METADATA_PROJECTION_SQL = `jsonb_build_object(
   'category', CASE
     WHEN jsonb_typeof(chunk.metadata -> 'category') = 'string'
@@ -228,12 +228,24 @@ export interface RankBackstageNotionSnapshotCandidatesInput {
   queryText: string;
   queryEmbedding: readonly number[];
   allowedBookingBrands?: readonly BackstageNotionBookingBrand[] | null;
+  /** Remaining enclosing request/operation budget at repository entry. */
+  remainingOperationBudgetMs?: number | null;
   limit: number;
 }
+
+export type BackstageNotionCandidateQueryStrategy =
+  | 'native_sidecar_v1'
+  | 'legacy_jsonb_v1';
 
 export interface BackstageNotionSnapshotCandidateSearch {
   scopeChunkCount: number;
   candidatePoolCount: number;
+  semanticCandidateCount: number;
+  lexicalCandidateCount: number | null;
+  mergedCandidateCount: number;
+  queryDurationMs: number;
+  queryTimeoutMs: number;
+  queryStrategy: BackstageNotionCandidateQueryStrategy;
   candidates: BackstageNotionActiveChunk[];
 }
 
@@ -380,6 +392,7 @@ interface SnapshotCandidateSearchRow extends ChunkMetadataRow {
   embedding: unknown;
   scope_chunk_count: number | string;
   candidate_pool_count: number | string;
+  lexical_candidate_count?: number | string;
 }
 
 interface SnapshotScopeIntegrityRow {
@@ -422,6 +435,7 @@ interface ReusableEmbeddingRow {
 interface SnapshotInventoryCountRow {
   page_count: number | string;
   chunk_count: number | string;
+  search_count: number | string;
 }
 
 interface PreparedPage {
@@ -512,6 +526,50 @@ export class BackstageNotionSnapshotCommitUnknownError extends Error {
     super('The Backstage Notion snapshot activation outcome could not be reconciled.');
     this.name = 'BackstageNotionSnapshotCommitUnknownError';
   }
+}
+
+export type BackstageNotionCandidateTimeoutClassification =
+  | 'budget_exhausted'
+  | 'statement_timeout'
+  | 'query_cancelled';
+
+export class BackstageNotionCandidateQueryTimeoutError extends Error {
+  readonly code = 'BACKSTAGE_NOTION_CANDIDATE_QUERY_TIMEOUT';
+
+  constructor(
+    readonly classification: BackstageNotionCandidateTimeoutClassification,
+    readonly queryStrategy: BackstageNotionCandidateQueryStrategy,
+    readonly queryDurationMs: number,
+    readonly queryTimeoutMs: number
+  ) {
+    super('The bounded Backstage Notion candidate query deadline was exhausted.');
+    this.name = 'BackstageNotionCandidateQueryTimeoutError';
+  }
+}
+
+export function isBackstageNotionCandidateQueryTimeoutError(
+  error: unknown
+): error is BackstageNotionCandidateQueryTimeoutError {
+  return error instanceof BackstageNotionCandidateQueryTimeoutError;
+}
+
+export function resolveBackstageNotionCandidateReadTimeoutMs(
+  remainingOperationBudgetMs: number | null | undefined
+): number {
+  if (remainingOperationBudgetMs === undefined || remainingOperationBudgetMs === null) {
+    return BACKSTAGE_NOTION_CANDIDATE_READ_TIMEOUT_MAX_MS;
+  }
+  if (!Number.isFinite(remainingOperationBudgetMs) || remainingOperationBudgetMs < 0) {
+    throw new Error('remainingOperationBudgetMs must be null or a finite nonnegative number.');
+  }
+  return Math.min(
+    BACKSTAGE_NOTION_CANDIDATE_READ_TIMEOUT_MAX_MS,
+    Math.max(
+      0,
+      Math.trunc(remainingOperationBudgetMs)
+        - BACKSTAGE_NOTION_CANDIDATE_READ_BUDGET_HEADROOM_MS
+    )
+  );
 }
 
 function normalizeUniverseId(value: string): string {
@@ -1170,11 +1228,34 @@ async function configureSnapshotWriteDeadline(
   remainingSnapshotWriteMilliseconds(deadlineAtMs, phase);
 }
 
+function classifyPostgresQueryCancellation(
+  error: unknown
+): 'statement_timeout' | 'query_cancelled' | null {
+  if (
+    typeof error !== 'object'
+    || error === null
+    || !('code' in error)
+    || (error as { code?: unknown }).code !== '57014'
+  ) {
+    return null;
+  }
+  return 'message' in error
+    && typeof (error as { message?: unknown }).message === 'string'
+    && (error as { message: string }).message
+      .includes('canceling statement due to statement timeout')
+    ? 'statement_timeout'
+    : 'query_cancelled';
+}
+
 function isPostgresStatementTimeout(error: unknown): boolean {
+  return classifyPostgresQueryCancellation(error) === 'statement_timeout';
+}
+
+function isPostgresUndefinedTable(error: unknown): boolean {
   return typeof error === 'object'
     && error !== null
     && 'code' in error
-    && (error as { code?: unknown }).code === '57014';
+    && (error as { code?: unknown }).code === '42P01';
 }
 
 async function withBoundedAuthorityRead<T>(
@@ -1199,18 +1280,91 @@ async function withBoundedAuthorityRead<T>(
 
 async function withBoundedCandidateRead<T>(
   pool: Pool,
+  deadlineAtMs: number,
+  queryStrategy: BackstageNotionCandidateQueryStrategy,
   action: (client: PoolClient) => Promise<T>
-): Promise<T> {
-  const client = await pool.connect();
+): Promise<{
+  result: T;
+  queryDurationMs: number;
+  queryTimeoutMs: number;
+}> {
+  const initialTimeoutMs = Math.trunc(deadlineAtMs - Date.now());
+  if (initialTimeoutMs < BACKSTAGE_NOTION_CANDIDATE_READ_TIMEOUT_MIN_MS) {
+    throw new BackstageNotionCandidateQueryTimeoutError(
+      'budget_exhausted',
+      queryStrategy,
+      0,
+      Math.max(0, initialTimeoutMs)
+    );
+  }
+  let acquisitionTimedOut = false;
+  let acquisitionTimer: NodeJS.Timeout | undefined;
+  const connectPromise = pool.connect();
+  const acquisitionTimeout = new Promise<never>((_resolve, reject) => {
+    acquisitionTimer = setTimeout(() => {
+      acquisitionTimedOut = true;
+      reject(new BackstageNotionCandidateQueryTimeoutError(
+        'budget_exhausted',
+        queryStrategy,
+        0,
+        initialTimeoutMs
+      ));
+    }, initialTimeoutMs);
+  });
+  let client: PoolClient;
+  try {
+    client = await Promise.race([connectPromise, acquisitionTimeout]);
+  } finally {
+    if (acquisitionTimer !== undefined) {
+      clearTimeout(acquisitionTimer);
+    }
+    if (acquisitionTimedOut) {
+      void connectPromise.then(
+        lateClient => lateClient.release(),
+        () => undefined
+      );
+    }
+  }
   let discardClient = false;
+  let queryStartedAtMs = 0;
+  let queryTimeoutMs = initialTimeoutMs;
   try {
     await client.query('BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
-    await client.query(CANDIDATE_READ_TIMEOUT_SQL);
+    queryTimeoutMs = Math.trunc(deadlineAtMs - Date.now());
+    if (queryTimeoutMs < BACKSTAGE_NOTION_CANDIDATE_READ_TIMEOUT_MIN_MS) {
+      throw new BackstageNotionCandidateQueryTimeoutError(
+        'budget_exhausted',
+        queryStrategy,
+        0,
+        Math.max(0, queryTimeoutMs)
+      );
+    }
+    const boundedTimeout = `${queryTimeoutMs}ms`;
+    await client.query(
+      `SELECT
+         set_config('lock_timeout', $1, TRUE),
+         set_config('statement_timeout', $2, TRUE),
+         set_config('idle_in_transaction_session_timeout', $2, TRUE),
+         set_config('work_mem', '8MB', TRUE),
+         set_config('temp_file_limit', '256MB', TRUE)`,
+      [`${Math.min(1_000, queryTimeoutMs)}ms`, boundedTimeout]
+    );
+    queryStartedAtMs = Date.now();
     const result = await action(client);
+    const queryDurationMs = Math.max(0, Date.now() - queryStartedAtMs);
     await client.query('COMMIT');
-    return result;
+    return { result, queryDurationMs, queryTimeoutMs };
   } catch (error) {
     discardClient = !(await rollbackQuietly(client));
+    const cancellationClassification = classifyPostgresQueryCancellation(error);
+    if (cancellationClassification !== null) {
+      throw new BackstageNotionCandidateQueryTimeoutError(
+        cancellationClassification,
+        queryStrategy,
+        queryStartedAtMs > 0 ? Math.max(0, Date.now() - queryStartedAtMs) : 0,
+        queryTimeoutMs
+      );
+    }
     throw error;
   } finally {
     client.release(discardClient);
@@ -1614,44 +1768,120 @@ export class PostgresBackstageNotionRagRepository implements BackstageNotionRagR
       for (const chunkBatch of chunkBatches) {
         await configureSnapshotWriteDeadline(client, prepared.deadlineAtMs, writePhase);
         await client.query(
-          `INSERT INTO backstage_notion_snapshot_chunks (
-           id,
-           snapshot_id,
-           universe_id,
-           page_id,
-           ordinal,
-           content_hash,
-           content,
-           code_points,
-           embedding_model,
-           embedding,
-           heading_path,
-           metadata
-         )
-         SELECT
-           chunk.chunk_id,
-           $1::UUID,
-           $2,
-           chunk.page_id,
-           chunk.ordinal,
-           chunk.content_hash,
-           chunk.content,
-           chunk.code_points,
-           $3,
-           chunk.embedding,
-           chunk.heading_path,
-           chunk.metadata
-         FROM jsonb_to_recordset($4::JSONB) AS chunk(
-           chunk_id TEXT,
-           page_id TEXT,
-           ordinal INTEGER,
-           content_hash TEXT,
-           content TEXT,
-           code_points INTEGER,
-           embedding JSONB,
-           heading_path JSONB,
-           metadata JSONB
-         )`,
+          `WITH input_chunks AS MATERIALIZED (
+             SELECT chunk.*
+             FROM jsonb_to_recordset($4::JSONB) AS chunk(
+               chunk_id TEXT,
+               page_id TEXT,
+               ordinal INTEGER,
+               content_hash TEXT,
+               content TEXT,
+               code_points INTEGER,
+               embedding JSONB,
+               heading_path JSONB,
+               metadata JSONB
+             )
+           ), inserted_chunks AS MATERIALIZED (
+             INSERT INTO backstage_notion_snapshot_chunks (
+               id,
+               snapshot_id,
+               universe_id,
+               page_id,
+               ordinal,
+               content_hash,
+               content,
+               code_points,
+               embedding_model,
+               embedding,
+               heading_path,
+               metadata
+             )
+             SELECT
+               chunk.chunk_id,
+               $1::UUID,
+               $2,
+               chunk.page_id,
+               chunk.ordinal,
+               chunk.content_hash,
+               chunk.content,
+               chunk.code_points,
+               $3,
+               chunk.embedding,
+               chunk.heading_path,
+               chunk.metadata
+             FROM input_chunks AS chunk
+             RETURNING
+               id,
+               snapshot_id,
+               universe_id,
+               page_id,
+               ordinal,
+               content,
+               embedding_model,
+               embedding,
+               heading_path,
+               metadata
+           ), search_material AS MATERIALIZED (
+             SELECT
+               chunk.*,
+               page.title AS page_title,
+               page.path AS page_path,
+               CASE
+                 WHEN jsonb_typeof(chunk.metadata -> 'category') = 'string'
+                   AND octet_length(convert_to(
+                     chunk.metadata ->> 'category', 'UTF8'
+                   )) <= 32
+                 THEN chunk.metadata ->> 'category'
+                 ELSE ''
+               END AS category,
+               public.backstage_notion_candidate_embedding_from_jsonb(
+                 chunk.embedding
+               ) AS native_embedding
+             FROM inserted_chunks AS chunk
+             INNER JOIN backstage_notion_snapshot_pages AS page
+               ON page.universe_id = chunk.universe_id
+              AND page.snapshot_id = chunk.snapshot_id
+              AND page.page_id = chunk.page_id
+           )
+           INSERT INTO public.backstage_notion_snapshot_chunk_search (
+             universe_id,
+             snapshot_id,
+             chunk_id,
+             page_id,
+             ordinal,
+             embedding_model,
+             embedding_dimension,
+             embedding_norm,
+             embedding,
+             search_vector,
+             booking_brand_mask
+           )
+           SELECT
+             material.universe_id,
+             material.snapshot_id,
+             material.id,
+             material.page_id,
+             material.ordinal,
+             material.embedding_model,
+             pg_catalog.cardinality(material.native_embedding),
+             public.backstage_notion_candidate_embedding_norm(
+               material.native_embedding
+             ),
+             material.native_embedding,
+             public.backstage_notion_candidate_search_vector(
+               material.content,
+               material.page_title,
+               material.page_path,
+               material.heading_path,
+               material.category
+             ),
+             public.backstage_notion_candidate_brand_mask(
+               material.page_title,
+               material.page_path,
+               material.heading_path,
+               material.category
+             )
+           FROM search_material AS material`,
           [
             snapshotId,
             prepared.universeId,
@@ -1676,7 +1906,13 @@ export class PostgresBackstageNotionRagRepository implements BackstageNotionRagR
              FROM backstage_notion_snapshot_chunks AS chunk
              WHERE chunk.universe_id = $1
                AND chunk.snapshot_id = $2::UUID
-           ) AS chunk_count`,
+           ) AS chunk_count,
+           (
+             SELECT COUNT(*)
+             FROM public.backstage_notion_snapshot_chunk_search AS search
+             WHERE search.universe_id = $1
+               AND search.snapshot_id = $2::UUID
+           ) AS search_count`,
         [prepared.universeId, snapshotId]
       );
       const inventory = inventoryResult.rows[0];
@@ -1685,6 +1921,8 @@ export class PostgresBackstageNotionRagRepository implements BackstageNotionRagR
         || parseInteger(inventory.page_count, 'persisted page_count')
           !== prepared.pages.length
         || parseInteger(inventory.chunk_count, 'persisted chunk_count')
+          !== prepared.chunks.length
+        || parseInteger(inventory.search_count, 'persisted search count')
           !== prepared.chunks.length
       ) {
         throw new BackstageNotionSnapshotWriteError(
@@ -2587,8 +2825,303 @@ export class PostgresBackstageNotionRagRepository implements BackstageNotionRagR
       ? 0
       : Math.min(16, Math.max(1, Math.floor(limit / 8)));
     const bookingPreferredCandidateLimit = limit - bookingNeutralCandidateLimit;
-    const result = await withBoundedCandidateRead(
+    const allowedBookingBrandMask = allowedBookingBrands === null
+      ? 0
+      : allowedBookingBrands.reduce((mask, brand) => (
+          mask | (brand === 'raw' ? 1 : brand === 'smackdown' ? 2 : 4)
+        ), 0);
+    const candidateReadTimeoutMs = resolveBackstageNotionCandidateReadTimeoutMs(
+      input.remainingOperationBudgetMs
+    );
+    const candidateReadDeadlineAtMs = Date.now() + candidateReadTimeoutMs;
+    let boundedResult: {
+      result: QueryResult<SnapshotCandidateSearchRow>;
+      queryDurationMs: number;
+      queryTimeoutMs: number;
+    };
+    let queryStrategy: BackstageNotionCandidateQueryStrategy = 'native_sidecar_v1';
+    try {
+      boundedResult = await withBoundedCandidateRead(
+        this.pool,
+        candidateReadDeadlineAtMs,
+        'native_sidecar_v1',
+        client => client.query<SnapshotCandidateSearchRow>(
+        `WITH RECURSIVE pinned_snapshot AS MATERIALIZED (
+           SELECT snapshot.id, snapshot.embedding_model
+           FROM backstage_notion_snapshots AS snapshot
+           WHERE snapshot.universe_id = $1
+             AND snapshot.id = $2::UUID
+         ), scope_pages(page_id) AS (
+           SELECT anchor.page_id
+           FROM pinned_snapshot AS pinned
+           INNER JOIN backstage_notion_snapshot_pages AS anchor
+             ON anchor.universe_id = $1
+            AND anchor.snapshot_id = pinned.id
+            AND anchor.page_id = $3
+           UNION
+           SELECT child.page_id
+           FROM scope_pages AS parent
+           INNER JOIN backstage_notion_snapshot_pages AS child
+             ON child.universe_id = $1
+            AND child.snapshot_id = $2::UUID
+            AND child.parent_page_id = parent.page_id
+           WHERE $4::TEXT = 'subtree'
+         ), eligible_chunk_keys AS MATERIALIZED (
+           SELECT
+             pinned.embedding_model AS snapshot_embedding_model,
+             chunk.id AS chunk_id,
+             chunk.page_id,
+             chunk.ordinal,
+             chunk.embedding_model AS chunk_embedding_model,
+             search.embedding_model AS search_embedding_model,
+             search.embedding_dimension,
+             search.embedding_norm,
+             search.embedding,
+             search.search_vector,
+             search.booking_brand_mask
+           FROM pinned_snapshot AS pinned
+           INNER JOIN backstage_notion_snapshot_chunks AS chunk
+             ON chunk.universe_id = $1
+            AND chunk.snapshot_id = pinned.id
+           LEFT JOIN public.backstage_notion_snapshot_chunk_search AS search
+             ON search.universe_id = chunk.universe_id
+            AND search.snapshot_id = chunk.snapshot_id
+            AND search.chunk_id = chunk.id
+            AND search.page_id = chunk.page_id
+            AND search.ordinal = chunk.ordinal
+           WHERE (
+             $4::TEXT = 'all'
+             OR chunk.page_id IN (SELECT scope_page.page_id FROM scope_pages AS scope_page)
+           )
+           AND (
+             $5::INTEGER[] IS NULL
+             OR CASE
+               WHEN jsonb_typeof(chunk.metadata -> 'headingOccurrencePath') = 'array'
+               THEN
+                 jsonb_array_length(chunk.metadata -> 'headingOccurrencePath')
+                   >= cardinality($5::INTEGER[])
+                  AND NOT EXISTS (
+                    SELECT 1
+                    FROM unnest($5::INTEGER[]) WITH ORDINALITY
+                      AS requested_occurrence(value, position)
+                    WHERE chunk.metadata -> 'headingOccurrencePath'
+                      ->> (requested_occurrence.position - 1)::INTEGER
+                      IS DISTINCT FROM requested_occurrence.value::TEXT
+                  )
+               ELSE FALSE
+             END
+           )
+         ), selection_integrity AS MATERIALIZED (
+           SELECT
+             COUNT(*)::INTEGER AS scope_chunk_count,
+             COUNT(*) FILTER (WHERE
+               eligible.snapshot_embedding_model = $7
+               AND eligible.chunk_embedding_model = $7
+               AND eligible.search_embedding_model = $7
+               AND eligible.embedding_dimension = cardinality($8::DOUBLE PRECISION[])
+               AND cardinality(eligible.embedding) = cardinality($8::DOUBLE PRECISION[])
+               AND eligible.embedding_norm > 0
+               AND eligible.embedding_norm < 'Infinity'::DOUBLE PRECISION
+               AND eligible.embedding_norm <> 'NaN'::DOUBLE PRECISION
+               AND eligible.search_vector IS NOT NULL
+               AND eligible.booking_brand_mask BETWEEN 0 AND 7
+             )::INTEGER AS scorable_chunk_count
+           FROM eligible_chunk_keys AS eligible
+         ), lexical_query AS MATERIALIZED (
+           SELECT CASE
+             WHEN $10::TEXT = '' THEN NULL::TSQUERY
+             ELSE pg_catalog.websearch_to_tsquery(
+               'simple'::pg_catalog.regconfig,
+               $10::TEXT
+             )
+           END AS query
+         ), booking_scoped_keys AS MATERIALIZED (
+           SELECT
+             eligible.*,
+             CASE
+               WHEN $12::TEXT[] IS NULL THEN 'generic'
+              WHEN (eligible.booking_brand_mask::INTEGER & $15::INTEGER) <> 0
+                 THEN 'preferred'
+               ELSE 'neutral'
+             END AS booking_disposition
+           FROM selection_integrity AS integrity
+           INNER JOIN eligible_chunk_keys AS eligible ON TRUE
+           WHERE integrity.scope_chunk_count = $6::INTEGER
+             AND integrity.scorable_chunk_count = integrity.scope_chunk_count
+             AND (
+               $12::TEXT[] IS NULL
+               OR (
+                  eligible.booking_brand_mask::INTEGER
+                   & (7 # $15::INTEGER)
+               ) = 0
+             )
+         ), candidate_pool AS MATERIALIZED (
+           SELECT
+             COUNT(*)::INTEGER AS candidate_pool_count,
+             COUNT(*) FILTER (WHERE
+               lexical_query.query IS NOT NULL
+               AND candidate.search_vector @@ lexical_query.query
+             )::INTEGER AS lexical_candidate_count
+           FROM booking_scoped_keys AS candidate
+           CROSS JOIN lexical_query
+         ), scored_candidate_keys AS MATERIALIZED (
+           SELECT
+             candidate.*,
+             similarity.semantic_score,
+             CASE
+               WHEN lexical_query.query IS NULL THEN 0::DOUBLE PRECISION
+               ELSE pg_catalog.ts_rank_cd(
+                 candidate.search_vector,
+                 lexical_query.query,
+                 32
+               )::DOUBLE PRECISION
+             END AS lexical_score,
+             integrity.scope_chunk_count,
+             pool.candidate_pool_count,
+             pool.lexical_candidate_count
+           FROM selection_integrity AS integrity
+           INNER JOIN booking_scoped_keys AS candidate ON TRUE
+           CROSS JOIN candidate_pool AS pool
+           CROSS JOIN lexical_query
+           CROSS JOIN LATERAL (
+             SELECT GREATEST(
+               -1::DOUBLE PRECISION,
+               LEAST(
+                 1::DOUBLE PRECISION,
+                  COALESCE(SUM(
+                    coordinate.candidate_component * coordinate.query_component
+                  ), 0)::DOUBLE PRECISION
+                    / NULLIF(
+                        candidate.embedding_norm * $9::DOUBLE PRECISION,
+                        0::DOUBLE PRECISION
+                      )
+               )
+             ) AS semantic_score
+              FROM unnest(
+                candidate.embedding,
+                $8::DOUBLE PRECISION[]
+              ) AS coordinate(candidate_component, query_component)
+           ) AS similarity
+         ), generic_candidates AS MATERIALIZED (
+           SELECT candidate.*
+           FROM scored_candidate_keys AS candidate
+           WHERE $12::TEXT[] IS NULL
+           ORDER BY
+             (
+               candidate.semantic_score
+               + (0.12::DOUBLE PRECISION * candidate.lexical_score)
+             ) DESC,
+             candidate.semantic_score DESC,
+             candidate.lexical_score DESC,
+             candidate.page_id,
+             candidate.ordinal,
+             candidate.chunk_id COLLATE "C"
+           LIMIT $11
+         ), booking_preferred_candidates AS MATERIALIZED (
+           SELECT candidate.*
+           FROM scored_candidate_keys AS candidate
+           WHERE $12::TEXT[] IS NOT NULL
+             AND candidate.booking_disposition = 'preferred'
+           ORDER BY
+             (
+               candidate.semantic_score
+               + (0.12::DOUBLE PRECISION * candidate.lexical_score)
+             ) DESC,
+             candidate.semantic_score DESC,
+             candidate.lexical_score DESC,
+             candidate.page_id,
+             candidate.ordinal,
+             candidate.chunk_id COLLATE "C"
+           LIMIT $13
+         ), booking_neutral_candidates AS MATERIALIZED (
+           SELECT candidate.*
+           FROM scored_candidate_keys AS candidate
+           WHERE $12::TEXT[] IS NOT NULL
+             AND candidate.booking_disposition = 'neutral'
+           ORDER BY
+             (
+               candidate.semantic_score
+               + (0.12::DOUBLE PRECISION * candidate.lexical_score)
+             ) DESC,
+             candidate.semantic_score DESC,
+             candidate.lexical_score DESC,
+             candidate.page_id,
+             candidate.ordinal,
+             candidate.chunk_id COLLATE "C"
+           LIMIT $14
+         ), limited_candidates AS MATERIALIZED (
+           SELECT * FROM generic_candidates
+           UNION ALL
+           SELECT * FROM booking_preferred_candidates
+           UNION ALL
+           SELECT * FROM booking_neutral_candidates
+         )
+         SELECT
+           candidate.chunk_id,
+           candidate.page_id,
+           page.title AS page_title,
+           page.path AS page_path,
+           candidate.ordinal,
+           chunk.content_hash,
+           chunk.content,
+           chunk.code_points,
+           chunk.embedding_model AS chunk_embedding_model,
+           candidate.embedding,
+           chunk.heading_path,
+           ${BACKSTAGE_NOTION_CHUNK_METADATA_PROJECTION_SQL} AS chunk_metadata,
+           candidate.scope_chunk_count,
+           candidate.candidate_pool_count,
+           candidate.lexical_candidate_count
+         FROM limited_candidates AS candidate
+         INNER JOIN backstage_notion_snapshot_chunks AS chunk
+           ON chunk.universe_id = $1
+          AND chunk.snapshot_id = $2::UUID
+          AND chunk.id = candidate.chunk_id
+          AND chunk.page_id = candidate.page_id
+          AND chunk.ordinal = candidate.ordinal
+         INNER JOIN backstage_notion_snapshot_pages AS page
+           ON page.universe_id = chunk.universe_id
+          AND page.snapshot_id = chunk.snapshot_id
+          AND page.page_id = chunk.page_id
+         ORDER BY
+           (
+             candidate.semantic_score
+             + (0.12::DOUBLE PRECISION * candidate.lexical_score)
+           ) DESC,
+           candidate.semantic_score DESC,
+           candidate.lexical_score DESC,
+           candidate.page_id,
+           candidate.ordinal,
+           candidate.chunk_id COLLATE "C"
+         LIMIT $11`,
+        [
+          normalizedUniverseId,
+          normalizedSnapshotId,
+          normalizedPageId,
+          selector.scopeKind,
+          normalizedSectionOccurrencePath,
+          expectedScopeChunkCount,
+          embeddingModel,
+          queryEmbedding,
+          queryEmbeddingNorm,
+          lexicalProjection,
+          limit,
+          allowedBookingBrands,
+          bookingPreferredCandidateLimit,
+          bookingNeutralCandidateLimit,
+          allowedBookingBrandMask
+        ]
+        )
+      );
+    } catch (error) {
+      if (!isPostgresUndefinedTable(error)) {
+        throw error;
+      }
+      queryStrategy = 'legacy_jsonb_v1';
+      boundedResult = await withBoundedCandidateRead(
       this.pool,
+      candidateReadDeadlineAtMs,
+      'legacy_jsonb_v1',
       client => client.query<SnapshotCandidateSearchRow>(
       `WITH RECURSIVE pinned_snapshot AS MATERIALIZED (
          SELECT snapshot.id, snapshot.embedding_model
@@ -2884,6 +3417,8 @@ export class PostgresBackstageNotionRagRepository implements BackstageNotionRagR
       ]
       )
     );
+    }
+    const result = boundedResult.result;
     if (result.rows.length < 1 || result.rows.length > limit) {
       throw new Error('Snapshot candidate search did not return its bounded expected projection.');
     }
@@ -2924,7 +3459,29 @@ export class PostgresBackstageNotionRagRepository implements BackstageNotionRagR
     if (new Set(candidates.map(candidate => candidate.id)).size !== candidates.length) {
       throw new Error('Snapshot candidate search returned duplicate chunks.');
     }
-    return { scopeChunkCount: expectedScopeChunkCount, candidatePoolCount, candidates };
+    const lexicalCandidateCount = result.rows[0]?.lexical_candidate_count === undefined
+      ? null
+      : parseInteger(
+          result.rows[0].lexical_candidate_count,
+          'lexical_candidate_count'
+        );
+    if (
+      lexicalCandidateCount !== null
+      && (lexicalCandidateCount < 0 || lexicalCandidateCount > candidatePoolCount)
+    ) {
+      throw new Error('Snapshot candidate search returned an invalid lexical candidate count.');
+    }
+    return {
+      scopeChunkCount: expectedScopeChunkCount,
+      candidatePoolCount,
+      semanticCandidateCount: candidatePoolCount,
+      lexicalCandidateCount,
+      mergedCandidateCount: candidatePoolCount,
+      queryDurationMs: boundedResult.queryDurationMs,
+      queryTimeoutMs: boundedResult.queryTimeoutMs,
+      queryStrategy,
+      candidates,
+    };
   }
 
   async loadActiveInventory(

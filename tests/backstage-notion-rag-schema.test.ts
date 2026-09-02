@@ -45,6 +45,22 @@ const snapshotCapacityRollback = readFileSync(
   ),
   'utf8'
 );
+const candidateSearchMigration = readFileSync(
+  join(
+    process.cwd(),
+    'migrations',
+    '20260902_backstage_notion_rag_candidate_search_v1.sql'
+  ),
+  'utf8'
+);
+const candidateSearchRollback = readFileSync(
+  join(
+    process.cwd(),
+    'migrations',
+    '20260902_backstage_notion_rag_candidate_search_v1.rollback.sql'
+  ),
+  'utf8'
+);
 const runtimeSql = BACKSTAGE_NOTION_RAG_TABLE_DEFINITIONS.join('\n');
 
 const dedicatedTables = [
@@ -297,5 +313,70 @@ describe('Backstage Notion RAG database contract', () => {
       expect(runtimeSql).toContain(fragment);
       expect(snapshotCapacityMigration).toContain(fragment);
     }
+  });
+
+  it.each([
+    ['runtime bootstrap', runtimeSql],
+    ['candidate-search migration', candidateSearchMigration]
+  ])('%s creates the immutable native candidate-search sidecar', (_label, sql) => {
+    for (const fragment of [
+      'backstage_notion_candidate_embedding_from_jsonb',
+      'backstage_notion_candidate_embedding_norm',
+      'backstage_notion_candidate_search_vector',
+      'backstage_notion_candidate_brand_mask',
+      'CREATE TABLE IF NOT EXISTS public.backstage_notion_snapshot_chunk_search',
+      'embedding DOUBLE PRECISION[] NOT NULL',
+      'embedding_norm > 0::DOUBLE PRECISION',
+      "embedding_norm < 'Infinity'::DOUBLE PRECISION",
+      "embedding_norm <> 'NaN'::DOUBLE PRECISION",
+      'search_vector TSVECTOR NOT NULL',
+      'booking_brand_mask SMALLINT NOT NULL',
+      'FOREIGN KEY (snapshot_id, chunk_id)',
+      'REFERENCES public.backstage_notion_snapshot_chunks(snapshot_id, id)',
+      'idx_backstage_notion_snapshot_chunk_search_scope',
+      'idx_backstage_notion_snapshot_chunk_search_model',
+      'idx_backstage_notion_snapshot_chunk_search_lexical',
+      'USING GIN (search_vector)',
+    ]) {
+      expect(sql).toContain(fragment);
+    }
+  });
+
+  it('includes the candidate sidecar in both immutable-trigger installation paths', () => {
+    expect(runtimeSql).toContain("'backstage_notion_snapshot_chunk_search'");
+    expect(runtimeSql).toContain(
+      "'CREATE TRIGGER trg_backstage_notion_immutable BEFORE UPDATE OR DELETE ON %I"
+    );
+    expect(candidateSearchMigration).toContain(
+      'BEFORE UPDATE OR DELETE ON public.backstage_notion_snapshot_chunk_search'
+    );
+  });
+
+  it('keeps the candidate-search migration additive and defers bounded backfill', () => {
+    expect(candidateSearchMigration).toContain(
+      'This migration deliberately does not backfill historical snapshots.'
+    );
+    expect(candidateSearchMigration).not.toMatch(
+      /(?:UPDATE|DELETE\s+FROM|TRUNCATE)\s+(?:public\.)?backstage_notion_snapshot_(?:chunks|pages)/iu
+    );
+    expect(candidateSearchMigration).not.toContain(
+      'INSERT INTO public.backstage_notion_snapshot_chunk_search SELECT'
+    );
+    expect(candidateSearchMigration).toContain(
+      'The table is new and empty at schema-install time'
+    );
+  });
+
+  it('compensates only derived candidate-search state', () => {
+    expect(candidateSearchRollback).toContain(
+      'DROP TABLE IF EXISTS public.backstage_notion_snapshot_chunk_search'
+    );
+    expect(candidateSearchRollback).toContain(
+      'DROP FUNCTION IF EXISTS public.backstage_notion_candidate_embedding_from_jsonb'
+    );
+    expect(candidateSearchRollback).not.toMatch(
+      /(?:DROP|DELETE\s+FROM|TRUNCATE)\s+(?:TABLE\s+)?(?:public\.)?backstage_notion_snapshot_(?:chunks|pages)/iu
+    );
+    expect(candidateSearchRollback).not.toContain('CASCADE');
   });
 });
