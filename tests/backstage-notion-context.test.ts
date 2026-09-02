@@ -14,6 +14,9 @@ import {
   runWithBackstageNotionEnrichmentAuthorization,
 } from '../src/services/backstageNotionEnrichmentAuthorization.js';
 import {
+  BackstageNotionReadError,
+  fetchBackstageNotionMarkdownPage,
+  fetchBackstageNotionPageMetadata,
   loadBackstageNotionPromptContextCore,
 } from '../src/shared/backstage/backstageNotionContextCore.js';
 
@@ -352,6 +355,135 @@ describe('Backstage Notion prompt context', () => {
       })).resolves.toBeNull();
     }
   );
+
+  it.each([
+    [
+      'page_metadata',
+      (fetchMock: typeof fetch) => fetchBackstageNotionPageMetadata(
+        fetchMock,
+        notionToken,
+        firstPageId,
+        new AbortController().signal
+      ),
+    ],
+    [
+      'page_markdown',
+      (fetchMock: typeof fetch) => fetchBackstageNotionMarkdownPage(
+        fetchMock,
+        notionToken,
+        firstPageId,
+        new AbortController().signal
+      ),
+    ],
+  ] as const)(
+    'retains only bounded official error-envelope diagnostics for %s',
+    async (endpointKind, request) => {
+      const privateMessage = 'PRIVATE-NOTION-PROVIDER-MESSAGE';
+      const fetchMock = jest.fn(async () => new Response(JSON.stringify({
+        object: 'error',
+        status: 403,
+        code: 'restricted_resource',
+        message: privateMessage,
+        additional_data: {
+          private: 'PRIVATE-NOTION-ADDITIONAL-DATA',
+        },
+      }), {
+        status: 403,
+        headers: { 'content-type': 'application/json; charset=utf-8' },
+      }));
+
+      let caught: unknown;
+      try {
+        await request(asFetch(fetchMock));
+      } catch (error) {
+        caught = error;
+      }
+
+      expect(caught).toBeInstanceOf(BackstageNotionReadError);
+      expect(caught).toMatchObject({
+        category: 'http_403',
+        notionHttpStatus: 403,
+        notionProviderCode: 'restricted_resource',
+        notionFailureCategory: 'authorization',
+        notionResponseContentType: 'application/json',
+        notionResponseSchemaValid: true,
+        notionEndpointKind: endpointKind,
+      });
+      const serialized = JSON.stringify(caught);
+      expect(serialized).not.toContain(privateMessage);
+      expect(serialized).not.toContain('PRIVATE-NOTION-ADDITIONAL-DATA');
+      expect(serialized).not.toContain(notionToken);
+      expect(serialized).not.toContain(firstPageId);
+    }
+  );
+
+  it('rejects an unbounded provider-code field while retaining safe status metadata', async () => {
+    const privateProviderCode = `PRIVATE/${firstPageId}/${'x'.repeat(100)}`;
+    const fetchMock = jest.fn(async () => new Response(JSON.stringify({
+      object: 'error',
+      status: 400,
+      code: privateProviderCode,
+      message: 'PRIVATE-NOTION-PROVIDER-MESSAGE',
+    }), {
+      status: 400,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    let caught: unknown;
+    try {
+      await fetchBackstageNotionPageMetadata(
+        asFetch(fetchMock),
+        notionToken,
+        firstPageId,
+        new AbortController().signal
+      );
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toMatchObject({
+      category: 'http_400',
+      notionHttpStatus: 400,
+      notionProviderCode: null,
+      notionFailureCategory: 'permanent_provider',
+      notionResponseContentType: 'application/json',
+      notionResponseSchemaValid: false,
+      notionEndpointKind: 'page_metadata',
+    });
+    expect(JSON.stringify(caught)).not.toContain(privateProviderCode);
+  });
+
+  it('retains the HTTP class when a non-success error body exceeds the read bound', async () => {
+    const fetchMock = jest.fn(async () => new Response('{}', {
+      status: 403,
+      headers: {
+        'content-type': 'application/json',
+        'content-length': String(BACKSTAGE_NOTION_MAX_RESPONSE_BYTES + 1),
+      },
+    }));
+
+    let caught: unknown;
+    try {
+      await fetchBackstageNotionPageMetadata(
+        asFetch(fetchMock),
+        notionToken,
+        firstPageId,
+        new AbortController().signal
+      );
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toMatchObject({
+      category: 'http_403',
+      notionHttpStatus: 403,
+      notionProviderCode: null,
+      notionFailureCategory: 'authorization',
+      notionResponseContentType: 'application/json',
+      notionResponseSchemaValid: false,
+      notionEndpointKind: 'page_metadata',
+    });
+  });
 
   it('fails open on malformed and mismatched provider responses', async () => {
     const malformedFetch = jest.fn(async () => new Response('{bad json', {

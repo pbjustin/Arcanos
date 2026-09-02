@@ -37,6 +37,8 @@ import {
   fetchBackstageNotionPageMetadata,
   normalizeBackstageNotionPageId,
   readBackstageNotionAccessToken,
+  type BackstageNotionEndpointKind,
+  type BackstageNotionFailureCategory,
   type BackstageNotionFetchImplementation,
   type BackstageNotionPageMetadata,
 } from '@shared/backstage/backstageNotionContextCore.js';
@@ -125,6 +127,12 @@ export interface BackstageNotionSyncFailureDiagnostics {
   newEmbeddingCount: number;
   notionRetryCount: number;
   rateLimitWaitMs: number;
+  notionHttpStatus: number | null;
+  notionProviderCode: string | null;
+  notionFailureCategory: BackstageNotionFailureCategory | null;
+  notionResponseContentType: string | null;
+  notionResponseSchemaValid: boolean | null;
+  notionEndpointKind: BackstageNotionEndpointKind | null;
   elapsedMs: number;
   candidateSnapshotCreated: boolean;
   candidateSnapshotValidated: boolean;
@@ -247,6 +255,12 @@ function createSyncProgress(): BackstageNotionSyncProgress {
     newEmbeddingCount: 0,
     notionRetryCount: 0,
     rateLimitWaitMs: 0,
+    notionHttpStatus: null,
+    notionProviderCode: null,
+    notionFailureCategory: null,
+    notionResponseContentType: null,
+    notionResponseSchemaValid: null,
+    notionEndpointKind: null,
     candidateSnapshotCreated: false,
     candidateSnapshotValidated: false,
     candidateSnapshotActivated: false,
@@ -278,6 +292,12 @@ function snapshotSyncFailureDiagnostics(
     newEmbeddingCount: progress.newEmbeddingCount,
     notionRetryCount: progress.notionRetryCount,
     rateLimitWaitMs: progress.rateLimitWaitMs,
+    notionHttpStatus: progress.notionHttpStatus,
+    notionProviderCode: progress.notionProviderCode,
+    notionFailureCategory: progress.notionFailureCategory,
+    notionResponseContentType: progress.notionResponseContentType,
+    notionResponseSchemaValid: progress.notionResponseSchemaValid,
+    notionEndpointKind: progress.notionEndpointKind,
     elapsedMs: Math.max(0, Date.now() - progress.startedAt),
     candidateSnapshotCreated: progress.candidateSnapshotCreated,
     candidateSnapshotValidated: progress.candidateSnapshotValidated,
@@ -343,6 +363,18 @@ function classifyNotionReadFailure(
     };
   }
   return { phase: currentPhase, reason: 'permanent_notion_error' };
+}
+
+function captureNotionReadDiagnostics(
+  progress: BackstageNotionSyncProgress,
+  error: BackstageNotionReadError
+): void {
+  progress.notionHttpStatus = error.notionHttpStatus;
+  progress.notionProviderCode = error.notionProviderCode;
+  progress.notionFailureCategory = error.notionFailureCategory;
+  progress.notionResponseContentType = error.notionResponseContentType;
+  progress.notionResponseSchemaValid = error.notionResponseSchemaValid;
+  progress.notionEndpointKind = error.notionEndpointKind;
 }
 
 class BackstageNotionRequestDeadlineError extends Error {
@@ -436,6 +468,7 @@ function wrapSyncFailure(
     );
   }
   if (error instanceof BackstageNotionReadError) {
+    captureNotionReadDiagnostics(progress, error);
     const failure = classifyNotionReadFailure(error, progress.phase);
     return new BackstageNotionSyncError(
       failure.reason === 'inaccessible_page'
