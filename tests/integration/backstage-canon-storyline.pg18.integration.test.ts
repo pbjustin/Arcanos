@@ -226,6 +226,65 @@ async function resetDisposableNotionRagState(client: Client): Promise<void> {
   );
 }
 
+async function populateNotionCandidateSearchSidecar(
+  client: Client,
+  universeId: string,
+  snapshotId: string
+): Promise<void> {
+  await client.query(
+    `INSERT INTO public.backstage_notion_snapshot_chunk_search (
+       universe_id, snapshot_id, chunk_id, page_id, ordinal,
+       embedding_model, embedding_dimension, embedding_norm, embedding,
+       search_vector, booking_brand_mask
+     )
+     SELECT
+       chunk.universe_id,
+       chunk.snapshot_id,
+       chunk.id,
+       chunk.page_id,
+       chunk.ordinal,
+       chunk.embedding_model,
+       pg_catalog.cardinality(material.native_embedding),
+       public.backstage_notion_candidate_embedding_norm(material.native_embedding),
+       material.native_embedding,
+       public.backstage_notion_candidate_search_vector(
+         chunk.content,
+         page.title,
+         page.path,
+         chunk.heading_path,
+         material.category
+       ),
+       public.backstage_notion_candidate_brand_mask(
+         page.title,
+         page.path,
+         chunk.heading_path,
+         material.category
+       )
+     FROM public.backstage_notion_snapshot_chunks AS chunk
+     INNER JOIN public.backstage_notion_snapshot_pages AS page
+       ON page.universe_id = chunk.universe_id
+      AND page.snapshot_id = chunk.snapshot_id
+      AND page.page_id = chunk.page_id
+     CROSS JOIN LATERAL (
+       SELECT
+         public.backstage_notion_candidate_embedding_from_jsonb(
+           chunk.embedding
+         ) AS native_embedding,
+         CASE
+           WHEN jsonb_typeof(chunk.metadata -> 'category') = 'string'
+             AND octet_length(convert_to(
+               chunk.metadata ->> 'category', 'UTF8'
+             )) <= 32
+           THEN chunk.metadata ->> 'category'
+           ELSE ''
+         END AS category
+     ) AS material
+     WHERE chunk.universe_id = $1
+       AND chunk.snapshot_id = $2::UUID`,
+    [universeId, snapshotId]
+  );
+}
+
 function notionSnapshotInput(input: {
   universeId: string;
   rootPageId: string;
@@ -393,7 +452,7 @@ async function insertNotionIndexFenceSnapshot(input: {
          $6,
          $7,
          'pg18-fence-model',
-         '[0]'::JSONB,
+         '[1]'::JSONB,
          '[]'::JSONB,
          '{}'::JSONB
        )`,
@@ -406,6 +465,11 @@ async function insertNotionIndexFenceSnapshot(input: {
         content,
         Array.from(content).length,
       ]
+    );
+    await populateNotionCandidateSearchSidecar(
+      input.client,
+      input.universeId,
+      snapshotId
     );
   }
   return snapshotId;
@@ -787,7 +851,7 @@ describeWithDatabase('Backstage canon/storyline persistence on PostgreSQL 18', (
         indexFormats: [BACKSTAGE_NOTION_RAG_INDEX_FORMAT],
         expectedChunkCount: 2,
       });
-      await expectActivationError(partialChunkSnapshot, 'BN002');
+      await expectActivationError(partialChunkSnapshot, 'BN003');
 
       const replacementRootSnapshot = await insertNotionIndexFenceSnapshot({
         client: observer,
@@ -1083,12 +1147,13 @@ describeWithDatabase('Backstage canon/storyline persistence on PostgreSQL 18', (
            'Synthetic authoritative chunk ' || ordinal::TEXT,
            char_length('Synthetic authoritative chunk ' || ordinal::TEXT),
            'pg18-expanded-model',
-           '[0]'::JSONB,
+           '[1]'::JSONB,
            '[]'::JSONB,
            '{}'::JSONB
          FROM generate_series(0, 2116) AS ordinal`,
         [snapshotId, universeId, pageId]
       );
+      await populateNotionCandidateSearchSidecar(observer, universeId, snapshotId);
       await observer.query(
         `UPDATE backstage_notion_universe_heads
          SET authority = 'notion',
