@@ -29,6 +29,7 @@ const POSTGRES_TEST_FILES = [
   'tests/integration/backstage-roster-atomicity.pg18.integration.test.ts',
   'tests/integration/backstage-storyline-atomicity.pg18.integration.test.ts',
   'tests/integration/backstage-canon-storyline.pg18.integration.test.ts',
+  'tests/integration/backstage-notion-rag-candidate-search.pg18.integration.test.ts',
   'tests/integration/backstage-notion-partition-storage.pg18.integration.test.ts',
   'tests/integration/non-gpt-terminal-retention.pg18.integration.test.ts',
 ];
@@ -47,7 +48,7 @@ function readWorkflowJob(workflow, jobId, nextJobId) {
 }
 
 describe('required PostgreSQL CI truth contract', () => {
-  it('uses one required-database sentinel for all ten PostgreSQL suites', () => {
+  it('uses one required-database sentinel for all eleven PostgreSQL suites', () => {
     const workflow = readNormalized('.github/workflows/ci-cd.yml');
     const postgresJob = readWorkflowJob(
       workflow,

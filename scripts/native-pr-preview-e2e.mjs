@@ -4150,6 +4150,17 @@ async function executeRequestCase(
       );
     }
     if (
+      requestCase.fixtureName === 'notionAuthorityRag'
+      && response.headers.get(
+        contract.proofHeaders.notionReadDiagnosticsVersion
+      ) !== contract.notionReadDiagnosticsProofVersion
+    ) {
+      fail(
+        'NATIVE_PR_PREVIEW_BACKSTAGE_NOTION_READ_DIAGNOSTICS_PROOF_INVALID',
+        requestCase.caseId
+      );
+    }
+    if (
       requestCase.fixtureName === 'partitionFailureTelemetry'
       && response.headers.get(
         contract.proofHeaders.partitionFailureTelemetryVersion
@@ -4368,6 +4379,7 @@ async function executeRequestCase(
     ...(requestCase.expectedType === 'backstage-generation-contract'
       && requestCase.fixtureName === 'notionAuthorityRag'
       ? {
+          notionReadDiagnosticsVerified: true,
           partitionCutoverRepairVerified: true,
           partitionedAuthorityVerified: true,
         }

@@ -33,7 +33,7 @@
     "test": "npm run build:packages && node scripts/run-jest.mjs",
     "test:integration": "npm run build:packages && node scripts/run-jest.mjs --testPathPatterns=integration --coverage=false",
     "test:local-agent-postgres": "node scripts/run-jest.mjs --testPathPatterns=local-agent-hardening.pg.integration --coverage=false --runInBand",
-    "test:postgres-fencing": "node scripts/run-jest.mjs --runTestsByPath tests/integration/job-claim-fencing.pg18.integration.test.ts tests/integration/dag-snapshot-generation.pg18.integration.test.ts tests/integration/job-worker-budget-identity.pg18.integration.test.ts tests/integration/job-stale-recovery-batching.pg18.integration.test.ts tests/integration/backstage-roster-atomicity.pg18.integration.test.ts tests/integration/backstage-storyline-atomicity.pg18.integration.test.ts tests/integration/backstage-canon-storyline.pg18.integration.test.ts tests/integration/backstage-notion-partition-storage.pg18.integration.test.ts tests/integration/non-gpt-terminal-retention.pg18.integration.test.ts --coverage=false --runInBand",
+    "test:postgres-fencing": "node scripts/run-jest.mjs --runTestsByPath tests/integration/job-claim-fencing.pg18.integration.test.ts tests/integration/dag-snapshot-generation.pg18.integration.test.ts tests/integration/job-worker-budget-identity.pg18.integration.test.ts tests/integration/job-stale-recovery-batching.pg18.integration.test.ts tests/integration/backstage-roster-atomicity.pg18.integration.test.ts tests/integration/backstage-storyline-atomicity.pg18.integration.test.ts tests/integration/backstage-canon-storyline.pg18.integration.test.ts tests/integration/backstage-notion-rag-candidate-search.pg18.integration.test.ts tests/integration/backstage-notion-partition-storage.pg18.integration.test.ts tests/integration/non-gpt-terminal-retention.pg18.integration.test.ts --coverage=false --runInBand",
     "test:unit": "npm run build:packages && node scripts/jest-unit-helper.mjs",
     "test:all": "npm run test:unit && npm run test:integration",
     "test:redis-resilience": "npm run build:packages && node scripts/run-jest.mjs --testPathPatterns=dependency-lifecycle --testPathPatterns=redis-startup-lifecycle --testPathPatterns=redis-operation-boundary --testPathPatterns=dependency-lifecycle-metrics --testPathPatterns=dependency-unavailable-http --testPathPatterns=incident-response-kill-switch --testPathPatterns=routes-self-improve --testPathPatterns=safety-v2-redis-lifecycle --testPathPatterns=self-heal-telemetry-redis --testPathPatterns=startup-health-routes --testPathPatterns=server-startup-resilience --testPathPatterns=unified-health-redis --testPathPatterns=railway-redis-lifecycle-preview-probe --coverage=false --runInBand",
@@ -296,10 +296,11 @@
       "hono": "4.12.34"
     },
     "express-rate-limit": "8.3.0",
-    "fast-uri": "3.1.5",
+    "fast-uri": "https://codeload.github.com/fastify/fast-uri/tar.gz/412e40abd4eb8beabfb952d80abf949a2baf27a3",
     "ip-address": "10.3.1",
     "undici": "7.29.0",
     "proxy-from-env": "https://codeload.github.com/Rob--W/proxy-from-env/tar.gz/refs/tags/v2.1.0",
+    "qs": "https://codeload.github.com/ljharb/qs/tar.gz/bb9379e01fad04c601478acd6152143cb20c984b",
     "express": {
       "path-to-regexp": "https://codeload.github.com/pillarjs/path-to-regexp/tar.gz/refs/tags/v.0.1.13"
     },

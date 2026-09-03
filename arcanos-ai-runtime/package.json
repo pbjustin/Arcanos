@@ -29,6 +29,9 @@
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3"
   },
+  "overrides": {
+    "qs": "https://codeload.github.com/ljharb/qs/tar.gz/bb9379e01fad04c601478acd6152143cb20c984b"
+  },
   "engines": {
     "node": "24.18.1",
     "npm": "11.16.0"

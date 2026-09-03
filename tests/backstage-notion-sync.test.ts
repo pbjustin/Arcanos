@@ -32,6 +32,7 @@ import {
 } from '../src/platform/runtime/env.js';
 import {
   BACKSTAGE_NOTION_ACCESS_TOKEN_ENV_NAME,
+  BACKSTAGE_NOTION_MAX_RESPONSE_BYTES,
 } from '../src/shared/backstage/backstageNotionContextCore.js';
 import {
   BACKSTAGE_NOTION_RAG_HEADING_INDEX_VERSION,
@@ -80,7 +81,7 @@ interface FetchOptions {
   metadataParentOverrides?: ReadonlyMap<string, string | null>;
   driftPageId?: string;
   retryMetadataPageId?: string;
-  retryMetadataStatus?: 429 | 500 | 502 | 503 | 504 | 529;
+  retryMetadataStatus?: 409 | 429 | 500 | 502 | 503 | 504 | 529;
   retryMetadataFailures?: number;
   retryAfterSeconds?: number;
 }
@@ -144,6 +145,35 @@ function jsonResponse(
   });
 }
 
+function notionErrorResponse(
+  status: number,
+  code: string,
+  message = 'PRIVATE-NOTION-PROVIDER-MESSAGE'
+): Response {
+  return jsonResponse({ object: 'error', status, code, message }, status);
+}
+
+function retryProviderCode(status: number): string {
+  switch (status) {
+    case 409:
+      return 'conflict_error';
+    case 429:
+      return 'rate_limited';
+    case 500:
+      return 'internal_server_error';
+    case 502:
+      return 'bad_gateway';
+    case 503:
+      return 'service_unavailable';
+    case 504:
+      return 'gateway_timeout';
+    case 529:
+      return 'service_overload';
+    default:
+      return 'validation_error';
+  }
+}
+
 function notionFetch(
   pages: readonly TestNotionPage[],
   options: FetchOptions = {}
@@ -179,7 +209,12 @@ function notionFetch(
       && callCount <= (options.retryMetadataFailures ?? 1)
     ) {
       return jsonResponse(
-        { error: 'try later' },
+        {
+          object: 'error',
+          status: options.retryMetadataStatus ?? 429,
+          code: retryProviderCode(options.retryMetadataStatus ?? 429),
+          message: 'PRIVATE-NOTION-PROVIDER-MESSAGE',
+        },
         options.retryMetadataStatus ?? 429,
         options.retryAfterSeconds === undefined
           ? {}
@@ -1868,32 +1903,35 @@ describe('Backstage Notion authority synchronization', () => {
     }
   );
 
-  it('recovers from a bounded transient 503 retry', async () => {
-    const page: TestNotionPage = {
-      pageId: pageId(0),
-      parentPageId: null,
-      title: 'WWE Universe Mode',
-      markdown: '# Root',
-    };
-    const { fetchMock, metadataCalls } = notionFetch([page], {
-      retryMetadataPageId: page.pageId,
-      retryMetadataStatus: 503,
-    });
-    const repository = repositoryHarness();
+  it.each([409, 503] as const)(
+    'recovers from a bounded transient %s retry',
+    async retryMetadataStatus => {
+      const page: TestNotionPage = {
+        pageId: pageId(0),
+        parentPageId: null,
+        title: 'WWE Universe Mode',
+        markdown: '# Root',
+      };
+      const { fetchMock, metadataCalls } = notionFetch([page], {
+        retryMetadataPageId: page.pageId,
+        retryMetadataStatus,
+      });
+      const repository = repositoryHarness();
 
-    await expect(syncBackstageNotionAuthorityRoot(
-      rootAuthority(),
-      dependencies({
-        repository: repository.repository,
-        fetchImpl: fetchMock as unknown as typeof fetch,
-        wait: async () => undefined,
-        random: () => 0,
-      })
-    )).resolves.toMatchObject({ status: 'activated' });
+      await expect(syncBackstageNotionAuthorityRoot(
+        rootAuthority(),
+        dependencies({
+          repository: repository.repository,
+          fetchImpl: fetchMock as unknown as typeof fetch,
+          wait: async () => undefined,
+          random: () => 0,
+        })
+      )).resolves.toMatchObject({ status: 'activated' });
 
-    expect(metadataCalls.get(page.pageId)).toBe(3);
-    expect(repository.activateSnapshot).toHaveBeenCalledTimes(1);
-  });
+      expect(metadataCalls.get(page.pageId)).toBe(3);
+      expect(repository.activateSnapshot).toHaveBeenCalledTimes(1);
+    }
+  );
 
   it('fails before persistence when embedding generation fails', async () => {
     const page: TestNotionPage = {
@@ -2055,7 +2093,7 @@ describe('Backstage Notion authority synchronization', () => {
 
   it('classifies an inaccessible Notion page without retry or activation', async () => {
     const fetchMock = jest.fn(async (): Promise<Response> => (
-      jsonResponse({ error: 'PRIVATE-UPSTREAM-BODY' }, 404)
+      notionErrorResponse(404, 'object_not_found')
     ));
     const repository = repositoryHarness();
 
@@ -2071,6 +2109,12 @@ describe('Backstage Notion authority synchronization', () => {
         phase: 'page_fetch',
         reason: 'inaccessible_page',
         notionRetryCount: 0,
+        notionHttpStatus: 404,
+        notionProviderCode: 'object_not_found',
+        notionFailureCategory: 'inaccessible',
+        notionResponseContentType: 'application/json',
+        notionResponseSchemaValid: true,
+        notionEndpointKind: 'page_metadata',
         candidateSnapshotActivated: false,
       }),
     });
@@ -2078,11 +2122,14 @@ describe('Backstage Notion authority synchronization', () => {
     expect(repository.activateSnapshot).not.toHaveBeenCalled();
   });
 
-  it.each([401, 403])(
-    'classifies Notion %s as an authorization failure without retry',
-    async status => {
+  it.each([
+    [401, 'unauthorized'],
+    [403, 'restricted_resource'],
+  ] as const)(
+    'classifies Notion %s/%s as an authorization failure without retry',
+    async (status, providerCode) => {
       const fetchMock = jest.fn(async (): Promise<Response> => (
-        jsonResponse({ error: 'PRIVATE-UPSTREAM-BODY' }, status)
+        notionErrorResponse(status, providerCode)
       ));
       const repository = repositoryHarness();
 
@@ -2098,12 +2145,216 @@ describe('Backstage Notion authority synchronization', () => {
           phase: 'authorization',
           reason: 'permanent_notion_error',
           notionRetryCount: 0,
+          notionHttpStatus: status,
+          notionProviderCode: providerCode,
+          notionFailureCategory: 'authorization',
+          notionResponseContentType: 'application/json',
+          notionResponseSchemaValid: true,
+          notionEndpointKind: 'page_metadata',
         }),
       });
       expect(fetchMock).toHaveBeenCalledTimes(1);
       expect(repository.activateSnapshot).not.toHaveBeenCalled();
+      const serializedTelemetry = JSON.stringify(
+        (logger.warn as jest.Mock).mock.calls
+      );
+      expect(serializedTelemetry).not.toContain('PRIVATE-NOTION-PROVIDER-MESSAGE');
+      expect(serializedTelemetry).not.toContain(pageId(0));
+      expect(serializedTelemetry).not.toContain(notionToken);
     }
   );
+
+  it.each([
+    [409, 'conflict_error'],
+    [500, 'internal_server_error'],
+    [502, 'bad_gateway'],
+    [503, 'service_unavailable'],
+    [504, 'gateway_timeout'],
+    [529, 'service_overload'],
+  ] as const)(
+    'classifies retry-exhausted Notion %s/%s without provider-body leakage',
+    async (status, providerCode) => {
+      const fetchMock = jest.fn(async (): Promise<Response> => (
+        notionErrorResponse(status, providerCode)
+      ));
+      const repository = repositoryHarness();
+
+      await expect(syncBackstageNotionAuthorityRoot(
+        rootAuthority(),
+        dependencies({
+          repository: repository.repository,
+          fetchImpl: fetchMock as unknown as typeof fetch,
+          wait: async () => undefined,
+          random: () => 0,
+        })
+      )).rejects.toMatchObject({
+        code: BACKSTAGE_NOTION_SYNC_ROOT_FAILED_ERROR_CODE,
+        diagnostics: expect.objectContaining({
+          phase: 'page_fetch',
+          reason: 'transient_retry_exhausted',
+          notionRetryCount: 2,
+          notionHttpStatus: status,
+          notionProviderCode: providerCode,
+          notionFailureCategory: 'transient_provider',
+          notionResponseContentType: 'application/json',
+          notionResponseSchemaValid: true,
+          notionEndpointKind: 'page_metadata',
+          candidateSnapshotActivated: false,
+        }),
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+      expect(repository.activateSnapshot).not.toHaveBeenCalled();
+      const serializedTelemetry = JSON.stringify(
+        (logger.warn as jest.Mock).mock.calls
+      );
+      expect(serializedTelemetry).not.toContain('PRIVATE-NOTION-PROVIDER-MESSAGE');
+      expect(serializedTelemetry).not.toContain(pageId(0));
+      expect(serializedTelemetry).not.toContain(notionToken);
+    }
+  );
+
+  it('classifies an unexpected permanent Notion 4xx with a bounded provider code', async () => {
+    const fetchMock = jest.fn(async (): Promise<Response> => (
+      notionErrorResponse(400, 'validation_error')
+    ));
+    const repository = repositoryHarness();
+
+    await expect(syncBackstageNotionAuthorityRoot(
+      rootAuthority(),
+      dependencies({
+        repository: repository.repository,
+        fetchImpl: fetchMock as unknown as typeof fetch,
+      })
+    )).rejects.toMatchObject({
+      diagnostics: expect.objectContaining({
+        phase: 'page_fetch',
+        reason: 'permanent_notion_error',
+        notionRetryCount: 0,
+        notionHttpStatus: 400,
+        notionProviderCode: 'validation_error',
+        notionFailureCategory: 'permanent_provider',
+        notionResponseContentType: 'application/json',
+        notionResponseSchemaValid: true,
+        notionEndpointKind: 'page_metadata',
+      }),
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(repository.activateSnapshot).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'malformed JSON',
+      () => new Response('{PRIVATE-MALFORMED-BODY', {
+        status: 200,
+        headers: { 'content-type': 'application/json; charset=utf-8' },
+      }),
+      'application/json',
+    ],
+    [
+      'unexpected schema',
+      () => jsonResponse({
+        object: 'page',
+        id: pageId(0),
+        private: 'PRIVATE-UNEXPECTED-SCHEMA',
+      }),
+      'application/json',
+    ],
+    [
+      'unexpected content type',
+      () => new Response('PRIVATE-NON-JSON-BODY', {
+        status: 200,
+        headers: { 'content-type': 'text/plain; charset=utf-8' },
+      }),
+      'text/plain',
+    ],
+    [
+      'invalid UTF-8 body',
+      () => new Response(new Uint8Array([0xC3, 0x28]), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+      'application/json',
+    ],
+  ] as const)(
+    'classifies %s as a malformed Notion response without leaking the body',
+    async (_label, responseFactory, responseContentType) => {
+      const fetchMock = jest.fn(async (): Promise<Response> => responseFactory());
+      const repository = repositoryHarness();
+
+      await expect(syncConfiguredBackstageNotionAuthorities(
+        dependencies({
+          repository: repository.repository,
+          fetchImpl: fetchMock as unknown as typeof fetch,
+          readEnvironment: environmentReader({
+            token: notionToken,
+            authority: JSON.stringify({
+              [universeId]: {
+                rootPageId: pageId(0),
+                displayName: 'WWE Universe Mode',
+              },
+            }),
+          }),
+        })
+      )).resolves.toEqual([expect.objectContaining({
+        status: 'failed',
+        failure: expect.objectContaining({
+          phase: 'page_fetch',
+          reason: 'permanent_notion_error',
+          notionHttpStatus: 200,
+          notionProviderCode: null,
+          notionFailureCategory: 'malformed_response',
+          notionResponseContentType: responseContentType,
+          notionResponseSchemaValid: false,
+          notionEndpointKind: 'page_metadata',
+          candidateSnapshotActivated: false,
+        }),
+      })]);
+      expect(repository.activateSnapshot).not.toHaveBeenCalled();
+      const serializedTelemetry = JSON.stringify(
+        (logger.warn as jest.Mock).mock.calls
+      );
+      expect(serializedTelemetry).not.toContain('PRIVATE-MALFORMED-BODY');
+      expect(serializedTelemetry).not.toContain('PRIVATE-UNEXPECTED-SCHEMA');
+      expect(serializedTelemetry).not.toContain('PRIVATE-NON-JSON-BODY');
+      expect(serializedTelemetry).not.toContain(pageId(0));
+      expect(serializedTelemetry).not.toContain(notionToken);
+    }
+  );
+
+  it('classifies an oversized root response without consuming or activating it', async () => {
+    const fetchMock = jest.fn(async (): Promise<Response> => new Response('{}', {
+      status: 200,
+      headers: {
+        'content-type': 'application/json',
+        'content-length': String(BACKSTAGE_NOTION_MAX_RESPONSE_BYTES + 1),
+      },
+    }));
+    const active = activeInventory('active-manifest');
+    const repository = repositoryHarness({ loadActive: () => active });
+
+    await expect(syncBackstageNotionAuthorityRoot(
+      rootAuthority(),
+      dependencies({
+        repository: repository.repository,
+        fetchImpl: fetchMock as unknown as typeof fetch,
+      })
+    )).rejects.toMatchObject({
+      diagnostics: expect.objectContaining({
+        phase: 'page_fetch',
+        reason: 'permanent_notion_error',
+        notionHttpStatus: 200,
+        notionProviderCode: null,
+        notionFailureCategory: 'response_too_large',
+        notionResponseContentType: 'application/json',
+        notionResponseSchemaValid: null,
+        notionEndpointKind: 'page_metadata',
+        candidateSnapshotActivated: false,
+      }),
+    });
+    expect(repository.activateSnapshot).not.toHaveBeenCalled();
+    expect(repository.markActiveSnapshotVerified).not.toHaveBeenCalled();
+  });
 
   it('reports exhausted network failures as transient without leaking details', async () => {
     const fetchMock = jest.fn(async (): Promise<Response> => {
@@ -2161,6 +2412,12 @@ describe('Backstage Notion authority synchronization', () => {
         reason: 'rate_limit_exhausted',
         notionRetryCount: 2,
         rateLimitWaitMs: 4_000,
+        notionHttpStatus: 429,
+        notionProviderCode: 'rate_limited',
+        notionFailureCategory: 'rate_limited',
+        notionResponseContentType: 'application/json',
+        notionResponseSchemaValid: true,
+        notionEndpointKind: 'page_metadata',
         candidateSnapshotActivated: false,
       }),
     });

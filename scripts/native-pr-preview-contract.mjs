@@ -50,6 +50,8 @@ export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
       'backstage-notion-partitioned-authority/v1',
     partitionCutoverRepairProofVersion:
       'backstage-notion-partition-cutover-repair/v1',
+    notionReadDiagnosticsProofVersion:
+      'backstage-notion-read-diagnostics/v1',
     partitionFailureTelemetryProofVersion:
       'backstage-notion-partition-failure-telemetry/v1',
     queueWaitPolicyProofVersion:
@@ -93,6 +95,8 @@ export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
         'x-arcanos-preview-backstage-partition-contract-version',
       partitionCutoverRepairVersion:
         'x-arcanos-preview-backstage-partition-cutover-repair-version',
+      notionReadDiagnosticsVersion:
+        'x-arcanos-preview-backstage-notion-read-diagnostics-version',
       partitionFailureTelemetryVersion:
         'x-arcanos-preview-backstage-partition-failure-telemetry-version',
       queueWaitPolicyVersion:

@@ -179,6 +179,22 @@ fixed `api.notion.com/v1/users/me` request with a hard-coded invalid non-secret
 bearer and an absolute four-second DNS/TLS/header deadline. It accepts only the
 expected JSON `401` and cancels without reading,
 parsing, or returning the provider body and does not retry or follow redirects.
+Before returning its existing body, the same selector sends two server-owned
+synthetic `409` responses through the production-shared Notion page readers. It
+requires the official `conflict_error` envelope to classify as
+`transient_provider`, requires an identifier-like unknown provider code to
+produce `notionProviderCode: null` and `notionResponseSchemaValid: false`, and
+exact-allowlists the errors' enumerable diagnostic keys before scanning that
+serialized projection and the fixed error message for the credential, page ID,
+provider message, extra body data, and rejected code. The raw error objects are
+never returned. This proof does not inspect or attest `Error.stack` or other
+non-enumerable or symbol-keyed own values.
+The exact-head verifier requires
+`x-arcanos-preview-backstage-notion-read-diagnostics-version:
+backstage-notion-read-diagnostics/v1`; the response body remains unchanged for
+the trusted base verifier. This component proof does not execute the production
+sync retry loop, repository, candidate SQL, PostgreSQL, backfill, or activation
+fence.
 
 The same partition-authority selector executes the production-shared,
 semantic-digest-pinned exact-shadow writer-admission and cutover validation

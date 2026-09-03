@@ -110,9 +110,13 @@ describe('Backstage Booker Custom GPT builder contract', () => {
     expect(fenceEnd).toBeGreaterThan(policyOffset);
 
     const policy = guide.slice(policyOffset, fenceEnd).replace(/\r\n/gu, '\n');
+    const normalizedPolicy = policy.replace(/\s+/gu, ' ');
     expect(policy.length).toBeGreaterThan(0);
     expect(Array.from(policy).length).toBeLessThanOrEqual(8_000);
     expect(Buffer.byteLength(policy, 'utf8')).toBeLessThanOrEqual(8_000);
+    expect(normalizedPolicy).toContain(
+      '"The protected Backstage booking did not complete, so no official result was established." Then stop.'
+    );
   });
 
   it('ships an operational full-block Builder instruction replacement checklist', () => {

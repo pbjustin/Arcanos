@@ -80,18 +80,184 @@ export interface BackstageNotionPageMetadata {
   inTrash: boolean;
 }
 
+export type BackstageNotionEndpointKind =
+  | 'page_metadata'
+  | 'page_markdown';
+
+export type BackstageNotionFailureCategory =
+  | 'authorization'
+  | 'inaccessible'
+  | 'rate_limited'
+  | 'transient_provider'
+  | 'permanent_provider'
+  | 'malformed_response'
+  | 'response_too_large'
+  | 'transport_failure'
+  | 'invalid_request';
+
+export interface BackstageNotionReadDiagnostics {
+  notionHttpStatus: number | null;
+  notionProviderCode: string | null;
+  notionFailureCategory: BackstageNotionFailureCategory;
+  notionResponseContentType: string | null;
+  notionResponseSchemaValid: boolean | null;
+  notionEndpointKind: BackstageNotionEndpointKind | null;
+}
+
 export class BackstageNotionReadError extends Error {
   readonly category: string;
   readonly retryAfterMs?: number;
+  readonly notionHttpStatus: number | null;
+  readonly notionProviderCode: string | null;
+  readonly notionFailureCategory: BackstageNotionFailureCategory;
+  readonly notionResponseContentType: string | null;
+  readonly notionResponseSchemaValid: boolean | null;
+  readonly notionEndpointKind: BackstageNotionEndpointKind | null;
 
-  constructor(category: string, retryAfterMs?: number) {
+  constructor(
+    category: string,
+    retryAfterMs?: number,
+    diagnostics: Partial<BackstageNotionReadDiagnostics> = {}
+  ) {
     super('Backstage Notion reference is unavailable.');
     this.name = 'BackstageNotionReadError';
     this.category = category;
     if (retryAfterMs !== undefined) {
       this.retryAfterMs = retryAfterMs;
     }
+    this.notionHttpStatus = normalizeNotionHttpStatus(
+      diagnostics.notionHttpStatus
+    ) ?? notionHttpStatusFromCategory(category);
+    this.notionProviderCode = normalizeNotionProviderCode(
+      diagnostics.notionProviderCode
+    );
+    this.notionFailureCategory = isBackstageNotionFailureCategory(
+      diagnostics.notionFailureCategory
+    )
+      ? diagnostics.notionFailureCategory
+      : classifyBackstageNotionFailureCategory(
+          category,
+          this.notionHttpStatus
+        );
+    this.notionResponseContentType = normalizeNotionResponseContentType(
+      diagnostics.notionResponseContentType
+    );
+    this.notionResponseSchemaValid =
+      typeof diagnostics.notionResponseSchemaValid === 'boolean'
+        ? diagnostics.notionResponseSchemaValid
+        : null;
+    this.notionEndpointKind = isBackstageNotionEndpointKind(
+      diagnostics.notionEndpointKind
+    )
+      ? diagnostics.notionEndpointKind
+      : null;
   }
+}
+
+const NOTION_PROVIDER_CODES = new Set<string>([
+  'invalid_json',
+  'invalid_request_url',
+  'invalid_request',
+  'invalid_grant',
+  'validation_error',
+  'missing_version',
+  'invalid_beta',
+  'unauthorized',
+  'restricted_resource',
+  'object_not_found',
+  'conflict_error',
+  'rate_limited',
+  'internal_server_error',
+  'bad_gateway',
+  'service_unavailable',
+  'database_connection_unavailable',
+  'gateway_timeout',
+  'service_overload',
+]);
+const NOTION_RESPONSE_CONTENT_TYPE_PATTERN =
+  /^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/u;
+
+function normalizeNotionHttpStatus(value: unknown): number | null {
+  return Number.isSafeInteger(value) && Number(value) >= 100 && Number(value) <= 599
+    ? Number(value)
+    : null;
+}
+
+function notionHttpStatusFromCategory(category: string): number | null {
+  const match = /^http_(\d{3})$/u.exec(category);
+  return match ? normalizeNotionHttpStatus(Number(match[1])) : null;
+}
+
+function normalizeNotionProviderCode(value: unknown): string | null {
+  return typeof value === 'string' && NOTION_PROVIDER_CODES.has(value)
+    ? value
+    : null;
+}
+
+function normalizeNotionResponseContentType(value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const normalized = value.split(';', 1)[0]?.trim().toLowerCase() ?? '';
+  return normalized.length <= 100
+    && NOTION_RESPONSE_CONTENT_TYPE_PATTERN.test(normalized)
+    ? normalized
+    : null;
+}
+
+function isBackstageNotionEndpointKind(
+  value: unknown
+): value is BackstageNotionEndpointKind {
+  return value === 'page_metadata' || value === 'page_markdown';
+}
+
+function isBackstageNotionFailureCategory(
+  value: unknown
+): value is BackstageNotionFailureCategory {
+  return [
+    'authorization',
+    'inaccessible',
+    'rate_limited',
+    'transient_provider',
+    'permanent_provider',
+    'malformed_response',
+    'response_too_large',
+    'transport_failure',
+    'invalid_request',
+  ].includes(String(value));
+}
+
+function classifyBackstageNotionFailureCategory(
+  category: string,
+  status: number | null
+): BackstageNotionFailureCategory {
+  if (category === 'response_too_large') {
+    return 'response_too_large';
+  }
+  if (/^(?:invalid_content_type|invalid_json|invalid_response|invalid_utf8)$/u.test(
+    category
+  )) {
+    return 'malformed_response';
+  }
+  if (category === 'request_failed') {
+    return 'transport_failure';
+  }
+  if (status === 401 || status === 403) {
+    return 'authorization';
+  }
+  if (status === 404) {
+    return 'inaccessible';
+  }
+  if (status === 429) {
+    return 'rate_limited';
+  }
+  if ([409, 500, 502, 503, 504, 529].includes(status ?? -1)) {
+    return 'transient_provider';
+  }
+  if (status !== null || category === 'redirect_rejected') {
+    return 'permanent_provider';
+  }
+  return 'invalid_request';
 }
 
 function parseNotionRetryAfterMs(response: Response): number | undefined {
@@ -197,7 +363,8 @@ function normalizeNotionPageId(value: string): string | null {
 async function fetchNotionResponse(
   fetchImpl: BackstageNotionFetchImplementation,
   endpoint: URL,
-  init: RequestInit
+  init: RequestInit,
+  endpointKind: BackstageNotionEndpointKind
 ): Promise<Response> {
   try {
     return await fetchImpl(endpoint, init);
@@ -211,7 +378,9 @@ async function fetchNotionResponse(
     if (error instanceof BackstageNotionReadError) {
       throw error;
     }
-    throw new BackstageNotionReadError('request_failed');
+    throw new BackstageNotionReadError('request_failed', undefined, {
+      notionEndpointKind: endpointKind,
+    });
   }
 }
 
@@ -325,7 +494,25 @@ function readBackstageNotionConfiguration(
   };
 }
 
-async function readBoundedResponseBody(response: Response): Promise<string> {
+function responseReadDiagnostics(
+  response: Response,
+  endpointKind: BackstageNotionEndpointKind,
+  notionResponseSchemaValid: boolean | null,
+  notionProviderCode: string | null = null
+): Partial<BackstageNotionReadDiagnostics> {
+  return {
+    notionHttpStatus: response.status,
+    notionProviderCode,
+    notionResponseContentType: response.headers.get('content-type'),
+    notionResponseSchemaValid,
+    notionEndpointKind: endpointKind,
+  };
+}
+
+async function readBoundedResponseBody(
+  response: Response,
+  endpointKind: BackstageNotionEndpointKind
+): Promise<string> {
   const declaredLength = response.headers.get('content-length');
   if (declaredLength !== null) {
     const parsedLength = /^\d+$/u.test(declaredLength)
@@ -337,7 +524,9 @@ async function readBoundedResponseBody(response: Response): Promise<string> {
       || parsedLength > BACKSTAGE_NOTION_MAX_RESPONSE_BYTES
     ) {
       await response.body?.cancel().catch(() => undefined);
-      throw new BackstageNotionReadError('response_too_large');
+      throw new BackstageNotionReadError('response_too_large', undefined, {
+        ...responseReadDiagnostics(response, endpointKind, null),
+      });
     }
   }
 
@@ -357,7 +546,9 @@ async function readBoundedResponseBody(response: Response): Promise<string> {
       totalBytes += chunk.value.byteLength;
       if (totalBytes > BACKSTAGE_NOTION_MAX_RESPONSE_BYTES) {
         await reader.cancel().catch(() => undefined);
-        throw new BackstageNotionReadError('response_too_large');
+        throw new BackstageNotionReadError('response_too_large', undefined, {
+          ...responseReadDiagnostics(response, endpointKind, null),
+        });
       }
       chunks.push(chunk.value);
     }
@@ -375,23 +566,100 @@ async function readBoundedResponseBody(response: Response): Promise<string> {
   try {
     return new TextDecoder('utf-8', { fatal: true }).decode(body);
   } catch {
-    throw new BackstageNotionReadError('invalid_utf8');
+    throw new BackstageNotionReadError('invalid_utf8', undefined, {
+      ...responseReadDiagnostics(response, endpointKind, false),
+    });
   }
 }
 
-function parseNotionMarkdownResponse(
-  rawBody: string,
-  expectedPageId: string
-): BackstageNotionMarkdownResponse {
+async function readNotionErrorResponseDiagnostics(
+  response: Response,
+  endpointKind: BackstageNotionEndpointKind
+): Promise<Partial<BackstageNotionReadDiagnostics>> {
+  const contentType = normalizeNotionResponseContentType(
+    response.headers.get('content-type')
+  );
+  if (contentType !== 'application/json') {
+    await response.body?.cancel().catch(() => undefined);
+    return responseReadDiagnostics(response, endpointKind, false);
+  }
+
+  let rawBody: string;
+  try {
+    rawBody = await readBoundedResponseBody(response, endpointKind);
+  } catch {
+    // The HTTP status remains the classification authority for an error
+    // response. An oversized or malformed untrusted body only makes the
+    // provider envelope unverifiable; it cannot relabel auth/access/rate state.
+    return responseReadDiagnostics(response, endpointKind, false);
+  }
+
   let parsed: unknown;
   try {
     parsed = JSON.parse(rawBody) as unknown;
   } catch {
-    throw new BackstageNotionReadError('invalid_json');
+    return responseReadDiagnostics(response, endpointKind, false);
+  }
+  const providerCode = isPlainConfigurationObject(parsed)
+    ? normalizeNotionProviderCode(parsed.code)
+    : null;
+  const schemaValid = isPlainConfigurationObject(parsed)
+    && parsed.object === 'error'
+    && parsed.status === response.status
+    && providerCode !== null
+    && typeof parsed.message === 'string';
+  return responseReadDiagnostics(
+    response,
+    endpointKind,
+    schemaValid,
+    schemaValid ? providerCode : null
+  );
+}
+
+async function throwNotionHttpError(
+  response: Response,
+  endpointKind: BackstageNotionEndpointKind
+): Promise<never> {
+  const diagnostics = await readNotionErrorResponseDiagnostics(
+    response,
+    endpointKind
+  );
+  throw new BackstageNotionReadError(
+    response.status >= 300 && response.status < 400
+      ? 'redirect_rejected'
+      : `http_${response.status}`,
+    parseNotionRetryAfterMs(response),
+    diagnostics
+  );
+}
+
+function parseNotionMarkdownResponse(
+  rawBody: string,
+  expectedPageId: string,
+  response: Response
+): BackstageNotionMarkdownResponse {
+  const invalidResponseDiagnostics = responseReadDiagnostics(
+    response,
+    'page_markdown',
+    false
+  );
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawBody) as unknown;
+  } catch {
+    throw new BackstageNotionReadError(
+      'invalid_json',
+      undefined,
+      invalidResponseDiagnostics
+    );
   }
 
   if (!isPlainConfigurationObject(parsed)) {
-    throw new BackstageNotionReadError('invalid_response');
+    throw new BackstageNotionReadError(
+      'invalid_response',
+      undefined,
+      invalidResponseDiagnostics
+    );
   }
 
   const responsePageId = typeof parsed.id === 'string'
@@ -409,7 +677,11 @@ function parseNotionMarkdownResponse(
       typeof value !== 'string' || normalizeNotionPageId(value) === null
     ))
   ) {
-    throw new BackstageNotionReadError('invalid_response');
+    throw new BackstageNotionReadError(
+      'invalid_response',
+      undefined,
+      invalidResponseDiagnostics
+    );
   }
 
   return {
@@ -433,52 +705,70 @@ async function fetchNotionMarkdownPage(
     NOTION_API_ORIGIN
   );
   endpoint.searchParams.set('include_transcript', 'false');
-  const response = await fetchNotionResponse(fetchImpl, endpoint, {
-    method: 'GET',
-    headers: {
-      Accept: 'application/json',
-      Authorization: `Bearer ${accessToken}`,
-      'Notion-Version': BACKSTAGE_NOTION_API_VERSION,
+  const response = await fetchNotionResponse(
+    fetchImpl,
+    endpoint,
+    {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${accessToken}`,
+        'Notion-Version': BACKSTAGE_NOTION_API_VERSION,
+      },
+      redirect: 'manual',
+      signal,
     },
-    redirect: 'manual',
-    signal,
-  });
+    'page_markdown'
+  );
 
   if (!response.ok) {
-    await response.body?.cancel().catch(() => undefined);
-    throw new BackstageNotionReadError(
-      response.status >= 300 && response.status < 400
-        ? 'redirect_rejected'
-        : `http_${response.status}`,
-      parseNotionRetryAfterMs(response)
-    );
+    return throwNotionHttpError(response, 'page_markdown');
   }
 
-  const contentType = response.headers.get('content-type')?.toLowerCase() ?? '';
-  if (!contentType.startsWith('application/json')) {
+  const contentType = normalizeNotionResponseContentType(
+    response.headers.get('content-type')
+  );
+  if (contentType !== 'application/json') {
     await response.body?.cancel().catch(() => undefined);
-    throw new BackstageNotionReadError('invalid_content_type');
+    throw new BackstageNotionReadError('invalid_content_type', undefined, {
+      ...responseReadDiagnostics(response, 'page_markdown', false),
+    });
   }
 
   return parseNotionMarkdownResponse(
-    await readBoundedResponseBody(response),
-    pageId
+    await readBoundedResponseBody(response, 'page_markdown'),
+    pageId,
+    response
   );
 }
 
 function parseNotionPageMetadataResponse(
   rawBody: string,
-  expectedPageId: string
+  expectedPageId: string,
+  response: Response
 ): BackstageNotionPageMetadata {
+  const invalidResponseDiagnostics = responseReadDiagnostics(
+    response,
+    'page_metadata',
+    false
+  );
   let parsed: unknown;
   try {
     parsed = JSON.parse(rawBody) as unknown;
   } catch {
-    throw new BackstageNotionReadError('invalid_json');
+    throw new BackstageNotionReadError(
+      'invalid_json',
+      undefined,
+      invalidResponseDiagnostics
+    );
   }
 
   if (!isPlainConfigurationObject(parsed)) {
-    throw new BackstageNotionReadError('invalid_response');
+    throw new BackstageNotionReadError(
+      'invalid_response',
+      undefined,
+      invalidResponseDiagnostics
+    );
   }
 
   const responsePageId = typeof parsed.id === 'string'
@@ -502,7 +792,11 @@ function parseNotionPageMetadataResponse(
     || !Number.isFinite(lastEditedAt.getTime())
     || (parent?.type === 'page_id' && parentPageId === null)
   ) {
-    throw new BackstageNotionReadError('invalid_response');
+    throw new BackstageNotionReadError(
+      'invalid_response',
+      undefined,
+      invalidResponseDiagnostics
+    );
   }
 
   return {
@@ -522,7 +816,9 @@ export async function fetchBackstageNotionMarkdownPage(
 ): Promise<BackstageNotionMarkdownResponse> {
   const normalizedPageId = normalizeNotionPageId(pageId);
   if (!normalizedPageId || normalizedPageId !== pageId) {
-    throw new BackstageNotionReadError('invalid_page_id');
+    throw new BackstageNotionReadError('invalid_page_id', undefined, {
+      notionEndpointKind: 'page_markdown',
+    });
   }
   return fetchNotionMarkdownPage(
     fetchImpl,
@@ -541,39 +837,45 @@ export async function fetchBackstageNotionPageMetadata(
 ): Promise<BackstageNotionPageMetadata> {
   const normalizedPageId = normalizeNotionPageId(pageId);
   if (!normalizedPageId || normalizedPageId !== pageId) {
-    throw new BackstageNotionReadError('invalid_page_id');
+    throw new BackstageNotionReadError('invalid_page_id', undefined, {
+      notionEndpointKind: 'page_metadata',
+    });
   }
   const endpoint = new URL(`/v1/pages/${normalizedPageId}`, NOTION_API_ORIGIN);
-  const response = await fetchNotionResponse(fetchImpl, endpoint, {
-    method: 'GET',
-    headers: {
-      Accept: 'application/json',
-      Authorization: `Bearer ${accessToken}`,
-      'Notion-Version': BACKSTAGE_NOTION_API_VERSION,
+  const response = await fetchNotionResponse(
+    fetchImpl,
+    endpoint,
+    {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${accessToken}`,
+        'Notion-Version': BACKSTAGE_NOTION_API_VERSION,
+      },
+      redirect: 'manual',
+      signal,
     },
-    redirect: 'manual',
-    signal,
-  });
+    'page_metadata'
+  );
 
   if (!response.ok) {
-    await response.body?.cancel().catch(() => undefined);
-    throw new BackstageNotionReadError(
-      response.status >= 300 && response.status < 400
-        ? 'redirect_rejected'
-        : `http_${response.status}`,
-      parseNotionRetryAfterMs(response)
-    );
+    return throwNotionHttpError(response, 'page_metadata');
   }
 
-  const contentType = response.headers.get('content-type')?.toLowerCase() ?? '';
-  if (!contentType.startsWith('application/json')) {
+  const contentType = normalizeNotionResponseContentType(
+    response.headers.get('content-type')
+  );
+  if (contentType !== 'application/json') {
     await response.body?.cancel().catch(() => undefined);
-    throw new BackstageNotionReadError('invalid_content_type');
+    throw new BackstageNotionReadError('invalid_content_type', undefined, {
+      ...responseReadDiagnostics(response, 'page_metadata', false),
+    });
   }
 
   return parseNotionPageMetadataResponse(
-    await readBoundedResponseBody(response),
-    normalizedPageId
+    await readBoundedResponseBody(response, 'page_metadata'),
+    normalizedPageId,
+    response
   );
 }
 

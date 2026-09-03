@@ -83,6 +83,11 @@ const postgresSuites = [
     commandPath: 'tests/integration/backstage-canon-storyline.pg18.integration.test.ts',
   },
   {
+    databaseEnvironment: 'BACKSTAGE_CANON_STORYLINE_PG18_TEST_DATABASE_URL',
+    command: 'test:postgres-fencing',
+    commandPath: 'tests/integration/backstage-notion-rag-candidate-search.pg18.integration.test.ts',
+  },
+  {
     databaseEnvironment: 'NON_GPT_TERMINAL_RETENTION_TEST_DATABASE_URL',
     command: 'test:postgres-fencing',
     commandPath: 'tests/integration/non-gpt-terminal-retention.pg18.integration.test.ts',

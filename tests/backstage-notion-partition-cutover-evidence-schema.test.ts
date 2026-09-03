@@ -5,22 +5,26 @@ import { describe, expect, test } from '@jest/globals';
 
 import { BACKSTAGE_NOTION_PARTITION_CUTOVER_EVIDENCE_TABLE_DEFINITIONS } from '../src/core/db/backstageNotionPartitionCutoverEvidenceSchema.js';
 
-const forwardMigration = readFileSync(
+function normalizeLineEndings(value: string): string {
+  return value.replace(/\r\n?/gu, '\n');
+}
+
+const forwardMigration = normalizeLineEndings(readFileSync(
   join(
     process.cwd(),
     'migrations',
     '20260830_backstage_notion_partition_cutover_evidence_v1.sql'
   ),
   'utf8'
-);
-const rollbackMigration = readFileSync(
+));
+const rollbackMigration = normalizeLineEndings(readFileSync(
   join(
     process.cwd(),
     'migrations',
     '20260830_backstage_notion_partition_cutover_evidence_v1.rollback.sql'
   ),
   'utf8'
-);
+));
 const runtimeSql =
   BACKSTAGE_NOTION_PARTITION_CUTOVER_EVIDENCE_TABLE_DEFINITIONS.join('\n');
 

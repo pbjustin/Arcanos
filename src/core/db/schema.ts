@@ -571,6 +571,208 @@ export const BACKSTAGE_NOTION_RAG_TABLE_DEFINITIONS = [
    END
    $$`,
 
+  `CREATE OR REPLACE FUNCTION public.backstage_notion_candidate_embedding_from_jsonb(
+    source_embedding JSONB
+  )
+  RETURNS DOUBLE PRECISION[]
+  LANGUAGE plpgsql
+  IMMUTABLE
+  STRICT
+  PARALLEL SAFE
+  SET search_path = pg_catalog, public
+  AS $function$
+  DECLARE
+    component JSONB;
+    parsed_component DOUBLE PRECISION;
+    native_embedding DOUBLE PRECISION[] := ARRAY[]::DOUBLE PRECISION[];
+  BEGIN
+    IF pg_catalog.jsonb_typeof(source_embedding) <> 'array'
+       OR pg_catalog.jsonb_array_length(source_embedding) NOT BETWEEN 1 AND 8192 THEN
+      RETURN NULL;
+    END IF;
+    FOR component IN
+      SELECT element.value
+      FROM pg_catalog.jsonb_array_elements(source_embedding)
+        WITH ORDINALITY AS element(value, position)
+      ORDER BY element.position
+    LOOP
+      IF pg_catalog.jsonb_typeof(component) <> 'number' THEN
+        RETURN NULL;
+      END IF;
+      BEGIN
+        parsed_component := (component #>> '{}')::DOUBLE PRECISION;
+      EXCEPTION
+        WHEN numeric_value_out_of_range OR invalid_text_representation THEN
+          RETURN NULL;
+      END;
+      IF parsed_component <= '-Infinity'::DOUBLE PRECISION
+         OR parsed_component >= 'Infinity'::DOUBLE PRECISION
+         OR parsed_component = 'NaN'::DOUBLE PRECISION THEN
+        RETURN NULL;
+      END IF;
+      native_embedding := pg_catalog.array_append(native_embedding, parsed_component);
+    END LOOP;
+    RETURN native_embedding;
+  END;
+  $function$`,
+
+  `CREATE OR REPLACE FUNCTION public.backstage_notion_candidate_embedding_norm(
+    native_embedding DOUBLE PRECISION[]
+  )
+  RETURNS DOUBLE PRECISION
+  LANGUAGE plpgsql
+  IMMUTABLE
+  STRICT
+  PARALLEL SAFE
+  SET search_path = pg_catalog, public
+  AS $function$
+  DECLARE
+    component DOUBLE PRECISION;
+    squared_norm DOUBLE PRECISION := 0;
+    resolved_norm DOUBLE PRECISION;
+  BEGIN
+    IF pg_catalog.array_ndims(native_embedding) <> 1
+       OR pg_catalog.array_lower(native_embedding, 1) <> 1
+       OR pg_catalog.cardinality(native_embedding) NOT BETWEEN 1 AND 8192 THEN
+      RETURN NULL;
+    END IF;
+    FOREACH component IN ARRAY native_embedding LOOP
+      IF component IS NULL
+         OR component <= '-Infinity'::DOUBLE PRECISION
+         OR component >= 'Infinity'::DOUBLE PRECISION
+         OR component = 'NaN'::DOUBLE PRECISION THEN
+        RETURN NULL;
+      END IF;
+      squared_norm := squared_norm + (component * component);
+      IF squared_norm >= 'Infinity'::DOUBLE PRECISION
+         OR squared_norm = 'NaN'::DOUBLE PRECISION THEN
+        RETURN NULL;
+      END IF;
+    END LOOP;
+    IF squared_norm <= 0 THEN
+      RETURN NULL;
+    END IF;
+    BEGIN
+      resolved_norm := pg_catalog.sqrt(squared_norm);
+    EXCEPTION
+      WHEN numeric_value_out_of_range THEN
+        RETURN NULL;
+    END;
+    IF resolved_norm <= 0
+       OR resolved_norm >= 'Infinity'::DOUBLE PRECISION
+       OR resolved_norm = 'NaN'::DOUBLE PRECISION THEN
+      RETURN NULL;
+    END IF;
+    RETURN resolved_norm;
+  END;
+  $function$`,
+
+  `CREATE OR REPLACE FUNCTION public.backstage_notion_candidate_search_vector(
+    chunk_content TEXT,
+    page_title TEXT,
+    page_path JSONB,
+    heading_path JSONB,
+    category TEXT
+  )
+  RETURNS TSVECTOR
+  LANGUAGE SQL
+  IMMUTABLE
+  STRICT
+  PARALLEL SAFE
+  SET search_path = pg_catalog, public
+  AS $function$
+    SELECT pg_catalog.to_tsvector(
+      'simple'::pg_catalog.regconfig,
+      pg_catalog.concat_ws(
+        ' ', chunk_content, page_title, page_path::TEXT, heading_path::TEXT, category
+      )
+    );
+  $function$`,
+
+  `CREATE OR REPLACE FUNCTION public.backstage_notion_candidate_brand_mask(
+    page_title TEXT,
+    page_path JSONB,
+    heading_path JSONB,
+    category TEXT
+  )
+  RETURNS SMALLINT
+  LANGUAGE SQL
+  IMMUTABLE
+  STRICT
+  PARALLEL SAFE
+  SET search_path = pg_catalog, public
+  AS $function$
+    SELECT (
+      (CASE WHEN scope_signal ~ '(^|[^[:alnum:]])raw([^[:alnum:]]|$)'
+        THEN 1 ELSE 0 END)
+      + (CASE WHEN scope_signal
+          ~ '(^|[^[:alnum:]])smack([[:space:]-]?down)([^[:alnum:]]|$)'
+        THEN 2 ELSE 0 END)
+      + (CASE WHEN scope_signal ~ '(^|[^[:alnum:]])nxt([^[:alnum:]]|$)'
+        THEN 4 ELSE 0 END)
+    )::SMALLINT
+    FROM (
+      SELECT pg_catalog.lower(pg_catalog.concat_ws(
+        ' ', page_title, page_path::TEXT, heading_path::TEXT, category
+      )) AS scope_signal
+    ) AS normalized;
+  $function$`,
+
+  `CREATE TABLE IF NOT EXISTS public.backstage_notion_snapshot_chunk_search (
+    universe_id TEXT NOT NULL,
+    snapshot_id UUID NOT NULL,
+    chunk_id TEXT NOT NULL,
+    page_id TEXT NOT NULL,
+    ordinal INTEGER NOT NULL,
+    embedding_model TEXT NOT NULL,
+    embedding_dimension INTEGER NOT NULL,
+    embedding_norm DOUBLE PRECISION NOT NULL,
+    embedding DOUBLE PRECISION[] NOT NULL,
+    search_vector TSVECTOR NOT NULL,
+    booking_brand_mask SMALLINT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT pk_backstage_notion_snapshot_chunk_search
+      PRIMARY KEY (snapshot_id, chunk_id),
+    CONSTRAINT uq_backstage_notion_snapshot_chunk_search_position
+      UNIQUE (snapshot_id, page_id, ordinal),
+    CONSTRAINT fk_backstage_notion_snapshot_chunk_search_snapshot
+      FOREIGN KEY (universe_id, snapshot_id)
+      REFERENCES public.backstage_notion_snapshots(universe_id, id)
+      ON DELETE RESTRICT ON UPDATE RESTRICT,
+    CONSTRAINT fk_backstage_notion_snapshot_chunk_search_chunk
+      FOREIGN KEY (snapshot_id, chunk_id)
+      REFERENCES public.backstage_notion_snapshot_chunks(snapshot_id, id)
+      ON DELETE RESTRICT ON UPDATE RESTRICT,
+    CONSTRAINT ck_backstage_notion_snapshot_chunk_search_chunk_id
+      CHECK (chunk_id ~ '^[0-9a-f]{64}$'),
+    CONSTRAINT ck_backstage_notion_snapshot_chunk_search_page_id
+      CHECK (page_id ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'),
+    CONSTRAINT ck_backstage_notion_snapshot_chunk_search_ordinal CHECK (ordinal >= 0),
+    CONSTRAINT ck_backstage_notion_snapshot_chunk_search_model
+      CHECK (pg_catalog.length(pg_catalog.btrim(embedding_model)) BETWEEN 1 AND 200),
+    CONSTRAINT ck_backstage_notion_snapshot_chunk_search_embedding
+      CHECK (
+        embedding_dimension BETWEEN 1 AND 8192
+        AND pg_catalog.array_ndims(embedding) = 1
+        AND pg_catalog.array_lower(embedding, 1) = 1
+        AND pg_catalog.cardinality(embedding) = embedding_dimension
+        AND public.backstage_notion_candidate_embedding_norm(embedding) IS NOT NULL
+        AND embedding_norm > 0::DOUBLE PRECISION
+        AND embedding_norm < 'Infinity'::DOUBLE PRECISION
+        AND embedding_norm <> 'NaN'::DOUBLE PRECISION
+        AND pg_catalog.abs(
+          public.backstage_notion_candidate_embedding_norm(embedding) - embedding_norm
+        ) <= GREATEST(
+          1e-12::DOUBLE PRECISION,
+          embedding_norm * 1e-9::DOUBLE PRECISION
+        )
+      ),
+    CONSTRAINT ck_backstage_notion_snapshot_chunk_search_brand_mask
+      CHECK (booking_brand_mask BETWEEN 0 AND 7),
+    CONSTRAINT ck_backstage_notion_snapshot_chunk_search_created_at
+      CHECK (pg_catalog.isfinite(created_at))
+  )`,
+
   `CREATE TABLE IF NOT EXISTS backstage_notion_sync_leases (
     universe_id TEXT PRIMARY KEY,
     holder_id TEXT NOT NULL,
@@ -704,6 +906,16 @@ export const BACKSTAGE_NOTION_RAG_TABLE_DEFINITIONS = [
      ON backstage_notion_snapshot_chunks(universe_id, snapshot_id, page_id, ordinal)`,
   `CREATE INDEX IF NOT EXISTS idx_backstage_notion_chunks_embedding_reuse
      ON backstage_notion_snapshot_chunks(universe_id, embedding_model, content_hash, created_at DESC)`,
+  `CREATE INDEX IF NOT EXISTS idx_backstage_notion_snapshot_chunk_search_scope
+     ON backstage_notion_snapshot_chunk_search(
+       universe_id, snapshot_id, page_id, ordinal, chunk_id
+     )`,
+  `CREATE INDEX IF NOT EXISTS idx_backstage_notion_snapshot_chunk_search_model
+     ON backstage_notion_snapshot_chunk_search(
+       universe_id, snapshot_id, embedding_model, embedding_dimension, chunk_id
+     )`,
+  `CREATE INDEX IF NOT EXISTS idx_backstage_notion_snapshot_chunk_search_lexical
+     ON backstage_notion_snapshot_chunk_search USING GIN (search_vector)`,
   `CREATE INDEX IF NOT EXISTS idx_backstage_notion_sync_leases_expiry
      ON backstage_notion_sync_leases(expires_at)`,
 
@@ -728,7 +940,8 @@ export const BACKSTAGE_NOTION_RAG_TABLE_DEFINITIONS = [
      FOREACH target_table IN ARRAY ARRAY[
        'backstage_notion_snapshots',
        'backstage_notion_snapshot_pages',
-       'backstage_notion_snapshot_chunks'
+       'backstage_notion_snapshot_chunks',
+       'backstage_notion_snapshot_chunk_search'
      ]
      LOOP
        EXECUTE format(
@@ -757,6 +970,111 @@ export const BACKSTAGE_NOTION_RAG_TABLE_DEFINITIONS = [
            USING ERRCODE = '42804';
        END IF;
      END LOOP;
+   END
+   $$`,
+
+  `CREATE OR REPLACE FUNCTION backstage_notion_guard_candidate_search_activation()
+   RETURNS TRIGGER
+   LANGUAGE plpgsql
+   SET search_path = pg_catalog, public
+   AS $$
+   DECLARE
+     expected_chunk_count INTEGER;
+     canonical_chunk_count BIGINT;
+     sidecar_chunk_count BIGINT;
+     exact_membership_count BIGINT;
+   BEGIN
+     IF NEW.active_snapshot_id IS NOT DISTINCT FROM OLD.active_snapshot_id THEN
+       RETURN NEW;
+     END IF;
+     IF NEW.active_snapshot_id IS NULL THEN
+       RETURN NEW;
+     END IF;
+
+     SELECT snapshot.chunk_count
+       INTO expected_chunk_count
+       FROM public.backstage_notion_snapshots AS snapshot
+       WHERE snapshot.universe_id = NEW.universe_id
+         AND snapshot.id = NEW.active_snapshot_id;
+
+     SELECT COUNT(*)
+       INTO canonical_chunk_count
+       FROM public.backstage_notion_snapshot_chunks AS chunk
+       WHERE chunk.universe_id = NEW.universe_id
+         AND chunk.snapshot_id = NEW.active_snapshot_id;
+
+     SELECT COUNT(*)
+       INTO sidecar_chunk_count
+       FROM public.backstage_notion_snapshot_chunk_search AS search
+       WHERE search.universe_id = NEW.universe_id
+         AND search.snapshot_id = NEW.active_snapshot_id;
+
+     SELECT COUNT(*)
+       INTO exact_membership_count
+       FROM public.backstage_notion_snapshot_chunks AS chunk
+       INNER JOIN public.backstage_notion_snapshot_chunk_search AS search
+         ON search.universe_id = chunk.universe_id
+        AND search.snapshot_id = chunk.snapshot_id
+        AND search.chunk_id = chunk.id
+        AND search.page_id = chunk.page_id
+        AND search.ordinal = chunk.ordinal
+        AND search.embedding_model = chunk.embedding_model
+       WHERE chunk.universe_id = NEW.universe_id
+         AND chunk.snapshot_id = NEW.active_snapshot_id;
+
+     IF expected_chunk_count IS NULL
+        OR canonical_chunk_count IS DISTINCT FROM expected_chunk_count::BIGINT
+        OR sidecar_chunk_count IS DISTINCT FROM expected_chunk_count::BIGINT
+        OR exact_membership_count IS DISTINCT FROM expected_chunk_count::BIGINT THEN
+       RAISE EXCEPTION 'Backstage Notion candidate-search sidecar is incomplete for snapshot activation'
+         USING ERRCODE = 'BN003';
+     END IF;
+
+     RETURN NEW;
+   END
+   $$`,
+
+  `DO $$
+   DECLARE
+     existing_trigger_function OID;
+     existing_trigger_type SMALLINT;
+     existing_trigger_enabled "char";
+     existing_trigger_columns TEXT;
+     existing_trigger_when TEXT;
+   BEGIN
+     LOCK TABLE backstage_notion_universe_heads IN SHARE ROW EXCLUSIVE MODE;
+     SELECT
+       trigger_row.tgfoid,
+       trigger_row.tgtype,
+       trigger_row.tgenabled,
+       trigger_row.tgattr::TEXT,
+       pg_get_expr(trigger_row.tgqual, trigger_row.tgrelid)
+       INTO
+         existing_trigger_function,
+         existing_trigger_type,
+         existing_trigger_enabled,
+         existing_trigger_columns,
+         existing_trigger_when
+       FROM pg_trigger AS trigger_row
+       WHERE trigger_row.tgrelid = 'backstage_notion_universe_heads'::regclass
+         AND trigger_row.tgname = 'trg_backstage_notion_candidate_search_activation'
+         AND NOT trigger_row.tgisinternal;
+
+     IF existing_trigger_function IS NULL THEN
+       CREATE TRIGGER trg_backstage_notion_candidate_search_activation
+         BEFORE UPDATE ON backstage_notion_universe_heads
+         FOR EACH ROW
+         EXECUTE FUNCTION backstage_notion_guard_candidate_search_activation();
+     ELSIF existing_trigger_function
+         <> 'backstage_notion_guard_candidate_search_activation()'::regprocedure
+       OR existing_trigger_type <> 19
+       OR existing_trigger_enabled <> 'O'
+       OR existing_trigger_columns <> ''
+       OR existing_trigger_when IS NOT NULL
+     THEN
+       RAISE EXCEPTION 'trg_backstage_notion_candidate_search_activation has an unexpected definition'
+         USING ERRCODE = '42804';
+     END IF;
    END
    $$`,
 

@@ -36,6 +36,7 @@ jest.unstable_mockModule('@core/db/repositories/backstageNotionRagRepository.js'
   BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT,
   BACKSTAGE_NOTION_MAX_PAGES_PER_SNAPSHOT: 5_000,
   BACKSTAGE_NOTION_RELEVANT_CANDIDATE_SEARCH_MAX_RESULTS: 128,
+  isBackstageNotionCandidateQueryTimeoutError: () => false,
   getBackstageNotionRagRepository: () => ({
     loadAuthorityHead,
     loadActiveSnapshot,

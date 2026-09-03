@@ -99,6 +99,22 @@ const notionRagSnapshotCapacityRollback = readFileSync(
   ),
   'utf8'
 );
+const notionRagCandidateSearchMigration = readFileSync(
+  join(
+    process.cwd(),
+    'migrations',
+    '20260902_backstage_notion_rag_candidate_search_v1.sql'
+  ),
+  'utf8'
+);
+const notionRagCandidateSearchRollback = readFileSync(
+  join(
+    process.cwd(),
+    'migrations',
+    '20260902_backstage_notion_rag_candidate_search_v1.rollback.sql'
+  ),
+  'utf8'
+);
 const notionRagSnapshotCapacityRollbackBegin =
   notionRagSnapshotCapacityRollback.indexOf('\nBEGIN;');
 const notionRagSnapshotCapacityRollbackCommit =
@@ -142,6 +158,7 @@ async function applyCanonForwardMigration(client: Client): Promise<void> {
 
 const ownedTableNames = [
   'backstage_notion_authority_epoch',
+  'backstage_notion_snapshot_chunk_search',
   'backstage_notion_snapshot_chunks',
   'backstage_notion_snapshot_pages',
   'backstage_notion_snapshots',
@@ -166,6 +183,7 @@ const phaseTwoTables = [
 ] as const;
 const notionRagTables = [
   'backstage_notion_authority_epoch',
+  'backstage_notion_snapshot_chunk_search',
   'backstage_notion_snapshot_chunks',
   'backstage_notion_snapshot_pages',
   'backstage_notion_snapshots',
@@ -192,6 +210,7 @@ function fingerprint(label: string): string {
 async function resetDisposableNotionRagState(client: Client): Promise<void> {
   await client.query(
     `TRUNCATE TABLE
+       backstage_notion_snapshot_chunk_search,
        backstage_notion_snapshot_chunks,
        backstage_notion_snapshot_pages,
        backstage_notion_sync_leases,
@@ -204,6 +223,65 @@ async function resetDisposableNotionRagState(client: Client): Promise<void> {
      SET epoch = 0,
          updated_at = clock_timestamp()
      WHERE singleton = TRUE`
+  );
+}
+
+async function populateNotionCandidateSearchSidecar(
+  client: Client,
+  universeId: string,
+  snapshotId: string
+): Promise<void> {
+  await client.query(
+    `INSERT INTO public.backstage_notion_snapshot_chunk_search (
+       universe_id, snapshot_id, chunk_id, page_id, ordinal,
+       embedding_model, embedding_dimension, embedding_norm, embedding,
+       search_vector, booking_brand_mask
+     )
+     SELECT
+       chunk.universe_id,
+       chunk.snapshot_id,
+       chunk.id,
+       chunk.page_id,
+       chunk.ordinal,
+       chunk.embedding_model,
+       pg_catalog.cardinality(material.native_embedding),
+       public.backstage_notion_candidate_embedding_norm(material.native_embedding),
+       material.native_embedding,
+       public.backstage_notion_candidate_search_vector(
+         chunk.content,
+         page.title,
+         page.path,
+         chunk.heading_path,
+         material.category
+       ),
+       public.backstage_notion_candidate_brand_mask(
+         page.title,
+         page.path,
+         chunk.heading_path,
+         material.category
+       )
+     FROM public.backstage_notion_snapshot_chunks AS chunk
+     INNER JOIN public.backstage_notion_snapshot_pages AS page
+       ON page.universe_id = chunk.universe_id
+      AND page.snapshot_id = chunk.snapshot_id
+      AND page.page_id = chunk.page_id
+     CROSS JOIN LATERAL (
+       SELECT
+         public.backstage_notion_candidate_embedding_from_jsonb(
+           chunk.embedding
+         ) AS native_embedding,
+         CASE
+           WHEN jsonb_typeof(chunk.metadata -> 'category') = 'string'
+             AND octet_length(convert_to(
+               chunk.metadata ->> 'category', 'UTF8'
+             )) <= 32
+           THEN chunk.metadata ->> 'category'
+           ELSE ''
+         END AS category
+     ) AS material
+     WHERE chunk.universe_id = $1
+       AND chunk.snapshot_id = $2::UUID`,
+    [universeId, snapshotId]
   );
 }
 
@@ -374,7 +452,7 @@ async function insertNotionIndexFenceSnapshot(input: {
          $6,
          $7,
          'pg18-fence-model',
-         '[0]'::JSONB,
+         '[1]'::JSONB,
          '[]'::JSONB,
          '{}'::JSONB
        )`,
@@ -387,6 +465,11 @@ async function insertNotionIndexFenceSnapshot(input: {
         content,
         Array.from(content).length,
       ]
+    );
+    await populateNotionCandidateSearchSidecar(
+      input.client,
+      input.universeId,
+      snapshotId
     );
   }
   return snapshotId;
@@ -526,6 +609,7 @@ describeWithDatabase('Backstage canon/storyline persistence on PostgreSQL 18', (
     await observer.query(notionRagForwardMigration);
     await observer.query(notionRagIndexVersionFenceMigration);
     await observer.query(notionRagSnapshotCapacityMigration);
+    await observer.query(notionRagCandidateSearchMigration);
 
     pool = new Pool({
       connectionString: configuredConnectionString,
@@ -579,6 +663,7 @@ describeWithDatabase('Backstage canon/storyline persistence on PostgreSQL 18', (
         );
         if (notionRagTable.rows[0]?.installed) {
           await resetDisposableNotionRagState(observer);
+          await observer.query(notionRagCandidateSearchRollback);
           await observer.query(notionRagSnapshotCapacityRollback);
           await observer.query(notionRagIndexVersionFenceRollback);
           await observer.query(notionRagRollbackMigration);
@@ -617,6 +702,7 @@ describeWithDatabase('Backstage canon/storyline persistence on PostgreSQL 18', (
     await observer.query(notionRagForwardMigration);
     await observer.query(notionRagIndexVersionFenceMigration);
     await observer.query(notionRagSnapshotCapacityMigration);
+    await observer.query(notionRagCandidateSearchMigration);
 
     const tables = await observer.query<{ table_name: string }>(
       `SELECT table_name
@@ -765,7 +851,7 @@ describeWithDatabase('Backstage canon/storyline persistence on PostgreSQL 18', (
         indexFormats: [BACKSTAGE_NOTION_RAG_INDEX_FORMAT],
         expectedChunkCount: 2,
       });
-      await expectActivationError(partialChunkSnapshot, 'BN002');
+      await expectActivationError(partialChunkSnapshot, 'BN003');
 
       const replacementRootSnapshot = await insertNotionIndexFenceSnapshot({
         client: observer,
@@ -1061,12 +1147,13 @@ describeWithDatabase('Backstage canon/storyline persistence on PostgreSQL 18', (
            'Synthetic authoritative chunk ' || ordinal::TEXT,
            char_length('Synthetic authoritative chunk ' || ordinal::TEXT),
            'pg18-expanded-model',
-           '[0]'::JSONB,
+           '[1]'::JSONB,
            '[]'::JSONB,
            '{}'::JSONB
          FROM generate_series(0, 2116) AS ordinal`,
         [snapshotId, universeId, pageId]
       );
+      await populateNotionCandidateSearchSidecar(observer, universeId, snapshotId);
       await observer.query(
         `UPDATE backstage_notion_universe_heads
          SET authority = 'notion',
@@ -1469,6 +1556,7 @@ describeWithDatabase('Backstage canon/storyline persistence on PostgreSQL 18', (
        CASCADE`
     );
     await resetDisposableNotionRagState(observer);
+    await observer.query(notionRagCandidateSearchRollback);
     await observer.query(notionRagSnapshotCapacityRollback);
     await observer.query(notionRagIndexVersionFenceRollback);
     await observer.query(notionRagRollbackMigration);
