@@ -409,10 +409,12 @@ rewrite historical immutable snapshots. Roll it out in this order:
    membership parity. A legacy canonical-only writer therefore fails closed
    and leaves the prior active head unchanged instead of activating a snapshot
    that the native reader cannot use.
-2. Deploy the compatible worker while the old web reader remains in service.
-   The new writer populates canonical chunks and their derived search rows in
-   one transaction, checks exact inventory parity, and cannot activate a
-   partially indexed candidate snapshot.
+2. Keep the old web reader and the legacy worker deployment active and healthy;
+   the canonical paired Railway promotion preflights both baseline services.
+   Do not select the backfill target until the migration has committed. The
+   installed `BN003` fence then rejects every later canonical-only head change
+   from the legacy writer, so re-read the exact active target after the fence
+   is installed rather than treating a failed legacy sync as backfill evidence.
 3. With separately confirmed production authorization and the exact active
    Notion `universe_id`, `snapshot_id`, and expected chunk count, run
    `scripts/backstage-notion-candidate-search-backfill.mjs` with its dedicated
@@ -428,9 +430,24 @@ rewrite historical immutable snapshots. Roll it out in this order:
    versioned tuple `["backstage-notion-candidate-backfill-target/v1",
    trimmedUniverseId, lowercaseSnapshotId, expectedChunksInteger]`; it does not
    emit the raw identifiers.
-4. Deploy the compatible web reader only after independently recomputing and
-   matching `targetDigest` from the separately confirmed exact values, and
-   after a read-only review establishes that the same snapshot is still active.
+4. Only after independently recomputing and matching `targetDigest` from the
+   separately confirmed exact values, and after a read-only review establishes
+   that the same snapshot is still active, dispatch the canonical paired
+   Railway promotion. It deploys the compatible dual-writing worker first and
+   the native-reader web second. The new writer populates canonical chunks and
+   their derived search rows in one transaction, checks exact inventory parity,
+   and cannot activate a partially indexed candidate snapshot. Do not dispatch
+   the paired promotion before the exact active target passes backfill and
+   digest verification; its general coordinated-writer confirmation is not a
+   candidate-sidecar completeness gate.
+
+   The pre-promotion `targetDigest` proves the backfilled legacy active target.
+   If the compatible worker safely activates a successor before the web step,
+   that digest is historical evidence rather than proof of the new current
+   head. The compatible writer transaction and `BN003` fence protect the
+   successor; the post-promotion read-only checks must establish the current
+   head and native-query outcome without relabeling the earlier digest.
+
    New readers fall back to the legacy JSONB query only when the entire
    sidecar query fails with SQLSTATE `42P01` because the table is absent. Once
    the table exists, an empty, incomplete, malformed, or mismatched sidecar

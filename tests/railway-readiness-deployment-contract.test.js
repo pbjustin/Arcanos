@@ -17,6 +17,8 @@ const timeoutRegressionSource = readFileSync(
   'scripts/check-railway-timeout-regressions.js',
   'utf8',
 );
+const deploymentGuide = readFileSync('docs/RAILWAY_DEPLOYMENT.md', 'utf8');
+const migrationGuide = readFileSync('docs/DATABASE_MIGRATIONS.md', 'utf8');
 
 function deploymentSteps() {
   const steps = workflow.jobs?.['deploy-production']?.steps;
@@ -108,6 +110,127 @@ describe('Railway role-aware deployment evidence', () => {
     expect(deploymentObserverSource).not.toContain('now = Date.now');
     expect(deploymentObserverSource).toContain('maxBuffer');
     expect(deploymentObserverSource).not.toContain('shell: true');
+  });
+
+  it('requires candidate-sidecar preparation before the paired worker-web promotion', () => {
+    const deploymentSectionStart = deploymentGuide.indexOf(
+      'The monolithic Notion candidate-search sidecar requires a staged Railway',
+    );
+    const deploymentSectionEnd = deploymentGuide.indexOf(
+      '\nRollback is old-reader/old-writer first.',
+      deploymentSectionStart,
+    );
+    const deploymentSection = deploymentGuide.slice(
+      deploymentSectionStart,
+      deploymentSectionEnd,
+    );
+    const migrationSectionStart = migrationGuide.indexOf(
+      '`migrations/20260902_backstage_notion_rag_candidate_search_v1.sql` adds derived',
+    );
+    const migrationSectionEnd = migrationGuide.indexOf(
+      '\nDo not apply this migration or run the backfill as routine validation',
+      migrationSectionStart,
+    );
+    const migrationSection = migrationGuide.slice(
+      migrationSectionStart,
+      migrationSectionEnd,
+    );
+    const normalizedDeploymentSection = deploymentSection.replace(/\s+/gu, ' ');
+    const normalizedMigrationSection = migrationSection.replace(/\s+/gu, ' ');
+
+    expect(deploymentSectionStart).toBeGreaterThanOrEqual(0);
+    expect(deploymentSectionEnd).toBeGreaterThan(deploymentSectionStart);
+    expect(migrationSectionStart).toBeGreaterThanOrEqual(0);
+    expect(migrationSectionEnd).toBeGreaterThan(migrationSectionStart);
+
+    const deploymentFence = normalizedDeploymentSection.indexOf(
+      'Do not select the backfill target until the migration has committed',
+    );
+    const deploymentBn003 = normalizedDeploymentSection.indexOf(
+      '`BN003` activation fence then rejects every later canonical-only active-head change',
+    );
+    const deploymentTarget = normalizedDeploymentSection.indexOf(
+      'Re-read the exact active target',
+    );
+    const deploymentBackfill = normalizedDeploymentSection.indexOf(
+      'run the bounded idempotent backfill',
+    );
+    const deploymentDigest = normalizedDeploymentSection.indexOf(
+      'independently recompute and match its `targetDigest`',
+    );
+    const deploymentSameHead = normalizedDeploymentSection.indexOf(
+      'verify that the same snapshot remains active',
+    );
+    const deploymentPair = normalizedDeploymentSection.indexOf(
+      'Only after those database preparations pass may the canonical paired Railway promotion run',
+    );
+    expect(deploymentFence).toBeGreaterThanOrEqual(0);
+    expect(deploymentBn003).toBeGreaterThan(deploymentFence);
+    expect(deploymentTarget).toBeGreaterThan(deploymentBn003);
+    expect(deploymentBackfill).toBeGreaterThan(deploymentTarget);
+    expect(deploymentDigest).toBeGreaterThan(deploymentBackfill);
+    expect(deploymentSameHead).toBeGreaterThan(deploymentDigest);
+    expect(deploymentPair).toBeGreaterThan(deploymentSameHead);
+    expect(normalizedDeploymentSection).toContain(
+      'Keep the old web and legacy worker deployment active and healthy',
+    );
+    expect(normalizedDeploymentSection).toContain(
+      'coordinated-writer confirmation does not establish candidate-sidecar',
+    );
+    expect(normalizedDeploymentSection).toContain(
+      'digest is historical evidence rather than proof of the new current head',
+    );
+    expect(normalizedDeploymentSection).toContain(
+      'declared chunk count = canonical chunk count = sidecar count = recomputed valid-sidecar count',
+    );
+    expect(normalizedDeploymentSection).toContain(
+      'do not associate the pre-promotion `targetDigest` with it',
+    );
+
+    const migrationFence = normalizedMigrationSection.indexOf(
+      'Do not select the backfill target until the migration has committed',
+    );
+    const migrationBn003 = normalizedMigrationSection.indexOf(
+      '`BN003` fence then rejects every later canonical-only head change',
+    );
+    const migrationTarget = normalizedMigrationSection.indexOf(
+      're-read the exact active target after the fence is installed',
+    );
+    const migrationBackfill = normalizedMigrationSection.indexOf(
+      'run `scripts/backstage-notion-candidate-search-backfill.mjs`',
+    );
+    const migrationDigest = normalizedMigrationSection.indexOf(
+      'independently recomputing and matching `targetDigest`',
+    );
+    const migrationSameHead = normalizedMigrationSection.indexOf(
+      'same snapshot is still active',
+    );
+    const migrationPair = normalizedMigrationSection.indexOf(
+      'dispatch the canonical paired Railway promotion',
+    );
+    expect(migrationFence).toBeGreaterThanOrEqual(0);
+    expect(migrationBn003).toBeGreaterThan(migrationFence);
+    expect(migrationTarget).toBeGreaterThan(migrationBn003);
+    expect(migrationBackfill).toBeGreaterThan(migrationTarget);
+    expect(migrationDigest).toBeGreaterThan(migrationBackfill);
+    expect(migrationSameHead).toBeGreaterThan(migrationDigest);
+    expect(migrationPair).toBeGreaterThan(migrationSameHead);
+    expect(normalizedMigrationSection).toContain(
+      'Keep the old web reader and the legacy worker deployment active and healthy',
+    );
+    expect(normalizedMigrationSection).toContain(
+      'general coordinated-writer confirmation is not a candidate-sidecar completeness gate',
+    );
+    expect(normalizedMigrationSection).toContain(
+      'digest is historical evidence rather than proof of the new current head',
+    );
+
+    const stepNames = deploymentSteps().map(step => step.name);
+    const workerStep = stepNames.indexOf('Deploy and verify Railway worker');
+    const webStep = stepNames.indexOf('Deploy and verify Railway web pair');
+    expect(workerStep).toBeGreaterThanOrEqual(0);
+    expect(webStep).toBeGreaterThanOrEqual(0);
+    expect(workerStep).toBeLessThan(webStep);
   });
 
   it('preflights and re-verifies both exact roles and active deployments', () => {

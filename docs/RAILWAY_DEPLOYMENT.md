@@ -785,15 +785,30 @@ mapped page content is approved for the existing OpenAI provider data path.
 The monolithic Notion candidate-search sidecar requires a staged Railway
 rollout; deployment alone does not backfill the currently active immutable
 snapshot. Apply the reviewed additive
-`20260902_backstage_notion_rag_candidate_search_v1` schema first, deploy the
-dual-writing worker while the old web remains active, run the bounded
-idempotent backfill for the separately confirmed exact active snapshot, and
-require its final active-head lock plus exact canonical/search/valid-search
-parity report. Only then deploy the native-reader web. Do not move the web step
-ahead of completeness verification: before the schema exists the new reader
+`20260902_backstage_notion_rag_candidate_search_v1` schema first. Keep the old
+web and legacy worker deployment active and healthy because the canonical
+paired promotion preflights both baseline services. Do not select the backfill
+target until the migration has committed; its installed `BN003` activation
+fence then rejects every later canonical-only active-head change. Re-read the
+exact active target, run the bounded idempotent backfill, require its final
+active-head lock plus exact canonical/search/valid-search parity report,
+independently recompute and match its `targetDigest`, and verify that the same
+snapshot remains active. Only after those database preparations pass may the
+canonical paired Railway promotion run: it deploys the compatible dual-writing
+worker first and the native-reader web second. Do not dispatch the paired
+promotion before completeness verification. Its general
+coordinated-writer confirmation does not establish candidate-sidecar
+completeness or validate `targetDigest`. Before the schema exists the new reader
 can use its whole-query SQLSTATE `42P01` compatibility path, but a present and
 incomplete sidecar fails closed. The design uses PostgreSQL-native arrays and a
 precomputed `TSVECTOR`; it does not assume `pgvector` or an ANN extension.
+
+The pre-promotion `targetDigest` proves the backfilled legacy active target. If
+the compatible worker safely activates a successor before the web step, the
+digest is historical evidence rather than proof of the new current head. The
+compatible writer transaction and `BN003` fence protect that successor. After
+the paired promotion, use the read-only checks below to establish the current
+head and native-query outcome; do not relabel the earlier digest as current.
 
 No production migration, backfill, deployment, restart, sync, probe, or variable
 change is authorized merely by this procedure. After a separately authorized
@@ -802,6 +817,11 @@ inspection to verify all of the following:
 
 - the worker and web run the exact reviewed revision and both services remain
   healthy;
+- a read-only database check identifies the exact current active snapshot and
+  establishes declared chunk count = canonical chunk count = sidecar count =
+  recomputed valid-sidecar count. If this identifier differs from the backfill
+  target, record it as a compatible-worker successor and do not associate the
+  pre-promotion `targetDigest` with it;
 - `backstage.notion_rag.candidate_query` reports `outcome:success` with
   `queryStrategy:native_sidecar_v1`, bounded `queryDurationMs` and
   `queryTimeoutMs`, and internally consistent `scopeChunkCount`,
