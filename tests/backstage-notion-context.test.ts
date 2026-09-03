@@ -14,10 +14,13 @@ import {
   runWithBackstageNotionEnrichmentAuthorization,
 } from '../src/services/backstageNotionEnrichmentAuthorization.js';
 import {
+  BACKSTAGE_NOTION_MAX_DATA_SOURCE_QUERY_RESPONSE_BYTES,
   BackstageNotionReadError,
+  fetchBackstageNotionDatabaseMetadata,
   fetchBackstageNotionMarkdownPage,
   fetchBackstageNotionPageMetadata,
   loadBackstageNotionPromptContextCore,
+  queryBackstageNotionDataSource,
 } from '../src/shared/backstage/backstageNotionContextCore.js';
 
 const notionToken = `ntn_${'a'.repeat(48)}`;
@@ -375,6 +378,25 @@ describe('Backstage Notion prompt context', () => {
         new AbortController().signal
       ),
     ],
+    [
+      'database_metadata',
+      (fetchMock: typeof fetch) => fetchBackstageNotionDatabaseMetadata(
+        fetchMock,
+        notionToken,
+        firstPageId,
+        new AbortController().signal
+      ),
+    ],
+    [
+      'data_source_query',
+      (fetchMock: typeof fetch) => queryBackstageNotionDataSource(
+        fetchMock,
+        notionToken,
+        firstPageId,
+        null,
+        new AbortController().signal
+      ),
+    ],
   ] as const)(
     'retains only bounded official error-envelope diagnostics for %s',
     async (endpointKind, request) => {
@@ -416,6 +438,216 @@ describe('Backstage Notion prompt context', () => {
       expect(serialized).not.toContain(firstPageId);
     }
   );
+
+  it('validates full database metadata and bounded partial query candidates', async () => {
+    const databaseFetch = jest.fn(async () => new Response(JSON.stringify({
+      object: 'database',
+      id: firstPageId,
+      parent: { type: 'workspace', workspace: true },
+      title: [{ plain_text: 'Universe authority' }],
+      last_edited_time: '2026-09-03T12:00:00.000Z',
+      in_trash: false,
+      data_sources: [
+        { id: secondPageId, name: 'Primary' },
+        { id: thirdPageId, name: 'Secondary' },
+      ],
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+    const queryFetch = jest.fn(async (
+      input: string | URL | Request,
+      init?: RequestInit
+    ) => {
+      void input;
+      void init;
+      return new Response(JSON.stringify({
+        object: 'list',
+        type: 'page_or_data_source',
+        page_or_data_source: {},
+        results: [
+          { object: 'page', id: secondPageId },
+          { object: 'data_source', id: thirdPageId },
+        ],
+        has_more: true,
+        next_cursor: 'opaque-cursor-1',
+        request_status: { type: 'complete' },
+      }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+
+    await expect(fetchBackstageNotionDatabaseMetadata(
+      asFetch(databaseFetch),
+      notionToken,
+      firstPageId,
+      new AbortController().signal
+    )).resolves.toMatchObject({
+      databaseId: firstPageId,
+      dataSourceIds: [secondPageId, thirdPageId],
+      parentType: 'workspace',
+      parentId: null,
+      title: 'Universe authority',
+      inTrash: false,
+    });
+    await expect(queryBackstageNotionDataSource(
+      asFetch(queryFetch),
+      notionToken,
+      firstPageId,
+      null,
+      new AbortController().signal
+    )).resolves.toEqual({
+      results: [
+        { kind: 'page', pageId: secondPageId },
+        { kind: 'data_source', dataSourceId: thirdPageId },
+      ],
+      hasMore: true,
+      nextCursor: 'opaque-cursor-1',
+    });
+    const queryUrl = new URL(String(queryFetch.mock.calls[0]?.[0]));
+    expect(queryUrl.searchParams.getAll('filter_properties[]')).toEqual([
+      'title',
+    ]);
+    expect(queryFetch.mock.calls[0]?.[1]?.body).toBe(JSON.stringify({
+      page_size: 10,
+    }));
+  });
+
+  it('accepts a bounded 10-row filtered data-source query response above the legacy cap', async () => {
+    const titleItem = {
+      type: 'text',
+      text: { content: 'x'.repeat(2_000), link: null },
+      annotations: {
+        bold: false,
+        italic: false,
+        strikethrough: false,
+        underline: false,
+        code: false,
+        color: 'default',
+      },
+      plain_text: 'x'.repeat(2_000),
+      href: null,
+    };
+    const rawResults = Array.from({ length: 10 }, (_, index) => ({
+      object: 'page',
+      id: `aaaaaaaa-aaaa-4aaa-8aaa-${(index + 1).toString(16).padStart(12, '0')}`,
+      properties: {
+        title: {
+          type: 'title',
+          title: Array.from({ length: 25 }, () => titleItem),
+        },
+      },
+    }));
+    const responseBody = JSON.stringify({
+      object: 'list',
+      type: 'page_or_data_source',
+      page_or_data_source: { additive_field: 'ignored' },
+      results: rawResults,
+      has_more: false,
+      next_cursor: null,
+      request_status: { type: 'complete', additive_field: 'ignored' },
+    });
+    expect(Buffer.byteLength(responseBody, 'utf8'))
+      .toBeGreaterThan(BACKSTAGE_NOTION_MAX_RESPONSE_BYTES);
+    expect(Buffer.byteLength(responseBody, 'utf8'))
+      .toBeLessThan(BACKSTAGE_NOTION_MAX_DATA_SOURCE_QUERY_RESPONSE_BYTES);
+    const fetchMock = jest.fn(async () => new Response(responseBody, {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    const response = await queryBackstageNotionDataSource(
+      asFetch(fetchMock),
+      notionToken,
+      firstPageId,
+      null,
+      new AbortController().signal
+    );
+
+    expect(response.results).toHaveLength(10);
+    expect(response.results[0]).toEqual({
+      kind: 'page',
+      pageId: rawResults[0]?.id,
+    });
+    expect(response.results.at(-1)).toEqual({
+      kind: 'page',
+      pageId: rawResults.at(-1)?.id,
+    });
+  });
+
+  it('rejects a cursor whose serialized request exceeds the provider request cap', async () => {
+    const privateCursorMarker = 'PRIVATE-OVERSIZED-CURSOR';
+    const oversizedCursor = `${privateCursorMarker}${'\u0000'.repeat(90_000)}`;
+    const fetchMock = jest.fn(async () => new Response('{}', {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    let caught: unknown;
+    try {
+      await queryBackstageNotionDataSource(
+        asFetch(fetchMock),
+        notionToken,
+        firstPageId,
+        oversizedCursor,
+        new AbortController().signal
+      );
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(caught).toMatchObject({
+      category: 'invalid_cursor',
+      notionEndpointKind: 'data_source_query',
+    });
+    const serialized = JSON.stringify(caught);
+    expect(serialized).not.toContain(privateCursorMarker);
+    expect(serialized).not.toContain(firstPageId);
+    expect(serialized).not.toContain(notionToken);
+  });
+
+  it('rejects incomplete data-source query status without retaining content', async () => {
+    const privateCursor = 'PRIVATE-QUERY-CURSOR';
+    const fetchMock = jest.fn(async () => new Response(JSON.stringify({
+      object: 'list',
+      type: 'page_or_data_source',
+      page_or_data_source: {},
+      results: [],
+      has_more: false,
+      next_cursor: null,
+      request_status: {
+        type: 'incomplete',
+        incomplete_reason: 'query_result_limit_reached',
+      },
+      private_cursor: privateCursor,
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    let caught: unknown;
+    try {
+      await queryBackstageNotionDataSource(
+        asFetch(fetchMock),
+        notionToken,
+        firstPageId,
+        null,
+        new AbortController().signal
+      );
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toMatchObject({
+      category: 'invalid_response',
+      notionEndpointKind: 'data_source_query',
+      notionResponseSchemaValid: false,
+    });
+    expect(JSON.stringify(caught)).not.toContain(privateCursor);
+    expect(JSON.stringify(caught)).not.toContain(firstPageId);
+    expect(JSON.stringify(caught)).not.toContain(notionToken);
+  });
 
   it('rejects an unbounded provider-code field while retaining safe status metadata', async () => {
     const privateProviderCode = `PRIVATE/${firstPageId}/${'x'.repeat(100)}`;

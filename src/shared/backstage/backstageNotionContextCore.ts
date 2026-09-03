@@ -14,6 +14,11 @@ export const BACKSTAGE_NOTION_UNIVERSE_PAGES_ENV_NAME =
 export const BACKSTAGE_NOTION_API_VERSION = '2026-03-11';
 export const BACKSTAGE_NOTION_FETCH_TIMEOUT_MS = 4_000;
 export const BACKSTAGE_NOTION_MAX_RESPONSE_BYTES = 256 * 1024;
+export const BACKSTAGE_NOTION_MAX_METADATA_RESPONSE_BYTES = 1024 * 1024;
+export const BACKSTAGE_NOTION_MAX_DATA_SOURCE_QUERY_RESPONSE_BYTES =
+  8 * 1024 * 1024;
+export const BACKSTAGE_NOTION_MAX_DATABASE_DATA_SOURCES = 100;
+export const BACKSTAGE_NOTION_MAX_DATA_SOURCE_QUERY_RESULTS = 10;
 export const BACKSTAGE_NOTION_MAX_PAGES_PER_UNIVERSE = 3;
 export const BACKSTAGE_NOTION_PAGE_CONTEXT_CODE_POINTS = 4_000;
 export const BACKSTAGE_NOTION_TOTAL_CONTEXT_CODE_POINTS =
@@ -23,6 +28,7 @@ export const BACKSTAGE_NOTION_TOTAL_CONTEXT_CODE_POINTS =
 const BACKSTAGE_NOTION_SANITIZATION_INPUT_CODE_POINTS =
   BACKSTAGE_NOTION_PAGE_CONTEXT_CODE_POINTS * 2;
 const BACKSTAGE_NOTION_MAX_CONFIG_BYTES = 16 * 1024;
+const BACKSTAGE_NOTION_MAX_REQUEST_BYTES = 500 * 1024;
 const BACKSTAGE_NOTION_MAX_CONFIGURED_UNIVERSES = 32;
 const BACKSTAGE_NOTION_MAX_TOKEN_LENGTH = 4_096;
 const BACKSTAGE_UNIVERSE_ID_PATTERN =
@@ -76,13 +82,49 @@ export interface BackstageNotionMarkdownResponse {
 export interface BackstageNotionPageMetadata {
   pageId: string;
   parentPageId: string | null;
+  parentDataSourceId?: string | null;
+  parentType?: 'block_id' | 'data_source_id' | 'database_id' | 'page_id' | 'workspace';
+  parentId?: string | null;
+  title?: string | null;
   lastEditedAt: Date;
   inTrash: boolean;
 }
 
+export interface BackstageNotionDatabaseMetadata {
+  databaseId: string;
+  dataSourceIds: readonly string[];
+  parentType: 'block_id' | 'data_source_id' | 'database_id' | 'page_id' | 'workspace';
+  parentId: string | null;
+  title: string;
+  lastEditedAt: Date;
+  inTrash: boolean;
+}
+
+export interface BackstageNotionDataSourceQueryPage {
+  kind: 'page';
+  pageId: string;
+}
+
+export interface BackstageNotionDataSourceQueryChildDataSource {
+  kind: 'data_source';
+  dataSourceId: string;
+}
+
+export type BackstageNotionDataSourceQueryResult =
+  | BackstageNotionDataSourceQueryPage
+  | BackstageNotionDataSourceQueryChildDataSource;
+
+export interface BackstageNotionDataSourceQueryResponse {
+  results: readonly BackstageNotionDataSourceQueryResult[];
+  hasMore: boolean;
+  nextCursor: string | null;
+}
+
 export type BackstageNotionEndpointKind =
   | 'page_metadata'
-  | 'page_markdown';
+  | 'page_markdown'
+  | 'database_metadata'
+  | 'data_source_query';
 
 export type BackstageNotionFailureCategory =
   | 'authorization'
@@ -208,7 +250,10 @@ function normalizeNotionResponseContentType(value: unknown): string | null {
 function isBackstageNotionEndpointKind(
   value: unknown
 ): value is BackstageNotionEndpointKind {
-  return value === 'page_metadata' || value === 'page_markdown';
+  return value === 'page_metadata'
+    || value === 'page_markdown'
+    || value === 'database_metadata'
+    || value === 'data_source_query';
 }
 
 function isBackstageNotionFailureCategory(
@@ -511,7 +556,8 @@ function responseReadDiagnostics(
 
 async function readBoundedResponseBody(
   response: Response,
-  endpointKind: BackstageNotionEndpointKind
+  endpointKind: BackstageNotionEndpointKind,
+  maximumBytes = BACKSTAGE_NOTION_MAX_RESPONSE_BYTES
 ): Promise<string> {
   const declaredLength = response.headers.get('content-length');
   if (declaredLength !== null) {
@@ -521,7 +567,7 @@ async function readBoundedResponseBody(
     if (
       !Number.isFinite(parsedLength)
       || parsedLength < 0
-      || parsedLength > BACKSTAGE_NOTION_MAX_RESPONSE_BYTES
+      || parsedLength > maximumBytes
     ) {
       await response.body?.cancel().catch(() => undefined);
       throw new BackstageNotionReadError('response_too_large', undefined, {
@@ -544,7 +590,7 @@ async function readBoundedResponseBody(
         break;
       }
       totalBytes += chunk.value.byteLength;
-      if (totalBytes > BACKSTAGE_NOTION_MAX_RESPONSE_BYTES) {
+      if (totalBytes > maximumBytes) {
         await reader.cancel().catch(() => undefined);
         throw new BackstageNotionReadError('response_too_large', undefined, {
           ...responseReadDiagnostics(response, endpointKind, null),
@@ -745,7 +791,8 @@ async function fetchNotionMarkdownPage(
 function parseNotionPageMetadataResponse(
   rawBody: string,
   expectedPageId: string,
-  response: Response
+  response: Response,
+  requireTitle: boolean
 ): BackstageNotionPageMetadata {
   const invalidResponseDiagnostics = responseReadDiagnostics(
     response,
@@ -781,8 +828,25 @@ function parseNotionPageMetadataResponse(
     && typeof parent.page_id === 'string'
     ? normalizeNotionPageId(parent.page_id)
     : null;
+  const parentDataSourceId = parent?.type === 'data_source_id'
+    && typeof parent.data_source_id === 'string'
+    ? normalizeNotionPageId(parent.data_source_id)
+    : null;
+  const parentBlockId = parent?.type === 'block_id'
+    && typeof parent.block_id === 'string'
+    ? normalizeNotionPageId(parent.block_id)
+    : null;
+  const parentValid = parent !== null && (
+    (parent.type === 'page_id' && parentPageId !== null)
+    || (parent.type === 'data_source_id' && parentDataSourceId !== null)
+    || (parent.type === 'block_id' && parentBlockId !== null)
+    || (parent.type === 'workspace' && parent.workspace === true)
+  );
   const lastEditedAt = typeof parsed.last_edited_time === 'string'
     ? new Date(parsed.last_edited_time)
+    : null;
+  const title = requireTitle
+    ? boundedNotionPageTitle(parsed.properties)
     : null;
   if (
     parsed.object !== 'page'
@@ -790,7 +854,8 @@ function parseNotionPageMetadataResponse(
     || typeof parsed.in_trash !== 'boolean'
     || !lastEditedAt
     || !Number.isFinite(lastEditedAt.getTime())
-    || (parent?.type === 'page_id' && parentPageId === null)
+    || !parentValid
+    || (requireTitle && title === null)
   ) {
     throw new BackstageNotionReadError(
       'invalid_response',
@@ -802,8 +867,283 @@ function parseNotionPageMetadataResponse(
   return {
     pageId: responsePageId,
     parentPageId,
+    parentDataSourceId,
+    parentType: parent?.type as BackstageNotionPageMetadata['parentType'],
+    parentId: parentPageId ?? parentDataSourceId ?? parentBlockId,
+    title,
     lastEditedAt,
     inTrash: parsed.in_trash,
+  };
+}
+
+function boundedNotionRichTextTitle(richText: unknown): string | null {
+  if (!Array.isArray(richText) || richText.length > 100) {
+    return null;
+  }
+  let title = '';
+  for (const item of richText) {
+    if (
+      !isPlainConfigurationObject(item)
+      || typeof item.plain_text !== 'string'
+    ) {
+      return null;
+    }
+    title += item.plain_text;
+    if (Array.from(title).length > 240) {
+      return null;
+    }
+  }
+  if (
+    /[\u0000-\u001F\u007F-\u009F]/u.test(title)
+    || /[\u061C\u200B-\u200F\u202A-\u202E\u2060-\u206F\uFEFF]/u.test(title)
+    || /[<>]/u.test(title)
+  ) {
+    return null;
+  }
+  return title.replace(/\s+/gu, ' ').trim() || 'Untitled Notion page';
+}
+
+function parseNotionDatabaseMetadataResponse(
+  rawBody: string,
+  expectedDatabaseId: string,
+  response: Response
+): BackstageNotionDatabaseMetadata {
+  const invalidResponseDiagnostics = responseReadDiagnostics(
+    response,
+    'database_metadata',
+    false
+  );
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawBody) as unknown;
+  } catch {
+    throw new BackstageNotionReadError(
+      'invalid_json',
+      undefined,
+      invalidResponseDiagnostics
+    );
+  }
+  if (!isPlainConfigurationObject(parsed)) {
+    throw new BackstageNotionReadError(
+      'invalid_response',
+      undefined,
+      invalidResponseDiagnostics
+    );
+  }
+
+  const responseDatabaseId = typeof parsed.id === 'string'
+    ? normalizeNotionPageId(parsed.id)
+    : null;
+  const lastEditedAt = typeof parsed.last_edited_time === 'string'
+    ? new Date(parsed.last_edited_time)
+    : null;
+  const title = boundedNotionRichTextTitle(parsed.title);
+  const parent = isPlainConfigurationObject(parsed.parent)
+    ? parsed.parent
+    : null;
+  const parentType = parent?.type;
+  const parentIdField = parentType === 'page_id'
+    ? parent?.page_id
+    : parentType === 'data_source_id'
+      ? parent?.data_source_id
+      : parentType === 'database_id'
+        ? parent?.database_id
+        : parentType === 'block_id'
+          ? parent?.block_id
+          : null;
+  const parentId = typeof parentIdField === 'string'
+    ? normalizeNotionPageId(parentIdField)
+    : null;
+  const parentValid = parent !== null && (
+    (parentType === 'workspace' && parent.workspace === true)
+    || (
+      [
+        'block_id',
+        'data_source_id',
+        'database_id',
+        'page_id',
+      ].includes(String(parentType))
+      && parentId !== null
+    )
+  );
+  const rawDataSources = parsed.data_sources;
+  const dataSources = Array.isArray(rawDataSources) ? rawDataSources : null;
+  const dataSourceIds: string[] = [];
+  const seenDataSourceIds = new Set<string>();
+  let dataSourcesValid = dataSources !== null
+    && dataSources.length >= 1
+    && dataSources.length <= BACKSTAGE_NOTION_MAX_DATABASE_DATA_SOURCES;
+  if (dataSources !== null && dataSourcesValid) {
+    for (const rawDataSource of dataSources) {
+      const dataSourceId = isPlainConfigurationObject(rawDataSource)
+        && typeof rawDataSource.id === 'string'
+        ? normalizeNotionPageId(rawDataSource.id)
+        : null;
+      if (
+        !dataSourceId
+        || seenDataSourceIds.has(dataSourceId)
+        || typeof rawDataSource.name !== 'string'
+        || Array.from(rawDataSource.name).length > 240
+      ) {
+        dataSourcesValid = false;
+        break;
+      }
+      seenDataSourceIds.add(dataSourceId);
+      dataSourceIds.push(dataSourceId);
+    }
+  }
+
+  if (
+    parsed.object !== 'database'
+    || responseDatabaseId !== expectedDatabaseId
+    || typeof parsed.in_trash !== 'boolean'
+    || title === null
+    || !parentValid
+    || !lastEditedAt
+    || !Number.isFinite(lastEditedAt.getTime())
+    || !dataSourcesValid
+  ) {
+    throw new BackstageNotionReadError(
+      'invalid_response',
+      undefined,
+      invalidResponseDiagnostics
+    );
+  }
+
+  return {
+    databaseId: responseDatabaseId,
+    dataSourceIds: Object.freeze(dataSourceIds),
+    parentType: parentType as BackstageNotionDatabaseMetadata['parentType'],
+    parentId,
+    title,
+    lastEditedAt,
+    inTrash: parsed.in_trash,
+  };
+}
+
+function boundedNotionPageTitle(properties: unknown): string | null {
+  if (!isPlainConfigurationObject(properties)) {
+    return null;
+  }
+  const titleProperties = Object.values(properties).filter(
+    (value): value is Record<string, unknown> => (
+      isPlainConfigurationObject(value) && value.type === 'title'
+    )
+  );
+  if (titleProperties.length !== 1) {
+    return null;
+  }
+  return boundedNotionRichTextTitle(titleProperties[0]?.title);
+}
+
+function parseNotionDataSourceQueryResponse(
+  rawBody: string,
+  response: Response
+): BackstageNotionDataSourceQueryResponse {
+  const invalidResponseDiagnostics = responseReadDiagnostics(
+    response,
+    'data_source_query',
+    false
+  );
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawBody) as unknown;
+  } catch {
+    throw new BackstageNotionReadError(
+      'invalid_json',
+      undefined,
+      invalidResponseDiagnostics
+    );
+  }
+  if (!isPlainConfigurationObject(parsed)) {
+    throw new BackstageNotionReadError(
+      'invalid_response',
+      undefined,
+      invalidResponseDiagnostics
+    );
+  }
+
+  const rawResults = parsed.results;
+  const hasMore = parsed.has_more;
+  const rawNextCursor = parsed.next_cursor;
+  const nextCursor = typeof rawNextCursor === 'string'
+    && rawNextCursor.length >= 1
+    ? rawNextCursor
+    : null;
+  const requestStatusValid = parsed.request_status === undefined
+    || (
+      isPlainConfigurationObject(parsed.request_status)
+      && parsed.request_status.type === 'complete'
+    );
+  const resultTypeObjectValid = isPlainConfigurationObject(
+    parsed.page_or_data_source
+  );
+  if (
+    parsed.object !== 'list'
+    || parsed.type !== 'page_or_data_source'
+    || !resultTypeObjectValid
+    || !Array.isArray(rawResults)
+    || rawResults.length > BACKSTAGE_NOTION_MAX_DATA_SOURCE_QUERY_RESULTS
+    || typeof hasMore !== 'boolean'
+    || (
+      rawNextCursor !== null
+      && (
+        typeof rawNextCursor !== 'string'
+        || nextCursor === null
+      )
+    )
+    || (hasMore ? nextCursor === null : rawNextCursor !== null)
+    || !requestStatusValid
+  ) {
+    throw new BackstageNotionReadError(
+      'invalid_response',
+      undefined,
+      invalidResponseDiagnostics
+    );
+  }
+
+  const results: BackstageNotionDataSourceQueryResult[] = [];
+  const seenResultIds = new Set<string>();
+  for (const rawResult of rawResults) {
+    if (!isPlainConfigurationObject(rawResult)) {
+      throw new BackstageNotionReadError(
+        'invalid_response',
+        undefined,
+        invalidResponseDiagnostics
+      );
+    }
+    const resultId = typeof rawResult.id === 'string'
+      ? normalizeNotionPageId(rawResult.id)
+      : null;
+    if (!resultId || seenResultIds.has(resultId)) {
+      throw new BackstageNotionReadError(
+        'invalid_response',
+        undefined,
+        invalidResponseDiagnostics
+      );
+    }
+    seenResultIds.add(resultId);
+    if (rawResult.object === 'data_source') {
+      results.push({ kind: 'data_source', dataSourceId: resultId });
+      continue;
+    }
+    if (rawResult.object !== 'page') {
+      throw new BackstageNotionReadError(
+        'invalid_response',
+        undefined,
+        invalidResponseDiagnostics
+      );
+    }
+    results.push({
+      kind: 'page',
+      pageId: resultId,
+    });
+  }
+
+  return {
+    results: Object.freeze(results),
+    hasMore,
+    nextCursor,
   };
 }
 
@@ -833,7 +1173,8 @@ export async function fetchBackstageNotionPageMetadata(
   fetchImpl: BackstageNotionFetchImplementation,
   accessToken: string,
   pageId: string,
-  signal: AbortSignal
+  signal: AbortSignal,
+  options: { requireTitle?: boolean } = {}
 ): Promise<BackstageNotionPageMetadata> {
   const normalizedPageId = normalizeNotionPageId(pageId);
   if (!normalizedPageId || normalizedPageId !== pageId) {
@@ -842,6 +1183,9 @@ export async function fetchBackstageNotionPageMetadata(
     });
   }
   const endpoint = new URL(`/v1/pages/${normalizedPageId}`, NOTION_API_ORIGIN);
+  if (options.requireTitle === true) {
+    endpoint.searchParams.append('filter_properties[]', 'title');
+  }
   const response = await fetchNotionResponse(
     fetchImpl,
     endpoint,
@@ -873,8 +1217,143 @@ export async function fetchBackstageNotionPageMetadata(
   }
 
   return parseNotionPageMetadataResponse(
-    await readBoundedResponseBody(response, 'page_metadata'),
+    await readBoundedResponseBody(
+      response,
+      'page_metadata',
+      BACKSTAGE_NOTION_MAX_METADATA_RESPONSE_BYTES
+    ),
     normalizedPageId,
+    response,
+    options.requireTitle === true
+  );
+}
+
+/** Fetch one exact Notion database container's bounded identity metadata. */
+export async function fetchBackstageNotionDatabaseMetadata(
+  fetchImpl: BackstageNotionFetchImplementation,
+  accessToken: string,
+  databaseId: string,
+  signal: AbortSignal
+): Promise<BackstageNotionDatabaseMetadata> {
+  const normalizedDatabaseId = normalizeNotionPageId(databaseId);
+  if (!normalizedDatabaseId || normalizedDatabaseId !== databaseId) {
+    throw new BackstageNotionReadError('invalid_database_id', undefined, {
+      notionEndpointKind: 'database_metadata',
+    });
+  }
+  const endpoint = new URL(
+    `/v1/databases/${normalizedDatabaseId}`,
+    NOTION_API_ORIGIN
+  );
+  const response = await fetchNotionResponse(
+    fetchImpl,
+    endpoint,
+    {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${accessToken}`,
+        'Notion-Version': BACKSTAGE_NOTION_API_VERSION,
+      },
+      redirect: 'manual',
+      signal,
+    },
+    'database_metadata'
+  );
+  if (!response.ok) {
+    return throwNotionHttpError(response, 'database_metadata');
+  }
+  const contentType = normalizeNotionResponseContentType(
+    response.headers.get('content-type')
+  );
+  if (contentType !== 'application/json') {
+    await response.body?.cancel().catch(() => undefined);
+    throw new BackstageNotionReadError('invalid_content_type', undefined, {
+      ...responseReadDiagnostics(response, 'database_metadata', false),
+    });
+  }
+  return parseNotionDatabaseMetadataResponse(
+    await readBoundedResponseBody(
+      response,
+      'database_metadata',
+      BACKSTAGE_NOTION_MAX_METADATA_RESPONSE_BYTES
+    ),
+    normalizedDatabaseId,
+    response
+  );
+}
+
+/** Query one exact Notion data source page with a bounded opaque cursor. */
+export async function queryBackstageNotionDataSource(
+  fetchImpl: BackstageNotionFetchImplementation,
+  accessToken: string,
+  dataSourceId: string,
+  startCursor: string | null,
+  signal: AbortSignal
+): Promise<BackstageNotionDataSourceQueryResponse> {
+  const normalizedDataSourceId = normalizeNotionPageId(dataSourceId);
+  if (!normalizedDataSourceId || normalizedDataSourceId !== dataSourceId) {
+    throw new BackstageNotionReadError('invalid_data_source_id', undefined, {
+      notionEndpointKind: 'data_source_query',
+    });
+  }
+  if (
+    startCursor !== null
+    && startCursor.length < 1
+  ) {
+    throw new BackstageNotionReadError('invalid_cursor', undefined, {
+      notionEndpointKind: 'data_source_query',
+    });
+  }
+  const endpoint = new URL(
+    `/v1/data_sources/${normalizedDataSourceId}/query`,
+    NOTION_API_ORIGIN
+  );
+  endpoint.searchParams.append('filter_properties[]', 'title');
+  const requestBody = JSON.stringify({
+    page_size: BACKSTAGE_NOTION_MAX_DATA_SOURCE_QUERY_RESULTS,
+    ...(startCursor === null ? {} : { start_cursor: startCursor }),
+  });
+  if (Buffer.byteLength(requestBody, 'utf8') > BACKSTAGE_NOTION_MAX_REQUEST_BYTES) {
+    throw new BackstageNotionReadError('invalid_cursor', undefined, {
+      notionEndpointKind: 'data_source_query',
+    });
+  }
+  const response = await fetchNotionResponse(
+    fetchImpl,
+    endpoint,
+    {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+        'Notion-Version': BACKSTAGE_NOTION_API_VERSION,
+      },
+      body: requestBody,
+      redirect: 'manual',
+      signal,
+    },
+    'data_source_query'
+  );
+  if (!response.ok) {
+    return throwNotionHttpError(response, 'data_source_query');
+  }
+  const contentType = normalizeNotionResponseContentType(
+    response.headers.get('content-type')
+  );
+  if (contentType !== 'application/json') {
+    await response.body?.cancel().catch(() => undefined);
+    throw new BackstageNotionReadError('invalid_content_type', undefined, {
+      ...responseReadDiagnostics(response, 'data_source_query', false),
+    });
+  }
+  return parseNotionDataSourceQueryResponse(
+    await readBoundedResponseBody(
+      response,
+      'data_source_query',
+      BACKSTAGE_NOTION_MAX_DATA_SOURCE_QUERY_RESPONSE_BYTES
+    ),
     response
   );
 }

@@ -32,7 +32,7 @@ import {
 } from '../src/platform/runtime/env.js';
 import {
   BACKSTAGE_NOTION_ACCESS_TOKEN_ENV_NAME,
-  BACKSTAGE_NOTION_MAX_RESPONSE_BYTES,
+  BACKSTAGE_NOTION_MAX_METADATA_RESPONSE_BYTES,
 } from '../src/shared/backstage/backstageNotionContextCore.js';
 import {
   BACKSTAGE_NOTION_RAG_HEADING_INDEX_VERSION,
@@ -239,6 +239,210 @@ function notionFetch(
   });
 
   return { fetchMock, metadataCalls };
+}
+
+function databaseRootFetch(options: {
+  databaseMetadataDrift?: 'data_sources' | 'in_trash' | 'title';
+  duplicatePageIdAcrossDataSources?: boolean;
+  duplicatePageIdAcrossQueryPages?: boolean;
+  incompleteQuery?: boolean;
+  membershipDrift?: boolean;
+  nestedDataSource?: boolean;
+  opaqueCursorTraversal?: boolean;
+  repeatedCursor?: boolean;
+} = {}) {
+  const databaseId = pageId(0);
+  const firstDataSourceId = pageId(100);
+  const secondDataSourceId = pageId(101);
+  const opaqueCursor = 'opaque cursor/雪:v1';
+  const baseRows = [
+    {
+      pageId: pageId(1),
+      dataSourceId: firstDataSourceId,
+      title: 'Raw authority',
+      markdown: '# Raw\n\nPRIVATE-RAW-CANON',
+    },
+    {
+      pageId: pageId(2),
+      dataSourceId: secondDataSourceId,
+      title: 'SmackDown authority',
+      markdown: '# SmackDown\n\nPRIVATE-SMACKDOWN-CANON',
+    },
+  ];
+  const paginatedRow = {
+    pageId: pageId(3),
+    dataSourceId: firstDataSourceId,
+    title: 'NXT authority',
+    markdown: '# NXT\n\nPRIVATE-NXT-CANON',
+  };
+  const rows = options.opaqueCursorTraversal
+    ? [...baseRows, paginatedRow]
+    : baseRows;
+  let databaseCalls = 0;
+  const queryCalls = new Map<string, number>();
+  const metadataCalls = new Map<string, number>();
+  const requestBodies: unknown[] = [];
+  const fetchMock = jest.fn(async (
+    input: string | URL | Request,
+    init?: RequestInit
+  ): Promise<Response> => {
+    const url = new URL(String(input));
+    if (url.pathname === `/v1/pages/${databaseId}`) {
+      return notionErrorResponse(400, 'validation_error');
+    }
+    if (url.pathname === `/v1/databases/${databaseId}`) {
+      databaseCalls += 1;
+      const metadataDrift = databaseCalls >= 2
+        ? options.databaseMetadataDrift
+        : undefined;
+      return jsonResponse({
+        object: 'database',
+        id: databaseId,
+        parent: { type: 'workspace', workspace: true },
+        title: [{
+          plain_text: metadataDrift === 'title'
+            ? 'Drifted provider database title'
+            : 'Provider database title',
+        }],
+        last_edited_time: fixedTime.toISOString(),
+        in_trash: metadataDrift === 'in_trash',
+        data_sources: metadataDrift === 'data_sources'
+          ? [{ id: firstDataSourceId, name: 'Raw' }]
+          : [
+              { id: firstDataSourceId, name: 'Raw' },
+              { id: secondDataSourceId, name: 'SmackDown' },
+            ],
+      });
+    }
+    const queryMatch = /^\/v1\/data_sources\/([^/]+)\/query$/u.exec(
+      url.pathname
+    );
+    if (queryMatch) {
+      const dataSourceId = queryMatch[1] ?? '';
+      const callCount = (queryCalls.get(dataSourceId) ?? 0) + 1;
+      queryCalls.set(dataSourceId, callCount);
+      const requestBody = JSON.parse(String(init?.body ?? '{}')) as {
+        page_size?: unknown;
+        start_cursor?: unknown;
+      };
+      requestBodies.push(requestBody);
+      if (options.nestedDataSource && dataSourceId === firstDataSourceId) {
+        return jsonResponse({
+          object: 'list',
+          type: 'page_or_data_source',
+          page_or_data_source: {},
+          results: [{ object: 'data_source', id: pageId(300) }],
+          has_more: false,
+          next_cursor: null,
+        });
+      }
+      if (
+        dataSourceId === firstDataSourceId
+        && (
+          options.opaqueCursorTraversal
+          || options.repeatedCursor
+          || options.duplicatePageIdAcrossQueryPages
+        )
+      ) {
+        const firstRow = baseRows[0]!;
+        if (requestBody.start_cursor === undefined) {
+          return jsonResponse({
+            object: 'list',
+            type: 'page_or_data_source',
+            page_or_data_source: {},
+            results: [{ object: 'page', id: firstRow.pageId }],
+            has_more: true,
+            next_cursor: opaqueCursor,
+            request_status: { type: 'complete' },
+          });
+        }
+        if (requestBody.start_cursor === opaqueCursor) {
+          return jsonResponse({
+            object: 'list',
+            type: 'page_or_data_source',
+            page_or_data_source: {},
+            results: options.duplicatePageIdAcrossQueryPages
+              ? [{ object: 'page', id: firstRow.pageId }]
+              : options.repeatedCursor
+                ? []
+                : [{ object: 'page', id: paginatedRow.pageId }],
+            has_more: options.repeatedCursor ?? false,
+            next_cursor: options.repeatedCursor ? opaqueCursor : null,
+            request_status: { type: 'complete' },
+          });
+        }
+      }
+      const row = rows.find(candidate => candidate.dataSourceId === dataSourceId);
+      const returnedPageId = options.duplicatePageIdAcrossDataSources
+        && dataSourceId === secondDataSourceId
+        ? baseRows[0]!.pageId
+        : row?.pageId;
+      const omitForDrift = options.membershipDrift
+        && callCount >= 2
+        && dataSourceId === secondDataSourceId;
+      return jsonResponse({
+        object: 'list',
+        type: 'page_or_data_source',
+        page_or_data_source: {},
+        results: returnedPageId && !omitForDrift
+          ? [{ object: 'page', id: returnedPageId }]
+          : [],
+        has_more: false,
+        next_cursor: null,
+        ...(options.incompleteQuery && dataSourceId === firstDataSourceId
+          ? {
+              request_status: {
+                type: 'incomplete',
+                incomplete_reason: 'query_result_limit_reached',
+              },
+            }
+          : { request_status: { type: 'complete' } }),
+      });
+    }
+    const pageMatch = /^\/v1\/pages\/([^/]+)(\/markdown)?$/u.exec(url.pathname);
+    const row = rows.find(candidate => candidate.pageId === pageMatch?.[1]);
+    if (!row) {
+      return notionErrorResponse(404, 'object_not_found');
+    }
+    if (pageMatch?.[2] === '/markdown') {
+      return jsonResponse({
+        object: 'page_markdown',
+        id: row.pageId,
+        markdown: row.markdown,
+        truncated: false,
+        unknown_block_ids: [],
+      });
+    }
+    metadataCalls.set(
+      row.pageId,
+      (metadataCalls.get(row.pageId) ?? 0) + 1
+    );
+    return jsonResponse({
+      object: 'page',
+      id: row.pageId,
+      parent: {
+        type: 'data_source_id',
+        data_source_id: row.dataSourceId,
+        database_id: databaseId,
+      },
+      properties: {
+        ArbitraryProviderTitleKey: {
+          type: 'title',
+          title: [{ plain_text: row.title }],
+        },
+      },
+      last_edited_time: fixedTime.toISOString(),
+      in_trash: false,
+    });
+  });
+  return {
+    databaseCalls: () => databaseCalls,
+    fetchMock,
+    metadataCalls,
+    queryCalls,
+    requestBodies,
+    rows,
+  };
 }
 
 function snapshotRecord(
@@ -688,6 +892,10 @@ describe('Backstage Notion authority synchronization', () => {
     ))).toBe(true);
     expect([...metadataCalls.values()].every(count => count === 2)).toBe(true);
     expect(fetchMock).toHaveBeenCalledTimes(54);
+    expect(fetchMock.mock.calls.some(call => (
+      new URL(String(call[0])).pathname.includes('/v1/databases/')
+      || new URL(String(call[0])).pathname.includes('/v1/data_sources/')
+    ))).toBe(false);
     expect(repository.releaseSyncLease).toHaveBeenCalledTimes(1);
 
     const logged = JSON.stringify([
@@ -697,6 +905,355 @@ describe('Backstage Notion authority synchronization', () => {
     expect(logged).not.toContain(notionToken);
     expect(logged).not.toContain('PRIVATE-CONTINUITY');
     expect(logged).not.toContain(pageId(15));
+  });
+
+  it('captures every source of a database authority root before activation', async () => {
+    const provider = databaseRootFetch();
+    const repository = repositoryHarness();
+
+    const result = await syncBackstageNotionAuthorityRoot(
+      rootAuthority({ initialMinimumPageCount: 2 }),
+      dependencies({
+        repository: repository.repository,
+        fetchImpl: provider.fetchMock as unknown as typeof fetch,
+      })
+    );
+
+    expect(result).toMatchObject({ status: 'activated', pageCount: 3 });
+    expect(repository.activateSnapshot).toHaveBeenCalledTimes(1);
+    const activation = repository.activateSnapshot.mock.calls[0]?.[0];
+    expect(activation?.pages).toHaveLength(3);
+    expect(activation?.pages.find(page => page.pageId === pageId(0)))
+      .toMatchObject({
+        parentPageId: null,
+        title: 'WWE Universe Mode',
+        canonicalUrl: null,
+        markdown: '',
+        metadata: expect.objectContaining({ sourceObjectType: 'database' }),
+      });
+    for (const row of provider.rows) {
+      expect(activation?.pages.find(page => page.pageId === row.pageId))
+        .toMatchObject({
+          parentPageId: pageId(0),
+          title: row.title,
+          markdown: row.markdown,
+          metadata: expect.objectContaining({ sourceObjectType: 'page' }),
+        });
+      expect(provider.metadataCalls.get(row.pageId)).toBe(2);
+    }
+    expect(provider.databaseCalls()).toBe(2);
+    expect([...provider.queryCalls.values()]).toEqual([2, 2]);
+    expect(provider.requestBodies).toEqual([
+      { page_size: 10 },
+      { page_size: 10 },
+      { page_size: 10 },
+      { page_size: 10 },
+    ]);
+    expect(provider.fetchMock.mock.calls
+      .filter(call => new URL(String(call[0])).pathname.endsWith('/query'))
+      .every(call => new URL(String(call[0])).searchParams.getAll(
+        'filter_properties[]'
+      ).join(',') === 'title')).toBe(true);
+    const rootProbeCalls = provider.fetchMock.mock.calls.filter(call => (
+      new URL(String(call[0])).pathname === `/v1/pages/${pageId(0)}`
+    ));
+    expect(rootProbeCalls).toHaveLength(1);
+    expect(new URL(String(rootProbeCalls[0]?.[0])).search).toBe('');
+    for (const row of provider.rows) {
+      const metadataUrls = provider.fetchMock.mock.calls
+        .map(call => new URL(String(call[0])))
+        .filter(url => url.pathname === `/v1/pages/${row.pageId}`);
+      expect(metadataUrls).toHaveLength(2);
+      expect(metadataUrls.every(url => url.searchParams.getAll(
+        'filter_properties[]'
+      ).join(',') === 'title')).toBe(true);
+    }
+    const serializedTelemetry = JSON.stringify([
+      (logger.info as jest.Mock).mock.calls,
+      (logger.warn as jest.Mock).mock.calls,
+    ]);
+    expect(serializedTelemetry).not.toContain(notionToken);
+    expect(serializedTelemetry).not.toContain(pageId(0));
+    expect(serializedTelemetry).not.toContain('PRIVATE-RAW-CANON');
+  });
+
+  it('does not count the synthetic database container toward initial coverage', async () => {
+    const provider = databaseRootFetch();
+    const repository = repositoryHarness();
+
+    await expect(syncBackstageNotionAuthorityRoot(
+      rootAuthority({ initialMinimumPageCount: 3 }),
+      dependencies({
+        repository: repository.repository,
+        fetchImpl: provider.fetchMock as unknown as typeof fetch,
+      })
+    )).rejects.toMatchObject({
+      code: BACKSTAGE_NOTION_SYNC_INCOMPLETE_ERROR_CODE,
+      diagnostics: expect.objectContaining({
+        phase: 'completeness_validation',
+        reason: 'completeness_mismatch',
+        candidateSnapshotCreated: false,
+        candidateSnapshotActivated: false,
+      }),
+    });
+    expect(repository.activateSnapshot).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when a database query reports a nested data source', async () => {
+    const provider = databaseRootFetch({ nestedDataSource: true });
+    const repository = repositoryHarness();
+
+    await expect(syncBackstageNotionAuthorityRoot(
+      rootAuthority(),
+      dependencies({
+        repository: repository.repository,
+        fetchImpl: provider.fetchMock as unknown as typeof fetch,
+      })
+    )).rejects.toMatchObject({
+      code: BACKSTAGE_NOTION_SYNC_INCOMPLETE_ERROR_CODE,
+      diagnostics: expect.objectContaining({
+        phase: 'discovery',
+        reason: 'completeness_mismatch',
+        candidateSnapshotCreated: false,
+        candidateSnapshotActivated: false,
+      }),
+    });
+    expect(repository.activateSnapshot).not.toHaveBeenCalled();
+  });
+
+  it('fails closed on an incomplete database query response', async () => {
+    const provider = databaseRootFetch({ incompleteQuery: true });
+    const repository = repositoryHarness();
+
+    await expect(syncBackstageNotionAuthorityRoot(
+      rootAuthority(),
+      dependencies({
+        repository: repository.repository,
+        fetchImpl: provider.fetchMock as unknown as typeof fetch,
+      })
+    )).rejects.toMatchObject({
+      code: BACKSTAGE_NOTION_SYNC_ROOT_FAILED_ERROR_CODE,
+      diagnostics: expect.objectContaining({
+        phase: 'discovery',
+        reason: 'permanent_notion_error',
+        notionHttpStatus: 200,
+        notionEndpointKind: 'data_source_query',
+        notionResponseSchemaValid: false,
+        candidateSnapshotCreated: false,
+        candidateSnapshotActivated: false,
+      }),
+    });
+    expect(repository.activateSnapshot).not.toHaveBeenCalled();
+  });
+
+  it('discards a database-root candidate when query membership drifts', async () => {
+    const provider = databaseRootFetch({ membershipDrift: true });
+    const repository = repositoryHarness();
+
+    await expect(syncBackstageNotionAuthorityRoot(
+      rootAuthority(),
+      dependencies({
+        repository: repository.repository,
+        fetchImpl: provider.fetchMock as unknown as typeof fetch,
+      })
+    )).rejects.toMatchObject({
+      code: BACKSTAGE_NOTION_SYNC_SOURCE_DRIFT_ERROR_CODE,
+      diagnostics: expect.objectContaining({
+        phase: 'completeness_validation',
+        reason: 'source_changed',
+        candidateSnapshotCreated: true,
+        candidateSnapshotValidated: false,
+        candidateSnapshotActivated: false,
+      }),
+    });
+    expect(repository.activateSnapshot).not.toHaveBeenCalled();
+  });
+
+  it('traverses opaque database query cursors with exact request bodies', async () => {
+    const provider = databaseRootFetch({ opaqueCursorTraversal: true });
+    const repository = repositoryHarness();
+
+    const result = await syncBackstageNotionAuthorityRoot(
+      rootAuthority({ initialMinimumPageCount: 3 }),
+      dependencies({
+        repository: repository.repository,
+        fetchImpl: provider.fetchMock as unknown as typeof fetch,
+      })
+    );
+
+    expect(result).toMatchObject({ status: 'activated', pageCount: 4 });
+    expect(repository.activateSnapshot).toHaveBeenCalledTimes(1);
+    const activation = repository.activateSnapshot.mock.calls[0]?.[0];
+    expect(activation?.pages.map(page => page.pageId).sort()).toEqual([
+      pageId(0),
+      pageId(1),
+      pageId(2),
+      pageId(3),
+    ].sort());
+    expect(provider.queryCalls.get(pageId(100))).toBe(4);
+    expect(provider.queryCalls.get(pageId(101))).toBe(2);
+    const rawQueryBodies = provider.fetchMock.mock.calls
+      .filter(call => new URL(String(call[0])).pathname.endsWith('/query'))
+      .map(call => call[1]?.body);
+    expect(rawQueryBodies).toEqual([
+      '{"page_size":10}',
+      '{"page_size":10,"start_cursor":"opaque cursor/雪:v1"}',
+      '{"page_size":10}',
+      '{"page_size":10}',
+      '{"page_size":10,"start_cursor":"opaque cursor/雪:v1"}',
+      '{"page_size":10}',
+    ]);
+    expect(provider.requestBodies).toEqual([
+      { page_size: 10 },
+      {
+        page_size: 10,
+        start_cursor: 'opaque cursor/雪:v1',
+      },
+      { page_size: 10 },
+      { page_size: 10 },
+      {
+        page_size: 10,
+        start_cursor: 'opaque cursor/雪:v1',
+      },
+      { page_size: 10 },
+    ]);
+  });
+
+  it('fails closed when a database query repeats an opaque cursor', async () => {
+    const provider = databaseRootFetch({ repeatedCursor: true });
+    const repository = repositoryHarness();
+
+    await expect(syncBackstageNotionAuthorityRoot(
+      rootAuthority(),
+      dependencies({
+        repository: repository.repository,
+        fetchImpl: provider.fetchMock as unknown as typeof fetch,
+      })
+    )).rejects.toMatchObject({
+      code: BACKSTAGE_NOTION_SYNC_INCOMPLETE_ERROR_CODE,
+      diagnostics: expect.objectContaining({
+        phase: 'pagination',
+        reason: 'pagination_incomplete',
+        paginationRequests: 1,
+        candidateSnapshotCreated: false,
+        candidateSnapshotValidated: false,
+        candidateSnapshotActivated: false,
+      }),
+    });
+    expect(provider.databaseCalls()).toBe(1);
+    expect(provider.queryCalls.get(pageId(100))).toBe(2);
+    expect(provider.queryCalls.has(pageId(101))).toBe(false);
+    expect(provider.requestBodies).toEqual([
+      { page_size: 10 },
+      {
+        page_size: 10,
+        start_cursor: 'opaque cursor/雪:v1',
+      },
+    ]);
+    expect(repository.activateSnapshot).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'query pages',
+      { duplicatePageIdAcrossQueryPages: true },
+      [
+        { page_size: 10 },
+        {
+          page_size: 10,
+          start_cursor: 'opaque cursor/雪:v1',
+        },
+      ],
+    ],
+    [
+      'data sources',
+      { duplicatePageIdAcrossDataSources: true },
+      [
+        { page_size: 10 },
+        { page_size: 10 },
+      ],
+    ],
+  ] as const)(
+    'fails closed on duplicate page IDs across %s',
+    async (_scope, options, expectedRequestBodies) => {
+      const provider = databaseRootFetch(options);
+      const repository = repositoryHarness();
+
+      await expect(syncBackstageNotionAuthorityRoot(
+        rootAuthority(),
+        dependencies({
+          repository: repository.repository,
+          fetchImpl: provider.fetchMock as unknown as typeof fetch,
+        })
+      )).rejects.toMatchObject({
+        code: BACKSTAGE_NOTION_SYNC_INCOMPLETE_ERROR_CODE,
+        diagnostics: expect.objectContaining({
+          phase: 'completeness_validation',
+          reason: 'completeness_mismatch',
+          candidateSnapshotCreated: false,
+          candidateSnapshotValidated: false,
+          candidateSnapshotActivated: false,
+        }),
+      });
+      expect(provider.databaseCalls()).toBe(1);
+      expect(provider.requestBodies).toEqual(expectedRequestBodies);
+      expect(provider.metadataCalls.size).toBe(0);
+      expect(repository.activateSnapshot).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each([
+    ['data source set', 'data_sources'],
+    ['title', 'title'],
+  ] as const)(
+    'discards a database-root candidate when database %s drifts',
+    async (_field, databaseMetadataDrift) => {
+      const provider = databaseRootFetch({ databaseMetadataDrift });
+      const repository = repositoryHarness();
+
+      await expect(syncBackstageNotionAuthorityRoot(
+        rootAuthority(),
+        dependencies({
+          repository: repository.repository,
+          fetchImpl: provider.fetchMock as unknown as typeof fetch,
+        })
+      )).rejects.toMatchObject({
+        code: BACKSTAGE_NOTION_SYNC_SOURCE_DRIFT_ERROR_CODE,
+        diagnostics: expect.objectContaining({
+          phase: 'completeness_validation',
+          reason: 'source_changed',
+          candidateSnapshotCreated: true,
+          candidateSnapshotValidated: false,
+          candidateSnapshotActivated: false,
+        }),
+      });
+      expect(provider.databaseCalls()).toBe(2);
+      expect(repository.activateSnapshot).not.toHaveBeenCalled();
+    }
+  );
+
+  it('fails closed when a database root moves to trash during verification', async () => {
+    const provider = databaseRootFetch({ databaseMetadataDrift: 'in_trash' });
+    const repository = repositoryHarness();
+
+    await expect(syncBackstageNotionAuthorityRoot(
+      rootAuthority(),
+      dependencies({
+        repository: repository.repository,
+        fetchImpl: provider.fetchMock as unknown as typeof fetch,
+      })
+    )).rejects.toMatchObject({
+      code: BACKSTAGE_NOTION_SYNC_INCOMPLETE_ERROR_CODE,
+      diagnostics: expect.objectContaining({
+        phase: 'completeness_validation',
+        reason: 'inaccessible_page',
+        candidateSnapshotCreated: true,
+        candidateSnapshotValidated: false,
+        candidateSnapshotActivated: false,
+      }),
+    });
+    expect(provider.databaseCalls()).toBe(2);
+    expect(repository.activateSnapshot).not.toHaveBeenCalled();
   });
 
   it('exhausts nested enhanced-Markdown continuation identifiers exactly once', async () => {
@@ -2213,7 +2770,7 @@ describe('Backstage Notion authority synchronization', () => {
     }
   );
 
-  it('classifies an unexpected permanent Notion 4xx with a bounded provider code', async () => {
+  it('probes only the database endpoint after an exact root page type error', async () => {
     const fetchMock = jest.fn(async (): Promise<Response> => (
       notionErrorResponse(400, 'validation_error')
     ));
@@ -2235,6 +2792,34 @@ describe('Backstage Notion authority synchronization', () => {
         notionFailureCategory: 'permanent_provider',
         notionResponseContentType: 'application/json',
         notionResponseSchemaValid: true,
+        notionEndpointKind: 'database_metadata',
+      }),
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls.map(call => new URL(String(call[0])).pathname))
+      .toEqual([
+        `/v1/pages/${pageId(0)}`,
+        `/v1/databases/${pageId(0)}`,
+      ]);
+    expect(repository.activateSnapshot).not.toHaveBeenCalled();
+  });
+
+  it('does not probe another object type for an unrelated root page 400', async () => {
+    const fetchMock = jest.fn(async (): Promise<Response> => (
+      notionErrorResponse(400, 'invalid_request')
+    ));
+    const repository = repositoryHarness();
+
+    await expect(syncBackstageNotionAuthorityRoot(
+      rootAuthority(),
+      dependencies({
+        repository: repository.repository,
+        fetchImpl: fetchMock as unknown as typeof fetch,
+      })
+    )).rejects.toMatchObject({
+      diagnostics: expect.objectContaining({
+        notionHttpStatus: 400,
+        notionProviderCode: 'invalid_request',
         notionEndpointKind: 'page_metadata',
       }),
     });
@@ -2327,7 +2912,9 @@ describe('Backstage Notion authority synchronization', () => {
       status: 200,
       headers: {
         'content-type': 'application/json',
-        'content-length': String(BACKSTAGE_NOTION_MAX_RESPONSE_BYTES + 1),
+        'content-length': String(
+          BACKSTAGE_NOTION_MAX_METADATA_RESPONSE_BYTES + 1
+        ),
       },
     }));
     const active = activeInventory('active-manifest');

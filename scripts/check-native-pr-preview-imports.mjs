@@ -754,7 +754,7 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ],
   [
     'src/shared/backstage/backstageNotionContextCore.ts',
-    '5debcbb9b67ae3db1cd40925b99ff8f3a6d1665bcbd56cf3d8db2399b9f3601f',
+    '347bb560f826088836ed8a30ffda394b749353b21cc3b863e4eee1f4f94761ed',
   ],
   [
     'src/shared/backstage/backstageNotionPreviewCanary.ts',

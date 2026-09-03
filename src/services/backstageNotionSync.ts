@@ -33,10 +33,13 @@ import {
 } from './backstageNotionAuthority.js';
 import {
   BackstageNotionReadError,
+  fetchBackstageNotionDatabaseMetadata,
   fetchBackstageNotionMarkdownPage,
   fetchBackstageNotionPageMetadata,
   normalizeBackstageNotionPageId,
+  queryBackstageNotionDataSource,
   readBackstageNotionAccessToken,
+  type BackstageNotionDatabaseMetadata,
   type BackstageNotionEndpointKind,
   type BackstageNotionFailureCategory,
   type BackstageNotionFetchImplementation,
@@ -81,6 +84,7 @@ export const BACKSTAGE_NOTION_SYNC_REQUEST_SPACING_MS = 350;
 export const BACKSTAGE_NOTION_SYNC_FETCH_ATTEMPTS = 3;
 export const BACKSTAGE_NOTION_SYNC_EMBEDDING_BATCH_SIZE = 32;
 export const BACKSTAGE_NOTION_SYNC_MAX_MARKDOWN_SEGMENTS_PER_PAGE = 256;
+export const BACKSTAGE_NOTION_SYNC_MAX_DATA_SOURCE_QUERY_REQUESTS = 1_024;
 export const BACKSTAGE_NOTION_SYNC_MAX_RETRY_AFTER_MS = 60_000;
 export const BACKSTAGE_NOTION_SYNC_RETRY_JITTER_MAX_MS = 250;
 export const BACKSTAGE_NOTION_SYNC_LEASE_RENEW_INTERVAL_MS = 60_000;
@@ -89,7 +93,7 @@ export const BACKSTAGE_NOTION_SYNC_CLEANUP_TIMEOUT_MS = 5_000;
 export { BACKSTAGE_NOTION_RAG_INDEX_FORMAT };
 
 const BACKSTAGE_NOTION_RAG_MANIFEST_FORMAT =
-  'backstage-notion-rag-manifest-v5';
+  'backstage-notion-rag-manifest-v6';
 
 const SYNC_HOLDER_ID = `backstage-notion-rag:${process.pid}:${randomUUID()}`;
 const UNSUPPORTED_ENHANCED_MARKDOWN_PATTERN =
@@ -198,11 +202,34 @@ interface PendingPage {
   title: string;
   depth: number;
   path: string[];
+  expectedProviderParentPageId?: string | null;
+  expectedProviderParentDataSourceId?: string | null;
+  membershipDataSourceId?: string | null;
+  appendProviderTitleToPath?: boolean;
+  preloadedMetadata?: BackstageNotionPageMetadata;
 }
 
 interface CapturedPage {
   prepared: BackstageNotionPreparedRagPage;
   metadata: BackstageNotionPageMetadata;
+  sourceObjectType: 'page' | 'database';
+  membershipDataSourceId: string | null;
+  databaseDataSourceIds: readonly string[];
+}
+
+interface DatabaseRootPageMembership {
+  pageId: string;
+  dataSourceId: string;
+}
+
+interface DatabaseRootCaptureState {
+  metadata: BackstageNotionDatabaseMetadata;
+  pages: readonly DatabaseRootPageMembership[];
+}
+
+interface CapturedHierarchy {
+  pages: CapturedPage[];
+  databaseRoot: DatabaseRootCaptureState | null;
 }
 
 function sha256(value: string): string {
@@ -902,8 +929,13 @@ function validateFetchedPage(
     metadata.pageId !== pending.pageId
     || metadata.inTrash
     || (
-      pending.parentPageId !== null
-      && metadata.parentPageId !== pending.parentPageId
+      pending.expectedProviderParentPageId !== undefined
+      && metadata.parentPageId !== pending.expectedProviderParentPageId
+    )
+    || (
+      pending.expectedProviderParentDataSourceId !== undefined
+      && (metadata.parentDataSourceId ?? null)
+        !== pending.expectedProviderParentDataSourceId
     )
   ) {
     throw incompleteSyncError(
@@ -921,6 +953,12 @@ function buildManifestHash(pages: readonly CapturedPage[]): string {
     .map(page => ({
       pageId: page.prepared.pageId,
       parentPageId: page.prepared.parentPageId,
+      sourceObjectType: page.sourceObjectType,
+      sourceParentType: page.metadata.parentType ?? null,
+      sourceParentId: page.metadata.parentId ?? null,
+      sourceTitle: page.metadata.title ?? null,
+      membershipDataSourceId: page.membershipDataSourceId,
+      databaseDataSourceIds: [...page.databaseDataSourceIds].sort(),
       title: page.prepared.title,
       path: page.prepared.path,
       sourceHash: page.prepared.sourceHash,
@@ -1113,11 +1151,13 @@ async function buildSnapshotChunks(input: {
 function buildSnapshotPages(
   pages: readonly CapturedPage[]
 ): BackstageNotionSnapshotPageInput[] {
-  return pages.map(({ prepared, metadata }) => ({
+  return pages.map(({ prepared, metadata, sourceObjectType }) => ({
     pageId: prepared.pageId,
     parentPageId: prepared.parentPageId,
     title: prepared.title,
-    canonicalUrl: canonicalPageUrl(prepared.pageId),
+    canonicalUrl: sourceObjectType === 'page'
+      ? canonicalPageUrl(prepared.pageId)
+      : null,
     contentHash: prepared.sourceHash,
     markdown: prepared.sanitizedMarkdown,
     sourceLastEditedAt: metadata.lastEditedAt,
@@ -1129,14 +1169,189 @@ function buildSnapshotPages(
       contentCodePoints: codePointLength(prepared.sanitizedMarkdown),
       headingIndexVersion: BACKSTAGE_NOTION_RAG_HEADING_INDEX_VERSION,
       indexFormat: BACKSTAGE_NOTION_RAG_INDEX_FORMAT,
+      sourceObjectType,
       scopePathKey: normalizeBackstageNotionScopePath(prepared.path),
       scopeTitleKey: normalizeBackstageNotionScopeKey(prepared.title),
     },
   }));
 }
 
+function isExactDatabaseRootFallback(error: unknown): boolean {
+  return error instanceof BackstageNotionReadError
+    && error.category === 'http_400'
+    && error.notionHttpStatus === 400
+    && error.notionProviderCode === 'validation_error'
+    && error.notionFailureCategory === 'permanent_provider'
+    && error.notionResponseContentType === 'application/json'
+    && error.notionResponseSchemaValid === true
+    && error.notionEndpointKind === 'page_metadata';
+}
+
+function databaseRootStateMatches(
+  left: DatabaseRootCaptureState,
+  right: DatabaseRootCaptureState
+): boolean {
+  if (
+    left.metadata.databaseId !== right.metadata.databaseId
+    || left.metadata.inTrash !== right.metadata.inTrash
+    || left.metadata.parentType !== right.metadata.parentType
+    || left.metadata.parentId !== right.metadata.parentId
+    || left.metadata.title !== right.metadata.title
+    || left.metadata.lastEditedAt.getTime()
+      !== right.metadata.lastEditedAt.getTime()
+  ) {
+    return false;
+  }
+  const leftDataSourceIds = [...left.metadata.dataSourceIds].sort();
+  const rightDataSourceIds = [...right.metadata.dataSourceIds].sort();
+  if (
+    leftDataSourceIds.length !== rightDataSourceIds.length
+    || leftDataSourceIds.some((value, index) => (
+      value !== rightDataSourceIds[index]
+    ))
+    || left.pages.length !== right.pages.length
+  ) {
+    return false;
+  }
+  return left.pages.every((page, index) => {
+    const candidate = right.pages[index];
+    return candidate !== undefined
+      && page.pageId === candidate.pageId
+      && page.dataSourceId === candidate.dataSourceId;
+  });
+}
+
+async function loadDatabaseRootCaptureState(input: {
+  rootPageId: string;
+  request: <T>(operation: (signal: AbortSignal) => Promise<T>) => Promise<T>;
+  fetchImpl: BackstageNotionFetchImplementation;
+  accessToken: string;
+  progress: BackstageNotionSyncProgress;
+}): Promise<DatabaseRootCaptureState> {
+  input.progress.phase = 'page_fetch';
+  const metadata = await input.request(signal =>
+    fetchBackstageNotionDatabaseMetadata(
+      input.fetchImpl,
+      input.accessToken,
+      input.rootPageId,
+      signal
+    )
+  );
+  if (metadata.inTrash) {
+    throw incompleteSyncError(
+      input.progress,
+      'completeness_validation',
+      'inaccessible_page',
+      'The configured Notion database authority root is unavailable.'
+    );
+  }
+
+  const pages: DatabaseRootPageMembership[] = [];
+  const seenPageIds = new Set<string>([input.rootPageId]);
+  let queryRequestCount = 0;
+  for (const dataSourceId of [...metadata.dataSourceIds].sort()) {
+    let cursor: string | null = null;
+    const seenCursorDigests = new Set<string>();
+    while (true) {
+      if (
+        queryRequestCount
+        >= BACKSTAGE_NOTION_SYNC_MAX_DATA_SOURCE_QUERY_REQUESTS
+      ) {
+        throw incompleteSyncError(
+          input.progress,
+          'pagination',
+          'pagination_incomplete',
+          'The Notion database authority root exceeds the bounded query limit.'
+        );
+      }
+      input.progress.phase = cursor === null ? 'discovery' : 'pagination';
+      if (cursor !== null) {
+        input.progress.paginationRequests += 1;
+      }
+      queryRequestCount += 1;
+      const response = await input.request(signal =>
+        queryBackstageNotionDataSource(
+          input.fetchImpl,
+          input.accessToken,
+          dataSourceId,
+          cursor,
+          signal
+        )
+      );
+      for (const result of response.results) {
+        if (result.kind === 'data_source') {
+          throw incompleteSyncError(
+            input.progress,
+            'discovery',
+            'completeness_mismatch',
+            'The Notion database authority root contains a nested database that cannot be synchronized completely.'
+          );
+        }
+        if (
+          seenPageIds.has(result.pageId)
+          || pages.length >= BACKSTAGE_NOTION_SYNC_MAX_PAGES - 1
+        ) {
+          throw incompleteSyncError(
+            input.progress,
+            'completeness_validation',
+            'completeness_mismatch',
+            'The Notion database authority root could not be verified completely.'
+          );
+        }
+        seenPageIds.add(result.pageId);
+        pages.push({ pageId: result.pageId, dataSourceId });
+      }
+      if (!response.hasMore) {
+        break;
+      }
+      const nextCursor = response.nextCursor;
+      const nextCursorDigest = nextCursor === null ? null : sha256(nextCursor);
+      if (
+        nextCursor === null
+        || nextCursorDigest === null
+        || seenCursorDigests.has(nextCursorDigest)
+      ) {
+        throw incompleteSyncError(
+          input.progress,
+          'pagination',
+          'pagination_incomplete',
+          'The Notion database authority root returned incomplete or cyclic pagination.'
+        );
+      }
+      seenCursorDigests.add(nextCursorDigest);
+      cursor = nextCursor;
+    }
+  }
+  if (pages.length === 0) {
+    throw incompleteSyncError(
+      input.progress,
+      'completeness_validation',
+      'completeness_mismatch',
+      'The Notion database authority root did not expose any complete pages.'
+    );
+  }
+  pages.sort((left, right) => left.pageId.localeCompare(right.pageId));
+  return { metadata, pages: Object.freeze(pages) };
+}
+
+function sourceDriftError(
+  progress: BackstageNotionSyncProgress
+): BackstageNotionSyncError {
+  return new BackstageNotionSyncError(
+    BACKSTAGE_NOTION_SYNC_SOURCE_DRIFT_ERROR_CODE,
+    'The Notion hierarchy changed during synchronization; the candidate snapshot was discarded.',
+    snapshotSyncFailureDiagnostics(
+      progress,
+      'completeness_validation',
+      'source_changed'
+    )
+  );
+}
+
 async function verifyHierarchyDidNotDrift(input: {
   pages: readonly CapturedPage[];
+  databaseRoot: DatabaseRootCaptureState | null;
+  rootPageId: string;
   request: <T>(operation: (signal: AbortSignal) => Promise<T>) => Promise<T>;
   fetchImpl: BackstageNotionFetchImplementation;
   accessToken: string;
@@ -1144,28 +1359,48 @@ async function verifyHierarchyDidNotDrift(input: {
 }): Promise<void> {
   input.progress.phase = 'completeness_validation';
   for (const page of input.pages) {
+    if (
+      input.databaseRoot !== null
+      && page.prepared.pageId === input.rootPageId
+    ) {
+      continue;
+    }
     const verified = await input.request(signal =>
       fetchBackstageNotionPageMetadata(
         input.fetchImpl,
         input.accessToken,
         page.prepared.pageId,
-        signal
+        signal,
+        { requireTitle: page.membershipDataSourceId !== null }
       )
     );
     if (
       verified.inTrash
       || verified.parentPageId !== page.metadata.parentPageId
+      || (verified.parentDataSourceId ?? null)
+        !== (page.metadata.parentDataSourceId ?? null)
+      || (verified.parentType ?? null) !== (page.metadata.parentType ?? null)
+      || (verified.parentId ?? null) !== (page.metadata.parentId ?? null)
       || verified.lastEditedAt.getTime() !== page.metadata.lastEditedAt.getTime()
+      || (
+        page.metadata.title !== undefined
+        && page.metadata.title !== null
+        && verified.title !== page.metadata.title
+      )
     ) {
-      throw new BackstageNotionSyncError(
-        BACKSTAGE_NOTION_SYNC_SOURCE_DRIFT_ERROR_CODE,
-        'The Notion hierarchy changed during synchronization; the candidate snapshot was discarded.',
-        snapshotSyncFailureDiagnostics(
-          input.progress,
-          'completeness_validation',
-          'source_changed'
-        )
-      );
+      throw sourceDriftError(input.progress);
+    }
+  }
+  if (input.databaseRoot !== null) {
+    const verifiedDatabaseRoot = await loadDatabaseRootCaptureState({
+      rootPageId: input.rootPageId,
+      request: input.request,
+      fetchImpl: input.fetchImpl,
+      accessToken: input.accessToken,
+      progress: input.progress,
+    });
+    if (!databaseRootStateMatches(input.databaseRoot, verifiedDatabaseRoot)) {
+      throw sourceDriftError(input.progress);
     }
   }
 }
@@ -1176,19 +1411,90 @@ async function captureHierarchy(input: {
   accessToken: string;
   request: <T>(operation: (signal: AbortSignal) => Promise<T>) => Promise<T>;
   progress: BackstageNotionSyncProgress;
-}): Promise<CapturedPage[]> {
-  const queue: PendingPage[] = [{
-    pageId: input.root.rootPageId,
-    parentPageId: null,
-    title: input.root.displayName,
-    depth: 0,
-    path: [input.root.displayName],
-  }];
-  const discovered = new Map<string, string | null>([[input.root.rootPageId, null]]);
+}): Promise<CapturedHierarchy> {
+  const queue: PendingPage[] = [];
+  const discovered = new Map<string, string | null>([
+    [input.root.rootPageId, null],
+  ]);
   const captured: CapturedPage[] = [];
   let totalCodePoints = 0;
-  input.progress.phase = 'discovery';
   input.progress.pagesDiscovered = 1;
+  input.progress.phase = 'page_fetch';
+  let rootPageMetadata: BackstageNotionPageMetadata | null = null;
+  let databaseRoot: DatabaseRootCaptureState | null = null;
+  try {
+    rootPageMetadata = await input.request(signal =>
+      fetchBackstageNotionPageMetadata(
+        input.fetchImpl,
+        input.accessToken,
+        input.root.rootPageId,
+        signal
+      )
+    );
+  } catch (error) {
+    if (!isExactDatabaseRootFallback(error)) {
+      throw error;
+    }
+    databaseRoot = await loadDatabaseRootCaptureState({
+      rootPageId: input.root.rootPageId,
+      request: input.request,
+      fetchImpl: input.fetchImpl,
+      accessToken: input.accessToken,
+      progress: input.progress,
+    });
+  }
+
+  if (databaseRoot === null) {
+    queue.push({
+      pageId: input.root.rootPageId,
+      parentPageId: null,
+      title: input.root.displayName,
+      depth: 0,
+      path: [input.root.displayName],
+      preloadedMetadata: rootPageMetadata ?? undefined,
+    });
+  } else {
+    const metadata: BackstageNotionPageMetadata = {
+      pageId: input.root.rootPageId,
+      parentPageId: null,
+      parentDataSourceId: null,
+      parentType: databaseRoot.metadata.parentType,
+      parentId: databaseRoot.metadata.parentId,
+      title: databaseRoot.metadata.title,
+      lastEditedAt: databaseRoot.metadata.lastEditedAt,
+      inTrash: false,
+    };
+    captured.push({
+      prepared: prepareBackstageNotionRagPage({
+        universeId: input.root.universeId,
+        pageId: input.root.rootPageId,
+        parentPageId: null,
+        title: input.root.displayName,
+        path: [input.root.displayName],
+        markdown: '',
+        sourceLastEditedAt: metadata.lastEditedAt.toISOString(),
+      }),
+      metadata,
+      sourceObjectType: 'database',
+      membershipDataSourceId: null,
+      databaseDataSourceIds: databaseRoot.metadata.dataSourceIds,
+    });
+    for (const page of databaseRoot.pages) {
+      discovered.set(page.pageId, input.root.rootPageId);
+      queue.push({
+        pageId: page.pageId,
+        parentPageId: input.root.rootPageId,
+        title: '',
+        depth: 1,
+        path: [input.root.displayName],
+        expectedProviderParentDataSourceId: page.dataSourceId,
+        membershipDataSourceId: page.dataSourceId,
+        appendProviderTitleToPath: true,
+      });
+    }
+    input.progress.pagesDiscovered = discovered.size;
+  }
+  let providerPagesFetched = 0;
 
   while (queue.length > 0) {
     const pending = queue.shift();
@@ -1208,15 +1514,30 @@ async function captureHierarchy(input: {
     }
 
     input.progress.phase = 'page_fetch';
-    const metadata = await input.request(signal =>
+    const metadata = pending.preloadedMetadata ?? await input.request(signal =>
       fetchBackstageNotionPageMetadata(
         input.fetchImpl,
         input.accessToken,
         pending.pageId,
-        signal
+        signal,
+        { requireTitle: pending.appendProviderTitleToPath === true }
       )
     );
     validateFetchedPage(pending, metadata, input.progress);
+    const title = pending.appendProviderTitleToPath
+      ? metadata.title
+      : pending.title;
+    if (typeof title !== 'string' || title.length === 0) {
+      throw incompleteSyncError(
+        input.progress,
+        'completeness_validation',
+        'completeness_mismatch',
+        'A Notion database row did not expose complete page metadata.'
+      );
+    }
+    const path = pending.appendProviderTitleToPath
+      ? [...pending.path, title]
+      : pending.path;
     const markdown = await fetchCompleteBackstageNotionMarkdown({
       pageId: pending.pageId,
       fetchImpl: input.fetchImpl,
@@ -1247,8 +1568,8 @@ async function captureHierarchy(input: {
       universeId: input.root.universeId,
       pageId: pending.pageId,
       parentPageId: pending.parentPageId,
-      title: pending.title,
-      path: pending.path,
+      title,
+      path,
       markdown,
       sourceLastEditedAt: metadata.lastEditedAt.toISOString(),
     });
@@ -1266,8 +1587,15 @@ async function captureHierarchy(input: {
         'The Notion hierarchy contains an ambiguous child-page reference.'
       );
     }
-    captured.push({ prepared, metadata });
-    input.progress.pagesFetched = captured.length;
+    captured.push({
+      prepared,
+      metadata,
+      sourceObjectType: 'page',
+      membershipDataSourceId: pending.membershipDataSourceId ?? null,
+      databaseDataSourceIds: Object.freeze([]),
+    });
+    providerPagesFetched += 1;
+    input.progress.pagesFetched = providerPagesFetched;
 
     for (const child of prepared.childPages) {
       const priorParent = discovered.get(child.pageId);
@@ -1289,12 +1617,14 @@ async function captureHierarchy(input: {
         parentPageId: pending.pageId,
         title: child.title,
         depth: pending.depth + 1,
-        path: [...pending.path, child.title],
+        path: [...path, child.title],
+        expectedProviderParentPageId: pending.pageId,
+        expectedProviderParentDataSourceId: null,
       });
     }
   }
 
-  return captured;
+  return { pages: captured, databaseRoot };
 }
 
 function sourceMaximumEditedAt(pages: readonly CapturedPage[]): Date | null {
@@ -1603,18 +1933,19 @@ export async function syncBackstageNotionAuthorityRoot(
       signal: heartbeat.signal,
     });
     const startedAt = Date.now();
-    const pages = await captureHierarchy({
+    const hierarchy = await captureHierarchy({
       root,
       fetchImpl,
       accessToken,
       request,
       progress,
     });
+    const pages = hierarchy.pages;
     progress.phase = 'completeness_validation';
     if (!initialActivationMeetsCoverage({
       root,
       activeInventory,
-      pageCount: pages.length,
+      pageCount: pages.filter(page => page.sourceObjectType === 'page').length,
     })) {
       throw incompleteSyncError(
         progress,
@@ -1637,6 +1968,8 @@ export async function syncBackstageNotionAuthorityRoot(
     ) {
       await verifyHierarchyDidNotDrift({
         pages,
+        databaseRoot: hierarchy.databaseRoot,
+        rootPageId: root.rootPageId,
         request,
         fetchImpl,
         accessToken,
@@ -1715,6 +2048,8 @@ export async function syncBackstageNotionAuthorityRoot(
     progress.candidateSnapshotCreated = true;
     await verifyHierarchyDidNotDrift({
       pages,
+      databaseRoot: hierarchy.databaseRoot,
+      rootPageId: root.rootPageId,
       request,
       fetchImpl,
       accessToken,
