@@ -420,7 +420,11 @@ describe('Gate R2 bounded masked projector session', () => {
     ['timeout', 'GATE_R2_SESSION_PROJECTOR_TIMEOUT']
   ])('fails closed for bounded-process fixture %s', (mode, expectedCode) => {
     const result = runBoundedFixture(mode, mode === 'timeout' ? 100 : 5_000);
-    expect(result.status).toBe(0);
+    expect({
+      status: result.status,
+      signal: result.signal,
+      errorCode: result.error?.code ?? null
+    }).toEqual({ status: 0, signal: null, errorCode: null });
     expect(result.stderr).toBe('');
     expect(result.stdout.trim()).toBe(expectedCode);
   });

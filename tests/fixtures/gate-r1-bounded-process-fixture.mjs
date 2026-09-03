@@ -8,9 +8,11 @@ switch (mode) {
     break;
   case 'stdout-over':
     process.stdout.write(Buffer.alloc(2049, 0x41));
+    setTimeout(() => {}, 60_000);
     break;
   case 'stderr-over':
     process.stderr.write(Buffer.alloc(257, 0x42));
+    setTimeout(() => {}, 60_000);
     break;
   case 'invalid-utf8':
     process.stdout.write(Buffer.from([0xc3, 0x28]));
