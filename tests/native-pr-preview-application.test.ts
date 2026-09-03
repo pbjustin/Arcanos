@@ -1708,6 +1708,24 @@ describe('native PR contained application', () => {
       ]
     ).toBe(contract.partitionCutoverRepairProofVersion);
     expect(
+      notionAuthorityRag.headers[
+        contract.proofHeaders.notionReadDiagnosticsVersion
+      ]
+    ).toBe(contract.notionReadDiagnosticsProofVersion);
+    const notionDiagnosticsPublicProjection = [
+      notionAuthorityRag.text,
+      JSON.stringify(notionAuthorityRag.headers),
+    ].join('\n');
+    expect(notionDiagnosticsPublicProjection).not.toMatch(
+      /PRIVATE-NOTION-DIAGNOSTICS|preview-notion-diagnostics|cccccccc-cccc-4ccc-8ccc-cccccccccccc|a0{31}/u
+    );
+    expect(notionDiagnosticsPublicProjection).not.toContain(
+      'BackstageNotionReadError'
+    );
+    expect(notionDiagnosticsPublicProjection).not.toContain(
+      'Backstage Notion reference is unavailable.'
+    );
+    expect(
       partitionFailureTelemetry.headers[
         contract.proofHeaders.partitionFailureTelemetryVersion
       ]
@@ -1758,6 +1776,22 @@ describe('native PR contained application', () => {
       expect(
         response.headers[
           contract.proofHeaders.partitionCutoverRepairVersion
+        ]
+      ).toBeUndefined();
+    }
+    for (const response of [
+      routeBudget,
+      hrcRetryCache,
+      reviewCompletion,
+      compactRetry,
+      productionOutputContracts,
+      partitionFailureTelemetry,
+      continuityQuery,
+      continuitySubtree,
+    ]) {
+      expect(
+        response.headers[
+          contract.proofHeaders.notionReadDiagnosticsVersion
         ]
       ).toBeUndefined();
     }
@@ -2253,6 +2287,9 @@ describe('native PR contained application', () => {
       ).toBeUndefined();
       expect(
         response.headers[contract.proofHeaders.partitionCutoverRepairVersion]
+      ).toBeUndefined();
+      expect(
+        response.headers[contract.proofHeaders.notionReadDiagnosticsVersion]
       ).toBeUndefined();
       expect(
         response.headers[

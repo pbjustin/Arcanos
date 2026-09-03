@@ -106,6 +106,20 @@ Launcher behavior:
   path. It does not prove a valid Notion credential or page share, PostgreSQL
   activation, worker scheduling, the normal authenticated route, or an OpenAI
   request.
+- Before returning its byte-compatible body, the same selector sends
+  server-owned synthetic `409` error envelopes through the production-shared
+  page readers. It proves official `conflict_error` is classified as
+  `transient_provider`, an identifier-like unknown provider code is reduced to
+  `null` with an invalid schema, exact-allowlists the errors' enumerable
+  diagnostic keys, and scans that serialized projection plus the fixed error
+  message for the credential, page ID, raw message, extra body data, and rejected
+  code. Raw error objects are never returned; `Error.stack` and other
+  non-enumerable or symbol-keyed own values are outside this proof. The exact-head verifier requires
+  `x-arcanos-preview-backstage-notion-read-diagnostics-version:
+  backstage-notion-read-diagnostics/v1`; the response body remains compatible
+  with the trusted base verifier. This is shared-reader policy evidence only: it
+  does not execute the production sync retry loop, candidate repository/SQL,
+  PostgreSQL migration or activation fencing, or backfill.
 - The same sealed Notion-authority selector executes the production-shared pure
   partition configuration, page-material classification, routing,
   manifest-membership, reconciliation-planning, and sync request/job/result

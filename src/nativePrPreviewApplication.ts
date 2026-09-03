@@ -167,6 +167,7 @@ import {
   BACKSTAGE_NOTION_API_VERSION,
   BACKSTAGE_NOTION_SYSTEM_POLICY_PROMPT,
   BACKSTAGE_NOTION_UNIVERSE_PAGES_ENV_NAME,
+  BackstageNotionReadError,
   buildBackstageNotionUntrustedContextPrompt,
   fetchBackstageNotionMarkdownPage,
   fetchBackstageNotionPageMetadata,
@@ -3595,6 +3596,171 @@ interface BackstageGenerationFixtureExecution {
     | null;
 }
 
+async function captureBackstageNotionReadError(
+  operation: () => Promise<unknown>
+): Promise<BackstageNotionReadError> {
+  try {
+    await operation();
+  } catch (error) {
+    if (error instanceof BackstageNotionReadError) {
+      return error;
+    }
+  }
+  throw new Error('PREVIEW_BACKSTAGE_NOTION_READ_ERROR_MISSING');
+}
+
+async function assertBackstageNotionReadDiagnosticsFixture(): Promise<void> {
+  const pageId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+  const syntheticCredential = 'preview-notion-diagnostics-non-secret';
+  const privateMessage = 'PRIVATE-NOTION-DIAGNOSTICS-MESSAGE';
+  const privateBody = 'PRIVATE-NOTION-DIAGNOSTICS-BODY';
+  const unknownProviderCode = `a${'0'.repeat(31)}`;
+  const responses = [
+    new Response(JSON.stringify({
+      object: 'error',
+      status: 409,
+      code: 'conflict_error',
+      message: privateMessage,
+      additional_data: { private: privateBody },
+    }), {
+      status: 409,
+      headers: { 'content-type': 'application/json; charset=utf-8' },
+    }),
+    new Response(JSON.stringify({
+      object: 'error',
+      status: 409,
+      code: unknownProviderCode,
+      message: privateMessage,
+      additional_data: { private: privateBody },
+    }), {
+      status: 409,
+      headers: { 'content-type': 'application/json; charset=utf-8' },
+    }),
+  ];
+  let requestCount = 0;
+  const notionFetch = async (
+    input: string | URL | Request,
+    init: RequestInit = {}
+  ): Promise<Response> => {
+    const endpoint = input instanceof URL ? input : new URL(String(input));
+    const headers = new Headers(init.headers);
+    const expectedPath = requestCount === 0
+      ? `/v1/pages/${pageId}`
+      : `/v1/pages/${pageId}/markdown`;
+    const expectedSearch = requestCount === 0
+      ? ''
+      : '?include_transcript=false';
+    if (
+      requestCount >= responses.length
+      || endpoint.origin !== 'https://api.notion.com'
+      || endpoint.pathname !== expectedPath
+      || endpoint.search !== expectedSearch
+      || init.method !== 'GET'
+      || init.redirect !== 'manual'
+      || init.body !== undefined
+      || !(init.signal instanceof AbortSignal)
+      || headers.get('accept') !== 'application/json'
+      || headers.get('authorization') !== `Bearer ${syntheticCredential}`
+      || headers.get('notion-version') !== BACKSTAGE_NOTION_API_VERSION
+    ) {
+      throw new Error('PREVIEW_BACKSTAGE_NOTION_DIAGNOSTICS_REQUEST_INVALID');
+    }
+    const response = responses[requestCount];
+    requestCount += 1;
+    if (!response) {
+      throw new Error('PREVIEW_BACKSTAGE_NOTION_DIAGNOSTICS_RESPONSE_MISSING');
+    }
+    return response;
+  };
+  const signal = new AbortController().signal;
+  const conflictError = await captureBackstageNotionReadError(() => (
+    fetchBackstageNotionPageMetadata(
+      notionFetch,
+      syntheticCredential,
+      pageId,
+      signal
+    )
+  ));
+  const unknownCodeError = await captureBackstageNotionReadError(() => (
+    fetchBackstageNotionMarkdownPage(
+      notionFetch,
+      syntheticCredential,
+      pageId,
+      signal
+    )
+  ));
+  const publicProof = JSON.stringify({
+    conflict: {
+      category: conflictError.category,
+      endpointKind: conflictError.notionEndpointKind,
+      failureCategory: conflictError.notionFailureCategory,
+      httpStatus: conflictError.notionHttpStatus,
+      providerCode: conflictError.notionProviderCode,
+      responseContentType: conflictError.notionResponseContentType,
+      responseSchemaValid: conflictError.notionResponseSchemaValid,
+    },
+    unknownCode: {
+      category: unknownCodeError.category,
+      endpointKind: unknownCodeError.notionEndpointKind,
+      failureCategory: unknownCodeError.notionFailureCategory,
+      httpStatus: unknownCodeError.notionHttpStatus,
+      providerCode: unknownCodeError.notionProviderCode,
+      responseContentType: unknownCodeError.notionResponseContentType,
+      responseSchemaValid: unknownCodeError.notionResponseSchemaValid,
+    },
+  });
+  const expectedEnumerableErrorKeys = [
+    'category',
+    'name',
+    'notionEndpointKind',
+    'notionFailureCategory',
+    'notionHttpStatus',
+    'notionProviderCode',
+    'notionResponseContentType',
+    'notionResponseSchemaValid',
+    'retryAfterMs',
+  ];
+  const enumerableErrorKeysExact = [conflictError, unknownCodeError].every(
+    error => JSON.stringify(Object.keys(error).sort())
+      === JSON.stringify(expectedEnumerableErrorKeys)
+  );
+  const serializedProjectedErrors = [conflictError, unknownCodeError]
+    .map(error => `${error.message}\n${JSON.stringify(error)}`)
+    .join('\n');
+  const sensitiveValues = [
+    syntheticCredential,
+    pageId,
+    privateMessage,
+    privateBody,
+    unknownProviderCode,
+  ];
+  if (
+    requestCount !== 2
+    || conflictError.category !== 'http_409'
+    || conflictError.notionHttpStatus !== 409
+    || conflictError.notionProviderCode !== 'conflict_error'
+    || conflictError.notionFailureCategory !== 'transient_provider'
+    || conflictError.notionResponseContentType !== 'application/json'
+    || conflictError.notionResponseSchemaValid !== true
+    || conflictError.notionEndpointKind !== 'page_metadata'
+    || unknownCodeError.category !== 'http_409'
+    || unknownCodeError.notionHttpStatus !== 409
+    || unknownCodeError.notionProviderCode !== null
+    || unknownCodeError.notionFailureCategory !== 'transient_provider'
+    || unknownCodeError.notionResponseContentType !== 'application/json'
+    || unknownCodeError.notionResponseSchemaValid !== false
+    || unknownCodeError.notionEndpointKind !== 'page_markdown'
+    || conflictError.message !== 'Backstage Notion reference is unavailable.'
+    || unknownCodeError.message !== 'Backstage Notion reference is unavailable.'
+    || !enumerableErrorKeysExact
+    || Buffer.byteLength(publicProof, 'utf8') > 1_024
+    || sensitiveValues.some(value => publicProof.includes(value))
+    || sensitiveValues.some(value => serializedProjectedErrors.includes(value))
+  ) {
+    throw new Error('PREVIEW_BACKSTAGE_NOTION_READ_DIAGNOSTICS_INVALID');
+  }
+}
+
 async function runBackstageNotionAuthorityRagFixture(
   fixture: string,
   connectivityProbe: () => Promise<BackstageNotionPreviewConnectivityResult>
@@ -3603,6 +3769,7 @@ async function runBackstageNotionAuthorityRagFixture(
   if (!connectivity.apiReached || !connectivity.authenticationRejected) {
     throw new Error('PREVIEW_BACKSTAGE_NOTION_CONNECTIVITY_INVALID');
   }
+  await assertBackstageNotionReadDiagnosticsFixture();
 
   const universeId = 'native-preview-notion-authority';
   const pageId = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
@@ -9016,6 +9183,18 @@ export function createNativePrPreviewApplication(
                 .partitionCutoverRepairVersion,
               NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT
                 .partitionCutoverRepairProofVersion
+            );
+          }
+          if (
+            fixture
+              === NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.fixtures
+                .notionAuthorityRag
+          ) {
+            response.setHeader(
+              NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.proofHeaders
+                .notionReadDiagnosticsVersion,
+              NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT
+                .notionReadDiagnosticsProofVersion
             );
           }
           if (

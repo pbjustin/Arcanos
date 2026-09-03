@@ -355,6 +355,22 @@ recognition over sealed content. It does not use a live credential, read a live
 page, connect to PostgreSQL, run the authority worker, call a model provider, or
 reach a protected effect.
 
+Before returning its byte-compatible body, the same Notion-authority selector
+sends two server-owned synthetic `409` envelopes through the production-shared
+page readers. It requires official `conflict_error` to classify as
+`transient_provider` and an identifier-like unknown provider code to become
+`notionProviderCode: null` with an invalid response schema. The fixture
+exact-allowlists the errors' enumerable diagnostic keys and scans that
+serialized projection plus the fixed error message for the synthetic credential,
+page ID, provider message, extra body data, and rejected code. Raw error objects
+are never returned; `Error.stack` and other non-enumerable or symbol-keyed own
+values are outside this proof. The exact-head verifier requires
+`x-arcanos-preview-backstage-notion-read-diagnostics-version:
+backstage-notion-read-diagnostics/v1`; the response body remains compatible with
+the trusted base verifier. This is shared-reader component evidence only: it does
+not execute the production sync retry loop, candidate repository or SQL,
+PostgreSQL migration, backfill, or activation fencing.
+
 The exact `POST /mcp/body-cap-contract` surface accepts only the server-owned
 `effective-limits` selector. It imports the config-free core used by the
 production MCP pre-parser and feeds it six deterministic, chunked,

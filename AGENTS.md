@@ -123,6 +123,16 @@ Choose the smallest set covering the change, then expand for cross-cutting or re
 
 ## Operational and security safety
 
+- The sealed `notion-authority-rag-contract` selector sends two server-owned
+  synthetic `409` envelopes through semantic-digest-pinned page readers before
+  returning its unchanged body. It proves official `conflict_error`
+  classification and unknown provider-code rejection, exact-allowlists and
+  scans only the enumerable diagnostic projection plus fixed error message, and
+  carries `x-arcanos-preview-backstage-notion-read-diagnostics-version`. Raw
+  error objects are not returned; stack, non-enumerable, and symbol-keyed own
+  values are outside this proof. It does not execute the sync retry loop,
+  candidate repository or SQL, PostgreSQL migration, backfill, or activation
+  fence.
 - Do not stage, commit, push, deploy, release, link/unlink Railway targets, change variables, restart/redeploy services, run production smoke/probe/watchdog commands, or enable live network/execute modes without explicit authorization.
 - `npm run start:worker` can claim queued jobs. `npm run worker:jobs:maintenance -- inspect` initializes database state before reading; `requeue` and `cleanup` mutate jobs. Treat all of these as configured-database operations, not harmless diagnostics.
 - Do not call live memory save/delete/bulk, natural-language save, or save-conversation endpoints, or exercise GPT-dispatcher memory commands (including recall), as routine validation. With explicit session scope, dispatcher interception can persist conversation/history even for reads; interception without explicit session scope skips that persistence. Use focused mocked tests unless the user explicitly authorizes persistent writes against a confirmed target and session. The complete dispatcher-interception/persistence branch lacks a focused test.
