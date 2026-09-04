@@ -3767,8 +3767,8 @@ async function run(): Promise<void> {
 
           // Install both asynchronous authority coordinators before committing
           // process readiness. The monolith zero-delay timer and the partition
-          // interval timer cannot run until this synchronous callback emits the
-          // ready sentinel.
+          // coordinator's mode-dependent timer cannot run until this synchronous
+          // callback emits the ready sentinel.
           backstageNotionLoopHandles.monolith = startBackstageNotionSyncLoop({
             signal: workerProcessShutdownController.signal,
             coordinator: backstageNotionSynchronizationCoordinator,

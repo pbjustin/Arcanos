@@ -1501,12 +1501,14 @@ claim or provider attempt that fills its window publishes the budget pause
 synchronously before that admitted work continues; best-effort snapshot
 persistence starts immediately but cannot hold the claimed lease or provider
 transport. The worker does not wait for a later denied admission to revoke
-readiness. If the required startup
-Notion rebuild reaches the rolling AI limit or observes a provider dependency
-outage, every configured slot publishes the matching pause before the child
-readiness signal, waits for the database retry time or dependency recovery, and
-reruns the gate in-process. Deterministic Notion configuration or index-contract
-failures remain fatal.
+readiness. The asynchronous Notion authority coordinator does not publish
+worker-slot pause states or rerun a process-readiness gate. A rolling AI limit
+or provider failure in that background cycle remains a bounded synchronization
+outcome and is retried on the coordinator's normal schedule; independently, a
+configured consumer slot's own dependency failure still makes `/readyz` return
+`503` through the existing readiness aggregation. A malformed authority mapping
+or a missing or unsafe dedicated token detected during structural startup
+validation remains fatal.
 
 Use `npm run build` before `npm run job-events:timeline -- --job-id <uuid> --output text` to reconstruct a redacted chronological job timeline from the compiled backend. The script first invokes the shared database initializer, which can apply built-in schema DDL and write an initialization heartbeat; treat it as a configured-database operation and run it only with explicit authorization and exact target confirmation.
 

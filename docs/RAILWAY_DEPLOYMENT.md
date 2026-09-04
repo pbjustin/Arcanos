@@ -283,11 +283,12 @@ Launcher behavior:
   sync lease, and partition cutover evidence are not process-startup invariants.
   The worker installs the existing monolith and partition background
   coordinators at the all-slot barrier and emits its ready sentinel before their
-  asynchronous timers can execute. The monolith's first cycle is zero-delay;
-  the partition loop retains its configured first interval. The monolith cycle
-  therefore reuses the same bounded synchronization, database lease, and
-  activation fencing as every recurring refresh without consuming Railway's
-  300-second activation window.
+  asynchronous timers can execute. The monolith's first cycle is zero-delay.
+  Partition synchronization in exact `shadow` mode retains its configured first
+  interval, while the partitioned-mode evidence monitor schedules its first
+  cycle with zero delay. The monolith cycle therefore reuses the same bounded
+  synchronization, database lease, and activation fencing as every recurring
+  refresh without consuming Railway's 300-second activation window.
   An old or absent snapshot keeps protected generation fail-closed with
   `BACKSTAGE_NOTION_INDEX_UNAVAILABLE`; a successful activation makes later
   requests available without a process restart. Exact `shadow` remains the only
