@@ -168,10 +168,14 @@ import {
   BACKSTAGE_NOTION_SYSTEM_POLICY_PROMPT,
   BACKSTAGE_NOTION_UNIVERSE_PAGES_ENV_NAME,
   BackstageNotionReadError,
+  assembleBackstageNotionPageTitle,
   buildBackstageNotionUntrustedContextPrompt,
+  fetchBackstageNotionDatabaseMetadata,
   fetchBackstageNotionMarkdownPage,
   fetchBackstageNotionPageMetadata,
+  fetchBackstageNotionPageTitleProperty,
   loadBackstageNotionPromptContextCore,
+  queryBackstageNotionDataSource,
 } from './shared/backstage/backstageNotionContextCore.js';
 import {
   BACKSTAGE_NOTION_RAG_SYSTEM_POLICY_PROMPT,
@@ -3761,6 +3765,394 @@ async function assertBackstageNotionReadDiagnosticsFixture(): Promise<void> {
   }
 }
 
+async function assertBackstageNotionDatabaseAuthorityFixture(): Promise<void> {
+  const databaseId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1';
+  const dataSourceIds = [
+    'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1',
+    'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2',
+  ] as const;
+  const rowPageIds = [
+    'cccccccc-cccc-4ccc-8ccc-ccccccccccc1',
+    'cccccccc-cccc-4ccc-8ccc-ccccccccccc2',
+    'cccccccc-cccc-4ccc-8ccc-ccccccccccc3',
+  ] as const;
+  const referencePageId = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+  const syntheticCredential = 'preview-notion-database-authority-non-secret';
+  const databaseTitle = 'Backstage authority database';
+  const dataSourceCursor = 'opaque cursor/\u96ea:v1';
+  const titleCursor = 'opaque title cursor/\u96ea:v1';
+  const ignoredTitleNextUrl =
+    'https://example.invalid/private-title-pagination?cursor=ignored';
+  const inlineTitleParts = Array.from(
+    { length: 25 },
+    (_, index) => `${index}.`
+  );
+  const finalTitlePart = 'complete';
+  const expectedCompleteTitle = assembleBackstageNotionPageTitle([
+    ...inlineTitleParts,
+    finalTitlePart,
+  ]);
+  if (expectedCompleteTitle === null) {
+    throw new Error('PREVIEW_BACKSTAGE_NOTION_DATABASE_TITLE_FIXTURE_INVALID');
+  }
+
+  let rootProbeRequests = 0;
+  let databaseMetadataRequests = 0;
+  let pageMetadataRequests = 0;
+  let titlePropertyRequests = 0;
+  const queryRequests = new Map<string, number>();
+  const queryRequestBodies: string[] = [];
+  const titleRequestOrigins: string[] = [];
+  const jsonResponse = (
+    body: Record<string, unknown>,
+    status = 200
+  ): Response => new Response(JSON.stringify(body), {
+    status,
+    headers: { 'content-type': 'application/json; charset=utf-8' },
+  });
+  const assertCommonRequest = (
+    endpoint: URL,
+    init: RequestInit,
+    method: 'GET' | 'POST'
+  ): Headers => {
+    const headers = new Headers(init.headers);
+    if (
+      endpoint.origin !== 'https://api.notion.com'
+      || init.method !== method
+      || init.redirect !== 'manual'
+      || !(init.signal instanceof AbortSignal)
+      || headers.get('accept') !== 'application/json'
+      || headers.get('authorization') !== `Bearer ${syntheticCredential}`
+      || headers.get('notion-version') !== BACKSTAGE_NOTION_API_VERSION
+    ) {
+      throw new Error(
+        'PREVIEW_BACKSTAGE_NOTION_DATABASE_AUTHORITY_REQUEST_INVALID'
+      );
+    }
+    return headers;
+  };
+  const notionFetch = async (
+    input: string | URL | Request,
+    init: RequestInit = {}
+  ): Promise<Response> => {
+    const endpoint = input instanceof URL ? input : new URL(String(input));
+
+    if (endpoint.pathname === `/v1/pages/${databaseId}`) {
+      assertCommonRequest(endpoint, init, 'GET');
+      rootProbeRequests += 1;
+      if (
+        rootProbeRequests !== 1
+        || endpoint.search !== ''
+        || init.body !== undefined
+      ) {
+        throw new Error('PREVIEW_BACKSTAGE_NOTION_DATABASE_PROBE_INVALID');
+      }
+      return jsonResponse({
+        object: 'error',
+        status: 400,
+        code: 'validation_error',
+        message: 'server-owned database fallback fixture',
+      }, 400);
+    }
+
+    if (endpoint.pathname === `/v1/databases/${databaseId}`) {
+      assertCommonRequest(endpoint, init, 'GET');
+      databaseMetadataRequests += 1;
+      if (
+        databaseMetadataRequests !== 1
+        || endpoint.search !== ''
+        || init.body !== undefined
+      ) {
+        throw new Error('PREVIEW_BACKSTAGE_NOTION_DATABASE_METADATA_INVALID');
+      }
+      return jsonResponse({
+        object: 'database',
+        id: databaseId,
+        parent: { type: 'workspace', workspace: true },
+        title: [{ type: 'text', plain_text: databaseTitle }],
+        data_sources: dataSourceIds.map((id, index) => ({
+          id,
+          name: `Authority source ${index + 1}`,
+        })),
+        last_edited_time: '2026-09-03T00:00:00.000Z',
+        in_trash: false,
+      });
+    }
+
+    const dataSourceId = dataSourceIds.find(id => (
+      endpoint.pathname === `/v1/data_sources/${id}/query`
+    ));
+    if (dataSourceId !== undefined) {
+      const headers = assertCommonRequest(endpoint, init, 'POST');
+      const priorRequestCount = queryRequests.get(dataSourceId) ?? 0;
+      queryRequests.set(dataSourceId, priorRequestCount + 1);
+      if (
+        endpoint.searchParams.getAll('filter_properties[]').join(',')
+          !== 'title'
+        || headers.get('content-type') !== 'application/json'
+        || typeof init.body !== 'string'
+      ) {
+        throw new Error('PREVIEW_BACKSTAGE_NOTION_DATA_SOURCE_QUERY_INVALID');
+      }
+      queryRequestBodies.push(init.body);
+      if (dataSourceId === dataSourceIds[0] && priorRequestCount === 0) {
+        if (init.body !== '{"page_size":10}') {
+          throw new Error('PREVIEW_BACKSTAGE_NOTION_QUERY_BODY_INVALID');
+        }
+        return jsonResponse({
+          object: 'list',
+          type: 'page_or_data_source',
+          page_or_data_source: {},
+          results: [{ object: 'page', id: rowPageIds[0] }],
+          has_more: true,
+          next_cursor: dataSourceCursor,
+          request_status: { type: 'complete' },
+        });
+      }
+      if (dataSourceId === dataSourceIds[0] && priorRequestCount === 1) {
+        if (
+          init.body
+            !== '{"page_size":10,"start_cursor":"opaque cursor/\u96ea:v1"}'
+        ) {
+          throw new Error('PREVIEW_BACKSTAGE_NOTION_QUERY_CURSOR_INVALID');
+        }
+        return jsonResponse({
+          object: 'list',
+          type: 'page_or_data_source',
+          page_or_data_source: {},
+          results: [{ object: 'page', id: rowPageIds[1] }],
+          has_more: false,
+          next_cursor: null,
+          request_status: { type: 'complete' },
+        });
+      }
+      if (dataSourceId === dataSourceIds[1] && priorRequestCount === 0) {
+        if (init.body !== '{"page_size":10}') {
+          throw new Error('PREVIEW_BACKSTAGE_NOTION_QUERY_BODY_INVALID');
+        }
+        return jsonResponse({
+          object: 'list',
+          type: 'page_or_data_source',
+          page_or_data_source: {},
+          results: [{ object: 'page', id: rowPageIds[2] }],
+          has_more: false,
+          next_cursor: null,
+          request_status: { type: 'complete' },
+        });
+      }
+      throw new Error('PREVIEW_BACKSTAGE_NOTION_QUERY_COUNT_INVALID');
+    }
+
+    if (endpoint.pathname === `/v1/pages/${rowPageIds[0]}`) {
+      assertCommonRequest(endpoint, init, 'GET');
+      pageMetadataRequests += 1;
+      if (
+        endpoint.searchParams.getAll('filter_properties[]').join(',')
+          !== 'title'
+        || init.body !== undefined
+      ) {
+        throw new Error('PREVIEW_BACKSTAGE_NOTION_ROW_METADATA_INVALID');
+      }
+      return jsonResponse({
+        object: 'page',
+        id: rowPageIds[0],
+        parent: {
+          type: 'data_source_id',
+          data_source_id: dataSourceIds[0],
+        },
+        properties: {
+          title: {
+            id: 'title',
+            type: 'title',
+            title: inlineTitleParts.map(plainText => ({
+              type: 'mention',
+              plain_text: plainText,
+              mention: {
+                type: 'page',
+                page: { id: referencePageId },
+              },
+            })),
+          },
+        },
+        last_edited_time: '2026-09-03T00:00:00.000Z',
+        in_trash: false,
+      });
+    }
+
+    if (endpoint.pathname === `/v1/pages/${rowPageIds[0]}/properties/title`) {
+      assertCommonRequest(endpoint, init, 'GET');
+      titlePropertyRequests += 1;
+      titleRequestOrigins.push(endpoint.origin);
+      const firstPage = titlePropertyRequests % 2 === 1;
+      if (
+        endpoint.searchParams.get('page_size') !== '100'
+        || endpoint.searchParams.get('start_cursor')
+          !== (firstPage ? null : titleCursor)
+        || init.body !== undefined
+      ) {
+        throw new Error('PREVIEW_BACKSTAGE_NOTION_TITLE_REQUEST_INVALID');
+      }
+      const titleParts = firstPage ? inlineTitleParts : [finalTitlePart];
+      return jsonResponse({
+        object: 'list',
+        type: 'property_item',
+        results: titleParts.map(plainText => ({
+          object: 'property_item',
+          id: 'title',
+          type: 'title',
+          title: { type: 'text', plain_text: plainText },
+        })),
+        has_more: firstPage,
+        next_cursor: firstPage ? titleCursor : null,
+        property_item: {
+          id: 'title',
+          type: 'title',
+          title: {},
+          next_url: firstPage ? ignoredTitleNextUrl : null,
+        },
+      });
+    }
+
+    throw new Error('PREVIEW_BACKSTAGE_NOTION_DATABASE_ENDPOINT_INVALID');
+  };
+
+  const signal = new AbortController().signal;
+  const rootProbeError = await captureBackstageNotionReadError(() => (
+    fetchBackstageNotionPageMetadata(
+      notionFetch,
+      syntheticCredential,
+      databaseId,
+      signal
+    )
+  ));
+  const databaseMetadata = await fetchBackstageNotionDatabaseMetadata(
+    notionFetch,
+    syntheticCredential,
+    databaseId,
+    signal
+  );
+  const discoveredPageIds: string[] = [];
+  for (const dataSourceId of databaseMetadata.dataSourceIds) {
+    let cursor: string | null = null;
+    do {
+      const result = await queryBackstageNotionDataSource(
+        notionFetch,
+        syntheticCredential,
+        dataSourceId,
+        cursor,
+        signal
+      );
+      for (const item of result.results) {
+        if (item.kind !== 'page') {
+          throw new Error('PREVIEW_BACKSTAGE_NOTION_QUERY_RESULT_INVALID');
+        }
+        discoveredPageIds.push(item.pageId);
+      }
+      cursor = result.nextCursor;
+    } while (cursor !== null);
+  }
+
+  const readCompleteTitle = async (): Promise<string | null> => {
+    const metadata = await fetchBackstageNotionPageMetadata(
+      notionFetch,
+      syntheticCredential,
+      rowPageIds[0],
+      signal,
+      { requireTitle: true }
+    );
+    if (
+      metadata.parentDataSourceId !== dataSourceIds[0]
+      || metadata.titleIsComplete !== false
+      || metadata.title !== inlineTitleParts.join('')
+    ) {
+      throw new Error('PREVIEW_BACKSTAGE_NOTION_ROW_TITLE_METADATA_INVALID');
+    }
+    const titleParts: string[] = [];
+    let cursor: string | null = null;
+    do {
+      const result = await fetchBackstageNotionPageTitleProperty(
+        notionFetch,
+        syntheticCredential,
+        rowPageIds[0],
+        cursor,
+        signal
+      );
+      titleParts.push(...result.titleParts);
+      cursor = result.nextCursor;
+    } while (cursor !== null);
+    return assembleBackstageNotionPageTitle(titleParts);
+  };
+  const capturedTitle = await readCompleteTitle();
+  const verifiedTitle = await readCompleteTitle();
+
+  const oversizedCursorMarker = 'PRIVATE-OVERSIZED-PROVIDER-CURSOR';
+  const oversizedCursor = `${oversizedCursorMarker}${'\u0000'.repeat(90_000)}`;
+  let oversizedCursorRequests = 0;
+  const oversizedCursorError = await captureBackstageNotionReadError(() => (
+    queryBackstageNotionDataSource(
+      async () => {
+        oversizedCursorRequests += 1;
+        return jsonResponse({
+          object: 'list',
+          type: 'page_or_data_source',
+          page_or_data_source: {},
+          results: [{ object: 'page', id: rowPageIds[0] }],
+          has_more: true,
+          next_cursor: oversizedCursor,
+          request_status: { type: 'complete' },
+        });
+      },
+      syntheticCredential,
+      dataSourceIds[0],
+      null,
+      signal
+    )
+  ));
+  const serializedOversizedCursorError = JSON.stringify(oversizedCursorError);
+
+  if (
+    rootProbeRequests !== 1
+    || databaseMetadataRequests !== 1
+    || rootProbeError.category !== 'http_400'
+    || rootProbeError.notionHttpStatus !== 400
+    || rootProbeError.notionProviderCode !== 'validation_error'
+    || rootProbeError.notionFailureCategory !== 'permanent_provider'
+    || rootProbeError.notionResponseContentType !== 'application/json'
+    || rootProbeError.notionResponseSchemaValid !== true
+    || rootProbeError.notionEndpointKind !== 'page_metadata'
+    || databaseMetadata.databaseId !== databaseId
+    || databaseMetadata.title !== databaseTitle
+    || databaseMetadata.parentType !== 'workspace'
+    || databaseMetadata.parentId !== null
+    || databaseMetadata.inTrash
+    || JSON.stringify(databaseMetadata.dataSourceIds)
+      !== JSON.stringify(dataSourceIds)
+    || JSON.stringify(discoveredPageIds) !== JSON.stringify(rowPageIds)
+    || queryRequests.get(dataSourceIds[0]) !== 2
+    || queryRequests.get(dataSourceIds[1]) !== 1
+    || JSON.stringify(queryRequestBodies) !== JSON.stringify([
+      '{"page_size":10}',
+      '{"page_size":10,"start_cursor":"opaque cursor/\u96ea:v1"}',
+      '{"page_size":10}',
+    ])
+    || pageMetadataRequests !== 2
+    || titlePropertyRequests !== 4
+    || titleRequestOrigins.some(origin => origin !== 'https://api.notion.com')
+    || capturedTitle !== expectedCompleteTitle
+    || verifiedTitle !== expectedCompleteTitle
+    || oversizedCursorRequests !== 1
+    || oversizedCursorError.category !== 'invalid_response'
+    || oversizedCursorError.notionEndpointKind !== 'data_source_query'
+    || oversizedCursorError.notionResponseSchemaValid !== false
+    || serializedOversizedCursorError.includes(oversizedCursorMarker)
+    || serializedOversizedCursorError.includes(syntheticCredential)
+    || serializedOversizedCursorError.includes(databaseId)
+    || serializedOversizedCursorError.includes(rowPageIds[0])
+  ) {
+    throw new Error('PREVIEW_BACKSTAGE_NOTION_DATABASE_AUTHORITY_INVALID');
+  }
+}
+
 async function runBackstageNotionAuthorityRagFixture(
   fixture: string,
   connectivityProbe: () => Promise<BackstageNotionPreviewConnectivityResult>
@@ -3770,6 +4162,7 @@ async function runBackstageNotionAuthorityRagFixture(
     throw new Error('PREVIEW_BACKSTAGE_NOTION_CONNECTIVITY_INVALID');
   }
   await assertBackstageNotionReadDiagnosticsFixture();
+  await assertBackstageNotionDatabaseAuthorityFixture();
 
   const universeId = 'native-preview-notion-authority';
   const pageId = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
@@ -9195,6 +9588,12 @@ export function createNativePrPreviewApplication(
                 .notionReadDiagnosticsVersion,
               NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT
                 .notionReadDiagnosticsProofVersion
+            );
+            response.setHeader(
+              NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.proofHeaders
+                .notionDatabaseAuthorityVersion,
+              NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT
+                .notionDatabaseAuthorityProofVersion
             );
           }
           if (

@@ -227,6 +227,10 @@ function responseHeadersForCase(
                   .proofHeaders.notionReadDiagnosticsVersion]:
                   NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration
                     .notionReadDiagnosticsProofVersion,
+                [NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration
+                  .proofHeaders.notionDatabaseAuthorityVersion]:
+                  NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration
+                    .notionDatabaseAuthorityProofVersion,
               }
             : {}),
           ...(requestCase.fixtureName === 'partitionFailureTelemetry'
@@ -2163,6 +2167,7 @@ test('executes the bounded credential-free matrix and detects identity stability
       clearPolicyVersionVerified: true,
       httpStatus: 200,
       method: 'POST',
+      notionDatabaseAuthorityVerified: true,
       notionReadDiagnosticsVerified: true,
       partitionCutoverRepairVerified: true,
       partitionedAuthorityVerified: true,
@@ -2976,6 +2981,28 @@ test('rejects missing synthetic provenance and correlation or security header dr
           NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration.proofHeaders
             .notionReadDiagnosticsVersion
         ] = 'backstage-notion-read-diagnostics/drifted';
+      },
+    },
+    {
+      caseId: 'backstage-generation-notion-authority-rag',
+      code:
+        'NATIVE_PR_PREVIEW_BACKSTAGE_NOTION_DATABASE_AUTHORITY_PROOF_INVALID',
+      mutate(headers) {
+        delete headers[
+          NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration.proofHeaders
+            .notionDatabaseAuthorityVersion
+        ];
+      },
+    },
+    {
+      caseId: 'backstage-generation-notion-authority-rag',
+      code:
+        'NATIVE_PR_PREVIEW_BACKSTAGE_NOTION_DATABASE_AUTHORITY_PROOF_INVALID',
+      mutate(headers) {
+        headers[
+          NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration.proofHeaders
+            .notionDatabaseAuthorityVersion
+        ] = 'backstage-notion-database-authority/drifted';
       },
     },
     {

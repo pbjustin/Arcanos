@@ -120,6 +120,22 @@ Launcher behavior:
   with the trusted base verifier. This is shared-reader policy evidence only: it
   does not execute the production sync retry loop, candidate repository/SQL,
   PostgreSQL migration or activation fencing, or backfill.
+- Before returning that same byte-compatible body, the selector also executes a
+  server-owned database-authority transport fixture through the
+  production-shared Notion context core. It proves the exact structured
+  `400 validation_error` page response needed for database fallback, bounded
+  database metadata with two data sources, fixed-origin data-source queries with
+  a valid opaque continuation cursor, and rejection of an oversized provider
+  cursor on the first response with no follow-up request. A database-row page
+  response containing exactly 25 inline references is treated as incomplete;
+  two fixed-origin title-property pages are assembled into the complete title in
+  both capture and verification passes without following the provider's
+  `next_url`. The exact-head verifier requires
+  `x-arcanos-preview-backstage-notion-database-authority-version:
+  backstage-notion-database-authority/v1`. This is credential-free shared-reader
+  component evidence only: it does not execute the production sync coordinator,
+  the 512/513 capacity fence, candidate activation, PostgreSQL, embeddings, a
+  live Notion credential, or the normal authenticated route.
 - The same sealed Notion-authority selector executes the production-shared pure
   partition configuration, page-material classification, routing,
   manifest-membership, reconciliation-planning, and sync request/job/result
@@ -382,7 +398,7 @@ Native PR previews keep the worker passive and run a credential-empty sealed
 web application that does not mount the manual partition-sync control plane.
 Preview success therefore proves the exact-SHA build, integrity gate, and
 contained startup only. It does not prove control-plane authentication,
-PostgreSQL admission/claiming, Notion capture, embedding calls, or manual job
+PostgreSQL admission/claiming, live Notion capture, embedding calls, or manual job
 execution; focused mocked suites and PostgreSQL 18 CI are authoritative for
 those effects.
 
