@@ -86,7 +86,15 @@ export const BACKSTAGE_NOTION_SYNC_MAX_CHUNKS =
 export const BACKSTAGE_NOTION_SYNC_FETCH_TIMEOUT_MS = 15_000;
 export const BACKSTAGE_NOTION_SYNC_REQUEST_SPACING_MS = 350;
 export const BACKSTAGE_NOTION_SYNC_FETCH_ATTEMPTS = 3;
-export const BACKSTAGE_NOTION_SYNC_EMBEDDING_BATCH_SIZE = 32;
+// Each embedding input is independently limited to 8,192 tokens and the
+// provider caps one request at 300,000 aggregate input tokens. Thirty-six is
+// therefore the largest batch that remains below the aggregate ceiling even
+// when every individually valid input reaches its token limit.
+export const BACKSTAGE_NOTION_SYNC_EMBEDDING_BATCH_SIZE = 36;
+export const BACKSTAGE_NOTION_SYNC_MAX_COLD_EMBEDDING_REQUESTS = Math.ceil(
+  BACKSTAGE_NOTION_SYNC_MAX_CHUNKS
+    / BACKSTAGE_NOTION_SYNC_EMBEDDING_BATCH_SIZE
+);
 export const BACKSTAGE_NOTION_SYNC_MAX_MARKDOWN_SEGMENTS_PER_PAGE = 256;
 export const BACKSTAGE_NOTION_SYNC_MAX_DATA_SOURCE_QUERY_REQUESTS = 1_024;
 export const BACKSTAGE_NOTION_SYNC_MAX_RETRY_AFTER_MS = 60_000;

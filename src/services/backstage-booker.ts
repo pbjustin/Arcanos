@@ -2579,7 +2579,9 @@ export async function trackStoryline(
 /**
  * Generate a CLEAR-guided backstage booking response from current roster and continuity context.
  * Inputs/outputs: natural-language booking prompt -> finalized storyline or booking plan string.
- * Edge cases: exact-literal anti-simulation prompts short-circuit before persona/context expansion, and database failures fall back to in-memory continuity snapshots.
+ * Edge cases: unprotected exact literals bypass context/model work; protected
+ * exact literals first establish durable authority and never use process
+ * fallback; unprotected database failures may use legacy in-memory continuity.
  */
 export async function generateBooking(
   prompt: string,

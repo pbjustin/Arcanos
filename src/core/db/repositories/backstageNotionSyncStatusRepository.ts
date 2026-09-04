@@ -106,7 +106,7 @@ export interface LoadBackstageNotionMonolithAuthorityOperationalStateInput {
   readonly expectedEmbeddingModel: string;
 }
 
-/** Narrow read surface used only by authenticated monolith authority status. */
+/** Identifier-free read surface for status and protected-literal admission. */
 export interface BackstageNotionMonolithAuthorityStatusRepository {
   loadMonolithAuthorityOperationalState(
     input: LoadBackstageNotionMonolithAuthorityOperationalStateInput

@@ -308,8 +308,19 @@ Launcher behavior:
   readiness does not remain green until a later denied admission.
   The normal OpenAI startup readiness check does not perform a paid probe.
   Background Notion synchronization and embedding still run under the same hard
-  worker AI-call budget; exhaustion or a provider failure ends that isolated
-  cycle safely and the existing finite scheduler retries it. Deterministic
+  database-admitted worker AI-call ledger. Their callback-free sub-cap stops one
+  reservation below the queue threshold, so authority work alone cannot publish
+  queue-slot pause or dependency states or fill the global limit. A sub-cap
+  denial or provider failure ends that isolated cycle safely and the existing
+  finite scheduler retries it. Queue work can consume the reserved final
+  attempt, after which genuine global capacity exhaustion independently makes
+  the slot `paused_budget`. The monolith batches at most 4,096 cold chunks into
+  114 provider-safe requests of at most 36 inputs, so its structural minimum is
+  115 shared calls per hour including headroom. Partition-only resumable writer
+  mode has a minimum of two. The default 120 leaves five retry or competing-work
+  reservations before the authority sub-cap; multiple maximum roots may finish
+  across later rolling windows unless operators deliberately provision a larger
+  finite maximum. Deterministic
   Notion authority configuration failures remain fatal before readiness. After a real
   job observes provider failure, the slot publishes `dependency_failure`, stops
   new claims, and probes with backoff until recovery rather than repeatedly
@@ -328,8 +339,9 @@ Launcher behavior:
   writer is enabled in `shadow`, both crawls share one process-local coordinator,
   so they cannot overlap inside one worker replica. Their existing PostgreSQL
   leases and activation fences prevent duplicate cross-replica writers and
-  reject stale holders after replacement. Partition synchronization starts after one
-  configured interval and retains bounded full Notion source scans because the
+  reject stale holders after replacement. Exact `shadow` partition synchronization
+  starts after one configured interval; partitioned evidence monitoring starts at
+  zero delay. Writer cycles retain bounded full Notion source scans because the
   provider has no authoritative hierarchy delta feed. Immutable material reuse
   begins only after capture. Cycle logs expose only safe mode/status metadata and
   aggregate results.
@@ -1202,12 +1214,20 @@ malformed hold values fail closed rather than restoring automatic promotion.
 
 A cold authority synchronization does not require manual preactivation. Keep
 automatic promotion held while first-class database-container root support and
-the readiness-decoupling follow-up are reviewed. After explicit merge and
-deployment authorization, merge the root-support change first and the
-decoupling follow-up second without promoting production between them. Select
-the resulting combined main SHA, verify the effective `/railway.json` command,
-`/readyz`, 300-second timeout, and 60-second drain, then promote that exact SHA
-to the worker before the web service.
+the readiness-decoupling follow-up are reviewed. This code-rollout sequence
+assumes that the reviewed phase-two web authority guard and root mapping above
+are already active, or that no new authority universe is being converted. It
+does not replace the one-way phase-two activation sequence: for a new universe,
+stage and verify the compatible web guard and mapping first, then enable the
+worker token and synchronization exactly as described above. Never use a
+worker-first code rollout to bypass that authority cutover.
+
+For the subsequent code upgrade, after explicit merge and deployment
+authorization, merge the root-support change first and the readiness-decoupling
+follow-up second without promoting production between them. Select the resulting
+combined main SHA, verify the effective `/railway.json` command, `/readyz`,
+300-second timeout, and 60-second drain, then promote that exact SHA to the
+worker before the web service.
 
 The replacement worker becomes Railway-ready after core database, bootstrap,
 and queue-slot invariants pass. Its existing coordinator then starts or retries

@@ -48,7 +48,9 @@ import {
   BACKSTAGE_NOTION_RAG_INDEX_FORMAT,
   BACKSTAGE_NOTION_SYNC_CONFIGURATION_ERROR_CODE,
   BACKSTAGE_NOTION_SYNC_CYCLE_TIMEOUT_MS,
+  BACKSTAGE_NOTION_SYNC_EMBEDDING_BATCH_SIZE,
   BACKSTAGE_NOTION_SYNC_INCOMPLETE_ERROR_CODE,
+  BACKSTAGE_NOTION_SYNC_MAX_COLD_EMBEDDING_REQUESTS,
   BACKSTAGE_NOTION_SYNC_MAX_PAGES,
   BACKSTAGE_NOTION_SYNC_REQUEST_SPACING_MS,
   BACKSTAGE_NOTION_SYNC_ROOT_FAILED_ERROR_CODE,
@@ -808,6 +810,27 @@ describe('Backstage Notion authority synchronization', () => {
   beforeEach(() => {
     jest.spyOn(logger, 'info').mockImplementation(() => undefined);
     jest.spyOn(logger, 'warn').mockImplementation(() => undefined);
+  });
+
+  it('fits the largest provider-safe batch and maximum cold root in the default budget', () => {
+    const providerMaximumTokensPerInput = 8_192;
+    const providerMaximumAggregateTokens = 300_000;
+
+    expect(
+      BACKSTAGE_NOTION_SYNC_EMBEDDING_BATCH_SIZE
+        * providerMaximumTokensPerInput
+    ).toBeLessThanOrEqual(providerMaximumAggregateTokens);
+    expect(
+      (BACKSTAGE_NOTION_SYNC_EMBEDDING_BATCH_SIZE + 1)
+        * providerMaximumTokensPerInput
+    ).toBeGreaterThan(providerMaximumAggregateTokens);
+    expect(BACKSTAGE_NOTION_SYNC_MAX_COLD_EMBEDDING_REQUESTS).toBe(
+      Math.ceil(
+        BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT
+          / BACKSTAGE_NOTION_SYNC_EMBEDDING_BATCH_SIZE
+      )
+    );
+    expect(BACKSTAGE_NOTION_SYNC_MAX_COLD_EMBEDDING_REQUESTS).toBe(114);
   });
 
   it('records successful activation separately from the active snapshot pointer', async () => {
@@ -1908,6 +1931,17 @@ describe('Backstage Notion authority synchronization', () => {
       const embeddedInputs = embedBatch.mock.calls.flatMap(call => call[0]);
       expect(embeddedInputs).toHaveLength(chunkCount);
       expect(new Set(embeddedInputs).size).toBe(chunkCount);
+      expect(embedBatch.mock.calls.every(call => (
+        call[0].length >= 1
+        && call[0].length <= BACKSTAGE_NOTION_SYNC_EMBEDDING_BATCH_SIZE
+      ))).toBe(true);
+      if (chunkCount === BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT) {
+        expect(BACKSTAGE_NOTION_SYNC_MAX_COLD_EMBEDDING_REQUESTS).toBe(114);
+        expect(embedBatch).toHaveBeenCalledTimes(
+          BACKSTAGE_NOTION_SYNC_MAX_COLD_EMBEDDING_REQUESTS
+        );
+        expect(embedBatch.mock.calls.at(-1)?.[0]).toHaveLength(28);
+      }
       expect(new Set(activatedChunks.map(chunk => chunk.chunkId)).size)
         .toBe(chunkCount);
       expect(new Set(activatedChunks.map(chunk => chunk.contentHash)).size)
@@ -2329,7 +2363,7 @@ describe('Backstage Notion authority synchronization', () => {
     );
 
     expect(result).toMatchObject({ status: 'activated', chunkCount: 66 });
-    expect(embedBatch.mock.calls.map(call => call[0].length)).toEqual([32, 32, 1]);
+    expect(embedBatch.mock.calls.map(call => call[0].length)).toEqual([36, 29]);
     const activation = repository.activateSnapshot.mock.calls[0]?.[0];
     expect(activation?.chunks.find(chunk => chunk.contentHash === reusedHash)?.embedding)
       .toEqual([99, 99]);

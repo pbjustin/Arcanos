@@ -246,11 +246,11 @@ describe('Backstage Notion synchronization loop', () => {
     expect(() => handle.stop()).not.toThrow();
   });
 
-  it('surfaces a swallowed worker budget pause before classifying a sync result', async () => {
+  it('keeps process readiness intact when callback-free authority budget pauses', async () => {
     const budgetError = new WorkerAiCallBudgetPausedError(
       '2026-08-30T15:00:00.000Z'
     );
-    const onOperationalFailure = jest.fn();
+    const processReady = true;
     const sync = jest.fn(async () => {
       try {
         await instrumentOpenAIOperation({
@@ -273,16 +273,23 @@ describe('Backstage Notion synchronization loop', () => {
         statsWorkerId: 'async-queue',
         workerId: 'async-queue-slot-1',
         maxCallsPerHour: 120,
-        onOperationalFailure,
       },
+      reportBootstrapLifecycle: true,
     });
 
     await jest.advanceTimersByTimeAsync(0);
 
-    expect(onOperationalFailure).toHaveBeenCalledWith(budgetError);
+    expect(processReady).toBe(true);
     expect(loggerWarn).toHaveBeenCalledWith(
       'backstage.notion_rag.sync_cycle_failed',
       expect.objectContaining({ module: 'backstage-notion-sync' })
+    );
+    expect(loggerWarn).toHaveBeenCalledWith(
+      'backstage.notion_sync.bootstrap_failed',
+      expect.objectContaining({
+        syncInProgress: false,
+        syncOutcome: 'failed',
+      })
     );
     expect(JSON.stringify(loggerWarn.mock.calls)).not.toContain(
       budgetError.message

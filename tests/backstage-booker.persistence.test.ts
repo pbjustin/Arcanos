@@ -3577,7 +3577,7 @@ describe('Backstage Booker service persistence outcomes', () => {
     );
   });
 
-  it('short-circuits exact-literal responses before database or Notion context work', async () => {
+  it('short-circuits unprotected exact-literal responses before context work', async () => {
     await expect(generateBooking(
       'Answer directly. Do not simulate, role-play, or describe a hypothetical run. Say exactly: backstage-check.',
       'notion-exact-literal'

@@ -93,6 +93,7 @@ import {
 import { classifyDagNodeFailureForWorkerRetry } from './jobFailureClassification.js';
 import {
   advanceClaimedJobAbortState,
+  buildAuthoritySynchronizationWorkerAiCallBudget,
   buildJobRunnerSlotDefinitions,
   commitAllWorkerSlotsReadyOrThrow,
   computeDeterministicIntervalJitterMs,
@@ -183,6 +184,7 @@ import {
   type BackstageNotionPartitionShadowLoopHandle,
 } from './backstageNotionPartitionShadowLoop.js';
 import {
+  BACKSTAGE_NOTION_SYNC_MAX_COLD_EMBEDDING_REQUESTS,
   validateBackstageNotionSynchronizationConfiguration,
 } from '@services/backstageNotionSync.js';
 import {
@@ -3621,23 +3623,6 @@ async function run(): Promise<void> {
       createWorkerOperationalStateReporter(slotDefinition.workerId)
     ] as const)
   );
-  const reportAllWorkerOperationalStates: ReturnType<
-    typeof createWorkerOperationalStateReporter
-  > = (state, reason, retryAt) => {
-    for (const reportOperationalState of operationalStateReporters.values()) {
-      reportOperationalState(state, reason, retryAt);
-    }
-  };
-  const workerAiCallBudget = attachWorkerOperationalFailureReporting(
-    inspectorAutonomyService.getWorkerAiCallBudget(),
-    providerDependencyState,
-    reportAllWorkerOperationalStates,
-    async (reason, retryAt) => inspectorAutonomyService.setClaimAcceptanceState(
-      'paused_budget',
-      { reason, retryAt }
-    )
-  );
-
   const backstageNotionConfiguration =
     validateBackstageNotionSynchronizationConfiguration();
   logger.info('worker.backstage_notion_configuration.validated', {
@@ -3673,6 +3658,18 @@ async function run(): Promise<void> {
     cutoverGateReasonCodes:
       backstageNotionPartitionPolicy.cutoverGateReasonCodes,
   });
+  // Authority crawls remain inside the same database-admitted ledger as queue
+  // work, but use a callback-free sub-cap with one normal-work reservation of
+  // headroom. Consumer slots retain their own reporting wrappers below.
+  const authoritySyncWorkerAiCallBudget =
+    buildAuthoritySynchronizationWorkerAiCallBudget(
+      inspectorAutonomyService.getWorkerAiCallBudget(),
+      backstageNotionConfiguration.authorityConfigured
+        ? BACKSTAGE_NOTION_SYNC_MAX_COLD_EMBEDDING_REQUESTS
+        : backstageNotionPartitionPolicy.partitionSyncEnabled
+          ? 1
+          : 0
+    );
 
   const bootstrapResult = await bootstrapWorkerAutonomyWithRetry(
     inspectorAutonomyService,
@@ -3772,14 +3769,14 @@ async function run(): Promise<void> {
           backstageNotionLoopHandles.monolith = startBackstageNotionSyncLoop({
             signal: workerProcessShutdownController.signal,
             coordinator: backstageNotionSynchronizationCoordinator,
-            workerBudget: workerAiCallBudget,
+            workerBudget: authoritySyncWorkerAiCallBudget,
             reportBootstrapLifecycle: true,
           });
           backstageNotionLoopHandles.partition =
             startBackstageNotionPartitionShadowLoop({
               signal: workerProcessShutdownController.signal,
               coordinator: backstageNotionSynchronizationCoordinator,
-              workerBudget: workerAiCallBudget,
+              workerBudget: authoritySyncWorkerAiCallBudget,
               cutoverEvidence: backstageNotionPartitionCutoverEvidence,
               loadCutoverEvidence:
                 loadBackstageNotionPartitionCutoverGateEvidenceSet,

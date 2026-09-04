@@ -1243,9 +1243,11 @@ Authority availability is evaluated independently from that process signal:
 - With no active snapshot, the worker can be process-ready while the first
   lease-fenced sync runs, but no legacy, uploaded, exported, or conversation
   fallback becomes official.
-- A failed cycle leaves process readiness intact and preserves the prior active
-  snapshot semantics. Only a later complete activation or unchanged
-  verification restores `current_complete` automatically.
+- An authority-specific crawl or provider failure does not directly mutate
+  process readiness and preserves the prior active snapshot semantics. An
+  exhausted shared hard AI-call ledger remains a genuine queue-capacity pause
+  when consumers independently evaluate it. Only a later complete activation
+  or unchanged verification restores `current_complete` automatically.
 - An invalid authority mapping or missing/unsafe required Notion token is a
   structural startup error and prevents worker readiness.
 
@@ -1290,7 +1292,7 @@ Protected GPT Action and operator calls must use `/gpt-access/*` for backend ope
 | `JOB_WORKER_STATS_ID` | No | `JOB_WORKER_ID` | Exact worker-group identity shared by inspection, alert cooldowns, and hourly job/AI-call budgets. Every generic queue claim persists this value separately from its slot lease ID. Values longer than 255 characters or containing control characters fail worker startup before readiness. |
 | `JOB_WORKER_CONCURRENCY` | No | `WORKER_COUNT` or `1` | Number of queue-consumer slots in one worker process. |
 | `JOB_WORKER_MAX_JOBS_PER_HOUR` | No | `120` | Hard maximum generic queue claims admitted for one `JOB_WORKER_STATS_ID` in the shared PostgreSQL rolling window. The decision, reservation, and claim are one transaction. Must be an integer from 1 through 2,147,483,647; zero, malformed, or out-of-range values fail worker startup. |
-| `JOB_WORKER_MAX_AI_CALLS_PER_HOUR` | No | `120` | Hard maximum database-admitted worker OpenAI capacity reservations for one `JOB_WORKER_STATS_ID` in the shared PostgreSQL rolling window. Every SDK or higher-level retry and every multi-stage native transport requires a reservation; one batched embedding request requires one. A reservation committed before a later cancellation remains charged even if no network request starts. Must be an integer from 1 through 2,147,483,647. |
+| `JOB_WORKER_MAX_AI_CALLS_PER_HOUR` | No | `120` | Hard maximum database-admitted worker OpenAI capacity reservations for one `JOB_WORKER_STATS_ID` in the shared PostgreSQL rolling window. Every SDK or higher-level retry and every multi-stage native transport requires a reservation; one batched embedding request requires one. A reservation committed before a later cancellation remains charged even if no network request starts. Provider-backed Notion authority synchronization uses the same ledger with a sub-cap one below this maximum, reserving one attempt for normal queue work. Monolith authority therefore requires at least `115`: at most 4,096 cold chunks are sent in provider-safe batches of 36, requiring 114 no-retry requests. Partition-only resumable writer mode requires at least `2`. Other runtimes permit integers from 1 through 2,147,483,647. |
 | `JOB_WORKER_MAX_RSS_MB` | No | `2048` | Hard per-process resident-memory claim ceiling in MiB. The worker pauses at or above the limit and resumes only after RSS falls below it. Must be a positive safe integer. |
 | `WORKER_TRINITY_RUNTIME_BUDGET_MS` | No | `420000` | Max worker Trinity runtime budget. |
 | `WORKER_TRINITY_STAGE_TIMEOUT_MS` | No | `180000` | Per-stage/model timeout passed from worker-originated Trinity calls. |
@@ -1398,7 +1400,7 @@ database URL as a command-line argument.
 | `JOB_WORKER_STATS_ID` | `JOB_WORKER_ID` | Exact worker-group identity persisted on every generic claim and used for shared slot-level inspection and hourly budget accounting. Groups may span processes only when they use the same configured value. Values longer than 255 characters or containing control characters fail worker startup before readiness. |
 | `JOB_WORKER_CONCURRENCY` | `WORKER_COUNT` or `1` | Number of queue-consumer slots in one worker process. |
 | `JOB_WORKER_MAX_JOBS_PER_HOUR` | `120` | Hard shared rolling-hour claim maximum. Admission and claim are atomically serialized in PostgreSQL across slots and replicas sharing `JOB_WORKER_STATS_ID`. |
-| `JOB_WORKER_MAX_AI_CALLS_PER_HOUR` | `120` | Hard shared rolling-hour worker OpenAI admission maximum. Every native transport requires one committed reservation. Provider failures and cancellations after commit remain charged, so the ledger can conservatively exceed transports that actually started; denied, reservation-store-failed, replayed, and already-aborted-before-admission requests consume no new reservation. |
+| `JOB_WORKER_MAX_AI_CALLS_PER_HOUR` | `120` | Hard shared rolling-hour worker OpenAI admission maximum. Every native transport requires one committed reservation. Provider failures and cancellations after commit remain charged, so the ledger can conservatively exceed transports that actually started; denied, reservation-store-failed, replayed, and already-aborted-before-admission requests consume no new reservation. Provider-backed authority work reserves one unit of queue headroom. Monolith authority requires at least `115`; partition-only resumable writer mode requires at least `2`. |
 | `JOB_WORKER_MAX_RSS_MB` | `2048` | Hard per-process RSS claim ceiling in MiB. Claiming pauses at equality and resumes after RSS drops below the ceiling. |
 | `JOB_WORKER_POLL_MS` | `250` | Poll delay after a claimed job cycle. |
 | `JOB_WORKER_IDLE_BACKOFF_MS` | `1000` | Sleep interval when no job is available. |
@@ -1501,14 +1503,23 @@ claim or provider attempt that fills its window publishes the budget pause
 synchronously before that admitted work continues; best-effort snapshot
 persistence starts immediately but cannot hold the claimed lease or provider
 transport. The worker does not wait for a later denied admission to revoke
-readiness. The asynchronous Notion authority coordinator does not publish
-worker-slot pause states or rerun a process-readiness gate. A rolling AI limit
-or provider failure in that background cycle remains a bounded synchronization
-outcome and is retried on the coordinator's normal schedule; independently, a
-configured consumer slot's own dependency failure still makes `/readyz` return
-`503` through the existing readiness aggregation. A malformed authority mapping
-or a missing or unsafe dedicated token detected during structural startup
-validation remains fatal.
+readiness. The asynchronous Notion authority coordinator uses the same
+database-admitted hard AI-call ledger but stops one reservation below the normal
+queue threshold and does not publish worker-slot pause states or rerun a
+process-readiness gate. An authority sub-cap denial or provider failure remains
+a bounded synchronization outcome and is retried on the coordinator's normal
+schedule. A configured consumer slot's own dependency failure still makes
+`/readyz` return `503` through the existing readiness aggregation. Queue work
+may consume the reserved final attempt, after which genuine global capacity
+exhaustion independently publishes `paused_budget`. A malformed authority
+mapping, a missing or unsafe dedicated token, a monolith authority mode with a
+global AI-call maximum below `115`, or a partition-only writer mode with a
+maximum below `2` remains fatal during structural startup validation. The
+default `120` admits one 4,096-chunk cold root in 114 batches and leaves five
+shared reservations for retries or competing queue work before the authority
+sub-cap. Additional maximum-size roots can activate independently in later
+rolling windows; operators who require same-window completion or more retry and
+queue margin must size the finite global maximum explicitly.
 
 Use `npm run build` before `npm run job-events:timeline -- --job-id <uuid> --output text` to reconstruct a redacted chronological job timeline from the compiled backend. The script first invokes the shared database initializer, which can apply built-in schema DDL and write an initialization heartbeat; treat it as a configured-database operation and run it only with explicit authorization and exact target confirmation.
 
@@ -1722,7 +1733,7 @@ This table mirrors high-impact runtime keys and active operator controls in `.en
 | `JOB_WORKER_STATS_ID` | `JOB_WORKER_ID` (commented) | Exact persisted worker-group identity for shared inspection and hourly budgets; maximum 255 characters. |
 | `JOB_WORKER_CONCURRENCY` | `1` (commented) | Queue-consumer slots per worker process. |
 | `JOB_WORKER_MAX_JOBS_PER_HOUR` | `120` (commented) | Hard shared rolling-hour queue-claim maximum; integer 1 through 2,147,483,647 only. |
-| `JOB_WORKER_MAX_AI_CALLS_PER_HOUR` | `120` (commented) | Hard shared rolling-hour worker OpenAI transport-attempt maximum; integer 1 through 2,147,483,647 only. |
+| `JOB_WORKER_MAX_AI_CALLS_PER_HOUR` | `120` (commented) | Hard shared rolling-hour worker OpenAI transport-attempt maximum; integer 1 through 2,147,483,647. Monolith authority requires at least `115`; partition-only resumable writer mode requires at least `2`. |
 | `JOB_WORKER_MAX_RSS_MB` | `2048` (commented) | Hard per-process RSS claim ceiling in MiB; positive safe integer only. |
 | `JOB_WORKER_POLL_MS` | `250` (commented) | Worker polling delay after claim cycles. |
 | `JOB_WORKER_HEARTBEAT_MS` | `5000` | Worker heartbeat interval. |

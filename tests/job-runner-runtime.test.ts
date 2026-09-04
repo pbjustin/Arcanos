@@ -5,6 +5,8 @@ import { pathToFileURL } from 'url';
 
 import {
   advanceClaimedJobAbortState,
+  AUTHORITY_SYNCHRONIZATION_QUEUE_AI_CALL_HEADROOM,
+  buildAuthoritySynchronizationWorkerAiCallBudget,
   buildJobRunnerSlotDefinitions,
   commitAllWorkerSlotsReadyOrThrow,
   computeDeterministicIntervalJitterMs,
@@ -24,6 +26,9 @@ import {
   waitForWorkerStartupReadiness,
   WORKER_BOOTSTRAP_READY_SENTINEL
 } from '../src/workers/jobRunnerRuntime.js';
+import {
+  BACKSTAGE_NOTION_SYNC_MAX_COLD_EMBEDDING_REQUESTS,
+} from '../src/services/backstageNotionSync.js';
 
 function createDeferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -37,6 +42,56 @@ function createDeferred<T>() {
 }
 
 describe('jobRunnerRuntime', () => {
+  it('reserves queue headroom while stripping authority readiness callbacks', () => {
+    const onCapacityExhausted = () => undefined;
+    const onOperationalFailure = () => undefined;
+    const workerBudget = {
+      statsWorkerId: 'async-queue',
+      workerId: 'async-queue-slot-1',
+      maxCallsPerHour: 120,
+      onCapacityExhausted,
+      onOperationalFailure,
+    };
+
+    const authorityBudget = buildAuthoritySynchronizationWorkerAiCallBudget(
+      workerBudget,
+      BACKSTAGE_NOTION_SYNC_MAX_COLD_EMBEDDING_REQUESTS
+    );
+
+    expect(AUTHORITY_SYNCHRONIZATION_QUEUE_AI_CALL_HEADROOM).toBe(1);
+    expect(BACKSTAGE_NOTION_SYNC_MAX_COLD_EMBEDDING_REQUESTS).toBe(114);
+    expect(authorityBudget).toEqual({
+      statsWorkerId: workerBudget.statsWorkerId,
+      workerId: workerBudget.workerId,
+      maxCallsPerHour: 119,
+    });
+    expect(authorityBudget).not.toHaveProperty('onCapacityExhausted');
+    expect(authorityBudget).not.toHaveProperty('onOperationalFailure');
+    expect(Object.isFrozen(authorityBudget)).toBe(true);
+    expect(() => buildAuthoritySynchronizationWorkerAiCallBudget(
+      { ...workerBudget, maxCallsPerHour: 114 },
+      BACKSTAGE_NOTION_SYNC_MAX_COLD_EMBEDDING_REQUESTS
+    )).toThrow(
+      'JOB_WORKER_MAX_AI_CALLS_PER_HOUR must be at least 115'
+    );
+    expect(buildAuthoritySynchronizationWorkerAiCallBudget(
+      { ...workerBudget, maxCallsPerHour: 115 },
+      BACKSTAGE_NOTION_SYNC_MAX_COLD_EMBEDDING_REQUESTS
+    )).toMatchObject({ maxCallsPerHour: 114 });
+    expect(buildAuthoritySynchronizationWorkerAiCallBudget(
+      { ...workerBudget, maxCallsPerHour: 1 },
+      0
+    )).toMatchObject({ maxCallsPerHour: 1 });
+    expect(buildAuthoritySynchronizationWorkerAiCallBudget(
+      { ...workerBudget, maxCallsPerHour: 2 },
+      1
+    )).toMatchObject({ maxCallsPerHour: 1 });
+    expect(() => buildAuthoritySynchronizationWorkerAiCallBudget(
+      workerBudget,
+      -1
+    )).toThrow('Minimum authority provider calls per cycle');
+  });
+
   it.each(['ask', 'dag-node', 'gpt'])(
     'leaves %s work for lease recovery on shutdown but terminalizes durable cancellation',
     () => {
@@ -913,6 +968,20 @@ describe('jobRunnerRuntime', () => {
     );
     expect(source).not.toContain('ensureBackstageNotionWorkerReadiness');
     expect(source).not.toContain('runBackstageNotionWorkerReadinessGate');
+    expect(source).not.toContain('reportAllWorkerOperationalStates');
+    expect(source).toContain(
+      'const authoritySyncWorkerAiCallBudget =\n' +
+      '    buildAuthoritySynchronizationWorkerAiCallBudget('
+    );
+    expect(
+      source.match(/workerBudget: authoritySyncWorkerAiCallBudget/gu)
+    ).toHaveLength(2);
+    expect(
+      source.match(/attachWorkerOperationalFailureReporting\(/gu)
+    ).toHaveLength(2);
+    expect(source).toMatch(
+      /const workerAiCallBudget = attachWorkerOperationalFailureReporting\(\s+autonomyService\.getWorkerAiCallBudget\(\),/u
+    );
     expect(source).toContain(
       'cutoverEvidence: backstageNotionPartitionCutoverEvidence'
     );
