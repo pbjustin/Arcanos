@@ -70,6 +70,8 @@ export interface NativePrPreviewE2eContract {
       'backstage-notion-sync-phase-a/v1';
     notionWriterCapacityReleaseProofVersion:
       'backstage-notion-writer-capacity-release/v1';
+    authorityReadinessProofVersion:
+      'backstage-notion-authority-readiness/v1';
     fixtures: Readonly<{
       routeBudget: 'route-budget-provider-delay';
       hrcRetryCache: 'hrc-timeout-retry-cache';
@@ -85,6 +87,7 @@ export interface NativePrPreviewE2eContract {
       productionOutputContracts: 'production-output-contracts';
       outputAdmission: 'output-classification-first-success-contract';
       notionSyncPhaseA: 'notion-sync-phase-a-contract';
+      authorityReadiness: 'notion-authority-readiness-contract';
     }>;
     proofHeaders: Readonly<{
       clearPolicyVersion:
@@ -117,6 +120,8 @@ export interface NativePrPreviewE2eContract {
         'x-arcanos-preview-backstage-notion-sync-phase-a-version';
       notionWriterCapacityReleaseVersion:
         'x-arcanos-preview-backstage-notion-writer-capacity-release-version';
+      authorityReadinessVersion:
+        'x-arcanos-preview-backstage-notion-authority-readiness-version';
     }>;
   }>;
   readonly backstageBookerOpenApi: Readonly<{

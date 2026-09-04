@@ -15,7 +15,7 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 5_000;
 const DEFAULT_TOTAL_TIMEOUT_MS = 60_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 64 * 1024;
 const MAX_AGGREGATE_RESPONSE_BYTES = 512 * 1024;
-const MAX_REQUESTS = 137;
+const MAX_REQUESTS = 138;
 const MAX_BACKSTAGE_BOOKER_OPENAPI_SOURCE_BYTES = 128 * 1024;
 const BACKSTAGE_BOOKER_OPENAPI_GIT_PATH =
   'contracts/backstage_booker.openapi.v1.json';
@@ -939,6 +939,10 @@ export function buildNativePrPreviewRequestPlan() {
     backstageGenerationCase(
       'backstage-generation-notion-sync-phase-a',
       'notionSyncPhaseA'
+    ),
+    backstageGenerationCase(
+      'backstage-generation-authority-readiness',
+      'authorityReadiness'
     ),
     backstageGenerationCase(
       'backstage-generation-notion-authority-rag',
@@ -2372,6 +2376,73 @@ function expectedBackstageGenerationContractPayload(requestCase) {
           disposition: 'verify_unchanged',
         },
       },
+      workerBoundaryReached: false,
+    };
+  }
+  if (requestCase.fixtureName === 'authorityReadiness') {
+    const checkpoint = (
+      name,
+      logicalTimeMs,
+      processReady,
+      syncInProgress,
+      authorityStatus,
+      snapshotStatus,
+      protectedGenerationAdmissible,
+      protectedFailureCode
+    ) => ({
+      name,
+      logicalTimeMs,
+      processReady,
+      syncInProgress,
+      authorityStatus,
+      snapshotStatus,
+      protectedGenerationAdmissible,
+      protectedFailureCode,
+    });
+    return {
+      ...base,
+      authorityReadiness: {
+        boundedStartupBudgetMs: 30_000,
+        checkpoints: [
+          checkpoint(
+            'booting', 0, false, false, 'unavailable', 'unavailable', false,
+            'BACKSTAGE_NOTION_INDEX_UNAVAILABLE'
+          ),
+          checkpoint(
+            'process_ready', 5_000, true, true, 'syncing', 'unavailable', false,
+            'BACKSTAGE_NOTION_INDEX_UNAVAILABLE'
+          ),
+          checkpoint(
+            'healthcheck_window', 300_000, true, true, 'syncing',
+            'unavailable', false, 'BACKSTAGE_NOTION_INDEX_UNAVAILABLE'
+          ),
+          checkpoint(
+            'activated', 360_001, true, false, 'current_complete',
+            'current_complete', true, null
+          ),
+        ],
+        contracts: {
+          boundedStartupBeforeRailwayWindow: true,
+          currentCompleteOnlyForProtectedGeneration: true,
+          healthcheckWindowDoesNotAwaitSync: true,
+          noRestartRequired: true,
+          protectedFailureCodeStable: true,
+          snapshotStatusReducerExecuted: true,
+          staleSnapshotNotOfficial: true,
+          syncExceedsRailwayWindow: true,
+          virtualTimeOnly: true,
+        },
+        processInstanceStarts: 1,
+        productionSharedProtectedProvenanceValidator: true,
+        productionSharedSnapshotStatusReducer: true,
+        railwayHealthcheckWindowMs: 300_000,
+        syncCompletedAtMs: 360_001,
+      },
+      embeddingBoundaryReached: false,
+      notionApiBoundaryReached: false,
+      queueBoundaryReached: false,
+      realTimerWaited: false,
+      sensitiveMetadataAbsent: true,
       workerBoundaryReached: false,
     };
   }
@@ -3891,6 +3962,48 @@ function validateResponseBody(requestCase, bodyBytes, options) {
   }
   if (
     requestCase.expectedType === 'backstage-generation-contract'
+    && requestCase.fixtureName === 'authorityReadiness'
+  ) {
+    const readiness = body?.authorityReadiness;
+    const checkpoints = Array.isArray(readiness?.checkpoints)
+      ? readiness.checkpoints
+      : [];
+    if (
+      /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/iu
+        .test(bodyText)
+      || /(?:root|database|dataSource|page|snapshot|attempt)Id/iu
+        .test(bodyText)
+      || bodyText.includes('Bearer ')
+      || bodyText.includes('https://')
+      || checkpoints.length !== 4
+      || checkpoints[1]?.processReady !== true
+      || checkpoints[1]?.syncInProgress !== true
+      || checkpoints[2]?.logicalTimeMs !== 300_000
+      || checkpoints[2]?.processReady !== true
+      || checkpoints[2]?.syncInProgress !== true
+      || checkpoints[2]?.protectedGenerationAdmissible !== false
+      || checkpoints[2]?.protectedFailureCode
+        !== 'BACKSTAGE_NOTION_INDEX_UNAVAILABLE'
+      || checkpoints[3]?.snapshotStatus !== 'current_complete'
+      || checkpoints[3]?.protectedGenerationAdmissible !== true
+      || readiness?.processInstanceStarts !== 1
+      || readiness?.productionSharedSnapshotStatusReducer !== true
+      || readiness?.productionSharedProtectedProvenanceValidator !== true
+      || body?.sensitiveMetadataAbsent !== true
+      || body?.realTimerWaited !== false
+      || body?.workerBoundaryReached !== false
+      || body?.databaseBoundaryReached !== false
+      || body?.providerBoundaryReached !== false
+      || body?.externalNetworkAttempted !== false
+    ) {
+      fail(
+        'NATIVE_PR_PREVIEW_BACKSTAGE_AUTHORITY_READINESS_OUTCOME_INVALID',
+        requestCase.caseId
+      );
+    }
+  }
+  if (
+    requestCase.expectedType === 'backstage-generation-contract'
     && requestCase.fixtureName === 'gptClientIdentity'
   ) {
     if (
@@ -4254,6 +4367,17 @@ async function executeRequestCase(
       );
     }
     if (
+      requestCase.fixtureName === 'authorityReadiness'
+      && response.headers.get(
+        contract.proofHeaders.authorityReadinessVersion
+      ) !== contract.authorityReadinessProofVersion
+    ) {
+      fail(
+        'NATIVE_PR_PREVIEW_BACKSTAGE_AUTHORITY_READINESS_PROOF_INVALID',
+        requestCase.caseId
+      );
+    }
+    if (
       requestCase.fixtureName === 'notionSyncPhaseA'
       && response.headers.get(
         contract.proofHeaders.notionWriterCapacityReleaseVersion
@@ -4426,6 +4550,10 @@ async function executeRequestCase(
           notionSyncPhaseAVerified: true,
           notionWriterCapacityReleaseVerified: true,
         }
+      : {}),
+    ...(requestCase.expectedType === 'backstage-generation-contract'
+      && requestCase.fixtureName === 'authorityReadiness'
+      ? { authorityReadinessVerified: true }
       : {}),
     ...(requestCase.expectedType === 'status-auth-boundary-contract'
       ? { statusAuthBoundaryVerified: true }

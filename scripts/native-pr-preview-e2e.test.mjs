@@ -296,6 +296,14 @@ function responseHeadersForCase(
                     .notionWriterCapacityReleaseProofVersion,
               }
             : {}),
+          ...(requestCase.fixtureName === 'authorityReadiness'
+            ? {
+                [NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration
+                  .proofHeaders.authorityReadinessVersion]:
+                  NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration
+                    .authorityReadinessProofVersion,
+              }
+            : {}),
         }
       : {}),
     ...(
@@ -712,7 +720,7 @@ test('rejects malformed or unsupported exact-head Backstage Booker versions', as
 
 test('executes the bounded credential-free matrix and detects identity stability', async () => {
   const requestPlan = buildNativePrPreviewRequestPlan();
-  assert.equal(requestPlan.length, 137);
+  assert.equal(requestPlan.length, 138);
   assert.equal(
     requestPlan.filter(({ caseId, expectedType }) =>
       expectedType !== 'research-contract'
@@ -788,7 +796,7 @@ test('executes the bounded credential-free matrix and detects identity stability
     requestPlan.filter(({ expectedType }) =>
       expectedType === 'backstage-generation-contract'
     ).length,
-    14
+    15
   );
   assert.equal(
     requestPlan.filter(({ expectedType }) =>
@@ -1209,6 +1217,9 @@ test('executes the bounded credential-free matrix and detects identity stability
   const notionSyncPhaseACase = requestPlan.find(({ caseId }) =>
     caseId === 'backstage-generation-notion-sync-phase-a'
   );
+  const authorityReadinessCase = requestPlan.find(({ caseId }) =>
+    caseId === 'backstage-generation-authority-readiness'
+  );
   const notionAuthorityRagCase = requestPlan.find(({ caseId }) =>
     caseId === 'backstage-generation-notion-authority-rag'
   );
@@ -1228,6 +1239,7 @@ test('executes the bounded credential-free matrix and detects identity stability
   assert.ok(productionOutputContractsCase);
   assert.ok(outputAdmissionCase);
   assert.ok(notionSyncPhaseACase);
+  assert.ok(authorityReadinessCase);
   assert.ok(notionAuthorityRagCase);
   assert.ok(partitionFailureTelemetryCase);
   assert.ok(continuityQueryCase);
@@ -1486,6 +1498,68 @@ test('executes the bounded credential-free matrix and detects identity stability
       },
     ],
   });
+  const authorityReadinessPayload = expectedNativePrPreviewResponseBody(
+    authorityReadinessCase,
+    { commitSha: COMMIT_SHA, prNumber: PR_NUMBER }
+  );
+  assert.deepEqual(
+    authorityReadinessPayload.authorityReadiness.checkpoints,
+    [
+      {
+        name: 'booting',
+        logicalTimeMs: 0,
+        processReady: false,
+        syncInProgress: false,
+        authorityStatus: 'unavailable',
+        snapshotStatus: 'unavailable',
+        protectedGenerationAdmissible: false,
+        protectedFailureCode: 'BACKSTAGE_NOTION_INDEX_UNAVAILABLE',
+      },
+      {
+        name: 'process_ready',
+        logicalTimeMs: 5_000,
+        processReady: true,
+        syncInProgress: true,
+        authorityStatus: 'syncing',
+        snapshotStatus: 'unavailable',
+        protectedGenerationAdmissible: false,
+        protectedFailureCode: 'BACKSTAGE_NOTION_INDEX_UNAVAILABLE',
+      },
+      {
+        name: 'healthcheck_window',
+        logicalTimeMs: 300_000,
+        processReady: true,
+        syncInProgress: true,
+        authorityStatus: 'syncing',
+        snapshotStatus: 'unavailable',
+        protectedGenerationAdmissible: false,
+        protectedFailureCode: 'BACKSTAGE_NOTION_INDEX_UNAVAILABLE',
+      },
+      {
+        name: 'activated',
+        logicalTimeMs: 360_001,
+        processReady: true,
+        syncInProgress: false,
+        authorityStatus: 'current_complete',
+        snapshotStatus: 'current_complete',
+        protectedGenerationAdmissible: true,
+        protectedFailureCode: null,
+      },
+    ]
+  );
+  assert.deepEqual(authorityReadinessPayload.authorityReadiness.contracts, {
+    boundedStartupBeforeRailwayWindow: true,
+    currentCompleteOnlyForProtectedGeneration: true,
+    healthcheckWindowDoesNotAwaitSync: true,
+    noRestartRequired: true,
+    protectedFailureCodeStable: true,
+    snapshotStatusReducerExecuted: true,
+    staleSnapshotNotOfficial: true,
+    syncExceedsRailwayWindow: true,
+    virtualTimeOnly: true,
+  });
+  assert.equal(authorityReadinessPayload.realTimerWaited, false);
+  assert.equal(authorityReadinessPayload.sensitiveMetadataAbsent, true);
   assert.deepEqual(
     expectedNativePrPreviewResponseBody(notionAuthorityRagCase, {
       commitSha: COMMIT_SHA,
@@ -1960,14 +2034,14 @@ test('executes the bounded credential-free matrix and detects identity stability
   assert.equal(result.executed, true);
   assert.equal(result.networkAttempted, true);
   assert.equal(result.summary.status, 'PASS');
-  assert.equal(result.summary.requestsMade, 137);
+  assert.equal(result.summary.requestsMade, 138);
   assert.equal(result.summary.simulatedAuthRequests, 24);
-  assert.equal(result.checks.length, 137);
+  assert.equal(result.checks.length, 138);
   assert.equal(
     result.checks.filter(({ simulatedAuth }) => simulatedAuth).length,
     24
   );
-  assert.equal(mock.requestCount, 137);
+  assert.equal(mock.requestCount, 138);
   assert.equal(
     result.checks.find(({ caseId }) =>
       caseId === 'worker-readiness-initial'
@@ -2124,6 +2198,21 @@ test('executes the bounded credential-free matrix and detects identity stability
     role: 'web',
     simulatedAuth: false,
   });
+  const authorityReadinessCheck = result.checks.find(({ caseId }) =>
+    caseId === 'backstage-generation-authority-readiness'
+  );
+  assert.deepEqual(authorityReadinessCheck, {
+    authorityReadinessVerified: true,
+    bodySha256: authorityReadinessCheck.bodySha256,
+    caseId: 'backstage-generation-authority-readiness',
+    clearPolicyVersionVerified: true,
+    httpStatus: 200,
+    method: 'POST',
+    pathTemplate: '/backstage/generation-contract',
+    responseBytes: Buffer.byteLength(JSON.stringify(authorityReadinessPayload)),
+    role: 'web',
+    simulatedAuth: false,
+  });
   assert.deepEqual(
     result.checks.find(({ caseId }) =>
       caseId === 'backstage-generation-route-budget'
@@ -2257,12 +2346,12 @@ test('executes the bounded credential-free matrix and detects identity stability
   const backstageGenerationCalls = mock.calls.filter(({ url }) =>
     url.endsWith('/backstage/generation-contract')
   );
-  assert.equal(backstageGenerationCalls.length, 15);
+  assert.equal(backstageGenerationCalls.length, 16);
   assert.equal(
     backstageGenerationCalls.filter(({ url }) =>
       url.startsWith(WEB_BASE_URL)
     ).length,
-    14
+    15
   );
   assert.equal(
     backstageGenerationCalls.filter(({ url }) =>
@@ -2917,6 +3006,26 @@ test('rejects missing synthetic provenance and correlation or security header dr
           NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration.proofHeaders
             .notionWriterCapacityReleaseVersion
         ] = 'backstage-notion-writer-capacity-release/drifted';
+      },
+    },
+    {
+      caseId: 'backstage-generation-authority-readiness',
+      code: 'NATIVE_PR_PREVIEW_BACKSTAGE_AUTHORITY_READINESS_PROOF_INVALID',
+      mutate(headers) {
+        delete headers[
+          NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration.proofHeaders
+            .authorityReadinessVersion
+        ];
+      },
+    },
+    {
+      caseId: 'backstage-generation-authority-readiness',
+      code: 'NATIVE_PR_PREVIEW_BACKSTAGE_AUTHORITY_READINESS_PROOF_INVALID',
+      mutate(headers) {
+        headers[
+          NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration.proofHeaders
+            .authorityReadinessVersion
+        ] = 'backstage-notion-authority-readiness/drifted';
       },
     },
     {
