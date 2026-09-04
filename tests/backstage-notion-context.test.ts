@@ -15,10 +15,14 @@ import {
 } from '../src/services/backstageNotionEnrichmentAuthorization.js';
 import {
   BACKSTAGE_NOTION_MAX_DATA_SOURCE_QUERY_RESPONSE_BYTES,
+  BACKSTAGE_NOTION_MAX_METADATA_RESPONSE_BYTES,
+  BACKSTAGE_NOTION_MAX_PAGE_TITLE_PROPERTY_ITEMS,
   BackstageNotionReadError,
+  assembleBackstageNotionPageTitle,
   fetchBackstageNotionDatabaseMetadata,
   fetchBackstageNotionMarkdownPage,
   fetchBackstageNotionPageMetadata,
+  fetchBackstageNotionPageTitleProperty,
   loadBackstageNotionPromptContextCore,
   queryBackstageNotionDataSource,
 } from '../src/shared/backstage/backstageNotionContextCore.js';
@@ -82,6 +86,50 @@ function markdownResponse(
       'content-type': 'application/json; charset=utf-8',
       ...options.headers,
     },
+  });
+}
+
+function titlePropertyItem(
+  plainText: string,
+  type: 'equation' | 'mention' | 'text' = 'mention'
+) {
+  return {
+    object: 'property_item',
+    id: 'title',
+    type: 'title',
+    title: {
+      type,
+      plain_text: plainText,
+    },
+  };
+}
+
+function titlePropertyResponse(
+  titleParts: readonly string[],
+  options: {
+    hasMore?: boolean;
+    nextCursor?: string | null;
+    nextUrl?: string | null;
+  } = {}
+): Response {
+  const hasMore = options.hasMore ?? false;
+  const nextCursor = options.nextCursor ?? null;
+  const nextUrl = options.nextUrl ?? null;
+  return new Response(JSON.stringify({
+    object: 'list',
+    type: 'property_item',
+    results: titleParts.map(part => titlePropertyItem(part)),
+    next_cursor: nextCursor,
+    has_more: hasMore,
+    property_item: {
+      id: 'title',
+      type: 'title',
+      title: {},
+      next_url: nextUrl,
+    },
+  }), {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
   });
 }
 
@@ -379,6 +427,16 @@ describe('Backstage Notion prompt context', () => {
       ),
     ],
     [
+      'page_title',
+      (fetchMock: typeof fetch) => fetchBackstageNotionPageTitleProperty(
+        fetchMock,
+        notionToken,
+        firstPageId,
+        null,
+        new AbortController().signal
+      ),
+    ],
+    [
       'database_metadata',
       (fetchMock: typeof fetch) => fetchBackstageNotionDatabaseMetadata(
         fetchMock,
@@ -512,6 +570,230 @@ describe('Backstage Notion prompt context', () => {
     expect(queryFetch.mock.calls[0]?.[1]?.body).toBe(JSON.stringify({
       page_size: 10,
     }));
+  });
+
+  it('retrieves an exact 25-part title through the complete property endpoint', async () => {
+    const titleParts = Array.from({ length: 25 }, (_, index) => `${index}.`);
+    const fetchMock = jest.fn(async () => titlePropertyResponse(titleParts));
+
+    const response = await fetchBackstageNotionPageTitleProperty(
+      asFetch(fetchMock),
+      notionToken,
+      firstPageId,
+      null,
+      new AbortController().signal
+    );
+
+    expect(response).toEqual({
+      titleParts,
+      hasMore: false,
+      nextCursor: null,
+    });
+    expect(assembleBackstageNotionPageTitle(response.titleParts))
+      .toBe(titleParts.join(''));
+    const requestUrl = new URL(String(fetchMock.mock.calls[0]?.[0]));
+    expect(requestUrl.origin).toBe('https://api.notion.com');
+    expect(requestUrl.pathname).toBe(`/v1/pages/${firstPageId}/properties/title`);
+    expect(requestUrl.searchParams.get('page_size')).toBe('100');
+    expect(requestUrl.searchParams.has('start_cursor')).toBe(false);
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
+      method: 'GET',
+      redirect: 'manual',
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${notionToken}`,
+        'Notion-Version': BACKSTAGE_NOTION_API_VERSION,
+      },
+    });
+  });
+
+  it('retrieves and assembles the 26th inline-reference title part', async () => {
+    const firstTitleParts = Array.from({ length: 25 }, (_, index) => `${index}.`);
+    const finalTitlePart = 'complete';
+    const nextCursor = 'opaque-title-cursor';
+    const fetchMock = jest.fn(async (input: string | URL | Request) => {
+      const requestUrl = new URL(String(input));
+      if (requestUrl.searchParams.get('start_cursor') === null) {
+        return titlePropertyResponse(firstTitleParts, {
+          hasMore: true,
+          nextCursor,
+          nextUrl: `https://api.notion.com/v1/pages/${firstPageId}/properties/title?start_cursor=${nextCursor}`,
+        });
+      }
+      return titlePropertyResponse([finalTitlePart]);
+    });
+
+    const first = await fetchBackstageNotionPageTitleProperty(
+      asFetch(fetchMock),
+      notionToken,
+      firstPageId,
+      null,
+      new AbortController().signal
+    );
+    const second = await fetchBackstageNotionPageTitleProperty(
+      asFetch(fetchMock),
+      notionToken,
+      firstPageId,
+      first.nextCursor,
+      new AbortController().signal
+    );
+    const completeTitleParts = [...first.titleParts, ...second.titleParts];
+
+    expect(first).toMatchObject({ hasMore: true, nextCursor });
+    expect(second).toEqual({
+      titleParts: [finalTitlePart],
+      hasMore: false,
+      nextCursor: null,
+    });
+    expect(completeTitleParts).toHaveLength(26);
+    expect(assembleBackstageNotionPageTitle(completeTitleParts))
+      .toBe(`${firstTitleParts.join('')}${finalTitlePart}`);
+    expect(new URL(String(fetchMock.mock.calls[1]?.[0])).searchParams.get(
+      'start_cursor'
+    )).toBe(nextCursor);
+  });
+
+  it('rejects malformed title property items and inconsistent pagination', async () => {
+    const malformedResponses = [
+      {
+        object: 'list',
+        type: 'property_item',
+        results: [{
+          ...titlePropertyItem('private malformed title'),
+          id: 'not-title',
+        }],
+        next_cursor: null,
+        has_more: false,
+        property_item: {
+          id: 'title',
+          type: 'title',
+          title: {},
+          next_url: null,
+        },
+      },
+      {
+        object: 'list',
+        type: 'property_item',
+        results: [titlePropertyItem('private incomplete title')],
+        next_cursor: null,
+        has_more: true,
+        property_item: {
+          id: 'title',
+          type: 'title',
+          title: {},
+          next_url: null,
+        },
+      },
+    ];
+
+    for (const malformedResponse of malformedResponses) {
+      const fetchMock = jest.fn(async () => new Response(
+        JSON.stringify(malformedResponse),
+        {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }
+      ));
+      let caught: unknown;
+      try {
+        await fetchBackstageNotionPageTitleProperty(
+          asFetch(fetchMock),
+          notionToken,
+          firstPageId,
+          null,
+          new AbortController().signal
+        );
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toMatchObject({
+        category: 'invalid_response',
+        notionEndpointKind: 'page_title',
+        notionResponseSchemaValid: false,
+      });
+      expect(JSON.stringify(caught)).not.toContain('private');
+      expect(JSON.stringify(caught)).not.toContain(firstPageId);
+      expect(JSON.stringify(caught)).not.toContain(notionToken);
+    }
+  });
+
+  it('rejects a self-cycling title property cursor without retaining it', async () => {
+    const privateCursor = 'PRIVATE-TITLE-CURSOR';
+    const fetchMock = jest.fn(async () => titlePropertyResponse(['title'], {
+      hasMore: true,
+      nextCursor: privateCursor,
+      nextUrl: `https://api.notion.com/private/${privateCursor}`,
+    }));
+    let caught: unknown;
+    try {
+      await fetchBackstageNotionPageTitleProperty(
+        asFetch(fetchMock),
+        notionToken,
+        firstPageId,
+        privateCursor,
+        new AbortController().signal
+      );
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toMatchObject({
+      category: 'invalid_response',
+      notionEndpointKind: 'page_title',
+      notionResponseSchemaValid: false,
+    });
+    expect(JSON.stringify(caught)).not.toContain(privateCursor);
+    expect(JSON.stringify(caught)).not.toContain(firstPageId);
+    expect(JSON.stringify(caught)).not.toContain(notionToken);
+  });
+
+  it('rejects oversized title pagination before dispatch or body retention', async () => {
+    const privateCursorMarker = 'PRIVATE-OVERSIZED-TITLE-CURSOR';
+    const oversizedCursor = `${privateCursorMarker}${'x'.repeat(500 * 1024)}`;
+    const fetchMock = jest.fn(async () => titlePropertyResponse(['title']));
+    let caught: unknown;
+    try {
+      await fetchBackstageNotionPageTitleProperty(
+        asFetch(fetchMock),
+        notionToken,
+        firstPageId,
+        oversizedCursor,
+        new AbortController().signal
+      );
+    } catch (error) {
+      caught = error;
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(caught).toMatchObject({
+      category: 'invalid_cursor',
+      notionEndpointKind: 'page_title',
+    });
+    expect(JSON.stringify(caught)).not.toContain(privateCursorMarker);
+
+    const oversizedBodyFetch = jest.fn(async () => new Response('{}', {
+      status: 200,
+      headers: {
+        'content-type': 'application/json',
+        'content-length': String(BACKSTAGE_NOTION_MAX_METADATA_RESPONSE_BYTES + 1),
+      },
+    }));
+    await expect(fetchBackstageNotionPageTitleProperty(
+      asFetch(oversizedBodyFetch),
+      notionToken,
+      firstPageId,
+      null,
+      new AbortController().signal
+    )).rejects.toMatchObject({
+      category: 'response_too_large',
+      notionEndpointKind: 'page_title',
+    });
+  });
+
+  it('rejects aggregate title item counts beyond the provider maximum', () => {
+    expect(assembleBackstageNotionPageTitle(Array.from(
+      { length: BACKSTAGE_NOTION_MAX_PAGE_TITLE_PROPERTY_ITEMS + 1 },
+      () => 'x'
+    ))).toBeNull();
   });
 
   it('accepts a bounded 10-row filtered data-source query response above the legacy cap', async () => {

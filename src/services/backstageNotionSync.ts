@@ -32,10 +32,13 @@ import {
   type BackstageNotionAuthorityRoot,
 } from './backstageNotionAuthority.js';
 import {
+  BACKSTAGE_NOTION_MAX_PAGE_TITLE_PROPERTY_ITEMS,
   BackstageNotionReadError,
+  assembleBackstageNotionPageTitle,
   fetchBackstageNotionDatabaseMetadata,
   fetchBackstageNotionMarkdownPage,
   fetchBackstageNotionPageMetadata,
+  fetchBackstageNotionPageTitleProperty,
   normalizeBackstageNotionPageId,
   queryBackstageNotionDataSource,
   readBackstageNotionAccessToken,
@@ -88,7 +91,13 @@ export const BACKSTAGE_NOTION_SYNC_MAX_DATA_SOURCE_QUERY_REQUESTS = 1_024;
 export const BACKSTAGE_NOTION_SYNC_MAX_RETRY_AFTER_MS = 60_000;
 export const BACKSTAGE_NOTION_SYNC_RETRY_JITTER_MAX_MS = 250;
 export const BACKSTAGE_NOTION_SYNC_LEASE_RENEW_INTERVAL_MS = 60_000;
-export const BACKSTAGE_NOTION_SYNC_CYCLE_TIMEOUT_MS = 14 * 60 * 1_000;
+// Preserve the original cycle's non-spacing headroom while admitting one
+// complete-title request in both capture and verification for every page.
+export const BACKSTAGE_NOTION_SYNC_CYCLE_TIMEOUT_MS =
+  14 * 60 * 1_000
+  + BACKSTAGE_NOTION_SYNC_MAX_PAGES
+    * 2
+    * BACKSTAGE_NOTION_SYNC_REQUEST_SPACING_MS;
 export const BACKSTAGE_NOTION_SYNC_CLEANUP_TIMEOUT_MS = 5_000;
 export { BACKSTAGE_NOTION_RAG_INDEX_FORMAT };
 
@@ -1289,7 +1298,7 @@ async function loadDatabaseRootCaptureState(input: {
         }
         if (
           seenPageIds.has(result.pageId)
-          || pages.length >= BACKSTAGE_NOTION_SYNC_MAX_PAGES - 1
+          || pages.length >= BACKSTAGE_NOTION_SYNC_MAX_PAGES
         ) {
           throw incompleteSyncError(
             input.progress,
@@ -1334,6 +1343,81 @@ async function loadDatabaseRootCaptureState(input: {
   return { metadata, pages: Object.freeze(pages) };
 }
 
+async function fetchCompleteBackstageNotionPageTitle(input: {
+  pageId: string;
+  request: <T>(operation: (signal: AbortSignal) => Promise<T>) => Promise<T>;
+  fetchImpl: BackstageNotionFetchImplementation;
+  accessToken: string;
+  progress: BackstageNotionSyncProgress;
+  firstPhase: BackstageNotionSyncFailurePhase;
+}): Promise<string> {
+  const titleParts: string[] = [];
+  const seenCursorDigests = new Set<string>();
+  let cursor: string | null = null;
+
+  while (true) {
+    input.progress.phase = cursor === null ? input.firstPhase : 'pagination';
+    if (cursor !== null) {
+      input.progress.paginationRequests += 1;
+    }
+    const response = await input.request(signal =>
+      fetchBackstageNotionPageTitleProperty(
+        input.fetchImpl,
+        input.accessToken,
+        input.pageId,
+        cursor,
+        signal
+      )
+    );
+    const nextItemCount = titleParts.length + response.titleParts.length;
+    if (
+      nextItemCount > BACKSTAGE_NOTION_MAX_PAGE_TITLE_PROPERTY_ITEMS
+      || (
+        response.hasMore
+        && nextItemCount >= BACKSTAGE_NOTION_MAX_PAGE_TITLE_PROPERTY_ITEMS
+      )
+    ) {
+      throw incompleteSyncError(
+        input.progress,
+        'pagination',
+        'pagination_incomplete',
+        'The Notion page title exceeds the bounded synchronization limits.'
+      );
+    }
+    titleParts.push(...response.titleParts);
+    if (!response.hasMore) {
+      break;
+    }
+    const nextCursor = response.nextCursor;
+    const nextCursorDigest = nextCursor === null ? null : sha256(nextCursor);
+    if (
+      nextCursor === null
+      || nextCursorDigest === null
+      || seenCursorDigests.has(nextCursorDigest)
+    ) {
+      throw incompleteSyncError(
+        input.progress,
+        'pagination',
+        'pagination_incomplete',
+        'The Notion page title returned incomplete or cyclic pagination.'
+      );
+    }
+    seenCursorDigests.add(nextCursorDigest);
+    cursor = nextCursor;
+  }
+
+  const title = assembleBackstageNotionPageTitle(titleParts);
+  if (title === null) {
+    throw incompleteSyncError(
+      input.progress,
+      'completeness_validation',
+      'completeness_mismatch',
+      'A Notion database row did not expose a complete bounded title.'
+    );
+  }
+  return title;
+}
+
 function sourceDriftError(
   progress: BackstageNotionSyncProgress
 ): BackstageNotionSyncError {
@@ -1365,7 +1449,8 @@ async function verifyHierarchyDidNotDrift(input: {
     ) {
       continue;
     }
-    const verified = await input.request(signal =>
+    input.progress.phase = 'completeness_validation';
+    const verifiedMetadata = await input.request(signal =>
       fetchBackstageNotionPageMetadata(
         input.fetchImpl,
         input.accessToken,
@@ -1374,6 +1459,24 @@ async function verifyHierarchyDidNotDrift(input: {
         { requireTitle: page.membershipDataSourceId !== null }
       )
     );
+    const verifiedTitle = page.membershipDataSourceId === null
+      ? verifiedMetadata.title
+      : verifiedMetadata.titleIsComplete === true
+        && typeof verifiedMetadata.title === 'string'
+        ? verifiedMetadata.title
+        : await fetchCompleteBackstageNotionPageTitle({
+          pageId: page.prepared.pageId,
+          request: input.request,
+          fetchImpl: input.fetchImpl,
+          accessToken: input.accessToken,
+          progress: input.progress,
+          firstPhase: 'completeness_validation',
+        });
+    const verified: BackstageNotionPageMetadata = {
+      ...verifiedMetadata,
+      title: verifiedTitle,
+      ...(page.membershipDataSourceId === null ? {} : { titleIsComplete: true }),
+    };
     if (
       verified.inTrash
       || verified.parentPageId !== page.metadata.parentPageId
@@ -1495,6 +1598,8 @@ async function captureHierarchy(input: {
     input.progress.pagesDiscovered = discovered.size;
   }
   let providerPagesFetched = 0;
+  const maximumCapturedRecords = BACKSTAGE_NOTION_SYNC_MAX_PAGES
+    + (databaseRoot === null ? 0 : 1);
 
   while (queue.length > 0) {
     const pending = queue.shift();
@@ -1503,7 +1608,7 @@ async function captureHierarchy(input: {
     }
     if (
       pending.depth > BACKSTAGE_NOTION_SYNC_MAX_DEPTH
-      || captured.length >= BACKSTAGE_NOTION_SYNC_MAX_PAGES
+      || captured.length >= maximumCapturedRecords
     ) {
       throw incompleteSyncError(
         input.progress,
@@ -1514,7 +1619,7 @@ async function captureHierarchy(input: {
     }
 
     input.progress.phase = 'page_fetch';
-    const metadata = pending.preloadedMetadata ?? await input.request(signal =>
+    const fetchedMetadata = pending.preloadedMetadata ?? await input.request(signal =>
       fetchBackstageNotionPageMetadata(
         input.fetchImpl,
         input.accessToken,
@@ -1523,9 +1628,19 @@ async function captureHierarchy(input: {
         { requireTitle: pending.appendProviderTitleToPath === true }
       )
     );
-    validateFetchedPage(pending, metadata, input.progress);
+    validateFetchedPage(pending, fetchedMetadata, input.progress);
     const title = pending.appendProviderTitleToPath
-      ? metadata.title
+      ? fetchedMetadata.titleIsComplete === true
+        && typeof fetchedMetadata.title === 'string'
+        ? fetchedMetadata.title
+        : await fetchCompleteBackstageNotionPageTitle({
+            pageId: pending.pageId,
+            request: input.request,
+            fetchImpl: input.fetchImpl,
+            accessToken: input.accessToken,
+            progress: input.progress,
+            firstPhase: 'page_fetch',
+          })
       : pending.title;
     if (typeof title !== 'string' || title.length === 0) {
       throw incompleteSyncError(
@@ -1538,6 +1653,12 @@ async function captureHierarchy(input: {
     const path = pending.appendProviderTitleToPath
       ? [...pending.path, title]
       : pending.path;
+    const metadata: BackstageNotionPageMetadata = {
+      ...fetchedMetadata,
+      ...(pending.appendProviderTitleToPath
+        ? { title, titleIsComplete: true }
+        : {}),
+    };
     const markdown = await fetchCompleteBackstageNotionMarkdown({
       pageId: pending.pageId,
       fetchImpl: input.fetchImpl,

@@ -19,6 +19,8 @@ export const BACKSTAGE_NOTION_MAX_DATA_SOURCE_QUERY_RESPONSE_BYTES =
   8 * 1024 * 1024;
 export const BACKSTAGE_NOTION_MAX_DATABASE_DATA_SOURCES = 100;
 export const BACKSTAGE_NOTION_MAX_DATA_SOURCE_QUERY_RESULTS = 10;
+export const BACKSTAGE_NOTION_MAX_PAGE_RESPONSE_INLINE_REFERENCES = 25;
+export const BACKSTAGE_NOTION_MAX_PAGE_TITLE_PROPERTY_ITEMS = 100;
 export const BACKSTAGE_NOTION_MAX_PAGES_PER_UNIVERSE = 3;
 export const BACKSTAGE_NOTION_PAGE_CONTEXT_CODE_POINTS = 4_000;
 export const BACKSTAGE_NOTION_TOTAL_CONTEXT_CODE_POINTS =
@@ -29,6 +31,7 @@ const BACKSTAGE_NOTION_SANITIZATION_INPUT_CODE_POINTS =
   BACKSTAGE_NOTION_PAGE_CONTEXT_CODE_POINTS * 2;
 const BACKSTAGE_NOTION_MAX_CONFIG_BYTES = 16 * 1024;
 const BACKSTAGE_NOTION_MAX_REQUEST_BYTES = 500 * 1024;
+const BACKSTAGE_NOTION_PAGE_TITLE_PROPERTY_PAGE_SIZE = 100;
 const BACKSTAGE_NOTION_MAX_CONFIGURED_UNIVERSES = 32;
 const BACKSTAGE_NOTION_MAX_TOKEN_LENGTH = 4_096;
 const BACKSTAGE_UNIVERSE_ID_PATTERN =
@@ -86,6 +89,7 @@ export interface BackstageNotionPageMetadata {
   parentType?: 'block_id' | 'data_source_id' | 'database_id' | 'page_id' | 'workspace';
   parentId?: string | null;
   title?: string | null;
+  titleIsComplete?: boolean;
   lastEditedAt: Date;
   inTrash: boolean;
 }
@@ -120,8 +124,15 @@ export interface BackstageNotionDataSourceQueryResponse {
   nextCursor: string | null;
 }
 
+export interface BackstageNotionPageTitlePropertyResponse {
+  titleParts: readonly string[];
+  hasMore: boolean;
+  nextCursor: string | null;
+}
+
 export type BackstageNotionEndpointKind =
   | 'page_metadata'
+  | 'page_title'
   | 'page_markdown'
   | 'database_metadata'
   | 'data_source_query';
@@ -251,6 +262,7 @@ function isBackstageNotionEndpointKind(
   value: unknown
 ): value is BackstageNotionEndpointKind {
   return value === 'page_metadata'
+    || value === 'page_title'
     || value === 'page_markdown'
     || value === 'database_metadata'
     || value === 'data_source_query';
@@ -845,7 +857,7 @@ function parseNotionPageMetadataResponse(
   const lastEditedAt = typeof parsed.last_edited_time === 'string'
     ? new Date(parsed.last_edited_time)
     : null;
-  const title = requireTitle
+  const pageTitle = requireTitle
     ? boundedNotionPageTitle(parsed.properties)
     : null;
   if (
@@ -855,7 +867,7 @@ function parseNotionPageMetadataResponse(
     || !lastEditedAt
     || !Number.isFinite(lastEditedAt.getTime())
     || !parentValid
-    || (requireTitle && title === null)
+    || (requireTitle && pageTitle === null)
   ) {
     throw new BackstageNotionReadError(
       'invalid_response',
@@ -870,25 +882,29 @@ function parseNotionPageMetadataResponse(
     parentDataSourceId,
     parentType: parent?.type as BackstageNotionPageMetadata['parentType'],
     parentId: parentPageId ?? parentDataSourceId ?? parentBlockId,
-    title,
+    title: pageTitle?.title ?? null,
+    ...(requireTitle ? { titleIsComplete: pageTitle?.isComplete === true } : {}),
     lastEditedAt,
     inTrash: parsed.in_trash,
   };
 }
 
-function boundedNotionRichTextTitle(richText: unknown): string | null {
-  if (!Array.isArray(richText) || richText.length > 100) {
+/** Assemble a complete bounded title from validated page-property fragments. */
+export function assembleBackstageNotionPageTitle(
+  titleParts: readonly string[]
+): string | null {
+  if (
+    !Array.isArray(titleParts)
+    || titleParts.length > BACKSTAGE_NOTION_MAX_PAGE_TITLE_PROPERTY_ITEMS
+  ) {
     return null;
   }
   let title = '';
-  for (const item of richText) {
-    if (
-      !isPlainConfigurationObject(item)
-      || typeof item.plain_text !== 'string'
-    ) {
+  for (const titlePart of titleParts) {
+    if (typeof titlePart !== 'string') {
       return null;
     }
-    title += item.plain_text;
+    title += titlePart;
     if (Array.from(title).length > 240) {
       return null;
     }
@@ -901,6 +917,26 @@ function boundedNotionRichTextTitle(richText: unknown): string | null {
     return null;
   }
   return title.replace(/\s+/gu, ' ').trim() || 'Untitled Notion page';
+}
+
+function boundedNotionRichTextTitle(richText: unknown): string | null {
+  if (
+    !Array.isArray(richText)
+    || richText.length > BACKSTAGE_NOTION_MAX_PAGE_TITLE_PROPERTY_ITEMS
+  ) {
+    return null;
+  }
+  const titleParts: string[] = [];
+  for (const item of richText) {
+    if (
+      !isPlainConfigurationObject(item)
+      || typeof item.plain_text !== 'string'
+    ) {
+      return null;
+    }
+    titleParts.push(item.plain_text);
+  }
+  return assembleBackstageNotionPageTitle(titleParts);
 }
 
 function parseNotionDatabaseMetadataResponse(
@@ -1021,7 +1057,80 @@ function parseNotionDatabaseMetadataResponse(
   };
 }
 
-function boundedNotionPageTitle(properties: unknown): string | null {
+function pageTitleInlineReferenceCount(item: unknown): 0 | 1 | null {
+  if (!isPlainConfigurationObject(item) || typeof item.plain_text !== 'string') {
+    return null;
+  }
+  if (item.type === 'text') {
+    return isPlainConfigurationObject(item.text)
+      && typeof item.text.content === 'string'
+      ? 0
+      : null;
+  }
+  if (item.type === 'equation') {
+    return isPlainConfigurationObject(item.equation)
+      && typeof item.equation.expression === 'string'
+      ? 0
+      : null;
+  }
+  if (item.type !== 'mention' || !isPlainConfigurationObject(item.mention)) {
+    return null;
+  }
+  const mentionType = item.mention.type;
+  if (typeof mentionType !== 'string') {
+    return null;
+  }
+  const mentionValue = item.mention[mentionType];
+  switch (mentionType) {
+    case 'database':
+    case 'page':
+      if (
+        !isPlainConfigurationObject(mentionValue)
+        || typeof mentionValue.id !== 'string'
+        || normalizeNotionPageId(mentionValue.id) === null
+      ) {
+        return null;
+      }
+      return mentionType === 'page' ? 1 : 0;
+    case 'user':
+      return isPlainConfigurationObject(mentionValue)
+        && mentionValue.object === 'user'
+        && typeof mentionValue.id === 'string'
+        && normalizeNotionPageId(mentionValue.id) !== null
+        ? 1
+        : null;
+    case 'date':
+      return isPlainConfigurationObject(mentionValue)
+        && typeof mentionValue.start === 'string'
+        ? 0
+        : null;
+    case 'link_preview':
+      return isPlainConfigurationObject(mentionValue)
+        && typeof mentionValue.url === 'string'
+        && mentionValue.url.length > 0
+        ? 0
+        : null;
+    case 'template_mention':
+      if (!isPlainConfigurationObject(mentionValue)) {
+        return null;
+      }
+      return (
+        mentionValue.type === 'template_mention_date'
+        && ['now', 'today'].includes(String(mentionValue.template_mention_date))
+      ) || (
+        mentionValue.type === 'template_mention_user'
+        && mentionValue.template_mention_user === 'me'
+      )
+        ? 0
+        : null;
+    default:
+      return null;
+  }
+}
+
+function boundedNotionPageTitle(
+  properties: unknown
+): { title: string; isComplete: boolean } | null {
   if (!isPlainConfigurationObject(properties)) {
     return null;
   }
@@ -1033,7 +1142,176 @@ function boundedNotionPageTitle(properties: unknown): string | null {
   if (titleProperties.length !== 1) {
     return null;
   }
-  return boundedNotionRichTextTitle(titleProperties[0]?.title);
+  const titleProperty = titleProperties[0];
+  if (!titleProperty) {
+    return null;
+  }
+  const richText = titleProperty.title;
+  const title = boundedNotionRichTextTitle(richText);
+  if (title === null || !Array.isArray(richText)) {
+    return null;
+  }
+  let inlineReferenceCount = 0;
+  for (const item of richText) {
+    const itemReferenceCount = pageTitleInlineReferenceCount(item);
+    if (itemReferenceCount === null) {
+      return { title, isComplete: false };
+    }
+    inlineReferenceCount += itemReferenceCount;
+  }
+  return {
+    title,
+    isComplete: titleProperty.id === 'title'
+      && inlineReferenceCount
+        < BACKSTAGE_NOTION_MAX_PAGE_RESPONSE_INLINE_REFERENCES,
+  };
+}
+
+function createNotionPageTitlePropertyEndpoint(
+  pageId: string,
+  startCursor: string | null
+): URL {
+  const endpoint = new URL(
+    `/v1/pages/${pageId}/properties/title`,
+    NOTION_API_ORIGIN
+  );
+  endpoint.searchParams.set(
+    'page_size',
+    String(BACKSTAGE_NOTION_PAGE_TITLE_PROPERTY_PAGE_SIZE)
+  );
+  if (startCursor !== null) {
+    endpoint.searchParams.set('start_cursor', startCursor);
+  }
+  return endpoint;
+}
+
+function isBoundedNotionPageTitlePropertyCursor(
+  pageId: string,
+  value: unknown
+): value is string {
+  return typeof value === 'string'
+    && value.length >= 1
+    && Buffer.byteLength(value, 'utf8') <= BACKSTAGE_NOTION_MAX_REQUEST_BYTES
+    && Buffer.byteLength(
+      createNotionPageTitlePropertyEndpoint(pageId, value).toString(),
+      'utf8'
+    ) <= BACKSTAGE_NOTION_MAX_REQUEST_BYTES;
+}
+
+function parseNotionPageTitlePropertyResponse(
+  rawBody: string,
+  expectedPageId: string,
+  startCursor: string | null,
+  response: Response
+): BackstageNotionPageTitlePropertyResponse {
+  const invalidResponseDiagnostics = responseReadDiagnostics(
+    response,
+    'page_title',
+    false
+  );
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawBody) as unknown;
+  } catch {
+    throw new BackstageNotionReadError(
+      'invalid_json',
+      undefined,
+      invalidResponseDiagnostics
+    );
+  }
+  if (!isPlainConfigurationObject(parsed)) {
+    throw new BackstageNotionReadError(
+      'invalid_response',
+      undefined,
+      invalidResponseDiagnostics
+    );
+  }
+
+  const rawResults = parsed.results;
+  const hasMore = parsed.has_more;
+  const rawNextCursor = parsed.next_cursor;
+  const nextCursor = isBoundedNotionPageTitlePropertyCursor(
+    expectedPageId,
+    rawNextCursor
+  )
+    ? rawNextCursor
+    : null;
+  const propertyItem = isPlainConfigurationObject(parsed.property_item)
+    ? parsed.property_item
+    : null;
+  const rawNextUrl = propertyItem?.next_url;
+  const nextUrlValid = rawNextUrl === null
+    || (
+      typeof rawNextUrl === 'string'
+      && rawNextUrl.length >= 1
+      && Buffer.byteLength(rawNextUrl, 'utf8')
+        <= BACKSTAGE_NOTION_MAX_REQUEST_BYTES
+    );
+  if (
+    parsed.object !== 'list'
+    || parsed.type !== 'property_item'
+    || !Array.isArray(rawResults)
+    || rawResults.length > BACKSTAGE_NOTION_PAGE_TITLE_PROPERTY_PAGE_SIZE
+    || typeof hasMore !== 'boolean'
+    || propertyItem === null
+    || propertyItem.id !== 'title'
+    || propertyItem.type !== 'title'
+    || !isPlainConfigurationObject(propertyItem.title)
+    || !nextUrlValid
+    || (
+      hasMore
+        ? (
+          nextCursor === null
+          || typeof rawNextUrl !== 'string'
+          || rawResults.length === 0
+          || nextCursor === startCursor
+        )
+        : rawNextCursor !== null || rawNextUrl !== null
+    )
+  ) {
+    throw new BackstageNotionReadError(
+      'invalid_response',
+      undefined,
+      invalidResponseDiagnostics
+    );
+  }
+
+  const titleParts: string[] = [];
+  for (const rawResult of rawResults) {
+    const titleValue = isPlainConfigurationObject(rawResult)
+      && isPlainConfigurationObject(rawResult.title)
+      ? rawResult.title
+      : null;
+    if (
+      !isPlainConfigurationObject(rawResult)
+      || rawResult.object !== 'property_item'
+      || rawResult.id !== 'title'
+      || rawResult.type !== 'title'
+      || titleValue === null
+      || !['equation', 'mention', 'text'].includes(String(titleValue.type))
+      || typeof titleValue.plain_text !== 'string'
+    ) {
+      throw new BackstageNotionReadError(
+        'invalid_response',
+        undefined,
+        invalidResponseDiagnostics
+      );
+    }
+    titleParts.push(titleValue.plain_text);
+  }
+  if (assembleBackstageNotionPageTitle(titleParts) === null) {
+    throw new BackstageNotionReadError(
+      'invalid_response',
+      undefined,
+      invalidResponseDiagnostics
+    );
+  }
+
+  return {
+    titleParts: Object.freeze(titleParts),
+    hasMore,
+    nextCursor,
+  };
 }
 
 function parseNotionDataSourceQueryResponse(
@@ -1225,6 +1503,71 @@ export async function fetchBackstageNotionPageMetadata(
     normalizedPageId,
     response,
     options.requireTitle === true
+  );
+}
+
+/** Fetch one bounded page of an exact Notion page's complete title property. */
+export async function fetchBackstageNotionPageTitleProperty(
+  fetchImpl: BackstageNotionFetchImplementation,
+  accessToken: string,
+  pageId: string,
+  startCursor: string | null,
+  signal: AbortSignal
+): Promise<BackstageNotionPageTitlePropertyResponse> {
+  const normalizedPageId = normalizeNotionPageId(pageId);
+  if (!normalizedPageId || normalizedPageId !== pageId) {
+    throw new BackstageNotionReadError('invalid_page_id', undefined, {
+      notionEndpointKind: 'page_title',
+    });
+  }
+  if (
+    startCursor !== null
+    && !isBoundedNotionPageTitlePropertyCursor(normalizedPageId, startCursor)
+  ) {
+    throw new BackstageNotionReadError('invalid_cursor', undefined, {
+      notionEndpointKind: 'page_title',
+    });
+  }
+  const endpoint = createNotionPageTitlePropertyEndpoint(
+    normalizedPageId,
+    startCursor
+  );
+  const response = await fetchNotionResponse(
+    fetchImpl,
+    endpoint,
+    {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${accessToken}`,
+        'Notion-Version': BACKSTAGE_NOTION_API_VERSION,
+      },
+      redirect: 'manual',
+      signal,
+    },
+    'page_title'
+  );
+  if (!response.ok) {
+    return throwNotionHttpError(response, 'page_title');
+  }
+  const contentType = normalizeNotionResponseContentType(
+    response.headers.get('content-type')
+  );
+  if (contentType !== 'application/json') {
+    await response.body?.cancel().catch(() => undefined);
+    throw new BackstageNotionReadError('invalid_content_type', undefined, {
+      ...responseReadDiagnostics(response, 'page_title', false),
+    });
+  }
+  return parseNotionPageTitlePropertyResponse(
+    await readBoundedResponseBody(
+      response,
+      'page_title',
+      BACKSTAGE_NOTION_MAX_METADATA_RESPONSE_BYTES
+    ),
+    normalizedPageId,
+    startCursor,
+    response
   );
 }
 

@@ -32,6 +32,7 @@ import {
 } from '../src/platform/runtime/env.js';
 import {
   BACKSTAGE_NOTION_ACCESS_TOKEN_ENV_NAME,
+  BACKSTAGE_NOTION_MAX_DATA_SOURCE_QUERY_RESULTS,
   BACKSTAGE_NOTION_MAX_METADATA_RESPONSE_BYTES,
 } from '../src/shared/backstage/backstageNotionContextCore.js';
 import {
@@ -46,7 +47,10 @@ import {
 import {
   BACKSTAGE_NOTION_RAG_INDEX_FORMAT,
   BACKSTAGE_NOTION_SYNC_CONFIGURATION_ERROR_CODE,
+  BACKSTAGE_NOTION_SYNC_CYCLE_TIMEOUT_MS,
   BACKSTAGE_NOTION_SYNC_INCOMPLETE_ERROR_CODE,
+  BACKSTAGE_NOTION_SYNC_MAX_PAGES,
+  BACKSTAGE_NOTION_SYNC_REQUEST_SPACING_MS,
   BACKSTAGE_NOTION_SYNC_ROOT_FAILED_ERROR_CODE,
   BACKSTAGE_NOTION_SYNC_SOURCE_DRIFT_ERROR_CODE,
   syncBackstageNotionAuthorityRoot,
@@ -90,6 +94,50 @@ function pageId(index: number): string {
   return `${index.toString(16).padStart(8, '0')}-1111-4111-8111-${index
     .toString(16)
     .padStart(12, '0')}`;
+}
+
+const titleAnnotations = Object.freeze({
+  bold: false,
+  italic: false,
+  strikethrough: false,
+  underline: false,
+  code: false,
+  color: 'default',
+});
+
+function titleText(plainText: string): Record<string, unknown> {
+  return {
+    type: 'text',
+    text: { content: plainText, link: null },
+    annotations: titleAnnotations,
+    plain_text: plainText,
+    href: null,
+  };
+}
+
+function titleInlineReference(
+  plainText: string,
+  index: number
+): Record<string, unknown> {
+  const referenceId = pageId(10_000 + index);
+  return index % 2 === 0
+    ? {
+        type: 'mention',
+        mention: { type: 'page', page: { id: referenceId } },
+        annotations: titleAnnotations,
+        plain_text: plainText,
+        href: `https://www.notion.so/${compactPageId(referenceId)}`,
+      }
+    : {
+        type: 'mention',
+        mention: {
+          type: 'user',
+          user: { object: 'user', id: referenceId, type: 'person' },
+        },
+        annotations: titleAnnotations,
+        plain_text: plainText,
+        href: null,
+      };
 }
 
 function sha256(value: string): string {
@@ -243,6 +291,11 @@ function notionFetch(
 
 function databaseRootFetch(options: {
   databaseMetadataDrift?: 'data_sources' | 'in_trash' | 'title';
+  databaseRowCount?: number;
+  firstRowTitleDrift?: boolean;
+  firstRowTitleParts?: readonly string[];
+  firstRowTitleShapeUncertain?: boolean;
+  allRowTitleShapesUncertain?: boolean;
   duplicatePageIdAcrossDataSources?: boolean;
   duplicatePageIdAcrossQueryPages?: boolean;
   incompleteQuery?: boolean;
@@ -275,12 +328,20 @@ function databaseRootFetch(options: {
     title: 'NXT authority',
     markdown: '# NXT\n\nPRIVATE-NXT-CANON',
   };
-  const rows = options.opaqueCursorTraversal
-    ? [...baseRows, paginatedRow]
-    : baseRows;
+  const rows = options.databaseRowCount === undefined
+    ? options.opaqueCursorTraversal
+      ? [...baseRows, paginatedRow]
+      : baseRows
+    : Array.from({ length: options.databaseRowCount }, (_, index) => ({
+        pageId: pageId(index + 1_000),
+        dataSourceId: firstDataSourceId,
+        title: `Authority row ${index + 1}`,
+        markdown: `# Authority row ${index + 1}`,
+      }));
   let databaseCalls = 0;
   const queryCalls = new Map<string, number>();
   const metadataCalls = new Map<string, number>();
+  const titlePropertyCalls = new Map<string, number>();
   const requestBodies: unknown[] = [];
   const fetchMock = jest.fn(async (
     input: string | URL | Request,
@@ -326,6 +387,33 @@ function databaseRootFetch(options: {
         start_cursor?: unknown;
       };
       requestBodies.push(requestBody);
+      if (options.databaseRowCount !== undefined) {
+        const cursorMatch = typeof requestBody.start_cursor === 'string'
+          ? /^database-row-offset:(\d+)$/u.exec(requestBody.start_cursor)
+          : null;
+        const offset = requestBody.start_cursor === undefined
+          ? 0
+          : cursorMatch
+            ? Number.parseInt(cursorMatch[1] ?? '', 10)
+            : Number.NaN;
+        const matchingRows = rows.filter(row => row.dataSourceId === dataSourceId);
+        const pageSize = BACKSTAGE_NOTION_MAX_DATA_SOURCE_QUERY_RESULTS;
+        const pageRows = Number.isSafeInteger(offset)
+          ? matchingRows.slice(offset, offset + pageSize)
+          : [];
+        const nextOffset = offset + pageRows.length;
+        const hasMore = Number.isSafeInteger(offset)
+          && nextOffset < matchingRows.length;
+        return jsonResponse({
+          object: 'list',
+          type: 'page_or_data_source',
+          page_or_data_source: {},
+          results: pageRows.map(row => ({ object: 'page', id: row.pageId })),
+          has_more: hasMore,
+          next_cursor: hasMore ? `database-row-offset:${nextOffset}` : null,
+          request_status: { type: 'complete' },
+        });
+      }
       if (options.nestedDataSource && dataSourceId === firstDataSourceId) {
         return jsonResponse({
           object: 'list',
@@ -399,6 +487,68 @@ function databaseRootFetch(options: {
           : { request_status: { type: 'complete' } }),
       });
     }
+    const titlePropertyMatch = /^\/v1\/pages\/([^/]+)\/properties\/title$/u.exec(
+      url.pathname
+    );
+    const titlePropertyRow = rows.find(candidate => (
+      candidate.pageId === titlePropertyMatch?.[1]
+    ));
+    if (titlePropertyRow) {
+      const callCount = (titlePropertyCalls.get(titlePropertyRow.pageId) ?? 0) + 1;
+      titlePropertyCalls.set(titlePropertyRow.pageId, callCount);
+      let completeTitleItems = options.firstRowTitleParts
+        && titlePropertyRow.pageId === rows[0]?.pageId
+        ? options.firstRowTitleParts.map(titleInlineReference)
+        : [titleText(titlePropertyRow.title)];
+      if (
+        options.firstRowTitleDrift
+        && titlePropertyRow.pageId === rows[0]?.pageId
+        && callCount >= 2
+      ) {
+        completeTitleItems = [titleText('Drifted complete provider title')];
+      }
+      const rawCursor = url.searchParams.get('start_cursor');
+      const cursorMatch = rawCursor === null
+        ? null
+        : /^title-offset:(\d+)$/u.exec(rawCursor);
+      const offset = rawCursor === null
+        ? 0
+        : cursorMatch
+          ? Number.parseInt(cursorMatch[1] ?? '', 10)
+          : Number.NaN;
+      const pageParts = Number.isSafeInteger(offset)
+        ? completeTitleItems.slice(offset, offset + 25)
+        : [];
+      const nextOffset = offset + pageParts.length;
+      const hasMore = Number.isSafeInteger(offset)
+        && nextOffset < completeTitleItems.length;
+      const nextCursor = hasMore ? `title-offset:${nextOffset}` : null;
+      const nextUrl = hasMore
+        ? new URL(`/v1/pages/${titlePropertyRow.pageId}/properties/title`, url.origin)
+        : null;
+      nextUrl?.searchParams.set('page_size', '100');
+      if (nextCursor !== null) {
+        nextUrl?.searchParams.set('start_cursor', nextCursor);
+      }
+      return jsonResponse({
+        object: 'list',
+        type: 'property_item',
+        results: pageParts.map(title => ({
+          object: 'property_item',
+          id: 'title',
+          type: 'title',
+          title,
+        })),
+        has_more: hasMore,
+        next_cursor: nextCursor,
+        property_item: {
+          id: 'title',
+          type: 'title',
+          title: {},
+          next_url: nextUrl?.toString() ?? null,
+        },
+      });
+    }
     const pageMatch = /^\/v1\/pages\/([^/]+)(\/markdown)?$/u.exec(url.pathname);
     const row = rows.find(candidate => candidate.pageId === pageMatch?.[1]);
     if (!row) {
@@ -427,8 +577,17 @@ function databaseRootFetch(options: {
       },
       properties: {
         ArbitraryProviderTitleKey: {
+          id: 'title',
           type: 'title',
-          title: [{ plain_text: row.title }],
+          title: options.allRowTitleShapesUncertain
+            || (
+              options.firstRowTitleShapeUncertain
+              && row.pageId === rows[0]?.pageId
+            )
+            ? [{ type: 'future_title_fragment', plain_text: row.title }]
+            : options.firstRowTitleParts && row.pageId === rows[0]?.pageId
+              ? options.firstRowTitleParts.slice(0, 25).map(titleInlineReference)
+              : [titleText(row.title)],
         },
       },
       last_edited_time: fixedTime.toISOString(),
@@ -442,6 +601,7 @@ function databaseRootFetch(options: {
     queryCalls,
     requestBodies,
     rows,
+    titlePropertyCalls,
   };
 }
 
@@ -585,6 +745,7 @@ function dependencies(input: {
   leaseRenewalIntervalMs?: number;
   fetchTimeoutMs?: number;
   cycleTimeoutMs?: number;
+  requestSpacingMs?: number;
   wait?: (milliseconds: number, signal?: AbortSignal) => Promise<void>;
   random?: () => number;
 }): BackstageNotionSyncDependencies {
@@ -597,7 +758,7 @@ function dependencies(input: {
     embedBatch: input.embedBatch ?? (async values => values.map(() => [1, 0])),
     readEnvironment: input.readEnvironment
       ?? environmentReader({ token: notionToken }),
-    requestSpacingMs: 0,
+    requestSpacingMs: input.requestSpacingMs ?? 0,
     retryBaseDelayMs: 0,
     fetchTimeoutMs: input.fetchTimeoutMs ?? 1_000,
     ...(input.cycleTimeoutMs === undefined
@@ -941,6 +1102,7 @@ describe('Backstage Notion authority synchronization', () => {
         });
       expect(provider.metadataCalls.get(row.pageId)).toBe(2);
     }
+    expect(provider.titlePropertyCalls.size).toBe(0);
     expect(provider.databaseCalls()).toBe(2);
     expect([...provider.queryCalls.values()]).toEqual([2, 2]);
     expect(provider.requestBodies).toEqual([
@@ -977,6 +1139,122 @@ describe('Backstage Notion authority synchronization', () => {
     expect(serializedTelemetry).not.toContain('PRIVATE-RAW-CANON');
   });
 
+  it('activates only the complete paginated database-row title in both passes', async () => {
+    const titleParts = [
+      ...Array.from({ length: 25 }, (_, index) => `${index}.`),
+      'complete',
+    ];
+    const completeTitle = titleParts.join('');
+    const provider = databaseRootFetch({ firstRowTitleParts: titleParts });
+    const repository = repositoryHarness();
+
+    const result = await syncBackstageNotionAuthorityRoot(
+      rootAuthority({ initialMinimumPageCount: 2 }),
+      dependencies({
+        repository: repository.repository,
+        fetchImpl: provider.fetchMock as unknown as typeof fetch,
+      })
+    );
+
+    expect(result.status).toBe('activated');
+    const activation = repository.activateSnapshot.mock.calls[0]?.[0];
+    expect(activation?.pages.find(page => page.pageId === provider.rows[0]?.pageId))
+      .toMatchObject({
+        title: completeTitle,
+        path: ['WWE Universe Mode', completeTitle],
+        metadata: expect.objectContaining({
+          sourceObjectType: 'page',
+        }),
+      });
+    expect(provider.titlePropertyCalls.get(provider.rows[0]!.pageId)).toBe(4);
+    expect(provider.titlePropertyCalls.has(provider.rows[1]!.pageId)).toBe(false);
+    const titleRequests = provider.fetchMock.mock.calls
+      .map(call => new URL(String(call[0])))
+      .filter(url => url.pathname.endsWith('/properties/title'));
+    expect(titleRequests).toHaveLength(4);
+    expect(titleRequests.every(url => url.origin === 'https://api.notion.com'))
+      .toBe(true);
+    expect(titleRequests.every(url => url.searchParams.get('page_size') === '100'))
+      .toBe(true);
+    expect(titleRequests.filter(url => url.searchParams.has('start_cursor')))
+      .toHaveLength(2);
+  });
+
+  it.each([
+    ['uses page metadata below', 24, 0],
+    ['retrieves the complete property at', 25, 2],
+  ] as const)(
+    '%s the 25-inline-reference boundary',
+    async (_description, inlineReferenceCount, expectedPropertyRequests) => {
+      const titleParts = Array.from(
+        { length: inlineReferenceCount },
+        (_, index) => `${index}.`
+      );
+      const provider = databaseRootFetch({ firstRowTitleParts: titleParts });
+      const repository = repositoryHarness();
+
+      const result = await syncBackstageNotionAuthorityRoot(
+        rootAuthority({ initialMinimumPageCount: 2 }),
+        dependencies({
+          repository: repository.repository,
+          fetchImpl: provider.fetchMock as unknown as typeof fetch,
+        })
+      );
+
+      expect(result.status).toBe('activated');
+      expect(repository.activateSnapshot.mock.calls[0]?.[0].pages.find(page => (
+        page.pageId === provider.rows[0]?.pageId
+      ))?.title).toBe(titleParts.join(''));
+      expect(provider.titlePropertyCalls.get(provider.rows[0]!.pageId) ?? 0)
+        .toBe(expectedPropertyRequests);
+      expect(provider.titlePropertyCalls.has(provider.rows[1]!.pageId)).toBe(false);
+    }
+  );
+
+  it('retrieves the complete property when the page title shape is uncertain', async () => {
+    const provider = databaseRootFetch({ firstRowTitleShapeUncertain: true });
+    const repository = repositoryHarness();
+
+    const result = await syncBackstageNotionAuthorityRoot(
+      rootAuthority({ initialMinimumPageCount: 2 }),
+      dependencies({
+        repository: repository.repository,
+        fetchImpl: provider.fetchMock as unknown as typeof fetch,
+      })
+    );
+
+    expect(result.status).toBe('activated');
+    expect(provider.titlePropertyCalls.get(provider.rows[0]!.pageId)).toBe(2);
+    expect(provider.titlePropertyCalls.has(provider.rows[1]!.pageId)).toBe(false);
+  });
+
+  it('rejects complete database-row title drift between verification passes', async () => {
+    const provider = databaseRootFetch({
+      firstRowTitleDrift: true,
+      firstRowTitleParts: Array.from({ length: 25 }, (_, index) => `${index}.`),
+    });
+    const repository = repositoryHarness();
+
+    await expect(syncBackstageNotionAuthorityRoot(
+      rootAuthority({ initialMinimumPageCount: 2 }),
+      dependencies({
+        repository: repository.repository,
+        fetchImpl: provider.fetchMock as unknown as typeof fetch,
+      })
+    )).rejects.toMatchObject({
+      code: BACKSTAGE_NOTION_SYNC_SOURCE_DRIFT_ERROR_CODE,
+      diagnostics: expect.objectContaining({
+        phase: 'completeness_validation',
+        reason: 'source_changed',
+        candidateSnapshotCreated: true,
+        candidateSnapshotValidated: false,
+        candidateSnapshotActivated: false,
+      }),
+    });
+    expect(provider.titlePropertyCalls.get(provider.rows[0]!.pageId)).toBe(2);
+    expect(repository.activateSnapshot).not.toHaveBeenCalled();
+  });
+
   it('does not count the synthetic database container toward initial coverage', async () => {
     const provider = databaseRootFetch();
     const repository = repositoryHarness();
@@ -996,6 +1274,113 @@ describe('Backstage Notion authority synchronization', () => {
         candidateSnapshotActivated: false,
       }),
     });
+    expect(repository.activateSnapshot).not.toHaveBeenCalled();
+  });
+
+  it('admits exactly 512 real database pages plus the synthetic root', async () => {
+    const provider = databaseRootFetch({
+      databaseRowCount: BACKSTAGE_NOTION_SYNC_MAX_PAGES,
+      allRowTitleShapesUncertain: true,
+    });
+    const repository = repositoryHarness();
+    let elapsedMs = 0;
+    const dateNow = jest.spyOn(Date, 'now').mockImplementation(() => (
+      fixedTime.getTime() + elapsedMs
+    ));
+    const wait = jest.fn(async (milliseconds: number) => {
+      elapsedMs += milliseconds;
+    });
+    // Root probe + two database reads + two query passes + five page reads:
+    // metadata, complete title property, markdown, verification metadata, and
+    // verification title property.
+    const expectedProviderRequestCount = 1 + 2 + 2 * (
+      Math.ceil(
+        BACKSTAGE_NOTION_SYNC_MAX_PAGES
+          / BACKSTAGE_NOTION_MAX_DATA_SOURCE_QUERY_RESULTS
+      ) + 1
+    ) + BACKSTAGE_NOTION_SYNC_MAX_PAGES * 5;
+
+    try {
+      const result = await syncBackstageNotionAuthorityRoot(
+        rootAuthority({
+          initialMinimumPageCount: BACKSTAGE_NOTION_SYNC_MAX_PAGES,
+        }),
+        dependencies({
+          repository: repository.repository,
+          fetchImpl: provider.fetchMock as unknown as typeof fetch,
+          requestSpacingMs: BACKSTAGE_NOTION_SYNC_REQUEST_SPACING_MS,
+          wait,
+        })
+      );
+
+      expect(result).toMatchObject({
+        status: 'activated',
+        pageCount: BACKSTAGE_NOTION_SYNC_MAX_PAGES + 1,
+        chunkCount: BACKSTAGE_NOTION_SYNC_MAX_PAGES,
+      });
+      expect(repository.activateSnapshot).toHaveBeenCalledTimes(1);
+      const activation = repository.activateSnapshot.mock.calls[0]?.[0];
+      expect(activation?.pages).toHaveLength(BACKSTAGE_NOTION_SYNC_MAX_PAGES + 1);
+      expect(activation?.pages.filter(page => (
+        page.metadata.sourceObjectType === 'page'
+      ))).toHaveLength(BACKSTAGE_NOTION_SYNC_MAX_PAGES);
+      expect(provider.metadataCalls.size).toBe(BACKSTAGE_NOTION_SYNC_MAX_PAGES);
+      expect([...provider.metadataCalls.values()].every(count => count === 2))
+        .toBe(true);
+      expect(provider.titlePropertyCalls.size).toBe(
+        BACKSTAGE_NOTION_SYNC_MAX_PAGES
+      );
+      expect([...provider.titlePropertyCalls.values()].every(count => count === 2))
+        .toBe(true);
+      expect(provider.fetchMock).toHaveBeenCalledTimes(
+        expectedProviderRequestCount
+      );
+      expect(elapsedMs).toBe(
+        (expectedProviderRequestCount - 1)
+          * BACKSTAGE_NOTION_SYNC_REQUEST_SPACING_MS
+      );
+      expect(BACKSTAGE_NOTION_SYNC_CYCLE_TIMEOUT_MS).toBe(
+        14 * 60 * 1_000
+          + BACKSTAGE_NOTION_SYNC_MAX_PAGES
+            * 2
+            * BACKSTAGE_NOTION_SYNC_REQUEST_SPACING_MS
+      );
+      expect(elapsedMs).toBeLessThan(BACKSTAGE_NOTION_SYNC_CYCLE_TIMEOUT_MS);
+    } finally {
+      dateNow.mockRestore();
+    }
+  });
+
+  it('fails closed at 513 real database pages before page or embedding work', async () => {
+    const provider = databaseRootFetch({
+      databaseRowCount: BACKSTAGE_NOTION_SYNC_MAX_PAGES + 1,
+    });
+    const repository = repositoryHarness();
+    const embedBatch = jest.fn(async (inputs: readonly string[]) => (
+      inputs.map(() => [1, 0])
+    ));
+
+    await expect(syncBackstageNotionAuthorityRoot(
+      rootAuthority({
+        initialMinimumPageCount: BACKSTAGE_NOTION_SYNC_MAX_PAGES,
+      }),
+      dependencies({
+        repository: repository.repository,
+        fetchImpl: provider.fetchMock as unknown as typeof fetch,
+        embedBatch,
+      })
+    )).rejects.toMatchObject({
+      code: BACKSTAGE_NOTION_SYNC_INCOMPLETE_ERROR_CODE,
+      diagnostics: expect.objectContaining({
+        phase: 'completeness_validation',
+        reason: 'completeness_mismatch',
+        candidateSnapshotCreated: false,
+        candidateSnapshotActivated: false,
+      }),
+    });
+    expect(provider.databaseCalls()).toBe(1);
+    expect(provider.metadataCalls.size).toBe(0);
+    expect(embedBatch).not.toHaveBeenCalled();
     expect(repository.activateSnapshot).not.toHaveBeenCalled();
   });
 

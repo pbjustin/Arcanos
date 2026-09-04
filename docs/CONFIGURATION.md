@@ -42,7 +42,7 @@ cp .env.example .env
 | `ARCANOS_BACKSTAGE_NOTION_ACCESS_TOKEN` | No; only with one Notion mode | none | Outbound read-content-only Notion credential. Legacy supplemental enrichment uses it on web; authority/RAG synchronization uses it on the worker and removes it from web. It must remain distinct from every ARCANOS application credential and never appears in Builder, inbound headers, source, prompts, chat, or logs. |
 | `ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON` | No; only with the Notion access token on the web service | none | Closed JSON object mapping each exact Backstage `universeId` to one to three unique raw Notion page UUIDs. The complete value is capped at 16 KiB and 32 universes; URLs, blank/padded IDs, duplicate pages, unsafe object keys, or partial/invalid configuration disable enrichment without failing booking. Treat the mapping as sensitive deployment configuration. |
 | `ARCANOS_BACKSTAGE_NOTION_AUTHORITY_ROOTS_JSON` | No; identical value on web and worker for authority mode | none | Closed mapping from each exact universe ID to `{rootPageId,displayName,initialMinimumPageCount?}`. The UUID may identify a normal page or a database container; database resolution occurs only after the exact page-type validation error and queries every listed data source. Nested database results fail closed. The complete hierarchy becomes authoritative, all six backend mutations are blocked, legacy PostgreSQL reads are quarantined, and one immutable active RAG snapshot is selected. A present malformed value fails mutation checks closed. `initialMinimumPageCount` is 1–512, counts only real Notion pages, and applies only before the first activation. |
-| `ARCANOS_BACKSTAGE_NOTION_PARTITIONS_JSON` | No; identical value on web and worker when validating the partitioned index | none | Additive closed version-1 envelope containing an operator generation and bounded universe/shard definitions. Stable lowercase `shardKey` values are independent of display names. Each shard declares a root UUID that is unique within its universe, a `hot`/`cold`/`archive` retrieval tier, required/optional behavior, sorted scope/category tags, and explicit finite page, chunk, depth, and content limits. Archive-tier shards are structurally optional and must declare `required:false`, preventing one unavailable archive from fencing unrelated current-canon publication. Unknown fields, duplicate universe/shard/tag identities, duplicate roots within one universe, required archives, malformed values, or excessive cardinality invalidate the complete envelope; distinct universe namespaces may reuse the same provider page ID. Its canonical semantic SHA-256 digest is separate from the operator generation. |
+| `ARCANOS_BACKSTAGE_NOTION_PARTITIONS_JSON` | No; identical value on web and worker when validating the partitioned index | none | Additive closed version-1 envelope containing an operator generation and bounded universe/shard definitions. Stable lowercase `shardKey` values are independent of display names. Each shard declares a normal Notion page root UUID that is unique within its universe, a `hot`/`cold`/`archive` retrieval tier, required/optional behavior, sorted scope/category tags, and explicit finite page, chunk, depth, and content limits; database containers remain supported only as monolithic authority roots. Archive-tier shards are structurally optional and must declare `required:false`, preventing one unavailable archive from fencing unrelated current-canon publication. Unknown fields, duplicate universe/shard/tag identities, duplicate roots within one universe, required archives, malformed values, or excessive cardinality invalidate the complete envelope; distinct universe namespaces may reuse the same provider page ID. Its canonical semantic SHA-256 digest is separate from the operator generation. |
 | `ARCANOS_BACKSTAGE_NOTION_PARTITIONED_INDEX_MODE` | No; identical value on web and worker | `monolith` | Exact rollout mode: `monolith`, `shadow`, or `partitioned`. Absent, padded, differently cased, or unknown values resolve to `monolith` with non-sensitive validity metadata. Exact `shadow` keeps the monolith as the sole returned read while executing web reads and protected queued relevant worker reads may perform bounded partition comparisons; it is the only mode that admits scheduled, manual, or queued partition synchronization. Exact `partitioned` serves only manifest-scoped partition reads, fails closed without a monolith read fallback, freezes partition writers, and keeps the evidence monitor plus legacy monolith synchronization active. Return to `shadow` to refresh partitions and reseal evidence; restoring exact `monolith` is the read rollback. This flag does not weaken the durable authority latch. |
 | `ARCANOS_BACKSTAGE_NOTION_PARTITION_CURSOR_SECRET` | Yes on web for exact `shadow` or `partitioned` mode | none | Current server-only credential used to seal partition complete-scope cursors. Configure an exact 32–4096 UTF-8-byte unpadded, non-placeholder value with no whitespace, distinct from every other purpose-bound credential. New cursors use only this value. Never place it on workers, in Builder/client configuration, requests, logs, or source. |
 | `ARCANOS_BACKSTAGE_NOTION_PARTITION_CURSOR_PREVIOUS_SECRET` | No; web-only cursor rotation overlap | none | Optional prior partition cursor credential accepted only for unsealing. It must satisfy the current-secret rules and differ from the current key and every other purpose-bound credential. Retain it only until cursors pinned to still-fresh manifests have drained; removing it invalidates any remaining cursor sealed by that prior value. |
@@ -579,8 +579,12 @@ replace that monolithic authority mapping. Its version-1 envelope contains an
 operator-owned `generation` plus an array of exact universes and their shards.
 Shard identity is the `(universeId, shardKey)` pair; renaming `displayName`
 therefore does not create a new identity. `shardKey` and scope/category tags are
-lowercase bounded identifiers. Root UUIDs are unique within each universe;
-distinct universe namespaces may reuse the same provider page ID. Duplicate
+lowercase bounded identifiers. Every partition root UUID must identify a normal
+Notion page and is unique within its universe. Database containers remain
+supported only as monolithic authority roots; the synthetic zero-content
+database record anchors that hierarchy but is excluded from partition shadow
+identity and page-count parity. Distinct universe namespaces may reuse the same
+provider page ID. Duplicate
 universe IDs, same-universe shard keys, roots, or tags are rejected rather than
 silently merged. Ancestor/descendant overlap still requires source-hierarchy
 ownership validation during synchronization.
@@ -685,10 +689,13 @@ new, failed, or incomplete refresh invalidates older evidence without disturbing
 the last complete active manifest.
 
 After each partition reconciliation, the worker runs one statement-pinned,
-identity-only PostgreSQL comparison per universe. It projects generation IDs,
-aggregate page/chunk counts, intersection counts, and constant-size ordered page
-ID samples; it never loads legacy snapshot Markdown, chunk content, metadata, or
-embeddings. Ordinary logs retain only semantic configuration digests and
+identity-and-source-type-only PostgreSQL comparison per universe. It projects
+generation IDs, aggregate page/chunk counts, intersection counts, and
+constant-size ordered page ID samples; it reads only the server-authored
+`metadata.sourceObjectType` discriminator to omit a synthetic database
+container and never projects raw metadata or loads legacy snapshot Markdown,
+chunk content, or embeddings. Ordinary logs retain only semantic configuration
+digests and
 aggregate counts, never generation IDs, page IDs, titles, paths, content,
 provider errors, configuration JSON, or embeddings. Writer failures retain the
 last immutable successful shard and manifest history. In exact `shadow` they
