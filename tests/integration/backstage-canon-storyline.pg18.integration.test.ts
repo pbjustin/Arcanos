@@ -16,6 +16,9 @@ import {
   type ActivateBackstageNotionSnapshotInput,
   type BackstageNotionSyncLease,
 } from '../../src/core/db/repositories/backstageNotionRagRepository.js';
+import {
+  PostgresBackstageNotionSyncStatusRepository,
+} from '../../src/core/db/repositories/backstageNotionSyncStatusRepository.js';
 import { TABLE_DEFINITIONS } from '../../src/core/db/schema.js';
 import { readBackstageStorylineSummary } from '../../src/services/backstageUniverseRead.js';
 import { BACKSTAGE_NOTION_RAG_HEADING_INDEX_VERSION } from '../../src/shared/backstage/backstageNotionRagCore.js';
@@ -99,6 +102,22 @@ const notionRagSnapshotCapacityRollback = readFileSync(
   ),
   'utf8'
 );
+const notionRagSyncStatusMigration = readFileSync(
+  join(
+    process.cwd(),
+    'migrations',
+    '20260829_backstage_notion_rag_v4_sync_status.sql'
+  ),
+  'utf8'
+);
+const notionRagSyncStatusRollback = readFileSync(
+  join(
+    process.cwd(),
+    'migrations',
+    '20260829_backstage_notion_rag_v4_sync_status.rollback.sql'
+  ),
+  'utf8'
+);
 const notionRagCandidateSearchMigration = readFileSync(
   join(
     process.cwd(),
@@ -158,6 +177,7 @@ async function applyCanonForwardMigration(client: Client): Promise<void> {
 
 const ownedTableNames = [
   'backstage_notion_authority_epoch',
+  'backstage_notion_latest_sync_attempts',
   'backstage_notion_snapshot_chunk_search',
   'backstage_notion_snapshot_chunks',
   'backstage_notion_snapshot_pages',
@@ -183,6 +203,7 @@ const phaseTwoTables = [
 ] as const;
 const notionRagTables = [
   'backstage_notion_authority_epoch',
+  'backstage_notion_latest_sync_attempts',
   'backstage_notion_snapshot_chunk_search',
   'backstage_notion_snapshot_chunks',
   'backstage_notion_snapshot_pages',
@@ -210,6 +231,7 @@ function fingerprint(label: string): string {
 async function resetDisposableNotionRagState(client: Client): Promise<void> {
   await client.query(
     `TRUNCATE TABLE
+       backstage_notion_latest_sync_attempts,
        backstage_notion_snapshot_chunk_search,
        backstage_notion_snapshot_chunks,
        backstage_notion_snapshot_pages,
@@ -609,6 +631,7 @@ describeWithDatabase('Backstage canon/storyline persistence on PostgreSQL 18', (
     await observer.query(notionRagForwardMigration);
     await observer.query(notionRagIndexVersionFenceMigration);
     await observer.query(notionRagSnapshotCapacityMigration);
+    await observer.query(notionRagSyncStatusMigration);
     await observer.query(notionRagCandidateSearchMigration);
 
     pool = new Pool({
@@ -664,6 +687,7 @@ describeWithDatabase('Backstage canon/storyline persistence on PostgreSQL 18', (
         if (notionRagTable.rows[0]?.installed) {
           await resetDisposableNotionRagState(observer);
           await observer.query(notionRagCandidateSearchRollback);
+          await observer.query(notionRagSyncStatusRollback);
           await observer.query(notionRagSnapshotCapacityRollback);
           await observer.query(notionRagIndexVersionFenceRollback);
           await observer.query(notionRagRollbackMigration);
@@ -702,6 +726,7 @@ describeWithDatabase('Backstage canon/storyline persistence on PostgreSQL 18', (
     await observer.query(notionRagForwardMigration);
     await observer.query(notionRagIndexVersionFenceMigration);
     await observer.query(notionRagSnapshotCapacityMigration);
+    await observer.query(notionRagSyncStatusMigration);
     await observer.query(notionRagCandidateSearchMigration);
 
     const tables = await observer.query<{ table_name: string }>(
@@ -875,6 +900,9 @@ describeWithDatabase('Backstage canon/storyline persistence on PostgreSQL 18', (
 
   test('fences live and stale Notion leases across real expiry and promotion', async () => {
     const notionRepository = new PostgresBackstageNotionRagRepository(pool);
+    const syncStatusRepository = new PostgresBackstageNotionSyncStatusRepository(
+      pool
+    );
     const universeId = 'notion-lease-takeover-pg18';
     const rootPageId = randomUUID();
     const wrongRootPageId = randomUUID();
@@ -914,6 +942,28 @@ describeWithDatabase('Backstage canon/storyline persistence on PostgreSQL 18', (
         1_000
       );
       expect(leaseA).not.toBeNull();
+      const attemptA = await syncStatusRepository.beginSyncAttempt({
+        universeId,
+        lease: leaseA!,
+      });
+      await expect(syncStatusRepository.loadMonolithAuthorityOperationalState({
+        universeId,
+        configuredRootPageId: rootPageId,
+        expectedEmbeddingModel: 'pg18-notion-lease-model',
+      })).resolves.toMatchObject({
+        durableAuthority: 'notion',
+        durableRootPresent: true,
+        configuredRootMatchesDurable: true,
+        activeSnapshotPresent: true,
+        activeSnapshotPageCount: 1,
+        activeSnapshotChunkCount: 1,
+        activeSnapshotReadable: true,
+        syncInProgress: true,
+        latestSyncAttempt: {
+          outcome: 'running',
+          successfulSnapshotMatchesActive: null,
+        },
+      });
       await expect(notionRepository.acquireSyncLease(
         universeId,
         holderB,
@@ -966,6 +1016,28 @@ describeWithDatabase('Backstage canon/storyline persistence on PostgreSQL 18', (
       );
       expect(leaseB).not.toBeNull();
       expect(leaseB!.leaseToken).not.toBe(leaseA!.leaseToken);
+      const attemptB = await syncStatusRepository.beginSyncAttempt({
+        universeId,
+        lease: leaseB!,
+      });
+      expect(BigInt(attemptB.generation)).toBe(BigInt(attemptA.generation) + 1n);
+      await expect(syncStatusRepository.completeSyncAttempt({
+        universeId,
+        attemptId: attemptA.attemptId,
+        generation: attemptA.generation,
+        outcome: 'failed',
+        failurePhase: 'lease',
+        failureReason: 'lease_lost',
+        pagesDiscovered: 0,
+        pagesFetched: 0,
+        blocksFetched: 0,
+        chunksProduced: 0,
+        chunksEmbedded: 0,
+        candidateSnapshotCreated: false,
+        candidateSnapshotValidated: false,
+        candidateSnapshotActivated: false,
+        activatedSnapshotId: null,
+      })).resolves.toBeNull();
 
       const staleInput = notionSnapshotInput({
         universeId,
@@ -1019,6 +1091,51 @@ describeWithDatabase('Backstage canon/storyline persistence on PostgreSQL 18', (
         lease: leaseB!,
         label: 'promoted-b',
       }));
+      await expect(syncStatusRepository.completeSyncAttempt({
+        universeId,
+        attemptId: attemptB.attemptId,
+        generation: attemptB.generation,
+        outcome: 'activated',
+        failurePhase: null,
+        failureReason: null,
+        pagesDiscovered: 1,
+        pagesFetched: 1,
+        blocksFetched: 1,
+        chunksProduced: 1,
+        chunksEmbedded: 1,
+        candidateSnapshotCreated: true,
+        candidateSnapshotValidated: true,
+        candidateSnapshotActivated: true,
+        activatedSnapshotId: promoted.id,
+      })).resolves.toMatchObject({
+        outcome: 'activated',
+        activatedSnapshotId: promoted.id,
+      });
+      await expect(notionRepository.releaseSyncLease(
+        universeId,
+        leaseB!.holderId,
+        leaseB!.leaseToken
+      )).resolves.toBe(true);
+      await expect(syncStatusRepository.loadMonolithAuthorityOperationalState({
+        universeId,
+        configuredRootPageId: rootPageId,
+        expectedEmbeddingModel: 'pg18-notion-lease-model',
+      })).resolves.toMatchObject({
+        durableAuthority: 'notion',
+        durableRootPresent: true,
+        configuredRootMatchesDurable: true,
+        activeSnapshotPresent: true,
+        activeSnapshotPageCount: 1,
+        activeSnapshotChunkCount: 1,
+        activeSnapshotReadable: true,
+        syncInProgress: false,
+        latestSyncAttempt: {
+          outcome: 'activated',
+          successfulSnapshotMatchesActive: true,
+          failurePhase: null,
+          failureReason: null,
+        },
+      });
       const finalHead = await observer.query<{
         active_snapshot_id: string;
         sync_holder_id: string;

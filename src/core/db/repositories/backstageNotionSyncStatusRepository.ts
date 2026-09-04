@@ -1,22 +1,36 @@
 import { randomUUID } from 'node:crypto';
 
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 
+import {
+  BACKSTAGE_NOTION_RAG_HEADING_INDEX_VERSION,
+} from '@shared/backstage/backstageNotionRagCore.js';
+import {
+  BACKSTAGE_NOTION_RAG_INDEX_FORMAT,
+} from '@shared/backstage/backstageNotionScopeIndex.js';
 import {
   BACKSTAGE_NOTION_SYNC_ATTEMPT_OUTCOMES,
   BACKSTAGE_NOTION_SYNC_FAILURE_PHASES,
   BACKSTAGE_NOTION_SYNC_FAILURE_REASONS,
+  type BackstageNotionLatestSyncAttemptObservation,
   type BackstageNotionLatestSyncAttemptState,
   type BackstageNotionSyncAttemptOutcome,
   type BackstageNotionSyncFailurePhase,
   type BackstageNotionSyncFailureReason,
 } from '@shared/backstage/backstageNotionSnapshotStatus.js';
 import { getPool } from '../client.js';
+import {
+  BACKSTAGE_NOTION_MAX_PAGES_PER_SNAPSHOT,
+  BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT,
+} from './backstageNotionRagRepository.js';
 
 const UNIVERSE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 const MAXIMUM_BOUNDED_SYNC_COUNT = 1_000_000;
 const POSTGRES_BIGINT_MAX = 9_223_372_036_854_775_807n;
+const MONOLITH_AUTHORITY_STATUS_READ_TIMEOUT_SQL = `SET LOCAL lock_timeout = '1s';
+SET LOCAL statement_timeout = '5s';
+SET LOCAL idle_in_transaction_session_timeout = '5s'`;
 const OUTCOMES = new Set<string>(BACKSTAGE_NOTION_SYNC_ATTEMPT_OUTCOMES);
 const FAILURE_PHASES = new Set<string>(BACKSTAGE_NOTION_SYNC_FAILURE_PHASES);
 const FAILURE_REASONS = new Set<string>(BACKSTAGE_NOTION_SYNC_FAILURE_REASONS);
@@ -72,6 +86,33 @@ export interface BackstageNotionSyncStatusRepository {
   ): Promise<BackstageNotionSyncAttemptRecord | null>;
 }
 
+export interface BackstageNotionMonolithAuthorityOperationalState {
+  readonly observedAt: Date;
+  readonly durableAuthority: 'postgres' | 'notion' | null;
+  readonly durableRootPresent: boolean;
+  readonly configuredRootMatchesDurable: boolean | null;
+  readonly activeSnapshotPresent: boolean;
+  readonly activeSnapshotVerifiedAt: Date | null;
+  readonly activeSnapshotPageCount: number;
+  readonly activeSnapshotChunkCount: number;
+  readonly activeSnapshotReadable: boolean;
+  readonly latestSyncAttempt: BackstageNotionLatestSyncAttemptObservation | null;
+  readonly syncInProgress: boolean;
+}
+
+export interface LoadBackstageNotionMonolithAuthorityOperationalStateInput {
+  readonly universeId: string;
+  readonly configuredRootPageId: string | null;
+  readonly expectedEmbeddingModel: string;
+}
+
+/** Narrow read surface used only by authenticated monolith authority status. */
+export interface BackstageNotionMonolithAuthorityStatusRepository {
+  loadMonolithAuthorityOperationalState(
+    input: LoadBackstageNotionMonolithAuthorityOperationalStateInput
+  ): Promise<BackstageNotionMonolithAuthorityOperationalState>;
+}
+
 interface SyncAttemptRow {
   universe_id: string;
   attempt_id: string;
@@ -90,6 +131,26 @@ interface SyncAttemptRow {
   candidate_snapshot_validated: boolean;
   candidate_snapshot_activated: boolean;
   activated_snapshot_id: string | null;
+}
+
+interface MonolithAuthorityOperationalStateRow {
+  observed_at: TimestampValue;
+  durable_authority: string | null;
+  durable_root_present: boolean;
+  configured_root_matches_durable: boolean | null;
+  active_snapshot_present: boolean;
+  active_snapshot_verified_at: TimestampValue | null;
+  active_snapshot_page_count: number | string | null;
+  active_snapshot_chunk_count: number | string | null;
+  active_snapshot_readable: boolean;
+  sync_in_progress: boolean;
+  latest_attempt_present: boolean;
+  latest_started_at: TimestampValue | null;
+  latest_completed_at: TimestampValue | null;
+  latest_outcome: string | null;
+  latest_failure_phase: string | null;
+  latest_failure_reason: string | null;
+  latest_successful_snapshot_matches_active: boolean | null;
 }
 
 export class BackstageNotionSyncStatusLeaseError extends Error {
@@ -159,6 +220,35 @@ function requireBoolean(value: unknown, label: string): boolean {
     throw new Error(`${label} is invalid.`);
   }
   return value;
+}
+
+async function rollbackQuietly(client: PoolClient): Promise<boolean> {
+  try {
+    await client.query('ROLLBACK');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function withBoundedMonolithAuthorityStatusRead<T>(
+  pool: Pool,
+  action: (client: PoolClient) => Promise<T>
+): Promise<T> {
+  const client = await pool.connect();
+  let discardClient = false;
+  try {
+    await client.query('BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+    await client.query(MONOLITH_AUTHORITY_STATUS_READ_TIMEOUT_SQL);
+    const result = await action(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (error) {
+    discardClient = !(await rollbackQuietly(client));
+    throw error;
+  } finally {
+    client.release(discardClient);
+  }
 }
 
 function mapAttempt(row: SyncAttemptRow): BackstageNotionSyncAttemptRecord {
@@ -249,6 +339,157 @@ function mapAttempt(row: SyncAttemptRow): BackstageNotionSyncAttemptRecord {
   };
 }
 
+function mapLatestAttemptFromOperationalState(
+  row: MonolithAuthorityOperationalStateRow
+): BackstageNotionLatestSyncAttemptObservation | null {
+  const latestAttemptPresent = requireBoolean(
+    row.latest_attempt_present,
+    'latest_attempt_present'
+  );
+  if (!latestAttemptPresent) {
+    const nullableFields = [
+      row.latest_started_at,
+      row.latest_completed_at,
+      row.latest_outcome,
+      row.latest_failure_phase,
+      row.latest_failure_reason,
+      row.latest_successful_snapshot_matches_active,
+    ];
+    if (nullableFields.some(value => value !== null)) {
+      throw new Error('Stored Backstage Notion sync status is incomplete.');
+    }
+    return null;
+  }
+  if (
+    row.latest_started_at === null
+    || row.latest_outcome === null
+    || !OUTCOMES.has(row.latest_outcome)
+  ) {
+    throw new Error('Stored Backstage Notion sync status is incomplete.');
+  }
+  if (
+    (row.latest_failure_phase !== null
+      && !FAILURE_PHASES.has(row.latest_failure_phase))
+    || (row.latest_failure_reason !== null
+      && !FAILURE_REASONS.has(row.latest_failure_reason))
+  ) {
+    throw new Error('Stored Backstage Notion sync status is unsupported.');
+  }
+  const failurePhase = row.latest_failure_phase as
+    BackstageNotionSyncFailurePhase | null;
+  const failureReason = row.latest_failure_reason as
+    BackstageNotionSyncFailureReason | null;
+  const outcome = row.latest_outcome as BackstageNotionSyncAttemptOutcome;
+  if (
+    (outcome === 'failed'
+      ? failurePhase === null
+        || failureReason === null
+        || row.latest_completed_at === null
+        || row.latest_successful_snapshot_matches_active !== null
+      : failurePhase !== null || failureReason !== null)
+    || (outcome === 'running'
+      ? row.latest_completed_at !== null
+        || row.latest_successful_snapshot_matches_active !== null
+      : outcome !== 'failed'
+        && (
+          row.latest_completed_at === null
+          || typeof row.latest_successful_snapshot_matches_active !== 'boolean'
+        ))
+  ) {
+    throw new Error('Stored Backstage Notion sync status is inconsistent.');
+  }
+  return Object.freeze({
+    startedAt: parseDate(row.latest_started_at, 'latest_started_at'),
+    completedAt: row.latest_completed_at === null
+      ? null
+      : parseDate(row.latest_completed_at, 'latest_completed_at'),
+    outcome,
+    successfulSnapshotMatchesActive:
+      row.latest_successful_snapshot_matches_active,
+    failurePhase,
+    failureReason,
+  });
+}
+
+function mapMonolithAuthorityOperationalState(
+  row: MonolithAuthorityOperationalStateRow
+): BackstageNotionMonolithAuthorityOperationalState {
+  const durableAuthority = row.durable_authority === null
+    ? null
+    : row.durable_authority === 'postgres' || row.durable_authority === 'notion'
+      ? row.durable_authority
+      : (() => {
+          throw new Error('Stored Backstage Notion authority is unsupported.');
+        })();
+  const durableRootPresent = requireBoolean(
+    row.durable_root_present,
+    'durable_root_present'
+  );
+  const configuredRootMatchesDurable = row.configured_root_matches_durable;
+  if (
+    configuredRootMatchesDurable !== null
+    && typeof configuredRootMatchesDurable !== 'boolean'
+  ) {
+    throw new Error('configured_root_matches_durable is invalid.');
+  }
+  const activeSnapshotPresent = requireBoolean(
+    row.active_snapshot_present,
+    'active_snapshot_present'
+  );
+  const activeSnapshotVerifiedAt = row.active_snapshot_verified_at === null
+    ? null
+    : parseDate(row.active_snapshot_verified_at, 'active_snapshot_verified_at');
+  const activeSnapshotChunkCount = row.active_snapshot_chunk_count === null
+    ? 0
+    : parseBoundedCount(
+        row.active_snapshot_chunk_count,
+        'active_snapshot_chunk_count'
+      );
+  const activeSnapshotPageCount = row.active_snapshot_page_count === null
+    ? 0
+    : parseBoundedCount(
+        row.active_snapshot_page_count,
+        'active_snapshot_page_count'
+      );
+  const activeSnapshotReadable = requireBoolean(
+    row.active_snapshot_readable,
+    'active_snapshot_readable'
+  );
+  const syncInProgress = requireBoolean(
+    row.sync_in_progress,
+    'sync_in_progress'
+  );
+  if (
+    activeSnapshotReadable
+    && (
+      durableAuthority !== 'notion'
+      || !durableRootPresent
+      || !activeSnapshotPresent
+      || activeSnapshotVerifiedAt === null
+      || activeSnapshotPageCount < 1
+      || activeSnapshotPageCount > BACKSTAGE_NOTION_MAX_PAGES_PER_SNAPSHOT
+      || activeSnapshotChunkCount < 1
+      || activeSnapshotChunkCount
+        > BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT
+    )
+  ) {
+    throw new Error('Stored Backstage Notion active snapshot is not readable.');
+  }
+  return Object.freeze({
+    observedAt: parseDate(row.observed_at, 'observed_at'),
+    durableAuthority,
+    durableRootPresent,
+    configuredRootMatchesDurable,
+    activeSnapshotPresent,
+    activeSnapshotVerifiedAt,
+    activeSnapshotPageCount,
+    activeSnapshotChunkCount,
+    activeSnapshotReadable,
+    latestSyncAttempt: mapLatestAttemptFromOperationalState(row),
+    syncInProgress,
+  });
+}
+
 function validateDiagnostics(
   input: BackstageNotionSyncAttemptDiagnosticsState
 ): BackstageNotionSyncAttemptDiagnosticsState {
@@ -293,7 +534,8 @@ const ATTEMPT_PROJECTION_SQL = `
   activated_snapshot_id`;
 
 export class PostgresBackstageNotionSyncStatusRepository
-implements BackstageNotionSyncStatusRepository {
+implements BackstageNotionSyncStatusRepository,
+BackstageNotionMonolithAuthorityStatusRepository {
   constructor(private readonly pool: Pool) {}
 
   async beginSyncAttempt(
@@ -520,10 +762,243 @@ implements BackstageNotionSyncStatusRepository {
     }
     return attempt;
   }
+
+  async loadMonolithAuthorityOperationalState(
+    input: LoadBackstageNotionMonolithAuthorityOperationalStateInput
+  ): Promise<BackstageNotionMonolithAuthorityOperationalState> {
+    const normalizedUniverseId = requireUniverseId(input.universeId);
+    const configuredRootPageId = input.configuredRootPageId === null
+      ? null
+      : requireUuid(input.configuredRootPageId, 'configuredRootPageId');
+    const expectedEmbeddingModel = input.expectedEmbeddingModel.trim();
+    if (!expectedEmbeddingModel || expectedEmbeddingModel.length > 200) {
+      throw new TypeError('expectedEmbeddingModel is invalid.');
+    }
+    const result = await withBoundedMonolithAuthorityStatusRead(
+      this.pool,
+      client => client.query<MonolithAuthorityOperationalStateRow>(
+        `WITH observation AS MATERIALIZED (
+           SELECT clock_timestamp() AS observed_at
+         ), requested AS (
+           SELECT $1::TEXT AS universe_id
+         )
+         SELECT
+           observation.observed_at,
+           head.authority AS durable_authority,
+           COALESCE(
+             head.authority = 'notion'
+             AND snapshot.id IS NOT NULL
+             AND EXISTS (
+               SELECT 1
+               FROM backstage_notion_snapshot_pages AS durable_root_page
+               WHERE durable_root_page.universe_id = requested.universe_id
+                 AND durable_root_page.snapshot_id = snapshot.id
+                 AND durable_root_page.page_id = snapshot.root_page_id
+                 AND durable_root_page.parent_page_id IS NULL
+                 AND durable_root_page.depth = 0
+                 AND jsonb_typeof(durable_root_page.path) = 'array'
+                 AND jsonb_array_length(durable_root_page.path) = 1
+             ),
+             FALSE
+           ) AS durable_root_present,
+           CASE
+             WHEN $2::TEXT IS NULL OR head.authority IS DISTINCT FROM 'notion'
+             THEN NULL
+             ELSE COALESCE(snapshot.root_page_id = $2::TEXT, FALSE)
+           END AS configured_root_matches_durable,
+           COALESCE(
+             head.active_snapshot_id IS NOT NULL AND snapshot.id IS NOT NULL,
+             FALSE
+           ) AS active_snapshot_present,
+           head.last_verified_at AS active_snapshot_verified_at,
+           snapshot.page_count AS active_snapshot_page_count,
+           snapshot.chunk_count AS active_snapshot_chunk_count,
+           COALESCE((
+             head.authority = 'notion'
+             AND head.active_snapshot_id IS NOT NULL
+             AND snapshot.id IS NOT NULL
+             AND head.last_verified_at IS NOT NULL
+             AND pg_catalog.isfinite(head.last_verified_at)
+             AND pg_catalog.isfinite(snapshot.created_at)
+             AND head.last_verified_at >= snapshot.created_at
+             AND head.last_verified_at
+               <= observation.observed_at + INTERVAL '5 minutes'
+             AND snapshot.created_at
+               <= observation.observed_at + INTERVAL '5 minutes'
+             AND snapshot.manifest_hash ~ '^[0-9a-f]{64}$'
+             AND snapshot.embedding_model = $7::TEXT
+             AND ($2::TEXT IS NULL OR snapshot.root_page_id = $2::TEXT)
+             AND snapshot.page_count BETWEEN 1 AND $3::INTEGER
+             AND snapshot.chunk_count BETWEEN 1 AND $4::INTEGER
+             AND snapshot.page_count = (
+               SELECT COUNT(*)
+               FROM backstage_notion_snapshot_pages AS counted_page
+               WHERE counted_page.universe_id = requested.universe_id
+                 AND counted_page.snapshot_id = snapshot.id
+             )
+             AND snapshot.chunk_count = (
+               SELECT COUNT(*)
+               FROM backstage_notion_snapshot_chunks AS counted_chunk
+               WHERE counted_chunk.universe_id = requested.universe_id
+                 AND counted_chunk.snapshot_id = snapshot.id
+             )
+             AND EXISTS (
+               SELECT 1
+               FROM backstage_notion_snapshot_pages AS root_page
+               WHERE root_page.universe_id = requested.universe_id
+                 AND root_page.snapshot_id = snapshot.id
+                 AND root_page.page_id = snapshot.root_page_id
+                 AND root_page.parent_page_id IS NULL
+                 AND root_page.depth = 0
+                 AND jsonb_typeof(root_page.path) = 'array'
+                 AND jsonb_array_length(root_page.path) = 1
+             )
+             AND NOT EXISTS (
+               SELECT 1
+               FROM backstage_notion_snapshot_pages AS page
+               WHERE page.universe_id = requested.universe_id
+                 AND page.snapshot_id = snapshot.id
+                 AND (
+                   jsonb_typeof(page.metadata) IS DISTINCT FROM 'object'
+                   OR page.metadata ->> 'indexFormat' IS DISTINCT FROM $5
+                   OR page.metadata ->> 'headingIndexVersion'
+                     IS DISTINCT FROM $6::TEXT
+                   OR jsonb_typeof(page.metadata -> 'scopeTitleKey')
+                     IS DISTINCT FROM 'string'
+                   OR page.metadata ->> 'scopeTitleKey'
+                     !~ '^[0-9a-f]{64}$'
+                   OR CASE
+                     WHEN jsonb_typeof(page.metadata -> 'scopePathKey') = 'array'
+                       AND jsonb_typeof(page.path) = 'array'
+                     THEN
+                       jsonb_array_length(page.metadata -> 'scopePathKey')
+                         IS DISTINCT FROM jsonb_array_length(page.path)
+                       OR jsonb_array_length(page.metadata -> 'scopePathKey')
+                         NOT BETWEEN 1 AND 101
+                       OR EXISTS (
+                         SELECT 1
+                         FROM jsonb_array_elements(
+                           page.metadata -> 'scopePathKey'
+                         ) AS scope_path_segment(value)
+                         WHERE jsonb_typeof(scope_path_segment.value)
+                           IS DISTINCT FROM 'string'
+                           OR (scope_path_segment.value #>> '{}')
+                             !~ '^[0-9a-f]{64}$'
+                       )
+                     ELSE TRUE
+                   END
+                 )
+             )
+             AND NOT EXISTS (
+               SELECT 1
+               FROM backstage_notion_snapshot_chunks AS chunk
+               WHERE chunk.universe_id = requested.universe_id
+                 AND chunk.snapshot_id = snapshot.id
+                 AND (
+                   chunk.embedding_model IS DISTINCT FROM snapshot.embedding_model
+                   OR jsonb_typeof(chunk.metadata) IS DISTINCT FROM 'object'
+                   OR chunk.metadata ->> 'headingIndexVersion'
+                     IS DISTINCT FROM $6::TEXT
+                   OR CASE
+                     WHEN jsonb_typeof(
+                       chunk.metadata -> 'scopeHeadingPathKey'
+                     ) = 'array'
+                       AND jsonb_typeof(
+                         chunk.metadata -> 'headingOccurrencePath'
+                       ) = 'array'
+                       AND jsonb_typeof(chunk.heading_path) = 'array'
+                     THEN
+                       jsonb_array_length(
+                         chunk.metadata -> 'scopeHeadingPathKey'
+                       ) IS DISTINCT FROM jsonb_array_length(chunk.heading_path)
+                       OR jsonb_array_length(
+                         chunk.metadata -> 'headingOccurrencePath'
+                       ) IS DISTINCT FROM jsonb_array_length(chunk.heading_path)
+                       OR jsonb_array_length(chunk.heading_path) > 32
+                       OR EXISTS (
+                         SELECT 1
+                         FROM jsonb_array_elements(
+                           chunk.metadata -> 'scopeHeadingPathKey'
+                         ) AS scope_heading_segment(value)
+                         WHERE jsonb_typeof(scope_heading_segment.value)
+                           IS DISTINCT FROM 'string'
+                           OR (scope_heading_segment.value #>> '{}')
+                             !~ '^[0-9a-f]{64}$'
+                       )
+                       OR EXISTS (
+                         SELECT 1
+                         FROM jsonb_array_elements(
+                           chunk.metadata -> 'headingOccurrencePath'
+                         ) AS heading_occurrence(value)
+                         WHERE CASE
+                           WHEN jsonb_typeof(heading_occurrence.value) = 'number'
+                             AND heading_occurrence.value::TEXT
+                               ~ '^[1-9][0-9]{0,3}$'
+                           THEN (heading_occurrence.value::TEXT)::INTEGER
+                             BETWEEN 1 AND ${BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT}
+                           ELSE FALSE
+                         END IS NOT TRUE
+                       )
+                     ELSE TRUE
+                   END
+                 )
+             )
+           ), FALSE) AS active_snapshot_readable,
+           EXISTS (
+             SELECT 1
+             FROM backstage_notion_sync_leases AS live_lease
+             WHERE live_lease.universe_id = requested.universe_id
+               AND live_lease.expires_at > observation.observed_at
+           ) AS sync_in_progress,
+           (latest.attempt_id IS NOT NULL) AS latest_attempt_present,
+           latest.started_at AS latest_started_at,
+           latest.completed_at AS latest_completed_at,
+           latest.outcome AS latest_outcome,
+           latest.failure_phase AS latest_failure_phase,
+           latest.failure_reason AS latest_failure_reason,
+           CASE
+             WHEN latest.outcome IN ('activated', 'unchanged')
+             THEN latest.activated_snapshot_id = head.active_snapshot_id
+             ELSE NULL
+           END AS latest_successful_snapshot_matches_active
+         FROM requested
+         CROSS JOIN observation
+         LEFT JOIN backstage_notion_universe_heads AS head
+           ON head.universe_id = requested.universe_id
+         LEFT JOIN backstage_notion_snapshots AS snapshot
+           ON snapshot.universe_id = head.universe_id
+          AND snapshot.id = head.active_snapshot_id
+         LEFT JOIN backstage_notion_latest_sync_attempts AS latest
+           ON latest.universe_id = requested.universe_id`,
+        [
+          normalizedUniverseId,
+          configuredRootPageId,
+          BACKSTAGE_NOTION_MAX_PAGES_PER_SNAPSHOT,
+          BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT,
+          BACKSTAGE_NOTION_RAG_INDEX_FORMAT,
+          BACKSTAGE_NOTION_RAG_HEADING_INDEX_VERSION,
+          expectedEmbeddingModel,
+        ]
+      )
+    );
+    if (result.rows.length !== 1 || !result.rows[0]) {
+      throw new Error('Backstage Notion monolith authority status is unavailable.');
+    }
+    return mapMonolithAuthorityOperationalState(result.rows[0]);
+  }
 }
 
 export function getBackstageNotionSyncStatusRepository():
 BackstageNotionSyncStatusRepository {
+  const pool = getPool();
+  if (!pool) {
+    throw new BackstageNotionSyncStatusRepositoryUnavailableError();
+  }
+  return new PostgresBackstageNotionSyncStatusRepository(pool);
+}
+
+export function getBackstageNotionMonolithAuthorityStatusRepository():
+BackstageNotionMonolithAuthorityStatusRepository {
   const pool = getPool();
   if (!pool) {
     throw new BackstageNotionSyncStatusRepositoryUnavailableError();
