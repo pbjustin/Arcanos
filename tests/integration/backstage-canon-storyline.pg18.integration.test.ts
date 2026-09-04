@@ -1674,6 +1674,7 @@ describeWithDatabase('Backstage canon/storyline persistence on PostgreSQL 18', (
     );
     await resetDisposableNotionRagState(observer);
     await observer.query(notionRagCandidateSearchRollback);
+    await observer.query(notionRagSyncStatusRollback);
     await observer.query(notionRagSnapshotCapacityRollback);
     await observer.query(notionRagIndexVersionFenceRollback);
     await observer.query(notionRagRollbackMigration);
