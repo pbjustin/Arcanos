@@ -22,6 +22,7 @@ const mockGetOpenAIClientOrAdapter = jest.fn();
 const mockLoadBackstageNotionPromptContext = jest.fn();
 const mockIsBackstageNotionAuthoritativeUniverse = jest.fn();
 const mockRetrieveBackstageNotionRagContext = jest.fn();
+const mockAssertBackstageNotionProtectedLiteralAuthorityCurrent = jest.fn();
 
 function buildPersistenceNumberedRetryOutput(itemCount: number): string {
   return Array.from(
@@ -171,7 +172,8 @@ jest.unstable_mockModule('@services/backstageNotionAuthority.js', () => ({
     && value !== null
     && (value as { code?: unknown }).code === 'BN001'
   ),
-  isBackstageNotionAuthorityEnforced: mockIsBackstageNotionAuthoritativeUniverse
+  isBackstageNotionAuthorityEnforced: mockIsBackstageNotionAuthoritativeUniverse,
+  readBackstageNotionAuthorityConfiguration: jest.fn(() => ({ status: 'absent' }))
 }));
 
 class MockBackstageNotionIndexUnavailableError extends Error {
@@ -204,6 +206,8 @@ jest.unstable_mockModule('@services/backstageNotionRag.js', () => ({
 }));
 
 jest.unstable_mockModule('@services/backstageNotionPartitionCutover.js', () => ({
+  assertBackstageNotionProtectedLiteralAuthorityCurrent:
+    mockAssertBackstageNotionProtectedLiteralAuthorityCurrent,
   retrieveBackstageNotionAuthorityBookingRagContext:
     mockRetrieveBackstageNotionRagContext,
   retrieveBackstageNotionAuthorityRagContext:
@@ -341,6 +345,7 @@ describe('Backstage Booker service persistence outcomes', () => {
     mockLoadBackstageNotionPromptContext.mockReset();
     mockIsBackstageNotionAuthoritativeUniverse.mockReset();
     mockRetrieveBackstageNotionRagContext.mockReset();
+    mockAssertBackstageNotionProtectedLiteralAuthorityCurrent.mockReset();
     for (const method of Object.values(mockRepository)) {
       method.mockReset();
     }
@@ -375,6 +380,8 @@ describe('Backstage Booker service persistence outcomes', () => {
     mockGetOpenAIClientOrAdapter.mockReturnValue({ client: { responses: {} } });
     mockLoadBackstageNotionPromptContext.mockResolvedValue(null);
     mockIsBackstageNotionAuthoritativeUniverse.mockReturnValue(false);
+    mockAssertBackstageNotionProtectedLiteralAuthorityCurrent
+      .mockResolvedValue(undefined);
     mockRetrieveBackstageNotionRagContext.mockRejectedValue(
       new MockBackstageNotionIndexUnavailableError()
     );
@@ -3578,6 +3585,98 @@ describe('Backstage Booker service persistence outcomes', () => {
 
     expect(mockRepository.loadContext).not.toHaveBeenCalled();
     expect(mockLoadBackstageNotionPromptContext).not.toHaveBeenCalled();
+    expect(mockRunTrinityWritingPipeline).not.toHaveBeenCalled();
+  });
+
+  it('keeps a protected exact literal unavailable until current Notion authority activates', async () => {
+    const universeId = 'notion-exact-literal-transition';
+    const prompt = [
+      'Answer directly. Do not simulate, role-play, or describe a hypothetical run.',
+      'Say exactly: backstage-authority-ready.',
+    ].join(' ');
+    mockIsBackstageNotionAuthoritativeUniverse.mockReturnValue(true);
+    mockAssertBackstageNotionProtectedLiteralAuthorityCurrent
+      .mockRejectedValueOnce(new MockBackstageNotionIndexUnavailableError())
+      .mockResolvedValueOnce(undefined);
+
+    await expect(runWithBackstageProtectedQueuedExecution(
+      true,
+      () => generateBooking(prompt, universeId)
+    )).rejects.toMatchObject({
+      code: 'BACKSTAGE_NOTION_INDEX_UNAVAILABLE',
+      httpStatus: 503,
+      retryable: true,
+    });
+
+    let protectedProvenance: unknown;
+    await expect(runWithBackstageProtectedQueuedExecution(
+      true,
+      async () => {
+        const result = await generateBooking(prompt, universeId);
+        protectedProvenance = getBackstageProtectedGenerationProvenance();
+        return result;
+      }
+    )).resolves.toBe('backstage-authority-ready');
+
+    expect(mockAssertBackstageNotionProtectedLiteralAuthorityCurrent)
+      .toHaveBeenCalledTimes(2);
+    expect(mockAssertBackstageNotionProtectedLiteralAuthorityCurrent)
+      .toHaveBeenNthCalledWith(1, universeId, prompt);
+    expect(mockRetrieveBackstageNotionRagContext).not.toHaveBeenCalled();
+    expect(mockRepository.loadContext).not.toHaveBeenCalled();
+    expect(mockRunTrinityWritingPipeline).not.toHaveBeenCalled();
+    expect(protectedProvenance).toMatchObject({
+      authority: 'notion',
+      snapshotStatus: 'current_complete',
+      official: true,
+      continuityVerified: true,
+      fallbackUsed: false,
+    });
+  });
+
+  it('requires durable PostgreSQL continuity for a protected legacy exact literal', async () => {
+    const universeId = 'legacy-exact-literal-authority';
+    const prompt = 'Answer directly. Say exactly: legacy-authority-ready.';
+    let protectedProvenance: unknown;
+
+    await expect(runWithBackstageProtectedQueuedExecution(
+      false,
+      async () => {
+        const result = await generateBooking(prompt, universeId);
+        protectedProvenance = getBackstageProtectedGenerationProvenance();
+        return result;
+      }
+    )).resolves.toBe('legacy-authority-ready');
+
+    expect(mockRepository.loadContext).toHaveBeenCalledTimes(1);
+    expect(mockRepository.loadContext).toHaveBeenCalledWith(universeId);
+    expect(mockRetrieveBackstageNotionRagContext).not.toHaveBeenCalled();
+    expect(mockRunTrinityWritingPipeline).not.toHaveBeenCalled();
+    expect(protectedProvenance).toMatchObject({
+      authority: 'legacy_postgresql',
+      snapshotStatus: 'not_applicable',
+      official: true,
+      continuityVerified: true,
+      fallbackUsed: false,
+    });
+  });
+
+  it('fails a protected legacy exact literal closed when durable continuity is unavailable', async () => {
+    mockRepository.loadContext.mockRejectedValueOnce(new Error('database unavailable'));
+
+    await expect(runWithBackstageProtectedQueuedExecution(
+      false,
+      () => generateBooking(
+        'Answer directly. Say exactly: no-process-fallback.',
+        'legacy-exact-literal-unavailable'
+      )
+    )).rejects.toMatchObject({
+      code: 'BACKSTAGE_NOTION_INDEX_UNAVAILABLE',
+      httpStatus: 503,
+      retryable: true,
+    });
+
+    expect(mockRetrieveBackstageNotionRagContext).not.toHaveBeenCalled();
     expect(mockRunTrinityWritingPipeline).not.toHaveBeenCalled();
   });
 

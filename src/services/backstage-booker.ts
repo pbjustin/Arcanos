@@ -85,6 +85,7 @@ import {
   BackstageNotionIndexUnavailableError,
 } from './backstageNotionRag.js';
 import {
+  assertBackstageNotionProtectedLiteralAuthorityCurrent,
   retrieveBackstageNotionAuthorityBookingRagContext,
 } from './backstageNotionPartitionCutover.js';
 import { buildDirectAnswerModeSystemInstruction, shouldPreferDirectAnswerMode } from '@services/directAnswerMode.js';
@@ -1444,6 +1445,42 @@ interface StructuredBookingPrompt {
   directAnswerUntrustedContextPrompt?: string;
 }
 
+async function establishExactLiteralBookingAuthority(
+  basePrompt: string,
+  universeId: string,
+  protectedGenerationExecution: boolean
+): Promise<void> {
+  if (await isBackstageNotionAuthorityEnforced(universeId)) {
+    await assertBackstageNotionProtectedLiteralAuthorityCurrent(
+      universeId,
+      basePrompt
+    );
+    recordBackstageProtectedGenerationAuthority('notion');
+    return;
+  }
+  if (!protectedGenerationExecution) {
+    return;
+  }
+
+  try {
+    const context = await getBackstageRepository().loadContext(universeId);
+    if (context.canonContext.universeId !== universeId) {
+      throw new TypeError('Backstage canon context crossed its requested universe.');
+    }
+    normalizeCanonRevision(
+      context.canonContext.revision,
+      'Backstage canon context revision'
+    );
+    recordBackstageProtectedGenerationAuthority('legacy_postgresql');
+  } catch {
+    logger.warn('backstage.protected_result.authority_status', {
+      authority: 'none',
+      status: 'legacy_postgresql_unavailable',
+    });
+    throw new BackstageNotionIndexUnavailableError();
+  }
+}
+
 async function buildStructuredBookingPrompt(
   basePrompt: string,
   universeId: string
@@ -2555,9 +2592,23 @@ export async function generateBooking(
     prompt
   });
   const resolvedUniverseId = input.universeId ?? DEFAULT_BACKSTAGE_UNIVERSE_ID;
+  const protectedQueuedExecution = isBackstageProtectedQueuedExecution();
+  const protectedGenerationExecution = isBackstageProtectedGenerationExecution();
+  const privateGenerationExecution =
+    protectedGenerationExecution || isBackstageLegacyQueuedExecution();
   const exactLiteralShortcut = tryExtractExactLiteralPromptShortcut(input.prompt);
-  //audit Assumption: literal-only backstage prompts should bypass persona/context expansion; failure risk: the booker persona or context scaffolding wraps the required literal in storytelling language; expected invariant: recognized exact-literal directives return verbatim output; handling strategy: short-circuit before prompt construction and provider invocation.
+  //audit Assumption: literal-only backstage prompts may skip persona/provider expansion but not protected authority selection; failure risk: a literal shortcut returns before current-complete Notion verification and acquires no server-owned provenance; expected invariant: every protected generation resolves durable authority before returning any output; handling strategy: perform a provider-free durable authority admission check, then return the literal without model or corpus retrieval.
   if (exactLiteralShortcut) {
+    if (protectedGenerationExecution || structuredScope) {
+      // Public structured calls also honor a configured or durable one-way
+      // Notion authority latch; unprotected legacy literals keep their existing
+      // no-context shortcut.
+      await establishExactLiteralBookingAuthority(
+        input.prompt,
+        resolvedUniverseId,
+        protectedGenerationExecution
+      );
+    }
     return assertValidBackstageBookerActionData(
       'generateBooking',
       exactLiteralShortcut.literal
@@ -2574,10 +2625,6 @@ export async function generateBooking(
     input.prompt,
     defaultTokenLimit
   );
-  const protectedQueuedExecution = isBackstageProtectedQueuedExecution();
-  const protectedGenerationExecution = isBackstageProtectedGenerationExecution();
-  const privateGenerationExecution =
-    protectedGenerationExecution || isBackstageLegacyQueuedExecution();
   const executionBudget = resolveBackstageExecutionBudgetPolicy({
     profile: protectedQueuedExecution
       ? 'queued_generation'

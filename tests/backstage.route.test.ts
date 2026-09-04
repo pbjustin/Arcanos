@@ -41,7 +41,8 @@ jest.unstable_mockModule('@services/backstage-booker.js', () => ({
 }));
 
 jest.unstable_mockModule('@services/backstageNotionAuthority.js', () => ({
-  isBackstageNotionAuthorityEnforced: mockIsBackstageNotionAuthoritativeUniverse
+  isBackstageNotionAuthorityEnforced: mockIsBackstageNotionAuthoritativeUniverse,
+  readBackstageNotionAuthorityConfiguration: jest.fn(() => ({ status: 'absent' }))
 }));
 
 const express = (await import('express')).default;
