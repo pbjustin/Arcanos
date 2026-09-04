@@ -793,7 +793,7 @@ describe('jobRunnerRuntime', () => {
     expect(source).toContain("sourceName: 'openai-provider-health'");
     expect(source).toContain('createWorkerProviderProbeBudget(params.workerBudget)');
     expect(source).toContain('workerBudget: workerAiCallBudget');
-    expect(source).toContain(
+    expect(source).not.toContain(
       'ai_calls_per_hour_exceeded_during_startup_provider_recovery'
     );
   });
@@ -811,33 +811,17 @@ describe('jobRunnerRuntime', () => {
     const databaseBootstrapIndex = source.indexOf(
       "await initializeJobRunnerDatabaseWithRetry('job-runner'"
     );
-    const preliminaryBackstageNotionPartitionPolicyIndex = source.indexOf(
-      'const preliminaryBackstageNotionPartitionPolicy =',
+    const backstageNotionConfigurationPreflightIndex = source.indexOf(
+      'validateBackstageNotionSynchronizationConfiguration();',
       databaseBootstrapIndex
-    );
-    const backstageNotionPartitionEvidenceIndex = source.indexOf(
-      'await loadBackstageNotionPartitionCutoverGateEvidenceSet(',
-      preliminaryBackstageNotionPartitionPolicyIndex
     );
     const backstageNotionPartitionPolicyIndex = source.indexOf(
       'const backstageNotionPartitionPolicy =',
-      backstageNotionPartitionEvidenceIndex
-    );
-    const startupReadinessRecoveryIndex = source.indexOf(
-      'await waitForWorkerStartupReadiness({',
-      backstageNotionPartitionPolicyIndex
-    );
-    const backstageNotionReadinessGateIndex = source.indexOf(
-      'attempt: () => runBackstageNotionWorkerReadinessGate(',
-      startupReadinessRecoveryIndex
-    );
-    const backstageNotionReadinessIndex = source.indexOf(
-      '() => ensureBackstageNotionWorkerReadiness({',
-      backstageNotionReadinessGateIndex
+      backstageNotionConfigurationPreflightIndex
     );
     const autonomyBootstrapIndex = source.indexOf(
       'await bootstrapWorkerAutonomyWithRetry(',
-      backstageNotionReadinessIndex
+      backstageNotionPartitionPolicyIndex
     );
     const moduleRegistryPreloadIndex = source.indexOf(
       'await initializeModuleRegistry()',
@@ -862,21 +846,25 @@ describe('jobRunnerRuntime', () => {
       'await commitAllWorkerSlotsReadyOrThrow(',
       consumerStartIndex
     );
+    const monolithSyncStartIndex = source.indexOf(
+      'backstageNotionLoopHandles.monolith = startBackstageNotionSyncLoop({',
+      consumerReadinessBarrierIndex
+    );
+    const partitionShadowStartIndex = source.indexOf(
+      'startBackstageNotionPartitionShadowLoop({',
+      monolithSyncStartIndex
+    );
     const readinessLogIndex = source.indexOf(
       "logger.info('worker.bootstrap.completed'",
-      consumerReadinessBarrierIndex
+      partitionShadowStartIndex
     );
     const readinessProtocolIndex = source.indexOf(
       'emitWorkerBootstrapReadySignal()',
       readinessLogIndex
     );
-    const partitionShadowStartIndex = source.indexOf(
-      'backstageNotionPartitionShadowHandle = startBackstageNotionPartitionShadowLoop({',
-      readinessProtocolIndex
-    );
     const consumerRuntimeBarrierIndex = source.indexOf(
       'await Promise.all(slotRuntimePromises)',
-      partitionShadowStartIndex
+      readinessProtocolIndex
     );
 
     expect([
@@ -884,12 +872,8 @@ describe('jobRunnerRuntime', () => {
       enabledGuardIndex,
       operatorDispatchProviderIndex,
       databaseBootstrapIndex,
-      preliminaryBackstageNotionPartitionPolicyIndex,
-      backstageNotionPartitionEvidenceIndex,
+      backstageNotionConfigurationPreflightIndex,
       backstageNotionPartitionPolicyIndex,
-      startupReadinessRecoveryIndex,
-      backstageNotionReadinessGateIndex,
-      backstageNotionReadinessIndex,
       autonomyBootstrapIndex,
       moduleRegistryPreloadIndex,
       dispatcherStartIndex,
@@ -897,6 +881,7 @@ describe('jobRunnerRuntime', () => {
       dispatcherReadySignalIndex,
       consumerStartIndex,
       consumerReadinessBarrierIndex,
+      monolithSyncStartIndex,
       readinessLogIndex,
       readinessProtocolIndex,
       partitionShadowStartIndex,
@@ -907,27 +892,27 @@ describe('jobRunnerRuntime', () => {
     expect(enabledGuardIndex).toBeLessThan(operatorDispatchProviderIndex);
     expect(operatorDispatchProviderIndex).toBeLessThan(databaseBootstrapIndex);
     expect(databaseBootstrapIndex)
-      .toBeLessThan(preliminaryBackstageNotionPartitionPolicyIndex);
-    expect(preliminaryBackstageNotionPartitionPolicyIndex)
-      .toBeLessThan(backstageNotionPartitionEvidenceIndex);
-    expect(backstageNotionPartitionEvidenceIndex)
+      .toBeLessThan(backstageNotionConfigurationPreflightIndex);
+    expect(backstageNotionConfigurationPreflightIndex)
       .toBeLessThan(backstageNotionPartitionPolicyIndex);
     expect(backstageNotionPartitionPolicyIndex)
-      .toBeLessThan(startupReadinessRecoveryIndex);
-    expect(startupReadinessRecoveryIndex)
-      .toBeLessThan(backstageNotionReadinessGateIndex);
-    expect(backstageNotionReadinessGateIndex)
-      .toBeLessThan(backstageNotionReadinessIndex);
-    expect(backstageNotionReadinessIndex).toBeLessThan(autonomyBootstrapIndex);
+      .toBeLessThan(autonomyBootstrapIndex);
     expect(autonomyBootstrapIndex).toBeLessThan(moduleRegistryPreloadIndex);
     expect(dispatcherStartIndex).toBeLessThan(heartbeatSetupIndex);
     expect(heartbeatSetupIndex).toBeLessThan(dispatcherReadySignalIndex);
     expect(moduleRegistryPreloadIndex).toBeLessThan(consumerStartIndex);
     expect(consumerStartIndex).toBeLessThan(consumerReadinessBarrierIndex);
+    expect(consumerReadinessBarrierIndex).toBeLessThan(monolithSyncStartIndex);
+    expect(monolithSyncStartIndex).toBeLessThan(partitionShadowStartIndex);
+    expect(partitionShadowStartIndex).toBeLessThan(readinessLogIndex);
     expect(consumerReadinessBarrierIndex).toBeLessThan(readinessLogIndex);
     expect(readinessLogIndex).toBeLessThan(readinessProtocolIndex);
-    expect(readinessProtocolIndex).toBeLessThan(partitionShadowStartIndex);
-    expect(partitionShadowStartIndex).toBeLessThan(consumerRuntimeBarrierIndex);
+    expect(readinessProtocolIndex).toBeLessThan(consumerRuntimeBarrierIndex);
+    expect(source).not.toContain(
+      'await loadBackstageNotionPartitionCutoverGateEvidenceSet('
+    );
+    expect(source).not.toContain('ensureBackstageNotionWorkerReadiness');
+    expect(source).not.toContain('runBackstageNotionWorkerReadinessGate');
     expect(source).toContain(
       'cutoverEvidence: backstageNotionPartitionCutoverEvidence'
     );

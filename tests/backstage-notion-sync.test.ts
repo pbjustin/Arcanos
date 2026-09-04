@@ -55,6 +55,7 @@ import {
   BACKSTAGE_NOTION_SYNC_SOURCE_DRIFT_ERROR_CODE,
   syncBackstageNotionAuthorityRoot,
   syncConfiguredBackstageNotionAuthorities,
+  validateBackstageNotionSynchronizationConfiguration,
   type BackstageNotionSyncDependencies,
 } from '../src/services/backstageNotionSync.js';
 
@@ -1339,6 +1340,7 @@ describe('Backstage Notion authority synchronization', () => {
         (expectedProviderRequestCount - 1)
           * BACKSTAGE_NOTION_SYNC_REQUEST_SPACING_MS
       );
+      expect(elapsedMs).toBeGreaterThan(300_000);
       expect(BACKSTAGE_NOTION_SYNC_CYCLE_TIMEOUT_MS).toBe(
         14 * 60 * 1_000
           + BACKSTAGE_NOTION_SYNC_MAX_PAGES
@@ -2578,6 +2580,54 @@ describe('Backstage Notion authority synchronization', () => {
     })).rejects.toMatchObject({ code: BACKSTAGE_NOTION_SYNC_CONFIGURATION_ERROR_CODE });
     expect(repository.acquireSyncLease).not.toHaveBeenCalled();
   });
+
+  it('validates startup synchronization configuration without provider or database work', () => {
+    const authority = JSON.stringify({
+      [universeId]: {
+        rootPageId: pageId(0),
+        displayName: 'WWE Universe Mode',
+      },
+    });
+
+    expect(validateBackstageNotionSynchronizationConfiguration({
+      readEnvironment: environmentReader(),
+    })).toEqual({
+      authorityConfigured: false,
+      configuredUniverses: 0,
+    });
+    expect(validateBackstageNotionSynchronizationConfiguration({
+      readEnvironment: environmentReader({ token: notionToken, authority }),
+    })).toEqual({
+      authorityConfigured: true,
+      configuredUniverses: 1,
+    });
+  });
+
+  it.each([
+    ['invalid authority', environmentReader({ token: notionToken, authority: '{' })],
+    ['missing token', environmentReader({ authority: JSON.stringify({
+      [universeId]: {
+        rootPageId: pageId(0),
+        displayName: 'WWE Universe Mode',
+      },
+    }) })],
+    ['unsafe token', environmentReader({ token: 'placeholder', authority: JSON.stringify({
+      [universeId]: {
+        rootPageId: pageId(0),
+        displayName: 'WWE Universe Mode',
+      },
+    }) })],
+    ['environment read failure', environmentReader({ throwOnRead: true })],
+  ] as const)(
+    'keeps malformed required startup configuration fatal: %s',
+    (_case, readEnvironment) => {
+      expect(() => validateBackstageNotionSynchronizationConfiguration({
+        readEnvironment,
+      })).toThrow(expect.objectContaining({
+        code: BACKSTAGE_NOTION_SYNC_CONFIGURATION_ERROR_CODE,
+      }));
+    }
+  );
 
   it('uses the configured runtime environment and default embedding adapter offline', async () => {
     const page: TestNotionPage = {

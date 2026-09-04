@@ -29,6 +29,7 @@ import { getEnv } from '@platform/runtime/env.js';
 import {
   readBackstageNotionAuthorityConfiguration,
   type BackstageNotionAuthorityEnvironmentReader,
+  type BackstageNotionAuthorityConfiguration,
   type BackstageNotionAuthorityRoot,
 } from './backstageNotionAuthority.js';
 import {
@@ -203,6 +204,11 @@ export interface BackstageNotionSyncResult {
   verifiedAt: Date | null;
   errorCode?: string;
   failure?: BackstageNotionSyncFailureDiagnostics;
+}
+
+export interface BackstageNotionSynchronizationConfigurationEvidence {
+  readonly authorityConfigured: boolean;
+  readonly configuredUniverses: number;
 }
 
 interface PendingPage {
@@ -1897,6 +1903,42 @@ function requireBackstageNotionAccessToken(
   return accessToken;
 }
 
+function readValidatedBackstageNotionSynchronizationConfiguration(
+  readEnvironment: BackstageNotionAuthorityEnvironmentReader
+): BackstageNotionAuthorityConfiguration {
+  const configuration = readBackstageNotionAuthorityConfiguration({
+    readEnvironment,
+  });
+  if (configuration.status === 'invalid') {
+    throw new BackstageNotionGlobalConfigurationError(
+      BACKSTAGE_NOTION_SYNC_CONFIGURATION_ERROR_CODE,
+      'Backstage Notion authority configuration is invalid.'
+    );
+  }
+  if (configuration.status === 'valid') {
+    requireBackstageNotionAccessToken(readEnvironment);
+  }
+  return configuration;
+}
+
+/**
+ * Validate only the static inputs needed for eventual authority synchronization.
+ * This deliberately performs no provider, embedding, inventory, or snapshot work.
+ */
+export function validateBackstageNotionSynchronizationConfiguration(
+  dependencies: Pick<BackstageNotionSyncDependencies, 'readEnvironment'> = {}
+): BackstageNotionSynchronizationConfigurationEvidence {
+  const configuration = readValidatedBackstageNotionSynchronizationConfiguration(
+    dependencies.readEnvironment ?? getEnv
+  );
+  return Object.freeze({
+    authorityConfigured: configuration.status === 'valid',
+    configuredUniverses: configuration.status === 'valid'
+      ? configuration.roots.length
+      : 0,
+  });
+}
+
 function rootFailureCode(error: unknown): string {
   if (
     error instanceof BackstageNotionSyncError
@@ -2286,23 +2328,12 @@ export async function syncBackstageNotionAuthorityRoot(
 export async function syncConfiguredBackstageNotionAuthorities(
   dependencies: BackstageNotionSyncDependencies = {}
 ): Promise<BackstageNotionSyncResult[]> {
-  const configuration = readBackstageNotionAuthorityConfiguration({
-    ...(dependencies.readEnvironment
-      ? { readEnvironment: dependencies.readEnvironment }
-      : {}),
-  });
+  const configuration = readValidatedBackstageNotionSynchronizationConfiguration(
+    dependencies.readEnvironment ?? getEnv
+  );
   if (configuration.status === 'absent') {
     return [];
   }
-  if (configuration.status === 'invalid') {
-    throw new BackstageNotionSyncError(
-      BACKSTAGE_NOTION_SYNC_CONFIGURATION_ERROR_CODE,
-      'Backstage Notion authority configuration is invalid.'
-    );
-  }
-  requireBackstageNotionAccessToken(
-    dependencies.readEnvironment ?? getEnv
-  );
 
   const results: BackstageNotionSyncResult[] = [];
   for (const root of configuration.roots) {

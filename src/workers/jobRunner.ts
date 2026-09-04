@@ -108,7 +108,6 @@ import {
   resolveJobRunnerRuntimeSettings,
   selectJobRunnerSlotTransientRetryEvent,
   shouldPersistClaimedJobCancellation,
-  waitForWorkerStartupReadiness,
   type ClaimedJobAbortCause,
   type ClaimedJobAbortState,
   type JobRunnerDatabaseBootstrapSettings,
@@ -175,16 +174,17 @@ import {
 } from '@services/gamingSourceIngestion.js';
 import {
   createBackstageNotionSynchronizationCoordinator,
-  ensureBackstageNotionWorkerReadiness,
   startBackstageNotionSyncLoop,
   type BackstageNotionSyncLoopHandle,
 } from './backstageNotionSyncLoop.js';
 import {
   resolveBackstageNotionPartitionShadowPolicy,
-  runBackstageNotionWorkerReadinessGate,
   startBackstageNotionPartitionShadowLoop,
   type BackstageNotionPartitionShadowLoopHandle,
 } from './backstageNotionPartitionShadowLoop.js';
+import {
+  validateBackstageNotionSynchronizationConfiguration,
+} from '@services/backstageNotionSync.js';
 import {
   BACKSTAGE_NOTION_PARTITION_SYNC_JOB_TYPE,
   BACKSTAGE_NOTION_PARTITION_SYNC_MAX_AI_CALLS,
@@ -3638,144 +3638,41 @@ async function run(): Promise<void> {
     )
   );
 
-  const preliminaryBackstageNotionPartitionPolicy =
-    resolveBackstageNotionPartitionShadowPolicy();
-  const backstageNotionPartitionCutoverEvidence =
-    preliminaryBackstageNotionPartitionPolicy.configuration
-      ? await loadBackstageNotionPartitionCutoverGateEvidenceSet(
-          preliminaryBackstageNotionPartitionPolicy.configuration
-        )
-      : Object.freeze([]);
+  const backstageNotionConfiguration =
+    validateBackstageNotionSynchronizationConfiguration();
+  logger.info('worker.backstage_notion_configuration.validated', {
+    module: 'job-runner',
+    authorityConfigured: backstageNotionConfiguration.authorityConfigured,
+    configuredUniverses: backstageNotionConfiguration.configuredUniverses,
+  });
+
+  // Cutover evidence is live authority state, not a structural startup
+  // invariant. The background partition coordinator reloads it on its first
+  // scheduled cycle, so an unavailable or slow evidence read cannot hold the
+  // Railway process-readiness signal open.
+  const backstageNotionPartitionCutoverEvidence = Object.freeze([]);
   const backstageNotionPartitionPolicy =
     resolveBackstageNotionPartitionShadowPolicy(
       undefined,
       backstageNotionPartitionCutoverEvidence
     );
-  try {
-    const backstageNotionReadiness = await waitForWorkerStartupReadiness({
-      attempt: () => runBackstageNotionWorkerReadinessGate(
-        backstageNotionPartitionPolicy,
-        () => ensureBackstageNotionWorkerReadiness({
-          signal: workerProcessShutdownController.signal,
-          workerBudget: workerAiCallBudget,
-        })
-      ),
-      resolveRetry: async (error) => {
-        if (isWorkerProcessShutdownRequested()) {
-          return null;
-        }
-        const workerBudgetFailure = classifyWorkerAiBudgetError(
-          normalizeWorkerAiBudgetError(error)
-        );
-        if (workerBudgetFailure) {
-          const budgetPaused = workerBudgetFailure.kind === 'budget_paused';
-          return {
-            state: budgetPaused ? 'paused_budget' : 'dependency_failure',
-            reason: budgetPaused
-              ? 'ai_calls_per_hour_exceeded_during_startup_readiness'
-              : 'worker_ai_budget_database_unavailable',
-            retryAt: workerBudgetFailure.retryAt,
-            delayMs: budgetPaused
-              ? resolveProviderPauseMs(workerBudgetFailure.retryAt, 60_000)
-              : Math.max(runtimeSettings.idleBackoffMs, 5_000),
-          };
-        }
-        if (!providerDependencyState.unavailable) {
-          return null;
-        }
-
-        const initialReason =
-          providerDependencyState.reason ?? 'openai_provider_unavailable:unknown';
-        const initialRetryAt = providerDependencyState.retryAt;
-        let recoveredClientState: WorkerProviderClientState;
-        try {
-          recoveredClientState = await recoverSharedWorkerProviderDependency({
-            state: providerDependencyState,
-            workerId: inspectorSlot.workerId,
-            currentConfigVersion: null,
-            workerBudget: workerAiCallBudget
-          });
-        } catch (recoveryError) {
-          const recoveryBudgetFailure = classifyWorkerAiBudgetError(
-            normalizeWorkerAiBudgetError(recoveryError)
-          );
-          if (!recoveryBudgetFailure) {
-            throw recoveryError;
-          }
-          const budgetPaused = recoveryBudgetFailure.kind === 'budget_paused';
-          return {
-            state: budgetPaused ? 'paused_budget' : 'dependency_failure',
-            reason: budgetPaused
-              ? 'ai_calls_per_hour_exceeded_during_startup_provider_recovery'
-              : 'worker_ai_budget_database_unavailable',
-            retryAt: recoveryBudgetFailure.retryAt,
-            delayMs: budgetPaused
-              ? resolveProviderPauseMs(recoveryBudgetFailure.retryAt, 60_000)
-              : Math.max(runtimeSettings.idleBackoffMs, 5_000),
-          };
-        }
-        if (recoveredClientState.providerRecovered) {
-          await inspectorAutonomyService.recordProviderCircuitBreakerReset({
-            providerFailureCategory: recoveredClientState.providerRecoveryCategory,
-            providerNextRetryAt: recoveredClientState.providerRecoveryNextRetryAt,
-            source: 'job-runner-startup-readiness'
-          });
-        }
-        const retryAt = providerDependencyState.retryAt ?? initialRetryAt;
-        return {
-          state: 'dependency_failure',
-          reason: providerDependencyState.reason ?? initialReason,
-          retryAt,
-          delayMs: providerDependencyState.unavailable
-            ? resolveProviderPauseMs(retryAt, runtimeSettings.idleBackoffMs)
-            : 0,
-        };
-      },
-      reportPause: decision => {
-        reportAllWorkerOperationalStates(
-          decision.state,
-          decision.reason,
-          decision.retryAt
-        );
-      },
-      wait: sleepUntilWorkerProcessSignal,
-    });
-    const safePolicyMetadata = {
-      modeStatus: backstageNotionPartitionPolicy.modeStatus,
-      requestedMode: backstageNotionPartitionPolicy.requestedMode,
-      configurationStatus: backstageNotionPartitionPolicy.configurationStatus,
-      reasonCode: backstageNotionPartitionPolicy.reasonCode,
-      configuredUniverses: backstageNotionPartitionPolicy.configuredUniverses,
-      configuredShards: backstageNotionPartitionPolicy.configuredShards,
-      effectiveReadMode: backstageNotionPartitionPolicy.effectiveReadMode,
-      cutoverAvailable: backstageNotionPartitionPolicy.cutoverAvailable,
-      cutoverGateReasonCodes:
-        backstageNotionPartitionPolicy.cutoverGateReasonCodes,
-    };
-    if (backstageNotionReadiness.monolithReadinessRequired) {
-      logger.info('worker.backstage_notion_readiness.completed', {
-        module: 'job-runner',
-        monolithReadinessRequired: true,
-        ...safePolicyMetadata,
-        ...backstageNotionReadiness.evidence,
-      });
-    } else {
-      logger.info('worker.backstage_notion_readiness.partition_mode_admitted', {
-        module: 'job-runner',
-        monolithReadinessRequired: false,
-        ...safePolicyMetadata,
-      });
-    }
-  } catch (error) {
-    if (isWorkerProcessShutdownRequested()) {
-      logger.info('worker.shutdown.during_backstage_notion_readiness', {
-        module: 'job-runner',
-        signal: workerProcessShutdownSignal ?? 'unknown'
-      });
-      return;
-    }
-    throw error;
-  }
+  logger.info('worker.backstage_notion_readiness.decoupled', {
+    module: 'job-runner',
+    authorityConfigured: backstageNotionConfiguration.authorityConfigured,
+    configuredAuthorityUniverses:
+      backstageNotionConfiguration.configuredUniverses,
+    modeStatus: backstageNotionPartitionPolicy.modeStatus,
+    requestedMode: backstageNotionPartitionPolicy.requestedMode,
+    configurationStatus: backstageNotionPartitionPolicy.configurationStatus,
+    reasonCode: backstageNotionPartitionPolicy.reasonCode,
+    configuredPartitionUniverses:
+      backstageNotionPartitionPolicy.configuredUniverses,
+    configuredShards: backstageNotionPartitionPolicy.configuredShards,
+    effectiveReadMode: backstageNotionPartitionPolicy.effectiveReadMode,
+    cutoverAvailable: backstageNotionPartitionPolicy.cutoverAvailable,
+    cutoverGateReasonCodes:
+      backstageNotionPartitionPolicy.cutoverGateReasonCodes,
+  });
 
   const bootstrapResult = await bootstrapWorkerAutonomyWithRetry(
     inspectorAutonomyService,
@@ -3818,9 +3715,13 @@ async function run(): Promise<void> {
   const partitionSyncExecutor = createBackstageNotionPartitionSyncJobExecutor({
     coordinator: backstageNotionSynchronizationCoordinator,
   });
-  let backstageNotionSyncHandle: BackstageNotionSyncLoopHandle | null = null;
-  let backstageNotionPartitionShadowHandle:
-    BackstageNotionPartitionShadowLoopHandle | null = null;
+  const backstageNotionLoopHandles: {
+    monolith: BackstageNotionSyncLoopHandle | null;
+    partition: BackstageNotionPartitionShadowLoopHandle | null;
+  } = {
+    monolith: null,
+    partition: null,
+  };
 
   try {
     const slotReadinessPromises: Promise<void>[] = [];
@@ -3864,6 +3765,25 @@ async function run(): Promise<void> {
             throw new Error('WORKER_SHUTDOWN_BEFORE_READINESS_COMMIT');
           }
 
+          // Install both asynchronous authority coordinators before committing
+          // process readiness. The monolith zero-delay timer and the partition
+          // interval timer cannot run until this synchronous callback emits the
+          // ready sentinel.
+          backstageNotionLoopHandles.monolith = startBackstageNotionSyncLoop({
+            signal: workerProcessShutdownController.signal,
+            coordinator: backstageNotionSynchronizationCoordinator,
+            workerBudget: workerAiCallBudget,
+            reportBootstrapLifecycle: true,
+          });
+          backstageNotionLoopHandles.partition =
+            startBackstageNotionPartitionShadowLoop({
+              signal: workerProcessShutdownController.signal,
+              coordinator: backstageNotionSynchronizationCoordinator,
+              workerBudget: workerAiCallBudget,
+              cutoverEvidence: backstageNotionPartitionCutoverEvidence,
+              loadCutoverEvidence:
+                loadBackstageNotionPartitionCutoverGateEvidenceSet,
+            });
           logger.info('worker.bootstrap.completed', {
             module: 'job-runner',
             workerId: inspectorAutonomyService.getWorkerId(),
@@ -3890,25 +3810,11 @@ async function run(): Promise<void> {
       return;
     }
 
-    backstageNotionSyncHandle = startBackstageNotionSyncLoop({
-      signal: workerProcessShutdownController.signal,
-      coordinator: backstageNotionSynchronizationCoordinator,
-      workerBudget: workerAiCallBudget,
-    });
-    backstageNotionPartitionShadowHandle = startBackstageNotionPartitionShadowLoop({
-      signal: workerProcessShutdownController.signal,
-      coordinator: backstageNotionSynchronizationCoordinator,
-      workerBudget: workerAiCallBudget,
-      cutoverEvidence: backstageNotionPartitionCutoverEvidence,
-      loadCutoverEvidence:
-        loadBackstageNotionPartitionCutoverGateEvidenceSet,
-    });
-
     await Promise.all(slotRuntimePromises);
   } finally {
     await Promise.all([
-      backstageNotionSyncHandle?.stopAndDrain(),
-      backstageNotionPartitionShadowHandle?.stopAndDrain(),
+      backstageNotionLoopHandles.monolith?.stopAndDrain(),
+      backstageNotionLoopHandles.partition?.stopAndDrain(),
     ]);
     clearInterval(watchdogHandle);
     clearInterval(inspectorHandle);
