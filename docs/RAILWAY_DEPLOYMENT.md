@@ -120,6 +120,22 @@ Launcher behavior:
   with the trusted base verifier. This is shared-reader policy evidence only: it
   does not execute the production sync retry loop, candidate repository/SQL,
   PostgreSQL migration or activation fencing, or backfill.
+- Before returning that same byte-compatible body, the selector also executes a
+  server-owned database-authority transport fixture through the
+  production-shared Notion context core. It proves the exact structured
+  `400 validation_error` page response needed for database fallback, bounded
+  database metadata with two data sources, fixed-origin data-source queries with
+  a valid opaque continuation cursor, and rejection of an oversized provider
+  cursor on the first response with no follow-up request. A database-row page
+  response containing exactly 25 inline references is treated as incomplete;
+  two fixed-origin title-property pages are assembled into the complete title in
+  both capture and verification passes without following the provider's
+  `next_url`. The exact-head verifier requires
+  `x-arcanos-preview-backstage-notion-database-authority-version:
+  backstage-notion-database-authority/v1`. This is credential-free shared-reader
+  component evidence only: it does not execute the production sync coordinator,
+  the 512/513 capacity fence, candidate activation, PostgreSQL, embeddings, a
+  live Notion credential, or the normal authenticated route.
 - The same sealed Notion-authority selector executes the production-shared pure
   partition configuration, page-material classification, routing,
   manifest-membership, reconciliation-planning, and sync request/job/result
@@ -347,8 +363,8 @@ Environment variables:
 | `BOOKER_REPAIR_STAGE_TIMEOUT_MS` | Optional on worker; defaults 45000 | One bounded protected-generation recovery stage, clamped to 10000-45000 ms and skipped when time or output budget is insufficient. |
 | `ARCANOS_BACKSTAGE_NOTION_ACCESS_TOKEN` | Optional; configure where the selected Notion mode executes | Outbound 16–4096-character visible-ASCII token for a dedicated read-content-only Notion integration. Synchronous legacy supplement uses web; authority sync and queued legacy generation use worker. It must differ from every ARCANOS application credential and never appears in Builder. |
 | `ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON` | Optional; configure with the Notion token on every service that can execute legacy supplement generation | Sensitive JSON mapping from at most 32 exact universe IDs to one to three unique raw Notion page UUIDs each. Before enabling queued heavy generation for a legacy-supplement universe, copy the identical mapping to worker through the approved secret workflow. URLs and partial/invalid configuration disable enrichment before provider work. Selected excerpts enter the existing OpenAI generation request. |
-| `ARCANOS_BACKSTAGE_NOTION_AUTHORITY_ROOTS_JSON` | Optional; identical closed mapping on web and worker | Selects exact Notion-authoritative universes and their fixed recursive roots. Web uses it to block/quarantine legacy state and require RAG; worker uses it to build full immutable snapshots. A malformed present value fails writes closed. After first activation, the PostgreSQL authority head is a durable one-way latch: deleting this variable does not restore legacy authority, and an unreadable/conflicting authority state fails closed with `BACKSTAGE_NOTION_AUTHORITY_UNAVAILABLE`. |
-| `ARCANOS_BACKSTAGE_NOTION_PARTITIONS_JSON` | Optional; identical closed version-1 envelope on web and worker during partition validation | Declares bounded shards using stable keys, roots unique within each universe, retrieval tiers, required policy, scope/category tags, and finite capacity. Archive-tier shards are structurally optional and must declare `required:false`; a required archive invalidates the envelope so archive failure cannot fence unrelated current canon. Distinct universe namespaces may reuse one provider page ID. The canonical semantic digest is independent of its operator generation. This additive configuration does not replace the monolithic authority latch. |
+| `ARCANOS_BACKSTAGE_NOTION_AUTHORITY_ROOTS_JSON` | Optional; identical closed mapping on web and worker | Selects exact Notion-authoritative universes and their fixed recursive page or database-container roots. Database resolution is gated by the exact root page-type error, queries every declared data source, and fails closed on nested databases or incomplete membership. Web uses the mapping to block/quarantine legacy state and require RAG; worker uses it to build full immutable snapshots. A malformed present value fails writes closed. After first activation, the PostgreSQL authority head is a durable one-way latch: deleting this variable does not restore legacy authority, and an unreadable/conflicting authority state fails closed with `BACKSTAGE_NOTION_AUTHORITY_UNAVAILABLE`. |
+| `ARCANOS_BACKSTAGE_NOTION_PARTITIONS_JSON` | Optional; identical closed version-1 envelope on web and worker during partition validation | Declares bounded shards using stable keys, normal Notion page roots unique within each universe, retrieval tiers, required policy, scope/category tags, and finite capacity. Database containers remain supported only as monolithic authority roots; their synthetic zero-content records are excluded from shadow identity and page-count parity. Archive-tier shards are structurally optional and must declare `required:false`; a required archive invalidates the envelope so archive failure cannot fence unrelated current canon. Distinct universe namespaces may reuse one provider page ID. The canonical semantic digest is independent of its operator generation. This additive configuration does not replace the monolithic authority latch. |
 | `ARCANOS_BACKSTAGE_NOTION_PARTITIONED_INDEX_MODE` | Optional; identical rollout control on web and worker; defaults to `monolith` | Accepts only exact `monolith`, `shadow`, or `partitioned`. Absent or invalid values resolve to `monolith`. `shadow` is the only partition-writer mode and keeps monolith as the sole returned read while synchronizing and comparing partitions. `partitioned` freezes scheduled, manual, and queued partition writes, keeps evidence monitoring and legacy monolith synchronization active, and serves only manifest-scoped partition reads with no silent monolith fallback. Return to exact `shadow` to refresh and reseal partitions; restore exact `monolith` for read rollback. This release does not mutate any deployed value. |
 | `ARCANOS_BACKSTAGE_NOTION_PARTITION_CURSOR_SECRET` | Required on web for exact `shadow` or `partitioned` | Exact 32–4096 UTF-8-byte unpadded/non-placeholder server-only credential with no whitespace, distinct from every other purpose-bound credential. It seals new partition complete-scope cursors and must never be placed on workers, in Builder/client configuration, requests, logs, or source. |
 | `ARCANOS_BACKSTAGE_NOTION_PARTITION_CURSOR_PREVIOUS_SECRET` | Optional on web during cursor-key rotation | Prior cursor credential accepted only for unsealing. It must satisfy the current-secret rules and remain distinct from the current key and every other registered credential. Retain it until cursors pinned to still-fresh manifests drain; removing it rejects remaining cursors sealed by the prior value. |
@@ -382,7 +398,7 @@ Native PR previews keep the worker passive and run a credential-empty sealed
 web application that does not mount the manual partition-sync control plane.
 Preview success therefore proves the exact-SHA build, integrity gate, and
 contained startup only. It does not prove control-plane authentication,
-PostgreSQL admission/claiming, Notion capture, embedding calls, or manual job
+PostgreSQL admission/claiming, live Notion capture, embedding calls, or manual job
 execution; focused mocked suites and PostgreSQL 18 CI are authoritative for
 those effects.
 
@@ -1042,7 +1058,8 @@ universe guard is active. Then put the identical mapping plus the read-content
 Notion token on the already compatible worker and enable its sync loop. Keep
 the authoritative universe out of the legacy page supplement. For each initial
 cutover, set `initialMinimumPageCount` to the independently reviewed reachable
-page count (for example, `18` for a reviewed 18-page hierarchy). Verify one
+real Notion-page count, excluding a synthetic database container (for example,
+`18` for a reviewed 18-page hierarchy). Verify one
 worker cycle activates a complete snapshot that meets that floor, reports zero
 unsupported blocks and zero errors, uses the current heading-index format, and
 has a fresh verification timestamp.

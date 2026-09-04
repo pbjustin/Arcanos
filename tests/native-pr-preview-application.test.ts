@@ -1712,12 +1712,17 @@ describe('native PR contained application', () => {
         contract.proofHeaders.notionReadDiagnosticsVersion
       ]
     ).toBe(contract.notionReadDiagnosticsProofVersion);
+    expect(
+      notionAuthorityRag.headers[
+        contract.proofHeaders.notionDatabaseAuthorityVersion
+      ]
+    ).toBe(contract.notionDatabaseAuthorityProofVersion);
     const notionDiagnosticsPublicProjection = [
       notionAuthorityRag.text,
       JSON.stringify(notionAuthorityRag.headers),
     ].join('\n');
     expect(notionDiagnosticsPublicProjection).not.toMatch(
-      /PRIVATE-NOTION-DIAGNOSTICS|preview-notion-diagnostics|cccccccc-cccc-4ccc-8ccc-cccccccccccc|a0{31}/u
+      /PRIVATE-(?:NOTION-DIAGNOSTICS|OVERSIZED-PROVIDER-CURSOR)|preview-notion-(?:diagnostics|database-authority)|cccccccc-cccc-4ccc-8ccc-cccccccccccc|a0{31}/u
     );
     expect(notionDiagnosticsPublicProjection).not.toContain(
       'BackstageNotionReadError'
@@ -1792,6 +1797,11 @@ describe('native PR contained application', () => {
       expect(
         response.headers[
           contract.proofHeaders.notionReadDiagnosticsVersion
+        ]
+      ).toBeUndefined();
+      expect(
+        response.headers[
+          contract.proofHeaders.notionDatabaseAuthorityVersion
         ]
       ).toBeUndefined();
     }
