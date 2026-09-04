@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-02T17:09:14.085Z",
+  "generatedAt": "2026-09-04T05:39:16.855Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -1593,6 +1593,9 @@
         },
         {
           "relativePath": "src/services/backstageNotionAuthority.ts"
+        },
+        {
+          "relativePath": "src/services/backstageNotionAuthorityStatus.ts"
         },
         {
           "relativePath": "src/services/backstageNotionContext.ts"
@@ -3481,6 +3484,12 @@
           "relativePath": "tests/backstage-notion-authority-core.test.ts"
         },
         {
+          "relativePath": "tests/backstage-notion-authority-status-route.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-notion-authority-status.test.ts"
+        },
+        {
           "relativePath": "tests/backstage-notion-booking-scope.test.ts"
         },
         {
@@ -4376,6 +4385,9 @@
         },
         {
           "relativePath": "tests/naturalLanguageMemoryRouteShortcut.test.ts"
+        },
+        {
+          "relativePath": "tests/notion-startup-preloads.test.ts"
         },
         {
           "relativePath": "tests/one-time-token-integration.test.ts"

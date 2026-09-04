@@ -714,8 +714,9 @@ worker:
 - `POST /api/backstage/notion-partitions/:universeId/syncs`
 - `GET|HEAD /api/backstage/notion-partitions/:universeId/syncs/:syncId`
 - `GET|HEAD /api/backstage/notion-partitions/:universeId/diagnostics`
+- `GET|HEAD /api/backstage/notion-partitions/:universeId/authority-status`
 
-All three routes require the purpose-bound control-plane bearer, operator role, and
+All four routes require the purpose-bound control-plane bearer, operator role, and
 the dedicated `backstage:notion-sync` scope. The POST body is exactly
 `{"version":1,"shardKey":"<stable-key>"}`, is capped at 4 KiB before the
 broad parser, and requires exactly one visible-ASCII `Idempotency-Key` of 8-240
@@ -761,6 +762,24 @@ as zero. It never returns page/chunk content, embeddings, root or page IDs,
 display names, raw configuration or configuration digests, provider errors,
 job IDs/inputs/results, or lease owner/token/generation data. Use the
 actor-scoped sync-status endpoint when exact manual-job detail is required.
+
+The bodyless and query-free authority-status read is a monolith-only operational
+view of the Notion authority used by protected Backstage generation. It reports
+only `authority: "notion"`, the derived operational `status`
+(`current_complete`, `last_known_good`, `syncing`, or `unavailable`), the
+three-state `snapshotStatus`, freshness and sync-in-progress booleans, readable
+snapshot availability and bounded chunk count, and allowlisted latest-sync
+outcome/failure classifications. It exposes no snapshot, root, page, database,
+data-source, lease, or attempt identifiers; timestamps, URLs, titles, content,
+embeddings, prompts, credentials, provider bodies, and raw failures are also
+excluded. A configured authority with no active snapshot, a stale but readable
+active snapshot, or a live synchronization returns `200` with its bounded
+unavailable, last-known-good, or syncing state. An absent configured and durable
+authority returns `404`; malformed configuration, database failure, or an
+unreadable, inconsistent, or corrupt active durable state returns the fixed
+`503 BACKSTAGE_NOTION_AUTHORITY_STATUS_UNAVAILABLE` response. This endpoint is
+operational evidence only and does not alter `/readyz` or make stale authority
+eligible for protected generation.
 
 Authority mode is one-way: Notion is the source of truth and PostgreSQL stores
 only the derived retrieval snapshots for AI use. The six legacy mutation
