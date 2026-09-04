@@ -38,6 +38,11 @@ import {
   isBackstageProtectedQueuedExecution,
 } from './backstageNotionEnrichmentAuthorization.js';
 import {
+  resolveBackstageNotionMonolithAuthorityStatus,
+  type BackstageNotionMonolithAuthorityStatusResolution,
+  type ResolveBackstageNotionMonolithAuthorityStatusInput,
+} from './backstageNotionAuthorityStatus.js';
+import {
   BackstageNotionIndexUnavailableError,
   retrieveBackstageNotionBookingRagContext,
   retrieveBackstageNotionRagContext,
@@ -117,6 +122,9 @@ export interface BackstageNotionPartitionCutoverDependencies {
   }>) => Promise<BackstageNotionPartitionCutoverGateEvidence | null>
     | BackstageNotionPartitionCutoverGateEvidence
     | null;
+  readonly resolveMonolithAuthorityStatus?: (
+    input: ResolveBackstageNotionMonolithAuthorityStatusInput
+  ) => Promise<BackstageNotionMonolithAuthorityStatusResolution>;
 }
 
 interface PartitionActivation {
@@ -381,6 +389,63 @@ async function resolveCutoverGate(
     supportedEmbeddingModel: DEFAULT_OPENAI_EMBEDDING_MODEL,
     evidence,
   });
+}
+
+/**
+ * Establish current Notion authority for an exact-literal booking without
+ * generating an embedding or reading corpus content. Partitioned mode still
+ * validates the exact request plan, configured universe, and cursor-secret
+ * policy. Its cutover gate always requires a readable rollback monolith, so a
+ * current-complete monolith is a conservative admission proof whether the
+ * request would select partitions or the gate's monolith fallback.
+ */
+export async function assertBackstageNotionProtectedLiteralAuthorityCurrent(
+  universeId: string,
+  query: string,
+  dependencies: BackstageNotionPartitionCutoverDependencies = {}
+): Promise<void> {
+  requireAuthorization(dependencies);
+  const readEnvironment = readDataFunction<ReadEnvironment>(
+    dependencies,
+    'readEnvironment'
+  ) ?? (name => getEnv(name));
+  const mode = readModeOnce(readEnvironment).mode;
+  if (mode === 'partitioned') {
+    const requestPlan = buildPartitionPlan(query);
+    const activation = requestPlan
+      ? resolvePartitionActivation(
+          universeId,
+          readEnvironment,
+          requestPlan.requiresCursorSecret
+            || !resolveProtectedQueuedExecution(dependencies)
+        )
+      : null;
+    if (!requestPlan || !activation) {
+      throw new BackstageNotionIndexUnavailableError();
+    }
+  }
+
+  const resolver = readDataFunction<NonNullable<
+    BackstageNotionPartitionCutoverDependencies['resolveMonolithAuthorityStatus']
+  >>(dependencies, 'resolveMonolithAuthorityStatus')
+    ?? resolveBackstageNotionMonolithAuthorityStatus;
+  let resolution: BackstageNotionMonolithAuthorityStatusResolution;
+  try {
+    resolution = await resolver({
+      universeId,
+      dependencies: { readEnvironment },
+    });
+  } catch {
+    throw new BackstageNotionIndexUnavailableError();
+  }
+  if (
+    resolution.status !== 'ready'
+    || resolution.data.status !== 'current_complete'
+    || resolution.data.snapshotStatus !== 'current_complete'
+    || !resolution.data.activeSnapshotReadable
+  ) {
+    throw new BackstageNotionIndexUnavailableError();
+  }
 }
 
 function snapshotQueryRequest(

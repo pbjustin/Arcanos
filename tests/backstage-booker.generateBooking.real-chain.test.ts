@@ -72,6 +72,9 @@ jest.unstable_mockModule('@services/selfImprove/controller.js', () => ({
 jest.unstable_mockModule('../src/services/backstageNotionAuthority.js', () => ({
   isBackstageNotionAuthorityDatabaseError: jest.fn(() => false),
   isBackstageNotionAuthorityEnforced: jest.fn(async () => false),
+  readBackstageNotionAuthorityConfiguration: jest.fn(() => ({
+    status: 'absent',
+  })),
   resolveEffectiveBackstageNotionAuthorityRoot: jest.fn(async () => null),
 }));
 

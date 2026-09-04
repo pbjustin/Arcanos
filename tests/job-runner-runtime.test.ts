@@ -5,6 +5,8 @@ import { pathToFileURL } from 'url';
 
 import {
   advanceClaimedJobAbortState,
+  AUTHORITY_SYNCHRONIZATION_QUEUE_AI_CALL_HEADROOM,
+  buildAuthoritySynchronizationWorkerAiCallBudget,
   buildJobRunnerSlotDefinitions,
   commitAllWorkerSlotsReadyOrThrow,
   computeDeterministicIntervalJitterMs,
@@ -24,6 +26,9 @@ import {
   waitForWorkerStartupReadiness,
   WORKER_BOOTSTRAP_READY_SENTINEL
 } from '../src/workers/jobRunnerRuntime.js';
+import {
+  BACKSTAGE_NOTION_SYNC_MAX_COLD_EMBEDDING_REQUESTS,
+} from '../src/services/backstageNotionSync.js';
 
 function createDeferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -37,6 +42,56 @@ function createDeferred<T>() {
 }
 
 describe('jobRunnerRuntime', () => {
+  it('reserves queue headroom while stripping authority readiness callbacks', () => {
+    const onCapacityExhausted = () => undefined;
+    const onOperationalFailure = () => undefined;
+    const workerBudget = {
+      statsWorkerId: 'async-queue',
+      workerId: 'async-queue-slot-1',
+      maxCallsPerHour: 120,
+      onCapacityExhausted,
+      onOperationalFailure,
+    };
+
+    const authorityBudget = buildAuthoritySynchronizationWorkerAiCallBudget(
+      workerBudget,
+      BACKSTAGE_NOTION_SYNC_MAX_COLD_EMBEDDING_REQUESTS
+    );
+
+    expect(AUTHORITY_SYNCHRONIZATION_QUEUE_AI_CALL_HEADROOM).toBe(1);
+    expect(BACKSTAGE_NOTION_SYNC_MAX_COLD_EMBEDDING_REQUESTS).toBe(114);
+    expect(authorityBudget).toEqual({
+      statsWorkerId: workerBudget.statsWorkerId,
+      workerId: workerBudget.workerId,
+      maxCallsPerHour: 119,
+    });
+    expect(authorityBudget).not.toHaveProperty('onCapacityExhausted');
+    expect(authorityBudget).not.toHaveProperty('onOperationalFailure');
+    expect(Object.isFrozen(authorityBudget)).toBe(true);
+    expect(() => buildAuthoritySynchronizationWorkerAiCallBudget(
+      { ...workerBudget, maxCallsPerHour: 114 },
+      BACKSTAGE_NOTION_SYNC_MAX_COLD_EMBEDDING_REQUESTS
+    )).toThrow(
+      'JOB_WORKER_MAX_AI_CALLS_PER_HOUR must be at least 115'
+    );
+    expect(buildAuthoritySynchronizationWorkerAiCallBudget(
+      { ...workerBudget, maxCallsPerHour: 115 },
+      BACKSTAGE_NOTION_SYNC_MAX_COLD_EMBEDDING_REQUESTS
+    )).toMatchObject({ maxCallsPerHour: 114 });
+    expect(buildAuthoritySynchronizationWorkerAiCallBudget(
+      { ...workerBudget, maxCallsPerHour: 1 },
+      0
+    )).toMatchObject({ maxCallsPerHour: 1 });
+    expect(buildAuthoritySynchronizationWorkerAiCallBudget(
+      { ...workerBudget, maxCallsPerHour: 2 },
+      1
+    )).toMatchObject({ maxCallsPerHour: 1 });
+    expect(() => buildAuthoritySynchronizationWorkerAiCallBudget(
+      workerBudget,
+      -1
+    )).toThrow('Minimum authority provider calls per cycle');
+  });
+
   it.each(['ask', 'dag-node', 'gpt'])(
     'leaves %s work for lease recovery on shutdown but terminalizes durable cancellation',
     () => {
@@ -793,7 +848,7 @@ describe('jobRunnerRuntime', () => {
     expect(source).toContain("sourceName: 'openai-provider-health'");
     expect(source).toContain('createWorkerProviderProbeBudget(params.workerBudget)');
     expect(source).toContain('workerBudget: workerAiCallBudget');
-    expect(source).toContain(
+    expect(source).not.toContain(
       'ai_calls_per_hour_exceeded_during_startup_provider_recovery'
     );
   });
@@ -811,33 +866,17 @@ describe('jobRunnerRuntime', () => {
     const databaseBootstrapIndex = source.indexOf(
       "await initializeJobRunnerDatabaseWithRetry('job-runner'"
     );
-    const preliminaryBackstageNotionPartitionPolicyIndex = source.indexOf(
-      'const preliminaryBackstageNotionPartitionPolicy =',
+    const backstageNotionConfigurationPreflightIndex = source.indexOf(
+      'validateBackstageNotionSynchronizationConfiguration();',
       databaseBootstrapIndex
-    );
-    const backstageNotionPartitionEvidenceIndex = source.indexOf(
-      'await loadBackstageNotionPartitionCutoverGateEvidenceSet(',
-      preliminaryBackstageNotionPartitionPolicyIndex
     );
     const backstageNotionPartitionPolicyIndex = source.indexOf(
       'const backstageNotionPartitionPolicy =',
-      backstageNotionPartitionEvidenceIndex
-    );
-    const startupReadinessRecoveryIndex = source.indexOf(
-      'await waitForWorkerStartupReadiness({',
-      backstageNotionPartitionPolicyIndex
-    );
-    const backstageNotionReadinessGateIndex = source.indexOf(
-      'attempt: () => runBackstageNotionWorkerReadinessGate(',
-      startupReadinessRecoveryIndex
-    );
-    const backstageNotionReadinessIndex = source.indexOf(
-      '() => ensureBackstageNotionWorkerReadiness({',
-      backstageNotionReadinessGateIndex
+      backstageNotionConfigurationPreflightIndex
     );
     const autonomyBootstrapIndex = source.indexOf(
       'await bootstrapWorkerAutonomyWithRetry(',
-      backstageNotionReadinessIndex
+      backstageNotionPartitionPolicyIndex
     );
     const moduleRegistryPreloadIndex = source.indexOf(
       'await initializeModuleRegistry()',
@@ -862,21 +901,25 @@ describe('jobRunnerRuntime', () => {
       'await commitAllWorkerSlotsReadyOrThrow(',
       consumerStartIndex
     );
+    const monolithSyncStartIndex = source.indexOf(
+      'backstageNotionLoopHandles.monolith = startBackstageNotionSyncLoop({',
+      consumerReadinessBarrierIndex
+    );
+    const partitionShadowStartIndex = source.indexOf(
+      'startBackstageNotionPartitionShadowLoop({',
+      monolithSyncStartIndex
+    );
     const readinessLogIndex = source.indexOf(
       "logger.info('worker.bootstrap.completed'",
-      consumerReadinessBarrierIndex
+      partitionShadowStartIndex
     );
     const readinessProtocolIndex = source.indexOf(
       'emitWorkerBootstrapReadySignal()',
       readinessLogIndex
     );
-    const partitionShadowStartIndex = source.indexOf(
-      'backstageNotionPartitionShadowHandle = startBackstageNotionPartitionShadowLoop({',
-      readinessProtocolIndex
-    );
     const consumerRuntimeBarrierIndex = source.indexOf(
       'await Promise.all(slotRuntimePromises)',
-      partitionShadowStartIndex
+      readinessProtocolIndex
     );
 
     expect([
@@ -884,12 +927,8 @@ describe('jobRunnerRuntime', () => {
       enabledGuardIndex,
       operatorDispatchProviderIndex,
       databaseBootstrapIndex,
-      preliminaryBackstageNotionPartitionPolicyIndex,
-      backstageNotionPartitionEvidenceIndex,
+      backstageNotionConfigurationPreflightIndex,
       backstageNotionPartitionPolicyIndex,
-      startupReadinessRecoveryIndex,
-      backstageNotionReadinessGateIndex,
-      backstageNotionReadinessIndex,
       autonomyBootstrapIndex,
       moduleRegistryPreloadIndex,
       dispatcherStartIndex,
@@ -897,6 +936,7 @@ describe('jobRunnerRuntime', () => {
       dispatcherReadySignalIndex,
       consumerStartIndex,
       consumerReadinessBarrierIndex,
+      monolithSyncStartIndex,
       readinessLogIndex,
       readinessProtocolIndex,
       partitionShadowStartIndex,
@@ -907,27 +947,41 @@ describe('jobRunnerRuntime', () => {
     expect(enabledGuardIndex).toBeLessThan(operatorDispatchProviderIndex);
     expect(operatorDispatchProviderIndex).toBeLessThan(databaseBootstrapIndex);
     expect(databaseBootstrapIndex)
-      .toBeLessThan(preliminaryBackstageNotionPartitionPolicyIndex);
-    expect(preliminaryBackstageNotionPartitionPolicyIndex)
-      .toBeLessThan(backstageNotionPartitionEvidenceIndex);
-    expect(backstageNotionPartitionEvidenceIndex)
+      .toBeLessThan(backstageNotionConfigurationPreflightIndex);
+    expect(backstageNotionConfigurationPreflightIndex)
       .toBeLessThan(backstageNotionPartitionPolicyIndex);
     expect(backstageNotionPartitionPolicyIndex)
-      .toBeLessThan(startupReadinessRecoveryIndex);
-    expect(startupReadinessRecoveryIndex)
-      .toBeLessThan(backstageNotionReadinessGateIndex);
-    expect(backstageNotionReadinessGateIndex)
-      .toBeLessThan(backstageNotionReadinessIndex);
-    expect(backstageNotionReadinessIndex).toBeLessThan(autonomyBootstrapIndex);
+      .toBeLessThan(autonomyBootstrapIndex);
     expect(autonomyBootstrapIndex).toBeLessThan(moduleRegistryPreloadIndex);
     expect(dispatcherStartIndex).toBeLessThan(heartbeatSetupIndex);
     expect(heartbeatSetupIndex).toBeLessThan(dispatcherReadySignalIndex);
     expect(moduleRegistryPreloadIndex).toBeLessThan(consumerStartIndex);
     expect(consumerStartIndex).toBeLessThan(consumerReadinessBarrierIndex);
+    expect(consumerReadinessBarrierIndex).toBeLessThan(monolithSyncStartIndex);
+    expect(monolithSyncStartIndex).toBeLessThan(partitionShadowStartIndex);
+    expect(partitionShadowStartIndex).toBeLessThan(readinessLogIndex);
     expect(consumerReadinessBarrierIndex).toBeLessThan(readinessLogIndex);
     expect(readinessLogIndex).toBeLessThan(readinessProtocolIndex);
-    expect(readinessProtocolIndex).toBeLessThan(partitionShadowStartIndex);
-    expect(partitionShadowStartIndex).toBeLessThan(consumerRuntimeBarrierIndex);
+    expect(readinessProtocolIndex).toBeLessThan(consumerRuntimeBarrierIndex);
+    expect(source).not.toContain(
+      'await loadBackstageNotionPartitionCutoverGateEvidenceSet('
+    );
+    expect(source).not.toContain('ensureBackstageNotionWorkerReadiness');
+    expect(source).not.toContain('runBackstageNotionWorkerReadinessGate');
+    expect(source).not.toContain('reportAllWorkerOperationalStates');
+    expect(source).toContain(
+      'const authoritySyncWorkerAiCallBudget =\n' +
+      '    buildAuthoritySynchronizationWorkerAiCallBudget('
+    );
+    expect(
+      source.match(/workerBudget: authoritySyncWorkerAiCallBudget/gu)
+    ).toHaveLength(2);
+    expect(
+      source.match(/attachWorkerOperationalFailureReporting\(/gu)
+    ).toHaveLength(2);
+    expect(source).toMatch(
+      /const workerAiCallBudget = attachWorkerOperationalFailureReporting\(\s+autonomyService\.getWorkerAiCallBudget\(\),/u
+    );
     expect(source).toContain(
       'cutoverEvidence: backstageNotionPartitionCutoverEvidence'
     );

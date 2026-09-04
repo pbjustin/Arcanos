@@ -217,6 +217,53 @@ describe('worker OpenAI provider-attempt budget', () => {
     }));
   });
 
+  it('denies callback-free background transport when the shared ledger is exhausted', async () => {
+    const nativeFetch = jest.fn();
+    const adapter = createOpenAIAdapter({
+      apiKey: 'test-key',
+      maxRetries: 0,
+      fetch: nativeFetch
+    });
+    const backgroundContext = createAiExecutionContext({
+      sourceType: 'background',
+      sourceName: 'backstage-notion-sync-loop',
+      workerBudget: {
+        statsWorkerId: 'async-queue',
+        workerId: 'async-queue-slot-1',
+        maxCallsPerHour: 2
+      }
+    });
+    reserveWorkerAiProviderAttemptMock.mockResolvedValueOnce({
+      kind: 'ai_provider_attempt',
+      statsWorkerId: 'async-queue',
+      allowed: false,
+      used: 2,
+      limit: 2,
+      remaining: 0,
+      evaluatedAt: '2026-08-30T14:00:00.000Z',
+      nextAvailableAt: '2026-08-30T14:30:00.000Z'
+    });
+
+    await expect(runWithAiExecutionContext(backgroundContext, () =>
+      adapter.embeddings.create({
+        model: 'text-embedding-3-small',
+        input: ['blocked authority embedding']
+      })
+    )).rejects.toBeInstanceOf(WorkerAiCallBudgetPausedError);
+
+    expect(backgroundContext.workerBudgetFailure).toBeInstanceOf(
+      WorkerAiCallBudgetPausedError
+    );
+    expect(reserveWorkerAiProviderAttemptMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        jobId: '00000000-0000-0000-0000-000000000000',
+        statsWorkerId: 'async-queue',
+        workerId: 'async-queue-slot-1'
+      })
+    );
+    expect(nativeFetch).not.toHaveBeenCalled();
+  });
+
   it('does not let the SDK retry local quota exhaustion or budget-store failure', async () => {
     const nativeFetch = jest.fn();
     const adapter = createOpenAIAdapter({ apiKey: 'test-key', maxRetries: 2, fetch: nativeFetch });

@@ -29,6 +29,7 @@ import { getEnv } from '@platform/runtime/env.js';
 import {
   readBackstageNotionAuthorityConfiguration,
   type BackstageNotionAuthorityEnvironmentReader,
+  type BackstageNotionAuthorityConfiguration,
   type BackstageNotionAuthorityRoot,
 } from './backstageNotionAuthority.js';
 import {
@@ -85,7 +86,15 @@ export const BACKSTAGE_NOTION_SYNC_MAX_CHUNKS =
 export const BACKSTAGE_NOTION_SYNC_FETCH_TIMEOUT_MS = 15_000;
 export const BACKSTAGE_NOTION_SYNC_REQUEST_SPACING_MS = 350;
 export const BACKSTAGE_NOTION_SYNC_FETCH_ATTEMPTS = 3;
-export const BACKSTAGE_NOTION_SYNC_EMBEDDING_BATCH_SIZE = 32;
+// Each embedding input is independently limited to 8,192 tokens and the
+// provider caps one request at 300,000 aggregate input tokens. Thirty-six is
+// therefore the largest batch that remains below the aggregate ceiling even
+// when every individually valid input reaches its token limit.
+export const BACKSTAGE_NOTION_SYNC_EMBEDDING_BATCH_SIZE = 36;
+export const BACKSTAGE_NOTION_SYNC_MAX_COLD_EMBEDDING_REQUESTS = Math.ceil(
+  BACKSTAGE_NOTION_SYNC_MAX_CHUNKS
+    / BACKSTAGE_NOTION_SYNC_EMBEDDING_BATCH_SIZE
+);
 export const BACKSTAGE_NOTION_SYNC_MAX_MARKDOWN_SEGMENTS_PER_PAGE = 256;
 export const BACKSTAGE_NOTION_SYNC_MAX_DATA_SOURCE_QUERY_REQUESTS = 1_024;
 export const BACKSTAGE_NOTION_SYNC_MAX_RETRY_AFTER_MS = 60_000;
@@ -203,6 +212,11 @@ export interface BackstageNotionSyncResult {
   verifiedAt: Date | null;
   errorCode?: string;
   failure?: BackstageNotionSyncFailureDiagnostics;
+}
+
+export interface BackstageNotionSynchronizationConfigurationEvidence {
+  readonly authorityConfigured: boolean;
+  readonly configuredUniverses: number;
 }
 
 interface PendingPage {
@@ -1897,6 +1911,42 @@ function requireBackstageNotionAccessToken(
   return accessToken;
 }
 
+function readValidatedBackstageNotionSynchronizationConfiguration(
+  readEnvironment: BackstageNotionAuthorityEnvironmentReader
+): BackstageNotionAuthorityConfiguration {
+  const configuration = readBackstageNotionAuthorityConfiguration({
+    readEnvironment,
+  });
+  if (configuration.status === 'invalid') {
+    throw new BackstageNotionGlobalConfigurationError(
+      BACKSTAGE_NOTION_SYNC_CONFIGURATION_ERROR_CODE,
+      'Backstage Notion authority configuration is invalid.'
+    );
+  }
+  if (configuration.status === 'valid') {
+    requireBackstageNotionAccessToken(readEnvironment);
+  }
+  return configuration;
+}
+
+/**
+ * Validate only the static inputs needed for eventual authority synchronization.
+ * This deliberately performs no provider, embedding, inventory, or snapshot work.
+ */
+export function validateBackstageNotionSynchronizationConfiguration(
+  dependencies: Pick<BackstageNotionSyncDependencies, 'readEnvironment'> = {}
+): BackstageNotionSynchronizationConfigurationEvidence {
+  const configuration = readValidatedBackstageNotionSynchronizationConfiguration(
+    dependencies.readEnvironment ?? getEnv
+  );
+  return Object.freeze({
+    authorityConfigured: configuration.status === 'valid',
+    configuredUniverses: configuration.status === 'valid'
+      ? configuration.roots.length
+      : 0,
+  });
+}
+
 function rootFailureCode(error: unknown): string {
   if (
     error instanceof BackstageNotionSyncError
@@ -2286,23 +2336,12 @@ export async function syncBackstageNotionAuthorityRoot(
 export async function syncConfiguredBackstageNotionAuthorities(
   dependencies: BackstageNotionSyncDependencies = {}
 ): Promise<BackstageNotionSyncResult[]> {
-  const configuration = readBackstageNotionAuthorityConfiguration({
-    ...(dependencies.readEnvironment
-      ? { readEnvironment: dependencies.readEnvironment }
-      : {}),
-  });
+  const configuration = readValidatedBackstageNotionSynchronizationConfiguration(
+    dependencies.readEnvironment ?? getEnv
+  );
   if (configuration.status === 'absent') {
     return [];
   }
-  if (configuration.status === 'invalid') {
-    throw new BackstageNotionSyncError(
-      BACKSTAGE_NOTION_SYNC_CONFIGURATION_ERROR_CODE,
-      'Backstage Notion authority configuration is invalid.'
-    );
-  }
-  requireBackstageNotionAccessToken(
-    dependencies.readEnvironment ?? getEnv
-  );
 
   const results: BackstageNotionSyncResult[] = [];
   for (const root of configuration.roots) {

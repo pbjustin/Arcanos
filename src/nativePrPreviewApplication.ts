@@ -95,6 +95,8 @@ import {
 } from './shared/backstage/backstageBookerAsyncContinuation.js';
 import {
   buildProtectedBackstageFailureEnvelope,
+  readProtectedBackstageFailureCode,
+  readProtectedBackstageGenerationProvenance,
 } from './shared/backstage/backstageProtectedFailure.js';
 import {
   resolveBackstageDurableContinuityFailure,
@@ -189,6 +191,9 @@ import {
   isBackstageNotionSnapshotChunkCountWritable,
   shouldVerifyBackstageNotionSnapshotUnchanged,
 } from './shared/backstage/backstageNotionSyncCore.js';
+import {
+  resolveBackstageNotionSnapshotStatus,
+} from './shared/backstage/backstageNotionSnapshotStatus.js';
 import {
   BACKSTAGE_NOTION_PARTITION_MAX_CHUNKS,
   BACKSTAGE_NOTION_PARTITION_MAX_SHARDS_PER_UNIVERSE,
@@ -5889,6 +5894,206 @@ async function runBackstageNotionSyncPhaseAFixture(
   };
 }
 
+function runBackstageAuthorityReadinessFixture(
+  fixture: string
+): Record<string, unknown> {
+  const epochMs = Date.parse('2026-09-03T12:00:00.000Z');
+  const coreReadyAtMs = 5_000;
+  const boundedStartupBudgetMs = 30_000;
+  const railwayHealthcheckWindowMs = 300_000;
+  const syncCompletedAtMs = 360_001;
+  const maximumStalenessMs = 24 * 60 * 60 * 1_000;
+  const snapshotId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee1';
+  const attemptId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee2';
+  const processInstanceStarts = 1;
+
+  const projectCheckpoint = (
+    name: 'booting' | 'process_ready' | 'healthcheck_window' | 'activated',
+    logicalTimeMs: number
+  ) => {
+    const processReady = logicalTimeMs >= coreReadyAtMs;
+    const syncStarted = processReady;
+    const syncCompleted = logicalTimeMs >= syncCompletedAtMs;
+    const syncInProgress = syncStarted && !syncCompleted;
+    const now = new Date(epochMs + logicalTimeMs);
+    const resolution = resolveBackstageNotionSnapshotStatus({
+      activeSnapshotId: syncCompleted ? snapshotId : null,
+      activeSnapshotReadable: syncCompleted,
+      activeSnapshotVerifiedAt: syncCompleted
+        ? new Date(epochMs + syncCompletedAtMs)
+        : null,
+      now,
+      maximumStalenessMs,
+      latestSyncAttempt: !syncStarted
+        ? null
+        : syncCompleted
+          ? {
+              attemptId,
+              startedAt: new Date(epochMs + coreReadyAtMs),
+              completedAt: new Date(epochMs + syncCompletedAtMs),
+              outcome: 'activated',
+              activatedSnapshotId: snapshotId,
+              failurePhase: null,
+              failureReason: null,
+            }
+          : {
+              attemptId,
+              startedAt: new Date(epochMs + coreReadyAtMs),
+              completedAt: null,
+              outcome: 'running',
+              activatedSnapshotId: null,
+              failurePhase: null,
+              failureReason: null,
+            },
+    });
+    const completionProvenance = readProtectedBackstageGenerationProvenance({
+      version: 1,
+      protected: true,
+      protectedGenerationCompleted: true,
+      official: true,
+      continuityVerified: true,
+      authority: 'notion',
+      snapshotStatus: resolution.status,
+      fallbackUsed: false,
+      fallbackPermitted: false,
+    });
+    const protectedGenerationAdmissible = completionProvenance !== null;
+    const protectedFailureCode = protectedGenerationAdmissible
+      ? null
+      : readProtectedBackstageFailureCode(
+          buildProtectedBackstageFailureEnvelope({
+            gptId: 'backstage-booker',
+            action: 'generateBooking',
+            code: 'BACKSTAGE_NOTION_INDEX_UNAVAILABLE',
+          }),
+          { gptId: 'backstage-booker', action: 'generateBooking' }
+        );
+
+    return {
+      name,
+      logicalTimeMs,
+      processReady,
+      syncInProgress,
+      authorityStatus: syncInProgress
+        ? 'syncing'
+        : resolution.status,
+      snapshotStatus: resolution.status,
+      protectedGenerationAdmissible,
+      protectedFailureCode,
+    };
+  };
+
+  const checkpoints = [
+    projectCheckpoint('booting', 0),
+    projectCheckpoint('process_ready', coreReadyAtMs),
+    projectCheckpoint('healthcheck_window', railwayHealthcheckWindowMs),
+    projectCheckpoint('activated', syncCompletedAtMs),
+  ];
+  const [booting, processReady, healthcheckWindow, activated] = checkpoints;
+  const lastKnownGood = resolveBackstageNotionSnapshotStatus({
+    activeSnapshotId: snapshotId,
+    activeSnapshotReadable: true,
+    activeSnapshotVerifiedAt:
+      new Date(epochMs - maximumStalenessMs - 1),
+    now: new Date(epochMs),
+    maximumStalenessMs,
+    latestSyncAttempt: null,
+  });
+  const lastKnownGoodAccepted = readProtectedBackstageGenerationProvenance({
+    version: 1,
+    protected: true,
+    protectedGenerationCompleted: true,
+    official: true,
+    continuityVerified: true,
+    authority: 'notion',
+    snapshotStatus: lastKnownGood.status,
+    fallbackUsed: false,
+    fallbackPermitted: false,
+  }) !== null;
+  const contracts = {
+    boundedStartupBeforeRailwayWindow:
+      coreReadyAtMs < boundedStartupBudgetMs
+      && boundedStartupBudgetMs < railwayHealthcheckWindowMs,
+    currentCompleteOnlyForProtectedGeneration:
+      !lastKnownGoodAccepted
+      && checkpoints.slice(0, 3).every(
+        checkpoint => !checkpoint.protectedGenerationAdmissible
+      )
+      && activated?.protectedGenerationAdmissible === true,
+    healthcheckWindowDoesNotAwaitSync:
+      healthcheckWindow?.logicalTimeMs === railwayHealthcheckWindowMs
+      && healthcheckWindow.processReady === true
+      && healthcheckWindow.syncInProgress === true,
+    noRestartRequired:
+      processInstanceStarts === 1
+      && processReady?.processReady === true
+      && activated?.processReady === true,
+    protectedFailureCodeStable:
+      checkpoints.slice(0, 3).every(
+        checkpoint => checkpoint.protectedFailureCode
+          === 'BACKSTAGE_NOTION_INDEX_UNAVAILABLE'
+      )
+      && activated?.protectedFailureCode === null,
+    snapshotStatusReducerExecuted:
+      booting?.snapshotStatus === 'unavailable'
+      && processReady?.snapshotStatus === 'unavailable'
+      && healthcheckWindow?.snapshotStatus === 'unavailable'
+      && activated?.snapshotStatus === 'current_complete',
+    staleSnapshotNotOfficial:
+      lastKnownGood.status === 'last_known_good'
+      && !lastKnownGoodAccepted,
+    syncExceedsRailwayWindow:
+      syncCompletedAtMs > railwayHealthcheckWindowMs,
+    virtualTimeOnly: true,
+  };
+  if (Object.values(contracts).some(value => !value)) {
+    throw new Error('PREVIEW_BACKSTAGE_AUTHORITY_READINESS_INVALID');
+  }
+
+  const authorityReadiness = {
+    boundedStartupBudgetMs,
+    checkpoints,
+    contracts,
+    processInstanceStarts,
+    productionSharedProtectedProvenanceValidator: true,
+    productionSharedSnapshotStatusReducer: true,
+    railwayHealthcheckWindowMs,
+    syncCompletedAtMs,
+  };
+  const safeProjection = JSON.stringify(authorityReadiness);
+  const sensitiveMetadataAbsent = ![
+    snapshotId,
+    attemptId,
+    'Bearer ',
+    'rootPageId',
+    'databaseId',
+    'dataSourceId',
+    'https://',
+  ].some(value => safeProjection.includes(value));
+  if (!sensitiveMetadataAbsent) {
+    throw new Error('PREVIEW_BACKSTAGE_AUTHORITY_READINESS_METADATA_UNSAFE');
+  }
+
+  return {
+    accepted: true,
+    authorityReadiness,
+    cacheBoundaryReached: false,
+    databaseBoundaryReached: false,
+    effectsBoundaryReached: false,
+    embeddingBoundaryReached: false,
+    externalNetworkAttempted: false,
+    fixture,
+    notionApiBoundaryReached: false,
+    protectedEffectsEnabled: false,
+    providerBoundaryReached: false,
+    queueBoundaryReached: false,
+    realTimerWaited: false,
+    schemaVersion: 1,
+    sensitiveMetadataAbsent,
+    workerBoundaryReached: false,
+  };
+}
+
 async function runBackstageReviewCompletionFixture(
   fixture: string
 ): Promise<Record<string, unknown>> {
@@ -7500,6 +7705,11 @@ async function runBackstageGenerationFixture(
     case fixtures.notionSyncPhaseA:
       return {
         payload: await runBackstageNotionSyncPhaseAFixture(fixture),
+        partitionedAuthorityProofVersion: null,
+      };
+    case fixtures.authorityReadiness:
+      return {
+        payload: runBackstageAuthorityReadinessFixture(fixture),
         partitionedAuthorityProofVersion: null,
       };
     case fixtures.partitionFailureTelemetry:
@@ -9705,6 +9915,18 @@ export function createNativePrPreviewApplication(
                 .notionWriterCapacityReleaseVersion,
               NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT
                 .notionWriterCapacityReleaseProofVersion
+            );
+          }
+          if (
+            fixture
+              === NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.fixtures
+                .authorityReadiness
+          ) {
+            response.setHeader(
+              NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.proofHeaders
+                .authorityReadinessVersion,
+              NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT
+                .authorityReadinessProofVersion
             );
           }
           return sendBoundedJsonResponse(

@@ -92,16 +92,6 @@ export interface BackstageNotionPartitionShadowPolicy {
   readonly configuration: ValidPartitionConfiguration | null;
 }
 
-export type BackstageNotionWorkerReadinessGateResult<T> =
-  | Readonly<{
-    monolithReadinessRequired: true;
-    evidence: T;
-  }>
-  | Readonly<{
-    monolithReadinessRequired: false;
-    evidence: null;
-  }>;
-
 export interface BackstageNotionPartitionShadowCycleResult {
   readonly synchronization: BackstageNotionPartitionSynchronizationResult;
   readonly coverage: readonly BackstageNotionPartitionShadowCoverage[];
@@ -288,34 +278,6 @@ export function resolveBackstageNotionPartitionShadowPolicy(
         : 'PARTITIONED_CUTOVER_GATE_CLOSED'
       : 'SHADOW_ENABLED',
     configuration,
-  });
-}
-
-/**
- * Every monolith-authoritative mode proves the monolith before queue admission.
- * Partitioned mode may skip the duplicate crawl only after the explicit gate
- * already proves a readable rollback monolith.
- */
-export function requiresBackstageNotionMonolithWorkerReadiness(
-  policy: BackstageNotionPartitionShadowPolicy
-): boolean {
-  return policy.effectiveReadMode !== 'partitioned';
-}
-
-/** Run the unchanged legacy readiness proof only when the resolved policy requires it. */
-export async function runBackstageNotionWorkerReadinessGate<T>(
-  policy: BackstageNotionPartitionShadowPolicy,
-  ensureReadiness: () => Promise<T>
-): Promise<BackstageNotionWorkerReadinessGateResult<T>> {
-  if (!requiresBackstageNotionMonolithWorkerReadiness(policy)) {
-    return Object.freeze({
-      monolithReadinessRequired: false,
-      evidence: null,
-    });
-  }
-  return Object.freeze({
-    monolithReadinessRequired: true,
-    evidence: await ensureReadiness(),
   });
 }
 
