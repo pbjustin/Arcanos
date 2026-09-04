@@ -858,6 +858,51 @@ describe('Backstage Notion prompt context', () => {
     });
   });
 
+  it('rejects an oversized provider cursor before returning query pagination state', async () => {
+    const privateCursorMarker = 'PRIVATE-PROVIDER-OVERSIZED-CURSOR';
+    const oversizedCursor = `${privateCursorMarker}${'\u0000'.repeat(90_000)}`;
+    const responseBody = JSON.stringify({
+      object: 'list',
+      type: 'page_or_data_source',
+      page_or_data_source: {},
+      results: [{ object: 'page', id: secondPageId }],
+      has_more: true,
+      next_cursor: oversizedCursor,
+      request_status: { type: 'complete' },
+    });
+    expect(Buffer.byteLength(responseBody, 'utf8'))
+      .toBeLessThan(BACKSTAGE_NOTION_MAX_DATA_SOURCE_QUERY_RESPONSE_BYTES);
+    const fetchMock = jest.fn(async () => new Response(responseBody, {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    let caught: unknown;
+    try {
+      await queryBackstageNotionDataSource(
+        asFetch(fetchMock),
+        notionToken,
+        firstPageId,
+        null,
+        new AbortController().signal
+      );
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(caught).toMatchObject({
+      category: 'invalid_response',
+      notionEndpointKind: 'data_source_query',
+      notionResponseSchemaValid: false,
+    });
+    const serialized = JSON.stringify(caught);
+    expect(serialized).not.toContain(privateCursorMarker);
+    expect(serialized).not.toContain(firstPageId);
+    expect(serialized).not.toContain(secondPageId);
+    expect(serialized).not.toContain(notionToken);
+  });
+
   it('rejects a cursor whose serialized request exceeds the provider request cap', async () => {
     const privateCursorMarker = 'PRIVATE-OVERSIZED-CURSOR';
     const oversizedCursor = `${privateCursorMarker}${'\u0000'.repeat(90_000)}`;

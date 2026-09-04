@@ -1314,6 +1314,27 @@ function parseNotionPageTitlePropertyResponse(
   };
 }
 
+function createNotionDataSourceQueryRequestBody(
+  startCursor: string | null
+): string {
+  return JSON.stringify({
+    page_size: BACKSTAGE_NOTION_MAX_DATA_SOURCE_QUERY_RESULTS,
+    ...(startCursor === null ? {} : { start_cursor: startCursor }),
+  });
+}
+
+function isBoundedNotionDataSourceQueryCursor(
+  value: unknown
+): value is string {
+  return typeof value === 'string'
+    && value.length >= 1
+    && Buffer.byteLength(value, 'utf8') <= BACKSTAGE_NOTION_MAX_REQUEST_BYTES
+    && Buffer.byteLength(
+      createNotionDataSourceQueryRequestBody(value),
+      'utf8'
+    ) <= BACKSTAGE_NOTION_MAX_REQUEST_BYTES;
+}
+
 function parseNotionDataSourceQueryResponse(
   rawBody: string,
   response: Response
@@ -1344,8 +1365,7 @@ function parseNotionDataSourceQueryResponse(
   const rawResults = parsed.results;
   const hasMore = parsed.has_more;
   const rawNextCursor = parsed.next_cursor;
-  const nextCursor = typeof rawNextCursor === 'string'
-    && rawNextCursor.length >= 1
+  const nextCursor = isBoundedNotionDataSourceQueryCursor(rawNextCursor)
     ? rawNextCursor
     : null;
   const requestStatusValid = parsed.request_status === undefined
@@ -1642,7 +1662,7 @@ export async function queryBackstageNotionDataSource(
   }
   if (
     startCursor !== null
-    && startCursor.length < 1
+    && !isBoundedNotionDataSourceQueryCursor(startCursor)
   ) {
     throw new BackstageNotionReadError('invalid_cursor', undefined, {
       notionEndpointKind: 'data_source_query',
@@ -1653,10 +1673,7 @@ export async function queryBackstageNotionDataSource(
     NOTION_API_ORIGIN
   );
   endpoint.searchParams.append('filter_properties[]', 'title');
-  const requestBody = JSON.stringify({
-    page_size: BACKSTAGE_NOTION_MAX_DATA_SOURCE_QUERY_RESULTS,
-    ...(startCursor === null ? {} : { start_cursor: startCursor }),
-  });
+  const requestBody = createNotionDataSourceQueryRequestBody(startCursor);
   if (Buffer.byteLength(requestBody, 'utf8') > BACKSTAGE_NOTION_MAX_REQUEST_BYTES) {
     throw new BackstageNotionReadError('invalid_cursor', undefined, {
       notionEndpointKind: 'data_source_query',
