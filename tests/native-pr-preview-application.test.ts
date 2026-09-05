@@ -3054,6 +3054,9 @@ describe('native PR contained application', () => {
         },
       });
       expectContainedResponseHeaders(response, requestId, traceId, true);
+      expect(response.headers[NATIVE_PR_PREVIEW_GAMING_CONTRACT.proofHeader]).toBe(
+        mode === 'guide' ? NATIVE_PR_PREVIEW_GAMING_CONTRACT.proofVersion : undefined
+      );
     }
 
     const invalidCanary = await request(app)

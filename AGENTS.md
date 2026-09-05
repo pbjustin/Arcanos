@@ -123,6 +123,15 @@ Choose the smallest set covering the change, then expand for cross-cutting or re
 
 ## Operational and security safety
 
+- The sealed Gaming guide response additionally runs the production-shared
+  Archive resolver and grounding policies using only server-owned synthetic
+  documents and in-memory callbacks. Its proof header is
+  `x-arcanos-preview-gaming-archive-grounding-version`; failures withhold the
+  header and success response. This does not execute URL preparation, DNS,
+  HTTP extraction, ranking, the complete Gaming pipeline, stored retrieval,
+  provider calls, or a logger sink. Keep the normal Gaming service/fetcher
+  graph outside the preview; only the reviewed shared cores and fixed fixture
+  belong in the import allowlist and semantic digest pins.
 - The sealed `notion-authority-rag-contract` selector sends two server-owned
   synthetic `409` envelopes through semantic-digest-pinned page readers before
   returning its unchanged body. It proves official `conflict_error`

@@ -90,6 +90,9 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/shared/gpt/gptJobLifecycle.ts',
   'src/shared/gpt/gptJobResult.ts',
   'src/shared/gpt/trinityReasoningPolicy.ts',
+  'src/shared/gaming/gamingArchiveResourceCore.ts',
+  'src/shared/gaming/gamingArchivePreviewFixture.ts',
+  'src/shared/gaming/gamingGrounding.ts',
   'src/shared/http/clientJsonPayload.ts',
   'src/shared/http/clientResponseCommon.ts',
   'src/shared/http/errors.ts',
@@ -652,6 +655,18 @@ const CRITICAL_RUNTIME_FUNCTION_DIGESTS = new Map([
   ],
 ]);
 const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
+  [
+    'src/shared/gaming/gamingArchiveResourceCore.ts',
+    '778e89b2ecfc4339989b49f42f8facb974b71e8f51461d01be6af8e71b9d08c8',
+  ],
+  [
+    'src/shared/gaming/gamingArchivePreviewFixture.ts',
+    'fcb2df373f6f282dcacd473055b4b9a460cb453e214d71bcdc497279245b9a7e',
+  ],
+  [
+    'src/shared/gaming/gamingGrounding.ts',
+    '93a8f3e52122a398c6309bfa4d65a97d9f07264f7cf71a59eb58358ae69afe19',
+  ],
   [
     'src/core/logic/trinityDirectAnswerMode.ts',
     '80060899d1ed7c1ea4304b4fdfc96ff1f7678f33736ab056ebd378487ce889af',

@@ -18,7 +18,6 @@ import { generateMockResponse } from "@services/openai.js";
 import { tryExtractExactLiteralPromptShortcut } from "@services/exactLiteralPromptShortcut.js";
 import {
   formatGamingSuccess,
-  GamingSourceEvidenceError,
   type GamingDiscoveryFailureReason,
   type GamingDiscoveryReason,
   type GamingEvidenceRequest,
@@ -29,6 +28,11 @@ import {
   type ValidatedGamingRequest
 } from "@services/gamingModes.js";
 import { buildGamingDiscoveryQuery } from "@services/gamingSourceDiscovery.js";
+import {
+  buildGamingGroundingSummary,
+  createGamingSuppliedGuideEvidenceError,
+  resolveGamingExecutionOutcome
+} from "@shared/gaming/gamingGrounding.js";
 import {
   extractExplicitGamingVersions,
   textContainsExactGamingVersion
@@ -486,7 +490,7 @@ function formatGameplaySuccessWithLogs(params: {
   logger.info("gaming.request.end", {
     ...params.logContext,
     ok: true,
-    executionOutcome: params.fallbackReason ? "fallback" : "completed",
+    executionOutcome: resolveGamingExecutionOutcome(params.fallbackReason),
     grounding: responseGrounding,
     groundingStatus: responseGrounding.groundingStatus,
     groundedInSuppliedEvidence: responseGrounding.groundedInSuppliedEvidence,
@@ -771,26 +775,18 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
     });
   }
 
-  const liveUsableSourceCount = sources.filter(isCitableGamingWebSource).length;
-  let grounding: GamingGrounding = {
-    groundingStatus: liveUsableSourceCount > 0 && selectedChunkCount > 0
-      ? "grounded"
-      : retrievedSourceCount > 0 ? "insufficient_evidence" : "unavailable",
+  let grounding: GamingGrounding = buildGamingGroundingSummary({
     requestedSourceCount: guideSourceCount,
     fetchedSourceCount: retrievedSourceCount,
     fetchedSuppliedSourceCount,
-    usableSourceCount: liveUsableSourceCount,
-    citableSourceCount: liveUsableSourceCount,
+    sources,
     selectedChunkCount,
-    suppliedEvidenceSourceCount,
-    groundedInSuppliedEvidence: suppliedEvidenceSourceCount > 0 && selectedChunkCount > 0
-  };
-  if (suppliedGuideRequired && !grounding.groundedInSuppliedEvidence) {
-    grounding = {
-      ...grounding,
-      groundingStatus: fetchedSuppliedSourceCount > 0 ? "insufficient_evidence" : "unavailable"
-    };
-    const error = new GamingSourceEvidenceError(grounding);
+    suppliedEvidenceSourceCount
+  });
+  const evidenceError = suppliedGuideRequired ? createGamingSuppliedGuideEvidenceError(grounding) : null;
+  if (evidenceError) {
+    const error = evidenceError;
+    grounding = error.grounding;
     logger.warn("gaming.grounding.insufficient", {
       ...baseLogContext,
       errorCode: error.code,

@@ -4,6 +4,7 @@ import { evaluateWithHRC } from "./hrcWrapper.js";
 import { getRequestAbortContext, getRequestAbortSignal, isAbortError } from "@arcanos/runtime";
 import { logger } from "@platform/logging/structuredLogging.js";
 import { hasVisibleContent } from "@shared/promptUtils.js";
+import { resolveGamingExecutionOutcome } from "@shared/gaming/gamingGrounding.js";
 import { GAMING_RESPONSE_MAX_CHARACTERS } from "@shared/http/clientResponseCommon.js";
 import { isRecord } from "@shared/typeGuards.js";
 import {
@@ -457,7 +458,7 @@ async function handleGamingRequest(payload: unknown): Promise<GamingEnvelope> {
       mode: gamingIntent.mode,
       confidence: gamingIntent.confidence,
       sourceCount: backendEnvelope.data.sources.length,
-      executionOutcome: backendEnvelope.data.fallbackReason ? "fallback" : "completed",
+      executionOutcome: resolveGamingExecutionOutcome(backendEnvelope.data.fallbackReason),
       groundingStatus: backendEnvelope.data.grounding?.groundingStatus ?? "unavailable",
       groundedInSuppliedEvidence: backendEnvelope.data.grounding?.groundedInSuppliedEvidence ?? false,
       ...(backendEnvelope.data.grounding ? { grounding: backendEnvelope.data.grounding } : {})

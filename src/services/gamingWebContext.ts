@@ -5,6 +5,10 @@ import { redactString } from "@shared/redaction.js";
 import { logger } from "@platform/logging/structuredLogging.js";
 import { getEnv } from "@platform/runtime/env.js";
 import {
+  isCitableGamingEvidenceSource,
+  LIMITED_GAMING_ARTICLE_TEXT_SNIPPET
+} from "@shared/gaming/gamingGrounding.js";
+import {
   fetchAndClean,
   type FetchAndCleanExtractionMetrics,
   type FetchAndCleanOptions,
@@ -214,17 +218,10 @@ const LOW_QUALITY_DOMAINS = [
 const MAX_DOCUMENT_CACHE_ENTRIES = 100;
 const MAX_PUBLIC_GAMING_SOURCES = 8;
 const MAX_PUBLIC_SNIPPET_CHARS = 600;
-const LIMITED_ARTICLE_TEXT_SNIPPET = "Relevant source retrieved, but readable article text was limited.";
+const LIMITED_ARTICLE_TEXT_SNIPPET = LIMITED_GAMING_ARTICLE_TEXT_SNIPPET;
 const LIMITED_ARTICLE_CONTEXT_NOTE = "[No readable article evidence was extracted from this source.]";
-const STRUCTURED_RESOURCE_DIAGNOSTIC_SNIPPETS = new Set([
-  "Structured build resource detected, but the loadout data could not be decoded safely.",
-  "Structured build resource detected, but only bounded metadata could be recovered.",
-  "Resource metadata was inspected, but no structured build data was recovered."
-]);
-
 export function isCitableGamingWebSource(source: GamingWebSource): boolean {
-  return Boolean(source.snippet && source.snippet !== LIMITED_ARTICLE_TEXT_SNIPPET
-    && !STRUCTURED_RESOURCE_DIAGNOSTIC_SNIPPETS.has(source.snippet));
+  return isCitableGamingEvidenceSource(source);
 }
 
 const GENERIC_CONTENT_SELECTORS = [
