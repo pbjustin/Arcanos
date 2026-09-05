@@ -78,6 +78,8 @@ const { runBuildPipeline, runGuidePipeline, runMetaPipeline } = await import('..
 const { buildGamingRagContext, clearGamingRagCache } = await import('../src/services/gamingWebContext.js');
 const { runWithRequestAbortContext } = await import('@arcanos/runtime');
 const { logger } = await import('@platform/logging/structuredLogging.js');
+const { IntentRouterAgent, ResponseComposerAgent } = await import('../src/services/gamingAgents.js');
+const { shapeClientRouteResult } = await import('../src/shared/http/clientRouteResultShape.js');
 
 describe('gaming guide output hardening', () => {
   beforeEach(() => {
@@ -295,7 +297,7 @@ describe('gaming guide output hardening', () => {
       };
     };
     expect(trinityRequest.input.prompt).toContain('Regression check only');
-    expect(trinityRequest.input.prompt).toContain('Return only a six-item checklist using hyphen bullets');
+    expect(trinityRequest.input.prompt).toContain("Answer the user's actual gameplay question first");
     expect(trinityRequest.context.runtimeBudget).toEqual(expect.objectContaining({
       watchdogLimit: 50_000,
       safetyBuffer: 500
@@ -362,7 +364,7 @@ describe('gaming guide output hardening', () => {
     const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as { input: { prompt: string } };
     expect(trinityRequest.input.prompt).toContain('[GAME]\nElden Ring');
     expect(trinityRequest.input.prompt).toContain('Look up a guide for Elden Ring.');
-    expect(trinityRequest.input.prompt).toContain('Return only a six-item checklist using hyphen bullets');
+    expect(trinityRequest.input.prompt).toContain("Answer the user's actual gameplay question first");
   });
 
   it('passes a narrow Elden Ring progression guide through the normal guide path', async () => {
@@ -383,7 +385,7 @@ describe('gaming guide output hardening', () => {
     expect(result.data.response).not.toContain('bounded deterministic fallback');
     const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as { input: { prompt: string } };
     expect(trinityRequest.input.prompt).toContain('Where do I go first in Elden Ring after leaving the tutorial?');
-    expect(trinityRequest.input.prompt).toContain('Return only a six-item checklist using hyphen bullets');
+    expect(trinityRequest.input.prompt).toContain("Answer the user's actual gameplay question first");
   });
 
   it('returns a deterministic fallback when build provider generation is incomplete', async () => {
@@ -629,7 +631,7 @@ describe('gaming guide output hardening', () => {
       };
     };
     expect(trinityRequest.input.prompt).toContain('[WEB CONTEXT]');
-    expect(trinityRequest.input.prompt).toContain('Return only a six-item checklist using hyphen bullets');
+    expect(trinityRequest.input.prompt).toContain("Answer the user's actual gameplay question first");
     expect(trinityRequest.context.runOptions).toEqual(expect.objectContaining({
       answerMode: 'explained',
       requestedVerbosity: 'normal',
@@ -2082,6 +2084,41 @@ describe('gaming guide output hardening', () => {
     const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as { input: { prompt: string } };
     expect(trinityRequest.input.prompt).toContain('Source retrieval ran or sources were provided, but no usable snippets were retrieved.');
     expect(trinityRequest.input.prompt).toContain('label weak, missing, or patch-sensitive evidence as inference or fallback');
+  });
+
+  it('carries a grounded guide answer and evidence counts through user-facing composition', async () => {
+    process.env.ARCANOS_GAMING_WEB_CONTEXT_CHARS = '2400';
+    const request = {
+      mode: 'guide' as const,
+      game: 'Kingdom Hearts HD 1.5 Remix',
+      prompt: 'Where should I go next to speak to Cid? Avoid spoilers beyond this objective.',
+      guideUrl: 'https://guides.example/kingdom-hearts-hd-1-5-remix',
+      guideUrls: [], auditEnabled: false,
+    };
+    const evidence = 'Kingdom Hearts HD 1.5 Remix guide: return to Traverse Town and speak to Cid at the shop after completing the preceding world objective. Cid explains the next route and objective.';
+    mockFetchAndClean.mockResolvedValue(evidence);
+    const answer = 'Go to Traverse Town and speak to Cid [1].\n\n1. Return to town.\n2. Visit the shop.\n3. Complete the interaction.';
+    mockRunTrinityWritingPipeline.mockResolvedValueOnce({ result: answer });
+
+    const backendEnvelope = await runGuidePipeline(request);
+    const composed = ResponseComposerAgent.compose({
+      intent: { ...IntentRouterAgent.classify(request), mode: 'guide' }, backendEnvelope,
+    });
+    expect(composed.data.response).toBe(answer);
+    expect(composed.data.grounding).toMatchObject({
+      groundingStatus: 'grounded', groundedInSuppliedEvidence: true,
+      usableSourceCount: 1, citableSourceCount: 1, selectedChunkCount: 1,
+    });
+    expect(shapeClientRouteResult(composed)).toMatchObject({
+      data: { response: answer, grounding: composed.data.grounding, sources: composed.data.sources },
+    });
+    const providerRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as {
+      input: { prompt: string; body: { game: string } };
+    };
+    expect(providerRequest.input.prompt).toContain(evidence);
+    expect(providerRequest.input.prompt).toContain('Avoid spoilers beyond this objective.');
+    expect(providerRequest.input.body.game).toBe(request.game);
+    expect(providerRequest.input.prompt).toContain(`[GAME]\n${request.game}`);
   });
 
   it('does not log credentials from supplied guide URLs', async () => {
