@@ -92,6 +92,9 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/shared/gpt/trinityReasoningPolicy.ts',
   'src/shared/gaming/gamingArchiveResourceCore.ts',
   'src/shared/gaming/gamingArchivePreviewFixture.ts',
+  'src/shared/gaming/gamingGuideResponseCore.ts',
+  'src/shared/gaming/gamingGuideResponsePreviewFixture.ts',
+  'src/shared/gaming/gamingPromptCore.ts',
   'src/shared/gaming/gamingGrounding.ts',
   'src/shared/http/clientJsonPayload.ts',
   'src/shared/http/clientResponseCommon.ts',
@@ -655,6 +658,18 @@ const CRITICAL_RUNTIME_FUNCTION_DIGESTS = new Map([
   ],
 ]);
 const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
+  [
+    'src/shared/gaming/gamingGuideResponsePreviewFixture.ts',
+    '4d9c670a218cd9bbddc69d5720eb7519631f927d8a1aad04ef8c3df3e36eee5a',
+  ],
+  [
+    'src/shared/gaming/gamingPromptCore.ts',
+    '5e0ab99cca80797b01325b331b7efb7497f37519767cc3548be632054f36b416',
+  ],
+  [
+    'src/shared/gaming/gamingGuideResponseCore.ts',
+    '09abe6823af73e11f5ed68ba6d6bf1dde701c74059b181602d110a54ca79816b',
+  ],
   [
     'src/shared/gaming/gamingArchiveResourceCore.ts',
     '778e89b2ecfc4339989b49f42f8facb974b71e8f51461d01be6af8e71b9d08c8',

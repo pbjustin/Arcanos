@@ -7,6 +7,7 @@ import { createHash } from 'node:crypto';
 import { Readable } from 'node:stream';
 import { setTimeout as delay } from 'node:timers/promises';
 import { runGamingArchiveGroundingPreview } from './shared/gaming/gamingArchivePreviewFixture.js';
+import { runGamingGuideResponsePreview } from './shared/gaming/gamingGuideResponsePreviewFixture.js';
 
 import {
   createGenericJobsRouter,
@@ -9163,9 +9164,28 @@ export function createNativePrPreviewApplication(
             );
             return;
           }
+          try {
+            runGamingGuideResponsePreview();
+          } catch {
+            sendBoundedJsonResponse(
+              request,
+              response,
+              { error: 'PREVIEW_GAMING_GUIDE_RESPONSE_CONTRACT_INVALID' },
+              {
+                logEvent: 'native_pr_preview.gaming_guide_response_invalid',
+                maxBytes: MAX_GAMING_QUERY_RESPONSE_BYTES,
+                statusCode: 500,
+              }
+            );
+            return;
+          }
           response.setHeader(
             NATIVE_PR_PREVIEW_GAMING_CONTRACT.proofHeader,
             NATIVE_PR_PREVIEW_GAMING_CONTRACT.proofVersion
+          );
+          response.setHeader(
+            NATIVE_PR_PREVIEW_GAMING_CONTRACT.responseProofHeader,
+            NATIVE_PR_PREVIEW_GAMING_CONTRACT.responseProofVersion
           );
         }
         sendPreviewJson(

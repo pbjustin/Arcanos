@@ -123,6 +123,17 @@ Choose the smallest set covering the change, then expand for cross-cutting or re
 
 ## Operational and security safety
 
+- The sealed Gaming guide response also runs semantic-digest-pinned production
+  prompt assembly and grounded-guide composition cores with fixed synthetic
+  evidence, prompt resources, and backend answers. Its additive proof header is
+  `x-arcanos-preview-gaming-guide-response-version`; the exact-head verifier
+  requires it and reports `gamingGuideResponseVerified`. Failures withhold both
+  Gaming proof headers and the unchanged success body. This proves prompt
+  selection and response composition, including outer trimming and preserved
+  internal formatting/metadata. It does not execute the configured prompt
+  loader, provider/model compliance, citation normalization, normal Gaming
+  pipeline/route, or public size-limit fallback branch. The public-query cap
+  regressions remain separate mocked tests.
 - The sealed Gaming guide response additionally runs the production-shared
   Archive resolver and grounding policies using only server-owned synthetic
   documents and in-memory callbacks. Its proof header is

@@ -184,6 +184,8 @@ export interface NativePrPreviewE2eContract {
     queryPath: '/gpt/arcanos-gaming';
     proofHeader: 'x-arcanos-preview-gaming-archive-grounding-version';
     proofVersion: 'gaming-archive-grounding/v1';
+    responseProofHeader: 'x-arcanos-preview-gaming-guide-response-version';
+    responseProofVersion: 'gaming-guide-response/v1';
     game: 'Palworld';
     fixtures: Readonly<{
       guide: 'sealed-preview-guide';
