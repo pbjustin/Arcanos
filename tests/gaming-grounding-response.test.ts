@@ -61,7 +61,23 @@ describe('Gaming grounding public projection', () => {
     'On hard difficulty, save the item for the second phase [1]. On normal, the guide recommends using it immediately.',
   ])('preserves complete provider structure, citations, and material qualifications: %#', (response) => {
     const envelope = groundedEnvelope(response);
-    expect(ResponseComposerAgent.compose({ intent, backendEnvelope: envelope }).data.response).toBe(response);
+    expect(ResponseComposerAgent.compose({ intent, backendEnvelope: envelope }).data.response).toBe(response.trim());
+  });
+
+  it('trims only outer whitespace while preserving Markdown, citations, metadata, and the input envelope', () => {
+    const response = '### Route\nVisit Cid [1].  \nThen return to town.\n\n```text\nTown -> Shop\n  -> Cid\n```\n\n[1]: https://guides.example/kingdom-hearts "Guide"';
+    const paddedResponse = ` \t\r\n${response}\r\n\t `;
+    const envelope = groundedEnvelope(paddedResponse);
+    envelope.data.auditTrace = { draft: paddedResponse, finalized: paddedResponse };
+    envelope.data.hrc = { passed: true };
+
+    const composed = ResponseComposerAgent.compose({ intent, backendEnvelope: envelope });
+
+    expect(composed).toEqual({ ...envelope, data: { ...envelope.data, response } });
+    expect(envelope.data.response).toBe(paddedResponse);
+    expect(shapeClientRouteResult(composed)).toEqual(shapeClientRouteResult({
+      ...envelope, data: { ...envelope.data, response },
+    }));
   });
 
   it('preserves source, grounding, and optional audit metadata through composition', () => {
