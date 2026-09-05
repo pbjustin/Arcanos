@@ -4207,6 +4207,16 @@ async function executeRequestCase(
   ) {
     fail('NATIVE_PR_PREVIEW_SYNTHETIC_MARKER_MISSING', requestCase.caseId);
   }
+  if (
+    requestCase.caseId === 'gaming-query-guide'
+    && response.headers.get(NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.proofHeader)
+      !== NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.proofVersion
+  ) {
+    fail(
+      'NATIVE_PR_PREVIEW_GAMING_ARCHIVE_GROUNDING_PROOF_INVALID',
+      requestCase.caseId
+    );
+  }
   if (requestCase.expectedType === 'backstage-generation-contract') {
     const contract = NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration;
     if (
@@ -4500,6 +4510,9 @@ async function executeRequestCase(
     responseBytes: bodyBytes.length,
     role: requestCase.role,
     simulatedAuth: requestCase.simulatedAuth === true,
+    ...(requestCase.caseId === 'gaming-query-guide'
+      ? { gamingArchiveGuideEvidenceVerified: true }
+      : {}),
     ...(requestCase.expectedType === 'backstage-generation-contract'
       ? { clearPolicyVersionVerified: true }
       : {}),

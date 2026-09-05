@@ -1489,6 +1489,60 @@ Historical opaque partitions are preserved locally for compatibility, never
 placed on request context, logged, or returned, and the access credential is
 never persisted to the daemon token file.
 
+### Gaming supplied-guide evidence
+
+`POST /gpt/arcanos-gaming` retains its existing request and HTTP envelope. In
+`guide` mode, explicit supplied guide URLs must contribute readable evidence
+before a provider answer can run. When none does, the module returns
+`result.ok: false` with `GAMING_SOURCE_UNREADABLE` if a supplied document was
+obtained but rejected, or `GAMING_SOURCE_UNAVAILABLE` if none was obtained.
+The outer dispatcher may still return HTTP 200 and `ok: true`; inspect the
+module result. No general-knowledge completion substitutes for a failed
+explicit guide. The existing frontend current-evidence retry response remains
+an explicit evidence request and does not imply the candidates were read.
+
+`data.grounding` on retrieval responses and `error.details.grounding` on source
+failures distinguish `grounded`, `insufficient_evidence`, and `unavailable`.
+The summary reports requested supplied URLs, fetched live documents (including
+the in-process document cache), fetched supplied documents, usable/citable sources, selected
+chunks, supplied evidence sources, and `groundedInSuppliedEvidence`. Metadata
+requests are not guide documents. Grounding describes admitted evidence;
+it does not certify full-book coverage or every generated claim.
+Usable source and chunk counts can also include the existing stored Gaming
+evidence after the explicit supplied-guide guard passes. Distinct reader URLs
+may count as separate requested URLs while resolving to one Archive evidence item.
+
+Gaming recognizes Archive.org `/details/<identifier>` items and validates their
+bounded metadata before choosing an eligible text resource deterministically.
+For representations of one original document, OCR `DjVuTXT` takes priority over
+supported plain `Text`; eligible text resources from different original documents
+are rejected as ambiguous regardless of format. Filename and original document
+provenance must match the item metadata. The resolver constructs a
+read URL only from a validated Archive storage host and the exact item directory,
+because Archive's public download endpoint redirects. Arbitrary metadata URLs
+and redirects remain forbidden. PDF, EPUB, compressed archives, and binaries
+are not parsed. Missing, malformed, oversized, restricted, or unreadable
+resources fail closed; Archive navigation HTML is not substituted for text.
+Archive acceptance is capped at 128,000 metadata bytes and 512 file entries,
+1,000,000 document bytes, and 100,000 cleaned document characters for ranking.
+The existing configured web-fetch byte cap may be stricter; selected model
+context retains its independent Gaming character budget. Only the validated
+primary metadata storage host is attempted; redirects and secondary-host retries
+are not enabled.
+Normal HTML guides retain the existing extraction and evidence-quality gates.
+Only the sanitized item URL is public; storage URLs and filenames are not
+logged or cited. Retrieval shares the existing request abort, fetch deadline,
+DNS pinning, size limits, sanitization, ranking, and cache protections.
+
+`gaming.retrieval.source.end` reports retrieval execution; `gaming.grounding.*`
+reports evidence admission. `gaming.backend.end` carries execution and grounding
+state separately; responses with `data.fallbackReason` report
+`executionOutcome: "fallback"`. `retrievedSourceCount` remains the fetched live
+document count, including cached documents, after stored evidence is merged.
+`gaming.stored_retrieval.mergedSourceCount` reports the stored sources added to
+the prompt separately. HTTP success or a completed backend execution does not
+prove that a supplied guide was used.
+
 ### GPT Access protected gateway
 - `GET /gpt-access/openapi.json` (public schema metadata)
 - `GET /gpt-access/health`

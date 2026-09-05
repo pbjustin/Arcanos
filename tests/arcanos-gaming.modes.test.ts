@@ -50,6 +50,7 @@ jest.unstable_mockModule("../src/platform/logging/structuredLogging.js", () => (
 }));
 
 const { ArcanosGaming } = await import("../src/services/arcanos-gaming.js");
+const { GamingSourceEvidenceError } = await import("../src/services/gamingModes.js");
 const { runWithRequestAbortContext } = await import("@arcanos/runtime");
 
 describe("ArcanosGaming mode routing", () => {
@@ -83,6 +84,40 @@ describe("ArcanosGaming mode routing", () => {
       },
     });
     mockEvaluateWithHRC.mockResolvedValue({ fidelity: 1, resilience: 1, verdict: "ok" });
+  });
+
+  it.each([0, 1])('preserves supplied-guide grounding failure with %i fetched sources', async (fetchedSourceCount) => {
+    const grounding = {
+      groundingStatus: fetchedSourceCount > 0 ? 'insufficient_evidence' as const : 'unavailable' as const,
+      requestedSourceCount: 1,
+      fetchedSourceCount,
+      fetchedSuppliedSourceCount: fetchedSourceCount,
+      usableSourceCount: 0,
+      citableSourceCount: 0,
+      selectedChunkCount: 0,
+      suppliedEvidenceSourceCount: 0,
+      groundedInSuppliedEvidence: false
+    };
+    mockRunGuidePipeline.mockRejectedValueOnce(new GamingSourceEvidenceError(grounding));
+    const result = await ArcanosGaming.actions.query({
+      mode: 'guide', game: 'Kingdom Hearts HD 1.5 Remix',
+      prompt: 'Use the supplied guide for the first boss.',
+      guideUrl: 'https://archive.org/details/KH1.5_guide',
+      hrc: true
+    });
+    expect(result).toEqual({
+      ok: false, route: 'gaming', mode: 'guide',
+      error: {
+        code: fetchedSourceCount > 0 ? 'GAMING_SOURCE_UNREADABLE' : 'GAMING_SOURCE_UNAVAILABLE',
+        message: expect.any(String), details: { grounding }
+      }
+    });
+    expect(mockEvaluateWithHRC).not.toHaveBeenCalled();
+    expect(mockLogger.info).not.toHaveBeenCalledWith('gaming.backend.success', expect.anything());
+    expect(mockLogger.info).not.toHaveBeenCalledWith('gaming.backend.end', expect.anything());
+    expect(mockLogger.warn).toHaveBeenCalledWith('gaming.backend.failure', expect.objectContaining({
+      errorCode: fetchedSourceCount > 0 ? 'GAMING_SOURCE_UNREADABLE' : 'GAMING_SOURCE_UNAVAILABLE'
+    }));
   });
 
   it("routes guide mode to the guide pipeline only", async () => {

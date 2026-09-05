@@ -182,6 +182,8 @@ export interface NativePrPreviewE2eContract {
   readonly gaming: Readonly<{
     canaryPath: '/gpt/arcanos-gaming/canary';
     queryPath: '/gpt/arcanos-gaming';
+    proofHeader: 'x-arcanos-preview-gaming-archive-grounding-version';
+    proofVersion: 'gaming-archive-grounding/v1';
     game: 'Palworld';
     fixtures: Readonly<{
       guide: 'sealed-preview-guide';

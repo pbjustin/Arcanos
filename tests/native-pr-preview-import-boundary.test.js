@@ -474,6 +474,25 @@ describe('native PR preview import boundary', () => {
     );
   });
 
+  it.each([
+    'src/shared/gaming/gamingArchiveResourceCore.ts',
+    'src/shared/gaming/gamingArchivePreviewFixture.ts',
+    'src/shared/gaming/gamingGrounding.ts',
+  ])('pins the reviewed Gaming preview core %s', async (filePath) => {
+    const sourceText = await readNormalizedSource(new URL(`../${filePath}`, import.meta.url));
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).toContain(filePath);
+    expect(findUnsafeRuntimeSyntax(filePath, sourceText)).toEqual([]);
+    expect(findUnsafeRuntimeSyntax(filePath, `${sourceText}\nexport const previewPolicyDrift = true;\n`)).toEqual(
+      expect.arrayContaining([expect.stringContaining('critical entry file semantic digest')])
+    );
+    for (const forbidden of [
+      'src/services/gamingArchiveResources.ts', 'src/services/gamingPipeline.ts',
+      'src/services/gamingWebContext.ts', 'src/shared/webFetcher.ts',
+    ]) {
+      expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toContain(forbidden);
+    }
+  });
+
   it('admits and pins the pure Trinity reasoning provider policy', async () => {
     const filePath = 'src/shared/gpt/trinityReasoningPolicy.ts';
     const sourceText = await readNormalizedSource(

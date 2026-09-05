@@ -203,9 +203,38 @@ describe('ArcanosGaming module', () => {
       mode: 'guide',
       confidence: expect.any(Number),
     }));
-    expect(mockLogger.info).toHaveBeenCalledWith('gaming.backend.success', expect.objectContaining({
+    expect(mockLogger.info).toHaveBeenCalledWith('gaming.backend.end', expect.objectContaining({
       mode: 'guide',
       confidence: expect.any(Number),
+      executionOutcome: 'completed',
+      groundedInSuppliedEvidence: false,
+    }));
+  });
+
+  it('logs a successful deterministic backend fallback as fallback execution', async () => {
+    runGuidePipelineSpy.mockResolvedValueOnce({
+      ok: true,
+      route: 'gaming',
+      mode: 'guide',
+      data: {
+        response: 'Prepare healing items and check the nearest checkpoint before retrying the boss.',
+        sources: [],
+        fallbackReason: 'GAMING_PROVIDER_UNAVAILABLE',
+      },
+    });
+
+    const result = await ArcanosGaming.actions.query({
+      mode: 'guide',
+      prompt: 'How do I beat the temple boss?',
+    });
+
+    expect(result).toMatchObject({ ok: true, data: { fallbackReason: 'GAMING_PROVIDER_UNAVAILABLE' } });
+    expect(mockLogger.info).toHaveBeenCalledWith('gaming.backend.end', expect.objectContaining({
+      executionOutcome: 'fallback',
+      groundedInSuppliedEvidence: false,
+    }));
+    expect(mockLogger.info).not.toHaveBeenCalledWith('gaming.backend.end', expect.objectContaining({
+      executionOutcome: 'completed',
     }));
   });
 
