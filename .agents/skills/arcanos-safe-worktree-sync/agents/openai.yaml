@@ -1,0 +1,3 @@
+interface:
+  display_name: "ARCANOS Safe Worktree Sync"
+  short_description: "Sync checkouts while preserving local work"
