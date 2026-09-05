@@ -169,6 +169,23 @@ describe('bounded Gaming Archive resource resolution with the real web extractor
     await expect(resolveGamingArchiveResource(gamingArchiveGuideUrl, 5000)).rejects.toMatchObject({ code: 'GAMING_ARCHIVE_AMBIGUOUS_DOCUMENTS' });
   });
 
+  it.each(['Text', 'Plain Text'])('rejects a competing %s manual even when OCR has higher format priority', async (format) => {
+    const metadata = gamingArchiveMetadata();
+    metadata.files.push({ name: 'Other Manual.txt', source: 'original', format, size: '1000' });
+    serve(metadata);
+    await expect(resolveGamingArchiveResource(gamingArchiveGuideUrl, 5000)).rejects.toMatchObject({ code: 'GAMING_ARCHIVE_AMBIGUOUS_DOCUMENTS' });
+    expect(mockAxiosGet).toHaveBeenCalledTimes(1);
+  });
+
+  it('prefers OCR over a plain-text derivative of the same manual', async () => {
+    const metadata = gamingArchiveMetadata();
+    metadata.files.push({ name: '000 Plain Text.txt', source: 'derivative', original: '001 Combine.pdf', format: 'Text', size: '1000' });
+    serve(metadata);
+    const result = await resolveGamingArchiveResource(gamingArchiveGuideUrl, 5000);
+    expect(result?.resolution.archiveSelectionReason).toBe('archive_djvu_text');
+    expect(mockAxiosGet.mock.calls[1][0]).toBe(`https://93.184.216.34${gamingArchiveDerivativePath}`);
+  });
+
   it('breaks equivalent derivative ties by code-point filename independent of metadata ordering', async () => {
     const metadata = gamingArchiveMetadata();
     metadata.files.push({ ...metadata.files[5], name: '000 OCR.txt' });

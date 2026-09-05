@@ -511,6 +511,9 @@ describe('gaming RAG snippet quality', () => {
       snippet: 'Structured build resource detected, but the loadout data could not be decoded safely.'
     }]);
     expect(result.context).toContain('could not be decoded safely');
+    expect(result.sources.some(isCitableGamingWebSource)).toBe(false);
+    expect(result.selectedChunkCount).toBe(0);
+    expect(result.acceptedSuppliedSourceCount).toBe(0);
     expect(JSON.stringify(result)).not.toContain(rawPayload);
     expect(JSON.stringify(result)).not.toMatch(/SyntaxError|Unexpected token/i);
   });

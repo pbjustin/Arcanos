@@ -1514,8 +1514,10 @@ may count as separate requested URLs while resolving to one Archive evidence ite
 
 Gaming recognizes Archive.org `/details/<identifier>` items and validates their
 bounded metadata before choosing an eligible text resource deterministically.
-OCR `DjVuTXT` takes priority over supported plain `Text`; filename and original
-document provenance must match the item metadata. The resolver constructs a
+For representations of one original document, OCR `DjVuTXT` takes priority over
+supported plain `Text`; eligible text resources from different original documents
+are rejected as ambiguous regardless of format. Filename and original document
+provenance must match the item metadata. The resolver constructs a
 read URL only from a validated Archive storage host and the exact item directory,
 because Archive's public download endpoint redirects. Arbitrary metadata URLs
 and redirects remain forbidden. PDF, EPUB, compressed archives, and binaries

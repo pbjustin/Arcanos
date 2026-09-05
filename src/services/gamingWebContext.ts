@@ -216,9 +216,15 @@ const MAX_PUBLIC_GAMING_SOURCES = 8;
 const MAX_PUBLIC_SNIPPET_CHARS = 600;
 const LIMITED_ARTICLE_TEXT_SNIPPET = "Relevant source retrieved, but readable article text was limited.";
 const LIMITED_ARTICLE_CONTEXT_NOTE = "[No readable article evidence was extracted from this source.]";
+const STRUCTURED_RESOURCE_DIAGNOSTIC_SNIPPETS = new Set([
+  "Structured build resource detected, but the loadout data could not be decoded safely.",
+  "Structured build resource detected, but only bounded metadata could be recovered.",
+  "Resource metadata was inspected, but no structured build data was recovered."
+]);
 
 export function isCitableGamingWebSource(source: GamingWebSource): boolean {
-  return Boolean(source.snippet && source.snippet !== LIMITED_ARTICLE_TEXT_SNIPPET);
+  return Boolean(source.snippet && source.snippet !== LIMITED_ARTICLE_TEXT_SNIPPET
+    && !STRUCTURED_RESOURCE_DIAGNOSTIC_SNIPPETS.has(source.snippet));
 }
 
 const GENERIC_CONTENT_SELECTORS = [
@@ -2788,7 +2794,7 @@ function buildRagContext(
   orderedChunks.forEach((chunk) => {
     const sourceNumber = sourceNumberByUrl.get(chunk.candidate.url);
     const source = sourceNumber ? sources[sourceNumber - 1] : undefined;
-    if (!sourceNumber || source?.snippet === LIMITED_ARTICLE_TEXT_SNIPPET) {
+    if (!sourceNumber || !source || !isCitableGamingWebSource(source)) {
       return;
     }
     const domain = normalizeDomain(chunk.candidate.url);
@@ -2816,10 +2822,12 @@ function buildRagContext(
   });
 
   sources.forEach((source, index) => {
-    if (source.snippet !== LIMITED_ARTICLE_TEXT_SNIPPET) {
+    if (!source.snippet || isCitableGamingWebSource(source)) {
       return;
     }
-    parts.push("", `[Source ${index + 1}] ${source.url}`, LIMITED_ARTICLE_CONTEXT_NOTE);
+    // Controlled extraction diagnostics remain visible without becoming evidence.
+    parts.push("", `[Source ${index + 1}] ${source.url}`,
+      source.snippet === LIMITED_ARTICLE_TEXT_SNIPPET ? LIMITED_ARTICLE_CONTEXT_NOTE : source.snippet);
   });
 
   return {

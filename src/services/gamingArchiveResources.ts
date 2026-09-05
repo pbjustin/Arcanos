@@ -113,7 +113,7 @@ function selectTextCandidate(files: Map<string, ArchiveFile>): TextCandidate {
   if (candidates.length === 0) throw new GamingArchiveResolutionError("NO_READABLE_DERIVATIVE");
   const best = candidates[0];
   // A collection containing different manuals cannot be disambiguated from an item URL alone.
-  if (candidates.some((candidate) => candidate.priority === best.priority && candidate.root !== best.root)) {
+  if (candidates.some((candidate) => candidate.root !== best.root)) {
     throw new GamingArchiveResolutionError("AMBIGUOUS_DOCUMENTS");
   }
   return best;

@@ -167,12 +167,15 @@ describe('Archive guide document reaches the Gaming provider and HTTP envelope',
     expect(successLog).not.toHaveBeenCalledWith('gaming.grounding.success', expect.anything());
   });
 
-  it.each(['malformed', '404', 'timeout', 'no_derivative'])('returns a controlled source failure for Archive %s', async (failure) => {
+  it.each(['malformed', '404', 'timeout', 'no_derivative', 'ambiguous_manuals'])('returns a controlled source failure for Archive %s', async (failure) => {
     if (failure === '404' || failure === 'timeout') {
       mockAxiosGet.mockRejectedValue(Object.assign(new Error('Synthetic HTTP failure'), { code: failure === 'timeout' ? 'ETIMEDOUT' : 'ERR_BAD_REQUEST' }));
     } else {
       const metadata = gamingArchiveMetadata();
       if (failure === 'no_derivative') metadata.files = [];
+      if (failure === 'ambiguous_manuals') {
+        metadata.files.push({ name: 'Other Manual.txt', source: 'original', format: 'Text', size: '1000' });
+      }
       mockAxiosGet.mockResolvedValue({ data: failure === 'malformed' ? '{broken' : JSON.stringify(metadata), headers: { 'content-type': 'application/json' } });
     }
     const response = await query();

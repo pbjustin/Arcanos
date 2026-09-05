@@ -2094,6 +2094,27 @@ describe('gaming guide output hardening', () => {
     expect(mockRunTrinityWritingPipeline).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['undecodable', '{malformed-guide-payload'],
+    ['metadata-only', JSON.stringify({ title: 'Shared build guide' })]
+  ])('rejects %s structured guide placeholders before provider invocation', async (_label, payload) => {
+    process.env.ARCANOS_GAMING_WEB_CONTEXT_CHARS = '2048';
+    mockFetchAndClean.mockResolvedValue('');
+    await expect(runGuidePipeline({
+      prompt: 'Use the supplied guide to explain the build.',
+      guideUrl: `https://unknown-planner.example/build-planner/share?build=${encodeURIComponent(payload)}`,
+      guideUrls: [], auditEnabled: false
+    })).rejects.toMatchObject({
+      code: 'GAMING_SOURCE_UNREADABLE',
+      grounding: {
+        groundingStatus: 'insufficient_evidence', fetchedSourceCount: 1,
+        fetchedSuppliedSourceCount: 1, usableSourceCount: 0, citableSourceCount: 0,
+        selectedChunkCount: 0, suppliedEvidenceSourceCount: 0, groundedInSuppliedEvidence: false
+      }
+    });
+    expect(mockRunTrinityWritingPipeline).not.toHaveBeenCalled();
+  });
+
   it.each(['0', '64', '180'])('does not count source headers as evidence with a %s character context budget', async (maxContextChars) => {
     process.env.ARCANOS_GAMING_WEB_CONTEXT_CHARS = maxContextChars;
     mockFetchAndClean.mockResolvedValue('Kingdom Hearts HD 1.5 Remix guide: collect potions, guard against the boss attack, and strike only during recovery windows.');
