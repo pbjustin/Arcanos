@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-04T05:39:16.855Z",
+  "generatedAt": "2026-09-05T04:39:22.077Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -1842,6 +1842,9 @@
         },
         {
           "relativePath": "src/services/gamingAgents.ts"
+        },
+        {
+          "relativePath": "src/services/gamingArchiveResources.ts"
         },
         {
           "relativePath": "src/services/gamingBuildResources.ts"
@@ -3886,6 +3889,18 @@
           "relativePath": "tests/gaming-agents.routing.test.ts"
         },
         {
+          "relativePath": "tests/gaming-archive-provider-http.integration.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-archive-rag.integration.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-archive-resources.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-grounding-response.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-ingress-audit.test.ts"
         },
         {
@@ -4889,6 +4904,9 @@
         },
         {
           "relativePath": "tests/test-stateless-pr.ts"
+        },
+        {
+          "relativePath": "tests/testUtils/gamingArchiveFixtures.ts"
         },
         {
           "relativePath": "tests/testUtils/gamingStructuredResourceFixtures.ts"

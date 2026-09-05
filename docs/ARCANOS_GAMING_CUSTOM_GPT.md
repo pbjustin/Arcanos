@@ -142,6 +142,10 @@ Call `queryArcanosGaming` directly and do not invoke Web Search unless current e
 
 For a one-off gameplay answer, pass the supplied URL through `url`, `urls`, `guideUrl`, or `guideUrls` in the single `queryArcanosGaming` call. For an explicit request to ingest, add, store, or remember the source, call `ingestGamingSources` instead with the URL in `payload.sourceUrls`, `origin: "user_supplied"`, and a request-specific `idempotencyKey`.
 
+Archive.org `/details/<identifier>` guide links resolve through bounded item metadata to a readable text derivative before the normal Gaming evidence checks. A reached landing page alone does not establish that a guide was read. When an explicit guide has no usable supplied evidence, report the returned `GAMING_SOURCE_UNREADABLE` or `GAMING_SOURCE_UNAVAILABLE` module error without composing a gameplay answer. HTTP 200 can carry `result.ok: false`.
+
+Successful responses include `data.grounding` when retrieval runs; controlled source errors include `error.details.grounding`. Check `groundedInSuppliedEvidence` before describing an answer as supported by the supplied guide. `groundingStatus: grounded` describes selected evidence, not full-book coverage or a guarantee that every answer claim is correct.
+
 ### GPT-discovered sources for ingestion
 
 When the user explicitly asks to find and ingest sources, use Web Search only to collect one to four public HTTPS candidate URLs. Call `ingestGamingSources` once with those URLs, `origin: "gpt_web_search"`, and a request-specific `idempotencyKey`. Do not send search snippets or page contents. Poll `getGamingSourceIngestionStatus` with the returned `ingestionId` before claiming that the sources are stored.
