@@ -211,6 +211,33 @@ describe('ArcanosGaming module', () => {
     }));
   });
 
+  it('logs a successful deterministic backend fallback as fallback execution', async () => {
+    runGuidePipelineSpy.mockResolvedValueOnce({
+      ok: true,
+      route: 'gaming',
+      mode: 'guide',
+      data: {
+        response: 'Prepare healing items and check the nearest checkpoint before retrying the boss.',
+        sources: [],
+        fallbackReason: 'GAMING_PROVIDER_UNAVAILABLE',
+      },
+    });
+
+    const result = await ArcanosGaming.actions.query({
+      mode: 'guide',
+      prompt: 'How do I beat the temple boss?',
+    });
+
+    expect(result).toMatchObject({ ok: true, data: { fallbackReason: 'GAMING_PROVIDER_UNAVAILABLE' } });
+    expect(mockLogger.info).toHaveBeenCalledWith('gaming.backend.end', expect.objectContaining({
+      executionOutcome: 'fallback',
+      groundedInSuppliedEvidence: false,
+    }));
+    expect(mockLogger.info).not.toHaveBeenCalledWith('gaming.backend.end', expect.objectContaining({
+      executionOutcome: 'completed',
+    }));
+  });
+
   it('returns a structured non-gaming error when no gameplay prompt is supplied', async () => {
     await expect(ArcanosGaming.actions.query({ url: 'https://example.com' } as any)).resolves.toEqual({
       ok: false,

@@ -457,7 +457,7 @@ async function handleGamingRequest(payload: unknown): Promise<GamingEnvelope> {
       mode: gamingIntent.mode,
       confidence: gamingIntent.confidence,
       sourceCount: backendEnvelope.data.sources.length,
-      executionOutcome: "completed",
+      executionOutcome: backendEnvelope.data.fallbackReason ? "fallback" : "completed",
       groundingStatus: backendEnvelope.data.grounding?.groundingStatus ?? "unavailable",
       groundedInSuppliedEvidence: backendEnvelope.data.grounding?.groundedInSuppliedEvidence ?? false,
       ...(backendEnvelope.data.grounding ? { grounding: backendEnvelope.data.grounding } : {})

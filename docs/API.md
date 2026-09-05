@@ -1536,8 +1536,12 @@ DNS pinning, size limits, sanitization, ranking, and cache protections.
 
 `gaming.retrieval.source.end` reports retrieval execution; `gaming.grounding.*`
 reports evidence admission. `gaming.backend.end` carries execution and grounding
-state separately. HTTP success or a completed backend execution does not prove
-that a supplied guide was used.
+state separately; responses with `data.fallbackReason` report
+`executionOutcome: "fallback"`. `retrievedSourceCount` remains the fetched live
+document count, including cached documents, after stored evidence is merged.
+`gaming.stored_retrieval.mergedSourceCount` reports the stored sources added to
+the prompt separately. HTTP success or a completed backend execution does not
+prove that a supplied guide was used.
 
 ### GPT Access protected gateway
 - `GET /gpt-access/openapi.json` (public schema metadata)

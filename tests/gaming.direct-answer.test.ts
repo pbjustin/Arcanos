@@ -1024,6 +1024,54 @@ describe('gaming guide output hardening', () => {
     expect(mockRunTrinityWritingPipeline).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['stored-only', false, false, 0, 1],
+    ['mixed live and stored', true, false, 1, 1],
+    ['deduplicated stored', true, true, 1, 0]
+  ] as const)('keeps live retrieval telemetry consistent for %s evidence', async (_label, hasLiveSource, sameUrl, fetchedSourceCount, mergedSourceCount) => {
+    process.env.ARCANOS_GAMING_WEB_CONTEXT_CHARS = '2048';
+    const liveUrl = 'https://example.com/clockwork-live-guide';
+    mockFetchAndClean.mockResolvedValue('Clockwork Odyssey guide: collect healing supplies before the boss fight and attack only during safe recovery windows.');
+    mockBuildStoredGamingKnowledgeContext.mockResolvedValueOnce({
+      context: '',
+      sources: [{
+        url: sameUrl ? liveUrl : 'https://example.com/clockwork-stored-guide',
+        sourceType: 'curated',
+        fetchedAt: '2024-01-01T00:00:00.000Z',
+        snippet: 'Use stored route notes to locate the checkpoint before the boss fight.'
+      }]
+    });
+    const infoSpy = jest.spyOn(logger, 'info').mockImplementation(() => undefined);
+    try {
+      const result = await runGuidePipeline({
+        game: 'Clockwork Odyssey', prompt: 'Explain the safe beginner route.',
+        ...(hasLiveSource ? { guideUrl: liveUrl } : {}),
+        guideUrls: [], auditEnabled: false
+      });
+
+      expect(mockFetchAndClean).toHaveBeenCalledTimes(fetchedSourceCount);
+      expect(result.data.grounding).toMatchObject({
+        fetchedSourceCount,
+        usableSourceCount: fetchedSourceCount + mergedSourceCount,
+        selectedChunkCount: fetchedSourceCount + mergedSourceCount
+      });
+      expect(infoSpy).toHaveBeenCalledWith('gaming.intake.step', expect.objectContaining({
+        step: 'retrieval', retrievedSourceCount: fetchedSourceCount
+      }));
+      for (const event of ['gaming.postprocess.start', 'gaming.postprocess.end']) {
+        expect(infoSpy).toHaveBeenCalledWith(event, expect.objectContaining({
+          retrievedSourceCount: fetchedSourceCount,
+          publicSourceCount: fetchedSourceCount + mergedSourceCount
+        }));
+      }
+      expect(infoSpy).toHaveBeenCalledWith('gaming.stored_retrieval', expect.objectContaining({
+        sourceCount: 1, mergedSourceCount
+      }));
+    } finally {
+      infoSpy.mockRestore();
+    }
+  });
+
   it('does not treat a recent stored fetch as current-version evidence by itself', async () => {
     mockBuildStoredGamingKnowledgeContext.mockResolvedValueOnce({
       context: '',

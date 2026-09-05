@@ -673,6 +673,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
   let sources: GamingWebSource[] = [];
   let retrievalAttempted = guideUrls.length > 0;
   let retrievalHadUsableSources = false;
+  // Keep live document retrieval distinct from stored-source merge telemetry.
   let retrievedSourceCount = 0;
   let publicSourceCount = 0;
   let omittedSourceCount = 0;
@@ -891,7 +892,6 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
         sources = [...sources, ...storedSources];
         retrievalAttempted = true;
         retrievalHadUsableSources = true;
-        retrievedSourceCount += storedSources.length;
         selectedChunkCount += storedSources.length;
         publicSourceCount = sources.length;
         if (hasCurrentStoredGamingEvidence(uniqueStoredSources, resolvedParams)) {
