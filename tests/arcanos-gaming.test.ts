@@ -203,9 +203,11 @@ describe('ArcanosGaming module', () => {
       mode: 'guide',
       confidence: expect.any(Number),
     }));
-    expect(mockLogger.info).toHaveBeenCalledWith('gaming.backend.success', expect.objectContaining({
+    expect(mockLogger.info).toHaveBeenCalledWith('gaming.backend.end', expect.objectContaining({
       mode: 'guide',
       confidence: expect.any(Number),
+      executionOutcome: 'completed',
+      groundedInSuppliedEvidence: false,
     }));
   });
 

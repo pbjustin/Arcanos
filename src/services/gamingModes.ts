@@ -55,12 +55,38 @@ export type GamingError = {
   details?: unknown;
 };
 
+export type GamingGrounding = {
+  groundingStatus: "grounded" | "insufficient_evidence" | "unavailable";
+  requestedSourceCount: number;
+  fetchedSourceCount: number;
+  fetchedSuppliedSourceCount: number;
+  usableSourceCount: number;
+  citableSourceCount: number;
+  selectedChunkCount: number;
+  suppliedEvidenceSourceCount: number;
+  groundedInSuppliedEvidence: boolean;
+};
+
+export class GamingSourceEvidenceError extends Error {
+  readonly code: "GAMING_SOURCE_UNREADABLE" | "GAMING_SOURCE_UNAVAILABLE";
+
+  constructor(readonly grounding: GamingGrounding) {
+    const reachedSource = grounding.fetchedSuppliedSourceCount > 0;
+    super(reachedSource
+      ? "The supplied source was reached, but no sufficiently reliable readable guide evidence could be extracted."
+      : "The supplied guide evidence could not be retrieved safely. No guide-grounded answer was generated.");
+    this.name = "GamingSourceEvidenceError";
+    this.code = reachedSource ? "GAMING_SOURCE_UNREADABLE" : "GAMING_SOURCE_UNAVAILABLE";
+  }
+}
+
 export type GamingSuccessEnvelope = {
   ok: true;
   route: "gaming";
   mode: GamingMode;
   data: {
     response: string;
+    grounding?: GamingGrounding;
     sources: Array<{
       url: string;
       snippet?: string;

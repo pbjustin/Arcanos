@@ -813,6 +813,45 @@ describe('gaming RAG snippet quality', () => {
   });
 
   it.each([
+    'Kingdom Hearts HD 1.5 Remix.',
+    'Kingdom Hearts HD 1.5 Remix Guide.',
+    'Kingdom Hearts HD 1.5 Remix Build Weapon Manual.',
+    'Kingdom Hearts HD 1.5 Remix beginner build and weapon manual for the complete walkthrough.',
+    'How to use weapons in the Kingdom Hearts HD 1.5 Remix complete walkthrough.'
+  ])('rejects catalog-only metadata even when its title matches gameplay terms: %s', async (title) => {
+    const text = `${title} Identifier KH1.5_guide. Addeddate. Reviews. Download Options.`;
+    mockFetchedHtml({ title: 'Internet Archive', text });
+    const result = await buildGamingRagContext({
+      mode: 'guide', game: 'Kingdom Hearts HD 1.5 Remix',
+      prompt: 'Use the supplied guide for the first boss.',
+      guideUrl: 'https://example.com/catalog', guideUrls: []
+    });
+    expect(scoreGamingSnippetQuality(text).passed).toBe(false);
+    expect(result.retrievedSourceCount).toBe(1);
+    expect(result.acceptedSuppliedSourceCount).toBe(0);
+    expect(result.selectedChunkCount).toBe(0);
+    expect(result.sources.filter(isCitableGamingWebSource)).toHaveLength(0);
+    expect(result.context).not.toContain('Identifier');
+  });
+
+  it('preserves real gameplay prose beside catalog metadata without lowering quality thresholds', async () => {
+    const text = [
+      'Kingdom Hearts HD 1.5 Remix. Identifier KH1.5_guide. Addeddate. Reviews. Download Options.',
+      'To defeat the Guard Armor boss, lock onto the feet and dodge its spinning attacks before striking during recovery.'
+    ].join(' ');
+    mockFetchedHtml({ title: 'Internet Archive', text });
+    const result = await buildGamingRagContext({
+      mode: 'guide', game: 'Kingdom Hearts HD 1.5 Remix',
+      prompt: 'Use the supplied guide to defeat the Guard Armor boss.',
+      guideUrl: 'https://example.com/catalog', guideUrls: []
+    });
+    expect(scoreGamingSnippetQuality(text).passed).toBe(true);
+    expect(result.acceptedSuppliedSourceCount).toBe(1);
+    expect(result.selectedChunkCount).toBeGreaterThan(0);
+    expect(result.context).toContain('dodge its spinning attacks');
+  });
+
+  it.each([
     [Object.assign(new Error('secret upstream 401 body'), { response: { status: 401 } }), 'Source access was blocked.'],
     [Object.assign(new Error('secret upstream 403 body'), { response: { status: 403 } }), 'Source access was blocked.'],
     [new Error('Unsupported content type for web fetching: application/pdf'), 'Source content type is unsupported.'],

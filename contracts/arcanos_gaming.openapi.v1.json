@@ -58,7 +58,7 @@
         },
         "responses": {
           "200": {
-            "description": "Gaming result, including a controlled evidence request when current evidence is unavailable.",
+            "description": "Gaming module result. Explicit supplied guides without usable evidence return result.ok=false with GAMING_SOURCE_UNREADABLE or GAMING_SOURCE_UNAVAILABLE; HTTP success alone does not establish grounding.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1838,6 +1838,36 @@
           }
         }
       },
+      "GamingGrounding": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Evidence admitted to the provider context. Requested counts describe supplied URLs; fetched counts describe documents, not metadata HTTP calls. Grounded does not establish full-document coverage or answer correctness.",
+        "required": [
+          "groundingStatus",
+          "requestedSourceCount",
+          "fetchedSourceCount",
+          "fetchedSuppliedSourceCount",
+          "usableSourceCount",
+          "citableSourceCount",
+          "selectedChunkCount",
+          "suppliedEvidenceSourceCount",
+          "groundedInSuppliedEvidence"
+        ],
+        "properties": {
+          "groundingStatus": {
+            "type": "string",
+            "enum": ["grounded", "insufficient_evidence", "unavailable"]
+          },
+          "requestedSourceCount": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+          "fetchedSourceCount": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+          "fetchedSuppliedSourceCount": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+          "usableSourceCount": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+          "citableSourceCount": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+          "selectedChunkCount": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+          "suppliedEvidenceSourceCount": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+          "groundedInSuppliedEvidence": { "type": "boolean" }
+        }
+      },
       "GamingResponseData": {
         "type": "object",
         "additionalProperties": true,
@@ -1869,6 +1899,9 @@
           },
           "evidenceRequest": {
             "$ref": "#/components/schemas/GamingEvidenceRequest"
+          },
+          "grounding": {
+            "$ref": "#/components/schemas/GamingGrounding"
           }
         }
       },

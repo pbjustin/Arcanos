@@ -76,6 +76,8 @@ export type GamingRagContext = GamingWebContext & {
   retrievalReason: string;
   retrievalQuery: string;
   retrievedSourceCount: number;
+  fetchedSuppliedSourceCount: number;
+  selectedChunkCount: number;
   publicSourceCount: number;
   omittedSourceCount: number;
   sourceDomains: string[];
@@ -1296,7 +1298,8 @@ function normalizeCacheUrl(url: string): string {
 function gamingSourceDedupeKey(url: string): string {
   const normalized = normalizeCacheUrl(url);
   // Archive identifiers are case sensitive; preserve their identity through deduplication.
-  return recognizeGamingArchiveItem(url) ? normalized : normalized.toLowerCase();
+  const archiveIdentifier = recognizeGamingArchiveItem(url);
+  return archiveIdentifier ? `https://archive.org/details/${archiveIdentifier}` : normalized.toLowerCase();
 }
 
 function detectGameFromRagInput(input: GamingRagInput): GamingGameDetection {
@@ -1899,7 +1902,7 @@ async function fetchGamingRagDocument(
 ): Promise<GamingFetchedDocument | GamingWebSource> {
   const fetchUrl = candidate.fetchUrl;
   const sourceUrl = candidate.url;
-  const archiveSource = normalizeDomain(fetchUrl) === "archive.org";
+  const archiveSource = ["archive.org", "www.archive.org"].includes(normalizeDomain(fetchUrl));
   const untrustedEvidenceCandidate = candidate.untrustedCandidate === true;
   const strictEvidenceCandidate = untrustedEvidenceCandidate && candidate.requiresFreshness === true;
   const preparedResource = prepareGamingResourceUrl(fetchUrl);
@@ -1914,9 +1917,13 @@ async function fetchGamingRagDocument(
     || isStructuredGamingResourceType(preliminaryClassification.type)
   );
   const contentTermKey = createHash("sha256").update(contentTerms.join("\n")).digest("hex").slice(0, 16);
-  const cacheUrlKey = createHash("sha256").update(normalizeCacheUrl(fetchUrl)).digest("hex");
-  const payloadCacheKey = preparedResource?.payloadHash.slice(0, 24) ?? "invalid-resource";
-  const archiveCachePolicy = recognizeGamingArchiveItem(fetchUrl) ? `:archive:${GAMING_ARCHIVE_RESOLVER_VERSION}` : "";
+  const archiveIdentifier = recognizeGamingArchiveItem(fetchUrl);
+  const archiveIdentity = archiveIdentifier ? `https://archive.org/details/${archiveIdentifier}` : undefined;
+  const cacheUrlKey = createHash("sha256").update(archiveIdentity ?? normalizeCacheUrl(fetchUrl)).digest("hex");
+  const payloadCacheKey = archiveIdentity
+    ? createHash("sha256").update(archiveIdentity).digest("hex").slice(0, 24)
+    : preparedResource?.payloadHash.slice(0, 24) ?? "invalid-resource";
+  const archiveCachePolicy = archiveIdentity ? `:archive:${GAMING_ARCHIVE_RESOLVER_VERSION}` : "";
   const cacheKey = `${cacheUrlKey}#gaming-rag:${contentTermKey}:payload:${payloadCacheKey}:origin:${strictEvidenceCandidate ? "current-candidate" : untrustedEvidenceCandidate ? "supplied" : "curated"}${archiveCachePolicy}`;
   const cached = documentCache.get(cacheKey);
   const now = Date.now();
@@ -2297,6 +2304,20 @@ const NON_TOPICAL_QUERY_TERMS = new Set([
   "about", "and", "best", "create", "current", "for", "from", "give", "help", "into", "latest", "look", "need", "please", "recommend", "show", "the", "use", "using", "want", "with"
 ]);
 
+function isGamingCatalogMetadataOnly(text: string): boolean {
+  const catalogLabels = text.match(/\b(?:identifier|addeddate|download options|scanner|isbn|publication date|publisher)\b/gi) ?? [];
+  if (catalogLabels.length < 2) {
+    return false;
+  }
+  // A title or catalog label can overlap the requested game without describing
+  // gameplay. Preserve catalog pages only when they also contain gameplay prose.
+  return !text.split(/(?<=[.!?])\s+/).some((sentence) =>
+    GAMEPLAY_CONTENT_PATTERN.test(sentence)
+    && tokenize(sentence).length >= 8
+    && /(?:^(?:(?:first|next|then)[,:]?\s+)?(?:to\s+)?|\b(?:should|must|can|then)\s+)(?:attack|avoid|block|collect|defeat|dodge|equip|explore|follow|gather|heal|jump|move|open|press|restore|save|select|spend|upgrade|use|wait)\b/i.test(sentence.trim())
+  );
+}
+
 function clampScore(value: number): number {
   return Math.max(0, Math.min(1, value));
 }
@@ -2449,7 +2470,7 @@ export function scoreGamingSnippetQuality(
   );
   return {
     score,
-    passed: wordCount >= 4 && proseSignal && keywordDumpPenalty < 0.35 && score >= MIN_SNIPPET_QUALITY_SCORE && malformedPenalty < 0.35 && instructionPenalty < 0.35 && density < 0.62,
+    passed: !isGamingCatalogMetadataOnly(normalized) && wordCount >= 4 && proseSignal && keywordDumpPenalty < 0.35 && score >= MIN_SNIPPET_QUALITY_SCORE && malformedPenalty < 0.35 && instructionPenalty < 0.35 && density < 0.62,
     readability,
     queryOverlap,
     gameOverlap,
@@ -2746,9 +2767,11 @@ function buildRagContext(
   sources: GamingWebSource[],
   retrievalQuery: string,
   maxContextChars: number
-): string {
+): { context: string; selectedChunkCount: number; selectedSourceUrls: Set<string> } {
+  const selectedSourceUrls = new Set<string>();
+  let selectedChunkCount = 0;
   if (sources.length === 0) {
-    return "";
+    return { context: "", selectedChunkCount, selectedSourceUrls };
   }
 
   const sourceNumberByUrl = buildSourceNumberByUrl(sources);
@@ -2776,12 +2799,20 @@ function buildRagContext(
     const freshnessNote = chunk.candidate.discovered && !chunk.candidate.stable
       ? `; Freshness: ${chunk.candidate.updatedAt ?? chunk.candidate.publishedAt ?? "date unavailable; latest status unverified"}`
       : "";
-    parts.push(
-      "",
-      `[Source ${sourceNumber}] ${chunk.candidate.url}`,
-      `Title: ${chunk.candidate.title}; Domain: ${domain}; Type: ${chunk.candidate.sourceType}; Trust: ${chunk.candidate.trustScore.toFixed(2)}${freshnessNote}`,
-      evidenceText
-    );
+    const header = [
+      "", `[Source ${sourceNumber}] ${chunk.candidate.url}`,
+      `Title: ${chunk.candidate.title}; Domain: ${domain}; Type: ${chunk.candidate.sourceType}; Trust: ${chunk.candidate.trustScore.toFixed(2)}${freshnessNote}`
+    ];
+    const availableChars = maxContextChars - [...parts, ...header, ""].join("\n").length;
+    // A source header alone is not evidence. Count only readable text that fits
+    // the final provider context, using the existing gameplay readability test.
+    const boundedEvidence = evidenceText.slice(0, Math.max(0, availableChars)).trim();
+    if (!boundedEvidence || !isReadableGameplayChunk(boundedEvidence)) {
+      return;
+    }
+    parts.push(...header, boundedEvidence);
+    selectedChunkCount += 1;
+    selectedSourceUrls.add(chunk.candidate.url);
   });
 
   sources.forEach((source, index) => {
@@ -2791,7 +2822,11 @@ function buildRagContext(
     parts.push("", `[Source ${index + 1}] ${source.url}`, LIMITED_ARTICLE_CONTEXT_NOTE);
   });
 
-  return parts.join("\n").slice(0, Math.max(0, maxContextChars));
+  return {
+    context: parts.join("\n").slice(0, Math.max(0, maxContextChars)),
+    selectedChunkCount,
+    selectedSourceUrls
+  };
 }
 
 function extractReadableEvidenceText(text: string): string {
@@ -2807,7 +2842,7 @@ function extractReadableEvidenceText(text: string): string {
     .split(/(?<=[.!?])\s+/)
     .filter((sentence) => sentence.length > 0 && !SOURCE_INSTRUCTION_PATTERN.test(sentence));
   const safeText = sentences.join(" ").trim();
-  if (!safeText) {
+  if (!safeText || isGamingCatalogMetadataOnly(safeText)) {
     return "";
   }
   if (isReadableGameplayChunk(safeText)) {
@@ -2954,6 +2989,8 @@ function emptyRagContext(params: {
     context: "",
     sources,
     retrievedSourceCount: 0,
+    fetchedSuppliedSourceCount: 0,
+    selectedChunkCount: 0,
     publicSourceCount: sources.length,
     omittedSourceCount: 0,
     retrievalEnabled: params.enabled,
@@ -3318,17 +3355,26 @@ export async function buildGamingRagContext(
   const reservedErrorSourceCount = publicErrorSources.length > 0
     ? Math.min(publicErrorSources.length, publicSourceLimit, rankedSources.length > 0 ? 1 : publicSourceLimit)
     : 0;
-  const retainedSources = rankedSources.slice(0, Math.max(0, publicSourceLimit - reservedErrorSourceCount));
+  let retainedSources = rankedSources.slice(0, Math.max(0, publicSourceLimit - reservedErrorSourceCount));
+  let renderedContext = buildRagContext(chunks, retainedSources, effectiveRetrievalQuery, maxContextChars);
+  // Preserve metadata-only placeholders, while citations require evidence that
+  // actually survived the provider-context budget. Re-render to align numbering.
+  retainedSources = retainedSources.filter((source) =>
+    !isCitableGamingWebSource(source) || renderedContext.selectedSourceUrls.has(source.url)
+  );
+  renderedContext = buildRagContext(chunks, retainedSources, effectiveRetrievalQuery, maxContextChars);
   const returnedSources = [
     ...retainedSources,
     ...publicErrorSources.slice(0, reservedErrorSourceCount)
   ];
-  const context = buildRagContext(chunks, retainedSources, effectiveRetrievalQuery, maxContextChars);
+  const context = renderedContext.context;
   const rankingElapsedMs = Date.now() - rankingStartedAt;
   const sourceDomains = sourceDomainsFromSources(returnedSources);
   const cacheHit = documents.some((document) => document.cacheHit);
   const fallbackReason = documents.length === 0 && timedOut ? "INTAKE_RETRIEVAL_TIMEOUT" : undefined;
   const retrievedSourceCount = documents.length;
+  const fetchedSuppliedSourceCount = documents.filter((document) => document.candidate.supplied).length;
+  const selectedChunkCount = renderedContext.selectedChunkCount;
   const acceptedSourceCount = retainedSources.filter((source) =>
     discoveredCandidateUrls.has(source.url) && isCitableGamingWebSource(source)
   ).length;
@@ -3427,6 +3473,8 @@ export async function buildGamingRagContext(
       retrievalQueryTermCount: effectiveTerms.length,
       sourceCount: returnedSources.length,
       retrievedSourceCount,
+      fetchedSuppliedSourceCount,
+      selectedChunkCount,
       publicSourceCount: returnedPublicSourceCount,
       omittedSourceCount,
       sourceDomains,
@@ -3450,6 +3498,8 @@ export async function buildGamingRagContext(
     context,
     sources: returnedSources,
     retrievedSourceCount,
+    fetchedSuppliedSourceCount,
+    selectedChunkCount,
     publicSourceCount: returnedPublicSourceCount,
     omittedSourceCount: retainedSources.length > 0 ? omittedSourceCount : 0,
     retrievalEnabled,
