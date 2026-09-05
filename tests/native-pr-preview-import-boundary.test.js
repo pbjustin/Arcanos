@@ -477,6 +477,9 @@ describe('native PR preview import boundary', () => {
   it.each([
     'src/shared/gaming/gamingArchiveResourceCore.ts',
     'src/shared/gaming/gamingArchivePreviewFixture.ts',
+    'src/shared/gaming/gamingGuideResponseCore.ts',
+    'src/shared/gaming/gamingGuideResponsePreviewFixture.ts',
+    'src/shared/gaming/gamingPromptCore.ts',
     'src/shared/gaming/gamingGrounding.ts',
   ])('pins the reviewed Gaming preview core %s', async (filePath) => {
     const sourceText = await readNormalizedSource(new URL(`../${filePath}`, import.meta.url));
@@ -488,6 +491,8 @@ describe('native PR preview import boundary', () => {
     for (const forbidden of [
       'src/services/gamingArchiveResources.ts', 'src/services/gamingPipeline.ts',
       'src/services/gamingWebContext.ts', 'src/shared/webFetcher.ts',
+      'src/services/gamingAgents.ts', 'src/services/gamingPromptBuilder.ts',
+      'src/platform/runtime/prompts.ts',
     ]) {
       expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toContain(forbidden);
     }

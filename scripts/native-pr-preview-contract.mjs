@@ -185,6 +185,8 @@ export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
     queryPath: '/gpt/arcanos-gaming',
     proofHeader: 'x-arcanos-preview-gaming-archive-grounding-version',
     proofVersion: 'gaming-archive-grounding/v1',
+    responseProofHeader: 'x-arcanos-preview-gaming-guide-response-version',
+    responseProofVersion: 'gaming-guide-response/v1',
     game: 'Palworld',
     fixtures: Object.freeze({
       guide: 'sealed-preview-guide',

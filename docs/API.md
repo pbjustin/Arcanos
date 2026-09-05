@@ -1512,6 +1512,15 @@ Usable source and chunk counts can also include the existing stored Gaming
 evidence after the explicit supplied-guide guard passes. Distinct reader URLs
 may count as separate requested URLs while resolving to one Archive evidence item.
 
+For grounded guide answers without a generation fallback, the response formatter
+presents the backend answer once and trims outer whitespace. It preserves the
+Markdown and citations supplied by the generation pipeline. The guide
+prompt asks for the gameplay answer first, with context qualifications only when
+they materially affect the advice and with the user's spoiler restrictions intact.
+The formatter adds no generic context warnings or backend diagnostic commentary;
+`data.grounding` and source metadata remain available separately. Explicit `game`
+values retain their specificity and take precedence over source-derived title hints.
+
 Gaming recognizes Archive.org `/details/<identifier>` items and validates their
 bounded metadata before choosing an eligible text resource deterministically.
 For representations of one original document, OCR `DjVuTXT` takes priority over
