@@ -117,6 +117,19 @@ npm run validate:backend-cli:offline
 
 Use `npm run build:packages` before full backend validation whenever `packages/*`, protocol schemas, or package exports changed.
 
+## Repository agent skills
+
+Codex can discover the shared workflows in `.agents/skills/` when working in
+this repository. Invoke one by name, such as `$arcanos-validation`, or describe
+the matching task. Each workflow rechecks current repository instructions and
+source and preserves the authorization already given for the task.
+
+- [PR blocker review](../.agents/skills/arcanos-pr-blocker-review/SKILL.md): inspect code, CI, review threads, and merge readiness at the current PR head.
+- [Validation](../.agents/skills/arcanos-validation/SKILL.md): select relevant local checks and report passed, failed, and skipped results.
+- [Protocol changes](../.agents/skills/arcanos-protocol-change/SKILL.md): coordinate schemas, TypeScript/Python consumers, tests, and documentation.
+- [Safe worktree synchronization](../.agents/skills/arcanos-safe-worktree-sync/SKILL.md): align a checkout with its remote while preserving local work and other worktrees.
+- [Preview verification](../.agents/skills/arcanos-preview-verification/SKILL.md): verify an authorized isolated Railway preview and its scoped teardown.
+
 ## Deploy (Railway)
 Local workflow should pass before Railway deploy:
 ```bash

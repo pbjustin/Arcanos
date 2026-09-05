@@ -1,0 +1,3 @@
+interface:
+  display_name: "ARCANOS Protocol Change"
+  short_description: "Keep ARCANOS schemas and consumers synchronized"
