@@ -724,6 +724,16 @@ export const ResponseComposerAgent = {
     backendEnvelope: GamingSuccessEnvelope;
   }): GamingSuccessEnvelope {
     const { intent, backendEnvelope } = params;
+    if (
+      intent.mode === "guide" &&
+      backendEnvelope.data.grounding?.groundingStatus === "grounded" &&
+      !backendEnvelope.data.fallbackReason
+    ) {
+      // The provider has the guide evidence needed to qualify its answer. Preserve
+      // its prose, Markdown, and citations once, without generic context warnings.
+      return backendEnvelope;
+    }
+
     const backendResponse = backendEnvelope.data.response.trim();
     const response = hasComposedSections(backendResponse)
       ? [

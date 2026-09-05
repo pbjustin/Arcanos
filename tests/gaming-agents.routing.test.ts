@@ -386,6 +386,16 @@ describe('Gaming agent routing model', () => {
     });
   });
 
+  it.each(['Kingdom Hearts HD 1.5 Remix', 'Kingdom Hearts'])('preserves the explicit game identity %s despite a source URL', (game) => {
+    const intent = IntentRouterAgent.classify({
+      mode: 'guide', game, prompt: 'Where should I go next?',
+      guideUrl: 'https://archive.org/details/KingdomHeartsHD1.5RemixGuide',
+    });
+
+    expect(intent.game).toBe(game);
+    expect(BackendQueryAgent.build({ ...intent, mode: 'guide' }).payload.game).toBe(game);
+  });
+
   it.each([
     [{ action: 'runtime.inspect', payload: { prompt: 'check runtime' } }],
     [{ action: 'query', payload: { action: 'runtime.inspect', prompt: 'check runtime' } }],
