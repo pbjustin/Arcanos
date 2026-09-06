@@ -15,11 +15,13 @@ An explicit request to sync the selected checkout authorizes the necessary ordin
 
 Verify the intended remote identity without printing credential-bearing remote URLs. Fetch the requested branch into its tracking ref and resolve it locally; use `git ls-remote --heads` for a final live comparison when needed. If remote state cannot be refreshed, label the tracking ref as cached and do not claim current remote equality.
 
+Protect ignored files before every merge, checkout, or switch, including clean checkouts and detached-head transitions. A clean `git status` does not reveal ignored files, and Git can overwrite them when the target starts tracking the same path. Pass `--no-overwrite-ignore` to `git merge`, `git checkout`, or `git switch`; if a collision is reported, stop and preserve the affected files outside the checkout before retrying within the authorized scope. Backup branches and `git stash --include-untracked` do not save ignored files.
+
 ## Select the smallest safe path
 
 ### Clean checkout, same branch, fast-forward possible
 
-Use `git pull --ff-only` when the configured upstream is the intended target, or fetch the verified remote branch and use `git merge --ff-only` on the resolved tracking ref. A refusal signals divergence or another precondition failure; investigate rather than retrying with an automatic merge, rebase, or hard reset.
+Fetch the verified remote branch and use `git merge --ff-only --no-overwrite-ignore` on the resolved tracking ref. Use this two-step sequence because `git pull` does not accept `--no-overwrite-ignore`. A refusal signals divergence, a local-file collision, or another precondition failure; investigate rather than retrying with an automatic merge, rebase, hard reset, or ignored-file overwrite.
 
 ### Dirty checkout or branch-only commits
 
