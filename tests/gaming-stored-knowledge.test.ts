@@ -67,6 +67,23 @@ describe('bounded stored Gaming chunk evidence', () => {
       .toContain('Sunfire Carbine');
   });
 
+  test('retrieves a structured build fact beyond the first 4,000 evidence characters', () => {
+    const text = 'A build planner page describes equipment choices.';
+    const structuredEvidence = 'Equipment: a synthetic training accessory with bounded descriptive attributes. '.repeat(65)
+      + 'Rotation: activate the Zephyrglass Compass before entering the cobalt arch.';
+    expect(structuredEvidence.indexOf('Zephyrglass Compass')).toBeGreaterThan(4_000);
+    expect(structuredEvidence.length).toBeLessThanOrEqual(8_000);
+    const row = record('structured-tail', text, {
+      recordType: 'build', searchText: `${text}\n${structuredEvidence}`,
+      normalized: { text, structuredEvidence,
+        chunk: { ordinal: 0, totalChunks: 1, startChar: 0, endChar: text.length } }
+    });
+    const selected = selectStoredGamingEvidence([row], { ...input, mode: 'build' });
+    expect(selected).toHaveLength(1);
+    expect(selected[0].evidence.text).toContain('Zephyrglass Compass');
+    expect(selected[0].source.snippet).toContain('Zephyrglass Compass');
+  });
+
   test('legacy deep-passage selection ignores repeated game names and normalizes Unicode query terms', () => {
     const row = record('legacy-deep', 'Synthetic Quest is an imaginary game with training routes. '.repeat(100)
       + 'The Zephyrglass Compass opens the route beyond the cobalt arch.', { normalized: {} });

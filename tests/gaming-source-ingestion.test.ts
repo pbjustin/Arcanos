@@ -451,6 +451,72 @@ describe('gaming source ingestion', () => {
     }));
   });
 
+  it('retains later structured build facts in the first chunk search text without duplicating them', async () => {
+    const url = 'https://mobalytics.gg/borderlands-4/builds';
+    const text = 'Borderlands 4 endgame route. Follow the canyon and activate the checkpoint. '.repeat(70);
+    const lateFact = 'Rotation: Activate the Zephyrglass Overdrive after the shield breaks.';
+    const evidenceText = `[STRUCTURED BUILD EVIDENCE - EXTRACTED FACTS ONLY]\n${'Equipment: Synthetic reinforced armor with enhanced shield capacity. '.repeat(75)}\n${lateFact}`;
+    expect(evidenceText.indexOf(lateFact)).toBeGreaterThan(4_000);
+    expect(evidenceText.length).toBeLessThan(8_000);
+    resolveGamingDocumentMock.mockResolvedValueOnce(resolvedDocument(url, text));
+    const normalized = await ingestGamingBuildResourceMock();
+    ingestGamingBuildResourceMock.mockResolvedValueOnce({
+      ...normalized,
+      build: { ...normalized.build, rotation: ['Activate the Zephyrglass Overdrive after the shield breaks.'] },
+      evidenceText
+    });
+
+    const result = await executeQueuedGamingSourceIngestion('019fe3cd-8c01-7f01-8d2d-caa951bc4b9b', {
+      action: 'ingest', schemaVersion: '1', submittedCount: 1, rejectedSources: [],
+      sources: [{ submittedIndex: 0, canonicalUrl: url,
+        game: 'Borderlands 4', gameKey: 'borderlands-4', origin: 'user_supplied' }]
+    });
+
+    expect(result.output.sources[0].status).toBe('stored');
+    const persisted = persistGamingSourceRevisionMock.mock.calls[0][0] as {
+      records: Array<{ searchText: string; normalized: { text: string; structuredEvidence?: string } }>;
+    };
+    expect(persisted.records.length).toBeGreaterThan(1);
+    expect(persisted.records[0].searchText).toContain(lateFact);
+    expect(persisted.records[0].normalized.structuredEvidence).toBe(evidenceText);
+    expect(persisted.records.every(record => record.normalized.text.length <= 2_000)).toBe(true);
+    expect(persisted.records.slice(1).every(record => record.normalized.structuredEvidence === undefined
+      && !record.searchText.includes(lateFact))).toBe(true);
+  });
+
+  it('keeps the full structured evidence bound searchable alongside maximum accepted metadata', async () => {
+    const url = 'https://example.org/synthetic-build';
+    const text = `${'Synthetic gameplay route. '.repeat(100).slice(0, 1_999)}X`;
+    const title = 'Synthetic build '.padEnd(500, 't');
+    const game = 'Synthetic Game '.padEnd(120, 'g');
+    const patch = '1.'.padEnd(64, '2');
+    const lateFact = 'Rotation: Activate the Zephyrglass Overdrive after the shield breaks.';
+    const evidenceText = `${'Equipment: Synthetic armor. '.repeat(400).slice(0, 8_000 - lateFact.length)}${lateFact}`;
+    resolveGamingDocumentMock.mockResolvedValueOnce(resolvedDocument(url, text, {
+      metadata: { title: 'Synthetic build' }
+    }));
+    const normalized = await ingestGamingBuildResourceMock();
+    ingestGamingBuildResourceMock.mockResolvedValueOnce({
+      ...normalized, build: { ...normalized.build, title, game, patch }, evidenceText
+    });
+
+    const result = await executeQueuedGamingSourceIngestion('019fe3cd-8c01-7f01-8d2d-caa951bc4b9b', {
+      action: 'ingest', schemaVersion: '1', submittedCount: 1, rejectedSources: [],
+      sources: [{ submittedIndex: 0, canonicalUrl: url,
+        game, gameKey: 'synthetic-game', origin: 'user_supplied' }]
+    });
+
+    expect(result.output.sources[0].status).toBe('stored');
+    const persisted = persistGamingSourceRevisionMock.mock.calls[0][0] as {
+      records: Array<{ searchText: string; normalized: { text: string; structuredEvidence?: string } }>;
+    };
+    expect(persisted.records).toHaveLength(1);
+    expect(persisted.records[0].normalized.text).toHaveLength(2_000);
+    expect(persisted.records[0].normalized.structuredEvidence).toHaveLength(8_000);
+    expect(persisted.records[0].searchText).toBe([text, title, game, patch, evidenceText].join('\n\n'));
+    expect(persisted.records[0].searchText).toHaveLength(10_692);
+  });
+
   it.each([
     'Use this guide to defeat every boss in the new expansion. The Borderlands 4 route starts at the village checkpoint.',
     'Unlike Elden Ring, Borderlands 4 rewards aggressive use of gunfire. Keep moving between cover positions and save ammunition for the boss.'

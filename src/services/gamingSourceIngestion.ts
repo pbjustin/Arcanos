@@ -1084,7 +1084,8 @@ async function ingestOneSource(
       extractorVersion: normalized.adapterVersion
     });
     const title = normalizedBuild?.title ?? pageTitle;
-    const normalizedEvidence = supportsStructuredExtraction ? normalized.evidenceText.trim() : '';
+    const normalizedEvidence = supportsStructuredExtraction
+      ? normalized.evidenceText.trim().slice(0, GAMING_BUILD_RESOURCE_HARD_LIMITS.maxEvidenceChars) : '';
     const patchVerification = resolveVerifiedPatch({
       claimedPatch: source.patchVersion,
       extractedPatch: normalizedBuild?.patch,
@@ -1130,7 +1131,7 @@ async function ingestOneSource(
         }),
         schemaVersion: GAMING_DOCUMENT_CHUNKING_VERSION,
         text,
-        ...(chunk.ordinal === 0 && normalizedEvidence ? { structuredEvidence: normalizedEvidence.slice(0, 2_000) } : {}),
+        ...(chunk.ordinal === 0 && normalizedEvidence ? { structuredEvidence: normalizedEvidence } : {}),
         chunk: chunkMetadata
       };
       return {
@@ -1141,8 +1142,10 @@ async function ingestOneSource(
         patch: patchVersion,
         searchText: buildGamingDocumentSearchText({
           cleanedText: text, title, game: source.game, patchVersion,
-          normalizedEvidence: chunk.ordinal === 0 ? normalizedEvidence.slice(0, 2_000) : '',
-          maxChars: GAMING_DURABLE_DOCUMENT_LIMITS.maxChunkChars + 2_600
+          normalizedEvidence: chunk.ordinal === 0 ? normalizedEvidence : '',
+          // Reserve the actual metadata plus all four possible blank-line separators.
+          maxChars: GAMING_DURABLE_DOCUMENT_LIMITS.maxChunkChars + GAMING_BUILD_RESOURCE_HARD_LIMITS.maxEvidenceChars
+            + (title?.length ?? 0) + source.game.length + (patchVersion?.length ?? 0) + 8
         }),
         normalized: chunkData
       };

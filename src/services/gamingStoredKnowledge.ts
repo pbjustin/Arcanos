@@ -2,6 +2,7 @@ import type { GamingKnowledgeProvenanceRecord } from '@core/db/repositories/gami
 import { searchActiveGamingKnowledge } from '@core/db/repositories/gamingSourceRepository.js';
 import { logger } from '@platform/logging/structuredLogging.js';
 import { truncateTextByCharacters } from '@shared/http/clientResponseCommon.js';
+import { GAMING_BUILD_RESOURCE_HARD_LIMITS } from './gamingBuildResourceSchema.js';
 import { getGamingRagChunkChars, getGamingRagMaxChunks, getGamingRagMaxSources, getGamingWebContextMaxChars } from './gamingConfig.js';
 import { selectGamingDocumentExcerpt } from './gamingDocumentChunks.js';
 import { filterGamingDocumentInstructions } from './gamingDocumentExtraction.js';
@@ -115,7 +116,8 @@ function projectCandidate(record: GamingKnowledgeProvenanceRecord, terms: string
   if (normalized.chunk !== undefined && typeof normalized.text !== 'string') return null;
   // Historical lexical-only records remain readable through passage selection.
   const body = [typeof normalized.text === 'string' ? normalized.text : record.searchText,
-    typeof normalized.structuredEvidence === 'string' ? normalized.structuredEvidence.slice(0, 4_000) : ''].filter(Boolean).join('\n\n');
+    typeof normalized.structuredEvidence === 'string'
+      ? normalized.structuredEvidence.slice(0, GAMING_BUILD_RESOURCE_HARD_LIMITS.maxEvidenceChars) : ''].filter(Boolean).join('\n\n');
   const safeText = filterGamingDocumentInstructions(body);
   const query = terms.join(' ');
   const text = selectGamingDocumentExcerpt(safeText, query, Math.min(1_200, getGamingRagChunkChars()))

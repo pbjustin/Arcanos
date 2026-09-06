@@ -1619,6 +1619,11 @@ Unicode code-point boundaries. Chunk metadata stores ordinal, total, offsets,
 content hash, and an explicit heading path only when available. No page numbers
 are inferred from OCR.
 
+Structured build facts retain their existing 8,000-character evidence bound in
+the first record only, including its searchable text. Stored passage selection
+can use that complete bounded evidence; prose chunks remain at most 2,000
+characters, and selected evidence still fits the existing prompt budget.
+
 Unchanged text and policy retain the active revision. Changes anywhere in the
 accepted document, including after character 100,000, or an index-policy change
 produce an updated generation. Source locking, revision insertion, supersession,
