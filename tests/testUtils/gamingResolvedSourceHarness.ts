@@ -18,6 +18,7 @@ export class GamingResolvedSourceHarness {
     this.queries.push(sql);
     const result = (rows: Array<Record<string, any>> = []) => ({ rows, rowCount: rows.length });
     if (['BEGIN', 'COMMIT', 'ROLLBACK'].includes(sql)) return result();
+    if (sql.startsWith("SELECT set_config('statement_timeout'")) return result();
     if (sql.startsWith('INSERT INTO gaming_sources')) {
       if (this.source) return result();
       this.source = {
@@ -35,9 +36,16 @@ export class GamingResolvedSourceHarness {
     if (sql.startsWith('SELECT id FROM gaming_source_revisions')) {
       return result(this.revisions.filter(revision => revision.source_id === values[0]
         && revision.content_hash === values[1] && revision.extractor === values[2]
-        && revision.extractor_version === values[3] && revision.normalizer_schema_version === values[4]));
+        && revision.extractor_version === values[3] && revision.normalizer_schema_version === values[4]
+        && (!sql.includes('AND EXISTS') || this.records.some(record =>
+          record.source_revision_id === revision.id && record.status === 'active'))));
     }
     if (sql.startsWith('INSERT INTO gaming_source_revisions')) {
+      if (this.revisions.some(revision => revision.source_id === values[0]
+        && revision.content_hash === values[1] && revision.extractor === values[8]
+        && revision.extractor_version === values[9] && revision.normalizer_schema_version === values[10])) {
+        return result();
+      }
       const revision = {
         id: `20000000-0000-4000-8000-${String(this.revisions.length + 1).padStart(12, '0')}`,
         source_id: values[0], content_hash: values[1], cleaned_content: values[2],
@@ -55,8 +63,16 @@ export class GamingResolvedSourceHarness {
       superseded.forEach(record => { record.status = 'superseded'; });
       return result(superseded);
     }
+    if (sql.startsWith("UPDATE gaming_knowledge_records SET status = 'active'")) {
+      const reactivated = this.records.filter(record => record.source_revision_id === values[0]
+        && record.status === 'superseded');
+      reactivated.forEach(record => { record.status = 'active'; });
+      return result(reactivated);
+    }
     if (sql.startsWith('INSERT INTO gaming_knowledge_records')) {
-      const inserted = JSON.parse(values[2]).map((record: Record<string, any>, index: number) => ({
+      const inserted = JSON.parse(values[2]).filter((record: Record<string, any>) => !this.records.some(existing =>
+        existing.source_revision_id === values[0] && existing.semantic_key === record.semantic_key
+        && existing.payload_hash === record.payload_hash)).map((record: Record<string, any>, index: number) => ({
         ...record, id: `record-${this.records.length + index + 1}`, source_revision_id: values[0],
         game_key: values[1], status: 'active', created_at: new Date()
       }));
@@ -71,11 +87,16 @@ export class GamingResolvedSourceHarness {
     }
     if (sql.startsWith('WITH search_input')) {
       // Model only literal topic matches; the existing repository suites own SQL shape checks.
-      const words = String(values[1]).toLowerCase().match(/[a-z0-9]+/gu) ?? [];
+      const queryText = String(values[1]);
+      const disjunction = queryText.includes(' OR ');
+      const words = (queryText.toLowerCase().match(/[a-z0-9]+/gu) ?? [])
+        .filter(word => word !== 'or');
       return result(this.records.filter(record => record.status === 'active'
         && this.source?.status === 'active' && record.game_key === values[0]
         && (!values[2] || record.record_type === values[2])
-        && words.every(word => record.search_text.toLowerCase().includes(word)))
+        && (disjunction
+          ? words.some(word => record.search_text.toLowerCase().includes(word))
+          : words.every(word => record.search_text.toLowerCase().includes(word))))
         .slice(0, values[3]).map(record => {
           const revision = this.revisions.find(item => item.id === record.source_revision_id)!;
           return {

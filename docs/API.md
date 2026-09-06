@@ -1609,24 +1609,72 @@ including public page identifiers such as MediaWiki's `curid` query parameter.
 Durable ingestion checks source-game conflicts using the URL, title, and
 headings; ordinary guide prose is not treated as a requested game.
 
-Durable revisions hash the resolved, sanitized text and normalized data.
-Unchanged content and extraction policy retain the revision; changed content creates a revision and
-supersedes its prior knowledge records atomically. Guide storage retains one
-record per revision. Stored retrieval uses Gaming's shared sentence chunker to
-select a query-relevant passage of at most 1,200 characters from that record.
-The existing PostgreSQL full-text query and active-source filters are unchanged.
+Durable revisions hash all accepted, sanitized document text, normalized identity,
+and the explicit `gaming-document-chunks-v1` policy. The revision's 16,000-character
+`cleaned_content` preview does not define searchable coverage. Each guide revision
+owns up to 500 deterministic knowledge chunks, targeting 1,800 characters with a
+2,000-character maximum and at most 240 characters of local overlap. Segmentation
+prefers paragraph, sentence, then word boundaries; indivisible runs split only at
+Unicode code-point boundaries. Chunk metadata stores ordinal, total, offsets,
+content hash, and an explicit heading path only when available. No page numbers
+are inferred from OCR.
+
+Structured build facts retain their existing 8,000-character evidence bound in
+the first record only, including its searchable text. Stored passage selection
+can use that complete bounded evidence; prose chunks remain at most 2,000
+characters, and selected evidence still fits the existing prompt budget.
+
+Unchanged text and policy retain the active revision. Changes anywhere in the
+accepted document, including after character 100,000, or an index-policy change
+produce an updated generation. Source locking, revision insertion, supersession,
+and chunk insertion remain one transaction. A return to a historical document
+reactivates its immutable revision and supersedes the intervening chunks atomically.
+Existing single-record revisions remain readable until explicitly refreshed;
+there is no automatic backfill.
+
+Stored retrieval returns structured chunk evidence before formatting it. PostgreSQL
+full-text search retrieves up to 20 active candidates using bounded meaningful
+query terms. Candidates need positive lexical rank and at least 25% matching
+query-term coverage in their evidence text; matching only a repeated game/title
+does not establish relevance. Ranking combines 65% term coverage with 35%
+normalized PostgreSQL rank. Four-token text overlap and revision offsets penalize
+redundancy; near duplicates are omitted. Selection uses the existing Gaming chunk,
+source, and character budgets, with the stored context fitting the space remaining
+after live evidence. Empty evidence remains a valid result. Multiple chunks from
+one public URL share a citation index, while internal evidence retains source,
+revision, record, ordinal, resolver provenance, and fetch time for audit.
+
+Semantic retrieval is not enabled by this change. Gaming has no existing vector
+index; the generic JSON vector store loads all documents into process memory,
+and the separate Notion vector schema has different authority semantics. Neither
+provides a bounded Gaming vector query within the existing one-second retrieval
+deadline. Lexical retrieval needs no embedding provider, new dependency, schema
+migration, or environment setting.
 
 Document extraction quality is independent of structured-build extraction:
 readable guide prose can be complete while structured extraction is
 `not_applicable`. `EXTRACTION_PARTIAL` indicates truncated or metadata-only
 document evidence, rather than absent equipment, skill, or stat fields.
-The 100,000-character document cap still applies, including text that expands
-during Unicode normalization, so a larger guide can be stored successfully
-with this warning. Revision provenance and extraction
+Durable resolution explicitly permits up to 1,000,000 characters; live resolution
+keeps its 100,000-character default. The durable ceiling matches the existing
+revision ceiling and fits ordinary ASCII guides within the unchanged default
+1.5 MB fetch limit. The shared fetcher's byte limits, deadlines, DNS pinning,
+URL restrictions, and Archive metadata/derivative validation remain in force.
+Archive's existing 1 MB derivative byte limit can reject larger or multibyte
+documents before the character ceiling; this PR does not relax it. If accepted
+text exceeds the character or 500-chunk limit, a deterministic contiguous prefix
+is indexed and partial coverage is recorded. A fully covered 591K-character guide
+does not receive `EXTRACTION_PARTIAL` merely for exceeding the former 100K cap.
+Revision provenance and extraction
 metrics retain bounded resolver/version/strategy, document type and lengths,
 truncation, and both quality dimensions. Resolution, normalization, and
 persistence telemetry report those stages separately, without guide content,
 raw metadata, or derivative addresses.
+
+`gaming.source.chunking_completed` and `gaming.stored_retrieval.completed` emit
+bounded lengths, counts, policy, coverage, and elapsed-time diagnostics without
+chunk text or embeddings. Detailed coverage diagnostics remain internal to
+revision metadata and telemetry; the public status contract remains unchanged.
 
 They require the dedicated, web-service-only
 `ARCANOS_GAMING_SOURCE_ACCESS_TOKEN` Bearer credential. It is an exact

@@ -254,6 +254,49 @@ describe('PostgresGamingSourceRepository persistence', () => {
     expect(harness.queries.at(-1)?.sql).toBe('COMMIT');
   });
 
+  test('reactivates a historical revision atomically after the document returns to earlier content', async () => {
+    const harness = new GamingRepositoryHarness((sql) => {
+      if (sql.startsWith('INSERT INTO gaming_sources')) return result();
+      if (sql.includes('FROM gaming_sources') && sql.endsWith('FOR UPDATE')) return result([sourceRow()]);
+      if (sql.startsWith('UPDATE gaming_sources')) return result([sourceRow()]);
+      if (sql.startsWith('SELECT id FROM gaming_source_revisions')) {
+        return sql.includes('AND EXISTS') ? result() : result([{ id: REVISION_ID }]);
+      }
+      if (sql.startsWith('INSERT INTO gaming_source_revisions')) return result();
+      if (sql.startsWith('UPDATE gaming_knowledge_records AS knowledge')) return result([{ id: 'previous-current' }]);
+      if (sql.startsWith('UPDATE gaming_knowledge_records SET')) return result([{ id: RECORD_ID }]);
+      if (sql.startsWith('INSERT INTO gaming_knowledge_records')) return result();
+      throw new Error(`Unhandled query: ${sql}`);
+    });
+    await expect(new PostgresGamingSourceRepository(harness.pool).persistGamingSourceRevision(persistInput()))
+      .resolves.toEqual({ sourceId: SOURCE_ID, revisionId: REVISION_ID, state: 'updated', recordsCreated: 0, recordsUpdated: 1 });
+    expect(harness.queries.some(query => query.sql.includes("SET status = 'active', superseded_at = NULL"))).toBe(true);
+    expect(harness.queries.at(-1)?.sql).toBe('COMMIT');
+  });
+
+  test('rolls back supersession when the new chunk batch cannot be persisted', async () => {
+    const harness = new GamingRepositoryHarness((sql) => {
+      if (sql.startsWith('INSERT INTO gaming_sources')) return result([sourceRow()]);
+      if (sql.startsWith('SELECT id FROM gaming_source_revisions')) return result();
+      if (sql.startsWith('INSERT INTO gaming_source_revisions')) return result([{ id: REVISION_ID }]);
+      if (sql.startsWith('UPDATE gaming_knowledge_records')) return result([{ id: 'old-record' }]);
+      if (sql.startsWith('INSERT INTO gaming_knowledge_records')) throw new Error('Synthetic chunk persistence failure');
+      throw new Error(`Unhandled query: ${sql}`);
+    });
+    await expect(new PostgresGamingSourceRepository(harness.pool).persistGamingSourceRevision(persistInput()))
+      .rejects.toThrow('Synthetic chunk persistence failure');
+    expect(harness.queries.at(-1)?.sql).toBe('ROLLBACK');
+    expect(harness.queries.some(query => query.sql === 'COMMIT')).toBe(false);
+  });
+
+  test('retains the 500-record revision bound before acquiring a database client', async () => {
+    const harness = new GamingRepositoryHarness(() => result());
+    await expect(new PostgresGamingSourceRepository(harness.pool).persistGamingSourceRevision(persistInput({
+      records: Array.from({ length: 501 }, () => persistInput().records[0])
+    }))).rejects.toThrow('between 1 and 500');
+    expect(harness.connect).not.toHaveBeenCalled();
+  });
+
   test('rejects canonical hash collisions and rolls back without overwriting the source', async () => {
     const harness = new GamingRepositoryHarness((sql) => {
       if (sql.startsWith('INSERT INTO gaming_sources')) {

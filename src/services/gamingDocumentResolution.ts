@@ -19,6 +19,11 @@ import { projectGamingDocumentText } from "@shared/gaming/gamingDocumentProjecti
 
 export const GAMING_DOCUMENT_RESOLVER_VERSION = "gaming-document-v1";
 export const GAMING_DOCUMENT_LIMITS = Object.freeze({ textChars: 100_000, timeoutMs: 30_000 });
+// Matches the existing revision ceiling and stays within the unchanged 1.5 MB default fetch budget for ASCII prose.
+export const GAMING_DURABLE_DOCUMENT_MAX_CHARS = 1_000_000;
+export interface GamingDocumentResolutionOptions extends FetchAndCleanOptions {
+  documentPurpose?: 'durable';
+}
 
 /** Internal acquired document. URL fields are public-safe; transport URLs never leave the resolver. */
 export interface ResolvedGamingDocument {
@@ -121,11 +126,13 @@ export function describeGamingDocumentSource(url: string): {
 export async function resolveGamingDocument(
   url: string,
   maxDocumentChars: number = GAMING_DOCUMENT_LIMITS.textChars,
-  options: FetchAndCleanOptions = {}
+  options: GamingDocumentResolutionOptions = {}
 ): Promise<ResolvedGamingDocument> {
   const description = describeGamingDocumentSource(url);
   const parsed = new URL(url);
-  const maxChars = Math.min(GAMING_DOCUMENT_LIMITS.textChars, Math.max(0,
+  const documentCeiling = options.documentPurpose === 'durable'
+    ? GAMING_DURABLE_DOCUMENT_MAX_CHARS : GAMING_DOCUMENT_LIMITS.textChars;
+  const maxChars = Math.min(documentCeiling, Math.max(0,
     Number.isFinite(maxDocumentChars) ? Math.trunc(maxDocumentChars) : GAMING_DOCUMENT_LIMITS.textChars));
   const timeoutMs = Math.min(GAMING_DOCUMENT_LIMITS.timeoutMs, Math.max(1,
     Number.isFinite(options.timeoutMs) ? Math.trunc(options.timeoutMs!) : webFetcher.getConfiguredFetchTimeoutMs()));
@@ -140,6 +147,7 @@ export async function resolveGamingDocument(
     timeoutMs,
     deadlineAt,
     retainFullSelectedText: true,
+    maxSelectedTextChars: documentCeiling,
     rawDocumentMaxChars: Math.min(options.rawDocumentMaxChars ?? GAMING_BUILD_RESOURCE_HARD_LIMITS.maxHtmlChars,
       GAMING_BUILD_RESOURCE_HARD_LIMITS.maxHtmlChars),
     onExtraction: (metrics) => { extraction = metrics; },

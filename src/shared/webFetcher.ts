@@ -12,6 +12,7 @@ const DEFAULT_FETCH_TIMEOUT_MS = 8000;
 const DEFAULT_MAX_LINKS = 15;
 const DEFAULT_USER_AGENT = 'Arcanos-WebFetcher/1.0';
 const HARD_MAX_CHARS = 100_000;
+const HARD_MAX_SELECTED_TEXT_CHARS = 1_000_000;
 const HARD_MAX_FETCH_BYTES = 5_000_000;
 const HARD_MAX_FETCH_TIMEOUT_MS = 30_000;
 const HARD_MAX_LINKS = 100;
@@ -121,6 +122,8 @@ export interface FetchAndCleanOptions {
   includeLinks?: boolean;
   /** Gaming document acquisition opts in; scoring remains bounded and legacy extraction stays unchanged. */
   retainFullSelectedText?: boolean;
+  /** Internal durable-document opt-in. Does not change transport byte, timeout, or URL limits. */
+  maxSelectedTextChars?: number;
   onExtraction?: (metrics: FetchAndCleanExtractionMetrics) => void;
   rawDocumentMaxChars?: number;
   onRawDocument?: (document: FetchAndCleanRawDocument) => void;
@@ -386,7 +389,10 @@ export async function fetchAndCleanDocument(
   const target = await resolveFetchTarget(url, options);
   throwIfFetchCancelled(options);
   const maxFetchBytes = getConfiguredMaxFetchBytes();
-  const boundedMaxChars = Math.min(Math.max(0, maxChars), HARD_MAX_CHARS);
+  const selectedTextCeiling = options.retainFullSelectedText && Number.isFinite(options.maxSelectedTextChars)
+    ? Math.min(HARD_MAX_SELECTED_TEXT_CHARS, Math.max(0, Math.trunc(options.maxSelectedTextChars!)))
+    : HARD_MAX_CHARS;
+  const boundedMaxChars = Math.min(Math.max(0, Number.isFinite(maxChars) ? Math.trunc(maxChars) : 0), selectedTextCeiling);
   const deadlineRemainingMs = typeof options.deadlineAt === 'number'
     ? Math.max(1, Math.trunc(options.deadlineAt - Date.now()))
     : HARD_MAX_FETCH_TIMEOUT_MS;
@@ -592,7 +598,9 @@ export async function fetchAndCleanDocument(
   return {
     text: cleanedText,
     links: limitedLinks,
-    combined: serializeFetchAndCleanDocument({ text: cleanedText, links: limitedLinks }, boundedMaxChars)
+    combined: options.retainFullSelectedText && options.includeLinks === false && options.maxSelectedTextChars !== undefined
+      ? cleanedText.slice(0, boundedMaxChars)
+      : serializeFetchAndCleanDocument({ text: cleanedText, links: limitedLinks }, boundedMaxChars)
   };
 }
 

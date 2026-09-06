@@ -9,6 +9,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { runGamingArchiveGroundingPreview } from './shared/gaming/gamingArchivePreviewFixture.js';
 import { runGamingGuideResponsePreview } from './shared/gaming/gamingGuideResponsePreviewFixture.js';
 import { runGamingDocumentIngestionPreview } from './shared/gaming/gamingDocumentIngestionPreviewFixture.js';
+import { runGamingDurableRagPreview } from './shared/gaming/gamingDurableRagPreviewFixture.js';
 
 import {
   createGenericJobsRouter,
@@ -9195,6 +9196,25 @@ export function createNativePrPreviewApplication(
             );
             return;
           }
+          try {
+            await runGamingDurableRagPreview();
+          } catch {
+            sendBoundedJsonResponse(
+              request,
+              response,
+              { error: 'PREVIEW_GAMING_DURABLE_RAG_CONTRACT_INVALID' },
+              {
+                logEvent: 'native_pr_preview.gaming_durable_rag_invalid',
+                maxBytes: MAX_GAMING_QUERY_RESPONSE_BYTES,
+                statusCode: 500,
+              }
+            );
+            return;
+          }
+          response.setHeader(
+            NATIVE_PR_PREVIEW_GAMING_CONTRACT.durableRagProofHeader,
+            NATIVE_PR_PREVIEW_GAMING_CONTRACT.durableRagProofVersion
+          );
           response.setHeader(
             NATIVE_PR_PREVIEW_GAMING_CONTRACT.proofHeader,
             NATIVE_PR_PREVIEW_GAMING_CONTRACT.proofVersion

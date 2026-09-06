@@ -120,10 +120,10 @@ describe('shared resolved Gaming documents reach durable stored retrieval', () =
     expect(stored.output.sources[0]).toMatchObject({ status: 'stored', sourceId: resolvedSourceId, canonicalUrl: gamingArchiveGuideUrl });
     expect(stored.output.sources[0].warnings).toBeUndefined();
     const revision = database.revisions[0];
-    expect(revision.cleaned_content).toContain(PASSAGE);
+    expect(revision.cleaned_content.length).toBeLessThanOrEqual(16_000);
     expect(revision.cleaned_content).not.toMatch(/Download Options|Addeddate|Internet Archive Search/);
-    expect(database.records).toHaveLength(1);
-    expect(database.records[0].search_text).toContain(PASSAGE);
+    expect(database.records.length).toBeGreaterThan(1);
+    expect(database.records.some(record => record.search_text.includes(PASSAGE))).toBe(true);
     expect(JSON.stringify(revision.provenance)).toContain('archive-org');
     expect(JSON.stringify(revision.provenance)).toContain('archive_djvu_text');
     expect(revision.extraction_metrics.extractionQuality).not.toBe('metadata-only');
@@ -140,6 +140,7 @@ describe('shared resolved Gaming documents reach durable stored retrieval', () =
   it('uses refresh admission and the same resolver for unchanged and changed revision content', async () => {
     await ingest();
     const initial = database.revisions[0];
+    const initialChunkCount = database.records.length;
     const semanticKey = database.records[0].semantic_key;
     const admitted = await refreshGamingSources({ action: 'refresh', payload: { sourceIds: [resolvedSourceId], idempotencyKey: 'test-refresh-one' } }, gateway);
     expect(admitted.statusCode).toBe(202);
@@ -149,12 +150,13 @@ describe('shared resolved Gaming documents reach durable stored retrieval', () =
     expect(database.revisions).toHaveLength(1);
     derivative = GUIDE.replace('silver telescope', 'copper telescope');
     const updated = await ingest('refresh');
-    expect(updated.output.sources[0]).toMatchObject({ status: 'updated', sourceId: resolvedSourceId, recordsCreated: 1, recordsUpdated: 1 });
+    expect(updated.output.sources[0]).toMatchObject({ status: 'updated', sourceId: resolvedSourceId, recordsCreated: expect.any(Number), recordsUpdated: initialChunkCount });
     expect(database.revisions).toHaveLength(2);
     expect(database.revisions[1].id).not.toBe(initial.id);
     expect(database.revisions[1].content_hash).not.toBe(initial.content_hash);
-    expect(database.records.map(record => record.status)).toEqual(['superseded', 'active']);
-    expect(database.records[1].semantic_key).toBe(semanticKey);
+    expect(database.records.slice(0, initialChunkCount).every(record => record.status === 'superseded')).toBe(true);
+    expect(database.records.slice(initialChunkCount).every(record => record.status === 'active')).toBe(true);
+    expect(database.records[initialChunkCount].semantic_key).toBe(semanticKey);
     const context = await buildStoredGamingKnowledgeContext({ game: GAME, prompt: TOPIC, mode: 'guide' });
     expect(context.context).toContain('copper telescope');
     expect(context.context).not.toContain('silver telescope');
@@ -167,7 +169,7 @@ describe('shared resolved Gaming documents reach durable stored retrieval', () =
     expect(stored.output.sources[0].status).toBe('stored');
     expect(stored.output.sources[0].warnings).toBeUndefined();
     expect(JSON.stringify(database.revisions[0].provenance)).toMatch(/generic/);
-    expect(database.revisions[0].cleaned_content).toContain(PASSAGE);
+    expect(database.records.some(record => record.search_text.includes(PASSAGE))).toBe(true);
     expect(database.revisions[0].cleaned_content).not.toContain('Unrelated catalog navigation');
     const context = await buildStoredGamingKnowledgeContext({ game: GAME, prompt: TOPIC, mode: 'guide' });
     expect(context.context).toContain(PASSAGE);
@@ -184,12 +186,13 @@ describe('shared resolved Gaming documents reach durable stored retrieval', () =
   });
 
   it('retains partial warnings for actual bounded document truncation', async () => {
-    derivative = GUIDE.repeat(6);
+    generic = true;
+    derivative = 'Synthetic strategy guide checkpoint. '.repeat(26_000);
     const stored = await ingest();
     expect(stored.output.sources[0].status).toBe('stored');
     expect(stored.output.sources[0].warnings).toContain('EXTRACTION_PARTIAL');
-    expect(database.revisions[0].cleaned_content.length).toBeLessThanOrEqual(100_000);
-    expect(database.records[0].search_text.length).toBeLessThanOrEqual(100_000);
+    expect(database.revisions[0].cleaned_content.length).toBeLessThanOrEqual(16_000);
+    expect(database.records).toHaveLength(500);
     expect(database.revisions[0].extraction_metrics.extractionQuality).toBe('partial');
   });
 
@@ -232,7 +235,7 @@ describe('shared resolved Gaming documents reach durable stored retrieval', () =
         ...queued, sources: [{ ...source, submittedIndex: 0 }], rejectedSources: [], submittedCount: 1
       });
       expect(stored.output.sources[0]).toMatchObject({ status: 'stored', canonicalUrl: source.canonicalUrl });
-      expect(resolveDocument).toHaveBeenLastCalledWith(source.canonicalUrl, 100_000, expect.anything());
+      expect(resolveDocument).toHaveBeenLastCalledWith(source.canonicalUrl, 1_000_000, expect.objectContaining({ documentPurpose: 'durable' }));
       const fetchedUrl = new URL(mockAxiosGet.mock.calls.at(-1)?.[0] as string);
       expect(`${fetchedUrl.pathname}${fetchedUrl.search}`).toBe(`/w/index.php${new URL(source.canonicalUrl).search}`);
       expect(database.source).toMatchObject({ canonical_url: source.canonicalUrl, public_url: source.canonicalUrl });

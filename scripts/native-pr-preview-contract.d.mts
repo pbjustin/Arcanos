@@ -188,6 +188,8 @@ export interface NativePrPreviewE2eContract {
     responseProofVersion: 'gaming-guide-response/v1';
     documentProofHeader: 'x-arcanos-preview-gaming-document-ingestion-version';
     documentProofVersion: 'gaming-document-ingestion/v1';
+    durableRagProofHeader: 'x-arcanos-preview-gaming-durable-rag-version';
+    durableRagProofVersion: 'gaming-durable-rag/v1';
     game: 'Palworld';
     fixtures: Readonly<{
       guide: 'sealed-preview-guide';

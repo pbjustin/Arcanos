@@ -83,6 +83,30 @@ describe('bounded Gaming Archive resource resolution with the real web extractor
     expect(mockAxiosGet.mock.calls[1][0]).toBe('https://93.184.216.34/5/items/other_manual/Custom%20Manual%20Text.txt');
   });
 
+  it('uses the selected durable character bound for multibyte text while retaining the default live projection', async () => {
+    const retainedFact = 'The amber lantern opens the western gate.';
+    const clippedFact = 'The violet compass unlocks the final observatory.';
+    const text = `${'道'.repeat(149_980)} ${retainedFact} ${'道'.repeat(60_000)} ${clippedFact}`;
+    const metadata = gamingArchiveMetadata(text);
+    expect(Buffer.byteLength(text, 'utf8')).toBeLessThan(1_000_000);
+    serve(metadata, text);
+    const live = await resolveGamingArchiveResource(gamingArchiveGuideUrl, 1_000_000, {
+      retainFullSelectedText: true, includeLinks: false
+    });
+    expect(live?.text).toHaveLength(100_000);
+    expect(live?.text).not.toContain(retainedFact);
+
+    serve(metadata, text);
+    const durable = await resolveGamingArchiveResource(gamingArchiveGuideUrl, 1_000_000, {
+      maxSelectedTextChars: 200_000, retainFullSelectedText: true, includeLinks: false
+    });
+    expect(durable?.text).toHaveLength(200_000);
+    expect(durable?.text).toContain(retainedFact);
+    expect(durable?.text).not.toContain(clippedFact);
+    expect(durable?.resolution.archiveDerivativeBytes).toBe(Buffer.byteLength(text, 'utf8'));
+    expect(mockAxiosGet).toHaveBeenCalledTimes(4);
+  });
+
   it('keeps item case, ignores reader position/query and recognizes only Archive items', async () => {
     expect(recognizeGamingArchiveItem(`${gamingArchiveGuideUrl}/page/n1/mode/2up?utm_source=reader#page`)).toBe('KH1.5_guide');
     expect(recognizeGamingArchiveItem('https://example.org/details/KH1.5_guide')).toBeNull();
@@ -213,6 +237,19 @@ describe('bounded Gaming Archive resource resolution with the real web extractor
   it('rejects actual oversized text despite a false small declared size', async () => {
     serve(gamingArchiveMetadata(), 'x'.repeat(1_000_001));
     await expect(resolveGamingArchiveResource(gamingArchiveGuideUrl, 5000)).rejects.toMatchObject({ code: 'GAMING_ARCHIVE_DOCUMENT_TOO_LARGE' });
+  });
+
+  it('rejects multibyte text over the byte limit even when its character count fits the durable projection', async () => {
+    const text = '道'.repeat(340_000);
+    expect(text.length).toBeLessThan(1_000_000);
+    expect(Buffer.byteLength(text, 'utf8')).toBeGreaterThan(1_000_000);
+    serve(gamingArchiveMetadata(), text);
+    const raw = jest.fn();
+    await expect(resolveGamingArchiveResource(gamingArchiveGuideUrl, 1_000_000, {
+      maxSelectedTextChars: 1_000_000, retainFullSelectedText: true, includeLinks: false, onRawDocument: raw
+    })).rejects.toMatchObject({ code: 'GAMING_ARCHIVE_DOCUMENT_TOO_LARGE' });
+    expect(mockAxiosGet).toHaveBeenCalledTimes(2);
+    expect(raw).not.toHaveBeenCalled();
   });
 
   it.each([

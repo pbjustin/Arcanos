@@ -11,7 +11,8 @@ import {
 import {
   GAMING_RUNTIME_BUDGET_SAFETY_BUFFER_MS,
   getGamingPipelineTimeoutMs,
-  getGamingStageTimeoutMs
+  getGamingStageTimeoutMs,
+  getGamingWebContextMaxChars
 } from "@services/gamingConfig.js";
 import { getOpenAIClientOrAdapter } from "@services/openai/clientBridge.js";
 import { generateMockResponse } from "@services/openai.js";
@@ -50,6 +51,7 @@ import {
   buildStoredGamingKnowledgeContext,
   type GamingStoredKnowledgeContext
 } from "@services/gamingSourceIngestion.js";
+import { formatStoredGamingEvidence } from "@services/gamingStoredKnowledge.js";
 
 export type GamingPipelineInput = Pick<
   ValidatedGamingRequest,
@@ -136,6 +138,19 @@ function getGamingStoredRetrievalTimeoutMs(): number {
   return remainingMs === null
     ? GAMING_STORED_RETRIEVAL_TIMEOUT_MS
     : Math.max(1, Math.min(GAMING_STORED_RETRIEVAL_TIMEOUT_MS, remainingMs));
+}
+
+/** Failed-source diagnostics remain public metadata; they never consume an evidence index. */
+function omitGamingDiagnosticContextBlocks(context: string, sources: GamingWebSource[]): string {
+  let omit = false;
+  return context.split("\n").filter(line => {
+    const match = line.match(/^\[Source (\d+)\] (https?:\/\/\S+)$/u);
+    if (match) {
+      const source = sources[Number(match[1]) - 1];
+      if (source?.url === match[2]) omit = !isCitableGamingWebSource(source);
+    }
+    return !omit;
+  }).join("\n").trim();
 }
 
 function hasCurrentStoredGamingEvidence(
@@ -817,6 +832,9 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
   if (resolvedGame) {
     const storedRetrievalStartedAt = Date.now();
     const storedRetrievalTimeoutMs = getGamingStoredRetrievalTimeoutMs();
+    const liveEvidenceContext = omitGamingDiagnosticContextBlocks(webContext, sources);
+    const liveCitableSources = sources.filter(isCitableGamingWebSource);
+    const storedContextBudget = Math.max(0, getGamingWebContextMaxChars() - liveEvidenceContext.length - (liveEvidenceContext ? 2 : 0));
     let storedKnowledge: GamingStoredKnowledgeContext = { context: "", sources: [] };
     let storedRetrievalError: unknown;
     try {
@@ -831,8 +849,9 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
           game: resolvedGame,
           prompt: resolvedParams.prompt,
           mode: resolvedParams.mode,
-          limit: 4,
-          sourceIndexOffset: sources.length,
+          sourceIndexOffset: liveCitableSources.length,
+          maxContextChars: storedContextBudget,
+          excludePublicUrls: sources.filter(isCitableGamingWebSource).map(source => source.url),
           queryTimeoutMs: storedRetrievalTimeoutMs,
           signal: getRequestAbortSignal() ?? undefined
         })
@@ -853,8 +872,51 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
       const existingUrls = new Set(
         sources.filter(isCitableGamingWebSource).map((source) => source.url)
       );
-      const uniqueStoredSources = storedKnowledge.sources
+      let uniqueStoredSources = storedKnowledge.sources
         .filter((source) => !existingUrls.has(source.url));
+      let storedContext = "";
+      let storedSelectedChunkCount = 0;
+      if (storedKnowledge.evidence) {
+        const candidates = storedKnowledge.evidence.flatMap(evidence => {
+          const source = uniqueStoredSources.find(candidate => candidate.url === evidence.publicUrl);
+          return source ? [{ source, evidence }] : [];
+        });
+        const projected = formatStoredGamingEvidence(candidates, { sourceIndexOffset: liveCitableSources.length, maxContextChars: storedContextBudget });
+        uniqueStoredSources = projected.sources;
+        storedContext = projected.context;
+        storedSelectedChunkCount = projected.evidence?.length ?? 0;
+        logger.info("gaming.stored_evidence.selected", {
+          ...baseLogContext,
+          chunks: (projected.evidence ?? []).map(evidence => ({
+            sourceIndex: liveCitableSources.length + projected.sources.findIndex(source => source.url === evidence.publicUrl) + 1,
+            sourceId: evidence.sourceId, revisionId: evidence.revisionId, recordId: evidence.recordId,
+            recordType: evidence.recordType, ordinal: evidence.ordinal,
+            fetchedAt: evidence.provenance.fetchedAt,
+            resolverId: evidence.provenance.resolverId,
+            resolverVersion: evidence.provenance.resolverVersion,
+            resolutionStrategy: evidence.provenance.resolutionStrategy
+          }))
+        });
+      } else {
+        // Compatibility with lexical source projections produced before chunk evidence existed.
+        const acceptedSources: typeof uniqueStoredSources = [];
+        for (const source of uniqueStoredSources) {
+          const part = [
+            `[Source ${liveCitableSources.length + acceptedSources.length + 1}]`,
+            "Origin: stored gaming knowledge", `URL: ${source.url}`,
+            source.sourceType ? `Type: ${source.sourceType}` : "",
+            source.patchVersion ? `Patch: ${source.patchVersion}` : "",
+            source.publishedAt ? `Published: ${source.publishedAt}` : "",
+            source.title ? `Title: ${source.title}` : "", source.snippet
+          ].filter(Boolean).join("\n");
+          const nextContext = [storedContext, part].filter(Boolean).join("\n\n");
+          if (!source.snippet || nextContext.length > storedContextBudget) continue;
+          storedContext = nextContext;
+          acceptedSources.push(source);
+        }
+        uniqueStoredSources = acceptedSources;
+        storedSelectedChunkCount = acceptedSources.length;
+      }
       const storedSources: GamingWebSource[] = uniqueStoredSources
         .map((source) => ({
           url: source.url,
@@ -868,27 +930,12 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
         }));
       if (storedSources.length > 0) {
         const storedUrls = new Set(storedSources.map((source) => source.url));
-        sources = sources.filter((source) =>
-          !storedUrls.has(source.url) || isCitableGamingWebSource(source)
-        );
-        const storedContext = storedSources.map((source, index) => [
-          `[Source ${sources.length + index + 1}]`,
-          "Origin: stored gaming knowledge",
-          `URL: ${source.url}`,
-          source.sourceId ? `Source ID: ${source.sourceId}` : "",
-          source.sourceType ? `Type: ${source.sourceType}` : "",
-          source.patchVersion ? `Patch: ${source.patchVersion}` : "",
-          uniqueStoredSources[index]?.publishedAt
-            ? `Published: ${uniqueStoredSources[index]?.publishedAt}`
-            : "",
-          source.title ? `Title: ${source.title}` : "",
-          source.snippet ?? ""
-        ].filter(Boolean).join("\n")).join("\n\n");
-        webContext = [webContext, storedContext].filter(Boolean).join("\n\n");
-        sources = [...sources, ...storedSources];
+        const failedSources = sources.filter(source => !isCitableGamingWebSource(source) && !storedUrls.has(source.url));
+        webContext = [liveEvidenceContext, storedContext].filter(Boolean).join("\n\n");
+        sources = [...liveCitableSources, ...storedSources, ...failedSources];
         retrievalAttempted = true;
         retrievalHadUsableSources = true;
-        selectedChunkCount += storedSources.length;
+        selectedChunkCount += storedSelectedChunkCount;
         publicSourceCount = sources.length;
         if (hasCurrentStoredGamingEvidence(uniqueStoredSources, resolvedParams)) {
           currentEvidenceAvailable = true;
