@@ -4207,6 +4207,43 @@ async function executeRequestCase(
   ) {
     fail('NATIVE_PR_PREVIEW_SYNTHETIC_MARKER_MISSING', requestCase.caseId);
   }
+  if (
+    requestCase.caseId === 'gaming-query-guide'
+    && response.headers.get(NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.proofHeader)
+      !== NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.proofVersion
+  ) {
+    fail(
+      'NATIVE_PR_PREVIEW_GAMING_ARCHIVE_GROUNDING_PROOF_INVALID',
+      requestCase.caseId
+    );
+  }
+  if (
+    requestCase.caseId === 'gaming-query-guide'
+    && response.headers.get(NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.responseProofHeader)
+      !== NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.responseProofVersion
+  ) {
+    fail(
+      'NATIVE_PR_PREVIEW_GAMING_GUIDE_RESPONSE_PROOF_INVALID',
+      requestCase.caseId
+    );
+  }
+  if (
+    requestCase.caseId === 'gaming-query-guide'
+    && response.headers.get(NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.documentProofHeader)
+      !== NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.documentProofVersion
+  ) {
+    fail(
+      'NATIVE_PR_PREVIEW_GAMING_DOCUMENT_INGESTION_PROOF_INVALID',
+      requestCase.caseId
+    );
+  }
+  if (
+    requestCase.caseId === 'gaming-query-guide'
+    && response.headers.get(NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.durableRagProofHeader)
+      !== NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.durableRagProofVersion
+  ) {
+    fail('NATIVE_PR_PREVIEW_GAMING_DURABLE_RAG_PROOF_INVALID', requestCase.caseId);
+  }
   if (requestCase.expectedType === 'backstage-generation-contract') {
     const contract = NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration;
     if (
@@ -4500,6 +4537,14 @@ async function executeRequestCase(
     responseBytes: bodyBytes.length,
     role: requestCase.role,
     simulatedAuth: requestCase.simulatedAuth === true,
+    ...(requestCase.caseId === 'gaming-query-guide'
+      ? {
+          gamingArchiveGuideEvidenceVerified: true,
+          gamingGuideResponseVerified: true,
+          gamingDocumentIngestionVerified: true,
+          gamingDurableRagVerified: true,
+        }
+      : {}),
     ...(requestCase.expectedType === 'backstage-generation-contract'
       ? { clearPolicyVersionVerified: true }
       : {}),

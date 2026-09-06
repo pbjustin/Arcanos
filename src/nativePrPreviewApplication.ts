@@ -6,6 +6,10 @@ import {
 import { createHash } from 'node:crypto';
 import { Readable } from 'node:stream';
 import { setTimeout as delay } from 'node:timers/promises';
+import { runGamingArchiveGroundingPreview } from './shared/gaming/gamingArchivePreviewFixture.js';
+import { runGamingGuideResponsePreview } from './shared/gaming/gamingGuideResponsePreviewFixture.js';
+import { runGamingDocumentIngestionPreview } from './shared/gaming/gamingDocumentIngestionPreviewFixture.js';
+import { runGamingDurableRagPreview } from './shared/gaming/gamingDurableRagPreviewFixture.js';
 
 import {
   createGenericJobsRouter,
@@ -9142,10 +9146,88 @@ export function createNativePrPreviewApplication(
 
   app.post(
     NATIVE_PR_PREVIEW_GAMING_CONTRACT.queryPath,
-    (request, response) => {
+    async (request, response) => {
       const correlation = readPreviewCorrelation(response);
       const fixture = resolveGamingQueryFixture(request.body);
       if (fixture.kind === 'success') {
+        if (fixture.mode === 'guide') {
+          try {
+            await runGamingArchiveGroundingPreview();
+          } catch {
+            sendBoundedJsonResponse(
+              request,
+              response,
+              { error: 'PREVIEW_GAMING_ARCHIVE_GROUNDING_CONTRACT_INVALID' },
+              {
+                logEvent: 'native_pr_preview.gaming_archive_grounding_invalid',
+                maxBytes: MAX_GAMING_QUERY_RESPONSE_BYTES,
+                statusCode: 500,
+              }
+            );
+            return;
+          }
+          try {
+            runGamingGuideResponsePreview();
+          } catch {
+            sendBoundedJsonResponse(
+              request,
+              response,
+              { error: 'PREVIEW_GAMING_GUIDE_RESPONSE_CONTRACT_INVALID' },
+              {
+                logEvent: 'native_pr_preview.gaming_guide_response_invalid',
+                maxBytes: MAX_GAMING_QUERY_RESPONSE_BYTES,
+                statusCode: 500,
+              }
+            );
+            return;
+          }
+          try {
+            await runGamingDocumentIngestionPreview();
+          } catch {
+            sendBoundedJsonResponse(
+              request,
+              response,
+              { error: 'PREVIEW_GAMING_DOCUMENT_INGESTION_CONTRACT_INVALID' },
+              {
+                logEvent: 'native_pr_preview.gaming_document_ingestion_invalid',
+                maxBytes: MAX_GAMING_QUERY_RESPONSE_BYTES,
+                statusCode: 500,
+              }
+            );
+            return;
+          }
+          try {
+            await runGamingDurableRagPreview();
+          } catch {
+            sendBoundedJsonResponse(
+              request,
+              response,
+              { error: 'PREVIEW_GAMING_DURABLE_RAG_CONTRACT_INVALID' },
+              {
+                logEvent: 'native_pr_preview.gaming_durable_rag_invalid',
+                maxBytes: MAX_GAMING_QUERY_RESPONSE_BYTES,
+                statusCode: 500,
+              }
+            );
+            return;
+          }
+          response.setHeader(
+            NATIVE_PR_PREVIEW_GAMING_CONTRACT.durableRagProofHeader,
+            NATIVE_PR_PREVIEW_GAMING_CONTRACT.durableRagProofVersion
+          );
+          response.setHeader(
+            NATIVE_PR_PREVIEW_GAMING_CONTRACT.proofHeader,
+            NATIVE_PR_PREVIEW_GAMING_CONTRACT.proofVersion
+          );
+          response.setHeader(
+            NATIVE_PR_PREVIEW_GAMING_CONTRACT.responseProofHeader,
+            NATIVE_PR_PREVIEW_GAMING_CONTRACT.responseProofVersion
+          );
+          response.setHeader(
+            NATIVE_PR_PREVIEW_GAMING_CONTRACT.documentProofHeader,
+            NATIVE_PR_PREVIEW_GAMING_CONTRACT.documentProofVersion
+          );
+        }
         sendPreviewJson(
           request,
           response,

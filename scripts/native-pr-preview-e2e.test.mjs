@@ -195,6 +195,18 @@ function responseHeadersForCase(
             NATIVE_PR_PREVIEW_E2E_CONTRACT.syntheticResponseHeader.value,
         }
       : {}),
+    ...(requestCase.caseId === 'gaming-query-guide'
+      ? {
+          [NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.proofHeader]:
+            NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.proofVersion,
+          [NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.responseProofHeader]:
+            NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.responseProofVersion,
+          [NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.documentProofHeader]:
+            NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.documentProofVersion,
+          [NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.durableRagProofHeader]:
+            NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.durableRagProofVersion,
+        }
+      : {}),
     ...(requestCase.expectedType === 'backstage-generation-contract'
       ? {
           [NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration.proofHeaders
@@ -2042,6 +2054,30 @@ test('executes the bounded credential-free matrix and detects identity stability
     24
   );
   assert.equal(mock.requestCount, 138);
+  assert.deepEqual(
+    result.checks.filter(({ gamingArchiveGuideEvidenceVerified }) =>
+      gamingArchiveGuideEvidenceVerified === true
+    ).map(({ caseId }) => caseId),
+    ['gaming-query-guide']
+  );
+  assert.deepEqual(
+    result.checks.filter(({ gamingGuideResponseVerified }) =>
+      gamingGuideResponseVerified === true
+    ).map(({ caseId }) => caseId),
+    ['gaming-query-guide']
+  );
+  assert.deepEqual(
+    result.checks.filter(({ gamingDocumentIngestionVerified }) =>
+      gamingDocumentIngestionVerified === true
+    ).map(({ caseId }) => caseId),
+    ['gaming-query-guide']
+  );
+  assert.deepEqual(
+    result.checks.filter(({ gamingDurableRagVerified }) =>
+      gamingDurableRagVerified === true
+    ).map(({ caseId }) => caseId),
+    ['gaming-query-guide']
+  );
   assert.equal(
     result.checks.find(({ caseId }) =>
       caseId === 'worker-readiness-initial'
@@ -2842,6 +2878,65 @@ test('rejects missing synthetic provenance and correlation or security header dr
         delete headers[
           NATIVE_PR_PREVIEW_E2E_CONTRACT.syntheticResponseHeader.name
         ];
+      },
+    },
+    {
+      caseId: 'gaming-query-guide',
+      code: 'NATIVE_PR_PREVIEW_GAMING_ARCHIVE_GROUNDING_PROOF_INVALID',
+      mutate(headers) {
+        delete headers[NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.proofHeader];
+      },
+    },
+    {
+      caseId: 'gaming-query-guide',
+      code: 'NATIVE_PR_PREVIEW_GAMING_ARCHIVE_GROUNDING_PROOF_INVALID',
+      mutate(headers) {
+        headers[NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.proofHeader] =
+          'gaming-archive-grounding/drifted';
+      },
+    },
+    {
+      caseId: 'gaming-query-guide',
+      code: 'NATIVE_PR_PREVIEW_GAMING_DOCUMENT_INGESTION_PROOF_INVALID',
+      mutate(headers) {
+        delete headers[NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.documentProofHeader];
+      },
+    },
+    {
+      caseId: 'gaming-query-guide',
+      code: 'NATIVE_PR_PREVIEW_GAMING_DURABLE_RAG_PROOF_INVALID',
+      mutate(headers) {
+        delete headers[NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.durableRagProofHeader];
+      },
+    },
+    {
+      caseId: 'gaming-query-guide',
+      code: 'NATIVE_PR_PREVIEW_GAMING_DURABLE_RAG_PROOF_INVALID',
+      mutate(headers) {
+        headers[NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.durableRagProofHeader] = 'gaming-durable-rag/drifted';
+      },
+    },
+    {
+      caseId: 'gaming-query-guide',
+      code: 'NATIVE_PR_PREVIEW_GAMING_DOCUMENT_INGESTION_PROOF_INVALID',
+      mutate(headers) {
+        headers[NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.documentProofHeader] =
+          'gaming-document-ingestion/drifted';
+      },
+    },
+    {
+      caseId: 'gaming-query-guide',
+      code: 'NATIVE_PR_PREVIEW_GAMING_GUIDE_RESPONSE_PROOF_INVALID',
+      mutate(headers) {
+        delete headers[NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.responseProofHeader];
+      },
+    },
+    {
+      caseId: 'gaming-query-guide',
+      code: 'NATIVE_PR_PREVIEW_GAMING_GUIDE_RESPONSE_PROOF_INVALID',
+      mutate(headers) {
+        headers[NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.responseProofHeader] =
+          'gaming-guide-response/drifted';
       },
     },
     {

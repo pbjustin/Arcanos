@@ -474,6 +474,55 @@ describe('native PR preview import boundary', () => {
     );
   });
 
+  it.each([
+    'src/shared/gaming/gamingArchiveResourceCore.ts',
+    'src/services/gamingDocumentExtraction.ts',
+    'src/services/gamingDocumentChunks.ts',
+    'src/services/gamingDurableDocumentChunks.ts',
+    'src/services/gamingGameDetection.ts',
+    'src/shared/gaming/gamingDocumentProjectionCore.ts',
+    'src/shared/gaming/gamingDocumentIngestionCore.ts',
+    'src/shared/gaming/gamingDocumentIngestionPreviewFixture.ts',
+    'src/shared/gaming/gamingStoredEvidenceCore.ts',
+    'src/shared/gaming/gamingDurableRagPreviewFixture.ts',
+    'src/shared/gaming/gamingArchivePreviewFixture.ts',
+    'src/shared/gaming/gamingGuideResponseCore.ts',
+    'src/shared/gaming/gamingGuideResponsePreviewFixture.ts',
+    'src/shared/gaming/gamingPromptCore.ts',
+    'src/shared/gaming/gamingGrounding.ts',
+  ])('pins the reviewed Gaming preview core %s', async (filePath) => {
+    const sourceText = await readNormalizedSource(new URL(`../${filePath}`, import.meta.url));
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).toContain(filePath);
+    expect(findUnsafeRuntimeSyntax(filePath, sourceText)).toEqual([]);
+    expect(findUnsafeRuntimeSyntax(filePath, `${sourceText}\nexport const previewPolicyDrift = true;\n`)).toEqual(
+      expect.arrayContaining([expect.stringContaining('critical entry file semantic digest')])
+    );
+    for (const forbidden of [
+      'src/services/gamingArchiveResources.ts', 'src/services/gamingPipeline.ts',
+      'src/services/gamingWebContext.ts', 'src/shared/webFetcher.ts',
+      'src/services/gamingAgents.ts', 'src/services/gamingPromptBuilder.ts',
+      'src/services/gamingStoredKnowledge.ts', 'src/services/gamingSourceIngestion.ts',
+      'src/core/db/repositories/gamingSourceRepository.ts',
+      'src/platform/runtime/prompts.ts',
+    ]) {
+      expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toContain(forbidden);
+    }
+  });
+
+  it.each([
+    ['setTimeout as yieldToEventLoop', 'setTimeout:yieldToEventLoop'],
+    ['setImmediate as alternateYield', 'setImmediate:alternateYield'],
+  ])('rejects an alternative durable chunker timer binding %s', async (replacement, forbiddenBinding) => {
+    const filePath = 'src/services/gamingDurableDocumentChunks.ts';
+    const sourceText = await readNormalizedSource(new URL(`../${filePath}`, import.meta.url));
+    expect(findUnsafeRuntimeSyntax(filePath, sourceText)).toEqual([]);
+    const driftedSource = replaceRequired(sourceText, 'setImmediate as yieldToEventLoop', replacement);
+    expect(findUnsafeRuntimeSyntax(filePath, driftedSource)).toEqual(expect.arrayContaining([
+      expect.stringContaining(`forbidden runtime import binding "${forbiddenBinding}"`),
+      expect.stringContaining('critical entry file semantic digest'),
+    ]));
+  });
+
   it('admits and pins the pure Trinity reasoning provider policy', async () => {
     const filePath = 'src/shared/gpt/trinityReasoningPolicy.ts';
     const sourceText = await readNormalizedSource(

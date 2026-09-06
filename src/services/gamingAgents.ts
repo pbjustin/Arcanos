@@ -9,6 +9,7 @@ import {
   type GamingSuccessEnvelope
 } from "@services/gamingModes.js";
 import { isRecord } from "@shared/typeGuards.js";
+import { composeGroundedGamingGuideResponse } from "@shared/gaming/gamingGuideResponseCore.js";
 import { extractTextPrompt, normalizeStringList } from "@transport/http/payloadNormalization.js";
 
 export type GamingIntentMode = GamingMode | "non-gaming";
@@ -724,6 +725,11 @@ export const ResponseComposerAgent = {
     backendEnvelope: GamingSuccessEnvelope;
   }): GamingSuccessEnvelope {
     const { intent, backendEnvelope } = params;
+    const groundedGuide = composeGroundedGamingGuideResponse(intent.mode, backendEnvelope);
+    if (groundedGuide) {
+      return groundedGuide;
+    }
+
     const backendResponse = backendEnvelope.data.response.trim();
     const response = hasComposedSections(backendResponse)
       ? [

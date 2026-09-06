@@ -11,48 +11,65 @@ import {
 import {
   GamingSourceRepositoryUnavailableError,
   getGamingSourceById,
-  persistGamingSourceRevision,
-  searchActiveGamingKnowledge
+  persistGamingSourceRevision
 } from '@core/db/repositories/gamingSourceRepository.js';
 import { logger } from '@platform/logging/structuredLogging.js';
 import { buildQueuedGptJobInput } from '@shared/gpt/asyncGptJob.js';
+import {
+  buildGamingDocumentSearchText,
+  classifyGamingDocumentQuality,
+  classifyGamingStructuredExtractionQuality,
+  detectGamingDocumentGame,
+  selectGamingSourceAdmissionUrl,
+  selectGamingSourcePublicUrl
+} from '@shared/gaming/gamingDocumentIngestionCore.js';
 import { truncateTextByCharacters } from '@shared/http/clientResponseCommon.js';
-import { fetchAndCleanDocument, type FetchAndCleanRawDocument } from '@shared/webFetcher.js';
 import { planAutonomousWorkerJob } from '@services/workerAutonomyService.js';
 
 import { ingestGamingBuildResource } from './gamingBuildResources.js';
+import {
+  GAMING_DOCUMENT_RESOLVER_VERSION,
+  describeGamingDocumentSource,
+  resolveGamingDocument
+} from './gamingDocumentResolution.js';
+import {
+  chunkGamingDocument,
+  GAMING_DOCUMENT_CHUNKING_VERSION,
+  GAMING_DURABLE_DOCUMENT_LIMITS,
+  hashGamingDocumentRevision
+} from './gamingDurableDocumentChunks.js';
 import {
   GAMING_BUILD_RESOURCE_SCHEMA_VERSION,
   GAMING_BUILD_RESOURCE_HARD_LIMITS,
   GAMING_RESOURCE_TYPES,
   type GamingResourceType
 } from './gamingBuildResourceSchema.js';
-import {
-  canonicalizeGamingGameName,
-  detectGamingGame
-} from './gamingGameDetection.js';
+import { canonicalizeGamingGameName } from './gamingGameDetection.js';
 import { sanitizeGamingDiscoveryCandidateUrl } from './gamingSourceDiscovery.js';
 import { textContainsExactGamingVersion } from './gamingVersion.js';
 
+import {
+  retrieveStoredGamingKnowledge,
+  type GamingStoredKnowledgeContext,
+  type GamingStoredKnowledgeInput
+} from './gamingStoredKnowledge.js';
+export type { GamingStoredKnowledgeContext } from './gamingStoredKnowledge.js';
 export const GAMING_SOURCE_INGESTION_REQUEST_PATH = '/gpt-access/gaming/sources/ingestions';
 export const GAMING_SOURCE_REFRESH_REQUEST_PATH = '/gpt-access/gaming/sources/refreshes';
 export const GAMING_SOURCE_INGESTION_REASON = 'gaming_source_ingestion';
 export const GAMING_SOURCE_INGESTION_GPT_ID = 'arcanos-gaming';
 
 const MAX_SOURCE_URLS = 4;
-const MAX_SOURCE_TEXT_CHARS = 100_000;
 const MAX_TITLE_CHARS = 240;
 const MIN_USEFUL_TEXT_CHARS = 120;
 const IDEMPOTENCY_KEY_MAX_CHARS = 240;
 const GAMING_SOURCE_OPERATION_ERROR_MAX_CHARS = 240;
 const GAMING_PATCH_VERSION_MAX_CHARS = 64;
 const SOURCE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
-const MAX_CONCURRENT_STORED_GAMING_LOOKUPS = 4;
 const VERIFIED_PATCH_METHODS = new Set([
   'extractor',
   'fetched_content_exact_match'
 ]);
-let activeStoredGamingLookups = 0;
 
 const allowedSourceTypeHints = GAMING_RESOURCE_TYPES.filter(
   (value): value is Exclude<GamingResourceType, 'unknown'> => value !== 'unknown'
@@ -198,21 +215,6 @@ export interface GamingSourceGatewayContext {
   };
 }
 
-export interface GamingStoredKnowledgeContext {
-  context: string;
-  sources: Array<{
-    sourceId: string;
-    url: string;
-    title?: string;
-    sourceType: string;
-    patchVersion?: string;
-    verifiedPatchVersion?: string;
-    fetchedAt: string;
-    publishedAt?: string;
-    snippet: string;
-  }>;
-}
-
 function sha256(value: string): string {
   return createHash('sha256').update(value, 'utf8').digest('hex');
 }
@@ -306,7 +308,8 @@ function admitUrl(
     };
   }
 
-  const canonicalUrl = sanitized.url;
+  const description = describeGamingDocumentSource(sanitized.url);
+  const canonicalUrl = selectGamingSourceAdmissionUrl(sanitized.url, description);
   if (seenCanonicalUrls.has(canonicalUrl)) {
     return {
       rejection: rejectAdmission(
@@ -360,22 +363,6 @@ function queuedSourceResults(body: QueuedGamingIngestionBody): GamingSourceInges
     })),
     ...body.rejectedSources
   ].sort((left, right) => left.submittedIndex - right.submittedIndex);
-}
-
-async function runWithStoredGamingLookupAdmission<T>(
-  callback: () => Promise<T>
-): Promise<T> {
-  if (activeStoredGamingLookups >= MAX_CONCURRENT_STORED_GAMING_LOOKUPS) {
-    const error = new Error('Stored Gaming knowledge lookup capacity is busy.');
-    error.name = 'GamingStoredKnowledgeLookupBusyError';
-    throw error;
-  }
-  activeStoredGamingLookups += 1;
-  try {
-    return await callback();
-  } finally {
-    activeStoredGamingLookups -= 1;
-  }
 }
 
 function resolveVerifiedPatch(input: {
@@ -877,7 +864,7 @@ function classifySourceFailure(error: unknown): GamingSourcePublicError {
   if (status !== undefined && status >= 400) {
     return { code: 'FETCH_FAILED', message: 'The source rejected the public fetch.', retryable: false };
   }
-  if (message.includes('timeout') || message.includes('timed out')) {
+  if (message.includes('timeout') || message.includes('timed out') || message.includes('deadline')) {
     return { code: 'FETCH_TIMEOUT', message: 'The source fetch timed out.', retryable: true };
   }
   if (message.includes('content type')) {
@@ -939,7 +926,8 @@ function pageLooksAuthenticationBlocked(text: string): boolean {
 
 async function ingestOneSource(
   source: QueuedGamingSource,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  context: { requestId?: string; traceId?: string } = {}
 ): Promise<GamingSourceIngestionItemResult> {
   const startedAt = Date.now();
   const urlHash = sha256(source.canonicalUrl).slice(0, 16);
@@ -948,25 +936,48 @@ async function ingestOneSource(
     sourceHost: new URL(source.canonicalUrl).hostname,
     sourceUrlHash: urlHash,
     submittedIndex: source.submittedIndex,
+    ...context,
     action: source.origin === 'refresh' ? 'refresh' : 'ingest'
   };
   logger.info('gaming.source.fetch_started', logContext);
-  let rawDocument: FetchAndCleanRawDocument | undefined;
-  let extractionMetrics: Record<string, unknown> = {};
   try {
     const fetchedAt = new Date().toISOString();
-    const document = await fetchAndCleanDocument(source.canonicalUrl, MAX_SOURCE_TEXT_CHARS, {
+    const document = await resolveGamingDocument(source.canonicalUrl, GAMING_DURABLE_DOCUMENT_LIMITS.documentChars, {
       signal,
+      documentPurpose: 'durable',
       includeLinks: false,
-      rawDocumentMaxChars: GAMING_BUILD_RESOURCE_HARD_LIMITS.maxHtmlChars,
-      onRawDocument: (raw) => {
-        rawDocument = raw;
-      },
-      onExtraction: (metrics) => {
-        extractionMetrics = { ...metrics };
-      }
+      rawDocumentMaxChars: GAMING_BUILD_RESOURCE_HARD_LIMITS.maxHtmlChars
     });
-    const cleanedText = document.text.trim();
+    signal?.throwIfAborted();
+    const chunked = await chunkGamingDocument(document.text, { signal });
+    const cleanedText = chunked.text;
+    const documentTruncated = document.metrics.truncated || chunked.documentTruncated;
+    const documentQuality = classifyGamingDocumentQuality({
+      cleanedText,
+      navigationDensity: document.extraction.navigationDensity,
+      truncated: documentTruncated,
+      minUsefulTextChars: MIN_USEFUL_TEXT_CHARS
+    });
+    const resolutionProvenance = {
+      resolverId: document.resolution.resolverId,
+      resolverVersion: document.resolution.resolverVersion,
+      resolutionStrategy: document.resolution.strategy,
+      requestedHost: document.host,
+      resolvedDocumentType: document.resolution.documentType,
+      documentTruncated,
+      rawTextLength: document.metrics.rawTextLength,
+      cleanedTextLength: cleanedText.length,
+      documentCharsResolved: document.extraction.cleanedTextLength,
+      documentCharsIndexed: chunked.indexedChars,
+      chunkCount: chunked.chunks.length,
+      chunkingVersion: chunked.chunkingVersion,
+      coverageStatus: documentTruncated ? 'partial' : 'complete'
+    };
+    logger.info('gaming.source.resolution_completed', {
+      ...logContext,
+      ...resolutionProvenance,
+      documentQuality
+    });
     if (cleanedText.length < MIN_USEFUL_TEXT_CHARS) {
       const code = pageLooksAuthenticationBlocked(cleanedText)
         ? 'AUTHENTICATION_REQUIRED'
@@ -989,14 +1000,10 @@ async function ingestOneSource(
       };
     }
 
-    const pageTitle = typeof extractionMetrics.documentTitle === 'string'
-      ? extractionMetrics.documentTitle.slice(0, MAX_TITLE_CHARS)
-      : undefined;
-    const pageHeadings = typeof extractionMetrics.headingText === 'string'
-      ? extractionMetrics.headingText.slice(0, 1_000)
-      : undefined;
-    const detectedGame = detectGamingGame({
-      urls: [source.canonicalUrl],
+    const pageTitle = document.metadata.title?.slice(0, MAX_TITLE_CHARS);
+    const pageHeadings = document.metadata.headings?.slice(0, 1_000);
+    const detectedGame = detectGamingDocumentGame({
+      canonicalUrl: source.canonicalUrl,
       pageTitle,
       pageHeadings
     });
@@ -1024,8 +1031,8 @@ async function ingestOneSource(
     const normalized = await ingestGamingBuildResource({
       url: source.canonicalUrl,
       requestedGame: source.game,
-      contentType: rawDocument?.contentType,
-      html: rawDocument?.body,
+      contentType: document.contentType,
+      html: document.rawDocument?.contentType.includes('html') ? document.rawDocument.body : undefined,
       text: cleanedText,
       metadata: {
         title: pageTitle,
@@ -1033,7 +1040,9 @@ async function ingestOneSource(
       },
       signal
     }, { useCache: false });
-    if (normalized.failureReason === 'STRUCTURED_RESOURCE_GAME_MISMATCH') {
+    const supportsStructuredExtraction = document.resolution.supportsStructuredExtraction;
+    const normalizedBuild = supportsStructuredExtraction ? normalized.build : null;
+    if (supportsStructuredExtraction && normalized.failureReason === 'STRUCTURED_RESOURCE_GAME_MISMATCH') {
       return {
         submittedIndex: source.submittedIndex,
         status: 'rejected',
@@ -1050,14 +1059,36 @@ async function ingestOneSource(
       };
     }
 
-    const sourceType = normalized.classification.type !== 'unknown'
+    const classifiedSourceType = normalized.classification.type !== 'unknown'
       ? normalized.classification.type
       : source.sourceTypeHint ?? 'article';
-    const title = normalized.build?.title ?? pageTitle;
-    const normalizedEvidence = normalized.evidenceText.trim();
+    // Document-only resolvers must not turn prose into a build record merely
+    // because an item identifier resembles a planner or loadout URL.
+    const sourceType = !supportsStructuredExtraction && sourceTypeToRecordType(classifiedSourceType) === 'build'
+      ? 'article' : classifiedSourceType;
+    const hasStructuredFields = Boolean(normalizedBuild && (
+      normalizedBuild.equipment?.length || normalizedBuild.skills?.length
+      || Object.keys(normalizedBuild.stats ?? {}).length
+    ));
+    const structuredExtractionQuality = classifyGamingStructuredExtractionQuality({
+      isBuildRecord: sourceTypeToRecordType(sourceType) === 'build',
+      hasStructuredFields,
+      quality: normalized.quality
+    });
+    logger.info('gaming.source.normalization_completed', {
+      ...logContext,
+      sourceType,
+      documentQuality,
+      structuredExtractionQuality,
+      extractor: normalized.adapterId,
+      extractorVersion: normalized.adapterVersion
+    });
+    const title = normalizedBuild?.title ?? pageTitle;
+    const normalizedEvidence = supportsStructuredExtraction
+      ? normalized.evidenceText.trim().slice(0, GAMING_BUILD_RESOURCE_HARD_LIMITS.maxEvidenceChars) : '';
     const patchVerification = resolveVerifiedPatch({
       claimedPatch: source.patchVersion,
-      extractedPatch: normalized.build?.patch,
+      extractedPatch: normalizedBuild?.patch,
       fetchedEvidence: [
         pageTitle,
         pageHeadings,
@@ -1066,8 +1097,8 @@ async function ingestOneSource(
       ].filter(Boolean).join('\n\n')
     });
     const patchVersion = patchVerification?.version;
-    const normalizedData: Record<string, unknown> = normalized.build
-      ? { ...normalized.build }
+    const normalizedData: Record<string, unknown> = normalizedBuild
+      ? { ...normalizedBuild }
       : {
           schemaVersion: '1',
           game: source.game,
@@ -1079,48 +1110,62 @@ async function ingestOneSource(
     if (patchVersion) {
       normalizedData.patch = patchVersion;
     }
-    const searchText = [
-      title,
-      source.game,
-      patchVersion,
-      normalizedEvidence,
-      cleanedText
-    ].filter(Boolean).join('\n\n').slice(0, MAX_SOURCE_TEXT_CHARS);
-    const contentHash = sha256(`${cleanedText}\n${stableJson(normalizedData)}`);
-    const normalizedBuildIdentity = normalized.build
-      ? {
-          game: normalized.build.game,
-          title: normalized.build.title,
-          role: normalized.build.role,
-          archetype: normalized.build.archetype,
-          activity: normalized.build.activity,
-          patch: patchVersion,
-          character: normalized.build.character,
-          equipment: normalized.build.equipment,
-          skills: normalized.build.skills
-        }
-      : null;
-    const semanticKey = sha256(stableJson({
-      gameKey: source.gameKey,
-      recordType: sourceTypeToRecordType(sourceType),
-      title: title?.toLowerCase() ?? null,
-      patchVersion: patchVersion?.toLowerCase() ?? null,
-      build: normalizedBuildIdentity
-    }));
+    const contentHash = hashGamingDocumentRevision(cleanedText, stableJson(normalizedData));
+    // Revision identity includes acquisition policy so refreshing an older
+    // extraction can replace stale provenance/quality even if its prose matches.
+    const extractorVersion = `${GAMING_DOCUMENT_RESOLVER_VERSION}:${sha256(stableJson({
+      adapterId: normalized.adapterId,
+      adapterVersion: normalized.adapterVersion,
+      resolverId: document.resolution.resolverId,
+      resolverVersion: document.resolution.resolverVersion,
+      documentResolverVersion: GAMING_DOCUMENT_RESOLVER_VERSION,
+      chunkingVersion: GAMING_DOCUMENT_CHUNKING_VERSION
+    }))}`;
+    const records = chunked.chunks.map((chunk) => {
+      const { text, semanticKey, ...chunkMetadata } = chunk;
+      // Structured build payloads remain compatible on the first record only;
+      // every other record contains its own prose and bounded document metadata.
+      const chunkData: Record<string, unknown> = {
+        ...(normalizedBuild && chunk.ordinal === 0 ? normalizedData : {
+          game: source.game, title, sourceType, ...(patchVersion ? { patch: patchVersion } : {})
+        }),
+        schemaVersion: GAMING_DOCUMENT_CHUNKING_VERSION,
+        text,
+        ...(chunk.ordinal === 0 && normalizedEvidence ? { structuredEvidence: normalizedEvidence } : {}),
+        chunk: chunkMetadata
+      };
+      return {
+        recordType: sourceTypeToRecordType(sourceType),
+        semanticKey: sha256(stableJson({ gameKey: source.gameKey, recordType: sourceTypeToRecordType(sourceType), semanticKey })),
+        payloadHash: sha256(stableJson(chunkData)),
+        title,
+        patch: patchVersion,
+        searchText: buildGamingDocumentSearchText({
+          cleanedText: text, title, game: source.game, patchVersion,
+          normalizedEvidence: chunk.ordinal === 0 ? normalizedEvidence : '',
+          // Reserve the actual metadata plus all four possible blank-line separators.
+          maxChars: GAMING_DURABLE_DOCUMENT_LIMITS.maxChunkChars + GAMING_BUILD_RESOURCE_HARD_LIMITS.maxEvidenceChars
+            + (title?.length ?? 0) + source.game.length + (patchVersion?.length ?? 0) + 8
+        }),
+        normalized: chunkData
+      };
+    });
+    signal?.throwIfAborted();
     const persisted = await persistGamingSourceRevision({
       gameKey: source.gameKey,
       gameName: source.game,
       canonicalUrl: source.canonicalUrl,
-      publicUrl: source.canonicalUrl,
+      publicUrl: selectGamingSourcePublicUrl(source.canonicalUrl, document.publicUrl, supportsStructuredExtraction),
       sourceType: sourceTypeToTrustType(sourceType, source),
       trustScore: source.trustScore ?? 0.25,
       priority: 100,
       contentHash,
-      cleanedContent: cleanedText.slice(0, MAX_SOURCE_TEXT_CHARS),
+      cleanedContent: cleanedText.slice(0, GAMING_DURABLE_DOCUMENT_LIMITS.revisionPreviewChars)
+        .replace(/[\uD800-\uDBFF]$/u, ''),
       fetchedAt,
       patch: patchVersion,
       extractor: normalized.adapterId,
-      extractorVersion: normalized.adapterVersion,
+      extractorVersion,
       normalizerSchemaVersion: GAMING_BUILD_RESOURCE_SCHEMA_VERSION,
       provenance: {
         canonicalUrl: source.canonicalUrl,
@@ -1129,36 +1174,46 @@ async function ingestOneSource(
         submittedIndex: source.submittedIndex,
         claimedPatchVersion: source.patchVersion ?? null,
         verifiedPatchVersion: patchVersion ?? null,
-        patchVerificationMethod: patchVerification?.method ?? null
+        patchVerificationMethod: patchVerification?.method ?? null,
+        structuredExtractorVersion: normalized.adapterVersion,
+        documentResolverVersion: GAMING_DOCUMENT_RESOLVER_VERSION,
+        ...resolutionProvenance
       },
       extractionMetrics: {
-        ...extractionMetrics,
+        ...resolutionProvenance,
         structured: normalized.metrics,
-        extractionQuality: normalized.quality,
+        extractionQuality: documentQuality,
+        structuredExtractionQuality,
         validationIssues: normalized.validation.issues.slice(0, 16),
         origin: source.origin
       },
-      records: [{
-        recordType: sourceTypeToRecordType(sourceType),
-        semanticKey,
-        payloadHash: sha256(stableJson(normalizedData)),
-        title,
-        patch: patchVersion,
-        searchText,
-        normalized: normalizedData
-      }]
+      records
     });
     const status = persisted.state === 'unchanged'
       ? 'unchanged'
       : persisted.state === 'created'
         ? 'stored'
         : 'updated';
+    logger.info('gaming.source.chunking_completed', {
+      ...logContext,
+      sourceId: persisted.sourceId,
+      revisionId: persisted.revisionId,
+      documentChars: cleanedText.length,
+      indexedChars: chunked.indexedChars,
+      chunkCount: records.length,
+      averageChunkChars: Math.round(chunked.chunks.reduce((sum, chunk) => sum + chunk.text.length, 0) / records.length),
+      maxChunkChars: Math.max(...chunked.chunks.map((chunk) => chunk.text.length)),
+      documentTruncated,
+      chunkingVersion: chunked.chunkingVersion,
+      coverageStatus: documentTruncated ? 'partial' : 'complete'
+    });
     logger.info('gaming.source.ingestion_completed', {
       ...logContext,
       sourceId: persisted.sourceId,
       status,
       sourceType,
-      extractionQuality: normalized.quality,
+      extractionQuality: documentQuality,
+      structuredExtractionQuality,
       recordsCreated: persisted.recordsCreated,
       recordsUpdated: persisted.recordsUpdated,
       elapsedMs: Date.now() - startedAt
@@ -1174,7 +1229,7 @@ async function ingestOneSource(
       recordsUpdated: persisted.recordsUpdated,
       fetchedAt,
       completedAt: new Date().toISOString(),
-      ...(normalized.quality === 'partial' || normalized.quality === 'metadata-only'
+      ...(documentQuality === 'partial' || documentQuality === 'metadata-only'
         ? { warnings: ['EXTRACTION_PARTIAL'] }
         : {})
     };
@@ -1221,7 +1276,10 @@ export async function executeQueuedGamingSourceIngestion(
         ? options.signal.reason
         : new Error('Gaming-source ingestion was cancelled.');
     }
-    processed.push(await ingestOneSource(source, options.signal));
+    processed.push(await ingestOneSource(source, options.signal, {
+      requestId: options.requestId,
+      traceId: options.traceId
+    }));
   }
   const sources = [...processed, ...parsed.data.rejectedSources]
     .sort((left, right) => left.submittedIndex - right.submittedIndex);
@@ -1379,73 +1437,8 @@ export async function getGamingSourceIngestionStatus(
   }
 }
 
-export async function buildStoredGamingKnowledgeContext(input: {
-  game: string;
-  prompt: string;
-  mode: 'guide' | 'build' | 'meta';
-  limit?: number;
-  sourceIndexOffset?: number;
-  queryTimeoutMs?: number;
-  signal?: AbortSignal;
-}): Promise<GamingStoredKnowledgeContext> {
-  const gameKey = canonicalGameKey(input.game);
-  const records = await runWithStoredGamingLookupAdmission(() =>
-    searchActiveGamingKnowledge({
-      gameKey,
-      query: input.prompt,
-      mode: input.mode,
-      limit: Math.min(Math.max(input.limit ?? 4, 1), 8)
-    }, {
-      queryTimeoutMs: input.queryTimeoutMs,
-      signal: input.signal
-    })
-  ).catch((error: unknown) => {
-    if (input.signal?.aborted) {
-      throw error;
-    }
-    logger.warn('gaming.stored_retrieval_failed', {
-      module: 'gaming-source-ingestion',
-      gameKey,
-      mode: input.mode,
-      errorType: error instanceof Error ? error.name : 'unknown'
-    });
-    return [];
-  });
-  if (records.length === 0) {
-    return { context: '', sources: [] };
-  }
-  const sources = records.map((record) => {
-    const verifiedPatchVersion = resolveVerifiedStoredPatch(record);
-    return {
-      sourceId: record.sourceId,
-      url: record.publicUrl,
-      ...(record.title ? { title: record.title } : {}),
-      sourceType: record.sourceType,
-      ...(verifiedPatchVersion
-        ? {
-            patchVersion: verifiedPatchVersion,
-            verifiedPatchVersion
-          }
-        : {}),
-      fetchedAt: record.fetchedAt.toISOString(),
-      ...(record.publishedAt ? { publishedAt: record.publishedAt.toISOString() } : {}),
-      snippet: record.searchText.slice(0, 1_200)
-    };
-  });
-  const sourceIndexOffset = Math.max(0, Math.trunc(input.sourceIndexOffset ?? 0));
-  const context = records.map((record, index) => {
-    const verifiedPatchVersion = resolveVerifiedStoredPatch(record);
-    return [
-      `[Source ${sourceIndexOffset + index + 1}]`,
-      'Origin: stored gaming knowledge',
-      `URL: ${record.publicUrl}`,
-      `Source ID: ${record.sourceId}`,
-      `Type: ${record.sourceType}`,
-      verifiedPatchVersion ? `Patch: ${verifiedPatchVersion}` : '',
-      record.publishedAt ? `Published: ${record.publishedAt.toISOString()}` : '',
-      record.title ? `Title: ${record.title}` : '',
-      record.searchText.slice(0, 1_200)
-    ].filter(Boolean).join('\n');
-  }).join('\n\n');
-  return { context, sources };
+export async function buildStoredGamingKnowledgeContext(
+  input: GamingStoredKnowledgeInput
+): Promise<GamingStoredKnowledgeContext> {
+  return retrieveStoredGamingKnowledge(input, { resolveVerifiedPatch: resolveVerifiedStoredPatch });
 }

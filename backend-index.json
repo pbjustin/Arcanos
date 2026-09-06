@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-04T05:39:16.855Z",
+  "generatedAt": "2026-09-06T19:49:06.319Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -1844,6 +1844,9 @@
           "relativePath": "src/services/gamingAgents.ts"
         },
         {
+          "relativePath": "src/services/gamingArchiveResources.ts"
+        },
+        {
           "relativePath": "src/services/gamingBuildResources.ts"
         },
         {
@@ -1851,6 +1854,18 @@
         },
         {
           "relativePath": "src/services/gamingConfig.ts"
+        },
+        {
+          "relativePath": "src/services/gamingDocumentChunks.ts"
+        },
+        {
+          "relativePath": "src/services/gamingDocumentExtraction.ts"
+        },
+        {
+          "relativePath": "src/services/gamingDocumentResolution.ts"
+        },
+        {
+          "relativePath": "src/services/gamingDurableDocumentChunks.ts"
         },
         {
           "relativePath": "src/services/gamingGameDetection.ts"
@@ -1884,6 +1899,9 @@
         },
         {
           "relativePath": "src/services/gamingSourceIngestion.ts"
+        },
+        {
+          "relativePath": "src/services/gamingStoredKnowledge.ts"
         },
         {
           "relativePath": "src/services/gamingVersion.ts"
@@ -2595,6 +2613,39 @@
         },
         {
           "relativePath": "src/shared/fileStorage.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingArchivePreviewFixture.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingArchiveResourceCore.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingDocumentIngestionCore.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingDocumentIngestionPreviewFixture.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingDocumentProjectionCore.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingDurableRagPreviewFixture.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingGrounding.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingGuideResponseCore.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingGuideResponsePreviewFixture.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingPromptCore.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingStoredEvidenceCore.ts"
         },
         {
           "relativePath": "src/shared/gpt/asyncGptJob.ts"
@@ -3886,7 +3937,52 @@
           "relativePath": "tests/gaming-agents.routing.test.ts"
         },
         {
+          "relativePath": "tests/gaming-archive-preview-failure.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-archive-preview.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-archive-provider-http.integration.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-archive-rag.integration.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-archive-resources.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-document-ingestion-preview-failure.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-document-ingestion-preview.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-document-resolution.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-durable-document-chunks.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-durable-rag-preview-failure.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-durable-rag-preview.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-grounding-response.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-guide-response-preview-failure.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-guide-response-preview.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-ingress-audit.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-large-guide-rag.integration.test.ts"
         },
         {
           "relativePath": "tests/gaming-prompt-builder.test.ts"
@@ -3899,6 +3995,9 @@
         },
         {
           "relativePath": "tests/gaming-rag-local-fetch.integration.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-resolved-source-ingestion.integration.test.ts"
         },
         {
           "relativePath": "tests/gaming-search-discovery.test.ts"
@@ -3917,6 +4016,9 @@
         },
         {
           "relativePath": "tests/gaming-source-schema-parity.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-stored-knowledge.test.ts"
         },
         {
           "relativePath": "tests/gaming-structured-resources.test.ts"
@@ -4151,6 +4253,9 @@
         },
         {
           "relativePath": "tests/integration/dag-snapshot-generation.pg18.integration.test.ts"
+        },
+        {
+          "relativePath": "tests/integration/gaming-durable-rag.pg18.integration.test.ts"
         },
         {
           "relativePath": "tests/integration/job-claim-fencing.pg18.integration.test.ts"
@@ -4889,6 +4994,15 @@
         },
         {
           "relativePath": "tests/test-stateless-pr.ts"
+        },
+        {
+          "relativePath": "tests/testUtils/gamingArchiveFixtures.ts"
+        },
+        {
+          "relativePath": "tests/testUtils/gamingLargeGuideFixture.ts"
+        },
+        {
+          "relativePath": "tests/testUtils/gamingResolvedSourceHarness.ts"
         },
         {
           "relativePath": "tests/testUtils/gamingStructuredResourceFixtures.ts"

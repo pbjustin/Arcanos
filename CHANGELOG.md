@@ -8,6 +8,11 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) where practical
 
 ### Added
 
+- Durable Gaming guides now use deterministic bounded document chunks, full-document
+  revision hashes, and ranked lexical evidence with source/chunk provenance. Large
+  guides remain searchable beyond the former 100,000-character boundary while
+  provider context stays within the existing Gaming budget. Existing records stay
+  readable; no migration, automatic backfill, or embedding service is required.
 - Added optional authenticated Backstage Booker generation context from
   explicitly mapped, read-only Notion pages while keeping PostgreSQL canon
   authoritative. The backend uses the existing dedicated Backstage bearer as

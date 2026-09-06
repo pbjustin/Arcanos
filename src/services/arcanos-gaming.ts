@@ -4,6 +4,7 @@ import { evaluateWithHRC } from "./hrcWrapper.js";
 import { getRequestAbortContext, getRequestAbortSignal, isAbortError } from "@arcanos/runtime";
 import { logger } from "@platform/logging/structuredLogging.js";
 import { hasVisibleContent } from "@shared/promptUtils.js";
+import { resolveGamingExecutionOutcome } from "@shared/gaming/gamingGrounding.js";
 import { GAMING_RESPONSE_MAX_CHARACTERS } from "@shared/http/clientResponseCommon.js";
 import { isRecord } from "@shared/typeGuards.js";
 import {
@@ -16,6 +17,7 @@ import {
 } from "@services/gamingAgents.js";
 import {
   formatGamingError,
+  GamingSourceEvidenceError,
   resolveGamingMode,
   type GamingErrorEnvelope,
   type GamingMode,
@@ -196,6 +198,16 @@ async function executeGamingBackendQuery(payload: GamingBackendActionPayload): P
         ? await runBuildPipeline(pipelineInput)
         : await runMetaPipeline(pipelineInput);
   } catch (error: unknown) {
+    if (error instanceof GamingSourceEvidenceError) {
+      return formatGamingError({
+        mode,
+        error: {
+          code: error.code,
+          message: error.message,
+          details: { grounding: error.grounding }
+        }
+      });
+    }
     if (readSafeErrorString(error, "code") === "GAMING_GAME_REQUIRED") {
       return formatGamingError({
         mode,
@@ -441,11 +453,15 @@ async function handleGamingRequest(payload: unknown): Promise<GamingEnvelope> {
       };
     }
 
-    logger.info("gaming.backend.success", {
+    logger.info("gaming.backend.end", {
       ...requestLogContext,
       mode: gamingIntent.mode,
       confidence: gamingIntent.confidence,
-      sourceCount: backendEnvelope.data.sources.length
+      sourceCount: backendEnvelope.data.sources.length,
+      executionOutcome: resolveGamingExecutionOutcome(backendEnvelope.data.fallbackReason),
+      groundingStatus: backendEnvelope.data.grounding?.groundingStatus ?? "unavailable",
+      groundedInSuppliedEvidence: backendEnvelope.data.grounding?.groundedInSuppliedEvidence ?? false,
+      ...(backendEnvelope.data.grounding ? { grounding: backendEnvelope.data.grounding } : {})
     });
 
     const composedResponse = ResponseComposerAgent.compose({

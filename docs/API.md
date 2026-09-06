@@ -1489,6 +1489,69 @@ Historical opaque partitions are preserved locally for compatibility, never
 placed on request context, logged, or returned, and the access credential is
 never persisted to the daemon token file.
 
+### Gaming supplied-guide evidence
+
+`POST /gpt/arcanos-gaming` retains its existing request and HTTP envelope. In
+`guide` mode, explicit supplied guide URLs must contribute readable evidence
+before a provider answer can run. When none does, the module returns
+`result.ok: false` with `GAMING_SOURCE_UNREADABLE` if a supplied document was
+obtained but rejected, or `GAMING_SOURCE_UNAVAILABLE` if none was obtained.
+The outer dispatcher may still return HTTP 200 and `ok: true`; inspect the
+module result. No general-knowledge completion substitutes for a failed
+explicit guide. The existing frontend current-evidence retry response remains
+an explicit evidence request and does not imply the candidates were read.
+
+`data.grounding` on retrieval responses and `error.details.grounding` on source
+failures distinguish `grounded`, `insufficient_evidence`, and `unavailable`.
+The summary reports requested supplied URLs, fetched live documents (including
+the in-process document cache), fetched supplied documents, usable/citable sources, selected
+chunks, supplied evidence sources, and `groundedInSuppliedEvidence`. Metadata
+requests are not guide documents. Grounding describes admitted evidence;
+it does not certify full-book coverage or every generated claim.
+Usable source and chunk counts can also include the existing stored Gaming
+evidence after the explicit supplied-guide guard passes. Distinct reader URLs
+may count as separate requested URLs while resolving to one Archive evidence item.
+
+For grounded guide answers without a generation fallback, the response formatter
+presents the backend answer once and trims outer whitespace. It preserves the
+Markdown and citations supplied by the generation pipeline. The guide
+prompt asks for the gameplay answer first, with context qualifications only when
+they materially affect the advice and with the user's spoiler restrictions intact.
+The formatter adds no generic context warnings or backend diagnostic commentary;
+`data.grounding` and source metadata remain available separately. Explicit `game`
+values retain their specificity and take precedence over source-derived title hints.
+
+Gaming recognizes Archive.org `/details/<identifier>` items and validates their
+bounded metadata before choosing an eligible text resource deterministically.
+For representations of one original document, OCR `DjVuTXT` takes priority over
+supported plain `Text`; eligible text resources from different original documents
+are rejected as ambiguous regardless of format. Filename and original document
+provenance must match the item metadata. The resolver constructs a
+read URL only from a validated Archive storage host and the exact item directory,
+because Archive's public download endpoint redirects. Arbitrary metadata URLs
+and redirects remain forbidden. PDF, EPUB, compressed archives, and binaries
+are not parsed. Missing, malformed, oversized, restricted, or unreadable
+resources fail closed; Archive navigation HTML is not substituted for text.
+Archive acceptance is capped at 128,000 metadata bytes and 512 file entries,
+1,000,000 document bytes, and 100,000 cleaned document characters for ranking.
+The existing configured web-fetch byte cap may be stricter; selected model
+context retains its independent Gaming character budget. Only the validated
+primary metadata storage host is attempted; redirects and secondary-host retries
+are not enabled.
+Normal HTML guides retain the existing extraction and evidence-quality gates.
+Only the sanitized item URL is public; storage URLs and filenames are not
+logged or cited. Retrieval shares the existing request abort, fetch deadline,
+DNS pinning, size limits, sanitization, ranking, and cache protections.
+
+`gaming.retrieval.source.end` reports retrieval execution; `gaming.grounding.*`
+reports evidence admission. `gaming.backend.end` carries execution and grounding
+state separately; responses with `data.fallbackReason` report
+`executionOutcome: "fallback"`. `retrievedSourceCount` remains the fetched live
+document count, including cached documents, after stored evidence is merged.
+`gaming.stored_retrieval.mergedSourceCount` reports the stored sources added to
+the prompt separately. HTTP success or a completed backend execution does not
+prove that a supplied guide was used.
+
 ### GPT Access protected gateway
 - `GET /gpt-access/openapi.json` (public schema metadata)
 - `GET /gpt-access/health`
@@ -1534,6 +1597,84 @@ UUID `ingestionId`. The status route accepts only that identifier and returns a
 sanitized lifecycle projection with source-level states, safe errors, record
 counts, provenance, and timestamps—never generic job payloads, queue state,
 worker state, raw database records, or provider diagnostics.
+
+Live supplied-source retrieval, initial durable ingestion, and refresh all use
+`resolveGamingDocument()` in `src/services/gamingDocumentResolution.ts`. Its
+small ordered resolver registry acquires a bounded `ResolvedGamingDocument`
+before either ranking or structured normalization. The Archive adapter reuses
+the existing metadata-attested text resolver; generic HTML/text remains the
+fallback. Archive reader aliases use the public item URL as their source
+identity and citation. Generic sources retain their admitted, sanitized URL,
+including public page identifiers such as MediaWiki's `curid` query parameter.
+Durable ingestion checks source-game conflicts using the URL, title, and
+headings; ordinary guide prose is not treated as a requested game.
+
+Durable revisions hash all accepted, sanitized document text, normalized identity,
+and the explicit `gaming-document-chunks-v1` policy. The revision's 16,000-character
+`cleaned_content` preview does not define searchable coverage. Each guide revision
+owns up to 500 deterministic knowledge chunks, targeting 1,800 characters with a
+2,000-character maximum and at most 240 characters of local overlap. Segmentation
+prefers paragraph, sentence, then word boundaries; indivisible runs split only at
+Unicode code-point boundaries. Chunk metadata stores ordinal, total, offsets,
+content hash, and an explicit heading path only when available. No page numbers
+are inferred from OCR.
+
+Structured build facts retain their existing 8,000-character evidence bound in
+the first record only, including its searchable text. Stored passage selection
+can use that complete bounded evidence; prose chunks remain at most 2,000
+characters, and selected evidence still fits the existing prompt budget.
+
+Unchanged text and policy retain the active revision. Changes anywhere in the
+accepted document, including after character 100,000, or an index-policy change
+produce an updated generation. Source locking, revision insertion, supersession,
+and chunk insertion remain one transaction. A return to a historical document
+reactivates its immutable revision and supersedes the intervening chunks atomically.
+Existing single-record revisions remain readable until explicitly refreshed;
+there is no automatic backfill.
+
+Stored retrieval returns structured chunk evidence before formatting it. PostgreSQL
+full-text search retrieves up to 20 active candidates using bounded meaningful
+query terms. Candidates need positive lexical rank and at least 25% matching
+query-term coverage in their evidence text; matching only a repeated game/title
+does not establish relevance. Ranking combines 65% term coverage with 35%
+normalized PostgreSQL rank. Four-token text overlap and revision offsets penalize
+redundancy; near duplicates are omitted. Selection uses the existing Gaming chunk,
+source, and character budgets, with the stored context fitting the space remaining
+after live evidence. Empty evidence remains a valid result. Multiple chunks from
+one public URL share a citation index, while internal evidence retains source,
+revision, record, ordinal, resolver provenance, and fetch time for audit.
+
+Semantic retrieval is not enabled by this change. Gaming has no existing vector
+index; the generic JSON vector store loads all documents into process memory,
+and the separate Notion vector schema has different authority semantics. Neither
+provides a bounded Gaming vector query within the existing one-second retrieval
+deadline. Lexical retrieval needs no embedding provider, new dependency, schema
+migration, or environment setting.
+
+Document extraction quality is independent of structured-build extraction:
+readable guide prose can be complete while structured extraction is
+`not_applicable`. `EXTRACTION_PARTIAL` indicates truncated or metadata-only
+document evidence, rather than absent equipment, skill, or stat fields.
+Durable resolution explicitly permits up to 1,000,000 characters; live resolution
+keeps its 100,000-character default. The durable ceiling matches the existing
+revision ceiling and fits ordinary ASCII guides within the unchanged default
+1.5 MB fetch limit. The shared fetcher's byte limits, deadlines, DNS pinning,
+URL restrictions, and Archive metadata/derivative validation remain in force.
+Archive's existing 1 MB derivative byte limit can reject larger or multibyte
+documents before the character ceiling; this PR does not relax it. If accepted
+text exceeds the character or 500-chunk limit, a deterministic contiguous prefix
+is indexed and partial coverage is recorded. A fully covered 591K-character guide
+does not receive `EXTRACTION_PARTIAL` merely for exceeding the former 100K cap.
+Revision provenance and extraction
+metrics retain bounded resolver/version/strategy, document type and lengths,
+truncation, and both quality dimensions. Resolution, normalization, and
+persistence telemetry report those stages separately, without guide content,
+raw metadata, or derivative addresses.
+
+`gaming.source.chunking_completed` and `gaming.stored_retrieval.completed` emit
+bounded lengths, counts, policy, coverage, and elapsed-time diagnostics without
+chunk text or embeddings. Detailed coverage diagnostics remain internal to
+revision metadata and telemetry; the public status contract remains unchanged.
 
 They require the dedicated, web-service-only
 `ARCANOS_GAMING_SOURCE_ACCESS_TOKEN` Bearer credential. It is an exact

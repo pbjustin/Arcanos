@@ -47,6 +47,7 @@ jest.unstable_mockModule('../src/platform/logging/structuredLogging.js', () => (
 const { default: ArcanosGaming } = await import('../src/modules/arcanos-gaming.js');
 const { BackendQueryAgent, IntentRouterAgent, ResponseComposerAgent } = await import('../src/services/gamingAgents.js');
 const { validatePublicGamingQueryRequest } = await import('../src/services/gamingModes.js');
+const { GAMING_RESPONSE_MAX_CHARACTERS } = await import('../src/shared/http/clientResponseCommon.js');
 
 describe('ArcanosGaming module', () => {
 
@@ -203,9 +204,38 @@ describe('ArcanosGaming module', () => {
       mode: 'guide',
       confidence: expect.any(Number),
     }));
-    expect(mockLogger.info).toHaveBeenCalledWith('gaming.backend.success', expect.objectContaining({
+    expect(mockLogger.info).toHaveBeenCalledWith('gaming.backend.end', expect.objectContaining({
       mode: 'guide',
       confidence: expect.any(Number),
+      executionOutcome: 'completed',
+      groundedInSuppliedEvidence: false,
+    }));
+  });
+
+  it('logs a successful deterministic backend fallback as fallback execution', async () => {
+    runGuidePipelineSpy.mockResolvedValueOnce({
+      ok: true,
+      route: 'gaming',
+      mode: 'guide',
+      data: {
+        response: 'Prepare healing items and check the nearest checkpoint before retrying the boss.',
+        sources: [],
+        fallbackReason: 'GAMING_PROVIDER_UNAVAILABLE',
+      },
+    });
+
+    const result = await ArcanosGaming.actions.query({
+      mode: 'guide',
+      prompt: 'How do I beat the temple boss?',
+    });
+
+    expect(result).toMatchObject({ ok: true, data: { fallbackReason: 'GAMING_PROVIDER_UNAVAILABLE' } });
+    expect(mockLogger.info).toHaveBeenCalledWith('gaming.backend.end', expect.objectContaining({
+      executionOutcome: 'fallback',
+      groundedInSuppliedEvidence: false,
+    }));
+    expect(mockLogger.info).not.toHaveBeenCalledWith('gaming.backend.end', expect.objectContaining({
+      executionOutcome: 'completed',
     }));
   });
 
@@ -464,6 +494,65 @@ describe('ArcanosGaming module', () => {
       }),
     }));
     expect((result as any).data.response).not.toContain('x'.repeat(1_000));
+  });
+
+  it.each([
+    { characterCount: GAMING_RESPONSE_MAX_CHARACTERS, accepted: true },
+    { characterCount: GAMING_RESPONSE_MAX_CHARACTERS + 1, accepted: false },
+  ])('applies the public cap after trimming a grounded guide with $characterCount Unicode characters', async ({ characterCount, accepted }) => {
+    const opening = 'Follow the guide [1]. ';
+    const response = `${opening}${'\u{1F3AE}'.repeat(characterCount - opening.length)}`;
+    const sources = [{
+      url: 'https://example.com/palworld-guide',
+      snippet: 'Validated Palworld guidance.',
+    }];
+    runGuidePipelineSpy.mockResolvedValueOnce({
+      ok: true,
+      route: 'gaming',
+      mode: 'guide',
+      data: {
+        response: ` \t\r\n${response}\r\n\t `,
+        sources,
+        grounding: {
+          groundingStatus: 'grounded',
+          requestedSourceCount: 1,
+          fetchedSourceCount: 1,
+          fetchedSuppliedSourceCount: 1,
+          usableSourceCount: 1,
+          citableSourceCount: 1,
+          selectedChunkCount: 1,
+          suppliedEvidenceSourceCount: 1,
+          groundedInSuppliedEvidence: true,
+        },
+      },
+    } as any);
+
+    const result = await ArcanosGaming.actions.query({
+      mode: 'guide',
+      game: 'Palworld',
+      prompt: 'Give me a beginner route.',
+    } as any);
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      data: expect.objectContaining({ sources }),
+    }));
+    const publicResponse = (result as any).data.response as string;
+    if (accepted) {
+      expect(publicResponse).toBe(response);
+      expect(Array.from(publicResponse)).toHaveLength(GAMING_RESPONSE_MAX_CHARACTERS);
+      expect(publicResponse.length).toBeGreaterThan(GAMING_RESPONSE_MAX_CHARACTERS);
+      expect((result as any).data.fallbackReason).toBeUndefined();
+    } else {
+      expect(publicResponse).toContain('General Fallback (not backend-supported)');
+      expect(publicResponse).not.toContain('\u{1F3AE}');
+      expect((result as any).data.fallbackReason).toBe('GAMING_PROVIDER_ERROR');
+      expect(mockLogger.warn).toHaveBeenCalledWith('gaming.backend.failure', expect.objectContaining({
+        errorCode: 'GAMING_RESPONSE_TOO_LARGE',
+        responseCharacters: characterCount,
+        maxResponseCharacters: GAMING_RESPONSE_MAX_CHARACTERS,
+      }));
+    }
   });
 
   it('accepts a contract-valid multibyte response larger than 4 KiB', async () => {

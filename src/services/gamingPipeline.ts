@@ -11,7 +11,8 @@ import {
 import {
   GAMING_RUNTIME_BUDGET_SAFETY_BUFFER_MS,
   getGamingPipelineTimeoutMs,
-  getGamingStageTimeoutMs
+  getGamingStageTimeoutMs,
+  getGamingWebContextMaxChars
 } from "@services/gamingConfig.js";
 import { getOpenAIClientOrAdapter } from "@services/openai/clientBridge.js";
 import { generateMockResponse } from "@services/openai.js";
@@ -22,11 +23,17 @@ import {
   type GamingDiscoveryReason,
   type GamingEvidenceRequest,
   type GamingFallbackReason,
+  type GamingGrounding,
   type GamingMode,
   type GamingSuccessEnvelope,
   type ValidatedGamingRequest
 } from "@services/gamingModes.js";
 import { buildGamingDiscoveryQuery } from "@services/gamingSourceDiscovery.js";
+import {
+  buildGamingGroundingSummary,
+  createGamingSuppliedGuideEvidenceError,
+  resolveGamingExecutionOutcome
+} from "@shared/gaming/gamingGrounding.js";
 import {
   extractExplicitGamingVersions,
   textContainsExactGamingVersion
@@ -44,6 +51,7 @@ import {
   buildStoredGamingKnowledgeContext,
   type GamingStoredKnowledgeContext
 } from "@services/gamingSourceIngestion.js";
+import { formatStoredGamingEvidence } from "@services/gamingStoredKnowledge.js";
 
 export type GamingPipelineInput = Pick<
   ValidatedGamingRequest,
@@ -130,6 +138,19 @@ function getGamingStoredRetrievalTimeoutMs(): number {
   return remainingMs === null
     ? GAMING_STORED_RETRIEVAL_TIMEOUT_MS
     : Math.max(1, Math.min(GAMING_STORED_RETRIEVAL_TIMEOUT_MS, remainingMs));
+}
+
+/** Failed-source diagnostics remain public metadata; they never consume an evidence index. */
+function omitGamingDiagnosticContextBlocks(context: string, sources: GamingWebSource[]): string {
+  let omit = false;
+  return context.split("\n").filter(line => {
+    const match = line.match(/^\[Source (\d+)\] (https?:\/\/\S+)$/u);
+    if (match) {
+      const source = sources[Number(match[1]) - 1];
+      if (source?.url === match[2]) omit = !isCitableGamingWebSource(source);
+    }
+    return !omit;
+  }).join("\n").trim();
 }
 
 function hasCurrentStoredGamingEvidence(
@@ -409,11 +430,28 @@ function formatGameplaySuccessWithLogs(params: {
   discoveryReason?: GamingDiscoveryReason;
   discoveryFailureReason?: GamingDiscoveryFailureReason;
   evidenceRequest?: GamingEvidenceRequest;
+  grounding?: GamingGrounding;
 }): GamingSuccessEnvelope {
   const postprocessStartedAt = Date.now();
   const citableSourceCount = params.sources.filter(isCitableGamingWebSource).length;
   const citationNormalization = normalizeGamingInlineSourceReferences(params.response, citableSourceCount);
   const response = citationNormalization.response;
+  const grounding: GamingGrounding = params.grounding ?? {
+    groundingStatus: "unavailable",
+    requestedSourceCount: 0,
+    fetchedSourceCount: 0,
+    fetchedSuppliedSourceCount: 0,
+    usableSourceCount: 0,
+    citableSourceCount: 0,
+    selectedChunkCount: 0,
+    suppliedEvidenceSourceCount: 0,
+    groundedInSuppliedEvidence: false
+  };
+  // Retrieval availability is distinct from a provider or deterministic fallback answer.
+  const responseGrounding = {
+    ...grounding,
+    groundedInSuppliedEvidence: !params.fallbackReason && grounding.groundedInSuppliedEvidence
+  };
   logger.info("gaming.postprocess.start", {
     ...params.logContext,
     responseChars: params.response.length,
@@ -432,6 +470,7 @@ function formatGameplaySuccessWithLogs(params: {
     data: {
       response,
       sources: params.sources,
+      grounding: responseGrounding,
       ...(params.fallbackReason ? { fallbackReason: params.fallbackReason } : {}),
       ...(params.discoveryReason ? { discoveryReason: params.discoveryReason } : {}),
       ...(params.discoveryFailureReason
@@ -466,6 +505,10 @@ function formatGameplaySuccessWithLogs(params: {
   logger.info("gaming.request.end", {
     ...params.logContext,
     ok: true,
+    executionOutcome: resolveGamingExecutionOutcome(params.fallbackReason),
+    grounding: responseGrounding,
+    groundingStatus: responseGrounding.groundingStatus,
+    groundedInSuppliedEvidence: responseGrounding.groundedInSuppliedEvidence,
     totalElapsedMs: Date.now() - params.requestStartedAt
   });
 
@@ -599,7 +642,21 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
   const requestContext = getRequestAbortContext();
   const requestId = requestContext?.requestId;
   const traceId = requestId;
-  const guideSourceCount = (params.guideUrl ? 1 : 0) + params.guideUrls.length;
+  const guideUrls = collectGamingGuideUrls(params);
+  const guideSourceCount = new Set(guideUrls.filter((url): url is string =>
+    typeof url === "string" && url.trim().length > 0
+  ).map((url) => {
+    try {
+      const parsed = new URL(url.trim());
+      parsed.hash = "";
+      return parsed.href;
+    } catch {
+      return url.trim();
+    }
+  })).size;
+  const freshnessSensitive = isGamingFreshnessSensitive(params);
+  const suppliedGuideRequired = params.mode === "guide" && guideSourceCount > 0
+    && !(params.evidenceOrigin === "frontend_web_search" && freshnessSensitive);
   const baseLogContext: GamingLogContext = {
     module: "ARCANOS:GAMING",
     route: "gaming",
@@ -620,7 +677,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
   logGamingIntakeStep(baseLogContext, "shortcut", shortcutStartedAt, {
     ok: Boolean(exactLiteralShortcut)
   });
-  if (exactLiteralShortcut) {
+  if (exactLiteralShortcut && !suppliedGuideRequired) {
     return formatGameplaySuccessWithLogs({
       mode: params.mode,
       response: exactLiteralShortcut.literal,
@@ -630,16 +687,18 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
     });
   }
 
-  const guideUrls = collectGamingGuideUrls(params);
-  const freshnessSensitive = isGamingFreshnessSensitive(params);
   const retrievalStartedAt = Date.now();
   let webContext = "";
   let sources: GamingWebSource[] = [];
   let retrievalAttempted = guideUrls.length > 0;
   let retrievalHadUsableSources = false;
+  // Keep live document retrieval distinct from stored-source merge telemetry.
   let retrievedSourceCount = 0;
   let publicSourceCount = 0;
   let omittedSourceCount = 0;
+  let suppliedEvidenceSourceCount = 0;
+  let fetchedSuppliedSourceCount = 0;
+  let selectedChunkCount = 0;
   let retrievedGame: string | undefined;
   let fallbackReason: GamingFallbackReason | undefined;
   let discoveryReason: GamingDiscoveryReason | undefined;
@@ -654,6 +713,9 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
     retrievedSourceCount = webContextResult.retrievedSourceCount;
     publicSourceCount = webContextResult.publicSourceCount;
     omittedSourceCount = webContextResult.omittedSourceCount;
+    suppliedEvidenceSourceCount = webContextResult.acceptedSuppliedSourceCount;
+    fetchedSuppliedSourceCount = webContextResult.fetchedSuppliedSourceCount;
+    selectedChunkCount = webContextResult.selectedChunkCount;
     retrievedGame = webContextResult.detectedGame;
     fallbackReason = webContextResult.fallbackReason;
     discoveryReason = webContextResult.discoveryReason;
@@ -728,6 +790,37 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
     });
   }
 
+  let grounding: GamingGrounding = buildGamingGroundingSummary({
+    requestedSourceCount: guideSourceCount,
+    fetchedSourceCount: retrievedSourceCount,
+    fetchedSuppliedSourceCount,
+    sources,
+    selectedChunkCount,
+    suppliedEvidenceSourceCount
+  });
+  const evidenceError = suppliedGuideRequired ? createGamingSuppliedGuideEvidenceError(grounding) : null;
+  if (evidenceError) {
+    const error = evidenceError;
+    grounding = error.grounding;
+    logger.warn("gaming.grounding.insufficient", {
+      ...baseLogContext,
+      errorCode: error.code,
+      grounding,
+      providerInvoked: false
+    });
+    logger.info("gaming.request.end", {
+      ...baseLogContext,
+      ok: false,
+      executionOutcome: "evidence_rejected",
+      errorCode: error.code,
+      grounding,
+      groundingStatus: grounding.groundingStatus,
+      groundedInSuppliedEvidence: false,
+      totalElapsedMs: Date.now() - requestStartedAt
+    });
+    throw error;
+  }
+
   const resolvedParams: GamingPipelineInput = !params.game && retrievedGame
     ? { ...params, game: retrievedGame }
     : params;
@@ -739,6 +832,9 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
   if (resolvedGame) {
     const storedRetrievalStartedAt = Date.now();
     const storedRetrievalTimeoutMs = getGamingStoredRetrievalTimeoutMs();
+    const liveEvidenceContext = omitGamingDiagnosticContextBlocks(webContext, sources);
+    const liveCitableSources = sources.filter(isCitableGamingWebSource);
+    const storedContextBudget = Math.max(0, getGamingWebContextMaxChars() - liveEvidenceContext.length - (liveEvidenceContext ? 2 : 0));
     let storedKnowledge: GamingStoredKnowledgeContext = { context: "", sources: [] };
     let storedRetrievalError: unknown;
     try {
@@ -753,8 +849,9 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
           game: resolvedGame,
           prompt: resolvedParams.prompt,
           mode: resolvedParams.mode,
-          limit: 4,
-          sourceIndexOffset: sources.length,
+          sourceIndexOffset: liveCitableSources.length,
+          maxContextChars: storedContextBudget,
+          excludePublicUrls: sources.filter(isCitableGamingWebSource).map(source => source.url),
           queryTimeoutMs: storedRetrievalTimeoutMs,
           signal: getRequestAbortSignal() ?? undefined
         })
@@ -775,8 +872,51 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
       const existingUrls = new Set(
         sources.filter(isCitableGamingWebSource).map((source) => source.url)
       );
-      const uniqueStoredSources = storedKnowledge.sources
+      let uniqueStoredSources = storedKnowledge.sources
         .filter((source) => !existingUrls.has(source.url));
+      let storedContext = "";
+      let storedSelectedChunkCount = 0;
+      if (storedKnowledge.evidence) {
+        const candidates = storedKnowledge.evidence.flatMap(evidence => {
+          const source = uniqueStoredSources.find(candidate => candidate.url === evidence.publicUrl);
+          return source ? [{ source, evidence }] : [];
+        });
+        const projected = formatStoredGamingEvidence(candidates, { sourceIndexOffset: liveCitableSources.length, maxContextChars: storedContextBudget });
+        uniqueStoredSources = projected.sources;
+        storedContext = projected.context;
+        storedSelectedChunkCount = projected.evidence?.length ?? 0;
+        logger.info("gaming.stored_evidence.selected", {
+          ...baseLogContext,
+          chunks: (projected.evidence ?? []).map(evidence => ({
+            sourceIndex: liveCitableSources.length + projected.sources.findIndex(source => source.url === evidence.publicUrl) + 1,
+            sourceId: evidence.sourceId, revisionId: evidence.revisionId, recordId: evidence.recordId,
+            recordType: evidence.recordType, ordinal: evidence.ordinal,
+            fetchedAt: evidence.provenance.fetchedAt,
+            resolverId: evidence.provenance.resolverId,
+            resolverVersion: evidence.provenance.resolverVersion,
+            resolutionStrategy: evidence.provenance.resolutionStrategy
+          }))
+        });
+      } else {
+        // Compatibility with lexical source projections produced before chunk evidence existed.
+        const acceptedSources: typeof uniqueStoredSources = [];
+        for (const source of uniqueStoredSources) {
+          const part = [
+            `[Source ${liveCitableSources.length + acceptedSources.length + 1}]`,
+            "Origin: stored gaming knowledge", `URL: ${source.url}`,
+            source.sourceType ? `Type: ${source.sourceType}` : "",
+            source.patchVersion ? `Patch: ${source.patchVersion}` : "",
+            source.publishedAt ? `Published: ${source.publishedAt}` : "",
+            source.title ? `Title: ${source.title}` : "", source.snippet
+          ].filter(Boolean).join("\n");
+          const nextContext = [storedContext, part].filter(Boolean).join("\n\n");
+          if (!source.snippet || nextContext.length > storedContextBudget) continue;
+          storedContext = nextContext;
+          acceptedSources.push(source);
+        }
+        uniqueStoredSources = acceptedSources;
+        storedSelectedChunkCount = acceptedSources.length;
+      }
       const storedSources: GamingWebSource[] = uniqueStoredSources
         .map((source) => ({
           url: source.url,
@@ -790,27 +930,12 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
         }));
       if (storedSources.length > 0) {
         const storedUrls = new Set(storedSources.map((source) => source.url));
-        sources = sources.filter((source) =>
-          !storedUrls.has(source.url) || isCitableGamingWebSource(source)
-        );
-        const storedContext = storedSources.map((source, index) => [
-          `[Source ${sources.length + index + 1}]`,
-          "Origin: stored gaming knowledge",
-          `URL: ${source.url}`,
-          source.sourceId ? `Source ID: ${source.sourceId}` : "",
-          source.sourceType ? `Type: ${source.sourceType}` : "",
-          source.patchVersion ? `Patch: ${source.patchVersion}` : "",
-          uniqueStoredSources[index]?.publishedAt
-            ? `Published: ${uniqueStoredSources[index]?.publishedAt}`
-            : "",
-          source.title ? `Title: ${source.title}` : "",
-          source.snippet ?? ""
-        ].filter(Boolean).join("\n")).join("\n\n");
-        webContext = [webContext, storedContext].filter(Boolean).join("\n\n");
-        sources = [...sources, ...storedSources];
+        const failedSources = sources.filter(source => !isCitableGamingWebSource(source) && !storedUrls.has(source.url));
+        webContext = [liveEvidenceContext, storedContext].filter(Boolean).join("\n\n");
+        sources = [...liveCitableSources, ...storedSources, ...failedSources];
         retrievalAttempted = true;
         retrievalHadUsableSources = true;
-        retrievedSourceCount += storedSources.length;
+        selectedChunkCount += storedSelectedChunkCount;
         publicSourceCount = sources.length;
         if (hasCurrentStoredGamingEvidence(uniqueStoredSources, resolvedParams)) {
           currentEvidenceAvailable = true;
@@ -826,6 +951,22 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
       mergedSourceCount: sources.filter((source) => source.origin === "stored").length
     });
   }
+
+  grounding = {
+    ...grounding,
+    groundingStatus: sources.some(isCitableGamingWebSource) && selectedChunkCount > 0
+      ? "grounded" : grounding.groundingStatus,
+    usableSourceCount: sources.filter(isCitableGamingWebSource).length,
+    citableSourceCount: sources.filter(isCitableGamingWebSource).length,
+    selectedChunkCount
+  };
+  logger.info(grounding.groundingStatus === "grounded"
+    ? "gaming.grounding.success" : "gaming.grounding.insufficient", {
+    ...baseLogContext,
+    grounding,
+    groundingStatus: grounding.groundingStatus,
+    groundedInSuppliedEvidence: grounding.groundedInSuppliedEvidence
+  });
 
   if (
     fallbackReason === "INTAKE_RETRIEVAL_TIMEOUT"
@@ -853,6 +994,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
         sources,
         logContext: baseLogContext,
         requestStartedAt,
+        grounding,
         retrievedSourceCount,
         omittedSourceCount,
         fallbackReason,
@@ -884,6 +1026,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
       sources,
       logContext: baseLogContext,
       requestStartedAt,
+      grounding,
       retrievedSourceCount,
       omittedSourceCount,
       fallbackReason: currentEvidenceFallbackReason,
@@ -908,6 +1051,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
       sources,
       logContext: baseLogContext,
       requestStartedAt,
+      grounding,
       retrievedSourceCount,
       omittedSourceCount,
       fallbackReason: "GAMING_PROVIDER_UNAVAILABLE",
@@ -1060,6 +1204,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
         sources,
         logContext: baseLogContext,
         requestStartedAt,
+        grounding,
         retrievedSourceCount,
         omittedSourceCount,
         fallbackReason,
@@ -1110,6 +1255,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
         sources,
         logContext: baseLogContext,
         requestStartedAt,
+        grounding,
         retrievedSourceCount,
         omittedSourceCount,
         fallbackReason,
@@ -1195,6 +1341,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
       sources,
       logContext: baseLogContext,
       requestStartedAt,
+      grounding,
       retrievedSourceCount,
       omittedSourceCount,
       fallbackReason,
@@ -1236,6 +1383,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
     sources,
     logContext: baseLogContext,
     requestStartedAt,
+    grounding,
     retrievedSourceCount,
     omittedSourceCount,
     fallbackReason,

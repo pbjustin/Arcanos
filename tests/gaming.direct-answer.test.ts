@@ -78,10 +78,12 @@ const { runBuildPipeline, runGuidePipeline, runMetaPipeline } = await import('..
 const { buildGamingRagContext, clearGamingRagCache } = await import('../src/services/gamingWebContext.js');
 const { runWithRequestAbortContext } = await import('@arcanos/runtime');
 const { logger } = await import('@platform/logging/structuredLogging.js');
+const { IntentRouterAgent, ResponseComposerAgent } = await import('../src/services/gamingAgents.js');
+const { shapeClientRouteResult } = await import('../src/shared/http/clientRouteResultShape.js');
 
 describe('gaming guide output hardening', () => {
   beforeEach(() => {
-    jest.clearAllMocks();
+    jest.resetAllMocks();
     delete process.env.ARCANOS_GAMING_PIPELINE_TIMEOUT_MS;
     delete process.env.ARCANOS_GAMING_GUIDE_PIPELINE_TIMEOUT_MS;
     delete process.env.ARCANOS_GAMING_STAGE_TIMEOUT_MS;
@@ -295,7 +297,7 @@ describe('gaming guide output hardening', () => {
       };
     };
     expect(trinityRequest.input.prompt).toContain('Regression check only');
-    expect(trinityRequest.input.prompt).toContain('Return only a six-item checklist using hyphen bullets');
+    expect(trinityRequest.input.prompt).toContain("Answer the user's actual gameplay question first");
     expect(trinityRequest.context.runtimeBudget).toEqual(expect.objectContaining({
       watchdogLimit: 50_000,
       safetyBuffer: 500
@@ -362,7 +364,7 @@ describe('gaming guide output hardening', () => {
     const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as { input: { prompt: string } };
     expect(trinityRequest.input.prompt).toContain('[GAME]\nElden Ring');
     expect(trinityRequest.input.prompt).toContain('Look up a guide for Elden Ring.');
-    expect(trinityRequest.input.prompt).toContain('Return only a six-item checklist using hyphen bullets');
+    expect(trinityRequest.input.prompt).toContain("Answer the user's actual gameplay question first");
   });
 
   it('passes a narrow Elden Ring progression guide through the normal guide path', async () => {
@@ -383,7 +385,7 @@ describe('gaming guide output hardening', () => {
     expect(result.data.response).not.toContain('bounded deterministic fallback');
     const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as { input: { prompt: string } };
     expect(trinityRequest.input.prompt).toContain('Where do I go first in Elden Ring after leaving the tutorial?');
-    expect(trinityRequest.input.prompt).toContain('Return only a six-item checklist using hyphen bullets');
+    expect(trinityRequest.input.prompt).toContain("Answer the user's actual gameplay question first");
   });
 
   it('returns a deterministic fallback when build provider generation is incomplete', async () => {
@@ -629,7 +631,7 @@ describe('gaming guide output hardening', () => {
       };
     };
     expect(trinityRequest.input.prompt).toContain('[WEB CONTEXT]');
-    expect(trinityRequest.input.prompt).toContain('Return only a six-item checklist using hyphen bullets');
+    expect(trinityRequest.input.prompt).toContain("Answer the user's actual gameplay question first");
     expect(trinityRequest.context.runOptions).toEqual(expect.objectContaining({
       answerMode: 'explained',
       requestedVerbosity: 'normal',
@@ -640,41 +642,26 @@ describe('gaming guide output hardening', () => {
     }));
   });
 
-  it('uses direct mode when supplied guide sources yield no usable context', async () => {
+  it('rejects explicit supplied guides when fetching yields no usable context', async () => {
     const url = 'https://example.com/unreachable-guide';
     mockFetchAndClean.mockRejectedValueOnce(new Error('deterministic fetch failure'));
 
-    const result = await runGuidePipeline({
+    await expect(runGuidePipeline({
       game: 'Palworld',
       prompt: 'Use the supplied source for a Palworld beginner guide.',
       guideUrl: url,
       guideUrls: [],
       auditEnabled: false
+    })).rejects.toMatchObject({
+      code: 'GAMING_SOURCE_UNAVAILABLE',
+      grounding: {
+        groundingStatus: 'unavailable', requestedSourceCount: 1, fetchedSourceCount: 0,
+        usableSourceCount: 0, citableSourceCount: 0, selectedChunkCount: 0,
+        suppliedEvidenceSourceCount: 0, groundedInSuppliedEvidence: false
+      }
     });
-
-    expect(result.data.sources).toEqual([
-      expect.objectContaining({ url, error: expect.any(String) })
-    ]);
-    const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as {
-      input: { prompt: string };
-      context: {
-        runOptions: {
-          answerMode?: string;
-          modelStageTimeoutMs?: number;
-          intentMode?: string;
-          toolBackedCapabilities?: { verifyProvidedData?: boolean };
-        };
-      };
-    };
-    expect(trinityRequest.input.prompt).toContain(
-      'Source retrieval ran or sources were provided, but no usable snippets were retrieved.'
-    );
-    expect(trinityRequest.context.runOptions).toEqual(expect.objectContaining({
-      answerMode: 'direct',
-      modelStageTimeoutMs: 24_000,
-      intentMode: 'EXECUTE_TASK'
-    }));
-    expect(trinityRequest.context.runOptions.toolBackedCapabilities).toBeUndefined();
+    expect(mockRunTrinityWritingPipeline).not.toHaveBeenCalled();
+    expect(mockBuildStoredGamingKnowledgeContext).not.toHaveBeenCalled();
   });
 
   it('normalizes generated citations so inline source refs map to public sources', async () => {
@@ -715,7 +702,7 @@ describe('gaming guide output hardening', () => {
     expect(result.data.response).not.toMatch(/\bsource\s+\d+\b/i);
   });
 
-  it('removes inline citations when the only public source has no readable evidence', async () => {
+  it('rejects metadata-only sources before a provider can claim verified guidance', async () => {
     mockFetchAndClean.mockResolvedValue('Menu. Sign In. Cookie Settings. Privacy Policy. Related. Categories.');
     mockRunTrinityWritingPipeline.mockResolvedValueOnce({
       result: 'Treat this as verified source-backed guidance [1].',
@@ -723,18 +710,20 @@ describe('gaming guide output hardening', () => {
       meta: { provider: { finishReason: 'stop' } }
     });
 
-    const result = await runGuidePipeline({
+    await expect(runGuidePipeline({
       prompt: 'Use this supplied guide.',
       guideUrl: 'https://unknown.example/chrome-only',
       guideUrls: [],
       auditEnabled: false
+    })).rejects.toMatchObject({
+      code: 'GAMING_SOURCE_UNREADABLE',
+      grounding: {
+        groundingStatus: 'insufficient_evidence', fetchedSourceCount: 1,
+        usableSourceCount: 0, citableSourceCount: 0, selectedChunkCount: 0,
+        groundedInSuppliedEvidence: false
+      }
     });
-
-    expect(result.data.sources).toEqual([{
-      url: 'https://unknown.example/chrome-only',
-      snippet: 'Relevant source retrieved, but readable article text was limited.'
-    }]);
-    expect(extractInlineSourceRefs(result.data.response)).toEqual([]);
+    expect(mockRunTrinityWritingPipeline).not.toHaveBeenCalled();
   });
 
   it('preserves retrieved sources when generic provider generation fails', async () => {
@@ -1037,6 +1026,108 @@ describe('gaming guide output hardening', () => {
     expect(mockRunTrinityWritingPipeline).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['stored-only', false, false, 0, 1],
+    ['mixed live and stored', true, false, 1, 1],
+    ['deduplicated stored', true, true, 1, 0]
+  ] as const)('keeps live retrieval telemetry consistent for %s evidence', async (_label, hasLiveSource, sameUrl, fetchedSourceCount, mergedSourceCount) => {
+    process.env.ARCANOS_GAMING_WEB_CONTEXT_CHARS = '2048';
+    const liveUrl = 'https://example.com/clockwork-live-guide';
+    mockFetchAndClean.mockResolvedValue('Clockwork Odyssey guide: collect healing supplies before the boss fight and attack only during safe recovery windows.');
+    mockBuildStoredGamingKnowledgeContext.mockResolvedValueOnce({
+      context: '',
+      sources: [{
+        url: sameUrl ? liveUrl : 'https://example.com/clockwork-stored-guide',
+        sourceType: 'curated',
+        fetchedAt: '2024-01-01T00:00:00.000Z',
+        snippet: 'Use stored route notes to locate the checkpoint before the boss fight.'
+      }]
+    });
+    const infoSpy = jest.spyOn(logger, 'info').mockImplementation(() => undefined);
+    try {
+      const result = await runGuidePipeline({
+        game: 'Clockwork Odyssey', prompt: 'Explain the safe beginner route.',
+        ...(hasLiveSource ? { guideUrl: liveUrl } : {}),
+        guideUrls: [], auditEnabled: false
+      });
+
+      expect(mockFetchAndClean).toHaveBeenCalledTimes(fetchedSourceCount);
+      expect(result.data.grounding).toMatchObject({
+        fetchedSourceCount,
+        usableSourceCount: fetchedSourceCount + mergedSourceCount,
+        selectedChunkCount: fetchedSourceCount + mergedSourceCount
+      });
+      expect(infoSpy).toHaveBeenCalledWith('gaming.intake.step', expect.objectContaining({
+        step: 'retrieval', retrievedSourceCount: fetchedSourceCount
+      }));
+      for (const event of ['gaming.postprocess.start', 'gaming.postprocess.end']) {
+        expect(infoSpy).toHaveBeenCalledWith(event, expect.objectContaining({
+          retrievedSourceCount: fetchedSourceCount,
+          publicSourceCount: fetchedSourceCount + mergedSourceCount
+        }));
+      }
+      expect(infoSpy).toHaveBeenCalledWith('gaming.stored_retrieval', expect.objectContaining({
+        sourceCount: 1, mergedSourceCount
+      }));
+    } finally {
+      infoSpy.mockRestore();
+    }
+  });
+
+  it('grounds a no-URL late-document question with bounded stored chunks and private audit provenance', async () => {
+    process.env.ARCANOS_GAMING_WEB_CONTEXT_CHARS = '5000';
+    const url = 'https://example.com/large-synthetic-guide';
+    const text = 'The fictional Zephyrglass Compass is hidden near the cobalt arch. Follow the violet staircase to collect the item.';
+    const source = { sourceId: 'source-large', url, sourceType: 'supplied', fetchedAt: '2026-09-01T00:00:00.000Z', snippet: text };
+    mockBuildStoredGamingKnowledgeContext.mockResolvedValueOnce({
+      context: '', sources: [source], evidence: [{
+        sourceId: source.sourceId, revisionId: 'revision-large', recordId: 'chunk-near-end', recordType: 'guide', publicUrl: url,
+        ordinal: 350, text, lexicalScore: 0.8, combinedScore: 0.9,
+        provenance: { fetchedAt: source.fetchedAt, resolverId: 'archive-org', resolverVersion: 'archive-text-v1' }
+      }]
+    });
+    const infoSpy = jest.spyOn(logger, 'info').mockImplementation(() => undefined);
+    try {
+      const result = await runGuidePipeline({ game: 'Clockwork Odyssey', prompt: 'Where is the Zephyrglass Compass?', guideUrls: [], auditEnabled: false });
+      expect(mockFetchAndClean).not.toHaveBeenCalled();
+      expect(mockBuildStoredGamingKnowledgeContext).toHaveBeenCalledWith(expect.objectContaining({ maxContextChars: 5000 }));
+      expect(JSON.stringify(mockRunTrinityWritingPipeline.mock.calls)).toContain('Zephyrglass Compass');
+      expect(result.data.grounding).toMatchObject({ groundingStatus: 'grounded', selectedChunkCount: 1, citableSourceCount: 1 });
+      expect(result.data.sources).toEqual([expect.objectContaining({ sourceId: source.sourceId, url, origin: 'stored' })]);
+      expect(JSON.stringify(result)).not.toContain('chunk-near-end');
+      expect(JSON.stringify(result)).not.toContain('revision-large');
+      expect(infoSpy).toHaveBeenCalledWith('gaming.stored_evidence.selected', expect.objectContaining({ chunks: [expect.objectContaining({ sourceIndex: 1,
+        sourceId: source.sourceId, revisionId: 'revision-large', recordId: 'chunk-near-end', ordinal: 350, resolverId: 'archive-org' })] }));
+    } finally { infoSpy.mockRestore(); }
+  });
+
+  it('keeps stored citations consecutive when another live source fails and bounds the provider evidence block', async () => {
+    process.env.ARCANOS_GAMING_WEB_CONTEXT_CHARS = '5000';
+    const liveUrl = 'https://example.com/live-compass-guide';
+    const failedUrl = 'https://example.com/failed-compass-guide';
+    const storedUrl = 'https://example.com/stored-compass-guide';
+    mockFetchAndClean.mockImplementation(async (url: string) => {
+      if (url === failedUrl) throw new Error('source unavailable');
+      return 'Clockwork Odyssey guide: collect the Zephyrglass Compass beside the blue gate to open the next route. Follow the practice path and avoid the moving obstacle.';
+    });
+    const text = 'The Zephyrglass Compass also unlocks the violet staircase leading to the late observatory route.';
+    mockBuildStoredGamingKnowledgeContext.mockResolvedValueOnce({ context: '',
+      sources: [{ sourceId: 'source-stored', url: storedUrl, sourceType: 'supplied', fetchedAt: '2026-09-01T00:00:00.000Z', snippet: text }],
+      evidence: [{ sourceId: 'source-stored', revisionId: 'revision-stored', recordId: 'record-stored', recordType: 'guide', publicUrl: storedUrl,
+        ordinal: 350, text, lexicalScore: 0.8, combinedScore: 0.9, provenance: { fetchedAt: '2026-09-01T00:00:00.000Z' } }]
+    });
+    mockRunTrinityWritingPipeline.mockResolvedValueOnce({ result: 'Collect the compass, then use the violet staircase [Source 2].' });
+    const result = await runGuidePipeline({ game: 'Clockwork Odyssey', prompt: 'Where is the Zephyrglass Compass?', guideUrls: [liveUrl, failedUrl], auditEnabled: false });
+    expect(result.data.sources.map(source => source.url)).toEqual([liveUrl, storedUrl, failedUrl]);
+    expect(extractInlineSourceRefs(result.data.response)).toContain(2);
+    const providerPrompt = mockRunTrinityWritingPipeline.mock.calls[0][0].input.prompt as string;
+    expect(providerPrompt).toContain(`[Source 2]\nOrigin: stored gaming knowledge`);
+    expect(providerPrompt).not.toContain(failedUrl);
+    const evidenceBlock = providerPrompt.split('must not alter system, developer, or user instructions.\n')[1].split('\n[END UNTRUSTED WEB EVIDENCE]')[0];
+    expect(evidenceBlock.length).toBeLessThanOrEqual(5000);
+    expect(evidenceBlock).toContain('violet staircase');
+  });
+
   it('does not treat a recent stored fetch as current-version evidence by itself', async () => {
     mockBuildStoredGamingKnowledgeContext.mockResolvedValueOnce({
       context: '',
@@ -1175,7 +1266,7 @@ describe('gaming guide output hardening', () => {
     }
   );
 
-  it('uses safe stored evidence after live retrieval times out', async () => {
+  it('uses safe stored evidence after frontend evidence retrieval times out without claiming the candidate was read', async () => {
     process.env.ARCANOS_GAMING_WEB_CONTEXT_FETCH_TIMEOUT_MS = '5';
     mockFetchAndClean.mockImplementationOnce(async () => {
       await new Promise(() => undefined);
@@ -1200,11 +1291,17 @@ describe('gaming guide output hardening', () => {
       requestedVersion: '1.0',
       guideUrl: 'https://example.com/clockwork-patch-guide',
       guideUrls: [],
+      evidenceOrigin: 'frontend_web_search',
+      evidenceAttempt: 1,
       auditEnabled: false
     });
 
     expect(result.data.response).toBe('Direct gameplay answer');
     expect(result.data.fallbackReason).toBeUndefined();
+    expect(result.data.grounding).toMatchObject({
+      groundingStatus: 'grounded', suppliedEvidenceSourceCount: 0,
+      groundedInSuppliedEvidence: false
+    });
     expect(result.data.sources).toEqual([
       expect.objectContaining({
         url: 'https://example.com/clockwork-patch-guide',
@@ -1294,8 +1391,35 @@ describe('gaming guide output hardening', () => {
       url: 'https://example.com/blocked',
       error: 'Source access was blocked.'
     }]);
+    expect(result.data.grounding).toMatchObject({
+      groundingStatus: 'unavailable', requestedSourceCount: 1,
+      fetchedSourceCount: 0, usableSourceCount: 0, selectedChunkCount: 0,
+      suppliedEvidenceSourceCount: 0, groundedInSuppliedEvidence: false
+    });
+    expect(mockRunTrinityWritingPipeline).not.toHaveBeenCalled();
     expect(result.data).not.toHaveProperty('evidenceRequest');
     expect(JSON.stringify(result)).not.toContain('raw upstream forbidden body');
+  });
+
+  it('does not let frontend evidence provenance bypass grounding for a stable supplied guide', async () => {
+    mockFetchAndClean.mockRejectedValue(new Error('source unavailable'));
+    await expect(runGuidePipeline({
+      game: 'Kingdom Hearts HD 1.5 Remix',
+      prompt: 'Use the supplied guide to defeat the Guard Armor boss.',
+      guideUrls: ['https://example.com/unavailable-guide'],
+      evidenceOrigin: 'frontend_web_search',
+      evidenceAttempt: 1,
+      auditEnabled: false
+    })).rejects.toMatchObject({
+      code: 'GAMING_SOURCE_UNAVAILABLE',
+      grounding: {
+        groundingStatus: 'unavailable', requestedSourceCount: 1,
+        fetchedSourceCount: 0, usableSourceCount: 0, selectedChunkCount: 0,
+        suppliedEvidenceSourceCount: 0, groundedInSuppliedEvidence: false
+      }
+    });
+    expect(mockRunTrinityWritingPipeline).not.toHaveBeenCalled();
+    expect(mockBuildStoredGamingKnowledgeContext).not.toHaveBeenCalled();
   });
 
   it('does not request frontend evidence for a stable guide request', async () => {
@@ -1658,29 +1782,17 @@ describe('gaming guide output hardening', () => {
   });
 
   it('rejects guide URL credentials before fetch or prompt construction', async () => {
-    const result = await runGuidePipeline({
+    await expect(runGuidePipeline({
       prompt: 'Use the linked guide for a direct boss strategy.',
       guideUrl: 'https://user:pass@example.com/guide',
       guideUrls: [],
       auditEnabled: false
-    });
-
-    expect(result.data.sources).toEqual([
-      { url: 'invalid-source', error: 'Source URL was rejected by evidence policy.' }
-    ]);
+    })).rejects.toMatchObject({ code: 'GAMING_SOURCE_UNAVAILABLE' });
     expect(mockFetchAndClean).not.toHaveBeenCalled();
-    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledWith(
-      expect.objectContaining({
-        input: expect.objectContaining({
-          prompt: expect.not.stringContaining('https://example.com/guide')
-        })
-      })
-    );
-    const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as { input: { prompt: string } };
-    expect(trinityRequest.input.prompt).not.toContain('user:pass');
+    expect(mockRunTrinityWritingPipeline).not.toHaveBeenCalled();
   });
 
-  it('continues with sources unavailable when retrieval fails', async () => {
+  it('fails closed with sources unavailable when explicit guide retrieval fails', async () => {
     mockFetchAndClean.mockRejectedValueOnce(new Error('network unavailable'));
     mockRunTrinityWritingPipeline.mockResolvedValueOnce({
       result: 'Use the safe route and verify the linked guide later.',
@@ -1688,20 +1800,13 @@ describe('gaming guide output hardening', () => {
       meta: { provider: { finishReason: 'stop' } }
     });
 
-    const result = await runGuidePipeline({
+    await expect(runGuidePipeline({
       prompt: 'Use the linked guide for a direct boss strategy.',
       guideUrl: 'https://example.com/guide',
       guideUrls: [],
       auditEnabled: false
-    });
-
-    expect(result.ok).toBe(true);
-    expect(result.data.response).toBe('Use the safe route and verify the linked guide later.');
-    expect(result.data.sources).toEqual([
-      { url: 'https://example.com/guide', error: 'Source could not be retrieved.' }
-    ]);
-    const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as { input: { prompt: string } };
-    expect(trinityRequest.input.prompt).toContain('Source retrieval ran or sources were provided, but no usable snippets were retrieved.');
+    })).rejects.toMatchObject({ code: 'GAMING_SOURCE_UNAVAILABLE' });
+    expect(mockRunTrinityWritingPipeline).not.toHaveBeenCalled();
   });
 
   it('aborts guide source fetches when the local retrieval timeout fires', async () => {
@@ -1718,21 +1823,18 @@ describe('gaming guide output hardening', () => {
       meta: { provider: { finishReason: 'stop' } }
     });
 
-    const result = await runGuidePipeline({
+    await expect(runGuidePipeline({
       prompt: 'Use the linked guide for a direct boss strategy.',
       guideUrl: 'https://example.com/guide',
       guideUrls: [],
       auditEnabled: false
+    })).rejects.toMatchObject({
+      code: 'GAMING_SOURCE_UNAVAILABLE',
+      grounding: { groundingStatus: 'unavailable', requestedSourceCount: 1, fetchedSourceCount: 0 }
     });
 
     expect(capturedSignal?.aborted).toBe(true);
-    expect(result.ok).toBe(true);
-    expect(result.data.sources).toEqual([
-      {
-        url: 'https://example.com/guide',
-        error: 'Source retrieval timed out.'
-      }
-    ]);
+    expect(mockRunTrinityWritingPipeline).not.toHaveBeenCalled();
     expect(mockFetchAndClean).toHaveBeenCalledWith(
       'https://example.com/guide',
       512,
@@ -2021,16 +2123,56 @@ describe('gaming guide output hardening', () => {
   });
 
   it('marks no-source generation as retrieval fallback or inference context', async () => {
-    await runGuidePipeline({
+    const result = await runGuidePipeline({
       prompt: 'How do I beat the temple boss?',
       guideUrls: [],
       auditEnabled: false
     });
 
     expect(mockFetchAndClean).not.toHaveBeenCalled();
+    expect(result.data.grounding).toMatchObject({
+      groundingStatus: 'unavailable', requestedSourceCount: 0,
+      usableSourceCount: 0, citableSourceCount: 0, selectedChunkCount: 0,
+      groundedInSuppliedEvidence: false
+    });
     const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as { input: { prompt: string } };
     expect(trinityRequest.input.prompt).toContain('Source retrieval ran or sources were provided, but no usable snippets were retrieved.');
     expect(trinityRequest.input.prompt).toContain('label weak, missing, or patch-sensitive evidence as inference or fallback');
+  });
+
+  it('carries a grounded guide answer and evidence counts through user-facing composition', async () => {
+    process.env.ARCANOS_GAMING_WEB_CONTEXT_CHARS = '2400';
+    const request = {
+      mode: 'guide' as const,
+      game: 'Kingdom Hearts HD 1.5 Remix',
+      prompt: 'Where should I go next to speak to Cid? Avoid spoilers beyond this objective.',
+      guideUrl: 'https://guides.example/kingdom-hearts-hd-1-5-remix',
+      guideUrls: [], auditEnabled: false,
+    };
+    const evidence = 'Kingdom Hearts HD 1.5 Remix guide: return to Traverse Town and speak to Cid at the shop after completing the preceding world objective. Cid explains the next route and objective.';
+    mockFetchAndClean.mockResolvedValue(evidence);
+    const answer = 'Go to Traverse Town and speak to Cid [1].\n\n1. Return to town.\n2. Visit the shop.\n3. Complete the interaction.';
+    mockRunTrinityWritingPipeline.mockResolvedValueOnce({ result: answer });
+
+    const backendEnvelope = await runGuidePipeline(request);
+    const composed = ResponseComposerAgent.compose({
+      intent: { ...IntentRouterAgent.classify(request), mode: 'guide' }, backendEnvelope,
+    });
+    expect(composed.data.response).toBe(answer);
+    expect(composed.data.grounding).toMatchObject({
+      groundingStatus: 'grounded', groundedInSuppliedEvidence: true,
+      usableSourceCount: 1, citableSourceCount: 1, selectedChunkCount: 1,
+    });
+    expect(shapeClientRouteResult(composed)).toMatchObject({
+      data: { response: answer, grounding: composed.data.grounding, sources: composed.data.sources },
+    });
+    const providerRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as {
+      input: { prompt: string; body: { game: string } };
+    };
+    expect(providerRequest.input.prompt).toContain(evidence);
+    expect(providerRequest.input.prompt).toContain('Avoid spoilers beyond this objective.');
+    expect(providerRequest.input.body.game).toBe(request.game);
+    expect(providerRequest.input.prompt).toContain(`[GAME]\n${request.game}`);
   });
 
   it('does not log credentials from supplied guide URLs', async () => {
@@ -2038,12 +2180,12 @@ describe('gaming guide output hardening', () => {
     const warnSpy = jest.spyOn(logger, 'warn').mockImplementation(() => undefined);
 
     try {
-      await runGuidePipeline({
+      await expect(runGuidePipeline({
         prompt: 'Use the linked guide for a direct boss strategy.',
         guideUrl: 'https://user:pass@example.com/guide',
         guideUrls: [],
         auditEnabled: false
-      });
+      })).rejects.toMatchObject({ code: 'GAMING_SOURCE_UNAVAILABLE' });
 
       const logged = JSON.stringify([...infoSpy.mock.calls, ...warnSpy.mock.calls]);
       expect(logged).not.toContain('user:pass');
@@ -2057,7 +2199,7 @@ describe('gaming guide output hardening', () => {
   it('short-circuits exact-literal prompts before any provider call', async () => {
     const result = await runGuidePipeline({
       prompt: 'Answer directly. Do not simulate, role-play, or describe a hypothetical run. Say exactly: no-simulation.',
-      guideUrls: ['https://example.com/guide'],
+      guideUrls: [],
       auditEnabled: false
     });
 
@@ -2067,11 +2209,108 @@ describe('gaming guide output hardening', () => {
       mode: 'guide',
       data: {
         response: 'no-simulation',
-        sources: []
+        sources: [],
+        grounding: {
+          groundingStatus: 'unavailable', requestedSourceCount: 0, fetchedSourceCount: 0,
+          fetchedSuppliedSourceCount: 0, usableSourceCount: 0, citableSourceCount: 0,
+          selectedChunkCount: 0, suppliedEvidenceSourceCount: 0, groundedInSuppliedEvidence: false
+        }
       }
     });
     expect(mockFetchAndClean).not.toHaveBeenCalled();
     expect(mockResponsesCreate).not.toHaveBeenCalled();
+    expect(mockRunTrinityWritingPipeline).not.toHaveBeenCalled();
+  });
+
+  it('does not let an exact-literal request bypass supplied-guide grounding', async () => {
+    mockFetchAndClean.mockResolvedValue('Menu. Sign In. Cookie Settings. Privacy Policy.');
+    await expect(runGuidePipeline({
+      prompt: 'Say exactly: the guide was read.',
+      guideUrl: 'https://example.com/unreadable-guide',
+      guideUrls: [], auditEnabled: false
+    })).rejects.toMatchObject({ code: 'GAMING_SOURCE_UNREADABLE' });
+    expect(mockFetchAndClean).toHaveBeenCalledTimes(1);
+    expect(mockRunTrinityWritingPipeline).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['undecodable', '{malformed-guide-payload'],
+    ['metadata-only', JSON.stringify({ title: 'Shared build guide' })]
+  ])('rejects %s structured guide placeholders before provider invocation', async (_label, payload) => {
+    process.env.ARCANOS_GAMING_WEB_CONTEXT_CHARS = '2048';
+    mockFetchAndClean.mockResolvedValue('');
+    await expect(runGuidePipeline({
+      prompt: 'Use the supplied guide to explain the build.',
+      guideUrl: `https://unknown-planner.example/build-planner/share?build=${encodeURIComponent(payload)}`,
+      guideUrls: [], auditEnabled: false
+    })).rejects.toMatchObject({
+      code: 'GAMING_SOURCE_UNREADABLE',
+      grounding: {
+        groundingStatus: 'insufficient_evidence', fetchedSourceCount: 1,
+        fetchedSuppliedSourceCount: 1, usableSourceCount: 0, citableSourceCount: 0,
+        selectedChunkCount: 0, suppliedEvidenceSourceCount: 0, groundedInSuppliedEvidence: false
+      }
+    });
+    expect(mockRunTrinityWritingPipeline).not.toHaveBeenCalled();
+  });
+
+  it.each(['0', '64', '180'])('does not count source headers as evidence with a %s character context budget', async (maxContextChars) => {
+    process.env.ARCANOS_GAMING_WEB_CONTEXT_CHARS = maxContextChars;
+    mockFetchAndClean.mockResolvedValue('Kingdom Hearts HD 1.5 Remix guide: collect potions, guard against the boss attack, and strike only during recovery windows.');
+    await expect(runGuidePipeline({
+      game: 'Kingdom Hearts HD 1.5 Remix',
+      prompt: 'Use the supplied guide for the first boss and list the safe route.',
+      guideUrl: 'https://example.com/kingdom-hearts-hd-1-5-remix-guide',
+      guideUrls: [], auditEnabled: false
+    })).rejects.toMatchObject({
+      code: 'GAMING_SOURCE_UNREADABLE',
+      grounding: {
+        groundingStatus: 'insufficient_evidence', requestedSourceCount: 1,
+        fetchedSourceCount: 1, usableSourceCount: 0, citableSourceCount: 0,
+        selectedChunkCount: 0, suppliedEvidenceSourceCount: 0, groundedInSuppliedEvidence: false
+      }
+    });
+    expect(mockRunTrinityWritingPipeline).not.toHaveBeenCalled();
+  });
+
+  it.each(['ARCANOS_GAMING_WEB_CONTEXT_MAX_URLS', 'ARCANOS_GAMING_RAG_MAX_SOURCES', 'ARCANOS_GAMING_RAG_MAX_CHUNKS'])(
+    'fails closed for explicit guides with %s disabled', async (setting) => {
+      process.env[setting] = '0';
+      await expect(runGuidePipeline({
+        prompt: 'Use the supplied guide for the first boss.',
+        guideUrl: 'https://example.com/guide', guideUrls: [], auditEnabled: false
+      })).rejects.toMatchObject({
+        code: expect.stringMatching(/^GAMING_SOURCE_(?:UNREADABLE|UNAVAILABLE)$/u),
+        grounding: { requestedSourceCount: 1, suppliedEvidenceSourceCount: 0, groundedInSuppliedEvidence: false }
+      });
+      expect(mockRunTrinityWritingPipeline).not.toHaveBeenCalled();
+    }
+  );
+
+  it('does not substitute curated evidence when the explicit supplied guide could not be fetched', async () => {
+    process.env.ARCANOS_GAMING_WEB_CONTEXT_CHARS = '2048';
+    process.env.ARCANOS_GAMING_CURATED_SOURCES_JSON = JSON.stringify([{
+      url: 'https://example.com/curated-guide', title: 'Curated boss guide',
+      modes: ['guide'], topics: ['boss'], sourceType: 'curated', stable: true
+    }]);
+    mockFetchAndClean.mockImplementation(async (url: string) => {
+      if (url === 'https://example.com/supplied-guide') {
+        throw new Error('supplied fetch failed');
+      }
+      return 'Curated guide: use safe positioning, upgrade first, and punish only after boss recovery.';
+    });
+    await expect(runGuidePipeline({
+      prompt: 'Use the supplied guide for the boss strategy.',
+      guideUrl: 'https://example.com/supplied-guide', guideUrls: [], auditEnabled: false
+    })).rejects.toMatchObject({
+      code: 'GAMING_SOURCE_UNAVAILABLE',
+      grounding: {
+        groundingStatus: 'unavailable', requestedSourceCount: 1, fetchedSourceCount: 1,
+        fetchedSuppliedSourceCount: 0, usableSourceCount: 1,
+        suppliedEvidenceSourceCount: 0, groundedInSuppliedEvidence: false
+      }
+    });
+    expect(mockFetchAndClean).toHaveBeenCalledTimes(2);
     expect(mockRunTrinityWritingPipeline).not.toHaveBeenCalled();
   });
 
