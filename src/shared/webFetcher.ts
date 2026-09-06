@@ -72,7 +72,7 @@ function getConfiguredMaxChars(): number {
   return Math.min(getEnvIntegerAtLeast('WEB_FETCH_MAX_CHARS', DEFAULT_MAX_CHARS, 0), HARD_MAX_CHARS);
 }
 
-function getConfiguredFetchTimeoutMs(): number {
+export function getConfiguredFetchTimeoutMs(): number {
   return Math.min(
     getEnvIntegerAtLeast('WEB_FETCH_TIMEOUT_MS', DEFAULT_FETCH_TIMEOUT_MS, 1),
     HARD_MAX_FETCH_TIMEOUT_MS
@@ -119,6 +119,8 @@ export interface FetchAndCleanOptions {
   preferredContentTerms?: readonly string[];
   removeSelectors?: readonly string[];
   includeLinks?: boolean;
+  /** Gaming document acquisition opts in; scoring remains bounded and legacy extraction stays unchanged. */
+  retainFullSelectedText?: boolean;
   onExtraction?: (metrics: FetchAndCleanExtractionMetrics) => void;
   rawDocumentMaxChars?: number;
   onRawDocument?: (document: FetchAndCleanRawDocument) => void;
@@ -206,6 +208,7 @@ function contentTermOverlap(text: string, terms: readonly string[]): number {
 }
 
 interface ScoredExtractionCandidate {
+  element?: cheerio.Element;
   selector: string;
   text: string;
   headingText?: string;
@@ -311,6 +314,7 @@ function scoreExtractionCandidate(
   const headingText = boundExtractionMetadata(headings.join(' | '));
 
   return {
+    element,
     selector: selector.slice(0, MAX_EXTRACTION_METADATA_CHARS),
     text: scoringText,
     ...(headingText ? { headingText } : {}),
@@ -531,14 +535,18 @@ export async function fetchAndCleanDocument(
     bestPreferredCandidate.qualityScore >= MIN_PREFERRED_CONTAINER_SCORE
     ? bestPreferredCandidate
     : bodyCandidate;
-  const cleanedText = selectedCandidate.text;
+  // Keep only the winning element, not full document copies for every scoring candidate.
+  const selectedText = options.retainFullSelectedText && selectedCandidate.element
+    ? normalizeExtractedText($(selectedCandidate.element).text())
+    : selectedCandidate.text;
+  const cleanedText = options.retainFullSelectedText ? selectedText.slice(0, boundedMaxChars) : selectedText;
   const extractionStrategy = selectedCandidate.selector;
   const documentTitle = boundExtractionMetadata($('title').first().text());
 
   options.onExtraction?.({
     strategy: extractionStrategy,
     rawTextLength,
-    cleanedTextLength: cleanedText.length,
+    cleanedTextLength: selectedText.length,
     fetchElapsedMs,
     extractionElapsedMs: Date.now() - extractionStartedAt,
     selectedContainer: selectedCandidate.selector,

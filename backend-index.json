@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-05T23:03:28.660Z",
+  "generatedAt": "2026-09-06T06:45:31.042Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -1856,6 +1856,15 @@
           "relativePath": "src/services/gamingConfig.ts"
         },
         {
+          "relativePath": "src/services/gamingDocumentChunks.ts"
+        },
+        {
+          "relativePath": "src/services/gamingDocumentExtraction.ts"
+        },
+        {
+          "relativePath": "src/services/gamingDocumentResolution.ts"
+        },
+        {
           "relativePath": "src/services/gamingGameDetection.ts"
         },
         {
@@ -2604,6 +2613,15 @@
         },
         {
           "relativePath": "src/shared/gaming/gamingArchiveResourceCore.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingDocumentIngestionCore.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingDocumentIngestionPreviewFixture.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingDocumentProjectionCore.ts"
         },
         {
           "relativePath": "src/shared/gaming/gamingGrounding.ts"
@@ -3922,6 +3940,15 @@
           "relativePath": "tests/gaming-archive-resources.test.ts"
         },
         {
+          "relativePath": "tests/gaming-document-ingestion-preview-failure.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-document-ingestion-preview.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-document-resolution.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-grounding-response.test.ts"
         },
         {
@@ -3944,6 +3971,9 @@
         },
         {
           "relativePath": "tests/gaming-rag-local-fetch.integration.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-resolved-source-ingestion.integration.test.ts"
         },
         {
           "relativePath": "tests/gaming-search-discovery.test.ts"
@@ -4937,6 +4967,9 @@
         },
         {
           "relativePath": "tests/testUtils/gamingArchiveFixtures.ts"
+        },
+        {
+          "relativePath": "tests/testUtils/gamingResolvedSourceHarness.ts"
         },
         {
           "relativePath": "tests/testUtils/gamingStructuredResourceFixtures.ts"

@@ -476,6 +476,12 @@ describe('native PR preview import boundary', () => {
 
   it.each([
     'src/shared/gaming/gamingArchiveResourceCore.ts',
+    'src/services/gamingDocumentExtraction.ts',
+    'src/services/gamingDocumentChunks.ts',
+    'src/services/gamingGameDetection.ts',
+    'src/shared/gaming/gamingDocumentProjectionCore.ts',
+    'src/shared/gaming/gamingDocumentIngestionCore.ts',
+    'src/shared/gaming/gamingDocumentIngestionPreviewFixture.ts',
     'src/shared/gaming/gamingArchivePreviewFixture.ts',
     'src/shared/gaming/gamingGuideResponseCore.ts',
     'src/shared/gaming/gamingGuideResponsePreviewFixture.ts',

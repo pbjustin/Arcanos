@@ -103,7 +103,7 @@ Launcher behavior:
   fixture checks answer-first guidance, proportional uncertainty, spoiler and
   title preservation, untrusted evidence boundaries, mode/fallback selection,
   whitespace trimming, internal formatting/citations, and envelope metadata.
-  Both Gaming success markers are withheld if either proof fails; the successful
+  All Gaming success markers are withheld if any proof fails; the successful
   response body and the 138-request plan stay compatible with the trusted
   default-branch verifier. The normal wrappers use the same semantic-digest-pinned
   pure cores, while configured prompt loading and the provider/database graph
@@ -111,6 +111,21 @@ Launcher behavior:
   compliance or the normal Gaming pipeline, citation-normalization, public
   size-limit fallback, or worker execution. Separate mocked public-query tests
   cover padded 4,096-code-point acceptance and 4,097-code-point fallback.
+- The sealed Gaming guide response also executes the production-shared document
+  projection and ingestion policies after resolving synthetic Archive metadata
+  and OCR through the existing resolver core. The fixture proves instruction
+  removal, Unicode-expansion truncation, independent document/build quality,
+  metadata-based game detection, generic page identity, and a matching excerpt
+  near the end of a guide beyond 24,000 characters. Search metadata cannot push
+  the retained guide tail beyond the 100,000-character search-text cap. The
+  additive `x-arcanos-preview-gaming-document-ingestion-version:
+  gaming-document-ingestion/v1` header is required by the exact-head verifier,
+  which reports `gamingDocumentIngestionVerified`. Failure returns a fixed 500
+  without any Gaming success marker. This proves deployed shared components,
+  not the normal resolver wrapper, URL sanitization, DNS/HTTP extraction,
+  ranking, ingestion queue/worker, repository, PostgreSQL persistence/search,
+  provider, or logger execution. The mocked resolver/ingestion integration
+  tests separately cover the production composition and in-memory SQL adapter.
 - Before returning the unchanged sealed Gaming guide response, the web preview
   executes the production-shared Archive resolver and grounding policies with
   server-owned metadata, text, and in-memory read callbacks. The exact-head
