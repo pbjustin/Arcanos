@@ -1,4 +1,7 @@
+import { splitGamingDocumentIntoChunks as splitIntoChunks } from "@services/gamingDocumentChunks.js";
 import { createHash } from "node:crypto";
+import { GAMEPLAY_CONTENT_PATTERN, filterGamingDocumentInstructions, isGamingCatalogMetadataOnly } from "@services/gamingDocumentExtraction.js";
+import { describeGamingDocumentSource, resolveGamingDocument } from "@services/gamingDocumentResolution.js";
 import { load } from "cheerio";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import { redactString } from "@shared/redaction.js";
@@ -9,9 +12,7 @@ import {
   LIMITED_GAMING_ARTICLE_TEXT_SNIPPET
 } from "@shared/gaming/gamingGrounding.js";
 import {
-  fetchAndClean,
   type FetchAndCleanExtractionMetrics,
-  type FetchAndCleanOptions,
   type FetchAndCleanRawDocument
 } from "@shared/webFetcher.js";
 import {
@@ -44,10 +45,7 @@ import {
   textContainsExactGamingVersion
 } from "@services/gamingVersion.js";
 import {
-  GAMING_ARCHIVE_RESOLVER_VERSION,
-  GAMING_ARCHIVE_RESOURCE_LIMITS,
   recognizeGamingArchiveItem,
-  resolveGamingArchiveResource,
   type GamingArchiveResolutionTelemetry
 } from "@services/gamingArchiveResources.js";
 import {
@@ -223,115 +221,6 @@ const LIMITED_ARTICLE_CONTEXT_NOTE = "[No readable article evidence was extracte
 export function isCitableGamingWebSource(source: GamingWebSource): boolean {
   return isCitableGamingEvidenceSource(source);
 }
-
-const GENERIC_CONTENT_SELECTORS = [
-  "main",
-  "article",
-  "[role='main']",
-  ".mw-parser-output",
-  ".entry-content",
-  ".article-content",
-  ".article-body",
-  "[class*='article-content']",
-  "[class*='article-body']",
-  ".main-content",
-  "#main-content",
-  ".page-content",
-  ".post-content",
-  "#content",
-  ".content"
-] as const;
-
-const COMMON_JUNK_SELECTORS = [
-  "nav",
-  "header",
-  "footer",
-  "aside",
-  "form",
-  "template",
-  "[hidden]",
-  "[aria-hidden='true']",
-  "[aria-modal='true']",
-  "[role='dialog']",
-  "[role='navigation']",
-  "[role='banner']",
-  "[role='complementary']",
-  ".sidebar",
-  "#sidebar",
-  "[class$='-sidebar']",
-  "[class$='__sidebar']",
-  "[id$='-sidebar']",
-  "[id$='__sidebar']",
-  "[class*='cookie']",
-  "[id*='cookie']",
-  "[class*='newsletter']",
-  "[class*='sign-in']",
-  "[class*='signin']",
-  "[class*='login']",
-  "[id*='sign-in']",
-  "[id*='signin']",
-  "[id*='login']",
-  "[class*='modal']",
-  "[class*='popup']",
-  "[class*='popin']",
-  ".comments",
-  "#comments",
-  "[class*='comment-list']",
-  "[class*='breadcrumb']",
-  "[class*='social-share']",
-  "[class*='share-social']",
-  "[class*='related-links']",
-  "[class*='related-content']",
-  "[class*='recommended-links']",
-  "[class*='advertisement']",
-  "[class*='ad-container']"
-] as const;
-
-const SOURCE_EXTRACTION_PROFILES: Array<{
-  domains: string[];
-  contentSelectors: readonly string[];
-  removeSelectors: readonly string[];
-}> = [
-  {
-    domains: ["wiki.fextralife.com", "fextralife.com"],
-    contentSelectors: ["#wiki-content-block", ".wiki-content-block", "#main-content", ".page-content"],
-    removeSelectors: [
-      ".wiki-header-container",
-      ".wiki-menu-2-left",
-      ".wikiMenuMobile",
-      ".left-side-menu-container",
-      ".side-bar-right",
-      "#featured-wikis",
-      "#related-games-content",
-      "#disqus_thread"
-    ]
-  },
-  {
-    domains: ["bandainamcoent.com", "bandainamcoent.eu"],
-    contentSelectors: [".article__edito-content", ".article__content", ".article", "article"],
-    removeSelectors: [
-      ".article__sidebar",
-      ".article__share-social",
-      "[class*='read-next']",
-      ".age-gate"
-    ]
-  },
-  {
-    domains: ["worldofwarcraft.blizzard.com", "news.blizzard.com", "blizzard.com"],
-    contentSelectors: [".NewsBlog-content", ".Article-content", ".article-content", "#main", "article"],
-    removeSelectors: [".SiteNav", ".SocialLinks", ".CommentTotal"]
-  },
-  {
-    domains: ["icy-veins.com"],
-    contentSelectors: [".left-column-content", ".left-column-main", ".guide-page-content", "article"],
-    removeSelectors: [
-      ".guide-header__breadcrumbs",
-      ".content-toc",
-      ".table-of-contents",
-      ".left-column-sidebar"
-    ]
-  }
-];
 
 const BUILTIN_SOURCE_CATALOG: Array<{
   game: string;
@@ -1107,13 +996,11 @@ export async function buildGamingWebContext(
           cleanedTextLength: 0
         };
         const fetchedText = await runWithLocalTimeout(
-          (signal) => fetchAndClean(
-            fetchUrl,
-            maxContextChars,
-            buildGamingFetchOptions(fetchUrl, signal, fetchTimeoutMs, [], (metrics) => {
-              extraction = metrics;
-            })
-          ),
+          async (signal) => {
+            const document = await resolveGamingDocument(fetchUrl, maxContextChars, { signal, timeoutMs: fetchTimeoutMs });
+            extraction = document.extraction;
+            return document.text;
+          },
           fetchTimeoutMs
         );
         if (extraction.rawTextLength === 0 && fetchedText.length > 0) {
@@ -1212,42 +1099,6 @@ function domainMatches(domain: string, candidate: string): boolean {
   return domain === candidate || domain.endsWith(`.${candidate}`);
 }
 
-function buildGamingFetchOptions(
-  url: string,
-  signal: AbortSignal,
-  timeoutMs: number,
-  preferredContentTerms: readonly string[],
-  onExtraction: (metrics: FetchAndCleanExtractionMetrics) => void,
-  onRawDocument?: (document: FetchAndCleanRawDocument) => void,
-  rawDocumentMaxChars?: number
-): FetchAndCleanOptions {
-  const domain = normalizeDomain(url);
-  const profile = SOURCE_EXTRACTION_PROFILES.find((entry) =>
-    entry.domains.some((candidate) => domainMatches(domain, candidate))
-  );
-
-  return {
-    signal,
-    timeoutMs,
-    includeLinks: false,
-    preferredContentSelectors: [
-      ...(profile?.contentSelectors ?? []),
-      ...GENERIC_CONTENT_SELECTORS
-    ],
-    preferredContentTerms,
-    removeSelectors: [
-      ...COMMON_JUNK_SELECTORS,
-      ...(profile?.removeSelectors ?? [])
-    ],
-    onExtraction,
-    ...(onRawDocument
-      ? {
-        onRawDocument,
-        ...(rawDocumentMaxChars !== undefined ? { rawDocumentMaxChars } : {})
-      }
-      : {})
-  };
-}
 
 function trustScoreForSource(
   source: Pick<GamingSourceCandidate, "url" | "sourceType" | "stable">,
@@ -1905,7 +1756,8 @@ async function fetchGamingRagDocument(
 ): Promise<GamingFetchedDocument | GamingWebSource> {
   const fetchUrl = candidate.fetchUrl;
   const sourceUrl = candidate.url;
-  const archiveSource = ["archive.org", "www.archive.org"].includes(normalizeDomain(fetchUrl));
+  let documentSource: ReturnType<typeof describeGamingDocumentSource> | undefined;
+  try { documentSource = describeGamingDocumentSource(fetchUrl); } catch { /* Acquisition returns a bounded source failure below. */ }
   const untrustedEvidenceCandidate = candidate.untrustedCandidate === true;
   const strictEvidenceCandidate = untrustedEvidenceCandidate && candidate.requiresFreshness === true;
   const preparedResource = prepareGamingResourceUrl(fetchUrl);
@@ -1914,20 +1766,19 @@ async function fetchGamingRagDocument(
     requestedGame: input.game,
     prompt: input.prompt
   });
-  const shouldInspectUrlPayload = !archiveSource && !strictEvidenceCandidate && (
+  const shouldInspectUrlPayload = documentSource?.supportsUrlPayload !== false && !strictEvidenceCandidate && (
     fetchUrl.length > GAMING_BUILD_RESOURCE_HARD_LIMITS.maxUrlChars
     || preliminaryClassification.extractionStrategy === "url_payload"
     || isStructuredGamingResourceType(preliminaryClassification.type)
   );
   const contentTermKey = createHash("sha256").update(contentTerms.join("\n")).digest("hex").slice(0, 16);
-  const archiveIdentifier = recognizeGamingArchiveItem(fetchUrl);
-  const archiveIdentity = archiveIdentifier ? `https://archive.org/details/${archiveIdentifier}` : undefined;
-  const cacheUrlKey = createHash("sha256").update(archiveIdentity ?? normalizeCacheUrl(fetchUrl)).digest("hex");
-  const payloadCacheKey = archiveIdentity
-    ? createHash("sha256").update(archiveIdentity).digest("hex").slice(0, 24)
+  const resolvedIdentity = documentSource?.supportsUrlPayload === false ? documentSource.publicUrl : undefined;
+  const cacheUrlKey = createHash("sha256").update(resolvedIdentity ?? normalizeCacheUrl(fetchUrl)).digest("hex");
+  const payloadCacheKey = resolvedIdentity
+    ? createHash("sha256").update(resolvedIdentity).digest("hex").slice(0, 24)
     : preparedResource?.payloadHash.slice(0, 24) ?? "invalid-resource";
-  const archiveCachePolicy = archiveIdentity ? `:archive:${GAMING_ARCHIVE_RESOLVER_VERSION}` : "";
-  const cacheKey = `${cacheUrlKey}#gaming-rag:${contentTermKey}:payload:${payloadCacheKey}:origin:${strictEvidenceCandidate ? "current-candidate" : untrustedEvidenceCandidate ? "supplied" : "curated"}${archiveCachePolicy}`;
+  const resolverCachePolicy = documentSource ? `:resolver:${documentSource.resolverId}:${documentSource.resolverVersion}` : "";
+  const cacheKey = `${cacheUrlKey}#gaming-rag:${contentTermKey}:payload:${payloadCacheKey}:origin:${strictEvidenceCandidate ? "current-candidate" : untrustedEvidenceCandidate ? "supplied" : "curated"}${resolverCachePolicy}`;
   const cached = documentCache.get(cacheKey);
   const now = Date.now();
   const sourceStartedAt = now;
@@ -2036,21 +1887,21 @@ async function fetchGamingRagDocument(
     };
     let rawDocument: FetchAndCleanRawDocument | undefined;
     let archiveResolution: GamingArchiveResolutionTelemetry | undefined;
+    let supportsStructuredExtraction = true;
     const fetchedArticleText = await runWithLocalTimeout(
       async (signal) => {
-        const options = buildGamingFetchOptions(fetchUrl, signal, fetchTimeoutMs, contentTerms, (metrics) => {
-          extraction = metrics;
-        }, (document) => {
-          rawDocument = document;
-        }, GAMING_BUILD_RESOURCE_HARD_LIMITS.maxHtmlChars);
-        if (archiveSource) {
-          const archive = await resolveGamingArchiveResource(fetchUrl, GAMING_ARCHIVE_RESOURCE_LIMITS.documentChars, options);
-          if (archive) {
-            archiveResolution = archive.resolution;
-            return archive.text;
-          }
-        }
-        return fetchAndClean(fetchUrl, maxDocumentChars, options);
+        const document = await resolveGamingDocument(fetchUrl,
+          documentSource?.supportsUrlPayload === false ? 100_000 : maxDocumentChars, {
+            signal,
+            timeoutMs: fetchTimeoutMs,
+            preferredContentTerms: contentTerms,
+            rawDocumentMaxChars: GAMING_BUILD_RESOURCE_HARD_LIMITS.maxHtmlChars
+          });
+        extraction = document.extraction;
+        rawDocument = document.rawDocument;
+        archiveResolution = document.archiveResolution;
+        supportsStructuredExtraction = document.resolution.supportsStructuredExtraction;
+        return document.text;
       },
       fetchTimeoutMs,
       requestSignal
@@ -2079,7 +1930,7 @@ async function fetchGamingRagDocument(
     let structuredResult: GamingBuildResourceResult | undefined;
     try {
       // Resolved plain-text guides must pass the article evidence gates; they are not build imports.
-      if (!archiveResolution) {
+      if (supportsStructuredExtraction) {
         structuredResult = await ingestGamingBuildResource({
           url: strictEvidenceCandidate ? neutralizeUntrustedStructuredIngestionUrl(fetchUrl) : fetchUrl,
           requestedGame: input.game,
@@ -2248,51 +2099,10 @@ async function fetchGamingRagDocument(
   }
 }
 
-function splitIntoChunks(text: string, maxChunkChars: number): string[] {
-  const normalized = text.replace(/\s+/g, " ").trim();
-  if (!normalized) {
-    return [];
-  }
-
-  const chunkSize = Math.max(1, maxChunkChars);
-  const sentences = normalized.split(/(?<=[.!?])\s+/);
-  const chunks: string[] = [];
-  let current = "";
-  for (const sentence of sentences) {
-    const nextLength = current ? current.length + sentence.length + 1 : sentence.length;
-    if (nextLength <= chunkSize) {
-      current = current ? `${current} ${sentence}` : sentence;
-      continue;
-    }
-
-    if (current) {
-      chunks.push(current);
-      current = "";
-    }
-
-    if (sentence.length > chunkSize) {
-      for (let index = 0; index < sentence.length; index += chunkSize) {
-        chunks.push(sentence.slice(index, index + chunkSize));
-      }
-      continue;
-    }
-
-    current = sentence;
-  }
-
-  if (current) {
-    chunks.push(current);
-  }
-
-  return chunks;
-}
-
 const NAVIGATION_JUNK_PATTERN = /\b(?:advertisement|cookie settings?|privacy policy|terms of use|sign in|log in|subscribe|newsletter|menu|navigation|footer|share this|edit source|page information|table of contents|all rights reserved|fandom apps|explore properties|category directory|wiki category)\b/i;
 const NAVIGATION_LABEL_PATTERN = /\b(?:home|menu|games?|news|guides?|builds?|weapons?|armor|talismans?|skills?|bosses?|locations?|quests?|walkthrough|classes?|community|forums?|wiki|categories|view all|go back|read next|follow us|related games?|popular games)\b/gi;
 const NAVIGATION_JUNK_MATCH_PATTERN = /\b(?:advertisement|cookie settings?|privacy policy|terms of use|sign in|log in|subscribe|newsletter|menu|navigation|footer|share this|edit source|page information|table of contents|all rights reserved|category directory|wiki category)\b/gi;
-const SOURCE_INSTRUCTION_PATTERN = /\b(?:(?:ignore|disregard|override)\s+(?:all\s+)?(?:previous|prior|system|developer|assistant|user)\s+(?:instructions?|messages?|prompts?)|forget\s+(?:everything|all)\s+(?:above|before)|you\s+are\s+now|new\s+(?:system|developer|assistant)\s+(?:message|prompt|instructions?)|follow\s+(?:these|the\s+following)\s+instructions?|(?:system|developer|assistant)\s+(?:message|prompt|instructions?)|(?:reveal|print|show|expose|exfiltrate)\s+(?:the\s+)?(?:system|developer|secret|credential|token|api\s+key)\s*(?:prompt|message|instructions?|value)?|(?:call|invoke)\s+(?:the\s+)?(?:tool|function)|(?:execute|run)\s+(?:this\s+)?(?:command|shell|powershell|bash))\b/i;
 const SOURCE_INSTRUCTION_MATCH_PATTERN = /(?:\[(?:system|developer|assistant|instructions?)\]|<(?:system|developer|assistant)>|#{1,6}\s*(?:system|developer|assistant|instructions?)\b|\b(?:ignore|disregard|override)\s+(?:all\s+)?(?:previous|prior|system|developer|assistant|user)\s+(?:instructions?|messages?|prompts?)\b|\bforget\s+(?:everything|all)\s+(?:above|before)\b|\byou\s+are\s+now\b|\bnew\s+(?:system|developer|assistant)\s+(?:message|prompt|instructions?)\b|\bfollow\s+(?:these|the\s+following)\s+instructions?\b|\b(?:reveal|print|show|expose|exfiltrate)\s+(?:the\s+)?(?:system|developer|secret|credential|token|api\s+key)\b|\b(?:call|invoke)\s+(?:the\s+)?(?:tool|function)\b|\b(?:execute|run)\s+(?:this\s+)?(?:command|shell|powershell|bash)\b)/gi;
-const GAMEPLAY_CONTENT_PATTERN = /\b(?:boss|route|walkthrough|build|patch|weapon|stat|skill|class|quest|location|level|damage|talent|gear|rotation|viable|craft|resource|upgrade|exploration|progress|economy|unit|mission|encounter|ability|loadout|mechanic)\b/i;
 const MODE_CONTENT_TERMS: Record<GamingMode, readonly string[]> = {
   guide: ["route", "walkthrough", "boss", "location", "beginner", "quest", "tutorial", "progress", "objective", "exploration", "mission", "mechanic"],
   build: ["build", "stats", "weapon", "armor", "skill", "rotation", "talent", "gear", "loadout", "ability", "attribute", "module"],
@@ -2307,19 +2117,6 @@ const NON_TOPICAL_QUERY_TERMS = new Set([
   "about", "and", "best", "create", "current", "for", "from", "give", "help", "into", "latest", "look", "need", "please", "recommend", "show", "the", "use", "using", "want", "with"
 ]);
 
-function isGamingCatalogMetadataOnly(text: string): boolean {
-  const catalogLabels = text.match(/\b(?:identifier|addeddate|download options|scanner|isbn|publication date|publisher)\b/gi) ?? [];
-  if (catalogLabels.length < 2) {
-    return false;
-  }
-  // A title or catalog label can overlap the requested game without describing
-  // gameplay. Preserve catalog pages only when they also contain gameplay prose.
-  return !text.split(/(?<=[.!?])\s+/).some((sentence) =>
-    GAMEPLAY_CONTENT_PATTERN.test(sentence)
-    && tokenize(sentence).length >= 8
-    && /(?:^(?:(?:first|next|then)[,:]?\s+)?(?:to\s+)?|\b(?:should|must|can|then)\s+)(?:attack|avoid|block|collect|defeat|dodge|equip|explore|follow|gather|heal|jump|move|open|press|restore|save|select|spend|upgrade|use|wait)\b/i.test(sentence.trim())
-  );
-}
 
 function clampScore(value: number): number {
   return Math.max(0, Math.min(1, value));
@@ -2835,18 +2632,8 @@ function buildRagContext(
 }
 
 function extractReadableEvidenceText(text: string): string {
-  const withoutLinks = text
-    .replace(/\s*\[LINKS\][\s\S]*$/i, "")
-    .replace(/^\s*(?:\[(?:system|developer|assistant|instructions?|mode|request|output)\]|<(?:system|developer|assistant)>|#{1,6}\s*(?:system|developer|assistant|instructions?)\b).*$/gim, "")
-    .replace(/\s+/g, " ")
-    .trim();
-  if (!withoutLinks) {
-    return "";
-  }
-  const sentences = withoutLinks
-    .split(/(?<=[.!?])\s+/)
-    .filter((sentence) => sentence.length > 0 && !SOURCE_INSTRUCTION_PATTERN.test(sentence));
-  const safeText = sentences.join(" ").trim();
+  const safeText = filterGamingDocumentInstructions(text);
+  const sentences = safeText.split(/(?<=[.!?])\s+/);
   if (!safeText || isGamingCatalogMetadataOnly(safeText)) {
     return "";
   }
