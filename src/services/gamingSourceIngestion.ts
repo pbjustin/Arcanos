@@ -312,7 +312,8 @@ function admitUrl(
     };
   }
 
-  const canonicalUrl = describeGamingDocumentSource(sanitized.url).publicUrl;
+  const description = describeGamingDocumentSource(sanitized.url);
+  const canonicalUrl = description.supportsUrlPayload ? sanitized.url : description.publicUrl;
   if (seenCanonicalUrls.has(canonicalUrl)) {
     return {
       rejection: rejectAdmission(
@@ -1015,8 +1016,7 @@ async function ingestOneSource(
     const detectedGame = detectGamingGame({
       urls: [source.canonicalUrl],
       pageTitle,
-      pageHeadings,
-      prompt: cleanedText.slice(0, 2_000)
+      pageHeadings
     });
     if (
       detectedGame.game
@@ -1163,7 +1163,7 @@ async function ingestOneSource(
       gameKey: source.gameKey,
       gameName: source.game,
       canonicalUrl: source.canonicalUrl,
-      publicUrl: document.publicUrl,
+      publicUrl: supportsStructuredExtraction ? source.canonicalUrl : document.publicUrl,
       sourceType: sourceTypeToTrustType(sourceType, source),
       trustScore: source.trustScore ?? 0.25,
       priority: 100,

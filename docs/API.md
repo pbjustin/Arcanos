@@ -1603,7 +1603,11 @@ Live supplied-source retrieval, initial durable ingestion, and refresh all use
 small ordered resolver registry acquires a bounded `ResolvedGamingDocument`
 before either ranking or structured normalization. The Archive adapter reuses
 the existing metadata-attested text resolver; generic HTML/text remains the
-fallback. The public item URL remains the source identity and citation.
+fallback. Archive reader aliases use the public item URL as their source
+identity and citation. Generic sources retain their admitted, sanitized URL,
+including public page identifiers such as MediaWiki's `curid` query parameter.
+Durable ingestion checks source-game conflicts using the URL, title, and
+headings; ordinary guide prose is not treated as a requested game.
 
 Durable revisions hash the resolved, sanitized text and normalized data.
 Unchanged content and extraction policy retain the revision; changed content creates a revision and
@@ -1616,8 +1620,9 @@ Document extraction quality is independent of structured-build extraction:
 readable guide prose can be complete while structured extraction is
 `not_applicable`. `EXTRACTION_PARTIAL` indicates truncated or metadata-only
 document evidence, rather than absent equipment, skill, or stat fields.
-The 100,000-character document cap still applies, so a larger guide can be
-stored successfully with this warning. Revision provenance and extraction
+The 100,000-character document cap still applies, including text that expands
+during Unicode normalization, so a larger guide can be stored successfully
+with this warning. Revision provenance and extraction
 metrics retain bounded resolver/version/strategy, document type and lengths,
 truncation, and both quality dimensions. Resolution, normalization, and
 persistence telemetry report those stages separately, without guide content,

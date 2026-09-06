@@ -450,6 +450,42 @@ describe('gaming source ingestion', () => {
     }));
   });
 
+  it.each([
+    'Use this guide to defeat every boss in the new expansion. The Borderlands 4 route starts at the village checkpoint.',
+    'Unlike Elden Ring, Borderlands 4 rewards aggressive use of gunfire. Keep moving between cover positions and save ammunition for the boss.'
+  ])('does not interpret gameplay prose as a requested game: %s', async (passage) => {
+    const url = 'https://mobalytics.gg/borderlands-4/builds';
+    const text = passage.repeat(3);
+    resolveGamingDocumentMock.mockResolvedValueOnce(resolvedDocument(url, text));
+    const result = await executeQueuedGamingSourceIngestion('019fe3cd-8c01-7f01-8d2d-caa951bc4b9b', {
+      action: 'ingest', schemaVersion: '1', submittedCount: 1, rejectedSources: [],
+      sources: [{ submittedIndex: 0, canonicalUrl: url,
+        game: 'Borderlands 4', gameKey: 'borderlands-4', origin: 'user_supplied' }]
+    });
+    expect(result.output.sources[0].status).toBe('stored');
+    expect(persistGamingSourceRevisionMock).toHaveBeenCalledWith(expect.objectContaining({
+      cleanedContent: text,
+      gameKey: 'borderlands-4'
+    }));
+  });
+
+  it.each([
+    { url: 'https://example.org/Elden%20Ring/guide', title: 'Borderlands 4 progression guide' },
+    { url: 'https://guides.example.org/article', title: 'Destiny 2 progression guide' }
+  ])('still rejects a source game mismatch from its URL or metadata: $url', async ({ url, title }) => {
+    resolveGamingDocumentMock.mockResolvedValueOnce(resolvedDocument(url, 'Borderlands 4 progression route. '.repeat(10), {
+      metadata: { title }
+    }));
+    const result = await executeQueuedGamingSourceIngestion('019fe3cd-8c01-7f01-8d2d-caa951bc4b9b', {
+      action: 'ingest', schemaVersion: '1', submittedCount: 1, rejectedSources: [],
+      sources: [{ submittedIndex: 0, canonicalUrl: url,
+        game: 'Borderlands 4', gameKey: 'borderlands-4', origin: 'user_supplied' }]
+    });
+    expect(result.output.sources[0]).toMatchObject({ status: 'rejected', error: { code: 'GAME_MISMATCH' } });
+    expect(ingestGamingBuildResourceMock).not.toHaveBeenCalled();
+    expect(persistGamingSourceRevisionMock).not.toHaveBeenCalled();
+  });
+
   it.each([false, true])('reports prose document quality independently of build fields (truncated=%s)', async (truncated) => {
     const text = 'Borderlands 4 progression guide. Cross the canyon and activate the tower to open the eastern route. '.repeat(30);
     resolveGamingDocumentMock.mockResolvedValueOnce(resolvedDocument(

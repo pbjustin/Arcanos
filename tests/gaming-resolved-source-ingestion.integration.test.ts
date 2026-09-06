@@ -208,6 +208,39 @@ describe('shared resolved Gaming documents reach durable stored retrieval', () =
     expect(JSON.stringify(database.revisions)).not.toContain('test-private-value');
   });
 
+  it('preserves distinct public MediaWiki page identities through admission, fetching, and storage', async () => {
+    // MediaWiki index.php uses curid to select a page independently of its title.
+    const urls = [
+      'https://guides.example.org/w/index.php?curid=123',
+      'https://guides.example.org/w/index.php?curid=456'
+    ];
+    const result = await createGamingSourceIngestion({ action: 'ingest', payload: {
+      game: GAME, sourceUrls: [
+        `${urls[0]}&utm_source=test`, urls[1],
+        `${urls[0]}&utm_source=duplicate`, `${urls[0]}&token=test-private-value`
+      ], idempotencyKey: 'test-wiki-page-identities'
+    } }, gateway);
+    expect(result.statusCode).toBe(202);
+    const queued = (mockEnqueue.mock.calls[0]?.[0] as any).input.body;
+    expect(queued.sources.map((source: any) => source.canonicalUrl)).toEqual(urls);
+    expect(queued.rejectedSources.map((source: any) => source.error.code)).toEqual(['DUPLICATE_URL', 'URL_BLOCKED']);
+    expect(JSON.stringify(queued)).not.toMatch(/utm_source|test-private-value/);
+    expect(resolveDocument).not.toHaveBeenCalled();
+    for (const source of queued.sources) {
+      database = new GamingResolvedSourceHarness();
+      const stored = await executeQueuedGamingSourceIngestion('test-wiki-page', {
+        ...queued, sources: [{ ...source, submittedIndex: 0 }], rejectedSources: [], submittedCount: 1
+      });
+      expect(stored.output.sources[0]).toMatchObject({ status: 'stored', canonicalUrl: source.canonicalUrl });
+      expect(resolveDocument).toHaveBeenLastCalledWith(source.canonicalUrl, 100_000, expect.anything());
+      const fetchedUrl = new URL(mockAxiosGet.mock.calls.at(-1)?.[0] as string);
+      expect(`${fetchedUrl.pathname}${fetchedUrl.search}`).toBe(`/w/index.php${new URL(source.canonicalUrl).search}`);
+      expect(database.source).toMatchObject({ canonical_url: source.canonicalUrl, public_url: source.canonicalUrl });
+      const context = await buildStoredGamingKnowledgeContext({ game: GAME, prompt: TOPIC, mode: 'guide' });
+      expect(context.sources[0].url).toBe(source.canonicalUrl);
+    }
+  });
+
   it('deduplicates Archive reader aliases under the canonical public item identity', async () => {
     const result = await createGamingSourceIngestion({ action: 'ingest', payload: {
       game: GAME, sourceUrls: [`https://www.archive.org/details/KH1.5_guide/page/n9/mode/2up`, gamingArchiveGuideUrl], idempotencyKey: 'test-reader-alias'
