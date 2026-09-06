@@ -7,6 +7,7 @@ jest.unstable_mockModule('@core/db/repositories/gamingSourceRepository.js', () =
 jest.unstable_mockModule('@platform/logging/structuredLogging.js', () => ({ logger: { info: logInfo, warn: jest.fn() } }));
 const { buildStoredGamingLexicalQuery, selectStoredGamingEvidence, formatStoredGamingEvidence, retrieveStoredGamingKnowledge } =
   await import('../src/services/gamingStoredKnowledge.js');
+const storedEvidenceCore = await import('../src/shared/gaming/gamingStoredEvidenceCore.js');
 
 const input = { game: 'Synthetic Quest', prompt: 'Where is the Zephyrglass Compass?', mode: 'guide' as const };
 function record(id: string, text: string, overrides: Partial<GamingKnowledgeProvenanceRecord> = {}): GamingKnowledgeProvenanceRecord {
@@ -42,6 +43,29 @@ describe('bounded stored Gaming chunk evidence', () => {
     expect(selected).toHaveLength(1);
     expect(selected[0].evidence).toMatchObject({ sourceId: 'source-one', revisionId: 'revision-one', recordId: 'record-end', publicUrl: best.publicUrl, ordinal: 399,
       provenance: { resolverId: 'archive-org', resolverVersion: 'archive-text-v1', resolutionStrategy: 'archive_djvu_text' } });
+  });
+
+  test('uses explicit core budgets independently from disabled runtime retrieval settings', () => {
+    const disabledSettings = ['ARCANOS_GAMING_RAG_MAX_CHUNKS', 'ARCANOS_GAMING_RAG_MAX_SOURCES', 'ARCANOS_GAMING_WEB_CONTEXT_CHARS'];
+    const originalSettings = disabledSettings.map(key => process.env[key]);
+    const rows = [record('core-evidence', 'Find the Zephyrglass Compass beyond the cobalt arch.')];
+    const limits = { chunkChars: 900, maxChunks: 6, maxSources: 4, maxContextChars: 5000, structuredEvidenceChars: 8000 };
+    try {
+      disabledSettings.forEach(key => { process.env[key] = '0'; });
+      const selected = storedEvidenceCore.selectStoredGamingEvidence(rows, input, limits);
+      const formatted = storedEvidenceCore.formatStoredGamingEvidence(selected, { sourceIndexOffset: 2 }, limits);
+      expect(formatted.context).toContain('[Source 3]');
+      expect(formatted.context).toContain('Zephyrglass Compass');
+      expect(formatted.evidence).toHaveLength(1);
+      expect(selectStoredGamingEvidence(rows, input)).toEqual([]);
+      expect(formatStoredGamingEvidence(selected, {})).toEqual({ context: '', sources: [] });
+    } finally {
+      disabledSettings.forEach((key, index) => {
+        const original = originalSettings[index];
+        if (original === undefined) delete process.env[key];
+        else process.env[key] = original;
+      });
+    }
   });
 
   test('allows zero evidence for blank questions, zero SQL rank, unrelated text and title-only matches', () => {

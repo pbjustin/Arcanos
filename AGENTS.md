@@ -123,6 +123,28 @@ Choose the smallest set covering the change, then expand for cross-cutting or re
 
 ## Operational and security safety
 
+- The sealed Gaming guide response also executes the production durable-document
+  chunker and pure stored-evidence selection/formatting core over a server-owned
+  synthetic guide of approximately 590,000 characters and bounded synthetic
+  candidates. Its additive header is
+  `x-arcanos-preview-gaming-durable-rag-version: gaming-durable-rag/v1`; the
+  exact-head verifier requires it and reports `gamingDurableRagVerified`.
+  It checks late-document evidence, deterministic chunks and revision identity,
+  explicit 500-chunk partial coverage and Unicode boundaries, bounded
+  selection/diversification, citation/provenance preservation, complete bounded
+  structured-build evidence, and independent Archive character/byte
+  limits. All Gaming success markers are withheld if any fixture fails; the
+  response body and 138-request plan remain compatible with the trusted verifier.
+  The chunker's sole additional timer import is `setImmediate` from
+  `node:timers/promises`, bound as `yieldToEventLoop`; it yields during bounded
+  chunking. The fixture does not execute the configured stored-retrieval wrapper,
+  PostgreSQL full-text ranking, repository, persistence, ingestion worker, queue,
+  live Archive/HTTP/DNS, provider, or logger. Candidate records and lexical ranks
+  are synthetic; this is served production-core component evidence. A passing
+  exact-head `tests/integration/gaming-durable-rag.pg18.integration.test.ts` run
+  separately establishes PostgreSQL storage, full-text matching/ranking,
+  supersession, and historical revision reactivation against its guarded
+  disposable PostgreSQL 18 schema; the preview does not supply that evidence.
 - The sealed Gaming guide response also executes the production-shared document
   projection, ingestion identity, game-detection, quality, search-text, and
   excerpt policies after synthetic Archive resolution. Its additive header is

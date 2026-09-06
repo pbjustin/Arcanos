@@ -40,6 +40,9 @@
       "@services/gamingDocumentChunks.js": [
         "src/services/gamingDocumentChunks.ts"
       ],
+      "@services/gamingDurableDocumentChunks.js": [
+        "src/services/gamingDurableDocumentChunks.ts"
+      ],
       "@services/directAnswerMode.js": [
         "src/services/directAnswerMode.ts"
       ],

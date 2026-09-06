@@ -203,6 +203,8 @@ function responseHeadersForCase(
             NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.responseProofVersion,
           [NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.documentProofHeader]:
             NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.documentProofVersion,
+          [NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.durableRagProofHeader]:
+            NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.durableRagProofVersion,
         }
       : {}),
     ...(requestCase.expectedType === 'backstage-generation-contract'
@@ -2070,6 +2072,12 @@ test('executes the bounded credential-free matrix and detects identity stability
     ).map(({ caseId }) => caseId),
     ['gaming-query-guide']
   );
+  assert.deepEqual(
+    result.checks.filter(({ gamingDurableRagVerified }) =>
+      gamingDurableRagVerified === true
+    ).map(({ caseId }) => caseId),
+    ['gaming-query-guide']
+  );
   assert.equal(
     result.checks.find(({ caseId }) =>
       caseId === 'worker-readiness-initial'
@@ -2892,6 +2900,20 @@ test('rejects missing synthetic provenance and correlation or security header dr
       code: 'NATIVE_PR_PREVIEW_GAMING_DOCUMENT_INGESTION_PROOF_INVALID',
       mutate(headers) {
         delete headers[NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.documentProofHeader];
+      },
+    },
+    {
+      caseId: 'gaming-query-guide',
+      code: 'NATIVE_PR_PREVIEW_GAMING_DURABLE_RAG_PROOF_INVALID',
+      mutate(headers) {
+        delete headers[NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.durableRagProofHeader];
+      },
+    },
+    {
+      caseId: 'gaming-query-guide',
+      code: 'NATIVE_PR_PREVIEW_GAMING_DURABLE_RAG_PROOF_INVALID',
+      mutate(headers) {
+        headers[NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.durableRagProofHeader] = 'gaming-durable-rag/drifted';
       },
     },
     {
