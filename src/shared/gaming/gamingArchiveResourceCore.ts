@@ -32,6 +32,7 @@ export const GAMING_ARCHIVE_RESOURCE_LIMITS = Object.freeze({
   metadataBytes: 128_000,
   documentBytes: 1_000_000,
   documentChars: 100_000,
+  durableDocumentChars: 1_000_000,
   files: 512,
   provenanceDepth: 8
 });
@@ -231,7 +232,7 @@ export async function resolveGamingArchiveResourceCore(
   let document: GamingArchiveRawDocument | undefined;
   let text: string;
   const documentTextCeiling = Number.isFinite(options.maxSelectedTextChars)
-    ? Math.min(GAMING_ARCHIVE_RESOURCE_LIMITS.documentBytes, Math.max(0, Math.trunc(options.maxSelectedTextChars!)))
+    ? Math.min(GAMING_ARCHIVE_RESOURCE_LIMITS.durableDocumentChars, Math.max(0, Math.trunc(options.maxSelectedTextChars!)))
     : GAMING_ARCHIVE_RESOURCE_LIMITS.documentChars;
   try {
     text = await dependencies.fetchAndClean(derivativeUrl,
