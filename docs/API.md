@@ -1598,6 +1598,31 @@ sanitized lifecycle projection with source-level states, safe errors, record
 counts, provenance, and timestamps—never generic job payloads, queue state,
 worker state, raw database records, or provider diagnostics.
 
+Live supplied-source retrieval, initial durable ingestion, and refresh all use
+`resolveGamingDocument()` in `src/services/gamingDocumentResolution.ts`. Its
+small ordered resolver registry acquires a bounded `ResolvedGamingDocument`
+before either ranking or structured normalization. The Archive adapter reuses
+the existing metadata-attested text resolver; generic HTML/text remains the
+fallback. The public item URL remains the source identity and citation.
+
+Durable revisions hash the resolved, sanitized text and normalized data.
+Unchanged content and extraction policy retain the revision; changed content creates a revision and
+supersedes its prior knowledge records atomically. Guide storage retains one
+record per revision. Stored retrieval uses Gaming's shared sentence chunker to
+select a query-relevant passage of at most 1,200 characters from that record.
+The existing PostgreSQL full-text query and active-source filters are unchanged.
+
+Document extraction quality is independent of structured-build extraction:
+readable guide prose can be complete while structured extraction is
+`not_applicable`. `EXTRACTION_PARTIAL` indicates truncated or metadata-only
+document evidence, rather than absent equipment, skill, or stat fields.
+The 100,000-character document cap still applies, so a larger guide can be
+stored successfully with this warning. Revision provenance and extraction
+metrics retain bounded resolver/version/strategy, document type and lengths,
+truncation, and both quality dimensions. Resolution, normalization, and
+persistence telemetry report those stages separately, without guide content,
+raw metadata, or derivative addresses.
+
 They require the dedicated, web-service-only
 `ARCANOS_GAMING_SOURCE_ACCESS_TOKEN` Bearer credential. It is an exact
 32–4096-character visible-ASCII non-placeholder secret with no whitespace and

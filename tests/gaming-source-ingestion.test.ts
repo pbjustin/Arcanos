@@ -11,9 +11,30 @@ const getJobByIdMock = jest.fn();
 const persistGamingSourceRevisionMock = jest.fn();
 const getGamingSourceByIdMock = jest.fn();
 const searchActiveGamingKnowledgeMock = jest.fn();
-const fetchAndCleanDocumentMock = jest.fn();
+const resolveGamingDocumentMock = jest.fn();
 const planAutonomousWorkerJobMock = jest.fn();
 const ingestGamingBuildResourceMock = jest.fn();
+
+function resolvedDocument(url: string, text: string, overrides: Record<string, unknown> = {}) {
+  return {
+    requestedUrl: url,
+    canonicalUrl: url,
+    publicUrl: url,
+    host: new URL(url).hostname,
+    text,
+    contentType: 'text/html',
+    rawDocument: {
+      body: '<html><title>Borderlands 4 Endgame Build</title><body>Useful guide</body></html>',
+      contentType: 'text/html',
+      truncated: false
+    },
+    metadata: { title: 'Borderlands 4 Endgame Build', headings: 'Endgame Build' },
+    extraction: { strategy: 'article', rawTextLength: text.length, cleanedTextLength: text.length },
+    resolution: { resolverId: 'generic-html', resolverVersion: '1', strategy: 'article', documentType: 'html', supportsStructuredExtraction: true },
+    metrics: { rawTextLength: text.length, cleanedTextLength: text.length, truncated: false },
+    ...overrides
+  };
+}
 
 class MockGamingSourceRepositoryUnavailableError extends Error {}
 
@@ -72,7 +93,7 @@ beforeEach(async () => {
   persistGamingSourceRevisionMock.mockReset();
   getGamingSourceByIdMock.mockReset();
   searchActiveGamingKnowledgeMock.mockReset();
-  fetchAndCleanDocumentMock.mockReset();
+  resolveGamingDocumentMock.mockReset();
   planAutonomousWorkerJobMock.mockReset();
   ingestGamingBuildResourceMock.mockReset();
 
@@ -94,30 +115,10 @@ beforeEach(async () => {
     autonomyState: {},
     planningReasons: []
   });
-  fetchAndCleanDocumentMock.mockImplementation(async (
-    _url: string,
-    _maxChars: number,
-    options: {
-      onRawDocument?: (value: { body: string; contentType: string; truncated: boolean }) => void;
-      onExtraction?: (value: Record<string, unknown>) => void;
-    }
-  ) => {
-    options.onRawDocument?.({
-      body: '<html><title>Borderlands 4 Endgame Build</title><body>Useful guide</body></html>',
-      contentType: 'text/html',
-      truncated: false
-    });
-    options.onExtraction?.({
-      documentTitle: 'Borderlands 4 Endgame Build',
-      headingText: 'Endgame Build',
-      cleanedTextLength: 500
-    });
-    return {
-      text: 'Borderlands 4 endgame build equipment skills rotation '.repeat(12),
-      links: [],
-      combined: ''
-    };
-  });
+  resolveGamingDocumentMock.mockImplementation(async (url: string) => resolvedDocument(
+    url,
+    'Borderlands 4 endgame build equipment skills rotation '.repeat(12)
+  ));
   ingestGamingBuildResourceMock.mockResolvedValue({
     publicUrl: 'https://mobalytics.gg/borderlands-4/builds',
     safeDisplayUrl: 'https://mobalytics.gg/borderlands-4/builds',
@@ -194,8 +195,10 @@ beforeEach(async () => {
     getGamingSourceById: getGamingSourceByIdMock,
     searchActiveGamingKnowledge: searchActiveGamingKnowledgeMock
   }));
-  jest.unstable_mockModule('../src/shared/webFetcher.js', () => ({
-    fetchAndCleanDocument: fetchAndCleanDocumentMock
+  jest.unstable_mockModule('../src/services/gamingDocumentResolution.js', () => ({
+    GAMING_DOCUMENT_RESOLVER_VERSION: 'gaming-document-v1',
+    resolveGamingDocument: resolveGamingDocumentMock,
+    describeGamingDocumentSource: (url: string) => ({ publicUrl: url })
   }));
   jest.unstable_mockModule('../src/services/workerAutonomyService.js', () => ({
     planAutonomousWorkerJob: planAutonomousWorkerJobMock
@@ -418,6 +421,11 @@ describe('gaming source ingestion', () => {
     );
 
     expect(execution.retryable).toBe(false);
+    expect(resolveGamingDocumentMock).toHaveBeenCalledWith(
+      'https://mobalytics.gg/borderlands-4/builds',
+      100_000,
+      expect.objectContaining({ includeLinks: false })
+    );
     expect(execution.output).toEqual(expect.objectContaining({
       status: 'completed',
       counts: expect.objectContaining({ succeeded: 1, recordsCreated: 1 }),
@@ -440,6 +448,151 @@ describe('gaming source ingestion', () => {
         payloadHash: expect.stringMatching(/^[a-f0-9]{64}$/)
       })]
     }));
+  });
+
+  it.each([false, true])('reports prose document quality independently of build fields (truncated=%s)', async (truncated) => {
+    const text = 'Borderlands 4 progression guide. Cross the canyon and activate the tower to open the eastern route. '.repeat(30);
+    resolveGamingDocumentMock.mockResolvedValueOnce(resolvedDocument(
+      'https://example.com/generic-guide', text, {
+        metrics: { rawTextLength: text.length + (truncated ? 800 : 0), cleanedTextLength: text.length, truncated },
+        // Raw capture truncation alone must not lower the persisted text quality.
+        rawDocument: { body: '<html></html>', contentType: 'text/html', truncated: true }
+      }
+    ));
+    ingestGamingBuildResourceMock.mockResolvedValueOnce({
+      ...genericNormalizedGamingSource(''),
+      quality: 'metadata-only'
+    });
+    const execution = await executeQueuedGamingSourceIngestion('019fe3cd-8c01-7f01-8d2d-caa951bc4b9b', {
+      action: 'ingest', schemaVersion: '1', submittedCount: 1, rejectedSources: [],
+      sources: [{ submittedIndex: 0, canonicalUrl: 'https://example.com/generic-guide',
+        game: 'Borderlands 4', gameKey: 'borderlands-4', origin: 'user_supplied' }]
+    });
+    expect(execution.output.sources[0].status).toBe('stored');
+    expect(execution.output.sources[0].warnings).toEqual(truncated ? ['EXTRACTION_PARTIAL'] : undefined);
+    expect(persistGamingSourceRevisionMock).toHaveBeenCalledWith(expect.objectContaining({
+      cleanedContent: text.trim(),
+      provenance: expect.objectContaining({ resolverId: 'generic-html', resolverVersion: '1' }),
+      extractionMetrics: expect.objectContaining({
+        extractionQuality: truncated ? 'partial' : 'complete',
+        structuredExtractionQuality: 'not_applicable',
+        documentTruncated: truncated
+      })
+    }));
+  });
+
+  it('retains partial extraction warnings for catalog metadata even when the bounded response is complete', async () => {
+    const text = 'Borderlands 4. Identifier test-guide. Publisher Synthetic Fixtures. Publication date 2026. Download options. Scanner synthetic. Addeddate today. '.repeat(3);
+    resolveGamingDocumentMock.mockResolvedValueOnce(resolvedDocument('https://example.com/catalog', text));
+    ingestGamingBuildResourceMock.mockResolvedValueOnce(genericNormalizedGamingSource(''));
+    const result = await executeQueuedGamingSourceIngestion('019fe3cd-8c01-7f01-8d2d-caa951bc4b9b', {
+      action: 'ingest', schemaVersion: '1', submittedCount: 1, rejectedSources: [],
+      sources: [{ submittedIndex: 0, canonicalUrl: 'https://example.com/catalog',
+        game: 'Borderlands 4', gameKey: 'borderlands-4', origin: 'user_supplied' }]
+    });
+    expect(result.output.sources[0].warnings).toEqual(['EXTRACTION_PARTIAL']);
+    expect(persistGamingSourceRevisionMock).toHaveBeenCalledWith(expect.objectContaining({
+      extractionMetrics: expect.objectContaining({ extractionQuality: 'metadata-only', structuredExtractionQuality: 'not_applicable' })
+    }));
+  });
+
+  it('stores document-only resolver prose as a guide even when its identifier resembles a build URL', async () => {
+    const text = 'Borderlands 4 progression route. Follow the canyon path and activate the eastern beacon to unlock the objective. '.repeat(10);
+    resolveGamingDocumentMock.mockResolvedValueOnce(resolvedDocument('https://archive.org/details/synthetic_build_planner', text, {
+      contentType: 'text/plain', rawDocument: undefined,
+      resolution: { resolverId: 'archive-org', resolverVersion: '1', strategy: 'archive_djvu_text', documentType: 'text', supportsStructuredExtraction: false }
+    }));
+    const result = await executeQueuedGamingSourceIngestion('019fe3cd-8c01-7f01-8d2d-caa951bc4b9b', {
+      action: 'ingest', schemaVersion: '1', submittedCount: 1, rejectedSources: [],
+      sources: [{ submittedIndex: 0, canonicalUrl: 'https://archive.org/details/synthetic_build_planner',
+        game: 'Borderlands 4', gameKey: 'borderlands-4', origin: 'user_supplied' }]
+    });
+    expect(result.output.sources[0]).toMatchObject({ status: 'stored', sourceType: 'article' });
+    expect(result.output.sources[0].warnings).toBeUndefined();
+    expect(persistGamingSourceRevisionMock).toHaveBeenCalledWith(expect.objectContaining({
+      extractionMetrics: expect.objectContaining({ structuredExtractionQuality: 'not_applicable' }),
+      records: [expect.objectContaining({ recordType: 'guide', normalized: expect.not.objectContaining({ equipment: expect.anything() }) })]
+    }));
+  });
+
+  it('keeps the complete bounded guide searchable and hashes a change at its tail on refresh', async () => {
+    const url = 'https://example.com/generic-guide';
+    const prefix = 'Borderlands 4 progression route. '.repeat(4_000).slice(0, 99_900);
+    const initialText = `${prefix}${'x'.repeat(70)} FINAL TOWER PASSAGE ALPHA`.padEnd(100_000, '.');
+    const updatedText = `${initialText.slice(0, -5)}BETA.`;
+    ingestGamingBuildResourceMock.mockResolvedValue(genericNormalizedGamingSource('Normalized metadata. '.repeat(100)));
+    resolveGamingDocumentMock
+      .mockResolvedValueOnce(resolvedDocument(url, initialText))
+      .mockResolvedValueOnce(resolvedDocument(url, initialText))
+      .mockResolvedValueOnce(resolvedDocument(url, updatedText));
+    const queued = {
+      action: 'ingest', schemaVersion: '1', submittedCount: 1, rejectedSources: [],
+      sources: [{ submittedIndex: 0, canonicalUrl: url, game: 'Borderlands 4',
+        gameKey: 'borderlands-4', origin: 'user_supplied' }]
+    };
+    await executeQueuedGamingSourceIngestion('019fe3cd-8c01-7f01-8d2d-caa951bc4b9b', queued);
+    const refresh = { ...queued, action: 'refresh', sources: [{ ...queued.sources[0], origin: 'refresh' }] };
+    await executeQueuedGamingSourceIngestion('019fe3cd-8c01-7f01-8d2d-caa951bc4b9b', refresh);
+    await executeQueuedGamingSourceIngestion('019fe3cd-8c01-7f01-8d2d-caa951bc4b9b', refresh);
+    const writes = persistGamingSourceRevisionMock.mock.calls.map(([value]) => value as {
+      contentHash: string; cleanedContent: string; records: Array<{ searchText: string }>;
+    });
+    expect(writes).toHaveLength(3);
+    expect(writes[0].cleanedContent).toBe(initialText);
+    expect(writes[0].records).toHaveLength(1);
+    expect(writes[0].records[0].searchText).toBe(initialText);
+    expect(writes[1].contentHash).toBe(writes[0].contentHash);
+    expect(writes[2].contentHash).not.toBe(writes[0].contentHash);
+    expect(writes[2].records[0].searchText).toBe(updatedText);
+    expect(resolveGamingDocumentMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('propagates cancellation after acquisition without normalizing or persisting a document', async () => {
+    const controller = new AbortController();
+    const aborted = new Error('Synthetic cancellation');
+    resolveGamingDocumentMock.mockImplementationOnce(async (url: string) => {
+      controller.abort(aborted);
+      return resolvedDocument(url, 'Borderlands 4 progression guide. '.repeat(10));
+    });
+    await expect(executeQueuedGamingSourceIngestion('019fe3cd-8c01-7f01-8d2d-caa951bc4b9b', {
+      action: 'ingest', schemaVersion: '1', submittedCount: 1, rejectedSources: [],
+      sources: [{ submittedIndex: 0, canonicalUrl: 'https://example.com/generic-guide',
+        game: 'Borderlands 4', gameKey: 'borderlands-4', origin: 'user_supplied' }]
+    }, { signal: controller.signal })).rejects.toBe(aborted);
+    expect(ingestGamingBuildResourceMock).not.toHaveBeenCalled();
+    expect(persistGamingSourceRevisionMock).not.toHaveBeenCalled();
+  });
+
+  it('revises extraction identity when resolver policy changes without changing persisted content', async () => {
+    const url = 'https://example.com/generic-guide';
+    const text = 'Borderlands 4 progression route. Follow the canyon path to unlock the eastern beacon. '.repeat(10);
+    const document = resolvedDocument(url, text);
+    resolveGamingDocumentMock
+      .mockResolvedValueOnce(document)
+      .mockResolvedValueOnce(document)
+      .mockResolvedValueOnce({
+        ...document,
+        resolution: { ...document.resolution, resolverVersion: '2' }
+      });
+    ingestGamingBuildResourceMock.mockResolvedValue(genericNormalizedGamingSource(''));
+    const body = {
+      action: 'refresh', schemaVersion: '1', submittedCount: 1, rejectedSources: [],
+      sources: [{ submittedIndex: 0, canonicalUrl: url, game: 'Borderlands 4', gameKey: 'borderlands-4', origin: 'refresh' }]
+    };
+    for (let index = 0; index < 3; index += 1) {
+      await executeQueuedGamingSourceIngestion('019fe3cd-8c01-7f01-8d2d-caa951bc4b9b', body);
+    }
+    const writes = persistGamingSourceRevisionMock.mock.calls.map(([value]) => value as {
+      contentHash: string; extractorVersion: string; provenance: Record<string, unknown>;
+    });
+    expect(writes[1].extractorVersion).toBe(writes[0].extractorVersion);
+    expect(writes[2].extractorVersion).not.toBe(writes[0].extractorVersion);
+    expect(writes[2].contentHash).toBe(writes[0].contentHash);
+    expect(writes[2].extractorVersion).toMatch(/^gaming-document-v1:[a-f0-9]{64}$/);
+    expect(writes[2].extractorVersion.length).toBeLessThanOrEqual(120);
+    expect(writes[2].provenance).toMatchObject({
+      resolverVersion: '2', structuredExtractorVersion: '1', documentResolverVersion: 'gaming-document-v1'
+    });
   });
 
   it('keeps an uncorroborated caller patch only as non-authoritative provenance', async () => {
@@ -488,14 +641,9 @@ describe('gaming source ingestion', () => {
 
   it('promotes a caller patch only after an exact fetched-content match', async () => {
     const verifiedText = 'Borderlands 4 patch 9.9 progression equipment skills rotation '.repeat(8);
-    fetchAndCleanDocumentMock.mockImplementationOnce(async (
-      _url: string,
-      _maxChars: number,
-      options: { onExtraction?: (value: Record<string, unknown>) => void }
-    ) => {
-      options.onExtraction?.({ documentTitle: 'Borderlands 4 Patch 9.9 Guide' });
-      return { text: verifiedText, links: [], combined: '' };
-    });
+    resolveGamingDocumentMock.mockImplementationOnce(async (url: string) => resolvedDocument(
+      url, verifiedText, { metadata: { title: 'Borderlands 4 Patch 9.9 Guide' } }
+    ));
     ingestGamingBuildResourceMock.mockResolvedValueOnce(
       genericNormalizedGamingSource('Borderlands 4 patch 9.9 progression guide.')
     );
@@ -855,6 +1003,23 @@ describe('gaming source ingestion', () => {
         publishedAt: '2026-08-07T12:00:00.000Z'
       })
     ]);
+  });
+
+  it('returns the matching deep guide passage instead of the first 1200 characters', async () => {
+    const passage = 'The luminous observatory gate opens after activating the azure prism beside the eastern waterfall.';
+    searchActiveGamingKnowledgeMock.mockResolvedValue([{
+      sourceId: '019fe3cd-8c01-7f01-8d2d-caa951bc4ba0',
+      publicUrl: 'https://example.com/generic-guide', title: 'Progression Guide', sourceType: 'supplied',
+      patch: null, revisionPatch: null, fetchedAt: new Date('2026-08-08T12:00:00.000Z'), publishedAt: null,
+      searchText: 'How do I find the route in this guide and what should I do? '.repeat(200) + passage,
+      normalized: {}, provenance: {}
+    }]);
+    const result = await buildStoredGamingKnowledgeContext({
+      game: 'Borderlands 4', prompt: 'How do I open the luminous observatory gate?', mode: 'guide'
+    });
+    expect(result.context).toContain(passage);
+    expect(result.sources[0].snippet).toContain(passage);
+    expect(result.sources[0].snippet.length).toBeLessThanOrEqual(1_200);
   });
 
   it('does not project an unverified historical patch claim as source metadata or prompt context', async () => {
