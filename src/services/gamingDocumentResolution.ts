@@ -15,6 +15,7 @@ import {
   type GamingArchiveResolutionTelemetry
 } from "@services/gamingArchiveResources.js";
 import { filterGamingDocumentInstructions, gamingDocumentFetchOptions } from "@services/gamingDocumentExtraction.js";
+import { projectGamingDocumentText } from "@shared/gaming/gamingDocumentProjectionCore.js";
 
 export const GAMING_DOCUMENT_RESOLVER_VERSION = "gaming-document-v1";
 export const GAMING_DOCUMENT_LIMITS = Object.freeze({ textChars: 100_000, timeoutMs: 30_000 });
@@ -148,16 +149,15 @@ export async function resolveGamingDocument(
     if (!resolver.canHandle(parsed)) continue;
     const acquired = await resolver.acquire(url, maxChars, fetchOptions);
     if (!acquired) continue;
-    const boundedText = acquired.text.slice(0, maxChars);
-    const filteredText = filterGamingDocumentInstructions(boundedText);
-    const text = filteredText.slice(0, maxChars);
     const effectiveExtraction: FetchAndCleanExtractionMetrics = extraction ?? {
       strategy: "body", rawTextLength: acquired.text.length, cleanedTextLength: acquired.text.length
     };
+    const projection = projectGamingDocumentText({
+      acquiredText: acquired.text,
+      maxChars,
+      selectedTextLength: effectiveExtraction.cleanedTextLength
+    });
     const contentType = rawDocument?.contentType;
-    // Raw HTML capture may be shorter than its extracted prose. Only selected prose bounds indicate partial document text.
-    const truncated = effectiveExtraction.cleanedTextLength > boundedText.length
-      || acquired.text.length > maxChars || filteredText.length > maxChars;
     const boundedRaw = rawDocument ? {
       ...rawDocument,
       body: rawDocument.body.slice(0, GAMING_BUILD_RESOURCE_HARD_LIMITS.maxHtmlChars),
@@ -175,7 +175,7 @@ export async function resolveGamingDocument(
       canonicalUrl: publicUrl,
       publicUrl,
       host: new URL(publicUrl).hostname,
-      text,
+      text: projection.text,
       ...(contentType ? { contentType } : {}),
       ...(boundedRaw ? { rawDocument: boundedRaw } : {}),
       metadata: safeMetadata,
@@ -190,9 +190,9 @@ export async function resolveGamingDocument(
       },
       metrics: {
         rawTextLength: effectiveExtraction.rawTextLength,
-        cleanedTextLength: text.length,
-        truncated,
-        instructionFiltered: filteredText.length < boundedText.normalize("NFKC").replace(/\s+/g, " ").trim().length
+        cleanedTextLength: projection.cleanedTextLength,
+        truncated: projection.truncated,
+        instructionFiltered: projection.instructionFiltered
       },
       ...(acquired.archiveResolution ? { archiveResolution: acquired.archiveResolution } : {})
     };

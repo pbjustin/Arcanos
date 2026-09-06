@@ -8,6 +8,7 @@ import { Readable } from 'node:stream';
 import { setTimeout as delay } from 'node:timers/promises';
 import { runGamingArchiveGroundingPreview } from './shared/gaming/gamingArchivePreviewFixture.js';
 import { runGamingGuideResponsePreview } from './shared/gaming/gamingGuideResponsePreviewFixture.js';
+import { runGamingDocumentIngestionPreview } from './shared/gaming/gamingDocumentIngestionPreviewFixture.js';
 
 import {
   createGenericJobsRouter,
@@ -9179,6 +9180,21 @@ export function createNativePrPreviewApplication(
             );
             return;
           }
+          try {
+            await runGamingDocumentIngestionPreview();
+          } catch {
+            sendBoundedJsonResponse(
+              request,
+              response,
+              { error: 'PREVIEW_GAMING_DOCUMENT_INGESTION_CONTRACT_INVALID' },
+              {
+                logEvent: 'native_pr_preview.gaming_document_ingestion_invalid',
+                maxBytes: MAX_GAMING_QUERY_RESPONSE_BYTES,
+                statusCode: 500,
+              }
+            );
+            return;
+          }
           response.setHeader(
             NATIVE_PR_PREVIEW_GAMING_CONTRACT.proofHeader,
             NATIVE_PR_PREVIEW_GAMING_CONTRACT.proofVersion
@@ -9186,6 +9202,10 @@ export function createNativePrPreviewApplication(
           response.setHeader(
             NATIVE_PR_PREVIEW_GAMING_CONTRACT.responseProofHeader,
             NATIVE_PR_PREVIEW_GAMING_CONTRACT.responseProofVersion
+          );
+          response.setHeader(
+            NATIVE_PR_PREVIEW_GAMING_CONTRACT.documentProofHeader,
+            NATIVE_PR_PREVIEW_GAMING_CONTRACT.documentProofVersion
           );
         }
         sendPreviewJson(

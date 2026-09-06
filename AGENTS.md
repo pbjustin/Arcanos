@@ -123,6 +123,17 @@ Choose the smallest set covering the change, then expand for cross-cutting or re
 
 ## Operational and security safety
 
+- The sealed Gaming guide response also executes the production-shared document
+  projection, ingestion identity, game-detection, quality, search-text, and
+  excerpt policies after synthetic Archive resolution. Its additive header is
+  `x-arcanos-preview-gaming-document-ingestion-version`; the exact-head verifier
+  requires it and reports `gamingDocumentIngestionVerified`. It proves deep
+  guide-tail retention, instruction filtering, Unicode truncation, generic page
+  identity, and independent document/build quality. All Gaming success markers
+  are withheld on any fixture failure. This does not execute the normal document
+  resolver wrapper, URL sanitizer, DNS/HTTP extraction, ranking, ingestion worker,
+  repository, PostgreSQL persistence/search, provider, or logger. Only the pinned
+  pure document helpers and synthetic fixture join the preview import allowlist.
 - The sealed Gaming guide response also runs semantic-digest-pinned production
   prompt assembly and grounded-guide composition cores with fixed synthetic
   evidence, prompt resources, and backend answers. Its additive proof header is

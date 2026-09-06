@@ -16,6 +16,14 @@ import {
 } from '@core/db/repositories/gamingSourceRepository.js';
 import { logger } from '@platform/logging/structuredLogging.js';
 import { buildQueuedGptJobInput } from '@shared/gpt/asyncGptJob.js';
+import {
+  buildGamingDocumentSearchText,
+  classifyGamingDocumentQuality,
+  classifyGamingStructuredExtractionQuality,
+  detectGamingDocumentGame,
+  selectGamingSourceAdmissionUrl,
+  selectGamingSourcePublicUrl
+} from '@shared/gaming/gamingDocumentIngestionCore.js';
 import { truncateTextByCharacters } from '@shared/http/clientResponseCommon.js';
 import { planAutonomousWorkerJob } from '@services/workerAutonomyService.js';
 
@@ -26,17 +34,13 @@ import {
   resolveGamingDocument
 } from './gamingDocumentResolution.js';
 import { selectGamingDocumentExcerpt } from './gamingDocumentChunks.js';
-import { isGamingCatalogMetadataOnly } from './gamingDocumentExtraction.js';
 import {
   GAMING_BUILD_RESOURCE_SCHEMA_VERSION,
   GAMING_BUILD_RESOURCE_HARD_LIMITS,
   GAMING_RESOURCE_TYPES,
   type GamingResourceType
 } from './gamingBuildResourceSchema.js';
-import {
-  canonicalizeGamingGameName,
-  detectGamingGame
-} from './gamingGameDetection.js';
+import { canonicalizeGamingGameName } from './gamingGameDetection.js';
 import { sanitizeGamingDiscoveryCandidateUrl } from './gamingSourceDiscovery.js';
 import { textContainsExactGamingVersion } from './gamingVersion.js';
 
@@ -313,7 +317,7 @@ function admitUrl(
   }
 
   const description = describeGamingDocumentSource(sanitized.url);
-  const canonicalUrl = description.supportsUrlPayload ? sanitized.url : description.publicUrl;
+  const canonicalUrl = selectGamingSourceAdmissionUrl(sanitized.url, description);
   if (seenCanonicalUrls.has(canonicalUrl)) {
     return {
       rejection: rejectAdmission(
@@ -969,11 +973,12 @@ async function ingestOneSource(
     });
     signal?.throwIfAborted();
     const cleanedText = document.text.trim();
-    const metadataOnly = isGamingCatalogMetadataOnly(cleanedText)
-      || (document.extraction.navigationDensity ?? 0) >= 0.62;
-    const documentQuality = cleanedText.length < MIN_USEFUL_TEXT_CHARS
-      ? 'unusable'
-      : metadataOnly ? 'metadata-only' : document.metrics.truncated ? 'partial' : 'complete';
+    const documentQuality = classifyGamingDocumentQuality({
+      cleanedText,
+      navigationDensity: document.extraction.navigationDensity,
+      truncated: document.metrics.truncated,
+      minUsefulTextChars: MIN_USEFUL_TEXT_CHARS
+    });
     const resolutionProvenance = {
       resolverId: document.resolution.resolverId,
       resolverVersion: document.resolution.resolverVersion,
@@ -1013,8 +1018,8 @@ async function ingestOneSource(
 
     const pageTitle = document.metadata.title?.slice(0, MAX_TITLE_CHARS);
     const pageHeadings = document.metadata.headings?.slice(0, 1_000);
-    const detectedGame = detectGamingGame({
-      urls: [source.canonicalUrl],
+    const detectedGame = detectGamingDocumentGame({
+      canonicalUrl: source.canonicalUrl,
       pageTitle,
       pageHeadings
     });
@@ -1081,9 +1086,11 @@ async function ingestOneSource(
       normalizedBuild.equipment?.length || normalizedBuild.skills?.length
       || Object.keys(normalizedBuild.stats ?? {}).length
     ));
-    const structuredExtractionQuality = sourceTypeToRecordType(sourceType) === 'build' || hasStructuredFields
-      ? normalized.quality
-      : 'not_applicable';
+    const structuredExtractionQuality = classifyGamingStructuredExtractionQuality({
+      isBuildRecord: sourceTypeToRecordType(sourceType) === 'build',
+      hasStructuredFields,
+      quality: normalized.quality
+    });
     logger.info('gaming.source.normalization_completed', {
       ...logContext,
       sourceType,
@@ -1118,16 +1125,14 @@ async function ingestOneSource(
     if (patchVersion) {
       normalizedData.patch = patchVersion;
     }
-    // Preserve every resolved character in the searchable record. Metadata can
-    // use remaining capacity, but must never push a guide's tail off the index.
-    const searchMetadata = [
+    const searchText = buildGamingDocumentSearchText({
+      cleanedText,
       title,
-      source.game,
+      game: source.game,
       patchVersion,
-      normalizedEvidence
-    ].filter(Boolean).join('\n\n');
-    const searchText = [cleanedText, searchMetadata]
-      .filter(Boolean).join('\n\n').slice(0, MAX_SOURCE_TEXT_CHARS);
+      normalizedEvidence,
+      maxChars: MAX_SOURCE_TEXT_CHARS
+    });
     const contentHash = sha256(`${cleanedText}\n${stableJson(normalizedData)}`);
     // Revision identity includes acquisition policy so refreshing an older
     // extraction can replace stale provenance/quality even if its prose matches.
@@ -1163,7 +1168,7 @@ async function ingestOneSource(
       gameKey: source.gameKey,
       gameName: source.game,
       canonicalUrl: source.canonicalUrl,
-      publicUrl: supportsStructuredExtraction ? source.canonicalUrl : document.publicUrl,
+      publicUrl: selectGamingSourcePublicUrl(source.canonicalUrl, document.publicUrl, supportsStructuredExtraction),
       sourceType: sourceTypeToTrustType(sourceType, source),
       trustScore: source.trustScore ?? 0.25,
       priority: 100,
