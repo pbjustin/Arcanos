@@ -738,6 +738,11 @@ export class PostgresGamingSourceRepository {
          AND extractor = $3
          AND extractor_version = $4
          AND normalizer_schema_version = $5
+         AND EXISTS (
+           SELECT 1 FROM gaming_knowledge_records AS active_knowledge
+           WHERE active_knowledge.source_revision_id = gaming_source_revisions.id
+             AND active_knowledge.status = 'active'
+         )
        LIMIT 1`,
       [
         source.id,
@@ -823,13 +828,8 @@ export class PostgresGamingSourceRepository {
       if (!revisionId) {
         throw new Error('Gaming source revision insert did not return a revision row.');
       }
-      return {
-        sourceId: source.id,
-        revisionId,
-        state: 'unchanged',
-        recordsCreated: 0,
-        recordsUpdated: 0
-      };
+      // A -> B -> A can reuse A's immutable revision and chunk identities, but
+      // its superseded records must become current again within this transaction.
     }
 
     const supersededRecords = await client.query<{ id: string }>(
@@ -847,6 +847,14 @@ export class PostgresGamingSourceRepository {
     );
 
     let recordsCreated = 0;
+    if (!insertedRevision.rows[0]) {
+      await client.query(
+        `UPDATE gaming_knowledge_records
+         SET status = 'active', superseded_at = NULL, updated_at = NOW()
+         WHERE source_revision_id = $1 AND status = 'superseded'`,
+        [revisionId]
+      );
+    }
     if (input.records.length > 0) {
       const insertedRecords = await client.query<{ id: string }>(
         `INSERT INTO gaming_knowledge_records (
@@ -949,7 +957,10 @@ export class PostgresGamingSourceRepository {
            revision.normalizer_schema_version
          FROM gaming_source_revisions AS revision
          WHERE revision.source_id = source.id
-         ORDER BY revision.fetched_at DESC, revision.created_at DESC
+         ORDER BY EXISTS (
+           SELECT 1 FROM gaming_knowledge_records AS active_record
+           WHERE active_record.source_revision_id = revision.id AND active_record.status = 'active'
+         ) DESC, revision.fetched_at DESC, revision.created_at DESC
          LIMIT 1
        ) AS latest ON TRUE
        WHERE source.id = $1
@@ -1029,8 +1040,8 @@ export class PostgresGamingSourceRepository {
          AND source.status = 'active'
          AND ($3::text IS NULL OR knowledge.record_type = $3)
          AND (
-           search_input.query IS NULL
-           OR to_tsvector('simple'::regconfig, knowledge.search_text) @@ search_input.query
+           search_input.query IS NOT NULL
+           AND to_tsvector('simple'::regconfig, knowledge.search_text) @@ search_input.query
          )
        ORDER BY
          relevance DESC,

@@ -684,7 +684,7 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ],
   [
     'src/shared/gaming/gamingArchiveResourceCore.ts',
-    '778e89b2ecfc4339989b49f42f8facb974b71e8f51461d01be6af8e71b9d08c8',
+    '7d42c5952802424aa436158002b7fcae83d8b40c36fc3582ff69c6b9075e9966',
   ],
   [
     'src/shared/gaming/gamingArchivePreviewFixture.ts',

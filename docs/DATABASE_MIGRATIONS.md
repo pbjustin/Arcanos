@@ -148,6 +148,17 @@ an immutable revision and atomically supersede only that source's prior active
 knowledge records. Unchanged content updates freshness timestamps without
 duplicating records.
 
+Durable Gaming document chunking uses these existing tables without a new
+migration. One source owns immutable revisions, and each revision owns up to
+500 bounded knowledge records. Existing JSONB `normalized` data carries chunk
+text and deterministic ordinal/offset/hash metadata; each `search_text` contains
+only that chunk's evidence and bounded search metadata. The revision text is a
+16,000-character preview, while its hash covers the full accepted document and
+index-policy version. Refresh supersession and historical revision reactivation
+occur inside the source-locking transaction. Lexical queries exclude superseded
+records and inactive sources; historical single-record revisions stay readable
+until a controlled refresh. No vector columns or automatic reindex are added.
+
 The rollback file is intended only for an explicitly confirmed disposable
 database because dropping these tables removes ingested Gaming knowledge. Do
 not apply either file as routine validation. Runtime startup mirrors the

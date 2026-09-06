@@ -423,7 +423,7 @@ describe('gaming source ingestion', () => {
     expect(execution.retryable).toBe(false);
     expect(resolveGamingDocumentMock).toHaveBeenCalledWith(
       'https://mobalytics.gg/borderlands-4/builds',
-      100_000,
+      1_000_000,
       expect.objectContaining({ includeLinks: false })
     );
     expect(execution.output).toEqual(expect.objectContaining({
@@ -445,7 +445,8 @@ describe('gaming source ingestion', () => {
       provenance: expect.objectContaining({ origin: 'user_supplied' }),
       records: [expect.objectContaining({
         recordType: 'build',
-        payloadHash: expect.stringMatching(/^[a-f0-9]{64}$/)
+        payloadHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+        normalized: expect.objectContaining({ structuredEvidence: 'Endgame Build with Test Weapon' })
       })]
     }));
   });
@@ -553,8 +554,8 @@ describe('gaming source ingestion', () => {
 
   it('keeps the complete bounded guide searchable and hashes a change at its tail on refresh', async () => {
     const url = 'https://example.com/generic-guide';
-    const prefix = 'Borderlands 4 progression route. '.repeat(4_000).slice(0, 99_900);
-    const initialText = `${prefix}${'x'.repeat(70)} FINAL TOWER PASSAGE ALPHA`.padEnd(100_000, '.');
+    const prefix = 'Borderlands 4 progression route. '.repeat(6_000).slice(0, 159_900);
+    const initialText = `${prefix}${'x'.repeat(70)} FINAL TOWER PASSAGE ALPHA`.padEnd(160_000, '.');
     const updatedText = `${initialText.slice(0, -5)}BETA.`;
     ingestGamingBuildResourceMock.mockResolvedValue(genericNormalizedGamingSource('Normalized metadata. '.repeat(100)));
     resolveGamingDocumentMock
@@ -574,12 +575,12 @@ describe('gaming source ingestion', () => {
       contentHash: string; cleanedContent: string; records: Array<{ searchText: string }>;
     });
     expect(writes).toHaveLength(3);
-    expect(writes[0].cleanedContent).toBe(initialText);
-    expect(writes[0].records).toHaveLength(1);
-    expect(writes[0].records[0].searchText).toBe(initialText);
+    expect(writes[0].cleanedContent).toBe(initialText.slice(0, 16_000));
+    expect(writes[0].records.length).toBeGreaterThan(1);
+    expect(writes[0].records.some(record => record.searchText.includes('FINAL TOWER PASSAGE ALPHA'))).toBe(true);
     expect(writes[1].contentHash).toBe(writes[0].contentHash);
     expect(writes[2].contentHash).not.toBe(writes[0].contentHash);
-    expect(writes[2].records[0].searchText).toBe(updatedText);
+    expect(writes[2].records.at(-1)?.searchText).toContain('BETA.');
     expect(resolveGamingDocumentMock).toHaveBeenCalledTimes(3);
   });
 
@@ -995,6 +996,7 @@ describe('gaming source ingestion', () => {
 
   it('returns bounded stored knowledge with source provenance', async () => {
     searchActiveGamingKnowledgeMock.mockResolvedValue([{
+      recordId: 'stored-build', revisionId: 'revision-build', recordType: 'build', relevance: 0.75,
       sourceId: '019fe3cd-8c01-7f01-8d2d-caa951bc4ba0',
       publicUrl: 'https://mobalytics.gg/borderlands-4/builds',
       title: 'Endgame Build',
@@ -1024,8 +1026,8 @@ describe('gaming source ingestion', () => {
         mode: 'build'
       }),
       expect.objectContaining({
-        queryTimeoutMs: undefined,
-        signal: undefined
+        queryTimeoutMs: 1000,
+        signal: expect.any(Object)
       })
     );
     expect(result.context).toContain('[Source 3]');
@@ -1044,6 +1046,7 @@ describe('gaming source ingestion', () => {
   it('returns the matching deep guide passage instead of the first 1200 characters', async () => {
     const passage = 'The luminous observatory gate opens after activating the azure prism beside the eastern waterfall.';
     searchActiveGamingKnowledgeMock.mockResolvedValue([{
+      recordId: 'stored-passage', revisionId: 'revision-passage', recordType: 'guide', relevance: 0.75,
       sourceId: '019fe3cd-8c01-7f01-8d2d-caa951bc4ba0',
       publicUrl: 'https://example.com/generic-guide', title: 'Progression Guide', sourceType: 'supplied',
       patch: null, revisionPatch: null, fetchedAt: new Date('2026-08-08T12:00:00.000Z'), publishedAt: null,
@@ -1060,6 +1063,7 @@ describe('gaming source ingestion', () => {
 
   it('does not project an unverified historical patch claim as source metadata or prompt context', async () => {
     searchActiveGamingKnowledgeMock.mockResolvedValue([{
+      recordId: 'stored-patch', revisionId: 'revision-patch', recordType: 'guide', relevance: 0.75,
       sourceId: '019fe3cd-8c01-7f01-8d2d-caa951bc4ba0',
       publicUrl: 'https://example.com/generic-guide',
       title: 'Generic Guide',
@@ -1079,7 +1083,7 @@ describe('gaming source ingestion', () => {
 
     const result = await buildStoredGamingKnowledgeContext({
       game: 'Borderlands 4',
-      prompt: 'What gear should I use?',
+      prompt: 'What equipment recommendations should I use?',
       mode: 'guide'
     });
 

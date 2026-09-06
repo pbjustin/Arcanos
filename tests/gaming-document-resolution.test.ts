@@ -101,6 +101,63 @@ describe('shared Gaming document acquisition contract', () => {
     expect(document.rawDocument?.truncated).toBe(false);
   });
 
+  it.each(['text/plain', 'text/html'])('durable %s resolution retains late text while default and transport bounds remain unchanged', async (contentType) => {
+    const guide = 'Synthetic route checkpoint: save progress and check the lantern before crossing the courtyard. '.repeat(6_400)
+      + 'Synthetic near-end violet astrolabe: turn the copper dial twice.';
+    const body = contentType === 'text/html' ? `<html><body><article>${guide}</article></body></html>` : guide;
+    mockAxiosGet.mockResolvedValue(response(body, contentType));
+    const live = await resolveGamingDocument('https://example.org/guide', 1_000_000);
+    expect(live.text.length).toBeLessThanOrEqual(100_000);
+    expect(live.metrics.truncated).toBe(true);
+    const durable = await resolveGamingDocument('https://example.org/guide', 1_000_000, { documentPurpose: 'durable' });
+    expect(durable.text).toContain('near-end violet astrolabe');
+    expect(durable.text.length).toBeGreaterThan(500_000);
+    expect(durable.metrics.truncated).toBe(false);
+    expect(mockAxiosGet.mock.calls[1][1]).toMatchObject({
+      maxRedirects: 0, proxy: false, maxContentLength: 1_500_000, maxBodyLength: 1_500_000
+    });
+  });
+
+  it('retains the same metadata-attested Archive derivative under the durable text projection bound', async () => {
+    const guide = `${gamingArchiveGuideText} `.repeat(420) + 'Synthetic final quartz badge is found beside the violet observatory.';
+    mockAxiosGet.mockResolvedValueOnce(response(JSON.stringify(gamingArchiveMetadata(guide)), 'application/json'));
+    mockAxiosGet.mockResolvedValueOnce(response(guide, 'text/plain'));
+    const document = await resolveGamingDocument(gamingArchiveGuideUrl, 1_000_000, { documentPurpose: 'durable' });
+    expect(document.text).toContain('Synthetic final quartz badge');
+    expect(document.text.length).toBeGreaterThan(500_000);
+    expect(document.metrics.truncated).toBe(false);
+    expect(document.resolution).toMatchObject({ resolverId: 'archive-org', resolverVersion: 'archive-text-v1', strategy: 'archive_djvu_text' });
+    expect(mockAxiosGet).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(document)).not.toContain(gamingArchiveStorageHost);
+  });
+
+  it('clamps durable documents at one million characters even when the caller asks for more', async () => {
+    const guide = 'Synthetic route checkpoint requires saving before crossing the courtyard. '.repeat(15_000);
+    mockAxiosGet.mockResolvedValue(response(guide, 'text/plain'));
+    const document = await resolveGamingDocument('https://example.org/guide', 5_000_000, { documentPurpose: 'durable' });
+    expect(document.text.length).toBeLessThanOrEqual(1_000_000);
+    expect(document.text.length).toBeGreaterThan(999_900);
+    expect(document.metrics.truncated).toBe(true);
+    expect(document.extraction.cleanedTextLength).toBeGreaterThan(1_000_000);
+  });
+
+  it('does not widen default shared fetcher extraction when only a larger requested size is supplied', async () => {
+    mockAxiosGet.mockResolvedValue(response('Synthetic route checkpoint requires saving before departure. '.repeat(4_000), 'text/plain'));
+    const { fetchAndClean } = await import('../src/shared/webFetcher.js');
+    const text = await fetchAndClean('https://example.org/guide', 1_000_000, { retainFullSelectedText: true, includeLinks: false });
+    expect(text).toHaveLength(100_000);
+  });
+
+  it('honors a pre-cancelled durable resolution without DNS or transport', async () => {
+    const controller = new AbortController();
+    const reason = new Error('cancel durable source');
+    controller.abort(reason);
+    await expect(resolveGamingDocument('https://example.org/guide', 1_000_000, { documentPurpose: 'durable', signal: controller.signal }))
+      .rejects.toBe(reason);
+    expect(mockResolve4).not.toHaveBeenCalled();
+    expect(mockAxiosGet).not.toHaveBeenCalled();
+  });
+
   it('reports Unicode normalization truncation separately from instruction filtering', async () => {
     const guide = 'Collect the ﬂowers beside the lantern checkpoint before starting the next route. '.repeat(4).trim();
     const normalized = guide.normalize('NFKC');

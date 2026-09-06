@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-06T06:45:31.042Z",
+  "generatedAt": "2026-09-06T17:39:29.258Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -1865,6 +1865,9 @@
           "relativePath": "src/services/gamingDocumentResolution.ts"
         },
         {
+          "relativePath": "src/services/gamingDurableDocumentChunks.ts"
+        },
+        {
           "relativePath": "src/services/gamingGameDetection.ts"
         },
         {
@@ -1896,6 +1899,9 @@
         },
         {
           "relativePath": "src/services/gamingSourceIngestion.ts"
+        },
+        {
+          "relativePath": "src/services/gamingStoredKnowledge.ts"
         },
         {
           "relativePath": "src/services/gamingVersion.ts"
@@ -3949,6 +3955,9 @@
           "relativePath": "tests/gaming-document-resolution.test.ts"
         },
         {
+          "relativePath": "tests/gaming-durable-document-chunks.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-grounding-response.test.ts"
         },
         {
@@ -3959,6 +3968,9 @@
         },
         {
           "relativePath": "tests/gaming-ingress-audit.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-large-guide-rag.integration.test.ts"
         },
         {
           "relativePath": "tests/gaming-prompt-builder.test.ts"
@@ -3992,6 +4004,9 @@
         },
         {
           "relativePath": "tests/gaming-source-schema-parity.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-stored-knowledge.test.ts"
         },
         {
           "relativePath": "tests/gaming-structured-resources.test.ts"
@@ -4967,6 +4982,9 @@
         },
         {
           "relativePath": "tests/testUtils/gamingArchiveFixtures.ts"
+        },
+        {
+          "relativePath": "tests/testUtils/gamingLargeGuideFixture.ts"
         },
         {
           "relativePath": "tests/testUtils/gamingResolvedSourceHarness.ts"

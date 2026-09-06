@@ -6,6 +6,8 @@ export interface GamingArchiveRawDocument {
 
 export interface GamingArchiveResolutionOptions {
   signal?: AbortSignal;
+  /** Caller-selected document projection bound; existing byte validation is unchanged. */
+  maxSelectedTextChars?: number;
   onRawDocument?: (document: GamingArchiveRawDocument) => void;
 }
 
@@ -228,9 +230,12 @@ export async function resolveGamingArchiveResourceCore(
   }
   let document: GamingArchiveRawDocument | undefined;
   let text: string;
+  const documentTextCeiling = Number.isFinite(options.maxSelectedTextChars)
+    ? Math.min(GAMING_ARCHIVE_RESOURCE_LIMITS.documentBytes, Math.max(0, Math.trunc(options.maxSelectedTextChars!)))
+    : GAMING_ARCHIVE_RESOURCE_LIMITS.documentChars;
   try {
     text = await dependencies.fetchAndClean(derivativeUrl,
-      Math.min(Math.max(0, maxDocumentChars), GAMING_ARCHIVE_RESOURCE_LIMITS.documentChars), {
+      Math.min(Math.max(0, maxDocumentChars), documentTextCeiling), {
         includeLinks: false,
         rawDocumentMaxChars: GAMING_ARCHIVE_RESOURCE_LIMITS.documentBytes,
         onRawDocument: (raw) => { document = raw; }
