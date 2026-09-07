@@ -56,6 +56,7 @@ describe('served Gaming guide response component-proof failure boundary', () => 
     expect(response.status).toBe(500);
     expect(response.headers[NATIVE_PR_PREVIEW_GAMING_CONTRACT.proofHeader]).toBeUndefined();
     expect(response.headers[NATIVE_PR_PREVIEW_GAMING_CONTRACT.responseProofHeader]).toBeUndefined();
+    expect(response.headers[NATIVE_PR_PREVIEW_GAMING_CONTRACT.guideAssistanceProofHeader]).toBeUndefined();
     expect(response.headers[NATIVE_PR_PREVIEW_SYNTHETIC_RESPONSE_HEADER.name])
       .toBe(NATIVE_PR_PREVIEW_SYNTHETIC_RESPONSE_HEADER.value);
     expect(response.body).toEqual({ error: 'PREVIEW_GAMING_GUIDE_RESPONSE_CONTRACT_INVALID' });

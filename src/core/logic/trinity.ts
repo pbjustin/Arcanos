@@ -17,6 +17,7 @@
 import type OpenAI from 'openai';
 import { logArcanosRouting, logRoutingSummary } from "@platform/logging/aiLogger.js";
 import { generateRequestId } from "@shared/idGenerator.js";
+import { resolveGamingGuideIntakeEndpointPolicy } from '@shared/gaming/gamingGuideIntakeCore.js';
 import { getTrinityMessages } from "@platform/runtime/prompts.js";
 import { MidLayerTranslator } from "@services/midLayerTranslator.js";
 import {
@@ -752,9 +753,9 @@ export async function runThroughBrain(
   const start = Date.now();
   const effectiveMemorySessionId = options.memorySessionId ?? sessionId;
   const effectiveTokenAuditSessionId = options.tokenAuditSessionId ?? sessionId;
-  const gamingGuideIntakePolicy = options.gamingGuideIntakePolicy === 'compact-v1'
-    && options.sourceEndpoint === 'arcanos-gaming.guide'
-      ? options.gamingGuideIntakePolicy : undefined;
+  const gamingGuideIntakePolicy = resolveGamingGuideIntakeEndpointPolicy(
+    options.gamingGuideIntakePolicy, options.sourceEndpoint
+  );
   const trustedPolicyPrompt =
     typeof options.trustedPolicyPrompt === 'string'
     && options.trustedPolicyPrompt.trim().length > 0

@@ -1,5 +1,6 @@
 import type { GamingFallbackReason, GamingMode, GamingSuccessEnvelope } from '@services/gamingModes.js';
 import { composeGroundedGamingGuideResponse } from './gamingGuideResponseCore.js';
+import { runGamingGuideAssistancePreview } from './gamingGuideAssistancePreviewFixture.js';
 import {
   buildGamingPrompt,
   buildGamingSystemPrompt,
@@ -169,6 +170,7 @@ export function runGamingGuideResponsePreview(): void {
     const unicodeResult = composeGroundedGamingGuideResponse('guide', envelope(`\n ${unicodeAnswer} \n`));
     requireProof(unicodeResult?.data.response === unicodeAnswer);
     requireProof(Array.from(unicodeResult.data.response).length === 4_096 && unicodeResult.data.response.length > 4_096);
+    runGamingGuideAssistancePreview();
   } catch {
     throw new Error(FAILURE);
   }

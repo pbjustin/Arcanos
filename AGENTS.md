@@ -123,6 +123,17 @@ Choose the smallest set covering the change, then expand for cross-cutting or re
 
 ## Operational and security safety
 
+- The sealed Gaming guide request also executes the production-shared context,
+  lexical retrieval, answer-policy, prompt/composition, and compact intake-policy
+  cores through `gamingGuideAssistancePreviewFixture.ts`. Its additive marker is
+  `x-arcanos-preview-gaming-guide-assistance-version: gaming-guide-assistance/v1`;
+  the exact-head verifier reports `gamingGuideAssistanceVerified`. All Gaming
+  success markers are withheld on failure, with unchanged response and request
+  contracts for the trusted base verifier. The fixed synthetic cases do not
+  execute normal agent mapping, retrieval wrappers, Trinity orchestration,
+  provider adapters, SQL, caches, network acquisition, logging, or active workers.
+  Keep those graphs outside the preview; use the separate mocked public-path
+  E2E and guarded disposable PostgreSQL tests for their respective boundaries.
 - The sealed Gaming guide response also executes the production durable-document
   chunker and pure stored-evidence selection/formatting core over a server-owned
   synthetic guide of approximately 590,000 characters and bounded synthetic

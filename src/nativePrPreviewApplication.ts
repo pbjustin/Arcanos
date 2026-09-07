@@ -9216,6 +9216,10 @@ export function createNativePrPreviewApplication(
             NATIVE_PR_PREVIEW_GAMING_CONTRACT.durableRagProofVersion
           );
           response.setHeader(
+            NATIVE_PR_PREVIEW_GAMING_CONTRACT.guideAssistanceProofHeader,
+            NATIVE_PR_PREVIEW_GAMING_CONTRACT.guideAssistanceProofVersion
+          );
+          response.setHeader(
             NATIVE_PR_PREVIEW_GAMING_CONTRACT.proofHeader,
             NATIVE_PR_PREVIEW_GAMING_CONTRACT.proofVersion
           );

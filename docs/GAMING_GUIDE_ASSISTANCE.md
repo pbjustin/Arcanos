@@ -170,9 +170,29 @@ node scripts/run-jest.mjs --runInBand --runTestsByPath tests/gaming-answer-polic
 
 Mocks prove contracts, stage inputs, selection, safety, bounds, and projection.
 They do not prove live model compliance. Live evaluation is disabled by default;
-no live-model evaluation, production database test, source refresh, or deployment
+no live-model evaluation, production database test, source refresh, or production deployment
 is part of this change. The repository currently has no suitable bounded Gaming
 live-model evaluation runner, so no generic live command is repurposed.
+
+## Sealed Railway preview verification
+
+The existing `railway-preview` lifecycle can run the new guide-assistance proof
+inside its credential-empty synthetic application. The unchanged sealed guide
+request executes the same production pure context, retrieval, prompt/composition,
+and compact intake-policy cores over fixed adventure, action, and ship cases.
+Success adds `x-arcanos-preview-gaming-guide-assistance-version:
+gaming-guide-assistance/v1`; any assertion failure withholds all Gaming success
+markers. The supplemental exact-head verifier requires that marker and reports
+`gamingGuideAssistanceVerified` within the existing bounded 138-request plan.
+
+This is deployed production-core component evidence. The separate
+`gaming-player-context.e2e.test.ts` exercises actual public validation, agent
+mapping, configured retrieval composition, Trinity stages and provider adapters
+with controlled dependencies. The preview itself does not run those normal
+wrappers, a live model, SQL, or an active worker. Follow the exact-head target,
+credential-isolation, trusted-verifier, and teardown procedure in
+[RAILWAY_DEPLOYMENT.md](RAILWAY_DEPLOYMENT.md); passing fixtures never authorize
+production promotion or a source refresh.
 
 ## Custom GPT operator step
 

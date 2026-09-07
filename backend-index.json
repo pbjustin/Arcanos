@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-07T21:39:44.791Z",
+  "generatedAt": "2026-09-07T23:14:38.570Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -2639,6 +2639,12 @@
           "relativePath": "src/shared/gaming/gamingGrounding.ts"
         },
         {
+          "relativePath": "src/shared/gaming/gamingGuideAssistancePreviewFixture.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingGuideIntakeCore.ts"
+        },
+        {
           "relativePath": "src/shared/gaming/gamingGuideResponseCore.ts"
         },
         {
@@ -3983,6 +3989,15 @@
         },
         {
           "relativePath": "tests/gaming-grounding-response.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-guide-assistance-preview-failure.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-guide-assistance-preview.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-guide-intake-core.test.ts"
         },
         {
           "relativePath": "tests/gaming-guide-response-preview-failure.test.ts"

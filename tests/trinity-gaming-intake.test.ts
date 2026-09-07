@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { buildGamingGuideIntakeContract } from '../src/shared/gaming/gamingGuideIntakeCore.js';
 
 const responsesCreate = jest.fn();
 const runStructuredReasoning = jest.fn();
@@ -131,6 +132,9 @@ describe('Gaming compact Trinity intake through the real Responses adapter', () 
     expect(intake).not.toHaveProperty('max_completion_tokens');
     expect(JSON.stringify(intake)).toContain('at most 120 words');
     expect(JSON.stringify(intake)).toContain('Do not write the walkthrough or answer');
+    const sharedContract = buildGamingGuideIntakeContract('gpt-5.1');
+    expect(intake.max_output_tokens).toBe(sharedContract.outputAllocation);
+    expect(JSON.stringify(intake)).toContain(JSON.stringify(sharedContract.instructions).slice(1, -1));
     expect(runStructuredReasoning).toHaveBeenCalledTimes(1);
     const reasoningPrompt = runStructuredReasoning.mock.calls[0]?.[2] as string;
     expect(reasoningPrompt).toContain('originalGamingRequest');

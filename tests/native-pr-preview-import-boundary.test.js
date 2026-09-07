@@ -488,6 +488,11 @@ describe('native PR preview import boundary', () => {
     'src/shared/gaming/gamingArchivePreviewFixture.ts',
     'src/shared/gaming/gamingGuideResponseCore.ts',
     'src/shared/gaming/gamingGuideResponsePreviewFixture.ts',
+    'src/shared/gaming/gamingGuideAssistancePreviewFixture.ts',
+    'src/shared/gaming/gamingGuideIntakeCore.ts',
+    'src/shared/gaming/gamingPlayerContext.ts',
+    'src/shared/gaming/gamingRetrievalPolicy.ts',
+    'src/shared/gaming/gamingAnswerPolicy.ts',
     'src/shared/gaming/gamingPromptCore.ts',
     'src/shared/gaming/gamingGrounding.ts',
   ])('pins the reviewed Gaming preview core %s', async (filePath) => {
