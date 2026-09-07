@@ -17,6 +17,7 @@
 import type OpenAI from 'openai';
 import { logArcanosRouting, logRoutingSummary } from "@platform/logging/aiLogger.js";
 import { generateRequestId } from "@shared/idGenerator.js";
+import { resolveGamingGuideIntakeEndpointPolicy } from '@shared/gaming/gamingGuideIntakeCore.js';
 import { getTrinityMessages } from "@platform/runtime/prompts.js";
 import { MidLayerTranslator } from "@services/midLayerTranslator.js";
 import {
@@ -752,6 +753,9 @@ export async function runThroughBrain(
   const start = Date.now();
   const effectiveMemorySessionId = options.memorySessionId ?? sessionId;
   const effectiveTokenAuditSessionId = options.tokenAuditSessionId ?? sessionId;
+  const gamingGuideIntakePolicy = resolveGamingGuideIntakeEndpointPolicy(
+    options.gamingGuideIntakePolicy, options.sourceEndpoint
+  );
   const trustedPolicyPrompt =
     typeof options.trustedPolicyPrompt === 'string'
     && options.trustedPolicyPrompt.trim().length > 0
@@ -974,7 +978,7 @@ export async function runThroughBrain(
         : selfHealingMitigation.forceDirectAnswer
           ? 'self_heal_enable_degraded_mode'
           : resolveTrinityDirectAnswerPreference(trustedPolicyPrompt));
-    const shouldPreferDirectAnswerMode = directAnswerReason !== null;
+    const shouldPreferDirectAnswerMode = !gamingGuideIntakePolicy && directAnswerReason !== null;
 
     const completeWithDirectAnswer = async (
       selectionReason: string,
@@ -1661,12 +1665,13 @@ export async function runThroughBrain(
             cognitiveDomain,
             internalDirective,
             runtimeBudget,
-            stageTimeoutOverrideMs
+            stageTimeoutOverrideMs,
+            gamingGuideIntakePolicy
           )
       });
     } catch (error) {
       throwIfRequestAborted();
-      if (tier === 'simple' && isAbortError(error)) {
+      if (!gamingGuideIntakePolicy && tier === 'simple' && isAbortError(error)) {
         intakeRecoveryAction = recordTrinityStageFailure({
           stage: 'intake',
           error: resolveErrorMessage(error),
@@ -1688,7 +1693,14 @@ export async function runThroughBrain(
       }
       throw error;
     }
-    const framedRequest = intakeOutput.framedRequest;
+    // The task card is a navigation aid, never a replacement for selected evidence.
+    // The reasoning envelope escapes this JSON before inserting it as untrusted data.
+    const framedRequest = gamingGuideIntakePolicy
+      ? JSON.stringify({
+          intakeTaskCard: intakeOutput.framedRequest,
+          originalGamingRequest: auditSafePrompt
+        })
+      : intakeOutput.framedRequest;
     const actualModel = intakeOutput.activeModel;
 
     // --- Stage 2: Reasoning ---
@@ -1722,7 +1734,7 @@ export async function runThroughBrain(
       });
     } catch (error) {
       throwIfRequestAborted();
-      if (tier === 'simple' && isAbortError(error)) {
+      if (!gamingGuideIntakePolicy && tier === 'simple' && isAbortError(error)) {
         reasoningRecoveryAction = recordTrinityStageFailure({
           stage: 'reasoning',
           error: resolveErrorMessage(error),
@@ -1770,7 +1782,9 @@ export async function runThroughBrain(
             DEFAULT_TRINITY_CLEAR_AUDIT_TIMEOUT_MS,
             runtimeBudget
           ),
-          operation: () => runClearAudit(client, reasoningLedger, runtimeBudget)
+          operation: () => gamingGuideIntakePolicy
+            ? runClearAudit(client, reasoningLedger, runtimeBudget, auditSafePrompt)
+            : runClearAudit(client, reasoningLedger, runtimeBudget)
         });
       } catch (error) {
         throwIfRequestAborted();
@@ -1953,19 +1967,23 @@ export async function runThroughBrain(
     checkWatchdog();
 
     const userIntent = MidLayerTranslator.detectIntentFromUserMessage(trustedPolicyPrompt);
-    const translatedFinalText = MidLayerTranslator.translate({ raw: finalOutput.output }, userIntent);
+    const translatedFinalText = gamingGuideIntakePolicy
+      ? finalOutput.output.trim()
+      : MidLayerTranslator.translate({ raw: finalOutput.output }, userIntent);
     const honestyFilteredFinal = enforceFinalStageHonesty(
       translatedFinalText,
       reasoningHonesty,
       capabilityFlags,
-      readIntentMode(outputControls)
+      readIntentMode(outputControls),
+      Boolean(gamingGuideIntakePolicy)
     );
     const enforcedFinalOutput = enforceFinalStageHonestyAndMinimalism({
       text: honestyFilteredFinal.text,
       userPrompt: trustedPolicyPrompt,
       capabilityFlags,
       outputControls,
-      reasoningHonesty
+      reasoningHonesty,
+      preservePresentation: Boolean(gamingGuideIntakePolicy)
     });
     const finalText = enforcedFinalOutput.text;
 

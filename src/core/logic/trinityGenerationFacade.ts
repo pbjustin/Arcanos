@@ -8,6 +8,7 @@ import {
   type WritingPlaneInputClassification,
 } from '@platform/runtime/writingPlaneContract.js';
 import { generateRequestId } from '@shared/idGenerator.js';
+import { resolveGamingGuideIntakePolicy } from '@shared/gaming/gamingGuideIntakeCore.js';
 
 import { runThroughBrain, type TrinityResult, type TrinityRunOptions } from './trinity.js';
 import { readIntentMode, resolveIntentMode } from './trinityHonesty.js';
@@ -308,6 +309,16 @@ export async function runTrinityGenerationFacade(
   const startedAt = Date.now();
   const policyPrompt = resolveClassificationPrompt(params);
   const intentMode = resolveIntentMode(policyPrompt, params.context.runOptions ?? {});
+  const runOptions = { ...(params.context.runOptions ?? {}) };
+  // The policy is internal configuration, never a field read from public request data.
+  if (!resolveGamingGuideIntakePolicy({
+    configuredPolicy: runOptions.gamingGuideIntakePolicy,
+    moduleId: params.input.moduleId,
+    sourceEndpoint,
+    body: params.input.body
+  })) {
+    delete runOptions.gamingGuideIntakePolicy;
+  }
 
   logger.info('trinity.entry', {
     module: 'trinity',
@@ -325,7 +336,7 @@ export async function runTrinityGenerationFacade(
       params.input.sessionId,
       params.input.overrideAuditSafe,
       {
-        ...(params.context.runOptions ?? {}),
+        ...runOptions,
         sourceEndpoint,
       },
       runtimeBudget

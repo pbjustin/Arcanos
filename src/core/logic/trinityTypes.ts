@@ -246,6 +246,8 @@ export interface TrinityResult {
 }
 
 export interface TrinityRunOptions {
+  /** Server-owned Gaming guide task-card policy; the writing facade verifies the module and route. */
+  gamingGuideIntakePolicy?: 'compact-v1';
   dryRun?: boolean;
   dryRunReason?: string;
   /** Disable non-essential feedback and self-improvement writes for tightly bounded workflows. */

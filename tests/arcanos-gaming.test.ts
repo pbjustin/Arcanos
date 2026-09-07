@@ -92,6 +92,33 @@ describe('ArcanosGaming module', () => {
     expect(Object.keys(ArcanosGaming.actions)).toEqual(['query']);
   });
 
+  it.each(['Lantern Vale', 'Iron Duel', 'Star Hauler'])('forwards validated player context to the real module pipeline boundary for %s', async game => {
+    const payload = {
+      mode: 'guide', game, prompt: 'What next?', platform: 'PC', edition: 'Original', version: '1.2',
+      currentArea: 'Copper Harbor', lastCompletedObjective: 'Restored the ferry beacon',
+      progressPoint: 'Dock checkpoint', difficulty: 'Hard', class: 'Navigator', role: 'Support',
+      constraints: ['No rare fuel'], spoilerTolerance: 'light', answerDepth: 'detailed'
+    };
+    expect(validatePublicGamingQueryRequest({ action: 'query', payload }, 'query')).toBeNull();
+    await ArcanosGaming.actions.query(payload as any);
+    const { mode: _mode, ...forwarded } = payload;
+    expect(runGuidePipelineSpy).toHaveBeenCalledWith(expect.objectContaining({
+      ...forwarded, requestedVersion: '1.2', spoilerMode: 'light', contextOrigins: expect.objectContaining({ currentArea: 'explicit' })
+    }));
+  });
+
+  it('rejects invalid raw optional context before intent normalization or any backend call', async () => {
+    expect(await ArcanosGaming.actions.query({ mode: 'guide', prompt: 'What next?', currentArea: `Gate${' '.repeat(160)}` } as any))
+      .toMatchObject({ ok: false, error: { code: 'BAD_REQUEST' } });
+    expect(runGuidePipelineSpy).not.toHaveBeenCalled();
+  });
+
+  it('asks one clarification for conflicting progression before provider work', async () => {
+    expect(await ArcanosGaming.actions.query({ mode: 'guide', game: 'Lantern Vale', prompt: 'I am at Copper Harbor. What next?', currentArea: 'Old Mill' } as any))
+      .toMatchObject({ ok: false, error: { code: 'CLARIFICATION_REQUIRED', message: expect.stringContaining('Which current area') } });
+    expect(runGuidePipelineSpy).not.toHaveBeenCalled();
+  });
+
   it('accepts Action fields exactly at their published length and count limits', () => {
     const urlPrefix = 'https://example.com/';
     const boundedUrl = `${urlPrefix}${'a'.repeat(2_048 - urlPrefix.length)}`;
@@ -152,6 +179,8 @@ describe('ArcanosGaming module', () => {
     await ArcanosGaming.actions.query(payload);
 
     expect(runGuidePipelineSpy).toHaveBeenCalledWith({
+      answerDepth: "auto", spoilerMode: "none", spoilerTolerance: "unknown",
+      contextConflicts: [], contextOrigins: { answerDepth: "default", spoilerTolerance: "default" },
       prompt: 'How do I beat the boss?',
       game: undefined,
       guideUrl: 'https://example.com/guide',
@@ -172,6 +201,8 @@ describe('ArcanosGaming module', () => {
     await ArcanosGaming.actions.query(payload);
 
     expect(runBuildPipelineSpy).toHaveBeenCalledWith({
+      answerDepth: "auto", spoilerMode: "none", spoilerTolerance: "unknown",
+      contextConflicts: [], contextOrigins: { answerDepth: "default", spoilerTolerance: "default" },
       prompt: 'Show me the path',
       game: 'SWTOR',
       guideUrl: undefined,
@@ -186,6 +217,8 @@ describe('ArcanosGaming module', () => {
     } as any);
 
     expect(runGuidePipelineSpy).toHaveBeenCalledWith({
+      answerDepth: "auto", spoilerMode: "none", spoilerTolerance: "unknown",
+      contextConflicts: [], contextOrigins: { answerDepth: "default", spoilerTolerance: "default" },
       prompt: 'How do I beat the temple boss?',
       game: undefined,
       guideUrl: undefined,
@@ -598,6 +631,9 @@ describe('ArcanosGaming module', () => {
     } as any);
 
     expect(runGuidePipelineSpy).toHaveBeenCalledWith({
+      answerDepth: "auto", spoilerMode: "none", spoilerTolerance: "unknown",
+      contextConflicts: [], contextOrigins: { answerDepth: "default", spoilerTolerance: "default", version: "explicit", constraints: "tentative" },
+      version: "1.0", constraints: ["beginner"],
       prompt: 'Look up a current beginner guide for Palworld 1.0.',
       game: 'Palworld',
       guideUrl: undefined,
@@ -628,6 +664,9 @@ describe('ArcanosGaming module', () => {
       action: 'query',
       payload: {
         mode: 'meta',
+        class: 'Frost Mage',
+        version: 'this patch',
+        constraints: ['PvP', 'PvE'],
         game: 'World of Warcraft',
         prompt: 'Is Frost Mage viable this patch in World of Warcraft?\nPlease separate PvE and PvP.',
         guideUrls,

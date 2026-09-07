@@ -1,6 +1,8 @@
 import { truncateTextByCharacters } from '@shared/http/clientResponseCommon.js';
 import { selectGamingDocumentExcerpt } from '@services/gamingDocumentChunks.js';
 import { filterGamingDocumentInstructions } from '@services/gamingDocumentExtraction.js';
+import type { GamingPlayerContext } from './gamingPlayerContext.js';
+import { buildGamingRetrievalTerms, gamingTermCoverage, safeGamingEvidenceMetadata, scopeGamingEvidenceParagraphs } from './gamingRetrievalPolicy.js';
 
 export const MAX_STORED_GAMING_CANDIDATES = 20;
 const MIN_QUERY_COVERAGE = 0.25;
@@ -32,7 +34,7 @@ export interface GamingStoredEvidenceRecord {
   relevance: number;
 }
 
-export interface GamingStoredKnowledgeInput {
+export interface GamingStoredKnowledgeInput extends GamingPlayerContext {
   game: string;
   prompt: string;
   mode: 'guide' | 'build' | 'meta';
@@ -42,6 +44,7 @@ export interface GamingStoredKnowledgeInput {
   excludePublicUrls?: readonly string[];
   queryTimeoutMs?: number;
   signal?: AbortSignal;
+  requestedVersion?: string;
 }
 
 /** Internal evidence identity. It is never copied into the public source schema. */
@@ -96,7 +99,11 @@ function tokens(text: string): string[] {
 }
 
 /** Natural questions use bounded OR terms; PostgreSQL still owns exact lexical matching. */
-export function buildStoredGamingLexicalQuery(prompt: string, game: string): { query: string; terms: string[] } {
+export function buildStoredGamingLexicalQuery(prompt: string, game: string, context?: GamingPlayerContext): { query: string; terms: string[] } {
+  if (context) {
+    const terms = buildGamingRetrievalTerms({ ...context, prompt, game }).focusTerms;
+    return { query: terms.map(term => `"${term}"`).join(' OR '), terms };
+  }
   const gameTokens = new Set(tokens(game));
   const terms = [...new Set(tokens(prompt).filter(term => !STOP_WORDS.has(term) && !gameTokens.has(term)))].slice(0, 16);
   return { query: terms.map(term => `"${term}"`).join(' OR '), terms };
@@ -120,13 +127,13 @@ function chunkMetadata(normalized: Record<string, unknown>): Pick<GamingStoredEv
     || (endChar as number) - (startChar as number) !== normalized.text.length) return null;
   const headingPath = Array.isArray(value.headingPath)
     ? value.headingPath.slice(0, 6).filter((heading): heading is string => typeof heading === 'string')
-      .map(heading => filterGamingDocumentInstructions(heading).slice(0, 160)).filter(Boolean)
+      .map(heading => safeGamingEvidenceMetadata(heading, { prompt: '', mode: 'build' }, 160)).filter(Boolean)
     : [];
   return { ordinal: ordinal as number, startChar: startChar as number, endChar: endChar as number,
     ...(headingPath.length ? { headingPath } : {}) };
 }
 
-function projectCandidate<RecordType extends GamingStoredEvidenceRecord>(record: RecordType, terms: string[], limits: GamingStoredEvidenceLimits, resolvePatch: GamingStoredPatchResolver<RecordType>): GamingStoredEvidenceCandidate | null {
+function projectCandidate<RecordType extends GamingStoredEvidenceRecord>(record: RecordType, terms: string[], input: GamingStoredKnowledgeInput, limits: GamingStoredEvidenceLimits, resolvePatch: GamingStoredPatchResolver<RecordType>): GamingStoredEvidenceCandidate | null {
   if (!Number.isFinite(record.relevance) || record.relevance <= 0) return null;
   const normalized = record.normalized ?? {};
   const metadata = chunkMetadata(normalized);
@@ -136,7 +143,7 @@ function projectCandidate<RecordType extends GamingStoredEvidenceRecord>(record:
   const body = [typeof normalized.text === 'string' ? normalized.text : record.searchText,
     typeof normalized.structuredEvidence === 'string'
       ? normalized.structuredEvidence.slice(0, limits.structuredEvidenceChars) : ''].filter(Boolean).join('\n\n');
-  const safeText = filterGamingDocumentInstructions(body);
+  const safeText = filterGamingDocumentInstructions(scopeGamingEvidenceParagraphs(body, input));
   const query = terms.join(' ');
   const text = selectGamingDocumentExcerpt(safeText, query, Math.min(1_200, limits.chunkChars))
     .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/gu, '');
@@ -144,8 +151,9 @@ function projectCandidate<RecordType extends GamingStoredEvidenceRecord>(record:
   const coverage = terms.filter(term => contentTokens.has(term)).length / Math.max(1, terms.length);
   if (!text || coverage < MIN_QUERY_COVERAGE) return null;
   const patch = resolvePatch(record);
+  if (input.requestedVersion && patch && patch !== input.requestedVersion) return null;
   const provenance = record.provenance ?? {};
-  const title = record.title ? filterGamingDocumentInstructions(record.title).slice(0, 240) : '';
+  const title = record.title ? safeGamingEvidenceMetadata(record.title, input, 240) : '';
   return {
     evidence: {
       sourceId: record.sourceId, revisionId: record.revisionId, recordId: record.recordId,
@@ -184,23 +192,28 @@ function redundancy(left: GamingStoredEvidenceChunk, right: GamingStoredEvidence
 /** One candidate pool, deterministic lexical score, record deduplication and overlap penalty. */
 export function selectStoredGamingEvidence<RecordType extends GamingStoredEvidenceRecord>(records: readonly RecordType[], input: GamingStoredKnowledgeInput,
   limits: GamingStoredEvidenceLimits, resolvePatch: GamingStoredPatchResolver<RecordType> = () => undefined): GamingStoredEvidenceCandidate[] {
-  const { terms } = buildStoredGamingLexicalQuery(input.prompt, input.game);
+  const { terms } = buildStoredGamingLexicalQuery(input.prompt, input.game, input.mode === 'guide' ? input : undefined);
   if (!terms.length) return [];
   const excluded = new Set(input.excludePublicUrls ?? []);
   const byRecord = new Map<string, GamingStoredEvidenceCandidate>();
   for (const record of records.slice(0, MAX_STORED_GAMING_CANDIDATES)) {
     input.signal?.throwIfAborted();
     if (excluded.has(record.publicUrl)) continue;
-    const candidate = projectCandidate(record, terms, limits, resolvePatch);
+    const candidate = projectCandidate(record, terms, input, limits, resolvePatch);
     if (!candidate) continue;
     const previous = byRecord.get(record.recordId);
     if (!previous || candidate.evidence.lexicalScore > previous.evidence.lexicalScore) byRecord.set(record.recordId, candidate);
   }
   const pool = [...byRecord.values()];
   const maxRank = Math.max(0, ...pool.map(candidate => candidate.evidence.lexicalScore));
+  const retrievalTerms = buildGamingRetrievalTerms(input);
   for (const candidate of pool) {
     // Coverage dominates frequency; database ranks are normalized within this bounded pool.
     candidate.evidence.combinedScore = 0.65 * candidate.evidence.combinedScore + 0.35 * candidate.evidence.lexicalScore / maxRank;
+    // A small state tie-break cannot admit a passage that failed the request relevance floor.
+    if (input.mode === 'guide' && retrievalTerms.requestTerms.length) {
+      candidate.evidence.combinedScore += 0.08 * gamingTermCoverage(candidate.evidence.text, retrievalTerms.contextTerms);
+    }
   }
   const selected: GamingStoredEvidenceCandidate[] = [];
   const selectedUrls = new Set<string>();
@@ -221,7 +234,7 @@ export function selectStoredGamingEvidence<RecordType extends GamingStoredEviden
 }
 
 /** Format only selected evidence, numbering chunks from the same public URL consistently. */
-export function formatStoredGamingEvidence(candidates: readonly GamingStoredEvidenceCandidate[], input: Pick<GamingStoredKnowledgeInput, 'sourceIndexOffset' | 'maxContextChars'>,
+export function formatStoredGamingEvidence(candidates: readonly GamingStoredEvidenceCandidate[], input: Pick<GamingStoredKnowledgeInput, 'sourceIndexOffset' | 'maxContextChars' | 'spoilerMode'>,
   limits: Pick<GamingStoredEvidenceLimits, 'maxContextChars'>): GamingStoredKnowledgeContext {
   const budget = boundedInteger(input.maxContextChars, limits.maxContextChars, 0, limits.maxContextChars);
   const offset = boundedInteger(input.sourceIndexOffset, 0, 0, 64);
@@ -238,6 +251,8 @@ export function formatStoredGamingEvidence(candidates: readonly GamingStoredEvid
       candidate.source.patchVersion ? `Patch: ${candidate.source.patchVersion}` : '',
       candidate.source.publishedAt ? `Published: ${candidate.source.publishedAt}` : '',
       candidate.source.title ? `Title: ${candidate.source.title}` : '',
+      input.spoilerMode === 'full' && candidate.evidence.headingPath?.length
+        ? `Sections (source metadata, not progression order): ${candidate.evidence.headingPath.join(' > ')}` : '',
       candidate.evidence.ordinal !== undefined ? `Passage: ${candidate.evidence.ordinal + 1}` : ''
     ].filter(Boolean).join('\n');
     const remaining = budget - used - header.length - 1 - (parts.length ? 2 : 0);

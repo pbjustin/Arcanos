@@ -62,7 +62,9 @@ describe('served Gaming durable RAG proof boundary', () => {
     if (scenario === 'chunk coverage drift') {
       mockChunks.mockImplementationOnce(async (...args) => ({ ...await actualChunks.chunkGamingDocument(...args), chunks: [] }));
     } else if (scenario === 'retrieval drift') {
-      mockSelect.mockReturnValueOnce([]);
+      // Earlier guide-assistance checks share this core; corrupt only the durable fixture's rows.
+      mockSelect.mockImplementation((rows, ...args) => rows.some(row => row.revisionId === 'synthetic-revision')
+        ? [] : actualEvidence.selectStoredGamingEvidence(rows, ...args));
     } else {
       mockChunks.mockRejectedValueOnce(new Error('private-fixture-sentinel'));
     }
@@ -71,6 +73,7 @@ describe('served Gaming durable RAG proof boundary', () => {
     for (const header of [
       NATIVE_PR_PREVIEW_GAMING_CONTRACT.proofHeader,
       NATIVE_PR_PREVIEW_GAMING_CONTRACT.responseProofHeader,
+      NATIVE_PR_PREVIEW_GAMING_CONTRACT.guideAssistanceProofHeader,
       NATIVE_PR_PREVIEW_GAMING_CONTRACT.documentProofHeader,
       NATIVE_PR_PREVIEW_GAMING_CONTRACT.durableRagProofHeader
     ]) expect(response.headers[header]).toBeUndefined();

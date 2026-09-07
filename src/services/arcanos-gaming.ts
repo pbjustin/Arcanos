@@ -7,6 +7,7 @@ import { hasVisibleContent } from "@shared/promptUtils.js";
 import { resolveGamingExecutionOutcome } from "@shared/gaming/gamingGrounding.js";
 import { GAMING_RESPONSE_MAX_CHARACTERS } from "@shared/http/clientResponseCommon.js";
 import { isRecord } from "@shared/typeGuards.js";
+import { pickGamingPlayerContext, validateGamingPlayerContextInput } from "@shared/gaming/gamingPlayerContext.js";
 import {
   BackendQueryAgent,
   ClarificationAgent,
@@ -179,6 +180,7 @@ async function executeGamingBackendQuery(payload: GamingBackendActionPayload): P
     hrcEnabled
   } = validation.value;
   const pipelineInput = {
+    ...pickGamingPlayerContext(validation.value),
     prompt,
     game,
     guideUrl,
@@ -316,12 +318,20 @@ function buildTelemetryEntityFlags(intent: GamingIntent) {
     role: Boolean(intent.role),
     difficulty: Boolean(intent.difficulty),
     progressPoint: Boolean(intent.progressPoint),
-    spoilerTolerance: intent.spoilerTolerance
+    currentArea: Boolean(intent.currentArea),
+    lastCompletedObjective: Boolean(intent.lastCompletedObjective),
+    edition: Boolean(intent.edition),
+    constraints: Boolean(intent.constraints.length),
+    spoilerMode: intent.spoilerMode,
+    answerDepth: intent.answerDepth,
+    contextOrigins: intent.contextOrigins
   };
 }
 
 async function handleGamingRequest(payload: unknown): Promise<GamingEnvelope> {
   const requestLogContext = buildGamingRequestLogContext();
+  const contextError = validateGamingPlayerContextInput(payload);
+  if (contextError) return formatGamingError({ mode: resolveGamingMode(payload), error: { code: 'BAD_REQUEST', message: contextError } });
   if (isRecord(payload) && payload.candidateUrls !== undefined) {
     return formatGamingError({
       mode: resolveGamingMode(payload),

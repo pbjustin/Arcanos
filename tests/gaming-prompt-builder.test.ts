@@ -72,7 +72,7 @@ describe('gaming prompt web-evidence boundary', () => {
     expect(prompt).not.toContain('[END UNTRUSTED WEB EVIDENCE]');
     expect(prompt).not.toContain('ARCANOS already retrieved the accepted snippets above');
     expect(prompt).not.toContain('do not claim the accepted snippets are inaccessible');
-    expect(prompt).toContain('Return only a six-item checklist');
+    expect(prompt).toContain('No accepted guide evidence is available.');
     expect(prompt).toContain('label weak, missing, or patch-sensitive evidence as inference or fallback');
     expect(prompt).not.toContain("Answer the user's actual gameplay question first");
   });
@@ -123,7 +123,7 @@ describe('grounded gaming guide response guidance', () => {
     expect(prompt).toContain('Do not open with a blanket disclaimer or list of missing game, platform, version, difficulty, or progress fields.');
     expect(prompt).toContain('Do not refuse useful supported guidance merely because optional context is absent.');
     expect(prompt).not.toContain('State missing game, platform, class, or version details plainly');
-    expect(prompt).not.toContain('Return only a six-item checklist');
+    expect(prompt).not.toContain('No accepted guide evidence is available.');
     expect(prompt).toContain('headings or lists when helpful; do not repeat the opening answer');
     expect(prompt).toContain(guideEvidence);
   });
@@ -163,7 +163,7 @@ describe('grounded gaming guide response guidance', () => {
     const prompt = buildGamingTrinityPrompt(guideRequest, '', true, false);
 
     expect(prompt).toContain('State missing game, platform, class, or version details plainly instead of guessing.');
-    expect(prompt).toContain('Return only a six-item checklist');
+    expect(prompt).toContain('No accepted guide evidence is available.');
     expect(prompt).toContain('State when source evidence is unavailable.');
     expect(prompt).not.toContain("Answer the user's actual gameplay question first");
     for (const mode of ['build', 'meta'] as const) {

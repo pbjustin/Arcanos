@@ -52,11 +52,13 @@ import {
   type GamingStoredKnowledgeContext
 } from "@services/gamingSourceIngestion.js";
 import { formatStoredGamingEvidence } from "@services/gamingStoredKnowledge.js";
+import { pickGamingPlayerContext, resolveGamingPlayerContext, type GamingPlayerContext } from "@shared/gaming/gamingPlayerContext.js";
+import { resolveGamingAnswerPolicy } from "@shared/gaming/gamingAnswerPolicy.js";
 
 export type GamingPipelineInput = Pick<
   ValidatedGamingRequest,
   "mode" | "prompt" | "game" | "guideUrl" | "guideUrls" | "evidenceOrigin" | "requestedVersion" | "evidenceAttempt" | "auditEnabled"
->;
+> & GamingPlayerContext;
 
 type GamingWebSource = GamingSuccessEnvelope["data"]["sources"][number];
 
@@ -351,6 +353,35 @@ function formatCitationNumbers(numbers: number[], sourceCount: number, wrapper: 
 export function normalizeGamingInlineSourceReferences(response: string, sourceCount: number): GamingCitationNormalization {
   let maxInlineSourceRef = 0;
   let applied = false;
+  // Repair only the gap left by a removed citation. Preserve all other spacing,
+  // including code, list indentation, and trailing Markdown hard-break spaces.
+  const replaceReferences = (text: string, pattern: RegExp, rewrite: (
+    fullMatch: string, rawNumbers: string, offset: number, fullText: string
+  ) => string): string => {
+    let result = '';
+    let cursor = 0;
+    for (const match of text.matchAll(pattern)) {
+      const offset = match.index;
+      result += text.slice(cursor, offset);
+      const replacement = rewrite(match[0], match[1], offset, text);
+      cursor = offset + match[0].length;
+      if (replacement) {
+        result += replacement;
+        continue;
+      }
+      const trailing = /^[ \t]*/u.exec(text.slice(cursor))?.[0] ?? '';
+      const linePrefix = result.slice(result.lastIndexOf('\n') + 1);
+      const leading = /[ \t]+$/u.exec(result)?.[0] ?? '';
+      const next = text[cursor + trailing.length];
+      if (linePrefix.trim()) {
+        result = result.slice(0, result.length - leading.length);
+        if (!next || next === '\r' || next === '\n') result += trailing;
+        else if ((leading || trailing) && !/[.,;:!?]/u.test(next)) result += ' ';
+      }
+      cursor += trailing.length;
+    }
+    return result + text.slice(cursor);
+  };
   const normalizeMatch = (fullMatch: string, rawNumbers: string, wrapper: "paren" | "bracket"): string => {
     const numbers = parseCitationNumbers(rawNumbers);
     for (const number of numbers) {
@@ -364,11 +395,10 @@ export function normalizeGamingInlineSourceReferences(response: string, sourceCo
     return normalized;
   };
 
-  const normalized = response
-    .replace(/\[(?:sources?)\s+([\d,\s]+)\]/gi, (fullMatch, rawNumbers: string) =>
+  let normalized = replaceReferences(response, /\[(?:sources?)\s+([\d,\s]+)\]/gi, (fullMatch, rawNumbers: string) =>
       normalizeMatch(fullMatch, rawNumbers, "bracket")
-    )
-    .replace(/\[([\d,\s]+)\]/g, (fullMatch, rawNumbers: string) => {
+    );
+  normalized = replaceReferences(normalized, /\[([\d,\s]+)\]/g, (fullMatch, rawNumbers: string) => {
       const numbers = parseCitationNumbers(rawNumbers);
       for (const number of numbers) {
         maxInlineSourceRef = Math.max(maxInlineSourceRef, number);
@@ -380,11 +410,11 @@ export function normalizeGamingInlineSourceReferences(response: string, sourceCo
         applied = true;
       }
       return normalizedMatch;
-    })
-    .replace(/\((?:sources?)\s+([\d,\s]+)\)/gi, (fullMatch, rawNumbers: string) =>
+    });
+  normalized = replaceReferences(normalized, /\((?:sources?)\s+([\d,\s]+)\)/gi, (fullMatch, rawNumbers: string) =>
       normalizeMatch(fullMatch, rawNumbers, "paren")
-    )
-    .replace(/\b(?:sources?)\s+(\d+(?:\s*,\s*\d+)*)\b/gi, (
+    );
+  normalized = replaceReferences(normalized, /\b(?:sources?)\s+(\d+(?:\s*,\s*\d+)*)\b/gi, (
       fullMatch: string,
       rawNumbers: string,
       offset: number,
@@ -406,10 +436,7 @@ export function normalizeGamingInlineSourceReferences(response: string, sourceCo
         applied = true;
       }
       return normalized;
-    })
-    .replace(/\s+([.,;:!?])/g, "$1")
-    .replace(/[ \t]{2,}/g, " ")
-    .trim();
+    }).trim();
 
   return {
     response: normalized,
@@ -606,20 +633,15 @@ function stringifyMockResult(result: unknown): string {
   }
 }
 
-function buildGamingRunOptions(mode: GamingMode, hasGuideSources: boolean) {
+function buildGamingRunOptions(mode: GamingMode, _hasGuideSources: boolean) {
   if (mode === "guide") {
-    if (hasGuideSources) {
-      return {
-        answerMode: "explained" as const,
-        requestedVerbosity: "normal" as const,
-        strictUserVisibleOutput: true
-      };
-    }
-
     return {
-      answerMode: "direct" as const,
+      answerMode: "explained" as const,
       requestedVerbosity: "normal" as const,
-      strictUserVisibleOutput: true
+      strictUserVisibleOutput: true,
+      gamingGuideIntakePolicy: "compact-v1" as const,
+      disableOptionalSideEffects: true,
+      redactAuditContent: true
     };
   }
 
@@ -637,6 +659,9 @@ function buildGamingRunOptions(mode: GamingMode, hasGuideSources: boolean) {
 }
 
 export async function runGameplayPipeline(params: GamingPipelineInput): Promise<GamingSuccessEnvelope> {
+  if (params.mode === "guide" && !params.contextOrigins) {
+    params = { ...params, ...resolveGamingPlayerContext(params, params.prompt) };
+  }
   const requestStartedAt = Date.now();
   const sourceEndpoint = `arcanos-gaming.${params.mode}`;
   const requestContext = getRequestAbortContext();
@@ -671,6 +696,14 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
   };
 
   logger.info("gaming.request.start", baseLogContext);
+  if (params.mode === "guide") {
+    logger.info("gaming.guide.policy", {
+      ...baseLogContext,
+      ...resolveGamingAnswerPolicy(params),
+      contextOrigins: params.contextOrigins,
+      contextConflicts: params.contextConflicts
+    });
+  }
 
   const shortcutStartedAt = Date.now();
   const exactLiteralShortcut = tryExtractExactLiteralPromptShortcut(params.prompt);
@@ -846,9 +879,11 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
           abortMessage: `Gaming stored retrieval timed out after ${storedRetrievalTimeoutMs}ms`
         },
         () => buildStoredGamingKnowledgeContext({
+          ...pickGamingPlayerContext(resolvedParams),
           game: resolvedGame,
           prompt: resolvedParams.prompt,
           mode: resolvedParams.mode,
+          requestedVersion: resolvedParams.requestedVersion,
           sourceIndexOffset: liveCitableSources.length,
           maxContextChars: storedContextBudget,
           excludePublicUrls: sources.filter(isCitableGamingWebSource).map(source => source.url),
@@ -881,7 +916,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
           const source = uniqueStoredSources.find(candidate => candidate.url === evidence.publicUrl);
           return source ? [{ source, evidence }] : [];
         });
-        const projected = formatStoredGamingEvidence(candidates, { sourceIndexOffset: liveCitableSources.length, maxContextChars: storedContextBudget });
+        const projected = formatStoredGamingEvidence(candidates, { sourceIndexOffset: liveCitableSources.length, maxContextChars: storedContextBudget, spoilerMode: resolvedParams.spoilerMode });
         uniqueStoredSources = projected.sources;
         storedContext = projected.context;
         storedSelectedChunkCount = projected.evidence?.length ?? 0;
@@ -1108,6 +1143,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
             ),
             runOptions: {
               ...buildGamingRunOptions(params.mode, guideUrls.length > 0 && retrievalHadUsableSources),
+              ...(params.mode === "guide" ? { trustedPolicyPrompt: resolvedParams.prompt, internalMode: false } : {}),
               intentMode: "EXECUTE_TASK",
               ...(retrievalHadUsableSources
                 ? { toolBackedCapabilities: { verifyProvidedData: true } }
@@ -1118,6 +1154,20 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
           }
         })
     );
+    const completion = trinityResult.meta?.provider;
+    if (params.mode === "guide" && (completion?.incomplete || completion?.truncated || completion?.lengthTruncated
+      || completion?.finishReason === "length" || completion?.responseStatus === "incomplete")) {
+      throw Object.assign(new Error("Gaming provider completion is incomplete."), {
+        code: "OPENAI_COMPLETION_INCOMPLETE",
+        finishReason: completion.finishReason,
+        incompleteReason: completion.incompleteReason
+      });
+    }
+    if (params.mode === "guide" && (trinityResult.fallbackFlag || trinityResult.dryRun || completion?.contentFiltered)) {
+      throw Object.assign(new Error("Gaming provider did not produce a completed primary answer."), {
+        code: "GAMING_PROVIDER_UNUSABLE_RESPONSE"
+      });
+    }
     if (
       trinityResult.meta?.provider?.emptyOutput === true
       || typeof trinityResult.result !== "string"

@@ -63,6 +63,7 @@ describe('served Gaming document component-proof failure boundary', () => {
     for (const header of [
       NATIVE_PR_PREVIEW_GAMING_CONTRACT.proofHeader,
       NATIVE_PR_PREVIEW_GAMING_CONTRACT.responseProofHeader,
+      NATIVE_PR_PREVIEW_GAMING_CONTRACT.guideAssistanceProofHeader,
       NATIVE_PR_PREVIEW_GAMING_CONTRACT.documentProofHeader
     ]) expect(response.headers[header]).toBeUndefined();
     expect(response.headers[NATIVE_PR_PREVIEW_SYNTHETIC_RESPONSE_HEADER.name])

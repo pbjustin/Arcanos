@@ -1,0 +1,55 @@
+{
+  "version": "gaming-guide-assistance/v1",
+  "rubric": {
+    "clarity": "The opening answers the actual question without duplicate summary or internal diagnostic labels.",
+    "actionability": "Actions are concrete and supported; required prerequisites and checkpoints are usable.",
+    "support": "Specific claims follow the selected synthetic evidence; source numbers remain aligned.",
+    "spoilers": "The answer reveals only detail allowed by the effective policy and the immediate task.",
+    "detail": "Depth fits the request; extra explanation adds useful information without padding."
+  },
+  "cases": [
+    {
+      "id": "adventure-canal-next",
+      "request": {"game":"Lantern Vale", "mode":"guide", "prompt":"What next?", "currentArea":"Copper Canal", "lastCompletedObjective":"Repaired the canal pump", "spoilerTolerance":"none"},
+      "task": "next_step", "depth":"concise", "spoilerMode":"none",
+      "evidence":"After repairing the canal pump at Copper Canal, turn the blue valve beside the lift. Cross when the bridge locks in place. The lit bridge lamp confirms the route is open.",
+      "referenceAnswer":"Turn the blue valve beside the canal lift, then cross once the bridge locks in place. The lit bridge lamp confirms it is ready. [1]",
+      "excludedFuture":"The distant Moon Court reveals that the cartographer becomes the final enemy."
+    },
+    {
+      "id":"adventure-observatory-next",
+      "request":{"game":"Lantern Vale", "mode":"guide", "prompt":"What next?", "currentArea":"Glass Observatory", "lastCompletedObjective":"Aligned the lens", "spoilerTolerance":"light"},
+      "task":"next_step", "depth":"concise", "spoilerMode":"light",
+      "evidence":"Once the Glass Observatory lens is aligned, pull the brass lever on the lower landing. The open hatch beside the lens is the completion checkpoint.",
+      "referenceAnswer":"Pull the brass lever on the lower landing. Check that the hatch beside the lens opens. [1]"
+    },
+    {
+      "id":"action-boss-detailed",
+      "request":{"game":"Iron Wake", "mode":"guide", "prompt":"How do I beat the Ash Sentinel? Explain in detail.", "difficulty":"Veteran", "class":"Scout", "constraints":["No shield"], "spoilerTolerance":"avoid", "answerDepth":"concise"},
+      "task":"strategy", "depth":"detailed", "spoilerMode":"none",
+      "evidence":"The Ash Sentinel raises its left arm before a sweeping strike. Step behind the raised arm, then attack after the blade hits the floor. Back away when it braces both feet. The guide does not specify Veteran damage values or exact timings.",
+      "referenceAnswer":"Watch for the Ash Sentinel to raise its left arm. Step behind that arm, then attack after its blade hits the floor. [1]\n\nWhen it braces both feet, back away and reset your position. This approach uses movement and does not require your Scout to equip a shield. The guide does not establish Veteran-specific damage or exact timing windows. [1]"
+    },
+    {
+      "id":"action-item-precise",
+      "request":{"game":"Iron Wake: Second Tide", "mode":"guide", "prompt":"Where do I find the Sable Coil?", "currentArea":"Ash Foundry", "platform":"PC", "difficulty":"Hard", "answerDepth":"auto", "spoilerTolerance":"full"},
+      "task":"lookup", "depth":"concise", "spoilerMode":"full",
+      "evidence":"The Sable Coil is in the locked workshop at Ash Foundry. Bring the workshop key and open the cabinet beside the anvil.",
+      "referenceAnswer":"The Sable Coil is in the locked workshop at Ash Foundry. Bring the workshop key, then open the cabinet beside the anvil. [1]"
+    },
+    {
+      "id":"ship-blocked-diagnostic",
+      "request":{"game":"Vector Harbor", "mode":"guide", "prompt":"My survey beacon won't activate. What should I check?", "role":"Survey pilot", "currentArea":"Kepler Dock", "version":"2.1", "constraints":["Starter power unit"], "spoilerTolerance":"unknown", "answerDepth":"standard"},
+      "task":"troubleshooting", "depth":"standard", "spoilerMode":"none",
+      "evidence":"A survey beacon needs a charged capacitor and an assigned utility slot. At Kepler Dock, open the utility panel to check slot assignment, then inspect capacitor charge. An amber icon indicates insufficient charge.",
+      "referenceAnswer":"Check the beacon's utility-slot assignment, then its capacitor charge. An amber icon means it needs more charge. Those are supported checks; the guide does not show which one is blocking your ship. [1]"
+    },
+    {
+      "id":"ship-broad-explanation",
+      "request":{"game":"Vector Harbor", "mode":"guide", "prompt":"Explain how capacitor charge affects survey equipment, briefly.", "answerDepth":"detailed", "spoilerTolerance":"light"},
+      "task":"explanation", "depth":"concise", "spoilerMode":"light",
+      "evidence":"Survey equipment draws from capacitor charge when activated. An empty capacitor prevents activation; waiting with the equipment idle restores charge.",
+      "referenceAnswer":"Survey equipment needs capacitor charge to activate. If the capacitor is empty, leave the equipment idle until charge returns. [1]"
+    }
+  ]
+}

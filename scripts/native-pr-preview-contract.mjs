@@ -191,6 +191,8 @@ export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
     documentProofVersion: 'gaming-document-ingestion/v1',
     durableRagProofHeader: 'x-arcanos-preview-gaming-durable-rag-version',
     durableRagProofVersion: 'gaming-durable-rag/v1',
+    guideAssistanceProofHeader: 'x-arcanos-preview-gaming-guide-assistance-version',
+    guideAssistanceProofVersion: 'gaming-guide-assistance/v1',
     game: 'Palworld',
     fixtures: Object.freeze({
       guide: 'sealed-preview-guide',

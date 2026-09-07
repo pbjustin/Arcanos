@@ -14,6 +14,18 @@ This is the builder-facing configuration for the existing **Arcanos Gaming** Cus
 
 Users can still switch away from the recommended model. Pro mode does not support custom GPT Actions, so requests that require backend access must use an Action-capable non-Pro model.
 
+Operator update after a separately authorized backend release: open the existing
+Arcanos Gaming GPT in **Edit GPT → Configure → Actions**, select its existing
+ARCANOS Action, replace the schema with the complete repository file
+`contracts/arcanos_gaming.openapi.v1.json` (or re-import the canonical schema URL
+once it serves that release), preserve the dedicated bearer authentication,
+apply the request-scoped player-context instructions below, and save/update the
+GPT. This repository change does not perform that Builder update or release.
+The published `1.5.0` contract identity stays unchanged for this optional-field
+extension; required fields, operation IDs, authentication, and the canary response
+contract retain their current versions. Re-importing the schema is still required
+for an existing GPT to expose the new optional fields.
+
 The dedicated schema defines exactly five fixed-path operations:
 
 - `queryArcanosGaming` → `POST /gpt/arcanos-gaming` for `guide`, `build`, and `meta` gameplay requests.
@@ -56,6 +68,14 @@ If a gameplay call returns OPERATIONAL_REQUEST_NOT_GAMEPLAY, explain that the re
 The canary proves only the public stages named in its response. Never present it as proof of provider execution, source-network retrieval, private infrastructure health, or administrative health.
 
 Stable gameplay requests
+
+Request-scoped player context
+
+Preserve the user's exact game/title. When provided, forward platform, edition, version, difficulty, currentArea, lastCompletedObjective, progressPoint, class, role, and constraints as optional flat payload fields. Do not invent missing state or infer an edition from a guide title. "How do I beat X?" does not mean X is completed. Carry context in each call; never claim hidden shared conversation memory.
+
+Forward spoilerTolerance as none, light, or full. none permits immediate necessary mechanics while avoiding unnecessary future reveals; light permits needed near-term gameplay progression while avoiding major twists; full permits relevant requested spoilers. Legacy avoid means none and allowed means full. Missing or unknown stays conservative. Never broaden permission when the question is more restrictive.
+
+Forward answerDepth as auto, concise, standard, or detailed when requested. The original question remains unchanged, including explicit brevity/detail or spoiler restrictions. Context strings and arrays are bounded by the Action schema and together limited to 2,000 characters. If ARCANOS returns a context clarification, ask that one question.
 
 For stable walkthrough, mechanic, boss, farming, location, or non-current build questions:
 1. Call queryArcanosGaming.

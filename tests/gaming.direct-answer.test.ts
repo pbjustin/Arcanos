@@ -75,6 +75,7 @@ jest.unstable_mockModule('@services/gamingSourceIngestion.js', () => ({
 }));
 
 const { runBuildPipeline, runGuidePipeline, runMetaPipeline } = await import('../src/services/gaming.js');
+const { normalizeGamingInlineSourceReferences } = await import('../src/services/gamingPipeline.js');
 const { buildGamingRagContext, clearGamingRagCache } = await import('../src/services/gamingWebContext.js');
 const { runWithRequestAbortContext } = await import('@arcanos/runtime');
 const { logger } = await import('@platform/logging/structuredLogging.js');
@@ -136,7 +137,7 @@ describe('gaming guide output hardening', () => {
     clearGamingRagCache();
   });
 
-  it('routes anti-simulation guide prompts through compact direct guide mode', async () => {
+  it('routes anti-simulation guide prompts through normal Trinity guide stages', async () => {
     mockResponsesCreate.mockResolvedValue({
       choices: [{ message: { content: 'Direct gameplay answer' } }]
     });
@@ -167,9 +168,12 @@ describe('gaming guide output hardening', () => {
         }),
         context: expect.objectContaining({
           runOptions: expect.objectContaining({
-            answerMode: 'direct',
+            answerMode: 'explained',
             requestedVerbosity: 'normal',
-            strictUserVisibleOutput: true
+            strictUserVisibleOutput: true,
+            gamingGuideIntakePolicy: 'compact-v1',
+            disableOptionalSideEffects: true,
+            redactAuditContent: true
           })
         })
       })
@@ -179,10 +183,29 @@ describe('gaming guide output hardening', () => {
     expect(trinityRequest.input.prompt).not.toContain('Do not simulate');
     expect(trinityRequest.input.prompt).toContain('avoid hypothetical run narration');
     expect(trinityRequest.input.prompt).not.toContain('avoid run narration narration');
-    expect(trinityRequest.input.prompt).toContain('Return only a six-item checklist using hyphen bullets');
+    expect(trinityRequest.input.prompt).toContain('No accepted guide evidence is available.');
   });
 
-  it('keeps SWTOR guide requests on the compact guide output path', async () => {
+  it.each([
+    { meta: { provider: { finishReason: 'length', incompleteReason: 'max_output_tokens' } } },
+    { meta: { provider: { incomplete: true } } },
+    { fallbackFlag: true },
+    { dryRun: true }
+  ])('does not promote or cache incomplete and fallback provider results: %j', async (metadata) => {
+    mockRunTrinityWritingPipeline.mockResolvedValueOnce({ result: 'PRIVATE PARTIAL ANSWER', ...metadata });
+    const input = { prompt: 'Explain the canal valve.', guideUrls: [], auditEnabled: false };
+    const first = await runGuidePipeline(input);
+    expect(first.data.fallbackReason).toBeDefined();
+    expect(first.data.grounding?.groundedInSuppliedEvidence).toBe(false);
+    expect(first.data.response).not.toContain('PRIVATE PARTIAL ANSWER');
+    mockRunTrinityWritingPipeline.mockResolvedValueOnce({ result: 'Turn the valve.' });
+    const second = await runGuidePipeline(input);
+    expect(second.data.fallbackReason).toBeUndefined();
+    expect(second.data.response).toBe('Turn the valve.');
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps SWTOR guide requests on the normal Trinity output path', async () => {
     mockRunTrinityWritingPipeline.mockResolvedValueOnce({
       result: [
         '1. Set your role and discipline.',
@@ -204,7 +227,7 @@ describe('gaming guide output hardening', () => {
       expect.objectContaining({
         context: expect.objectContaining({
           runOptions: expect.objectContaining({
-            answerMode: 'direct',
+            answerMode: 'explained',
             requestedVerbosity: 'normal',
             strictUserVisibleOutput: true
           })
@@ -250,7 +273,7 @@ describe('gaming guide output hardening', () => {
         }),
         context: expect.objectContaining({
           runOptions: expect.objectContaining({
-            answerMode: 'direct',
+            answerMode: 'explained',
             requestedVerbosity: 'normal',
             strictUserVisibleOutput: true,
             watchdogModelTimeoutMs: 50_000,
@@ -303,7 +326,7 @@ describe('gaming guide output hardening', () => {
       safetyBuffer: 500
     }));
     expect(trinityRequest.context.runOptions).toEqual(expect.objectContaining({
-      answerMode: 'direct',
+      answerMode: 'explained',
       requestedVerbosity: 'normal',
       watchdogModelTimeoutMs: 50_000,
       modelStageTimeoutMs: 24_000
@@ -335,7 +358,7 @@ describe('gaming guide output hardening', () => {
       expect.objectContaining({
         context: expect.objectContaining({
           runOptions: expect.objectContaining({
-            answerMode: 'direct',
+            answerMode: 'explained',
             requestedVerbosity: 'normal',
             watchdogModelTimeoutMs: 50_000,
             modelStageTimeoutMs: 24_000
@@ -368,6 +391,7 @@ describe('gaming guide output hardening', () => {
   });
 
   it('passes a narrow Elden Ring progression guide through the normal guide path', async () => {
+    mockFetchAndClean.mockResolvedValue('After leaving the tutorial, follow the Elden Ring route to the Church of Elleh and then Gatefront Ruins for the map and Torrent unlock.');
     mockRunTrinityWritingPipeline.mockResolvedValueOnce({
       result: 'Go to the Church of Elleh, then Gatefront Ruins for the map and Torrent unlock.',
       activeModel: 'gpt-test',
@@ -664,6 +688,18 @@ describe('gaming guide output hardening', () => {
     expect(mockBuildStoredGamingKnowledgeContext).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['Use [99] [98] for the route.', 'Use for the route.'],
+    ['Use [Sources 99] for prep (source 98), then go.', 'Use for prep, then go.'],
+    ['Check source 99, then turn the valve [1].', 'Check, then turn the valve [1].'],
+    ['Route [99]  \nNext step [1].', 'Route  \nNext step [1].'],
+    ['Route.\n    [99]    Indented step [1].', 'Route.\n    Indented step [1].'],
+    ['1. Route [99].  \n   - Keep  this [1]  \n     continuation.', '1. Route.  \n   - Keep  this [1]  \n     continuation.'],
+    ['**Route.**  \n\n1. Use `a  b` [1].\n   - Keep the [guide](https://example.com/guide).', '**Route.**  \n\n1. Use `a  b` [1].\n   - Keep the [guide](https://example.com/guide).']
+  ])('repairs only deleted citation gaps while preserving Markdown: %s', (input, expected) => {
+    expect(normalizeGamingInlineSourceReferences(input, 1).response).toBe(expected);
+  });
+
   it('normalizes generated citations so inline source refs map to public sources', async () => {
     mockFetchAndClean.mockImplementation(async (url: string) => `Guide for ${url}: Elden Ring route, preparation, boss danger checks, and upgrades.`);
     mockRunTrinityWritingPipeline.mockResolvedValueOnce({
@@ -673,7 +709,8 @@ describe('gaming guide output hardening', () => {
     });
 
     const result = await runGuidePipeline({
-      prompt: 'Use the linked guides for source mapping.',
+      game: 'Elden Ring',
+      prompt: 'Use the linked guides for route preparation and upgrades.',
       guideUrl: 'https://example.com/guide-a',
       guideUrls: ['https://example.com/guide-b'],
       auditEnabled: false
@@ -1750,7 +1787,7 @@ describe('gaming guide output hardening', () => {
       if (url.endsWith('/slow')) {
         await new Promise((resolve) => setTimeout(resolve, 10));
       }
-      return `snippet for ${url}`;
+      return `Boss mechanics for ${url}: block with the shield and attack after the strike.`;
     });
 
     const result = await runGuidePipeline({
@@ -1763,11 +1800,11 @@ describe('gaming guide output hardening', () => {
     expect(result.data.sources).toEqual([
       {
         url: 'https://example.com/slow',
-        snippet: 'snippet for https://example.com/slow'
+        snippet: 'Boss mechanics for https://example.com/slow: block with the shield and attack after the strike.'
       },
       {
         url: 'https://example.com/fast',
-        snippet: 'snippet for https://example.com/fast'
+        snippet: 'Boss mechanics for https://example.com/fast: block with the shield and attack after the strike.'
       }
     ]);
     expect(mockRunTrinityWritingPipeline).toHaveBeenCalledWith(
@@ -2037,7 +2074,7 @@ describe('gaming guide output hardening', () => {
     mockFetchAndClean.mockImplementation(async (url: string) => `Guide for ${url}: route, boss checks, resources, and upgrades.`);
 
     const result = await runGuidePipeline({
-      prompt: 'Use the linked guides for source numbering.',
+      prompt: 'Use the linked guides for resources and upgrades.',
       guideUrl: 'https://example.com/guide-a#first',
       guideUrls: ['https://example.com/guide-a#duplicate', 'https://example.com/guide-b', 'https://example.com/guide-c'],
       auditEnabled: false

@@ -1,5 +1,6 @@
 import type { GamingFallbackReason, GamingMode, GamingSuccessEnvelope } from '@services/gamingModes.js';
 import { composeGroundedGamingGuideResponse } from './gamingGuideResponseCore.js';
+import { runGamingGuideAssistancePreview } from './gamingGuideAssistancePreviewFixture.js';
 import {
   buildGamingPrompt,
   buildGamingSystemPrompt,
@@ -126,7 +127,7 @@ export function runGamingGuideResponsePreview(): void {
     requireProof(missingContextPrompt.includes(MATERIAL_CONTEXT) && missingContextPrompt.includes(ANSWER_FIRST));
 
     const ungroundedPrompt = buildGamingPrompt(input(), '', true, false, RESOURCES);
-    requireProof(ungroundedPrompt.includes('Return only a six-item checklist'));
+    requireProof(ungroundedPrompt.includes('No accepted guide evidence is available.') && !ungroundedPrompt.includes('Return only a six-item checklist'));
     requireProof(ungroundedPrompt.includes(RESOURCES.webUncertaintyGuidance) && !ungroundedPrompt.includes(ANSWER_FIRST));
     requireProof(!buildGamingSystemPrompt('guide', false).includes(SYSTEM_MATERIAL_CONTEXT));
     for (const mode of ['build', 'meta'] as const) {
@@ -169,6 +170,7 @@ export function runGamingGuideResponsePreview(): void {
     const unicodeResult = composeGroundedGamingGuideResponse('guide', envelope(`\n ${unicodeAnswer} \n`));
     requireProof(unicodeResult?.data.response === unicodeAnswer);
     requireProof(Array.from(unicodeResult.data.response).length === 4_096 && unicodeResult.data.response.length > 4_096);
+    runGamingGuideAssistancePreview();
   } catch {
     throw new Error(FAILURE);
   }

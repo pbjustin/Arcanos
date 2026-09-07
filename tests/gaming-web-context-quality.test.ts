@@ -173,6 +173,39 @@ describe('gaming RAG snippet quality', () => {
     expect(routeFetch?.[2]?.removeSelectors).not.toContain("[class*='sidebar']");
   });
 
+  it('uses player checkpoints in live acquisition terms and excludes unrelated future passages', async () => {
+    const quay = 'At Copper Quay, repair the signal bell and speak to the dock keeper to unlock the ferry route.';
+    const ridge = 'At Violet Ridge, climb the ladder and open the observatory gate to finish the objective.';
+    mockFetchedHtml({ title: 'Lantern Voyage walkthrough and navigator betrayal', text: `${quay}\n\n${ridge}` });
+    const request = { mode: 'guide' as const, game: 'Lantern Voyage', prompt: 'What next?', guideUrl: 'https://guides.example/lantern-voyage', guideUrls: [], spoilerMode: 'none' as const };
+    const a = await buildGamingRagContext({ ...request, currentArea: 'Copper Quay' });
+    const b = await buildGamingRagContext({ ...request, currentArea: 'Violet Ridge' });
+    expect(a.retrievalQuery).toContain('copper quay');
+    expect(b.retrievalQuery).toContain('violet ridge');
+    expect(a.context).toContain(quay);
+    expect(a.context).not.toContain('Violet Ridge');
+    expect(b.context).toContain(ridge);
+    expect(b.context).not.toContain('Copper Quay');
+    expect(a.context).not.toContain('navigator betrayal');
+    expect(a.selectedChunkCount).toBe(1);
+    expect(b.selectedChunkCount).toBe(1);
+  });
+
+  it('reapplies spoiler selection after raw document cache reuse', async () => {
+    const safe = 'The Glass Warden raises its shield before a strike; dodge sideways and attack after the shield drops.';
+    const future = 'The final ending reveals that the navigator destroys the capital.';
+    mockFetchedHtml({ title: 'Ashbound Arena ending: navigator betrayal', text: `${safe}\n\n${future}` });
+    const request = { mode: 'guide' as const, game: 'Ashbound Arena', prompt: 'How do I beat the Glass Warden?', guideUrl: 'https://guides.example/ashbound-arena', guideUrls: [] };
+    const full = await buildGamingRagContext({ ...request, spoilerMode: 'full' });
+    const conservative = await buildGamingRagContext({ ...request, spoilerMode: 'none' });
+    expect(full.sources.some(isCitableGamingWebSource)).toBe(true);
+    expect(conservative.cacheHit).toBe(true);
+    expect(conservative.context).toContain('Glass Warden');
+    expect(conservative.context).not.toMatch(/navigator|capital|ending/u);
+    expect(JSON.stringify(conservative.sources)).not.toMatch(/navigator|capital|ending/u);
+    expect(mockFetchAndClean).toHaveBeenCalledTimes(1);
+  });
+
   it('prefers official Bandai Namco patch changes over site chrome', async () => {
     mockFetchAndClean.mockResolvedValue([
       `${NAVIGATION_TEXT} Patch Notes.`,
