@@ -127,6 +127,8 @@ describe("ArcanosGaming mode routing", () => {
     });
 
     expect(mockRunGuidePipeline).toHaveBeenCalledWith({
+      answerDepth: "auto", spoilerMode: "none", spoilerTolerance: "unknown",
+      contextConflicts: [], contextOrigins: { answerDepth: "default", spoilerTolerance: "default" },
       prompt: "Where do I go next?",
       game: undefined,
       guideUrl: undefined,
@@ -180,6 +182,8 @@ describe("ArcanosGaming mode routing", () => {
     });
 
     expect(mockRunGuidePipeline).toHaveBeenCalledWith({
+      answerDepth: "auto", spoilerMode: "none", spoilerTolerance: "unknown",
+      contextConflicts: [], contextOrigins: { answerDepth: "default", spoilerTolerance: "default" },
       prompt: "Use this guide.",
       game: undefined,
       guideUrl: "https://example.com/guide",
@@ -199,6 +203,8 @@ describe("ArcanosGaming mode routing", () => {
     });
 
     expect(pipeline).toHaveBeenCalledWith({
+      answerDepth: "auto", spoilerMode: "none", spoilerTolerance: "unknown",
+      contextConflicts: [], contextOrigins: { answerDepth: "default", spoilerTolerance: "default" },
       prompt: "Use the supplied article for this request.",
       game: undefined,
       guideUrl: "https://community.example/article/123",
@@ -241,6 +247,8 @@ describe("ArcanosGaming mode routing", () => {
     });
 
     expect(mockRunGuidePipeline).toHaveBeenCalledWith({
+      answerDepth: "auto", spoilerMode: "none", spoilerTolerance: "unknown",
+      contextConflicts: [], contextOrigins: { answerDepth: "default", spoilerTolerance: "default" },
       prompt: "Use this guide.",
       game: undefined,
       guideUrl: "https://example.com/guide",
@@ -257,6 +265,8 @@ describe("ArcanosGaming mode routing", () => {
     });
 
     expect(mockRunBuildPipeline).toHaveBeenCalledWith({
+      answerDepth: "auto", spoilerMode: "none", spoilerTolerance: "unknown",
+      contextConflicts: [], contextOrigins: { answerDepth: "default", spoilerTolerance: "default" },
       prompt: "What is the best burst build?",
       game: "SWTOR",
       guideUrl: undefined,
@@ -281,6 +291,8 @@ describe("ArcanosGaming mode routing", () => {
     });
 
     expect(mockRunMetaPipeline).toHaveBeenCalledWith({
+      answerDepth: "auto", spoilerMode: "none", spoilerTolerance: "unknown",
+      contextConflicts: [], contextOrigins: { answerDepth: "default", spoilerTolerance: "default" },
       prompt: "What is strong in ranked right now?",
       game: "SWTOR",
       guideUrl: undefined,

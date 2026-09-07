@@ -103,6 +103,7 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/shared/gaming/gamingArchivePreviewFixture.ts',
   'src/shared/gaming/gamingGuideResponseCore.ts',
   'src/shared/gaming/gamingGuideResponsePreviewFixture.ts',
+  'src/shared/gaming/gamingPlayerContext.ts',
   'src/shared/gaming/gamingPromptCore.ts',
   'src/shared/gaming/gamingGrounding.ts',
   'src/shared/http/clientJsonPayload.ts',
@@ -672,6 +673,7 @@ const CRITICAL_RUNTIME_FUNCTION_DIGESTS = new Map([
   ],
 ]);
 const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
+  ['src/shared/gaming/gamingPlayerContext.ts', '76057aecad556d3751b78348ca067864dc46083274368aec8ce98b1108c631f8'],
   ['src/services/gamingDocumentExtraction.ts', '9838652d99a26aa241e004aebfc76f60d58b637f5ebdcc5a40668a5b8539e8c6'],
   ['src/services/gamingDocumentChunks.ts', 'a758af0d49a08a3d81ac6d6191c437d4080ba481c158169a535f091d8e279815'],
   ['src/services/gamingDurableDocumentChunks.ts', '7e0c0bc99285faab2cfe68dfaa8330ea7c32533899d4095b43838410b42ed927'],

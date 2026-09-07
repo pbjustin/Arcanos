@@ -513,7 +513,7 @@ describe('public Gaming HTTP dispatch boundary', () => {
     const filesystemPath = 'C:\\private\\runtime\\secrets.txt';
     const rawSource = '<html>PRIVATE-RAW-SOURCE-MARKER</html>';
 
-    await request(createApp())
+    const invalidGameplay = await request(createApp())
       .post('/gpt/arcanos-gaming')
       .send({
         action: 'query',
@@ -527,6 +527,13 @@ describe('public Gaming HTTP dispatch boundary', () => {
           path: filesystemPath,
         },
       });
+    expect(invalidGameplay.status).toBe(400);
+    expect(invalidGameplay.body).toMatchObject({ error: { code: 'BAD_REQUEST' } });
+    // The closed payload rejects invented evidence fields; a valid operational
+    // request still exercises safe integration-status logging independently.
+    await request(createApp()).post('/gpt/arcanos-gaming').send({
+      action: 'query', payload: { mode: 'guide', game: 'Palworld', prompt: operationalPrompt }
+    });
     await request(createApp())
       .post('/gpt/arcanos-gaming/canary')
       .send({

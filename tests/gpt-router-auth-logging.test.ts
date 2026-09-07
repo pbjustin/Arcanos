@@ -423,12 +423,20 @@ describe('gpt router auth logging', () => {
       .send({
         action: 'query',
         mode: 'guide',
+        currentArea: 'Copper Harbor',
+        lastCompletedObjective: 'Restored the ferry beacon',
+        spoilerTolerance: 'none',
+        answerDepth: 'concise',
         payload: {
           prompt: 'Where do I go next?'
         }
       });
 
     expect(response.status).toBe(200);
+    expect((mockRouteGptRequest.mock.calls[0]?.[0] as { body?: { payload?: unknown } }).body?.payload).toMatchObject({
+      currentArea: 'Copper Harbor', lastCompletedObjective: 'Restored the ferry beacon',
+      spoilerTolerance: 'none', answerDepth: 'concise'
+    });
     expect(response.body).toMatchObject({
       ok: true,
       requestId: response.headers['x-request-id'],
@@ -750,6 +758,10 @@ describe('gpt router auth logging', () => {
         mode: 'guide',
         originalPrompt,
         candidateUrls,
+        currentArea: 'Copper Harbor',
+        progressPoint: 'Dock checkpoint',
+        spoilerTolerance: 'light',
+        answerDepth: 'detailed',
         requestedVersion: 'version 1.0',
         evidenceAttempt: 1
       });
@@ -769,6 +781,11 @@ describe('gpt router auth logging', () => {
         game: 'Palworld',
         prompt: originalPrompt,
         guideUrls: candidateUrls,
+        version: '1.0',
+        currentArea: 'Copper Harbor',
+        progressPoint: 'Dock checkpoint',
+        spoilerTolerance: 'light',
+        answerDepth: 'detailed',
         evidenceOrigin: 'frontend_web_search',
         evidenceAttempt: 1,
         requestedVersion: '1.0'

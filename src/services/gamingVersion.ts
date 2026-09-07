@@ -99,7 +99,14 @@ export function extractExplicitGamingVersions(input: GamingVersionTextInput): st
   }
 
   matches.sort((left, right) => left.index - right.index);
-  return Array.from(new Set(matches.map((match) => match.version)));
+  return Array.from(new Set(matches.filter(match => {
+    const prefix = prompt.slice(Math.max(0, match.index - 140), match.index);
+    // Exclude a denied current-state/version assertion. Hypothetical information
+    // targets ("If I install patch 2.1, what changes?") remain valid query targets.
+    return !/\b(?:not|never|no\s+longer)\s+(?:(?:currently|actually|still)\s+)?(?:using|playing|running|on|installed|installing|use|play|run|install|updating\s+to|updated\s+to|asking\s+about)\b[^,;.!?\n]{0,48}$/iu.test(prefix)
+      && !/\b(?:don['’]t|didn['’]t|haven['’]t|hasn['’]t)\s+(?:use|play|run|install|installed|update|updated)\b[^,;.!?\n]{0,48}$/iu.test(prefix)
+      && !/\bnot\s+(?:(?:patch|version|update)s?|v(?:ersion)?)\s*$/iu.test(prefix);
+  }).map(match => match.version)));
 }
 
 export function textContainsExactGamingVersion(text: string, version: string): boolean {

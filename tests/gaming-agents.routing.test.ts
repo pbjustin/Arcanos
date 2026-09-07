@@ -377,6 +377,8 @@ describe('Gaming agent routing model', () => {
         mode: 'guide',
         prompt: 'Use these guides.',
         game: 'SWTOR',
+        platform: 'PC',
+        role: 'tank',
         url: ' https://example.com/a ',
         urls: ['https://example.com/b', ' https://example.com/c '],
         guideUrls: ['https://example.com/d'],

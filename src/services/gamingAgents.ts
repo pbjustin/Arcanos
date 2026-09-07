@@ -11,12 +11,13 @@ import {
 import { isRecord } from "@shared/typeGuards.js";
 import { composeGroundedGamingGuideResponse } from "@shared/gaming/gamingGuideResponseCore.js";
 import { extractTextPrompt, normalizeStringList } from "@transport/http/payloadNormalization.js";
+import { GAMING_PLAYER_CONTEXT, pickGamingPlayerContext, resolveGamingPlayerContext, type GamingContextCarrier, type GamingPlayerContext, type GamingSpoilerTolerance } from "@shared/gaming/gamingPlayerContext.js";
 
 export type GamingIntentMode = GamingMode | "non-gaming";
 
-export type GamingSpoilerTolerance = "avoid" | "allowed" | "unknown";
+export type { GamingSpoilerTolerance } from "@shared/gaming/gamingPlayerContext.js";
 
-export type GamingIntent = {
+export type GamingIntent = GamingPlayerContext & {
   mode: GamingIntentMode;
   prompt: string;
   confidence: number;
@@ -57,7 +58,7 @@ export type GamingClarificationResult =
       question: string;
     };
 
-export type GamingBackendActionPayload = {
+export type GamingBackendActionPayload = GamingPlayerContext & GamingContextCarrier & {
   mode: GamingMode;
   prompt: string;
   game?: string;
@@ -367,7 +368,8 @@ function extractVersion(payload: unknown, prompt: string, game?: string): string
   }
 
   const labeledToken = prompt.match(/\b(?:patch|version|season)\s+([A-Za-z0-9][A-Za-z0-9._-]{0,31})\b/i)?.[1];
-  return labeledToken && !/^(?:for|is|notes?|of|the)$/i.test(labeledToken)
+  return labeledToken && !/^\d{1,3}\.\d{1,3}(?:\.\d{1,3})?$/u.test(labeledToken)
+    && !/^(?:for|is|notes?|of|the)$/i.test(labeledToken)
     ? labeledToken
     : undefined;
 }
@@ -418,44 +420,8 @@ function extractDifficulty(payload: unknown, prompt: string): string | undefined
   return match?.[1];
 }
 
-function extractProgressPoint(payload: unknown, prompt: string): string | undefined {
-  const explicit =
-    getStringField(payload, "progressPoint") ??
-    getStringField(payload, "progress") ??
-    getStringField(payload, "checkpoint");
-  if (explicit) {
-    return explicit;
-  }
-
-  const match = prompt.match(/\b(?:stuck\s+(?:on|at)|at|after|before)\s+([A-Za-z0-9][A-Za-z0-9'’:, -]{1,48})/i);
-  if (match?.[1]) {
-    return normalizeEntityValue(match[1]);
-  }
-
-  const stage = prompt.match(/\b(early\s+game|mid\s*game|late\s+game|endgame|act\s+\d+|chapter\s+\d+|new\s+game\s*\+|ng\+)\b/i);
-  return stage?.[1] ? normalizeEntityValue(stage[1]) : undefined;
-}
-
 function normalizeEntityValue(value: string): string {
   return value.replace(/\s+/g, " ").trim();
-}
-
-function extractSpoilerTolerance(payload: unknown, prompt: string): GamingSpoilerTolerance {
-  const explicit = getStringField(payload, "spoilerTolerance")?.toLowerCase();
-  if (explicit === "avoid" || explicit === "none" || explicit === "no spoilers") {
-    return "avoid";
-  }
-  if (explicit === "allowed" || explicit === "ok" || explicit === "spoilers ok") {
-    return "allowed";
-  }
-
-  if (/\b(?:no|avoid)\s+spoilers?\b/i.test(prompt)) {
-    return "avoid";
-  }
-  if (/\bspoilers?\s+(?:ok|okay|allowed|fine)\b|\binclude\s+spoilers?\b/i.test(prompt)) {
-    return "allowed";
-  }
-  return "unknown";
 }
 
 function extractConstraints(payload: unknown, prompt: string): string[] {
@@ -616,6 +582,14 @@ export const IntentRouterAgent = {
     const scoredIntent = scoreIntent(payload, prompt, gameDetection);
     const rawPlatform = extractPlatform(payload, prompt);
     const rawVersion = extractVersion(payload, prompt, gameDetection.game);
+    const playerContext = resolveGamingPlayerContext(payload, prompt, {
+      platform: rawPlatform,
+      version: rawVersion,
+      class: extractClass(payload, prompt),
+      role: extractRole(payload, prompt),
+      difficulty: extractDifficulty(payload, prompt),
+      constraints: extractConstraints(payload, prompt)
+    });
 
     return {
       mode: scoredIntent.mode,
@@ -626,14 +600,9 @@ export const IntentRouterAgent = {
       game: gameDetection.game,
       gameDetectionConfidence: gameDetection.confidence,
       gameDetectionSource: gameDetection.source,
-      platform: rawPlatform ? normalizeEntityValue(rawPlatform) : undefined,
-      version: rawVersion ? normalizeEntityValue(rawVersion) : undefined,
-      class: extractClass(payload, prompt),
-      role: extractRole(payload, prompt),
-      difficulty: extractDifficulty(payload, prompt),
-      progressPoint: extractProgressPoint(payload, prompt),
-      spoilerTolerance: extractSpoilerTolerance(payload, prompt),
-      constraints: extractConstraints(payload, prompt),
+      ...playerContext,
+      spoilerTolerance: playerContext.spoilerTolerance ?? 'unknown',
+      constraints: playerContext.constraints ?? [],
       ...(url ? { url } : {}),
       ...(urls.length > 0 ? { urls } : {}),
       ...(guideUrls.length > 0 ? { guideUrls } : {}),
@@ -649,6 +618,11 @@ export const IntentRouterAgent = {
 
 export const ClarificationAgent = {
   evaluate(intent: GamingIntent): GamingClarificationResult {
+    if (intent.mode === 'guide' && intent.contextConflicts?.length) {
+      const field = intent.contextConflicts[0];
+      const labels: Record<string, string> = { currentArea: 'current area', lastCompletedObjective: 'last completed objective', progressPoint: 'checkpoint', version: 'version', edition: 'edition' };
+      return { required: true, mode: 'guide', missing: [field], question: `Which ${labels[field] ?? field} should I use? Your supplied context and question give different values.` };
+    }
     if (intent.mode !== "build" && intent.mode !== "meta") {
       return { required: false };
     }
@@ -676,6 +650,15 @@ export const BackendQueryAgent = {
       mode: intent.mode,
       prompt: intent.prompt,
     };
+    const playerContext = pickGamingPlayerContext(intent);
+    // JSON callers cannot provide this server-owned origin attestation.
+    for (const [key, value] of Object.entries(playerContext)) {
+      if (key === 'spoilerMode' || key === 'contextOrigins' || key === 'contextConflicts') continue;
+      if (key === 'spoilerTolerance' && value === 'unknown') continue;
+      if (key === 'answerDepth' && value === 'auto') continue;
+      Object.defineProperty(payload, key, { value, enumerable: true, configurable: true });
+    }
+    Object.defineProperty(payload, GAMING_PLAYER_CONTEXT, { value: playerContext, enumerable: false });
 
     if (intent.game) {
       payload.game = intent.game;

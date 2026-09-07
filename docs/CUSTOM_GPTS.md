@@ -398,6 +398,14 @@ security tradeoff, rotation, and rollback guidance. Never put the credential in
 the imported schema, GPT instructions, chat, source, or logs.
 
 ### Arcanos Gaming
+
+Gaming accepts optional player context and answer preferences in each query:
+`platform`, `edition`, `version`, `difficulty`, `currentArea`,
+`lastCompletedObjective`, `progressPoint`, `class`, `role`, `constraints`,
+`spoilerTolerance` (`none|light|full`, with legacy aliases), and `answerDepth`
+(`auto|concise|standard|detailed`). Use the limits and precedence in [API.md](API.md).
+These fields do not create conversation memory. The repository schema is additive;
+the existing minimum `mode`/`prompt` request remains valid.
 **What it is:** A Core-managed, non-privileged Custom GPT module for gameplay guides, builds, and meta advice. The `ARCANOS:GAMING` module exposes only the `query` action, validates `mode` as `guide`, `build`, or `meta`, and forwards the validated request to the Gaming pipelines without exposing Core control-plane capabilities. (`src/services/arcanos-gaming.ts`) (`src/services/gamingModes.ts`)
 
 **Known GPT IDs:** `arcanos-gaming`, `gaming`. The catalog registers `arcanos-gaming.ts` at route `gaming`, and both GPT IDs are pinned to `ARCANOS:GAMING` in direct dispatch so environment overrides cannot route them to Core. (`src/services/arcanos-gaming.ts`) (`src/services/moduleCatalog.ts`) (`src/routes/_core/gptDispatch.ts`)

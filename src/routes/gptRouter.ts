@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { pickGamingPublicPlayerContext } from '@shared/gaming/gamingPlayerContext.js';
 import express from "express";
 import { DEFAULT_BACKSTAGE_UNIVERSE_ID } from '@arcanos/protocol';
 import { resolveGptRouting, routeGptRequest } from "./_core/gptDispatch.js";
@@ -1540,6 +1541,7 @@ router.post('/arcanos-gaming/evidence-retry', (req, res, next) => {
       mode: validation.value.mode,
       game: validation.value.game,
       prompt: validation.value.originalPrompt,
+      ...pickGamingPublicPlayerContext(validation.value),
       guideUrls: validation.value.candidateUrls,
       evidenceOrigin: 'frontend_web_search',
       evidenceAttempt: 1,
@@ -1857,6 +1859,11 @@ router.post(
             'gpt.response.gaming_validation',
             400
           );
+        }
+
+        if (publicGamingDecision?.ok && publicGamingDecision.action === 'query') {
+          // Forward only the validated Gaming payload, including bounded top-level aliases.
+          effectiveBody = { ...(effectiveBody as Record<string, unknown>), payload: publicGamingDecision.request.payload };
         }
 
         requestLogger?.info?.("gpt.request.auth_state", {

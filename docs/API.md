@@ -1491,6 +1491,44 @@ never persisted to the daemon token file.
 
 ### Gaming supplied-guide evidence
 
+Gaming query payloads accept optional request-scoped `platform` (64 characters),
+`edition` (120), `version` (64), `difficulty` (64), `currentArea` (160),
+`lastCompletedObjective` (240), `progressPoint` (160), `class` (64), `role` (64),
+and `constraints` (at most eight strings of 160 characters). All context values
+together are limited to 2,000 characters; existing prompt, URL, parser, and
+request limits still apply. Payloads reject unknown fields. `patch`, `className`,
+`progress`, and `checkpoint` remain aliases. Semantic `version` values normalize
+to the existing `requestedVersion` selector; non-semantic version labels remain
+user context. Different explicit aliases trigger a targeted guide clarification.
+
+`spoilerTolerance` accepts `none`, `light`, or `full`. Legacy `avoid` maps to
+`none`; `allowed`, `ok`, and `spoilers ok` map to `full`; `no spoilers` maps to
+`none`. Omitted or `unknown` uses conservative `none` without claiming an explicit
+preference. Conflicting structured and textual permissions use the stricter mode.
+`answerDepth` accepts `auto` (default), `concise`, `standard`, or `detailed`;
+an explicit brevity/detail request in the current question takes precedence.
+
+Explicit payload values take precedence over omitted-field top-level aliases.
+Direct affirmative first-person statements in the question may supply missing
+area, completed-objective, or checkpoint claims. Negations, hypothetical
+questions, and source mentions do not establish progress. Broad class, role,
+platform, difficulty, or version extraction remains tentative. Source titles
+never establish the player's edition, and explicit precise game names remain
+intact. Conflicting material guide context prompts one clarification. Context is
+forwarded through validation, backend mapping, retrieval, and Trinity; it is
+user-provided data, never verified state or control instructions. There is no
+implicit session or cross-chat memory.
+
+The existing `POST /gpt/arcanos-gaming/evidence-retry` client endpoint accepts the
+same optional context fields alongside `game`, `mode`, `originalPrompt`,
+`candidateUrls`, and `evidenceAttempt: 1`. Clients must resupply their context;
+the endpoint does not retrieve prior conversation state. It retains its single
+evidence-attempt bound and does not grant provider retries or source access.
+
+```json
+{"action":"query","payload":{"mode":"guide","game":"Lantern Vale","prompt":"What next?","currentArea":"Copper Harbor","lastCompletedObjective":"Restored the ferry beacon","spoilerTolerance":"none","answerDepth":"concise"}}
+```
+
 `POST /gpt/arcanos-gaming` retains its existing request and HTTP envelope. In
 `guide` mode, explicit supplied guide URLs must contribute readable evidence
 before a provider answer can run. When none does, the module returns

@@ -239,7 +239,7 @@ describe('public Gaming request dispatcher', () => {
     expect(elapsedMs).toBeLessThan(1_000);
   });
 
-  it('classifies only the original payload prompt, never source-like or derived fields', () => {
+  it('rejects caller-supplied derived evidence fields at the closed payload boundary', () => {
     const gameplayDecision = dispatchPublicGamingRequest({
       action: 'query',
       payload: {
@@ -265,11 +265,11 @@ describe('public Gaming request dispatcher', () => {
       },
     }, 'query');
 
-    expect(gameplayDecision).toMatchObject({ ok: true, intent: 'gameplay_guide' });
+    expect(gameplayDecision).toMatchObject({ ok: false, intent: 'unsupported', error: { code: 'BAD_REQUEST' } });
     expect(operationalDecision).toMatchObject({
       ok: false,
-      intent: 'integration_status',
-      error: { code: OPERATIONAL_REQUEST_NOT_GAMEPLAY_CODE },
+      intent: 'unsupported',
+      error: { code: 'BAD_REQUEST' },
     });
   });
 
