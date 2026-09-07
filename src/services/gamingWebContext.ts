@@ -1,6 +1,8 @@
 import { splitGamingDocumentIntoChunks as splitIntoChunks } from "@services/gamingDocumentChunks.js";
 import { createHash } from "node:crypto";
 import { GAMEPLAY_CONTENT_PATTERN, filterGamingDocumentInstructions, isGamingCatalogMetadataOnly } from "@services/gamingDocumentExtraction.js";
+import type { GamingPlayerContext } from '@shared/gaming/gamingPlayerContext.js';
+import { buildGamingRetrievalTerms, GAMING_RETRIEVAL_POLICY_VERSION, gamingTermCoverage, safeGamingEvidenceMetadata, scopeGamingEvidenceParagraphs } from '@shared/gaming/gamingRetrievalPolicy.js';
 import { describeGamingDocumentSource, resolveGamingDocument } from "@services/gamingDocumentResolution.js";
 import { load } from "cheerio";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
@@ -122,7 +124,7 @@ export type GamingGuideUrlInput = Pick<ValidatedGamingRequest, "guideUrl" | "gui
 export type GamingRagInput = Pick<
   ValidatedGamingRequest,
   "mode" | "prompt" | "game" | "guideUrl" | "guideUrls" | "requestedVersion"
->;
+> & GamingPlayerContext;
 
 export type GamingWebContextLogContext = {
   module: "ARCANOS:GAMING";
@@ -1482,6 +1484,10 @@ function tokenize(value: string): string[] {
 }
 
 function extractTopicTerms(input: GamingRagInput, game?: string): string[] {
+  if (input.mode === 'guide') {
+    const policy = buildGamingRetrievalTerms({ ...input, game });
+    return [...policy.focusTerms, ...tokenize(game ?? '')].slice(0, 20);
+  }
   const text = `${input.prompt} ${game ?? ""}`;
   const terms = tokenize(text)
     .filter((term) => !["game", "guide", "build", "meta", "this", "that", "still", "make", "what", "where", "first", "after"].includes(term))
@@ -2302,6 +2308,12 @@ function isRelevantGameplayChunk(
   terms: readonly string[],
   input: GamingRagInput
 ): boolean {
+  if (input.mode === 'guide') {
+    const { focusTerms } = buildGamingRetrievalTerms(input);
+    // A supplied document still needs topical evidence. No chronology is inferred
+    // from its title, chapter order, or chunk ordinal.
+    if (focusTerms.length && gamingTermCoverage(text, focusTerms) === 0) return false;
+  }
   if (candidate.supplied) {
     return true;
   }
@@ -2397,7 +2409,7 @@ function rankChunks(documents: GamingFetchedDocument[], terms: string[], input: 
       }
       continue;
     }
-    for (const chunk of splitIntoChunks(document.text, maxChunkChars)) {
+    for (const chunk of splitIntoChunks(scopeGamingEvidenceParagraphs(document.text, input), maxChunkChars)) {
       const safeChunk = extractReadableEvidenceText(chunk);
       if (!safeChunk || !isReadableGameplayChunk(safeChunk) || !isRelevantGameplayChunk(safeChunk, document.candidate, terms, input)) {
         continue;
@@ -2417,6 +2429,8 @@ function rankChunks(documents: GamingFetchedDocument[], terms: string[], input: 
       const termScore = Math.min(0.7, terms.filter((term) =>
         tokenize(term).every((token) => chunkTokens.has(token))
       ).length * 0.14);
+      const stateScore = input.mode === 'guide'
+        ? 0.08 * gamingTermCoverage(safeChunk, buildGamingRetrievalTerms(input).contextTerms) : 0;
       const gameScore = Math.min(0.24, gameTerms.filter((term) => chunkTokens.has(term)).length * 0.08);
       const modeTermCount = MODE_CONTENT_TERMS[input.mode].filter((term) => haystack.includes(term)).length;
       const modeScore = Math.min(0.35, modeTermCount * 0.07);
@@ -2439,6 +2453,7 @@ function rankChunks(documents: GamingFetchedDocument[], terms: string[], input: 
         text: safeChunk,
         score: scoreCandidate(input, document.candidate, terms, patchSensitive)
           + termScore
+          + stateScore
           + gameScore
           + modeScore
           + patchScore
@@ -2566,7 +2581,8 @@ function buildRagContext(
   chunks: GamingRankedChunk[],
   sources: GamingWebSource[],
   retrievalQuery: string,
-  maxContextChars: number
+  maxContextChars: number,
+  input: GamingRagInput
 ): { context: string; selectedChunkCount: number; selectedSourceUrls: Set<string> } {
   const selectedSourceUrls = new Set<string>();
   let selectedChunkCount = 0;
@@ -2599,9 +2615,10 @@ function buildRagContext(
     const freshnessNote = chunk.candidate.discovered && !chunk.candidate.stable
       ? `; Freshness: ${chunk.candidate.updatedAt ?? chunk.candidate.publishedAt ?? "date unavailable; latest status unverified"}`
       : "";
+    const title = safeGamingEvidenceMetadata(chunk.candidate.title, input, 240);
     const header = [
       "", `[Source ${sourceNumber}] ${chunk.candidate.url}`,
-      `Title: ${chunk.candidate.title}; Domain: ${domain}; Type: ${chunk.candidate.sourceType}; Trust: ${chunk.candidate.trustScore.toFixed(2)}${freshnessNote}`
+      `${title ? `Title: ${title}; ` : ''}Domain: ${domain}; Type: ${chunk.candidate.sourceType}; Trust: ${chunk.candidate.trustScore.toFixed(2)}${freshnessNote}`
     ];
     const availableChars = maxContextChars - [...parts, ...header, ""].join("\n").length;
     // A source header alone is not evidence. Count only readable text that fits
@@ -3035,7 +3052,7 @@ export async function buildGamingRagContext(
       });
     }
     const discoveryResult = await discoverGamingSources({
-      prompt: input.prompt,
+      prompt: input.mode === 'guide' ? [input.prompt, ...buildGamingRetrievalTerms(input).focusTerms].join(' ') : input.prompt,
       game,
       mode: input.mode,
       patchSensitive,
@@ -3148,13 +3165,13 @@ export async function buildGamingRagContext(
     ? Math.min(publicErrorSources.length, publicSourceLimit, rankedSources.length > 0 ? 1 : publicSourceLimit)
     : 0;
   let retainedSources = rankedSources.slice(0, Math.max(0, publicSourceLimit - reservedErrorSourceCount));
-  let renderedContext = buildRagContext(chunks, retainedSources, effectiveRetrievalQuery, maxContextChars);
+  let renderedContext = buildRagContext(chunks, retainedSources, effectiveRetrievalQuery, maxContextChars, effectiveInput);
   // Preserve metadata-only placeholders, while citations require evidence that
   // actually survived the provider-context budget. Re-render to align numbering.
   retainedSources = retainedSources.filter((source) =>
     !isCitableGamingWebSource(source) || renderedContext.selectedSourceUrls.has(source.url)
   );
-  renderedContext = buildRagContext(chunks, retainedSources, effectiveRetrievalQuery, maxContextChars);
+  renderedContext = buildRagContext(chunks, retainedSources, effectiveRetrievalQuery, maxContextChars, effectiveInput);
   const returnedSources = [
     ...retainedSources,
     ...publicErrorSources.slice(0, reservedErrorSourceCount)
@@ -3241,6 +3258,8 @@ export async function buildGamingRagContext(
     logger.info("gaming.retrieval.end", {
       ...logContext,
       ...(effectiveGameDetection.game ? { game: effectiveGameDetection.game, detectedGame: effectiveGameDetection.game } : {}),
+      ...(input.mode === 'guide' ? { retrievalPolicyVersion: GAMING_RETRIEVAL_POLICY_VERSION,
+        effectiveSpoilerMode: input.spoilerMode ?? 'none' } : {}),
       gameDetectionConfidence: effectiveGameDetection.confidence,
       gameDetectionSource: effectiveGameDetection.source,
       retrievalEnabled,

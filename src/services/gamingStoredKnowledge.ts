@@ -15,6 +15,7 @@ import {
 import { GAMING_BUILD_RESOURCE_HARD_LIMITS } from './gamingBuildResourceSchema.js';
 import { getGamingRagChunkChars, getGamingRagMaxChunks, getGamingRagMaxSources, getGamingWebContextMaxChars } from './gamingConfig.js';
 import { canonicalizeGamingGameName } from './gamingGameDetection.js';
+import { buildGamingRetrievalTerms, GAMING_RETRIEVAL_POLICY_VERSION } from '@shared/gaming/gamingRetrievalPolicy.js';
 
 export { buildStoredGamingLexicalQuery } from '@shared/gaming/gamingStoredEvidenceCore.js';
 export type {
@@ -49,14 +50,14 @@ export function selectStoredGamingEvidence(records: readonly GamingKnowledgeProv
 }
 
 /** Preserve the service formatter API while keeping configuration outside the core. */
-export function formatStoredGamingEvidence(candidates: readonly GamingStoredEvidenceCandidate[], input: Pick<GamingStoredKnowledgeInput, 'sourceIndexOffset' | 'maxContextChars'>): GamingStoredKnowledgeContext {
+export function formatStoredGamingEvidence(candidates: readonly GamingStoredEvidenceCandidate[], input: Pick<GamingStoredKnowledgeInput, 'sourceIndexOffset' | 'maxContextChars' | 'spoilerMode'>): GamingStoredKnowledgeContext {
   return formatStoredGamingEvidenceCore(candidates, input, { maxContextChars: getGamingWebContextMaxChars() });
 }
 
 export async function retrieveStoredGamingKnowledge(input: GamingStoredKnowledgeInput,
   options: { resolveVerifiedPatch: PatchResolver }): Promise<GamingStoredKnowledgeContext> {
   const startedAt = Date.now();
-  const { query } = buildStoredGamingLexicalQuery(input.prompt, input.game);
+  const { query } = buildStoredGamingLexicalQuery(input.prompt, input.game, input.mode === 'guide' ? input : undefined);
   if (!query || input.maxContextChars === 0 || getGamingWebContextMaxChars() === 0) return { context: '', sources: [] };
   input.signal?.throwIfAborted();
   const gameKey = canonicalizeGamingGameName(input.game).normalize('NFKC').toLowerCase()
@@ -94,7 +95,11 @@ export async function retrieveStoredGamingKnowledge(input: GamingStoredKnowledge
   }
   const candidates = selectStoredGamingEvidence(records, input, options.resolveVerifiedPatch);
   const result = formatStoredGamingEvidence(candidates, input);
+  const retrievalTerms = buildGamingRetrievalTerms(input);
   logger.info('gaming.stored_retrieval.completed', {
+    ...(input.mode === 'guide' ? { retrievalPolicyVersion: GAMING_RETRIEVAL_POLICY_VERSION,
+      requestTermCount: retrievalTerms.requestTerms.length, playerContextTermCount: retrievalTerms.contextTerms.length,
+      effectiveSpoilerMode: input.spoilerMode ?? 'none' } : {}),
     lexicalCandidateCount: records.length, semanticCandidateCount: 0,
     mergedCandidateCount: new Set(records.map(record => record.recordId)).size,
     selectedChunkCount: result.evidence?.length ?? 0, selectedContextChars: result.context.length,

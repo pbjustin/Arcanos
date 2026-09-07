@@ -1166,7 +1166,7 @@ describe('gaming source ingestion', () => {
     searchActiveGamingKnowledgeMock.mockImplementation(() => blockedLookup);
     const lookupInput = {
       game: 'Borderlands 4',
-      prompt: 'beginner guide',
+      prompt: 'Where is the Zephyrglass Compass?',
       mode: 'guide' as const,
       queryTimeoutMs: 250
     };
