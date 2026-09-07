@@ -308,6 +308,19 @@ export async function runTrinityGenerationFacade(
   const startedAt = Date.now();
   const policyPrompt = resolveClassificationPrompt(params);
   const intentMode = resolveIntentMode(policyPrompt, params.context.runOptions ?? {});
+  const runOptions = { ...(params.context.runOptions ?? {}) };
+  const body = params.input.body;
+  // The policy is internal configuration, never a field read from public request data.
+  if (!(
+    runOptions.gamingGuideIntakePolicy === 'compact-v1'
+    && params.input.moduleId === 'ARCANOS:GAMING'
+    && sourceEndpoint === 'arcanos-gaming.guide'
+    && body !== null && typeof body === 'object'
+    && Object.prototype.hasOwnProperty.call(body, 'mode')
+    && (body as Record<string, unknown>).mode === 'guide'
+  )) {
+    delete runOptions.gamingGuideIntakePolicy;
+  }
 
   logger.info('trinity.entry', {
     module: 'trinity',
@@ -325,7 +338,7 @@ export async function runTrinityGenerationFacade(
       params.input.sessionId,
       params.input.overrideAuditSafe,
       {
-        ...(params.context.runOptions ?? {}),
+        ...runOptions,
         sourceEndpoint,
       },
       runtimeBudget
