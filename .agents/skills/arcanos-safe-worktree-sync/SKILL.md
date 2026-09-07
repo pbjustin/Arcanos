@@ -25,7 +25,7 @@ Fetch the verified remote branch and use `git merge --ff-only --no-overwrite-ign
 
 ### Dirty checkout or branch-only commits
 
-Before a branch switch or authorized realignment, preserve the current HEAD with a uniquely named backup branch and save staged/unstaged plus normal untracked changes in a uniquely named stash using `git stash push --include-untracked --message`. Do not stash merely to answer a status question. Check ignored/untracked path names for prospective checkout collisions; never include ignored files with `--all` as routine preservation.
+Before a branch switch or authorized realignment, preserve the current HEAD with a uniquely named backup branch and save staged/unstaged plus normal untracked changes in a uniquely named stash using `git stash push --include-untracked --message "<unique-recovery-name>"`, replacing the placeholder with a unique name for this operation. Do not stash merely to answer a status question. Check ignored/untracked path names for prospective checkout collisions; never include ignored files with `--all` as routine preservation.
 
 Record the backup branch and OID, stash OID, source checkout/branch, and target OID. Verify the backup resolves to the original HEAD, verify stash parent and tree metadata and applicable untracked entries, and independently recheck checkout cleanliness before proceeding. Line-ending normalization can make stash summaries misleading; an empty `stash show` alone is not proof that nothing was saved. If preservation fails, stop dependent writes and retain all recovery objects.
 
