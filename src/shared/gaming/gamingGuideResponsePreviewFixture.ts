@@ -126,7 +126,7 @@ export function runGamingGuideResponsePreview(): void {
     requireProof(missingContextPrompt.includes(MATERIAL_CONTEXT) && missingContextPrompt.includes(ANSWER_FIRST));
 
     const ungroundedPrompt = buildGamingPrompt(input(), '', true, false, RESOURCES);
-    requireProof(ungroundedPrompt.includes('Return only a six-item checklist'));
+    requireProof(ungroundedPrompt.includes('No accepted guide evidence is available.') && !ungroundedPrompt.includes('Return only a six-item checklist'));
     requireProof(ungroundedPrompt.includes(RESOURCES.webUncertaintyGuidance) && !ungroundedPrompt.includes(ANSWER_FIRST));
     requireProof(!buildGamingSystemPrompt('guide', false).includes(SYSTEM_MATERIAL_CONTEXT));
     for (const mode of ['build', 'meta'] as const) {

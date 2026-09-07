@@ -52,11 +52,13 @@ import {
   type GamingStoredKnowledgeContext
 } from "@services/gamingSourceIngestion.js";
 import { formatStoredGamingEvidence } from "@services/gamingStoredKnowledge.js";
+import { pickGamingPlayerContext, resolveGamingPlayerContext, type GamingPlayerContext } from "@shared/gaming/gamingPlayerContext.js";
+import { resolveGamingAnswerPolicy } from "@shared/gaming/gamingAnswerPolicy.js";
 
 export type GamingPipelineInput = Pick<
   ValidatedGamingRequest,
   "mode" | "prompt" | "game" | "guideUrl" | "guideUrls" | "evidenceOrigin" | "requestedVersion" | "evidenceAttempt" | "auditEnabled"
->;
+> & GamingPlayerContext;
 
 type GamingWebSource = GamingSuccessEnvelope["data"]["sources"][number];
 
@@ -407,8 +409,6 @@ export function normalizeGamingInlineSourceReferences(response: string, sourceCo
       }
       return normalized;
     })
-    .replace(/\s+([.,;:!?])/g, "$1")
-    .replace(/[ \t]{2,}/g, " ")
     .trim();
 
   return {
@@ -606,20 +606,15 @@ function stringifyMockResult(result: unknown): string {
   }
 }
 
-function buildGamingRunOptions(mode: GamingMode, hasGuideSources: boolean) {
+function buildGamingRunOptions(mode: GamingMode, _hasGuideSources: boolean) {
   if (mode === "guide") {
-    if (hasGuideSources) {
-      return {
-        answerMode: "explained" as const,
-        requestedVerbosity: "normal" as const,
-        strictUserVisibleOutput: true
-      };
-    }
-
     return {
-      answerMode: "direct" as const,
+      answerMode: "explained" as const,
       requestedVerbosity: "normal" as const,
-      strictUserVisibleOutput: true
+      strictUserVisibleOutput: true,
+      gamingGuideIntakePolicy: "compact-v1" as const,
+      disableOptionalSideEffects: true,
+      redactAuditContent: true
     };
   }
 
@@ -637,6 +632,9 @@ function buildGamingRunOptions(mode: GamingMode, hasGuideSources: boolean) {
 }
 
 export async function runGameplayPipeline(params: GamingPipelineInput): Promise<GamingSuccessEnvelope> {
+  if (params.mode === "guide" && !params.contextOrigins) {
+    params = { ...params, ...resolveGamingPlayerContext(params, params.prompt) };
+  }
   const requestStartedAt = Date.now();
   const sourceEndpoint = `arcanos-gaming.${params.mode}`;
   const requestContext = getRequestAbortContext();
@@ -671,6 +669,14 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
   };
 
   logger.info("gaming.request.start", baseLogContext);
+  if (params.mode === "guide") {
+    logger.info("gaming.guide.policy", {
+      ...baseLogContext,
+      ...resolveGamingAnswerPolicy(params),
+      contextOrigins: params.contextOrigins,
+      contextConflicts: params.contextConflicts
+    });
+  }
 
   const shortcutStartedAt = Date.now();
   const exactLiteralShortcut = tryExtractExactLiteralPromptShortcut(params.prompt);
@@ -846,9 +852,11 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
           abortMessage: `Gaming stored retrieval timed out after ${storedRetrievalTimeoutMs}ms`
         },
         () => buildStoredGamingKnowledgeContext({
+          ...pickGamingPlayerContext(resolvedParams),
           game: resolvedGame,
           prompt: resolvedParams.prompt,
           mode: resolvedParams.mode,
+          requestedVersion: resolvedParams.requestedVersion,
           sourceIndexOffset: liveCitableSources.length,
           maxContextChars: storedContextBudget,
           excludePublicUrls: sources.filter(isCitableGamingWebSource).map(source => source.url),
@@ -881,7 +889,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
           const source = uniqueStoredSources.find(candidate => candidate.url === evidence.publicUrl);
           return source ? [{ source, evidence }] : [];
         });
-        const projected = formatStoredGamingEvidence(candidates, { sourceIndexOffset: liveCitableSources.length, maxContextChars: storedContextBudget });
+        const projected = formatStoredGamingEvidence(candidates, { sourceIndexOffset: liveCitableSources.length, maxContextChars: storedContextBudget, spoilerMode: resolvedParams.spoilerMode });
         uniqueStoredSources = projected.sources;
         storedContext = projected.context;
         storedSelectedChunkCount = projected.evidence?.length ?? 0;
@@ -1108,6 +1116,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
             ),
             runOptions: {
               ...buildGamingRunOptions(params.mode, guideUrls.length > 0 && retrievalHadUsableSources),
+              ...(params.mode === "guide" ? { trustedPolicyPrompt: resolvedParams.prompt, internalMode: false } : {}),
               intentMode: "EXECUTE_TASK",
               ...(retrievalHadUsableSources
                 ? { toolBackedCapabilities: { verifyProvidedData: true } }
@@ -1118,6 +1127,20 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
           }
         })
     );
+    const completion = trinityResult.meta?.provider;
+    if (params.mode === "guide" && (completion?.incomplete || completion?.truncated || completion?.lengthTruncated
+      || completion?.finishReason === "length" || completion?.responseStatus === "incomplete")) {
+      throw Object.assign(new Error("Gaming provider completion is incomplete."), {
+        code: "OPENAI_COMPLETION_INCOMPLETE",
+        finishReason: completion.finishReason,
+        incompleteReason: completion.incompleteReason
+      });
+    }
+    if (params.mode === "guide" && (trinityResult.fallbackFlag || trinityResult.dryRun || completion?.contentFiltered)) {
+      throw Object.assign(new Error("Gaming provider did not produce a completed primary answer."), {
+        code: "GAMING_PROVIDER_UNUSABLE_RESPONSE"
+      });
+    }
     if (
       trinityResult.meta?.provider?.emptyOutput === true
       || typeof trinityResult.result !== "string"

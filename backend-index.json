@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-06T19:49:06.319Z",
+  "generatedAt": "2026-09-07T21:24:14.482Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -2615,6 +2615,9 @@
           "relativePath": "src/shared/fileStorage.ts"
         },
         {
+          "relativePath": "src/shared/gaming/gamingAnswerPolicy.ts"
+        },
+        {
           "relativePath": "src/shared/gaming/gamingArchivePreviewFixture.ts"
         },
         {
@@ -2642,7 +2645,13 @@
           "relativePath": "src/shared/gaming/gamingGuideResponsePreviewFixture.ts"
         },
         {
+          "relativePath": "src/shared/gaming/gamingPlayerContext.ts"
+        },
+        {
           "relativePath": "src/shared/gaming/gamingPromptCore.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingRetrievalPolicy.ts"
         },
         {
           "relativePath": "src/shared/gaming/gamingStoredEvidenceCore.ts"
@@ -3937,6 +3946,9 @@
           "relativePath": "tests/gaming-agents.routing.test.ts"
         },
         {
+          "relativePath": "tests/gaming-answer-policy.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-archive-preview-failure.test.ts"
         },
         {
@@ -3985,6 +3997,12 @@
           "relativePath": "tests/gaming-large-guide-rag.integration.test.ts"
         },
         {
+          "relativePath": "tests/gaming-player-context.e2e.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-player-context.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-prompt-builder.test.ts"
         },
         {
@@ -3998,6 +4016,9 @@
         },
         {
           "relativePath": "tests/gaming-resolved-source-ingestion.integration.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-retrieval-policy.test.ts"
         },
         {
           "relativePath": "tests/gaming-search-discovery.test.ts"
@@ -5027,6 +5048,9 @@
         },
         {
           "relativePath": "tests/trinity-direct-answer-stage.test.ts"
+        },
+        {
+          "relativePath": "tests/trinity-gaming-intake.test.ts"
         },
         {
           "relativePath": "tests/trinity-integrity-recovery.test.ts"

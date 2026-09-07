@@ -61,6 +61,7 @@ ownership, lifecycle, consolidation, and validation rules.
 | Document | Lifecycle | Scope |
 | --- | --- | --- |
 | [Arcanos Gaming Custom GPT](ARCANOS_GAMING_CUSTOM_GPT.md) | Docs-as-contract | Builder instructions and OpenAPI contract expectations. |
+| [Gaming guide assistance](GAMING_GUIDE_ASSISTANCE.md) | Companion | Player context, guide intake, lexical retrieval, spoiler/depth policy, and deterministic evaluation. |
 | [Backstage Booker Custom GPT](BACKSTAGE_BOOKER_CUSTOM_GPT.md) | Docs-as-contract | End-user workflow, scoped Notion continuity queries, mandatory CLEAR-guided generation, simulation, protected exact reads, approval-gated canon writes, Builder setup, rotation, and rollback. |
 | [Backstage Booker GPT Builder instructions](BACKSTAGE_BOOKER_GPT_BUILDER_INSTRUCTIONS.md) | Docs-as-contract | Copy-ready protected-authority and no-local-fallback instructions for the live GPT Builder. |
 | [MCP server](ARCANOS_MCP_SERVER.md) | Companion | Current MCP transports, tools, principals, and gates. |
