@@ -353,6 +353,35 @@ function formatCitationNumbers(numbers: number[], sourceCount: number, wrapper: 
 export function normalizeGamingInlineSourceReferences(response: string, sourceCount: number): GamingCitationNormalization {
   let maxInlineSourceRef = 0;
   let applied = false;
+  // Repair only the gap left by a removed citation. Preserve all other spacing,
+  // including code, list indentation, and trailing Markdown hard-break spaces.
+  const replaceReferences = (text: string, pattern: RegExp, rewrite: (
+    fullMatch: string, rawNumbers: string, offset: number, fullText: string
+  ) => string): string => {
+    let result = '';
+    let cursor = 0;
+    for (const match of text.matchAll(pattern)) {
+      const offset = match.index;
+      result += text.slice(cursor, offset);
+      const replacement = rewrite(match[0], match[1], offset, text);
+      cursor = offset + match[0].length;
+      if (replacement) {
+        result += replacement;
+        continue;
+      }
+      const trailing = /^[ \t]*/u.exec(text.slice(cursor))?.[0] ?? '';
+      const linePrefix = result.slice(result.lastIndexOf('\n') + 1);
+      const leading = /[ \t]+$/u.exec(result)?.[0] ?? '';
+      const next = text[cursor + trailing.length];
+      if (linePrefix.trim()) {
+        result = result.slice(0, result.length - leading.length);
+        if (!next || next === '\r' || next === '\n') result += trailing;
+        else if ((leading || trailing) && !/[.,;:!?]/u.test(next)) result += ' ';
+      }
+      cursor += trailing.length;
+    }
+    return result + text.slice(cursor);
+  };
   const normalizeMatch = (fullMatch: string, rawNumbers: string, wrapper: "paren" | "bracket"): string => {
     const numbers = parseCitationNumbers(rawNumbers);
     for (const number of numbers) {
@@ -366,11 +395,10 @@ export function normalizeGamingInlineSourceReferences(response: string, sourceCo
     return normalized;
   };
 
-  const normalized = response
-    .replace(/\[(?:sources?)\s+([\d,\s]+)\]/gi, (fullMatch, rawNumbers: string) =>
+  let normalized = replaceReferences(response, /\[(?:sources?)\s+([\d,\s]+)\]/gi, (fullMatch, rawNumbers: string) =>
       normalizeMatch(fullMatch, rawNumbers, "bracket")
-    )
-    .replace(/\[([\d,\s]+)\]/g, (fullMatch, rawNumbers: string) => {
+    );
+  normalized = replaceReferences(normalized, /\[([\d,\s]+)\]/g, (fullMatch, rawNumbers: string) => {
       const numbers = parseCitationNumbers(rawNumbers);
       for (const number of numbers) {
         maxInlineSourceRef = Math.max(maxInlineSourceRef, number);
@@ -382,11 +410,11 @@ export function normalizeGamingInlineSourceReferences(response: string, sourceCo
         applied = true;
       }
       return normalizedMatch;
-    })
-    .replace(/\((?:sources?)\s+([\d,\s]+)\)/gi, (fullMatch, rawNumbers: string) =>
+    });
+  normalized = replaceReferences(normalized, /\((?:sources?)\s+([\d,\s]+)\)/gi, (fullMatch, rawNumbers: string) =>
       normalizeMatch(fullMatch, rawNumbers, "paren")
-    )
-    .replace(/\b(?:sources?)\s+(\d+(?:\s*,\s*\d+)*)\b/gi, (
+    );
+  normalized = replaceReferences(normalized, /\b(?:sources?)\s+(\d+(?:\s*,\s*\d+)*)\b/gi, (
       fullMatch: string,
       rawNumbers: string,
       offset: number,
@@ -408,8 +436,7 @@ export function normalizeGamingInlineSourceReferences(response: string, sourceCo
         applied = true;
       }
       return normalized;
-    })
-    .trim();
+    }).trim();
 
   return {
     response: normalized,

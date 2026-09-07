@@ -75,6 +75,7 @@ jest.unstable_mockModule('@services/gamingSourceIngestion.js', () => ({
 }));
 
 const { runBuildPipeline, runGuidePipeline, runMetaPipeline } = await import('../src/services/gaming.js');
+const { normalizeGamingInlineSourceReferences } = await import('../src/services/gamingPipeline.js');
 const { buildGamingRagContext, clearGamingRagCache } = await import('../src/services/gamingWebContext.js');
 const { runWithRequestAbortContext } = await import('@arcanos/runtime');
 const { logger } = await import('@platform/logging/structuredLogging.js');
@@ -687,6 +688,18 @@ describe('gaming guide output hardening', () => {
     expect(mockBuildStoredGamingKnowledgeContext).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['Use [99] [98] for the route.', 'Use for the route.'],
+    ['Use [Sources 99] for prep (source 98), then go.', 'Use for prep, then go.'],
+    ['Check source 99, then turn the valve [1].', 'Check, then turn the valve [1].'],
+    ['Route [99]  \nNext step [1].', 'Route  \nNext step [1].'],
+    ['Route.\n    [99]    Indented step [1].', 'Route.\n    Indented step [1].'],
+    ['1. Route [99].  \n   - Keep  this [1]  \n     continuation.', '1. Route.  \n   - Keep  this [1]  \n     continuation.'],
+    ['**Route.**  \n\n1. Use `a  b` [1].\n   - Keep the [guide](https://example.com/guide).', '**Route.**  \n\n1. Use `a  b` [1].\n   - Keep the [guide](https://example.com/guide).']
+  ])('repairs only deleted citation gaps while preserving Markdown: %s', (input, expected) => {
+    expect(normalizeGamingInlineSourceReferences(input, 1).response).toBe(expected);
+  });
+
   it('normalizes generated citations so inline source refs map to public sources', async () => {
     mockFetchAndClean.mockImplementation(async (url: string) => `Guide for ${url}: Elden Ring route, preparation, boss danger checks, and upgrades.`);
     mockRunTrinityWritingPipeline.mockResolvedValueOnce({
@@ -704,7 +717,7 @@ describe('gaming guide output hardening', () => {
     });
 
     expect(result.data.sources).toHaveLength(2);
-    expect(result.data.response).toBe('Use  for the route, (source 1) for prep, [1] for danger checks, and (source 2) for upgrades.');
+    expect(result.data.response).toBe('Use for the route, (source 1) for prep, [1] for danger checks, and (source 2) for upgrades.');
     expectInlineSourceRefsToMap(result.data.response, result.data.sources.length);
   });
 

@@ -405,9 +405,19 @@ export function parsePublicGamingQueryRequest(body: unknown): PublicGamingQueryV
   const effectivePayload: Record<string, unknown> = {};
   const promptAliases = new Set(['prompt', 'message', 'userInput', 'text', 'content', 'query']);
   const hasPayloadPrompt = [...promptAliases].some(key => Object.prototype.hasOwnProperty.call(body.payload, key));
+  const contextAliasGroups = [
+    ['version', 'patch', 'requestedVersion'],
+    ['class', 'className'],
+    ['progressPoint', 'progress', 'checkpoint']
+  ];
   for (const key of PUBLIC_GAMING_PAYLOAD_FIELDS) {
     if (Object.prototype.hasOwnProperty.call(body.payload, key)) effectivePayload[key] = body.payload[key];
-    else if (!(hasPayloadPrompt && promptAliases.has(key)) && Object.prototype.hasOwnProperty.call(body, key)) effectivePayload[key] = body[key];
+    else {
+      const hasPayloadContextAlias = contextAliasGroups.some(group => group.includes(key)
+        && group.some(alias => Object.prototype.hasOwnProperty.call(body.payload, alias)));
+      if (!(hasPayloadPrompt && promptAliases.has(key)) && !hasPayloadContextAlias
+        && Object.prototype.hasOwnProperty.call(body, key)) effectivePayload[key] = body[key];
+    }
   }
   const contextError = validateGamingPlayerContextInput(effectivePayload);
   if (contextError) return { ok: false, error: { code: 'BAD_REQUEST', message: contextError } };

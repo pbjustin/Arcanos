@@ -87,6 +87,33 @@ describe('validated request-scoped Gaming player context', () => {
   });
 
   it.each([
+    ['version', 'patch', '1.2', '2.0', 'version', '1.2'],
+    ['version', 'requestedVersion', '1.2', '2.0', 'version', '1.2'],
+    ['class', 'className', 'Navigator', 'Scout', 'class', 'Navigator'],
+    ['progressPoint', 'progress', 'Dock checkpoint', 'Old Mill', 'progressPoint', 'Dock checkpoint'],
+    ['progressPoint', 'checkpoint', 'Dock checkpoint', 'Old Mill', 'progressPoint', 'Dock checkpoint'],
+    ['patch', 'version', '1.2', '2.0', 'version', '1.2'],
+    ['requestedVersion', 'version', '1.2', '2.0', 'version', '1.2'],
+    ['className', 'class', 'Navigator', 'Scout', 'class', 'Navigator'],
+    ['progress', 'progressPoint', 'Dock checkpoint', 'Old Mill', 'progressPoint', 'Dock checkpoint'],
+    ['checkpoint', 'progressPoint', 'Dock checkpoint', 'Old Mill', 'progressPoint', 'Dock checkpoint'],
+    ['progress', 'checkpoint', 'Dock checkpoint', 'Old Mill', 'progressPoint', 'Dock checkpoint']
+  ])('gives nested %s precedence over top-level equivalent %s', (nestedField, topField, nestedValue, topValue, canonical, expected) => {
+    const parsed = parsePublicGamingQueryRequest({
+      action: 'query', [topField]: topValue,
+      payload: { mode: 'guide', game: 'Lantern Vale', prompt: 'What next?', [nestedField]: nestedValue }
+    });
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) throw new Error('Expected valid nested context');
+    expect(parsed.value.payload).not.toHaveProperty(topField);
+    const intent = IntentRouterAgent.classify(parsed.value.payload);
+    expect(intent).toMatchObject({ [canonical]: expected, contextConflicts: [] });
+    expect(ClarificationAgent.evaluate(intent)).toEqual({ required: false });
+    const backend = validateGamingRequest(BackendQueryAgent.build({ ...intent, mode: 'guide' }).payload);
+    expect(backend).toMatchObject({ ok: true, value: { [canonical]: expected, contextConflicts: [] } });
+  });
+
+  it.each([
     'How do I beat the Brass Warden?', 'I have not defeated the Brass Warden.',
     "I haven't completed the beacon.", 'If I defeated the Brass Warden, what next?',
     'Imagine I am in Copper Harbor.', 'The guide says I am at the final palace.',
