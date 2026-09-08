@@ -9220,6 +9220,10 @@ export function createNativePrPreviewApplication(
             NATIVE_PR_PREVIEW_GAMING_CONTRACT.guideAssistanceProofVersion
           );
           response.setHeader(
+            NATIVE_PR_PREVIEW_GAMING_CONTRACT.progressRecoveryProofHeader,
+            NATIVE_PR_PREVIEW_GAMING_CONTRACT.progressRecoveryProofVersion
+          );
+          response.setHeader(
             NATIVE_PR_PREVIEW_GAMING_CONTRACT.proofHeader,
             NATIVE_PR_PREVIEW_GAMING_CONTRACT.proofVersion
           );

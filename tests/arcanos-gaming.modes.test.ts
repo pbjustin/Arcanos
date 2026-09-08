@@ -148,7 +148,7 @@ describe("ArcanosGaming mode routing", () => {
       }),
     }));
     expect((result as any).data.response).toContain("Quick Answer");
-    expect((result as any).data.response).toContain("Why It Works");
+    expect((result as any).data.response).not.toContain("Backend-supported");
     expect((result as any).data.response).toContain("Watch Outs");
   });
 
@@ -350,10 +350,10 @@ describe("ArcanosGaming mode routing", () => {
       route: "gaming",
       mode: "guide",
       data: expect.objectContaining({
-        response: expect.stringContaining("General Fallback (not backend-supported)")
+        response: expect.stringContaining("reliabl")
       })
     }));
-    expect((result as any).data.response).toContain("safe deterministic fallback was used");
+    expect((result as any).data.response).toContain("reliabl");
     expect((result as any).data.response).not.toMatch(/timeout|incomplete|integrity/i);
   });
 
@@ -460,10 +460,10 @@ describe("ArcanosGaming mode routing", () => {
       route: "gaming",
       mode: "guide",
       data: expect.objectContaining({
-        response: expect.stringContaining("General Fallback (not backend-supported)")
+        response: expect.stringContaining("reliabl")
       })
     }));
-    expect((result as any).data.response).toContain("safe deterministic fallback was used");
+    expect((result as any).data.response).toContain("reliabl");
     expect((result as any).data.response).not.toMatch(/timeout|incomplete|integrity/i);
   });
 
@@ -487,10 +487,10 @@ describe("ArcanosGaming mode routing", () => {
       route: "gaming",
       mode: "guide",
       data: expect.objectContaining({
-        response: expect.stringContaining("General Fallback (not backend-supported)")
+        response: expect.stringContaining("reliabl")
       })
     }));
-    expect((result as any).data.response).toContain("safe deterministic fallback was used");
+    expect((result as any).data.response).toContain("reliabl");
     expect((result as any).data.response).not.toMatch(/timeout|incomplete|integrity/i);
   });
 

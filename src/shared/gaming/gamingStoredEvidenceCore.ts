@@ -85,6 +85,8 @@ export interface GamingStoredKnowledgeContext {
   context: string;
   sources: GamingStoredKnowledgeSource[];
   evidence?: GamingStoredEvidenceChunk[];
+  /** Active stored catalog identity exists; it does not establish selected evidence. */
+  sourceKnown?: boolean;
 }
 
 export type GamingStoredPatchResolver<RecordType extends GamingStoredEvidenceRecord = GamingStoredEvidenceRecord> = (record: RecordType) => string | undefined;

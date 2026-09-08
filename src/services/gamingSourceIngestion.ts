@@ -23,6 +23,7 @@ import {
   selectGamingSourceAdmissionUrl,
   selectGamingSourcePublicUrl
 } from '@shared/gaming/gamingDocumentIngestionCore.js';
+import { normalizeGamingGameIdentity } from '@shared/gaming/gamingGameIdentity.js';
 import { truncateTextByCharacters } from '@shared/http/clientResponseCommon.js';
 import { planAutonomousWorkerJob } from '@services/workerAutonomyService.js';
 
@@ -235,12 +236,7 @@ function stableJson(value: unknown): string {
 }
 
 function canonicalGameKey(game: string): string {
-  return canonicalizeGamingGameName(game)
-    .normalize('NFKC')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/gu, '-')
-    .replace(/^-+|-+$/gu, '')
-    .slice(0, 160);
+  return normalizeGamingGameIdentity(game).slice(0, 160);
 }
 
 function publicAdmissionError(
@@ -694,7 +690,7 @@ export async function createGamingSourceIngestion(
     return buildGatewayValidationError(idempotency.error ?? 'An idempotency key is required.');
   }
 
-  const game = canonicalizeGamingGameName(parsed.data.payload.game);
+  const game = parsed.data.payload.game;
   const gameKey = canonicalGameKey(game);
   const seenCanonicalUrls = new Set<string>();
   const sources: QueuedGamingSource[] = [];
@@ -1010,7 +1006,8 @@ async function ingestOneSource(
     if (
       detectedGame.game
       && detectedGame.confidence >= 0.8
-      && canonicalGameKey(detectedGame.game) !== source.gameKey
+      // The detector recognizes broad aliases; it must not define the stored title or key.
+      && canonicalGameKey(detectedGame.game) !== canonicalGameKey(canonicalizeGamingGameName(source.game))
     ) {
       return {
         submittedIndex: source.submittedIndex,

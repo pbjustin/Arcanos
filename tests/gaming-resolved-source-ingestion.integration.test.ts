@@ -49,7 +49,7 @@ const {
   createGamingSourceIngestion, refreshGamingSources, executeQueuedGamingSourceIngestion,
   buildStoredGamingKnowledgeContext
 } = await import('../src/services/gamingSourceIngestion.js');
-const { searchActiveGamingKnowledge } = await import('../src/core/db/repositories/gamingSourceRepository.js');
+const { searchActiveGamingKnowledge, findActiveGamingSourceIdentities } = await import('../src/core/db/repositories/gamingSourceRepository.js');
 const { logger } = await import('../src/platform/logging/structuredLogging.js');
 const environment = {
   ARCANOS_GAMING_RAG_ENABLED: 'true', ARCANOS_GAMING_DISCOVERY_ENABLED: 'false',
@@ -135,6 +135,23 @@ describe('shared resolved Gaming documents reach durable stored retrieval', () =
     expect(context.sources[0].snippet).toContain('silver telescope');
     expect(mockAxiosGet).toHaveBeenCalledTimes(4);
     expect(database.queries).toContain('COMMIT');
+  });
+
+  it.each(['game key', 'revision owner'])('enforces source ownership in catalog and passage queries after a mismatched %s', async mismatch => {
+    await ingest();
+    const scopedQuery = { gameKey: 'another-game', query: TOPIC, mode: 'guide' as const, sourceIds: [resolvedSourceId] };
+    // Source IDs may replace the caller's lookup key, but never the stored join invariants.
+    expect((await searchActiveGamingKnowledge(scopedQuery)).length).toBeGreaterThan(0);
+    expect(await findActiveGamingSourceIdentities({ game: GAME, mode: 'guide' })).toHaveLength(1);
+    if (mismatch === 'game key') {
+      database.records.forEach(record => { record.game_key = 'another-game'; });
+    } else {
+      database.revisions.forEach(revision => { revision.source_id = '10000000-0000-4000-8000-000000000002'; });
+    }
+    expect(await searchActiveGamingKnowledge(scopedQuery)).toEqual([]);
+    const legacyGameKey = mismatch === 'game key' ? 'another-game' : database.source!.game_key;
+    expect(await searchActiveGamingKnowledge({ gameKey: legacyGameKey, query: TOPIC, mode: 'guide' })).toEqual([]);
+    expect(await findActiveGamingSourceIdentities({ game: GAME, mode: 'guide' })).toEqual([]);
   });
 
   it('uses refresh admission and the same resolver for unchanged and changed revision content', async () => {

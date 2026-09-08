@@ -74,6 +74,7 @@ describe('served Gaming durable RAG proof boundary', () => {
       NATIVE_PR_PREVIEW_GAMING_CONTRACT.proofHeader,
       NATIVE_PR_PREVIEW_GAMING_CONTRACT.responseProofHeader,
       NATIVE_PR_PREVIEW_GAMING_CONTRACT.guideAssistanceProofHeader,
+      NATIVE_PR_PREVIEW_GAMING_CONTRACT.progressRecoveryProofHeader,
       NATIVE_PR_PREVIEW_GAMING_CONTRACT.documentProofHeader,
       NATIVE_PR_PREVIEW_GAMING_CONTRACT.durableRagProofHeader
     ]) expect(response.headers[header]).toBeUndefined();

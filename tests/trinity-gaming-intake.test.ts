@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { buildGamingGuideIntakeContract } from '../src/shared/gaming/gamingGuideIntakeCore.js';
 
 const responsesCreate = jest.fn();
@@ -94,6 +94,11 @@ function request(prompt = originalPrompt) {
 }
 
 describe('Gaming compact Trinity intake through the real Responses adapter', () => {
+  afterEach(() => {
+    jest.useRealTimers();
+    jest.restoreAllMocks();
+  });
+
   beforeEach(() => {
     jest.clearAllMocks();
     responsesCreate.mockReset();
@@ -210,6 +215,64 @@ describe('Gaming compact Trinity intake through the real Responses adapter', () 
     await expect(runTrinityWritingPipeline(request())).rejects.toBe(providerError);
     expect(responsesCreate).toHaveBeenCalledTimes(1);
     expect(runStructuredReasoning).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { label: 'the existing 24-second Gaming stage deadline', runtimeMs: 60_000, requestMs: 60_000, expectedMs: 24_000 },
+    { label: 'the remaining runtime budget', runtimeMs: 8_000, requestMs: 60_000, expectedMs: 8_000 },
+    { label: 'the earlier aggregate request deadline', runtimeMs: 60_000, requestMs: 3_000, expectedMs: 3_000 }
+  ])('cancels intake at $label without recovery or later stages', async ({ runtimeMs, requestMs, expectedMs }) => {
+    jest.useFakeTimers();
+    const logInfo = jest.spyOn(logger, 'info').mockImplementation(() => undefined);
+    const controller = new AbortController();
+    let providerSignal: AbortSignal | undefined;
+    let providerSettled = false;
+    responsesCreate.mockImplementation((_payload: unknown, options: { signal: AbortSignal }) => {
+      providerSignal = options.signal;
+      return new Promise<never>((_resolve, reject) => {
+        options.signal.addEventListener('abort', () => {
+          providerSettled = true;
+          reject(options.signal.reason);
+        }, { once: true });
+      });
+    });
+    const input = request();
+    input.context.runtimeBudget = createRuntimeBudgetWithLimit(runtimeMs, 0);
+    input.context.runOptions.modelStageTimeoutMs = 24_000;
+    const startedAt = Date.now();
+    let completed = false;
+    const outcome = runWithRequestAbortContext({
+      requestId: `gaming-intake-deadline-${expectedMs}`, controller, signal: controller.signal,
+      deadlineAt: startedAt + requestMs, timeoutMs: requestMs
+    }, () => runTrinityWritingPipeline(input)).then(
+      result => ({ result, error: undefined }),
+      (error: unknown) => ({ result: undefined, error })
+    ).finally(() => { completed = true; });
+
+    await jest.advanceTimersByTimeAsync(0);
+    expect(responsesCreate).toHaveBeenCalledTimes(1);
+    expect(responsesCreate.mock.calls[0]?.[1]).toMatchObject({ timeout: expectedMs });
+    await jest.advanceTimersByTimeAsync(expectedMs - 1);
+    expect(completed).toBe(false);
+    expect(providerSignal?.aborted).toBe(false);
+    await jest.advanceTimersByTimeAsync(1);
+    const settled = await outcome;
+    expect(Date.now() - startedAt).toBe(expectedMs);
+    expect(settled.result).toBeUndefined();
+    expect(settled.error).toMatchObject({ name: 'AbortError', timeoutPhase: 'intake', trinityStage: 'intake' });
+    expect(providerSignal?.aborted).toBe(true);
+    expect(providerSettled).toBe(true);
+    expect(responsesCreate).toHaveBeenCalledTimes(1);
+    expect(runStructuredReasoning).not.toHaveBeenCalled();
+    expect(createGPT5Reasoning).not.toHaveBeenCalled();
+    expect(storePattern).not.toHaveBeenCalled();
+    expect(recordFeedback).not.toHaveBeenCalled();
+    expect(logInfo).toHaveBeenCalledWith('trinity.gaming.intake.complete', expect.objectContaining({
+      completionStatus: 'cancelled', recovery: 'not_attempted'
+    }));
+    expect(logInfo).not.toHaveBeenCalledWith('trinity.gaming.intake.complete', expect.objectContaining({
+      completionStatus: 'completed'
+    }));
   });
 
   it('rejects an empty compact intake instead of silently substituting the original prompt', async () => {

@@ -1,6 +1,10 @@
 import { buildGamingRetrievalTerms, safeGamingEvidenceMetadata, scopeGamingEvidenceParagraphs } from '../src/shared/gaming/gamingRetrievalPolicy.js';
 
 describe('request-scoped Gaming lexical retrieval policy', () => {
+  test.each(['What am I supposed to do now?', 'I’m stuck.', 'Where should I go next?'])('generic progression wording %s is not a lexical anchor', prompt => {
+    expect(buildGamingRetrievalTerms({ prompt, game: 'Lantern Voyage' }).focusTerms).toEqual([]);
+    expect(buildGamingRetrievalTerms({ prompt, currentArea: 'Copper Quay' }).focusTerms).toEqual(['copper', 'quay']);
+  });
   test('uses explicit progress to acquire evidence for an ambiguous adventure request', () => {
     expect(buildGamingRetrievalTerms({ prompt: 'What next?', game: 'Lantern Voyage', currentArea: 'Copper Quay', lastCompletedObjective: 'Repair signal bell' }))
       .toEqual({ requestTerms: [], contextTerms: ['copper', 'quay', 'repair', 'signal', 'bell'], focusTerms: ['copper', 'quay', 'repair', 'signal', 'bell'] });
@@ -17,6 +21,50 @@ describe('request-scoped Gaming lexical retrieval policy', () => {
     expect(boss.focusTerms).toEqual(['glass', 'warden']);
     const item = buildGamingRetrievalTerms({ prompt: 'Where is the Zephyrglass Compass? Spoilers allowed. Make it detailed.', currentArea: 'Copper Quay' });
     expect(item.focusTerms).toEqual(['zephyrglass', 'compass']);
+  });
+
+  test('generic completion prose cannot displace the named progress point', () => {
+    const terms = buildGamingRetrievalTerms({ prompt: 'What next?', game: 'Lantern Voyage',
+      currentArea: 'Copper Quay', lastCompletedObjective: 'user has completed the first major Copper Quay objective',
+      platform: 'PC', difficulty: 'Hard', answerDepth: 'detailed', constraints: ['only use starter equipment'] });
+    expect(terms.focusTerms).toEqual(['copper', 'quay']);
+  });
+
+  test('negated or hypothetical state and build constraints cannot supply a progression anchor', () => {
+    for (const lastCompletedObjective of ['I have not defeated the Glass Warden', 'If I defeated the Glass Warden']) {
+      expect(buildGamingRetrievalTerms({ prompt: 'What next?', lastCompletedObjective, class: 'Paladin', constraints: ['low health'] }).focusTerms).toEqual([]);
+    }
+  });
+
+  test('a negated or hypothetical player claim does not displace a precise item question', () => {
+    for (const statement of ["I haven't defeated the Glass Warden.", 'If I defeated the Glass Warden, I would reach Copper Quay.']) {
+      expect(buildGamingRetrievalTerms({ prompt: `Where is the Zephyrglass Compass? ${statement}` }).focusTerms).toEqual(['zephyrglass', 'compass']);
+    }
+  });
+
+  test.each([
+    'I would like help defeating the Glass Warden.',
+    'I could use help with the Glass Warden.',
+    'Could you tell me what I should do next after defeating the Glass Warden?'
+  ])('preserves the named target of a polite request: %s', prompt => {
+    const terms = buildGamingRetrievalTerms({ prompt, currentArea: 'Copper Quay' });
+    expect(terms.focusTerms).toEqual(expect.arrayContaining(['glass', 'warden']));
+    expect(terms.focusTerms).not.toEqual(expect.arrayContaining(['copper', 'quay']));
+  });
+
+  test('an unfound item remains the request target without asserting completed progress', () => {
+    const terms = buildGamingRetrievalTerms({ prompt: 'I have not found the Zephyrglass Compass.', currentArea: 'Copper Quay' });
+    expect(terms.focusTerms).toEqual(expect.arrayContaining(['zephyrglass', 'compass']));
+    expect(terms.focusTerms).not.toEqual(expect.arrayContaining(['copper', 'quay']));
+  });
+
+  test.each([
+    "I haven't defeated the Glass Warden, where is the Zephyrglass Compass?",
+    'I am in Copper Quay, how would I find the Zephyrglass Compass?'
+  ])('retains the question attached to a player statement: %s', prompt => {
+    const terms = buildGamingRetrievalTerms({ prompt, currentArea: 'Violet Ridge' });
+    expect(terms.focusTerms).toEqual(expect.arrayContaining(['zephyrglass', 'compass']));
+    expect(terms.focusTerms).not.toEqual(expect.arrayContaining(['violet', 'ridge']));
   });
 
   test('keeps rare boss and equipment requests ahead of broad context and presentation terms', () => {

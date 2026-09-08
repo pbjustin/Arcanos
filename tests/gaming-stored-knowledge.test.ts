@@ -2,8 +2,9 @@ import { jest } from '@jest/globals';
 import type { GamingKnowledgeProvenanceRecord } from '../src/core/db/repositories/gamingSourceRepository.js';
 
 const search = jest.fn<(...args: unknown[]) => Promise<GamingKnowledgeProvenanceRecord[]>>();
+const findSources = jest.fn<(...args: unknown[]) => Promise<Array<{ sourceId: string; gameKey: string; gameName: string }>>>();
 const logInfo = jest.fn();
-jest.unstable_mockModule('@core/db/repositories/gamingSourceRepository.js', () => ({ searchActiveGamingKnowledge: search }));
+jest.unstable_mockModule('@core/db/repositories/gamingSourceRepository.js', () => ({ searchActiveGamingKnowledge: search, findActiveGamingSourceIdentities: findSources }));
 jest.unstable_mockModule('@platform/logging/structuredLogging.js', () => ({ logger: { info: logInfo, warn: jest.fn() } }));
 const { buildStoredGamingLexicalQuery, selectStoredGamingEvidence, formatStoredGamingEvidence, retrieveStoredGamingKnowledge } =
   await import('../src/services/gamingStoredKnowledge.js');
@@ -25,7 +26,7 @@ function record(id: string, text: string, overrides: Partial<GamingKnowledgeProv
 }
 
 describe('bounded stored Gaming chunk evidence', () => {
-  beforeEach(() => { search.mockReset(); logInfo.mockClear(); });
+  beforeEach(() => { search.mockReset(); logInfo.mockClear(); findSources.mockReset(); findSources.mockResolvedValue([{ sourceId: 'source-one', gameKey: 'synthetic-quest', gameName: 'Synthetic Quest' }]); });
   afterEach(() => { jest.useRealTimers(); });
 
   test('preserves exact Unicode names in a bounded lexical OR query and removes question/game boilerplate', () => {
@@ -33,6 +34,24 @@ describe('bounded stored Gaming chunk evidence', () => {
       .toEqual({ query: '"traverse" OR "town"', terms: ['traverse', 'town'] });
     expect(buildStoredGamingLexicalQuery('Where is Ｃｉｄ?', input.game).query).toBe('"cid"');
     expect(buildStoredGamingLexicalQuery('Where should I go in Synthetic Quest?', input.game).terms).toEqual([]);
+  });
+
+  test('resolves trusted source identity before topical lookup despite harmless title formatting', async () => {
+    search.mockImplementation(async (query: unknown) => {
+      const scoped = query as { gameKey: string; sourceIds?: string[] };
+      return scoped.gameKey === 'synthetic-quest' || scoped.sourceIds?.includes('source-one')
+        ? [record('item', 'The Zephyrglass Compass is below the cobalt arch.')] : [];
+    });
+    const found = await retrieveStoredGamingKnowledge({ ...input, game: 'Synthetic™ Quest' }, { resolveVerifiedPatch: () => undefined });
+    expect(found.evidence).toHaveLength(1);
+    expect(findSources).toHaveBeenCalled();
+  });
+
+  test('recognizes an available source independently from an insufficient gameplay question', async () => {
+    search.mockResolvedValue([]);
+    const found = await retrieveStoredGamingKnowledge({ ...input, prompt: 'What should I do next?' }, { resolveVerifiedPatch: () => undefined });
+    expect(found).toMatchObject({ sourceKnown: true, context: '', sources: [] });
+    expect(search).not.toHaveBeenCalled();
   });
 
   test('ranks exact item names, deduplicates repeated records and preserves chunk provenance', () => {
@@ -161,7 +180,11 @@ describe('bounded stored Gaming chunk evidence', () => {
     search.mockResolvedValue([record('one', 'Find the Zephyrglass Compass beyond the cobalt arch.')]);
     const result = await retrieveStoredGamingKnowledge(input, { resolveVerifiedPatch: () => undefined });
     expect(result.evidence).toHaveLength(1);
-    expect(search).toHaveBeenCalledWith(expect.objectContaining({ query: '"zephyrglass" OR "compass"', limit: 20 }), expect.objectContaining({ queryTimeoutMs: 1000, signal: expect.any(Object) }));
+    expect(findSources).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({ queryTimeoutMs: 1000, signal: expect.any(Object) }));
+    expect(search).toHaveBeenCalledWith(expect.objectContaining({ query: '"zephyrglass" OR "compass"', limit: 20 }), expect.objectContaining({ queryTimeoutMs: expect.any(Number), signal: expect.any(Object) }));
+    const remainingMs = (search.mock.calls[0][1] as { queryTimeoutMs: number }).queryTimeoutMs;
+    expect(remainingMs).toBeGreaterThan(0);
+    expect(remainingMs).toBeLessThanOrEqual(1000);
     expect(logInfo).toHaveBeenCalledWith('gaming.stored_retrieval.completed', expect.objectContaining({ lexicalCandidateCount: 1, semanticCandidateCount: 0, selectedChunkCount: 1 }));
     expect(JSON.stringify(logInfo.mock.calls)).not.toContain('cobalt arch');
   });
@@ -183,6 +206,22 @@ describe('bounded stored Gaming chunk evidence', () => {
     expect(selected.map(entry => entry.evidence.recordId)).toEqual(['target']);
     expect(selectStoredGamingEvidence(rows, { ...input, requestedVersion: '2.0' }, () => '1.0')).toEqual([]);
     expect(selectStoredGamingEvidence(rows, { ...input, requestedVersion: '2.0' }, () => undefined)).toHaveLength(1);
+  });
+
+  test.each([
+    'I would like help finding the Zephyrglass Compass.',
+    'I have not found the Zephyrglass Compass.',
+    "I haven't defeated the Glass Warden, where is the Zephyrglass Compass?",
+    'I am in Copper Quay, how would I find the Zephyrglass Compass?'
+  ])('acquires the requested item instead of unrelated area evidence for %s', async prompt => {
+    const target = record('target', 'The Zephyrglass Compass is under the cobalt arch.');
+    const area = record('area', 'Copper Quay has a ferry route to the west.');
+    search.mockImplementation(async (query: unknown) =>
+      (query as { query: string }).query.includes('zephyrglass') ? [target] : [area]);
+    const found = await retrieveStoredGamingKnowledge({ ...input, prompt, currentArea: 'Copper Quay' }, { resolveVerifiedPatch: () => undefined });
+    expect(found.evidence?.map(entry => entry.recordId)).toEqual(['target']);
+    expect(found.context).toContain('Zephyrglass Compass');
+    expect(found.context).not.toContain('ferry route');
   });
 
   test('keeps spoiler-filtered snippets and budgeted sanitized headings aligned with source numbers', () => {
@@ -214,14 +253,73 @@ describe('bounded stored Gaming chunk evidence', () => {
     search.mockReturnValue(pending);
     const lookups = Array.from({ length: 4 }, () => retrieveStoredGamingKnowledge({ ...input, queryTimeoutMs: 20 }, { resolveVerifiedPatch: () => undefined }));
     await jest.advanceTimersByTimeAsync(21);
-    await expect(Promise.all(lookups)).resolves.toEqual(Array.from({ length: 4 }, () => ({ context: '', sources: [] })));
+    await expect(Promise.all(lookups)).resolves.toEqual(Array.from({ length: 4 }, () => ({ context: '', sources: [], sourceKnown: true })));
     await retrieveStoredGamingKnowledge(input, { resolveVerifiedPatch: () => undefined });
     expect(search).toHaveBeenCalledTimes(4);
     expect((search.mock.calls[0][1] as { signal: AbortSignal }).signal.aborted).toBe(true);
     release?.([]);
-    await Promise.resolve(); await Promise.resolve();
+    await jest.advanceTimersByTimeAsync(0);
     search.mockResolvedValue([]);
     await retrieveStoredGamingKnowledge(input, { resolveVerifiedPatch: () => undefined });
     expect(search).toHaveBeenCalledTimes(5);
+  });
+
+  test('shares the catalog and passage deadline and forbids late lexical work', async () => {
+    jest.useFakeTimers();
+    let release: ((rows: Array<{ sourceId: string; gameKey: string; gameName: string }>) => void) | undefined;
+    findSources.mockReturnValue(new Promise(resolve => { release = resolve; }));
+    const lookup = retrieveStoredGamingKnowledge({ ...input, queryTimeoutMs: 20 }, { resolveVerifiedPatch: () => undefined });
+    await jest.advanceTimersByTimeAsync(21);
+    await expect(lookup).resolves.toEqual({ context: '', sources: [] });
+    const options = findSources.mock.calls[0][1] as { signal: AbortSignal };
+    expect(options.signal.aborted).toBe(true);
+    release?.([{ sourceId: 'source-one', gameKey: 'synthetic-quest', gameName: 'Synthetic Quest' }]);
+    await jest.advanceTimersByTimeAsync(0);
+    expect(search).not.toHaveBeenCalled();
+  });
+
+  test('does not search a base game when the requested edition has no trusted source association', async () => {
+    findSources.mockResolvedValue([]);
+    search.mockResolvedValue([record('wrong-edition', 'The Zephyrglass Compass is under the cobalt arch.')]);
+    const found = await retrieveStoredGamingKnowledge({ ...input, game: 'Synthetic Quest HD 1.5 Remix' }, { resolveVerifiedPatch: () => undefined });
+    expect(found).toMatchObject({ sourceKnown: false, context: '', sources: [] });
+    expect(search).not.toHaveBeenCalled();
+  });
+
+  test('carries a separate explicit edition into trusted identity resolution', async () => {
+    findSources.mockResolvedValue([]);
+    const found = await retrieveStoredGamingKnowledge({ ...input, edition: 'Remake' }, { resolveVerifiedPatch: () => undefined });
+    expect(findSources).toHaveBeenCalledWith({ game: input.game, edition: 'Remake', mode: 'guide' }, expect.any(Object));
+    expect(found).toMatchObject({ sourceKnown: false, context: '', sources: [] });
+    expect(search).not.toHaveBeenCalled();
+  });
+
+  test.each(['build', 'meta'] as const)('finds newly ingested precise titles for %s without collapsing their catalog identity', async mode => {
+    const game = 'Elden Ring Shadow of the Erdtree';
+    const gameKey = 'elden-ring-shadow-of-the-erdtree';
+    findSources.mockResolvedValue([{ sourceId: 'precise-source', gameKey, gameName: game }]);
+    search.mockImplementation(async (query: unknown) => (query as { sourceIds?: string[] }).sourceIds?.includes('precise-source')
+      ? [record('precise', 'Equip the Zephyrglass Compass before entering the cobalt arch.', { recordType: mode, gameKey, gameName: game, sourceId: 'precise-source' })] : []);
+    const found = await retrieveStoredGamingKnowledge({ ...input, game, mode }, { resolveVerifiedPatch: () => undefined });
+    expect(findSources).toHaveBeenCalledWith({ game, mode }, expect.any(Object));
+    expect(found.evidence?.map(entry => entry.recordId)).toEqual(['precise']);
+    expect(found).not.toHaveProperty('sourceKnown');
+  });
+
+  test.each(['build', 'meta'] as const)('preserves the historical alias lookup for %s when no precise source identity exists', async mode => {
+    findSources.mockResolvedValue([]);
+    search.mockResolvedValue([record('historical', 'Equip the Zephyrglass Compass before entering the cobalt arch.', { recordType: mode, gameKey: 'diablo-4', gameName: 'Diablo 4' })]);
+    const found = await retrieveStoredGamingKnowledge({ ...input, game: 'Diablo IV', mode }, { resolveVerifiedPatch: () => undefined });
+    expect(findSources).toHaveBeenCalledWith({ game: 'Diablo IV', mode }, expect.any(Object));
+    expect(search).toHaveBeenCalledWith({ gameKey: 'diablo-4', query: '"zephyrglass" OR "compass"', mode, limit: 20 }, expect.any(Object));
+    expect(found.evidence?.map(entry => entry.recordId)).toEqual(['historical']);
+  });
+
+  test.each(['build', 'meta'] as const)('keeps the existing single lookup for an unchanged %s game key', async mode => {
+    search.mockResolvedValue([record('common', 'Equip the Zephyrglass Compass before entering the cobalt arch.', { recordType: mode })]);
+    const found = await retrieveStoredGamingKnowledge({ ...input, mode }, { resolveVerifiedPatch: () => undefined });
+    expect(findSources).not.toHaveBeenCalled();
+    expect(search).toHaveBeenCalledWith({ gameKey: 'synthetic-quest', query: '"zephyrglass" OR "compass"', mode, limit: 20 }, expect.any(Object));
+    expect(found.evidence?.map(entry => entry.recordId)).toEqual(['common']);
   });
 });

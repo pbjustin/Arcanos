@@ -45,7 +45,7 @@ jest.unstable_mockModule('@core/db/client.js', () => ({
   getPool: () => databasePool,
   isDatabaseConnected: () => Boolean(databasePool)
 }));
-const { persistGamingSourceRevision, searchActiveGamingKnowledge } =
+const { persistGamingSourceRevision, searchActiveGamingKnowledge, findActiveGamingSourceIdentities } =
   await import('../../src/core/db/repositories/gamingSourceRepository.js');
 
 function hash(value: string): string {
@@ -122,6 +122,59 @@ describeWithDatabase('durable Gaming chunk storage and retrieval on PostgreSQL 1
         await setupClient.end();
       }
     }
+  });
+
+  test('matches stored title formatting across three games without collapsing editions or reindexing historical keys', async () => {
+    for (const [storedName, requestedName, otherEdition] of [
+      ['Lantern™ Voyage®: Remastered – 1.5', 'Lantern Voyage Remastered 1.5', 'Lantern Voyage'],
+      ['Pilot’s Oath - PC Edition', "Pilot's Oath: PC Edition", "Pilot's Oath Console Edition"],
+      ['Ａｓｈｂｏｕｎｄ Arena — II', 'Ashbound Arena II', 'Ashbound Arena I'],
+      ['AETHER CAFÉ™: II', 'Aether Café II', 'Aether Cafe II'],
+      ['ΝΗΣΟΣ™: II', 'Νησος II', 'Νησος I'],
+      ['İris™: II', 'İris II', 'Iris II']
+    ]) {
+      const text = 'At Copper Quay, activate the blue beacon to unlock the ferry.';
+      const gameKey = `historical-${randomUUID()}`;
+      const source = await persistGamingSourceRevision({
+        gameKey, gameName: storedName, canonicalUrl: `https://example.com/${gameKey}`, sourceType: 'supplied',
+        contentHash: hash(text), cleanedContent: text, fetchedAt, extractor: 'synthetic', extractorVersion: '1', normalizerSchemaVersion: '1',
+        records: [{ recordType: 'guide', semanticKey: 'copper-quay', payloadHash: hash(text), searchText: text, normalized: { text } }]
+      });
+      const identities = await findActiveGamingSourceIdentities({ game: requestedName, mode: 'guide' }, { queryTimeoutMs: 1000 });
+      expect(identities).toEqual([{ sourceId: source.sourceId, gameKey, gameName: storedName }]);
+      expect(await findActiveGamingSourceIdentities({ game: requestedName, edition: 'Incompatible Remake', mode: 'guide' })).toEqual([]);
+      expect(await findActiveGamingSourceIdentities({ game: otherEdition, mode: 'guide' })).toEqual([]);
+      expect(await findActiveGamingSourceIdentities({ game: requestedName, mode: 'build' })).toEqual([]);
+      // The precise title cannot reach the historical key through the old exact-key path.
+      expect(await searchActiveGamingKnowledge({ gameKey: requestedName, query: 'copper', mode: 'guide' })).toEqual([]);
+      const scope = { gameKey: requestedName, sourceIds: identities.map(identity => identity.sourceId), mode: 'guide' as const };
+      expect(await searchActiveGamingKnowledge({ ...scope, query: '' })).toEqual([]);
+      const query = buildStoredGamingLexicalQuery('What next?', requestedName, { currentArea: 'Copper Quay' });
+      const records = await searchActiveGamingKnowledge({ ...scope, query: query.query });
+      expect(records).toHaveLength(1);
+      expect(records[0].relevance).toBeGreaterThan(0);
+      expect(selectStoredGamingEvidence(records, { game: requestedName, prompt: 'What next?', currentArea: 'Copper Quay', mode: 'guide' }, limits)).toHaveLength(1);
+      await databasePool.query("UPDATE gaming_sources SET status = 'disabled' WHERE id = $1", [source.sourceId]);
+      expect(await findActiveGamingSourceIdentities({ game: requestedName, mode: 'guide' })).toEqual([]);
+    }
+  });
+
+  test('a separate edition field selects the complete trusted identity and rejects a base-only catalog', async () => {
+    const text = 'The Glass Warden raises its shield before the strike.';
+    const gameKey = `edition-${randomUUID()}`;
+    const persist = (edition: string) => persistGamingSourceRevision({
+      gameKey: `${gameKey}-${edition}`, gameName: `Lantern Vale${edition ? ` ${edition}` : ''}`,
+      canonicalUrl: `https://example.com/${gameKey}-${edition}`, sourceType: 'supplied',
+      contentHash: hash(text), cleanedContent: text, fetchedAt, extractor: 'synthetic', extractorVersion: '1', normalizerSchemaVersion: '1',
+      records: [{ recordType: 'guide', semanticKey: 'warden', payloadHash: hash(text), searchText: text, normalized: { text } }]
+    });
+    await persist('');
+    expect(await findActiveGamingSourceIdentities({ game: 'Lantern Vale', edition: 'Remake', mode: 'guide' })).toEqual([]);
+    const remake = await persist('Remake');
+    expect(await findActiveGamingSourceIdentities({ game: 'Lantern Vale', edition: 'Remake', mode: 'guide' }))
+      .toEqual([{ sourceId: remake.sourceId, gameKey: `${gameKey}-Remake`.toLowerCase(), gameName: 'Lantern Vale Remake' }]);
+    expect(await findActiveGamingSourceIdentities({ game: 'Lantern Vale Remake', edition: 'Remake', mode: 'guide' }))
+      .toHaveLength(1);
   });
 
   test('retrieves late and near-end facts through real indexed SQL and bounded evidence projection', async () => {

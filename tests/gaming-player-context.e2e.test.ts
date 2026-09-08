@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import express from 'express';
+import request from 'supertest';
 
 const responsesCreate = jest.fn();
 const runStructuredReasoning = jest.fn();
@@ -38,36 +40,96 @@ jest.unstable_mockModule('@services/selfImprove/selfHealingV2.js', () => ({
 }));
 
 const searchActiveGamingKnowledge = jest.fn();
+const findActiveGamingSourceIdentities = jest.fn();
 const forbiddenWrite = jest.fn(() => { throw new Error('No persistent writes allowed in this fixture'); });
 const modelClient = {
   models: { retrieve: jest.fn().mockResolvedValue({ id: 'gpt-5.1' }) },
   responses: { create: responsesCreate }
 };
 jest.unstable_mockModule('@services/openai/clientBridge.js', () => ({ getOpenAIClientOrAdapter: () => ({ client: modelClient }) }));
-jest.unstable_mockModule('@services/openai.js', () => ({ generateMockResponse: jest.fn() }));
+jest.unstable_mockModule('@services/openai.js', () => ({ generateMockResponse: jest.fn(), getGPT5Model: () => 'gpt-5.1' }));
 jest.unstable_mockModule('@services/hrcWrapper.js', () => ({ evaluateWithHRC: forbiddenWrite }));
 jest.unstable_mockModule('@services/workerAutonomyService.js', () => ({ planAutonomousWorkerJob: forbiddenWrite }));
 jest.unstable_mockModule('@core/db/repositories/jobRepository.js', () => ({
+  ...Object.fromEntries(['createJob', 'createClaimedJobFence', 'claimNextPendingJob', 'claimNextPendingJobWithAdmission', 'deferJobForProviderRecovery', 'failPendingJobIfUnclaimed', 'normalizeJobClaimGeneration', 'recordJobHeartbeat', 'scheduleJobRetry', 'recoverStaleJobs', 'updateClaimedJobTerminal', 'updateJob', 'getLatestJob', 'getJobQueueSummary', 'getJobExecutionStatsSince'].map(name => [name, forbiddenWrite])),
   findOrCreateGptJob: forbiddenWrite, getJobById: forbiddenWrite,
+  requestJobCancellation: forbiddenWrite,
   IdempotencyKeyConflictError: class extends Error {}, JobRepositoryUnavailableError: class extends Error {}
 }));
 jest.unstable_mockModule('@core/db/repositories/gamingSourceRepository.js', () => ({
+  findActiveGamingSourceIdentities,
   searchActiveGamingKnowledge,
+  createGamingSourceRepository: forbiddenWrite,
+  findGamingSourceById: forbiddenWrite,
+  queryActiveGamingKnowledge: searchActiveGamingKnowledge,
+  listDueGamingSources: forbiddenWrite,
+  markGamingSourceRefreshFailure: forbiddenWrite,
+  GamingSourceCanonicalHashCollisionError: class extends Error {},
+  PostgresGamingSourceRepository: class {},
+  GAMING_KNOWLEDGE_RECORD_TYPES: ['guide', 'build', 'meta'],
+  GAMING_SOURCE_TYPES: ['official', 'patch_notes', 'wiki', 'curated', 'supplied'],
   getGamingSourceById: forbiddenWrite,
   persistGamingSourceRevision: forbiddenWrite,
   GamingSourceRepositoryUnavailableError: class extends Error {}
 }));
+// Keep the HTTP router and public dispatcher real while binding only the module registry.
+jest.unstable_mockModule('@services/moduleRegistry.js', () => ({
+  initializeModuleRegistry: jest.fn(),
+  resolveLegacyModule: forbiddenWrite,
+  getModuleMetadata: () => ({ name: 'ARCANOS:GAMING', actions: ['query'], route: 'gaming', defaultAction: 'query', defaultTimeoutMs: 60000 }),
+  dispatchModuleAction: async (_module: string, action: string, payload: Record<string, unknown>) => {
+    if (action !== 'query') throw new Error('Only gameplay queries are permitted by this fixture');
+    return gamingModule.actions.query(payload);
+  }
+}));
+jest.unstable_mockModule('@services/arcanos-core.js', () => ({
+  buildArcanosCoreTimeoutFallbackEnvelope: forbiddenWrite, resolveArcanosCoreTimeoutPhase: forbiddenWrite
+}));
+jest.unstable_mockModule('@services/naturalLanguageMemory.js', () => ({
+  executeNaturalLanguageMemoryCommand: forbiddenWrite,
+  parseNaturalLanguageMemoryCommand: () => ({ intent: 'unknown' }),
+  extractNaturalLanguageSessionId: () => null,
+  extractNaturalLanguageStorageLabel: () => null,
+  hasDagOrchestrationIntentCue: () => false,
+  hasNaturalLanguageMemoryCue: () => false
+}));
+jest.unstable_mockModule('@services/arcanosMcp.js', () => ({ arcanosMcpService: { invokeTool: forbiddenWrite, listTools: forbiddenWrite } }));
+jest.unstable_mockModule('@services/systemState.js', () => ({ executeSystemStateRequest: forbiddenWrite, SystemStateConflictError: class extends Error {} }));
+jest.unstable_mockModule('@services/sessionMemoryService.js', () => ({ saveMessage: forbiddenWrite }));
+jest.unstable_mockModule('@platform/runtime/gptRouterConfig.js', () => ({
+  default: async () => ({ 'arcanos-gaming': { module: 'ARCANOS:GAMING', route: 'gaming' } }),
+  getGptModuleMap: async () => ({ 'arcanos-gaming': { module: 'ARCANOS:GAMING', route: 'gaming' } }),
+  rebuildGptModuleMap: async () => ({ 'arcanos-gaming': { module: 'ARCANOS:GAMING', route: 'gaming' } }),
+  validateGptRegistry: () => ({ requiredGptIds: [], missingGptIds: [], registeredGptIds: ['arcanos-gaming'], registeredGptCount: 1 })
+}));
 
 const { readFileSync } = await import('node:fs');
 const { default: gamingModule } = await import('../src/modules/arcanos-gaming.js');
-const { parsePublicGamingQueryRequest } = await import('../src/services/gamingModes.js');
-const { shapeClientRouteResult } = await import('../src/shared/http/clientRouteResultShape.js');
+const { default: requestContext } = await import('../src/middleware/requestContext.js');
+const { default: gptRouter } = await import('../src/routes/gptRouter.js');
+const { default: errorHandler } = await import('../src/transport/http/middleware/errorHandler.js');
 const { logger } = await import('../src/platform/logging/structuredLogging.js');
 const logInfo = jest.fn();
 const corpus = JSON.parse(readFileSync(new URL('./fixtures/gaming-guide-assistance.json', import.meta.url), 'utf8')) as {
   cases: Array<{ id: string; request: Record<string, unknown>; evidence: string; referenceAnswer: string; excludedFuture?: string }>
 };
-const cases = [...corpus.cases, {
+const cases = [...corpus.cases, ...[
+  {
+    ...corpus.cases[2]!,
+    id: 'polite-boss-request',
+    request: { game: 'Iron Wake', mode: 'guide', prompt: 'I would like help defeating the Ash Sentinel.' }
+  },
+  {
+    ...corpus.cases[0]!,
+    id: 'polite-named-progression-request',
+    request: { game: 'Lantern Vale', mode: 'guide', prompt: 'Could you tell me what I should do next after repairing the Copper Canal pump?' }
+  },
+  {
+    ...corpus.cases[3]!,
+    id: 'unfound-item-request',
+    request: { game: 'Iron Wake: Second Tide', mode: 'guide', prompt: 'I have not found the Sable Coil.' }
+  }
+], {
   ...corpus.cases[3]!,
   id: 'all-optional-context-fields',
   request: {
@@ -80,12 +142,13 @@ const cases = [...corpus.cases, {
 
 function record(fixture: typeof corpus.cases[number], text = fixture.evidence, id = fixture.id) {
   const game = fixture.request.game as string;
+  const sourceGameName = fixture.request.edition ? `${game} ${fixture.request.edition}` : game;
   return {
     recordId: id, recordType: 'guide', semanticKey: id, payloadHash: 'a'.repeat(64),
     title: 'Synthetic gameplay guide', patch: fixture.request.version ?? null, searchText: text,
     normalized: { text, chunk: { ordinal: 399, totalChunks: 400, startChar: 590000, endChar: 590000 + text.length } },
     recordCreatedAt: new Date('2026-09-01T00:00:00Z'), sourceId: 'synthetic-source',
-    gameKey: game.toLowerCase().replace(/[^a-z0-9]+/gu, '-'), gameName: game,
+    gameKey: sourceGameName.toLowerCase().replace(/[^a-z0-9]+/gu, '-'), gameName: sourceGameName,
     canonicalUrl: 'https://example.com/guide', publicUrl: 'https://example.com/guide',
     canonicalUrlHash: 'b'.repeat(64), host: 'example.com', sourceType: 'supplied', trustScore: 0.8,
     revisionId: 'synthetic-active-revision', contentHash: 'c'.repeat(64),
@@ -106,9 +169,14 @@ function completion(text: string, incomplete = false) {
 }
 
 async function publicQuery(payload: Record<string, unknown>) {
-  const validated = parsePublicGamingQueryRequest({ action: 'query', payload });
-  if (!validated.ok) throw new Error(validated.error.message);
-  return shapeClientRouteResult(await gamingModule.actions.query(validated.value.payload)) as {
+  const app = express();
+  app.use(requestContext);
+  app.use(express.json());
+  app.use('/gpt', gptRouter);
+  app.use(errorHandler);
+  const response = await request(app).post('/gpt/arcanos-gaming').send({ action: 'query', payload });
+  expect(response.status).toBe(200);
+  return response.body.result as {
     ok: boolean; data: { response: string; sources: Array<{ url: string }>; fallbackReason?: string; grounding?: { groundingStatus: string; groundedInSuppliedEvidence: boolean; selectedChunkCount: number } }
   };
 }
@@ -119,6 +187,10 @@ describe('public Gaming player context to selected evidence and normal Trinity r
     jest.spyOn(logger, 'info').mockImplementation(logInfo);
     responsesCreate.mockReset();
     searchActiveGamingKnowledge.mockReset();
+    findActiveGamingSourceIdentities.mockImplementation(async (input: { game: string; edition?: string }) => {
+      const gameName = input.edition ? `${input.game} ${input.edition}` : input.game;
+      return [{ sourceId: 'synthetic-source', gameKey: gameName.toLowerCase().replace(/[^a-z0-9]+/gu, '-'), gameName }];
+    });
     createGPT5Reasoning.mockResolvedValue({ content: JSON.stringify({ clarity: 5, leverage: 5, efficiency: 5, alignment: 5, resilience: 5, overall: 5 }) });
   });
 
@@ -176,5 +248,54 @@ describe('public Gaming player context to selected evidence and normal Trinity r
     expect(searchActiveGamingKnowledge).toHaveBeenCalledTimes(2);
     expect(responsesCreate).toHaveBeenCalledTimes(2);
     expect(runStructuredReasoning).not.toHaveBeenCalled();
+  });
+
+  it.each(['Lumen Voyage', 'Cinder Cartographer', 'Vector Harbor'])('clarifies %s through the real public HTTP path before any model call', async game => {
+    const app = express();
+    app.use(requestContext);
+    app.use(express.json());
+    app.use('/gpt', gptRouter);
+    app.use(errorHandler);
+    const result = await request(app).post('/gpt/arcanos-gaming').send({ action: 'query', payload: {
+      mode: 'guide', game, prompt: 'What should I do next?', platform: 'PC', difficulty: 'Normal',
+      spoilerTolerance: 'none', answerDepth: 'concise'
+    } });
+    expect(result.status).toBe(200);
+    const serialized = JSON.stringify(result.body);
+    expect(serialized).toContain(game);
+    expect(serialized).toContain('Where are you now');
+    expect(serialized).not.toMatch(/Backend-supported|Fallback status|upgrade.*gear|stock.*healing/iu);
+    expect(findActiveGamingSourceIdentities).toHaveBeenCalledTimes(1);
+    expect(searchActiveGamingKnowledge).not.toHaveBeenCalled();
+    expect(responsesCreate).not.toHaveBeenCalled();
+    expect(modelClient.models.retrieve).not.toHaveBeenCalled();
+    expect(runStructuredReasoning).not.toHaveBeenCalled();
+    expect(forbiddenWrite).not.toHaveBeenCalled();
+  });
+
+  it('keeps an unrepresented edition separate while recovering the known live request shape', async () => {
+    findActiveGamingSourceIdentities.mockResolvedValue([]);
+    const result = await publicQuery({ mode: 'guide', game: 'Synthetic Voyage 1.5 Remix', prompt: 'What should I do next?' });
+    expect(result.data.response).toContain('current progress point');
+    expect(result.data.response).not.toContain('guide available');
+    expect(result.data.grounding?.groundedInSuppliedEvidence).toBe(false);
+    expect(searchActiveGamingKnowledge).not.toHaveBeenCalled();
+    expect(responsesCreate).not.toHaveBeenCalled();
+  });
+
+  it('recovers an evidence-backed timeout without invented strategy or caching a success', async () => {
+    const fixture = corpus.cases[0]!;
+    searchActiveGamingKnowledge.mockResolvedValue([record(fixture)]);
+    const timedOut = Object.assign(new Error('OpenAI chat completion timed out after 24000ms'), { name: 'AbortError', timeoutPhase: 'intake' });
+    responsesCreate.mockRejectedValue(timedOut);
+    const result = await publicQuery(fixture.request);
+    expect(result.data.response).toContain('found the relevant guide material');
+    expect(result.data.response).toContain('timed out');
+    expect(result.data.response).not.toMatch(/OpenAI|Trinity|Backend-supported|Fallback status|upgrade|stock/iu);
+    expect(result.data.fallbackReason).toBe('INTAKE_UPSTREAM_TIMEOUT');
+    expect(result.data.grounding?.groundedInSuppliedEvidence).toBe(false);
+    expect(responsesCreate).toHaveBeenCalledTimes(1);
+    expect(runStructuredReasoning).not.toHaveBeenCalled();
+    expect(storePattern).not.toHaveBeenCalled();
   });
 });
