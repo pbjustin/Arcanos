@@ -15,7 +15,8 @@ import {
   getGamingWebContextMaxChars
 } from "@services/gamingConfig.js";
 import { getOpenAIClientOrAdapter } from "@services/openai/clientBridge.js";
-import { generateMockResponse } from "@services/openai.js";
+import { assessGamingProgressionRequest } from "@shared/gaming/gamingProgressionPolicy.js";
+import { buildGamingRecoveryResponse, resolveGamingRecoveryClass } from "@shared/gaming/gamingRecoveryResponse.js";
 import { tryExtractExactLiteralPromptShortcut } from "@services/exactLiteralPromptShortcut.js";
 import {
   formatGamingSuccess,
@@ -542,97 +543,30 @@ function formatGameplaySuccessWithLogs(params: {
   return envelope;
 }
 
-function buildGuideFallbackSteps(params: GamingPipelineInput): string[] {
-  return [
-    `For ${params.game ?? "the requested game"}, confirm the next objective, nearest checkpoint, and any missing version details before committing rare resources.`,
-    "Upgrade or repair core gear, stock healing and utility items, and retry the next encounter while watching repeatable mechanics.",
-    "If progress stalls, narrow the request to the exact boss, quest, route, build, or checkpoint for a more precise guide.",
-    "Treat patch-sensitive numbers as provisional until verified in game or against a provided guide URL."
-  ];
-}
-
-function buildBuildFallbackSteps(params: GamingPipelineInput): string[] {
-  return [
-    `For ${params.game ?? "the requested game"}, start from the role the build must perform and choose one reliable damage or utility loop.`,
-    "Prioritize core scaling stats, survivability, and resource sustain before niche optimization.",
-    "Test changes in safe content before spending rare materials, ranked attempts, or irreversible respec resources."
-  ];
-}
-
-function buildMetaFallbackSteps(params: GamingPipelineInput): string[] {
-  return [
-    `For ${params.game ?? "the requested game"}, treat current-state advice as patch-sensitive until verified against the latest in-game version.`,
-    "Prefer flexible picks, builds, routes, or team comps that stay useful when a matchup or balance assumption is wrong.",
-    "Avoid overcommitting to exact tier claims without a supplied patch, date, or guide source."
-  ];
-}
-
-function sourceAvailabilityLine(sources: GamingWebSource[]): string {
-  if (sources.length === 0) {
-    return "Sources unavailable: no source-backed game data was available for this request.";
-  }
-
-  const usableSourceCount = sources.filter(isCitableGamingWebSource).length;
-  if (usableSourceCount === 0) {
-    return "Sources unavailable: selected game-data sources could not be retrieved before the fallback.";
-  }
-
-  if (usableSourceCount < sources.length) {
-    return `Sources partially available: ${usableSourceCount} of ${sources.length} selected game-data sources were usable.`;
-  }
-
-  return `Sources available: ${usableSourceCount} source-backed game-data snippet${usableSourceCount === 1 ? " was" : "s were"} retrieved.`;
-}
-
 function buildGamingProviderFallbackResponse(params: {
   input: GamingPipelineInput;
   sources: GamingWebSource[];
   fallbackReason: string;
   timeoutPhase?: string;
+  sourceKnown?: boolean;
 }): string {
-  const steps =
-    params.input.mode === "build"
-      ? buildBuildFallbackSteps(params.input)
-      : params.input.mode === "meta"
-      ? buildMetaFallbackSteps(params.input)
-      : buildGuideFallbackSteps(params.input);
-  const sectionLabel = params.input.mode === "build" ? "Build" : "Steps";
-  const fallbackSummary = `${sourceAvailabilityLine(params.sources)} A bounded deterministic fallback is shown because the full answer could not be generated safely.`;
-  const supportLine = "Backend-supported: partial. ARCANOS Gaming returned stable gameplay guidance while the full answer was unavailable.";
-
-  return [
-    "Quick Answer",
-    fallbackSummary,
-    "",
-    sectionLabel,
-    ...steps.map((step, index) => `${index + 1}. ${step}`),
-    "",
-    "Why It Works",
-    supportLine,
-    "Fallback status: safe deterministic guidance.",
-    "",
-    "Watch Outs",
-    "- Ask again with a narrower boss, quest, route, build, patch, or guide URL for a more specific answer.",
-    "- Verify patch-sensitive numbers and current meta details in game or with a provided source."
-  ].join("\n");
+  const recovery = {
+    ...params.input,
+    sourceKnown: params.sourceKnown ?? params.sources.some(isCitableGamingWebSource),
+    evidenceSelected: params.sources.some(isCitableGamingWebSource),
+    timedOut: params.fallbackReason.includes("TIMEOUT") && params.timeoutPhase !== "retrieval"
+  };
+  logger.info("gaming.recovery.selected", {
+    module: "ARCANOS:GAMING", mode: params.input.mode,
+    requestId: getRequestAbortContext()?.requestId,
+    recoveryClass: resolveGamingRecoveryClass(recovery),
+    fallbackReason: params.fallbackReason,
+    ...(params.timeoutPhase ? { timeoutPhase: params.timeoutPhase } : {}),
+    sourceKnown: recovery.sourceKnown,
+    evidenceSelected: recovery.evidenceSelected
+  });
+  return buildGamingRecoveryResponse(recovery);
 }
-
-function stringifyMockResult(result: unknown): string {
-  if (typeof result === "string") {
-    return result;
-  }
-
-  if (result === null || result === undefined) {
-    return "";
-  }
-
-  try {
-    return JSON.stringify(result);
-  } catch {
-    return String(result);
-  }
-}
-
 function buildGamingRunOptions(mode: GamingMode, _hasGuideSources: boolean) {
   if (mode === "guide") {
     return {
@@ -732,6 +666,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
   let suppliedEvidenceSourceCount = 0;
   let fetchedSuppliedSourceCount = 0;
   let selectedChunkCount = 0;
+  let storedSourceKnown = false;
   let retrievedGame: string | undefined;
   let fallbackReason: GamingFallbackReason | undefined;
   let discoveryReason: GamingDiscoveryReason | undefined;
@@ -903,6 +838,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
         errorName: error instanceof Error ? error.name : typeof error
       });
     }
+    storedSourceKnown = storedKnowledge.sourceKnown === true || storedKnowledge.sources.length > 0;
     if (storedKnowledge.sources.length > 0) {
       const existingUrls = new Set(
         sources.filter(isCitableGamingWebSource).map((source) => source.url)
@@ -1003,6 +939,34 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
     groundedInSuppliedEvidence: grounding.groundedInSuppliedEvidence
   });
 
+  // A known game is a scope, not a gameplay point. Do not spend an intake call
+  // or select a guessed chapter when the request cannot identify safe evidence.
+  getRequestAbortSignal()?.throwIfAborted();
+  const progression = assessGamingProgressionRequest(resolvedParams);
+  if (resolvedParams.mode === "guide" && progression.clarificationNeeded) {
+    const clarificationReason: GamingFallbackReason = "INTAKE_RETRIEVAL_FAILED";
+    const sourceKnown = storedSourceKnown || retrievalHadUsableSources;
+    logger.info("gaming.progress.clarification", {
+      ...baseLogContext,
+      sourceKnown,
+      evidenceSelected: false,
+      clarificationNeeded: true,
+      recoveryClass: "clarification_required",
+      providerInvoked: false,
+      generationElapsedMs: 0
+    });
+    return formatGameplaySuccessWithLogs({
+      mode: resolvedParams.mode,
+      response: buildGamingProviderFallbackResponse({
+        input: resolvedParams, sources: [], sourceKnown, fallbackReason: clarificationReason
+      }),
+      sources: [], logContext: baseLogContext, requestStartedAt,
+      grounding: { ...grounding, groundingStatus: "insufficient_evidence", selectedChunkCount: 0,
+        usableSourceCount: 0, citableSourceCount: 0, groundedInSuppliedEvidence: false },
+      retrievedSourceCount, omittedSourceCount,
+      fallbackReason: clarificationReason, discoveryReason, discoveryFailureReason
+    });
+  }
   if (
     fallbackReason === "INTAKE_RETRIEVAL_TIMEOUT"
     && (resolvedParams.game || (resolvedParams.mode !== "build" && resolvedParams.mode !== "meta"))
@@ -1071,18 +1035,34 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
     });
   }
 
+  if (resolvedParams.mode === "guide" && (!retrievalHadUsableSources || selectedChunkCount === 0)) {
+    const unavailableReason: GamingFallbackReason = fallbackReason ?? "INTAKE_RETRIEVAL_FAILED";
+    return formatGameplaySuccessWithLogs({
+      mode: resolvedParams.mode,
+      response: buildGamingProviderFallbackResponse({
+        input: resolvedParams, sources: [], sourceKnown: storedSourceKnown, fallbackReason: unavailableReason
+      }),
+      sources, logContext: baseLogContext, requestStartedAt, grounding,
+      retrievedSourceCount, omittedSourceCount,
+      fallbackReason: unavailableReason, discoveryReason, discoveryFailureReason
+    });
+  }
+
   const { client } = getOpenAIClientOrAdapter();
 
   if (!client) {
     logger.warn("gaming.provider.unavailable", {
       ...baseLogContext,
       provider: "openai",
-      fallback: "mock"
+      recoveryClass: "generation_unavailable"
     });
-    const mock = generateMockResponse(resolvedParams.prompt, resolvedParams.mode);
+
     return formatGameplaySuccessWithLogs({
       mode: params.mode,
-      response: stringifyMockResult(mock.result),
+      response: buildGamingProviderFallbackResponse({
+        input: resolvedParams, sources, sourceKnown: storedSourceKnown,
+        fallbackReason: "GAMING_PROVIDER_UNAVAILABLE"
+      }),
       sources,
       logContext: baseLogContext,
       requestStartedAt,

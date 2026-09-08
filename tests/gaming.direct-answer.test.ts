@@ -17,6 +17,16 @@ const mockRunTrinityWritingPipeline = jest.fn();
 const mockBuildStoredGamingKnowledgeContext = jest.fn();
 const DEFAULT_GUIDE_SNIPPET = 'Clean guide explains boss mechanics, route steps, and readable gameplay evidence.';
 
+/** Provider-only regressions must first have real selected evidence from the controlled repository. */
+function useControlledStoredGuideEvidence(): void {
+  mockBuildStoredGamingKnowledgeContext.mockResolvedValue({
+    context: 'Synthetic guide evidence.', sourceKnown: true,
+    sources: [{ url: 'https://example.com/controlled-guide', sourceId: 'controlled-source',
+      sourceType: 'supplied', fetchedAt: '2026-09-01T00:00:00Z',
+      snippet: 'Synthetic guide: turn the canal valve to open the door. The temple boss lowers its guard after striking.' }]
+  });
+}
+
 function expectFetchOptions(timeoutMs = 5000) {
   return expect.objectContaining({
     signal: expect.any(Object),
@@ -138,11 +148,13 @@ describe('gaming guide output hardening', () => {
   });
 
   it('routes anti-simulation guide prompts through normal Trinity guide stages', async () => {
+    useControlledStoredGuideEvidence();
     mockResponsesCreate.mockResolvedValue({
       choices: [{ message: { content: 'Direct gameplay answer' } }]
     });
 
     const result = await runGuidePipeline({
+      game: 'Fixture Quest',
       prompt: 'Answer directly. Do not simulate, no role-play, no hypothetical runs. How do I beat the temple boss?',
       guideUrls: [],
       auditEnabled: false
@@ -154,7 +166,7 @@ describe('gaming guide output hardening', () => {
       mode: 'guide',
       data: expect.objectContaining({
         response: 'Direct gameplay answer',
-        sources: []
+        sources: [expect.objectContaining({ sourceId: 'controlled-source' })]
       })
     }));
     expect(mockResponsesCreate).not.toHaveBeenCalled();
@@ -183,7 +195,7 @@ describe('gaming guide output hardening', () => {
     expect(trinityRequest.input.prompt).not.toContain('Do not simulate');
     expect(trinityRequest.input.prompt).toContain('avoid hypothetical run narration');
     expect(trinityRequest.input.prompt).not.toContain('avoid run narration narration');
-    expect(trinityRequest.input.prompt).toContain('No accepted guide evidence is available.');
+    expect(trinityRequest.input.prompt).toContain('Synthetic guide: turn the canal valve');
   });
 
   it.each([
@@ -192,8 +204,9 @@ describe('gaming guide output hardening', () => {
     { fallbackFlag: true },
     { dryRun: true }
   ])('does not promote or cache incomplete and fallback provider results: %j', async (metadata) => {
+    useControlledStoredGuideEvidence();
     mockRunTrinityWritingPipeline.mockResolvedValueOnce({ result: 'PRIVATE PARTIAL ANSWER', ...metadata });
-    const input = { prompt: 'Explain the canal valve.', guideUrls: [], auditEnabled: false };
+    const input = { game: 'Fixture Quest', prompt: 'Explain the canal valve.', guideUrls: [], auditEnabled: false };
     const first = await runGuidePipeline(input);
     expect(first.data.fallbackReason).toBeDefined();
     expect(first.data.grounding?.groundedInSuppliedEvidence).toBe(false);
@@ -206,6 +219,7 @@ describe('gaming guide output hardening', () => {
   });
 
   it('keeps SWTOR guide requests on the normal Trinity output path', async () => {
+    useControlledStoredGuideEvidence();
     mockRunTrinityWritingPipeline.mockResolvedValueOnce({
       result: [
         '1. Set your role and discipline.',
@@ -334,6 +348,7 @@ describe('gaming guide output hardening', () => {
   });
 
   it('passes a small guide smoke request through the bounded guide path', async () => {
+    useControlledStoredGuideEvidence();
     mockRunTrinityWritingPipeline.mockResolvedValueOnce({
       result: '1. Hold threat. 2. Face enemies away. 3. Use mitigation before spikes.',
       activeModel: 'gpt-test',
@@ -438,10 +453,10 @@ describe('gaming guide output hardening', () => {
 
       expect(result.ok).toBe(true);
       expect(result.mode).toBe('build');
-      expect(result.data.response).toContain('bounded deterministic fallback');
+      expect(result.data.response).toContain("couldn't locate enough guide information");
       expect(result.data.response).not.toContain('PROVIDER_COMPLETION_INCOMPLETE');
       expect(result.data.response).not.toMatch(/provider|incomplete|integrity|timeout/i);
-      expect(result.data.response).toContain('For Elden Ring');
+      expect(result.data.response).toContain('Elden Ring');
       const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as {
         input: { prompt: string };
         context: { runOptions: { answerMode?: string; requestedVerbosity?: string } };
@@ -780,7 +795,7 @@ describe('gaming guide output hardening', () => {
       expect(result.ok).toBe(true);
       expect(result.data.sources.length).toBeGreaterThanOrEqual(1);
       expect(result.data.sources.map((source) => source.url)).toContain('https://example.com/elden-ring-route');
-      expect(result.data.response).toContain('Sources available');
+      expect(result.data.response).toContain('I found relevant guide material');
       expect(result.data.response).not.toContain('TRINITY_OUTPUT_INTEGRITY_FAILED');
       expect(result.data.response).not.toMatch(/provider|incomplete|integrity|timeout/i);
       expect(result.data.response).not.toContain('Backend-supported: none');
@@ -882,6 +897,7 @@ describe('gaming guide output hardening', () => {
     'I cannot browse the web. I also cannot access live external data.',
     "I'm unable to browse the web. Please paste the source text so I can help."
   ])('honors Trinity refusal metadata for a multi-sentence capability-only response', async (providerOutput) => {
+    useControlledStoredGuideEvidence();
     mockRunTrinityWritingPipeline.mockResolvedValueOnce({
       result: providerOutput,
       activeModel: 'gpt-test',
@@ -896,6 +912,7 @@ describe('gaming guide output hardening', () => {
     });
 
     const result = await runGuidePipeline({
+      game: 'Fixture Quest',
       prompt: 'Give me a concise general survival-game progression guide.',
       guideUrls: [],
       auditEnabled: false
@@ -905,7 +922,7 @@ describe('gaming guide output hardening', () => {
     expect(result.data.fallbackReason).toBe('GAMING_PROVIDER_ERROR');
   });
 
-  it('treats a capability-only provider response as unusable when no sources were available', async () => {
+  it('does not call the provider when no sources are available', async () => {
     mockRunTrinityWritingPipeline.mockResolvedValueOnce({
       result: 'I cannot browse the web or access live external data.',
       activeModel: 'gpt-test',
@@ -920,7 +937,8 @@ describe('gaming guide output hardening', () => {
 
     expect(result.data.sources).toEqual([]);
     expect(result.data.response.trim().length).toBeGreaterThan(0);
-    expect(result.data.fallbackReason).toBe('GAMING_PROVIDER_ERROR');
+    expect(result.data.fallbackReason).toBe('INTAKE_RETRIEVAL_FAILED');
+    expect(mockRunTrinityWritingPipeline).not.toHaveBeenCalled();
   });
 
   it('preserves useful source-backed gameplay guidance that includes a capability limitation', async () => {
@@ -1049,7 +1067,7 @@ describe('gaming guide output hardening', () => {
     expect(result.data.discoveryReason).toBe('DISCOVERY_NO_SOURCE_CANDIDATES');
     expect(result.data.discoveryFailureReason).toBe('DISCOVERY_PROVIDER_UNCONFIGURED');
     expect(result.data.sources).toEqual([]);
-    expect(result.data.response).toContain('Sources unavailable');
+    expect(result.data.response).toContain("couldn't locate enough guide information");
     expect(result.data.evidenceRequest).toEqual({
       required: true,
       reason: 'CURRENT_VERSION_EVIDENCE_REQUIRED',
@@ -1490,6 +1508,7 @@ describe('gaming guide output hardening', () => {
   });
 
   it('marks the deterministic no-client path with bounded fallback metadata', async () => {
+    useControlledStoredGuideEvidence();
     mockGetOpenAIClientOrAdapter.mockReturnValueOnce({ client: null });
 
     const result = await runGuidePipeline({
@@ -1501,7 +1520,7 @@ describe('gaming guide output hardening', () => {
 
     expect(result.data.fallbackReason).toBe('GAMING_PROVIDER_UNAVAILABLE');
     expect(result.data.discoveryReason).toBe('DISCOVERY_DISABLED');
-    expect(mockGenerateMockResponse).toHaveBeenCalledTimes(1);
+    expect(mockGenerateMockResponse).not.toHaveBeenCalled();
     expect(mockRunTrinityWritingPipeline).not.toHaveBeenCalled();
   });
 
@@ -1524,10 +1543,10 @@ describe('gaming guide output hardening', () => {
       route: 'gaming',
       mode: 'guide'
     }));
-    expect(result.data.response).toContain('Sources available');
+    expect(result.data.response).toContain('I found the relevant guide material');
     expect(result.data.response).not.toContain('INTAKE_UPSTREAM_TIMEOUT');
     expect(result.data.response).not.toMatch(/provider|incomplete|integrity|timeout/i);
-    expect(result.data.response).toContain('For Elden Ring');
+    expect(result.data.response).toContain('timed out');
   });
 
   it('returns a controlled fallback when runtime budget exhaustion reaches the guide pipeline', async () => {
@@ -1545,7 +1564,7 @@ describe('gaming guide output hardening', () => {
     });
 
     expect(result.ok).toBe(true);
-    expect(result.data.response).toContain('bounded deterministic fallback');
+    expect(result.data.response).toContain('timed out');
     expect(result.data.response).not.toContain('INTAKE_UPSTREAM_TIMEOUT');
     expect(result.data.response).not.toMatch(/provider|incomplete|integrity|timeout/i);
   });
@@ -1612,6 +1631,7 @@ describe('gaming guide output hardening', () => {
   });
 
   it('clamps guide stage timeout below the guide pipeline timeout when env overrides exceed the budget', async () => {
+    useControlledStoredGuideEvidence();
     process.env.ARCANOS_GAMING_GUIDE_PIPELINE_TIMEOUT_MS = '9000';
     process.env.ARCANOS_GAMING_GUIDE_STAGE_TIMEOUT_MS = '25000';
     mockRunTrinityWritingPipeline.mockResolvedValueOnce({
@@ -1644,6 +1664,7 @@ describe('gaming guide output hardening', () => {
   });
 
   it('uses an explicit module timeout as the default guide provider budget', async () => {
+    useControlledStoredGuideEvidence();
     process.env.ARCANOS_GAMING_MODULE_TIMEOUT_MS = '90000ms';
     mockRunTrinityWritingPipeline.mockResolvedValueOnce({
       result: '1. Hold threat. 2. Face enemies away. 3. Use mitigation before spikes.',
@@ -1675,6 +1696,7 @@ describe('gaming guide output hardening', () => {
   });
 
   it('preserves the default guide provider budget when the module timeout is explicitly set to its default', async () => {
+    useControlledStoredGuideEvidence();
     process.env.ARCANOS_GAMING_MODULE_TIMEOUT_MS = '60000';
     mockRunTrinityWritingPipeline.mockResolvedValueOnce({
       result: '1. Hold threat. 2. Face enemies away. 3. Use mitigation before spikes.',
@@ -1890,7 +1912,8 @@ describe('gaming guide output hardening', () => {
       });
 
       expect(result.ok).toBe(true);
-      expect(mockRunTrinityWritingPipeline).toHaveBeenCalledTimes(1);
+      expect(mockRunTrinityWritingPipeline).not.toHaveBeenCalled();
+      expect(result.data.fallbackReason).toBe('INTAKE_RETRIEVAL_FAILED');
       const retrievalFailureLog = warnSpy.mock.calls.find(([event]) => event === 'gaming.retrieval.failure')?.[1];
       expect(retrievalFailureLog).toBeUndefined();
       expect(warnSpy).not.toHaveBeenCalledWith('gaming.fallback.used', expect.objectContaining({
@@ -1904,7 +1927,7 @@ describe('gaming guide output hardening', () => {
   it('uses curated walkthrough context for Elden Ring guide requests', async () => {
     mockFetchAndClean.mockImplementation(async (url: string) =>
       url.includes('Game+Progress+Route')
-        ? 'Limgrave route: visit The First Step, Church of Elleh, Gatefront Ruins, and unlock Torrent before Stormveil.'
+        ? 'Limgrave route after leaving the tutorial: visit The First Step, Church of Elleh, Gatefront Ruins, and unlock Torrent before Stormveil.'
         : 'less relevant source'
     );
 
@@ -2159,7 +2182,7 @@ describe('gaming guide output hardening', () => {
     }
   });
 
-  it('marks no-source generation as retrieval fallback or inference context', async () => {
+  it('returns source-unavailable recovery before generation when no evidence exists', async () => {
     const result = await runGuidePipeline({
       prompt: 'How do I beat the temple boss?',
       guideUrls: [],
@@ -2172,9 +2195,9 @@ describe('gaming guide output hardening', () => {
       usableSourceCount: 0, citableSourceCount: 0, selectedChunkCount: 0,
       groundedInSuppliedEvidence: false
     });
-    const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as { input: { prompt: string } };
-    expect(trinityRequest.input.prompt).toContain('Source retrieval ran or sources were provided, but no usable snippets were retrieved.');
-    expect(trinityRequest.input.prompt).toContain('label weak, missing, or patch-sensitive evidence as inference or fallback');
+    expect(mockRunTrinityWritingPipeline).not.toHaveBeenCalled();
+    expect(result.data.fallbackReason).toBe('INTAKE_RETRIEVAL_FAILED');
+    expect(result.data.response).toContain("couldn't locate enough guide information");
   });
 
   it('carries a grounded guide answer and evidence counts through user-facing composition', async () => {
@@ -2352,7 +2375,9 @@ describe('gaming guide output hardening', () => {
   });
 
   it('does not emit a misleading audit trace when audit is folded into the Trinity prompt', async () => {
+    useControlledStoredGuideEvidence();
     const result = await runGuidePipeline({
+      game: 'Fixture Quest',
       prompt: 'Give a direct guide to defensive positioning.',
       guideUrls: [],
       auditEnabled: true

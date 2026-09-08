@@ -375,10 +375,10 @@ describe('ArcanosGaming module', () => {
       route: 'gaming',
       mode: 'guide',
       data: expect.objectContaining({
-        response: expect.stringContaining('Backend-supported: none. The backend did not return usable guidance.'),
+        response: expect.stringContaining('enough guide information'),
       }),
     }));
-    expect((result as any).data.response).toContain('General Fallback (not backend-supported)');
+    expect((result as any).data.response).toContain('reliabl');
   });
 
   it('returns a labeled general fallback when the backend times out', async () => {
@@ -396,10 +396,10 @@ describe('ArcanosGaming module', () => {
       route: 'gaming',
       mode: 'guide',
       data: expect.objectContaining({
-        response: expect.stringContaining('Backend-supported: none. The backend did not return usable guidance.'),
+        response: expect.stringContaining('enough guide information'),
       }),
     }));
-    expect((result as any).data.response).toContain('safe deterministic fallback was used');
+    expect((result as any).data.response).toContain('reliabl');
     expect((result as any).data.response).not.toMatch(/timeout|incomplete|integrity/i);
   });
 
@@ -423,10 +423,10 @@ describe('ArcanosGaming module', () => {
       route: 'gaming',
       mode: 'guide',
       data: expect.objectContaining({
-        response: expect.stringContaining('General Fallback (not backend-supported)'),
+        response: expect.stringContaining('reliabl'),
       }),
     }));
-    expect((result as any).data.response).toContain('safe deterministic fallback was used');
+    expect((result as any).data.response).toContain('reliabl');
     expect((result as any).data.response).not.toContain('Malformed backend response');
   });
 
@@ -454,7 +454,7 @@ describe('ArcanosGaming module', () => {
       route: 'gaming',
       mode: 'guide',
       data: expect.objectContaining({
-        response: expect.stringContaining('General Fallback (not backend-supported)'),
+        response: expect.stringContaining('reliabl'),
         sources: [{
           url: 'https://example.com/elden-ring-route',
           snippet: 'Validated route guidance.',
@@ -486,7 +486,7 @@ describe('ArcanosGaming module', () => {
     expect(result).toEqual(expect.objectContaining({
       ok: true,
       data: expect.objectContaining({
-        response: expect.stringContaining('General Fallback (not backend-supported)'),
+        response: expect.stringContaining('reliabl'),
         sources: [{
           url: 'https://example.com/palworld-guide',
           snippet: 'Validated Palworld guidance.',
@@ -518,7 +518,7 @@ describe('ArcanosGaming module', () => {
     expect(result).toEqual(expect.objectContaining({
       ok: true,
       data: expect.objectContaining({
-        response: expect.stringContaining('General Fallback (not backend-supported)'),
+        response: expect.stringContaining('reliabl'),
         sources: [{
           url: 'https://example.com/palworld-guide',
           snippet: 'Validated Palworld guidance.',
@@ -577,7 +577,7 @@ describe('ArcanosGaming module', () => {
       expect(publicResponse.length).toBeGreaterThan(GAMING_RESPONSE_MAX_CHARACTERS);
       expect((result as any).data.fallbackReason).toBeUndefined();
     } else {
-      expect(publicResponse).toContain('General Fallback (not backend-supported)');
+      expect(publicResponse).toContain('reliabl');
       expect(publicResponse).not.toContain('\u{1F3AE}');
       expect((result as any).data.fallbackReason).toBe('GAMING_PROVIDER_ERROR');
       expect(mockLogger.warn).toHaveBeenCalledWith('gaming.backend.failure', expect.objectContaining({
@@ -615,7 +615,7 @@ describe('ArcanosGaming module', () => {
     const publicResponse = (result as any).data.response as string;
     expect(Buffer.byteLength(publicResponse, 'utf8')).toBeGreaterThan(4 * 1_024);
     expect(Array.from(publicResponse).length).toBeLessThanOrEqual(4_096);
-    expect(publicResponse).not.toContain('General Fallback (not backend-supported)');
+    expect(publicResponse).not.toContain('reliabl');
     expect((result as any).data.fallbackReason).toBeUndefined();
   });
 

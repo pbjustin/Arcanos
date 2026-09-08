@@ -427,7 +427,37 @@ describe('PostgresGamingSourceRepository reads', () => {
     expect(query?.sql).toContain("knowledge.status = 'active'");
     expect(query?.sql).toContain("source.status = 'active'");
     expect(query?.sql).toContain("to_tsvector('simple'::regconfig, knowledge.search_text)");
-    expect(query?.values).toEqual(['destiny 2', 'solar hunter', 'build', 50]);
+    expect(query?.values).toEqual(['destiny 2', 'solar hunter', 'build', 50, null]);
+  });
+
+  test('finds a bounded active catalog identity independently from gameplay text', async () => {
+    const harness = new GamingRepositoryHarness((sql, values) => {
+      expect(sql).toContain("source.status = 'active'");
+      expect(sql).toContain("knowledge.status = 'active'");
+      expect(sql).toContain('knowledge.game_key = source.game_key');
+      expect(sql).toContain('COLLATE pg_catalog.pg_c_utf8');
+      expect(sql).not.toContain('pg_unicode_fast');
+      expect(sql).toContain('ORDER BY source.trust_score DESC, source.priority DESC, source.id ASC LIMIT 20');
+      expect(values).toEqual(["Pilot's Oath™ — PC Edition", 'guide']);
+      return result([
+        { source_id: SOURCE_ID, game_key: 'historical-key', game_name: 'Pilot’s Oath: PC Edition' },
+        { source_id: RECORD_ID, game_key: 'pilots-oath', game_name: 'Pilots Oath' }
+      ]);
+    });
+    expect(await new PostgresGamingSourceRepository(harness.pool)
+      .findActiveGamingSourceIdentities({ game: "Pilot's Oath™ — PC Edition", mode: 'guide' }))
+      .toEqual([{ sourceId: SOURCE_ID, gameKey: 'historical-key', gameName: 'Pilot’s Oath: PC Edition' }]);
+  });
+
+  test('source ID scoping never falls back to a broader historical game key', async () => {
+    const harness = new GamingRepositoryHarness((sql, values) => {
+      expect(sql).toContain('(($5::uuid[] IS NULL AND knowledge.game_key = $1) OR source.id = ANY($5::uuid[]))');
+      expect(values.at(-1)).toEqual([SOURCE_ID]);
+      return result();
+    });
+    await expect(new PostgresGamingSourceRepository(harness.pool).queryActiveGamingKnowledge({
+      gameKey: 'broad-franchise', sourceIds: [SOURCE_ID], query: 'copper', mode: 'guide'
+    })).resolves.toEqual([]);
   });
 
   test('bounds a public knowledge query with a transaction-local statement timeout', async () => {

@@ -10,6 +10,7 @@ import {
 } from "@services/gamingModes.js";
 import { isRecord } from "@shared/typeGuards.js";
 import { composeGroundedGamingGuideResponse } from "@shared/gaming/gamingGuideResponseCore.js";
+import { buildGamingRecoveryResponse } from "@shared/gaming/gamingRecoveryResponse.js";
 import { extractTextPrompt, normalizeStringList } from "@transport/http/payloadNormalization.js";
 import { GAMING_PLAYER_CONTEXT, pickGamingPlayerContext, resolveGamingPlayerContext, type GamingContextCarrier, type GamingPlayerContext, type GamingSpoilerTolerance } from "@shared/gaming/gamingPlayerContext.js";
 
@@ -467,12 +468,12 @@ function firstUsefulLine(text: string): string {
     .find((entry) => entry.length > 0);
 
   if (!line) {
-    return "Backend-supported guidance is available below.";
+    return "Guidance is available below.";
   }
 
   const cleanLine = line.replace(/^#+\s*/, "").trim();
   if (!cleanLine) {
-    return "Backend-supported guidance is available below.";
+    return "Guidance is available below.";
   }
 
   return cleanLine.length > 220 ? `${cleanLine.slice(0, 217)}...` : cleanLine;
@@ -502,21 +503,6 @@ function patchWatchOut(intent: GamingIntent): string {
   return "Context: adjust for your platform, patch, difficulty, and progression point when they differ.";
 }
 
-function buildContextLine(intent: GamingIntent): string {
-  const parts = [
-    intent.game ? `game=${intent.game}` : "",
-    intent.platform ? `platform=${intent.platform}` : "",
-    intent.version ? `version=${intent.version}` : "",
-    intent.class ? `class=${intent.class}` : "",
-    intent.role ? `role=${intent.role}` : "",
-    intent.difficulty ? `difficulty=${intent.difficulty}` : "",
-    intent.progressPoint ? `progress=${intent.progressPoint}` : "",
-    intent.constraints.length > 0 ? `constraints=${intent.constraints.join(", ")}` : "",
-  ].filter(Boolean);
-
-  return parts.length > 0 ? `Context used: ${parts.join("; ")}.` : "Context used: prompt only.";
-}
-
 function hasComposedSections(response: string): boolean {
   return /\bQuick Answer\b/i.test(response) &&
     /\bWhy It Works\b/i.test(response) &&
@@ -528,32 +514,7 @@ function lowConfidenceNote(intent: GamingIntent): string | null {
     return null;
   }
 
-  return `Routing confidence: low (${intent.confidence.toFixed(2)}). If this lands in the wrong mode, specify guide, build, or meta.`;
-}
-
-function fallbackBodyForMode(intent: GamingIntent): string {
-  if (intent.mode === "build") {
-    return [
-      "Start with the role you need the build to perform, then prioritize core scaling stats, survivability, and one reliable damage or utility loop.",
-      "Test changes in safe content before committing rare materials or ranked attempts.",
-    ].join("\n");
-  }
-
-  if (intent.mode === "meta") {
-    return [
-      "Treat meta advice as patch-sensitive until verified against the current game version.",
-      "Prefer flexible picks, builds, or team comps that remain useful when a matchup or balance assumption is wrong.",
-    ].join("\n");
-  }
-
-  return [
-    "Confirm the current objective, repair or upgrade gear, stock key consumables, and retry the next encounter while watching for repeatable mechanics.",
-    "If progress stalls, lower the difficulty, level up, or narrow the request to the exact boss, quest, route, or checkpoint.",
-  ].join("\n");
-}
-
-function safeBackendFailureReason(_error: unknown): string {
-  return "The gaming backend could not return usable guidance; a safe deterministic fallback was used.";
+  return "For a more specific answer, name the exact boss, item, location, or objective.";
 }
 
 export const IntentRouterAgent = {
@@ -708,6 +669,11 @@ export const ResponseComposerAgent = {
     backendEnvelope: GamingSuccessEnvelope;
   }): GamingSuccessEnvelope {
     const { intent, backendEnvelope } = params;
+    // Recovery text is already a complete player-facing response. Keep diagnostic
+    // fields on the envelope instead of wrapping it in internal support labels.
+    if (backendEnvelope.data.fallbackReason) {
+      return { ...backendEnvelope, data: { ...backendEnvelope.data, response: backendEnvelope.data.response.trim() } };
+    }
     const groundedGuide = composeGroundedGamingGuideResponse(intent.mode, backendEnvelope);
     if (groundedGuide) {
       return groundedGuide;
@@ -723,15 +689,10 @@ export const ResponseComposerAgent = {
         ].join("\n")
       : [
           "Quick Answer",
-          `Backend-supported: ${firstUsefulLine(backendResponse)}`,
+          firstUsefulLine(backendResponse),
           "",
           intent.mode === "build" ? "Build" : "Steps",
           backendResponse,
-          "",
-          "Why It Works",
-          "Backend-supported: the guidance above came from the ARCANOS Gaming backend.",
-          "Inference: ARCANOS Gaming added the section labels, summary line, and context cautions.",
-          buildContextLine(intent),
           "",
           "Watch Outs",
           `- ${spoilerWatchOut(intent.spoilerTolerance)}`,
@@ -753,28 +714,13 @@ export const ResponseComposerAgent = {
     error: unknown;
     fallbackReason?: GamingFallbackReason;
   }): GamingSuccessEnvelope {
-    const { intent, error } = params;
-    const fallback = fallbackBodyForMode(intent);
-    const response = [
-      "Quick Answer",
-      "Backend-supported: none. The backend did not return usable guidance.",
-      "",
-      intent.mode === "build" ? "Build" : "Steps",
-      "General Fallback (not backend-supported):",
-      fallback,
-      "",
-      "Why It Works",
-      "Backend-supported: none; this is a deterministic fallback because the backend call failed.",
-      `Inference: fallback selected from request mode '${intent.mode}' and available prompt context.`,
-      buildContextLine(intent),
-      "",
-      "Watch Outs",
-      `- ${spoilerWatchOut(intent.spoilerTolerance)}`,
-      `- ${patchWatchOut(intent)}`,
-      ...(lowConfidenceNote(intent) ? [`- ${lowConfidenceNote(intent)}`] : []),
-      `- Backend status: ${safeBackendFailureReason(error)}`,
-    ].join("\n");
-
+    const { intent } = params;
+    const reason = params.fallbackReason ?? "GAMING_PROVIDER_ERROR";
+    const response = buildGamingRecoveryResponse({
+      ...intent,
+      evidenceSelected: false,
+      timedOut: reason.includes("TIMEOUT")
+    });
     return formatGamingSuccess({
       mode: intent.mode,
       data: {

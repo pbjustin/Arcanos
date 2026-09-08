@@ -5,6 +5,10 @@ Arcanos uses PostgreSQL when `DATABASE_URL` or equivalent `PG*` variables are co
 
 ## Prerequisites
 - PostgreSQL access for migration development or validation.
+- Gaming source identity lookup uses the built-in `pg_catalog.pg_c_utf8`
+  Unicode collation available in PostgreSQL 17 and 18 UTF-8 databases. It needs
+  no extension, migration, or source reindex. SQL only acquires candidates;
+  the shared application identity check must also accept each stored title.
 - `DATABASE_URL` or a complete `PG*` connection set when running database-backed paths.
 - Node dependencies installed from the repository root.
 

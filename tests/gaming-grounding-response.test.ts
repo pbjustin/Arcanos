@@ -96,7 +96,8 @@ describe('Gaming grounding public projection', () => {
     expect(composed.data.fallbackReason).toBe('GAMING_PROVIDER_UNAVAILABLE');
     expect(composed.data.grounding).toEqual(envelope.data.grounding);
     expect(composed.data.response).toContain('General guidance while generation is unavailable.');
-    expect(composed.data.response).not.toBe(envelope.data.response);
+    expect(composed.data.response).toBe(envelope.data.response);
+    expect(composed.data.response).not.toMatch(/Backend-supported|Fallback status/iu);
   });
 
   it('preserves only bounded grounding fields on success', () => {

@@ -193,7 +193,8 @@ beforeEach(async () => {
     GamingSourceRepositoryUnavailableError: MockGamingSourceRepositoryUnavailableError,
     persistGamingSourceRevision: persistGamingSourceRevisionMock,
     getGamingSourceById: getGamingSourceByIdMock,
-    searchActiveGamingKnowledge: searchActiveGamingKnowledgeMock
+    searchActiveGamingKnowledge: searchActiveGamingKnowledgeMock,
+    findActiveGamingSourceIdentities: jest.fn(async () => [{ sourceId: '019fe3cd-8c01-7f01-8d2d-caa951bc4ba0', gameKey: 'borderlands-4', gameName: 'Borderlands 4' }])
   }));
   jest.unstable_mockModule('../src/services/gamingDocumentResolution.js', () => ({
     GAMING_DOCUMENT_RESOLVER_VERSION: 'gaming-document-v1',
@@ -1182,11 +1183,11 @@ describe('gaming source ingestion', () => {
 
     releaseLookups?.([]);
     await expect(Promise.all(admitted)).resolves.toEqual(
-      Array.from({ length: 4 }, () => ({ context: '', sources: [] }))
+      Array.from({ length: 4 }, () => ({ context: '', sources: [], sourceKnown: true }))
     );
     await expect(
       buildStoredGamingKnowledgeContext(lookupInput)
-    ).resolves.toEqual({ context: '', sources: [] });
+    ).resolves.toEqual({ context: '', sources: [], sourceKnown: true });
     expect(searchActiveGamingKnowledgeMock).toHaveBeenCalledTimes(5);
   });
 });

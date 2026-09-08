@@ -353,8 +353,8 @@ describe('Gaming agent routing model', () => {
       },
     });
 
-    expect(result.data.response).toContain('Backend-supported: Guide to beating Malenia');
-    expect(result.data.response).not.toContain('Backend-supported: ###');
+    expect(result.data.response).toContain('Quick Answer\nGuide to beating Malenia');
+    expect(result.data.response).not.toContain('Backend-supported:');
   });
 
   it('preserves the exact backend payload schema and URL values', () => {

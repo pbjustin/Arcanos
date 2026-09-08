@@ -1,4 +1,5 @@
 import type { Pool } from 'pg';
+import { normalizeGamingGameIdentity } from '../../src/shared/gaming/gamingGameIdentity.js';
 
 export const resolvedSourceId = '10000000-0000-4000-8000-000000000001';
 
@@ -92,7 +93,8 @@ export class GamingResolvedSourceHarness {
       const words = (queryText.toLowerCase().match(/[a-z0-9]+/gu) ?? [])
         .filter(word => word !== 'or');
       return result(this.records.filter(record => record.status === 'active'
-        && this.source?.status === 'active' && record.game_key === values[0]
+        && this.source?.status === 'active'
+        && (values[4] ? values[4].includes(this.source?.id) : record.game_key === values[0])
         && (!values[2] || record.record_type === values[2])
         && (disjunction
           ? words.some(word => record.search_text.toLowerCase().includes(word))
@@ -106,6 +108,12 @@ export class GamingResolvedSourceHarness {
             relevance: 1
           };
         }));
+    }
+    if (sql.startsWith('SELECT source.id AS source_id, source.game_key, source.game_name')) {
+      return result(this.source?.status === 'active'
+        && normalizeGamingGameIdentity(this.source.game_name) === normalizeGamingGameIdentity(values[0])
+        && this.records.some(record => record.status === 'active' && (!values[1] || record.record_type === values[1]))
+        ? [{ source_id: this.source.id, game_key: this.source.game_key, game_name: this.source.game_name }] : []);
     }
     throw new Error('Unexpected SQL operation in Gaming fixture');
   }

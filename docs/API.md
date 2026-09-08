@@ -1519,6 +1519,18 @@ forwarded through validation, backend mapping, retrieval, and Trinity; it is
 user-provided data, never verified state or control instructions. There is no
 implicit session or cross-chat memory.
 
+Underspecified progression requests such as "What next?" need a specific area,
+checkpoint, completed objective, or an objective named in the question. Without
+one, guide mode asks one progress question before model validation or generation.
+Platform, difficulty, answer depth, and spoiler preferences do not supply progress
+anchors. Other guide requests with no usable evidence return a concise source
+recovery message without generating unsupported gameplay advice. If generation
+times out after retrieval, the response says guide material was found and invites
+a retry; clients must resend the same gameplay context. Diagnostic fallback
+reasons remain separate from player-facing prose, and failed generation is never
+marked as a grounded answer. The compact Trinity intake and its bounded timeout
+remain the normal generation path when useful evidence is available.
+
 The existing `POST /gpt/arcanos-gaming/evidence-retry` client endpoint accepts the
 same optional context fields alongside `game`, `mode`, `originalPrompt`,
 `candidateUrls`, and `evidenceAttempt: 1`. Clients must resupply their context;
@@ -1671,6 +1683,14 @@ Existing single-record revisions remain readable until explicitly refreshed;
 there is no automatic backfill.
 
 Stored retrieval returns structured chunk evidence before formatting it. PostgreSQL
+guide lookup first resolves active stored source identities from trusted game
+metadata, independently of passage selection. Formatting normalization handles
+punctuation, trademarks, and separators while retaining edition, sequel, expansion,
+and platform distinctions. A catalog entry under a base title does not authorize
+retrieval for a differently named edition without trusted matching metadata.
+Internal `sourceKnown` therefore remains separate from selected evidence. Source
+identity lookup and lexical acquisition share the existing bounded retrieval
+deadline; no source refresh or reindex occurs during a query. PostgreSQL
 full-text search retrieves up to 20 active candidates using bounded meaningful
 query terms. Candidates need positive lexical rank and at least 25% matching
 query-term coverage in their evidence text; matching only a repeated game/title

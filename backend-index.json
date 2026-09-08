@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-07T23:14:38.570Z",
+  "generatedAt": "2026-09-08T17:49:37.264Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -2636,6 +2636,9 @@
           "relativePath": "src/shared/gaming/gamingDurableRagPreviewFixture.ts"
         },
         {
+          "relativePath": "src/shared/gaming/gamingGameIdentity.ts"
+        },
+        {
           "relativePath": "src/shared/gaming/gamingGrounding.ts"
         },
         {
@@ -2654,7 +2657,13 @@
           "relativePath": "src/shared/gaming/gamingPlayerContext.ts"
         },
         {
+          "relativePath": "src/shared/gaming/gamingProgressionPolicy.ts"
+        },
+        {
           "relativePath": "src/shared/gaming/gamingPromptCore.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingRecoveryResponse.ts"
         },
         {
           "relativePath": "src/shared/gaming/gamingRetrievalPolicy.ts"
@@ -3988,6 +3997,9 @@
           "relativePath": "tests/gaming-durable-rag-preview.test.ts"
         },
         {
+          "relativePath": "tests/gaming-game-identity.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-grounding-response.test.ts"
         },
         {
@@ -4016,6 +4028,9 @@
         },
         {
           "relativePath": "tests/gaming-player-context.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-progress-recovery.test.ts"
         },
         {
           "relativePath": "tests/gaming-prompt-builder.test.ts"
