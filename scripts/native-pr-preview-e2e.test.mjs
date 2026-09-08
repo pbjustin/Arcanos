@@ -207,6 +207,8 @@ function responseHeadersForCase(
             NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.durableRagProofVersion,
           [NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.guideAssistanceProofHeader]:
             NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.guideAssistanceProofVersion,
+          [NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.progressRecoveryProofHeader]:
+            NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.progressRecoveryProofVersion,
         }
       : {}),
     ...(requestCase.expectedType === 'backstage-generation-contract'
@@ -2086,6 +2088,12 @@ test('executes the bounded credential-free matrix and detects identity stability
     ).map(({ caseId }) => caseId),
     ['gaming-query-guide']
   );
+  assert.deepEqual(
+    result.checks.filter(({ gamingProgressRecoveryVerified }) =>
+      gamingProgressRecoveryVerified === true
+    ).map(({ caseId }) => caseId),
+    ['gaming-query-guide']
+  );
   assert.equal(
     result.checks.find(({ caseId }) =>
       caseId === 'worker-readiness-initial'
@@ -2936,6 +2944,20 @@ test('rejects missing synthetic provenance and correlation or security header dr
       code: 'NATIVE_PR_PREVIEW_GAMING_GUIDE_ASSISTANCE_PROOF_INVALID',
       mutate(headers) {
         headers[NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.guideAssistanceProofHeader] = 'gaming-guide-assistance/drifted';
+      },
+    },
+    {
+      caseId: 'gaming-query-guide',
+      code: 'NATIVE_PR_PREVIEW_GAMING_PROGRESS_RECOVERY_PROOF_INVALID',
+      mutate(headers) {
+        delete headers[NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.progressRecoveryProofHeader];
+      },
+    },
+    {
+      caseId: 'gaming-query-guide',
+      code: 'NATIVE_PR_PREVIEW_GAMING_PROGRESS_RECOVERY_PROOF_INVALID',
+      mutate(headers) {
+        headers[NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.progressRecoveryProofHeader] = 'gaming-progress-recovery/drifted';
       },
     },
     {

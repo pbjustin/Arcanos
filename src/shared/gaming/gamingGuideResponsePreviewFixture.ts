@@ -1,6 +1,7 @@
 import type { GamingFallbackReason, GamingMode, GamingSuccessEnvelope } from '@services/gamingModes.js';
 import { composeGroundedGamingGuideResponse } from './gamingGuideResponseCore.js';
 import { runGamingGuideAssistancePreview } from './gamingGuideAssistancePreviewFixture.js';
+import { runGamingProgressRecoveryPreview } from './gamingProgressRecoveryPreviewFixture.js';
 import {
   buildGamingPrompt,
   buildGamingSystemPrompt,
@@ -171,6 +172,7 @@ export function runGamingGuideResponsePreview(): void {
     requireProof(unicodeResult?.data.response === unicodeAnswer);
     requireProof(Array.from(unicodeResult.data.response).length === 4_096 && unicodeResult.data.response.length > 4_096);
     runGamingGuideAssistancePreview();
+    runGamingProgressRecoveryPreview();
   } catch {
     throw new Error(FAILURE);
   }

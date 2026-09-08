@@ -108,6 +108,9 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/shared/gaming/gamingRetrievalPolicy.ts',
   'src/shared/gaming/gamingProgressionPolicy.ts',
   'src/shared/gaming/gamingGuideAssistancePreviewFixture.ts',
+  'src/shared/gaming/gamingProgressRecoveryPreviewFixture.ts',
+  'src/shared/gaming/gamingGameIdentity.ts',
+  'src/shared/gaming/gamingRecoveryResponse.ts',
   'src/shared/gaming/gamingGuideIntakeCore.ts',
   'src/shared/gaming/gamingPromptCore.ts',
   'src/shared/gaming/gamingGrounding.ts',
@@ -678,6 +681,9 @@ const CRITICAL_RUNTIME_FUNCTION_DIGESTS = new Map([
   ],
 ]);
 const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
+  ['src/shared/gaming/gamingProgressRecoveryPreviewFixture.ts', '3b62bb34437b2152dd991218ee675b567fbf558c6d9e1f55b8d90d61d97eb5ef'],
+  ['src/shared/gaming/gamingGameIdentity.ts', 'f2fbfddaad32ff4382ca3a698cf1d6821e393c68e78ba68de31393daae90053c'],
+  ['src/shared/gaming/gamingRecoveryResponse.ts', '637fcd8afec14041b303c4a8255e7fe940e1b9aa76b68f8fb17d0fb9ad4b141e'],
   ['src/shared/gaming/gamingProgressionPolicy.ts', '91a221a4fa378b8a51bd45a61978fe5d62a386d319659293a05235d81288554b'],
   ['src/shared/gaming/gamingGuideIntakeCore.ts', '8e4f5415d69f223d9006dd465ec7bccac7021f78811b536f4bfe9a4bb27e04f5'],
   ['src/shared/gaming/gamingGuideAssistancePreviewFixture.ts', 'b913a94b6eb908252b426ded9a73547daef5c2af61ad9e12254df0f2b7ff7810'],
@@ -695,7 +701,7 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ['src/shared/gaming/gamingDocumentIngestionPreviewFixture.ts', 'bf530a9fe88a67fdb7a217828d2b68122b2180e9f4fbff2ef6b1c1fb17f81b84'],
   [
     'src/shared/gaming/gamingGuideResponsePreviewFixture.ts',
-    '1cb5f82fe6f1ab2886cf5ffb11e5e0532dc573aa19e95e1e63bd31718b7474f4',
+    'bc69d23a728afd5f1ba863541390a4ad7835a7de55b0785f5045720eed1939a1',
   ],
   [
     'src/shared/gaming/gamingPromptCore.ts',
