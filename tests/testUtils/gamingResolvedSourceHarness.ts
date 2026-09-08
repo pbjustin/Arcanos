@@ -94,6 +94,8 @@ export class GamingResolvedSourceHarness {
         .filter(word => word !== 'or');
       return result(this.records.filter(record => record.status === 'active'
         && this.source?.status === 'active'
+        && record.game_key === this.source.game_key
+        && this.revisions.some(revision => revision.id === record.source_revision_id && revision.source_id === this.source?.id)
         && (values[4] ? values[4].includes(this.source?.id) : record.game_key === values[0])
         && (!values[2] || record.record_type === values[2])
         && (disjunction
@@ -112,7 +114,9 @@ export class GamingResolvedSourceHarness {
     if (sql.startsWith('SELECT source.id AS source_id, source.game_key, source.game_name')) {
       return result(this.source?.status === 'active'
         && normalizeGamingGameIdentity(this.source.game_name) === normalizeGamingGameIdentity(values[0])
-        && this.records.some(record => record.status === 'active' && (!values[1] || record.record_type === values[1]))
+        && this.records.some(record => record.status === 'active' && record.game_key === this.source?.game_key
+          && this.revisions.some(revision => revision.id === record.source_revision_id && revision.source_id === this.source?.id)
+          && (!values[1] || record.record_type === values[1]))
         ? [{ source_id: this.source.id, game_key: this.source.game_key, game_name: this.source.game_name }] : []);
     }
     throw new Error('Unexpected SQL operation in Gaming fixture');
