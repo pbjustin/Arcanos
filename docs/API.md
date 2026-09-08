@@ -1692,6 +1692,11 @@ metadata, independently of passage selection. Formatting normalization handles
 punctuation, trademarks, and separators while retaining edition, sequel, expansion,
 and platform distinctions. A catalog entry under a base title does not authorize
 retrieval for a differently named edition without trusted matching metadata.
+New ingestion preserves the explicitly supplied game title and derives its source
+key from that same formatting-only identity, so variants at the same URL remain
+distinct. Existing stored identities are unchanged until separately maintained.
+Build/meta lookup prefers these precise identities when its legacy key differs,
+and retains the existing legacy-key fallback when no precise identity is stored.
 Internal `sourceKnown` therefore remains separate from selected evidence. Source
 identity lookup and lexical acquisition share the existing bounded retrieval
 deadline; no source refresh or reindex occurs during a query. PostgreSQL

@@ -61,9 +61,11 @@ export async function retrieveStoredGamingKnowledge(input: GamingStoredKnowledge
   const { query } = buildStoredGamingLexicalQuery(input.prompt, input.game, input.mode === 'guide' ? input : undefined);
   if ((!query && input.mode !== 'guide') || input.maxContextChars === 0 || getGamingWebContextMaxChars() === 0) return { context: '', sources: [] };
   input.signal?.throwIfAborted();
-  const gameKey = input.mode === 'guide' ? normalizeGamingGameIdentity(input.game).slice(0, 120)
+  const preciseGameKey = normalizeGamingGameIdentity(input.game).slice(0, 120);
+  const gameKey = input.mode === 'guide' ? preciseGameKey
     : canonicalizeGamingGameName(input.game).normalize('NFKC').toLowerCase()
       .replace(/[^a-z0-9]+/gu, '-').replace(/^-+|-+$/gu, '').slice(0, 160);
+  const resolveSourceIdentity = input.mode === 'guide' || preciseGameKey !== gameKey;
   let sourceKnown = false;
   let records: GamingKnowledgeProvenanceRecord[];
   try {
@@ -84,15 +86,18 @@ export async function retrieveStoredGamingKnowledge(input: GamingStoredKnowledge
       // actual pool waiter/query settles. Its aborted signal forbids stale DB work.
       const pending = Promise.resolve().then(async () => {
         const lookupStartedAt = Date.now();
-        const sources = input.mode === 'guide'
-          ? await findActiveGamingSourceIdentities({ game: input.game, ...(input.edition ? { edition: input.edition } : {}), mode: input.mode }, { queryTimeoutMs, signal: controller.signal })
+        const identities = resolveSourceIdentity
+          ? await findActiveGamingSourceIdentities({ game: input.game, ...(input.mode === 'guide' && input.edition ? { edition: input.edition } : {}), mode: input.mode }, { queryTimeoutMs, signal: controller.signal })
           : undefined;
-        sourceKnown = Boolean(sources?.length);
+        // Newly ingested precise titles can differ from the historical build/meta
+        // alias key. Prefer their exact catalog scope, retaining the legacy fallback.
+        const sources = input.mode === 'guide' || identities?.length ? identities : undefined;
+        sourceKnown = input.mode === 'guide' && Boolean(sources?.length);
         controller.signal.throwIfAborted();
         // Catalog presence never substitutes for positively relevant gameplay evidence.
         if (!query || (sources && !sources.length)) return [];
         const remainingMs = Math.max(1, queryTimeoutMs - (Date.now() - lookupStartedAt));
-        return searchActiveGamingKnowledge({ gameKey, query, mode: input.mode, limit: MAX_STORED_GAMING_CANDIDATES,
+        return searchActiveGamingKnowledge({ gameKey: sources?.length ? preciseGameKey : gameKey, query, mode: input.mode, limit: MAX_STORED_GAMING_CANDIDATES,
           ...(sources ? { sourceIds: sources.map(source => source.sourceId) } : {}) },
         { queryTimeoutMs: remainingMs, signal: controller.signal });
       }).finally(() => { activeLookups -= 1; });

@@ -293,4 +293,33 @@ describe('bounded stored Gaming chunk evidence', () => {
     expect(found).toMatchObject({ sourceKnown: false, context: '', sources: [] });
     expect(search).not.toHaveBeenCalled();
   });
+
+  test.each(['build', 'meta'] as const)('finds newly ingested precise titles for %s without collapsing their catalog identity', async mode => {
+    const game = 'Elden Ring Shadow of the Erdtree';
+    const gameKey = 'elden-ring-shadow-of-the-erdtree';
+    findSources.mockResolvedValue([{ sourceId: 'precise-source', gameKey, gameName: game }]);
+    search.mockImplementation(async (query: unknown) => (query as { sourceIds?: string[] }).sourceIds?.includes('precise-source')
+      ? [record('precise', 'Equip the Zephyrglass Compass before entering the cobalt arch.', { recordType: mode, gameKey, gameName: game, sourceId: 'precise-source' })] : []);
+    const found = await retrieveStoredGamingKnowledge({ ...input, game, mode }, { resolveVerifiedPatch: () => undefined });
+    expect(findSources).toHaveBeenCalledWith({ game, mode }, expect.any(Object));
+    expect(found.evidence?.map(entry => entry.recordId)).toEqual(['precise']);
+    expect(found).not.toHaveProperty('sourceKnown');
+  });
+
+  test.each(['build', 'meta'] as const)('preserves the historical alias lookup for %s when no precise source identity exists', async mode => {
+    findSources.mockResolvedValue([]);
+    search.mockResolvedValue([record('historical', 'Equip the Zephyrglass Compass before entering the cobalt arch.', { recordType: mode, gameKey: 'diablo-4', gameName: 'Diablo 4' })]);
+    const found = await retrieveStoredGamingKnowledge({ ...input, game: 'Diablo IV', mode }, { resolveVerifiedPatch: () => undefined });
+    expect(findSources).toHaveBeenCalledWith({ game: 'Diablo IV', mode }, expect.any(Object));
+    expect(search).toHaveBeenCalledWith({ gameKey: 'diablo-4', query: '"zephyrglass" OR "compass"', mode, limit: 20 }, expect.any(Object));
+    expect(found.evidence?.map(entry => entry.recordId)).toEqual(['historical']);
+  });
+
+  test.each(['build', 'meta'] as const)('keeps the existing single lookup for an unchanged %s game key', async mode => {
+    search.mockResolvedValue([record('common', 'Equip the Zephyrglass Compass before entering the cobalt arch.', { recordType: mode })]);
+    const found = await retrieveStoredGamingKnowledge({ ...input, mode }, { resolveVerifiedPatch: () => undefined });
+    expect(findSources).not.toHaveBeenCalled();
+    expect(search).toHaveBeenCalledWith({ gameKey: 'synthetic-quest', query: '"zephyrglass" OR "compass"', mode, limit: 20 }, expect.any(Object));
+    expect(found.evidence?.map(entry => entry.recordId)).toEqual(['common']);
+  });
 });

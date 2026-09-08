@@ -292,6 +292,51 @@ describe('gaming source ingestion', () => {
     expect(JSON.stringify(queuedInput)).not.toContain('utm_source');
   });
 
+  it.each([
+    ['Minecraft', 'Minecraft Dungeons', 'minecraft-dungeons'],
+    ['Elden Ring', 'Elden Ring Shadow of the Erdtree', 'elden-ring-shadow-of-the-erdtree'],
+    ['World of Warcraft', 'World of Warcraft Classic', 'world-of-warcraft-classic']
+  ])('preserves the precise %s variant through enqueue and persistence at the same source URL', async (baseGame, game, gameKey) => {
+    const url = 'https://example.com/shared-guide';
+    const fingerprints: string[] = [];
+    const persistedGameKeys: string[] = [];
+    for (const requestedGame of [baseGame, game]) {
+      const text = `${requestedGame} progression guide. Cross the canyon and activate the tower to open the eastern route. `.repeat(5);
+      resolveGamingDocumentMock.mockResolvedValueOnce(resolvedDocument(url, text, {
+        metadata: { title: `${requestedGame} progression guide`, headings: 'Progression' }
+      }));
+      ingestGamingBuildResourceMock.mockResolvedValueOnce(genericNormalizedGamingSource(text));
+      const response = await createGamingSourceIngestion({
+        action: 'ingest',
+        payload: { game: ` ${requestedGame} `, sourceUrls: [url], idempotencyKey: 'precise-game-identity-ingestion' }
+      }, { actorKey: 'test-actor' });
+
+      expect(response.statusCode).toBe(202);
+      const queued = findOrCreateGptJobMock.mock.calls.at(-1)![0] as {
+        input: { body: { sources: Array<{ game: string; gameKey: string }> } };
+        requestFingerprintHash: string;
+      };
+      expect(queued.input.body.sources[0].game).toBe(requestedGame);
+      const expectedGameKey = requestedGame === game ? gameKey : baseGame.toLowerCase().replaceAll(' ', '-');
+      expect(queued.input.body.sources[0].gameKey).toBe(expectedGameKey);
+      fingerprints.push(queued.requestFingerprintHash);
+
+      const result = await executeQueuedGamingSourceIngestion('019fe3cd-8c01-7f01-8d2d-caa951bc4b9b', queued.input.body);
+      expect(result.output.sources[0].status).toBe('stored');
+      expect(persistGamingSourceRevisionMock).toHaveBeenLastCalledWith(expect.objectContaining({
+        canonicalUrl: url,
+        gameName: requestedGame,
+        gameKey: expectedGameKey,
+        records: expect.arrayContaining([expect.objectContaining({
+          normalized: expect.objectContaining({ game: requestedGame })
+        })])
+      }));
+      persistedGameKeys.push((persistGamingSourceRevisionMock.mock.calls.at(-1)![0] as { gameKey: string }).gameKey);
+    }
+    expect(new Set(fingerprints).size).toBe(2);
+    expect(new Set(persistedGameKeys).size).toBe(2);
+  });
+
   it('rejects mismatched idempotency values without enqueueing', async () => {
     const response = await createGamingSourceIngestion({
       action: 'ingest',
