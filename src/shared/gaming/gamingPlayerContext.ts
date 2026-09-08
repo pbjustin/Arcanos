@@ -83,17 +83,22 @@ function read(values: Record<string, unknown>, key: string): string | undefined 
 }
 
 /** Only direct first-person affirmative clauses may establish progression claims. */
-function questionProgress(prompt: string): Partial<GamingPlayerContext> {
+function questionProgress(prompt: string, game?: string): Partial<GamingPlayerContext> {
   const result: Partial<GamingPlayerContext> = {};
   const conflicts = new Set<GamingContextField>();
   const assign = (field: 'currentArea' | 'lastCompletedObjective' | 'progressPoint', value: string): void => {
     if (result[field] && result[field]?.toLowerCase() !== clean(value).toLowerCase()) conflicts.add(field);
     result[field] = clean(value);
   };
-  const clauses = prompt.split(/[.!?;\n]/u).map(clean);
+  // A decimal in a game edition is not a sentence boundary. Only the exact
+  // supplied title can be removed from an area claim; other location suffixes remain.
+  const gameSuffix = game ? new RegExp(` in ${clean(game).replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}$`, 'iu') : undefined;
+  const clauses = prompt.split(/(?<!\d)\.|\.(?!\d)|[!?;\n]/u).map(clean);
   for (const clause of clauses) {
     if (/\b(?:if|would|could|might|suppose|imagine|hypothetical|not|never|haven['’]?t|hadn['’]?t|didn['’]?t)\b/iu.test(clause)) continue;
-    const area = /^(?:now\s+)?I(?:['’]m|\s+am)\s+(?:currently\s+)?(?:at|in)\s+([^,]{1,160})(?:,|$)/iu.exec(clause)?.[1];
+    const areaClaim = /^(?:now\s+)?I(?:['’]m|\s+am)\s+(?:currently\s+)?(?:at|in)\s+([^,]{1,160})(?:,|$)/iu.exec(clause)?.[1];
+    const gameSuffixMatch = areaClaim && gameSuffix ? gameSuffix.exec(areaClaim) : null;
+    const area = gameSuffixMatch ? areaClaim?.slice(0, gameSuffixMatch.index).trim() : areaClaim;
     const completed = /^I\s+(?:(?:have|['’]ve)\s+(?:just\s+)?(?:completed|finished|defeated|beaten)|(?:just\s+)?(?:completed|finished|defeated)|just\s+beat)\s+([^,]{1,240})(?:,|$)/iu.exec(clause)?.[1];
     const progress = /^I(?:['’]m|\s+am)\s+(?:currently\s+)?(?:at\s+)?(?:checkpoint|progress\s+point)\s+([^,]{1,160})(?:,|$)/iu.exec(clause)?.[1];
     if (area && !/\b(?:checkpoint|progress\s+point)\b/iu.test(area)) assign('currentArea', area);
@@ -137,7 +142,7 @@ export function resolveGamingPlayerContext(
   const context: GamingPlayerContext = {};
   const origins: NonNullable<GamingPlayerContext['contextOrigins']> = {};
   const conflicts = new Set<GamingContextField>();
-  const question = questionProgress(prompt);
+  const question = questionProgress(prompt, read(values, 'game'));
   for (const field of question.contextConflicts ?? []) conflicts.add(field);
   for (const field of Object.keys(GAMING_CONTEXT_STRING_LIMITS) as Array<keyof typeof GAMING_CONTEXT_STRING_LIMITS>) {
     const aliasKeys = Object.entries(CONTEXT_ALIASES).filter(([, canonical]) => canonical === field).map(([alias]) => alias);

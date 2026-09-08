@@ -131,6 +131,46 @@ describe('validated request-scoped Gaming player context', () => {
   });
 
   it.each([
+    ['Lantern Voyage 1.5 Remix', 'Copper Harbor'],
+    ['Iron Duel II: Remake', 'Ash Foundry'],
+    ['Star Hauler 2.0', 'Glass Dock'],
+    ['İris 2.0', 'Copper Harbor']
+  ])('does not mistake a repeated game title for part of the current area: %s', (game, currentArea) => {
+    const prompt = `I am in ${currentArea} in ${game}. I finished the first local objective. What should I do next? No spoilers, and keep the answer concise.`;
+    const payload = { mode: 'guide', game, prompt, currentArea,
+      progressPoint: 'immediately after the first local objective', spoilerTolerance: 'none', answerDepth: 'concise' };
+    const parsed = parsePublicGamingQueryRequest({ action: 'query', payload });
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) throw new Error('Expected valid browser Action request');
+    const intent = IntentRouterAgent.classify(parsed.value.payload);
+    expect(intent).toMatchObject({ currentArea, contextConflicts: [] });
+    expect(ClarificationAgent.evaluate(intent)).toEqual({ required: false });
+    const backend = validateGamingRequest(BackendQueryAgent.build({ ...intent, mode: 'guide' }).payload);
+    expect(backend).toMatchObject({ ok: true, value: { currentArea, contextConflicts: [] } });
+    expect(resolveGamingPlayerContext({ game }, prompt)).toMatchObject({ currentArea,
+      contextOrigins: { currentArea: 'question' }, contextConflicts: [] });
+  });
+
+  it('keeps real area conflicts and unmatched location or edition suffixes', () => {
+    const payload = { game: 'Lantern Voyage 1.5 Remix', currentArea: 'Copper Harbor' };
+    expect(resolveGamingPlayerContext(payload, 'I am in Old Mill in Lantern Voyage 1.5 Remix. What next?').contextConflicts)
+      .toContain('currentArea');
+    expect(resolveGamingPlayerContext(payload, 'I am in Copper Harbor in Lower Basin. What next?').contextConflicts)
+      .toContain('currentArea');
+    expect(resolveGamingPlayerContext(payload, 'I am in Copper Harbor in Lantern Voyage II. What next?').contextConflicts)
+      .toContain('currentArea');
+    expect(resolveGamingPlayerContext(payload, 'I am in Copper Harbor in Lantern Voyage 1x5 Remix. What next?').contextConflicts)
+      .toContain('currentArea');
+    expect(resolveGamingPlayerContext({ game: payload.game }, 'I am in Copper Harbor in Lower Basin. What next?').currentArea)
+      .toBe('Copper Harbor in Lower Basin');
+  });
+
+  it.each(['I am not in Copper Harbor', 'If I am in Copper Harbor', 'Imagine I am in Copper Harbor'])('does not infer an area from a repeated title in %s', statement => {
+    const game = 'Lantern Voyage 1.5 Remix';
+    expect(resolveGamingPlayerContext({ game }, `${statement} in ${game}. What next?`).currentArea).toBeUndefined();
+  });
+
+  it.each([
     { currentArea: 'Old Mill', prompt: 'I am at Copper Harbor. What next?' },
     { prompt: 'I am at Old Mill. I am at Copper Harbor. What next?' },
     { version: '1.0', requestedVersion: '2.0', prompt: 'What next?' }
