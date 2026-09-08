@@ -1531,6 +1531,10 @@ reasons remain separate from player-facing prose, and failed generation is never
 marked as a grounded answer. The compact Trinity intake and its bounded timeout
 remain the normal generation path when useful evidence is available.
 
+Named tasks remain retrieval anchors in polite requests or statements about an
+unfound item. They do not establish completed objectives or verified player state.
+Negated or hypothetical location/completion claims cannot supply a progress point.
+
 The existing `POST /gpt/arcanos-gaming/evidence-retry` client endpoint accepts the
 same optional context fields alongside `game`, `mode`, `originalPrompt`,
 `candidateUrls`, and `evidenceAttempt: 1`. Clients must resupply their context;

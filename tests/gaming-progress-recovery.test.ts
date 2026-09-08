@@ -9,7 +9,11 @@ describe('Gaming progression sufficiency and player recovery', () => {
     "I'm stuck.", 'What now?', 'What am I supposed to do?', "I don't know what to do.",
     'What next? I am completely lost.', 'Where do I go? Please make the answer concise.',
     'Can you tell me what I should do next?', 'What should I do next in the story?',
-    'I am stuck in the campaign.', 'What next? I need guidance.', 'What next? I am near the beginning.'])('asks for progress for %s', prompt => {
+    'I am stuck in the campaign.', 'What next? I need guidance.', 'What next? I am near the beginning.',
+    'Could you tell me what I should do next?', 'I would like help. What next?',
+    'I could use help. What next?', 'Could you please explain what I should do next?',
+    'I have not found where to go. What next?', 'I am not sure what next.',
+    'I could use some help. What next?', 'I would appreciate help. What next?'])('asks for progress for %s', prompt => {
     const input = { mode: 'guide' as const, game: 'Lantern Voyage', prompt, evidenceSelected: false,
       difficulty: 'Hard', platform: 'PC', answerDepth: 'detailed' as const, spoilerTolerance: 'none' as const };
     expect(assessGamingProgressionRequest(input).clarificationNeeded).toBe(true);
@@ -24,6 +28,20 @@ describe('Gaming progression sufficiency and player recovery', () => {
     expect(assessGamingProgressionRequest({ prompt, game: 'Lantern Voyage' }).clarificationNeeded).toBe(false);
   });
 
+  it.each([
+    'Could you tell me what I should do next after defeating the Glass Warden?',
+    'Where do I go to find the Zephyrglass Compass if I missed it?',
+    'I would like help defeating the Glass Warden. What next?',
+    'What should I do next? I have not found the Zephyrglass Compass.'
+  ])('retains a named task despite polite or conditional wording: %s', prompt => {
+    const context = resolveGamingPlayerContext({}, prompt);
+    expect(context.currentArea).toBeUndefined();
+    expect(context.lastCompletedObjective).toBeUndefined();
+    expect(assessGamingProgressionRequest({ prompt, game: 'Lantern Voyage', ...context })).toMatchObject({
+      hasRequestAnchor: true, clarificationNeeded: false
+    });
+  });
+
   it.each(['currentArea', 'lastCompletedObjective', 'progressPoint'] as const)('uses a specific %s instead of asking again', field => {
     expect(assessGamingProgressionRequest({ prompt: 'What next?', [field]: 'Copper Quay' }).clarificationNeeded).toBe(false);
   });
@@ -33,7 +51,10 @@ describe('Gaming progression sufficiency and player recovery', () => {
   });
 
   it.each(["I haven't defeated the Glass Warden. What next?", 'If I defeated the Glass Warden, what next?',
-    'Imagine I am in Copper Quay. Where do I go?'])('does not infer state from %s', prompt => {
+    'Imagine I am in Copper Quay. Where do I go?', 'Hypothetically, I am in Copper Quay. Where do I go?',
+    'I could be at Copper Quay. What next?', "I'm not in Copper Quay. What next?",
+    'Actually, I have not defeated the Glass Warden. What next?', 'Well, I am not in Copper Quay. What next?',
+    'Since I have not defeated the Glass Warden, what next?', 'I have never been to Copper Quay. What next?'])('does not infer state from %s', prompt => {
     const context = resolveGamingPlayerContext({}, prompt);
     expect(context.currentArea).toBeUndefined();
     expect(context.lastCompletedObjective).toBeUndefined();

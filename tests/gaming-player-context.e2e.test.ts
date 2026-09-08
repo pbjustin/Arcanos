@@ -113,7 +113,23 @@ const logInfo = jest.fn();
 const corpus = JSON.parse(readFileSync(new URL('./fixtures/gaming-guide-assistance.json', import.meta.url), 'utf8')) as {
   cases: Array<{ id: string; request: Record<string, unknown>; evidence: string; referenceAnswer: string; excludedFuture?: string }>
 };
-const cases = [...corpus.cases, {
+const cases = [...corpus.cases, ...[
+  {
+    ...corpus.cases[2]!,
+    id: 'polite-boss-request',
+    request: { game: 'Iron Wake', mode: 'guide', prompt: 'I would like help defeating the Ash Sentinel.' }
+  },
+  {
+    ...corpus.cases[0]!,
+    id: 'polite-named-progression-request',
+    request: { game: 'Lantern Vale', mode: 'guide', prompt: 'Could you tell me what I should do next after repairing the Copper Canal pump?' }
+  },
+  {
+    ...corpus.cases[3]!,
+    id: 'unfound-item-request',
+    request: { game: 'Iron Wake: Second Tide', mode: 'guide', prompt: 'I have not found the Sable Coil.' }
+  }
+], {
   ...corpus.cases[3]!,
   id: 'all-optional-context-fields',
   request: {

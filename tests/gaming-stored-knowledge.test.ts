@@ -180,7 +180,11 @@ describe('bounded stored Gaming chunk evidence', () => {
     search.mockResolvedValue([record('one', 'Find the Zephyrglass Compass beyond the cobalt arch.')]);
     const result = await retrieveStoredGamingKnowledge(input, { resolveVerifiedPatch: () => undefined });
     expect(result.evidence).toHaveLength(1);
-    expect(search).toHaveBeenCalledWith(expect.objectContaining({ query: '"zephyrglass" OR "compass"', limit: 20 }), expect.objectContaining({ queryTimeoutMs: 1000, signal: expect.any(Object) }));
+    expect(findSources).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({ queryTimeoutMs: 1000, signal: expect.any(Object) }));
+    expect(search).toHaveBeenCalledWith(expect.objectContaining({ query: '"zephyrglass" OR "compass"', limit: 20 }), expect.objectContaining({ queryTimeoutMs: expect.any(Number), signal: expect.any(Object) }));
+    const remainingMs = (search.mock.calls[0][1] as { queryTimeoutMs: number }).queryTimeoutMs;
+    expect(remainingMs).toBeGreaterThan(0);
+    expect(remainingMs).toBeLessThanOrEqual(1000);
     expect(logInfo).toHaveBeenCalledWith('gaming.stored_retrieval.completed', expect.objectContaining({ lexicalCandidateCount: 1, semanticCandidateCount: 0, selectedChunkCount: 1 }));
     expect(JSON.stringify(logInfo.mock.calls)).not.toContain('cobalt arch');
   });
@@ -202,6 +206,22 @@ describe('bounded stored Gaming chunk evidence', () => {
     expect(selected.map(entry => entry.evidence.recordId)).toEqual(['target']);
     expect(selectStoredGamingEvidence(rows, { ...input, requestedVersion: '2.0' }, () => '1.0')).toEqual([]);
     expect(selectStoredGamingEvidence(rows, { ...input, requestedVersion: '2.0' }, () => undefined)).toHaveLength(1);
+  });
+
+  test.each([
+    'I would like help finding the Zephyrglass Compass.',
+    'I have not found the Zephyrglass Compass.',
+    "I haven't defeated the Glass Warden, where is the Zephyrglass Compass?",
+    'I am in Copper Quay, how would I find the Zephyrglass Compass?'
+  ])('acquires the requested item instead of unrelated area evidence for %s', async prompt => {
+    const target = record('target', 'The Zephyrglass Compass is under the cobalt arch.');
+    const area = record('area', 'Copper Quay has a ferry route to the west.');
+    search.mockImplementation(async (query: unknown) =>
+      (query as { query: string }).query.includes('zephyrglass') ? [target] : [area]);
+    const found = await retrieveStoredGamingKnowledge({ ...input, prompt, currentArea: 'Copper Quay' }, { resolveVerifiedPatch: () => undefined });
+    expect(found.evidence?.map(entry => entry.recordId)).toEqual(['target']);
+    expect(found.context).toContain('Zephyrglass Compass');
+    expect(found.context).not.toContain('ferry route');
   });
 
   test('keeps spoiler-filtered snippets and budgeted sanitized headings aligned with source numbers', () => {

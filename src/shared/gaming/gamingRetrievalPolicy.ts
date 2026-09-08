@@ -1,6 +1,6 @@
 import { filterGamingDocumentInstructions } from '@services/gamingDocumentExtraction.js';
 import type { GamingPlayerContext } from './gamingPlayerContext.js';
-import { assessGamingProgressionRequest, hasUsefulGamingProgressValue } from './gamingProgressionPolicy.js';
+import { assessGamingProgressionRequest, filterGamingNonAffirmativeStateClauses, hasUsefulGamingProgressValue } from './gamingProgressionPolicy.js';
 
 export const GAMING_RETRIEVAL_POLICY_VERSION = 'gaming-player-retrieval/v1';
 const STOP_WORDS = new Set('a an and are as at be by can do does for from how i in is it me my of on or should that the this to was what when where which who why with you about after before finishing completing completed finished defeated get go help please tell use using want would guide next now then need proceed continue current objective checkpoint step steps walkthrough explain detailed detail concise briefly spoiler spoilers spoilerfree beat defeat boss strategy game look up newly released beginner route supplied source opening simple summary summarize overview linked guides direct answer both am im m supposed stuck has have user major first'.split(' '));
@@ -27,13 +27,9 @@ export function buildGamingRetrievalTerms(input: GamingRetrievalPolicyInput): Ga
   const gameTerms = new Set(gamingLexicalTokens(input.game ?? ''));
   const meaningful = (text: string) => [...new Set(gamingLexicalTokens(text)
     .filter(term => !STOP_WORDS.has(term) && !gameTerms.has(term)))];
-  const question = input.prompt
-    // A non-affirmative player claim remains in the original generation request,
-    // but cannot dilute a specific question's lexical relevance requirement.
-    .split(/[.!?;\n]/u)
-    .filter(clause => !/^\s*(?:(?:if|suppose|imagine|hypothetically)\s+)?(?:i|we|the user)\b/iu.test(clause)
-      || !/\b(?:if|would|could|might|suppose|imagine|hypothetical|hypothetically|not|never|haven['’]?t|hadn['’]?t|didn['’]?t|don['’]?t)\b/iu.test(clause))
-    .join(' ')
+  // Share the progression filter so a polite task remains the topical anchor
+  // while non-affirmative location/completion claims remain generation context.
+  const question = filterGamingNonAffirmativeStateClauses(input.prompt)
     .replace(/\b(?:no|without|avoid|light|full)\s+spoilers?\b/giu, '')
     .replace(/\bspoilers?\s+(?:are\s+)?(?:allowed|ok|okay|fine|permitted)\b/giu, '')
     .replace(/\b(?:keep|make)\s+it\s+(?:short|brief|concise|detailed)\b/giu, '')
