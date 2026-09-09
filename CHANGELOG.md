@@ -8,6 +8,12 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) where practical
 
 ### Added
 
+- Gaming-only opt-in hybrid knowledge Actions: stored-evidence handoff, bounded
+  frontend URL discovery, independent source/freshness validation, approved
+  durable ingestion, and reusable patch/build verification provenance. Includes
+  a version-controlled Custom GPT package requiring backend deployment before
+  activation; legacy Gaming Actions remain compatible.
+
 - Durable Gaming guides now use deterministic bounded document chunks, full-document
   revision hashes, and ranked lexical evidence with source/chunk provenance. Large
   guides remain searchable beyond the former 100,000-character boundary while

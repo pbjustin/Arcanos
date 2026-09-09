@@ -7,7 +7,7 @@ import { buildGamingAnswerPolicyInstruction, resolveGamingAnswerPolicy } from '.
 export type GamingPromptInput = Pick<
   ValidatedGamingRequest,
   "mode" | "prompt" | "game" | "auditEnabled"
-> & GamingPlayerContext;
+> & GamingPlayerContext & { /** Server-only opt-in for hybrid build/meta context. */ includePlayerContext?: boolean };
 
 /** Prompt text supplied by the caller without loading runtime configuration. */
 export type GamingPromptResources = {
@@ -140,7 +140,9 @@ export function buildGamingPrompt(
   const context = params.contextOrigins ? pickGamingPlayerContext(params) : resolveGamingPlayerContext(params, params.prompt);
   const outputInstruction = params.mode === "guide"
     ? `${groundedGuide ? groundedGuideOutputInstruction : 'No accepted guide evidence is available. Give only guidance you can support, state material uncertainty, and ask one targeted clarification when needed.'}\n${buildGamingAnswerPolicyInstruction(resolveGamingAnswerPolicy({ ...context, prompt: params.prompt }))}`
-    : outputShapeInstructions[params.mode];
+    : params.includePlayerContext
+      ? [outputShapeInstructions[params.mode], buildGamingAnswerPolicyInstruction(resolveGamingAnswerPolicy({ ...context, prompt: params.prompt }))].filter(Boolean).join('\n')
+      : outputShapeInstructions[params.mode];
   // JSON quotes and escaped brackets keep caller strings from forging section markers.
   // This is a data block, never a source of system instructions or verified state.
   const playerContext = JSON.stringify(context, (_key, value: unknown) => typeof value === 'string'
@@ -158,7 +160,7 @@ export function buildGamingPrompt(
     ? `\n\n[WEB CONTEXT]\nSource retrieval ran or sources were provided, but no usable snippets were retrieved.\n\n${clearRagInstructions}\n\n${resources.webUncertaintyGuidance}`
     : "";
 
-  return `${modeLabel}${gameLabel}\n\n[REQUEST]\n${requestPrompt}${params.mode === "guide" ? playerContextLabel : ""}${outputLabel}${webLabel}`;
+  return `${modeLabel}${gameLabel}\n\n[REQUEST]\n${requestPrompt}${params.mode === "guide" || params.includePlayerContext ? playerContextLabel : ""}${outputLabel}${webLabel}`;
 }
 
 /** Combine the mode, request, evidence, and optional audit instructions without effects. */

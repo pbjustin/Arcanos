@@ -252,4 +252,101 @@ describeWithDatabase('durable Gaming chunk storage and retrieval on PostgreSQL 1
     expect(generations.rows).toHaveLength(2);
     expect((await databasePool.query<{ count: number }>('SELECT COUNT(*)::integer AS count FROM gaming_source_revisions WHERE source_id = $1', [first.sourceId])).rows[0].count).toBe(2);
   }, 30000);
+
+  test('advances unchanged hybrid resource verification monotonically without changing revision or active chunks', async () => {
+    const gameKey = `hybrid-freshness-${randomUUID()}`;
+    const text = 'The Glass Warden opens its shield after the blue beacon pulses.';
+    const original: PersistGamingSourceRevisionInput = {
+      gameKey, gameName: 'Lantern Vale', canonicalUrl: `https://example.com/${gameKey}`,
+      sourceType: 'supplied', contentHash: hash(text), cleanedContent: text,
+      fetchedAt: '2026-09-01T00:00:00.000Z', extractor: 'synthetic', extractorVersion: '1',
+      normalizerSchemaVersion: 'gaming-hybrid-fixture-v1',
+      provenance: {
+        retainedResolverField: 'synthetic-only',
+        hybridFreshness: { verifiedAt: '2026-09-01T00:00:00.000Z', fetchedAt: '2026-09-01T00:00:00.000Z', patch: 'opaque-blue' },
+      },
+      records: [{ recordType: 'guide', semanticKey: 'glass-warden', payloadHash: hash(text), searchText: text, normalized: { text } }],
+    };
+    const first = await persistGamingSourceRevision(original);
+    const before = await databasePool.query<{ id: string; status: string }>(
+      'SELECT id, status FROM gaming_knowledge_records WHERE source_revision_id = $1', [first.revisionId]
+    );
+    const reverify = (verifiedAt: string) => persistGamingSourceRevision({
+      ...original, fetchedAt: verifiedAt,
+      provenance: {
+        ignoredAttemptToReplaceResolver: 'must-not-overwrite',
+        hybridFreshness: { verifiedAt, fetchedAt: verifiedAt, patch: 'opaque-blue' },
+      },
+    });
+    // Competing completed fetches may reach the source lock in either order.
+    const [newer, older] = await Promise.all([
+      reverify('2026-09-03T00:00:00.000Z'), reverify('2026-09-02T00:00:00.000Z'),
+    ]);
+    for (const result of [newer, older]) expect(result).toMatchObject({
+      state: 'unchanged', sourceId: first.sourceId, revisionId: first.revisionId, recordsCreated: 0, recordsUpdated: 0,
+    });
+    await reverify('2026-09-01T12:00:00.000Z');
+    // A legacy revalidation lacking hybrid metadata cannot remove it.
+    await persistGamingSourceRevision({ ...original, provenance: { resolverId: 'legacy-refresh' } });
+    const revisions = await databasePool.query<{ id: string; provenance: Record<string, unknown> }>(
+      'SELECT id, provenance FROM gaming_source_revisions WHERE source_id = $1', [first.sourceId]
+    );
+    expect(revisions.rows).toEqual([{
+      id: first.revisionId,
+      provenance: {
+        retainedResolverField: 'synthetic-only',
+        hybridFreshness: { verifiedAt: '2026-09-03T00:00:00.000Z', fetchedAt: '2026-09-03T00:00:00.000Z', patch: 'opaque-blue' },
+      },
+    }]);
+    const after = await databasePool.query<{ id: string; status: string }>(
+      'SELECT id, status FROM gaming_knowledge_records WHERE source_revision_id = $1', [first.revisionId]
+    );
+    expect(after.rows).toEqual(before.rows);
+    expect(after.rows).toHaveLength(1);
+    expect(after.rows[0].status).toBe('active');
+    const retrieved = await searchActiveGamingKnowledge({ gameKey, query: 'glass & warden', mode: 'guide' });
+    expect(retrieved).toHaveLength(1);
+    expect(retrieved[0].revisionId).toBe(first.revisionId);
+    expect(retrieved[0].provenance).toMatchObject({
+      hybridFreshness: { verifiedAt: '2026-09-03T00:00:00.000Z' },
+    });
+  });
+
+  test('rolls back a failed new revision after supersession and retains the prior usable evidence', async () => {
+    const gameKey = `hybrid-failed-refresh-${randomUUID()}`;
+    const text = 'The Lantern Guardian weakens after the bronze bell rings.';
+    const original: PersistGamingSourceRevisionInput = {
+      gameKey, gameName: 'Lantern Vale', canonicalUrl: `https://example.com/${gameKey}`,
+      sourceType: 'supplied', contentHash: hash(text), cleanedContent: text, fetchedAt,
+      extractor: 'synthetic', extractorVersion: '1', normalizerSchemaVersion: 'gaming-hybrid-fixture-v1',
+      records: [{ recordType: 'guide', semanticKey: 'lantern-guardian', payloadHash: hash(text), searchText: text, normalized: { text } }],
+    };
+    const first = await persistGamingSourceRevision(original);
+    const nextText = 'The Lantern Guardian weakens after the silver bell rings.';
+    // A disposable-schema-only constraint fails the final record insert, after
+    // the production transaction has inserted a revision and superseded rows.
+    await databasePool.query(`ALTER TABLE gaming_knowledge_records ADD CONSTRAINT hybrid_fixture_insert_failure
+      CHECK (normalized->>'simulateFailure' IS DISTINCT FROM 'true')`);
+    try {
+      await expect(persistGamingSourceRevision({
+        ...original, contentHash: hash(nextText), cleanedContent: nextText,
+        records: [{ recordType: 'guide', semanticKey: 'lantern-guardian', payloadHash: hash(nextText),
+          searchText: nextText, normalized: { text: nextText, simulateFailure: true } }],
+      })).rejects.toMatchObject({ code: '23514' });
+    } finally {
+      await databasePool.query('ALTER TABLE gaming_knowledge_records DROP CONSTRAINT hybrid_fixture_insert_failure');
+    }
+    const revisions = await databasePool.query<{ id: string }>(
+      'SELECT id FROM gaming_source_revisions WHERE source_id = $1', [first.sourceId]
+    );
+    expect(revisions.rows).toEqual([{ id: first.revisionId }]);
+    const prior = await searchActiveGamingKnowledge({ gameKey, query: 'bronze & bell', mode: 'guide' });
+    expect(prior).toHaveLength(1);
+    expect(prior[0].revisionId).toBe(first.revisionId);
+    expect(await searchActiveGamingKnowledge({ gameKey, query: 'silver & bell', mode: 'guide' })).toEqual([]);
+    const records = await databasePool.query<{ status: string; superseded_at: Date | null }>(
+      'SELECT status, superseded_at FROM gaming_knowledge_records WHERE source_revision_id = $1', [first.revisionId]
+    );
+    expect(records.rows).toEqual([{ status: 'active', superseded_at: null }]);
+  });
 });

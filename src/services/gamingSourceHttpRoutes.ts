@@ -9,6 +9,9 @@ const GAMING_SOURCE_STATUS_ID_MAX_LENGTH = 128;
 const MUTATION_METHODS = new Set(['DELETE', 'PATCH', 'POST', 'PUT']);
 
 export type GamingSourceHttpTargetKind =
+  | 'hybrid_query'
+  | 'hybrid_candidates'
+  | 'hybrid_ingestion'
   | 'ingestion'
   | 'refresh'
   | 'status';
@@ -81,6 +84,12 @@ function resolveGamingSourceHttpResolutionUncached(
     return null;
   }
   const normalizedLowerPath = normalizedRawPath.toLowerCase();
+  const hybridKind = ({
+    '/gpt-access/gaming/sources/hybrid/query': 'hybrid_query',
+    '/gpt-access/gaming/sources/hybrid/candidates': 'hybrid_candidates',
+    '/gpt-access/gaming/sources/hybrid/ingestions': 'hybrid_ingestion'
+  } as const)[normalizedLowerPath as '/gpt-access/gaming/sources/hybrid/query'];
+  if (hybridKind) return { target: { kind: hybridKind }, canonical: true };
   if (normalizedLowerPath === GAMING_SOURCE_INGESTIONS_PATH) {
     return {
       target: {
@@ -152,7 +161,7 @@ export function resolveGamingSourceHttpOperation(
   const { target } = resolution;
   const method = normalizeRequestMethod(req.method);
   if (
-    (target.kind === 'ingestion' || target.kind === 'refresh')
+    (target.kind === 'ingestion' || target.kind === 'refresh' || target.kind.startsWith('hybrid_'))
     && method === 'POST'
   ) {
     return {

@@ -1,5 +1,18 @@
 # Database and Migrations
 
+Gaming hybrid knowledge requires no new migration or production backfill.
+Existing `gaming_sources`, `gaming_source_revisions`, `gaming_knowledge_records`
+and durable jobs hold approved prose chunks and bounded JSONB provenance.
+`hybridFreshness` records content-derived applicability and, when verified,
+an official-index attestation bound to the accepted full-content hash; it does
+not store the release index as evergreen gameplay knowledge. Active-revision
+replacement and reactivation remain atomic. On an unchanged successful hybrid
+refresh, the existing transaction advances only `hybridFreshness` monotonically
+by `verifiedAt`; other provenance and active records remain intact. A failed
+refresh or mismatched approval hash leaves the last valid revision usable.
+The guarded PostgreSQL Gaming suite covers concurrent unchanged verification
+and rollback after a real SQL failure.
+
 ## Overview
 Arcanos uses PostgreSQL when `DATABASE_URL` or equivalent `PG*` variables are configured. Without a database, several backend paths continue in reduced or in-memory mode, but queued async jobs and durable inspection require PostgreSQL.
 

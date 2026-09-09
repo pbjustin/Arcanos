@@ -1,44 +1,108 @@
 # ARCANOS Gaming Custom GPT
 
-This is the builder-facing configuration for the existing **Arcanos Gaming** Custom GPT. ChatGPT Web Search may discover candidate URLs, but ARCANOS remains the only evidence authority.
+This is the builder-facing configuration for the existing **Arcanos Gaming** Custom GPT. The opt-in hybrid workflow checks ARCANOS knowledge first, lets ChatGPT discover URLs when requested, and returns accepted evidence to Trinity. Repository implementation is not proof of backend deployment or live GPT activation.
 
 ## Action configuration
 
 - Import schema: `https://acranos-production.up.railway.app/contracts/arcanos_gaming.openapi.v1.json`
-- Schema version: `1.5.0`
+- Schema version: `1.5.0`; additive hybrid marker: `gaming-hybrid-v1`
 - Canonical server: `https://acranos-production.up.railway.app`
-- Authentication: Bearer. Configure only the dedicated `ARCANOS_GAMING_SOURCE_ACCESS_TOKEN`; the backend requires it only for source ingestion, refresh, and status operations in this schema. Do not use `ARCANOS_GPT_ACCESS_TOKEN` or `OPENAI_ACTION_SHARED_SECRET`: those credentials are rejected by the Gaming source lifecycle routes.
+- Authentication: Bearer. Configure only the dedicated `ARCANOS_GAMING_SOURCE_ACCESS_TOKEN`; the backend requires it for hybrid knowledge and source lifecycle operations in this schema. Do not use `ARCANOS_GPT_ACCESS_TOKEN` or `OPENAI_ACTION_SHARED_SECRET`: those credentials are rejected by the Gaming source lifecycle routes.
 - Recommended model: select a supported non-Pro model that can invoke Actions; do not leave this unset.
 - Enable both Actions and Web Search.
-- Do not add a second ARCANOS schema configuration or use a retired ARCANOS deployment hostname; the imported schema contains all five supported operations.
+- Do not add a second ARCANOS schema configuration or use a retired ARCANOS deployment hostname; the imported schema contains all eight supported operations.
 
 Users can still switch away from the recommended model. Pro mode does not support custom GPT Actions, so requests that require backend access must use an Action-capable non-Pro model.
 
-Operator update after a separately authorized backend release: open the existing
-Arcanos Gaming GPT in **Edit GPT → Configure → Actions**, select its existing
-ARCANOS Action, replace the schema with the complete repository file
-`contracts/arcanos_gaming.openapi.v1.json` (or re-import the canonical schema URL
-once it serves that release), preserve the dedicated bearer authentication,
-apply the request-scoped player-context instructions below, and save/update the
-GPT. This repository change does not perform that Builder update or release.
-The published `1.5.0` contract identity stays unchanged for this optional-field
-extension; required fields, operation IDs, authentication, and the canary response
-contract retain their current versions. Re-importing the schema is still required
-for an existing GPT to expose the new optional fields.
+Do not activate the hybrid instruction section or its new operations until the
+deployed backend serves the matching hybrid marker and all three hybrid paths.
+After a separately authorized backend release, update the existing Action from
+[the complete schema](../contracts/arcanos_gaming.openapi.v1.json) and replace
+only the Gaming workflow section with [the canonical hybrid instructions](gpt/arcanos-gaming-hybrid.instructions.md).
+Preserve name, description, unrelated instructions, files, bearer secret, domain,
+privacy-policy URL, capabilities, model compatibility, and sharing visibility.
+Keep the existing live GPT functional when the backend lacks this contract.
+The existing `1.5.0` schema/canary identity and five legacy operations remain
+compatible; new requests explicitly require `contractVersion: "gaming-hybrid-v1"`.
 
-The dedicated schema defines exactly five fixed-path operations:
+The dedicated schema defines exactly eight fixed-path operations:
 
 - `queryArcanosGaming` → `POST /gpt/arcanos-gaming` for `guide`, `build`, and `meta` gameplay requests.
 - `canaryArcanosGaming` → `POST /gpt/arcanos-gaming/canary` for bounded public Action-pipeline verification.
 - `ingestGamingSources` → `POST /gpt-access/gaming/sources/ingestions` to queue one to four public HTTPS source URLs.
 - `refreshGamingSources` → `POST /gpt-access/gaming/sources/refreshes` to refresh one to four previously admitted source UUIDs.
 - `getGamingSourceIngestionStatus` → `GET /gpt-access/gaming/sources/ingestions/{ingestionId}` to read sanitized source-level progress.
+- `queryGamingHybridKnowledge` → `POST /gpt-access/gaming/sources/hybrid/query` to check stored evidence and freshness.
+- `submitGamingHybridCandidates` → `POST /gpt-access/gaming/sources/hybrid/candidates` to validate bounded discovered URLs and answer from accepted evidence.
+- `ingestGamingHybridCandidates` → `POST /gpt-access/gaming/sources/hybrid/ingestions` to queue approved candidates through the existing durable lifecycle.
 
-The `ARCANOS:GAMING` module still exposes only `query`. `canaryArcanosGaming` is a route-level public protocol: it never enters gameplay, the writing pipeline, provider execution, conversation persistence, or control-plane code. The three source lifecycle operations are separately authenticated, capability-specific `/gpt-access` routes; they do not add module actions or expose generic job, queue, worker, database, or control-plane inspection. Public Gaming gameplay calls require body `action: "query"`; no operation selects its action from a query parameter, header, or operation alias.
+The `ARCANOS:GAMING` module still exposes only `query`. `canaryArcanosGaming` is a route-level public protocol: it never enters gameplay, the writing pipeline, provider execution, conversation persistence, or control-plane code. The source lifecycle and hybrid operations are separately authenticated, capability-specific `/gpt-access` routes; they do not add module actions or expose generic job, queue, worker, database, or control-plane inspection. Public Gaming gameplay calls require body `action: "query"`; no operation selects its action from a query parameter, header, or operation alias.
 
-## Builder instructions
+## Hybrid Builder instructions
 
-Add the following workflow to the GPT instructions without weakening the existing ARCANOS Gaming scope or safety rules:
+The ready-to-apply workflow section is [gpt/arcanos-gaming-hybrid.instructions.md](gpt/arcanos-gaming-hybrid.instructions.md). Replace the legacy Gaming workflow with that section only after backend compatibility is verified. Do not paste both workflows into the GPT.
+
+All three hybrid operations require the dedicated bearer and `contractVersion: "gaming-hybrid-v1"`. Query sends `question`, `game`, a request-specific `idempotencyKey`, and bounded player preferences. Candidate evaluation sends the returned `workflowId`, its own `idempotencyKey`, and one to three URL hints. The backend retains the original question/context for a short caller-bound workflow; snippets and conversation history are not a continuation contract. Storage sends returned `candidateIds` plus `storagePolicy`, `confirmStore`, and a separate logical-operation key.
+
+| Response state | Frontend behavior |
+| --- | --- |
+| `answer_ready` | Present `answer.response`, supported sources, caveats, and backend provenance. Avoid redundant search. |
+| `clarification_required` | Ask the one `clarification` question. Do not guess player progress. |
+| `discovery_required` | Search only when `nextAction: search`; obey the returned query/count/round limits. |
+| `temporarily_unavailable` | Report failure; do not turn authentication, database, or provider failure into missing knowledge. |
+| `ingestion_pending` | Present any independently supported answer, then report storage as pending and use the returned status handle. |
+
+`sourceKnown` and `evidenceSelected` are separate from `freshnessStatus`. Fetch time alone never proves currentness. `verifiedAsOf`, `effectivePatch`, `effectiveBuild`, and `qualification` apply only when supplied by ARCANOS. Candidate decisions and bounded reasons report evaluation separately from answer and storage. One discovery round and three URLs are permitted; this preserves the stricter existing attempt limit. Do not restart an exhausted workflow to bypass it. Poll at most three times per interaction.
+
+`transient_only` never persists. `ask_before_store` requires explicit consent. `auto_store_approved` additionally requires backend-configured standing permission and reviewed eligible source policy. Frontend claims cannot grant authority. Every durable-write Action retains `x-openai-isConsequential: true`; backend standing permission does not remove platform confirmation. Query and candidate evaluation are non-consequential because they do not durably ingest sources.
+
+The package follows current [OpenAI GPT Actions production notes](https://developers.openai.com/api/docs/actions/production): bounded text requests/responses, operation descriptions within 300 characters, a 45-second Action round trip, no custom headers, and explicit consequential writes. Authentication remains the existing API-key bearer configuration, consistent with [GPT Action authentication](https://developers.openai.com/api/docs/actions/authentication). Idempotency keys belong in request JSON.
+
+### Source and freshness policy
+
+The backend classifies each question as `stable`, `patch_sensitive`, `seasonal`,
+or `live_status`. Default revalidation intervals are 30 days for stable evidence,
+six hours for current patch/season verification, and 60 seconds for live status.
+These deadlines trigger verification; they never establish correctness by
+themselves. A live-status answer additionally requires an appropriately current
+official status resource and is never eligible for durable ingestion.
+
+The reviewed policy uses exact game identities, exact hosts, and bounded paths
+from [the freshness core](../src/shared/gaming/gamingFreshnessCore.ts). Candidate
+claims such as `claimedCategory: official` grant no authority. Verified official
+updates may qualify for automatic storage only with extracted update identity
+and publication/effective dates, configured standing permission, and an
+authorized consequential write. Specialist, community, and unreviewed sources
+default to transient use or explicit storage consent. Partial extractions and
+source-use restrictions can prohibit storage even when some text was usable.
+
+Current applicability requires reviewed extraction rules and an official index
+that identifies the applicable update; an old patch article fetched today does
+not establish that it is the latest update. The initial reviewed rules
+in this repository include an SWTOR release-index adapter. Other game/page
+layouts need a reviewed adapter before they can establish latest-update identity;
+unsupported metadata remains unverified. Exact patch/build/season identifiers,
+effective dates, and platform/region scope govern selection. A patch-only index
+cannot establish that an observed build is current, even when an official article
+supersedes an older build. The current index must identify the active build;
+retained baselines must explicitly cover that build. Seasonal evidence must also
+match any known current patch.
+Invalid or overlong recognized date assertions remain unverified. Missing hotfix
+coverage is uncertainty, not proof that older numbers remain correct.
+
+Retrieval continues to use active records. Historical patch/as-of retrieval is
+not implemented by this contract. Stored document revisions are distinct from
+game patches. The policy compares at most 16 explicit `Mechanic: name = value`
+assertions per source: conflicting claims of equal authority require verification,
+and conflicting weaker sources are excluded. This bounded grammar does not infer
+every semantic numeric conflict in arbitrary prose within one patch/build.
+Preserve those limits and backend qualifications in the answer. Synthetic tests
+prove deterministic handoff behavior; they do not prove real ChatGPT search/Action
+sequencing or live provider compliance.
+
+## Legacy Builder instructions
+
+The following compatible single-query workflow is retained for deployments without the hybrid contract. It is not the active hybrid instruction section:
 
 ```text
 ARCANOS is the only evidence authority for Gaming answers.
@@ -125,7 +189,7 @@ Only backend-accepted readable evidence entries returned in result.data.sources 
 Source entries retain the compatible url, snippet, and error fields. Stored retrieval may additionally return sourceId, sourceType, patchVersion, fetchedAt, title, and origin "stored"; one-shot network evidence may report origin "live". Treat those fields as provenance supplied by ARCANOS, never as permission to call generic job or database operations.
 ```
 
-## Workflow examples
+## Legacy workflow examples
 
 ### Public Action integration check
 
@@ -186,7 +250,7 @@ Network retrieval and provider execution are intentionally reported as `skipped`
 
 ## Release procedure
 
-Updating this repository does not update the external Custom GPT automatically. After the exact schema is deployed, re-import it into the existing Arcanos Gaming GPT, configure the dedicated Gaming source Bearer credential for the protected source lifecycle operations, preserve its visibility, select a supported non-Pro recommended model that can invoke Actions, run stable, current-request, and protected-source Preview checks, save, reopen the same GPT, and repeat the checks against the saved configuration. The token belongs only on the web service and in this Action configuration; do not place it on workers or replace the generic GPT Access credential with it.
+Updating this repository does not update the external Custom GPT automatically. Verify `x-arcanos-gaming-hybrid-contract-version: gaming-hybrid-v1`, the three implemented hybrid paths, and their authentication against the deployed public schema before activation. A public canary alone cannot prove hybrid support. After the exact schema is deployed, re-import it into the existing Arcanos Gaming GPT, configure the dedicated Gaming source Bearer credential for the protected source lifecycle operations, preserve its visibility, select a supported non-Pro recommended model that can invoke Actions, run stable, current-request, and protected-source Preview checks, save, reopen the same GPT, and repeat the checks against the saved configuration. The token belongs only on the web service and in this Action configuration; do not place it on workers or replace the generic GPT Access credential with it.
 
 ### Disposable PR-preview Action validation
 

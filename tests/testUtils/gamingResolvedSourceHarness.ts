@@ -58,6 +58,14 @@ export class GamingResolvedSourceHarness {
       this.revisions.push(revision);
       return result([revision]);
     }
+    if (sql.startsWith('UPDATE gaming_source_revisions SET provenance = jsonb_set')) {
+      const revision = this.revisions.find(item => item.id === values[0]);
+      const freshness = JSON.parse(values[1]);
+      if (revision && (revision.provenance.hybridFreshness?.verifiedAt ?? '') <= (freshness.verifiedAt ?? '')) {
+        revision.provenance.hybridFreshness = freshness;
+      }
+      return result();
+    }
     if (sql.startsWith('UPDATE gaming_knowledge_records AS knowledge')) {
       const superseded = this.records.filter(record => record.source_revision_id !== values[1]
         && record.status === 'active');

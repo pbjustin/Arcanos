@@ -130,6 +130,9 @@ describe('custom GPT OpenAPI contract route', () => {
       '/gpt-access/gaming/sources/ingestions',
       '/gpt-access/gaming/sources/refreshes',
       '/gpt-access/gaming/sources/ingestions/{ingestionId}',
+      '/gpt-access/gaming/sources/hybrid/query',
+      '/gpt-access/gaming/sources/hybrid/candidates',
+      '/gpt-access/gaming/sources/hybrid/ingestions',
     ]);
     expect(response.body.paths?.['/gpt/arcanos-gaming']?.post?.security).toBeUndefined();
     expect(response.body.paths?.['/gpt/arcanos-gaming/canary']?.post?.security).toBeUndefined();

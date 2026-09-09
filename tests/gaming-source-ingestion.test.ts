@@ -240,6 +240,33 @@ beforeEach(async () => {
 });
 
 describe('gaming source ingestion', () => {
+  it('never promotes changed hidden structured HTML after hybrid approval of unchanged visible prose', async () => {
+    const { createApprovedGamingSourceIngestion, hashGamingApprovedDocument } = await import('../src/services/gamingSourceIngestion.js');
+    const url = 'https://example.com/borderlands-4-guide';
+    const text = 'Borderlands 4 route guide equipment skills rotation '.repeat(12);
+    const approved = resolvedDocument(url, text);
+    const actorKey = 'hybrid-approved-actor';
+    const queued = await createApprovedGamingSourceIngestion([{
+      url, game: 'Borderlands 4', contentHash: hashGamingApprovedDocument(approved as any),
+      actorScopeHash: createHash('sha256').update(actorKey).digest('hex'),
+      policyVersion: 'gaming-hybrid-candidates/v1', sourceTrustType: 'supplied', freshness: {}
+    }], 'hybrid-hidden-json-1', { actorKey, canStore: true });
+    expect(queued.statusCode).toBe(202);
+    resolveGamingDocumentMock.mockResolvedValue({ ...approved, rawDocument: {
+      body: '<script type="application/json">{"equipment":[{"name":"UNAPPROVED HIDDEN WEAPON"}]}</script>',
+      contentType: 'text/html', truncated: false
+    } });
+    const queuedBody = (findOrCreateGptJobMock.mock.calls[0][0] as any).input.body;
+    const result = await executeQueuedGamingSourceIngestion('019fe3cd-8c01-7f01-8d2d-caa951bc4b9b', queuedBody);
+    expect(result.output.sources[0].status).toBe('stored');
+    expect((ingestGamingBuildResourceMock.mock.calls[0][0] as any).html).toBeUndefined();
+    const persisted = persistGamingSourceRevisionMock.mock.calls[0][0] as any;
+    expect(JSON.stringify(persisted.records)).not.toContain('UNAPPROVED HIDDEN WEAPON');
+    expect(JSON.stringify(persisted.records)).not.toContain('Test Weapon');
+    expect(persisted.records.every((record: any) => !record.normalized.structuredEvidence && !record.normalized.equipment)).toBe(true);
+    expect(persisted.records[0].searchText).toContain('equipment skills rotation');
+  });
+
   it('canonicalizes and deduplicates source URLs before creating one durable job', async () => {
     const response = await createGamingSourceIngestion({
       action: 'ingest',

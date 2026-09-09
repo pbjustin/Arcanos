@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
-import { buildGamingGuideIntakeContract } from '../src/shared/gaming/gamingGuideIntakeCore.js';
+import { buildGamingGuideIntakeContract, GAMING_HYBRID_INTAKE } from '../src/shared/gaming/gamingGuideIntakeCore.js';
 
 const responsesCreate = jest.fn();
 const runStructuredReasoning = jest.fn();
@@ -158,6 +158,21 @@ describe('Gaming compact Trinity intake through the real Responses adapter', () 
     expect(recordFeedback).not.toHaveBeenCalled();
   });
 
+  it.each(['build', 'meta'])('forwards original scoped hybrid %s evidence through the full Trinity writing facade', async mode => {
+    responsesCreate.mockResolvedValueOnce(response('Compact task card.')).mockResolvedValueOnce(response(finalAnswer));
+    const input = request();
+    input.input.sourceEndpoint = `arcanos-gaming.hybrid-${mode}`;
+    input.input.body = { ...input.input.body, mode, [GAMING_HYBRID_INTAKE]: true } as typeof input.input.body;
+    const result = await runTrinityWritingPipeline(input);
+    expect(JSON.stringify(responsesCreate.mock.calls[0]?.[0])).toContain('compact-v1');
+    expect(runStructuredReasoning.mock.calls[0]?.[2]).toContain('originalGamingRequest');
+    expect(runStructuredReasoning.mock.calls[0]?.[2]).toContain(syntheticEvidence);
+    expect(JSON.stringify(responsesCreate.mock.calls[1]?.[0])).toContain('Spoiler mode: none');
+    expect(JSON.stringify(responsesCreate.mock.calls[1]?.[0])).toContain(syntheticEvidence);
+    expect(result.result).toBe(finalAnswer);
+    expect(storePattern).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['Lantern Vale', 'Current area: Tide Hall; last completed objective: restored pump.'],
     ['Iron Comet', 'Boss: Cinder Warden; difficulty: veteran; shield only.'],
@@ -298,6 +313,8 @@ describe('Gaming compact Trinity intake through the real Responses adapter', () 
   it.each([
     { moduleId: 'ARCANOS:OTHER', sourceEndpoint: 'arcanos-gaming.guide', body: { mode: 'guide' } },
     { moduleId: 'ARCANOS:GAMING', sourceEndpoint: 'arcanos-gaming.meta', body: { mode: 'guide' } },
+    { moduleId: 'ARCANOS:GAMING', sourceEndpoint: 'arcanos-gaming.hybrid-build', body: { mode: 'build' } },
+    { moduleId: 'ARCANOS:GAMING', sourceEndpoint: 'arcanos-gaming.hybrid-meta', body: { mode: 'meta', gamingGuideIntakePolicy: 'compact-v1' } },
     { moduleId: 'ARCANOS:GAMING', sourceEndpoint: 'arcanos-gaming.guide', body: { mode: 'build' } },
     { moduleId: 'ARCANOS:GAMING', sourceEndpoint: 'arcanos-gaming.guide', body: {} }
   ])('rejects the trusted policy outside the exact module/source/mode scope: $moduleId $sourceEndpoint $body.mode', async input => {

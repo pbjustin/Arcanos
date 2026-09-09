@@ -62,10 +62,10 @@ export async function retrieveStoredGamingKnowledge(input: GamingStoredKnowledge
   if ((!query && input.mode !== 'guide') || input.maxContextChars === 0 || getGamingWebContextMaxChars() === 0) return { context: '', sources: [] };
   input.signal?.throwIfAborted();
   const preciseGameKey = normalizeGamingGameIdentity(input.game).slice(0, 120);
-  const gameKey = input.mode === 'guide' ? preciseGameKey
+  const gameKey = input.mode === 'guide' || input.hybridRetrieval ? preciseGameKey
     : canonicalizeGamingGameName(input.game).normalize('NFKC').toLowerCase()
       .replace(/[^a-z0-9]+/gu, '-').replace(/^-+|-+$/gu, '').slice(0, 160);
-  const resolveSourceIdentity = input.mode === 'guide' || preciseGameKey !== gameKey;
+  const resolveSourceIdentity = input.mode === 'guide' || input.hybridRetrieval || preciseGameKey !== gameKey;
   let sourceKnown = false;
   let records: GamingKnowledgeProvenanceRecord[];
   try {
@@ -87,17 +87,17 @@ export async function retrieveStoredGamingKnowledge(input: GamingStoredKnowledge
       const pending = Promise.resolve().then(async () => {
         const lookupStartedAt = Date.now();
         const identities = resolveSourceIdentity
-          ? await findActiveGamingSourceIdentities({ game: input.game, ...(input.mode === 'guide' && input.edition ? { edition: input.edition } : {}), mode: input.mode }, { queryTimeoutMs, signal: controller.signal })
+          ? await findActiveGamingSourceIdentities({ game: input.game, ...((input.mode === 'guide' || input.hybridRetrieval) && input.edition ? { edition: input.edition } : {}), mode: input.hybridRetrieval ? undefined : input.mode }, { queryTimeoutMs, signal: controller.signal })
           : undefined;
         // Newly ingested precise titles can differ from the historical build/meta
         // alias key. Prefer their exact catalog scope, retaining the legacy fallback.
-        const sources = input.mode === 'guide' || identities?.length ? identities : undefined;
-        sourceKnown = input.mode === 'guide' && Boolean(sources?.length);
+        const sources = input.mode === 'guide' || input.hybridRetrieval || identities?.length ? identities : undefined;
+        sourceKnown = (input.mode === 'guide' || input.hybridRetrieval === true) && Boolean(sources?.length);
         controller.signal.throwIfAborted();
         // Catalog presence never substitutes for positively relevant gameplay evidence.
         if (!query || (sources && !sources.length)) return [];
         const remainingMs = Math.max(1, queryTimeoutMs - (Date.now() - lookupStartedAt));
-        return searchActiveGamingKnowledge({ gameKey: sources?.length ? preciseGameKey : gameKey, query, mode: input.mode, limit: MAX_STORED_GAMING_CANDIDATES,
+        return searchActiveGamingKnowledge({ gameKey: sources?.length ? preciseGameKey : gameKey, query, mode: input.hybridRetrieval ? undefined : input.mode, limit: MAX_STORED_GAMING_CANDIDATES,
           ...(sources ? { sourceIds: sources.map(source => source.sourceId) } : {}) },
         { queryTimeoutMs: remainingMs, signal: controller.signal });
       }).finally(() => { activeLookups -= 1; });
@@ -110,6 +110,7 @@ export async function retrieveStoredGamingKnowledge(input: GamingStoredKnowledge
     input.signal?.throwIfAborted();
   } catch (error) {
     if (input.signal?.aborted) throw error;
+    if (input.failOnUnavailable) throw error;
     logger.warn('gaming.stored_retrieval_failed', { module: 'gaming-stored-knowledge', mode: input.mode, errorType: error instanceof Error ? error.name : 'unknown' });
     return { context: '', sources: [], ...(sourceKnown ? { sourceKnown } : {}) };
   }
@@ -126,5 +127,5 @@ export async function retrieveStoredGamingKnowledge(input: GamingStoredKnowledge
     ...(input.mode === 'guide' ? { sourceKnown } : {}),
     retrievalElapsedMs: Date.now() - startedAt
   });
-  return { ...result, ...(input.mode === 'guide' ? { sourceKnown } : {}) };
+  return { ...result, ...(input.mode === 'guide' || input.hybridRetrieval ? { sourceKnown } : {}) };
 }
