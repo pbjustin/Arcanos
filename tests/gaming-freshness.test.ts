@@ -220,6 +220,16 @@ describe('current patch, hotfix, baseline, and rollout applicability', () => {
     expect(evaluate([index(), announced]).usable).toBe(false);
   });
 
+  test.each(['Platforms', 'Regions'])('malformed %s lists cannot widen stable evidence to unspecified scope', label => {
+    for (const value of ['x'.repeat(81), 'all, ', Array.from({ length: 9 }, (_, i) => `scope-${i}`).join(', ')]) {
+      const metadata = extract('https://prism.test/updates/scoped', `Game: Prism Siege\nPatch: 2.4.1\n${label}: ${value}`);
+      expect(metadata.metadataUnverified).toBe(true);
+      expect(metadata.autoStoreAllowed).toBe(false);
+      expect(evaluate([metadata], { question: 'Where is the cave entrance?', platform: 'PC', region: 'EU' }))
+        .toMatchObject({ usable: false, reasons: ['APPLICABILITY_METADATA_UNVERIFIED'] });
+    }
+  });
+
   test('explicit same-mechanic numeric conflicts are bounded and use source authority', () => {
     const first = extract('https://prism.test/updates/first', 'Game: Prism Siege\nPatch: 2.4.1\nMechanic: beam damage = 20\nMechanic: beam cooldown = 5 seconds');
     const changed = extract('https://prism.test/updates/changed', 'Game: Prism Siege\nPatch: 2.4.1\nMechanic: beam damage = 30');
@@ -238,6 +248,22 @@ describe('current patch, hotfix, baseline, and rollout applicability', () => {
     expect(Object.keys(excessive.mechanicValues ?? {})).toHaveLength(16);
     expect(excessive.metadataUnverified).toBe(true);
   });
+
+  test.each([[false, false], [false, true], [true, false], [true, true]])(
+    'excluded weaker sources contribute no other mechanics (source order=%s, claim order=%s)', (reverseSources, reverseClaims) => {
+      const official = source('official-balance', { mechanicValues: { 'beam damage': '20' } });
+      const rejectedClaims: Array<[string, string]> = [['beam damage', '30'], ['beam cooldown', '5s']];
+      const rejected = source('rejected-community', { authority: 'community', category: 'community',
+        mechanicValues: Object.fromEntries(reverseClaims ? rejectedClaims.reverse() : rejectedClaims) });
+      const valid = source('valid-community', { authority: 'community', category: 'community',
+        mechanicValues: { 'beam damage': '20', 'beam cooldown': '6s' } });
+      const weaker = reverseSources ? [valid, rejected] : [rejected, valid];
+      expect(evaluate([index(), official, ...weaker])).toMatchObject({
+        status: 'current', selectedEvidenceIds: ['official-balance', 'valid-community', 'current'],
+        reasons: expect.arrayContaining(['LOWER_AUTHORITY_CONFLICT_EXCLUDED'])
+      });
+    }
+  );
 
   test('future and expired patch announcements are not active gameplay evidence', () => {
     const result = evaluate([index(), source('future', { effectiveFrom: '2026-09-09' }), source('expired', { effectiveUntil: '2026-09-08T12:00:00Z' })]);
@@ -308,6 +334,23 @@ describe('MMO seasons and operational status remain time-scoped', () => {
     });
     expect(evaluate([seasonIndex, { ...seasonIndex, id: 'other-index', currentPatch: '3.0' }, current], scope))
       .toMatchObject({ status: 'conflicting', reasons: ['OFFICIAL_CURRENT_APPLICABILITY_CONFLICT'] });
+  });
+
+  test.each([
+    { question: 'What is the best weapon build for the current season?', mode: 'guide' },
+    { question: 'What are the latest hotfix beam damage values this season?', mode: 'guide' },
+    { question: 'Describe the seasonal loadout.', mode: 'build' }
+  ])('a season-only index cannot verify patch-sensitive intent: $question', ({ question, mode }) => {
+    const scope = { game: 'Clockwork Citadel', question, mode };
+    const seasonIndex = index({ game: scope.game, currentSeason: 'Gears', currentPatch: undefined });
+    const old = source('obsolete-balance', { game: scope.game, season: 'Gears', patch: '1.0' });
+    expect(evaluate([seasonIndex, old], scope)).toMatchObject({
+      classification: 'seasonal', usable: false, reasons: ['CURRENT_OFFICIAL_INDEX_REQUIRED']
+    });
+    const current = source('current-balance', { game: scope.game, season: 'Gears', patch: '2.0' });
+    expect(evaluate([{ ...seasonIndex, currentPatch: '2.0' }, old, current], scope)).toMatchObject({
+      status: 'current', effectivePatch: '2.0', selectedEvidenceIds: ['current-balance', 'current']
+    });
   });
 
   test('operational status needs a live official page with a recent source timestamp', () => {

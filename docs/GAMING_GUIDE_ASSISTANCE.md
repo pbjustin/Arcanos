@@ -228,9 +228,13 @@ The server permits one discovery round (the existing stricter frontend limit),
 three URLs, eight workflows per credential actor, 24 hybrid calls per five
 minutes, and 128 workflows total per web process. Workflows expire after ten
 minutes; retained resolved text is bounded to 12 million characters per process.
+At that capacity, new evidence remains transient and returns no storage handle;
+previously retained approvals remain available within their normal lifetime.
 The early authenticated parser caps requests at 16 KiB. Candidate fetching has
 a 12-second aggregate budget; HTTP hybrid Actions have a 38-second deadline,
 including generation. Context remains within the existing Gaming budget. The
+same candidate-operation key can resume a failed acquisition without consuming
+another discovery round; different keys remain subject to the one-round limit.
 GPT may poll status at most three times; the existing status endpoint retains
 its shared 120-request/five-minute HTTP rate limit. These in-process transient
 limits are not a distributed quota. A different replica or restart can return
@@ -260,8 +264,8 @@ interpretation/resolver policy and expiry. It is reused for the immediate answer
 Hybrid ingestion stores only the approved extracted prose; embedded structured
 planner objects and raw HTML cannot introduce unapproved evidence during refetch.
 The durable worker resolves again because its execution may occur on another
-process after the request artifact expires; a changed content hash rejects that
-approval rather than storing unreviewed content. Idempotency uses the caller and
+process after the request artifact expires; a changed content hash or partial
+refetch rejects that approval rather than storing unreviewed content. Idempotency uses the caller and
 logical operation key. Same-key retries reuse work; new refreshes use new keys.
 Content revision hashing covers all accepted text and indexing policy, not a
 preview. Atomic active-revision replacement preserves last valid records on
@@ -293,12 +297,16 @@ guess the latest patch. A known current hotfix/build excludes incompatible older
 builds; exact declared patch/build baseline applicability can retain unchanged facts. Absence of a
 change in newer notes never proves an older fact remains valid. A 304 validates
 only that resource, not the absence of updates elsewhere.
+Seasonal questions about patches, hotfixes, balance or builds also require current
+patch applicability; a season-only index cannot establish it. Malformed or
+truncated scope labels remain unverified rather than implying global applicability.
 
 Metadata adapters are intentionally conservative: supported labeled metadata and
 the reviewed SWTOR dated release index are implemented. Unsupported site layouts
 remain unverified; this is not exhaustive live-service coverage. Bounded explicit
 `Mechanic: name = number` labels detect conflicting numeric values (16 per source);
 equal-authority conflicts fail closed and conflicting weaker sources are excluded.
+An excluded source contributes no other mechanic claims to conflict resolution.
 Arbitrary prose semantic conflicts cannot be resolved exhaustively by lexical rules.
 Answers must retain that
 uncertainty, distinguish official changes from recommendations, and avoid a

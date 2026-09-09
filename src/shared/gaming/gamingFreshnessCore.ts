@@ -120,7 +120,6 @@ const dateValue = (value: string | undefined): string | undefined => {
   const parsed = timestamp(value);
   return parsed === undefined ? undefined : new Date(parsed).toISOString();
 };
-const boundedList = (value: string | undefined): string[] | undefined => value?.split(',').map(item => item.trim()).filter(item => item.length > 0 && item.length <= 80).slice(0, 8);
 
 /** Question policy is conservative even when an explicit client mode says "guide". */
 export function classifyGamingQuestionFreshness(input: { prompt: string; mode?: string; requestedVersion?: string }): GamingQuestionFreshness {
@@ -160,6 +159,16 @@ export function extractGamingFreshnessMetadata(document: { publicUrl: string; te
     const values = [...new Set(claims.filter(value => value.length > 0 && value.length <= max))];
     if (values.length > 1) conflict = true;
     return values.length === 1 ? values[0] : undefined;
+  };
+  const boundedList = (value: string | undefined): string[] | undefined => {
+    if (value === undefined) return undefined;
+    const values = value.split(',').map(item => item.trim());
+    // A malformed or incomplete restriction cannot become unspecified/global scope.
+    if (values.length > 8 || values.some(item => item.length === 0 || item.length > 80)) {
+      invalidMetadata = true;
+      return undefined;
+    }
+    return values;
   };
   const game = label('Game', 160) ?? context.game;
   const edition = label('Edition', 120);
@@ -268,6 +277,11 @@ export interface GamingFreshnessEvaluation {
 /** Freshness never substitutes for the caller's independent relevance/sufficiency selection. */
 export function evaluateGamingFreshness(input: GamingFreshnessEvaluationInput): GamingFreshnessEvaluation {
   const classification = classifyGamingQuestionFreshness({ prompt: input.question, mode: input.mode, requestedVersion: input.requestedVersion });
+  // A season identity alone cannot verify balance/build claims within that season.
+  const seasonalPatchRequired = classification === 'seasonal' && classifyGamingQuestionFreshness({
+    prompt: input.question.replace(/\b(?:(?:current|latest)\s+)?(?:season(?:al)?|battle\s+pass|league)\b/giu, ' '),
+    mode: input.mode, requestedVersion: input.requestedVersion
+  }) === 'patch_sensitive';
   const now = (input.now ?? new Date()).getTime();
   const result = (status: GamingFreshnessStatus, reasons: string[], selected: readonly GamingFreshnessEvidence[] = [], extra: Partial<GamingFreshnessEvaluation> = {}): GamingFreshnessEvaluation => ({
     policyVersion: GAMING_FRESHNESS_POLICY_VERSION, classification, status, usable: status === 'current',
@@ -323,7 +337,8 @@ export function evaluateGamingFreshness(input: GamingFreshnessEvaluationInput): 
     && item.metadataConfidence === 'content_extracted' && recent(item, GAMING_FRESHNESS_DEFAULTS[classification])
     && (!input.platform || item.platforms?.some(platform => same(platform, input.platform) || same(platform, 'all')))
     && (!input.region || item.regions?.some(region => same(region, input.region) || same(region, 'all')))
-    && timestamp(item.effectiveFrom) !== undefined && (classification === 'seasonal' ? item.currentSeason : item.currentPatch));
+    && timestamp(item.effectiveFrom) !== undefined && (classification === 'seasonal' ? item.currentSeason : item.currentPatch)
+    && (!seasonalPatchRequired || item.currentPatch));
   if (!indexes.length) {
     const outdatedIndex = scoped.some(item => item.authority === 'official' && item.currentness === 'current_index'
       && !recent(item, GAMING_FRESHNESS_DEFAULTS[classification]));
@@ -366,12 +381,20 @@ export function evaluateGamingFreshness(input: GamingFreshnessEvaluationInput): 
   const claims = new Map<string, { rank: number; value: string }>();
   const lowerAuthorityConflicts = new Set<string>();
   for (const item of [...selected].sort((a, b) => authorityRank[b.authority] - authorityRank[a.authority])) {
-    for (const [key, value] of Object.entries(item.mechanicValues ?? {}).slice(0, 16)) {
+    const mechanics = Object.entries(item.mechanicValues ?? {}).slice(0, 16);
+    const rank = authorityRank[item.authority];
+    // Reject the whole weaker source before any of its other claims enter comparison.
+    if (mechanics.some(([key, value]) => {
       const prior = claims.get(key);
-      const rank = authorityRank[item.authority];
+      return prior && prior.rank > rank && prior.value !== value;
+    })) {
+      lowerAuthorityConflicts.add(item.id);
+      continue;
+    }
+    for (const [key, value] of mechanics) {
+      const prior = claims.get(key);
       if (prior && prior.value !== value) {
-        if (prior.rank === rank) return result('conflicting', [...reasons, 'EXPLICIT_MECHANIC_VALUE_CONFLICT']);
-        lowerAuthorityConflicts.add(item.id);
+        return result('conflicting', [...reasons, 'EXPLICIT_MECHANIC_VALUE_CONFLICT']);
       } else if (!prior) claims.set(key, { rank, value });
     }
   }
