@@ -134,6 +134,69 @@ describe('Gaming hybrid durable lifecycle', () => {
   afterEach(() => {
     for (const [key, value] of Object.entries(prior)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
     jest.restoreAllMocks();
+    jest.useRealTimers();
+  });
+
+  function setClock(time: string) {
+    jest.useFakeTimers({ doNotFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'setImmediate',
+      'clearImmediate', 'nextTick', 'hrtime', 'performance', 'queueMicrotask'] });
+    jest.setSystemTime(new Date(time));
+  }
+
+  it('never approves an already expired stable source for durable ingestion', async () => {
+    setClock('2026-09-09T12:00:00.000Z');
+    documentText = `Effective until: 2026-09-09T12:00:00.000Z. ${PASSAGE}`;
+    const evaluated = await evaluate();
+    expect(evaluated.accepted).toHaveLength(0);
+    expect(evaluated.decisions[0]).toMatchObject({ decision: 'rejected', reasonCodes: expect.arrayContaining(['NO_LONGER_EFFECTIVE']) });
+    expect(jobs.size).toBe(0);
+  });
+
+  it('reassesses an accepted artifact if its applicability expires before ingestion approval', async () => {
+    setClock('2026-09-09T12:00:00.000Z');
+    documentText = `Effective until: 2026-09-09T12:00:01.000Z. ${PASSAGE}`;
+    const evaluated = await evaluate();
+    expect(evaluated.decisions[0].decision).toBe('eligible_for_ingestion');
+    jest.setSystemTime(new Date('2026-09-09T12:00:01.000Z'));
+    expect((await store(evaluated.accepted)).statusCode).toBe(403);
+    expect(jobs.size).toBe(0);
+  });
+
+  it('rejects source applicability that expires while the approved job is queued', async () => {
+    setClock('2026-09-09T12:00:00.000Z');
+    documentText = `Effective until: 2026-09-09T12:00:01.000Z. ${PASSAGE}`;
+    expect((await store((await evaluate()).accepted)).statusCode).toBe(202);
+    jest.setSystemTime(new Date('2026-09-09T12:00:01.000Z'));
+    const result = await complete([...jobs.keys()][0]);
+    expect(result.sources[0]).toMatchObject({ status: 'rejected', error: { code: 'APPROVED_APPLICABILITY_EXPIRED' } });
+    expect(database.source).toBeUndefined();
+  });
+
+  it('retains exact historical patch eligibility across storage and worker verification', async () => {
+    setClock('2026-09-09T12:00:00.000Z');
+    documentText = `Patch: 1.0. Effective from: 2024-01-01. Effective until: 2024-02-01. ${PASSAGE}`;
+    const evaluated = await evaluate({ prompt: 'Explain the historical patch 1.0 obsidian observatory route.', requestedVersion: '1.0' });
+    expect(evaluated.decisions[0].decision).toBe('eligible_for_ingestion');
+    expect((await store(evaluated.accepted)).statusCode).toBe(202);
+    expect((await complete([...jobs.keys()][0])).sources[0].status).toBe('stored');
+  });
+
+  it('binds normalized worker applicability context to the source assessment', async () => {
+    expect((await store((await evaluate()).accepted)).statusCode).toBe(202);
+    const job = [...jobs.values()][0];
+    job.input.body.sources[0].hybridApproval.applicabilityContext.historical = true;
+    expect((await complete(job.id)).sources[0]).toMatchObject({ status: 'rejected', error: { code: 'APPROVED_APPLICABILITY_EXPIRED' } });
+  });
+
+  it('rechecks a current build index proof that becomes stale while queued', async () => {
+    setClock('2026-09-09T12:00:00.000Z');
+    const { workflow, found, missing, guideUrl } = await discoverCurrent('build');
+    const candidateId = found.body.candidates!.find(candidate => candidate.url === guideUrl)!.candidateId!;
+    const result = await workflow.ingest({ contractVersion, workflowId: missing.body.workflowId,
+      idempotencyKey: 'expiring-index-store-1', candidateIds: [candidateId], storagePolicy: 'ask_before_store', confirmStore: true }, context);
+    expect(result.body.state).toBe('ingestion_pending');
+    jest.setSystemTime(new Date('2026-09-09T18:00:00.001Z'));
+    expect((await complete([...jobs.keys()][0])).sources[0]).toMatchObject({ status: 'rejected', error: { code: 'APPROVED_APPLICABILITY_EXPIRED' } });
   });
 
   it('discovers unknown coverage, validates URLs, answers through Gaming Trinity, ingests, then answers without URL or rediscovery', async () => {

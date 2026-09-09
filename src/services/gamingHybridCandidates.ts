@@ -4,7 +4,7 @@ import { normalizeGamingGameIdentity, resolveGamingGuideIdentity } from '@shared
 import { classifyGamingDocumentQuality, selectGamingSourceAdmissionUrl } from '@shared/gaming/gamingDocumentIngestionCore.js';
 import { buildGamingRetrievalTerms, gamingTermCoverage } from '@shared/gaming/gamingRetrievalPolicy.js';
 import {
-  assessGamingSourcePolicy, extractGamingFreshnessMetadata, classifyGamingQuestionFreshness,
+  assessGamingSourcePolicy, extractGamingFreshnessMetadata, classifyGamingQuestionFreshness, gamingSeasonalPatchRequired,
   type GamingFreshnessEvidence
 } from '@shared/gaming/gamingFreshnessCore.js';
 import {
@@ -17,7 +17,7 @@ import { chunkGamingDocument, GAMING_DURABLE_DOCUMENT_LIMITS } from './gamingDur
 import { sanitizeGamingDiscoveryCandidateUrl } from './gamingSourceDiscovery.js';
 import { getGamingRagChunkChars, getGamingRagMaxChunks, getGamingRagMaxSources, getGamingWebContextMaxChars, getGamingWebContextFetchTimeoutMs } from './gamingConfig.js';
 import { createApprovedGamingSourceIngestion, hashGamingApprovedDocument, type GamingSourceGatewayContext } from './gamingSourceIngestion.js';
-import { assessGamingClearSource, gamingClearIntactSourceText } from '@shared/gaming/gamingClearSource.js';
+import { assessGamingClearSource, gamingClearHistoricalSourceVerified, gamingClearIntactSourceText } from '@shared/gaming/gamingClearSource.js';
 import { GAMING_CLEAR_VERSION, gamingClearHash, type GamingClearAssessment } from '@shared/gaming/gamingClearPolicy.js';
 import { pickGamingPlayerContext } from '@shared/gaming/gamingPlayerContext.js';
 
@@ -250,16 +250,16 @@ export async function createApprovedGamingHybridIngestion(input: {
       || candidate.sourceMetadataBinding !== sourceMetadataBinding(candidate.freshness, candidate.sourcePolicy)) {
       return denied('GAMING_HYBRID_APPROVAL_INVALID', 'The source approval expired or does not belong to this caller.');
     }
-    // A combined, artifact-bound currentness check can close the source's earlier
-    // uncertainty. Reassess under the same request; it does not grant storage permission.
-    if (candidate.sourceAssessment.decision === 'partial') {
-      const reassessed = assessGamingClearSource(candidate.sourceContext, candidate.document, { subjectId: candidate.candidateId,
-        subjectHash: candidate.contentHash, actorScopeHash: candidate.actorScopeHash, sourcePolicy: candidate.sourcePolicy,
-        freshness: candidate.freshness, now: new Date() });
-      if (reassessed.qualityEligible) {
-        candidate.sourceAssessment = reassessed;
-        candidate.assessmentBinding = gamingClearHash({ sourceAssessment: reassessed, sourceContext: candidate.sourceContext });
-      }
+    // Applicability can expire inside the artifact TTL; recheck every bound source
+    // at the storage decision. Combined currentness may also close earlier uncertainty.
+    const reassessed = assessGamingClearSource(candidate.sourceContext, candidate.document, { subjectId: candidate.candidateId,
+      subjectHash: candidate.contentHash, actorScopeHash: candidate.actorScopeHash, sourcePolicy: candidate.sourcePolicy,
+      freshness: candidate.freshness, now: new Date() });
+    // Retain the same logical approval identity when revalidation changes only its
+    // check time, so retrying an unchanged enqueue keeps existing idempotency.
+    if (gamingClearHash({ ...reassessed, evaluatedAt: candidate.sourceAssessment.evaluatedAt }) !== gamingClearHash(candidate.sourceAssessment)) {
+      candidate.sourceAssessment = reassessed;
+      candidate.assessmentBinding = gamingClearHash({ sourceAssessment: reassessed, sourceContext: candidate.sourceContext });
     }
     if (!candidate.sourcePolicy.durableAllowed || !candidate.sourceAssessment.qualityEligible || candidate.document.metrics.truncated
       || (input.storagePolicy === 'auto_store_approved' && !candidate.sourcePolicy.autoStoreAllowed)) {
@@ -272,6 +272,12 @@ export async function createApprovedGamingHybridIngestion(input: {
     recordType: candidate.recordType,
     sourceTrustType: candidate.sourcePolicy.authority === 'official' ? 'official' as const
       : candidate.sourcePolicy.authority === 'specialist' ? 'curated' as const : 'supplied' as const,
-    freshness: { ...candidate.freshness }, sourceAssessment: candidate.sourceAssessment
+    freshness: { ...candidate.freshness }, sourceAssessment: candidate.sourceAssessment,
+    applicabilityContext: { game: candidate.sourceContext.game, mode: candidate.sourceContext.mode,
+      classification: classifyGamingQuestionFreshness(candidate.sourceContext),
+      seasonalPatchRequired: gamingSeasonalPatchRequired({ ...candidate.sourceContext, question: candidate.sourceContext.prompt }),
+      historical: gamingClearHistoricalSourceVerified(candidate.sourceContext, candidate.freshness, new Date()),
+      requestedVersion: candidate.sourceContext.requestedVersion, contextFingerprint: candidate.sourceAssessment.contextFingerprint,
+      edition: candidate.sourceContext.edition, platform: candidate.sourceContext.platform, region: candidate.sourceContext.region }
   })), input.idempotencyKey, { ...context, canStore: true });
 }

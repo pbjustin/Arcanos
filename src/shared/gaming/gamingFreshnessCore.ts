@@ -274,14 +274,19 @@ export interface GamingFreshnessEvaluation {
   qualification: string;
 }
 
-/** Freshness never substitutes for the caller's independent relevance/sufficiency selection. */
-export function evaluateGamingFreshness(input: GamingFreshnessEvaluationInput): GamingFreshnessEvaluation {
-  const classification = classifyGamingQuestionFreshness({ prompt: input.question, mode: input.mode, requestedVersion: input.requestedVersion });
-  // A season identity alone cannot verify balance/build claims within that season.
-  const seasonalPatchRequired = classification === 'seasonal' && classifyGamingQuestionFreshness({
+/** A season identity alone cannot verify balance/build claims within that season. */
+export function gamingSeasonalPatchRequired(input: Pick<GamingFreshnessEvaluationInput, 'question' | 'mode' | 'requestedVersion'>): boolean {
+  return classifyGamingQuestionFreshness({ prompt: input.question, mode: input.mode, requestedVersion: input.requestedVersion }) === 'seasonal'
+    && classifyGamingQuestionFreshness({
     prompt: input.question.replace(/\b(?:(?:current|latest)\s+)?(?:season(?:al)?|battle\s+pass|league)\b/giu, ' '),
     mode: input.mode, requestedVersion: input.requestedVersion
   }) === 'patch_sensitive';
+}
+
+/** Freshness never substitutes for the caller's independent relevance/sufficiency selection. */
+export function evaluateGamingFreshness(input: GamingFreshnessEvaluationInput): GamingFreshnessEvaluation {
+  const classification = classifyGamingQuestionFreshness({ prompt: input.question, mode: input.mode, requestedVersion: input.requestedVersion });
+  const seasonalPatchRequired = gamingSeasonalPatchRequired(input);
   const now = (input.now ?? new Date()).getTime();
   const result = (status: GamingFreshnessStatus, reasons: string[], selected: readonly GamingFreshnessEvidence[] = [], extra: Partial<GamingFreshnessEvaluation> = {}): GamingFreshnessEvaluation => ({
     policyVersion: GAMING_FRESHNESS_POLICY_VERSION, classification, status, usable: status === 'current',

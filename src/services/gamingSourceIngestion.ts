@@ -24,7 +24,8 @@ import {
   selectGamingSourcePublicUrl
 } from '@shared/gaming/gamingDocumentIngestionCore.js';
 import { normalizeGamingGameIdentity } from '@shared/gaming/gamingGameIdentity.js';
-import { GAMING_FRESHNESS_POLICY_VERSION, GAMING_SOURCE_POLICY_VERSION } from '@shared/gaming/gamingFreshnessCore.js';
+import { assessGamingSourcePolicy, evaluateGamingFreshness, GAMING_FRESHNESS_POLICY_VERSION, GAMING_SOURCE_POLICY_VERSION, type GamingFreshnessEvidence } from '@shared/gaming/gamingFreshnessCore.js';
+import { gamingClearHistoricalSourceVerified } from '@shared/gaming/gamingClearSource.js';
 import { isGamingApprovedArtifactCurrent } from '@shared/gaming/gamingHybridPolicyCore.js';
 import { GAMING_CLEAR_VERSION, GAMING_CLEAR_POLICY_VERSION, parseGamingClearAssessment, type GamingClearAssessment } from '@shared/gaming/gamingClearPolicy.js';
 import { truncateTextByCharacters } from '@shared/http/clientResponseCommon.js';
@@ -137,6 +138,19 @@ const queuedSourceSchema = z.object({
       }
       return assessment;
     }).optional(),
+    applicabilityContext: z.object({
+      game: z.string().trim().min(1).max(120),
+      mode: z.enum(['guide', 'build', 'meta']),
+      classification: z.enum(['stable', 'patch_sensitive', 'seasonal', 'live_status']),
+      seasonalPatchRequired: z.boolean(),
+      historical: z.boolean(),
+      requestedVersion: z.string().trim().min(1).max(64).optional(),
+      contextFingerprint: z.string().regex(/^[a-f0-9]{64}$/u),
+      edition: z.string().trim().min(1).max(120).optional(),
+      platform: z.string().trim().min(1).max(80).optional(),
+      region: z.string().trim().min(1).max(80).optional()
+    }).strict().optional(),
+    applicabilityBinding: z.string().regex(/^[a-f0-9]{64}$/u).optional(),
     freshness: z.record(z.unknown()).refine(value => JSON.stringify(value).length <= 8_000)
   }).strict().optional()
 }).strict();
@@ -761,6 +775,8 @@ export async function createApprovedGamingSourceIngestion(
     recordType?: 'guide' | 'build' | 'meta';
     freshness: Record<string, unknown>;
     sourceAssessment: GamingClearAssessment;
+    applicabilityContext?: { game: string; mode: 'guide' | 'build' | 'meta'; classification: 'stable' | 'patch_sensitive' | 'seasonal' | 'live_status'; historical: boolean; seasonalPatchRequired: boolean;
+      requestedVersion?: string; contextFingerprint: string; edition?: string; platform?: string; region?: string };
   }[],
   idempotencyKey: string,
   context: GamingSourceGatewayContext & { canStore: boolean }
@@ -775,7 +791,8 @@ export async function createApprovedGamingSourceIngestion(
   const seen = new Set<string>();
   const approved: QueuedGamingSource[] = [];
   for (const [submittedIndex, source] of sources.entries()) {
-    if (source.sourceAssessment?.subjectHash !== source.contentHash) {
+    if (source.sourceAssessment?.subjectHash !== source.contentHash
+      || (source.applicabilityContext && source.applicabilityContext.contextFingerprint !== source.sourceAssessment.contextFingerprint)) {
       return buildGatewayValidationError('The source assessment is not bound to this approved content.');
     }
     const admission = admitUrl(source.url, submittedIndex, seen);
@@ -787,6 +804,9 @@ export async function createApprovedGamingSourceIngestion(
       hybridApproval: { actorScopeHash: source.actorScopeHash, contentHash: source.contentHash,
         policyVersion: source.policyVersion, freshness: source.freshness,
         gamingClear: source.sourceAssessment,
+        applicabilityContext: source.applicabilityContext,
+        ...(source.applicabilityContext ? { applicabilityBinding: sha256(stableJson({
+          context: source.applicabilityContext, assessment: source.sourceAssessment })) } : {}),
         freshnessPolicyVersion: GAMING_FRESHNESS_POLICY_VERSION, sourcePolicyVersion: GAMING_SOURCE_POLICY_VERSION,
         recordType: source.recordType ?? 'guide' }
     });
@@ -1042,6 +1062,42 @@ async function ingestOneSource(
         recordsCreated: 0, recordsUpdated: 0, completedAt: new Date().toISOString(),
         error: { code: 'APPROVED_CONTENT_CHANGED', message: 'The source assessment requires a new evaluation.', retryable: false } };
     }
+    const approvalApplicable = (): boolean => {
+      const approval = source.hybridApproval;
+      if (!approval) return true;
+      const applicability = approval.applicabilityContext;
+      if (applicability && (applicability.contextFingerprint !== approvedAssessment?.contextFingerprint
+        || approval.applicabilityBinding !== sha256(stableJson({ context: applicability, assessment: approvedAssessment })))) return false;
+      const freshness = approval.freshness as unknown as GamingFreshnessEvidence;
+      const at = new Date();
+      const historical = applicability?.historical && gamingClearHistoricalSourceVerified({ ...applicability,
+        prompt: 'historical patch' }, freshness, at);
+      const until = approval?.freshness.effectiveUntil;
+      if (until !== undefined && (typeof until !== 'string' || !Number.isFinite(Date.parse(until)))) return false;
+      if (typeof until === 'string' && Date.parse(until) <= at.getTime() && !historical) return false;
+      if (applicability?.historical) return Boolean(historical);
+      if (approvedAssessment?.gates.freshness === 'not_applicable') return true;
+      if (!applicability) return approvedAssessment?.policyProfile.endsWith(':walkthrough:source') === true
+        || approvedAssessment?.policyProfile.endsWith(':explanation:source') === true;
+      const verification = approval.freshness.currentVerification as { artifactHash?: string; indexHash?: string;
+        evidence?: GamingFreshnessEvidence; snippet?: string } | undefined;
+      const index = verification?.evidence;
+      const boundIndex = index && verification?.artifactHash === approval.contentHash
+        && /^[a-f0-9]{64}$/u.test(verification.indexHash ?? '') && (verification.snippet?.length ?? Infinity) <= 600
+        && index.currentness === 'current_index' && Boolean(index.ruleId)
+        && assessGamingSourcePolicy(index.url, applicability.game).ruleId === index.ruleId;
+      const question = applicability.classification === 'seasonal'
+        ? applicability.seasonalPatchRequired ? 'current seasonal build' : 'current season'
+        : applicability.classification === 'patch_sensitive' ? 'current patch build'
+          : applicability.classification === 'live_status' ? 'live server status' : 'explain the route';
+      const checked = evaluateGamingFreshness({ ...applicability, question,
+        evidence: [freshness, ...(boundIndex ? [index!] : [])], now: at });
+      return checked.usable && checked.selectedEvidenceIds.includes(freshness.id);
+    };
+    const expiredApprovalResult = () => ({ submittedIndex: source.submittedIndex, status: 'rejected' as const,
+      canonicalUrl: source.canonicalUrl, recordsCreated: 0, recordsUpdated: 0, completedAt: new Date().toISOString(),
+      error: { code: 'APPROVED_APPLICABILITY_EXPIRED', message: 'The source applicability requires a new evaluation before storing.', retryable: false } });
+    if (!approvalApplicable()) return expiredApprovalResult();
     const chunked = await chunkGamingDocument(document.text, { signal });
     const cleanedText = chunked.text;
     const documentTruncated = document.metrics.truncated || chunked.documentTruncated;
@@ -1253,6 +1309,7 @@ async function ingestOneSource(
       };
     });
     signal?.throwIfAborted();
+    if (!approvalApplicable()) return expiredApprovalResult();
     const persisted = await persistGamingSourceRevision({
       gameKey: source.gameKey,
       gameName: source.game,

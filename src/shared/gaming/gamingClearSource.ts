@@ -20,6 +20,17 @@ export function gamingClearIntactSourceText(document: Pick<ResolvedGamingDocumen
   return document.text.slice(0, intactEnd).trimEnd();
 }
 
+/** Historical expiry exemptions require acquired patch evidence, never a requested label alone. */
+export function gamingClearHistoricalSourceVerified(input: Pick<GamingStoredKnowledgeInput, 'prompt' | 'game' | 'mode' | 'requestedVersion' | 'edition' | 'platform'> & { region?: string },
+  freshness: GamingFreshnessEvidence, now: Date): boolean {
+  if (!/\b(?:historical|as of|old patch|previous patch)\b/iu.test(input.prompt) || !input.requestedVersion) return false;
+  const evaluated = evaluateGamingFreshness({ question: input.prompt, game: input.game, mode: input.mode,
+    requestedVersion: input.requestedVersion, edition: input.edition, platform: input.platform, region: input.region,
+    evidence: [freshness], now });
+  return evaluated.usable && evaluated.reasons.includes('HISTORICAL_PATCH_APPLICABILITY_VERIFIED')
+    && evaluated.selectedEvidenceIds.includes(freshness.id);
+}
+
 /** Acquired labels are assertions, never independent proof. Complete names preserve edition distinctions. */
 export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDocument, 'text' | 'metadata' | 'publicUrl'>,
   input: Pick<GamingStoredKnowledgeInput, 'game' | 'edition' | 'prompt' | 'mode'>,
@@ -104,9 +115,7 @@ export function assessGamingClearSource(input: GamingStoredKnowledgeInput & { re
   const evaluated = (score: number, reasonCode: string) => ({ status: 'evaluated' as const, score,
     reasonCodes: [reasonCode], evidenceRefs: refs, unresolvedFacts: [] as string[] });
   const stable = classifyGamingQuestionFreshness(input) === 'stable';
-  const historical = /\b(?:historical|as of|old patch|previous patch)\b/iu.test(input.prompt) && Boolean(input.requestedVersion)
-    && evaluateGamingFreshness({ question: input.prompt, game: input.game, mode: input.mode, requestedVersion: input.requestedVersion,
-      edition: input.edition, platform: input.platform, region: input.region, evidence: [options.freshness], now: options.now }).usable;
+  const historical = gamingClearHistoricalSourceVerified(input, options.freshness, options.now);
   const verification = (options.freshness as GamingFreshnessEvidence & { currentVerification?: {
     artifactHash?: string; indexHash?: string; evidence?: GamingFreshnessEvidence; snippet?: string } }).currentVerification;
   const verifiedIndex = verification?.evidence;
@@ -118,10 +127,13 @@ export function assessGamingClearSource(input: GamingStoredKnowledgeInput & { re
       requestedVersion: input.requestedVersion, edition: input.edition, platform: input.platform, region: input.region,
       evidence: [options.freshness, verifiedIndex], now: options.now }).usable;
   const future = [options.freshness.effectiveFrom, options.freshness.publishedAt].some(value => value && Date.parse(value) > options.now.getTime());
+  const invalidInterval = [options.freshness.effectiveFrom, options.freshness.effectiveUntil, options.freshness.publishedAt]
+    .some(value => value !== undefined && !Number.isFinite(Date.parse(value)));
+  const expired = !historical && Boolean(options.freshness.effectiveUntil && Date.parse(options.freshness.effectiveUntil) <= options.now.getTime());
   const wrongPatch = Boolean(input.requestedVersion && options.freshness.patch
     && normalizeGamingGameIdentity(input.requestedVersion) !== normalizeGamingGameIdentity(options.freshness.patch));
-  const compatibility = options.freshness.metadataConflict || future || wrongPatch ? 'conflict' as const
-    : options.freshness.metadataUnverified ? 'unknown' as const : 'verified' as const;
+  const compatibility = options.freshness.metadataConflict || future || expired || wrongPatch ? 'conflict' as const
+    : options.freshness.metadataUnverified || invalidInterval ? 'unknown' as const : 'verified' as const;
   const substantiveFreshness = stable || historical || combinedCurrent ? 'verified' as const : role === 'live_status'
     ? evaluateGamingFreshness({ question: input.prompt, game: input.game, evidence: [options.freshness], now: options.now }).usable
       ? 'verified' as const : 'unknown' as const : supporting ? 'not_applicable' as const : 'unknown' as const;
@@ -142,7 +154,7 @@ export function assessGamingClearSource(input: GamingStoredKnowledgeInput & { re
         reasonCodes: identity.reasonCodes, evidenceRefs: refs, unresolvedFacts: ['GAME_IDENTITY'] },
       resilience: { ...evaluated(document.metrics.truncated ? 3 : 3.5, document.metrics.truncated ? 'EXTRACTION_PARTIAL' : 'TRACEABLE_ACQUIRED_DOCUMENT'),
         unresolvedFacts: ['INDEPENDENT_CORROBORATION_NOT_ESTABLISHED', ...(!stable && !historical && !combinedCurrent ? ['COMBINED_APPLICABILITY_REQUIRED'] : [])] }
-    }, findings: [...(future || wrongPatch ? [{ code: future ? 'NOT_YET_EFFECTIVE' : 'PATCH_MISMATCH', severity: 'blocking' as const, evidenceRefs: refs }] : []),
+    }, findings: [...(future || expired || wrongPatch ? [{ code: future ? 'NOT_YET_EFFECTIVE' : expired ? 'NO_LONGER_EFFECTIVE' : 'PATCH_MISMATCH', severity: 'blocking' as const, evidenceRefs: refs }] : []),
       ...identity.reasonCodes.filter(() => identity.status !== 'verified').map(code => ({ code, severity: identity.status === 'conflict'
       ? 'blocking' as const : 'warning' as const, evidenceRefs: refs })), ...(document.metrics.truncated
       ? [{ code: 'EXTRACTION_PARTIAL', severity: 'warning' as const, evidenceRefs: refs }] : [])], evaluatedAt: options.now.toISOString()

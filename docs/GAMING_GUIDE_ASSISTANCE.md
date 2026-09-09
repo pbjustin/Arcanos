@@ -472,6 +472,12 @@ bindings and worker refetch validation remain authoritative. Queued, stored,
 unchanged, failed and rejected remain separate states. Existing metadata carries
 bounded audit provenance; legacy records stay readable without invented prior
 Gaming CLEAR scores. Question alignment and freshness are reevaluated on reads.
+Source quality is reevaluated before queuing even after an earlier acceptance.
+The worker uses bounded, integrity-bound applicability context and the existing
+freshness evaluator again before persistence, so an expired interval or currentness
+proof cannot remain authorized merely because it was valid when queued. Historical
+interval exceptions require verified matching patch evidence; no raw question or
+private reasoning is added to the approval payload.
 
 ### Evidence and final-answer placement
 

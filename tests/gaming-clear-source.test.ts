@@ -74,6 +74,26 @@ describe('Gaming CLEAR acquired source assessment', () => {
     expect(assess(doc, { prompt: 'Explain historical patch 1.0 Intelligence spell choices.', requestedVersion: '1.0' })).toMatchObject({
       decision: 'accept', gates: { freshness: 'verified' } });
   });
+  it.each(['2026-09-09T11:59:59.000Z', '2026-09-09T12:00:00.000Z'])(
+    'rejects explicit applicability expiry at or before the source assessment: %s', until => {
+      expect(assess(document('Elden Ring', 'Elden Ring guide', `Effective until: ${until}. ${prose}`))).toMatchObject({
+        decision: 'reject', qualityEligible: false, gates: { compatibility: 'conflict' },
+        blockingFindings: expect.arrayContaining([expect.objectContaining({ code: 'NO_LONGER_EFFECTIVE' })]) });
+    });
+  it('keeps explicit historical expiry exemptions tied to acquired matching patch evidence', () => {
+    const doc = document('Elden Ring', 'Elden Ring guide', `Patch: 1.0. Effective from: 2024-01-01. Effective until: 2024-02-01. ${prose}`);
+    expect(assess(doc, { prompt: 'Explain historical patch 1.0 Intelligence spell choices.', requestedVersion: '1.0' })).toMatchObject({
+      decision: 'accept', qualityEligible: true });
+    for (const context of [{ requestedVersion: '1.0' }, { prompt: 'Explain historical Intelligence spell choices.' },
+      { prompt: 'Explain historical patch 2.0 Intelligence spell choices.', requestedVersion: '2.0' },
+      { prompt: 'Explain Intelligence spell choices as of 2024-01-15.', requestedVersion: '1.0' }]) {
+      expect(assess(doc, context).qualityEligible).toBe(false);
+    }
+  });
+  it('does not treat malformed applicability dates as an unrestricted stable source', () => {
+    expect(assess(document('Elden Ring', 'Elden Ring guide', `Effective until: invalid. ${prose}`))).toMatchObject({
+      decision: 'clarify', qualityEligible: false, gates: { compatibility: 'unknown' } });
+  });
   it('permits partial intact evidence only transiently and never invents extraction or corroboration', () => {
     expect(assess(document('Elden Ring', 'Elden Ring guide', prose, true))).toMatchObject({ decision: 'accept', qualityEligible: false,
       dimensionScores: { resilience: { score: 3, reasonCodes: ['EXTRACTION_PARTIAL'], unresolvedFacts: ['INDEPENDENT_CORROBORATION_NOT_ESTABLISHED'] } } });
