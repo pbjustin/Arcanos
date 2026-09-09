@@ -9,6 +9,7 @@ import { resolveGamingPlayerContext, validateGamingPlayerContextInput } from '@s
 import { assessGamingProgressionRequest } from '@shared/gaming/gamingProgressionPolicy.js';
 import { buildGamingRecoveryResponse } from '@shared/gaming/gamingRecoveryResponse.js';
 import { assessGamingSourcePolicy, classifyGamingQuestionFreshness, evaluateGamingFreshness, type GamingFreshnessEvidence } from '@shared/gaming/gamingFreshnessCore.js';
+import { resolveGamingHybridCandidateAttempt, projectGamingHybridCandidateRetention } from '@shared/gaming/gamingHybridPolicyCore.js';
 import { buildStoredGamingKnowledgeContext, type GamingSourceGatewayContext } from './gamingSourceIngestion.js';
 import { formatStoredGamingEvidence, type GamingStoredKnowledgeContext } from './gamingStoredKnowledge.js';
 import type { runGameplayPipeline, GamingPipelineInput } from './gamingPipeline.js';
@@ -274,8 +275,10 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
           result.body.candidates = workflow.candidateSubmission.decisions;
           return result;
         }
-        if (workflow.candidateOperationKey !== input.idempotencyKey) {
-          if (workflow.round >= LIMITS.discoveryRounds || workflow.last?.nextAction !== 'search') return failure(context, 'DISCOVERY_LIMIT_REACHED', 409, workflow);
+        const attempt = resolveGamingHybridCandidateAttempt({ operationKey: workflow.candidateOperationKey,
+          requestedKey: input.idempotencyKey, round: workflow.round, nextAction: workflow.last?.nextAction, maxRounds: LIMITS.discoveryRounds });
+        if (attempt === 'deny') return failure(context, 'DISCOVERY_LIMIT_REACHED', 409, workflow);
+        if (attempt === 'begin') {
           // Charge before yielding. A failed acquisition can resume only this payload-bound
           // operation; alternative submissions cannot spend another discovery round.
           workflow.round += 1;
@@ -285,7 +288,8 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
           region: workflow.input.region, candidates: input.candidates }, context);
         evaluated.knowledge.sources.forEach(source => { source.origin = 'live'; });
         const retainedChars = [...workflows.values()].flatMap(item => item.accepted).reduce((total, item) => total + item.document.text.length, 0);
-        const retainArtifacts = retainedChars + evaluated.accepted.reduce((total, item) => total + item.document.text.length, 0) <= 12_000_000;
+        const { retainArtifacts, decisions } = projectGamingHybridCandidateRetention({ retainedChars,
+          candidateChars: evaluated.accepted.reduce((total, item) => total + item.document.text.length, 0), decisions: evaluated.decisions });
         if (retainArtifacts) workflow.accepted = evaluated.accepted;
         const prior = workflow.knowledge;
         const combined = { context: '', sources: [...evaluated.knowledge.sources,
@@ -293,10 +297,6 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
           evidence: [...(evaluated.knowledge.evidence ?? []),
             ...(prior?.evidence ?? []).filter(chunk => !evaluated.knowledge.sources.some(next => next.url === chunk.publicUrl))],
           sourceKnown: prior?.sourceKnown };
-        const decisions = evaluated.decisions.map(({ candidateId, url, decision, reasonCodes, sourceCategory }) => ({
-          ...(retainArtifacts && candidateId ? { candidateId } : {}), url,
-          decision: !retainArtifacts && candidateId ? 'accepted_transient' : decision,
-          reasonCodes: (!retainArtifacts && candidateId ? ['ARTIFACT_CAPACITY_REACHED', ...reasonCodes] : reasonCodes).slice(0, 8), sourceCategory }));
         // Retain only bounded evidence/freshness for answer retries when full artifacts
         // do not fit. Their candidate IDs must never advertise a storage handle.
         const candidateFreshness = evaluated.accepted.map(item => item.freshness);

@@ -490,6 +490,10 @@ describe('native PR preview import boundary', () => {
     'src/shared/gaming/gamingGuideResponsePreviewFixture.ts',
     'src/shared/gaming/gamingGuideAssistancePreviewFixture.ts',
     'src/shared/gaming/gamingProgressRecoveryPreviewFixture.ts',
+    'src/shared/gaming/gamingHybridPolicyCore.ts',
+    'src/shared/gaming/gamingHybridKnowledgePreviewFixture.ts',
+    'src/shared/gaming/gamingHybridContract.ts',
+    'src/shared/gaming/gamingFreshnessCore.ts',
     'src/shared/gaming/gamingGameIdentity.ts',
     'src/shared/gaming/gamingRecoveryResponse.ts',
     'src/shared/gaming/gamingProgressionPolicy.ts',
@@ -511,6 +515,7 @@ describe('native PR preview import boundary', () => {
       'src/services/gamingWebContext.ts', 'src/shared/webFetcher.ts',
       'src/services/gamingAgents.ts', 'src/services/gamingPromptBuilder.ts',
       'src/services/gamingStoredKnowledge.ts', 'src/services/gamingSourceIngestion.ts',
+      'src/services/gamingHybridKnowledge.ts', 'src/services/gamingHybridCandidates.ts',
       'src/core/db/repositories/gamingSourceRepository.ts',
       'src/platform/runtime/prompts.ts',
     ]) {

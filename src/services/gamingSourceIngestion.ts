@@ -25,6 +25,7 @@ import {
 } from '@shared/gaming/gamingDocumentIngestionCore.js';
 import { normalizeGamingGameIdentity } from '@shared/gaming/gamingGameIdentity.js';
 import { GAMING_FRESHNESS_POLICY_VERSION, GAMING_SOURCE_POLICY_VERSION } from '@shared/gaming/gamingFreshnessCore.js';
+import { isGamingApprovedArtifactCurrent } from '@shared/gaming/gamingHybridPolicyCore.js';
 import { truncateTextByCharacters } from '@shared/http/clientResponseCommon.js';
 import { planAutonomousWorkerJob } from '@services/workerAutonomyService.js';
 
@@ -1006,8 +1007,9 @@ async function ingestOneSource(
     // A queued worker has its own process/lifetime. Reacquire safely, then require the exact
     // complete artifact approved by the caller; a changed or newly truncated page
     // needs a new evaluation even when its retained prefix has the approved hash.
-    if (source.hybridApproval && (hashGamingApprovedDocument(document) !== source.hybridApproval.contentHash
-      || document.metrics.instructionFiltered || document.metrics.truncated)) {
+    if (source.hybridApproval && !isGamingApprovedArtifactCurrent({
+      approvedContentHash: source.hybridApproval.contentHash, documentContentHash: hashGamingApprovedDocument(document),
+      instructionFiltered: document.metrics.instructionFiltered, truncated: document.metrics.truncated })) {
       return { submittedIndex: source.submittedIndex, status: 'rejected', canonicalUrl: source.canonicalUrl,
         recordsCreated: 0, recordsUpdated: 0, completedAt: new Date().toISOString(),
         error: { code: 'APPROVED_CONTENT_CHANGED', message: 'The source changed after approval; evaluate it again before storing.', retryable: false } };

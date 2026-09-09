@@ -194,6 +194,41 @@ credential-isolation, trusted-verifier, and teardown procedure in
 [RAILWAY_DEPLOYMENT.md](RAILWAY_DEPLOYMENT.md); passing fixtures never authorize
 production promotion or a source refresh.
 
+### Hybrid knowledge component proof
+
+The same sealed guide request runs
+[the hybrid fixture](../src/shared/gaming/gamingHybridKnowledgePreviewFixture.ts)
+against the production hybrid schemas, source/freshness policy, and shared
+retry-admission, capacity-projection, and approved-refetch predicates. It checks
+seasonal questions that also need current patch evidence, malformed applicability
+lists, exclusion of conflicting weaker-source mechanics, charged-operation retry
+decisions, exact 12,000,000-character retention and one-character overflow, and
+changed/filtered/truncated refetch rejection using synthetic hashes.
+
+Success adds `x-arcanos-preview-gaming-hybrid-knowledge-version: gaming-hybrid-knowledge/v1`;
+the supplemental exact-head verifier requires it and reports
+`gamingHybridKnowledgeVerified`. The guide response body and bounded 138-request
+plan remain unchanged. Any hybrid assertion failure returns the fixed
+`PREVIEW_GAMING_HYBRID_KNOWLEDGE_CONTRACT_INVALID` error and withholds all Gaming
+success markers and the success body. The
+[fixture fault tests](../tests/gaming-hybrid-preview.test.ts) and
+[served failure tests](../tests/gaming-hybrid-preview-failure.test.ts) verify this
+failure boundary.
+
+This fixture establishes served production-core decisions with fixed synthetic
+rules, times, and evidence. Schema defaults do not prove consent or authentication
+enforcement. It does not run the hybrid workflow cache, request hashing, concurrent
+promise reuse, source acquisition, ingestion, queues, SQL, providers, or workers.
+The separate mocked
+[workflow tests](../tests/gaming-hybrid-workflow.test.ts),
+[lifecycle tests](../tests/gaming-hybrid-lifecycle.integration.test.ts), and
+[ingestion tests](../tests/gaming-source-ingestion.test.ts) exercise service
+composition, actor/payload binding, retry reuse, retained storage handles, and
+pre-persistence rejection. The guarded
+[PostgreSQL 18 suite](../tests/integration/gaming-durable-rag.pg18.integration.test.ts)
+provides separate evidence for real lexical retrieval and active-revision
+transactions when executed against an authorized disposable database.
+
 ## Custom GPT operator step
 
 ### Hybrid knowledge handoff (`gaming-hybrid-v1`)

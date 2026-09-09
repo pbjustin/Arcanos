@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-09T03:38:31.430Z",
+  "generatedAt": "2026-09-09T14:31:34.877Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -2666,6 +2666,12 @@
           "relativePath": "src/shared/gaming/gamingHybridContract.ts"
         },
         {
+          "relativePath": "src/shared/gaming/gamingHybridKnowledgePreviewFixture.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingHybridPolicyCore.ts"
+        },
+        {
           "relativePath": "src/shared/gaming/gamingPlayerContext.ts"
         },
         {
@@ -4037,6 +4043,12 @@
         },
         {
           "relativePath": "tests/gaming-hybrid-lifecycle.integration.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-hybrid-preview-failure.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-hybrid-preview.test.ts"
         },
         {
           "relativePath": "tests/gaming-hybrid-workflow.test.ts"
