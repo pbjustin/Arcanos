@@ -293,7 +293,7 @@
       "express": {
         "body-parser": "2.3.0"
       },
-      "hono": "4.12.34"
+      "hono": "https://registry.npmjs.org/hono/-/hono-4.13.5.tgz"
     },
     "express-rate-limit": "8.3.0",
     "fast-uri": "https://codeload.github.com/fastify/fast-uri/tar.gz/412e40abd4eb8beabfb952d80abf949a2baf27a3",
