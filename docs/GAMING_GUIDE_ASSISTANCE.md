@@ -194,7 +194,168 @@ credential-isolation, trusted-verifier, and teardown procedure in
 [RAILWAY_DEPLOYMENT.md](RAILWAY_DEPLOYMENT.md); passing fixtures never authorize
 production promotion or a source refresh.
 
+### Hybrid knowledge component proof
+
+The same sealed guide request runs
+[the hybrid fixture](../src/shared/gaming/gamingHybridKnowledgePreviewFixture.ts)
+against the production hybrid schemas, source/freshness policy, and shared
+retry-admission, capacity-projection, and approved-refetch predicates. It checks
+seasonal questions that also need current patch evidence, malformed applicability
+lists, exclusion of conflicting weaker-source mechanics, charged-operation retry
+decisions, exact 12,000,000-character retention and one-character overflow, and
+changed/filtered/truncated refetch rejection using synthetic hashes.
+
+Success adds `x-arcanos-preview-gaming-hybrid-knowledge-version: gaming-hybrid-knowledge/v1`;
+the supplemental exact-head verifier requires it and reports
+`gamingHybridKnowledgeVerified`. The guide response body and bounded 138-request
+plan remain unchanged. Any hybrid assertion failure returns the fixed
+`PREVIEW_GAMING_HYBRID_KNOWLEDGE_CONTRACT_INVALID` error and withholds all Gaming
+success markers and the success body. The
+[fixture fault tests](../tests/gaming-hybrid-preview.test.ts) and
+[served failure tests](../tests/gaming-hybrid-preview-failure.test.ts) verify this
+failure boundary.
+
+This fixture establishes served production-core decisions with fixed synthetic
+rules, times, and evidence. Schema defaults do not prove consent or authentication
+enforcement. It does not run the hybrid workflow cache, request hashing, concurrent
+promise reuse, source acquisition, ingestion, queues, SQL, providers, or workers.
+The separate mocked
+[workflow tests](../tests/gaming-hybrid-workflow.test.ts),
+[lifecycle tests](../tests/gaming-hybrid-lifecycle.integration.test.ts), and
+[ingestion tests](../tests/gaming-source-ingestion.test.ts) exercise service
+composition, actor/payload binding, retry reuse, retained storage handles, and
+pre-persistence rejection. The guarded
+[PostgreSQL 18 suite](../tests/integration/gaming-durable-rag.pg18.integration.test.ts)
+provides separate evidence for real lexical retrieval and active-revision
+transactions when executed against an authorized disposable database.
+
 ## Custom GPT operator step
+
+### Hybrid knowledge handoff (`gaming-hybrid-v1`)
+
+The additive authenticated Gaming hybrid Actions reuse stored lexical retrieval,
+the shared document resolver, existing ingestion jobs, source revisions and chunks,
+and the normal Gaming Trinity pipeline. Older gameplay and source Actions retain
+their existing request and response shapes. This contract does not make the
+backend invoke ChatGPT's web-search tool.
+
+1. `queryGamingHybridKnowledge` receives the question, precise game/edition,
+   available player context and storage policy. It checks active stored records.
+2. `answer_ready` carries a grounded Trinity answer, citations and request ID;
+   `clarification_required` carries one progress question. Neither requires search.
+3. `discovery_required` carries bounded queries and limits. The GPT searches and
+   calls `submitGamingHybridCandidates` with actual URLs and its workflow ID.
+4. ARCANOS independently fetches, validates, extracts, checks applicability and
+   selects evidence. Accepted evidence can answer immediately, without storage.
+5. `ingestGamingHybridCandidates` is a separate consequential write. It selects
+   caller-bound candidate IDs, applies storage permission/consent, and queues the
+   existing worker. The existing ingestion-status Action reports the outcome.
+
+`sourceKnown`, `evidenceSelected`, and `freshnessStatus` are independent. A known
+catalog entry does not establish coverage. Lookup/auth/provider failures become
+temporary unavailability, never an invitation to reinterpret an outage as an
+empty corpus. The hybrid path skips Trinity when evidence is missing, stale or
+requires progress clarification. It passes the original validated player context,
+spoiler/depth preferences, selected evidence and date/update qualifications to
+the existing generation and citation projection.
+
+The server permits one discovery round (the existing stricter frontend limit),
+three URLs, eight workflows per credential actor, 24 hybrid calls per five
+minutes, and 128 workflows total per web process. Workflows expire after ten
+minutes; retained resolved text is bounded to 12 million characters per process.
+At that capacity, new evidence remains transient and returns no storage handle;
+previously retained approvals remain available within their normal lifetime.
+The early authenticated parser caps requests at 16 KiB. Candidate fetching has
+a 12-second aggregate budget; HTTP hybrid Actions have a 38-second deadline,
+including generation. Context remains within the existing Gaming budget. The
+same candidate-operation key can resume a failed acquisition without consuming
+another discovery round; different keys remain subject to the one-round limit.
+GPT may poll status at most three times; the existing status endpoint retains
+its shared 120-request/five-minute HTTP rate limit. These in-process transient
+limits are not a distributed quota. A different replica or restart can return
+`WORKFLOW_UNAVAILABLE`; it must not refetch or ingest from an unbound handle.
+An already queued durable job continues without the GPT remaining open.
+
+### Candidate trust and storage
+
+Candidate title, timestamp, claimed publisher, game or patch are untrusted hints.
+Only independently retrieved content enters evidence. HTTPS, credentials, query
+exposure, DNS/public IP, redirect, media, extraction, cancellation and document
+limits use the existing resolver/security path. Prompt instructions in sources
+are rejected; source-use restrictions are honored. Inaccessible material is not
+replaced by a search snippet. Source policy uses reviewed exact host/path rules
+and precise game identity, not search position or a frontend `official` claim.
+
+`transient_only` is the default and cannot be upgraded by a later write in that
+workflow. `ask_before_store` requires explicit confirmation and the dedicated
+Gaming source credential. `auto_store_approved` additionally requires configured
+standing permission and a reviewed official update article with affirmative
+patch/hotfix identity and date metadata. Unknown/community sources never qualify
+for automatic storage. Live operational status stays transient. Platform Action
+confirmations remain required on the explicit write even with standing permission.
+
+An internal artifact binds the credential actor, full accepted content hash,
+interpretation/resolver policy and expiry. It is reused for the immediate answer.
+Hybrid ingestion stores only the approved extracted prose; embedded structured
+planner objects and raw HTML cannot introduce unapproved evidence during refetch.
+The durable worker resolves again because its execution may occur on another
+process after the request artifact expires; a changed content hash or partial
+refetch rejects that approval rather than storing unreviewed content. Idempotency uses the caller and
+logical operation key. Same-key retries reuse work; new refreshes use new keys.
+Content revision hashing covers all accepted text and indexing policy, not a
+preview. Atomic active-revision replacement preserves last valid records on
+failed refreshes. An unchanged successful hybrid refresh advances only verified
+freshness provenance monotonically under the existing transaction.
+
+Queued/processing is not stored. Completion reports records, extraction coverage,
+unchanged, failed and rejected outcomes separately. An independently supported
+answer survives a later storage failure. No model training or notifications are
+implied. No production-wide backfill, source refresh, new database or historical
+revision query path is introduced.
+
+### Freshness and patch applicability
+
+The server classifies each question: stable, patch-sensitive, seasonal or live
+status. Revalidation defaults are 30 days for stable evidence, six hours for
+official current patch/season verification, and 60 seconds for live status.
+These deadlines trigger verification; they do not prove current correctness.
+Fetched/verified timestamps are separate from publication, source update,
+effective interval, patch, build, season, platform, region and metadata confidence.
+Legacy stable evidence may use its last backend fetch date; legacy patch labels
+alone never establish the current release.
+
+Dynamic questions require an applicable official current-update index and
+compatible gameplay material. Newly fetched old patch notes, missing/contradictory
+metadata, future releases and ambiguous date-only rollout-day announcements do
+not establish active applicability. Opaque version strings are never sorted to
+guess the latest patch. A known current hotfix/build excludes incompatible older
+builds; exact declared patch/build baseline applicability can retain unchanged facts. Absence of a
+change in newer notes never proves an older fact remains valid. A 304 validates
+only that resource, not the absence of updates elsewhere.
+Seasonal questions about patches, hotfixes, balance or builds also require current
+patch applicability; a season-only index cannot establish it. Malformed or
+truncated scope labels remain unverified rather than implying global applicability.
+
+Metadata adapters are intentionally conservative: supported labeled metadata and
+the reviewed SWTOR dated release index are implemented. Unsupported site layouts
+remain unverified; this is not exhaustive live-service coverage. Bounded explicit
+`Mechanic: name = number` labels detect conflicting numeric values (16 per source);
+equal-authority conflicts fail closed and conflicting weaker sources are excluded.
+An excluded source contributes no other mechanic claims to conflict resolution.
+Arbitrary prose semantic conflicts cannot be resolved exhaustively by lexical rules.
+Answers must retain that
+uncertainty, distinguish official changes from recommendations, and avoid a
+currentness claim without verification. Queries for historical/as-of releases
+are explicitly unsupported because ordinary retrieval selects active records only.
+
+An accepted official index can be retained as a bounded verification attestation
+on the approved source's existing provenance. It is bound to the full approved
+artifact hash and reviewed policy, and expires independently under the currentness
+rules. Later no-URL retrieval can reuse it while applicable. Its citation contains
+server-projected patch/build/season/date facts, not unrelated index story headlines.
+
+See the [canonical GPT package](ARCANOS_GAMING_CUSTOM_GPT.md) for the exact
+schema/instruction paths and deployment-before-activation procedure.
 
 This PR updates repository schemas only. After a separately authorized backend
 release, open the deployed Gaming Custom GPT in **Edit GPT → Configure →

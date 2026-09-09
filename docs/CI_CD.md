@@ -83,6 +83,10 @@ Release automation boundaries:
   vulnerability as actionable; there is no npm advisory, package, dependency
   path, or platform-profile exception registry. Workflows record npm's raw audit
   exit code while relying on this fail-closed zero-vulnerability policy.
+- The MCP SDK's Hono override uses the official npm `hono-4.13.5.tgz` artifact,
+  with its integrity recorded in `package-lock.json`. Registry version metadata
+  lagged the available security-release tarball; the direct artifact keeps the
+  patched dependency reproducible without weakening the audit policy.
 - Required CI and release validation pin `pip-audit` to `2.10.1` and contain no
   Python vulnerability ignores.
 - Patch mode can only append deterministic validation notes to an existing

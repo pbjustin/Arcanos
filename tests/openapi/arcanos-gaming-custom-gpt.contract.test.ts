@@ -1,12 +1,21 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import Ajv2020 from 'ajv/dist/2020.js';
 
 import { buildGamingDiscoveryQuery } from '../../src/services/gamingSourceDiscovery.js';
 import { GAMING_RESPONSE_MAX_CHARACTERS } from '../../src/shared/http/clientResponseCommon.js';
+import {
+  GAMING_HYBRID_CONTRACT_VERSION,
+  GAMING_HYBRID_LIMITS,
+  gamingHybridCandidatesSchema,
+  gamingHybridIngestionSchema,
+  gamingHybridQuerySchema,
+} from '../../src/shared/gaming/gamingHybridContract.js';
 
 const contractPath = join(process.cwd(), 'contracts/arcanos_gaming.openapi.v1.json');
 const instructionsPath = join(process.cwd(), 'docs/ARCANOS_GAMING_CUSTOM_GPT.md');
 const customGptsPath = join(process.cwd(), 'docs/CUSTOM_GPTS.md');
+const hybridInstructionsPath = join(process.cwd(), 'docs/gpt/arcanos-gaming-hybrid.instructions.md');
 
 function loadContract() {
   return JSON.parse(readFileSync(contractPath, 'utf8'));
@@ -75,6 +84,9 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
       '/gpt-access/gaming/sources/ingestions',
       '/gpt-access/gaming/sources/refreshes',
       '/gpt-access/gaming/sources/ingestions/{ingestionId}',
+      '/gpt-access/gaming/sources/hybrid/query',
+      '/gpt-access/gaming/sources/hybrid/candidates',
+      '/gpt-access/gaming/sources/hybrid/ingestions',
     ]);
     expect(Object.keys(contract.paths['/gpt/arcanos-gaming'])).toEqual(['post']);
     expect(Object.keys(contract.paths['/gpt/arcanos-gaming/canary'])).toEqual(['post']);
@@ -105,7 +117,7 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
         type: 'http',
         scheme: 'bearer',
         bearerFormat: 'Opaque Gaming source access token',
-        description: 'Required only for Gaming source ingestion, refresh, and status. Configure the dedicated ARCANOS_GAMING_SOURCE_ACCESS_TOKEN; it cannot authorize other GPT Access routes.',
+        description: 'Required for Gaming hybrid knowledge and source lifecycle operations. Configure the dedicated ARCANOS_GAMING_SOURCE_ACCESS_TOKEN; it cannot authorize other GPT Access routes.',
       },
     });
 
@@ -671,11 +683,177 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
     expect(runtimeQuery.length).toBe(contractMax);
   });
 
-  it('keeps builder instructions synchronized with five operations and one gameplay call', () => {
+  it('adds authenticated hybrid operations without weakening durable-write confirmation', () => {
+    const contract = loadContract();
+    expect(contract['x-arcanos-gaming-hybrid-contract-version']).toBe(GAMING_HYBRID_CONTRACT_VERSION);
+    for (const [suffix, operationId, schema, consequential] of [
+      ['query', 'queryGamingHybridKnowledge', 'GamingHybridQueryRequest', false],
+      ['candidates', 'submitGamingHybridCandidates', 'GamingHybridCandidatesRequest', false],
+      ['ingestions', 'ingestGamingHybridCandidates', 'GamingHybridIngestionRequest', true],
+    ] as const) {
+      const operation = contract.paths[`/gpt-access/gaming/sources/hybrid/${suffix}`].post;
+      expect(operation.operationId).toBe(operationId);
+      expect(operation.security).toEqual([{ bearerAuth: [] }]);
+      expect(operation['x-openai-isConsequential']).toBe(consequential);
+      expect(operation.description.length).toBeLessThanOrEqual(300);
+      expect(operation.summary.length).toBeLessThanOrEqual(300);
+      expect(operation.parameters).toBeUndefined();
+      expect(operation.requestBody.content['application/json'].schema).toEqual({
+        $ref: `#/components/schemas/${schema}`,
+      });
+      expect(operation.responses['200'].content['application/json'].schema).toEqual({
+        $ref: '#/components/schemas/GamingHybridResponse',
+      });
+    }
+    const schemas = contract.components.schemas;
+    expect(schemas.GamingHybridQueryRequest.properties.storagePolicy.default).toBe('transient_only');
+    expect(schemas.GamingHybridQueryRequest.properties.storagePolicy.enum).toEqual([
+      'transient_only', 'ask_before_store', 'auto_store_approved',
+    ]);
+    expect(schemas.GamingHybridIngestionRequest.properties.confirmStore.default).toBe(false);
+    expect(schemas.GamingHybridIngestionRequest.properties).not.toHaveProperty('sourceUrls');
+    expect(schemas.GamingHybridCandidatesRequest.properties).not.toHaveProperty('question');
+    expect(schemas.GamingHybridCandidatesRequest.properties).not.toHaveProperty('context');
+  });
+
+  it('validates Action request examples with both OpenAPI and the runtime contract', () => {
+    const contract = loadContract();
+    const ajv = new Ajv2020({ strict: false, validateFormats: false });
+    ajv.addSchema(contract, 'gaming-hybrid-action');
+    const shared = { contractVersion: GAMING_HYBRID_CONTRACT_VERSION, idempotencyKey: 'example-operation-1' };
+    const workflowId = '4517e693-b592-43c8-a827-d4b74168c429';
+    const candidateId = 'c25c641a-7031-42f4-a50e-f0db1d6c58c5';
+    const examples = [
+      {
+        name: 'GamingHybridQueryRequest', runtime: gamingHybridQuerySchema,
+        valid: { ...shared, game: 'Lantern Vale', question: 'What next?', currentArea: 'Harbor', spoilerTolerance: 'none', answerDepth: 'concise' },
+        invalid: [
+          { ...shared, game: 'Lantern Vale', question: 'x'.repeat(4001) },
+          { ...shared, game: 'Lantern Vale', question: 'What next?', platform: 'x'.repeat(65) },
+          { ...shared, game: 'Lantern Vale', question: 'What next?', storagePolicy: 'always_store' },
+          { ...shared, game: 'Lantern Vale', question: 'What next?', authToken: 'untrusted' },
+          { ...shared, game: 'Lantern Vale', question: 'What next?', contractVersion: 'gaming-hybrid-v0' },
+        ],
+      },
+      {
+        name: 'GamingHybridCandidatesRequest', runtime: gamingHybridCandidatesSchema,
+        valid: { ...shared, workflowId, candidates: [{ url: 'https://guides.example.org/lantern-vale', claimedCategory: 'official' }] },
+        invalid: [
+          { ...shared, workflowId, candidates: Array.from({ length: 4 }, () => ({ url: 'https://guides.example.org/guide' })) },
+          { ...shared, workflowId, candidates: [{ url: 'https://guides.example.org/guide', rawHtml: '<article>Not a URL hint</article>' }] },
+          { ...shared, workflowId, candidates: [{ url: 'https://guides.example.org/guide', claimedPatch: 'x'.repeat(65) }] },
+          { ...shared, workflowId, candidates: [] },
+        ],
+      },
+      {
+        name: 'GamingHybridIngestionRequest', runtime: gamingHybridIngestionSchema,
+        valid: { ...shared, workflowId, candidateIds: [candidateId], storagePolicy: 'ask_before_store', confirmStore: true },
+        invalid: [
+          { ...shared, workflowId, candidateIds: [candidateId], storagePolicy: 'ask_before_store', confirmStore: 'yes' },
+          { ...shared, workflowId, candidateIds: Array(4).fill(candidateId), storagePolicy: 'ask_before_store' },
+          { ...shared, workflowId, candidateIds: [], storagePolicy: 'auto_store_approved' },
+          { ...shared, workflowId, candidateIds: [candidateId], storagePolicy: 'auto_store_approved', trustLevel: 'official' },
+        ],
+      },
+    ];
+    for (const example of examples) {
+      const validate = ajv.getSchema(`gaming-hybrid-action#/components/schemas/${example.name}`)!;
+      expect(validate(example.valid)).toBe(true);
+      expect(example.runtime.safeParse(example.valid).success).toBe(true);
+      for (const invalid of example.invalid) {
+        expect(validate(invalid)).toBe(false);
+        expect(example.runtime.safeParse(invalid).success).toBe(false);
+      }
+      expect(JSON.stringify(example.valid).length).toBeLessThan(100000);
+    }
+  });
+
+  it('keeps evidence, currentness, answer provenance, and pending ingestion distinct', () => {
+    const schemas = loadContract().components.schemas;
+    expect(schemas.GamingHybridResponse.properties.state.enum).toEqual([
+      'answer_ready', 'clarification_required', 'discovery_required', 'temporarily_unavailable', 'ingestion_pending',
+    ]);
+    expect(schemas.GamingHybridResponse.required).toEqual(expect.arrayContaining([
+      'contractVersion', 'requestId', 'state', 'nextAction', 'reason', 'sourceKnown', 'evidenceSelected', 'freshnessStatus',
+    ]));
+    expect(schemas.GamingHybridResponse.properties.freshnessStatus.enum).toEqual([
+      'current', 'stale', 'unverified', 'not_applicable', 'conflicting',
+    ]);
+    expect(schemas.GamingHybridDiscovery.properties.maxRounds.enum).toEqual([GAMING_HYBRID_LIMITS.discoveryRounds]);
+    expect(schemas.GamingHybridDiscovery.properties.maxCandidates.enum).toEqual([GAMING_HYBRID_LIMITS.candidates]);
+    expect(schemas.GamingHybridCandidatesRequest.properties.candidates.maxItems).toBe(GAMING_HYBRID_LIMITS.candidates);
+    expect(schemas.GamingHybridIngestionReference.properties.maxPolls.enum).toEqual([GAMING_HYBRID_LIMITS.polls]);
+    expect(schemas.GamingHybridAnswer.properties.provenance.enum).toEqual(['arcanos-trinity']);
+    expect(schemas.GamingHybridAnswer.required).toContain('requestId');
+    expect(schemas.GamingHybridIngestionReference.properties).not.toHaveProperty('stored');
+
+    const ajv = new Ajv2020({ strict: false, validateFormats: false });
+    ajv.addSchema(loadContract(), 'gaming-hybrid-response');
+    const validate = ajv.getSchema('gaming-hybrid-response#/components/schemas/GamingHybridResponse')!;
+    const pending = {
+      contractVersion: GAMING_HYBRID_CONTRACT_VERSION, requestId: 'req_1',
+      state: 'ingestion_pending', nextAction: 'poll_ingestion', reason: 'INGESTION_QUEUED',
+      sourceKnown: false, evidenceSelected: true, freshnessStatus: 'not_applicable',
+      answer: { response: 'Use the harbor lever. [1]', sources: [{ url: 'https://guides.example.org/lantern-vale' }], provenance: 'arcanos-trinity', requestId: 'req_1' },
+      ingestion: { ingestionId: 'bc7f4bbe-3a48-4e13-a96f-9a5bc8fccf05', status: 'queued', statusUrl: '/gpt-access/gaming/sources/ingestions/bc7f4bbe-3a48-4e13-a96f-9a5bc8fccf05', maxPolls: 3 },
+    };
+    expect(validate(pending)).toBe(true);
+    expect(validate({ ...pending, freshnessStatus: 'fetched_today_so_current' })).toBe(false);
+    expect(validate({ ...pending, answer: { ...pending.answer, response: 'x'.repeat(18001) } })).toBe(false);
+    const maximal = {
+      ...pending,
+      requestId: 'r'.repeat(128), workflowId: '4517e693-b592-43c8-a827-d4b74168c429',
+      reason: 'r'.repeat(80), effectivePatch: 'p'.repeat(64), qualification: 'q'.repeat(1000),
+      clarification: 'c'.repeat(1000),
+      discovery: { round: 1, maxRounds: 1, maxCandidates: 3, searchQueries: Array(3).fill('q'.repeat(400)) },
+      candidates: Array.from({ length: 3 }, () => ({
+        candidateId: 'c25c641a-7031-42f4-a50e-f0db1d6c58c5', url: 'u'.repeat(2048),
+        decision: 'eligible_for_ingestion', reasonCodes: Array(8).fill('r'.repeat(80)), sourceCategory: 'official_updates',
+      })),
+      answer: {
+        ...pending.answer, response: 'a'.repeat(18000), requestId: 'r'.repeat(128),
+        sources: Array.from({ length: 8 }, () => ({
+          url: 'u'.repeat(2048), title: 't'.repeat(240), sourceId: 'c25c641a-7031-42f4-a50e-f0db1d6c58c5',
+          patchVersion: 'p'.repeat(64), fetchedAt: 'd'.repeat(64),
+        })),
+      },
+    };
+    expect(validate(maximal)).toBe(true);
+    expect(JSON.stringify(maximal).length).toBeLessThan(100000);
+  });
+
+  it('packages bounded frontend orchestration and a backend-first activation gate', () => {
+    const instructions = readFileSync(hybridInstructionsPath, 'utf8');
+    const guide = readFileSync(instructionsPath, 'utf8');
+    expect(instructions.length).toBeLessThan(8000);
+    expect(instructions).toContain('queryGamingHybridKnowledge first');
+    for (const operationId of [
+      'submitGamingHybridCandidates', 'ingestGamingHybridCandidates', 'getGamingSourceIngestionStatus',
+    ]) expect(instructions).toContain(operationId);
+    for (const state of loadContract().components.schemas.GamingHybridResponse.properties.state.enum) {
+      expect(instructions).toContain(state);
+    }
+    for (const requirement of [
+      'not prose', 'without redundant search', 'one discovery round', 'at most three',
+      'original question', 'server retains the validated original context',
+      'untrusted hint', 'transient_only', 'ask_before_store', 'auto_store_approved',
+      'platform\'s Action confirmation', 'queued or running is', 'not saved',
+      'after ChatGPT closes', 'do not promise a later notification',
+      'answer.requestId', 'answer.provenance', 'gameplay additions',
+    ]) expect(instructions).toContain(requirement);
+    expect(guide).toContain('Do not activate the hybrid instruction section');
+    expect(guide).toContain('Do not paste both workflows');
+    expect(guide).toContain('Preserve name, description, unrelated instructions, files, bearer secret');
+    expect(guide).toContain('A public canary alone cannot prove hybrid support');
+    expect(guide).toContain('https://developers.openai.com/api/docs/actions/production');
+    expect(guide).toContain('gpt/arcanos-gaming-hybrid.instructions.md');
+  });
+
+  it('keeps legacy instructions available separately from the opt-in hybrid workflow', () => {
     const instructions = readFileSync(instructionsPath, 'utf8');
     const customGpts = readFileSync(customGptsPath, 'utf8');
 
-    expect(instructions).toContain('The dedicated schema defines exactly five fixed-path operations');
+    expect(instructions).toContain('The dedicated schema defines exactly eight fixed-path operations');
     expect(instructions).toContain('queryArcanosGaming` → `POST /gpt/arcanos-gaming');
     expect(instructions).toContain('canaryArcanosGaming` → `POST /gpt/arcanos-gaming/canary');
     expect(instructions).toContain(
@@ -758,8 +936,8 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
     expect(instructions).toContain(
       'https://acranos-production.up.railway.app/contracts/arcanos_gaming.openapi.v1.json'
     );
-    expect(customGpts).toContain('five Action operations while retaining one gameplay call per gameplay request');
-    expect(customGpts).toContain('each gameplay workflow still makes one `queryArcanosGaming` call');
+    expect(customGpts).toContain('eight Action operations and an opt-in `gaming-hybrid-v1` backend-first workflow');
+    expect(customGpts).toContain('The five legacy operations remain available without adopting hybrid request shapes');
     expect(customGpts).toContain('origin: "stored"');
     expect(customGpts).not.toContain('mandatory backend-first evidence workflow');
   });

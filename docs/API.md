@@ -1,5 +1,44 @@
 # API Guide
 
+## Gaming hybrid knowledge Actions
+
+The additive `gaming-hybrid-v1` contract uses the existing dedicated Gaming
+source bearer credential, no-store/authentication boundary and 16 KiB JSON cap.
+The canonical [Gaming Action schema](../contracts/arcanos_gaming.openapi.v1.json)
+defines the complete closed request and response shapes. Legacy operations are
+unchanged.
+
+| Method/path | Operation | Effect |
+| --- | --- | --- |
+| `POST /gpt-access/gaming/sources/hybrid/query` | `queryGamingHybridKnowledge` | Read active stored knowledge and return a grounded answer or explicit handoff. |
+| `POST /gpt-access/gaming/sources/hybrid/candidates` | `submitGamingHybridCandidates` | Validate at most three URLs in a caller-bound workflow; evidence stays transient. |
+| `POST /gpt-access/gaming/sources/hybrid/ingestions` | `ingestGamingHybridCandidates` | Explicit consequential write to queue approved candidate IDs under the configured storage/consent policy. |
+| `GET /gpt-access/gaming/sources/ingestions/{ingestionId}` | `getGamingSourceIngestionStatus` | Existing authenticated, actor-owned lifecycle status; queued does not mean stored. |
+
+Query bodies include `contractVersion`, logical `idempotencyKey`, `question`,
+precise `game`, optional validated context and a `storagePolicy` (default
+`transient_only`). Candidate calls use the returned `workflowId`, their own
+logical key and URLs; the original question and context remain server-owned
+within that workflow. Ingestion selects `candidateIds`, the matching storage
+policy, logical key and `confirmStore` for conversational approval when required.
+
+Responses separate `sourceKnown`, `evidenceSelected` and `freshnessStatus` from
+the state: `answer_ready`, `clarification_required`, `discovery_required`,
+`temporarily_unavailable`, or `ingestion_pending`. `nextAction` directs the GPT;
+it must not parse prose to decide whether to search. `answer` preserves backend
+citations and request provenance. Structured dates/patch/build and qualifications
+describe verified applicability. Discovery is capped at one round and three
+candidates. Handler failures never become missing knowledge; early auth/parser
+failures retain their existing error envelopes. Invalid bodies return 400,
+scope/consent failure 403, unknown/expired workflow 404, changed same-key payload
+409, rate/capacity limits 429, and unavailable dependencies 503. Retryable failed
+operations can retry the same key without dropping its payload binding.
+
+See [Gaming guide assistance](GAMING_GUIDE_ASSISTANCE.md#hybrid-knowledge-handoff-gaming-hybrid-v1)
+for limits, source/freshness policy, persistence, evidence boundaries and the
+[GPT configuration package](ARCANOS_GAMING_CUSTOM_GPT.md) for activation after
+a separately authorized backend deployment.
+
 ## Overview
 This guide documents the primary supported surfaces and notable operator/compatibility routes mounted by `src/routes/register.ts`, `src/routes/healthGroup.ts`, and `src/routes/api/index.ts`. It is a maintained integration guide, not a generated exhaustive route manifest. Route behavior is sensitive to mount order when duplicate paths exist.
 

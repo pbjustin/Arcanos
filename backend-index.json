@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-08T20:52:35.054Z",
+  "generatedAt": "2026-09-09T14:31:34.877Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -1871,6 +1871,12 @@
           "relativePath": "src/services/gamingGameDetection.ts"
         },
         {
+          "relativePath": "src/services/gamingHybridCandidates.ts"
+        },
+        {
+          "relativePath": "src/services/gamingHybridKnowledge.ts"
+        },
+        {
           "relativePath": "src/services/gamingModes.ts"
         },
         {
@@ -2636,6 +2642,9 @@
           "relativePath": "src/shared/gaming/gamingDurableRagPreviewFixture.ts"
         },
         {
+          "relativePath": "src/shared/gaming/gamingFreshnessCore.ts"
+        },
+        {
           "relativePath": "src/shared/gaming/gamingGameIdentity.ts"
         },
         {
@@ -2652,6 +2661,15 @@
         },
         {
           "relativePath": "src/shared/gaming/gamingGuideResponsePreviewFixture.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingHybridContract.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingHybridKnowledgePreviewFixture.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingHybridPolicyCore.ts"
         },
         {
           "relativePath": "src/shared/gaming/gamingPlayerContext.ts"
@@ -4000,6 +4018,9 @@
           "relativePath": "tests/gaming-durable-rag-preview.test.ts"
         },
         {
+          "relativePath": "tests/gaming-freshness.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-game-identity.test.ts"
         },
         {
@@ -4019,6 +4040,18 @@
         },
         {
           "relativePath": "tests/gaming-guide-response-preview.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-hybrid-lifecycle.integration.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-hybrid-preview-failure.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-hybrid-preview.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-hybrid-workflow.test.ts"
         },
         {
           "relativePath": "tests/gaming-ingress-audit.test.ts"

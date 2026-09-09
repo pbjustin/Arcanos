@@ -1,6 +1,8 @@
 import { supportsDisabledReasoningEffort } from '../gpt/trinityReasoningPolicy.js';
 
 export const GAMING_GUIDE_INTAKE_POLICY_VERSION = 'compact-v1';
+/** In-process attestation. JSON Action callers cannot enable this policy. */
+export const GAMING_HYBRID_INTAKE = Symbol('gaming.hybrid.intake');
 
 const GAMING_GUIDE_INTAKE_INSTRUCTIONS = [
   'Gaming guide intake policy: compact-v1.',
@@ -18,7 +20,7 @@ export function resolveGamingGuideIntakeEndpointPolicy(
   sourceEndpoint: unknown
 ): typeof GAMING_GUIDE_INTAKE_POLICY_VERSION | undefined {
   return configuredPolicy === GAMING_GUIDE_INTAKE_POLICY_VERSION
-    && sourceEndpoint === 'arcanos-gaming.guide'
+    && ['arcanos-gaming.guide', 'arcanos-gaming.hybrid-build', 'arcanos-gaming.hybrid-meta'].includes(String(sourceEndpoint))
     ? GAMING_GUIDE_INTAKE_POLICY_VERSION : undefined;
 }
 
@@ -34,7 +36,10 @@ export function resolveGamingGuideIntakePolicy(input: {
     && input.moduleId === 'ARCANOS:GAMING'
     && input.body !== null && typeof input.body === 'object'
     && Object.prototype.hasOwnProperty.call(input.body, 'mode')
-    && (input.body as Record<string, unknown>).mode === 'guide'
+    && (((input.body as Record<string, unknown>).mode === 'guide' && input.sourceEndpoint === 'arcanos-gaming.guide')
+      || ((input.body as { [GAMING_HYBRID_INTAKE]?: boolean })[GAMING_HYBRID_INTAKE] === true
+        && ['build', 'meta'].includes(String((input.body as Record<string, unknown>).mode))
+        && input.sourceEndpoint === `arcanos-gaming.hybrid-${(input.body as Record<string, unknown>).mode}`))
     ? policy : undefined;
 }
 

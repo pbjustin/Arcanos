@@ -115,6 +115,8 @@ import {
 } from '@services/gamingSourceHttpBoundary.js';
 import { gamingSourceBodyParser } from '@services/gamingSourceBodyParser.js';
 import { requireGamingSourceAccessAuthentication } from '@services/gamingSourceAccessAuth.js';
+import { gamingHybridWorkflow } from '@services/gamingHybridKnowledge.js';
+import { getRequestAbortSignal, runWithRequestAbortTimeout } from '@arcanos/runtime';
 import { gptAccessRateLimit } from '@services/gptAccessRateLimit.js';
 import {
   BACKSTAGE_BOOKER_STORYLINE_SUMMARY_READ_SUFFIX,
@@ -2228,6 +2230,29 @@ router.post(
     );
   })
 );
+
+for (const [path, operation] of [
+  ['/gpt-access/gaming/sources/hybrid/query', 'query'],
+  ['/gpt-access/gaming/sources/hybrid/candidates', 'candidates'],
+  ['/gpt-access/gaming/sources/hybrid/ingestions', 'ingest']
+] as const) {
+  router.post(path, requireGamingSourceAccessAuthentication, asyncHandler(async (req, res) => {
+    const abortScope = createClientDisconnectAbortScope(req, res, 'Gaming hybrid client disconnected');
+    try {
+      const result = await abortScope.run((signal) => runWithRequestAbortTimeout({ timeoutMs: 38_000,
+        parentSignal: signal, requestId: req.requestId, abortMessage: 'Gaming hybrid request timed out' },
+      () => gamingHybridWorkflow[operation](req.body, {
+        actorKey: getRequestAuthenticatedActorKey(req), requestId: req.requestId, traceId: req.traceId,
+        logger: req.logger, canStore: true, signal: getRequestAbortSignal()
+      })));
+      res.status(result.status).json(result.body);
+    } catch {
+      res.status(503).json({ contractVersion: 'gaming-hybrid-v1', requestId: req.requestId ?? 'unavailable',
+        state: 'temporarily_unavailable', nextAction: 'retry_later', reason: 'SERVICE_UNAVAILABLE',
+        sourceKnown: false, evidenceSelected: false, freshnessStatus: 'unverified' });
+    } finally { abortScope.cleanup(); }
+  }));
+}
 
 router.post(
   '/gpt-access/gaming/sources/refreshes',

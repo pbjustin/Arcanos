@@ -345,6 +345,25 @@ async function sendAbsoluteFormRequest(
 }
 
 describe('Gaming source production HTTP boundary', () => {
+  it.each(['query', 'candidates', 'ingestions'])('authenticates hybrid %s before parsing oversized input', async operation => {
+    const response = await request(createApp()).post(`/gpt-access/gaming/sources/hybrid/${operation}`)
+      .set('Content-Type', 'application/json').send('x'.repeat(20_000));
+    expect(response.status).toBe(401);
+    expect(response.body.error.code).toBe('UNAUTHORIZED_GPT_ACCESS');
+    expect(unsafeGateMock).not.toHaveBeenCalled();
+  });
+  it.each(['query', 'candidates', 'ingestions'])('bounds authenticated hybrid %s before downstream execution', async operation => {
+    const response = await request(createApp()).post(`/gpt-access/gaming/sources/hybrid/${operation}`)
+      .set('Authorization', `Bearer ${TEST_TOKEN}`).send({ padding: 'x'.repeat(20_000) });
+    expect(response.status).toBe(413);
+    expect(unsafeGateMock).not.toHaveBeenCalled();
+  });
+  it.each(['query', 'candidates', 'ingestions'])('rejects generic credentials for hybrid %s', async operation => {
+    const response = await request(createApp()).post(`/gpt-access/gaming/sources/hybrid/${operation}`)
+      .set('Authorization', `Bearer ${GLOBAL_GPT_ACCESS_TOKEN}`).send({});
+    expect(response.status).toBe(401);
+    expect(unsafeGateMock).not.toHaveBeenCalled();
+  });
   beforeEach(() => {
     jest.clearAllMocks();
     registerRoutesMock.mockReset();

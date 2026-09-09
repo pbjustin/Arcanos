@@ -24,6 +24,8 @@ import {
   selectGamingSourcePublicUrl
 } from '@shared/gaming/gamingDocumentIngestionCore.js';
 import { normalizeGamingGameIdentity } from '@shared/gaming/gamingGameIdentity.js';
+import { GAMING_FRESHNESS_POLICY_VERSION, GAMING_SOURCE_POLICY_VERSION } from '@shared/gaming/gamingFreshnessCore.js';
+import { isGamingApprovedArtifactCurrent } from '@shared/gaming/gamingHybridPolicyCore.js';
 import { truncateTextByCharacters } from '@shared/http/clientResponseCommon.js';
 import { planAutonomousWorkerJob } from '@services/workerAutonomyService.js';
 
@@ -31,7 +33,8 @@ import { ingestGamingBuildResource } from './gamingBuildResources.js';
 import {
   GAMING_DOCUMENT_RESOLVER_VERSION,
   describeGamingDocumentSource,
-  resolveGamingDocument
+  resolveGamingDocument,
+  type ResolvedGamingDocument
 } from './gamingDocumentResolution.js';
 import {
   chunkGamingDocument,
@@ -115,7 +118,17 @@ const queuedSourceSchema = z.object({
   sourceTrustType: z.enum(['official', 'patch_notes', 'wiki', 'curated', 'supplied']).optional(),
   trustScore: z.number().min(0).max(1).optional(),
   patchVersion: z.string().trim().min(1).max(64).optional(),
-  origin: z.enum(['user_supplied', 'gpt_web_search', 'refresh'])
+  origin: z.enum(['user_supplied', 'gpt_web_search', 'refresh']),
+  // Server-created only. The public ingest/refresh schemas deliberately cannot submit this authority.
+  hybridApproval: z.object({
+    actorScopeHash: z.string().regex(/^[a-f0-9]{64}$/u),
+    contentHash: z.string().regex(/^[a-f0-9]{64}$/u),
+    policyVersion: z.literal('gaming-hybrid-candidates/v1'),
+    freshnessPolicyVersion: z.literal(GAMING_FRESHNESS_POLICY_VERSION),
+    sourcePolicyVersion: z.literal(GAMING_SOURCE_POLICY_VERSION),
+    recordType: z.enum(['guide', 'build', 'meta']),
+    freshness: z.record(z.unknown()).refine(value => JSON.stringify(value).length <= 8_000)
+  }).strict().optional()
 }).strict();
 
 const admissionErrorSchema = z.object({
@@ -583,7 +596,8 @@ async function enqueueGamingIngestion(
         gameKey: source.gameKey,
         sourceId: source.sourceId ?? null,
         sourceTypeHint: source.sourceTypeHint ?? null,
-        patchVersion: source.patchVersion ?? null
+        patchVersion: source.patchVersion ?? null,
+        ...(source.hybridApproval ? { hybridApproval: source.hybridApproval } : {})
       }))
       .sort((left, right) => left.canonicalUrl.localeCompare(right.canonicalUrl)),
     rejected: body.rejectedSources.map((source) => ({
@@ -721,6 +735,51 @@ export async function createGamingSourceIngestion(
     rejectedSources,
     submittedCount: parsed.data.payload.sourceUrls.length
   }, idempotency.key, context);
+}
+
+/** Full accepted text and interpretation metadata; never hash a preview or excerpt. */
+export function hashGamingApprovedDocument(document: ResolvedGamingDocument): string {
+  return sha256(stableJson({ text: document.text, metadata: document.metadata,
+    publicUrl: document.publicUrl, resolution: document.resolution, contentType: document.contentType ?? null }));
+}
+
+/** Internal hybrid admission adapter; uses the same worker, job ownership, and idempotency lifecycle. */
+export async function createApprovedGamingSourceIngestion(
+  sources: readonly {
+    url: string; game: string; contentHash: string; policyVersion: 'gaming-hybrid-candidates/v1';
+    actorScopeHash: string; sourceTrustType: 'official' | 'patch_notes' | 'wiki' | 'curated' | 'supplied';
+    recordType?: 'guide' | 'build' | 'meta';
+    freshness: Record<string, unknown>;
+  }[],
+  idempotencyKey: string,
+  context: GamingSourceGatewayContext & { canStore: boolean }
+) {
+  if (!context.canStore) return { statusCode: 403, payload: { ok: false,
+    error: { code: 'GAMING_HYBRID_STORAGE_FORBIDDEN', message: 'This caller cannot store discovered Gaming sources.' } } };
+  if (sources.length < 1 || sources.length > 3 || sources.some(source => source.actorScopeHash !== sha256(context.actorKey))) {
+    return buildGatewayValidationError('The approved candidate scope or count is invalid.');
+  }
+  const idempotency = resolveExplicitIdempotencyKey(idempotencyKey, context.idempotencyKey);
+  if (!idempotency.key) return buildGatewayValidationError(idempotency.error ?? 'An idempotency key is required.');
+  const seen = new Set<string>();
+  const approved: QueuedGamingSource[] = [];
+  for (const [submittedIndex, source] of sources.entries()) {
+    const admission = admitUrl(source.url, submittedIndex, seen);
+    if (!admission.source) return buildGatewayValidationError('An approved source no longer passes URL admission.');
+    const parsedSource = queuedSourceSchema.safeParse({
+      submittedIndex, canonicalUrl: admission.source, game: source.game, gameKey: canonicalGameKey(source.game),
+      origin: 'gpt_web_search', sourceTrustType: source.sourceTrustType,
+      trustScore: source.sourceTrustType === 'official' || source.sourceTrustType === 'patch_notes' ? 0.9 : 0.5,
+      hybridApproval: { actorScopeHash: source.actorScopeHash, contentHash: source.contentHash,
+        policyVersion: source.policyVersion, freshness: source.freshness,
+        freshnessPolicyVersion: GAMING_FRESHNESS_POLICY_VERSION, sourcePolicyVersion: GAMING_SOURCE_POLICY_VERSION,
+        recordType: source.recordType ?? 'guide' }
+    });
+    if (!parsedSource.success) return buildGatewayValidationError('The approved source artifact is invalid.');
+    approved.push(parsedSource.data);
+  }
+  return enqueueGamingIngestion({ action: 'ingest', schemaVersion: '1', sources: approved,
+    rejectedSources: [], submittedCount: approved.length }, idempotency.key, context);
 }
 
 export async function refreshGamingSources(
@@ -945,6 +1004,16 @@ async function ingestOneSource(
       rawDocumentMaxChars: GAMING_BUILD_RESOURCE_HARD_LIMITS.maxHtmlChars
     });
     signal?.throwIfAborted();
+    // A queued worker has its own process/lifetime. Reacquire safely, then require the exact
+    // complete artifact approved by the caller; a changed or newly truncated page
+    // needs a new evaluation even when its retained prefix has the approved hash.
+    if (source.hybridApproval && !isGamingApprovedArtifactCurrent({
+      approvedContentHash: source.hybridApproval.contentHash, documentContentHash: hashGamingApprovedDocument(document),
+      instructionFiltered: document.metrics.instructionFiltered, truncated: document.metrics.truncated })) {
+      return { submittedIndex: source.submittedIndex, status: 'rejected', canonicalUrl: source.canonicalUrl,
+        recordsCreated: 0, recordsUpdated: 0, completedAt: new Date().toISOString(),
+        error: { code: 'APPROVED_CONTENT_CHANGED', message: 'The source changed after approval; evaluate it again before storing.', retryable: false } };
+    }
     const chunked = await chunkGamingDocument(document.text, { signal });
     const cleanedText = chunked.text;
     const documentTruncated = document.metrics.truncated || chunked.documentTruncated;
@@ -1029,7 +1098,8 @@ async function ingestOneSource(
       url: source.canonicalUrl,
       requestedGame: source.game,
       contentType: document.contentType,
-      html: document.rawDocument?.contentType.includes('html') ? document.rawDocument.body : undefined,
+      // Hybrid approval covers resolved prose and metadata, not fresh hidden scripts.
+      html: !source.hybridApproval && document.rawDocument?.contentType.includes('html') ? document.rawDocument.body : undefined,
       text: cleanedText,
       metadata: {
         title: pageTitle,
@@ -1037,7 +1107,9 @@ async function ingestOneSource(
       },
       signal
     }, { useCache: false });
-    const supportsStructuredExtraction = document.resolution.supportsStructuredExtraction;
+    // Discovered artifacts retain the established document/chunk pipeline. Their
+    // durable records cannot acquire unseen structured fields after approval.
+    const supportsStructuredExtraction = document.resolution.supportsStructuredExtraction && !source.hybridApproval;
     const normalizedBuild = supportsStructuredExtraction ? normalized.build : null;
     if (supportsStructuredExtraction && normalized.failureReason === 'STRUCTURED_RESOURCE_GAME_MISMATCH') {
       return {
@@ -1108,6 +1180,7 @@ async function ingestOneSource(
       normalizedData.patch = patchVersion;
     }
     const contentHash = hashGamingDocumentRevision(cleanedText, stableJson(normalizedData));
+    const recordType = source.hybridApproval?.recordType ?? sourceTypeToRecordType(sourceType);
     // Revision identity includes acquisition policy so refreshing an older
     // extraction can replace stale provenance/quality even if its prose matches.
     const extractorVersion = `${GAMING_DOCUMENT_RESOLVER_VERSION}:${sha256(stableJson({
@@ -1116,7 +1189,10 @@ async function ingestOneSource(
       resolverId: document.resolution.resolverId,
       resolverVersion: document.resolution.resolverVersion,
       documentResolverVersion: GAMING_DOCUMENT_RESOLVER_VERSION,
-      chunkingVersion: GAMING_DOCUMENT_CHUNKING_VERSION
+      chunkingVersion: GAMING_DOCUMENT_CHUNKING_VERSION,
+      ...(source.hybridApproval ? { hybridPolicyVersion: source.hybridApproval.policyVersion,
+        freshnessPolicyVersion: source.hybridApproval.freshnessPolicyVersion,
+        sourcePolicyVersion: source.hybridApproval.sourcePolicyVersion, recordType } : {})
     }))}`;
     const records = chunked.chunks.map((chunk) => {
       const { text, semanticKey, ...chunkMetadata } = chunk;
@@ -1132,8 +1208,8 @@ async function ingestOneSource(
         chunk: chunkMetadata
       };
       return {
-        recordType: sourceTypeToRecordType(sourceType),
-        semanticKey: sha256(stableJson({ gameKey: source.gameKey, recordType: sourceTypeToRecordType(sourceType), semanticKey })),
+        recordType,
+        semanticKey: sha256(stableJson({ gameKey: source.gameKey, recordType, semanticKey })),
         payloadHash: sha256(stableJson(chunkData)),
         title,
         patch: patchVersion,
@@ -1174,6 +1250,9 @@ async function ingestOneSource(
         patchVerificationMethod: patchVerification?.method ?? null,
         structuredExtractorVersion: normalized.adapterVersion,
         documentResolverVersion: GAMING_DOCUMENT_RESOLVER_VERSION,
+        ...(source.hybridApproval ? { hybridFreshness: source.hybridApproval.freshness,
+          hybridPolicyVersion: source.hybridApproval.policyVersion,
+          approvedContentHash: source.hybridApproval.contentHash } : {}),
         ...resolutionProvenance
       },
       extractionMetrics: {

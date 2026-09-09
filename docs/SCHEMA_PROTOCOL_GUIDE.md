@@ -1,5 +1,15 @@
 # Schema and Protocol Guide
 
+The Gaming hybrid Action contract is an additive module HTTP contract in
+[`contracts/arcanos_gaming.openapi.v1.json`](../contracts/arcanos_gaming.openapi.v1.json),
+with runtime request schemas/types in
+[`src/shared/gaming/gamingHybridContract.ts`](../src/shared/gaming/gamingHybridContract.ts).
+It explicitly opts in through `contractVersion: gaming-hybrid-v1`; legacy
+Gaming gameplay/source contracts and canary schema identity remain unchanged.
+It adds no command-envelope ID, ActionPlan shape, Python-owned protocol or
+schema-catalog family. Query, transient candidate validation, and consequential
+durable ingestion are separate operations. See [Gaming API](API.md#gaming-hybrid-knowledge-actions).
+
 ## Overview
 Arcanos is schema-first at its public protocol boundary. TypeScript owns the public protocol surface in `packages/protocol/`; Python daemon code consumes that surface through the protocol runtime and backend clients.
 

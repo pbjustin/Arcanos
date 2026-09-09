@@ -833,6 +833,19 @@ export class PostgresGamingSourceRepository {
       ]
     );
     if (existingRevision.rows[0]) {
+      const hybridFreshness = (JSON.parse(input.provenanceJson) as Record<string, unknown>).hybridFreshness;
+      if (hybridFreshness && typeof hybridFreshness === 'object' && !Array.isArray(hybridFreshness)) {
+        // Exact content/policy identity already matched under the source lock. Revalidation
+        // advances only resource verification metadata; it does not manufacture a revision
+        // or assert that another URL has no newer game update.
+        await client.query(
+          `UPDATE gaming_source_revisions
+           SET provenance = jsonb_set(provenance, '{hybridFreshness}', $2::jsonb)
+           WHERE id = $1
+             AND COALESCE(provenance->'hybridFreshness'->>'verifiedAt', '') <= COALESCE($2::jsonb->>'verifiedAt', '')`,
+          [existingRevision.rows[0].id, JSON.stringify(hybridFreshness)]
+        );
+      }
       return {
         sourceId: source.id,
         revisionId: existingRevision.rows[0].id,

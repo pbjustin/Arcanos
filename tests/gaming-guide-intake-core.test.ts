@@ -2,6 +2,7 @@ import { describe, expect, it } from '@jest/globals';
 import {
   buildGamingGuideIntakeContract,
   GAMING_GUIDE_INTAKE_POLICY_VERSION,
+  GAMING_HYBRID_INTAKE,
   resolveGamingGuideIntakeEndpointPolicy,
   resolveGamingGuideIntakePolicy
 } from '../src/shared/gaming/gamingGuideIntakeCore.js';
@@ -59,5 +60,14 @@ describe('pure Gaming guide intake contract', () => {
   it('retains the additional lower-level endpoint guard', () => {
     expect(resolveGamingGuideIntakeEndpointPolicy('compact-v1', 'arcanos-gaming.meta')).toBeUndefined();
     expect(resolveGamingGuideIntakeEndpointPolicy(undefined, 'arcanos-gaming.guide')).toBeUndefined();
+  });
+
+  it.each(['build', 'meta'])('requires an in-process attestation for hybrid %s intake', mode => {
+    const scope = { ...trustedScope, sourceEndpoint: `arcanos-gaming.hybrid-${mode}`,
+      body: { mode, [GAMING_HYBRID_INTAKE]: true } };
+    expect(resolveGamingGuideIntakePolicy(scope)).toBe('compact-v1');
+    expect(resolveGamingGuideIntakePolicy({ ...scope, body: JSON.parse(JSON.stringify(scope.body)) })).toBeUndefined();
+    expect(resolveGamingGuideIntakePolicy({ ...scope, sourceEndpoint: `arcanos-gaming.${mode}` })).toBeUndefined();
+    expect(resolveGamingGuideIntakePolicy({ ...scope, moduleId: 'ARCANOS:CORE' })).toBeUndefined();
   });
 });

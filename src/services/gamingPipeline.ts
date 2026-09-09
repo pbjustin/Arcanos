@@ -55,6 +55,7 @@ import {
 import { formatStoredGamingEvidence } from "@services/gamingStoredKnowledge.js";
 import { pickGamingPlayerContext, resolveGamingPlayerContext, type GamingPlayerContext } from "@shared/gaming/gamingPlayerContext.js";
 import { resolveGamingAnswerPolicy } from "@shared/gaming/gamingAnswerPolicy.js";
+import { GAMING_HYBRID_INTAKE } from '@shared/gaming/gamingGuideIntakeCore.js';
 
 export type GamingPipelineInput = Pick<
   ValidatedGamingRequest,
@@ -592,12 +593,18 @@ function buildGamingRunOptions(mode: GamingMode, _hasGuideSources: boolean) {
   };
 }
 
-export async function runGameplayPipeline(params: GamingPipelineInput): Promise<GamingSuccessEnvelope> {
+export interface GamingPreparedEvidence {
+  knowledge: GamingStoredKnowledgeContext;
+  current: boolean;
+  qualification: string;
+}
+
+export async function runGameplayPipeline(params: GamingPipelineInput, prepared?: GamingPreparedEvidence): Promise<GamingSuccessEnvelope> {
   if (params.mode === "guide" && !params.contextOrigins) {
     params = { ...params, ...resolveGamingPlayerContext(params, params.prompt) };
   }
   const requestStartedAt = Date.now();
-  const sourceEndpoint = `arcanos-gaming.${params.mode}`;
+  const sourceEndpoint = `arcanos-gaming.${prepared && params.mode !== 'guide' ? 'hybrid-' : ''}${params.mode}`;
   const requestContext = getRequestAbortContext();
   const requestId = requestContext?.requestId;
   const traceId = requestId;
@@ -644,7 +651,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
   logGamingIntakeStep(baseLogContext, "shortcut", shortcutStartedAt, {
     ok: Boolean(exactLiteralShortcut)
   });
-  if (exactLiteralShortcut && !suppliedGuideRequired) {
+  if (exactLiteralShortcut && !suppliedGuideRequired && !prepared) {
     return formatGameplaySuccessWithLogs({
       mode: params.mode,
       response: exactLiteralShortcut.literal,
@@ -672,7 +679,21 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
   let discoveryReason: GamingDiscoveryReason | undefined;
   let discoveryFailureReason: GamingDiscoveryFailureReason | undefined;
   let currentEvidenceAvailable = false;
-  try {
+  if (prepared) {
+    webContext = [prepared.knowledge.context, prepared.qualification].filter(Boolean).join('\n\n');
+    sources = prepared.knowledge.sources.map(source => ({
+      url: source.url, title: source.title, snippet: source.snippet, sourceId: source.sourceId,
+      sourceType: source.sourceType, patchVersion: source.verifiedPatchVersion,
+      fetchedAt: source.fetchedAt, origin: source.origin ?? 'stored'
+    }));
+    retrievedSourceCount = sources.length;
+    publicSourceCount = sources.length;
+    selectedChunkCount = prepared.knowledge.evidence?.length ?? 0;
+    retrievalAttempted = true;
+    retrievalHadUsableSources = sources.length > 0 && selectedChunkCount > 0;
+    storedSourceKnown = prepared.knowledge.sourceKnown === true;
+    currentEvidenceAvailable = prepared.current;
+  } else try {
     const webContextResult = await buildGamingRagContext(params, baseLogContext, getRequestAbortSignal());
     webContext = webContextResult.context;
     sources = webContextResult.sources;
@@ -797,7 +818,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
   }
 
   const resolvedGame = resolvedParams.game;
-  if (resolvedGame) {
+  if (resolvedGame && !prepared) {
     const storedRetrievalStartedAt = Date.now();
     const storedRetrievalTimeoutMs = getGamingStoredRetrievalTimeoutMs();
     const liveEvidenceContext = omitGamingDiagnosticContextBlocks(webContext, sources);
@@ -1103,7 +1124,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
         runTrinityWritingPipeline({
           input: {
             prompt: buildGamingTrinityPrompt(
-              resolvedParams,
+              prepared ? { ...resolvedParams, includePlayerContext: true } : resolvedParams,
               webContext,
               retrievalAttempted || retrievalHadUsableSources,
               retrievalHadUsableSources
@@ -1111,7 +1132,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
             moduleId: "ARCANOS:GAMING",
             sourceEndpoint,
             requestedAction: "query",
-            body: resolvedParams,
+            body: prepared ? { ...resolvedParams, [GAMING_HYBRID_INTAKE]: true } : resolvedParams,
             executionMode: "request"
           },
           context: {
@@ -1123,6 +1144,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
             ),
             runOptions: {
               ...buildGamingRunOptions(params.mode, guideUrls.length > 0 && retrievalHadUsableSources),
+              ...(prepared ? { disableOptionalSideEffects: true, redactAuditContent: true, gamingGuideIntakePolicy: 'compact-v1' as const } : {}),
               ...(params.mode === "guide" ? { trustedPolicyPrompt: resolvedParams.prompt, internalMode: false } : {}),
               intentMode: "EXECUTE_TASK",
               ...(retrievalHadUsableSources
@@ -1135,7 +1157,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
         })
     );
     const completion = trinityResult.meta?.provider;
-    if (params.mode === "guide" && (completion?.incomplete || completion?.truncated || completion?.lengthTruncated
+    if ((params.mode === "guide" || prepared) && (completion?.incomplete || completion?.truncated || completion?.lengthTruncated
       || completion?.finishReason === "length" || completion?.responseStatus === "incomplete")) {
       throw Object.assign(new Error("Gaming provider completion is incomplete."), {
         code: "OPENAI_COMPLETION_INCOMPLETE",
@@ -1143,7 +1165,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
         incompleteReason: completion.incompleteReason
       });
     }
-    if (params.mode === "guide" && (trinityResult.fallbackFlag || trinityResult.dryRun || completion?.contentFiltered)) {
+    if ((params.mode === "guide" || prepared) && (trinityResult.fallbackFlag || trinityResult.dryRun || completion?.contentFiltered)) {
       throw Object.assign(new Error("Gaming provider did not produce a completed primary answer."), {
         code: "GAMING_PROVIDER_UNUSABLE_RESPONSE"
       });

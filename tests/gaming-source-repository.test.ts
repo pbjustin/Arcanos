@@ -274,6 +274,26 @@ describe('PostgresGamingSourceRepository persistence', () => {
     expect(harness.queries.at(-1)?.sql).toBe('COMMIT');
   });
 
+  test('advances only hybrid resource verification for an unchanged revision under the existing transaction', async () => {
+    const freshness = { verifiedAt: '2026-09-08T12:00:00.000Z', fetchedAt: '2026-09-08T12:00:00.000Z', patch: '2.1' };
+    const harness = new GamingRepositoryHarness((sql) => {
+      if (sql.startsWith('INSERT INTO gaming_sources')) return result();
+      if (sql.includes('FROM gaming_sources') && sql.endsWith('FOR UPDATE')) return result([sourceRow()]);
+      if (sql.startsWith('UPDATE gaming_sources')) return result([sourceRow()]);
+      if (sql.startsWith('SELECT id FROM gaming_source_revisions')) return result([{ id: REVISION_ID }]);
+      if (sql.startsWith('UPDATE gaming_source_revisions SET provenance = jsonb_set')) return result();
+      throw new Error(`Unhandled query: ${sql}`);
+    });
+    const persisted = await new PostgresGamingSourceRepository(harness.pool).persistGamingSourceRevision(
+      persistInput({ provenance: { hybridFreshness: freshness } }));
+    expect(persisted.state).toBe('unchanged');
+    const update = harness.queries.find(query => query.sql.startsWith('UPDATE gaming_source_revisions'))!;
+    expect(update.values).toEqual([REVISION_ID, JSON.stringify(freshness)]);
+    expect(update.sql).toContain("COALESCE(provenance->'hybridFreshness'->>'verifiedAt', '') <=");
+    expect(harness.queries.some(query => query.sql.startsWith('UPDATE gaming_knowledge_records'))).toBe(false);
+    expect(harness.queries.at(-1)?.sql).toBe('COMMIT');
+  });
+
   test('rolls back supersession when the new chunk batch cannot be persisted', async () => {
     const harness = new GamingRepositoryHarness((sql) => {
       if (sql.startsWith('INSERT INTO gaming_sources')) return result([sourceRow()]);
