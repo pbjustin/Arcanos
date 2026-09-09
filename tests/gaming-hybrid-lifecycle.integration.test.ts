@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { GamingResolvedSourceHarness } from './testUtils/gamingResolvedSourceHarness.js';
+import { createGamingClearAssessment, GAMING_CLEAR_DIMENSIONS, gamingClearHash, type GamingClearDimensions } from '../src/shared/gaming/gamingClearPolicy.js';
 
 const URL = 'https://guides.example.org/amber-vault';
 const SOURCE_GAME = 'Amber Pilgrim';
@@ -43,6 +44,18 @@ jest.unstable_mockModule('@core/db/repositories/jobRepository.js', () => ({
 jest.unstable_mockModule('@services/workerAutonomyService.js', () => ({ planAutonomousWorkerJob: async () => ({ status: 'pending', maxRetries: 2 }) }));
 jest.unstable_mockModule('@services/openai/clientBridge.js', () => ({ getOpenAIClientOrAdapter: () => ({ client: {} }) }));
 jest.unstable_mockModule('@core/logic/trinityWritingPipeline.js', () => ({ runTrinityWritingPipeline: mockTrinity }));
+// The semantic reviewer is a controlled provider boundary in this lifecycle suite.
+// Real answer validation and provider failure are covered by gaming-clear-answer-audit.
+jest.unstable_mockModule('@services/gamingClearAnswerAudit.js', () => ({
+  gamingClearAnswerMatches: (assessment: any, answer: string) => assessment?.decision === 'accept' && assessment.subjectHash === gamingClearHash(answer),
+  runGamingClearAnswerAudit: async (_client: unknown, audit: any) => ({ assessment: createGamingClearAssessment({
+    profile: 'answer', questionProfile: audit.evidenceAssessment.policyProfile.split(':')[1], subjectId: 'fixture-answer',
+    subjectHash: gamingClearHash(audit.answer), contextFingerprint: audit.evidenceAssessment.contextFingerprint,
+    evidenceRefs: audit.knowledge.evidence.map((chunk: any) => chunk.recordId), gates: audit.evidenceAssessment.gates,
+    dimensions: Object.fromEntries(GAMING_CLEAR_DIMENSIONS.map(name => [name, { status: 'evaluated', score: 4,
+      reasonCodes: ['SUPPORTED_FIXTURE'], evidenceRefs: [audit.knowledge.evidence[0].recordId], unresolvedFacts: [] }])) as GamingClearDimensions
+  }) })
+}));
 
 const { createGamingHybridWorkflow } = await import('../src/services/gamingHybridKnowledge.js');
 const { evaluateGamingHybridCandidates, createApprovedGamingHybridIngestion } = await import('../src/services/gamingHybridCandidates.js');
@@ -75,18 +88,20 @@ async function discoverCurrent(mode: 'build' | 'meta', extras: Record<string, un
   const game = 'Star Wars: The Old Republic';
   const indexUrl = 'https://swtor.com/patchnotes';
   const patchUrl = 'https://swtor.com/patchnotes/synthetic-test-update';
+  const guideUrl = 'https://guides.example.org/swtor-telescope-build';
   mockHttp.mockImplementation(async (url: string) => {
     const index = new globalThis.URL(url).pathname === '/patchnotes';
+    const guide = new globalThis.URL(url).pathname === '/swtor-telescope-build';
     const labels = index ? 'Current patch: 2.1. Current build: 2.1.1.' : 'Patch: 2.1. Build: 2.1.1.';
-    return { data: `<html><title>${game} patch notes</title><body><article>Game: ${game}. ${labels} Effective from: 2026-09-08. Platforms: all. Regions: all. ${index ? 'This synthetic official release index identifies only the applicable update and hotfix for the disposable test. Do not infer the best strategy from this list.' : PASSAGE}</article></body></html>`, headers: { 'content-type': 'text/html' } };
+    return { data: `<html><title>${game} ${guide ? 'build guide' : 'patch notes'}</title><body><article>Game: ${game}. ${labels} Effective from: 2026-09-08. Platforms: all. Regions: all. ${game} gameplay reference. ${index ? 'This synthetic official release index identifies only the applicable update and hotfix for the disposable test. Do not infer the best strategy from this list.' : guide ? `For the telescope build at the obsidian observatory, ${PASSAGE}` : 'The telescope alignment value at the obsidian observatory changed in this synthetic update. This patch verifies the change only, without recommending a build.'}</article></body></html>`, headers: { 'content-type': 'text/html' } };
   });
   const workflow = createGamingHybridWorkflow();
   const query = { contractVersion, idempotencyKey: 'mode-query-1', game, mode,
     question: 'Which current telescope build works at the obsidian observatory?', storagePolicy: 'ask_before_store', ...extras };
   const missing = await workflow.query(query, context);
   const found = await workflow.candidates({ contractVersion, workflowId: missing.body.workflowId,
-    idempotencyKey: 'mode-candidates-1', candidates: [{ url: patchUrl }, { url: indexUrl }] }, context);
-  return { workflow, query, missing, found, patchUrl, indexUrl };
+    idempotencyKey: 'mode-candidates-1', candidates: [{ url: guideUrl }, { url: patchUrl }, { url: indexUrl }] }, context);
+  return { workflow, query, missing, found, patchUrl, indexUrl, guideUrl };
 }
 
 /** Real Gaming handoff, resolver, normalization, worker, repository, chunk selection, and pipeline.
@@ -103,13 +118,17 @@ describe('Gaming hybrid durable lifecycle', () => {
     jest.spyOn(logger, 'info').mockImplementation(() => undefined);
     jest.spyOn(logger, 'warn').mockImplementation(() => undefined);
     jest.spyOn(logger, 'error').mockImplementation(() => undefined);
-    mockTrinity.mockResolvedValue({ result: `${PASSAGE} [Source 1]`, meta: { provider: { finishReason: 'stop' } } });
+    mockTrinity.mockImplementation(async (request: any) => {
+      const result = `${PASSAGE} [Source 1]`;
+      const { assessment } = await request.context.runOptions.gamingClearAnswerAudit(result, {});
+      return { result, gamingClearAudit: assessment, meta: { provider: { finishReason: 'stop' } } };
+    });
     mockHttp.mockImplementation(async (url: string, options: any) => {
       expect(new globalThis.URL(url).hostname).toBe('93.184.216.34');
       expect(options).toMatchObject({ maxRedirects: 0, proxy: false, responseType: 'text' });
       expect(options.maxContentLength).toBeLessThanOrEqual(2_000_000);
       const paragraphs = documentText.split('\n\n').map(text => `<p>${text}</p>`).join('');
-      return { data: `<html><title>${documentTitle ?? `${documentGame} guide`}</title><body><article>${paragraphs}</article></body></html>`, headers: { 'content-type': 'text/html' } };
+      return { data: `<html><title>${documentTitle ?? `${documentGame} guide`}</title><body><article><p>${documentGame} gameplay reference.</p>${paragraphs}</article></body></html>`, headers: { 'content-type': 'text/html' } };
     });
   });
   afterEach(() => {
@@ -190,22 +209,25 @@ describe('Gaming hybrid durable lifecycle', () => {
     const game = 'Star Wars: The Old Republic';
     const indexUrl = 'https://swtor.com/patchnotes';
     const patchUrl = 'https://swtor.com/patchnotes/synthetic-test-update';
+    const guideUrl = 'https://guides.example.org/swtor-telescope-build';
     const indexText = `Game: ${game}. Current patch: 2.1. Current build: 2.1.1. Effective from: 2026-09-08. Platforms: all. Regions: all. Official synthetic update release index for the disposable Gaming test. This index identifies the applicable update and hotfix only.`;
-    const patchText = `Game: ${game}. Patch: 2.1. Build: 2.1.1. Effective from: 2026-09-08. Published at: 2026-09-08. Platforms: all. Regions: all. ${PASSAGE}`;
+    const patchText = `Game: ${game}. Patch: 2.1. Build: 2.1.1. Effective from: 2026-09-08. Published at: 2026-09-08. Platforms: all. Regions: all. ${game} gameplay reference. ${PASSAGE}`;
     mockHttp.mockImplementation(async (url: string, options: any) => {
       expect(options).toMatchObject({ maxRedirects: 0, proxy: false });
       const index = new globalThis.URL(url).pathname === '/patchnotes';
-      return { data: `<html><title>${game} ${index ? 'patch notes' : 'build guide'}</title><body><article>${index ? indexText : patchText}</article></body></html>`, headers: { 'content-type': 'text/html' } };
+      const guide = new globalThis.URL(url).pathname === '/swtor-telescope-build';
+      const distinctPatch = patchText.replace(PASSAGE, 'The telescope balance at the obsidian observatory changes under this synthetic update. These notes verify only the update, without recommending a build.');
+      return { data: `<html><title>${game} ${guide ? 'build guide' : 'patch notes'}</title><body><article>${index ? indexText : guide ? patchText : distinctPatch}</article></body></html>`, headers: { 'content-type': 'text/html' } };
     });
     const workflow = createGamingHybridWorkflow();
     const query = { contractVersion, idempotencyKey: 'dynamic-query-1', game, mode: 'build',
       question: 'Which current telescope build works at the obsidian observatory?', storagePolicy: 'ask_before_store' };
     const missing = await workflow.query(query, context);
     const found = await workflow.candidates({ contractVersion, workflowId: missing.body.workflowId,
-      idempotencyKey: 'dynamic-candidates-1', candidates: [{ url: patchUrl }, { url: indexUrl }] }, context);
+      idempotencyKey: 'dynamic-candidates-1', candidates: [{ url: guideUrl }, { url: patchUrl }, { url: indexUrl }] }, context);
     expect(found.body).toMatchObject({ state: 'answer_ready', freshnessStatus: 'current', effectivePatch: '2.1', effectiveBuild: '2.1.1' });
     expect(found.body.answer?.sources).toEqual(expect.arrayContaining([expect.objectContaining({ url: indexUrl })]));
-    const candidateId = found.body.candidates!.find(candidate => candidate.url === patchUrl)!.candidateId!;
+    const candidateId = found.body.candidates!.find(candidate => candidate.url === guideUrl)!.candidateId!;
     const queued = await workflow.ingest({ contractVersion, workflowId: missing.body.workflowId,
       idempotencyKey: 'dynamic-store-1', candidateIds: [candidateId], storagePolicy: 'ask_before_store', confirmStore: true }, context);
     expect(queued.body.state).toBe('ingestion_pending');
@@ -315,6 +337,46 @@ describe('Gaming hybrid durable lifecycle', () => {
     documentGame = 'Amber Pilgrim 2'; expect((await evaluate()).accepted).toHaveLength(0); documentGame = SOURCE_GAME;
     documentText = 'Village merchants barter leather supplies and canvas tents while local craftsmen prepare wooden tools for visiting travelers. '.repeat(4);
     expect((await evaluate()).decisions[0].reasonCodes).toContain('QUESTION_COVERAGE_INSUFFICIENT');
+  });
+
+  it('accepts an acquired Elden Ring Intelligence title without the historical narrow guide suffix', async () => {
+    documentGame = 'Elden Ring';
+    documentTitle = 'Elden Ring Mage Build: Intelligence, Staves, and Spell Choices';
+    documentText = 'In Elden Ring, Intelligence and staves shape the available spell choices. Compare staves against spell requirements before selecting equipment. Read the listed prerequisites before choosing a spell.';
+    const result = await evaluate({ game: 'Elden Ring', prompt: 'Explain Intelligence, staves and spell choices.' });
+    expect(result.accepted).toHaveLength(1);
+    expect(result.accepted[0].sourceAssessment).toMatchObject({ rubricVersion: 'gaming-clear/v1', profile: 'source', decision: 'accept' });
+    expect(result.decisions[0]).not.toHaveProperty('dimensionScores');
+  });
+
+  it('preserves the three distinct synthetic historical rejection causes and never scores a blocked redirect', async () => {
+    documentTitle = 'Unidentified notebook'; documentText = PASSAGE;
+    const identity = await evaluate();
+    expect(identity.decisions[0].reasonCodes).toContain('GAME_IDENTITY_UNVERIFIED');
+    expect(identity.accepted).toHaveLength(0);
+    jest.mocked(logger.info).mockClear();
+    mockHttp.mockRejectedValueOnce({ response: { status: 302 } });
+    expect((await evaluate()).decisions[0].reasonCodes).toContain('REDIRECT_NOT_ALLOWED');
+    expect(jest.mocked(logger.info).mock.calls.some(([event]) => event === 'gaming.clear.source.completed')).toBe(false);
+    expect(jest.mocked(logger.info).mock.calls).toEqual(expect.arrayContaining([expect.arrayContaining(['gaming.clear.source.not_run'])]));
+    documentText = 'No usable gameplay text.';
+    expect((await evaluate()).decisions[0].reasonCodes).toContain('INSUFFICIENT_EXTRACTION');
+    expect(jobs.size).toBe(0);
+  });
+
+  it('invalidates source approvals after rubric, score, context, or freshness metadata changes', async () => {
+    const accepted = (await evaluate()).accepted;
+    expect(accepted[0].sourceAssessment.qualityEligible).toBe(true);
+    for (const mutate of [
+      (candidate: any) => { candidate.sourceAssessment.overall = 5; },
+      (candidate: any) => { candidate.sourceAssessment.rubricVersion = 'gaming-clear/v2'; },
+      (candidate: any) => { candidate.sourceContext.spoilerMode = 'full'; },
+      (candidate: any) => { candidate.freshness.patch = '9.9'; }
+    ]) {
+      const candidate = structuredClone(accepted[0]); mutate(candidate);
+      expect((await store([candidate])).statusCode).toBe(403);
+    }
+    expect(jobs.size).toBe(0);
   });
 
   it('enforces candidate count and canonical duplicate bounds without stripping meaningful query values', async () => {

@@ -545,6 +545,11 @@ case retains existing behavior. Three existing pure Gaming fixture digests are
 updated for reviewed code changes; the sealed preview import boundary is retained
 without importing the Gaming scoring engine or adding effects.
 
+All Gaming guide/build/meta generation uses the existing audit-content redaction
+and optional-side-effect suppression flags. This keeps reasoning-ledger content
+out of optional pattern/feedback persistence and redacts audit summaries; other
+modules retain their previous defaults.
+
 ### Calibration and evidence limits
 
 The source/evidence feature mappings deliberately reserve resilience credit:

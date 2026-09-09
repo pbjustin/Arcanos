@@ -4,6 +4,7 @@ import express from 'express';
 import request from 'supertest';
 import Ajv2020 from 'ajv/dist/2020.js';
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import type { TrinityWritingPipelineRequest } from '../src/core/logic/trinityWritingPipeline.js';
 import {
   gamingArchiveGuideUrl, gamingArchiveStorageHost, gamingArchiveDerivativePath,
   gamingArchiveGuideText, gamingArchiveMetadata, gamingArchiveLandingHtml,
@@ -11,6 +12,7 @@ import {
 
 const mockAxiosGet = jest.fn();
 const mockProvider = jest.fn();
+const mockAuditResponsesCreate = jest.fn();
 const mockStoredContext = jest.fn();
 const mockRouteGptRequest = jest.fn();
 const mockResolveGptRouting = jest.fn();
@@ -24,11 +26,19 @@ jest.unstable_mockModule('node:dns/promises', () => ({
   },
 }));
 jest.unstable_mockModule('@core/logic/trinityWritingPipeline.js', () => ({
-  runTrinityWritingPipeline: mockProvider,
+  // Generation is synthetic; the supplied final-answer callback executes the real
+  // Gaming audit and Responses adapter against the actual extracted passages.
+  runTrinityWritingPipeline: async (params: TrinityWritingPipelineRequest) => {
+    const candidate = await mockProvider(params) as { result: string };
+    const audit = params.context.runOptions?.gamingClearAnswerAudit;
+    if (!audit || !params.context.runtimeBudget) throw new Error('Expected bounded Gaming final-answer audit');
+    const { assessment } = await audit(candidate.result, params.context.runtimeBudget);
+    return { ...candidate, gamingClearAudit: assessment };
+  },
   applyTrinityGenerationInvariant: jest.fn(() => { throw new Error('Unexpected non-Gaming invocation'); }),
 }));
 jest.unstable_mockModule('@services/openai/clientBridge.js', () => ({
-  getOpenAIClientOrAdapter: () => ({ client: {} }),
+  getOpenAIClientOrAdapter: () => ({ client: { responses: { create: mockAuditResponsesCreate } } }),
   requireOpenAIClientOrAdapter: jest.fn(() => { throw new Error('Unexpected direct provider invocation'); }),
 }));
 jest.unstable_mockModule('@services/gamingSourceIngestion.js', () => ({ buildStoredGamingKnowledgeContext: mockStoredContext }));
@@ -81,6 +91,17 @@ function query(guideUrl = gamingArchiveGuideUrl) {
   });
 }
 
+type AuditRequest = {
+  model: string;
+  input: Array<{ role: string; content: Array<{ type: string; text: string }> }>;
+};
+
+function auditData(payload: AuditRequest): { answer: string; evidence: Array<{ chunkId: string; text: string }> } {
+  const userData = payload.input.find(message => message.role === 'user')?.content[0]?.text;
+  if (!userData) throw new Error('Expected structured audit input');
+  return JSON.parse(userData);
+}
+
 describe('Archive guide document reaches the Gaming provider and HTTP envelope', () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -90,6 +111,19 @@ describe('Archive guide document reaches the Gaming provider and HTTP envelope',
     jest.spyOn(console, 'log').mockImplementation(() => undefined);
     mockStoredContext.mockResolvedValue({ context: '', sources: [] });
     mockProvider.mockResolvedValue({ result: 'Save at the lantern checkpoint before the boss encounter. [1]' });
+    mockAuditResponsesCreate.mockImplementation(async (payload: AuditRequest) => {
+      const data = auditData(payload);
+      const evidenceRefs = data.evidence.map(passage => passage.chunkId);
+      return {
+        id: 'synthetic-archive-answer-audit', model: payload.model, status: 'completed', output: [],
+        output_text: JSON.stringify({
+          dimensions: Object.fromEntries(['clarity', 'leverage', 'efficiency', 'alignment', 'resilience'].map(name => [name, {
+            status: 'evaluated', score: 4.5, reasonCodes: ['SUPPORTED'], evidenceRefs, unresolvedFacts: []
+          }])), findings: []
+        }),
+        usage: { input_tokens: 700, output_tokens: 180, total_tokens: 880 }
+      };
+    });
     mockResolveGptRouting.mockResolvedValue({
       ok: true, plan: {
         matchedId: 'arcanos-gaming', module: 'ARCANOS:GAMING', route: 'gaming', action: 'query',
@@ -133,6 +167,14 @@ describe('Archive guide document reaches the Gaming provider and HTTP envelope',
     expect(response.body.result.data.grounding.citableSourceCount).toBeGreaterThanOrEqual(1);
     expect(response.body.result.data.grounding.selectedChunkCount).toBeGreaterThanOrEqual(1);
     expect(mockProvider).toHaveBeenCalledTimes(1);
+    expect(mockAuditResponsesCreate).toHaveBeenCalledTimes(1);
+    const [auditRequest, auditOptions] = mockAuditResponsesCreate.mock.calls[0];
+    expect(auditRequest).toMatchObject({ max_output_tokens: 1024, store: false });
+    expect(auditOptions).toMatchObject({ maxRetries: 0 });
+    expect(auditData(auditRequest as AuditRequest)).toMatchObject({
+      answer: 'Save at the lantern checkpoint before the boss encounter. [1]',
+      evidence: expect.arrayContaining([expect.objectContaining({ text: expect.stringContaining('Follow the western path to the courtyard') })])
+    });
     const providerPrompt = (mockProvider.mock.calls[0][0] as { input: { prompt: string } }).input.prompt;
     expect(providerPrompt).toContain('Follow the western path to the courtyard');
     expect(providerPrompt).not.toContain('Download Options');
@@ -162,6 +204,7 @@ describe('Archive guide document reaches the Gaming provider and HTTP envelope',
       } },
     } });
     expect(mockProvider).not.toHaveBeenCalled();
+    expect(mockAuditResponsesCreate).not.toHaveBeenCalled();
     expect(mockStoredContext).not.toHaveBeenCalled();
     expect(successLog).not.toHaveBeenCalledWith('gaming.backend.success', expect.anything());
     expect(successLog).not.toHaveBeenCalledWith('gaming.grounding.success', expect.anything());
@@ -188,6 +231,7 @@ describe('Archive guide document reaches the Gaming provider and HTTP envelope',
       } },
     } });
     expect(mockProvider).not.toHaveBeenCalled();
+    expect(mockAuditResponsesCreate).not.toHaveBeenCalled();
     expect(mockAxiosGet).toHaveBeenCalledTimes(1);
   });
 
@@ -207,5 +251,6 @@ describe('Archive guide document reaches the Gaming provider and HTTP envelope',
     expect(second.body.result).toMatchObject({ ok: true, data: { grounding: { groundedInSuppliedEvidence: true } } });
     expect(mockAxiosGet).toHaveBeenCalledTimes(2);
     expect(mockProvider).toHaveBeenCalledTimes(2);
+    expect(mockAuditResponsesCreate).toHaveBeenCalledTimes(2);
   });
 });

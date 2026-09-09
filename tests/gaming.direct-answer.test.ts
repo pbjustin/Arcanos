@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { createGamingClearAssessment, gamingClearContextFingerprint, gamingClearHash } from '../src/shared/gaming/gamingClearPolicy.js';
 
 const mockResponsesCreate = jest.fn();
 const mockGetOpenAIClientOrAdapter = jest.fn();
@@ -16,6 +17,25 @@ const mockGetEnvBoolean = jest.fn();
 const mockRunTrinityWritingPipeline = jest.fn();
 const mockBuildStoredGamingKnowledgeContext = jest.fn();
 const DEFAULT_GUIDE_SNIPPET = 'Clean guide explains boss mechanics, route steps, and readable gameplay evidence.';
+
+// This existing suite isolates acquisition, formatting and provider orchestration.
+// Its generic snippets are deliberately not semantic-judgment fixtures. The real
+// CLEAR policies/provider audit are exercised by gaming-clear-{pipeline,answer-audit}
+// and gaming-player-context.e2e tests; this harness supplies explicit bound audit doubles.
+function orchestrationAssessment(profile: 'evidence' | 'answer', text: string, invalidCitation = false) {
+  return createGamingClearAssessment({ profile, questionProfile: 'walkthrough', subjectId: 'orchestration-fixture',
+    subjectHash: gamingClearHash(text), contextFingerprint: gamingClearContextFingerprint('orchestration-fixture'),
+    evidenceRefs: ['orchestration-evidence'],
+    gates: { security: 'verified', identity: 'verified', compatibility: 'verified', claimSupport: 'verified', provenance: 'verified', freshness: 'not_applicable' },
+    dimensions: Object.fromEntries(['clarity', 'leverage', 'efficiency', 'alignment', 'resilience'].map(name => [name,
+      { status: 'evaluated', score: 4.5, reasonCodes: ['FIXTURE_ACCEPTED'], evidenceRefs: ['orchestration-evidence'], unresolvedFacts: [] }
+    ])) as Parameters<typeof createGamingClearAssessment>[0]['dimensions'],
+    findings: invalidCitation ? [{ code: 'CITATION_NOT_FOUND', severity: 'blocking', evidenceRefs: [] }] : []
+  });
+}
+jest.unstable_mockModule('@shared/gaming/gamingClearEvidence.js', () => ({
+  assessGamingClearEvidence: () => orchestrationAssessment('evidence', 'controlled orchestration evidence')
+}));
 
 /** Provider-only regressions must first have real selected evidence from the controlled repository. */
 function useControlledStoredGuideEvidence(): void {
@@ -77,7 +97,13 @@ jest.unstable_mockModule('@platform/runtime/env.js', () => ({
 }));
 
 jest.unstable_mockModule('@core/logic/trinityWritingPipeline.js', () => ({
-  runTrinityWritingPipeline: mockRunTrinityWritingPipeline
+  runTrinityWritingPipeline: async (input: { input: { prompt: string } }) => {
+    const result = await mockRunTrinityWritingPipeline(input) as { result?: string } | undefined;
+    if (!result || typeof result.result !== 'string') return result;
+    const sourceNumbers = new Set(Array.from(input.input.prompt.matchAll(/\[Source (\d+)\]/gu), match => Number(match[1])));
+    const invalidCitation = extractInlineSourceRefs(result.result).some(index => !sourceNumbers.has(index));
+    return { ...result, gamingClearAudit: orchestrationAssessment('answer', result.result, invalidCitation) };
+  }
 }));
 
 jest.unstable_mockModule('@services/gamingSourceIngestion.js', () => ({
@@ -464,7 +490,9 @@ describe('gaming guide output hardening', () => {
       expect(trinityRequest.input.prompt).toContain('Return only 5 short numbered bullets');
       expect(trinityRequest.context.runOptions).toEqual(expect.objectContaining({
         answerMode: 'direct',
-        strictUserVisibleOutput: true
+        strictUserVisibleOutput: true,
+        disableOptionalSideEffects: true,
+        redactAuditContent: true
       }));
       expect(trinityRequest.context.runOptions).not.toHaveProperty('requestedVerbosity');
       expect(warnSpy).toHaveBeenCalledWith('gaming.provider.incomplete', expect.objectContaining({
@@ -512,7 +540,9 @@ describe('gaming guide output hardening', () => {
     expect(trinityRequest.input.prompt).not.toContain('Answer the request directly');
     expect(trinityRequest.context.runOptions).toEqual(expect.objectContaining({
       answerMode: 'explained',
-      strictUserVisibleOutput: true
+      strictUserVisibleOutput: true,
+      disableOptionalSideEffects: true,
+      redactAuditContent: true
     }));
   });
 
@@ -715,7 +745,7 @@ describe('gaming guide output hardening', () => {
     expect(normalizeGamingInlineSourceReferences(input, 1).response).toBe(expected);
   });
 
-  it('normalizes generated citations so inline source refs map to public sources', async () => {
+  it('rejects generated references to missing sources instead of presenting an obsolete audited answer', async () => {
     mockFetchAndClean.mockImplementation(async (url: string) => `Guide for ${url}: Elden Ring route, preparation, boss danger checks, and upgrades.`);
     mockRunTrinityWritingPipeline.mockResolvedValueOnce({
       result: 'Use [Source 3] for the route, (sources 1, 4) for prep, [1, 4] for danger checks, and source 2 for upgrades.',
@@ -732,7 +762,9 @@ describe('gaming guide output hardening', () => {
     });
 
     expect(result.data.sources).toHaveLength(2);
-    expect(result.data.response).toBe('Use for the route, (source 1) for prep, [1] for danger checks, and (source 2) for upgrades.');
+    expect(result.data.fallbackReason).toBe('GAMING_ANSWER_REJECTED');
+    expect(result.data.response).not.toContain('for the route');
+    expect(result.data.grounding?.groundedInSuppliedEvidence).toBe(false);
     expectInlineSourceRefsToMap(result.data.response, result.data.sources.length);
   });
 

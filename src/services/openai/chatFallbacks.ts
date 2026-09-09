@@ -48,6 +48,8 @@ type ChatCompletionParams = Omit<OpenAI.Chat.Completions.ChatCompletionCreatePar
   timeoutMs?: number;
   preserveAggregateAbortContext?: boolean;
   redactErrorDetails?: boolean;
+  /** Optional per-request transport retry cap; omitted preserves existing SDK behavior. */
+  maxRetries?: 0;
 };
 
 function resolveCompletionCancellationSignal(
@@ -106,7 +108,7 @@ function resolveChatAbortReason(signal: AbortSignal): Error {
 function createResponsesWithBoundary(
   clientOrAdapter: OpenAI | OpenAIAdapter,
   requestPayload: ReturnType<typeof buildResponsesRequest>,
-  options: { signal?: AbortSignal; timeout?: number }
+  options: { signal?: AbortSignal; timeout?: number; maxRetries?: 0 }
 ): Promise<any> {
   if (isOpenAIAdapter(clientOrAdapter)) {
     return clientOrAdapter.responses.create(requestPayload, options);
@@ -379,7 +381,7 @@ const executeChatCompletionRequest = async (
       () => createResponsesWithBoundary(
           clientOrAdapter,
           requestPayload,
-          { signal: requestSignal }
+          { signal: requestSignal, ...(payload.maxRetries === 0 ? { maxRetries: 0 } : {}) }
         ),
       requestSignal
     );
@@ -397,6 +399,7 @@ const executeChatCompletionRequest = async (
       () => createResponsesWithBoundary(clientOrAdapter, requestPayload, {
           signal: requestScope.signal,
           timeout: requestTimeoutMs,
+          ...(payload.maxRetries === 0 ? { maxRetries: 0 } : {}),
         }),
       requestScope.signal,
     );

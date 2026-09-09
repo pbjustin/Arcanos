@@ -2,6 +2,8 @@ import { splitGamingDocumentIntoChunks as splitIntoChunks } from "@services/gami
 import { createHash } from "node:crypto";
 import { GAMEPLAY_CONTENT_PATTERN, filterGamingDocumentInstructions, isGamingCatalogMetadataOnly } from "@services/gamingDocumentExtraction.js";
 import type { GamingPlayerContext } from '@shared/gaming/gamingPlayerContext.js';
+import type { GamingStoredKnowledgeContext } from '@shared/gaming/gamingStoredEvidenceCore.js';
+import { extractGamingFreshnessMetadata } from '@shared/gaming/gamingFreshnessCore.js';
 import { buildGamingRetrievalTerms, GAMING_RETRIEVAL_POLICY_VERSION, gamingTermCoverage, safeGamingEvidenceMetadata, scopeGamingEvidenceParagraphs } from '@shared/gaming/gamingRetrievalPolicy.js';
 import { describeGamingDocumentSource, resolveGamingDocument } from "@services/gamingDocumentResolution.js";
 import { load } from "cheerio";
@@ -76,6 +78,8 @@ export type GamingWebContext = {
 };
 
 export type GamingRagContext = GamingWebContext & {
+  /** Internal exact passages surviving formatting; never a public source-field expansion. */
+  clearKnowledge?: GamingStoredKnowledgeContext;
   retrievalEnabled: boolean;
   retrievalReason: string;
   retrievalQuery: string;
@@ -138,6 +142,7 @@ export type GamingWebContextLogContext = {
 type GamingSourceType = "official" | "patch_notes" | "wiki" | "curated" | "supplied";
 
 type GamingSourceCandidate = {
+  partialExtraction?: boolean;
   url: string;
   fetchUrl: string;
   title: string;
@@ -386,6 +391,7 @@ const BUILTIN_SOURCE_CATALOG: Array<{
 ];
 
 const documentCache = new Map<string, {
+  partialExtraction?: boolean;
   text: string;
   corroborationText?: string;
   fetchedAt: string;
@@ -1819,7 +1825,7 @@ async function fetchGamingRagDocument(
     }
     return {
       candidate: candidateWithFetchedGameCorroboration(
-        candidate,
+        { ...candidate, partialExtraction: cached.partialExtraction },
         input,
         cached.corroborationText ?? cached.text,
         cached.extraction,
@@ -1894,6 +1900,7 @@ async function fetchGamingRagDocument(
     let rawDocument: FetchAndCleanRawDocument | undefined;
     let archiveResolution: GamingArchiveResolutionTelemetry | undefined;
     let supportsStructuredExtraction = true;
+    let partialExtraction = false;
     const fetchedArticleText = await runWithLocalTimeout(
       async (signal) => {
         const document = await resolveGamingDocument(fetchUrl,
@@ -1904,6 +1911,7 @@ async function fetchGamingRagDocument(
             rawDocumentMaxChars: GAMING_BUILD_RESOURCE_HARD_LIMITS.maxHtmlChars
           });
         extraction = document.extraction;
+        partialExtraction = document.metrics.truncated;
         rawDocument = document.rawDocument;
         archiveResolution = document.archiveResolution;
         supportsStructuredExtraction = document.resolution.supportsStructuredExtraction;
@@ -1976,6 +1984,7 @@ async function fetchGamingRagDocument(
     const fetchedPageDate = strictEvidenceCandidate ? extractFetchedPageDate(rawDocument, fetchUrl) : undefined;
     pruneDocumentCache(now);
     documentCache.set(cacheKey, {
+      partialExtraction,
       text,
       ...(untrustedEvidenceCandidate ? { corroborationText: articleText } : {}),
       fetchedAt,
@@ -2014,7 +2023,7 @@ async function fetchGamingRagDocument(
     }
     return {
       candidate: candidateWithFetchedGameCorroboration(
-        candidate,
+        { ...candidate, partialExtraction },
         input,
         untrustedEvidenceCandidate ? articleText : text,
         effectiveExtraction,
@@ -2583,11 +2592,12 @@ function buildRagContext(
   retrievalQuery: string,
   maxContextChars: number,
   input: GamingRagInput
-): { context: string; selectedChunkCount: number; selectedSourceUrls: Set<string> } {
+): { context: string; selectedChunkCount: number; selectedSourceUrls: Set<string>; selectedEvidence: Array<{ chunk: GamingRankedChunk; text: string }> } {
   const selectedSourceUrls = new Set<string>();
+  const selectedEvidence: Array<{ chunk: GamingRankedChunk; text: string }> = [];
   let selectedChunkCount = 0;
   if (sources.length === 0) {
-    return { context: "", selectedChunkCount, selectedSourceUrls };
+    return { context: "", selectedChunkCount, selectedSourceUrls, selectedEvidence };
   }
 
   const sourceNumberByUrl = buildSourceNumberByUrl(sources);
@@ -2618,18 +2628,27 @@ function buildRagContext(
     const title = safeGamingEvidenceMetadata(chunk.candidate.title, input, 240);
     const header = [
       "", `[Source ${sourceNumber}] ${chunk.candidate.url}`,
-      `${title ? `Title: ${title}; ` : ''}Domain: ${domain}; Type: ${chunk.candidate.sourceType}; Trust: ${chunk.candidate.trustScore.toFixed(2)}${freshnessNote}`
+      `${title ? `Title: ${title}; ` : ''}Domain: ${domain}; Type: ${chunk.candidate.sourceType}; Trust: ${chunk.candidate.trustScore.toFixed(2)}${freshnessNote}`,
+      ...(chunk.candidate.partialExtraction ? ['Coverage: partial extraction. Use only intact selected passages; missing prerequisites are unknown.'] : [])
     ];
     const availableChars = maxContextChars - [...parts, ...header, ""].join("\n").length;
     // A source header alone is not evidence. Count only readable text that fits
     // the final provider context, using the existing gameplay readability test.
-    const boundedEvidence = evidenceText.slice(0, Math.max(0, availableChars)).trim();
+    let boundedEvidence = evidenceText.slice(0, Math.max(0, availableChars)).trim();
+    if (boundedEvidence.length < evidenceText.length) {
+      // A clipped qualification or prerequisite changes a claim. Keep only
+      // complete fitting sentences; a header or mid-sentence prefix is not evidence.
+      const sentenceEnds = [...boundedEvidence.matchAll(/[.!?](?=\s|$)/gu)];
+      const lastEnd = sentenceEnds.at(-1)?.index;
+      boundedEvidence = lastEnd === undefined ? '' : boundedEvidence.slice(0, lastEnd + 1).trim();
+    }
     if (!boundedEvidence || !isReadableGameplayChunk(boundedEvidence)) {
       return;
     }
     parts.push(...header, boundedEvidence);
     selectedChunkCount += 1;
     selectedSourceUrls.add(chunk.candidate.url);
+    selectedEvidence.push({ chunk, text: boundedEvidence });
   });
 
   sources.forEach((source, index) => {
@@ -2644,7 +2663,8 @@ function buildRagContext(
   return {
     context: parts.join("\n").slice(0, Math.max(0, maxContextChars)),
     selectedChunkCount,
-    selectedSourceUrls
+    selectedSourceUrls,
+    selectedEvidence
   };
 }
 
@@ -3184,6 +3204,28 @@ export async function buildGamingRagContext(
   const retrievedSourceCount = documents.length;
   const fetchedSuppliedSourceCount = documents.filter((document) => document.candidate.supplied).length;
   const selectedChunkCount = renderedContext.selectedChunkCount;
+  const clearKnowledge: GamingStoredKnowledgeContext = { context, sources: [], evidence: [] };
+  for (const source of retainedSources.filter(isCitableGamingWebSource)) {
+    const document = documents.find(item => item.candidate.url === source.url);
+    if (!document) continue;
+    const sourceId = `live:${hashChunk(source.url)}`;
+    const revisionId = `live:${hashChunk(document.text)}`;
+    const reliableGame = detectReliableDocumentGame(document) ?? detectGameFromDocumentIntro(document, effectiveInput.game)
+      ?? (document.candidate.gameCorroborated ? effectiveInput.game : undefined)
+      ?? (!document.candidate.untrustedCandidate ? document.candidate.games?.[0] : undefined);
+    const metadata = effectiveInput.game ? extractGamingFreshnessMetadata({ publicUrl: source.url, text: document.text,
+      metadata: { title: document.extraction.documentTitle, headings: document.extraction.headingText } },
+      { game: effectiveInput.game, edition: effectiveInput.edition, platform: effectiveInput.platform }, new Date(document.fetchedAt)) : undefined;
+    clearKnowledge.sources.push({ sourceId, url: source.url, snippet: source.snippet ?? '',
+      sourceType: document.candidate.sourceType, origin: 'live', fetchedAt: document.fetchedAt,
+      ...(reliableGame ? { game: reliableGame } : {}),
+      ...(metadata ? { freshnessMetadata: { ...metadata, id: sourceId, partialExtraction: document.candidate.partialExtraction === true } } : {}) });
+    for (const item of renderedContext.selectedEvidence.filter(item => item.chunk.candidate.url === source.url)) {
+      clearKnowledge.evidence!.push({ sourceId, revisionId, recordId: `live:${hashChunk(item.text)}`,
+        recordType: effectiveInput.mode, publicUrl: source.url, text: item.text,
+        lexicalScore: item.chunk.score, combinedScore: item.chunk.score, provenance: { fetchedAt: document.fetchedAt } });
+    }
+  }
   const acceptedSourceCount = retainedSources.filter((source) =>
     discoveredCandidateUrls.has(source.url) && isCitableGamingWebSource(source)
   ).length;
@@ -3308,6 +3350,7 @@ export async function buildGamingRagContext(
   return {
     context,
     sources: returnedSources,
+    clearKnowledge,
     retrievedSourceCount,
     fetchedSuppliedSourceCount,
     selectedChunkCount,

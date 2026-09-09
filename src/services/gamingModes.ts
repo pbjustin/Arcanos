@@ -17,6 +17,8 @@ export type GamingEvidenceRequest = {
 };
 
 export type GamingFallbackReason =
+  | "GAMING_ANSWER_AUDIT_UNAVAILABLE"
+  | "GAMING_ANSWER_REJECTED"
   | "CURRENT_EVIDENCE_UNAVAILABLE"
   | "GAMING_PROVIDER_ERROR"
   | "GAMING_PROVIDER_UNAVAILABLE"

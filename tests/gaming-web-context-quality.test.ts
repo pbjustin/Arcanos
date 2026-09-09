@@ -76,6 +76,7 @@ function mockFetchedHtml(params: {
   headings?: string;
   date?: string;
   htmlExtra?: string;
+  partialExtraction?: boolean;
 }): void {
   mockFetchAndClean.mockImplementation(async (
     _url: string,
@@ -104,7 +105,7 @@ function mockFetchedHtml(params: {
         '</article></body></html>'
       ].join(''),
       contentType: 'text/html',
-      truncated: false
+      truncated: params.partialExtraction ?? false
     });
     return params.text;
   });
@@ -171,6 +172,25 @@ describe('gaming RAG snippet quality', () => {
     }));
     expect(routeFetch?.[2]?.removeSelectors).not.toContain('.fex-main-sidebar-container');
     expect(routeFetch?.[2]?.removeSelectors).not.toContain("[class*='sidebar']");
+  });
+
+  it('retains complete attributable sentences at the context boundary and records partial extraction through cache reuse', async () => {
+    process.env.ARCANOS_GAMING_RAG_CHUNK_CHARS = '4000';
+    process.env.ARCANOS_GAMING_WEB_CONTEXT_CHARS = '600';
+    const first = 'In Lantern Vale, turn the west valve beside the pump to open the return route through Tide Hall.';
+    const prerequisite = `Only attempt the return route after ${'checking the required gate key and return route prerequisites '.repeat(14)}is complete.`;
+    mockFetchedHtml({ title: 'Lantern Vale guide', text: `${first} ${prerequisite}`, partialExtraction: true });
+    const input = { game: 'Lantern Vale', mode: 'guide' as const, prompt: 'How do I open the return route?',
+      guideUrl: 'https://example.com/lantern-guide', guideUrls: [] };
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const result = await buildGamingRagContext(input);
+      expect(result.context.length).toBeLessThanOrEqual(600);
+      expect(result.context).toContain('Coverage: partial extraction');
+      expect(result.clearKnowledge?.sources[0].freshnessMetadata?.partialExtraction).toBe(true);
+      expect(result.clearKnowledge?.evidence?.[0].text).toBe(first);
+      expect(result.context).not.toContain('Only attempt');
+    }
+    expect(mockFetchAndClean).toHaveBeenCalledTimes(1);
   });
 
   it('uses player checkpoints in live acquisition terms and excludes unrelated future passages', async () => {

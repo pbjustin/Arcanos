@@ -56,6 +56,10 @@ import { formatStoredGamingEvidence } from "@services/gamingStoredKnowledge.js";
 import { pickGamingPlayerContext, resolveGamingPlayerContext, type GamingPlayerContext } from "@shared/gaming/gamingPlayerContext.js";
 import { resolveGamingAnswerPolicy } from "@shared/gaming/gamingAnswerPolicy.js";
 import { GAMING_HYBRID_INTAKE } from '@shared/gaming/gamingGuideIntakeCore.js';
+import { assessGamingClearEvidence } from '@shared/gaming/gamingClearEvidence.js';
+import { type GamingClearAssessment } from '@shared/gaming/gamingClearPolicy.js';
+import { gamingClearAnswerMatches, runGamingClearAnswerAudit } from '@services/gamingClearAnswerAudit.js';
+import { GAMING_CLEAR_APPROVED_ANSWER } from '@shared/gaming/gamingClearAnswerBinding.js';
 
 export type GamingPipelineInput = Pick<
   ValidatedGamingRequest,
@@ -460,11 +464,15 @@ function formatGameplaySuccessWithLogs(params: {
   discoveryFailureReason?: GamingDiscoveryFailureReason;
   evidenceRequest?: GamingEvidenceRequest;
   grounding?: GamingGrounding;
+  answerAssessment?: GamingClearAssessment;
 }): GamingSuccessEnvelope {
   const postprocessStartedAt = Date.now();
   const citableSourceCount = params.sources.filter(isCitableGamingWebSource).length;
   const citationNormalization = normalizeGamingInlineSourceReferences(params.response, citableSourceCount);
-  const response = citationNormalization.response;
+  // The answer review saw the exact final citation spellings. Do not alter a
+  // claim/citation after it passes; unaudited legacy/recovery paths retain normalization.
+  const approvedAnswer = gamingClearAnswerMatches(params.answerAssessment, params.response);
+  const response = approvedAnswer ? params.response : citationNormalization.response;
   const grounding: GamingGrounding = params.grounding ?? {
     groundingStatus: "unavailable",
     requestedSourceCount: 0,
@@ -507,6 +515,9 @@ function formatGameplaySuccessWithLogs(params: {
         : {}),
       ...(params.evidenceRequest ? { evidenceRequest: params.evidenceRequest } : {})
     }
+  });
+  if (approvedAnswer) Object.defineProperty(envelope.data, GAMING_CLEAR_APPROVED_ANSWER, {
+    value: params.answerAssessment, enumerable: false
   });
 
   logger.info("gaming.postprocess.end", {
@@ -583,20 +594,27 @@ function buildGamingRunOptions(mode: GamingMode, _hasGuideSources: boolean) {
   if (mode === "build") {
     return {
       answerMode: "direct" as const,
-      strictUserVisibleOutput: true
+      strictUserVisibleOutput: true,
+      disableOptionalSideEffects: true,
+      redactAuditContent: true
     };
   }
 
   return {
     answerMode: "explained" as const,
-    strictUserVisibleOutput: true
+    strictUserVisibleOutput: true,
+    disableOptionalSideEffects: true,
+    redactAuditContent: true
   };
 }
 
 export interface GamingPreparedEvidence {
+  /** Internal authorization scope; never accepted from the public request body. */
+  actorScopeHash?: string;
   knowledge: GamingStoredKnowledgeContext;
   current: boolean;
   qualification: string;
+  clearEvidenceAssessment?: GamingClearAssessment;
 }
 
 export async function runGameplayPipeline(params: GamingPipelineInput, prepared?: GamingPreparedEvidence): Promise<GamingSuccessEnvelope> {
@@ -674,11 +692,13 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
   let fetchedSuppliedSourceCount = 0;
   let selectedChunkCount = 0;
   let storedSourceKnown = false;
+  let storedRetrievalUnavailable = false;
   let retrievedGame: string | undefined;
   let fallbackReason: GamingFallbackReason | undefined;
   let discoveryReason: GamingDiscoveryReason | undefined;
   let discoveryFailureReason: GamingDiscoveryFailureReason | undefined;
   let currentEvidenceAvailable = false;
+  let clearKnowledge: GamingStoredKnowledgeContext = prepared?.knowledge ?? { context: '', sources: [], evidence: [] };
   if (prepared) {
     webContext = [prepared.knowledge.context, prepared.qualification].filter(Boolean).join('\n\n');
     sources = prepared.knowledge.sources.map(source => ({
@@ -695,6 +715,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
     currentEvidenceAvailable = prepared.current;
   } else try {
     const webContextResult = await buildGamingRagContext(params, baseLogContext, getRequestAbortSignal());
+    clearKnowledge = webContextResult.clearKnowledge ?? { context: '', sources: [], evidence: [] };
     webContext = webContextResult.context;
     sources = webContextResult.sources;
     retrievalAttempted = webContextResult.retrievalEnabled;
@@ -835,6 +856,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
           abortMessage: `Gaming stored retrieval timed out after ${storedRetrievalTimeoutMs}ms`
         },
         () => buildStoredGamingKnowledgeContext({
+          failOnUnavailable: true,
           ...pickGamingPlayerContext(resolvedParams),
           game: resolvedGame,
           prompt: resolvedParams.prompt,
@@ -852,6 +874,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
         throw error;
       }
       storedRetrievalError = error;
+      storedRetrievalUnavailable = true;
       logger.warn("gaming.stored_retrieval_failed", {
         ...baseLogContext,
         elapsedMs: Date.now() - storedRetrievalStartedAt,
@@ -877,6 +900,8 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
         uniqueStoredSources = projected.sources;
         storedContext = projected.context;
         storedSelectedChunkCount = projected.evidence?.length ?? 0;
+        clearKnowledge = { context: '', sources: [...clearKnowledge.sources, ...projected.sources],
+          evidence: [...(clearKnowledge.evidence ?? []), ...(projected.evidence ?? [])] };
         logger.info("gaming.stored_evidence.selected", {
           ...baseLogContext,
           chunks: (projected.evidence ?? []).map(evidence => ({
@@ -1060,7 +1085,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
     const unavailableReason: GamingFallbackReason = fallbackReason ?? "INTAKE_RETRIEVAL_FAILED";
     return formatGameplaySuccessWithLogs({
       mode: resolvedParams.mode,
-      response: buildGamingProviderFallbackResponse({
+      response: storedRetrievalUnavailable ? 'I couldn’t check the saved guide information right now. Please try again shortly.' : buildGamingProviderFallbackResponse({
         input: resolvedParams, sources: [], sourceKnown: storedSourceKnown, fallbackReason: unavailableReason
       }),
       sources, logContext: baseLogContext, requestStartedAt, grounding,
@@ -1069,6 +1094,27 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
     });
   }
 
+  clearKnowledge = { ...clearKnowledge, context: webContext };
+  const auditContext = { actorScopeHash: prepared?.actorScopeHash };
+  const evidenceAssessment = assessGamingClearEvidence({ ...resolvedParams, game: resolvedParams.game ?? '' }, clearKnowledge, auditContext);
+  logger.info('gaming.clear.evidence.completed', {
+    ...baseLogContext, rubricVersion: evidenceAssessment.rubricVersion, profile: evidenceAssessment.profile,
+    policyProfile: evidenceAssessment.policyProfile, subjectHash: evidenceAssessment.subjectHash,
+    assessmentMethod: evidenceAssessment.assessmentMethod, assessmentStatus: evidenceAssessment.assessmentStatus,
+    dimensionScores: evidenceAssessment.dimensionScores, overall: evidenceAssessment.overall,
+    decision: evidenceAssessment.decision, reasonCodes: evidenceAssessment.findings.map(finding => finding.code),
+    blockingFindingCount: evidenceAssessment.blockingFindings.length, providerInvoked: false
+  });
+  if (evidenceAssessment.decision !== 'accept') {
+    const reason: GamingFallbackReason = evidenceAssessment.gates.freshness === 'unknown'
+      ? 'CURRENT_EVIDENCE_UNAVAILABLE' : 'INTAKE_RETRIEVAL_FAILED';
+    return formatGameplaySuccessWithLogs({ mode: params.mode,
+      response: buildGamingProviderFallbackResponse({ input: resolvedParams, sources: [], fallbackReason: reason,
+        sourceKnown: storedSourceKnown }), sources, logContext: baseLogContext, requestStartedAt,
+      grounding: { ...grounding, groundedInSuppliedEvidence: false, groundingStatus: 'insufficient_evidence' },
+      retrievedSourceCount, omittedSourceCount, fallbackReason: reason, discoveryReason, discoveryFailureReason,
+      ...(reason === 'CURRENT_EVIDENCE_UNAVAILABLE' ? { evidenceRequest: buildFrontendGamingEvidenceRequest(resolvedParams) } : {}) });
+  }
   const { client } = getOpenAIClientOrAdapter();
 
   if (!client) {
@@ -1144,6 +1190,10 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
             ),
             runOptions: {
               ...buildGamingRunOptions(params.mode, guideUrls.length > 0 && retrievalHadUsableSources),
+              gamingClearAnswerAudit: (answer, runtimeBudget) => runGamingClearAnswerAudit(client, {
+                ...resolvedParams, game: resolvedParams.game ?? '', answer, knowledge: clearKnowledge,
+                evidenceAssessment: assessGamingClearEvidence({ ...resolvedParams, game: resolvedParams.game ?? '' }, clearKnowledge, auditContext), requestId
+              }, runtimeBudget),
               ...(prepared ? { disableOptionalSideEffects: true, redactAuditContent: true, gamingGuideIntakePolicy: 'compact-v1' as const } : {}),
               ...(params.mode === "guide" ? { trustedPolicyPrompt: resolvedParams.prompt, internalMode: false } : {}),
               intentMode: "EXECUTE_TASK",
@@ -1429,9 +1479,29 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
     finishReason: trinityResult.meta?.provider?.finishReason ?? "unknown"
   });
 
+  // Applicability can expire while generation or the bounded audit is running.
+  // Recheck only deterministic metadata; this grants no extra model/discovery attempt.
+  const finalEvidenceAssessment = assessGamingClearEvidence({ ...resolvedParams, game: resolvedParams.game ?? '' }, clearKnowledge, auditContext);
+  if (!gamingClearAnswerMatches(trinityResult.gamingClearAudit, trinityResult.result)
+    || finalEvidenceAssessment.decision !== 'accept'
+    || finalEvidenceAssessment.contextFingerprint !== trinityResult.gamingClearAudit?.contextFingerprint) {
+    const auditRecoveryReason: GamingFallbackReason = finalEvidenceAssessment.gates.freshness === 'unknown'
+      ? 'CURRENT_EVIDENCE_UNAVAILABLE' : trinityResult.gamingClearAudit?.assessmentStatus === 'completed'
+      ? 'GAMING_ANSWER_REJECTED' : 'GAMING_ANSWER_AUDIT_UNAVAILABLE';
+    logger.info('gaming.answer.recovery', { ...baseLogContext, providerCompleted: true,
+      assessmentStatus: trinityResult.gamingClearAudit?.assessmentStatus ?? 'not_run',
+      decision: trinityResult.gamingClearAudit?.decision ?? 'unavailable',
+      reasonCodes: trinityResult.gamingClearAudit?.findings.map(finding => finding.code) ?? ['ANSWER_AUDIT_NOT_RUN'] });
+    return formatGameplaySuccessWithLogs({ mode: params.mode,
+      response: buildGamingProviderFallbackResponse({ input: resolvedParams, sources, fallbackReason: auditRecoveryReason }),
+      sources, logContext: baseLogContext, requestStartedAt, grounding,
+      retrievedSourceCount, omittedSourceCount, fallbackReason: auditRecoveryReason, discoveryReason, discoveryFailureReason });
+  }
+
   return formatGameplaySuccessWithLogs({
     mode: params.mode,
     response: trinityResult.result,
+    answerAssessment: trinityResult.gamingClearAudit,
     sources,
     logContext: baseLogContext,
     requestStartedAt,
