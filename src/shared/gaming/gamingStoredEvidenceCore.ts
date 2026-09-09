@@ -3,6 +3,8 @@ import { selectGamingDocumentExcerpt } from '@services/gamingDocumentChunks.js';
 import { filterGamingDocumentInstructions } from '@services/gamingDocumentExtraction.js';
 import type { GamingPlayerContext } from './gamingPlayerContext.js';
 import { buildGamingRetrievalTerms, gamingTermCoverage, safeGamingEvidenceMetadata, scopeGamingEvidenceParagraphs } from './gamingRetrievalPolicy.js';
+import { normalizeGamingEvidenceGameIdentity, resolveGamingGuideIdentity } from './gamingGameIdentity.js';
+import type { GamingClearAssessment } from './gamingClearPolicy.js';
 
 export const MAX_STORED_GAMING_CANDIDATES = 20;
 const MIN_QUERY_COVERAGE = 0.25;
@@ -19,6 +21,10 @@ export interface GamingStoredEvidenceLimits {
 
 /** Only fields read by evidence selection; no repository or runtime dependency. */
 export interface GamingStoredEvidenceRecord {
+  /** Validated and content-bound by the backend service before projection. */
+  clearSourceAssessment?: GamingClearAssessment;
+  /** Backend catalog identity when available; legacy pure inputs may omit it. */
+  gameName?: string;
   recordId: string;
   recordType: 'guide' | 'build' | 'meta';
   title: string | null;
@@ -74,6 +80,10 @@ export interface GamingStoredEvidenceChunk {
 }
 
 export interface GamingStoredKnowledgeSource {
+  game?: string;
+  edition?: string;
+  /** Internal provenance only; never a current question-dependent approval. */
+  clearSourceAssessment?: GamingClearAssessment;
   origin?: 'stored' | 'live';
   /** Server-owned revision provenance, never caller discovery hints. */
   freshnessMetadata?: Record<string, unknown>;
@@ -95,6 +105,8 @@ export interface GamingStoredKnowledgeContext {
   evidence?: GamingStoredEvidenceChunk[];
   /** Active stored catalog identity exists; it does not establish selected evidence. */
   sourceKnown?: boolean;
+  /** Current request assessment; excluded from the public source contract. */
+  clearEvidenceAssessment?: GamingClearAssessment;
 }
 
 export type GamingStoredPatchResolver<RecordType extends GamingStoredEvidenceRecord = GamingStoredEvidenceRecord> = (record: RecordType) => string | undefined;
@@ -145,6 +157,10 @@ function chunkMetadata(normalized: Record<string, unknown>): Pick<GamingStoredEv
 
 function projectCandidate<RecordType extends GamingStoredEvidenceRecord>(record: RecordType, terms: string[], input: GamingStoredKnowledgeInput, limits: GamingStoredEvidenceLimits, resolvePatch: GamingStoredPatchResolver<RecordType>): GamingStoredEvidenceCandidate | null {
   if (!Number.isFinite(record.relevance) || record.relevance <= 0) return null;
+  // Catalog-scoped retrieval remains authoritative. Defense in depth rejects an
+  // explicitly different record even if its prose happens to match every term.
+  if (record.gameName && ![input.game, resolveGamingGuideIdentity(input.game, input.edition)].map(normalizeGamingEvidenceGameIdentity)
+    .includes(normalizeGamingEvidenceGameIdentity(record.gameName))) return null;
   const normalized = record.normalized ?? {};
   const metadata = chunkMetadata(normalized);
   if (!metadata) return null;
@@ -177,6 +193,10 @@ function projectCandidate<RecordType extends GamingStoredEvidenceRecord>(record:
       }
     },
     source: {
+      ...(record.gameName ? { game: record.gameName }
+        : typeof provenance.gameName === 'string' ? { game: provenance.gameName.slice(0, 160) } : {}),
+      ...(typeof provenance.edition === 'string' ? { edition: provenance.edition.slice(0, 120) } : {}),
+      ...(record.clearSourceAssessment ? { clearSourceAssessment: record.clearSourceAssessment } : {}),
       ...(typeof provenance.approvedContentHash === 'string' ? { approvedContentHash: provenance.approvedContentHash } : {}),
       ...(provenance.hybridFreshness && typeof provenance.hybridFreshness === 'object' && !Array.isArray(provenance.hybridFreshness)
         ? { freshnessMetadata: provenance.hybridFreshness as Record<string, unknown> } : {}),

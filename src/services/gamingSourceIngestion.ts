@@ -26,6 +26,7 @@ import {
 import { normalizeGamingGameIdentity } from '@shared/gaming/gamingGameIdentity.js';
 import { GAMING_FRESHNESS_POLICY_VERSION, GAMING_SOURCE_POLICY_VERSION } from '@shared/gaming/gamingFreshnessCore.js';
 import { isGamingApprovedArtifactCurrent } from '@shared/gaming/gamingHybridPolicyCore.js';
+import { GAMING_CLEAR_VERSION, GAMING_CLEAR_POLICY_VERSION, parseGamingClearAssessment, type GamingClearAssessment } from '@shared/gaming/gamingClearPolicy.js';
 import { truncateTextByCharacters } from '@shared/http/clientResponseCommon.js';
 import { planAutonomousWorkerJob } from '@services/workerAutonomyService.js';
 
@@ -127,6 +128,15 @@ const queuedSourceSchema = z.object({
     freshnessPolicyVersion: z.literal(GAMING_FRESHNESS_POLICY_VERSION),
     sourcePolicyVersion: z.literal(GAMING_SOURCE_POLICY_VERSION),
     recordType: z.enum(['guide', 'build', 'meta']),
+    gamingClear: z.unknown().transform((value, context) => {
+      const assessment = parseGamingClearAssessment(value);
+      if (!assessment || assessment.profile !== 'source' || !assessment.qualityEligible
+        || JSON.stringify(assessment).length > 12_000) {
+        context.addIssue({ code: z.ZodIssueCode.custom, message: 'A current bounded source quality assessment is required.' });
+        return z.NEVER;
+      }
+      return assessment;
+    }).optional(),
     freshness: z.record(z.unknown()).refine(value => JSON.stringify(value).length <= 8_000)
   }).strict().optional()
 }).strict();
@@ -750,6 +760,7 @@ export async function createApprovedGamingSourceIngestion(
     actorScopeHash: string; sourceTrustType: 'official' | 'patch_notes' | 'wiki' | 'curated' | 'supplied';
     recordType?: 'guide' | 'build' | 'meta';
     freshness: Record<string, unknown>;
+    sourceAssessment: GamingClearAssessment;
   }[],
   idempotencyKey: string,
   context: GamingSourceGatewayContext & { canStore: boolean }
@@ -764,6 +775,9 @@ export async function createApprovedGamingSourceIngestion(
   const seen = new Set<string>();
   const approved: QueuedGamingSource[] = [];
   for (const [submittedIndex, source] of sources.entries()) {
+    if (source.sourceAssessment?.subjectHash !== source.contentHash) {
+      return buildGatewayValidationError('The source assessment is not bound to this approved content.');
+    }
     const admission = admitUrl(source.url, submittedIndex, seen);
     if (!admission.source) return buildGatewayValidationError('An approved source no longer passes URL admission.');
     const parsedSource = queuedSourceSchema.safeParse({
@@ -772,6 +786,7 @@ export async function createApprovedGamingSourceIngestion(
       trustScore: source.sourceTrustType === 'official' || source.sourceTrustType === 'patch_notes' ? 0.9 : 0.5,
       hybridApproval: { actorScopeHash: source.actorScopeHash, contentHash: source.contentHash,
         policyVersion: source.policyVersion, freshness: source.freshness,
+        gamingClear: source.sourceAssessment,
         freshnessPolicyVersion: GAMING_FRESHNESS_POLICY_VERSION, sourcePolicyVersion: GAMING_SOURCE_POLICY_VERSION,
         recordType: source.recordType ?? 'guide' }
     });
@@ -996,6 +1011,11 @@ async function ingestOneSource(
   };
   logger.info('gaming.source.fetch_started', logContext);
   try {
+    if (source.hybridApproval && !source.hybridApproval.gamingClear) {
+      return { submittedIndex: source.submittedIndex, status: 'rejected', canonicalUrl: source.canonicalUrl,
+        recordsCreated: 0, recordsUpdated: 0, completedAt: new Date().toISOString(),
+        error: { code: 'APPROVED_ASSESSMENT_REQUIRED', message: 'Evaluate this legacy source approval with the current quality policy before storing.', retryable: false } };
+    }
     const fetchedAt = new Date().toISOString();
     const document = await resolveGamingDocument(source.canonicalUrl, GAMING_DURABLE_DOCUMENT_LIMITS.documentChars, {
       signal,
@@ -1013,6 +1033,14 @@ async function ingestOneSource(
       return { submittedIndex: source.submittedIndex, status: 'rejected', canonicalUrl: source.canonicalUrl,
         recordsCreated: 0, recordsUpdated: 0, completedAt: new Date().toISOString(),
         error: { code: 'APPROVED_CONTENT_CHANGED', message: 'The source changed after approval; evaluate it again before storing.', retryable: false } };
+    }
+    const approvedAssessment = source.hybridApproval?.gamingClear;
+    if (source.hybridApproval && (!approvedAssessment || approvedAssessment.subjectHash !== source.hybridApproval.contentHash
+      || approvedAssessment.rubricVersion !== GAMING_CLEAR_VERSION
+      || !approvedAssessment.policyProfile.startsWith(`${GAMING_CLEAR_POLICY_VERSION}:`))) {
+      return { submittedIndex: source.submittedIndex, status: 'rejected', canonicalUrl: source.canonicalUrl,
+        recordsCreated: 0, recordsUpdated: 0, completedAt: new Date().toISOString(),
+        error: { code: 'APPROVED_CONTENT_CHANGED', message: 'The source assessment requires a new evaluation.', retryable: false } };
     }
     const chunked = await chunkGamingDocument(document.text, { signal });
     const cleanedText = chunked.text;
@@ -1192,7 +1220,8 @@ async function ingestOneSource(
       chunkingVersion: GAMING_DOCUMENT_CHUNKING_VERSION,
       ...(source.hybridApproval ? { hybridPolicyVersion: source.hybridApproval.policyVersion,
         freshnessPolicyVersion: source.hybridApproval.freshnessPolicyVersion,
-        sourcePolicyVersion: source.hybridApproval.sourcePolicyVersion, recordType } : {})
+        sourcePolicyVersion: source.hybridApproval.sourcePolicyVersion, gamingClearRubricVersion: GAMING_CLEAR_VERSION,
+        gamingClearPolicyVersion: GAMING_CLEAR_POLICY_VERSION, recordType } : {})
     }))}`;
     const records = chunked.chunks.map((chunk) => {
       const { text, semanticKey, ...chunkMetadata } = chunk;
@@ -1252,6 +1281,7 @@ async function ingestOneSource(
         documentResolverVersion: GAMING_DOCUMENT_RESOLVER_VERSION,
         ...(source.hybridApproval ? { hybridFreshness: source.hybridApproval.freshness,
           hybridPolicyVersion: source.hybridApproval.policyVersion,
+          gamingClear: source.hybridApproval.gamingClear,
           approvedContentHash: source.hybridApproval.contentHash } : {}),
         ...resolutionProvenance
       },

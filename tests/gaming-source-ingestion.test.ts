@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { createGamingClearAssessment, gamingClearHash } from '../src/shared/gaming/gamingClearPolicy.js';
 import {
   QUEUED_GPT_JOB_PRODUCER_CONTRACT_SOURCE,
   QUEUED_GPT_JOB_PRODUCER_CONTRACT_VERSION,
@@ -14,6 +15,15 @@ const searchActiveGamingKnowledgeMock = jest.fn();
 const resolveGamingDocumentMock = jest.fn();
 const planAutonomousWorkerJobMock = jest.fn();
 const ingestGamingBuildResourceMock = jest.fn();
+
+function sourceApproval(subjectHash: string) {
+  const dimension = { status: 'evaluated' as const, score: 4.5, reasonCodes: ['SYNTHETIC_SUPPORTED_SOURCE'],
+    evidenceRefs: ['synthetic-source'], unresolvedFacts: [] };
+  return createGamingClearAssessment({ profile: 'source', questionProfile: 'walkthrough', sourceRole: 'gameplay_guide',
+    subjectId: 'synthetic-source', subjectHash, contextFingerprint: gamingClearHash('synthetic-context'), evidenceRefs: ['synthetic-source'],
+    gates: { identity: 'verified', compatibility: 'verified', claimSupport: 'verified', freshness: 'verified', provenance: 'verified', security: 'verified' },
+    dimensions: { clarity: dimension, leverage: dimension, efficiency: dimension, alignment: dimension, resilience: dimension } });
+}
 
 function resolvedDocument(url: string, text: string, overrides: Record<string, unknown> = {}) {
   return {
@@ -240,6 +250,22 @@ beforeEach(async () => {
 });
 
 describe('gaming source ingestion', () => {
+  it('requires write permission and a strict content-bound quality assessment before hybrid enqueue', async () => {
+    const { createApprovedGamingSourceIngestion } = await import('../src/services/gamingSourceIngestion.js');
+    const actorKey = 'synthetic-hybrid-actor';
+    const contentHash = gamingClearHash('synthetic-content');
+    const source = { url: 'https://example.com/guide', game: 'Borderlands 4', contentHash,
+      actorScopeHash: createHash('sha256').update(actorKey).digest('hex'), policyVersion: 'gaming-hybrid-candidates/v1' as const,
+      sourceTrustType: 'supplied' as const, freshness: {}, sourceAssessment: sourceApproval(contentHash) };
+    expect((await createApprovedGamingSourceIngestion([source], 'no-write-1', { actorKey, canStore: false })).statusCode).toBe(403);
+    for (const assessment of [{ ...source.sourceAssessment, overall: 5 },
+      { ...source.sourceAssessment, rubricVersion: 'gaming-clear/v2' }, sourceApproval(gamingClearHash('other-content'))]) {
+      expect((await createApprovedGamingSourceIngestion([{ ...source, sourceAssessment: assessment as any }],
+        'invalid-assessment-1', { actorKey, canStore: true })).statusCode).toBe(400);
+    }
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+  });
+
   it('never promotes changed hidden structured HTML after hybrid approval of unchanged visible prose', async () => {
     const { createApprovedGamingSourceIngestion, hashGamingApprovedDocument } = await import('../src/services/gamingSourceIngestion.js');
     const url = 'https://example.com/borderlands-4-guide';
@@ -249,7 +275,8 @@ describe('gaming source ingestion', () => {
     const queued = await createApprovedGamingSourceIngestion([{
       url, game: 'Borderlands 4', contentHash: hashGamingApprovedDocument(approved as any),
       actorScopeHash: createHash('sha256').update(actorKey).digest('hex'),
-      policyVersion: 'gaming-hybrid-candidates/v1', sourceTrustType: 'supplied', freshness: {}
+      policyVersion: 'gaming-hybrid-candidates/v1', sourceTrustType: 'supplied', freshness: {},
+      sourceAssessment: sourceApproval(hashGamingApprovedDocument(approved as any))
     }], 'hybrid-hidden-json-1', { actorKey, canStore: true });
     expect(queued.statusCode).toBe(202);
     resolveGamingDocumentMock.mockResolvedValue({ ...approved, rawDocument: {
@@ -261,10 +288,28 @@ describe('gaming source ingestion', () => {
     expect(result.output.sources[0].status).toBe('stored');
     expect((ingestGamingBuildResourceMock.mock.calls[0][0] as any).html).toBeUndefined();
     const persisted = persistGamingSourceRevisionMock.mock.calls[0][0] as any;
+    expect(persisted.provenance.gamingClear).toMatchObject({ rubricVersion: 'gaming-clear/v1', profile: 'source',
+      subjectHash: hashGamingApprovedDocument(approved as any), qualityEligible: true });
     expect(JSON.stringify(persisted.records)).not.toContain('UNAPPROVED HIDDEN WEAPON');
     expect(JSON.stringify(persisted.records)).not.toContain('Test Weapon');
     expect(persisted.records.every((record: any) => !record.normalized.structuredEvidence && !record.normalized.equipment)).toBe(true);
     expect(persisted.records[0].searchText).toContain('equipment skills rotation');
+  });
+
+  it('reports legacy queued hybrid approval as requiring reassessment without fabricating a pass or invoking acquisition', async () => {
+    const { createApprovedGamingSourceIngestion } = await import('../src/services/gamingSourceIngestion.js');
+    const actorKey = 'legacy-hybrid-actor';
+    const contentHash = gamingClearHash('legacy-approved-content');
+    await createApprovedGamingSourceIngestion([{ url: 'https://example.com/guide', game: 'Borderlands 4', contentHash,
+      actorScopeHash: createHash('sha256').update(actorKey).digest('hex'), policyVersion: 'gaming-hybrid-candidates/v1',
+      sourceTrustType: 'supplied', freshness: {}, sourceAssessment: sourceApproval(contentHash) }], 'legacy-hybrid-1', { actorKey, canStore: true });
+    const body = (findOrCreateGptJobMock.mock.calls[0][0] as any).input.body;
+    delete body.sources[0].hybridApproval.gamingClear;
+    const result = await executeQueuedGamingSourceIngestion('019fe3cd-8c01-7f01-8d2d-caa951bc4b9b', body);
+    expect(result.output).toMatchObject({ status: 'completed_with_errors', sources: [{ status: 'rejected',
+      error: { code: 'APPROVED_ASSESSMENT_REQUIRED', retryable: false } }] });
+    expect(resolveGamingDocumentMock).not.toHaveBeenCalled();
+    expect(persistGamingSourceRevisionMock).not.toHaveBeenCalled();
   });
 
   it('preserves the prior revision when refetch truncates to the same approved text', async () => {
@@ -277,7 +322,7 @@ describe('gaming source ingestion', () => {
     const queued = await createApprovedGamingSourceIngestion([{
       url, game: 'Borderlands 4', contentHash: approvedHash,
       actorScopeHash: createHash('sha256').update(actorKey).digest('hex'),
-      policyVersion: 'gaming-hybrid-candidates/v1', sourceTrustType: 'supplied', freshness: {}
+      policyVersion: 'gaming-hybrid-candidates/v1', sourceTrustType: 'supplied', freshness: {}, sourceAssessment: sourceApproval(approvedHash)
     }], 'hybrid-truncated-refetch-1', { actorKey, canStore: true });
     expect(queued.statusCode).toBe(202);
     const queuedBody = (findOrCreateGptJobMock.mock.calls[0][0] as any).input.body;

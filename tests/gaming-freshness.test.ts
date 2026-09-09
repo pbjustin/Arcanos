@@ -137,6 +137,26 @@ describe('reviewed ownership and independently extracted source metadata', () =>
 });
 
 describe('current patch, hotfix, baseline, and rollout applicability', () => {
+  test('explicit historical patch evidence is evaluated against the requested version, not current age', () => {
+    const old = source('historical', { patch: '1.0', publishedAt: '2020-01-01', effectiveFrom: '2020-01-01',
+      effectiveUntil: '2021-01-01', fetchedAt: '2022-01-01', verifiedAt: '2022-01-01' });
+    const result = evaluate([old], { question: 'Explain the historical weapon behavior for old patch 1.0.', requestedVersion: '1.0' });
+    expect(result).toMatchObject({ usable: true, effectivePatch: '1.0', selectedEvidenceIds: ['historical'],
+      reasons: ['HISTORICAL_PATCH_APPLICABILITY_VERIFIED'] });
+    expect(result.qualification).toContain('not a claim that the patch is currently active');
+    expect(evaluate([old], { question: 'Explain the historical weapon behavior for old patch 2.0.', requestedVersion: '2.0' }).usable).toBe(false);
+    expect(evaluate([old], { question: 'What is the current best weapon build?', requestedVersion: '1.0' }).usable).toBe(false);
+  });
+
+  test('historical scope cannot admit future publications or contradictory same-patch builds', () => {
+    const request = { question: 'Explain the historical build on old patch 1.0.', requestedVersion: '1.0' };
+    expect(evaluate([source('future', { patch: '1.0', publishedAt: '2027-01-01' })], request).usable).toBe(false);
+    expect(evaluate([source('a', { patch: '1.0', build: 'a' }), source('b', { patch: '1.0', build: 'b' })], request))
+      .toMatchObject({ status: 'conflicting', usable: false });
+    expect(evaluate([source('a', { patch: '1.0', mechanicValues: { damage: '5' } }),
+      source('b', { patch: '1.0', mechanicValues: { damage: '7' } })], request)).toMatchObject({ status: 'conflicting', usable: false });
+  });
+
   test('newly fetched obsolete notes fail without an applicable current index', () => {
     expect(evaluate([source('obsolete', { patch: '1.0', publishedAt: '2020-01-01', effectiveFrom: '2020-01-01' })])).toMatchObject({ status: 'unverified', usable: false });
   });

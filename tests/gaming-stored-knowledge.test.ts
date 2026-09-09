@@ -1,5 +1,6 @@
 import { jest } from '@jest/globals';
 import type { GamingKnowledgeProvenanceRecord } from '../src/core/db/repositories/gamingSourceRepository.js';
+import { createGamingClearAssessment } from '../src/shared/gaming/gamingClearPolicy.js';
 
 const search = jest.fn<(...args: unknown[]) => Promise<GamingKnowledgeProvenanceRecord[]>>();
 const findSources = jest.fn<(...args: unknown[]) => Promise<Array<{ sourceId: string; gameKey: string; gameName: string }>>>();
@@ -98,6 +99,37 @@ describe('bounded stored Gaming chunk evidence', () => {
     const text = 'The Zephyrglass Compass opens the hidden route beyond the cobalt arch.';
     expect(selectStoredGamingEvidence([record('bad', text, { normalized: { text, chunk: { ordinal: -1, totalChunks: 1, startChar: 0, endChar: 30 } } })], input)).toEqual([]);
     expect(selectStoredGamingEvidence([record('legacy', text, { normalized: {} })], input)).toHaveLength(1);
+  });
+
+  test('CLEAR retains legacy readability but rejects explicit mismatched catalog game identity before scoring', async () => {
+    const text = 'The Zephyrglass Compass opens the hidden route beyond the cobalt arch.';
+    expect(selectStoredGamingEvidence([record('wrong-game', text, { gameName: 'Synthetic Quest 2' })], input)).toEqual([]);
+    search.mockResolvedValue([record('legacy', text, { normalized: {} })]);
+    const result = await retrieveStoredGamingKnowledge(input, { resolveVerifiedPatch: () => undefined });
+    expect(result.clearEvidenceAssessment).toMatchObject({ profile: 'evidence', assessmentStatus: 'completed', decision: 'accept' });
+    expect(result.sources[0].clearSourceAssessment).toBeUndefined();
+    expect(result.clearEvidenceAssessment?.findings.map(finding => finding.code)).toContain('LEGACY_SOURCE_NOT_PREVIOUSLY_ASSESSED');
+  });
+
+  test('prior source assessments are content/policy-bound and never replace current context assessment', async () => {
+    const dimension = { status: 'evaluated' as const, score: 4.5, reasonCodes: ['SUPPORTED_EVIDENCE'], evidenceRefs: ['original-source'], unresolvedFacts: [] };
+    const priorAssessment = createGamingClearAssessment({ profile: 'source', questionProfile: 'walkthrough', sourceRole: 'gameplay_guide',
+      subjectId: 'original-source', subjectHash: 'a'.repeat(64), contextFingerprint: 'b'.repeat(64), evidenceRefs: ['original-source'],
+      gates: { identity: 'verified', compatibility: 'verified', claimSupport: 'verified', freshness: 'not_applicable', provenance: 'verified', security: 'verified' },
+      dimensions: { clarity: dimension, leverage: dimension, efficiency: dimension, alignment: dimension, resilience: dimension } });
+    const text = 'The Zephyrglass Compass opens the hidden route beyond the cobalt arch.';
+    const bound = record('assessed', text, { provenance: { gamingClear: priorAssessment, approvedContentHash: priorAssessment.subjectHash } });
+    expect(selectStoredGamingEvidence([bound], input)[0].source.clearSourceAssessment?.subjectHash).toBe(priorAssessment.subjectHash);
+    for (const gamingClear of [{ ...priorAssessment, rubricVersion: 'gaming-clear/v0' }, { ...priorAssessment, policyProfile: 'client-easy-policy' }]) {
+      const result = selectStoredGamingEvidence([{ ...bound, provenance: { ...bound.provenance, gamingClear } }], input);
+      expect(result[0].source.clearSourceAssessment).toBeUndefined();
+    }
+    expect(selectStoredGamingEvidence([{ ...bound, provenance: { ...bound.provenance, approvedContentHash: 'c'.repeat(64) } }], input)[0].source.clearSourceAssessment).toBeUndefined();
+    search.mockResolvedValue([bound]);
+    const current = await retrieveStoredGamingKnowledge(input, { resolveVerifiedPatch: () => undefined });
+    expect(current.clearEvidenceAssessment?.contextFingerprint).not.toBe(priorAssessment.contextFingerprint);
+    const missing = await retrieveStoredGamingKnowledge({ ...input, prompt: 'Where is the violet tablet?' }, { resolveVerifiedPatch: () => undefined });
+    expect(missing.evidence).toBeUndefined();
   });
 
   test('retains independently extracted structured equipment evidence without treating metadata as evidence', () => {

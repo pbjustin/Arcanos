@@ -17,6 +17,9 @@ import { chunkGamingDocument, GAMING_DURABLE_DOCUMENT_LIMITS } from './gamingDur
 import { sanitizeGamingDiscoveryCandidateUrl } from './gamingSourceDiscovery.js';
 import { getGamingRagChunkChars, getGamingRagMaxChunks, getGamingRagMaxSources, getGamingWebContextMaxChars, getGamingWebContextFetchTimeoutMs } from './gamingConfig.js';
 import { createApprovedGamingSourceIngestion, hashGamingApprovedDocument, type GamingSourceGatewayContext } from './gamingSourceIngestion.js';
+import { assessGamingClearSource, gamingClearIntactSourceText } from '@shared/gaming/gamingClearSource.js';
+import { GAMING_CLEAR_VERSION, gamingClearHash, type GamingClearAssessment } from '@shared/gaming/gamingClearPolicy.js';
+import { pickGamingPlayerContext } from '@shared/gaming/gamingPlayerContext.js';
 
 export const GAMING_HYBRID_CANDIDATE_POLICY_VERSION = 'gaming-hybrid-candidates/v1';
 export const GAMING_HYBRID_CANDIDATE_LIMITS = Object.freeze({ count: 3, artifactTtlMs: 10 * 60_000, totalFetchMs: 12_000 });
@@ -57,6 +60,10 @@ export interface GamingHybridAcceptedCandidate {
   document: ResolvedGamingDocument;
   freshness: GamingFreshnessEvidence;
   sourcePolicy: ReturnType<typeof assessGamingSourcePolicy>;
+  sourceAssessment: GamingClearAssessment;
+  assessmentBinding: string;
+  sourceContext: GamingStoredKnowledgeInput & { region?: string };
+  sourceMetadataBinding: string;
 }
 
 interface GamingHybridCandidateDependencies {
@@ -67,33 +74,17 @@ interface GamingHybridCandidateDependencies {
 }
 
 const actorHash = (actorKey: string) => createHash('sha256').update(actorKey, 'utf8').digest('hex');
-const containsIdentity = (text: string, expected: string) => (`-${normalizeGamingGameIdentity(text)}-`)
-  .includes(`-${normalizeGamingGameIdentity(expected)}-`);
+const sourceMetadataBinding = (freshness: GamingFreshnessEvidence, policy: ReturnType<typeof assessGamingSourcePolicy>): string => {
+  const metadata = { ...freshness } as Record<string, unknown>;
+  // Only the workflow's separately artifact-bound official index attestation is additive.
+  delete metadata.currentVerification;
+  return gamingClearHash({ freshness: metadata, policy });
+};
 
 function unsafeHints(candidate: GamingHybridCandidateInput): boolean {
   return Object.entries(candidate).some(([key, value]) => key !== 'url' && value !== undefined
     && (typeof value !== 'string' || value.length > 240
       || filterGamingDocumentInstructions(value) !== value.normalize('NFKC').replace(/\s+/gu, ' ').trim()));
-}
-
-function identityFailure(document: ResolvedGamingDocument, input: GamingStoredKnowledgeInput): string | undefined {
-  const labeledGame = /\bgame\s*:\s*(.{1,160}?)(?=\.(?:\s|$)|;|\n|\s+(?:Edition|Platform|Region|Patch|Build|Published at|Effective from)\s*:|$)/iu.exec(document.text)?.[1]?.trim();
-  const expected = new Set([normalizeGamingGameIdentity(input.game), resolveGamingGuideIdentity(input.game, input.edition)]);
-  if (labeledGame && !expected.has(normalizeGamingGameIdentity(labeledGame))) return 'GAME_MISMATCH';
-  // Broad game-detection aliases intentionally omit some expansions/editions;
-  // they cannot authorize source identity. Only a complete requested name plus
-  // an ordinary document label, an exact title, or a precise Game label can.
-  const documentLabel = /^(?:(?:beginner|boss|build|class|combat|current|endgame|loadout|mechanics|patch|progression|pve|pvp|quest|raid|route|season|strategy|survival|synthetic)-){0,4}(?:guide|build|loadout|walkthrough|wiki|tips|patch-notes|release-notes|update-notes)$/u;
-  const metadata = [document.metadata.title, document.metadata.headings].filter((value): value is string => Boolean(value));
-  const exactTitle = metadata.some(value => {
-    const identity = normalizeGamingGameIdentity(value);
-    return [...expected].some(game => identity === game || (identity.startsWith(`${game}-`) && documentLabel.test(identity.slice(game.length + 1))));
-  });
-  if (!exactTitle && metadata.some(value => /.+\s+(?:guide|build|walkthrough|wiki|patch notes|release notes)$/iu.test(value))) return 'GAME_MISMATCH';
-  if (!labeledGame && !exactTitle) return 'GAME_IDENTITY_UNVERIFIED';
-  const metadataIdentity = [document.metadata.title, document.metadata.headings, document.text.slice(0, 1_000)].filter(Boolean).join(' ');
-  if (input.edition && !containsIdentity(metadataIdentity, input.edition)) return 'EDITION_UNVERIFIED';
-  return undefined;
 }
 
 /** Safe acquisition happens once. Full documents stay internal; existing chunks and selection bound context. */
@@ -116,8 +107,14 @@ export async function evaluateGamingHybridCandidates(
   for (const [submittedIndex, candidate] of input.candidates.entries()) {
     signal?.throwIfAborted();
     let publicUrl: string | undefined;
-    const reject = (reason: string) => decisions.push({ submittedIndex, ...(publicUrl ? { url: publicUrl } : {}),
-      decision: 'rejected', reasonCodes: [reason] });
+    let sourceAssessed = false;
+    const sourceStartedAt = Date.now();
+    const reject = (reason: string) => {
+      if (!sourceAssessed) logger.info('gaming.clear.source.not_run', { requestId: context.requestId, traceId: context.traceId,
+        rubricVersion: GAMING_CLEAR_VERSION, profile: 'source', assessmentStatus: 'not_run', reasonCodes: [reason],
+        elapsedMs: Date.now() - sourceStartedAt });
+      decisions.push({ submittedIndex, ...(publicUrl ? { url: publicUrl } : {}), decision: 'rejected', reasonCodes: [reason] });
+    };
     if (unsafeHints(candidate)) { reject('UNTRUSTED_METADATA_INVALID'); continue; }
     try {
       if (typeof candidate.url !== 'string' || candidate.url.length > 2_048) { reject('INVALID_URL'); continue; }
@@ -139,11 +136,11 @@ export async function evaluateGamingHybridCandidates(
       const quality = classifyGamingDocumentQuality({ cleanedText: document.text,
         navigationDensity: document.extraction.navigationDensity, truncated: document.metrics.truncated, minUsefulTextChars: 120 });
       if (quality === 'unusable' || quality === 'metadata-only') { reject('INSUFFICIENT_EXTRACTION'); continue; }
+      const intactText = gamingClearIntactSourceText(document);
+      if (intactText.trim().length < 120) { reject('INSUFFICIENT_EXTRACTION'); continue; }
       if (/\b(?:no (?:automated|machine) (?:access|use)|automated (?:access|use) (?:is )?prohibited|do not (?:store|redistribute) (?:this|our) content)\b/iu.test(document.text)) {
         reject('SOURCE_USE_RESTRICTED'); continue;
       }
-      const identity = identityFailure(document, input);
-      if (identity) { reject(identity); continue; }
       const reviewedPolicy = (dependencies.sourcePolicy ?? assessGamingSourcePolicy)(document.publicUrl, input.game);
       const policy = classifyGamingQuestionFreshness({ prompt: input.prompt, mode: input.mode }) === 'live_status'
         ? { ...reviewedPolicy, durableAllowed: false, autoStoreAllowed: false } : reviewedPolicy;
@@ -160,29 +157,52 @@ export async function evaluateGamingHybridCandidates(
       const contentHash = hashGamingApprovedDocument(document);
       const candidateId = randomUUID();
       freshness.id = candidateId;
-      const chunks = await chunkGamingDocument(document.text, { signal });
+      const sourceAssessment = assessGamingClearSource(input, document, { subjectId: candidateId, subjectHash: contentHash,
+        actorScopeHash: actorHash(context.actorKey), sourcePolicy: policy, freshness, now: now() });
+      sourceAssessed = true;
+      logger.info('gaming.clear.source.completed', { requestId: context.requestId, traceId: context.traceId,
+        rubricVersion: sourceAssessment.rubricVersion, profile: sourceAssessment.profile, policyProfile: sourceAssessment.policyProfile,
+        sourceRole: sourceAssessment.sourceRole, subjectHash: contentHash, assessmentMethod: sourceAssessment.assessmentMethod,
+        assessmentStatus: sourceAssessment.assessmentStatus, dimensionScores: sourceAssessment.dimensionScores,
+        overall: sourceAssessment.overall, decision: sourceAssessment.decision, blockingFindingCount: sourceAssessment.blockingFindings.length,
+        elapsedMs: Date.now() - sourceStartedAt, budgetOutcome: 'within_existing_acquisition_budget' });
+      const identityReasons = sourceAssessment.dimensionScores.alignment.reasonCodes;
+      if (!['accept', 'partial'].includes(sourceAssessment.decision)
+        || identityReasons.some(reason => ['GAME_MISMATCH', 'GAME_IDENTITY_UNVERIFIED', 'EDITION_UNVERIFIED'].includes(reason))) {
+        reject(identityReasons.find(reason => reason === 'GAME_MISMATCH')
+          ?? sourceAssessment.dimensionScores.leverage.reasonCodes.find(reason => reason === 'QUESTION_COVERAGE_INSUFFICIENT')
+          ?? identityReasons.find(reason => ['GAME_IDENTITY_UNVERIFIED', 'EDITION_UNVERIFIED'].includes(reason))
+          ?? sourceAssessment.blockingFindings[0]?.code ?? 'GAMING_CLEAR_SOURCE_REJECTED'); continue;
+      }
+      const chunks = await chunkGamingDocument(intactText, { signal });
       const records = chunks.chunks.map(chunk => ({
         recordId: `${candidateId}:${chunk.ordinal}`, recordType: input.mode === 'guide' ? 'guide' as const : input.mode === 'build' ? 'build' as const : 'meta' as const,
         title: document.metadata.title ?? null, searchText: chunk.text,
         normalized: { text: chunk.text, chunk: { ordinal: chunk.ordinal, totalChunks: chunk.totalChunks,
           startChar: chunk.startChar, endChar: chunk.endChar, headingPath: chunk.headingPath } },
         sourceId: candidateId, publicUrl: publicUrl!, sourceType: policy.category, revisionId: contentHash,
+        clearSourceAssessment: sourceAssessment,
         fetchedAt: now(), publishedAt: null, provenance: { resolverId: document.resolution.resolverId,
-          resolverVersion: document.resolution.resolverVersion, resolutionStrategy: document.resolution.strategy },
+          resolverVersion: document.resolution.resolverVersion, resolutionStrategy: document.resolution.strategy,
+          gameName: input.game, edition: input.edition, gamingClear: sourceAssessment },
         relevance: gamingTermCoverage(chunk.text, terms)
       })).filter(record => record.relevance >= 0.25);
       // An official index/status page can verify applicability even when it does not cover the gameplay anchor.
       if (!records.length && !['current_index', 'live_status'].includes(policy.currentness)) { reject('QUESTION_COVERAGE_INSUFFICIENT'); continue; }
+      const sourceContext = { ...pickGamingPlayerContext(input), game: input.game, prompt: input.prompt, mode: input.mode,
+        requestedVersion: input.requestedVersion, region: input.region };
       const artifact: GamingHybridAcceptedCandidate = { candidateId, actorScopeHash: actorHash(context.actorKey), contentHash,
         policyVersion: GAMING_HYBRID_CANDIDATE_POLICY_VERSION, expiresAt: now().getTime() + GAMING_HYBRID_CANDIDATE_LIMITS.artifactTtlMs,
         game: input.edition && resolveGamingGuideIdentity(input.game, input.edition) !== normalizeGamingGameIdentity(input.game)
           ? `${input.game} ${input.edition}` : input.game,
         recordType: input.mode,
-        publicUrl, document: { ...document, rawDocument: undefined }, freshness, sourcePolicy: policy };
+        publicUrl, document: { ...document, rawDocument: undefined }, freshness, sourcePolicy: policy,
+        sourceAssessment, assessmentBinding: gamingClearHash({ sourceAssessment, sourceContext }), sourceContext,
+        sourceMetadataBinding: sourceMetadataBinding(freshness, policy) };
       accepted.push(artifact);
       allRecords.push(...records);
       decisions.push({ submittedIndex, candidateId, url: publicUrl,
-        decision: policy.durableAllowed && !document.metrics.truncated ? 'eligible_for_ingestion' : 'accepted_transient',
+        decision: policy.durableAllowed && sourceAssessment.qualityEligible && !document.metrics.truncated ? 'eligible_for_ingestion' : 'accepted_transient',
         reasonCodes: [records.length ? 'VALIDATED_RELEVANT_CONTENT' : 'VALIDATED_APPLICABILITY_SOURCE',
           ...(document.metrics.truncated ? ['EXTRACTION_PARTIAL'] : [])], sourceCategory: policy.category, contentHash });
     } catch (error) {
@@ -223,10 +243,25 @@ export async function createApprovedGamingHybridIngestion(input: {
   for (const candidate of input.candidates) {
     if (candidate.actorScopeHash !== actorHash(context.actorKey) || candidate.expiresAt <= Date.now()
       || candidate.policyVersion !== GAMING_HYBRID_CANDIDATE_POLICY_VERSION
-      || candidate.contentHash !== hashGamingApprovedDocument(candidate.document)) {
+      || candidate.contentHash !== hashGamingApprovedDocument(candidate.document)
+      || candidate.sourceAssessment?.rubricVersion !== GAMING_CLEAR_VERSION
+      || candidate.sourceAssessment.subjectHash !== candidate.contentHash
+      || candidate.assessmentBinding !== gamingClearHash({ sourceAssessment: candidate.sourceAssessment, sourceContext: candidate.sourceContext })
+      || candidate.sourceMetadataBinding !== sourceMetadataBinding(candidate.freshness, candidate.sourcePolicy)) {
       return denied('GAMING_HYBRID_APPROVAL_INVALID', 'The source approval expired or does not belong to this caller.');
     }
-    if (!candidate.sourcePolicy.durableAllowed || candidate.document.metrics.truncated
+    // A combined, artifact-bound currentness check can close the source's earlier
+    // uncertainty. Reassess under the same request; it does not grant storage permission.
+    if (candidate.sourceAssessment.decision === 'partial') {
+      const reassessed = assessGamingClearSource(candidate.sourceContext, candidate.document, { subjectId: candidate.candidateId,
+        subjectHash: candidate.contentHash, actorScopeHash: candidate.actorScopeHash, sourcePolicy: candidate.sourcePolicy,
+        freshness: candidate.freshness, now: new Date() });
+      if (reassessed.qualityEligible) {
+        candidate.sourceAssessment = reassessed;
+        candidate.assessmentBinding = gamingClearHash({ sourceAssessment: reassessed, sourceContext: candidate.sourceContext });
+      }
+    }
+    if (!candidate.sourcePolicy.durableAllowed || !candidate.sourceAssessment.qualityEligible || candidate.document.metrics.truncated
       || (input.storagePolicy === 'auto_store_approved' && !candidate.sourcePolicy.autoStoreAllowed)) {
       return denied('GAMING_HYBRID_SOURCE_STORAGE_DISALLOWED', 'The selected source category does not qualify for this storage policy.');
     }
@@ -237,6 +272,6 @@ export async function createApprovedGamingHybridIngestion(input: {
     recordType: candidate.recordType,
     sourceTrustType: candidate.sourcePolicy.authority === 'official' ? 'official' as const
       : candidate.sourcePolicy.authority === 'specialist' ? 'curated' as const : 'supplied' as const,
-    freshness: { ...candidate.freshness }
+    freshness: { ...candidate.freshness }, sourceAssessment: candidate.sourceAssessment
   })), input.idempotencyKey, { ...context, canStore: true });
 }

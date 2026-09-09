@@ -17,6 +17,8 @@ import { getGamingRagChunkChars, getGamingRagMaxChunks, getGamingRagMaxSources, 
 import { canonicalizeGamingGameName } from './gamingGameDetection.js';
 import { normalizeGamingGameIdentity } from '@shared/gaming/gamingGameIdentity.js';
 import { buildGamingRetrievalTerms, GAMING_RETRIEVAL_POLICY_VERSION } from '@shared/gaming/gamingRetrievalPolicy.js';
+import { assessGamingClearEvidence } from '@shared/gaming/gamingClearEvidence.js';
+import { parseGamingClearAssessment } from '@shared/gaming/gamingClearPolicy.js';
 
 export { buildStoredGamingLexicalQuery } from '@shared/gaming/gamingStoredEvidenceCore.js';
 export type {
@@ -47,7 +49,13 @@ function getStoredGamingEvidenceLimits(): GamingStoredEvidenceLimits {
 /** Bind runtime configuration to the production-shared pure selection policy. */
 export function selectStoredGamingEvidence(records: readonly GamingKnowledgeProvenanceRecord[], input: GamingStoredKnowledgeInput,
   resolvePatch: PatchResolver = () => undefined): GamingStoredEvidenceCandidate[] {
-  return selectStoredGamingEvidenceCore(records, input, getStoredGamingEvidenceLimits(), resolvePatch);
+  const validatedRecords = records.slice(0, MAX_STORED_GAMING_CANDIDATES).map(record => {
+    const assessment = parseGamingClearAssessment(record.provenance?.gamingClear);
+    const bound = assessment?.profile === 'source'
+      && assessment.subjectHash === (record.provenance?.approvedContentHash ?? record.revisionId);
+    return { ...record, ...(bound ? { clearSourceAssessment: assessment } : {}) };
+  });
+  return selectStoredGamingEvidenceCore(validatedRecords, input, getStoredGamingEvidenceLimits(), resolvePatch);
 }
 
 /** Preserve the service formatter API while keeping configuration outside the core. */
@@ -116,6 +124,20 @@ export async function retrieveStoredGamingKnowledge(input: GamingStoredKnowledge
   }
   const candidates = selectStoredGamingEvidence(records, input, options.resolveVerifiedPatch);
   const result = formatStoredGamingEvidence(candidates, input);
+  // Assess only passages that survived formatting. The assembled live/stored
+  // set is assessed again before generation, allowing complementary evidence.
+  const clearEvidenceAssessment = assessGamingClearEvidence(input, result, { identityVerified: true });
+  if (result.evidence?.length) result.clearEvidenceAssessment = clearEvidenceAssessment;
+  logger.info('gaming.clear.evidence.completed', {
+    rubricVersion: clearEvidenceAssessment.rubricVersion, profile: clearEvidenceAssessment.profile,
+    policyProfile: clearEvidenceAssessment.policyProfile, subjectHash: clearEvidenceAssessment.subjectHash,
+    assessmentMethod: clearEvidenceAssessment.assessmentMethod, assessmentStatus: clearEvidenceAssessment.assessmentStatus,
+    dimensionScores: Object.fromEntries(Object.entries(clearEvidenceAssessment.dimensionScores).map(([key, value]) => [key, value.score])),
+    overall: clearEvidenceAssessment.overall, decision: clearEvidenceAssessment.decision,
+    reasonCodes: clearEvidenceAssessment.findings.map(finding => finding.code),
+    blockingFindingCount: clearEvidenceAssessment.blockingFindings.length,
+    elapsedMs: Date.now() - startedAt, budgetOutcome: 'within_existing_selection_budget'
+  });
   const retrievalTerms = buildGamingRetrievalTerms(input);
   logger.info('gaming.stored_retrieval.completed', {
     ...(input.mode === 'guide' ? { retrievalPolicyVersion: GAMING_RETRIEVAL_POLICY_VERSION,
