@@ -1004,9 +1004,10 @@ async function ingestOneSource(
     });
     signal?.throwIfAborted();
     // A queued worker has its own process/lifetime. Reacquire safely, then require the exact
-    // complete artifact approved by the caller; a changed page needs a new evaluation.
+    // complete artifact approved by the caller; a changed or newly truncated page
+    // needs a new evaluation even when its retained prefix has the approved hash.
     if (source.hybridApproval && (hashGamingApprovedDocument(document) !== source.hybridApproval.contentHash
-      || document.metrics.instructionFiltered)) {
+      || document.metrics.instructionFiltered || document.metrics.truncated)) {
       return { submittedIndex: source.submittedIndex, status: 'rejected', canonicalUrl: source.canonicalUrl,
         recordsCreated: 0, recordsUpdated: 0, completedAt: new Date().toISOString(),
         error: { code: 'APPROVED_CONTENT_CHANGED', message: 'The source changed after approval; evaluate it again before storing.', retryable: false } };

@@ -29,7 +29,8 @@ type Workflow = {
   round: number; accepted: GamingHybridAcceptedCandidate[]; operations: Map<string, Operation>;
   last?: GamingHybridResponse;
   knowledge?: GamingStoredKnowledgeContext;
-  candidateSubmission?: { key: string; knowledge: GamingStoredKnowledgeContext; decisions: GamingHybridResponse['candidates'] };
+  candidateOperationKey?: string;
+  candidateSubmission?: { key: string; knowledge: GamingStoredKnowledgeContext; decisions: GamingHybridResponse['candidates']; freshness: GamingFreshnessEvidence[] };
   answer?: GamingHybridResponse['answer'];
 };
 const hash = (value: unknown): string => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -111,7 +112,7 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
       discovery: { round: workflow.round, maxRounds: LIMITS.discoveryRounds, maxCandidates: LIMITS.candidates, searchQueries: searchQueries(workflow) } } };
   }
   async function answer(context: GamingHybridCallContext, workflow: Workflow, knowledge: GamingStoredKnowledgeContext,
-    candidateFreshness: GamingFreshnessEvidence[] = []): Promise<GamingHybridResult> {
+    candidateFreshness: GamingFreshnessEvidence[] = [], acceptedCandidates: readonly GamingHybridAcceptedCandidate[] = workflow.accepted): Promise<GamingHybridResult> {
     const input = workflow.input;
     let body: GamingHybridResponse = { ...base(context, workflow), sourceKnown: knowledge.sourceKnown === true || knowledge.sources.length > 0 };
     if (assessGamingProgressionRequest(workflow.pipeline).clarificationNeeded) return { status: 200, body: { ...body,
@@ -153,7 +154,7 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
       evidence, now: new Date(deps.now()) });
     const selected = new Set(freshness.selectedEvidenceIds);
     if (freshness.usable) {
-      const index = workflow.accepted.find(item => item.freshness.currentness === 'current_index' && selected.has(item.candidateId));
+      const index = acceptedCandidates.find(item => item.freshness.currentness === 'current_index' && selected.has(item.candidateId));
       if (index) {
         const snippet = [
           'Backend-verified official release index; applicability verification only.',
@@ -163,7 +164,7 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
           index.freshness.effectiveFrom ? `Effective from: ${index.freshness.effectiveFrom}.` : '',
           index.freshness.verifiedAt ? `Verified at: ${index.freshness.verifiedAt}.` : ''
         ].filter(Boolean).join(' ').slice(0, 600);
-        for (const candidate of workflow.accepted) if (selected.has(candidate.candidateId) && candidate !== index) {
+        for (const candidate of acceptedCandidates) if (selected.has(candidate.candidateId) && candidate !== index) {
           Object.assign(candidate.freshness, { currentVerification: { artifactHash: candidate.contentHash,
             indexHash: index.contentHash, evidence: { ...index.freshness }, snippet } satisfies CurrentVerification });
         }
@@ -269,19 +270,23 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
       if (!workflow) return failure(context, 'WORKFLOW_UNAVAILABLE', 404);
       return runOnce(workflow, `candidates:${input.idempotencyKey}`, input, context, async () => {
         if (workflow.candidateSubmission?.key === input.idempotencyKey) {
-          const result = await answer(context, workflow, workflow.candidateSubmission.knowledge, workflow.accepted.map(item => item.freshness));
+          const result = await answer(context, workflow, workflow.candidateSubmission.knowledge, workflow.candidateSubmission.freshness);
           result.body.candidates = workflow.candidateSubmission.decisions;
           return result;
         }
-        if (workflow.round >= LIMITS.discoveryRounds || workflow.last?.nextAction !== 'search') return failure(context, 'DISCOVERY_LIMIT_REACHED', 409, workflow);
-        // Charge before yielding so concurrent alternative submissions cannot exceed rounds.
-        workflow.round += 1;
+        if (workflow.candidateOperationKey !== input.idempotencyKey) {
+          if (workflow.round >= LIMITS.discoveryRounds || workflow.last?.nextAction !== 'search') return failure(context, 'DISCOVERY_LIMIT_REACHED', 409, workflow);
+          // Charge before yielding. A failed acquisition can resume only this payload-bound
+          // operation; alternative submissions cannot spend another discovery round.
+          workflow.round += 1;
+          workflow.candidateOperationKey = input.idempotencyKey;
+        }
         const evaluated = await deps.evaluateCandidates({ ...workflow.pipeline, game: workflow.input.game,
           region: workflow.input.region, candidates: input.candidates }, context);
         evaluated.knowledge.sources.forEach(source => { source.origin = 'live'; });
         const retainedChars = [...workflows.values()].flatMap(item => item.accepted).reduce((total, item) => total + item.document.text.length, 0);
-        if (retainedChars + evaluated.accepted.reduce((total, item) => total + item.document.text.length, 0) <= 12_000_000)
-          workflow.accepted = evaluated.accepted;
+        const retainArtifacts = retainedChars + evaluated.accepted.reduce((total, item) => total + item.document.text.length, 0) <= 12_000_000;
+        if (retainArtifacts) workflow.accepted = evaluated.accepted;
         const prior = workflow.knowledge;
         const combined = { context: '', sources: [...evaluated.knowledge.sources,
           ...(prior?.sources ?? []).filter(source => !evaluated.knowledge.sources.some(next => next.url === source.url))],
@@ -289,9 +294,14 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
             ...(prior?.evidence ?? []).filter(chunk => !evaluated.knowledge.sources.some(next => next.url === chunk.publicUrl))],
           sourceKnown: prior?.sourceKnown };
         const decisions = evaluated.decisions.map(({ candidateId, url, decision, reasonCodes, sourceCategory }) => ({
-          candidateId, url, decision, reasonCodes: reasonCodes.slice(0, 8), sourceCategory }));
-        workflow.candidateSubmission = { key: input.idempotencyKey, knowledge: combined, decisions };
-        const result = await answer(context, workflow, combined, evaluated.accepted.map(item => item.freshness));
+          ...(retainArtifacts && candidateId ? { candidateId } : {}), url,
+          decision: !retainArtifacts && candidateId ? 'accepted_transient' : decision,
+          reasonCodes: (!retainArtifacts && candidateId ? ['ARTIFACT_CAPACITY_REACHED', ...reasonCodes] : reasonCodes).slice(0, 8), sourceCategory }));
+        // Retain only bounded evidence/freshness for answer retries when full artifacts
+        // do not fit. Their candidate IDs must never advertise a storage handle.
+        const candidateFreshness = evaluated.accepted.map(item => item.freshness);
+        workflow.candidateSubmission = { key: input.idempotencyKey, knowledge: combined, decisions, freshness: candidateFreshness };
+        const result = await answer(context, workflow, combined, candidateFreshness, evaluated.accepted);
         result.body.candidates = decisions;
         return result;
       });

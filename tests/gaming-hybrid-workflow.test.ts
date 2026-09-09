@@ -81,6 +81,27 @@ describe('Gaming hybrid authenticated handoff', () => {
     expect((await workflow.candidates(submission, context)).body.state).toBe('answer_ready');
     expect(evaluateCandidates).toHaveBeenCalledTimes(1);
   });
+  it('retries failed acquisition with the same payload-bound key while keeping the discovery round charged', async () => {
+    const { generate } = setup();
+    let available = false;
+    const evaluateCandidates = jest.fn(async () => {
+      if (!available) throw new Error('Synthetic acquisition cancellation');
+      return { decisions: [], accepted: [], knowledge: knowledge() };
+    });
+    const workflow = createGamingHybridWorkflow({ retrieve: async () => empty, evaluateCandidates, generate });
+    const first = await workflow.query(query, context);
+    const submission = { contractVersion, workflowId: first.body.workflowId, idempotencyKey: 'retry-acquisition-1',
+      candidates: [{ url: 'https://example.com/lantern' }] };
+    expect(await workflow.candidates(submission, context)).toMatchObject({ status: 503, body: { nextAction: 'retry_later' } });
+    expect((await workflow.candidates({ ...submission, idempotencyKey: 'alternative-acquisition-1' }, context)).status).toBe(409);
+    expect((await workflow.candidates({ ...submission, candidates: [{ url: 'https://example.com/substitute' }] }, context)).status).toBe(409);
+    available = true;
+    const [recovered, replay] = await Promise.all([workflow.candidates(submission, context), workflow.candidates(submission, context)]);
+    expect(recovered.body.state).toBe('answer_ready');
+    expect(replay).toEqual(recovered);
+    expect(evaluateCandidates).toHaveBeenCalledTimes(2);
+    expect(generate).toHaveBeenCalledTimes(1);
+  });
   it('does not promote provider fallback or overlarge output to an answer', async () => {
     for (const data of [{ response: 'Fallback text', fallbackReason: 'GAMING_PROVIDER_ERROR' }, { response: 'a'.repeat(18_001) }]) {
       const workflow = createGamingHybridWorkflow({ retrieve: async () => knowledge(), generate: async () => ({ ok: true, route: 'gaming', mode: 'guide', data: { ...data, sources: [] } } as any) });
@@ -132,6 +153,40 @@ describe('Gaming hybrid authenticated handoff', () => {
     const result = await workflow.ingest({ contractVersion, workflowId: first.body.workflowId, idempotencyKey: 'store-source-1',
       candidateIds: ['10000000-0000-4000-8000-000000000001'], storagePolicy: 'ask_before_store', confirmStore: true }, { ...context, canStore: true });
     expect(result.status).toBe(403);
+  });
+  it('keeps overflow artifacts transient without invalidating previously retained storage handles', async () => {
+    const { generate } = setup();
+    const documentText = 'x'.repeat(1_000_000);
+    const candidateIds = [1, 2, 3].map(index => `10000000-0000-4000-8000-00000000000${index}`);
+    const evaluateCandidates = jest.fn(async () => ({ knowledge: knowledge(),
+      accepted: candidateIds.map(candidateId => ({ candidateId, document: { text: documentText },
+        freshness: { id: candidateId, game: query.game, url: 'https://example.com/lantern',
+          fetchedAt: new Date(now).toISOString(), verifiedAt: new Date(now).toISOString() } })),
+      decisions: candidateIds.map(candidateId => ({ candidateId, url: 'https://example.com/lantern',
+        decision: 'eligible_for_ingestion', reasonCodes: ['VALIDATED_RELEVANT_CONTENT'] })) } as any));
+    const ingest = jest.fn(async () => ({ statusCode: 202, payload: { ok: true,
+      ingestionId: '20000000-0000-4000-8000-000000000001', status: 'queued' } } as any));
+    const workflow = createGamingHybridWorkflow({ retrieve: async () => empty, evaluateCandidates, generate, ingest });
+    const results: Awaited<ReturnType<typeof workflow.candidates>>[] = [];
+    for (let index = 0; index < 5; index += 1) {
+      const first = await workflow.query({ ...query, idempotencyKey: `capacity-query-${index}`, storagePolicy: 'ask_before_store' }, context);
+      results.push(await workflow.candidates({ contractVersion, workflowId: first.body.workflowId,
+        idempotencyKey: `capacity-candidates-${index}`, candidates: [{ url: 'https://example.com/lantern' }] }, context));
+    }
+    expect(results[3].body.candidates?.every(candidate => candidate.candidateId)).toBe(true);
+    const overflow = results[4];
+    expect(overflow.body.state).toBe('answer_ready');
+    expect(overflow.body.candidates).toHaveLength(3);
+    for (const candidate of overflow.body.candidates!) {
+      expect(candidate).toMatchObject({ decision: 'accepted_transient', reasonCodes: expect.arrayContaining(['ARTIFACT_CAPACITY_REACHED']) });
+      expect(candidate).not.toHaveProperty('candidateId');
+    }
+    const storage = { contractVersion, idempotencyKey: 'capacity-storage-1', candidateIds: [candidateIds[0]],
+      storagePolicy: 'ask_before_store', confirmStore: true };
+    expect((await workflow.ingest({ ...storage, workflowId: overflow.body.workflowId }, context)).status).toBe(404);
+    expect(ingest).not.toHaveBeenCalled();
+    expect((await workflow.ingest({ ...storage, workflowId: results[0].body.workflowId }, context)).body.state).toBe('ingestion_pending');
+    expect(ingest).toHaveBeenCalledTimes(1);
   });
   it.each(([true, false] as const).flatMap(supported => [
     ['queued', 'INGESTION_QUEUED'], ['running', 'INGESTION_PROCESSING'],
