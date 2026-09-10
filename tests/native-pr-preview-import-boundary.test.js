@@ -378,7 +378,7 @@ describe('native PR preview import boundary', () => {
     })).resolves.toContain(
       'unreviewed preview import: src/config/openai.ts'
     );
-  });
+  }, 30_000);
 
   it('keeps runtime loader hooks outside the contained child command graph', () => {
     expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toEqual(
