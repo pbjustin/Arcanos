@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { createGamingClearAssessment, gamingClearContextFingerprint, gamingClearHash } from '../src/shared/gaming/gamingClearPolicy.js';
+import { gamingAcquisitionAxios } from './testUtils/gamingAcquisitionFixtures.js';
+import type { FetchAndCleanOptions, FetchAndCleanExtractionMetrics } from '../src/shared/webFetcher.js';
 
 const mockResponsesCreate = jest.fn();
 const mockGetOpenAIClientOrAdapter = jest.fn();
@@ -8,7 +10,10 @@ const mockGetDefaultModel = jest.fn();
 const mockGetGPT5Model = jest.fn();
 const mockGenerateMockResponse = jest.fn();
 const mockFetchAndClean = jest.fn();
-const mockFetchAndCleanDocument = jest.fn();
+const mockAxiosGet = jest.fn();
+const mockExtractDocument = jest.fn();
+const acquisitionOptions = new Map<string, FetchAndCleanOptions>();
+const extractionFixtures = new Map<string, { text: string; metrics?: FetchAndCleanExtractionMetrics }>();
 const mockGetEnv = jest.fn();
 const mockGetEnvNumber = jest.fn();
 const mockGetEnvIntegerAtLeast = jest.fn();
@@ -83,10 +88,12 @@ jest.unstable_mockModule('@platform/runtime/prompts.js', () => ({
   getPrompt: mockGetPrompt
 }));
 
-jest.unstable_mockModule('@shared/webFetcher.js', () => ({
-  fetchAndClean: mockFetchAndClean,
-  fetchAndCleanDocument: mockFetchAndCleanDocument
-}));
+jest.unstable_mockModule('axios', () => ({ default: gamingAcquisitionAxios(mockAxiosGet) }));
+jest.unstable_mockModule('node:dns/promises', () => ({ Resolver: class {
+  async resolve4() { return ['93.184.216.34']; }
+  async resolve6() { return []; }
+  cancel() {}
+} }));
 
 jest.unstable_mockModule('@platform/runtime/env.js', () => ({
   getEnv: mockGetEnv,
@@ -110,6 +117,27 @@ jest.unstable_mockModule('@services/gamingSourceIngestion.js', () => ({
   buildStoredGamingKnowledgeContext: mockBuildStoredGamingKnowledgeContext
 }));
 
+const actualWebFetcher = await import('../src/shared/webFetcher.js');
+jest.unstable_mockModule('@shared/webFetcher.js', () => ({
+  ...actualWebFetcher,
+  fetchAndClean: mockFetchAndClean,
+  createProtectedDocumentFetchSession: (options: FetchAndCleanOptions) => {
+    const session = actualWebFetcher.createProtectedDocumentFetchSession(options);
+    return { ...session, fetch: (url: string) => {
+      acquisitionOptions.set(url, options);
+      return session.fetch(url);
+    } };
+  },
+  // Preserve the orchestration suite's controlled text/metadata fixtures while exercising
+  // the real acquisition loop, DNS pinning, streaming transport, and resolver provenance.
+  extractFetchAndCleanDocument: (url: string, body: string, contentType: string, maxChars: number, options: FetchAndCleanOptions) => {
+    mockExtractDocument(url, body, contentType, maxChars, options);
+    const fixture = extractionFixtures.get(url)!;
+    if (fixture.metrics) options.onExtraction?.(fixture.metrics);
+    return { text: fixture.text, links: [], combined: fixture.text };
+  }
+}));
+
 const { runBuildPipeline, runGuidePipeline, runMetaPipeline } = await import('../src/services/gaming.js');
 const { normalizeGamingInlineSourceReferences } = await import('../src/services/gamingPipeline.js');
 const { buildGamingRagContext, clearGamingRagCache } = await import('../src/services/gamingWebContext.js');
@@ -121,6 +149,28 @@ const { shapeClientRouteResult } = await import('../src/shared/http/clientRouteR
 describe('gaming guide output hardening', () => {
   beforeEach(() => {
     jest.resetAllMocks();
+    acquisitionOptions.clear();
+    extractionFixtures.clear();
+    mockAxiosGet.mockImplementation(async (pinnedUrl: string, options?: Record<string, unknown>) => {
+      const logicalUrl = new URL(pinnedUrl);
+      logicalUrl.host = (options?.headers as { Host: string }).Host;
+      const url = logicalUrl.href;
+      const fixture: { text: string; metrics?: FetchAndCleanExtractionMetrics } = { text: '' };
+      try {
+        // The text fixture supplies unbounded source text; actual resolver limits are
+        // observed separately at the extractFetchAndCleanDocument boundary.
+        fixture.text = await mockFetchAndClean(url, undefined, {
+          ...acquisitionOptions.get(url),
+          onExtraction: (metrics: FetchAndCleanExtractionMetrics) => { fixture.metrics = metrics; }
+        }) as string;
+      } catch (error) {
+        const status = (error as { status?: number }).status;
+        if (status) return { status, headers: { 'content-type': 'text/plain' }, data: '' };
+        throw error;
+      }
+      extractionFixtures.set(url, fixture);
+      return { status: 200, headers: { 'content-type': 'text/plain' }, data: fixture.text };
+    });
     delete process.env.ARCANOS_GAMING_PIPELINE_TIMEOUT_MS;
     delete process.env.ARCANOS_GAMING_GUIDE_PIPELINE_TIMEOUT_MS;
     delete process.env.ARCANOS_GAMING_STAGE_TIMEOUT_MS;
@@ -1759,7 +1809,8 @@ describe('gaming guide output hardening', () => {
     }));
   });
 
-  it('deduplicates guide URLs and uses the configured gaming context size', async () => {
+  it.each([512, 1024])('deduplicates guide URLs and uses the configured %i character gaming context size', async (contextChars) => {
+    process.env.ARCANOS_GAMING_WEB_CONTEXT_CHARS = String(contextChars);
     await runGuidePipeline({
       prompt: 'Use the linked guides for a direct boss strategy.',
       guideUrl: 'https://example.com/guide-a',
@@ -1767,8 +1818,11 @@ describe('gaming guide output hardening', () => {
       auditEnabled: false
     });
 
-    expect(mockFetchAndClean).toHaveBeenNthCalledWith(1, 'https://example.com/guide-a', 512, expectFetchOptions());
-    expect(mockFetchAndClean).toHaveBeenNthCalledWith(2, 'https://example.com/guide-b', 512, expectFetchOptions());
+    expect(mockExtractDocument).toHaveBeenNthCalledWith(1, 'https://example.com/guide-a', DEFAULT_GUIDE_SNIPPET, 'text/plain', contextChars, expectFetchOptions());
+    expect(mockExtractDocument).toHaveBeenNthCalledWith(2, 'https://example.com/guide-b', DEFAULT_GUIDE_SNIPPET, 'text/plain', contextChars, expectFetchOptions());
+    expect(mockAxiosGet).toHaveBeenCalledWith('https://93.184.216.34/guide-a', expect.objectContaining({
+      headers: expect.objectContaining({ Host: 'example.com' }), maxRedirects: 0, proxy: false, responseType: 'stream'
+    }));
     expect(mockFetchAndClean).toHaveBeenCalledTimes(2);
     const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as { input: { prompt: string } };
     expect(mockRunTrinityWritingPipeline).toHaveBeenCalledWith(
@@ -1797,8 +1851,8 @@ describe('gaming guide output hardening', () => {
     });
 
     expect(mockFetchAndClean).toHaveBeenCalledTimes(2);
-    expect(mockFetchAndClean).toHaveBeenNthCalledWith(1, 'https://example.com/guide-a', 512, expectFetchOptions());
-    expect(mockFetchAndClean).toHaveBeenNthCalledWith(2, 'https://example.com/guide-b', 512, expectFetchOptions());
+    expect(mockExtractDocument).toHaveBeenNthCalledWith(1, 'https://example.com/guide-a', DEFAULT_GUIDE_SNIPPET, 'text/plain', 512, expectFetchOptions());
+    expect(mockExtractDocument).toHaveBeenNthCalledWith(2, 'https://example.com/guide-b', DEFAULT_GUIDE_SNIPPET, 'text/plain', 512, expectFetchOptions());
     expect(result.data.sources).toEqual([
       { url: 'https://example.com/guide-a', snippet: DEFAULT_GUIDE_SNIPPET },
       { url: 'https://example.com/guide-b', snippet: DEFAULT_GUIDE_SNIPPET }
@@ -1824,7 +1878,7 @@ describe('gaming guide output hardening', () => {
     });
 
     expect(mockFetchAndClean).toHaveBeenCalledTimes(1);
-    expect(mockFetchAndClean).toHaveBeenNthCalledWith(1, 'https://example.com/guide-a', 512, expectFetchOptions());
+    expect(mockExtractDocument).toHaveBeenNthCalledWith(1, 'https://example.com/guide-a', DEFAULT_GUIDE_SNIPPET, 'text/plain', 512, expectFetchOptions());
     expect(result.data.sources).toEqual([
       { url: 'https://example.com/guide-a', snippet: DEFAULT_GUIDE_SNIPPET },
       { url: 'invalid-source', error: 'Source URL was rejected by evidence policy.' }
@@ -1926,11 +1980,8 @@ describe('gaming guide output hardening', () => {
 
     expect(capturedSignal?.aborted).toBe(true);
     expect(mockRunTrinityWritingPipeline).not.toHaveBeenCalled();
-    expect(mockFetchAndClean).toHaveBeenCalledWith(
-      'https://example.com/guide',
-      512,
-      expectFetchOptions(5)
-    );
+    expect(acquisitionOptions.get('https://example.com/guide')).toEqual(expectFetchOptions(5));
+    expect(mockExtractDocument).not.toHaveBeenCalled();
   });
 
   it('ignores malformed retrieval inputs without logging secrets or timeout fallbacks', async () => {
@@ -1970,8 +2021,10 @@ describe('gaming guide output hardening', () => {
       auditEnabled: false
     });
 
-    expect(mockFetchAndClean).toHaveBeenCalledWith(
+    expect(mockExtractDocument).toHaveBeenCalledWith(
       'https://eldenring.wiki.fextralife.com/Game+Progress+Route',
+      expect.stringContaining('Limgrave route'),
+      'text/plain',
       512,
       expectFetchOptions()
     );
@@ -2014,9 +2067,11 @@ describe('gaming guide output hardening', () => {
       auditEnabled: false
     });
 
-    expect(mockFetchAndClean).toHaveBeenNthCalledWith(
+    expect(mockExtractDocument).toHaveBeenNthCalledWith(
       1,
       'https://en.bandainamcoent.eu/elden-ring/news/elden-ring-patch-notes-version-1161',
+      expect.stringContaining('official current patch notes'),
+      'text/plain',
       512,
       expectFetchOptions()
     );
@@ -2040,9 +2095,11 @@ describe('gaming guide output hardening', () => {
       auditEnabled: false
     });
 
-    expect(mockFetchAndClean).toHaveBeenNthCalledWith(
+    expect(mockExtractDocument).toHaveBeenNthCalledWith(
       1,
       'https://worldofwarcraft.blizzard.com/en-us/news',
+      expect.stringContaining('official current patch news'),
+      'text/plain',
       1024,
       expectFetchOptions()
     );
