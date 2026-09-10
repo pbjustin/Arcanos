@@ -5,6 +5,8 @@ import type { GamingPlayerContext } from './gamingPlayerContext.js';
 import { buildGamingRetrievalTerms, gamingTermCoverage, safeGamingEvidenceMetadata, scopeGamingEvidenceParagraphs } from './gamingRetrievalPolicy.js';
 import { normalizeGamingEvidenceGameIdentity, resolveGamingGuideIdentity } from './gamingGameIdentity.js';
 import type { GamingClearAssessment } from './gamingClearPolicy.js';
+import type { GamingEvidenceUnit } from './gamingEvidenceUnits.js';
+import { assessGamingStructuralUsability, readGamingEvidenceUnits } from './gamingStructuralEvidence.js';
 
 export const MAX_STORED_GAMING_CANDIDATES = 20;
 const MIN_QUERY_COVERAGE = 0.25;
@@ -68,6 +70,7 @@ export interface GamingStoredEvidenceChunk {
   startChar?: number;
   endChar?: number;
   headingPath?: string[];
+  evidenceUnits?: GamingEvidenceUnit[];
   text: string;
   lexicalScore: number;
   combinedScore: number;
@@ -165,13 +168,23 @@ function projectCandidate<RecordType extends GamingStoredEvidenceRecord>(record:
   const metadata = chunkMetadata(normalized);
   if (!metadata) return null;
   if (normalized.chunk !== undefined && typeof normalized.text !== 'string') return null;
+  const evidenceUnits = readGamingEvidenceUnits(normalized.evidenceUnits, record.publicUrl,
+    typeof normalized.text === 'string' ? normalized.text : record.searchText);
+  // A malformed structural record must never fall through to legacy flattened prose.
+  if (normalized.evidenceUnits !== undefined && (!evidenceUnits.length
+    || evidenceUnits.some(unit => unit.integrity.status !== 'complete' || unit.integrity.reasons.length))) return null;
+  const structural = assessGamingStructuralUsability({ units: evidenceUnits, ...input });
+  if (evidenceUnits.length && structural.claimShape !== 'none' && !structural.claimSupported) return null;
   // Historical lexical-only records remain readable through passage selection.
   const body = [typeof normalized.text === 'string' ? normalized.text : record.searchText,
     typeof normalized.structuredEvidence === 'string'
       ? normalized.structuredEvidence.slice(0, limits.structuredEvidenceChars) : ''].filter(Boolean).join('\n\n');
-  const safeText = filterGamingDocumentInstructions(scopeGamingEvidenceParagraphs(body, input));
+  const structuralText = evidenceUnits.map(unit => unit.text).join('\n\n');
+  if (structuralText && filterGamingDocumentInstructions(structuralText) !== structuralText.normalize('NFKC').replace(/\s+/gu, ' ').trim()) return null;
+  const safeText = structuralText || filterGamingDocumentInstructions(scopeGamingEvidenceParagraphs(body, input));
   const query = terms.join(' ');
-  const text = selectGamingDocumentExcerpt(safeText, query, Math.min(1_200, limits.chunkChars))
+  const text = (structuralText ? structuralText.length <= Math.min(2_000, limits.chunkChars) ? structuralText : ''
+    : selectGamingDocumentExcerpt(safeText, query, Math.min(1_200, limits.chunkChars)))
     .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/gu, '');
   const contentTokens = new Set(tokens(text));
   const coverage = terms.filter(term => contentTokens.has(term)).length / Math.max(1, terms.length);
@@ -184,6 +197,7 @@ function projectCandidate<RecordType extends GamingStoredEvidenceRecord>(record:
     evidence: {
       sourceId: record.sourceId, revisionId: record.revisionId, recordId: record.recordId,
       recordType: record.recordType, publicUrl: record.publicUrl, ...metadata, text,
+      ...(evidenceUnits.length ? { evidenceUnits } : {}),
       lexicalScore: record.relevance, combinedScore: coverage,
       provenance: {
         fetchedAt: record.fetchedAt.toISOString(),
@@ -203,7 +217,7 @@ function projectCandidate<RecordType extends GamingStoredEvidenceRecord>(record:
       sourceId: record.sourceId, url: record.publicUrl, ...(title ? { title } : {}), sourceType: record.sourceType,
       ...(patch ? { patchVersion: patch, verifiedPatchVersion: patch } : {}),
       fetchedAt: record.fetchedAt.toISOString(), ...(record.publishedAt ? { publishedAt: record.publishedAt.toISOString() } : {}),
-      snippet: selectGamingDocumentExcerpt(safeText, query, 600)
+      snippet: (structuralText ? structuralText.length <= 600 ? structuralText : '' : selectGamingDocumentExcerpt(safeText, query, 600))
         .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/gu, '')
     }
   };
@@ -286,7 +300,8 @@ export function formatStoredGamingEvidence(candidates: readonly GamingStoredEvid
       candidate.source.title ? `Title: ${candidate.source.title}` : '',
       input.spoilerMode === 'full' && candidate.evidence.headingPath?.length
         ? `Sections (source metadata, not progression order): ${candidate.evidence.headingPath.join(' > ')}` : '',
-      candidate.evidence.ordinal !== undefined ? `Passage: ${candidate.evidence.ordinal + 1}` : ''
+      candidate.evidence.ordinal !== undefined ? `Passage: ${candidate.evidence.ordinal + 1}` : '',
+      ...(candidate.evidence.evidenceUnits?.map(unit => `Record: ${unit.id}; strategy: ${unit.provenance.strategy}; source location: ${unit.provenance.locator}; representation: ${unit.provenance.representation}${unit.provenance.jsonOnly ? '; JSON-only source assertion' : ''}`) ?? [])
     ].filter(Boolean).join('\n');
     const remaining = budget - used - header.length - 1 - (parts.length ? 2 : 0);
     // Retain the selected passage intact: clipping again could remove its only matching fact.

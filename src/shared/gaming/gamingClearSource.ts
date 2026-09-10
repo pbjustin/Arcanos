@@ -4,6 +4,7 @@ import { buildGamingRetrievalTerms, gamingTermCoverage } from './gamingRetrieval
 import { assessGamingSourcePolicy, classifyGamingQuestionFreshness, evaluateGamingFreshness, type GamingFreshnessEvidence, type GamingSourcePolicyAssessment } from './gamingFreshnessCore.js';
 import type { GamingStoredKnowledgeInput } from './gamingStoredEvidenceCore.js';
 import type { ResolvedGamingDocument } from '@services/gamingDocumentResolution.js';
+import { assessGamingStructuralUsability, readGamingEvidenceUnits } from './gamingStructuralEvidence.js';
 import { createGamingClearAssessment, classifyGamingClearQuestion, gamingClearContextFingerprint,
   type GamingClearSourceRole } from './gamingClearPolicy.js';
 
@@ -13,7 +14,18 @@ const DOCUMENT_LABEL = /^(?:(?:beginner|boss|build|class|combat|current|endgame|
 const DISTINCT_SCOPE = /^(?:ii|iii|iv|\d+|nightreign|classic|remastered|remake|bedrock|java|shadow-of-the-erdtree|dlc|expansion)(?:-|$)/u;
 
 /** A truncated final sentence cannot be evidence for a claim whose qualification may be missing. */
-export function gamingClearIntactSourceText(document: Pick<ResolvedGamingDocument, 'text' | 'metrics'>): string {
+export function gamingClearIntactSourceText(document: Pick<ResolvedGamingDocument, 'text' | 'metrics' | 'evidenceUnits'>): string {
+  const units = readGamingEvidenceUnits(document.evidenceUnits, undefined, document.text);
+  if (units.length) {
+    // Parser-verified unit boundaries survive truncation elsewhere. Prose still
+    // requires its own final sentence; parser repair never establishes integrity.
+    let prose = document.text;
+    for (const unit of units) prose = prose.replace(unit.text, '');
+    let proseEnd = document.metrics.truncated ? 0 : prose.length;
+    if (document.metrics.truncated) for (const match of prose.matchAll(/[.!?](?=\s|$)/gu)) proseEnd = match.index + 1;
+    return [prose.slice(0, proseEnd).trim(), ...units.filter(unit => assessGamingStructuralUsability({ units: [unit] }).hasIntactUsableUnit)
+      .map(unit => unit.text)].filter(Boolean).join('\n\n');
+  }
   if (!document.metrics.truncated) return document.text;
   let intactEnd = 0;
   for (const match of document.text.matchAll(/[.!?](?=\s|$)/gu)) intactEnd = match.index + 1;
@@ -36,7 +48,7 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
   input: Pick<GamingStoredKnowledgeInput, 'game' | 'edition' | 'prompt' | 'mode'>,
   policy: GamingSourcePolicyAssessment): { status: 'verified' | 'unknown' | 'conflict'; reasonCodes: string[] } {
   const expected = new Set([normalizeGamingGameIdentity(input.game), resolveGamingGuideIdentity(input.game, input.edition)]);
-  const labels = [...document.text.slice(0, 32_000).matchAll(/\bgame\s*:\s*(.{1,160}?)(?=\.(?:\s|$)|;|\n|\s+(?:Edition|Platform|Region|Patch|Build|Published at|Effective from)\s*:|$)/giu)];
+  const labels = [...document.text.slice(0, 32_000).matchAll(/\bgame\s*:\s*(.{1,160}?)(?=\.(?:\s|$)|;|\||\n|\s+(?:Edition|Platform|Region|Patch|Build|Published at|Effective from)\s*:|$)/giu)];
   if (labels.some(label => !expected.has(normalizeGamingGameIdentity(label[1])))) return { status: 'conflict', reasonCodes: ['GAME_MISMATCH'] };
   const metadata = [document.metadata.title, document.metadata.headings].filter((value): value is string => Boolean(value));
   for (const value of metadata) {
@@ -55,7 +67,7 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
       return { status: 'conflict', reasonCodes: ['GAME_MISMATCH'] };
     }
   }
-  const prose = document.text.slice(0, 32_000).replace(/\bgame\s*:[^.;\n]{1,160}[.;]?/giu, '');
+  const prose = document.text.slice(0, 32_000).replace(/\bgame\s*:[^.;|\n]{1,160}[.;]?/giu, '');
   const bodyHeadings = prose.split(/\n+|(?<=[.!?])\s+/u).slice(0, 128)
     .filter(unit => /^[^.!?\n]{2,160}\b(?:guide|build|walkthrough)\s*:/iu.test(unit));
   for (const heading of bodyHeadings) {
@@ -82,7 +94,7 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
     return identity === game || identity.startsWith(`${game}-`) && DOCUMENT_LABEL.test(identity.slice(game.length + 1));
   }));
   const metadataAnchor = metadata.some(value => [...expected].some(game => containsIdentity(value, game)));
-  const proseAnchor = [...expected].some(game => containsIdentity(document.text.replace(/\bgame\s*:[^.;\n]{1,160}[.;]?/giu, ''), game));
+  const proseAnchor = [...expected].some(game => containsIdentity(document.text.replace(/\bgame\s*:[^.;|\n]{1,160}[.;]?/giu, ''), game));
   // The resolver already bounded this document; identity relevance must not erase a late intact passage.
   const relevant = gamingTermCoverage(document.text, buildGamingRetrievalTerms(input).focusTerms) >= 0.25;
   const reviewedAssociation = Boolean(policy.ruleId) && ['official', 'specialist', 'community'].includes(policy.authority);
@@ -110,8 +122,10 @@ export function assessGamingClearSource(input: GamingStoredKnowledgeInput & { re
   const supporting = ['patch_authority', 'currentness_index', 'live_status'].includes(role);
   const intactText = gamingClearIntactSourceText(document);
   const coverage = gamingTermCoverage(intactText, buildGamingRetrievalTerms(input).focusTerms);
-  const usable = intactText.trim().length >= 120;
-  const relevant = coverage >= 0.25 || supporting;
+  const structural = assessGamingStructuralUsability({ units: document.evidenceUnits, ...input });
+  const structuredClaim = Boolean(document.evidenceUnits?.length) && structural.claimShape !== 'none';
+  const usable = structural.hasIntactUsableUnit || intactText.trim().length >= 120;
+  const relevant = structuredClaim ? structural.claimSupported : coverage >= 0.25 || supporting;
   const refs = [options.subjectId];
   const evaluated = (score: number, reasonCode: string) => ({ status: 'evaluated' as const, score,
     reasonCodes: [reasonCode], evidenceRefs: refs, unresolvedFacts: [] as string[] });
@@ -150,14 +164,17 @@ export function assessGamingClearSource(input: GamingStoredKnowledgeInput & { re
     gates: { identity: identity.status, compatibility, claimSupport: usable && relevant ? 'verified' : 'unknown',
       freshness: substantiveFreshness, provenance: 'verified', security: document.metrics.instructionFiltered ? 'conflict' : 'verified' },
     dimensions: {
-      clarity: evaluated(usable ? /[.!?](?:\s|$)/u.test(document.text) ? 4.5 : 4 : 0, usable ? 'INTELLIGIBLE_RELEVANT_EXTRACTION' : 'INSUFFICIENT_EXTRACTION'),
+      clarity: evaluated(usable ? structural.hasIntactUsableUnit ? 4 : /[.!?](?:\s|$)/u.test(document.text) ? 4.5 : 4 : 0,
+        usable ? structural.hasIntactUsableUnit ? 'INTELLIGIBLE_HEADER_VALUE_RELATIONSHIPS' : 'INTELLIGIBLE_RELEVANT_EXTRACTION' : 'INSUFFICIENT_EXTRACTION'),
       leverage: evaluated(relevant ? coverage >= 0.5 ? 4.5 : 4 : 1, supporting ? 'SUPPORTING_SOURCE_ROLE' : relevant ? 'QUESTION_ANCHORS_PRESENT' : 'QUESTION_COVERAGE_INSUFFICIENT'),
-      efficiency: evaluated((document.extraction.navigationDensity ?? 0) >= 0.4 ? 3 : 4.5, 'BOUNDED_CHUNK_RETRIEVAL_AVAILABLE'),
+      efficiency: evaluated(!structural.hasIntactUsableUnit && (document.extraction.navigationDensity ?? 0) >= 0.4 ? 3 : 4.5,
+        structural.hasIntactUsableUnit ? 'ISOLATED_ATTRIBUTABLE_STRUCTURAL_UNITS' : 'BOUNDED_CHUNK_RETRIEVAL_AVAILABLE'),
       alignment: identity.status === 'verified' ? evaluated(4, identity.reasonCodes[0]) : { status: 'unknown', score: null,
         reasonCodes: identity.reasonCodes, evidenceRefs: refs, unresolvedFacts: ['GAME_IDENTITY'] },
       resilience: { ...evaluated(document.metrics.truncated ? 3 : 3.5, document.metrics.truncated ? 'EXTRACTION_PARTIAL' : 'TRACEABLE_ACQUIRED_DOCUMENT'),
         unresolvedFacts: ['INDEPENDENT_CORROBORATION_NOT_ESTABLISHED', ...(!stable && !historical && !combinedCurrent ? ['COMBINED_APPLICABILITY_REQUIRED'] : [])] }
-    }, findings: [...(future || expired || wrongPatch ? [{ code: future ? 'NOT_YET_EFFECTIVE' : expired ? 'NO_LONGER_EFFECTIVE' : 'PATCH_MISMATCH', severity: 'blocking' as const, evidenceRefs: refs }] : []),
+    }, findings: [...(structuredClaim && !structural.claimSupported ? structural.reasonCodes.map(code => ({ code, severity: 'blocking' as const, evidenceRefs: refs })) : []),
+      ...(future || expired || wrongPatch ? [{ code: future ? 'NOT_YET_EFFECTIVE' : expired ? 'NO_LONGER_EFFECTIVE' : 'PATCH_MISMATCH', severity: 'blocking' as const, evidenceRefs: refs }] : []),
       ...identity.reasonCodes.filter(() => identity.status !== 'verified').map(code => ({ code, severity: identity.status === 'conflict'
       ? 'blocking' as const : 'warning' as const, evidenceRefs: refs })), ...(document.metrics.truncated
       ? [{ code: 'EXTRACTION_PARTIAL', severity: 'warning' as const, evidenceRefs: refs }] : [])], evaluatedAt: options.now.toISOString()

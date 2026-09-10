@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-10T16:24:28.961Z",
+  "generatedAt": "2026-09-10T18:46:45.500Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -1862,6 +1862,9 @@
           "relativePath": "src/services/gamingDocumentChunks.ts"
         },
         {
+          "relativePath": "src/services/gamingDocumentEvidence.ts"
+        },
+        {
           "relativePath": "src/services/gamingDocumentExtraction.ts"
         },
         {
@@ -1874,10 +1877,16 @@
           "relativePath": "src/services/gamingGameDetection.ts"
         },
         {
+          "relativePath": "src/services/gamingHtmlEvidence.ts"
+        },
+        {
           "relativePath": "src/services/gamingHybridCandidates.ts"
         },
         {
           "relativePath": "src/services/gamingHybridKnowledge.ts"
+        },
+        {
+          "relativePath": "src/services/gamingJsonEvidence.ts"
         },
         {
           "relativePath": "src/services/gamingModes.ts"
@@ -2660,6 +2669,9 @@
           "relativePath": "src/shared/gaming/gamingDurableRagPreviewFixture.ts"
         },
         {
+          "relativePath": "src/shared/gaming/gamingEvidenceUnits.ts"
+        },
+        {
           "relativePath": "src/shared/gaming/gamingFreshnessCore.ts"
         },
         {
@@ -2715,6 +2727,9 @@
         },
         {
           "relativePath": "src/shared/gaming/gamingStoredEvidenceCore.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingStructuralEvidence.ts"
         },
         {
           "relativePath": "src/shared/gpt/asyncGptJob.ts"
@@ -4093,6 +4108,9 @@
           "relativePath": "tests/gaming-guide-response-preview.test.ts"
         },
         {
+          "relativePath": "tests/gaming-html-evidence.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-hybrid-lifecycle.integration.test.ts"
         },
         {
@@ -4106,6 +4124,12 @@
         },
         {
           "relativePath": "tests/gaming-ingress-audit.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-json-evidence-resolution.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-json-evidence.test.ts"
         },
         {
           "relativePath": "tests/gaming-large-guide-rag.integration.test.ts"
@@ -4174,7 +4198,16 @@
           "relativePath": "tests/gaming-stored-knowledge.test.ts"
         },
         {
+          "relativePath": "tests/gaming-structural-sufficiency.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-structure-diagnostics.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-structured-resources.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-structured-supplied-rag.integration.test.ts"
         },
         {
           "relativePath": "tests/gaming-version.test.ts"

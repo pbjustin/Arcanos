@@ -3,13 +3,14 @@ import { gamingAcquisitionAxios } from './testUtils/gamingAcquisitionFixtures.js
 import express from 'express';
 import request from 'supertest';
 import { GamingResolvedSourceHarness } from './testUtils/gamingResolvedSourceHarness.js';
-import { createGamingClearAssessment, GAMING_CLEAR_DIMENSIONS, gamingClearHash, type GamingClearDimensions } from '../src/shared/gaming/gamingClearPolicy.js';
+import { GAMING_CLEAR_DIMENSIONS } from '../src/shared/gaming/gamingClearPolicy.js';
 
 const URL = 'https://guides.example.org/amber-vault';
 const SOURCE_GAME = 'Amber Pilgrim';
 const PASSAGE = 'At the obsidian observatory, rotate the silver telescope toward the eastern beacon before crossing the crystal bridge. Open the amber gate after aligning the telescope.';
 const mockHttp = jest.fn();
 const mockTrinity = jest.fn();
+const mockAuditCompletion = jest.fn();
 const jobs = new Map<string, any>();
 const operations = new Map<string, any>();
 let database = new GamingResolvedSourceHarness();
@@ -62,17 +63,10 @@ jest.unstable_mockModule('@core/db/repositories/jobRepository.js', () => ({
 jest.unstable_mockModule('@services/workerAutonomyService.js', () => ({ planAutonomousWorkerJob: async () => ({ status: 'pending', maxRetries: 2 }) }));
 jest.unstable_mockModule('@services/openai/clientBridge.js', () => ({ getOpenAIClientOrAdapter: () => ({ client: {} }) }));
 jest.unstable_mockModule('@core/logic/trinityWritingPipeline.js', () => ({ runTrinityWritingPipeline: mockTrinity }));
-// The semantic reviewer is a controlled provider boundary in this lifecycle suite.
-// Real answer validation and provider failure are covered by gaming-clear-answer-audit.
-jest.unstable_mockModule('@services/gamingClearAnswerAudit.js', () => ({
-  gamingClearAnswerMatches: (assessment: any, answer: string) => assessment?.decision === 'accept' && assessment.subjectHash === gamingClearHash(answer),
-  runGamingClearAnswerAudit: async (_client: unknown, audit: any) => ({ assessment: createGamingClearAssessment({
-    profile: 'answer', questionProfile: audit.evidenceAssessment.policyProfile.split(':')[1], subjectId: 'fixture-answer',
-    subjectHash: gamingClearHash(audit.answer), contextFingerprint: audit.evidenceAssessment.contextFingerprint,
-    evidenceRefs: audit.knowledge.evidence.map((chunk: any) => chunk.recordId), gates: audit.evidenceAssessment.gates,
-    dimensions: Object.fromEntries(GAMING_CLEAR_DIMENSIONS.map(name => [name, { status: 'evaluated', score: 4,
-      reasonCodes: ['SUPPORTED_FIXTURE'], evidenceRefs: [audit.knowledge.evidence[0].recordId], unresolvedFacts: [] }])) as GamingClearDimensions
-  }) })
+// Control the semantic provider response. The real audit validates citations,
+// response shape, scores, context binding and the final CLEAR decision.
+jest.unstable_mockModule('@services/openai/chatFallbacks.js', () => ({
+  createSingleChatCompletion: mockAuditCompletion, createChatCompletionWithFallback: jest.fn(), ensureModelMatchesExpectation: jest.fn()
 }));
 
 const { createGamingHybridWorkflow } = await import('../src/services/gamingHybridKnowledge.js');
@@ -317,6 +311,14 @@ describe('Gaming hybrid durable lifecycle', () => {
     jest.spyOn(logger, 'info').mockImplementation(() => undefined);
     jest.spyOn(logger, 'warn').mockImplementation(() => undefined);
     jest.spyOn(logger, 'error').mockImplementation(() => undefined);
+    mockAuditCompletion.mockImplementation(async (_client: unknown, params: any) => {
+      const data = JSON.parse(params.messages[1].content);
+      const evidenceRefs = data.evidence.map((chunk: any) => chunk.chunkId);
+      return { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
+        dimensions: Object.fromEntries(GAMING_CLEAR_DIMENSIONS.map(name => [name, { status: 'evaluated', score: 4,
+          reasonCodes: ['SUPPORTED_FIXTURE'], evidenceRefs: evidenceRefs.slice(0, 1), unresolvedFacts: [] }])), findings: []
+      }) } }], usage: { prompt_tokens: 500, completion_tokens: 200, total_tokens: 700 } };
+    });
     mockTrinity.mockImplementation(async (request: any) => {
       const result = `${PASSAGE} [Source 1]`;
       const { assessment } = await request.context.runOptions.gamingClearAnswerAudit(result, {});
@@ -441,6 +443,120 @@ describe('Gaming hybrid durable lifecycle', () => {
     const result = await evaluate({ game });
     expect(result.accepted).toHaveLength(1); expect(result.knowledge.context).toContain('silver telescope');
     expect(result.accepted[0].sourcePolicy.authority).toBe('unreviewed');
+  });
+
+  function useSparseTable(rows = '<tr><td>TEST-ORION-01</td><td>B 2</td><td>PML 7</td><td>Platinum</td></tr>', prefix = '', game = SOURCE_GAME) {
+    mockHttp.mockImplementation(async () => ({ data: `<html><title>${game} guide</title><body>${prefix}<table><caption>${game} resources</caption><tr><th>System</th><th>Body</th><th>Site</th><th>Resource</th></tr>${rows}</table></body></html>`, headers: { 'content-type': 'text/html' } }));
+  }
+  const locationQuestion = 'Which system, body and PML site reports Platinum?';
+
+  it('rejects wrong-game and unverified-edition sparse records after successful extraction', async () => {
+    useSparseTable(undefined, '', 'Unrelated Pilgrim');
+    expect((await resolveGamingDocument(URL)).evidenceUnits?.[0].integrity.status).toBe('complete');
+    const wrongGame = await evaluate({ prompt: locationQuestion });
+    expect(wrongGame.accepted).toHaveLength(0);
+    expect(wrongGame.decisions[0].reasonCodes).not.toContain('INSUFFICIENT_EXTRACTION');
+    useSparseTable();
+    const edition = await evaluate({ prompt: locationQuestion, edition: 'Remastered' });
+    expect(edition.accepted).toHaveLength(0);
+    expect(edition.decisions[0].reasonCodes).toContain('EDITION_UNVERIFIED_OR_MISMATCH');
+  });
+
+  it('keeps an undated structured community report transient on request and does not assert present availability', async () => {
+    // Reviewed host policy is exercised with synthetic response bytes, never a live wiki request.
+    const communityUrl = 'https://bg3.wiki/wiki/synthetic-resource-fixture';
+    const game = "Baldur's Gate 3";
+    useSparseTable(undefined, '', game);
+    const workflow = createGamingHybridWorkflow();
+    const first = await workflow.query({ contractVersion, idempotencyKey: 'community-structured-query',
+      game, question: locationQuestion, mode: 'guide', storagePolicy: 'transient_only' }, context);
+    const result = await workflow.candidates({ contractVersion, workflowId: first.body.workflowId,
+      idempotencyKey: 'community-structured-candidates', candidates: [{ url: communityUrl }] }, context);
+    expect(result.body.freshnessStatus).toBe('unverified');
+    expect(result.body.qualification).toContain('Current in-game applicability is unverified');
+    expect(result.body.candidates?.[0].sourceCategory).toBe('community');
+    expect(jobs.size).toBe(0); expect(database.records).toHaveLength(0);
+  });
+
+  it('carries a genuinely short structured tuple through real source/evidence CLEAR, approval, worker and later no-URL retrieval', async () => {
+    useSparseTable();
+    const acquired = await resolveGamingDocument(URL, 1_000_000, { documentPurpose: 'durable' });
+    expect(acquired.text.length).toBeLessThan(120);
+    expect(acquired.evidenceUnits).toHaveLength(1);
+    expect(acquired.evidenceUnits![0].fields.map(field => field.value)).toEqual(['TEST-ORION-01', 'B 2', 'PML 7', 'Platinum']);
+    const evaluated = await evaluate({ prompt: locationQuestion });
+    expect(evaluated.decisions[0].decision).toBe('eligible_for_ingestion');
+    expect(evaluated.accepted[0].sourceAssessment.dimensionScores.clarity.reasonCodes).toContain('INTELLIGIBLE_HEADER_VALUE_RELATIONSHIPS');
+    expect(evaluated.knowledge.evidence?.[0].evidenceUnits?.[0].provenance).toMatchObject({ sourceUrl: URL, strategy: 'html_table' });
+    mockHttp.mockClear();
+    mockTrinity.mockImplementation(async (request: any) => {
+      expect(JSON.stringify(request)).toContain('TEST-ORION-01');
+      const result = 'This source reports TEST-ORION-01 → B 2 → PML 7 → Platinum. Current applicability is unverified. [Source 1]';
+      const { assessment } = await request.context.runOptions.gamingClearAnswerAudit(result, {});
+      return { result, gamingClearAudit: assessment, meta: { provider: { finishReason: 'stop' } } };
+    });
+    const workflow = createGamingHybridWorkflow();
+    const query = { contractVersion, idempotencyKey: 'structured-query-1', game: SOURCE_GAME,
+      question: locationQuestion, mode: 'guide', storagePolicy: 'ask_before_store' };
+    const first = await workflow.query(query, context);
+    expect(first.body.state).toBe('discovery_required');
+    const found = await workflow.candidates({ contractVersion, workflowId: first.body.workflowId,
+      idempotencyKey: 'structured-candidates-1', candidates: [{ url: URL }] }, context);
+    expect(found.body).toMatchObject({ state: 'answer_ready', evidenceSelected: true, freshnessStatus: 'unverified' });
+    expect(found.body.answer?.response).toContain('PML 7');
+    expect(found.body.answer?.sources[0].url).toBe(URL);
+    expect(found.body.qualification).toContain('Current in-game applicability is unverified');
+    const queued = await workflow.ingest({ contractVersion, workflowId: first.body.workflowId,
+      idempotencyKey: 'structured-store-1', candidateIds: found.body.candidates!.map(candidate => candidate.candidateId),
+      storagePolicy: 'ask_before_store', confirmStore: true }, context);
+    expect(queued.body.state).toBe('ingestion_pending');
+    expect((await complete(queued.body.ingestion!.ingestionId)).sources[0].status).toBe('stored');
+    expect(database.records.some(record => record.normalized.evidenceUnits?.[0].provenance.strategy === 'html_table')).toBe(true);
+    const later = await workflow.query({ ...query, idempotencyKey: 'structured-query-2' }, context);
+    expect(later.body).toMatchObject({ state: 'answer_ready', sourceKnown: true, evidenceSelected: true, freshnessStatus: 'unverified' });
+    expect(later.body.answer?.response).toContain('PML 7');
+    expect(later.body.answer?.sources[0].url).toBe(URL);
+    expect(mockHttp).toHaveBeenCalledTimes(2);
+    expect(mockTrinity).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify((logger.info as jest.Mock).mock.calls)).not.toContain('TEST-ORION-01');
+  });
+
+  it.each([
+    '<tr><td>TEST-ORION-01</td><td>B 2</td><td></td><td>Platinum</td></tr>',
+    '<tr><td>TEST-ORION-01</td><td></td><td>PML 7</td><td>Platinum</td></tr>',
+    '<tr><td>TEST-ORION-01</td><td>B 2</td><td>PML 7</td><td></td></tr>',
+    '<tr><td>TEST-ORION-01</td><td>B 2</td><td></td><td>Platinum</td></tr><tr><td>TEST-OTHER-02</td><td>B 2</td><td>PML 7</td><td>Iron</td></tr>',
+    '<tr><td>TEST-ORION-01</td><td>B 2</td><td>PML 7</td><td>not Platinum; depleted; old patch</td></tr>'
+  ])('does not answer or persist an incomplete, cross-row or qualified tuple %#', async rows => {
+    useSparseTable(rows);
+    const evaluated = await evaluate({ prompt: locationQuestion });
+    expect(evaluated.accepted).toHaveLength(0);
+    expect(evaluated.knowledge.evidence ?? []).toHaveLength(0);
+    expect(database.records).toHaveLength(0);
+    expect(mockTrinity).not.toHaveBeenCalled();
+  });
+
+  it('retains late rows beyond the diagnostic preview, hashes substantive changes and preserves last-good records on approval failure', async () => {
+    const prefix = `<article>${'Village traders exchange copper coins for canvas and wood. '.repeat(2_400)}</article>`;
+    useSparseTable(undefined, prefix);
+    const first = await evaluate({ prompt: locationQuestion });
+    expect(first.accepted).toHaveLength(1);
+    expect(first.accepted[0].document.text.indexOf('TEST-ORION-01')).toBeGreaterThan(100_000);
+    expect(first.knowledge.context).toContain('PML 7');
+    expect((await complete(((await store(first.accepted)).payload as any).ingestionId)).sources[0].status).toBe('stored');
+    const unchanged = await evaluate({ prompt: 'What resource is at TEST-ORION-01 B 2 PML 7?' });
+    expect(unchanged.accepted[0].contentHash).toBe(first.accepted[0].contentHash);
+    expect(unchanged.accepted[0].document.text).toBe(first.accepted[0].document.text);
+    expect((await complete(((await store(unchanged.accepted, 'structured-refresh-1')).payload as any).ingestionId)).sources[0].status).toBe('unchanged');
+    const queued = await store(unchanged.accepted, 'structured-refresh-2');
+    useSparseTable('<tr><td>TEST-ORION-01</td><td>B 2</td><td>PML 8</td><td>Platinum</td></tr>', prefix);
+    expect((await complete((queued.payload as any).ingestionId)).sources[0].error.code).toBe('APPROVED_CONTENT_CHANGED');
+    expect(database.records.some(record => record.status === 'active' && record.search_text.includes('PML 7'))).toBe(true);
+    const changed = await evaluate({ prompt: locationQuestion });
+    expect(changed.accepted[0].contentHash).not.toBe(first.accepted[0].contentHash);
+    expect((await complete(((await store(changed.accepted, 'structured-refresh-3')).payload as any).ingestionId)).sources[0].status).toBe('updated');
+    expect(database.records.some(record => record.status === 'active' && record.search_text.includes('PML 8'))).toBe(true);
+    expect(database.records.some(record => record.status === 'active' && record.search_text.includes('PML 7'))).toBe(false);
   });
 
   it('selects late content beyond 100K, hashes the full artifact, and rejects changed late content before storage', async () => {

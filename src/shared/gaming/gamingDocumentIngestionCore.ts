@@ -1,6 +1,8 @@
 import type { GamingExtractionQuality } from "@services/gamingBuildResourceSchema.js";
 import { isGamingCatalogMetadataOnly } from "@services/gamingDocumentExtraction.js";
 import { detectGamingGame, type GamingGameDetection } from "@services/gamingGameDetection.js";
+import type { GamingEvidenceUnit } from './gamingEvidenceUnits.js';
+import { assessGamingStructuralUsability } from './gamingStructuralEvidence.js';
 
 /** Keep generic page parameters after admission; document-only sources own their public identity. */
 export function selectGamingSourceAdmissionUrl(
@@ -37,7 +39,9 @@ export function classifyGamingDocumentQuality(input: {
   navigationDensity?: number;
   truncated: boolean;
   minUsefulTextChars: number;
+  evidenceUnits?: readonly GamingEvidenceUnit[];
 }): 'unusable' | 'metadata-only' | 'partial' | 'complete' {
+  if (assessGamingStructuralUsability({ units: input.evidenceUnits }).hasIntactUsableUnit) return input.truncated ? 'partial' : 'complete';
   const metadataOnly = isGamingCatalogMetadataOnly(input.cleanedText)
     || (input.navigationDensity ?? 0) >= 0.62;
   return input.cleanedText.length < input.minUsefulTextChars

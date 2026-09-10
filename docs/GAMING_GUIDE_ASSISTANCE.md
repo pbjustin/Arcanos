@@ -603,3 +603,13 @@ silently enabled.
 The subsequent [source acquisition policy](GAMING_SOURCE_ACQUISITION.md) preserves
 URL identity and permits bounded, explicitly approved HTTPS redirects before
 CLEAR. Unapproved redirects and failed acquisition still remain unassessed.
+
+### Structured source records
+
+The shared resolver also preserves supported tables, lists, definition lists and
+inert JSON records before prose cleanup. Short intact records can establish a
+narrow source assertion through the existing CLEAR and retrieval paths. Game,
+edition, freshness, complete claim coverage and storage permission remain
+separate checks. See [Gaming structured source evidence](GAMING_STRUCTURED_EVIDENCE.md)
+for exact format/resource bounds, integrity and provenance rules, refresh
+behavior, synthetic regression mapping and live-evidence limits.

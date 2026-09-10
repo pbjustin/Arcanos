@@ -1,4 +1,6 @@
 import { normalizeGamingGameIdentity } from './gamingGameIdentity.js';
+import type { GamingEvidenceUnit } from './gamingEvidenceUnits.js';
+import { readGamingEvidenceUnits } from './gamingStructuralEvidence.js';
 
 export const GAMING_FRESHNESS_POLICY_VERSION = 'gaming-hybrid-freshness-v1';
 export const GAMING_SOURCE_POLICY_VERSION = 'gaming-hybrid-source-policy-v1';
@@ -139,17 +141,27 @@ export function classifyGamingQuestionFreshness(input: { prompt: string; mode?: 
  * Reads only fetched text. Dates from footers, HTTP Last-Modified, and frontend hints
  * cannot establish current applicability. Unsupported page layouts stay unverified.
  */
-export function extractGamingFreshnessMetadata(document: { publicUrl: string; canonicalUrl?: string; text: string; metadata?: { title?: string; headings?: string } },
+export function extractGamingFreshnessMetadata(document: { publicUrl: string; canonicalUrl?: string; text: string; metadata?: { title?: string; headings?: string }; evidenceUnits?: readonly GamingEvidenceUnit[] },
   context: { game: string; edition?: string; platform?: string; region?: string }, now = new Date(),
   rules: readonly GamingReviewedSourceRule[] = REVIEWED_GAMING_SOURCE_RULES): GamingFreshnessEvidence {
   // Citation redaction may shorten a path; only the acquired identity grants publisher policy.
   const policy = assessGamingSourcePolicy(document.canonicalUrl ?? document.publicUrl, context.game, rules);
-  const metadataText = document.text.slice(0, GAMING_FRESHNESS_DEFAULTS.maxMetadataChars);
+  const evidenceUnits = readGamingEvidenceUnits(document.evidenceUnits, undefined, document.text);
+  let proseText = document.text;
+  for (const unit of evidenceUnits) proseText = proseText.replace(unit.text, '');
+  const metadataText = proseText.slice(0, GAMING_FRESHNESS_DEFAULTS.maxMetadataChars);
   // The shared document instruction filter normalizes whitespace. Recover only
   // this closed label grammar; do not infer metadata from arbitrary date mentions.
   const labels = 'Game|Edition|Platforms?|Regions?|Published at|Source updated at|Effective from|Effective until|Patch|Build|Season|Current patch|Current build|Current season|Baseline valid for patches|Baseline valid for builds|Supersedes patches|Supersedes builds|Mechanic';
   const lines = metadataText.replace(new RegExp(`(?:^|\\s)(${labels}):\\s*`, 'giu'), '\n$1: ')
     .split(/\r?\n/u).slice(0, 500).map(line => line.split(/\.(?=\s+[A-Z])/u)[0].trim().replace(/\.$/u, ''));
+  // Read explicit fields as individual source assertions. Record labels such as
+  // Mechanic and Build do not become the separate prose metadata grammar.
+  const structuralLabel = /^(?:Game|Edition|Platforms?|Regions?|Published at|Source updated at|Effective from|Effective until|Patch|Season|Current patch|Current build|Current season|Baseline valid for patches|Baseline valid for builds|Supersedes patches|Supersedes builds)$/iu;
+  for (const unit of evidenceUnits) if (unit.integrity.status === 'complete') for (const field of unit.fields) {
+    const leaf = field.label.split(/\s+\/\s+/u).at(-1)!;
+    if (structuralLabel.test(leaf) && lines.length < 500) lines.push(`${leaf}: ${field.value}`);
+  }
   let conflict = false;
   let invalidMetadata = false;
   const label = (name: string, max = 80): string | undefined => {

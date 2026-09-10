@@ -134,6 +134,9 @@ export interface ProtectedDocumentFetchResponse {
   body: string;
   contentType: string;
   publicUrl: string;
+  /** Per-response bytes measured by the protected wire/decode meters. */
+  receivedBytes?: number;
+  acceptedBytes?: number;
 }
 
 export interface ProtectedDocumentFetchSession {
@@ -188,6 +191,8 @@ export function createProtectedDocumentFetchSession(
       assertActive();
       if (inFlight) throw new ProtectedDocumentFetchError('FETCH_FAILED');
       inFlight = true;
+      const responseWireStart = wireBytes;
+      const responseDecodedStart = decodedBytes;
       let agent: HttpsAgent | undefined;
       let response: IncomingMessage | undefined;
       let responseStatus: number | undefined;
@@ -303,7 +308,9 @@ export function createProtectedDocumentFetchSession(
           ...(isRedirect ? { location: locations[0] } : {}),
           body: Buffer.concat(chunks).toString('utf8'),
           contentType: String(result.headers['content-type'] ?? '').split(';', 1)[0].trim().toLowerCase(),
-          publicUrl: target.parsedUrl.href
+          publicUrl: target.parsedUrl.href,
+          receivedBytes: wireBytes - responseWireStart,
+          acceptedBytes: decodedBytes - responseDecodedStart
         };
       } catch (error) {
         assertActive();
@@ -654,6 +661,18 @@ export async function fetchAndCleanDocument(
   return extractFetchAndCleanDocument(target.parsedUrl.href, responseText, contentType, maxChars, options, fetchElapsedMs);
 }
 
+/** Validate original accepted bytes before any opt-in document projection can remove content. */
+export function assertSupportedFetchAndCleanBody(responseText: string, contentType: string): void {
+  if (contentType && !['text/html', 'text/plain', 'application/xhtml+xml', 'application/json'].includes(contentType)) {
+    throw new Error(`Unsupported content type for web fetching: ${contentType}`);
+  }
+  const binarySample = responseText.slice(0, 8192);
+  const binaryControlCount = binarySample.match(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\ufffd]/g)?.length ?? 0;
+  if (binarySample.includes('\u0000') || binaryControlCount / Math.max(1, binarySample.length) > 0.03) {
+    throw new Error('Unsupported binary-like content for web fetching');
+  }
+}
+
 /** Reuse the bounded extractor after resolver-controlled acquisition, without another network request. */
 export function extractFetchAndCleanDocument(
   url: string,
@@ -669,14 +688,7 @@ export function extractFetchAndCleanDocument(
     ? Math.min(HARD_MAX_SELECTED_TEXT_CHARS, Math.max(0, Math.trunc(options.maxSelectedTextChars!)))
     : HARD_MAX_CHARS;
   const boundedMaxChars = Math.min(Math.max(0, Number.isFinite(maxChars) ? Math.trunc(maxChars) : 0), selectedTextCeiling);
-  if (contentType && !['text/html', 'text/plain', 'application/xhtml+xml', 'application/json'].includes(contentType)) {
-    throw new Error(`Unsupported content type for web fetching: ${contentType}`);
-  }
-  const binarySample = responseText.slice(0, 8192);
-  const binaryControlCount = binarySample.match(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\ufffd]/g)?.length ?? 0;
-  if (binarySample.includes('\u0000') || binaryControlCount / Math.max(1, binarySample.length) > 0.03) {
-    throw new Error('Unsupported binary-like content for web fetching');
-  }
+  assertSupportedFetchAndCleanBody(responseText, contentType);
 
   if (options.onRawDocument) {
     const rawDocumentMaxChars = Math.min(

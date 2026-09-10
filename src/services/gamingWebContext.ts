@@ -3,10 +3,15 @@ import { createHash } from "node:crypto";
 import { GAMEPLAY_CONTENT_PATTERN, filterGamingDocumentInstructions, isGamingCatalogMetadataOnly } from "@services/gamingDocumentExtraction.js";
 import type { GamingPlayerContext } from '@shared/gaming/gamingPlayerContext.js';
 import type { GamingStoredKnowledgeContext } from '@shared/gaming/gamingStoredEvidenceCore.js';
+import type { GamingEvidenceUnit } from '@shared/gaming/gamingEvidenceUnits.js';
+import { GAMING_EVIDENCE_UNIT_POLICY_VERSION } from '@shared/gaming/gamingEvidenceUnits.js';
+import { assessGamingStructuralUsability, readGamingEvidenceUnits } from '@shared/gaming/gamingStructuralEvidence.js';
+import { assessGamingClearSource } from '@shared/gaming/gamingClearSource.js';
+import { gamingClearHash, type GamingClearAssessment } from '@shared/gaming/gamingClearPolicy.js';
 import { assessGamingSourcePolicy, extractGamingFreshnessMetadata } from '@shared/gaming/gamingFreshnessCore.js';
 import { buildGamingRetrievalTerms, GAMING_RETRIEVAL_POLICY_VERSION, gamingTermCoverage, safeGamingEvidenceMetadata, scopeGamingEvidenceParagraphs } from '@shared/gaming/gamingRetrievalPolicy.js';
 import { describeGamingDocumentSource, resolveGamingDocument, isResolvedGamingDocumentIdentityVerified,
-  GAMING_DOCUMENT_ACQUISITION_POLICY_VERSION, GamingDocumentAcquisitionError } from "@services/gamingDocumentResolution.js";
+  GAMING_DOCUMENT_ACQUISITION_POLICY_VERSION, GamingDocumentAcquisitionError, type ResolvedGamingDocument } from "@services/gamingDocumentResolution.js";
 import { load } from "cheerio";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import { redactString } from "@shared/redaction.js";
@@ -174,6 +179,8 @@ type GamingFetchedDocument = {
   fetchedAt: string;
   cacheHit: boolean;
   extraction: FetchAndCleanExtractionMetrics;
+  evidenceUnits?: GamingEvidenceUnit[];
+  resolvedDocument?: ResolvedGamingDocument;
   archiveResolution?: GamingArchiveResolutionTelemetry;
   structured?: {
     result: GamingBuildResourceResult;
@@ -188,6 +195,8 @@ type GamingRankedChunk = {
   hash: string;
   snippetQualityScore: number;
   navigationPenalty: number;
+  evidenceUnits?: GamingEvidenceUnit[];
+  sourceAssessment?: GamingClearAssessment;
 };
 
 const TRUSTED_DOMAIN_SCORES: Array<{ domain: string; score: number }> = [
@@ -402,6 +411,8 @@ const documentCache = new Map<string, {
   extraction: FetchAndCleanExtractionMetrics;
   archiveResolution?: GamingArchiveResolutionTelemetry;
   structured?: GamingFetchedDocument["structured"];
+  evidenceUnits?: GamingEvidenceUnit[];
+  resolvedDocument?: ResolvedGamingDocument;
 }>();
 
 const FRONTEND_EVIDENCE_CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff]/g;
@@ -1795,7 +1806,7 @@ async function fetchGamingRagDocument(
   const payloadCacheKey = resolvedIdentity
     ? createHash("sha256").update(resolvedIdentity).digest("hex").slice(0, 24)
     : preparedResource?.payloadHash.slice(0, 24) ?? "invalid-resource";
-  const resolverCachePolicy = documentSource ? `:resolver:${documentSource.resolverId}:${documentSource.resolverVersion}:${GAMING_DOCUMENT_ACQUISITION_POLICY_VERSION}` : "";
+  const resolverCachePolicy = documentSource ? `:resolver:${documentSource.resolverId}:${documentSource.resolverVersion}:${GAMING_DOCUMENT_ACQUISITION_POLICY_VERSION}:${GAMING_EVIDENCE_UNIT_POLICY_VERSION}` : "";
   const cacheKey = `${cacheUrlKey}#gaming-rag:${contentTermKey}:payload:${payloadCacheKey}:origin:${strictEvidenceCandidate ? "current-candidate" : untrustedEvidenceCandidate ? "supplied" : "curated"}${resolverCachePolicy}`;
   const cached = documentCache.get(cacheKey);
   const now = Date.now();
@@ -1842,6 +1853,8 @@ async function fetchGamingRagDocument(
       fetchedAt: cached.fetchedAt,
       cacheHit: true,
       extraction: cached.extraction,
+      ...(cached.evidenceUnits ? { evidenceUnits: cached.evidenceUnits } : {}),
+      ...(cached.resolvedDocument ? { resolvedDocument: cached.resolvedDocument } : {}),
       ...(cached.archiveResolution ? { archiveResolution: cached.archiveResolution } : {}),
       ...(cached.structured ? { structured: cached.structured } : {})
     };
@@ -1910,6 +1923,8 @@ async function fetchGamingRagDocument(
     let partialExtraction = false;
     let effectiveCandidate = candidate;
     let acquiredCanonicalUrl = fetchUrl;
+    let evidenceUnits: GamingEvidenceUnit[] = [];
+    let resolvedDocument: ResolvedGamingDocument | undefined;
     const fetchedArticleText = await runWithLocalTimeout(
       async (signal) => {
         const document = await resolveGamingDocument(fetchUrl,
@@ -1922,6 +1937,11 @@ async function fetchGamingRagDocument(
         if (!isResolvedGamingDocumentIdentityVerified(document, fetchUrl)) {
           throw new GamingDocumentAcquisitionError('URL_BLOCKED', 'extraction', 'SOURCE_IDENTITY_MISMATCH');
         }
+        if (document.sourceUseRestricted || document.evidenceUnits?.length && document.metrics.instructionFiltered) {
+          throw new GamingDocumentAcquisitionError('SOURCE_FETCH_FAILED', 'extraction', 'SOURCE_USE_RESTRICTED');
+        }
+        evidenceUnits = readGamingEvidenceUnits(document.evidenceUnits, document.publicUrl, document.text);
+        if (evidenceUnits.length) resolvedDocument = { ...document, rawDocument: undefined };
         redirected = (document.acquisition?.redirectCount ?? 0) > 0;
         acquiredCanonicalUrl = document.canonicalUrl;
         effectiveCandidate = { ...candidate, url: document.publicUrl, fetchUrl: document.canonicalUrl };
@@ -1944,7 +1964,7 @@ async function fetchGamingRagDocument(
       fetchTimeoutMs,
       requestSignal
     );
-    const articleText = untrustedEvidenceCandidate
+    const articleText = untrustedEvidenceCandidate && !evidenceUnits.length
       ? normalizeUntrustedEvidenceText(fetchedArticleText)
       : fetchedArticleText;
     if (untrustedEvidenceCandidate) {
@@ -2027,7 +2047,8 @@ async function fetchGamingRagDocument(
       expiresAt: now + getGamingRagTtlMs(input.mode, patchSensitive),
       extraction: effectiveExtraction,
       ...(archiveResolution ? { archiveResolution } : {}),
-      ...(structured ? { structured } : {})
+      ...(structured ? { structured } : {}),
+      ...(!evidenceUsed && evidenceUnits.length ? { evidenceUnits, resolvedDocument } : {})
     });
     if (logContext) {
       logger.info("gaming.retrieval.source.end", {
@@ -2070,7 +2091,8 @@ async function fetchGamingRagDocument(
       cacheHit: false,
       extraction: effectiveExtraction,
       ...(archiveResolution ? { archiveResolution } : {}),
-      ...(structured ? { structured } : {})
+      ...(structured ? { structured } : {}),
+      ...(!evidenceUsed && evidenceUnits.length ? { evidenceUnits, resolvedDocument } : {})
     };
   } catch (error) {
     if (requestSignal?.aborted) {
@@ -2437,6 +2459,31 @@ function rankChunks(documents: GamingFetchedDocument[], terms: string[], input: 
   const maxChunkChars = getGamingRagChunkChars();
   const scoredChunks: GamingRankedChunk[] = [];
   for (const document of documents) {
+    const units = readGamingEvidenceUnits(document.evidenceUnits, document.candidate.url, document.text);
+    const structural = assessGamingStructuralUsability({ units, ...input });
+    const structuredClaim = units.length > 0 && structural.claimShape !== 'none';
+    if (structuredClaim && !structural.claimSupported) continue;
+    if (structural.hasIntactUsableUnit && document.resolvedDocument && input.game) {
+      const assessedAt = new Date();
+      const sourceAssessment = assessGamingClearSource({ ...input, game: input.game }, document.resolvedDocument, {
+        subjectId: `live:${hashChunk(document.candidate.url)}`,
+        subjectHash: gamingClearHash({ text: document.text, evidenceUnits: units, policyVersion: GAMING_EVIDENCE_UNIT_POLICY_VERSION }),
+        actorScopeHash: gamingClearHash('request-scoped-supplied-retrieval'),
+        sourcePolicy: assessGamingSourcePolicy(document.candidate.fetchUrl, input.game),
+        freshness: extractGamingFreshnessMetadata(document.resolvedDocument, { game: input.game, edition: input.edition, platform: input.platform }, new Date(document.fetchedAt)),
+        now: assessedAt
+      });
+      if (['accept', 'partial'].includes(sourceAssessment.decision)) {
+        for (const unit of units) {
+          if (!structural.supportingUnitIds.includes(unit.id) || unit.text.length > maxChunkChars
+            || filterGamingDocumentInstructions(unit.text) !== unit.text.normalize('NFKC').replace(/\s+/gu, ' ').trim()
+            || !isRelevantGameplayChunk(unit.text, document.candidate, terms, input)) continue;
+          scoredChunks.push({ candidate: document.candidate, text: unit.text, evidenceUnits: [unit], sourceAssessment,
+            score: scoreCandidate(input, document.candidate, terms, patchSensitive) + gamingTermCoverage(unit.text, terms),
+            hash: hashChunk(unit.text), snippetQualityScore: (sourceAssessment.dimensionScores.clarity.score ?? 0) / 5, navigationPenalty: 0 });
+        }
+      } else if (structuredClaim) continue;
+    }
     if (document.structured?.evidenceUsed) {
       const structuredChunks = splitIntoChunks(document.text, maxChunkChars).slice(0, Math.min(3, maxChunks));
       for (const [index, chunk] of structuredChunks.entries()) {
@@ -2459,7 +2506,11 @@ function rankChunks(documents: GamingFetchedDocument[], terms: string[], input: 
       }
       continue;
     }
-    for (const chunk of splitIntoChunks(scopeGamingEvidenceParagraphs(document.text, input), maxChunkChars)) {
+    let proseText = document.text;
+    // Every structural unit stays outside the legacy prose fallback, including
+    // rejected records whose flattened words could otherwise mimic a tuple.
+    for (const unit of units) proseText = proseText.replace(unit.text, '');
+    for (const chunk of splitIntoChunks(scopeGamingEvidenceParagraphs(proseText, input), maxChunkChars)) {
       const safeChunk = extractReadableEvidenceText(chunk);
       if (!safeChunk || !isReadableGameplayChunk(safeChunk) || !isRelevantGameplayChunk(safeChunk, document.candidate, terms, input)) {
         continue;
@@ -2531,7 +2582,7 @@ function rankChunks(documents: GamingFetchedDocument[], terms: string[], input: 
   for (const chunk of sortedChunks) {
     if (selectedChunks.some((selected) =>
       selected.candidate.url === chunk.candidate.url
-      && (selected.hash === chunk.hash || areNearDuplicateChunks(selected.text, chunk.text))
+      && (selected.hash === chunk.hash || !selected.evidenceUnits?.length && !chunk.evidenceUnits?.length && areNearDuplicateChunks(selected.text, chunk.text))
     )) {
       continue;
     }
@@ -2659,7 +2710,7 @@ function buildRagContext(
       return;
     }
     const domain = normalizeDomain(chunk.candidate.url);
-    const evidenceText = extractReadableEvidenceText(chunk.text);
+    const evidenceText = chunk.evidenceUnits?.length ? chunk.text : extractReadableEvidenceText(chunk.text);
     if (!evidenceText) {
       return;
     }
@@ -2670,12 +2721,15 @@ function buildRagContext(
     const header = [
       "", `[Source ${sourceNumber}] ${chunk.candidate.url}`,
       `${title ? `Title: ${title}; ` : ''}Domain: ${domain}; Type: ${chunk.candidate.sourceType}; Trust: ${chunk.candidate.trustScore.toFixed(2)}${freshnessNote}`,
-      ...(chunk.candidate.partialExtraction ? ['Coverage: partial extraction. Use only intact selected passages; missing prerequisites are unknown.'] : [])
+      ...(chunk.candidate.partialExtraction ? ['Coverage: partial extraction. Use only intact selected passages; missing prerequisites are unknown.'] : []),
+      ...(chunk.evidenceUnits?.map(unit => `Record: ${unit.id}; source location: ${unit.provenance.locator}; representation: ${unit.provenance.representation}; strategy: ${unit.provenance.strategy}${unit.provenance.jsonOnly ? '; JSON-only source assertion' : ''}`) ?? []),
+      ...(chunk.evidenceUnits?.length ? ['The source reports this record; in-game observation, current availability and independent corroboration are not established.'] : [])
     ];
     const availableChars = maxContextChars - [...parts, ...header, ""].join("\n").length;
     // A source header alone is not evidence. Count only readable text that fits
     // the final provider context, using the existing gameplay readability test.
-    let boundedEvidence = evidenceText.slice(0, Math.max(0, availableChars)).trim();
+    let boundedEvidence = chunk.evidenceUnits?.length ? evidenceText.length <= availableChars ? evidenceText : ''
+      : evidenceText.slice(0, Math.max(0, availableChars)).trim();
     if (boundedEvidence.length < evidenceText.length) {
       // A clipped qualification or prerequisite changes a claim. Keep only
       // complete fitting sentences; a header or mid-sentence prefix is not evidence.
@@ -2683,7 +2737,7 @@ function buildRagContext(
       const lastEnd = sentenceEnds.at(-1)?.index;
       boundedEvidence = lastEnd === undefined ? '' : boundedEvidence.slice(0, lastEnd + 1).trim();
     }
-    if (!boundedEvidence || !isReadableGameplayChunk(boundedEvidence)) {
+    if (!boundedEvidence || !chunk.evidenceUnits?.length && !isReadableGameplayChunk(boundedEvidence)) {
       return;
     }
     parts.push(...header, boundedEvidence);
@@ -2741,7 +2795,8 @@ function shapePublicSnippet(text: string): string {
 function sourceFromChunk(chunk: GamingRankedChunk): GamingWebSource {
   return {
     url: chunk.candidate.url,
-    snippet: shapePublicSnippet(chunk.text)
+    snippet: chunk.evidenceUnits?.length ? chunk.text.length <= MAX_PUBLIC_SNIPPET_CHARS ? chunk.text
+      : 'Structured source record; the complete record is retained in the evidence context.' : shapePublicSnippet(chunk.text)
   };
 }
 
@@ -3250,21 +3305,26 @@ export async function buildGamingRagContext(
     const document = documents.find(item => item.candidate.url === source.url);
     if (!document) continue;
     const sourceId = `live:${hashChunk(source.url)}`;
-    const revisionId = `live:${hashChunk(document.text)}`;
+    const revisionId = `live:${document.evidenceUnits?.length ? gamingClearHash({ text: document.text,
+      evidenceUnits: document.evidenceUnits, policyVersion: GAMING_EVIDENCE_UNIT_POLICY_VERSION }) : hashChunk(document.text)}`;
     const reliableGame = detectReliableDocumentGame(document) ?? detectGameFromDocumentIntro(document, effectiveInput.game)
       ?? (document.candidate.gameCorroborated ? effectiveInput.game : undefined)
       ?? (!document.candidate.untrustedCandidate ? document.candidate.games?.[0] : undefined);
     const metadata = effectiveInput.game ? extractGamingFreshnessMetadata({ publicUrl: source.url,
       canonicalUrl: document.candidate.fetchUrl, text: document.text,
+      evidenceUnits: document.evidenceUnits,
       metadata: { title: document.extraction.documentTitle, headings: document.extraction.headingText } },
       { game: effectiveInput.game, edition: effectiveInput.edition, platform: effectiveInput.platform }, new Date(document.fetchedAt)) : undefined;
+    const sourceAssessment = renderedContext.selectedEvidence.find(item => item.chunk.candidate.url === source.url && item.chunk.sourceAssessment)?.chunk.sourceAssessment;
     clearKnowledge.sources.push({ sourceId, url: source.url, snippet: source.snippet ?? '',
+      ...(sourceAssessment ? { clearSourceAssessment: sourceAssessment } : {}),
       sourceType: document.candidate.sourceType, origin: 'live', fetchedAt: document.fetchedAt,
       ...(reliableGame ? { game: reliableGame } : {}),
       ...(metadata ? { freshnessMetadata: { ...metadata, id: sourceId, partialExtraction: document.candidate.partialExtraction === true } } : {}) });
     for (const item of renderedContext.selectedEvidence.filter(item => item.chunk.candidate.url === source.url)) {
       clearKnowledge.evidence!.push({ sourceId, revisionId, recordId: `live:${hashChunk(item.text)}`,
         recordType: effectiveInput.mode, publicUrl: source.url, text: item.text,
+        ...(item.chunk.evidenceUnits?.length ? { evidenceUnits: item.chunk.evidenceUnits } : {}),
         lexicalScore: item.chunk.score, combinedScore: item.chunk.score, provenance: { fetchedAt: document.fetchedAt } });
     }
   }
