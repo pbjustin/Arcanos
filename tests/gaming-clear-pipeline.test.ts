@@ -52,6 +52,26 @@ describe('Gaming CLEAR real pipeline delivery decisions', () => {
     expect(composed.data.response).toBe(answer);
   });
 
+  it.each(['EU', 'US', undefined])('retains region %s through the final applicability gate and semantic review', async region => {
+    const evidence: GamingStoredKnowledgeContext = knowledge();
+    evidence.sources[0].freshnessMetadata = { id: 'source-1', game: input.game, url: evidence.sources[0].url,
+      regions: ['EU'], fetchedAt: evidence.sources[0].fetchedAt, verifiedAt: evidence.sources[0].fetchedAt,
+      metadataConfidence: 'content_extracted' };
+    const result = await runGameplayPipeline({ ...input, ...(region ? { region } : {}) },
+      { knowledge: evidence, current: true, qualification: '' });
+    if (region === 'EU') {
+      expect(result.data.response).toBe(answer);
+      expect(result.data.fallbackReason).toBeUndefined();
+      const params = createSingleChatCompletion.mock.calls[0][1] as { messages: Array<{ content: string }> };
+      expect(JSON.parse(params.messages[1].content)).toMatchObject({ playerContext: { region: 'EU' },
+        applicability: [{ regions: ['EU'] }] });
+    } else {
+      expect(result.data.fallbackReason).toBe('INTAKE_RETRIEVAL_FAILED');
+      expect(runTrinityWritingPipeline).not.toHaveBeenCalled();
+      expect(createSingleChatCompletion).not.toHaveBeenCalled();
+    }
+  });
+
   it('blocks a high-scoring material defect even with auditEnabled false and no retry/repair', async () => {
     findings = [{ code: 'UNSUPPORTED_MECHANIC', severity: 'blocking', evidenceRefs: ['chunk-1'] }];
     const result = await run();

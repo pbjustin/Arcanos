@@ -310,7 +310,7 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
         return failure(context, 'WORKFLOW_CAPACITY_REACHED', 429);
       const workflow: Workflow = { id: randomUUID(), actor, createdAt: deps.now(), input, round: 0, accepted: [], operations: new Map(),
         pipeline: { ...resolveGamingPlayerContext(input, input.question), game: input.game, prompt: input.question,
-          mode: input.mode, requestedVersion: input.requestedVersion, guideUrls: [], auditEnabled: false } };
+          mode: input.mode, requestedVersion: input.requestedVersion, region: input.region, guideUrls: [], auditEnabled: false } };
       workflows.set(workflow.id, workflow);
       const promise = protect(context, workflow, async () => {
         workflow.knowledge = await deps.retrieve({ ...workflow.pipeline, game: input.game, failOnUnavailable: true, hybridRetrieval: true, signal: context.signal });

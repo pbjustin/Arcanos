@@ -23,6 +23,7 @@ export interface GamingClearAnswerInput extends GamingPlayerContext {
   prompt: string;
   mode: 'guide' | 'build' | 'meta';
   requestedVersion?: string;
+  region?: string;
   answer: string;
   knowledge: GamingStoredKnowledgeContext;
   evidenceAssessment: GamingClearAssessment;
@@ -93,6 +94,7 @@ export async function runGamingClearAnswerAudit(client: OpenAI, input: GamingCle
       partialExtraction: metadata.partialExtraction === true || sourceReasonCodes.includes('EXTRACTION_PARTIAL'),
       sourceAssessmentStatus: source.clearSourceAssessment?.assessmentStatus ?? 'not_run', sourceReasonCodes,
       patch: metadata.patch, build: metadata.build, season: metadata.season, currentPatch: metadata.currentPatch,
+      platforms: metadata.platforms, regions: metadata.regions,
       currentBuild: metadata.currentBuild, effectiveFrom: metadata.effectiveFrom, effectiveUntil: metadata.effectiveUntil,
       verifiedAt: metadata.verifiedAt, sourceUpdatedAt: metadata.sourceUpdatedAt, fetchedAt: source.fetchedAt,
       currentness: metadata.currentness, baselineForPatches: metadata.baselineForPatches,
@@ -107,7 +109,7 @@ export async function runGamingClearAnswerAudit(client: OpenAI, input: GamingCle
   }
   const data = JSON.stringify({ answer: input.answer, question: input.prompt, game: input.game,
     requestedVersion: input.requestedVersion, playerContext: {
-      platform: input.platform, edition: input.edition, currentArea: input.currentArea,
+      platform: input.platform, region: input.region, edition: input.edition, currentArea: input.currentArea,
       lastCompletedObjective: input.lastCompletedObjective, progressPoint: input.progressPoint,
       difficulty: input.difficulty, class: input.class, role: input.role, constraints: input.constraints,
       spoilerMode: input.spoilerMode ?? 'none', answerDepth: input.answerDepth ?? 'auto'

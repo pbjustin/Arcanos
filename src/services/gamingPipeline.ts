@@ -64,7 +64,10 @@ import { GAMING_CLEAR_APPROVED_ANSWER } from '@shared/gaming/gamingClearAnswerBi
 export type GamingPipelineInput = Pick<
   ValidatedGamingRequest,
   "mode" | "prompt" | "game" | "guideUrl" | "guideUrls" | "evidenceOrigin" | "requestedVersion" | "evidenceAttempt" | "auditEnabled"
-> & GamingPlayerContext;
+> & GamingPlayerContext & {
+  /** Region already validated by the hybrid request contract. */
+  region?: string;
+};
 
 type GamingWebSource = GamingSuccessEnvelope["data"]["sources"][number];
 

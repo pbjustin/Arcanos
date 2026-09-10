@@ -41,6 +41,21 @@ describe('Gaming hybrid authenticated handoff', () => {
     expect(generate).toHaveBeenCalledTimes(1);
     expect(evaluateCandidates).not.toHaveBeenCalled();
   });
+  it.each(['EU', 'US', undefined])('retains region %s through evidence assessment and generation', async region => {
+    const data = knowledge();
+    data.sources[0].freshnessMetadata = { id: 'source-1', game: query.game, url: data.sources[0].url,
+      regions: ['EU'], fetchedAt: data.sources[0].fetchedAt, verifiedAt: data.sources[0].fetchedAt,
+      metadataConfidence: 'content_extracted' };
+    const { workflow, generate } = setup(data);
+    const result = await workflow.query({ ...query, ...(region ? { region } : {}) }, context);
+    if (region === 'EU') {
+      expect(result.body.state).toBe('answer_ready');
+      expect(generate).toHaveBeenCalledWith(expect.objectContaining({ region: 'EU' }), expect.any(Object));
+    } else {
+      expect(result.body.answer).toBeUndefined();
+      expect(generate).not.toHaveBeenCalled();
+    }
+  });
   it('asks one targeted question for a known source and vague progression', async () => {
     const { workflow, generate } = setup({ ...empty, sourceKnown: true });
     const result = await workflow.query({ ...query, question: 'What next?' }, context);
