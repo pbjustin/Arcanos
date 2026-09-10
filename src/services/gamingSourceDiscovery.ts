@@ -1,8 +1,13 @@
+import {
+  sanitizeGamingSourceUrl, normalizeGamingSourceDomain as normalizeDomain, gamingSourceDomainMatches as domainMatches,
+  type GamingSourceAdmissionResult
+} from "@shared/gaming/gamingSourceAcquisitionCore.js";
+export { GAMING_SOURCE_ADMISSION_POLICY_VERSION } from "@shared/gaming/gamingSourceAcquisitionCore.js";
+export type { GamingSourceAdmissionSubreason, GamingSourceAdmissionRejection, GamingSourceAdmissionResult }
+  from "@shared/gaming/gamingSourceAcquisitionCore.js";
 import { createHash } from "node:crypto";
-import { isIP } from "node:net";
 import { logger } from "@platform/logging/structuredLogging.js";
 import { getEnv } from "@platform/runtime/env.js";
-import { redactString } from "@shared/redaction.js";
 import { GAMING_BUILD_RESOURCE_HARD_LIMITS } from "@services/gamingBuildResourceSchema.js";
 import {
   getGamingDiscoveryBudgetMs,
@@ -122,48 +127,7 @@ const MAX_SEARCH_TITLE_CHARS = 240;
 const MAX_SEARCH_SNIPPET_CHARS = 500;
 const MAX_QUERY_TOPIC_TERMS = 7;
 const MAX_PROVIDER_RANK = 100;
-// These names are analytics identifiers. Generic source/campaign/ref selectors can identify a document.
-const TRACKING_PARAM_PATTERN = /^(?:utm_.+|fbclid|gclid|dclid|msclkid|mc_[ce]id)$/i;
-const SENSITIVE_PARAM_PATTERN = /(?:^|[_-])(?:access|api|auth|authorization|bearer|cookie|credential|key|nonce|password|secret|session|sig|signature|ticket|token)(?:$|[_-])|^(?:accessToken|apiKey|authToken|sessionId|x-amz-.+|x-goog-.+)$/i;
-const SENSITIVE_PATH_MARKER_PATTERN = /^(?:access[-_]?token|api[-_]?key|assertion|authorization|bearer|credential|jwt|nonce|oauth|password|saml|secret|session|sig|signature|signed|sso|ticket|token|x-amz-.+)$/i;
-const SENSITIVE_VALUE_PATTERN = /^(?:sk-|gh[opusr]_|eyj[a-z0-9_-]*\.|bearer\s+)/i;
-const FILE_DOWNLOAD_PATTERN = /\.(?:7z|avi|bin|dmg|docx?|exe|gz|iso|mov|mp3|mp4|msi|pdf|pkg|rar|tar|wav|webm|xlsx?|zip)$/i;
-const ACCOUNT_PATH_PATTERN = /\/(?:account|accounts|auth|login|log-in|register|registration|sign-in|signin|signup)(?:\/|$)/i;
-const SEARCH_PATH_PATTERN = /\/(?:search|search-results|results)(?:\/|$)/i;
-const SEARCH_QUERY_PARAM_PATTERN = /^(?:keyword|q|query|search|search_query)$/i;
-const SEARCH_QUERY_ENDPOINT_PATTERN = /^\/(?:index(?:\.(?:php|html?|aspx?))?)?\/?$/i;
-const RAW_URL_CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f-\u009f]/u;
-const CONTENT_FARM_DOMAIN_PATTERN = /(?:^|[.-])(?:clickbait|content-?farm|scraper|seo-?spam|spam)(?:[.-]|$)/i;
 const SOURCE_INSTRUCTION_PATTERN = /(?:\b(?:(?:ignore|disregard|override)\s+(?:all\s+)?(?:previous|prior|system|developer|assistant|user)\s+(?:instructions?|messages?|prompts?)|forget\s+(?:everything|all)(?:\s+(?:written|said))?\s+(?:above|before)|you\s+are\s+now|(?:reveal|print|show|expose)\s+(?:the\s+)?(?:system|developer)\s+(?:prompt|message|instructions?)|(?:call|invoke)\s+(?:the\s+)?(?:tool|function)|(?:execute|run)\s+(?:this\s+)?(?:command|shell|powershell|bash))\b|(?:^|\s|\[|<\|)(?:system|developer|assistant|user)(?:\s*:|\]|\|>))/i;
-const LOW_SIGNAL_DOMAINS = [
-  "facebook.com",
-  "instagram.com",
-  "pinterest.com",
-  "tiktok.com",
-  "twitter.com",
-  "x.com",
-  "youtube.com",
-  "youtu.be"
-];
-const URL_SHORTENER_DOMAINS = [
-  "bit.ly",
-  "buff.ly",
-  "cutt.ly",
-  "goo.gl",
-  "is.gd",
-  "ow.ly",
-  "rebrand.ly",
-  "shorturl.at",
-  "tinyurl.com",
-  "t.co"
-];
-const SEARCH_ENGINE_DOMAINS = [
-  "bing.com",
-  "duckduckgo.com",
-  "google.com",
-  "search.brave.com",
-  "search.yahoo.com"
-];
 const QUERY_STOP_WORDS = new Set([
   "about", "access", "and", "api", "are", "auth", "bearer", "best", "can", "cookie", "could", "credential", "find", "for", "from", "game", "give", "help",
   "how", "into", "look", "looking", "me", "need", "please", "show", "that", "the", "this", "through",
@@ -240,186 +204,19 @@ export function buildGamingDiscoveryQuery(input: Pick<GamingDiscoveryInput, "pro
     .trim();
 }
 
-function normalizeDomain(hostname: string): string {
-  return hostname.toLowerCase().replace(/^www\./, "").replace(/^\[|\]$/g, "").replace(/\.$/, "");
-}
-
-function domainMatches(domain: string, candidate: string): boolean {
-  const normalizedCandidate = normalizeDomain(candidate);
-  return domain === normalizedCandidate || domain.endsWith(`.${normalizedCandidate}`);
-}
-
-function isInternalIpv4(hostname: string): boolean {
-  const octets = hostname.split(".").map(Number);
-  if (octets.length !== 4 || octets.some((octet) => !Number.isInteger(octet) || octet < 0 || octet > 255)) {
-    return true;
-  }
-  const [first, second, third] = octets;
-  return first === 0
-    || first === 10
-    || first === 127
-    || (first === 100 && second >= 64 && second <= 127)
-    || (first === 169 && second === 254)
-    || (first === 172 && second >= 16 && second <= 31)
-    || (first === 192 && second === 168)
-    || (first === 192 && second === 0 && (third === 0 || third === 2))
-    || (first === 198 && (second === 18 || second === 19 || (second === 51 && third === 100)))
-    || (first === 203 && second === 0 && third === 113)
-    || first >= 224;
-}
-
-function isInternalHost(hostname: string): boolean {
-  const normalized = normalizeDomain(hostname);
-  if (normalized === "localhost" || normalized.endsWith(".localhost") || normalized.endsWith(".local")) {
-    return true;
-  }
-  const ipFamily = isIP(normalized);
-  if (ipFamily === 4) {
-    return isInternalIpv4(normalized);
-  }
-  if (ipFamily === 6) {
-    const compact = normalized.toLowerCase();
-    return compact === "::" || compact === "::1" || compact.startsWith("fc") || compact.startsWith("fd")
-      || /^fe[89ab]/.test(compact) || /^fe[c-f]/.test(compact) || compact.startsWith("ff")
-      || compact === "2001:db8" || compact.startsWith("2001:db8:") || compact.startsWith("::ffff:");
-  }
-  return false;
-}
-
-export const GAMING_SOURCE_ADMISSION_POLICY_VERSION = "gaming-source-admission-v2";
-
-export type GamingSourceAdmissionSubreason =
-  | "invalid_url" | "url_too_long" | "unsupported_scheme" | "credentials" | "sensitive_url_material"
-  | "forbidden_port" | "private_reserved_destination" | "domain_deny_rule" | "outside_domain_allowlist"
-  | "unsupported_document_type" | "account_path" | "search_results" | "shortened_url"
-  | "source_category_excluded" | "tracking_limit" | "query_parameter_limit";
-
-export interface GamingSourceAdmissionRejection {
-  category: "security" | "source_policy";
-  subreason: GamingSourceAdmissionSubreason;
-  ruleId: string;
-  policyVersion: typeof GAMING_SOURCE_ADMISSION_POLICY_VERSION;
-}
-
-export interface GamingSourceAdmissionResult {
-  url?: string;
-  rejected: boolean;
-  /** Internal bounded diagnostics; retain the existing public URL_BLOCKED reason. */
-  rejection?: GamingSourceAdmissionRejection;
-}
-
-function rejectGamingSourceUrl(
-  category: GamingSourceAdmissionRejection["category"],
-  subreason: GamingSourceAdmissionSubreason
-): GamingSourceAdmissionResult {
-  return { rejected: true, rejection: {
-    category, subreason, ruleId: `gaming.url.${subreason}`, policyVersion: GAMING_SOURCE_ADMISSION_POLICY_VERSION
-  } };
-}
-
 export function sanitizeGamingDiscoveryCandidateUrl(rawUrl: string): GamingSourceAdmissionResult {
-  return sanitizeGamingSourceUrl(rawUrl, MAX_SEARCH_RESULT_URL_CHARS);
+  return sanitizeGamingSourceUrl(rawUrl, MAX_SEARCH_RESULT_URL_CHARS, {
+    allowlist: getGamingDiscoveryDomainAllowlist(), blocklist: getGamingDiscoveryDomainBlocklist()
+  });
 }
 
 /** Existing internal structured documents retain their bounded URL payload allowance.
  * Public discovery/hybrid candidates and redirect destinations always use the 2,048-character entry point.
  */
 export function sanitizeGamingStructuredDocumentUrl(rawUrl: string): GamingSourceAdmissionResult {
-  return sanitizeGamingSourceUrl(rawUrl, GAMING_BUILD_RESOURCE_HARD_LIMITS.maxUrlChars);
-}
-
-function sanitizeGamingSourceUrl(rawUrl: string, maxUrlChars: number): GamingSourceAdmissionResult {
-  if (
-    typeof rawUrl !== "string"
-    || rawUrl.length === 0
-    || RAW_URL_CONTROL_CHARACTER_PATTERN.test(rawUrl)
-    || rawUrl.includes("\\")
-  ) {
-    return rejectGamingSourceUrl("security", "invalid_url");
-  }
-  if (rawUrl.length > maxUrlChars) return rejectGamingSourceUrl("source_policy", "url_too_long");
-  try {
-    const parsed = new URL(rawUrl.trim());
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return rejectGamingSourceUrl("security", "unsupported_scheme");
-    if (parsed.username || parsed.password) return rejectGamingSourceUrl("security", "credentials");
-    if (parsed.port) return rejectGamingSourceUrl("security", "forbidden_port");
-    const domain = normalizeDomain(parsed.hostname);
-    if (!domain || isInternalHost(domain)) {
-      return rejectGamingSourceUrl("security", "private_reserved_destination");
-    }
-    // Decode only for validation. The parser-owned encoded request path is never rewritten.
-    const decodedSegments = parsed.pathname.split("/").map((segment) => decodeURIComponent(segment));
-    const policyPath = decodedSegments.join("/");
-    if (RAW_URL_CONTROL_CHARACTER_PATTERN.test(policyPath) || policyPath.includes("\\")) {
-      return rejectGamingSourceUrl("security", "invalid_url");
-    }
-    // Encoded slashes also delimit policy components; retain whole decoded values for redaction.
-    const policySegments = decodedSegments.concat(policyPath.split("/"));
-    if (policySegments.some((segment) => SENSITIVE_PATH_MARKER_PATTERN.test(segment)
-      || SENSITIVE_VALUE_PATTERN.test(segment) || redactString(segment) === "[REDACTED]")) {
-      return rejectGamingSourceUrl("security", "sensitive_url_material");
-    }
-
-    let trackingParamCount = 0;
-    // Validate all original values before any analytics removal; erasure cannot authorize a signed URL.
-    for (const [key, value] of parsed.searchParams.entries()) {
-      if (
-        SENSITIVE_PARAM_PATTERN.test(key)
-        || SENSITIVE_VALUE_PATTERN.test(value)
-        || redactString(value) === "[REDACTED]"
-        || RAW_URL_CONTROL_CHARACTER_PATTERN.test(key + value)
-      ) {
-        return rejectGamingSourceUrl("security", "sensitive_url_material");
-      }
-      if (TRACKING_PARAM_PATTERN.test(key)) trackingParamCount += 1;
-    }
-    const fragment = decodeURIComponent(parsed.hash.slice(1));
-    if (SENSITIVE_VALUE_PATTERN.test(fragment) || redactString(fragment) === "[REDACTED]"
-      || RAW_URL_CONTROL_CHARACTER_PATTERN.test(fragment)
-      || Array.from(new URLSearchParams(fragment).entries()).some(([key, value]) =>
-        SENSITIVE_PARAM_PATTERN.test(key) || SENSITIVE_VALUE_PATTERN.test(value) || redactString(value) === "[REDACTED]")) {
-      return rejectGamingSourceUrl("security", "sensitive_url_material");
-    }
-    // Security material is rejected before product categories, including specialized resolver exceptions.
-    const allowlist = getGamingDiscoveryDomainAllowlist();
-    const blocklist = getGamingDiscoveryDomainBlocklist();
-    if (blocklist.some((candidate) => domainMatches(domain, candidate))) {
-      return rejectGamingSourceUrl("source_policy", "domain_deny_rule");
-    }
-    if (allowlist.length > 0 && !allowlist.some((candidate) => domainMatches(domain, candidate))) {
-      return rejectGamingSourceUrl("source_policy", "outside_domain_allowlist");
-    }
-    if (URL_SHORTENER_DOMAINS.some((candidate) => domainMatches(domain, candidate))) {
-      return rejectGamingSourceUrl("source_policy", "shortened_url");
-    }
-    if (SEARCH_ENGINE_DOMAINS.some((candidate) => domainMatches(domain, candidate))) {
-      return rejectGamingSourceUrl("source_policy", "search_results");
-    }
-    if (LOW_SIGNAL_DOMAINS.some((candidate) => domainMatches(domain, candidate)) || CONTENT_FARM_DOMAIN_PATTERN.test(domain)) {
-      return rejectGamingSourceUrl("source_policy", "source_category_excluded");
-    }
-    if (ACCOUNT_PATH_PATTERN.test(policyPath)) return rejectGamingSourceUrl("source_policy", "account_path");
-    if (SEARCH_PATH_PATTERN.test(policyPath) || (SEARCH_QUERY_ENDPOINT_PATTERN.test(policyPath)
-      && Array.from(parsed.searchParams.keys()).some((key) => SEARCH_QUERY_PARAM_PATTERN.test(key)))) {
-      return rejectGamingSourceUrl("source_policy", "search_results");
-    }
-    if (trackingParamCount >= 5) return rejectGamingSourceUrl("source_policy", "tracking_limit");
-    if (Array.from(parsed.searchParams.keys()).filter((key) => !TRACKING_PARAM_PATTERN.test(key)).length > 10) {
-      return rejectGamingSourceUrl("source_policy", "query_parameter_limit");
-    }
-    if (FILE_DOWNLOAD_PATTERN.test(policyPath)) return rejectGamingSourceUrl("source_policy", "unsupported_document_type");
-    if (trackingParamCount > 0) {
-      // URLSearchParams classifies names, but serializing it would rewrite retained query bytes and ordering.
-      parsed.search = parsed.search.slice(1).split("&").filter((part) => {
-        const key = new URLSearchParams(part).keys().next().value;
-        return key === undefined || !TRACKING_PARAM_PATTERN.test(key);
-      }).join("&");
-    }
-    parsed.hash = "";
-    return { url: parsed.toString(), rejected: false };
-  } catch {
-    return rejectGamingSourceUrl("security", "invalid_url");
-  }
+  return sanitizeGamingSourceUrl(rawUrl, GAMING_BUILD_RESOURCE_HARD_LIMITS.maxUrlChars, {
+    allowlist: getGamingDiscoveryDomainAllowlist(), blocklist: getGamingDiscoveryDomainBlocklist()
+  });
 }
 
 function matchedTokenRatio(text: string, terms: readonly string[]): number {

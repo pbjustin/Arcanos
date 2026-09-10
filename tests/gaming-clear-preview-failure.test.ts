@@ -21,7 +21,8 @@ const proofPairs = () => [
   [contract.documentProofHeader, contract.documentProofVersion], [contract.durableRagProofHeader, contract.durableRagProofVersion],
   [contract.guideAssistanceProofHeader, contract.guideAssistanceProofVersion],
   [contract.progressRecoveryProofHeader, contract.progressRecoveryProofVersion],
-  [contract.hybridKnowledgeProofHeader, contract.hybridKnowledgeProofVersion], [contract.clearProofHeader, contract.clearProofVersion]
+  [contract.hybridKnowledgeProofHeader, contract.hybridKnowledgeProofVersion], [contract.clearProofHeader, contract.clearProofVersion],
+  [contract.sourceAcquisitionProofHeader, contract.sourceAcquisitionProofVersion]
 ];
 
 async function queryGuide() {

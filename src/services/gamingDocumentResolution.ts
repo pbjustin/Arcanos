@@ -1,3 +1,10 @@
+import {
+  GamingDocumentAcquisitionError, GAMING_DOCUMENT_ACQUISITION_POLICY_VERSION, isGamingDocumentRedirectStatus,
+  requireGamingHttpsSourceAdmission, resolveGamingDocumentRedirect, type GamingDocumentAcquisition
+} from "@shared/gaming/gamingSourceAcquisitionCore.js";
+export { GamingDocumentAcquisitionError, GAMING_DOCUMENT_ACQUISITION_POLICY_VERSION }
+  from "@shared/gaming/gamingSourceAcquisitionCore.js";
+export type { GamingDocumentAcquisition } from "@shared/gaming/gamingSourceAcquisitionCore.js";
 import { createHash } from "node:crypto";
 import * as webFetcher from "@shared/webFetcher.js";
 import {
@@ -21,47 +28,6 @@ import { projectGamingDocumentText } from "@shared/gaming/gamingDocumentProjecti
 import { sanitizeGamingDiscoveryCandidateUrl, sanitizeGamingStructuredDocumentUrl } from "@services/gamingSourceDiscovery.js";
 
 export const GAMING_DOCUMENT_RESOLVER_VERSION = "gaming-document-v1";
-export const GAMING_DOCUMENT_ACQUISITION_POLICY_VERSION = "gaming-https-acquisition-v1";
-const MAX_REDIRECT_TRANSITIONS = 3;
-const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
-
-export interface GamingDocumentAcquisition {
-  policyVersion: typeof GAMING_DOCUMENT_ACQUISITION_POLICY_VERSION;
-  requestedUrl: string;
-  finalUrl: string;
-  redirectCount: number;
-  transitions: readonly {
-    fromUrl: string;
-    toUrl: string;
-    classification: "same_origin" | "reviewed_publisher_pair";
-    ruleId: string;
-  }[];
-  contentType: string;
-  coverage: { selectedTextChars: number; returnedTextChars: number; truncated: boolean; instructionFiltered: boolean };
-}
-
-/** Finite diagnostics contain no rejected URL, Location, transport address, or client configuration. */
-export class GamingDocumentAcquisitionError extends Error {
-  readonly acquisition: {
-    stage: "admission" | "redirect" | "transport" | "extraction";
-    subreason: string;
-    ruleId: string;
-    policyVersion: typeof GAMING_DOCUMENT_ACQUISITION_POLICY_VERSION;
-    redirectCount: number;
-    failingHop: number;
-    statusCategory?: "3xx" | "4xx" | "5xx";
-  };
-  constructor(readonly code: "URL_BLOCKED" | "REDIRECT_NOT_ALLOWED" | "SOURCE_FETCH_FAILED" | "SOURCE_TIMEOUT" | "SOURCE_INACCESSIBLE",
-    stage: "admission" | "redirect" | "transport" | "extraction", subreason: string, redirectCount = 0, readonly status?: number,
-    ruleId = `gaming.acquisition.${subreason.toLowerCase()}`) {
-    super("The source could not be acquired under the public document policy.");
-    this.name = "GamingDocumentAcquisitionError";
-    this.acquisition = { stage, subreason, ruleId, policyVersion: GAMING_DOCUMENT_ACQUISITION_POLICY_VERSION,
-      redirectCount, failingHop: redirectCount, ...(status && status >= 300 && status < 600
-        ? { statusCategory: `${Math.floor(status / 100)}xx` as "3xx" | "4xx" | "5xx" } : {}) };
-  }
-}
-
 const acquisitionAttestations = new WeakMap<GamingDocumentAcquisition, string>();
 const documentBinding = (document: ResolvedGamingDocument): string => createHash("sha256")
   .update(JSON.stringify({ requestedUrl: document.requestedUrl, canonicalUrl: document.canonicalUrl,
@@ -230,24 +196,7 @@ function admitGenericGamingUrl(rawUrl: string, redirectCount = 0, initialDocumen
   // have already passed their stricter admission, and every redirect destination keeps that bound.
   const structuredInitial = initialDocument && classifyGamingResource({ url: rawUrl }).extractionStrategy === "url_payload";
   const admission = structuredInitial ? sanitizeGamingStructuredDocumentUrl(rawUrl) : sanitizeGamingDiscoveryCandidateUrl(rawUrl);
-  if (!admission.url || admission.rejected) throw new GamingDocumentAcquisitionError("URL_BLOCKED", "admission",
-    admission.rejection?.subreason ?? "URL_REJECTED", redirectCount, undefined, admission.rejection?.ruleId);
-  if (new URL(admission.url).protocol !== "https:") throw new GamingDocumentAcquisitionError("URL_BLOCKED", "admission",
-    "HTTPS_REQUIRED", redirectCount);
-  return admission.url;
-}
-
-function redirectTransition(from: URL, to: URL): Pick<GamingDocumentAcquisition["transitions"][number], "classification" | "ruleId"> | undefined {
-  if (from.origin === to.origin) return { classification: "same_origin", ruleId: "gaming.redirect.same_origin" };
-  // These exact host/path pairs already have independently reviewed publisher entries in
-  // REVIEWED_GAMING_SOURCE_RULES. A shared suffix or an arbitrary publisher subdomain grants nothing.
-  const pairs = [
-    { id: "wow-specialist-apex-www", hosts: ["icy-veins.com", "www.icy-veins.com"], path: (value: string) => value.startsWith("/wow/") },
-    { id: "swtor-patch-apex-www", hosts: ["swtor.com", "www.swtor.com"], path: (value: string) => value === "/patchnotes" || value.startsWith("/patchnotes/") }
-  ];
-  const rule = pairs.find(candidate => candidate.hosts.includes(from.hostname) && candidate.hosts.includes(to.hostname)
-    && candidate.path(from.pathname) && candidate.path(to.pathname));
-  return rule ? { classification: "reviewed_publisher_pair", ruleId: `gaming.redirect.${rule.id}` } : undefined;
+  return requireGamingHttpsSourceAdmission(admission, redirectCount);
 }
 
 async function acquireGenericGamingDocument(url: string, maxChars: number, options: FetchAndCleanOptions) {
@@ -265,7 +214,7 @@ async function acquireGenericGamingDocument(url: string, maxChars: number, optio
       session.assertActive();
       const response = await session.fetch(currentUrl);
       session.assertActive();
-      if (!REDIRECT_STATUSES.has(response.status)) {
+      if (!isGamingDocumentRedirectStatus(response.status)) {
         if (response.status < 200 || response.status >= 300) throw new GamingDocumentAcquisitionError(
           response.status === 401 || response.status === 403 ? "SOURCE_INACCESSIBLE" : "SOURCE_FETCH_FAILED",
           "transport", response.status === 304 ? "CONDITIONAL_CONTENT_UNAVAILABLE" : "HTTP_RESPONSE_UNUSABLE", transitions.length, response.status);
@@ -283,25 +232,12 @@ async function acquireGenericGamingDocument(url: string, maxChars: number, optio
         session.assertActive();
         return { text: extracted.combined, finalUrl: currentUrl, transitions, supportsStructuredExtraction: true };
       }
-      if (transitions.length >= MAX_REDIRECT_TRANSITIONS) throw new GamingDocumentAcquisitionError("REDIRECT_NOT_ALLOWED", "redirect",
-        "REDIRECT_LIMIT", transitions.length, response.status);
-      const location = response.location;
-      if (typeof location !== "string" || !location.length || location.length > 2_048
-        || location !== location.trim() || /[\u0000-\u0020\u007f-\u009f\\]/u.test(location)
-        || (/^https:/iu.test(location) && !/^https:\/\//iu.test(location))) {
-        throw new GamingDocumentAcquisitionError("REDIRECT_NOT_ALLOWED", "redirect", "INVALID_LOCATION", transitions.length, response.status);
-      }
-      let next: URL;
-      try { next = new URL(location, currentUrl); } catch {
-        throw new GamingDocumentAcquisitionError("REDIRECT_NOT_ALLOWED", "redirect", "INVALID_LOCATION", transitions.length, response.status);
-      }
-      const nextUrl = admitGenericGamingUrl(next.toString(), transitions.length);
-      const transition = redirectTransition(new URL(currentUrl), new URL(nextUrl));
-      if (!transition) throw new GamingDocumentAcquisitionError("REDIRECT_NOT_ALLOWED", "redirect", "UNAPPROVED_TRANSITION", transitions.length, response.status);
-      if (seen.has(nextUrl)) throw new GamingDocumentAcquisitionError("REDIRECT_NOT_ALLOWED", "redirect", "REDIRECT_LOOP", transitions.length, response.status);
-      transitions.push({ fromUrl: currentUrl, toUrl: nextUrl, ...transition });
-      seen.add(nextUrl);
-      currentUrl = nextUrl;
+      const transition = resolveGamingDocumentRedirect({
+        currentUrl, status: response.status, location: response.location, redirectCount: transitions.length, seen
+      }, admitGenericGamingUrl);
+      transitions.push(transition);
+      seen.add(transition.toUrl);
+      currentUrl = transition.toUrl;
     }
   } catch (error) {
     options.signal?.throwIfAborted();

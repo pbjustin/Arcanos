@@ -126,6 +126,21 @@ streams, agents/sockets, listeners, and timers are released on every exit.
 
 ## Provenance, approval, and durable identity
 
+The sealed Railway preview runs the same URL-admission and redirect-decision
+core over fixed in-memory hops. Its guide selector requires the additive
+`x-arcanos-preview-gaming-source-acquisition-version: gaming-source-acquisition/v1`
+proof header. The fixtures cover exact URL identities, approved transitions,
+denied destinations, loops, and hop limits; the hybrid fixture separately checks
+that a redacted citation cannot promote an acquired article into a current index.
+Any acquisition fixture failure returns a fixed HTTP 500 and withholds all Gaming
+proof headers and the success body. The trusted base verifier keeps its existing
+response contract; the reviewed PR-head verifier requires the new marker.
+
+This is served policy-component evidence. Synthetic transport regression tests
+cover the protected fetch session separately; the preview does not contact Gaming
+publishers, perform DNS pinning or decompression, attest acquired documents, or
+exercise real storage, providers, and active workers.
+
 Generic acquired documents retain exact requested/final acquisition identities
 internally and derive a separate public citation URL. Recognized structured-build
 payloads are removed from that citation even when a redirect supplies useful
