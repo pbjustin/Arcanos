@@ -13,23 +13,30 @@ const containsIdentity = (text: string, expected: string): boolean => (`-${norma
 const DOCUMENT_LABEL = /^(?:(?:beginner|boss|build|class|combat|current|endgame|loadout|mechanics|patch|progression|pve|pvp|quest|raid|route|season|strategy|survival|synthetic)-){0,4}(?:guide|build|loadout|walkthrough|wiki|tips|patch-notes|release-notes|update-notes)$/u;
 const DISTINCT_SCOPE = /^(?:ii|iii|iv|\d+|nightreign|classic|remastered|remake|bedrock|java|shadow-of-the-erdtree|dlc|expansion)(?:-|$)/u;
 
+/** Structural serialization never becomes fallback prose, even when repeated. */
+export function gamingClearIntactProseText(document: Pick<ResolvedGamingDocument, 'text' | 'evidenceUnits'> & {
+  metrics: Pick<ResolvedGamingDocument['metrics'], 'truncated'>;
+}): string {
+  const units = readGamingEvidenceUnits(document.evidenceUnits, undefined, document.text);
+  let prose = document.text;
+  for (const unit of units) prose = prose.split(unit.text).join('');
+  if (!document.metrics.truncated) return prose.trim();
+  let proseEnd = 0;
+  for (const match of prose.matchAll(/[.!?](?=\s|$)/gu)) proseEnd = match.index + 1;
+  return prose.slice(0, proseEnd).trim();
+}
+
 /** A truncated final sentence cannot be evidence for a claim whose qualification may be missing. */
 export function gamingClearIntactSourceText(document: Pick<ResolvedGamingDocument, 'text' | 'metrics' | 'evidenceUnits'>): string {
   const units = readGamingEvidenceUnits(document.evidenceUnits, undefined, document.text);
+  const prose = gamingClearIntactProseText(document);
   if (units.length) {
     // Parser-verified unit boundaries survive truncation elsewhere. Prose still
     // requires its own final sentence; parser repair never establishes integrity.
-    let prose = document.text;
-    for (const unit of units) prose = prose.replace(unit.text, '');
-    let proseEnd = document.metrics.truncated ? 0 : prose.length;
-    if (document.metrics.truncated) for (const match of prose.matchAll(/[.!?](?=\s|$)/gu)) proseEnd = match.index + 1;
-    return [prose.slice(0, proseEnd).trim(), ...units.filter(unit => assessGamingStructuralUsability({ units: [unit] }).hasIntactUsableUnit)
+    return [prose, ...units.filter(unit => assessGamingStructuralUsability({ units: [unit] }).hasIntactUsableUnit)
       .map(unit => unit.text)].filter(Boolean).join('\n\n');
   }
-  if (!document.metrics.truncated) return document.text;
-  let intactEnd = 0;
-  for (const match of document.text.matchAll(/[.!?](?=\s|$)/gu)) intactEnd = match.index + 1;
-  return document.text.slice(0, intactEnd).trimEnd();
+  return document.metrics.truncated ? prose : document.text;
 }
 
 /** Historical expiry exemptions require acquired patch evidence, never a requested label alone. */
@@ -122,10 +129,13 @@ export function assessGamingClearSource(input: GamingStoredKnowledgeInput & { re
   const supporting = ['patch_authority', 'currentness_index', 'live_status'].includes(role);
   const intactText = gamingClearIntactSourceText(document);
   const coverage = gamingTermCoverage(intactText, buildGamingRetrievalTerms(input).focusTerms);
-  const structural = assessGamingStructuralUsability({ units: document.evidenceUnits, ...input });
+  const proseText = gamingClearIntactProseText(document);
+  const structural = assessGamingStructuralUsability({ units: document.evidenceUnits, ...input, proseText });
   const structuredClaim = Boolean(document.evidenceUnits?.length) && structural.claimShape !== 'none';
+  const independentProse = !structural.hasRelevantClaimUnit && structural.hasIndependentProseAnchors
+    && proseText.length >= 120 && gamingTermCoverage(proseText, buildGamingRetrievalTerms(input).focusTerms) >= 0.25;
   const usable = structural.hasIntactUsableUnit || intactText.trim().length >= 120;
-  const relevant = structuredClaim ? structural.claimSupported : coverage >= 0.25 || supporting;
+  const relevant = structuredClaim ? structural.claimSupported || independentProse : coverage >= 0.25 || supporting;
   const refs = [options.subjectId];
   const evaluated = (score: number, reasonCode: string) => ({ status: 'evaluated' as const, score,
     reasonCodes: [reasonCode], evidenceRefs: refs, unresolvedFacts: [] as string[] });
@@ -173,7 +183,7 @@ export function assessGamingClearSource(input: GamingStoredKnowledgeInput & { re
         reasonCodes: identity.reasonCodes, evidenceRefs: refs, unresolvedFacts: ['GAME_IDENTITY'] },
       resilience: { ...evaluated(document.metrics.truncated ? 3 : 3.5, document.metrics.truncated ? 'EXTRACTION_PARTIAL' : 'TRACEABLE_ACQUIRED_DOCUMENT'),
         unresolvedFacts: ['INDEPENDENT_CORROBORATION_NOT_ESTABLISHED', ...(!stable && !historical && !combinedCurrent ? ['COMBINED_APPLICABILITY_REQUIRED'] : [])] }
-    }, findings: [...(structuredClaim && !structural.claimSupported ? structural.reasonCodes.map(code => ({ code, severity: 'blocking' as const, evidenceRefs: refs })) : []),
+    }, findings: [...(structuredClaim && !structural.claimSupported && !independentProse ? structural.reasonCodes.map(code => ({ code, severity: 'blocking' as const, evidenceRefs: refs })) : []),
       ...(future || expired || wrongPatch ? [{ code: future ? 'NOT_YET_EFFECTIVE' : expired ? 'NO_LONGER_EFFECTIVE' : 'PATCH_MISMATCH', severity: 'blocking' as const, evidenceRefs: refs }] : []),
       ...identity.reasonCodes.filter(() => identity.status !== 'verified').map(code => ({ code, severity: identity.status === 'conflict'
       ? 'blocking' as const : 'warning' as const, evidenceRefs: refs })), ...(document.metrics.truncated

@@ -97,6 +97,7 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
     if (id) idElements.set(id, [...(idElements.get(id) ?? []), node]);
   });
   const contextReasons = new Map<string, string[]>();
+  const markContext = (scope: string, reason: string) => contextReasons.set(scope, unique([...(contextReasons.get(scope) ?? []), reason]));
   const removedProseElements = new Set<Element>();
   const intactTransportScope = (element: Element) => !input.transportTruncated
     || $(element).parents('section,article,figure').toArray().some(closed);
@@ -117,17 +118,36 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
       if (!heading && current.is('section,article,main')) heading = text(current.children('h1,h2,h3,h4,h5,h6').add(current.children('header').find('h1,h2,h3,h4,h5,h6')).first().text()) || undefined;
     }
     const qualifiers: string[] = [];
-    node.prevAll('p,aside,div').slice(0, 2).add(node.nextAll('p,aside,div').slice(0, 2)).each((_, sibling) => {
-      const value = text($(sibling).text());
+    const post = node.closest(DISCUSSION).first();
+    const container = node.closest('section,article,main,figure').first();
+    const ancestors = node.parents().toArray();
+    let relevant = node.prevAll('p,aside,div,small').slice(0, 2).add(node.nextAll('p,aside,div,small').slice(0, 2));
+    let ancestor = node.parent();
+    for (let depth = 0; depth < 6 && ancestor.length && !ancestor.is('html'); depth++, ancestor = ancestor.parent()) {
+      relevant = relevant.add(ancestor.children('p,figcaption,small,[role="note"]'))
+        .add(ancestor.prevAll('p,aside,div,small').slice(0, 2)).add(ancestor.nextAll('p,aside,div,small').slice(0, 2));
+    }
+    if (ancestor.length && !ancestor.is('html')) markContext(scope, 'required_context_missing');
+    if (container.length) relevant = relevant.add(container.find('p,figcaption,small,[role="note"]'));
+    if (relevant.length > 64) markContext(scope, 'required_context_missing');
+    relevant.slice(0, 64).each((_, sibling) => {
+      const selected = $(sibling);
+      if (selected.closest('nav,footer,form,template,[hidden],[aria-hidden="true"],[role="navigation"],blockquote,table,ul,ol,dl').length) return;
+      const candidateScope = selected.closest('section,article,main,figure').get(0);
+      if (candidateScope && candidateScope !== container.get(0) && !ancestors.includes(candidateScope)) return;
+      if (selected.closest(UNRELATED_DISCUSSION).length && (!post.length || selected.closest(DISCUSSION).get(0) !== post.get(0))) return;
+      // Container wrappers must not import a sibling record or a quoted correction.
+      const copy = selected.clone();
+      copy.find(`script,style,template,table,ul,ol,dl,blockquote,section,article,main,figure,nav,footer,form,[hidden],[aria-hidden="true"],${UNRELATED_DISCUSSION}`).remove();
+      const value = text(copy.text());
       if (QUALIFIER.test(value)) {
         qualifiers.push(value);
-        if (!closed(sibling)) contextReasons.set(scope, ['content_truncated']);
+        if (!closed(sibling)) markContext(scope, 'content_truncated');
       }
     });
-    const post = node.closest(DISCUSSION).first();
     const attribution = post.length
       ? text(post.find('[itemprop="author"]').first().text()).slice(0, 160) : undefined;
-    if ([heading, caption, ...qualifiers].some((value) => value && value.length > limit.contextChars)) contextReasons.set(scope, ['content_truncated']);
+    if ([heading, caption, ...qualifiers].some((value) => value && value.length > limit.contextChars)) markContext(scope, 'content_truncated');
     return { scope, ...(heading ? { heading: heading.slice(0, limit.contextChars) } : {}), ...(caption ? { caption: caption.slice(0, limit.contextChars) } : {}),
       ...(qualifiers.length ? { qualifiers: unique(qualifiers).map((value) => value.slice(0, limit.contextChars)) } : {}), ...(attribution ? { attribution } : {}) };
   }
@@ -181,7 +201,7 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
     const footerText = text($(table).children('tfoot').text());
     if (footerText) {
       unitContext.qualifiers = unique([...(unitContext.qualifiers ?? []), footerText.slice(0, limit.contextChars)]);
-      if (footerText.length > limit.contextChars || !closed($(table).children('tfoot').first().get(0)!)) contextReasons.set(scope, ['content_truncated']);
+      if (footerText.length > limit.contextChars || !closed($(table).children('tfoot').first().get(0)!)) markContext(scope, 'content_truncated');
     }
     const rows = $(table).find('tr').toArray().filter((row) => $(row).closest('table').get(0) === table);
     const grid: Array<Array<{ element: Element; row: number; column: number; colSpan: number } | undefined>> = [];
@@ -244,6 +264,7 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
         const columnHeaders = explicit.length ? explicit.map((id) => headers.get(id)?.length === 1 ? headers.get(id)![0] : undefined)
           : grid.slice(0, headerRows).map((headerRow) => headerRow[column]?.element);
         if (explicit.length && columnHeaders.some((header) => !header)) reasons.push('ambiguous_field_mapping');
+        if ($(cell.element).find('table,ul,ol,dl').length || columnHeaders.some((header) => header && $(header).find('table,ul,ol,dl').length)) reasons.push('required_context_missing');
         if (columnHeaders.some((header) => header && $(header).find('blockquote').length)) reasons.push('ambiguous_field_mapping', 'quoted_content_ambiguous');
         const label = unique(columnHeaders.filter((header): header is Element => Boolean(header)).map((header) => cleanElementText($, header))).join(' / ');
         if (!label) reasons.push('ambiguous_field_mapping');
@@ -304,12 +325,14 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
         const next = entries[index + 1];
         if (!next || !$(next).is('dd') || $(next).parent().get(0) !== parent) { fields.push({ label, value: '' }); reasons.push('ambiguous_field_mapping'); continue; }
         if (!closed(list) || !closed(parent) || !closed(entry) || !closed(next) || !intactTransportScope(list)) reasons.push('content_truncated');
+        if ($(entry).find('table,ul,ol,dl').length || $(next).find('table,ul,ol,dl').length) reasons.push('required_context_missing');
         if ($(entry).find('blockquote').length || $(next).find('blockquote').length) reasons.push('ambiguous_field_mapping', 'quoted_content_ambiguous');
         const values = [cleanElementText($, next)];
         index++;
         while (entries[index + 1] && $(entries[index + 1]).is('dd') && $(entries[index + 1]).parent().get(0) === parent) {
           index++;
           if (!closed(entries[index])) reasons.push('content_truncated');
+          if ($(entries[index]).find('table,ul,ol,dl').length) reasons.push('required_context_missing');
           if ($(entries[index]).find('blockquote').length) reasons.push('ambiguous_field_mapping', 'quoted_content_ambiguous');
           values.push(cleanElementText($, entries[index]));
         }
@@ -331,7 +354,7 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
       if (!fields.some((field) => field.label)) continue;
       removedProseElements.add(item);
       const reasons = !closed(item) || !closed(list) || !intactTransportScope(list) ? ['content_truncated'] : [];
-      if ($(item).children('ul,ol').length > 1 || nested.find('ul,ol,dl').length) reasons.push('ambiguous_field_mapping');
+      if ($(item).find('table,ul,ol,dl').length > (nested.length ? 1 : 0)) reasons.push('ambiguous_field_mapping', 'required_context_missing');
       if (nested.children('li').toArray().some((child) => !closed(child))) reasons.push('content_truncated');
       addUnit('list_item', fields, item, 'html_list', { ...unitContext, scope: `${scope}/item:${itemIndex}` }, reasons);
     }

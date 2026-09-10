@@ -16,6 +16,8 @@ let saved: Array<string | undefined>;
 const url = 'https://example.org/testspace-report';
 const input = { game: 'Testspace', mode: 'guide' as const, prompt: 'Which system body site reports Platinum?', guideUrl: url, guideUrls: [], spoilerMode: 'none' as const };
 const page = (rows = '<tr><td>T-1</td><td>B 2</td><td>PML 7</td><td>Platinum</td></tr>', extra = '') => `<html><head><title>Testspace guide</title></head><body><main><table><caption>Testspace</caption><tr><th>System</th><th>Body</th><th>Site</th><th>Resource</th></tr>${rows}</table></main>${extra}</body></html>`;
+const platinumProse = 'Testspace guide. This community source reports Platinum at system T-1, body B 2, site PML 7. It is a source assertion and current applicability remains unverified. Always check local conditions before using this reported resource location.';
+const mixedPage = (rows: string, prose = platinumProse) => page(rows).replace('<main>', `<main><article><p>${prose}</p></article>`);
 
 describe('actual secure acquisition into ordinary supplied URL structured RAG', () => {
   beforeEach(() => {
@@ -51,6 +53,34 @@ describe('actual secure acquisition into ordinary supplied URL structured RAG', 
     expect(result).toMatchObject({ selectedChunkCount: 0, cacheHit: true });
     expect(result.clearKnowledge?.evidence).toEqual([]);
     expect(result.sources).toEqual([]);
+  });
+  it('keeps independent prose usable when an unrelated resource table is present, including a cache hit', async () => {
+    http.mockResolvedValue({ data: mixedPage('<tr><td>OTHER-1</td><td>A 1</td><td>PML 1</td><td>Iron</td></tr>'), headers: { 'content-type': 'text/html' } });
+    for (const cacheHit of [false, true]) {
+      const result = await buildGamingRagContext(input);
+      expect(result).toMatchObject({ cacheHit });
+      expect(result.selectedChunkCount).toBeGreaterThan(0);
+      expect(result.context).toContain('reports Platinum at system T-1, body B 2, site PML 7');
+      expect(result.clearKnowledge?.evidence?.every(chunk => !chunk.evidenceUnits?.length)).toBe(true);
+      expect(assessGamingClearEvidence(input, result.clearKnowledge!)).toMatchObject({ decision: 'accept', gates: { claimSupport: 'verified' } });
+    }
+    expect(http).toHaveBeenCalledTimes(1);
+  });
+  it('does not treat requested field labels as a missing resource anchor in independent prose', async () => {
+    const generic = 'Testspace guide. Each system body site has a resource report. Source records describe the system body site and resource; check the source report before visiting a location. These system body site records are community reports with unverified current applicability.';
+    http.mockResolvedValue({ data: mixedPage('<tr><td>OTHER-1</td><td>A 1</td><td>PML 1</td><td>Iron</td></tr>', generic), headers: { 'content-type': 'text/html' } });
+    expect((await buildGamingRagContext(input)).selectedChunkCount).toBe(0);
+  });
+  it.each([
+    '<tr><td>T-1</td><td>B 2</td><td></td><td>Platinum</td></tr>',
+    '<tr><td>T-1</td><td>B 2</td><td>PML 7</td><td>not Platinum; depleted</td></tr>',
+    '<tr><td>T-1</td><td>B 2</td><td>PML 7</td><td>Platinum</td></tr><tr><td>T-1</td><td>B 2</td><td>PML 7</td><td>Iron</td></tr>'
+  ])('keeps relevant partial, qualified, or contradictory records from being bypassed by positive prose', async rows => {
+    http.mockResolvedValue({ data: mixedPage(rows), headers: { 'content-type': 'text/html' } });
+    for (const cacheHit of [false, true]) {
+      const result = await buildGamingRagContext(input);
+      expect(result).toMatchObject({ selectedChunkCount: 0, cacheHit });
+    }
   });
   it.each([
     '<tr><td>T-1</td><td>B 2</td><td></td><td>Platinum</td></tr><tr><td>OTHER-1</td><td>A 1</td><td>PML 1</td><td>Iron</td></tr>',

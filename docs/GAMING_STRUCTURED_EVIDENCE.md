@@ -51,6 +51,10 @@ corrections and relevant qualifiers remain attached. Responsive copies are
 deduplicated; unrelated rows, nested layout tables and unrelated bullets never
 supply missing fields for each other.
 
+Qualifier discovery includes bounded ancestor context around wrapped structures.
+Nested content that cannot retain its field association makes the affected record
+insufficient; removing a nested correction cannot leave an affirmative record.
+
 Community selection uses explicit `DiscussionForumPosting` markup together with
 its article/main containment. It preserves available author attribution while
 keeping quoted claims and unrelated comments out of affirmative record evidence.
@@ -87,6 +91,7 @@ article/section remains partial because a trailing qualifier could be missing.
 | HTML units/output and merged extraction | 2,048 units; 1,000,000 output characters |
 | Conflict comparison before selection | At most 4,096 validated candidate units across strategies; final output remains capped at 2,048 and omitted conflicts still invalidate retained assertions |
 | HTML fields/context | 32 fields/unit; 1,024 characters/value; 512 characters/context value; 4,096 characters/unit |
+| HTML surrounding context | Six ancestor levels; at most 64 candidate context elements; omitted context makes the record partial |
 | JSON parsing | 262,144 bytes/payload; 524,288 cumulative JSON bytes; 16 inert scripts; depth 12 |
 | JSON containers | 64 keys/object; 4,096 total keys; 256 array entries; 4,096 characters/parsed string |
 | JSON records/output | 256 records; 32 fields/record; 160 characters/label; 1,000 characters/value; 16 qualifiers of 400 characters; 4,096 characters/unit; 200,000 output characters |
@@ -135,6 +140,12 @@ another system that happens to use the same body name. Negative, depleted,
 unconfirmed, superseded or example-only location records cannot become exact
 affirmative locations. Contradictory visible and JSON records are marked
 ambiguous before query selection and durable indexing.
+
+An unrelated structured record does not veto independently sufficient prose.
+The prose path removes every structural serialization before applying its
+existing length and topic-coverage requirements. Relevant incomplete, qualified,
+or contradictory records still block structural claim support; their words
+cannot supply evidence through the prose fallback.
 
 CLEAR retains Clarity, Leverage, Efficiency, Alignment and Resilience, their
 thresholds, and the non-compensable gates. A supported structure supplies truthful

@@ -6,7 +6,7 @@ import { assessGamingSourcePolicy, extractGamingFreshnessMetadata } from '../src
 import { gamingClearHash } from '../src/shared/gaming/gamingClearPolicy.js';
 import { assessGamingStructuralUsability } from '../src/shared/gaming/gamingStructuralEvidence.js';
 import { chunkGamingDocument } from '../src/services/gamingDurableDocumentChunks.js';
-import { formatStoredGamingEvidence, selectStoredGamingEvidence } from '../src/shared/gaming/gamingStoredEvidenceCore.js';
+import { formatStoredGamingEvidence, selectStoredGamingEvidence, type GamingStoredKnowledgeContext } from '../src/shared/gaming/gamingStoredEvidenceCore.js';
 import { assessGamingClearEvidence } from '../src/shared/gaming/gamingClearEvidence.js';
 
 const now = new Date('2026-09-10T12:00:00Z');
@@ -25,6 +25,14 @@ function document(unit: GamingEvidenceUnit, truncated = false): ResolvedGamingDo
     resolution: { resolverId: 'generic-web', resolverVersion: 'gaming-document-v1', strategy: 'article', documentType: 'html', supportsStructuredExtraction: false },
     metrics: { rawTextLength: 200, cleanedTextLength: unit.text.length, instructionFiltered: false, truncated },
     evidenceUnits: [unit] } as ResolvedGamingDocument;
+}
+function mixedKnowledge(prose: string, units: GamingEvidenceUnit[]): GamingStoredKnowledgeContext {
+  const context = [prose, ...units.map(unit => unit.text)].join('\n\n');
+  return { context, sources: [{ sourceId: 'source', url, game: 'Testspace', sourceType: 'unreviewed', fetchedAt: now.toISOString(), snippet: prose }],
+    evidence: [{ sourceId: 'source', revisionId: 'revision', recordId: 'prose', recordType: 'guide', publicUrl: url,
+      text: prose, lexicalScore: 1, combinedScore: 1, provenance: { fetchedAt: now.toISOString() } },
+    ...units.map((unit, index) => ({ sourceId: 'source', revisionId: 'revision', recordId: `row-${index}`, recordType: 'guide', publicUrl: url,
+      text: unit.text, evidenceUnits: [unit], lexicalScore: 1, combinedScore: 1, provenance: { fetchedAt: now.toISOString() } }))] };
 }
 
 describe('structural evidence survives the existing CLEAR source gates', () => {
@@ -54,15 +62,31 @@ describe('structural evidence survives the existing CLEAR source gates', () => {
     expect(assessGamingClearSource(input, doc, { subjectId: 'source', subjectHash: gamingClearHash(doc.text),
       sourcePolicy: assessGamingSourcePolicy(url, input.game), freshness: extractGamingFreshnessMetadata(doc, input, now), now }).qualityEligible).toBe(false);
   });
-  it('preserves sufficient prose when a complementary unrelated table is present', () => {
-    const unit = locationUnit({ License: 'CC-BY', Publisher: 'Example' });
+  it.each([
+    { License: 'CC-BY', Publisher: 'Example' },
+    { System: 'OTHER-1', Body: 'A 1', Site: 'PML 1', Resource: 'Iron' }
+  ])('preserves sufficient prose when a complementary unrelated table is present: %j', fields => {
+    const unit = locationUnit(fields);
     const prose = 'Testspace guide. This community source reports Platinum at system T-1, body B 2, site PML 7. It is a source assertion and current applicability remains unverified. Always check local conditions before using this reported resource location.';
     const input = { game: 'Testspace', prompt: 'Which system body site reports Platinum?', mode: 'guide' as const };
     for (const units of [[], [unit]]) {
       const doc = { ...document(unit), text: [prose, ...units.map(row => row.text)].join('\n\n'), evidenceUnits: units };
       expect(assessGamingClearSource(input, doc, { subjectId: 'source', subjectHash: gamingClearHash(doc.text),
         sourcePolicy: assessGamingSourcePolicy(url, input.game), freshness: extractGamingFreshnessMetadata(doc, input, now), now }).qualityEligible).toBe(true);
+      expect(assessGamingClearEvidence(input, mixedKnowledge(prose, units))).toMatchObject({ decision: 'accept', gates: { claimSupport: 'verified' } });
     }
+  });
+  it.each(['partial', 'ambiguous', 'qualified', 'generic-prose'] as const)('keeps %s from borrowing independent prose support at either CLEAR gate', variant => {
+    const base = locationUnit({ System: 'T-1', Body: 'B 2', Site: 'PML 7', Resource: variant === 'qualified' ? 'Platinum; depleted' : variant === 'generic-prose' ? 'Iron' : 'Platinum' });
+    const unit = variant === 'partial' || variant === 'ambiguous' ? { ...base, integrity: { status: variant, reasons: ['incomplete_record'] } } : base;
+    const prose = variant === 'generic-prose'
+      ? 'Testspace guide. Each system body site has a resource report. Source records describe the system body site and resource; check the source report before visiting a location. These system body site records are community reports.'
+      : 'Testspace guide. This community source reports Platinum at system T-1, body B 2, site PML 7. Always check local conditions before using this reported resource location.';
+    const input = { game: 'Testspace', prompt: 'Which system body site reports Platinum?', mode: 'guide' as const };
+    const doc = { ...document(unit), text: `${prose}\n\n${unit.text}` };
+    expect(assessGamingClearSource(input, doc, { subjectId: 'source', subjectHash: gamingClearHash(doc.text),
+      sourcePolicy: assessGamingSourcePolicy(url, input.game), freshness: extractGamingFreshnessMetadata(doc, input, now), now }).qualityEligible).toBe(false);
+    expect(assessGamingClearEvidence(input, mixedKnowledge(prose, [unit])).qualityEligible).toBe(false);
   });
 });
 

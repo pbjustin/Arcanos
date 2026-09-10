@@ -6,6 +6,7 @@ import { buildGamingRetrievalTerms, gamingTermCoverage, type GamingRetrievalPoli
 import { classifyGamingQuestionFreshness, evaluateGamingFreshness, type GamingFreshnessEvaluation, type GamingFreshnessEvidence } from './gamingFreshnessCore.js';
 import type { GamingStoredKnowledgeContext, GamingStoredKnowledgeSource } from './gamingStoredEvidenceCore.js';
 import { assessGamingStructuralUsability } from './gamingStructuralEvidence.js';
+import { gamingClearIntactProseText } from './gamingClearSource.js';
 
 export interface GamingClearEvidenceOptions {
   freshness?: GamingFreshnessEvaluation;
@@ -103,11 +104,14 @@ export function assessGamingClearEvidence(
   const text = gameplayChunks.map(chunk => chunk.text).join('\n\n');
   const coverage = gamingTermCoverage(text, focusTerms);
   const structuralUnits = gameplayChunks.flatMap(chunk => chunk.evidenceUnits ?? []);
-  const structural = assessGamingStructuralUsability({ units: structuralUnits, ...input });
+  const proseText = gamingClearIntactProseText({ text, evidenceUnits: structuralUnits, metrics: { truncated: false } });
+  const structural = assessGamingStructuralUsability({ units: structuralUnits, ...input, proseText });
   const structuredClaim = structuralUnits.length > 0 && structural.claimShape !== 'none';
+  const independentProse = !structural.hasRelevantClaimUnit && structural.hasIndependentProseAnchors
+    && proseText.length >= 120 && gamingTermCoverage(proseText, focusTerms) >= 0.5;
   const progress = assessGamingProgressionRequest(input);
   const hasSupport = gameplayChunks.length > 0 && focusTerms.length > 0
-    && (structuredClaim ? structural.claimSupported : coverage >= 0.5) && !progress.clarificationNeeded;
+    && (structuredClaim ? structural.claimSupported || independentProse : coverage >= 0.5) && !progress.clarificationNeeded;
   const uniqueText = new Set(selected.map(chunk => gamingClearHash(chunk.text.normalize('NFKC').toLowerCase().replace(/\s+/gu, ' ').trim())));
   // Identical or syndicated text never earns independent-corroboration credit.
   const duplicate = uniqueText.size < selected.length;
@@ -126,7 +130,7 @@ export function assessGamingClearEvidence(
   if (contradictory) finding('CONTRADICTORY_EVIDENCE');
   if (progress.clarificationNeeded) finding('PROGRESS_POINT_REQUIRED');
   if (!hasSupport) finding('QUESTION_COVERAGE_INSUFFICIENT');
-  if (structuredClaim && !structural.claimSupported) for (const reason of structural.reasonCodes) finding(reason);
+  if (structuredClaim && !structural.claimSupported && !independentProse) for (const reason of structural.reasonCodes) finding(reason);
   if (!traceable) finding('CITATION_PROVENANCE_MISSING');
   if (patchSensitive && !freshnessCoversSet) finding('REQUIRED_FRESHNESS_UNVERIFIED');
   if (duplicate) finding('DUPLICATE_EVIDENCE', false);

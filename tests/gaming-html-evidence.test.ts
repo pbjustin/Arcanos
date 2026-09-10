@@ -14,6 +14,7 @@ jest.unstable_mockModule('node:dns/promises', () => ({
 }));
 const { resolveGamingDocument } = await import('../src/services/gamingDocumentResolution.js');
 const { extractGamingHtmlEvidence, GAMING_HTML_EVIDENCE_LIMITS } = await import('../src/services/gamingHtmlEvidence.js');
+const { assessGamingStructuralUsability } = await import('../src/shared/gaming/gamingStructuralEvidence.js');
 
 const sparseTable = '<table><caption>TEST SPACE resource reports</caption><tr><th>System</th><th>Body</th><th>Site</th><th>Resource</th></tr><tr><td>TEST-ORION-01</td><td>B 2</td><td>PML 7</td><td>Platinum</td></tr></table>';
 const extract = (body: string, transportTruncated = false) => extractGamingHtmlEvidence({
@@ -115,6 +116,55 @@ describe('Gaming structural HTML evidence', () => {
     const result = extract(`<article><h1>TEST SPACE guide</h1><p>Equip the scanner and save progress before leaving.</p>${sparseTable}</article>`);
     expect(result.proseBody).toContain('Equip the scanner and save progress before leaving.');
     expect(result.proseBody).not.toContain('TEST-ORION-01');
+  });
+
+  it.each([
+    sparseTable,
+    '<ul><li>System: TEST-ORION-01; Body: B 2; Site: PML 7; Resource: Platinum</li></ul>',
+    '<dl><dt>System</dt><dd>TEST-ORION-01</dd><dt>Body</dt><dd>B 2</dd><dt>Site</dt><dd>PML 7</dd><dt>Resource</dt><dd>Platinum</dd></dl>'
+  ])('retains an ancestor qualification across wrappers without borrowing sibling sections', (html) => {
+    const result = extract(`<main><section><p>Old patch from an unrelated report.</p></section><article><p>Example only; no longer available.</p><section><div>${html}</div></section></article></main>`);
+    expect(result.units[0].context.qualifiers).toContain('Example only; no longer available.');
+    expect(result.units[0].text).not.toContain('Old patch from an unrelated report.');
+    expect(assessGamingStructuralUsability({ units: result.units, prompt: 'Where is Platinum? Give system, body, site and resource.', game: 'TEST SPACE', mode: 'guide' }).claimSupported).toBe(false);
+  });
+
+  it.each([
+    sparseTable.replace('<td>Platinum</td>', '<td>Platinum<ul><li>Correction: depleted; no longer available.</li></ul></td>'),
+    '<dl><dt>System</dt><dd>TEST-ORION-01</dd><dt>Body</dt><dd>B 2</dd><dt>Site</dt><dd>PML 7</dd><dt>Resource</dt><dd>Platinum<ul><li>Correction: depleted; no longer available.</li></ul></dd></dl>',
+    '<ul><li>System: TEST-ORION-01; Body: B 2; Site: PML 7; Resource: Platinum<dl><dt>Correction</dt><dd>Depleted; no longer available.</dd></dl></li></ul>'
+  ])('does not promote a record after nested structural context is omitted', (html) => {
+    const result = extract(html);
+    expect(result.units[0].integrity.status).not.toBe('complete');
+    expect(assessGamingStructuralUsability({ units: result.units, prompt: 'Where is Platinum? Give system, body, site and resource.', game: 'TEST SPACE', mode: 'guide' }).claimSupported).toBe(false);
+    expect(result.proseBody).not.toContain('TEST-ORION-01');
+  });
+
+  it('keeps bounded inherited context intact and marks omitted or unclosed context partial', () => {
+    const wrapped = extract(`<article><h2>TEST SPACE</h2><div>${sparseTable}</div></article>`);
+    expect(wrapped.units[0].integrity.status).toBe('complete');
+    const unclosed = extract(`<article><p>Example only<div>${sparseTable}</div></article>`);
+    expect(unclosed.units[0].integrity).toMatchObject({ status: 'partial', reasons: ['content_truncated'] });
+    const tooLong = extract(`<article><p>Example only ${'x'.repeat(GAMING_HTML_EVIDENCE_LIMITS.contextChars)}</p><div>${sparseTable}</div></article>`);
+    expect(tooLong.units[0].integrity.status).toBe('partial');
+    expect(tooLong.units[0].context.qualifiers?.[0].length).toBeLessThanOrEqual(GAMING_HTML_EVIDENCE_LIMITS.contextChars);
+    const tooMany = extract(`<article>${'<p>Ordinary context.</p>'.repeat(65)}<div>${sparseTable}</div><p>Example only.</p></article>`);
+    expect(tooMany.units[0].integrity).toMatchObject({ status: 'partial', reasons: ['required_context_missing'] });
+    const tooDeep = extract(`<article><p>Example only.</p>${'<div>'.repeat(7)}${sparseTable}${'</div>'.repeat(7)}</article>`);
+    expect(tooDeep.units[0].integrity).toMatchObject({ status: 'partial', reasons: ['required_context_missing'] });
+  });
+
+  it('does not import sibling figures, quotations or unrelated comment qualifications through wrappers', () => {
+    const result = extract(`<main><div><figure><p>Old patch figure.</p></figure><div class="comments"><p>Example only comment.</p></div><blockquote><p>Unconfirmed quotation.</p></blockquote></div><article><div>${sparseTable}</div></article></main>`);
+    expect(result.units[0].context.qualifiers).toBeUndefined();
+    expect(result.units[0].integrity.status).toBe('complete');
+  });
+
+  it('does not turn qualifications inside neighboring records into article-wide context', () => {
+    const result = extract(`<article>${sparseTable}<table><tr><th>Other report</th></tr><tr><td><p>Correction: another site is depleted.</p></td></tr></table><ul><li><p>Example only: another report.</p></li></ul><section><p>Old patch in a separate scope.</p></section></article>`);
+    expect(result.units[0].context.qualifiers).toBeUndefined();
+    expect(result.units[0].text).not.toMatch(/depleted|example only|old patch/i);
+    expect(result.units[0].integrity.status).toBe('complete');
   });
 
   it('supports multirow column headers and explicit bounded rowspan relationships', () => {

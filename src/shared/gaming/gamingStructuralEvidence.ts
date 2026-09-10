@@ -8,6 +8,8 @@ export const GAMING_STRUCTURAL_EVIDENCE_LIMITS = Object.freeze({ units: 2_048, u
 export type GamingStructuralClaimShape = 'location' | 'statistic' | 'patch_change' | 'build' | 'none';
 export interface GamingStructuralUsability {
   hasIntactUsableUnit: boolean;
+  hasRelevantClaimUnit: boolean;
+  hasIndependentProseAnchors: boolean;
   claimShape: GamingStructuralClaimShape;
   claimSupported: boolean;
   usableUnitIds: string[];
@@ -159,13 +161,24 @@ export function markGamingEvidenceUnitConflicts(input: readonly GamingEvidenceUn
 
 /** One record must support a tuple. Extraction, authority, applicability and consent stay separate decisions. */
 export function assessGamingStructuralUsability(input: {
-  units?: readonly GamingEvidenceUnit[]; prompt?: string; game?: string; mode?: 'guide' | 'build' | 'meta';
+  units?: readonly GamingEvidenceUnit[]; prompt?: string; game?: string; mode?: 'guide' | 'build' | 'meta'; proseText?: string;
 }): GamingStructuralUsability {
   const units = readGamingEvidenceUnits(input.units);
   const usable = units.filter(intact);
   const claimShape = shape(input, units);
   const terms = input.prompt ? buildGamingRetrievalTerms({ prompt: input.prompt, game: input.game }).focusTerms : [];
   const requestedValues = terms.filter(term => !REQUEST_FORMAT_TERMS.has(term));
+  // Only positively unrelated records permit independent prose to answer a
+  // structural question. Partial and contradictory records still carry vetoes;
+  // field labels alone never establish either a target match or prose support.
+  const hasRelevantClaimUnit = units.length !== (input.units?.length ?? 0) || !requestedValues.length
+    || units.some(unit => {
+      const values = new Set(gamingLexicalTokens([ ...unit.fields.map(field => field.value), unit.context.heading ?? '',
+        unit.context.caption ?? '', unit.context.attribution ?? '', ...(unit.context.qualifiers ?? []) ].join(' ')));
+      return requestedValues.some(term => values.has(term));
+    });
+  const proseTokens = new Set(gamingLexicalTokens(input.proseText ?? ''));
+  const hasIndependentProseAnchors = requestedValues.length > 0 && requestedValues.every(term => proseTokens.has(term));
   const request = normal(input.prompt ?? '');
   // Known value anchors identify requested entities, not just a row with the same body/resource elsewhere.
   const anchored = requestedFieldBindings(input.prompt ?? '', claimShape);
@@ -202,7 +215,7 @@ export function assessGamingStructuralUsability(input: {
   const nearest = candidates.filter(item => item.relevant && item.sameScope).sort((a, b) => a.missing.length - b.missing.length)[0];
   const missingFields = supporting.length || claimShape === 'none' ? []
     : nearest?.missing.length ? nearest.missing : requiredFields(claimShape, new Map()).filter(key => !units.some(unit => unit.fields.some(field => fieldKey(field.label) === key)));
-  return { hasIntactUsableUnit: usable.length > 0, claimShape,
+  return { hasIntactUsableUnit: usable.length > 0, hasRelevantClaimUnit, hasIndependentProseAnchors, claimShape,
     claimSupported: supporting.length > 0,
     usableUnitIds: usable.map(unit => unit.id), supportingUnitIds: supporting.map(item => item.unit.id), missingFields,
     reasonCodes: !usable.length ? ['NO_INTACT_STRUCTURAL_UNIT'] : supporting.length ? ['INTACT_RECORD_CLAIM_SUPPORTED']

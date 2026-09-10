@@ -6,7 +6,7 @@ import type { GamingStoredKnowledgeContext } from '@shared/gaming/gamingStoredEv
 import type { GamingEvidenceUnit } from '@shared/gaming/gamingEvidenceUnits.js';
 import { GAMING_EVIDENCE_UNIT_POLICY_VERSION } from '@shared/gaming/gamingEvidenceUnits.js';
 import { assessGamingStructuralUsability, readGamingEvidenceUnits } from '@shared/gaming/gamingStructuralEvidence.js';
-import { assessGamingClearSource } from '@shared/gaming/gamingClearSource.js';
+import { assessGamingClearSource, gamingClearIntactProseText } from '@shared/gaming/gamingClearSource.js';
 import { gamingClearHash, type GamingClearAssessment } from '@shared/gaming/gamingClearPolicy.js';
 import { assessGamingSourcePolicy, extractGamingFreshnessMetadata } from '@shared/gaming/gamingFreshnessCore.js';
 import { buildGamingRetrievalTerms, GAMING_RETRIEVAL_POLICY_VERSION, gamingTermCoverage, safeGamingEvidenceMetadata, scopeGamingEvidenceParagraphs } from '@shared/gaming/gamingRetrievalPolicy.js';
@@ -2460,9 +2460,13 @@ function rankChunks(documents: GamingFetchedDocument[], terms: string[], input: 
   const scoredChunks: GamingRankedChunk[] = [];
   for (const document of documents) {
     const units = readGamingEvidenceUnits(document.evidenceUnits, document.candidate.url, document.text);
-    const structural = assessGamingStructuralUsability({ units, ...input });
+    const proseText = units.length ? gamingClearIntactProseText({ text: document.text, evidenceUnits: units,
+      metrics: { truncated: document.candidate.partialExtraction === true } }) : document.text;
+    const structural = assessGamingStructuralUsability({ units, ...input, proseText });
     const structuredClaim = units.length > 0 && structural.claimShape !== 'none';
-    if (structuredClaim && !structural.claimSupported) continue;
+    const independentProse = !structural.hasRelevantClaimUnit && structural.hasIndependentProseAnchors
+      && proseText.length >= 120 && gamingTermCoverage(proseText, terms) >= 0.25;
+    if (structuredClaim && !structural.claimSupported && !independentProse) continue;
     if (structural.hasIntactUsableUnit && document.resolvedDocument && input.game) {
       const assessedAt = new Date();
       const sourceAssessment = assessGamingClearSource({ ...input, game: input.game }, document.resolvedDocument, {
@@ -2506,10 +2510,8 @@ function rankChunks(documents: GamingFetchedDocument[], terms: string[], input: 
       }
       continue;
     }
-    let proseText = document.text;
     // Every structural unit stays outside the legacy prose fallback, including
     // rejected records whose flattened words could otherwise mimic a tuple.
-    for (const unit of units) proseText = proseText.replace(unit.text, '');
     for (const chunk of splitIntoChunks(scopeGamingEvidenceParagraphs(proseText, input), maxChunkChars)) {
       const safeChunk = extractReadableEvidenceText(chunk);
       if (!safeChunk || !isReadableGameplayChunk(safeChunk) || !isRelevantGameplayChunk(safeChunk, document.candidate, terms, input)) {
