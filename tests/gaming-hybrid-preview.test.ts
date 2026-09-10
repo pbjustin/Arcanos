@@ -39,6 +39,9 @@ describe('sealed Gaming hybrid knowledge production-core proof', () => {
     expect(mockEvaluate).toHaveBeenCalledWith(expect.objectContaining({ question: 'What are the latest hotfix beam damage values this season?' }));
     expect(mockExtract).toHaveBeenCalledWith(expect.objectContaining({ text: expect.stringContaining('Platforms:') }),
       expect.objectContaining({ game: 'Prism Siege' }), new Date('2026-09-09T12:00:00.000Z'), expect.any(Array));
+    expect(mockExtract).toHaveBeenCalledWith(expect.objectContaining({ publicUrl: 'https://prism.example/updates/current',
+      canonicalUrl: `https://prism.example/updates/current/${'A'.repeat(120)}?build=%7Bprivate-preview-build-payload` }),
+      expect.objectContaining({ game: 'Prism Siege' }), new Date('2026-09-09T12:00:00.000Z'), expect.any(Array));
     expect(mockAttempt).toHaveBeenCalledWith(expect.objectContaining({ operationKey: 'synthetic-candidates-1', round: 1, nextAction: 'retry_later' }));
     expect(mockRetention).toHaveBeenCalledWith(expect.objectContaining({ retainedChars: 12_000_000, candidateChars: 1 }));
     expect(mockArtifact).toHaveBeenCalledWith(expect.objectContaining({ truncated: true }));
@@ -68,6 +71,26 @@ describe('sealed Gaming hybrid knowledge production-core proof', () => {
 
   it('fails closed when malformed restrictions disappear into unspecified scope', () => {
     mockExtract.mockImplementation((...args) => ({ ...freshness.extractGamingFreshnessMetadata(...args), metadataUnverified: undefined }));
+    expect(runGamingHybridKnowledgePreview).toThrow(FAILURE);
+  });
+
+  it('fails closed when a shortened public citation grants current-index authority to an acquired article', () => {
+    mockExtract.mockImplementation((document, ...args) => freshness.extractGamingFreshnessMetadata(
+      { ...document, canonicalUrl: undefined }, ...args));
+    expect(runGamingHybridKnowledgePreview).toThrow(FAILURE);
+  });
+
+  it('fails closed when private acquired identity leaks into public freshness evidence', () => {
+    mockExtract.mockImplementation((document, ...args) => ({ ...freshness.extractGamingFreshnessMetadata(document, ...args),
+      ...(document.canonicalUrl ? { url: document.canonicalUrl } : {}) }));
+    expect(runGamingHybridKnowledgePreview).toThrow(FAILURE);
+  });
+
+  it('fails closed when public freshness evidence merges distinct ordinary query identities', () => {
+    mockExtract.mockImplementation((document, ...args) => {
+      const result = freshness.extractGamingFreshnessMetadata(document, ...args);
+      return document.publicUrl.includes('?guide=') ? { ...result, id: document.publicUrl.split('?')[0] } : result;
+    });
     expect(runGamingHybridKnowledgePreview).toThrow(FAILURE);
   });
 

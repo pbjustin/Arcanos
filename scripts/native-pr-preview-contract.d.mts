@@ -198,6 +198,8 @@ export interface NativePrPreviewE2eContract {
     hybridKnowledgeProofVersion: 'gaming-hybrid-knowledge/v1';
     clearProofHeader: 'x-arcanos-preview-gaming-clear-version';
     clearProofVersion: 'gaming-clear/v1';
+    sourceAcquisitionProofHeader: 'x-arcanos-preview-gaming-source-acquisition-version';
+    sourceAcquisitionProofVersion: 'gaming-source-acquisition/v1';
     game: 'Palworld';
     fixtures: Readonly<{
       guide: 'sealed-preview-guide';

@@ -244,7 +244,8 @@ describe('fetchAndClean', () => {
     'http://[2001:db8::1]/',
     'http://[fec0::1]/',
     'http://[ff02::1]/',
-    'http://[::ffff:7f00:1]/'
+    'http://[::ffff:7f00:1]/',
+    'http://[0:0:0:0:0:ffff:7f00:1]/'
   ])('blocks non-global fetch target %s', async (blockedUrl) => {
     await expect(fetchAndClean(blockedUrl)).rejects.toThrow('Private/internal IP addresses are not allowed');
   });

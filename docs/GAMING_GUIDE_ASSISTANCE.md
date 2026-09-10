@@ -599,3 +599,7 @@ undocumented gameplay. No source refresh, production reindex, deployment, GPT
 Builder edit or live model evaluation is part of this implementation. There is no
 existing Gaming CLEAR live-evaluation harness; live evaluation was not run or
 silently enabled.
+
+The subsequent [source acquisition policy](GAMING_SOURCE_ACQUISITION.md) preserves
+URL identity and permits bounded, explicitly approved HTTPS redirects before
+CLEAR. Unapproved redirects and failed acquisition still remain unassessed.

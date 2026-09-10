@@ -26,7 +26,7 @@ export const gamingHybridQuerySchema = z.object({
   answerDepth: z.enum(['auto', 'concise', 'standard', 'detailed']).optional()
 }).strict();
 export const gamingHybridCandidateSchema = z.object({
-  url: z.string().trim().min(1).max(2_048), title: z.string().max(240).optional(),
+  url: z.string().min(1).max(2_048), title: z.string().max(240).optional(),
   discoveredAt: z.string().max(64).optional(), discoveryMethod: z.string().max(64).optional(),
   claimedGame: z.string().max(120).optional(), claimedPatch: z.string().max(64).optional(),
   claimedPublisher: z.string().max(120).optional(), claimedCategory: z.string().max(64).optional()

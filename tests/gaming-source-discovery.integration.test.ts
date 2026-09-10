@@ -1,6 +1,8 @@
 import { afterAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { gamingAcquisitionAxios } from './testUtils/gamingAcquisitionFixtures.js';
 
-const mockFetchAndClean = jest.fn();
+const mockPageContent = jest.fn();
+const mockAxiosGet = jest.fn();
 const mockDiscoverGamingSources = jest.fn();
 const mockClearGamingDiscoveryCache = jest.fn();
 const mockGetEnv = jest.fn();
@@ -9,15 +11,12 @@ const mockGetEnvIntegerAtLeast = jest.fn();
 const mockGetEnvNumber = jest.fn();
 const mockGetOptionalEnvIntegerAtLeast = jest.fn();
 
-jest.unstable_mockModule('@shared/webFetcher.js', () => ({
-  fetchAndClean: mockFetchAndClean
-}));
-
-jest.unstable_mockModule('@services/gamingSourceDiscovery.js', () => ({
-  discoverGamingSources: mockDiscoverGamingSources,
-  clearGamingDiscoveryCache: mockClearGamingDiscoveryCache,
-  sanitizeGamingDiscoveryCandidateUrl: (url: string) => ({ url, rejected: false })
-}));
+jest.unstable_mockModule('axios', () => ({ default: gamingAcquisitionAxios(mockAxiosGet) }));
+jest.unstable_mockModule('node:dns/promises', () => ({ Resolver: class {
+  async resolve4() { return ['93.184.216.34']; }
+  async resolve6() { return []; }
+  cancel() {}
+} }));
 
 jest.unstable_mockModule('@platform/runtime/env.js', () => ({
   getEnv: mockGetEnv,
@@ -25,6 +24,13 @@ jest.unstable_mockModule('@platform/runtime/env.js', () => ({
   getEnvIntegerAtLeast: mockGetEnvIntegerAtLeast,
   getEnvNumber: mockGetEnvNumber,
   getOptionalEnvIntegerAtLeast: mockGetOptionalEnvIntegerAtLeast
+}));
+
+const discovery = await import('../src/services/gamingSourceDiscovery.js');
+jest.unstable_mockModule('@services/gamingSourceDiscovery.js', () => ({
+  ...discovery,
+  discoverGamingSources: mockDiscoverGamingSources,
+  clearGamingDiscoveryCache: mockClearGamingDiscoveryCache
 }));
 
 const {
@@ -173,7 +179,26 @@ describe('Gaming RAG discovery integration', () => {
       return Number.isFinite(parsed) && parsed >= minValue ? parsed : undefined;
     });
     mockDiscoverGamingSources.mockResolvedValue(makeDiscoveryResult({ failureReason: 'DISCOVERY_NO_RESULTS' }));
-    mockFetchAndClean.mockResolvedValue(guideEvidence('Caves of Qud', 'early progression'));
+    mockPageContent.mockResolvedValue(guideEvidence('Caves of Qud', 'early progression'));
+    mockAxiosGet.mockImplementation(async (url: string, options: any) => {
+      const transport = new URL(url);
+      expect(transport.hostname).toBe('93.184.216.34');
+      expect(options).toMatchObject({ maxRedirects: 0, proxy: false, responseType: 'stream', decompress: false });
+      expect(options.httpsAgent.options).toMatchObject({ servername: options.headers.Host, rejectUnauthorized: true });
+      const logicalUrl = new URL(url);
+      logicalUrl.hostname = options.headers.Host;
+      let body: string;
+      let status = 200;
+      try {
+        body = String(await mockPageContent(logicalUrl.href));
+      } catch (error) {
+        const responseStatus = (error as { response?: { status?: number } }).response?.status;
+        if (typeof responseStatus !== 'number') throw error;
+        status = responseStatus;
+        body = '';
+      }
+      return { status, headers: { 'content-type': 'text/html' }, data: body };
+    });
     clearGamingRagCache();
     mockClearGamingDiscoveryCache.mockClear();
   });
@@ -196,7 +221,7 @@ describe('Gaming RAG discovery integration', () => {
       game: 'Caves of Qud',
       mode: 'guide'
     }));
-    expect(mockFetchAndClean).toHaveBeenCalledWith(discoveredUrl, expect.any(Number), expect.any(Object));
+    expect(mockPageContent).toHaveBeenCalledWith(discoveredUrl);
     expect(result.discoveryTriggered).toBe(true);
     expect(result.discoveryReason).toBe('DISCOVERY_NO_SOURCE_CANDIDATES');
     expect(result.acceptedSourceCount).toBe(1);
@@ -244,7 +269,7 @@ describe('Gaming RAG discovery integration', () => {
 
   it('accepts a validated supplied semantic-version article as current evidence', async () => {
     const suppliedUrl = 'https://palworld-guides.example/palworld-1-0-beginner-guide';
-    mockFetchAndClean.mockResolvedValue(
+    mockPageContent.mockResolvedValue(
       'Palworld 1.0 beginner guide evidence explains a current progression route with preparation and combat steps. '
       + 'Players should gather supplies, confirm the nearby landmark, and save before starting the Palworld objective.'
     );
@@ -264,7 +289,7 @@ describe('Gaming RAG discovery integration', () => {
 
   it('accepts an exact requested version followed by sentence-ending punctuation', async () => {
     const suppliedUrl = 'https://palworld-guides.example/palworld-1-0-beginner-guide';
-    mockFetchAndClean.mockResolvedValue(
+    mockPageContent.mockResolvedValue(
       'Palworld beginner guide evidence explains a current progression route with preparation and combat steps. '
       + 'Players should gather supplies, confirm the nearby landmark, and save before starting the objective. '
       + 'This guidance applies to Palworld version 1.0.'
@@ -281,7 +306,7 @@ describe('Gaming RAG discovery integration', () => {
 
   it('does not accept a longer patch as an exact requested version', async () => {
     const suppliedUrl = 'https://palworld-guides.example/palworld-1-0-1-beginner-guide';
-    mockFetchAndClean.mockResolvedValue(
+    mockPageContent.mockResolvedValue(
       'Palworld beginner guide evidence explains a current progression route with preparation and combat steps. '
       + 'Players should gather supplies, confirm the nearby landmark, and save before starting the objective. '
       + 'This guidance applies to Palworld version 1.0.1.'
@@ -298,7 +323,7 @@ describe('Gaming RAG discovery integration', () => {
 
   it('does not treat a different semantic version as current evidence', async () => {
     const suppliedUrl = 'https://palworld-guides.example/palworld-1-0-beginner-guide';
-    mockFetchAndClean.mockResolvedValue(
+    mockPageContent.mockResolvedValue(
       'Palworld 0.9 beginner guide evidence explains a progression route with preparation and combat steps. '
       + 'Players should gather supplies, confirm the nearby landmark, and save before starting the Palworld objective.'
     );
@@ -323,7 +348,7 @@ describe('Gaming RAG discovery integration', () => {
   it('requires every explicitly requested version across eligible citable chunks', async () => {
     const olderUrl = 'https://palworld-guides.example/palworld-0-9-guide';
     const currentUrl = 'https://palworld-guides.example/palworld-1-0-guide';
-    mockFetchAndClean.mockImplementation(async (url: string) => url === olderUrl
+    mockPageContent.mockImplementation(async (url: string) => url === olderUrl
       ? guideEvidence('Palworld version 0.9', 'progression route')
       : guideEvidence('Palworld version 1.0', 'progression route'));
 
@@ -342,7 +367,7 @@ describe('Gaming RAG discovery integration', () => {
 
   it('does not satisfy a multi-version request with evidence for only the first version', async () => {
     const suppliedUrl = 'https://palworld-guides.example/palworld-0-9-guide';
-    mockFetchAndClean.mockResolvedValue(guideEvidence('Palworld version 0.9', 'progression route'));
+    mockPageContent.mockResolvedValue(guideEvidence('Palworld version 0.9', 'progression route'));
 
     const result = await buildGamingRagContext(baseInput({
       game: 'Palworld',
@@ -365,7 +390,7 @@ describe('Gaming RAG discovery integration', () => {
         updatedAt: '2020-01-01T00:00:00.000Z'
       }]
     }));
-    mockFetchAndClean.mockResolvedValue(
+    mockPageContent.mockResolvedValue(
       'Palworld current beginner guide evidence explains a progression route with preparation and combat steps. '
       + 'Players should gather supplies, confirm the nearby landmark, and save before starting the Palworld objective.'
     );
@@ -389,7 +414,7 @@ describe('Gaming RAG discovery integration', () => {
         updatedAt: new Date().toISOString()
       }]
     }));
-    mockFetchAndClean.mockResolvedValue(
+    mockPageContent.mockResolvedValue(
       'Palworld current beginner guide evidence explains a progression route with preparation and combat steps. '
       + 'Players should gather supplies, confirm the nearby landmark, and save before starting the Palworld objective.'
     );
@@ -407,7 +432,7 @@ describe('Gaming RAG discovery integration', () => {
 
   it('skips discovery when a supplied source already provides high-quality evidence', async () => {
     const suppliedUrl = 'https://community-guides.example/caves-of-qud/early-progression-guide';
-    mockFetchAndClean.mockResolvedValue(guideEvidence('Caves of Qud', 'early progression'));
+    mockPageContent.mockResolvedValue(guideEvidence('Caves of Qud', 'early progression'));
 
     const result = await buildGamingRagContext(baseInput({ guideUrl: suppliedUrl }));
 
@@ -433,8 +458,8 @@ describe('Gaming RAG discovery integration', () => {
     const result = await buildGamingRagContext(baseInput({ guideUrl: suppliedUrl }));
 
     expect(result.sources[0]?.url).toBe(suppliedUrl);
-    expect(mockFetchAndClean).toHaveBeenCalledTimes(1);
-    expect(mockFetchAndClean).not.toHaveBeenCalledWith(curatedUrl, expect.anything(), expect.anything());
+    expect(mockPageContent).toHaveBeenCalledTimes(1);
+    expect(mockPageContent).not.toHaveBeenCalledWith(curatedUrl);
     expect(mockDiscoverGamingSources).not.toHaveBeenCalled();
   });
 
@@ -449,25 +474,19 @@ describe('Gaming RAG discovery integration', () => {
       topics: ['progression'],
       stable: true
     }]);
-    mockFetchAndClean.mockImplementation(async (url: string, _maxChars: number, options: {
-      onExtraction?: (metrics: Record<string, unknown>) => void;
-    }) => {
+    mockPageContent.mockImplementation(async (url: string) => {
       const wrongGame = url === suppliedUrl;
-      options.onExtraction?.({
-        strategy: 'article',
-        rawTextLength: 300,
-        cleanedTextLength: 240,
-        documentTitle: wrongGame ? 'Elden Ring beginner guide' : 'Caves of Qud progression guide',
-        headingText: wrongGame ? 'Elden Ring route' : 'Caves of Qud route'
-      });
-      return wrongGame
+      const title = wrongGame ? 'Elden Ring beginner guide' : 'Caves of Qud progression guide';
+      const heading = wrongGame ? 'Elden Ring route' : 'Caves of Qud route';
+      const text = wrongGame
         ? guideEvidence('Elden Ring', 'beginner route')
         : guideEvidence('Caves of Qud', 'early progression');
+      return `<html><title>${title}</title><body><article><h1>${heading}</h1><p>${text}</p></article></body></html>`;
     });
 
     const result = await buildGamingRagContext(baseInput({ guideUrl: suppliedUrl }));
 
-    expect(mockFetchAndClean).toHaveBeenCalledTimes(2);
+    expect(mockPageContent).toHaveBeenCalledTimes(2);
     expect(result.sources[0]).toEqual(expect.objectContaining({ url: curatedUrl }));
     expect(isCitableGamingWebSource(result.sources[0])).toBe(true);
     expect(mockDiscoverGamingSources).not.toHaveBeenCalled();
@@ -476,7 +495,7 @@ describe('Gaming RAG discovery integration', () => {
   it('rejects a supplied wrong-game article identified only by its body introduction', async () => {
     process.env.ARCANOS_GAMING_DISCOVERY_ENABLED = 'false';
     const suppliedUrl = 'https://supplied.example/article-without-metadata';
-    mockFetchAndClean.mockResolvedValue(guideEvidence('Elden Ring', 'beginner guide route'));
+    mockPageContent.mockResolvedValue(guideEvidence('Elden Ring', 'beginner guide route'));
 
     const result = await buildGamingRagContext(baseInput({
       game: 'Factorio',
@@ -500,7 +519,7 @@ describe('Gaming RAG discovery integration', () => {
     mockDiscoverGamingSources.mockResolvedValue(makeDiscoveryResult({
       candidates: [makeDiscoveredCandidate(discoveredUrl, 1, 'patch_notes')]
     }));
-    mockFetchAndClean.mockImplementation(async (url: string) => url === suppliedUrl
+    mockPageContent.mockImplementation(async (url: string) => url === suppliedUrl
       ? 'Players can progress safely. Upgrade gear before difficult encounters.'
       : guideEvidence('Caves of Qud', 'early progression route equipment combat'));
 
@@ -526,7 +545,7 @@ describe('Gaming RAG discovery integration', () => {
       expect.objectContaining({ url: discoveredUrl, snippet: expect.any(String) }),
       { url: 'invalid-source', error: 'Malformed or unsupported source URL.' }
     ]);
-    expect(mockFetchAndClean).toHaveBeenCalledTimes(1);
+    expect(mockPageContent).toHaveBeenCalledTimes(1);
   });
 
   it.each([
@@ -559,7 +578,7 @@ describe('Gaming RAG discovery integration', () => {
       searchResultCount: 3,
       rejectedCandidateCount: 1
     }));
-    mockFetchAndClean.mockImplementation(async (url: string) => {
+    mockPageContent.mockImplementation(async (url: string) => {
       if (url === failedUrl) {
         throw new Error('source unavailable');
       }
@@ -575,7 +594,7 @@ describe('Gaming RAG discovery integration', () => {
     ]);
     expect(result.sources).not.toContainEqual(expect.objectContaining({ url: failedUrl }));
     expect(result.sources).not.toContainEqual(expect.objectContaining({ url: searchOnlyUrl }));
-    expect(mockFetchAndClean).not.toHaveBeenCalledWith(searchOnlyUrl, expect.anything(), expect.anything());
+    expect(mockPageContent).not.toHaveBeenCalledWith(searchOnlyUrl);
   });
 
   it('keeps a safe supplied-source error after accepted discovered evidence', async () => {
@@ -589,7 +608,7 @@ describe('Gaming RAG discovery integration', () => {
         makeDiscoveredCandidate(secondDiscoveredUrl, 2, 'patch_notes')
       ]
     }));
-    mockFetchAndClean.mockImplementation(async (url: string) => {
+    mockPageContent.mockImplementation(async (url: string) => {
       if (url === suppliedUrl) {
         throw Object.assign(new Error('secret upstream forbidden response'), {
           response: { status: 403 }
@@ -619,7 +638,7 @@ describe('Gaming RAG discovery integration', () => {
     mockDiscoverGamingSources.mockResolvedValue(makeDiscoveryResult({
       candidates: [makeDiscoveredCandidate(unrelatedUrl)]
     }));
-    mockFetchAndClean.mockResolvedValue(
+    mockPageContent.mockResolvedValue(
       'A generic progression guide explains a route, equipment upgrades, combat preparation, and safe recovery steps.'
     );
 
@@ -638,7 +657,7 @@ describe('Gaming RAG discovery integration', () => {
       modes: ['guide'],
       topics: ['progression']
     }]);
-    mockFetchAndClean.mockRejectedValue(new Error('source unavailable'));
+    mockPageContent.mockRejectedValue(new Error('source unavailable'));
 
     const result = await buildGamingRagContext(baseInput({ guideUrl: 'not-a-valid-url' }));
 
@@ -657,7 +676,7 @@ describe('Gaming RAG discovery integration', () => {
     mockDiscoverGamingSources.mockResolvedValue(makeDiscoveryResult({
       candidates: urls.map((url, index) => makeDiscoveredCandidate(url, index + 1))
     }));
-    mockFetchAndClean.mockImplementation(async (url: string) =>
+    mockPageContent.mockImplementation(async (url: string) =>
       guideEvidence('Caves of Qud', `early route ${urls.indexOf(url) + 1}`)
     );
 
@@ -684,13 +703,13 @@ describe('Gaming RAG discovery integration', () => {
 
     await buildGamingRagContext(baseInput());
     await buildGamingRagContext(baseInput());
-    expect(mockFetchAndClean).toHaveBeenCalledTimes(1);
+    expect(mockPageContent).toHaveBeenCalledTimes(1);
 
     clearGamingRagCache();
     expect(mockClearGamingDiscoveryCache).toHaveBeenCalledTimes(1);
 
     await buildGamingRagContext(baseInput());
-    expect(mockFetchAndClean).toHaveBeenCalledTimes(2);
+    expect(mockPageContent).toHaveBeenCalledTimes(2);
   });
 
   it('skips discovery when no game can be identified', async () => {
@@ -708,7 +727,7 @@ describe('Gaming RAG discovery integration', () => {
 
   it('skips discovery when URL-only game detection remains below the confidence threshold', async () => {
     const lowConfidenceUrl = 'https://mystery-portal.example/guide/boss';
-    mockFetchAndClean.mockRejectedValue(new Error('source unavailable'));
+    mockPageContent.mockRejectedValue(new Error('source unavailable'));
 
     const result = await buildGamingRagContext(baseInput({
       game: undefined,

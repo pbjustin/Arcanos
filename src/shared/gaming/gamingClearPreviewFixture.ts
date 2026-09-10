@@ -109,7 +109,7 @@ function requireEvidenceApplicability(): GamingClearAssessment {
   const currentInput = { ...INPUT, prompt: 'Which Intelligence build is best currently?', mode: 'build' as const, requestedVersion: '2.0', region: 'EU' };
   const guide = document(`Patch: 1.0\nBaseline valid for patches: 2.0\nRegions: EU\n${PROSE}`);
   const index = { ...document('Current patch: 2.0\nRegions: EU\nEffective from: 2026-09-08\nThe release index identifies the active patch for this region.'),
-    publicUrl: INDEX_URL, metadata: { title: `${GAME} Patch Notes` } };
+    requestedUrl: INDEX_URL, canonicalUrl: INDEX_URL, publicUrl: INDEX_URL, metadata: { title: `${GAME} Patch Notes` } };
   const current = assess(currentInput, knowledge([guide, index]));
   requireProof(current.decision === 'accept' && current.gates.freshness === 'verified');
   const unverified = assess(currentInput, knowledge([guide]));

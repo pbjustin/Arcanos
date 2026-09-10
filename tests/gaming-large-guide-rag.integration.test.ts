@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { gamingAcquisitionAxios } from './testUtils/gamingAcquisitionFixtures.js';
 import { GamingResolvedSourceHarness, resolvedSourceId } from './testUtils/gamingResolvedSourceHarness.js';
 import { buildGamingLargeGuideFixture } from './testUtils/gamingLargeGuideFixture.js';
 import {
@@ -14,7 +15,7 @@ let database = new GamingResolvedSourceHarness();
 let documentText = fixture.text;
 let generic = false;
 
-jest.unstable_mockModule('axios', () => ({ default: { get: mockAxiosGet } }));
+jest.unstable_mockModule('axios', () => ({ default: gamingAcquisitionAxios(mockAxiosGet) }));
 jest.unstable_mockModule('node:dns/promises', () => ({ Resolver: class {
   async resolve4() { return ['93.184.216.34']; }
   async resolve6() { return []; }

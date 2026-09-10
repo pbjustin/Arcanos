@@ -12,6 +12,7 @@ import { runGamingDocumentIngestionPreview } from './shared/gaming/gamingDocumen
 import { runGamingDurableRagPreview } from './shared/gaming/gamingDurableRagPreviewFixture.js';
 import { runGamingHybridKnowledgePreview } from './shared/gaming/gamingHybridKnowledgePreviewFixture.js';
 import { runGamingClearPreview } from './shared/gaming/gamingClearPreviewFixture.js';
+import { runGamingSourceAcquisitionPreview } from './shared/gaming/gamingSourceAcquisitionPreviewFixture.js';
 
 import {
   createGenericJobsRouter,
@@ -9243,6 +9244,25 @@ export function createNativePrPreviewApplication(
             );
             return;
           }
+          try {
+            runGamingSourceAcquisitionPreview();
+          } catch {
+            sendBoundedJsonResponse(
+              request,
+              response,
+              { error: 'PREVIEW_GAMING_SOURCE_ACQUISITION_CONTRACT_INVALID' },
+              {
+                logEvent: 'native_pr_preview.gaming_source_acquisition_invalid',
+                maxBytes: MAX_GAMING_QUERY_RESPONSE_BYTES,
+                statusCode: 500,
+              }
+            );
+            return;
+          }
+          response.setHeader(
+            NATIVE_PR_PREVIEW_GAMING_CONTRACT.sourceAcquisitionProofHeader,
+            NATIVE_PR_PREVIEW_GAMING_CONTRACT.sourceAcquisitionProofVersion
+          );
           response.setHeader(
             NATIVE_PR_PREVIEW_GAMING_CONTRACT.clearProofHeader,
             NATIVE_PR_PREVIEW_GAMING_CONTRACT.clearProofVersion

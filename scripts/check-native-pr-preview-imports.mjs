@@ -95,6 +95,8 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/shared/gpt/gptJobResult.ts',
   'src/shared/gpt/trinityReasoningPolicy.ts',
   'src/shared/gaming/gamingArchiveResourceCore.ts',
+  'src/shared/gaming/gamingSourceAcquisitionCore.ts',
+  'src/shared/gaming/gamingSourceAcquisitionPreviewFixture.ts',
   'src/shared/gaming/gamingDocumentProjectionCore.ts',
   'src/shared/gaming/gamingDocumentIngestionCore.ts',
   'src/shared/gaming/gamingDocumentIngestionPreviewFixture.ts',
@@ -189,6 +191,7 @@ const ALLOWED_EXTERNAL_RUNTIME_IMPORTS = new Set([
   'zod',
 ]);
 const FILE_SPECIFIC_EXTERNAL_RUNTIME_IMPORTS = new Map([
+  ['src/shared/gaming/gamingSourceAcquisitionCore.ts', new Set(['node:net', '@arcanos/runtime/redaction'])],
   ['src/services/gamingDurableDocumentChunks.ts', new Set(['node:timers/promises'])],
   [
     'packages/arcanos-runtime/src/requestAbort.ts',
@@ -218,6 +221,10 @@ const FILE_SPECIFIC_EXTERNAL_RUNTIME_IMPORTS = new Map([
   ['src/start-native-pr-preview.ts', new Set(['node:http', 'node:url'])],
 ]);
 const FILE_SPECIFIC_EXTERNAL_IMPORT_BINDINGS = new Map([
+  ['src/shared/gaming/gamingSourceAcquisitionCore.ts', new Map([
+    ['node:net', new Set(['isIP:isIP'])],
+    ['@arcanos/runtime/redaction', new Set(['redactString:redactString'])],
+  ])],
   ['src/shared/gaming/gamingClearPolicy.ts', new Map([
     ['node:crypto', new Set(['createHash:createHash'])],
     ['zod', new Set(['z:z'])],
@@ -700,15 +707,17 @@ const CRITICAL_RUNTIME_FUNCTION_DIGESTS = new Map([
   ],
 ]);
 const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
-  ['src/shared/gaming/gamingClearPreviewFixture.ts', '3213753db01a386c1f65dd97315ab7f5b8746b14b17185a9049f4ba7c5d42713'],
+  ['src/shared/gaming/gamingSourceAcquisitionCore.ts', 'ee84f5d883de2da22288b939129fec36efee510251a06b2be6d3deacf9749c77'],
+  ['src/shared/gaming/gamingSourceAcquisitionPreviewFixture.ts', '1c943c7e72b7919ca99db84126517518898e414f1117873eb903f56cb52614a4'],
+  ['src/shared/gaming/gamingClearPreviewFixture.ts', '82ddd79989c1c1878a17ace1976a139f9ad76de49cbefdd0c2ea65ea9c6209a7'],
   ['src/shared/gaming/gamingClearPolicy.ts', 'adb60f38bcccfb63e34a0b51c3e1e7d264bf0b12201e90f760b2476730c472a9'],
   ['src/shared/gaming/gamingClearSource.ts', 'fd8c910fa3a4442f4e3290bdd09049a9ce515f31834a051d3f248c46106d4d1a'],
   ['src/shared/gaming/gamingClearEvidence.ts', 'a76a865103294305060ea33f74139d1e613855f1a1e3565b1e6836b67461a2d2'],
   ['src/shared/gaming/gamingClearAnswerBinding.ts', '2f6d1353e2643ae471705f182415521b1a6548ca484c3e684d4920910f3d0f75'],
   ['src/shared/gaming/gamingHybridPolicyCore.ts', '6a736b5fed5909c77efe886ce3975e57bdfe59b643ea4e56cc3a62b3a81a933a'],
-  ['src/shared/gaming/gamingHybridKnowledgePreviewFixture.ts', '9c9616ede433b89881c8c97eff1c622ce7357ccb33c5d2e97f4a949c9d50e3bc'],
-  ['src/shared/gaming/gamingHybridContract.ts', 'b41e402c72b9a3bb4ada7293191ac77c9f9b85ddabab9c664d7686f110e7d2a9'],
-  ['src/shared/gaming/gamingFreshnessCore.ts', '59d317e2a61fd6ae58ec69395e74c657d3e5605f908cfb498014ca7005119449'],
+  ['src/shared/gaming/gamingHybridKnowledgePreviewFixture.ts', 'd424ea6c060739a3fdc7a7c2674c4ea80a0afb6dbbd33648289b2cf1d9a2422a'],
+  ['src/shared/gaming/gamingHybridContract.ts', 'd23f73d51ef250de54d1635dd63aef612db21bf522a66e76263708b251b96b83'],
+  ['src/shared/gaming/gamingFreshnessCore.ts', '4b30fd97c91c20cca9926ff0d72213c0d521be5cc9b6978dbd49e8517d2cc5d9'],
   ['src/shared/gaming/gamingProgressRecoveryPreviewFixture.ts', '3b62bb34437b2152dd991218ee675b567fbf558c6d9e1f55b8d90d61d97eb5ef'],
   ['src/shared/gaming/gamingGameIdentity.ts', '253612cf9df001cbae65b56cdf13fc9a813aa659f63a4554619e54b62c70957a'],
   ['src/shared/gaming/gamingRecoveryResponse.ts', '637fcd8afec14041b303c4a8255e7fe940e1b9aa76b68f8fb17d0fb9ad4b141e'],

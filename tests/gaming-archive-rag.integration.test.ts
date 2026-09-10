@@ -1,10 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { gamingAcquisitionAxios } from './testUtils/gamingAcquisitionFixtures.js';
 import type { FetchAndCleanOptions } from '../src/shared/webFetcher.js';
 import { logger } from '../src/platform/logging/structuredLogging.js';
 
 const mockFetchAndClean = jest.fn<(url: string, maxChars?: number, options?: FetchAndCleanOptions) => Promise<string>>();
+const mockAxiosGet = jest.fn();
 
-jest.unstable_mockModule('@shared/webFetcher.js', () => ({ fetchAndClean: mockFetchAndClean }));
+jest.unstable_mockModule('axios', () => ({ default: gamingAcquisitionAxios(mockAxiosGet) }));
+jest.unstable_mockModule('node:dns/promises', () => ({ Resolver: class {
+  async resolve4() { return ['93.184.216.34']; }
+  async resolve6() { return []; }
+  cancel() {}
+} }));
+const actualFetcher = await import('../src/shared/webFetcher.js');
+jest.unstable_mockModule('@shared/webFetcher.js', () => ({ ...actualFetcher, fetchAndClean: mockFetchAndClean }));
 
 const { buildGamingRagContext, clearGamingRagCache, isCitableGamingWebSource } = await import('../src/services/gamingWebContext.js');
 
@@ -197,15 +206,11 @@ describe('Archive gaming guides through the existing RAG pipeline', () => {
 
   it('keeps ordinary HTML guide retrieval on its existing fetch path and quality checks', async () => {
     const normalUrl = 'https://guides.example.com/kingdom-hearts-walkthrough';
-    mockFetchAndClean.mockImplementation(async (_url, _maxChars, options) => {
-      options?.onRawDocument?.({ body: `<article>${GUIDE_TEXT}</article>`, contentType: 'text/html', truncated: false });
-      options?.onExtraction?.({ strategy: 'article', rawTextLength: GUIDE_TEXT.length, cleanedTextLength: GUIDE_TEXT.length, qualityScore: 0.85 });
-      return GUIDE_TEXT;
-    });
+    mockAxiosGet.mockResolvedValue({ data: `<article>${GUIDE_TEXT}</article>`, status: 200, headers: { 'content-type': 'text/html' } });
     const result = await buildGamingRagContext({ ...request(), guideUrl: normalUrl });
-    expect(mockFetchAndClean).toHaveBeenCalledTimes(1);
-    expect(mockFetchAndClean.mock.calls[0]?.[0]).toBe(normalUrl);
-    expect(mockFetchAndClean.mock.calls[0]?.[1]).toBe(5000);
+    expect(mockFetchAndClean).not.toHaveBeenCalled();
+    expect(mockAxiosGet).toHaveBeenCalledWith('https://93.184.216.34/kingdom-hearts-walkthrough',
+      expect.objectContaining({ headers: expect.objectContaining({ Host: 'guides.example.com' }), maxRedirects: 0, proxy: false }));
     expect(result.acceptedSuppliedSourceCount).toBe(1);
     expect(result.context).toContain('Guard Armor');
   });

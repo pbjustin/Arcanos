@@ -12,7 +12,8 @@ import {
   type GamingStoredEvidenceRecord, type GamingStoredKnowledgeContext, type GamingStoredKnowledgeInput
 } from '@shared/gaming/gamingStoredEvidenceCore.js';
 import { filterGamingDocumentInstructions } from './gamingDocumentExtraction.js';
-import { describeGamingDocumentSource, resolveGamingDocument, type ResolvedGamingDocument } from './gamingDocumentResolution.js';
+import { describeGamingDocumentSource, resolveGamingDocument, isResolvedGamingDocumentIdentityVerified, projectGamingDocumentPublicUrl,
+  GamingDocumentAcquisitionError, GAMING_DOCUMENT_ACQUISITION_POLICY_VERSION, type ResolvedGamingDocument } from './gamingDocumentResolution.js';
 import { chunkGamingDocument, GAMING_DURABLE_DOCUMENT_LIMITS } from './gamingDurableDocumentChunks.js';
 import { sanitizeGamingDiscoveryCandidateUrl } from './gamingSourceDiscovery.js';
 import { getGamingRagChunkChars, getGamingRagMaxChunks, getGamingRagMaxSources, getGamingWebContextMaxChars, getGamingWebContextFetchTimeoutMs } from './gamingConfig.js';
@@ -90,7 +91,7 @@ function unsafeHints(candidate: GamingHybridCandidateInput): boolean {
 /** Safe acquisition happens once. Full documents stay internal; existing chunks and selection bound context. */
 export async function evaluateGamingHybridCandidates(
   input: GamingStoredKnowledgeInput & { candidates: readonly GamingHybridCandidateInput[]; region?: string },
-  context: { actorKey: string; requestId?: string; traceId?: string; signal?: AbortSignal },
+  context: { actorKey: string; requestId?: string; traceId?: string; workflowId?: string; signal?: AbortSignal },
   dependencies: GamingHybridCandidateDependencies = {}
 ): Promise<{ decisions: GamingHybridCandidateDecision[]; accepted: GamingHybridAcceptedCandidate[]; knowledge: GamingStoredKnowledgeContext }> {
   if (!context.actorKey || input.candidates.length < 1 || input.candidates.length > GAMING_HYBRID_CANDIDATE_LIMITS.count) {
@@ -109,19 +110,30 @@ export async function evaluateGamingHybridCandidates(
     let publicUrl: string | undefined;
     let sourceAssessed = false;
     const sourceStartedAt = Date.now();
+    const candidateReference = randomUUID();
+    let acquisitionDiagnostic: Record<string, string | number> = {
+      stage: 'admission', policyVersion: GAMING_DOCUMENT_ACQUISITION_POLICY_VERSION, redirectCount: 0, failingHop: 0
+    };
     const reject = (reason: string) => {
       if (!sourceAssessed) logger.info('gaming.clear.source.not_run', { requestId: context.requestId, traceId: context.traceId,
+        workflowId: context.workflowId, submittedIndex, candidateReference, acquisition: acquisitionDiagnostic,
         rubricVersion: GAMING_CLEAR_VERSION, profile: 'source', assessmentStatus: 'not_run', reasonCodes: [reason],
         elapsedMs: Date.now() - sourceStartedAt });
-      decisions.push({ submittedIndex, ...(publicUrl ? { url: publicUrl } : {}), decision: 'rejected', reasonCodes: [reason] });
+      decisions.push({ submittedIndex, ...(publicUrl ? { url: projectGamingDocumentPublicUrl(publicUrl) } : {}), decision: 'rejected', reasonCodes: [reason] });
     };
+    if (Date.now() >= deadlineAt) { reject('FETCH_BUDGET_EXHAUSTED'); continue; }
     if (unsafeHints(candidate)) { reject('UNTRUSTED_METADATA_INVALID'); continue; }
     try {
       if (typeof candidate.url !== 'string' || candidate.url.length > 2_048) { reject('INVALID_URL'); continue; }
-      const parsedUrl = new URL(candidate.url);
-      if (parsedUrl.protocol !== 'https:' || parsedUrl.username || parsedUrl.password) { reject('URL_BLOCKED'); continue; }
       const admission = sanitizeGamingDiscoveryCandidateUrl(candidate.url);
-      if (!admission.url || admission.rejected) { reject('URL_BLOCKED'); continue; }
+      if (!admission.url || admission.rejected) {
+        if (admission.rejection) acquisitionDiagnostic = { ...acquisitionDiagnostic, ...admission.rejection };
+        reject('URL_BLOCKED'); continue;
+      }
+      if (new URL(admission.url).protocol !== 'https:') {
+        acquisitionDiagnostic = { ...acquisitionDiagnostic, category: 'security', subreason: 'unsupported_scheme', ruleId: 'gaming.https_required' };
+        reject('URL_BLOCKED'); continue;
+      }
       const description = describeGamingDocumentSource(admission.url);
       publicUrl = selectGamingSourceAdmissionUrl(admission.url, description);
       if (seen.has(publicUrl)) { reject('DUPLICATE_URL'); continue; }
@@ -131,7 +143,11 @@ export async function evaluateGamingHybridCandidates(
         GAMING_DURABLE_DOCUMENT_LIMITS.documentChars, { documentPurpose: 'durable', signal, deadlineAt,
           timeoutMs: Math.min(5_000, getGamingWebContextFetchTimeoutMs(), Math.max(1, deadlineAt - Date.now())), includeLinks: false });
       signal?.throwIfAborted();
-      if (new URL(document.publicUrl).hostname !== new URL(publicUrl).hostname) { reject('RESOLVED_SOURCE_IDENTITY_MISMATCH'); continue; }
+      acquisitionDiagnostic = { stage: 'extraction', policyVersion: document.acquisition?.policyVersion ?? GAMING_DOCUMENT_ACQUISITION_POLICY_VERSION,
+        redirectCount: document.acquisition?.redirectCount ?? 0, failingHop: document.acquisition?.redirectCount ?? 0 };
+      if (!isResolvedGamingDocumentIdentityVerified(document, publicUrl)) { reject('RESOLVED_SOURCE_IDENTITY_MISMATCH'); continue; }
+      // Only the trusted resolver can establish the final publisher and citation identity.
+      publicUrl = document.publicUrl;
       if (document.metrics.instructionFiltered) { reject('SOURCE_INSTRUCTIONS_REJECTED'); continue; }
       const quality = classifyGamingDocumentQuality({ cleanedText: document.text,
         navigationDensity: document.extraction.navigationDensity, truncated: document.metrics.truncated, minUsefulTextChars: 120 });
@@ -141,7 +157,7 @@ export async function evaluateGamingHybridCandidates(
       if (/\b(?:no (?:automated|machine) (?:access|use)|automated (?:access|use) (?:is )?prohibited|do not (?:store|redistribute) (?:this|our) content)\b/iu.test(document.text)) {
         reject('SOURCE_USE_RESTRICTED'); continue;
       }
-      const reviewedPolicy = (dependencies.sourcePolicy ?? assessGamingSourcePolicy)(document.publicUrl, input.game);
+      const reviewedPolicy = (dependencies.sourcePolicy ?? assessGamingSourcePolicy)(document.canonicalUrl, input.game);
       const policy = classifyGamingQuestionFreshness({ prompt: input.prompt, mode: input.mode }) === 'live_status'
         ? { ...reviewedPolicy, durableAllowed: false, autoStoreAllowed: false } : reviewedPolicy;
       const freshness = (dependencies.extractFreshness ?? extractGamingFreshnessMetadata)(document, input, now());
@@ -162,6 +178,7 @@ export async function evaluateGamingHybridCandidates(
       sourceAssessed = true;
       logger.info('gaming.clear.source.completed', { requestId: context.requestId, traceId: context.traceId,
         rubricVersion: sourceAssessment.rubricVersion, profile: sourceAssessment.profile, policyProfile: sourceAssessment.policyProfile,
+        workflowId: context.workflowId, submittedIndex, candidateReference, acquisition: acquisitionDiagnostic,
         sourceRole: sourceAssessment.sourceRole, subjectHash: contentHash, assessmentMethod: sourceAssessment.assessmentMethod,
         assessmentStatus: sourceAssessment.assessmentStatus, dimensionScores: sourceAssessment.dimensionScores,
         overall: sourceAssessment.overall, decision: sourceAssessment.decision, blockingFindingCount: sourceAssessment.blockingFindings.length,
@@ -207,8 +224,12 @@ export async function evaluateGamingHybridCandidates(
           ...(document.metrics.truncated ? ['EXTRACTION_PARTIAL'] : [])], sourceCategory: policy.category, contentHash });
     } catch (error) {
       if (signal?.aborted) throw error;
+      if (error instanceof GamingDocumentAcquisitionError) {
+        acquisitionDiagnostic = { ...error.acquisition };
+        reject(error.code); continue;
+      }
       const status = (error as { response?: { status?: number } })?.response?.status;
-      reject(status === 401 || status === 403 ? 'SOURCE_INACCESSIBLE' : status && status >= 300 && status < 400
+      reject(status === 401 || status === 403 ? 'SOURCE_INACCESSIBLE' : status && [301, 302, 303, 307, 308].includes(status)
         ? 'REDIRECT_NOT_ALLOWED' : error instanceof Error && /(?:timeout|deadline|abort)/iu.test(error.name + error.message)
           ? 'SOURCE_TIMEOUT' : 'SOURCE_FETCH_FAILED');
     }
@@ -243,6 +264,8 @@ export async function createApprovedGamingHybridIngestion(input: {
   for (const candidate of input.candidates) {
     if (candidate.actorScopeHash !== actorHash(context.actorKey) || candidate.expiresAt <= Date.now()
       || candidate.policyVersion !== GAMING_HYBRID_CANDIDATE_POLICY_VERSION
+      || candidate.publicUrl !== candidate.document.publicUrl
+      || !isResolvedGamingDocumentIdentityVerified(candidate.document, candidate.document.requestedUrl)
       || candidate.contentHash !== hashGamingApprovedDocument(candidate.document)
       || candidate.sourceAssessment?.rubricVersion !== GAMING_CLEAR_VERSION
       || candidate.sourceAssessment.subjectHash !== candidate.contentHash
@@ -267,7 +290,7 @@ export async function createApprovedGamingHybridIngestion(input: {
     }
   }
   return createApprovedGamingSourceIngestion(input.candidates.map(candidate => ({
-    url: candidate.publicUrl, game: candidate.game, contentHash: candidate.contentHash,
+    url: candidate.document.requestedUrl, game: candidate.game, contentHash: candidate.contentHash,
     actorScopeHash: candidate.actorScopeHash, policyVersion: candidate.policyVersion,
     recordType: candidate.recordType,
     sourceTrustType: candidate.sourcePolicy.authority === 'official' ? 'official' as const

@@ -3,9 +3,10 @@ import { createHash } from "node:crypto";
 import { GAMEPLAY_CONTENT_PATTERN, filterGamingDocumentInstructions, isGamingCatalogMetadataOnly } from "@services/gamingDocumentExtraction.js";
 import type { GamingPlayerContext } from '@shared/gaming/gamingPlayerContext.js';
 import type { GamingStoredKnowledgeContext } from '@shared/gaming/gamingStoredEvidenceCore.js';
-import { extractGamingFreshnessMetadata } from '@shared/gaming/gamingFreshnessCore.js';
+import { assessGamingSourcePolicy, extractGamingFreshnessMetadata } from '@shared/gaming/gamingFreshnessCore.js';
 import { buildGamingRetrievalTerms, GAMING_RETRIEVAL_POLICY_VERSION, gamingTermCoverage, safeGamingEvidenceMetadata, scopeGamingEvidenceParagraphs } from '@shared/gaming/gamingRetrievalPolicy.js';
-import { describeGamingDocumentSource, resolveGamingDocument } from "@services/gamingDocumentResolution.js";
+import { describeGamingDocumentSource, resolveGamingDocument, isResolvedGamingDocumentIdentityVerified,
+  GAMING_DOCUMENT_ACQUISITION_POLICY_VERSION, GamingDocumentAcquisitionError } from "@services/gamingDocumentResolution.js";
 import { load } from "cheerio";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import { redactString } from "@shared/redaction.js";
@@ -391,6 +392,7 @@ const BUILTIN_SOURCE_CATALOG: Array<{
 ];
 
 const documentCache = new Map<string, {
+  verifiedPublicUrl?: string;
   partialExtraction?: boolean;
   text: string;
   corroborationText?: string;
@@ -579,20 +581,6 @@ function isFetchableGuideUrl(url: string): boolean {
   }
 }
 
-function redactUrlCredentials(url: string): string {
-  try {
-    const parsedUrl = new URL(url);
-    if (!parsedUrl.username && !parsedUrl.password) {
-      return url;
-    }
-    parsedUrl.username = "";
-    parsedUrl.password = "";
-    return parsedUrl.toString();
-  } catch {
-    return url;
-  }
-}
-
 function readErrorString(error: unknown, key: string): string | undefined {
   if (!error || typeof error !== "object") {
     return undefined;
@@ -768,17 +756,18 @@ function sanitizeUntrustedEvidenceCandidateUrl(url: string): { url?: string; rej
   }
 
   try {
-    if (new URL(candidate.url).protocol !== "https:") {
+    const parsed = new URL(candidate.url);
+    if (parsed.protocol !== "https:") {
       return { rejected: true };
     }
+    // Frontend article candidates cannot smuggle structured build data through URL payloads.
+    // Preserve this separate product restriction without dropping ordinary document selectors.
+    if ([...parsed.searchParams.keys()].some(key => FRONTEND_PUBLIC_PAYLOAD_KEY_PATTERN.test(key))) return { rejected: true };
+    const segments = parsed.pathname.split('/').map(segment => decodeURIComponent(segment));
+    if (segments.some((segment, index) => segment.length > 160
+      || (FRONTEND_PUBLIC_PAYLOAD_KEY_PATTERN.test(segment) && (segments[index + 1]?.length ?? 0) >= 24
+        && /^[a-z0-9+/_=-]+$/iu.test(segments[index + 1])))) return { rejected: true };
   } catch {
-    return { rejected: true };
-  }
-
-  const publicCandidate = sanitizeGamingDiscoveryCandidateUrl(
-    sanitizeUntrustedPublicSourceUrl(candidate.url)
-  );
-  if (publicCandidate.rejected || !publicCandidate.url || publicCandidate.url !== candidate.url) {
     return { rejected: true };
   }
 
@@ -854,6 +843,13 @@ function readHttpStatus(error: unknown): number | undefined {
 }
 
 function safeGamingSourceError(error: unknown): string {
+  if (error instanceof GamingDocumentAcquisitionError) {
+    if (error.code === 'URL_BLOCKED') return "Source URL was blocked or could not be resolved.";
+    if (['DEADLINE_EXCEEDED', 'CANCELLED'].includes(error.acquisition.subreason)) return "Source retrieval timed out.";
+    if (['TRANSFER_LIMIT', 'DECODED_LIMIT'].includes(error.acquisition.subreason)) return "Source response exceeded the size limit.";
+    if (error.acquisition.subreason === 'UNSUPPORTED_CONTENT_TYPE') return "Source content type is unsupported.";
+    if (error.acquisition.subreason === 'DNS_FAILED') return "Source URL was blocked or could not be resolved.";
+  }
   const message = resolveErrorMessage(error, "Source retrieval failed.").toLowerCase();
   const status = readHttpStatus(error);
   if (status === 401 || status === 403 || /\b(?:401|403)\b|unauthorized|forbidden/.test(message)) {
@@ -982,8 +978,11 @@ export async function buildGamingWebContext(
 
   const sources: GamingWebSource[] = await Promise.all(
     uniqueUrls.map(async (url, index): Promise<GamingWebSource> => {
-      const fetchUrl = redactUrlCredentials(url);
-      const sourceUrl = sanitizePublicSourceUrl(fetchUrl);
+      const fetchUrl = url;
+      let sourceUrl: string;
+      try { sourceUrl = describeGamingDocumentSource(fetchUrl).publicUrl; } catch (error) {
+        return { url: 'invalid-source', error: safeGamingSourceError(error) };
+      }
       const sourceStartedAt = Date.now();
       const sourceLogTarget = buildSafeSourceLogTarget(fetchUrl);
       if (logContext) {
@@ -1006,6 +1005,10 @@ export async function buildGamingWebContext(
         const fetchedText = await runWithLocalTimeout(
           async (signal) => {
             const document = await resolveGamingDocument(fetchUrl, maxContextChars, { signal, timeoutMs: fetchTimeoutMs });
+            if (!isResolvedGamingDocumentIdentityVerified(document, fetchUrl)) {
+              throw new GamingDocumentAcquisitionError('URL_BLOCKED', 'extraction', 'SOURCE_IDENTITY_MISMATCH');
+            }
+            sourceUrl = document.publicUrl;
             extraction = document.extraction;
             return document.text;
           },
@@ -1161,7 +1164,7 @@ function gamingSourceDedupeKey(url: string): string {
   const normalized = normalizeCacheUrl(url);
   // Archive identifiers are case sensitive; preserve their identity through deduplication.
   const archiveIdentifier = recognizeGamingArchiveItem(url);
-  return archiveIdentifier ? `https://archive.org/details/${archiveIdentifier}` : normalized.toLowerCase();
+  return archiveIdentifier ? `https://archive.org/details/${archiveIdentifier}` : normalized;
 }
 
 function detectGameFromRagInput(input: GamingRagInput): GamingGameDetection {
@@ -1522,7 +1525,7 @@ function makeSourceCandidate(
   supplied: boolean,
   fallbackTrustScore: number
 ): GamingSourceCandidate {
-  const fetchUrl = redactUrlCredentials(source.url.trim());
+  const fetchUrl = source.url.trim();
   return {
     ...source,
     url: sanitizePublicSourceUrl(fetchUrl),
@@ -1707,8 +1710,8 @@ function buildSourceCandidates(input: GamingRagInput, game: string | undefined):
 
   const deduped = new Map<string, GamingSourceCandidate>();
   for (const candidate of allCandidates) {
-    const dedupeUrl = candidate.untrustedCandidate ? candidate.url : candidate.fetchUrl;
-    const key = createHash("sha256").update(gamingSourceDedupeKey(dedupeUrl)).digest("hex");
+    // Display URLs may hide payloads or selectors; acquisition identity owns deduplication.
+    const key = createHash("sha256").update(gamingSourceDedupeKey(candidate.fetchUrl)).digest("hex");
     const existing = deduped.get(key);
     if (!existing || scoreCandidate(input, candidate, [], false) > scoreCandidate(input, existing, [], false)) {
       deduped.set(key, candidate);
@@ -1769,7 +1772,10 @@ async function fetchGamingRagDocument(
   const fetchUrl = candidate.fetchUrl;
   const sourceUrl = candidate.url;
   let documentSource: ReturnType<typeof describeGamingDocumentSource> | undefined;
-  try { documentSource = describeGamingDocumentSource(fetchUrl); } catch { /* Acquisition returns a bounded source failure below. */ }
+  try { documentSource = describeGamingDocumentSource(fetchUrl); } catch (error) {
+    // Never create a cache fingerprint from a rejected raw URL or erase credentials before acquisition.
+    return { url: 'invalid-source', error: safeGamingSourceError(error) };
+  }
   const untrustedEvidenceCandidate = candidate.untrustedCandidate === true;
   const strictEvidenceCandidate = untrustedEvidenceCandidate && candidate.requiresFreshness === true;
   const preparedResource = prepareGamingResourceUrl(fetchUrl);
@@ -1789,7 +1795,7 @@ async function fetchGamingRagDocument(
   const payloadCacheKey = resolvedIdentity
     ? createHash("sha256").update(resolvedIdentity).digest("hex").slice(0, 24)
     : preparedResource?.payloadHash.slice(0, 24) ?? "invalid-resource";
-  const resolverCachePolicy = documentSource ? `:resolver:${documentSource.resolverId}:${documentSource.resolverVersion}` : "";
+  const resolverCachePolicy = documentSource ? `:resolver:${documentSource.resolverId}:${documentSource.resolverVersion}:${GAMING_DOCUMENT_ACQUISITION_POLICY_VERSION}` : "";
   const cacheKey = `${cacheUrlKey}#gaming-rag:${contentTermKey}:payload:${payloadCacheKey}:origin:${strictEvidenceCandidate ? "current-candidate" : untrustedEvidenceCandidate ? "supplied" : "curated"}${resolverCachePolicy}`;
   const cached = documentCache.get(cacheKey);
   const now = Date.now();
@@ -1825,7 +1831,7 @@ async function fetchGamingRagDocument(
     }
     return {
       candidate: candidateWithFetchedGameCorroboration(
-        { ...candidate, partialExtraction: cached.partialExtraction },
+        { ...candidate, url: cached.verifiedPublicUrl ?? candidate.url, partialExtraction: cached.partialExtraction },
         input,
         cached.corroborationText ?? cached.text,
         cached.extraction,
@@ -1891,6 +1897,7 @@ async function fetchGamingRagDocument(
     };
   }
 
+  let redirected = false;
   try {
     let extraction: FetchAndCleanExtractionMetrics = {
       strategy: "body",
@@ -1901,6 +1908,8 @@ async function fetchGamingRagDocument(
     let archiveResolution: GamingArchiveResolutionTelemetry | undefined;
     let supportsStructuredExtraction = true;
     let partialExtraction = false;
+    let effectiveCandidate = candidate;
+    let acquiredCanonicalUrl = fetchUrl;
     const fetchedArticleText = await runWithLocalTimeout(
       async (signal) => {
         const document = await resolveGamingDocument(fetchUrl,
@@ -1910,6 +1919,21 @@ async function fetchGamingRagDocument(
             preferredContentTerms: contentTerms,
             rawDocumentMaxChars: GAMING_BUILD_RESOURCE_HARD_LIMITS.maxHtmlChars
           });
+        if (!isResolvedGamingDocumentIdentityVerified(document, fetchUrl)) {
+          throw new GamingDocumentAcquisitionError('URL_BLOCKED', 'extraction', 'SOURCE_IDENTITY_MISMATCH');
+        }
+        redirected = (document.acquisition?.redirectCount ?? 0) > 0;
+        acquiredCanonicalUrl = document.canonicalUrl;
+        effectiveCandidate = { ...candidate, url: document.publicUrl, fetchUrl: document.canonicalUrl };
+        if (redirected) {
+          const policy = assessGamingSourcePolicy(document.canonicalUrl, input.game ?? '');
+          const sourceType = policy.authority === 'official' ? 'official' : policy.authority === 'specialist' ? 'curated' : 'supplied';
+          effectiveCandidate = { ...effectiveCandidate, sourceType, stable: false,
+            title: document.metadata.title ?? safeSourceTitleFromUrl(document.publicUrl),
+            trustScore: policy.authority === 'official' ? 0.94 : policy.authority === 'specialist' ? 0.78 : 0.55,
+            games: undefined, publishedAt: undefined, updatedAt: undefined,
+            gameCorroborated: false, versionCorroborated: false, freshnessCorroborated: false };
+        }
         extraction = document.extraction;
         partialExtraction = document.metrics.truncated;
         rawDocument = document.rawDocument;
@@ -1946,7 +1970,8 @@ async function fetchGamingRagDocument(
       // Resolved plain-text guides must pass the article evidence gates; they are not build imports.
       if (supportsStructuredExtraction) {
         structuredResult = await ingestGamingBuildResource({
-          url: strictEvidenceCandidate ? neutralizeUntrustedStructuredIngestionUrl(fetchUrl) : fetchUrl,
+          url: strictEvidenceCandidate ? neutralizeUntrustedStructuredIngestionUrl(effectiveCandidate.url)
+            : redirected ? acquiredCanonicalUrl : fetchUrl,
           requestedGame: input.game,
           prompt: input.prompt,
           contentType: rawDocument?.contentType,
@@ -1959,7 +1984,7 @@ async function fetchGamingRagDocument(
         });
       }
     } catch {
-      structuredResult = urlStructuredResult;
+      structuredResult = redirected ? undefined : urlStructuredResult;
     }
     const structuredRelevant = Boolean(
       structuredResult
@@ -1980,10 +2005,20 @@ async function fetchGamingRagDocument(
     const structured = structuredResult && structuredRelevant
       ? { result: structuredResult, evidenceUsed }
       : undefined;
+    // Structured payload display remains private even when the enclosing public page was acquired.
+    const finalClassification = redirected ? classifyGamingResource({ url: acquiredCanonicalUrl }) : preliminaryClassification;
+    const finalResource = redirected ? prepareGamingResourceUrl(acquiredCanonicalUrl) : preparedResource;
+    if (finalClassification.extractionStrategy === 'url_payload' && finalResource) {
+      effectiveCandidate = { ...effectiveCandidate, url: finalResource.publicUrl };
+    } else if (structured && evidenceUsed) {
+      effectiveCandidate = { ...effectiveCandidate, url: structured.result.publicUrl };
+    }
     const fetchedAt = new Date().toISOString();
-    const fetchedPageDate = strictEvidenceCandidate ? extractFetchedPageDate(rawDocument, fetchUrl) : undefined;
+    const fetchedPageDate = strictEvidenceCandidate ? extractFetchedPageDate(rawDocument, effectiveCandidate.url) : undefined;
     pruneDocumentCache(now);
-    documentCache.set(cacheKey, {
+    // A redirect destination is not a reusable acquisition permission. Revalidate its chain next time.
+    if (!redirected) documentCache.set(cacheKey, {
+      verifiedPublicUrl: effectiveCandidate.url,
       partialExtraction,
       text,
       ...(untrustedEvidenceCandidate ? { corroborationText: articleText } : {}),
@@ -2023,7 +2058,7 @@ async function fetchGamingRagDocument(
     }
     return {
       candidate: candidateWithFetchedGameCorroboration(
-        { ...candidate, partialExtraction },
+        { ...effectiveCandidate, partialExtraction },
         input,
         untrustedEvidenceCandidate ? articleText : text,
         effectiveExtraction,
@@ -2041,8 +2076,14 @@ async function fetchGamingRagDocument(
     if (requestSignal?.aborted) {
       throw requestSignal.reason instanceof Error ? requestSignal.reason : error;
     }
+    const directPayloadFallbackAllowed = !redirected
+      && error instanceof GamingDocumentAcquisitionError
+      && error.code === 'SOURCE_FETCH_FAILED'
+      && error.acquisition.redirectCount === 0
+      && ['FETCH_FAILED', 'DNS_FAILED', 'HTTP_RESPONSE_UNUSABLE'].includes(error.acquisition.subreason)
+      && (error.status === undefined || error.status >= 400);
     if (
-      urlStructuredResult
+      directPayloadFallbackAllowed && urlStructuredResult
       && (
         urlStructuredResult.build
         || isStructuredGamingResourceType(urlStructuredResult.classification.type)
@@ -3087,12 +3128,12 @@ export async function buildGamingRagContext(
     candidateRankingElapsedMs = discoveryResult.candidateRankingElapsedMs;
     discoveryFailureReason = discoveryResult.discoveryFailureReason;
 
-    const existingCandidateUrls = new Set(candidates.map((candidate) => candidate.url.toLowerCase()));
+    const existingCandidateUrls = new Set(candidates.map((candidate) => gamingSourceDedupeKey(candidate.fetchUrl)));
     const discoveredCandidatesBeforeDedupe = discoveryResult.candidates.map((result) =>
       makeDiscoveredSourceCandidate(result, input)
     );
     const discoveryCandidates = discoveredCandidatesBeforeDedupe.filter((candidate) =>
-      !existingCandidateUrls.has(candidate.url.toLowerCase())
+      !existingCandidateUrls.has(gamingSourceDedupeKey(candidate.fetchUrl))
     );
     rejectedCandidateCount += discoveredCandidatesBeforeDedupe.length - discoveryCandidates.length;
     for (const candidate of discoveryCandidates) {
@@ -3213,7 +3254,8 @@ export async function buildGamingRagContext(
     const reliableGame = detectReliableDocumentGame(document) ?? detectGameFromDocumentIntro(document, effectiveInput.game)
       ?? (document.candidate.gameCorroborated ? effectiveInput.game : undefined)
       ?? (!document.candidate.untrustedCandidate ? document.candidate.games?.[0] : undefined);
-    const metadata = effectiveInput.game ? extractGamingFreshnessMetadata({ publicUrl: source.url, text: document.text,
+    const metadata = effectiveInput.game ? extractGamingFreshnessMetadata({ publicUrl: source.url,
+      canonicalUrl: document.candidate.fetchUrl, text: document.text,
       metadata: { title: document.extraction.documentTitle, headings: document.extraction.headingText } },
       { game: effectiveInput.game, edition: effectiveInput.edition, platform: effectiveInput.platform }, new Date(document.fetchedAt)) : undefined;
     clearKnowledge.sources.push({ sourceId, url: source.url, snippet: source.snippet ?? '',
@@ -3227,9 +3269,9 @@ export async function buildGamingRagContext(
     }
   }
   const acceptedSourceCount = retainedSources.filter((source) =>
-    discoveredCandidateUrls.has(source.url) && isCitableGamingWebSource(source)
+    documents.some(document => document.candidate.discovered && document.candidate.url === source.url) && isCitableGamingWebSource(source)
   ).length;
-  const suppliedCandidateUrls = new Set(suppliedCandidates.map((candidate) => candidate.url));
+  const suppliedCandidateUrls = new Set(documents.filter(document => document.candidate.supplied).map(document => document.candidate.url));
   const acceptedSuppliedSourceCount = retainedSources.filter((source) =>
     suppliedCandidateUrls.has(source.url) && isCitableGamingWebSource(source)
   ).length;

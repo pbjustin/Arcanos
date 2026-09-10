@@ -87,6 +87,37 @@ function requireCurrentApplicability(): void {
   requireProof(!evaluate([{ ...status, sourceUpdatedAt: old }], 'Are the servers down?').usable);
 }
 
+function requireAcquiredIdentityFreshness(): void {
+  // The resolver supplies both identities. This fixture exercises freshness policy,
+  // not the URL redaction or acquisition that produced the public citation.
+  const privatePath = 'A'.repeat(120);
+  const privatePayload = '%7Bprivate-preview-build-payload';
+  const text = `Game: ${GAME}\nPatch: 2.1\nCurrent patch: 2.1\nCurrent build: beam-v2\nCurrent season: Gears\nEffective from: 2026-09-08`;
+  const document = { publicUrl: INDEX_URL, canonicalUrl: `${INDEX_URL}/${privatePath}?build=${privatePayload}`,
+    text, metadata: { title: `${GAME} Patch Notes` } };
+  const article = extractGamingFreshnessMetadata(document, { game: GAME }, NOW, RULES);
+  requireProof(article.ruleId === 'synthetic-notes' && article.authority === 'official' && article.currentness === 'article');
+  requireProof(article.patch === '2.1' && !article.currentPatch && !article.currentBuild && !article.currentSeason);
+  const result = evaluate([article]);
+  requireProof(!result.usable && result.status === 'unverified');
+  const index = extractGamingFreshnessMetadata({ ...document, canonicalUrl: INDEX_URL }, { game: GAME }, NOW, RULES);
+  requireProof(index.ruleId === 'synthetic-current' && index.currentness === 'current_index');
+  requireProof(index.currentPatch === '2.1' && index.currentBuild === 'beam-v2' && index.currentSeason === 'Gears');
+  const unreviewed = extractGamingFreshnessMetadata({ ...document,
+    canonicalUrl: `https://prism.example/player-builds/${privatePath}?build=${privatePayload}` }, { game: GAME }, NOW, RULES);
+  requireProof(unreviewed.authority === 'unreviewed' && unreviewed.currentness === 'none' && !unreviewed.autoStoreAllowed);
+  requireProof(!unreviewed.currentPatch && !unreviewed.currentBuild && !unreviewed.currentSeason);
+  for (const evidence of [article, index, unreviewed]) {
+    requireProof(evidence.id === INDEX_URL && evidence.url === INDEX_URL);
+    const serialized = JSON.stringify({ evidence, result });
+    requireProof(!serialized.includes(privatePath) && !serialized.includes('private-preview-build-payload') && !serialized.includes('build='));
+  }
+  const first = extract('https://prism.example/updates/article?guide=beam&rank=1&rank=2', 'Patch: 2.1');
+  const second = extract('https://prism.example/updates/article?guide=beam&rank=2&rank=1', 'Patch: 2.1');
+  requireProof(first.id === first.url && second.id === second.url && first.id !== second.id);
+  requireProof(first.url.endsWith('?guide=beam&rank=1&rank=2') && second.url.endsWith('?guide=beam&rank=2&rank=1'));
+}
+
 function requireSeasonalAndScopeRepairs(): void {
   const index = extract(INDEX_URL, 'Current season: Gears\nEffective from: 2026-09-08');
   const obsolete = extract('https://prism.example/updates/season', 'Season: Gears\nPatch: 1.0\nEffective from: 2026-09-08');
@@ -169,6 +200,7 @@ export function runGamingHybridKnowledgePreview(): void {
   try {
     requireClosedContracts();
     requireCurrentApplicability();
+    requireAcquiredIdentityFreshness();
     requireSeasonalAndScopeRepairs();
     requireMechanicConflictRepair();
     requireLifecycleRepairs();

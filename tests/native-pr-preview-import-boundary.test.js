@@ -1406,6 +1406,29 @@ describe('native PR preview import boundary', () => {
     }
   });
 
+  it('pins Gaming acquisition policy and restricts node:net to the pure IP parser', async () => {
+    for (const name of ['gamingSourceAcquisitionCore', 'gamingSourceAcquisitionPreviewFixture']) {
+      const filePath = `src/shared/gaming/${name}.ts`;
+      expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).toContain(filePath);
+      const sourceText = await readFile(new URL(`../${filePath}`, import.meta.url), 'utf8');
+      expect(findUnsafeRuntimeSyntax(filePath, sourceText)).toEqual([]);
+      expect(findUnsafeRuntimeSyntax(filePath, `${sourceText}\nexport const unreviewedPolicyChange = true;`)).toEqual(
+        expect.arrayContaining([expect.stringContaining('critical entry file semantic digest')])
+      );
+    }
+    const filePath = 'src/shared/gaming/gamingSourceAcquisitionCore.ts';
+    for (const sourceText of [
+      'import { connect } from "node:net";',
+      'import * as net from "node:net";',
+      'import net from "node:net";',
+      'export { connect } from "node:net";'
+    ]) expect(findUnsafeRuntimeSyntax(filePath, sourceText).length).toBeGreaterThan(0);
+    for (const filePath of ['src/services/gamingSourceDiscovery.ts', 'src/services/gamingDocumentResolution.ts',
+      'src/services/gamingBuildResources.ts', 'src/shared/webFetcher.ts']) {
+      expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toContain(filePath);
+    }
+  });
+
   it('pins the pure Gaming CLEAR decisions without admitting their effectful service graph', async () => {
     for (const name of ['gamingClearPreviewFixture', 'gamingClearPolicy', 'gamingClearSource', 'gamingClearEvidence', 'gamingClearAnswerBinding']) {
       const filePath = `src/shared/gaming/${name}.ts`;
