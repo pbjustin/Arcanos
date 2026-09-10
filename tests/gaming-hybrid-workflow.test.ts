@@ -25,6 +25,24 @@ function setup(initial = empty) {
 }
 
 describe('Gaming hybrid authenticated handoff', () => {
+  it('reports failed acquisition without asserting absence and preserves the one-round stop on replay', async () => {
+    const { workflow, evaluateCandidates, generate } = setup();
+    evaluateCandidates.mockResolvedValue({ decisions: [{ decision: 'rejected', reasonCodes: ['URL_BLOCKED'] }],
+      accepted: [], knowledge: empty } as any);
+    const queried = await workflow.query(query, context);
+    const submitted = { contractVersion, workflowId: queried.body.workflowId, idempotencyKey: 'test-failure-1',
+      candidates: [{ url: 'https://guides.example.com/lantern' }] };
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const result = await workflow.candidates(submitted, context);
+      expect(result.body).toMatchObject({ reason: 'SOURCE_ACQUISITION_UNVERIFIED', nextAction: 'stop',
+        discovery: { round: 1, maxRounds: 1, maxCandidates: 3 } });
+      expect(result.body.qualification).toContain('could not be verified through backend acquisition');
+      expect(result.body.qualification).toContain('does not establish');
+    }
+    expect(evaluateCandidates).toHaveBeenCalledTimes(1);
+    expect(evaluateCandidates).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ workflowId: queried.body.workflowId }));
+    expect(generate).not.toHaveBeenCalled();
+  });
   it('requests bounded discovery without generation for unknown knowledge', async () => {
     const { workflow, generate, retrieve } = setup();
     const result = await workflow.query(query, context);

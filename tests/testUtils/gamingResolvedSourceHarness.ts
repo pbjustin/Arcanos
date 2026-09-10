@@ -31,6 +31,12 @@ export class GamingResolvedSourceHarness {
       };
       return result([this.source]);
     }
+    if (sql.startsWith('UPDATE gaming_sources SET game_name')) {
+      if (this.source) Object.assign(this.source, { game_name: values[1] ?? this.source.game_name,
+        public_url: values[2], host: values[3], source_type: values[4], trust_score: values[5], priority: values[6],
+        status: 'active', last_checked_at: values[7], last_success_at: values[7], last_error_code: null });
+      return result(this.source ? [this.source] : []);
+    }
     if (sql.endsWith('FOR UPDATE') || sql.startsWith('UPDATE gaming_sources')) {
       return result(this.source ? [this.source] : []);
     }

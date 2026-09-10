@@ -34,7 +34,9 @@ import { planAutonomousWorkerJob } from '@services/workerAutonomyService.js';
 import { ingestGamingBuildResource } from './gamingBuildResources.js';
 import {
   GAMING_DOCUMENT_RESOLVER_VERSION,
+  GamingDocumentAcquisitionError,
   describeGamingDocumentSource,
+  isResolvedGamingDocumentIdentityVerified,
   resolveGamingDocument,
   type ResolvedGamingDocument
 } from './gamingDocumentResolution.js';
@@ -87,7 +89,7 @@ const sourceTypeHintSchema = z.enum(
 
 const ingestPayloadSchema = z.object({
   game: z.string().trim().min(1).max(120),
-  sourceUrls: z.array(z.string().trim().min(1).max(2_048)).min(1).max(MAX_SOURCE_URLS),
+  sourceUrls: z.array(z.string().min(1).max(2_048)).min(1).max(MAX_SOURCE_URLS),
   sourceTypeHint: sourceTypeHintSchema.optional(),
   patchVersion: z.string().trim().min(1).max(64).optional(),
   origin: z.enum(['user_supplied', 'gpt_web_search']).optional().default('user_supplied'),
@@ -113,6 +115,9 @@ const refreshRequestSchema = z.object({
 const queuedSourceSchema = z.object({
   submittedIndex: z.number().int().min(0).max(MAX_SOURCE_URLS - 1),
   canonicalUrl: z.string().url().max(2_048),
+  // Server-owned refresh provenance; still admitted and fetched from scratch by the worker.
+  acquisitionUrl: z.string().url().max(2_048).optional(),
+  policyGame: z.string().trim().min(1).max(120).optional(),
   game: z.string().trim().min(1).max(120),
   gameKey: z.string().trim().min(1).max(160),
   sourceId: z.string().regex(SOURCE_ID_PATTERN).optional(),
@@ -617,6 +622,9 @@ async function enqueueGamingIngestion(
     sources: [...body.sources]
       .map((source) => ({
         canonicalUrl: source.canonicalUrl,
+        ...(source.acquisitionUrl && source.acquisitionUrl !== source.canonicalUrl
+          ? { acquisitionUrl: source.acquisitionUrl } : {}),
+        ...(source.policyGame ? { policyGame: source.policyGame } : {}),
         gameKey: source.gameKey,
         sourceId: source.sourceId ?? null,
         sourceTypeHint: source.sourceTypeHint ?? null,
@@ -764,7 +772,9 @@ export async function createGamingSourceIngestion(
 /** Full accepted text and interpretation metadata; never hash a preview or excerpt. */
 export function hashGamingApprovedDocument(document: ResolvedGamingDocument): string {
   return sha256(stableJson({ text: document.text, metadata: document.metadata,
-    publicUrl: document.publicUrl, resolution: document.resolution, contentType: document.contentType ?? null }));
+    requestedUrl: document.requestedUrl, canonicalUrl: document.canonicalUrl,
+    publicUrl: document.publicUrl, resolution: document.resolution, contentType: document.contentType ?? null,
+    acquisition: document.acquisition ?? null }));
 }
 
 /** Internal hybrid admission adapter; uses the same worker, job ownership, and idempotency lifecycle. */
@@ -859,9 +869,16 @@ export async function refreshGamingSources(
       const refreshPatchVersion = readBoundedGamingPatchVersion(
         source.latestRevision?.patch
       );
+      const priorRequestedUrl = source.latestRevision?.provenance?.requestedUrl;
+      const acquisitionUrl = typeof priorRequestedUrl === 'string' && priorRequestedUrl.length <= 2_048
+        ? priorRequestedUrl : source.canonicalUrl;
+      const priorPolicyGame = source.latestRevision?.provenance?.policyGame;
       sources.push({
         submittedIndex,
         canonicalUrl: source.canonicalUrl,
+        acquisitionUrl,
+        ...(typeof priorPolicyGame === 'string' && priorPolicyGame.length > 0 && priorPolicyGame.length <= 120
+          ? { policyGame: priorPolicyGame } : {}),
         game: source.game,
         gameKey: source.gameKey,
         sourceId: source.id,
@@ -929,7 +946,21 @@ function readHttpStatus(error: unknown): number | undefined {
 }
 
 function classifySourceFailure(error: unknown): GamingSourcePublicError {
-  const status = readHttpStatus(error);
+  const status = error instanceof GamingDocumentAcquisitionError ? error.status : readHttpStatus(error);
+  if (error instanceof GamingDocumentAcquisitionError) {
+    if (error.code === 'URL_BLOCKED') return { code: 'URL_BLOCKED', message: 'The source did not pass public acquisition policy.', retryable: false };
+    if (error.code === 'REDIRECT_NOT_ALLOWED') return { code: 'REDIRECT_NOT_ALLOWED', message: 'The source does not satisfy the approved redirect policy.', retryable: false };
+    if (error.code === 'SOURCE_TIMEOUT') return { code: 'FETCH_TIMEOUT', message: 'The source fetch timed out.', retryable: true };
+    if (['TRANSFER_LIMIT', 'DECODED_LIMIT'].includes(error.acquisition.subreason)) {
+      return { code: 'RESPONSE_TOO_LARGE', message: 'The source response exceeds the acquisition limit.', retryable: false };
+    }
+    if (['UNSUPPORTED_ENCODING', 'UNSUPPORTED_CONTENT_TYPE', 'DOCUMENT_EXTRACTION_FAILED'].includes(error.acquisition.subreason)) {
+      return { code: 'UNSUPPORTED_CONTENT_TYPE', message: 'The source did not contain supported public document content.', retryable: false };
+    }
+    if (error.acquisition.subreason === 'CONDITIONAL_CONTENT_UNAVAILABLE') {
+      return { code: 'FETCH_FAILED', message: 'The source response did not provide usable document content.', retryable: false };
+    }
+  }
   const message = error instanceof Error ? error.message.toLowerCase() : '';
   if (status === 401 || status === 403) {
     return {
@@ -944,7 +975,7 @@ function classifySourceFailure(error: unknown): GamingSourcePublicError {
   if (status !== undefined && status >= 300 && status < 400) {
     return {
       code: 'REDIRECT_NOT_ALLOWED',
-      message: 'The source redirected; redirects are not followed by the safe fetcher.',
+      message: 'The source response does not satisfy the approved redirect policy.',
       retryable: false
     };
   }
@@ -977,7 +1008,7 @@ function classifySourceFailure(error: unknown): GamingSourcePublicError {
   if (message.includes('redirect')) {
     return {
       code: 'REDIRECT_NOT_ALLOWED',
-      message: 'The source redirected; redirects are not followed by the safe fetcher.',
+      message: 'The source response does not satisfy the approved redirect policy.',
       retryable: false
     };
   }
@@ -1037,13 +1068,26 @@ async function ingestOneSource(
         error: { code: 'APPROVED_ASSESSMENT_REQUIRED', message: 'Evaluate this legacy source approval with the current quality policy before storing.', retryable: false } };
     }
     const fetchedAt = new Date().toISOString();
-    const document = await resolveGamingDocument(source.canonicalUrl, GAMING_DURABLE_DOCUMENT_LIMITS.documentChars, {
+    const acquisitionUrl = source.acquisitionUrl ?? source.canonicalUrl;
+    const document = await resolveGamingDocument(acquisitionUrl, GAMING_DURABLE_DOCUMENT_LIMITS.documentChars, {
       signal,
       documentPurpose: 'durable',
       includeLinks: false,
       rawDocumentMaxChars: GAMING_BUILD_RESOURCE_HARD_LIMITS.maxHtmlChars
     });
     signal?.throwIfAborted();
+    if (!isResolvedGamingDocumentIdentityVerified(document, acquisitionUrl)) {
+      return { submittedIndex: source.submittedIndex, status: 'rejected', canonicalUrl: source.canonicalUrl,
+        recordsCreated: 0, recordsUpdated: 0, completedAt: new Date().toISOString(),
+        error: { code: 'RESOLVED_SOURCE_IDENTITY_MISMATCH', message: 'The acquired source identity could not be verified.', retryable: false } };
+    }
+    const policyGame = source.hybridApproval?.applicabilityContext?.game ?? source.policyGame ?? source.game;
+    const finalPolicy = assessGamingSourcePolicy(document.publicUrl, policyGame);
+    if (!finalPolicy.durableAllowed || /\b(?:no (?:automated|machine) (?:access|use)|automated (?:access|use) (?:is )?prohibited|do not (?:store|redistribute) (?:this|our) content)\b/iu.test(document.text)) {
+      return { submittedIndex: source.submittedIndex, status: 'rejected', canonicalUrl: source.canonicalUrl,
+        recordsCreated: 0, recordsUpdated: 0, completedAt: new Date().toISOString(),
+        error: { code: 'SOURCE_USE_RESTRICTED', message: 'The final source does not permit this durable source use.', retryable: false } };
+    }
     // A queued worker has its own process/lifetime. Reacquire safely, then require the exact
     // complete artifact approved by the caller; a changed or newly truncated page
     // needs a new evaluation even when its retained prefix has the approved hash.
@@ -1069,6 +1113,9 @@ async function ingestOneSource(
       if (applicability && (applicability.contextFingerprint !== approvedAssessment?.contextFingerprint
         || approval.applicabilityBinding !== sha256(stableJson({ context: applicability, assessment: approvedAssessment })))) return false;
       const freshness = approval.freshness as unknown as GamingFreshnessEvidence;
+      if (document.acquisition && (freshness.url !== document.publicUrl || freshness.policyVersion !== finalPolicy.policyVersion
+        || freshness.authority !== finalPolicy.authority || freshness.category !== finalPolicy.category
+        || freshness.ruleId !== finalPolicy.ruleId)) return false;
       const at = new Date();
       const historical = applicability?.historical && gamingClearHistoricalSourceVerified({ ...applicability,
         prompt: 'historical patch' }, freshness, at);
@@ -1111,7 +1158,10 @@ async function ingestOneSource(
       resolverId: document.resolution.resolverId,
       resolverVersion: document.resolution.resolverVersion,
       resolutionStrategy: document.resolution.strategy,
-      requestedHost: document.host,
+      requestedHost: new URL(document.requestedUrl).hostname,
+      finalHost: document.host,
+      ...(document.acquisition ? { acquisitionPolicyVersion: document.acquisition.policyVersion,
+        redirectCount: document.acquisition.redirectCount } : {}),
       resolvedDocumentType: document.resolution.documentType,
       documentTruncated,
       rawTextLength: document.metrics.rawTextLength,
@@ -1152,7 +1202,7 @@ async function ingestOneSource(
     const pageTitle = document.metadata.title?.slice(0, MAX_TITLE_CHARS);
     const pageHeadings = document.metadata.headings?.slice(0, 1_000);
     const detectedGame = detectGamingDocumentGame({
-      canonicalUrl: source.canonicalUrl,
+      canonicalUrl: document.publicUrl,
       pageTitle,
       pageHeadings
     });
@@ -1179,7 +1229,7 @@ async function ingestOneSource(
     }
 
     const normalized = await ingestGamingBuildResource({
-      url: source.canonicalUrl,
+      url: document.publicUrl,
       requestedGame: source.game,
       contentType: document.contentType,
       // Hybrid approval covers resolved prose and metadata, not fresh hidden scripts.
@@ -1273,6 +1323,8 @@ async function ingestOneSource(
       resolverId: document.resolution.resolverId,
       resolverVersion: document.resolution.resolverVersion,
       documentResolverVersion: GAMING_DOCUMENT_RESOLVER_VERSION,
+      acquisition: document.acquisition ?? null,
+      finalSourcePolicy: finalPolicy,
       chunkingVersion: GAMING_DOCUMENT_CHUNKING_VERSION,
       ...(source.hybridApproval ? { hybridPolicyVersion: source.hybridApproval.policyVersion,
         freshnessPolicyVersion: source.hybridApproval.freshnessPolicyVersion,
@@ -1313,10 +1365,15 @@ async function ingestOneSource(
     const persisted = await persistGamingSourceRevision({
       gameKey: source.gameKey,
       gameName: source.game,
-      canonicalUrl: source.canonicalUrl,
-      publicUrl: selectGamingSourcePublicUrl(source.canonicalUrl, document.publicUrl, supportsStructuredExtraction),
-      sourceType: sourceTypeToTrustType(sourceType, source),
-      trustScore: source.trustScore ?? 0.25,
+      // An observed approved redirect proves final document identity for new-source deduplication.
+      // Refresh keeps the existing source key; a changed destination becomes a new revision/citation.
+      canonicalUrl: source.origin === 'refresh' ? source.canonicalUrl : document.canonicalUrl,
+      publicUrl: document.acquisition ? document.publicUrl
+        : selectGamingSourcePublicUrl(source.canonicalUrl, document.publicUrl, supportsStructuredExtraction),
+      sourceType: document.acquisition ? finalPolicy.authority === 'official' ? 'official'
+        : finalPolicy.authority === 'specialist' ? 'curated' : 'supplied' : sourceTypeToTrustType(sourceType, source),
+      trustScore: document.acquisition ? finalPolicy.authority === 'official' ? 0.9
+        : finalPolicy.authority === 'specialist' ? 0.5 : 0.25 : source.trustScore ?? 0.25,
       priority: 100,
       contentHash,
       cleanedContent: cleanedText.slice(0, GAMING_DURABLE_DOCUMENT_LIMITS.revisionPreviewChars)
@@ -1328,6 +1385,11 @@ async function ingestOneSource(
       normalizerSchemaVersion: GAMING_BUILD_RESOURCE_SCHEMA_VERSION,
       provenance: {
         canonicalUrl: source.canonicalUrl,
+        requestedUrl: document.requestedUrl,
+        finalPublicUrl: document.publicUrl,
+        finalSourcePolicy: finalPolicy,
+        policyGame,
+        ...(document.acquisition ? { acquisition: document.acquisition } : {}),
         origin: source.origin,
         sourceTypeHint: source.sourceTypeHint ?? null,
         submittedIndex: source.submittedIndex,
@@ -1405,6 +1467,7 @@ async function ingestOneSource(
       ...logContext,
       errorCode: classified.code,
       retryable: classified.retryable,
+      ...(error instanceof GamingDocumentAcquisitionError ? { acquisition: error.acquisition } : {}),
       elapsedMs: Date.now() - startedAt
     });
     return {

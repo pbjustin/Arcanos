@@ -364,7 +364,8 @@ describe('PostgresGamingSourceRepository reads', () => {
           latest_patch: '8.0.0',
           latest_extractor: 'gaming-html',
           latest_extractor_version: '1.0.0',
-          latest_normalizer_schema_version: 'gaming-knowledge-v1'
+          latest_normalizer_schema_version: 'gaming-knowledge-v1',
+          latest_provenance: { requestedUrl: 'https://example.com/original-guide' }
         })]);
       }
       throw new Error(`Unhandled query: ${sql}`);
@@ -381,7 +382,8 @@ describe('PostgresGamingSourceRepository reads', () => {
       latestRevision: {
         id: REVISION_ID,
         contentHash: 'a'.repeat(64),
-        patch: '8.0.0'
+        patch: '8.0.0',
+        provenance: { requestedUrl: 'https://example.com/original-guide' }
       }
     });
     expect(source?.latestRevision?.fetchedAt).toEqual(new Date(FETCHED_AT));

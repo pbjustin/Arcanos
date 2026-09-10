@@ -34,6 +34,14 @@ scope/consent failure 403, unknown/expired workflow 404, changed same-key payloa
 409, rate/capacity limits 429, and unavailable dependencies 503. Retryable failed
 operations can retry the same key without dropping its payload binding.
 
+Candidate acquisition uses the [bounded HTTPS acquisition policy](GAMING_SOURCE_ACQUISITION.md).
+Approved redirects retain verified final citations and still require Gaming
+CLEAR and applicability assessment. When every candidate fails acquisition,
+`reason: SOURCE_ACQUISITION_UNVERIFIED` and the existing `qualification` field
+describe the backend limitation; they do not assert that no public source exists.
+Detailed admission/redirect diagnostics remain internal. No new request fields
+grant redirect or storage privileges.
+
 See [Gaming guide assistance](GAMING_GUIDE_ASSISTANCE.md#hybrid-knowledge-handoff-gaming-hybrid-v1)
 for limits, source/freshness policy, persistence, evidence boundaries and the
 [GPT configuration package](ARCANOS_GAMING_CUSTOM_GPT.md) for activation after

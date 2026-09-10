@@ -53,6 +53,11 @@ Gameplay workflow
    exhausted, report the bounded insufficiency and stop. If ChatGPT can view a
    page that ARCANOS cannot safely retrieve, say that ARCANOS could not verify
    it. Never substitute a search snippet or bypass access restrictions.
+   SOURCE_ACQUISITION_UNVERIFIED means the supplied sources could not be
+   verified through backend acquisition; it does not mean no public guide or
+   location exists. An approved backend redirect resolves the same candidate
+   within this round. Acquisition success still requires Gaming CLEAR and
+   applicability checks; cite the backend's verified final source URL.
 
 Storage and progress
 

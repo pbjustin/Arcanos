@@ -78,6 +78,7 @@ export interface GamingSourceLatestRevision {
   extractor: string;
   extractorVersion: string;
   normalizerSchemaVersion: string;
+  provenance?: Record<string, unknown>;
 }
 
 export interface GamingSourceRecord {
@@ -227,6 +228,7 @@ interface GamingSourceRow {
   latest_extractor?: string | null;
   latest_extractor_version?: string | null;
   latest_normalizer_schema_version?: string | null;
+  latest_provenance?: unknown;
 }
 
 interface GamingRevisionIdentityRow {
@@ -599,7 +601,8 @@ function mapLatestRevision(row: GamingSourceRow): GamingSourceLatestRevision | n
     patch: row.latest_patch ?? null,
     extractor: row.latest_extractor,
     extractorVersion: row.latest_extractor_version,
-    normalizerSchemaVersion: row.latest_normalizer_schema_version
+    normalizerSchemaVersion: row.latest_normalizer_schema_version,
+    provenance: parseJsonObject(row.latest_provenance)
   };
 }
 
@@ -1034,7 +1037,8 @@ export class PostgresGamingSourceRepository {
          latest.patch AS latest_patch,
          latest.extractor AS latest_extractor,
          latest.extractor_version AS latest_extractor_version,
-         latest.normalizer_schema_version AS latest_normalizer_schema_version
+         latest.normalizer_schema_version AS latest_normalizer_schema_version,
+         latest.provenance AS latest_provenance
        FROM gaming_sources AS source
        LEFT JOIN LATERAL (
          SELECT
@@ -1047,7 +1051,8 @@ export class PostgresGamingSourceRepository {
            revision.patch,
            revision.extractor,
            revision.extractor_version,
-           revision.normalizer_schema_version
+           revision.normalizer_schema_version,
+           revision.provenance
          FROM gaming_source_revisions AS revision
          WHERE revision.source_id = source.id
          ORDER BY EXISTS (

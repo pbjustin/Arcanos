@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-10T02:20:13.069Z",
+  "generatedAt": "2026-09-10T04:27:20.460Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -4123,6 +4123,9 @@
           "relativePath": "tests/gaming-prompt-builder.test.ts"
         },
         {
+          "relativePath": "tests/gaming-protected-transport.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-public-dispatch-http.test.ts"
         },
         {
@@ -5132,6 +5135,9 @@
         },
         {
           "relativePath": "tests/test-stateless-pr.ts"
+        },
+        {
+          "relativePath": "tests/testUtils/gamingAcquisitionFixtures.ts"
         },
         {
           "relativePath": "tests/testUtils/gamingArchiveFixtures.ts"

@@ -4,6 +4,7 @@ import express from 'express';
 import request from 'supertest';
 import Ajv2020 from 'ajv/dist/2020.js';
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { gamingAcquisitionAxios } from './testUtils/gamingAcquisitionFixtures.js';
 import type { TrinityWritingPipelineRequest } from '../src/core/logic/trinityWritingPipeline.js';
 import {
   gamingArchiveGuideUrl, gamingArchiveStorageHost, gamingArchiveDerivativePath,
@@ -17,7 +18,7 @@ const mockStoredContext = jest.fn();
 const mockRouteGptRequest = jest.fn();
 const mockResolveGptRouting = jest.fn();
 
-jest.unstable_mockModule('axios', () => ({ default: { get: mockAxiosGet } }));
+jest.unstable_mockModule('axios', () => ({ default: gamingAcquisitionAxios(mockAxiosGet) }));
 jest.unstable_mockModule('node:dns/promises', () => ({
   Resolver: class {
     async resolve4() { return ['93.184.216.34']; }

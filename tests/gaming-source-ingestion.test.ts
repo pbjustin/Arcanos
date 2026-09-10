@@ -47,6 +47,13 @@ function resolvedDocument(url: string, text: string, overrides: Record<string, u
 }
 
 class MockGamingSourceRepositoryUnavailableError extends Error {}
+class MockGamingDocumentAcquisitionError extends Error {
+  acquisition: Record<string, unknown>;
+  constructor(readonly code: string, stage: string, subreason: string, redirectCount = 0, readonly status?: number) {
+    super('Safe acquisition failure');
+    this.acquisition = { stage, subreason, redirectCount, failingHop: redirectCount, ruleId: 'gaming.fixture', policyVersion: 'gaming-https-acquisition-v1' };
+  }
+}
 
 function gamingSourceActorScopeHash(actorKey: string): string {
   return createHash('sha256')
@@ -208,7 +215,9 @@ beforeEach(async () => {
   }));
   jest.unstable_mockModule('../src/services/gamingDocumentResolution.js', () => ({
     GAMING_DOCUMENT_RESOLVER_VERSION: 'gaming-document-v1',
+    GamingDocumentAcquisitionError: MockGamingDocumentAcquisitionError,
     resolveGamingDocument: resolveGamingDocumentMock,
+    isResolvedGamingDocumentIdentityVerified: (document: any, url: string) => document.requestedUrl === url,
     describeGamingDocumentSource: (url: string) => ({ publicUrl: url })
   }));
   jest.unstable_mockModule('../src/services/workerAutonomyService.js', () => ({
@@ -340,6 +349,34 @@ describe('gaming source ingestion', () => {
       error: { code: 'APPROVED_CONTENT_CHANGED', retryable: false } });
     expect(ingestGamingBuildResourceMock).not.toHaveBeenCalled();
     expect(persistGamingSourceRevisionMock).not.toHaveBeenCalled();
+  });
+
+  it('preserves pre-acquisition-policy idempotency fingerprints for unchanged ingest and legacy refresh', async () => {
+    const canonicalUrl = 'https://example.com/guide';
+    const sourceId = '019fe3cd-8c01-7f01-8d2d-caa951bc4ba0';
+    const context = { actorKey: 'legacy-idempotency-fixture' };
+    const baselineFingerprint = (action: 'ingest' | 'refresh') => createHash('sha256').update(
+      `{"action":"${action}","refreshReason":${action === 'refresh' ? '"user_requested"' : 'null'},"rejected":[],"sources":[{"canonicalUrl":"https://example.com/guide","gameKey":"borderlands-4","patchVersion":null,"sourceId":${action === 'refresh' ? JSON.stringify(sourceId) : 'null'},"sourceTypeHint":"article"}]}`
+    ).digest('hex');
+    await createGamingSourceIngestion({ action: 'ingest', payload: {
+      game: 'Borderlands 4', sourceUrls: [canonicalUrl], sourceTypeHint: 'article', idempotencyKey: 'legacy-ingest-fixture'
+    } }, context);
+    expect(findOrCreateGptJobMock).toHaveBeenLastCalledWith(expect.objectContaining({
+      requestFingerprintHash: baselineFingerprint('ingest')
+    }));
+    const source = { id: sourceId, canonicalUrl, game: 'Borderlands 4', gameKey: 'borderlands-4',
+      sourceType: 'supplied', trustScore: 0.25, latestRevision: { patch: null } };
+    getGamingSourceByIdMock.mockResolvedValue(source);
+    await refreshGamingSources({ action: 'refresh', payload: { sourceIds: [sourceId], idempotencyKey: 'legacy-refresh-fixture' } }, context);
+    expect(findOrCreateGptJobMock).toHaveBeenLastCalledWith(expect.objectContaining({
+      requestFingerprintHash: baselineFingerprint('refresh')
+    }));
+    getGamingSourceByIdMock.mockResolvedValue({ ...source, latestRevision: { patch: null,
+      provenance: { requestedUrl: 'https://example.com/original-guide' } } });
+    await refreshGamingSources({ action: 'refresh', payload: { sourceIds: [sourceId], idempotencyKey: 'legacy-refresh-fixture' } }, context);
+    expect(findOrCreateGptJobMock).toHaveBeenLastCalledWith(expect.objectContaining({
+      requestFingerprintHash: expect.not.stringMatching(baselineFingerprint('refresh'))
+    }));
   });
 
   it('canonicalizes and deduplicates source URLs before creating one durable job', async () => {
@@ -888,6 +925,92 @@ describe('gaming source ingestion', () => {
     expect(persisted.records[0]?.normalized).not.toHaveProperty('patch');
     expect(persisted.records[0]?.searchText).not.toContain('9.9');
     expect(execution.output.sources[0]).not.toHaveProperty('patchVersion');
+  });
+
+  it('refreshes the original acquired URL from stored provenance while retaining the existing source key', async () => {
+    const originalUrl = 'https://example.com/original-guide';
+    const canonicalUrl = 'https://example.com/final-guide';
+    const nextUrl = 'https://example.com/updated-guide';
+    const sourceId = '019fe3cd-8c01-7f01-8d2d-caa951bc4ba0';
+    getGamingSourceByIdMock.mockResolvedValue({ id: sourceId, canonicalUrl, game: 'Borderlands 4', gameKey: 'borderlands 4',
+      sourceType: 'official', trustScore: 0.9, latestRevision: { patch: null, provenance: { requestedUrl: originalUrl } } });
+    const queued = await refreshGamingSources({ action: 'refresh', payload: { sourceIds: [sourceId], idempotencyKey: 'redirect-refresh-original-1' } },
+      { actorKey: 'redirect-fixture-actor' });
+    expect(queued.statusCode).toBe(202);
+    const body = (findOrCreateGptJobMock.mock.calls[0][0] as any).input.body;
+    expect(body.sources[0]).toMatchObject({ canonicalUrl, acquisitionUrl: originalUrl, sourceId });
+    const document = resolvedDocument(originalUrl, 'Borderlands 4 route guide save progress before crossing the checkpoint. '.repeat(20), {
+      canonicalUrl: nextUrl, publicUrl: nextUrl,
+      acquisition: { policyVersion: 'gaming-https-acquisition-v1', requestedUrl: originalUrl, finalUrl: nextUrl,
+        redirectCount: 1, transitions: [{ fromUrl: originalUrl, toUrl: nextUrl, classification: 'same_origin', ruleId: 'gaming.redirect.same_origin' }] }
+    });
+    resolveGamingDocumentMock.mockResolvedValue(document);
+    ingestGamingBuildResourceMock.mockResolvedValue(genericNormalizedGamingSource(''));
+    await executeQueuedGamingSourceIngestion('019fe3cd-8c01-7f01-8d2d-caa951bc4b9b', body);
+    expect(resolveGamingDocumentMock).toHaveBeenCalledWith(originalUrl, 1_000_000, expect.any(Object));
+    expect(persistGamingSourceRevisionMock).toHaveBeenCalledWith(expect.objectContaining({ canonicalUrl, publicUrl: nextUrl,
+      sourceType: 'supplied', trustScore: 0.25,
+      provenance: expect.objectContaining({ requestedUrl: originalUrl, finalPublicUrl: nextUrl,
+        acquisition: document.acquisition, finalSourcePolicy: expect.objectContaining({ authority: 'unreviewed' }) }) }));
+  });
+
+  it('binds unchanged prose approvals to requested/final identity and the verified acquisition policy', async () => {
+    const { hashGamingApprovedDocument } = await import('../src/services/gamingSourceIngestion.js');
+    const originalUrl = 'https://example.com/original-guide';
+    const finalUrl = 'https://example.com/final-guide';
+    const document = resolvedDocument(originalUrl, 'Borderlands 4 route guide checkpoint. '.repeat(20), {
+      canonicalUrl: finalUrl, publicUrl: finalUrl,
+      acquisition: { policyVersion: 'gaming-https-acquisition-v1', requestedUrl: originalUrl, finalUrl,
+        redirectCount: 1, transitions: [{ fromUrl: originalUrl, toUrl: finalUrl, classification: 'same_origin', ruleId: 'gaming.redirect.same_origin' }] }
+    });
+    const originalHash = hashGamingApprovedDocument(document as any);
+    for (const changed of [
+      { ...document, requestedUrl: 'https://example.com/other-original' },
+      { ...document, publicUrl: 'https://example.com/other-final' },
+      { ...document, canonicalUrl: 'https://example.com/other-identity' },
+      { ...document, acquisition: { ...(document.acquisition as object), policyVersion: 'changed-policy' } },
+      { ...document, acquisition: undefined }
+    ]) expect(hashGamingApprovedDocument(changed as any)).not.toBe(originalHash);
+  });
+
+  it.each([
+    ['URL_BLOCKED', 'private_reserved_destination', undefined, 'URL_BLOCKED', false],
+    ['REDIRECT_NOT_ALLOWED', 'UNAPPROVED_TRANSITION', 302, 'REDIRECT_NOT_ALLOWED', false],
+    ['SOURCE_TIMEOUT', 'DEADLINE_EXCEEDED', undefined, 'FETCH_TIMEOUT', true],
+    ['SOURCE_FETCH_FAILED', 'TRANSFER_LIMIT', undefined, 'RESPONSE_TOO_LARGE', false],
+    ['SOURCE_FETCH_FAILED', 'DECODED_LIMIT', undefined, 'RESPONSE_TOO_LARGE', false],
+    ['SOURCE_FETCH_FAILED', 'UNSUPPORTED_ENCODING', undefined, 'UNSUPPORTED_CONTENT_TYPE', false],
+    ['SOURCE_FETCH_FAILED', 'UNSUPPORTED_CONTENT_TYPE', undefined, 'UNSUPPORTED_CONTENT_TYPE', false],
+    ['SOURCE_FETCH_FAILED', 'CONDITIONAL_CONTENT_UNAVAILABLE', 304, 'FETCH_FAILED', false],
+    ['SOURCE_INACCESSIBLE', 'HTTP_RESPONSE_UNUSABLE', 401, 'AUTHENTICATION_REQUIRED', false],
+    ['SOURCE_INACCESSIBLE', 'HTTP_RESPONSE_UNUSABLE', 403, 'ACCESS_DENIED', false],
+    ['SOURCE_FETCH_FAILED', 'HTTP_RESPONSE_UNUSABLE', 404, 'SOURCE_NOT_FOUND', false],
+    ['SOURCE_FETCH_FAILED', 'HTTP_RESPONSE_UNUSABLE', 410, 'SOURCE_NOT_FOUND', false],
+    ['SOURCE_FETCH_FAILED', 'HTTP_RESPONSE_UNUSABLE', 429, 'FETCH_FAILED', true],
+    ['SOURCE_FETCH_FAILED', 'HTTP_RESPONSE_UNUSABLE', 503, 'FETCH_FAILED', true]
+  ])('preserves bounded acquisition failure %s/%s in worker classification', async (code, subreason, status, expectedCode, retryable) => {
+    resolveGamingDocumentMock.mockRejectedValueOnce(new MockGamingDocumentAcquisitionError(String(code), 'transport', String(subreason), 1, status as number | undefined));
+    const result = await executeQueuedGamingSourceIngestion('019fe3cd-8c01-7f01-8d2d-caa951bc4b9b', {
+      action: 'ingest', schemaVersion: '1', submittedCount: 1, rejectedSources: [],
+      sources: [{ submittedIndex: 0, canonicalUrl: 'https://example.com/guide', game: 'Borderlands 4', gameKey: 'borderlands 4', origin: 'user_supplied' }]
+    });
+    expect(result.output.sources[0]).toMatchObject({ status: retryable ? 'failed' : 'rejected', error: { code: expectedCode, retryable } });
+    expect(persistGamingSourceRevisionMock).not.toHaveBeenCalled();
+  });
+
+  it('stores observed equivalent redirect entries under their verified final canonical identity', async () => {
+    const originalUrl = 'https://example.com/original-guide';
+    const finalUrl = 'https://example.com/final-guide';
+    resolveGamingDocumentMock.mockResolvedValue(resolvedDocument(originalUrl, 'Borderlands 4 route guide checkpoint. '.repeat(20), {
+      canonicalUrl: finalUrl, publicUrl: finalUrl,
+      acquisition: { policyVersion: 'gaming-https-acquisition-v1', requestedUrl: originalUrl, finalUrl, redirectCount: 1, transitions: [] }
+    }));
+    ingestGamingBuildResourceMock.mockResolvedValue(genericNormalizedGamingSource(''));
+    await executeQueuedGamingSourceIngestion('019fe3cd-8c01-7f01-8d2d-caa951bc4b9b', {
+      action: 'ingest', schemaVersion: '1', submittedCount: 1, rejectedSources: [],
+      sources: [{ submittedIndex: 0, canonicalUrl: originalUrl, game: 'Borderlands 4', gameKey: 'borderlands 4', origin: 'user_supplied' }]
+    });
+    expect(persistGamingSourceRevisionMock).toHaveBeenCalledWith(expect.objectContaining({ canonicalUrl: finalUrl, publicUrl: finalUrl }));
   });
 
   it('promotes a caller patch only after an exact fetched-content match', async () => {

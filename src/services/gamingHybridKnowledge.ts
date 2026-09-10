@@ -128,6 +128,16 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
     return { status: 200, body: { ...body, state: 'discovery_required', nextAction: workflow.round < LIMITS.discoveryRounds ? 'search' : 'stop',
       discovery: { round: workflow.round, maxRounds: LIMITS.discoveryRounds, maxCandidates: LIMITS.candidates, searchQueries: searchQueries(workflow) } } };
   }
+  function candidateAcquisitionOutcome(result: GamingHybridResult, decisions: GamingHybridResponse['candidates']): GamingHybridResult {
+    const acquisitionReasons = new Set(['INVALID_URL', 'URL_BLOCKED', 'REDIRECT_NOT_ALLOWED', 'SOURCE_FETCH_FAILED',
+      'SOURCE_INACCESSIBLE', 'SOURCE_TIMEOUT', 'FETCH_BUDGET_EXHAUSTED', 'RESOLVED_SOURCE_IDENTITY_MISMATCH']);
+    if (!result.body.answer && !result.body.evidenceSelected && decisions?.length
+      && decisions.every(item => item.decision === 'rejected' && item.reasonCodes.every(reason => acquisitionReasons.has(reason)))) {
+      result.body.reason = 'SOURCE_ACQUISITION_UNVERIFIED';
+      result.body.qualification = 'The supplied sources could not be verified through backend acquisition. This does not establish that no public guide or location exists.';
+    }
+    return result;
+  }
   async function answer(context: GamingHybridCallContext, workflow: Workflow, knowledge: GamingStoredKnowledgeContext,
     candidateFreshness: GamingFreshnessEvidence[] = [], acceptedCandidates: readonly GamingHybridAcceptedCandidate[] = workflow.accepted): Promise<GamingHybridResult> {
     const input = workflow.input;
@@ -336,7 +346,7 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
         if (workflow.candidateSubmission?.key === input.idempotencyKey) {
           const result = await answer(context, workflow, workflow.candidateSubmission.knowledge, workflow.candidateSubmission.freshness);
           result.body.candidates = workflow.candidateSubmission.decisions;
-          return result;
+          return candidateAcquisitionOutcome(result, result.body.candidates);
         }
         const attempt = resolveGamingHybridCandidateAttempt({ operationKey: workflow.candidateOperationKey,
           requestedKey: input.idempotencyKey, round: workflow.round, nextAction: workflow.last?.nextAction, maxRounds: LIMITS.discoveryRounds });
@@ -348,7 +358,7 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
           workflow.candidateOperationKey = input.idempotencyKey;
         }
         const evaluated = await deps.evaluateCandidates({ ...workflow.pipeline, game: workflow.input.game,
-          region: workflow.input.region, candidates: input.candidates }, context);
+          region: workflow.input.region, candidates: input.candidates }, { ...context, workflowId: workflow.id });
         evaluated.knowledge.sources.forEach(source => { source.origin = 'live'; });
         const retainedChars = [...workflows.values()].flatMap(item => item.accepted).reduce((total, item) => total + item.document.text.length, 0);
         const { retainArtifacts, decisions } = projectGamingHybridCandidateRetention({ retainedChars,
@@ -366,7 +376,7 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
         workflow.candidateSubmission = { key: input.idempotencyKey, knowledge: combined, decisions, freshness: candidateFreshness };
         const result = await answer(context, workflow, combined, candidateFreshness, evaluated.accepted);
         result.body.candidates = decisions;
-        return result;
+        return candidateAcquisitionOutcome(result, decisions);
       });
     },
     async ingest(payload: unknown, context: GamingHybridCallContext): Promise<GamingHybridResult> {
