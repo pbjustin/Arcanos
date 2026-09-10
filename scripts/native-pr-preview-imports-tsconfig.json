@@ -34,6 +34,9 @@
       "@services/gamingDocumentExtraction.js": [
         "src/services/gamingDocumentExtraction.ts"
       ],
+      "@services/gamingDocumentEvidence.js": [
+        "src/services/gamingDocumentEvidence.ts"
+      ],
       "@services/gamingGameDetection.js": [
         "src/services/gamingGameDetection.ts"
       ],

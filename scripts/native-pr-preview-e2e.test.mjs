@@ -215,6 +215,8 @@ function responseHeadersForCase(
             NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.clearProofVersion,
           [NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.sourceAcquisitionProofHeader]:
             NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.sourceAcquisitionProofVersion,
+          [NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.structuredEvidenceProofHeader]:
+            NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.structuredEvidenceProofVersion,
         }
       : {}),
     ...(requestCase.expectedType === 'backstage-generation-contract'
@@ -2118,6 +2120,12 @@ test('executes the bounded credential-free matrix and detects identity stability
     ).map(({ caseId }) => caseId),
     ['gaming-query-guide']
   );
+  assert.deepEqual(
+    result.checks.filter(({ gamingStructuredEvidenceVerified }) =>
+      gamingStructuredEvidenceVerified === true
+    ).map(({ caseId }) => caseId),
+    ['gaming-query-guide']
+  );
   assert.equal(
     result.checks.find(({ caseId }) =>
       caseId === 'worker-readiness-initial'
@@ -3010,6 +3018,20 @@ test('rejects missing synthetic provenance and correlation or security header dr
       code: 'NATIVE_PR_PREVIEW_GAMING_SOURCE_ACQUISITION_PROOF_INVALID',
       mutate(headers) {
         headers[NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.sourceAcquisitionProofHeader] = 'gaming-source-acquisition/drifted';
+      },
+    },
+    {
+      caseId: 'gaming-query-guide',
+      code: 'NATIVE_PR_PREVIEW_GAMING_STRUCTURED_EVIDENCE_PROOF_INVALID',
+      mutate(headers) {
+        delete headers[NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.structuredEvidenceProofHeader];
+      },
+    },
+    {
+      caseId: 'gaming-query-guide',
+      code: 'NATIVE_PR_PREVIEW_GAMING_STRUCTURED_EVIDENCE_PROOF_INVALID',
+      mutate(headers) {
+        headers[NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.structuredEvidenceProofHeader] = 'gaming-structured-evidence/drifted';
       },
     },
     {

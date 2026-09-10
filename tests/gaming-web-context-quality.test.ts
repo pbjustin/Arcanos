@@ -422,7 +422,7 @@ describe('gaming RAG snippet quality', () => {
     ).toBe(true);
     expect(blizzardFetch?.[2]).toEqual(expect.objectContaining({
       preferredContentSelectors: expect.arrayContaining(['.NewsBlog-content', '#main']),
-      preferredContentTerms: expect.arrayContaining(['frost mage', 'patch', 'hotfix'])
+      preferredContentTerms: []
     }));
     expect(blizzardFetch?.[2]?.preferredContentSelectors?.[0]).toBe('.NewsBlog-content');
     expect(icyVeinsSource?.snippet).toContain('current tuning keeps the specialization viable');

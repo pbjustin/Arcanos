@@ -26,14 +26,17 @@ import {
 import { filterGamingDocumentInstructions, gamingDocumentFetchOptions } from "@services/gamingDocumentExtraction.js";
 import { projectGamingDocumentText } from "@shared/gaming/gamingDocumentProjectionCore.js";
 import { sanitizeGamingDiscoveryCandidateUrl, sanitizeGamingStructuredDocumentUrl } from "@services/gamingSourceDiscovery.js";
+import type { GamingEvidenceUnit, GamingStructureDiagnostics } from '@shared/gaming/gamingEvidenceUnits.js';
+import { extractGamingDocumentEvidence } from './gamingDocumentEvidence.js';
 
-export const GAMING_DOCUMENT_RESOLVER_VERSION = "gaming-document-v1";
+export const GAMING_DOCUMENT_RESOLVER_VERSION = "gaming-document-v2";
 const acquisitionAttestations = new WeakMap<GamingDocumentAcquisition, string>();
 const documentBinding = (document: ResolvedGamingDocument): string => createHash("sha256")
   .update(JSON.stringify({ requestedUrl: document.requestedUrl, canonicalUrl: document.canonicalUrl,
     publicUrl: document.publicUrl, host: document.host, text: document.text, metadata: document.metadata,
     contentType: document.contentType, resolution: document.resolution, metrics: document.metrics,
-    acquisition: document.acquisition }), "utf8").digest("hex");
+    acquisition: document.acquisition, evidenceUnits: document.evidenceUnits,
+    sourceUseRestricted: document.sourceUseRestricted }), "utf8").digest("hex");
 
 /** Preserve article selectors; only structured URL payloads need a separate citation projection. */
 export function projectGamingDocumentPublicUrl(url: string): string {
@@ -91,6 +94,9 @@ export interface ResolvedGamingDocument {
   };
   archiveResolution?: GamingArchiveResolutionTelemetry;
   acquisition?: GamingDocumentAcquisition;
+  evidenceUnits?: GamingEvidenceUnit[];
+  structureDiagnostics?: GamingStructureDiagnostics;
+  sourceUseRestricted?: boolean;
 }
 
 interface GamingDocumentResolver {
@@ -106,6 +112,7 @@ interface GamingDocumentResolver {
     supportsStructuredExtraction: boolean;
     finalUrl?: string;
     transitions?: GamingDocumentAcquisition["transitions"];
+    structure?: ReturnType<typeof extractGamingDocumentEvidence>;
   } | null>;
 }
 
@@ -222,15 +229,26 @@ async function acquireGenericGamingDocument(url: string, maxChars: number, optio
           throw new GamingDocumentAcquisitionError("SOURCE_FETCH_FAILED", "extraction", "UNSUPPORTED_CONTENT_TYPE", transitions.length);
         }
         let extracted: webFetcher.FetchAndCleanDocument;
+        let structure: ReturnType<typeof extractGamingDocumentEvidence>;
         try {
-          extracted = webFetcher.extractFetchAndCleanDocument(currentUrl, response.body, response.contentType, maxChars,
-            gamingDocumentFetchOptions(currentUrl, options), Date.now() - startedAt);
+          webFetcher.assertSupportedFetchAndCleanBody(response.body, response.contentType);
+          structure = extractGamingDocumentEvidence({ body: response.body, contentType: response.contentType,
+            sourceUrl: projectGamingDocumentPublicUrl(currentUrl), deadlineAt: options.deadlineAt,
+            receivedBytes: response.receivedBytes, acceptedBytes: response.acceptedBytes });
+          // Raw diagnostic/build preview describes the original response, not the
+          // structural projection. Extraction sees the entire accepted body above.
+          const rawLimit = Math.min(options.rawDocumentMaxChars ?? GAMING_BUILD_RESOURCE_HARD_LIMITS.maxHtmlChars,
+            GAMING_BUILD_RESOURCE_HARD_LIMITS.maxHtmlChars);
+          options.onRawDocument?.({ body: response.body.slice(0, rawLimit), contentType: response.contentType,
+            truncated: response.body.length > rawLimit });
+          extracted = webFetcher.extractFetchAndCleanDocument(currentUrl, structure.proseBody, response.contentType, maxChars,
+            gamingDocumentFetchOptions(currentUrl, { ...options, onRawDocument: undefined }), Date.now() - startedAt);
         } catch {
           session.assertActive();
           throw new GamingDocumentAcquisitionError("SOURCE_FETCH_FAILED", "extraction", "DOCUMENT_EXTRACTION_FAILED", transitions.length);
         }
         session.assertActive();
-        return { text: extracted.combined, finalUrl: currentUrl, transitions, supportsStructuredExtraction: true };
+        return { text: extracted.combined, finalUrl: currentUrl, transitions, supportsStructuredExtraction: true, structure };
       }
       const transition = resolveGamingDocumentRedirect({
         currentUrl, status: response.status, location: response.location, redirectCount: transitions.length, seen
@@ -272,6 +290,9 @@ export async function resolveGamingDocument(
   let rawDocument: FetchAndCleanRawDocument | undefined;
   const fetchOptions = gamingDocumentFetchOptions(url, {
     ...options,
+    // Acquisition/extraction identity never depends on a caller's question terms.
+    // Relevance selection belongs to the live and stored retrieval consumers.
+    preferredContentTerms: [],
     timeoutMs,
     deadlineAt,
     retainFullSelectedText: true,
@@ -291,7 +312,8 @@ export async function resolveGamingDocument(
     const projection = projectGamingDocumentText({
       acquiredText: acquired.text,
       maxChars,
-      selectedTextLength: effectiveExtraction.cleanedTextLength
+      selectedTextLength: effectiveExtraction.cleanedTextLength,
+      evidenceUnits: acquired.structure?.units
     });
     const contentType = rawDocument?.contentType;
     const boundedRaw = rawDocument ? {
@@ -314,6 +336,20 @@ export async function resolveGamingDocument(
       coverage: { selectedTextChars: effectiveExtraction.cleanedTextLength, returnedTextChars: projection.text.length,
         truncated: projection.truncated, instructionFiltered: projection.instructionFiltered }
     } : undefined;
+    const evidenceUnits = acquired.structure?.units.filter(unit => projection.text.includes(unit.text));
+    const structureDiagnostics = acquired.structure ? { ...acquired.structure.diagnostics,
+      extractedChars: projection.text.length,
+      selectedUnits: evidenceUnits?.length ?? 0,
+      unitKinds: [...new Set(evidenceUnits?.map(unit => unit.kind) ?? [])],
+      completeUnits: evidenceUnits?.filter(unit => unit.integrity.status === 'complete').length ?? 0,
+      partialUnits: evidenceUnits?.filter(unit => unit.integrity.status === 'partial').length ?? 0,
+      ambiguousUnits: evidenceUnits?.filter(unit => unit.integrity.status === 'ambiguous').length ?? 0,
+      truncationStages: [...new Set([...acquired.structure.diagnostics.truncationStages,
+        ...(boundedRaw?.truncated ? ['raw_preview'] : []), ...(projection.truncated ? ['output'] : [])])]
+    } : undefined;
+    if (structureDiagnostics && !projection.text.trim() && !structureDiagnostics.subreasons.length) {
+      structureDiagnostics.subreasons.push('no_primary_content');
+    }
     const document: ResolvedGamingDocument = {
       requestedUrl: description.publicUrl,
       canonicalUrl,
@@ -335,11 +371,14 @@ export async function resolveGamingDocument(
       metrics: {
         rawTextLength: effectiveExtraction.rawTextLength,
         cleanedTextLength: projection.cleanedTextLength,
-        truncated: projection.truncated,
-        instructionFiltered: projection.instructionFiltered
+        truncated: projection.truncated || Boolean(acquired.structure?.diagnostics.truncationStages.includes('extraction')),
+        instructionFiltered: projection.instructionFiltered || acquired.structure?.instructionFiltered === true
       },
       ...(acquired.archiveResolution ? { archiveResolution: acquired.archiveResolution } : {}),
-      ...(acquisition ? { acquisition } : {})
+      ...(acquisition ? { acquisition } : {}),
+      ...(evidenceUnits?.length ? { evidenceUnits } : {}),
+      ...(structureDiagnostics ? { structureDiagnostics } : {}),
+      ...(acquired.structure?.sourceUseRestricted ? { sourceUseRestricted: true } : {})
     };
     if (acquisition) acquisitionAttestations.set(acquisition, documentBinding(document));
     if (Date.now() >= deadlineAt) throw new GamingDocumentAcquisitionError("SOURCE_TIMEOUT", "extraction", "DEADLINE_EXCEEDED", acquisition?.redirectCount);

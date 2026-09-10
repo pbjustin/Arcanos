@@ -136,6 +136,16 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
       result.body.reason = 'SOURCE_ACQUISITION_UNVERIFIED';
       result.body.qualification = 'The supplied sources could not be verified through backend acquisition. This does not establish that no public guide or location exists.';
     }
+    if (!result.body.answer && !result.body.evidenceSelected && decisions?.length
+      && decisions.every(item => item.decision === 'rejected')) {
+      if (decisions.every(item => item.reasonCodes.includes('INSUFFICIENT_EXTRACTION'))) {
+        result.body.reason = 'SOURCE_EXTRACTION_INSUFFICIENT';
+        result.body.qualification = 'Could not extract intact usable evidence from the supplied sources. This does not establish that no public guide or location exists.';
+      } else if (decisions.some(item => item.reasonCodes.includes('QUESTION_COVERAGE_INSUFFICIENT'))) {
+        result.body.reason = 'QUESTION_COVERAGE_INSUFFICIENT';
+        result.body.qualification = 'Extracted source content, but no supported record establishes the requested facts and their relationships.';
+      }
+    }
     return result;
   }
   async function answer(context: GamingHybridCallContext, workflow: Workflow, knowledge: GamingStoredKnowledgeContext,
@@ -219,7 +229,12 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
       const source = knowledge.sources.find(entry => entry.sourceId === chunk.sourceId);
       return source && selected.has(source.sourceId) ? [{ evidence: chunk, source }] : [];
     });
+    const structuredReport = candidates.some(candidate => candidate.evidence.evidenceUnits?.length);
+    const applicabilityUnverified = structuredReport && freshness.classification === 'stable'
+      && !freshness.effectivePatch;
     const qualification = [freshness.qualification,
+      structuredReport ? 'Structured records are source reports. Preserve their qualifiers and attribution; they do not establish independent in-game observation.' : '',
+      applicabilityUnverified ? 'Current in-game applicability is unverified. A recent source fetch verifies acquisition only.' : '',
       knowledge.sources.some(source => source.clearSourceAssessment?.findings.some(finding => finding.code === 'EXTRACTION_PARTIAL'))
         ? 'Some sources were only partially extracted. Use only the intact cited passages and state material coverage limits.' : '',
       freshness.verifiedAsOf ? `Last backend verification: ${freshness.verifiedAsOf}.` : '',
@@ -241,8 +256,8 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
       }
     }
     const gameplaySelected = usable.evidence?.some(chunk => !chunk.recordId.endsWith(':verification')) === true;
-    body = { ...body, evidenceSelected: gameplaySelected, freshnessStatus: freshness.status,
-      ...(freshness.verifiedAsOf ? { verifiedAsOf: freshness.verifiedAsOf } : {}),
+    body = { ...body, evidenceSelected: gameplaySelected, freshnessStatus: applicabilityUnverified ? 'unverified' : freshness.status,
+      ...(freshness.verifiedAsOf && !applicabilityUnverified ? { verifiedAsOf: freshness.verifiedAsOf } : {}),
       ...(freshness.effectivePatch ? { effectivePatch: freshness.effectivePatch } : {}),
       ...(freshness.effectiveBuild ? { effectiveBuild: freshness.effectiveBuild } : {}), qualification };
     if (!freshness.usable || !gameplaySelected) return discovery(context, workflow,

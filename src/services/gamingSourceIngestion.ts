@@ -26,6 +26,8 @@ import {
 import { normalizeGamingGameIdentity } from '@shared/gaming/gamingGameIdentity.js';
 import { assessGamingSourcePolicy, evaluateGamingFreshness, GAMING_FRESHNESS_POLICY_VERSION, GAMING_SOURCE_POLICY_VERSION, type GamingFreshnessEvidence } from '@shared/gaming/gamingFreshnessCore.js';
 import { gamingClearHistoricalSourceVerified } from '@shared/gaming/gamingClearSource.js';
+import { assessGamingStructuralUsability } from '@shared/gaming/gamingStructuralEvidence.js';
+import { GAMING_EVIDENCE_UNIT_POLICY_VERSION } from '@shared/gaming/gamingEvidenceUnits.js';
 import { isGamingApprovedArtifactCurrent } from '@shared/gaming/gamingHybridPolicyCore.js';
 import { GAMING_CLEAR_VERSION, GAMING_CLEAR_POLICY_VERSION, parseGamingClearAssessment, type GamingClearAssessment } from '@shared/gaming/gamingClearPolicy.js';
 import { truncateTextByCharacters } from '@shared/http/clientResponseCommon.js';
@@ -778,6 +780,8 @@ export async function createGamingSourceIngestion(
 /** Full accepted text and interpretation metadata; never hash a preview or excerpt. */
 export function hashGamingApprovedDocument(document: ResolvedGamingDocument): string {
   return sha256(stableJson({ text: document.text, metadata: document.metadata,
+    ...(document.sourceUseRestricted !== undefined ? { sourceUseRestricted: document.sourceUseRestricted } : {}),
+    ...(document.evidenceUnits?.length ? { evidenceUnits: document.evidenceUnits, evidenceUnitPolicyVersion: GAMING_EVIDENCE_UNIT_POLICY_VERSION } : {}),
     requestedUrl: document.requestedUrl, canonicalUrl: document.canonicalUrl,
     publicUrl: document.publicUrl, resolution: document.resolution, contentType: document.contentType ?? null,
     acquisition: document.acquisition ?? null }));
@@ -1089,7 +1093,7 @@ async function ingestOneSource(
     }
     const policyGame = source.hybridApproval?.applicabilityContext?.game ?? source.policyGame ?? source.game;
     const finalPolicy = assessGamingSourcePolicy(document.canonicalUrl, policyGame);
-    if (!finalPolicy.durableAllowed || /\b(?:no (?:automated|machine) (?:access|use)|automated (?:access|use) (?:is )?prohibited|do not (?:store|redistribute) (?:this|our) content)\b/iu.test(document.text)) {
+    if (!finalPolicy.durableAllowed || document.sourceUseRestricted || /\b(?:no (?:automated|machine) (?:access|use)|automated (?:access|use) (?:is )?prohibited|do not (?:store|redistribute) (?:this|our) content)\b/iu.test(document.text)) {
       return { submittedIndex: source.submittedIndex, status: 'rejected', canonicalUrl: source.canonicalUrl,
         recordsCreated: 0, recordsUpdated: 0, completedAt: new Date().toISOString(),
         error: { code: 'SOURCE_USE_RESTRICTED', message: 'The final source does not permit this durable source use.', retryable: false } };
@@ -1151,14 +1155,16 @@ async function ingestOneSource(
       canonicalUrl: source.canonicalUrl, recordsCreated: 0, recordsUpdated: 0, completedAt: new Date().toISOString(),
       error: { code: 'APPROVED_APPLICABILITY_EXPIRED', message: 'The source applicability requires a new evaluation before storing.', retryable: false } });
     if (!approvalApplicable()) return expiredApprovalResult();
-    const chunked = await chunkGamingDocument(document.text, { signal });
+    const structural = assessGamingStructuralUsability({ units: document.evidenceUnits });
+    const chunked = await chunkGamingDocument(document.text, { signal, evidenceUnits: document.evidenceUnits });
     const cleanedText = chunked.text;
     const documentTruncated = document.metrics.truncated || chunked.documentTruncated;
     const documentQuality = classifyGamingDocumentQuality({
       cleanedText,
       navigationDensity: document.extraction.navigationDensity,
       truncated: documentTruncated,
-      minUsefulTextChars: MIN_USEFUL_TEXT_CHARS
+      minUsefulTextChars: MIN_USEFUL_TEXT_CHARS,
+      evidenceUnits: document.evidenceUnits
     });
     const resolutionProvenance = {
       resolverId: document.resolution.resolverId,
@@ -1176,14 +1182,17 @@ async function ingestOneSource(
       documentCharsIndexed: chunked.indexedChars,
       chunkCount: chunked.chunks.length,
       chunkingVersion: chunked.chunkingVersion,
+      ...(document.evidenceUnits?.length ? { evidenceUnitPolicyVersion: GAMING_EVIDENCE_UNIT_POLICY_VERSION,
+        evidenceUnitCount: document.evidenceUnits.length } : {}),
       coverageStatus: documentTruncated ? 'partial' : 'complete'
     };
     logger.info('gaming.source.resolution_completed', {
       ...logContext,
       ...resolutionProvenance,
+      extraction: document.structureDiagnostics,
       documentQuality
     });
-    if (cleanedText.length < MIN_USEFUL_TEXT_CHARS) {
+    if ((!structural.hasIntactUsableUnit && cleanedText.length < MIN_USEFUL_TEXT_CHARS) || !chunked.chunks.length) {
       const code = pageLooksAuthenticationBlocked(cleanedText)
         ? 'AUTHENTICATION_REQUIRED'
         : 'EXTRACTION_EMPTY';
@@ -1319,7 +1328,8 @@ async function ingestOneSource(
     if (patchVersion) {
       normalizedData.patch = patchVersion;
     }
-    const contentHash = hashGamingDocumentRevision(cleanedText, stableJson(normalizedData));
+    const contentHash = hashGamingDocumentRevision(cleanedText, stableJson({ ...normalizedData,
+      ...(document.evidenceUnits?.length ? { evidenceUnits: document.evidenceUnits, evidenceUnitPolicyVersion: GAMING_EVIDENCE_UNIT_POLICY_VERSION } : {}) }));
     const recordType = source.hybridApproval?.recordType ?? sourceTypeToRecordType(sourceType);
     // Revision identity includes acquisition policy so refreshing an older
     // extraction can replace stale provenance/quality even if its prose matches.
@@ -1332,13 +1342,14 @@ async function ingestOneSource(
       acquisition: document.acquisition ?? null,
       finalSourcePolicy: finalPolicy,
       chunkingVersion: GAMING_DOCUMENT_CHUNKING_VERSION,
+      ...(document.evidenceUnits?.length ? { evidenceUnitPolicyVersion: GAMING_EVIDENCE_UNIT_POLICY_VERSION } : {}),
       ...(source.hybridApproval ? { hybridPolicyVersion: source.hybridApproval.policyVersion,
         freshnessPolicyVersion: source.hybridApproval.freshnessPolicyVersion,
         sourcePolicyVersion: source.hybridApproval.sourcePolicyVersion, gamingClearRubricVersion: GAMING_CLEAR_VERSION,
         gamingClearPolicyVersion: GAMING_CLEAR_POLICY_VERSION, recordType } : {})
     }))}`;
     const records = chunked.chunks.map((chunk) => {
-      const { text, semanticKey, ...chunkMetadata } = chunk;
+      const { text, semanticKey, evidenceUnits, ...chunkMetadata } = chunk;
       // Structured build payloads remain compatible on the first record only;
       // every other record contains its own prose and bounded document metadata.
       const chunkData: Record<string, unknown> = {
@@ -1347,6 +1358,7 @@ async function ingestOneSource(
         }),
         schemaVersion: GAMING_DOCUMENT_CHUNKING_VERSION,
         text,
+        ...(evidenceUnits?.length ? { evidenceUnits } : {}),
         ...(chunk.ordinal === 0 && normalizedEvidence ? { structuredEvidence: normalizedEvidence } : {}),
         chunk: chunkMetadata
       };

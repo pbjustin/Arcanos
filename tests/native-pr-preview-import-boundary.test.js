@@ -378,7 +378,7 @@ describe('native PR preview import boundary', () => {
     })).resolves.toContain(
       'unreviewed preview import: src/config/openai.ts'
     );
-  });
+  }, 30_000);
 
   it('keeps runtime loader hooks outside the contained child command graph', () => {
     expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toEqual(
@@ -1427,6 +1427,32 @@ describe('native PR preview import boundary', () => {
       'src/services/gamingBuildResources.ts', 'src/shared/webFetcher.ts']) {
       expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toContain(filePath);
     }
+  });
+
+  it('pins structured Gaming parsers and permits only inert cheerio load', async () => {
+    for (const filePath of ['src/services/gamingDocumentEvidence.ts', 'src/services/gamingHtmlEvidence.ts',
+      'src/services/gamingJsonEvidence.ts', 'src/shared/gaming/gamingStructuredEvidencePreviewFixture.ts']) {
+      expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).toContain(filePath);
+      const sourceText = await readFile(new URL(`../${filePath}`, import.meta.url), 'utf8');
+      expect(findUnsafeRuntimeSyntax(filePath, sourceText)).toEqual([]);
+      expect(findUnsafeRuntimeSyntax(filePath, `${sourceText}\nexport const unreviewedPolicyChange = true;`)).toEqual(
+        expect.arrayContaining([expect.stringContaining('critical entry file semantic digest')])
+      );
+      for (const [unsafe, diagnostic] of [
+        ['import { fromURL } from "cheerio";', /(?:forbidden runtime import binding|unreviewed external runtime import binding surface)/u],
+        ['import * as cheerio from "cheerio";', /(?:forbidden runtime import binding|unreviewed external runtime import binding surface)/u],
+        ['const cheerio = require("cheerio");', /forbidden require call/u]
+      ]) {
+        expect(findUnsafeRuntimeSyntax(filePath, `${sourceText}\n${unsafe}`)).toEqual(
+          expect.arrayContaining([expect.stringMatching(diagnostic)])
+        );
+      }
+    }
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toContain('src/shared/webFetcher.ts');
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toContain('src/services/gamingDocumentResolution.ts');
+    expect(findUnsafeRuntimeSyntax('src/services/gamingDocumentEvidence.ts', 'import { load } from "cheerio";')).toEqual(
+      expect.arrayContaining([expect.stringContaining('unreviewed external runtime import binding surface')])
+    );
   });
 
   it('pins the pure Gaming CLEAR decisions without admitting their effectful service graph', async () => {

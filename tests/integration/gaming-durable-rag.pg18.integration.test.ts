@@ -18,6 +18,10 @@ import {
   selectStoredGamingEvidence
 } from '../../src/shared/gaming/gamingStoredEvidenceCore.js';
 import { buildGamingLargeGuideFixture } from '../testUtils/gamingLargeGuideFixture.js';
+import { gamingAcquisitionAxios } from '../testUtils/gamingAcquisitionFixtures.js';
+import { extractGamingJsonEvidence } from '../../src/services/gamingJsonEvidence.js';
+import { assessGamingClearSource } from '../../src/shared/gaming/gamingClearSource.js';
+import { assessGamingSourcePolicy, extractGamingFreshnessMetadata } from '../../src/shared/gaming/gamingFreshnessCore.js';
 import {
   assertDisposablePostgresTestDatabaseUrl,
   POSTGRES_TEST_DATABASE_NAME,
@@ -38,6 +42,24 @@ const game = 'Kingdom Hearts HD 1.5 Remix';
 const fetchedAt = '2026-09-01T00:00:00.000Z';
 const limits = { chunkChars: 1200, maxChunks: 8, maxSources: 3, maxContextChars: 5000, structuredEvidenceChars: 8000 };
 let databasePool: Pool;
+const mockSourceHttpGet = jest.fn();
+const mockSourceEnqueue = jest.fn();
+
+// These two boundaries are controlled; acquisition safety, extraction, CLEAR,
+// source ingestion and the repository remain real implementations.
+jest.unstable_mockModule('axios', () => ({ default: gamingAcquisitionAxios(mockSourceHttpGet) }));
+jest.unstable_mockModule('node:dns/promises', () => ({ Resolver: class {
+  async resolve4() { return ['93.184.216.34']; }
+  async resolve6() { return []; }
+  cancel() {}
+} }));
+jest.unstable_mockModule('@core/db/repositories/jobRepository.js', () => ({
+  findOrCreateGptJob: mockSourceEnqueue, getJobById: jest.fn(),
+  IdempotencyKeyConflictError: class extends Error {}, JobRepositoryUnavailableError: class extends Error {}
+}));
+jest.unstable_mockModule('@services/workerAutonomyService.js', () => ({
+  planAutonomousWorkerJob: async () => ({ status: 'pending', maxRetries: 2 })
+}));
 
 // Only the configured pool lookup is replaced. Repository transactions, rows,
 // indexes, full-text matching and ranking all execute in actual PostgreSQL 18.
@@ -123,6 +145,128 @@ describeWithDatabase('durable Gaming chunk storage and retrieval on PostgreSQL 1
       }
     }
   });
+
+  test('acquires a short structured source, passes real source CLEAR, ingests, and retrieves without its URL', async () => {
+    const { resolveGamingDocument } = await import('../../src/services/gamingDocumentResolution.js');
+    const {
+      createGamingSourceIngestion, executeQueuedGamingSourceIngestion, buildStoredGamingKnowledgeContext,
+      refreshGamingSources, hashGamingApprovedDocument
+    } = await import('../../src/services/gamingSourceIngestion.js');
+    const structuredGame = 'Void Frontier';
+    const publicUrl = `https://guides.example.org/void-frontier/${randomUUID()}`;
+    const prompt = 'Which system, body and site reports Platinum in TEST-ORION-01?';
+    let site = 'PML 7';
+    const page = () => `<html><head><title>Void Frontier guide</title></head><body><main><h1>Void Frontier</h1><table><tr><th>System</th><th>Body</th><th>Site</th><th>Resource</th></tr><tr><td>TEST-ORION-01</td><td>B 2</td><td>${site}</td><td>Platinum</td></tr></table></main></body></html>`;
+    mockSourceHttpGet.mockImplementation(async (url: string, options: any) => {
+      expect(new URL(url).hostname).toBe('93.184.216.34');
+      expect(options).toMatchObject({ maxRedirects: 0, proxy: false, headers: { Host: 'guides.example.org' } });
+      return { data: page(), headers: { 'content-type': 'text/html' } };
+    });
+    mockSourceEnqueue.mockImplementation(async (input: any) => ({
+      job: { id: randomUUID(), status: 'pending', created_at: new Date(), input: input.input }, created: true, deduped: false
+    }));
+    const input = { game: structuredGame, prompt, mode: 'guide' as const };
+    const document = await resolveGamingDocument(publicUrl);
+    expect(document.evidenceUnits).toHaveLength(1);
+    expect(document.evidenceUnits![0].text.length).toBeLessThan(120);
+    const now = new Date('2026-09-10T12:00:00Z');
+    const assessment = assessGamingClearSource(input, document, {
+      subjectId: publicUrl, subjectHash: hashGamingApprovedDocument(document), actorScopeHash: hash('disposable-reader'),
+      sourcePolicy: assessGamingSourcePolicy(publicUrl, structuredGame),
+      freshness: extractGamingFreshnessMetadata(document, input, now), now
+    });
+    expect(assessment).toMatchObject({ qualityEligible: true, decision: 'accept', gates: { claimSupport: 'verified' } });
+    expect(assessment.dimensionScores.clarity.reasonCodes).toContain('INTELLIGIBLE_HEADER_VALUE_RELATIONSHIPS');
+    const gateway = { actorKey: 'disposable-structured-reader', requestId: 'disposable-request', traceId: 'disposable-trace' };
+    const admitted = await createGamingSourceIngestion({ action: 'ingest', payload: {
+      game: structuredGame, sourceUrls: [publicUrl], idempotencyKey: `structured-${randomUUID()}`
+    } }, gateway);
+    expect(admitted.statusCode).toBe(202);
+    const queuedBody = () => (mockSourceEnqueue.mock.calls.at(-1)![0] as any).input.body;
+    const stored = await executeQueuedGamingSourceIngestion(randomUUID(), queuedBody());
+    expect(stored.output.sources[0]).toMatchObject({ status: 'stored' });
+    const firstRecordCount = stored.output.sources[0].recordsCreated;
+    expect(firstRecordCount).toBeGreaterThanOrEqual(1);
+    const sourceId = stored.output.sources[0].sourceId!;
+    const records = await searchActiveGamingKnowledge({ gameKey: 'void-frontier', query: 'platinum', mode: 'guide', sourceIds: [sourceId] });
+    expect(records).toHaveLength(1);
+    const firstRevision = records[0].revisionId;
+    const retrieved = await buildStoredGamingKnowledgeContext({ ...input, failOnUnavailable: true });
+    expect(retrieved.context).toContain('TEST-ORION-01');
+    expect(retrieved.context).toContain('B 2');
+    expect(retrieved.context).toContain('PML 7');
+    expect(retrieved.sources.some(source => source.url === publicUrl)).toBe(true);
+    expect(retrieved.evidence?.some(evidence => evidence.sourceId === sourceId && evidence.revisionId === firstRevision
+      && evidence.evidenceUnits?.some(unit => unit.provenance.sourceUrl === publicUrl && unit.provenance.strategy === 'html_table'))).toBe(true);
+    const refresh = async () => {
+      const admittedRefresh = await refreshGamingSources({ action: 'refresh', payload: { sourceIds: [sourceId], idempotencyKey: `refresh-${randomUUID()}` } }, gateway);
+      expect(admittedRefresh.statusCode).toBe(202);
+      return executeQueuedGamingSourceIngestion(randomUUID(), queuedBody());
+    };
+    expect((await refresh()).output.sources[0]).toMatchObject({ status: 'unchanged', recordsCreated: 0, recordsUpdated: 0 });
+    site = 'PML 8';
+    expect((await refresh()).output.sources[0]).toMatchObject({ status: 'updated', recordsCreated: firstRecordCount, recordsUpdated: firstRecordCount });
+    const changed = await buildStoredGamingKnowledgeContext({ ...input, failOnUnavailable: true });
+    expect(changed.context).toContain('PML 8');
+    expect(changed.context).not.toContain('PML 7');
+    expect(changed.evidence?.some(evidence => evidence.sourceId === sourceId && evidence.revisionId !== firstRevision)).toBe(true);
+    const statuses = await databasePool.query<{ status: string }>(
+      `SELECT records.status FROM gaming_knowledge_records AS records
+       JOIN gaming_source_revisions AS revisions ON revisions.id = records.source_revision_id
+       WHERE revisions.source_id = $1 ORDER BY records.status`, [sourceId]);
+    expect(statuses.rows.filter(row => row.status === 'active')).toHaveLength(firstRecordCount);
+    expect(statuses.rows.filter(row => row.status === 'superseded')).toHaveLength(firstRecordCount);
+    mockSourceHttpGet.mockReset(); mockSourceEnqueue.mockReset();
+  }, 30000);
+
+  test('retains JSON record provenance beyond 100K and revisions a late change through actual SQL', async () => {
+    const { GAMING_DOCUMENT_RESOLVER_VERSION } = await import('../../src/services/gamingDocumentResolution.js');
+    const gameKey = `structured-late-${randomUUID()}`;
+    const publicUrl = `https://guides.example.org/${gameKey}`;
+    const prepare = async (site: string): Promise<PersistGamingSourceRevisionInput> => {
+      const parsed = extractGamingJsonEvidence({ sourceUrl: publicUrl, contentType: 'application/json',
+        body: JSON.stringify({ system: 'TEST-ORION-01', body: 'B 2', site, resource: 'Platinum' }) });
+      expect(parsed.units).toHaveLength(1);
+      const text = `${'An ordinary synthetic guide explains equipment and safe travel. '.repeat(2_000)}\n\n${parsed.units[0].text}`;
+      expect(text.indexOf(parsed.units[0].text)).toBeGreaterThan(100_000);
+      const chunked = await chunkGamingDocument(text, { evidenceUnits: parsed.units });
+      expect(chunked.coverageStatus).toBe('complete');
+      expect(chunked.chunks.filter(chunk => chunk.evidenceUnits?.length)).toHaveLength(1);
+      return {
+        gameKey, gameName: 'Void Frontier', canonicalUrl: publicUrl, publicUrl, sourceType: 'supplied', trustScore: 0.25,
+        contentHash: hashGamingDocumentRevision(chunked.text, JSON.stringify(parsed.units)),
+        cleanedContent: chunked.text.slice(0, GAMING_DURABLE_DOCUMENT_LIMITS.revisionPreviewChars), fetchedAt,
+        extractor: 'generic-web', extractorVersion: GAMING_DOCUMENT_RESOLVER_VERSION, normalizerSchemaVersion: GAMING_DOCUMENT_CHUNKING_VERSION,
+        provenance: { resolverId: 'generic-web', evidenceUnitPolicyVersion: parsed.units[0].provenance.policyVersion },
+        records: chunked.chunks.map(chunk => {
+          const { text: chunkText, semanticKey, evidenceUnits, ...chunkMetadata } = chunk;
+          const normalized = { game: 'Void Frontier', text: chunkText, chunk: chunkMetadata, ...(evidenceUnits?.length ? { evidenceUnits } : {}) };
+          return { recordType: 'guide', semanticKey, payloadHash: hash(JSON.stringify(normalized)), searchText: chunkText, normalized };
+        })
+      };
+    };
+    const original = await prepare('PML 7');
+    const first = await persistGamingSourceRevision(original);
+    expect(await persistGamingSourceRevision(original)).toMatchObject({ state: 'unchanged', revisionId: first.revisionId });
+    const input = { game: 'Void Frontier', prompt: 'Which system body site reports Platinum in TEST-ORION-01?', mode: 'guide' as const };
+    const rows = await searchActiveGamingKnowledge({ gameKey, query: 'platinum', mode: 'guide' });
+    const selected = selectStoredGamingEvidence(rows, input, limits);
+    const formatted = formatStoredGamingEvidence(selected, { maxContextChars: 2000 }, limits);
+    expect(formatted.context).toContain('PML 7');
+    expect(formatted.evidence?.[0].startChar).toBeGreaterThan(100_000);
+    expect(formatted.evidence?.[0].evidenceUnits?.[0].provenance).toMatchObject({ strategy: 'application_json', jsonOnly: true, sourceUrl: publicUrl });
+    const revised = await prepare('PML 8');
+    expect(revised.cleanedContent).toBe(original.cleanedContent);
+    expect(revised.contentHash).not.toBe(original.contentHash);
+    const second = await persistGamingSourceRevision(revised);
+    expect(second).toMatchObject({ state: 'updated', sourceId: first.sourceId });
+    expect(second.revisionId).not.toBe(first.revisionId);
+    const active = await searchActiveGamingKnowledge({ gameKey, query: 'platinum', mode: 'guide' });
+    expect(active.every(row => row.revisionId === second.revisionId)).toBe(true);
+    const after = formatStoredGamingEvidence(selectStoredGamingEvidence(active, input, limits), { maxContextChars: 2000 }, limits);
+    expect(after.context).toContain('PML 8');
+    expect(after.context).not.toContain('PML 7');
+  }, 30000);
 
   test('matches stored title formatting across three games without collapsing editions or reindexing historical keys', async () => {
     for (const [storedName, requestedName, otherEdition] of [

@@ -21,6 +21,8 @@ import { createApprovedGamingSourceIngestion, hashGamingApprovedDocument, type G
 import { assessGamingClearSource, gamingClearHistoricalSourceVerified, gamingClearIntactSourceText } from '@shared/gaming/gamingClearSource.js';
 import { GAMING_CLEAR_VERSION, gamingClearHash, type GamingClearAssessment } from '@shared/gaming/gamingClearPolicy.js';
 import { pickGamingPlayerContext } from '@shared/gaming/gamingPlayerContext.js';
+import { assessGamingStructuralUsability } from '@shared/gaming/gamingStructuralEvidence.js';
+import type { GamingStructureDiagnostics } from '@shared/gaming/gamingEvidenceUnits.js';
 
 export const GAMING_HYBRID_CANDIDATE_POLICY_VERSION = 'gaming-hybrid-candidates/v1';
 export const GAMING_HYBRID_CANDIDATE_LIMITS = Object.freeze({ count: 3, artifactTtlMs: 10 * 60_000, totalFetchMs: 12_000 });
@@ -111,6 +113,8 @@ export async function evaluateGamingHybridCandidates(
     let sourceAssessed = false;
     const sourceStartedAt = Date.now();
     const candidateReference = randomUUID();
+    let extractionDiagnostic: GamingStructureDiagnostics | undefined;
+    let missingClaimFields: string[] = [];
     let acquisitionDiagnostic: Record<string, string | number> = {
       stage: 'admission', policyVersion: GAMING_DOCUMENT_ACQUISITION_POLICY_VERSION, redirectCount: 0, failingHop: 0
     };
@@ -118,6 +122,7 @@ export async function evaluateGamingHybridCandidates(
       if (!sourceAssessed) logger.info('gaming.clear.source.not_run', { requestId: context.requestId, traceId: context.traceId,
         workflowId: context.workflowId, submittedIndex, candidateReference, acquisition: acquisitionDiagnostic,
         rubricVersion: GAMING_CLEAR_VERSION, profile: 'source', assessmentStatus: 'not_run', reasonCodes: [reason],
+        extraction: extractionDiagnostic, missingClaimFields,
         elapsedMs: Date.now() - sourceStartedAt });
       decisions.push({ submittedIndex, ...(publicUrl ? { url: projectGamingDocumentPublicUrl(publicUrl) } : {}), decision: 'rejected', reasonCodes: [reason] });
     };
@@ -143,18 +148,21 @@ export async function evaluateGamingHybridCandidates(
         GAMING_DURABLE_DOCUMENT_LIMITS.documentChars, { documentPurpose: 'durable', signal, deadlineAt,
           timeoutMs: Math.min(5_000, getGamingWebContextFetchTimeoutMs(), Math.max(1, deadlineAt - Date.now())), includeLinks: false });
       signal?.throwIfAborted();
+      extractionDiagnostic = document.structureDiagnostics;
       acquisitionDiagnostic = { stage: 'extraction', policyVersion: document.acquisition?.policyVersion ?? GAMING_DOCUMENT_ACQUISITION_POLICY_VERSION,
         redirectCount: document.acquisition?.redirectCount ?? 0, failingHop: document.acquisition?.redirectCount ?? 0 };
       if (!isResolvedGamingDocumentIdentityVerified(document, publicUrl)) { reject('RESOLVED_SOURCE_IDENTITY_MISMATCH'); continue; }
       // Only the trusted resolver can establish the final publisher and citation identity.
       publicUrl = document.publicUrl;
       if (document.metrics.instructionFiltered) { reject('SOURCE_INSTRUCTIONS_REJECTED'); continue; }
-      const quality = classifyGamingDocumentQuality({ cleanedText: document.text,
-        navigationDensity: document.extraction.navigationDensity, truncated: document.metrics.truncated, minUsefulTextChars: 120 });
-      if (quality === 'unusable' || quality === 'metadata-only') { reject('INSUFFICIENT_EXTRACTION'); continue; }
       const intactText = gamingClearIntactSourceText(document);
-      if (intactText.trim().length < 120) { reject('INSUFFICIENT_EXTRACTION'); continue; }
-      if (/\b(?:no (?:automated|machine) (?:access|use)|automated (?:access|use) (?:is )?prohibited|do not (?:store|redistribute) (?:this|our) content)\b/iu.test(document.text)) {
+      const quality = classifyGamingDocumentQuality({ cleanedText: intactText,
+        navigationDensity: document.extraction.navigationDensity, truncated: document.metrics.truncated, minUsefulTextChars: 120 });
+      const structural = assessGamingStructuralUsability({ units: document.evidenceUnits, ...input });
+      missingClaimFields = structural.missingFields;
+      if (!structural.hasIntactUsableUnit && (quality === 'unusable' || quality === 'metadata-only')) { reject('INSUFFICIENT_EXTRACTION'); continue; }
+      if (!structural.hasIntactUsableUnit && intactText.trim().length < 120) { reject('INSUFFICIENT_EXTRACTION'); continue; }
+      if (document.sourceUseRestricted || /\b(?:no (?:automated|machine) (?:access|use)|automated (?:access|use) (?:is )?prohibited|do not (?:store|redistribute) (?:this|our) content)\b/iu.test(document.text)) {
         reject('SOURCE_USE_RESTRICTED'); continue;
       }
       const reviewedPolicy = (dependencies.sourcePolicy ?? assessGamingSourcePolicy)(document.canonicalUrl, input.game);
@@ -179,6 +187,7 @@ export async function evaluateGamingHybridCandidates(
       logger.info('gaming.clear.source.completed', { requestId: context.requestId, traceId: context.traceId,
         rubricVersion: sourceAssessment.rubricVersion, profile: sourceAssessment.profile, policyProfile: sourceAssessment.policyProfile,
         workflowId: context.workflowId, submittedIndex, candidateReference, acquisition: acquisitionDiagnostic,
+        extraction: extractionDiagnostic, missingClaimFields,
         sourceRole: sourceAssessment.sourceRole, subjectHash: contentHash, assessmentMethod: sourceAssessment.assessmentMethod,
         assessmentStatus: sourceAssessment.assessmentStatus, dimensionScores: sourceAssessment.dimensionScores,
         overall: sourceAssessment.overall, decision: sourceAssessment.decision, blockingFindingCount: sourceAssessment.blockingFindings.length,
@@ -191,11 +200,11 @@ export async function evaluateGamingHybridCandidates(
           ?? identityReasons.find(reason => ['GAME_IDENTITY_UNVERIFIED', 'EDITION_UNVERIFIED'].includes(reason))
           ?? sourceAssessment.blockingFindings[0]?.code ?? 'GAMING_CLEAR_SOURCE_REJECTED'); continue;
       }
-      const chunks = await chunkGamingDocument(intactText, { signal });
+      const chunks = await chunkGamingDocument(intactText, { signal, evidenceUnits: document.evidenceUnits });
       const records = chunks.chunks.map(chunk => ({
         recordId: `${candidateId}:${chunk.ordinal}`, recordType: input.mode === 'guide' ? 'guide' as const : input.mode === 'build' ? 'build' as const : 'meta' as const,
         title: document.metadata.title ?? null, searchText: chunk.text,
-        normalized: { text: chunk.text, chunk: { ordinal: chunk.ordinal, totalChunks: chunk.totalChunks,
+        normalized: { text: chunk.text, ...(chunk.evidenceUnits?.length ? { evidenceUnits: chunk.evidenceUnits } : {}), chunk: { ordinal: chunk.ordinal, totalChunks: chunk.totalChunks,
           startChar: chunk.startChar, endChar: chunk.endChar, headingPath: chunk.headingPath } },
         sourceId: candidateId, publicUrl: publicUrl!, sourceType: policy.category, revisionId: contentHash,
         clearSourceAssessment: sourceAssessment,

@@ -1,5 +1,7 @@
 import { createHash } from 'node:crypto';
 import { setImmediate as yieldToEventLoop } from 'node:timers/promises';
+import type { GamingEvidenceUnit } from '@shared/gaming/gamingEvidenceUnits.js';
+import { markGamingEvidenceUnitConflicts } from '@shared/gaming/gamingStructuralEvidence.js';
 
 export const GAMING_DOCUMENT_CHUNKING_VERSION = 'gaming-document-chunks-v1';
 export const GAMING_DURABLE_DOCUMENT_LIMITS = Object.freeze({
@@ -21,6 +23,8 @@ export interface GamingDocumentChunk {
   semanticKey: string;
   overlapFromPrevious: boolean;
   headingPath?: string[];
+  /** Complete records whose serialized text is exactly this chunk. */
+  evidenceUnits?: GamingEvidenceUnit[];
 }
 
 function hashText(text: string): string {
@@ -82,7 +86,7 @@ function selectOverlapStart(text: string, start: number, end: number): number {
  */
 export async function chunkGamingDocument(
   input: string,
-  options: { signal?: AbortSignal; policyVersion?: string } = {}
+  options: { signal?: AbortSignal; policyVersion?: string; evidenceUnits?: readonly GamingEvidenceUnit[] } = {}
 ): Promise<{
   text: string;
   chunks: GamingDocumentChunk[];
@@ -101,6 +105,14 @@ export async function chunkGamingDocument(
     .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/gu, ' ')
     .trim();
   const chunks: GamingDocumentChunk[] = [];
+  const structuralRanges: Array<{ start: number; end: number; unit: GamingEvidenceUnit }> = [];
+  for (const unit of markGamingEvidenceUnitConflicts(options.evidenceUnits ?? [])) {
+    const start = text.indexOf(unit.text);
+    if (start >= 0 && !structuralRanges.some(range => start < range.end && start + unit.text.length > range.start))
+      structuralRanges.push({ start, end: start + unit.text.length, unit });
+  }
+  structuralRanges.sort((left, right) => left.start - right.start);
+  let omittedUnits = false;
   // Only explicit headings have a provable path. Flat OCR/HTML metadata has no offsets.
   const headings = text.matchAll(/^ {0,3}(#{1,6})[ \t]+([^\n]{1,120})[ \t]*$/gmu);
   let nextHeading = headings.next();
@@ -118,7 +130,16 @@ export async function chunkGamingDocument(
       headingPath = [...headingPath.slice(0, Math.min(heading[1].length - 1, 3)), heading[2].trim()];
       nextHeading = headings.next();
     }
-    const end = selectChunkEnd(text, start);
+    const containing = structuralRanges.find(range => start >= range.start && start < range.end);
+    if (containing && (containing.unit.integrity.status !== 'complete' || containing.unit.integrity.reasons.length
+      || containing.unit.text.length > GAMING_DURABLE_DOCUMENT_LIMITS.maxChunkChars)) {
+      omittedUnits = true;
+      start = containing.end;
+      continue;
+    }
+    const following = structuralRanges.find(range => range.start >= start);
+    const end = containing?.end ?? Math.min(selectChunkEnd(text, start), following?.start ?? text.length);
+    if (!text.slice(start, end).trim()) { start = end; continue; }
     const chunkText = text.slice(start, end);
     const ordinal = chunks.length;
     const contentHash = hashText(chunkText);
@@ -127,14 +148,15 @@ export async function chunkGamingDocument(
       contentHash,
       semanticKey: hashText(JSON.stringify([policyVersion, ordinal, headingPath, contentHash])),
       overlapFromPrevious: start < indexedChars,
+      ...(containing ? { evidenceUnits: [containing.unit] } : {}),
       ...(headingPath.length ? { headingPath: [...headingPath] } : {})
     });
     indexedChars = end;
     if (end === text.length) break;
-    start = selectOverlapStart(text, start, end);
+    start = containing || following?.start === end ? end : selectOverlapStart(text, start, end);
   }
   for (const chunk of chunks) chunk.totalChunks = chunks.length;
-  const documentTruncated = input.length > bound || indexedChars < text.length;
+  const documentTruncated = input.length > bound || indexedChars < text.length || omittedUnits;
   return {
     text, chunks, documentChars: text.length, indexedChars, documentTruncated,
     coverageStatus: documentTruncated ? 'partial' : 'complete', chunkingVersion: policyVersion
