@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { gamingAcquisitionAxios } from './testUtils/gamingAcquisitionFixtures.js';
 import {
   gamingArchiveGuideText, gamingArchiveGuideUrl, gamingArchiveMetadata, gamingArchiveStorageHost
 } from './testUtils/gamingArchiveFixtures.js';
@@ -6,7 +7,7 @@ import {
 const mockAxiosGet = jest.fn();
 const mockResolve4 = jest.fn();
 const mockResolve6 = jest.fn();
-jest.unstable_mockModule('axios', () => ({ default: { get: mockAxiosGet } }));
+jest.unstable_mockModule('axios', () => ({ default: gamingAcquisitionAxios(mockAxiosGet) }));
 jest.unstable_mockModule('node:dns/promises', () => ({
   Resolver: class {
     resolve4(host: string) { return mockResolve4(host); }
@@ -14,7 +15,9 @@ jest.unstable_mockModule('node:dns/promises', () => ({
     cancel() {}
   }
 }));
-const { describeGamingDocumentSource, resolveGamingDocument } = await import('../src/services/gamingDocumentResolution.js');
+const { describeGamingDocumentSource, resolveGamingDocument, isResolvedGamingDocumentIdentityVerified } = await import('../src/services/gamingDocumentResolution.js');
+const { sanitizeGamingDiscoveryCandidateUrl, sanitizeGamingStructuredDocumentUrl } = await import('../src/services/gamingSourceDiscovery.js');
+const { GAMING_BUILD_RESOURCE_HARD_LIMITS } = await import('../src/services/gamingBuildResources.js');
 
 function response(data: string, contentType: string) {
   return { data, headers: { 'content-type': contentType } };
@@ -39,7 +42,7 @@ describe('shared Gaming document acquisition contract', () => {
   it('resolves Archive OCR once and exposes only canonical public item provenance', async () => {
     mockAxiosGet.mockResolvedValueOnce(response(JSON.stringify(gamingArchiveMetadata()), 'application/json'));
     mockAxiosGet.mockResolvedValueOnce(response(gamingArchiveGuideText, 'text/plain'));
-    const document = await resolveGamingDocument(`${gamingArchiveGuideUrl}/page/n4/mode/2up?token=private-sentinel`, 100_000);
+    const document = await resolveGamingDocument(`${gamingArchiveGuideUrl}/page/n4/mode/2up`, 100_000);
     expect(document).toMatchObject({
       canonicalUrl: gamingArchiveGuideUrl, publicUrl: gamingArchiveGuideUrl, host: 'archive.org',
       resolution: {
@@ -58,7 +61,7 @@ describe('shared Gaming document acquisition contract', () => {
   it('uses the same generic profile for normal web guides, retaining bounded structured HTML internally', async () => {
     const html = `<html><head><title>Example guide</title></head><body><nav>Private menu navigation</nav><article><h1>Lantern route</h1>${gamingArchiveGuideText}</article></body></html>`;
     mockAxiosGet.mockResolvedValue(response(html, 'text/html'));
-    const document = await resolveGamingDocument('https://example.org/guide?token=private-sentinel&utm_source=test', 100_000, { rawDocumentMaxChars: 40 });
+    const document = await resolveGamingDocument('https://example.org/guide?utm_source=test', 100_000, { rawDocumentMaxChars: 40 });
     expect(document).toMatchObject({
       publicUrl: 'https://example.org/guide',
       metadata: { title: 'Example guide', headings: 'Lantern route' },
@@ -69,6 +72,14 @@ describe('shared Gaming document acquisition contract', () => {
     expect(document.rawDocument?.body).toHaveLength(40);
     expect(document.text).not.toContain('Private menu navigation');
     expect(mockAxiosGet.mock.calls[0][1]).toMatchObject({ maxRedirects: 0, proxy: false });
+  });
+
+  it('preserves Gaming link suppression even when a caller requests links', async () => {
+    mockAxiosGet.mockResolvedValue(response(`<html><body><article>${gamingArchiveGuideText}<a href="/appendix">Guide appendix</a></article></body></html>`, 'text/html'));
+    const document = await resolveGamingDocument('https://example.org/guide', 100_000, { includeLinks: true });
+    expect(document.text).not.toContain('[LINKS]');
+    expect(document.text).not.toContain('https://example.org/appendix');
+    expect(mockAxiosGet).toHaveBeenCalledTimes(1);
   });
 
   it.each(['text/plain', 'text/html'])('retains the selected %s guide past the scoring window without changing legacy extraction', async (contentType) => {
@@ -114,7 +125,8 @@ describe('shared Gaming document acquisition contract', () => {
     expect(durable.text.length).toBeGreaterThan(500_000);
     expect(durable.metrics.truncated).toBe(false);
     expect(mockAxiosGet.mock.calls[1][1]).toMatchObject({
-      maxRedirects: 0, proxy: false, maxContentLength: 1_500_000, maxBodyLength: 1_500_000
+      // Streaming transfer/decode meters enforce the shared byte limit; Axios must not preempt 3xx handling.
+      maxRedirects: 0, proxy: false, responseType: 'stream', decompress: false, maxBodyLength: 1_500_000
     });
   });
 
@@ -195,6 +207,193 @@ describe('shared Gaming document acquisition contract', () => {
       resolverVersion: 'archive-text-v1', supportsUrlPayload: false
     });
     expect(describeGamingDocumentSource('https://example.org/guide')).toMatchObject({ resolverId: 'generic-web', supportsUrlPayload: true });
+    expect(mockAxiosGet).not.toHaveBeenCalled();
+  });
+
+  it('preserves an admitted www host and meaningful repeated query identity through transport and citations', async () => {
+    mockAxiosGet.mockResolvedValue(response(gamingArchiveGuideText, 'text/plain'));
+    const url = 'https://www.example.org/CaseSensitiveGuide?locale=en-US&page=2&article=A%2fb&article=B+Z';
+    const document = await resolveGamingDocument(`${url}&utm_source=fixture#checkpoint`);
+    expect(document).toMatchObject({ requestedUrl: url, publicUrl: url, canonicalUrl: url, host: 'www.example.org',
+      acquisition: { requestedUrl: url, finalUrl: url, redirectCount: 0, policyVersion: 'gaming-https-acquisition-v1' } });
+    expect(mockAxiosGet).toHaveBeenCalledWith('https://93.184.216.34/CaseSensitiveGuide?locale=en-US&page=2&article=A%2fb&article=B+Z',
+      expect.objectContaining({ headers: expect.objectContaining({ Host: 'www.example.org' }), maxRedirects: 0, proxy: false }));
+    expect(mockResolve4).toHaveBeenCalledWith('www.example.org');
+  });
+
+  it.each([2049, GAMING_BUILD_RESOURCE_HARD_LIMITS.maxUrlChars])('retains the existing internal structured URL allowance at %i characters without expanding public candidate admission', async length => {
+    const payload = encodeURIComponent(JSON.stringify({ game: 'Boundary Quest', equipment: [{ name: 'Boundary Blade' }] }));
+    const prefix = `https://www.planner.example/build-planner/share?build=${payload}&document=`;
+    const url = prefix + 'A'.repeat(length - prefix.length);
+    expect(url).toHaveLength(length);
+    expect(sanitizeGamingDiscoveryCandidateUrl(url)).toMatchObject({ rejected: true, rejection: { subreason: 'url_too_long' } });
+    expect(describeGamingDocumentSource(url).publicUrl).toBe(url);
+    mockAxiosGet.mockResolvedValue(response('Boundary Quest guide explains safe progression, weapon preparation, and the next checkpoint.', 'text/plain'));
+    const document = await resolveGamingDocument(url);
+    expect(document.publicUrl).toBe(url);
+    expect(document.acquisition?.redirectCount).toBe(0);
+    expect(isResolvedGamingDocumentIdentityVerified(document, url)).toBe(true);
+    const pinned = new URL(url); pinned.hostname = '93.184.216.34';
+    expect(mockAxiosGet).toHaveBeenCalledWith(pinned.href, expect.objectContaining({ headers: expect.objectContaining({ Host: 'www.planner.example' }) }));
+    expect(mockAxiosGet).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps an ordinary supplied structured build above 2048 characters on the shared live resolver path', async () => {
+    const { buildGamingRagContext, clearGamingRagCache } = await import('../src/services/gamingWebContext.js');
+    clearGamingRagCache();
+    const payload = encodeURIComponent(JSON.stringify({ game: 'Boundary Quest', equipment: [{ slot: 'weapon', name: 'Boundary Blade' }] }));
+    const prefix = `https://planner.example/build-planner/share?build=${payload}&document=`;
+    const url = prefix + 'A'.repeat(2200 - prefix.length);
+    mockAxiosGet.mockResolvedValue(response('Boundary Quest equipment build guide explains safe weapon upgrades and boss preparation.', 'text/plain'));
+    try {
+      const result = await buildGamingRagContext({ mode: 'build', game: 'Boundary Quest',
+        prompt: 'Review this Boundary Quest equipment build.', guideUrl: url, guideUrls: [] });
+      expect(mockAxiosGet).toHaveBeenCalledTimes(1);
+      expect(mockAxiosGet.mock.calls[0][0]).toContain(`build=${payload}&document=`);
+      expect(result.context).toContain('Boundary Blade');
+      expect(result.sources[0].url).toBe('https://planner.example/build-planner/share');
+      expect(JSON.stringify(result.sources)).not.toContain(payload);
+    } finally { clearGamingRagCache(); }
+  });
+
+  it('does not expand ordinary guide URLs or the existing structured maximum, and preserves sensitive-material checks', async () => {
+    const ordinary = 'https://guides.example/manual?document=' + 'A'.repeat(2049);
+    const payload = 'https://planner.example/build-planner?build=' + 'A'.repeat(GAMING_BUILD_RESOURCE_HARD_LIMITS.maxUrlChars);
+    const sensitive = 'https://planner.example/build-planner?build=' + 'A'.repeat(2200) + '&token=synthetic-private';
+    expect(sanitizeGamingStructuredDocumentUrl(payload)).toMatchObject({ rejected: true, rejection: { subreason: 'url_too_long' } });
+    expect(sanitizeGamingStructuredDocumentUrl(sensitive)).toMatchObject({ rejected: true, rejection: { subreason: 'sensitive_url_material' } });
+    await expect(resolveGamingDocument(ordinary)).rejects.toMatchObject({ code: 'URL_BLOCKED' });
+    await expect(resolveGamingDocument(payload)).rejects.toThrow();
+    await expect(resolveGamingDocument(sensitive)).rejects.toMatchObject({ code: 'URL_BLOCKED' });
+    expect(mockResolve4).not.toHaveBeenCalled();
+    expect(mockAxiosGet).not.toHaveBeenCalled();
+  });
+
+  it('keeps the redirect Location limit at 2048 even for an admitted long initial structured URL', async () => {
+    const url = 'https://planner.example/build-planner?build=' + 'A'.repeat(2200);
+    mockAxiosGet.mockResolvedValueOnce({ status: 302, headers: { location: '/build-planner?build=' + 'B'.repeat(2200) }, data: '' });
+    await expect(resolveGamingDocument(url)).rejects.toMatchObject({ code: 'REDIRECT_NOT_ALLOWED' });
+    expect(mockResolve4).toHaveBeenCalledTimes(1);
+    expect(mockAxiosGet).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([301, 302, 303, 307, 308])('follows one same-origin relative %s redirect with newly pinned transport', async status => {
+    mockResolve4.mockResolvedValueOnce(['93.184.216.34']).mockResolvedValueOnce(['93.184.216.35']);
+    mockAxiosGet.mockResolvedValueOnce({ status, headers: { location: '../manual/Final?page=2' }, data: '' });
+    mockAxiosGet.mockResolvedValueOnce(response(gamingArchiveGuideText, 'text/plain'));
+    const document = await resolveGamingDocument('https://www.example.org/guides/start');
+    expect(document).toMatchObject({ publicUrl: 'https://www.example.org/manual/Final?page=2',
+      acquisition: { redirectCount: 1, transitions: [{ fromUrl: 'https://www.example.org/guides/start',
+        toUrl: 'https://www.example.org/manual/Final?page=2', classification: 'same_origin' }] } });
+    expect(mockAxiosGet.mock.calls.map(call => call[0])).toEqual([
+      'https://93.184.216.34/guides/start', 'https://93.184.216.35/manual/Final?page=2'
+    ]);
+    expect(mockResolve4).toHaveBeenCalledTimes(2);
+    expect(isResolvedGamingDocumentIdentityVerified(document, document.requestedUrl)).toBe(true);
+    expect(isResolvedGamingDocumentIdentityVerified({ ...document, rawDocument: undefined }, document.requestedUrl)).toBe(true);
+    expect(isResolvedGamingDocumentIdentityVerified({ ...document, publicUrl: 'https://other.example/guide' }, document.requestedUrl)).toBe(false);
+    expect(isResolvedGamingDocumentIdentityVerified({ ...document, acquisition: undefined }, document.requestedUrl)).toBe(false);
+    expect(isResolvedGamingDocumentIdentityVerified({ ...document, acquisition: { ...document.acquisition! } }, document.requestedUrl)).toBe(false);
+  });
+
+  it.each([
+    ['https://icy-veins.com/wow/guide', 'https://www.icy-veins.com/wow/guide', 'gaming.redirect.wow-specialist-apex-www'],
+    ['https://www.swtor.com/patchnotes', 'https://swtor.com/patchnotes/', 'gaming.redirect.swtor-patch-apex-www']
+  ])('permits only the reviewed publisher host/path pair from %s', async (url, destination, ruleId) => {
+    mockAxiosGet.mockResolvedValueOnce({ status: 302, headers: { location: destination }, data: '' });
+    mockAxiosGet.mockResolvedValueOnce(response(gamingArchiveGuideText, 'text/plain'));
+    const document = await resolveGamingDocument(url);
+    expect(document.publicUrl).toBe(destination);
+    expect(document.acquisition?.transitions[0]).toMatchObject({ classification: 'reviewed_publisher_pair', ruleId });
+    for (const [index, host] of [new URL(url).hostname, new URL(destination).hostname].entries()) {
+      const options = mockAxiosGet.mock.calls[index][1] as any;
+      expect(options.headers).toEqual(expect.objectContaining({ Host: host }));
+      expect(options.httpsAgent.options).toEqual(expect.objectContaining({ servername: host }));
+      expect(options.httpsAgent.options.rejectUnauthorized).not.toBe(false);
+      // Omission preserves Node's normal certificate hostname verifier; no custom bypass is installed.
+      expect(options.httpsAgent.options.checkServerIdentity).toBeUndefined();
+    }
+  });
+
+  it.each([
+    'https://example.net/guide', 'https://example.org.evil.example/guide', 'https://sibling.example.org/guide',
+    'https://www.example.org/guide', 'https://www.icy-veins.com/other/guide'
+  ])('rejects unapproved host transition %s before DNS or connection', async destination => {
+    mockAxiosGet.mockResolvedValueOnce({ status: 302, headers: { location: destination }, data: '' });
+    await expect(resolveGamingDocument('https://icy-veins.com/wow/guide')).rejects.toMatchObject({
+      code: 'REDIRECT_NOT_ALLOWED', acquisition: { subreason: 'UNAPPROVED_TRANSITION', redirectCount: 0 }
+    });
+    expect(mockAxiosGet).toHaveBeenCalledTimes(1);
+    expect(mockResolve4).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['/login', 'ACCOUNT_PATH'], ['/search?q=guide', 'SEARCH_RESULTS'], ['/manual.pdf', 'UNSUPPORTED_DOCUMENT_TYPE'],
+    ['http://example.org/guide', 'HTTPS_REQUIRED'], ['https://user:secret@example.org/guide', 'CREDENTIALS'],
+    ['https://example.org:8443/guide', 'FORBIDDEN_PORT'], ['https://127.0.0.1/guide', 'NETWORK_DESTINATION']
+  ])('rejects forbidden redirect destination %s independently of the original admission', async (destination) => {
+    mockAxiosGet.mockResolvedValueOnce({ status: 302, headers: { location: destination }, data: '' });
+    await expect(resolveGamingDocument('https://example.org/guide')).rejects.toMatchObject({ code: 'URL_BLOCKED' });
+    expect(mockAxiosGet).toHaveBeenCalledTimes(1);
+    expect(mockResolve4).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([undefined, '', ' /next', '/next\n', '\\evil.example/next', 'https:opaque', '/next'.repeat(500), ['/one', '/two']])(
+    'rejects missing, malformed, oversized, or duplicate Location without a next request (%j)', async location => {
+      mockAxiosGet.mockResolvedValueOnce({ status: 301, headers: { location }, data: '' });
+      await expect(resolveGamingDocument('https://example.org/guide')).rejects.toMatchObject({ code: 'REDIRECT_NOT_ALLOWED' });
+      expect(mockAxiosGet).toHaveBeenCalledTimes(1);
+    });
+
+  it('detects fragment/default-port loops using actual normalized request identity', async () => {
+    mockAxiosGet.mockResolvedValueOnce({ status: 308, headers: { location: 'https://example.org:443/guide#next' }, data: '' });
+    await expect(resolveGamingDocument('https://example.org/guide')).rejects.toMatchObject({ acquisition: { subreason: 'REDIRECT_LOOP' } });
+    expect(mockAxiosGet).toHaveBeenCalledTimes(1);
+  });
+
+  it('allows at most three transitions and four requests without probes or retries', async () => {
+    mockAxiosGet.mockImplementation(async () => ({ status: 302, headers: { location: `/hop-${mockAxiosGet.mock.calls.length}` }, data: '' }));
+    await expect(resolveGamingDocument('https://example.org/guide')).rejects.toMatchObject({ acquisition: { subreason: 'REDIRECT_LIMIT', redirectCount: 3 } });
+    expect(mockAxiosGet).toHaveBeenCalledTimes(4);
+    expect(mockResolve4).toHaveBeenCalledTimes(4);
+  });
+
+  it('does not follow 304, HTML meta-refresh, JavaScript, canonical links, or metadata destinations', async () => {
+    mockAxiosGet.mockResolvedValueOnce({ status: 304, headers: { location: '/next' }, data: '' });
+    await expect(resolveGamingDocument('https://example.org/guide')).rejects.toMatchObject({
+      code: 'SOURCE_FETCH_FAILED', acquisition: { subreason: 'CONDITIONAL_CONTENT_UNAVAILABLE' }
+    });
+    mockAxiosGet.mockResolvedValueOnce(response(`<html><head><meta http-equiv="refresh" content="0;url=https://other.example/guide">
+      <link rel="canonical" href="https://other.example/canonical"></head><body><script>location='/script';</script>
+      <article>${gamingArchiveGuideText}</article></body></html>`, 'text/html'));
+    const document = await resolveGamingDocument('https://example.org/guide');
+    expect(document.acquisition?.redirectCount).toBe(0);
+    expect(document.publicUrl).toBe('https://example.org/guide');
+    expect(mockAxiosGet).toHaveBeenCalledTimes(2);
+  });
+
+  it('blocks a same-origin rebinding/mixed DNS answer on the next hop before connection', async () => {
+    mockResolve4.mockResolvedValueOnce(['93.184.216.34']).mockResolvedValueOnce(['93.184.216.34', '127.0.0.1']);
+    mockAxiosGet.mockResolvedValueOnce({ status: 302, headers: { location: '/next' }, data: '' });
+    await expect(resolveGamingDocument('https://example.org/guide')).rejects.toMatchObject({
+      code: 'URL_BLOCKED', acquisition: { subreason: 'NETWORK_DESTINATION_BLOCKED', redirectCount: 1 }
+    });
+    expect(mockAxiosGet).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects sensitive URLs before citation redaction or network acquisition', async () => {
+    await expect(resolveGamingDocument('https://example.org/guide?token=private-sentinel')).rejects.toMatchObject({ code: 'URL_BLOCKED' });
+    expect(mockResolve4).not.toHaveBeenCalled();
+    expect(mockAxiosGet).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    `${gamingArchiveGuideUrl}/page/n4/mode/2up?token=private-sentinel`,
+    'https://archive.org/download/Synthetic_Manual/guide.pdf?token=private-sentinel',
+    'http://localhost:4567/guide#token=private-sentinel'
+  ])('rejects sensitive original URLs before specialized or local canonicalization (%s)', async url => {
+    await expect(resolveGamingDocument(url)).rejects.toMatchObject({ code: 'URL_BLOCKED' });
+    expect(mockResolve4).not.toHaveBeenCalled();
     expect(mockAxiosGet).not.toHaveBeenCalled();
   });
 

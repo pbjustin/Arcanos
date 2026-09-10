@@ -94,6 +94,24 @@ describe('generic Gaming structured resources', () => {
     expect(JSON.stringify(result)).not.toContain('%7B');
   });
 
+  it('preserves the 16384-character standalone structured allowance independently of public discovery URLs', async () => {
+    const fixture = gamingStructuredResourceFixtures[0];
+    const prefix = `${fixture.jsonUrl}&document=`;
+    for (const length of [2049, GAMING_BUILD_RESOURCE_HARD_LIMITS.maxUrlChars]) {
+      const url = prefix + 'A'.repeat(length - prefix.length);
+      expect(prepareGamingResourceUrl(url)?.privateFetchUrl).toBe(url);
+      const result = await ingestGamingBuildResource({ url, requestedGame: fixture.game }, { useCache: false });
+      expect(result.validation.accepted).toBe(true);
+      expect(result.extractionStrategy).toBe('url_payload');
+      expect(result.build?.equipment?.[0].name).toBe(fixture.payload.equipment?.[0].name);
+    }
+    const oversized = prefix + 'A'.repeat(GAMING_BUILD_RESOURCE_HARD_LIMITS.maxUrlChars + 1 - prefix.length);
+    expect(prepareGamingResourceUrl(oversized)).toBeNull();
+    await expect(ingestGamingBuildResource({ url: oversized }, { useCache: false })).resolves.toMatchObject({
+      build: null, failureReason: 'STRUCTURED_PAYLOAD_TOO_LARGE'
+    });
+  });
+
   it.each([
     ['base64url', gamingStructuredResourceFixtures[0].base64Url],
     ['deflate', gamingStructuredResourceFixtures[1].deflateUrl],
