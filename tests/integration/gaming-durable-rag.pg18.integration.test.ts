@@ -211,7 +211,9 @@ describeWithDatabase('durable Gaming chunk storage and retrieval on PostgreSQL 1
     expect(changed.context).not.toContain('PML 7');
     expect(changed.evidence?.some(evidence => evidence.sourceId === sourceId && evidence.revisionId !== firstRevision)).toBe(true);
     const statuses = await databasePool.query<{ status: string }>(
-      'SELECT status FROM gaming_knowledge_records WHERE source_id = $1 ORDER BY status', [sourceId]);
+      `SELECT records.status FROM gaming_knowledge_records AS records
+       JOIN gaming_source_revisions AS revisions ON revisions.id = records.source_revision_id
+       WHERE revisions.source_id = $1 ORDER BY records.status`, [sourceId]);
     expect(statuses.rows.filter(row => row.status === 'active')).toHaveLength(firstRecordCount);
     expect(statuses.rows.filter(row => row.status === 'superseded')).toHaveLength(firstRecordCount);
     mockSourceHttpGet.mockReset(); mockSourceEnqueue.mockReset();
