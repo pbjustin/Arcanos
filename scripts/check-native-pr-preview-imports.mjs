@@ -112,6 +112,11 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/shared/gaming/gamingHybridPolicyCore.ts',
   'src/shared/gaming/gamingHybridKnowledgePreviewFixture.ts',
   'src/shared/gaming/gamingHybridContract.ts',
+  'src/shared/gaming/gamingClearPreviewFixture.ts',
+  'src/shared/gaming/gamingClearPolicy.ts',
+  'src/shared/gaming/gamingClearSource.ts',
+  'src/shared/gaming/gamingClearEvidence.ts',
+  'src/shared/gaming/gamingClearAnswerBinding.ts',
   'src/shared/gaming/gamingFreshnessCore.ts',
   'src/shared/gaming/gamingGameIdentity.ts',
   'src/shared/gaming/gamingRecoveryResponse.ts',
@@ -213,6 +218,10 @@ const FILE_SPECIFIC_EXTERNAL_RUNTIME_IMPORTS = new Map([
   ['src/start-native-pr-preview.ts', new Set(['node:http', 'node:url'])],
 ]);
 const FILE_SPECIFIC_EXTERNAL_IMPORT_BINDINGS = new Map([
+  ['src/shared/gaming/gamingClearPolicy.ts', new Map([
+    ['node:crypto', new Set(['createHash:createHash'])],
+    ['zod', new Set(['z:z'])],
+  ])],
   ['src/services/gamingDurableDocumentChunks.ts', new Map([
     ['node:crypto', new Set(['createHash:createHash'])],
     ['node:timers/promises', new Set(['setImmediate:yieldToEventLoop'])],
@@ -691,6 +700,11 @@ const CRITICAL_RUNTIME_FUNCTION_DIGESTS = new Map([
   ],
 ]);
 const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
+  ['src/shared/gaming/gamingClearPreviewFixture.ts', '3213753db01a386c1f65dd97315ab7f5b8746b14b17185a9049f4ba7c5d42713'],
+  ['src/shared/gaming/gamingClearPolicy.ts', 'adb60f38bcccfb63e34a0b51c3e1e7d264bf0b12201e90f760b2476730c472a9'],
+  ['src/shared/gaming/gamingClearSource.ts', 'fd8c910fa3a4442f4e3290bdd09049a9ce515f31834a051d3f248c46106d4d1a'],
+  ['src/shared/gaming/gamingClearEvidence.ts', 'a76a865103294305060ea33f74139d1e613855f1a1e3565b1e6836b67461a2d2'],
+  ['src/shared/gaming/gamingClearAnswerBinding.ts', '2f6d1353e2643ae471705f182415521b1a6548ca484c3e684d4920910f3d0f75'],
   ['src/shared/gaming/gamingHybridPolicyCore.ts', '6a736b5fed5909c77efe886ce3975e57bdfe59b643ea4e56cc3a62b3a81a933a'],
   ['src/shared/gaming/gamingHybridKnowledgePreviewFixture.ts', '9c9616ede433b89881c8c97eff1c622ce7357ccb33c5d2e97f4a949c9d50e3bc'],
   ['src/shared/gaming/gamingHybridContract.ts', 'b41e402c72b9a3bb4ada7293191ac77c9f9b85ddabab9c664d7686f110e7d2a9'],

@@ -196,6 +196,8 @@ export interface NativePrPreviewE2eContract {
     progressRecoveryProofVersion: 'gaming-progress-recovery/v1';
     hybridKnowledgeProofHeader: 'x-arcanos-preview-gaming-hybrid-knowledge-version';
     hybridKnowledgeProofVersion: 'gaming-hybrid-knowledge/v1';
+    clearProofHeader: 'x-arcanos-preview-gaming-clear-version';
+    clearProofVersion: 'gaming-clear/v1';
     game: 'Palworld';
     fixtures: Readonly<{
       guide: 'sealed-preview-guide';
