@@ -46,6 +46,9 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/routes/genericJobsRouter.ts',
   'src/services/gamingModes.ts',
   'src/services/gamingDocumentExtraction.ts',
+  'src/services/gamingDocumentEvidence.ts',
+  'src/services/gamingHtmlEvidence.ts',
+  'src/services/gamingJsonEvidence.ts',
   'src/services/gamingDocumentChunks.ts',
   'src/services/gamingDurableDocumentChunks.ts',
   'src/services/gamingGameDetection.ts',
@@ -97,6 +100,7 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/shared/gaming/gamingArchiveResourceCore.ts',
   'src/shared/gaming/gamingSourceAcquisitionCore.ts',
   'src/shared/gaming/gamingSourceAcquisitionPreviewFixture.ts',
+  'src/shared/gaming/gamingStructuredEvidencePreviewFixture.ts',
   'src/shared/gaming/gamingDocumentProjectionCore.ts',
   'src/shared/gaming/gamingEvidenceUnits.ts',
   'src/shared/gaming/gamingStructuralEvidence.ts',
@@ -163,7 +167,7 @@ const FORBIDDEN_LOCAL_IMPORT_PATTERNS = [
   /^src\/routes\/jobs\.ts$/u,
   /^src\/routes\/modules\.ts$/u,
   /^src\/routes\/register\.ts$/u,
-  /^src\/services\/(?!(?:(?:backstageBookerClear|directAnswerMode|gamingModes|gamingDocumentExtraction|gamingDocumentChunks|gamingDurableDocumentChunks|gamingGameDetection|gamingPublicDispatcher|publicGamingCanary|publicGamingCanaryFixture|queuedJobCompletionPolling)\.ts$|controlPlane\/(?:httpAuth|systemStateBodyParser|systemStateHttpBoundary|types)\.ts$))/u,
+  /^src\/services\/(?!(?:(?:backstageBookerClear|directAnswerMode|gamingModes|gamingDocumentExtraction|gamingDocumentEvidence|gamingHtmlEvidence|gamingJsonEvidence|gamingDocumentChunks|gamingDurableDocumentChunks|gamingGameDetection|gamingPublicDispatcher|publicGamingCanary|publicGamingCanaryFixture|queuedJobCompletionPolling)\.ts$|controlPlane\/(?:httpAuth|systemStateBodyParser|systemStateHttpBoundary|types)\.ts$))/u,
   /^src\/shared\/http\/index\.ts$/u,
   /^src\/shared\/http\/middleware\.ts$/u,
   /^src\/transport\/http\/middleware\//u,
@@ -193,6 +197,8 @@ const ALLOWED_EXTERNAL_RUNTIME_IMPORTS = new Set([
   'zod',
 ]);
 const FILE_SPECIFIC_EXTERNAL_RUNTIME_IMPORTS = new Map([
+  ['src/services/gamingHtmlEvidence.ts', new Set(['cheerio'])],
+  ['src/services/gamingJsonEvidence.ts', new Set(['cheerio'])],
   ['src/shared/gaming/gamingSourceAcquisitionCore.ts', new Set(['node:net', '@arcanos/runtime/redaction'])],
   ['src/services/gamingDurableDocumentChunks.ts', new Set(['node:timers/promises'])],
   [
@@ -223,6 +229,14 @@ const FILE_SPECIFIC_EXTERNAL_RUNTIME_IMPORTS = new Map([
   ['src/start-native-pr-preview.ts', new Set(['node:http', 'node:url'])],
 ]);
 const FILE_SPECIFIC_EXTERNAL_IMPORT_BINDINGS = new Map([
+  ['src/services/gamingHtmlEvidence.ts', new Map([
+    ['node:crypto', new Set(['createHash:createHash'])],
+    ['cheerio', new Set(['load:load'])],
+  ])],
+  ['src/services/gamingJsonEvidence.ts', new Map([
+    ['node:crypto', new Set(['createHash:createHash'])],
+    ['cheerio', new Set(['load:load'])],
+  ])],
   ['src/shared/gaming/gamingSourceAcquisitionCore.ts', new Map([
     ['node:net', new Set(['isIP:isIP'])],
     ['@arcanos/runtime/redaction', new Set(['redactString:redactString'])],
@@ -709,6 +723,10 @@ const CRITICAL_RUNTIME_FUNCTION_DIGESTS = new Map([
   ],
 ]);
 const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
+  ['src/services/gamingDocumentEvidence.ts', '2fcf36e679c8850dea53ea0b5b56a4a662b8a4a20709d5c5e74e16d524f4a82b'],
+  ['src/services/gamingHtmlEvidence.ts', 'c70e8749dc06dfbc66a9137f3d3789d8c31ca4c6c9cfd923a3c44bfa2effa827'],
+  ['src/services/gamingJsonEvidence.ts', '8f25b8b37706dfb027bbcfb176543b9f7724c67d799b2a3de57181e07d7b6509'],
+  ['src/shared/gaming/gamingStructuredEvidencePreviewFixture.ts', '22d14d1f2a04d8bd618c3c7f9c160076033106dac7217147d2b3c4f52314f516'],
   ['src/shared/gaming/gamingSourceAcquisitionCore.ts', 'ee84f5d883de2da22288b939129fec36efee510251a06b2be6d3deacf9749c77'],
   ['src/shared/gaming/gamingSourceAcquisitionPreviewFixture.ts', '1c943c7e72b7919ca99db84126517518898e414f1117873eb903f56cb52614a4'],
   ['src/shared/gaming/gamingClearPreviewFixture.ts', '82ddd79989c1c1878a17ace1976a139f9ad76de49cbefdd0c2ea65ea9c6209a7'],

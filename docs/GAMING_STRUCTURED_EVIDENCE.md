@@ -8,6 +8,22 @@ assertion without 120 characters or sentence-ending punctuation. Extraction
 does not establish source authority, current applicability, complete answer
 coverage, or permission to store.
 
+## Sealed Railway preview proof
+
+The fixed guide selector runs the actual bounded HTML/JSON extractors and shared
+structural, CLEAR, chunking and stored-evidence cores over synthetic accepted
+bodies. It preserves the existing response and request matrix, and emits
+`gaming-structured-evidence/v1` only after the complete fixture succeeds. The
+PR-head verifier requires that marker; missing or changed markers fail the probe.
+Fixture failures return a fixed error and withhold every Gaming success marker.
+
+This is deployed component evidence with in-memory records and a passive worker.
+It does not execute the normal secure fetch/resolver/hybrid wrappers, SQL writes,
+or model calls. The controlled hybrid lifecycle and disposable PostgreSQL suites
+provide separate proof of those tested boundaries. See the
+[Railway preview lifecycle](RAILWAY_DEPLOYMENT.md#configuration) for exact-head
+ownership, supplemental verification and teardown requirements.
+
 ## Historical evidence and confirmed defects
 
 The implementation base is

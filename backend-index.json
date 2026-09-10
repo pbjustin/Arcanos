@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-10T18:46:45.500Z",
+  "generatedAt": "2026-09-10T22:33:20.375Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -2732,6 +2732,9 @@
           "relativePath": "src/shared/gaming/gamingStructuralEvidence.ts"
         },
         {
+          "relativePath": "src/shared/gaming/gamingStructuredEvidencePreviewFixture.ts"
+        },
+        {
           "relativePath": "src/shared/gpt/asyncGptJob.ts"
         },
         {
@@ -4202,6 +4205,12 @@
         },
         {
           "relativePath": "tests/gaming-structure-diagnostics.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-structured-evidence-preview-failure.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-structured-evidence-preview.test.ts"
         },
         {
           "relativePath": "tests/gaming-structured-resources.test.ts"

@@ -334,6 +334,22 @@ Launcher behavior:
   canonical route races, operator authentication, evidence sealing, embedding,
   retrieval-query, or Notion-sync behavior. The hosted PostgreSQL 18 suites
   remain authoritative for partition SQL atomicity and query behavior.
+- The sealed Gaming guide request also runs the production structured-document
+  extractors over fixed synthetic accepted HTML/JSON bodies, then passes their
+  actual evidence units through structural sufficiency, source/evidence CLEAR,
+  whole-record chunking and in-memory stored-evidence selection/formatting.
+  `x-arcanos-preview-gaming-structured-evidence-version:
+  gaming-structured-evidence/v1` is emitted only after every assertion succeeds.
+  A failure returns `PREVIEW_GAMING_STRUCTURED_EVIDENCE_CONTRACT_INVALID` and
+  withholds all Gaming proof headers and the success body. The original response
+  and 138-request matrix remain compatible with the trusted main verifier; run
+  the reviewed PR-head verifier separately to require this additional marker.
+  Parser imports are semantic-digest pinned; only the HTML/JSON modules may use
+  `cheerio.load`, with no remote loader or arbitrary service admission. This
+  proves served synthetic component execution, not a live HTTP fetch, the normal
+  hybrid/provider wrappers, SQL persistence, active workers or current gameplay.
+  Controlled hybrid integration and disposable PostgreSQL CI establish their
+  tested lifecycle boundaries separately; no production credentials are used.
 - The trusted
   [Railway PR preview lifecycle workflow](../.github/workflows/railway-pr-preview-lifecycle.yml)
   owns preview creation and teardown for PRs carrying the exact

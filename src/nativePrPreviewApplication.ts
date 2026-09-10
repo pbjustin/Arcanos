@@ -13,6 +13,7 @@ import { runGamingDurableRagPreview } from './shared/gaming/gamingDurableRagPrev
 import { runGamingHybridKnowledgePreview } from './shared/gaming/gamingHybridKnowledgePreviewFixture.js';
 import { runGamingClearPreview } from './shared/gaming/gamingClearPreviewFixture.js';
 import { runGamingSourceAcquisitionPreview } from './shared/gaming/gamingSourceAcquisitionPreviewFixture.js';
+import { runGamingStructuredEvidencePreview } from './shared/gaming/gamingStructuredEvidencePreviewFixture.js';
 
 import {
   createGenericJobsRouter,
@@ -9259,6 +9260,25 @@ export function createNativePrPreviewApplication(
             );
             return;
           }
+          try {
+            await runGamingStructuredEvidencePreview();
+          } catch {
+            sendBoundedJsonResponse(
+              request,
+              response,
+              { error: 'PREVIEW_GAMING_STRUCTURED_EVIDENCE_CONTRACT_INVALID' },
+              {
+                logEvent: 'native_pr_preview.gaming_structured_evidence_invalid',
+                maxBytes: MAX_GAMING_QUERY_RESPONSE_BYTES,
+                statusCode: 500,
+              }
+            );
+            return;
+          }
+          response.setHeader(
+            NATIVE_PR_PREVIEW_GAMING_CONTRACT.structuredEvidenceProofHeader,
+            NATIVE_PR_PREVIEW_GAMING_CONTRACT.structuredEvidenceProofVersion
+          );
           response.setHeader(
             NATIVE_PR_PREVIEW_GAMING_CONTRACT.sourceAcquisitionProofHeader,
             NATIVE_PR_PREVIEW_GAMING_CONTRACT.sourceAcquisitionProofVersion
