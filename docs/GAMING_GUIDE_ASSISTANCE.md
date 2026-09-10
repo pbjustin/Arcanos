@@ -137,7 +137,7 @@ names; pronoun-only dependent passages can be missed. There is no claim of
 semantic/paraphrase recall or perfect spoiler detection. The generation policy
 must still scope the answer to the question and effective spoiler permission.
 
-There is no selected-answer cache in the Gaming/Trinity/module path. Source
+The ordinary Gaming/Trinity/module path has no selected-answer cache. The hybrid workflow has a bounded idempotency response cache, described below. Source
 document and discovery caches remain enabled. Context-dependent selection runs
 after raw cache reads, preserving per-request checkpoint/spoiler decisions and
 current stored active-revision reads. No cache is globally disabled. Telemetry
@@ -365,3 +365,237 @@ the existing server URL, authentication, and access scope, then save/update the
 GPT. If it uses the generic router Action instead, refresh from
 `contracts/custom_gpt_route.openapi.v1.json`. This repository PR does not perform
 that manual configuration change or authorize backend promotion.
+
+## Gaming CLEAR (`gaming-clear/v1`)
+
+The canonical executable rubric is
+[`gamingClearPolicy.ts`](../src/shared/gaming/gamingClearPolicy.ts). Its five
+names preserve general CLEAR. Source, evidence and answer are audit subjects,
+not alternative expansions of the acronym. The definitions below are checked
+against that code by the policy tests.
+
+| Dimension | Gaming judgment |
+| --- | --- |
+| C — Clarity | Is the information precise and understandable enough to interpret correctly? |
+| L — Leverage | How much does the material contribute to the player's actual task? |
+| E — Efficiency | Can the material be used proportionately without unnecessary noise or cost? |
+| A — Alignment | Does the material apply to this request and its meaningful constraints? |
+| R — Resilience | How well does the information remain dependable under uncertainty or change? |
+
+Clarity covers precise game/topic identity, intelligible steps, quantities and
+prerequisites, and explicit observations, recommendations, assumptions and
+material uncertainty. Polished writing does not establish truth. Missing
+platform or patch metadata is immaterial only when irrelevant to the claim.
+Leverage measures useful contribution to the player's task against each source's
+role. A patch authority may verify a balance change without supporting a full
+build. Efficiency measures relevant excerpts and usable structure, duplication,
+extraction noise, retrieval cost and requested depth; a long guide is not poor
+merely because it is long. Efficiency cannot compensate for unsupported claims.
+Alignment checks meaningful game/edition distinctions, player checkpoint,
+platform/region/difficulty, requested date/patch/season, spoiler and depth
+constraints. Missing facts are not inferred matches. Resilience checks traceable
+provenance, claim-appropriate reliability, independent corroboration,
+contradictions, superseding changes, partial extraction and honest uncertainty.
+Official sources are not sufficient for every claim; community sources are not
+automatically false; fetching an old document does not make its facts current.
+
+### Server-owned policy and decisions
+
+`gaming-clear-policy/v1` separates audit profile, question profile and source
+role. Requests and source text cannot supply policy weights, floors or approval.
+These initial hypotheses are conservative rubric judgments, not calibrated
+probabilities or accuracy percentages.
+
+| Question profile | C | L | E | A | R |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| walkthrough, explanation | .25 | .25 | .15 | .25 | .10 |
+| current_build, patch_change, live_status | .15 | .20 | .10 | .30 | .25 |
+
+| Stage | Overall minimum | C minimum | A minimum | R minimum |
+| --- | ---: | ---: | ---: | ---: |
+| Transient source use | 3.25 | 3 | 3.5 | 3 |
+| Durable source quality | 4 | 3.5 | 4 | 3.5 |
+| Evidence sufficiency | 3.5 | 3 | 4 | 3 |
+| Final answer acceptance | 4 | 3.5 | 4 | 3.5 |
+
+Required currentness raises the R floor to at least 3.5. An aggregate never
+compensates for a failed floor or a material blocking finding. Identity,
+compatibility, adequate claim support, provenance and acquisition security must
+be verified. Freshness can be not applicable for stable claims or for a source
+contributing only patch authority/currentness/corroboration; the assembled
+current evidence and answer must still independently satisfy freshness.
+All five dimensions are required in v1; dimension-level `not_applicable` is
+reserved and rejected, preventing removal of an inconvenient dimension.
+
+| Assessment and facts | Decision and consequence |
+| --- | --- |
+| Completed, all required checks and floors pass | Accept the profile's subject; source quality is not answer sufficiency. |
+| Explicit security/game/edition/patch/provenance/support conflict | Reject, regardless of aggregate. |
+| Source with only required freshness unresolved | Partial transient contribution pending evidence-level applicability; no durable quality eligibility. |
+| Missing required identity, applicability, coverage, or dimension judgment | Clarify or recover; no invented match or optimistic score. |
+| Timeout, unavailable provider, incomplete or malformed audit | `unavailable`, null dimension scores and overall; never a completed zero or pass. |
+| Fixed clarification without gameplay claims | No model audit required. |
+
+Results bind rubric/policy, profile/role, subject/content hash, request context
+fingerprint, method/status, bounded scores, codes and existing evidence IDs.
+Overall is computed server-side from strictly validated finite 0–5 numbers.
+Strings, booleans, arrays, null evaluated scores, NaN/Infinity, unknown cited IDs,
+missing dimensions and model-selected policy/overall/decision are rejected.
+Unknown facts remain explicit. Only concise findings are retained, not reviewer
+prompts, source dumps or private model reasoning. Player responses do not display
+scorecards. Structured telemetry distinguishes audit completion, audit availability,
+evidence selection, acquisition, generation and ingestion.
+
+The implementation retains the original URL, DNS/network, redirect, access,
+byte/text, timeout, instruction-filtering and source-use controls before scoring.
+No score can rescue an acquisition denial or empty extraction. A relevant intact
+partial passage may contribute transient evidence while remaining ineligible for
+durable ingestion. A reviewed source association and safely extracted game/body
+anchors can establish identity without requiring a particular guide-title shape;
+a frontend label or a source's `Game:` label alone cannot establish identity.
+Broad franchise overlap and explicit incompatible editions remain blocked.
+
+Source roles are `gameplay_guide`, `build_analysis`, `patch_authority`,
+`currentness_index`, `live_status`, `community_observation`, and `corroboration`.
+Role-appropriate contribution is scored once; publisher reputation, fetch time
+and duplicated/syndicated passages are not counted repeatedly as independent
+support. A patch note does not prove that no newer hotfix exists or that a build
+is best. Current requests use the existing freshness model's publication,
+update, fetch, verification, effective interval, patch/build/season and
+platform/region distinctions. Historical requests need matching historical
+applicability; irrelevant version fields are not required for stable walkthroughs.
+
+Storage requires durable quality **and** allowed source use **and** caller write
+permission **and** consent or authorized standing policy **and** all existing
+storage requirements. `transient_only` never writes. Actor/content/expiry/policy
+bindings and worker refetch validation remain authoritative. Queued, stored,
+unchanged, failed and rejected remain separate states. Existing metadata carries
+bounded audit provenance; legacy records stay readable without invented prior
+Gaming CLEAR scores. Question alignment and freshness are reevaluated on reads.
+Source quality is reevaluated before queuing even after an earlier acceptance.
+The worker uses bounded, integrity-bound applicability context and the existing
+freshness evaluator again before persistence, so an expired interval or currentness
+proof cannot remain authorized merely because it was valid when queued. Historical
+interval exceptions require verified matching patch evidence; no raw question or
+private reasoning is added to the approval payload.
+
+### Evidence and final-answer placement
+
+Source assessment precedes approved hybrid artifacts. Existing lexical search,
+complete-document chunk storage and retrieval budgets select relevant passages;
+the evidence profile evaluates the actual bounded selected set and its combined
+coverage. It preserves zero-result recovery, overlap exclusion and late-document
+retrieval. Complementary guides, patch authorities and currentness indexes can
+contribute different claims, but individually good sources do not establish a
+consistent or sufficient set.
+
+Gaming answer validation evaluates the actual composed substantive response,
+with the bounded evidence and player constraints available. It replaces the
+Gaming reasoning-ledger CLEAR call; general CLEAR and non-Gaming Trinity retain
+their existing behavior. A ledger score is never represented as a final-answer
+audit. Citation IDs and claim support, version/currentness, player constraints,
+spoilers, depth, useful steps and honest fallback status are part of that answer
+judgment. Returned substantive text must match the audited subject hash; changes
+to claims or citations cannot carry forward an obsolete pass. Simple-tier low
+score retention cannot bypass this Gaming gate.
+
+No repair attempt is added in v1. Material defects, insufficient evidence and
+unavailable audits use honest recovery rather than recursively requesting new
+answers. This keeps the one-round/three-candidate discovery bounds. Source and
+evidence assessments are deterministic and add zero model calls or network
+requests. Gaming uses at most one final-answer audit in place of its prior ledger
+audit; it uses the configured existing reasoning model and provider adapter,
+with no tools or browsing, transport retries fixed to zero and the existing audit deadline
+capped by the remaining aggregate request/runtime budget. No production model,
+timeout, environment variable or deployment setting is changed.
+
+The final audit permits only server-owned `STYLE_CONCISION`, `STYLE_REPETITION`
+and `STYLE_PRESENTATION` warning codes to remain nonblocking. Every other answer
+finding is blocking even if the model labels it a warning. Mandatory server
+findings override colliding model warnings. Material unresolved answer facts
+also block high scores. All model explanation fields are bounded reason codes;
+free-text reasoning is rejected by runtime validation, not merely discouraged
+by the prompt.
+
+The answer payload contains the actual answer, passages, source/revision/chunk
+IDs, applicable game/edition/patch/build/season and verification/effective-time
+metadata, and partial-extraction diagnostics. Direct context clipping retains
+complete fitting sentences within the existing context cap. Partial extraction
+requires bounded claims and material qualifications; it does not establish full
+document coverage. Freshness and context are checked immediately before auditing
+and again before delivery. Hybrid cached substantive answers also expire at the
+earliest actual proof deadline (including live status update age), even when the
+workflow itself has time remaining. Expired proof yields
+`EVIDENCE_REVALIDATION_REQUIRED` without replaying the answer, issuing additional
+model calls or resetting the discovery round.
+
+The one audit call has **1,024 maximum output tokens**, **32,000 maximum data
+characters**, **38,000 maximum total prompt characters** including trusted rubric,
+**12,000 maximum answer characters**, and a **3,000 ms ceiling** clamped to existing
+configuration and remaining runtime/request time. Over-budget input is unavailable
+rather than silently truncated or approved. The historical main Trinity invocation
+budget counts intake/reasoning, not all auxiliary calls; Gaming uses a separate
+explicit single-call audit slot and records its tokens in aggregate totals.
+Full Gaming guide generation replaces its old ledger audit with this call.
+Paths that previously omitted an audit, including direct/hybrid paths, add at most
+one call. There is no additional concurrency fan-out, retrieval round, repair,
+provider fallback expansion or timeout increase.
+
+`GAMING_ANSWER_AUDIT_UNAVAILABLE` and `GAMING_ANSWER_REJECTED` are additive bounded
+fallback reason values; genuine provider failures retain their existing reasons.
+Recovery is not reported as grounded generation. Scores remain internal; no
+new public score fields or model reasoning are exposed. Existing general CLEAR
+continues to audit ledgers using its prior result/fallback semantics. The only
+shared provider change is an optional per-call zero-retry setting whose absent
+case retains existing behavior. Three existing pure Gaming fixture digests are
+updated for reviewed code changes; the sealed preview import boundary is retained
+without importing the Gaming scoring engine or adding effects.
+
+All Gaming guide/build/meta generation uses the existing audit-content redaction
+and optional-side-effect suppression flags. This keeps reasoning-ledger content
+out of optional pattern/feedback persistence and redacts audit summaries; other
+modules retain their previous defaults.
+
+### Calibration and evidence limits
+
+The source/evidence feature mappings deliberately reserve resilience credit:
+traceable intact acquisition starts at 3.5 without claiming independent
+corroboration; partial extraction has lower resilience and no durable eligibility.
+Evidence resilience does not increase merely because copies appear on several
+URLs. Lexical coverage and structured contradiction checks are preliminary set
+judgments; final semantic support is the answer review's responsibility.
+
+The labeled [calibration corpus](../tests/fixtures/gamingClearCalibration.ts) and
+[runner](../tests/gaming-clear-calibration.test.ts) use invented documents across
+The Legend of Zelda: Ocarina of Time (static adventure), Elden Ring (action/build),
+and Star Wars: The Old Republic (live-service systems). Each profile has nine
+calibration and nine separate held-out cases. Cases include supported and
+paraphrased passages, mismatched identities/patches, missing support, and uncertain
+identity; answer labels include invented mechanics, misleading citation support,
+spoiler defects and unavailable assessment. Question-sensitive currentness has
+additional focused source, evidence, freshness and workflow fixtures.
+
+| Profile | Calibration cases | False accepts / rejects | Held-out cases | False accepts / rejects |
+| --- | ---: | --- | ---: | --- |
+| source deterministic policy | 9 | 0 / 0 | 9 | 0 / 0 |
+| evidence deterministic policy | 9 | 0 / 0 | 9 | 0 / 0 |
+| answer enforcement against supplied gold judgments | 9 | 0 / 0 | 9 | 0 / 0 |
+
+An accept means the rubric decision is `accept`; partial/inconclusive judgments
+are not counted as acceptance. The held-out split was evaluated without changing
+the proposed thresholds. These small synthetic results exercise policy behavior,
+not production recall, calibrated accuracy or live-model judgment quality. In
+particular, the answer corpus supplies semantic gold judgments; its zero false
+accepts do not demonstrate that a real model will discover those defects.
+
+The historical Elden Ring telemetry identified three outcomes, without exact URL
+provenance: identity unverified, redirect disallowed and insufficient extraction.
+Synthetic regressions show a legitimate varied title with acquired body identity
+can now pass; redirect rejection and zero usable text remain rejected before
+CLEAR. No claim is made that all three historical candidates deserved acceptance.
+CLEAR does not solve inaccessible pages, disallowed host transitions, rendering,
+missing extraction, hidden late-document facts outside selected chunks, or
+undocumented gameplay. No source refresh, production reindex, deployment, GPT
+Builder edit or live model evaluation is part of this implementation. There is no
+existing Gaming CLEAR live-evaluation harness; live evaluation was not run or
+silently enabled.

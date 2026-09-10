@@ -274,14 +274,19 @@ export interface GamingFreshnessEvaluation {
   qualification: string;
 }
 
-/** Freshness never substitutes for the caller's independent relevance/sufficiency selection. */
-export function evaluateGamingFreshness(input: GamingFreshnessEvaluationInput): GamingFreshnessEvaluation {
-  const classification = classifyGamingQuestionFreshness({ prompt: input.question, mode: input.mode, requestedVersion: input.requestedVersion });
-  // A season identity alone cannot verify balance/build claims within that season.
-  const seasonalPatchRequired = classification === 'seasonal' && classifyGamingQuestionFreshness({
+/** A season identity alone cannot verify balance/build claims within that season. */
+export function gamingSeasonalPatchRequired(input: Pick<GamingFreshnessEvaluationInput, 'question' | 'mode' | 'requestedVersion'>): boolean {
+  return classifyGamingQuestionFreshness({ prompt: input.question, mode: input.mode, requestedVersion: input.requestedVersion }) === 'seasonal'
+    && classifyGamingQuestionFreshness({
     prompt: input.question.replace(/\b(?:(?:current|latest)\s+)?(?:season(?:al)?|battle\s+pass|league)\b/giu, ' '),
     mode: input.mode, requestedVersion: input.requestedVersion
   }) === 'patch_sensitive';
+}
+
+/** Freshness never substitutes for the caller's independent relevance/sufficiency selection. */
+export function evaluateGamingFreshness(input: GamingFreshnessEvaluationInput): GamingFreshnessEvaluation {
+  const classification = classifyGamingQuestionFreshness({ prompt: input.question, mode: input.mode, requestedVersion: input.requestedVersion });
+  const seasonalPatchRequired = gamingSeasonalPatchRequired(input);
   const now = (input.now ?? new Date()).getTime();
   const result = (status: GamingFreshnessStatus, reasons: string[], selected: readonly GamingFreshnessEvidence[] = [], extra: Partial<GamingFreshnessEvaluation> = {}): GamingFreshnessEvaluation => ({
     policyVersion: GAMING_FRESHNESS_POLICY_VERSION, classification, status, usable: status === 'current',
@@ -292,7 +297,11 @@ export function evaluateGamingFreshness(input: GamingFreshnessEvaluationInput): 
   if (!Number.isFinite(now)) return result('unverified', ['INVALID_VERIFICATION_TIME']);
   if (input.evidence.length > GAMING_FRESHNESS_DEFAULTS.maxEvidence) return result('unverified', ['EVIDENCE_LIMIT_EXCEEDED']);
   if (!input.evidence.length) return result('unverified', ['NO_EVIDENCE']);
-  if (/\b(?:as\s+of|historical|previous\s+patch|old\s+patch)\b/iu.test(input.question)) return result('unverified', ['HISTORICAL_AS_OF_UNSUPPORTED']);
+  const historical = /\b(?:as\s+of|historical|previous\s+patch|old\s+patch)\b/iu.test(input.question);
+  // An explicit historical patch is a different applicability target from today's
+  // release. A date-only request still needs a reviewed version/date mapping.
+  if (historical && (!input.requestedVersion || /\bas\s+of\s+\d{4}-\d{2}-\d{2}\b/iu.test(input.question)))
+    return result('unverified', ['HISTORICAL_AS_OF_UNSUPPORTED']);
   const reasons = new Set<string>();
   const scoped = input.evidence.filter(item => {
     if (normalizeGamingGameIdentity(item.game) !== normalizeGamingGameIdentity(input.game)) { reasons.add('GAME_MISMATCH'); return false; }
@@ -306,7 +315,7 @@ export function evaluateGamingFreshness(input: GamingFreshnessEvaluationInput): 
     const until = timestamp(item.effectiveUntil);
     const published = timestamp(item.publishedAt);
     if ((from !== undefined && from > now) || (published !== undefined && published > now)) { reasons.add('NOT_YET_EFFECTIVE'); return false; }
-    if (until !== undefined && until <= now) { reasons.add('NO_LONGER_EFFECTIVE'); return false; }
+    if (!historical && until !== undefined && until <= now) { reasons.add('NO_LONGER_EFFECTIVE'); return false; }
     if (item.metadataConflict) { reasons.add('CONTRADICTORY_SOURCE_METADATA'); return false; }
     if (item.metadataUnverified) { reasons.add('APPLICABILITY_METADATA_UNVERIFIED'); return false; }
     if (item.policyVersion !== GAMING_SOURCE_POLICY_VERSION) { reasons.add('SOURCE_POLICY_REVALIDATION_REQUIRED'); return false; }
@@ -319,6 +328,26 @@ export function evaluateGamingFreshness(input: GamingFreshnessEvaluationInput): 
     return checked !== undefined && fetched !== undefined && checked <= now && fetched <= checked && now - checked <= age;
   };
   const oldestVerification = (items: readonly GamingFreshnessEvidence[]): string => new Date(Math.min(...items.map(item => timestamp(item.verifiedAt)!))).toISOString();
+  if (historical) {
+    const matching = scoped.filter(item => item.currentness !== 'current_index'
+      && item.metadataConfidence === 'content_extracted' && same(item.patch, input.requestedVersion)
+      && timestamp(item.verifiedAt) !== undefined && timestamp(item.verifiedAt)! <= now
+      && timestamp(item.fetchedAt) !== undefined && timestamp(item.fetchedAt)! <= timestamp(item.verifiedAt)!
+      && (!input.platform || item.platforms?.some(platform => same(platform, input.platform) || same(platform, 'all')))
+      && (!input.region || item.regions?.some(region => same(region, input.region) || same(region, 'all'))));
+    if (!matching.length) return result('unverified', [...reasons, 'HISTORICAL_PATCH_COVERAGE_MISSING']);
+    if (new Set(matching.flatMap(item => item.build ? [normalized(item.build)] : [])).size > 1)
+      return result('conflicting', [...reasons, 'HISTORICAL_BUILD_APPLICABILITY_CONFLICT']);
+    const claims = new Map<string, string>();
+    for (const item of matching) for (const [key, value] of Object.entries(item.mechanicValues ?? {}).slice(0, 16)) {
+      if (claims.has(key) && claims.get(key) !== value) return result('conflicting', [...reasons, 'EXPLICIT_MECHANIC_VALUE_CONFLICT']);
+      claims.set(key, value);
+    }
+    return result('current', [...reasons, 'HISTORICAL_PATCH_APPLICABILITY_VERIFIED'], matching, {
+      effectivePatch: input.requestedVersion, verifiedAsOf: oldestVerification(matching),
+      qualification: 'Applies only to the explicitly requested historical patch; this is not a claim that the patch is currently active.'
+    });
+  }
   if (classification === 'stable') {
     const usable = scoped.filter(item => recent(item, GAMING_FRESHNESS_DEFAULTS.stable));
     return usable.length ? result('current', [...reasons, 'STABLE_EVIDENCE_CHECKED'], usable, { verifiedAsOf: oldestVerification(usable) })

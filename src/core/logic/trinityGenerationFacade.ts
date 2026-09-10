@@ -310,6 +310,11 @@ export async function runTrinityGenerationFacade(
   const policyPrompt = resolveClassificationPrompt(params);
   const intentMode = resolveIntentMode(policyPrompt, params.context.runOptions ?? {});
   const runOptions = { ...(params.context.runOptions ?? {}) };
+  // Neither public request data nor another module can select Gaming audit policy.
+  if (params.input.moduleId !== 'ARCANOS:GAMING'
+    || !/^arcanos-gaming\.(?:guide|build|meta|hybrid-build|hybrid-meta)$/u.test(sourceEndpoint)) {
+    delete runOptions.gamingClearAnswerAudit;
+  }
   // The policy is internal configuration, never a field read from public request data.
   if (!resolveGamingGuideIntakePolicy({
     configuredPolicy: runOptions.gamingGuideIntakePolicy,

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-09T14:31:34.877Z",
+  "generatedAt": "2026-09-10T02:20:13.069Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -1853,6 +1853,9 @@
           "relativePath": "src/services/gamingBuildResourceSchema.ts"
         },
         {
+          "relativePath": "src/services/gamingClearAnswerAudit.ts"
+        },
+        {
           "relativePath": "src/services/gamingConfig.ts"
         },
         {
@@ -2628,6 +2631,21 @@
         },
         {
           "relativePath": "src/shared/gaming/gamingArchiveResourceCore.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingClearAnswerBinding.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingClearEvidence.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingClearPolicy.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingClearPreviewFixture.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingClearSource.ts"
         },
         {
           "relativePath": "src/shared/gaming/gamingDocumentIngestionCore.ts"
@@ -3976,6 +3994,9 @@
           "relativePath": "tests/fallback-handler.test.ts"
         },
         {
+          "relativePath": "tests/fixtures/gamingClearCalibration.ts"
+        },
+        {
           "relativePath": "tests/fixtures/openai-response-conversion.ts"
         },
         {
@@ -3998,6 +4019,30 @@
         },
         {
           "relativePath": "tests/gaming-archive-resources.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-clear-answer-audit.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-clear-calibration.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-clear-evidence.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-clear-pipeline.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-clear-policy.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-clear-preview-failure.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-clear-preview-fixture.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-clear-source.test.ts"
         },
         {
           "relativePath": "tests/gaming-document-ingestion-preview-failure.test.ts"

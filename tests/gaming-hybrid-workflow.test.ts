@@ -41,6 +41,21 @@ describe('Gaming hybrid authenticated handoff', () => {
     expect(generate).toHaveBeenCalledTimes(1);
     expect(evaluateCandidates).not.toHaveBeenCalled();
   });
+  it.each(['EU', 'US', undefined])('retains region %s through evidence assessment and generation', async region => {
+    const data = knowledge();
+    data.sources[0].freshnessMetadata = { id: 'source-1', game: query.game, url: data.sources[0].url,
+      regions: ['EU'], fetchedAt: data.sources[0].fetchedAt, verifiedAt: data.sources[0].fetchedAt,
+      metadataConfidence: 'content_extracted' };
+    const { workflow, generate } = setup(data);
+    const result = await workflow.query({ ...query, ...(region ? { region } : {}) }, context);
+    if (region === 'EU') {
+      expect(result.body.state).toBe('answer_ready');
+      expect(generate).toHaveBeenCalledWith(expect.objectContaining({ region: 'EU' }), expect.any(Object));
+    } else {
+      expect(result.body.answer).toBeUndefined();
+      expect(generate).not.toHaveBeenCalled();
+    }
+  });
   it('asks one targeted question for a known source and vague progression', async () => {
     const { workflow, generate } = setup({ ...empty, sourceKnown: true });
     const result = await workflow.query({ ...query, question: 'What next?' }, context);
@@ -56,6 +71,104 @@ describe('Gaming hybrid authenticated handoff', () => {
     const retrieve = jest.fn(async () => { throw new Error('synthetic database unavailable'); });
     const workflow = createGamingHybridWorkflow({ retrieve });
     expect(await workflow.query(query, context)).toMatchObject({ status: 503, body: { state: 'temporarily_unavailable', nextAction: 'retry_later' } });
+  });
+  it('expires a live-status workflow before replay can outlast its applicability window', async () => {
+    let clock = now;
+    const retrieve = jest.fn(async () => empty);
+    const workflow = createGamingHybridWorkflow({ retrieve, now: () => clock });
+    const liveQuery = { ...query, question: 'What is the live server status?' };
+    const first = await workflow.query(liveQuery, context);
+    clock += 59_999;
+    expect((await workflow.query(liveQuery, context)).body.workflowId).toBe(first.body.workflowId);
+    expect(retrieve).toHaveBeenCalledTimes(1);
+    clock += 1;
+    expect((await workflow.query(liveQuery, context)).body.workflowId).not.toBe(first.body.workflowId);
+    expect(retrieve).toHaveBeenCalledTimes(2);
+  });
+  it('CLEAR evidence judgment blocks generation when retained good sources lack combined question coverage', async () => {
+    const data = knowledge();
+    const { workflow, generate } = setup(data);
+    const result = await workflow.query({ ...query, question: 'Where are the sapphire compass and violet tablet?' }, context);
+    expect(result.body).toMatchObject({ state: 'discovery_required', nextAction: 'search', evidenceSelected: false,
+      reason: 'QUESTION_COVERAGE_INSUFFICIENT', discovery: { maxRounds: 1, maxCandidates: 3 } });
+    expect(generate).not.toHaveBeenCalled();
+  });
+  it('cached substantive answers expire with the actual proof age, without another discovery round or generation', async () => {
+    let clock = now;
+    const data = knowledge();
+    data.sources[0].fetchedAt = new Date(now - (30 * 24 * 60 * 60 * 1_000) + 1_000).toISOString();
+    const { generate } = setup();
+    const retrieve = jest.fn(async () => data);
+    const workflow = createGamingHybridWorkflow({ retrieve, generate, now: () => clock });
+    const first = await workflow.query(query, context);
+    expect(first.body.state).toBe('answer_ready');
+    clock += 1_000;
+    const expired = await workflow.query(query, context);
+    expect(expired).toMatchObject({ status: 409, body: { reason: 'EVIDENCE_REVALIDATION_REQUIRED', nextAction: 'stop', sourceKnown: true } });
+    expect(expired.body.answer).toBeUndefined();
+    expect(retrieve).toHaveBeenCalledTimes(1);
+    expect(generate).toHaveBeenCalledTimes(1);
+  });
+  it('withholds a newly generated answer if its applicability proof expired during generation', async () => {
+    let clock = now;
+    const data = knowledge();
+    data.sources[0].fetchedAt = new Date(now - (30 * 24 * 60 * 60 * 1_000) + 1_000).toISOString();
+    const { generate } = setup();
+    const workflow = createGamingHybridWorkflow({ retrieve: async () => data, now: () => clock,
+      generate: async (request, prepared) => { clock += 1_000; return generate(request, prepared); } });
+    const result = await workflow.query(query, context);
+    expect(result.status).toBe(409);
+    expect(result.body.answer).toBeUndefined();
+    expect(generate).toHaveBeenCalledTimes(1);
+  });
+  it('does not attach an expired earlier answer when an ingestion operation throws', async () => {
+    let clock = now;
+    const checked = new Date(now - (30 * 24 * 60 * 60 * 1_000) + 1_000).toISOString();
+    const candidateId = '10000000-0000-4000-8000-000000000001';
+    const data = knowledge();
+    const { generate } = setup();
+    const workflow = createGamingHybridWorkflow({ now: () => clock, retrieve: async () => empty, generate,
+      evaluateCandidates: async () => ({ decisions: [], knowledge: data, accepted: [{ candidateId, document: { text: '' },
+        freshness: { id: candidateId, game: query.game, url: data.sources[0].url, fetchedAt: checked, verifiedAt: checked } }] } as any),
+      ingest: async () => { clock += 1_000; throw new Error('Synthetic ingestion failure'); } });
+    const first = await workflow.query({ ...query, storagePolicy: 'ask_before_store' }, context);
+    const accepted = await workflow.candidates({ contractVersion, workflowId: first.body.workflowId,
+      idempotencyKey: 'expiring-candidate-1', candidates: [{ url: data.sources[0].url }] }, context);
+    expect(accepted.body.state).toBe('answer_ready');
+    const failed = await workflow.ingest({ contractVersion, workflowId: first.body.workflowId, idempotencyKey: 'expiring-storage-1',
+      candidateIds: [candidateId], storagePolicy: 'ask_before_store', confirmStore: true }, context);
+    expect(failed).toMatchObject({ status: 409, body: { reason: 'EVIDENCE_REVALIDATION_REQUIRED' } });
+    expect(failed.body.answer).toBeUndefined();
+  });
+  it.each(['patch_sensitive', 'live_status'] as const)('cached %s proof expires by its checked time', async category => {
+    let clock = now;
+    const age = category === 'live_status' ? 60_000 : 6 * 60 * 60_000;
+    const checked = new Date(now - age + 1_000).toISOString();
+    const data = knowledge();
+    const question = category === 'live_status' ? 'What is the current server status?' : 'What changed for the copper gate in the patch?';
+    const sourceText = category === 'live_status' ? 'The current server status is online with normal access to this synthetic game.' : 'The copper gate now requires a carved key after the documented patch change.';
+    const metadata = { id: 'source-1', url: data.sources[0].url, game: query.game, policyVersion: 'gaming-hybrid-source-policy-v1',
+      category: category === 'live_status' ? 'official_status' : 'official_updates', authority: 'official',
+      currentness: category === 'live_status' ? 'live_status' : 'article', metadataConfidence: 'content_extracted',
+      fetchedAt: checked, verifiedAt: checked, sourceUpdatedAt: checked, patch: '2.1', effectiveFrom: new Date(now - age - 1000).toISOString() };
+    data.sources[0].freshnessMetadata = metadata;
+    data.sources[0].snippet = sourceText;
+    data.evidence![0].text = sourceText;
+    if (category === 'patch_sensitive') {
+      data.sources.push({ ...data.sources[0], sourceId: 'index-1', url: 'https://example.com/index',
+        freshnessMetadata: { ...metadata, id: 'index-1', url: 'https://example.com/index', currentness: 'current_index', currentPatch: '2.1' } });
+      data.evidence!.push({ ...data.evidence![0], sourceId: 'index-1', recordId: 'index:verification', publicUrl: 'https://example.com/index',
+        text: 'The current official patch index identifies active patch 2.1.' });
+    }
+    const { generate } = setup();
+    const workflow = createGamingHybridWorkflow({ retrieve: async () => data, generate, now: () => clock });
+    const request = { ...query, question };
+    expect((await workflow.query(request, context)).body.state).toBe('answer_ready');
+    clock += 1_000;
+    const expired = await workflow.query(request, context);
+    expect(expired).toMatchObject({ status: 409, body: { reason: 'EVIDENCE_REVALIDATION_REQUIRED' } });
+    expect(expired.body.answer).toBeUndefined();
+    expect(generate).toHaveBeenCalledTimes(1);
   });
   it('allows same-key recovery after a database outage without losing payload binding', async () => {
     let available = false;

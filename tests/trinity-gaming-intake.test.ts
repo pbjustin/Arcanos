@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { buildGamingGuideIntakeContract, GAMING_HYBRID_INTAKE } from '../src/shared/gaming/gamingGuideIntakeCore.js';
+import { createGamingClearAssessment, gamingClearContextFingerprint, gamingClearHash } from '../src/shared/gaming/gamingClearPolicy.js';
+import type { TrinityRunOptions } from '../src/core/logic/trinityTypes.js';
 
 const responsesCreate = jest.fn();
 const runStructuredReasoning = jest.fn();
@@ -113,6 +115,45 @@ describe('Gaming compact Trinity intake through the real Responses adapter', () 
     }) });
   });
 
+  it.each(['accept', 'reject', 'unavailable'] as const)('replaces ledger CLEAR with one actual final-answer review for %s, including simple tier', async decision => {
+    responsesCreate.mockResolvedValueOnce(response('Question: next step. Evidence [1].')).mockResolvedValueOnce(response(finalAnswer));
+    const requestInput = request();
+    const audit = jest.fn(async (text: string) => ({ assessment: createGamingClearAssessment({
+      profile: 'answer', questionProfile: 'walkthrough', subjectId: 'answer-test', subjectHash: gamingClearHash(text),
+      contextFingerprint: gamingClearContextFingerprint('gaming-test'), evidenceRefs: ['record-6'],
+      gates: { identity: 'verified', security: 'verified', compatibility: 'verified', provenance: 'verified', claimSupport: 'verified', freshness: 'not_applicable' },
+      assessmentStatus: decision === 'unavailable' ? 'unavailable' : 'completed',
+      dimensions: Object.fromEntries(['clarity', 'leverage', 'efficiency', 'alignment', 'resilience'].map(name => [name,
+        { status: 'evaluated', score: 4.5, reasonCodes: ['SUPPORTED'], evidenceRefs: ['record-6'], unresolvedFacts: [] }
+      ])) as Parameters<typeof createGamingClearAssessment>[0]['dimensions'],
+      findings: decision === 'reject' ? [{ code: 'UNSUPPORTED_MECHANIC', severity: 'blocking', evidenceRefs: ['record-6'] }] : []
+    }), usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 } }));
+    (requestInput.context.runOptions as TrinityRunOptions).gamingClearAnswerAudit = audit;
+    const result = await runTrinityWritingPipeline(requestInput);
+    expect(audit).toHaveBeenCalledTimes(1);
+    expect(audit.mock.calls[0][0]).toBe(finalAnswer);
+    expect(audit.mock.invocationCallOrder[0]).toBeGreaterThan(responsesCreate.mock.invocationCallOrder[1]);
+    expect(createGPT5Reasoning).not.toHaveBeenCalled();
+    expect(responsesCreate).toHaveBeenCalledTimes(2);
+    expect(result.clearAudit).toBeUndefined();
+    expect(result.confidence).toBeUndefined();
+    expect(result.gamingClearAudit?.decision).toBe(decision);
+    expect(result.gamingClearAudit?.subjectHash).toBe(gamingClearHash(result.result));
+    expect(result.tierInfo?.escalated).toBe(false);
+    if (decision !== 'accept') expect(result.auditSafe.auditFlags).toContain('GAMING_FINAL_ANSWER_NOT_ACCEPTED');
+  });
+
+  it('forwards Gaming-only zero transport retries without changing ordinary provider defaults', async () => {
+    const { createSingleChatCompletion } = await import('../src/services/openai/chatFallbacks.js');
+    responsesCreate.mockResolvedValue(response('{}'));
+    await createSingleChatCompletion(client, { model: 'gpt-5.1', messages: [{ role: 'user', content: 'Synthetic audit' }],
+      max_completion_tokens: 128, maxRetries: 0, redactErrorDetails: true });
+    expect(responsesCreate.mock.calls[0][1]).toMatchObject({ maxRetries: 0 });
+    expect(responsesCreate.mock.calls[0][0]).toMatchObject({ store: false });
+    await createSingleChatCompletion(client, { model: 'gpt-5.1', messages: [{ role: 'user', content: 'Synthetic ordinary request' }], max_completion_tokens: 128 });
+    expect(responsesCreate.mock.calls[1][1]).not.toHaveProperty('maxRetries');
+  });
+
   it('reproduces the historical settled 500-token truncation with the ordinary intake contract', async () => {
     responsesCreate.mockResolvedValue(response('PRIVATE unfinished walkthrough', true));
     await expect(runIntakeStage(
@@ -171,6 +212,18 @@ describe('Gaming compact Trinity intake through the real Responses adapter', () 
     expect(JSON.stringify(responsesCreate.mock.calls[1]?.[0])).toContain(syntheticEvidence);
     expect(result.result).toBe(finalAnswer);
     expect(storePattern).not.toHaveBeenCalled();
+  });
+
+  it.each(['guide', 'build', 'meta'])('honors Gaming %s audit redaction and disables optional reasoning persistence', async mode => {
+    responsesCreate.mockResolvedValue(response(finalAnswer));
+    const input = request();
+    input.input.sourceEndpoint = `arcanos-gaming.${mode}`;
+    input.input.body = { ...input.input.body, mode };
+    if (mode === 'build') (input.context.runOptions as TrinityRunOptions).answerMode = 'direct';
+    const result = await runTrinityWritingPipeline(input);
+    expect(result.auditSafe.auditFlags).toContain('SENSITIVE_CONTEXT_AUDIT_CONTENT_REDACTED');
+    expect(storePattern).not.toHaveBeenCalled();
+    expect(recordFeedback).not.toHaveBeenCalled();
   });
 
   it.each([

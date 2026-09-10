@@ -1406,6 +1406,23 @@ describe('native PR preview import boundary', () => {
     }
   });
 
+  it('pins the pure Gaming CLEAR decisions without admitting their effectful service graph', async () => {
+    for (const name of ['gamingClearPreviewFixture', 'gamingClearPolicy', 'gamingClearSource', 'gamingClearEvidence', 'gamingClearAnswerBinding']) {
+      const filePath = `src/shared/gaming/${name}.ts`;
+      expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).toContain(filePath);
+      const sourceText = await readFile(new URL(`../${filePath}`, import.meta.url), 'utf8');
+      expect(findUnsafeRuntimeSyntax(filePath, sourceText)).toEqual([]);
+      expect(findUnsafeRuntimeSyntax(filePath, `${sourceText}\nexport const unreviewedPolicyChange = true;`)).toEqual(
+        expect.arrayContaining([expect.stringContaining('critical entry file semantic digest')])
+      );
+    }
+    for (const filePath of ['src/services/gamingClearAnswerAudit.ts', 'src/services/gamingHybridKnowledge.ts',
+      'src/services/gamingHybridCandidates.ts', 'src/services/gamingDocumentResolution.ts',
+      'src/services/gamingPipeline.ts', 'src/services/gamingSourceIngestion.ts', 'src/core/logic/trinity.ts']) {
+      expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toContain(filePath);
+    }
+  });
+
   it('pins the Research drain wrapper and its narrow request-abort runtime', async () => {
     expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).toEqual(
       expect.arrayContaining([

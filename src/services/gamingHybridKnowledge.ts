@@ -8,8 +8,9 @@ import { GAMING_HYBRID_CONTRACT_VERSION, GAMING_HYBRID_LIMITS as LIMITS,
 import { resolveGamingPlayerContext, validateGamingPlayerContextInput } from '@shared/gaming/gamingPlayerContext.js';
 import { assessGamingProgressionRequest } from '@shared/gaming/gamingProgressionPolicy.js';
 import { buildGamingRecoveryResponse } from '@shared/gaming/gamingRecoveryResponse.js';
-import { assessGamingSourcePolicy, classifyGamingQuestionFreshness, evaluateGamingFreshness, type GamingFreshnessEvidence } from '@shared/gaming/gamingFreshnessCore.js';
+import { assessGamingSourcePolicy, classifyGamingQuestionFreshness, evaluateGamingFreshness, GAMING_FRESHNESS_DEFAULTS, type GamingFreshnessEvidence } from '@shared/gaming/gamingFreshnessCore.js';
 import { resolveGamingHybridCandidateAttempt, projectGamingHybridCandidateRetention } from '@shared/gaming/gamingHybridPolicyCore.js';
+import { assessGamingClearEvidence } from '@shared/gaming/gamingClearEvidence.js';
 import { buildStoredGamingKnowledgeContext, type GamingSourceGatewayContext } from './gamingSourceIngestion.js';
 import { formatStoredGamingEvidence, type GamingStoredKnowledgeContext } from './gamingStoredKnowledge.js';
 import type { runGameplayPipeline, GamingPipelineInput } from './gamingPipeline.js';
@@ -33,6 +34,8 @@ type Workflow = {
   candidateOperationKey?: string;
   candidateSubmission?: { key: string; knowledge: GamingStoredKnowledgeContext; decisions: GamingHybridResponse['candidates']; freshness: GamingFreshnessEvidence[] };
   answer?: GamingHybridResponse['answer'];
+  /** Earliest expiry of the actual applicability proof, not the workflow creation time. */
+  evidenceExpiresAt?: number;
 };
 const hash = (value: unknown): string => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 
@@ -56,7 +59,11 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
   const queries = new Map<string, { workflowId: string; operation: Operation }>();
   const rates = new Map<string, { start: number; count: number }>();
   function prune() {
-    for (const [id, workflow] of workflows) if (deps.now() - workflow.createdAt >= LIMITS.workflowTtlMs) workflows.delete(id);
+    for (const [id, workflow] of workflows) {
+      const freshnessClass = classifyGamingQuestionFreshness(workflow.pipeline);
+      const ttl = Math.min(LIMITS.workflowTtlMs, GAMING_FRESHNESS_DEFAULTS[freshnessClass]);
+      if (deps.now() - workflow.createdAt >= ttl) workflows.delete(id);
+    }
     for (const [id, query] of queries) if (!workflows.has(query.workflowId)) queries.delete(id);
     for (const [id, rate] of rates) if (deps.now() - rate.start >= LIMITS.rateWindowMs) rates.delete(id);
   }
@@ -67,6 +74,15 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
   }
   function failure(context: GamingHybridCallContext, reason: string, status: number, workflow?: Workflow): GamingHybridResult {
     return { status, body: { ...base(context, workflow), reason, nextAction: status >= 500 || status === 429 ? 'retry_later' : 'stop' } };
+  }
+  function currentResponse(context: GamingHybridCallContext, workflow: Workflow, result: GamingHybridResult): GamingHybridResult {
+    if (result.body.answer && workflow.evidenceExpiresAt !== undefined && deps.now() >= workflow.evidenceExpiresAt) {
+      workflow.answer = undefined;
+      const expired = failure(context, 'EVIDENCE_REVALIDATION_REQUIRED', 409, workflow);
+      expired.body.sourceKnown = result.body.sourceKnown;
+      return expired;
+    }
+    return result;
   }
   function admit(context: GamingHybridCallContext): GamingHybridResult | undefined {
     prune();
@@ -84,7 +100,7 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
   async function protect(context: GamingHybridCallContext, workflow: Workflow, work: () => Promise<GamingHybridResult>): Promise<GamingHybridResult> {
     try {
       context.signal?.throwIfAborted();
-      const result = await work();
+      const result = currentResponse(context, workflow, await work());
       workflow.last = result.body;
       if (result.body.answer) workflow.answer = result.body.answer;
       logger.info('gaming.hybrid.handoff', { requestId: result.body.requestId, workflowId: workflow.id,
@@ -96,7 +112,7 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
       // Deliberately no raw exception, question, URL, document, or model reasoning.
       const failed = failure(context, 'SERVICE_UNAVAILABLE', 503, workflow);
       if (workflow.answer) failed.body.answer = workflow.answer;
-      return failed;
+      return currentResponse(context, workflow, failed);
     }
   }
   function searchQueries(workflow: Workflow): string[] {
@@ -155,6 +171,16 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
       evidence, now: new Date(deps.now()) });
     const selected = new Set(freshness.selectedEvidenceIds);
     if (freshness.usable) {
+      const historical = Boolean(input.requestedVersion && /\b(?:as\s+of|historical|previous\s+patch|old\s+patch)\b/iu.test(input.question));
+      const selectedProof = evidence.filter(item => selected.has(item.id));
+      const timeProof = historical ? [] : selectedProof.filter(item => freshness.classification === 'stable'
+        || freshness.classification === 'live_status' || item.currentness === 'current_index');
+      const deadlines = timeProof.flatMap(item => [Date.parse(item.verifiedAt ?? '') + GAMING_FRESHNESS_DEFAULTS[freshness.classification],
+        ...(freshness.classification === 'live_status' ? [Date.parse(item.sourceUpdatedAt ?? '') + GAMING_FRESHNESS_DEFAULTS.live_status] : [])]);
+      if (!historical) deadlines.push(...selectedProof.flatMap(item => item.effectiveUntil ? [Date.parse(item.effectiveUntil)] : []));
+      workflow.evidenceExpiresAt = Math.min(workflow.createdAt + LIMITS.workflowTtlMs, ...deadlines.filter(Number.isFinite));
+    }
+    if (freshness.usable) {
       const index = acceptedCandidates.find(item => item.freshness.currentness === 'current_index' && selected.has(item.candidateId));
       if (index) {
         const snippet = [
@@ -184,6 +210,8 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
       return source && selected.has(source.sourceId) ? [{ evidence: chunk, source }] : [];
     });
     const qualification = [freshness.qualification,
+      knowledge.sources.some(source => source.clearSourceAssessment?.findings.some(finding => finding.code === 'EXTRACTION_PARTIAL'))
+        ? 'Some sources were only partially extracted. Use only the intact cited passages and state material coverage limits.' : '',
       freshness.verifiedAsOf ? `Last backend verification: ${freshness.verifiedAsOf}.` : '',
       freshness.effectivePatch ? `Applicable update: ${freshness.effectivePatch}.` : '',
       freshness.effectiveBuild ? `Applicable hotfix/build: ${freshness.effectiveBuild}.` : '',
@@ -192,6 +220,16 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
     ].filter(Boolean).join(' ').slice(0, 1_000);
     const usable = formatStoredGamingEvidence(candidates, { spoilerMode: workflow.pipeline.spoilerMode,
       maxContextChars: Math.max(0, getGamingWebContextMaxChars() - qualification.length - 2) });
+    // Keep the selected set's backend applicability facts beside its passages so
+    // the final pipeline can independently bind and reassess the same evidence.
+    for (const source of usable.sources) {
+      const metadata = evidence.find(item => item.id === source.sourceId || item.url === source.url);
+      if (metadata) {
+        source.game = metadata.game;
+        source.freshnessMetadata = { ...metadata };
+        if (metadata.edition) source.edition = metadata.edition;
+      }
+    }
     const gameplaySelected = usable.evidence?.some(chunk => !chunk.recordId.endsWith(':verification')) === true;
     body = { ...body, evidenceSelected: gameplaySelected, freshnessStatus: freshness.status,
       ...(freshness.verifiedAsOf ? { verifiedAsOf: freshness.verifiedAsOf } : {}),
@@ -199,8 +237,30 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
       ...(freshness.effectiveBuild ? { effectiveBuild: freshness.effectiveBuild } : {}), qualification };
     if (!freshness.usable || !gameplaySelected) return discovery(context, workflow,
       { ...body, reason: !knowledge.evidence?.length ? 'COVERAGE_INSUFFICIENT' : freshness.reasons[0] ?? 'CURRENT_APPLICABILITY_UNVERIFIED' });
-    const generated = await deps.generate(workflow.pipeline, { knowledge: { ...usable, sourceKnown: body.sourceKnown },
-      current: freshness.usable, qualification });
+    // Quality of individual documents is insufficient: judge the actual retained
+    // set after freshness exclusions and the existing context/chunk budgets.
+    const clearStartedAt = deps.now();
+    const clearEvidenceAssessment = assessGamingClearEvidence({ ...workflow.pipeline, game: input.game }, usable, {
+      freshness, freshnessEvidence: evidence.filter(item => selected.has(item.id)),
+      identityVerified: true, actorScopeHash: workflow.actor, now: new Date(deps.now())
+    });
+    logger.info('gaming.clear.evidence.completed', {
+      requestId: context.requestId, workflowId: workflow.id,
+      rubricVersion: clearEvidenceAssessment.rubricVersion, profile: clearEvidenceAssessment.profile,
+      policyProfile: clearEvidenceAssessment.policyProfile, subjectHash: clearEvidenceAssessment.subjectHash,
+      assessmentMethod: clearEvidenceAssessment.assessmentMethod, assessmentStatus: clearEvidenceAssessment.assessmentStatus,
+      dimensionScores: Object.fromEntries(Object.entries(clearEvidenceAssessment.dimensionScores).map(([key, value]) => [key, value.score])),
+      overall: clearEvidenceAssessment.overall, decision: clearEvidenceAssessment.decision,
+      reasonCodes: clearEvidenceAssessment.findings.map(finding => finding.code), blockingFindingCount: clearEvidenceAssessment.blockingFindings.length,
+      elapsedMs: deps.now() - clearStartedAt, budgetOutcome: 'within_existing_selection_budget'
+    });
+    if (clearEvidenceAssessment.decision !== 'accept') return discovery(context, workflow, {
+      ...body, evidenceSelected: false, reason: clearEvidenceAssessment.blockingFindings[0]?.code ?? 'COVERAGE_INSUFFICIENT'
+    });
+    usable.clearEvidenceAssessment = clearEvidenceAssessment;
+    const preparedKnowledge = { knowledge: { ...usable, sourceKnown: body.sourceKnown },
+      current: freshness.usable, qualification, actorScopeHash: workflow.actor };
+    const generated = await deps.generate(workflow.pipeline, preparedKnowledge);
     if (generated.data.fallbackReason || generated.data.grounding?.groundingStatus !== 'grounded'
       || !generated.data.response.trim() || generated.data.response.length > 18_000) {
       return { status: 503, body: { ...body, reason: 'GENERATION_UNAVAILABLE' } };
@@ -215,7 +275,7 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
     const digest = hash(payload);
     const existing = workflow.operations.get(key);
     if (existing?.hash !== undefined && existing.hash !== digest) return Promise.resolve(failure(context, 'IDEMPOTENCY_CONFLICT', 409, workflow));
-    if (existing && !existing.retryable) return existing.promise;
+    if (existing && !existing.retryable) return existing.promise.then(result => currentResponse(context, workflow, result));
     if (workflow.operations.size >= 6) return Promise.resolve(failure(context, 'SUBMISSION_LIMIT_REACHED', 429, workflow));
     const promise = Promise.resolve().then(() => protect(context, workflow, work)).then(result => {
       if (result.status >= 500 || result.status === 429) {
@@ -239,7 +299,10 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
       const prior = queries.get(key);
       if (prior) {
         if (prior.operation.hash !== hash(input)) return failure(context, 'IDEMPOTENCY_CONFLICT', 409);
-        if (!prior.operation.retryable) return prior.operation.promise;
+        if (!prior.operation.retryable) return prior.operation.promise.then(result => {
+          const workflow = workflows.get(prior.workflowId);
+          return workflow ? currentResponse(context, workflow, result) : failure(context, 'WORKFLOW_UNAVAILABLE', 404);
+        });
         workflows.delete(prior.workflowId);
       }
       const actor = hash(context.actorKey);
@@ -247,7 +310,7 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
         return failure(context, 'WORKFLOW_CAPACITY_REACHED', 429);
       const workflow: Workflow = { id: randomUUID(), actor, createdAt: deps.now(), input, round: 0, accepted: [], operations: new Map(),
         pipeline: { ...resolveGamingPlayerContext(input, input.question), game: input.game, prompt: input.question,
-          mode: input.mode, requestedVersion: input.requestedVersion, guideUrls: [], auditEnabled: false } };
+          mode: input.mode, requestedVersion: input.requestedVersion, region: input.region, guideUrls: [], auditEnabled: false } };
       workflows.set(workflow.id, workflow);
       const promise = protect(context, workflow, async () => {
         workflow.knowledge = await deps.retrieve({ ...workflow.pipeline, game: input.game, failOnUnavailable: true, hybridRetrieval: true, signal: context.signal });
