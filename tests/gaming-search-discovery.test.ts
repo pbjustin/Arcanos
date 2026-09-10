@@ -25,6 +25,7 @@ const {
   buildGamingDiscoveryQuery,
   clearGamingDiscoveryCache,
   discoverGamingSources,
+  GAMING_SOURCE_ADMISSION_POLICY_VERSION,
   sanitizeGamingDiscoveryCandidateUrl
 } = await import('../src/services/gamingSourceDiscovery.js');
 
@@ -130,6 +131,79 @@ describe('gaming open-web source discovery', () => {
       url: 'https://example.com/guides/railway-empire-beginner-guide',
       rejected: false
     });
+  });
+
+  it('preserves the submitted www hostname, path case, and meaningful ordered query values', () => {
+    const url = 'https://www.guides.example/Prism/Article%2FAlpha?locale=en-GB&q=Variant%20A&part=B&part=A&source=manual&campaign=Story';
+    expect(sanitizeGamingDiscoveryCandidateUrl(`${url}#section-2`)).toEqual({ url, rejected: false });
+    expect(sanitizeGamingDiscoveryCandidateUrl(`${url}&utm_source=newsletter&fbclid=analytics`))
+      .toEqual({ url, rejected: false });
+  });
+
+  it('removes only named analytics parameters without rewriting retained query encodings', () => {
+    expect(sanitizeGamingDiscoveryCandidateUrl(
+      'https://guide.example/article?term=A%20B&ref_src=Manual&term=A+B&utm_source=mail&marker=~%2f&ref_url=Appendix'
+    )).toEqual({
+      url: 'https://guide.example/article?term=A%20B&ref_src=Manual&term=A+B&marker=~%2f&ref_url=Appendix', rejected: false
+    });
+  });
+
+  it.each([
+    ['https://www.guide.example.:443/Article%2FOne?title=MiXeD', 'https://www.guide.example./Article%2FOne?title=MiXeD'],
+    ['https://bücher.example/Guide?locale=de', 'https://xn--bcher-kva.example/Guide?locale=de'],
+    ['https://guide.example/a//b?chapter=Two&chapter=One', 'https://guide.example/a//b?chapter=Two&chapter=One'],
+    ['https://forum.example/topics/guide?id=17', 'https://forum.example/topics/guide?id=17']
+  ])('keeps parser-defined public identity for %s', (url, expected) => {
+    expect(sanitizeGamingDiscoveryCandidateUrl(url)).toEqual({ url: expected, rejected: false });
+  });
+
+  it.each([
+    ['invalid_url', 'security', 'not-a-url'],
+    ['invalid_url', 'security', 'https://guide.example/a\nb'],
+    ['invalid_url', 'security', 'https://guide.example/\\login'],
+    ['invalid_url', 'security', 'https://guide.example/%ZZ'],
+    ['url_too_long', 'source_policy', `https://guide.example/${'a'.repeat(2_048)}`],
+    ['unsupported_scheme', 'security', 'file:///guide.txt'],
+    ['credentials', 'security', 'https://user:pass@guide.example/article'],
+    ['sensitive_url_material', 'security', 'https://guide.example/article?access_token=opaque'],
+    ['sensitive_url_material', 'security', 'https://guide.example/article?apiKey=opaque'],
+    ['sensitive_url_material', 'security', 'https://guide.example/article?sessionId=opaque'],
+    ['sensitive_url_material', 'security', 'https://guide.example/token/opaque/article'],
+    ['sensitive_url_material', 'security', 'https://guide.example/article#access_token=opaque'],
+    ['sensitive_url_material', 'security', 'https://guide.example/article?utm_source=ghp_abcdefghijklmnop'],
+    ['forbidden_port', 'security', 'https://guide.example:444/article'],
+    ['private_reserved_destination', 'security', 'https://127.0.0.1/guide'],
+    ['private_reserved_destination', 'security', 'https://2130706433/guide'],
+    ['private_reserved_destination', 'security', 'https://0x7f000001/guide'],
+    ['private_reserved_destination', 'security', 'https://0177.0.0.1/guide'],
+    ['private_reserved_destination', 'security', 'https://[::ffff:127.0.0.1]/guide'],
+    ['private_reserved_destination', 'security', 'https://[2001:db8::1]/guide'],
+    ['unsupported_document_type', 'source_policy', 'https://guide.example/article.%70df'],
+    ['account_path', 'source_policy', 'https://guide.example/%6Cogin/article'],
+    ['search_results', 'source_policy', 'https://guide.example/search?q=guide'],
+    ['search_results', 'source_policy', 'https://guide.example/?q=guide'],
+    ['search_results', 'source_policy', 'https://guide.example/index.php?query=guide'],
+    ['shortened_url', 'source_policy', 'https://bit.ly/guide'],
+    ['source_category_excluded', 'source_policy', 'https://youtube.com/watch?v=guide'],
+    ['source_category_excluded', 'source_policy', 'https://content-farm.example/guide'],
+    ['tracking_limit', 'source_policy', 'https://guide.example/article?utm_a=1&utm_b=2&utm_c=3&gclid=4&fbclid=5'],
+    ['query_parameter_limit', 'source_policy', `https://guide.example/article?${Array.from({ length: 11 }, (_, i) => `part=${i}`).join('&')}`]
+  ])('returns only bounded %s diagnostics for a %s prohibition', (subreason, category, url) => {
+    const result = sanitizeGamingDiscoveryCandidateUrl(url);
+    expect(result).toEqual({ rejected: true, rejection: {
+      category, subreason, ruleId: `gaming.url.${subreason}`, policyVersion: GAMING_SOURCE_ADMISSION_POLICY_VERSION
+    } });
+    expect(JSON.stringify(result)).not.toContain(url);
+  });
+
+  it('distinguishes configured allowlist and explicit deny rules without trusting deceptive suffixes', () => {
+    process.env.ARCANOS_GAMING_DISCOVERY_DOMAIN_ALLOWLIST = 'guide.example';
+    expect(sanitizeGamingDiscoveryCandidateUrl('https://guide.example.attacker.test/article').rejection)
+      .toMatchObject({ category: 'source_policy', subreason: 'outside_domain_allowlist' });
+    expect(sanitizeGamingDiscoveryCandidateUrl('https://www.guide.example/article').rejected).toBe(false);
+    process.env.ARCANOS_GAMING_DISCOVERY_DOMAIN_BLOCKLIST = 'www.guide.example';
+    expect(sanitizeGamingDiscoveryCandidateUrl('https://www.guide.example/article').rejection)
+      .toMatchObject({ category: 'source_policy', subreason: 'domain_deny_rule' });
   });
 
   it('constructs a short deterministic query without prompt instructions, URLs, or private contact text', () => {
@@ -299,7 +373,7 @@ describe('gaming open-web source discovery', () => {
         providerRank: 2
       }),
       makeResult({
-        url: 'https://www.moonring.community/guides/progression?id=7',
+        url: 'https://moonring.community/guides/progression?id=7',
         providerRank: 1
       })
     ]);
@@ -309,6 +383,21 @@ describe('gaming open-web source discovery', () => {
     expect(result.candidates).toHaveLength(1);
     expect(result.candidates[0]?.url).toBe('https://moonring.community/guides/progression?id=7');
     expect(result.rejectedCandidateCount).toBe(1);
+  });
+
+  it('does not deduplicate unverified apex/www aliases or case-sensitive resource identities', async () => {
+    process.env.ARCANOS_GAMING_DISCOVERY_MIN_CANDIDATE_SCORE = '0';
+    process.env.ARCANOS_GAMING_DISCOVERY_FETCH_CANDIDATE_LIMIT = '4';
+    const urls = [
+      'https://moonring.community/guides/Progression?id=A',
+      'https://www.moonring.community/guides/Progression?id=A',
+      'https://moonring.community/guides/progression?id=A',
+      'https://moonring.community/guides/Progression?id=a'
+    ];
+    const { provider } = makeProvider(async () => urls.map((url, index) => makeResult({ url, providerRank: index + 1 })));
+    const result = await discoverGamingSources(guideInput({ provider }));
+    expect(result.candidates.map(({ url }) => url).sort()).toEqual([...urls].sort());
+    expect(result.rejectedCandidateCount).toBe(0);
   });
 
   it('filters a result for an unrelated game even when its page otherwise looks like a good guide', async () => {

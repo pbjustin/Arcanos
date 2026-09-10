@@ -3,6 +3,7 @@ import { isIP } from "node:net";
 import { logger } from "@platform/logging/structuredLogging.js";
 import { getEnv } from "@platform/runtime/env.js";
 import { redactString } from "@shared/redaction.js";
+import { GAMING_BUILD_RESOURCE_HARD_LIMITS } from "@services/gamingBuildResourceSchema.js";
 import {
   getGamingDiscoveryBudgetMs,
   getGamingDiscoveryCacheMaxEntries,
@@ -121,13 +122,16 @@ const MAX_SEARCH_TITLE_CHARS = 240;
 const MAX_SEARCH_SNIPPET_CHARS = 500;
 const MAX_QUERY_TOPIC_TERMS = 7;
 const MAX_PROVIDER_RANK = 100;
-const TRACKING_PARAM_PATTERN = /^(?:utm_.+|fbclid|gclid|dclid|msclkid|mc_[ce]id|ref_src|ref_url|source|campaign|campaignid)$/i;
-const SENSITIVE_PARAM_PATTERN = /(?:^|[_-])(?:access|api|auth|bearer|credential|key|password|secret|sig|signature|token)(?:$|[_-])|^x-amz-/i;
+// These names are analytics identifiers. Generic source/campaign/ref selectors can identify a document.
+const TRACKING_PARAM_PATTERN = /^(?:utm_.+|fbclid|gclid|dclid|msclkid|mc_[ce]id)$/i;
+const SENSITIVE_PARAM_PATTERN = /(?:^|[_-])(?:access|api|auth|authorization|bearer|cookie|credential|key|nonce|password|secret|session|sig|signature|ticket|token)(?:$|[_-])|^(?:accessToken|apiKey|authToken|sessionId|x-amz-.+|x-goog-.+)$/i;
+const SENSITIVE_PATH_MARKER_PATTERN = /^(?:access[-_]?token|api[-_]?key|assertion|authorization|bearer|credential|jwt|nonce|oauth|password|saml|secret|session|sig|signature|signed|sso|ticket|token|x-amz-.+)$/i;
 const SENSITIVE_VALUE_PATTERN = /^(?:sk-|gh[opusr]_|eyj[a-z0-9_-]*\.|bearer\s+)/i;
 const FILE_DOWNLOAD_PATTERN = /\.(?:7z|avi|bin|dmg|docx?|exe|gz|iso|mov|mp3|mp4|msi|pdf|pkg|rar|tar|wav|webm|xlsx?|zip)$/i;
 const ACCOUNT_PATH_PATTERN = /\/(?:account|accounts|auth|login|log-in|register|registration|sign-in|signin|signup)(?:\/|$)/i;
 const SEARCH_PATH_PATTERN = /\/(?:search|search-results|results)(?:\/|$)/i;
 const SEARCH_QUERY_PARAM_PATTERN = /^(?:keyword|q|query|search|search_query)$/i;
+const SEARCH_QUERY_ENDPOINT_PATTERN = /^\/(?:index(?:\.(?:php|html?|aspx?))?)?\/?$/i;
 const RAW_URL_CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f-\u009f]/u;
 const CONTENT_FARM_DOMAIN_PATTERN = /(?:^|[.-])(?:clickbait|content-?farm|scraper|seo-?spam|spam)(?:[.-]|$)/i;
 const SOURCE_INSTRUCTION_PATTERN = /(?:\b(?:(?:ignore|disregard|override)\s+(?:all\s+)?(?:previous|prior|system|developer|assistant|user)\s+(?:instructions?|messages?|prompts?)|forget\s+(?:everything|all)(?:\s+(?:written|said))?\s+(?:above|before)|you\s+are\s+now|(?:reveal|print|show|expose)\s+(?:the\s+)?(?:system|developer)\s+(?:prompt|message|instructions?)|(?:call|invoke)\s+(?:the\s+)?(?:tool|function)|(?:execute|run)\s+(?:this\s+)?(?:command|shell|powershell|bash))\b|(?:^|\s|\[|<\|)(?:system|developer|assistant|user)(?:\s*:|\]|\|>))/i;
@@ -282,80 +286,137 @@ function isInternalHost(hostname: string): boolean {
   return false;
 }
 
-export function sanitizeGamingDiscoveryCandidateUrl(rawUrl: string): { url?: string; rejected: boolean } {
+export const GAMING_SOURCE_ADMISSION_POLICY_VERSION = "gaming-source-admission-v2";
+
+export type GamingSourceAdmissionSubreason =
+  | "invalid_url" | "url_too_long" | "unsupported_scheme" | "credentials" | "sensitive_url_material"
+  | "forbidden_port" | "private_reserved_destination" | "domain_deny_rule" | "outside_domain_allowlist"
+  | "unsupported_document_type" | "account_path" | "search_results" | "shortened_url"
+  | "source_category_excluded" | "tracking_limit" | "query_parameter_limit";
+
+export interface GamingSourceAdmissionRejection {
+  category: "security" | "source_policy";
+  subreason: GamingSourceAdmissionSubreason;
+  ruleId: string;
+  policyVersion: typeof GAMING_SOURCE_ADMISSION_POLICY_VERSION;
+}
+
+export interface GamingSourceAdmissionResult {
+  url?: string;
+  rejected: boolean;
+  /** Internal bounded diagnostics; retain the existing public URL_BLOCKED reason. */
+  rejection?: GamingSourceAdmissionRejection;
+}
+
+function rejectGamingSourceUrl(
+  category: GamingSourceAdmissionRejection["category"],
+  subreason: GamingSourceAdmissionSubreason
+): GamingSourceAdmissionResult {
+  return { rejected: true, rejection: {
+    category, subreason, ruleId: `gaming.url.${subreason}`, policyVersion: GAMING_SOURCE_ADMISSION_POLICY_VERSION
+  } };
+}
+
+export function sanitizeGamingDiscoveryCandidateUrl(rawUrl: string): GamingSourceAdmissionResult {
+  return sanitizeGamingSourceUrl(rawUrl, MAX_SEARCH_RESULT_URL_CHARS);
+}
+
+/** Existing internal structured documents retain their bounded URL payload allowance.
+ * Public discovery/hybrid candidates and redirect destinations always use the 2,048-character entry point.
+ */
+export function sanitizeGamingStructuredDocumentUrl(rawUrl: string): GamingSourceAdmissionResult {
+  return sanitizeGamingSourceUrl(rawUrl, GAMING_BUILD_RESOURCE_HARD_LIMITS.maxUrlChars);
+}
+
+function sanitizeGamingSourceUrl(rawUrl: string, maxUrlChars: number): GamingSourceAdmissionResult {
   if (
-    rawUrl.length === 0
-    || rawUrl.length > MAX_SEARCH_RESULT_URL_CHARS
+    typeof rawUrl !== "string"
+    || rawUrl.length === 0
     || RAW_URL_CONTROL_CHARACTER_PATTERN.test(rawUrl)
+    || rawUrl.includes("\\")
   ) {
-    return { rejected: true };
+    return rejectGamingSourceUrl("security", "invalid_url");
   }
+  if (rawUrl.length > maxUrlChars) return rejectGamingSourceUrl("source_policy", "url_too_long");
   try {
     const parsed = new URL(rawUrl.trim());
-    if ((parsed.protocol !== "http:" && parsed.protocol !== "https:") || parsed.username || parsed.password || parsed.port) {
-      return { rejected: true };
-    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return rejectGamingSourceUrl("security", "unsupported_scheme");
+    if (parsed.username || parsed.password) return rejectGamingSourceUrl("security", "credentials");
+    if (parsed.port) return rejectGamingSourceUrl("security", "forbidden_port");
     const domain = normalizeDomain(parsed.hostname);
     if (!domain || isInternalHost(domain)) {
-      return { rejected: true };
+      return rejectGamingSourceUrl("security", "private_reserved_destination");
     }
-    if (LOW_SIGNAL_DOMAINS.some((candidate) => domainMatches(domain, candidate))
-      || URL_SHORTENER_DOMAINS.some((candidate) => domainMatches(domain, candidate))
-      || SEARCH_ENGINE_DOMAINS.some((candidate) => domainMatches(domain, candidate))
-      || CONTENT_FARM_DOMAIN_PATTERN.test(domain)) {
-      return { rejected: true };
+    // Decode only for validation. The parser-owned encoded request path is never rewritten.
+    const decodedSegments = parsed.pathname.split("/").map((segment) => decodeURIComponent(segment));
+    const policyPath = decodedSegments.join("/");
+    if (RAW_URL_CONTROL_CHARACTER_PATTERN.test(policyPath) || policyPath.includes("\\")) {
+      return rejectGamingSourceUrl("security", "invalid_url");
     }
-    const allowlist = getGamingDiscoveryDomainAllowlist();
-    const blocklist = getGamingDiscoveryDomainBlocklist();
-    if ((allowlist.length > 0 && !allowlist.some((candidate) => domainMatches(domain, candidate)))
-      || blocklist.some((candidate) => domainMatches(domain, candidate))) {
-      return { rejected: true };
-    }
-    if (ACCOUNT_PATH_PATTERN.test(parsed.pathname) || SEARCH_PATH_PATTERN.test(parsed.pathname)
-      || FILE_DOWNLOAD_PATTERN.test(parsed.pathname)) {
-      return { rejected: true };
-    }
-    for (const segment of parsed.pathname.split("/").filter(Boolean)) {
-      let decodedSegment: string;
-      try {
-        decodedSegment = decodeURIComponent(segment);
-      } catch {
-        return { rejected: true };
-      }
-      if (
-        SENSITIVE_VALUE_PATTERN.test(decodedSegment)
-        || redactString(decodedSegment) === "[REDACTED]"
-      ) {
-        return { rejected: true };
-      }
-    }
-    if (Array.from(parsed.searchParams.keys()).some((key) => SEARCH_QUERY_PARAM_PATTERN.test(key))) {
-      return { rejected: true };
+    if (decodedSegments.some((segment) => SENSITIVE_PATH_MARKER_PATTERN.test(segment)
+      || SENSITIVE_VALUE_PATTERN.test(segment) || redactString(segment) === "[REDACTED]")) {
+      return rejectGamingSourceUrl("security", "sensitive_url_material");
     }
 
     let trackingParamCount = 0;
-    for (const [key, value] of Array.from(parsed.searchParams.entries())) {
+    // Validate all original values before any analytics removal; erasure cannot authorize a signed URL.
+    for (const [key, value] of parsed.searchParams.entries()) {
       if (
         SENSITIVE_PARAM_PATTERN.test(key)
         || SENSITIVE_VALUE_PATTERN.test(value)
         || redactString(value) === "[REDACTED]"
+        || RAW_URL_CONTROL_CHARACTER_PATTERN.test(key + value)
       ) {
-        return { rejected: true };
+        return rejectGamingSourceUrl("security", "sensitive_url_material");
       }
-      if (TRACKING_PARAM_PATTERN.test(key)) {
-        parsed.searchParams.delete(key);
-        trackingParamCount += 1;
-      }
+      if (TRACKING_PARAM_PATTERN.test(key)) trackingParamCount += 1;
     }
-    if (trackingParamCount >= 5 || Array.from(parsed.searchParams.keys()).length > 10) {
-      return { rejected: true };
+    const fragment = decodeURIComponent(parsed.hash.slice(1));
+    if (SENSITIVE_VALUE_PATTERN.test(fragment) || redactString(fragment) === "[REDACTED]"
+      || RAW_URL_CONTROL_CHARACTER_PATTERN.test(fragment)
+      || Array.from(new URLSearchParams(fragment).entries()).some(([key, value]) =>
+        SENSITIVE_PARAM_PATTERN.test(key) || SENSITIVE_VALUE_PATTERN.test(value) || redactString(value) === "[REDACTED]")) {
+      return rejectGamingSourceUrl("security", "sensitive_url_material");
     }
-    parsed.hostname = domain;
+    // Security material is rejected before product categories, including specialized resolver exceptions.
+    const allowlist = getGamingDiscoveryDomainAllowlist();
+    const blocklist = getGamingDiscoveryDomainBlocklist();
+    if (blocklist.some((candidate) => domainMatches(domain, candidate))) {
+      return rejectGamingSourceUrl("source_policy", "domain_deny_rule");
+    }
+    if (allowlist.length > 0 && !allowlist.some((candidate) => domainMatches(domain, candidate))) {
+      return rejectGamingSourceUrl("source_policy", "outside_domain_allowlist");
+    }
+    if (URL_SHORTENER_DOMAINS.some((candidate) => domainMatches(domain, candidate))) {
+      return rejectGamingSourceUrl("source_policy", "shortened_url");
+    }
+    if (SEARCH_ENGINE_DOMAINS.some((candidate) => domainMatches(domain, candidate))) {
+      return rejectGamingSourceUrl("source_policy", "search_results");
+    }
+    if (LOW_SIGNAL_DOMAINS.some((candidate) => domainMatches(domain, candidate)) || CONTENT_FARM_DOMAIN_PATTERN.test(domain)) {
+      return rejectGamingSourceUrl("source_policy", "source_category_excluded");
+    }
+    if (ACCOUNT_PATH_PATTERN.test(policyPath)) return rejectGamingSourceUrl("source_policy", "account_path");
+    if (SEARCH_PATH_PATTERN.test(policyPath) || (SEARCH_QUERY_ENDPOINT_PATTERN.test(policyPath)
+      && Array.from(parsed.searchParams.keys()).some((key) => SEARCH_QUERY_PARAM_PATTERN.test(key)))) {
+      return rejectGamingSourceUrl("source_policy", "search_results");
+    }
+    if (trackingParamCount >= 5) return rejectGamingSourceUrl("source_policy", "tracking_limit");
+    if (Array.from(parsed.searchParams.keys()).filter((key) => !TRACKING_PARAM_PATTERN.test(key)).length > 10) {
+      return rejectGamingSourceUrl("source_policy", "query_parameter_limit");
+    }
+    if (FILE_DOWNLOAD_PATTERN.test(policyPath)) return rejectGamingSourceUrl("source_policy", "unsupported_document_type");
+    if (trackingParamCount > 0) {
+      // URLSearchParams classifies names, but serializing it would rewrite retained query bytes and ordering.
+      parsed.search = parsed.search.slice(1).split("&").filter((part) => {
+        const key = new URLSearchParams(part).keys().next().value;
+        return key === undefined || !TRACKING_PARAM_PATTERN.test(key);
+      }).join("&");
+    }
     parsed.hash = "";
-    parsed.searchParams.sort();
     return { url: parsed.toString(), rejected: false };
   } catch {
-    return { rejected: true };
+    return rejectGamingSourceUrl("security", "invalid_url");
   }
 }
 
@@ -816,7 +877,7 @@ export async function discoverGamingSources(input: GamingDiscoveryInput): Promis
       rejectedCandidateCount += 1;
       continue;
     }
-    const canonicalKey = createHash("sha256").update(normalizedUrl.url.toLowerCase()).digest("hex");
+    const canonicalKey = createHash("sha256").update(normalizedUrl.url).digest("hex");
     const normalizedResult = { ...result, url: normalizedUrl.url };
     const existing = deduped.get(canonicalKey);
     if (!existing || normalizedResult.providerRank < existing.providerRank) {
