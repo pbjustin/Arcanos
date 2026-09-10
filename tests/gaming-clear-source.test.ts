@@ -38,6 +38,14 @@ describe('Gaming CLEAR acquired source assessment', () => {
     const doc = document('Elden Ring', 'Elden Ring Mage Build', `Game: Elden Ring. In Diablo 4, Intelligence supports this spell setup. ${prose}`);
     expect(assess(doc).decision).toBe('reject');
   });
+  it.each(['https://clear-preview.example/guides/intelligence', 'https://guides.example.org/elden%20ring/build'])(
+    'does not let URL identity shadow a conflicting acquired body subject: %s', publicUrl => {
+      for (const subject of ['In Diablo 4, Intelligence supports this spell setup.',
+        'Diablo IV sorcerer build: Intelligence and staves determine spell choices.']) {
+        const doc = { ...document('Elden Ring', 'Elden Ring Mage Build', `Game: Elden Ring. ${subject} ${prose}`), publicUrl };
+        expect(assess(doc)).toMatchObject({ decision: 'reject', gates: { identity: 'conflict' } });
+      }
+    });
   it.each(['Diablo IV sorcerer build: Intelligence and staves determine spell choices. Read the listed prerequisites before choosing a spell.',
     'The anonymous game uses Intelligence, staves and spell choices. Check the equipment prerequisites before choosing one of the available spells.'])(
     'does not accept title-only identity with unrelated substantive body: %s', body => {

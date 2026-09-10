@@ -59,14 +59,15 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
   const bodyHeadings = prose.split(/\n+|(?<=[.!?])\s+/u).slice(0, 128)
     .filter(unit => /^[^.!?\n]{2,160}\b(?:guide|build|walkthrough)\s*:/iu.test(unit));
   for (const heading of bodyHeadings) {
-    const detected = detectGamingDocumentGame({ canonicalUrl: document.publicUrl, pageTitle: heading.slice(0, 240) });
+    // URL-first detection must not hide an explicit conflicting subject in acquired prose.
+    const detected = detectGamingDocumentGame({ canonicalUrl: '', pageTitle: heading.slice(0, 240) });
     if (detected.game && detected.confidence >= 0.8 && !expected.has(normalizeGamingGameIdentity(detected.game))
       && ![...expected].some(game => containsIdentity(heading.split(':')[0], game))) return { status: 'conflict', reasonCodes: ['GAME_MISMATCH'] };
   }
   // Only an explicit body subject can veto metadata; incidental comparisons do not establish a different subject.
   const bodySubject = /(?:^|[.!?]\s+)(?:this (?:guide|build|walkthrough) (?:covers|is for)|in(?: the game)?)\s+([^.!?\n]{2,160})/iu.exec(prose.trim())?.[1];
   if (bodySubject) {
-    const detected = detectGamingDocumentGame({ canonicalUrl: document.publicUrl, pageTitle: bodySubject });
+    const detected = detectGamingDocumentGame({ canonicalUrl: '', pageTitle: bodySubject });
     if (detected.game && detected.confidence >= 0.8 && !expected.has(normalizeGamingGameIdentity(detected.game))
       && ![...expected].some(game => containsIdentity(bodySubject, game)))
       return { status: 'conflict', reasonCodes: ['GAME_MISMATCH'] };
