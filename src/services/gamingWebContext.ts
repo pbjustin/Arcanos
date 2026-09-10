@@ -1710,8 +1710,8 @@ function buildSourceCandidates(input: GamingRagInput, game: string | undefined):
 
   const deduped = new Map<string, GamingSourceCandidate>();
   for (const candidate of allCandidates) {
-    const dedupeUrl = candidate.untrustedCandidate ? candidate.url : candidate.fetchUrl;
-    const key = createHash("sha256").update(gamingSourceDedupeKey(dedupeUrl)).digest("hex");
+    // Display URLs may hide payloads or selectors; acquisition identity owns deduplication.
+    const key = createHash("sha256").update(gamingSourceDedupeKey(candidate.fetchUrl)).digest("hex");
     const existing = deduped.get(key);
     if (!existing || scoreCandidate(input, candidate, [], false) > scoreCandidate(input, existing, [], false)) {
       deduped.set(key, candidate);
@@ -1909,6 +1909,7 @@ async function fetchGamingRagDocument(
     let supportsStructuredExtraction = true;
     let partialExtraction = false;
     let effectiveCandidate = candidate;
+    let acquiredCanonicalUrl = fetchUrl;
     const fetchedArticleText = await runWithLocalTimeout(
       async (signal) => {
         const document = await resolveGamingDocument(fetchUrl,
@@ -1922,9 +1923,10 @@ async function fetchGamingRagDocument(
           throw new GamingDocumentAcquisitionError('URL_BLOCKED', 'extraction', 'SOURCE_IDENTITY_MISMATCH');
         }
         redirected = (document.acquisition?.redirectCount ?? 0) > 0;
-        effectiveCandidate = { ...candidate, url: document.publicUrl };
+        acquiredCanonicalUrl = document.canonicalUrl;
+        effectiveCandidate = { ...candidate, url: document.publicUrl, fetchUrl: document.canonicalUrl };
         if (redirected) {
-          const policy = assessGamingSourcePolicy(document.publicUrl, input.game ?? '');
+          const policy = assessGamingSourcePolicy(document.canonicalUrl, input.game ?? '');
           const sourceType = policy.authority === 'official' ? 'official' : policy.authority === 'specialist' ? 'curated' : 'supplied';
           effectiveCandidate = { ...effectiveCandidate, sourceType, stable: false,
             title: document.metadata.title ?? safeSourceTitleFromUrl(document.publicUrl),
@@ -1969,7 +1971,7 @@ async function fetchGamingRagDocument(
       if (supportsStructuredExtraction) {
         structuredResult = await ingestGamingBuildResource({
           url: strictEvidenceCandidate ? neutralizeUntrustedStructuredIngestionUrl(effectiveCandidate.url)
-            : redirected ? effectiveCandidate.url : fetchUrl,
+            : redirected ? acquiredCanonicalUrl : fetchUrl,
           requestedGame: input.game,
           prompt: input.prompt,
           contentType: rawDocument?.contentType,
@@ -2004,8 +2006,10 @@ async function fetchGamingRagDocument(
       ? { result: structuredResult, evidenceUsed }
       : undefined;
     // Structured payload display remains private even when the enclosing public page was acquired.
-    if (!redirected && preliminaryClassification.extractionStrategy === 'url_payload' && preparedResource) {
-      effectiveCandidate = { ...effectiveCandidate, url: preparedResource.publicUrl };
+    const finalClassification = redirected ? classifyGamingResource({ url: acquiredCanonicalUrl }) : preliminaryClassification;
+    const finalResource = redirected ? prepareGamingResourceUrl(acquiredCanonicalUrl) : preparedResource;
+    if (finalClassification.extractionStrategy === 'url_payload' && finalResource) {
+      effectiveCandidate = { ...effectiveCandidate, url: finalResource.publicUrl };
     } else if (structured && evidenceUsed) {
       effectiveCandidate = { ...effectiveCandidate, url: structured.result.publicUrl };
     }
@@ -3124,12 +3128,12 @@ export async function buildGamingRagContext(
     candidateRankingElapsedMs = discoveryResult.candidateRankingElapsedMs;
     discoveryFailureReason = discoveryResult.discoveryFailureReason;
 
-    const existingCandidateUrls = new Set(candidates.map((candidate) => gamingSourceDedupeKey(candidate.url)));
+    const existingCandidateUrls = new Set(candidates.map((candidate) => gamingSourceDedupeKey(candidate.fetchUrl)));
     const discoveredCandidatesBeforeDedupe = discoveryResult.candidates.map((result) =>
       makeDiscoveredSourceCandidate(result, input)
     );
     const discoveryCandidates = discoveredCandidatesBeforeDedupe.filter((candidate) =>
-      !existingCandidateUrls.has(gamingSourceDedupeKey(candidate.url))
+      !existingCandidateUrls.has(gamingSourceDedupeKey(candidate.fetchUrl))
     );
     rejectedCandidateCount += discoveredCandidatesBeforeDedupe.length - discoveryCandidates.length;
     for (const candidate of discoveryCandidates) {
@@ -3250,7 +3254,8 @@ export async function buildGamingRagContext(
     const reliableGame = detectReliableDocumentGame(document) ?? detectGameFromDocumentIntro(document, effectiveInput.game)
       ?? (document.candidate.gameCorroborated ? effectiveInput.game : undefined)
       ?? (!document.candidate.untrustedCandidate ? document.candidate.games?.[0] : undefined);
-    const metadata = effectiveInput.game ? extractGamingFreshnessMetadata({ publicUrl: source.url, text: document.text,
+    const metadata = effectiveInput.game ? extractGamingFreshnessMetadata({ publicUrl: source.url,
+      canonicalUrl: document.candidate.fetchUrl, text: document.text,
       metadata: { title: document.extraction.documentTitle, headings: document.extraction.headingText } },
       { game: effectiveInput.game, edition: effectiveInput.edition, platform: effectiveInput.platform }, new Date(document.fetchedAt)) : undefined;
     clearKnowledge.sources.push({ sourceId, url: source.url, snippet: source.snippet ?? '',

@@ -679,6 +679,31 @@ describe('gaming RAG snippet quality', () => {
     expect(acquisitionRequests).toEqual([url]);
   });
 
+  it('redacts a redirected destination planner payload when useful article evidence wins', async () => {
+    const rawPayload = '{malformed-private-build-payload';
+    const start = 'https://redirect-review.example/guides/factorio';
+    const publicUrl = 'https://redirect-review.example/build-planner';
+    const finalUrl = `${publicUrl}?build=${encodeURIComponent(rawPayload)}`;
+    redirectFixtures.set(start, { status: 302, location: finalUrl });
+    mockFetchedHtml({ title: 'Factorio progression guide', text:
+      'Factorio progression begins by mining iron ore and fueling stone furnaces before building the first automation machines. '
+      + 'Place burner mining drills beside the ore deposit and route iron plates to assembling machines for steady gear production. '
+      + 'Research logistics after stabilizing power, then expand copper mining and science production before exploring nearby enemy nests.' });
+    const input = { mode: 'guide' as const, game: 'Factorio',
+      prompt: 'Explain the Factorio progression route and automation preparation.', guideUrl: start, guideUrls: [] };
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const result = await buildGamingRagContext(input);
+      expect(result.cacheHit).toBe(false);
+      expect(result.sources.some(isCitableGamingWebSource)).toBe(true);
+      expect(result.sources[0].url).toBe(publicUrl);
+      expect(result.context).toContain('mining iron ore and fueling stone furnaces');
+      expect(result.context).not.toContain('Structured build resource detected');
+      expect(JSON.stringify(result)).not.toContain(encodeURIComponent(rawPayload));
+      expect(JSON.stringify(result)).not.toContain('build=');
+    }
+    expect(acquisitionRequests).toEqual([start, finalUrl, start, finalUrl]);
+  });
+
   it('does not turn an oversized invalid planner URL into a citable source', async () => {
     const url = `https://oversized.example/build-planner?build=${'A'.repeat(GAMING_BUILD_RESOURCE_HARD_LIMITS.maxUrlChars)}`;
     const result = await buildGamingRagContext({
@@ -958,6 +983,31 @@ describe('gaming RAG snippet quality', () => {
     expect(acquisitionRequests.filter((url) => new URL(url).hostname === 'www.swtor.com')).toEqual([start, final]);
   });
 
+  it.each([false, true])('keeps article freshness policy after private path projection with redirect=%s', async redirected => {
+    const publicUrl = 'https://www.swtor.com/patchnotes';
+    const privatePath = 'A'.repeat(120);
+    const finalUrl = `${publicUrl}/${privatePath}?build=%7Bmalformed-private-build`;
+    const start = redirected ? `${publicUrl}/progression-fixture` : finalUrl;
+    if (redirected) redirectFixtures.set(start, { status: 302, location: finalUrl });
+    mockFetchedHtml({ title: 'Star Wars: The Old Republic progression guide', text:
+      'Star Wars: The Old Republic progression requires completing the class mission, upgrading equipment, and visiting the training area before the next combat encounter.' });
+    const input = { game: 'Star Wars: The Old Republic', mode: 'guide' as const,
+      prompt: 'Explain the progression route and combat preparation.', guideUrl: start, guideUrls: [] };
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const result = await buildGamingRagContext(input);
+      expect(result.cacheHit).toBe(!redirected && attempt > 0);
+      expect(result.sources.some(isCitableGamingWebSource)).toBe(true);
+      expect(result.sources[0].url).toBe(publicUrl);
+      expect(result.clearKnowledge?.sources[0].freshnessMetadata).toMatchObject({
+        url: publicUrl, currentness: 'article', ruleId: 'swtor-patch-article'
+      });
+      expect(JSON.stringify(result)).not.toContain(privatePath);
+      expect(JSON.stringify(result)).not.toContain('build=');
+    }
+    expect(acquisitionRequests.filter(url => new URL(url).hostname === 'www.swtor.com'))
+      .toEqual(redirected ? [start, finalUrl, start, finalUrl] : [finalUrl]);
+  });
+
   it('keeps current configured trust, game and stability hints when reusing a direct document cache entry', async () => {
     const url = 'https://factory-notes.example/progression';
     const configure = (sourceType: string, stable: boolean, game = 'Factorio') => {
@@ -1122,6 +1172,27 @@ describe('gaming RAG snippet quality', () => {
 
     expect(mockFetchAndClean).toHaveBeenCalledTimes(2);
     expect(result.sources.map((source) => source.url)).toEqual([firstUrl, secondUrl]);
+  });
+
+  it.each([
+    ['q=iron', 'q=copper'],
+    ['source=iron', 'source=copper'],
+    ['campaign=iron', 'campaign=copper'],
+    ['item=iron&item=copper', 'item=copper&item=iron']
+  ])('fetches both distinct admitted article selectors: %s and %s', async (firstQuery, secondQuery) => {
+    mockFetchedHtml({ title: 'Factorio progression guide', text:
+      'Factorio progression begins by mining iron ore and fueling stone furnaces before building the first automation machines. '
+      + 'Place burner mining drills beside the ore deposit and route iron plates to assembling machines for steady gear production. '
+      + 'Research logistics after stabilizing power, then expand copper mining and science production before exploring nearby enemy nests.' });
+    const urls = [`https://selector-review.example/article?${firstQuery}`, `https://selector-review.example/article?${secondQuery}`];
+    const input = { mode: 'guide' as const, game: 'Factorio',
+      prompt: 'Explain the Factorio progression route and automation preparation.', guideUrl: urls[0], guideUrls: [urls[1]] };
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const result = await buildGamingRagContext(input);
+      expect(result.fetchedSuppliedSourceCount).toBe(2);
+      expect(result.cacheHit).toBe(attempt > 0);
+    }
+    expect(acquisitionRequests).toEqual(urls);
   });
 
   it('excludes source instruction-like sentences from public snippets and prompt context', async () => {

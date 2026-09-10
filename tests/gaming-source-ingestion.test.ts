@@ -217,6 +217,7 @@ beforeEach(async () => {
     GAMING_DOCUMENT_RESOLVER_VERSION: 'gaming-document-v1',
     GamingDocumentAcquisitionError: MockGamingDocumentAcquisitionError,
     resolveGamingDocument: resolveGamingDocumentMock,
+    projectGamingDocumentPublicUrl: (url: string) => url,
     isResolvedGamingDocumentIdentityVerified: (document: any, url: string) => document.requestedUrl === url,
     describeGamingDocumentSource: (url: string) => ({ publicUrl: url })
   }));

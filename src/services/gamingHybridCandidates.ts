@@ -12,7 +12,7 @@ import {
   type GamingStoredEvidenceRecord, type GamingStoredKnowledgeContext, type GamingStoredKnowledgeInput
 } from '@shared/gaming/gamingStoredEvidenceCore.js';
 import { filterGamingDocumentInstructions } from './gamingDocumentExtraction.js';
-import { describeGamingDocumentSource, resolveGamingDocument, isResolvedGamingDocumentIdentityVerified,
+import { describeGamingDocumentSource, resolveGamingDocument, isResolvedGamingDocumentIdentityVerified, projectGamingDocumentPublicUrl,
   GamingDocumentAcquisitionError, GAMING_DOCUMENT_ACQUISITION_POLICY_VERSION, type ResolvedGamingDocument } from './gamingDocumentResolution.js';
 import { chunkGamingDocument, GAMING_DURABLE_DOCUMENT_LIMITS } from './gamingDurableDocumentChunks.js';
 import { sanitizeGamingDiscoveryCandidateUrl } from './gamingSourceDiscovery.js';
@@ -119,7 +119,7 @@ export async function evaluateGamingHybridCandidates(
         workflowId: context.workflowId, submittedIndex, candidateReference, acquisition: acquisitionDiagnostic,
         rubricVersion: GAMING_CLEAR_VERSION, profile: 'source', assessmentStatus: 'not_run', reasonCodes: [reason],
         elapsedMs: Date.now() - sourceStartedAt });
-      decisions.push({ submittedIndex, ...(publicUrl ? { url: publicUrl } : {}), decision: 'rejected', reasonCodes: [reason] });
+      decisions.push({ submittedIndex, ...(publicUrl ? { url: projectGamingDocumentPublicUrl(publicUrl) } : {}), decision: 'rejected', reasonCodes: [reason] });
     };
     if (Date.now() >= deadlineAt) { reject('FETCH_BUDGET_EXHAUSTED'); continue; }
     if (unsafeHints(candidate)) { reject('UNTRUSTED_METADATA_INVALID'); continue; }
@@ -157,7 +157,7 @@ export async function evaluateGamingHybridCandidates(
       if (/\b(?:no (?:automated|machine) (?:access|use)|automated (?:access|use) (?:is )?prohibited|do not (?:store|redistribute) (?:this|our) content)\b/iu.test(document.text)) {
         reject('SOURCE_USE_RESTRICTED'); continue;
       }
-      const reviewedPolicy = (dependencies.sourcePolicy ?? assessGamingSourcePolicy)(document.publicUrl, input.game);
+      const reviewedPolicy = (dependencies.sourcePolicy ?? assessGamingSourcePolicy)(document.canonicalUrl, input.game);
       const policy = classifyGamingQuestionFreshness({ prompt: input.prompt, mode: input.mode }) === 'live_status'
         ? { ...reviewedPolicy, durableAllowed: false, autoStoreAllowed: false } : reviewedPolicy;
       const freshness = (dependencies.extractFreshness ?? extractGamingFreshnessMetadata)(document, input, now());

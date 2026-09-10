@@ -69,12 +69,21 @@ const documentBinding = (document: ResolvedGamingDocument): string => createHash
     contentType: document.contentType, resolution: document.resolution, metrics: document.metrics,
     acquisition: document.acquisition }), "utf8").digest("hex");
 
+/** Preserve article selectors; only structured URL payloads need a separate citation projection. */
+export function projectGamingDocumentPublicUrl(url: string): string {
+  if (classifyGamingResource({ url }).extractionStrategy !== "url_payload") return url;
+  const prepared = prepareGamingResourceUrl(url);
+  if (!prepared) throw new GamingDocumentAcquisitionError("URL_BLOCKED", "extraction", "INVALID_PUBLIC_IDENTITY");
+  return prepared.publicUrl;
+}
+
 /** Only this resolver can attest a changed identity; plain records cannot grant redirect permission. */
 export function isResolvedGamingDocumentIdentityVerified(document: ResolvedGamingDocument, requestedUrl: string): boolean {
   try {
     const description = describeGamingDocumentSource(requestedUrl);
     if (document.acquisition) return document.acquisition.requestedUrl === description.publicUrl
-      && document.requestedUrl === description.publicUrl && document.publicUrl === document.acquisition.finalUrl
+      && document.requestedUrl === description.publicUrl && document.canonicalUrl === document.acquisition.finalUrl
+      && document.publicUrl === projectGamingDocumentPublicUrl(document.canonicalUrl)
       && acquisitionAttestations.get(document.acquisition) === documentBinding(document);
     // Specialized Archive and the unchanged legacy HTTP transport have their own deny-redirect policy.
     const legacyIdentity = new URL(requestedUrl).protocol === "http:"
@@ -90,7 +99,7 @@ export interface GamingDocumentResolutionOptions extends FetchAndCleanOptions {
   documentPurpose?: 'durable';
 }
 
-/** Internal acquired document. URL fields are public-safe; transport URLs never leave the resolver. */
+/** Internal acquired document. Requested/canonical URLs retain private payload identity; only publicUrl is a citation. */
 export interface ResolvedGamingDocument {
   requestedUrl: string;
   canonicalUrl: string;
@@ -360,17 +369,18 @@ export async function resolveGamingDocument(
     };
     options.onExtraction?.(effectiveExtraction);
     if (boundedRaw) options.onRawDocument?.(boundedRaw);
-    const publicUrl = resolver.publicUrl(url) ?? acquired.finalUrl ?? description.publicUrl;
+    const canonicalUrl = resolver.publicUrl(url) ?? acquired.finalUrl ?? description.publicUrl;
+    const publicUrl = acquired.finalUrl ? projectGamingDocumentPublicUrl(canonicalUrl) : canonicalUrl;
     const acquisition: GamingDocumentAcquisition | undefined = acquired.finalUrl ? {
       policyVersion: GAMING_DOCUMENT_ACQUISITION_POLICY_VERSION, requestedUrl: description.publicUrl,
-      finalUrl: publicUrl, redirectCount: acquired.transitions?.length ?? 0,
+      finalUrl: canonicalUrl, redirectCount: acquired.transitions?.length ?? 0,
       transitions: acquired.transitions ?? [], contentType: contentType ?? "unknown",
       coverage: { selectedTextChars: effectiveExtraction.cleanedTextLength, returnedTextChars: projection.text.length,
         truncated: projection.truncated, instructionFiltered: projection.instructionFiltered }
     } : undefined;
     const document: ResolvedGamingDocument = {
       requestedUrl: description.publicUrl,
-      canonicalUrl: publicUrl,
+      canonicalUrl,
       publicUrl,
       host: new URL(publicUrl).hostname,
       text: projection.text,

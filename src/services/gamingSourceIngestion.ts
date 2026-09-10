@@ -37,6 +37,7 @@ import {
   GamingDocumentAcquisitionError,
   describeGamingDocumentSource,
   isResolvedGamingDocumentIdentityVerified,
+  projectGamingDocumentPublicUrl,
   resolveGamingDocument,
   type ResolvedGamingDocument
 } from './gamingDocumentResolution.js';
@@ -400,7 +401,7 @@ function queuedSourceResults(body: QueuedGamingIngestionBody): GamingSourceInges
       recordsUpdated: 0
     })),
     ...body.rejectedSources
-  ].sort((left, right) => left.submittedIndex - right.submittedIndex);
+  ].map(projectGamingSourcePublicResult).sort((left, right) => left.submittedIndex - right.submittedIndex);
 }
 
 function resolveVerifiedPatch(input: {
@@ -474,10 +475,15 @@ function resolveVerifiedStoredPatch(record: {
     : undefined;
 }
 
-function projectBoundedPublicPatchVersion(
+function projectGamingSourcePublicResult(
   source: GamingSourceIngestionItemResult
 ): GamingSourceIngestionItemResult {
   const projectedSource = { ...source };
+  if (source.canonicalUrl) {
+    // Job/source identity stays exact internally; public results must not display planner payloads.
+    try { projectedSource.canonicalUrl = projectGamingDocumentPublicUrl(source.canonicalUrl); }
+    catch { delete projectedSource.canonicalUrl; }
+  }
   delete projectedSource.patchVersion;
   const patchVersion = readBoundedGamingPatchVersion(source.patchVersion);
   if (patchVersion) {
@@ -510,7 +516,7 @@ function terminalSourceResults(
       }
     })),
     ...body.rejectedSources
-  ].sort((left, right) => left.submittedIndex - right.submittedIndex);
+  ].map(projectGamingSourcePublicResult).sort((left, right) => left.submittedIndex - right.submittedIndex);
 }
 
 function mapStoredJobStatus(status: string): GamingSourceIngestionOutput['status'] {
@@ -1082,7 +1088,7 @@ async function ingestOneSource(
         error: { code: 'RESOLVED_SOURCE_IDENTITY_MISMATCH', message: 'The acquired source identity could not be verified.', retryable: false } };
     }
     const policyGame = source.hybridApproval?.applicabilityContext?.game ?? source.policyGame ?? source.game;
-    const finalPolicy = assessGamingSourcePolicy(document.publicUrl, policyGame);
+    const finalPolicy = assessGamingSourcePolicy(document.canonicalUrl, policyGame);
     if (!finalPolicy.durableAllowed || /\b(?:no (?:automated|machine) (?:access|use)|automated (?:access|use) (?:is )?prohibited|do not (?:store|redistribute) (?:this|our) content)\b/iu.test(document.text)) {
       return { submittedIndex: source.submittedIndex, status: 'rejected', canonicalUrl: source.canonicalUrl,
         recordsCreated: 0, recordsUpdated: 0, completedAt: new Date().toISOString(),
@@ -1202,7 +1208,7 @@ async function ingestOneSource(
     const pageTitle = document.metadata.title?.slice(0, MAX_TITLE_CHARS);
     const pageHeadings = document.metadata.headings?.slice(0, 1_000);
     const detectedGame = detectGamingDocumentGame({
-      canonicalUrl: document.publicUrl,
+      canonicalUrl: document.canonicalUrl,
       pageTitle,
       pageHeadings
     });
@@ -1229,7 +1235,7 @@ async function ingestOneSource(
     }
 
     const normalized = await ingestGamingBuildResource({
-      url: document.publicUrl,
+      url: document.canonicalUrl,
       requestedGame: source.game,
       contentType: document.contentType,
       // Hybrid approval covers resolved prose and metadata, not fresh hidden scripts.
@@ -1508,6 +1514,7 @@ export async function executeQueuedGamingSourceIngestion(
     }));
   }
   const sources = [...processed, ...parsed.data.rejectedSources]
+    .map(projectGamingSourcePublicResult)
     .sort((left, right) => left.submittedIndex - right.submittedIndex);
   const succeeded = sources.filter((source) => ['stored', 'updated', 'unchanged'].includes(source.status)).length;
   const rejected = sources.filter((source) => source.status === 'rejected').length;
@@ -1588,7 +1595,7 @@ export async function getGamingSourceIngestionStatus(
           ...output,
           action: 'status',
           status: job.status === 'failed' ? 'failed' : output.status,
-          sources: output.sources.map(projectBoundedPublicPatchVersion),
+          sources: output.sources.map(projectGamingSourcePublicResult),
           createdAt,
           updatedAt,
           ...(job.completed_at ? { completedAt: new Date(job.completed_at).toISOString() } : {}),

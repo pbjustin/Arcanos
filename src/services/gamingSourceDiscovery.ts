@@ -353,7 +353,9 @@ function sanitizeGamingSourceUrl(rawUrl: string, maxUrlChars: number): GamingSou
     if (RAW_URL_CONTROL_CHARACTER_PATTERN.test(policyPath) || policyPath.includes("\\")) {
       return rejectGamingSourceUrl("security", "invalid_url");
     }
-    if (decodedSegments.some((segment) => SENSITIVE_PATH_MARKER_PATTERN.test(segment)
+    // Encoded slashes also delimit policy components; retain whole decoded values for redaction.
+    const policySegments = decodedSegments.concat(policyPath.split("/"));
+    if (policySegments.some((segment) => SENSITIVE_PATH_MARKER_PATTERN.test(segment)
       || SENSITIVE_VALUE_PATTERN.test(segment) || redactString(segment) === "[REDACTED]")) {
       return rejectGamingSourceUrl("security", "sensitive_url_material");
     }

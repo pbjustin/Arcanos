@@ -230,7 +230,10 @@ describe('shared Gaming document acquisition contract', () => {
     expect(describeGamingDocumentSource(url).publicUrl).toBe(url);
     mockAxiosGet.mockResolvedValue(response('Boundary Quest guide explains safe progression, weapon preparation, and the next checkpoint.', 'text/plain'));
     const document = await resolveGamingDocument(url);
-    expect(document.publicUrl).toBe(url);
+    expect(document.publicUrl).toBe('https://www.planner.example/build-planner/share');
+    expect(document.canonicalUrl).toBe(url);
+    expect(document.requestedUrl).toBe(url);
+    expect(document.acquisition?.finalUrl).toBe(url);
     expect(document.acquisition?.redirectCount).toBe(0);
     expect(isResolvedGamingDocumentIdentityVerified(document, url)).toBe(true);
     const pinned = new URL(url); pinned.hostname = '93.184.216.34';
@@ -342,6 +345,17 @@ describe('shared Gaming document acquisition contract', () => {
     'rejects missing, malformed, oversized, or duplicate Location without a next request (%j)', async location => {
       mockAxiosGet.mockResolvedValueOnce({ status: 301, headers: { location }, data: '' });
       await expect(resolveGamingDocument('https://example.org/guide')).rejects.toMatchObject({ code: 'REDIRECT_NOT_ALLOWED' });
+      expect(mockAxiosGet).toHaveBeenCalledTimes(1);
+    });
+
+  it.each(['/token%2Fopaque/article', '/guides%2fsession%2fopaque/article'])(
+    'rejects an encoded sensitive redirect path %s before destination DNS or transport', async location => {
+      mockAxiosGet.mockResolvedValueOnce({ status: 302, headers: { location }, data: '' });
+      await expect(resolveGamingDocument('https://example.org/guide')).rejects.toMatchObject({
+        code: 'URL_BLOCKED', acquisition: { stage: 'admission', subreason: 'sensitive_url_material', redirectCount: 0 }
+      });
+      expect(mockResolve4).toHaveBeenCalledTimes(1);
+      expect(mockResolve6).toHaveBeenCalledTimes(1);
       expect(mockAxiosGet).toHaveBeenCalledTimes(1);
     });
 

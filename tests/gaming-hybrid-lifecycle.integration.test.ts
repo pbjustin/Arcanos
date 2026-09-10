@@ -130,6 +130,16 @@ async function discoverCurrent(mode: 'build' | 'meta', extras: Record<string, un
  * This is not PostgreSQL FTS evidence or proof of ChatGPT's real web-tool sequencing.
  */
 describe('Gaming hybrid durable lifecycle', () => {
+  it('keeps planner payloads out of acquisition failure decisions', async () => {
+    const publicUrl = 'https://guides.example.org/build-planner';
+    const payload = '{private-failed-build-fixture';
+    mockHttp.mockRejectedValue(new Error('Synthetic acquisition failure'));
+    const evaluated = await evaluate({ candidates: [{ url: `${publicUrl}?build=${encodeURIComponent(payload)}` }] });
+    expect(evaluated.decisions).toMatchObject([{ url: publicUrl, decision: 'rejected', reasonCodes: ['SOURCE_FETCH_FAILED'] }]);
+    expect(JSON.stringify(evaluated)).not.toContain('private-failed-build-fixture');
+    expect(evaluated.accepted).toEqual([]);
+  });
+
   function redirectOriginalTo(destination: string) {
     const finalResponse = mockHttp.getMockImplementation()!;
     mockHttp.mockImplementation(async (url: string, options: any) => new globalThis.URL(url).pathname === '/amber-vault'
@@ -173,6 +183,86 @@ describe('Gaming hybrid durable lifecycle', () => {
     mockHttp.mockResolvedValueOnce({ status: 302, data: '', headers: { location: '/different-observatory' } });
     const completed = await complete((queued.payload as any).ingestionId);
     expect(completed.sources[0]).toMatchObject({ status: 'rejected', error: { code: 'APPROVED_CONTENT_CHANGED' } });
+    expect(database.revisions).toHaveLength(0);
+  });
+  it.each([
+    ['valid', JSON.stringify({ game: SOURCE_GAME, equipment: [{ slot: 'weapon', name: 'Private Amber Blade' }] })],
+    ['valid path', JSON.stringify({ game: SOURCE_GAME, equipment: [{ slot: 'weapon', name: 'Private Amber Blade' }] })],
+    ['malformed', '{malformed-private-build-payload']
+  ])('keeps a redirected %s planner payload out of hybrid and stored citations while preserving refetch identity', async (kind, payload) => {
+    const publicUrl = 'https://guides.example.org/build-planner';
+    const encodedPayload = encodeURIComponent(payload);
+    const pathPayload = kind === 'valid path' ? Buffer.from(payload).toString('base64url') : undefined;
+    const finalUrl = `${publicUrl}${pathPayload ? `/${pathPayload}` : ''}?build=${encodedPayload}`;
+    redirectOriginalTo(finalUrl);
+    const evaluated = await evaluate();
+    expect(evaluated.decisions[0]).toMatchObject({ decision: 'eligible_for_ingestion', url: publicUrl });
+    expect(evaluated.accepted[0].document).toMatchObject({ requestedUrl: URL, canonicalUrl: finalUrl, publicUrl,
+      acquisition: { requestedUrl: URL, finalUrl, redirectCount: 1 } });
+    expect(evaluated.knowledge.sources[0].url).toBe(publicUrl);
+    expect(evaluated.knowledge.context).toContain('silver telescope');
+    const publicEvidence = JSON.stringify({ decisions: evaluated.decisions, knowledge: evaluated.knowledge });
+    expect(publicEvidence).not.toContain(payload);
+    expect(publicEvidence).not.toContain(encodedPayload);
+    if (pathPayload) expect(publicEvidence).not.toContain(pathPayload);
+
+    const queued = await store(evaluated.accepted);
+    expect(queued.statusCode).toBe(202);
+    expect([...jobs.values()][0].input.body.sources[0].canonicalUrl).toBe(URL);
+    expect((await complete((queued.payload as any).ingestionId)).sources[0].status).toBe('stored');
+    expect(database.source).toMatchObject({ canonical_url: finalUrl, public_url: publicUrl });
+    expect(database.revisions[0].provenance).toMatchObject({ requestedUrl: URL, finalPublicUrl: publicUrl,
+      acquisition: { requestedUrl: URL, finalUrl, redirectCount: 1 } });
+    expect(database.records.every(record => record.normalized.equipment === undefined)).toBe(true);
+    expect(mockHttp).toHaveBeenCalledTimes(4);
+
+    const storedAnswer = await createGamingHybridWorkflow().query({ contractVersion, idempotencyKey: 'private-planner-stored-query',
+      game: SOURCE_GAME, question: input.prompt }, context);
+    expect(storedAnswer.body.answer?.sources[0].url).toBe(publicUrl);
+    expect(JSON.stringify(storedAnswer.body)).not.toContain(payload);
+    expect(JSON.stringify(storedAnswer.body)).not.toContain(encodedPayload);
+    expect(mockHttp).toHaveBeenCalledTimes(4);
+
+    const sourceId = database.source!.id;
+    const refreshed = await refreshGamingSources({ action: 'refresh', payload: {
+      sourceIds: [sourceId], idempotencyKey: 'private-planner-refresh'
+    } }, context);
+    expect(refreshed.statusCode).toBe(202);
+    expect((refreshed.payload as any).sources[0].canonicalUrl).toBe(publicUrl);
+    expect(JSON.stringify(refreshed.payload)).not.toContain(encodedPayload);
+    if (pathPayload) expect(JSON.stringify(refreshed.payload)).not.toContain(pathPayload);
+    expect([...jobs.values()].at(-1)!.input.body.sources[0]).toMatchObject({ canonicalUrl: finalUrl, acquisitionUrl: URL });
+    const pendingStatus = await getGamingSourceIngestionStatus((refreshed.payload as any).ingestionId, context);
+    expect((pendingStatus.payload as any).sources[0].canonicalUrl).toBe(publicUrl);
+    const refreshedOutput = await complete((refreshed.payload as any).ingestionId);
+    expect(['updated', 'unchanged']).toContain(refreshedOutput.sources[0].status);
+    expect(refreshedOutput.sources[0].canonicalUrl).toBe(publicUrl);
+    expect(JSON.stringify(refreshedOutput)).not.toContain(encodedPayload);
+    if (pathPayload) expect(JSON.stringify(refreshedOutput)).not.toContain(pathPayload);
+    const completedStatus = await getGamingSourceIngestionStatus((refreshed.payload as any).ingestionId, context);
+    expect((completedStatus.payload as any).sources[0].canonicalUrl).toBe(publicUrl);
+    expect(JSON.stringify(completedStatus.payload)).not.toContain(encodedPayload);
+    if (pathPayload) expect(JSON.stringify(completedStatus.payload)).not.toContain(pathPayload);
+    expect(database.source).toMatchObject({ id: sourceId, canonical_url: finalUrl, public_url: publicUrl });
+    expect(database.revisions.at(-1)!.provenance).toMatchObject({ requestedUrl: URL,
+      acquisition: { requestedUrl: URL, finalUrl, redirectCount: 1 } });
+    if (kind.startsWith('valid')) {
+      expect(database.records.find(record => record.status === 'active')!.normalized.equipment)
+        .toEqual(expect.arrayContaining([expect.objectContaining({ name: 'Private Amber Blade' })]));
+    }
+    expect(mockHttp).toHaveBeenCalledTimes(6);
+  });
+  it('invalidates redirected planner approval when the private payload changes behind the same public citation', async () => {
+    const publicUrl = 'https://guides.example.org/build-planner';
+    redirectOriginalTo(`${publicUrl}?build=%7Bapproved-private-payload`);
+    const evaluated = await evaluate();
+    expect(evaluated.decisions[0].url).toBe(publicUrl);
+    const queued = await store(evaluated.accepted);
+    expect(queued.statusCode).toBe(202);
+    mockHttp.mockResolvedValueOnce({ status: 302, data: '', headers: { location: `${publicUrl}?build=%7Bchanged-private-payload` } });
+    expect((await complete((queued.payload as any).ingestionId)).sources[0])
+      .toMatchObject({ status: 'rejected', error: { code: 'APPROVED_CONTENT_CHANGED' } });
+    expect(database.source).toBeUndefined();
     expect(database.revisions).toHaveLength(0);
   });
   it('uses final publisher path policy and refuses missing or copied redirect attestations', async () => {

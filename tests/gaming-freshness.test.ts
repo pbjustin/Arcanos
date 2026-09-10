@@ -389,6 +389,18 @@ describe('MMO seasons and operational status remain time-scoped', () => {
     expect(metadata.currentPatch).not.toBe('8.0');
   });
 
+  test('a redacted citation cannot promote the acquired patch article to the official current index', () => {
+    const publicUrl = 'https://www.swtor.com/patchnotes';
+    const document = { publicUrl, canonicalUrl: `${publicUrl}/${'A'.repeat(100)}?build=private-build-fixture`,
+      text: '09/07/26 - Game Update 7.9.1b' };
+    const metadata = extractGamingFreshnessMetadata(document, { game: 'Star Wars: The Old Republic' }, NOW);
+    expect(metadata).toMatchObject({ id: publicUrl, url: publicUrl,
+      ruleId: 'swtor-patch-article', currentness: 'article', durableAllowed: true });
+    expect(metadata.currentPatch).toBeUndefined();
+    expect(metadata.effectiveFrom).toBeUndefined();
+    expect(JSON.stringify(metadata)).not.toContain('private-build-fixture');
+  });
+
   test('same-date release ambiguity requires further verification', () => {
     const metadata = extractGamingFreshnessMetadata({ publicUrl: 'https://www.swtor.com/patchnotes',
       text: '09/07/26 - Game Update 7.9.1b\n09/07/26 - Game Update 7.9.1a' }, { game: 'Star Wars: The Old Republic' }, NOW);

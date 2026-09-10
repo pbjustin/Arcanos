@@ -139,10 +139,11 @@ export function classifyGamingQuestionFreshness(input: { prompt: string; mode?: 
  * Reads only fetched text. Dates from footers, HTTP Last-Modified, and frontend hints
  * cannot establish current applicability. Unsupported page layouts stay unverified.
  */
-export function extractGamingFreshnessMetadata(document: { publicUrl: string; text: string; metadata?: { title?: string; headings?: string } },
+export function extractGamingFreshnessMetadata(document: { publicUrl: string; canonicalUrl?: string; text: string; metadata?: { title?: string; headings?: string } },
   context: { game: string; edition?: string; platform?: string; region?: string }, now = new Date(),
   rules: readonly GamingReviewedSourceRule[] = REVIEWED_GAMING_SOURCE_RULES): GamingFreshnessEvidence {
-  const policy = assessGamingSourcePolicy(document.publicUrl, context.game, rules);
+  // Citation redaction may shorten a path; only the acquired identity grants publisher policy.
+  const policy = assessGamingSourcePolicy(document.canonicalUrl ?? document.publicUrl, context.game, rules);
   const metadataText = document.text.slice(0, GAMING_FRESHNESS_DEFAULTS.maxMetadataChars);
   // The shared document instruction filter normalizes whitespace. Recover only
   // this closed label grammar; do not infer metadata from arbitrary date mentions.

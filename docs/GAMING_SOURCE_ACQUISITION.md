@@ -126,9 +126,13 @@ streams, agents/sockets, listeners, and timers are released on every exit.
 
 ## Provenance, approval, and durable identity
 
-Generic acquired documents carry resolver-owned requested/final public URLs,
-policy version, approved transition classifications, redirect count, final
-content type, and actual extraction coverage. A private in-process attestation
+Generic acquired documents retain exact requested/final acquisition identities
+internally and derive a separate public citation URL. Recognized structured-build
+payloads are removed from that citation even when a redirect supplies useful
+article text. Admission validates decoded path components, including encoded
+slashes, without rewriting accepted request bytes. Documents also carry policy
+version, approved transitions, redirect count, content type, and extraction
+coverage. A private in-process attestation
 binds that record to document identity, content, metadata, and extraction result.
 Missing, copied, or modified HTTPS attestations cannot authorize a transition.
 Transport IP URLs never become citations.
