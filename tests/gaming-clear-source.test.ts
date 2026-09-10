@@ -69,6 +69,14 @@ describe('Gaming CLEAR acquired source assessment', () => {
     expect(assess(document('Elden Ring', 'Elden Ring guide', `Patch: 1.0. ${prose}`), { requestedVersion: '2.0' }).decision).toBe('reject');
     expect(assess(document('Elden Ring', 'Elden Ring guide', `Effective from: 2099-01-01. ${prose}`)).decision).toBe('reject');
   });
+  it('retains an explicitly applicable old baseline while requiring independent currentness verification', () => {
+    const input = { prompt: 'Which Intelligence build is best currently?', mode: 'build' as const, requestedVersion: '2.0' };
+    const baseline = document('Elden Ring', 'Elden Ring guide', `Patch: 1.0. Baseline valid for patches: 2.0. ${prose}`);
+    expect(assess(baseline, input)).toMatchObject({ decision: 'partial', qualityEligible: false,
+      gates: { compatibility: 'verified', freshness: 'unknown' } });
+    const otherBaseline = document('Elden Ring', 'Elden Ring guide', `Patch: 1.0. Baseline valid for patches: 1.5. ${prose}`);
+    expect(assess(otherBaseline, input)).toMatchObject({ decision: 'reject', gates: { compatibility: 'conflict' } });
+  });
   it('evaluates matching historical patch evidence without treating its age as a currentness failure', () => {
     const doc = document('Elden Ring', 'Elden Ring guide', `Game: Elden Ring. Patch: 1.0. Effective from: 2024-01-01. Published at: 2024-01-01. ${prose}`);
     expect(assess(doc, { prompt: 'Explain historical patch 1.0 Intelligence spell choices.', requestedVersion: '1.0' })).toMatchObject({

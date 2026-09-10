@@ -131,7 +131,9 @@ export function assessGamingClearSource(input: GamingStoredKnowledgeInput & { re
     .some(value => value !== undefined && !Number.isFinite(Date.parse(value)));
   const expired = !historical && Boolean(options.freshness.effectiveUntil && Date.parse(options.freshness.effectiveUntil) <= options.now.getTime());
   const wrongPatch = Boolean(input.requestedVersion && options.freshness.patch
-    && normalizeGamingGameIdentity(input.requestedVersion) !== normalizeGamingGameIdentity(options.freshness.patch));
+    && normalizeGamingGameIdentity(input.requestedVersion) !== normalizeGamingGameIdentity(options.freshness.patch)
+    && !options.freshness.baselineForPatches?.some(patch => patch.normalize('NFKC').trim().toLowerCase()
+      === input.requestedVersion!.normalize('NFKC').trim().toLowerCase()));
   const compatibility = options.freshness.metadataConflict || future || expired || wrongPatch ? 'conflict' as const
     : options.freshness.metadataUnverified || invalidInterval ? 'unknown' as const : 'verified' as const;
   const substantiveFreshness = stable || historical || combinedCurrent ? 'verified' as const : role === 'live_status'
