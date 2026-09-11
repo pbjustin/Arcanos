@@ -1364,10 +1364,13 @@ describe('gaming source ingestion', () => {
         mode: 'build'
       }),
       expect.objectContaining({
-        queryTimeoutMs: 1000,
+        queryTimeoutMs: expect.any(Number),
         signal: expect.any(Object)
       })
     );
+    const remainingMs = (searchActiveGamingKnowledgeMock.mock.calls[0][1] as { queryTimeoutMs: number }).queryTimeoutMs;
+    expect(remainingMs).toBeGreaterThan(0);
+    expect(remainingMs).toBeLessThanOrEqual(1000);
     expect(result.context).toContain('[Source 3]');
     expect(result.context).toContain('Published: 2026-08-07T12:00:00.000Z');
     expect(result.sources).toEqual([

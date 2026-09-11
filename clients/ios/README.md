@@ -360,6 +360,48 @@ the same head. This supplemental proof does not replace trusted lifecycle
 ownership evidence or establish live pairing/authentication, SQL, a real queue,
 provider inference, actual Local Agent execution, Siri, or Foundation Models.
 
+### Durable recovery over preview HTTPS
+
+After the same trusted lifecycle establishes both hosts, build the executable
+from the clean exact-head Linux/macOS checkout and run the recovery parent:
+
+```sh
+swift build --package-path clients/ios/ArcanosKit --product ArcanosPreviewProof
+preview_bin_dir=$(swift build --package-path clients/ios/ArcanosKit --show-bin-path)
+python3 clients/ios/scripts/run-operation-recovery-preview.py \
+  --swift-binary "$preview_bin_dir/ArcanosPreviewProof" \
+  --pr-number <PR-number> --commit-sha <exact-40-character-head-SHA> \
+  --web-base-url <confirmed-web-HTTPS-origin> \
+  --worker-base-url <confirmed-worker-HTTPS-origin>
+```
+
+This first run verifies arguments and clean Git evidence without HTTP or index
+writes. Repeat with both `--execute --allow-network` for the authorized proof.
+The parent starts fresh Swift processes for submission, an unknown-handle
+negative control, accepted-handle recovery, and terminal restoration. Each
+executed process uses the existing production HTTPS transport and checks both
+roles, device-policy evidence, and fixture metadata before job traffic; successful
+phases repeat those gates afterward. The parent checks the actual file between
+processes, verifies stable job identity and exact request counts, and removes its
+temporary files. The unknown-handle read must return the specific missing-job
+failure without modifying either saved index or creating a job.
+
+The full proof is bounded to 120 seconds, with 40 seconds per child. It makes 32
+HTTPS requests: one create, three result reads (one negative, two successful),
+and 28 identity/contract reads. The initial dry child adds no requests. A single
+run must finish within the sealed peer's 120-second job retention. The report
+includes phase process IDs, assertion names, counters, exact source commit and
+binary hash; build provenance still requires building that binary at the tested
+commit. Logs belong outside the evidence checkout. Remove the opt-in label only
+after all supplemental proofs finish, then verify the trusted lifecycle removes
+the exact owned preview and both former hosts deny readiness.
+
+This proves file/process recovery over actual HTTPS against the sealed synthetic
+peer. It does not establish shipping app/Siri recovery, real paired-device
+authorization, database durability, active worker execution, or provider results.
+The [loopback recovery fixture](#durable-operation-recovery-fixture) separately
+covers lost receipts, process termination during submission, and corrupt results.
+
 ## Device Gateway and PostgreSQL end-to-end fixture
 
 `ArcanosDeviceE2E` connects the real Swift pairing, Gateway, session, polling and
@@ -409,6 +451,45 @@ and eleven independent backend assertions, the same run ID/source commit, and
 confirmed server/schema cleanup. The report identifies local uncommitted changes.
 For pull requests, CI tests GitHub's merge commit; verify that report's source SHA
 and its PR head/base parents when using the artifact as published source evidence.
+
+## Durable operation recovery fixture
+
+The Phase 3 recovery index is a reusable core; it is not yet connected to the
+shipping session, app lifecycle, or App Intents. `ArcanosRecoveryProof` tests that
+core through production `OperationTracker`, `FileOperationPersistence`,
+`GatewayClient`, and `JobClient` with separate Swift processes and actual HTTP
+requests to a disposable loopback fixture.
+
+On Linux or macOS with Swift 6.2.4 and Python 3.10 or later, run from the repository:
+
+```sh
+swift test --package-path clients/ios/ArcanosKit
+swift build --package-path clients/ios/ArcanosKit --product ArcanosRecoveryProof
+recovery_bin_dir=$(swift build --package-path clients/ios/ArcanosKit --show-bin-path)
+python3 clients/ios/scripts/run-operation-recovery-e2e.py --swift-binary "$recovery_bin_dir/ArcanosRecoveryProof"
+```
+
+The parent verifies intent is on disk before submission, one create per operation,
+restart/result recovery, foreign partition isolation, failed-read preservation,
+lost receipts, and SIGKILL before receipt with no duplicate submission. Its
+positive sequence requires 11 distinct process IDs, seven requests, and three
+creates. A separate mandatory corrupted-result run must fail at result validation.
+Temporary files and the loopback listener are removed before success is reported.
+For a standalone expected-failure run, add `--inject-fault corrupt-completion`;
+it must exit nonzero with `CORRUPTED_COMPLETION_REJECTED`.
+
+The executable accepts only `--execute --allow-loopback` with bounded parent
+configuration on stdin. Its test adapter permits only create/result POSTs to a
+fixed logical origin and one exact loopback HTTP port; it disables redirects,
+proxies, cookies, and shared credentials. Each process receives its synthetic
+credential independently. The index contains neither credentials nor prompt or
+result content. JSON evidence records the checked-out SHA/dirty state and binary
+hash; compile immediately before execution. CI does this in the macOS job.
+
+This is process/file/client-wire evidence. It does not prove shipping HTTPS,
+Keychain or locked-iPhone file protection, actual server authorization or job
+execution, automatic recovery of an unknown job handle, or Siri/app lifecycle
+recovery. See the [Phase 3 engineering report](PHASE3_ENGINEERING_REPORT.md).
 
 ## Validation and next phase
 
