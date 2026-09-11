@@ -4,3 +4,5 @@ c39c0a0fa08b7abbcacb604a67140e2034f79705:tests/clear-execution-decision.test.ts:
 db4d8428b19e41bca572397d707e8cd461e31c3c:clients/ios/ArcanosKit/Sources/ArcanosKit/Gateway/CapabilityClient.swift:generic-api-key:50
 # Synthetic prefix concatenated with randomUUID in an isolated test; no credential literal.
 978ffacc324353d8aa4f9c1b8300dc5f25de37f5:tests/integration/ios-device-gateway.e2e.integration.test.ts:generic-api-key:37
+# Swift idempotency-key emptiness/byte-length validation; no credential literal.
+328fcc2f0b824a17e5bf2935220d3ff03bd78ae4:clients/ios/ArcanosKit/Sources/ArcanosKit/Runtime/OperationTracker.swift:generic-api-key:46
