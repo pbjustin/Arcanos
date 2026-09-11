@@ -11,10 +11,17 @@ persists a submission intention before transport, records accepted backend job
 handles without calling them complete, represents uncertain delivery separately,
 and accepts result observations only for the exact stored handle. Records are
 partitioned by canonical HTTPS origin and the server-issued device UUID. Duplicate
-idempotency keys in one partition fail closed.
+idempotency keys in one partition and duplicate operation UUIDs fail closed,
+including when restoring persisted records. Accepted job handles cannot be
+rebound, and delayed callbacks cannot replace terminal observations. Local Agent
+`pending` receipts and deduped terminal receipts are supported.
 
-The file store uses atomic writes and complete file protection. Records contain no
-credential, confirmation challenge, prompt, payload, repository content, or result.
+The file store uses atomic writes and complete file protection. The host must keep
+one tracker instance per file; actor serialization does not coordinate separate
+trackers or processes sharing a file. Callers must supply fixed, non-sensitive
+display summaries and opaque identifiers, never credentials, confirmation
+challenges, prompts, payloads, repository content, or results. The string fields do
+not automatically redact sensitive caller input.
 Terminal/dismissed metadata is retained for seven days by default; unresolved
 records remain until the user resolves or deletes the partition. Unpairing callers
 can delete one exact partition with `removeAll`. The backend remains authoritative.
@@ -40,11 +47,28 @@ caller must perform the normal authenticated result fetch after any accepted hin
 
 ## Validation performed
 
-`swift test --package-path clients/ios/ArcanosKit` passed on Linux with 18 XCTest
-tests plus 84 Swift Testing cases. Five new deterministic cases cover cross-process
-restoration, accepted-job preservation, ambiguous delivery, idempotency collision,
-device partition isolation, ambiguous reference rejection, mismatched job results,
-and duplicate/out-of-order/cross-device notification hints.
+The original checkpoint reported a Linux `swift test --package-path
+clients/ios/ArcanosKit` run with 18 XCTest tests plus 84 Swift Testing cases. Its
+five new deterministic cases use in-memory persistence and cover restoration
+across tracker instances, accepted-job preservation, ambiguous delivery,
+idempotency collision, device partition isolation, ambiguous reference rejection,
+mismatched job results, and duplicate/cross-device notification hints. They do not
+demonstrate cross-process or file-backed recovery, file protection, or rejection
+of out-of-order notifications.
+
+Review independently verified the [macOS CI job](https://github.com/pbjustin/Arcanos/actions/runs/34581054753/job/103204443210)
+for original head `328fcc2f0b824a17e5bf2935220d3ff03bd78ae4`: Apple Swift 6.2.4
+and Xcode 26.3 passed 18 XCTest tests and 85 Swift Testing cases, including the
+five tracker cases, and built the unsigned Simulator app successfully. This run
+does not validate later review fixes or establish Simulator execution.
+
+The review fixes passed the complete package suite on Linux with Swift 6.2.4:
+18 XCTest tests and 92 Swift Testing tests in eight suites. Added regression
+coverage checks Local Agent receipt statuses, immutable handles, delayed terminal
+callbacks, invalid observations, duplicate identities, malformed restoration,
+and preservation of durable and actor state after a failed write. The existing
+Gateway contract passed its drift check. These fixes still require a fresh macOS
+CI run for Apple-platform compilation evidence.
 
 ## Remaining implementation and validation
 
@@ -54,12 +78,13 @@ still track their latest job in memory. Backend APNs token registration/delivery
 also not implemented because no reviewed device-notification contract exists.
 Those are required before calling durable recovery user-visible.
 
-The following are **NOT RUN**: Xcode/iOS SDK compilation, Simulator execution,
-physical iPhone Keychain behavior, Foundation Models inference, Siri/App Shortcut
+The following are **NOT RUN**: Simulator execution, physical iPhone Keychain
+behavior, Foundation Models inference, Siri/App Shortcut
 activation, dictation/speech, system confirmation, APNs delivery, authorized HTTPS
 Gateway integration, PostgreSQL assertions, Local Agent/provider execution, and
-dismiss/relaunch result retrieval. This environment exposes Linux Swift rather
-than Xcode/device hardware and no live credentials or isolated target were used.
+dismiss/relaunch result retrieval. The original implementation environment exposed
+Linux Swift rather than Xcode/device hardware; the macOS CI build above supplies
+separate compilation evidence. No live credentials or isolated target were used.
 
 ## Exact physical-iPhone procedure
 
@@ -72,7 +97,8 @@ than Xcode/device hardware and no live credentials or isolated target were used.
 3. With networking disabled, separately test intent invocation, dictation, a bounded
    Foundation Models request, unavailable-model handling, and spoken output. Inspect
    transport instrumentation to prove the local-only request made no network call.
-4. Configure the user-owned App Shortcut/Vocal Shortcut. Invoke Ask Arcanos, dismiss
+4. After session/lifecycle recovery is implemented, configure the user-owned App
+   Shortcut/Vocal Shortcut. Invoke Ask Arcanos, dismiss
    Siri after a pending acknowledgement, terminate/relaunch the app, restore the
    operation, and retrieve its result without a second create request. Exercise an
    ambiguous recent-reference case and verify clarification rather than selection.

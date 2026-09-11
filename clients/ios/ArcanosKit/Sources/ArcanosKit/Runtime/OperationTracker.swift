@@ -84,6 +84,9 @@ public struct FileOperationPersistence: OperationPersistence {
 
 /// Serializes recovery-index changes and enforces authenticated partition isolation.
 public actor OperationTracker {
+    private static let acceptanceStatuses: Set<String> = ["pending", "queued", "running", "completed", "failed", "cancelled", "expired"]
+    private static let observationStatuses: Set<String> = ["pending", "completed", "failed", "expired", "not_found"]
+    private static let terminalStatuses: Set<String> = ["completed", "failed", "cancelled", "expired", "not_found"]
     private let persistence: any OperationPersistence
     private let now: @Sendable () -> Date
     private let retention: TimeInterval
@@ -100,9 +103,13 @@ public actor OperationTracker {
     /// Persists submission intent before transport. Callers must not reuse its key for another operation.
     @discardableResult
     public func prepare(_ operation: TrackedOperation) throws -> UUID {
+        try Self.validate(operation)
+        guard operation.localState == .prepared else { throw GatewayError.invalidRequest }
         var values = try current()
         //audit Assumption: an idempotency key identifies one semantic operation in one security partition; reject collisions rather than guessing.
-        guard !values.contains(where: { $0.partition == operation.partition && $0.idempotencyKey == operation.idempotencyKey }) else {
+        guard !values.contains(where: {
+            $0.id == operation.id || ($0.partition == operation.partition && $0.idempotencyKey == operation.idempotencyKey)
+        }) else {
             throw GatewayError.invalidRequest
         }
         values.append(operation)
@@ -112,29 +119,37 @@ public actor OperationTracker {
 
     /// Records a confirmed backend acceptance without treating acceptance as completion.
     public func accept(_ id: UUID, jobID: String, backendStatus: String) throws {
-        guard UUID(uuidString: jobID) != nil, ["queued", "running", "completed", "failed"].contains(backendStatus) else {
+        guard UUID(uuidString: jobID) != nil, Self.acceptanceStatuses.contains(backendStatus) else {
             throw GatewayError.invalidResponse
         }
         try update(id) { record in
+            guard record.backendJobID == nil || record.backendJobID == jobID else { throw GatewayError.invalidResponse }
+            // A retried receipt cannot replace an accepted handle or overwrite a later result observation.
+            guard ![.observing, .terminal, .dismissed].contains(record.localState) else { return }
             record.backendJobID = jobID
             record.backendStatus = backendStatus
-            record.localState = backendStatus == "completed" || backendStatus == "failed" ? .terminal : .accepted
+            record.localState = Self.terminalStatuses.contains(backendStatus) ? .terminal : .accepted
         }
     }
 
     /// Marks a transport outcome ambiguous; this never authorizes automatic replay.
     public func markSubmissionUncertain(_ id: UUID) throws {
         try update(id) { record in
-            guard record.backendJobID == nil else { return }
+            guard record.backendJobID == nil, record.localState != .dismissed else { return }
             record.localState = .submissionUncertain
         }
     }
 
     /// Applies an authorized status read to a known accepted job.
     public func observe(_ id: UUID, jobID: String, backendStatus: String, terminal: Bool) throws {
+        guard Self.observationStatuses.contains(backendStatus), terminal == Self.terminalStatuses.contains(backendStatus) else {
+            throw GatewayError.invalidResponse
+        }
         try update(id) { record in
             //audit Assumption: response identity must equal the accepted handle; mismatch is untrusted transport data and fails closed.
             guard record.backendJobID == jobID else { throw GatewayError.invalidResponse }
+            // Concurrent reads may arrive out of order; completed recovery evidence must not become pending again.
+            guard ![.terminal, .dismissed].contains(record.localState) else { return }
             record.backendStatus = backendStatus
             record.localState = terminal ? .terminal : .observing
         }
@@ -164,7 +179,9 @@ public actor OperationTracker {
     private func update(_ id: UUID, mutation: (inout TrackedOperation) throws -> Void) throws {
         var values = try current()
         guard let index = values.firstIndex(where: { $0.id == id }) else { throw OperationTrackingError.notFound }
+        let previous = values[index]
         try mutation(&values[index])
+        guard values[index] != previous else { return }
         values[index].updatedAt = now()
         try commit(values)
     }
@@ -181,11 +198,49 @@ public actor OperationTracker {
         guard let data = try persistence.load() else { records = []; return [] }
         do {
             let decoded = try JSONDecoder().decode([TrackedOperation].self, from: data)
+            var ids: Set<UUID> = []
+            var keys: [OperationPartition: Set<String>] = [:]
+            for operation in decoded {
+                try Self.validate(operation)
+                guard ids.insert(operation.id).inserted,
+                      keys[operation.partition, default: []].insert(operation.idempotencyKey).inserted else {
+                    throw OperationTrackingError.corruptStore
+                }
+            }
             records = decoded
             return decoded
         } catch {
             //audit Assumption: corrupt local cache has no authority; surface failure rather than silently discarding recovery evidence.
             throw OperationTrackingError.corruptStore
+        }
+    }
+
+    private static func validate(_ operation: TrackedOperation) throws {
+        guard let origin = URL(string: operation.partition.origin),
+              let partition = try? OperationPartition(origin: origin, deviceID: operation.partition.deviceID),
+              partition == operation.partition,
+              operation.createdAt.timeIntervalSinceReferenceDate.isFinite,
+              operation.updatedAt.timeIntervalSinceReferenceDate.isFinite else { throw GatewayError.invalidRequest }
+        let prepared = try TrackedOperation(id: operation.id, partition: partition, kind: operation.kind,
+            displaySummary: operation.displaySummary, createdAt: operation.createdAt, idempotencyKey: operation.idempotencyKey)
+        guard prepared.displaySummary == operation.displaySummary else { throw GatewayError.invalidRequest }
+        if let jobID = operation.backendJobID {
+            guard UUID(uuidString: jobID) != nil, let status = operation.backendStatus else { throw GatewayError.invalidRequest }
+            switch operation.localState {
+            case .accepted:
+                guard Self.acceptanceStatuses.contains(status), !Self.terminalStatuses.contains(status) else { throw GatewayError.invalidRequest }
+            case .observing:
+                guard status == "pending" else { throw GatewayError.invalidRequest }
+            case .terminal:
+                guard Self.terminalStatuses.contains(status) else { throw GatewayError.invalidRequest }
+            case .dismissed:
+                guard Self.acceptanceStatuses.contains(status) || Self.observationStatuses.contains(status) else { throw GatewayError.invalidRequest }
+            case .prepared, .submissionUncertain:
+                throw GatewayError.invalidRequest
+            }
+        } else {
+            guard operation.backendStatus == nil,
+                  [.prepared, .submissionUncertain, .dismissed].contains(operation.localState) else { throw GatewayError.invalidRequest }
         }
     }
 
@@ -229,7 +284,7 @@ public actor CompletionHintInbox {
     /// Creates an in-memory hint inbox; recovery remains functional when delivery is denied or missing.
     public init(now: @escaping @Sendable () -> Date = { Date() }) { self.now = now }
 
-    /// Returns the operation to reconcile, or nil for a duplicate/out-of-order/unowned hint.
+    /// Returns the operation to reconcile, or nil for a duplicate/pre-operation/unowned hint.
     public func receive(_ hint: CompletionNotificationHint, operations: [TrackedOperation]) -> UUID? {
         received = received.filter { now().timeIntervalSince($0.value) < 24 * 60 * 60 }
         //audit Assumption: APNs can duplicate and reorder payloads; hints never mutate terminal state and only trigger an authorized fetch.
