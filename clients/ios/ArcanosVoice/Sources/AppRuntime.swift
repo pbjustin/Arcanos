@@ -59,7 +59,7 @@ final class AppRuntime {
             }
             let broker = try DevicePairingClient(origin: origin, store: credentialStore)
             try await broker.pair(pairingToken: pairingToken.trimmingCharacters(in: .whitespacesAndNewlines))
-            let canonical = broker.origin
+            let canonical = await broker.origin
             UserDefaults.standard.set(canonical.absoluteString, forKey: "arcanos.gateway.origin")
             demonstration = false
             #if DEBUG
