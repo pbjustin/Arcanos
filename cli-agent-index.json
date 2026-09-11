@@ -1,6 +1,14 @@
 {
-  "generatedAt": "2026-09-11T07:47:44.153Z",
+  "generatedAt": "2026-09-11T16:37:10.536Z",
   "scopes": [
+    {
+      "scope": "clients",
+      "files": [
+        {
+          "relativePath": "clients/ios/scripts/run-operation-recovery-e2e.py"
+        }
+      ]
+    },
     {
       "scope": "daemon-python",
       "files": [

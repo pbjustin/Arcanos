@@ -67,8 +67,49 @@ The review fixes passed the complete package suite on Linux with Swift 6.2.4:
 coverage checks Local Agent receipt statuses, immutable handles, delayed terminal
 callbacks, invalid observations, duplicate identities, malformed restoration,
 and preservation of durable and actor state after a failed write. The existing
-Gateway contract passed its drift check. These fixes still require a fresh macOS
-CI run for Apple-platform compilation evidence.
+Gateway contract passed its drift check. [macOS CI for reviewed head `3fd8eb11`](https://github.com/pbjustin/Arcanos/actions/runs/34620625976/job/103333407616)
+also passed those 110 tests and the unsigned Simulator build with Apple Swift
+6.2.4 / Xcode 26.3.
+
+## Separate-process recovery fixture
+
+`ArcanosRecoveryProof` and `scripts/run-operation-recovery-e2e.py` now exercise the
+production tracker, file store, Gateway client, and JobClient across fresh Swift
+processes. The parent independently checks the file before admitting each create
+request and counts actual URLSession HTTP requests to its loopback server.
+The successful sequence has 11 distinct processes, seven HTTP requests, and three
+create requests for three separate operations. It proves:
+
+- Accepted handles and completed state survive process exit and file reload.
+- Pending then completed result reads use the stored operation identity.
+- A mismatched result or authentication denial leaves the durable file unchanged.
+- Other device/origin lookups send no requests and disclose no recovery records.
+- Losing a receipt preserves `submissionUncertain` without automatic replay.
+- SIGKILL after server acceptance, before receipt, preserves `prepared` intent;
+  the restarted fixture refuses duplicate submission. It cannot discover the
+  backend job without the missing handle or a future reconciliation contract.
+- Credentials, prompt/result sentinels, and confirmation tokens are absent from
+  the index. The host supplies a fresh synthetic credential to each process.
+
+A mandatory negative control corrupts the completion payload and requires the
+specific result-verification failure. Missing phases, unexpected child exits,
+incomplete assertions, duplicate submissions, and failed cleanup withhold success.
+The JSON evidence includes source HEAD/dirty state, binary SHA-256, process IDs,
+request counts, assertion names, and scope. Build the executable immediately
+before a local run; its hash alone does not prove source-to-binary provenance.
+The macOS workflow builds the product from its checkout before running the fixture.
+
+Five additional Swift tests use actual files to cover retention boundaries,
+partition deletion/reload, damaged-file preservation, failed replacement without
+publishing actor state, and recovered notification ownership. Linux Swift 6.2.4
+passed 18 XCTest tests plus 97 Swift Testing tests in nine suites with these
+fixtures. The blocked-destination replacement test is not a power-loss simulation.
+
+Run the commands in [the iOS recovery-fixture guide](README.md#durable-operation-recovery-fixture).
+The fixture uses a fixed logical HTTPS origin remapped by a test-only adapter to
+one HTTP loopback listener. It does not establish shipping TLS, Apple Keychain,
+locked-device file protection, real backend authentication/database/worker/provider
+behavior, or app/Siri lifecycle integration. No production state is touched.
 
 ## Remaining implementation and validation
 

@@ -403,6 +403,45 @@ policy are unchanged; this proof does not verify TLS, a physical iPhone, Siri,
 Apple Keychain, Foundation Models or actual Python executor/provider behavior.
 The separate macOS workflow verifies the unsigned iOS Simulator build.
 
+## Durable operation recovery fixture
+
+The Phase 3 recovery index is a reusable core; it is not yet connected to the
+shipping session, app lifecycle, or App Intents. `ArcanosRecoveryProof` tests that
+core through production `OperationTracker`, `FileOperationPersistence`,
+`GatewayClient`, and `JobClient` with separate Swift processes and actual HTTP
+requests to a disposable loopback fixture.
+
+On Linux or macOS with Swift 6.2.4 and Python 3.10 or later, run from the repository:
+
+```sh
+swift test --package-path clients/ios/ArcanosKit
+swift build --package-path clients/ios/ArcanosKit --product ArcanosRecoveryProof
+recovery_bin_dir=$(swift build --package-path clients/ios/ArcanosKit --show-bin-path)
+python3 clients/ios/scripts/run-operation-recovery-e2e.py --swift-binary "$recovery_bin_dir/ArcanosRecoveryProof"
+```
+
+The parent verifies intent is on disk before submission, one create per operation,
+restart/result recovery, foreign partition isolation, failed-read preservation,
+lost receipts, and SIGKILL before receipt with no duplicate submission. Its
+positive sequence requires 11 distinct process IDs, seven requests, and three
+creates. A separate mandatory corrupted-result run must fail at result validation.
+Temporary files and the loopback listener are removed before success is reported.
+For a standalone expected-failure run, add `--inject-fault corrupt-completion`;
+it must exit nonzero with `CORRUPTED_COMPLETION_REJECTED`.
+
+The executable accepts only `--execute --allow-loopback` with bounded parent
+configuration on stdin. Its test adapter permits only create/result POSTs to a
+fixed logical origin and one exact loopback HTTP port; it disables redirects,
+proxies, cookies, and shared credentials. Each process receives its synthetic
+credential independently. The index contains neither credentials nor prompt or
+result content. JSON evidence records the checked-out SHA/dirty state and binary
+hash; compile immediately before execution. CI does this in the macOS job.
+
+This is process/file/client-wire evidence. It does not prove shipping HTTPS,
+Keychain or locked-iPhone file protection, actual server authorization or job
+execution, automatic recovery of an unknown job handle, or Siri/app lifecycle
+recovery. See the [Phase 3 engineering report](PHASE3_ENGINEERING_REPORT.md).
+
 The required PostgreSQL CI job runs this fixture and retains its sanitized
 `ios-device-e2e/v1` JSON artifact. Success requires all eleven Swift observations
 and eleven independent backend assertions, the same run ID/source commit, and
