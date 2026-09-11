@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-10T22:33:20.375Z",
+  "generatedAt": "2026-09-11T04:01:19.242Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -2876,6 +2876,9 @@
           "relativePath": "src/shared/idGenerator.ts"
         },
         {
+          "relativePath": "src/shared/ios/iosGatewayPreviewFixture.ts"
+        },
+        {
           "relativePath": "src/shared/jobs/backstageNotionPartitionSyncJob.ts"
         },
         {
@@ -4484,6 +4487,12 @@
         },
         {
           "relativePath": "tests/introspection-openapi-contract.route.test.ts"
+        },
+        {
+          "relativePath": "tests/ios-gateway-preview-application.test.ts"
+        },
+        {
+          "relativePath": "tests/ios-gateway-preview-fixture.test.ts"
         },
         {
           "relativePath": "tests/job-claim-generation-schema.test.ts"

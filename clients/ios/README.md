@@ -212,6 +212,62 @@ Apple references: [Foundation Models availability and generation](https://develo
 [Vocal Shortcuts setup](https://support.apple.com/guide/iphone/use-vocal-shortcuts-iph7f242ea2c/ios),
 [Developer Mode](https://developer.apple.com/documentation/xcode/enabling-developer-mode-on-a-device).
 
+## Supplemental Swift HTTPS preview proof
+
+After the [maintained Railway PR preview lifecycle](../../docs/RAILWAY_DEPLOYMENT.md)
+has established the exact PR head, owned web/worker deployments, and both HTTPS
+hosts, `ArcanosPreviewProof` exercises the actual Swift client against its sealed
+synthetic HTTP peer. This separate executable is not part of the iPhone host.
+Build and run it from a clean checkout of that exact head on macOS or Linux with
+Swift 6.2, using a process environment without service/provider credentials.
+
+First validate the arguments and Git evidence without making network requests:
+
+```sh
+swift run --package-path clients/ios/ArcanosKit ArcanosPreviewProof \
+  --repository-root /absolute/path/to/clean/checkout \
+  --pr-number <PR-number> --commit-sha <exact-40-character-head-SHA> \
+  --web-base-url <confirmed-web-HTTPS-origin> \
+  --worker-base-url <confirmed-worker-HTTPS-origin>
+```
+
+For an authorized executed proof, repeat the same command with both
+`--execute --allow-network`. The default run reports `executed: false` and zero
+requests. Origins must identify this PR under `*.up.railway.app`; production,
+redirects, alternate origins, paths, queries, embedded credentials, and incomplete
+network opt-ins are rejected. The checkout must have canonical GitHub origin,
+matching HEAD, and no tracked or untracked changes. In WSL, use a Linux Git
+checkout; Windows worktree metadata may contain paths Linux Git cannot resolve.
+Keep the JSON output outside the evidence checkout.
+
+The proof checks both served identities and compact fixture metadata before
+admitting canonical Gateway requests, then verifies them again at completion.
+It uses the package's `GatewayClient`, `URLSessionGatewayTransport`, generated
+DTOs, session, polling, and confirmation coordinator. Its observing wrapper adds
+only the fixed synthetic selector, records fixture traffic, and controls response
+delivery for deterministic concurrency checks. Every response is received over
+HTTPS; none is substituted. Only the compiled public test bearer is used.
+
+Coverage includes all five canonical operations, a create/pending/completed AI
+flow, terminal failure, a redacted HTTP error, exact original request bytes and
+idempotency on one approved retry, rejected approval replay, cancellation without
+a retry, and passive-worker/unauthenticated/malformed-request denials. It also
+cancels Swift tasks immediately after receiving accepted HTTP receipts and holds
+two real patch-result responses to verify accepted job handles survive and a
+consumed preview cannot be rearmed. The approval here is an explicit synthetic
+harness decision; it does not exercise Apple's system approval UI.
+
+The run permits at most 40 requests, 120 seconds, and 2 MiB of aggregate response
+data, retaining the actual transport's request/resource timeouts. Its JSON report
+contains the tested SHA/PR, executed/network flags, finite assertion names,
+request/byte counts, and scope. It does not print prompts, credentials, challenges,
+or raw server errors. The server fixture replies are validated separately against
+the source-derived Gateway snapshot in
+`tests/ios-gateway-preview-fixture.test.ts`; run contract derivation `--check` at
+the same head. This supplemental proof does not replace trusted lifecycle
+ownership evidence or establish live pairing/authentication, SQL, a real queue,
+provider inference, actual Local Agent execution, Siri, or Foundation Models.
+
 ## Validation and next phase
 
 Implementation checks on 2026-09-10: Swift 6.2 portable Linux debug/test and release
