@@ -13,6 +13,10 @@ This repository uses GitHub Actions workflows in `.github/workflows/` for build/
 Core workflows to review first:
 
 - [CI/CD pipeline](../.github/workflows/ci-cd.yml)
+  includes the required PostgreSQL 18 job's cross-process Swift device Gateway
+  fixture. It builds `ArcanosDeviceE2E`, runs real HTTP/authentication/queue/SQL
+  paths with synthetic provider/executor boundaries, and retains only the
+  sanitized proof JSON after success. See the [fixture procedure](../clients/ios/README.md#device-gateway-and-postgresql-end-to-end-fixture).
 - [PR CI](../.github/workflows/pr-ci.yml)
 - [iOS client](../.github/workflows/ios-client.yml): canonical Gateway/Swift drift,
   Swift package tests with Xcode 26.3, and an unsigned iOS Simulator build. These

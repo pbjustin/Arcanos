@@ -212,6 +212,42 @@ The complete repository-wide test suite, deployed migration and multi-replica
 live behavior were not exercised; the focused and SQL suites are the evidence
 reported here. TLS/Keychain APIs require the hardware acceptance sequence below.
 
+## PR review and integrated E2E follow-up
+
+PR #1496 now includes a required, disposable PostgreSQL 18 fixture that runs the
+compiled Swift `ArcanosDeviceE2E` client through real URLSession requests, the
+Gateway HTTP boundary/router, production device repositories, queued GPT worker
+execution and fenced terminal persistence. It also executes the explicit Local
+Agent confirmation/retry path and persists a synthetic executor result through
+the production repository. Eleven Swift observations and eleven independent
+backend assertions must all pass; skipped execution or unverified cleanup fails
+the runner. The required PostgreSQL CI job retains a sanitized report bound to
+the checked-out commit (GitHub's test merge commit for pull requests).
+
+The fixture reproduced a real requester-device idempotency collision: two phones
+using the same explicit key for the same executor/action conflicted in the SQL
+binding despite distinct request fingerprints. Device requests now include their
+requester identity in the key hash. Real PostgreSQL coverage verifies separate
+jobs across devices and stable deduplication within one device; focused unit
+coverage preserves the previous operator key hash exactly.
+
+Local validation of the follow-up passed with Node 24.18.1, Swift 6.2 and
+PostgreSQL 18.6, including both integrated tests, all eleven backend assertions,
+77 focused JavaScript/TypeScript regressions, and 18 XCTest tests plus 77 Swift
+Testing functions. Type checking passed; lint had zero errors and 76 existing
+warnings. The owned schema was removed, HTTP server closed, and temporary local
+PostgreSQL server stopped with no remaining listener.
+
+The transport adapter maps one logical HTTPS origin onto loopback HTTP. Keychain
+item storage, local inference, provider responses, and executor registration and
+output are synthetic. This proves the integrated client/backend flow within
+those fixture boundaries; it does not establish TLS trust, physical iPhone/Siri/
+Foundation Models behavior, system Keychain persistence, live provider quality,
+the Python executor, full production startup, or deployed migrations. The
+[repeatable fixture instructions](README.md#device-gateway-and-postgresql-end-to-end-fixture)
+describe its guards, execution command and evidence format. The physical-device
+acceptance procedure remains necessary before claiming live iPhone readiness.
+
 ## Physical iPhone live-test procedure
 
 This procedure requires a separately authorized non-production deployment of the
@@ -273,14 +309,21 @@ boundaries; richer UI, additional platforms and memory redesign are separate wor
 <!-- PHASE2_FILE_INVENTORY -->
 ## File inventory
 
-Added (18):
+Added (
+25
+):
 
 - `.github/workflows/ios-client.yml`
+- `clients/ios/ArcanosKit/Sources/ArcanosDeviceE2E/Configuration.swift`
+- `clients/ios/ArcanosKit/Sources/ArcanosDeviceE2E/DeviceProof.swift`
+- `clients/ios/ArcanosKit/Sources/ArcanosDeviceE2E/LoopbackTransport.swift`
 - `clients/ios/ArcanosKit/Sources/ArcanosKit/Gateway/DevicePairingClient.swift`
+- `clients/ios/ArcanosKit/Tests/ArcanosDeviceE2ETests/ConfigurationTests.swift`
 - `clients/ios/ArcanosKit/Tests/ArcanosKitTests/DeviceAuthenticationTests.swift`
 - `clients/ios/PHASE2_ENGINEERING_REPORT.md`
 - `migrations/20260911_gpt_access_devices_v1.rollback.sql`
 - `migrations/20260911_gpt_access_devices_v1.sql`
+- `scripts/validate-ios-device-gateway-e2e.mjs`
 - `scripts/validate-ios-device-gateway.mjs`
 - `src/core/db/gptAccessDeviceSchema.ts`
 - `src/core/db/repositories/gptAccessDeviceRepository.ts`
@@ -293,13 +336,18 @@ Added (18):
 - `tests/gpt-access-device-openapi-contract.test.ts`
 - `tests/helpers/gptAccessDeviceRepository.ts`
 - `tests/integration/gpt-access-device-auth.pg18.integration.test.ts`
+- `tests/integration/ios-device-gateway.e2e.integration.test.ts`
+- `tests/ios-device-e2e-runner.test.js`
 
-Modified (40):
+Modified (
+42
+):
 
 - `.env.example`
 - `.github/workflows/ci-cd.yml`
 - `backend-index.json`
 - `cli-agent-index.json`
+- `clients/ios/ArcanosKit/Package.swift`
 - `clients/ios/ArcanosKit/Sources/ArcanosKit/AI/RemoteAI.swift`
 - `clients/ios/ArcanosKit/Sources/ArcanosKit/Gateway/GatewayClient.swift`
 - `clients/ios/ArcanosKit/Sources/ArcanosKit/Gateway/GatewayCredential.swift`
@@ -307,6 +355,7 @@ Modified (40):
 - `clients/ios/ArcanosKit/Sources/ArcanosKit/Runtime/SessionResult.swift`
 - `clients/ios/ArcanosKit/Sources/ArcanosKit/Security/CredentialStore.swift`
 - `clients/ios/ArcanosVoice/Sources/AppRuntime.swift`
+- `clients/ios/ArcanosVoice/Sources/ArcanosIntents.swift`
 - `clients/ios/ArcanosVoice/Sources/SettingsView.swift`
 - `clients/ios/README.md`
 - `clients/ios/scripts/derive-gateway-contract.mjs`

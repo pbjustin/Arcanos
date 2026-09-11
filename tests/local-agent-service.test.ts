@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, jest, test } from '@jest/globals';
+import { createHash } from 'node:crypto';
 
 const findOrCreateLocalAgentJobMock = jest.fn();
 const assertLocalAgentWorkspaceAllowedMock = jest.fn();
@@ -76,14 +77,26 @@ describe('local-agent GPT Access job service', () => {
     }
     const first = findOrCreateLocalAgentJobMock.mock.calls[0][0] as {
       envelope: { gptAccessDeviceOwner: { deviceId: string }; job: { deviceId: string } };
-      idempotencyScopeHash: string; requestFingerprintHash: string;
+      idempotencyScopeHash: string; idempotencyKeyHash: string; requestFingerprintHash: string;
     };
     const second = findOrCreateLocalAgentJobMock.mock.calls[1][0] as typeof first;
     expect(first.envelope.gptAccessDeviceOwner.deviceId).toBe('11111111-1111-4111-8111-111111111111');
     expect(second.envelope.gptAccessDeviceOwner.deviceId).toBe('22222222-2222-4222-8222-222222222222');
     expect(first.envelope.job.deviceId).toBe('20000000-0000-4000-8000-000000000001');
     expect(first.idempotencyScopeHash).not.toBe(second.idempotencyScopeHash);
+    expect(first.idempotencyKeyHash).not.toBe(second.idempotencyKeyHash);
     expect(first.requestFingerprintHash).not.toBe(second.requestFingerprintHash);
+  });
+
+  test('preserves operator idempotency bindings and stable retries for one requester device', async () => {
+    await executeLocalAgentActionAsJob({ action: 'git.status', payload: {}, context });
+    const deviceContext = { ...context, requesterDeviceId: '11111111-1111-4111-8111-111111111111' };
+    await executeLocalAgentActionAsJob({ action: 'git.status', payload: {}, context: deviceContext });
+    await executeLocalAgentActionAsJob({ action: 'git.status', payload: {}, context: deviceContext });
+    const hashes = findOrCreateLocalAgentJobMock.mock.calls.map(call => (call[0] as { idempotencyKeyHash: string }).idempotencyKeyHash);
+    expect(hashes[0]).toBe(createHash('sha256').update('local-agent-idempotency-key-v1\0turn:test', 'utf8').digest('hex'));
+    expect(hashes[1]).not.toBe(hashes[0]);
+    expect(hashes[2]).toBe(hashes[1]);
   });
   test('queues read-only work with only server-controlled authority fields', async () => {
     await expect(

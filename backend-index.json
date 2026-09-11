@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-11T05:21:29.510Z",
+  "generatedAt": "2026-09-11T07:00:28.716Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -4487,6 +4487,9 @@
         },
         {
           "relativePath": "tests/integration/gpt-access-device-auth.pg18.integration.test.ts"
+        },
+        {
+          "relativePath": "tests/integration/ios-device-gateway.e2e.integration.test.ts"
         },
         {
           "relativePath": "tests/integration/job-claim-fencing.pg18.integration.test.ts"

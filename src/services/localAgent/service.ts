@@ -175,10 +175,14 @@ export async function executeLocalAgentActionAsJob(
         action
       }
     );
-    const idempotencyKeyHash = hashScopedOpaqueValue(
-      'local-agent-idempotency-key-v1',
-      idempotency.key
-    );
+    // The database binding is keyed by executor device, so requester devices
+    // must also have distinct key hashes within that shared executor scope.
+    const idempotencyKeyHash = request.context.requesterDeviceId
+      ? fingerprintCanonicalValue('local-agent-device-idempotency-key-v1', {
+        requesterDeviceId: request.context.requesterDeviceId,
+        key: idempotency.key
+      })
+      : hashScopedOpaqueValue('local-agent-idempotency-key-v1', idempotency.key);
     const evidenceId = fingerprintCanonicalValue(
       'local-agent-authorization-evidence-v1',
       {

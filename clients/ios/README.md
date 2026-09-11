@@ -347,6 +347,56 @@ the same head. This supplemental proof does not replace trusted lifecycle
 ownership evidence or establish live pairing/authentication, SQL, a real queue,
 provider inference, actual Local Agent execution, Siri, or Foundation Models.
 
+## Device Gateway and PostgreSQL end-to-end fixture
+
+`ArcanosDeviceE2E` connects the real Swift pairing, Gateway, session, polling and
+confirmation clients to the real Express Gateway handlers and a disposable
+PostgreSQL 18 database. The backend uses the production credential, job and
+Local Agent repositories. A finite worker claims and executes the queued GPT
+request through the configured dispatcher, SDK and Trinity path, then persists
+the fenced result. Provider responses, local inference, executor registration/
+output and Keychain item storage are fixtures.
+
+Run from a Linux checkout with the pinned Node/npm toolchain, Swift 6.2 or later,
+installed npm dependencies, and an explicitly disposable PostgreSQL 18 database:
+
+```sh
+npm run build:packages
+swift build --package-path clients/ios/ArcanosKit --product ArcanosDeviceE2E
+ios_device_e2e_bin_dir=$(swift build --package-path clients/ios/ArcanosKit --show-bin-path)
+IOS_DEVICE_E2E_DATABASE_URL=postgresql://arcanos_ci@127.0.0.1:5432/arcanos_ios_e2e_test \
+IOS_DEVICE_E2E_SWIFT_BINARY="$ios_device_e2e_bin_dir/ArcanosDeviceE2E" \
+  node scripts/validate-ios-device-gateway-e2e.mjs
+```
+
+The runner does not create a database or start PostgreSQL. It accepts only an
+explicit loopback port and the dedicated `arcanos_ios_e2e_*` database names or
+the existing CI database `arcanos_audit_pg18_20260727`. It creates a schema named
+for a fresh run ID and removes it afterward. Never substitute a configured
+application database. Missing prerequisites, incomplete evidence, skipped tests,
+child timeouts and unconfirmed cleanup fail the command.
+
+The proof covers unpaired local operation, authenticated pairing, consumed-token
+replay rejection, durable AI results, foreign-device result concealment,
+confirmation cancellation without execution, one exact approved retry, Local
+Agent results, renewal with rejection of the old credential, revocation, and
+independent idempotency keys for phones sharing an operator/workspace/executor.
+The latter includes same-phone deduplication and caught a database binding
+collision that synthetic repository tests did not detect.
+
+The fixture's URLSession transport remaps the fixed logical HTTPS origin to a
+bounded loopback HTTP listener. Production transport and its HTTPS/redirect
+policy are unchanged; this proof does not verify TLS, a physical iPhone, Siri,
+Apple Keychain, Foundation Models or actual Python executor/provider behavior.
+The separate macOS workflow verifies the unsigned iOS Simulator build.
+
+The required PostgreSQL CI job runs this fixture and retains its sanitized
+`ios-device-e2e/v1` JSON artifact. Success requires all eleven Swift observations
+and eleven independent backend assertions, the same run ID/source commit, and
+confirmed server/schema cleanup. The report identifies local uncommitted changes.
+For pull requests, CI tests GitHub's merge commit; verify that report's source SHA
+and its PR head/base parents when using the artifact as published source evidence.
+
 ## Validation and next phase
 
 Implementation checks on 2026-09-10: Swift 6.2 portable Linux debug/test and release

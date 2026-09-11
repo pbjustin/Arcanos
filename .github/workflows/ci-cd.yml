@@ -415,7 +415,7 @@ jobs:
 
   local-agent-postgres-concurrency:
     name: PostgreSQL Fencing & Local Agent Concurrency
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     services:
       postgres:
         image: postgres:18-alpine
@@ -475,6 +475,29 @@ jobs:
 
       - name: 🧱 Verify PostgreSQL fencing, Backstage atomicity, partition storage, and retention
         run: npm run test:postgres-fencing
+
+      - name: Verify Swift device clients through HTTP and disposable PostgreSQL
+        timeout-minutes: 10
+        env:
+          IOS_DEVICE_E2E_DATABASE_URL: ${{ env.GPT_ACCESS_DEVICE_TEST_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          npm run build:packages
+          swift --version
+          swift build --package-path clients/ios/ArcanosKit --product ArcanosDeviceE2E
+          ios_device_e2e_bin_dir=$(swift build --package-path clients/ios/ArcanosKit --show-bin-path)
+          mkdir -p local_artifacts
+          IOS_DEVICE_E2E_SWIFT_BINARY="$ios_device_e2e_bin_dir/ArcanosDeviceE2E" \
+            node scripts/validate-ios-device-gateway-e2e.mjs | tee local_artifacts/ios-device-e2e-proof.json
+
+      - name: Retain sanitized Swift device E2E proof
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-device-e2e-proof-${{ github.sha }}
+          path: local_artifacts/ios-device-e2e-proof.json
+          if-no-files-found: error
+          retention-days: 7
 
   runtime-redis-admission:
     name: Standalone Runtime Redis Admission
