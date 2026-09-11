@@ -346,6 +346,20 @@ function replaceRequired(sourceText, expected, replacement) {
 }
 
 describe('native PR preview import boundary', () => {
+  it.each([
+    'src/services/actionPlanExecution/canonical.ts',
+    'src/shared/security/gptAccessDevice.ts',
+    'src/shared/security/gptAccessDevicePolicyCore.ts',
+    'src/shared/ios/iosDevicePreviewFixture.ts',
+  ])('requires the reviewed semantic digest for device preview dependency %s', async (filePath) => {
+    const sourceText = await readFile(new URL(`../${filePath}`, import.meta.url), 'utf8');
+    expect(findUnsafeRuntimeSyntax(filePath, sourceText)).toEqual([]);
+    expect(findUnsafeRuntimeSyntax(filePath, `${sourceText}\nexport const unreviewedChange = true;\n`))
+      .toEqual(expect.arrayContaining([
+        expect.stringContaining('critical entry file semantic digest'),
+      ]));
+  });
+
   it('keeps the contained application outside production side-effect modules', async () => {
     await expect(findNativePrPreviewImportViolations()).resolves.toEqual([]);
   }, 30_000);

@@ -186,6 +186,12 @@ function responseHeadersForCase(
             NATIVE_PR_PREVIEW_E2E_CONTRACT.workerBudgetReadiness.proofVersion,
         }
       : {}),
+    ...(requestCase.expectedType === 'web-readiness'
+      ? {
+          [NATIVE_PR_PREVIEW_E2E_CONTRACT.iosDevicePolicy.proofHeader]:
+            NATIVE_PR_PREVIEW_E2E_CONTRACT.iosDevicePolicy.proofVersion,
+        }
+      : {}),
     ...(requestCase.boundedResponse
       ? { 'x-response-bytes': String(bodyBytes) }
       : {}),
@@ -2066,6 +2072,9 @@ test('executes the bounded credential-free matrix and detects identity stability
     24
   );
   assert.equal(mock.requestCount, 138);
+  for (const caseId of ['web-readiness-initial', 'web-readiness-final']) {
+    assert.equal(result.checks.find(check => check.caseId === caseId)?.iosDevicePolicyVerified, true);
+  }
   assert.deepEqual(
     result.checks.filter(({ gamingArchiveGuideEvidenceVerified }) =>
       gamingArchiveGuideEvidenceVerified === true
@@ -2910,6 +2919,20 @@ test('rejects extra response fields and an incorrect media type', async () => {
 test('rejects missing synthetic provenance and correlation or security header drift', async () => {
   const requestPlan = buildNativePrPreviewRequestPlan();
   const cases = [
+    {
+      caseId: 'web-readiness-initial',
+      code: 'NATIVE_PR_PREVIEW_IOS_DEVICE_POLICY_PROOF_INVALID',
+      mutate(headers) {
+        delete headers[NATIVE_PR_PREVIEW_E2E_CONTRACT.iosDevicePolicy.proofHeader];
+      },
+    },
+    {
+      caseId: 'web-readiness-final',
+      code: 'NATIVE_PR_PREVIEW_IOS_DEVICE_POLICY_PROOF_INVALID',
+      mutate(headers) {
+        headers[NATIVE_PR_PREVIEW_E2E_CONTRACT.iosDevicePolicy.proofHeader] = 'ios-device-policy/unverified';
+      },
+    },
     {
       caseId: 'worker-readiness-initial',
       code: 'NATIVE_PR_PREVIEW_WORKER_BUDGET_READINESS_PROOF_INVALID',

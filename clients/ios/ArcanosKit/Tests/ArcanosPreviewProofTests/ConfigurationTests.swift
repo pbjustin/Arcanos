@@ -47,4 +47,22 @@ struct ConfigurationTests {
         }
         #expect(await transport.count() == 0)
     }
+
+    @Test func devicePolicyRequestsRefuseCarriersBodiesAndWrongMethod() async throws {
+        let configuration = try ProofConfiguration(arguments: base)
+        let transport = ObservedTransport(web: configuration.web, worker: configuration.worker)
+        let url = URL(string: PreviewFixture.devicePolicyPath, relativeTo: configuration.web)!.absoluteURL
+        for header in ["Authorization", "authorization", "x-native-preview-fixture", "Idempotency-Key"] {
+            await #expect(throws: ProofFailure.self) {
+                try await transport.send(GatewayRequest(url: url, method: "GET", headers: [header: "fixture-marker"]))
+            }
+        }
+        await #expect(throws: ProofFailure.self) {
+            try await transport.send(GatewayRequest(url: url, method: "GET", headers: [:], body: Data("{}".utf8)))
+        }
+        await #expect(throws: ProofFailure.self) {
+            try await transport.send(GatewayRequest(url: url, method: "POST", headers: [:]))
+        }
+        #expect(await transport.count() == 0)
+    }
 }

@@ -1,5 +1,6 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { gptAccessDeviceRepository } from '@core/db/repositories/gptAccessDeviceRepository.js';
+import { validateGptAccessDeviceRecord } from '@shared/security/gptAccessDevicePolicyCore.js';
 import {
   GPT_ACCESS_DEVICE_AUDIENCE, GPT_ACCESS_DEVICE_GPT_IDS, GPT_ACCESS_DEVICE_RENEWAL_TTL_MS,
   GPT_ACCESS_DEVICE_TOKEN_PATTERN, GPT_ACCESS_DEVICE_TTL_MS, GPT_ACCESS_PAIRING_TOKEN_PATTERN,
@@ -75,21 +76,7 @@ export class GptAccessDeviceCredentialService {
   }
 
   private validateRecord(record: GptAccessDeviceRecord, origin: string, now: number): void {
-    const { principalId, workspaceId, scopes, capabilityActions } = record;
-    if (record.audience !== GPT_ACCESS_DEVICE_AUDIENCE
-      || !GptAccessDeviceGrantSchema.safeParse({ principalId, workspaceId, scopes, capabilityActions, origin: record.origin }).success
-      || record.gptIds.length !== 1 || record.gptIds[0] !== 'arcanos-core'
-      || ![record.pairedAt, record.issuedAt, record.expiresAt, record.renewalExpiresAt].every(value => Number.isFinite(Date.parse(value)))
-      || Date.parse(record.issuedAt) > now || Date.parse(record.pairedAt) > Date.parse(record.issuedAt)
-      || Date.parse(record.expiresAt) > Date.parse(record.renewalExpiresAt)
-      || Date.parse(record.expiresAt) - Date.parse(record.issuedAt) > GPT_ACCESS_DEVICE_TTL_MS
-      || Date.parse(record.renewalExpiresAt) - Date.parse(record.pairedAt) > GPT_ACCESS_DEVICE_RENEWAL_TTL_MS) {
-      throw new GptAccessDeviceAuthError('DEVICE_AUTH_INVALID');
-    }
-    if (record.revokedAt) throw new GptAccessDeviceAuthError('DEVICE_REVOKED');
-    if (record.origin !== origin) throw new GptAccessDeviceAuthError('DEVICE_ORIGIN_DENIED', 403);
-    if (Date.parse(record.renewalExpiresAt) <= now) throw new GptAccessDeviceAuthError('DEVICE_RENEWAL_REQUIRED');
-    if (Date.parse(record.expiresAt) <= now) throw new GptAccessDeviceAuthError('DEVICE_CREDENTIAL_EXPIRED');
+    validateGptAccessDeviceRecord(record, origin, now);
   }
 
   async authenticate(token: string | undefined, origin: string): Promise<GptAccessDevicePrincipal> {

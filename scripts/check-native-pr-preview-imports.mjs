@@ -44,6 +44,7 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/platform/runtime/security.ts',
   'src/routes/_core/researchAbortDrain.ts',
   'src/routes/genericJobsRouter.ts',
+  'src/services/actionPlanExecution/canonical.ts',
   'src/services/gamingModes.ts',
   'src/services/gamingDocumentExtraction.ts',
   'src/services/gamingDocumentEvidence.ts',
@@ -98,6 +99,7 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/shared/gpt/gptJobResult.ts',
   'src/shared/gpt/trinityReasoningPolicy.ts',
   'src/shared/ios/iosGatewayPreviewFixture.ts',
+  'src/shared/ios/iosDevicePreviewFixture.ts',
   'src/shared/gaming/gamingArchiveResourceCore.ts',
   'src/shared/gaming/gamingSourceAcquisitionCore.ts',
   'src/shared/gaming/gamingSourceAcquisitionPreviewFixture.ts',
@@ -145,6 +147,8 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/shared/hrcEvaluationPolicy.ts',
   'src/shared/researchRequest.ts',
   'src/shared/constants.ts',
+  'src/shared/security/gptAccessDevice.ts',
+  'src/shared/security/gptAccessDevicePolicyCore.ts',
   'src/shared/security/opaqueSecret.ts',
   'src/shared/security/purposeBoundCredential.ts',
   'src/shared/security/sensitiveProviderStorage.ts',
@@ -168,7 +172,7 @@ const FORBIDDEN_LOCAL_IMPORT_PATTERNS = [
   /^src\/routes\/jobs\.ts$/u,
   /^src\/routes\/modules\.ts$/u,
   /^src\/routes\/register\.ts$/u,
-  /^src\/services\/(?!(?:(?:backstageBookerClear|directAnswerMode|gamingModes|gamingDocumentExtraction|gamingDocumentEvidence|gamingHtmlEvidence|gamingJsonEvidence|gamingDocumentChunks|gamingDurableDocumentChunks|gamingGameDetection|gamingPublicDispatcher|publicGamingCanary|publicGamingCanaryFixture|queuedJobCompletionPolling)\.ts$|controlPlane\/(?:httpAuth|systemStateBodyParser|systemStateHttpBoundary|types)\.ts$))/u,
+  /^src\/services\/(?!(?:(?:backstageBookerClear|directAnswerMode|gamingModes|gamingDocumentExtraction|gamingDocumentEvidence|gamingHtmlEvidence|gamingJsonEvidence|gamingDocumentChunks|gamingDurableDocumentChunks|gamingGameDetection|gamingPublicDispatcher|publicGamingCanary|publicGamingCanaryFixture|queuedJobCompletionPolling)\.ts$|actionPlanExecution\/canonical\.ts$|controlPlane\/(?:httpAuth|systemStateBodyParser|systemStateHttpBoundary|types)\.ts$))/u,
   /^src\/shared\/http\/index\.ts$/u,
   /^src\/shared\/http\/middleware\.ts$/u,
   /^src\/transport\/http\/middleware\//u,
@@ -230,6 +234,12 @@ const FILE_SPECIFIC_EXTERNAL_RUNTIME_IMPORTS = new Map([
   ['src/start-native-pr-preview.ts', new Set(['node:http', 'node:url'])],
 ]);
 const FILE_SPECIFIC_EXTERNAL_IMPORT_BINDINGS = new Map([
+  ['src/services/actionPlanExecution/canonical.ts', new Map([
+    ['node:crypto', new Set(['createHash:createHash'])],
+  ])],
+  ['src/shared/security/gptAccessDevice.ts', new Map([
+    ['zod', new Set(['z:z'])],
+  ])],
   ['src/services/gamingHtmlEvidence.ts', new Map([
     ['node:crypto', new Set(['createHash:createHash'])],
     ['cheerio', new Set(['load:load'])],
@@ -724,6 +734,10 @@ const CRITICAL_RUNTIME_FUNCTION_DIGESTS = new Map([
   ],
 ]);
 const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
+  ['src/services/actionPlanExecution/canonical.ts', 'b0c24aa5b6d3b588c7970008049bdcacccab8e66cbaa26a51eea49e59811c917'],
+  ['src/shared/security/gptAccessDevice.ts', '4f125ee645d846e9a00a6e3ccd92d26dbcbd3710a2f5cfae445bbc1376bcd100'], // gitleaks:allow -- public source semantic SHA-256
+  ['src/shared/security/gptAccessDevicePolicyCore.ts', '82e9adfaba37b14ad163b5f33f75944dc2565e46697d5a89dcdc9c3027724516'], // gitleaks:allow -- public source semantic SHA-256
+  ['src/shared/ios/iosDevicePreviewFixture.ts', '32491af102dc33ef8353eb240dc536088b1d3e3e8e39ae5cf678c78a091c640b'],
   ['src/shared/ios/iosGatewayPreviewFixture.ts', '67babf8ad6b2d7d1e1f7f2131ad3ac4856e27b47c026db525d269e4f07d035f5'],
   ['src/services/gamingDocumentEvidence.ts', '2fcf36e679c8850dea53ea0b5b56a4a662b8a4a20709d5c5e74e16d524f4a82b'],
   ['src/services/gamingHtmlEvidence.ts', 'c70e8749dc06dfbc66a9137f3d3789d8c31ca4c6c9cfd923a3c44bfa2effa827'],

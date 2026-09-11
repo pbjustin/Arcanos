@@ -6,6 +6,8 @@ enum PreviewFixture {
     static let selector = "ios-gateway-v1"
     static let token = "test-ios-preview-only-v1"
     static let metadataPath = "/ios/gateway-contract"
+    static let devicePolicyPath = "/ios/device-contract"
+    static let devicePolicyVersion = "ios-device-policy/v1"
     static let createPath = "/gpt-access/jobs/create"
     static let resultPath = "/gpt-access/jobs/result"
     static let listPath = "/gpt-access/capabilities/v1"
@@ -62,14 +64,19 @@ actor ObservedTransport: GatewayTransport {
         let path = parts.path
         parts.path = ""
         try require(parts.url.map { origins.contains($0) } == true, "TRANSPORT_ORIGIN_DENIED")
-        let readAllowed = request.method == "GET" && ["/readyz", PreviewFixture.metadataPath, PreviewFixture.listPath, PreviewFixture.detailPath].contains(path)
+        let devicePolicy = path == PreviewFixture.devicePolicyPath
+        if devicePolicy {
+            try require(request.body == nil && request.headers.keys.allSatisfy { $0.lowercased() == "accept" },
+                        "DEVICE_POLICY_REQUEST_CARRIER_DENIED")
+        }
+        let readAllowed = request.method == "GET" && ["/readyz", PreviewFixture.metadataPath, PreviewFixture.devicePolicyPath, PreviewFixture.listPath, PreviewFixture.detailPath].contains(path)
         let writeAllowed = request.method == "POST" && [PreviewFixture.createPath, PreviewFixture.resultPath, PreviewFixture.runPath].contains(path)
         try require(readAllowed || writeAllowed, "TRANSPORT_ROUTE_DENIED")
-        try require(admitted || (request.method == "GET" && ["/readyz", PreviewFixture.metadataPath].contains(path)), "PREVIEW_IDENTITY_NOT_VERIFIED")
+        try require(admitted || (request.method == "GET" && ["/readyz", PreviewFixture.metadataPath, PreviewFixture.devicePolicyPath].contains(path)), "PREVIEW_IDENTITY_NOT_VERIFIED")
         try require(requestsMade < 40 && Date() < deadline, "TRANSPORT_BUDGET_EXHAUSTED")
         requestsMade += 1
         var headers = request.headers
-        if path != "/readyz" { headers["x-native-preview-fixture"] = PreviewFixture.selector }
+        if path != "/readyz" && !devicePolicy { headers["x-native-preview-fixture"] = PreviewFixture.selector }
         let outgoing = GatewayRequest(url: request.url, method: request.method, headers: headers, body: request.body)
         let response: GatewayResponse
         do { response = try await actual.send(outgoing) }

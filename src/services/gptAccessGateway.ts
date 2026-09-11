@@ -58,6 +58,7 @@ export {
 import { GPT_ACCESS_SCOPES, type GptAccessScope } from '@services/gptAccessScopes.js';
 import { authenticateGptAccessDevice, isDeviceCredentialRequest } from './gptAccessDeviceAuth.js';
 import type { GptAccessDevicePrincipal } from '@shared/security/gptAccessDevice.js';
+import { matchesGptAccessDeviceJobOwner } from '@shared/security/gptAccessDevicePolicyCore.js';
 
 const SERVICE_VERSION = '1.0.0';
 const TOKEN_ENV_NAME = 'ARCANOS_GPT_ACCESS_TOKEN';
@@ -1033,9 +1034,7 @@ function isGptAccessCreatedJob(
   // reads additionally require immutable server-written ownership on every state.
   const device = context?.devicePrincipal;
   if (device) {
-    const owner = job.input.gptAccessDeviceOwner;
-    if (!isRecord(owner) || owner.version !== 1 || owner.deviceId !== device.deviceId
-      || owner.principalId !== device.principalId || owner.workspaceId !== device.workspaceId) return false;
+    if (!matchesGptAccessDeviceJobOwner(job.input.gptAccessDeviceOwner, device)) return false;
   }
 
   if (job.job_type === 'gpt') {

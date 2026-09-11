@@ -5,7 +5,8 @@ struct ProofReport: Encodable, Sendable {
     let schemaVersion = 1
     let kind = "ios_gateway_client_https_proof"
     let proofVersion = PreviewFixture.version
-    let scope = "actual Swift HTTPS client against sealed synthetic peer; passive worker; no live provider, database, queue, device pairing, Siri, or Foundation Models proof"
+    let devicePolicyProofVersion = PreviewFixture.devicePolicyVersion
+    let scope = "actual Swift HTTPS client and served device policy checks against sealed synthetic peer; passive worker; no live provider, database, queue, device pairing, Siri, or Foundation Models proof"
     let status = "PASS"
     let executed: Bool
     let networkAttempted: Bool
@@ -37,6 +38,9 @@ struct ProofRunner: Sendable {
         let initialWeb = try await readiness(configuration.web, role: "web")
         let initialWorker = try await readiness(configuration.worker, role: "worker")
         checks.append("both_roles_exact_identity_and_sealed_readiness")
+        let devicePolicy = try await raw(configuration.web, path: PreviewFixture.devicePolicyPath, method: "GET")
+        try ResponseEvidence.devicePolicy(devicePolicy, prNumber: configuration.prNumber, sourceCommit: configuration.commit)
+        checks.append("served_device_policy_semantics_exact_identity_and_contract")
         let metadata = try await raw(configuration.web, path: PreviewFixture.metadataPath, method: "GET", authenticated: true)
         try require(metadata.statusCode == 200, "METADATA_HTTP_STATUS")
         try require(try json(metadata) == expectedMetadata, "METADATA_CONTRACT_MISMATCH")
@@ -137,9 +141,15 @@ struct ProofRunner: Sendable {
             throw ProofFailure("PASSIVE_WORKER_ACCEPTED_CREATE")
         } catch GatewayError.http(let status, _) { try require(status == 404, "PASSIVE_WORKER_DENIAL_STATUS") }
         checks.append("unauthenticated_malformed_and_passive_worker_denials")
+        let workerDevicePolicy = try await raw(configuration.worker, path: PreviewFixture.devicePolicyPath, method: "GET")
+        try require(workerDevicePolicy.statusCode == 404, "PASSIVE_WORKER_DEVICE_POLICY_NOT_DENIED")
+        checks.append("passive_worker_device_policy_denied")
 
         try require(try await readiness(configuration.web, role: "web") == initialWeb, "WEB_IDENTITY_DRIFT")
         try require(try await readiness(configuration.worker, role: "worker") == initialWorker, "WORKER_IDENTITY_DRIFT")
+        let finalDevicePolicy = try await raw(configuration.web, path: PreviewFixture.devicePolicyPath, method: "GET")
+        try ResponseEvidence.devicePolicy(finalDevicePolicy, prNumber: configuration.prNumber, sourceCommit: configuration.commit)
+        checks.append("final_served_device_policy_contract_unchanged")
         try configuration.verifyGit()
         checks.append("final_role_identities_unchanged")
         return await report(checks: checks)

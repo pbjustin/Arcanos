@@ -248,6 +248,29 @@ the Python executor, full production startup, or deployed migrations. The
 describe its guards, execution command and evidence format. The physical-device
 acceptance procedure remains necessary before claiming live iPhone readiness.
 
+## Railway preview fixture follow-up
+
+The sealed preview now executes the production-shared device grant schema,
+credential state validation, owned-job predicate, and requester-idempotency helper
+under `ios-device-policy/v1`. Failed assertions prevent web readiness and withhold
+the proof header. The exact-head native verifier checks that header within its
+unchanged 138-request matrix; the Swift HTTPS runner validates the fixed policy
+response before and after its Gateway flow and requires passive-worker denial.
+The actual Swift client exposed a preview admission mismatch for its mandatory
+device-origin header. The synthetic routes now accept only the exact matching
+PR HTTPS origin with the public fixture bearer and selector; negative cases cover
+duplicate, mismatched and additional credential headers.
+
+Local validation passed 743 focused Jest tests, 16 native-verifier tests, 18
+XCTest tests and 80 Swift Testing functions, full build/type checking, and lint
+with zero errors and 76 existing warnings. The real PostgreSQL/Swift integrated
+fixture still passed all eleven backend assertions after policy extraction.
+These local results are prerequisites for the maintained preview lifecycle;
+executed Railway results must independently identify the tested commit, trusted
+controller, owned deployments, both verifier reports, and teardown. The preview
+uses synthetic data and a passive worker; it does not supply durable pairing,
+database, provider, active-worker or physical-device evidence.
+
 ## Physical iPhone live-test procedure
 
 This procedure requires a separately authorized non-production deployment of the
@@ -309,7 +332,7 @@ boundaries; richer UI, additional platforms and memory redesign are separate wor
 <!-- PHASE2_FILE_INVENTORY -->
 ## File inventory
 
-Added (25):
+Added (29):
 
 - `.github/workflows/ios-client.yml`
 - `clients/ios/ArcanosKit/Sources/ArcanosDeviceE2E/Configuration.swift`
@@ -329,15 +352,19 @@ Added (25):
 - `src/services/gptAccessDeviceAuth.ts`
 - `src/services/gptAccessDeviceCredentials.ts`
 - `src/services/gptAccessDeviceHttpBoundary.ts`
+- `src/shared/ios/iosDevicePreviewFixture.ts`
 - `src/shared/security/gptAccessDevice.ts`
+- `src/shared/security/gptAccessDevicePolicyCore.ts`
 - `tests/gpt-access-device-credentials.test.ts`
 - `tests/gpt-access-device-openapi-contract.test.ts`
 - `tests/helpers/gptAccessDeviceRepository.ts`
 - `tests/integration/gpt-access-device-auth.pg18.integration.test.ts`
 - `tests/integration/ios-device-gateway.e2e.integration.test.ts`
 - `tests/ios-device-e2e-runner.test.js`
+- `tests/ios-device-preview-application.test.ts`
+- `tests/ios-device-preview-fixture.test.ts`
 
-Modified (43):
+Modified (59):
 
 - `.env.example`
 - `.github/workflows/ci-cd.yml`
@@ -351,6 +378,11 @@ Modified (43):
 - `clients/ios/ArcanosKit/Sources/ArcanosKit/Models/GatewayModels.generated.swift`
 - `clients/ios/ArcanosKit/Sources/ArcanosKit/Runtime/SessionResult.swift`
 - `clients/ios/ArcanosKit/Sources/ArcanosKit/Security/CredentialStore.swift`
+- `clients/ios/ArcanosKit/Sources/ArcanosPreviewProof/ObservedTransport.swift`
+- `clients/ios/ArcanosKit/Sources/ArcanosPreviewProof/ProofRunner.swift`
+- `clients/ios/ArcanosKit/Sources/ArcanosPreviewProof/ResponseEvidence.swift`
+- `clients/ios/ArcanosKit/Tests/ArcanosPreviewProofTests/ConfigurationTests.swift`
+- `clients/ios/ArcanosKit/Tests/ArcanosPreviewProofTests/ResponseEvidenceTests.swift`
 - `clients/ios/ArcanosVoice/Sources/AppRuntime.swift`
 - `clients/ios/ArcanosVoice/Sources/ArcanosIntents.swift`
 - `clients/ios/ArcanosVoice/Sources/SettingsView.swift`
@@ -364,14 +396,24 @@ Modified (43):
 - `docs/CONFIGURATION.md`
 - `docs/DATABASE_MIGRATIONS.md`
 - `docs/gpt-access-gateway.md`
+- `docs/RAILWAY_DEPLOYMENT.md`
 - `docs/SCHEMA_PROTOCOL_GUIDE.md`
 - `package.json`
 - `packages/arcanos-runtime/src/redaction.ts`
 - `prisma/schema.prisma`
+- `scripts/check-native-pr-preview-imports.mjs`
+- `scripts/native-pr-preview-contract.d.mts`
+- `scripts/native-pr-preview-contract.mjs`
+- `scripts/native-pr-preview-e2e.mjs`
+- `scripts/native-pr-preview-e2e.test.mjs`
+- `scripts/native-pr-preview-imports-tsconfig.json`
 - `src/app.ts`
 - `src/core/db/repositories/localAgentJobRepository.ts`
 - `src/core/db/schema.ts`
+- `src/nativePrPreviewApplication.ts`
+- `src/nativePrPreviewContract.ts`
 - `src/routes/gpt-access.ts`
+- `src/services/actionPlanExecution/canonical.ts`
 - `src/services/gptAccessGateway.ts`
 - `src/services/localAgent/service.ts`
 - `src/services/moduleLoader.ts`
@@ -380,5 +422,6 @@ Modified (43):
 - `tests/async-gpt-job.test.ts`
 - `tests/gpt-access-gateway.test.ts`
 - `tests/local-agent-service.test.ts`
+- `tests/native-pr-preview-import-boundary.test.js`
 - `tests/postgres-ci-truth-contract.test.js`
 - `tests/runtime-redaction.test.ts`

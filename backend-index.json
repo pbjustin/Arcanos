@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-11T07:00:28.716Z",
+  "generatedAt": "2026-09-11T07:47:44.153Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -2894,6 +2894,9 @@
           "relativePath": "src/shared/idGenerator.ts"
         },
         {
+          "relativePath": "src/shared/ios/iosDevicePreviewFixture.ts"
+        },
+        {
           "relativePath": "src/shared/ios/iosGatewayPreviewFixture.ts"
         },
         {
@@ -2955,6 +2958,9 @@
         },
         {
           "relativePath": "src/shared/security/gptAccessDevice.ts"
+        },
+        {
+          "relativePath": "src/shared/security/gptAccessDevicePolicyCore.ts"
         },
         {
           "relativePath": "src/shared/security/memoryAccessCredential.ts"
@@ -4523,6 +4529,12 @@
         },
         {
           "relativePath": "tests/introspection-openapi-contract.route.test.ts"
+        },
+        {
+          "relativePath": "tests/ios-device-preview-application.test.ts"
+        },
+        {
+          "relativePath": "tests/ios-device-preview-fixture.test.ts"
         },
         {
           "relativePath": "tests/ios-gateway-preview-application.test.ts"

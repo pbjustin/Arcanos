@@ -7,6 +7,7 @@ import {
 } from '@core/db/repositories/localAgentJobRepository.js';
 import {
   fingerprintCanonicalValue,
+  hashLocalAgentIdempotencyKey,
   hashScopedOpaqueValue,
   type CanonicalJsonValue
 } from '@services/actionPlanExecution/canonical.js';
@@ -177,12 +178,7 @@ export async function executeLocalAgentActionAsJob(
     );
     // The database binding is keyed by executor device, so requester devices
     // must also have distinct key hashes within that shared executor scope.
-    const idempotencyKeyHash = request.context.requesterDeviceId
-      ? fingerprintCanonicalValue('local-agent-device-idempotency-key-v1', {
-        requesterDeviceId: request.context.requesterDeviceId,
-        key: idempotency.key
-      })
-      : hashScopedOpaqueValue('local-agent-idempotency-key-v1', idempotency.key);
+    const idempotencyKeyHash = hashLocalAgentIdempotencyKey(idempotency.key, request.context.requesterDeviceId);
     const evidenceId = fingerprintCanonicalValue(
       'local-agent-authorization-evidence-v1',
       {

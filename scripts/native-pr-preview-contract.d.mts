@@ -10,6 +10,11 @@ export interface NativePrPreviewE2eContract {
     proofHeader: 'x-arcanos-preview-worker-budget-readiness-version';
     proofVersion: 'worker-budget-readiness/v1';
   }>;
+  readonly iosDevicePolicy: Readonly<{
+    path: '/ios/device-contract';
+    proofHeader: 'x-arcanos-preview-ios-device-version';
+    proofVersion: 'ios-device-policy/v1';
+  }>;
   readonly invalidJobId: 'not-a-uuid';
   readonly unlistedJobId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab';
   readonly research: Readonly<{

@@ -336,6 +336,19 @@ two real patch-result responses to verify accepted job handles survive and a
 consumed preview cannot be rearmed. The approval here is an explicit synthetic
 harness decision; it does not exercise Apple's system approval UI.
 
+The credential-free `GET /ios/device-contract` runs the production-shared grant
+schema, credential state policy, owned-job predicate, and requester-device
+idempotency helper over fixed synthetic inputs. The Swift proof checks its exact
+`ios-device-policy/v1` response and served identity before and after Gateway
+traffic, and requires the passive worker to deny it. Web readiness runs the same
+assertions fail-closed; the supplemental native verifier requires its versioned
+proof header on both existing readiness requests, preserving the trusted
+138-request plan. This covers invalid grants/origins, expiry and renewal,
+revocation and audience, owner isolation, and idempotency isolation without
+credentials, persistence, or protected effects. The synthetic Gateway routes
+accept the Swift client's device-origin header only when it exactly matches the
+owned PR HTTPS host, together with the fixed selector and public fixture bearer.
+
 The run permits at most 40 requests, 120 seconds, and 2 MiB of aggregate response
 data, retaining the actual transport's request/resource timeouts. Its JSON report
 contains the tested SHA/PR, executed/network flags, finite assertion names,
