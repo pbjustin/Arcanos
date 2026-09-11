@@ -110,11 +110,22 @@ sentinel; no production credential is required.
 DATABASE_URL=postgresql://user:password@host:5432/database
 ```
 
-Railway deployments can also use:
+Railway deployments can additionally configure these candidates:
 ```env
 DATABASE_PRIVATE_URL=postgresql://user:password@postgres.railway.internal:5432/database?sslmode=no-verify
 DATABASE_PUBLIC_URL=postgresql://user:password@public-proxy.rlwy.net:12345/database?sslmode=no-verify
 ```
+
+The current `resolveDatabaseConnectionCandidates` implementation in
+[`src/core/db/client.ts`](../src/core/db/client.ts) first requires `DATABASE_URL`
+or a complete discrete `PG*` set. If neither exists, it returns no candidates
+even when a private/public URL is present. This alias-only discrepancy needs a
+separate code decision; the aliases alone are not a working setup. Once that
+prerequisite holds, the candidate order is private URL, primary URL (or the
+URL synthesized from `PG*`), then distinct public URL. Initialization advances
+to the next candidate only for a recognized private-Railway reachability
+failure with an immediately following non-private candidate, not for every
+connection failure.
 
 For local access to a Railway Postgres proxy, set `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, and `PGPASSWORD` as shown in `.env.example`.
 
@@ -677,20 +688,29 @@ npm run test:local-agent-postgres
 ```
 
 The shared required flag governs both required PostgreSQL package commands and
-all nine suites. `npm run test:postgres-fencing` additionally requires
+their selected suites. `npm run test:postgres-fencing` additionally requires
 `JOB_CLAIM_FENCING_TEST_DATABASE_URL`,
 `DAG_SNAPSHOT_GENERATION_TEST_DATABASE_URL`,
 `JOB_WORKER_BUDGET_TEST_DATABASE_URL`,
 `JOB_STALE_RECOVERY_TEST_DATABASE_URL`,
 `BACKSTAGE_ROSTER_ATOMICITY_TEST_DATABASE_URL`,
 `BACKSTAGE_STORYLINE_ATOMICITY_TEST_DATABASE_URL`,
-`BACKSTAGE_CANON_STORYLINE_PG18_TEST_DATABASE_URL`, and
-`NON_GPT_TERMINAL_RETENTION_TEST_DATABASE_URL`. With the sentinel set, a
+`BACKSTAGE_CANON_STORYLINE_PG18_TEST_DATABASE_URL`,
+`BACKSTAGE_NOTION_PARTITION_PG18_TEST_DATABASE_URL`,
+`NON_GPT_TERMINAL_RETENTION_TEST_DATABASE_URL`, and
+`GPT_ACCESS_DEVICE_TEST_DATABASE_URL`. With the sentinel set, a
 missing dedicated URL fails before `describe.skip`; without it, an absent URL
 retains the intentional local skip. No suite reads ambient `DATABASE_URL`.
 Every configured target must use credentials, an explicit loopback port, and
 the exact disposable database `arcanos_audit_pg18_20260727`. Never point either
 test command at production or a retained preview database.
+
+The candidate-search suite intentionally uses
+`BACKSTAGE_CANON_STORYLINE_PG18_TEST_DATABASE_URL`, and Gaming durable retrieval
+uses `JOB_CLAIM_FENCING_TEST_DATABASE_URL`; neither defines a separate test URL.
+The exact selected test paths belong to the root
+[`package.json`](../package.json), and target guards are implemented in
+[`tests/integration/postgresTestDatabase.ts`](../tests/integration/postgresTestDatabase.ts).
 
 ### Generic queue claim-generation fencing migration
 
@@ -914,7 +934,7 @@ Attach PostgreSQL to the Railway environment or set a valid external `DATABASE_U
 The root `package.json` still lists `db:init` and `db:patch`, but the referenced compiled JavaScript files are not present in `scripts/` in this checkout. Treat those scripts as unavailable until the script targets are repaired or replaced with a documented migration runner.
 
 ## Troubleshooting
-- Worker exits with database bootstrap errors: configure `DATABASE_URL`, `DATABASE_PRIVATE_URL`, `DATABASE_PUBLIC_URL`, or the complete `PG*` set.
+- Worker exits with database bootstrap errors: configure `DATABASE_URL` or the complete `PG*` set, and check any additional private/public candidates using the resolver rules above.
 - API health reports database degraded: attach PostgreSQL or accept reduced in-memory behavior for local development.
 - Queued jobs never complete: confirm the worker service can connect to the same database as the web service.
 

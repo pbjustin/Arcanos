@@ -60,7 +60,7 @@ npm start
 ```
 
 `arcanos-ai-runtime/` is standalone and can be tested independently through its
-package scripts. Its package test builds the workspace and exercises the
+package scripts. Its package test builds this runtime and exercises the
 fail-closed `/jobs` HTTP boundary against an injected queue; it does not require
 Redis, OpenAI, or a live listener outside loopback. Runtime callers must
 configure the purpose-bound Bearer token, stable server-owned principal, and
@@ -70,6 +70,97 @@ exercises admission concurrency and BullMQ lifecycle fencing only against an
 explicitly confirmed disposable loopback Redis database; the required CI job
 provides that service. Never point this suite at shared, developer, staging, or
 production Redis.
+
+For a separately authorized standalone run, provide the documented
+[runtime configuration](CONFIGURATION.md#standalone-bullmqredis-ai-runtime)
+in each process environment; these entry points do not load the root `.env`.
+Use already-installed dependencies and build from the repository root:
+
+```bash
+npm run build:packages
+npm --prefix arcanos-ai-runtime run build
+```
+
+Then run each command in a separate terminal from the repository root:
+
+```bash
+node arcanos-ai-runtime/dist/server.js
+```
+
+```bash
+node arcanos-ai-runtime/dist/worker.js
+```
+
+The first starts the standalone HTTP queue API; the second starts its BullMQ
+consumer. They access the configured Redis service, and the worker can call
+the configured provider when processing jobs. Select those targets explicitly;
+these commands are operational startup, not offline validation. The package
+has no `start` script; its `main: index.js` field is not a runtime entry point.
+See the [standalone API](API.md#standalone-arcanos-ai-runtime-api) for readiness,
+authentication, job acceptance, and result boundaries.
+
+### Separate `workers/` workspace
+
+The `arcanos-workers` package has its own in-process `TypedWorkerQueue`
+(`workers/src/queue/index.ts`). It dispatches registered EventEmitter listeners
+sequentially, with up to three attempts per listener by default and retry
+delays of 500 ms, then 1000 ms. This is separate from the canonical PostgreSQL
+consumer in `src/workers/jobRunner.ts` and the BullMQ runtime above; it does
+not implement a broker consumer, durable queue, or cross-process memory store.
+
+With dependencies installed and shared packages built, build this package from
+the repository root:
+
+```bash
+npm run build:workers --workspace=arcanos-workers
+```
+
+Its manifest provides three manual entry points. These are configured-runtime
+operations; provider jobs can make external calls.
+
+| Command from repository root | Registered jobs |
+| --- | --- |
+| `npm run start:openai --workspace=arcanos-workers` | `OPENAI_COMPLETION`, `OPENAI_EMBEDDING` |
+| `npm run start:memory --workspace=arcanos-workers` | `MEMORY_SET`, `MEMORY_GET` |
+| `npm run start:memorySync --workspace=arcanos-workers` | `MEMORY_SYNC` |
+
+Each entry point parses one `WORKER_JOB` plus JSON `WORKER_PAYLOAD` from its
+process environment and attempts one dispatch when both parse to a known job
+and non-null payload. It also resumes stdin.
+Stdin is not a job transport, and these commands do not poll the backend queue.
+The parser checks the shared job-name allowlist and JSON syntax, not the
+per-job payload shape in `workers/src/jobs/index.ts`. Choose a job registered
+by the selected entry point; another allowed job has no listener and returns
+an empty result array. Treat payloads and printed results as potentially
+sensitive data, keep credentials out of payloads and shell history, and do not
+treat log redaction as approval to print private content.
+
+`workers/src/infrastructure/sdk/openaiConfig.ts:resolveWorkerOpenAIConfig`
+selects chat models by `WORKER_OPENAI_MODEL`, then `OPENAI_MODEL`, then
+`gpt-4.1-mini`; embeddings use `EMBEDDING_MODEL` or `text-embedding-3-large`.
+Completion/embedding payloads can override the model. Key aliases are
+`OPENAI_API_KEY`, `RAILWAY_OPENAI_API_KEY`, `API_KEY`, then `OPENAI_KEY`;
+`WORKER_API_TIMEOUT_MS` defaults to 60000. Supply these values in the process
+environment; the package does not load `.env`. Provider retries also occur in
+the shared adapter/SDK path, so three queue attempts is not a three-provider-call
+limit. The parsed `OPENAI_MAX_RETRIES` value is not forwarded by this adapter;
+changing that setting does not establish a retry limit here.
+
+`MEMORY_SET`/`MEMORY_GET` use one process-local map. `MEMORY_SYNC` uses a
+different map in `workers/src/infrastructure/memory/index.ts` and can optionally
+request an embedding when `embed` is true. Despite the handler's persistence
+comment, neither map writes a database or file; restarting loses its contents.
+The exported rollback deletes keys from that map and is not automatically
+invoked by the queue.
+
+Top-level modules such as `worker-gpt5-reasoning.ts`, `worker-planner-engine.ts`,
+and `worker-memory.ts` instead expose context-based work and schedule metadata.
+The reasoning pulse calls the supplied `context.ai.query`; its GPT-5.1 label
+does not choose a model. The planner counts pending database jobs, while the
+memory module counts entries rather than synchronizing them. A build or a
+schedule field does not prove activation: the separate loader in
+`src/platform/runtime/workerBoot.ts` and its invocation/export expectations
+must be checked before claiming any module is scheduled.
 
 ## Deploy (Railway)
 Railway builds from the root package and uses `scripts/start-railway-service-with-integrity.mjs`, which validates configured runtime-owned protected digests before invoking the role launcher. Workspace package changes must be built into `dist/` before deploy.

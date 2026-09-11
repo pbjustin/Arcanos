@@ -1,5 +1,16 @@
 # ARCANOS CLEAR Decision and Disclosure Contract
 
+> Lifecycle scope: The pure CLEAR interpretation and disclosure rules remain
+> relevant; the adapter flow, per-action result writes, cache/locking behavior,
+> and remaining-risk observations below describe the cited Phase 2B/2C
+> baseline. Later Phase 2D/2E work added lifecycle checks and authoritative
+> authenticated execution commands, runs, claims, and result submission.
+> Current HTTP execution is implemented by `src/routes/plans.ts` and
+> `src/services/actionPlanExecution/service.ts`; consult
+> [the API guide](../API.md) and
+> [the execution ownership record](action-plan-execution-ownership-contract.md).
+> Historical findings below are preserved and are not current defect claims.
+
 - Status: Phase 2B authoritative contract with Phase 2C Python daemon compatibility extension
 - Scope: ActionPlan CLEAR 2.0 interpretation, execution rechecks, decision persistence, Python daemon parsing, and MCP error disclosure
 - Baseline branch: `codex/clear-decision-integrity`

@@ -1,5 +1,13 @@
 # Local-Agent Capability Bridge Security Review
 
+This review includes historical implementation-stage findings and the
+[2026-07-24 preview report](../PREVIEW_E2E_REPORT.md). Statements below about
+pending gates describe the original review stage; the report records later
+revision-specific results. Neither establishes current CI, deployment, or
+production status. The maintained [bridge guide](../LOCAL_AGENT_CAPABILITY_BRIDGE.md)
+describes the current source boundary and separates executor registration from
+mobile Gateway pairing.
+
 ## Scope and conclusion
 
 This review covers the implemented `ARCANOS:LOCAL_AGENT` TypeScript capability,
@@ -261,7 +269,9 @@ configuration.
   it only in the backend/daemon secret stores, rotate after device loss, and
   monitor the credential version and device identity in audit records.
 
-### LA-03: Database-authoritative idempotency — implemented, migration pending
+<a id="la-03-database-authoritative-idempotency--implemented-migration-pending"></a>
+
+### LA-03: Database-authoritative idempotency — implemented, target migration required
 
 - **Previous severity:** Medium defense in depth.
 - **Location:** `src/core/db/repositories/localAgentJobRepository.ts`,
@@ -277,7 +287,9 @@ configuration.
   bindings in bounded batches.
 - **Deployment gate:** The repository fails closed when the binding table is
   unavailable. Apply and verify the reviewed migration only against proven
-  preview PostgreSQL before E2E. No database migration has been applied yet.
+  preview PostgreSQL before E2E. The original review preceded migration;
+  the later preview application is recorded in the historical report and
+  does not prove any current target has this migration.
 
 ### LA-04: Per-job expiry events — remediated
 
@@ -386,15 +398,14 @@ Before enabling the bridge:
 
 ## Deployment security gate
 
-The bridge and hardening migration were deployed only to the isolated
+The 2026-07-24 report records deployment of the bridge and hardening migration to the isolated
 `arcanos-preview-bf8ac3bd` Railway environment with preview-owned API, worker,
 PostgreSQL, Redis, credentials, domain, and synthetic data. The exact resource
 IDs, commands, validation evidence, and teardown plan are recorded in
 `docs/PREVIEW_E2E_REPORT.md`.
 
-No production deployment, production migration, production variable change,
-or production Custom GPT Action change has occurred. The initial read-only
-Railway selection was:
+That work recorded no production deployment, migration, variable change, or
+Custom GPT Action change. The historical initial read-only Railway selection was:
 
 ```text
 Project:     Arcanos
@@ -421,8 +432,10 @@ idempotency is database-enforced after migration, per-job expiry events share
 the state transaction, and no generic command capability is exposed.
 
 The isolated preview migration/deployment, Linux sandbox/link test run, and
-E2E evidence are complete and preserved in `docs/PREVIEW_E2E_REPORT.md`.
-Production remains disabled. The main remaining code risk is that
+E2E evidence are preserved with their individual revisions and limits in
+`docs/PREVIEW_E2E_REPORT.md`. The final read-only candidate was `f7f3a2ca`;
+mutation checks were recorded at earlier revisions. Current production
+enablement was not verified by this documentation review. The main remaining code risk is that
 `patch.apply` delegates path-based mutation to Git and therefore cannot provide
 descriptor-atomic protection against a hostile concurrent local writer. Git
 actions now additionally fail closed when repository metadata or config cannot

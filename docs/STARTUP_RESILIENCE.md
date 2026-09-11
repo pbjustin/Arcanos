@@ -30,8 +30,16 @@ dependency state and are retried in-process.
 | `READY` | Bound | Connected and verified | `200` | `200` |
 | Production web runtime initialized without configured database or Redis | Bound | Unconfigured | `200` | `503` |
 
-Liveness responses contain only sanitized lifecycle metadata. Root-backend
-readiness aggregates OpenAI, database, process-local Redis lifecycle,
+The table isolates Redis/database startup effects. In the normal application,
+`src/app.ts` and `setupDiagnostics` register `/healthz` and `/health` before the
+generic health router. Both use `writePublicHealthResponse` in
+[`src/core/diagnostics.ts`](../src/core/diagnostics.ts): they expose bounded
+registry/lifecycle diagnostics and return `503` when required GPT IDs are
+missing. They are not unconditional liveness successes. The later standalone
+health router has a different `/health` projection; its critical OpenAI and
+application checks do not describe the normal app's earlier handlers.
+
+Root-backend readiness aggregates OpenAI, database, process-local Redis lifecycle,
 public-provider admission, and startup checks. It reads the generation-matched
 admission-capability result and does not create a Redis probe client or issue a
 Redis command itself. Both `GET` and `HEAD /readyz` are credential-free and return

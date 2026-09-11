@@ -33,6 +33,8 @@ ownership, lifecycle, consolidation, and validation rules.
 | Deploy or roll back on Railway | [Railway deployment](RAILWAY_DEPLOYMENT.md) |
 | Diagnose a local problem | [Troubleshooting](TROUBLESHOOTING.md) |
 | Contribute a change | [Contributing](../CONTRIBUTING.md) |
+| Work as a repository agent | [Agent instructions](../AGENTS.md) |
+| Choose a script and understand its effects | [Scripts guide](../scripts/README.md) |
 
 ## Canonical engineering guides
 
@@ -175,13 +177,10 @@ Migration-local implementation notes live beside their artifacts under
 - [2026-04-29 refactor audit](audits/reusable-code/2026-04-29/refactor-audit.md)
   — relocated baseline snapshot retained only as historical evidence.
 - [2026-07-28 repository-health audit](audits/repository-health/2026-07-28/progress.md)
-  — compact current dashboard with a targeted 2026-08-22 update for repaired
-  draft PR #1456 and `SEC-DISPATCH-QUOTA-ORDER-001`. The candidate has bounded
-  local, review, and exact repaired-implementation CI evidence but remains
-  unmerged; no hosted preview, deployment, or production credit is assigned.
-  Other audit entries
-  retain their existing dated evidence bounds. Arcanos Gaming PRs #1425/#1426
-  remain excluded from this audit lineage, with separate
+  — dashboard at its recorded reconciliation cutoffs, not a continuously
+  refreshed statement of this checkout or live PR/deployment state. Its dated
+  source, review, CI and production observations retain their original bounds.
+  Arcanos Gaming PRs #1425/#1426 are excluded from that audit lineage. It has separate
   [findings register](audits/repository-health/2026-07-28/findings.md),
   [evidence](audits/repository-health/2026-07-28/evidence.md), and
   [historical narrative](audits/repository-health/2026-07-28/history-through-2026-07-31.md)

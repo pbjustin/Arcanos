@@ -35,6 +35,12 @@ Phase 5.6 artifacts:
 
 ## Table Or Record Shape
 
+This Phase 5.5 logical design is not the physical insert-plan contract. The
+later draft stores `nonce_hash` instead of raw `nonce` and differs in timestamp
+and correlation fields. Those unresolved reconciliation requirements are
+listed in the [implementation readiness review](GPTOSS_DURABLE_REPLAY_IMPLEMENTATION_READINESS.md#architecture-review-gap-summary);
+neither representation authorizes durable implementation or migration apply.
+
 Future storage must model one immutable replay ledger record per accepted
 signed request nonce:
 

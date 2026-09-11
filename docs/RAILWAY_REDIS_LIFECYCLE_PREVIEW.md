@@ -41,10 +41,18 @@ FORCE_MOCK=true
 ALLOW_MOCK_OPENAI=true
 OPENAI_API_KEY_REQUIRED=false
 OPENAI_BASE_URL=http://127.0.0.1:9/v1
+DATABASE_URL=${{<PREVIEW_POSTGRES_SERVICE_NAME>.DATABASE_URL}}
 REDIS_URL=${{<PREVIEW_REDIS_SERVICE_NAME>.REDIS_URL}}
 ```
 
 Railway supplies `RAILWAY_ENVIRONMENT_NAME`, `RAILWAY_ENVIRONMENT_ID`, `RAILWAY_SERVICE_ID`, `PORT`, and the other platform identity variables. Do not override them. The loopback provider URL intentionally cannot reach a real provider; `FORCE_MOCK=true` keeps application behavior deterministic.
+
+Production-mode web readiness also requires a configured, connected,
+schema-ready PostgreSQL database, even for this Redis-focused procedure
+(`checkDatabaseReadiness` in `src/platform/resilience/unifiedHealth.ts`). Use
+only the fresh preview database above. Application startup can apply built-in
+DDL and write an initialization heartbeat; provisioning and startup therefore
+belong to the approved preview mutation gate.
 
 ## Local preflight (no Railway access)
 
@@ -78,10 +86,15 @@ This gate is a Railway mutation and is **not authorized or executed by preparati
 
 1. In the Railway dashboard, create a new empty persistent environment in the intended non-production project. Name it with the required pattern, for example `arcanos-redis-lifecycle-preview-20260722-1`.
 2. Record the project, environment, web service, Redis service, and later web deployment IDs. Compare every ID with the production inventory and stop if any ID matches.
-3. Add a fresh Redis service to this environment.
+3. Add fresh PostgreSQL and Redis services to this environment with new,
+   preview-only volumes and private networking. Provision and record the
+   private worker from the topology above using the same preview database;
+   its role, provider isolation, and queue settings need separate review.
 4. Remove the Redis public TCP proxy in Networking. Confirm Redis has no public domain or TCP proxy before continuing.
 5. Add one empty web service sourced from the exact reviewed repository commit.
-6. Set only the variables listed above. Use a private Railway reference for `REDIS_URL`; never paste a Redis URL into the shell or evidence file.
+6. Set only the reviewed preview variables above. Use private Railway references
+   for `DATABASE_URL` and `REDIS_URL`; never paste connection strings into the
+   shell or evidence file.
 7. Confirm the web deploy settings resolve to `node scripts/start-railway-service-with-integrity.mjs` and `/readyz`, as declared in `railway.json`.
 8. Generate one temporary Railway HTTPS domain for the web service. Record only its origin, with no path, query, credentials, or fragment.
 
@@ -137,7 +150,11 @@ railway down --project <PROJECT_ID> --environment <PREVIEW_ENVIRONMENT_ID> --ser
 
 `railway down` removes the latest successful deployment for the selected service; it does not delete the service. See [Railway CLI `down`](https://docs.railway.com/cli/down).
 
-If the web service has not yet been deployed, deploy the exact reviewed commit now while Redis remains down. This proves listener binding is independent of Redis startup. Record the resulting web deployment ID and use that same ID in every report.
+The same web deployment must already have passed Gate 2 while Redis was
+healthy. Do not deploy or replace it during the outage: `/readyz` intentionally
+prevents an unhealthy candidate from activating. Listener binding with Redis
+unavailable at startup is covered by the separate deterministic startup tests;
+this hosted procedure measures an outage after activation.
 
 ### 3B. Capture read-only outage evidence
 

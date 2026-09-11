@@ -4,7 +4,10 @@
 [![codecov](https://codecov.io/gh/pbjustin/Arcanos/branch/main/graph/badge.svg)](https://codecov.io/gh/pbjustin/Arcanos)
 
 ## Overview
-Arcanos is a TypeScript/Express backend with optional workers and an optional Python CLI daemon (`daemon-python/`).
+Arcanos is a TypeScript/Express backend for module-bound AI requests, durable
+jobs, and protected control-plane capabilities. Its product modules include
+Gaming guidance and Backstage Booker continuity/generation. An optional Python
+daemon provides a local client.
 
 Key characteristics:
 - **Responses-first OpenAI integration** (tool calling + continuation via `previous_response_id`)
@@ -14,6 +17,13 @@ Key characteristics:
 - **Schema-first protocol surface** in `packages/protocol/`
 - **Railway-ready** web/worker launcher and health configuration
 
+Start with the [documentation index](docs/README.md). Users can follow
+[local setup](docs/RUN_LOCAL.md) and the [API guide](docs/API.md);
+contributors use [CONTRIBUTING.md](CONTRIBUTING.md), operators use the
+[Railway runbook](docs/RAILWAY_DEPLOYMENT.md), and repository agents use
+[AGENTS.md](AGENTS.md). These guides describe source and configuration, not a
+verified live deployment. Optional integrations require their own credentials,
+services, and capability-specific readiness.
 
 ### Optional local daemon (Python)
 The repository includes an **optional local daemon CLI** in `daemon-python/` that turns Arcanos into a personal coding assistant on your machine:
@@ -23,41 +33,59 @@ The repository includes an **optional local daemon CLI** in `daemon-python/` tha
 - injects lightweight **repo indexing context** into backend requests
 - keeps **SQLite audit/history** with backups + `/rollback`
 
-See: `daemon-python/README.md`
+See the [Python daemon guide](daemon-python/README.md).
 
 ### Optional iPhone voice client
 
 [`clients/ios/`](clients/ios/README.md) contains the Swift ArcanosKit foundation
 and a minimal iOS host exposing ARCANOS through Siri, App Intents and Vocal
-Shortcuts. Phase 1 supports on-device Foundation Models and an explicit synthetic
-Gateway demonstration. Live remote use requires a scoped paired-device credential
-mechanism; server-wide GPT Access credentials must never be installed on a phone.
+Shortcuts. It supports on-device Foundation Models, an explicit synthetic Gateway
+demonstration, and Phase 2 connectivity through scoped, expiring, revocable
+paired-device credentials. The phone consumes an operator-issued one-use pairing
+token; server-wide GPT Access credentials must never be installed on a phone.
+Deployment and physical-device behavior require separate verification.
 
 ### Optional CLI Bridge
 `ARCANOS:CLI` is an optional protected GPT Access capability for inspecting and safely interacting with the local Python daemon. It is disabled unless `ARCANOS_CLI_BRIDGE_ENABLED=true`.
 
-It is exposed only under `/gpt-access/capabilities/v1`; it does not route through `/gpt/:gptId` and is not a raw shell endpoint. When disabled, discovery still lists it with `enabled:false` for operator visibility. Read-only actions include `status`, `policy`, `repoContext`, `proposeCommand`, `proposePatch`, and `tailAudit`. Execution and patch application require the existing confirmation flow, the matching proposal id, and still pass shared `config/cli-policy.json` command policy, cwd sandboxing, timeout, output cap, redaction, patch safety, and daemon-side audit checks.
+It is exposed under `/gpt-access/capabilities/v1`, with confirmation,
+proposal matching, command policy, sandboxing and daemon-side audit checks for
+execution. Disabled discovery remains visible with `enabled:false`. It is not
+a raw shell endpoint. See the [daemon bridge guide](daemon-python/README.md)
+and [Gateway guide](docs/gpt-access-gateway.md) for actions and configuration.
 
-Start the local daemon bridge with `arcanos bridge`; it binds to `127.0.0.1` by default. Configure `ARCANOS_CLI_BRIDGE_URL`, `ARCANOS_CLI_BRIDGE_TOKEN`, `ARCANOS_CLI_SANDBOX_ROOT`, `ARCANOS_CLI_COMMAND_TIMEOUT_MS`, and `ARCANOS_CLI_OUTPUT_MAX_BYTES` as needed. Command and patch POSTs require the bridge token; keep it local and do not paste it into GPT payloads.
+Start the Python daemon bridge with `arcanos bridge`; it binds to `127.0.0.1`
+by default. Keep its distinct bridge token local and out of GPT payloads. The
+TypeScript CLI also installs an `arcanos` executable; see
+[CLI overview](docs/CLI_OVERVIEW.md) to distinguish the two.
 
 
 ## Prerequisites
 - Exact Node.js 24.18.1 with its bundled npm 11.16.0.
 - Optional: Python 3.10+ for daemon work in `daemon-python/`
 - Optional: OpenAI API key for non-mock model calls
+- PostgreSQL for durable jobs and authoritative persisted data. Production web
+  activation also requires Redis; the separate BullMQ/Redis runtime has its own
+  setup. See [Configuration](docs/CONFIGURATION.md) for conditional requirements.
 
 ## Setup
+From the repository root, for a new checkout without an existing `.env`:
+
 ```bash
 npm install
 cp .env.example .env
 ```
+
+Use `Copy-Item .env.example .env` in PowerShell. Preserve existing configuration.
+Installation contacts package registries and runs local setup hooks; see the
+[local runbook](docs/RUN_LOCAL.md) before installing into an existing workspace.
 
 Use `npm install` for local development. CI and Railway use reproducible `npm ci` installs. The current Dockerfile starts from `npm ci --omit=dev` and then installs development dependencies for the image build, so treat the Dockerfile itself as the container install source of truth.
 
 ## Configuration
 - Backend minimum:
   - `PORT=3000` for local `.env` usage; Railway injects `PORT`
-  - `OPENAI_API_KEY=sk-...` (optional for mock-mode tests)
+  - `OPENAI_API_KEY=<your-local-key>` (optional for mock-mode tests)
 - Optional OpenAI request persistence:
   - `OPENAI_STORE=false`
 - Railway service role:
@@ -79,11 +107,13 @@ curl http://localhost:3000/healthz
 curl http://localhost:3000/health
 ```
 
-See `docs/RUN_LOCAL.md` for daemon setup, the dedicated worker, focused validation, and troubleshooting.
+Startup can initialize database state and background work; select a local/test
+target intentionally. See [RUN_LOCAL.md](docs/RUN_LOCAL.md) for daemon setup,
+the dedicated worker, offline documentation checks, and troubleshooting.
 
 ## Deploy (Railway)
-- `docs/RAILWAY_DEPLOYMENT.md`
-- `docs/CI_CD.md`
+- [Railway deployment](docs/RAILWAY_DEPLOYMENT.md)
+- [CI/CD](docs/CI_CD.md)
 
 ## Custom GPT + GPT ID API Bridge
 Custom GPT Actions should call the HTTP bridge, not Railway CLI. The runtime path is:
@@ -91,69 +121,58 @@ Custom GPT Actions should call the HTTP bridge, not Railway CLI. The runtime pat
 
 `POST /gpt/:gptId` remains the writing plane for module-bound generative work. Job-result lookups, runtime diagnostics, queue inspection, worker status, and MCP diagnostics must use direct control endpoints or `/gpt-access/*`, not prompt-shaped requests through `/gpt/:gptId`.
 
-See `docs/gpt-access-gateway.md` for protected gateway auth/scopes, natural-language dispatch, fallback semantics, and safety/deployment notes.
+See [GPT Access](docs/gpt-access-gateway.md) for protected gateway auth/scopes,
+natural-language dispatch, fallback semantics, and safety notes. The bridge is
+documented in [API](docs/API.md) and
+[its OpenAPI contract](openapi/custom-gpt-bridge.yaml).
 
-Required environment:
-- `OPENAI_ACTION_SHARED_SECRET` for inbound bridge auth.
-- `ARCANOS_JOB_READ_CAPABILITY_SECRET` as the distinct server-side HMAC key
-  used to issue job-specific generic read capabilities.
-- Optional `ARCANOS_JOB_READ_CAPABILITY_PREVIOUS_SECRET` only during a
-  bounded rotation overlap; it verifies old tokens but never issues new ones.
-- `DEFAULT_GPT_ID` as the fallback GPT ID when callers omit `gptId`.
+The bridge authenticates with `OPENAI_ACTION_SHARED_SECRET` and needs a distinct
+server-side `ARCANOS_JOB_READ_CAPABILITY_SECRET` for job-backed responses.
+The response returns a job-specific token for exactly one
+`x-arcanos-job-read-token` header on `/jobs/*` reads. Keep signing keys
+server-side and tokens out of URLs, logs and prompts. Rotation, response shapes,
+and `DEFAULT_GPT_ID` fallback are documented in the linked guides.
 
-Bridge endpoints:
-- `POST /api/bridge/gpt` accepts `{ "gptId": "arcanos-core", "prompt": "...", "action": "query" | "query_and_wait", "metadata": {} }`.
-- `GET /api/bridge/health` requires the same bridge shared secret and reports
-  no-store bridge env sanity (including whether job-read signing is
-  configured), default GPT route reachability, database state, worker health
-  when available, and bridge failure counters.
-- Job-backed bridge responses return `jobReadToken` and
-  `jobReadTokenHeader`. Async status, result, and stream retrieval stays on
-  `GET /jobs/{id}`, `GET /jobs/{id}/result`, and
-  `GET /jobs/{id}/stream`, with the token sent in exactly one
-  `x-arcanos-job-read-token` header.
-- Generic reads expose only `gpt` and `ask` jobs and are `no-store`; invalid
-  capabilities are concealed as missing jobs.
-- `POST /jobs/{id}/cancel` requires the same job-specific capability plus
-  confirmation and the creation surface's authenticated owner. Bridge jobs
-  revalidate the bridge credential; anonymous public GPT jobs are intentionally
-  non-cancellable. The read capability alone is not cancellation authority.
-
-The Custom GPT Action OpenAPI document is `openapi/custom-gpt-bridge.yaml`.
+The read capability alone never authorizes cancellation: cancellation also
+requires confirmation and the creation surface's authenticated owner.
+Anonymous public GPT jobs are intentionally non-cancellable. These generic
+job rules must not be assumed to provide the same ownership checks on every
+MCP or Gateway surface; see the authorization limitations in [API](docs/API.md).
 
 ## Troubleshooting
-- `docs/TROUBLESHOOTING.md`
-- Health checks: `GET /healthz` (liveness), `GET /health` (dependency diagnostics), and `GET /readyz` (readiness and the Railway deployment activation probe)
+- [Troubleshooting](docs/TROUBLESHOOTING.md)
+- Health checks: `GET /healthz` and `GET /health` (public registry/lifecycle snapshots), and `GET /readyz` (activation readiness and the Railway deployment probe)
 
 ## References
-- API catalog: `docs/API.md`
-- Memory backend guide: `docs/MEMORY_BACKEND_USAGE.md`
-- Workspace packages: `docs/WORKSPACE_PACKAGES.md`
-- Schema/protocol changes: `docs/SCHEMA_PROTOCOL_GUIDE.md`
-- Database and migrations: `docs/DATABASE_MIGRATIONS.md`
-- OpenAI tooling: `docs/OPENAI_RESPONSES_TOOLS.md`
-- Solo operator runtime guide: `docs/SOLO_OPERATOR_RUNTIME_GUIDE.md`
-- Configuration details: `docs/CONFIGURATION.md`
-- Documentation index: `docs/README.md`
+- [API catalog](docs/API.md), [configuration](docs/CONFIGURATION.md), and [memory](docs/MEMORY_BACKEND_USAGE.md)
+- [Workspace packages](docs/WORKSPACE_PACKAGES.md) and [schema/protocol changes](docs/SCHEMA_PROTOCOL_GUIDE.md)
+- [Database and migrations](docs/DATABASE_MIGRATIONS.md) and [solo operator guide](docs/SOLO_OPERATOR_RUNTIME_GUIDE.md)
+- [OpenAI tooling](docs/OPENAI_RESPONSES_TOOLS.md) and the complete [documentation index](docs/README.md)
 
 ## OpenAI integration map (current)
-Canonical boundaries / pipelines:
-- Shared TypeScript client constructor and helpers: `packages/arcanos-openai/src/client.ts`
-- TypeScript OpenAI adapter boundary: `src/core/adapters/openai.adapter.ts`
-- TypeScript request builders (staged): `src/services/openai/requestBuilders/`
-  - `build → normalize → convert → validate`
-- TypeScript call pipeline (staged): `src/services/openai/chatFlow/`
-  - `prepare → execute → parse → trace`
-- Shared parsing utilities: `packages/arcanos-openai/src/responseParsing.ts`
-- Worker OpenAI boundary: `workers/src/infrastructure/sdk/openai.ts`
-- Python daemon OpenAI adapter: `daemon-python/arcanos/openai/openai_adapter.py`
+The shared constructor lives in `packages/arcanos-openai/src/client.ts`; the
+backend adapter is `src/core/adapters/openai.adapter.ts`. Request construction
+and execution are staged under `src/services/openai/`. The
+[OpenAI guide](docs/OPENAI_RESPONSES_TOOLS.md) maps the worker and Python
+boundaries, model precedence, parsing, tool continuation, and retention.
 
 ## Health endpoints
-- Liveness: `GET /healthz`
-- Readiness: `GET /readyz` (critical dependencies ready for traffic)
-- Detailed dependency view: `GET /health` (not the Railway activation gate)
+- Public health: `GET /healthz` and `GET /health` use the same handler in the
+  normal app. Its status is 200 when required GPT registrations are present,
+  otherwise 503; the body includes startup and Redis lifecycle snapshots.
+- Activation readiness: `GET /readyz` checks the configured critical dependencies.
+
+The public health handlers are registered before the separate health router;
+they do not run that router's active dependency checks. See [API](docs/API.md)
+for the effective routes and [startup resilience](docs/STARTUP_RESILIENCE.md).
+
+Health success does not establish completed Notion synchronization, fresh
+Gaming evidence, protected-operation eligibility, or end-to-end correctness.
 
 ## Custom GPT bridge smoke test
+This is an active, job-creating operation against an explicitly authorized
+target, not an offline documentation check.
+
 Use `POST /api/bridge/gpt` with `action: "health_echo"` to verify bridge auth,
 request handling, queueing, worker execution, and canonical
 `/jobs/{id}/result` retrieval without invoking the Trinity reasoning pipeline.
@@ -162,11 +181,12 @@ Retain the returned job-read capability for that retrieval. Use
 real model behavior.
 
 ## OpenAI data retention
-Responses requests default to **stateless** (`store: false`). You can enable storage via:
-- `OPENAI_STORE=true`
+The backend request builder and ask tool loop default to `store: false`.
+`OPENAI_STORE=true` enables storage only in callers that consult that setting;
+some sensitive paths force it off and some portable helpers omit the field.
+This does not disable Arcanos's own logs, memory, or durable job storage.
 
-More details:
-- `docs/OPENAI_RESPONSES_TOOLS.md`
+More details: [OpenAI Responses and tools](docs/OPENAI_RESPONSES_TOOLS.md).
 
 External SDK references:
 - OpenAI Node SDK: https://github.com/openai/openai-node

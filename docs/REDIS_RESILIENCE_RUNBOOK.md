@@ -56,9 +56,17 @@ Those source controls do not establish deployment readiness. Before separately a
 
 ## Health semantics
 
-- `/healthz` is process liveness. `/health` is dependency diagnostics; both remain HTTP 200 for a Redis-only outage because Redis is non-critical there.
+- In the normal web application, `/health` and `/healthz` both use
+  `writePublicHealthResponse` in `src/core/diagnostics.ts`, registered before
+  the generic health router. A Redis-only outage can leave both at HTTP 200
+  because their status follows required GPT registry availability, not the
+  later router's critical/non-critical dependency flags. Missing required GPT
+  entries can return `503`; see [startup resilience](STARTUP_RESILIENCE.md).
 - `/readyz` is full application readiness. It returns HTTP 503 while configured Redis is unavailable or the generation-matched public-provider Lua/write capability probe is pending or failed. Probe retries run in bounded background backoff; readiness requests perform no Redis I/O.
-- Public lifecycle metadata includes only state, circuit state, attempt, retry status, recovery count, and ready generation.
+- Public Redis lifecycle metadata includes bounded configuration/readiness
+  classifications, state, circuit state, attempt, retry status, recovery count,
+  and ready generation; it is part of the broader registry/lifecycle health
+  response.
 - Railway uses `/readyz` only as the deployment activation gate. A configured Redis outage therefore blocks a new revision from activating, while an already active revision is not removed merely because readiness later degrades; `/healthz` remains live, `/health` retains its diagnostic behavior, and Redis-dependent routes must fail fast and safely.
 
 Do not restart the web service to repair Redis. Restore the Redis service, private-network reference, authentication, DNS, or persistence issue and allow lifecycle recovery to close the circuit.

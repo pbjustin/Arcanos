@@ -578,6 +578,8 @@ index format is also rejected until the worker rebuilds and activates it.
 
 ## Configure the existing GPT
 
+### Builder update checklist
+
 Repository changes do not update the external Custom GPT automatically. After
 the exact backend revision and contract route are deployed:
 

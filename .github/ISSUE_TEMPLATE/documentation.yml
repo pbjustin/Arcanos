@@ -132,8 +132,8 @@ body:
       options:
         - label: I have checked the latest version of the documentation
         - label: I have searched for existing documentation issues
-        - label: I have tested any code examples mentioned
-        - label: I have verified this affects the current software version (OpenAI SDK v6.22.0)
+        - label: I have identified which examples were executed, inspected only, or not run and why
+        - label: I have recorded the affected checkout revision and relevant manifest versions
 
   - type: textarea
     id: related_files

@@ -170,6 +170,9 @@ Ambiguous title references return bounded candidates and do not mutate state.
 
 ## Activation
 
+Activation is an operator procedure that changes configuration and database
+state; it is not a documentation validation command or evidence of deployment.
+
 Configure the API service with server-controlled values:
 
 ```env
@@ -182,6 +185,17 @@ MCP_ALLOW_MODULE_ACTIONS=ARCANOS:PRODUCTIVITY:*
 Keep the existing GPT Access bearer token out of source control. Apply the migration through the repository's normal migration process before running write capabilities.
 
 All writes still pass through the existing scope, allowlist, confirmation, audit, and tracing controls.
+
+## Implementation and verification boundaries
+
+The capability catalog and risk metadata are defined in
+`src/services/arcanos-productivity.ts`; input schemas and deterministic domain
+rules live under `src/services/productivity/`. Transaction, receipt, and snapshot
+behavior is implemented in `src/core/db/repositories/productivityRepository.ts`.
+`tests/productivity-service.test.ts`, `tests/productivity-repository.test.ts`,
+and `tests/productivity-module-contract.test.ts` provide focused local coverage.
+Those test files are not evidence that the migration is applied, that an outbox
+publisher exists, or that a live provider or database was exercised.
 
 ## Deliberately deferred
 

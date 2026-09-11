@@ -16,6 +16,13 @@ Routing boundary:
 - `gpt.generate`, `trinity.query`, `arcanos.run`, and `trinity.query_finetune` are MCP tools that intentionally enter writing capabilities.
 - `jobs.status` and `jobs.result` read existing GPT job state by `jobId`; they do not enter Trinity or create writing work.
 
+The job-tool boundary differs from public `/jobs/*` HTTP reads. In
+`src/mcp/server/jobTools.ts:registerJobMcpTools`, the handlers read by ID and
+exclude `local-agent` jobs; they do not check the public job-read capability or
+a per-job requester owner. This is a separate authorization gap, not a tenant
+isolation guarantee. Keep broad MCP access within its operator trust boundary;
+the scoped Local Agent result flow uses `/gpt-access/jobs/result`.
+
 ## HTTP request flow
 
 For `POST /mcp`:
@@ -246,22 +253,30 @@ Keep environment defaults synchronized with `CONFIGURATION.md` and `.env.example
 
 ## Quick HTTP verification
 
+Run these examples only against a confirmed, authorized backend. Writing tools
+can invoke providers and persistence; DAG creation enqueues work even when the
+goal sounds observational. They are not offline documentation checks. The HTTP
+Streamable transport also expects the MCP client's supported response media:
+include `Accept: application/json, text/event-stream` when using curl.
+
 List tools:
 
 ```bash
 curl -X POST http://localhost:3000/mcp \
   -H "Authorization: Bearer $MCP_BEARER_TOKEN" \
+  -H "Accept: application/json, text/event-stream" \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","id":"1","method":"tools/list","params":{}}'
 ```
 
-Call `trinity.query`:
+Call `trinity.query` for writing work (not infrastructure health):
 
 ```bash
 curl -X POST http://localhost:3000/mcp \
   -H "Authorization: Bearer $MCP_BEARER_TOKEN" \
+  -H "Accept: application/json, text/event-stream" \
   -H "Content-Type: application/json" \
-  -d "{\"jsonrpc\":\"2.0\",\"id\":\"2\",\"method\":\"tools/call\",\"params\":{\"name\":\"trinity.query\",\"arguments\":{\"prompt\":\"Health check\"}}}"
+  -d "{\"jsonrpc\":\"2.0\",\"id\":\"2\",\"method\":\"tools/call\",\"params\":{\"name\":\"trinity.query\",\"arguments\":{\"prompt\":\"Draft a contributor welcome message\"}}}"
 ```
 
 Call `jobs.status`:
@@ -269,6 +284,7 @@ Call `jobs.status`:
 ```bash
 curl -X POST http://localhost:3000/mcp \
   -H "Authorization: Bearer $MCP_BEARER_TOKEN" \
+  -H "Accept: application/json, text/event-stream" \
   -H "Content-Type: application/json" \
   -d "{\"jsonrpc\":\"2.0\",\"id\":\"3\",\"method\":\"tools/call\",\"params\":{\"name\":\"jobs.status\",\"arguments\":{\"jobId\":\"job_123\"}}}"
 ```
@@ -278,6 +294,7 @@ Create a DAG run after obtaining a nonce from the first call:
 ```bash
 curl -X POST http://localhost:3000/mcp \
   -H "Authorization: Bearer $MCP_BEARER_TOKEN" \
+  -H "Accept: application/json, text/event-stream" \
   -H "Content-Type: application/json" \
   -d "{\"jsonrpc\":\"2.0\",\"id\":\"4\",\"method\":\"tools/call\",\"params\":{\"name\":\"dag.run.create\",\"arguments\":{\"goal\":\"Audit the current backend DAG path\",\"confirmationNonce\":\"<nonce-from-first-response>\"}}}"
 ```

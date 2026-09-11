@@ -201,6 +201,16 @@ be used as GPT-OSS labels.
 
 ## Phase Plan
 
+The training outcomes and local artifact paths in this phase narrative are
+historical experiment records, not results reproduced by a documentation
+review or guarantees that an ignored adapter is present in this checkout.
+The tracked Phase 3.13 baseline metadata is
+[`examples/gptoss/gptoss-baseline-registry.json`](../examples/gptoss/gptoss-baseline-registry.json);
+its source evaluation report and adapter live under ignored `local_artifacts/`.
+Earlier observations below lack a complete revision/environment record here.
+Preserve those limits when citing them. The source-backed current serving
+boundary is described in [Phase 5 Private Serving Status](#phase-5-private-serving-status).
+
 Phase 0 is bridge safety: local bridge scripts must keep OpenAI reference output
 out of reports and keep eval reports marked `allowedForTraining: false`.
 
@@ -609,7 +619,7 @@ learned the fact, and OpenAI reference mode remains disabled.
 
 ## Phase 4 Local Runtime Profile
 
-Phase 3.13 records the current baseline:
+Phase 3.13 records the selected historical baseline in the tracked registry:
 
 - model-only score: `11/24`
 - effective-router score: `24/24`

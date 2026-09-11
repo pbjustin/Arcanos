@@ -602,6 +602,8 @@ The first three steps complete the operational work around the merged changes.
 The fourth is continuing repository stewardship rather than a blocker to the
 already merged PR.
 
+<a id="continuation-update--2026-07-29"></a>
+
 ## Continuation update — 2026-07-29
 
 This section records the current coordination baseline. It preserves the
@@ -801,6 +803,8 @@ dependency-remediation checkout at `aec39397` is tree-identical.
 7. Prepare and reverify the coordinated production database/API/worker rollout
    bundle. Keep the promotion hold active and obtain exact production
    authorization before every live operation.
+
+<a id="post-1411-audit-continuation--2026-07-29"></a>
 
 ## Post-#1411 audit continuation — 2026-07-29
 
@@ -2033,6 +2037,8 @@ registration, staged state, commit, or pull request was changed by this report
 update. Merging PR #1412, deploying its code to production, changing branch
 protection, and beginning another ranked remediation slice remain outside this
 documentation update unless separately authorized.
+
+<a id="post-merge-pr-1412-read-only-audit-continuation--2026-07-30"></a>
 
 ## Post-merge PR #1412 read-only audit continuation — 2026-07-30
 

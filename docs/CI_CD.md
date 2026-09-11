@@ -156,17 +156,23 @@ The required `PostgreSQL Fencing & Local Agent Concurrency` job provisions an
 isolated PostgreSQL 18 service with database
 `arcanos_audit_pg18_20260727`. It runs both
 `npm run test:local-agent-postgres` and `npm run test:postgres-fencing` through
-nine dedicated test-only URL variables: local-agent hardening, job-claim
+dedicated test-only URL variables: local-agent hardening, job-claim
 fencing, DAG-snapshot fencing, worker-budget identity, stale-recovery batching,
 Backstage roster atomicity, Backstage storyline atomicity, Backstage canon
-storyline atomicity, and non-GPT terminal retention. The fencing command
+storyline atomicity, Notion partition storage, non-GPT terminal retention, and
+paired-device authentication.
+The monolithic Notion candidate-search suite shares the canon-storyline test
+URL; Gaming durable retrieval shares the job-claim fencing test URL.
+The exact suite selection is maintained in the root
+[`package.json`](../package.json), and its target variables are set in
+[the PostgreSQL service job](../.github/workflows/ci-cd.yml). The fencing command
 includes the storyline and canon forward/runtime/rollback DDL, advisory-lock
 and canon-head concurrency, mixed-version table-writer fencing, retention
 order, and legacy-containment suite, plus retention-writer and lock-skipping
 cleanup proof.
 
 CI sets the single sentinel `ARCANOS_POSTGRES_TESTS_REQUIRE_DATABASE=1` for both
-package commands. Every one of the nine suites resolves its own dedicated URL
+package commands. Every selected suite resolves its explicit test URL
 before it can select `describe.skip`; a missing or blank URL, or a nonempty
 sentinel value other than `1`, fails before database work. The URLs never fall
 back to ambient `DATABASE_URL`, and each suite is guarded to the exact

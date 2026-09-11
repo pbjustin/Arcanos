@@ -3,7 +3,9 @@
 ## Overview
 This guide covers contribution workflow for:
 - TypeScript backend/runtime in `src/`
+- Shared protocol, CLI, runtime and OpenAI packages in `packages/`
 - TypeScript workers in `workers/`
+- Standalone BullMQ/Redis runtime in `arcanos-ai-runtime/`
 - Python daemon in `daemon-python/`
 
 OpenAI integrations are adapter-first and centralized. New runtime code should not instantiate SDK clients outside the canonical constructor modules.
@@ -39,6 +41,13 @@ If you only work on the TypeScript backend, skip the Python steps above.
 
 Use `npm install` for local development. CI and Railway use reproducible `npm ci` installs. The Docker image uses the install sequence declared in `Dockerfile`, which currently combines `npm ci --omit=dev` with a later development-dependency install for the build stage.
 
+Both npm install paths run `scripts/postinstall.cjs`; local setup may create
+missing Git hooks and editor/workspace tooling through `setup-auto-sync.js`.
+Inspect those effects before installing into a checkout with existing tooling.
+Installation requires package-registry access. Do not overwrite an existing
+`.env`; the copy examples are for a new checkout. In PowerShell, use
+`Copy-Item .env.example .env` instead of the shell-specific `cp` spelling.
+
 ## Setup (Step by Step)
 ```bash
 git clone https://github.com/pbjustin/Arcanos.git
@@ -55,6 +64,7 @@ python -m venv venv
 .\venv\Scripts\Activate.ps1
 python -m pip install -e ".[dev]"
 cp .env.example .env
+cd ..
 ```
 
 ## Run locally
@@ -83,6 +93,7 @@ Choose the smallest check set that covers the change, then expand for cross-cutt
 
 | Change area | Minimum relevant checks |
 | --- | --- |
+| Documentation only | `npm run docs:check`, `npm run docs:links -- --local-only`, and `git diff --check`; no application startup is needed |
 | Root TypeScript/backend | `npm run type-check`, `npm run lint`, and focused Jest via `node scripts/run-jest.mjs --testPathPatterns=<pattern> --coverage=false` |
 | Broad root behavior | `npm run build` and `npm test` (or the split `npm run test:all`) |
 | Protocol/CLI or TypeScript-Python boundary | `npm run type-check`, `npm run lint`, protocol-focused Jest, `npm run validate:backend-cli:contract`, `npm run validate:backend-cli:offline`, and `npm run sync:check` |
@@ -94,6 +105,12 @@ Choose the smallest check set that covers the change, then expand for cross-cutt
 | Database/schema code | `npm run type-check`, focused database/route Jest, and `npm run validate:railway`; do not apply a migration as routine validation |
 
 Run `npm run guard:commit` before committing. The expensive broad readiness sweep is `npm run validate:all`; it does not include the Python pytest suite or `arcanos-ai-runtime` tests.
+
+`guard:commit` inspects staged additions only. An empty-index pass does not
+verify unstaged edits. Record actual passed, failed, skipped and unexecuted
+checks with their scope; a fixture does not establish live-provider, database,
+preview, or physical-device behavior. For exact Jest selection, prefer
+`node scripts/run-jest.mjs --runTestsByPath <actual-file> --coverage=false`.
 
 ## Deploy (Railway)
 Contributors must keep Railway build/start behavior unchanged:
@@ -109,8 +126,11 @@ npm run validate:railway
 Production deploy process is documented in `docs/RAILWAY_DEPLOYMENT.md`.
 
 ## CI Expectations
-Authoritative branch-protection workflow:
-- `.github/workflows/ci-cd.yml`
+Workflow definitions and configured branch protection are separate evidence:
+- `.github/workflows/ci-cd.yml` defines the main CI checks and aggregate.
+- `.github/workflows/doc-audit.yml` defines the documentation audit.
+- Consult [CI/CD](docs/CI_CD.md) for other required and specialized workflows;
+  repository files alone do not establish current GitHub protection settings.
 
 Required CI behavior:
 - Mock-only OpenAI required checks (`OPENAI_API_KEY=mock-api-key`)

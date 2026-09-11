@@ -99,7 +99,7 @@ The primitive MUST NOT decide whether a missing value is a 401, 403, 500, or 503
 
 ## Opaque-boundary inventory
 
-The repository currently has 26 security-sensitive opaque comparison boundaries. The first seven have complete Phase 1 characterization; O-08 through O-20 received focused Phase 2A decision tests before migration, and O-21 through O-26 were added with focused boundary tests.
+This record inventories 26 security-sensitive opaque comparison boundaries across its documented phases; it is not a count of every current consumer. The first seven have complete Phase 1 characterization; O-08 through O-20 received focused Phase 2A decision tests before migration, and O-21 through O-26 were added with focused boundary tests. Test references record coverage and do not assert a fresh execution at the current checkout.
 
 | ID | Boundary and evidence | Extraction and normalization | Configuration source and capture | Pre-Phase-2A equality | Disposition |
 |---|---|---|---|---|---|

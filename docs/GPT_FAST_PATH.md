@@ -3,7 +3,7 @@
 ## Architecture
 `POST /gpt/:gptId` now has two execution modes:
 
-- `fast_path`: inline prompt generation for small requests that look like prompt-generation work. It bypasses job creation, worker orchestration, DAG planning, memory overlays, research overlays, and audit overlays.
+- `fast_path`: inline prompt generation for small requests that look like prompt-generation work. It bypasses durable job creation and the queue worker, but still invokes the mandatory Trinity writing pipeline. Its result records `trinityRequired: true` and `orchestrationBypassed: false`; it does not promise to bypass Trinity memory, audit, or guardrail stages.
 - `orchestrated_path`: non-fast-path behavior. Execution planning may still return through bounded module dispatch, or it may use durable async jobs for `query`, non-core `query_and_wait`, explicit async requests, complex prompts, idempotent retries, and long-running work.
 
 The route keeps a single public endpoint so existing Custom GPT integrations do not need a new URL. The router branches internally before async job planning. `query` keeps its job-backed behavior, `get_status` and `get_result` stay on the control plane, and core `query_and_wait` now uses the synchronous direct action lane by default. Fast path remains available for prompt-generation requests that omit `action`.
@@ -28,7 +28,7 @@ Configuration:
 | Variable | Default | Notes |
 | --- | --- | --- |
 | `GPT_FAST_PATH_ENABLED` | `true` | Set `false` to route all requests through existing orchestration. |
-| `GPT_FAST_PATH_MODEL` | `gpt-4.1-mini` | Inline model for fast-path generation. This intentionally defaults to the lightweight repo model instead of the heavier configured default/fine-tuned model. |
+| `GPT_FAST_PATH_MODEL` | `gpt-4.1-mini` | Parsed by `resolveGptFastPathConfig`, but not passed to `executeFastGptPrompt` or its Trinity call. It currently does not select the inline provider model; see the model selectors in [CONFIGURATION.md](CONFIGURATION.md#default-model-resolution-order). |
 | `GPT_FAST_PATH_TIMEOUT_MS` | `8000` | Inline model timeout, clamped from 500ms to 20000ms. |
 | `GPT_FAST_PATH_MAX_PROMPT_CHARS` | `900` | Maximum prompt size for automatic fast-path classification. |
 | `GPT_FAST_PATH_MAX_MESSAGE_COUNT` | `3` | Maximum `messages[]` count. |
@@ -127,6 +127,11 @@ npm run mcp:stdio
 Use the MCP client’s normal `tools/list` flow to discover `gpt.generate`.
 
 ## Railway CLI Workflow
+These commands are operational examples, not documentation checks. Linking,
+changing variables, deployment, and provider probes require authorization for
+the exact target. `railway run ... npm run dev` starts application behavior
+with the selected environment's credentials and can access its services.
+
 The tracked Railway configuration uses the protected-digest startup wrapper from `railway.json`, which invokes `scripts/start-railway-service.mjs` only after all configured runtime-owned pins match. Railway CLI 4.x supports browser login via `railway login`, environment linking through `railway env`, local command execution with Railway variables through `railway run`, deployments with `railway up`, logs with `railway logs`, and variables through `railway variable` (`variables`, `vars`, and `var` are aliases).
 
 Interactive setup:
@@ -143,7 +148,6 @@ Set fast-path variables when needed:
 
 ```bash
 railway variable set GPT_FAST_PATH_ENABLED=true --service <web-service> --environment production
-railway variable set GPT_FAST_PATH_MODEL=gpt-4.1-mini --service <web-service> --environment production
 railway variable set GPT_FAST_PATH_TIMEOUT_MS=8000 --service <web-service> --environment production
 ```
 
@@ -217,6 +221,6 @@ If a request unexpectedly falls back to async, check:
 - Whether the request has `action`, non-empty `payload`, `tools`, `dag`, `files`, `research`, or other heavy fields.
 - Whether an `Idempotency-Key` header was provided.
 - Whether `GPT_FAST_PATH_ENABLED=false` or `GPT_FAST_PATH_GPT_ALLOWLIST` excludes the GPT ID.
-- Whether `GPT_FAST_PATH_MODEL` points at a slower or unavailable model.
+- Which model the returned Trinity metadata identifies and which applicable model selectors are configured. `GPT_FAST_PATH_MODEL` is currently parsed but does not reach the execution call.
 - Whether prompt size, message count, or `maxWords` exceeds configured limits.
 - Whether logs show `gpt.request.fast_path_fallback`, which means the classifier selected fast path but inline execution failed and the request continued through the existing orchestrated path.

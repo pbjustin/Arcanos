@@ -20,7 +20,7 @@ node packages/cli/dist/index.js --help
 python -m arcanos.cli
 ```
 
-The Python interactive-agent behavior is documented in `../daemon-python/README.md`.
+The Python interactive-agent behavior is documented in the [daemon guide](../daemon-python/README.md).
 
 ---
 
@@ -29,7 +29,7 @@ The Python interactive-agent behavior is documented in `../daemon-python/README.
 ### 1) Submit prompt tasks to Arcanos (`ask`)
 
 ```bash
-arcanos ask "Summarize current worker health"
+arcanos ask "Draft a contributor welcome message"
 arcanos generate --gpt arcanos-core --prompt "Generate a prompt for a launch email" --mode fast
 arcanos query --gpt arcanos-core --prompt "Create the writing job and return its id"
 arcanos query-and-wait --gpt arcanos-core --prompt "Generate a Seth Rollins promo prompt"
@@ -60,7 +60,9 @@ arcanos plan "Add a runtime metrics endpoint"
 - Sends a protocol `plan.generate` request.
 - The prompt is wrapped with plan-focused instructions before being sent to backend GPT.
 
-### 3) Queue execution work (`exec`)
+<a id="3-queue-execution-work-exec"></a>
+
+### 3) Create an execution scaffold (`exec`)
 
 ```bash
 arcanos exec "Apply the approved patch"
@@ -68,6 +70,13 @@ arcanos exec "Apply the approved patch"
 
 - Sends `exec.start` with a deterministic task id.
 - Prints execution id and status (for example, `Execution queued: exec-... (queued)`).
+- This is an in-memory protocol state scaffold, not a durable backend job or
+  evidence that a command or patch executed. Both
+  `packages/cli/src/dispatcher.ts:handleExecStart` and Python
+  `protocol_runtime/handlers.py:_handle_exec_start` record queued state without
+  invoking an executor. Separate CLI invocations do not retain that process-local
+  state. Use the [Local Agent capability bridge](LOCAL_AGENT_CAPABILITY_BRIDGE.md)
+  for implemented, authorized repository execution.
 
 ### 4) Inspect runtime status (`status`)
 
@@ -195,7 +204,11 @@ process group; Windows asynchronously invokes fixed `taskkill.exe /T /F` and
 falls back to direct-child termination if tree-wide cleanup cannot be
 confirmed. That Windows fallback is explicitly best-effort for descendants.
 
-Use `--transport local` for local-only workflows; use default/python when you need parity with the Python protocol runtime.
+`--transport local` selects the in-process protocol dispatcher; it is not an
+offline switch for every command. `ask`, `plan`, generation, status, and other
+HTTP commands can still call the configured backend through
+`packages/cli/src/client/backend.ts`. A direct `protocol context.inspect`
+invocation with local transport is an offline example.
 
 The local dispatcher intentionally omits Python-only schema introspection and repository tool execution. These operations require `--transport python`:
 
@@ -255,8 +268,11 @@ arcanos logs --recent
 arcanos ask "Propose safe refactor for command router"
 arcanos generate --gpt arcanos-core --prompt "Generate a prompt for a migration checklist" --mode fast
 arcanos plan "Implement the approved refactor"
-arcanos exec "Apply patch for approved plan"
 ```
+
+These commands request generated text. They do not apply the resulting plan.
+Worker health and other operational observations use the structured commands
+above, not `ask` prompts.
 
 ### Automation/integration
 
@@ -278,7 +294,7 @@ Use `--json` for machine parsing in scripts/CI.
 
 ## References
 
-- `../daemon-python/README.md`
-- `WORKSPACE_PACKAGES.md`
-- `SCHEMA_PROTOCOL_GUIDE.md`
+- [Python daemon](../daemon-python/README.md)
+- [Workspace packages](WORKSPACE_PACKAGES.md)
+- [Protocol and schemas](SCHEMA_PROTOCOL_GUIDE.md)
 

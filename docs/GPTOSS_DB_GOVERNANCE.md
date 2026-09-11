@@ -46,17 +46,22 @@ It defines:
 - `gptoss_training_candidates`
 - `gptoss_approved_training_examples`
 
-Local scripts do not apply this migration. Review it and apply it manually in
-the target Postgres environment only when that is explicitly intended. After
-review and explicit approval, the guarded apply command is:
+Dry-run and validation scripts do not apply this migration. The separate apply
+mode writes to PostgreSQL and requires prior operator confirmation of the
+effective connection target. After review and explicit approval, its command is:
 
 ```bash
 npm run gptoss:db:schema:apply
 ```
 
-The apply command requires the local DB connection environment to be present,
-rejects destructive SQL, runs this one idempotent migration in a transaction,
-and reports only table names plus seed counts. It does not dump table contents.
+The [schema script](../scripts/gptoss/db-governance-schema.mjs) checks that
+`DATABASE_URL` is nonempty, but constructs `pg.Pool` without a `connectionString`.
+Its apply and live-verification connections therefore use `PG*` variables and
+driver defaults, rather than the checked `DATABASE_URL`. Setting that URL alone
+does not select or confirm the target; independently verify the effective
+connection settings before either live command. The apply command rejects
+destructive SQL, runs this one idempotent migration in a transaction, and
+reports only table names plus seed counts. It does not dump table contents.
 
 Inspect the migration without opening a DB connection:
 
@@ -149,6 +154,11 @@ npm run gptoss:db:eval-ledger:dry -- --report local_artifacts/gptoss-phase3-7-lo
 Ledger dry-runs write local reports under `local_artifacts/gptoss-db-ledger/`.
 
 ## Phase 3.8 Candidate Workflow
+
+The scores and local artifact references in this section record an earlier
+experiment. They are not current-checkout test results, and the ignored reports
+are not guaranteed to be available. See the [historical phase evidence
+boundary](GPTOSS_LOCAL_RUNTIME.md#phase-plan).
 
 The Phase 3.7 router/classifier postprocessed v2 eval reached 9/24. Its
 remaining true model errors are now represented as local governance candidate

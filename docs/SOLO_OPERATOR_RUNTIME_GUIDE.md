@@ -1,14 +1,15 @@
 # Solo Operator Runtime Guide
 
 ## Overview
-This document explains the current Arcanos production runtime as one system.
+This document explains the repository-defined Arcanos web/worker runtime as one
+system. It does not attest the current production deployment or configuration.
 
 It covers two views:
 - the technical view for backend maintenance
 - the end-user view for understanding what behavior changed
 
 ## What This System Is
-Arcanos is a Railway-hosted backend with four practical runtime pieces:
+The canonical Railway deployment has four practical runtime pieces:
 - the main Express app
 - a dedicated async worker service
 - a Postgres database
@@ -70,13 +71,19 @@ Current Redis responsibilities are infrastructure-facing:
 
 Redis is intentionally optional in some paths. If it is not configured, the app can still run in reduced mode. If it is configured and unhealthy, health routes now surface that failure explicitly.
 
+Production web activation is stricter: PostgreSQL must be configured,
+connected, and schema-ready; Redis must be configured and connected, and its
+current ready generation must pass the isolated public-provider admission
+capability probe. Reduced local/development behavior is not a production
+readiness fallback. See [startup resilience](STARTUP_RESILIENCE.md).
+
 ### What changed in health checks
 Health reporting is now explicit about Redis.
 
 Endpoints:
-- `GET /healthz`: liveness only
+- `GET /healthz`: bounded public registry/lifecycle health
 - `GET /readyz`: readiness for OpenAI, database, Redis, and application runtime
-- `GET /health`: comprehensive dependency view, including Redis details
+- `GET /health`: the same public health projection, including Redis details
 
 Relevant code:
 - `src/platform/resilience/unifiedHealth.ts`
@@ -86,7 +93,9 @@ Relevant code:
 Behavior:
 - `/readyz` fails when a configured critical dependency is unhealthy
 - `/health` includes `dependencies.redis`
-- live `/health` and router-based health handling now agree about Redis status
+- normal-app `/health` and `/healthz` use the same writer; missing required GPT
+  registry entries can return `503` independently of Redis. The generic health
+  router's separate `/health` handler is shadowed by earlier app registration.
 
 ### What changed in ask-style routing
 The legacy ask-style implementation now lives behind `/brain` and defaults to
@@ -206,9 +215,15 @@ Use:
 - `GET /health`
 
 Read them as:
-- `/healthz`: process alive
-- `/readyz`: safe to receive traffic
-- `/health`: detailed dependency report
+- `/healthz`: public registry/lifecycle health
+- `/readyz`: process/dependency activation gates passed for this role
+- `/health`: the same public health projection in the normal application
+
+These responses do not establish full Notion synchronization, current complete
+authority, source coverage, or eligibility for protected generation. Those
+decisions remain in the authority/retrieval path. Worker queue-slot readiness
+and ongoing synchronization are described in
+[the deployment guide](RAILWAY_DEPLOYMENT.md#configuration).
 
 ### Worker helper routes
 Use the bounded status routes for summary inspection:
