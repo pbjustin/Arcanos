@@ -111,6 +111,25 @@ one HTTP loopback listener. It does not establish shipping TLS, Apple Keychain,
 locked-device file protection, real backend authentication/database/worker/provider
 behavior, or app/Siri lifecycle integration. No production state is touched.
 
+## Railway HTTPS recovery fixture
+
+`scripts/run-operation-recovery-preview.py` extends the existing
+`ArcanosPreviewProof` with separate-process submission, persisted-handle recovery,
+and terminal restoration against lifecycle-owned Railway HTTPS hosts. It uses
+the production tracker/file store and Gateway transport with the existing sealed
+synthetic peer. No server fixture, normal authenticated route, or lifecycle token
+handling is changed. The parent requires exact source/host evidence and request
+counts, checks actual file contents between processes, and verifies a real
+unknown-handle HTTPS read fails without updating saved state or resubmitting.
+
+The executed sequence has one dry process plus four network processes, 32 HTTPS
+requests, one create, and three result reads. The additional result read is the
+negative control. Successful phases revalidate served identity after traffic.
+See [the preview recovery commands](README.md#durable-recovery-over-preview-https).
+Executed JSON evidence must be paired with the trusted lifecycle run and
+independent deployment/domain ownership verification at the same commit; this
+fixture does not assert control-plane provenance or delete Railway environments.
+
 ## Remaining implementation and validation
 
 This commit does **not** claim the complete Phase 3 milestone. The recovery index is
@@ -121,11 +140,12 @@ Those are required before calling durable recovery user-visible.
 
 The following are **NOT RUN**: Simulator execution, physical iPhone Keychain
 behavior, Foundation Models inference, Siri/App Shortcut
-activation, dictation/speech, system confirmation, APNs delivery, authorized HTTPS
+activation, dictation/speech, system confirmation, APNs delivery, real paired HTTPS
 Gateway integration, PostgreSQL assertions, Local Agent/provider execution, and
 dismiss/relaunch result retrieval. The original implementation environment exposed
 Linux Swift rather than Xcode/device hardware; the macOS CI build above supplies
-separate compilation evidence. No live credentials or isolated target were used.
+separate compilation evidence. The sealed Railway fixture uses only a public
+synthetic bearer and does not supply these live-backend or physical-device proofs.
 
 ## Exact physical-iPhone procedure
 

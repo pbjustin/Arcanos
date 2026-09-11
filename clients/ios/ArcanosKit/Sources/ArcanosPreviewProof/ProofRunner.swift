@@ -162,7 +162,7 @@ struct ProofRunner: Sendable {
                     requestsMade: await transport.count(), responseBytes: await transport.bytes(), checks: checks)
     }
 
-    private func raw(_ origin: URL, path: String, method: String, body: Data? = nil, authenticated: Bool = false) async throws -> GatewayResponse {
+    func raw(_ origin: URL, path: String, method: String, body: Data? = nil, authenticated: Bool = false) async throws -> GatewayResponse {
         guard let url = URL(string: path, relativeTo: origin)?.absoluteURL else { throw ProofFailure("FIXTURE_URL_INVALID") }
         var headers = ["Accept": "application/json"]
         if authenticated { headers["Authorization"] = "Bearer \(PreviewFixture.token)" }
@@ -172,7 +172,7 @@ struct ProofRunner: Sendable {
 
     private func json(_ response: GatewayResponse) throws -> JSONValue { try JSONDecoder().decode(JSONValue.self, from: response.data) }
 
-    private func readiness(_ origin: URL, role: String) async throws -> JSONValue {
+    func readiness(_ origin: URL, role: String) async throws -> JSONValue {
         let response = try await raw(origin, path: "/readyz", method: "GET")
         try require(response.statusCode == 200, "READINESS_HTTP_STATUS")
         let value = try json(response)
@@ -211,7 +211,7 @@ struct ProofRunner: Sendable {
         try require(retryBody == expected && original.request.headers["Idempotency-Key"] != nil, "APPROVAL_BYTES_CHANGED")
     }
 
-    private var expectedMetadata: JSONValue {
+    var expectedMetadata: JSONValue {
         .object(["schemaVersion": .integer(1), "proofVersion": .string(PreviewFixture.version), "synthetic": .bool(true),
                  "prNumber": .integer(Int64(configuration.prNumber)), "sourceCommit": .string(configuration.commit),
                  "contractSource": .string("src/services/gptAccessGateway.ts#buildGptAccessOpenApiDocument"),

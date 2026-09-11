@@ -60,6 +60,16 @@ jobs:
           xcrun swift build --package-path clients/ios/ArcanosKit --product ArcanosRecoveryProof
           recovery_bin_dir=$(xcrun swift build --package-path clients/ios/ArcanosKit --show-bin-path)
           python3 clients/ios/scripts/run-operation-recovery-e2e.py --swift-binary "$recovery_bin_dir/ArcanosRecoveryProof"
+      - name: Validate preview recovery proof without network
+        timeout-minutes: 5
+        run: |
+          xcrun swift build --package-path clients/ios/ArcanosKit --product ArcanosPreviewProof
+          preview_bin_dir=$(xcrun swift build --package-path clients/ios/ArcanosKit --show-bin-path)
+          python3 clients/ios/scripts/run-operation-recovery-preview.py \
+            --swift-binary "$preview_bin_dir/ArcanosPreviewProof" \
+            --pr-number 1 --commit-sha "$(git rev-parse HEAD)" \
+            --web-base-url https://web-pr-1.up.railway.app \
+            --worker-base-url https://worker-pr-1.up.railway.app
       - name: Build unsigned iOS Simulator app
         run: >-
           xcodebuild

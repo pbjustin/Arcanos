@@ -18,9 +18,14 @@ enum ArcanosPreviewProof {
     }
 
     static func main() async {
+        let arguments = Array(CommandLine.arguments.dropFirst())
+        if arguments.first == "--recovery-phase" {
+            await PreviewRecoveryProof.main(arguments: arguments)
+            return
+        }
         var activeRunner: ProofRunner?
         do {
-            let configuration = try ProofConfiguration(arguments: Array(CommandLine.arguments.dropFirst()))
+            let configuration = try ProofConfiguration(arguments: arguments)
             try configuration.verifyGit()
             let runner = ProofRunner(configuration: configuration)
             activeRunner = runner

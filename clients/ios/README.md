@@ -360,6 +360,48 @@ the same head. This supplemental proof does not replace trusted lifecycle
 ownership evidence or establish live pairing/authentication, SQL, a real queue,
 provider inference, actual Local Agent execution, Siri, or Foundation Models.
 
+### Durable recovery over preview HTTPS
+
+After the same trusted lifecycle establishes both hosts, build the executable
+from the clean exact-head Linux/macOS checkout and run the recovery parent:
+
+```sh
+swift build --package-path clients/ios/ArcanosKit --product ArcanosPreviewProof
+preview_bin_dir=$(swift build --package-path clients/ios/ArcanosKit --show-bin-path)
+python3 clients/ios/scripts/run-operation-recovery-preview.py \
+  --swift-binary "$preview_bin_dir/ArcanosPreviewProof" \
+  --pr-number <PR-number> --commit-sha <exact-40-character-head-SHA> \
+  --web-base-url <confirmed-web-HTTPS-origin> \
+  --worker-base-url <confirmed-worker-HTTPS-origin>
+```
+
+This first run verifies arguments and clean Git evidence without HTTP or index
+writes. Repeat with both `--execute --allow-network` for the authorized proof.
+The parent starts fresh Swift processes for submission, an unknown-handle
+negative control, accepted-handle recovery, and terminal restoration. Each
+executed process uses the existing production HTTPS transport and checks both
+roles, device-policy evidence, and fixture metadata before job traffic; successful
+phases repeat those gates afterward. The parent checks the actual file between
+processes, verifies stable job identity and exact request counts, and removes its
+temporary files. The unknown-handle read must return the specific missing-job
+failure without modifying either saved index or creating a job.
+
+The full proof is bounded to 120 seconds, with 40 seconds per child. It makes 32
+HTTPS requests: one create, three result reads (one negative, two successful),
+and 28 identity/contract reads. The initial dry child adds no requests. A single
+run must finish within the sealed peer's 120-second job retention. The report
+includes phase process IDs, assertion names, counters, exact source commit and
+binary hash; build provenance still requires building that binary at the tested
+commit. Logs belong outside the evidence checkout. Remove the opt-in label only
+after all supplemental proofs finish, then verify the trusted lifecycle removes
+the exact owned preview and both former hosts deny readiness.
+
+This proves file/process recovery over actual HTTPS against the sealed synthetic
+peer. It does not establish shipping app/Siri recovery, real paired-device
+authorization, database durability, active worker execution, or provider results.
+The [loopback recovery fixture](#durable-operation-recovery-fixture) separately
+covers lost receipts, process termination during submission, and corrupt results.
+
 ## Device Gateway and PostgreSQL end-to-end fixture
 
 `ArcanosDeviceE2E` connects the real Swift pairing, Gateway, session, polling and
