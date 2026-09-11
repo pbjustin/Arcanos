@@ -38,6 +38,31 @@ The dedicated schema defines exactly eight fixed-path operations:
 
 The `ARCANOS:GAMING` module still exposes only `query`. `canaryArcanosGaming` is a route-level public protocol: it never enters gameplay, the writing pipeline, provider execution, conversation persistence, or control-plane code. The source lifecycle and hybrid operations are separately authenticated, capability-specific `/gpt-access` routes; they do not add module actions or expose generic job, queue, worker, database, or control-plane inspection. Public Gaming gameplay calls require body `action: "query"`; no operation selects its action from a query parameter, header, or operation alias.
 
+## Current implementation limits
+
+The tracked schema above is the client contract for this checkout, not proof
+of the saved Builder configuration or any deployed revision. Gameplay and
+hybrid query requests support bounded edition, progress-point, answer-depth,
+and spoiler fields. `src/services/gamingAgents.ts:BackendQueryAgent.build`
+forwards resolved player context to the gameplay pipeline. Preserve both the
+original question and the schema-defined context fields.
+
+Progression-dependent guide requests without a usable progress or question
+anchor stop for clarification. Context conflict checks and conservative
+excerpt selection constrain retrieval, but do not verify the player's actual
+progress or prove that all generated text is spoiler-free. See
+[Gaming guide assistance](GAMING_GUIDE_ASSISTANCE.md) and
+`src/shared/gaming/gamingProgressionPolicy.ts`.
+
+Stored retrieval uses bounded lexical search and exact source identity,
+including supplied edition for guide and hybrid requests
+(`src/services/gamingStoredKnowledge.ts:retrieveStoredGamingKnowledge`).
+Source admission or a successful query does not prove complete indexing of a
+game, document, or progression path. Gameplay retrieval can return no stored
+evidence when the repository is unavailable; hybrid retrieval requests
+fail-on-unavailable behavior. Preserve returned failure states and evidence
+qualifications rather than presenting fallback text as source-backed facts.
+
 ## Hybrid Builder instructions
 
 The ready-to-apply workflow section is [gpt/arcanos-gaming-hybrid.instructions.md](gpt/arcanos-gaming-hybrid.instructions.md). Replace the legacy Gaming workflow with that section only after backend compatibility is verified. Do not paste both workflows into the GPT.

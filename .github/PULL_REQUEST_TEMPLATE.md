@@ -7,6 +7,12 @@ Describe the change and user impact in 1-3 sentences.
 
 ## Setup
 Validation run before requesting review:
+Choose checks for the changed area in [CONTRIBUTING.md](../CONTRIBUTING.md).
+Mark irrelevant or unexecuted checks as not run with a reason; do not start a
+service solely to validate documentation.
+
+- [ ] `npm run docs:check` and `npm run docs:links -- --local-only` (documentation changes)
+- [ ] `git diff --check`
 - [ ] `npm run type-check`
 - [ ] `npm run lint`
 - [ ] `npm test`
@@ -22,6 +28,9 @@ Configuration and secrets changes:
 
 ## Run locally
 Manual verification performed:
+Identify the exact local/fixture/preview/live target and authorization when
+applicable. A fixture or liveness pass does not prove live dependencies.
+
 - [ ] Backend startup and `/healthz` check
 - [ ] Changed endpoints/scripts tested locally
 - [ ] Confirmation-gated routes tested (if applicable)
@@ -40,4 +49,4 @@ Known risks / follow-ups:
 ## References
 - Related issue(s):
 - Docs updated (paths):
-- Evidence (logs/screenshots/tests):
+- Evidence (redacted logs/screenshots/tests, exact revision and limitations):

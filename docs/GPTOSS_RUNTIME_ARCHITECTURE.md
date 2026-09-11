@@ -7,6 +7,13 @@ production routing.
 
 ## Current Readiness
 
+The scores below are the selected Phase 3.13 metadata in
+[`gptoss-baseline-registry.json`](../examples/gptoss/gptoss-baseline-registry.json).
+The registry references an ignored local evaluation report and adapter; a static
+gate validates the recorded metadata and fixtures, not a new model evaluation
+or the availability of those artifacts. No runtime readiness field alone is
+live-model or deployment evidence.
+
 - Model-only score: `11/24`.
 - Effective-router score: `24/24`.
 - Model-only behavior is not ready.

@@ -448,6 +448,13 @@ policy are unchanged; this proof does not verify TLS, a physical iPhone, Siri,
 Apple Keychain, Foundation Models or actual Python executor/provider behavior.
 The separate macOS workflow verifies the unsigned iOS Simulator build.
 
+The required PostgreSQL CI job runs this fixture and retains its sanitized
+`ios-device-e2e/v1` JSON artifact. Success requires all eleven Swift observations
+and eleven independent backend assertions, the same run ID/source commit, and
+confirmed server/schema cleanup. The report identifies local uncommitted changes.
+For pull requests, CI tests GitHub's merge commit; verify that report's source SHA
+and its PR head/base parents when using the artifact as published source evidence.
+
 ## Shipping recovery integration fixture
 
 The production `AppRuntime` constructs `ShippingSessionComposition` using the
@@ -535,13 +542,6 @@ This is process/file/client-wire evidence. It does not prove shipping HTTPS,
 Keychain or locked-iPhone file protection, actual server authorization or job
 execution, automatic recovery of an unknown job handle, or Siri/app lifecycle
 recovery. See the [Phase 3 engineering report](PHASE3_ENGINEERING_REPORT.md).
-
-The required PostgreSQL CI job runs this fixture and retains its sanitized
-`ios-device-e2e/v1` JSON artifact. Success requires all eleven Swift observations
-and eleven independent backend assertions, the same run ID/source commit, and
-confirmed server/schema cleanup. The report identifies local uncommitted changes.
-For pull requests, CI tests GitHub's merge commit; verify that report's source SHA
-and its PR head/base parents when using the artifact as published source evidence.
 
 ## Validation and next phase
 

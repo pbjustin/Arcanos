@@ -89,13 +89,26 @@ Daemon result endpoint:
 
 ## Data retention
 
-Responses requests default to:
+The backend request builder and ask tool loop default to:
 
 ```text
 store: false
 ```
 
-Set `OPENAI_STORE=true` to enable OpenAI-side response storage and stateful `previous_response_id` continuation. The flag is read in `src/config/openaiStore.ts`.
+Set `OPENAI_STORE=true` to enable response storage and stateful
+`previous_response_id` continuation in callers that consult
+`src/config/openaiStore.ts`. It is not a universal override: the normalized
+vision Responses builder (`src/services/openai/requestBuilders/convert.ts`)
+and sensitive Backstage paths force `store: false`; the text builder also
+honors an explicit per-request `store: false` override.
+
+Portable helpers do not all set this field themselves. For example,
+`packages/arcanos-openai/src/structuredReasoning.ts` constructs a Responses
+request without `store`; a consumer must inspect its client/adapter boundary
+before claiming that the request sends `store: false`.
+
+`store: false` does not prove zero provider retention or disable Arcanos's
+separate logs, memory, audit, or durable job storage.
 
 Do not assume a response ID is remotely reusable when storage is disabled.
 

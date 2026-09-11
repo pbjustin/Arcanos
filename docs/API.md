@@ -48,12 +48,12 @@ for limits, source/freshness policy, persistence, evidence boundaries and the
 a separately authorized backend deployment.
 
 ## Overview
-This guide documents the primary supported surfaces and notable operator/compatibility routes mounted by `src/routes/register.ts`, `src/routes/healthGroup.ts`, and `src/routes/api/index.ts`. It is a maintained integration guide, not a generated exhaustive route manifest. Route behavior is sensitive to mount order when duplicate paths exist.
+This guide documents the primary supported surfaces and notable operator/compatibility routes mounted by `src/app.ts`, `src/routes/register.ts`, `src/routes/healthGroup.ts`, and `src/routes/api/index.ts`. It is a maintained integration guide, not a generated exhaustive route manifest. Route behavior is sensitive to mount order when duplicate paths exist.
 
 ## Prerequisites
 - Backend running locally or on Railway.
 - JSON client (curl/Postman/SDK).
-- For protected routes, confirmation headers or trusted automation settings.
+- For protected routes, the purpose-bound authentication credential and required scopes documented for that route. Confirmation is an additional action gate, not caller authentication.
 
 ## Setup
 Start the backend:
@@ -113,16 +113,22 @@ without consuming Redis-start tokens or issuing Redis commands until the
 background capability probe succeeds or Redis advances to a new generation.
 
 ## Run locally
-Quick probes:
+Public process/registry snapshots (against an authorized local target):
 ```bash
 curl http://localhost:3000/healthz
 curl http://localhost:3000/health
+```
+
+Generation example; this can call the configured provider and enqueue durable
+work, so it is not a read-only health or documentation check:
+
+```bash
 curl -X POST http://localhost:3000/gpt/arcanos-core -H "Content-Type: application/json" -d '{"action":"query","prompt":"hello"}'
 ```
 
 ## Deploy (Railway)
-No API path changes are required for Railway. Validate liveness (`/healthz`),
-dependency diagnostics (`/health`), the Railway activation probe (`/readyz`),
+No API path changes are required for Railway. Inspect the public process/registry
+snapshots (`/healthz` and `/health`), the Railway activation probe (`/readyz`),
 and confirmation-gated flows after deploy.
 
 ## Troubleshooting
@@ -340,6 +346,16 @@ The groups below highlight stable public routes, operator/control routes, compat
 - `GET /api/test`
 - `GET /api/fallback/test`
 
+In the normal root application, `src/app.ts` registers `/healthz` and calls
+`setupDiagnostics(app)` before `registerRoutes(app)`. Both `/healthz` and
+`/health` therefore use `src/core/diagnostics.ts:writePublicHealthResponse`,
+which returns a public snapshot with registry validation, startup/Redis lifecycle,
+and configured-key metadata. Its normal status is `200` when required GPT IDs
+are registered and `503` when they are missing; handler failures can return
+`500`. This is not a live provider/database probe or proof of complete readiness.
+The later leaf handlers in `src/routes/health.ts` do not own those two paths in
+the normal application. Worker and sealed preview health contracts are separate.
+
 The root backend's credential-free `/readyz` checks OpenAI, database, Redis,
 public-provider admission capability, and startup readiness in that order. It
 returns `200` only when every critical
@@ -362,7 +378,7 @@ values, and a timestamp. Internal worker filenames, checked filesystem paths,
 free-form reasons, and exception messages are not returned. Unexpected
 failures are logged only by stable code and error type with request
 correlation. Railway deployments use `GET /readyz` for activation; retain
-`GET /healthz` for liveness and `GET /health` for dependency diagnostics.
+`GET /healthz` and `GET /health` for the public snapshots described above.
 
 ### Core AI interaction
 - `POST /gpt/:gptId` (canonical GPT writing plane; valid Backstage mutation
@@ -681,9 +697,10 @@ them as authoritative structured scope fields.
 
 Every ordinary `generateBooking` generation, including the booking generated
 before `generateBookingWithHRC` evaluates it, receives a mandatory server-owned
-CLEAR draft-review-revise system policy. The model silently drafts, checks
-Clarity, Leverage, Efficiency, Alignment, and Resilience, revises weak areas,
-and returns only the final booking or review. This policy adds no score or
+CLEAR draft-review-revise system policy. The instruction asks the model to
+draft, check Clarity, Leverage, Efficiency, Alignment, and Resilience, revise
+weak areas, and return only the final booking or review; source inspection
+does not prove those internal model steps occurred. This policy adds no score or
 threshold gate, no extra booking-generation call, and no ActionPlan CLEAR 2.0
 guarantee. The raw-string `generateBooking` contract, HRC response contract,
 token and timeout budgets, max-output-only compact retry, and non-persistent
@@ -1196,7 +1213,7 @@ These machine-feedback routes do not gain a new confirmation challenge. The
 current legacy `ai-endpoints.ts` owner of `POST /audit` retains its existing
 confirmation requirement; when legacy GPT routes are disabled, the CLEAR
 feedback owner remains confirmation-free. Public `GET /health` is unchanged
-and continues to be owned by the earlier health-group router.
+and is owned by `setupDiagnostics(app)` before the health-group router mounts.
 
 ### AI utility and media
 - `POST /write` (confirmation required)
@@ -1508,6 +1525,14 @@ checks remain authoritative.
 - `POST /queryroute` (legacy catalog-backed dispatch for exposed definitions only)
 - `POST /modules/:moduleRoute` (legacy catalog-backed route for exposed definitions only)
 - `POST /gpt/:gptId` (writing plane; control compatibility actions are intercepted before write dispatch)
+
+MCP job tools are a separate authorization surface from the generic HTTP
+`/jobs/*` routes. In `src/mcp/server/jobTools.ts`, `jobs.status` and
+`jobs.result` call `getJobById` and conceal `local-agent` jobs, but do not
+check the generic job-read capability, creation-surface provenance, or a
+per-job owner. The transport bearer does not establish those missing checks.
+This is an unresolved authorization-parity gap requiring separate code review;
+do not represent MCP job reads as providing the generic HTTP ownership guarantees.
 
 The source-owned catalog contains 15 definitions. `ARCANOS:CLI`,
 `ARCANOS:LOCAL_AGENT`, and `ARCANOS:PRODUCTIVITY` are GPT Access-only and are
@@ -2108,7 +2133,7 @@ namespace with the new reservation protocol.
 
 ## Verified route ownership and remaining order ambiguities
 - `POST /audit` is defined in multiple routers; current mount order means AI utility handling executes first.
-- `GET /health` is defined in multiple routers; health-group handler executes first because it is mounted before reinforcement and status routes.
+- `GET /health` is defined in multiple routers; normal `src/app.ts` composition registers `setupDiagnostics(app)` first. Its public snapshot handler shadows the health-group, reinforcement, and status definitions. The same composition registers its own `/healthz` before the health-group leaf.
 
 The `/api/reusables*` routes have one canonical owner in `api/index.ts` after
 the writing-plane memory-consistency gate; `register.ts` does not mount their

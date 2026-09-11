@@ -227,12 +227,16 @@ different universes, null-reason fallback, and absence of raw identifiers. It
 also projects the maximum 512 failed shards into 55,314 UTF-8 bytes, below the
 64 KiB proof bound. The selector and verifier explicitly report that no worker,
 logger sink, database, Notion API, model provider, or protected effect ran.
-It then executes the
-production-shared Notion page/RAG core over sealed content to prove request
+
+Separately, the `notion-authority-rag-contract` selector executes the
+production-shared Notion page/RAG core over sealed content to check request
 shape, parsing, sanitization, chunking, citation framing, message isolation,
-and mutation recognition. This proves deployed Notion API reachability, not a
-valid credential, live page read, PostgreSQL activation, worker run, or model
-provider call. Protected effects stay disabled.
+and mutation recognition. Its fixed invalid-credential canary
+(`src/shared/backstage/backstageNotionPreviewCanary.ts`) checks Notion API
+reachability only when actually executed. Neither the synthetic core checks
+nor that canary proves valid credentials, a live page read, PostgreSQL
+activation, worker execution, or model-provider behavior. Reading this guide
+or running a dry plan does not execute the canary.
 
 The compact-retry case derives an exact two-item, 20-words-per-item recovery
 contract from a server-owned prompt, then executes the same production-shared

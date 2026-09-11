@@ -18,6 +18,9 @@ This document captures active backend and daemon configuration used by current c
 - Copy `daemon-python/.env.example` to `daemon-python/.env` for daemon usage.
 
 ## Setup
+Create local environment files only when they do not already exist; preserve
+existing local values. Run the backend copy from the repository root.
+
 Backend:
 ```bash
 cp .env.example .env
@@ -29,6 +32,31 @@ cd daemon-python
 cp .env.example .env
 ```
 
+The split files in `config/env/*.env.example` are examples to consult, not a
+runtime-loaded configuration stack: `src/platform/runtime/env.ts` loads the
+working directory's `.env` through `dotenv.config()`. Example assignments are
+explicit choices, not evidence of runtime defaults or deployed values. In
+particular, `config/env/openai.env.example` still lists
+`OPENAI_COMPLEX_MODEL` and `OPENAI_VISION_MODEL`, but current backend selectors
+do not read those variables: `getComplexModel()` derives the configured
+default model, and `buildVisionResponsesDraft()` uses its per-call model or
+`gpt-4o`. Those example entries need a separate configuration cleanup.
+Likewise, the security example's trusted-ID comment must be read with the
+presence-only confirmation limitation documented below, not as caller
+authentication.
+
+Some root `.env.example` Notion comments also retain an earlier web-only
+supplement and fixed five-shard rollout description. The source-backed Notion
+mode, executing-service, and configured-membership rules below describe current
+behavior; those mixed-purpose example comments need separate cleanup.
+
+`.env.test.example` matches the local test defaults, but is not a network
+sandbox. The test bootstrap in `scripts/test-env.mjs` loads `.env.test`, clears
+its explicit list of deployment/database/Redis settings, then fills missing
+test defaults. Inspect each selected script and fixture before relying on an
+offline workflow; those flags do not independently disable every possible
+outbound call.
+
 ## Configuration
 ### Backend required and core variables
 
@@ -39,7 +67,8 @@ cp .env.example .env
 | `OPENAI_API_KEY` | No for explicit local/test mock paths; yes by default in production/Railway and for live AI | none | Default production/Railway startup validation rejects a missing or placeholder key. |
 | `OPENAI_BASE_URL` | No | none | Optional OpenAI endpoint override. |
 | `OPENAI_MODEL` | No | fallback chain | Participates in default model resolution chain. |
-| `DATABASE_URL` | No | none | Enables PostgreSQL persistence. |
+| `DATABASE_URL` | No | none | Primary PostgreSQL connection string; alternatively provide all five `PGUSER`, `PGPASSWORD`, `PGHOST`, `PGPORT`, and `PGDATABASE` fields. |
+| `DATABASE_PRIVATE_URL` / `DATABASE_PUBLIC_URL` | No | none | Additional database candidates, considered only when `DATABASE_URL` or the complete five-field `PG*` set is also present. See the current alias-only limitation below. |
 | `REDIS_URL` | No | none | Preferred `redis://` or TLS `rediss://` connection string; discrete `REDISHOST`/`REDISPORT`/`REDISUSER`/`REDISPASSWORD` are fallback inputs. Without a valid discrete fallback, a malformed non-empty value is treated as configured but unavailable. |
 | `ARCANOS_JOB_READ_CAPABILITY_SECRET` | Yes for generic async job creation and reads | none | Dedicated 32–4096 character HMAC signing secret for job-specific read capabilities. It must contain no whitespace or placeholder text and must remain distinct from every other purpose-bound application credential. |
 | `ARCANOS_JOB_READ_CAPABILITY_PREVIOUS_SECRET` | No; rotation overlap only | none | Optional prior signing key accepted only for capability verification. It must satisfy the current-key credential rules and differ from the current key and every other purpose-bound credential. New tokens are never issued from it. |
@@ -49,8 +78,8 @@ cp .env.example .env
 | `ARCANOS_BACKSTAGE_BOOKER_ASYNC_GENERATION_ENABLED` | No; web-service automatic-routing rollout control | `false` | Only the exact value `true` promotes workload-classified heavy Booker generation to the existing durable GPT queue; every absent or malformed value keeps the false synchronous-routing rollback. Explicit async and idempotent job-backed generation remain queued and protected regardless of this flag. Enabled queue/protection failure never falls back to a web-service model call. Lightweight `queryContinuity` remains synchronous. |
 | `ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY` | Yes on web and worker for any job-backed Booker generation | none | Canonical base64 encoding of exactly 32 random bytes. It encrypts private Booker job inputs and terminal outputs with purpose- and identity-bound AES-256-GCM. Keep it distinct from every other purpose-bound credential and out of Builder/client configuration. Rotate in Railway deployment order: both roles K1 current/K2 previous, then worker K2 current/K1 previous, then web K2 current/K1 previous. |
 | `ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_PREVIOUS_KEY` | No; retained-job rotation overlap only | none | Optional prior canonical 32-byte base64 key accepted only for decryption. New jobs use only the current key. Remove it only after the maximum retained protected-job window drains. |
-| `ARCANOS_BACKSTAGE_NOTION_ACCESS_TOKEN` | No; only with one Notion mode | none | Outbound read-content-only Notion credential. Legacy supplemental enrichment uses it on web; authority/RAG synchronization uses it on the worker and removes it from web. It must remain distinct from every ARCANOS application credential and never appears in Builder, inbound headers, source, prompts, chat, or logs. |
-| `ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON` | No; only with the Notion access token on the web service | none | Closed JSON object mapping each exact Backstage `universeId` to one to three unique raw Notion page UUIDs. The complete value is capped at 16 KiB and 32 universes; URLs, blank/padded IDs, duplicate pages, unsafe object keys, or partial/invalid configuration disable enrichment without failing booking. Treat the mapping as sensitive deployment configuration. |
+| `ARCANOS_BACKSTAGE_NOTION_ACCESS_TOKEN` | No; only with one Notion mode | none | Outbound read-content-only Notion credential. Legacy supplemental enrichment uses it on the executing service: web for synchronous generation, worker for protected queued generation. Authority/RAG synchronization uses it on the worker and removes it from web. It must remain distinct from every ARCANOS application credential and never appears in Builder, inbound headers, source, prompts, chat, or logs. |
+| `ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON` | No; only with the Notion access token on each executing service | none | Closed JSON object mapping each exact Backstage `universeId` to one to three unique raw Notion page UUIDs. Configure the identical mapping on worker before protected queued legacy supplement generation. The complete value is capped at 16 KiB and 32 universes; URLs, blank/padded IDs, duplicate pages, unsafe object keys, or partial/invalid configuration disable enrichment without failing booking. Treat the mapping as sensitive deployment configuration. |
 | `ARCANOS_BACKSTAGE_NOTION_AUTHORITY_ROOTS_JSON` | No; identical value on web and worker for authority mode | none | Closed mapping from each exact universe ID to `{rootPageId,displayName,initialMinimumPageCount?}`. The UUID may identify a normal page or a database container; database resolution occurs only after the exact page-type validation error and queries every listed data source. Nested database results fail closed. The complete hierarchy becomes authoritative, all six backend mutations are blocked, legacy PostgreSQL reads are quarantined, and one immutable active RAG snapshot is selected. A present malformed value fails mutation checks closed. `initialMinimumPageCount` is 1–512, counts only real Notion pages, and applies only before the first activation. |
 | `ARCANOS_BACKSTAGE_NOTION_PARTITIONS_JSON` | No; identical value on web and worker when validating the partitioned index | none | Additive closed version-1 envelope containing an operator generation and bounded universe/shard definitions. Stable lowercase `shardKey` values are independent of display names. Each shard declares a normal Notion page root UUID that is unique within its universe, a `hot`/`cold`/`archive` retrieval tier, required/optional behavior, sorted scope/category tags, and explicit finite page, chunk, depth, and content limits; database containers remain supported only as monolithic authority roots. Archive-tier shards are structurally optional and must declare `required:false`, preventing one unavailable archive from fencing unrelated current-canon publication. Unknown fields, duplicate universe/shard/tag identities, duplicate roots within one universe, required archives, malformed values, or excessive cardinality invalidate the complete envelope; distinct universe namespaces may reuse the same provider page ID. Its canonical semantic SHA-256 digest is separate from the operator generation. |
 | `ARCANOS_BACKSTAGE_NOTION_PARTITIONED_INDEX_MODE` | No; identical value on web and worker | `monolith` | Exact rollout mode: `monolith`, `shadow`, or `partitioned`. Absent, padded, differently cased, or unknown values resolve to `monolith` with non-sensitive validity metadata. Exact `shadow` keeps the monolith as the sole returned read while executing web reads and protected queued relevant worker reads may perform bounded partition comparisons; it is the only mode that admits scheduled, manual, or queued partition synchronization. Exact `partitioned` serves only manifest-scoped partition reads, fails closed without a monolith read fallback, freezes partition writers, and keeps the evidence monitor plus legacy monolith synchronization active. Return to `shadow` to refresh partitions and reseal evidence; restoring exact `monolith` is the read rollback. This flag does not weaken the durable authority latch. |
@@ -367,6 +396,13 @@ The OpenAI client resolves keys in this order:
 5. `FINE_TUNED_MODEL_ID`
 6. `gpt-4.1`
 
+These are source-defined selectors, not evidence of a deployed model or provider
+availability (`src/platform/runtime/unifiedConfig.ts`, `getConfig`). The
+`GPT_FAST_PATH_MODEL` compatibility setting is parsed in
+`src/shared/gpt/gptFastPath.ts`, but `executeFastGptPrompt` in
+`src/services/gptFastPath.ts` does not pass it into Trinity. The inline lane
+therefore uses the applicable Trinity selectors rather than that setting.
+
 ### GPT-5 and Backstage Booker generation
 
 `TRINITY_REASONING_MODEL` selects only Trinity's schema-constrained Responses reasoning model. Its precedence is `TRINITY_REASONING_MODEL`, `GPT5_MODEL`, `GPT51_MODEL`, then the built-in `gpt-5.6-terra` default. The shared `GPT5_MODEL` selector used by other GPT-5 execution paths retains its existing `GPT5_MODEL`, `GPT51_MODEL`, then GPT-5.1 behavior, so the Terra migration does not silently move unrelated calls that lack an explicit effort. Trinity structured reasoning requests an explicit effort by tier: `simple` uses `none`, `complex` uses `low`, and `critical` uses `medium`. At the provider boundary, `none` is normalized to `minimal` only for exact `gpt-5` and dated GPT-5 snapshots because that model family does not support disabled reasoning; GPT-5.1 and GPT-5.6 retain `none`. `TRINITY_REASONING_MAX_OUTPUT_TOKENS` defaults to `8000`; strict positive base-10 integers are clamped to `16`-`8000`, while invalid or unset values use `8000`. This Responses limit includes both hidden reasoning tokens and visible structured JSON. `TRINITY_REASONING_STAGE_TIMEOUT_MS` defaults to `20000` and is further clamped to the remaining request and runtime budget.
@@ -502,10 +538,14 @@ After a deployed contract change, a human operator must refresh or re-import
 that endpoint in GPT Builder; repository changes do not update the Action.
 Configure
 `ARCANOS_BACKSTAGE_NOTION_ACCESS_TOKEN` and
-`ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON` together on the web service;
-either value alone, invalid configuration, an unmapped universe, or a missing
-valid Backstage bearer produces the existing PostgreSQL-only generation path
-and no Notion request. The mapping accepts at most 32 exact universe IDs and
+`ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON` together on each executing service:
+web for synchronous generation and worker for protected queued generation.
+The worker obtains enrichment authorization from the protected job envelope
+(`src/workers/jobRunner.ts`, `runWithBackstageProtectedQueuedExecution`); the
+inbound Backstage bearer remains web-only. Either value alone, invalid
+configuration, an unmapped universe, or absent enrichment authorization produces
+the existing PostgreSQL-only generation path and no Notion request in this
+legacy supplement mode. The mapping accepts at most 32 exact universe IDs and
 one to three unique raw page UUIDs per universe. It never accepts a URL or a
 caller-selected destination. The Notion integration should have read-content
 access only, and operators must explicitly share only the intended pages.
@@ -599,11 +639,12 @@ universe IDs, same-universe shard keys, roots, or tags are rejected rather than
 silently merged. Ancestor/descendant overlap still requires source-hierarchy
 ownership validation during synchronization.
 
-The controlled deployment target uses the existing five shards declared by its
-closed configuration. The implementation never hard-codes those shard names or
-derives the required set from prose: registration, source capture, publication,
-routing, diagnostics, validation, and cutover compare the exact configured
-membership and count.
+Shard membership comes from the closed configuration, not a fixed deployment
+count or names in this guide. `src/shared/backstage/backstageNotionPartitionCore.ts`
+permits at most 128 shards per universe and 512 total; registration, capture,
+publication, routing, diagnostics, validation, and cutover use that configured
+membership. Repository inspection does not establish a live deployment's shard
+count or configuration.
 
 Every shard declares `retrievalTier` (`hot`, `cold`, or `archive`), `required`,
 and a complete `capacity` object. Archive-tier shards are structurally optional:
@@ -1201,6 +1242,18 @@ KiB of JSON and returns only the requested-force value plus the allowlisted
 validates but discards target-controlled message text and generates a local
 `restart.message` from those booleans.
 
+### PostgreSQL candidate limitation
+
+`src/core/db/client.ts:resolveDatabaseConnectionCandidates` currently returns
+an empty candidate list if both `DATABASE_URL` and a complete five-field
+`PG*` set are absent, before it considers either URL alias. Therefore
+`DATABASE_PRIVATE_URL` or `DATABASE_PUBLIC_URL` alone does not configure the
+database. Once a primary URL can be resolved, candidate order is private,
+primary (explicit or synthesized from `PG*`), then public, with duplicates
+removed. This alias-only behavior disagrees with the apparent standalone
+meaning of the aliases and requires a separate code/configuration decision;
+do not assume adding either alias alone fixes database readiness.
+
 ### Railway service role
 | Variable | Required | Purpose |
 | --- | --- | --- |
@@ -1217,7 +1270,8 @@ public-provider capability probe must also be complete. Database
 configuration may use `DATABASE_URL` or the complete
 `PGUSER`/`PGPASSWORD`/`PGHOST`/`PGPORT`/`PGDATABASE` set; Redis may use
 `REDIS_URL`, `REDISHOST`, or `REDIS_HOST`. Missing configuration returns
-`503` without changing `/healthz` liveness or `/health` diagnostics. Worker
+`503` without changing the earlier public `/healthz` and `/health` snapshot
+handlers (see [normal-app health ownership](API.md#core-health-and-status)). Worker
 readiness remains `503` until database bootstrap, autonomy/module-registry
 bootstrap, every configured consumer slot's dispatcher-start write, and a
 supported OpenAI key setting are present. When Notion authorities are
@@ -1506,7 +1560,7 @@ When a rolling budget is exhausted, the worker publishes `paused_budget`, stops
 new claims, and reports the database-derived retry time. At or above the RSS
 ceiling it publishes `paused_rss`. An observed queue/provider/database failure
 publishes `dependency_failure`. Worker `/readyz` is unavailable for all three
-states, while `/healthz` remains process liveness; window expiry, RSS reduction,
+states, while the dedicated worker's `/healthz` remains process liveness; window expiry, RSS reduction,
 or successful dependency recovery returns the slot to `accepting_claims` and restores
 readiness once every configured slot is accepting claims. A final admitted job
 claim or provider attempt that fills its window publishes the budget pause
@@ -1580,8 +1634,8 @@ The semantic planner can only propose one registered action plus a JSON-object p
 | `BACKEND_URL` | none | Backend routing target (recommended for `arcanos-daemon`). |
 | `BACKEND_TOKEN` | none | Optional generic bearer token for non-daemon backend routes. It is never sent to `/api/daemon/*`. |
 | `ARCANOS_DAEMON_ACCESS_TOKEN` | none | Required for generic daemon heartbeat and command threads and every `/api/daemon/*` request. The Python client sends it only as `x-arcanos-daemon-token`, with no `BACKEND_TOKEN`/API-key/admin-key fallback. |
-| `BACKEND_GPT_ID` | `arcanos-daemon` | Identifies the daemon to the backend for `/gpt/:gptId` routing and optional `x-gpt-id` auth metadata. |
-| `BACKEND_ALLOW_GPT_ID_AUTH` | `false` | If true, daemon may authenticate via `x-gpt-id` without a bearer token (backend must allow). |
+| `BACKEND_GPT_ID` | `arcanos-daemon` | GPT routing identifier and optional caller-supplied `x-gpt-id` metadata; it is not authenticated daemon identity. |
+| `BACKEND_ALLOW_GPT_ID_AUTH` | `false` | Compatibility client flag that permits requests without a generic bearer and adds `x-gpt-id` in `daemon-python/arcanos/backend_client/__init__.py`. It does not authenticate current protected backend routes or replace `ARCANOS_DAEMON_ACCESS_TOKEN`. |
 | `BACKEND_ROUTING_MODE` | `hybrid` | `local`, `backend`, or `hybrid`. |
 | `BACKEND_REQUEST_TIMEOUT` | `15` | Python daemon timeout, in seconds, used by its main backend API and protocol clients. |
 | `REQUEST_TIMEOUT` | `30` | Python daemon timeout, in seconds, supplied to non-streaming chat, fallback chat streaming, vision, transcription, and inline agentic confirmed command execution. It is not a Node/backend HTTP-server deadline. |
@@ -1647,8 +1701,15 @@ These directories are created at runtime or during builds and must **not** be co
 
 ## OpenAI data retention
 - `OPENAI_STORE` (default: `false`)
-  - When `true`, Responses requests will be created with `store: true`.
-  - When `false`, Responses requests use `store: false` (stateless / no retention).
+  - Callers that consult `src/config/openaiStore.ts` may enable stored response
+    continuation with `true`, `1`, `yes`, or `on` (case-insensitive).
+  - `false` selects stateless continuation in those callers. Other paths,
+    including sensitive Backstage generation and the normalized vision Responses
+    builder, explicitly force `store: false` regardless of this flag. The text
+    builder also honors an explicit per-request `store: false` override.
+  - This request field is not proof of zero provider retention and does not
+    disable application logs, queued results, memory, or audit persistence.
+    See [OPENAI_RESPONSES_TOOLS.md](OPENAI_RESPONSES_TOOLS.md#data-retention).
 
 ## Daemon tool result continuation
 These control how long the backend waits for the daemon to report tool results before continuing the model response:
@@ -1788,7 +1849,7 @@ This table mirrors high-impact runtime keys and active operator controls in `.en
 | `DAEMON_RESULT_WAIT_MS` | `8000` | How long (ms) to poll for daemon command results before continuing without them. |
 | `DAEMON_RESULT_POLL_MS` | `250` | Poll interval (ms) when waiting for daemon results. |
 | `WEB_SEARCH_PROVIDER` | `auto` | Provider selector for `POST /api/web/search`; supported values are `auto`, `duckduckgo-lite`, `brave`, `tavily`, `serpapi`, and `searxng`. |
-| `WEB_SEARCH_TIMEOUT_MS` | `10000` | Overall web-search timeout. |
+| `WEB_SEARCH_TIMEOUT_MS` | `10000` | Per search-provider HTTP request timeout in `webSearchAgent.fetchText`; it is not an aggregate deadline for page retrieval and optional Trinity synthesis. |
 | `WEB_SEARCH_RATE_LIMIT_MAX` | `30` | Web-search rate-limit request count. |
 | `WEB_SEARCH_RATE_LIMIT_WINDOW_MS` | `600000` | Web-search rate-limit window. |
 | `WEB_SEARCH_SNAPSHOT_CHARS` | `2000` | Maximum response snapshot characters per result. |

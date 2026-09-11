@@ -28,7 +28,9 @@ Secret and auth guidance:
   storage path.
 
 ## Run locally
-Recommended checks:
+Dependency checks below contact external package registries/advisory services;
+they are not offline documentation validation. Run them only when network
+dependency analysis is in scope:
 ```bash
 npm audit --audit-level=moderate
 ```
@@ -41,7 +43,12 @@ python -m pip list --outdated
 ## Deploy (Railway)
 - Store secrets only in Railway Variables or GitHub Actions Secrets.
 - Keep production and development environments separated.
-- Validate post-deploy liveness/readiness: `/healthz`, `/health`, `/readyz`.
+- With an approved target, distinguish public registry/lifecycle health
+  (`/healthz` and `/health`) from activation readiness (`/readyz`). A
+  successful response does not establish complete Notion authority, ingestion,
+  retrieval, or protected-operation eligibility; those retain separate gates
+  (see [startup resilience](docs/STARTUP_RESILIENCE.md) and
+  [Railway deployment](docs/RAILWAY_DEPLOYMENT.md)).
 - If a secret leaks, rotate immediately and redeploy.
 
 ## Troubleshooting
@@ -51,6 +58,15 @@ python -m pip list --outdated
   token, review `arcanos:read` grants, disable trace capture, and separately
   assess any configured JSONL file without printing its contents.
 - Repeated confirmation bypass concerns: review `TRUSTED_GPT_IDS`, `ARCANOS_AUTOMATION_SECRET`, and header usage.
+
+The legacy `confirmGate` trusted-GPT branch currently checks only that a
+nonempty one-time-token header is present; that branch does not validate or
+consume its value. This is a confirmation-verification gap requiring separate
+code/security review, not a verified approval mechanism. Challenge-only CEF
+routes require their issued challenge and exclude this bypass. See
+[`trustedGptBypassApproved`](src/transport/http/middleware/confirmGate.ts) and
+[CEF controls](docs/cef-hardening-controls.md). No live exploit or deployed
+configuration was tested during this documentation audit.
 
 ## References
 - Security advisories: `https://github.com/pbjustin/Arcanos/security`

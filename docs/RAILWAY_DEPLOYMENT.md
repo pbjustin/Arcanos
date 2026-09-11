@@ -491,7 +491,7 @@ Launcher behavior:
   any required maintenance separately against an explicitly confirmed
   database target under the operational approval gate.
 - Importing shared GPT dispatch or worker configuration code does not start the separate in-process EventEmitter runtime. That runtime is bootstrapped only by the explicit local/direct API lifecycle when configured.
-- The application keeps `/health`, `/healthz`, and `/readyz` available; Railway uses `/readyz` for deployment activation, `/healthz` remains liveness, and `/health` remains dependency diagnostics. Public readiness responses are a sanitized, no-store dependency projection with stable status and failure codes. The credential-free `/railway/healthcheck` compatibility diagnostic is also a no-store bounded projection and omits worker filenames, checked filesystem paths, free-form reasons, and exception text; it is not the configured Railway deployment probe.
+- The application keeps `/health`, `/healthz`, and `/readyz` available; Railway uses `/readyz` for deployment activation. In the normal web app, `/health` and `/healthz` both use the public registry/lifecycle projection from `src/core/diagnostics.ts`; required GPT registry failures can return `503`. These handlers register before the generic health router. Public readiness responses are a sanitized, no-store dependency projection with stable status and failure codes. The credential-free `/railway/healthcheck` compatibility diagnostic is also a no-store bounded projection and omits worker filenames, checked filesystem paths, free-form reasons, and exception text; it is not the configured Railway deployment probe.
 - The web listener binds before Redis initialization. `/health` and `/healthz` remain live during a Redis outage, missing backend configuration, or incomplete database schema initialization, while production web `/readyz` returns `503` unless PostgreSQL is configured, connected, and schema-ready, Redis is configured and connected, and that Redis ready generation has passed the isolated public-provider Lua/write capability probe; a new revision therefore cannot activate in an in-memory/no-Redis, schema-incomplete, or command-incompatible fallback. Local, test, development, and non-web modes preserve optional unconfigured dependencies. Railway does not continuously monitor the activation path after the first successful response; see `STARTUP_RESILIENCE.md`.
 - Worker `/readyz` remains `503` until database bootstrap,
   autonomy/module-registry bootstrap, every configured consumer slot's
@@ -519,7 +519,9 @@ Launcher behavior:
   `dependency_failure`, `paused_rss`, `paused_budget`, then `accepting_claims`.
   `/readyz` returns `503` whenever any slot cannot accept its configured queue
   role. Rolling job/AI-budget pauses and RSS pressure are degraded, recoverable
-  states; dependency failure is unhealthy. `/healthz` remains process liveness.
+  states; dependency failure is unhealthy. The worker launcher's `/healthz`
+  remains process liveness; it is separate from the normal web app's
+  registry/lifecycle health projection.
   Window expiry, RSS reduction, or a successful dependency probe produces a new
   `accepting_claims` transition and can restore readiness once all other gates pass.
   When a final allowed claim or provider attempt consumes the last rolling-window
@@ -577,7 +579,7 @@ Environment variables:
 | `ALLOWED_ORIGINS` | Optional | Comma-separated exact HTTP(S) browser origins permitted to call the web service. Inventory every browser API and SSE caller before rollout. Omit to disable cross-origin browser access; same-origin and server-to-server requests remain available. |
 | `ARCANOS_PROCESS_KIND` | Yes | `web` for the API service, `worker` for the async worker service. The launcher exits if missing or invalid. |
 | `RUN_WORKERS` | Launcher-managed | Set by the role launcher from `ARCANOS_PROCESS_KIND` after the protected-digest gate passes. |
-| `DATABASE_URL` or complete `PG*` set | Required for production web activation and async GPT jobs | Attach Railway PostgreSQL for persistence; web and worker services must share it. The complete fallback is `PGUSER`, `PGPASSWORD`, `PGHOST`, `PGPORT`, and `PGDATABASE`. |
+| `DATABASE_URL` or complete `PG*` set; optional `DATABASE_PRIVATE_URL` / `DATABASE_PUBLIC_URL` candidates | Required for production web activation and async GPT jobs | The complete discrete set is `PGUSER`, `PGPASSWORD`, `PGHOST`, `PGPORT`, and `PGDATABASE`. Alias-only configuration does not currently initialize the pool; see the [resolver discrepancy](DATABASE_MIGRATIONS.md#local-configuration). Attach Railway PostgreSQL for persistence; web and worker services must share it. |
 | `REDIS_URL`, `REDISHOST`, or `REDIS_HOST` | Required for production web activation | Configure the shared Redis lifecycle. The URL is preferred; either host name enables the runtime-supported discrete form. |
 | `PUBLIC_PROVIDER_RATE_LIMIT_MAX`, `PUBLIC_PROVIDER_CLIENT_RATE_LIMIT_MAX`, `PUBLIC_PROVIDER_RATE_LIMIT_WINDOW_MS` | Recommended explicit production policy | Deployment ceiling (default `100`), lower caller/cohort ceiling (default `20`), and shared window (default `900000` ms). A compatibility global ceiling of `1` uses a caller ceiling of `1`; otherwise the caller ceiling must be strictly lower. Production atomically stores both counters in Redis. |
 | `PUBLIC_PROVIDER_RATE_LIMIT_STORE` | No production override | Production always resolves this policy to `redis`, fails closed during Redis loss, and never falls back to process memory. |
@@ -779,7 +781,7 @@ the disposable run, but it remains untracked and is never release evidence.
 
 Use the build, test, and `validate:railway` checks above for non-deploying validation. Do not start the application with Railway or production variables as a deployment check.
 
-A separately approved local runtime check must use a deliberately isolated effective environment with no inherited Railway-management, provider, Redis, queue, or remote-database credentials. Database resolution accepts `DATABASE_PRIVATE_URL`, `DATABASE_URL`, `DATABASE_PUBLIC_URL`, or a complete `PGUSER`/`PGPASSWORD`/`PGHOST`/`PGPORT`/`PGDATABASE` set. When any candidate resolves successfully, startup can execute DDL and write a heartbeat.
+A separately approved local runtime check must use a deliberately isolated effective environment with no inherited Railway-management, provider, Redis, queue, or remote-database credentials. Inspect all database candidates: `DATABASE_PRIVATE_URL`, `DATABASE_URL`, `DATABASE_PUBLIC_URL`, and the complete `PGUSER`/`PGPASSWORD`/`PGHOST`/`PGPORT`/`PGDATABASE` set. The current resolver requires `DATABASE_URL` or the complete discrete set before considering aliases; see [Local Configuration](DATABASE_MIGRATIONS.md#local-configuration). When a candidate connects successfully, startup can execute DDL and write a heartbeat.
 
 ## Deploy (Railway)
 
@@ -792,7 +794,9 @@ or implicit environment default. Railway-native GitHub triggers remain disabled
 so an independent single-service deploy cannot bypass the pair.
 
 Successful CI means the aggregate verifier observed the exact required job set
-with every result equal to `success`, including the nine-suite PostgreSQL job.
+with every result equal to `success`, including the PostgreSQL job's suites
+selected by `test:local-agent-postgres` and `test:postgres-fencing` in
+[`package.json`](../package.json).
 It is not proof of current production topology, deployed revision, live database
 schema, writer compatibility, or drain readiness; those remain separately
 verified promotion conditions.
@@ -1039,7 +1043,7 @@ authentication to every operation, including `runBackstageBooker` and
 token or stream. If Builder does not attach the credential, enrichment and the
 managed continuation must remain disabled; do not remove the server-side gate.
 
-Every Notion attempt is fixed to `api.notion.com`, rejects redirects, shares a
+Each legacy-supplement Notion attempt is fixed to `api.notion.com`, rejects redirects, shares a
 four-second deadline across at most three reads, caps each response at 256 KiB,
 and caps prompt material at 4,000 Unicode code points per page/12,000 total.
 PostgreSQL remains authoritative and Notion failures fall back to its already
@@ -1159,7 +1163,7 @@ can outlive the cooperative abort until Railway's outer drain bound, so confirm
 the old worker is stopped before treating rollback as complete.
 
 Exact `partitioned` is a controlled read cutover, not an automatic promotion.
-The rollout target's five shard identities and required set must be read from the
+The rollout target's configured shard identities and required set must be read from the
 reviewed identical configuration on web and worker; do not hard-code names or
 infer membership from display labels. One full source-generation capture must
 bind every required shard to the same source digest and exact source coverage.
@@ -1224,10 +1228,15 @@ original evidence-expiry and rollback-validity windows; it never extends either
 window. A new snapshot or timestamp regression closes the gate. Synchronization
 and startup cannot seal evidence or change the deployed mode automatically.
 
-Manifest publication is one transaction: every configured shard must be sealed,
-readable, complete, on the same generation, and covered by the one manifest before
-the active pointer and published epoch advance. A failed shard or activation
-transaction leaves the previous complete manifest active. Controlled rollback
+Manifest publication is one transaction: every required shard and every included
+optional shard must be sealed, readable, complete, on the same source generation,
+and covered by the one manifest before the active pointer and published epoch
+advance. An unavailable optional shard can have an explicit omission decision;
+it cannot serve a read that selects it. A missing required shard or failed activation
+transaction leaves the previous complete manifest active. These decisions are
+validated by `activateUniverseManifest` in
+[`backstageNotionPartitionRepository.ts`](../src/core/db/repositories/backstageNotionPartitionRepository.ts).
+Controlled rollback
 atomically reactivates that prior complete manifest and advances/publishes a new
 epoch; it never reconstructs a partial set. Every request and complete-scope
 cursor remains pinned to one manifest version, and a cursor from another version

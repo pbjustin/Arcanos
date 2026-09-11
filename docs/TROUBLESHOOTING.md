@@ -19,11 +19,16 @@ Quick config checks:
 - Railway injects `PORT`; do not hard-code it in Railway variables.
 - Railway launcher requires `ARCANOS_PROCESS_KIND=web` or `ARCANOS_PROCESS_KIND=worker`.
 - Live AI requires `OPENAI_API_KEY`.
-- PostgreSQL persistence requires `DATABASE_URL`.
+- PostgreSQL persistence currently requires `DATABASE_URL` or the complete
+  `PG*` set. Private/public URL aliases are candidates only after that condition
+  is met; alias-only configuration is a known resolver gap. See
+  [database configuration](DATABASE_MIGRATIONS.md#local-configuration).
 - Daemon debug server should have `DEBUG_SERVER_TOKEN` when enabled.
 
 ## Run locally
-Helpful probes:
+Starting the application is a configured-runtime operation: it can initialize
+database schema, write heartbeat state, and start enabled background work.
+Use a deliberately isolated local configuration before running:
 ```bash
 npm run build
 npm start
@@ -86,7 +91,9 @@ If failing, inspect Railway build/deploy logs first.
   marked consequential, save the existing GPT, and reopen it before testing.
   Do not send the mutation until the banner is present.
 - Backstage Booker generation does not use the configured Notion pages: verify
-  both Notion variables are present only on the web service, the exact universe
+  the legacy supplement token and page mapping are present on the service that
+  executes generation (worker for queued generation; web for synchronous
+  rollback), the exact universe
   ID is mapped to raw page UUIDs, and the integration has read-content access
   to each shared page. Then confirm the request carries the existing dedicated
   Backstage Action bearer by looking only for the sanitized
@@ -310,7 +317,10 @@ If failing, inspect Railway build/deploy logs first.
   backend, distinct from every other purpose-bound credential. Restart the
   Python daemon after changing its value; backend configuration is read per
   request. A daemon 401 does not refresh the unrelated `BACKEND_TOKEN`.
-- Health degraded for database: attach/configure PostgreSQL or accept in-memory mode.
+- Health degraded for database: attach/configure PostgreSQL or accept reduced
+  in-memory behavior only for supported local/development paths. Production web
+  activation requires a connected, schema-ready database and configured Redis;
+  `/readyz` remains unavailable without them.
 - `MCP_BEARER_TOKEN not configured`: set `MCP_BEARER_TOKEN` before calling `POST /mcp`.
 - `/brain` returns `410 Gone`: migrate the caller to `/gpt/:gptId`; set `ASK_ROUTE_MODE=compat` only as a temporary migration bridge.
 

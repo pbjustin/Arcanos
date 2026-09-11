@@ -128,6 +128,16 @@ Use this endpoint to verify judged feedback behavior after deploy/restart.
 | `JUDGED_FEEDBACK_CACHE_MAX_ENTRIES` | `2000` | In-memory duplicate-suppression cache cap. |
 
 ## Verification Checklist
+
+The following is an operator-authorized integration procedure for a confirmed
+target. `POST /reinforcement/judge` changes reinforcement context and may write
+`self_reflections`; repository bootstrap may initialize database schema. A
+restart is also an operational action. None is a read-only documentation check.
+For isolated checks, inspect the mocks in `tests/judgedResponseFeedback.test.ts`,
+`tests/trinityJudgedFeedback.test.ts`, and
+`tests/selfReflectionRepository.persistence.test.ts` before running the relevant
+suite. Their existence does not establish a current pass or live persistence.
+
 ```bash
 curl -X POST http://localhost:3000/reinforcement/judge \
   -H "Authorization: Bearer ${ARCANOS_CONTROL_PLANE_ACCESS_TOKEN}" \

@@ -119,9 +119,9 @@ Implementation rules:
 ## Setup
 Primary backend flow:
 1. `src/start-server.ts` validates env and starts server.
-2. `src/server.ts` builds app, starts workers, and binds port.
-3. `src/routes/register.ts` mounts all route groups.
-4. `src/services/openai/*` handles OpenAI client and request flows.
+2. `src/server.ts:startServer` loads the app and binds the listener before asynchronous dependency initialization completes. A listening process is not necessarily ready.
+3. `src/app.ts` composes the app and `src/routes/register.ts` mounts route groups. The startup lifecycle admits background runtime work only after initialization is ready; the canonical Railway web role disables in-process workers.
+4. `src/services/openai/*` handles OpenAI client and request flows behind the shared adapter boundary.
 
 ## Repository Map and Entry Points
 
@@ -321,7 +321,7 @@ Operational maintenance:
 - Structured logs and metrics emit dedupe decisions, retryability, cancellation, expiry, queue wait time, execution time, and end-to-end completion time without logging prompt contents
 
 ## Railway Topology
-Production remains split into dedicated Railway services:
+The repository's canonical Railway topology separates dedicated services; this describes configuration, not a live deployment observation:
 
 - Web service: request ingress, direct control endpoints, write-plane classification, and MCP HTTP transport.
 - Worker service: queued GPT execution and background job processing.
@@ -331,3 +331,14 @@ Environment separation must remain explicit:
 - Worker processes use `ARCANOS_PROCESS_KIND=worker` and run the PostgreSQL-backed `jobRunner` lifecycle.
 - The local/direct in-process EventEmitter runtime starts only from the explicit application startup lifecycle when `RUN_WORKERS` resolves true. Importing shared dispatch or worker configuration code never starts it.
 - Logging must make the selected plane visible (`gpt.request.classified`, `gpt.write.entry`, `gpt.dispatch.write_guard_rejected`).
+
+In the normal app, `/healthz` and `/health` use
+`src/core/diagnostics.ts:writePublicHealthResponse`, registered in `src/app.ts`
+before the separate health router. They return registry-based 200/503 status
+with startup/Redis lifecycle snapshots. `/readyz` evaluates activation
+readiness. None establishes complete Notion
+authority, completed indexing, fresh retrieval, or protected-generation
+eligibility. Those remain capability-specific checks; see
+[startup resilience](STARTUP_RESILIENCE.md),
+[Backstage Booker](BACKSTAGE_BOOKER_CUSTOM_GPT.md), and
+[Gaming](ARCANOS_GAMING_CUSTOM_GPT.md).

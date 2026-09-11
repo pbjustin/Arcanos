@@ -30,22 +30,40 @@ This feature adds a grounded web-search pipeline to ARCANOS.
 
 ## Flow
 
-1. Validate and sanitize request input.
-2. Apply route-level rate limiting.
-3. Resolve the provider through a registry.
-4. Search for URLs.
-5. Filter and deduplicate results.
-6. Fetch page content using `fetchAndClean()`.
-7. Create a `SearchPacket` for each fetched source.
-8. Capture a bounded cleaned-text snapshot for replay and memory handoff.
-9. Optionally traverse extracted `[LINKS]` from fetched pages using a bounded click-through loop.
-10. Evaluate the plan with CLEAR 2.0.
-11. Optionally synthesize a cited answer from fetched packets.
+1. Apply the shared public-provider admission boundary and route-level rate limiting.
+2. Validate and sanitize request input.
+3. Compute the CLEAR decision from the query and normalized options.
+4. Resolve the provider through a registry.
+5. Search for URLs.
+6. Filter and deduplicate results.
+7. Fetch page content using `fetchAndCleanDocument()`.
+8. Create a `SearchPacket` for each fetched source, including a bounded cleaned-text snapshot for replay and memory handoff.
+9. Before optional traversal, check the earlier CLEAR decision; when it is not `block`, traverse extracted `[LINKS]` using the bounded click-through loop.
+10. Before optional synthesis, check provider configuration and the CLEAR decision; when configured and not blocked, synthesize a cited answer from fetched packets.
 
-Provider and execution failures return `500` with
+Uncaught provider-search and execution failures return `500` with
 `{ "ok": false, "error": "WEB_SEARCH_FAILED", "message": "Web search failed." }`
-plus a timestamp. Provider exception text remains in redacted server-side
-diagnostics and is not returned to the caller.
+plus a timestamp. This outer route error uses fixed public text.
+
+The service handles individual page-fetch and optional synthesis failures
+separately, returning available packets with `answer: null` when synthesis
+fails. **Known implementation gap:** these inner handlers currently copy
+`resolveErrorMessage(...)` into public `notes` and fetch-error metadata.
+The fixed outer `500` message therefore does not establish redaction for a
+successful partial response. Sanitizing those projections requires a separate
+code change; clients should treat them as untrusted diagnostics.
+
+The route schema in `src/routes/web-search.ts` requires a 1–1000-character
+query and validates integer bounds: `limit` 1–10, `fetchPages` 1–5,
+`pageMaxChars` 1000–12000, `traversalDepth` 1–2, `maxTraversalPages` 1–5,
+and `traversalLinkLimit` 1–8. Invalid input returns `400`; throttling returns
+`429`. `synthesize` defaults to `false`, while `includePageContent` defaults
+to `true`. Examples that enable synthesis can incur provider calls.
+
+`WEB_SEARCH_TIMEOUT_MS` bounds each search-provider HTTP request, not the
+entire workflow. Sequential page retrieval and optional Trinity synthesis use
+their own execution limits (`src/services/webSearchAgent.ts`, `fetchText`,
+`webSearchAgent`, and `synthesizeSources`).
 
 ## SearchPacket schema
 
@@ -96,6 +114,11 @@ This gives each search request a governance score covering:
 
 The result is returned under `clear`, and each packet is stamped with:
 - `clearPolicyVersion`
+
+A `block` decision skips optional traversal and synthesis, but the current
+implementation still performs provider search and initial page fetches.
+`confirm` is not an interactive confirmation challenge on this route. Packets
+and scores do not independently authorize durable memory writes.
 
 ## Traversal behavior
 

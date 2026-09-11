@@ -66,7 +66,7 @@ Use placeholders in docs, scripts, and tickets. Never paste real bearer tokens, 
 
 | Variable | Required for | Notes |
 | --- | --- | --- |
-| `ARCANOS_GPT_ACCESS_TOKEN` | Any `/gpt-access/*` call | Strong bearer token. Store only in the runtime environment or GPT Action auth field. |
+| `ARCANOS_GPT_ACCESS_TOKEN` | Generic protected `/gpt-access/*` operations | Store only in the runtime environment or generic GPT Action auth field. Public OpenAPI metadata needs no bearer; dedicated Booker, Gaming source, and local-agent executor operations use their own credentials. |
 | `ARCANOS_GPT_ACCESS_SCOPES` | `/gpt-access/jobs/create` | Must explicitly include `jobs.create`; include `jobs.result` for result polling. |
 | `OPENAI_API_KEY` | Live Trinity output and worker execution | The config layer also supports fallback key names documented in `CONFIGURATION.md`, but `OPENAI_API_KEY` is the preferred operator setting. |
 | `DATABASE_URL` or complete `PG*` set | Durable GPT jobs and worker queue | Web and worker services must point at the same database. |

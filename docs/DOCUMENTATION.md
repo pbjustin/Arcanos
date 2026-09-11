@@ -80,6 +80,13 @@ generated indexes as substitutes for correcting source organization.
 `npm run reindex:check` verifies all four artifacts without rewriting them, and
 the required `npm run docs:check` workflow includes that drift check.
 
+The generator scans filesystem `.ts` and `.py` paths, including ignored local
+additions outside its explicit exclusions; it is not a tracked-file inventory.
+Inspect unexpected paths before regenerating. Keep task audit reports in an
+already-ignored `local_artifacts/` directory, or outside the checkout when that
+directory is not ignored. Do not place copied TypeScript/Python source there:
+`scripts/reindex-codebase.js` does not exclude `local_artifacts/`.
+
 ## Current audit dashboards and historical evidence
 
 Canonical and companion guides describe current supported behavior. Test
@@ -190,3 +197,17 @@ audit dashboard, register, ledger, or index entry changes.
 Use real Markdown links for navigation. Backticked paths are appropriate for
 copyable source locations and commands, but they are not substitutes for links
 in an index.
+
+These checks are static documentation checks. They do not execute application
+examples, establish provider availability, or validate a live deployment.
+`docs:check` discovers tracked Markdown; `docs:links` additionally excludes
+`docs/audits/`. Review relevant untracked additions and non-Markdown templates
+separately, including their links and examples. There is no root Markdown lint,
+format, or documentation-site build script in `package.json`.
+
+For a broad audit, record checkout identity and pre-existing changes, per-file
+dispositions, source/symbol evidence, subsystem-to-guide coverage, and actual
+validation results. A historical result keeps its original revision and scope;
+a test present in the tree is not an executed test. Record reviewed-unchanged
+pages explicitly and disclose unreviewed scope. `guard:commit` scans staged
+additions only, so an empty-index pass does not scan unstaged documentation.
