@@ -7,7 +7,8 @@ let package = Package(
     products: [
         .library(name: "ArcanosKit", targets: ["ArcanosKit"]),
         .executable(name: "ArcanosPreviewProof", targets: ["ArcanosPreviewProof"]),
-        .executable(name: "ArcanosDeviceE2E", targets: ["ArcanosDeviceE2E"])
+        .executable(name: "ArcanosDeviceE2E", targets: ["ArcanosDeviceE2E"]),
+        .executable(name: "ArcanosRecoveryProof", targets: ["ArcanosRecoveryProof"])
     ],
     targets: [
         .target(name: "ArcanosKit"),
@@ -15,6 +16,7 @@ let package = Package(
         .executableTarget(name: "ArcanosPreviewProof", dependencies: ["ArcanosKit"]),
         .testTarget(name: "ArcanosPreviewProofTests", dependencies: ["ArcanosPreviewProof"]),
         .executableTarget(name: "ArcanosDeviceE2E", dependencies: ["ArcanosKit"]),
-        .testTarget(name: "ArcanosDeviceE2ETests", dependencies: ["ArcanosDeviceE2E"])
+        .testTarget(name: "ArcanosDeviceE2ETests", dependencies: ["ArcanosDeviceE2E"]),
+        .executableTarget(name: "ArcanosRecoveryProof", dependencies: ["ArcanosKit"])
     ]
 )

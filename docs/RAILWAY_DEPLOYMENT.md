@@ -417,6 +417,14 @@ Launcher behavior:
   existing 138-request matrix. Results prove real HTTPS client-to-fixture
   behavior, not iPhone/Siri/Foundation Models, device pairing, active Local Agent
   execution, real queue persistence, or production operations.
+  The [separate-process recovery proof](../clients/ios/README.md#durable-recovery-over-preview-https)
+  uses the same attested hosts and existing synthetic peer to persist a create
+  receipt, restore it in a new Swift process, fetch pending/completed results, and
+  reload terminal state. Its mandatory unknown-handle control requires a real
+  HTTPS failure without index mutation or resubmission. Run its dry mode first,
+  then the paired network flags; it has 32 requests and a 120-second total bound.
+  Finish it before removing the preview opt-in label. This is file/process client
+  evidence, not shipping app lifecycle, real authorization, database or worker proof.
 - The iOS device-policy fixture adds credential-free `GET /ios/device-contract`
   with exact `ios-device-policy/v1` evidence for production-shared grant schema,
   credential state validation, owned-job filtering, and requester-device
