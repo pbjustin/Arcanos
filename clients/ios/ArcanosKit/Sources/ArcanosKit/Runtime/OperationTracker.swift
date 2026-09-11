@@ -181,6 +181,17 @@ public actor OperationTracker {
         }
     }
 
+    /// Only a pending approval cancelled or expired before its retry may call this.
+    /// Accepted or uncertain work must retain its existing recovery evidence.
+    func dismissUnsubmittedApproval(_ id: UUID) throws {
+        try update(id) { record in
+            guard record.backendJobID == nil, record.localState == .prepared else {
+                throw GatewayError.invalidRequest
+            }
+            record.localState = .dismissed
+        }
+    }
+
     /// Applies an authorized status read to a known accepted job.
     public func observe(_ id: UUID, jobID: String, backendStatus: String, terminal: Bool) throws {
         guard Self.observationStatuses.contains(backendStatus), terminal == Self.terminalStatuses.contains(backendStatus) else {

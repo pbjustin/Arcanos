@@ -77,14 +77,22 @@ public actor ArcanosSession {
     }
 
     public func approve(_ approvalID: UUID) async -> SessionResult {
+        guard !capabilitySubmissionInFlight else { return .failure(ConfirmationError.busy) }
         guard let confirmations, let kind = approvalActions.removeValue(forKey: approvalID) else {
             return .failure(ConfirmationError.notPending)
         }
+        capabilitySubmissionInFlight = true
+        defer { capabilitySubmissionInFlight = false }
         let operationID = approvalOperations.removeValue(forKey: approvalID)
         do {
             // The coordinator consumes approval before its bound Gateway credential read.
             // A temporary authentication failure must not leave an orphaned pending token.
             return try await accepted(try await confirmations.approve(approvalID), kind: kind, operationID: operationID)
+        } catch ConfirmationError.expired {
+            if let recovery, let operationID {
+                do { try await recovery.dismissUnsubmittedApproval(operationID) } catch { return .failure(error) }
+            }
+            return .failure(ConfirmationError.expired)
         } catch {
             if let recovery, let operationID {
                 do { try await recovery.uncertain(operationID) } catch { return .failure(error) }
@@ -94,10 +102,20 @@ public actor ArcanosSession {
     }
 
     public func cancel(_ approvalID: UUID) async -> SessionResult {
-        approvalActions.removeValue(forKey: approvalID)
-        approvalOperations.removeValue(forKey: approvalID)
-        guard let confirmations, await confirmations.cancel(approvalID) else { return .failure(ConfirmationError.notPending) }
-        return SessionResult(text: "Approval cancelled. ARCANOS will not retry that action.", kind: .cancelled)
+        guard !capabilitySubmissionInFlight else { return .failure(ConfirmationError.busy) }
+        guard let confirmations, approvalActions.removeValue(forKey: approvalID) != nil else {
+            return .failure(ConfirmationError.notPending)
+        }
+        capabilitySubmissionInFlight = true
+        defer { capabilitySubmissionInFlight = false }
+        let operationID = approvalOperations.removeValue(forKey: approvalID)
+        guard await confirmations.cancel(approvalID) else { return .failure(ConfirmationError.notPending) }
+        do {
+            // A cancelled pending challenge proves no approved retry was sent. Keep
+            // its metadata, but exclude it from recovery of potentially running work.
+            if let recovery, let operationID { try await recovery.dismissUnsubmittedApproval(operationID) }
+            return SessionResult(text: "Approval cancelled. ARCANOS will not retry that action.", kind: .cancelled)
+        } catch { return .failure(error) }
     }
 
     public func checkLatest(operationID: UUID? = nil) async -> SessionResult {
@@ -175,6 +193,11 @@ public actor ArcanosSession {
                 return result
             case .response(let response): return try await accepted(response, kind: kind, operationID: operationID)
             }
+        } catch ConfirmationError.expired {
+            if let recovery, let operationID {
+                do { try await recovery.dismissUnsubmittedApproval(operationID) } catch { return .failure(error) }
+            }
+            return .failure(ConfirmationError.expired)
         } catch {
             if let recovery, let operationID {
                 do { try await recovery.uncertain(operationID) } catch { return .failure(error) }

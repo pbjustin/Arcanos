@@ -85,8 +85,14 @@ private actor ShippingHeldReceiptTransport: GatewayTransport {
     private var receipt: CheckedContinuation<GatewayResponse, Never>?
     private var waiting: CheckedContinuation<Void, Never>?
     private var requests = 0
+    private let requiresApproval: Bool
+    init(requiresApproval: Bool = false) { self.requiresApproval = requiresApproval }
     func send(_ request: GatewayRequest) async throws -> GatewayResponse {
         requests += 1
+        if requiresApproval && requests == 1 {
+            return try shippingWire(ConfirmationRequiredResponse(code: "CONFIRMATION_REQUIRED", confirmationRequired: true,
+                confirmationChallenge: ConfirmationChallenge(id: "held-approval-challenge")), status: 403)
+        }
         return await withCheckedContinuation { continuation in
             receipt = continuation
             waiting?.resume()
@@ -98,7 +104,7 @@ private actor ShippingHeldReceiptTransport: GatewayTransport {
         await withCheckedContinuation { waiting = $0 }
     }
     func deliverReceipt() throws {
-        receipt?.resume(returning: try shippingReceipt())
+        receipt?.resume(returning: try requiresApproval ? shippingCapabilityReceipt() : shippingReceipt())
         receipt = nil
     }
     func count() -> Int { requests }
@@ -438,6 +444,110 @@ struct ShippingSessionTests {
         #expect(await transport.recorded().count == 1)
         #expect(await live.ask("Run tests").kind == .confirmationRequired)
         #expect(await transport.recorded().count == 2)
+    }
+
+    @Test func cancelledApprovalDoesNotRemainAnUncertainRecoveryCandidate() async throws {
+        let fixture = ShippingFixture()
+        defer { fixture.cleanup() }
+        try await fixture.pair()
+        let challenge = ConfirmationRequiredResponse(code: "CONFIRMATION_REQUIRED", confirmationRequired: true,
+            confirmationChallenge: ConfirmationChallenge(id: "cancelled-challenge"))
+        let transport = ShippingTransport(try [shippingWire(challenge, status: 403), shippingReceipt(), shippingResult()])
+        let live = fixture.composition(transport)
+        let approval = await live.ask("Run tests")
+        let approvalID = try #require(approval.approvalID)
+        let operationID = try #require(approval.operationID)
+        #expect(await live.cancel(approvalID).kind == .cancelled)
+        #expect(try fixture.records().first?.localState == .dismissed)
+        #expect(await fixture.composition(transport).startup().isEmpty)
+        let cancelled = await fixture.composition(transport).checkLatest(operationID: operationID)
+        #expect(cancelled.kind == .cancelled)
+        #expect(cancelled.text.contains("No approved retry was sent"))
+        #expect(await live.cancel(approvalID).kind == .failure)
+        #expect(await transport.recorded().count == 1)
+
+        let accepted = await live.ask("Synthetic remote operation after cancelling approval")
+        #expect(accepted.kind == .pending)
+        let result = await fixture.composition(transport).checkLatest()
+        #expect(result.kind == .answer)
+        #expect(result.operationID == accepted.operationID)
+        #expect(await transport.recorded().count == 3)
+    }
+
+    @Test func newCapabilityDuringApprovalCannotCreateUnsentRecoveryRecord() async throws {
+        let fixture = ShippingFixture()
+        defer { fixture.cleanup() }
+        try await fixture.pair()
+        let transport = ShippingHeldReceiptTransport(requiresApproval: true)
+        let live = fixture.composition(transport)
+        let approval = await live.ask("Run tests")
+        let approvalID = try #require(approval.approvalID)
+        let approved = Task { await live.approve(approvalID) }
+        await transport.waitForSubmission()
+
+        #expect(await live.cancel(approvalID).kind == .failure)
+        #expect(try fixture.records().first?.localState == .prepared)
+        let overlapping = await live.ask("Check my repository")
+        #expect(overlapping.text == SessionResult.failure(ConfirmationError.busy).text)
+        #expect(try fixture.records().count == 1)
+        #expect(await transport.count() == 2)
+
+        try await transport.deliverReceipt()
+        #expect(await approved.value.kind == .pending)
+        #expect(try fixture.records().count == 1)
+        #expect(try fixture.records().first?.localState == .accepted)
+    }
+
+    @Test func cancellationDismissalCannotHideUncertainOrAcceptedWork() async throws {
+        let fixture = ShippingFixture()
+        defer { fixture.cleanup() }
+        let partition = try OperationPartition(origin: shippingOrigin, deviceID: shippingDevice)
+        let tracker = OperationTracker(persistence: fixture.persistence, now: { shippingInstant })
+        let uncertain = try TrackedOperation(partition: partition, kind: .confirmation,
+            displaySummary: "Uncertain approval", createdAt: shippingInstant, idempotencyKey: "uncertain-approval")
+        let accepted = try TrackedOperation(partition: partition, kind: .confirmation,
+            displaySummary: "Accepted approval", createdAt: shippingInstant, idempotencyKey: "accepted-approval")
+        try await tracker.prepare(uncertain)
+        try await tracker.markSubmissionUncertain(uncertain.id)
+        try await tracker.prepare(accepted)
+        try await tracker.accept(accepted.id, jobID: shippingJob, backendStatus: "queued")
+        let before = try fixture.records()
+
+        await #expect(throws: GatewayError.invalidRequest) { try await tracker.dismissUnsubmittedApproval(uncertain.id) }
+        await #expect(throws: GatewayError.invalidRequest) { try await tracker.dismissUnsubmittedApproval(accepted.id) }
+        #expect(try fixture.records() == before)
+    }
+
+    @Test(arguments: [false, true])
+    func expiredApprovalDoesNotRemainAnUncertainRecoveryCandidate(expiredOnArrival: Bool) async throws {
+        let fixture = ShippingFixture()
+        defer { fixture.cleanup() }
+        try await fixture.pair()
+        let expiresAt = expiredOnArrival ? ISO8601DateFormatter().string(from: shippingInstant.addingTimeInterval(-1)) : nil
+        let challenge = ConfirmationRequiredResponse(code: "CONFIRMATION_REQUIRED", confirmationRequired: true,
+            confirmationChallenge: ConfirmationChallenge(id: "expired-challenge", expiresAt: expiresAt))
+        let transport = ShippingTransport(try [shippingWire(challenge, status: 403), shippingReceipt(), shippingResult()])
+        let live = fixture.composition(transport)
+        let approval = await live.ask("Run tests")
+        if expiredOnArrival {
+            #expect(approval.text.contains("approval expired"))
+        } else {
+            fixture.clock.advance(121)
+            #expect(await live.approve(try #require(approval.approvalID)).text.contains("approval expired"))
+        }
+        #expect(try fixture.records().first?.localState == .dismissed)
+        let operationID = try #require(try fixture.records().first?.id)
+        let expired = await fixture.composition(transport).checkLatest(operationID: operationID)
+        #expect(expired.kind == .cancelled)
+        #expect(expired.text.contains("No approved retry was sent"))
+        #expect(await transport.recorded().count == 1)
+
+        let accepted = await live.ask("Synthetic remote operation after approval expired")
+        #expect(accepted.kind == .pending)
+        let result = await fixture.composition(transport).checkLatest()
+        #expect(result.kind == .answer)
+        #expect(result.operationID == accepted.operationID)
+        #expect(await transport.recorded().count == 3)
     }
 
     @Test func cancellationDuringReceiptDeliveryStillPersistsAcceptance() async throws {

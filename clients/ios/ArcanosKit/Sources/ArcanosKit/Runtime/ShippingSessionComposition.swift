@@ -169,6 +169,9 @@ public actor DurableSessionRecovery {
     }
 
     func uncertain(_ operationID: UUID) async throws { try await tracker.markSubmissionUncertain(operationID) }
+    func dismissUnsubmittedApproval(_ operationID: UUID) async throws {
+        try await tracker.dismissUnsubmittedApproval(operationID)
+    }
     func takePreviewHash(jobID: String) -> String? { verifiedPreviewHashes.removeValue(forKey: jobID) }
 
     func submitAI(_ request: AIRequest) async throws -> AIResponse {
@@ -250,6 +253,9 @@ public actor DurableSessionRecovery {
         func result(_ text: String, _ kind: SessionResult.Kind) -> SessionResult {
             SessionResult(text: text, kind: kind, jobID: operation.backendJobID,
                 operationID: operation.id, partition: partition)
+        }
+        if operation.localState == .dismissed, operation.backendJobID == nil {
+            return result("This approval ended locally. No approved retry was sent.", .cancelled)
         }
         guard let jobID = operation.backendJobID else {
             if [.confirmation, .patchApply].contains(operation.kind) || operation.capabilityAction == "tests.run" {

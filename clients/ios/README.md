@@ -464,6 +464,13 @@ and startup/foreground activation call that adapter. A fresh intent can restore
 the index without opening the host UI first. The single app target contains
 the intents; no extension or App Group was added.
 
+Declining an approval or allowing it to expire before the approved retry marks
+that local record dismissed. It does not compete with accepted jobs during later
+recovery. Approval, cancellation, and capability submission share one admission
+guard so overlapping interactions cannot create an operation that was never sent.
+Accepted receipts and uncertain transport outcomes remain recoverable; dismissing
+a local approval does not report that a backend job was cancelled.
+
 An initial remote ask persists its intention, sends one authenticated create,
 persists the accepted receipt, and returns pending without polling. Later
 invocations observe the same job. Status is fetched again even for a previously
