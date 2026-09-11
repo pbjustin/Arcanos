@@ -442,6 +442,16 @@ independent idempotency keys for phones sharing an operator/workspace/executor.
 The latter includes same-phone deduplication and caught a database binding
 collision that synthetic repository tests did not detect.
 
+The same command also runs six fresh Swift processes through
+`ShippingSessionComposition`: AI submission and recovery, confirmed capability
+submission and recovery, foreign-device recovery, and revoked-device recovery.
+The parent reads each accepted receipt after its process exits, then claims and
+completes the corresponding PostgreSQL job. Recovery must return the exact result
+for the same operation/job/partition with no new submission. Cancellation must
+leave one dismissed record alongside the single accepted capability operation.
+The parent verifies exactly one AI execution and one synthetic executor result,
+two persisted jobs, and no remaining claimable work for those operations.
+
 The fixture's URLSession transport remaps the fixed logical HTTPS origin to a
 bounded loopback HTTP listener. Production transport and its HTTPS/redirect
 policy are unchanged; this proof does not verify TLS, a physical iPhone, Siri,
@@ -449,9 +459,11 @@ Apple Keychain, Foundation Models or actual Python executor/provider behavior.
 The separate macOS workflow verifies the unsigned iOS Simulator build.
 
 The required PostgreSQL CI job runs this fixture and retains its sanitized
-`ios-device-e2e/v1` JSON artifact. Success requires all eleven Swift observations
-and eleven independent backend assertions, the same run ID/source commit, and
-confirmed server/schema cleanup. The report identifies local uncommitted changes.
+`ios-device-e2e/v1` JSON as `ios-device-e2e-proof-${{ github.sha }}` for seven days.
+Success requires all eleven original Swift observations, nineteen independent
+backend assertions, and the six shipping phases in order with exact request and
+execution counts. Run ID/source commit must match, and server, schema and shipping
+state-directory cleanup must be confirmed. The report identifies local uncommitted changes.
 For pull requests, CI tests GitHub's merge commit; verify that report's source SHA
 and its PR head/base parents when using the artifact as published source evidence.
 
@@ -506,9 +518,29 @@ python3 clients/ios/scripts/run-shipping-recovery-e2e.py --swift-binary "$shippi
 
 The parent observes file-before-wire ordering and independent HTTP/semantic counts,
 terminates the submit process, starts new startup/status processes, and requires
-the same operation/job/partition and verified result. A mandatory disabled-wiring
-negative control must fail. This executes the adapter used by App Intents, not
-Siri or SwiftUI. See [Phase 3B: shipping recovery integration](PHASE3B_ENGINEERING_REPORT.md)
+the same operation/job/partition and verified result. Additional processes cover
+cancelled approvals, expiry while awaiting approval, an already-expired challenge,
+and overlapping actions while submission or the approved retry is suspended.
+They verify durable dismissal, no phantom record or duplicate retry, unchanged
+request bytes/idempotency key, and unambiguous implicit recovery after restart.
+
+Both mandatory negative controls must fail at their specific checks: bypassed
+startup wiring, and an injected persistence double that loses durable dismissal
+after the real cancellation succeeds. To run the latter alone, append
+`--inject-fault dismissal-disabled`; expect exit 1 with
+`APPROVAL_DISMISSAL_NOT_DURABLE`. Its successful child response cannot satisfy
+the parent's independent file check.
+
+The macOS CI job retains core and shipping JSON, including available failed-run
+reports, as `ios-recovery-proofs-${{ github.sha }}` for seven days. Shell pipeline
+failures remain failures when output is captured. Build each binary from the
+recorded source before execution; the reported SHA and binary hash alone do not
+prove that an arbitrary supplied binary was built from that source.
+
+This fixture executes the shared adapter with synthetic server replies, credentials
+and local inference. Actual Gateway/PostgreSQL behavior is covered by the separate
+command above. Neither fixture executes Siri or SwiftUI. See
+[Phase 3B: shipping recovery integration](PHASE3B_ENGINEERING_REPORT.md)
 for executed checks and the physical-device procedure, which is not run by this fixture.
 
 ## Durable operation recovery fixture
@@ -538,8 +570,10 @@ For a standalone expected-failure run, add `--inject-fault corrupt-completion`;
 it must exit nonzero with `CORRUPTED_COMPLETION_REJECTED`.
 
 The executable accepts only `--execute --allow-loopback` with bounded parent
-configuration on stdin. Its test adapter permits only create/result POSTs to a
-fixed logical origin and one exact loopback HTTP port; it disables redirects,
+configuration on stdin. This proof sends only create/result POSTs; its shared
+test adapter also admits the fixed Local Agent capability route used by the
+shipping approval proof. All requests use a fixed logical origin and one exact
+loopback HTTP port; the adapter disables redirects,
 proxies, cookies, and shared credentials. Each process receives its synthetic
 credential independently. The index contains neither credentials nor prompt or
 result content. JSON evidence records the checked-out SHA/dirty state and binary

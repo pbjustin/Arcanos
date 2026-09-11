@@ -19,6 +19,7 @@ import signal
 import subprocess
 import tempfile
 import threading
+import time
 from http.server import ThreadingHTTPServer
 from uuid import uuid4
 
@@ -44,6 +45,18 @@ for _mode in ["mismatch", "corrupt", "network", "denied", "unpaired", "expired",
     ASSERTIONS[_mode] = ["shipping_unavailable_or_foreign_result_rejected", "local_request_independent_of_credentials"]
 COUNTS = {"submit-held": 1, "submit-uncertain": 1, "submit-crash": 1, "startup": 3,
           "status": 1, "terminal-status": 1, "race-pending": 1, "mismatch": 1, "corrupt": 1, "network": 1, "denied": 1}
+for _mode in ["approval-cancel", "approval-expire", "approval-expired-challenge"]:
+    ASSERTIONS[_mode] = ["ended_approval_consumed_without_approved_retry"]
+    COUNTS[_mode] = 1
+ASSERTIONS.update({
+    "approval-after-dismissal": ["restart_excludes_dismissed_approval", "subsequent_operation_accepted_without_approval_replay"],
+    "approval-overlap": ["overlap_during_submission_pending_and_approved_retry_rejected_without_phantom_record",
+                         "single_approval_consumed_and_same_operation_receipt_persisted"],
+    "approval-restart-status": ["restart_recovers_only_accepted_operation", "implicit_latest_and_intent_phrase_verify_same_completed_job"],
+})
+COUNTS.update({"approval-after-dismissal": 1, "approval-overlap": 2, "approval-restart-status": 3})
+CAPABILITY_PATH = "/gpt-access/capabilities/v1/ARCANOS:LOCAL_AGENT/run"
+CHALLENGE = "SHIPPING_APPROVAL_CHALLENGE_SENTINEL"
 
 
 class Fixture:
@@ -80,7 +93,7 @@ class Fixture:
                 "storePath": str(self.store), "deviceID": DEVICE, "token": self.token,
                 "operationID": self.operation_id, "disableRecovery": self.fault == "wiring-disabled"}
 
-    def handle(self, request):
+    def read_request(self, request):
         mode = self.mode
         require(request.command == "POST", "METHOD_INVALID")
         require(request.headers.get("Authorization") == "Bearer " + self.token, "AUTH_HEADER_INVALID")
@@ -89,10 +102,16 @@ class Fixture:
         require(request.headers.get("Content-Type") == "application/json", "CONTENT_TYPE_INVALID")
         length = int(request.headers.get("Content-Length", "0"))
         require(0 < length <= 16_384, "REQUEST_LENGTH_INVALID")
-        body = json.loads(request.rfile.read(length))
+        raw = request.rfile.read(length)
+        body = json.loads(raw)
         with self.lock:
             self.requests.append({"mode": mode, "path": request.path, "operationID": self.operation_id})
             require(len(self.requests) <= 32, "REQUEST_BUDGET_EXCEEDED")
+        return raw, body
+
+    def handle(self, request):
+        mode = self.mode
+        _, body = self.read_request(request)
         if request.path == "/gpt-access/jobs/create":
             require(mode in ["submit-held", "submit-uncertain", "submit-crash"], "RESTORATION_SUBMITTED_WORK")
             record = self.inspect_store()  # Checked before the fixture admits submission.
@@ -134,6 +153,112 @@ class Fixture:
                      "completedAt": None, "retentionUntil": None, "idempotencyUntil": None, "expiresAt": None,
                      "poll": "/gpt-access/jobs/result", "stream": "", "resultEndpoint": "/gpt-access/jobs/result",
                      "result": result if completed else None, "error": None}
+
+
+class ApprovalFixture(Fixture):
+    def __init__(self, directory, source_sha, fault):
+        super().__init__(directory, source_sha, fault)
+        self.scenario, self.original_body, self.original_key = None, None, None
+        self.capability_attempts, self.approved_retries, self.result_reads = 0, 0, 0
+        self.capability_executions = 0
+        self.cancelled = threading.Event()
+
+    def config(self):
+        return {**super().config(), "disableDismissal": self.fault == "dismissal-disabled"}
+
+    def inspect_records(self):
+        data = self.store.read_bytes()
+        require(len(data) < 16_384, "INDEX_SIZE_INVALID")
+        for sentinel in [self.token, PROMPT, RESULT, CHALLENGE, "Bearer ", "confirmation_token", "typescript-unit"]:
+            require(sentinel.encode() not in data, "SENSITIVE_CONTENT_PERSISTED")
+        records = json.loads(data)
+        require(isinstance(records, list) and 1 <= len(records) <= 2, "INDEX_RECORD_COUNT_INVALID")
+        require(len({record["id"] for record in records}) == len(records), "DUPLICATE_OPERATION_ID")
+        require(len({record["idempotencyKey"] for record in records}) == len(records), "DUPLICATE_IDEMPOTENCY_KEY")
+        for record in records:
+            require(record["partition"] == {"origin": ORIGIN, "deviceID": DEVICE}, "INDEX_PARTITION_INVALID")
+            require(record["idempotencyKey"] and len(record["idempotencyKey"]) <= 240, "IDEMPOTENCY_INVALID")
+        return records
+
+    def inspect_store(self):
+        records = self.inspect_records()
+        if self.operation_id is None:
+            require(len(records) == 1, "APPROVAL_PHANTOM_RECORD")
+            self.operation_id = records[0]["id"].lower()
+        matches = [record for record in records if record["id"].lower() == self.operation_id]
+        require(len(matches) == 1, "INDEX_OPERATION_CHANGED")
+        return matches[0]
+
+    def hold_request(self, number):
+        Path(str(self.store) + ".held-" + str(number)).write_text("held", encoding="ascii")
+        release = Path(str(self.store) + ".release-" + str(number))
+        deadline = time.monotonic() + 4
+        while not release.exists():
+            require(not self.cancelled.is_set() and time.monotonic() < deadline, "OVERLAP_HTTP_NOT_RELEASED")
+            time.sleep(0.01)
+        require(release.read_text(encoding="ascii") == "release", "OVERLAP_RELEASE_INVALID")
+
+    def handle(self, request):
+        raw, body = self.read_request(request)
+        if request.path == CAPABILITY_PATH:
+            require(self.mode in ["approval-cancel", "approval-expire", "approval-expired-challenge", "approval-overlap"],
+                    "RESTORATION_APPROVED_EXECUTION")
+            records = self.inspect_records()
+            record = self.inspect_store()
+            require(len(records) == 1 and record["localState"] == "prepared" and record.get("backendJobID") is None,
+                    "APPROVAL_INTENT_NOT_DURABLE_OR_PHANTOM")
+            require(record["kind"] == "confirmation" and record["capabilityAction"] == "tests.run", "APPROVAL_RECORD_INVALID")
+            key = request.headers.get("Idempotency-Key")
+            require(key == record["idempotencyKey"], "CAPABILITY_IDEMPOTENCY_CHANGED")
+            self.capability_attempts += 1
+            if self.original_body is None:
+                require(body == {"action": "tests.run", "payload": {"profile": "typescript-unit"}}, "CAPABILITY_BODY_INVALID")
+                self.original_body, self.original_key = raw, key
+                if self.mode == "approval-overlap":
+                    self.hold_request(1)
+                challenge = {"id": CHALLENGE}
+                if self.mode == "approval-expired-challenge":
+                    challenge["expiresAt"] = "2034-12-31T23:59:59Z"
+                return 403, {"code": "CONFIRMATION_REQUIRED", "confirmationRequired": True,
+                             "confirmationChallenge": challenge, "endpoint": CAPABILITY_PATH, "method": "POST"}
+            require(self.mode == "approval-overlap", "ENDED_APPROVAL_SENT_RETRY")
+            require(raw == self.original_body[:-1] + b',"confirmation_token":' + json.dumps(CHALLENGE).encode() + b'}'
+                    and key == self.original_key, "APPROVED_RETRY_NOT_EXACT_FROZEN_REQUEST")
+            self.approved_retries += 1
+            require(self.approved_retries == 1, "DUPLICATE_APPROVED_RETRY")
+            self.hold_request(2)
+            self.semantic_executions[(ORIGIN, DEVICE, key)] = self.operation_id
+            self.capability_executions += 1
+            return 200, {"ok": True, "result": {"ok": True, "accepted": True, "persisted": True,
+                                                "jobId": JOB, "status": "queued"}}
+        if request.path == "/gpt-access/jobs/create":
+            require(self.mode == "approval-after-dismissal", "APPROVAL_RECOVERY_SUBMITTED_WORK")
+            records = self.inspect_records()
+            dismissed = [record for record in records if record["localState"] == "dismissed"]
+            prepared = [record for record in records if record["localState"] == "prepared"]
+            require(len(records) == 2 and len(dismissed) == 1 and len(prepared) == 1
+                    and prepared[0]["kind"] == "remoteAI" and prepared[0].get("backendJobID") is None,
+                    "SUBSEQUENT_INTENT_NOT_DURABLE")
+            self.operation_id = prepared[0]["id"].lower()
+            require(body["task"] == PROMPT and body["gptId"] == "arcanos-core"
+                    and body["idempotencyKey"] == prepared[0]["idempotencyKey"]
+                    and "confirmation_token" not in body, "SUBSEQUENT_SUBMISSION_INVALID")
+            require(self.operation_id not in self.creates, "DUPLICATE_HTTP_SUBMISSION")
+            self.creates[self.operation_id] = 1
+            self.semantic_executions[(ORIGIN, DEVICE, body["idempotencyKey"])] = self.operation_id
+            return 202, {"ok": True, "jobId": JOB, "traceId": self.run_id, "status": "queued",
+                         "deduped": False, "resultEndpoint": "/gpt-access/jobs/result"}
+        require(request.path == "/gpt-access/jobs/result" and self.mode == "approval-restart-status"
+                and body == {"jobId": JOB}, "APPROVAL_RECOVERY_ROUTE_INVALID")
+        records = self.inspect_records()
+        candidates = [record for record in records if record["localState"] != "dismissed"]
+        require(len(candidates) == 1 and candidates[0]["id"].lower() == self.operation_id
+                and candidates[0]["backendJobID"] == JOB, "APPROVAL_RECOVERY_CANDIDATE_INVALID")
+        self.result_reads += 1
+        result = {"outcome": "succeeded", "output": {"ok": True, "status": "passed"}} if self.scenario == "approval-overlap" else RESULT
+        return 200, {"ok": True, "jobId": JOB, "traceId": self.run_id, "status": "completed",
+                     "jobStatus": "completed", "lifecycleStatus": "completed", "poll": "/gpt-access/jobs/result",
+                     "stream": "", "resultEndpoint": "/gpt-access/jobs/result", "result": result, "error": None}
 
 
 def start_child(binary, fixture):
@@ -283,10 +408,84 @@ def execute(binary, source_sha, fault=None):
     return report
 
 
+def execute_approvals(binary, source_sha, fault=None):
+    reports, scenarios = [], []
+    failure = None
+    with tempfile.TemporaryDirectory(prefix="arcanos-shipping-approvals-") as directory:
+        fixture = ApprovalFixture(Path(directory), source_sha, fault)
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        server.daemon_threads = False
+        fixture.server = server; server.fixture = fixture
+        thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
+        try:
+            modes = ["approval-cancel"] if fault else ["approval-cancel", "approval-expire", "approval-expired-challenge", "approval-overlap"]
+            for scenario in modes:
+                fixture.scenario = scenario
+                fixture.store = Path(directory) / scenario / "operations.json"
+                fixture.operation_id, fixture.original_body, fixture.original_key = None, None, None
+                before = {"requestsMade": len(fixture.requests), "approvedRetries": fixture.approved_retries,
+                          "semanticExecutions": len(fixture.semantic_executions), "capabilityAttempts": fixture.capability_attempts,
+                          "processCount": len(reports)}
+                run_child(binary, fixture, scenario, reports)
+                record = fixture.inspect_store()
+                if scenario != "approval-overlap":
+                    # This parent check is independent of the child assertion and
+                    # rejects a successful cancel whose durable dismissal was lost.
+                    require(record["localState"] == "dismissed" and record.get("backendJobID") is None,
+                            "APPROVAL_DISMISSAL_NOT_DURABLE")
+                    require(fixture.approved_retries == before["approvedRetries"]
+                            and len(fixture.semantic_executions) == before["semanticExecutions"], "ENDED_APPROVAL_EXECUTED")
+                    ended_id = fixture.operation_id
+                    run_child(binary, fixture, "approval-after-dismissal", reports)
+                    require(fixture.operation_id != ended_id and fixture.inspect_store()["localState"] == "accepted",
+                            "SUBSEQUENT_OPERATION_IDENTITY_INVALID")
+                else:
+                    require(len(fixture.inspect_records()) == 1 and record["localState"] == "accepted",
+                            "OVERLAP_PHANTOM_RECORD_OR_RECEIPT_MISSING")
+                accepted_id = fixture.operation_id
+                run_child(binary, fixture, "approval-restart-status", reports)
+                require(fixture.operation_id == accepted_id and fixture.inspect_store()["localState"] == "terminal",
+                        "APPROVAL_RECOVERY_COMPLETION_NOT_DURABLE")
+                scenarios.append({"scenario": scenario, "operationID": accepted_id, "jobID": JOB,
+                    "processCount": len(reports) - before["processCount"],
+                    "requestsMade": len(fixture.requests) - before["requestsMade"],
+                    "capabilityAttempts": fixture.capability_attempts - before["capabilityAttempts"],
+                    "approvedRetries": fixture.approved_retries - before["approvedRetries"],
+                    "semanticExecutions": len(fixture.semantic_executions) - before["semanticExecutions"],
+                    "endedApprovalSemanticExecutions": 0 if scenario != "approval-overlap" else None})
+            require(sum(item["requestsMade"] for item in reports) == len(fixture.requests), "APPROVAL_REQUEST_ACCOUNTING_INVALID")
+            require(len(reports) == 11 and len(fixture.requests) == 20 and fixture.capability_attempts == 5
+                    and fixture.approved_retries == 1 and fixture.result_reads == 12 and len(fixture.creates) == 3
+                    and len(fixture.semantic_executions) == 4 and fixture.capability_executions == 1,
+                    "APPROVAL_EXECUTION_ACCOUNTING_INVALID")
+        except ProofFailure as error:
+            failure = error
+        finally:
+            fixture.cancelled.set(); server.shutdown(); server.server_close(); thread.join(timeout=5)
+            require(not thread.is_alive(), "FIXTURE_CLEANUP_FAILED")
+        require(not fixture.errors, fixture.errors[0] if fixture.errors else "FIXTURE_FAILED")
+        report = {"phases": reports, "scenarios": scenarios, "processCount": len(reports),
+                  "requestsMade": len(fixture.requests), "httpSubmissionAttempts": fixture.capability_attempts + sum(fixture.creates.values()),
+                  "capabilityAttempts": fixture.capability_attempts, "approvedRetries": fixture.approved_retries,
+                  "semanticExecutions": len(fixture.semantic_executions), "capabilityExecutions": fixture.capability_executions,
+                  "resultReads": fixture.result_reads,
+                  "independentChecks": [] if failure else ["ended_approvals_persist_dismissal_and_send_zero_approved_retries",
+                      "dismissed_metadata_excluded_across_process_restart", "subsequent_sole_accepted_job_resolves_without_explicit_id",
+                      "concurrent_invoke_and_cancel_during_approved_retry_create_no_phantom_record",
+                      "approved_retry_preserves_original_body_bytes_and_idempotency_key",
+                      "confirmation_secret_and_payload_absent_from_recovery_index"]}
+    require(not Path(directory).exists(), "DISPOSABLE_STORE_NOT_REMOVED")
+    report["cleanupConfirmed"] = True
+    if failure is not None:
+        failure.evidence = report
+        raise failure
+    return report
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--swift-binary", type=Path, required=True)
-    parser.add_argument("--inject-fault", choices=["wiring-disabled"])
+    parser.add_argument("--inject-fault", choices=["wiring-disabled", "dismissal-disabled"])
     args = parser.parse_args()
     report = {"version": VERSION, "ok": False, "scope": "shipping-shared-entry-adapter-process-file-loopback",
               "actualAppIntentExecution": False, "simulatorRuntime": False, "physicalDevice": False,
@@ -299,8 +498,12 @@ def main():
         source_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repository, text=True).strip()
         report.update(sourceSha=source_sha, sourceDirty=bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=repository)),
                       binarySHA256=hashlib.sha256(binary.read_bytes()).hexdigest())
+        if args.inject_fault == "dismissal-disabled":
+            execute_approvals(binary, source_sha, args.inject_fault)
+            raise ProofFailure("DISABLED_DISMISSAL_WAS_ACCEPTED")
         report.update(execute(binary, source_sha, args.inject_fault))
         require(args.inject_fault is None, "DISABLED_WIRING_WAS_ACCEPTED")
+        report["approvalRecovery"] = execute_approvals(binary, source_sha)
         try:
             execute(binary, source_sha, "wiring-disabled")
         except ProofFailure as error:
@@ -310,10 +513,23 @@ def main():
                 "httpSubmissionAttempts": 1, "semanticExecutions": 1, "recoveryRequests": 0}
         else:
             raise ProofFailure("DISABLED_WIRING_WAS_ACCEPTED")
+        try:
+            execute_approvals(binary, source_sha, "dismissal-disabled")
+        except ProofFailure as error:
+            require(str(error) == "APPROVAL_DISMISSAL_NOT_DURABLE", "DISMISSAL_NEGATIVE_CONTROL_FAILED_UNEXPECTEDLY")
+            evidence = error.evidence
+            require(evidence["processCount"] == 1 and evidence["requestsMade"] == 1 and evidence["approvedRetries"] == 0
+                    and evidence["semanticExecutions"] == 0 and evidence["cleanupConfirmed"]
+                    and evidence["phases"][0].get("ok") is True, "DISMISSAL_NEGATIVE_CONTROL_FAILED_UNEXPECTEDLY")
+            report["approvalNegativeControl"] = {**evidence, "fault": "dismissal-disabled", "rejected": True,
+                "parentFailure": "APPROVAL_DISMISSAL_NOT_DURABLE"}
+        else:
+            raise ProofFailure("DISABLED_DISMISSAL_WAS_ACCEPTED")
         report["includingNegativeControl"] = {
-            "processCount": report["processCount"] + 2, "requestsMade": report["requestsMade"] + 1,
-            "httpSubmissionAttempts": report["httpSubmissionAttempts"] + 1,
-            "semanticExecutions": report["semanticExecutions"] + 1}
+            "processCount": report["processCount"] + 2 + report["approvalRecovery"]["processCount"] + evidence["processCount"],
+            "requestsMade": report["requestsMade"] + 1 + report["approvalRecovery"]["requestsMade"] + evidence["requestsMade"],
+            "httpSubmissionAttempts": report["httpSubmissionAttempts"] + 1 + report["approvalRecovery"]["httpSubmissionAttempts"] + evidence["httpSubmissionAttempts"],
+            "semanticExecutions": report["semanticExecutions"] + 1 + report["approvalRecovery"]["semanticExecutions"] + evidence["semanticExecutions"]}
         report["ok"] = True
     except Exception as error:
         report["failure"] = str(error) if isinstance(error, ProofFailure) else "SHIPPING_PROOF_FAILED"

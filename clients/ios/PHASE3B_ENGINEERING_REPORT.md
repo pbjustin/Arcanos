@@ -3,6 +3,10 @@
 Date: 2026-09-11. This milestone connects the recovery core to shipping product
 entry points. It does not claim all of Phase 3 or physical Siri recovery.
 
+The original preparation evidence below remains a dated snapshot. The review
+addendum at the end describes subsequent fixture changes and their validation
+status without replacing the earlier results or their limits.
+
 ## Baseline and inspection
 
 Review preparation rechecked GitHub: PR #1497 **merged** at
@@ -332,3 +336,85 @@ at the final head, passing macOS/iOS compilation, and resolved review threads.
 Refresh the base and checks if main advances. The draft must be ready for review
 before a merge recommendation. Physical iPhone/Siri and live-service validation
 remain a separately authorized subsequent milestone, using the procedure above.
+
+## 2026-09-11 PR #1499 review addendum: expanded end-to-end fixtures
+
+The review extends fixtures from published baseline
+`bc3c1b0ce732a840ab7c75f40ac6a4e78abc8656`. It changes test support, evidence
+admission and CI retention; it adds no production Gateway, authentication,
+database-schema, provider or executor behavior.
+
+The shipping loopback runner now exercises cancellation, approval expiry,
+an already-expired challenge, and overlapping actions at held HTTP boundaries.
+New processes reopen dismissed records, submit a subsequent operation, and
+resolve that sole accepted job through startup and implicit status requests.
+Parent checks require no approved retry for ended approvals, no phantom record,
+one exact frozen approved retry, stable operation/job/partition identity, and no
+confirmation token or request/result content in the index. Its four added
+positive scenarios require eleven processes and twenty HTTP requests.
+
+A mandatory dropped-dismissal control runs the real cancellation path with an
+injected persistence double. The child must report successful cancellation;
+the parent must then reject the unchanged prepared record specifically with
+`APPROVAL_DISMISSAL_NOT_DURABLE`, zero approved retries and zero executions.
+The existing disabled-startup-wiring and core corrupted-result controls remain.
+These loopback semantic execution counts describe fixture behavior.
+
+`ArcanosDeviceE2E` also uses the shipping composition in six fresh processes:
+AI submit/restore, capability submit/restore, foreign-device restore and
+revoked-device restore. The parent waits for each submit process to exit,
+independently reads its durable receipt, then executes the real Gateway/SQL
+worker claim and completion path before restoration. Capability authorization,
+single enqueue, claim and result persistence use the real backend; executor
+output is synthetic. AI dispatch runs through the existing worker and provider
+integration with a synthetic provider response. Recovery must verify the exact
+answer and original operation/job/partition without submitting work again.
+
+The evidence validator requires nineteen backend assertions, the original eleven
+Swift observations, all six ordered shipping phases with exact wire counts and
+matching run/source identity, one AI execution and one synthetic executor result,
+and confirmed server/schema/state-directory cleanup. Negative admission tests
+reject incomplete or failed phases, stale identity, duplicate submissions and
+incorrect execution counts.
+
+Run the commands under [Device Gateway and PostgreSQL end-to-end
+fixture](README.md#device-gateway-and-postgresql-end-to-end-fixture) and
+[Shipping recovery integration fixture](README.md#shipping-recovery-integration-fixture).
+The shipping command includes both shipping negative controls; adding
+`--inject-fault dismissal-disabled` runs the new expected-failure control alone.
+Use fresh binaries built from the recorded source snapshot and retain source
+and binary hashes with the command results. An echoed source SHA alone does not
+establish build provenance.
+
+The macOS workflow retains available core/shipping JSON for seven days as
+`ios-recovery-proofs-${{ github.sha }}`, including available failed-run reports.
+The PostgreSQL CI job retains successful backend proof JSON for seven days as
+`ios-device-e2e-proof-${{ github.sha }}`. Pull-request artifacts identify GitHub's
+tested merge commit; verify its head/base parents before attributing the evidence
+to a published PR revision.
+
+The combined local snapshot passed the following checks on 2026-09-11 with
+Swift 6.2.4 on Linux, pinned Node 24.18.1/npm 11.16.0, and disposable PostgreSQL
+18.3. This was baseline `bc3c1b0...` plus the uncommitted fixture changes, not a
+new published commit. The 2,989-file source manifests matched before and after
+execution; fresh Release binaries and their hashes accompany the retained local
+evidence. These results supersede the earlier snapshot's unrun PostgreSQL scope
+for this tested local revision only. Documentation was updated afterward.
+
+| Check | Local result |
+| --- | --- |
+| Full Swift package tests | PASS: 18 XCTest + 130 Swift Testing tests, 148 total |
+| Swift Release build | PASS |
+| Node proof-runner tests | PASS: 54 tests |
+| Root type-check and full lint | PASS |
+| Shipping process proof | PASS: 35 processes / 41 HTTP requests including both mandatory negative controls |
+| Standalone dropped-dismissal control | Expected exit 1: `APPROVAL_DISMISSAL_NOT_DURABLE` |
+| Core recovery process proof | PASS, including its mandatory corrupted-result control |
+| Gateway/PostgreSQL proof | PASS: 19/19 backend assertions, six shipping processes, one shipping AI execution and one synthetic executor result; cleanup confirmed |
+
+Fresh remote CI for these additions remains pending publication. The original
+remote revision's CI does not validate the uncommitted additions.
+
+The fixtures still substitute Keychain storage, local inference, provider replies
+and Local Agent executor output. They do not execute actual AppIntents/Siri,
+SwiftUI lifecycle, physical-device file protection, production TLS or live providers.

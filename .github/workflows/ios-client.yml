@@ -57,9 +57,12 @@ jobs:
       - name: Prove recovery across separate processes and file storage
         timeout-minutes: 5
         run: |
+          set -euo pipefail
+          mkdir -p local_artifacts/ios-recovery
           xcrun swift build --package-path clients/ios/ArcanosKit --product ArcanosRecoveryProof
           recovery_bin_dir=$(xcrun swift build --package-path clients/ios/ArcanosKit --show-bin-path)
-          python3 clients/ios/scripts/run-operation-recovery-e2e.py --swift-binary "$recovery_bin_dir/ArcanosRecoveryProof"
+          python3 clients/ios/scripts/run-operation-recovery-e2e.py --swift-binary "$recovery_bin_dir/ArcanosRecoveryProof" \
+            | tee local_artifacts/ios-recovery/core-proof.json
       - name: Validate preview recovery proof without network
         timeout-minutes: 5
         run: |
@@ -73,9 +76,20 @@ jobs:
       - name: Prove shipping session recovery across processes
         timeout-minutes: 5
         run: |
+          set -euo pipefail
+          mkdir -p local_artifacts/ios-recovery
           xcrun swift build --package-path clients/ios/ArcanosKit --product ArcanosShippingRecoveryProof
           shipping_bin_dir=$(xcrun swift build --package-path clients/ios/ArcanosKit --show-bin-path)
-          python3 clients/ios/scripts/run-shipping-recovery-e2e.py --swift-binary "$shipping_bin_dir/ArcanosShippingRecoveryProof"
+          python3 clients/ios/scripts/run-shipping-recovery-e2e.py --swift-binary "$shipping_bin_dir/ArcanosShippingRecoveryProof" \
+            | tee local_artifacts/ios-recovery/shipping-proof.json
+      - name: Retain sanitized recovery process proofs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-recovery-proofs-${{ github.sha }}
+          path: local_artifacts/ios-recovery/*.json
+          if-no-files-found: warn
+          retention-days: 7
       - name: Build unsigned iOS Simulator app
         run: >-
           xcodebuild

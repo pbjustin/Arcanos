@@ -18,6 +18,19 @@ export const REQUIRED_ASSERTIONS = Object.freeze([
   'cross_device_job_reads_denied',
   'secret_free_report',
   'local_agent_device_idempotency_isolated',
+  'shipping_ai_receipt_survives_process_exit',
+  'shipping_ai_worker_completion_recovered',
+  'shipping_confirmation_receipt_survives_process_exit',
+  'shipping_confirmation_completion_recovered',
+  'shipping_recovery_no_duplicate_jobs_or_executions',
+  'shipping_recovery_credential_partition_isolated',
+  'shipping_recovery_revoked_device_denied',
+  'shipping_recovery_index_secret_free',
+]);
+export const SHIPPING_PHASES = Object.freeze([
+  ['ai-submit', 1, 0, 0], ['ai-restore', 0, 0, 2],
+  ['capability-submit', 0, 3, 0], ['capability-restore', 0, 0, 2],
+  ['foreign-restore', 0, 0, 0], ['revoked-restore', 0, 0, 1],
 ]);
 
 /** Reject configured/remote databases before importing any application code. */
@@ -85,6 +98,15 @@ export function validateProofReport(report, binding) {
     || report.runId !== binding.runId || report.sourceSha !== binding.sourceSha
     || report.transport !== 'urlsession-loopback-http-test-adapter'
     || report.schemaRemoved !== true || report.serverClosed !== true
+    || report.shipping?.shippingDirectoryRemoved !== true
+    || !Array.isArray(report.shipping?.phases) || report.shipping.phases.length !== SHIPPING_PHASES.length
+    || report.shipping.phases.some((phase, index) => {
+      const [name, creates, capabilities, results] = SHIPPING_PHASES[index];
+      return phase?.version !== 'ios-shipping-device-e2e/v1' || phase.phase !== name || phase.ok !== true
+        || phase.processSucceeded !== true || phase.runId !== binding.runId || phase.sourceSha !== binding.sourceSha
+        || phase.creates !== creates || phase.capabilities !== capabilities || phase.results !== results;
+    })
+    || report.sql?.shippingAIExecutions !== 1 || report.sql?.shippingExecutorExecutions !== 1
     || !Array.isArray(assertions) || assertions.length !== REQUIRED_ASSERTIONS.length
     || assertions.some(assertion => assertion?.passed !== true)
     || new Set(assertions.map(assertion => assertion?.name)).size !== REQUIRED_ASSERTIONS.length
@@ -158,6 +180,9 @@ export async function main() {
       workingTreeModified: Boolean(dirty.stdout.trim()), runId, transport: report.transport,
       assertions: report.assertions.map(({ name, passed }) => ({ name, passed })),
       schemaRemoved: true, serverClosed: true,
+      shippingRecovery: { processesCompleted: report.shipping.phases.length, stateDirectoryRemoved: true,
+        aiExecutions: report.sql.shippingAIExecutions, executorExecutions: report.sql.shippingExecutorExecutions,
+        phases: report.shipping.phases.map(({ phase, creates, capabilities, results }) => ({ phase, creates, capabilities, results })) },
       synthetic: ['Keychain item storage', 'local inference', 'provider response', 'Local Agent executor registration and output'],
       productionCredentialsUsed: false, physicalDeviceValidated: false, productionTlsValidated: false,
     }, null, 2));

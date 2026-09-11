@@ -25,6 +25,8 @@ actor LoopbackTransport: GatewayTransport {
     private var responseBytes = 0
     private var createdAIJobID: String?
     private var capabilityRequests: [GatewayRequest] = []
+    private var createRequests = 0
+    private var resultRequests = 0
 
     init(configuration: DeviceProofConfiguration) throws {
         try configuration.validate()
@@ -42,6 +44,9 @@ actor LoopbackTransport: GatewayTransport {
 
     func counts() -> (requests: Int, bytes: Int) { (requestCount, responseBytes) }
     func observedAIJobID() -> String? { createdAIJobID }
+    func shippingCounts() -> (creates: Int, capabilities: Int, results: Int) {
+        (createRequests, capabilityRequests.count, resultRequests)
+    }
 
     func confirmedRetryIsExact() -> Bool {
         guard capabilityRequests.count == 3 else { return false }
@@ -80,6 +85,8 @@ actor LoopbackTransport: GatewayTransport {
         let destination = try Self.destination(request, configuration: configuration)
         try deviceRequire(requestCount < 80 && Date() < deadline, "NETWORK_BUDGET_EXHAUSTED")
         requestCount += 1
+        if request.url.path == "/gpt-access/jobs/create" { createRequests += 1 }
+        if request.url.path == "/gpt-access/jobs/result" { resultRequests += 1 }
         if request.url.path == "/gpt-access/capabilities/v1/ARCANOS:LOCAL_AGENT/run" {
             capabilityRequests.append(request)
         }
