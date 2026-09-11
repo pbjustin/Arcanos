@@ -1,4 +1,9 @@
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 
 /// A non-secret, authenticated partition used to prevent recovery across devices or Gateway origins.
 public struct OperationPartition: Codable, Hashable, Sendable {
@@ -33,6 +38,8 @@ public struct TrackedOperation: Codable, Equatable, Identifiable, Sendable {
     public let createdAt: Date
     public var updatedAt: Date
     public let idempotencyKey: String
+    /// Optional finite action identifier; older recovery records remain readable.
+    public let capabilityAction: String?
     public var backendJobID: String?
     public var backendStatus: String?
     public var localState: LocalOperationState
@@ -40,7 +47,8 @@ public struct TrackedOperation: Codable, Equatable, Identifiable, Sendable {
 
     /// Creates a pre-network record so a crash cannot erase submission uncertainty.
     public init(id: UUID = UUID(), partition: OperationPartition, kind: TrackedOperationKind,
-                displaySummary: String, createdAt: Date, idempotencyKey: String) throws {
+                displaySummary: String, createdAt: Date, idempotencyKey: String,
+                capabilityAction: String? = nil) throws {
         let safeSummary = displaySummary.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !safeSummary.isEmpty, safeSummary.utf8.count <= 240,
               !idempotencyKey.isEmpty, idempotencyKey.utf8.count <= 240 else {
@@ -53,6 +61,7 @@ public struct TrackedOperation: Codable, Equatable, Identifiable, Sendable {
         self.createdAt = createdAt
         self.updatedAt = createdAt
         self.idempotencyKey = idempotencyKey
+        self.capabilityAction = capabilityAction
         self.localState = .prepared
     }
 }
@@ -61,6 +70,12 @@ public struct TrackedOperation: Codable, Equatable, Identifiable, Sendable {
 public protocol OperationPersistence: Sendable {
     func load() throws -> Data?
     func replace(with data: Data) throws
+    func withExclusiveAccess<T>(isolation: isolated (any Actor)?, _ body: () throws -> T) throws -> T
+}
+
+public extension OperationPersistence {
+    /// Single-owner fixtures may use the default. Shared persistence must serialize transactions.
+    func withExclusiveAccess<T>(isolation: isolated (any Actor)? = #isolation, _ body: () throws -> T) throws -> T { try body() }
 }
 
 /// Atomic file-backed storage for non-secret operation metadata.
@@ -70,9 +85,33 @@ public struct FileOperationPersistence: OperationPersistence {
     /// Uses an application-support file supplied by the host; parent directories are created lazily.
     public init(fileURL: URL) { self.fileURL = fileURL }
 
+    /// Lock the stable sidecar, not the atomically replaced data inode. The OS releases
+    /// this lock on process death; no termination callback or persisted lease is needed.
+    public func withExclusiveAccess<T>(isolation: isolated (any Actor)? = #isolation, _ body: () throws -> T) throws -> T {
+        #if canImport(Darwin) || canImport(Glibc)
+        try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let descriptor = open(fileURL.appendingPathExtension("lock").path, O_CREAT | O_RDWR | O_CLOEXEC, S_IRUSR | S_IWUSR)
+        guard descriptor >= 0 else { throw OperationTrackingError.storageUnavailable }
+        defer { _ = close(descriptor) }
+        // Transactions contain only bounded local file work, never network awaits.
+        // Bound contention to one second even if a peer has been suspended mid-write.
+        var acquired = false
+        for _ in 0..<100 {
+            if flock(descriptor, LOCK_EX | LOCK_NB) == 0 { acquired = true; break }
+            guard errno == EWOULDBLOCK || errno == EAGAIN else { throw OperationTrackingError.storageUnavailable }
+            usleep(10_000)
+        }
+        guard acquired else { throw OperationTrackingError.storageUnavailable }
+        defer { _ = flock(descriptor, LOCK_UN) }
+        return try body()
+        #else
+        throw OperationTrackingError.storageUnavailable
+        #endif
+    }
+
     public func load() throws -> Data? {
-        guard FileManager.default.fileExists(atPath: fileURL.path) else { return nil }
-        return try Data(contentsOf: fileURL, options: .mappedIfSafe)
+        do { return try Data(contentsOf: fileURL, options: .mappedIfSafe) }
+        catch let error as CocoaError where error.code == .fileReadNoSuchFile { return nil }
     }
 
     public func replace(with data: Data) throws {
@@ -105,16 +144,18 @@ public actor OperationTracker {
     public func prepare(_ operation: TrackedOperation) throws -> UUID {
         try Self.validate(operation)
         guard operation.localState == .prepared else { throw GatewayError.invalidRequest }
-        var values = try current()
-        //audit Assumption: an idempotency key identifies one semantic operation in one security partition; reject collisions rather than guessing.
-        guard !values.contains(where: {
-            $0.id == operation.id || ($0.partition == operation.partition && $0.idempotencyKey == operation.idempotencyKey)
-        }) else {
-            throw GatewayError.invalidRequest
+        return try transaction {
+            var values = try current()
+            //audit Assumption: an idempotency key identifies one semantic operation in one security partition; reject collisions rather than guessing.
+            guard !values.contains(where: {
+                $0.id == operation.id || ($0.partition == operation.partition && $0.idempotencyKey == operation.idempotencyKey)
+            }) else {
+                throw GatewayError.invalidRequest
+            }
+            values.append(operation)
+            try commit(values)
+            return operation.id
         }
-        values.append(operation)
-        try commit(values)
-        return operation.id
     }
 
     /// Records a confirmed backend acceptance without treating acceptance as completion.
@@ -157,8 +198,10 @@ public actor OperationTracker {
 
     /// Returns only records belonging to the current authenticated device/origin partition.
     public func operations(for partition: OperationPartition) throws -> [TrackedOperation] {
-        try prune()
-        return try current().filter { $0.partition == partition }.sorted { $0.updatedAt > $1.updatedAt }
+        try transaction {
+            try prune()
+            return try current().filter { $0.partition == partition }.sorted { $0.updatedAt > $1.updatedAt }
+        }
     }
 
     /// Resolves a recent reference only when exactly one non-stale candidate exists.
@@ -173,17 +216,26 @@ public actor OperationTracker {
 
     /// Deletes all cached metadata for an unpaired partition; server jobs and results are untouched.
     public func removeAll(for partition: OperationPartition) throws {
-        try commit(try current().filter { $0.partition != partition })
+        try transaction { try commit(try current().filter { $0.partition != partition }) }
     }
 
     private func update(_ id: UUID, mutation: (inout TrackedOperation) throws -> Void) throws {
-        var values = try current()
-        guard let index = values.firstIndex(where: { $0.id == id }) else { throw OperationTrackingError.notFound }
-        let previous = values[index]
-        try mutation(&values[index])
-        guard values[index] != previous else { return }
-        values[index].updatedAt = now()
-        try commit(values)
+        try transaction {
+            var values = try current()
+            guard let index = values.firstIndex(where: { $0.id == id }) else { throw OperationTrackingError.notFound }
+            let previous = values[index]
+            try mutation(&values[index])
+            guard values[index] != previous else { return }
+            values[index].updatedAt = now()
+            try commit(values)
+        }
+    }
+
+    private func transaction<T>(_ body: () throws -> T) throws -> T {
+        // Invalidate before acquiring; all reads occur inside the synchronous locked
+        // body. A previous snapshot must never survive into a new transaction.
+        records = nil
+        return try persistence.withExclusiveAccess(isolation: self, body)
     }
 
     private func prune() throws {
@@ -216,6 +268,10 @@ public actor OperationTracker {
     }
 
     private static func validate(_ operation: TrackedOperation) throws {
+        if let action = operation.capabilityAction {
+            guard ["git.status", "tests.run", "patch.preview", "patch.apply"].contains(action),
+                  operation.kind != .remoteAI else { throw GatewayError.invalidRequest }
+        }
         guard let origin = URL(string: operation.partition.origin),
               let partition = try? OperationPartition(origin: origin, deviceID: operation.partition.deviceID),
               partition == operation.partition,
@@ -253,7 +309,7 @@ public actor OperationTracker {
 }
 
 public enum OperationTrackingError: Error, Equatable, Sendable {
-    case notFound, corruptStore, ambiguousReference
+    case notFound, corruptStore, ambiguousReference, storageUnavailable
 }
 
 /// Minimal push payload. It is only a wake/presentation hint and never authoritative job state.

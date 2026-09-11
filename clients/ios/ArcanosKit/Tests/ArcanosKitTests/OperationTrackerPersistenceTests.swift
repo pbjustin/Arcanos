@@ -149,7 +149,9 @@ struct OperationTrackerPersistenceTests {
         await #expect(throws: (any Error).self) {
             try await tracker.accept(operation.id, jobID: jobID, backendStatus: "queued")
         }
-        #expect(try await tracker.operations(for: partition) == [operation])
+        // Shared storage must be read afresh: a cached snapshot cannot conceal an
+        // unavailable file or a different process's updates.
+        await #expect(throws: (any Error).self) { try await tracker.operations(for: partition) }
         #expect(try Data(contentsOf: backup) == before)
         #expect(try Data(contentsOf: blocker) == marker)
 

@@ -6,17 +6,21 @@ struct VoicePresentation: Sendable {
     let text: String
     let status: String
     let approvalID: UUID?
+    let operationID: UUID?
 
     init(_ result: SessionResult, demonstration: Bool) {
         let spokenText = demonstration ? "Simulation. \(result.text)" : result.text
         text = String(spokenText.prefix(4_000))
         approvalID = result.approvalID
+        operationID = result.operationID
         switch result.kind {
         case .answer: status = demonstration ? "Simulated result" : "Response"
         case .pending: status = "Pending — not completed"
         case .confirmationRequired: status = "Approval required"
         case .failure: status = "Unavailable or failed"
-        case .cancelled: status = "Cancelled"
+        case .unavailable: status = "Status unavailable"
+        case .clarificationRequired: status = "Choose an operation"
+        case .cancelled: status = "Interaction stopped"
         }
     }
 
@@ -24,6 +28,7 @@ struct VoicePresentation: Sendable {
         self.text = String(text.prefix(4_000))
         self.status = status
         approvalID = nil
+        operationID = nil
     }
 }
 
@@ -41,6 +46,11 @@ struct VoiceSnippet: View {
             Text(presentation.text)
                 .font(.body)
                 .fixedSize(horizontal: false, vertical: true)
+            if let reference = presentation.operationID {
+                Text("Operation reference: \(reference.uuidString)")
+                    .font(.caption2)
+                    .textSelection(.enabled)
+            }
         }
         .padding()
         .accessibilityElement(children: .combine)

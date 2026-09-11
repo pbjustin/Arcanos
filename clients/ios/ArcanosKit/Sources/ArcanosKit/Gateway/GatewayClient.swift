@@ -9,11 +9,13 @@ public actor GatewayClient {
     public let baseURL: URL
     private let credentials: any GatewayCredentialProvider
     private let transport: any GatewayTransport
+    private let now: @Sendable () -> Date
 
     public init(
         baseURL: URL,
         credentials: any GatewayCredentialProvider,
-        transport: any GatewayTransport = URLSessionGatewayTransport()
+        transport: any GatewayTransport = URLSessionGatewayTransport(),
+        now: @escaping @Sendable () -> Date = { Date() }
     ) throws {
         guard let components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false),
               components.scheme?.lowercased() == "https", components.host?.isEmpty == false,
@@ -25,6 +27,7 @@ public actor GatewayClient {
         self.baseURL = try DeviceAuthentication.origin(baseURL)
         self.credentials = credentials
         self.transport = transport
+        self.now = now
     }
 
     public func createJob(_ request: CreateAIJobRequest) async throws -> CreateAIJobResponse {
@@ -113,7 +116,7 @@ public actor GatewayClient {
         guard body == nil || body!.count <= 1_048_576,
               let url = URL(string: path, relativeTo: baseURL)?.absoluteURL else { throw GatewayError.invalidRequest }
         guard let credential = try await credentials.credential(for: baseURL) else { throw GatewayError.unpaired }
-        guard credential.expiresAt > Date() else { throw GatewayError.credentialExpired }
+        guard credential.expiresAt > now() else { throw GatewayError.credentialExpired }
         guard let credentialOrigin = URLComponents(url: credential.origin, resolvingAgainstBaseURL: false),
               credentialOrigin.scheme?.lowercased() == baseURL.scheme?.lowercased(),
               credentialOrigin.host?.lowercased() == baseURL.host?.lowercased(),

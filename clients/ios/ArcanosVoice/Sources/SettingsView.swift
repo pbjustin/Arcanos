@@ -24,7 +24,9 @@ struct SettingsView: View {
                     }
                 }
                 Section("Pairing") {
-                    Label(runtime.deviceState.message, systemImage: "lock.shield")
+                    Label(runtime.secureStorageUnavailable
+                        ? "Secure storage is temporarily unavailable. Unlock this iPhone and try again. Pairing has not been removed."
+                        : runtime.deviceState.message, systemImage: "lock.shield")
                     TextField("Gateway HTTPS origin", text: $gatewayAddress)
                         .textContentType(.URL)
                         .keyboardType(.URL)
@@ -59,7 +61,7 @@ struct SettingsView: View {
                         set: { runtime.setDemonstration($0) }
                     ))
                     .disabled(runtime.changingPairing)
-                    Text("Simulation uses in-memory API fixtures. It makes no network requests and never runs tests or changes a repository. Responses say ‘Simulation’. Switching modes discards pending approvals and tracked jobs.")
+                    Text("Simulation uses in-memory API fixtures. It makes no network requests and never runs tests or changes a repository. Responses say ‘Simulation’. Switching modes discards pending approvals; paired-device recovery records remain saved.")
                         .foregroundStyle(.secondary)
                 }
                 #endif
@@ -82,8 +84,15 @@ struct SettingsView: View {
                 }
                 Section("Diagnostics") {
                     Text(runtime.diagnosticMessage)
-                    Text("Siri and Vocal Shortcuts manage audio. ARCANOS does not run a background microphone. Approvals and job tracking remain in this app process; ask again after a restart.")
+                    Text("Siri and Vocal Shortcuts manage audio. Accepted operations remain available after restart. Check Latest Arcanos Job retrieves their status. Observation stops when the app is suspended; approvals require a fresh user interaction after restart.")
                         .foregroundStyle(.secondary)
+                }
+                if !runtime.recoveredResults.isEmpty {
+                    Section("Recovered operations") {
+                        ForEach(runtime.recoveredResults.indices, id: \.self) { index in
+                            VoiceSnippet(presentation: runtime.recoveredResults[index])
+                        }
+                    }
                 }
             }
             .navigationTitle("ARCANOS")

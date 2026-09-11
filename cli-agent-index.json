@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-11T17:27:39.595Z",
+  "generatedAt": "2026-09-11T20:16:52.102Z",
   "scopes": [
     {
       "scope": "clients",
@@ -9,6 +9,9 @@
         },
         {
           "relativePath": "clients/ios/scripts/run-operation-recovery-preview.py"
+        },
+        {
+          "relativePath": "clients/ios/scripts/run-shipping-recovery-e2e.py"
         }
       ]
     },
