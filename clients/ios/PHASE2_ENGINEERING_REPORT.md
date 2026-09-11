@@ -309,9 +309,7 @@ boundaries; richer UI, additional platforms and memory redesign are separate wor
 <!-- PHASE2_FILE_INVENTORY -->
 ## File inventory
 
-Added (
-25
-):
+Added (25):
 
 - `.github/workflows/ios-client.yml`
 - `clients/ios/ArcanosKit/Sources/ArcanosDeviceE2E/Configuration.swift`
@@ -339,12 +337,11 @@ Added (
 - `tests/integration/ios-device-gateway.e2e.integration.test.ts`
 - `tests/ios-device-e2e-runner.test.js`
 
-Modified (
-42
-):
+Modified (43):
 
 - `.env.example`
 - `.github/workflows/ci-cd.yml`
+- `.gitleaksignore`
 - `backend-index.json`
 - `cli-agent-index.json`
 - `clients/ios/ArcanosKit/Package.swift`
