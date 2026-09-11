@@ -1,9 +1,12 @@
+import ArcanosKit
 import Foundation
 import SwiftUI
 
 struct SettingsView: View {
     @State private var runtime = AppRuntime.shared
     @State private var note = ""
+    @State private var gatewayAddress = ""
+    @State private var pairingToken = ""
 
     var body: some View {
         NavigationStack {
@@ -21,9 +24,33 @@ struct SettingsView: View {
                     }
                 }
                 Section("Pairing") {
-                    Label("Device pairing is not available yet", systemImage: "lock.shield")
-                    Text("Remote access needs a scoped, revocable device credential issued by ARCANOS. Phase 1 does not provide credential entry. Local intelligence remains usable when available.")
+                    Label(runtime.deviceState.message, systemImage: "lock.shield")
+                    TextField("Gateway HTTPS origin", text: $gatewayAddress)
+                        .textContentType(.URL)
+                        .keyboardType(.URL)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                    SecureField("One-use pairing token", text: $pairingToken)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .privacySensitive()
+                    Button("Pair this iPhone") {
+                        let submittedPairingToken = pairingToken
+                        let address = gatewayAddress
+                        pairingToken = ""
+                        Task { await runtime.pair(address: address, pairingToken: submittedPairingToken) }
+                    }
+                    .disabled(runtime.changingPairing || gatewayAddress.isEmpty || !pairingToken.hasPrefix("agp1."))
+                    Text("Create a short-lived pairing token in your trusted ARCANOS operator context and verify its Gateway origin. Only the one-use agp1 pairing token belongs here. Device secrets are stored in this iPhone's Keychain.")
                         .foregroundStyle(.secondary)
+                    Button("Check device session") { Task { await runtime.inspectDeviceSession() } }
+                        .disabled(runtime.changingPairing || runtime.gatewayAddress.isEmpty || runtime.demonstration)
+                    Button("Renew device credential") { Task { await runtime.renewCredential() } }
+                        .disabled(runtime.changingPairing || ![.paired, .renewalRequired].contains(runtime.deviceState) || runtime.demonstration)
+                    Button("Revoke this device", role: .destructive) { Task { await runtime.revokeDevice() } }
+                        .disabled(runtime.changingPairing || ![.paired, .renewalRequired].contains(runtime.deviceState) || runtime.demonstration)
+                    Button("Forget local credential", role: .destructive) { Task { await runtime.forgetCredential() } }
+                        .disabled(runtime.changingPairing || runtime.gatewayAddress.isEmpty || runtime.demonstration)
                 }
                 #if DEBUG
                 Section("Developer demonstration") {
@@ -31,6 +58,7 @@ struct SettingsView: View {
                         get: { runtime.demonstration },
                         set: { runtime.setDemonstration($0) }
                     ))
+                    .disabled(runtime.changingPairing)
                     Text("Simulation uses in-memory API fixtures. It makes no network requests and never runs tests or changes a repository. Responses say ‘Simulation’. Switching modes discards pending approvals and tracked jobs.")
                         .foregroundStyle(.secondary)
                 }
@@ -59,7 +87,10 @@ struct SettingsView: View {
                 }
             }
             .navigationTitle("ARCANOS")
-            .task { await runtime.refreshDiagnostics() }
+            .task {
+                gatewayAddress = runtime.gatewayAddress
+                await runtime.refreshDiagnostics()
+            }
         }
     }
 }

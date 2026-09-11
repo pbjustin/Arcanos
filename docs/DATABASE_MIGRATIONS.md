@@ -16,6 +16,38 @@ and rollback after a real SQL failure.
 ## Overview
 Arcanos uses PostgreSQL when `DATABASE_URL` or equivalent `PG*` variables are configured. Without a database, several backend paths continue in reduced or in-memory mode, but queued async jobs and durable inspection require PostgreSQL.
 
+## Paired iPhone credentials
+
+`migrations/20260911_gpt_access_devices_v1.sql` adds `gpt_access_device_pairings`
+and `gpt_access_devices`. The same additive definitions are included in runtime
+schema initialization and represented in Prisma. Existing jobs, operator tokens,
+and Python executor identities require no backfill or credential rotation.
+Device authentication fails closed if these tables are unavailable; it has no
+memory fallback. Reads bypass the query cache so revocation is visible on the
+next request.
+
+Pairing stores only a SHA-256 digest of a random five-minute token. Consuming a
+challenge locks its row, inserts a device, and marks the challenge consumed in
+one transaction. The database rechecks expiry at the write after lock waits.
+One-hour credential digests rotate under a device row lock with a compare and
+swap; the absolute renewal deadline remains thirty days after pairing. Device
+revocation uses the owning principal and workspace and cannot be undone by
+renewal. No raw credential, pairing token, or client local identity is stored.
+Expired challenge digests older than twenty-four hours are pruned on later
+challenge creation; device records retain revocation/audit metadata.
+
+The reversible `migrations/20260911_gpt_access_devices_v1.rollback.sql` removes
+only these new tables, invalidating all paired devices. Applying or reverting
+these definitions against an existing environment requires its normal explicit
+migration authorization. The implementation task does not apply production DDL.
+
+`tests/integration/gpt-access-device-auth.pg18.integration.test.ts` uses the
+shared loopback-only disposable-database guard through
+`GPT_ACCESS_DEVICE_TEST_DATABASE_URL`. It exercises actual pairing/rotation
+races, revocation, expiry during a row lock, database grant constraints, and
+rollback. CI includes it in `test:postgres-fencing` with the required-database
+sentinel; no production credential is required.
+
 ## Prerequisites
 - PostgreSQL access for migration development or validation.
 - Gaming source identity lookup uses the built-in `pg_catalog.pg_c_utf8`

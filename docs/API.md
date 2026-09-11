@@ -1654,6 +1654,53 @@ the prompt separately. HTTP success or a completed backend execution does not
 prove that a supplied guide was used.
 
 ### GPT Access protected gateway
+
+Paired iPhones use a distinct, scoped device principal. The canonical OpenAPI
+builder in `src/services/gptAccessGateway.ts` owns the following additive HTTP
+contract; the iOS model generator consumes that builder directly.
+
+| Operation | Authentication and behavior |
+| --- | --- |
+| `POST /gpt-access/devices/pairing` | Existing operator bearer only. Body `{}` uses the default four client scopes and `git.status`; optional `scopes` and `capabilityActions` grant only supported subsets. Server assigns owner, workspace, origin, TTL, and GPT IDs. Returns `201` with one five-minute pairing token. |
+| `POST /gpt-access/devices/pair` | No existing bearer required. Body contains `pairingToken` and a random installation `localIdentity` UUID. Exact approved `X-Arcanos-Device-Origin` required. Consumes the challenge once and returns `201` with the new device credential/session. |
+| `GET /gpt-access/devices/session` | Current unexpired device bearer and exact origin header. Returns safe session metadata with `paired` or `renewal_required`; no credential material. |
+| `POST /gpt-access/devices/renew` | Current unexpired device bearer and exact origin header; body must be `{}`. Rotates the credential atomically without extending the original thirty-day renewal deadline. |
+| `POST /gpt-access/devices/{deviceId}/revoke` | The current device may revoke itself; the existing operator may revoke a device only within its trusted principal/workspace. Body must be `{}`. Subsequent device authentication is rejected. |
+
+Device credentials are opaque `agd1.` secrets with a one-hour access lifetime;
+pairing tokens use a separate `agp1.` prefix. The server stores secret digests.
+Every device request requires `Authorization: Bearer <device credential>` and
+`X-Arcanos-Device-Origin: <approved HTTPS origin>`. Device identity alone, the
+public origin header, and successful pairing are never execution approval.
+Device POST requests require a nonempty, uncompressed `application/json` body
+of at most 4,096 bytes. The namespace authenticates protected operations and
+applies its existing Gateway rate budget before broad application parsing.
+Parser failures return a fixed `DEVICE_REQUEST_INVALID` envelope without
+echoing input; used challenges return `409 PAIRING_USED`, expired challenges
+return `410 PAIRING_EXPIRED`.
+
+Device grants are limited to `jobs.create`, `jobs.result`, `capabilities.read`,
+and `capabilities.run`, the GPT `arcanos-core`, and explicitly granted Local
+Agent actions from `git.status`, `tests.run`, `patch.preview`, `patch.apply`.
+Deployment-level scopes, module-action allowlists, Local Agent policy, and
+confirmation remain additional gates. Existing operator/server authentication
+and dedicated Local Agent executor authentication remain separate.
+
+The canonical five client operations below accept either the existing operator
+bearer or a device bearer with its required origin header. Devices receive only
+their approved capability projection. Device-created AI and Local Agent jobs
+carry server-owned device, principal, and workspace ownership; result reads
+must match that ownership before exposing any state or result. Learning a job
+ID or a direct job-read token does not authorize cross-device Gateway reads.
+Direct `/jobs/*` read-token protections remain in force. Operator result access
+retains the existing trusted-server behavior.
+
+Expired or revoked credentials cannot poll, inspect, invoke, or renew. A
+client must renew while its current access credential is valid; after missed
+expiry or the absolute renewal deadline it needs a new trusted pairing.
+See [device authentication](gpt-access-gateway.md#paired-iphone-authentication)
+and [the iOS client](../clients/ios/README.md) for lifecycle and device testing.
+
 - `GET /gpt-access/openapi.json` (public schema metadata)
 - `GET /gpt-access/health`
 - `GET /gpt-access/status`

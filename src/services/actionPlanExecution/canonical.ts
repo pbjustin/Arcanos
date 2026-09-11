@@ -39,3 +39,10 @@ export function hashScopedOpaqueValue(scope: string, value: string): string {
 export function fingerprintCanonicalValue(scope: string, value: CanonicalJsonValue): string {
   return hashScopedOpaqueValue(scope, canonicalizeJson(value));
 }
+
+/** Preserve operator bindings while isolating requesters sharing an executor. */
+export function hashLocalAgentIdempotencyKey(key: string, requesterDeviceId?: string): string {
+  return requesterDeviceId
+    ? fingerprintCanonicalValue('local-agent-device-idempotency-key-v1', { requesterDeviceId, key })
+    : hashScopedOpaqueValue('local-agent-idempotency-key-v1', key);
+}

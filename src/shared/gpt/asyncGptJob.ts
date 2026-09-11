@@ -72,7 +72,15 @@ const jsonValueSchema: z.ZodType<unknown> = z.lazy(() =>
   ])
 );
 
+const gptAccessDeviceOwnerSchema = z.object({
+  version: z.literal(1),
+  deviceId: z.string().uuid(),
+  principalId: z.string().min(1).max(128),
+  workspaceId: z.string().min(1).max(128),
+}).strict();
+
 const queuedGptJobInputSchema = z.object({
+  gptAccessDeviceOwner: gptAccessDeviceOwnerSchema.optional(),
   gptId: z.string().trim().min(1).max(128),
   body: z.record(jsonValueSchema),
   prompt: z.string().trim().min(1).optional(),
@@ -135,6 +143,7 @@ export interface QueuedGptBackstageMutationAdmission {
 }
 
 export interface QueuedGptJobInput extends QueuedBridgeSmokeInput {
+  gptAccessDeviceOwner?: z.infer<typeof gptAccessDeviceOwnerSchema>;
   gptId: string;
   body: Record<string, unknown>;
   prompt?: string;
@@ -238,6 +247,7 @@ export function buildQueuedGptBackstageMutationAdmission(input: {
  * Edge case behavior: blank optional strings are omitted so queue rows stay compact.
  */
 export function buildQueuedGptJobInput(input: {
+  gptAccessDeviceOwner?: z.infer<typeof gptAccessDeviceOwnerSchema>;
   gptId: string;
   body: Record<string, unknown>;
   prompt?: string | null;
@@ -253,6 +263,7 @@ export function buildQueuedGptJobInput(input: {
   bridgeAction?: string | null;
 }): QueuedGptJobInput {
   const normalizedJobInput: QueuedGptJobInput = {
+    ...(input.gptAccessDeviceOwner ? { gptAccessDeviceOwner: { ...input.gptAccessDeviceOwner } } : {}),
     gptId: input.gptId.trim(),
     body: input.body,
     producerContract: {

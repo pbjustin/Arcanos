@@ -56,6 +56,9 @@ export {
   sanitizeGptAccessString
 } from '@services/gptAccessSanitization.js';
 import { GPT_ACCESS_SCOPES, type GptAccessScope } from '@services/gptAccessScopes.js';
+import { authenticateGptAccessDevice, isDeviceCredentialRequest } from './gptAccessDeviceAuth.js';
+import type { GptAccessDevicePrincipal } from '@shared/security/gptAccessDevice.js';
+import { matchesGptAccessDeviceJobOwner } from '@shared/security/gptAccessDevicePolicyCore.js';
 
 const SERVICE_VERSION = '1.0.0';
 const TOKEN_ENV_NAME = 'ARCANOS_GPT_ACCESS_TOKEN';
@@ -201,6 +204,7 @@ interface GptAccessLogger {
 
 export interface CreateGptAccessAiJobContext {
   actorKey: string;
+  devicePrincipal?: GptAccessDevicePrincipal;
   requestId?: string;
   traceId?: string;
   idempotencyKey?: string | null;
@@ -209,6 +213,7 @@ export interface CreateGptAccessAiJobContext {
 
 export interface GptAccessJobResultContext {
   actorKey: string;
+  devicePrincipal?: GptAccessDevicePrincipal;
   principalId?: string | null;
   workspaceId?: string | null;
   requestId?: string;
@@ -629,8 +634,16 @@ function readBearerTokenStatus(req: Request):
 }
 
 export function gptAccessAuthMiddleware(req: Request, res: Response, next: NextFunction): void {
-  const route = sanitizeRequestPath(req.originalUrl);
   const expectedToken = readConfiguredAccessToken();
+  const providedToken = readBearerTokenStatus(req);
+  // Preserve every existing configured operator credential, including one that
+  // happens to use the new device prefix. A prefix alone never grants authority.
+  if (isDeviceCredentialRequest(req)
+    && !(expectedToken && providedToken.ok && timingSafeTokenEquals(providedToken.bearerValue, expectedToken))) {
+    void authenticateGptAccessDevice(req, res, next);
+    return;
+  }
+  const route = sanitizeRequestPath(req.originalUrl);
   if (!expectedToken) {
     const message = isProductionEnvironment()
       ? `${TOKEN_ENV_NAME} is required.`
@@ -644,7 +657,6 @@ export function gptAccessAuthMiddleware(req: Request, res: Response, next: NextF
     return;
   }
 
-  const providedToken = readBearerTokenStatus(req);
   if (!providedToken.ok) {
     req.logger?.warn?.('gpt_access.auth.failed', {
       route,
@@ -722,8 +734,10 @@ function isGptAccessScopeExplicitlyConfigured(scope: GptAccessScope): boolean {
 }
 
 export function requireGptAccessScope(scope: GptAccessScope) {
-  return (_req: Request, res: Response, next: NextFunction): void => {
-    if (!isGptAccessScopeAllowed(scope)) {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    if (!isGptAccessScopeAllowed(scope)
+      || (req.gptAccessDevicePrincipal && !req.gptAccessDevicePrincipal.scopes.some(granted => granted === scope))) {
+      req.logger?.warn?.('gpt_access.scope.denied', { scope, deviceId: req.gptAccessDevicePrincipal?.deviceId });
       sendGatewayError(res, 403, 'GPT_ACCESS_SCOPE_DENIED', 'GPT access scope denied.');
       return;
     }
@@ -1014,6 +1028,13 @@ function isGptAccessCreatedJob(
 ): boolean {
   if (!job || !isRecord(job.input)) {
     return false;
+  }
+
+  // Gateway jobs cannot use the generic public job-read capability. Device
+  // reads additionally require immutable server-written ownership on every state.
+  const device = context?.devicePrincipal;
+  if (device) {
+    if (!matchesGptAccessDeviceJobOwner(job.input.gptAccessDeviceOwner, device)) return false;
   }
 
   if (job.job_type === 'gpt') {
@@ -1318,6 +1339,11 @@ export async function getGptAccessJobResult(body: unknown, context?: GptAccessJo
   }
 
   let gatewayJob = isGptAccessCreatedJob(job, context) ? job : null;
+  if (context?.devicePrincipal && !gatewayJob) {
+    context.logger?.warn?.('gpt_access.device.job_read_denied', {
+      deviceId: context.devicePrincipal.deviceId,
+    });
+  }
   if (
     gatewayJob?.job_type === 'local-agent'
     && ['pending', 'running'].includes(gatewayJob.status)
@@ -1447,6 +1473,11 @@ export async function createGptAccessAiJob(body: unknown, context: CreateGptAcce
 
   const request = parsed.data;
   const canonicalGptId = canonicalizeGptAccessAiJobGptId(request.gptId);
+  if (context.devicePrincipal && !context.devicePrincipal.gptIds.includes(canonicalGptId)) {
+    return { statusCode: 403, payload: { ok: false, error: {
+      code: 'DEVICE_SCOPE_DENIED', message: 'Device GPT operation is not permitted.'
+    } } };
+  }
   const bodyIdempotencyKey = normalizeExplicitIdempotencyKey(request.idempotencyKey);
   const headerIdempotencyKey = normalizeExplicitIdempotencyKey(context.idempotencyKey);
   if (bodyIdempotencyKey && headerIdempotencyKey && bodyIdempotencyKey !== headerIdempotencyKey) {
@@ -1563,6 +1594,14 @@ export async function createGptAccessAiJob(body: unknown, context: CreateGptAcce
     requestPath: GPT_ACCESS_JOB_CREATE_ENDPOINT,
     executionModeReason: 'gpt_access_create_ai_job'
   });
+  if (context.devicePrincipal) {
+    queuedInput.gptAccessDeviceOwner = {
+      version: 1,
+      deviceId: context.devicePrincipal.deviceId,
+      principalId: context.devicePrincipal.principalId,
+      workspaceId: context.devicePrincipal.workspaceId,
+    };
+  }
 
   try {
     const plannedJob = await planAutonomousWorkerJob('gpt', queuedInput);
@@ -1580,6 +1619,7 @@ export async function createGptAccessAiJob(body: unknown, context: CreateGptAcce
     });
 
     context.logger?.info?.('gpt_access.ai_job.enqueued', {
+      ...(context.devicePrincipal ? { deviceId: context.devicePrincipal.deviceId } : {}),
       traceId,
       requestType: 'createAiJob',
       gptId: canonicalGptId,
@@ -2336,6 +2376,8 @@ export function buildGptAccessCapabilityCatalogExtension() {
 export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = {}) {
   const serverUrl = normalizeOpenApiServerUrl(options.serverUrl) ?? resolveGptAccessOpenApiServerUrl();
   const protectedSecurity = [{ bearerAuth: [] }];
+  const deviceSecurity = [{ deviceBearerAuth: [], deviceOrigin: [] }];
+  const operatorOrDeviceSecurity = [{ bearerAuth: [] }, { deviceBearerAuth: [], deviceOrigin: [] }];
   const noStoreResponseHeaders = {
     'Cache-Control': {
       '$ref': '#/components/headers/NoStore'
@@ -2361,7 +2403,20 @@ export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = 
         bearerAuth: {
           type: 'http',
           scheme: 'bearer',
-          bearerFormat: 'opaque'
+          bearerFormat: 'opaque',
+          description: 'Existing trusted operator/server credential. Never provision this credential to an iPhone.'
+        },
+        deviceBearerAuth: {
+          type: 'http',
+          scheme: 'bearer',
+          bearerFormat: 'agd1.<opaque-secret>',
+          description: 'Scoped paired-device credential. Every protected operation checks current server-side device, scope, expiration, and revocation state.'
+        },
+        deviceOrigin: {
+          type: 'apiKey',
+          in: 'header',
+          name: 'X-Arcanos-Device-Origin',
+          description: 'Exact HTTPS origin authorized by the pairing server. Required alongside a device bearer; this public value is not authentication by itself.'
         }
       },
       headers: {
@@ -2374,6 +2429,111 @@ export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = 
         }
       },
       schemas: {
+        DevicePairingRequest: {
+          type: 'object',
+          description: 'Trusted operator grants a subset of iPhone operations. Principal, workspace, origin, expiry, and GPT IDs are assigned by the server.',
+          properties: {
+            scopes: {
+              type: 'array', minItems: 1, maxItems: 4, uniqueItems: true,
+              items: { type: 'string', enum: ['jobs.create', 'jobs.result', 'capabilities.read', 'capabilities.run'] }
+            },
+            capabilityActions: {
+              type: 'array', maxItems: 4, uniqueItems: true,
+              items: { type: 'string', enum: ['git.status', 'tests.run', 'patch.preview', 'patch.apply'] }
+            }
+          },
+          additionalProperties: false
+        },
+        DevicePairingResponse: {
+          type: 'object',
+          description: 'Single-use pairing material, returned once to a trusted operator. Expires after five minutes; never persist it in logs.',
+          properties: {
+            ok: { type: 'boolean', const: true },
+            pairingToken: { type: 'string', pattern: '^agp1\\.[A-Za-z0-9_-]{43}$', 'x-arcanos-sensitive': true },
+            expiresAt: { type: 'string', format: 'date-time' },
+            origin: { type: 'string', format: 'uri', pattern: '^https://' }
+          },
+          required: ['ok', 'pairingToken', 'expiresAt', 'origin'],
+          additionalProperties: false
+        },
+        DevicePairRequest: {
+          type: 'object',
+          description: 'Consume operator-issued pairing material once. localIdentity is a random installation UUID retained in Keychain, never a hardware identifier or an authentication credential.',
+          properties: {
+            pairingToken: { type: 'string', pattern: '^agp1\\.[A-Za-z0-9_-]{43}$', writeOnly: true, 'x-arcanos-sensitive': true },
+            localIdentity: { type: 'string', format: 'uuid' }
+          },
+          required: ['pairingToken', 'localIdentity'],
+          additionalProperties: false
+        },
+        DeviceCredentialResponse: {
+          type: 'object',
+          description: 'One-hour device credential. Store the complete session atomically in origin-bound, nonsynchronizing, device-only Keychain. Renewal preserves the original thirty-day absolute deadline.',
+          properties: {
+            ok: { type: 'boolean', const: true },
+            deviceId: { type: 'string', format: 'uuid' },
+            credential: { type: 'string', pattern: '^agd1\\.[A-Za-z0-9_-]{43}$', 'x-arcanos-sensitive': true },
+            tokenType: { type: 'string', const: 'Bearer' },
+            audience: { type: 'string', const: 'gpt-access-device-v1' },
+            origin: { type: 'string', format: 'uri', pattern: '^https://' },
+            issuedAt: { type: 'string', format: 'date-time' },
+            expiresAt: { type: 'string', format: 'date-time' },
+            renewalExpiresAt: { type: 'string', format: 'date-time' },
+            scopes: {
+              type: 'array', minItems: 1, maxItems: 4, uniqueItems: true,
+              items: { type: 'string', enum: ['jobs.create', 'jobs.result', 'capabilities.read', 'capabilities.run'] }
+            },
+            capabilityActions: {
+              type: 'array', maxItems: 4, uniqueItems: true,
+              items: { type: 'string', enum: ['git.status', 'tests.run', 'patch.preview', 'patch.apply'] }
+            },
+            gptIds: { type: 'array', minItems: 1, maxItems: 1, items: { type: 'string', const: 'arcanos-core' } }
+          },
+          required: ['ok', 'deviceId', 'credential', 'tokenType', 'audience', 'origin', 'issuedAt', 'expiresAt', 'renewalExpiresAt', 'scopes', 'capabilityActions', 'gptIds'],
+          additionalProperties: false
+        },
+        DeviceSessionResponse: {
+          type: 'object',
+          description: 'Current server-authoritative device metadata without credential material. Pairing does not grant confirmation approval.',
+          properties: {
+            ok: { type: 'boolean', const: true },
+            deviceId: { type: 'string', format: 'uuid' },
+            tokenType: { type: 'string', const: 'Bearer' },
+            audience: { type: 'string', const: 'gpt-access-device-v1' },
+            origin: { type: 'string', format: 'uri', pattern: '^https://' },
+            issuedAt: { type: 'string', format: 'date-time' },
+            expiresAt: { type: 'string', format: 'date-time' },
+            renewalExpiresAt: { type: 'string', format: 'date-time' },
+            scopes: {
+              type: 'array', minItems: 1, maxItems: 4, uniqueItems: true,
+              items: { type: 'string', enum: ['jobs.create', 'jobs.result', 'capabilities.read', 'capabilities.run'] }
+            },
+            capabilityActions: {
+              type: 'array', maxItems: 4, uniqueItems: true,
+              items: { type: 'string', enum: ['git.status', 'tests.run', 'patch.preview', 'patch.apply'] }
+            },
+            gptIds: { type: 'array', minItems: 1, maxItems: 1, items: { type: 'string', const: 'arcanos-core' } },
+            state: { type: 'string', enum: ['paired', 'renewal_required'] }
+          },
+          required: ['ok', 'deviceId', 'tokenType', 'audience', 'origin', 'issuedAt', 'expiresAt', 'renewalExpiresAt', 'scopes', 'capabilityActions', 'gptIds', 'state'],
+          additionalProperties: false
+        },
+        DeviceRenewRequest: {
+          type: 'object', properties: {}, additionalProperties: false
+        },
+        DeviceRevokeRequest: {
+          type: 'object', properties: {}, additionalProperties: false
+        },
+        DeviceRevokeResponse: {
+          type: 'object',
+          properties: {
+            ok: { type: 'boolean', const: true },
+            deviceId: { type: 'string', format: 'uuid' },
+            state: { type: 'string', const: 'revoked' }
+          },
+          required: ['ok', 'deviceId', 'state'],
+          additionalProperties: false
+        },
         ConfirmationChallenge: {
           type: 'object',
           description: 'Short-lived confirmation challenge returned by confirmGate when an operation requires approval.',
@@ -2867,6 +3027,97 @@ export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = 
       }
     },
     paths: {
+      '/gpt-access/devices/pairing': {
+        post: {
+          operationId: 'createDevicePairing',
+          summary: 'Create a short-lived iPhone pairing challenge from a trusted operator context.',
+          description: 'Operator only. Server assigns principal/workspace, approved origin, five-minute expiry, and least-privilege grants. Transfer only the resulting pairing material to the iPhone.',
+          security: protectedSecurity,
+          requestBody: { required: true, content: { 'application/json': { schema: { '$ref': '#/components/schemas/DevicePairingRequest' } } } },
+          responses: {
+            '201': { description: 'Single-use pairing challenge created.', headers: noStoreResponseHeaders, content: { 'application/json': { schema: { '$ref': '#/components/schemas/DevicePairingResponse' } } } },
+            '400': { description: 'Invalid scope or capability grant.', headers: noStoreResponseHeaders, content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '413': { description: 'Device JSON request exceeds 4096 bytes (DEVICE_REQUEST_INVALID).', headers: noStoreResponseHeaders, content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '415': { description: 'Device requests require uncompressed application/json (DEVICE_REQUEST_INVALID).', headers: noStoreResponseHeaders, content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '401': { description: 'Operator authentication required.', headers: noStoreResponseHeaders, content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '403': { description: 'Device principals cannot create pairing challenges, or the grant is not permitted.', headers: noStoreResponseHeaders, content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '503': { description: 'Pairing storage or trusted server context unavailable.', headers: noStoreResponseHeaders, content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } }
+          }
+        }
+      },
+      '/gpt-access/devices/pair': {
+        post: {
+          operationId: 'pairDevice',
+          summary: 'Consume one pairing challenge and issue a scoped device credential.',
+          description: 'Submit single-use pairing material and a random Keychain installation UUID. The exact approved origin header is required. No operator credential is sent by this operation.',
+          security: [],
+          parameters: [{ name: 'X-Arcanos-Device-Origin', in: 'header', required: true, schema: { type: 'string', format: 'uri', pattern: '^https://' } }],
+          requestBody: { required: true, content: { 'application/json': { schema: { '$ref': '#/components/schemas/DevicePairRequest' } } } },
+          responses: {
+            '201': { description: 'Device registered and credential issued once.', headers: noStoreResponseHeaders, content: { 'application/json': { schema: { '$ref': '#/components/schemas/DeviceCredentialResponse' } } } },
+            '400': { description: 'Malformed pairing material or installation UUID.', headers: noStoreResponseHeaders, content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '413': { description: 'Device JSON request exceeds 4096 bytes (DEVICE_REQUEST_INVALID).', headers: noStoreResponseHeaders, content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '415': { description: 'Device requests require uncompressed application/json (DEVICE_REQUEST_INVALID).', headers: noStoreResponseHeaders, content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '401': { description: 'Device registration authorization invalid.', headers: noStoreResponseHeaders, content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '403': { description: 'Pairing origin denied.', headers: noStoreResponseHeaders, content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '409': { description: 'Pairing challenge already consumed (PAIRING_USED).', headers: noStoreResponseHeaders, content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '410': { description: 'Pairing challenge expired (PAIRING_EXPIRED).', headers: noStoreResponseHeaders, content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '503': { description: 'Pairing storage unavailable.', headers: noStoreResponseHeaders, content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } }
+          }
+        }
+      },
+      '/gpt-access/devices/session': {
+        get: {
+          operationId: 'getDeviceSession',
+          summary: 'Inspect the currently authenticated device session without returning secrets.',
+          description: 'Requires a current unexpired device credential. Returns renewal_required near credential expiry or the absolute renewal deadline. Revoked and expired credentials are rejected.',
+          security: deviceSecurity,
+          responses: {
+            '200': { description: 'Current session metadata.', headers: noStoreResponseHeaders, content: { 'application/json': { schema: { '$ref': '#/components/schemas/DeviceSessionResponse' } } } },
+            '401': { description: 'Device credential missing, invalid, expired, or revoked.', headers: noStoreResponseHeaders, content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '403': { description: 'Device origin denied or operator credential supplied.', headers: noStoreResponseHeaders, content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '503': { description: 'Device authorization unavailable.', headers: noStoreResponseHeaders, content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } }
+          }
+        }
+      },
+      '/gpt-access/devices/renew': {
+        post: {
+          operationId: 'renewDeviceCredential',
+          summary: 'Rotate the current unexpired device credential before its expiry.',
+          description: 'Requires the current credential and approved origin. Rotation atomically invalidates the previous credential. Renewal cannot extend the original thirty-day deadline; expired or revoked sessions require trusted pairing.',
+          security: deviceSecurity,
+          requestBody: { required: true, content: { 'application/json': { schema: { '$ref': '#/components/schemas/DeviceRenewRequest' } } } },
+          responses: {
+            '200': { description: 'Replacement credential issued once.', headers: noStoreResponseHeaders, content: { 'application/json': { schema: { '$ref': '#/components/schemas/DeviceCredentialResponse' } } } },
+            '400': { description: 'Expected an empty JSON object.', headers: noStoreResponseHeaders, content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '413': { description: 'Device JSON request exceeds 4096 bytes (DEVICE_REQUEST_INVALID).', headers: noStoreResponseHeaders, content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '415': { description: 'Device requests require uncompressed application/json (DEVICE_REQUEST_INVALID).', headers: noStoreResponseHeaders, content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '401': { description: 'Credential invalid, expired, revoked, or renewal deadline reached.', headers: noStoreResponseHeaders, content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '403': { description: 'Device origin denied.', headers: noStoreResponseHeaders, content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '503': { description: 'Device authorization unavailable.', headers: noStoreResponseHeaders, content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } }
+          }
+        }
+      },
+      '/gpt-access/devices/{deviceId}/revoke': {
+        post: {
+          operationId: 'revokeDevice',
+          summary: 'Revoke this device or a device owned by the trusted operator context.',
+          description: 'The same authenticated device may revoke itself. A trusted operator may revoke a device only within its server-owned principal/workspace. Subsequent protected requests fail even if the old credential remains on the phone.',
+          security: operatorOrDeviceSecurity,
+          parameters: [{ name: 'deviceId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+          requestBody: { required: true, content: { 'application/json': { schema: { '$ref': '#/components/schemas/DeviceRevokeRequest' } } } },
+          responses: {
+            '200': { description: 'Device revoked.', headers: noStoreResponseHeaders, content: { 'application/json': { schema: { '$ref': '#/components/schemas/DeviceRevokeResponse' } } } },
+            '400': { description: 'Invalid device ID or nonempty request body.', headers: noStoreResponseHeaders, content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '413': { description: 'Device JSON request exceeds 4096 bytes (DEVICE_REQUEST_INVALID).', headers: noStoreResponseHeaders, content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '415': { description: 'Device requests require uncompressed application/json (DEVICE_REQUEST_INVALID).', headers: noStoreResponseHeaders, content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '401': { description: 'Authentication required or rejected.', headers: noStoreResponseHeaders, content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '403': { description: 'Device or operator does not own the requested device.', headers: noStoreResponseHeaders, content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '404': { description: 'Device not found in the authorized ownership context.', headers: noStoreResponseHeaders, content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '503': { description: 'Device authorization unavailable.', headers: noStoreResponseHeaders, content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } }
+          }
+        }
+      },
       '/gpt-access/health': {
         get: {
           operationId: 'arcanosAccessHealth',
@@ -2975,7 +3226,7 @@ export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = 
           operationId: 'listCapabilitiesV1',
           summary: 'List GPT Access capabilities backed by connected runtime modules.',
           description: 'Returns a safe capability projection from the existing module registry. Handlers, secrets, GPT bindings, and implementation details are not exposed.',
-          security: protectedSecurity,
+          security: operatorOrDeviceSecurity,
           responses: {
             '200': {
               description: 'Capability list.',
@@ -2994,7 +3245,7 @@ export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = 
         get: {
           operationId: 'getCapabilityV1',
           summary: 'Inspect one GPT Access capability.',
-          security: protectedSecurity,
+          security: operatorOrDeviceSecurity,
           parameters: [
             {
               name: 'id',
@@ -3022,7 +3273,7 @@ export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = 
           operationId: 'runCapabilityV1',
           summary: 'Run one action on a GPT Access capability.',
           description: 'Run an allowlisted capability action. On CONFIRMATION_REQUIRED, pause for explicit operator approval. After approval, retry this exact POST once with unchanged action/payload and only the raw confirmationChallenge.id as top-level confirmation_token. Stop on failure or another challenge.',
-          security: protectedSecurity,
+          security: operatorOrDeviceSecurity,
           parameters: [
             {
               name: 'id',
@@ -3134,7 +3385,7 @@ export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = 
           operationId: 'createAiJob',
           summary: 'Create an async backend AI generation job.',
           description: 'Use for backend AI generation, advice, explanation, planning, review, architecture, summarization, writing, and how-should prompts. Send canonical gptId arcanos-core and the complete user request in task. Poll getJobResult with the returned jobId until terminal.',
-          security: protectedSecurity,
+          security: operatorOrDeviceSecurity,
           parameters: [
             {
               name: 'Idempotency-Key',
@@ -3183,7 +3434,7 @@ export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = 
           operationId: 'getJobResult',
           summary: 'Read an async job result without using /gpt/:gptId.',
           description: 'Poll with the jobId returned by createAiJob or an asynchronous protected capability such as ARCANOS:LOCAL_AGENT. If status is pending or running, poll this operation again. If completed, return the result. If failed, expired, or not_found, stop and report that terminal state.',
-          security: protectedSecurity,
+          security: operatorOrDeviceSecurity,
           requestBody: {
             required: true,
             content: {

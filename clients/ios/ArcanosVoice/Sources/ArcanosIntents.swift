@@ -10,7 +10,7 @@ struct AskArcanos: AppIntent {
     var command: String?
 
     static var parameterSummary: some ParameterSummary {
-        Summary("Ask ARCANOS \(.$command)")
+        Summary("Ask ARCANOS \(\.$command)")
     }
 
     @MainActor
@@ -108,7 +108,7 @@ struct CaptureArcanosNote: AppIntent {
     var note: String
 
     static var parameterSummary: some ParameterSummary {
-        Summary("Capture \(.$note) with ARCANOS")
+        Summary("Capture \(\.$note) with ARCANOS")
     }
 
     @MainActor

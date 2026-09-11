@@ -4181,6 +4181,13 @@ async function executeRequestCase(
     );
   }
   if (
+    requestCase.expectedType === 'web-readiness'
+    && response.headers.get(NATIVE_PR_PREVIEW_E2E_CONTRACT.iosDevicePolicy.proofHeader)
+      !== NATIVE_PR_PREVIEW_E2E_CONTRACT.iosDevicePolicy.proofVersion
+  ) {
+    fail('NATIVE_PR_PREVIEW_IOS_DEVICE_POLICY_PROOF_INVALID', requestCase.caseId);
+  }
+  if (
     (
       requestCase.expectedType === 'gaming-source'
       || requestCase.expectedType === 'dispatch-gpt-identifier-contract'
@@ -4656,6 +4663,9 @@ async function executeRequestCase(
       : {}),
     ...(requestCase.expectedType === 'worker-readiness'
       ? { workerBudgetReadinessVerified: true }
+      : {}),
+    ...(requestCase.expectedType === 'web-readiness'
+      ? { iosDevicePolicyVerified: true }
       : {}),
     ...(generationProofStartedAt === null
       ? {}

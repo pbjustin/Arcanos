@@ -19,13 +19,19 @@ final class AppRuntime {
     private(set) var capturedNoteCount = 0
     private(set) var diagnosticMessage = "Ready for Ask Arcanos."
     private(set) var demonstration = false
+    private(set) var deviceState: DeviceCredentialState = .unpaired
+    private(set) var gatewayAddress = ""
+    private(set) var changingPairing = false
 
     @ObservationIgnored private var session = ArcanosSession(router: AIRouter())
     @ObservationIgnored private let localContext = LocalContextStore()
     @ObservationIgnored private var latestJobID: String?
     @ObservationIgnored private var generation = UUID()
+    @ObservationIgnored private let credentialStore = KeychainCredentialStore()
+    @ObservationIgnored private var pairing: DevicePairingClient?
 
     private init() {
+        restoreGateway()
         #if DEBUG
         if UserDefaults.standard.bool(forKey: "arcanos.demo.enabled") {
             setDemonstration(true)
@@ -40,18 +46,90 @@ final class AppRuntime {
         case .unavailable:
             localModelStatus = "Local model unavailable. Requires iOS 26, a supported Apple Intelligence device, and a ready model."
         }
+        await refreshDeviceState()
+    }
+
+    func pair(address: String, pairingToken: String) async {
+        guard !changingPairing else { return }
+        changingPairing = true
+        defer { changingPairing = false }
+        do {
+            guard let origin = URL(string: address.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+                throw GatewayError.invalidConfiguration
+            }
+            let broker = try DevicePairingClient(origin: origin, store: credentialStore)
+            try await broker.pair(pairingToken: pairingToken.trimmingCharacters(in: .whitespacesAndNewlines))
+            let canonical = await broker.origin
+            UserDefaults.standard.set(canonical.absoluteString, forKey: "arcanos.gateway.origin")
+            demonstration = false
+            #if DEBUG
+            UserDefaults.standard.set(false, forKey: "arcanos.demo.enabled")
+            #endif
+            try installGateway(canonical)
+            diagnosticMessage = "Device pairing completed. Remote requests now use this device credential."
+        } catch { diagnosticMessage = SessionResult.failure(error).text }
+        await refreshDeviceState()
+    }
+
+    func renewCredential() async {
+        guard !changingPairing, let pairing else { return }
+        changingPairing = true
+        defer { changingPairing = false }
+        do {
+            try await pairing.renew()
+            diagnosticMessage = "The device credential was renewed and replaced in Keychain."
+        } catch { diagnosticMessage = SessionResult.failure(error).text }
+        await refreshDeviceState()
+    }
+
+    func inspectDeviceSession() async {
+        guard !changingPairing, let pairing else { return }
+        do {
+            _ = try await pairing.inspect()
+            diagnosticMessage = "The Gateway accepted this device session."
+        } catch { diagnosticMessage = SessionResult.failure(error).text }
+        await refreshDeviceState()
+    }
+
+    func revokeDevice() async {
+        guard !changingPairing, let pairing else { return }
+        changingPairing = true
+        defer { changingPairing = false }
+        do {
+            try await pairing.revoke()
+            pendingApproval = nil
+            latestJobID = nil
+            generation = UUID()
+            diagnosticMessage = "The Gateway revoked this device. Local intelligence remains available."
+        } catch { diagnosticMessage = SessionResult.failure(error).text }
+        await refreshDeviceState()
+    }
+
+    func forgetCredential() async {
+        guard !changingPairing, !demonstration, !gatewayAddress.isEmpty,
+              let origin = URL(string: gatewayAddress) else { return }
+        changingPairing = true
+        defer { changingPairing = false }
+        do {
+            try await credentialStore.removeCredential(for: origin)
+            try installGateway(origin)
+            diagnosticMessage = "Local credential removed. This does not confirm server revocation; use the trusted operator context if needed."
+        } catch { diagnosticMessage = SessionResult.failure(error).text }
+        await refreshDeviceState()
     }
 
     func ask(_ command: String) async -> VoicePresentation {
         let activeGeneration = generation
         let context = await localContext.capturedNote()
         let result = await session.ask(command, localContext: context)
+        await refreshDeviceState()
         return consume(result, generation: activeGeneration)
     }
 
     func approve(_ approvalID: UUID) async -> VoicePresentation {
         let activeGeneration = generation
         let result = await session.approve(approvalID)
+        await refreshDeviceState()
         if pendingApproval?.id == approvalID { pendingApproval = nil }
         return consume(result, generation: activeGeneration)
     }
@@ -69,6 +147,7 @@ final class AppRuntime {
         }
         let activeGeneration = generation
         let result = await session.checkJob(latestJobID)
+        await refreshDeviceState()
         return consume(result, generation: activeGeneration)
     }
 
@@ -92,12 +171,15 @@ final class AppRuntime {
 
     #if DEBUG
     func setDemonstration(_ enabled: Bool) {
+        guard !changingPairing else { return }
         do {
             let replacement: ArcanosSession
             if enabled {
                 replacement = try DemoGateway.makeSession()
             } else {
-                replacement = ArcanosSession(router: AIRouter())
+                if !gatewayAddress.isEmpty, let origin = URL(string: gatewayAddress) {
+                    replacement = try makeGatewaySession(origin)
+                } else { replacement = ArcanosSession(router: AIRouter()) }
             }
             session = replacement
             demonstration = enabled
@@ -105,13 +187,42 @@ final class AppRuntime {
             pendingApproval = nil
             latestJobID = nil
             UserDefaults.standard.set(enabled, forKey: "arcanos.demo.enabled")
-            diagnosticMessage = enabled ? "Simulation enabled. No network request or real capability action will run." : "Local mode enabled. Remote pairing is not available in Phase 1."
+            diagnosticMessage = enabled ? "Simulation enabled. No network request or real capability action will run." : "Live device mode enabled. Remote operations require a valid paired session."
         } catch {
             // Never display a raw error, which might contain request metadata.
             diagnosticMessage = "The demonstration could not start."
         }
     }
     #endif
+
+    private func restoreGateway() {
+        guard let address = UserDefaults.standard.string(forKey: "arcanos.gateway.origin"),
+              let origin = URL(string: address) else { return }
+        do { try installGateway(origin) }
+        catch { diagnosticMessage = "The saved Gateway origin is invalid. Pair again in the app." }
+    }
+
+    private func makeGatewaySession(_ origin: URL) throws -> ArcanosSession {
+        let gateway = try GatewayClient(baseURL: origin, credentials: credentialStore)
+        let jobs = JobClient(gateway: gateway)
+        return ArcanosSession(router: AIRouter(remote: RemoteAI(jobs: jobs)),
+                              capabilities: CapabilityClient(gateway: gateway), jobs: jobs)
+    }
+
+    private func installGateway(_ origin: URL) throws {
+        session = try makeGatewaySession(origin)
+        pairing = try DevicePairingClient(origin: origin, store: credentialStore)
+        gatewayAddress = origin.absoluteString
+        generation = UUID()
+        pendingApproval = nil
+        latestJobID = nil
+    }
+
+    private func refreshDeviceState() async {
+        guard !gatewayAddress.isEmpty, let origin = URL(string: gatewayAddress) else { deviceState = .unpaired; return }
+        do { deviceState = try await credentialStore.state(for: origin) }
+        catch { deviceState = .authenticationFailure }
+    }
 
     private func consume(_ result: SessionResult, generation activeGeneration: UUID) -> VoicePresentation {
         guard activeGeneration == generation else {

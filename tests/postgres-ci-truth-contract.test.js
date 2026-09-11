@@ -19,6 +19,7 @@ const POSTGRES_TEST_DATABASE_ENVIRONMENTS = [
   'BACKSTAGE_CANON_STORYLINE_PG18_TEST_DATABASE_URL',
   'BACKSTAGE_NOTION_PARTITION_PG18_TEST_DATABASE_URL',
   'NON_GPT_TERMINAL_RETENTION_TEST_DATABASE_URL',
+  'GPT_ACCESS_DEVICE_TEST_DATABASE_URL',
 ];
 const POSTGRES_TEST_FILES = [
   'tests/integration/local-agent-hardening.pg.integration.test.ts',
@@ -33,6 +34,7 @@ const POSTGRES_TEST_FILES = [
   'tests/integration/backstage-notion-partition-storage.pg18.integration.test.ts',
   'tests/integration/non-gpt-terminal-retention.pg18.integration.test.ts',
   'tests/integration/gaming-durable-rag.pg18.integration.test.ts',
+  'tests/integration/gpt-access-device-auth.pg18.integration.test.ts',
 ];
 
 function readNormalized(path) {
@@ -49,7 +51,7 @@ function readWorkflowJob(workflow, jobId, nextJobId) {
 }
 
 describe('required PostgreSQL CI truth contract', () => {
-  it('uses one required-database sentinel for all twelve PostgreSQL suites', () => {
+  it('uses one required-database sentinel for all thirteen PostgreSQL suites', () => {
     const workflow = readNormalized('.github/workflows/ci-cd.yml');
     const postgresJob = readWorkflowJob(
       workflow,

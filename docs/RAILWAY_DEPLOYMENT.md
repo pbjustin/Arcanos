@@ -417,6 +417,22 @@ Launcher behavior:
   existing 138-request matrix. Results prove real HTTPS client-to-fixture
   behavior, not iPhone/Siri/Foundation Models, device pairing, active Local Agent
   execution, real queue persistence, or production operations.
+- The iOS device-policy fixture adds credential-free `GET /ios/device-contract`
+  with exact `ios-device-policy/v1` evidence for production-shared grant schema,
+  credential state validation, owned-job filtering, and requester-device
+  idempotency. Fixed inputs cover invalid grants/origins, expiry/renewal,
+  revocation/audience, cross-device ownership, and operator compatibility.
+  Web readiness executes these assertions fail-closed while preserving its
+  existing response body. The supplemental exact-head native verifier requires
+  the versioned proof header on both existing web-readiness requests; the trusted
+  138-request plan is unchanged. The Swift HTTPS proof checks the exact policy
+  response before and after Gateway traffic and requires worker denial.
+  Synthetic Gateway admission permits the client's device-origin header only
+  with the fixed selector/public fixture bearer and an exact matching PR HTTPS
+  host; duplicate, mismatched, or additional credential headers remain denied.
+  Import guards pin the reviewed pure cores and the exact canonical hash helper.
+  This is served policy evidence; the separate PostgreSQL/Swift E2E fixture
+  supplies real pairing, credential persistence, and worker execution evidence.
 - Cutover is deliberately fail closed. Railway-native PR environment creation
   must be disabled before the controller will create a custom preview, because
   both mechanisms can create competing environments and deployments for the

@@ -1,31 +1,148 @@
 {
   "source": "src/services/gptAccessGateway.ts",
   "openapi": "3.1.0",
+  "securitySchemes": {
+    "bearerAuth": {
+      "type": "http",
+      "scheme": "bearer",
+      "bearerFormat": "opaque",
+      "description": "Existing trusted operator/server credential. Never provision this credential to an iPhone."
+    },
+    "deviceBearerAuth": {
+      "type": "http",
+      "scheme": "bearer",
+      "bearerFormat": "agd1.<opaque-secret>",
+      "description": "Scoped paired-device credential. Every protected operation checks current server-side device, scope, expiration, and revocation state."
+    },
+    "deviceOrigin": {
+      "type": "apiKey",
+      "in": "header",
+      "name": "X-Arcanos-Device-Origin",
+      "description": "Exact HTTPS origin authorized by the pairing server. Required alongside a device bearer; this public value is not authentication by itself."
+    }
+  },
   "operations": [
     {
       "path": "/gpt-access/jobs/create",
       "method": "post",
-      "operationId": "createAiJob"
+      "operationId": "createAiJob",
+      "security": [
+        {
+          "bearerAuth": []
+        },
+        {
+          "deviceBearerAuth": [],
+          "deviceOrigin": []
+        }
+      ]
     },
     {
       "path": "/gpt-access/jobs/result",
       "method": "post",
-      "operationId": "getJobResult"
+      "operationId": "getJobResult",
+      "security": [
+        {
+          "bearerAuth": []
+        },
+        {
+          "deviceBearerAuth": [],
+          "deviceOrigin": []
+        }
+      ]
     },
     {
       "path": "/gpt-access/capabilities/v1",
       "method": "get",
-      "operationId": "listCapabilitiesV1"
+      "operationId": "listCapabilitiesV1",
+      "security": [
+        {
+          "bearerAuth": []
+        },
+        {
+          "deviceBearerAuth": [],
+          "deviceOrigin": []
+        }
+      ]
     },
     {
       "path": "/gpt-access/capabilities/v1/{id}",
       "method": "get",
-      "operationId": "getCapabilityV1"
+      "operationId": "getCapabilityV1",
+      "security": [
+        {
+          "bearerAuth": []
+        },
+        {
+          "deviceBearerAuth": [],
+          "deviceOrigin": []
+        }
+      ]
     },
     {
       "path": "/gpt-access/capabilities/v1/{id}/run",
       "method": "post",
-      "operationId": "runCapabilityV1"
+      "operationId": "runCapabilityV1",
+      "security": [
+        {
+          "bearerAuth": []
+        },
+        {
+          "deviceBearerAuth": [],
+          "deviceOrigin": []
+        }
+      ]
+    },
+    {
+      "path": "/gpt-access/devices/pairing",
+      "method": "post",
+      "operationId": "createDevicePairing",
+      "security": [
+        {
+          "bearerAuth": []
+        }
+      ]
+    },
+    {
+      "path": "/gpt-access/devices/pair",
+      "method": "post",
+      "operationId": "pairDevice",
+      "security": []
+    },
+    {
+      "path": "/gpt-access/devices/session",
+      "method": "get",
+      "operationId": "getDeviceSession",
+      "security": [
+        {
+          "deviceBearerAuth": [],
+          "deviceOrigin": []
+        }
+      ]
+    },
+    {
+      "path": "/gpt-access/devices/renew",
+      "method": "post",
+      "operationId": "renewDeviceCredential",
+      "security": [
+        {
+          "deviceBearerAuth": [],
+          "deviceOrigin": []
+        }
+      ]
+    },
+    {
+      "path": "/gpt-access/devices/{deviceId}/revoke",
+      "method": "post",
+      "operationId": "revokeDevice",
+      "security": [
+        {
+          "bearerAuth": []
+        },
+        {
+          "deviceBearerAuth": [],
+          "deviceOrigin": []
+        }
+      ]
     }
   ],
   "schemas": {
@@ -648,6 +765,323 @@
       "required": [
         "ok",
         "result"
+      ],
+      "additionalProperties": false
+    },
+    "DevicePairingRequest": {
+      "type": "object",
+      "description": "Trusted operator grants a subset of iPhone operations. Principal, workspace, origin, expiry, and GPT IDs are assigned by the server.",
+      "properties": {
+        "scopes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "jobs.create",
+              "jobs.result",
+              "capabilities.read",
+              "capabilities.run"
+            ]
+          }
+        },
+        "capabilityActions": {
+          "type": "array",
+          "maxItems": 4,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "git.status",
+              "tests.run",
+              "patch.preview",
+              "patch.apply"
+            ]
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "DevicePairingResponse": {
+      "type": "object",
+      "description": "Single-use pairing material, returned once to a trusted operator. Expires after five minutes; never persist it in logs.",
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "const": true
+        },
+        "pairingToken": {
+          "type": "string",
+          "pattern": "^agp1\\.[A-Za-z0-9_-]{43}$",
+          "x-arcanos-sensitive": true
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "origin": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https://"
+        }
+      },
+      "required": [
+        "ok",
+        "pairingToken",
+        "expiresAt",
+        "origin"
+      ],
+      "additionalProperties": false
+    },
+    "DevicePairRequest": {
+      "type": "object",
+      "description": "Consume operator-issued pairing material once. localIdentity is a random installation UUID retained in Keychain, never a hardware identifier or an authentication credential.",
+      "properties": {
+        "pairingToken": {
+          "type": "string",
+          "pattern": "^agp1\\.[A-Za-z0-9_-]{43}$",
+          "writeOnly": true,
+          "x-arcanos-sensitive": true
+        },
+        "localIdentity": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "required": [
+        "pairingToken",
+        "localIdentity"
+      ],
+      "additionalProperties": false
+    },
+    "DeviceCredentialResponse": {
+      "type": "object",
+      "description": "One-hour device credential. Store the complete session atomically in origin-bound, nonsynchronizing, device-only Keychain. Renewal preserves the original thirty-day absolute deadline.",
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "const": true
+        },
+        "deviceId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "credential": {
+          "type": "string",
+          "pattern": "^agd1\\.[A-Za-z0-9_-]{43}$",
+          "x-arcanos-sensitive": true
+        },
+        "tokenType": {
+          "type": "string",
+          "const": "Bearer"
+        },
+        "audience": {
+          "type": "string",
+          "const": "gpt-access-device-v1"
+        },
+        "origin": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https://"
+        },
+        "issuedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "renewalExpiresAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "scopes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "jobs.create",
+              "jobs.result",
+              "capabilities.read",
+              "capabilities.run"
+            ]
+          }
+        },
+        "capabilityActions": {
+          "type": "array",
+          "maxItems": 4,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "git.status",
+              "tests.run",
+              "patch.preview",
+              "patch.apply"
+            ]
+          }
+        },
+        "gptIds": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": {
+            "type": "string",
+            "const": "arcanos-core"
+          }
+        }
+      },
+      "required": [
+        "ok",
+        "deviceId",
+        "credential",
+        "tokenType",
+        "audience",
+        "origin",
+        "issuedAt",
+        "expiresAt",
+        "renewalExpiresAt",
+        "scopes",
+        "capabilityActions",
+        "gptIds"
+      ],
+      "additionalProperties": false
+    },
+    "DeviceSessionResponse": {
+      "type": "object",
+      "description": "Current server-authoritative device metadata without credential material. Pairing does not grant confirmation approval.",
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "const": true
+        },
+        "deviceId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "tokenType": {
+          "type": "string",
+          "const": "Bearer"
+        },
+        "audience": {
+          "type": "string",
+          "const": "gpt-access-device-v1"
+        },
+        "origin": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https://"
+        },
+        "issuedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "renewalExpiresAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "scopes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "jobs.create",
+              "jobs.result",
+              "capabilities.read",
+              "capabilities.run"
+            ]
+          }
+        },
+        "capabilityActions": {
+          "type": "array",
+          "maxItems": 4,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "git.status",
+              "tests.run",
+              "patch.preview",
+              "patch.apply"
+            ]
+          }
+        },
+        "gptIds": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": {
+            "type": "string",
+            "const": "arcanos-core"
+          }
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "paired",
+            "renewal_required"
+          ]
+        }
+      },
+      "required": [
+        "ok",
+        "deviceId",
+        "tokenType",
+        "audience",
+        "origin",
+        "issuedAt",
+        "expiresAt",
+        "renewalExpiresAt",
+        "scopes",
+        "capabilityActions",
+        "gptIds",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "DeviceRenewRequest": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "DeviceRevokeRequest": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "DeviceRevokeResponse": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "const": true
+        },
+        "deviceId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "state": {
+          "type": "string",
+          "const": "revoked"
+        }
+      },
+      "required": [
+        "ok",
+        "deviceId",
+        "state"
       ],
       "additionalProperties": false
     }

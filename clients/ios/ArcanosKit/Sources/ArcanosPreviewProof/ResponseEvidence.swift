@@ -7,6 +7,27 @@ enum ResponseEvidence {
         try JSONDecoder().decode(JSONValue.self, from: response.data)
     }
 
+    static func devicePolicy(_ response: GatewayResponse, prNumber: Int, sourceCommit: String) throws {
+        let expected: JSONValue = .object([
+            "ok": .bool(true), "synthetic": .bool(true),
+            "proofVersion": .string(PreviewFixture.devicePolicyVersion),
+            "prNumber": .integer(Int64(prNumber)), "sourceCommit": .string(sourceCommit),
+            "checks": .object([
+                "grantAndOriginValidation": .bool(true), "credentialExpiryAndRenewal": .bool(true),
+                "revocationAndAudience": .bool(true), "ownerIsolation": .bool(true),
+                "missingOwnerDenied": .bool(true), "requesterIdempotencyIsolation": .bool(true),
+                "operatorIdempotencyCompatibility": .bool(true)
+            ]),
+            "boundaries": .object([
+                "grantSchema": .bool(true), "credentialStatePolicy": .bool(true),
+                "deviceJobOwnership": .bool(true), "requesterIdempotency": .bool(true)
+            ]),
+            "protectedEffectsEnabled": .bool(false)
+        ])
+        try require(response.statusCode == 200, "DEVICE_POLICY_HTTP_STATUS")
+        try require(try json(response) == expected, "DEVICE_POLICY_CONTRACT_MISMATCH")
+    }
+
     static func aiSequence(_ exchanges: [ObservedTransport.Exchange], terminalStatus: String) throws {
         try require(exchanges.count == 3, "AI_POLL_SEQUENCE_COUNT")
         try require(exchanges.map { $0.request.url.path } == [PreviewFixture.createPath, PreviewFixture.resultPath, PreviewFixture.resultPath]

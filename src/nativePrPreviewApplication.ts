@@ -20,6 +20,7 @@ import {
   isIosGatewayPreviewAdmission,
   isIosGatewayPreviewRoute,
 } from './shared/ios/iosGatewayPreviewFixture.js';
+import { runIosDevicePolicyPreview } from './shared/ios/iosDevicePreviewFixture.js';
 
 import {
   createGenericJobsRouter,
@@ -40,6 +41,7 @@ import {
   NATIVE_PR_PREVIEW_BACKSTAGE_BOOKER_OPENAPI_CONTRACT,
   NATIVE_PR_PREVIEW_DISPATCH_GPT_IDENTIFIER_CONTRACT,
   NATIVE_PR_PREVIEW_FIXTURE_IDS,
+  NATIVE_PR_PREVIEW_IOS_DEVICE_CONTRACT,
   NATIVE_PR_PREVIEW_GAMING_CONTRACT,
   NATIVE_PR_PREVIEW_GAMING_SOURCES_CONTRACT,
   NATIVE_PR_PREVIEW_MCP_BODY_CAP_CONTRACT,
@@ -8785,6 +8787,7 @@ function buildAllowedRouteKeys(): Set<string> {
     'HEAD /healthz',
     'GET /readyz',
     'HEAD /readyz',
+    `GET ${NATIVE_PR_PREVIEW_IOS_DEVICE_CONTRACT.path}`,
     `GET ${NATIVE_PR_PREVIEW_BACKSTAGE_BOOKER_OPENAPI_CONTRACT.path}`,
     `POST ${NATIVE_PR_PREVIEW_BACKSTAGE_STORYLINE_CONTRACT.path}`,
     `POST ${NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.path}`,
@@ -8840,6 +8843,18 @@ function sendFixedNotFound(
   response.status(404);
   response.type('text/plain');
   response.send(request.method === 'HEAD' ? undefined : 'not found');
+}
+
+function hasExactIosFixtureDeviceOrigin(request: express.Request, prNumber: number): boolean {
+  const origin = request.header('x-arcanos-device-origin');
+  if (countPreviewRawHeaders(request, 'x-arcanos-device-origin') !== 1
+    || origin !== `https://${request.header('host')}`) return false;
+  try {
+    const parsed = new URL(origin);
+    return parsed.origin === origin && !parsed.port
+      && parsed.hostname.endsWith('.up.railway.app')
+      && new RegExp(`(?:^|[.-])pr-(?:[0-9a-f]{6}-)?${prNumber}(?:[.-]|$)`, 'iu').test(parsed.hostname);
+  } catch { return false; }
 }
 
 export function createNativePrPreviewReadinessState():
@@ -8925,6 +8940,13 @@ export function createNativePrPreviewApplication(
       && countPreviewRawHeaders(request, IOS_GATEWAY_PREVIEW_CONTRACT.selectorHeader) === 1
       && countPreviewRawHeaders(request, 'idempotency-key') <= 1;
     const iosFixtureCarriers = iosFixtureAdmission ? ['authorization'] : [];
+    // The shipping client sends its canonical origin on every Gateway request.
+    // Only the public synthetic fixture bearer may carry this exact PR origin.
+    if (iosFixtureAdmission
+      && request.header('authorization') === IOS_GATEWAY_PREVIEW_CONTRACT.bearer
+      && hasExactIosFixtureDeviceOrigin(request, options.identity.prNumber)) {
+      iosFixtureCarriers.push('x-arcanos-device-origin');
+    }
     const idempotencyKey = request.header('idempotency-key');
     if (iosFixtureAdmission && request.method === 'POST'
       && rawPath === IOS_GATEWAY_PREVIEW_CONTRACT.runPath
@@ -8965,6 +8987,7 @@ export function createNativePrPreviewApplication(
       || rawPath === NATIVE_PR_PREVIEW_DISPATCH_GPT_IDENTIFIER_CONTRACT.path
       || gamingSourcePath
       || iosFixtureAdmission
+      || rawPath === NATIVE_PR_PREVIEW_IOS_DEVICE_CONTRACT.path
     ) {
       response.setHeader(
         NATIVE_PR_PREVIEW_SYNTHETIC_RESPONSE_HEADER.name,
@@ -9125,11 +9148,22 @@ export function createNativePrPreviewApplication(
   });
 
   app.get('/readyz', (_request, response) => {
-    const ready =
+    let ready =
       options.readinessState.ready
       && options.readinessState.applicationImported
       && options.readinessState.fixturesSealed
       && !options.readinessState.draining;
+    // Preserve the trusted verifier's response contract while requiring the
+    // deployed device policy fixture before readiness can claim success.
+    if (ready) {
+      try {
+        runIosDevicePolicyPreview();
+        response.setHeader(NATIVE_PR_PREVIEW_IOS_DEVICE_CONTRACT.proofHeader,
+          NATIVE_PR_PREVIEW_IOS_DEVICE_CONTRACT.proofVersion);
+      } catch {
+        ready = false;
+      }
+    }
     response.status(ready ? 200 : 503).json({
       applicationImported: options.readinessState.applicationImported,
       fixturesSealed: options.readinessState.fixturesSealed,
@@ -9143,6 +9177,21 @@ export function createNativePrPreviewApplication(
       sourceCommit: options.identity.sourceCommit,
       trustScope: NATIVE_PR_PREVIEW_TRUST_SCOPE,
     });
+  });
+
+  app.get(NATIVE_PR_PREVIEW_IOS_DEVICE_CONTRACT.path, (request, response) => {
+    try {
+      const proof = runIosDevicePolicyPreview();
+      response.setHeader(NATIVE_PR_PREVIEW_IOS_DEVICE_CONTRACT.proofHeader,
+        NATIVE_PR_PREVIEW_IOS_DEVICE_CONTRACT.proofVersion);
+      sendBoundedJsonResponse(request, response, {
+        ...proof, prNumber: options.identity.prNumber, sourceCommit: options.identity.sourceCommit,
+      }, { logEvent: 'native_pr_preview.ios_device_policy', maxBytes: 4096, statusCode: 200 });
+    } catch {
+      sendBoundedJsonResponse(request, response, {
+        ok: false, error: 'IOS_DEVICE_PREVIEW_FIXTURE_FAILED',
+      }, { logEvent: 'native_pr_preview.ios_device_policy_failed', maxBytes: 1024, statusCode: 500 });
+    }
   });
 
   app.get(
