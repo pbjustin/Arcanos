@@ -982,7 +982,7 @@
       },
       "GamingQueryPayload": {
         "type": "object",
-        "additionalProperties": true,
+        "additionalProperties": false,
         "required": [
           "mode",
           "prompt"
@@ -1044,8 +1044,121 @@
               1
             ],
             "description": "Present only for the single frontend evidence retry."
+          },
+          "platform": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "Optional request-scoped player context; not verified game state."
+          },
+          "edition": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120,
+            "description": "User-supplied edition; never inferred from the guide title."
+          },
+          "version": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "User-supplied version or patch; requestedVersion is the semantic-version alias. Named editions belong in edition."
+          },
+          "difficulty": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "Optional request-scoped player context; not verified game state."
+          },
+          "currentArea": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160,
+            "description": "Optional request-scoped player context; not verified game state."
+          },
+          "lastCompletedObjective": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240,
+            "description": "Optional request-scoped player context; not verified game state."
+          },
+          "progressPoint": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160,
+            "description": "Optional request-scoped player context; not verified game state."
+          },
+          "class": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "Optional request-scoped player context; not verified game state."
+          },
+          "role": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "Optional request-scoped player context; not verified game state."
+          },
+          "patch": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "Optional request-scoped player context; not verified game state."
+          },
+          "className": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "Optional request-scoped player context; not verified game state."
+          },
+          "progress": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160,
+            "description": "Optional request-scoped player context; not verified game state."
+          },
+          "checkpoint": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160,
+            "description": "Optional request-scoped player context; not verified game state."
+          },
+          "constraints": {
+            "type": "array",
+            "maxItems": 8,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            }
+          },
+          "spoilerTolerance": {
+            "type": "string",
+            "enum": [
+              "none",
+              "light",
+              "full",
+              "avoid",
+              "allowed",
+              "unknown",
+              "no spoilers",
+              "ok",
+              "spoilers ok"
+            ],
+            "description": "none is the conservative default; avoid maps to none and allowed to full. Conflicting textual permission uses the stricter mode."
+          },
+          "answerDepth": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "concise",
+              "standard",
+              "detailed"
+            ],
+            "description": "Defaults to adaptive auto. Explicit brevity or detail requested in the question takes precedence within server budgets."
           }
-        }
+        },
+        "description": "Player-context values together are limited to 2,000 characters. Context is request-scoped and optional; prompt and source URL limits are unchanged."
       },
       "GamingEvidenceRequest": {
         "type": "object",
@@ -1138,6 +1251,8 @@
           "fallbackReason": {
             "type": "string",
             "enum": [
+              "GAMING_ANSWER_AUDIT_UNAVAILABLE",
+              "GAMING_ANSWER_REJECTED",
               "CURRENT_EVIDENCE_UNAVAILABLE",
               "GAMING_PROVIDER_ERROR",
               "GAMING_PROVIDER_UNAVAILABLE",

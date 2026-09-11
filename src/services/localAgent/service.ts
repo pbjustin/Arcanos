@@ -7,6 +7,7 @@ import {
 } from '@core/db/repositories/localAgentJobRepository.js';
 import {
   fingerprintCanonicalValue,
+  hashLocalAgentIdempotencyKey,
   hashScopedOpaqueValue,
   type CanonicalJsonValue
 } from '@services/actionPlanExecution/canonical.js';
@@ -161,6 +162,7 @@ export async function executeLocalAgentActionAsJob(
         payload: canonicalPayload,
         principal: request.context.principalId,
         workspace: request.context.workspaceId,
+        ...(request.context.requesterDeviceId ? { requesterDeviceId: request.context.requesterDeviceId } : {}),
         deviceId: device.deviceId
       }
     );
@@ -169,14 +171,14 @@ export async function executeLocalAgentActionAsJob(
       {
         principal: request.context.principalId,
         workspace: request.context.workspaceId,
+        ...(request.context.requesterDeviceId ? { requesterDeviceId: request.context.requesterDeviceId } : {}),
         deviceId: device.deviceId,
         action
       }
     );
-    const idempotencyKeyHash = hashScopedOpaqueValue(
-      'local-agent-idempotency-key-v1',
-      idempotency.key
-    );
+    // The database binding is keyed by executor device, so requester devices
+    // must also have distinct key hashes within that shared executor scope.
+    const idempotencyKeyHash = hashLocalAgentIdempotencyKey(idempotency.key, request.context.requesterDeviceId);
     const evidenceId = fingerprintCanonicalValue(
       'local-agent-authorization-evidence-v1',
       {
@@ -189,6 +191,12 @@ export async function executeLocalAgentActionAsJob(
       }
     );
     const envelope: LocalAgentJobEnvelope = {
+      ...(request.context.requesterDeviceId ? { gptAccessDeviceOwner: {
+        version: 1 as const,
+        deviceId: request.context.requesterDeviceId,
+        principalId: request.context.principalId,
+        workspaceId: request.context.workspaceId,
+      } } : {}),
       protocolVersion: LOCAL_AGENT_JOB_PROTOCOL_VERSION,
       requestPath: LOCAL_AGENT_CAPABILITY_PATH,
       executionModeReason: 'gpt_access_local_agent_capability',

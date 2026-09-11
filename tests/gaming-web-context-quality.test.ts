@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { Readable } from 'node:stream';
 import { logger } from '../src/platform/logging/structuredLogging.js';
 import { gamingStructuredResourceFixtures } from './testUtils/gamingStructuredResourceFixtures.js';
+import { gamingAcquisitionAxios } from './testUtils/gamingAcquisitionFixtures.js';
+import type { FetchAndCleanOptions, FetchAndCleanExtractionMetrics, FetchAndCleanRawDocument } from '../src/shared/webFetcher.js';
 
 const mockFetchAndClean = jest.fn();
 const mockGetEnv = jest.fn();
@@ -8,10 +11,48 @@ const mockGetEnvBoolean = jest.fn();
 const mockGetEnvIntegerAtLeast = jest.fn();
 const mockGetEnvNumber = jest.fn();
 const mockGetOptionalEnvIntegerAtLeast = jest.fn();
-
-jest.unstable_mockModule('@shared/webFetcher.js', () => ({
-  fetchAndClean: mockFetchAndClean
-}));
+const mockResolve4 = jest.fn();
+const mockResolve6 = jest.fn();
+const acquisitionOptions = new Map<string, FetchAndCleanOptions>();
+const extractionFixtures = new Map<string, { text: string; raw?: FetchAndCleanRawDocument; metrics?: FetchAndCleanExtractionMetrics }>();
+const redirectFixtures = new Map<string, { status: number; location: string; body?: Readable }>();
+const acquisitionRequests: string[] = [];
+const failingStructuredUrls = new Set<string>();
+const structuredFailureRequests: string[] = [];
+const mockAxiosGet = jest.fn(async (pinnedUrl: string, options?: Record<string, unknown>) => {
+  const logicalUrl = new URL(pinnedUrl);
+  logicalUrl.host = (options?.headers as { Host: string }).Host;
+  const url = logicalUrl.href;
+  acquisitionRequests.push(url);
+  const redirect = redirectFixtures.get(url);
+  if (redirect) return { status: redirect.status, headers: { location: redirect.location }, data: redirect.body ?? '' };
+  const fixture: { text: string; raw?: FetchAndCleanRawDocument; metrics?: FetchAndCleanExtractionMetrics } = { text: '' };
+  try {
+    fixture.text = await mockFetchAndClean(url, Number(process.env.ARCANOS_GAMING_WEB_CONTEXT_CHARS ?? 5000), {
+      ...acquisitionOptions.get(url),
+      onRawDocument: (raw: FetchAndCleanRawDocument) => { fixture.raw = raw; },
+      onExtraction: (metrics: FetchAndCleanExtractionMetrics) => { fixture.metrics = metrics; }
+    }) as string;
+  } catch (error) {
+    const status = (error as { response?: { status?: number } }).response?.status;
+    if (status) return { status, headers: { 'content-type': 'text/plain' }, data: '' };
+    if (error instanceof Error && error.message.startsWith('Unsupported content type')) {
+      return { status: 200, headers: { 'content-type': 'application/pdf' }, data: 'Unsupported fixture' };
+    }
+    if (error instanceof Error && error.message.startsWith('maxContentLength')) {
+      return { status: 200, headers: { 'content-length': '1500001' }, data: '' };
+    }
+    throw error;
+  }
+  extractionFixtures.set(url, fixture);
+  return { status: 200, headers: { 'content-type': fixture.raw?.contentType ?? 'text/plain' }, data: fixture.raw?.body ?? fixture.text };
+});
+jest.unstable_mockModule('axios', () => ({ default: gamingAcquisitionAxios(mockAxiosGet) }));
+jest.unstable_mockModule('node:dns/promises', () => ({ Resolver: class {
+  resolve4(hostname: string) { return mockResolve4(hostname); }
+  resolve6(hostname: string) { return mockResolve6(hostname); }
+  cancel() {}
+} }));
 
 jest.unstable_mockModule('@platform/runtime/env.js', () => ({
   getEnv: mockGetEnv,
@@ -19,6 +60,40 @@ jest.unstable_mockModule('@platform/runtime/env.js', () => ({
   getEnvIntegerAtLeast: mockGetEnvIntegerAtLeast,
   getEnvNumber: mockGetEnvNumber,
   getOptionalEnvIntegerAtLeast: mockGetOptionalEnvIntegerAtLeast
+}));
+
+const actualWebFetcher = await import('../src/shared/webFetcher.js');
+jest.unstable_mockModule('@shared/webFetcher.js', () => ({
+  ...actualWebFetcher,
+  fetchAndClean: mockFetchAndClean,
+  createProtectedDocumentFetchSession: (options: FetchAndCleanOptions) => {
+    const session = actualWebFetcher.createProtectedDocumentFetchSession(options);
+    return { ...session, fetch: (url: string) => {
+      acquisitionOptions.set(url, options);
+      return session.fetch(url);
+    } };
+  },
+  // Existing quality tests deliberately supply precise extraction metrics. Keep that seam while
+  // executing the real redirect loop, admission, DNS pinning, streaming budgets, and provenance.
+  // The separate resolver/large-document/TLS suites exercise production extraction itself.
+  extractFetchAndCleanDocument: (url: string, _body: string, _contentType: string, _maxChars: number, options: FetchAndCleanOptions) => {
+    const fixture = extractionFixtures.get(url)!;
+    if (fixture.raw) options.onRawDocument?.(fixture.raw);
+    if (fixture.metrics) options.onExtraction?.(fixture.metrics);
+    return { text: fixture.text, links: [], combined: fixture.text };
+  }
+}));
+
+const actualBuildResources = await import('../src/services/gamingBuildResources.js');
+jest.unstable_mockModule('@services/gamingBuildResources.js', () => ({
+  ...actualBuildResources,
+  ingestGamingBuildResource: (...args: Parameters<typeof actualBuildResources.ingestGamingBuildResource>) => {
+    if (failingStructuredUrls.has(args[0].url)) {
+      structuredFailureRequests.push(args[0].url);
+      throw new Error('Synthetic final-document structured extraction failure');
+    }
+    return actualBuildResources.ingestGamingBuildResource(...args);
+  }
 }));
 
 const {
@@ -76,6 +151,7 @@ function mockFetchedHtml(params: {
   headings?: string;
   date?: string;
   htmlExtra?: string;
+  partialExtraction?: boolean;
 }): void {
   mockFetchAndClean.mockImplementation(async (
     _url: string,
@@ -104,7 +180,7 @@ function mockFetchedHtml(params: {
         '</article></body></html>'
       ].join(''),
       contentType: 'text/html',
-      truncated: false
+      truncated: params.partialExtraction ?? false
     });
     return params.text;
   });
@@ -113,6 +189,14 @@ function mockFetchedHtml(params: {
 describe('gaming RAG snippet quality', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    acquisitionOptions.clear();
+    extractionFixtures.clear();
+    redirectFixtures.clear();
+    acquisitionRequests.length = 0;
+    failingStructuredUrls.clear();
+    structuredFailureRequests.length = 0;
+    mockResolve4.mockResolvedValue(['93.184.216.34']);
+    mockResolve6.mockResolvedValue([]);
     for (const key of TEST_ENV_KEYS) {
       delete process.env[key];
     }
@@ -171,6 +255,58 @@ describe('gaming RAG snippet quality', () => {
     }));
     expect(routeFetch?.[2]?.removeSelectors).not.toContain('.fex-main-sidebar-container');
     expect(routeFetch?.[2]?.removeSelectors).not.toContain("[class*='sidebar']");
+  });
+
+  it('retains complete attributable sentences at the context boundary and records partial extraction through cache reuse', async () => {
+    process.env.ARCANOS_GAMING_RAG_CHUNK_CHARS = '4000';
+    process.env.ARCANOS_GAMING_WEB_CONTEXT_CHARS = '600';
+    const first = 'In Lantern Vale, turn the west valve beside the pump to open the return route through Tide Hall.';
+    const prerequisite = `Only attempt the return route after ${'checking the required gate key and return route prerequisites '.repeat(14)}is complete.`;
+    mockFetchedHtml({ title: 'Lantern Vale guide', text: `${first} ${prerequisite}`, partialExtraction: true });
+    const input = { game: 'Lantern Vale', mode: 'guide' as const, prompt: 'How do I open the return route?',
+      guideUrl: 'https://example.com/lantern-guide', guideUrls: [] };
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const result = await buildGamingRagContext(input);
+      expect(result.context.length).toBeLessThanOrEqual(600);
+      expect(result.context).toContain('Coverage: partial extraction');
+      expect(result.clearKnowledge?.sources[0].freshnessMetadata?.partialExtraction).toBe(true);
+      expect(result.clearKnowledge?.evidence?.[0].text).toBe(first);
+      expect(result.context).not.toContain('Only attempt');
+    }
+    expect(mockFetchAndClean).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses player checkpoints in live acquisition terms and excludes unrelated future passages', async () => {
+    const quay = 'At Copper Quay, repair the signal bell and speak to the dock keeper to unlock the ferry route.';
+    const ridge = 'At Violet Ridge, climb the ladder and open the observatory gate to finish the objective.';
+    mockFetchedHtml({ title: 'Lantern Voyage walkthrough and navigator betrayal', text: `${quay}\n\n${ridge}` });
+    const request = { mode: 'guide' as const, game: 'Lantern Voyage', prompt: 'What next?', guideUrl: 'https://guides.example/lantern-voyage', guideUrls: [], spoilerMode: 'none' as const };
+    const a = await buildGamingRagContext({ ...request, currentArea: 'Copper Quay' });
+    const b = await buildGamingRagContext({ ...request, currentArea: 'Violet Ridge' });
+    expect(a.retrievalQuery).toContain('copper quay');
+    expect(b.retrievalQuery).toContain('violet ridge');
+    expect(a.context).toContain(quay);
+    expect(a.context).not.toContain('Violet Ridge');
+    expect(b.context).toContain(ridge);
+    expect(b.context).not.toContain('Copper Quay');
+    expect(a.context).not.toContain('navigator betrayal');
+    expect(a.selectedChunkCount).toBe(1);
+    expect(b.selectedChunkCount).toBe(1);
+  });
+
+  it('reapplies spoiler selection after raw document cache reuse', async () => {
+    const safe = 'The Glass Warden raises its shield before a strike; dodge sideways and attack after the shield drops.';
+    const future = 'The final ending reveals that the navigator destroys the capital.';
+    mockFetchedHtml({ title: 'Ashbound Arena ending: navigator betrayal', text: `${safe}\n\n${future}` });
+    const request = { mode: 'guide' as const, game: 'Ashbound Arena', prompt: 'How do I beat the Glass Warden?', guideUrl: 'https://guides.example/ashbound-arena', guideUrls: [] };
+    const full = await buildGamingRagContext({ ...request, spoilerMode: 'full' });
+    const conservative = await buildGamingRagContext({ ...request, spoilerMode: 'none' });
+    expect(full.sources.some(isCitableGamingWebSource)).toBe(true);
+    expect(conservative.cacheHit).toBe(true);
+    expect(conservative.context).toContain('Glass Warden');
+    expect(conservative.context).not.toMatch(/navigator|capital|ending/u);
+    expect(JSON.stringify(conservative.sources)).not.toMatch(/navigator|capital|ending/u);
+    expect(mockFetchAndClean).toHaveBeenCalledTimes(1);
   });
 
   it('prefers official Bandai Namco patch changes over site chrome', async () => {
@@ -286,7 +422,7 @@ describe('gaming RAG snippet quality', () => {
     ).toBe(true);
     expect(blizzardFetch?.[2]).toEqual(expect.objectContaining({
       preferredContentSelectors: expect.arrayContaining(['.NewsBlog-content', '#main']),
-      preferredContentTerms: expect.arrayContaining(['frost mage', 'patch', 'hotfix'])
+      preferredContentTerms: []
     }));
     expect(blizzardFetch?.[2]?.preferredContentSelectors?.[0]).toBe('.NewsBlog-content');
     expect(icyVeinsSource?.snippet).toContain('current tuning keeps the specialization viable');
@@ -511,8 +647,61 @@ describe('gaming RAG snippet quality', () => {
       snippet: 'Structured build resource detected, but the loadout data could not be decoded safely.'
     }]);
     expect(result.context).toContain('could not be decoded safely');
+    expect(result.sources.some(isCitableGamingWebSource)).toBe(false);
+    expect(result.selectedChunkCount).toBe(0);
+    expect(result.acceptedSuppliedSourceCount).toBe(0);
     expect(JSON.stringify(result)).not.toContain(rawPayload);
     expect(JSON.stringify(result)).not.toMatch(/SyntaxError|Unexpected token/i);
+  });
+
+  it('redacts a malformed private planner payload from fresh and cached citations while retaining useful article evidence', async () => {
+    const rawPayload = '{malformed-private-build-payload';
+    const publicUrl = 'https://unknown-planner.example/build-planner';
+    const url = `${publicUrl}?build=${encodeURIComponent(rawPayload)}`;
+    mockFetchedHtml({ title: 'Factorio progression guide', text:
+      'Factorio progression begins by mining iron ore and fueling stone furnaces before building the first automation machines. '
+      + 'Place burner mining drills beside the ore deposit and route iron plates to assembling machines for steady gear production. '
+      + 'Research logistics after stabilizing power, then expand copper mining and science production before exploring nearby enemy nests.' });
+    const input = { mode: 'guide' as const, game: 'Factorio',
+      prompt: 'Explain the Factorio progression route and automation preparation.', guideUrl: url, guideUrls: [] };
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const result = await buildGamingRagContext(input);
+      expect(result.cacheHit).toBe(attempt > 0);
+      expect(result.sources.some(isCitableGamingWebSource)).toBe(true);
+      expect(result.sources[0].url).toBe(publicUrl);
+      expect(result.context).toContain('mining iron ore and fueling stone furnaces');
+      expect(result.context).not.toContain('Structured build resource detected');
+      const serialized = JSON.stringify(result);
+      expect(serialized).not.toContain(rawPayload);
+      expect(serialized).not.toContain(encodeURIComponent(rawPayload));
+      expect(serialized).not.toContain('build=');
+    }
+    expect(acquisitionRequests).toEqual([url]);
+  });
+
+  it('redacts a redirected destination planner payload when useful article evidence wins', async () => {
+    const rawPayload = '{malformed-private-build-payload';
+    const start = 'https://redirect-review.example/guides/factorio';
+    const publicUrl = 'https://redirect-review.example/build-planner';
+    const finalUrl = `${publicUrl}?build=${encodeURIComponent(rawPayload)}`;
+    redirectFixtures.set(start, { status: 302, location: finalUrl });
+    mockFetchedHtml({ title: 'Factorio progression guide', text:
+      'Factorio progression begins by mining iron ore and fueling stone furnaces before building the first automation machines. '
+      + 'Place burner mining drills beside the ore deposit and route iron plates to assembling machines for steady gear production. '
+      + 'Research logistics after stabilizing power, then expand copper mining and science production before exploring nearby enemy nests.' });
+    const input = { mode: 'guide' as const, game: 'Factorio',
+      prompt: 'Explain the Factorio progression route and automation preparation.', guideUrl: start, guideUrls: [] };
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const result = await buildGamingRagContext(input);
+      expect(result.cacheHit).toBe(false);
+      expect(result.sources.some(isCitableGamingWebSource)).toBe(true);
+      expect(result.sources[0].url).toBe(publicUrl);
+      expect(result.context).toContain('mining iron ore and fueling stone furnaces');
+      expect(result.context).not.toContain('Structured build resource detected');
+      expect(JSON.stringify(result)).not.toContain(encodeURIComponent(rawPayload));
+      expect(JSON.stringify(result)).not.toContain('build=');
+    }
+    expect(acquisitionRequests).toEqual([start, finalUrl, start, finalUrl]);
   });
 
   it('does not turn an oversized invalid planner URL into a citable source', async () => {
@@ -721,9 +910,8 @@ describe('gaming RAG snippet quality', () => {
     }));
   });
 
-  it('uses a signed fetch URL while stripping its query from public source data', async () => {
+  it('rejects a signed acquisition URL rather than erasing authentication material and fetching another resource', async () => {
     const fetchUrl = 'https://independent.example/article?signature=test-only';
-    const publicUrl = 'https://independent.example/article';
     mockFetchAndClean.mockResolvedValue(
       'Factorio progression starts by automating plates, stabilizing power, and scaling science production in deliberate stages.'
     );
@@ -736,17 +924,235 @@ describe('gaming RAG snippet quality', () => {
       guideUrls: []
     });
 
-    expect(mockFetchAndClean).toHaveBeenCalledWith(
-      fetchUrl,
-      5000,
-      expect.objectContaining({ signal: expect.any(Object) })
-    );
+    expect(mockFetchAndClean).not.toHaveBeenCalled();
+    expect(acquisitionRequests).toHaveLength(0);
     expect(result.sources).toEqual([{
-      url: publicUrl,
-      snippet: 'Factorio progression starts by automating plates, stabilizing power, and scaling science production in deliberate stages.'
+      url: 'invalid-source', error: 'Source URL was blocked or could not be resolved.'
     }]);
-    expect(result.context).toContain(`[Source 1] ${publicUrl}`);
+    expect(result.selectedChunkCount).toBe(0);
     expect(result.context).not.toContain('signature=test-only');
+  });
+
+  it('cites the verified final guide and reacquires a changed redirect destination on the next live request', async () => {
+    const start = 'https://guides.example/lantern-voyage/start';
+    const firstFinal = 'https://guides.example/lantern-voyage/copper-quay';
+    const secondFinal = 'https://guides.example/lantern-voyage/violet-ridge';
+    redirectFixtures.set(start, { status: 302, location: '/lantern-voyage/copper-quay' });
+    mockFetchedHtml({ title: 'Lantern Voyage progression guide', text:
+      'Lantern Voyage progression guidance at Copper Quay explains safe route checkpoints, equipment upgrades, and boss preparation. Repair the signal bell and speak to the dock keeper to unlock the ferry route.' });
+    const input = { game: 'Lantern Voyage', mode: 'guide' as const, prompt: 'Explain the next progression route.', guideUrl: start, guideUrls: [] };
+    const first = await buildGamingRagContext(input);
+    expect(first.sources).toEqual([expect.objectContaining({ url: firstFinal, snippet: expect.any(String) })]);
+    expect(first.sources.some(isCitableGamingWebSource)).toBe(true);
+    expect(first.sources[0].url).toBe(firstFinal);
+    expect(first.context).toContain(`[Source 1] ${firstFinal}`);
+    expect(first.clearKnowledge?.sources[0].url).toBe(firstFinal);
+    expect(first.acceptedSuppliedSourceCount).toBe(1);
+    expect(first.context).not.toContain(start);
+
+    redirectFixtures.set(start, { status: 307, location: '/lantern-voyage/violet-ridge' });
+    mockFetchedHtml({ title: 'Lantern Voyage progression guide', text:
+      'Lantern Voyage progression guidance at Violet Ridge explains safe route checkpoints, equipment upgrades, and boss preparation. Climb the ladder and open the observatory gate to complete the route.' });
+    const second = await buildGamingRagContext(input);
+    expect(second.cacheHit).toBe(false);
+    expect(second.sources[0].url).toBe(secondFinal);
+    expect(second.context).toContain('Violet Ridge');
+    expect(second.context).not.toContain('Copper Quay');
+    expect(second.clearKnowledge?.sources[0].url).toBe(secondFinal);
+    expect(acquisitionRequests).toEqual([start, firstFinal, start, secondFinal]);
+  });
+
+  it('reassesses trust after an official-path source redirects to an unreviewed community path on the same host', async () => {
+    const start = 'https://www.swtor.com/patchnotes/fixture';
+    const final = 'https://www.swtor.com/community/progression-fixture';
+    process.env.ARCANOS_GAMING_CURATED_SOURCES_JSON = JSON.stringify([{
+      game: 'Star Wars: The Old Republic', games: ['Star Wars: The Old Republic'],
+      title: 'Star Wars: The Old Republic official update', url: start,
+      sourceType: 'patch_notes', stable: true, trustScore: 0.96
+    }]);
+    redirectFixtures.set(start, { status: 302, location: '/community/progression-fixture' });
+    mockFetchedHtml({ title: 'Star Wars: The Old Republic progression guide', text:
+      'Star Wars: The Old Republic progression requires completing the class mission, upgrading equipment, and visiting the training area before the next combat encounter.' });
+    const result = await buildGamingRagContext({ game: 'Star Wars: The Old Republic', mode: 'guide',
+      prompt: 'Explain the progression route and combat preparation.', guideUrls: [] });
+    expect(result.sources.some(isCitableGamingWebSource)).toBe(true);
+    expect(result.sources[0].url).toBe(final);
+    expect(result.clearKnowledge?.sources[0].sourceType).toBe('supplied');
+    expect(result.context).toContain('Type: supplied; Trust: 0.55');
+    expect(result.context).not.toContain('Type: patch_notes');
+    expect(acquisitionRequests.filter((url) => new URL(url).hostname === 'www.swtor.com')).toEqual([start, final]);
+  });
+
+  it.each([false, true])('keeps article freshness policy after private path projection with redirect=%s', async redirected => {
+    const publicUrl = 'https://www.swtor.com/patchnotes';
+    const privatePath = 'A'.repeat(120);
+    const finalUrl = `${publicUrl}/${privatePath}?build=%7Bmalformed-private-build`;
+    const start = redirected ? `${publicUrl}/progression-fixture` : finalUrl;
+    if (redirected) redirectFixtures.set(start, { status: 302, location: finalUrl });
+    mockFetchedHtml({ title: 'Star Wars: The Old Republic progression guide', text:
+      'Star Wars: The Old Republic progression requires completing the class mission, upgrading equipment, and visiting the training area before the next combat encounter.' });
+    const input = { game: 'Star Wars: The Old Republic', mode: 'guide' as const,
+      prompt: 'Explain the progression route and combat preparation.', guideUrl: start, guideUrls: [] };
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const result = await buildGamingRagContext(input);
+      expect(result.cacheHit).toBe(!redirected && attempt > 0);
+      expect(result.sources.some(isCitableGamingWebSource)).toBe(true);
+      expect(result.sources[0].url).toBe(publicUrl);
+      expect(result.clearKnowledge?.sources[0].freshnessMetadata).toMatchObject({
+        url: publicUrl, currentness: 'article', ruleId: 'swtor-patch-article'
+      });
+      expect(JSON.stringify(result)).not.toContain(privatePath);
+      expect(JSON.stringify(result)).not.toContain('build=');
+    }
+    expect(acquisitionRequests.filter(url => new URL(url).hostname === 'www.swtor.com'))
+      .toEqual(redirected ? [start, finalUrl, start, finalUrl] : [finalUrl]);
+  });
+
+  it('keeps current configured trust, game and stability hints when reusing a direct document cache entry', async () => {
+    const url = 'https://factory-notes.example/progression';
+    const configure = (sourceType: string, stable: boolean, game = 'Factorio') => {
+      process.env.ARCANOS_GAMING_CURATED_SOURCES_JSON = JSON.stringify([{
+        url, title: `${game} progression reference`, game, modes: ['guide'],
+        topics: ['progression', 'automation'], sourceType, stable
+      }]);
+    };
+    mockFetchAndClean.mockResolvedValue('Factorio progression explains automation order, research priorities, resource throughput, and safe expansion.');
+    const input = { mode: 'guide' as const, game: 'Factorio', prompt: 'Factorio progression guide', guideUrls: [] };
+    configure('official', true);
+    const first = await buildGamingRagContext(input);
+    expect(first.context).toContain('Type: official; Trust: 0.88');
+    configure('supplied', false);
+    const downgraded = await buildGamingRagContext(input);
+    expect(downgraded.cacheHit).toBe(true);
+    expect(downgraded.context).toContain('Type: supplied; Trust: 0.75');
+    expect(downgraded.clearKnowledge?.sources[0].sourceType).toBe('supplied');
+    expect(downgraded.context).not.toContain('Type: official');
+    configure('supplied', true);
+    const stable = await buildGamingRagContext(input);
+    expect(stable.cacheHit).toBe(true);
+    expect(stable.context).toContain('Type: supplied; Trust: 0.78');
+    configure('official', true, 'Hollow Knight');
+    const incompatible = await buildGamingRagContext(input);
+    expect(incompatible.sources.some(source => source.url === url && isCitableGamingWebSource(source))).toBe(false);
+    expect(acquisitionRequests).toEqual([url]);
+  });
+
+  it('never falls back to the original URL payload after an approved redirect and final structured extraction failure', async () => {
+    const fixture = gamingStructuredResourceFixtures[0];
+    const start = new URL(fixture.jsonUrl).href;
+    const final = `${new URL(start).origin}/guides/verified-arrival`;
+    redirectFixtures.set(start, { status: 302, location: '/guides/verified-arrival' });
+    failingStructuredUrls.add(final);
+    mockFetchedHtml({ title: `${fixture.game} progression guide`, text:
+      `${fixture.game} progression guidance explains safe route checkpoints, equipment upgrades, and boss preparation. Visit the harbor training station before the next encounter.` });
+    const result = await buildGamingRagContext({ mode: 'guide', game: fixture.game,
+      prompt: `Explain the ${fixture.game} progression route.`, guideUrl: start, guideUrls: [] });
+    expect(acquisitionRequests).toEqual([start, final]);
+    expect(structuredFailureRequests).toEqual([final]);
+    expect(result.sources[0].url).toBe(final);
+    expect(result.sources.some(isCitableGamingWebSource)).toBe(true);
+    expect(result.context).toContain('progression guidance');
+    expect(result.context).not.toContain('Light Ion Blaster II');
+    expect(JSON.stringify(result)).not.toContain('[STRUCTURED BUILD EVIDENCE');
+    expect(JSON.stringify(result)).not.toContain(encodeURIComponent(JSON.stringify(fixture.payload)));
+  });
+
+  it.each([
+    ['private destination', 'https://127.0.0.1/private-guide'],
+    ['unapproved publisher', 'https://unapproved-guides.example/ship-guide']
+  ])('does not revive a structured URL payload after redirect rejection for a %s', async (_label, location) => {
+    const fixture = gamingStructuredResourceFixtures[0];
+    const start = new URL(fixture.jsonUrl).href;
+    redirectFixtures.set(start, { status: 302, location });
+    const input = { mode: 'build' as const, game: fixture.game,
+      prompt: `Review this ${fixture.game} ship build.`, guideUrl: start, guideUrls: [] };
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const result = await buildGamingRagContext(input);
+      expect(result.sources.some(isCitableGamingWebSource)).toBe(false);
+      expect(result.cacheHit).toBe(false);
+      expect(result.context).not.toContain('Light Ion Blaster II');
+      expect(JSON.stringify(result)).not.toContain('[STRUCTURED BUILD EVIDENCE');
+    }
+    expect(acquisitionRequests).toEqual([start, start]);
+    expect(mockFetchAndClean).not.toHaveBeenCalled();
+    expect(mockResolve4.mock.calls.every(([host]) => host === new URL(start).hostname)).toBe(true);
+    expect(mockAxiosGet.mock.calls.every(([url]) => new URL(url).hostname === '93.184.216.34')).toBe(true);
+  });
+
+  it('does not revive or cache a structured URL payload when the approved redirected page returns HTTP 500', async () => {
+    const fixture = gamingStructuredResourceFixtures[0];
+    const start = new URL(fixture.jsonUrl).href;
+    const final = `${new URL(start).origin}/guides/temporarily-unavailable`;
+    redirectFixtures.set(start, { status: 307, location: '/guides/temporarily-unavailable' });
+    mockFetchAndClean.mockRejectedValue(Object.assign(new Error('Synthetic final response unavailable'), {
+      response: { status: 500 }
+    }));
+    const input = { mode: 'build' as const, game: fixture.game,
+      prompt: `Review this ${fixture.game} ship build.`, guideUrl: start, guideUrls: [] };
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const result = await buildGamingRagContext(input);
+      expect(result.sources.some(isCitableGamingWebSource)).toBe(false);
+      expect(result.cacheHit).toBe(false);
+      expect(result.context).not.toContain('Light Ion Blaster II');
+      expect(JSON.stringify(result)).not.toContain('[STRUCTURED BUILD EVIDENCE');
+    }
+    expect(acquisitionRequests).toEqual([start, final, start, final]);
+  });
+
+  it('does not revive a structured URL payload when the initial redirect response body fails before the next hop', async () => {
+    const fixture = gamingStructuredResourceFixtures[0];
+    const start = new URL(fixture.jsonUrl).href;
+    const location = '/guides/unreached-arrival';
+    const body = Object.assign(new Readable({
+      read() { this.destroy(new Error('Synthetic redirect body connection failure')); }
+    }), { rawHeaders: ['Location', location] });
+    redirectFixtures.set(start, { status: 302, location, body });
+    const result = await buildGamingRagContext({ mode: 'build', game: fixture.game,
+      prompt: `Review this ${fixture.game} ship build.`, guideUrl: start, guideUrls: [] });
+    expect(acquisitionRequests).toEqual([start]);
+    expect(mockFetchAndClean).not.toHaveBeenCalled();
+    expect(body.destroyed).toBe(true);
+    expect(result.sources.some(isCitableGamingWebSource)).toBe(false);
+    expect(result.cacheHit).toBe(false);
+    expect(result.context).not.toContain('Light Ion Blaster II');
+    expect(JSON.stringify(result)).not.toContain('[STRUCTURED BUILD EVIDENCE');
+  });
+
+  it('does not revive a structured URL payload when acquisition times out after an approved redirect', async () => {
+    const fixture = gamingStructuredResourceFixtures[0];
+    const start = new URL(fixture.jsonUrl).href;
+    const final = `${new URL(start).origin}/guides/delayed-response`;
+    redirectFixtures.set(start, { status: 308, location: '/guides/delayed-response' });
+    process.env.ARCANOS_GAMING_WEB_CONTEXT_FETCH_TIMEOUT_MS = '100';
+    let cancelled = false;
+    mockFetchAndClean.mockImplementation(async (_url: string, _maxChars: number, options: FetchAndCleanOptions) =>
+      new Promise<string>((_resolve, reject) => {
+        const onAbort = () => { cancelled = true; reject(options.signal?.reason ?? new Error('Aborted fixture')); };
+        if (options.signal?.aborted) onAbort();
+        else options.signal?.addEventListener('abort', onAbort, { once: true });
+      }));
+    const result = await buildGamingRagContext({ mode: 'build', game: fixture.game,
+      prompt: `Review this ${fixture.game} ship build.`, guideUrl: start, guideUrls: [] });
+    expect(acquisitionRequests).toEqual([start, final]);
+    expect(cancelled).toBe(true);
+    expect(result.sources.some(isCitableGamingWebSource)).toBe(false);
+    expect(result.cacheHit).toBe(false);
+    expect(result.context).not.toContain('Light Ion Blaster II');
+    expect(JSON.stringify(result)).not.toContain('[STRUCTURED BUILD EVIDENCE');
+  });
+
+  it('preserves the self-contained build URL fallback for a direct HTTP 500 without redirects', async () => {
+    const fixture = gamingStructuredResourceFixtures[0];
+    const start = new URL(fixture.jsonUrl).href;
+    mockFetchAndClean.mockRejectedValue(Object.assign(new Error('Synthetic direct response unavailable'), {
+      response: { status: 500 }
+    }));
+    const result = await buildGamingRagContext({ mode: 'build', game: fixture.game,
+      prompt: `Review this ${fixture.game} ship build.`, guideUrl: start, guideUrls: [] });
+    expect(acquisitionRequests).toEqual([start]);
+    expect(result.sources.some(isCitableGamingWebSource)).toBe(true);
+    expect(result.context).toContain('[STRUCTURED BUILD EVIDENCE - EXTRACTED FACTS ONLY]');
+    expect(result.context).toContain('Light Ion Blaster II');
   });
 
   it('preserves safe wiki identity parameters without collapsing distinct articles', async () => {
@@ -766,6 +1172,27 @@ describe('gaming RAG snippet quality', () => {
 
     expect(mockFetchAndClean).toHaveBeenCalledTimes(2);
     expect(result.sources.map((source) => source.url)).toEqual([firstUrl, secondUrl]);
+  });
+
+  it.each([
+    ['q=iron', 'q=copper'],
+    ['source=iron', 'source=copper'],
+    ['campaign=iron', 'campaign=copper'],
+    ['item=iron&item=copper', 'item=copper&item=iron']
+  ])('fetches both distinct admitted article selectors: %s and %s', async (firstQuery, secondQuery) => {
+    mockFetchedHtml({ title: 'Factorio progression guide', text:
+      'Factorio progression begins by mining iron ore and fueling stone furnaces before building the first automation machines. '
+      + 'Place burner mining drills beside the ore deposit and route iron plates to assembling machines for steady gear production. '
+      + 'Research logistics after stabilizing power, then expand copper mining and science production before exploring nearby enemy nests.' });
+    const urls = [`https://selector-review.example/article?${firstQuery}`, `https://selector-review.example/article?${secondQuery}`];
+    const input = { mode: 'guide' as const, game: 'Factorio',
+      prompt: 'Explain the Factorio progression route and automation preparation.', guideUrl: urls[0], guideUrls: [urls[1]] };
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const result = await buildGamingRagContext(input);
+      expect(result.fetchedSuppliedSourceCount).toBe(2);
+      expect(result.cacheHit).toBe(attempt > 0);
+    }
+    expect(acquisitionRequests).toEqual(urls);
   });
 
   it('excludes source instruction-like sentences from public snippets and prompt context', async () => {
@@ -813,6 +1240,45 @@ describe('gaming RAG snippet quality', () => {
   });
 
   it.each([
+    'Kingdom Hearts HD 1.5 Remix.',
+    'Kingdom Hearts HD 1.5 Remix Guide.',
+    'Kingdom Hearts HD 1.5 Remix Build Weapon Manual.',
+    'Kingdom Hearts HD 1.5 Remix beginner build and weapon manual for the complete walkthrough.',
+    'How to use weapons in the Kingdom Hearts HD 1.5 Remix complete walkthrough.'
+  ])('rejects catalog-only metadata even when its title matches gameplay terms: %s', async (title) => {
+    const text = `${title} Identifier KH1.5_guide. Addeddate. Reviews. Download Options.`;
+    mockFetchedHtml({ title: 'Internet Archive', text });
+    const result = await buildGamingRagContext({
+      mode: 'guide', game: 'Kingdom Hearts HD 1.5 Remix',
+      prompt: 'Use the supplied guide for the first boss.',
+      guideUrl: 'https://example.com/catalog', guideUrls: []
+    });
+    expect(scoreGamingSnippetQuality(text).passed).toBe(false);
+    expect(result.retrievedSourceCount).toBe(1);
+    expect(result.acceptedSuppliedSourceCount).toBe(0);
+    expect(result.selectedChunkCount).toBe(0);
+    expect(result.sources.filter(isCitableGamingWebSource)).toHaveLength(0);
+    expect(result.context).not.toContain('Identifier');
+  });
+
+  it('preserves real gameplay prose beside catalog metadata without lowering quality thresholds', async () => {
+    const text = [
+      'Kingdom Hearts HD 1.5 Remix. Identifier KH1.5_guide. Addeddate. Reviews. Download Options.',
+      'To defeat the Guard Armor boss, lock onto the feet and dodge its spinning attacks before striking during recovery.'
+    ].join(' ');
+    mockFetchedHtml({ title: 'Internet Archive', text });
+    const result = await buildGamingRagContext({
+      mode: 'guide', game: 'Kingdom Hearts HD 1.5 Remix',
+      prompt: 'Use the supplied guide to defeat the Guard Armor boss.',
+      guideUrl: 'https://example.com/catalog', guideUrls: []
+    });
+    expect(scoreGamingSnippetQuality(text).passed).toBe(true);
+    expect(result.acceptedSuppliedSourceCount).toBe(1);
+    expect(result.selectedChunkCount).toBeGreaterThan(0);
+    expect(result.context).toContain('dodge its spinning attacks');
+  });
+
+  it.each([
     [Object.assign(new Error('secret upstream 401 body'), { response: { status: 401 } }), 'Source access was blocked.'],
     [Object.assign(new Error('secret upstream 403 body'), { response: { status: 403 } }), 'Source access was blocked.'],
     [new Error('Unsupported content type for web fetching: application/pdf'), 'Source content type is unsupported.'],
@@ -820,6 +1286,10 @@ describe('gaming RAG snippet quality', () => {
     [new Error('getaddrinfo ENOTFOUND private-host'), 'Source URL was blocked or could not be resolved.'],
   ])('returns bounded safe source errors for expected retrieval failures', async (error, expectedError) => {
     mockFetchAndClean.mockRejectedValue(error);
+    if (error.message.includes('ENOTFOUND')) {
+      mockResolve4.mockRejectedValue(error);
+      mockResolve6.mockRejectedValue(error);
+    }
     const result = await buildGamingRagContext({
       mode: 'guide',
       prompt: 'Use this community guide.',
@@ -1724,6 +2194,12 @@ describe('gaming RAG snippet quality', () => {
       requestedVersion: '1.0',
       evidenceAttempt: 1
     }, undefined, controller.signal);
+    // DNS is now exercised before the fixture HTTP response; cancel once both bounded candidate
+    // transfers have started so this remains a transfer-cancellation test rather than a DNS test.
+    for (let attempt = 0; attempt < 30 && mockFetchAndClean.mock.calls.length < 2; attempt += 1) {
+      await Promise.resolve();
+    }
+    expect(mockFetchAndClean).toHaveBeenCalledTimes(2);
     controller.abort(new Error('caller aborted'));
 
     await expect(pending).rejects.toThrow('caller aborted');

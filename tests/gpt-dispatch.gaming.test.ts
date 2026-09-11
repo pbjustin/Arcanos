@@ -166,6 +166,34 @@ describe('routeGptRequest gaming routing', () => {
     );
   });
 
+  it.each(['GAMING_SOURCE_UNREADABLE', 'GAMING_SOURCE_UNAVAILABLE'])('preserves %s as a module failure inside the existing dispatch envelope', async (code) => {
+    const grounding = {
+      groundingStatus: code === 'GAMING_SOURCE_UNREADABLE' ? 'insufficient_evidence' : 'unavailable',
+      requestedSourceCount: 1, fetchedSourceCount: code === 'GAMING_SOURCE_UNREADABLE' ? 1 : 0,
+      fetchedSuppliedSourceCount: code === 'GAMING_SOURCE_UNREADABLE' ? 1 : 0,
+      usableSourceCount: 0, citableSourceCount: 0, selectedChunkCount: 0,
+      suppliedEvidenceSourceCount: 0, groundedInSuppliedEvidence: false,
+    };
+    mockDispatchModuleAction.mockResolvedValueOnce({
+      ok: false, route: 'gaming', mode: 'guide',
+      error: { code, message: 'Controlled guide evidence failure.', details: { grounding } },
+    });
+    const response = await routeGptRequest({
+      gptId: 'arcanos-gaming', requestId: 'req-gaming-grounding', body: {
+        action: 'query', payload: {
+          mode: 'guide', game: 'Kingdom Hearts HD 1.5 Remix',
+          prompt: 'Use the supplied guide for boss preparation.',
+          guideUrl: 'https://archive.org/details/KH1.5_guide',
+        },
+      },
+    });
+    expect(response).toMatchObject({
+      ok: true, result: { ok: false, route: 'gaming', mode: 'guide', error: { code, details: { grounding } } },
+      _route: { module: 'ARCANOS:GAMING', route: 'gaming' },
+    });
+    expect(mockDispatchModuleAction).toHaveBeenCalledTimes(1);
+  });
+
   it('preserves Gaming source metadata arrays through the GPT route shaper', async () => {
     mockDispatchModuleAction.mockResolvedValueOnce({
       ok: true,

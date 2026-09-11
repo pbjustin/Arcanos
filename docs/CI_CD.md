@@ -13,7 +13,14 @@ This repository uses GitHub Actions workflows in `.github/workflows/` for build/
 Core workflows to review first:
 
 - [CI/CD pipeline](../.github/workflows/ci-cd.yml)
+  includes the required PostgreSQL 18 job's cross-process Swift device Gateway
+  fixture. It builds `ArcanosDeviceE2E`, runs real HTTP/authentication/queue/SQL
+  paths with synthetic provider/executor boundaries, and retains only the
+  sanitized proof JSON after success. See the [fixture procedure](../clients/ios/README.md#device-gateway-and-postgresql-end-to-end-fixture).
 - [PR CI](../.github/workflows/pr-ci.yml)
+- [iOS client](../.github/workflows/ios-client.yml): canonical Gateway/Swift drift,
+  Swift package tests with Xcode 26.3, and an unsigned iOS Simulator build. These
+  checks use synthetic credentials and do not deploy or validate a physical iPhone.
 - [Documentation audit](../.github/workflows/doc-audit.yml)
 - [Documentation update analysis](../.github/workflows/auto-update-documentation.yml)
 - [Documentation link audit](../.github/workflows/documentation-links.yml)
@@ -83,6 +90,10 @@ Release automation boundaries:
   vulnerability as actionable; there is no npm advisory, package, dependency
   path, or platform-profile exception registry. Workflows record npm's raw audit
   exit code while relying on this fail-closed zero-vulnerability policy.
+- The MCP SDK's Hono override uses the official npm `hono-4.13.5.tgz` artifact,
+  with its integrity recorded in `package-lock.json`. Registry version metadata
+  lagged the available security-release tarball; the direct artifact keeps the
+  patched dependency reproducible without weakening the audit policy.
 - Required CI and release validation pin `pip-audit` to `2.10.1` and contain no
   Python vulnerability ignores.
 - Patch mode can only append deterministic validation notes to an existing
@@ -148,9 +159,11 @@ isolated PostgreSQL 18 service with database
 dedicated test-only URL variables: local-agent hardening, job-claim
 fencing, DAG-snapshot fencing, worker-budget identity, stale-recovery batching,
 Backstage roster atomicity, Backstage storyline atomicity, Backstage canon
-storyline atomicity, Notion partition storage, and non-GPT terminal retention.
+storyline atomicity, Notion partition storage, non-GPT terminal retention, and
+paired-device authentication.
 The monolithic Notion candidate-search suite shares the canon-storyline test
-URL. The exact suite selection is maintained in the root
+URL; Gaming durable retrieval shares the job-claim fencing test URL.
+The exact suite selection is maintained in the root
 [`package.json`](../package.json), and its target variables are set in
 [the PostgreSQL service job](../.github/workflows/ci-cd.yml). The fencing command
 includes the storyline and canon forward/runtime/rollback DDL, advisory-lock

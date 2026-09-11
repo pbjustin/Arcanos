@@ -7,6 +7,13 @@ function ownKey(record: object, key: string): boolean {
 }
 
 describe('shared runtime redaction', () => {
+  it('redacts bare device and pairing secrets even in otherwise ordinary fields', () => {
+    const access = 'agd1.' + 'a'.repeat(43);
+    const pairing = 'agp1.' + 'b'.repeat(43);
+    expect(redactSensitive({ message: access, detail: pairing, deviceId: 'safe-device-id' })).toEqual({
+      message: '[REDACTED]', detail: '[REDACTED]', deviceId: 'safe-device-id',
+    });
+  });
   it('redacts complete Backstage Notion authority configuration values', () => {
     const mapping = '{"my-universe-2k26":["11111111-1111-4111-8111-111111111111"]}';
     const partitions = '{"version":1,"generation":"generation-1","universes":[]}';

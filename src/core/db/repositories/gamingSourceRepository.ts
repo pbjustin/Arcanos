@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
-import type { Pool, PoolClient, QueryResult } from 'pg';
+import type { Pool, PoolClient, QueryResult, QueryResultRow } from 'pg';
 
 import { getPool, isDatabaseConnected } from '../client.js';
+import { normalizeGamingGameIdentity, resolveGamingGuideIdentity } from '@shared/gaming/gamingGameIdentity.js';
 
 export const GAMING_SOURCE_TYPES = [
   'official',
@@ -77,6 +78,7 @@ export interface GamingSourceLatestRevision {
   extractor: string;
   extractorVersion: string;
   normalizerSchemaVersion: string;
+  provenance?: Record<string, unknown>;
 }
 
 export interface GamingSourceRecord {
@@ -104,8 +106,22 @@ export interface GamingSourceRecord {
 
 export interface QueryActiveGamingKnowledgeInput {
   gameKey: string;
+  /** Internal IDs resolved from trusted catalog metadata, never public caller aliases. */
+  sourceIds?: readonly string[];
   query: string;
   limit?: number;
+  mode?: GamingKnowledgeRecordType;
+}
+
+export interface GamingSourceIdentity {
+  sourceId: string;
+  gameKey: string;
+  gameName: string;
+}
+
+export interface FindActiveGamingSourceIdentitiesInput {
+  game: string;
+  edition?: string;
   mode?: GamingKnowledgeRecordType;
 }
 
@@ -212,6 +228,7 @@ interface GamingSourceRow {
   latest_extractor?: string | null;
   latest_extractor_version?: string | null;
   latest_normalizer_schema_version?: string | null;
+  latest_provenance?: unknown;
 }
 
 interface GamingRevisionIdentityRow {
@@ -584,7 +601,8 @@ function mapLatestRevision(row: GamingSourceRow): GamingSourceLatestRevision | n
     patch: row.latest_patch ?? null,
     extractor: row.latest_extractor,
     extractorVersion: row.latest_extractor_version,
-    normalizerSchemaVersion: row.latest_normalizer_schema_version
+    normalizerSchemaVersion: row.latest_normalizer_schema_version,
+    provenance: parseJsonObject(row.latest_provenance)
   };
 }
 
@@ -622,6 +640,71 @@ function assertUuid(value: string, label: string): string {
 
 export class PostgresGamingSourceRepository {
   constructor(private readonly pool: Pool) {}
+
+  /** Bounded reads share the same stale-pool-waiter and transaction cancellation guard. */
+  private async queryWithDeadline<Row extends QueryResultRow>(queryText: string, queryValues: unknown[],
+    options: QueryActiveGamingKnowledgeOptions): Promise<QueryResult<Row>> {
+    const queryTimeoutMs = normalizeQueryTimeoutMs(options.queryTimeoutMs);
+    if (queryTimeoutMs === null && options.signal === undefined) return this.pool.query<Row>(queryText, queryValues);
+    throwIfQueryAborted(options.signal);
+    const client = await this.pool.connect();
+    let transactionStarted = false;
+    let releaseError: Error | undefined;
+    try {
+      // A timed-out pool waiter must never begin work after finally acquiring a client.
+      throwIfQueryAborted(options.signal);
+      await client.query('BEGIN');
+      transactionStarted = true;
+      if (queryTimeoutMs !== null) await client.query("SELECT set_config('statement_timeout', $1, true)", [`${queryTimeoutMs}ms`]);
+      throwIfQueryAborted(options.signal);
+      const result = await client.query<Row>(queryText, queryValues);
+      throwIfQueryAborted(options.signal);
+      await client.query('COMMIT');
+      transactionStarted = false;
+      return result;
+    } catch (error) {
+      if (transactionStarted) {
+        try { await client.query('ROLLBACK'); }
+        catch (rollbackError) {
+          releaseError = rollbackError instanceof Error ? rollbackError : new Error('Gaming knowledge query rollback failed.');
+        }
+      }
+      throw error;
+    } finally {
+      client.release(releaseError);
+    }
+  }
+
+  async findActiveGamingSourceIdentities(input: FindActiveGamingSourceIdentitiesInput,
+    options: QueryActiveGamingKnowledgeOptions = {}): Promise<GamingSourceIdentity[]> {
+    const game = requiredString(input.game, 'game', 120);
+    const edition = input.edition === undefined ? undefined : requiredString(input.edition, 'edition', 120);
+    const identity = resolveGamingGuideIdentity(game, edition);
+    const lookupTitle = identity === normalizeGamingGameIdentity(game) ? game : `${game} ${edition}`;
+    if (!identity) return [];
+    if (input.mode !== undefined && !RECORD_TYPE_SET.has(input.mode)) throw new TypeError('mode is not supported.');
+    // The builtin Unicode collation exists in PostgreSQL 17 and 18. Normalize
+    // both raw titles in SQL, then apply the shared strict identity check below:
+    // PostgreSQL's simple case mapping is not JavaScript's full case mapping.
+    const result = await this.queryWithDeadline<{ source_id: string; game_key: string; game_name: string }>(
+      `SELECT source.id AS source_id, source.game_key, source.game_name
+       FROM gaming_sources AS source
+       WHERE source.status = 'active'
+         AND trim(both '-' from regexp_replace(upper(normalize(translate(source.game_name, '™®©’‘''', ''), NFKC) COLLATE pg_catalog.pg_c_utf8), '[^[:alnum:]+]+', '-', 'g'))
+           = trim(both '-' from regexp_replace(upper(normalize(translate($1::text, '™®©’‘''', ''), NFKC) COLLATE pg_catalog.pg_c_utf8), '[^[:alnum:]+]+', '-', 'g'))
+         AND EXISTS (
+           SELECT 1 FROM gaming_source_revisions AS revision
+           JOIN gaming_knowledge_records AS knowledge ON knowledge.source_revision_id = revision.id
+           WHERE revision.source_id = source.id AND knowledge.status = 'active'
+             AND knowledge.game_key = source.game_key
+             AND ($2::text IS NULL OR knowledge.record_type = $2)
+         )
+       ORDER BY source.trust_score DESC, source.priority DESC, source.id ASC
+       LIMIT 20`, [lookupTitle, input.mode ?? null], options);
+    // Recheck using the shared Unicode policy before IDs can scope a knowledge query.
+    return result.rows.filter(row => normalizeGamingGameIdentity(row.game_name) === identity)
+      .map(row => ({ sourceId: row.source_id, gameKey: row.game_key, gameName: row.game_name }));
+  }
 
   async persistGamingSourceRevision(
     input: PersistGamingSourceRevisionInput
@@ -738,6 +821,11 @@ export class PostgresGamingSourceRepository {
          AND extractor = $3
          AND extractor_version = $4
          AND normalizer_schema_version = $5
+         AND EXISTS (
+           SELECT 1 FROM gaming_knowledge_records AS active_knowledge
+           WHERE active_knowledge.source_revision_id = gaming_source_revisions.id
+             AND active_knowledge.status = 'active'
+         )
        LIMIT 1`,
       [
         source.id,
@@ -748,6 +836,19 @@ export class PostgresGamingSourceRepository {
       ]
     );
     if (existingRevision.rows[0]) {
+      const hybridFreshness = (JSON.parse(input.provenanceJson) as Record<string, unknown>).hybridFreshness;
+      if (hybridFreshness && typeof hybridFreshness === 'object' && !Array.isArray(hybridFreshness)) {
+        // Exact content/policy identity already matched under the source lock. Revalidation
+        // advances only resource verification metadata; it does not manufacture a revision
+        // or assert that another URL has no newer game update.
+        await client.query(
+          `UPDATE gaming_source_revisions
+           SET provenance = jsonb_set(provenance, '{hybridFreshness}', $2::jsonb)
+           WHERE id = $1
+             AND COALESCE(provenance->'hybridFreshness'->>'verifiedAt', '') <= COALESCE($2::jsonb->>'verifiedAt', '')`,
+          [existingRevision.rows[0].id, JSON.stringify(hybridFreshness)]
+        );
+      }
       return {
         sourceId: source.id,
         revisionId: existingRevision.rows[0].id,
@@ -823,13 +924,8 @@ export class PostgresGamingSourceRepository {
       if (!revisionId) {
         throw new Error('Gaming source revision insert did not return a revision row.');
       }
-      return {
-        sourceId: source.id,
-        revisionId,
-        state: 'unchanged',
-        recordsCreated: 0,
-        recordsUpdated: 0
-      };
+      // A -> B -> A can reuse A's immutable revision and chunk identities, but
+      // its superseded records must become current again within this transaction.
     }
 
     const supersededRecords = await client.query<{ id: string }>(
@@ -847,6 +943,14 @@ export class PostgresGamingSourceRepository {
     );
 
     let recordsCreated = 0;
+    if (!insertedRevision.rows[0]) {
+      await client.query(
+        `UPDATE gaming_knowledge_records
+         SET status = 'active', superseded_at = NULL, updated_at = NOW()
+         WHERE source_revision_id = $1 AND status = 'superseded'`,
+        [revisionId]
+      );
+    }
     if (input.records.length > 0) {
       const insertedRecords = await client.query<{ id: string }>(
         `INSERT INTO gaming_knowledge_records (
@@ -933,7 +1037,8 @@ export class PostgresGamingSourceRepository {
          latest.patch AS latest_patch,
          latest.extractor AS latest_extractor,
          latest.extractor_version AS latest_extractor_version,
-         latest.normalizer_schema_version AS latest_normalizer_schema_version
+         latest.normalizer_schema_version AS latest_normalizer_schema_version,
+         latest.provenance AS latest_provenance
        FROM gaming_sources AS source
        LEFT JOIN LATERAL (
          SELECT
@@ -946,10 +1051,14 @@ export class PostgresGamingSourceRepository {
            revision.patch,
            revision.extractor,
            revision.extractor_version,
-           revision.normalizer_schema_version
+           revision.normalizer_schema_version,
+           revision.provenance
          FROM gaming_source_revisions AS revision
          WHERE revision.source_id = source.id
-         ORDER BY revision.fetched_at DESC, revision.created_at DESC
+         ORDER BY EXISTS (
+           SELECT 1 FROM gaming_knowledge_records AS active_record
+           WHERE active_record.source_revision_id = revision.id AND active_record.status = 'active'
+         ) DESC, revision.fetched_at DESC, revision.created_at DESC
          LIMIT 1
        ) AS latest ON TRUE
        WHERE source.id = $1
@@ -975,7 +1084,8 @@ export class PostgresGamingSourceRepository {
       throw new TypeError('limit must be a positive integer.');
     }
     const limit = Math.min(requestedLimit, MAX_QUERY_LIMIT);
-    const queryTimeoutMs = normalizeQueryTimeoutMs(options.queryTimeoutMs);
+    const sourceIds = input.sourceIds === undefined ? null : [...new Set(input.sourceIds.map(id => assertUuid(id, 'sourceId')))];
+    if (sourceIds && sourceIds.length > 20) throw new TypeError('sourceIds cannot exceed 20.');
     const queryText = `WITH search_input AS (
          SELECT CASE
             WHEN NULLIF(btrim($2::text), '') IS NULL THEN NULL
@@ -1024,13 +1134,14 @@ export class PostgresGamingSourceRepository {
        JOIN gaming_sources AS source
          ON source.id = revision.source_id
        CROSS JOIN search_input
-       WHERE knowledge.game_key = $1
+       WHERE (($5::uuid[] IS NULL AND knowledge.game_key = $1) OR source.id = ANY($5::uuid[]))
+         AND knowledge.game_key = source.game_key
          AND knowledge.status = 'active'
          AND source.status = 'active'
          AND ($3::text IS NULL OR knowledge.record_type = $3)
          AND (
-           search_input.query IS NULL
-           OR to_tsvector('simple'::regconfig, knowledge.search_text) @@ search_input.query
+           search_input.query IS NOT NULL
+           AND to_tsvector('simple'::regconfig, knowledge.search_text) @@ search_input.query
          )
        ORDER BY
          relevance DESC,
@@ -1039,47 +1150,8 @@ export class PostgresGamingSourceRepository {
           knowledge.created_at DESC,
           knowledge.id ASC
         LIMIT $4`;
-    const queryValues = [gameKey, input.query, input.mode ?? null, limit];
-    let result: QueryResult<GamingKnowledgeQueryRow>;
-    if (queryTimeoutMs === null && options.signal === undefined) {
-      result = await this.pool.query<GamingKnowledgeQueryRow>(queryText, queryValues);
-    } else {
-      throwIfQueryAborted(options.signal);
-      const client = await this.pool.connect();
-      let transactionStarted = false;
-      let releaseError: Error | undefined;
-      try {
-        // A request can time out while waiting for a pool slot. Never let that
-        // stale waiter begin database work after it finally acquires a client.
-        throwIfQueryAborted(options.signal);
-        await client.query('BEGIN');
-        transactionStarted = true;
-        if (queryTimeoutMs !== null) {
-          await client.query(
-            "SELECT set_config('statement_timeout', $1, true)",
-            [`${queryTimeoutMs}ms`]
-          );
-        }
-        throwIfQueryAborted(options.signal);
-        result = await client.query<GamingKnowledgeQueryRow>(queryText, queryValues);
-        throwIfQueryAborted(options.signal);
-        await client.query('COMMIT');
-        transactionStarted = false;
-      } catch (error) {
-        if (transactionStarted) {
-          try {
-            await client.query('ROLLBACK');
-          } catch (rollbackError) {
-            releaseError = rollbackError instanceof Error
-              ? rollbackError
-              : new Error('Gaming knowledge query rollback failed.');
-          }
-        }
-        throw error;
-      } finally {
-        client.release(releaseError);
-      }
-    }
+    const queryValues = [gameKey, input.query, input.mode ?? null, limit, sourceIds];
+    const result = await this.queryWithDeadline<GamingKnowledgeQueryRow>(queryText, queryValues, options);
 
     return result.rows.map(row => ({
       recordId: row.record_id,
@@ -1150,3 +1222,10 @@ export async function queryActiveGamingKnowledge(
 }
 
 export const searchActiveGamingKnowledge = queryActiveGamingKnowledge;
+
+export async function findActiveGamingSourceIdentities(
+  input: FindActiveGamingSourceIdentitiesInput,
+  options: QueryActiveGamingKnowledgeOptions = {}
+): Promise<GamingSourceIdentity[]> {
+  return createGamingSourceRepository().findActiveGamingSourceIdentities(input, options);
+}

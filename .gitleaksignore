@@ -1,3 +1,6 @@
 b85753cfa90c4a07c628045a787b7eada8f00f0c:tests/gptoss-railway-safe-routing-dataset.test.ts:generic-api-key:198
 73c6b90a6ed3de533d4dce482d401b4e01b9d618:tests/gptoss-training-dataset-gate.test.ts:generic-api-key:366
 c39c0a0fa08b7abbcacb604a67140e2034f79705:tests/clear-execution-decision.test.ts:generic-api-key:162
+db4d8428b19e41bca572397d707e8cd461e31c3c:clients/ios/ArcanosKit/Sources/ArcanosKit/Gateway/CapabilityClient.swift:generic-api-key:50
+# Synthetic prefix concatenated with randomUUID in an isolated test; no credential literal.
+978ffacc324353d8aa4f9c1b8300dc5f25de37f5:tests/integration/ios-device-gateway.e2e.integration.test.ts:generic-api-key:37

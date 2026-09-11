@@ -12,6 +12,9 @@ const SNAPSHOT_ID = '22222222-2222-4222-8222-222222222222';
 const LEASE_TOKEN = '44444444-4444-4444-8444-444444444444';
 const STARTED_AT = new Date('2026-08-29T15:56:00.000Z');
 const COMPLETED_AT = new Date('2026-08-29T15:58:00.000Z');
+const OBSERVED_AT = new Date('2026-08-29T16:00:00.000Z');
+const VERIFIED_AT = new Date('2026-08-29T15:55:00.000Z');
+const ROOT_PAGE_ID = '11111111-1111-4111-8111-111111111111';
 
 function row(overrides: Record<string, unknown> = {}) {
   return {
@@ -49,7 +52,250 @@ function poolWithQuery(
   return { query } as unknown as Pool;
 }
 
+function operationalStateRow(overrides: Record<string, unknown> = {}) {
+  return {
+    observed_at: OBSERVED_AT,
+    durable_authority: 'notion',
+    durable_root_present: true,
+    configured_root_matches_durable: true,
+    active_snapshot_present: true,
+    active_snapshot_verified_at: VERIFIED_AT,
+    active_snapshot_page_count: '2',
+    active_snapshot_chunk_count: '3',
+    active_snapshot_readable: true,
+    sync_in_progress: false,
+    latest_attempt_present: true,
+    latest_started_at: STARTED_AT,
+    latest_completed_at: COMPLETED_AT,
+    latest_outcome: 'unchanged',
+    latest_failure_phase: null,
+    latest_failure_reason: null,
+    latest_successful_snapshot_matches_active: true,
+    ...overrides,
+  };
+}
+
+function poolWithConnectedQuery(
+  read: (sql: string, values: unknown[]) => Promise<{
+    rows: Record<string, unknown>[];
+    rowCount: number;
+  }>
+): Readonly<{
+  pool: Pool;
+  commands: string[];
+  values: unknown[][];
+  releases: unknown[];
+}> {
+  const commands: string[] = [];
+  const values: unknown[][] = [];
+  const releases: unknown[] = [];
+  const client = {
+    query: async (rawSql: string, rawValues: unknown[] = []) => {
+      const sql = normalizeSql(rawSql);
+      commands.push(sql);
+      values.push(rawValues);
+      if (sql.startsWith('WITH observation AS MATERIALIZED')) {
+        return read(sql, rawValues);
+      }
+      return { rows: [], rowCount: 0 };
+    },
+    release: (discard?: unknown) => {
+      releases.push(discard);
+    },
+  };
+  return {
+    pool: {
+      connect: async () => client,
+    } as unknown as Pool,
+    commands,
+    values,
+    releases,
+  };
+}
+
 describe('PostgresBackstageNotionSyncStatusRepository', () => {
+  it('loads one bounded identifier-free monolith authority observation', async () => {
+    const hostileSnapshotId = '99999999-9999-4999-8999-999999999999';
+    const harness = poolWithConnectedQuery(async () => ({
+      rows: [operationalStateRow({
+        snapshot_id: hostileSnapshotId,
+        root_page_id: ROOT_PAGE_ID,
+        attempt_id: ATTEMPT_ID,
+        lease_token: LEASE_TOKEN,
+        content: 'hostile-authority-content-sentinel',
+      })],
+      rowCount: 1,
+    }));
+    const repository = new PostgresBackstageNotionSyncStatusRepository(
+      harness.pool
+    );
+
+    const state = await repository.loadMonolithAuthorityOperationalState({
+      universeId: UNIVERSE_ID,
+      configuredRootPageId: ROOT_PAGE_ID,
+      expectedEmbeddingModel: 'text-embedding-3-small',
+    });
+
+    expect(state).toEqual({
+      observedAt: OBSERVED_AT,
+      durableAuthority: 'notion',
+      durableRootPresent: true,
+      configuredRootMatchesDurable: true,
+      activeSnapshotPresent: true,
+      activeSnapshotVerifiedAt: VERIFIED_AT,
+      activeSnapshotPageCount: 2,
+      activeSnapshotChunkCount: 3,
+      activeSnapshotReadable: true,
+      latestSyncAttempt: {
+        startedAt: STARTED_AT,
+        completedAt: COMPLETED_AT,
+        outcome: 'unchanged',
+        successfulSnapshotMatchesActive: true,
+        failurePhase: null,
+        failureReason: null,
+      },
+      syncInProgress: false,
+    });
+    const serialized = JSON.stringify(state);
+    for (const forbidden of [
+      hostileSnapshotId,
+      ROOT_PAGE_ID,
+      ATTEMPT_ID,
+      LEASE_TOKEN,
+      'hostile-authority-content-sentinel',
+    ]) {
+      expect(serialized).not.toContain(forbidden);
+    }
+    expect(harness.commands).toHaveLength(4);
+    expect(harness.commands[0]).toBe(
+      'BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY'
+    );
+    expect(harness.commands[1]).toContain("SET LOCAL lock_timeout = '1s'");
+    expect(harness.commands[1]).toContain("SET LOCAL statement_timeout = '5s'");
+    expect(harness.commands[1]).toContain(
+      "SET LOCAL idle_in_transaction_session_timeout = '5s'"
+    );
+    expect(harness.commands[3]).toBe('COMMIT');
+    expect(harness.releases).toEqual([false]);
+    expect(harness.values[2]).toEqual([
+      UNIVERSE_ID,
+      ROOT_PAGE_ID,
+      5_000,
+      4_096,
+      'backstage-notion-rag-index-v5',
+      3,
+      'text-embedding-3-small',
+    ]);
+  });
+
+  it('encodes every active-header and whole-snapshot integrity condition', async () => {
+    const harness = poolWithConnectedQuery(async () => ({
+      rows: [operationalStateRow({ active_snapshot_readable: false })],
+      rowCount: 1,
+    }));
+    const repository = new PostgresBackstageNotionSyncStatusRepository(
+      harness.pool
+    );
+
+    await expect(repository.loadMonolithAuthorityOperationalState({
+      universeId: UNIVERSE_ID,
+      configuredRootPageId: ROOT_PAGE_ID,
+      expectedEmbeddingModel: 'text-embedding-3-small',
+    })).resolves.toMatchObject({ activeSnapshotReadable: false });
+
+    const sql = harness.commands[2] ?? '';
+    expect(sql.match(/clock_timestamp\(\)/gu)).toHaveLength(1);
+    expect(sql).toContain("snapshot.manifest_hash ~ '^[0-9a-f]{64}$'");
+    expect(sql).toContain('snapshot.embedding_model = $7::TEXT');
+    expect(sql).toContain('pg_catalog.isfinite(head.last_verified_at)');
+    expect(sql).toContain('pg_catalog.isfinite(snapshot.created_at)');
+    expect(sql).toContain('head.last_verified_at >= snapshot.created_at');
+    expect(sql).toContain("observation.observed_at + INTERVAL '5 minutes'");
+    expect(sql).toContain('snapshot.page_count = ( SELECT COUNT(*)');
+    expect(sql).toContain('snapshot.chunk_count = ( SELECT COUNT(*)');
+    expect(sql).toContain('root_page.page_id = snapshot.root_page_id');
+    expect(sql).toContain("page.metadata ->> 'indexFormat' IS DISTINCT FROM $5");
+    expect(sql).toContain("page.metadata -> 'scopeTitleKey'");
+    expect(sql).toContain("page.metadata -> 'scopePathKey'");
+    expect(sql).toContain('chunk.embedding_model IS DISTINCT FROM snapshot.embedding_model');
+    expect(sql).toContain("chunk.metadata -> 'scopeHeadingPathKey'");
+    expect(sql).toContain("chunk.metadata -> 'headingOccurrencePath'");
+    expect(sql).toContain('live_lease.expires_at > observation.observed_at');
+    expect(sql).not.toContain('$2::UUID');
+  });
+
+  it.each([
+    ['malformed manifest', 'manifest'],
+    ['wrong embedding model', 'embedding-model'],
+    ['verification before creation', 'chronology'],
+    ['invalid page scope metadata', 'page-scope'],
+    ['invalid chunk scope metadata', 'chunk-scope'],
+    ['stored and actual count mismatch', 'counts'],
+    ['missing root page', 'root-page'],
+  ])('keeps %s fail-closed in the aggregate observation', async (_label, sentinel) => {
+    const harness = poolWithConnectedQuery(async () => ({
+      rows: [operationalStateRow({
+        active_snapshot_readable: false,
+        corruption_sentinel: sentinel,
+      })],
+      rowCount: 1,
+    }));
+    const repository = new PostgresBackstageNotionSyncStatusRepository(
+      harness.pool
+    );
+
+    const state = await repository.loadMonolithAuthorityOperationalState({
+      universeId: UNIVERSE_ID,
+      configuredRootPageId: ROOT_PAGE_ID,
+      expectedEmbeddingModel: 'text-embedding-3-small',
+    });
+    expect(state.activeSnapshotReadable).toBe(false);
+    expect(JSON.stringify(state)).not.toContain(sentinel);
+  });
+
+  it.each([
+    ['zero pages marked readable', { active_snapshot_page_count: 0 }],
+    ['unsupported latest outcome', { latest_outcome: 'hostile-outcome' }],
+    ['stray fields without a latest attempt', {
+      latest_attempt_present: false,
+      latest_started_at: null,
+      latest_completed_at: null,
+      latest_outcome: 'unchanged',
+      latest_successful_snapshot_matches_active: null,
+    }],
+  ])('rejects malformed monolith status rows: %s', async (_label, overrides) => {
+    const harness = poolWithConnectedQuery(async () => ({
+      rows: [operationalStateRow(overrides)],
+      rowCount: 1,
+    }));
+    const repository = new PostgresBackstageNotionSyncStatusRepository(
+      harness.pool
+    );
+
+    await expect(repository.loadMonolithAuthorityOperationalState({
+      universeId: UNIVERSE_ID,
+      configuredRootPageId: ROOT_PAGE_ID,
+      expectedEmbeddingModel: 'text-embedding-3-small',
+    })).rejects.toThrow();
+  });
+
+  it('rolls back and releases a reusable client when the bounded read fails', async () => {
+    const harness = poolWithConnectedQuery(async () => {
+      throw new Error('synthetic bounded read failure');
+    });
+    const repository = new PostgresBackstageNotionSyncStatusRepository(
+      harness.pool
+    );
+
+    await expect(repository.loadMonolithAuthorityOperationalState({
+      universeId: UNIVERSE_ID,
+      configuredRootPageId: ROOT_PAGE_ID,
+      expectedEmbeddingModel: 'text-embedding-3-small',
+    })).rejects.toThrow('synthetic bounded read failure');
+    expect(harness.commands.at(-1)).toBe('ROLLBACK');
+    expect(harness.releases).toEqual([false]);
+  });
+
   it('starts a generation-fenced attempt only through the current live lease', async () => {
     let sql = '';
     let values: unknown[] = [];

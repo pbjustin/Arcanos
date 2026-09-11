@@ -20,6 +20,43 @@ model User {
   createdAt DateTime @default(now())
 }
 
+// Runtime SQL owns bounds and allowlist CHECK constraints for these additive tables.
+model GptAccessDevicePairing {
+  pairingHash       String    @id @map("pairing_hash")
+  principalId       String    @map("principal_id")
+  workspaceId       String    @map("workspace_id")
+  origin            String
+  scopes            String[]
+  capabilityActions String[]  @map("capability_actions")
+  issuedAt          DateTime  @map("issued_at") @db.Timestamptz()
+  expiresAt         DateTime  @map("expires_at") @db.Timestamptz()
+  consumedAt        DateTime? @map("consumed_at") @db.Timestamptz()
+
+  @@index([expiresAt], map: "idx_gpt_access_device_pairings_expiry")
+  @@map("gpt_access_device_pairings")
+}
+
+model GptAccessDevice {
+  deviceId          String    @id @map("device_id") @db.Uuid
+  localIdentityHash String    @map("local_identity_hash")
+  credentialHash    String    @unique @map("credential_hash")
+  principalId       String    @map("principal_id")
+  workspaceId       String    @map("workspace_id")
+  origin            String
+  audience          String
+  pairedAt          DateTime  @map("paired_at") @db.Timestamptz()
+  issuedAt          DateTime  @map("issued_at") @db.Timestamptz()
+  expiresAt         DateTime  @map("expires_at") @db.Timestamptz()
+  renewalExpiresAt  DateTime  @map("renewal_expires_at") @db.Timestamptz()
+  revokedAt         DateTime? @map("revoked_at") @db.Timestamptz()
+  scopes            String[]
+  capabilityActions String[]  @map("capability_actions")
+  gptIds            String[]  @map("gpt_ids")
+
+  @@index([principalId, workspaceId], map: "idx_gpt_access_devices_owner")
+  @@map("gpt_access_devices")
+}
+
 model ActionPlan {
   id                       String                       @id @default(uuid())
   createdBy                String

@@ -57,6 +57,7 @@ jest.unstable_mockModule('../src/services/backstageNotionAuthority.js', () => ({
     && (value as { code?: unknown }).code === 'BN001'
   ),
   isBackstageNotionAuthorityEnforced: jest.fn(async () => false),
+  readBackstageNotionAuthorityConfiguration: jest.fn(() => ({ status: 'absent' })),
   resolveEffectiveBackstageNotionAuthorityRoot: jest.fn(async () => null)
 }));
 

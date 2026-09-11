@@ -21,6 +21,7 @@ import { getTokenParameter } from "@shared/tokenParameterHelper.js";
 import { APPLICATION_CONSTANTS } from "@shared/constants.js";
 import { countWords } from '@shared/text/countWords.js';
 import { hasVisibleContent } from '@shared/promptUtils.js';
+import { buildGamingGuideIntakeContract, GAMING_GUIDE_INTAKE_POLICY_VERSION } from '@shared/gaming/gamingGuideIntakeCore.js';
 import {
   ARCANOS_SYSTEM_PROMPTS,
   buildFinalGpt5AnalysisMessage,
@@ -403,13 +404,28 @@ export async function runIntakeStage(
   cognitiveDomain?: CognitiveDomain,
   systemPromptOverride?: string,
   runtimeBudget?: RuntimeBudget,
-  explicitTimeoutMs?: number
+  explicitTimeoutMs?: number,
+  gamingGuideIntakePolicy?: 'compact-v1'
 ): Promise<TrinityIntakeOutput> {
   if (runtimeBudget) assertBudgetAvailable(runtimeBudget);
 
-  const intakeSystemPrompt = systemPromptOverride || ARCANOS_SYSTEM_PROMPTS.INTAKE(memoryContextSummary);
-  const intakeTokenParams = getTokenParameter(arcanosModel, TRINITY_INTAKE_TOKEN_LIMIT);
+  const gamingIntakeContract = gamingGuideIntakePolicy === GAMING_GUIDE_INTAKE_POLICY_VERSION
+    ? buildGamingGuideIntakeContract(arcanosModel) : undefined;
+  const intakeSystemPrompt = [
+    systemPromptOverride || ARCANOS_SYSTEM_PROMPTS.INTAKE(memoryContextSummary),
+    ...(gamingIntakeContract ? [gamingIntakeContract.instructions] : [])
+  ].join('\n\n');
+  const intakeOutputAllocation = gamingIntakeContract?.outputAllocation ?? TRINITY_INTAKE_TOKEN_LIMIT;
+  const intakeTokenParams = getTokenParameter(arcanosModel, intakeOutputAllocation);
   const temperature = resolveTemperature(cognitiveDomain);
+  if (gamingIntakeContract) {
+    logger.info('trinity.gaming.intake.plan', {
+      policyVersion: gamingIntakeContract.policyVersion,
+      outputAllocation: intakeOutputAllocation,
+      maxAttempts: gamingIntakeContract.maxAttempts,
+      recovery: gamingIntakeContract.recovery
+    });
+  }
   const intakeResponse = await createSingleChatCompletion(client, {
     messages: [
       { role: 'system', content: intakeSystemPrompt },
@@ -431,9 +447,42 @@ export async function runIntakeStage(
       }
     ],
     temperature,
+    ...(gamingIntakeContract ? {
+      model: arcanosModel,
+      ...(gamingIntakeContract.reasoningEffort ? { reasoning_effort: gamingIntakeContract.reasoningEffort } : {})
+    } : {}),
     timeoutMs: resolveIntakeStageTimeoutMs(runtimeBudget, explicitTimeoutMs),
     ...intakeTokenParams
+  }).catch((error: unknown) => {
+    if (gamingIntakeContract) {
+      const incomplete = typeof error === 'object' && error !== null
+        && 'code' in error && error.code === 'OPENAI_COMPLETION_INCOMPLETE';
+      logger.info('trinity.gaming.intake.complete', {
+        policyVersion: gamingGuideIntakePolicy,
+        outputAllocation: intakeOutputAllocation,
+        completionStatus: incomplete ? 'incomplete' : isAbortError(error) ? 'cancelled' : 'provider_error',
+        recovery: 'not_attempted'
+      });
+    }
+    throw error;
   });
+
+  if (gamingIntakeContract) {
+    const hasTaskCard = hasVisibleContent(intakeResponse.choices[0]?.message?.content ?? '');
+    logger.info('trinity.gaming.intake.complete', {
+      policyVersion: gamingGuideIntakePolicy,
+      outputAllocation: intakeOutputAllocation,
+      completionStatus: hasTaskCard ? 'completed' : 'empty',
+      usageCompletion: intakeResponse.usage?.completion_tokens ?? null,
+      usageTotal: intakeResponse.usage?.total_tokens ?? null,
+      recovery: 'not_needed'
+    });
+    if (!hasTaskCard) {
+      throw Object.assign(new Error('Gaming intake returned no usable task card.'), {
+        code: 'GAMING_PROVIDER_EMPTY_RESPONSE'
+      });
+    }
+  }
 
   const framedRequest = intakeResponse.choices[0]?.message?.content || auditSafePrompt;
   const actualModel = intakeResponse.activeModel || arcanosModel;

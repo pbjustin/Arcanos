@@ -1,0 +1,3 @@
+interface:
+  display_name: "ARCANOS PR Blocker Review"
+  short_description: "Review PR blockers against current commit evidence"

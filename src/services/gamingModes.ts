@@ -1,6 +1,7 @@
 import { isRecord } from "@shared/typeGuards.js";
 import { redactString } from "@shared/redaction.js";
 import { extractTextPrompt, normalizeStringList } from "@transport/http/payloadNormalization.js";
+import { GAMING_CONTEXT_PUBLIC_FIELDS, GAMING_PLAYER_CONTEXT, resolveGamingPlayerContext, validateGamingPlayerContextInput, type GamingContextCarrier, type GamingPlayerContext } from "@shared/gaming/gamingPlayerContext.js";
 
 export type GamingMode = "guide" | "build" | "meta";
 
@@ -16,6 +17,8 @@ export type GamingEvidenceRequest = {
 };
 
 export type GamingFallbackReason =
+  | "GAMING_ANSWER_AUDIT_UNAVAILABLE"
+  | "GAMING_ANSWER_REJECTED"
   | "CURRENT_EVIDENCE_UNAVAILABLE"
   | "GAMING_PROVIDER_ERROR"
   | "GAMING_PROVIDER_UNAVAILABLE"
@@ -55,12 +58,38 @@ export type GamingError = {
   details?: unknown;
 };
 
+export type GamingGrounding = {
+  groundingStatus: "grounded" | "insufficient_evidence" | "unavailable";
+  requestedSourceCount: number;
+  fetchedSourceCount: number;
+  fetchedSuppliedSourceCount: number;
+  usableSourceCount: number;
+  citableSourceCount: number;
+  selectedChunkCount: number;
+  suppliedEvidenceSourceCount: number;
+  groundedInSuppliedEvidence: boolean;
+};
+
+export class GamingSourceEvidenceError extends Error {
+  readonly code: "GAMING_SOURCE_UNREADABLE" | "GAMING_SOURCE_UNAVAILABLE";
+
+  constructor(readonly grounding: GamingGrounding) {
+    const reachedSource = grounding.fetchedSuppliedSourceCount > 0;
+    super(reachedSource
+      ? "The supplied source was reached, but no sufficiently reliable readable guide evidence could be extracted."
+      : "The supplied guide evidence could not be retrieved safely. No guide-grounded answer was generated.");
+    this.name = "GamingSourceEvidenceError";
+    this.code = reachedSource ? "GAMING_SOURCE_UNREADABLE" : "GAMING_SOURCE_UNAVAILABLE";
+  }
+}
+
 export type GamingSuccessEnvelope = {
   ok: true;
   route: "gaming";
   mode: GamingMode;
   data: {
     response: string;
+    grounding?: GamingGrounding;
     sources: Array<{
       url: string;
       snippet?: string;
@@ -91,7 +120,7 @@ export type GamingErrorEnvelope = {
   error: GamingError;
 };
 
-export type ValidatedGamingRequest = {
+export type ValidatedGamingRequest = GamingPlayerContext & {
   mode: GamingMode;
   prompt: string;
   game?: string;
@@ -104,7 +133,7 @@ export type ValidatedGamingRequest = {
   hrcEnabled: boolean;
 };
 
-export type GamingEvidenceRetryRequest = {
+export type GamingEvidenceRetryRequest = GamingPlayerContext & {
   game: string;
   mode: GamingMode;
   originalPrompt: string;
@@ -132,7 +161,7 @@ export type ValidatedPublicGamingQueryRequest = {
   payload: {
     mode: GamingMode;
     prompt: string;
-  };
+  } & GamingPlayerContext;
 };
 
 export type PublicGamingQueryValidation =
@@ -145,6 +174,11 @@ const MAX_PUBLIC_GAMING_GAME_CHARS = 120;
 const MAX_PUBLIC_GAMING_PROMPT_CHARS = 8_000;
 const MAX_PUBLIC_GAMING_URL_CHARS = 2_048;
 const MAX_PUBLIC_GAMING_URLS = 4;
+const PUBLIC_GAMING_PAYLOAD_FIELDS = new Set([
+  'mode', 'game', 'prompt', 'message', 'userInput', 'text', 'content', 'query',
+  'url', 'urls', 'guideUrl', 'guideUrls', 'audit', 'enableAudit', 'hrc', 'enableHrc',
+  'evidenceOrigin', 'requestedVersion', 'evidenceAttempt', ...GAMING_CONTEXT_PUBLIC_FIELDS
+]);
 
 function publicGamingRequestExceedsStructuralLimits(body: Record<string, unknown>): boolean {
   const stack: Array<{ value: unknown; depth: number }> = [{ value: body, depth: 0 }];
@@ -173,7 +207,7 @@ function publicGamingRequestExceedsStructuralLimits(body: Record<string, unknown
 }
 
 function publicGamingPayloadExceedsContractLimits(payload: Record<string, unknown>): boolean {
-  for (const field of ["prompt", "message", "text", "content", "query"] as const) {
+  for (const field of ["prompt", "message", "userInput", "text", "content", "query"] as const) {
     if (
       Object.prototype.hasOwnProperty.call(payload, field)
       && !isBoundedPromptText(payload[field], MAX_PUBLIC_GAMING_PROMPT_CHARS)
@@ -270,6 +304,7 @@ export function validateGamingEvidenceRetryRequest(body: unknown): GamingEvidenc
   const allowedFields = new Set([
     "game",
     "mode",
+    ...GAMING_CONTEXT_PUBLIC_FIELDS,
     "originalPrompt",
     "candidateUrls",
     "requestedVersion",
@@ -280,6 +315,8 @@ export function validateGamingEvidenceRetryRequest(body: unknown): GamingEvidenc
   }
 
   const mode = resolveGamingMode(body);
+  const contextError = validateGamingPlayerContextInput(body);
+  if (contextError) return { ok: false, code: 'BAD_REQUEST', message: contextError };
   if (!mode) {
     return { ok: false, code: "BAD_REQUEST", message: "Gaming evidence retry requires mode 'guide', 'build', or 'meta'." };
   }
@@ -317,6 +354,7 @@ export function validateGamingEvidenceRetryRequest(body: unknown): GamingEvidenc
     value: {
       game,
       mode,
+      ...resolveGamingPlayerContext(body, body.originalPrompt),
       originalPrompt: body.originalPrompt.trim(),
       candidateUrls: body.candidateUrls.map((value) => value.trim()),
       ...(requestedVersion ? { requestedVersion } : {}),
@@ -362,7 +400,30 @@ export function parsePublicGamingQueryRequest(body: unknown): PublicGamingQueryV
       }
     };
   }
-  if (publicGamingPayloadExceedsContractLimits(body.payload)) {
+  if (Object.keys(body.payload).some(key => !PUBLIC_GAMING_PAYLOAD_FIELDS.has(key))) {
+    return { ok: false, error: { code: 'BAD_REQUEST', message: 'Gaming query payload contains unsupported fields.' } };
+  }
+  // Top-level aliases fill only omitted fields, matching the existing route normalizer.
+  const effectivePayload: Record<string, unknown> = {};
+  const promptAliases = new Set(['prompt', 'message', 'userInput', 'text', 'content', 'query']);
+  const hasPayloadPrompt = [...promptAliases].some(key => Object.prototype.hasOwnProperty.call(body.payload, key));
+  const contextAliasGroups = [
+    ['version', 'patch', 'requestedVersion'],
+    ['class', 'className'],
+    ['progressPoint', 'progress', 'checkpoint']
+  ];
+  for (const key of PUBLIC_GAMING_PAYLOAD_FIELDS) {
+    if (Object.prototype.hasOwnProperty.call(body.payload, key)) effectivePayload[key] = body.payload[key];
+    else {
+      const hasPayloadContextAlias = contextAliasGroups.some(group => group.includes(key)
+        && group.some(alias => Object.prototype.hasOwnProperty.call(body.payload, alias)));
+      if (!(hasPayloadPrompt && promptAliases.has(key)) && !hasPayloadContextAlias
+        && Object.prototype.hasOwnProperty.call(body, key)) effectivePayload[key] = body[key];
+    }
+  }
+  const contextError = validateGamingPlayerContextInput(effectivePayload);
+  if (contextError) return { ok: false, error: { code: 'BAD_REQUEST', message: contextError } };
+  if (publicGamingPayloadExceedsContractLimits(effectivePayload)) {
     return {
       ok: false,
       error: {
@@ -384,9 +445,9 @@ export function parsePublicGamingQueryRequest(body: unknown): PublicGamingQueryV
     };
   }
 
-  const promptKeys = ["prompt", "message", "text", "content", "query"];
+  const promptKeys = ["prompt", "message", "userInput", "text", "content", "query"];
   const payloadHasPromptAlias = promptKeys.some((key) => Object.prototype.hasOwnProperty.call(body.payload, key));
-  const prompt = payloadHasPromptAlias ? extractTextPrompt(body.payload) : extractTextPrompt(body);
+  const prompt = payloadHasPromptAlias ? extractTextPrompt(body.payload, promptKeys) : extractTextPrompt(body, promptKeys);
   if (!prompt) {
     return {
       ok: false,
@@ -402,6 +463,7 @@ export function parsePublicGamingQueryRequest(body: unknown): PublicGamingQueryV
     value: {
       action: "query",
       payload: {
+        ...effectivePayload,
         mode,
         prompt
       }
@@ -442,6 +504,8 @@ export function formatGamingError(params: {
 }
 
 export function validateGamingRequest(payload: unknown): { ok: true; value: ValidatedGamingRequest } | { ok: false; error: GamingErrorEnvelope } {
+  const contextError = validateGamingPlayerContextInput(payload);
+  if (contextError) return { ok: false, error: formatGamingError({ mode: resolveGamingMode(payload), error: { code: 'BAD_REQUEST', message: contextError } }) };
   const mode = resolveGamingMode(payload);
   if (!mode) {
     return {
@@ -569,7 +633,10 @@ export function validateGamingRequest(payload: unknown): { ok: true; value: Vali
     };
   }
   const rawRequestedVersion = isRecord(payload) ? payload.requestedVersion : undefined;
-  const requestedVersion = normalizeRequestedVersion(rawRequestedVersion);
+  const playerContext = (payload as GamingContextCarrier | null)?.[GAMING_PLAYER_CONTEXT] ?? resolveGamingPlayerContext(payload, prompt);
+  const requestedVersion = normalizeRequestedVersion(rawRequestedVersion)
+    ?? (rawRequestedVersion === undefined && playerContext.contextOrigins?.version === 'explicit'
+      ? normalizeRequestedVersion(playerContext.version) : undefined);
   if (rawRequestedVersion !== undefined && !requestedVersion) {
     return {
       ok: false,
@@ -617,6 +684,7 @@ export function validateGamingRequest(payload: unknown): { ok: true; value: Vali
   return {
     ok: true,
     value: {
+      ...playerContext,
       mode,
       prompt,
       game,

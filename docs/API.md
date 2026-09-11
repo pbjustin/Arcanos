@@ -1,5 +1,52 @@
 # API Guide
 
+## Gaming hybrid knowledge Actions
+
+The additive `gaming-hybrid-v1` contract uses the existing dedicated Gaming
+source bearer credential, no-store/authentication boundary and 16 KiB JSON cap.
+The canonical [Gaming Action schema](../contracts/arcanos_gaming.openapi.v1.json)
+defines the complete closed request and response shapes. Legacy operations are
+unchanged.
+
+| Method/path | Operation | Effect |
+| --- | --- | --- |
+| `POST /gpt-access/gaming/sources/hybrid/query` | `queryGamingHybridKnowledge` | Read active stored knowledge and return a grounded answer or explicit handoff. |
+| `POST /gpt-access/gaming/sources/hybrid/candidates` | `submitGamingHybridCandidates` | Validate at most three URLs in a caller-bound workflow; evidence stays transient. |
+| `POST /gpt-access/gaming/sources/hybrid/ingestions` | `ingestGamingHybridCandidates` | Explicit consequential write to queue approved candidate IDs under the configured storage/consent policy. |
+| `GET /gpt-access/gaming/sources/ingestions/{ingestionId}` | `getGamingSourceIngestionStatus` | Existing authenticated, actor-owned lifecycle status; queued does not mean stored. |
+
+Query bodies include `contractVersion`, logical `idempotencyKey`, `question`,
+precise `game`, optional validated context and a `storagePolicy` (default
+`transient_only`). Candidate calls use the returned `workflowId`, their own
+logical key and URLs; the original question and context remain server-owned
+within that workflow. Ingestion selects `candidateIds`, the matching storage
+policy, logical key and `confirmStore` for conversational approval when required.
+
+Responses separate `sourceKnown`, `evidenceSelected` and `freshnessStatus` from
+the state: `answer_ready`, `clarification_required`, `discovery_required`,
+`temporarily_unavailable`, or `ingestion_pending`. `nextAction` directs the GPT;
+it must not parse prose to decide whether to search. `answer` preserves backend
+citations and request provenance. Structured dates/patch/build and qualifications
+describe verified applicability. Discovery is capped at one round and three
+candidates. Handler failures never become missing knowledge; early auth/parser
+failures retain their existing error envelopes. Invalid bodies return 400,
+scope/consent failure 403, unknown/expired workflow 404, changed same-key payload
+409, rate/capacity limits 429, and unavailable dependencies 503. Retryable failed
+operations can retry the same key without dropping its payload binding.
+
+Candidate acquisition uses the [bounded HTTPS acquisition policy](GAMING_SOURCE_ACQUISITION.md).
+Approved redirects retain verified final citations and still require Gaming
+CLEAR and applicability assessment. When every candidate fails acquisition,
+`reason: SOURCE_ACQUISITION_UNVERIFIED` and the existing `qualification` field
+describe the backend limitation; they do not assert that no public source exists.
+Detailed admission/redirect diagnostics remain internal. No new request fields
+grant redirect or storage privileges.
+
+See [Gaming guide assistance](GAMING_GUIDE_ASSISTANCE.md#hybrid-knowledge-handoff-gaming-hybrid-v1)
+for limits, source/freshness policy, persistence, evidence boundaries and the
+[GPT configuration package](ARCANOS_GAMING_CUSTOM_GPT.md) for activation after
+a separately authorized backend deployment.
+
 ## Overview
 This guide documents the primary supported surfaces and notable operator/compatibility routes mounted by `src/app.ts`, `src/routes/register.ts`, `src/routes/healthGroup.ts`, and `src/routes/api/index.ts`. It is a maintained integration guide, not a generated exhaustive route manifest. Route behavior is sensitive to mount order when duplicate paths exist.
 
@@ -731,8 +778,9 @@ worker:
 - `POST /api/backstage/notion-partitions/:universeId/syncs`
 - `GET|HEAD /api/backstage/notion-partitions/:universeId/syncs/:syncId`
 - `GET|HEAD /api/backstage/notion-partitions/:universeId/diagnostics`
+- `GET|HEAD /api/backstage/notion-partitions/:universeId/authority-status`
 
-All three routes require the purpose-bound control-plane bearer, operator role, and
+All four routes require the purpose-bound control-plane bearer, operator role, and
 the dedicated `backstage:notion-sync` scope. The POST body is exactly
 `{"version":1,"shardKey":"<stable-key>"}`, is capped at 4 KiB before the
 broad parser, and requires exactly one visible-ASCII `Idempotency-Key` of 8-240
@@ -778,6 +826,24 @@ as zero. It never returns page/chunk content, embeddings, root or page IDs,
 display names, raw configuration or configuration digests, provider errors,
 job IDs/inputs/results, or lease owner/token/generation data. Use the
 actor-scoped sync-status endpoint when exact manual-job detail is required.
+
+The bodyless and query-free authority-status read is a monolith-only operational
+view of the Notion authority used by protected Backstage generation. It reports
+only `authority: "notion"`, the derived operational `status`
+(`current_complete`, `last_known_good`, `syncing`, or `unavailable`), the
+three-state `snapshotStatus`, freshness and sync-in-progress booleans, readable
+snapshot availability and bounded chunk count, and allowlisted latest-sync
+outcome/failure classifications. It exposes no snapshot, root, page, database,
+data-source, lease, or attempt identifiers; timestamps, URLs, titles, content,
+embeddings, prompts, credentials, provider bodies, and raw failures are also
+excluded. A configured authority with no active snapshot, a stale but readable
+active snapshot, or a live synchronization returns `200` with its bounded
+unavailable, last-known-good, or syncing state. An absent configured and durable
+authority returns `404`; malformed configuration, database failure, or an
+unreadable, inconsistent, or corrupt active durable state returns the fixed
+`503 BACKSTAGE_NOTION_AUTHORITY_STATUS_UNAVAILABLE` response. This endpoint is
+operational evidence only and does not alter `/readyz` or make stale authority
+eligible for protected generation.
 
 Authority mode is one-way: Notion is the source of truth and PostgreSQL stores
 only the derived retrieval snapshots for AI use. The six legacy mutation
@@ -1495,7 +1561,171 @@ Historical opaque partitions are preserved locally for compatibility, never
 placed on request context, logged, or returned, and the access credential is
 never persisted to the daemon token file.
 
+### Gaming supplied-guide evidence
+
+Gaming query payloads accept optional request-scoped `platform` (64 characters),
+`edition` (120), `version` (64), `difficulty` (64), `currentArea` (160),
+`lastCompletedObjective` (240), `progressPoint` (160), `class` (64), `role` (64),
+and `constraints` (at most eight strings of 160 characters). All context values
+together are limited to 2,000 characters; existing prompt, URL, parser, and
+request limits still apply. Payloads reject unknown fields. `patch`, `className`,
+`progress`, and `checkpoint` remain aliases. Semantic `version` values normalize
+to the existing `requestedVersion` selector; non-semantic version labels remain
+user context. Different explicit aliases trigger a targeted guide clarification.
+
+`spoilerTolerance` accepts `none`, `light`, or `full`. Legacy `avoid` maps to
+`none`; `allowed`, `ok`, and `spoilers ok` map to `full`; `no spoilers` maps to
+`none`. Omitted or `unknown` uses conservative `none` without claiming an explicit
+preference. Conflicting structured and textual permissions use the stricter mode.
+`answerDepth` accepts `auto` (default), `concise`, `standard`, or `detailed`;
+an explicit brevity/detail request in the current question takes precedence.
+
+Explicit payload values take precedence over omitted-field top-level aliases.
+Direct affirmative first-person statements in the question may supply missing
+area, completed-objective, or checkpoint claims. Negations, hypothetical
+questions, and source mentions do not establish progress. Broad class, role,
+platform, difficulty, or version extraction remains tentative. Source titles
+never establish the player's edition, and explicit precise game names remain
+intact. Conflicting material guide context prompts one clarification. Context is
+forwarded through validation, backend mapping, retrieval, and Trinity; it is
+user-provided data, never verified state or control instructions. There is no
+implicit session or cross-chat memory.
+
+Underspecified progression requests such as "What next?" need a specific area,
+checkpoint, completed objective, or an objective named in the question. Without
+one, guide mode asks one progress question before model validation or generation.
+Platform, difficulty, answer depth, and spoiler preferences do not supply progress
+anchors. Other guide requests with no usable evidence return a concise source
+recovery message without generating unsupported gameplay advice. If generation
+times out after retrieval, the response says guide material was found and invites
+a retry; clients must resend the same gameplay context. Diagnostic fallback
+reasons remain separate from player-facing prose, and failed generation is never
+marked as a grounded answer. The compact Trinity intake and its bounded timeout
+remain the normal generation path when useful evidence is available.
+
+Named tasks remain retrieval anchors in polite requests or statements about an
+unfound item. They do not establish completed objectives or verified player state.
+Negated or hypothetical location/completion claims cannot supply a progress point.
+
+The existing `POST /gpt/arcanos-gaming/evidence-retry` client endpoint accepts the
+same optional context fields alongside `game`, `mode`, `originalPrompt`,
+`candidateUrls`, and `evidenceAttempt: 1`. Clients must resupply their context;
+the endpoint does not retrieve prior conversation state. It retains its single
+evidence-attempt bound and does not grant provider retries or source access.
+
+```json
+{"action":"query","payload":{"mode":"guide","game":"Lantern Vale","prompt":"What next?","currentArea":"Copper Harbor","lastCompletedObjective":"Restored the ferry beacon","spoilerTolerance":"none","answerDepth":"concise"}}
+```
+
+`POST /gpt/arcanos-gaming` retains its existing request and HTTP envelope. In
+`guide` mode, explicit supplied guide URLs must contribute readable evidence
+before a provider answer can run. When none does, the module returns
+`result.ok: false` with `GAMING_SOURCE_UNREADABLE` if a supplied document was
+obtained but rejected, or `GAMING_SOURCE_UNAVAILABLE` if none was obtained.
+The outer dispatcher may still return HTTP 200 and `ok: true`; inspect the
+module result. No general-knowledge completion substitutes for a failed
+explicit guide. The existing frontend current-evidence retry response remains
+an explicit evidence request and does not imply the candidates were read.
+
+`data.grounding` on retrieval responses and `error.details.grounding` on source
+failures distinguish `grounded`, `insufficient_evidence`, and `unavailable`.
+The summary reports requested supplied URLs, fetched live documents (including
+the in-process document cache), fetched supplied documents, usable/citable sources, selected
+chunks, supplied evidence sources, and `groundedInSuppliedEvidence`. Metadata
+requests are not guide documents. Grounding describes admitted evidence;
+it does not certify full-book coverage or every generated claim.
+Usable source and chunk counts can also include the existing stored Gaming
+evidence after the explicit supplied-guide guard passes. Distinct reader URLs
+may count as separate requested URLs while resolving to one Archive evidence item.
+
+For grounded guide answers without a generation fallback, the response formatter
+presents the backend answer once and trims outer whitespace. It preserves the
+Markdown and citations supplied by the generation pipeline. The guide
+prompt asks for the gameplay answer first, with context qualifications only when
+they materially affect the advice and with the user's spoiler restrictions intact.
+The formatter adds no generic context warnings or backend diagnostic commentary;
+`data.grounding` and source metadata remain available separately. Explicit `game`
+values retain their specificity and take precedence over source-derived title hints.
+
+Gaming recognizes Archive.org `/details/<identifier>` items and validates their
+bounded metadata before choosing an eligible text resource deterministically.
+For representations of one original document, OCR `DjVuTXT` takes priority over
+supported plain `Text`; eligible text resources from different original documents
+are rejected as ambiguous regardless of format. Filename and original document
+provenance must match the item metadata. The resolver constructs a
+read URL only from a validated Archive storage host and the exact item directory,
+because Archive's public download endpoint redirects. Arbitrary metadata URLs
+and redirects remain forbidden. PDF, EPUB, compressed archives, and binaries
+are not parsed. Missing, malformed, oversized, restricted, or unreadable
+resources fail closed; Archive navigation HTML is not substituted for text.
+Archive acceptance is capped at 128,000 metadata bytes and 512 file entries,
+1,000,000 document bytes, and 100,000 cleaned document characters for ranking.
+The existing configured web-fetch byte cap may be stricter; selected model
+context retains its independent Gaming character budget. Only the validated
+primary metadata storage host is attempted; redirects and secondary-host retries
+are not enabled.
+Normal HTML guides retain the existing extraction and evidence-quality gates.
+Only the sanitized item URL is public; storage URLs and filenames are not
+logged or cited. Retrieval shares the existing request abort, fetch deadline,
+DNS pinning, size limits, sanitization, ranking, and cache protections.
+
+`gaming.retrieval.source.end` reports retrieval execution; `gaming.grounding.*`
+reports evidence admission. `gaming.backend.end` carries execution and grounding
+state separately; responses with `data.fallbackReason` report
+`executionOutcome: "fallback"`. `retrievedSourceCount` remains the fetched live
+document count, including cached documents, after stored evidence is merged.
+`gaming.stored_retrieval.mergedSourceCount` reports the stored sources added to
+the prompt separately. HTTP success or a completed backend execution does not
+prove that a supplied guide was used.
+
 ### GPT Access protected gateway
+
+Paired iPhones use a distinct, scoped device principal. The canonical OpenAPI
+builder in `src/services/gptAccessGateway.ts` owns the following additive HTTP
+contract; the iOS model generator consumes that builder directly.
+
+| Operation | Authentication and behavior |
+| --- | --- |
+| `POST /gpt-access/devices/pairing` | Existing operator bearer only. Body `{}` uses the default four client scopes and `git.status`; optional `scopes` and `capabilityActions` grant only supported subsets. Server assigns owner, workspace, origin, TTL, and GPT IDs. Returns `201` with one five-minute pairing token. |
+| `POST /gpt-access/devices/pair` | No existing bearer required. Body contains `pairingToken` and a random installation `localIdentity` UUID. Exact approved `X-Arcanos-Device-Origin` required. Consumes the challenge once and returns `201` with the new device credential/session. |
+| `GET /gpt-access/devices/session` | Current unexpired device bearer and exact origin header. Returns safe session metadata with `paired` or `renewal_required`; no credential material. |
+| `POST /gpt-access/devices/renew` | Current unexpired device bearer and exact origin header; body must be `{}`. Rotates the credential atomically without extending the original thirty-day renewal deadline. |
+| `POST /gpt-access/devices/{deviceId}/revoke` | The current device may revoke itself; the existing operator may revoke a device only within its trusted principal/workspace. Body must be `{}`. Subsequent device authentication is rejected. |
+
+Device credentials are opaque `agd1.` secrets with a one-hour access lifetime;
+pairing tokens use a separate `agp1.` prefix. The server stores secret digests.
+Every device request requires `Authorization: Bearer <device credential>` and
+`X-Arcanos-Device-Origin: <approved HTTPS origin>`. Device identity alone, the
+public origin header, and successful pairing are never execution approval.
+Device POST requests require a nonempty, uncompressed `application/json` body
+of at most 4,096 bytes. The namespace authenticates protected operations and
+applies its existing Gateway rate budget before broad application parsing.
+Parser failures return a fixed `DEVICE_REQUEST_INVALID` envelope without
+echoing input; used challenges return `409 PAIRING_USED`, expired challenges
+return `410 PAIRING_EXPIRED`.
+
+Device grants are limited to `jobs.create`, `jobs.result`, `capabilities.read`,
+and `capabilities.run`, the GPT `arcanos-core`, and explicitly granted Local
+Agent actions from `git.status`, `tests.run`, `patch.preview`, `patch.apply`.
+Deployment-level scopes, module-action allowlists, Local Agent policy, and
+confirmation remain additional gates. Existing operator/server authentication
+and dedicated Local Agent executor authentication remain separate.
+
+The canonical five client operations below accept either the existing operator
+bearer or a device bearer with its required origin header. Devices receive only
+their approved capability projection. Device-created AI and Local Agent jobs
+carry server-owned device, principal, and workspace ownership; result reads
+must match that ownership before exposing any state or result. Learning a job
+ID or a direct job-read token does not authorize cross-device Gateway reads.
+Direct `/jobs/*` read-token protections remain in force. Operator result access
+retains the existing trusted-server behavior.
+
+Expired or revoked credentials cannot poll, inspect, invoke, or renew. A
+client must renew while its current access credential is valid; after missed
+expiry or the absolute renewal deadline it needs a new trusted pairing.
+See [device authentication](gpt-access-gateway.md#paired-iphone-authentication)
+and [the iOS client](../clients/ios/README.md) for lifecycle and device testing.
+
 - `GET /gpt-access/openapi.json` (public schema metadata)
 - `GET /gpt-access/health`
 - `GET /gpt-access/status`
@@ -1540,6 +1770,97 @@ UUID `ingestionId`. The status route accepts only that identifier and returns a
 sanitized lifecycle projection with source-level states, safe errors, record
 counts, provenance, and timestamps—never generic job payloads, queue state,
 worker state, raw database records, or provider diagnostics.
+
+Live supplied-source retrieval, initial durable ingestion, and refresh all use
+`resolveGamingDocument()` in `src/services/gamingDocumentResolution.ts`. Its
+small ordered resolver registry acquires a bounded `ResolvedGamingDocument`
+before either ranking or structured normalization. The Archive adapter reuses
+the existing metadata-attested text resolver; generic HTML/text remains the
+fallback. Archive reader aliases use the public item URL as their source
+identity and citation. Generic sources retain their admitted, sanitized URL,
+including public page identifiers such as MediaWiki's `curid` query parameter.
+Durable ingestion checks source-game conflicts using the URL, title, and
+headings; ordinary guide prose is not treated as a requested game.
+
+Durable revisions hash all accepted, sanitized document text, normalized identity,
+and the explicit `gaming-document-chunks-v1` policy. The revision's 16,000-character
+`cleaned_content` preview does not define searchable coverage. Each guide revision
+owns up to 500 deterministic knowledge chunks, targeting 1,800 characters with a
+2,000-character maximum and at most 240 characters of local overlap. Segmentation
+prefers paragraph, sentence, then word boundaries; indivisible runs split only at
+Unicode code-point boundaries. Chunk metadata stores ordinal, total, offsets,
+content hash, and an explicit heading path only when available. No page numbers
+are inferred from OCR.
+
+Structured build facts retain their existing 8,000-character evidence bound in
+the first record only, including its searchable text. Stored passage selection
+can use that complete bounded evidence; prose chunks remain at most 2,000
+characters, and selected evidence still fits the existing prompt budget.
+
+Unchanged text and policy retain the active revision. Changes anywhere in the
+accepted document, including after character 100,000, or an index-policy change
+produce an updated generation. Source locking, revision insertion, supersession,
+and chunk insertion remain one transaction. A return to a historical document
+reactivates its immutable revision and supersedes the intervening chunks atomically.
+Existing single-record revisions remain readable until explicitly refreshed;
+there is no automatic backfill.
+
+Stored retrieval returns structured chunk evidence before formatting it. PostgreSQL
+guide lookup first resolves active stored source identities from trusted game
+metadata, independently of passage selection. Formatting normalization handles
+punctuation, trademarks, and separators while retaining edition, sequel, expansion,
+and platform distinctions. A catalog entry under a base title does not authorize
+retrieval for a differently named edition without trusted matching metadata.
+New ingestion preserves the explicitly supplied game title and derives its source
+key from that same formatting-only identity, so variants at the same URL remain
+distinct. Existing stored identities are unchanged until separately maintained.
+Build/meta lookup prefers these precise identities when its legacy key differs,
+and retains the existing legacy-key fallback when no precise identity is stored.
+Internal `sourceKnown` therefore remains separate from selected evidence. Source
+identity lookup and lexical acquisition share the existing bounded retrieval
+deadline; no source refresh or reindex occurs during a query. PostgreSQL
+full-text search retrieves up to 20 active candidates using bounded meaningful
+query terms. Candidates need positive lexical rank and at least 25% matching
+query-term coverage in their evidence text; matching only a repeated game/title
+does not establish relevance. Ranking combines 65% term coverage with 35%
+normalized PostgreSQL rank. Four-token text overlap and revision offsets penalize
+redundancy; near duplicates are omitted. Selection uses the existing Gaming chunk,
+source, and character budgets, with the stored context fitting the space remaining
+after live evidence. Empty evidence remains a valid result. Multiple chunks from
+one public URL share a citation index, while internal evidence retains source,
+revision, record, ordinal, resolver provenance, and fetch time for audit.
+
+Semantic retrieval is not enabled by this change. Gaming has no existing vector
+index; the generic JSON vector store loads all documents into process memory,
+and the separate Notion vector schema has different authority semantics. Neither
+provides a bounded Gaming vector query within the existing one-second retrieval
+deadline. Lexical retrieval needs no embedding provider, new dependency, schema
+migration, or environment setting.
+
+Document extraction quality is independent of structured-build extraction:
+readable guide prose can be complete while structured extraction is
+`not_applicable`. `EXTRACTION_PARTIAL` indicates truncated or metadata-only
+document evidence, rather than absent equipment, skill, or stat fields.
+Durable resolution explicitly permits up to 1,000,000 characters; live resolution
+keeps its 100,000-character default. The durable ceiling matches the existing
+revision ceiling and fits ordinary ASCII guides within the unchanged default
+1.5 MB fetch limit. The shared fetcher's byte limits, deadlines, DNS pinning,
+URL restrictions, and Archive metadata/derivative validation remain in force.
+Archive's existing 1 MB derivative byte limit can reject larger or multibyte
+documents before the character ceiling; this PR does not relax it. If accepted
+text exceeds the character or 500-chunk limit, a deterministic contiguous prefix
+is indexed and partial coverage is recorded. A fully covered 591K-character guide
+does not receive `EXTRACTION_PARTIAL` merely for exceeding the former 100K cap.
+Revision provenance and extraction
+metrics retain bounded resolver/version/strategy, document type and lengths,
+truncation, and both quality dimensions. Resolution, normalization, and
+persistence telemetry report those stages separately, without guide content,
+raw metadata, or derivative addresses.
+
+`gaming.source.chunking_completed` and `gaming.stored_retrieval.completed` emit
+bounded lengths, counts, policy, coverage, and elapsed-time diagnostics without
+chunk text or embeddings. Detailed coverage diagnostics remain internal to
+revision metadata and telemetry; the public status contract remains unchanged.
 
 They require the dedicated, web-service-only
 `ARCANOS_GAMING_SOURCE_ACCESS_TOKEN` Bearer credential. It is an exact

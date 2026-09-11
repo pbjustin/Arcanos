@@ -1,10 +1,59 @@
 # Database and Migrations
 
+Gaming hybrid knowledge requires no new migration or production backfill.
+Existing `gaming_sources`, `gaming_source_revisions`, `gaming_knowledge_records`
+and durable jobs hold approved prose chunks and bounded JSONB provenance.
+`hybridFreshness` records content-derived applicability and, when verified,
+an official-index attestation bound to the accepted full-content hash; it does
+not store the release index as evergreen gameplay knowledge. Active-revision
+replacement and reactivation remain atomic. On an unchanged successful hybrid
+refresh, the existing transaction advances only `hybridFreshness` monotonically
+by `verifiedAt`; other provenance and active records remain intact. A failed
+refresh or mismatched approval hash leaves the last valid revision usable.
+The guarded PostgreSQL Gaming suite covers concurrent unchanged verification
+and rollback after a real SQL failure.
+
 ## Overview
 Arcanos uses PostgreSQL when `DATABASE_URL` or equivalent `PG*` variables are configured. Without a database, several backend paths continue in reduced or in-memory mode, but queued async jobs and durable inspection require PostgreSQL.
 
+## Paired iPhone credentials
+
+`migrations/20260911_gpt_access_devices_v1.sql` adds `gpt_access_device_pairings`
+and `gpt_access_devices`. The same additive definitions are included in runtime
+schema initialization and represented in Prisma. Existing jobs, operator tokens,
+and Python executor identities require no backfill or credential rotation.
+Device authentication fails closed if these tables are unavailable; it has no
+memory fallback. Reads bypass the query cache so revocation is visible on the
+next request.
+
+Pairing stores only a SHA-256 digest of a random five-minute token. Consuming a
+challenge locks its row, inserts a device, and marks the challenge consumed in
+one transaction. The database rechecks expiry at the write after lock waits.
+One-hour credential digests rotate under a device row lock with a compare and
+swap; the absolute renewal deadline remains thirty days after pairing. Device
+revocation uses the owning principal and workspace and cannot be undone by
+renewal. No raw credential, pairing token, or client local identity is stored.
+Expired challenge digests older than twenty-four hours are pruned on later
+challenge creation; device records retain revocation/audit metadata.
+
+The reversible `migrations/20260911_gpt_access_devices_v1.rollback.sql` removes
+only these new tables, invalidating all paired devices. Applying or reverting
+these definitions against an existing environment requires its normal explicit
+migration authorization. The implementation task does not apply production DDL.
+
+`tests/integration/gpt-access-device-auth.pg18.integration.test.ts` uses the
+shared loopback-only disposable-database guard through
+`GPT_ACCESS_DEVICE_TEST_DATABASE_URL`. It exercises actual pairing/rotation
+races, revocation, expiry during a row lock, database grant constraints, and
+rollback. CI includes it in `test:postgres-fencing` with the required-database
+sentinel; no production credential is required.
+
 ## Prerequisites
 - PostgreSQL access for migration development or validation.
+- Gaming source identity lookup uses the built-in `pg_catalog.pg_c_utf8`
+  Unicode collation available in PostgreSQL 17 and 18 UTF-8 databases. It needs
+  no extension, migration, or source reindex. SQL only acquires candidates;
+  the shared application identity check must also accept each stored title.
 - `DATABASE_URL` or a complete `PG*` connection set when running database-backed paths.
 - Node dependencies installed from the repository root.
 
@@ -158,6 +207,17 @@ before treating a digest match as the same source. Successful refreshes append
 an immutable revision and atomically supersede only that source's prior active
 knowledge records. Unchanged content updates freshness timestamps without
 duplicating records.
+
+Durable Gaming document chunking uses these existing tables without a new
+migration. One source owns immutable revisions, and each revision owns up to
+500 bounded knowledge records. Existing JSONB `normalized` data carries chunk
+text and deterministic ordinal/offset/hash metadata; each `search_text` contains
+only that chunk's evidence and bounded search metadata. The revision text is a
+16,000-character preview, while its hash covers the full accepted document and
+index-policy version. Refresh supersession and historical revision reactivation
+occur inside the source-locking transaction. Lexical queries exclude superseded
+records and inactive sources; historical single-record revisions stay readable
+until a controlled refresh. No vector columns or automatic reindex are added.
 
 The rollback file is intended only for an explicitly confirmed disposable
 database because dropping these tables removes ingested Gaming knowledge. Do
@@ -636,8 +696,9 @@ their selected suites. `npm run test:postgres-fencing` additionally requires
 `BACKSTAGE_ROSTER_ATOMICITY_TEST_DATABASE_URL`,
 `BACKSTAGE_STORYLINE_ATOMICITY_TEST_DATABASE_URL`,
 `BACKSTAGE_CANON_STORYLINE_PG18_TEST_DATABASE_URL`,
-`BACKSTAGE_NOTION_PARTITION_PG18_TEST_DATABASE_URL`, and
-`NON_GPT_TERMINAL_RETENTION_TEST_DATABASE_URL`. With the sentinel set, a
+`BACKSTAGE_NOTION_PARTITION_PG18_TEST_DATABASE_URL`,
+`NON_GPT_TERMINAL_RETENTION_TEST_DATABASE_URL`, and
+`GPT_ACCESS_DEVICE_TEST_DATABASE_URL`. With the sentinel set, a
 missing dedicated URL fails before `describe.skip`; without it, an absent URL
 retains the intentional local skip. No suite reads ambient `DATABASE_URL`.
 Every configured target must use credentials, an explicit loopback port, and
@@ -645,8 +706,9 @@ the exact disposable database `arcanos_audit_pg18_20260727`. Never point either
 test command at production or a retained preview database.
 
 The candidate-search suite intentionally uses
-`BACKSTAGE_CANON_STORYLINE_PG18_TEST_DATABASE_URL`; it does not define a separate
-candidate-search test URL. The exact selected test paths belong to the root
+`BACKSTAGE_CANON_STORYLINE_PG18_TEST_DATABASE_URL`, and Gaming durable retrieval
+uses `JOB_CLAIM_FENCING_TEST_DATABASE_URL`; neither defines a separate test URL.
+The exact selected test paths belong to the root
 [`package.json`](../package.json), and target guards are implemented in
 [`tests/integration/postgresTestDatabase.ts`](../tests/integration/postgresTestDatabase.ts).
 

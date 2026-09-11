@@ -15,7 +15,7 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 5_000;
 const DEFAULT_TOTAL_TIMEOUT_MS = 60_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 64 * 1024;
 const MAX_AGGREGATE_RESPONSE_BYTES = 512 * 1024;
-const MAX_REQUESTS = 137;
+const MAX_REQUESTS = 138;
 const MAX_BACKSTAGE_BOOKER_OPENAPI_SOURCE_BYTES = 128 * 1024;
 const BACKSTAGE_BOOKER_OPENAPI_GIT_PATH =
   'contracts/backstage_booker.openapi.v1.json';
@@ -939,6 +939,10 @@ export function buildNativePrPreviewRequestPlan() {
     backstageGenerationCase(
       'backstage-generation-notion-sync-phase-a',
       'notionSyncPhaseA'
+    ),
+    backstageGenerationCase(
+      'backstage-generation-authority-readiness',
+      'authorityReadiness'
     ),
     backstageGenerationCase(
       'backstage-generation-notion-authority-rag',
@@ -2372,6 +2376,73 @@ function expectedBackstageGenerationContractPayload(requestCase) {
           disposition: 'verify_unchanged',
         },
       },
+      workerBoundaryReached: false,
+    };
+  }
+  if (requestCase.fixtureName === 'authorityReadiness') {
+    const checkpoint = (
+      name,
+      logicalTimeMs,
+      processReady,
+      syncInProgress,
+      authorityStatus,
+      snapshotStatus,
+      protectedGenerationAdmissible,
+      protectedFailureCode
+    ) => ({
+      name,
+      logicalTimeMs,
+      processReady,
+      syncInProgress,
+      authorityStatus,
+      snapshotStatus,
+      protectedGenerationAdmissible,
+      protectedFailureCode,
+    });
+    return {
+      ...base,
+      authorityReadiness: {
+        boundedStartupBudgetMs: 30_000,
+        checkpoints: [
+          checkpoint(
+            'booting', 0, false, false, 'unavailable', 'unavailable', false,
+            'BACKSTAGE_NOTION_INDEX_UNAVAILABLE'
+          ),
+          checkpoint(
+            'process_ready', 5_000, true, true, 'syncing', 'unavailable', false,
+            'BACKSTAGE_NOTION_INDEX_UNAVAILABLE'
+          ),
+          checkpoint(
+            'healthcheck_window', 300_000, true, true, 'syncing',
+            'unavailable', false, 'BACKSTAGE_NOTION_INDEX_UNAVAILABLE'
+          ),
+          checkpoint(
+            'activated', 360_001, true, false, 'current_complete',
+            'current_complete', true, null
+          ),
+        ],
+        contracts: {
+          boundedStartupBeforeRailwayWindow: true,
+          currentCompleteOnlyForProtectedGeneration: true,
+          healthcheckWindowDoesNotAwaitSync: true,
+          noRestartRequired: true,
+          protectedFailureCodeStable: true,
+          snapshotStatusReducerExecuted: true,
+          staleSnapshotNotOfficial: true,
+          syncExceedsRailwayWindow: true,
+          virtualTimeOnly: true,
+        },
+        processInstanceStarts: 1,
+        productionSharedProtectedProvenanceValidator: true,
+        productionSharedSnapshotStatusReducer: true,
+        railwayHealthcheckWindowMs: 300_000,
+        syncCompletedAtMs: 360_001,
+      },
+      embeddingBoundaryReached: false,
+      notionApiBoundaryReached: false,
+      queueBoundaryReached: false,
+      realTimerWaited: false,
+      sensitiveMetadataAbsent: true,
       workerBoundaryReached: false,
     };
   }
@@ -3891,6 +3962,48 @@ function validateResponseBody(requestCase, bodyBytes, options) {
   }
   if (
     requestCase.expectedType === 'backstage-generation-contract'
+    && requestCase.fixtureName === 'authorityReadiness'
+  ) {
+    const readiness = body?.authorityReadiness;
+    const checkpoints = Array.isArray(readiness?.checkpoints)
+      ? readiness.checkpoints
+      : [];
+    if (
+      /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/iu
+        .test(bodyText)
+      || /(?:root|database|dataSource|page|snapshot|attempt)Id/iu
+        .test(bodyText)
+      || bodyText.includes('Bearer ')
+      || bodyText.includes('https://')
+      || checkpoints.length !== 4
+      || checkpoints[1]?.processReady !== true
+      || checkpoints[1]?.syncInProgress !== true
+      || checkpoints[2]?.logicalTimeMs !== 300_000
+      || checkpoints[2]?.processReady !== true
+      || checkpoints[2]?.syncInProgress !== true
+      || checkpoints[2]?.protectedGenerationAdmissible !== false
+      || checkpoints[2]?.protectedFailureCode
+        !== 'BACKSTAGE_NOTION_INDEX_UNAVAILABLE'
+      || checkpoints[3]?.snapshotStatus !== 'current_complete'
+      || checkpoints[3]?.protectedGenerationAdmissible !== true
+      || readiness?.processInstanceStarts !== 1
+      || readiness?.productionSharedSnapshotStatusReducer !== true
+      || readiness?.productionSharedProtectedProvenanceValidator !== true
+      || body?.sensitiveMetadataAbsent !== true
+      || body?.realTimerWaited !== false
+      || body?.workerBoundaryReached !== false
+      || body?.databaseBoundaryReached !== false
+      || body?.providerBoundaryReached !== false
+      || body?.externalNetworkAttempted !== false
+    ) {
+      fail(
+        'NATIVE_PR_PREVIEW_BACKSTAGE_AUTHORITY_READINESS_OUTCOME_INVALID',
+        requestCase.caseId
+      );
+    }
+  }
+  if (
+    requestCase.expectedType === 'backstage-generation-contract'
     && requestCase.fixtureName === 'gptClientIdentity'
   ) {
     if (
@@ -4068,6 +4181,13 @@ async function executeRequestCase(
     );
   }
   if (
+    requestCase.expectedType === 'web-readiness'
+    && response.headers.get(NATIVE_PR_PREVIEW_E2E_CONTRACT.iosDevicePolicy.proofHeader)
+      !== NATIVE_PR_PREVIEW_E2E_CONTRACT.iosDevicePolicy.proofVersion
+  ) {
+    fail('NATIVE_PR_PREVIEW_IOS_DEVICE_POLICY_PROOF_INVALID', requestCase.caseId);
+  }
+  if (
     (
       requestCase.expectedType === 'gaming-source'
       || requestCase.expectedType === 'dispatch-gpt-identifier-contract'
@@ -4093,6 +4213,85 @@ async function executeRequestCase(
     ) !== NATIVE_PR_PREVIEW_E2E_CONTRACT.syntheticResponseHeader.value
   ) {
     fail('NATIVE_PR_PREVIEW_SYNTHETIC_MARKER_MISSING', requestCase.caseId);
+  }
+  if (
+    requestCase.caseId === 'gaming-query-guide'
+    && response.headers.get(NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.proofHeader)
+      !== NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.proofVersion
+  ) {
+    fail(
+      'NATIVE_PR_PREVIEW_GAMING_ARCHIVE_GROUNDING_PROOF_INVALID',
+      requestCase.caseId
+    );
+  }
+  if (
+    requestCase.caseId === 'gaming-query-guide'
+    && response.headers.get(NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.responseProofHeader)
+      !== NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.responseProofVersion
+  ) {
+    fail(
+      'NATIVE_PR_PREVIEW_GAMING_GUIDE_RESPONSE_PROOF_INVALID',
+      requestCase.caseId
+    );
+  }
+  if (
+    requestCase.caseId === 'gaming-query-guide'
+    && response.headers.get(NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.documentProofHeader)
+      !== NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.documentProofVersion
+  ) {
+    fail(
+      'NATIVE_PR_PREVIEW_GAMING_DOCUMENT_INGESTION_PROOF_INVALID',
+      requestCase.caseId
+    );
+  }
+  if (
+    requestCase.caseId === 'gaming-query-guide'
+    && response.headers.get(NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.durableRagProofHeader)
+      !== NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.durableRagProofVersion
+  ) {
+    fail('NATIVE_PR_PREVIEW_GAMING_DURABLE_RAG_PROOF_INVALID', requestCase.caseId);
+  }
+  if (
+    requestCase.caseId === 'gaming-query-guide'
+    && response.headers.get(NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.guideAssistanceProofHeader)
+      !== NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.guideAssistanceProofVersion
+  ) {
+    fail('NATIVE_PR_PREVIEW_GAMING_GUIDE_ASSISTANCE_PROOF_INVALID', requestCase.caseId);
+  }
+  if (
+    requestCase.caseId === 'gaming-query-guide'
+    && response.headers.get(NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.progressRecoveryProofHeader)
+      !== NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.progressRecoveryProofVersion
+  ) {
+    fail('NATIVE_PR_PREVIEW_GAMING_PROGRESS_RECOVERY_PROOF_INVALID', requestCase.caseId);
+  }
+  if (
+    requestCase.caseId === 'gaming-query-guide'
+    && response.headers.get(NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.hybridKnowledgeProofHeader)
+      !== NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.hybridKnowledgeProofVersion
+  ) {
+    fail('NATIVE_PR_PREVIEW_GAMING_HYBRID_KNOWLEDGE_PROOF_INVALID', requestCase.caseId);
+  }
+  if (
+    requestCase.caseId === 'gaming-query-guide'
+    && response.headers.get(NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.clearProofHeader)
+      !== NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.clearProofVersion
+  ) {
+    fail('NATIVE_PR_PREVIEW_GAMING_CLEAR_PROOF_INVALID', requestCase.caseId);
+  }
+  if (
+    requestCase.caseId === 'gaming-query-guide'
+    && response.headers.get(NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.sourceAcquisitionProofHeader)
+      !== NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.sourceAcquisitionProofVersion
+  ) {
+    fail('NATIVE_PR_PREVIEW_GAMING_SOURCE_ACQUISITION_PROOF_INVALID', requestCase.caseId);
+  }
+  if (
+    requestCase.caseId === 'gaming-query-guide'
+    && response.headers.get(NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.structuredEvidenceProofHeader)
+      !== NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.structuredEvidenceProofVersion
+  ) {
+    fail('NATIVE_PR_PREVIEW_GAMING_STRUCTURED_EVIDENCE_PROOF_INVALID', requestCase.caseId);
   }
   if (requestCase.expectedType === 'backstage-generation-contract') {
     const contract = NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration;
@@ -4157,6 +4356,17 @@ async function executeRequestCase(
     ) {
       fail(
         'NATIVE_PR_PREVIEW_BACKSTAGE_NOTION_READ_DIAGNOSTICS_PROOF_INVALID',
+        requestCase.caseId
+      );
+    }
+    if (
+      requestCase.fixtureName === 'notionAuthorityRag'
+      && response.headers.get(
+        contract.proofHeaders.notionDatabaseAuthorityVersion
+      ) !== contract.notionDatabaseAuthorityProofVersion
+    ) {
+      fail(
+        'NATIVE_PR_PREVIEW_BACKSTAGE_NOTION_DATABASE_AUTHORITY_PROOF_INVALID',
         requestCase.caseId
       );
     }
@@ -4239,6 +4449,17 @@ async function executeRequestCase(
     ) {
       fail(
         'NATIVE_PR_PREVIEW_BACKSTAGE_NOTION_SYNC_PHASE_A_PROOF_INVALID',
+        requestCase.caseId
+      );
+    }
+    if (
+      requestCase.fixtureName === 'authorityReadiness'
+      && response.headers.get(
+        contract.proofHeaders.authorityReadinessVersion
+      ) !== contract.authorityReadinessProofVersion
+    ) {
+      fail(
+        'NATIVE_PR_PREVIEW_BACKSTAGE_AUTHORITY_READINESS_PROOF_INVALID',
         requestCase.caseId
       );
     }
@@ -4365,6 +4586,20 @@ async function executeRequestCase(
     responseBytes: bodyBytes.length,
     role: requestCase.role,
     simulatedAuth: requestCase.simulatedAuth === true,
+    ...(requestCase.caseId === 'gaming-query-guide'
+      ? {
+          gamingArchiveGuideEvidenceVerified: true,
+          gamingGuideResponseVerified: true,
+          gamingDocumentIngestionVerified: true,
+          gamingDurableRagVerified: true,
+          gamingGuideAssistanceVerified: true,
+          gamingProgressRecoveryVerified: true,
+          gamingHybridKnowledgeVerified: true,
+          gamingClearVerified: true,
+          gamingSourceAcquisitionVerified: true,
+          gamingStructuredEvidenceVerified: true,
+        }
+      : {}),
     ...(requestCase.expectedType === 'backstage-generation-contract'
       ? { clearPolicyVersionVerified: true }
       : {}),
@@ -4379,6 +4614,7 @@ async function executeRequestCase(
     ...(requestCase.expectedType === 'backstage-generation-contract'
       && requestCase.fixtureName === 'notionAuthorityRag'
       ? {
+          notionDatabaseAuthorityVerified: true,
           notionReadDiagnosticsVerified: true,
           partitionCutoverRepairVerified: true,
           partitionedAuthorityVerified: true,
@@ -4415,6 +4651,10 @@ async function executeRequestCase(
           notionWriterCapacityReleaseVerified: true,
         }
       : {}),
+    ...(requestCase.expectedType === 'backstage-generation-contract'
+      && requestCase.fixtureName === 'authorityReadiness'
+      ? { authorityReadinessVerified: true }
+      : {}),
     ...(requestCase.expectedType === 'status-auth-boundary-contract'
       ? { statusAuthBoundaryVerified: true }
       : {}),
@@ -4423,6 +4663,9 @@ async function executeRequestCase(
       : {}),
     ...(requestCase.expectedType === 'worker-readiness'
       ? { workerBudgetReadinessVerified: true }
+      : {}),
+    ...(requestCase.expectedType === 'web-readiness'
+      ? { iosDevicePolicyVerified: true }
       : {}),
     ...(generationProofStartedAt === null
       ? {}

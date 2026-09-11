@@ -19,7 +19,7 @@ For deployed environments, set `ARCANOS_BASE_URL` to that service's HTTPS origin
 For Custom GPT OpenAPI metadata, the gateway derives the server URL from `ARCANOS_GPT_ACCESS_BASE_URL` first, then `ARCANOS_BASE_URL`, `ARCANOS_BACKEND_URL`, `SERVER_URL`, `BACKEND_URL`, public Railway URL/domain variables, or a local development request origin. Railway PR previews advertise their Railway preview URL variables before inherited production URLs. Non-local request hosts are ignored so public metadata cannot be poisoned by spoofed headers. Set `ARCANOS_GPT_ACCESS_BASE_URL` in stable deployments when the gateway is reached through a public origin.
 
 ## Authentication
-Generic protected `/gpt-access/*` operations require bearer auth. `/gpt-access/openapi.json` is public metadata so GPT Action import can retrieve the schema, but every generic protected operation in that schema still declares bearer auth:
+Generic protected `/gpt-access/*` operations require bearer auth. `/gpt-access/openapi.json` is public metadata so GPT Action import can retrieve the schema. Existing operator/server clients retain their original credential class:
 
 ```bash
 Authorization: Bearer <ARCANOS_GPT_ACCESS_TOKEN>
@@ -29,7 +29,80 @@ Authorization: Bearer <ARCANOS_GPT_ACCESS_TOKEN>
 
 `ARCANOS_GPT_ACCESS_SCOPES` is a comma-separated allowlist. `jobs.create`, `capabilities.read`, `capabilities.run`, and `workers.recover` must be listed explicitly before their respective enqueue, discovery, capability-execution, or worker-recovery operation is allowed. If the variable is unset, the remaining recognized scopes receive the compatibility default grant. Capability runs also require the existing `MCP_ALLOW_MODULE_ACTIONS` module-action allowlist and the applicable confirmation gate (`x-confirmed: yes` or a confirmation challenge token); stricter local-agent execution uses its issued challenge only.
 
-Those are the unchanged generic-bearer rules. The exact Backstage Booker canon
+### Paired iPhone authentication
+
+The iPhone bootstrap adds a separate device principal and never gives the phone
+the operator/server bearer, Local Agent executor credential, or backend secrets.
+An already trusted operator creates a five-minute single-use challenge using
+`POST /gpt-access/devices/pairing`. The phone submits that token and a random
+Keychain installation UUID to `POST /gpt-access/devices/pair`. The server binds
+the new device to the trusted operator's existing principal/workspace and the
+configured HTTPS device origin. The installation UUID is an identity label;
+possession of that UUID alone cannot authenticate a request.
+
+Pairing produces an opaque `agd1.` device credential with 256 bits of random
+secret material and a one-hour access lifetime. The challenge uses the distinct
+`agp1.` prefix and is consumed atomically. Secret digests, bounded expiry, and
+revocation state are server-owned. Neither raw pairing material nor credential
+values belong in logs or durable application preferences. The iOS session and
+local installation identity are stored only in nonsynchronizing, device-only
+Keychain storage.
+
+The device sends its credential as a bearer together with the exact approved
+`X-Arcanos-Device-Origin` header. OpenAPI describes operator and device security
+separately; the origin header is public binding metadata, not another secret.
+All device authorization reads current server state. Missing, malformed,
+expired, revoked, wrong-origin, and unavailable-authorization cases fail
+closed. A client-side state check never replaces server-side validation.
+
+The maximum client scope set is `jobs.create`, `jobs.result`,
+`capabilities.read`, and `capabilities.run`. AI jobs are restricted to
+`arcanos-core`. The default capability grant is `git.status`; an operator may
+explicitly grant `tests.run`, `patch.preview`, and `patch.apply` as a supported
+subset. The server also enforces the deployment's existing scopes,
+`MCP_ALLOW_MODULE_ACTIONS`, and Local Agent policy. Devices cannot use queue,
+worker, MCP, diagnostic, generic module-alias, executor, or administrative
+routes. Capability discovery exposes only granted client actions.
+
+Device-owned jobs carry device, principal, and workspace context supplied by
+the authenticated server principal. Gateway polling checks ownership before
+returning pending, completed, failed, or expired state. Another device cannot
+read a job by learning its UUID. Existing operator reads and direct `/jobs/*`
+job-read-token requirements retain their original behavior.
+
+Pairing is never confirmation. An authorized `tests.run` or `patch.apply`
+request still receives `CONFIRMATION_REQUIRED`. The user must approve, then
+the client retries the same method, path, action, payload, and idempotency key
+once with only `confirmation_token` added. Mutation, replay, a retry failure,
+or a second challenge ends that attempt. Challenge state stays temporary and
+is not a permanent device grant.
+
+`GET /gpt-access/devices/session` returns safe metadata only.
+`POST /gpt-access/devices/renew` accepts `{}` with the current unexpired
+credential; it atomically replaces the old secret and preserves the original
+thirty-day absolute renewal deadline. A lost renewal response or failed
+Keychain write can require fresh pairing: the old credential is not retained
+as a second live secret. Never automatically replay a remote mutation to
+recover authentication. Expired access cannot be renewed or inspected and
+requires a new trusted pairing. Local-capable requests continue locally while
+remote-required requests report a clear authentication/connectivity state.
+
+`POST /gpt-access/devices/{deviceId}/revoke` accepts `{}` from that current
+device or the trusted owning operator context. Server-side revocation blocks
+future requests even if the phone retains its old Keychain record. Deleting a
+local record alone is not server revocation. Responses carrying pairing or
+session material use `Cache-Control: no-store`.
+The device HTTP boundary precedes broad application parsing, applies the shared
+Gateway rate budget once, and caps device JSON bodies at 4 KiB. POST bodies
+must be nonempty uncompressed `application/json`; renewal and revocation send
+`{}`. Fixed parser-error responses and audit fields never echo request content.
+
+See the [endpoint contract](API.md#gpt-access-protected-gateway) and
+[iPhone validation procedure](../clients/ios/README.md). The additive device
+HTTP family does not change public protocol command IDs, Python executor
+contracts, or existing server-to-server credential provisioning.
+
+Those are the unchanged generic-bearer rules plus the bounded device lane. The exact Backstage Booker canon
 route additionally supports the purpose-bound lane below; its universe and
 storyline reads require only that dedicated credential. Neither weakens a generic credential's
 scope or confirmation requirements.
@@ -372,9 +445,11 @@ results are admitted by their server-owned creation-path and execution-reason
 markers under the shared gateway bearer; the handler does not compare an
 individual GPT job's actor to the caller. Local-agent results additionally
 require the configured principal/workspace to match the stored job and may
-reconcile an expired job's durable lifecycle before returning. This operation
-is not a per-user authorization boundary or a strictly read-only database
-probe. Dedicated Booker results and generic HTTP job capabilities have their
+reconcile an expired job's durable lifecycle before returning. Shared-operator
+reads are not a per-user authorization boundary; paired-device reads additionally
+require the server-owned device, principal, and workspace to match on every
+job state. Result polling is not a strictly read-only database probe.
+Dedicated Booker results and generic HTTP job capabilities have their
 own separate checks. MCP `jobs.status`/`jobs.result` do not inherit them; see
 the unresolved MCP authorization gap in [API.md](API.md#daemon-debug-and-registry-paths).
 

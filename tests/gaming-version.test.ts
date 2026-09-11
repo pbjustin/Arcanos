@@ -20,6 +20,12 @@ describe('Gaming semantic version parsing', () => {
     ['Compare Palworld 0.9 with Palworld 1.0.', ['0.9', '1.0']],
     ['Compare versions 1.0 and 2.0 kilograms.', ['1.0']],
     ['Compare Palworld 1.0 and 3.5 minutes of setup.', ['1.0']],
+    ['If I install patch 2.1, what changes?', ['2.1']],
+    ['I am not using patch 2.1. Show a guide for version 1.9.', ['1.9']],
+    ['I have not installed patch 2.1.', []],
+    ["I don't use version 2.1.", []],
+    ['Not version 2.1; use patch 1.9.', ['1.9']],
+    ['I am not sure what changed in patch 2.1.', ['2.1']],
   ])('extracts explicit versions without trailing prose: %s', (prompt, expected) => {
     expect(extractExplicitGamingVersions({ prompt, game: 'Palworld' })).toEqual(expected);
   });

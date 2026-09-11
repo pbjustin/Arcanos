@@ -2,7 +2,10 @@ import axios from 'axios';
 import { load } from 'cheerio';
 import { Resolver } from 'node:dns/promises';
 import { Agent as HttpsAgent } from 'node:https';
+import type { IncomingMessage } from 'node:http';
 import { isIP } from 'node:net';
+import { PassThrough, Transform, type Readable } from 'node:stream';
+import { createBrotliDecompress, createGunzip, createInflate } from 'node:zlib';
 import { getEnv, getEnvIntegerAtLeast } from '@platform/runtime/env.js';
 
 const DEFAULT_MAX_CHARS = 12000;
@@ -12,6 +15,7 @@ const DEFAULT_FETCH_TIMEOUT_MS = 8000;
 const DEFAULT_MAX_LINKS = 15;
 const DEFAULT_USER_AGENT = 'Arcanos-WebFetcher/1.0';
 const HARD_MAX_CHARS = 100_000;
+const HARD_MAX_SELECTED_TEXT_CHARS = 1_000_000;
 const HARD_MAX_FETCH_BYTES = 5_000_000;
 const HARD_MAX_FETCH_TIMEOUT_MS = 30_000;
 const HARD_MAX_LINKS = 100;
@@ -72,7 +76,7 @@ function getConfiguredMaxChars(): number {
   return Math.min(getEnvIntegerAtLeast('WEB_FETCH_MAX_CHARS', DEFAULT_MAX_CHARS, 0), HARD_MAX_CHARS);
 }
 
-function getConfiguredFetchTimeoutMs(): number {
+export function getConfiguredFetchTimeoutMs(): number {
   return Math.min(
     getEnvIntegerAtLeast('WEB_FETCH_TIMEOUT_MS', DEFAULT_FETCH_TIMEOUT_MS, 1),
     HARD_MAX_FETCH_TIMEOUT_MS
@@ -111,6 +115,225 @@ export interface FetchAndCleanRawDocument {
   truncated: boolean;
 }
 
+export type ProtectedDocumentFetchFailureCode =
+  | 'INVALID_TARGET' | 'NETWORK_DESTINATION_BLOCKED' | 'DNS_FAILED' | 'FETCH_FAILED'
+  | 'REDIRECT_LOCATION_INVALID' | 'TRANSFER_LIMIT' | 'DECODED_LIMIT'
+  | 'UNSUPPORTED_ENCODING' | 'DEADLINE_EXCEEDED' | 'CANCELLED';
+
+/** Only bounded codes/status leave the protected transport; native errors can contain target data. */
+export class ProtectedDocumentFetchError extends Error {
+  constructor(readonly code: ProtectedDocumentFetchFailureCode, readonly status?: number) {
+    super(`Public document acquisition failed: ${code}`);
+    this.name = 'ProtectedDocumentFetchError';
+  }
+}
+
+export interface ProtectedDocumentFetchResponse {
+  status: number;
+  location?: string;
+  body: string;
+  contentType: string;
+  publicUrl: string;
+  /** Per-response bytes measured by the protected wire/decode meters. */
+  receivedBytes?: number;
+  acceptedBytes?: number;
+}
+
+export interface ProtectedDocumentFetchSession {
+  readonly deadlineAt: number;
+  assertActive(): void;
+  fetch(url: string): Promise<ProtectedDocumentFetchResponse>;
+  dispose(): void;
+}
+
+/**
+ * One protected GET at a time, with an aggregate compressed/decoded allowance and absolute deadline.
+ * This is not a redirect follower: only the Gaming resolver decides whether to request another URL.
+ * Both the session and legacy Axios fetch disable automatic redirects and environment proxies.
+ */
+export function createProtectedDocumentFetchSession(
+  options: Pick<FetchAndCleanOptions, 'signal' | 'deadlineAt' | 'timeoutMs'> = {}
+): ProtectedDocumentFetchSession {
+  const timeoutMs = Math.min(
+    HARD_MAX_FETCH_TIMEOUT_MS,
+    Math.max(1, Number.isFinite(options.timeoutMs) ? options.timeoutMs! : getConfiguredFetchTimeoutMs())
+  );
+  const deadlineAt = Math.min(
+    Date.now() + timeoutMs,
+    Number.isFinite(options.deadlineAt) ? options.deadlineAt! : Infinity
+  );
+  const controller = new AbortController();
+  // A fresh core client inherits neither global defaults nor interceptors/auth/transforms.
+  const client = new axios.Axios({ adapter: axios.getAdapter('http') });
+  const maxBytes = getConfiguredMaxFetchBytes();
+  let wireBytes = 0;
+  let decodedBytes = 0;
+  let disposed = false;
+  let inFlight = false;
+  const abort = (code: 'CANCELLED' | 'DEADLINE_EXCEEDED'): void => {
+    if (!controller.signal.aborted) controller.abort(new ProtectedDocumentFetchError(code));
+  };
+  const onCallerAbort = (): void => abort('CANCELLED');
+  options.signal?.addEventListener('abort', onCallerAbort, { once: true });
+  if (options.signal?.aborted) onCallerAbort();
+  const timer = setTimeout(() => abort('DEADLINE_EXCEEDED'), Math.max(0, deadlineAt - Date.now()));
+  timer.unref();
+  const assertActive = (): void => {
+    if (disposed) throw new ProtectedDocumentFetchError('CANCELLED');
+    if (Date.now() >= deadlineAt) abort('DEADLINE_EXCEEDED');
+    if (controller.signal.aborted) throw controller.signal.reason;
+  };
+
+  return {
+    deadlineAt,
+    assertActive,
+    async fetch(url) {
+      assertActive();
+      if (inFlight) throw new ProtectedDocumentFetchError('FETCH_FAILED');
+      inFlight = true;
+      const responseWireStart = wireBytes;
+      const responseDecodedStart = decodedBytes;
+      let agent: HttpsAgent | undefined;
+      let response: IncomingMessage | undefined;
+      let responseStatus: number | undefined;
+      const streams: Readable[] = [];
+      const stopTransfer = (): void => {
+        const error = controller.signal.reason as Error;
+        response?.destroy(error);
+        for (const stream of streams) stream.destroy(error);
+      };
+      controller.signal.addEventListener('abort', stopTransfer, { once: true });
+      try {
+        let parsed: URL;
+        try {
+          parsed = assertHttpUrl(url);
+          if (parsed.protocol !== 'https:' || (parsed.port && parsed.port !== '443')) {
+            throw new Error('invalid');
+          }
+        } catch {
+          throw new ProtectedDocumentFetchError('INVALID_TARGET');
+        }
+        let target: ResolvedFetchTarget;
+        try {
+          target = await resolveFetchTarget(parsed.href, {
+            signal: controller.signal, deadlineAt
+          }, false);
+        } catch (error) {
+          assertActive();
+          if (error instanceof Error && error.message === 'Private/internal IP addresses are not allowed for security reasons') {
+            throw new ProtectedDocumentFetchError('NETWORK_DESTINATION_BLOCKED');
+          }
+          throw new ProtectedDocumentFetchError('DNS_FAILED');
+        }
+        assertActive();
+        agent = new HttpsAgent({ servername: target.tlsServerName, rejectUnauthorized: true, keepAlive: false });
+        const result = await client.get<IncomingMessage>(target.requestUrl.href, {
+          data: undefined,
+          timeout: Math.max(1, deadlineAt - Date.now()),
+          signal: controller.signal,
+          // The two streaming meters below own this aggregate bound, including decompression.
+          maxContentLength: -1,
+          maxBodyLength: maxBytes - wireBytes,
+          maxRedirects: 0,
+          proxy: false,
+          responseType: 'stream',
+          // Count compressed bytes before explicitly decoding under the same aggregate allowance.
+          decompress: false,
+          validateStatus: () => true,
+          headers: {
+            Host: target.hostHeader,
+            'User-Agent': DEFAULT_USER_AGENT,
+            Accept: 'text/html,text/plain,application/xhtml+xml,application/json;q=0.9',
+            'Accept-Encoding': 'gzip,deflate,br'
+          },
+          httpsAgent: agent
+        });
+        response = result.data;
+        responseStatus = result.status;
+        assertActive();
+        const status = result.status;
+        const locations: string[] = [];
+        // Axios may wrap the body in a limiting stream; the native response retains raw headers.
+        const rawHeaders: string[] | undefined = response.rawHeaders ?? result.request?.res?.rawHeaders;
+        if (!rawHeaders || rawHeaders.length > 256 || rawHeaders.reduce((bytes, value) => bytes + Buffer.byteLength(value), 0) > 16_384) {
+          throw new ProtectedDocumentFetchError('FETCH_FAILED', status);
+        }
+        for (let index = 0; index < rawHeaders.length; index += 2) {
+          if (rawHeaders[index].toLowerCase() === 'location') {
+            locations.push(rawHeaders[index + 1]);
+          }
+        }
+        const isRedirect = [301, 302, 303, 307, 308].includes(status);
+        if (isRedirect && (locations.length !== 1 || locations[0].length === 0 ||
+          Buffer.byteLength(locations[0], 'utf8') > 2048 || /[\u0000-\u0020\u007f]/u.test(locations[0]))) {
+          throw new ProtectedDocumentFetchError('REDIRECT_LOCATION_INVALID', status);
+        }
+        const encoding = String(result.headers['content-encoding'] ?? '').trim().toLowerCase();
+        if (!['', 'identity', 'gzip', 'deflate', 'br'].includes(encoding)) {
+          throw new ProtectedDocumentFetchError('UNSUPPORTED_ENCODING', status);
+        }
+        const contentLength = result.headers['content-length'];
+        if (contentLength !== undefined && (!/^\d+$/u.test(String(contentLength)) || Number(contentLength) > maxBytes - wireBytes)) {
+          throw new ProtectedDocumentFetchError('TRANSFER_LIMIT', status);
+        }
+        const wireMeter = new Transform({
+          transform(chunk: Buffer, _encoding, callback) {
+            wireBytes += chunk.length;
+            callback(wireBytes > maxBytes ? new ProtectedDocumentFetchError('TRANSFER_LIMIT', status) : null, chunk);
+          }
+        });
+        const decoder = encoding === 'gzip' ? createGunzip()
+          : encoding === 'deflate' ? createInflate()
+          : encoding === 'br' ? createBrotliDecompress() : new PassThrough();
+        const decodedMeter = new Transform({
+          transform(chunk: Buffer, _encoding, callback) {
+            decodedBytes += chunk.length;
+            callback(decodedBytes > maxBytes ? new ProtectedDocumentFetchError('DECODED_LIMIT', status) : null, chunk);
+          }
+        });
+        streams.push(wireMeter, decoder, decodedMeter);
+        // Forward upstream failures explicitly; pipe() alone does not forward stream errors.
+        response.once('error', (error) => wireMeter.destroy(error));
+        wireMeter.once('error', (error) => decoder.destroy(error));
+        decoder.once('error', (error) => decodedMeter.destroy(error));
+        response.pipe(wireMeter).pipe(decoder).pipe(decodedMeter);
+        const chunks: Buffer[] = [];
+        for await (const chunk of decodedMeter) {
+          assertActive();
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        }
+        assertActive();
+        return {
+          status,
+          ...(isRedirect ? { location: locations[0] } : {}),
+          body: Buffer.concat(chunks).toString('utf8'),
+          contentType: String(result.headers['content-type'] ?? '').split(';', 1)[0].trim().toLowerCase(),
+          publicUrl: target.parsedUrl.href,
+          receivedBytes: wireBytes - responseWireStart,
+          acceptedBytes: decodedBytes - responseDecodedStart
+        };
+      } catch (error) {
+        assertActive();
+        if (error instanceof ProtectedDocumentFetchError) throw error;
+        throw new ProtectedDocumentFetchError('FETCH_FAILED', responseStatus);
+      } finally {
+        controller.signal.removeEventListener('abort', stopTransfer);
+        response?.destroy();
+        for (const stream of streams) stream.destroy();
+        agent?.destroy();
+        inFlight = false;
+      }
+    },
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      abort('CANCELLED');
+      clearTimeout(timer);
+      options.signal?.removeEventListener('abort', onCallerAbort);
+    }
+  };
+}
+
 export interface FetchAndCleanOptions {
   signal?: AbortSignal;
   deadlineAt?: number;
@@ -119,6 +342,10 @@ export interface FetchAndCleanOptions {
   preferredContentTerms?: readonly string[];
   removeSelectors?: readonly string[];
   includeLinks?: boolean;
+  /** Gaming document acquisition opts in; scoring remains bounded and legacy extraction stays unchanged. */
+  retainFullSelectedText?: boolean;
+  /** Internal durable-document opt-in. Does not change transport byte, timeout, or URL limits. */
+  maxSelectedTextChars?: number;
   onExtraction?: (metrics: FetchAndCleanExtractionMetrics) => void;
   rawDocumentMaxChars?: number;
   onRawDocument?: (document: FetchAndCleanRawDocument) => void;
@@ -206,6 +433,7 @@ function contentTermOverlap(text: string, terms: readonly string[]): number {
 }
 
 interface ScoredExtractionCandidate {
+  element?: cheerio.Element;
   selector: string;
   text: string;
   headingText?: string;
@@ -311,6 +539,7 @@ function scoreExtractionCandidate(
   const headingText = boundExtractionMetadata(headings.join(' | '));
 
   return {
+    element,
     selector: selector.slice(0, MAX_EXTRACTION_METADATA_CHARS),
     text: scoringText,
     ...(headingText ? { headingText } : {}),
@@ -382,7 +611,6 @@ export async function fetchAndCleanDocument(
   const target = await resolveFetchTarget(url, options);
   throwIfFetchCancelled(options);
   const maxFetchBytes = getConfiguredMaxFetchBytes();
-  const boundedMaxChars = Math.min(Math.max(0, maxChars), HARD_MAX_CHARS);
   const deadlineRemainingMs = typeof options.deadlineAt === 'number'
     ? Math.max(1, Math.trunc(options.deadlineAt - Date.now()))
     : HARD_MAX_FETCH_TIMEOUT_MS;
@@ -422,20 +650,45 @@ export async function fetchAndCleanDocument(
     // exact abort reason, or the canonical deadline error, before returning.
     throwIfFetchCancelled(options);
     throw error;
+  }).finally(() => {
+    httpsAgent?.destroy();
   });
   throwIfFetchCancelled(options);
   const fetchElapsedMs = Date.now() - fetchStartedAt;
 
   const contentType = String(response.headers['content-type'] ?? '').split(';', 1)[0].trim().toLowerCase();
+  const responseText = typeof response.data === 'string' ? response.data : String(response.data ?? '');
+  return extractFetchAndCleanDocument(target.parsedUrl.href, responseText, contentType, maxChars, options, fetchElapsedMs);
+}
+
+/** Validate original accepted bytes before any opt-in document projection can remove content. */
+export function assertSupportedFetchAndCleanBody(responseText: string, contentType: string): void {
   if (contentType && !['text/html', 'text/plain', 'application/xhtml+xml', 'application/json'].includes(contentType)) {
     throw new Error(`Unsupported content type for web fetching: ${contentType}`);
   }
-  const responseText = typeof response.data === 'string' ? response.data : String(response.data ?? '');
   const binarySample = responseText.slice(0, 8192);
   const binaryControlCount = binarySample.match(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\ufffd]/g)?.length ?? 0;
   if (binarySample.includes('\u0000') || binaryControlCount / Math.max(1, binarySample.length) > 0.03) {
     throw new Error('Unsupported binary-like content for web fetching');
   }
+}
+
+/** Reuse the bounded extractor after resolver-controlled acquisition, without another network request. */
+export function extractFetchAndCleanDocument(
+  url: string,
+  responseText: string,
+  contentType: string,
+  maxChars: number,
+  options: FetchAndCleanOptions = {},
+  fetchElapsedMs = 0
+): FetchAndCleanDocument {
+  throwIfFetchCancelled(options);
+  const parsedUrl = assertHttpUrl(url);
+  const selectedTextCeiling = options.retainFullSelectedText && Number.isFinite(options.maxSelectedTextChars)
+    ? Math.min(HARD_MAX_SELECTED_TEXT_CHARS, Math.max(0, Math.trunc(options.maxSelectedTextChars!)))
+    : HARD_MAX_CHARS;
+  const boundedMaxChars = Math.min(Math.max(0, Number.isFinite(maxChars) ? Math.trunc(maxChars) : 0), selectedTextCeiling);
+  assertSupportedFetchAndCleanBody(responseText, contentType);
 
   if (options.onRawDocument) {
     const rawDocumentMaxChars = Math.min(
@@ -531,14 +784,18 @@ export async function fetchAndCleanDocument(
     bestPreferredCandidate.qualityScore >= MIN_PREFERRED_CONTAINER_SCORE
     ? bestPreferredCandidate
     : bodyCandidate;
-  const cleanedText = selectedCandidate.text;
+  // Keep only the winning element, not full document copies for every scoring candidate.
+  const selectedText = options.retainFullSelectedText && selectedCandidate.element
+    ? normalizeExtractedText($(selectedCandidate.element).text())
+    : selectedCandidate.text;
+  const cleanedText = options.retainFullSelectedText ? selectedText.slice(0, boundedMaxChars) : selectedText;
   const extractionStrategy = selectedCandidate.selector;
   const documentTitle = boundExtractionMetadata($('title').first().text());
 
   options.onExtraction?.({
     strategy: extractionStrategy,
     rawTextLength,
-    cleanedTextLength: cleanedText.length,
+    cleanedTextLength: selectedText.length,
     fetchElapsedMs,
     extractionElapsedMs: Date.now() - extractionStartedAt,
     selectedContainer: selectedCandidate.selector,
@@ -558,7 +815,7 @@ export async function fetchAndCleanDocument(
     if (!href) return;
 
     try {
-      const resolved = new URL(href, target.parsedUrl);
+      const resolved = new URL(href, parsedUrl);
       if (resolved.protocol !== 'http:' && resolved.protocol !== 'https:') {
         return;
       }
@@ -584,7 +841,9 @@ export async function fetchAndCleanDocument(
   return {
     text: cleanedText,
     links: limitedLinks,
-    combined: serializeFetchAndCleanDocument({ text: cleanedText, links: limitedLinks }, boundedMaxChars)
+    combined: options.retainFullSelectedText && options.includeLinks === false && options.maxSelectedTextChars !== undefined
+      ? cleanedText.slice(0, boundedMaxChars)
+      : serializeFetchAndCleanDocument({ text: cleanedText, links: limitedLinks }, boundedMaxChars)
   };
 }
 
@@ -692,7 +951,7 @@ function isInternalIpv4(ipv4Address: string): boolean {
 }
 
 function extractIpv4MappedIpv6(ipv6Address: string): string | null {
-  const normalized = normalizeIpAddress(ipv6Address).toLowerCase();
+  const normalized = canonicalizeIpv6Address(ipv6Address);
   if (!normalized.startsWith('::ffff:')) {
     return null;
   }
@@ -721,7 +980,7 @@ function extractIpv4MappedIpv6(ipv6Address: string): string | null {
 }
 
 function isLoopbackIpv6(ipv6Address: string): boolean {
-  const normalized = normalizeIpAddress(ipv6Address).toLowerCase();
+  const normalized = canonicalizeIpv6Address(ipv6Address);
   if (normalized === '::1') {
     return true;
   }
@@ -730,7 +989,7 @@ function isLoopbackIpv6(ipv6Address: string): boolean {
 }
 
 function isInternalIpv6(ipv6Address: string): boolean {
-  const normalized = normalizeIpAddress(ipv6Address).toLowerCase();
+  const normalized = canonicalizeIpv6Address(ipv6Address);
 
   //audit assumption: link-local, loopback, unspecified, and ULA IPv6 ranges are internal; failure risk: SSRF to local infrastructure; expected invariant: globally routable address; handling strategy: block internal IPv6 prefixes.
   if (normalized === '::' || normalized === '::1') return true;
@@ -746,6 +1005,25 @@ function isInternalIpv6(ipv6Address: string): boolean {
   }
 
   return false;
+}
+
+function canonicalizeIpv6Address(ipv6Address: string): string {
+  // Use the same standard parser as URL admission, including equivalent expanded/mapped spellings.
+  return normalizeIpAddress(new URL(`http://[${normalizeIpAddress(ipv6Address)}]/`).hostname).toLowerCase();
+}
+
+function isGamingPublicIpv6(ipv6Address: string): boolean {
+  const normalized = canonicalizeIpv6Address(ipv6Address);
+  const [firstWord, secondWord] = normalized.split(':');
+  const first = Number.parseInt(firstWord, 16);
+  const second = secondWord ? Number.parseInt(secondWord, 16) : 0;
+  // Public Gaming acquisition admits ordinary global unicast only. This excludes unspecified,
+  // mapped/compatible, NAT64, discard, local, and multicast destinations without address translation.
+  if (first < 0x2000 || first > 0x3fff || !Number.isFinite(first)) return false;
+  if (first === 0x2001 && second <= 0x01ff) return false; // Special-purpose 2001::/23.
+  if (first === 0x2002) return false; // Deprecated 6to4 transition range.
+  if (first === 0x3fff && second <= 0x0fff) return false; // Documentation 3fff::/20.
+  return !isInternalIpv6(normalized);
 }
 
 function isInternalIpAddress(ipAddress: string): boolean {
@@ -883,12 +1161,13 @@ async function resolveHostnameAddresses(
 
 async function resolveFetchTarget(
   rawUrl: string,
-  options: Pick<FetchAndCleanOptions, 'signal' | 'deadlineAt'> = {}
+  options: Pick<FetchAndCleanOptions, 'signal' | 'deadlineAt'> = {},
+  allowLocalDevelopment = true
 ): Promise<ResolvedFetchTarget> {
   throwIfFetchCancelled(options);
   const parsedUrl = assertHttpUrl(rawUrl);
   const normalizedHostname = normalizeIpAddress(parsedUrl.hostname).toLowerCase();
-  const allowLoopbackForLocalDevelopment = isLocalDevelopmentBypassEnabled(normalizedHostname);
+  const allowLoopbackForLocalDevelopment = allowLocalDevelopment && isLocalDevelopmentBypassEnabled(normalizedHostname);
 
   const ipFamily = isIP(normalizedHostname);
   let resolvedAddresses: Array<{ address: string; family: IpFamily }>;
@@ -912,6 +1191,9 @@ async function resolveFetchTarget(
   //audit assumption: all resolved addresses must be validated, not just the first record; failure risk: mixed public/private DNS answers enabling SSRF via fallback selection; expected invariant: every candidate address is safe; handling strategy: reject if any resolved address is internal.
   for (const entry of resolvedAddresses) {
     assertAllowedResolvedAddress(entry.address, allowLoopbackForLocalDevelopment);
+    if (!allowLocalDevelopment && entry.family === 6 && !isGamingPublicIpv6(entry.address)) {
+      throw new Error('Private/internal IP addresses are not allowed for security reasons');
+    }
   }
 
   const selectedAddress = choosePreferredAddress(resolvedAddresses);

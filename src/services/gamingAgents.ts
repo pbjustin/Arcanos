@@ -9,13 +9,17 @@ import {
   type GamingSuccessEnvelope
 } from "@services/gamingModes.js";
 import { isRecord } from "@shared/typeGuards.js";
+import { composeGroundedGamingGuideResponse } from "@shared/gaming/gamingGuideResponseCore.js";
+import { hasBoundGamingClearAnswer } from '@shared/gaming/gamingClearAnswerBinding.js';
+import { buildGamingRecoveryResponse } from "@shared/gaming/gamingRecoveryResponse.js";
 import { extractTextPrompt, normalizeStringList } from "@transport/http/payloadNormalization.js";
+import { GAMING_PLAYER_CONTEXT, pickGamingPlayerContext, resolveGamingPlayerContext, type GamingContextCarrier, type GamingPlayerContext, type GamingSpoilerTolerance } from "@shared/gaming/gamingPlayerContext.js";
 
 export type GamingIntentMode = GamingMode | "non-gaming";
 
-export type GamingSpoilerTolerance = "avoid" | "allowed" | "unknown";
+export type { GamingSpoilerTolerance } from "@shared/gaming/gamingPlayerContext.js";
 
-export type GamingIntent = {
+export type GamingIntent = GamingPlayerContext & {
   mode: GamingIntentMode;
   prompt: string;
   confidence: number;
@@ -56,7 +60,7 @@ export type GamingClarificationResult =
       question: string;
     };
 
-export type GamingBackendActionPayload = {
+export type GamingBackendActionPayload = GamingPlayerContext & GamingContextCarrier & {
   mode: GamingMode;
   prompt: string;
   game?: string;
@@ -366,7 +370,8 @@ function extractVersion(payload: unknown, prompt: string, game?: string): string
   }
 
   const labeledToken = prompt.match(/\b(?:patch|version|season)\s+([A-Za-z0-9][A-Za-z0-9._-]{0,31})\b/i)?.[1];
-  return labeledToken && !/^(?:for|is|notes?|of|the)$/i.test(labeledToken)
+  return labeledToken && !/^\d{1,3}\.\d{1,3}(?:\.\d{1,3})?$/u.test(labeledToken)
+    && !/^(?:for|is|notes?|of|the)$/i.test(labeledToken)
     ? labeledToken
     : undefined;
 }
@@ -417,44 +422,8 @@ function extractDifficulty(payload: unknown, prompt: string): string | undefined
   return match?.[1];
 }
 
-function extractProgressPoint(payload: unknown, prompt: string): string | undefined {
-  const explicit =
-    getStringField(payload, "progressPoint") ??
-    getStringField(payload, "progress") ??
-    getStringField(payload, "checkpoint");
-  if (explicit) {
-    return explicit;
-  }
-
-  const match = prompt.match(/\b(?:stuck\s+(?:on|at)|at|after|before)\s+([A-Za-z0-9][A-Za-z0-9'’:, -]{1,48})/i);
-  if (match?.[1]) {
-    return normalizeEntityValue(match[1]);
-  }
-
-  const stage = prompt.match(/\b(early\s+game|mid\s*game|late\s+game|endgame|act\s+\d+|chapter\s+\d+|new\s+game\s*\+|ng\+)\b/i);
-  return stage?.[1] ? normalizeEntityValue(stage[1]) : undefined;
-}
-
 function normalizeEntityValue(value: string): string {
   return value.replace(/\s+/g, " ").trim();
-}
-
-function extractSpoilerTolerance(payload: unknown, prompt: string): GamingSpoilerTolerance {
-  const explicit = getStringField(payload, "spoilerTolerance")?.toLowerCase();
-  if (explicit === "avoid" || explicit === "none" || explicit === "no spoilers") {
-    return "avoid";
-  }
-  if (explicit === "allowed" || explicit === "ok" || explicit === "spoilers ok") {
-    return "allowed";
-  }
-
-  if (/\b(?:no|avoid)\s+spoilers?\b/i.test(prompt)) {
-    return "avoid";
-  }
-  if (/\bspoilers?\s+(?:ok|okay|allowed|fine)\b|\binclude\s+spoilers?\b/i.test(prompt)) {
-    return "allowed";
-  }
-  return "unknown";
 }
 
 function extractConstraints(payload: unknown, prompt: string): string[] {
@@ -500,12 +469,12 @@ function firstUsefulLine(text: string): string {
     .find((entry) => entry.length > 0);
 
   if (!line) {
-    return "Backend-supported guidance is available below.";
+    return "Guidance is available below.";
   }
 
   const cleanLine = line.replace(/^#+\s*/, "").trim();
   if (!cleanLine) {
-    return "Backend-supported guidance is available below.";
+    return "Guidance is available below.";
   }
 
   return cleanLine.length > 220 ? `${cleanLine.slice(0, 217)}...` : cleanLine;
@@ -535,21 +504,6 @@ function patchWatchOut(intent: GamingIntent): string {
   return "Context: adjust for your platform, patch, difficulty, and progression point when they differ.";
 }
 
-function buildContextLine(intent: GamingIntent): string {
-  const parts = [
-    intent.game ? `game=${intent.game}` : "",
-    intent.platform ? `platform=${intent.platform}` : "",
-    intent.version ? `version=${intent.version}` : "",
-    intent.class ? `class=${intent.class}` : "",
-    intent.role ? `role=${intent.role}` : "",
-    intent.difficulty ? `difficulty=${intent.difficulty}` : "",
-    intent.progressPoint ? `progress=${intent.progressPoint}` : "",
-    intent.constraints.length > 0 ? `constraints=${intent.constraints.join(", ")}` : "",
-  ].filter(Boolean);
-
-  return parts.length > 0 ? `Context used: ${parts.join("; ")}.` : "Context used: prompt only.";
-}
-
 function hasComposedSections(response: string): boolean {
   return /\bQuick Answer\b/i.test(response) &&
     /\bWhy It Works\b/i.test(response) &&
@@ -561,32 +515,7 @@ function lowConfidenceNote(intent: GamingIntent): string | null {
     return null;
   }
 
-  return `Routing confidence: low (${intent.confidence.toFixed(2)}). If this lands in the wrong mode, specify guide, build, or meta.`;
-}
-
-function fallbackBodyForMode(intent: GamingIntent): string {
-  if (intent.mode === "build") {
-    return [
-      "Start with the role you need the build to perform, then prioritize core scaling stats, survivability, and one reliable damage or utility loop.",
-      "Test changes in safe content before committing rare materials or ranked attempts.",
-    ].join("\n");
-  }
-
-  if (intent.mode === "meta") {
-    return [
-      "Treat meta advice as patch-sensitive until verified against the current game version.",
-      "Prefer flexible picks, builds, or team comps that remain useful when a matchup or balance assumption is wrong.",
-    ].join("\n");
-  }
-
-  return [
-    "Confirm the current objective, repair or upgrade gear, stock key consumables, and retry the next encounter while watching for repeatable mechanics.",
-    "If progress stalls, lower the difficulty, level up, or narrow the request to the exact boss, quest, route, or checkpoint.",
-  ].join("\n");
-}
-
-function safeBackendFailureReason(_error: unknown): string {
-  return "The gaming backend could not return usable guidance; a safe deterministic fallback was used.";
+  return "For a more specific answer, name the exact boss, item, location, or objective.";
 }
 
 export const IntentRouterAgent = {
@@ -615,6 +544,14 @@ export const IntentRouterAgent = {
     const scoredIntent = scoreIntent(payload, prompt, gameDetection);
     const rawPlatform = extractPlatform(payload, prompt);
     const rawVersion = extractVersion(payload, prompt, gameDetection.game);
+    const playerContext = resolveGamingPlayerContext(payload, prompt, {
+      platform: rawPlatform,
+      version: rawVersion,
+      class: extractClass(payload, prompt),
+      role: extractRole(payload, prompt),
+      difficulty: extractDifficulty(payload, prompt),
+      constraints: extractConstraints(payload, prompt)
+    });
 
     return {
       mode: scoredIntent.mode,
@@ -625,14 +562,9 @@ export const IntentRouterAgent = {
       game: gameDetection.game,
       gameDetectionConfidence: gameDetection.confidence,
       gameDetectionSource: gameDetection.source,
-      platform: rawPlatform ? normalizeEntityValue(rawPlatform) : undefined,
-      version: rawVersion ? normalizeEntityValue(rawVersion) : undefined,
-      class: extractClass(payload, prompt),
-      role: extractRole(payload, prompt),
-      difficulty: extractDifficulty(payload, prompt),
-      progressPoint: extractProgressPoint(payload, prompt),
-      spoilerTolerance: extractSpoilerTolerance(payload, prompt),
-      constraints: extractConstraints(payload, prompt),
+      ...playerContext,
+      spoilerTolerance: playerContext.spoilerTolerance ?? 'unknown',
+      constraints: playerContext.constraints ?? [],
       ...(url ? { url } : {}),
       ...(urls.length > 0 ? { urls } : {}),
       ...(guideUrls.length > 0 ? { guideUrls } : {}),
@@ -648,6 +580,11 @@ export const IntentRouterAgent = {
 
 export const ClarificationAgent = {
   evaluate(intent: GamingIntent): GamingClarificationResult {
+    if (intent.mode === 'guide' && intent.contextConflicts?.length) {
+      const field = intent.contextConflicts[0];
+      const labels: Record<string, string> = { currentArea: 'current area', lastCompletedObjective: 'last completed objective', progressPoint: 'checkpoint', version: 'version', edition: 'edition' };
+      return { required: true, mode: 'guide', missing: [field], question: `Which ${labels[field] ?? field} should I use? Your supplied context and question give different values.` };
+    }
     if (intent.mode !== "build" && intent.mode !== "meta") {
       return { required: false };
     }
@@ -675,6 +612,15 @@ export const BackendQueryAgent = {
       mode: intent.mode,
       prompt: intent.prompt,
     };
+    const playerContext = pickGamingPlayerContext(intent);
+    // JSON callers cannot provide this server-owned origin attestation.
+    for (const [key, value] of Object.entries(playerContext)) {
+      if (key === 'spoilerMode' || key === 'contextOrigins' || key === 'contextConflicts') continue;
+      if (key === 'spoilerTolerance' && value === 'unknown') continue;
+      if (key === 'answerDepth' && value === 'auto') continue;
+      Object.defineProperty(payload, key, { value, enumerable: true, configurable: true });
+    }
+    Object.defineProperty(payload, GAMING_PLAYER_CONTEXT, { value: playerContext, enumerable: false });
 
     if (intent.game) {
       payload.game = intent.game;
@@ -724,6 +670,18 @@ export const ResponseComposerAgent = {
     backendEnvelope: GamingSuccessEnvelope;
   }): GamingSuccessEnvelope {
     const { intent, backendEnvelope } = params;
+    // The reviewed prose and citation mappings must survive final composition.
+    if (hasBoundGamingClearAnswer(backendEnvelope.data)) return backendEnvelope;
+    // Recovery text is already a complete player-facing response. Keep diagnostic
+    // fields on the envelope instead of wrapping it in internal support labels.
+    if (backendEnvelope.data.fallbackReason) {
+      return { ...backendEnvelope, data: { ...backendEnvelope.data, response: backendEnvelope.data.response.trim() } };
+    }
+    const groundedGuide = composeGroundedGamingGuideResponse(intent.mode, backendEnvelope);
+    if (groundedGuide) {
+      return groundedGuide;
+    }
+
     const backendResponse = backendEnvelope.data.response.trim();
     const response = hasComposedSections(backendResponse)
       ? [
@@ -734,15 +692,10 @@ export const ResponseComposerAgent = {
         ].join("\n")
       : [
           "Quick Answer",
-          `Backend-supported: ${firstUsefulLine(backendResponse)}`,
+          firstUsefulLine(backendResponse),
           "",
           intent.mode === "build" ? "Build" : "Steps",
           backendResponse,
-          "",
-          "Why It Works",
-          "Backend-supported: the guidance above came from the ARCANOS Gaming backend.",
-          "Inference: ARCANOS Gaming added the section labels, summary line, and context cautions.",
-          buildContextLine(intent),
           "",
           "Watch Outs",
           `- ${spoilerWatchOut(intent.spoilerTolerance)}`,
@@ -764,28 +717,13 @@ export const ResponseComposerAgent = {
     error: unknown;
     fallbackReason?: GamingFallbackReason;
   }): GamingSuccessEnvelope {
-    const { intent, error } = params;
-    const fallback = fallbackBodyForMode(intent);
-    const response = [
-      "Quick Answer",
-      "Backend-supported: none. The backend did not return usable guidance.",
-      "",
-      intent.mode === "build" ? "Build" : "Steps",
-      "General Fallback (not backend-supported):",
-      fallback,
-      "",
-      "Why It Works",
-      "Backend-supported: none; this is a deterministic fallback because the backend call failed.",
-      `Inference: fallback selected from request mode '${intent.mode}' and available prompt context.`,
-      buildContextLine(intent),
-      "",
-      "Watch Outs",
-      `- ${spoilerWatchOut(intent.spoilerTolerance)}`,
-      `- ${patchWatchOut(intent)}`,
-      ...(lowConfidenceNote(intent) ? [`- ${lowConfidenceNote(intent)}`] : []),
-      `- Backend status: ${safeBackendFailureReason(error)}`,
-    ].join("\n");
-
+    const { intent } = params;
+    const reason = params.fallbackReason ?? "GAMING_PROVIDER_ERROR";
+    const response = buildGamingRecoveryResponse({
+      ...intent,
+      evidenceSelected: false,
+      timedOut: reason.includes("TIMEOUT")
+    });
     return formatGamingSuccess({
       mode: intent.mode,
       data: {

@@ -4,9 +4,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, jest, test } from '@jest/globals';
 
 import {
-  requiresBackstageNotionMonolithWorkerReadiness,
   resolveBackstageNotionPartitionShadowPolicy,
-  runBackstageNotionWorkerReadinessGate,
   startBackstageNotionPartitionShadowLoop,
   type BackstageNotionPartitionShadowCycleResult,
 } from '../src/workers/backstageNotionPartitionShadowLoop.js';
@@ -240,81 +238,6 @@ describe('Backstage Notion partition shadow worker policy', () => {
       reasonCode: 'ENVIRONMENT_READ_FAILED',
     }));
   });
-
-  test.each([
-    ['shadow', shadowEnvironment()],
-    ['partitioned-without-evidence', partitionedEnvironment()],
-  ] as const)(
-    'requires monolith readiness for %s',
-    async (_mode, readEnvironment) => {
-      const policy = resolveBackstageNotionPartitionShadowPolicy(readEnvironment);
-      const ensureReadiness = jest.fn(async () => ({ configuredUniverses: 1 }));
-
-      expect(requiresBackstageNotionMonolithWorkerReadiness(policy)).toBe(true);
-      await expect(runBackstageNotionWorkerReadinessGate(
-        policy,
-        ensureReadiness
-      )).resolves.toEqual({
-        monolithReadinessRequired: true,
-        evidence: { configuredUniverses: 1 },
-      });
-      expect(ensureReadiness).toHaveBeenCalledTimes(1);
-    }
-  );
-
-  test('skips a duplicate monolith crawl only for admitted partitioned mode', async () => {
-    const policy = resolveBackstageNotionPartitionShadowPolicy(
-      partitionedEnvironment(),
-      [completeCutoverEvidence()]
-    );
-    const ensureReadiness = jest.fn(async () => ({ configuredUniverses: 1 }));
-
-    expect(policy).toMatchObject({
-      cutoverAvailable: true,
-      effectiveReadMode: 'partitioned',
-      reasonCode: 'PARTITIONED_ENABLED',
-    });
-    expect(requiresBackstageNotionMonolithWorkerReadiness(policy)).toBe(false);
-    await expect(runBackstageNotionWorkerReadinessGate(
-      policy,
-      ensureReadiness
-    )).resolves.toEqual({
-      monolithReadinessRequired: false,
-      evidence: null,
-    });
-    expect(ensureReadiness).not.toHaveBeenCalled();
-  });
-
-  test.each([
-    ['absent', environment({})],
-    ['monolith', environment({
-      ARCANOS_BACKSTAGE_NOTION_PARTITIONED_INDEX_MODE: 'monolith',
-    })],
-    ['invalid-mode', environment({
-      ARCANOS_BACKSTAGE_NOTION_PARTITIONED_INDEX_MODE: 'SHADOW',
-    })],
-    ['missing-shadow-config', environment({
-      ARCANOS_BACKSTAGE_NOTION_PARTITIONED_INDEX_MODE: 'shadow',
-    })],
-    ['invalid-partitioned-config', environment({
-      ARCANOS_BACKSTAGE_NOTION_PARTITIONED_INDEX_MODE: 'partitioned',
-      ARCANOS_BACKSTAGE_NOTION_PARTITIONS_JSON: '{',
-    })],
-  ] as const)(
-    'runs and propagates monolith readiness for the %s fallback policy',
-    async (_case, readEnvironment) => {
-      const policy = resolveBackstageNotionPartitionShadowPolicy(readEnvironment);
-      const failure = new Error('bounded monolith readiness failure');
-      const ensureReadiness = jest.fn(async () => Promise.reject(failure));
-
-      expect(requiresBackstageNotionMonolithWorkerReadiness(policy)).toBe(true);
-      await expect(runBackstageNotionWorkerReadinessGate(
-        policy,
-        ensureReadiness
-      )).rejects.toBe(failure);
-      expect(ensureReadiness).toHaveBeenCalledTimes(1);
-    }
-  );
 
   test('never logs invalid raw mode or raw partition configuration', async () => {
     const warn = jest.fn();

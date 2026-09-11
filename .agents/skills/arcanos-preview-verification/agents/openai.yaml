@@ -1,0 +1,3 @@
+interface:
+  display_name: "ARCANOS Preview Verification"
+  short_description: "Verify exact-commit previews and scoped teardown"

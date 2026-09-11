@@ -1667,7 +1667,8 @@ export function enforceFinalStageHonesty(
   rawText: string,
   reasoningHonesty: TrinityReasoningHonesty,
   capabilityFlags: TrinityCapabilityFlags,
-  requestIntent: TrinityIntentMode = 'EXECUTE_TASK'
+  requestIntent: TrinityIntentMode = 'EXECUTE_TASK',
+  preservePresentation = false
 ): FinalClaimBlockResult {
   const promptGeneration = requestIntent === 'PROMPT_GENERATION';
   const supportsLiveVerification =
@@ -1735,7 +1736,12 @@ export function enforceFinalStageHonesty(
     text = buildFallbackHonestyText(reasoningHonesty);
   }
 
-  return { text, blocked: blockedCategories.size > 0, blockedCategories: Array.from(blockedCategories) };
+  return {
+    text: preservePresentation && blockedCategories.size === 0 && leadingDisclaimers.length === 0 && rawText.trim()
+      ? rawText.trim() : text,
+    blocked: blockedCategories.size > 0,
+    blockedCategories: Array.from(blockedCategories)
+  };
 }
 
 /**
@@ -1915,8 +1921,25 @@ export function enforceFinalStageHonestyAndMinimalism(params: {
   capabilityFlags: TrinityCapabilityFlags;
   outputControls: TrinityOutputControls;
   reasoningHonesty: TrinityReasoningHonesty;
+  /** Internal Gaming guide scope: retain Markdown and leave soft answer depth to generation. */
+  preservePresentation?: boolean;
 }): { text: string; removedMetaSections: string[]; blockedOrRewrittenClaims: string[] } {
   const withoutMetaSections = removeUnrequestedMetaSections(params.text, params.outputControls);
+  if (params.preservePresentation) {
+    const rewrittenClaims = rewriteUnsupportedClaims({
+      text: withoutMetaSections.text,
+      userPrompt: params.userPrompt,
+      capabilityFlags: params.capabilityFlags,
+      reasoningHonesty: params.reasoningHonesty
+    });
+    const safeText = rewrittenClaims.blockedOrRewrittenClaims.length > 0
+      ? rewrittenClaims.text : withoutMetaSections.text;
+    return {
+      text: ensureRequiredLimitation(safeText, params.reasoningHonesty).trim(),
+      removedMetaSections: withoutMetaSections.removedMetaSections,
+      blockedOrRewrittenClaims: rewrittenClaims.blockedOrRewrittenClaims
+    };
+  }
   const deInflatedText = stripStyleInflationPrefix(withoutMetaSections.text);
   const promptGeneration = isPromptGenerationRequest(params.outputControls);
   const promptGenerationAccessOnlyLimitation =

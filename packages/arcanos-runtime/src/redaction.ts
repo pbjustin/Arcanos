@@ -28,6 +28,7 @@ export const SENSITIVE_KEYS = [
 ] as const;
 
 export const SENSITIVE_VALUE_PATTERNS: RegExp[] = [
+  /\bag[dp]1\.[A-Za-z0-9_-]{43}\b/,
   /\bsk-[a-zA-Z0-9]{20,}\b/,
   /\bsk-[a-zA-Z0-9_*_-]{6,}\b/,
   /\bBearer\s+[a-zA-Z0-9._-]{12,}\b/i,

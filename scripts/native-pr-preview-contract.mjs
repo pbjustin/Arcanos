@@ -14,6 +14,11 @@ export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
       'x-arcanos-preview-worker-budget-readiness-version',
     proofVersion: 'worker-budget-readiness/v1',
   }),
+  iosDevicePolicy: Object.freeze({
+    path: '/ios/device-contract',
+    proofHeader: 'x-arcanos-preview-ios-device-version',
+    proofVersion: 'ios-device-policy/v1',
+  }),
   invalidJobId: 'not-a-uuid',
   unlistedJobId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab',
   research: Object.freeze({
@@ -52,6 +57,8 @@ export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
       'backstage-notion-partition-cutover-repair/v1',
     notionReadDiagnosticsProofVersion:
       'backstage-notion-read-diagnostics/v1',
+    notionDatabaseAuthorityProofVersion:
+      'backstage-notion-database-authority/v1',
     partitionFailureTelemetryProofVersion:
       'backstage-notion-partition-failure-telemetry/v1',
     queueWaitPolicyProofVersion:
@@ -72,6 +79,8 @@ export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
       'backstage-notion-sync-phase-a/v1',
     notionWriterCapacityReleaseProofVersion:
       'backstage-notion-writer-capacity-release/v1',
+    authorityReadinessProofVersion:
+      'backstage-notion-authority-readiness/v1',
     fixtures: Object.freeze({
       routeBudget: 'route-budget-provider-delay',
       hrcRetryCache: 'hrc-timeout-retry-cache',
@@ -87,6 +96,7 @@ export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
       productionOutputContracts: 'production-output-contracts',
       outputAdmission: 'output-classification-first-success-contract',
       notionSyncPhaseA: 'notion-sync-phase-a-contract',
+      authorityReadiness: 'notion-authority-readiness-contract',
     }),
     proofHeaders: Object.freeze({
       clearPolicyVersion:
@@ -97,6 +107,8 @@ export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
         'x-arcanos-preview-backstage-partition-cutover-repair-version',
       notionReadDiagnosticsVersion:
         'x-arcanos-preview-backstage-notion-read-diagnostics-version',
+      notionDatabaseAuthorityVersion:
+        'x-arcanos-preview-backstage-notion-database-authority-version',
       partitionFailureTelemetryVersion:
         'x-arcanos-preview-backstage-partition-failure-telemetry-version',
       queueWaitPolicyVersion:
@@ -117,6 +129,8 @@ export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
         'x-arcanos-preview-backstage-notion-sync-phase-a-version',
       notionWriterCapacityReleaseVersion:
         'x-arcanos-preview-backstage-notion-writer-capacity-release-version',
+      authorityReadinessVersion:
+        'x-arcanos-preview-backstage-notion-authority-readiness-version',
     }),
   }),
   backstageBookerOpenApi: Object.freeze({
@@ -174,6 +188,26 @@ export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
   gaming: Object.freeze({
     canaryPath: '/gpt/arcanos-gaming/canary',
     queryPath: '/gpt/arcanos-gaming',
+    proofHeader: 'x-arcanos-preview-gaming-archive-grounding-version',
+    proofVersion: 'gaming-archive-grounding/v1',
+    responseProofHeader: 'x-arcanos-preview-gaming-guide-response-version',
+    responseProofVersion: 'gaming-guide-response/v1',
+    documentProofHeader: 'x-arcanos-preview-gaming-document-ingestion-version',
+    documentProofVersion: 'gaming-document-ingestion/v1',
+    durableRagProofHeader: 'x-arcanos-preview-gaming-durable-rag-version',
+    durableRagProofVersion: 'gaming-durable-rag/v1',
+    guideAssistanceProofHeader: 'x-arcanos-preview-gaming-guide-assistance-version',
+    guideAssistanceProofVersion: 'gaming-guide-assistance/v1',
+    progressRecoveryProofHeader: 'x-arcanos-preview-gaming-progress-recovery-version',
+    progressRecoveryProofVersion: 'gaming-progress-recovery/v1',
+    hybridKnowledgeProofHeader: 'x-arcanos-preview-gaming-hybrid-knowledge-version',
+    hybridKnowledgeProofVersion: 'gaming-hybrid-knowledge/v1',
+    clearProofHeader: 'x-arcanos-preview-gaming-clear-version',
+    clearProofVersion: 'gaming-clear/v1',
+    sourceAcquisitionProofHeader: 'x-arcanos-preview-gaming-source-acquisition-version',
+    sourceAcquisitionProofVersion: 'gaming-source-acquisition/v1',
+    structuredEvidenceProofHeader: 'x-arcanos-preview-gaming-structured-evidence-version',
+    structuredEvidenceProofVersion: 'gaming-structured-evidence/v1',
     game: 'Palworld',
     fixtures: Object.freeze({
       guide: 'sealed-preview-guide',

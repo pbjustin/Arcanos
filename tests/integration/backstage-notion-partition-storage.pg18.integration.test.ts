@@ -4933,6 +4933,7 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
          universe_id TEXT NOT NULL,
          snapshot_id UUID NOT NULL,
          page_id TEXT NOT NULL,
+         metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
          PRIMARY KEY (snapshot_id, page_id)
        )`
     );
@@ -4941,11 +4942,13 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
     const secondLegacySnapshotId = randomUUID();
     const monolithOnlyPageId = randomUUID();
     const secondMonolithOnlyPageId = randomUUID();
+    const syntheticDatabaseRootId = randomUUID();
+    const extraSyntheticDatabaseRootId = randomUUID();
     await client.query(
       `INSERT INTO public.backstage_notion_snapshots (
          id, universe_id, page_count, chunk_count
        ) VALUES
-         ($1::UUID, $3, 2, 4),
+         ($1::UUID, $3, 3, 4),
          ($2::UUID, $3, 1, 2)`,
       [firstLegacySnapshotId, secondLegacySnapshotId, fixture.universeId]
     );
@@ -4964,6 +4967,14 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
         secondLegacySnapshotId,
         secondMonolithOnlyPageId,
       ]
+    );
+    await client.query(
+      `INSERT INTO public.backstage_notion_snapshot_pages (
+         universe_id, snapshot_id, page_id, metadata
+       ) VALUES (
+         $1, $2::UUID, $3, '{"sourceObjectType":"database"}'::JSONB
+       )`,
+      [fixture.universeId, firstLegacySnapshotId, syntheticDatabaseRootId]
     );
     await client.query(
       `UPDATE public.backstage_notion_universe_heads
@@ -4989,6 +5000,41 @@ describeWithDatabase('Backstage Notion partition storage on PostgreSQL 18', () =
         monolithOnlyPageIds: [monolithOnlyPageId],
         partitionOnlyPageIds: [],
       });
+
+    await client.query(
+      `UPDATE public.backstage_notion_snapshots
+       SET page_count = 4
+       WHERE id = $1::UUID`,
+      [firstLegacySnapshotId]
+    );
+    await expect(repository.loadShadowCoverage(fixture.universeId, 1))
+      .rejects.toThrow('Shadow coverage result is internally inconsistent.');
+    await client.query(
+      `INSERT INTO public.backstage_notion_snapshot_pages (
+         universe_id, snapshot_id, page_id, metadata
+       ) VALUES (
+         $1, $2::UUID, $3, '{"sourceObjectType":"database"}'::JSONB
+       )`,
+      [
+        fixture.universeId,
+        firstLegacySnapshotId,
+        extraSyntheticDatabaseRootId,
+      ]
+    );
+    await expect(repository.loadShadowCoverage(fixture.universeId, 1))
+      .rejects.toThrow('Shadow coverage result is internally inconsistent.');
+    await client.query(
+      `DELETE FROM public.backstage_notion_snapshot_pages
+       WHERE snapshot_id = $1::UUID
+         AND page_id = $2`,
+      [firstLegacySnapshotId, extraSyntheticDatabaseRootId]
+    );
+    await client.query(
+      `UPDATE public.backstage_notion_snapshots
+       SET page_count = 3
+       WHERE id = $1::UUID`,
+      [firstLegacySnapshotId]
+    );
 
     await client.query(
       `UPDATE public.backstage_notion_universe_heads

@@ -17,6 +17,7 @@
 import type OpenAI from 'openai';
 import { logArcanosRouting, logRoutingSummary } from "@platform/logging/aiLogger.js";
 import { generateRequestId } from "@shared/idGenerator.js";
+import { resolveGamingGuideIntakeEndpointPolicy } from '@shared/gaming/gamingGuideIntakeCore.js';
 import { getTrinityMessages } from "@platform/runtime/prompts.js";
 import { MidLayerTranslator } from "@services/midLayerTranslator.js";
 import {
@@ -752,6 +753,15 @@ export async function runThroughBrain(
   const start = Date.now();
   const effectiveMemorySessionId = options.memorySessionId ?? sessionId;
   const effectiveTokenAuditSessionId = options.tokenAuditSessionId ?? sessionId;
+  const gamingGuideIntakePolicy = resolveGamingGuideIntakeEndpointPolicy(
+    options.gamingGuideIntakePolicy, options.sourceEndpoint
+  );
+  const gamingAnswerAudit = /^arcanos-gaming\.(?:guide|build|meta|hybrid-build|hybrid-meta)$/u.test(options.sourceEndpoint ?? '')
+    ? options.gamingClearAnswerAudit : undefined;
+  // The historical ledger audit is an auxiliary slot (like final generation,
+  // it was never part of the intake/reasoning InvocationBudget). Keep one slot,
+  // never grant it again through escalation or repair, and include its token use.
+  const gamingAuxiliaryAuditBudget = new InvocationBudget(1);
   const trustedPolicyPrompt =
     typeof options.trustedPolicyPrompt === 'string'
     && options.trustedPolicyPrompt.trim().length > 0
@@ -974,7 +984,7 @@ export async function runThroughBrain(
         : selfHealingMitigation.forceDirectAnswer
           ? 'self_heal_enable_degraded_mode'
           : resolveTrinityDirectAnswerPreference(trustedPolicyPrompt));
-    const shouldPreferDirectAnswerMode = directAnswerReason !== null;
+    const shouldPreferDirectAnswerMode = !gamingGuideIntakePolicy && directAnswerReason !== null;
 
     const completeWithDirectAnswer = async (
       selectionReason: string,
@@ -1442,6 +1452,16 @@ export async function runThroughBrain(
         enforcedFinalOutput,
         finalText,
       } = preparedDirectAnswer;
+      let gamingDirectAudit: Awaited<ReturnType<NonNullable<TrinityRunOptions['gamingClearAnswerAudit']>>> | undefined;
+      if (gamingAnswerAudit && !directAnswerOutput.fallbackUsed && !directAnswerOutput.provider?.incomplete
+        && !directAnswerOutput.provider?.truncated && !directAnswerOutput.provider?.contentFiltered) {
+        checkWatchdog();
+        gamingAuxiliaryAuditBudget.increment();
+        gamingDirectAudit = await gamingAnswerAudit(finalText, runtimeBudget);
+        if (gamingDirectAudit.assessment.assessmentStatus !== 'completed' || gamingDirectAudit.assessment.decision !== 'accept') {
+          auditFlags.push('GAMING_FINAL_ANSWER_NOT_ACCEPTED');
+        }
+      }
 
       if (honestyFilteredFinal.blocked) {
         auditFlags.push('FINAL_UNSUPPORTED_CLAIM_BLOCKED');
@@ -1493,7 +1513,7 @@ export async function runThroughBrain(
       );
       logAITaskLineage(auditLogEntry);
 
-      const totalTokens = directAnswerOutput.usage?.total_tokens ?? 0;
+      const totalTokens = (directAnswerOutput.usage?.total_tokens ?? 0) + (gamingDirectAudit?.usage?.total_tokens ?? 0);
       if (effectiveTokenAuditSessionId) {
         recordSessionTokens(effectiveTokenAuditSessionId, totalTokens);
       }
@@ -1545,6 +1565,7 @@ export async function runThroughBrain(
       if (directAnswerOutput.provider) {
         result.meta.provider = directAnswerOutput.provider;
       }
+      if (gamingDirectAudit) result.gamingClearAudit = gamingDirectAudit.assessment;
       if (integrityRecoveryMeta) {
         result.meta.integrityRecovery = integrityRecoveryMeta;
       }
@@ -1661,12 +1682,13 @@ export async function runThroughBrain(
             cognitiveDomain,
             internalDirective,
             runtimeBudget,
-            stageTimeoutOverrideMs
+            stageTimeoutOverrideMs,
+            gamingGuideIntakePolicy
           )
       });
     } catch (error) {
       throwIfRequestAborted();
-      if (tier === 'simple' && isAbortError(error)) {
+      if (!gamingGuideIntakePolicy && tier === 'simple' && isAbortError(error)) {
         intakeRecoveryAction = recordTrinityStageFailure({
           stage: 'intake',
           error: resolveErrorMessage(error),
@@ -1688,7 +1710,14 @@ export async function runThroughBrain(
       }
       throw error;
     }
-    const framedRequest = intakeOutput.framedRequest;
+    // The task card is a navigation aid, never a replacement for selected evidence.
+    // The reasoning envelope escapes this JSON before inserting it as untrusted data.
+    const framedRequest = gamingGuideIntakePolicy
+      ? JSON.stringify({
+          intakeTaskCard: intakeOutput.framedRequest,
+          originalGamingRequest: auditSafePrompt
+        })
+      : intakeOutput.framedRequest;
     const actualModel = intakeOutput.activeModel;
 
     // --- Stage 2: Reasoning ---
@@ -1722,7 +1751,7 @@ export async function runThroughBrain(
       });
     } catch (error) {
       throwIfRequestAborted();
-      if (tier === 'simple' && isAbortError(error)) {
+      if (!gamingGuideIntakePolicy && tier === 'simple' && isAbortError(error)) {
         reasoningRecoveryAction = recordTrinityStageFailure({
           stage: 'reasoning',
           error: resolveErrorMessage(error),
@@ -1756,7 +1785,7 @@ export async function runThroughBrain(
 
     // --- CLEAR Audit & Escalation Logic ---
     let clearAudit: ClearAuditResult | undefined = undefined;
-    if (reasoningLedger && !selfHealingMitigation.bypassFinalStage) {
+    if (reasoningLedger && !selfHealingMitigation.bypassFinalStage && !gamingAnswerAudit) {
       checkWatchdog();
       try {
         clearAudit = await runLoggedStage({
@@ -1770,7 +1799,9 @@ export async function runThroughBrain(
             DEFAULT_TRINITY_CLEAR_AUDIT_TIMEOUT_MS,
             runtimeBudget
           ),
-          operation: () => runClearAudit(client, reasoningLedger, runtimeBudget)
+          operation: () => gamingGuideIntakePolicy
+            ? runClearAudit(client, reasoningLedger, runtimeBudget, auditSafePrompt)
+            : runClearAudit(client, reasoningLedger, runtimeBudget)
         });
       } catch (error) {
         throwIfRequestAborted();
@@ -1953,21 +1984,38 @@ export async function runThroughBrain(
     checkWatchdog();
 
     const userIntent = MidLayerTranslator.detectIntentFromUserMessage(trustedPolicyPrompt);
-    const translatedFinalText = MidLayerTranslator.translate({ raw: finalOutput.output }, userIntent);
+    const translatedFinalText = gamingGuideIntakePolicy
+      ? finalOutput.output.trim()
+      : MidLayerTranslator.translate({ raw: finalOutput.output }, userIntent);
     const honestyFilteredFinal = enforceFinalStageHonesty(
       translatedFinalText,
       reasoningHonesty,
       capabilityFlags,
-      readIntentMode(outputControls)
+      readIntentMode(outputControls),
+      Boolean(gamingGuideIntakePolicy)
     );
     const enforcedFinalOutput = enforceFinalStageHonestyAndMinimalism({
       text: honestyFilteredFinal.text,
       userPrompt: trustedPolicyPrompt,
       capabilityFlags,
       outputControls,
-      reasoningHonesty
+      reasoningHonesty,
+      preservePresentation: Boolean(gamingGuideIntakePolicy)
     });
     const finalText = enforcedFinalOutput.text;
+    // Gaming replaces the legacy ledger audit with one audit of the actual final
+    // candidate. Its callback owns strict validation and cannot trigger escalation.
+    let gamingAuditResult: Awaited<ReturnType<NonNullable<TrinityRunOptions['gamingClearAnswerAudit']>>> | undefined;
+    if (gamingAnswerAudit && !intakeOutput.fallbackUsed && !reasoningOutput.fallbackUsed && !finalOutput.fallbackUsed
+      && !finalOutput.provider?.incomplete && !finalOutput.provider?.truncated && !finalOutput.provider?.contentFiltered) {
+      checkWatchdog();
+      gamingAuxiliaryAuditBudget.increment();
+      gamingAuditResult = await gamingAnswerAudit(finalText, runtimeBudget);
+      if (gamingAuditResult.assessment.assessmentStatus !== 'completed'
+        || gamingAuditResult.assessment.decision !== 'accept') {
+        auditFlags.push('GAMING_FINAL_ANSWER_NOT_ACCEPTED');
+      }
+    }
 
     //audit Assumption: final-stage honesty rewrites must remain traceable for postmortems even when user-visible output is compressed.
     if (honestyFilteredFinal.blocked) {
@@ -2031,7 +2079,8 @@ export async function runThroughBrain(
     // --- Post-execution guards ---
     const totalTokens = (finalOutput.usage?.total_tokens ?? 0)
       + (intakeOutput.usage?.total_tokens ?? 0)
-      + (reasoningOutput.usage?.total_tokens ?? 0);
+      + (reasoningOutput.usage?.total_tokens ?? 0)
+      + (gamingAuditResult?.usage?.total_tokens ?? 0);
     //audit Assumption: DAG and worker flows may need a shared memory session but isolated token-audit buckets; failure risk: large multi-node runs exhaust one conversational token ceiling despite independent node work; expected invariant: memory continuity and token auditing can use different session identifiers when explicitly provided; handling strategy: audit against the optional token session id while preserving the original memory session for context lookup and storage.
     if (effectiveTokenAuditSessionId) {
       // recordSessionTokens mutates before enforcing the ceiling, so mark the reasoning
@@ -2096,6 +2145,7 @@ export async function runThroughBrain(
     if (finalOutput.provider) {
       result.meta.provider = finalOutput.provider;
     }
+    if (gamingAuditResult) result.gamingClearAudit = gamingAuditResult.assessment;
 
     result.tierInfo = {
       tier,

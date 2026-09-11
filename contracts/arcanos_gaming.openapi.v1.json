@@ -3,7 +3,7 @@
   "info": {
     "title": "ARCANOS Gaming Custom GPT Action",
     "version": "1.5.0",
-    "description": "Builder-specific contract for ARCANOS Gaming. Public gameplay query and canary operations remain separate from authenticated source ingestion, refresh, and status capabilities."
+    "description": "Builder contract for ARCANOS Gaming with compatible public gameplay/canary and authenticated source lifecycle. Hybrid knowledge operations opt in through gaming-hybrid-v1."
   },
   "servers": [
     {
@@ -51,6 +51,24 @@
                       ]
                     }
                   }
+                },
+                "playerContext": {
+                  "summary": "Progression guidance with bounded player context",
+                  "value": {
+                    "action": "query",
+                    "payload": {
+                      "mode": "guide",
+                      "game": "Lantern Vale",
+                      "prompt": "What next?",
+                      "currentArea": "Copper Harbor",
+                      "lastCompletedObjective": "Restored the ferry beacon",
+                      "spoilerTolerance": "none",
+                      "answerDepth": "concise",
+                      "platform": "PC",
+                      "edition": "Original",
+                      "difficulty": "normal"
+                    }
+                  }
                 }
               }
             }
@@ -58,7 +76,7 @@
         },
         "responses": {
           "200": {
-            "description": "Gaming result, including a controlled evidence request when current evidence is unavailable.",
+            "description": "Gaming module result. Explicit supplied guides without usable evidence return result.ok=false with GAMING_SOURCE_UNREADABLE or GAMING_SOURCE_UNAVAILABLE; HTTP success alone does not establish grounding.",
             "content": {
               "application/json": {
                 "schema": {
@@ -538,6 +556,421 @@
           }
         }
       }
+    },
+    "/gpt-access/gaming/sources/hybrid/query": {
+      "post": {
+        "operationId": "queryGamingHybridKnowledge",
+        "summary": "Check Gaming knowledge",
+        "description": "Check stored evidence and freshness for a gameplay question with request-scoped player context. Returns an answer, targeted clarification, or bounded discovery handoff; does not store sources.",
+        "x-openai-isConsequential": false,
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GamingHybridQueryRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Structured Gaming handoff, answer, or bounded recovery result.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GamingHybridResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or unsupported hybrid request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GamingHybridResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "A valid dedicated Gaming source bearer credential is required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GamingHybridFailureResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Storage permission or confirmation is missing.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GamingHybridResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The caller-scoped workflow or candidate is unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GamingHybridResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The logical operation conflicts with an earlier submission.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GamingHybridResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "The bounded Gaming JSON request is too large.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GamingHybridErrorResponse"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "The request must be uncompressed application/json.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GamingHybridErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The authenticated Gaming request budget was exceeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GamingHybridRateLimitResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The Gaming hybrid operation failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GamingHybridResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Gaming hybrid knowledge or its dedicated bearer authentication is temporarily unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GamingHybridFailureResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/gpt-access/gaming/sources/hybrid/candidates": {
+      "post": {
+        "operationId": "submitGamingHybridCandidates",
+        "summary": "Evaluate discovered Gaming sources",
+        "description": "Independently fetch and evaluate up to three candidate URLs for a caller-owned workflow, then answer through Trinity when evidence is sufficient and applicable. Transient evaluation does not store sources.",
+        "x-openai-isConsequential": false,
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GamingHybridCandidatesRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Structured Gaming handoff, answer, or bounded recovery result.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GamingHybridResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or unsupported hybrid request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GamingHybridResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "A valid dedicated Gaming source bearer credential is required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GamingHybridFailureResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Storage permission or confirmation is missing.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GamingHybridResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The caller-scoped workflow or candidate is unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GamingHybridResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The logical operation conflicts with an earlier submission.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GamingHybridResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "The bounded Gaming JSON request is too large.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GamingHybridErrorResponse"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "The request must be uncompressed application/json.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GamingHybridErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The authenticated Gaming request budget was exceeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GamingHybridRateLimitResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The Gaming hybrid operation failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GamingHybridResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Gaming hybrid knowledge or its dedicated bearer authentication is temporarily unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GamingHybridFailureResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/gpt-access/gaming/sources/hybrid/ingestions": {
+      "post": {
+        "operationId": "ingestGamingHybridCandidates",
+        "summary": "Store approved Gaming candidates",
+        "description": "Queue eligible accepted candidates through the existing durable ingestion lifecycle under backend storage permission and explicit consent policy. Platform Action confirmation remains required.",
+        "x-openai-isConsequential": true,
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GamingHybridIngestionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Structured Gaming handoff, answer, or bounded recovery result.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GamingHybridResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Ingestion accepted; inspect its returned status before claiming storage.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GamingHybridResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or unsupported hybrid request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GamingHybridResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "A valid dedicated Gaming source bearer credential is required.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GamingHybridFailureResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Storage permission or confirmation is missing.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GamingHybridResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The caller-scoped workflow or candidate is unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GamingHybridResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The logical operation conflicts with an earlier submission.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GamingHybridResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "The bounded Gaming JSON request is too large.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GamingHybridErrorResponse"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "The request must be uncompressed application/json.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GamingHybridErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The authenticated Gaming request budget was exceeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GamingHybridRateLimitResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The Gaming hybrid operation failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GamingHybridResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Gaming hybrid knowledge or its dedicated bearer authentication is temporarily unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GamingHybridFailureResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -546,7 +979,7 @@
         "type": "http",
         "scheme": "bearer",
         "bearerFormat": "Opaque Gaming source access token",
-        "description": "Required only for Gaming source ingestion, refresh, and status. Configure the dedicated ARCANOS_GAMING_SOURCE_ACCESS_TOKEN; it cannot authorize other GPT Access routes."
+        "description": "Required for Gaming hybrid knowledge and source lifecycle operations. Configure the dedicated ARCANOS_GAMING_SOURCE_ACCESS_TOKEN; it cannot authorize other GPT Access routes."
       }
     },
     "schemas": {
@@ -1719,8 +2152,121 @@
           },
           "enableHrc": {
             "type": "boolean"
+          },
+          "platform": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "Optional request-scoped player context; not verified game state."
+          },
+          "edition": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120,
+            "description": "User-supplied edition; never inferred from the guide title."
+          },
+          "version": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "User-supplied version or patch; requestedVersion is the semantic-version alias. Named editions belong in edition."
+          },
+          "difficulty": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "Optional request-scoped player context; not verified game state."
+          },
+          "currentArea": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160,
+            "description": "Optional request-scoped player context; not verified game state."
+          },
+          "lastCompletedObjective": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240,
+            "description": "Optional request-scoped player context; not verified game state."
+          },
+          "progressPoint": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160,
+            "description": "Optional request-scoped player context; not verified game state."
+          },
+          "class": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "Optional request-scoped player context; not verified game state."
+          },
+          "role": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "Optional request-scoped player context; not verified game state."
+          },
+          "patch": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "Optional request-scoped player context; not verified game state."
+          },
+          "className": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "Optional request-scoped player context; not verified game state."
+          },
+          "progress": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160,
+            "description": "Optional request-scoped player context; not verified game state."
+          },
+          "checkpoint": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160,
+            "description": "Optional request-scoped player context; not verified game state."
+          },
+          "constraints": {
+            "type": "array",
+            "maxItems": 8,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            }
+          },
+          "spoilerTolerance": {
+            "type": "string",
+            "enum": [
+              "none",
+              "light",
+              "full",
+              "avoid",
+              "allowed",
+              "unknown",
+              "no spoilers",
+              "ok",
+              "spoilers ok"
+            ],
+            "description": "none is the conservative default; avoid maps to none and allowed to full. Conflicting textual permission uses the stricter mode."
+          },
+          "answerDepth": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "concise",
+              "standard",
+              "detailed"
+            ],
+            "description": "Defaults to adaptive auto. Explicit brevity or detail requested in the question takes precedence within server budgets."
           }
-        }
+        },
+        "description": "Player-context values together are limited to 2,000 characters. Context is request-scoped and optional; prompt and source URL limits are unchanged."
       },
       "GamingEvidenceRequest": {
         "type": "object",
@@ -1838,6 +2384,70 @@
           }
         }
       },
+      "GamingGrounding": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Evidence admitted to the provider context. Requested counts describe supplied URLs; fetched counts describe documents, not metadata HTTP calls. Grounded does not establish full-document coverage or answer correctness.",
+        "required": [
+          "groundingStatus",
+          "requestedSourceCount",
+          "fetchedSourceCount",
+          "fetchedSuppliedSourceCount",
+          "usableSourceCount",
+          "citableSourceCount",
+          "selectedChunkCount",
+          "suppliedEvidenceSourceCount",
+          "groundedInSuppliedEvidence"
+        ],
+        "properties": {
+          "groundingStatus": {
+            "type": "string",
+            "enum": [
+              "grounded",
+              "insufficient_evidence",
+              "unavailable"
+            ]
+          },
+          "requestedSourceCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000
+          },
+          "fetchedSourceCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000
+          },
+          "fetchedSuppliedSourceCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000
+          },
+          "usableSourceCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000
+          },
+          "citableSourceCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000
+          },
+          "selectedChunkCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000
+          },
+          "suppliedEvidenceSourceCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000
+          },
+          "groundedInSuppliedEvidence": {
+            "type": "boolean"
+          }
+        }
+      },
       "GamingResponseData": {
         "type": "object",
         "additionalProperties": true,
@@ -1869,6 +2479,9 @@
           },
           "evidenceRequest": {
             "$ref": "#/components/schemas/GamingEvidenceRequest"
+          },
+          "grounding": {
+            "$ref": "#/components/schemas/GamingGrounding"
           }
         }
       },
@@ -2005,7 +2618,909 @@
             "$ref": "#/components/schemas/PublicError"
           }
         }
+      },
+      "GamingHybridQueryRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "contractVersion",
+          "idempotencyKey",
+          "question",
+          "game"
+        ],
+        "properties": {
+          "contractVersion": {
+            "type": "string",
+            "enum": [
+              "gaming-hybrid-v1"
+            ]
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 120,
+            "pattern": "^[a-zA-Z0-9._:-]+$",
+            "description": "New key per logical operation; reuse only for identical retries. Bound to the authenticated caller."
+          },
+          "question": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000
+          },
+          "game": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "guide",
+              "build",
+              "meta"
+            ],
+            "default": "guide"
+          },
+          "storagePolicy": {
+            "type": "string",
+            "enum": [
+              "transient_only",
+              "ask_before_store",
+              "auto_store_approved"
+            ],
+            "default": "transient_only"
+          },
+          "platform": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "Optional request-scoped player context; not verified game state."
+          },
+          "edition": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120,
+            "description": "User-supplied edition; never inferred from the guide title."
+          },
+          "version": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "User-supplied version or patch; requestedVersion is the semantic-version alias. Named editions belong in edition."
+          },
+          "difficulty": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "Optional request-scoped player context; not verified game state."
+          },
+          "currentArea": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160,
+            "description": "Optional request-scoped player context; not verified game state."
+          },
+          "lastCompletedObjective": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240,
+            "description": "Optional request-scoped player context; not verified game state."
+          },
+          "progressPoint": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160,
+            "description": "Optional request-scoped player context; not verified game state."
+          },
+          "class": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "Optional request-scoped player context; not verified game state."
+          },
+          "role": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "Optional request-scoped player context; not verified game state."
+          },
+          "constraints": {
+            "type": "array",
+            "maxItems": 8,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            }
+          },
+          "spoilerTolerance": {
+            "type": "string",
+            "enum": [
+              "none",
+              "light",
+              "full",
+              "avoid",
+              "allowed",
+              "unknown",
+              "no spoilers",
+              "ok",
+              "spoilers ok"
+            ],
+            "description": "none is the conservative default; avoid maps to none and allowed to full. Conflicting textual permission uses the stricter mode."
+          },
+          "answerDepth": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "concise",
+              "standard",
+              "detailed"
+            ],
+            "description": "Defaults to adaptive auto. Explicit brevity or detail requested in the question takes precedence within server budgets."
+          },
+          "requestedVersion": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "region": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          }
+        }
+      },
+      "GamingHybridCandidateHint": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "url"
+        ],
+        "properties": {
+          "url": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048,
+            "format": "uri"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 240
+          },
+          "discoveredAt": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 64
+          },
+          "discoveryMethod": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 64
+          },
+          "claimedGame": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 120
+          },
+          "claimedPatch": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 64
+          },
+          "claimedPublisher": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 120
+          },
+          "claimedCategory": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 64
+          }
+        }
+      },
+      "GamingHybridCandidatesRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "contractVersion",
+          "workflowId",
+          "idempotencyKey",
+          "candidates"
+        ],
+        "properties": {
+          "contractVersion": {
+            "type": "string",
+            "enum": [
+              "gaming-hybrid-v1"
+            ]
+          },
+          "workflowId": {
+            "type": "string",
+            "format": "uuid",
+            "maxLength": 36
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 120,
+            "pattern": "^[a-zA-Z0-9._:-]+$",
+            "description": "New key per logical operation; reuse only for identical retries. Bound to the authenticated caller."
+          },
+          "candidates": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 3,
+            "items": {
+              "$ref": "#/components/schemas/GamingHybridCandidateHint"
+            }
+          }
+        }
+      },
+      "GamingHybridIngestionRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "contractVersion",
+          "workflowId",
+          "idempotencyKey",
+          "candidateIds",
+          "storagePolicy"
+        ],
+        "properties": {
+          "contractVersion": {
+            "type": "string",
+            "enum": [
+              "gaming-hybrid-v1"
+            ]
+          },
+          "workflowId": {
+            "type": "string",
+            "format": "uuid",
+            "maxLength": 36
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 120,
+            "pattern": "^[a-zA-Z0-9._:-]+$",
+            "description": "New key per logical operation; reuse only for identical retries. Bound to the authenticated caller."
+          },
+          "candidateIds": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 3,
+            "items": {
+              "type": "string",
+              "format": "uuid",
+              "maxLength": 36
+            }
+          },
+          "storagePolicy": {
+            "type": "string",
+            "enum": [
+              "transient_only",
+              "ask_before_store",
+              "auto_store_approved"
+            ]
+          },
+          "confirmStore": {
+            "type": "boolean",
+            "default": false,
+            "description": "Explicit user approval for ask_before_store. This field does not grant backend permission or replace platform Action confirmation."
+          }
+        }
+      },
+      "GamingHybridDiscovery": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "round",
+          "maxRounds",
+          "maxCandidates",
+          "searchQueries"
+        ],
+        "properties": {
+          "round": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "maxRounds": {
+            "type": "integer",
+            "enum": [
+              1
+            ]
+          },
+          "maxCandidates": {
+            "type": "integer",
+            "enum": [
+              3
+            ]
+          },
+          "searchQueries": {
+            "type": "array",
+            "maxItems": 3,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 400
+            }
+          }
+        }
+      },
+      "GamingHybridCandidateDecision": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "decision",
+          "reasonCodes"
+        ],
+        "properties": {
+          "candidateId": {
+            "type": "string",
+            "format": "uuid",
+            "maxLength": 36
+          },
+          "url": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048,
+            "format": "uri"
+          },
+          "decision": {
+            "type": "string",
+            "enum": [
+              "accepted_transient",
+              "eligible_for_ingestion",
+              "already_indexed",
+              "rejected",
+              "requires_confirmation"
+            ]
+          },
+          "reasonCodes": {
+            "type": "array",
+            "maxItems": 8,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            }
+          },
+          "sourceCategory": {
+            "type": "string",
+            "enum": [
+              "official_updates",
+              "official_status",
+              "official_documentation",
+              "specialist_guide",
+              "community",
+              "unreviewed"
+            ]
+          }
+        }
+      },
+      "GamingHybridAnswerSource": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "url"
+        ],
+        "properties": {
+          "url": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048,
+            "format": "uri"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "sourceId": {
+            "type": "string",
+            "format": "uuid",
+            "maxLength": 36
+          },
+          "patchVersion": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "fetchedAt": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "format": "date-time"
+          }
+        }
+      },
+      "GamingHybridAnswer": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "response",
+          "sources",
+          "provenance",
+          "requestId"
+        ],
+        "properties": {
+          "response": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 18000,
+            "pattern": "[\\p{L}\\p{N}\\p{S}]"
+          },
+          "sources": {
+            "type": "array",
+            "maxItems": 8,
+            "items": {
+              "$ref": "#/components/schemas/GamingHybridAnswerSource"
+            }
+          },
+          "provenance": {
+            "type": "string",
+            "enum": [
+              "arcanos-trinity"
+            ]
+          },
+          "requestId": {
+            "$ref": "#/components/schemas/GamingCorrelationIdentifier"
+          }
+        }
+      },
+      "GamingHybridIngestionReference": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ingestionId",
+          "status",
+          "statusUrl",
+          "maxPolls"
+        ],
+        "properties": {
+          "ingestionId": {
+            "$ref": "#/components/schemas/GamingOpaqueIdentifier"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "running",
+              "completed",
+              "completed_with_errors",
+              "failed",
+              "cancelled",
+              "expired"
+            ]
+          },
+          "statusUrl": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "maxPolls": {
+            "type": "integer",
+            "enum": [
+              3
+            ]
+          }
+        }
+      },
+      "GamingHybridResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "contractVersion",
+          "requestId",
+          "state",
+          "nextAction",
+          "reason",
+          "sourceKnown",
+          "evidenceSelected",
+          "freshnessStatus"
+        ],
+        "properties": {
+          "contractVersion": {
+            "type": "string",
+            "enum": [
+              "gaming-hybrid-v1"
+            ]
+          },
+          "requestId": {
+            "$ref": "#/components/schemas/GamingCorrelationIdentifier"
+          },
+          "workflowId": {
+            "type": "string",
+            "format": "uuid",
+            "maxLength": 36
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "answer_ready",
+              "clarification_required",
+              "discovery_required",
+              "temporarily_unavailable",
+              "ingestion_pending"
+            ]
+          },
+          "nextAction": {
+            "type": "string",
+            "enum": [
+              "answer",
+              "clarify",
+              "search",
+              "retry_later",
+              "poll_ingestion",
+              "stop"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "sourceKnown": {
+            "type": "boolean"
+          },
+          "evidenceSelected": {
+            "type": "boolean"
+          },
+          "freshnessStatus": {
+            "type": "string",
+            "enum": [
+              "current",
+              "stale",
+              "unverified",
+              "not_applicable",
+              "conflicting"
+            ]
+          },
+          "verifiedAsOf": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "format": "date-time"
+          },
+          "effectivePatch": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "qualification": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "clarification": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "discovery": {
+            "$ref": "#/components/schemas/GamingHybridDiscovery"
+          },
+          "candidates": {
+            "type": "array",
+            "maxItems": 3,
+            "items": {
+              "$ref": "#/components/schemas/GamingHybridCandidateDecision"
+            }
+          },
+          "answer": {
+            "$ref": "#/components/schemas/GamingHybridAnswer"
+          },
+          "ingestion": {
+            "$ref": "#/components/schemas/GamingHybridIngestionReference"
+          },
+          "effectiveBuild": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          }
+        }
+      },
+      "GamingHybridErrorResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ok",
+          "error"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          },
+          "requestId": {
+            "$ref": "#/components/schemas/GamingCorrelationIdentifier"
+          },
+          "traceId": {
+            "$ref": "#/components/schemas/GamingCorrelationIdentifier"
+          },
+          "error": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "code",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 96
+              },
+              "message": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              }
+            }
+          }
+        }
+      },
+      "GamingHybridFailureResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Hybrid handler failures carry the structured hybrid state. Earlier authentication boundaries return the compatible ok/error envelope. Either is a failure, never a discovery request.",
+        "properties": {
+          "contractVersion": {
+            "type": "string",
+            "enum": [
+              "gaming-hybrid-v1"
+            ]
+          },
+          "requestId": {
+            "$ref": "#/components/schemas/GamingCorrelationIdentifier"
+          },
+          "workflowId": {
+            "type": "string",
+            "format": "uuid",
+            "maxLength": 36
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "answer_ready",
+              "clarification_required",
+              "discovery_required",
+              "temporarily_unavailable",
+              "ingestion_pending"
+            ]
+          },
+          "nextAction": {
+            "type": "string",
+            "enum": [
+              "answer",
+              "clarify",
+              "search",
+              "retry_later",
+              "poll_ingestion",
+              "stop"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "sourceKnown": {
+            "type": "boolean"
+          },
+          "evidenceSelected": {
+            "type": "boolean"
+          },
+          "freshnessStatus": {
+            "type": "string",
+            "enum": [
+              "current",
+              "stale",
+              "unverified",
+              "not_applicable",
+              "conflicting"
+            ]
+          },
+          "verifiedAsOf": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "format": "date-time"
+          },
+          "effectivePatch": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "qualification": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "clarification": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "discovery": {
+            "$ref": "#/components/schemas/GamingHybridDiscovery"
+          },
+          "candidates": {
+            "type": "array",
+            "maxItems": 3,
+            "items": {
+              "$ref": "#/components/schemas/GamingHybridCandidateDecision"
+            }
+          },
+          "answer": {
+            "$ref": "#/components/schemas/GamingHybridAnswer"
+          },
+          "ingestion": {
+            "$ref": "#/components/schemas/GamingHybridIngestionReference"
+          },
+          "ok": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          },
+          "traceId": {
+            "$ref": "#/components/schemas/GamingCorrelationIdentifier"
+          },
+          "error": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "code",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 96
+              },
+              "message": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 240
+              }
+            }
+          },
+          "effectiveBuild": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          }
+        }
+      },
+      "GamingHybridRateLimitResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Hybrid workflow limits carry the structured hybrid state; the shared earlier limiter retains its compatible rate-error envelope.",
+        "properties": {
+          "contractVersion": {
+            "type": "string",
+            "enum": [
+              "gaming-hybrid-v1"
+            ]
+          },
+          "requestId": {
+            "$ref": "#/components/schemas/GamingCorrelationIdentifier"
+          },
+          "workflowId": {
+            "type": "string",
+            "format": "uuid",
+            "maxLength": 36
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "answer_ready",
+              "clarification_required",
+              "discovery_required",
+              "temporarily_unavailable",
+              "ingestion_pending"
+            ]
+          },
+          "nextAction": {
+            "type": "string",
+            "enum": [
+              "answer",
+              "clarify",
+              "search",
+              "retry_later",
+              "poll_ingestion",
+              "stop"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "sourceKnown": {
+            "type": "boolean"
+          },
+          "evidenceSelected": {
+            "type": "boolean"
+          },
+          "freshnessStatus": {
+            "type": "string",
+            "enum": [
+              "current",
+              "stale",
+              "unverified",
+              "not_applicable",
+              "conflicting"
+            ]
+          },
+          "verifiedAsOf": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "format": "date-time"
+          },
+          "effectivePatch": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "qualification": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "clarification": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "discovery": {
+            "$ref": "#/components/schemas/GamingHybridDiscovery"
+          },
+          "candidates": {
+            "type": "array",
+            "maxItems": 3,
+            "items": {
+              "$ref": "#/components/schemas/GamingHybridCandidateDecision"
+            }
+          },
+          "answer": {
+            "$ref": "#/components/schemas/GamingHybridAnswer"
+          },
+          "ingestion": {
+            "$ref": "#/components/schemas/GamingHybridIngestionReference"
+          },
+          "error": {
+            "type": "string",
+            "enum": [
+              "Rate limit exceeded"
+            ]
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240,
+            "pattern": "\\S"
+          },
+          "retryAfter": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "effectiveBuild": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          }
+        }
       }
     }
-  }
+  },
+  "x-arcanos-gaming-hybrid-contract-version": "gaming-hybrid-v1"
 }

@@ -50,6 +50,7 @@ jest.unstable_mockModule("../src/platform/logging/structuredLogging.js", () => (
 }));
 
 const { ArcanosGaming } = await import("../src/services/arcanos-gaming.js");
+const { GamingSourceEvidenceError } = await import("../src/services/gamingModes.js");
 const { runWithRequestAbortContext } = await import("@arcanos/runtime");
 
 describe("ArcanosGaming mode routing", () => {
@@ -85,6 +86,40 @@ describe("ArcanosGaming mode routing", () => {
     mockEvaluateWithHRC.mockResolvedValue({ fidelity: 1, resilience: 1, verdict: "ok" });
   });
 
+  it.each([0, 1])('preserves supplied-guide grounding failure with %i fetched sources', async (fetchedSourceCount) => {
+    const grounding = {
+      groundingStatus: fetchedSourceCount > 0 ? 'insufficient_evidence' as const : 'unavailable' as const,
+      requestedSourceCount: 1,
+      fetchedSourceCount,
+      fetchedSuppliedSourceCount: fetchedSourceCount,
+      usableSourceCount: 0,
+      citableSourceCount: 0,
+      selectedChunkCount: 0,
+      suppliedEvidenceSourceCount: 0,
+      groundedInSuppliedEvidence: false
+    };
+    mockRunGuidePipeline.mockRejectedValueOnce(new GamingSourceEvidenceError(grounding));
+    const result = await ArcanosGaming.actions.query({
+      mode: 'guide', game: 'Kingdom Hearts HD 1.5 Remix',
+      prompt: 'Use the supplied guide for the first boss.',
+      guideUrl: 'https://archive.org/details/KH1.5_guide',
+      hrc: true
+    });
+    expect(result).toEqual({
+      ok: false, route: 'gaming', mode: 'guide',
+      error: {
+        code: fetchedSourceCount > 0 ? 'GAMING_SOURCE_UNREADABLE' : 'GAMING_SOURCE_UNAVAILABLE',
+        message: expect.any(String), details: { grounding }
+      }
+    });
+    expect(mockEvaluateWithHRC).not.toHaveBeenCalled();
+    expect(mockLogger.info).not.toHaveBeenCalledWith('gaming.backend.success', expect.anything());
+    expect(mockLogger.info).not.toHaveBeenCalledWith('gaming.backend.end', expect.anything());
+    expect(mockLogger.warn).toHaveBeenCalledWith('gaming.backend.failure', expect.objectContaining({
+      errorCode: fetchedSourceCount > 0 ? 'GAMING_SOURCE_UNREADABLE' : 'GAMING_SOURCE_UNAVAILABLE'
+    }));
+  });
+
   it("routes guide mode to the guide pipeline only", async () => {
     const result = await ArcanosGaming.actions.query({
       mode: "guide",
@@ -92,6 +127,8 @@ describe("ArcanosGaming mode routing", () => {
     });
 
     expect(mockRunGuidePipeline).toHaveBeenCalledWith({
+      answerDepth: "auto", spoilerMode: "none", spoilerTolerance: "unknown",
+      contextConflicts: [], contextOrigins: { answerDepth: "default", spoilerTolerance: "default" },
       prompt: "Where do I go next?",
       game: undefined,
       guideUrl: undefined,
@@ -111,7 +148,7 @@ describe("ArcanosGaming mode routing", () => {
       }),
     }));
     expect((result as any).data.response).toContain("Quick Answer");
-    expect((result as any).data.response).toContain("Why It Works");
+    expect((result as any).data.response).not.toContain("Backend-supported");
     expect((result as any).data.response).toContain("Watch Outs");
   });
 
@@ -145,6 +182,8 @@ describe("ArcanosGaming mode routing", () => {
     });
 
     expect(mockRunGuidePipeline).toHaveBeenCalledWith({
+      answerDepth: "auto", spoilerMode: "none", spoilerTolerance: "unknown",
+      contextConflicts: [], contextOrigins: { answerDepth: "default", spoilerTolerance: "default" },
       prompt: "Use this guide.",
       game: undefined,
       guideUrl: "https://example.com/guide",
@@ -164,6 +203,8 @@ describe("ArcanosGaming mode routing", () => {
     });
 
     expect(pipeline).toHaveBeenCalledWith({
+      answerDepth: "auto", spoilerMode: "none", spoilerTolerance: "unknown",
+      contextConflicts: [], contextOrigins: { answerDepth: "default", spoilerTolerance: "default" },
       prompt: "Use the supplied article for this request.",
       game: undefined,
       guideUrl: "https://community.example/article/123",
@@ -206,6 +247,8 @@ describe("ArcanosGaming mode routing", () => {
     });
 
     expect(mockRunGuidePipeline).toHaveBeenCalledWith({
+      answerDepth: "auto", spoilerMode: "none", spoilerTolerance: "unknown",
+      contextConflicts: [], contextOrigins: { answerDepth: "default", spoilerTolerance: "default" },
       prompt: "Use this guide.",
       game: undefined,
       guideUrl: "https://example.com/guide",
@@ -222,6 +265,8 @@ describe("ArcanosGaming mode routing", () => {
     });
 
     expect(mockRunBuildPipeline).toHaveBeenCalledWith({
+      answerDepth: "auto", spoilerMode: "none", spoilerTolerance: "unknown",
+      contextConflicts: [], contextOrigins: { answerDepth: "default", spoilerTolerance: "default" },
       prompt: "What is the best burst build?",
       game: "SWTOR",
       guideUrl: undefined,
@@ -246,6 +291,8 @@ describe("ArcanosGaming mode routing", () => {
     });
 
     expect(mockRunMetaPipeline).toHaveBeenCalledWith({
+      answerDepth: "auto", spoilerMode: "none", spoilerTolerance: "unknown",
+      contextConflicts: [], contextOrigins: { answerDepth: "default", spoilerTolerance: "default" },
       prompt: "What is strong in ranked right now?",
       game: "SWTOR",
       guideUrl: undefined,
@@ -303,10 +350,10 @@ describe("ArcanosGaming mode routing", () => {
       route: "gaming",
       mode: "guide",
       data: expect.objectContaining({
-        response: expect.stringContaining("General Fallback (not backend-supported)")
+        response: expect.stringContaining("reliabl")
       })
     }));
-    expect((result as any).data.response).toContain("safe deterministic fallback was used");
+    expect((result as any).data.response).toContain("reliabl");
     expect((result as any).data.response).not.toMatch(/timeout|incomplete|integrity/i);
   });
 
@@ -413,10 +460,10 @@ describe("ArcanosGaming mode routing", () => {
       route: "gaming",
       mode: "guide",
       data: expect.objectContaining({
-        response: expect.stringContaining("General Fallback (not backend-supported)")
+        response: expect.stringContaining("reliabl")
       })
     }));
-    expect((result as any).data.response).toContain("safe deterministic fallback was used");
+    expect((result as any).data.response).toContain("reliabl");
     expect((result as any).data.response).not.toMatch(/timeout|incomplete|integrity/i);
   });
 
@@ -440,10 +487,10 @@ describe("ArcanosGaming mode routing", () => {
       route: "gaming",
       mode: "guide",
       data: expect.objectContaining({
-        response: expect.stringContaining("General Fallback (not backend-supported)")
+        response: expect.stringContaining("reliabl")
       })
     }));
-    expect((result as any).data.response).toContain("safe deterministic fallback was used");
+    expect((result as any).data.response).toContain("reliabl");
     expect((result as any).data.response).not.toMatch(/timeout|incomplete|integrity/i);
   });
 

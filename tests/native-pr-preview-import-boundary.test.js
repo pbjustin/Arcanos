@@ -346,6 +346,20 @@ function replaceRequired(sourceText, expected, replacement) {
 }
 
 describe('native PR preview import boundary', () => {
+  it.each([
+    'src/services/actionPlanExecution/canonical.ts',
+    'src/shared/security/gptAccessDevice.ts',
+    'src/shared/security/gptAccessDevicePolicyCore.ts',
+    'src/shared/ios/iosDevicePreviewFixture.ts',
+  ])('requires the reviewed semantic digest for device preview dependency %s', async (filePath) => {
+    const sourceText = await readFile(new URL(`../${filePath}`, import.meta.url), 'utf8');
+    expect(findUnsafeRuntimeSyntax(filePath, sourceText)).toEqual([]);
+    expect(findUnsafeRuntimeSyntax(filePath, `${sourceText}\nexport const unreviewedChange = true;\n`))
+      .toEqual(expect.arrayContaining([
+        expect.stringContaining('critical entry file semantic digest'),
+      ]));
+  });
+
   it('keeps the contained application outside production side-effect modules', async () => {
     await expect(findNativePrPreviewImportViolations()).resolves.toEqual([]);
   }, 30_000);
@@ -378,7 +392,7 @@ describe('native PR preview import boundary', () => {
     })).resolves.toContain(
       'unreviewed preview import: src/config/openai.ts'
     );
-  });
+  }, 30_000);
 
   it('keeps runtime loader hooks outside the contained child command graph', () => {
     expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toEqual(
@@ -472,6 +486,69 @@ describe('native PR preview import boundary', () => {
         expect.stringContaining('critical entry file semantic digest'),
       ])
     );
+  });
+
+  it.each([
+    'src/shared/gaming/gamingArchiveResourceCore.ts',
+    'src/services/gamingDocumentExtraction.ts',
+    'src/services/gamingDocumentChunks.ts',
+    'src/services/gamingDurableDocumentChunks.ts',
+    'src/services/gamingGameDetection.ts',
+    'src/shared/gaming/gamingDocumentProjectionCore.ts',
+    'src/shared/gaming/gamingDocumentIngestionCore.ts',
+    'src/shared/gaming/gamingDocumentIngestionPreviewFixture.ts',
+    'src/shared/gaming/gamingStoredEvidenceCore.ts',
+    'src/shared/gaming/gamingDurableRagPreviewFixture.ts',
+    'src/shared/gaming/gamingArchivePreviewFixture.ts',
+    'src/shared/gaming/gamingGuideResponseCore.ts',
+    'src/shared/gaming/gamingGuideResponsePreviewFixture.ts',
+    'src/shared/gaming/gamingGuideAssistancePreviewFixture.ts',
+    'src/shared/gaming/gamingProgressRecoveryPreviewFixture.ts',
+    'src/shared/gaming/gamingHybridPolicyCore.ts',
+    'src/shared/gaming/gamingHybridKnowledgePreviewFixture.ts',
+    'src/shared/gaming/gamingHybridContract.ts',
+    'src/shared/gaming/gamingFreshnessCore.ts',
+    'src/shared/gaming/gamingGameIdentity.ts',
+    'src/shared/gaming/gamingRecoveryResponse.ts',
+    'src/shared/gaming/gamingProgressionPolicy.ts',
+    'src/shared/gaming/gamingGuideIntakeCore.ts',
+    'src/shared/gaming/gamingPlayerContext.ts',
+    'src/shared/gaming/gamingRetrievalPolicy.ts',
+    'src/shared/gaming/gamingAnswerPolicy.ts',
+    'src/shared/gaming/gamingPromptCore.ts',
+    'src/shared/gaming/gamingGrounding.ts',
+  ])('pins the reviewed Gaming preview core %s', async (filePath) => {
+    const sourceText = await readNormalizedSource(new URL(`../${filePath}`, import.meta.url));
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).toContain(filePath);
+    expect(findUnsafeRuntimeSyntax(filePath, sourceText)).toEqual([]);
+    expect(findUnsafeRuntimeSyntax(filePath, `${sourceText}\nexport const previewPolicyDrift = true;\n`)).toEqual(
+      expect.arrayContaining([expect.stringContaining('critical entry file semantic digest')])
+    );
+    for (const forbidden of [
+      'src/services/gamingArchiveResources.ts', 'src/services/gamingPipeline.ts',
+      'src/services/gamingWebContext.ts', 'src/shared/webFetcher.ts',
+      'src/services/gamingAgents.ts', 'src/services/gamingPromptBuilder.ts',
+      'src/services/gamingStoredKnowledge.ts', 'src/services/gamingSourceIngestion.ts',
+      'src/services/gamingHybridKnowledge.ts', 'src/services/gamingHybridCandidates.ts',
+      'src/core/db/repositories/gamingSourceRepository.ts',
+      'src/platform/runtime/prompts.ts',
+    ]) {
+      expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toContain(forbidden);
+    }
+  });
+
+  it.each([
+    ['setTimeout as yieldToEventLoop', 'setTimeout:yieldToEventLoop'],
+    ['setImmediate as alternateYield', 'setImmediate:alternateYield'],
+  ])('rejects an alternative durable chunker timer binding %s', async (replacement, forbiddenBinding) => {
+    const filePath = 'src/services/gamingDurableDocumentChunks.ts';
+    const sourceText = await readNormalizedSource(new URL(`../${filePath}`, import.meta.url));
+    expect(findUnsafeRuntimeSyntax(filePath, sourceText)).toEqual([]);
+    const driftedSource = replaceRequired(sourceText, 'setImmediate as yieldToEventLoop', replacement);
+    expect(findUnsafeRuntimeSyntax(filePath, driftedSource)).toEqual(expect.arrayContaining([
+      expect.stringContaining(`forbidden runtime import binding "${forbiddenBinding}"`),
+      expect.stringContaining('critical entry file semantic digest'),
+    ]));
   });
 
   it('admits and pins the pure Trinity reasoning provider policy', async () => {
@@ -1340,6 +1417,72 @@ describe('native PR preview import boundary', () => {
           expect.stringContaining('critical entry file semantic digest'),
         ])
       );
+    }
+  });
+
+  it('pins Gaming acquisition policy and restricts node:net to the pure IP parser', async () => {
+    for (const name of ['gamingSourceAcquisitionCore', 'gamingSourceAcquisitionPreviewFixture']) {
+      const filePath = `src/shared/gaming/${name}.ts`;
+      expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).toContain(filePath);
+      const sourceText = await readFile(new URL(`../${filePath}`, import.meta.url), 'utf8');
+      expect(findUnsafeRuntimeSyntax(filePath, sourceText)).toEqual([]);
+      expect(findUnsafeRuntimeSyntax(filePath, `${sourceText}\nexport const unreviewedPolicyChange = true;`)).toEqual(
+        expect.arrayContaining([expect.stringContaining('critical entry file semantic digest')])
+      );
+    }
+    const filePath = 'src/shared/gaming/gamingSourceAcquisitionCore.ts';
+    for (const sourceText of [
+      'import { connect } from "node:net";',
+      'import * as net from "node:net";',
+      'import net from "node:net";',
+      'export { connect } from "node:net";'
+    ]) expect(findUnsafeRuntimeSyntax(filePath, sourceText).length).toBeGreaterThan(0);
+    for (const filePath of ['src/services/gamingSourceDiscovery.ts', 'src/services/gamingDocumentResolution.ts',
+      'src/services/gamingBuildResources.ts', 'src/shared/webFetcher.ts']) {
+      expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toContain(filePath);
+    }
+  });
+
+  it('pins structured Gaming parsers and permits only inert cheerio load', async () => {
+    for (const filePath of ['src/services/gamingDocumentEvidence.ts', 'src/services/gamingHtmlEvidence.ts',
+      'src/services/gamingJsonEvidence.ts', 'src/shared/gaming/gamingStructuredEvidencePreviewFixture.ts']) {
+      expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).toContain(filePath);
+      const sourceText = await readFile(new URL(`../${filePath}`, import.meta.url), 'utf8');
+      expect(findUnsafeRuntimeSyntax(filePath, sourceText)).toEqual([]);
+      expect(findUnsafeRuntimeSyntax(filePath, `${sourceText}\nexport const unreviewedPolicyChange = true;`)).toEqual(
+        expect.arrayContaining([expect.stringContaining('critical entry file semantic digest')])
+      );
+      for (const [unsafe, diagnostic] of [
+        ['import { fromURL } from "cheerio";', /(?:forbidden runtime import binding|unreviewed external runtime import binding surface)/u],
+        ['import * as cheerio from "cheerio";', /(?:forbidden runtime import binding|unreviewed external runtime import binding surface)/u],
+        ['const cheerio = require("cheerio");', /forbidden require call/u]
+      ]) {
+        expect(findUnsafeRuntimeSyntax(filePath, `${sourceText}\n${unsafe}`)).toEqual(
+          expect.arrayContaining([expect.stringMatching(diagnostic)])
+        );
+      }
+    }
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toContain('src/shared/webFetcher.ts');
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toContain('src/services/gamingDocumentResolution.ts');
+    expect(findUnsafeRuntimeSyntax('src/services/gamingDocumentEvidence.ts', 'import { load } from "cheerio";')).toEqual(
+      expect.arrayContaining([expect.stringContaining('unreviewed external runtime import binding surface')])
+    );
+  });
+
+  it('pins the pure Gaming CLEAR decisions without admitting their effectful service graph', async () => {
+    for (const name of ['gamingClearPreviewFixture', 'gamingClearPolicy', 'gamingClearSource', 'gamingClearEvidence', 'gamingClearAnswerBinding']) {
+      const filePath = `src/shared/gaming/${name}.ts`;
+      expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).toContain(filePath);
+      const sourceText = await readFile(new URL(`../${filePath}`, import.meta.url), 'utf8');
+      expect(findUnsafeRuntimeSyntax(filePath, sourceText)).toEqual([]);
+      expect(findUnsafeRuntimeSyntax(filePath, `${sourceText}\nexport const unreviewedPolicyChange = true;`)).toEqual(
+        expect.arrayContaining([expect.stringContaining('critical entry file semantic digest')])
+      );
+    }
+    for (const filePath of ['src/services/gamingClearAnswerAudit.ts', 'src/services/gamingHybridKnowledge.ts',
+      'src/services/gamingHybridCandidates.ts', 'src/services/gamingDocumentResolution.ts',
+      'src/services/gamingPipeline.ts', 'src/services/gamingSourceIngestion.ts', 'src/core/logic/trinity.ts']) {
+      expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toContain(filePath);
     }
   });
 

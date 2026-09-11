@@ -80,7 +80,7 @@ The machine-readable contract lives at [contracts/custom_gpt_route.openapi.v1.js
 For live integrations, prefer the backend-served contract URL instead of a manually copied local file:
 - `https://<your-backend>/contracts/custom_gpt_route.openapi.v1.json`
 
-The Arcanos Gaming builder uses the dedicated `1.5.0` fixed-path schema with five Action operations while retaining one gameplay call per gameplay request:
+The Arcanos Gaming builder uses the dedicated `1.5.0` fixed-path schema with eight Action operations and an opt-in `gaming-hybrid-v1` backend-first workflow; the five legacy operations retain their shapes:
 
 - `https://<your-backend>/contracts/arcanos_gaming.openapi.v1.json`
 - [ARCANOS_GAMING_CUSTOM_GPT.md](ARCANOS_GAMING_CUSTOM_GPT.md)
@@ -399,6 +399,14 @@ security tradeoff, rotation, and rollback guidance. Never put the credential in
 the imported schema, GPT instructions, chat, source, or logs.
 
 ### Arcanos Gaming
+
+Gaming accepts optional player context and answer preferences in each query:
+`platform`, `edition`, `version`, `difficulty`, `currentArea`,
+`lastCompletedObjective`, `progressPoint`, `class`, `role`, `constraints`,
+`spoilerTolerance` (`none|light|full`, with legacy aliases), and `answerDepth`
+(`auto|concise|standard|detailed`). Use the limits and precedence in [API.md](API.md).
+These fields do not create conversation memory. The repository schema is additive;
+the existing minimum `mode`/`prompt` request remains valid.
 **What it is:** A Core-managed, non-privileged Custom GPT module for gameplay guides, builds, and meta advice. The `ARCANOS:GAMING` module exposes only the `query` action, validates `mode` as `guide`, `build`, or `meta`, and forwards the validated request to the Gaming pipelines without exposing Core control-plane capabilities. (`src/services/arcanos-gaming.ts`) (`src/services/gamingModes.ts`)
 
 **Known GPT IDs:** `arcanos-gaming`, `gaming`. The catalog registers `arcanos-gaming.ts` at route `gaming`, and both GPT IDs are pinned to `ARCANOS:GAMING` in direct dispatch so environment overrides cannot route them to Core. (`src/services/arcanos-gaming.ts`) (`src/services/moduleCatalog.ts`) (`src/routes/_core/gptDispatch.ts`)
@@ -414,8 +422,11 @@ the imported schema, GPT instructions, chat, source, or logs.
 - `ingestGamingSources` → `POST /gpt-access/gaming/sources/ingestions` for authenticated asynchronous ingestion of one to four public HTTPS URLs.
 - `refreshGamingSources` → `POST /gpt-access/gaming/sources/refreshes` for authenticated refresh of one to four known source IDs.
 - `getGamingSourceIngestionStatus` → `GET /gpt-access/gaming/sources/ingestions/{ingestionId}` for authenticated sanitized source-level status.
+- `queryGamingHybridKnowledge` → `POST /gpt-access/gaming/sources/hybrid/query` for authenticated stored-evidence/freshness assessment.
+- `submitGamingHybridCandidates` → `POST /gpt-access/gaming/sources/hybrid/candidates` for authenticated transient evaluation of up to three URLs.
+- `ingestGamingHybridCandidates` → `POST /gpt-access/gaming/sources/hybrid/ingestions` for consequential storage of eligible accepted candidates.
 
-The module itself still exposes only `query`. The canary is a route-level public protocol and never invokes the Gaming module, writing pipeline, provider, persistence, or control-plane code. The three source lifecycle operations are separate narrow GPT Access capabilities protected by Bearer authentication; they do not expose generic job, queue, worker, database, or control-plane inspection.
+The module itself still exposes only `query`. The canary is a route-level public protocol and never invokes the Gaming module, writing pipeline, provider, persistence, or control-plane code. The source lifecycle and hybrid operations are separate narrow GPT Access capabilities protected by Bearer authentication; they do not expose generic job, queue, worker, database, or control-plane inspection.
 
 **Spec sheet example:**
 ```yaml
@@ -442,7 +453,7 @@ success_response:
 
 **Public canary:** `canaryArcanosGaming` accepts exactly `{ "action": "canary", "payload": { "scope": "public_pipeline" } }`. It verifies request validation, deterministic dispatch, the fixed public route, bundled fixture marker `ARCANOS_PUBLIC_CANARY_7F31`, deterministic grounding/projection, response construction, and the response guard. Network retrieval and provider execution are explicitly `skipped`. The canary is not administrative health and exposes no logs, secrets, credentials, environment values, infrastructure or deployment details, filesystem paths, job, queue, database, worker, or control-plane data. See [ARCANOS_GAMING_CUSTOM_GPT.md](ARCANOS_GAMING_CUSTOM_GPT.md) for the disposable PR-preview Action procedure; direct preview HTTPS tests are not full ChatGPT Action end-to-end proof.
 
-**Frontend candidate discovery:** The dedicated builder schema exposes all five operations, but each gameplay workflow still makes one `queryArcanosGaming` call. For current or source-sensitive gameplay requests, Web Search may discover two to four URL candidates before that gameplay call, but its text never supplies evidence or route selection directly; ARCANOS must fetch, validate, and return every citable source. Durable ingestion is used only when the user explicitly asks to ingest, add, store, or remember sources. In that flow, the GPT sends one to four public HTTPS URLs—not snippets or page contents—to `ingestGamingSources`, then polls only the returned ingestion ID. See [ARCANOS_GAMING_CUSTOM_GPT.md](ARCANOS_GAMING_CUSTOM_GPT.md) for the exact builder instructions and examples.
+**Frontend candidate discovery:** The optional `gaming-hybrid-v1` workflow first calls `queryGamingHybridKnowledge` with the original question/game and bounded player preferences. It returns `answer_ready`, `clarification_required`, `discovery_required`, `temporarily_unavailable`, or `ingestion_pending` plus a structured `nextAction`. Only a discovery handoff triggers Web Search; the GPT sends at most three actual URLs to `submitGamingHybridCandidates` within the server's single discovery round. ARCANOS independently validates and selects evidence before Trinity answers. `ingestGamingHybridCandidates` is a separate consequential write, subject to source eligibility, caller permission, storage policy, and platform confirmation. Status polling uses the existing ingestion ID endpoint and stops after three reads per interaction. The five legacy operations remain available without adopting hybrid request shapes. See [ARCANOS_GAMING_CUSTOM_GPT.md](ARCANOS_GAMING_CUSTOM_GPT.md) and its [canonical hybrid instruction section](gpt/arcanos-gaming-hybrid.instructions.md). Deploy the compatible backend before activating that section in the existing GPT.
 
 **Source lifecycle contract:** Ingest requires `game`, one to four unique `sourceUrls`, and `idempotencyKey`; optional `sourceTypeHint`, `patchVersion`, and `origin` fields are closed and bounded. Refresh requires one to four UUID `sourceIds` plus `idempotencyKey` and never accepts a replacement URL. Both writes return `202` with an `ingestionId`; `getGamingSourceIngestionStatus` exposes bounded overall and per-source states, record counts, safe error codes, provenance, and timestamps. Stored query results may include optional `sourceId`, `sourceType`, `patchVersion`, `fetchedAt`, `title`, and `origin: "stored"` alongside the compatible `url`, `snippet`, and `error` fields.
 

@@ -1,7 +1,13 @@
 # Architecture
 
 ## Overview
-Arcanos is split into a TypeScript backend and an optional Python daemon client. The backend is the source of truth for API, confirmation gating, and Railway deployment.
+Arcanos has a TypeScript backend, an optional Python daemon client, and an optional
+[iPhone voice client](../clients/ios/README.md). The backend is the source of truth
+for API, confirmation gating, durable jobs, Local Agent execution and Railway
+deployment. The iOS Swift package performs bounded on-device text tasks and adapts
+the existing GPT Access contracts; it does not implement backend capabilities.
+Its Phase 1 host offers local inference and explicit synthetic Gateway fixtures.
+Live remote access requires the documented paired-device authorization addition.
 
 ## Dual-Lane Routing
 ARCANOS now enforces two planes before any module dispatch occurs:

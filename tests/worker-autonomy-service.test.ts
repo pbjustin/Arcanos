@@ -89,6 +89,9 @@ const {
   getWorkerAutonomySettings,
   planAutonomousWorkerJob
 } = await import('../src/services/workerAutonomyService.js');
+const {
+  buildAuthoritySynchronizationWorkerAiCallBudget
+} = await import('../src/workers/jobRunnerRuntime.js');
 
 const workerTimingEnvKeys = [
   'JOB_WORKER_HEARTBEAT_MS',
@@ -1748,6 +1751,61 @@ describe('workerAutonomyService', () => {
       }),
       { source: 'claim-acceptance-recovered' }
     );
+  });
+
+  it('keeps consumer readiness below the authority sub-cap and pauses on queue headroom use', async () => {
+    const service = new WorkerAutonomyService({
+      workerId: 'async-queue-slot-1',
+      statsWorkerId: 'async-queue',
+      workerType: 'async_queue',
+      heartbeatIntervalMs: 10_000,
+      leaseMs: 30_000,
+      inspectorIntervalMs: 30_000,
+      staleAfterMs: 60_000,
+      defaultMaxRetries: 2,
+      retryBackoffBaseMs: 2_000,
+      retryBackoffMaxMs: 60_000,
+      maxJobsPerHour: 120,
+      maxAiCallsPerHour: 3,
+      maxRssMb: 2_048,
+      queueDepthDeferralThreshold: 25,
+      queueDepthDeferralMs: 5_000,
+      failureWebhookUrl: null,
+      failureWebhookThreshold: 3,
+      failureWebhookCooldownMs: 300_000
+    });
+    const authorityBudget = buildAuthoritySynchronizationWorkerAiCallBudget(
+      service.getWorkerAiCallBudget(),
+      2
+    );
+    expect(authorityBudget).toMatchObject({ maxCallsPerHour: 2 });
+
+    getWorkerBudgetWindowUsageMock.mockResolvedValueOnce({
+      statsWorkerId: 'async-queue',
+      evaluatedAt: '2026-09-04T07:30:00.000Z',
+      jobClaims: 0,
+      aiProviderAttempts: authorityBudget.maxCallsPerHour,
+      nextJobClaimAvailableAt: null,
+      nextAiProviderAttemptAvailableAt: null
+    });
+    await expect(service.evaluateBudgetsBeforeClaim()).resolves.toMatchObject({
+      allowed: true,
+      claimAcceptance: 'accepting'
+    });
+
+    getWorkerBudgetWindowUsageMock.mockResolvedValueOnce({
+      statsWorkerId: 'async-queue',
+      evaluatedAt: '2026-09-04T07:30:01.000Z',
+      jobClaims: 1,
+      aiProviderAttempts: authorityBudget.maxCallsPerHour + 1,
+      nextJobClaimAvailableAt: null,
+      nextAiProviderAttemptAvailableAt: '2026-09-04T08:00:00.000Z'
+    });
+    await expect(service.evaluateBudgetsBeforeClaim()).resolves.toMatchObject({
+      allowed: false,
+      claimAcceptance: 'paused_budget',
+      reason: 'ai_calls_per_hour_exceeded:3'
+    });
   });
 
   it('pauses at the RSS boundary, recovers after RSS falls, and fails closed on budget-store errors', async () => {

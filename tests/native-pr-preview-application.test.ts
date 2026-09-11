@@ -1712,12 +1712,17 @@ describe('native PR contained application', () => {
         contract.proofHeaders.notionReadDiagnosticsVersion
       ]
     ).toBe(contract.notionReadDiagnosticsProofVersion);
+    expect(
+      notionAuthorityRag.headers[
+        contract.proofHeaders.notionDatabaseAuthorityVersion
+      ]
+    ).toBe(contract.notionDatabaseAuthorityProofVersion);
     const notionDiagnosticsPublicProjection = [
       notionAuthorityRag.text,
       JSON.stringify(notionAuthorityRag.headers),
     ].join('\n');
     expect(notionDiagnosticsPublicProjection).not.toMatch(
-      /PRIVATE-NOTION-DIAGNOSTICS|preview-notion-diagnostics|cccccccc-cccc-4ccc-8ccc-cccccccccccc|a0{31}/u
+      /PRIVATE-(?:NOTION-DIAGNOSTICS|OVERSIZED-PROVIDER-CURSOR)|preview-notion-(?:diagnostics|database-authority)|cccccccc-cccc-4ccc-8ccc-cccccccccccc|a0{31}/u
     );
     expect(notionDiagnosticsPublicProjection).not.toContain(
       'BackstageNotionReadError'
@@ -1792,6 +1797,11 @@ describe('native PR contained application', () => {
       expect(
         response.headers[
           contract.proofHeaders.notionReadDiagnosticsVersion
+        ]
+      ).toBeUndefined();
+      expect(
+        response.headers[
+          contract.proofHeaders.notionDatabaseAuthorityVersion
         ]
       ).toBeUndefined();
     }
@@ -2309,6 +2319,9 @@ describe('native PR contained application', () => {
       expect(
         response.headers[contract.proofHeaders.gptClientIdentityVersion]
       ).toBeUndefined();
+      expect(
+        response.headers[contract.proofHeaders.authorityReadinessVersion]
+      ).toBeUndefined();
       expect(response.body).toEqual({
         error: 'PREVIEW_BACKSTAGE_GENERATION_FIXTURE_INVALID',
       });
@@ -2319,6 +2332,108 @@ describe('native PR contained application', () => {
         true
       );
     }
+  });
+
+  it('proves process readiness remains independent from a long authority sync', async () => {
+    const { app } = buildApplication();
+    const contract = NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT;
+    const response = await request(app)
+      .post(contract.path)
+      .send({ fixture: contract.fixtures.authorityReadiness });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({
+      accepted: true,
+      authorityReadiness: {
+        boundedStartupBudgetMs: 30_000,
+        checkpoints: [
+          {
+            name: 'booting',
+            logicalTimeMs: 0,
+            processReady: false,
+            syncInProgress: false,
+            authorityStatus: 'unavailable',
+            snapshotStatus: 'unavailable',
+            protectedGenerationAdmissible: false,
+            protectedFailureCode: 'BACKSTAGE_NOTION_INDEX_UNAVAILABLE',
+          },
+          {
+            name: 'process_ready',
+            logicalTimeMs: 5_000,
+            processReady: true,
+            syncInProgress: true,
+            authorityStatus: 'syncing',
+            snapshotStatus: 'unavailable',
+            protectedGenerationAdmissible: false,
+            protectedFailureCode: 'BACKSTAGE_NOTION_INDEX_UNAVAILABLE',
+          },
+          {
+            name: 'healthcheck_window',
+            logicalTimeMs: 300_000,
+            processReady: true,
+            syncInProgress: true,
+            authorityStatus: 'syncing',
+            snapshotStatus: 'unavailable',
+            protectedGenerationAdmissible: false,
+            protectedFailureCode: 'BACKSTAGE_NOTION_INDEX_UNAVAILABLE',
+          },
+          {
+            name: 'activated',
+            logicalTimeMs: 360_001,
+            processReady: true,
+            syncInProgress: false,
+            authorityStatus: 'current_complete',
+            snapshotStatus: 'current_complete',
+            protectedGenerationAdmissible: true,
+            protectedFailureCode: null,
+          },
+        ],
+        contracts: {
+          boundedStartupBeforeRailwayWindow: true,
+          currentCompleteOnlyForProtectedGeneration: true,
+          healthcheckWindowDoesNotAwaitSync: true,
+          noRestartRequired: true,
+          protectedFailureCodeStable: true,
+          snapshotStatusReducerExecuted: true,
+          staleSnapshotNotOfficial: true,
+          syncExceedsRailwayWindow: true,
+          virtualTimeOnly: true,
+        },
+        processInstanceStarts: 1,
+        productionSharedProtectedProvenanceValidator: true,
+        productionSharedSnapshotStatusReducer: true,
+        railwayHealthcheckWindowMs: 300_000,
+        syncCompletedAtMs: 360_001,
+      },
+      databaseBoundaryReached: false,
+      effectsBoundaryReached: false,
+      externalNetworkAttempted: false,
+      fixture: contract.fixtures.authorityReadiness,
+      protectedEffectsEnabled: false,
+      providerBoundaryReached: false,
+      queueBoundaryReached: false,
+      realTimerWaited: false,
+      sensitiveMetadataAbsent: true,
+      workerBoundaryReached: false,
+    });
+    expect(
+      response.headers[contract.proofHeaders.authorityReadinessVersion]
+    ).toBe(contract.authorityReadinessProofVersion);
+    expect(response.headers[contract.proofHeaders.clearPolicyVersion]).toBe(
+      contract.clearPolicyVersion
+    );
+    expect(response.headers['x-response-bytes']).toBe(
+      String(Buffer.byteLength(response.text, 'utf8'))
+    );
+    expect(response.text).not.toMatch(
+      /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|"(?:root|database|dataSource|page|snapshot|attempt)Id"|Bearer |https:\/\//iu
+    );
+    expectContainedResponseHeaders(
+      response,
+      'native-pr-preview',
+      'native-pr-preview',
+      true
+    );
   });
 
   it('executes the production MCP pre-parser core against sealed streamed body boundaries', async () => {
@@ -2939,6 +3054,21 @@ describe('native PR contained application', () => {
         },
       });
       expectContainedResponseHeaders(response, requestId, traceId, true);
+      expect(response.headers[NATIVE_PR_PREVIEW_GAMING_CONTRACT.proofHeader]).toBe(
+        mode === 'guide' ? NATIVE_PR_PREVIEW_GAMING_CONTRACT.proofVersion : undefined
+      );
+      expect(response.headers[NATIVE_PR_PREVIEW_GAMING_CONTRACT.responseProofHeader]).toBe(
+        mode === 'guide' ? NATIVE_PR_PREVIEW_GAMING_CONTRACT.responseProofVersion : undefined
+      );
+      expect(response.headers[NATIVE_PR_PREVIEW_GAMING_CONTRACT.documentProofHeader]).toBe(
+        mode === 'guide' ? NATIVE_PR_PREVIEW_GAMING_CONTRACT.documentProofVersion : undefined
+      );
+      expect(response.headers[NATIVE_PR_PREVIEW_GAMING_CONTRACT.guideAssistanceProofHeader]).toBe(
+        mode === 'guide' ? NATIVE_PR_PREVIEW_GAMING_CONTRACT.guideAssistanceProofVersion : undefined
+      );
+      expect(response.headers[NATIVE_PR_PREVIEW_GAMING_CONTRACT.progressRecoveryProofHeader]).toBe(
+        mode === 'guide' ? NATIVE_PR_PREVIEW_GAMING_CONTRACT.progressRecoveryProofVersion : undefined
+      );
     }
 
     const invalidCanary = await request(app)

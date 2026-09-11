@@ -1,13 +1,28 @@
+import { splitGamingDocumentIntoChunks as splitIntoChunks } from "@services/gamingDocumentChunks.js";
 import { createHash } from "node:crypto";
+import { GAMEPLAY_CONTENT_PATTERN, filterGamingDocumentInstructions, isGamingCatalogMetadataOnly } from "@services/gamingDocumentExtraction.js";
+import type { GamingPlayerContext } from '@shared/gaming/gamingPlayerContext.js';
+import type { GamingStoredKnowledgeContext } from '@shared/gaming/gamingStoredEvidenceCore.js';
+import type { GamingEvidenceUnit } from '@shared/gaming/gamingEvidenceUnits.js';
+import { GAMING_EVIDENCE_UNIT_POLICY_VERSION } from '@shared/gaming/gamingEvidenceUnits.js';
+import { assessGamingStructuralUsability, readGamingEvidenceUnits } from '@shared/gaming/gamingStructuralEvidence.js';
+import { assessGamingClearSource, gamingClearIntactProseText } from '@shared/gaming/gamingClearSource.js';
+import { gamingClearHash, type GamingClearAssessment } from '@shared/gaming/gamingClearPolicy.js';
+import { assessGamingSourcePolicy, extractGamingFreshnessMetadata } from '@shared/gaming/gamingFreshnessCore.js';
+import { buildGamingRetrievalTerms, GAMING_RETRIEVAL_POLICY_VERSION, gamingTermCoverage, safeGamingEvidenceMetadata, scopeGamingEvidenceParagraphs } from '@shared/gaming/gamingRetrievalPolicy.js';
+import { describeGamingDocumentSource, resolveGamingDocument, isResolvedGamingDocumentIdentityVerified,
+  GAMING_DOCUMENT_ACQUISITION_POLICY_VERSION, GamingDocumentAcquisitionError, type ResolvedGamingDocument } from "@services/gamingDocumentResolution.js";
 import { load } from "cheerio";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import { redactString } from "@shared/redaction.js";
 import { logger } from "@platform/logging/structuredLogging.js";
 import { getEnv } from "@platform/runtime/env.js";
 import {
-  fetchAndClean,
+  isCitableGamingEvidenceSource,
+  LIMITED_GAMING_ARTICLE_TEXT_SNIPPET
+} from "@shared/gaming/gamingGrounding.js";
+import {
   type FetchAndCleanExtractionMetrics,
-  type FetchAndCleanOptions,
   type FetchAndCleanRawDocument
 } from "@shared/webFetcher.js";
 import {
@@ -40,6 +55,10 @@ import {
   textContainsExactGamingVersion
 } from "@services/gamingVersion.js";
 import {
+  recognizeGamingArchiveItem,
+  type GamingArchiveResolutionTelemetry
+} from "@services/gamingArchiveResources.js";
+import {
   GAMING_BUILD_RESOURCE_HARD_LIMITS,
   classifyGamingResource,
   clearGamingBuildResourceCache,
@@ -65,10 +84,14 @@ export type GamingWebContext = {
 };
 
 export type GamingRagContext = GamingWebContext & {
+  /** Internal exact passages surviving formatting; never a public source-field expansion. */
+  clearKnowledge?: GamingStoredKnowledgeContext;
   retrievalEnabled: boolean;
   retrievalReason: string;
   retrievalQuery: string;
   retrievedSourceCount: number;
+  fetchedSuppliedSourceCount: number;
+  selectedChunkCount: number;
   publicSourceCount: number;
   omittedSourceCount: number;
   sourceDomains: string[];
@@ -111,7 +134,7 @@ export type GamingGuideUrlInput = Pick<ValidatedGamingRequest, "guideUrl" | "gui
 export type GamingRagInput = Pick<
   ValidatedGamingRequest,
   "mode" | "prompt" | "game" | "guideUrl" | "guideUrls" | "requestedVersion"
->;
+> & GamingPlayerContext;
 
 export type GamingWebContextLogContext = {
   module: "ARCANOS:GAMING";
@@ -125,6 +148,7 @@ export type GamingWebContextLogContext = {
 type GamingSourceType = "official" | "patch_notes" | "wiki" | "curated" | "supplied";
 
 type GamingSourceCandidate = {
+  partialExtraction?: boolean;
   url: string;
   fetchUrl: string;
   title: string;
@@ -155,6 +179,9 @@ type GamingFetchedDocument = {
   fetchedAt: string;
   cacheHit: boolean;
   extraction: FetchAndCleanExtractionMetrics;
+  evidenceUnits?: GamingEvidenceUnit[];
+  resolvedDocument?: ResolvedGamingDocument;
+  archiveResolution?: GamingArchiveResolutionTelemetry;
   structured?: {
     result: GamingBuildResourceResult;
     evidenceUsed: boolean;
@@ -168,6 +195,8 @@ type GamingRankedChunk = {
   hash: string;
   snippetQualityScore: number;
   navigationPenalty: number;
+  evidenceUnits?: GamingEvidenceUnit[];
+  sourceAssessment?: GamingClearAssessment;
 };
 
 const TRUSTED_DOMAIN_SCORES: Array<{ domain: string; score: number }> = [
@@ -204,121 +233,11 @@ const LOW_QUALITY_DOMAINS = [
 const MAX_DOCUMENT_CACHE_ENTRIES = 100;
 const MAX_PUBLIC_GAMING_SOURCES = 8;
 const MAX_PUBLIC_SNIPPET_CHARS = 600;
-const LIMITED_ARTICLE_TEXT_SNIPPET = "Relevant source retrieved, but readable article text was limited.";
+const LIMITED_ARTICLE_TEXT_SNIPPET = LIMITED_GAMING_ARTICLE_TEXT_SNIPPET;
 const LIMITED_ARTICLE_CONTEXT_NOTE = "[No readable article evidence was extracted from this source.]";
-
 export function isCitableGamingWebSource(source: GamingWebSource): boolean {
-  return Boolean(source.snippet && source.snippet !== LIMITED_ARTICLE_TEXT_SNIPPET);
+  return isCitableGamingEvidenceSource(source);
 }
-
-const GENERIC_CONTENT_SELECTORS = [
-  "main",
-  "article",
-  "[role='main']",
-  ".mw-parser-output",
-  ".entry-content",
-  ".article-content",
-  ".article-body",
-  "[class*='article-content']",
-  "[class*='article-body']",
-  ".main-content",
-  "#main-content",
-  ".page-content",
-  ".post-content",
-  "#content",
-  ".content"
-] as const;
-
-const COMMON_JUNK_SELECTORS = [
-  "nav",
-  "header",
-  "footer",
-  "aside",
-  "form",
-  "template",
-  "[hidden]",
-  "[aria-hidden='true']",
-  "[aria-modal='true']",
-  "[role='dialog']",
-  "[role='navigation']",
-  "[role='banner']",
-  "[role='complementary']",
-  ".sidebar",
-  "#sidebar",
-  "[class$='-sidebar']",
-  "[class$='__sidebar']",
-  "[id$='-sidebar']",
-  "[id$='__sidebar']",
-  "[class*='cookie']",
-  "[id*='cookie']",
-  "[class*='newsletter']",
-  "[class*='sign-in']",
-  "[class*='signin']",
-  "[class*='login']",
-  "[id*='sign-in']",
-  "[id*='signin']",
-  "[id*='login']",
-  "[class*='modal']",
-  "[class*='popup']",
-  "[class*='popin']",
-  ".comments",
-  "#comments",
-  "[class*='comment-list']",
-  "[class*='breadcrumb']",
-  "[class*='social-share']",
-  "[class*='share-social']",
-  "[class*='related-links']",
-  "[class*='related-content']",
-  "[class*='recommended-links']",
-  "[class*='advertisement']",
-  "[class*='ad-container']"
-] as const;
-
-const SOURCE_EXTRACTION_PROFILES: Array<{
-  domains: string[];
-  contentSelectors: readonly string[];
-  removeSelectors: readonly string[];
-}> = [
-  {
-    domains: ["wiki.fextralife.com", "fextralife.com"],
-    contentSelectors: ["#wiki-content-block", ".wiki-content-block", "#main-content", ".page-content"],
-    removeSelectors: [
-      ".wiki-header-container",
-      ".wiki-menu-2-left",
-      ".wikiMenuMobile",
-      ".left-side-menu-container",
-      ".side-bar-right",
-      "#featured-wikis",
-      "#related-games-content",
-      "#disqus_thread"
-    ]
-  },
-  {
-    domains: ["bandainamcoent.com", "bandainamcoent.eu"],
-    contentSelectors: [".article__edito-content", ".article__content", ".article", "article"],
-    removeSelectors: [
-      ".article__sidebar",
-      ".article__share-social",
-      "[class*='read-next']",
-      ".age-gate"
-    ]
-  },
-  {
-    domains: ["worldofwarcraft.blizzard.com", "news.blizzard.com", "blizzard.com"],
-    contentSelectors: [".NewsBlog-content", ".Article-content", ".article-content", "#main", "article"],
-    removeSelectors: [".SiteNav", ".SocialLinks", ".CommentTotal"]
-  },
-  {
-    domains: ["icy-veins.com"],
-    contentSelectors: [".left-column-content", ".left-column-main", ".guide-page-content", "article"],
-    removeSelectors: [
-      ".guide-header__breadcrumbs",
-      ".content-toc",
-      ".table-of-contents",
-      ".left-column-sidebar"
-    ]
-  }
-];
 
 const BUILTIN_SOURCE_CATALOG: Array<{
   game: string;
@@ -482,13 +401,18 @@ const BUILTIN_SOURCE_CATALOG: Array<{
 ];
 
 const documentCache = new Map<string, {
+  verifiedPublicUrl?: string;
+  partialExtraction?: boolean;
   text: string;
   corroborationText?: string;
   fetchedAt: string;
   fetchedPageDate?: string;
   expiresAt: number;
   extraction: FetchAndCleanExtractionMetrics;
+  archiveResolution?: GamingArchiveResolutionTelemetry;
   structured?: GamingFetchedDocument["structured"];
+  evidenceUnits?: GamingEvidenceUnit[];
+  resolvedDocument?: ResolvedGamingDocument;
 }>();
 
 const FRONTEND_EVIDENCE_CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff]/g;
@@ -668,20 +592,6 @@ function isFetchableGuideUrl(url: string): boolean {
   }
 }
 
-function redactUrlCredentials(url: string): string {
-  try {
-    const parsedUrl = new URL(url);
-    if (!parsedUrl.username && !parsedUrl.password) {
-      return url;
-    }
-    parsedUrl.username = "";
-    parsedUrl.password = "";
-    return parsedUrl.toString();
-  } catch {
-    return url;
-  }
-}
-
 function readErrorString(error: unknown, key: string): string | undefined {
   if (!error || typeof error !== "object") {
     return undefined;
@@ -857,17 +767,18 @@ function sanitizeUntrustedEvidenceCandidateUrl(url: string): { url?: string; rej
   }
 
   try {
-    if (new URL(candidate.url).protocol !== "https:") {
+    const parsed = new URL(candidate.url);
+    if (parsed.protocol !== "https:") {
       return { rejected: true };
     }
+    // Frontend article candidates cannot smuggle structured build data through URL payloads.
+    // Preserve this separate product restriction without dropping ordinary document selectors.
+    if ([...parsed.searchParams.keys()].some(key => FRONTEND_PUBLIC_PAYLOAD_KEY_PATTERN.test(key))) return { rejected: true };
+    const segments = parsed.pathname.split('/').map(segment => decodeURIComponent(segment));
+    if (segments.some((segment, index) => segment.length > 160
+      || (FRONTEND_PUBLIC_PAYLOAD_KEY_PATTERN.test(segment) && (segments[index + 1]?.length ?? 0) >= 24
+        && /^[a-z0-9+/_=-]+$/iu.test(segments[index + 1])))) return { rejected: true };
   } catch {
-    return { rejected: true };
-  }
-
-  const publicCandidate = sanitizeGamingDiscoveryCandidateUrl(
-    sanitizeUntrustedPublicSourceUrl(candidate.url)
-  );
-  if (publicCandidate.rejected || !publicCandidate.url || publicCandidate.url !== candidate.url) {
     return { rejected: true };
   }
 
@@ -943,6 +854,13 @@ function readHttpStatus(error: unknown): number | undefined {
 }
 
 function safeGamingSourceError(error: unknown): string {
+  if (error instanceof GamingDocumentAcquisitionError) {
+    if (error.code === 'URL_BLOCKED') return "Source URL was blocked or could not be resolved.";
+    if (['DEADLINE_EXCEEDED', 'CANCELLED'].includes(error.acquisition.subreason)) return "Source retrieval timed out.";
+    if (['TRANSFER_LIMIT', 'DECODED_LIMIT'].includes(error.acquisition.subreason)) return "Source response exceeded the size limit.";
+    if (error.acquisition.subreason === 'UNSUPPORTED_CONTENT_TYPE') return "Source content type is unsupported.";
+    if (error.acquisition.subreason === 'DNS_FAILED') return "Source URL was blocked or could not be resolved.";
+  }
   const message = resolveErrorMessage(error, "Source retrieval failed.").toLowerCase();
   const status = readHttpStatus(error);
   if (status === 401 || status === 403 || /\b(?:401|403)\b|unauthorized|forbidden/.test(message)) {
@@ -1071,8 +989,11 @@ export async function buildGamingWebContext(
 
   const sources: GamingWebSource[] = await Promise.all(
     uniqueUrls.map(async (url, index): Promise<GamingWebSource> => {
-      const fetchUrl = redactUrlCredentials(url);
-      const sourceUrl = sanitizePublicSourceUrl(fetchUrl);
+      const fetchUrl = url;
+      let sourceUrl: string;
+      try { sourceUrl = describeGamingDocumentSource(fetchUrl).publicUrl; } catch (error) {
+        return { url: 'invalid-source', error: safeGamingSourceError(error) };
+      }
       const sourceStartedAt = Date.now();
       const sourceLogTarget = buildSafeSourceLogTarget(fetchUrl);
       if (logContext) {
@@ -1093,13 +1014,15 @@ export async function buildGamingWebContext(
           cleanedTextLength: 0
         };
         const fetchedText = await runWithLocalTimeout(
-          (signal) => fetchAndClean(
-            fetchUrl,
-            maxContextChars,
-            buildGamingFetchOptions(fetchUrl, signal, fetchTimeoutMs, [], (metrics) => {
-              extraction = metrics;
-            })
-          ),
+          async (signal) => {
+            const document = await resolveGamingDocument(fetchUrl, maxContextChars, { signal, timeoutMs: fetchTimeoutMs });
+            if (!isResolvedGamingDocumentIdentityVerified(document, fetchUrl)) {
+              throw new GamingDocumentAcquisitionError('URL_BLOCKED', 'extraction', 'SOURCE_IDENTITY_MISMATCH');
+            }
+            sourceUrl = document.publicUrl;
+            extraction = document.extraction;
+            return document.text;
+          },
           fetchTimeoutMs
         );
         if (extraction.rawTextLength === 0 && fetchedText.length > 0) {
@@ -1198,42 +1121,6 @@ function domainMatches(domain: string, candidate: string): boolean {
   return domain === candidate || domain.endsWith(`.${candidate}`);
 }
 
-function buildGamingFetchOptions(
-  url: string,
-  signal: AbortSignal,
-  timeoutMs: number,
-  preferredContentTerms: readonly string[],
-  onExtraction: (metrics: FetchAndCleanExtractionMetrics) => void,
-  onRawDocument?: (document: FetchAndCleanRawDocument) => void,
-  rawDocumentMaxChars?: number
-): FetchAndCleanOptions {
-  const domain = normalizeDomain(url);
-  const profile = SOURCE_EXTRACTION_PROFILES.find((entry) =>
-    entry.domains.some((candidate) => domainMatches(domain, candidate))
-  );
-
-  return {
-    signal,
-    timeoutMs,
-    includeLinks: false,
-    preferredContentSelectors: [
-      ...(profile?.contentSelectors ?? []),
-      ...GENERIC_CONTENT_SELECTORS
-    ],
-    preferredContentTerms,
-    removeSelectors: [
-      ...COMMON_JUNK_SELECTORS,
-      ...(profile?.removeSelectors ?? [])
-    ],
-    onExtraction,
-    ...(onRawDocument
-      ? {
-        onRawDocument,
-        ...(rawDocumentMaxChars !== undefined ? { rawDocumentMaxChars } : {})
-      }
-      : {})
-  };
-}
 
 function trustScoreForSource(
   source: Pick<GamingSourceCandidate, "url" | "sourceType" | "stable">,
@@ -1282,6 +1169,13 @@ function normalizeCacheUrl(url: string): string {
   } catch {
     return url;
   }
+}
+
+function gamingSourceDedupeKey(url: string): string {
+  const normalized = normalizeCacheUrl(url);
+  // Archive identifiers are case sensitive; preserve their identity through deduplication.
+  const archiveIdentifier = recognizeGamingArchiveItem(url);
+  return archiveIdentifier ? `https://archive.org/details/${archiveIdentifier}` : normalized;
 }
 
 function detectGameFromRagInput(input: GamingRagInput): GamingGameDetection {
@@ -1610,6 +1504,10 @@ function tokenize(value: string): string[] {
 }
 
 function extractTopicTerms(input: GamingRagInput, game?: string): string[] {
+  if (input.mode === 'guide') {
+    const policy = buildGamingRetrievalTerms({ ...input, game });
+    return [...policy.focusTerms, ...tokenize(game ?? '')].slice(0, 20);
+  }
   const text = `${input.prompt} ${game ?? ""}`;
   const terms = tokenize(text)
     .filter((term) => !["game", "guide", "build", "meta", "this", "that", "still", "make", "what", "where", "first", "after"].includes(term))
@@ -1638,7 +1536,7 @@ function makeSourceCandidate(
   supplied: boolean,
   fallbackTrustScore: number
 ): GamingSourceCandidate {
-  const fetchUrl = redactUrlCredentials(source.url.trim());
+  const fetchUrl = source.url.trim();
   return {
     ...source,
     url: sanitizePublicSourceUrl(fetchUrl),
@@ -1786,7 +1684,7 @@ function buildSourceCandidates(input: GamingRagInput, game: string | undefined):
         const sanitized = sanitizeSuppliedCandidateUrl(url, requiresFreshness);
         return sanitized.url && !sanitized.rejected ? [sanitized.url] : [];
       })
-      .map((url) => [normalizeCacheUrl(url).toLowerCase(), url] as const)
+      .map((url) => [gamingSourceDedupeKey(url), url] as const)
   ).values()).slice(0, Math.min(4, getGamingWebContextMaxUrls()));
   const suppliedCandidates = suppliedUrls.map((url) => makeSourceCandidate({
     url,
@@ -1823,8 +1721,8 @@ function buildSourceCandidates(input: GamingRagInput, game: string | undefined):
 
   const deduped = new Map<string, GamingSourceCandidate>();
   for (const candidate of allCandidates) {
-    const dedupeUrl = candidate.untrustedCandidate ? candidate.url : candidate.fetchUrl;
-    const key = createHash("sha256").update(normalizeCacheUrl(dedupeUrl).toLowerCase()).digest("hex");
+    // Display URLs may hide payloads or selectors; acquisition identity owns deduplication.
+    const key = createHash("sha256").update(gamingSourceDedupeKey(candidate.fetchUrl)).digest("hex");
     const existing = deduped.get(key);
     if (!existing || scoreCandidate(input, candidate, [], false) > scoreCandidate(input, existing, [], false)) {
       deduped.set(key, candidate);
@@ -1884,6 +1782,11 @@ async function fetchGamingRagDocument(
 ): Promise<GamingFetchedDocument | GamingWebSource> {
   const fetchUrl = candidate.fetchUrl;
   const sourceUrl = candidate.url;
+  let documentSource: ReturnType<typeof describeGamingDocumentSource> | undefined;
+  try { documentSource = describeGamingDocumentSource(fetchUrl); } catch (error) {
+    // Never create a cache fingerprint from a rejected raw URL or erase credentials before acquisition.
+    return { url: 'invalid-source', error: safeGamingSourceError(error) };
+  }
   const untrustedEvidenceCandidate = candidate.untrustedCandidate === true;
   const strictEvidenceCandidate = untrustedEvidenceCandidate && candidate.requiresFreshness === true;
   const preparedResource = prepareGamingResourceUrl(fetchUrl);
@@ -1892,15 +1795,19 @@ async function fetchGamingRagDocument(
     requestedGame: input.game,
     prompt: input.prompt
   });
-  const shouldInspectUrlPayload = !strictEvidenceCandidate && (
+  const shouldInspectUrlPayload = documentSource?.supportsUrlPayload !== false && !strictEvidenceCandidate && (
     fetchUrl.length > GAMING_BUILD_RESOURCE_HARD_LIMITS.maxUrlChars
     || preliminaryClassification.extractionStrategy === "url_payload"
     || isStructuredGamingResourceType(preliminaryClassification.type)
   );
   const contentTermKey = createHash("sha256").update(contentTerms.join("\n")).digest("hex").slice(0, 16);
-  const cacheUrlKey = createHash("sha256").update(normalizeCacheUrl(fetchUrl)).digest("hex");
-  const payloadCacheKey = preparedResource?.payloadHash.slice(0, 24) ?? "invalid-resource";
-  const cacheKey = `${cacheUrlKey}#gaming-rag:${contentTermKey}:payload:${payloadCacheKey}:origin:${strictEvidenceCandidate ? "current-candidate" : untrustedEvidenceCandidate ? "supplied" : "curated"}`;
+  const resolvedIdentity = documentSource?.supportsUrlPayload === false ? documentSource.publicUrl : undefined;
+  const cacheUrlKey = createHash("sha256").update(resolvedIdentity ?? normalizeCacheUrl(fetchUrl)).digest("hex");
+  const payloadCacheKey = resolvedIdentity
+    ? createHash("sha256").update(resolvedIdentity).digest("hex").slice(0, 24)
+    : preparedResource?.payloadHash.slice(0, 24) ?? "invalid-resource";
+  const resolverCachePolicy = documentSource ? `:resolver:${documentSource.resolverId}:${documentSource.resolverVersion}:${GAMING_DOCUMENT_ACQUISITION_POLICY_VERSION}:${GAMING_EVIDENCE_UNIT_POLICY_VERSION}` : "";
+  const cacheKey = `${cacheUrlKey}#gaming-rag:${contentTermKey}:payload:${payloadCacheKey}:origin:${strictEvidenceCandidate ? "current-candidate" : untrustedEvidenceCandidate ? "supplied" : "curated"}${resolverCachePolicy}`;
   const cached = documentCache.get(cacheKey);
   const now = Date.now();
   const sourceStartedAt = now;
@@ -1928,13 +1835,14 @@ async function fetchGamingRagDocument(
         rawTextLength: cached.extraction.rawTextLength,
         cleanedTextLength: cached.extraction.cleanedTextLength,
         requestedGame: input.game ?? null,
+        ...(cached.archiveResolution ? { archiveResolution: cached.archiveResolution } : {}),
         ...structuredResultLogFields(cached.structured?.result),
         fetchTimeoutMs
       });
     }
     return {
       candidate: candidateWithFetchedGameCorroboration(
-        candidate,
+        { ...candidate, url: cached.verifiedPublicUrl ?? candidate.url, partialExtraction: cached.partialExtraction },
         input,
         cached.corroborationText ?? cached.text,
         cached.extraction,
@@ -1945,6 +1853,9 @@ async function fetchGamingRagDocument(
       fetchedAt: cached.fetchedAt,
       cacheHit: true,
       extraction: cached.extraction,
+      ...(cached.evidenceUnits ? { evidenceUnits: cached.evidenceUnits } : {}),
+      ...(cached.resolvedDocument ? { resolvedDocument: cached.resolvedDocument } : {}),
+      ...(cached.archiveResolution ? { archiveResolution: cached.archiveResolution } : {}),
       ...(cached.structured ? { structured: cached.structured } : {})
     };
   }
@@ -1999,6 +1910,7 @@ async function fetchGamingRagDocument(
     };
   }
 
+  let redirected = false;
   try {
     let extraction: FetchAndCleanExtractionMetrics = {
       strategy: "body",
@@ -2006,20 +1918,53 @@ async function fetchGamingRagDocument(
       cleanedTextLength: 0
     };
     let rawDocument: FetchAndCleanRawDocument | undefined;
+    let archiveResolution: GamingArchiveResolutionTelemetry | undefined;
+    let supportsStructuredExtraction = true;
+    let partialExtraction = false;
+    let effectiveCandidate = candidate;
+    let acquiredCanonicalUrl = fetchUrl;
+    let evidenceUnits: GamingEvidenceUnit[] = [];
+    let resolvedDocument: ResolvedGamingDocument | undefined;
     const fetchedArticleText = await runWithLocalTimeout(
-      (signal) => fetchAndClean(
-        fetchUrl,
-        maxDocumentChars,
-        buildGamingFetchOptions(fetchUrl, signal, fetchTimeoutMs, contentTerms, (metrics) => {
-          extraction = metrics;
-        }, (document) => {
-          rawDocument = document;
-        }, GAMING_BUILD_RESOURCE_HARD_LIMITS.maxHtmlChars)
-      ),
+      async (signal) => {
+        const document = await resolveGamingDocument(fetchUrl,
+          documentSource?.supportsUrlPayload === false ? 100_000 : maxDocumentChars, {
+            signal,
+            timeoutMs: fetchTimeoutMs,
+            preferredContentTerms: contentTerms,
+            rawDocumentMaxChars: GAMING_BUILD_RESOURCE_HARD_LIMITS.maxHtmlChars
+          });
+        if (!isResolvedGamingDocumentIdentityVerified(document, fetchUrl)) {
+          throw new GamingDocumentAcquisitionError('URL_BLOCKED', 'extraction', 'SOURCE_IDENTITY_MISMATCH');
+        }
+        if (document.sourceUseRestricted || document.evidenceUnits?.length && document.metrics.instructionFiltered) {
+          throw new GamingDocumentAcquisitionError('SOURCE_FETCH_FAILED', 'extraction', 'SOURCE_USE_RESTRICTED');
+        }
+        evidenceUnits = readGamingEvidenceUnits(document.evidenceUnits, document.publicUrl, document.text);
+        if (evidenceUnits.length) resolvedDocument = { ...document, rawDocument: undefined };
+        redirected = (document.acquisition?.redirectCount ?? 0) > 0;
+        acquiredCanonicalUrl = document.canonicalUrl;
+        effectiveCandidate = { ...candidate, url: document.publicUrl, fetchUrl: document.canonicalUrl };
+        if (redirected) {
+          const policy = assessGamingSourcePolicy(document.canonicalUrl, input.game ?? '');
+          const sourceType = policy.authority === 'official' ? 'official' : policy.authority === 'specialist' ? 'curated' : 'supplied';
+          effectiveCandidate = { ...effectiveCandidate, sourceType, stable: false,
+            title: document.metadata.title ?? safeSourceTitleFromUrl(document.publicUrl),
+            trustScore: policy.authority === 'official' ? 0.94 : policy.authority === 'specialist' ? 0.78 : 0.55,
+            games: undefined, publishedAt: undefined, updatedAt: undefined,
+            gameCorroborated: false, versionCorroborated: false, freshnessCorroborated: false };
+        }
+        extraction = document.extraction;
+        partialExtraction = document.metrics.truncated;
+        rawDocument = document.rawDocument;
+        archiveResolution = document.archiveResolution;
+        supportsStructuredExtraction = document.resolution.supportsStructuredExtraction;
+        return document.text;
+      },
       fetchTimeoutMs,
       requestSignal
     );
-    const articleText = untrustedEvidenceCandidate
+    const articleText = untrustedEvidenceCandidate && !evidenceUnits.length
       ? normalizeUntrustedEvidenceText(fetchedArticleText)
       : fetchedArticleText;
     if (untrustedEvidenceCandidate) {
@@ -2042,20 +1987,24 @@ async function fetchGamingRagDocument(
     }
     let structuredResult: GamingBuildResourceResult | undefined;
     try {
-      structuredResult = await ingestGamingBuildResource({
-        url: strictEvidenceCandidate ? neutralizeUntrustedStructuredIngestionUrl(fetchUrl) : fetchUrl,
-        requestedGame: input.game,
-        prompt: input.prompt,
-        contentType: rawDocument?.contentType,
-        html: rawDocument?.body,
-        text: articleText,
-        metadata: {
-          title: extraction.documentTitle,
-          headings: extraction.headingText
-        }
-      });
+      // Resolved plain-text guides must pass the article evidence gates; they are not build imports.
+      if (supportsStructuredExtraction) {
+        structuredResult = await ingestGamingBuildResource({
+          url: strictEvidenceCandidate ? neutralizeUntrustedStructuredIngestionUrl(effectiveCandidate.url)
+            : redirected ? acquiredCanonicalUrl : fetchUrl,
+          requestedGame: input.game,
+          prompt: input.prompt,
+          contentType: rawDocument?.contentType,
+          html: rawDocument?.body,
+          text: articleText,
+          metadata: {
+            title: extraction.documentTitle,
+            headings: extraction.headingText
+          }
+        });
+      }
     } catch {
-      structuredResult = urlStructuredResult;
+      structuredResult = redirected ? undefined : urlStructuredResult;
     }
     const structuredRelevant = Boolean(
       structuredResult
@@ -2076,17 +2025,30 @@ async function fetchGamingRagDocument(
     const structured = structuredResult && structuredRelevant
       ? { result: structuredResult, evidenceUsed }
       : undefined;
+    // Structured payload display remains private even when the enclosing public page was acquired.
+    const finalClassification = redirected ? classifyGamingResource({ url: acquiredCanonicalUrl }) : preliminaryClassification;
+    const finalResource = redirected ? prepareGamingResourceUrl(acquiredCanonicalUrl) : preparedResource;
+    if (finalClassification.extractionStrategy === 'url_payload' && finalResource) {
+      effectiveCandidate = { ...effectiveCandidate, url: finalResource.publicUrl };
+    } else if (structured && evidenceUsed) {
+      effectiveCandidate = { ...effectiveCandidate, url: structured.result.publicUrl };
+    }
     const fetchedAt = new Date().toISOString();
-    const fetchedPageDate = strictEvidenceCandidate ? extractFetchedPageDate(rawDocument, fetchUrl) : undefined;
+    const fetchedPageDate = strictEvidenceCandidate ? extractFetchedPageDate(rawDocument, effectiveCandidate.url) : undefined;
     pruneDocumentCache(now);
-    documentCache.set(cacheKey, {
+    // A redirect destination is not a reusable acquisition permission. Revalidate its chain next time.
+    if (!redirected) documentCache.set(cacheKey, {
+      verifiedPublicUrl: effectiveCandidate.url,
+      partialExtraction,
       text,
       ...(untrustedEvidenceCandidate ? { corroborationText: articleText } : {}),
       fetchedAt,
       ...(fetchedPageDate ? { fetchedPageDate } : {}),
       expiresAt: now + getGamingRagTtlMs(input.mode, patchSensitive),
       extraction: effectiveExtraction,
-      ...(structured ? { structured } : {})
+      ...(archiveResolution ? { archiveResolution } : {}),
+      ...(structured ? { structured } : {}),
+      ...(!evidenceUsed && evidenceUnits.length ? { evidenceUnits, resolvedDocument } : {})
     });
     if (logContext) {
       logger.info("gaming.retrieval.source.end", {
@@ -2110,13 +2072,14 @@ async function fetchGamingRagDocument(
         rawTextLength: effectiveExtraction.rawTextLength,
         cleanedTextLength: effectiveExtraction.cleanedTextLength,
         requestedGame: input.game ?? null,
+        ...(archiveResolution ? { archiveResolution } : {}),
         ...structuredResultLogFields(structured?.result),
         fetchTimeoutMs
       });
     }
     return {
       candidate: candidateWithFetchedGameCorroboration(
-        candidate,
+        { ...effectiveCandidate, partialExtraction },
         input,
         untrustedEvidenceCandidate ? articleText : text,
         effectiveExtraction,
@@ -2127,14 +2090,22 @@ async function fetchGamingRagDocument(
       fetchedAt,
       cacheHit: false,
       extraction: effectiveExtraction,
-      ...(structured ? { structured } : {})
+      ...(archiveResolution ? { archiveResolution } : {}),
+      ...(structured ? { structured } : {}),
+      ...(!evidenceUsed && evidenceUnits.length ? { evidenceUnits, resolvedDocument } : {})
     };
   } catch (error) {
     if (requestSignal?.aborted) {
       throw requestSignal.reason instanceof Error ? requestSignal.reason : error;
     }
+    const directPayloadFallbackAllowed = !redirected
+      && error instanceof GamingDocumentAcquisitionError
+      && error.code === 'SOURCE_FETCH_FAILED'
+      && error.acquisition.redirectCount === 0
+      && ['FETCH_FAILED', 'DNS_FAILED', 'HTTP_RESPONSE_UNUSABLE'].includes(error.acquisition.subreason)
+      && (error.status === undefined || error.status >= 400);
     if (
-      urlStructuredResult
+      directPayloadFallbackAllowed && urlStructuredResult
       && (
         urlStructuredResult.build
         || isStructuredGamingResourceType(urlStructuredResult.classification.type)
@@ -2206,51 +2177,10 @@ async function fetchGamingRagDocument(
   }
 }
 
-function splitIntoChunks(text: string, maxChunkChars: number): string[] {
-  const normalized = text.replace(/\s+/g, " ").trim();
-  if (!normalized) {
-    return [];
-  }
-
-  const chunkSize = Math.max(1, maxChunkChars);
-  const sentences = normalized.split(/(?<=[.!?])\s+/);
-  const chunks: string[] = [];
-  let current = "";
-  for (const sentence of sentences) {
-    const nextLength = current ? current.length + sentence.length + 1 : sentence.length;
-    if (nextLength <= chunkSize) {
-      current = current ? `${current} ${sentence}` : sentence;
-      continue;
-    }
-
-    if (current) {
-      chunks.push(current);
-      current = "";
-    }
-
-    if (sentence.length > chunkSize) {
-      for (let index = 0; index < sentence.length; index += chunkSize) {
-        chunks.push(sentence.slice(index, index + chunkSize));
-      }
-      continue;
-    }
-
-    current = sentence;
-  }
-
-  if (current) {
-    chunks.push(current);
-  }
-
-  return chunks;
-}
-
 const NAVIGATION_JUNK_PATTERN = /\b(?:advertisement|cookie settings?|privacy policy|terms of use|sign in|log in|subscribe|newsletter|menu|navigation|footer|share this|edit source|page information|table of contents|all rights reserved|fandom apps|explore properties|category directory|wiki category)\b/i;
 const NAVIGATION_LABEL_PATTERN = /\b(?:home|menu|games?|news|guides?|builds?|weapons?|armor|talismans?|skills?|bosses?|locations?|quests?|walkthrough|classes?|community|forums?|wiki|categories|view all|go back|read next|follow us|related games?|popular games)\b/gi;
 const NAVIGATION_JUNK_MATCH_PATTERN = /\b(?:advertisement|cookie settings?|privacy policy|terms of use|sign in|log in|subscribe|newsletter|menu|navigation|footer|share this|edit source|page information|table of contents|all rights reserved|category directory|wiki category)\b/gi;
-const SOURCE_INSTRUCTION_PATTERN = /\b(?:(?:ignore|disregard|override)\s+(?:all\s+)?(?:previous|prior|system|developer|assistant|user)\s+(?:instructions?|messages?|prompts?)|forget\s+(?:everything|all)\s+(?:above|before)|you\s+are\s+now|new\s+(?:system|developer|assistant)\s+(?:message|prompt|instructions?)|follow\s+(?:these|the\s+following)\s+instructions?|(?:system|developer|assistant)\s+(?:message|prompt|instructions?)|(?:reveal|print|show|expose|exfiltrate)\s+(?:the\s+)?(?:system|developer|secret|credential|token|api\s+key)\s*(?:prompt|message|instructions?|value)?|(?:call|invoke)\s+(?:the\s+)?(?:tool|function)|(?:execute|run)\s+(?:this\s+)?(?:command|shell|powershell|bash))\b/i;
 const SOURCE_INSTRUCTION_MATCH_PATTERN = /(?:\[(?:system|developer|assistant|instructions?)\]|<(?:system|developer|assistant)>|#{1,6}\s*(?:system|developer|assistant|instructions?)\b|\b(?:ignore|disregard|override)\s+(?:all\s+)?(?:previous|prior|system|developer|assistant|user)\s+(?:instructions?|messages?|prompts?)\b|\bforget\s+(?:everything|all)\s+(?:above|before)\b|\byou\s+are\s+now\b|\bnew\s+(?:system|developer|assistant)\s+(?:message|prompt|instructions?)\b|\bfollow\s+(?:these|the\s+following)\s+instructions?\b|\b(?:reveal|print|show|expose|exfiltrate)\s+(?:the\s+)?(?:system|developer|secret|credential|token|api\s+key)\b|\b(?:call|invoke)\s+(?:the\s+)?(?:tool|function)\b|\b(?:execute|run)\s+(?:this\s+)?(?:command|shell|powershell|bash)\b)/gi;
-const GAMEPLAY_CONTENT_PATTERN = /\b(?:boss|route|walkthrough|build|patch|weapon|stat|skill|class|quest|location|level|damage|talent|gear|rotation|viable|craft|resource|upgrade|exploration|progress|economy|unit|mission|encounter|ability|loadout|mechanic)\b/i;
 const MODE_CONTENT_TERMS: Record<GamingMode, readonly string[]> = {
   guide: ["route", "walkthrough", "boss", "location", "beginner", "quest", "tutorial", "progress", "objective", "exploration", "mission", "mechanic"],
   build: ["build", "stats", "weapon", "armor", "skill", "rotation", "talent", "gear", "loadout", "ability", "attribute", "module"],
@@ -2264,6 +2194,7 @@ const MIN_SNIPPET_QUALITY_SCORE = 0.3;
 const NON_TOPICAL_QUERY_TERMS = new Set([
   "about", "and", "best", "create", "current", "for", "from", "give", "help", "into", "latest", "look", "need", "please", "recommend", "show", "the", "use", "using", "want", "with"
 ]);
+
 
 function clampScore(value: number): number {
   return Math.max(0, Math.min(1, value));
@@ -2417,7 +2348,7 @@ export function scoreGamingSnippetQuality(
   );
   return {
     score,
-    passed: wordCount >= 4 && proseSignal && keywordDumpPenalty < 0.35 && score >= MIN_SNIPPET_QUALITY_SCORE && malformedPenalty < 0.35 && instructionPenalty < 0.35 && density < 0.62,
+    passed: !isGamingCatalogMetadataOnly(normalized) && wordCount >= 4 && proseSignal && keywordDumpPenalty < 0.35 && score >= MIN_SNIPPET_QUALITY_SCORE && malformedPenalty < 0.35 && instructionPenalty < 0.35 && density < 0.62,
     readability,
     queryOverlap,
     gameOverlap,
@@ -2449,6 +2380,12 @@ function isRelevantGameplayChunk(
   terms: readonly string[],
   input: GamingRagInput
 ): boolean {
+  if (input.mode === 'guide') {
+    const { focusTerms } = buildGamingRetrievalTerms(input);
+    // A supplied document still needs topical evidence. No chronology is inferred
+    // from its title, chapter order, or chunk ordinal.
+    if (focusTerms.length && gamingTermCoverage(text, focusTerms) === 0) return false;
+  }
   if (candidate.supplied) {
     return true;
   }
@@ -2522,6 +2459,35 @@ function rankChunks(documents: GamingFetchedDocument[], terms: string[], input: 
   const maxChunkChars = getGamingRagChunkChars();
   const scoredChunks: GamingRankedChunk[] = [];
   for (const document of documents) {
+    const units = readGamingEvidenceUnits(document.evidenceUnits, document.candidate.url, document.text);
+    const proseText = units.length ? gamingClearIntactProseText({ text: document.text, evidenceUnits: units,
+      metrics: { truncated: document.candidate.partialExtraction === true } }) : document.text;
+    const structural = assessGamingStructuralUsability({ units, ...input, proseText });
+    const structuredClaim = units.length > 0 && structural.claimShape !== 'none';
+    const independentProse = !structural.hasRelevantClaimUnit && structural.hasIndependentProseAnchors
+      && proseText.length >= 120 && gamingTermCoverage(proseText, terms) >= 0.25;
+    if (structuredClaim && !structural.claimSupported && !independentProse) continue;
+    if (structural.hasIntactUsableUnit && document.resolvedDocument && input.game) {
+      const assessedAt = new Date();
+      const sourceAssessment = assessGamingClearSource({ ...input, game: input.game }, document.resolvedDocument, {
+        subjectId: `live:${hashChunk(document.candidate.url)}`,
+        subjectHash: gamingClearHash({ text: document.text, evidenceUnits: units, policyVersion: GAMING_EVIDENCE_UNIT_POLICY_VERSION }),
+        actorScopeHash: gamingClearHash('request-scoped-supplied-retrieval'),
+        sourcePolicy: assessGamingSourcePolicy(document.candidate.fetchUrl, input.game),
+        freshness: extractGamingFreshnessMetadata(document.resolvedDocument, { game: input.game, edition: input.edition, platform: input.platform }, new Date(document.fetchedAt)),
+        now: assessedAt
+      });
+      if (['accept', 'partial'].includes(sourceAssessment.decision)) {
+        for (const unit of units) {
+          if (!structural.supportingUnitIds.includes(unit.id) || unit.text.length > maxChunkChars
+            || filterGamingDocumentInstructions(unit.text) !== unit.text.normalize('NFKC').replace(/\s+/gu, ' ').trim()
+            || !isRelevantGameplayChunk(unit.text, document.candidate, terms, input)) continue;
+          scoredChunks.push({ candidate: document.candidate, text: unit.text, evidenceUnits: [unit], sourceAssessment,
+            score: scoreCandidate(input, document.candidate, terms, patchSensitive) + gamingTermCoverage(unit.text, terms),
+            hash: hashChunk(unit.text), snippetQualityScore: (sourceAssessment.dimensionScores.clarity.score ?? 0) / 5, navigationPenalty: 0 });
+        }
+      } else if (structuredClaim) continue;
+    }
     if (document.structured?.evidenceUsed) {
       const structuredChunks = splitIntoChunks(document.text, maxChunkChars).slice(0, Math.min(3, maxChunks));
       for (const [index, chunk] of structuredChunks.entries()) {
@@ -2544,7 +2510,9 @@ function rankChunks(documents: GamingFetchedDocument[], terms: string[], input: 
       }
       continue;
     }
-    for (const chunk of splitIntoChunks(document.text, maxChunkChars)) {
+    // Every structural unit stays outside the legacy prose fallback, including
+    // rejected records whose flattened words could otherwise mimic a tuple.
+    for (const chunk of splitIntoChunks(scopeGamingEvidenceParagraphs(proseText, input), maxChunkChars)) {
       const safeChunk = extractReadableEvidenceText(chunk);
       if (!safeChunk || !isReadableGameplayChunk(safeChunk) || !isRelevantGameplayChunk(safeChunk, document.candidate, terms, input)) {
         continue;
@@ -2564,6 +2532,8 @@ function rankChunks(documents: GamingFetchedDocument[], terms: string[], input: 
       const termScore = Math.min(0.7, terms.filter((term) =>
         tokenize(term).every((token) => chunkTokens.has(token))
       ).length * 0.14);
+      const stateScore = input.mode === 'guide'
+        ? 0.08 * gamingTermCoverage(safeChunk, buildGamingRetrievalTerms(input).contextTerms) : 0;
       const gameScore = Math.min(0.24, gameTerms.filter((term) => chunkTokens.has(term)).length * 0.08);
       const modeTermCount = MODE_CONTENT_TERMS[input.mode].filter((term) => haystack.includes(term)).length;
       const modeScore = Math.min(0.35, modeTermCount * 0.07);
@@ -2586,6 +2556,7 @@ function rankChunks(documents: GamingFetchedDocument[], terms: string[], input: 
         text: safeChunk,
         score: scoreCandidate(input, document.candidate, terms, patchSensitive)
           + termScore
+          + stateScore
           + gameScore
           + modeScore
           + patchScore
@@ -2613,7 +2584,7 @@ function rankChunks(documents: GamingFetchedDocument[], terms: string[], input: 
   for (const chunk of sortedChunks) {
     if (selectedChunks.some((selected) =>
       selected.candidate.url === chunk.candidate.url
-      && (selected.hash === chunk.hash || areNearDuplicateChunks(selected.text, chunk.text))
+      && (selected.hash === chunk.hash || !selected.evidenceUnits?.length && !chunk.evidenceUnits?.length && areNearDuplicateChunks(selected.text, chunk.text))
     )) {
       continue;
     }
@@ -2713,10 +2684,14 @@ function buildRagContext(
   chunks: GamingRankedChunk[],
   sources: GamingWebSource[],
   retrievalQuery: string,
-  maxContextChars: number
-): string {
+  maxContextChars: number,
+  input: GamingRagInput
+): { context: string; selectedChunkCount: number; selectedSourceUrls: Set<string>; selectedEvidence: Array<{ chunk: GamingRankedChunk; text: string }> } {
+  const selectedSourceUrls = new Set<string>();
+  const selectedEvidence: Array<{ chunk: GamingRankedChunk; text: string }> = [];
+  let selectedChunkCount = 0;
   if (sources.length === 0) {
-    return "";
+    return { context: "", selectedChunkCount, selectedSourceUrls, selectedEvidence };
   }
 
   const sourceNumberByUrl = buildSourceNumberByUrl(sources);
@@ -2733,49 +2708,67 @@ function buildRagContext(
   orderedChunks.forEach((chunk) => {
     const sourceNumber = sourceNumberByUrl.get(chunk.candidate.url);
     const source = sourceNumber ? sources[sourceNumber - 1] : undefined;
-    if (!sourceNumber || source?.snippet === LIMITED_ARTICLE_TEXT_SNIPPET) {
+    if (!sourceNumber || !source || !isCitableGamingWebSource(source)) {
       return;
     }
     const domain = normalizeDomain(chunk.candidate.url);
-    const evidenceText = extractReadableEvidenceText(chunk.text);
+    const evidenceText = chunk.evidenceUnits?.length ? chunk.text : extractReadableEvidenceText(chunk.text);
     if (!evidenceText) {
       return;
     }
     const freshnessNote = chunk.candidate.discovered && !chunk.candidate.stable
       ? `; Freshness: ${chunk.candidate.updatedAt ?? chunk.candidate.publishedAt ?? "date unavailable; latest status unverified"}`
       : "";
-    parts.push(
-      "",
-      `[Source ${sourceNumber}] ${chunk.candidate.url}`,
-      `Title: ${chunk.candidate.title}; Domain: ${domain}; Type: ${chunk.candidate.sourceType}; Trust: ${chunk.candidate.trustScore.toFixed(2)}${freshnessNote}`,
-      evidenceText
-    );
+    const title = safeGamingEvidenceMetadata(chunk.candidate.title, input, 240);
+    const header = [
+      "", `[Source ${sourceNumber}] ${chunk.candidate.url}`,
+      `${title ? `Title: ${title}; ` : ''}Domain: ${domain}; Type: ${chunk.candidate.sourceType}; Trust: ${chunk.candidate.trustScore.toFixed(2)}${freshnessNote}`,
+      ...(chunk.candidate.partialExtraction ? ['Coverage: partial extraction. Use only intact selected passages; missing prerequisites are unknown.'] : []),
+      ...(chunk.evidenceUnits?.map(unit => `Record: ${unit.id}; source location: ${unit.provenance.locator}; representation: ${unit.provenance.representation}; strategy: ${unit.provenance.strategy}${unit.provenance.jsonOnly ? '; JSON-only source assertion' : ''}`) ?? []),
+      ...(chunk.evidenceUnits?.length ? ['The source reports this record; in-game observation, current availability and independent corroboration are not established.'] : [])
+    ];
+    const availableChars = maxContextChars - [...parts, ...header, ""].join("\n").length;
+    // A source header alone is not evidence. Count only readable text that fits
+    // the final provider context, using the existing gameplay readability test.
+    let boundedEvidence = chunk.evidenceUnits?.length ? evidenceText.length <= availableChars ? evidenceText : ''
+      : evidenceText.slice(0, Math.max(0, availableChars)).trim();
+    if (boundedEvidence.length < evidenceText.length) {
+      // A clipped qualification or prerequisite changes a claim. Keep only
+      // complete fitting sentences; a header or mid-sentence prefix is not evidence.
+      const sentenceEnds = [...boundedEvidence.matchAll(/[.!?](?=\s|$)/gu)];
+      const lastEnd = sentenceEnds.at(-1)?.index;
+      boundedEvidence = lastEnd === undefined ? '' : boundedEvidence.slice(0, lastEnd + 1).trim();
+    }
+    if (!boundedEvidence || !chunk.evidenceUnits?.length && !isReadableGameplayChunk(boundedEvidence)) {
+      return;
+    }
+    parts.push(...header, boundedEvidence);
+    selectedChunkCount += 1;
+    selectedSourceUrls.add(chunk.candidate.url);
+    selectedEvidence.push({ chunk, text: boundedEvidence });
   });
 
   sources.forEach((source, index) => {
-    if (source.snippet !== LIMITED_ARTICLE_TEXT_SNIPPET) {
+    if (!source.snippet || isCitableGamingWebSource(source)) {
       return;
     }
-    parts.push("", `[Source ${index + 1}] ${source.url}`, LIMITED_ARTICLE_CONTEXT_NOTE);
+    // Controlled extraction diagnostics remain visible without becoming evidence.
+    parts.push("", `[Source ${index + 1}] ${source.url}`,
+      source.snippet === LIMITED_ARTICLE_TEXT_SNIPPET ? LIMITED_ARTICLE_CONTEXT_NOTE : source.snippet);
   });
 
-  return parts.join("\n").slice(0, Math.max(0, maxContextChars));
+  return {
+    context: parts.join("\n").slice(0, Math.max(0, maxContextChars)),
+    selectedChunkCount,
+    selectedSourceUrls,
+    selectedEvidence
+  };
 }
 
 function extractReadableEvidenceText(text: string): string {
-  const withoutLinks = text
-    .replace(/\s*\[LINKS\][\s\S]*$/i, "")
-    .replace(/^\s*(?:\[(?:system|developer|assistant|instructions?|mode|request|output)\]|<(?:system|developer|assistant)>|#{1,6}\s*(?:system|developer|assistant|instructions?)\b).*$/gim, "")
-    .replace(/\s+/g, " ")
-    .trim();
-  if (!withoutLinks) {
-    return "";
-  }
-  const sentences = withoutLinks
-    .split(/(?<=[.!?])\s+/)
-    .filter((sentence) => sentence.length > 0 && !SOURCE_INSTRUCTION_PATTERN.test(sentence));
-  const safeText = sentences.join(" ").trim();
-  if (!safeText) {
+  const safeText = filterGamingDocumentInstructions(text);
+  const sentences = safeText.split(/(?<=[.!?])\s+/);
+  if (!safeText || isGamingCatalogMetadataOnly(safeText)) {
     return "";
   }
   if (isReadableGameplayChunk(safeText)) {
@@ -2804,7 +2797,8 @@ function shapePublicSnippet(text: string): string {
 function sourceFromChunk(chunk: GamingRankedChunk): GamingWebSource {
   return {
     url: chunk.candidate.url,
-    snippet: shapePublicSnippet(chunk.text)
+    snippet: chunk.evidenceUnits?.length ? chunk.text.length <= MAX_PUBLIC_SNIPPET_CHARS ? chunk.text
+      : 'Structured source record; the complete record is retained in the evidence context.' : shapePublicSnippet(chunk.text)
   };
 }
 
@@ -2922,6 +2916,8 @@ function emptyRagContext(params: {
     context: "",
     sources,
     retrievedSourceCount: 0,
+    fetchedSuppliedSourceCount: 0,
+    selectedChunkCount: 0,
     publicSourceCount: sources.length,
     omittedSourceCount: 0,
     retrievalEnabled: params.enabled,
@@ -3174,7 +3170,7 @@ export async function buildGamingRagContext(
       });
     }
     const discoveryResult = await discoverGamingSources({
-      prompt: input.prompt,
+      prompt: input.mode === 'guide' ? [input.prompt, ...buildGamingRetrievalTerms(input).focusTerms].join(' ') : input.prompt,
       game,
       mode: input.mode,
       patchSensitive,
@@ -3189,12 +3185,12 @@ export async function buildGamingRagContext(
     candidateRankingElapsedMs = discoveryResult.candidateRankingElapsedMs;
     discoveryFailureReason = discoveryResult.discoveryFailureReason;
 
-    const existingCandidateUrls = new Set(candidates.map((candidate) => candidate.url.toLowerCase()));
+    const existingCandidateUrls = new Set(candidates.map((candidate) => gamingSourceDedupeKey(candidate.fetchUrl)));
     const discoveredCandidatesBeforeDedupe = discoveryResult.candidates.map((result) =>
       makeDiscoveredSourceCandidate(result, input)
     );
     const discoveryCandidates = discoveredCandidatesBeforeDedupe.filter((candidate) =>
-      !existingCandidateUrls.has(candidate.url.toLowerCase())
+      !existingCandidateUrls.has(gamingSourceDedupeKey(candidate.fetchUrl))
     );
     rejectedCandidateCount += discoveredCandidatesBeforeDedupe.length - discoveryCandidates.length;
     for (const candidate of discoveryCandidates) {
@@ -3286,21 +3282,58 @@ export async function buildGamingRagContext(
   const reservedErrorSourceCount = publicErrorSources.length > 0
     ? Math.min(publicErrorSources.length, publicSourceLimit, rankedSources.length > 0 ? 1 : publicSourceLimit)
     : 0;
-  const retainedSources = rankedSources.slice(0, Math.max(0, publicSourceLimit - reservedErrorSourceCount));
+  let retainedSources = rankedSources.slice(0, Math.max(0, publicSourceLimit - reservedErrorSourceCount));
+  let renderedContext = buildRagContext(chunks, retainedSources, effectiveRetrievalQuery, maxContextChars, effectiveInput);
+  // Preserve metadata-only placeholders, while citations require evidence that
+  // actually survived the provider-context budget. Re-render to align numbering.
+  retainedSources = retainedSources.filter((source) =>
+    !isCitableGamingWebSource(source) || renderedContext.selectedSourceUrls.has(source.url)
+  );
+  renderedContext = buildRagContext(chunks, retainedSources, effectiveRetrievalQuery, maxContextChars, effectiveInput);
   const returnedSources = [
     ...retainedSources,
     ...publicErrorSources.slice(0, reservedErrorSourceCount)
   ];
-  const context = buildRagContext(chunks, retainedSources, effectiveRetrievalQuery, maxContextChars);
+  const context = renderedContext.context;
   const rankingElapsedMs = Date.now() - rankingStartedAt;
   const sourceDomains = sourceDomainsFromSources(returnedSources);
   const cacheHit = documents.some((document) => document.cacheHit);
   const fallbackReason = documents.length === 0 && timedOut ? "INTAKE_RETRIEVAL_TIMEOUT" : undefined;
   const retrievedSourceCount = documents.length;
+  const fetchedSuppliedSourceCount = documents.filter((document) => document.candidate.supplied).length;
+  const selectedChunkCount = renderedContext.selectedChunkCount;
+  const clearKnowledge: GamingStoredKnowledgeContext = { context, sources: [], evidence: [] };
+  for (const source of retainedSources.filter(isCitableGamingWebSource)) {
+    const document = documents.find(item => item.candidate.url === source.url);
+    if (!document) continue;
+    const sourceId = `live:${hashChunk(source.url)}`;
+    const revisionId = `live:${document.evidenceUnits?.length ? gamingClearHash({ text: document.text,
+      evidenceUnits: document.evidenceUnits, policyVersion: GAMING_EVIDENCE_UNIT_POLICY_VERSION }) : hashChunk(document.text)}`;
+    const reliableGame = detectReliableDocumentGame(document) ?? detectGameFromDocumentIntro(document, effectiveInput.game)
+      ?? (document.candidate.gameCorroborated ? effectiveInput.game : undefined)
+      ?? (!document.candidate.untrustedCandidate ? document.candidate.games?.[0] : undefined);
+    const metadata = effectiveInput.game ? extractGamingFreshnessMetadata({ publicUrl: source.url,
+      canonicalUrl: document.candidate.fetchUrl, text: document.text,
+      evidenceUnits: document.evidenceUnits,
+      metadata: { title: document.extraction.documentTitle, headings: document.extraction.headingText } },
+      { game: effectiveInput.game, edition: effectiveInput.edition, platform: effectiveInput.platform }, new Date(document.fetchedAt)) : undefined;
+    const sourceAssessment = renderedContext.selectedEvidence.find(item => item.chunk.candidate.url === source.url && item.chunk.sourceAssessment)?.chunk.sourceAssessment;
+    clearKnowledge.sources.push({ sourceId, url: source.url, snippet: source.snippet ?? '',
+      ...(sourceAssessment ? { clearSourceAssessment: sourceAssessment } : {}),
+      sourceType: document.candidate.sourceType, origin: 'live', fetchedAt: document.fetchedAt,
+      ...(reliableGame ? { game: reliableGame } : {}),
+      ...(metadata ? { freshnessMetadata: { ...metadata, id: sourceId, partialExtraction: document.candidate.partialExtraction === true } } : {}) });
+    for (const item of renderedContext.selectedEvidence.filter(item => item.chunk.candidate.url === source.url)) {
+      clearKnowledge.evidence!.push({ sourceId, revisionId, recordId: `live:${hashChunk(item.text)}`,
+        recordType: effectiveInput.mode, publicUrl: source.url, text: item.text,
+        ...(item.chunk.evidenceUnits?.length ? { evidenceUnits: item.chunk.evidenceUnits } : {}),
+        lexicalScore: item.chunk.score, combinedScore: item.chunk.score, provenance: { fetchedAt: document.fetchedAt } });
+    }
+  }
   const acceptedSourceCount = retainedSources.filter((source) =>
-    discoveredCandidateUrls.has(source.url) && isCitableGamingWebSource(source)
+    documents.some(document => document.candidate.discovered && document.candidate.url === source.url) && isCitableGamingWebSource(source)
   ).length;
-  const suppliedCandidateUrls = new Set(suppliedCandidates.map((candidate) => candidate.url));
+  const suppliedCandidateUrls = new Set(documents.filter(document => document.candidate.supplied).map(document => document.candidate.url));
   const acceptedSuppliedSourceCount = retainedSources.filter((source) =>
     suppliedCandidateUrls.has(source.url) && isCitableGamingWebSource(source)
   ).length;
@@ -3371,6 +3404,8 @@ export async function buildGamingRagContext(
     logger.info("gaming.retrieval.end", {
       ...logContext,
       ...(effectiveGameDetection.game ? { game: effectiveGameDetection.game, detectedGame: effectiveGameDetection.game } : {}),
+      ...(input.mode === 'guide' ? { retrievalPolicyVersion: GAMING_RETRIEVAL_POLICY_VERSION,
+        effectiveSpoilerMode: input.spoilerMode ?? 'none' } : {}),
       gameDetectionConfidence: effectiveGameDetection.confidence,
       gameDetectionSource: effectiveGameDetection.source,
       retrievalEnabled,
@@ -3395,6 +3430,8 @@ export async function buildGamingRagContext(
       retrievalQueryTermCount: effectiveTerms.length,
       sourceCount: returnedSources.length,
       retrievedSourceCount,
+      fetchedSuppliedSourceCount,
+      selectedChunkCount,
       publicSourceCount: returnedPublicSourceCount,
       omittedSourceCount,
       sourceDomains,
@@ -3417,7 +3454,10 @@ export async function buildGamingRagContext(
   return {
     context,
     sources: returnedSources,
+    clearKnowledge,
     retrievedSourceCount,
+    fetchedSuppliedSourceCount,
+    selectedChunkCount,
     publicSourceCount: returnedPublicSourceCount,
     omittedSourceCount: retainedSources.length > 0 ? omittedSourceCount : 0,
     retrievalEnabled,

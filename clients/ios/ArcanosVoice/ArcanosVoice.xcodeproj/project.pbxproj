@@ -1,0 +1,151 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		A10000000000000000000001 /* ArcanosVoiceApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000001; };
+		A10000000000000000000002 /* ArcanosIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000002; };
+		A10000000000000000000003 /* ArcanosShortcuts.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000003; };
+		A10000000000000000000004 /* VoiceSnippet.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000004; };
+		A10000000000000000000005 /* AppRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000005; };
+		A10000000000000000000006 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000006; };
+		A10000000000000000000007 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000007; };
+		A10000000000000000000008 /* ArcanosKit in Frameworks */ = {isa = PBXBuildFile; productRef = A90000000000000000000001; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		A20000000000000000000001 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArcanosVoiceApp.swift; sourceTree = "<group>"; };
+		A20000000000000000000002 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArcanosIntents.swift; sourceTree = "<group>"; };
+		A20000000000000000000003 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArcanosShortcuts.swift; sourceTree = "<group>"; };
+		A20000000000000000000004 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceSnippet.swift; sourceTree = "<group>"; };
+		A20000000000000000000005 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppRuntime.swift; sourceTree = "<group>"; };
+		A20000000000000000000006 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		A20000000000000000000007 = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		A20000000000000000000008 = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ArcanosVoice.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		A30000000000000000000001 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000008, ); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		A40000000000000000000001 = {isa = PBXGroup; children = (A40000000000000000000002, A40000000000000000000003, A40000000000000000000004, ); sourceTree = "<group>"; };
+		A40000000000000000000002 = {isa = PBXGroup; children = (A20000000000000000000001, A20000000000000000000002, A20000000000000000000003, A20000000000000000000004, A20000000000000000000005, A20000000000000000000006, ); path = Sources; sourceTree = "<group>"; };
+		A40000000000000000000003 = {isa = PBXGroup; children = (A20000000000000000000007, ); path = Resources; sourceTree = "<group>"; };
+		A40000000000000000000004 = {isa = PBXGroup; children = (A20000000000000000000008, ); name = Products; sourceTree = "<group>"; };
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A50000000000000000000001 = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A70000000000000000000002;
+			buildPhases = (A30000000000000000000002, A30000000000000000000001, A30000000000000000000003, );
+			buildRules = ();
+			dependencies = ();
+			name = ArcanosVoice;
+			packageProductDependencies = (A90000000000000000000001, );
+			productName = ArcanosVoice;
+			productReference = A20000000000000000000008;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A60000000000000000000001 = {
+			isa = PBXProject;
+			attributes = {BuildIndependentTargetsInParallel = YES; LastSwiftUpdateCheck = 2600; LastUpgradeCheck = 2600; TargetAttributes = {A50000000000000000000001 = {CreatedOnToolsVersion = 26.0; }; }; };
+			buildConfigurationList = A70000000000000000000001;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (en, Base, );
+			mainGroup = A40000000000000000000001;
+			packageReferences = (A90000000000000000000002, );
+			productRefGroup = A40000000000000000000004;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (A50000000000000000000001, );
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		A30000000000000000000003 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000007, ); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A30000000000000000000002 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000001, A10000000000000000000002, A10000000000000000000003, A10000000000000000000004, A10000000000000000000005, A10000000000000000000006, ); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		A80000000000000000000001 = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; CLANG_ENABLE_OBJC_ARC = YES; DEBUG_INFORMATION_FORMAT = dwarf; ENABLE_TESTABILITY = YES; GCC_OPTIMIZATION_LEVEL = 0; IPHONEOS_DEPLOYMENT_TARGET = 18.0; SDKROOT = iphoneos; SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)"; SWIFT_OPTIMIZATION_LEVEL = "-Onone"; }; name = Debug; };
+		A80000000000000000000002 = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; CLANG_ENABLE_OBJC_ARC = YES; DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym"; IPHONEOS_DEPLOYMENT_TARGET = 18.0; SDKROOT = iphoneos; SWIFT_COMPILATION_MODE = wholemodule; VALIDATE_PRODUCT = YES; }; name = Release; };
+		A80000000000000000000003 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = ARCANOS;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", );
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = org.arcanos.voice;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		A80000000000000000000004 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = ARCANOS;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", );
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = org.arcanos.voice;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		A70000000000000000000001 = {isa = XCConfigurationList; buildConfigurations = (A80000000000000000000001, A80000000000000000000002, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		A70000000000000000000002 = {isa = XCConfigurationList; buildConfigurations = (A80000000000000000000003, A80000000000000000000004, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		A90000000000000000000002 = {isa = XCLocalSwiftPackageReference; relativePath = ../ArcanosKit; };
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		A90000000000000000000001 = {isa = XCSwiftPackageProductDependency; productName = ArcanosKit; };
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = A60000000000000000000001;
+}

@@ -6,6 +6,21 @@ import {
 import { createHash } from 'node:crypto';
 import { Readable } from 'node:stream';
 import { setTimeout as delay } from 'node:timers/promises';
+import { runGamingArchiveGroundingPreview } from './shared/gaming/gamingArchivePreviewFixture.js';
+import { runGamingGuideResponsePreview } from './shared/gaming/gamingGuideResponsePreviewFixture.js';
+import { runGamingDocumentIngestionPreview } from './shared/gaming/gamingDocumentIngestionPreviewFixture.js';
+import { runGamingDurableRagPreview } from './shared/gaming/gamingDurableRagPreviewFixture.js';
+import { runGamingHybridKnowledgePreview } from './shared/gaming/gamingHybridKnowledgePreviewFixture.js';
+import { runGamingClearPreview } from './shared/gaming/gamingClearPreviewFixture.js';
+import { runGamingSourceAcquisitionPreview } from './shared/gaming/gamingSourceAcquisitionPreviewFixture.js';
+import { runGamingStructuredEvidencePreview } from './shared/gaming/gamingStructuredEvidencePreviewFixture.js';
+import {
+  createIosGatewayPreviewFixture,
+  IOS_GATEWAY_PREVIEW_CONTRACT,
+  isIosGatewayPreviewAdmission,
+  isIosGatewayPreviewRoute,
+} from './shared/ios/iosGatewayPreviewFixture.js';
+import { runIosDevicePolicyPreview } from './shared/ios/iosDevicePreviewFixture.js';
 
 import {
   createGenericJobsRouter,
@@ -26,6 +41,7 @@ import {
   NATIVE_PR_PREVIEW_BACKSTAGE_BOOKER_OPENAPI_CONTRACT,
   NATIVE_PR_PREVIEW_DISPATCH_GPT_IDENTIFIER_CONTRACT,
   NATIVE_PR_PREVIEW_FIXTURE_IDS,
+  NATIVE_PR_PREVIEW_IOS_DEVICE_CONTRACT,
   NATIVE_PR_PREVIEW_GAMING_CONTRACT,
   NATIVE_PR_PREVIEW_GAMING_SOURCES_CONTRACT,
   NATIVE_PR_PREVIEW_MCP_BODY_CAP_CONTRACT,
@@ -95,6 +111,8 @@ import {
 } from './shared/backstage/backstageBookerAsyncContinuation.js';
 import {
   buildProtectedBackstageFailureEnvelope,
+  readProtectedBackstageFailureCode,
+  readProtectedBackstageGenerationProvenance,
 } from './shared/backstage/backstageProtectedFailure.js';
 import {
   resolveBackstageDurableContinuityFailure,
@@ -168,10 +186,14 @@ import {
   BACKSTAGE_NOTION_SYSTEM_POLICY_PROMPT,
   BACKSTAGE_NOTION_UNIVERSE_PAGES_ENV_NAME,
   BackstageNotionReadError,
+  assembleBackstageNotionPageTitle,
   buildBackstageNotionUntrustedContextPrompt,
+  fetchBackstageNotionDatabaseMetadata,
   fetchBackstageNotionMarkdownPage,
   fetchBackstageNotionPageMetadata,
+  fetchBackstageNotionPageTitleProperty,
   loadBackstageNotionPromptContextCore,
+  queryBackstageNotionDataSource,
 } from './shared/backstage/backstageNotionContextCore.js';
 import {
   BACKSTAGE_NOTION_RAG_SYSTEM_POLICY_PROMPT,
@@ -185,6 +207,9 @@ import {
   isBackstageNotionSnapshotChunkCountWritable,
   shouldVerifyBackstageNotionSnapshotUnchanged,
 } from './shared/backstage/backstageNotionSyncCore.js';
+import {
+  resolveBackstageNotionSnapshotStatus,
+} from './shared/backstage/backstageNotionSnapshotStatus.js';
 import {
   BACKSTAGE_NOTION_PARTITION_MAX_CHUNKS,
   BACKSTAGE_NOTION_PARTITION_MAX_SHARDS_PER_UNIVERSE,
@@ -3761,6 +3786,394 @@ async function assertBackstageNotionReadDiagnosticsFixture(): Promise<void> {
   }
 }
 
+async function assertBackstageNotionDatabaseAuthorityFixture(): Promise<void> {
+  const databaseId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1';
+  const dataSourceIds = [
+    'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1',
+    'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2',
+  ] as const;
+  const rowPageIds = [
+    'cccccccc-cccc-4ccc-8ccc-ccccccccccc1',
+    'cccccccc-cccc-4ccc-8ccc-ccccccccccc2',
+    'cccccccc-cccc-4ccc-8ccc-ccccccccccc3',
+  ] as const;
+  const referencePageId = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+  const syntheticCredential = 'preview-notion-database-authority-non-secret';
+  const databaseTitle = 'Backstage authority database';
+  const dataSourceCursor = 'opaque cursor/\u96ea:v1';
+  const titleCursor = 'opaque title cursor/\u96ea:v1';
+  const ignoredTitleNextUrl =
+    'https://example.invalid/private-title-pagination?cursor=ignored';
+  const inlineTitleParts = Array.from(
+    { length: 25 },
+    (_, index) => `${index}.`
+  );
+  const finalTitlePart = 'complete';
+  const expectedCompleteTitle = assembleBackstageNotionPageTitle([
+    ...inlineTitleParts,
+    finalTitlePart,
+  ]);
+  if (expectedCompleteTitle === null) {
+    throw new Error('PREVIEW_BACKSTAGE_NOTION_DATABASE_TITLE_FIXTURE_INVALID');
+  }
+
+  let rootProbeRequests = 0;
+  let databaseMetadataRequests = 0;
+  let pageMetadataRequests = 0;
+  let titlePropertyRequests = 0;
+  const queryRequests = new Map<string, number>();
+  const queryRequestBodies: string[] = [];
+  const titleRequestOrigins: string[] = [];
+  const jsonResponse = (
+    body: Record<string, unknown>,
+    status = 200
+  ): Response => new Response(JSON.stringify(body), {
+    status,
+    headers: { 'content-type': 'application/json; charset=utf-8' },
+  });
+  const assertCommonRequest = (
+    endpoint: URL,
+    init: RequestInit,
+    method: 'GET' | 'POST'
+  ): Headers => {
+    const headers = new Headers(init.headers);
+    if (
+      endpoint.origin !== 'https://api.notion.com'
+      || init.method !== method
+      || init.redirect !== 'manual'
+      || !(init.signal instanceof AbortSignal)
+      || headers.get('accept') !== 'application/json'
+      || headers.get('authorization') !== `Bearer ${syntheticCredential}`
+      || headers.get('notion-version') !== BACKSTAGE_NOTION_API_VERSION
+    ) {
+      throw new Error(
+        'PREVIEW_BACKSTAGE_NOTION_DATABASE_AUTHORITY_REQUEST_INVALID'
+      );
+    }
+    return headers;
+  };
+  const notionFetch = async (
+    input: string | URL | Request,
+    init: RequestInit = {}
+  ): Promise<Response> => {
+    const endpoint = input instanceof URL ? input : new URL(String(input));
+
+    if (endpoint.pathname === `/v1/pages/${databaseId}`) {
+      assertCommonRequest(endpoint, init, 'GET');
+      rootProbeRequests += 1;
+      if (
+        rootProbeRequests !== 1
+        || endpoint.search !== ''
+        || init.body !== undefined
+      ) {
+        throw new Error('PREVIEW_BACKSTAGE_NOTION_DATABASE_PROBE_INVALID');
+      }
+      return jsonResponse({
+        object: 'error',
+        status: 400,
+        code: 'validation_error',
+        message: 'server-owned database fallback fixture',
+      }, 400);
+    }
+
+    if (endpoint.pathname === `/v1/databases/${databaseId}`) {
+      assertCommonRequest(endpoint, init, 'GET');
+      databaseMetadataRequests += 1;
+      if (
+        databaseMetadataRequests !== 1
+        || endpoint.search !== ''
+        || init.body !== undefined
+      ) {
+        throw new Error('PREVIEW_BACKSTAGE_NOTION_DATABASE_METADATA_INVALID');
+      }
+      return jsonResponse({
+        object: 'database',
+        id: databaseId,
+        parent: { type: 'workspace', workspace: true },
+        title: [{ type: 'text', plain_text: databaseTitle }],
+        data_sources: dataSourceIds.map((id, index) => ({
+          id,
+          name: `Authority source ${index + 1}`,
+        })),
+        last_edited_time: '2026-09-03T00:00:00.000Z',
+        in_trash: false,
+      });
+    }
+
+    const dataSourceId = dataSourceIds.find(id => (
+      endpoint.pathname === `/v1/data_sources/${id}/query`
+    ));
+    if (dataSourceId !== undefined) {
+      const headers = assertCommonRequest(endpoint, init, 'POST');
+      const priorRequestCount = queryRequests.get(dataSourceId) ?? 0;
+      queryRequests.set(dataSourceId, priorRequestCount + 1);
+      if (
+        endpoint.searchParams.getAll('filter_properties[]').join(',')
+          !== 'title'
+        || headers.get('content-type') !== 'application/json'
+        || typeof init.body !== 'string'
+      ) {
+        throw new Error('PREVIEW_BACKSTAGE_NOTION_DATA_SOURCE_QUERY_INVALID');
+      }
+      queryRequestBodies.push(init.body);
+      if (dataSourceId === dataSourceIds[0] && priorRequestCount === 0) {
+        if (init.body !== '{"page_size":10}') {
+          throw new Error('PREVIEW_BACKSTAGE_NOTION_QUERY_BODY_INVALID');
+        }
+        return jsonResponse({
+          object: 'list',
+          type: 'page_or_data_source',
+          page_or_data_source: {},
+          results: [{ object: 'page', id: rowPageIds[0] }],
+          has_more: true,
+          next_cursor: dataSourceCursor,
+          request_status: { type: 'complete' },
+        });
+      }
+      if (dataSourceId === dataSourceIds[0] && priorRequestCount === 1) {
+        if (
+          init.body
+            !== '{"page_size":10,"start_cursor":"opaque cursor/\u96ea:v1"}'
+        ) {
+          throw new Error('PREVIEW_BACKSTAGE_NOTION_QUERY_CURSOR_INVALID');
+        }
+        return jsonResponse({
+          object: 'list',
+          type: 'page_or_data_source',
+          page_or_data_source: {},
+          results: [{ object: 'page', id: rowPageIds[1] }],
+          has_more: false,
+          next_cursor: null,
+          request_status: { type: 'complete' },
+        });
+      }
+      if (dataSourceId === dataSourceIds[1] && priorRequestCount === 0) {
+        if (init.body !== '{"page_size":10}') {
+          throw new Error('PREVIEW_BACKSTAGE_NOTION_QUERY_BODY_INVALID');
+        }
+        return jsonResponse({
+          object: 'list',
+          type: 'page_or_data_source',
+          page_or_data_source: {},
+          results: [{ object: 'page', id: rowPageIds[2] }],
+          has_more: false,
+          next_cursor: null,
+          request_status: { type: 'complete' },
+        });
+      }
+      throw new Error('PREVIEW_BACKSTAGE_NOTION_QUERY_COUNT_INVALID');
+    }
+
+    if (endpoint.pathname === `/v1/pages/${rowPageIds[0]}`) {
+      assertCommonRequest(endpoint, init, 'GET');
+      pageMetadataRequests += 1;
+      if (
+        endpoint.searchParams.getAll('filter_properties[]').join(',')
+          !== 'title'
+        || init.body !== undefined
+      ) {
+        throw new Error('PREVIEW_BACKSTAGE_NOTION_ROW_METADATA_INVALID');
+      }
+      return jsonResponse({
+        object: 'page',
+        id: rowPageIds[0],
+        parent: {
+          type: 'data_source_id',
+          data_source_id: dataSourceIds[0],
+        },
+        properties: {
+          title: {
+            id: 'title',
+            type: 'title',
+            title: inlineTitleParts.map(plainText => ({
+              type: 'mention',
+              plain_text: plainText,
+              mention: {
+                type: 'page',
+                page: { id: referencePageId },
+              },
+            })),
+          },
+        },
+        last_edited_time: '2026-09-03T00:00:00.000Z',
+        in_trash: false,
+      });
+    }
+
+    if (endpoint.pathname === `/v1/pages/${rowPageIds[0]}/properties/title`) {
+      assertCommonRequest(endpoint, init, 'GET');
+      titlePropertyRequests += 1;
+      titleRequestOrigins.push(endpoint.origin);
+      const firstPage = titlePropertyRequests % 2 === 1;
+      if (
+        endpoint.searchParams.get('page_size') !== '100'
+        || endpoint.searchParams.get('start_cursor')
+          !== (firstPage ? null : titleCursor)
+        || init.body !== undefined
+      ) {
+        throw new Error('PREVIEW_BACKSTAGE_NOTION_TITLE_REQUEST_INVALID');
+      }
+      const titleParts = firstPage ? inlineTitleParts : [finalTitlePart];
+      return jsonResponse({
+        object: 'list',
+        type: 'property_item',
+        results: titleParts.map(plainText => ({
+          object: 'property_item',
+          id: 'title',
+          type: 'title',
+          title: { type: 'text', plain_text: plainText },
+        })),
+        has_more: firstPage,
+        next_cursor: firstPage ? titleCursor : null,
+        property_item: {
+          id: 'title',
+          type: 'title',
+          title: {},
+          next_url: firstPage ? ignoredTitleNextUrl : null,
+        },
+      });
+    }
+
+    throw new Error('PREVIEW_BACKSTAGE_NOTION_DATABASE_ENDPOINT_INVALID');
+  };
+
+  const signal = new AbortController().signal;
+  const rootProbeError = await captureBackstageNotionReadError(() => (
+    fetchBackstageNotionPageMetadata(
+      notionFetch,
+      syntheticCredential,
+      databaseId,
+      signal
+    )
+  ));
+  const databaseMetadata = await fetchBackstageNotionDatabaseMetadata(
+    notionFetch,
+    syntheticCredential,
+    databaseId,
+    signal
+  );
+  const discoveredPageIds: string[] = [];
+  for (const dataSourceId of databaseMetadata.dataSourceIds) {
+    let cursor: string | null = null;
+    do {
+      const result = await queryBackstageNotionDataSource(
+        notionFetch,
+        syntheticCredential,
+        dataSourceId,
+        cursor,
+        signal
+      );
+      for (const item of result.results) {
+        if (item.kind !== 'page') {
+          throw new Error('PREVIEW_BACKSTAGE_NOTION_QUERY_RESULT_INVALID');
+        }
+        discoveredPageIds.push(item.pageId);
+      }
+      cursor = result.nextCursor;
+    } while (cursor !== null);
+  }
+
+  const readCompleteTitle = async (): Promise<string | null> => {
+    const metadata = await fetchBackstageNotionPageMetadata(
+      notionFetch,
+      syntheticCredential,
+      rowPageIds[0],
+      signal,
+      { requireTitle: true }
+    );
+    if (
+      metadata.parentDataSourceId !== dataSourceIds[0]
+      || metadata.titleIsComplete !== false
+      || metadata.title !== inlineTitleParts.join('')
+    ) {
+      throw new Error('PREVIEW_BACKSTAGE_NOTION_ROW_TITLE_METADATA_INVALID');
+    }
+    const titleParts: string[] = [];
+    let cursor: string | null = null;
+    do {
+      const result = await fetchBackstageNotionPageTitleProperty(
+        notionFetch,
+        syntheticCredential,
+        rowPageIds[0],
+        cursor,
+        signal
+      );
+      titleParts.push(...result.titleParts);
+      cursor = result.nextCursor;
+    } while (cursor !== null);
+    return assembleBackstageNotionPageTitle(titleParts);
+  };
+  const capturedTitle = await readCompleteTitle();
+  const verifiedTitle = await readCompleteTitle();
+
+  const oversizedCursorMarker = 'PRIVATE-OVERSIZED-PROVIDER-CURSOR';
+  const oversizedCursor = `${oversizedCursorMarker}${'\u0000'.repeat(90_000)}`;
+  let oversizedCursorRequests = 0;
+  const oversizedCursorError = await captureBackstageNotionReadError(() => (
+    queryBackstageNotionDataSource(
+      async () => {
+        oversizedCursorRequests += 1;
+        return jsonResponse({
+          object: 'list',
+          type: 'page_or_data_source',
+          page_or_data_source: {},
+          results: [{ object: 'page', id: rowPageIds[0] }],
+          has_more: true,
+          next_cursor: oversizedCursor,
+          request_status: { type: 'complete' },
+        });
+      },
+      syntheticCredential,
+      dataSourceIds[0],
+      null,
+      signal
+    )
+  ));
+  const serializedOversizedCursorError = JSON.stringify(oversizedCursorError);
+
+  if (
+    rootProbeRequests !== 1
+    || databaseMetadataRequests !== 1
+    || rootProbeError.category !== 'http_400'
+    || rootProbeError.notionHttpStatus !== 400
+    || rootProbeError.notionProviderCode !== 'validation_error'
+    || rootProbeError.notionFailureCategory !== 'permanent_provider'
+    || rootProbeError.notionResponseContentType !== 'application/json'
+    || rootProbeError.notionResponseSchemaValid !== true
+    || rootProbeError.notionEndpointKind !== 'page_metadata'
+    || databaseMetadata.databaseId !== databaseId
+    || databaseMetadata.title !== databaseTitle
+    || databaseMetadata.parentType !== 'workspace'
+    || databaseMetadata.parentId !== null
+    || databaseMetadata.inTrash
+    || JSON.stringify(databaseMetadata.dataSourceIds)
+      !== JSON.stringify(dataSourceIds)
+    || JSON.stringify(discoveredPageIds) !== JSON.stringify(rowPageIds)
+    || queryRequests.get(dataSourceIds[0]) !== 2
+    || queryRequests.get(dataSourceIds[1]) !== 1
+    || JSON.stringify(queryRequestBodies) !== JSON.stringify([
+      '{"page_size":10}',
+      '{"page_size":10,"start_cursor":"opaque cursor/\u96ea:v1"}',
+      '{"page_size":10}',
+    ])
+    || pageMetadataRequests !== 2
+    || titlePropertyRequests !== 4
+    || titleRequestOrigins.some(origin => origin !== 'https://api.notion.com')
+    || capturedTitle !== expectedCompleteTitle
+    || verifiedTitle !== expectedCompleteTitle
+    || oversizedCursorRequests !== 1
+    || oversizedCursorError.category !== 'invalid_response'
+    || oversizedCursorError.notionEndpointKind !== 'data_source_query'
+    || oversizedCursorError.notionResponseSchemaValid !== false
+    || serializedOversizedCursorError.includes(oversizedCursorMarker)
+    || serializedOversizedCursorError.includes(syntheticCredential)
+    || serializedOversizedCursorError.includes(databaseId)
+    || serializedOversizedCursorError.includes(rowPageIds[0])
+  ) {
+    throw new Error('PREVIEW_BACKSTAGE_NOTION_DATABASE_AUTHORITY_INVALID');
+  }
+}
+
 async function runBackstageNotionAuthorityRagFixture(
   fixture: string,
   connectivityProbe: () => Promise<BackstageNotionPreviewConnectivityResult>
@@ -3770,6 +4183,7 @@ async function runBackstageNotionAuthorityRagFixture(
     throw new Error('PREVIEW_BACKSTAGE_NOTION_CONNECTIVITY_INVALID');
   }
   await assertBackstageNotionReadDiagnosticsFixture();
+  await assertBackstageNotionDatabaseAuthorityFixture();
 
   const universeId = 'native-preview-notion-authority';
   const pageId = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
@@ -5496,6 +5910,206 @@ async function runBackstageNotionSyncPhaseAFixture(
   };
 }
 
+function runBackstageAuthorityReadinessFixture(
+  fixture: string
+): Record<string, unknown> {
+  const epochMs = Date.parse('2026-09-03T12:00:00.000Z');
+  const coreReadyAtMs = 5_000;
+  const boundedStartupBudgetMs = 30_000;
+  const railwayHealthcheckWindowMs = 300_000;
+  const syncCompletedAtMs = 360_001;
+  const maximumStalenessMs = 24 * 60 * 60 * 1_000;
+  const snapshotId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee1';
+  const attemptId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee2';
+  const processInstanceStarts = 1;
+
+  const projectCheckpoint = (
+    name: 'booting' | 'process_ready' | 'healthcheck_window' | 'activated',
+    logicalTimeMs: number
+  ) => {
+    const processReady = logicalTimeMs >= coreReadyAtMs;
+    const syncStarted = processReady;
+    const syncCompleted = logicalTimeMs >= syncCompletedAtMs;
+    const syncInProgress = syncStarted && !syncCompleted;
+    const now = new Date(epochMs + logicalTimeMs);
+    const resolution = resolveBackstageNotionSnapshotStatus({
+      activeSnapshotId: syncCompleted ? snapshotId : null,
+      activeSnapshotReadable: syncCompleted,
+      activeSnapshotVerifiedAt: syncCompleted
+        ? new Date(epochMs + syncCompletedAtMs)
+        : null,
+      now,
+      maximumStalenessMs,
+      latestSyncAttempt: !syncStarted
+        ? null
+        : syncCompleted
+          ? {
+              attemptId,
+              startedAt: new Date(epochMs + coreReadyAtMs),
+              completedAt: new Date(epochMs + syncCompletedAtMs),
+              outcome: 'activated',
+              activatedSnapshotId: snapshotId,
+              failurePhase: null,
+              failureReason: null,
+            }
+          : {
+              attemptId,
+              startedAt: new Date(epochMs + coreReadyAtMs),
+              completedAt: null,
+              outcome: 'running',
+              activatedSnapshotId: null,
+              failurePhase: null,
+              failureReason: null,
+            },
+    });
+    const completionProvenance = readProtectedBackstageGenerationProvenance({
+      version: 1,
+      protected: true,
+      protectedGenerationCompleted: true,
+      official: true,
+      continuityVerified: true,
+      authority: 'notion',
+      snapshotStatus: resolution.status,
+      fallbackUsed: false,
+      fallbackPermitted: false,
+    });
+    const protectedGenerationAdmissible = completionProvenance !== null;
+    const protectedFailureCode = protectedGenerationAdmissible
+      ? null
+      : readProtectedBackstageFailureCode(
+          buildProtectedBackstageFailureEnvelope({
+            gptId: 'backstage-booker',
+            action: 'generateBooking',
+            code: 'BACKSTAGE_NOTION_INDEX_UNAVAILABLE',
+          }),
+          { gptId: 'backstage-booker', action: 'generateBooking' }
+        );
+
+    return {
+      name,
+      logicalTimeMs,
+      processReady,
+      syncInProgress,
+      authorityStatus: syncInProgress
+        ? 'syncing'
+        : resolution.status,
+      snapshotStatus: resolution.status,
+      protectedGenerationAdmissible,
+      protectedFailureCode,
+    };
+  };
+
+  const checkpoints = [
+    projectCheckpoint('booting', 0),
+    projectCheckpoint('process_ready', coreReadyAtMs),
+    projectCheckpoint('healthcheck_window', railwayHealthcheckWindowMs),
+    projectCheckpoint('activated', syncCompletedAtMs),
+  ];
+  const [booting, processReady, healthcheckWindow, activated] = checkpoints;
+  const lastKnownGood = resolveBackstageNotionSnapshotStatus({
+    activeSnapshotId: snapshotId,
+    activeSnapshotReadable: true,
+    activeSnapshotVerifiedAt:
+      new Date(epochMs - maximumStalenessMs - 1),
+    now: new Date(epochMs),
+    maximumStalenessMs,
+    latestSyncAttempt: null,
+  });
+  const lastKnownGoodAccepted = readProtectedBackstageGenerationProvenance({
+    version: 1,
+    protected: true,
+    protectedGenerationCompleted: true,
+    official: true,
+    continuityVerified: true,
+    authority: 'notion',
+    snapshotStatus: lastKnownGood.status,
+    fallbackUsed: false,
+    fallbackPermitted: false,
+  }) !== null;
+  const contracts = {
+    boundedStartupBeforeRailwayWindow:
+      coreReadyAtMs < boundedStartupBudgetMs
+      && boundedStartupBudgetMs < railwayHealthcheckWindowMs,
+    currentCompleteOnlyForProtectedGeneration:
+      !lastKnownGoodAccepted
+      && checkpoints.slice(0, 3).every(
+        checkpoint => !checkpoint.protectedGenerationAdmissible
+      )
+      && activated?.protectedGenerationAdmissible === true,
+    healthcheckWindowDoesNotAwaitSync:
+      healthcheckWindow?.logicalTimeMs === railwayHealthcheckWindowMs
+      && healthcheckWindow.processReady === true
+      && healthcheckWindow.syncInProgress === true,
+    noRestartRequired:
+      processInstanceStarts === 1
+      && processReady?.processReady === true
+      && activated?.processReady === true,
+    protectedFailureCodeStable:
+      checkpoints.slice(0, 3).every(
+        checkpoint => checkpoint.protectedFailureCode
+          === 'BACKSTAGE_NOTION_INDEX_UNAVAILABLE'
+      )
+      && activated?.protectedFailureCode === null,
+    snapshotStatusReducerExecuted:
+      booting?.snapshotStatus === 'unavailable'
+      && processReady?.snapshotStatus === 'unavailable'
+      && healthcheckWindow?.snapshotStatus === 'unavailable'
+      && activated?.snapshotStatus === 'current_complete',
+    staleSnapshotNotOfficial:
+      lastKnownGood.status === 'last_known_good'
+      && !lastKnownGoodAccepted,
+    syncExceedsRailwayWindow:
+      syncCompletedAtMs > railwayHealthcheckWindowMs,
+    virtualTimeOnly: true,
+  };
+  if (Object.values(contracts).some(value => !value)) {
+    throw new Error('PREVIEW_BACKSTAGE_AUTHORITY_READINESS_INVALID');
+  }
+
+  const authorityReadiness = {
+    boundedStartupBudgetMs,
+    checkpoints,
+    contracts,
+    processInstanceStarts,
+    productionSharedProtectedProvenanceValidator: true,
+    productionSharedSnapshotStatusReducer: true,
+    railwayHealthcheckWindowMs,
+    syncCompletedAtMs,
+  };
+  const safeProjection = JSON.stringify(authorityReadiness);
+  const sensitiveMetadataAbsent = ![
+    snapshotId,
+    attemptId,
+    'Bearer ',
+    'rootPageId',
+    'databaseId',
+    'dataSourceId',
+    'https://',
+  ].some(value => safeProjection.includes(value));
+  if (!sensitiveMetadataAbsent) {
+    throw new Error('PREVIEW_BACKSTAGE_AUTHORITY_READINESS_METADATA_UNSAFE');
+  }
+
+  return {
+    accepted: true,
+    authorityReadiness,
+    cacheBoundaryReached: false,
+    databaseBoundaryReached: false,
+    effectsBoundaryReached: false,
+    embeddingBoundaryReached: false,
+    externalNetworkAttempted: false,
+    fixture,
+    notionApiBoundaryReached: false,
+    protectedEffectsEnabled: false,
+    providerBoundaryReached: false,
+    queueBoundaryReached: false,
+    realTimerWaited: false,
+    schemaVersion: 1,
+    sensitiveMetadataAbsent,
+    workerBoundaryReached: false,
+  };
+}
+
 async function runBackstageReviewCompletionFixture(
   fixture: string
 ): Promise<Record<string, unknown>> {
@@ -7109,6 +7723,11 @@ async function runBackstageGenerationFixture(
         payload: await runBackstageNotionSyncPhaseAFixture(fixture),
         partitionedAuthorityProofVersion: null,
       };
+    case fixtures.authorityReadiness:
+      return {
+        payload: runBackstageAuthorityReadinessFixture(fixture),
+        partitionedAuthorityProofVersion: null,
+      };
     case fixtures.partitionFailureTelemetry:
       return {
         payload: runBackstageNotionPartitionFailureTelemetryFixture(fixture),
@@ -7296,9 +7915,13 @@ function validateIdentity(identity: NativePrPreviewIdentity): void {
   }
 }
 
-function isCredentialCarrierPresent(request: express.Request): boolean {
+function isCredentialCarrierPresent(
+  request: express.Request,
+  allowedFixtureCarriers: readonly string[] = []
+): boolean {
   return Object.keys(request.headers).some((rawHeaderName) => {
     const headerName = rawHeaderName.toLowerCase();
+    if (allowedFixtureCarriers.includes(headerName)) return false;
     return FORBIDDEN_HEADER_NAMES.has(headerName)
       || SENSITIVE_HEADER_SEGMENT_PATTERN.test(headerName)
       || headerName.startsWith('x-arcanos-')
@@ -8164,6 +8787,7 @@ function buildAllowedRouteKeys(): Set<string> {
     'HEAD /healthz',
     'GET /readyz',
     'HEAD /readyz',
+    `GET ${NATIVE_PR_PREVIEW_IOS_DEVICE_CONTRACT.path}`,
     `GET ${NATIVE_PR_PREVIEW_BACKSTAGE_BOOKER_OPENAPI_CONTRACT.path}`,
     `POST ${NATIVE_PR_PREVIEW_BACKSTAGE_STORYLINE_CONTRACT.path}`,
     `POST ${NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.path}`,
@@ -8221,6 +8845,18 @@ function sendFixedNotFound(
   response.send(request.method === 'HEAD' ? undefined : 'not found');
 }
 
+function hasExactIosFixtureDeviceOrigin(request: express.Request, prNumber: number): boolean {
+  const origin = request.header('x-arcanos-device-origin');
+  if (countPreviewRawHeaders(request, 'x-arcanos-device-origin') !== 1
+    || origin !== `https://${request.header('host')}`) return false;
+  try {
+    const parsed = new URL(origin);
+    return parsed.origin === origin && !parsed.port
+      && parsed.hostname.endsWith('.up.railway.app')
+      && new RegExp(`(?:^|[.-])pr-(?:[0-9a-f]{6}-)?${prNumber}(?:[.-]|$)`, 'iu').test(parsed.hostname);
+  } catch { return false; }
+}
+
 export function createNativePrPreviewReadinessState():
 NativePrPreviewReadinessState {
   return {
@@ -8247,6 +8883,27 @@ export function createNativePrPreviewApplication(
   };
   const allowedRouteKeys = buildAllowedRouteKeys();
   const fixtureRepository = createSealedFixtureRepository();
+  const iosGatewayFixture = createIosGatewayPreviewFixture(options.identity);
+  const iosGatewayRawBodies = new WeakMap<express.Request, string>();
+  const respondIosGatewayFixture = (request: express.Request, response: express.Response) => {
+    const result = iosGatewayFixture.handle({
+      method: request.method,
+      path: request.url ?? '',
+      fixture: request.header(IOS_GATEWAY_PREVIEW_CONTRACT.selectorHeader),
+      authorization: request.header('authorization'),
+      idempotencyKey: request.header('idempotency-key'),
+      body: request.body,
+      rawBody: iosGatewayRawBodies.get(request),
+    });
+    iosGatewayRawBodies.delete(request);
+    response.setHeader(IOS_GATEWAY_PREVIEW_CONTRACT.proofHeader,
+      IOS_GATEWAY_PREVIEW_CONTRACT.proofVersion);
+    sendBoundedJsonResponse(request, response, result.payload, {
+      logEvent: 'native_pr_preview.ios_gateway_fixture',
+      maxBytes: 16_384,
+      statusCode: result.statusCode,
+    });
+  };
   const jsonBodyParser = express.json({
     // The pre-parser allowlist retains the 4 KiB ceiling everywhere else.
     // Gaming-source fixtures mirror the production route's 16 KiB ceiling.
@@ -8254,6 +8911,13 @@ export function createNativePrPreviewApplication(
     limit: MAX_GAMING_SOURCE_REQUEST_BYTES,
     strict: true,
     type: 'application/json',
+    verify: (request, _response, body) => {
+      const previewRequest = request as express.Request;
+      if (previewRequest.header(IOS_GATEWAY_PREVIEW_CONTRACT.selectorHeader)
+        === IOS_GATEWAY_PREVIEW_CONTRACT.selector) {
+        iosGatewayRawBodies.set(previewRequest, body.toString('utf8'));
+      }
+    },
   });
 
   app.disable('x-powered-by');
@@ -8267,6 +8931,29 @@ export function createNativePrPreviewApplication(
     const sourceFixture = request.header(
       NATIVE_PR_PREVIEW_GAMING_SOURCES_CONTRACT.fixtureHeader
     );
+    const iosFixtureAdmission = isIosGatewayPreviewAdmission({
+      method: request.method,
+      path: rawPath,
+      fixture: sourceFixture,
+      authorization: request.header('authorization'),
+    }) && countPreviewRawHeaders(request, 'authorization') <= 1
+      && countPreviewRawHeaders(request, IOS_GATEWAY_PREVIEW_CONTRACT.selectorHeader) === 1
+      && countPreviewRawHeaders(request, 'idempotency-key') <= 1;
+    const iosFixtureCarriers = iosFixtureAdmission ? ['authorization'] : [];
+    // The shipping client sends its canonical origin on every Gateway request.
+    // Only the public synthetic fixture bearer may carry this exact PR origin.
+    if (iosFixtureAdmission
+      && request.header('authorization') === IOS_GATEWAY_PREVIEW_CONTRACT.bearer
+      && hasExactIosFixtureDeviceOrigin(request, options.identity.prNumber)) {
+      iosFixtureCarriers.push('x-arcanos-device-origin');
+    }
+    const idempotencyKey = request.header('idempotency-key');
+    if (iosFixtureAdmission && request.method === 'POST'
+      && rawPath === IOS_GATEWAY_PREVIEW_CONTRACT.runPath
+      && idempotencyKey !== undefined
+      && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(idempotencyKey)) {
+      iosFixtureCarriers.push('idempotency-key');
+    }
     const contentLength = request.header('content-length');
     const parsedContentLength = contentLength === undefined
       ? 0
@@ -8277,13 +8964,13 @@ export function createNativePrPreviewApplication(
     if (
       rawUrl.includes('?')
       || (rawPath.includes('%') && !gamingSourcePath)
-      || (!gamingSourcePath && !allowedRouteKeys.has(routeKey))
-      || isCredentialCarrierPresent(request)
+      || (!gamingSourcePath && !iosFixtureAdmission && !allowedRouteKeys.has(routeKey))
+      || isCredentialCarrierPresent(request, iosFixtureCarriers)
       || (
         sourceFixture !== undefined
         && (
-          !gamingSourcePath
-          || !GAMING_SOURCE_FIXTURE_NAMES.has(sourceFixture)
+          !iosFixtureAdmission
+          && (!gamingSourcePath || !GAMING_SOURCE_FIXTURE_NAMES.has(sourceFixture))
         )
       )
     ) {
@@ -8299,6 +8986,8 @@ export function createNativePrPreviewApplication(
       || rawPath === NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.path
       || rawPath === NATIVE_PR_PREVIEW_DISPATCH_GPT_IDENTIFIER_CONTRACT.path
       || gamingSourcePath
+      || iosFixtureAdmission
+      || rawPath === NATIVE_PR_PREVIEW_IOS_DEVICE_CONTRACT.path
     ) {
       response.setHeader(
         NATIVE_PR_PREVIEW_SYNTHETIC_RESPONSE_HEADER.name,
@@ -8307,6 +8996,10 @@ export function createNativePrPreviewApplication(
     }
     if (gamingSourcePath) {
       response.setHeader('Pragma', 'no-cache');
+    }
+    if (iosFixtureAdmission && request.header('authorization') === undefined) {
+      respondIosGatewayFixture(request, response);
+      return;
     }
     const correlation = readPreviewCorrelation(response);
     if (sourceFixture === undefined && gamingSourcePath) {
@@ -8455,11 +9148,22 @@ export function createNativePrPreviewApplication(
   });
 
   app.get('/readyz', (_request, response) => {
-    const ready =
+    let ready =
       options.readinessState.ready
       && options.readinessState.applicationImported
       && options.readinessState.fixturesSealed
       && !options.readinessState.draining;
+    // Preserve the trusted verifier's response contract while requiring the
+    // deployed device policy fixture before readiness can claim success.
+    if (ready) {
+      try {
+        runIosDevicePolicyPreview();
+        response.setHeader(NATIVE_PR_PREVIEW_IOS_DEVICE_CONTRACT.proofHeader,
+          NATIVE_PR_PREVIEW_IOS_DEVICE_CONTRACT.proofVersion);
+      } catch {
+        ready = false;
+      }
+    }
     response.status(ready ? 200 : 503).json({
       applicationImported: options.readinessState.applicationImported,
       fixturesSealed: options.readinessState.fixturesSealed,
@@ -8473,6 +9177,21 @@ export function createNativePrPreviewApplication(
       sourceCommit: options.identity.sourceCommit,
       trustScope: NATIVE_PR_PREVIEW_TRUST_SCOPE,
     });
+  });
+
+  app.get(NATIVE_PR_PREVIEW_IOS_DEVICE_CONTRACT.path, (request, response) => {
+    try {
+      const proof = runIosDevicePolicyPreview();
+      response.setHeader(NATIVE_PR_PREVIEW_IOS_DEVICE_CONTRACT.proofHeader,
+        NATIVE_PR_PREVIEW_IOS_DEVICE_CONTRACT.proofVersion);
+      sendBoundedJsonResponse(request, response, {
+        ...proof, prNumber: options.identity.prNumber, sourceCommit: options.identity.sourceCommit,
+      }, { logEvent: 'native_pr_preview.ios_device_policy', maxBytes: 4096, statusCode: 200 });
+    } catch {
+      sendBoundedJsonResponse(request, response, {
+        ok: false, error: 'IOS_DEVICE_PREVIEW_FIXTURE_FAILED',
+      }, { logEvent: 'native_pr_preview.ios_device_policy_failed', maxBytes: 1024, statusCode: 500 });
+    }
   });
 
   app.get(
@@ -8519,6 +9238,17 @@ export function createNativePrPreviewApplication(
     });
   });
 
+  // This fixture never mounts the normal Gateway router or imports its effects graph.
+  // Admission and the existing 4 KiB pre-parser limits have already run above.
+  app.use((request, response, next) => {
+    const path = request.url ?? '';
+    if (!isIosGatewayPreviewRoute(request.method, path)) {
+      next();
+      return;
+    }
+    respondIosGatewayFixture(request, response);
+  });
+
   app.post(
     NATIVE_PR_PREVIEW_GAMING_CONTRACT.canaryPath,
     (request, response) => {
@@ -8539,10 +9269,172 @@ export function createNativePrPreviewApplication(
 
   app.post(
     NATIVE_PR_PREVIEW_GAMING_CONTRACT.queryPath,
-    (request, response) => {
+    async (request, response) => {
       const correlation = readPreviewCorrelation(response);
       const fixture = resolveGamingQueryFixture(request.body);
       if (fixture.kind === 'success') {
+        if (fixture.mode === 'guide') {
+          try {
+            await runGamingArchiveGroundingPreview();
+          } catch {
+            sendBoundedJsonResponse(
+              request,
+              response,
+              { error: 'PREVIEW_GAMING_ARCHIVE_GROUNDING_CONTRACT_INVALID' },
+              {
+                logEvent: 'native_pr_preview.gaming_archive_grounding_invalid',
+                maxBytes: MAX_GAMING_QUERY_RESPONSE_BYTES,
+                statusCode: 500,
+              }
+            );
+            return;
+          }
+          try {
+            runGamingGuideResponsePreview();
+          } catch {
+            sendBoundedJsonResponse(
+              request,
+              response,
+              { error: 'PREVIEW_GAMING_GUIDE_RESPONSE_CONTRACT_INVALID' },
+              {
+                logEvent: 'native_pr_preview.gaming_guide_response_invalid',
+                maxBytes: MAX_GAMING_QUERY_RESPONSE_BYTES,
+                statusCode: 500,
+              }
+            );
+            return;
+          }
+          try {
+            await runGamingDocumentIngestionPreview();
+          } catch {
+            sendBoundedJsonResponse(
+              request,
+              response,
+              { error: 'PREVIEW_GAMING_DOCUMENT_INGESTION_CONTRACT_INVALID' },
+              {
+                logEvent: 'native_pr_preview.gaming_document_ingestion_invalid',
+                maxBytes: MAX_GAMING_QUERY_RESPONSE_BYTES,
+                statusCode: 500,
+              }
+            );
+            return;
+          }
+          try {
+            await runGamingDurableRagPreview();
+          } catch {
+            sendBoundedJsonResponse(
+              request,
+              response,
+              { error: 'PREVIEW_GAMING_DURABLE_RAG_CONTRACT_INVALID' },
+              {
+                logEvent: 'native_pr_preview.gaming_durable_rag_invalid',
+                maxBytes: MAX_GAMING_QUERY_RESPONSE_BYTES,
+                statusCode: 500,
+              }
+            );
+            return;
+          }
+          try {
+            runGamingHybridKnowledgePreview();
+          } catch {
+            sendBoundedJsonResponse(
+              request,
+              response,
+              { error: 'PREVIEW_GAMING_HYBRID_KNOWLEDGE_CONTRACT_INVALID' },
+              {
+                logEvent: 'native_pr_preview.gaming_hybrid_knowledge_invalid',
+                maxBytes: MAX_GAMING_QUERY_RESPONSE_BYTES,
+                statusCode: 500,
+              }
+            );
+            return;
+          }
+          try {
+            runGamingClearPreview();
+          } catch {
+            sendBoundedJsonResponse(
+              request,
+              response,
+              { error: 'PREVIEW_GAMING_CLEAR_CONTRACT_INVALID' },
+              {
+                logEvent: 'native_pr_preview.gaming_clear_invalid',
+                maxBytes: MAX_GAMING_QUERY_RESPONSE_BYTES,
+                statusCode: 500,
+              }
+            );
+            return;
+          }
+          try {
+            runGamingSourceAcquisitionPreview();
+          } catch {
+            sendBoundedJsonResponse(
+              request,
+              response,
+              { error: 'PREVIEW_GAMING_SOURCE_ACQUISITION_CONTRACT_INVALID' },
+              {
+                logEvent: 'native_pr_preview.gaming_source_acquisition_invalid',
+                maxBytes: MAX_GAMING_QUERY_RESPONSE_BYTES,
+                statusCode: 500,
+              }
+            );
+            return;
+          }
+          try {
+            await runGamingStructuredEvidencePreview();
+          } catch {
+            sendBoundedJsonResponse(
+              request,
+              response,
+              { error: 'PREVIEW_GAMING_STRUCTURED_EVIDENCE_CONTRACT_INVALID' },
+              {
+                logEvent: 'native_pr_preview.gaming_structured_evidence_invalid',
+                maxBytes: MAX_GAMING_QUERY_RESPONSE_BYTES,
+                statusCode: 500,
+              }
+            );
+            return;
+          }
+          response.setHeader(
+            NATIVE_PR_PREVIEW_GAMING_CONTRACT.structuredEvidenceProofHeader,
+            NATIVE_PR_PREVIEW_GAMING_CONTRACT.structuredEvidenceProofVersion
+          );
+          response.setHeader(
+            NATIVE_PR_PREVIEW_GAMING_CONTRACT.sourceAcquisitionProofHeader,
+            NATIVE_PR_PREVIEW_GAMING_CONTRACT.sourceAcquisitionProofVersion
+          );
+          response.setHeader(
+            NATIVE_PR_PREVIEW_GAMING_CONTRACT.clearProofHeader,
+            NATIVE_PR_PREVIEW_GAMING_CONTRACT.clearProofVersion
+          );
+          response.setHeader(
+            NATIVE_PR_PREVIEW_GAMING_CONTRACT.hybridKnowledgeProofHeader,
+            NATIVE_PR_PREVIEW_GAMING_CONTRACT.hybridKnowledgeProofVersion
+          );
+          response.setHeader(
+            NATIVE_PR_PREVIEW_GAMING_CONTRACT.durableRagProofHeader,
+            NATIVE_PR_PREVIEW_GAMING_CONTRACT.durableRagProofVersion
+          );
+          response.setHeader(
+            NATIVE_PR_PREVIEW_GAMING_CONTRACT.guideAssistanceProofHeader,
+            NATIVE_PR_PREVIEW_GAMING_CONTRACT.guideAssistanceProofVersion
+          );
+          response.setHeader(
+            NATIVE_PR_PREVIEW_GAMING_CONTRACT.progressRecoveryProofHeader,
+            NATIVE_PR_PREVIEW_GAMING_CONTRACT.progressRecoveryProofVersion
+          );
+          response.setHeader(
+            NATIVE_PR_PREVIEW_GAMING_CONTRACT.proofHeader,
+            NATIVE_PR_PREVIEW_GAMING_CONTRACT.proofVersion
+          );
+          response.setHeader(
+            NATIVE_PR_PREVIEW_GAMING_CONTRACT.responseProofHeader,
+            NATIVE_PR_PREVIEW_GAMING_CONTRACT.responseProofVersion
+          );
+          response.setHeader(
+            NATIVE_PR_PREVIEW_GAMING_CONTRACT.documentProofHeader,
+            NATIVE_PR_PREVIEW_GAMING_CONTRACT.documentProofVersion
+          );
+        }
         sendPreviewJson(
           request,
           response,
@@ -9196,6 +10088,12 @@ export function createNativePrPreviewApplication(
               NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT
                 .notionReadDiagnosticsProofVersion
             );
+            response.setHeader(
+              NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.proofHeaders
+                .notionDatabaseAuthorityVersion,
+              NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT
+                .notionDatabaseAuthorityProofVersion
+            );
           }
           if (
             fixture
@@ -9306,6 +10204,18 @@ export function createNativePrPreviewApplication(
                 .notionWriterCapacityReleaseVersion,
               NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT
                 .notionWriterCapacityReleaseProofVersion
+            );
+          }
+          if (
+            fixture
+              === NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.fixtures
+                .authorityReadiness
+          ) {
+            response.setHeader(
+              NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.proofHeaders
+                .authorityReadinessVersion,
+              NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT
+                .authorityReadinessProofVersion
             );
           }
           return sendBoundedJsonResponse(

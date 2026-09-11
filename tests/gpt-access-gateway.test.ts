@@ -1,6 +1,8 @@
 import express from 'express';
 import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { SyntheticGptAccessDeviceRepository } from './helpers/gptAccessDeviceRepository.js';
+import type { GptAccessDeviceSession } from '../src/shared/security/gptAccessDevice.js';
 import { PURPOSE_BOUND_CREDENTIAL_ENV_NAMES } from '../src/shared/security/purposeBoundCredential.js';
 import {
   BACKSTAGE_ROSTER_PERSISTENCE_ERROR_CODE,
@@ -174,6 +176,8 @@ jest.unstable_mockModule('../src/platform/runtime/workerConfig.js', () => ({
 const ArcanosCli = (await import('../src/services/arcanos-cli.js')).default;
 const { MODULE_CATALOG } = await import('../src/services/moduleCatalog.js');
 const { default: gptAccessRouter } = await import('../src/routes/gpt-access.js');
+const { gptAccessDeviceRepository } = await import('../src/core/db/repositories/gptAccessDeviceRepository.js');
+const { gptAccessDeviceHttpBoundary } = await import('../src/services/gptAccessDeviceHttpBoundary.js');
 const { backstageBookerHttpBoundary } = await import(
   '../src/services/backstageBookerHttpBoundary.js'
 );
@@ -224,6 +228,7 @@ function buildApp(options: {
   if (!options.preparseBackstage) {
     app.use('/gpt-access', backstageBookerHttpBoundary);
   }
+  app.use('/gpt-access/devices', gptAccessDeviceHttpBoundary);
   app.use(express.json());
   app.use('/', gptAccessRouter);
   return app;
@@ -482,6 +487,257 @@ function buildNestedObject(depth: number): Record<string, unknown> {
 }
 
 describe('/gpt-access gateway', () => {
+  describe('Phase 2 paired-device synthetic Gateway proof', () => {
+    const origin = 'https://device-gateway.example';
+    let store: SyntheticGptAccessDeviceRepository;
+    let restore: Array<() => void>;
+    let previousOrigin: string | undefined;
+    beforeEach(() => {
+      previousOrigin = process.env.ARCANOS_GPT_ACCESS_DEVICE_ORIGIN;
+      process.env.ARCANOS_GPT_ACCESS_DEVICE_ORIGIN = origin;
+      process.env.ARCANOS_GPT_ACCESS_PRINCIPAL_ID = 'operator:primary';
+      process.env.ARCANOS_GPT_ACCESS_WORKSPACE_ID = 'personal';
+      allowCapabilityRun('jobs.create,jobs.result,capabilities.read,capabilities.run',
+        'ARCANOS:LOCAL_AGENT:git.status,ARCANOS:LOCAL_AGENT:tests.run,ARCANOS:LOCAL_AGENT:patch.apply');
+      store = new SyntheticGptAccessDeviceRepository();
+      restore = [];
+      for (const method of ['createPairing', 'consumePairing', 'findByCredentialHash', 'rotate', 'revoke'] as const) {
+        const spy = jest.spyOn(gptAccessDeviceRepository, method);
+        spy.mockImplementation(store[method].bind(store) as never);
+        restore.push(() => spy.mockRestore());
+      }
+      isDatabaseConnectedMock.mockReturnValue(true);
+    });
+    afterEach(() => {
+      restore.forEach(fn => fn());
+      if (previousOrigin === undefined) delete process.env.ARCANOS_GPT_ACCESS_DEVICE_ORIGIN;
+      else process.env.ARCANOS_GPT_ACCESS_DEVICE_ORIGIN = previousOrigin;
+    });
+    function deviceRequest(builder: request.Test, session: GptAccessDeviceSession) {
+      return builder.set('Authorization', `Bearer ${session.credential}`).set('X-Arcanos-Device-Origin', origin);
+    }
+    async function pair(app: express.Express, actions = ['git.status']): Promise<GptAccessDeviceSession> {
+      const challenge = await authorized(request(app).post('/gpt-access/devices/pairing')).send({ capabilityActions: actions });
+      expect(challenge.status).toBe(201);
+      const response = await request(app).post('/gpt-access/devices/pair')
+        .set('X-Arcanos-Device-Origin', origin)
+        .send({ pairingToken: challenge.body.pairingToken, localIdentity: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd' });
+      expect(response.status).toBe(201);
+      expect(response.headers['cache-control']).toContain('no-store');
+      expect(JSON.stringify(response.body)).not.toContain(TEST_TOKEN);
+      return response.body as GptAccessDeviceSession;
+    }
+    async function createOwnedJob(app: express.Express, session: GptAccessDeviceSession) {
+      const response = await deviceRequest(request(app).post('/gpt-access/jobs/create'), session)
+        .send({ gptId: 'arcanos-core', task: 'Synthetic paired device response.', idempotencyKey: 'phase2-proof' });
+      expect(response.status).toBe(202);
+      const input = (findOrCreateGptJobMock.mock.calls.at(-1)?.[0] as { input: Record<string, unknown> }).input;
+      expect(input.gptAccessDeviceOwner).toEqual({ version: 1, deviceId: session.deviceId, principalId: 'operator:primary', workspaceId: 'personal' });
+      return input;
+    }
+    function syntheticLocalAgent() {
+      const actions = ['git.status', 'tests.run', 'patch.apply'];
+      getModulesForRegistryMock.mockReturnValue([
+        { id: 'ARCANOS:LOCAL_AGENT', route: 'local-agent', actions },
+        { id: 'ARCANOS:CLI', route: 'cli', actions: ['runApprovedCommand'] },
+      ]);
+      getModuleMetadataMock.mockReturnValue({
+        name: 'ARCANOS:LOCAL_AGENT', route: 'local-agent', actions, gptAccessOnly: true,
+        actionMetadata: {
+          'git.status': { risk: 'readonly', requiresConfirmation: false },
+          'tests.run': { risk: 'privileged', requiresConfirmation: true },
+          'patch.apply': { risk: 'privileged', requiresConfirmation: true },
+        },
+      });
+      dispatchModuleActionMock.mockResolvedValue({ ok: true, summary: 'Synthetic approved action completed.' });
+    }
+
+    it('pairs, creates an owned job, polls pending/running and reads completed/failed/expired results; conceals every state from device B', async () => {
+      const app = buildApp();
+      const deviceA = await pair(app);
+      const deviceB = await pair(app);
+      expect(deviceA.deviceId).not.toBe(deviceB.deviceId);
+      const input = await createOwnedJob(app, deviceA);
+      for (const state of ['pending', 'running', 'completed', 'failed', 'expired']) {
+        getJobByIdMock.mockResolvedValue({ id: CREATED_JOB_ID, job_type: 'gpt', status: state, input,
+          created_at: new Date().toISOString(), output: { answer: 'owned result' }, error_message: 'synthetic failure' });
+        const own = await deviceRequest(request(app).post('/gpt-access/jobs/result'), deviceA).send({ jobId: CREATED_JOB_ID });
+        expect(own.status).toBe(200);
+        expect(own.body.status).toBe(state === 'running' ? 'pending' : state);
+        const denied = await deviceRequest(request(app).post('/gpt-access/jobs/result'), deviceB).send({ jobId: CREATED_JOB_ID });
+        expect(denied.status).toBe(200);
+        expect(denied.body).toMatchObject({ status: 'not_found', result: null });
+        expect(JSON.stringify(denied.body)).not.toContain('owned result');
+      }
+      getJobByIdMock.mockResolvedValue(null);
+      const missing = await deviceRequest(request(app).post('/gpt-access/jobs/result'), deviceA).send({ jobId: COMPLETED_JOB_ID });
+      expect(missing.body.status).toBe('not_found');
+    });
+
+    it('keeps ownership stable after rotation, invalidates the old secret, and stops polling after revocation', async () => {
+      const app = buildApp();
+      const paired = await pair(app);
+      const input = await createOwnedJob(app, paired);
+      getJobByIdMock.mockResolvedValue({ id: CREATED_JOB_ID, job_type: 'gpt', input, status: 'completed', output: { answer: 'rotated owner' } });
+      const rotation = await deviceRequest(request(app).post('/gpt-access/devices/renew'), paired).send({});
+      expect(rotation.status).toBe(200);
+      const replacement = rotation.body as GptAccessDeviceSession;
+      expect(replacement.deviceId).toBe(paired.deviceId);
+      expect(replacement.credential).not.toBe(paired.credential);
+      expect((await deviceRequest(request(app).post('/gpt-access/jobs/result'), paired).send({ jobId: CREATED_JOB_ID })).status).toBe(401);
+      expect((await deviceRequest(request(app).post('/gpt-access/jobs/result'), replacement).send({ jobId: CREATED_JOB_ID })).body.result).toEqual({ answer: 'rotated owner' });
+      const revoked = await authorized(request(app).post(`/gpt-access/devices/${paired.deviceId}/revoke`)).send({});
+      expect(revoked.status).toBe(200);
+      getJobByIdMock.mockClear();
+      const denied = await deviceRequest(request(app).post('/gpt-access/jobs/result'), replacement).send({ jobId: CREATED_JOB_ID });
+      expect(denied.status).toBe(401);
+      expect(denied.body.error.code).toBe('DEVICE_REVOKED');
+      expect(getJobByIdMock).not.toHaveBeenCalled();
+    });
+
+    it('preserves trusted operator reads while device ID or generic read-token spoofing grants no ownership', async () => {
+      const app = buildApp();
+      const a = await pair(app); const b = await pair(app);
+      const input = await createOwnedJob(app, a);
+      getJobByIdMock.mockResolvedValue({ id: CREATED_JOB_ID, job_type: 'gpt', status: 'completed', input, output: 'protected' });
+      const operator = await authorized(request(app).post('/gpt-access/jobs/result')).send({ jobId: CREATED_JOB_ID });
+      expect(operator.body.result).toBe('protected');
+      const denied = await deviceRequest(request(app).post('/gpt-access/jobs/result'), b)
+        .set('x-device-id', a.deviceId).set('x-arcanos-job-read-token', 'v1.' + 'a'.repeat(43)).send({ jobId: CREATED_JOB_ID });
+      expect(denied.body.status).toBe('not_found');
+      const malformed = await deviceRequest(request(app).post('/gpt-access/jobs/result'), b).send({ jobId: '../../admin' });
+      expect(malformed.status).toBe(400);
+    });
+
+    it('denies public/admin pairing creation, challenge replay, wrong-origin consumption, forged/malformed bearer and wrong origin', async () => {
+      const app = buildApp();
+      expect((await request(app).post('/gpt-access/devices/pairing').send({})).status).toBe(401);
+      const challenge = await authorized(request(app).post('/gpt-access/devices/pairing')).send({});
+      const body = { pairingToken: challenge.body.pairingToken, localIdentity: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee' };
+      expect((await request(app).post('/gpt-access/devices/pair').set('X-Arcanos-Device-Origin', 'https://wrong.example').send(body)).status).toBe(403);
+      const accepted = await request(app).post('/gpt-access/devices/pair').set('X-Arcanos-Device-Origin', origin).send(body);
+      expect(accepted.status).toBe(201);
+      expect((await request(app).post('/gpt-access/devices/pair').set('X-Arcanos-Device-Origin', origin).send(body)).status).toBe(409);
+      const device = accepted.body as GptAccessDeviceSession;
+      expect((await deviceRequest(request(app).post('/gpt-access/devices/pairing'), device).send({})).status).toBe(403);
+      for (const value of ['agd1.bad', 'agd1.' + 'a'.repeat(43), 'agd1.' + 'a'.repeat(43) + ',extra']) {
+        expect((await request(app).get('/gpt-access/devices/session').set('Authorization', `Bearer ${value}`).set('X-Arcanos-Device-Origin', origin)).status).toBe(401);
+      }
+      expect((await deviceRequest(request(app).get('/gpt-access/devices/session'), device).set('X-Arcanos-Device-Origin', 'https://wrong.example')).status).toBe(403);
+      const safe = await deviceRequest(request(app).get('/gpt-access/devices/session'), device);
+      expect(safe.body.state).toBe('paired');
+      expect(JSON.stringify(safe.body)).not.toContain(device.credential);
+    });
+
+    it('enforces narrow route, GPT and action grants before execution, including early special authentication lanes', async () => {
+      const app = buildApp(); const device = await pair(app); syntheticLocalAgent();
+      for (const path of ['/gpt-access/health', '/gpt-access/workers/status', '/gpt-access/modules', '/gpt-access/capabilities/v1/ARCANOS:CLI']) {
+        expect((await deviceRequest(request(app).get(path), device)).status).toBe(403);
+      }
+      for (const path of ['/gpt-access/dispatch/run', '/gpt-access/jobs/timeline', '/gpt-access/capabilities/v1/ARCANOS:CLI/run']) {
+        expect((await deviceRequest(request(app).post(path), device).send({})).status).toBe(403);
+      }
+      expect((await deviceRequest(request(app).post('/gpt-access/gaming/sources/ingest'), device).send({})).status).toBeGreaterThanOrEqual(400);
+      const deniedGPT = await deviceRequest(request(app).post('/gpt-access/jobs/create'), device).send({ gptId: 'backstage-booker', task: 'not granted' });
+      expect(deniedGPT.status).toBe(403);
+      const run = '/gpt-access/capabilities/v1/ARCANOS:LOCAL_AGENT/run';
+      const deniedAction = await deviceRequest(request(app).post(run), device).send({ action: 'tests.run', payload: {} });
+      expect(deniedAction.status).toBe(403);
+      expect(dispatchModuleActionMock).not.toHaveBeenCalled();
+      const allowed = await deviceRequest(request(app).post(run), device).send({ action: 'git.status', payload: {} });
+      expect(allowed.status).toBe(200);
+      const list = await deviceRequest(request(app).get('/gpt-access/capabilities/v1'), device);
+      expect(list.body.capabilities.map((entry: { id: string }) => entry.id)).toEqual(['ARCANOS:LOCAL_AGENT']);
+      expect(list.body.capabilities[0].actions).toEqual(['git.status']);
+      process.env.ARCANOS_GPT_ACCESS_SCOPES = 'jobs.result';
+      expect((await deviceRequest(request(app).post(run), device).send({ action: 'git.status', payload: {} })).status).toBe(403);
+    });
+
+    it.each(['tests.run', 'patch.apply'])('pairing never confirms %s; only one exact approved retry executes, replay and mutations fail', async action => {
+      const app = buildApp(); const device = await pair(app, ['git.status', 'tests.run', 'patch.apply']);
+      syntheticLocalAgent();
+      const path = '/gpt-access/capabilities/v1/ARCANOS:LOCAL_AGENT/run';
+      const body = { action, payload: { testCommandId: 'unit' } };
+      const challenge = await deviceRequest(request(app).post(path), device).set('x-confirmed', 'yes').send(body);
+      expect(challenge.status).toBe(403);
+      expect(challenge.body.code).toBe('CONFIRMATION_REQUIRED');
+      expect(dispatchModuleActionMock).not.toHaveBeenCalled();
+      const approved = await deviceRequest(request(app).post(path), device)
+        .send({ ...body, confirmation_token: challenge.body.confirmationChallenge.id });
+      expect(approved.status).toBe(200);
+      expect(dispatchModuleActionMock).toHaveBeenCalledTimes(1);
+      expect(dispatchModuleActionMock.mock.calls[0]?.[2]).toEqual(body.payload);
+      expect(dispatchModuleActionMock.mock.calls[0]?.[3]).toMatchObject({ requesterDeviceId: device.deviceId, confirmation: { usedChallengeToken: true } });
+      const replay = await deviceRequest(request(app).post(path), device).send({ ...body, confirmation_token: challenge.body.confirmationChallenge.id });
+      expect(replay.status).toBe(403);
+      const next = await deviceRequest(request(app).post(path), device).send(body);
+      const mutated = await deviceRequest(request(app).post(path), device)
+        .send({ ...body, payload: { testCommandId: 'changed' }, confirmation_token: next.body.confirmationChallenge.id });
+      expect(mutated.status).toBe(403);
+      expect(dispatchModuleActionMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not let a device revoke a peer or let a different operator workspace revoke it', async () => {
+      const app = buildApp(); const a = await pair(app); const b = await pair(app);
+      expect((await deviceRequest(request(app).post(`/gpt-access/devices/${b.deviceId}/revoke`), a).send({})).status).toBe(403);
+      process.env.ARCANOS_GPT_ACCESS_WORKSPACE_ID = 'different';
+      expect((await authorized(request(app).post(`/gpt-access/devices/${a.deviceId}/revoke`)).send({})).status).toBe(404);
+      expect((await deviceRequest(request(app).post(`/gpt-access/devices/${a.deviceId}/revoke`), a).send({})).status).toBe(200);
+    });
+
+    it('authenticates before parsing protected device bodies and bounds the public pairing parser without reflecting secrets', async () => {
+      const app = buildApp();
+      const oversized = JSON.stringify({ pairingToken: 'agp1.' + 'z'.repeat(43), pad: 'x'.repeat(4096) });
+      const unauthenticated = await request(app).post('/gpt-access/devices/pairing').set('Content-Type', 'application/json').send(oversized);
+      expect(unauthenticated.status).toBe(401);
+      const oversize = await request(app).post('/gpt-access/devices/pair').set('Content-Type', 'application/json').send(oversized);
+      expect(oversize.status).toBe(413);
+      const malformed = await request(app).post('/gpt-access/devices/pair').set('Content-Type', 'application/json').send('{"pairingToken":"agp1.' + 'z'.repeat(43));
+      expect(malformed.status).toBe(400);
+      expect(JSON.stringify(malformed.body)).not.toContain('agp1.');
+      expect((await request(app).post('/gpt-access/devices/pair').set('Content-Type', 'text/plain').send('{}')).status).toBe(415);
+      expect((await authorized(request(app).post('/gpt-access/devices/pairing')).set('Content-Type', 'application/json').send('')).status).toBe(400);
+    });
+
+    it('denies expired, wrong-audience and unavailable device sessions before job polling', async () => {
+      const app = buildApp(); const paired = await pair(app);
+      const record = store.devices.get(paired.deviceId)!;
+      const expiresAt = record.expiresAt;
+      record.issuedAt = new Date(Date.now() - 3_600_000).toISOString();
+      record.pairedAt = record.issuedAt;
+      record.expiresAt = new Date(Date.now() - 1).toISOString();
+      // Retain a valid absolute lifetime when moving synthetic timestamps.
+      record.renewalExpiresAt = new Date(Date.parse(record.pairedAt) + 30 * 86_400_000).toISOString();
+      getJobByIdMock.mockClear();
+      const expired = await deviceRequest(request(app).post('/gpt-access/jobs/result'), paired).send({ jobId: CREATED_JOB_ID });
+      expect(expired.body.error.code).toBe('DEVICE_CREDENTIAL_EXPIRED');
+      record.issuedAt = new Date().toISOString(); record.expiresAt = expiresAt;
+      Object.assign(record, { audience: 'wrong-audience' });
+      expect((await deviceRequest(request(app).post('/gpt-access/jobs/result'), paired).send({ jobId: CREATED_JOB_ID })).body.error.code).toBe('DEVICE_AUTH_INVALID');
+      Object.assign(record, { audience: 'gpt-access-device-v1' }); store.failReads = true;
+      expect((await deviceRequest(request(app).post('/gpt-access/jobs/result'), paired).send({ jobId: CREATED_JOB_ID })).status).toBe(503);
+      expect(getJobByIdMock).not.toHaveBeenCalled();
+    });
+    it('preserves an existing operator bearer even when its opaque value happens to use the device prefix', async () => {
+      process.env.ARCANOS_GPT_ACCESS_TOKEN = 'agd1.' + 'q'.repeat(43);
+      const result = await request(buildApp()).get('/gpt-access/capabilities/v1')
+        .set('Authorization', `Bearer ${process.env.ARCANOS_GPT_ACCESS_TOKEN}`);
+      expect(result.status).toBe(200);
+      expect(result.body.capabilities.some((entry: { id: string }) => entry.id === 'ARCANOS:CORE')).toBe(true);
+      expect(store.devices.size).toBe(0);
+    });
+    it('checks requester device ownership of Local Agent results while retaining target executor identity', async () => {
+      const app = buildApp(); const a = await pair(app); const b = await pair(app);
+      getJobByIdMock.mockResolvedValue({ id: CREATED_JOB_ID, job_type: 'local-agent', status: 'completed', output: 'executor result', input: {
+        protocolVersion: 'local-agent-job-v1', requestPath: '/gpt-access/capabilities/v1/ARCANOS:LOCAL_AGENT/run',
+        executionModeReason: 'gpt_access_local_agent_capability',
+        gptAccessDeviceOwner: { version: 1, deviceId: a.deviceId, principalId: 'operator:primary', workspaceId: 'personal' },
+        job: { principal: 'operator:primary', workspace: 'personal', deviceId: 'python-executor' },
+      } });
+      expect((await deviceRequest(request(app).post('/gpt-access/jobs/result'), a).send({ jobId: CREATED_JOB_ID })).body.result).toBe('executor result');
+      expect((await deviceRequest(request(app).post('/gpt-access/jobs/result'), b).send({ jobId: CREATED_JOB_ID })).body.status).toBe('not_found');
+    });
+  });
   const previousToken = process.env.ARCANOS_GPT_ACCESS_TOKEN;
   const previousBackstageBookerToken =
     process.env.ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN;
@@ -6660,6 +6916,16 @@ describe('/gpt-access gateway', () => {
     ).toEqual({ '$ref': '#/components/schemas/RailwayDeploymentMetadata' });
     expect(response.body.security).toEqual([{ bearerAuth: [] }]);
     expect(response.body.paths['/gpt-access/openapi.json'].get.security).toEqual([]);
+    const deviceSecurity = [{ deviceBearerAuth: [], deviceOrigin: [] }];
+    const operatorOrDeviceSecurity = [{ bearerAuth: [] }, ...deviceSecurity];
+    const deviceOperations = new Set([
+      '/gpt-access/devices/session', '/gpt-access/devices/renew'
+    ]);
+    const sharedOperations = new Set([
+      '/gpt-access/jobs/create', '/gpt-access/jobs/result',
+      '/gpt-access/capabilities/v1', '/gpt-access/capabilities/v1/{id}',
+      '/gpt-access/capabilities/v1/{id}/run', '/gpt-access/devices/{deviceId}/revoke'
+    ]);
     for (const [path, methods] of Object.entries(response.body.paths)) {
       for (const operation of Object.values(
         methods as Record<string, { security?: unknown; description?: unknown }>
@@ -6667,15 +6933,19 @@ describe('/gpt-access gateway', () => {
         expect(
           typeof operation.description === 'string' ? operation.description.length : 0
         ).toBeLessThanOrEqual(300);
-        if (path === '/gpt-access/openapi.json') {
+        if (path === '/gpt-access/openapi.json' || path === '/gpt-access/devices/pair') {
           expect(operation.security).toEqual([]);
+        } else if (deviceOperations.has(path)) {
+          expect(operation.security).toEqual(deviceSecurity);
+        } else if (sharedOperations.has(path)) {
+          expect(operation.security).toEqual(operatorOrDeviceSecurity);
         } else {
           expect(operation.security).toEqual([{ bearerAuth: [] }]);
         }
       }
     }
     expect(response.body.paths['/gpt-access/jobs/create'].post.operationId).toBe('createAiJob');
-    expect(response.body.paths['/gpt-access/jobs/create'].post.security).toEqual([{ bearerAuth: [] }]);
+    expect(response.body.paths['/gpt-access/jobs/create'].post.security).toEqual(operatorOrDeviceSecurity);
     expect(response.body.paths['/gpt-access/jobs/create'].post.requestBody.content['application/json'].schema).toEqual({
       '$ref': '#/components/schemas/CreateAiJobRequest'
     });

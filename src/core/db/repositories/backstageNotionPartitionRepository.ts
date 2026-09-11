@@ -1909,6 +1909,7 @@ interface ShadowCoverageRow {
   partition_manifest_id: string | null;
   partition_configuration_hash: string | null;
   monolith_page_count: number | string;
+  monolith_excluded_database_count: number | string;
   monolith_chunk_count: number | string;
   partition_page_count: number | string;
   partition_chunk_count: number | string;
@@ -2455,6 +2456,17 @@ export class PostgresBackstageNotionPartitionRepository {
          JOIN public.backstage_notion_snapshot_pages AS page
            ON page.universe_id = head.universe_id
           AND page.snapshot_id = head.monolith_snapshot_id
+         WHERE (page.metadata ->> 'sourceObjectType')
+           IS DISTINCT FROM 'database'
+       ),
+       monolith_excluded_database_pages AS MATERIALIZED (
+         SELECT page.page_id
+         FROM selected_heads AS head
+         JOIN public.backstage_notion_snapshot_pages AS page
+           ON page.universe_id = head.universe_id
+          AND page.snapshot_id = head.monolith_snapshot_id
+         WHERE (page.metadata ->> 'sourceObjectType')
+           IS NOT DISTINCT FROM 'database'
        ),
        partition_pages AS MATERIALIZED (
          SELECT ownership.page_id::TEXT AS page_id
@@ -2469,7 +2481,13 @@ export class PostgresBackstageNotionPartitionRepository {
          (SELECT configuration_hash FROM partition_generation)
            AS partition_configuration_hash,
          COALESCE((SELECT page_count FROM monolith_generation), 0)
+           - COALESCE((
+             SELECT COUNT(*) FROM monolith_excluded_database_pages
+           ), 0)
            AS monolith_page_count,
+         COALESCE((
+           SELECT COUNT(*) FROM monolith_excluded_database_pages
+         ), 0) AS monolith_excluded_database_count,
          COALESCE((SELECT chunk_count FROM monolith_generation), 0)
            AS monolith_chunk_count,
          COALESCE((SELECT page_count FROM partition_generation), 0)
@@ -2538,6 +2556,10 @@ export class PostgresBackstageNotionPartitionRepository {
       row.monolith_page_count,
       'monolith_page_count'
     );
+    const monolithExcludedDatabaseCount = normalizeDatabaseInteger(
+      row.monolith_excluded_database_count,
+      'monolith_excluded_database_count'
+    );
     const monolithChunkCount = normalizeDatabaseInteger(
       row.monolith_chunk_count,
       'monolith_chunk_count'
@@ -2574,7 +2596,11 @@ export class PostgresBackstageNotionPartitionRepository {
     );
     if (
       (monolithSnapshotId === null
-        && (monolithPageCount !== 0 || monolithChunkCount !== 0))
+        && (
+          monolithPageCount !== 0
+          || monolithExcludedDatabaseCount !== 0
+          || monolithChunkCount !== 0
+        ))
       || (partitionManifestId === null
         && (
           partitionConfigurationHash !== null
@@ -2582,6 +2608,7 @@ export class PostgresBackstageNotionPartitionRepository {
           || partitionChunkCount !== 0
         ))
       || (partitionManifestId !== null && partitionConfigurationHash === null)
+      || monolithExcludedDatabaseCount > 1
       || monolithPageCount !== sharedPageCount + monolithOnlyPageCount
       || partitionPageCount !== sharedPageCount + partitionOnlyPageCount
       || monolithOnlyPageIds.length > monolithOnlyPageCount

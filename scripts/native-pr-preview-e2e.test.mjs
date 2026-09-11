@@ -186,6 +186,12 @@ function responseHeadersForCase(
             NATIVE_PR_PREVIEW_E2E_CONTRACT.workerBudgetReadiness.proofVersion,
         }
       : {}),
+    ...(requestCase.expectedType === 'web-readiness'
+      ? {
+          [NATIVE_PR_PREVIEW_E2E_CONTRACT.iosDevicePolicy.proofHeader]:
+            NATIVE_PR_PREVIEW_E2E_CONTRACT.iosDevicePolicy.proofVersion,
+        }
+      : {}),
     ...(requestCase.boundedResponse
       ? { 'x-response-bytes': String(bodyBytes) }
       : {}),
@@ -193,6 +199,30 @@ function responseHeadersForCase(
       ? {
           [NATIVE_PR_PREVIEW_E2E_CONTRACT.syntheticResponseHeader.name]:
             NATIVE_PR_PREVIEW_E2E_CONTRACT.syntheticResponseHeader.value,
+        }
+      : {}),
+    ...(requestCase.caseId === 'gaming-query-guide'
+      ? {
+          [NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.proofHeader]:
+            NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.proofVersion,
+          [NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.responseProofHeader]:
+            NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.responseProofVersion,
+          [NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.documentProofHeader]:
+            NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.documentProofVersion,
+          [NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.durableRagProofHeader]:
+            NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.durableRagProofVersion,
+          [NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.guideAssistanceProofHeader]:
+            NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.guideAssistanceProofVersion,
+          [NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.progressRecoveryProofHeader]:
+            NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.progressRecoveryProofVersion,
+          [NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.hybridKnowledgeProofHeader]:
+            NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.hybridKnowledgeProofVersion,
+          [NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.clearProofHeader]:
+            NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.clearProofVersion,
+          [NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.sourceAcquisitionProofHeader]:
+            NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.sourceAcquisitionProofVersion,
+          [NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.structuredEvidenceProofHeader]:
+            NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.structuredEvidenceProofVersion,
         }
       : {}),
     ...(requestCase.expectedType === 'backstage-generation-contract'
@@ -227,6 +257,10 @@ function responseHeadersForCase(
                   .proofHeaders.notionReadDiagnosticsVersion]:
                   NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration
                     .notionReadDiagnosticsProofVersion,
+                [NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration
+                  .proofHeaders.notionDatabaseAuthorityVersion]:
+                  NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration
+                    .notionDatabaseAuthorityProofVersion,
               }
             : {}),
           ...(requestCase.fixtureName === 'partitionFailureTelemetry'
@@ -290,6 +324,14 @@ function responseHeadersForCase(
                   .proofHeaders.notionWriterCapacityReleaseVersion]:
                   NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration
                     .notionWriterCapacityReleaseProofVersion,
+              }
+            : {}),
+          ...(requestCase.fixtureName === 'authorityReadiness'
+            ? {
+                [NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration
+                  .proofHeaders.authorityReadinessVersion]:
+                  NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration
+                    .authorityReadinessProofVersion,
               }
             : {}),
         }
@@ -708,7 +750,7 @@ test('rejects malformed or unsupported exact-head Backstage Booker versions', as
 
 test('executes the bounded credential-free matrix and detects identity stability', async () => {
   const requestPlan = buildNativePrPreviewRequestPlan();
-  assert.equal(requestPlan.length, 137);
+  assert.equal(requestPlan.length, 138);
   assert.equal(
     requestPlan.filter(({ caseId, expectedType }) =>
       expectedType !== 'research-contract'
@@ -784,7 +826,7 @@ test('executes the bounded credential-free matrix and detects identity stability
     requestPlan.filter(({ expectedType }) =>
       expectedType === 'backstage-generation-contract'
     ).length,
-    14
+    15
   );
   assert.equal(
     requestPlan.filter(({ expectedType }) =>
@@ -1205,6 +1247,9 @@ test('executes the bounded credential-free matrix and detects identity stability
   const notionSyncPhaseACase = requestPlan.find(({ caseId }) =>
     caseId === 'backstage-generation-notion-sync-phase-a'
   );
+  const authorityReadinessCase = requestPlan.find(({ caseId }) =>
+    caseId === 'backstage-generation-authority-readiness'
+  );
   const notionAuthorityRagCase = requestPlan.find(({ caseId }) =>
     caseId === 'backstage-generation-notion-authority-rag'
   );
@@ -1224,6 +1269,7 @@ test('executes the bounded credential-free matrix and detects identity stability
   assert.ok(productionOutputContractsCase);
   assert.ok(outputAdmissionCase);
   assert.ok(notionSyncPhaseACase);
+  assert.ok(authorityReadinessCase);
   assert.ok(notionAuthorityRagCase);
   assert.ok(partitionFailureTelemetryCase);
   assert.ok(continuityQueryCase);
@@ -1482,6 +1528,68 @@ test('executes the bounded credential-free matrix and detects identity stability
       },
     ],
   });
+  const authorityReadinessPayload = expectedNativePrPreviewResponseBody(
+    authorityReadinessCase,
+    { commitSha: COMMIT_SHA, prNumber: PR_NUMBER }
+  );
+  assert.deepEqual(
+    authorityReadinessPayload.authorityReadiness.checkpoints,
+    [
+      {
+        name: 'booting',
+        logicalTimeMs: 0,
+        processReady: false,
+        syncInProgress: false,
+        authorityStatus: 'unavailable',
+        snapshotStatus: 'unavailable',
+        protectedGenerationAdmissible: false,
+        protectedFailureCode: 'BACKSTAGE_NOTION_INDEX_UNAVAILABLE',
+      },
+      {
+        name: 'process_ready',
+        logicalTimeMs: 5_000,
+        processReady: true,
+        syncInProgress: true,
+        authorityStatus: 'syncing',
+        snapshotStatus: 'unavailable',
+        protectedGenerationAdmissible: false,
+        protectedFailureCode: 'BACKSTAGE_NOTION_INDEX_UNAVAILABLE',
+      },
+      {
+        name: 'healthcheck_window',
+        logicalTimeMs: 300_000,
+        processReady: true,
+        syncInProgress: true,
+        authorityStatus: 'syncing',
+        snapshotStatus: 'unavailable',
+        protectedGenerationAdmissible: false,
+        protectedFailureCode: 'BACKSTAGE_NOTION_INDEX_UNAVAILABLE',
+      },
+      {
+        name: 'activated',
+        logicalTimeMs: 360_001,
+        processReady: true,
+        syncInProgress: false,
+        authorityStatus: 'current_complete',
+        snapshotStatus: 'current_complete',
+        protectedGenerationAdmissible: true,
+        protectedFailureCode: null,
+      },
+    ]
+  );
+  assert.deepEqual(authorityReadinessPayload.authorityReadiness.contracts, {
+    boundedStartupBeforeRailwayWindow: true,
+    currentCompleteOnlyForProtectedGeneration: true,
+    healthcheckWindowDoesNotAwaitSync: true,
+    noRestartRequired: true,
+    protectedFailureCodeStable: true,
+    snapshotStatusReducerExecuted: true,
+    staleSnapshotNotOfficial: true,
+    syncExceedsRailwayWindow: true,
+    virtualTimeOnly: true,
+  });
+  assert.equal(authorityReadinessPayload.realTimerWaited, false);
+  assert.equal(authorityReadinessPayload.sensitiveMetadataAbsent, true);
   assert.deepEqual(
     expectedNativePrPreviewResponseBody(notionAuthorityRagCase, {
       commitSha: COMMIT_SHA,
@@ -1956,14 +2064,77 @@ test('executes the bounded credential-free matrix and detects identity stability
   assert.equal(result.executed, true);
   assert.equal(result.networkAttempted, true);
   assert.equal(result.summary.status, 'PASS');
-  assert.equal(result.summary.requestsMade, 137);
+  assert.equal(result.summary.requestsMade, 138);
   assert.equal(result.summary.simulatedAuthRequests, 24);
-  assert.equal(result.checks.length, 137);
+  assert.equal(result.checks.length, 138);
   assert.equal(
     result.checks.filter(({ simulatedAuth }) => simulatedAuth).length,
     24
   );
-  assert.equal(mock.requestCount, 137);
+  assert.equal(mock.requestCount, 138);
+  for (const caseId of ['web-readiness-initial', 'web-readiness-final']) {
+    assert.equal(result.checks.find(check => check.caseId === caseId)?.iosDevicePolicyVerified, true);
+  }
+  assert.deepEqual(
+    result.checks.filter(({ gamingArchiveGuideEvidenceVerified }) =>
+      gamingArchiveGuideEvidenceVerified === true
+    ).map(({ caseId }) => caseId),
+    ['gaming-query-guide']
+  );
+  assert.deepEqual(
+    result.checks.filter(({ gamingGuideResponseVerified }) =>
+      gamingGuideResponseVerified === true
+    ).map(({ caseId }) => caseId),
+    ['gaming-query-guide']
+  );
+  assert.deepEqual(
+    result.checks.filter(({ gamingDocumentIngestionVerified }) =>
+      gamingDocumentIngestionVerified === true
+    ).map(({ caseId }) => caseId),
+    ['gaming-query-guide']
+  );
+  assert.deepEqual(
+    result.checks.filter(({ gamingDurableRagVerified }) =>
+      gamingDurableRagVerified === true
+    ).map(({ caseId }) => caseId),
+    ['gaming-query-guide']
+  );
+  assert.deepEqual(
+    result.checks.filter(({ gamingGuideAssistanceVerified }) =>
+      gamingGuideAssistanceVerified === true
+    ).map(({ caseId }) => caseId),
+    ['gaming-query-guide']
+  );
+  assert.deepEqual(
+    result.checks.filter(({ gamingProgressRecoveryVerified }) =>
+      gamingProgressRecoveryVerified === true
+    ).map(({ caseId }) => caseId),
+    ['gaming-query-guide']
+  );
+  assert.deepEqual(
+    result.checks.filter(({ gamingHybridKnowledgeVerified }) =>
+      gamingHybridKnowledgeVerified === true
+    ).map(({ caseId }) => caseId),
+    ['gaming-query-guide']
+  );
+  assert.deepEqual(
+    result.checks.filter(({ gamingClearVerified }) =>
+      gamingClearVerified === true
+    ).map(({ caseId }) => caseId),
+    ['gaming-query-guide']
+  );
+  assert.deepEqual(
+    result.checks.filter(({ gamingSourceAcquisitionVerified }) =>
+      gamingSourceAcquisitionVerified === true
+    ).map(({ caseId }) => caseId),
+    ['gaming-query-guide']
+  );
+  assert.deepEqual(
+    result.checks.filter(({ gamingStructuredEvidenceVerified }) =>
+      gamingStructuredEvidenceVerified === true
+    ).map(({ caseId }) => caseId),
+    ['gaming-query-guide']
+  );
   assert.equal(
     result.checks.find(({ caseId }) =>
       caseId === 'worker-readiness-initial'
@@ -2120,6 +2291,21 @@ test('executes the bounded credential-free matrix and detects identity stability
     role: 'web',
     simulatedAuth: false,
   });
+  const authorityReadinessCheck = result.checks.find(({ caseId }) =>
+    caseId === 'backstage-generation-authority-readiness'
+  );
+  assert.deepEqual(authorityReadinessCheck, {
+    authorityReadinessVerified: true,
+    bodySha256: authorityReadinessCheck.bodySha256,
+    caseId: 'backstage-generation-authority-readiness',
+    clearPolicyVersionVerified: true,
+    httpStatus: 200,
+    method: 'POST',
+    pathTemplate: '/backstage/generation-contract',
+    responseBytes: Buffer.byteLength(JSON.stringify(authorityReadinessPayload)),
+    role: 'web',
+    simulatedAuth: false,
+  });
   assert.deepEqual(
     result.checks.find(({ caseId }) =>
       caseId === 'backstage-generation-route-budget'
@@ -2163,6 +2349,7 @@ test('executes the bounded credential-free matrix and detects identity stability
       clearPolicyVersionVerified: true,
       httpStatus: 200,
       method: 'POST',
+      notionDatabaseAuthorityVerified: true,
       notionReadDiagnosticsVerified: true,
       partitionCutoverRepairVerified: true,
       partitionedAuthorityVerified: true,
@@ -2252,12 +2439,12 @@ test('executes the bounded credential-free matrix and detects identity stability
   const backstageGenerationCalls = mock.calls.filter(({ url }) =>
     url.endsWith('/backstage/generation-contract')
   );
-  assert.equal(backstageGenerationCalls.length, 15);
+  assert.equal(backstageGenerationCalls.length, 16);
   assert.equal(
     backstageGenerationCalls.filter(({ url }) =>
       url.startsWith(WEB_BASE_URL)
     ).length,
-    14
+    15
   );
   assert.equal(
     backstageGenerationCalls.filter(({ url }) =>
@@ -2733,6 +2920,20 @@ test('rejects missing synthetic provenance and correlation or security header dr
   const requestPlan = buildNativePrPreviewRequestPlan();
   const cases = [
     {
+      caseId: 'web-readiness-initial',
+      code: 'NATIVE_PR_PREVIEW_IOS_DEVICE_POLICY_PROOF_INVALID',
+      mutate(headers) {
+        delete headers[NATIVE_PR_PREVIEW_E2E_CONTRACT.iosDevicePolicy.proofHeader];
+      },
+    },
+    {
+      caseId: 'web-readiness-final',
+      code: 'NATIVE_PR_PREVIEW_IOS_DEVICE_POLICY_PROOF_INVALID',
+      mutate(headers) {
+        headers[NATIVE_PR_PREVIEW_E2E_CONTRACT.iosDevicePolicy.proofHeader] = 'ios-device-policy/unverified';
+      },
+    },
+    {
       caseId: 'worker-readiness-initial',
       code: 'NATIVE_PR_PREVIEW_WORKER_BUDGET_READINESS_PROOF_INVALID',
       mutate(headers) {
@@ -2748,6 +2949,149 @@ test('rejects missing synthetic provenance and correlation or security header dr
         delete headers[
           NATIVE_PR_PREVIEW_E2E_CONTRACT.syntheticResponseHeader.name
         ];
+      },
+    },
+    {
+      caseId: 'gaming-query-guide',
+      code: 'NATIVE_PR_PREVIEW_GAMING_ARCHIVE_GROUNDING_PROOF_INVALID',
+      mutate(headers) {
+        delete headers[NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.proofHeader];
+      },
+    },
+    {
+      caseId: 'gaming-query-guide',
+      code: 'NATIVE_PR_PREVIEW_GAMING_ARCHIVE_GROUNDING_PROOF_INVALID',
+      mutate(headers) {
+        headers[NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.proofHeader] =
+          'gaming-archive-grounding/drifted';
+      },
+    },
+    {
+      caseId: 'gaming-query-guide',
+      code: 'NATIVE_PR_PREVIEW_GAMING_DOCUMENT_INGESTION_PROOF_INVALID',
+      mutate(headers) {
+        delete headers[NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.documentProofHeader];
+      },
+    },
+    {
+      caseId: 'gaming-query-guide',
+      code: 'NATIVE_PR_PREVIEW_GAMING_DURABLE_RAG_PROOF_INVALID',
+      mutate(headers) {
+        delete headers[NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.durableRagProofHeader];
+      },
+    },
+    {
+      caseId: 'gaming-query-guide',
+      code: 'NATIVE_PR_PREVIEW_GAMING_DURABLE_RAG_PROOF_INVALID',
+      mutate(headers) {
+        headers[NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.durableRagProofHeader] = 'gaming-durable-rag/drifted';
+      },
+    },
+    {
+      caseId: 'gaming-query-guide',
+      code: 'NATIVE_PR_PREVIEW_GAMING_GUIDE_ASSISTANCE_PROOF_INVALID',
+      mutate(headers) {
+        delete headers[NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.guideAssistanceProofHeader];
+      },
+    },
+    {
+      caseId: 'gaming-query-guide',
+      code: 'NATIVE_PR_PREVIEW_GAMING_GUIDE_ASSISTANCE_PROOF_INVALID',
+      mutate(headers) {
+        headers[NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.guideAssistanceProofHeader] = 'gaming-guide-assistance/drifted';
+      },
+    },
+    {
+      caseId: 'gaming-query-guide',
+      code: 'NATIVE_PR_PREVIEW_GAMING_PROGRESS_RECOVERY_PROOF_INVALID',
+      mutate(headers) {
+        delete headers[NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.progressRecoveryProofHeader];
+      },
+    },
+    {
+      caseId: 'gaming-query-guide',
+      code: 'NATIVE_PR_PREVIEW_GAMING_PROGRESS_RECOVERY_PROOF_INVALID',
+      mutate(headers) {
+        headers[NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.progressRecoveryProofHeader] = 'gaming-progress-recovery/drifted';
+      },
+    },
+    {
+      caseId: 'gaming-query-guide',
+      code: 'NATIVE_PR_PREVIEW_GAMING_HYBRID_KNOWLEDGE_PROOF_INVALID',
+      mutate(headers) {
+        delete headers[NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.hybridKnowledgeProofHeader];
+      },
+    },
+    {
+      caseId: 'gaming-query-guide',
+      code: 'NATIVE_PR_PREVIEW_GAMING_HYBRID_KNOWLEDGE_PROOF_INVALID',
+      mutate(headers) {
+        headers[NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.hybridKnowledgeProofHeader] = 'gaming-hybrid-knowledge/drifted';
+      },
+    },
+    {
+      caseId: 'gaming-query-guide',
+      code: 'NATIVE_PR_PREVIEW_GAMING_SOURCE_ACQUISITION_PROOF_INVALID',
+      mutate(headers) {
+        delete headers[NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.sourceAcquisitionProofHeader];
+      },
+    },
+    {
+      caseId: 'gaming-query-guide',
+      code: 'NATIVE_PR_PREVIEW_GAMING_SOURCE_ACQUISITION_PROOF_INVALID',
+      mutate(headers) {
+        headers[NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.sourceAcquisitionProofHeader] = 'gaming-source-acquisition/drifted';
+      },
+    },
+    {
+      caseId: 'gaming-query-guide',
+      code: 'NATIVE_PR_PREVIEW_GAMING_STRUCTURED_EVIDENCE_PROOF_INVALID',
+      mutate(headers) {
+        delete headers[NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.structuredEvidenceProofHeader];
+      },
+    },
+    {
+      caseId: 'gaming-query-guide',
+      code: 'NATIVE_PR_PREVIEW_GAMING_STRUCTURED_EVIDENCE_PROOF_INVALID',
+      mutate(headers) {
+        headers[NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.structuredEvidenceProofHeader] = 'gaming-structured-evidence/drifted';
+      },
+    },
+    {
+      caseId: 'gaming-query-guide',
+      code: 'NATIVE_PR_PREVIEW_GAMING_CLEAR_PROOF_INVALID',
+      mutate(headers) {
+        delete headers[NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.clearProofHeader];
+      },
+    },
+    {
+      caseId: 'gaming-query-guide',
+      code: 'NATIVE_PR_PREVIEW_GAMING_CLEAR_PROOF_INVALID',
+      mutate(headers) {
+        headers[NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.clearProofHeader] = 'gaming-clear/drifted';
+      },
+    },
+    {
+      caseId: 'gaming-query-guide',
+      code: 'NATIVE_PR_PREVIEW_GAMING_DOCUMENT_INGESTION_PROOF_INVALID',
+      mutate(headers) {
+        headers[NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.documentProofHeader] =
+          'gaming-document-ingestion/drifted';
+      },
+    },
+    {
+      caseId: 'gaming-query-guide',
+      code: 'NATIVE_PR_PREVIEW_GAMING_GUIDE_RESPONSE_PROOF_INVALID',
+      mutate(headers) {
+        delete headers[NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.responseProofHeader];
+      },
+    },
+    {
+      caseId: 'gaming-query-guide',
+      code: 'NATIVE_PR_PREVIEW_GAMING_GUIDE_RESPONSE_PROOF_INVALID',
+      mutate(headers) {
+        headers[NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.responseProofHeader] =
+          'gaming-guide-response/drifted';
       },
     },
     {
@@ -2915,6 +3259,26 @@ test('rejects missing synthetic provenance and correlation or security header dr
       },
     },
     {
+      caseId: 'backstage-generation-authority-readiness',
+      code: 'NATIVE_PR_PREVIEW_BACKSTAGE_AUTHORITY_READINESS_PROOF_INVALID',
+      mutate(headers) {
+        delete headers[
+          NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration.proofHeaders
+            .authorityReadinessVersion
+        ];
+      },
+    },
+    {
+      caseId: 'backstage-generation-authority-readiness',
+      code: 'NATIVE_PR_PREVIEW_BACKSTAGE_AUTHORITY_READINESS_PROOF_INVALID',
+      mutate(headers) {
+        headers[
+          NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration.proofHeaders
+            .authorityReadinessVersion
+        ] = 'backstage-notion-authority-readiness/drifted';
+      },
+    },
+    {
       caseId: 'backstage-generation-notion-authority-rag',
       code: 'NATIVE_PR_PREVIEW_BACKSTAGE_PARTITION_PROOF_INVALID',
       mutate(headers) {
@@ -2976,6 +3340,28 @@ test('rejects missing synthetic provenance and correlation or security header dr
           NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration.proofHeaders
             .notionReadDiagnosticsVersion
         ] = 'backstage-notion-read-diagnostics/drifted';
+      },
+    },
+    {
+      caseId: 'backstage-generation-notion-authority-rag',
+      code:
+        'NATIVE_PR_PREVIEW_BACKSTAGE_NOTION_DATABASE_AUTHORITY_PROOF_INVALID',
+      mutate(headers) {
+        delete headers[
+          NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration.proofHeaders
+            .notionDatabaseAuthorityVersion
+        ];
+      },
+    },
+    {
+      caseId: 'backstage-generation-notion-authority-rag',
+      code:
+        'NATIVE_PR_PREVIEW_BACKSTAGE_NOTION_DATABASE_AUTHORITY_PROOF_INVALID',
+      mutate(headers) {
+        headers[
+          NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration.proofHeaders
+            .notionDatabaseAuthorityVersion
+        ] = 'backstage-notion-database-authority/drifted';
       },
     },
     {

@@ -47,6 +47,7 @@ jest.unstable_mockModule('../src/platform/logging/structuredLogging.js', () => (
 const { default: ArcanosGaming } = await import('../src/modules/arcanos-gaming.js');
 const { BackendQueryAgent, IntentRouterAgent, ResponseComposerAgent } = await import('../src/services/gamingAgents.js');
 const { validatePublicGamingQueryRequest } = await import('../src/services/gamingModes.js');
+const { GAMING_RESPONSE_MAX_CHARACTERS } = await import('../src/shared/http/clientResponseCommon.js');
 
 describe('ArcanosGaming module', () => {
 
@@ -89,6 +90,33 @@ describe('ArcanosGaming module', () => {
     expect(ArcanosGaming.gptIds).toEqual(['arcanos-gaming', 'gaming']);
     expect(ArcanosGaming.defaultAction).toBe('query');
     expect(Object.keys(ArcanosGaming.actions)).toEqual(['query']);
+  });
+
+  it.each(['Lantern Vale', 'Iron Duel', 'Star Hauler'])('forwards validated player context to the real module pipeline boundary for %s', async game => {
+    const payload = {
+      mode: 'guide', game, prompt: 'What next?', platform: 'PC', edition: 'Original', version: '1.2',
+      currentArea: 'Copper Harbor', lastCompletedObjective: 'Restored the ferry beacon',
+      progressPoint: 'Dock checkpoint', difficulty: 'Hard', class: 'Navigator', role: 'Support',
+      constraints: ['No rare fuel'], spoilerTolerance: 'light', answerDepth: 'detailed'
+    };
+    expect(validatePublicGamingQueryRequest({ action: 'query', payload }, 'query')).toBeNull();
+    await ArcanosGaming.actions.query(payload as any);
+    const { mode: _mode, ...forwarded } = payload;
+    expect(runGuidePipelineSpy).toHaveBeenCalledWith(expect.objectContaining({
+      ...forwarded, requestedVersion: '1.2', spoilerMode: 'light', contextOrigins: expect.objectContaining({ currentArea: 'explicit' })
+    }));
+  });
+
+  it('rejects invalid raw optional context before intent normalization or any backend call', async () => {
+    expect(await ArcanosGaming.actions.query({ mode: 'guide', prompt: 'What next?', currentArea: `Gate${' '.repeat(160)}` } as any))
+      .toMatchObject({ ok: false, error: { code: 'BAD_REQUEST' } });
+    expect(runGuidePipelineSpy).not.toHaveBeenCalled();
+  });
+
+  it('asks one clarification for conflicting progression before provider work', async () => {
+    expect(await ArcanosGaming.actions.query({ mode: 'guide', game: 'Lantern Vale', prompt: 'I am at Copper Harbor. What next?', currentArea: 'Old Mill' } as any))
+      .toMatchObject({ ok: false, error: { code: 'CLARIFICATION_REQUIRED', message: expect.stringContaining('Which current area') } });
+    expect(runGuidePipelineSpy).not.toHaveBeenCalled();
   });
 
   it('accepts Action fields exactly at their published length and count limits', () => {
@@ -151,6 +179,8 @@ describe('ArcanosGaming module', () => {
     await ArcanosGaming.actions.query(payload);
 
     expect(runGuidePipelineSpy).toHaveBeenCalledWith({
+      answerDepth: "auto", spoilerMode: "none", spoilerTolerance: "unknown",
+      contextConflicts: [], contextOrigins: { answerDepth: "default", spoilerTolerance: "default" },
       prompt: 'How do I beat the boss?',
       game: undefined,
       guideUrl: 'https://example.com/guide',
@@ -171,6 +201,8 @@ describe('ArcanosGaming module', () => {
     await ArcanosGaming.actions.query(payload);
 
     expect(runBuildPipelineSpy).toHaveBeenCalledWith({
+      answerDepth: "auto", spoilerMode: "none", spoilerTolerance: "unknown",
+      contextConflicts: [], contextOrigins: { answerDepth: "default", spoilerTolerance: "default" },
       prompt: 'Show me the path',
       game: 'SWTOR',
       guideUrl: undefined,
@@ -185,6 +217,8 @@ describe('ArcanosGaming module', () => {
     } as any);
 
     expect(runGuidePipelineSpy).toHaveBeenCalledWith({
+      answerDepth: "auto", spoilerMode: "none", spoilerTolerance: "unknown",
+      contextConflicts: [], contextOrigins: { answerDepth: "default", spoilerTolerance: "default" },
       prompt: 'How do I beat the temple boss?',
       game: undefined,
       guideUrl: undefined,
@@ -203,9 +237,38 @@ describe('ArcanosGaming module', () => {
       mode: 'guide',
       confidence: expect.any(Number),
     }));
-    expect(mockLogger.info).toHaveBeenCalledWith('gaming.backend.success', expect.objectContaining({
+    expect(mockLogger.info).toHaveBeenCalledWith('gaming.backend.end', expect.objectContaining({
       mode: 'guide',
       confidence: expect.any(Number),
+      executionOutcome: 'completed',
+      groundedInSuppliedEvidence: false,
+    }));
+  });
+
+  it('logs a successful deterministic backend fallback as fallback execution', async () => {
+    runGuidePipelineSpy.mockResolvedValueOnce({
+      ok: true,
+      route: 'gaming',
+      mode: 'guide',
+      data: {
+        response: 'Prepare healing items and check the nearest checkpoint before retrying the boss.',
+        sources: [],
+        fallbackReason: 'GAMING_PROVIDER_UNAVAILABLE',
+      },
+    });
+
+    const result = await ArcanosGaming.actions.query({
+      mode: 'guide',
+      prompt: 'How do I beat the temple boss?',
+    });
+
+    expect(result).toMatchObject({ ok: true, data: { fallbackReason: 'GAMING_PROVIDER_UNAVAILABLE' } });
+    expect(mockLogger.info).toHaveBeenCalledWith('gaming.backend.end', expect.objectContaining({
+      executionOutcome: 'fallback',
+      groundedInSuppliedEvidence: false,
+    }));
+    expect(mockLogger.info).not.toHaveBeenCalledWith('gaming.backend.end', expect.objectContaining({
+      executionOutcome: 'completed',
     }));
   });
 
@@ -312,10 +375,10 @@ describe('ArcanosGaming module', () => {
       route: 'gaming',
       mode: 'guide',
       data: expect.objectContaining({
-        response: expect.stringContaining('Backend-supported: none. The backend did not return usable guidance.'),
+        response: expect.stringContaining('enough guide information'),
       }),
     }));
-    expect((result as any).data.response).toContain('General Fallback (not backend-supported)');
+    expect((result as any).data.response).toContain('reliabl');
   });
 
   it('returns a labeled general fallback when the backend times out', async () => {
@@ -333,10 +396,10 @@ describe('ArcanosGaming module', () => {
       route: 'gaming',
       mode: 'guide',
       data: expect.objectContaining({
-        response: expect.stringContaining('Backend-supported: none. The backend did not return usable guidance.'),
+        response: expect.stringContaining('enough guide information'),
       }),
     }));
-    expect((result as any).data.response).toContain('safe deterministic fallback was used');
+    expect((result as any).data.response).toContain('reliabl');
     expect((result as any).data.response).not.toMatch(/timeout|incomplete|integrity/i);
   });
 
@@ -360,10 +423,10 @@ describe('ArcanosGaming module', () => {
       route: 'gaming',
       mode: 'guide',
       data: expect.objectContaining({
-        response: expect.stringContaining('General Fallback (not backend-supported)'),
+        response: expect.stringContaining('reliabl'),
       }),
     }));
-    expect((result as any).data.response).toContain('safe deterministic fallback was used');
+    expect((result as any).data.response).toContain('reliabl');
     expect((result as any).data.response).not.toContain('Malformed backend response');
   });
 
@@ -391,7 +454,7 @@ describe('ArcanosGaming module', () => {
       route: 'gaming',
       mode: 'guide',
       data: expect.objectContaining({
-        response: expect.stringContaining('General Fallback (not backend-supported)'),
+        response: expect.stringContaining('reliabl'),
         sources: [{
           url: 'https://example.com/elden-ring-route',
           snippet: 'Validated route guidance.',
@@ -423,7 +486,7 @@ describe('ArcanosGaming module', () => {
     expect(result).toEqual(expect.objectContaining({
       ok: true,
       data: expect.objectContaining({
-        response: expect.stringContaining('General Fallback (not backend-supported)'),
+        response: expect.stringContaining('reliabl'),
         sources: [{
           url: 'https://example.com/palworld-guide',
           snippet: 'Validated Palworld guidance.',
@@ -455,7 +518,7 @@ describe('ArcanosGaming module', () => {
     expect(result).toEqual(expect.objectContaining({
       ok: true,
       data: expect.objectContaining({
-        response: expect.stringContaining('General Fallback (not backend-supported)'),
+        response: expect.stringContaining('reliabl'),
         sources: [{
           url: 'https://example.com/palworld-guide',
           snippet: 'Validated Palworld guidance.',
@@ -464,6 +527,65 @@ describe('ArcanosGaming module', () => {
       }),
     }));
     expect((result as any).data.response).not.toContain('x'.repeat(1_000));
+  });
+
+  it.each([
+    { characterCount: GAMING_RESPONSE_MAX_CHARACTERS, accepted: true },
+    { characterCount: GAMING_RESPONSE_MAX_CHARACTERS + 1, accepted: false },
+  ])('applies the public cap after trimming a grounded guide with $characterCount Unicode characters', async ({ characterCount, accepted }) => {
+    const opening = 'Follow the guide [1]. ';
+    const response = `${opening}${'\u{1F3AE}'.repeat(characterCount - opening.length)}`;
+    const sources = [{
+      url: 'https://example.com/palworld-guide',
+      snippet: 'Validated Palworld guidance.',
+    }];
+    runGuidePipelineSpy.mockResolvedValueOnce({
+      ok: true,
+      route: 'gaming',
+      mode: 'guide',
+      data: {
+        response: ` \t\r\n${response}\r\n\t `,
+        sources,
+        grounding: {
+          groundingStatus: 'grounded',
+          requestedSourceCount: 1,
+          fetchedSourceCount: 1,
+          fetchedSuppliedSourceCount: 1,
+          usableSourceCount: 1,
+          citableSourceCount: 1,
+          selectedChunkCount: 1,
+          suppliedEvidenceSourceCount: 1,
+          groundedInSuppliedEvidence: true,
+        },
+      },
+    } as any);
+
+    const result = await ArcanosGaming.actions.query({
+      mode: 'guide',
+      game: 'Palworld',
+      prompt: 'Give me a beginner route.',
+    } as any);
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      data: expect.objectContaining({ sources }),
+    }));
+    const publicResponse = (result as any).data.response as string;
+    if (accepted) {
+      expect(publicResponse).toBe(response);
+      expect(Array.from(publicResponse)).toHaveLength(GAMING_RESPONSE_MAX_CHARACTERS);
+      expect(publicResponse.length).toBeGreaterThan(GAMING_RESPONSE_MAX_CHARACTERS);
+      expect((result as any).data.fallbackReason).toBeUndefined();
+    } else {
+      expect(publicResponse).toContain('reliabl');
+      expect(publicResponse).not.toContain('\u{1F3AE}');
+      expect((result as any).data.fallbackReason).toBe('GAMING_PROVIDER_ERROR');
+      expect(mockLogger.warn).toHaveBeenCalledWith('gaming.backend.failure', expect.objectContaining({
+        errorCode: 'GAMING_RESPONSE_TOO_LARGE',
+        responseCharacters: characterCount,
+        maxResponseCharacters: GAMING_RESPONSE_MAX_CHARACTERS,
+      }));
+    }
   });
 
   it('accepts a contract-valid multibyte response larger than 4 KiB', async () => {
@@ -493,7 +615,7 @@ describe('ArcanosGaming module', () => {
     const publicResponse = (result as any).data.response as string;
     expect(Buffer.byteLength(publicResponse, 'utf8')).toBeGreaterThan(4 * 1_024);
     expect(Array.from(publicResponse).length).toBeLessThanOrEqual(4_096);
-    expect(publicResponse).not.toContain('General Fallback (not backend-supported)');
+    expect(publicResponse).not.toContain('reliabl');
     expect((result as any).data.fallbackReason).toBeUndefined();
   });
 
@@ -509,6 +631,9 @@ describe('ArcanosGaming module', () => {
     } as any);
 
     expect(runGuidePipelineSpy).toHaveBeenCalledWith({
+      answerDepth: "auto", spoilerMode: "none", spoilerTolerance: "unknown",
+      contextConflicts: [], contextOrigins: { answerDepth: "default", spoilerTolerance: "default", version: "explicit", constraints: "tentative" },
+      version: "1.0", constraints: ["beginner"],
       prompt: 'Look up a current beginner guide for Palworld 1.0.',
       game: 'Palworld',
       guideUrl: undefined,
@@ -539,6 +664,9 @@ describe('ArcanosGaming module', () => {
       action: 'query',
       payload: {
         mode: 'meta',
+        class: 'Frost Mage',
+        version: 'this patch',
+        constraints: ['PvP', 'PvE'],
         game: 'World of Warcraft',
         prompt: 'Is Frost Mage viable this patch in World of Warcraft?\nPlease separate PvE and PvP.',
         guideUrls,

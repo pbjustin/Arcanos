@@ -1,13 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
-import type { BackstageNotionActiveInventory } from '../src/core/db/repositories/backstageNotionRagRepository.js';
-import type { BackstageNotionAuthorityConfiguration } from '../src/services/backstageNotionAuthority.js';
-import {
-  BACKSTAGE_NOTION_RAG_INDEX_FORMAT,
-  type BackstageNotionSyncResult,
-} from '../src/services/backstageNotionSync.js';
-import { BACKSTAGE_NOTION_RAG_HEADING_INDEX_VERSION } from '../src/shared/backstage/backstageNotionRagCore.js';
+import type { BackstageNotionSyncResult } from '../src/services/backstageNotionSync.js';
 import {
   WorkerAiCallBudgetPausedError,
   instrumentOpenAIOperation,
@@ -16,8 +10,6 @@ import {
   BACKSTAGE_NOTION_SYNC_INTERVAL_DEFAULT_MS,
   BACKSTAGE_NOTION_SYNC_INTERVAL_MAX_MS,
   BACKSTAGE_NOTION_SYNC_INTERVAL_MIN_MS,
-  BACKSTAGE_NOTION_WORKER_READINESS_ERROR_CODE,
-  ensureBackstageNotionWorkerReadiness,
   resolveBackstageNotionSyncIntervalMs,
   startBackstageNotionSyncLoop,
 } from '../src/workers/backstageNotionSyncLoop.js';
@@ -26,55 +18,6 @@ const loggerInfo = jest.fn();
 const loggerWarn = jest.fn();
 const testLogger = { info: loggerInfo, warn: loggerWarn };
 const universeId = 'my-universe-2k26';
-const rootPageId = '21f5a0ff-752e-8065-a204-e1735b744185';
-
-const validConfiguration: BackstageNotionAuthorityConfiguration = {
-  status: 'valid',
-  roots: [{
-    universeId,
-    rootPageId,
-    displayName: 'WWE Universe Mode',
-  }],
-};
-
-function inventory(
-  current: boolean,
-  chunkCount = 1
-): BackstageNotionActiveInventory {
-  const timestamp = new Date('2026-08-19T12:00:00.000Z');
-  return {
-    authority: 'notion',
-    verifiedAt: timestamp,
-    snapshot: {
-      id: '11111111-1111-4111-8111-111111111111',
-      universeId,
-      rootPageId,
-      manifestHash: 'a'.repeat(64),
-      embeddingModel: 'text-embedding-3-small',
-      pageCount: 1,
-      chunkCount,
-      sourceMaxEditedAt: timestamp,
-      syncHolderId: 'test-holder',
-      createdAt: timestamp,
-    },
-    pages: [{
-      pageId: rootPageId,
-      parentPageId: null,
-      title: 'WWE Universe Mode',
-      canonicalUrl: null,
-      contentHash: 'b'.repeat(64),
-      sourceLastEditedAt: timestamp,
-      depth: 0,
-      path: ['WWE Universe Mode'],
-      metadata: current
-        ? {
-            headingIndexVersion: BACKSTAGE_NOTION_RAG_HEADING_INDEX_VERSION,
-            indexFormat: BACKSTAGE_NOTION_RAG_INDEX_FORMAT,
-          }
-        : {},
-    }],
-  };
-}
 
 function syncResult(
   status: BackstageNotionSyncResult['status']
@@ -119,202 +62,85 @@ describe('Backstage Notion synchronization loop', () => {
     jest.useRealTimers();
   });
 
-  it('passes readiness without repository or provider work when no authority is configured', async () => {
-    const loadActiveInventory = jest.fn(async () => null);
-    const sync = jest.fn(async () => []);
+  it('keeps process readiness independent from a cold sync beyond 300 seconds', async () => {
+    const coldSync = createDeferred<readonly BackstageNotionSyncResult[]>();
+    const sync = jest.fn(() => coldSync.promise);
+    let processReady = false;
 
-    await expect(ensureBackstageNotionWorkerReadiness({
-      readConfiguration: () => ({ status: 'absent', roots: [] }),
-      repository: { loadActiveInventory },
+    const handle = startBackstageNotionSyncLoop({
+      intervalMs: BACKSTAGE_NOTION_SYNC_INTERVAL_MIN_MS,
       sync,
-    })).resolves.toEqual({
-      configuredUniverses: 0,
-      currentBeforeSync: 0,
-      syncAttempted: false,
-      activated: 0,
-      unchanged: 0,
+      logger: testLogger,
+      reportBootstrapLifecycle: true,
     });
-    expect(loadActiveInventory).not.toHaveBeenCalled();
+    // jobRunner commits the sentinel synchronously after installing this timer.
+    processReady = true;
+
     expect(sync).not.toHaveBeenCalled();
+    expect(loggerInfo).toHaveBeenCalledWith(
+      'backstage.notion_sync.bootstrap_scheduled',
+      expect.objectContaining({ processReady: false, syncInProgress: false })
+    );
+
+    await jest.advanceTimersByTimeAsync(0);
+    expect(sync).toHaveBeenCalledTimes(1);
+    expect(processReady).toBe(true);
+    expect(loggerInfo).toHaveBeenCalledWith(
+      'backstage.notion_sync.bootstrap_started',
+      expect.objectContaining({ syncInProgress: true })
+    );
+
+    await jest.advanceTimersByTimeAsync(300_001);
+    expect(sync).toHaveBeenCalledTimes(1);
+    expect(processReady).toBe(true);
+    expect(loggerInfo).not.toHaveBeenCalledWith(
+      'backstage.notion_sync.bootstrap_completed',
+      expect.anything()
+    );
+
+    coldSync.resolve([syncResult('activated')]);
+    await jest.advanceTimersByTimeAsync(0);
+    expect(processReady).toBe(true);
+    expect(loggerInfo).toHaveBeenCalledWith(
+      'backstage.notion_sync.bootstrap_completed',
+      expect.objectContaining({
+        syncInProgress: false,
+        syncOutcome: 'activated',
+      })
+    );
+
+    handle.stop();
   });
 
-  it('passes readiness from current inventory without calling the Notion sync', async () => {
-    const loadActiveInventory = jest.fn(async () => inventory(true));
-    const sync = jest.fn(async () => []);
-
-    await expect(ensureBackstageNotionWorkerReadiness({
-      readConfiguration: () => validConfiguration,
-      repository: { loadActiveInventory },
-      sync,
-    })).resolves.toEqual({
-      configuredUniverses: 1,
-      currentBeforeSync: 1,
-      syncAttempted: false,
-      activated: 0,
-      unchanged: 0,
-    });
-    expect(loadActiveInventory).toHaveBeenCalledTimes(1);
-    expect(loadActiveInventory).toHaveBeenCalledWith(universeId);
-    expect(sync).not.toHaveBeenCalled();
-  });
-
-  it.each([2_049, 2_307, 4_096])(
-    'treats a complete %d-chunk active inventory as reader-compatible',
-    async chunkCount => {
-      const loadActiveInventory = jest.fn(async () => inventory(true, chunkCount));
-      const sync = jest.fn(async () => []);
-
-      await expect(ensureBackstageNotionWorkerReadiness({
-        readConfiguration: () => validConfiguration,
-        repository: { loadActiveInventory },
-        sync,
-      })).resolves.toMatchObject({
-        currentBeforeSync: 1,
-        syncAttempted: false,
-      });
-      expect(sync).not.toHaveBeenCalled();
-    }
-  );
-
-  it.each([0, -1, 1.5, 4_097])(
-    'never treats an invalid %p-chunk active inventory as current',
-    async chunkCount => {
-      const loadActiveInventory = jest.fn(async () => inventory(true, chunkCount));
-      const sync = jest.fn(async () => [syncResult('lease-busy')]);
-
-      await expect(ensureBackstageNotionWorkerReadiness({
-        readConfiguration: () => validConfiguration,
-        repository: { loadActiveInventory },
-        sync,
-      })).rejects.toMatchObject({
-        code: BACKSTAGE_NOTION_WORKER_READINESS_ERROR_CODE,
-        reason: 'sync-result-incomplete',
-      });
-      expect(sync).toHaveBeenCalledTimes(1);
-    }
-  );
-
-  it.each(['activated', 'unchanged'] as const)(
-    'admits readiness after a successful %s upgrade and current inventory reload',
-    async status => {
-      const loadActiveInventory = jest.fn()
-        .mockResolvedValueOnce(inventory(false))
-        .mockResolvedValueOnce(inventory(true));
+  it.each([
+    ['lease-busy', 'info', 'backstage.notion_sync.bootstrap_lease_busy'],
+    ['failed', 'warn', 'backstage.notion_sync.bootstrap_failed'],
+  ] as const)(
+    'keeps bootstrap asynchronous when the first cycle is %s',
+    async (status, level, event) => {
       const sync = jest.fn(async () => [syncResult(status)]);
-
-      await expect(ensureBackstageNotionWorkerReadiness({
-        readConfiguration: () => validConfiguration,
-        repository: { loadActiveInventory },
+      const handle = startBackstageNotionSyncLoop({
+        intervalMs: BACKSTAGE_NOTION_SYNC_INTERVAL_MIN_MS,
         sync,
-      })).resolves.toEqual({
-        configuredUniverses: 1,
-        currentBeforeSync: 0,
-        syncAttempted: true,
-        activated: status === 'activated' ? 1 : 0,
-        unchanged: status === 'unchanged' ? 1 : 0,
+        logger: testLogger,
+        reportBootstrapLifecycle: true,
       });
-      expect(loadActiveInventory).toHaveBeenCalledTimes(2);
+      const processReady = true;
+
+      await jest.advanceTimersByTimeAsync(0);
+
+      expect(processReady).toBe(true);
       expect(sync).toHaveBeenCalledTimes(1);
+      expect(level === 'info' ? loggerInfo : loggerWarn).toHaveBeenCalledWith(
+        event,
+        expect.objectContaining({
+          syncInProgress: false,
+        })
+      );
+
+      handle.stop();
     }
   );
-
-  it.each(['lease-busy', 'failed'] as const)(
-    'fails readiness when the required upgrade result is %s',
-    async status => {
-      const loadActiveInventory = jest.fn(async () => inventory(false));
-      const sync = jest.fn(async () => [syncResult(status)]);
-
-      await expect(ensureBackstageNotionWorkerReadiness({
-        readConfiguration: () => validConfiguration,
-        repository: { loadActiveInventory },
-        sync,
-      })).rejects.toMatchObject({
-        code: BACKSTAGE_NOTION_WORKER_READINESS_ERROR_CODE,
-        reason: 'sync-result-incomplete',
-      });
-      expect(loadActiveInventory).toHaveBeenCalledTimes(1);
-    }
-  );
-
-  it('fails readiness when synchronization omits one configured authority', async () => {
-    const secondUniverseId = 'secondary-universe';
-    const twoRootConfiguration: BackstageNotionAuthorityConfiguration = {
-      status: 'valid',
-      roots: [
-        ...validConfiguration.roots,
-        {
-          universeId: secondUniverseId,
-          rootPageId: '31f5a0ff-752e-8065-a204-e1735b744185',
-          displayName: 'Secondary Universe',
-        },
-      ],
-    };
-    const loadActiveInventory = jest.fn(async () => null);
-    const sync = jest.fn(async () => [syncResult('activated')]);
-
-    await expect(ensureBackstageNotionWorkerReadiness({
-      readConfiguration: () => twoRootConfiguration,
-      repository: { loadActiveInventory },
-      sync,
-    })).rejects.toMatchObject({
-      code: BACKSTAGE_NOTION_WORKER_READINESS_ERROR_CODE,
-      reason: 'sync-result-incomplete',
-    });
-    expect(loadActiveInventory).toHaveBeenCalledTimes(2);
-    expect(loadActiveInventory).toHaveBeenCalledWith(secondUniverseId);
-  });
-
-  it('fails readiness when a successful sync does not leave current page metadata', async () => {
-    const loadActiveInventory = jest.fn(async () => inventory(false));
-    const sync = jest.fn(async () => [syncResult('activated')]);
-
-    await expect(ensureBackstageNotionWorkerReadiness({
-      readConfiguration: () => validConfiguration,
-      repository: { loadActiveInventory },
-      sync,
-    })).rejects.toMatchObject({
-      code: BACKSTAGE_NOTION_WORKER_READINESS_ERROR_CODE,
-      reason: 'index-not-current',
-    });
-    expect(loadActiveInventory).toHaveBeenCalledTimes(2);
-  });
-
-  it('fails readiness before repository or provider work for invalid configuration', async () => {
-    const invalidConfiguration: BackstageNotionAuthorityConfiguration = {
-      status: 'invalid',
-      roots: [],
-      reason: 'invalid_shape',
-    };
-    const loadActiveInventory = jest.fn(async () => null);
-    const sync = jest.fn(async () => []);
-
-    await expect(ensureBackstageNotionWorkerReadiness({
-      readConfiguration: () => invalidConfiguration,
-      repository: { loadActiveInventory },
-      sync,
-    })).rejects.toMatchObject({
-      code: BACKSTAGE_NOTION_WORKER_READINESS_ERROR_CODE,
-      reason: 'configuration-invalid',
-    });
-    expect(loadActiveInventory).not.toHaveBeenCalled();
-    expect(sync).not.toHaveBeenCalled();
-  });
-
-  it('fails readiness immediately for caller and reasonless abort signals', async () => {
-    const callerReason = new Error('test-only readiness shutdown');
-    const callerController = new AbortController();
-    callerController.abort(callerReason);
-
-    await expect(ensureBackstageNotionWorkerReadiness({
-      signal: callerController.signal,
-    })).rejects.toBe(callerReason);
-    await expect(ensureBackstageNotionWorkerReadiness({
-      signal: {
-        aborted: true,
-        reason: undefined,
-      } as AbortSignal,
-    })).rejects.toThrow('Backstage Notion worker readiness aborted.');
-  });
 
   it('runs immediately and schedules each recurring cycle after completion', async () => {
     const sync = jest.fn(async () => []);
@@ -372,9 +198,10 @@ describe('Backstage Notion synchronization loop', () => {
     expect(sync).toHaveBeenCalledTimes(1);
     expect(loggerWarn).toHaveBeenCalledWith(
       'backstage.notion_rag.sync_cycle_failed',
-      expect.objectContaining({ module: 'backstage-notion-sync' }),
-      { errorMessage: 'test-only synchronization failure' },
-      expect.any(Error)
+      expect.objectContaining({ module: 'backstage-notion-sync' })
+    );
+    expect(JSON.stringify(loggerWarn.mock.calls)).not.toContain(
+      'test-only synchronization failure'
     );
 
     await jest.advanceTimersByTimeAsync(BACKSTAGE_NOTION_SYNC_INTERVAL_MIN_MS);
@@ -387,11 +214,43 @@ describe('Backstage Notion synchronization loop', () => {
     handle.stop();
   });
 
-  it('surfaces a swallowed worker budget pause before classifying a sync result', async () => {
+  it('keeps bootstrap failure telemetry and repeated shutdown fail-safe', async () => {
+    const sync = jest.fn()
+      .mockRejectedValue(new Error('test-only synchronization failure'));
+    const throwingLogger = {
+      info: jest.fn(() => {
+        throw new Error('test-only info logger failure');
+      }),
+      warn: jest.fn(() => {
+        throw new Error('test-only warn logger failure');
+      }),
+    };
+    const handle = startBackstageNotionSyncLoop({
+      intervalMs: BACKSTAGE_NOTION_SYNC_INTERVAL_MIN_MS,
+      sync,
+      logger: throwingLogger,
+      reportBootstrapLifecycle: true,
+    });
+
+    await expect(jest.advanceTimersByTimeAsync(0)).resolves.toBeUndefined();
+    expect(sync).toHaveBeenCalledTimes(1);
+    expect(throwingLogger.warn).toHaveBeenCalledWith(
+      'backstage.notion_sync.bootstrap_failed',
+      expect.objectContaining({
+        syncInProgress: false,
+        syncOutcome: 'failed',
+      })
+    );
+
+    expect(() => handle.stop()).not.toThrow();
+    expect(() => handle.stop()).not.toThrow();
+  });
+
+  it('keeps process readiness intact when callback-free authority budget pauses', async () => {
     const budgetError = new WorkerAiCallBudgetPausedError(
       '2026-08-30T15:00:00.000Z'
     );
-    const onOperationalFailure = jest.fn();
+    const processReady = true;
     const sync = jest.fn(async () => {
       try {
         await instrumentOpenAIOperation({
@@ -414,18 +273,26 @@ describe('Backstage Notion synchronization loop', () => {
         statsWorkerId: 'async-queue',
         workerId: 'async-queue-slot-1',
         maxCallsPerHour: 120,
-        onOperationalFailure,
       },
+      reportBootstrapLifecycle: true,
     });
 
     await jest.advanceTimersByTimeAsync(0);
 
-    expect(onOperationalFailure).toHaveBeenCalledWith(budgetError);
+    expect(processReady).toBe(true);
     expect(loggerWarn).toHaveBeenCalledWith(
       'backstage.notion_rag.sync_cycle_failed',
-      expect.objectContaining({ module: 'backstage-notion-sync' }),
-      { errorMessage: budgetError.message },
-      budgetError
+      expect.objectContaining({ module: 'backstage-notion-sync' })
+    );
+    expect(loggerWarn).toHaveBeenCalledWith(
+      'backstage.notion_sync.bootstrap_failed',
+      expect.objectContaining({
+        syncInProgress: false,
+        syncOutcome: 'failed',
+      })
+    );
+    expect(JSON.stringify(loggerWarn.mock.calls)).not.toContain(
+      budgetError.message
     );
     expect(loggerWarn).not.toHaveBeenCalledWith(
       'backstage.notion_rag.sync_cycle_completed_with_failures',
@@ -546,7 +413,7 @@ describe('Backstage Notion synchronization loop', () => {
       .toBe(BACKSTAGE_NOTION_SYNC_INTERVAL_DEFAULT_MS);
   });
 
-  it('shares one coordinator across queue slots before starting recurring loops', () => {
+  it('commits core readiness before either asynchronous authority cycle can run', () => {
     const source = fs
       .readFileSync(path.resolve('src/workers/jobRunner.ts'), 'utf8')
       .replace(/\r\n/gu, '\n');
@@ -557,33 +424,17 @@ describe('Backstage Notion synchronization loop', () => {
       'initializeWorkerOpenAIAdapterIfConfigured();',
       databaseBootstrapIndex
     );
-    const preliminaryPartitionPolicyIndex = source.indexOf(
-      'const preliminaryBackstageNotionPartitionPolicy =',
+    const configurationPreflightIndex = source.indexOf(
+      'validateBackstageNotionSynchronizationConfiguration();',
       adapterInitializationIndex
-    );
-    const partitionEvidenceIndex = source.indexOf(
-      'await loadBackstageNotionPartitionCutoverGateEvidenceSet(',
-      preliminaryPartitionPolicyIndex
     );
     const partitionPolicyIndex = source.indexOf(
       'const backstageNotionPartitionPolicy =',
-      partitionEvidenceIndex
-    );
-    const startupReadinessRecoveryIndex = source.indexOf(
-      'await waitForWorkerStartupReadiness({',
-      partitionPolicyIndex
-    );
-    const readinessGateIndex = source.indexOf(
-      'attempt: () => runBackstageNotionWorkerReadinessGate(',
-      startupReadinessRecoveryIndex
-    );
-    const notionReadinessIndex = source.indexOf(
-      '() => ensureBackstageNotionWorkerReadiness({',
-      readinessGateIndex
+      configurationPreflightIndex
     );
     const coordinatorIndex = source.indexOf(
       'createBackstageNotionSynchronizationCoordinator()',
-      notionReadinessIndex
+      partitionPolicyIndex
     );
     const executorIndex = source.indexOf(
       'createBackstageNotionPartitionSyncJobExecutor({',
@@ -601,40 +452,36 @@ describe('Backstage Notion synchronization loop', () => {
       'await commitAllWorkerSlotsReadyOrThrow(',
       executorInjectionIndex
     );
-    const readinessSignalIndex = source.indexOf(
-      'emitWorkerBootstrapReadySignal()',
+    const syncStartIndex = source.indexOf(
+      'backstageNotionLoopHandles.monolith = startBackstageNotionSyncLoop({',
       readinessBarrierIndex
     );
-    const syncStartIndex = source.indexOf(
-      'backstageNotionSyncHandle = startBackstageNotionSyncLoop({',
-      coordinatorIndex
-    );
     const shadowStartIndex = source.indexOf(
-      'backstageNotionPartitionShadowHandle = startBackstageNotionPartitionShadowLoop({',
+      'startBackstageNotionPartitionShadowLoop({',
       syncStartIndex
+    );
+    const readinessSignalIndex = source.indexOf(
+      'emitWorkerBootstrapReadySignal()',
+      shadowStartIndex
     );
     const runtimeBarrierIndex = source.indexOf(
       'await Promise.all(slotRuntimePromises)',
-      shadowStartIndex
+      readinessSignalIndex
     );
     const syncDrainIndex = source.indexOf(
-      'backstageNotionSyncHandle?.stopAndDrain()',
+      'backstageNotionLoopHandles.monolith?.stopAndDrain()',
       runtimeBarrierIndex
     );
     const shadowDrainIndex = source.indexOf(
-      'backstageNotionPartitionShadowHandle?.stopAndDrain()',
+      'backstageNotionLoopHandles.partition?.stopAndDrain()',
       runtimeBarrierIndex
     );
 
     expect([
       databaseBootstrapIndex,
       adapterInitializationIndex,
-      preliminaryPartitionPolicyIndex,
-      partitionEvidenceIndex,
+      configurationPreflightIndex,
       partitionPolicyIndex,
-      startupReadinessRecoveryIndex,
-      readinessGateIndex,
-      notionReadinessIndex,
       coordinatorIndex,
       executorIndex,
       slotStartIndex,
@@ -648,32 +495,33 @@ describe('Backstage Notion synchronization loop', () => {
       shadowDrainIndex,
     ]).not.toContain(-1);
     expect(databaseBootstrapIndex).toBeLessThan(adapterInitializationIndex);
-    expect(adapterInitializationIndex).toBeLessThan(preliminaryPartitionPolicyIndex);
-    expect(preliminaryPartitionPolicyIndex).toBeLessThan(partitionEvidenceIndex);
-    expect(partitionEvidenceIndex).toBeLessThan(partitionPolicyIndex);
-    expect(partitionPolicyIndex).toBeLessThan(startupReadinessRecoveryIndex);
-    expect(startupReadinessRecoveryIndex).toBeLessThan(readinessGateIndex);
-    expect(readinessGateIndex).toBeLessThan(notionReadinessIndex);
-    expect(notionReadinessIndex).toBeLessThan(coordinatorIndex);
+    expect(adapterInitializationIndex).toBeLessThan(configurationPreflightIndex);
+    expect(configurationPreflightIndex).toBeLessThan(partitionPolicyIndex);
+    expect(partitionPolicyIndex).toBeLessThan(coordinatorIndex);
     expect(coordinatorIndex).toBeLessThan(executorIndex);
     expect(executorIndex).toBeLessThan(slotStartIndex);
     expect(slotStartIndex).toBeLessThan(executorInjectionIndex);
     expect(executorInjectionIndex).toBeLessThan(readinessBarrierIndex);
-    expect(readinessBarrierIndex).toBeLessThan(readinessSignalIndex);
-    expect(readinessSignalIndex).toBeLessThan(syncStartIndex);
+    expect(readinessBarrierIndex).toBeLessThan(syncStartIndex);
     expect(syncStartIndex).toBeLessThan(shadowStartIndex);
-    expect(shadowStartIndex).toBeLessThan(runtimeBarrierIndex);
+    expect(shadowStartIndex).toBeLessThan(readinessSignalIndex);
+    expect(readinessSignalIndex).toBeLessThan(runtimeBarrierIndex);
     expect(runtimeBarrierIndex).toBeLessThan(syncDrainIndex);
     expect(runtimeBarrierIndex).toBeLessThan(shadowDrainIndex);
     expect(source.indexOf('await Promise.all([', runtimeBarrierIndex))
       .toBeLessThan(syncDrainIndex);
     expect(source).not.toContain('await startBackstageNotionSyncLoop(');
     expect(source).not.toContain('await startBackstageNotionPartitionShadowLoop(');
+    expect(source).not.toContain(
+      'await loadBackstageNotionPartitionCutoverGateEvidenceSet('
+    );
+    expect(source).not.toContain('ensureBackstageNotionWorkerReadiness');
+    expect(source).not.toContain('runBackstageNotionWorkerReadinessGate');
     expect(source).toContain(
       'cutoverEvidence: backstageNotionPartitionCutoverEvidence'
     );
     expect(source).toContain(
-      'loadCutoverEvidence:\n        loadBackstageNotionPartitionCutoverGateEvidenceSet'
+      'loadCutoverEvidence:\n                loadBackstageNotionPartitionCutoverGateEvidenceSet'
     );
   });
 
@@ -710,57 +558,4 @@ describe('Backstage Notion synchronization loop', () => {
     expect(adapterInitializationIndex).toBeGreaterThan(providerRuntimeSyncIndex);
   });
 
-  it('uses the production readiness dependency defaults with a bounded signal', async () => {
-    const loadActiveInventory = jest.fn()
-      .mockResolvedValueOnce(inventory(false))
-      .mockResolvedValueOnce(inventory(true));
-    const getRepository = jest.fn(() => ({ loadActiveInventory }));
-    const readConfiguration = jest.fn(() => validConfiguration);
-    const sync = jest.fn(async () => [syncResult('activated')]);
-
-    jest.resetModules();
-    jest.unstable_mockModule(
-      '@core/db/repositories/backstageNotionRagRepository.js',
-      () => ({ getBackstageNotionRagRepository: getRepository })
-    );
-    jest.unstable_mockModule(
-      '@services/backstageNotionAuthority.js',
-      () => ({ readBackstageNotionAuthorityConfiguration: readConfiguration })
-    );
-    jest.unstable_mockModule(
-      '@services/backstageNotionSync.js',
-      () => ({
-        BACKSTAGE_NOTION_RAG_INDEX_FORMAT,
-        syncConfiguredBackstageNotionAuthorities: sync,
-      })
-    );
-
-    try {
-      const defaultsModule = await import(
-        '../src/workers/backstageNotionSyncLoop.js'
-      );
-      const controller = new AbortController();
-
-      await expect(defaultsModule.ensureBackstageNotionWorkerReadiness({
-        signal: controller.signal,
-      })).resolves.toEqual({
-        configuredUniverses: 1,
-        currentBeforeSync: 0,
-        syncAttempted: true,
-        activated: 1,
-        unchanged: 0,
-      });
-      expect(readConfiguration).toHaveBeenCalledTimes(1);
-      expect(getRepository).toHaveBeenCalledTimes(1);
-      expect(sync).toHaveBeenCalledWith({ signal: controller.signal });
-      expect(loadActiveInventory).toHaveBeenCalledTimes(2);
-    } finally {
-      jest.unstable_unmockModule(
-        '@core/db/repositories/backstageNotionRagRepository.js'
-      );
-      jest.unstable_unmockModule('@services/backstageNotionAuthority.js');
-      jest.unstable_unmockModule('@services/backstageNotionSync.js');
-      jest.resetModules();
-    }
-  });
 });

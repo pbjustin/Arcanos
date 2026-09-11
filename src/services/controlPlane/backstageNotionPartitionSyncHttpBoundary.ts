@@ -50,6 +50,10 @@ export type BackstageNotionPartitionSyncHttpOperation =
   | Readonly<{
       kind: 'diagnostics';
       universeId: string;
+    }>
+  | Readonly<{
+      kind: 'authorityStatus';
+      universeId: string;
     }>;
 
 type BackstageNotionPartitionSyncBoundaryRequest = Request & {
@@ -77,6 +81,11 @@ const PRINCIPAL_POLICIES: Readonly<
   },
   diagnostics: {
     bucketName: 'backstage-notion-partition-diagnostics',
+    maxRequests: 120,
+    windowMs: BACKSTAGE_NOTION_PARTITION_STATUS_RATE_LIMIT_WINDOW_MS,
+  },
+  authorityStatus: {
+    bucketName: 'backstage-notion-authority-status',
     maxRequests: 120,
     windowMs: BACKSTAGE_NOTION_PARTITION_STATUS_RATE_LIMIT_WINDOW_MS,
   },
@@ -156,6 +165,11 @@ export function resolveBackstageNotionPartitionSyncHttpOperation(
   if (segments.length === 2 && segments[1] === 'diagnostics') {
     return method === 'GET'
       ? Object.freeze({ kind: 'diagnostics' as const, universeId })
+      : null;
+  }
+  if (segments.length === 2 && segments[1] === 'authority-status') {
+    return method === 'GET'
+      ? Object.freeze({ kind: 'authorityStatus' as const, universeId })
       : null;
   }
   if (segments[1] !== 'syncs') {

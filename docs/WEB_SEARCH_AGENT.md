@@ -36,7 +36,7 @@ This feature adds a grounded web-search pipeline to ARCANOS.
 4. Resolve the provider through a registry.
 5. Search for URLs.
 6. Filter and deduplicate results.
-7. Fetch page content using `fetchAndClean()`.
+7. Fetch page content using `fetchAndCleanDocument()`.
 8. Create a `SearchPacket` for each fetched source, including a bounded cleaned-text snapshot for replay and memory handoff.
 9. Before optional traversal, check the earlier CLEAR decision; when it is not `block`, traverse extracted `[LINKS]` using the bounded click-through loop.
 10. Before optional synthesis, check provider configuration and the CLEAR decision; when configured and not blocked, synthesize a cited answer from fetched packets.

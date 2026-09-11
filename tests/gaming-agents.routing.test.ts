@@ -353,8 +353,8 @@ describe('Gaming agent routing model', () => {
       },
     });
 
-    expect(result.data.response).toContain('Backend-supported: Guide to beating Malenia');
-    expect(result.data.response).not.toContain('Backend-supported: ###');
+    expect(result.data.response).toContain('Quick Answer\nGuide to beating Malenia');
+    expect(result.data.response).not.toContain('Backend-supported:');
   });
 
   it('preserves the exact backend payload schema and URL values', () => {
@@ -377,6 +377,8 @@ describe('Gaming agent routing model', () => {
         mode: 'guide',
         prompt: 'Use these guides.',
         game: 'SWTOR',
+        platform: 'PC',
+        role: 'tank',
         url: ' https://example.com/a ',
         urls: ['https://example.com/b', ' https://example.com/c '],
         guideUrls: ['https://example.com/d'],
@@ -384,6 +386,16 @@ describe('Gaming agent routing model', () => {
         hrc: true,
       },
     });
+  });
+
+  it.each(['Kingdom Hearts HD 1.5 Remix', 'Kingdom Hearts'])('preserves the explicit game identity %s despite a source URL', (game) => {
+    const intent = IntentRouterAgent.classify({
+      mode: 'guide', game, prompt: 'Where should I go next?',
+      guideUrl: 'https://archive.org/details/KingdomHeartsHD1.5RemixGuide',
+    });
+
+    expect(intent.game).toBe(game);
+    expect(BackendQueryAgent.build({ ...intent, mode: 'guide' }).payload.game).toBe(game);
   });
 
   it.each([

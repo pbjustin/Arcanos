@@ -222,6 +222,8 @@ export interface TrinityResult {
     resilience: number;
     overall: number;
   };
+  /** Gaming final-answer assessment. Never a reasoning-ledger score or probability. */
+  gamingClearAudit?: import('@shared/gaming/gamingClearPolicy.js').GamingClearAssessment;
   judgedFeedback?: {
     enabled: boolean;
     attempted: boolean;
@@ -246,6 +248,16 @@ export interface TrinityResult {
 }
 
 export interface TrinityRunOptions {
+  /** Server-owned Gaming audit of the composed final text; never read from request JSON. */
+  gamingClearAnswerAudit?: (
+    text: string,
+    runtimeBudget: import('@platform/resilience/runtimeBudget.js').RuntimeBudget
+  ) => Promise<{
+    assessment: import('@shared/gaming/gamingClearPolicy.js').GamingClearAssessment;
+    usage?: TrinityMetaTokens;
+  }>;
+  /** Server-owned Gaming guide task-card policy; the writing facade verifies the module and route. */
+  gamingGuideIntakePolicy?: 'compact-v1';
   dryRun?: boolean;
   dryRunReason?: string;
   /** Disable non-essential feedback and self-improvement writes for tightly bounded workflows. */

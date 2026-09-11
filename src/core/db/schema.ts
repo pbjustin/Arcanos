@@ -11,6 +11,7 @@ import { redactString } from '@shared/redaction.js';
 import { getPool, isDatabaseConnected } from './client.js';
 import { BACKSTAGE_NOTION_PARTITION_STORAGE_TABLE_DEFINITIONS } from './backstageNotionPartitionStorageSchema.js';
 import { BACKSTAGE_NOTION_PARTITION_CUTOVER_EVIDENCE_TABLE_DEFINITIONS } from './backstageNotionPartitionCutoverEvidenceSchema.js';
+import { GPT_ACCESS_DEVICE_TABLE_DEFINITIONS } from './gptAccessDeviceSchema.js';
 import {
   BACKSTAGE_NOTION_SYNC_ATTEMPT_OUTCOMES,
   BACKSTAGE_NOTION_SYNC_FAILURE_PHASES,
@@ -1420,6 +1421,7 @@ export const BACKSTAGE_NOTION_RAG_TABLE_DEFINITIONS = [
 
 // Database Table Definitions
 export const TABLE_DEFINITIONS = [
+  ...GPT_ACCESS_DEVICE_TABLE_DEFINITIONS,
   // Saves table for persistence operations
   `CREATE TABLE IF NOT EXISTS saves (
     id SERIAL PRIMARY KEY,

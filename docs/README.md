@@ -63,6 +63,9 @@ ownership, lifecycle, consolidation, and validation rules.
 | Document | Lifecycle | Scope |
 | --- | --- | --- |
 | [Arcanos Gaming Custom GPT](ARCANOS_GAMING_CUSTOM_GPT.md) | Docs-as-contract | Builder instructions and OpenAPI contract expectations. |
+| [Gaming guide assistance](GAMING_GUIDE_ASSISTANCE.md) | Companion | Player context, guide intake, lexical retrieval, spoiler/depth policy, and deterministic evaluation. |
+| [Gaming source acquisition](GAMING_SOURCE_ACQUISITION.md) | Companion | URL admission, protected redirects, provenance, and acquisition limits. |
+| [Gaming structured evidence](GAMING_STRUCTURED_EVIDENCE.md) | Companion | Bounded table/list/JSON extraction, claim sufficiency, provenance, refresh, and regression evidence. |
 | [Backstage Booker Custom GPT](BACKSTAGE_BOOKER_CUSTOM_GPT.md) | Docs-as-contract | End-user workflow, scoped Notion continuity queries, mandatory CLEAR-guided generation, simulation, protected exact reads, approval-gated canon writes, Builder setup, rotation, and rollback. |
 | [Backstage Booker GPT Builder instructions](BACKSTAGE_BOOKER_GPT_BUILDER_INSTRUCTIONS.md) | Docs-as-contract | Copy-ready protected-authority and no-local-fallback instructions for the live GPT Builder. |
 | [MCP server](ARCANOS_MCP_SERVER.md) | Companion | Current MCP transports, tools, principals, and gates. |
@@ -77,6 +80,7 @@ ownership, lifecycle, consolidation, and validation rules.
 | [GPT Access gateway](gpt-access-gateway.md) | Canonical | Protected control-plane API, dispatch, scopes, and safety. |
 | [GPT client identity registry](GPT_CLIENT_IDENTITY.md) | Canonical | Registered authenticated clients, model-identity assurance, durable queue provenance, telemetry, and future OAuth boundaries. |
 | [Local-agent capability bridge](LOCAL_AGENT_CAPABILITY_BRIDGE.md) | Canonical | Protected TypeScript-to-Python execution protocol, local setup, and preview verification. |
+| [iPhone voice client](../clients/ios/README.md) | Canonical | Swift edge client, Siri/App Intents, local inference, Gateway contract derivation, confirmation, and pairing prerequisite. |
 | [Memory backend](MEMORY_BACKEND_USAGE.md) | Canonical | Persistence semantics and safe usage. |
 | [Predictive self-healing](PREDICTIVE_SELF_HEALING.md) | Companion | Predictive healing configuration and execution. |
 | [Productivity system](PRODUCTIVITY_SYSTEM.md) | Canonical | Conversational productivity capability contracts, lifecycle rules, and persistence. |

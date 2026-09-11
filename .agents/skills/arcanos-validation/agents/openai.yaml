@@ -1,0 +1,3 @@
+interface:
+  display_name: "ARCANOS Validation"
+  short_description: "Choose and run scoped ARCANOS validation checks"

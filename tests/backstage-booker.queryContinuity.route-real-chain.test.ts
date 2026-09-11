@@ -46,6 +46,9 @@ jest.unstable_mockModule('@core/db/repositories/backstageNotionRagRepository.js'
 }));
 
 jest.unstable_mockModule('@core/db/repositories/backstageNotionSyncStatusRepository.js', () => ({
+  getBackstageNotionMonolithAuthorityStatusRepository: () => ({
+    loadMonolithAuthorityOperationalState: jest.fn(),
+  }),
   getBackstageNotionSyncStatusRepository: () => ({
     loadLatestSyncAttempt,
   }),

@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { createGamingClearAssessment, gamingClearHash } from '../src/shared/gaming/gamingClearPolicy.js';
 import {
   QUEUED_GPT_JOB_PRODUCER_CONTRACT_SOURCE,
   QUEUED_GPT_JOB_PRODUCER_CONTRACT_VERSION,
@@ -11,11 +12,48 @@ const getJobByIdMock = jest.fn();
 const persistGamingSourceRevisionMock = jest.fn();
 const getGamingSourceByIdMock = jest.fn();
 const searchActiveGamingKnowledgeMock = jest.fn();
-const fetchAndCleanDocumentMock = jest.fn();
+const resolveGamingDocumentMock = jest.fn();
 const planAutonomousWorkerJobMock = jest.fn();
 const ingestGamingBuildResourceMock = jest.fn();
 
+function sourceApproval(subjectHash: string) {
+  const dimension = { status: 'evaluated' as const, score: 4.5, reasonCodes: ['SYNTHETIC_SUPPORTED_SOURCE'],
+    evidenceRefs: ['synthetic-source'], unresolvedFacts: [] };
+  return createGamingClearAssessment({ profile: 'source', questionProfile: 'walkthrough', sourceRole: 'gameplay_guide',
+    subjectId: 'synthetic-source', subjectHash, contextFingerprint: gamingClearHash('synthetic-context'), evidenceRefs: ['synthetic-source'],
+    gates: { identity: 'verified', compatibility: 'verified', claimSupport: 'verified', freshness: 'verified', provenance: 'verified', security: 'verified' },
+    dimensions: { clarity: dimension, leverage: dimension, efficiency: dimension, alignment: dimension, resilience: dimension } });
+}
+
+function resolvedDocument(url: string, text: string, overrides: Record<string, unknown> = {}) {
+  return {
+    requestedUrl: url,
+    canonicalUrl: url,
+    publicUrl: url,
+    host: new URL(url).hostname,
+    text,
+    contentType: 'text/html',
+    rawDocument: {
+      body: '<html><title>Borderlands 4 Endgame Build</title><body>Useful guide</body></html>',
+      contentType: 'text/html',
+      truncated: false
+    },
+    metadata: { title: 'Borderlands 4 Endgame Build', headings: 'Endgame Build' },
+    extraction: { strategy: 'article', rawTextLength: text.length, cleanedTextLength: text.length },
+    resolution: { resolverId: 'generic-html', resolverVersion: '1', strategy: 'article', documentType: 'html', supportsStructuredExtraction: true },
+    metrics: { rawTextLength: text.length, cleanedTextLength: text.length, truncated: false },
+    ...overrides
+  };
+}
+
 class MockGamingSourceRepositoryUnavailableError extends Error {}
+class MockGamingDocumentAcquisitionError extends Error {
+  acquisition: Record<string, unknown>;
+  constructor(readonly code: string, stage: string, subreason: string, redirectCount = 0, readonly status?: number) {
+    super('Safe acquisition failure');
+    this.acquisition = { stage, subreason, redirectCount, failingHop: redirectCount, ruleId: 'gaming.fixture', policyVersion: 'gaming-https-acquisition-v1' };
+  }
+}
 
 function gamingSourceActorScopeHash(actorKey: string): string {
   return createHash('sha256')
@@ -72,7 +110,7 @@ beforeEach(async () => {
   persistGamingSourceRevisionMock.mockReset();
   getGamingSourceByIdMock.mockReset();
   searchActiveGamingKnowledgeMock.mockReset();
-  fetchAndCleanDocumentMock.mockReset();
+  resolveGamingDocumentMock.mockReset();
   planAutonomousWorkerJobMock.mockReset();
   ingestGamingBuildResourceMock.mockReset();
 
@@ -94,30 +132,10 @@ beforeEach(async () => {
     autonomyState: {},
     planningReasons: []
   });
-  fetchAndCleanDocumentMock.mockImplementation(async (
-    _url: string,
-    _maxChars: number,
-    options: {
-      onRawDocument?: (value: { body: string; contentType: string; truncated: boolean }) => void;
-      onExtraction?: (value: Record<string, unknown>) => void;
-    }
-  ) => {
-    options.onRawDocument?.({
-      body: '<html><title>Borderlands 4 Endgame Build</title><body>Useful guide</body></html>',
-      contentType: 'text/html',
-      truncated: false
-    });
-    options.onExtraction?.({
-      documentTitle: 'Borderlands 4 Endgame Build',
-      headingText: 'Endgame Build',
-      cleanedTextLength: 500
-    });
-    return {
-      text: 'Borderlands 4 endgame build equipment skills rotation '.repeat(12),
-      links: [],
-      combined: ''
-    };
-  });
+  resolveGamingDocumentMock.mockImplementation(async (url: string) => resolvedDocument(
+    url,
+    'Borderlands 4 endgame build equipment skills rotation '.repeat(12)
+  ));
   ingestGamingBuildResourceMock.mockResolvedValue({
     publicUrl: 'https://mobalytics.gg/borderlands-4/builds',
     safeDisplayUrl: 'https://mobalytics.gg/borderlands-4/builds',
@@ -192,10 +210,16 @@ beforeEach(async () => {
     GamingSourceRepositoryUnavailableError: MockGamingSourceRepositoryUnavailableError,
     persistGamingSourceRevision: persistGamingSourceRevisionMock,
     getGamingSourceById: getGamingSourceByIdMock,
-    searchActiveGamingKnowledge: searchActiveGamingKnowledgeMock
+    searchActiveGamingKnowledge: searchActiveGamingKnowledgeMock,
+    findActiveGamingSourceIdentities: jest.fn(async () => [{ sourceId: '019fe3cd-8c01-7f01-8d2d-caa951bc4ba0', gameKey: 'borderlands-4', gameName: 'Borderlands 4' }])
   }));
-  jest.unstable_mockModule('../src/shared/webFetcher.js', () => ({
-    fetchAndCleanDocument: fetchAndCleanDocumentMock
+  jest.unstable_mockModule('../src/services/gamingDocumentResolution.js', () => ({
+    GAMING_DOCUMENT_RESOLVER_VERSION: 'gaming-document-v1',
+    GamingDocumentAcquisitionError: MockGamingDocumentAcquisitionError,
+    resolveGamingDocument: resolveGamingDocumentMock,
+    projectGamingDocumentPublicUrl: (url: string) => url,
+    isResolvedGamingDocumentIdentityVerified: (document: any, url: string) => document.requestedUrl === url,
+    describeGamingDocumentSource: (url: string) => ({ publicUrl: url })
   }));
   jest.unstable_mockModule('../src/services/workerAutonomyService.js', () => ({
     planAutonomousWorkerJob: planAutonomousWorkerJobMock
@@ -236,6 +260,126 @@ beforeEach(async () => {
 });
 
 describe('gaming source ingestion', () => {
+  it('requires write permission and a strict content-bound quality assessment before hybrid enqueue', async () => {
+    const { createApprovedGamingSourceIngestion } = await import('../src/services/gamingSourceIngestion.js');
+    const actorKey = 'synthetic-hybrid-actor';
+    const contentHash = gamingClearHash('synthetic-content');
+    const source = { url: 'https://example.com/guide', game: 'Borderlands 4', contentHash,
+      actorScopeHash: createHash('sha256').update(actorKey).digest('hex'), policyVersion: 'gaming-hybrid-candidates/v1' as const,
+      sourceTrustType: 'supplied' as const, freshness: {}, sourceAssessment: sourceApproval(contentHash) };
+    expect((await createApprovedGamingSourceIngestion([source], 'no-write-1', { actorKey, canStore: false })).statusCode).toBe(403);
+    for (const assessment of [{ ...source.sourceAssessment, overall: 5 },
+      { ...source.sourceAssessment, rubricVersion: 'gaming-clear/v2' }, sourceApproval(gamingClearHash('other-content'))]) {
+      expect((await createApprovedGamingSourceIngestion([{ ...source, sourceAssessment: assessment as any }],
+        'invalid-assessment-1', { actorKey, canStore: true })).statusCode).toBe(400);
+    }
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+  });
+
+  it('never promotes changed hidden structured HTML after hybrid approval of unchanged visible prose', async () => {
+    const { createApprovedGamingSourceIngestion, hashGamingApprovedDocument } = await import('../src/services/gamingSourceIngestion.js');
+    const url = 'https://example.com/borderlands-4-guide';
+    const text = 'Borderlands 4 route guide equipment skills rotation '.repeat(12);
+    const approved = resolvedDocument(url, text);
+    const actorKey = 'hybrid-approved-actor';
+    const queued = await createApprovedGamingSourceIngestion([{
+      url, game: 'Borderlands 4', contentHash: hashGamingApprovedDocument(approved as any),
+      actorScopeHash: createHash('sha256').update(actorKey).digest('hex'),
+      policyVersion: 'gaming-hybrid-candidates/v1', sourceTrustType: 'supplied', freshness: {},
+      sourceAssessment: sourceApproval(hashGamingApprovedDocument(approved as any))
+    }], 'hybrid-hidden-json-1', { actorKey, canStore: true });
+    expect(queued.statusCode).toBe(202);
+    resolveGamingDocumentMock.mockResolvedValue({ ...approved, rawDocument: {
+      body: '<script type="application/json">{"equipment":[{"name":"UNAPPROVED HIDDEN WEAPON"}]}</script>',
+      contentType: 'text/html', truncated: false
+    } });
+    const queuedBody = (findOrCreateGptJobMock.mock.calls[0][0] as any).input.body;
+    const result = await executeQueuedGamingSourceIngestion('019fe3cd-8c01-7f01-8d2d-caa951bc4b9b', queuedBody);
+    expect(result.output.sources[0].status).toBe('stored');
+    expect((ingestGamingBuildResourceMock.mock.calls[0][0] as any).html).toBeUndefined();
+    const persisted = persistGamingSourceRevisionMock.mock.calls[0][0] as any;
+    expect(persisted.provenance.gamingClear).toMatchObject({ rubricVersion: 'gaming-clear/v1', profile: 'source',
+      subjectHash: hashGamingApprovedDocument(approved as any), qualityEligible: true });
+    expect(JSON.stringify(persisted.records)).not.toContain('UNAPPROVED HIDDEN WEAPON');
+    expect(JSON.stringify(persisted.records)).not.toContain('Test Weapon');
+    expect(persisted.records.every((record: any) => !record.normalized.structuredEvidence && !record.normalized.equipment)).toBe(true);
+    expect(persisted.records[0].searchText).toContain('equipment skills rotation');
+  });
+
+  it('reports legacy queued hybrid approval as requiring reassessment without fabricating a pass or invoking acquisition', async () => {
+    const { createApprovedGamingSourceIngestion } = await import('../src/services/gamingSourceIngestion.js');
+    const actorKey = 'legacy-hybrid-actor';
+    const contentHash = gamingClearHash('legacy-approved-content');
+    await createApprovedGamingSourceIngestion([{ url: 'https://example.com/guide', game: 'Borderlands 4', contentHash,
+      actorScopeHash: createHash('sha256').update(actorKey).digest('hex'), policyVersion: 'gaming-hybrid-candidates/v1',
+      sourceTrustType: 'supplied', freshness: {}, sourceAssessment: sourceApproval(contentHash) }], 'legacy-hybrid-1', { actorKey, canStore: true });
+    const body = (findOrCreateGptJobMock.mock.calls[0][0] as any).input.body;
+    delete body.sources[0].hybridApproval.gamingClear;
+    const result = await executeQueuedGamingSourceIngestion('019fe3cd-8c01-7f01-8d2d-caa951bc4b9b', body);
+    expect(result.output).toMatchObject({ status: 'completed_with_errors', sources: [{ status: 'rejected',
+      error: { code: 'APPROVED_ASSESSMENT_REQUIRED', retryable: false } }] });
+    expect(resolveGamingDocumentMock).not.toHaveBeenCalled();
+    expect(persistGamingSourceRevisionMock).not.toHaveBeenCalled();
+  });
+
+  it('preserves the prior revision when refetch truncates to the same approved text', async () => {
+    const { createApprovedGamingSourceIngestion, hashGamingApprovedDocument } = await import('../src/services/gamingSourceIngestion.js');
+    const url = 'https://example.com/borderlands-4-guide';
+    const text = 'Borderlands 4 route guide equipment skills rotation '.repeat(12);
+    const approved = resolvedDocument(url, text);
+    const actorKey = 'hybrid-approved-actor';
+    const approvedHash = hashGamingApprovedDocument(approved as any);
+    const queued = await createApprovedGamingSourceIngestion([{
+      url, game: 'Borderlands 4', contentHash: approvedHash,
+      actorScopeHash: createHash('sha256').update(actorKey).digest('hex'),
+      policyVersion: 'gaming-hybrid-candidates/v1', sourceTrustType: 'supplied', freshness: {}, sourceAssessment: sourceApproval(approvedHash)
+    }], 'hybrid-truncated-refetch-1', { actorKey, canStore: true });
+    expect(queued.statusCode).toBe(202);
+    const queuedBody = (findOrCreateGptJobMock.mock.calls[0][0] as any).input.body;
+    resolveGamingDocumentMock.mockResolvedValue(approved);
+    const stored = await executeQueuedGamingSourceIngestion('019fe3cd-8c01-7f01-8d2d-caa951bc4b9b', queuedBody);
+    expect(stored.output.sources[0].status).toBe('stored');
+    expect(persistGamingSourceRevisionMock).toHaveBeenCalledTimes(1);
+    persistGamingSourceRevisionMock.mockClear();
+    ingestGamingBuildResourceMock.mockClear();
+    const truncated = { ...approved, metrics: { ...approved.metrics, rawTextLength: text.length + 500, truncated: true } };
+    expect(hashGamingApprovedDocument(truncated as any)).toBe(approvedHash);
+    resolveGamingDocumentMock.mockResolvedValue(truncated);
+    const result = await executeQueuedGamingSourceIngestion('019fe3cd-8c01-7f01-8d2d-caa951bc4b9b', queuedBody);
+    expect(result.output.sources[0]).toMatchObject({ status: 'rejected', recordsCreated: 0, recordsUpdated: 0,
+      error: { code: 'APPROVED_CONTENT_CHANGED', retryable: false } });
+    expect(ingestGamingBuildResourceMock).not.toHaveBeenCalled();
+    expect(persistGamingSourceRevisionMock).not.toHaveBeenCalled();
+  });
+
+  it('preserves pre-acquisition-policy idempotency fingerprints for unchanged ingest and legacy refresh', async () => {
+    const canonicalUrl = 'https://example.com/guide';
+    const sourceId = '019fe3cd-8c01-7f01-8d2d-caa951bc4ba0';
+    const context = { actorKey: 'legacy-idempotency-fixture' };
+    const baselineFingerprint = (action: 'ingest' | 'refresh') => createHash('sha256').update(
+      `{"action":"${action}","refreshReason":${action === 'refresh' ? '"user_requested"' : 'null'},"rejected":[],"sources":[{"canonicalUrl":"https://example.com/guide","gameKey":"borderlands-4","patchVersion":null,"sourceId":${action === 'refresh' ? JSON.stringify(sourceId) : 'null'},"sourceTypeHint":"article"}]}`
+    ).digest('hex');
+    await createGamingSourceIngestion({ action: 'ingest', payload: {
+      game: 'Borderlands 4', sourceUrls: [canonicalUrl], sourceTypeHint: 'article', idempotencyKey: 'legacy-ingest-fixture'
+    } }, context);
+    expect(findOrCreateGptJobMock).toHaveBeenLastCalledWith(expect.objectContaining({
+      requestFingerprintHash: baselineFingerprint('ingest')
+    }));
+    const source = { id: sourceId, canonicalUrl, game: 'Borderlands 4', gameKey: 'borderlands-4',
+      sourceType: 'supplied', trustScore: 0.25, latestRevision: { patch: null } };
+    getGamingSourceByIdMock.mockResolvedValue(source);
+    await refreshGamingSources({ action: 'refresh', payload: { sourceIds: [sourceId], idempotencyKey: 'legacy-refresh-fixture' } }, context);
+    expect(findOrCreateGptJobMock).toHaveBeenLastCalledWith(expect.objectContaining({
+      requestFingerprintHash: baselineFingerprint('refresh')
+    }));
+    getGamingSourceByIdMock.mockResolvedValue({ ...source, latestRevision: { patch: null,
+      provenance: { requestedUrl: 'https://example.com/original-guide' } } });
+    await refreshGamingSources({ action: 'refresh', payload: { sourceIds: [sourceId], idempotencyKey: 'legacy-refresh-fixture' } }, context);
+    expect(findOrCreateGptJobMock).toHaveBeenLastCalledWith(expect.objectContaining({
+      requestFingerprintHash: expect.not.stringMatching(baselineFingerprint('refresh'))
+    }));
+  });
+
   it('canonicalizes and deduplicates source URLs before creating one durable job', async () => {
     const response = await createGamingSourceIngestion({
       action: 'ingest',
@@ -286,6 +430,51 @@ describe('gaming source ingestion', () => {
       'https://mobalytics.gg/borderlands-4/builds'
     );
     expect(JSON.stringify(queuedInput)).not.toContain('utm_source');
+  });
+
+  it.each([
+    ['Minecraft', 'Minecraft Dungeons', 'minecraft-dungeons'],
+    ['Elden Ring', 'Elden Ring Shadow of the Erdtree', 'elden-ring-shadow-of-the-erdtree'],
+    ['World of Warcraft', 'World of Warcraft Classic', 'world-of-warcraft-classic']
+  ])('preserves the precise %s variant through enqueue and persistence at the same source URL', async (baseGame, game, gameKey) => {
+    const url = 'https://example.com/shared-guide';
+    const fingerprints: string[] = [];
+    const persistedGameKeys: string[] = [];
+    for (const requestedGame of [baseGame, game]) {
+      const text = `${requestedGame} progression guide. Cross the canyon and activate the tower to open the eastern route. `.repeat(5);
+      resolveGamingDocumentMock.mockResolvedValueOnce(resolvedDocument(url, text, {
+        metadata: { title: `${requestedGame} progression guide`, headings: 'Progression' }
+      }));
+      ingestGamingBuildResourceMock.mockResolvedValueOnce(genericNormalizedGamingSource(text));
+      const response = await createGamingSourceIngestion({
+        action: 'ingest',
+        payload: { game: ` ${requestedGame} `, sourceUrls: [url], idempotencyKey: 'precise-game-identity-ingestion' }
+      }, { actorKey: 'test-actor' });
+
+      expect(response.statusCode).toBe(202);
+      const queued = findOrCreateGptJobMock.mock.calls.at(-1)![0] as {
+        input: { body: { sources: Array<{ game: string; gameKey: string }> } };
+        requestFingerprintHash: string;
+      };
+      expect(queued.input.body.sources[0].game).toBe(requestedGame);
+      const expectedGameKey = requestedGame === game ? gameKey : baseGame.toLowerCase().replaceAll(' ', '-');
+      expect(queued.input.body.sources[0].gameKey).toBe(expectedGameKey);
+      fingerprints.push(queued.requestFingerprintHash);
+
+      const result = await executeQueuedGamingSourceIngestion('019fe3cd-8c01-7f01-8d2d-caa951bc4b9b', queued.input.body);
+      expect(result.output.sources[0].status).toBe('stored');
+      expect(persistGamingSourceRevisionMock).toHaveBeenLastCalledWith(expect.objectContaining({
+        canonicalUrl: url,
+        gameName: requestedGame,
+        gameKey: expectedGameKey,
+        records: expect.arrayContaining([expect.objectContaining({
+          normalized: expect.objectContaining({ game: requestedGame })
+        })])
+      }));
+      persistedGameKeys.push((persistGamingSourceRevisionMock.mock.calls.at(-1)![0] as { gameKey: string }).gameKey);
+    }
+    expect(new Set(fingerprints).size).toBe(2);
+    expect(new Set(persistedGameKeys).size).toBe(2);
   });
 
   it('rejects mismatched idempotency values without enqueueing', async () => {
@@ -418,6 +607,11 @@ describe('gaming source ingestion', () => {
     );
 
     expect(execution.retryable).toBe(false);
+    expect(resolveGamingDocumentMock).toHaveBeenCalledWith(
+      'https://mobalytics.gg/borderlands-4/builds',
+      1_000_000,
+      expect.objectContaining({ includeLinks: false })
+    );
     expect(execution.output).toEqual(expect.objectContaining({
       status: 'completed',
       counts: expect.objectContaining({ succeeded: 1, recordsCreated: 1 }),
@@ -437,9 +631,257 @@ describe('gaming source ingestion', () => {
       provenance: expect.objectContaining({ origin: 'user_supplied' }),
       records: [expect.objectContaining({
         recordType: 'build',
-        payloadHash: expect.stringMatching(/^[a-f0-9]{64}$/)
+        payloadHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+        normalized: expect.objectContaining({ structuredEvidence: 'Endgame Build with Test Weapon' })
       })]
     }));
+  });
+
+  it('retains later structured build facts in the first chunk search text without duplicating them', async () => {
+    const url = 'https://mobalytics.gg/borderlands-4/builds';
+    const text = 'Borderlands 4 endgame route. Follow the canyon and activate the checkpoint. '.repeat(70);
+    const lateFact = 'Rotation: Activate the Zephyrglass Overdrive after the shield breaks.';
+    const evidenceText = `[STRUCTURED BUILD EVIDENCE - EXTRACTED FACTS ONLY]\n${'Equipment: Synthetic reinforced armor with enhanced shield capacity. '.repeat(75)}\n${lateFact}`;
+    expect(evidenceText.indexOf(lateFact)).toBeGreaterThan(4_000);
+    expect(evidenceText.length).toBeLessThan(8_000);
+    resolveGamingDocumentMock.mockResolvedValueOnce(resolvedDocument(url, text));
+    const normalized = await ingestGamingBuildResourceMock();
+    ingestGamingBuildResourceMock.mockResolvedValueOnce({
+      ...normalized,
+      build: { ...normalized.build, rotation: ['Activate the Zephyrglass Overdrive after the shield breaks.'] },
+      evidenceText
+    });
+
+    const result = await executeQueuedGamingSourceIngestion('019fe3cd-8c01-7f01-8d2d-caa951bc4b9b', {
+      action: 'ingest', schemaVersion: '1', submittedCount: 1, rejectedSources: [],
+      sources: [{ submittedIndex: 0, canonicalUrl: url,
+        game: 'Borderlands 4', gameKey: 'borderlands-4', origin: 'user_supplied' }]
+    });
+
+    expect(result.output.sources[0].status).toBe('stored');
+    const persisted = persistGamingSourceRevisionMock.mock.calls[0][0] as {
+      records: Array<{ searchText: string; normalized: { text: string; structuredEvidence?: string } }>;
+    };
+    expect(persisted.records.length).toBeGreaterThan(1);
+    expect(persisted.records[0].searchText).toContain(lateFact);
+    expect(persisted.records[0].normalized.structuredEvidence).toBe(evidenceText);
+    expect(persisted.records.every(record => record.normalized.text.length <= 2_000)).toBe(true);
+    expect(persisted.records.slice(1).every(record => record.normalized.structuredEvidence === undefined
+      && !record.searchText.includes(lateFact))).toBe(true);
+  });
+
+  it('keeps the full structured evidence bound searchable alongside maximum accepted metadata', async () => {
+    const url = 'https://example.org/synthetic-build';
+    const text = `${'Synthetic gameplay route. '.repeat(100).slice(0, 1_999)}X`;
+    const title = 'Synthetic build '.padEnd(500, 't');
+    const game = 'Synthetic Game '.padEnd(120, 'g');
+    const patch = '1.'.padEnd(64, '2');
+    const lateFact = 'Rotation: Activate the Zephyrglass Overdrive after the shield breaks.';
+    const evidenceText = `${'Equipment: Synthetic armor. '.repeat(400).slice(0, 8_000 - lateFact.length)}${lateFact}`;
+    resolveGamingDocumentMock.mockResolvedValueOnce(resolvedDocument(url, text, {
+      metadata: { title: 'Synthetic build' }
+    }));
+    const normalized = await ingestGamingBuildResourceMock();
+    ingestGamingBuildResourceMock.mockResolvedValueOnce({
+      ...normalized, build: { ...normalized.build, title, game, patch }, evidenceText
+    });
+
+    const result = await executeQueuedGamingSourceIngestion('019fe3cd-8c01-7f01-8d2d-caa951bc4b9b', {
+      action: 'ingest', schemaVersion: '1', submittedCount: 1, rejectedSources: [],
+      sources: [{ submittedIndex: 0, canonicalUrl: url,
+        game, gameKey: 'synthetic-game', origin: 'user_supplied' }]
+    });
+
+    expect(result.output.sources[0].status).toBe('stored');
+    const persisted = persistGamingSourceRevisionMock.mock.calls[0][0] as {
+      records: Array<{ searchText: string; normalized: { text: string; structuredEvidence?: string } }>;
+    };
+    expect(persisted.records).toHaveLength(1);
+    expect(persisted.records[0].normalized.text).toHaveLength(2_000);
+    expect(persisted.records[0].normalized.structuredEvidence).toHaveLength(8_000);
+    expect(persisted.records[0].searchText).toBe([text, title, game, patch, evidenceText].join('\n\n'));
+    expect(persisted.records[0].searchText).toHaveLength(10_692);
+  });
+
+  it.each([
+    'Use this guide to defeat every boss in the new expansion. The Borderlands 4 route starts at the village checkpoint.',
+    'Unlike Elden Ring, Borderlands 4 rewards aggressive use of gunfire. Keep moving between cover positions and save ammunition for the boss.'
+  ])('does not interpret gameplay prose as a requested game: %s', async (passage) => {
+    const url = 'https://mobalytics.gg/borderlands-4/builds';
+    const text = passage.repeat(3);
+    resolveGamingDocumentMock.mockResolvedValueOnce(resolvedDocument(url, text));
+    const result = await executeQueuedGamingSourceIngestion('019fe3cd-8c01-7f01-8d2d-caa951bc4b9b', {
+      action: 'ingest', schemaVersion: '1', submittedCount: 1, rejectedSources: [],
+      sources: [{ submittedIndex: 0, canonicalUrl: url,
+        game: 'Borderlands 4', gameKey: 'borderlands-4', origin: 'user_supplied' }]
+    });
+    expect(result.output.sources[0].status).toBe('stored');
+    expect(persistGamingSourceRevisionMock).toHaveBeenCalledWith(expect.objectContaining({
+      cleanedContent: text,
+      gameKey: 'borderlands-4'
+    }));
+  });
+
+  it.each([
+    { url: 'https://example.org/Elden%20Ring/guide', title: 'Borderlands 4 progression guide' },
+    { url: 'https://guides.example.org/article', title: 'Destiny 2 progression guide' }
+  ])('still rejects a source game mismatch from its URL or metadata: $url', async ({ url, title }) => {
+    resolveGamingDocumentMock.mockResolvedValueOnce(resolvedDocument(url, 'Borderlands 4 progression route. '.repeat(10), {
+      metadata: { title }
+    }));
+    const result = await executeQueuedGamingSourceIngestion('019fe3cd-8c01-7f01-8d2d-caa951bc4b9b', {
+      action: 'ingest', schemaVersion: '1', submittedCount: 1, rejectedSources: [],
+      sources: [{ submittedIndex: 0, canonicalUrl: url,
+        game: 'Borderlands 4', gameKey: 'borderlands-4', origin: 'user_supplied' }]
+    });
+    expect(result.output.sources[0]).toMatchObject({ status: 'rejected', error: { code: 'GAME_MISMATCH' } });
+    expect(ingestGamingBuildResourceMock).not.toHaveBeenCalled();
+    expect(persistGamingSourceRevisionMock).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])('reports prose document quality independently of build fields (truncated=%s)', async (truncated) => {
+    const text = 'Borderlands 4 progression guide. Cross the canyon and activate the tower to open the eastern route. '.repeat(30);
+    resolveGamingDocumentMock.mockResolvedValueOnce(resolvedDocument(
+      'https://example.com/generic-guide', text, {
+        metrics: { rawTextLength: text.length + (truncated ? 800 : 0), cleanedTextLength: text.length, truncated },
+        // Raw capture truncation alone must not lower the persisted text quality.
+        rawDocument: { body: '<html></html>', contentType: 'text/html', truncated: true }
+      }
+    ));
+    ingestGamingBuildResourceMock.mockResolvedValueOnce({
+      ...genericNormalizedGamingSource(''),
+      quality: 'metadata-only'
+    });
+    const execution = await executeQueuedGamingSourceIngestion('019fe3cd-8c01-7f01-8d2d-caa951bc4b9b', {
+      action: 'ingest', schemaVersion: '1', submittedCount: 1, rejectedSources: [],
+      sources: [{ submittedIndex: 0, canonicalUrl: 'https://example.com/generic-guide',
+        game: 'Borderlands 4', gameKey: 'borderlands-4', origin: 'user_supplied' }]
+    });
+    expect(execution.output.sources[0].status).toBe('stored');
+    expect(execution.output.sources[0].warnings).toEqual(truncated ? ['EXTRACTION_PARTIAL'] : undefined);
+    expect(persistGamingSourceRevisionMock).toHaveBeenCalledWith(expect.objectContaining({
+      cleanedContent: text.trim(),
+      provenance: expect.objectContaining({ resolverId: 'generic-html', resolverVersion: '1' }),
+      extractionMetrics: expect.objectContaining({
+        extractionQuality: truncated ? 'partial' : 'complete',
+        structuredExtractionQuality: 'not_applicable',
+        documentTruncated: truncated
+      })
+    }));
+  });
+
+  it('retains partial extraction warnings for catalog metadata even when the bounded response is complete', async () => {
+    const text = 'Borderlands 4. Identifier test-guide. Publisher Synthetic Fixtures. Publication date 2026. Download options. Scanner synthetic. Addeddate today. '.repeat(3);
+    resolveGamingDocumentMock.mockResolvedValueOnce(resolvedDocument('https://example.com/catalog', text));
+    ingestGamingBuildResourceMock.mockResolvedValueOnce(genericNormalizedGamingSource(''));
+    const result = await executeQueuedGamingSourceIngestion('019fe3cd-8c01-7f01-8d2d-caa951bc4b9b', {
+      action: 'ingest', schemaVersion: '1', submittedCount: 1, rejectedSources: [],
+      sources: [{ submittedIndex: 0, canonicalUrl: 'https://example.com/catalog',
+        game: 'Borderlands 4', gameKey: 'borderlands-4', origin: 'user_supplied' }]
+    });
+    expect(result.output.sources[0].warnings).toEqual(['EXTRACTION_PARTIAL']);
+    expect(persistGamingSourceRevisionMock).toHaveBeenCalledWith(expect.objectContaining({
+      extractionMetrics: expect.objectContaining({ extractionQuality: 'metadata-only', structuredExtractionQuality: 'not_applicable' })
+    }));
+  });
+
+  it('stores document-only resolver prose as a guide even when its identifier resembles a build URL', async () => {
+    const text = 'Borderlands 4 progression route. Follow the canyon path and activate the eastern beacon to unlock the objective. '.repeat(10);
+    resolveGamingDocumentMock.mockResolvedValueOnce(resolvedDocument('https://archive.org/details/synthetic_build_planner', text, {
+      contentType: 'text/plain', rawDocument: undefined,
+      resolution: { resolverId: 'archive-org', resolverVersion: '1', strategy: 'archive_djvu_text', documentType: 'text', supportsStructuredExtraction: false }
+    }));
+    const result = await executeQueuedGamingSourceIngestion('019fe3cd-8c01-7f01-8d2d-caa951bc4b9b', {
+      action: 'ingest', schemaVersion: '1', submittedCount: 1, rejectedSources: [],
+      sources: [{ submittedIndex: 0, canonicalUrl: 'https://archive.org/details/synthetic_build_planner',
+        game: 'Borderlands 4', gameKey: 'borderlands-4', origin: 'user_supplied' }]
+    });
+    expect(result.output.sources[0]).toMatchObject({ status: 'stored', sourceType: 'article' });
+    expect(result.output.sources[0].warnings).toBeUndefined();
+    expect(persistGamingSourceRevisionMock).toHaveBeenCalledWith(expect.objectContaining({
+      extractionMetrics: expect.objectContaining({ structuredExtractionQuality: 'not_applicable' }),
+      records: [expect.objectContaining({ recordType: 'guide', normalized: expect.not.objectContaining({ equipment: expect.anything() }) })]
+    }));
+  });
+
+  it('keeps the complete bounded guide searchable and hashes a change at its tail on refresh', async () => {
+    const url = 'https://example.com/generic-guide';
+    const prefix = 'Borderlands 4 progression route. '.repeat(6_000).slice(0, 159_900);
+    const initialText = `${prefix}${'x'.repeat(70)} FINAL TOWER PASSAGE ALPHA`.padEnd(160_000, '.');
+    const updatedText = `${initialText.slice(0, -5)}BETA.`;
+    ingestGamingBuildResourceMock.mockResolvedValue(genericNormalizedGamingSource('Normalized metadata. '.repeat(100)));
+    resolveGamingDocumentMock
+      .mockResolvedValueOnce(resolvedDocument(url, initialText))
+      .mockResolvedValueOnce(resolvedDocument(url, initialText))
+      .mockResolvedValueOnce(resolvedDocument(url, updatedText));
+    const queued = {
+      action: 'ingest', schemaVersion: '1', submittedCount: 1, rejectedSources: [],
+      sources: [{ submittedIndex: 0, canonicalUrl: url, game: 'Borderlands 4',
+        gameKey: 'borderlands-4', origin: 'user_supplied' }]
+    };
+    await executeQueuedGamingSourceIngestion('019fe3cd-8c01-7f01-8d2d-caa951bc4b9b', queued);
+    const refresh = { ...queued, action: 'refresh', sources: [{ ...queued.sources[0], origin: 'refresh' }] };
+    await executeQueuedGamingSourceIngestion('019fe3cd-8c01-7f01-8d2d-caa951bc4b9b', refresh);
+    await executeQueuedGamingSourceIngestion('019fe3cd-8c01-7f01-8d2d-caa951bc4b9b', refresh);
+    const writes = persistGamingSourceRevisionMock.mock.calls.map(([value]) => value as {
+      contentHash: string; cleanedContent: string; records: Array<{ searchText: string }>;
+    });
+    expect(writes).toHaveLength(3);
+    expect(writes[0].cleanedContent).toBe(initialText.slice(0, 16_000));
+    expect(writes[0].records.length).toBeGreaterThan(1);
+    expect(writes[0].records.some(record => record.searchText.includes('FINAL TOWER PASSAGE ALPHA'))).toBe(true);
+    expect(writes[1].contentHash).toBe(writes[0].contentHash);
+    expect(writes[2].contentHash).not.toBe(writes[0].contentHash);
+    expect(writes[2].records.at(-1)?.searchText).toContain('BETA.');
+    expect(resolveGamingDocumentMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('propagates cancellation after acquisition without normalizing or persisting a document', async () => {
+    const controller = new AbortController();
+    const aborted = new Error('Synthetic cancellation');
+    resolveGamingDocumentMock.mockImplementationOnce(async (url: string) => {
+      controller.abort(aborted);
+      return resolvedDocument(url, 'Borderlands 4 progression guide. '.repeat(10));
+    });
+    await expect(executeQueuedGamingSourceIngestion('019fe3cd-8c01-7f01-8d2d-caa951bc4b9b', {
+      action: 'ingest', schemaVersion: '1', submittedCount: 1, rejectedSources: [],
+      sources: [{ submittedIndex: 0, canonicalUrl: 'https://example.com/generic-guide',
+        game: 'Borderlands 4', gameKey: 'borderlands-4', origin: 'user_supplied' }]
+    }, { signal: controller.signal })).rejects.toBe(aborted);
+    expect(ingestGamingBuildResourceMock).not.toHaveBeenCalled();
+    expect(persistGamingSourceRevisionMock).not.toHaveBeenCalled();
+  });
+
+  it('revises extraction identity when resolver policy changes without changing persisted content', async () => {
+    const url = 'https://example.com/generic-guide';
+    const text = 'Borderlands 4 progression route. Follow the canyon path to unlock the eastern beacon. '.repeat(10);
+    const document = resolvedDocument(url, text);
+    resolveGamingDocumentMock
+      .mockResolvedValueOnce(document)
+      .mockResolvedValueOnce(document)
+      .mockResolvedValueOnce({
+        ...document,
+        resolution: { ...document.resolution, resolverVersion: '2' }
+      });
+    ingestGamingBuildResourceMock.mockResolvedValue(genericNormalizedGamingSource(''));
+    const body = {
+      action: 'refresh', schemaVersion: '1', submittedCount: 1, rejectedSources: [],
+      sources: [{ submittedIndex: 0, canonicalUrl: url, game: 'Borderlands 4', gameKey: 'borderlands-4', origin: 'refresh' }]
+    };
+    for (let index = 0; index < 3; index += 1) {
+      await executeQueuedGamingSourceIngestion('019fe3cd-8c01-7f01-8d2d-caa951bc4b9b', body);
+    }
+    const writes = persistGamingSourceRevisionMock.mock.calls.map(([value]) => value as {
+      contentHash: string; extractorVersion: string; provenance: Record<string, unknown>;
+    });
+    expect(writes[1].extractorVersion).toBe(writes[0].extractorVersion);
+    expect(writes[2].extractorVersion).not.toBe(writes[0].extractorVersion);
+    expect(writes[2].contentHash).toBe(writes[0].contentHash);
+    expect(writes[2].extractorVersion).toMatch(/^gaming-document-v1:[a-f0-9]{64}$/);
+    expect(writes[2].extractorVersion.length).toBeLessThanOrEqual(120);
+    expect(writes[2].provenance).toMatchObject({
+      resolverVersion: '2', structuredExtractorVersion: '1', documentResolverVersion: 'gaming-document-v1'
+    });
   });
 
   it('keeps an uncorroborated caller patch only as non-authoritative provenance', async () => {
@@ -486,16 +928,97 @@ describe('gaming source ingestion', () => {
     expect(execution.output.sources[0]).not.toHaveProperty('patchVersion');
   });
 
+  it('refreshes the original acquired URL from stored provenance while retaining the existing source key', async () => {
+    const originalUrl = 'https://example.com/original-guide';
+    const canonicalUrl = 'https://example.com/final-guide';
+    const nextUrl = 'https://example.com/updated-guide';
+    const sourceId = '019fe3cd-8c01-7f01-8d2d-caa951bc4ba0';
+    getGamingSourceByIdMock.mockResolvedValue({ id: sourceId, canonicalUrl, game: 'Borderlands 4', gameKey: 'borderlands 4',
+      sourceType: 'official', trustScore: 0.9, latestRevision: { patch: null, provenance: { requestedUrl: originalUrl } } });
+    const queued = await refreshGamingSources({ action: 'refresh', payload: { sourceIds: [sourceId], idempotencyKey: 'redirect-refresh-original-1' } },
+      { actorKey: 'redirect-fixture-actor' });
+    expect(queued.statusCode).toBe(202);
+    const body = (findOrCreateGptJobMock.mock.calls[0][0] as any).input.body;
+    expect(body.sources[0]).toMatchObject({ canonicalUrl, acquisitionUrl: originalUrl, sourceId });
+    const document = resolvedDocument(originalUrl, 'Borderlands 4 route guide save progress before crossing the checkpoint. '.repeat(20), {
+      canonicalUrl: nextUrl, publicUrl: nextUrl,
+      acquisition: { policyVersion: 'gaming-https-acquisition-v1', requestedUrl: originalUrl, finalUrl: nextUrl,
+        redirectCount: 1, transitions: [{ fromUrl: originalUrl, toUrl: nextUrl, classification: 'same_origin', ruleId: 'gaming.redirect.same_origin' }] }
+    });
+    resolveGamingDocumentMock.mockResolvedValue(document);
+    ingestGamingBuildResourceMock.mockResolvedValue(genericNormalizedGamingSource(''));
+    await executeQueuedGamingSourceIngestion('019fe3cd-8c01-7f01-8d2d-caa951bc4b9b', body);
+    expect(resolveGamingDocumentMock).toHaveBeenCalledWith(originalUrl, 1_000_000, expect.any(Object));
+    expect(persistGamingSourceRevisionMock).toHaveBeenCalledWith(expect.objectContaining({ canonicalUrl, publicUrl: nextUrl,
+      sourceType: 'supplied', trustScore: 0.25,
+      provenance: expect.objectContaining({ requestedUrl: originalUrl, finalPublicUrl: nextUrl,
+        acquisition: document.acquisition, finalSourcePolicy: expect.objectContaining({ authority: 'unreviewed' }) }) }));
+  });
+
+  it('binds unchanged prose approvals to requested/final identity and the verified acquisition policy', async () => {
+    const { hashGamingApprovedDocument } = await import('../src/services/gamingSourceIngestion.js');
+    const originalUrl = 'https://example.com/original-guide';
+    const finalUrl = 'https://example.com/final-guide';
+    const document = resolvedDocument(originalUrl, 'Borderlands 4 route guide checkpoint. '.repeat(20), {
+      canonicalUrl: finalUrl, publicUrl: finalUrl,
+      acquisition: { policyVersion: 'gaming-https-acquisition-v1', requestedUrl: originalUrl, finalUrl,
+        redirectCount: 1, transitions: [{ fromUrl: originalUrl, toUrl: finalUrl, classification: 'same_origin', ruleId: 'gaming.redirect.same_origin' }] }
+    });
+    const originalHash = hashGamingApprovedDocument(document as any);
+    for (const changed of [
+      { ...document, requestedUrl: 'https://example.com/other-original' },
+      { ...document, publicUrl: 'https://example.com/other-final' },
+      { ...document, canonicalUrl: 'https://example.com/other-identity' },
+      { ...document, acquisition: { ...(document.acquisition as object), policyVersion: 'changed-policy' } },
+      { ...document, acquisition: undefined }
+    ]) expect(hashGamingApprovedDocument(changed as any)).not.toBe(originalHash);
+  });
+
+  it.each([
+    ['URL_BLOCKED', 'private_reserved_destination', undefined, 'URL_BLOCKED', false],
+    ['REDIRECT_NOT_ALLOWED', 'UNAPPROVED_TRANSITION', 302, 'REDIRECT_NOT_ALLOWED', false],
+    ['SOURCE_TIMEOUT', 'DEADLINE_EXCEEDED', undefined, 'FETCH_TIMEOUT', true],
+    ['SOURCE_FETCH_FAILED', 'TRANSFER_LIMIT', undefined, 'RESPONSE_TOO_LARGE', false],
+    ['SOURCE_FETCH_FAILED', 'DECODED_LIMIT', undefined, 'RESPONSE_TOO_LARGE', false],
+    ['SOURCE_FETCH_FAILED', 'UNSUPPORTED_ENCODING', undefined, 'UNSUPPORTED_CONTENT_TYPE', false],
+    ['SOURCE_FETCH_FAILED', 'UNSUPPORTED_CONTENT_TYPE', undefined, 'UNSUPPORTED_CONTENT_TYPE', false],
+    ['SOURCE_FETCH_FAILED', 'CONDITIONAL_CONTENT_UNAVAILABLE', 304, 'FETCH_FAILED', false],
+    ['SOURCE_INACCESSIBLE', 'HTTP_RESPONSE_UNUSABLE', 401, 'AUTHENTICATION_REQUIRED', false],
+    ['SOURCE_INACCESSIBLE', 'HTTP_RESPONSE_UNUSABLE', 403, 'ACCESS_DENIED', false],
+    ['SOURCE_FETCH_FAILED', 'HTTP_RESPONSE_UNUSABLE', 404, 'SOURCE_NOT_FOUND', false],
+    ['SOURCE_FETCH_FAILED', 'HTTP_RESPONSE_UNUSABLE', 410, 'SOURCE_NOT_FOUND', false],
+    ['SOURCE_FETCH_FAILED', 'HTTP_RESPONSE_UNUSABLE', 429, 'FETCH_FAILED', true],
+    ['SOURCE_FETCH_FAILED', 'HTTP_RESPONSE_UNUSABLE', 503, 'FETCH_FAILED', true]
+  ])('preserves bounded acquisition failure %s/%s in worker classification', async (code, subreason, status, expectedCode, retryable) => {
+    resolveGamingDocumentMock.mockRejectedValueOnce(new MockGamingDocumentAcquisitionError(String(code), 'transport', String(subreason), 1, status as number | undefined));
+    const result = await executeQueuedGamingSourceIngestion('019fe3cd-8c01-7f01-8d2d-caa951bc4b9b', {
+      action: 'ingest', schemaVersion: '1', submittedCount: 1, rejectedSources: [],
+      sources: [{ submittedIndex: 0, canonicalUrl: 'https://example.com/guide', game: 'Borderlands 4', gameKey: 'borderlands 4', origin: 'user_supplied' }]
+    });
+    expect(result.output.sources[0]).toMatchObject({ status: retryable ? 'failed' : 'rejected', error: { code: expectedCode, retryable } });
+    expect(persistGamingSourceRevisionMock).not.toHaveBeenCalled();
+  });
+
+  it('stores observed equivalent redirect entries under their verified final canonical identity', async () => {
+    const originalUrl = 'https://example.com/original-guide';
+    const finalUrl = 'https://example.com/final-guide';
+    resolveGamingDocumentMock.mockResolvedValue(resolvedDocument(originalUrl, 'Borderlands 4 route guide checkpoint. '.repeat(20), {
+      canonicalUrl: finalUrl, publicUrl: finalUrl,
+      acquisition: { policyVersion: 'gaming-https-acquisition-v1', requestedUrl: originalUrl, finalUrl, redirectCount: 1, transitions: [] }
+    }));
+    ingestGamingBuildResourceMock.mockResolvedValue(genericNormalizedGamingSource(''));
+    await executeQueuedGamingSourceIngestion('019fe3cd-8c01-7f01-8d2d-caa951bc4b9b', {
+      action: 'ingest', schemaVersion: '1', submittedCount: 1, rejectedSources: [],
+      sources: [{ submittedIndex: 0, canonicalUrl: originalUrl, game: 'Borderlands 4', gameKey: 'borderlands 4', origin: 'user_supplied' }]
+    });
+    expect(persistGamingSourceRevisionMock).toHaveBeenCalledWith(expect.objectContaining({ canonicalUrl: finalUrl, publicUrl: finalUrl }));
+  });
+
   it('promotes a caller patch only after an exact fetched-content match', async () => {
     const verifiedText = 'Borderlands 4 patch 9.9 progression equipment skills rotation '.repeat(8);
-    fetchAndCleanDocumentMock.mockImplementationOnce(async (
-      _url: string,
-      _maxChars: number,
-      options: { onExtraction?: (value: Record<string, unknown>) => void }
-    ) => {
-      options.onExtraction?.({ documentTitle: 'Borderlands 4 Patch 9.9 Guide' });
-      return { text: verifiedText, links: [], combined: '' };
-    });
+    resolveGamingDocumentMock.mockImplementationOnce(async (url: string) => resolvedDocument(
+      url, verifiedText, { metadata: { title: 'Borderlands 4 Patch 9.9 Guide' } }
+    ));
     ingestGamingBuildResourceMock.mockResolvedValueOnce(
       genericNormalizedGamingSource('Borderlands 4 patch 9.9 progression guide.')
     );
@@ -811,6 +1334,7 @@ describe('gaming source ingestion', () => {
 
   it('returns bounded stored knowledge with source provenance', async () => {
     searchActiveGamingKnowledgeMock.mockResolvedValue([{
+      recordId: 'stored-build', revisionId: 'revision-build', recordType: 'build', relevance: 0.75,
       sourceId: '019fe3cd-8c01-7f01-8d2d-caa951bc4ba0',
       publicUrl: 'https://mobalytics.gg/borderlands-4/builds',
       title: 'Endgame Build',
@@ -840,8 +1364,8 @@ describe('gaming source ingestion', () => {
         mode: 'build'
       }),
       expect.objectContaining({
-        queryTimeoutMs: undefined,
-        signal: undefined
+        queryTimeoutMs: 1000,
+        signal: expect.any(Object)
       })
     );
     expect(result.context).toContain('[Source 3]');
@@ -857,8 +1381,27 @@ describe('gaming source ingestion', () => {
     ]);
   });
 
+  it('returns the matching deep guide passage instead of the first 1200 characters', async () => {
+    const passage = 'The luminous observatory gate opens after activating the azure prism beside the eastern waterfall.';
+    searchActiveGamingKnowledgeMock.mockResolvedValue([{
+      recordId: 'stored-passage', revisionId: 'revision-passage', recordType: 'guide', relevance: 0.75,
+      sourceId: '019fe3cd-8c01-7f01-8d2d-caa951bc4ba0',
+      publicUrl: 'https://example.com/generic-guide', title: 'Progression Guide', sourceType: 'supplied',
+      patch: null, revisionPatch: null, fetchedAt: new Date('2026-08-08T12:00:00.000Z'), publishedAt: null,
+      searchText: 'How do I find the route in this guide and what should I do? '.repeat(200) + passage,
+      normalized: {}, provenance: {}
+    }]);
+    const result = await buildStoredGamingKnowledgeContext({
+      game: 'Borderlands 4', prompt: 'How do I open the luminous observatory gate?', mode: 'guide'
+    });
+    expect(result.context).toContain(passage);
+    expect(result.sources[0].snippet).toContain(passage);
+    expect(result.sources[0].snippet.length).toBeLessThanOrEqual(1_200);
+  });
+
   it('does not project an unverified historical patch claim as source metadata or prompt context', async () => {
     searchActiveGamingKnowledgeMock.mockResolvedValue([{
+      recordId: 'stored-patch', revisionId: 'revision-patch', recordType: 'guide', relevance: 0.75,
       sourceId: '019fe3cd-8c01-7f01-8d2d-caa951bc4ba0',
       publicUrl: 'https://example.com/generic-guide',
       title: 'Generic Guide',
@@ -878,7 +1421,7 @@ describe('gaming source ingestion', () => {
 
     const result = await buildStoredGamingKnowledgeContext({
       game: 'Borderlands 4',
-      prompt: 'What gear should I use?',
+      prompt: 'What equipment recommendations should I use?',
       mode: 'guide'
     });
 
@@ -895,7 +1438,7 @@ describe('gaming source ingestion', () => {
     searchActiveGamingKnowledgeMock.mockImplementation(() => blockedLookup);
     const lookupInput = {
       game: 'Borderlands 4',
-      prompt: 'beginner guide',
+      prompt: 'Where is the Zephyrglass Compass?',
       mode: 'guide' as const,
       queryTimeoutMs: 250
     };
@@ -911,11 +1454,11 @@ describe('gaming source ingestion', () => {
 
     releaseLookups?.([]);
     await expect(Promise.all(admitted)).resolves.toEqual(
-      Array.from({ length: 4 }, () => ({ context: '', sources: [] }))
+      Array.from({ length: 4 }, () => ({ context: '', sources: [], sourceKnown: true }))
     );
     await expect(
       buildStoredGamingKnowledgeContext(lookupInput)
-    ).resolves.toEqual({ context: '', sources: [] });
+    ).resolves.toEqual({ context: '', sources: [], sourceKnown: true });
     expect(searchActiveGamingKnowledgeMock).toHaveBeenCalledTimes(5);
   });
 });

@@ -2,6 +2,7 @@ import { describe, expect, it } from '@jest/globals';
 
 import {
   resolveBackstageNotionSnapshotStatus,
+  resolveBackstageNotionSnapshotStatusObservation,
   type BackstageNotionLatestSyncAttemptState,
 } from '../src/shared/backstage/backstageNotionSnapshotStatus.js';
 
@@ -44,6 +45,66 @@ function resolve(options: Parameters<
 }
 
 describe('Backstage Notion snapshot status projection', () => {
+  it.each([
+    ['current successful snapshot', attempt('unchanged'), 60 * 60 * 1_000],
+    ['newer failed refresh', attempt('failed'), 60 * 60 * 1_000],
+    ['newer running refresh', attempt('running'), 60 * 60 * 1_000],
+    ['stale successful snapshot', attempt('unchanged'), 60_000],
+    ['no latest attempt', null, 60 * 60 * 1_000],
+  ] as const)(
+    'keeps the identifier-free observation resolver in parity for %s',
+    (_label, latestSyncAttempt, maximumStalenessMs) => {
+      const identifierResult = resolve({
+        latestSyncAttempt,
+        maximumStalenessMs,
+      });
+      const observationResult = resolveBackstageNotionSnapshotStatusObservation({
+        activeSnapshotPresent: true,
+        activeSnapshotReadable: true,
+        activeSnapshotVerifiedAt: VERIFIED_AT,
+        now: NOW,
+        maximumStalenessMs,
+        latestSyncAttempt: latestSyncAttempt === null
+          ? null
+          : {
+              startedAt: latestSyncAttempt.startedAt,
+              completedAt: latestSyncAttempt.completedAt,
+              outcome: latestSyncAttempt.outcome,
+              successfulSnapshotMatchesActive:
+                latestSyncAttempt.activatedSnapshotId === null
+                  ? null
+                  : latestSyncAttempt.activatedSnapshotId === SNAPSHOT_ID,
+              failurePhase: latestSyncAttempt.failurePhase,
+              failureReason: latestSyncAttempt.failureReason,
+            },
+      });
+
+      expect(observationResult).toEqual(identifierResult);
+    }
+  );
+
+  it('fails the identifier-free resolver closed on malformed success state', () => {
+    expect(resolveBackstageNotionSnapshotStatusObservation({
+      activeSnapshotPresent: true,
+      activeSnapshotReadable: true,
+      activeSnapshotVerifiedAt: VERIFIED_AT,
+      now: NOW,
+      maximumStalenessMs: 60 * 60 * 1_000,
+      latestSyncAttempt: {
+        startedAt: new Date('2026-08-29T15:56:00.000Z'),
+        completedAt: new Date('2026-08-29T15:58:00.000Z'),
+        outcome: 'unchanged',
+        successfulSnapshotMatchesActive: null,
+        failurePhase: null,
+        failureReason: null,
+      },
+    })).toEqual({
+      status: 'unavailable',
+      fresh: false,
+      newerRefreshIncomplete: false,
+    });
+  });
+
   it('reports a fresh readable snapshot after a successful refresh as current_complete', () => {
     expect(resolve()).toEqual({
       status: 'current_complete',

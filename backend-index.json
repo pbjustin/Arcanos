@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-02T17:09:14.085Z",
+  "generatedAt": "2026-09-11T07:47:44.153Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -440,6 +440,9 @@
           "relativePath": "src/core/db/client.ts"
         },
         {
+          "relativePath": "src/core/db/gptAccessDeviceSchema.ts"
+        },
+        {
           "relativePath": "src/core/db/index.ts"
         },
         {
@@ -480,6 +483,9 @@
         },
         {
           "relativePath": "src/core/db/repositories/gamingSourceRepository.ts"
+        },
+        {
+          "relativePath": "src/core/db/repositories/gptAccessDeviceRepository.ts"
         },
         {
           "relativePath": "src/core/db/repositories/jobEventRepository.ts"
@@ -1307,6 +1313,9 @@
           "relativePath": "src/routes/genericJobsRouter.ts"
         },
         {
+          "relativePath": "src/routes/gpt-access-devices.ts"
+        },
+        {
           "relativePath": "src/routes/gpt-access-local-agent.ts"
         },
         {
@@ -1595,6 +1604,9 @@
           "relativePath": "src/services/backstageNotionAuthority.ts"
         },
         {
+          "relativePath": "src/services/backstageNotionAuthorityStatus.ts"
+        },
+        {
           "relativePath": "src/services/backstageNotionContext.ts"
         },
         {
@@ -1841,16 +1853,49 @@
           "relativePath": "src/services/gamingAgents.ts"
         },
         {
+          "relativePath": "src/services/gamingArchiveResources.ts"
+        },
+        {
           "relativePath": "src/services/gamingBuildResources.ts"
         },
         {
           "relativePath": "src/services/gamingBuildResourceSchema.ts"
         },
         {
+          "relativePath": "src/services/gamingClearAnswerAudit.ts"
+        },
+        {
           "relativePath": "src/services/gamingConfig.ts"
         },
         {
+          "relativePath": "src/services/gamingDocumentChunks.ts"
+        },
+        {
+          "relativePath": "src/services/gamingDocumentEvidence.ts"
+        },
+        {
+          "relativePath": "src/services/gamingDocumentExtraction.ts"
+        },
+        {
+          "relativePath": "src/services/gamingDocumentResolution.ts"
+        },
+        {
+          "relativePath": "src/services/gamingDurableDocumentChunks.ts"
+        },
+        {
           "relativePath": "src/services/gamingGameDetection.ts"
+        },
+        {
+          "relativePath": "src/services/gamingHtmlEvidence.ts"
+        },
+        {
+          "relativePath": "src/services/gamingHybridCandidates.ts"
+        },
+        {
+          "relativePath": "src/services/gamingHybridKnowledge.ts"
+        },
+        {
+          "relativePath": "src/services/gamingJsonEvidence.ts"
         },
         {
           "relativePath": "src/services/gamingModes.ts"
@@ -1883,6 +1928,9 @@
           "relativePath": "src/services/gamingSourceIngestion.ts"
         },
         {
+          "relativePath": "src/services/gamingStoredKnowledge.ts"
+        },
+        {
           "relativePath": "src/services/gamingVersion.ts"
         },
         {
@@ -1899,6 +1947,15 @@
         },
         {
           "relativePath": "src/services/gpt4Shadow.ts"
+        },
+        {
+          "relativePath": "src/services/gptAccessDeviceAuth.ts"
+        },
+        {
+          "relativePath": "src/services/gptAccessDeviceCredentials.ts"
+        },
+        {
+          "relativePath": "src/services/gptAccessDeviceHttpBoundary.ts"
         },
         {
           "relativePath": "src/services/gptAccessGateway.ts"
@@ -2594,6 +2651,108 @@
           "relativePath": "src/shared/fileStorage.ts"
         },
         {
+          "relativePath": "src/shared/gaming/gamingAnswerPolicy.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingArchivePreviewFixture.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingArchiveResourceCore.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingClearAnswerBinding.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingClearEvidence.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingClearPolicy.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingClearPreviewFixture.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingClearSource.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingDocumentIngestionCore.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingDocumentIngestionPreviewFixture.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingDocumentProjectionCore.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingDurableRagPreviewFixture.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingEvidenceUnits.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingFreshnessCore.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingGameIdentity.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingGrounding.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingGuideAssistancePreviewFixture.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingGuideIntakeCore.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingGuideResponseCore.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingGuideResponsePreviewFixture.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingHybridContract.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingHybridKnowledgePreviewFixture.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingHybridPolicyCore.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingPlayerContext.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingProgressionPolicy.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingProgressRecoveryPreviewFixture.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingPromptCore.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingRecoveryResponse.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingRetrievalPolicy.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingSourceAcquisitionCore.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingSourceAcquisitionPreviewFixture.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingStoredEvidenceCore.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingStructuralEvidence.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingStructuredEvidencePreviewFixture.ts"
+        },
+        {
           "relativePath": "src/shared/gpt/asyncGptJob.ts"
         },
         {
@@ -2735,6 +2894,12 @@
           "relativePath": "src/shared/idGenerator.ts"
         },
         {
+          "relativePath": "src/shared/ios/iosDevicePreviewFixture.ts"
+        },
+        {
+          "relativePath": "src/shared/ios/iosGatewayPreviewFixture.ts"
+        },
+        {
           "relativePath": "src/shared/jobs/backstageNotionPartitionSyncJob.ts"
         },
         {
@@ -2790,6 +2955,12 @@
         },
         {
           "relativePath": "src/shared/security/daemonAccessCredential.ts"
+        },
+        {
+          "relativePath": "src/shared/security/gptAccessDevice.ts"
+        },
+        {
+          "relativePath": "src/shared/security/gptAccessDevicePolicyCore.ts"
         },
         {
           "relativePath": "src/shared/security/memoryAccessCredential.ts"
@@ -3481,6 +3652,12 @@
           "relativePath": "tests/backstage-notion-authority-core.test.ts"
         },
         {
+          "relativePath": "tests/backstage-notion-authority-status-route.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-notion-authority-status.test.ts"
+        },
+        {
           "relativePath": "tests/backstage-notion-booking-scope.test.ts"
         },
         {
@@ -3871,16 +4048,145 @@
           "relativePath": "tests/fallback-handler.test.ts"
         },
         {
+          "relativePath": "tests/fixtures/gamingClearCalibration.ts"
+        },
+        {
           "relativePath": "tests/fixtures/openai-response-conversion.ts"
         },
         {
           "relativePath": "tests/gaming-agents.routing.test.ts"
         },
         {
+          "relativePath": "tests/gaming-answer-policy.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-archive-preview-failure.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-archive-preview.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-archive-provider-http.integration.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-archive-rag.integration.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-archive-resources.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-clear-answer-audit.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-clear-calibration.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-clear-evidence.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-clear-pipeline.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-clear-policy.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-clear-preview-failure.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-clear-preview-fixture.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-clear-source.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-document-ingestion-preview-failure.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-document-ingestion-preview.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-document-resolution.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-durable-document-chunks.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-durable-rag-preview-failure.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-durable-rag-preview.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-freshness.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-game-identity.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-grounding-response.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-guide-assistance-preview-failure.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-guide-assistance-preview.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-guide-intake-core.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-guide-response-preview-failure.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-guide-response-preview.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-html-evidence.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-hybrid-lifecycle.integration.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-hybrid-preview-failure.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-hybrid-preview.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-hybrid-workflow.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-ingress-audit.test.ts"
         },
         {
+          "relativePath": "tests/gaming-json-evidence-resolution.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-json-evidence.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-large-guide-rag.integration.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-player-context.e2e.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-player-context.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-progress-recovery-preview-failure.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-progress-recovery-preview.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-progress-recovery.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-prompt-builder.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-protected-transport.test.ts"
         },
         {
           "relativePath": "tests/gaming-public-dispatch-http.test.ts"
@@ -3892,7 +4198,19 @@
           "relativePath": "tests/gaming-rag-local-fetch.integration.test.ts"
         },
         {
+          "relativePath": "tests/gaming-resolved-source-ingestion.integration.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-retrieval-policy.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-search-discovery.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-source-acquisition-preview-failure.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-source-acquisition-preview.test.ts"
         },
         {
           "relativePath": "tests/gaming-source-discovery.integration.test.ts"
@@ -3910,7 +4228,25 @@
           "relativePath": "tests/gaming-source-schema-parity.test.ts"
         },
         {
+          "relativePath": "tests/gaming-stored-knowledge.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-structural-sufficiency.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-structure-diagnostics.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-structured-evidence-preview-failure.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-structured-evidence-preview.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-structured-resources.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-structured-supplied-rag.integration.test.ts"
         },
         {
           "relativePath": "tests/gaming-version.test.ts"
@@ -3929,6 +4265,12 @@
         },
         {
           "relativePath": "tests/governance-loop-contract.test.ts"
+        },
+        {
+          "relativePath": "tests/gpt-access-device-credentials.test.ts"
+        },
+        {
+          "relativePath": "tests/gpt-access-device-openapi-contract.test.ts"
         },
         {
           "relativePath": "tests/gpt-access-gateway.test.ts"
@@ -4105,6 +4447,9 @@
           "relativePath": "tests/gptRouteTimeout.test.ts"
         },
         {
+          "relativePath": "tests/helpers/gptAccessDeviceRepository.ts"
+        },
+        {
           "relativePath": "tests/hrc.test.ts"
         },
         {
@@ -4144,6 +4489,15 @@
           "relativePath": "tests/integration/dag-snapshot-generation.pg18.integration.test.ts"
         },
         {
+          "relativePath": "tests/integration/gaming-durable-rag.pg18.integration.test.ts"
+        },
+        {
+          "relativePath": "tests/integration/gpt-access-device-auth.pg18.integration.test.ts"
+        },
+        {
+          "relativePath": "tests/integration/ios-device-gateway.e2e.integration.test.ts"
+        },
+        {
           "relativePath": "tests/integration/job-claim-fencing.pg18.integration.test.ts"
         },
         {
@@ -4175,6 +4529,18 @@
         },
         {
           "relativePath": "tests/introspection-openapi-contract.route.test.ts"
+        },
+        {
+          "relativePath": "tests/ios-device-preview-application.test.ts"
+        },
+        {
+          "relativePath": "tests/ios-device-preview-fixture.test.ts"
+        },
+        {
+          "relativePath": "tests/ios-gateway-preview-application.test.ts"
+        },
+        {
+          "relativePath": "tests/ios-gateway-preview-fixture.test.ts"
         },
         {
           "relativePath": "tests/job-claim-generation-schema.test.ts"
@@ -4376,6 +4742,9 @@
         },
         {
           "relativePath": "tests/naturalLanguageMemoryRouteShortcut.test.ts"
+        },
+        {
+          "relativePath": "tests/notion-startup-preloads.test.ts"
         },
         {
           "relativePath": "tests/one-time-token-integration.test.ts"
@@ -4879,6 +5248,18 @@
           "relativePath": "tests/test-stateless-pr.ts"
         },
         {
+          "relativePath": "tests/testUtils/gamingAcquisitionFixtures.ts"
+        },
+        {
+          "relativePath": "tests/testUtils/gamingArchiveFixtures.ts"
+        },
+        {
+          "relativePath": "tests/testUtils/gamingLargeGuideFixture.ts"
+        },
+        {
+          "relativePath": "tests/testUtils/gamingResolvedSourceHarness.ts"
+        },
+        {
           "relativePath": "tests/testUtils/gamingStructuredResourceFixtures.ts"
         },
         {
@@ -4901,6 +5282,9 @@
         },
         {
           "relativePath": "tests/trinity-direct-answer-stage.test.ts"
+        },
+        {
+          "relativePath": "tests/trinity-gaming-intake.test.ts"
         },
         {
           "relativePath": "tests/trinity-integrity-recovery.test.ts"

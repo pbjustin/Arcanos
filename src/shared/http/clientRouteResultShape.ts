@@ -859,9 +859,54 @@ function shapeGamingEvidenceRequest(value: unknown): Record<string, unknown> | n
   };
 }
 
+function shapeGamingGrounding(value: unknown): Record<string, unknown> | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const status = readString(value.groundingStatus);
+  if (status !== 'grounded' && status !== 'insufficient_evidence' && status !== 'unavailable') {
+    return null;
+  }
+  const counts: Record<string, number> = {};
+  for (const key of [
+    'requestedSourceCount', 'fetchedSourceCount', 'fetchedSuppliedSourceCount', 'usableSourceCount',
+    'citableSourceCount', 'selectedChunkCount', 'suppliedEvidenceSourceCount',
+  ]) {
+    const count = readNumber(value[key]);
+    if (count === undefined || !Number.isSafeInteger(count) || count < 0 || count > 1_000_000) {
+      return null;
+    }
+    counts[key] = count;
+  }
+  const groundedInSuppliedEvidence = readBoolean(value.groundedInSuppliedEvidence);
+  if (groundedInSuppliedEvidence === undefined) {
+    return null;
+  }
+  return { groundingStatus: status, ...counts, groundedInSuppliedEvidence };
+}
+
 function shapeGamingResult(value: Record<string, unknown>): Record<string, unknown> | null {
   if (readString(value.route) !== 'gaming') {
     return null;
+  }
+
+  if (
+    value.ok === false && isRecord(value.error)
+    && (value.error.code === 'GAMING_SOURCE_UNREADABLE' || value.error.code === 'GAMING_SOURCE_UNAVAILABLE')
+  ) {
+    const grounding = isRecord(value.error.details) ? shapeGamingGrounding(value.error.details.grounding) : null;
+    return {
+      ok: false,
+      route: 'gaming',
+      ...(readString(value.mode) ? { mode: readString(value.mode) } : {}),
+      error: {
+        code: value.error.code,
+        message: value.error.code === 'GAMING_SOURCE_UNREADABLE'
+          ? 'The supplied source was reached, but no sufficiently reliable readable guide evidence could be extracted.'
+          : 'The supplied guide source could not be retrieved as readable evidence.',
+        ...(grounding ? { details: { grounding } } : {}),
+      },
+    };
   }
 
   if (
@@ -915,6 +960,7 @@ function shapeGamingResult(value: Record<string, unknown>): Record<string, unkno
   const discoveryReason = readGamingReason(value.data.discoveryReason);
   const discoveryFailureReason = readGamingReason(value.data.discoveryFailureReason);
   const evidenceRequest = shapeGamingEvidenceRequest(value.data.evidenceRequest);
+  const grounding = shapeGamingGrounding(value.data.grounding);
   const sources = Array.isArray(value.data.sources)
     ? value.data.sources
       .map(shapeGamingSource)
@@ -933,6 +979,7 @@ function shapeGamingResult(value: Record<string, unknown>): Record<string, unkno
       ...(discoveryReason ? { discoveryReason } : {}),
       ...(discoveryFailureReason ? { discoveryFailureReason } : {}),
       ...(evidenceRequest ? { evidenceRequest } : {}),
+      ...(grounding ? { grounding } : {}),
     },
   };
 }

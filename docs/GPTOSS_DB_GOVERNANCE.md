@@ -46,17 +46,22 @@ It defines:
 - `gptoss_training_candidates`
 - `gptoss_approved_training_examples`
 
-Dry-run and validation scripts do not apply this migration. The separately
-gated schema script can apply it to an explicitly confirmed PostgreSQL target.
-After review and explicit approval, the guarded apply command is:
+Dry-run and validation scripts do not apply this migration. The separate apply
+mode writes to PostgreSQL and requires prior operator confirmation of the
+effective connection target. After review and explicit approval, its command is:
 
 ```bash
 npm run gptoss:db:schema:apply
 ```
 
-The apply command requires the local DB connection environment to be present,
-rejects destructive SQL, runs this one idempotent migration in a transaction,
-and reports only table names plus seed counts. It does not dump table contents.
+The [schema script](../scripts/gptoss/db-governance-schema.mjs) checks that
+`DATABASE_URL` is nonempty, but constructs `pg.Pool` without a `connectionString`.
+Its apply and live-verification connections therefore use `PG*` variables and
+driver defaults, rather than the checked `DATABASE_URL`. Setting that URL alone
+does not select or confirm the target; independently verify the effective
+connection settings before either live command. The apply command rejects
+destructive SQL, runs this one idempotent migration in a transaction, and
+reports only table names plus seed counts. It does not dump table contents.
 
 Inspect the migration without opening a DB connection:
 

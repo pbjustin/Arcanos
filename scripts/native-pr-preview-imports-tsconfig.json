@@ -31,6 +31,24 @@
       "@services/gamingModes.js": [
         "src/services/gamingModes.ts"
       ],
+      "@services/actionPlanExecution/canonical.js": [
+        "src/services/actionPlanExecution/canonical.ts"
+      ],
+      "@services/gamingDocumentExtraction.js": [
+        "src/services/gamingDocumentExtraction.ts"
+      ],
+      "@services/gamingDocumentEvidence.js": [
+        "src/services/gamingDocumentEvidence.ts"
+      ],
+      "@services/gamingGameDetection.js": [
+        "src/services/gamingGameDetection.ts"
+      ],
+      "@services/gamingDocumentChunks.js": [
+        "src/services/gamingDocumentChunks.ts"
+      ],
+      "@services/gamingDurableDocumentChunks.js": [
+        "src/services/gamingDurableDocumentChunks.ts"
+      ],
       "@services/directAnswerMode.js": [
         "src/services/directAnswerMode.ts"
       ],

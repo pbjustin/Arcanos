@@ -18,6 +18,7 @@ import {
   BACKSTAGE_NOTION_PARTITION_CURSOR_PREVIOUS_SECRET_ENV_NAME,
   BACKSTAGE_NOTION_PARTITION_CURSOR_SECRET_ENV_NAME,
   BACKSTAGE_NOTION_PARTITION_SHADOW_MAX_IN_FLIGHT,
+  assertBackstageNotionProtectedLiteralAuthorityCurrent,
   retrieveBackstageNotionAuthorityBookingRagContext,
   retrieveBackstageNotionAuthorityRagContext,
   type BackstageNotionPartitionCutoverDependencies,
@@ -29,6 +30,9 @@ import type {
 } from '../src/services/backstageNotionPartitionRetrieval.js';
 import { DEFAULT_OPENAI_EMBEDDING_MODEL } from
   '../src/services/openai/embeddings.js';
+import {
+  runWithBackstageProtectedQueuedExecution,
+} from '../src/services/backstageNotionEnrichmentAuthorization.js';
 
 const UNIVERSE_ID = 'my-universe-2k26';
 const OTHER_UNIVERSE_ID = 'other-universe';
@@ -301,6 +305,145 @@ async function drainUntil(condition: () => boolean): Promise<void> {
 }
 
 describe('Backstage Notion partition cutover facade', () => {
+  const currentAuthorityStatus = Object.freeze({
+    status: 'ready' as const,
+    data: Object.freeze({
+      version: 1 as const,
+      surface: 'monolith_authority' as const,
+      authority: 'notion' as const,
+      status: 'current_complete' as const,
+      snapshotStatus: 'current_complete' as const,
+      freshnessSatisfied: true,
+      syncInProgress: false,
+      activeSnapshotReadable: true,
+      activeSnapshotChunkCount: 20,
+      latestSyncOutcome: 'unchanged' as const,
+      latestSyncFailurePhase: null,
+      latestSyncFailureReason: null,
+    }),
+  });
+
+  it('admits a protected literal from current monolith authority without provider or corpus work', async () => {
+    const resolveMonolithAuthorityStatus = jest.fn(
+      async () => currentAuthorityStatus
+    );
+    const embedQuery = jest.fn(async () => [1]);
+    const retrieveMonolith = jest.fn(async () => monolithRetrieval);
+    const retrievePartition = jest.fn(async () => partitionRetrieval);
+
+    await expect(runWithBackstageProtectedQueuedExecution(
+      true,
+      () => assertBackstageNotionProtectedLiteralAuthorityCurrent(
+        UNIVERSE_ID,
+        'Answer directly. Say exactly: current-authority.',
+        {
+          readEnvironment: createEnvironment('monolith'),
+          resolveMonolithAuthorityStatus,
+          embedQuery,
+          retrieveMonolith,
+          retrievePartition,
+        }
+      )
+    )).resolves.toBeUndefined();
+
+    expect(resolveMonolithAuthorityStatus).toHaveBeenCalledTimes(1);
+    expect(embedQuery).not.toHaveBeenCalled();
+    expect(retrieveMonolith).not.toHaveBeenCalled();
+    expect(retrievePartition).not.toHaveBeenCalled();
+  });
+
+  it('rejects a protected literal before status work without server-owned authorization', async () => {
+    const resolveMonolithAuthorityStatus = jest.fn(
+      async () => currentAuthorityStatus
+    );
+
+    await expect(runWithBackstageProtectedQueuedExecution(
+      false,
+      () => assertBackstageNotionProtectedLiteralAuthorityCurrent(
+        UNIVERSE_ID,
+        'Answer directly. Say exactly: unauthorized.',
+        {
+          readEnvironment: createEnvironment('monolith'),
+          resolveMonolithAuthorityStatus,
+        }
+      )
+    )).rejects.toBeInstanceOf(BackstageNotionIndexUnavailableError);
+
+    expect(resolveMonolithAuthorityStatus).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['syncing', 'last_known_good'],
+    ['last_known_good', 'last_known_good'],
+    ['unavailable', 'unavailable'],
+  ] as const)(
+    'rejects a protected literal while operational status is %s',
+    async (status, snapshotStatus) => {
+      await expect(assertBackstageNotionProtectedLiteralAuthorityCurrent(
+        UNIVERSE_ID,
+        'Answer directly. Say exactly: unavailable-authority.',
+        {
+          isAuthorized: () => true,
+          readEnvironment: createEnvironment('monolith'),
+          resolveMonolithAuthorityStatus: async () => ({
+            status: 'ready',
+            data: {
+              ...currentAuthorityStatus.data,
+              status,
+              snapshotStatus,
+              syncInProgress: status === 'syncing',
+              activeSnapshotReadable: status !== 'unavailable',
+              freshnessSatisfied: status === 'syncing',
+            },
+          }),
+        }
+      )).rejects.toBeInstanceOf(BackstageNotionIndexUnavailableError);
+    }
+  );
+
+  it('admits queued partition mode without distributing cursor keys and performs no gate read', async () => {
+    const resolveCutoverEvidence = jest.fn(async () => {
+      throw new Error('cutover evidence must not be read for a literal');
+    });
+    const resolveMonolithAuthorityStatus = jest.fn(
+      async () => currentAuthorityStatus
+    );
+
+    await expect(assertBackstageNotionProtectedLiteralAuthorityCurrent(
+      UNIVERSE_ID,
+      'Answer directly. Say exactly: partition-literal.',
+      {
+        isAuthorized: () => true,
+        isProtectedQueuedExecution: () => true,
+        readEnvironment: withoutCursorSecrets(createEnvironment('partitioned')),
+        resolveCutoverEvidence,
+        resolveMonolithAuthorityStatus,
+      }
+    )).resolves.toBeUndefined();
+
+    expect(resolveCutoverEvidence).not.toHaveBeenCalled();
+    expect(resolveMonolithAuthorityStatus).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects direct partition-mode literal admission when its cursor credential is unavailable', async () => {
+    const resolveMonolithAuthorityStatus = jest.fn(
+      async () => currentAuthorityStatus
+    );
+
+    await expect(assertBackstageNotionProtectedLiteralAuthorityCurrent(
+      UNIVERSE_ID,
+      'Answer directly. Say exactly: missing-cursor-secret.',
+      {
+        isAuthorized: () => true,
+        isProtectedQueuedExecution: () => false,
+        readEnvironment: withoutCursorSecrets(createEnvironment('partitioned')),
+        resolveMonolithAuthorityStatus,
+      }
+    )).rejects.toBeInstanceOf(BackstageNotionIndexUnavailableError);
+
+    expect(resolveMonolithAuthorityStatus).not.toHaveBeenCalled();
+  });
+
   it('checks authorization before hostile request, environment, dependency, or logging access', async () => {
     let queryGetterRead = false;
     let environmentGetterRead = false;

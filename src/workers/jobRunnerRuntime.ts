@@ -59,6 +59,65 @@ export interface WorkerBootstrapReadyDestination {
   write(chunk: string): unknown;
 }
 
+export interface AuthoritySynchronizationWorkerAiCallBudget {
+  readonly statsWorkerId: string;
+  readonly workerId: string;
+  readonly maxCallsPerHour: number;
+}
+
+export const AUTHORITY_SYNCHRONIZATION_QUEUE_AI_CALL_HEADROOM = 1;
+
+/**
+ * Build the callback-free provider budget used by asynchronous authority work.
+ * Purpose: preserve the shared hard ledger while reserving one provider attempt
+ * for normal queue work so an authority-only cycle cannot fill the process
+ * readiness threshold.
+ * Edge case behavior: the caller supplies the largest non-resumable provider
+ * cycle it must admit. Startup fails when that cycle plus queue headroom cannot
+ * fit, while resumable provider work may use a minimum of one call per cycle.
+ */
+export function buildAuthoritySynchronizationWorkerAiCallBudget(
+  workerBudget: AuthoritySynchronizationWorkerAiCallBudget,
+  minimumProviderCallsPerCycle: number
+): AuthoritySynchronizationWorkerAiCallBudget {
+  if (
+    !Number.isSafeInteger(workerBudget.maxCallsPerHour)
+    || workerBudget.maxCallsPerHour <= 0
+  ) {
+    throw new TypeError('Worker AI-call budget must be a positive safe integer.');
+  }
+  if (
+    !Number.isSafeInteger(minimumProviderCallsPerCycle)
+    || minimumProviderCallsPerCycle < 0
+  ) {
+    throw new TypeError(
+      'Minimum authority provider calls per cycle must be a non-negative safe integer.'
+    );
+  }
+  const requiredGlobalCallsPerHour = minimumProviderCallsPerCycle > 0
+    ? minimumProviderCallsPerCycle
+      + AUTHORITY_SYNCHRONIZATION_QUEUE_AI_CALL_HEADROOM
+    : 0;
+  if (
+    requiredGlobalCallsPerHour > 0
+    && workerBudget.maxCallsPerHour < requiredGlobalCallsPerHour
+  ) {
+    throw new Error(
+      `JOB_WORKER_MAX_AI_CALLS_PER_HOUR must be at least ${requiredGlobalCallsPerHour} when the configured Backstage Notion authority synchronization cycle can issue ${minimumProviderCallsPerCycle} provider requests.`
+    );
+  }
+
+  return Object.freeze({
+    statsWorkerId: workerBudget.statsWorkerId,
+    workerId: workerBudget.workerId,
+    maxCallsPerHour: workerBudget.maxCallsPerHour - (
+      minimumProviderCallsPerCycle > 0
+        ? AUTHORITY_SYNCHRONIZATION_QUEUE_AI_CALL_HEADROOM
+        : 0
+    )
+  });
+}
+
 /**
  * Emit the exact launcher-facing worker readiness protocol.
  * Purpose: keep deployment activation independent from configurable log filtering.

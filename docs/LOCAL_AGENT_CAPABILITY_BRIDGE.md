@@ -26,12 +26,13 @@ selection, authorization, confirmation, idempotency, job lifecycle, and
 result ownership. Python receives only a server-authorized job and never
 exposes an internet-facing GPT endpoint or connects directly to PostgreSQL.
 
-Here, a paired device means the registered Python executor selected by the
-server's local-agent binding. It does not mean an iPhone has received a scoped
-Gateway credential. In this checkout, generic GPT Access authentication still
-uses the server-wide bearer; no mobile pairing/issuance route is implemented.
-Do not put the Gateway, operator, or executor credential on a phone. See
-`src/services/gptAccessGateway.ts:gptAccessAuthMiddleware` and
+Here, a paired executor means the registered Python daemon selected by the
+server's local-agent binding. The separate
+[iPhone pairing flow](gpt-access-gateway.md#paired-iphone-authentication) issues
+a scoped, expiring, revocable Gateway device credential; it does not register
+the phone as a Python executor. Keep the operator/server bearer and executor
+credential off the phone. See `src/routes/gpt-access-devices.ts`,
+`src/services/gptAccessGateway.ts:gptAccessAuthMiddleware`, and
 `src/services/localAgent/devicePolicy.ts:resolveAuthorizedLocalAgentDevice`.
 
 ## Architectural assessment

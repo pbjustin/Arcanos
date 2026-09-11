@@ -11,48 +11,76 @@ import {
 import {
   GamingSourceRepositoryUnavailableError,
   getGamingSourceById,
-  persistGamingSourceRevision,
-  searchActiveGamingKnowledge
+  persistGamingSourceRevision
 } from '@core/db/repositories/gamingSourceRepository.js';
 import { logger } from '@platform/logging/structuredLogging.js';
 import { buildQueuedGptJobInput } from '@shared/gpt/asyncGptJob.js';
+import {
+  buildGamingDocumentSearchText,
+  classifyGamingDocumentQuality,
+  classifyGamingStructuredExtractionQuality,
+  detectGamingDocumentGame,
+  selectGamingSourceAdmissionUrl,
+  selectGamingSourcePublicUrl
+} from '@shared/gaming/gamingDocumentIngestionCore.js';
+import { normalizeGamingGameIdentity } from '@shared/gaming/gamingGameIdentity.js';
+import { assessGamingSourcePolicy, evaluateGamingFreshness, GAMING_FRESHNESS_POLICY_VERSION, GAMING_SOURCE_POLICY_VERSION, type GamingFreshnessEvidence } from '@shared/gaming/gamingFreshnessCore.js';
+import { gamingClearHistoricalSourceVerified } from '@shared/gaming/gamingClearSource.js';
+import { assessGamingStructuralUsability } from '@shared/gaming/gamingStructuralEvidence.js';
+import { GAMING_EVIDENCE_UNIT_POLICY_VERSION } from '@shared/gaming/gamingEvidenceUnits.js';
+import { isGamingApprovedArtifactCurrent } from '@shared/gaming/gamingHybridPolicyCore.js';
+import { GAMING_CLEAR_VERSION, GAMING_CLEAR_POLICY_VERSION, parseGamingClearAssessment, type GamingClearAssessment } from '@shared/gaming/gamingClearPolicy.js';
 import { truncateTextByCharacters } from '@shared/http/clientResponseCommon.js';
-import { fetchAndCleanDocument, type FetchAndCleanRawDocument } from '@shared/webFetcher.js';
 import { planAutonomousWorkerJob } from '@services/workerAutonomyService.js';
 
 import { ingestGamingBuildResource } from './gamingBuildResources.js';
+import {
+  GAMING_DOCUMENT_RESOLVER_VERSION,
+  GamingDocumentAcquisitionError,
+  describeGamingDocumentSource,
+  isResolvedGamingDocumentIdentityVerified,
+  projectGamingDocumentPublicUrl,
+  resolveGamingDocument,
+  type ResolvedGamingDocument
+} from './gamingDocumentResolution.js';
+import {
+  chunkGamingDocument,
+  GAMING_DOCUMENT_CHUNKING_VERSION,
+  GAMING_DURABLE_DOCUMENT_LIMITS,
+  hashGamingDocumentRevision
+} from './gamingDurableDocumentChunks.js';
 import {
   GAMING_BUILD_RESOURCE_SCHEMA_VERSION,
   GAMING_BUILD_RESOURCE_HARD_LIMITS,
   GAMING_RESOURCE_TYPES,
   type GamingResourceType
 } from './gamingBuildResourceSchema.js';
-import {
-  canonicalizeGamingGameName,
-  detectGamingGame
-} from './gamingGameDetection.js';
+import { canonicalizeGamingGameName } from './gamingGameDetection.js';
 import { sanitizeGamingDiscoveryCandidateUrl } from './gamingSourceDiscovery.js';
 import { textContainsExactGamingVersion } from './gamingVersion.js';
 
+import {
+  retrieveStoredGamingKnowledge,
+  type GamingStoredKnowledgeContext,
+  type GamingStoredKnowledgeInput
+} from './gamingStoredKnowledge.js';
+export type { GamingStoredKnowledgeContext } from './gamingStoredKnowledge.js';
 export const GAMING_SOURCE_INGESTION_REQUEST_PATH = '/gpt-access/gaming/sources/ingestions';
 export const GAMING_SOURCE_REFRESH_REQUEST_PATH = '/gpt-access/gaming/sources/refreshes';
 export const GAMING_SOURCE_INGESTION_REASON = 'gaming_source_ingestion';
 export const GAMING_SOURCE_INGESTION_GPT_ID = 'arcanos-gaming';
 
 const MAX_SOURCE_URLS = 4;
-const MAX_SOURCE_TEXT_CHARS = 100_000;
 const MAX_TITLE_CHARS = 240;
 const MIN_USEFUL_TEXT_CHARS = 120;
 const IDEMPOTENCY_KEY_MAX_CHARS = 240;
 const GAMING_SOURCE_OPERATION_ERROR_MAX_CHARS = 240;
 const GAMING_PATCH_VERSION_MAX_CHARS = 64;
 const SOURCE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
-const MAX_CONCURRENT_STORED_GAMING_LOOKUPS = 4;
 const VERIFIED_PATCH_METHODS = new Set([
   'extractor',
   'fetched_content_exact_match'
 ]);
-let activeStoredGamingLookups = 0;
 
 const allowedSourceTypeHints = GAMING_RESOURCE_TYPES.filter(
   (value): value is Exclude<GamingResourceType, 'unknown'> => value !== 'unknown'
@@ -64,7 +92,7 @@ const sourceTypeHintSchema = z.enum(
 
 const ingestPayloadSchema = z.object({
   game: z.string().trim().min(1).max(120),
-  sourceUrls: z.array(z.string().trim().min(1).max(2_048)).min(1).max(MAX_SOURCE_URLS),
+  sourceUrls: z.array(z.string().min(1).max(2_048)).min(1).max(MAX_SOURCE_URLS),
   sourceTypeHint: sourceTypeHintSchema.optional(),
   patchVersion: z.string().trim().min(1).max(64).optional(),
   origin: z.enum(['user_supplied', 'gpt_web_search']).optional().default('user_supplied'),
@@ -90,6 +118,9 @@ const refreshRequestSchema = z.object({
 const queuedSourceSchema = z.object({
   submittedIndex: z.number().int().min(0).max(MAX_SOURCE_URLS - 1),
   canonicalUrl: z.string().url().max(2_048),
+  // Server-owned refresh provenance; still admitted and fetched from scratch by the worker.
+  acquisitionUrl: z.string().url().max(2_048).optional(),
+  policyGame: z.string().trim().min(1).max(120).optional(),
   game: z.string().trim().min(1).max(120),
   gameKey: z.string().trim().min(1).max(160),
   sourceId: z.string().regex(SOURCE_ID_PATTERN).optional(),
@@ -97,7 +128,39 @@ const queuedSourceSchema = z.object({
   sourceTrustType: z.enum(['official', 'patch_notes', 'wiki', 'curated', 'supplied']).optional(),
   trustScore: z.number().min(0).max(1).optional(),
   patchVersion: z.string().trim().min(1).max(64).optional(),
-  origin: z.enum(['user_supplied', 'gpt_web_search', 'refresh'])
+  origin: z.enum(['user_supplied', 'gpt_web_search', 'refresh']),
+  // Server-created only. The public ingest/refresh schemas deliberately cannot submit this authority.
+  hybridApproval: z.object({
+    actorScopeHash: z.string().regex(/^[a-f0-9]{64}$/u),
+    contentHash: z.string().regex(/^[a-f0-9]{64}$/u),
+    policyVersion: z.literal('gaming-hybrid-candidates/v1'),
+    freshnessPolicyVersion: z.literal(GAMING_FRESHNESS_POLICY_VERSION),
+    sourcePolicyVersion: z.literal(GAMING_SOURCE_POLICY_VERSION),
+    recordType: z.enum(['guide', 'build', 'meta']),
+    gamingClear: z.unknown().transform((value, context) => {
+      const assessment = parseGamingClearAssessment(value);
+      if (!assessment || assessment.profile !== 'source' || !assessment.qualityEligible
+        || JSON.stringify(assessment).length > 12_000) {
+        context.addIssue({ code: z.ZodIssueCode.custom, message: 'A current bounded source quality assessment is required.' });
+        return z.NEVER;
+      }
+      return assessment;
+    }).optional(),
+    applicabilityContext: z.object({
+      game: z.string().trim().min(1).max(120),
+      mode: z.enum(['guide', 'build', 'meta']),
+      classification: z.enum(['stable', 'patch_sensitive', 'seasonal', 'live_status']),
+      seasonalPatchRequired: z.boolean(),
+      historical: z.boolean(),
+      requestedVersion: z.string().trim().min(1).max(64).optional(),
+      contextFingerprint: z.string().regex(/^[a-f0-9]{64}$/u),
+      edition: z.string().trim().min(1).max(120).optional(),
+      platform: z.string().trim().min(1).max(80).optional(),
+      region: z.string().trim().min(1).max(80).optional()
+    }).strict().optional(),
+    applicabilityBinding: z.string().regex(/^[a-f0-9]{64}$/u).optional(),
+    freshness: z.record(z.unknown()).refine(value => JSON.stringify(value).length <= 8_000)
+  }).strict().optional()
 }).strict();
 
 const admissionErrorSchema = z.object({
@@ -198,21 +261,6 @@ export interface GamingSourceGatewayContext {
   };
 }
 
-export interface GamingStoredKnowledgeContext {
-  context: string;
-  sources: Array<{
-    sourceId: string;
-    url: string;
-    title?: string;
-    sourceType: string;
-    patchVersion?: string;
-    verifiedPatchVersion?: string;
-    fetchedAt: string;
-    publishedAt?: string;
-    snippet: string;
-  }>;
-}
-
 function sha256(value: string): string {
   return createHash('sha256').update(value, 'utf8').digest('hex');
 }
@@ -233,12 +281,7 @@ function stableJson(value: unknown): string {
 }
 
 function canonicalGameKey(game: string): string {
-  return canonicalizeGamingGameName(game)
-    .normalize('NFKC')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/gu, '-')
-    .replace(/^-+|-+$/gu, '')
-    .slice(0, 160);
+  return normalizeGamingGameIdentity(game).slice(0, 160);
 }
 
 function publicAdmissionError(
@@ -306,7 +349,8 @@ function admitUrl(
     };
   }
 
-  const canonicalUrl = sanitized.url;
+  const description = describeGamingDocumentSource(sanitized.url);
+  const canonicalUrl = selectGamingSourceAdmissionUrl(sanitized.url, description);
   if (seenCanonicalUrls.has(canonicalUrl)) {
     return {
       rejection: rejectAdmission(
@@ -359,23 +403,7 @@ function queuedSourceResults(body: QueuedGamingIngestionBody): GamingSourceInges
       recordsUpdated: 0
     })),
     ...body.rejectedSources
-  ].sort((left, right) => left.submittedIndex - right.submittedIndex);
-}
-
-async function runWithStoredGamingLookupAdmission<T>(
-  callback: () => Promise<T>
-): Promise<T> {
-  if (activeStoredGamingLookups >= MAX_CONCURRENT_STORED_GAMING_LOOKUPS) {
-    const error = new Error('Stored Gaming knowledge lookup capacity is busy.');
-    error.name = 'GamingStoredKnowledgeLookupBusyError';
-    throw error;
-  }
-  activeStoredGamingLookups += 1;
-  try {
-    return await callback();
-  } finally {
-    activeStoredGamingLookups -= 1;
-  }
+  ].map(projectGamingSourcePublicResult).sort((left, right) => left.submittedIndex - right.submittedIndex);
 }
 
 function resolveVerifiedPatch(input: {
@@ -449,10 +477,15 @@ function resolveVerifiedStoredPatch(record: {
     : undefined;
 }
 
-function projectBoundedPublicPatchVersion(
+function projectGamingSourcePublicResult(
   source: GamingSourceIngestionItemResult
 ): GamingSourceIngestionItemResult {
   const projectedSource = { ...source };
+  if (source.canonicalUrl) {
+    // Job/source identity stays exact internally; public results must not display planner payloads.
+    try { projectedSource.canonicalUrl = projectGamingDocumentPublicUrl(source.canonicalUrl); }
+    catch { delete projectedSource.canonicalUrl; }
+  }
   delete projectedSource.patchVersion;
   const patchVersion = readBoundedGamingPatchVersion(source.patchVersion);
   if (patchVersion) {
@@ -485,7 +518,7 @@ function terminalSourceResults(
       }
     })),
     ...body.rejectedSources
-  ].sort((left, right) => left.submittedIndex - right.submittedIndex);
+  ].map(projectGamingSourcePublicResult).sort((left, right) => left.submittedIndex - right.submittedIndex);
 }
 
 function mapStoredJobStatus(status: string): GamingSourceIngestionOutput['status'] {
@@ -597,10 +630,14 @@ async function enqueueGamingIngestion(
     sources: [...body.sources]
       .map((source) => ({
         canonicalUrl: source.canonicalUrl,
+        ...(source.acquisitionUrl && source.acquisitionUrl !== source.canonicalUrl
+          ? { acquisitionUrl: source.acquisitionUrl } : {}),
+        ...(source.policyGame ? { policyGame: source.policyGame } : {}),
         gameKey: source.gameKey,
         sourceId: source.sourceId ?? null,
         sourceTypeHint: source.sourceTypeHint ?? null,
-        patchVersion: source.patchVersion ?? null
+        patchVersion: source.patchVersion ?? null,
+        ...(source.hybridApproval ? { hybridApproval: source.hybridApproval } : {})
       }))
       .sort((left, right) => left.canonicalUrl.localeCompare(right.canonicalUrl)),
     rejected: body.rejectedSources.map((source) => ({
@@ -707,7 +744,7 @@ export async function createGamingSourceIngestion(
     return buildGatewayValidationError(idempotency.error ?? 'An idempotency key is required.');
   }
 
-  const game = canonicalizeGamingGameName(parsed.data.payload.game);
+  const game = parsed.data.payload.game;
   const gameKey = canonicalGameKey(game);
   const seenCanonicalUrls = new Set<string>();
   const sources: QueuedGamingSource[] = [];
@@ -738,6 +775,66 @@ export async function createGamingSourceIngestion(
     rejectedSources,
     submittedCount: parsed.data.payload.sourceUrls.length
   }, idempotency.key, context);
+}
+
+/** Full accepted text and interpretation metadata; never hash a preview or excerpt. */
+export function hashGamingApprovedDocument(document: ResolvedGamingDocument): string {
+  return sha256(stableJson({ text: document.text, metadata: document.metadata,
+    ...(document.sourceUseRestricted !== undefined ? { sourceUseRestricted: document.sourceUseRestricted } : {}),
+    ...(document.evidenceUnits?.length ? { evidenceUnits: document.evidenceUnits, evidenceUnitPolicyVersion: GAMING_EVIDENCE_UNIT_POLICY_VERSION } : {}),
+    requestedUrl: document.requestedUrl, canonicalUrl: document.canonicalUrl,
+    publicUrl: document.publicUrl, resolution: document.resolution, contentType: document.contentType ?? null,
+    acquisition: document.acquisition ?? null }));
+}
+
+/** Internal hybrid admission adapter; uses the same worker, job ownership, and idempotency lifecycle. */
+export async function createApprovedGamingSourceIngestion(
+  sources: readonly {
+    url: string; game: string; contentHash: string; policyVersion: 'gaming-hybrid-candidates/v1';
+    actorScopeHash: string; sourceTrustType: 'official' | 'patch_notes' | 'wiki' | 'curated' | 'supplied';
+    recordType?: 'guide' | 'build' | 'meta';
+    freshness: Record<string, unknown>;
+    sourceAssessment: GamingClearAssessment;
+    applicabilityContext?: { game: string; mode: 'guide' | 'build' | 'meta'; classification: 'stable' | 'patch_sensitive' | 'seasonal' | 'live_status'; historical: boolean; seasonalPatchRequired: boolean;
+      requestedVersion?: string; contextFingerprint: string; edition?: string; platform?: string; region?: string };
+  }[],
+  idempotencyKey: string,
+  context: GamingSourceGatewayContext & { canStore: boolean }
+) {
+  if (!context.canStore) return { statusCode: 403, payload: { ok: false,
+    error: { code: 'GAMING_HYBRID_STORAGE_FORBIDDEN', message: 'This caller cannot store discovered Gaming sources.' } } };
+  if (sources.length < 1 || sources.length > 3 || sources.some(source => source.actorScopeHash !== sha256(context.actorKey))) {
+    return buildGatewayValidationError('The approved candidate scope or count is invalid.');
+  }
+  const idempotency = resolveExplicitIdempotencyKey(idempotencyKey, context.idempotencyKey);
+  if (!idempotency.key) return buildGatewayValidationError(idempotency.error ?? 'An idempotency key is required.');
+  const seen = new Set<string>();
+  const approved: QueuedGamingSource[] = [];
+  for (const [submittedIndex, source] of sources.entries()) {
+    if (source.sourceAssessment?.subjectHash !== source.contentHash
+      || (source.applicabilityContext && source.applicabilityContext.contextFingerprint !== source.sourceAssessment.contextFingerprint)) {
+      return buildGatewayValidationError('The source assessment is not bound to this approved content.');
+    }
+    const admission = admitUrl(source.url, submittedIndex, seen);
+    if (!admission.source) return buildGatewayValidationError('An approved source no longer passes URL admission.');
+    const parsedSource = queuedSourceSchema.safeParse({
+      submittedIndex, canonicalUrl: admission.source, game: source.game, gameKey: canonicalGameKey(source.game),
+      origin: 'gpt_web_search', sourceTrustType: source.sourceTrustType,
+      trustScore: source.sourceTrustType === 'official' || source.sourceTrustType === 'patch_notes' ? 0.9 : 0.5,
+      hybridApproval: { actorScopeHash: source.actorScopeHash, contentHash: source.contentHash,
+        policyVersion: source.policyVersion, freshness: source.freshness,
+        gamingClear: source.sourceAssessment,
+        applicabilityContext: source.applicabilityContext,
+        ...(source.applicabilityContext ? { applicabilityBinding: sha256(stableJson({
+          context: source.applicabilityContext, assessment: source.sourceAssessment })) } : {}),
+        freshnessPolicyVersion: GAMING_FRESHNESS_POLICY_VERSION, sourcePolicyVersion: GAMING_SOURCE_POLICY_VERSION,
+        recordType: source.recordType ?? 'guide' }
+    });
+    if (!parsedSource.success) return buildGatewayValidationError('The approved source artifact is invalid.');
+    approved.push(parsedSource.data);
+  }
+  return enqueueGamingIngestion({ action: 'ingest', schemaVersion: '1', sources: approved,
+    rejectedSources: [], submittedCount: approved.length }, idempotency.key, context);
 }
 
 export async function refreshGamingSources(
@@ -782,9 +879,16 @@ export async function refreshGamingSources(
       const refreshPatchVersion = readBoundedGamingPatchVersion(
         source.latestRevision?.patch
       );
+      const priorRequestedUrl = source.latestRevision?.provenance?.requestedUrl;
+      const acquisitionUrl = typeof priorRequestedUrl === 'string' && priorRequestedUrl.length <= 2_048
+        ? priorRequestedUrl : source.canonicalUrl;
+      const priorPolicyGame = source.latestRevision?.provenance?.policyGame;
       sources.push({
         submittedIndex,
         canonicalUrl: source.canonicalUrl,
+        acquisitionUrl,
+        ...(typeof priorPolicyGame === 'string' && priorPolicyGame.length > 0 && priorPolicyGame.length <= 120
+          ? { policyGame: priorPolicyGame } : {}),
         game: source.game,
         gameKey: source.gameKey,
         sourceId: source.id,
@@ -852,7 +956,21 @@ function readHttpStatus(error: unknown): number | undefined {
 }
 
 function classifySourceFailure(error: unknown): GamingSourcePublicError {
-  const status = readHttpStatus(error);
+  const status = error instanceof GamingDocumentAcquisitionError ? error.status : readHttpStatus(error);
+  if (error instanceof GamingDocumentAcquisitionError) {
+    if (error.code === 'URL_BLOCKED') return { code: 'URL_BLOCKED', message: 'The source did not pass public acquisition policy.', retryable: false };
+    if (error.code === 'REDIRECT_NOT_ALLOWED') return { code: 'REDIRECT_NOT_ALLOWED', message: 'The source does not satisfy the approved redirect policy.', retryable: false };
+    if (error.code === 'SOURCE_TIMEOUT') return { code: 'FETCH_TIMEOUT', message: 'The source fetch timed out.', retryable: true };
+    if (['TRANSFER_LIMIT', 'DECODED_LIMIT'].includes(error.acquisition.subreason)) {
+      return { code: 'RESPONSE_TOO_LARGE', message: 'The source response exceeds the acquisition limit.', retryable: false };
+    }
+    if (['UNSUPPORTED_ENCODING', 'UNSUPPORTED_CONTENT_TYPE', 'DOCUMENT_EXTRACTION_FAILED'].includes(error.acquisition.subreason)) {
+      return { code: 'UNSUPPORTED_CONTENT_TYPE', message: 'The source did not contain supported public document content.', retryable: false };
+    }
+    if (error.acquisition.subreason === 'CONDITIONAL_CONTENT_UNAVAILABLE') {
+      return { code: 'FETCH_FAILED', message: 'The source response did not provide usable document content.', retryable: false };
+    }
+  }
   const message = error instanceof Error ? error.message.toLowerCase() : '';
   if (status === 401 || status === 403) {
     return {
@@ -867,7 +985,7 @@ function classifySourceFailure(error: unknown): GamingSourcePublicError {
   if (status !== undefined && status >= 300 && status < 400) {
     return {
       code: 'REDIRECT_NOT_ALLOWED',
-      message: 'The source redirected; redirects are not followed by the safe fetcher.',
+      message: 'The source response does not satisfy the approved redirect policy.',
       retryable: false
     };
   }
@@ -877,7 +995,7 @@ function classifySourceFailure(error: unknown): GamingSourcePublicError {
   if (status !== undefined && status >= 400) {
     return { code: 'FETCH_FAILED', message: 'The source rejected the public fetch.', retryable: false };
   }
-  if (message.includes('timeout') || message.includes('timed out')) {
+  if (message.includes('timeout') || message.includes('timed out') || message.includes('deadline')) {
     return { code: 'FETCH_TIMEOUT', message: 'The source fetch timed out.', retryable: true };
   }
   if (message.includes('content type')) {
@@ -900,7 +1018,7 @@ function classifySourceFailure(error: unknown): GamingSourcePublicError {
   if (message.includes('redirect')) {
     return {
       code: 'REDIRECT_NOT_ALLOWED',
-      message: 'The source redirected; redirects are not followed by the safe fetcher.',
+      message: 'The source response does not satisfy the approved redirect policy.',
       retryable: false
     };
   }
@@ -939,7 +1057,8 @@ function pageLooksAuthenticationBlocked(text: string): boolean {
 
 async function ingestOneSource(
   source: QueuedGamingSource,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  context: { requestId?: string; traceId?: string } = {}
 ): Promise<GamingSourceIngestionItemResult> {
   const startedAt = Date.now();
   const urlHash = sha256(source.canonicalUrl).slice(0, 16);
@@ -948,26 +1067,132 @@ async function ingestOneSource(
     sourceHost: new URL(source.canonicalUrl).hostname,
     sourceUrlHash: urlHash,
     submittedIndex: source.submittedIndex,
+    ...context,
     action: source.origin === 'refresh' ? 'refresh' : 'ingest'
   };
   logger.info('gaming.source.fetch_started', logContext);
-  let rawDocument: FetchAndCleanRawDocument | undefined;
-  let extractionMetrics: Record<string, unknown> = {};
   try {
+    if (source.hybridApproval && !source.hybridApproval.gamingClear) {
+      return { submittedIndex: source.submittedIndex, status: 'rejected', canonicalUrl: source.canonicalUrl,
+        recordsCreated: 0, recordsUpdated: 0, completedAt: new Date().toISOString(),
+        error: { code: 'APPROVED_ASSESSMENT_REQUIRED', message: 'Evaluate this legacy source approval with the current quality policy before storing.', retryable: false } };
+    }
     const fetchedAt = new Date().toISOString();
-    const document = await fetchAndCleanDocument(source.canonicalUrl, MAX_SOURCE_TEXT_CHARS, {
+    const acquisitionUrl = source.acquisitionUrl ?? source.canonicalUrl;
+    const document = await resolveGamingDocument(acquisitionUrl, GAMING_DURABLE_DOCUMENT_LIMITS.documentChars, {
       signal,
+      documentPurpose: 'durable',
       includeLinks: false,
-      rawDocumentMaxChars: GAMING_BUILD_RESOURCE_HARD_LIMITS.maxHtmlChars,
-      onRawDocument: (raw) => {
-        rawDocument = raw;
-      },
-      onExtraction: (metrics) => {
-        extractionMetrics = { ...metrics };
-      }
+      rawDocumentMaxChars: GAMING_BUILD_RESOURCE_HARD_LIMITS.maxHtmlChars
     });
-    const cleanedText = document.text.trim();
-    if (cleanedText.length < MIN_USEFUL_TEXT_CHARS) {
+    signal?.throwIfAborted();
+    if (!isResolvedGamingDocumentIdentityVerified(document, acquisitionUrl)) {
+      return { submittedIndex: source.submittedIndex, status: 'rejected', canonicalUrl: source.canonicalUrl,
+        recordsCreated: 0, recordsUpdated: 0, completedAt: new Date().toISOString(),
+        error: { code: 'RESOLVED_SOURCE_IDENTITY_MISMATCH', message: 'The acquired source identity could not be verified.', retryable: false } };
+    }
+    const policyGame = source.hybridApproval?.applicabilityContext?.game ?? source.policyGame ?? source.game;
+    const finalPolicy = assessGamingSourcePolicy(document.canonicalUrl, policyGame);
+    if (!finalPolicy.durableAllowed || document.sourceUseRestricted || /\b(?:no (?:automated|machine) (?:access|use)|automated (?:access|use) (?:is )?prohibited|do not (?:store|redistribute) (?:this|our) content)\b/iu.test(document.text)) {
+      return { submittedIndex: source.submittedIndex, status: 'rejected', canonicalUrl: source.canonicalUrl,
+        recordsCreated: 0, recordsUpdated: 0, completedAt: new Date().toISOString(),
+        error: { code: 'SOURCE_USE_RESTRICTED', message: 'The final source does not permit this durable source use.', retryable: false } };
+    }
+    // A queued worker has its own process/lifetime. Reacquire safely, then require the exact
+    // complete artifact approved by the caller; a changed or newly truncated page
+    // needs a new evaluation even when its retained prefix has the approved hash.
+    if (source.hybridApproval && !isGamingApprovedArtifactCurrent({
+      approvedContentHash: source.hybridApproval.contentHash, documentContentHash: hashGamingApprovedDocument(document),
+      instructionFiltered: document.metrics.instructionFiltered, truncated: document.metrics.truncated })) {
+      return { submittedIndex: source.submittedIndex, status: 'rejected', canonicalUrl: source.canonicalUrl,
+        recordsCreated: 0, recordsUpdated: 0, completedAt: new Date().toISOString(),
+        error: { code: 'APPROVED_CONTENT_CHANGED', message: 'The source changed after approval; evaluate it again before storing.', retryable: false } };
+    }
+    const approvedAssessment = source.hybridApproval?.gamingClear;
+    if (source.hybridApproval && (!approvedAssessment || approvedAssessment.subjectHash !== source.hybridApproval.contentHash
+      || approvedAssessment.rubricVersion !== GAMING_CLEAR_VERSION
+      || !approvedAssessment.policyProfile.startsWith(`${GAMING_CLEAR_POLICY_VERSION}:`))) {
+      return { submittedIndex: source.submittedIndex, status: 'rejected', canonicalUrl: source.canonicalUrl,
+        recordsCreated: 0, recordsUpdated: 0, completedAt: new Date().toISOString(),
+        error: { code: 'APPROVED_CONTENT_CHANGED', message: 'The source assessment requires a new evaluation.', retryable: false } };
+    }
+    const approvalApplicable = (): boolean => {
+      const approval = source.hybridApproval;
+      if (!approval) return true;
+      const applicability = approval.applicabilityContext;
+      if (applicability && (applicability.contextFingerprint !== approvedAssessment?.contextFingerprint
+        || approval.applicabilityBinding !== sha256(stableJson({ context: applicability, assessment: approvedAssessment })))) return false;
+      const freshness = approval.freshness as unknown as GamingFreshnessEvidence;
+      if (document.acquisition && (freshness.url !== document.publicUrl || freshness.policyVersion !== finalPolicy.policyVersion
+        || freshness.authority !== finalPolicy.authority || freshness.category !== finalPolicy.category
+        || freshness.ruleId !== finalPolicy.ruleId)) return false;
+      const at = new Date();
+      const historical = applicability?.historical && gamingClearHistoricalSourceVerified({ ...applicability,
+        prompt: 'historical patch' }, freshness, at);
+      const until = approval?.freshness.effectiveUntil;
+      if (until !== undefined && (typeof until !== 'string' || !Number.isFinite(Date.parse(until)))) return false;
+      if (typeof until === 'string' && Date.parse(until) <= at.getTime() && !historical) return false;
+      if (applicability?.historical) return Boolean(historical);
+      if (approvedAssessment?.gates.freshness === 'not_applicable') return true;
+      if (!applicability) return approvedAssessment?.policyProfile.endsWith(':walkthrough:source') === true
+        || approvedAssessment?.policyProfile.endsWith(':explanation:source') === true;
+      const verification = approval.freshness.currentVerification as { artifactHash?: string; indexHash?: string;
+        evidence?: GamingFreshnessEvidence; snippet?: string } | undefined;
+      const index = verification?.evidence;
+      const boundIndex = index && verification?.artifactHash === approval.contentHash
+        && /^[a-f0-9]{64}$/u.test(verification.indexHash ?? '') && (verification.snippet?.length ?? Infinity) <= 600
+        && index.currentness === 'current_index' && Boolean(index.ruleId)
+        && assessGamingSourcePolicy(index.url, applicability.game).ruleId === index.ruleId;
+      const question = applicability.classification === 'seasonal'
+        ? applicability.seasonalPatchRequired ? 'current seasonal build' : 'current season'
+        : applicability.classification === 'patch_sensitive' ? 'current patch build'
+          : applicability.classification === 'live_status' ? 'live server status' : 'explain the route';
+      const checked = evaluateGamingFreshness({ ...applicability, question,
+        evidence: [freshness, ...(boundIndex ? [index!] : [])], now: at });
+      return checked.usable && checked.selectedEvidenceIds.includes(freshness.id);
+    };
+    const expiredApprovalResult = () => ({ submittedIndex: source.submittedIndex, status: 'rejected' as const,
+      canonicalUrl: source.canonicalUrl, recordsCreated: 0, recordsUpdated: 0, completedAt: new Date().toISOString(),
+      error: { code: 'APPROVED_APPLICABILITY_EXPIRED', message: 'The source applicability requires a new evaluation before storing.', retryable: false } });
+    if (!approvalApplicable()) return expiredApprovalResult();
+    const structural = assessGamingStructuralUsability({ units: document.evidenceUnits });
+    const chunked = await chunkGamingDocument(document.text, { signal, evidenceUnits: document.evidenceUnits });
+    const cleanedText = chunked.text;
+    const documentTruncated = document.metrics.truncated || chunked.documentTruncated;
+    const documentQuality = classifyGamingDocumentQuality({
+      cleanedText,
+      navigationDensity: document.extraction.navigationDensity,
+      truncated: documentTruncated,
+      minUsefulTextChars: MIN_USEFUL_TEXT_CHARS,
+      evidenceUnits: document.evidenceUnits
+    });
+    const resolutionProvenance = {
+      resolverId: document.resolution.resolverId,
+      resolverVersion: document.resolution.resolverVersion,
+      resolutionStrategy: document.resolution.strategy,
+      requestedHost: new URL(document.requestedUrl).hostname,
+      finalHost: document.host,
+      ...(document.acquisition ? { acquisitionPolicyVersion: document.acquisition.policyVersion,
+        redirectCount: document.acquisition.redirectCount } : {}),
+      resolvedDocumentType: document.resolution.documentType,
+      documentTruncated,
+      rawTextLength: document.metrics.rawTextLength,
+      cleanedTextLength: cleanedText.length,
+      documentCharsResolved: document.extraction.cleanedTextLength,
+      documentCharsIndexed: chunked.indexedChars,
+      chunkCount: chunked.chunks.length,
+      chunkingVersion: chunked.chunkingVersion,
+      ...(document.evidenceUnits?.length ? { evidenceUnitPolicyVersion: GAMING_EVIDENCE_UNIT_POLICY_VERSION,
+        evidenceUnitCount: document.evidenceUnits.length } : {}),
+      coverageStatus: documentTruncated ? 'partial' : 'complete'
+    };
+    logger.info('gaming.source.resolution_completed', {
+      ...logContext,
+      ...resolutionProvenance,
+      extraction: document.structureDiagnostics,
+      documentQuality
+    });
+    if ((!structural.hasIntactUsableUnit && cleanedText.length < MIN_USEFUL_TEXT_CHARS) || !chunked.chunks.length) {
       const code = pageLooksAuthenticationBlocked(cleanedText)
         ? 'AUTHENTICATION_REQUIRED'
         : 'EXTRACTION_EMPTY';
@@ -989,21 +1214,18 @@ async function ingestOneSource(
       };
     }
 
-    const pageTitle = typeof extractionMetrics.documentTitle === 'string'
-      ? extractionMetrics.documentTitle.slice(0, MAX_TITLE_CHARS)
-      : undefined;
-    const pageHeadings = typeof extractionMetrics.headingText === 'string'
-      ? extractionMetrics.headingText.slice(0, 1_000)
-      : undefined;
-    const detectedGame = detectGamingGame({
-      urls: [source.canonicalUrl],
+    const pageTitle = document.metadata.title?.slice(0, MAX_TITLE_CHARS);
+    const pageHeadings = document.metadata.headings?.slice(0, 1_000);
+    const detectedGame = detectGamingDocumentGame({
+      canonicalUrl: document.canonicalUrl,
       pageTitle,
       pageHeadings
     });
     if (
       detectedGame.game
       && detectedGame.confidence >= 0.8
-      && canonicalGameKey(detectedGame.game) !== source.gameKey
+      // The detector recognizes broad aliases; it must not define the stored title or key.
+      && canonicalGameKey(detectedGame.game) !== canonicalGameKey(canonicalizeGamingGameName(source.game))
     ) {
       return {
         submittedIndex: source.submittedIndex,
@@ -1022,10 +1244,11 @@ async function ingestOneSource(
     }
 
     const normalized = await ingestGamingBuildResource({
-      url: source.canonicalUrl,
+      url: document.canonicalUrl,
       requestedGame: source.game,
-      contentType: rawDocument?.contentType,
-      html: rawDocument?.body,
+      contentType: document.contentType,
+      // Hybrid approval covers resolved prose and metadata, not fresh hidden scripts.
+      html: !source.hybridApproval && document.rawDocument?.contentType.includes('html') ? document.rawDocument.body : undefined,
       text: cleanedText,
       metadata: {
         title: pageTitle,
@@ -1033,7 +1256,11 @@ async function ingestOneSource(
       },
       signal
     }, { useCache: false });
-    if (normalized.failureReason === 'STRUCTURED_RESOURCE_GAME_MISMATCH') {
+    // Discovered artifacts retain the established document/chunk pipeline. Their
+    // durable records cannot acquire unseen structured fields after approval.
+    const supportsStructuredExtraction = document.resolution.supportsStructuredExtraction && !source.hybridApproval;
+    const normalizedBuild = supportsStructuredExtraction ? normalized.build : null;
+    if (supportsStructuredExtraction && normalized.failureReason === 'STRUCTURED_RESOURCE_GAME_MISMATCH') {
       return {
         submittedIndex: source.submittedIndex,
         status: 'rejected',
@@ -1050,14 +1277,36 @@ async function ingestOneSource(
       };
     }
 
-    const sourceType = normalized.classification.type !== 'unknown'
+    const classifiedSourceType = normalized.classification.type !== 'unknown'
       ? normalized.classification.type
       : source.sourceTypeHint ?? 'article';
-    const title = normalized.build?.title ?? pageTitle;
-    const normalizedEvidence = normalized.evidenceText.trim();
+    // Document-only resolvers must not turn prose into a build record merely
+    // because an item identifier resembles a planner or loadout URL.
+    const sourceType = !supportsStructuredExtraction && sourceTypeToRecordType(classifiedSourceType) === 'build'
+      ? 'article' : classifiedSourceType;
+    const hasStructuredFields = Boolean(normalizedBuild && (
+      normalizedBuild.equipment?.length || normalizedBuild.skills?.length
+      || Object.keys(normalizedBuild.stats ?? {}).length
+    ));
+    const structuredExtractionQuality = classifyGamingStructuredExtractionQuality({
+      isBuildRecord: sourceTypeToRecordType(sourceType) === 'build',
+      hasStructuredFields,
+      quality: normalized.quality
+    });
+    logger.info('gaming.source.normalization_completed', {
+      ...logContext,
+      sourceType,
+      documentQuality,
+      structuredExtractionQuality,
+      extractor: normalized.adapterId,
+      extractorVersion: normalized.adapterVersion
+    });
+    const title = normalizedBuild?.title ?? pageTitle;
+    const normalizedEvidence = supportsStructuredExtraction
+      ? normalized.evidenceText.trim().slice(0, GAMING_BUILD_RESOURCE_HARD_LIMITS.maxEvidenceChars) : '';
     const patchVerification = resolveVerifiedPatch({
       claimedPatch: source.patchVersion,
-      extractedPatch: normalized.build?.patch,
+      extractedPatch: normalizedBuild?.patch,
       fetchedEvidence: [
         pageTitle,
         pageHeadings,
@@ -1066,8 +1315,8 @@ async function ingestOneSource(
       ].filter(Boolean).join('\n\n')
     });
     const patchVersion = patchVerification?.version;
-    const normalizedData: Record<string, unknown> = normalized.build
-      ? { ...normalized.build }
+    const normalizedData: Record<string, unknown> = normalizedBuild
+      ? { ...normalizedBuild }
       : {
           schemaVersion: '1',
           game: source.game,
@@ -1079,86 +1328,135 @@ async function ingestOneSource(
     if (patchVersion) {
       normalizedData.patch = patchVersion;
     }
-    const searchText = [
-      title,
-      source.game,
-      patchVersion,
-      normalizedEvidence,
-      cleanedText
-    ].filter(Boolean).join('\n\n').slice(0, MAX_SOURCE_TEXT_CHARS);
-    const contentHash = sha256(`${cleanedText}\n${stableJson(normalizedData)}`);
-    const normalizedBuildIdentity = normalized.build
-      ? {
-          game: normalized.build.game,
-          title: normalized.build.title,
-          role: normalized.build.role,
-          archetype: normalized.build.archetype,
-          activity: normalized.build.activity,
-          patch: patchVersion,
-          character: normalized.build.character,
-          equipment: normalized.build.equipment,
-          skills: normalized.build.skills
-        }
-      : null;
-    const semanticKey = sha256(stableJson({
-      gameKey: source.gameKey,
-      recordType: sourceTypeToRecordType(sourceType),
-      title: title?.toLowerCase() ?? null,
-      patchVersion: patchVersion?.toLowerCase() ?? null,
-      build: normalizedBuildIdentity
-    }));
+    const contentHash = hashGamingDocumentRevision(cleanedText, stableJson({ ...normalizedData,
+      ...(document.evidenceUnits?.length ? { evidenceUnits: document.evidenceUnits, evidenceUnitPolicyVersion: GAMING_EVIDENCE_UNIT_POLICY_VERSION } : {}) }));
+    const recordType = source.hybridApproval?.recordType ?? sourceTypeToRecordType(sourceType);
+    // Revision identity includes acquisition policy so refreshing an older
+    // extraction can replace stale provenance/quality even if its prose matches.
+    const extractorVersion = `${GAMING_DOCUMENT_RESOLVER_VERSION}:${sha256(stableJson({
+      adapterId: normalized.adapterId,
+      adapterVersion: normalized.adapterVersion,
+      resolverId: document.resolution.resolverId,
+      resolverVersion: document.resolution.resolverVersion,
+      documentResolverVersion: GAMING_DOCUMENT_RESOLVER_VERSION,
+      acquisition: document.acquisition ?? null,
+      finalSourcePolicy: finalPolicy,
+      chunkingVersion: GAMING_DOCUMENT_CHUNKING_VERSION,
+      ...(document.evidenceUnits?.length ? { evidenceUnitPolicyVersion: GAMING_EVIDENCE_UNIT_POLICY_VERSION } : {}),
+      ...(source.hybridApproval ? { hybridPolicyVersion: source.hybridApproval.policyVersion,
+        freshnessPolicyVersion: source.hybridApproval.freshnessPolicyVersion,
+        sourcePolicyVersion: source.hybridApproval.sourcePolicyVersion, gamingClearRubricVersion: GAMING_CLEAR_VERSION,
+        gamingClearPolicyVersion: GAMING_CLEAR_POLICY_VERSION, recordType } : {})
+    }))}`;
+    const records = chunked.chunks.map((chunk) => {
+      const { text, semanticKey, evidenceUnits, ...chunkMetadata } = chunk;
+      // Structured build payloads remain compatible on the first record only;
+      // every other record contains its own prose and bounded document metadata.
+      const chunkData: Record<string, unknown> = {
+        ...(normalizedBuild && chunk.ordinal === 0 ? normalizedData : {
+          game: source.game, title, sourceType, ...(patchVersion ? { patch: patchVersion } : {})
+        }),
+        schemaVersion: GAMING_DOCUMENT_CHUNKING_VERSION,
+        text,
+        ...(evidenceUnits?.length ? { evidenceUnits } : {}),
+        ...(chunk.ordinal === 0 && normalizedEvidence ? { structuredEvidence: normalizedEvidence } : {}),
+        chunk: chunkMetadata
+      };
+      return {
+        recordType,
+        semanticKey: sha256(stableJson({ gameKey: source.gameKey, recordType, semanticKey })),
+        payloadHash: sha256(stableJson(chunkData)),
+        title,
+        patch: patchVersion,
+        searchText: buildGamingDocumentSearchText({
+          cleanedText: text, title, game: source.game, patchVersion,
+          normalizedEvidence: chunk.ordinal === 0 ? normalizedEvidence : '',
+          // Reserve the actual metadata plus all four possible blank-line separators.
+          maxChars: GAMING_DURABLE_DOCUMENT_LIMITS.maxChunkChars + GAMING_BUILD_RESOURCE_HARD_LIMITS.maxEvidenceChars
+            + (title?.length ?? 0) + source.game.length + (patchVersion?.length ?? 0) + 8
+        }),
+        normalized: chunkData
+      };
+    });
+    signal?.throwIfAborted();
+    if (!approvalApplicable()) return expiredApprovalResult();
     const persisted = await persistGamingSourceRevision({
       gameKey: source.gameKey,
       gameName: source.game,
-      canonicalUrl: source.canonicalUrl,
-      publicUrl: source.canonicalUrl,
-      sourceType: sourceTypeToTrustType(sourceType, source),
-      trustScore: source.trustScore ?? 0.25,
+      // An observed approved redirect proves final document identity for new-source deduplication.
+      // Refresh keeps the existing source key; a changed destination becomes a new revision/citation.
+      canonicalUrl: source.origin === 'refresh' ? source.canonicalUrl : document.canonicalUrl,
+      publicUrl: document.acquisition ? document.publicUrl
+        : selectGamingSourcePublicUrl(source.canonicalUrl, document.publicUrl, supportsStructuredExtraction),
+      sourceType: document.acquisition ? finalPolicy.authority === 'official' ? 'official'
+        : finalPolicy.authority === 'specialist' ? 'curated' : 'supplied' : sourceTypeToTrustType(sourceType, source),
+      trustScore: document.acquisition ? finalPolicy.authority === 'official' ? 0.9
+        : finalPolicy.authority === 'specialist' ? 0.5 : 0.25 : source.trustScore ?? 0.25,
       priority: 100,
       contentHash,
-      cleanedContent: cleanedText.slice(0, MAX_SOURCE_TEXT_CHARS),
+      cleanedContent: cleanedText.slice(0, GAMING_DURABLE_DOCUMENT_LIMITS.revisionPreviewChars)
+        .replace(/[\uD800-\uDBFF]$/u, ''),
       fetchedAt,
       patch: patchVersion,
       extractor: normalized.adapterId,
-      extractorVersion: normalized.adapterVersion,
+      extractorVersion,
       normalizerSchemaVersion: GAMING_BUILD_RESOURCE_SCHEMA_VERSION,
       provenance: {
         canonicalUrl: source.canonicalUrl,
+        requestedUrl: document.requestedUrl,
+        finalPublicUrl: document.publicUrl,
+        finalSourcePolicy: finalPolicy,
+        policyGame,
+        ...(document.acquisition ? { acquisition: document.acquisition } : {}),
         origin: source.origin,
         sourceTypeHint: source.sourceTypeHint ?? null,
         submittedIndex: source.submittedIndex,
         claimedPatchVersion: source.patchVersion ?? null,
         verifiedPatchVersion: patchVersion ?? null,
-        patchVerificationMethod: patchVerification?.method ?? null
+        patchVerificationMethod: patchVerification?.method ?? null,
+        structuredExtractorVersion: normalized.adapterVersion,
+        documentResolverVersion: GAMING_DOCUMENT_RESOLVER_VERSION,
+        ...(source.hybridApproval ? { hybridFreshness: source.hybridApproval.freshness,
+          hybridPolicyVersion: source.hybridApproval.policyVersion,
+          gamingClear: source.hybridApproval.gamingClear,
+          approvedContentHash: source.hybridApproval.contentHash } : {}),
+        ...resolutionProvenance
       },
       extractionMetrics: {
-        ...extractionMetrics,
+        ...resolutionProvenance,
         structured: normalized.metrics,
-        extractionQuality: normalized.quality,
+        extractionQuality: documentQuality,
+        structuredExtractionQuality,
         validationIssues: normalized.validation.issues.slice(0, 16),
         origin: source.origin
       },
-      records: [{
-        recordType: sourceTypeToRecordType(sourceType),
-        semanticKey,
-        payloadHash: sha256(stableJson(normalizedData)),
-        title,
-        patch: patchVersion,
-        searchText,
-        normalized: normalizedData
-      }]
+      records
     });
     const status = persisted.state === 'unchanged'
       ? 'unchanged'
       : persisted.state === 'created'
         ? 'stored'
         : 'updated';
+    logger.info('gaming.source.chunking_completed', {
+      ...logContext,
+      sourceId: persisted.sourceId,
+      revisionId: persisted.revisionId,
+      documentChars: cleanedText.length,
+      indexedChars: chunked.indexedChars,
+      chunkCount: records.length,
+      averageChunkChars: Math.round(chunked.chunks.reduce((sum, chunk) => sum + chunk.text.length, 0) / records.length),
+      maxChunkChars: Math.max(...chunked.chunks.map((chunk) => chunk.text.length)),
+      documentTruncated,
+      chunkingVersion: chunked.chunkingVersion,
+      coverageStatus: documentTruncated ? 'partial' : 'complete'
+    });
     logger.info('gaming.source.ingestion_completed', {
       ...logContext,
       sourceId: persisted.sourceId,
       status,
       sourceType,
-      extractionQuality: normalized.quality,
+      extractionQuality: documentQuality,
+      structuredExtractionQuality,
       recordsCreated: persisted.recordsCreated,
       recordsUpdated: persisted.recordsUpdated,
       elapsedMs: Date.now() - startedAt
@@ -1174,7 +1472,7 @@ async function ingestOneSource(
       recordsUpdated: persisted.recordsUpdated,
       fetchedAt,
       completedAt: new Date().toISOString(),
-      ...(normalized.quality === 'partial' || normalized.quality === 'metadata-only'
+      ...(documentQuality === 'partial' || documentQuality === 'metadata-only'
         ? { warnings: ['EXTRACTION_PARTIAL'] }
         : {})
     };
@@ -1187,6 +1485,7 @@ async function ingestOneSource(
       ...logContext,
       errorCode: classified.code,
       retryable: classified.retryable,
+      ...(error instanceof GamingDocumentAcquisitionError ? { acquisition: error.acquisition } : {}),
       elapsedMs: Date.now() - startedAt
     });
     return {
@@ -1221,9 +1520,13 @@ export async function executeQueuedGamingSourceIngestion(
         ? options.signal.reason
         : new Error('Gaming-source ingestion was cancelled.');
     }
-    processed.push(await ingestOneSource(source, options.signal));
+    processed.push(await ingestOneSource(source, options.signal, {
+      requestId: options.requestId,
+      traceId: options.traceId
+    }));
   }
   const sources = [...processed, ...parsed.data.rejectedSources]
+    .map(projectGamingSourcePublicResult)
     .sort((left, right) => left.submittedIndex - right.submittedIndex);
   const succeeded = sources.filter((source) => ['stored', 'updated', 'unchanged'].includes(source.status)).length;
   const rejected = sources.filter((source) => source.status === 'rejected').length;
@@ -1304,7 +1607,7 @@ export async function getGamingSourceIngestionStatus(
           ...output,
           action: 'status',
           status: job.status === 'failed' ? 'failed' : output.status,
-          sources: output.sources.map(projectBoundedPublicPatchVersion),
+          sources: output.sources.map(projectGamingSourcePublicResult),
           createdAt,
           updatedAt,
           ...(job.completed_at ? { completedAt: new Date(job.completed_at).toISOString() } : {}),
@@ -1379,73 +1682,8 @@ export async function getGamingSourceIngestionStatus(
   }
 }
 
-export async function buildStoredGamingKnowledgeContext(input: {
-  game: string;
-  prompt: string;
-  mode: 'guide' | 'build' | 'meta';
-  limit?: number;
-  sourceIndexOffset?: number;
-  queryTimeoutMs?: number;
-  signal?: AbortSignal;
-}): Promise<GamingStoredKnowledgeContext> {
-  const gameKey = canonicalGameKey(input.game);
-  const records = await runWithStoredGamingLookupAdmission(() =>
-    searchActiveGamingKnowledge({
-      gameKey,
-      query: input.prompt,
-      mode: input.mode,
-      limit: Math.min(Math.max(input.limit ?? 4, 1), 8)
-    }, {
-      queryTimeoutMs: input.queryTimeoutMs,
-      signal: input.signal
-    })
-  ).catch((error: unknown) => {
-    if (input.signal?.aborted) {
-      throw error;
-    }
-    logger.warn('gaming.stored_retrieval_failed', {
-      module: 'gaming-source-ingestion',
-      gameKey,
-      mode: input.mode,
-      errorType: error instanceof Error ? error.name : 'unknown'
-    });
-    return [];
-  });
-  if (records.length === 0) {
-    return { context: '', sources: [] };
-  }
-  const sources = records.map((record) => {
-    const verifiedPatchVersion = resolveVerifiedStoredPatch(record);
-    return {
-      sourceId: record.sourceId,
-      url: record.publicUrl,
-      ...(record.title ? { title: record.title } : {}),
-      sourceType: record.sourceType,
-      ...(verifiedPatchVersion
-        ? {
-            patchVersion: verifiedPatchVersion,
-            verifiedPatchVersion
-          }
-        : {}),
-      fetchedAt: record.fetchedAt.toISOString(),
-      ...(record.publishedAt ? { publishedAt: record.publishedAt.toISOString() } : {}),
-      snippet: record.searchText.slice(0, 1_200)
-    };
-  });
-  const sourceIndexOffset = Math.max(0, Math.trunc(input.sourceIndexOffset ?? 0));
-  const context = records.map((record, index) => {
-    const verifiedPatchVersion = resolveVerifiedStoredPatch(record);
-    return [
-      `[Source ${sourceIndexOffset + index + 1}]`,
-      'Origin: stored gaming knowledge',
-      `URL: ${record.publicUrl}`,
-      `Source ID: ${record.sourceId}`,
-      `Type: ${record.sourceType}`,
-      verifiedPatchVersion ? `Patch: ${verifiedPatchVersion}` : '',
-      record.publishedAt ? `Published: ${record.publishedAt.toISOString()}` : '',
-      record.title ? `Title: ${record.title}` : '',
-      record.searchText.slice(0, 1_200)
-    ].filter(Boolean).join('\n');
-  }).join('\n\n');
-  return { context, sources };
+export async function buildStoredGamingKnowledgeContext(
+  input: GamingStoredKnowledgeInput
+): Promise<GamingStoredKnowledgeContext> {
+  return retrieveStoredGamingKnowledge(input, { resolveVerifiedPatch: resolveVerifiedStoredPatch });
 }

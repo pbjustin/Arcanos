@@ -115,7 +115,12 @@ import {
 } from '@services/gamingSourceHttpBoundary.js';
 import { gamingSourceBodyParser } from '@services/gamingSourceBodyParser.js';
 import { requireGamingSourceAccessAuthentication } from '@services/gamingSourceAccessAuth.js';
+import { gamingHybridWorkflow } from '@services/gamingHybridKnowledge.js';
+import { getRequestAbortSignal, runWithRequestAbortTimeout } from '@arcanos/runtime';
 import { gptAccessRateLimit } from '@services/gptAccessRateLimit.js';
+import { authorizeDeviceCapability } from '@services/gptAccessDeviceAuth.js';
+import devicePairingRouter from './gpt-access-devices.js';
+import { gptAccessDeviceHttpBoundary, isGptAccessDeviceBoundaryApplied } from '@services/gptAccessDeviceHttpBoundary.js';
 import {
   BACKSTAGE_BOOKER_STORYLINE_SUMMARY_READ_SUFFIX,
   BACKSTAGE_BOOKER_UNIVERSE_READ_PATH_PREFIX,
@@ -234,8 +239,8 @@ function validateCapabilityIdempotencyKey(
 function buildGptAccessModuleHandlerContext(
   req: express.Request
 ): ModuleHandlerContext | null {
-  const principalId = readConfiguredGptAccessContextId('ARCANOS_GPT_ACCESS_PRINCIPAL_ID');
-  const workspaceId = readConfiguredGptAccessContextId('ARCANOS_GPT_ACCESS_WORKSPACE_ID');
+  const principalId = req.gptAccessDevicePrincipal?.principalId ?? readConfiguredGptAccessContextId('ARCANOS_GPT_ACCESS_PRINCIPAL_ID');
+  const workspaceId = req.gptAccessDevicePrincipal?.workspaceId ?? readConfiguredGptAccessContextId('ARCANOS_GPT_ACCESS_WORKSPACE_ID');
   if (!principalId || !workspaceId) {
     return null;
   }
@@ -246,6 +251,7 @@ function buildGptAccessModuleHandlerContext(
     principalId,
     workspaceId,
     actorKey: getRequestActorKey(req),
+    ...(req.gptAccessDevicePrincipal ? { requesterDeviceId: req.gptAccessDevicePrincipal.deviceId } : {}),
     ...(req.requestId ? { requestId: req.requestId } : {}),
     traceId: req.traceId ?? null,
     ...(idempotencyKey ? { idempotencyKey } : {}),
@@ -266,10 +272,10 @@ function buildGptAccessConfirmationBinding(
   return {
     actorKey: getRequestAuthenticatedActorKey(req),
     principalId:
-      readConfiguredGptAccessContextId('ARCANOS_GPT_ACCESS_PRINCIPAL_ID')
+      req.gptAccessDevicePrincipal?.principalId ?? readConfiguredGptAccessContextId('ARCANOS_GPT_ACCESS_PRINCIPAL_ID')
       ?? 'gpt-access:unscoped-principal',
     workspaceId:
-      readConfiguredGptAccessContextId('ARCANOS_GPT_ACCESS_WORKSPACE_ID')
+      req.gptAccessDevicePrincipal?.workspaceId ?? readConfiguredGptAccessContextId('ARCANOS_GPT_ACCESS_WORKSPACE_ID')
       ?? 'gpt-access:unscoped-workspace'
   };
 }
@@ -520,17 +526,17 @@ function confirmCapabilityRunWhenRequired(
     }
   }
   const strictLocalAgentConfirmation =
-    (capabilityId === LOCAL_AGENT_CAPABILITY_ID
+    Boolean(req.gptAccessDevicePrincipal) || ((capabilityId === LOCAL_AGENT_CAPABILITY_ID
       || capabilityId === LOCAL_AGENT_CAPABILITY_ROUTE)
     && action !== null
-    && LOCAL_AGENT_STRICT_CONFIRMATION_ACTIONS.has(action);
+    && LOCAL_AGENT_STRICT_CONFIRMATION_ACTIONS.has(action));
   const strictConfirmationBinding: ConfirmationChallengeBinding | null =
     strictLocalAgentConfirmation
       ? (() => {
-          const principalId = readConfiguredGptAccessContextId(
+          const principalId = req.gptAccessDevicePrincipal?.principalId ?? readConfiguredGptAccessContextId(
             'ARCANOS_GPT_ACCESS_PRINCIPAL_ID'
           );
-          const workspaceId = readConfiguredGptAccessContextId(
+          const workspaceId = req.gptAccessDevicePrincipal?.workspaceId ?? readConfiguredGptAccessContextId(
             'ARCANOS_GPT_ACCESS_WORKSPACE_ID'
           );
           return principalId && workspaceId
@@ -551,7 +557,9 @@ function confirmCapabilityRunWhenRequired(
     return;
   }
 
+  let confirmationCompleted = false;
   confirmGate(req, res, () => {
+    confirmationCompleted = true;
     if (
       strictLocalAgentConfirmation
       && req.confirmationContext?.usedChallengeToken !== true
@@ -570,6 +578,9 @@ function confirmCapabilityRunWhenRequired(
       });
       return;
     }
+    if (req.gptAccessDevicePrincipal) {
+      req.logger?.info?.('gpt_access.device.confirmation_completed', { deviceId: req.gptAccessDevicePrincipal.deviceId, action });
+    }
     next();
   }, strictConfirmationBinding
     ? {
@@ -577,6 +588,9 @@ function confirmCapabilityRunWhenRequired(
         requireChallengeToken: true
       }
     : {});
+  if (!confirmationCompleted && req.gptAccessDevicePrincipal) {
+    req.logger?.info?.('gpt_access.device.confirmation_required', { deviceId: req.gptAccessDevicePrincipal.deviceId, action });
+  }
 }
 
 function preflightResearchCapabilityRun(
@@ -1372,7 +1386,7 @@ function isModuleDispatchNotFoundError(error: unknown): boolean {
   return error instanceof ModuleNotFoundError || error instanceof ModuleActionNotFoundError;
 }
 
-const listGptAccessCapabilities = asyncHandler(async (_req, res) => {
+const listGptAccessCapabilities = asyncHandler(async (req, res) => {
   let capabilities;
   try {
     capabilities = getModulesForRegistry()
@@ -1395,7 +1409,11 @@ const listGptAccessCapabilities = asyncHandler(async (_req, res) => {
 
   res.json({
     ok: true,
-    capabilities
+    capabilities: req.gptAccessDevicePrincipal ? capabilities
+      .filter(capability => capability.id === LOCAL_AGENT_CAPABILITY_ID)
+      .map(capability => ({ ...capability, actions: capability.actions.filter(action =>
+        req.gptAccessDevicePrincipal!.capabilityActions.some(allowed => allowed === action)
+        && isModuleActionAllowed(LOCAL_AGENT_CAPABILITY_ID, action)) })) : capabilities
   });
 });
 
@@ -1433,7 +1451,17 @@ const getGptAccessCapability = asyncHandler(async (req, res) => {
   res.json({
     ok: true,
     exists: true,
-    capability: toCapabilityDetail(metadata)
+    capability: req.gptAccessDevicePrincipal ? {
+      ...toCapabilityDetail(metadata),
+      defaultAction: metadata.defaultAction
+        && req.gptAccessDevicePrincipal.capabilityActions.some(allowed => allowed === metadata.defaultAction)
+        && isModuleActionAllowed(LOCAL_AGENT_CAPABILITY_ID, metadata.defaultAction) ? metadata.defaultAction : null,
+      actions: metadata.actions.filter(action => req.gptAccessDevicePrincipal!.capabilityActions.some(allowed => allowed === action)
+        && isModuleActionAllowed(LOCAL_AGENT_CAPABILITY_ID, action)),
+      actionMetadata: Object.fromEntries(Object.entries(metadata.actionMetadata ?? {}).filter(([action]) =>
+        req.gptAccessDevicePrincipal!.capabilityActions.some(allowed => allowed === action)
+        && isModuleActionAllowed(LOCAL_AGENT_CAPABILITY_ID, action))),
+    } : toCapabilityDetail(metadata)
   });
 });
 
@@ -1956,6 +1984,7 @@ const runGptAccessDispatch = asyncHandler(async (req, res) => {
 
 // Keep the leaf router safe when it is mounted without the production app.
 // Narrow boundary middleware is idempotent at the request boundary.
+router.use('/gpt-access/devices', gptAccessDeviceHttpBoundary);
 router.use(
   '/gpt-access/gaming/sources',
   gamingSourceHttpBoundary,
@@ -1977,6 +2006,7 @@ router.use('/gpt-access', (req, res, next) => {
   if (
     isGamingSourceHttpBoundaryApplied(req)
     || isBackstageBookerHttpBoundaryApplied(req)
+    || isGptAccessDeviceBoundaryApplied(req)
   ) {
     next();
     return;
@@ -1990,6 +2020,10 @@ router.get('/gpt-access/openapi.json', (req, res) => {
     serverUrl: resolveGptAccessOpenApiServerUrl(req)
   }));
 });
+
+// Pairing consumption is the only public device operation. Its router applies
+// operator/device authentication itself after the existing Gateway rate budget.
+router.use('/gpt-access/devices', devicePairingRouter);
 
 router.use('/gpt-access', (req, res, next) => {
   if (
@@ -2071,6 +2105,7 @@ router.get(
 router.post(
   '/gpt-access/capabilities/v1/:id/run',
   requireCapabilityRunScope,
+  authorizeDeviceCapability,
   requireGptAccessModuleRegistry,
   authorizeDedicatedBackstageCanonAction,
   mapCapabilityRunConfirmationToken,
@@ -2171,6 +2206,7 @@ router.post(
       res,
       await createGptAccessAiJob(req.body, {
         actorKey: getRequestAuthenticatedActorKey(req),
+        devicePrincipal: req.gptAccessDevicePrincipal,
         requestId: req.requestId,
         traceId: req.traceId,
         idempotencyKey: req.header('idempotency-key') ?? null,
@@ -2188,8 +2224,9 @@ router.post(
       res,
       await getGptAccessJobResult(req.body, {
         actorKey: getRequestAuthenticatedActorKey(req),
-        principalId: readConfiguredGptAccessContextId('ARCANOS_GPT_ACCESS_PRINCIPAL_ID'),
-        workspaceId: readConfiguredGptAccessContextId('ARCANOS_GPT_ACCESS_WORKSPACE_ID'),
+        devicePrincipal: req.gptAccessDevicePrincipal,
+        principalId: req.gptAccessDevicePrincipal?.principalId ?? readConfiguredGptAccessContextId('ARCANOS_GPT_ACCESS_PRINCIPAL_ID'),
+        workspaceId: req.gptAccessDevicePrincipal?.workspaceId ?? readConfiguredGptAccessContextId('ARCANOS_GPT_ACCESS_WORKSPACE_ID'),
         requestId: req.requestId,
         traceId: req.traceId,
         logger: req.logger
@@ -2228,6 +2265,29 @@ router.post(
     );
   })
 );
+
+for (const [path, operation] of [
+  ['/gpt-access/gaming/sources/hybrid/query', 'query'],
+  ['/gpt-access/gaming/sources/hybrid/candidates', 'candidates'],
+  ['/gpt-access/gaming/sources/hybrid/ingestions', 'ingest']
+] as const) {
+  router.post(path, requireGamingSourceAccessAuthentication, asyncHandler(async (req, res) => {
+    const abortScope = createClientDisconnectAbortScope(req, res, 'Gaming hybrid client disconnected');
+    try {
+      const result = await abortScope.run((signal) => runWithRequestAbortTimeout({ timeoutMs: 38_000,
+        parentSignal: signal, requestId: req.requestId, abortMessage: 'Gaming hybrid request timed out' },
+      () => gamingHybridWorkflow[operation](req.body, {
+        actorKey: getRequestAuthenticatedActorKey(req), requestId: req.requestId, traceId: req.traceId,
+        logger: req.logger, canStore: true, signal: getRequestAbortSignal()
+      })));
+      res.status(result.status).json(result.body);
+    } catch {
+      res.status(503).json({ contractVersion: 'gaming-hybrid-v1', requestId: req.requestId ?? 'unavailable',
+        state: 'temporarily_unavailable', nextAction: 'retry_later', reason: 'SERVICE_UNAVAILABLE',
+        sourceKnown: false, evidenceSelected: false, freshnessStatus: 'unverified' });
+    } finally { abortScope.cleanup(); }
+  }));
+}
 
 router.post(
   '/gpt-access/gaming/sources/refreshes',

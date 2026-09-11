@@ -8,6 +8,11 @@ import {
 import { getRequestAuthenticatedActorKey } from '@platform/runtime/security.js';
 import { getEnv } from '@platform/runtime/env.js';
 import {
+  getBackstageNotionMonolithAuthorityStatus,
+  type BackstageNotionMonolithAuthorityStatusHttpResult,
+  type ResolveBackstageNotionMonolithAuthorityStatusInput,
+} from '@services/backstageNotionAuthorityStatus.js';
+import {
   getBackstageNotionPartitionDiagnostics,
   type BackstageNotionPartitionDiagnosticsHttpResult,
   type GetBackstageNotionPartitionDiagnosticsInput,
@@ -49,12 +54,16 @@ type GetPartitionSyncStatus = (
 type GetPartitionDiagnostics = (
   input: GetBackstageNotionPartitionDiagnosticsInput
 ) => Promise<BackstageNotionPartitionDiagnosticsHttpResult>;
+type GetMonolithAuthorityStatus = (
+  input: ResolveBackstageNotionMonolithAuthorityStatusInput
+) => Promise<BackstageNotionMonolithAuthorityStatusHttpResult>;
 
 export interface ApiBackstageNotionPartitionsRouterOptions {
   readonly readEnvironment?: ReadEnvironment;
   readonly enqueueOperation?: EnqueuePartitionSync;
   readonly getOperationStatus?: GetPartitionSyncStatus;
   readonly getDiagnostics?: GetPartitionDiagnostics;
+  readonly getAuthorityStatus?: GetMonolithAuthorityStatus;
 }
 
 interface ConfirmedConfigurationContext {
@@ -231,6 +240,8 @@ export function createApiBackstageNotionPartitionsRouter(
     ?? getBackstageNotionPartitionSyncOperationStatus;
   const getDiagnostics = options.getDiagnostics
     ?? getBackstageNotionPartitionDiagnostics;
+  const getAuthorityStatus = options.getAuthorityStatus
+    ?? getBackstageNotionMonolithAuthorityStatus;
 
   router.use(
     backstageNotionPartitionSyncHttpBoundary,
@@ -439,6 +450,43 @@ export function createApiBackstageNotionPartitionsRouter(
         500,
         'BACKSTAGE_NOTION_PARTITION_DIAGNOSTICS_INTERNAL_ERROR',
         'Failed to read partition diagnostics.'
+      );
+    }
+  });
+
+  router.get('/:universeId/authority-status', async (req, res): Promise<void> => {
+    const operation = resolveBackstageNotionPartitionSyncHttpOperation(req);
+    if (!operation || operation.kind !== 'authorityStatus') {
+      sendFixedError(
+        res,
+        404,
+        'BACKSTAGE_NOTION_AUTHORITY_STATUS_NOT_FOUND',
+        'The Notion authority status target was not found.'
+      );
+      return;
+    }
+    try {
+      const result = await getAuthorityStatus({
+        universeId: operation.universeId,
+        dependencies: { readEnvironment },
+      });
+      try {
+        req.logger?.info?.('backstage_notion_authority_status.read', {
+          requestId: req.requestId,
+          traceId: req.traceId,
+          statusCode: result.statusCode,
+        });
+      } catch {
+        // Bounded status logging must never alter the protected response.
+      }
+      sendOperationResult(res, result);
+    } catch {
+      logRouteFailure(req, 'backstage_notion_authority_status.read_failed');
+      sendFixedError(
+        res,
+        500,
+        'BACKSTAGE_NOTION_AUTHORITY_STATUS_INTERNAL_ERROR',
+        'Failed to read Notion authority status.'
       );
     }
   });

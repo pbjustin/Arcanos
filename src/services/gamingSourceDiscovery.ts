@@ -1,8 +1,14 @@
+import {
+  sanitizeGamingSourceUrl, normalizeGamingSourceDomain as normalizeDomain, gamingSourceDomainMatches as domainMatches,
+  type GamingSourceAdmissionResult
+} from "@shared/gaming/gamingSourceAcquisitionCore.js";
+export { GAMING_SOURCE_ADMISSION_POLICY_VERSION } from "@shared/gaming/gamingSourceAcquisitionCore.js";
+export type { GamingSourceAdmissionSubreason, GamingSourceAdmissionRejection, GamingSourceAdmissionResult }
+  from "@shared/gaming/gamingSourceAcquisitionCore.js";
 import { createHash } from "node:crypto";
-import { isIP } from "node:net";
 import { logger } from "@platform/logging/structuredLogging.js";
 import { getEnv } from "@platform/runtime/env.js";
-import { redactString } from "@shared/redaction.js";
+import { GAMING_BUILD_RESOURCE_HARD_LIMITS } from "@services/gamingBuildResourceSchema.js";
 import {
   getGamingDiscoveryBudgetMs,
   getGamingDiscoveryCacheMaxEntries,
@@ -121,45 +127,7 @@ const MAX_SEARCH_TITLE_CHARS = 240;
 const MAX_SEARCH_SNIPPET_CHARS = 500;
 const MAX_QUERY_TOPIC_TERMS = 7;
 const MAX_PROVIDER_RANK = 100;
-const TRACKING_PARAM_PATTERN = /^(?:utm_.+|fbclid|gclid|dclid|msclkid|mc_[ce]id|ref_src|ref_url|source|campaign|campaignid)$/i;
-const SENSITIVE_PARAM_PATTERN = /(?:^|[_-])(?:access|api|auth|bearer|credential|key|password|secret|sig|signature|token)(?:$|[_-])|^x-amz-/i;
-const SENSITIVE_VALUE_PATTERN = /^(?:sk-|gh[opusr]_|eyj[a-z0-9_-]*\.|bearer\s+)/i;
-const FILE_DOWNLOAD_PATTERN = /\.(?:7z|avi|bin|dmg|docx?|exe|gz|iso|mov|mp3|mp4|msi|pdf|pkg|rar|tar|wav|webm|xlsx?|zip)$/i;
-const ACCOUNT_PATH_PATTERN = /\/(?:account|accounts|auth|login|log-in|register|registration|sign-in|signin|signup)(?:\/|$)/i;
-const SEARCH_PATH_PATTERN = /\/(?:search|search-results|results)(?:\/|$)/i;
-const SEARCH_QUERY_PARAM_PATTERN = /^(?:keyword|q|query|search|search_query)$/i;
-const RAW_URL_CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f-\u009f]/u;
-const CONTENT_FARM_DOMAIN_PATTERN = /(?:^|[.-])(?:clickbait|content-?farm|scraper|seo-?spam|spam)(?:[.-]|$)/i;
 const SOURCE_INSTRUCTION_PATTERN = /(?:\b(?:(?:ignore|disregard|override)\s+(?:all\s+)?(?:previous|prior|system|developer|assistant|user)\s+(?:instructions?|messages?|prompts?)|forget\s+(?:everything|all)(?:\s+(?:written|said))?\s+(?:above|before)|you\s+are\s+now|(?:reveal|print|show|expose)\s+(?:the\s+)?(?:system|developer)\s+(?:prompt|message|instructions?)|(?:call|invoke)\s+(?:the\s+)?(?:tool|function)|(?:execute|run)\s+(?:this\s+)?(?:command|shell|powershell|bash))\b|(?:^|\s|\[|<\|)(?:system|developer|assistant|user)(?:\s*:|\]|\|>))/i;
-const LOW_SIGNAL_DOMAINS = [
-  "facebook.com",
-  "instagram.com",
-  "pinterest.com",
-  "tiktok.com",
-  "twitter.com",
-  "x.com",
-  "youtube.com",
-  "youtu.be"
-];
-const URL_SHORTENER_DOMAINS = [
-  "bit.ly",
-  "buff.ly",
-  "cutt.ly",
-  "goo.gl",
-  "is.gd",
-  "ow.ly",
-  "rebrand.ly",
-  "shorturl.at",
-  "tinyurl.com",
-  "t.co"
-];
-const SEARCH_ENGINE_DOMAINS = [
-  "bing.com",
-  "duckduckgo.com",
-  "google.com",
-  "search.brave.com",
-  "search.yahoo.com"
-];
 const QUERY_STOP_WORDS = new Set([
   "about", "access", "and", "api", "are", "auth", "bearer", "best", "can", "cookie", "could", "credential", "find", "for", "from", "game", "give", "help",
   "how", "into", "look", "looking", "me", "need", "please", "show", "that", "the", "this", "through",
@@ -236,127 +204,19 @@ export function buildGamingDiscoveryQuery(input: Pick<GamingDiscoveryInput, "pro
     .trim();
 }
 
-function normalizeDomain(hostname: string): string {
-  return hostname.toLowerCase().replace(/^www\./, "").replace(/^\[|\]$/g, "").replace(/\.$/, "");
+export function sanitizeGamingDiscoveryCandidateUrl(rawUrl: string): GamingSourceAdmissionResult {
+  return sanitizeGamingSourceUrl(rawUrl, MAX_SEARCH_RESULT_URL_CHARS, {
+    allowlist: getGamingDiscoveryDomainAllowlist(), blocklist: getGamingDiscoveryDomainBlocklist()
+  });
 }
 
-function domainMatches(domain: string, candidate: string): boolean {
-  const normalizedCandidate = normalizeDomain(candidate);
-  return domain === normalizedCandidate || domain.endsWith(`.${normalizedCandidate}`);
-}
-
-function isInternalIpv4(hostname: string): boolean {
-  const octets = hostname.split(".").map(Number);
-  if (octets.length !== 4 || octets.some((octet) => !Number.isInteger(octet) || octet < 0 || octet > 255)) {
-    return true;
-  }
-  const [first, second, third] = octets;
-  return first === 0
-    || first === 10
-    || first === 127
-    || (first === 100 && second >= 64 && second <= 127)
-    || (first === 169 && second === 254)
-    || (first === 172 && second >= 16 && second <= 31)
-    || (first === 192 && second === 168)
-    || (first === 192 && second === 0 && (third === 0 || third === 2))
-    || (first === 198 && (second === 18 || second === 19 || (second === 51 && third === 100)))
-    || (first === 203 && second === 0 && third === 113)
-    || first >= 224;
-}
-
-function isInternalHost(hostname: string): boolean {
-  const normalized = normalizeDomain(hostname);
-  if (normalized === "localhost" || normalized.endsWith(".localhost") || normalized.endsWith(".local")) {
-    return true;
-  }
-  const ipFamily = isIP(normalized);
-  if (ipFamily === 4) {
-    return isInternalIpv4(normalized);
-  }
-  if (ipFamily === 6) {
-    const compact = normalized.toLowerCase();
-    return compact === "::" || compact === "::1" || compact.startsWith("fc") || compact.startsWith("fd")
-      || /^fe[89ab]/.test(compact) || /^fe[c-f]/.test(compact) || compact.startsWith("ff")
-      || compact === "2001:db8" || compact.startsWith("2001:db8:") || compact.startsWith("::ffff:");
-  }
-  return false;
-}
-
-export function sanitizeGamingDiscoveryCandidateUrl(rawUrl: string): { url?: string; rejected: boolean } {
-  if (
-    rawUrl.length === 0
-    || rawUrl.length > MAX_SEARCH_RESULT_URL_CHARS
-    || RAW_URL_CONTROL_CHARACTER_PATTERN.test(rawUrl)
-  ) {
-    return { rejected: true };
-  }
-  try {
-    const parsed = new URL(rawUrl.trim());
-    if ((parsed.protocol !== "http:" && parsed.protocol !== "https:") || parsed.username || parsed.password || parsed.port) {
-      return { rejected: true };
-    }
-    const domain = normalizeDomain(parsed.hostname);
-    if (!domain || isInternalHost(domain)) {
-      return { rejected: true };
-    }
-    if (LOW_SIGNAL_DOMAINS.some((candidate) => domainMatches(domain, candidate))
-      || URL_SHORTENER_DOMAINS.some((candidate) => domainMatches(domain, candidate))
-      || SEARCH_ENGINE_DOMAINS.some((candidate) => domainMatches(domain, candidate))
-      || CONTENT_FARM_DOMAIN_PATTERN.test(domain)) {
-      return { rejected: true };
-    }
-    const allowlist = getGamingDiscoveryDomainAllowlist();
-    const blocklist = getGamingDiscoveryDomainBlocklist();
-    if ((allowlist.length > 0 && !allowlist.some((candidate) => domainMatches(domain, candidate)))
-      || blocklist.some((candidate) => domainMatches(domain, candidate))) {
-      return { rejected: true };
-    }
-    if (ACCOUNT_PATH_PATTERN.test(parsed.pathname) || SEARCH_PATH_PATTERN.test(parsed.pathname)
-      || FILE_DOWNLOAD_PATTERN.test(parsed.pathname)) {
-      return { rejected: true };
-    }
-    for (const segment of parsed.pathname.split("/").filter(Boolean)) {
-      let decodedSegment: string;
-      try {
-        decodedSegment = decodeURIComponent(segment);
-      } catch {
-        return { rejected: true };
-      }
-      if (
-        SENSITIVE_VALUE_PATTERN.test(decodedSegment)
-        || redactString(decodedSegment) === "[REDACTED]"
-      ) {
-        return { rejected: true };
-      }
-    }
-    if (Array.from(parsed.searchParams.keys()).some((key) => SEARCH_QUERY_PARAM_PATTERN.test(key))) {
-      return { rejected: true };
-    }
-
-    let trackingParamCount = 0;
-    for (const [key, value] of Array.from(parsed.searchParams.entries())) {
-      if (
-        SENSITIVE_PARAM_PATTERN.test(key)
-        || SENSITIVE_VALUE_PATTERN.test(value)
-        || redactString(value) === "[REDACTED]"
-      ) {
-        return { rejected: true };
-      }
-      if (TRACKING_PARAM_PATTERN.test(key)) {
-        parsed.searchParams.delete(key);
-        trackingParamCount += 1;
-      }
-    }
-    if (trackingParamCount >= 5 || Array.from(parsed.searchParams.keys()).length > 10) {
-      return { rejected: true };
-    }
-    parsed.hostname = domain;
-    parsed.hash = "";
-    parsed.searchParams.sort();
-    return { url: parsed.toString(), rejected: false };
-  } catch {
-    return { rejected: true };
-  }
+/** Existing internal structured documents retain their bounded URL payload allowance.
+ * Public discovery/hybrid candidates and redirect destinations always use the 2,048-character entry point.
+ */
+export function sanitizeGamingStructuredDocumentUrl(rawUrl: string): GamingSourceAdmissionResult {
+  return sanitizeGamingSourceUrl(rawUrl, GAMING_BUILD_RESOURCE_HARD_LIMITS.maxUrlChars, {
+    allowlist: getGamingDiscoveryDomainAllowlist(), blocklist: getGamingDiscoveryDomainBlocklist()
+  });
 }
 
 function matchedTokenRatio(text: string, terms: readonly string[]): number {
@@ -816,7 +676,7 @@ export async function discoverGamingSources(input: GamingDiscoveryInput): Promis
       rejectedCandidateCount += 1;
       continue;
     }
-    const canonicalKey = createHash("sha256").update(normalizedUrl.url.toLowerCase()).digest("hex");
+    const canonicalKey = createHash("sha256").update(normalizedUrl.url).digest("hex");
     const normalizedResult = { ...result, url: normalizedUrl.url };
     const existing = deduped.get(canonicalKey);
     if (!existing || normalizedResult.providerRank < existing.providerRank) {

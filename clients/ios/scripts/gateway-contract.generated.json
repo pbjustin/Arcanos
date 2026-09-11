@@ -1,0 +1,1089 @@
+{
+  "source": "src/services/gptAccessGateway.ts",
+  "openapi": "3.1.0",
+  "securitySchemes": {
+    "bearerAuth": {
+      "type": "http",
+      "scheme": "bearer",
+      "bearerFormat": "opaque",
+      "description": "Existing trusted operator/server credential. Never provision this credential to an iPhone."
+    },
+    "deviceBearerAuth": {
+      "type": "http",
+      "scheme": "bearer",
+      "bearerFormat": "agd1.<opaque-secret>",
+      "description": "Scoped paired-device credential. Every protected operation checks current server-side device, scope, expiration, and revocation state."
+    },
+    "deviceOrigin": {
+      "type": "apiKey",
+      "in": "header",
+      "name": "X-Arcanos-Device-Origin",
+      "description": "Exact HTTPS origin authorized by the pairing server. Required alongside a device bearer; this public value is not authentication by itself."
+    }
+  },
+  "operations": [
+    {
+      "path": "/gpt-access/jobs/create",
+      "method": "post",
+      "operationId": "createAiJob",
+      "security": [
+        {
+          "bearerAuth": []
+        },
+        {
+          "deviceBearerAuth": [],
+          "deviceOrigin": []
+        }
+      ]
+    },
+    {
+      "path": "/gpt-access/jobs/result",
+      "method": "post",
+      "operationId": "getJobResult",
+      "security": [
+        {
+          "bearerAuth": []
+        },
+        {
+          "deviceBearerAuth": [],
+          "deviceOrigin": []
+        }
+      ]
+    },
+    {
+      "path": "/gpt-access/capabilities/v1",
+      "method": "get",
+      "operationId": "listCapabilitiesV1",
+      "security": [
+        {
+          "bearerAuth": []
+        },
+        {
+          "deviceBearerAuth": [],
+          "deviceOrigin": []
+        }
+      ]
+    },
+    {
+      "path": "/gpt-access/capabilities/v1/{id}",
+      "method": "get",
+      "operationId": "getCapabilityV1",
+      "security": [
+        {
+          "bearerAuth": []
+        },
+        {
+          "deviceBearerAuth": [],
+          "deviceOrigin": []
+        }
+      ]
+    },
+    {
+      "path": "/gpt-access/capabilities/v1/{id}/run",
+      "method": "post",
+      "operationId": "runCapabilityV1",
+      "security": [
+        {
+          "bearerAuth": []
+        },
+        {
+          "deviceBearerAuth": [],
+          "deviceOrigin": []
+        }
+      ]
+    },
+    {
+      "path": "/gpt-access/devices/pairing",
+      "method": "post",
+      "operationId": "createDevicePairing",
+      "security": [
+        {
+          "bearerAuth": []
+        }
+      ]
+    },
+    {
+      "path": "/gpt-access/devices/pair",
+      "method": "post",
+      "operationId": "pairDevice",
+      "security": []
+    },
+    {
+      "path": "/gpt-access/devices/session",
+      "method": "get",
+      "operationId": "getDeviceSession",
+      "security": [
+        {
+          "deviceBearerAuth": [],
+          "deviceOrigin": []
+        }
+      ]
+    },
+    {
+      "path": "/gpt-access/devices/renew",
+      "method": "post",
+      "operationId": "renewDeviceCredential",
+      "security": [
+        {
+          "deviceBearerAuth": [],
+          "deviceOrigin": []
+        }
+      ]
+    },
+    {
+      "path": "/gpt-access/devices/{deviceId}/revoke",
+      "method": "post",
+      "operationId": "revokeDevice",
+      "security": [
+        {
+          "bearerAuth": []
+        },
+        {
+          "deviceBearerAuth": [],
+          "deviceOrigin": []
+        }
+      ]
+    }
+  ],
+  "schemas": {
+    "ConfirmationChallenge": {
+      "type": "object",
+      "description": "Short-lived confirmation challenge returned by confirmGate when an operation requires approval.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Challenge ID. Pause for explicit operator approval, then retry the exact same method, path, action, and payload once, adding only this raw ID as top-level confirmation_token. Stop if that retry fails or returns another challenge."
+        },
+        "issuedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "ttlMs": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "instructions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "gptIdTrusted": {
+          "type": "boolean"
+        },
+        "allowedGptIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "providedTokenStatus": {
+          "type": "string",
+          "enum": [
+            "missing",
+            "invalid"
+          ]
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": true
+    },
+    "ConfirmationRequiredResponse": {
+      "type": "object",
+      "description": "Confirmation gate response. Extract confirmationChallenge.id and pause for explicit operator approval. After approval, retry the exact same operation once with unchanged action/payload plus only the raw ID as top-level confirmation_token. Stop on failure or another challenge.",
+      "properties": {
+        "error": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "code": {
+          "type": "string",
+          "const": "CONFIRMATION_REQUIRED"
+        },
+        "endpoint": {
+          "type": "string"
+        },
+        "method": {
+          "type": "string"
+        },
+        "gptId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "confirmationRequired": {
+          "type": "boolean",
+          "const": true
+        },
+        "confirmationStatus": {
+          "type": "string",
+          "const": "pending"
+        },
+        "confirmationChallenge": {
+          "$ref": "#/components/schemas/ConfirmationChallenge"
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "code",
+        "confirmationRequired",
+        "confirmationChallenge"
+      ],
+      "additionalProperties": true
+    },
+    "ErrorResponse": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "const": false
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "degraded",
+            "unavailable"
+          ]
+        },
+        "service": {
+          "type": "string"
+        },
+        "traceId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "error": {
+          "type": "object",
+          "properties": {
+            "code": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "code",
+            "message"
+          ]
+        }
+      },
+      "required": [
+        "ok",
+        "error"
+      ],
+      "additionalProperties": false
+    },
+    "CreateAiJobRequest": {
+      "type": "object",
+      "description": "Strict async AI job creation request. Unsafe transport/proxy fields such as sql, target, endpoint, headers, auth, cookies, proxy, and url are rejected at runtime, including inside input.",
+      "properties": {
+        "gptId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$",
+          "description": "Registered internal GPT ID. For the main ARCANOS Custom GPT, send the canonical ID arcanos-core. The exact case-insensitive display-name compatibility alias arcanos is canonicalized to arcanos-core; registered aliases core and arcanos-daemon remain supported. Do not infer IDs from display names and do not send default.",
+          "examples": [
+            "arcanos-core"
+          ]
+        },
+        "task": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8000,
+          "description": "Complete backend AI request, including all requested criteria and output requirements."
+        },
+        "input": {
+          "type": "object",
+          "additionalProperties": true,
+          "description": "Optional JSON object, serialized length limited to 12000 characters. Unsafe transport/proxy keys are not allowed."
+        },
+        "context": {
+          "type": "string",
+          "maxLength": 12000
+        },
+        "maxOutputTokens": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4096,
+          "default": 2048
+        },
+        "idempotencyKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "description": "Optional client idempotency key. Generate a unique value for each semantic request and reuse it only when retrying that same request. Equivalent to the Idempotency-Key header."
+        }
+      },
+      "required": [
+        "gptId",
+        "task"
+      ],
+      "additionalProperties": false
+    },
+    "CreateAiJobResponse": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "const": true
+        },
+        "jobId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "traceId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "queued",
+            "running",
+            "completed",
+            "failed"
+          ]
+        },
+        "deduped": {
+          "type": "boolean"
+        },
+        "resultEndpoint": {
+          "type": "string",
+          "const": "/gpt-access/jobs/result"
+        }
+      },
+      "required": [
+        "ok",
+        "jobId",
+        "traceId",
+        "status",
+        "deduped",
+        "resultEndpoint"
+      ],
+      "additionalProperties": false
+    },
+    "JobResultRequest": {
+      "type": "object",
+      "properties": {
+        "jobId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "traceId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "jobId"
+      ],
+      "additionalProperties": false
+    },
+    "JobResultError": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "details": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "additionalProperties": true
+    },
+    "JobResultResponse": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "const": true
+        },
+        "traceId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "jobId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "completed",
+            "failed",
+            "expired",
+            "not_found"
+          ]
+        },
+        "jobStatus": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "lifecycleStatus": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "updatedAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "completedAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "retentionUntil": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "idempotencyUntil": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "expiresAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "poll": {
+          "type": "string"
+        },
+        "stream": {
+          "type": "string"
+        },
+        "resultEndpoint": {
+          "type": "string",
+          "const": "/gpt-access/jobs/result"
+        },
+        "result": {},
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/JobResultError"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "ok",
+        "jobId",
+        "status",
+        "jobStatus",
+        "lifecycleStatus",
+        "createdAt",
+        "updatedAt",
+        "completedAt",
+        "retentionUntil",
+        "idempotencyUntil",
+        "expiresAt",
+        "poll",
+        "stream",
+        "resultEndpoint",
+        "result",
+        "error"
+      ],
+      "additionalProperties": true
+    },
+    "CapabilityV1Summary": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "route": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "enabled": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "description",
+        "route",
+        "actions"
+      ],
+      "additionalProperties": false
+    },
+    "CapabilityV1Detail": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "route": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "actionMetadata": {
+          "type": "object",
+          "description": "Machine-readable action contracts published by the registered module.",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "description": {
+                "type": "string"
+              },
+              "risk": {
+                "type": "string",
+                "enum": [
+                  "readonly",
+                  "privileged",
+                  "destructive"
+                ]
+              },
+              "requiresConfirmation": {
+                "type": "boolean"
+              },
+              "inputSchema": {
+                "type": "object",
+                "additionalProperties": true
+              },
+              "outputSchema": {
+                "type": "object",
+                "additionalProperties": true
+              },
+              "idempotent": {
+                "type": "boolean"
+              },
+              "executionTarget": {
+                "type": "string",
+                "enum": [
+                  "typescript",
+                  "python-daemon"
+                ]
+              },
+              "timeoutMs": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "requiredDeviceScopes": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "uniqueItems": true
+              },
+              "readOnly": {
+                "type": "boolean"
+              },
+              "mayModifyFiles": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "risk",
+              "requiresConfirmation"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "defaultAction": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "defaultTimeoutMs": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "description",
+        "route",
+        "actions",
+        "defaultAction",
+        "defaultTimeoutMs"
+      ],
+      "additionalProperties": false
+    },
+    "CapabilitiesV1Response": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "const": true
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/CapabilityV1Summary"
+          }
+        }
+      },
+      "required": [
+        "ok",
+        "capabilities"
+      ],
+      "additionalProperties": false
+    },
+    "CapabilityV1DetailResponse": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "const": true
+        },
+        "exists": {
+          "type": "boolean"
+        },
+        "capability": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/CapabilityV1Detail"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "ok",
+        "exists",
+        "capability"
+      ],
+      "additionalProperties": false
+    },
+    "CapabilityRunRequest": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": ".*\\S.*"
+        },
+        "payload": {
+          "description": "Optional JSON payload passed to the selected capability action."
+        },
+        "confirmation_token": {
+          "type": "string",
+          "minLength": 1,
+          "description": "After explicit operator approval, use the raw confirmationChallenge.id for one exact retry. Keep the endpoint, action, and payload unchanged; add only this top-level field. Stop if the retry fails or returns another challenge."
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "additionalProperties": false
+    },
+    "CapabilityRunResponse": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "const": true
+        },
+        "result": {
+          "description": "Capability action result."
+        }
+      },
+      "required": [
+        "ok",
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "DevicePairingRequest": {
+      "type": "object",
+      "description": "Trusted operator grants a subset of iPhone operations. Principal, workspace, origin, expiry, and GPT IDs are assigned by the server.",
+      "properties": {
+        "scopes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "jobs.create",
+              "jobs.result",
+              "capabilities.read",
+              "capabilities.run"
+            ]
+          }
+        },
+        "capabilityActions": {
+          "type": "array",
+          "maxItems": 4,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "git.status",
+              "tests.run",
+              "patch.preview",
+              "patch.apply"
+            ]
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "DevicePairingResponse": {
+      "type": "object",
+      "description": "Single-use pairing material, returned once to a trusted operator. Expires after five minutes; never persist it in logs.",
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "const": true
+        },
+        "pairingToken": {
+          "type": "string",
+          "pattern": "^agp1\\.[A-Za-z0-9_-]{43}$",
+          "x-arcanos-sensitive": true
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "origin": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https://"
+        }
+      },
+      "required": [
+        "ok",
+        "pairingToken",
+        "expiresAt",
+        "origin"
+      ],
+      "additionalProperties": false
+    },
+    "DevicePairRequest": {
+      "type": "object",
+      "description": "Consume operator-issued pairing material once. localIdentity is a random installation UUID retained in Keychain, never a hardware identifier or an authentication credential.",
+      "properties": {
+        "pairingToken": {
+          "type": "string",
+          "pattern": "^agp1\\.[A-Za-z0-9_-]{43}$",
+          "writeOnly": true,
+          "x-arcanos-sensitive": true
+        },
+        "localIdentity": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "required": [
+        "pairingToken",
+        "localIdentity"
+      ],
+      "additionalProperties": false
+    },
+    "DeviceCredentialResponse": {
+      "type": "object",
+      "description": "One-hour device credential. Store the complete session atomically in origin-bound, nonsynchronizing, device-only Keychain. Renewal preserves the original thirty-day absolute deadline.",
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "const": true
+        },
+        "deviceId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "credential": {
+          "type": "string",
+          "pattern": "^agd1\\.[A-Za-z0-9_-]{43}$",
+          "x-arcanos-sensitive": true
+        },
+        "tokenType": {
+          "type": "string",
+          "const": "Bearer"
+        },
+        "audience": {
+          "type": "string",
+          "const": "gpt-access-device-v1"
+        },
+        "origin": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https://"
+        },
+        "issuedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "renewalExpiresAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "scopes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "jobs.create",
+              "jobs.result",
+              "capabilities.read",
+              "capabilities.run"
+            ]
+          }
+        },
+        "capabilityActions": {
+          "type": "array",
+          "maxItems": 4,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "git.status",
+              "tests.run",
+              "patch.preview",
+              "patch.apply"
+            ]
+          }
+        },
+        "gptIds": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": {
+            "type": "string",
+            "const": "arcanos-core"
+          }
+        }
+      },
+      "required": [
+        "ok",
+        "deviceId",
+        "credential",
+        "tokenType",
+        "audience",
+        "origin",
+        "issuedAt",
+        "expiresAt",
+        "renewalExpiresAt",
+        "scopes",
+        "capabilityActions",
+        "gptIds"
+      ],
+      "additionalProperties": false
+    },
+    "DeviceSessionResponse": {
+      "type": "object",
+      "description": "Current server-authoritative device metadata without credential material. Pairing does not grant confirmation approval.",
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "const": true
+        },
+        "deviceId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "tokenType": {
+          "type": "string",
+          "const": "Bearer"
+        },
+        "audience": {
+          "type": "string",
+          "const": "gpt-access-device-v1"
+        },
+        "origin": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https://"
+        },
+        "issuedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "renewalExpiresAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "scopes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "jobs.create",
+              "jobs.result",
+              "capabilities.read",
+              "capabilities.run"
+            ]
+          }
+        },
+        "capabilityActions": {
+          "type": "array",
+          "maxItems": 4,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "git.status",
+              "tests.run",
+              "patch.preview",
+              "patch.apply"
+            ]
+          }
+        },
+        "gptIds": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1,
+          "items": {
+            "type": "string",
+            "const": "arcanos-core"
+          }
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "paired",
+            "renewal_required"
+          ]
+        }
+      },
+      "required": [
+        "ok",
+        "deviceId",
+        "tokenType",
+        "audience",
+        "origin",
+        "issuedAt",
+        "expiresAt",
+        "renewalExpiresAt",
+        "scopes",
+        "capabilityActions",
+        "gptIds",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "DeviceRenewRequest": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "DeviceRevokeRequest": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "DeviceRevokeResponse": {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "const": true
+        },
+        "deviceId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "state": {
+          "type": "string",
+          "const": "revoked"
+        }
+      },
+      "required": [
+        "ok",
+        "deviceId",
+        "state"
+      ],
+      "additionalProperties": false
+    }
+  }
+}
