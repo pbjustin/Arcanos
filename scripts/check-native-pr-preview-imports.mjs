@@ -97,6 +97,7 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/shared/gpt/gptJobLifecycle.ts',
   'src/shared/gpt/gptJobResult.ts',
   'src/shared/gpt/trinityReasoningPolicy.ts',
+  'src/shared/ios/iosGatewayPreviewFixture.ts',
   'src/shared/gaming/gamingArchiveResourceCore.ts',
   'src/shared/gaming/gamingSourceAcquisitionCore.ts',
   'src/shared/gaming/gamingSourceAcquisitionPreviewFixture.ts',
@@ -723,6 +724,7 @@ const CRITICAL_RUNTIME_FUNCTION_DIGESTS = new Map([
   ],
 ]);
 const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
+  ['src/shared/ios/iosGatewayPreviewFixture.ts', '67babf8ad6b2d7d1e1f7f2131ad3ac4856e27b47c026db525d269e4f07d035f5'],
   ['src/services/gamingDocumentEvidence.ts', '2fcf36e679c8850dea53ea0b5b56a4a662b8a4a20709d5c5e74e16d524f4a82b'],
   ['src/services/gamingHtmlEvidence.ts', 'c70e8749dc06dfbc66a9137f3d3789d8c31ca4c6c9cfd923a3c44bfa2effa827'],
   ['src/services/gamingJsonEvidence.ts', '8f25b8b37706dfb027bbcfb176543b9f7724c67d799b2a3de57181e07d7b6509'],

@@ -25,6 +25,14 @@ The repository includes an **optional local daemon CLI** in `daemon-python/` tha
 
 See: `daemon-python/README.md`
 
+### Optional iPhone voice client
+
+[`clients/ios/`](clients/ios/README.md) contains the Swift ArcanosKit foundation
+and a minimal iOS host exposing ARCANOS through Siri, App Intents and Vocal
+Shortcuts. Phase 1 supports on-device Foundation Models and an explicit synthetic
+Gateway demonstration. Live remote use requires a scoped paired-device credential
+mechanism; server-wide GPT Access credentials must never be installed on a phone.
+
 ### Optional CLI Bridge
 `ARCANOS:CLI` is an optional protected GPT Access capability for inspecting and safely interacting with the local Python daemon. It is disabled unless `ARCANOS_CLI_BRIDGE_ENABLED=true`.
 

@@ -14,6 +14,12 @@ import { runGamingHybridKnowledgePreview } from './shared/gaming/gamingHybridKno
 import { runGamingClearPreview } from './shared/gaming/gamingClearPreviewFixture.js';
 import { runGamingSourceAcquisitionPreview } from './shared/gaming/gamingSourceAcquisitionPreviewFixture.js';
 import { runGamingStructuredEvidencePreview } from './shared/gaming/gamingStructuredEvidencePreviewFixture.js';
+import {
+  createIosGatewayPreviewFixture,
+  IOS_GATEWAY_PREVIEW_CONTRACT,
+  isIosGatewayPreviewAdmission,
+  isIosGatewayPreviewRoute,
+} from './shared/ios/iosGatewayPreviewFixture.js';
 
 import {
   createGenericJobsRouter,
@@ -7907,9 +7913,13 @@ function validateIdentity(identity: NativePrPreviewIdentity): void {
   }
 }
 
-function isCredentialCarrierPresent(request: express.Request): boolean {
+function isCredentialCarrierPresent(
+  request: express.Request,
+  allowedFixtureCarriers: readonly string[] = []
+): boolean {
   return Object.keys(request.headers).some((rawHeaderName) => {
     const headerName = rawHeaderName.toLowerCase();
+    if (allowedFixtureCarriers.includes(headerName)) return false;
     return FORBIDDEN_HEADER_NAMES.has(headerName)
       || SENSITIVE_HEADER_SEGMENT_PATTERN.test(headerName)
       || headerName.startsWith('x-arcanos-')
@@ -8858,6 +8868,27 @@ export function createNativePrPreviewApplication(
   };
   const allowedRouteKeys = buildAllowedRouteKeys();
   const fixtureRepository = createSealedFixtureRepository();
+  const iosGatewayFixture = createIosGatewayPreviewFixture(options.identity);
+  const iosGatewayRawBodies = new WeakMap<express.Request, string>();
+  const respondIosGatewayFixture = (request: express.Request, response: express.Response) => {
+    const result = iosGatewayFixture.handle({
+      method: request.method,
+      path: request.url ?? '',
+      fixture: request.header(IOS_GATEWAY_PREVIEW_CONTRACT.selectorHeader),
+      authorization: request.header('authorization'),
+      idempotencyKey: request.header('idempotency-key'),
+      body: request.body,
+      rawBody: iosGatewayRawBodies.get(request),
+    });
+    iosGatewayRawBodies.delete(request);
+    response.setHeader(IOS_GATEWAY_PREVIEW_CONTRACT.proofHeader,
+      IOS_GATEWAY_PREVIEW_CONTRACT.proofVersion);
+    sendBoundedJsonResponse(request, response, result.payload, {
+      logEvent: 'native_pr_preview.ios_gateway_fixture',
+      maxBytes: 16_384,
+      statusCode: result.statusCode,
+    });
+  };
   const jsonBodyParser = express.json({
     // The pre-parser allowlist retains the 4 KiB ceiling everywhere else.
     // Gaming-source fixtures mirror the production route's 16 KiB ceiling.
@@ -8865,6 +8896,13 @@ export function createNativePrPreviewApplication(
     limit: MAX_GAMING_SOURCE_REQUEST_BYTES,
     strict: true,
     type: 'application/json',
+    verify: (request, _response, body) => {
+      const previewRequest = request as express.Request;
+      if (previewRequest.header(IOS_GATEWAY_PREVIEW_CONTRACT.selectorHeader)
+        === IOS_GATEWAY_PREVIEW_CONTRACT.selector) {
+        iosGatewayRawBodies.set(previewRequest, body.toString('utf8'));
+      }
+    },
   });
 
   app.disable('x-powered-by');
@@ -8878,6 +8916,22 @@ export function createNativePrPreviewApplication(
     const sourceFixture = request.header(
       NATIVE_PR_PREVIEW_GAMING_SOURCES_CONTRACT.fixtureHeader
     );
+    const iosFixtureAdmission = isIosGatewayPreviewAdmission({
+      method: request.method,
+      path: rawPath,
+      fixture: sourceFixture,
+      authorization: request.header('authorization'),
+    }) && countPreviewRawHeaders(request, 'authorization') <= 1
+      && countPreviewRawHeaders(request, IOS_GATEWAY_PREVIEW_CONTRACT.selectorHeader) === 1
+      && countPreviewRawHeaders(request, 'idempotency-key') <= 1;
+    const iosFixtureCarriers = iosFixtureAdmission ? ['authorization'] : [];
+    const idempotencyKey = request.header('idempotency-key');
+    if (iosFixtureAdmission && request.method === 'POST'
+      && rawPath === IOS_GATEWAY_PREVIEW_CONTRACT.runPath
+      && idempotencyKey !== undefined
+      && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(idempotencyKey)) {
+      iosFixtureCarriers.push('idempotency-key');
+    }
     const contentLength = request.header('content-length');
     const parsedContentLength = contentLength === undefined
       ? 0
@@ -8888,13 +8942,13 @@ export function createNativePrPreviewApplication(
     if (
       rawUrl.includes('?')
       || (rawPath.includes('%') && !gamingSourcePath)
-      || (!gamingSourcePath && !allowedRouteKeys.has(routeKey))
-      || isCredentialCarrierPresent(request)
+      || (!gamingSourcePath && !iosFixtureAdmission && !allowedRouteKeys.has(routeKey))
+      || isCredentialCarrierPresent(request, iosFixtureCarriers)
       || (
         sourceFixture !== undefined
         && (
-          !gamingSourcePath
-          || !GAMING_SOURCE_FIXTURE_NAMES.has(sourceFixture)
+          !iosFixtureAdmission
+          && (!gamingSourcePath || !GAMING_SOURCE_FIXTURE_NAMES.has(sourceFixture))
         )
       )
     ) {
@@ -8910,6 +8964,7 @@ export function createNativePrPreviewApplication(
       || rawPath === NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.path
       || rawPath === NATIVE_PR_PREVIEW_DISPATCH_GPT_IDENTIFIER_CONTRACT.path
       || gamingSourcePath
+      || iosFixtureAdmission
     ) {
       response.setHeader(
         NATIVE_PR_PREVIEW_SYNTHETIC_RESPONSE_HEADER.name,
@@ -8918,6 +8973,10 @@ export function createNativePrPreviewApplication(
     }
     if (gamingSourcePath) {
       response.setHeader('Pragma', 'no-cache');
+    }
+    if (iosFixtureAdmission && request.header('authorization') === undefined) {
+      respondIosGatewayFixture(request, response);
+      return;
     }
     const correlation = readPreviewCorrelation(response);
     if (sourceFixture === undefined && gamingSourcePath) {
@@ -9128,6 +9187,17 @@ export function createNativePrPreviewApplication(
       }
       next(error);
     });
+  });
+
+  // This fixture never mounts the normal Gateway router or imports its effects graph.
+  // Admission and the existing 4 KiB pre-parser limits have already run above.
+  app.use((request, response, next) => {
+    const path = request.url ?? '';
+    if (!isIosGatewayPreviewRoute(request.method, path)) {
+      next();
+      return;
+    }
+    respondIosGatewayFixture(request, response);
   });
 
   app.post(

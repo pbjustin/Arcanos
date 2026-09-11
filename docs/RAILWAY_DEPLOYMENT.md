@@ -390,7 +390,7 @@ Launcher behavior:
   branch. After the lifecycle reports the exact preview hosts, execute the
   current 138-request probe with both network flags from a separate, clean
   checkout of the revalidated exact PR head. This supplemental run is
-  credential-free and explicitly covers all PR-head selectors and worker
+  credential-free and explicitly covers its contract's PR-head selectors and worker
   denials; it has no Railway create, ownership, or cleanup authority.
   A final trusted job writes the
   `Railway PR Preview E2E` commit status against the revalidated exact head; it
@@ -402,6 +402,21 @@ Launcher behavior:
   status is informational for this opt-in policy; do not configure it as a
   global required check because unrelated unlabeled PRs are intentionally out
   of preview scope.
+- The [iOS Swift HTTPS proof](../clients/ios/README.md#supplemental-swift-https-preview-proof)
+  additionally exercises the actual `ArcanosKit` transport and session against
+  six exact routes selected by `x-native-preview-fixture: ios-gateway-v1`.
+  They accept only a public synthetic test bearer and fixed tasks/payloads;
+  normal Gateway requests remain denied. The pure fixture peer is import- and
+  semantic-digest-pinned, bounds transient jobs/challenges, and never imports
+  normal Gateway authentication, confirmation, provider, database, or worker code.
+  Its source-derived wire-schema tests and the 40-request/120-second Swift
+  runner cover creation/polling, explicit approval/cancellation, exact retry
+  bytes, accepted-receipt cancellation and consumed-preview races. Run it from
+  a clean exact-head Linux/macOS checkout against both controller-attested hosts
+  after the trusted lifecycle verifier passes; it is supplemental to the
+  existing 138-request matrix. Results prove real HTTPS client-to-fixture
+  behavior, not iPhone/Siri/Foundation Models, device pairing, active Local Agent
+  execution, real queue persistence, or production operations.
 - Cutover is deliberately fail closed. Railway-native PR environment creation
   must be disabled before the controller will create a custom preview, because
   both mechanisms can create competing environments and deployments for the

@@ -78,6 +78,7 @@ ownership, lifecycle, consolidation, and validation rules.
 | [GPT Access gateway](gpt-access-gateway.md) | Canonical | Protected control-plane API, dispatch, scopes, and safety. |
 | [GPT client identity registry](GPT_CLIENT_IDENTITY.md) | Canonical | Registered authenticated clients, model-identity assurance, durable queue provenance, telemetry, and future OAuth boundaries. |
 | [Local-agent capability bridge](LOCAL_AGENT_CAPABILITY_BRIDGE.md) | Canonical | Protected TypeScript-to-Python execution protocol, local setup, and preview verification. |
+| [iPhone voice client](../clients/ios/README.md) | Canonical | Swift edge client, Siri/App Intents, local inference, Gateway contract derivation, confirmation, and pairing prerequisite. |
 | [Memory backend](MEMORY_BACKEND_USAGE.md) | Canonical | Persistence semantics and safe usage. |
 | [Predictive self-healing](PREDICTIVE_SELF_HEALING.md) | Companion | Predictive healing configuration and execution. |
 | [Productivity system](PRODUCTIVITY_SYSTEM.md) | Canonical | Conversational productivity capability contracts, lifecycle rules, and persistence. |
