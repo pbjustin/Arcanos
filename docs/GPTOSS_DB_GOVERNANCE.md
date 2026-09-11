@@ -46,9 +46,9 @@ It defines:
 - `gptoss_training_candidates`
 - `gptoss_approved_training_examples`
 
-Local scripts do not apply this migration. Review it and apply it manually in
-the target Postgres environment only when that is explicitly intended. After
-review and explicit approval, the guarded apply command is:
+Dry-run and validation scripts do not apply this migration. The separately
+gated schema script can apply it to an explicitly confirmed PostgreSQL target.
+After review and explicit approval, the guarded apply command is:
 
 ```bash
 npm run gptoss:db:schema:apply
@@ -149,6 +149,11 @@ npm run gptoss:db:eval-ledger:dry -- --report local_artifacts/gptoss-phase3-7-lo
 Ledger dry-runs write local reports under `local_artifacts/gptoss-db-ledger/`.
 
 ## Phase 3.8 Candidate Workflow
+
+The scores and local artifact references in this section record an earlier
+experiment. They are not current-checkout test results, and the ignored reports
+are not guaranteed to be available. See the [historical phase evidence
+boundary](GPTOSS_LOCAL_RUNTIME.md#phase-plan).
 
 The Phase 3.7 router/classifier postprocessed v2 eval reached 9/24. Its
 remaining true model errors are now represented as local governance candidate

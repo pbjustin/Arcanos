@@ -18,11 +18,19 @@ Railway is the preferred deployment target because it offers a low-friction path
 - This matches Arcanos runtime expectations and reduces custom bootstrapping logic.
 
 ### 3) Health checks and observability
-- Railway's configured deployment activation probe uses Arcanos `GET /readyz`; `GET /healthz` remains process liveness and `GET /health` remains bounded dependency diagnostics.
+- Railway's configured deployment activation probe uses Arcanos `GET /readyz`.
+  In the normal web application, `GET /health` and `GET /healthz` share the
+  public registry/lifecycle projection; missing required GPT registry entries
+  can return `503`. The separate worker launcher uses its own liveness handler.
+  See [startup resilience](STARTUP_RESILIENCE.md).
 - Centralized logs streamline incident response and reduce the need for bespoke log aggregation in early stages.
 
 ### 4) Operational simplicity
-- The deployment workflow is straightforward: connect the repo, set variables, and deploy.
+- The repository owns a coordinated worker-first, web-second promotion workflow
+  with exact deployment observation and a fail-closed migration hold. Follow
+  [the deployment guide](RAILWAY_DEPLOYMENT.md); repository linkage alone does
+  not establish a safe rollout, and independent production GitHub triggers must
+  remain disabled when the paired workflow owns promotion.
 - This reduces operational overhead and lets the team focus on product features rather than infrastructure maintenance.
 
 ### 5) Environment isolation and safety

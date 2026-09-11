@@ -26,6 +26,14 @@ selection, authorization, confirmation, idempotency, job lifecycle, and
 result ownership. Python receives only a server-authorized job and never
 exposes an internet-facing GPT endpoint or connects directly to PostgreSQL.
 
+Here, a paired device means the registered Python executor selected by the
+server's local-agent binding. It does not mean an iPhone has received a scoped
+Gateway credential. In this checkout, generic GPT Access authentication still
+uses the server-wide bearer; no mobile pairing/issuance route is implemented.
+Do not put the Gateway, operator, or executor credential on a phone. See
+`src/services/gptAccessGateway.ts:gptAccessAuthMiddleware` and
+`src/services/localAgent/devicePolicy.ts:resolveAuthorizedLocalAgentDevice`.
+
 ## Architectural assessment
 
 The repository already contained the required control-plane foundations:
@@ -92,6 +100,11 @@ scopes it to principal/workspace/device/action, and compares the complete
 request fingerprint. The same key and request reuse the in-flight or retained
 terminal job; the same key with a different request is rejected. The current
 retention window is 24 hours.
+
+The configured executor device is part of both the key scope and request
+fingerprint (`src/services/localAgent/service.ts:executeLocalAgentActionAsJob`).
+Reassigning to another device creates a different scope; this does not provide
+cross-device deduplication or authorize replaying an uncertain mutation there.
 
 | Action | Purpose | Input | Output | Risk | Confirmation | Timeout | Required device scope | Read-only | May modify files |
 | --- | --- | --- | --- | --- | --- | ---: | --- | --- | --- |
@@ -535,7 +548,13 @@ arcanos
 The feature is disabled by default. Enabling it starts an outbound polling
 thread only.
 
-### 4. Verify without mutation
+<a id="4-verify-without-mutation"></a>
+
+### 4. Verify repository reads through durable jobs
+
+These actions avoid repository file mutation, but accepted capability calls
+still write backend jobs and lifecycle events. Use them only against an
+explicitly authorized target; they are not offline or read-only database checks.
 
 1. Confirm the daemon heartbeat is current through the existing Agent status
    interface.
@@ -653,17 +672,19 @@ URL on the command line. The daemon’s SQLite journal remains private local
 execution evidence; it is not canonical ARCANOS state, a server queue, or a
 PostgreSQL replacement.
 
-## Railway deployment status and production plan
+<a id="railway-deployment-status-and-production-plan"></a>
 
-The bridge and hardening migration have been exercised only in the isolated
-`arcanos-preview-bf8ac3bd` Railway environment. That preview has its own API,
-worker, PostgreSQL, Redis, credentials, domain, and disposable data. The exact
-resources, deployments, commands, tests, and teardown procedure are recorded
-in `docs/PREVIEW_E2E_REPORT.md`.
+## Historical preview evidence and promotion procedure
 
-No production deployment, production migration, production variable change,
-or production Custom GPT Action change has been performed. The initial
-read-only Railway inspection found this unrelated selection:
+The [preview report](PREVIEW_E2E_REPORT.md) is historical evidence dated
+2026-07-24. It records the isolated `arcanos-preview-bf8ac3bd` environment and
+final read-only candidate `f7f3a2caf3f13566a41a8587a1b6e2966d7f6439`.
+Its mutation evidence is from earlier revisions: `patch.apply` at `a1357af4`
+and sandboxed `tests.run` at `b2821e80`. Preserve those distinct scopes; the
+final read-only run did not repeat those mutations. The report records no
+production changes during that work, not the present deployment state.
+
+The historical initial Railway inspection recorded this unrelated selection:
 
 ```text
 Project:     Arcanos
@@ -709,9 +730,10 @@ PostgreSQL/Redis, and do not alter the production Custom GPT Action.
 The five reported hardening gaps now have code-level remediations: fail-closed
 container sandboxing, a dedicated executor audience, database-authoritative
 idempotency, transactional per-job recovery events, and Linux
-symlink/link-swap coverage. They were exercised through Linux CI and the
-isolated Railway preview described in `docs/PREVIEW_E2E_REPORT.md`; that
-evidence is not a production enablement or production rollout.
+symlink/link-swap coverage. Historical Linux CI and isolated preview evidence
+is scoped to the revisions in [the preview report](PREVIEW_E2E_REPORT.md);
+it is not current-checkout test execution, current deployment verification,
+or a production enablement.
 
 Git and patch actions intentionally support only a standalone main worktree
 whose physical `.git` directory is inside the registered workspace. A

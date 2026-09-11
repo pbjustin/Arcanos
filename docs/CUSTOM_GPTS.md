@@ -235,9 +235,10 @@ add entries to either protocol command-ID list. The raw-string
 structured response shape carries `universeId` when used.
 Every non-literal `generateBooking` run, including the booking generated before
 `generateBookingWithHRC` evaluates it, receives a mandatory server-owned CLEAR
-system policy. The model silently drafts, reviews Clarity, Leverage,
-Efficiency, Alignment, and Resilience, revises weak areas, and returns only the
-final booking or review. This changes neither response contract nor persistence
+system policy. That instruction asks the model to draft, review Clarity,
+Leverage, Efficiency, Alignment, and Resilience, revise weak areas, and return
+only the final booking or review; it is not proof that the model performed
+those internal steps. This changes neither response contract nor persistence
 behavior and adds no score, threshold gate, ActionPlan decision, or separate
 booking-generation call. Recognized exact-literal requests still bypass model
 generation.

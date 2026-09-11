@@ -79,8 +79,10 @@ fixture name; it cannot supply an action, target, execution disposition, runtime
 configuration, or credential. Responses state that provider, database, memory,
 worker, outbound-network, and effects boundaries were not reached.
 
-This is end-to-end proof from the Railway preview HTTPS ingress through the
-contained application and the production approval-policy component. It is not a
+When the exact-revision hosted verifier is actually run successfully, this
+provides component E2E evidence from Railway preview HTTPS ingress through the
+contained application and production approval-policy component. The fixture's
+presence alone is static implementation evidence. It is not a
 normal-runtime self-heal tick, provider decision, actuator, database, worker, or
 live-memory test. The normal `/api/self-heal/*` and `/api/self-improve/*` routes
 remain unavailable in the native preview, and the worker preview remains

@@ -12,7 +12,7 @@ body:
         - [ ] Not a duplicate of existing issues
         - [ ] Environment details are complete
         - [ ] Logs and error messages are included
-        - [ ] OpenAI SDK v6.22.0 compatibility verified
+        - [ ] Installed SDK version recorded and compared with package.json
 
   - type: textarea
     id: description
@@ -92,7 +92,7 @@ body:
     id: logs
     attributes:
       label: Relevant Logs
-      description: Include relevant log output, error messages, or screenshots
+      description: Include redacted errors or screenshots; remove tokens, credentials, personal data, and raw request payloads
       render: shell
       placeholder: Paste logs here...
 
@@ -100,7 +100,7 @@ body:
     id: confirmation
     attributes:
       label: Confirmation Gate Related?
-      description: Is this issue related to endpoints requiring x-confirmed header?
+      description: Is this issue related to a route's confirmation flow? Confirmation is separate from authentication and may require a challenge token as well as x-confirmed.
       options:
         - "No"
         - "Yes - Missing confirmation header"

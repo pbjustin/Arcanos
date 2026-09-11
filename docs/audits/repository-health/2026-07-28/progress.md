@@ -1,5 +1,12 @@
 # Repository health-audit progress
 
+> Reading this dashboard against another checkout: all status terms below use
+> the recorded reconciliation dates and revisions. They are not assertions
+> about the current HEAD, open PRs, deployed services, or present approval.
+> Consult the [maintained guides](../../../README.md) for current procedures;
+> reassess source and operational findings separately before acting. This note
+> does not revise or extend any captured validation result.
+
 Status: current non-GPT-OSS dashboard through product PR
 [#1432](https://github.com/pbjustin/Arcanos/pull/1432), delivery-control PRs
 [#1428](https://github.com/pbjustin/Arcanos/pull/1428),

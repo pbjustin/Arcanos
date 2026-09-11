@@ -1,5 +1,11 @@
 # ARCANOS Local-Agent and Productivity Preview E2E Report
 
+> Historical evidence for the revisions and 2026-07-24 environment recorded
+> below. Resource retention, branch state, credentials, and teardown status
+> have not been rechecked by this documentation review. These historical
+> commands and one-time approvals are not authorization to execute them now.
+> Current deployment procedures are in [RAILWAY_DEPLOYMENT.md](RAILWAY_DEPLOYMENT.md).
+
 - Report date: 2026-07-24
 - Status: Production-readiness preview revalidation completed; temporary resources retained for review
 - Branch: `codex/local-agent-preview-hardening`

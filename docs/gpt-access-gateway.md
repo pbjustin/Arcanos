@@ -27,7 +27,7 @@ Authorization: Bearer <ARCANOS_GPT_ACCESS_TOKEN>
 
 `ARCANOS_GPT_ACCESS_TOKEN` must be set out of band in the runtime environment or authorized generic Custom GPT Action authentication field. Do not paste the token into chat, source, docs, logs, or shell history. It must not be configured in the protected Backstage Booker or Arcanos Gaming Custom GPT Actions: those surfaces have separate, narrower credentials. Generic `capabilities.read` authorizes capability metadata, not stored Backstage universe content.
 
-`ARCANOS_GPT_ACCESS_SCOPES` is a comma-separated allowlist. `jobs.create`, `capabilities.read`, and `capabilities.run` are special: they must be listed explicitly before `/gpt-access/jobs/create` can enqueue work, capability discovery can enumerate modules, or `/gpt-access/capabilities/v1/{id}/run` can execute a module action. Capability runs also require the existing `MCP_ALLOW_MODULE_ACTIONS` module-action allowlist and the confirmation gate (`x-confirmed: yes` or a confirmation challenge token).
+`ARCANOS_GPT_ACCESS_SCOPES` is a comma-separated allowlist. `jobs.create`, `capabilities.read`, `capabilities.run`, and `workers.recover` must be listed explicitly before their respective enqueue, discovery, capability-execution, or worker-recovery operation is allowed. If the variable is unset, the remaining recognized scopes receive the compatibility default grant. Capability runs also require the existing `MCP_ALLOW_MODULE_ACTIONS` module-action allowlist and the applicable confirmation gate (`x-confirmed: yes` or a confirmation challenge token); stricter local-agent execution uses its issued challenge only.
 
 Those are the unchanged generic-bearer rules. The exact Backstage Booker canon
 route additionally supports the purpose-bound lane below; its universe and
@@ -366,6 +366,18 @@ curl -sS -X POST "$ARCANOS_BASE_URL/gpt-access/jobs/result" \
 
 Use an `Idempotency-Key` header, or the `idempotencyKey` body field, when a client may retry the same submission. Do not reuse one idempotency key for different semantic work.
 
+Result access is surface-specific (`src/services/gptAccessGateway.ts`,
+`isGptAccessCreatedJob` and `getGptAccessJobResult`). Generic gateway GPT
+results are admitted by their server-owned creation-path and execution-reason
+markers under the shared gateway bearer; the handler does not compare an
+individual GPT job's actor to the caller. Local-agent results additionally
+require the configured principal/workspace to match the stored job and may
+reconcile an expired job's durable lifecycle before returning. This operation
+is not a per-user authorization boundary or a strictly read-only database
+probe. Dedicated Booker results and generic HTTP job capabilities have their
+own separate checks. MCP `jobs.status`/`jobs.result` do not inherit them; see
+the unresolved MCP authorization gap in [API.md](API.md#daemon-debug-and-registry-paths).
+
 ## Wiring Verification
 Build and focused tests:
 
@@ -439,7 +451,9 @@ Add `capabilities.read,capabilities.run` and a narrow `MCP_ALLOW_MODULE_ACTIONS`
 
 Natural-language dispatch defaults from the web service credential state: unset mode becomes `hybrid` when the resolved OpenAI key is real, and `rules` when it is missing or a mock/placeholder. Set `GPT_ACCESS_NL_DISPATCH_MODE=rules` to force deterministic dispatch. Set `hybrid` or `llm_first` only on the web service when semantic planning is intentionally enabled, and deploy/restart the web service before validating. These settings do not change the worker service or guarantee worker recycle behavior.
 
-Dry-run verification:
+Dry-run verification against an authorized target (this still sends a backend
+request and may invoke semantic provider planning unless dispatch mode is
+`rules`; it skips the selected operation runner):
 
 ```bash
 curl -sS -X POST "$ARCANOS_GPT_ACCESS_BASE_URL/gpt-access/dispatch/run" \

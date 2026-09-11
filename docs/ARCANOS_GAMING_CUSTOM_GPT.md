@@ -26,6 +26,35 @@ The `ARCANOS:GAMING` module still exposes only `query`. `canaryArcanosGaming` is
 
 ## Builder instructions
 
+### Current implementation limits
+
+The tracked schema above is the client contract for this checkout, not proof
+of the saved Builder configuration or any deployed revision. Its gameplay
+payload has no dedicated edition, progress-point, answer-depth, or spoiler
+policy fields. Keep the user's stated constraints in the original prompt;
+do not invent extra Action fields.
+
+`src/services/gamingAgents.ts` extracts optional progression and spoiler cues
+and appends context cautions. `ClarificationAgent.evaluate` specifically asks
+for a missing game on build/meta requests without candidate URLs; guide
+generation may also return `CLARIFICATION_REQUIRED` when game identity cannot
+be resolved. There is no hard progression or spoiler boundary in this contract.
+`BackendQueryAgent.build` does not forward the extracted progress/spoiler fields
+as separate pipeline inputs. A caution saying spoilers were avoided is not
+mechanical verification that generated text contains no spoilers.
+
+Stored retrieval uses canonicalized game names and bounded lexical knowledge
+search (`src/services/gamingSourceIngestion.ts:buildStoredGamingKnowledgeContext`,
+`src/core/db/repositories/gamingSourceRepository.ts:searchActiveGamingKnowledge`).
+It is not an edition-aware complete walkthrough index. One request samples
+stored snippets and accepted network evidence; source admission or a successful
+query does not prove complete indexing of a game, document, or progression path.
+Retrieval can return no stored evidence when the repository is unavailable.
+Current-evidence and provider failures remain distinguishable through
+`fallbackReason`, `discoveryFailureReason`, and the error envelope. A successful
+envelope containing fallback text is not proof of source-backed gameplay facts.
+See `src/services/gamingPipeline.ts:runGameplayPipeline`.
+
 Add the following workflow to the GPT instructions without weakening the existing ARCANOS Gaming scope or safety rules:
 
 ```text

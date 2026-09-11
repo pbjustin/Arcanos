@@ -1,5 +1,11 @@
 # PR 1408 Merge Readiness
 
+> Historical review record for the revisions and 2026-07-24 environment below.
+> Its CI results, resource-retention statements, and merge recommendation are
+> not current-checkout or current-service verification. Preserve the recorded
+> evidence limits; use [CI_CD.md](CI_CD.md) and
+> [RAILWAY_DEPLOYMENT.md](RAILWAY_DEPLOYMENT.md) for current workflows.
+
 - Pull request: <https://github.com/pbjustin/Arcanos/pull/1408>
 - Branch: `codex/local-agent-preview-hardening`
 - Base: `59989445b6bf206c0f73bc9fb11f6d47f3494214`

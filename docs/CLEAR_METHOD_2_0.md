@@ -45,6 +45,13 @@ Default weights:
 - `0.40 <= overall < 0.70` → `confirm`
 - `overall < 0.40` → `block` (`src/services/clear2.ts`) (`src/services/clear2.ts`)
 
+These thresholds apply to a valid evaluation. Missing evaluation/decision data
+is indeterminate; malformed or contradictory scores are invalid. Neither is a
+zero score or an ordinary `block` verdict. `src/services/clearDecision.ts`
+(`interpretClear2Outcome`, `CLEAR_PUBLIC_ERRORS`) defines the fail-closed
+unavailable/invalid result categories. See the
+[CLEAR decision contract](security/clear-decision-contract.md).
+
 ## How CLEAR 2.0 is used for auditing
 
 There are two related auditing paths in Arcanos:
@@ -75,6 +82,14 @@ In short: CLEAR 2.0 governs **execution gating** for plans, while `/audit` gover
 ### Mounting and availability
 - CLEAR routes are mounted in the global route registry alongside plans and agents routes.
 - Feature flags (`enableActionPlans`, `enableClear2`) gate availability in route handlers. (`src/routes/register.ts`) (`src/routes/plans.ts`) (`src/routes/clear.ts`)
+
+Plan routes require the role-specific ActionPlan authentication boundary. Stored
+`GET /clear/:planId` scores require a requester or operator, the current execution
+realm, and requester ownership when applicable; they are not public reads.
+`POST /clear/evaluate` is a separate non-persisting scoring route and does not
+grant execution authority. A score or plan approval alone does not bypass the
+[execution ownership contract](security/action-plan-execution-ownership-contract.md).
+(`src/routes/clear.ts`, `src/routes/plans.ts`)
 
 ## How CLEAR is used in the Trinity pipeline
 

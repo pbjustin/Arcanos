@@ -30,7 +30,7 @@ arcanos-protocol --help
 node packages/cli/dist/index.js --help
 ```
 
-See `../docs/CLI_OVERVIEW.md` for the TypeScript CLI.
+See [CLI overview](../docs/CLI_OVERVIEW.md) for the TypeScript CLI.
 
 ## Routing boundary
 
@@ -102,15 +102,24 @@ heartbeat, polling, acknowledgements, results, and confirmations under
 `/api/daemon/*`; configure the exact same distinct value on the backend. Those
 requests send only `x-arcanos-daemon-token`, never `Authorization` or
 `x-gpt-id`, and do not fall back to `BACKEND_TOKEN`, `ARCANOS_API_KEY`, or
-`ADMIN_KEY`. `BACKEND_ALLOW_GPT_ID_AUTH` defaults to `false`; enable GPT-ID-only
-authentication only when the backend deployment explicitly allows and
-authorizes that trusted caller model.
+`ADMIN_KEY`. `BACKEND_ALLOW_GPT_ID_AUTH` defaults to `false`. This compatibility
+flag permits a generic client request with caller-supplied `x-gpt-id` metadata;
+it does not authenticate current protected backend routes or replace the
+dedicated daemon credential.
 
 The daemon access token proves possession of one deployment-wide credential,
 not individual daemon identity. Any holder can address known instance IDs. Keep
 it out of source control and restart the Python daemon after rotation.
 
-The complete environment-variable reference is `../docs/CONFIGURATION.md`.
+See the [configuration reference](../docs/CONFIGURATION.md) for backend and
+daemon routing settings. Template assignments are explicit choices, not always
+the defaults used when a variable is absent: `arcanos/config.py` defaults
+`OPENAI_MODEL` to `gpt-4.1-mini` and `MAX_TOKENS` to `2048`, while this package's
+`.env.example` assigns `gpt-4o-mini` and `500`. Its default comments need a
+separate template cleanup. The example also advertises
+`DEBUG_SERVER_ALLOW_UNAUTHENTICATED`, but `arcanos/debug_server.py` does not
+consult that parsed setting when authenticating requests; do not rely on it
+to change the debug server's access rules.
 
 ### Agentic coding features
 
@@ -229,6 +238,13 @@ Approval in one surface does not authorize a changed command or bypass the check
 
 ## Local bridge safety
 
+The outbound [Local Agent capability bridge](../docs/LOCAL_AGENT_CAPABILITY_BRIDGE.md)
+is a separate opt-in integration under `arcanos/local_agent/`. It uses a
+purpose-bound executor credential, server-assigned durable jobs, registered
+workspace/device scopes, and exact confirmation for `tests.run` and
+`patch.apply`. Its test execution defaults to disabled. The loopback HTTP bridge
+described below does not implement that executor authentication protocol.
+
 The optional HTTP bridge:
 
 - binds only to `127.0.0.1`, `localhost`, or `::1`
@@ -318,8 +334,8 @@ The query methods create writing work through the GPT route. Status and result m
 
 ## References
 
-- `../README.md`
-- `../docs/CLI_OVERVIEW.md`
-- `../docs/CONFIGURATION.md`
-- `../docs/SCHEMA_PROTOCOL_GUIDE.md`
-- `../contracts/backend_cli_contract.v1.json`
+- [Repository overview](../README.md)
+- [TypeScript CLI](../docs/CLI_OVERVIEW.md)
+- [Configuration](../docs/CONFIGURATION.md)
+- [Protocol and schemas](../docs/SCHEMA_PROTOCOL_GUIDE.md)
+- [Backend/CLI contract](../contracts/backend_cli_contract.v1.json)

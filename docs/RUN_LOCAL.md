@@ -9,6 +9,10 @@ This runbook covers local backend startup, optional daemon startup, and quick va
 - OpenAI API key for live AI calls; mock-mode tests do not require a real key
 
 ## Setup
+Run backend npm commands from the repository root. The copy examples assume a
+new checkout with no existing `.env`; preserve existing local configuration.
+PowerShell users can use `Copy-Item .env.example .env`.
+
 Backend:
 ```bash
 npm install
@@ -16,6 +20,11 @@ cp .env.example .env
 ```
 
 Use `npm install` for local development. CI and Railway use reproducible `npm ci` installs. The Dockerfile declares its own two-stage dependency install sequence for image builds.
+
+Installation accesses package registries and runs `scripts/postinstall.cjs`,
+which can create missing local Git hooks/editor tooling. Inspect that setup
+before running it in an existing workspace. Documentation checks below use
+already-installed tooling and need no service startup.
 
 Set minimum backend values:
 Set `PORT` to `3000` and set `OPENAI_API_KEY` to your local key in `.env`.
@@ -47,10 +56,11 @@ python -m pip install -e .
 # For daemon test/development work:
 # python -m pip install -e ".[dev]"
 cp .env.example .env
+cd ..
 ```
 
 ## Configuration
-Backend local defaults are documented in `CONFIGURATION.md`. For daemon routing to backend, set:
+Backend local defaults are documented in [Configuration](CONFIGURATION.md). For daemon routing to backend, set:
 ```env
 BACKEND_URL=http://localhost:3000
 BACKEND_ROUTING_MODE=hybrid
@@ -88,12 +98,24 @@ cd daemon-python
 arcanos
 ```
 
+Run the daemon in a separate terminal. Return to the repository root before
+running the npm commands below. The TypeScript CLI and Python daemon both
+provide an `arcanos` executable; [CLI overview](CLI_OVERVIEW.md) distinguishes
+their invocation paths.
+
 Validation:
 ```bash
 curl http://localhost:3000/healthz
 curl http://localhost:3000/health
 curl http://localhost:3000/api/test
 ```
+
+These requests inspect a deliberately started local service; they are not
+offline tests. `/healthz` and `/health` report public registry/lifecycle
+snapshots in the normal app; their success does not establish queue-slot
+readiness, synchronized Notion authority, or protected-generation eligibility.
+Application and worker startup can initialize schema and persistent state; use
+an intentionally selected local/test database, never an inherited remote target.
 
 An authenticated passive self-heal check, when the optional control-plane
 identity is configured:
@@ -115,6 +137,19 @@ npm run validate:railway
 npm run validate:backend-cli:offline
 ```
 
+For documentation-only changes, from the repository root:
+
+```bash
+npm run docs:check
+npm run docs:links -- --local-only
+git diff --check
+```
+
+The first two perform static documentation/index and local link checks. They
+do not execute the API examples or contact providers. Review relevant untracked
+documentation separately, since the built-in discovery uses tracked Markdown.
+There is no root documentation-site build or Markdown formatting command.
+
 Use `npm run build:packages` before full backend validation whenever `packages/*`, protocol schemas, or package exports changed.
 
 ## Deploy (Railway)
@@ -130,7 +165,7 @@ Then follow `RAILWAY_DEPLOYMENT.md`.
 - Daemon registry/heartbeat/command calls fail: verify `BACKEND_URL` and that
   both processes have the same valid `ARCANOS_DAEMON_ACCESS_TOKEN`. Generic
   GPT/backend failures may separately require `BACKEND_TOKEN`.
-- Worker exits with database bootstrap errors: configure `DATABASE_URL`, `DATABASE_PRIVATE_URL`, `DATABASE_PUBLIC_URL`, or the full `PG*` connection set.
+- Worker exits with database bootstrap errors: configure `DATABASE_URL` or the full `PG*` connection set. The current resolver returns no candidates when only `DATABASE_PRIVATE_URL`/`DATABASE_PUBLIC_URL` is set; see the source/configuration discrepancy in [Configuration](CONFIGURATION.md).
 - Docker Compose note: `docker-compose.yml` builds the Railway-style image for `arcanos-core`, but the service definition does not set `ARCANOS_PROCESS_KIND`. If you use Compose before that config is repaired, set `ARCANOS_PROCESS_KIND=web` for the API container or use the direct `npm run build && npm start` flow above.
 
 ## References
