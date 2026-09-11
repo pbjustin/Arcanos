@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-11T04:01:19.242Z",
+  "generatedAt": "2026-09-11T05:21:29.510Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -440,6 +440,9 @@
           "relativePath": "src/core/db/client.ts"
         },
         {
+          "relativePath": "src/core/db/gptAccessDeviceSchema.ts"
+        },
+        {
           "relativePath": "src/core/db/index.ts"
         },
         {
@@ -480,6 +483,9 @@
         },
         {
           "relativePath": "src/core/db/repositories/gamingSourceRepository.ts"
+        },
+        {
+          "relativePath": "src/core/db/repositories/gptAccessDeviceRepository.ts"
         },
         {
           "relativePath": "src/core/db/repositories/jobEventRepository.ts"
@@ -1307,6 +1313,9 @@
           "relativePath": "src/routes/genericJobsRouter.ts"
         },
         {
+          "relativePath": "src/routes/gpt-access-devices.ts"
+        },
+        {
           "relativePath": "src/routes/gpt-access-local-agent.ts"
         },
         {
@@ -1938,6 +1947,15 @@
         },
         {
           "relativePath": "src/services/gpt4Shadow.ts"
+        },
+        {
+          "relativePath": "src/services/gptAccessDeviceAuth.ts"
+        },
+        {
+          "relativePath": "src/services/gptAccessDeviceCredentials.ts"
+        },
+        {
+          "relativePath": "src/services/gptAccessDeviceHttpBoundary.ts"
         },
         {
           "relativePath": "src/services/gptAccessGateway.ts"
@@ -2934,6 +2952,9 @@
         },
         {
           "relativePath": "src/shared/security/daemonAccessCredential.ts"
+        },
+        {
+          "relativePath": "src/shared/security/gptAccessDevice.ts"
         },
         {
           "relativePath": "src/shared/security/memoryAccessCredential.ts"
@@ -4240,6 +4261,12 @@
           "relativePath": "tests/governance-loop-contract.test.ts"
         },
         {
+          "relativePath": "tests/gpt-access-device-credentials.test.ts"
+        },
+        {
+          "relativePath": "tests/gpt-access-device-openapi-contract.test.ts"
+        },
+        {
           "relativePath": "tests/gpt-access-gateway.test.ts"
         },
         {
@@ -4414,6 +4441,9 @@
           "relativePath": "tests/gptRouteTimeout.test.ts"
         },
         {
+          "relativePath": "tests/helpers/gptAccessDeviceRepository.ts"
+        },
+        {
           "relativePath": "tests/hrc.test.ts"
         },
         {
@@ -4454,6 +4484,9 @@
         },
         {
           "relativePath": "tests/integration/gaming-durable-rag.pg18.integration.test.ts"
+        },
+        {
+          "relativePath": "tests/integration/gpt-access-device-auth.pg18.integration.test.ts"
         },
         {
           "relativePath": "tests/integration/job-claim-fencing.pg18.integration.test.ts"

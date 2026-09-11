@@ -7,6 +7,7 @@ import type {
   LocalAgentExecutorPrincipal,
 } from '../../services/actionPlanExecution/auth.js';
 import type { ControlPlaneHttpPrincipal } from '../../services/controlPlane/types.js';
+import type { GptAccessDevicePrincipal } from '../security/gptAccessDevice.js';
 
 export type RequestLogLevel = 'debug' | 'info' | 'warn' | 'error';
 
@@ -34,6 +35,8 @@ declare global {
        * succeeds. Never contains the presented credential.
        */
       authenticatedActorKey?: string;
+      /** Server-validated paired iPhone identity; contains no credential material. */
+      gptAccessDevicePrincipal?: GptAccessDevicePrincipal;
       /**
        * Dispatch governance decision for request lifecycle.
        * Set by memoryConsistencyGate middleware.

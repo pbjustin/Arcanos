@@ -14,6 +14,9 @@ Core workflows to review first:
 
 - [CI/CD pipeline](../.github/workflows/ci-cd.yml)
 - [PR CI](../.github/workflows/pr-ci.yml)
+- [iOS client](../.github/workflows/ios-client.yml): canonical Gateway/Swift drift,
+  Swift package tests with Xcode 26.3, and an unsigned iOS Simulator build. These
+  checks use synthetic credentials and do not deploy or validate a physical iPhone.
 - [Documentation audit](../.github/workflows/doc-audit.yml)
 - [Documentation update analysis](../.github/workflows/auto-update-documentation.yml)
 - [Documentation link audit](../.github/workflows/documentation-links.yml)

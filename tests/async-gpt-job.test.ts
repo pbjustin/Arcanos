@@ -18,6 +18,15 @@ import {
 } from '../src/shared/gpt/bridgeSmoke.js';
 
 describe('async GPT job payload helpers', () => {
+  it('preserves server-owned device provenance through the worker parser', () => {
+    const owner = { version: 1 as const, deviceId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', principalId: 'operator:primary', workspaceId: 'personal' };
+    const parsed = parseQueuedGptJobInput(buildQueuedGptJobInput({
+      gptId: 'arcanos-core', body: {}, gptAccessDeviceOwner: owner,
+      requestPath: '/gpt-access/jobs/create', executionModeReason: 'gpt_access_create_ai_job',
+    }));
+    expect(parsed).toMatchObject({ ok: true, value: { gptAccessDeviceOwner: owner } });
+    expect(parseQueuedGptJobInput({ gptId: 'arcanos-core', body: {}, gptAccessDeviceOwner: { ...owner, deviceId: 'forged' } }).ok).toBe(false);
+  });
   const originalPayloadKey = process.env.ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY;
 
   afterAll(() => {

@@ -161,6 +161,7 @@ export async function executeLocalAgentActionAsJob(
         payload: canonicalPayload,
         principal: request.context.principalId,
         workspace: request.context.workspaceId,
+        ...(request.context.requesterDeviceId ? { requesterDeviceId: request.context.requesterDeviceId } : {}),
         deviceId: device.deviceId
       }
     );
@@ -169,6 +170,7 @@ export async function executeLocalAgentActionAsJob(
       {
         principal: request.context.principalId,
         workspace: request.context.workspaceId,
+        ...(request.context.requesterDeviceId ? { requesterDeviceId: request.context.requesterDeviceId } : {}),
         deviceId: device.deviceId,
         action
       }
@@ -189,6 +191,12 @@ export async function executeLocalAgentActionAsJob(
       }
     );
     const envelope: LocalAgentJobEnvelope = {
+      ...(request.context.requesterDeviceId ? { gptAccessDeviceOwner: {
+        version: 1 as const,
+        deviceId: request.context.requesterDeviceId,
+        principalId: request.context.principalId,
+        workspaceId: request.context.workspaceId,
+      } } : {}),
       protocolVersion: LOCAL_AGENT_JOB_PROTOCOL_VERSION,
       requestPath: LOCAL_AGENT_CAPABILITY_PATH,
       executionModeReason: 'gpt_access_local_agent_capability',

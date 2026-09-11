@@ -21,6 +21,7 @@ import {
 import {
   selfHealingControlHttpBoundary,
 } from '@services/controlPlane/selfHealingControlHttpBoundary.js';
+import { gptAccessDeviceHttpBoundary } from '@services/gptAccessDeviceHttpBoundary.js';
 import {
   selfHealingControlBodyParser,
 } from '@services/controlPlane/selfHealingControlBodyParser.js';
@@ -199,6 +200,7 @@ export function createApp(): Express {
   // the unsafe execution gate can inspect or short-circuit these paths.
   app.use('/gpt-access/gaming/sources', gamingSourceHttpBoundary);
   app.use('/gpt-access/gaming/sources', gamingSourceBodyParser);
+  app.use('/gpt-access/devices', gptAccessDeviceHttpBoundary);
   // Backstage canon writes use a dedicated Builder bearer while the existing
   // generic GPT Access bearer remains valid and retains backend confirmation.
   // Establish both authentication lanes before broad request parsing.

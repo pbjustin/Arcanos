@@ -1,0 +1,65 @@
+name: iOS Client
+
+on:
+  pull_request:
+    paths:
+      - 'clients/ios/**'
+      - 'src/services/gptAccessGateway.ts'
+      - 'src/services/gptAccessDevice*'
+      - 'src/shared/security/gptAccessDevice*'
+      - 'src/routes/gpt-access*.ts'
+      - 'src/core/db/gptAccessDeviceSchema.ts'
+      - 'src/core/db/repositories/gptAccessDeviceRepository.ts'
+      - 'tests/gpt-access-device*.test.ts'
+      - 'tests/integration/gpt-access-device-auth.pg18.integration.test.ts'
+      - 'tests/helpers/gptAccessDeviceRepository.ts'
+      - '.github/workflows/ios-client.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contract-drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.18.1'
+          cache: npm
+      - name: Install contract compiler without application lifecycle scripts
+        run: npm ci --ignore-scripts
+      - name: Check canonical Gateway model and authentication drift
+        run: node clients/ios/scripts/derive-gateway-contract.mjs --check
+
+  swift-and-ios-build:
+    runs-on: macos-15
+    env:
+      # runner-images macos-15 lists Xcode 26.3; Apple ships Swift 6.2.3 in it.
+      # https://github.com/actions/runner-images/blob/main/images/macos/macos-15-Readme.md
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Record Apple toolchain
+        run: |
+          test -d "$DEVELOPER_DIR"
+          xcrun --find swift
+          xcrun swift --version
+          xcodebuild -version
+      - name: Run Swift package unit and synthetic proof tests
+        working-directory: clients/ios/ArcanosKit
+        run: xcrun swift test
+      - name: Build unsigned iOS Simulator app
+        run: >-
+          xcodebuild
+          -project clients/ios/ArcanosVoice/ArcanosVoice.xcodeproj
+          -scheme ArcanosVoice
+          -sdk iphonesimulator
+          -destination 'generic/platform=iOS Simulator'
+          CODE_SIGNING_ALLOWED=NO
+          build

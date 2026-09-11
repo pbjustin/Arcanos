@@ -22,10 +22,7 @@ public actor GatewayClient {
               components.path.isEmpty || components.path == "/" else {
             throw GatewayError.invalidConfiguration
         }
-        var origin = components
-        origin.path = ""
-        guard let originURL = origin.url else { throw GatewayError.invalidConfiguration }
-        self.baseURL = originURL
+        self.baseURL = try DeviceAuthentication.origin(baseURL)
         self.credentials = credentials
         self.transport = transport
     }
@@ -77,6 +74,24 @@ public actor GatewayClient {
         return response
     }
 
+    public func deviceSession() async throws -> DeviceSessionResponse {
+        let response: DeviceSessionResponse = try await send(path: "/gpt-access/devices/session", method: "GET", accepted: [200])
+        try DeviceAuthentication.validate(response, origin: baseURL, now: Date())
+        return response
+    }
+
+    func renewDeviceCredential() async throws -> DeviceCredentialResponse {
+        try await send(path: "/gpt-access/devices/renew", method: "POST", body: encode(DeviceRenewRequest()), accepted: [200])
+    }
+
+    func revokeDevice(_ deviceID: String) async throws -> DeviceRevokeResponse {
+        guard UUID(uuidString: deviceID) != nil else { throw GatewayError.invalidRequest }
+        let response: DeviceRevokeResponse = try await send(
+            path: "/gpt-access/devices/\(deviceID)/revoke", method: "POST", body: encode(DeviceRevokeRequest()), accepted: [200])
+        guard response.ok, response.deviceId == deviceID, response.state == "revoked" else { throw GatewayError.invalidResponse }
+        return response
+    }
+
     static func validateCapabilityID(_ id: String) throws {
         guard !id.isEmpty, id.utf8.count <= 128,
               id.utf8.allSatisfy({ (65...90).contains($0) || (97...122).contains($0) || (48...57).contains($0) || [45, 58, 95].contains($0) }) else {
@@ -112,6 +127,7 @@ public actor GatewayClient {
         }
         var headers = [
             "Authorization": "Bearer \(credential.token)",
+            "X-Arcanos-Device-Origin": baseURL.absoluteString,
             "Accept": "application/json",
             "Cache-Control": "no-store"
         ]
@@ -153,6 +169,10 @@ public actor GatewayClient {
             let code = envelope?.error.code ?? "UNKNOWN_API_ERROR"
             let safeCode = code.utf8.count <= 100 && code.utf8.allSatisfy({ (65...90).contains($0) || (48...57).contains($0) || $0 == 95 })
                 ? code : "UNKNOWN_API_ERROR"
+            if let error = GatewayError.authenticationError(status: response.statusCode, code: safeCode) {
+                await credentials.rejectedCredential(credential.token, for: baseURL, error: error)
+                throw error
+            }
             throw GatewayError.http(status: response.statusCode, code: safeCode)
         }
         do { return try decoder.decode(T.self, from: response.data) }

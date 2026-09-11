@@ -16,6 +16,9 @@ public struct RemoteAI: ArcanosAI {
         do {
             result = try await jobs.poll(jobID: receipt.jobId, traceID: receipt.traceId,
                                              maximumAttempts: 2, interval: .seconds(1))
+        } catch let error as GatewayError where [.credentialExpired, .credentialRevoked, .renewalRequired, .authenticationFailure, .unpaired].contains(error) {
+            return AIResponse(text: "ARCANOS accepted the job, but its result could not be read. \(error.userFacingMessage)",
+                              execution: .remote, jobID: receipt.jobId)
         } catch {
             // Creation is already confirmed. Even a cancelled/failed observation must not lose
             // that accepted job handle or cause the original creation request to be repeated.

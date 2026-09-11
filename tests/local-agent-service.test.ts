@@ -70,6 +70,21 @@ beforeEach(() => {
 });
 
 describe('local-agent GPT Access job service', () => {
+  test('keeps requester ownership distinct from executor identity and isolates same-key device jobs', async () => {
+    for (const requesterDeviceId of ['11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222']) {
+      await executeLocalAgentActionAsJob({ action: 'git.status', payload: {}, context: { ...context, requesterDeviceId } });
+    }
+    const first = findOrCreateLocalAgentJobMock.mock.calls[0][0] as {
+      envelope: { gptAccessDeviceOwner: { deviceId: string }; job: { deviceId: string } };
+      idempotencyScopeHash: string; requestFingerprintHash: string;
+    };
+    const second = findOrCreateLocalAgentJobMock.mock.calls[1][0] as typeof first;
+    expect(first.envelope.gptAccessDeviceOwner.deviceId).toBe('11111111-1111-4111-8111-111111111111');
+    expect(second.envelope.gptAccessDeviceOwner.deviceId).toBe('22222222-2222-4222-8222-222222222222');
+    expect(first.envelope.job.deviceId).toBe('20000000-0000-4000-8000-000000000001');
+    expect(first.idempotencyScopeHash).not.toBe(second.idempotencyScopeHash);
+    expect(first.requestFingerprintHash).not.toBe(second.requestFingerprintHash);
+  });
   test('queues read-only work with only server-controlled authority fields', async () => {
     await expect(
       executeLocalAgentActionAsJob({

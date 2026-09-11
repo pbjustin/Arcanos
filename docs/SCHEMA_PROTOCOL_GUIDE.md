@@ -39,6 +39,26 @@ npm install
 | Backstage Booker Custom GPT OpenAPI contract | `contracts/backstage_booker.openapi.v1.json` |
 | Backend/CLI OpenAPI contracts | `contracts/*.openapi.v1.json` and `contracts/backend_cli_contract.v1.json` |
 | Custom GPT bridge OpenAPI | `openapi/custom-gpt-bridge.yaml` |
+| GPT Access and paired-device HTTP OpenAPI | `buildGptAccessOpenApiDocument` in `src/services/gptAccessGateway.ts` |
+| Generated iOS Gateway DTOs and contract snapshot | `clients/ios/scripts/derive-gateway-contract.mjs`; generated outputs under `clients/ios/ArcanosKit/Sources/ArcanosKit/Models/` and `clients/ios/scripts/` |
+
+The paired-iPhone endpoints form an additive Gateway HTTP contract. They do not
+add a command-envelope ID, ActionPlan schema, Python executor contract, or
+schema-catalog family. The TypeScript OpenAPI builder defines pairing, issued
+credentials, safe session metadata, renewal, and revocation. Existing operator
+bearer security is preserved; selected client operations additionally allow a
+scoped device bearer with its required approved-origin header. Pairing
+consumption uses a single-use challenge and has no operator-bearer requirement.
+
+Run `node clients/ios/scripts/derive-gateway-contract.mjs` after canonical
+changes and `node clients/ios/scripts/derive-gateway-contract.mjs --check` to
+verify drift. The generator reads literal TypeScript AST data without importing
+the backend runtime. It derives 22 selected object schemas and ten operations,
+including operation security and security-scheme definitions. Generated Swift
+DTOs transport canonical fields; server validators remain authoritative for
+closed shapes, audiences, origins, grants, ownership, expiry, and revocation.
+`tests/gpt-access-device-openapi-contract.test.ts` compares the snapshot with the
+runtime builder and covers positive and negative device contract shapes.
 
 Protocol v1 distinguishes protocol-visible command ids from implemented command ids. `ARCANOS_PROTOCOL_COMMAND_IDS` includes forward-compatible reserved commands so clients can reason about future surfaces. `ARCANOS_PROTOCOL_IMPLEMENTED_COMMAND_IDS` is the supported set with concrete schemas and dispatcher behavior in this checkout.
 

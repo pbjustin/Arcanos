@@ -294,5 +294,136 @@ public struct CapabilityRunResponse: Codable, Equatable, Sendable {
     }
 }
 
+public struct DevicePairingRequest: Codable, Equatable, Sendable {
+    public let scopes: [String]?
+    public let capabilityActions: [String]?
+
+    public init(scopes: [String]? = nil, capabilityActions: [String]? = nil) {
+        self.scopes = scopes
+        self.capabilityActions = capabilityActions
+    }
+}
+
+public struct DevicePairingResponse: Codable, Equatable, Sendable, CustomStringConvertible, CustomDebugStringConvertible {
+    public let ok: Bool
+    public let pairingToken: String
+    public let expiresAt: String
+    public let origin: String
+
+    public init(ok: Bool, pairingToken: String, expiresAt: String, origin: String) {
+        self.ok = ok
+        self.pairingToken = pairingToken
+        self.expiresAt = expiresAt
+        self.origin = origin
+    }
+
+    public var description: String { "DevicePairingResponse(<redacted>)" }
+    public var debugDescription: String { description }
+}
+
+public struct DevicePairRequest: Codable, Equatable, Sendable, CustomStringConvertible, CustomDebugStringConvertible {
+    public let pairingToken: String
+    public let localIdentity: String
+
+    public init(pairingToken: String, localIdentity: String) {
+        self.pairingToken = pairingToken
+        self.localIdentity = localIdentity
+    }
+
+    public var description: String { "DevicePairRequest(<redacted>)" }
+    public var debugDescription: String { description }
+}
+
+public struct DeviceCredentialResponse: Codable, Equatable, Sendable, CustomStringConvertible, CustomDebugStringConvertible {
+    public let ok: Bool
+    public let deviceId: String
+    public let credential: String
+    public let tokenType: String
+    public let audience: String
+    public let origin: String
+    public let issuedAt: String
+    public let expiresAt: String
+    public let renewalExpiresAt: String
+    public let scopes: [String]
+    public let capabilityActions: [String]
+    public let gptIds: [String]
+
+    public init(ok: Bool, deviceId: String, credential: String, tokenType: String, audience: String, origin: String, issuedAt: String, expiresAt: String, renewalExpiresAt: String, scopes: [String], capabilityActions: [String], gptIds: [String]) {
+        self.ok = ok
+        self.deviceId = deviceId
+        self.credential = credential
+        self.tokenType = tokenType
+        self.audience = audience
+        self.origin = origin
+        self.issuedAt = issuedAt
+        self.expiresAt = expiresAt
+        self.renewalExpiresAt = renewalExpiresAt
+        self.scopes = scopes
+        self.capabilityActions = capabilityActions
+        self.gptIds = gptIds
+    }
+
+    public var description: String { "DeviceCredentialResponse(<redacted>)" }
+    public var debugDescription: String { description }
+}
+
+public struct DeviceSessionResponse: Codable, Equatable, Sendable {
+    public let ok: Bool
+    public let deviceId: String
+    public let tokenType: String
+    public let audience: String
+    public let origin: String
+    public let issuedAt: String
+    public let expiresAt: String
+    public let renewalExpiresAt: String
+    public let scopes: [String]
+    public let capabilityActions: [String]
+    public let gptIds: [String]
+    public let state: String
+
+    public init(ok: Bool, deviceId: String, tokenType: String, audience: String, origin: String, issuedAt: String, expiresAt: String, renewalExpiresAt: String, scopes: [String], capabilityActions: [String], gptIds: [String], state: String) {
+        self.ok = ok
+        self.deviceId = deviceId
+        self.tokenType = tokenType
+        self.audience = audience
+        self.origin = origin
+        self.issuedAt = issuedAt
+        self.expiresAt = expiresAt
+        self.renewalExpiresAt = renewalExpiresAt
+        self.scopes = scopes
+        self.capabilityActions = capabilityActions
+        self.gptIds = gptIds
+        self.state = state
+    }
+}
+
+public struct DeviceRenewRequest: Codable, Equatable, Sendable {
+
+
+    public init() {
+
+    }
+}
+
+public struct DeviceRevokeRequest: Codable, Equatable, Sendable {
+
+
+    public init() {
+
+    }
+}
+
+public struct DeviceRevokeResponse: Codable, Equatable, Sendable {
+    public let ok: Bool
+    public let deviceId: String
+    public let state: String
+
+    public init(ok: Bool, deviceId: String, state: String) {
+        self.ok = ok
+        self.deviceId = deviceId
+        self.state = state
+    }
+}
+
 public typealias CreateAIJobRequest = CreateAiJobRequest
 public typealias CreateAIJobResponse = CreateAiJobResponse

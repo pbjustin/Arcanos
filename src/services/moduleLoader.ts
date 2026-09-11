@@ -13,6 +13,8 @@ export interface ModuleHandlerContext {
   principalId: string;
   workspaceId: string;
   actorKey: string;
+  /** Requesting iPhone; distinct from the target Python executor device. */
+  requesterDeviceId?: string;
   requestId?: string;
   traceId?: string | null;
   idempotencyKey?: string;

@@ -20,6 +20,7 @@ const LOCAL_AGENT_IDEMPOTENCY_CLEANUP_BATCH_SIZE = 100;
 export type LocalAgentAuthorizationDecision = 'allow' | 'confirmed';
 
 export interface LocalAgentJobEnvelope {
+  gptAccessDeviceOwner?: { version: 1; deviceId: string; principalId: string; workspaceId: string };
   protocolVersion: typeof LOCAL_AGENT_JOB_PROTOCOL_VERSION;
   requestPath: '/gpt-access/capabilities/v1/ARCANOS:LOCAL_AGENT/run';
   executionModeReason: 'gpt_access_local_agent_capability';

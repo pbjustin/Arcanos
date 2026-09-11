@@ -20,7 +20,7 @@ public struct SessionResult: Sendable {
         case is CancellationError:
             text = "ARCANOS stopped waiting. Any backend action already accepted may still run; no automatic retry will be sent."
         case GatewayError.unpaired, AIError.remoteNotPaired:
-            text = "This request needs remote ARCANOS. Device pairing is not available yet. No action was sent."
+            text = "This request needs remote ARCANOS. Complete device pairing in the ARCANOS app first. No action was sent."
         case GatewayError.credentialExpired:
             text = "Your ARCANOS device session expired. Pair again before using remote actions."
         case GatewayError.unavailable:
