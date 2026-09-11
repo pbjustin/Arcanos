@@ -119,6 +119,8 @@ public actor GatewayClient {
         if let idempotencyKey { headers["Idempotency-Key"] = idempotencyKey }
         let response: GatewayResponse
         do {
+            // Credential lookup can suspend. Cancellation must stop a request before transmission.
+            try Task.checkCancellation()
             response = try await transport.send(GatewayRequest(url: url, method: method, headers: headers, body: body))
         } catch is CancellationError {
             throw CancellationError()
@@ -129,11 +131,14 @@ public actor GatewayClient {
         } catch {
             throw GatewayError.unavailable
         }
-        try Task.checkCancellation()
+        // A delivered success may acknowledge a durable job. Finish validating it even if
+        // cancellation arrived during transport; discarding it would lose the accepted job handle.
         guard response.data.count <= 2_097_152 else { throw GatewayError.invalidResponse }
         guard !(300...399).contains(response.statusCode) else { throw GatewayError.redirectRejected }
         let decoder = JSONDecoder()
         if !accepted.contains(response.statusCode) {
+            // Cancellation must not leave a new approval challenge waiting for a later retry.
+            try Task.checkCancellation()
             if response.statusCode == 403,
                let confirmation = try? decoder.decode(ConfirmationRequiredResponse.self, from: response.data),
                confirmation.code == "CONFIRMATION_REQUIRED", confirmation.confirmationRequired {

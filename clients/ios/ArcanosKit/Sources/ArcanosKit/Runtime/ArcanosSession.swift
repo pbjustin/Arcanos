@@ -87,6 +87,9 @@ public actor ArcanosSession {
         guard let jobs, let kind = knownJobs[jobID] else { return .failure(GatewayError.invalidRequest) }
         do {
             let result = try await jobs.result(jobID: jobID)
+            // Another observation can finish while this actor awaits transport. A consumed
+            // terminal job must not re-arm a patch preview or overwrite its later state.
+            guard knownJobs[jobID] != nil else { throw GatewayError.invalidRequest }
             guard result.jobId == jobID else { throw GatewayError.invalidResponse }
             if result.status == "pending" {
                 return SessionResult(text: "The ARCANOS job is still pending. Completion has not been confirmed.", kind: .pending, jobID: jobID)

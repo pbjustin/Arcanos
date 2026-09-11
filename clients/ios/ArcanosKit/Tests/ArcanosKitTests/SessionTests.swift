@@ -32,6 +32,47 @@ private actor ContextObserver: ArcanosAI {
     }
 }
 
+/// Release overlapping reads individually to exercise actor reentrancy without timing sleeps.
+private actor DelayedPreviewTransport: GatewayTransport {
+    private let completedPreview: GatewayResponse
+    private var resultReads: [CheckedContinuation<GatewayResponse, Never>?] = []
+    private var observers: [(Int, CheckedContinuation<Void, Never>)] = []
+    private var applyCount = 0
+
+    init(completedPreview: GatewayResponse) { self.completedPreview = completedPreview }
+
+    func send(_ request: GatewayRequest) async throws -> GatewayResponse {
+        if request.url.path == "/gpt-access/jobs/result" {
+            return await withCheckedContinuation { continuation in
+                resultReads.append(continuation)
+                let ready = observers.filter { $0.0 <= resultReads.count }
+                observers.removeAll { $0.0 <= resultReads.count }
+                for (_, observer) in ready { observer.resume() }
+            }
+        }
+        guard let data = request.body,
+              let action = try JSONDecoder().decode(JSONValue.self, from: data)["action"]?.stringValue,
+              ["patch.preview", "patch.apply"].contains(action) else { throw GatewayError.invalidRequest }
+        if action == "patch.apply" { applyCount += 1 }
+        return try wire(CapabilityRunResponse(ok: true, result: .object([
+            "ok": .bool(true), "accepted": .bool(true), "persisted": .bool(true),
+            "jobId": .string(action == "patch.preview" ? sessionJobID : "33333333-3333-4333-8333-333333333333")
+        ])))
+    }
+
+    func waitForResultReads(_ count: Int) async {
+        if resultReads.count >= count { return }
+        await withCheckedContinuation { observers.append((count, $0)) }
+    }
+
+    func completeResultRead(_ index: Int) {
+        resultReads[index]?.resume(returning: completedPreview)
+        resultReads[index] = nil
+    }
+
+    func applications() -> Int { applyCount }
+}
+
 private func wire<T: Encodable>(_ value: T, status: Int = 200) throws -> GatewayResponse {
     GatewayResponse(statusCode: status, data: try JSONEncoder().encode(value))
 }
@@ -52,6 +93,33 @@ private func gateway(_ transport: SessionTransport) throws -> GatewayClient {
 }
 
 struct SessionTests {
+    @Test func overlappingPreviewReadsCannotRearmAConsumedPatch() async throws {
+        let transport = DelayedPreviewTransport(completedPreview: try job(.object([
+            "outcome": .string("succeeded"), "output": .object([
+                "applicable": .bool(true), "patchSha256": .string(String(repeating: "a", count: 64))
+            ])
+        ])))
+        let gateway = try GatewayClient(baseURL: URL(string: "https://session.arcanos.invalid")!,
+                                        credentials: SessionCredential(), transport: transport)
+        let session = ArcanosSession(router: AIRouter(), capabilities: CapabilityClient(gateway: gateway),
+                                     jobs: JobClient(gateway: gateway))
+        let preview = await session.previewPatch("synthetic patch")
+        #expect(preview.kind == .pending)
+
+        let first = Task { await session.checkJob(sessionJobID) }
+        await transport.waitForResultReads(1)
+        let delayed = Task { await session.checkJob(sessionJobID) }
+        await transport.waitForResultReads(2)
+        await transport.completeResultRead(0)
+        #expect(await first.value.kind == .answer)
+        #expect(await session.ask("Apply that patch").kind == .pending)
+
+        await transport.completeResultRead(1)
+        #expect(await delayed.value.kind == .failure)
+        #expect(await session.ask("Apply that patch").kind == .failure)
+        #expect(await transport.applications() == 1)
+    }
+
     @Test func canonicalDispatchAndTrinityEnvelopeProducesAnswer() async throws {
         let result: JSONValue = .object(["ok": .bool(true), "result": .object([
             "result": .string("The canonical ARCANOS answer"), "module": .string("fixture")

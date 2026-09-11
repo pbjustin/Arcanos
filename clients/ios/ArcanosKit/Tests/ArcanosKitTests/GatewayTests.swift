@@ -17,18 +17,28 @@ private struct FixtureCredentials: GatewayCredentialProvider {
     func credential(for origin: URL) async throws -> GatewayCredential? { value }
 }
 
+private struct CancelledLookupCredentials: GatewayCredentialProvider {
+    func credential(for origin: URL) async throws -> GatewayCredential? {
+        withUnsafeCurrentTask { $0?.cancel() }
+        return GatewayCredential(token: "test-cancelled-lookup", origin: origin, expiresAt: .distantFuture)
+    }
+}
+
 private actor FixtureGatewayTransport: GatewayTransport {
     private var responses: [GatewayResponse]
     private var requests: [GatewayRequest] = []
     private let offline: Bool
-    init(_ responses: [GatewayResponse] = [], offline: Bool = false) {
+    private let cancelOnResponseIndex: Int?
+    init(_ responses: [GatewayResponse] = [], offline: Bool = false, cancelOnResponseIndex: Int? = nil) {
         self.responses = responses
         self.offline = offline
+        self.cancelOnResponseIndex = cancelOnResponseIndex
     }
     func send(_ request: GatewayRequest) async throws -> GatewayResponse {
         requests.append(request)
         if offline { throw URLError(.notConnectedToInternet) }
         guard !responses.isEmpty else { throw GatewayError.invalidResponse }
+        if requests.count == cancelOnResponseIndex { withUnsafeCurrentTask { $0?.cancel() } }
         return responses.removeFirst()
     }
     func recorded() -> [GatewayRequest] { requests }
@@ -182,6 +192,74 @@ struct GatewayTests {
         await #expect(throws: GatewayError.unavailable) { try await gateway.createJob(CreateAIJobRequest(gptId: "arcanos-core", task: "Investigate this test failure")) }
         let requests = await transport.recorded()
         #expect(requests.count == 1)
+    }
+
+    @Test func cancelledAcceptedAIReceiptPreservesJobWithoutPollingOrResubmitting() async throws {
+        let receipt = fixtureResponse("""
+        {"ok":true,"jobId":"\(gatewayTestJobID)","traceId":"fixture","status":"queued",
+        "deduped":false,"resultEndpoint":"/gpt-access/jobs/result"}
+        """, status: 202)
+        let completed = fixtureResponse("""
+        {"ok":true,"jobId":"\(gatewayTestJobID)","status":"completed","lifecycleStatus":"completed",
+        "poll":"/gpt-access/jobs/result","stream":"/gpt-access/jobs/result",
+        "resultEndpoint":"/gpt-access/jobs/result","result":{"answer":"Recovered answer"}}
+        """)
+        let transport = FixtureGatewayTransport([receipt, completed], cancelOnResponseIndex: 1)
+        let gateway = try GatewayClient(baseURL: gatewayTestOrigin, credentials: FixtureCredentials(), transport: transport)
+        let jobs = JobClient(gateway: gateway)
+        let session = ArcanosSession(router: AIRouter(remote: RemoteAI(jobs: jobs)), jobs: jobs)
+        let accepted = await Task { await session.ask("Explain this result") }.value
+        #expect(accepted.kind == .pending)
+        #expect(accepted.jobID == gatewayTestJobID)
+        #expect(await transport.recorded().count == 1)
+        let result = await session.checkJob(gatewayTestJobID)
+        #expect(result.kind == .answer)
+        #expect(result.text == "Recovered answer")
+        #expect(await transport.recorded().filter { $0.url.path == "/gpt-access/jobs/create" }.count == 1)
+    }
+
+    @Test func cancelledApprovedCapabilityReceiptPreservesJobWithoutRetry() async throws {
+        let challenge = fixtureResponse("""
+        {"code":"CONFIRMATION_REQUIRED","confirmationRequired":true,
+        "confirmationChallenge":{"id":"fixture-challenge","expiresAt":"2099-01-01T12:00:00Z"}}
+        """, status: 403)
+        let receipt = fixtureResponse("""
+        {"ok":true,"result":{"ok":true,"accepted":true,"persisted":true,"jobId":"\(gatewayTestJobID)"}}
+        """)
+        let transport = FixtureGatewayTransport([challenge, receipt], cancelOnResponseIndex: 2)
+        let gateway = try GatewayClient(baseURL: gatewayTestOrigin, credentials: FixtureCredentials(), transport: transport)
+        let session = ArcanosSession(router: AIRouter(), capabilities: CapabilityClient(gateway: gateway), jobs: JobClient(gateway: gateway))
+        let pending = await session.ask("Run tests")
+        let approvalID = try #require(pending.approvalID)
+        let accepted = await Task { await session.approve(approvalID) }.value
+        #expect(accepted.kind == .pending)
+        #expect(accepted.jobID == gatewayTestJobID)
+        #expect(await session.approve(approvalID).kind == .failure)
+        #expect(await transport.recorded().count == 2)
+    }
+
+    @Test func cancelledChallengeDoesNotCreateAnApprovalOrRetry() async throws {
+        let challenge = fixtureResponse("""
+        {"code":"CONFIRMATION_REQUIRED","confirmationRequired":true,
+        "confirmationChallenge":{"id":"fixture-challenge","expiresAt":"2099-01-01T12:00:00Z"}}
+        """, status: 403)
+        let transport = FixtureGatewayTransport([challenge], cancelOnResponseIndex: 1)
+        let gateway = try GatewayClient(baseURL: gatewayTestOrigin, credentials: FixtureCredentials(), transport: transport)
+        let session = ArcanosSession(router: AIRouter(), capabilities: CapabilityClient(gateway: gateway))
+        let result = await Task { await session.ask("Run tests") }.value
+        #expect(result.kind == .cancelled)
+        #expect(result.approvalID == nil)
+        #expect(result.jobID == nil)
+        #expect(await transport.recorded().count == 1)
+    }
+
+    @Test func cancellationDuringCredentialLookupNeverTransmitsRequest() async throws {
+        let transport = FixtureGatewayTransport([fixtureResponse("{\"ok\":true,\"capabilities\":[]}")])
+        let gateway = try GatewayClient(baseURL: gatewayTestOrigin, credentials: CancelledLookupCredentials(), transport: transport)
+        let request = Task { try await gateway.listCapabilities() }
+        do { _ = try await request.value; Issue.record("Cancellation expected") }
+        catch is CancellationError {} catch { Issue.record("Unexpected cancellation error") }
+        #expect(await transport.recorded().isEmpty)
     }
 
     @Test func errorEnvelopeDoesNotReflectServerMessage() async throws {

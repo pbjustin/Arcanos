@@ -79,6 +79,11 @@ loses them, without cancelling accepted backend jobs. The client never silently
 queues or automatically replays a disconnected mutation. Foreground polling is
 bounded; pending results expose a Check Latest Arcanos Job action.
 
+Cancellation before transport prevents submission, including cancellation during
+credential lookup. A valid job receipt already received is retained for later
+status checks even if the caller cancels; no polling or resubmission follows in
+that cancelled task. Overlapping job reads cannot restore a consumed patch preview.
+
 ## API derivation and wire behavior
 
 The five operation paths are:
@@ -210,7 +215,7 @@ Apple references: [Foundation Models availability and generation](https://develo
 ## Validation and next phase
 
 Implementation checks on 2026-09-10: Swift 6.2 portable Linux debug/test and release
-builds passed; 18 XCTest tests and 35 Swift Testing functions passed, including
+builds passed; 18 XCTest tests and 40 Swift Testing functions passed, including
 all parameterized cases. The tested package source hashes matched the checkout.
 The four existing Gateway/OpenAPI/Local Agent/confirmation Jest suites passed
 279 tests with Node 24.18.1 / npm 11.16.0. Contract generation, positive and
@@ -235,7 +240,8 @@ xcodebuild -project clients/ios/ArcanosVoice/ArcanosVoice.xcodeproj \
 The portable package tests use injected providers/transports, with no live
 credentials or backend operations. They cover model unavailability, routing,
 malformed API results, transport/auth failures, cancellation, bounded polling,
-confirmation expiry/replay/concurrency and exact one-time retry semantics.
+confirmation expiry/replay/concurrency, accepted-receipt cancellation, cancelled
+credential lookup, overlapping preview reads and exact one-time retry semantics.
 Linux tests cannot exercise Foundation Models, Keychain, SwiftUI, or App Intents.
 Physical-device validation must include supported/unsupported model availability,
 offline inference, Siri input/output, locked-device behavior and explicit
