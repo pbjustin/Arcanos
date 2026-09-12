@@ -47,14 +47,29 @@ Use the pinned Node/npm toolchain and the repository wrapper. Core regression:
 node scripts/run-jest.mjs --runTestsByPath tests/backstage-notion-context.test.ts tests/backstage-notion-sync.test.ts tests/backstage-notion-snapshot-status.test.ts tests/native-pr-preview-application.test.ts --coverage=false --runInBand
 ```
 
-The existing
-`tests/integration/backstage-notion-rag-candidate-search.pg18.integration.test.ts`
-also runs synthetic Notion reads through the real synchronizer, deterministic
-embedding doubles, fenced PostgreSQL activation, complete-scope continuity, and
-failed-refresh retention. It requires the guarded disposable loopback PG18
-target described by `tests/integration/postgresTestDatabase.ts`; skipping that
-target is not SQL proof. Run type checking, lint, build, documentation checks,
-`sync:check`, and the staged `guard:commit` before publication.
+The candidate-search and authority HTTP suites run synthetic Notion reads
+through the real synchronizer, deterministic embedding doubles, and fenced
+PostgreSQL activation. They verify complete-scope continuity, wrong-parent and
+source-membership rejection, failed-refresh retention, and recovery to current
+authority. The HTTP fixture continues through bearer authentication, the
+canonical Booker route, dispatch, retrieval, and response formatting; model
+responses are deterministic doubles.
+
+Both require `BACKSTAGE_CANON_STORYLINE_PG18_TEST_DATABASE_URL` pointing to the
+guarded disposable loopback PG18 target described by
+`tests/integration/postgresTestDatabase.ts`. Set
+`ARCANOS_POSTGRES_TESTS_REQUIRE_DATABASE=1` to make missing database setup fail
+instead of skip, then run:
+
+```text
+node scripts/run-jest.mjs --runTestsByPath tests/integration/backstage-notion-rag-candidate-search.pg18.integration.test.ts tests/integration/backstage-notion-authority-http.pg18.integration.test.ts --coverage=false --runInBand
+```
+
+These suites also belong to the required `test:postgres-fencing` CI command.
+Their success is local HTTP and PostgreSQL evidence, with synthetic upstream
+data; it does not establish live Notion access, model quality, or hosted runtime
+recovery. Run type checking, lint, build, documentation checks, `sync:check`, and
+the staged `guard:commit` before publication.
 
 ## Deploy (Railway)
 

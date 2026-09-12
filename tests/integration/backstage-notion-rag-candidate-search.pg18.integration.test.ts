@@ -1037,7 +1037,8 @@ describeWithDatabase('Backstage Notion candidate search on PostgreSQL 18', () =>
       displayName: 'Synthetic continuity authority',
       initialMinimumPageCount: 2,
     };
-    const sourceId = randomUUID();
+    const [sourceId, alternateSourceId] = [randomUUID(), randomUUID()].sort();
+    const otherDatabaseId = randomUUID();
     const members = [randomUUID(), randomUUID()].sort();
     const titleParts = [...Array.from({ length: 25 }, () => 'a'), ' complete title'];
     const timestamp = new Date().toISOString();
@@ -1052,32 +1053,53 @@ describeWithDatabase('Backstage Notion candidate search on PostgreSQL 18', () =>
     const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), {
       status, headers: { 'content-type': 'application/json' },
     });
-    let failureMode: 'none' | 'incomplete' | 'drift'
+    let failureMode: 'none' | 'incomplete' | 'drift' | 'wrong-database-parent' | 'membership-drift'
       | 'missing-text' | 'missing-mention' | 'missing-equation' = 'none';
+    let membershipMoved = false;
+    let databaseReads = 0;
     let titleReads = 0;
     const fetchImpl: typeof fetch = async (input, init) => {
       const url = new URL(String(input));
       expect(url.origin).toBe('https://api.notion.com');
+      expect(init?.method).toBe(url.pathname.endsWith('/query') ? 'POST' : 'GET');
+      expect(init?.redirect).toBe('manual');
+      expect(init?.signal).toBeInstanceOf(AbortSignal);
+      const headers = new Headers(init?.headers);
+      expect(headers.get('accept')).toBe('application/json');
+      expect(headers.get('notion-version')).toBe('2026-03-11');
+      expect(headers.get('authorization')).toBe(`Bearer ntn_${'s'.repeat(48)}`);
       if (url.pathname === `/v1/pages/${root.rootPageId}`) {
+        expect(url.search).toBe('');
         return json({
           object: 'error', status: 400, code: 'validation_error',
           message: 'Synthetic database root requires database metadata.',
         }, 400);
       }
       if (url.pathname === `/v1/databases/${root.rootPageId}`) {
+        expect(url.search).toBe('');
+        databaseReads += 1;
         return json({
           object: 'database', id: root.rootPageId,
           parent: { type: 'workspace', workspace: true },
           title: [{ plain_text: 'Synthetic database' }],
           last_edited_time: timestamp, in_trash: false,
-          data_sources: [{ id: sourceId, name: 'Synthetic source' }],
+          data_sources: [
+            { id: sourceId, name: 'Synthetic source' },
+            { id: alternateSourceId, name: 'Alternate synthetic source' },
+          ],
         });
       }
-      if (url.pathname === `/v1/data_sources/${sourceId}/query`) {
-        expect(init?.method).toBe('POST');
+      if ([sourceId, alternateSourceId].some(id => url.pathname === `/v1/data_sources/${id}/query`)) {
+        expect([...url.searchParams]).toEqual([['filter_properties[]', 'title']]);
+        expect(headers.get('content-type')).toBe('application/json');
+        expect(JSON.parse(String(init?.body))).toEqual({ page_size: 10 });
+        const moveMember = membershipMoved || (failureMode === 'membership-drift' && databaseReads === 2);
+        const queriedMembers = url.pathname === `/v1/data_sources/${sourceId}/query`
+          ? moveMember ? members.slice(1) : members
+          : moveMember ? members.slice(0, 1) : [];
         return json({
           object: 'list', type: 'page_or_data_source', page_or_data_source: {},
-          results: members.map(id => ({ object: 'page', id })),
+          results: queriedMembers.map(id => ({ object: 'page', id })),
           has_more: false, next_cursor: null, request_status: { type: 'complete' },
         });
       }
@@ -1089,6 +1111,11 @@ describeWithDatabase('Backstage Notion candidate search on PostgreSQL 18', () =>
         expect(member).toBe(members[0]);
         titleReads += 1;
         const continuation = url.searchParams.has('start_cursor');
+        expect([...url.searchParams]).toEqual([
+          ['page_size', '100'],
+          ...(continuation ? [['start_cursor', 'synthetic-title-page-2']] : []),
+        ]);
+        expect(titleReads).toBeLessThanOrEqual(4);
         const currentParts = failureMode === 'drift' && titleReads >= 3
           ? ['Changed complete synthetic title']
           : titleParts;
@@ -1111,16 +1138,19 @@ describeWithDatabase('Backstage Notion candidate search on PostgreSQL 18', () =>
         });
       }
       if (url.pathname.endsWith('/markdown')) {
+        expect([...url.searchParams]).toEqual([['include_transcript', 'false']]);
         return json({
           object: 'page_markdown', id: member,
           markdown: `# Synthetic continuity\n\nSynthetic championship record ${members.indexOf(member) + 1}.`,
           truncated: false, unknown_block_ids: [],
         });
       }
+      expect(url.pathname).toBe(`/v1/pages/${member}`);
+      expect([...url.searchParams]).toEqual([['filter_properties[]', 'title']]);
       return json({
         object: 'page', id: member,
         parent: member === members[0]
-          ? { type: 'database_id', database_id: root.rootPageId }
+          ? { type: 'database_id', database_id: failureMode === 'wrong-database-parent' ? otherDatabaseId : root.rootPageId }
           : { type: 'data_source_id', data_source_id: sourceId, database_id: root.rootPageId },
         properties: {
           'Synthetic display label': member === members[0]
@@ -1159,10 +1189,25 @@ describeWithDatabase('Backstage Notion candidate search on PostgreSQL 18', () =>
     const activated = await syncBackstageNotionAuthorityRoot(root, dependencies);
     expect(activated).toMatchObject({ status: 'activated', pageCount: 3, chunkCount: 2 });
     expect(titleReads).toBe(4);
-    const inventory = await repository.loadActiveInventory(root.universeId);
+    let inventory = await repository.loadActiveInventory(root.universeId);
     expect(inventory?.snapshot.id).toBe(activated.snapshotId);
+    expect(inventory?.snapshot.manifestHash).toBe(activated.manifestHash);
+    expect(inventory?.snapshot.manifestHash).toMatch(/^[0-9a-f]{64}$/u);
     expect(inventory?.pages).toHaveLength(3);
-    expect(inventory?.pages.find(page => page.pageId === members[0])?.title).toBe(titleParts.join(''));
+    expect(inventory?.pages.find(page => page.pageId === root.rootPageId)).toMatchObject({
+      parentPageId: null, canonicalUrl: null,
+      metadata: { sourceObjectType: 'database', chunkCount: 0 },
+    });
+    for (const [index, pageId] of members.entries()) {
+      expect(inventory?.pages.find(page => page.pageId === pageId)).toMatchObject({
+        parentPageId: root.rootPageId,
+        title: index === 0 ? titleParts.join('') : 'Second synthetic member',
+        canonicalUrl: `https://www.notion.so/${pageId.replaceAll('-', '')}`,
+        sourceLastEditedAt: new Date(timestamp), depth: 1,
+        contentHash: expect.stringMatching(/^[0-9a-f]{64}$/u),
+        metadata: { sourceObjectType: 'page', chunkCount: 1 },
+      });
+    }
     expect(await syncStatusRepository.loadLatestSyncAttempt(root.universeId)).toMatchObject({
       outcome: 'activated', candidateSnapshotCreated: true,
       candidateSnapshotValidated: true, candidateSnapshotActivated: true,
@@ -1172,14 +1217,55 @@ describeWithDatabase('Backstage Notion candidate search on PostgreSQL 18', () =>
     expect(complete).toMatchObject({ snapshotId: activated.snapshotId, snapshotStatus: 'current_complete', chunkCount: 2 });
     expect(complete.coverage).toMatchObject({ status: 'complete', selectedChunks: 2 });
     expect(complete.citations.map(citation => citation.pageId).sort()).toEqual(members);
+    expect(complete.citations.find(citation => citation.pageId === members[0])?.pageTitle).toBe(titleParts.join(''));
+    expect(complete.prompt).toContain('Synthetic championship record 1.');
+    expect(complete.prompt).toContain('Synthetic championship record 2.');
 
-    for (const mode of ['incomplete', 'drift', 'missing-text', 'missing-mention', 'missing-equation'] as const) {
+    const verifyUnchanged = async () => {
+      failureMode = 'none';
+      databaseReads = 0;
+      titleReads = 0;
+      const unchanged = await syncBackstageNotionAuthorityRoot(root, dependencies);
+      expect(unchanged).toMatchObject({
+        status: 'unchanged', snapshotId: activated.snapshotId, manifestHash: activated.manifestHash,
+        pageCount: 3, chunkCount: 2,
+      });
+      expect(databaseReads).toBe(2);
+      expect(titleReads).toBe(4);
+      const verifiedInventory = await repository.loadActiveInventory(root.universeId);
+      expect(verifiedInventory?.snapshot).toEqual(inventory?.snapshot);
+      expect(verifiedInventory?.pages).toEqual(inventory?.pages);
+      expect(verifiedInventory!.verifiedAt.getTime()).toBeGreaterThanOrEqual(inventory!.verifiedAt.getTime());
+      inventory = verifiedInventory;
+      expect(await syncStatusRepository.loadLatestSyncAttempt(root.universeId)).toMatchObject({
+        outcome: 'unchanged', candidateSnapshotCreated: false, candidateSnapshotActivated: false,
+        activatedSnapshotId: activated.snapshotId,
+      });
+      expect(await readContinuity()).toMatchObject({
+        snapshotId: activated.snapshotId, snapshotStatus: 'current_complete', chunkCount: 2,
+      });
+      expect(await runWithBackstageNotionEnrichmentAuthorization(true, () => (
+        retrieveBackstageNotionBookingRagContext(root.universeId, 'Synthetic booking', retrievalDependencies)
+      ))).toMatchObject({ snapshotId: activated.snapshotId, snapshotStatus: 'current_complete' });
+    };
+    await verifyUnchanged();
+
+    for (const mode of [
+      'wrong-database-parent', 'membership-drift', 'incomplete', 'drift',
+      'missing-text', 'missing-mention', 'missing-equation',
+    ] as const) {
       failureMode = mode;
+      databaseReads = 0;
       titleReads = 0;
       await expect(syncBackstageNotionAuthorityRoot(root, dependencies)).rejects.toMatchObject({
-        code: mode === 'drift' ? 'BACKSTAGE_NOTION_SYNC_SOURCE_DRIFT' : 'BACKSTAGE_NOTION_SYNC_ROOT_FAILED',
+        code: mode === 'drift' || mode === 'membership-drift'
+          ? 'BACKSTAGE_NOTION_SYNC_SOURCE_DRIFT'
+          : mode === 'wrong-database-parent'
+            ? 'BACKSTAGE_NOTION_SYNC_INCOMPLETE' : 'BACKSTAGE_NOTION_SYNC_ROOT_FAILED',
         diagnostics: expect.objectContaining({ candidateSnapshotActivated: false }),
       });
+      if (mode === 'wrong-database-parent') expect(titleReads).toBe(0);
+      if (mode === 'membership-drift') expect(databaseReads).toBe(2);
       const retained = await repository.loadActiveInventory(root.universeId);
       expect(retained).toEqual(inventory);
       expect(await syncStatusRepository.loadLatestSyncAttempt(root.universeId)).toMatchObject({
@@ -1197,7 +1283,27 @@ describeWithDatabase('Backstage Notion candidate search on PostgreSQL 18', () =>
         [root.universeId]
       );
       expect(snapshotCount.rows).toEqual([{ count: '1' }]);
+      await verifyUnchanged();
     }
+
+    // Stable source membership changes require a new manifest even when provider
+    // parent metadata, complete titles, timestamps, and page content are identical.
+    membershipMoved = true;
+    databaseReads = 0;
+    titleReads = 0;
+    const moved = await syncBackstageNotionAuthorityRoot(root, dependencies);
+    expect(moved).toMatchObject({ status: 'activated', pageCount: 3, chunkCount: 2 });
+    expect(moved.snapshotId).not.toBe(activated.snapshotId);
+    expect(moved.manifestHash).not.toBe(activated.manifestHash);
+    const movedInventory = await repository.loadActiveInventory(root.universeId);
+    expect(movedInventory?.pages).toEqual(inventory?.pages);
+    expect(movedInventory?.snapshot.manifestHash).toBe(moved.manifestHash);
+    expect(await syncStatusRepository.loadLatestSyncAttempt(root.universeId)).toMatchObject({
+      outcome: 'activated', candidateSnapshotActivated: true, activatedSnapshotId: moved.snapshotId,
+    });
+    expect(await readContinuity()).toMatchObject({
+      snapshotId: moved.snapshotId, snapshotStatus: 'current_complete', chunkCount: 2,
+    });
   }, 30_000);
 
   test('keeps rollback repeat-safe when the sidecar table is already absent', async () => {
