@@ -19,6 +19,10 @@ enum ArcanosPreviewProof {
 
     static func main() async {
         let arguments = Array(CommandLine.arguments.dropFirst())
+        if arguments.first == "--shipping-recovery-phase" {
+            await ShippingPreviewProof.main(arguments: arguments)
+            return
+        }
         if arguments.first == "--recovery-phase" {
             await PreviewRecoveryProof.main(arguments: arguments)
             return

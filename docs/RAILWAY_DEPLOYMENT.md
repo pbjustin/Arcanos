@@ -425,6 +425,16 @@ Launcher behavior:
   then the paired network flags; it has 32 requests and a 120-second total bound.
   Finish it before removing the preview opt-in label. This is file/process client
   evidence, not shipping app lifecycle, real authorization, database or worker proof.
+- The [shipping recovery HTTPS proof](../clients/ios/README.md#shipping-recovery-over-preview-https)
+  uses the shipping session composition and separate Swift processes against those
+  same attested hosts. It covers durable dismissal, overlapping approvals, result
+  recovery and rejection of an unknown cached completion. The fixture-only
+  credential adapter admits one compiled synthetic device session and translates
+  its authorization to the sealed peer's public bearer; actual HTTPS responses
+  are preserved. Run its dry invocation before the paired network flags, and
+  finish it before lifecycle teardown. It provides shipping session/file/process
+  evidence over HTTPS, not live pairing, system Keychain, Siri, SQL, provider or
+  active-worker evidence. The separate PostgreSQL fixture retains its own scope.
 - The iOS device-policy fixture adds credential-free `GET /ios/device-contract`
   with exact `ios-device-policy/v1` evidence for production-shared grant schema,
   credential state validation, owned-job filtering, and requester-device

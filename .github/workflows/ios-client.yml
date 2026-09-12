@@ -73,6 +73,21 @@ jobs:
             --pr-number 1 --commit-sha "$(git rev-parse HEAD)" \
             --web-base-url https://web-pr-1.up.railway.app \
             --worker-base-url https://worker-pr-1.up.railway.app
+      # Served HTTPS execution requires the separately authorized, owned preview.
+      # This step admits the parent report and CLI without making HTTP requests.
+      - name: Validate shipping preview proof without network
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          python3 -B -m unittest discover -s clients/ios/scripts -p test_shipping_recovery_preview.py
+          preview_bin_dir=$(xcrun swift build --package-path clients/ios/ArcanosKit --show-bin-path)
+          mkdir -p local_artifacts/ios-recovery
+          python3 clients/ios/scripts/run-shipping-recovery-preview.py \
+            --swift-binary "$preview_bin_dir/ArcanosPreviewProof" \
+            --pr-number 1 --commit-sha "$(git rev-parse HEAD)" \
+            --web-base-url https://web-pr-1.up.railway.app \
+            --worker-base-url https://worker-pr-1.up.railway.app \
+            | tee local_artifacts/ios-recovery/shipping-preview-dry.json
       - name: Prove shipping session recovery across processes
         timeout-minutes: 5
         run: |

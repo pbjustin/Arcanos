@@ -405,6 +405,52 @@ authorization, database durability, active worker execution, or provider results
 The [loopback recovery fixture](#durable-operation-recovery-fixture) separately
 covers lost receipts, process termination during submission, and corrupt results.
 
+### Shipping recovery over preview HTTPS
+
+The shipping proof runs `ShippingSessionComposition` against the same owned
+preview and reopens its `FileOperationPersistence` index in separate Swift
+processes. Build `ArcanosPreviewProof` from the clean exact PR head, then run:
+
+```sh
+python3 clients/ios/scripts/run-shipping-recovery-preview.py \
+  --swift-binary "$preview_bin_dir/ArcanosPreviewProof" \
+  --pr-number <PR-number> --commit-sha <exact-40-character-head-SHA> \
+  --web-base-url <confirmed-web-HTTPS-origin> \
+  --worker-base-url <confirmed-worker-HTTPS-origin>
+```
+
+The default validates Git, arguments and proof admission with no HTTP requests
+or operation-index writes. After the trusted lifecycle verifies both deployments,
+repeat with `--execute --allow-network`. Complete all proofs before removing the
+preview label; verify the controller removes its owned environment afterward.
+
+This fixture exercises cancelled and expired approvals, a subsequent accepted
+AI operation, overlapping requests during approval, and recovery of the exact
+AI/capability result after process exit. The independent parent checks persisted
+records, process identities and exact wire counts. A mandatory unknown-handle
+control rejects a false cached completion after an actual HTTPS `not_found`
+response without replaying work or altering the saved index.
+
+The executed parent expects eight processes, including the zero-request dry
+child, and exactly 65 HTTPS requests: one AI create, five capability requests,
+seven result reads and 52 identity/contract reads. The parent has a 120-second
+total deadline, a 40-second child deadline and a 2 MiB aggregate response cap;
+the fixture's transient jobs must
+be restored within their existing retention window.
+
+The fixture stores only a compiled synthetic device session in memory. A narrowly
+scoped test adapter verifies that exact synthetic credential and origin, then
+maps its authorization header to the sealed peer's public test bearer. It retains
+the production HTTPS transport and validates real responses; it does not
+substitute responses or change the server's admission rules. This proves shipping
+session/file/process behavior over preview HTTPS, not real paired-device
+authentication, provider inference, active executor behavior, Siri or system
+Keychain. The following PostgreSQL fixture covers its separate real-backend scope.
+
+The macOS workflow runs parent admission tests and the no-network invocation,
+retaining the explicitly unexecuted report with other recovery artifacts. Those
+CI steps do not establish a served Railway proof.
+
 ## Device Gateway and PostgreSQL end-to-end fixture
 
 `ArcanosDeviceE2E` connects the real Swift pairing, Gateway, session, polling and
