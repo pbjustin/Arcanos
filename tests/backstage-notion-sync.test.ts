@@ -300,6 +300,9 @@ function databaseRootFetch(options: {
   firstRowTitleShapeUncertain?: boolean;
   allRowTitleShapesUncertain?: boolean;
   firstRowDatabaseParent?: 'valid' | 'wrong-root' | 'drift';
+  metadataParentPageIds?: ReadonlyMap<string, string>;
+  verificationParentPageIds?: ReadonlyMap<string, string>;
+  extraDescendants?: readonly TestNotionPage[];
   duplicatePageIdAcrossDataSources?: boolean;
   duplicatePageIdAcrossQueryPages?: boolean;
   incompleteQuery?: boolean;
@@ -554,7 +557,10 @@ function databaseRootFetch(options: {
       });
     }
     const pageMatch = /^\/v1\/pages\/([^/]+)(\/markdown)?$/u.exec(url.pathname);
-    const row = rows.find(candidate => candidate.pageId === pageMatch?.[1]);
+    const row = rows.find(candidate => candidate.pageId === pageMatch?.[1])
+      ?? options.extraDescendants?.find(candidate => (
+        candidate.pageId === pageMatch?.[1]
+      ));
     if (!row) {
       return notionErrorResponse(404, 'object_not_found');
     }
@@ -571,10 +577,18 @@ function databaseRootFetch(options: {
       row.pageId,
       (metadataCalls.get(row.pageId) ?? 0) + 1
     );
+    const parentPageId = (
+      (metadataCalls.get(row.pageId) ?? 0) >= 2
+        ? options.verificationParentPageIds?.get(row.pageId)
+        : undefined
+    ) ?? options.metadataParentPageIds?.get(row.pageId)
+      ?? ('parentPageId' in row ? row.parentPageId : null);
     return jsonResponse({
       object: 'page',
       id: row.pageId,
-      parent: options.firstRowDatabaseParent && row.pageId === rows[0]?.pageId
+      parent: parentPageId
+        ? { type: 'page_id', page_id: parentPageId }
+        : options.firstRowDatabaseParent && row.pageId === rows[0]?.pageId
         ? {
             type: 'database_id',
             database_id: options.firstRowDatabaseParent === 'wrong-root'
@@ -586,7 +600,7 @@ function databaseRootFetch(options: {
           }
         : {
             type: 'data_source_id',
-            data_source_id: row.dataSourceId,
+            data_source_id: 'dataSourceId' in row ? row.dataSourceId : null,
             database_id: databaseId,
           },
       properties: {
@@ -1172,6 +1186,403 @@ describe('Backstage Notion authority synchronization', () => {
     expect(serializedTelemetry).not.toContain(notionToken);
     expect(serializedTelemetry).not.toContain(pageId(0));
     expect(serializedTelemetry).not.toContain('PRIVATE-RAW-CANON');
+  });
+
+  it.each([false, true])(
+    'captures queried nested members with child-before-parent lexical order=%s',
+    async childSortsFirst => {
+      const parentId = pageId(childSortsFirst ? 2 : 1);
+      const childId = pageId(childSortsFirst ? 1 : 2);
+      const provider = databaseRootFetch({
+        metadataParentPageIds: new Map([[childId, parentId]]),
+        allRowTitleShapesUncertain: true,
+      });
+      const parent = provider.rows.find(row => row.pageId === parentId)!;
+      const child = provider.rows.find(row => row.pageId === childId)!;
+      parent.markdown += `\n<page url="notion://${childId}">Untrusted navigation label</page>`;
+      const repository = repositoryHarness();
+      const embedBatch = jest.fn(async (inputs: readonly string[]) => (
+        inputs.map(() => [1, 0])
+      ));
+
+      await expect(syncBackstageNotionAuthorityRoot(
+        rootAuthority({ initialMinimumPageCount: 2 }),
+        dependencies({
+          repository: repository.repository,
+          fetchImpl: provider.fetchMock as unknown as typeof fetch,
+          embedBatch,
+        })
+      )).resolves.toMatchObject({ status: 'activated', pageCount: 3 });
+
+      const activation = repository.activateSnapshot.mock.calls[0]?.[0];
+      expect(repository.activateSnapshot).toHaveBeenCalledTimes(1);
+      expect(activation?.pages.find(page => page.pageId === childId))
+        .toMatchObject({
+          parentPageId: parentId,
+          title: child.title,
+          path: ['WWE Universe Mode', parent.title, child.title],
+        });
+      expect(activation?.pages.filter(page => page.pageId === childId))
+        .toHaveLength(1);
+      for (const row of provider.rows) {
+        expect(provider.metadataCalls.get(row.pageId)).toBe(2);
+        expect(provider.titlePropertyCalls.get(row.pageId)).toBe(2);
+        expect(provider.fetchMock.mock.calls.filter(call => (
+          new URL(String(call[0])).pathname === `/v1/pages/${row.pageId}/markdown`
+        ))).toHaveLength(1);
+      }
+      expect(embedBatch).toHaveBeenCalled();
+      expect(embedBatch.mock.invocationCallOrder[0]).toBeLessThan(
+        repository.activateSnapshot.mock.invocationCallOrder[0]!
+      );
+      expect(provider.databaseCalls()).toBe(2);
+      expect([...provider.queryCalls.values()]).toEqual([2, 2]);
+    }
+  );
+
+  it('advances the 382-member production-shaped inventory through complete activation', async () => {
+    const parentId = pageId(1_000);
+    const childIds = [pageId(1_001), pageId(1_002)];
+    const provider = databaseRootFetch({
+      databaseRowCount: 382,
+      metadataParentPageIds: new Map(childIds.map(id => [id, parentId])),
+    });
+    provider.rows[0]!.markdown += childIds.map(id => (
+      `\n<page url="notion://${id}">Synthetic nested member</page>`
+    )).join('');
+    const repository = repositoryHarness();
+
+    await expect(syncBackstageNotionAuthorityRoot(
+      rootAuthority({ initialMinimumPageCount: 382 }),
+      dependencies({
+        repository: repository.repository,
+        fetchImpl: provider.fetchMock as unknown as typeof fetch,
+      })
+    )).resolves.toMatchObject({ status: 'activated', pageCount: 383 });
+
+    const activation = repository.activateSnapshot.mock.calls[0]?.[0];
+    expect(repository.activateSnapshot).toHaveBeenCalledTimes(1);
+    expect(new Set(activation?.pages.map(page => page.pageId)).size).toBe(383);
+    expect(provider.metadataCalls.size).toBe(382);
+    expect([...provider.metadataCalls.values()].every(count => count === 2)).toBe(true);
+    expect(provider.fetchMock.mock.calls.filter(call => (
+      new URL(String(call[0])).pathname.endsWith('/markdown')
+    ))).toHaveLength(382);
+    expect(provider.requestBodies.filter(body => (
+      Object.hasOwn(body as object, 'start_cursor')
+    ))).toHaveLength(76);
+    for (const childId of childIds) {
+      expect(activation?.pages.find(page => page.pageId === childId)?.parentPageId)
+        .toBe(parentId);
+    }
+  });
+
+  it('activates nested query membership after database-parent metadata, paginated titles and Markdown continuation', async () => {
+    const parentId = pageId(1);
+    const childId = pageId(2);
+    const continuationId = pageId(9_000);
+    const titleParts = Array.from({ length: 51 }, (_, index) => `${index + 1}.`);
+    const provider = databaseRootFetch({
+      firstRowDatabaseParent: 'valid',
+      firstRowTitleParts: titleParts,
+      metadataParentPageIds: new Map([[childId, parentId]]),
+    });
+    const continuationReads = jest.fn();
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === `/v1/pages/${parentId}/markdown`) {
+        return jsonResponse({
+          object: 'page_markdown', id: parentId,
+          markdown: `# Parent\n\n<unknown url="notion://${continuationId}"/>`,
+          truncated: true, unknown_block_ids: [continuationId],
+        });
+      }
+      if (url.pathname === `/v1/pages/${continuationId}/markdown`) {
+        continuationReads();
+        return jsonResponse({
+          object: 'page_markdown', id: continuationId,
+          markdown: `<page url="notion://${childId}">Child navigation</page>\n\nComplete continuation content.`,
+          truncated: false, unknown_block_ids: [],
+        });
+      }
+      return provider.fetchMock(input, init);
+    };
+    const repository = repositoryHarness();
+    const embedBatch = jest.fn(async (inputs: readonly string[]) => inputs.map(() => [1, 0]));
+
+    await expect(syncBackstageNotionAuthorityRoot(rootAuthority(), dependencies({
+      repository: repository.repository, fetchImpl, embedBatch,
+    }))).resolves.toMatchObject({ status: 'activated', pageCount: 3 });
+
+    const activation = repository.activateSnapshot.mock.calls[0]?.[0];
+    expect(continuationReads).toHaveBeenCalledTimes(1);
+    expect(provider.titlePropertyCalls.get(parentId)).toBe(6);
+    expect(provider.metadataCalls.get(parentId)).toBe(2);
+    expect(provider.metadataCalls.get(childId)).toBe(2);
+    expect(provider.databaseCalls()).toBe(2);
+    expect(activation?.pages.find(page => page.pageId === parentId)?.title)
+      .toBe(titleParts.join('').trim());
+    expect(activation?.pages.find(page => page.pageId === childId)?.parentPageId)
+      .toBe(parentId);
+    expect(activation?.chunks.some(chunk => chunk.content.includes('Complete continuation content.')))
+      .toBe(true);
+    expect(embedBatch).toHaveBeenCalled();
+    expect(repository.activateSnapshot).toHaveBeenCalledTimes(1);
+  });
+
+  it('retains the previous snapshot when a queried nested member is not structurally reachable', async () => {
+    const provider = databaseRootFetch({
+      metadataParentPageIds: new Map([[pageId(2), pageId(1)]]),
+    });
+    const previous = activeInventory('1'.repeat(64));
+    const repository = repositoryHarness({ active: previous });
+    const embedBatch = jest.fn(async (inputs: readonly string[]) => inputs.map(() => [1, 0]));
+    let caught: unknown;
+    try {
+      await syncBackstageNotionAuthorityRoot(rootAuthority(), dependencies({
+        repository: repository.repository,
+        fetchImpl: provider.fetchMock as unknown as typeof fetch,
+        embedBatch,
+      }));
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toMatchObject({
+      code: BACKSTAGE_NOTION_SYNC_INCOMPLETE_ERROR_CODE,
+      diagnostics: expect.objectContaining({
+        reason: 'completeness_mismatch',
+        topologyRejectionCode: 'unreachable_database_member',
+        candidateSnapshotCreated: false,
+        candidateSnapshotValidated: false,
+        candidateSnapshotActivated: false,
+      }),
+    });
+    expect(embedBatch).not.toHaveBeenCalled();
+    expect(repository.activateSnapshot).not.toHaveBeenCalled();
+    expect(repository.markActiveSnapshotVerified).not.toHaveBeenCalled();
+    expect(await repository.repository.loadActiveInventory(universeId)).toBe(previous);
+    const diagnostics = JSON.stringify(caught);
+    expect(diagnostics).not.toContain(pageId(1));
+    expect(diagnostics).not.toContain(pageId(2));
+    expect(diagnostics).not.toContain('PRIVATE-RAW-CANON');
+    expect(diagnostics).not.toContain(notionToken);
+  });
+
+  it('captures independent database members once despite repeated mentions and ordinary links', async () => {
+    const provider = databaseRootFetch({ databaseRowCount: 3 });
+    const targetId = provider.rows[2]!.pageId;
+    const externalId = pageId(9_999);
+    for (const row of provider.rows.slice(0, 2)) {
+      row.markdown += [
+        '',
+        `<mention-page url="notion://${targetId}">Mentioned member</mention-page>`,
+        `[Linked member](https://www.notion.so/${compactPageId(targetId)})`,
+        `<mention-page url="notion://${externalId}">External reference</mention-page>`,
+      ].join('\n');
+    }
+    const repository = repositoryHarness();
+
+    await expect(syncBackstageNotionAuthorityRoot(rootAuthority(), dependencies({
+      repository: repository.repository,
+      fetchImpl: provider.fetchMock as unknown as typeof fetch,
+    }))).resolves.toMatchObject({ status: 'activated', pageCount: 4 });
+
+    const activation = repository.activateSnapshot.mock.calls[0]?.[0];
+    for (const row of provider.rows) {
+      expect(activation?.pages.filter(page => page.pageId === row.pageId))
+        .toHaveLength(1);
+      expect(activation?.pages.find(page => page.pageId === row.pageId)?.parentPageId)
+        .toBe(pageId(0));
+      expect(provider.fetchMock.mock.calls.filter(call => (
+        new URL(String(call[0])).pathname === `/v1/pages/${row.pageId}/markdown`
+      ))).toHaveLength(1);
+    }
+    expect(provider.fetchMock.mock.calls.some(call => String(call[0]).includes(externalId)))
+      .toBe(false);
+  });
+
+  it('captures a provider-verified nonmember structural child without following external mentions', async () => {
+    const child: TestNotionPage = {
+      pageId: pageId(50), parentPageId: pageId(1), title: 'Actual descendant',
+      markdown: '# Synthetic child content',
+    };
+    const externalId = pageId(99);
+    const provider = databaseRootFetch({ extraDescendants: [child] });
+    provider.rows[0]!.markdown += `\n${pageTag(child)}\n<mention-page url="notion://${externalId}">External</mention-page>`;
+    const repository = repositoryHarness();
+
+    await expect(syncBackstageNotionAuthorityRoot(rootAuthority(), dependencies({
+      repository: repository.repository,
+      fetchImpl: provider.fetchMock as unknown as typeof fetch,
+    }))).resolves.toMatchObject({ status: 'activated', pageCount: 4 });
+
+    const activation = repository.activateSnapshot.mock.calls[0]?.[0];
+    expect(activation?.pages.find(page => page.pageId === child.pageId))
+      .toMatchObject({ parentPageId: pageId(1), markdown: child.markdown });
+    expect(provider.metadataCalls.get(child.pageId)).toBe(2);
+    expect(provider.fetchMock.mock.calls.some(call => String(call[0]).includes(externalId)))
+      .toBe(false);
+  });
+
+  it('rejects real containment of the same child by two different structural parents', async () => {
+    const child: TestNotionPage = {
+      pageId: pageId(50), parentPageId: pageId(1), title: 'Conflicting child',
+      markdown: '# Synthetic child',
+    };
+    const provider = databaseRootFetch({ extraDescendants: [child] });
+    for (const row of provider.rows) row.markdown += `\n${pageTag(child)}`;
+    const repository = repositoryHarness();
+
+    await expect(syncBackstageNotionAuthorityRoot(rootAuthority(), dependencies({
+      repository: repository.repository,
+      fetchImpl: provider.fetchMock as unknown as typeof fetch,
+    }))).rejects.toMatchObject({
+      code: BACKSTAGE_NOTION_SYNC_INCOMPLETE_ERROR_CODE,
+      diagnostics: expect.objectContaining({
+        reason: 'completeness_mismatch', topologyRejectionCode: 'duplicate_structural_parent',
+        candidateSnapshotActivated: false,
+      }),
+    });
+    expect(repository.activateSnapshot).not.toHaveBeenCalled();
+  });
+
+  it('rejects an ancestor cycle expressed by actual child-page edges', async () => {
+    const pages: TestNotionPage[] = [
+      { pageId: pageId(0), parentPageId: null, title: 'Root', markdown: '' },
+      { pageId: pageId(1), parentPageId: pageId(0), title: 'Child', markdown: '' },
+    ];
+    pages[0]!.markdown = pageTag(pages[1]!);
+    pages[1]!.markdown = pageTag(pages[0]!);
+    const provider = notionFetch(pages);
+    const repository = repositoryHarness();
+
+    await expect(syncBackstageNotionAuthorityRoot(rootAuthority(), dependencies({
+      repository: repository.repository,
+      fetchImpl: provider.fetchMock as unknown as typeof fetch,
+    }))).rejects.toMatchObject({
+      code: BACKSTAGE_NOTION_SYNC_INCOMPLETE_ERROR_CODE,
+      diagnostics: expect.objectContaining({
+        reason: 'completeness_mismatch', topologyRejectionCode: 'ancestor_cycle',
+        candidateSnapshotActivated: false,
+      }),
+    });
+    expect(repository.activateSnapshot).not.toHaveBeenCalled();
+  });
+
+  it('rejects a queried-member provider parent cycle before indexing', async () => {
+    const provider = databaseRootFetch({
+      metadataParentPageIds: new Map([[pageId(1), pageId(2)], [pageId(2), pageId(1)]]),
+    });
+    provider.rows[0]!.markdown += `\n<page url="notion://${pageId(2)}">Child</page>`;
+    provider.rows[1]!.markdown += `\n<page url="notion://${pageId(1)}">Child</page>`;
+    const repository = repositoryHarness();
+
+    await expect(syncBackstageNotionAuthorityRoot(rootAuthority(), dependencies({
+      repository: repository.repository,
+      fetchImpl: provider.fetchMock as unknown as typeof fetch,
+    }))).rejects.toMatchObject({
+      code: BACKSTAGE_NOTION_SYNC_INCOMPLETE_ERROR_CODE,
+      diagnostics: expect.objectContaining({
+        reason: 'completeness_mismatch', topologyRejectionCode: 'ancestor_cycle',
+        candidateSnapshotActivated: false,
+      }),
+    });
+    expect(repository.activateSnapshot).not.toHaveBeenCalled();
+  });
+
+  it('rejects a database member containment claim that contradicts provider metadata', async () => {
+    const provider = databaseRootFetch({
+      databaseRowCount: 3,
+      metadataParentPageIds: new Map([[pageId(1_002), pageId(1_001)]]),
+    });
+    provider.rows[0]!.markdown += `\n<page url="notion://${pageId(1_002)}">False child</page>`;
+    const repository = repositoryHarness();
+
+    await expect(syncBackstageNotionAuthorityRoot(rootAuthority(), dependencies({
+      repository: repository.repository,
+      fetchImpl: provider.fetchMock as unknown as typeof fetch,
+    }))).rejects.toMatchObject({
+      code: BACKSTAGE_NOTION_SYNC_INCOMPLETE_ERROR_CODE,
+      diagnostics: expect.objectContaining({
+        phase: 'completeness_validation', reason: 'discovered_page_missing',
+        topologyRejectionCode: 'provider_parent_mismatch',
+        candidateSnapshotActivated: false,
+      }),
+    });
+    expect(repository.activateSnapshot).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    `<page url="notion://malformed-page-identifier">Malformed</page>`,
+    `<page id="malformed" url="notion://${pageId(2)}">Ambiguous</page>`,
+    `<page id="${pageId(1)}" url="notion://${pageId(2)}">Conflicting</page>`,
+  ])('rejects ambiguous structural identifiers without disclosing them', async markdown => {
+    const provider = databaseRootFetch();
+    provider.rows[0]!.markdown = markdown;
+    const repository = repositoryHarness();
+    let caught: unknown;
+    try {
+      await syncBackstageNotionAuthorityRoot(rootAuthority(), dependencies({
+        repository: repository.repository,
+        fetchImpl: provider.fetchMock as unknown as typeof fetch,
+      }));
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toMatchObject({
+      code: BACKSTAGE_NOTION_SYNC_INCOMPLETE_ERROR_CODE,
+      diagnostics: expect.objectContaining({
+        phase: 'normalization', reason: 'completeness_mismatch',
+        topologyRejectionCode: 'ambiguous_page_edge', candidateSnapshotActivated: false,
+      }),
+    });
+    expect(repository.activateSnapshot).not.toHaveBeenCalled();
+    expect(JSON.stringify(caught)).not.toContain(markdown);
+    expect(JSON.stringify(caught)).not.toContain(pageId(2));
+  });
+
+  it('rejects a queried member whose structural parent is outside authority inventory', async () => {
+    const provider = databaseRootFetch({
+      metadataParentPageIds: new Map([[pageId(2), pageId(99)]]),
+    });
+    const repository = repositoryHarness();
+
+    await expect(syncBackstageNotionAuthorityRoot(rootAuthority(), dependencies({
+      repository: repository.repository,
+      fetchImpl: provider.fetchMock as unknown as typeof fetch,
+    }))).rejects.toMatchObject({
+      code: BACKSTAGE_NOTION_SYNC_INCOMPLETE_ERROR_CODE,
+      diagnostics: expect.objectContaining({
+        reason: 'completeness_mismatch',
+        candidateSnapshotActivated: false,
+      }),
+    });
+    expect(repository.activateSnapshot).not.toHaveBeenCalled();
+    expect(provider.fetchMock.mock.calls.some(call => String(call[0]).includes(pageId(99))))
+      .toBe(false);
+  });
+
+  it('rejects nested-member provider parent drift after embedding and preserves prior authority', async () => {
+    const provider = databaseRootFetch({
+      metadataParentPageIds: new Map([[pageId(2), pageId(1)]]),
+      verificationParentPageIds: new Map([[pageId(2), pageId(99)]]),
+    });
+    provider.rows[0]!.markdown += `\n<page url="notion://${pageId(2)}">Nested member</page>`;
+    const previous = activeInventory('1'.repeat(64));
+    const repository = repositoryHarness({ active: previous });
+    const embedBatch = jest.fn(async (inputs: readonly string[]) => inputs.map(() => [1, 0]));
+
+    await expect(syncBackstageNotionAuthorityRoot(rootAuthority(), dependencies({
+      repository: repository.repository,
+      fetchImpl: provider.fetchMock as unknown as typeof fetch,
+      embedBatch,
+    }))).rejects.toMatchObject({ code: BACKSTAGE_NOTION_SYNC_SOURCE_DRIFT_ERROR_CODE });
+    expect(embedBatch).toHaveBeenCalled();
+    expect(provider.metadataCalls.get(pageId(2))).toBe(2);
+    expect(repository.activateSnapshot).not.toHaveBeenCalled();
+    expect(repository.markActiveSnapshotVerified).not.toHaveBeenCalled();
+    expect(await repository.repository.loadActiveInventory(universeId)).toBe(previous);
   });
 
   it('activates only the complete paginated database-row title in both passes', async () => {
@@ -1832,6 +2243,7 @@ describe('Backstage Notion authority synchronization', () => {
         diagnostics: expect.objectContaining({
           phase: 'completeness_validation',
           reason: 'completeness_mismatch',
+          topologyRejectionCode: 'duplicate_database_membership',
           candidateSnapshotCreated: false,
           candidateSnapshotValidated: false,
           candidateSnapshotActivated: false,
