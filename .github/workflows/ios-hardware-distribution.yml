@@ -1,0 +1,119 @@
+name: iOS Hardware Validation Distribution
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Full reviewed main commit SHA; must equal this dispatch commit
+        required: true
+        type: string
+      build_number:
+        description: New Apple build number (1-9999 or valid dotted build version)
+        required: true
+        type: string
+      mode:
+        description: Archive only by default; upload needs separate publication authorization
+        required: true
+        default: archive
+        type: choice
+        options:
+          - archive
+          - upload
+      authorize_upload:
+        description: Explicitly authorize upload of this exact validation build to TestFlight
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-hardware-distribution
+  cancel-in-progress: false
+
+jobs:
+  admission:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require protected main and exact dispatch revision
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          ACTUAL_SHA: ${{ github.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref }}
+          REF_PROTECTED: ${{ github.ref_protected }}
+          REQUESTED_MODE: ${{ inputs.mode }}
+          UPLOAD_AUTHORIZED: ${{ inputs.authorize_upload }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$EVENT_NAME" = workflow_dispatch
+          test "$REF_NAME" = refs/heads/main
+          test "$REF_PROTECTED" = true
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$EXPECTED_SHA" = "$ACTUAL_SHA"
+          if [ "$REQUESTED_MODE" = upload ]; then test "$UPLOAD_AUTHORIZED" = true; fi
+
+  validation:
+    needs: admission
+    uses: ./.github/workflows/ios-phase3c.yml
+    # No secrets inherited. The same workflow/ref is validated before signing.
+
+  distribution:
+    needs: [admission, validation]
+    runs-on: macos-15
+    timeout-minutes: 55
+    # Configure BOTH environments with required reviewers, no self-approval,
+    # no admin bypass and main-only deployment branches before storing secrets.
+    # GitHub's environment declaration alone does not configure those controls.
+    environment: ${{ inputs.mode == 'upload' && 'ios-hardware-testflight' || 'ios-hardware-signing' }}
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Build, sign and export; upload only when explicitly authorized
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          BUILD_NUMBER: ${{ inputs.build_number }}
+          REQUESTED_MODE: ${{ inputs.mode }}
+          UPLOAD_AUTHORIZED: ${{ inputs.authorize_upload }}
+          ARCANOS_EPHEMERAL_SIGNING_RUNNER: '1'
+          IOS_SIGNING_P12_BASE64: ${{ secrets.IOS_SIGNING_P12_BASE64 }}
+          IOS_SIGNING_P12_PASSWORD: ${{ secrets.IOS_SIGNING_P12_PASSWORD }}
+          IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+          IOS_TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
+          # Set this protected environment variable only after owner review.
+          IOS_USES_NON_EXEMPT_ENCRYPTION: ${{ vars.IOS_USES_NON_EXEMPT_ENCRYPTION }}
+          # These secrets belong ONLY to ios-hardware-testflight. Archive mode
+          # must leave them unconfigured in ios-hardware-signing.
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_PRIVATE_KEY_BASE64: ${{ secrets.ASC_PRIVATE_KEY_BASE64 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d "$DEVELOPER_DIR"
+          args=(--mode "$REQUESTED_MODE" --expected-sha "$EXPECTED_SHA" --build-number "$BUILD_NUMBER"
+                --output-dir "$RUNNER_TEMP/arcanos-distribution-report")
+          if [ "$REQUESTED_MODE" = upload ] && [ "$UPLOAD_AUTHORIZED" = true ]; then
+            args+=(--authorize-upload)
+          fi
+          python3 -B clients/ios/scripts/phase3c_signing.py "${args[@]}"
+      - name: Publish sanitized signing metadata only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-hardware-distribution-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/arcanos-distribution-report/report.json
+          if-no-files-found: warn
+          retention-days: 7
+          include-hidden-files: false
+    # Products contain embedded profiles, so no IPA/archive/keychain/profile/
+    # private-key/raw-log artifact is published. Upload mode rebuilds and sends
+    # directly to Apple in this separate protected job. The hosted VM's mandatory
+    # destruction owns cleanup, including cancellation; persistent runners are
+    # rejected by the script, and no broad filesystem cleanup is performed.

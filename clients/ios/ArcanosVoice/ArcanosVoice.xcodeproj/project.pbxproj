@@ -14,6 +14,11 @@
 		A10000000000000000000006 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000006; };
 		A10000000000000000000007 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000007; };
 		A10000000000000000000008 /* ArcanosKit in Frameworks */ = {isa = PBXBuildFile; productRef = A90000000000000000000001; };
+		A10000000000000000000009 /* HardwareValidationRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000009; };
+		A1000000000000000000000A /* HardwareValidationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000A; };
+		A1000000000000000000000B /* HardwareFixtureTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000B; };
+		A1000000000000000000000C /* SimulatorRecoveryDriver.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000C; };
+		A1000000000000000000000D /* ValidationAssets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000D; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -25,6 +30,11 @@
 		A20000000000000000000006 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		A20000000000000000000007 = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		A20000000000000000000008 = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ArcanosVoice.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A20000000000000000000009 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "HardwareValidationRuntime.swift"; sourceTree = "<group>"; };
+		A2000000000000000000000A = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "HardwareValidationView.swift"; sourceTree = "<group>"; };
+		A2000000000000000000000B = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "../ArcanosKit/Sources/ArcanosHardwareValidation/HardwareFixtureTransport.swift"; sourceTree = SOURCE_ROOT; };
+		A2000000000000000000000C = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SimulatorRecoveryDriver.swift; sourceTree = "<group>"; };
+		A2000000000000000000000D = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = ValidationAssets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -33,8 +43,8 @@
 
 /* Begin PBXGroup section */
 		A40000000000000000000001 = {isa = PBXGroup; children = (A40000000000000000000002, A40000000000000000000003, A40000000000000000000004, ); sourceTree = "<group>"; };
-		A40000000000000000000002 = {isa = PBXGroup; children = (A20000000000000000000001, A20000000000000000000002, A20000000000000000000003, A20000000000000000000004, A20000000000000000000005, A20000000000000000000006, ); path = Sources; sourceTree = "<group>"; };
-		A40000000000000000000003 = {isa = PBXGroup; children = (A20000000000000000000007, ); path = Resources; sourceTree = "<group>"; };
+		A40000000000000000000002 = {isa = PBXGroup; children = (A20000000000000000000001, A20000000000000000000002, A20000000000000000000003, A20000000000000000000004, A20000000000000000000005, A20000000000000000000006, A20000000000000000000009, A2000000000000000000000A, A2000000000000000000000B, A2000000000000000000000C, ); path = Sources; sourceTree = "<group>"; };
+		A40000000000000000000003 = {isa = PBXGroup; children = (A20000000000000000000007, A2000000000000000000000D, ); path = Resources; sourceTree = "<group>"; };
 		A40000000000000000000004 = {isa = PBXGroup; children = (A20000000000000000000008, ); name = Products; sourceTree = "<group>"; };
 /* End PBXGroup section */
 
@@ -72,11 +82,11 @@
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
-		A30000000000000000000003 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000007, ); runOnlyForDeploymentPostprocessing = 0; };
+		A30000000000000000000003 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000007, A1000000000000000000000D, ); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
-		A30000000000000000000002 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000001, A10000000000000000000002, A10000000000000000000003, A10000000000000000000004, A10000000000000000000005, A10000000000000000000006, ); runOnlyForDeploymentPostprocessing = 0; };
+		A30000000000000000000002 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000001, A10000000000000000000002, A10000000000000000000003, A10000000000000000000004, A10000000000000000000005, A10000000000000000000006, A10000000000000000000009, A1000000000000000000000A, A1000000000000000000000B, A1000000000000000000000C, ); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */
@@ -85,6 +95,7 @@
 		A80000000000000000000003 = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				EXCLUDED_SOURCE_FILE_NAMES = "HardwareValidationRuntime.swift HardwareValidationView.swift HardwareFixtureTransport.swift SimulatorRecoveryDriver.swift ValidationAssets.xcassets";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -110,6 +121,7 @@
 		A80000000000000000000004 = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				EXCLUDED_SOURCE_FILE_NAMES = "HardwareValidationRuntime.swift HardwareValidationView.swift HardwareFixtureTransport.swift SimulatorRecoveryDriver.swift ValidationAssets.xcassets";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -132,11 +144,39 @@
 			};
 			name = Release;
 		};
+		A80000000000000000000005 = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; CLANG_ENABLE_OBJC_ARC = YES; DEBUG_INFORMATION_FORMAT = dwarf; ENABLE_TESTABILITY = YES; GCC_OPTIMIZATION_LEVEL = 0; IPHONEOS_DEPLOYMENT_TARGET = 18.0; SDKROOT = iphoneos; SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG ARCANOS_HARDWARE_VALIDATION $(inherited)"; SWIFT_OPTIMIZATION_LEVEL = "-Onone"; }; name = HardwareValidation; };
+		A80000000000000000000006 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = "ARCANOS Fixtures";
+				ASSETCATALOG_COMPILER_APPICON_NAME = ValidationAppIcon;
+				INFOPLIST_KEY_ArcanosValidationRevision = "$(ARCANOS_VALIDATION_REVISION)";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", );
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = org.arcanos.voice.hardware-validation;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = HardwareValidation;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		A70000000000000000000001 = {isa = XCConfigurationList; buildConfigurations = (A80000000000000000000001, A80000000000000000000002, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
-		A70000000000000000000002 = {isa = XCConfigurationList; buildConfigurations = (A80000000000000000000003, A80000000000000000000004, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		A70000000000000000000001 = {isa = XCConfigurationList; buildConfigurations = (A80000000000000000000001, A80000000000000000000002, A80000000000000000000005, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		A70000000000000000000002 = {isa = XCConfigurationList; buildConfigurations = (A80000000000000000000003, A80000000000000000000004, A80000000000000000000006, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */

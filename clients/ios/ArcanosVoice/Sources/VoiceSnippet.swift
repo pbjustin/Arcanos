@@ -9,7 +9,11 @@ struct VoicePresentation: Sendable {
     let operationID: UUID?
 
     init(_ result: SessionResult, demonstration: Bool) {
+        #if ARCANOS_HARDWARE_VALIDATION
+        let spokenText = "Hardware validation. \(result.text)"
+        #else
         let spokenText = demonstration ? "Simulation. \(result.text)" : result.text
+        #endif
         text = String(spokenText.prefix(4_000))
         approvalID = result.approvalID
         operationID = result.operationID
@@ -25,7 +29,11 @@ struct VoicePresentation: Sendable {
     }
 
     init(text: String, status: String) {
+        #if ARCANOS_HARDWARE_VALIDATION
+        self.text = String("Hardware validation. \(text)".prefix(4_000))
+        #else
         self.text = String(text.prefix(4_000))
+        #endif
         self.status = status
         approvalID = nil
         operationID = nil
@@ -38,8 +46,13 @@ struct VoiceSnippet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
+            #if ARCANOS_HARDWARE_VALIDATION
+            Label("ARCANOS · Fixture Gateway", systemImage: "testtube.2")
+                .font(.headline)
+            #else
             Label("ARCANOS", systemImage: "waveform")
                 .font(.headline)
+            #endif
             Text(presentation.status)
                 .font(.caption)
                 .foregroundStyle(.secondary)

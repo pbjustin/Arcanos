@@ -1,0 +1,17 @@
+{
+  "schema": "arcanos-phase3c-simulator-proof/v1",
+  "capturedAt": "2026-09-12T03:31:13.518435+00:00",
+  "revision": "4f3652ed4397e8b7de8891696ea6160d4cd51af2",
+  "status": "BLOCKED",
+  "scope": "Installed Simulator host app, real shipping AppRuntime/session/recovery and Simulator Keychain; injected durable Gateway fixture, no HTTP. Actual App Intent invocation, voice, Foundation Models inference, physical-device behavior and live services NOT RUN.",
+  "checks": [],
+  "stages": [],
+  "terminations": [],
+  "runtimeRequested": "26.2",
+  "deviceType": "com.apple.CoreSimulator.SimDeviceType.iPhone-16",
+  "physicalDevice": "NOT RUN",
+  "appIntentInvocation": "NOT RUN",
+  "liveServices": "NOT RUN",
+  "dependency": "macOS with selected Xcode and the requested iOS Simulator runtime",
+  "cleanup": "No Simulator deletion, erasure or artifact removal. Dedicated Simulator and app data retained on persistent hosts."
+}

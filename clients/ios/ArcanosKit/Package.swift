@@ -19,6 +19,9 @@ let package = Package(
         .executableTarget(name: "ArcanosDeviceE2E", dependencies: ["ArcanosKit"]),
         .testTarget(name: "ArcanosDeviceE2ETests", dependencies: ["ArcanosDeviceE2E"]),
         .target(name: "ArcanosFixtureSupport", dependencies: ["ArcanosKit"]),
+        // Hardware fixtures are deliberately not a dependency/product of shipping ArcanosKit.
+        .target(name: "ArcanosHardwareValidation", dependencies: ["ArcanosKit"]),
+        .testTarget(name: "ArcanosHardwareValidationTests", dependencies: ["ArcanosKit", "ArcanosHardwareValidation"]),
         .executableTarget(name: "ArcanosRecoveryProof", dependencies: ["ArcanosKit", "ArcanosFixtureSupport"]),
         .executableTarget(name: "ArcanosShippingRecoveryProof", dependencies: ["ArcanosKit", "ArcanosFixtureSupport"])
     ]

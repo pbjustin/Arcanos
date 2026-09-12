@@ -1,0 +1,68 @@
+name: iOS Phase 3C Apple Validation
+
+on:
+  pull_request:
+    paths:
+      - 'clients/ios/**'
+      - '.github/workflows/ios-phase3c.yml'
+      - '.github/workflows/ios-hardware-distribution.yml'
+  workflow_dispatch:
+  workflow_call:
+
+# No deployment environments, repository secrets or privileged PR triggers.
+permissions:
+  contents: read
+
+jobs:
+  apple-validation:
+    runs-on: macos-15
+    timeout-minutes: 55
+    env:
+      # Deliberate stable pin; missing image/toolchain/runtime fails clearly.
+      # https://github.com/actions/runner-images/blob/main/images/macos/macos-15-Readme.md
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Validate isolation, automation and distribution guards without secrets
+        run: |
+          python3 -B -m unittest discover -s clients/ios/scripts -p 'test_*configuration.py'
+          python3 -B -m unittest discover -s clients/ios/scripts -p 'test_phase3c_*.py'
+          python3 -B clients/ios/scripts/generate-validation-icon.py --check
+      - name: Compile actual app configurations with the Apple SDK
+        run: >-
+          python3 -B clients/ios/scripts/run-phase3c-apple-validation.py
+          --build --require-xcode-version 26.3 --require-ios-sdk 26.2
+          --output-dir local_artifacts/ios-phase3c/cloud-apple
+      - name: Execute installed app and restore an accepted fixture operation
+        env:
+          VALIDATION_SHA: ${{ github.sha }}
+        run: >-
+          python3 -B clients/ios/scripts/run-phase3c-simulator.py
+          --app local_artifacts/ios-phase3c/cloud-apple/DerivedData-HardwareValidation/Build/Products/HardwareValidation-iphonesimulator/ArcanosVoice.app
+          --revision "$VALIDATION_SHA" --runtime-version 26.2
+          --output-dir local_artifacts/ios-phase3c/cloud-simulator
+      - name: Record independent no-Mac evidence levels
+        if: always()
+        env:
+          VALIDATION_SHA: ${{ github.sha }}
+        run: >-
+          python3 -B clients/ios/scripts/phase3c_cloud_report.py --revision "$VALIDATION_SHA"
+          --apple local_artifacts/ios-phase3c/cloud-apple/report.json
+          --simulator local_artifacts/ios-phase3c/cloud-simulator/report.json
+          --output local_artifacts/ios-phase3c/cloud-summary.json
+      - name: Retain sanitized Apple and Simulator evidence only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-phase3c-apple-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            local_artifacts/ios-phase3c/cloud-apple/report.json
+            local_artifacts/ios-phase3c/cloud-apple/*.log
+            local_artifacts/ios-phase3c/cloud-simulator/report.json
+            local_artifacts/ios-phase3c/cloud-summary.json
+          if-no-files-found: warn
+          retention-days: 7
+          include-hidden-files: false

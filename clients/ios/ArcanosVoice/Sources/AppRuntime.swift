@@ -31,10 +31,28 @@ final class AppRuntime {
     @ObservationIgnored private var shipping: ShippingSessionComposition?
     @ObservationIgnored private var hasActivated = false
     @ObservationIgnored private var generation = UUID()
+    #if ARCANOS_HARDWARE_VALIDATION
+    @ObservationIgnored private let credentialStore = KeychainCredentialStore(service: HardwareValidationRuntime.keychainService)
+    private(set) var hardwareValidation: HardwareValidationRuntime?
+    #else
     @ObservationIgnored private let credentialStore = KeychainCredentialStore()
+    #endif
     @ObservationIgnored private var pairing: DevicePairingClient?
 
     private init() {
+        #if ARCANOS_HARDWARE_VALIDATION
+        // This branch runs before any preference/credential restoration. A broken
+        // fixture configuration remains local and never constructs a live client.
+        do {
+            let validation = try HardwareValidationRuntime(credentials: credentialStore)
+            hardwareValidation = validation
+            shipping = validation.makeComposition()
+            gatewayAddress = HardwareFixtureConfiguration.origin.absoluteString
+            diagnosticMessage = "Hardware validation. Gateway networking is disabled. Initialize synthetic credentials explicitly."
+        } catch {
+            diagnosticMessage = "Hardware validation could not initialize. Gateway networking remains disabled."
+        }
+        #else
         do { shipping = try makeShippingComposition(nil) }
         catch { diagnosticMessage = "Recovery storage is currently unavailable. Local intelligence remains available." }
         restoreGateway()
@@ -42,6 +60,7 @@ final class AppRuntime {
         if UserDefaults.standard.bool(forKey: "arcanos.demo.enabled") {
             setDemonstration(true)
         }
+        #endif
         #endif
     }
 
@@ -51,6 +70,9 @@ final class AppRuntime {
         guard !demonstration, let shipping else { return }
         let activeGeneration = generation
         let firstActivation = !hasActivated
+        #if ARCANOS_HARDWARE_VALIDATION
+        await hardwareValidation?.record(firstActivation ? .startup : .foreground)
+        #endif
         hasActivated = true
         let results = firstActivation ? await shipping.startup() : await shipping.foreground()
         guard activeGeneration == generation, !Task.isCancelled else { return }
@@ -59,15 +81,21 @@ final class AppRuntime {
     }
 
     func refreshDiagnostics() async {
+        #if ARCANOS_HARDWARE_VALIDATION
+        localModelStatus = HardwareValidationRuntime.modelAvailability
+        await hardwareValidation?.refreshEvidence()
+        #else
         switch await LocalAI().availability() {
         case .available:
             localModelStatus = "Foundation Models is available on this device."
         case .unavailable:
             localModelStatus = "Local model unavailable. Requires iOS 26, a supported Apple Intelligence device, and a ready model."
         }
+        #endif
         await refreshDeviceState()
     }
 
+    #if !ARCANOS_HARDWARE_VALIDATION
     func pair(address: String, pairingToken: String) async {
         guard !changingPairing else { return }
         changingPairing = true
@@ -137,18 +165,28 @@ final class AppRuntime {
         } catch { diagnosticMessage = SessionResult.failure(error).text }
         await refreshDeviceState()
     }
+    #endif
 
     func ask(_ command: String) async -> VoicePresentation {
+        #if ARCANOS_HARDWARE_VALIDATION
+        await hardwareValidation?.record(.ask)
+        #endif
         let activeGeneration = generation
         let context = await localContext.capturedNote()
         let result: SessionResult
         if !demonstration, let shipping { result = await shipping.ask(command, localContext: context) }
         else { result = await session.ask(command, localContext: context) }
         await refreshDeviceState()
+        #if ARCANOS_HARDWARE_VALIDATION
+        await hardwareValidation?.refreshEvidence()
+        #endif
         return consume(result, generation: activeGeneration)
     }
 
     func approve(_ approvalID: UUID) async -> VoicePresentation {
+        #if ARCANOS_HARDWARE_VALIDATION
+        await hardwareValidation?.record(.approve)
+        #endif
         let activeGeneration = generation
         let result: SessionResult
         if !demonstration, let shipping { result = await shipping.approve(approvalID) }
@@ -159,6 +197,9 @@ final class AppRuntime {
     }
 
     func cancel(_ approvalID: UUID) async -> VoicePresentation {
+        #if ARCANOS_HARDWARE_VALIDATION
+        await hardwareValidation?.record(.cancel)
+        #endif
         let activeGeneration = generation
         let result: SessionResult
         if !demonstration, let shipping { result = await shipping.cancel(approvalID) }
@@ -168,6 +209,9 @@ final class AppRuntime {
     }
 
     func checkLatestJob(reference: String? = nil) async -> VoicePresentation {
+        #if ARCANOS_HARDWARE_VALIDATION
+        await hardwareValidation?.record(.checkLatest)
+        #endif
         let operationID: UUID?
         if let reference, !reference.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             guard let parsed = UUID(uuidString: reference.trimmingCharacters(in: .whitespacesAndNewlines)) else {
@@ -185,6 +229,9 @@ final class AppRuntime {
     }
 
     func capture(_ note: String) async -> VoicePresentation {
+        #if ARCANOS_HARDWARE_VALIDATION
+        await hardwareValidation?.record(.captureNote)
+        #endif
         let trimmed = note.trimmingCharacters(in: .whitespacesAndNewlines)
         do {
             try await localContext.capture(trimmed)
@@ -202,7 +249,7 @@ final class AppRuntime {
         diagnosticMessage = "Local note cleared."
     }
 
-    #if DEBUG
+    #if DEBUG && !ARCANOS_HARDWARE_VALIDATION
     func setDemonstration(_ enabled: Bool) {
         guard !changingPairing else { return }
         do {
@@ -230,6 +277,7 @@ final class AppRuntime {
     }
     #endif
 
+    #if !ARCANOS_HARDWARE_VALIDATION
     private func restoreGateway() {
         guard let address = UserDefaults.standard.string(forKey: "arcanos.gateway.origin"),
               let origin = URL(string: address) else { return }
@@ -257,6 +305,7 @@ final class AppRuntime {
         demoLatestJobID = nil
         recoveredResults = []
     }
+    #endif
 
     private func refreshDeviceState() async {
         guard !gatewayAddress.isEmpty, let origin = URL(string: gatewayAddress) else { deviceState = .unpaired; return }

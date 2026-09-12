@@ -1,0 +1,614 @@
+{
+  "acceptedReceiptScenario": {
+    "httpSubmissionAttempts": 1,
+    "jobID": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    "operationID": "51591427-daba-470e-8384-48412ae84e3c",
+    "requestsMade": 17,
+    "semanticExecutions": 1
+  },
+  "actualAppIntentExecution": false,
+  "approvalNegativeControl": {
+    "approvedRetries": 0,
+    "capabilityAttempts": 1,
+    "capabilityExecutions": 0,
+    "cleanupConfirmed": true,
+    "fault": "dismissal-disabled",
+    "httpSubmissionAttempts": 1,
+    "independentChecks": [],
+    "parentFailure": "APPROVAL_DISMISSAL_NOT_DURABLE",
+    "phases": [
+      {
+        "assertions": [
+          "ended_approval_consumed_without_approved_retry"
+        ],
+        "mode": "approval-cancel",
+        "ok": true,
+        "operationID": "F5E3E6A7-3D08-4721-BBCE-94FBA6285A0B",
+        "pid": 1625,
+        "requestsMade": 1,
+        "runId": "e32c314a-6c8b-4d50-9187-f286c1c8526d",
+        "sourceSha": "4f3652ed4397e8b7de8891696ea6160d4cd51af2",
+        "version": "ios-shipping-recovery-e2e/v1"
+      }
+    ],
+    "processCount": 1,
+    "rejected": true,
+    "requestsMade": 1,
+    "resultReads": 0,
+    "scenarios": [],
+    "semanticExecutions": 0
+  },
+  "approvalRecovery": {
+    "approvedRetries": 1,
+    "capabilityAttempts": 5,
+    "capabilityExecutions": 1,
+    "cleanupConfirmed": true,
+    "httpSubmissionAttempts": 8,
+    "independentChecks": [
+      "ended_approvals_persist_dismissal_and_send_zero_approved_retries",
+      "dismissed_metadata_excluded_across_process_restart",
+      "subsequent_sole_accepted_job_resolves_without_explicit_id",
+      "concurrent_invoke_and_cancel_during_approved_retry_create_no_phantom_record",
+      "approved_retry_preserves_original_body_bytes_and_idempotency_key",
+      "confirmation_secret_and_payload_absent_from_recovery_index"
+    ],
+    "phases": [
+      {
+        "assertions": [
+          "ended_approval_consumed_without_approved_retry"
+        ],
+        "mode": "approval-cancel",
+        "ok": true,
+        "operationID": "349F3214-913C-4B13-B11B-DD31116C9948",
+        "pid": 1535,
+        "requestsMade": 1,
+        "runId": "3f8ac1b3-3b33-4b86-8787-fd6682fb8eac",
+        "sourceSha": "4f3652ed4397e8b7de8891696ea6160d4cd51af2",
+        "version": "ios-shipping-recovery-e2e/v1"
+      },
+      {
+        "assertions": [
+          "restart_excludes_dismissed_approval",
+          "subsequent_operation_accepted_without_approval_replay"
+        ],
+        "jobID": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "mode": "approval-after-dismissal",
+        "ok": true,
+        "operationID": "C1F1A8A9-6CD1-4A0B-B922-310FE8E0242F",
+        "pid": 1541,
+        "requestsMade": 1,
+        "runId": "3f8ac1b3-3b33-4b86-8787-fd6682fb8eac",
+        "sourceSha": "4f3652ed4397e8b7de8891696ea6160d4cd51af2",
+        "version": "ios-shipping-recovery-e2e/v1"
+      },
+      {
+        "assertions": [
+          "restart_recovers_only_accepted_operation",
+          "implicit_latest_and_intent_phrase_verify_same_completed_job"
+        ],
+        "jobID": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "mode": "approval-restart-status",
+        "ok": true,
+        "operationID": "C1F1A8A9-6CD1-4A0B-B922-310FE8E0242F",
+        "pid": 1547,
+        "requestsMade": 3,
+        "runId": "3f8ac1b3-3b33-4b86-8787-fd6682fb8eac",
+        "sourceSha": "4f3652ed4397e8b7de8891696ea6160d4cd51af2",
+        "version": "ios-shipping-recovery-e2e/v1"
+      },
+      {
+        "assertions": [
+          "ended_approval_consumed_without_approved_retry"
+        ],
+        "mode": "approval-expire",
+        "ok": true,
+        "operationID": "FCE8C54A-3CC9-4BEB-B48D-12A5B0145D7E",
+        "pid": 1555,
+        "requestsMade": 1,
+        "runId": "3f8ac1b3-3b33-4b86-8787-fd6682fb8eac",
+        "sourceSha": "4f3652ed4397e8b7de8891696ea6160d4cd51af2",
+        "version": "ios-shipping-recovery-e2e/v1"
+      },
+      {
+        "assertions": [
+          "restart_excludes_dismissed_approval",
+          "subsequent_operation_accepted_without_approval_replay"
+        ],
+        "jobID": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "mode": "approval-after-dismissal",
+        "ok": true,
+        "operationID": "6A3C9398-B01F-4692-958E-2705BCFAD7D0",
+        "pid": 1561,
+        "requestsMade": 1,
+        "runId": "3f8ac1b3-3b33-4b86-8787-fd6682fb8eac",
+        "sourceSha": "4f3652ed4397e8b7de8891696ea6160d4cd51af2",
+        "version": "ios-shipping-recovery-e2e/v1"
+      },
+      {
+        "assertions": [
+          "restart_recovers_only_accepted_operation",
+          "implicit_latest_and_intent_phrase_verify_same_completed_job"
+        ],
+        "jobID": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "mode": "approval-restart-status",
+        "ok": true,
+        "operationID": "6A3C9398-B01F-4692-958E-2705BCFAD7D0",
+        "pid": 1567,
+        "requestsMade": 3,
+        "runId": "3f8ac1b3-3b33-4b86-8787-fd6682fb8eac",
+        "sourceSha": "4f3652ed4397e8b7de8891696ea6160d4cd51af2",
+        "version": "ios-shipping-recovery-e2e/v1"
+      },
+      {
+        "assertions": [
+          "ended_approval_consumed_without_approved_retry"
+        ],
+        "mode": "approval-expired-challenge",
+        "ok": true,
+        "operationID": "15E34912-4925-49DA-9719-1A3FCB67448D",
+        "pid": 1575,
+        "requestsMade": 1,
+        "runId": "3f8ac1b3-3b33-4b86-8787-fd6682fb8eac",
+        "sourceSha": "4f3652ed4397e8b7de8891696ea6160d4cd51af2",
+        "version": "ios-shipping-recovery-e2e/v1"
+      },
+      {
+        "assertions": [
+          "restart_excludes_dismissed_approval",
+          "subsequent_operation_accepted_without_approval_replay"
+        ],
+        "jobID": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "mode": "approval-after-dismissal",
+        "ok": true,
+        "operationID": "D0784725-C3F5-4F30-8C85-BAC2E80052BC",
+        "pid": 1581,
+        "requestsMade": 1,
+        "runId": "3f8ac1b3-3b33-4b86-8787-fd6682fb8eac",
+        "sourceSha": "4f3652ed4397e8b7de8891696ea6160d4cd51af2",
+        "version": "ios-shipping-recovery-e2e/v1"
+      },
+      {
+        "assertions": [
+          "restart_recovers_only_accepted_operation",
+          "implicit_latest_and_intent_phrase_verify_same_completed_job"
+        ],
+        "jobID": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "mode": "approval-restart-status",
+        "ok": true,
+        "operationID": "D0784725-C3F5-4F30-8C85-BAC2E80052BC",
+        "pid": 1587,
+        "requestsMade": 3,
+        "runId": "3f8ac1b3-3b33-4b86-8787-fd6682fb8eac",
+        "sourceSha": "4f3652ed4397e8b7de8891696ea6160d4cd51af2",
+        "version": "ios-shipping-recovery-e2e/v1"
+      },
+      {
+        "assertions": [
+          "overlap_during_submission_pending_and_approved_retry_rejected_without_phantom_record",
+          "single_approval_consumed_and_same_operation_receipt_persisted"
+        ],
+        "jobID": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "mode": "approval-overlap",
+        "ok": true,
+        "operationID": "35ADC152-656A-4A90-A6CC-A7F46EFB61C3",
+        "pid": 1595,
+        "requestsMade": 2,
+        "runId": "3f8ac1b3-3b33-4b86-8787-fd6682fb8eac",
+        "sourceSha": "4f3652ed4397e8b7de8891696ea6160d4cd51af2",
+        "version": "ios-shipping-recovery-e2e/v1"
+      },
+      {
+        "assertions": [
+          "restart_recovers_only_accepted_operation",
+          "implicit_latest_and_intent_phrase_verify_same_completed_job"
+        ],
+        "jobID": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "mode": "approval-restart-status",
+        "ok": true,
+        "operationID": "35ADC152-656A-4A90-A6CC-A7F46EFB61C3",
+        "pid": 1604,
+        "requestsMade": 3,
+        "runId": "3f8ac1b3-3b33-4b86-8787-fd6682fb8eac",
+        "sourceSha": "4f3652ed4397e8b7de8891696ea6160d4cd51af2",
+        "version": "ios-shipping-recovery-e2e/v1"
+      }
+    ],
+    "processCount": 11,
+    "requestsMade": 20,
+    "resultReads": 12,
+    "scenarios": [
+      {
+        "approvedRetries": 0,
+        "capabilityAttempts": 1,
+        "endedApprovalSemanticExecutions": 0,
+        "jobID": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "operationID": "c1f1a8a9-6cd1-4a0b-b922-310fe8e0242f",
+        "processCount": 3,
+        "requestsMade": 5,
+        "scenario": "approval-cancel",
+        "semanticExecutions": 1
+      },
+      {
+        "approvedRetries": 0,
+        "capabilityAttempts": 1,
+        "endedApprovalSemanticExecutions": 0,
+        "jobID": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "operationID": "6a3c9398-b01f-4692-958e-2705bcfad7d0",
+        "processCount": 3,
+        "requestsMade": 5,
+        "scenario": "approval-expire",
+        "semanticExecutions": 1
+      },
+      {
+        "approvedRetries": 0,
+        "capabilityAttempts": 1,
+        "endedApprovalSemanticExecutions": 0,
+        "jobID": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "operationID": "d0784725-c3f5-4f30-8c85-bac2e80052bc",
+        "processCount": 3,
+        "requestsMade": 5,
+        "scenario": "approval-expired-challenge",
+        "semanticExecutions": 1
+      },
+      {
+        "approvedRetries": 1,
+        "capabilityAttempts": 2,
+        "endedApprovalSemanticExecutions": null,
+        "jobID": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "operationID": "35adc152-656a-4a90-a6cc-a7f46efb61c3",
+        "processCount": 2,
+        "requestsMade": 5,
+        "scenario": "approval-overlap",
+        "semanticExecutions": 1
+      }
+    ],
+    "semanticExecutions": 4
+  },
+  "binarySHA256": "99bb264d02930aa291b7d16cbee4d8180e3e335061b0cd2fc0131329741a3859",
+  "cleanupConfirmed": true,
+  "httpSubmissionAttempts": 3,
+  "includingNegativeControl": {
+    "httpSubmissionAttempts": 13,
+    "processCount": 35,
+    "requestsMade": 41,
+    "semanticExecutions": 8
+  },
+  "independentChecks": [
+    "product_intent_persisted_before_wire_submission",
+    "accepted_receipt_before_forced_termination",
+    "distinct_process_memory_and_same_operation_job_partition",
+    "wire_auth_origin_and_idempotency_context",
+    "no_secret_prompt_result_or_confirmation_in_operation_index",
+    "overlapping_app_intent_process_recovery",
+    "late_process_pending_observation_cannot_replace_verified_completion",
+    "lost_receipt_and_killed_process_never_replay",
+    "read_failures_preserve_operation_index",
+    "local_model_independent_of_remote_credentials"
+  ],
+  "liveBackend": false,
+  "negativeControl": {
+    "childFailure": "SHIPPING_RECOVERY_WIRING_BYPASSED",
+    "fault": "wiring-disabled",
+    "httpSubmissionAttempts": 1,
+    "processCount": 2,
+    "recoveryRequests": 0,
+    "rejected": true,
+    "requestsMade": 1,
+    "semanticExecutions": 1
+  },
+  "ok": true,
+  "phases": [
+    {
+      "assertions": [
+        "shipping_ask_returned_pending_with_durable_receipt"
+      ],
+      "expectedTermination": "SIGKILL-after-interaction-ended-and-receipt-persisted",
+      "jobID": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "mode": "submit-held",
+      "ok": true,
+      "operationID": "51591427-DABA-470E-8384-48412AE84E3C",
+      "pid": 1409,
+      "requestsMade": 1,
+      "runId": "076db573-e7d9-40ce-a93e-2af6769149d8",
+      "sourceSha": "4f3652ed4397e8b7de8891696ea6160d4cd51af2",
+      "version": "ios-shipping-recovery-e2e/v1"
+    },
+    {
+      "assertions": [
+        "shipping_unavailable_or_foreign_result_rejected",
+        "local_request_independent_of_credentials"
+      ],
+      "jobID": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "mode": "wrong-device",
+      "ok": true,
+      "operationID": "51591427-DABA-470E-8384-48412AE84E3C",
+      "pid": 1415,
+      "requestsMade": 0,
+      "runId": "076db573-e7d9-40ce-a93e-2af6769149d8",
+      "sourceSha": "4f3652ed4397e8b7de8891696ea6160d4cd51af2",
+      "version": "ios-shipping-recovery-e2e/v1"
+    },
+    {
+      "assertions": [
+        "shipping_unavailable_or_foreign_result_rejected",
+        "local_request_independent_of_credentials"
+      ],
+      "jobID": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "mode": "wrong-origin",
+      "ok": true,
+      "operationID": "51591427-DABA-470E-8384-48412AE84E3C",
+      "pid": 1420,
+      "requestsMade": 0,
+      "runId": "076db573-e7d9-40ce-a93e-2af6769149d8",
+      "sourceSha": "4f3652ed4397e8b7de8891696ea6160d4cd51af2",
+      "version": "ios-shipping-recovery-e2e/v1"
+    },
+    {
+      "assertions": [
+        "shipping_unavailable_or_foreign_result_rejected",
+        "local_request_independent_of_credentials"
+      ],
+      "jobID": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "mode": "unpaired",
+      "ok": true,
+      "operationID": "51591427-DABA-470E-8384-48412AE84E3C",
+      "pid": 1425,
+      "requestsMade": 0,
+      "runId": "076db573-e7d9-40ce-a93e-2af6769149d8",
+      "sourceSha": "4f3652ed4397e8b7de8891696ea6160d4cd51af2",
+      "version": "ios-shipping-recovery-e2e/v1"
+    },
+    {
+      "assertions": [
+        "shipping_unavailable_or_foreign_result_rejected",
+        "local_request_independent_of_credentials"
+      ],
+      "jobID": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "mode": "expired",
+      "ok": true,
+      "operationID": "51591427-DABA-470E-8384-48412AE84E3C",
+      "pid": 1430,
+      "requestsMade": 0,
+      "runId": "076db573-e7d9-40ce-a93e-2af6769149d8",
+      "sourceSha": "4f3652ed4397e8b7de8891696ea6160d4cd51af2",
+      "version": "ios-shipping-recovery-e2e/v1"
+    },
+    {
+      "assertions": [
+        "shipping_unavailable_or_foreign_result_rejected",
+        "local_request_independent_of_credentials"
+      ],
+      "jobID": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "mode": "revoked",
+      "ok": true,
+      "operationID": "51591427-DABA-470E-8384-48412AE84E3C",
+      "pid": 1435,
+      "requestsMade": 0,
+      "runId": "076db573-e7d9-40ce-a93e-2af6769149d8",
+      "sourceSha": "4f3652ed4397e8b7de8891696ea6160d4cd51af2",
+      "version": "ios-shipping-recovery-e2e/v1"
+    },
+    {
+      "assertions": [
+        "shipping_unavailable_or_foreign_result_rejected",
+        "local_request_independent_of_credentials"
+      ],
+      "jobID": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "mode": "locked",
+      "ok": true,
+      "operationID": "51591427-DABA-470E-8384-48412AE84E3C",
+      "pid": 1440,
+      "requestsMade": 0,
+      "runId": "076db573-e7d9-40ce-a93e-2af6769149d8",
+      "sourceSha": "4f3652ed4397e8b7de8891696ea6160d4cd51af2",
+      "version": "ios-shipping-recovery-e2e/v1"
+    },
+    {
+      "assertions": [
+        "shipping_unavailable_or_foreign_result_rejected",
+        "local_request_independent_of_credentials"
+      ],
+      "jobID": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "mode": "mismatch",
+      "ok": true,
+      "operationID": "51591427-DABA-470E-8384-48412AE84E3C",
+      "pid": 1445,
+      "requestsMade": 1,
+      "runId": "076db573-e7d9-40ce-a93e-2af6769149d8",
+      "sourceSha": "4f3652ed4397e8b7de8891696ea6160d4cd51af2",
+      "version": "ios-shipping-recovery-e2e/v1"
+    },
+    {
+      "assertions": [
+        "shipping_unavailable_or_foreign_result_rejected",
+        "local_request_independent_of_credentials"
+      ],
+      "jobID": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "mode": "corrupt",
+      "ok": true,
+      "operationID": "51591427-DABA-470E-8384-48412AE84E3C",
+      "pid": 1451,
+      "requestsMade": 1,
+      "runId": "076db573-e7d9-40ce-a93e-2af6769149d8",
+      "sourceSha": "4f3652ed4397e8b7de8891696ea6160d4cd51af2",
+      "version": "ios-shipping-recovery-e2e/v1"
+    },
+    {
+      "assertions": [
+        "shipping_unavailable_or_foreign_result_rejected",
+        "local_request_independent_of_credentials"
+      ],
+      "jobID": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "mode": "network",
+      "ok": true,
+      "operationID": "51591427-DABA-470E-8384-48412AE84E3C",
+      "pid": 1457,
+      "requestsMade": 1,
+      "runId": "076db573-e7d9-40ce-a93e-2af6769149d8",
+      "sourceSha": "4f3652ed4397e8b7de8891696ea6160d4cd51af2",
+      "version": "ios-shipping-recovery-e2e/v1"
+    },
+    {
+      "assertions": [
+        "shipping_unavailable_or_foreign_result_rejected",
+        "local_request_independent_of_credentials"
+      ],
+      "jobID": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "mode": "denied",
+      "ok": true,
+      "operationID": "51591427-DABA-470E-8384-48412AE84E3C",
+      "pid": 1463,
+      "requestsMade": 1,
+      "runId": "076db573-e7d9-40ce-a93e-2af6769149d8",
+      "sourceSha": "4f3652ed4397e8b7de8891696ea6160d4cd51af2",
+      "version": "ios-shipping-recovery-e2e/v1"
+    },
+    {
+      "assertions": [
+        "shipping_startup_restored_accepted_operation",
+        "repeated_startup_foreground_read_only"
+      ],
+      "jobID": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "mode": "startup",
+      "ok": true,
+      "operationID": "51591427-DABA-470E-8384-48412AE84E3C",
+      "pid": 1469,
+      "requestsMade": 3,
+      "runId": "076db573-e7d9-40ce-a93e-2af6769149d8",
+      "sourceSha": "4f3652ed4397e8b7de8891696ea6160d4cd51af2",
+      "version": "ios-shipping-recovery-e2e/v1"
+    },
+    {
+      "assertions": [
+        "shipping_startup_restored_accepted_operation",
+        "repeated_startup_foreground_read_only"
+      ],
+      "jobID": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "mode": "startup",
+      "ok": true,
+      "operationID": "51591427-DABA-470E-8384-48412AE84E3C",
+      "pid": 1477,
+      "requestsMade": 3,
+      "runId": "076db573-e7d9-40ce-a93e-2af6769149d8",
+      "sourceSha": "4f3652ed4397e8b7de8891696ea6160d4cd51af2",
+      "version": "ios-shipping-recovery-e2e/v1"
+    },
+    {
+      "assertions": [
+        "shipping_startup_restored_accepted_operation",
+        "repeated_startup_foreground_read_only"
+      ],
+      "jobID": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "mode": "startup",
+      "ok": true,
+      "operationID": "51591427-DABA-470E-8384-48412AE84E3C",
+      "pid": 1478,
+      "requestsMade": 3,
+      "runId": "076db573-e7d9-40ce-a93e-2af6769149d8",
+      "sourceSha": "4f3652ed4397e8b7de8891696ea6160d4cd51af2",
+      "version": "ios-shipping-recovery-e2e/v1"
+    },
+    {
+      "assertions": [
+        "shipping_intent_adapter_verified_same_operation_result"
+      ],
+      "jobID": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "mode": "status",
+      "ok": true,
+      "operationID": "51591427-DABA-470E-8384-48412AE84E3C",
+      "pid": 1500,
+      "requestsMade": 1,
+      "runId": "076db573-e7d9-40ce-a93e-2af6769149d8",
+      "sourceSha": "4f3652ed4397e8b7de8891696ea6160d4cd51af2",
+      "version": "ios-shipping-recovery-e2e/v1"
+    },
+    {
+      "assertions": [
+        "late_process_observation_preserves_verified_completion"
+      ],
+      "jobID": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "mode": "race-pending",
+      "ok": true,
+      "operationID": "51591427-DABA-470E-8384-48412AE84E3C",
+      "pid": 1494,
+      "requestsMade": 1,
+      "runId": "076db573-e7d9-40ce-a93e-2af6769149d8",
+      "sourceSha": "4f3652ed4397e8b7de8891696ea6160d4cd51af2",
+      "version": "ios-shipping-recovery-e2e/v1"
+    },
+    {
+      "assertions": [
+        "shipping_intent_adapter_verified_same_operation_result"
+      ],
+      "jobID": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "mode": "terminal-status",
+      "ok": true,
+      "operationID": "51591427-DABA-470E-8384-48412AE84E3C",
+      "pid": 1506,
+      "requestsMade": 1,
+      "runId": "076db573-e7d9-40ce-a93e-2af6769149d8",
+      "sourceSha": "4f3652ed4397e8b7de8891696ea6160d4cd51af2",
+      "version": "ios-shipping-recovery-e2e/v1"
+    },
+    {
+      "assertions": [
+        "shipping_submission_uncertainty_persisted"
+      ],
+      "mode": "submit-uncertain",
+      "ok": true,
+      "operationID": "2C3C7806-9FD4-44C7-B40D-C24CC6AFEE2C",
+      "pid": 1512,
+      "requestsMade": 1,
+      "runId": "076db573-e7d9-40ce-a93e-2af6769149d8",
+      "sourceSha": "4f3652ed4397e8b7de8891696ea6160d4cd51af2",
+      "version": "ios-shipping-recovery-e2e/v1"
+    },
+    {
+      "assertions": [
+        "shipping_restart_does_not_replay_uncertain_submission"
+      ],
+      "mode": "recover-uncertain",
+      "ok": true,
+      "operationID": "2C3C7806-9FD4-44C7-B40D-C24CC6AFEE2C",
+      "pid": 1518,
+      "requestsMade": 0,
+      "runId": "076db573-e7d9-40ce-a93e-2af6769149d8",
+      "sourceSha": "4f3652ed4397e8b7de8891696ea6160d4cd51af2",
+      "version": "ios-shipping-recovery-e2e/v1"
+    },
+    {
+      "assertions": [
+        "shipping_intent_durable_before_lost_receipt"
+      ],
+      "expectedTermination": "SIGKILL-before-receipt",
+      "mode": "submit-crash",
+      "operationID": "547dbe61-8d7a-43d3-99e5-5a97d75ac156",
+      "pid": 1523,
+      "requestsMade": 1
+    },
+    {
+      "assertions": [
+        "shipping_restart_does_not_replay_uncertain_submission"
+      ],
+      "mode": "recover-uncertain",
+      "ok": true,
+      "operationID": "547DBE61-8D7A-43D3-99E5-5A97D75AC156",
+      "pid": 1529,
+      "requestsMade": 0,
+      "runId": "076db573-e7d9-40ce-a93e-2af6769149d8",
+      "sourceSha": "4f3652ed4397e8b7de8891696ea6160d4cd51af2",
+      "version": "ios-shipping-recovery-e2e/v1"
+    }
+  ],
+  "physicalDevice": false,
+  "processCount": 21,
+  "requestsMade": 19,
+  "scope": "shipping-shared-entry-adapter-process-file-loopback",
+  "secureStorage": "injected-memory-double",
+  "semanticExecutions": 3,
+  "simulatorRuntime": false,
+  "sourceDirty": true,
+  "sourceSha": "4f3652ed4397e8b7de8891696ea6160d4cd51af2",
+  "tls": false,
+  "version": "ios-shipping-recovery-e2e/v1"
+}
