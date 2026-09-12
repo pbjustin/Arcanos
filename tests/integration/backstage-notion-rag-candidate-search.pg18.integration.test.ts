@@ -12,9 +12,15 @@ import {
   PostgresBackstageNotionRagRepository,
   type BackstageNotionSnapshotCandidateSearch,
 } from '../../src/core/db/repositories/backstageNotionRagRepository.js';
+import { PostgresBackstageNotionSyncStatusRepository } from '../../src/core/db/repositories/backstageNotionSyncStatusRepository.js';
 import { runWithBackstageNotionEnrichmentAuthorization } from '../../src/services/backstageNotionEnrichmentAuthorization.js';
-import { retrieveBackstageNotionRagContext } from '../../src/services/backstageNotionRag.js';
+import {
+  retrieveBackstageNotionBookingRagContext,
+  retrieveBackstageNotionRagContext,
+} from '../../src/services/backstageNotionRag.js';
+import { syncBackstageNotionAuthorityRoot } from '../../src/services/backstageNotionSync.js';
 import { DEFAULT_OPENAI_EMBEDDING_MODEL } from '../../src/services/openai/embeddings.js';
+import { BACKSTAGE_NOTION_ACCESS_TOKEN_ENV_NAME } from '../../src/shared/backstage/backstageNotionContextCore.js';
 import { BACKSTAGE_NOTION_RAG_HEADING_INDEX_VERSION } from '../../src/shared/backstage/backstageNotionRagCore.js';
 import { BACKSTAGE_NOTION_RAG_INDEX_FORMAT } from '../../src/shared/backstage/backstageNotionScopeIndex.js';
 import {
@@ -62,6 +68,12 @@ const notionRagV3Migration = readMigration(
 );
 const notionRagV3Rollback = readMigration(
   '20260829_backstage_notion_rag_v3_snapshot_capacity.rollback.sql'
+);
+const syncStatusMigration = readMigration(
+  '20260829_backstage_notion_rag_v4_sync_status.sql'
+);
+const syncStatusRollback = readMigration(
+  '20260829_backstage_notion_rag_v4_sync_status.rollback.sql'
 );
 const candidateSearchMigration = readMigration(
   '20260902_backstage_notion_rag_candidate_search_v1.sql'
@@ -912,6 +924,7 @@ describeWithDatabase('Backstage Notion candidate search on PostgreSQL 18', () =>
   let observer: Client;
   let pool: Pool;
   let ownsInstallation = false;
+  let ownsSyncStatusInstallation = false;
 
   beforeAll(async () => {
     if (!configuredConnectionString) {
@@ -962,6 +975,13 @@ describeWithDatabase('Backstage Notion candidate search on PostgreSQL 18', () =>
     } else {
       await observer.query(candidateSearchMigration);
     }
+    const syncStatusInstallation = await observer.query<{ relation: string | null }>(
+      `SELECT to_regclass('public.backstage_notion_latest_sync_attempts')::TEXT AS relation`
+    );
+    if (syncStatusInstallation.rows[0]?.relation === null) {
+      await observer.query(syncStatusMigration);
+      ownsSyncStatusInstallation = true;
+    }
     pool = new Pool({
       connectionString: configuredConnectionString,
       ssl: false,
@@ -977,6 +997,9 @@ describeWithDatabase('Backstage Notion candidate search on PostgreSQL 18', () =>
       if (observer) {
         await observer.query('ROLLBACK').catch(() => undefined);
         await resetNotionRows(observer);
+        if (ownsSyncStatusInstallation) {
+          await observer.query(syncStatusRollback);
+        }
         if (ownsInstallation) {
           await observer.query(candidateSearchRollback);
           await observer.query(notionRagV3Rollback);
@@ -1005,6 +1028,173 @@ describeWithDatabase('Backstage Notion candidate search on PostgreSQL 18', () =>
       await observer?.end();
     }
   }, 120_000);
+
+  test('synchronizes database-parent authority through PostgreSQL activation and continuity', async () => {
+    await resetNotionRows(observer);
+    const root = {
+      universeId: `database-parent-pg18-${randomUUID().slice(0, 8)}`,
+      rootPageId: randomUUID(),
+      displayName: 'Synthetic continuity authority',
+      initialMinimumPageCount: 2,
+    };
+    const sourceId = randomUUID();
+    const members = [randomUUID(), randomUUID()].sort();
+    const titleParts = [...Array.from({ length: 25 }, () => 'a'), ' complete title'];
+    const timestamp = new Date().toISOString();
+    const annotation = {
+      bold: false, italic: false, strikethrough: false,
+      underline: false, code: false, color: 'default',
+    };
+    const textItem = (content: string) => ({
+      type: 'text', text: { content, link: null },
+      annotations: annotation, plain_text: content, href: null,
+    });
+    const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), {
+      status, headers: { 'content-type': 'application/json' },
+    });
+    let failureMode: 'none' | 'incomplete' | 'drift' = 'none';
+    let titleReads = 0;
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = new URL(String(input));
+      expect(url.origin).toBe('https://api.notion.com');
+      if (url.pathname === `/v1/pages/${root.rootPageId}`) {
+        return json({
+          object: 'error', status: 400, code: 'validation_error',
+          message: 'Synthetic database root requires database metadata.',
+        }, 400);
+      }
+      if (url.pathname === `/v1/databases/${root.rootPageId}`) {
+        return json({
+          object: 'database', id: root.rootPageId,
+          parent: { type: 'workspace', workspace: true },
+          title: [{ plain_text: 'Synthetic database' }],
+          last_edited_time: timestamp, in_trash: false,
+          data_sources: [{ id: sourceId, name: 'Synthetic source' }],
+        });
+      }
+      if (url.pathname === `/v1/data_sources/${sourceId}/query`) {
+        expect(init?.method).toBe('POST');
+        return json({
+          object: 'list', type: 'page_or_data_source', page_or_data_source: {},
+          results: members.map(id => ({ object: 'page', id })),
+          has_more: false, next_cursor: null, request_status: { type: 'complete' },
+        });
+      }
+      const member = members.find(id => url.pathname.startsWith(`/v1/pages/${id}`));
+      if (!member) {
+        throw new Error('Unexpected synthetic Notion fixture request.');
+      }
+      if (url.pathname.endsWith('/properties/title')) {
+        expect(member).toBe(members[0]);
+        titleReads += 1;
+        const continuation = url.searchParams.has('start_cursor');
+        const currentParts = failureMode === 'drift' && titleReads >= 3
+          ? ['Changed complete synthetic title']
+          : titleParts;
+        const parts = continuation ? currentParts.slice(25) : currentParts.slice(0, 25);
+        const hasMore = failureMode === 'incomplete' || (!continuation && currentParts.length > 25);
+        const cursor = hasMore && failureMode !== 'incomplete' ? 'synthetic-title-page-2' : null;
+        const nextUrl = cursor === null ? null : new URL(url.pathname, url.origin);
+        nextUrl?.searchParams.set('page_size', '100');
+        if (cursor !== null) nextUrl?.searchParams.set('start_cursor', cursor);
+        return json({
+          object: 'list', type: 'property_item',
+          results: parts.map(part => ({
+            object: 'property_item', id: 'title', type: 'title', title: textItem(part),
+          })),
+          has_more: hasMore, next_cursor: cursor,
+          property_item: { id: 'title', type: 'title', title: {}, next_url: nextUrl?.toString() ?? null },
+        });
+      }
+      if (url.pathname.endsWith('/markdown')) {
+        return json({
+          object: 'page_markdown', id: member,
+          markdown: `# Synthetic continuity\n\nSynthetic championship record ${members.indexOf(member) + 1}.`,
+          truncated: false, unknown_block_ids: [],
+        });
+      }
+      return json({
+        object: 'page', id: member,
+        parent: member === members[0]
+          ? { type: 'database_id', database_id: root.rootPageId }
+          : { type: 'data_source_id', data_source_id: sourceId, database_id: root.rootPageId },
+        properties: {
+          'Synthetic display label': member === members[0]
+            ? { id: 'title', type: 'title', title: titleParts.slice(0, 25).map(part => ({
+                type: 'mention', mention: { type: 'page', page: { id: members[1] } },
+                annotations: annotation, plain_text: part, href: `https://www.notion.so/${members[1]!.replaceAll('-', '')}`,
+              })) }
+            : { id: 'title', type: 'title', title: [textItem('Second synthetic member')] },
+        },
+        last_edited_time: timestamp, in_trash: false,
+      });
+    };
+    const repository = new PostgresBackstageNotionRagRepository(pool);
+    const syncStatusRepository = new PostgresBackstageNotionSyncStatusRepository(pool);
+    const embedding = Array.from({ length: embeddingDimension }, (_, index) => index === 0 ? 1 : 0);
+    const dependencies = {
+      repository, syncStatusRepository, fetchImpl,
+      embedBatch: async (inputs: readonly string[]) => inputs.map(() => [...embedding]),
+      readEnvironment: (name: string) => name === BACKSTAGE_NOTION_ACCESS_TOKEN_ENV_NAME
+        ? `ntn_${'s'.repeat(48)}` : undefined,
+      holderId: 'synthetic-database-parent-pg18', requestSpacingMs: 0,
+      retryBaseDelayMs: 0, fetchTimeoutMs: 1_000, cycleTimeoutMs: 15_000,
+    };
+    const retrievalDependencies = {
+      repository, syncStatusRepository, resolveAuthorityRoot: () => root,
+      embedQuery: async () => [...embedding],
+      remainingOperationBudgetMs: () => 15_500,
+    };
+    const readContinuity = () => runWithBackstageNotionEnrichmentAuthorization(true, () => (
+      retrieveBackstageNotionRagContext(root.universeId, {
+        query: 'Read the synthetic championship continuity.', retrievalMode: 'complete_scope',
+      }, retrievalDependencies)
+    ));
+
+    await expect(readContinuity()).rejects.toMatchObject({ code: 'BACKSTAGE_NOTION_INDEX_UNAVAILABLE' });
+    const activated = await syncBackstageNotionAuthorityRoot(root, dependencies);
+    expect(activated).toMatchObject({ status: 'activated', pageCount: 3, chunkCount: 2 });
+    expect(titleReads).toBe(4);
+    const inventory = await repository.loadActiveInventory(root.universeId);
+    expect(inventory?.snapshot.id).toBe(activated.snapshotId);
+    expect(inventory?.pages).toHaveLength(3);
+    expect(inventory?.pages.find(page => page.pageId === members[0])?.title).toBe(titleParts.join(''));
+    expect(await syncStatusRepository.loadLatestSyncAttempt(root.universeId)).toMatchObject({
+      outcome: 'activated', candidateSnapshotCreated: true,
+      candidateSnapshotValidated: true, candidateSnapshotActivated: true,
+      activatedSnapshotId: activated.snapshotId,
+    });
+    const complete = await readContinuity();
+    expect(complete).toMatchObject({ snapshotId: activated.snapshotId, snapshotStatus: 'current_complete', chunkCount: 2 });
+    expect(complete.coverage).toMatchObject({ status: 'complete', selectedChunks: 2 });
+    expect(complete.citations.map(citation => citation.pageId).sort()).toEqual(members);
+
+    for (const mode of ['incomplete', 'drift'] as const) {
+      failureMode = mode;
+      titleReads = 0;
+      await expect(syncBackstageNotionAuthorityRoot(root, dependencies)).rejects.toMatchObject({
+        code: mode === 'drift' ? 'BACKSTAGE_NOTION_SYNC_SOURCE_DRIFT' : 'BACKSTAGE_NOTION_SYNC_ROOT_FAILED',
+        diagnostics: expect.objectContaining({ candidateSnapshotActivated: false }),
+      });
+      const retained = await repository.loadActiveInventory(root.universeId);
+      expect(retained).toEqual(inventory);
+      expect(await syncStatusRepository.loadLatestSyncAttempt(root.universeId)).toMatchObject({
+        outcome: 'failed', candidateSnapshotActivated: false, activatedSnapshotId: null,
+      });
+      const continuity = await readContinuity();
+      expect(continuity).toMatchObject({
+        snapshotId: activated.snapshotId, snapshotStatus: 'last_known_good', chunkCount: 2,
+      });
+      await expect(runWithBackstageNotionEnrichmentAuthorization(true, () => (
+        retrieveBackstageNotionBookingRagContext(root.universeId, 'Synthetic booking', retrievalDependencies)
+      ))).rejects.toMatchObject({ code: 'BACKSTAGE_NOTION_INDEX_UNAVAILABLE' });
+      const snapshotCount = await observer.query<{ count: string }>(
+        'SELECT COUNT(*)::TEXT AS count FROM public.backstage_notion_snapshots WHERE universe_id = $1',
+        [root.universeId]
+      );
+      expect(snapshotCount.rows).toEqual([{ count: '1' }]);
+    }
+  }, 30_000);
 
   test('keeps rollback repeat-safe when the sidecar table is already absent', async () => {
     await resetNotionRows(observer);

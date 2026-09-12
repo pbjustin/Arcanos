@@ -104,6 +104,31 @@ function titlePropertyItem(
   };
 }
 
+function pageMetadataBody(overrides: Record<string, unknown> = {}) {
+  return {
+    object: 'page',
+    id: firstPageId,
+    last_edited_time: '2026-09-12T12:00:00.000Z',
+    in_trash: false,
+    parent: { type: 'database_id', database_id: secondPageId },
+    properties: {
+      'Synthetic renamed heading': {
+        id: 'title',
+        type: 'title',
+        title: [{ type: 'text', text: { content: 'ABC' }, plain_text: 'ABC' }],
+      },
+    },
+    ...overrides,
+  };
+}
+
+function jsonResponse(body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+  });
+}
+
 function titlePropertyResponse(
   titleParts: readonly string[],
   options: {
@@ -570,6 +595,157 @@ describe('Backstage Notion prompt context', () => {
     expect(queryFetch.mock.calls[0]?.[1]?.body).toBe(JSON.stringify({
       page_size: 10,
     }));
+  });
+
+  it.each([true, false])(
+    'accepts observed database-parent metadata with requireTitle=%s',
+    async requireTitle => {
+      const fetchMock = jest.fn(async () => jsonResponse(pageMetadataBody()));
+      await expect(fetchBackstageNotionPageMetadata(
+        asFetch(fetchMock), notionToken, firstPageId, new AbortController().signal,
+        { requireTitle }
+      )).resolves.toMatchObject({
+        pageId: firstPageId,
+        parentPageId: null,
+        parentDataSourceId: null,
+        parentType: 'database_id',
+        parentId: secondPageId,
+        inTrash: false,
+        title: requireTitle ? 'ABC' : null,
+        ...(requireTitle ? { titleIsComplete: true } : {}),
+        lastEditedAt: new Date('2026-09-12T12:00:00.000Z'),
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const requestUrl = new URL(String(fetchMock.mock.calls[0]?.[0]));
+      expect(requestUrl.searchParams.getAll('filter_properties[]'))
+        .toEqual(requireTitle ? ['title'] : []);
+      expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
+        method: 'GET',
+        redirect: 'manual',
+        headers: { 'Notion-Version': BACKSTAGE_NOTION_API_VERSION },
+      });
+    }
+  );
+
+  it('keeps data-source membership distinct from its database container', async () => {
+    const fetchMock = jest.fn(async () => jsonResponse(pageMetadataBody({
+      parent: {
+        type: 'data_source_id',
+        data_source_id: thirdPageId,
+        database_id: secondPageId,
+      },
+    })));
+    await expect(fetchBackstageNotionPageMetadata(
+      asFetch(fetchMock), notionToken, firstPageId, new AbortController().signal,
+      { requireTitle: true }
+    )).resolves.toMatchObject({
+      parentPageId: null,
+      parentDataSourceId: thirdPageId,
+      parentType: 'data_source_id',
+      parentId: thirdPageId,
+      title: 'ABC',
+      titleIsComplete: true,
+    });
+  });
+
+  it.each([
+    ['wrong object', { object: 'database' }, 'page_object'],
+    ['missing identity', { id: undefined }, 'page_identity'],
+    ['wrong identity', { id: thirdPageId }, 'page_identity'],
+    ['missing trash state', { in_trash: undefined }, 'page_trash_state'],
+    ['invalid trash state', { in_trash: 'false' }, 'page_trash_state'],
+    ['missing timestamp', { last_edited_time: undefined }, 'page_last_edited_time'],
+    ['invalid timestamp', { last_edited_time: 'PRIVATE-INVALID-TIMESTAMP' }, 'page_last_edited_time'],
+    ['missing parent', { parent: undefined }, 'page_parent'],
+    ['unsupported parent', { parent: { type: 'PRIVATE-UNSUPPORTED-PARENT' } }, 'page_parent'],
+    ['missing database identity', { parent: { type: 'database_id' } }, 'page_parent'],
+    ['invalid database identity', { parent: { type: 'database_id', database_id: 'PRIVATE-PARENT' } }, 'page_parent'],
+    ['substituted data-source identity', { parent: { type: 'database_id', data_source_id: secondPageId } }, 'page_parent'],
+    ['invalid data-source parent', { parent: { type: 'data_source_id', data_source_id: 'PRIVATE-PARENT' } }, 'page_parent'],
+    ['invalid page parent', { parent: { type: 'page_id', page_id: 'PRIVATE-PARENT' } }, 'page_parent'],
+    ['invalid workspace parent', { parent: { type: 'workspace', workspace: false } }, 'page_parent'],
+    ['missing required title', { properties: {} }, 'page_title'],
+  ])('rejects %s in otherwise valid database-parent metadata', async (_name, overrides, notionRejectionCode) => {
+    const fetchMock = jest.fn(async () => jsonResponse(pageMetadataBody(overrides)));
+    let caught: unknown;
+    try {
+      await fetchBackstageNotionPageMetadata(
+        asFetch(fetchMock), notionToken, firstPageId, new AbortController().signal,
+        { requireTitle: true }
+      );
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toMatchObject({
+      category: 'invalid_response',
+      notionHttpStatus: 200,
+      notionFailureCategory: 'malformed_response',
+      notionResponseSchemaValid: false,
+      notionEndpointKind: 'page_metadata',
+      notionRejectionCode,
+    });
+    const serialized = JSON.stringify(caught);
+    expect(serialized).not.toContain('PRIVATE');
+    expect(serialized).not.toContain(firstPageId);
+    expect(serialized).not.toContain(notionToken);
+  });
+
+  it.each([null, [], 'PRIVATE-NONOBJECT-RESPONSE'])(
+    'rejects a non-object metadata body with a bounded page-object code (%j)',
+    async body => {
+      const fetchMock = jest.fn(async () => jsonResponse(body));
+      await expect(fetchBackstageNotionPageMetadata(
+        asFetch(fetchMock), notionToken, firstPageId, new AbortController().signal,
+        { requireTitle: true }
+      )).rejects.toMatchObject({
+        category: 'invalid_response',
+        notionFailureCategory: 'malformed_response',
+        notionEndpointKind: 'page_metadata',
+        notionRejectionCode: 'page_object',
+      });
+    }
+  );
+
+  it.each(['PRIVATE-REJECTION-CODE', { private: 'PRIVATE-REJECTION-CODE' }, 123])(
+    'omits an uncontrolled rejection code from serialized diagnostics (%j)',
+    rawCode => {
+      const error = new BackstageNotionReadError('invalid_response', undefined, {
+        notionRejectionCode: rawCode,
+      } as unknown as ConstructorParameters<typeof BackstageNotionReadError>[2]);
+      expect(error.category).toBe('invalid_response');
+      expect(error.notionFailureCategory).toBe('malformed_response');
+      expect(Object.hasOwn(error, 'notionRejectionCode')).toBe(false);
+      expect(JSON.stringify(error)).not.toContain('PRIVATE');
+    }
+  );
+
+  it.each([
+    ['invalid JSON', '{PRIVATE-SYNTHETIC-JSON', 'invalid_json'],
+    ['invalid UTF-8', new Uint8Array([0xc3, 0x28]), 'invalid_utf8'],
+  ])('rejects page metadata with %s before schema interpretation', async (_name, body, category) => {
+    const fetchMock = jest.fn(async () => new Response(body, {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+    let caught: unknown;
+    try {
+      await fetchBackstageNotionPageMetadata(
+        asFetch(fetchMock), notionToken, firstPageId, new AbortController().signal,
+        { requireTitle: true }
+      );
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toMatchObject({
+      category,
+      notionHttpStatus: 200,
+      notionFailureCategory: 'malformed_response',
+      notionResponseSchemaValid: false,
+      notionEndpointKind: 'page_metadata',
+      notionRejectionCode: category,
+    });
+    expect(JSON.stringify(caught)).not.toContain('PRIVATE');
+    expect(JSON.stringify(caught)).not.toContain(notionToken);
   });
 
   it('retrieves an exact 25-part title through the complete property endpoint', async () => {

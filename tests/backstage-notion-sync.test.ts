@@ -299,6 +299,7 @@ function databaseRootFetch(options: {
   firstRowTitleParts?: readonly string[];
   firstRowTitleShapeUncertain?: boolean;
   allRowTitleShapesUncertain?: boolean;
+  firstRowDatabaseParent?: 'valid' | 'wrong-root' | 'drift';
   duplicatePageIdAcrossDataSources?: boolean;
   duplicatePageIdAcrossQueryPages?: boolean;
   incompleteQuery?: boolean;
@@ -573,11 +574,21 @@ function databaseRootFetch(options: {
     return jsonResponse({
       object: 'page',
       id: row.pageId,
-      parent: {
-        type: 'data_source_id',
-        data_source_id: row.dataSourceId,
-        database_id: databaseId,
-      },
+      parent: options.firstRowDatabaseParent && row.pageId === rows[0]?.pageId
+        ? {
+            type: 'database_id',
+            database_id: options.firstRowDatabaseParent === 'wrong-root'
+              || (
+                options.firstRowDatabaseParent === 'drift'
+                && (metadataCalls.get(row.pageId) ?? 0) >= 2
+              )
+              ? pageId(999) : databaseId,
+          }
+        : {
+            type: 'data_source_id',
+            data_source_id: row.dataSourceId,
+            database_id: databaseId,
+          },
       properties: {
         ArbitraryProviderTitleKey: {
           id: 'title',
@@ -1250,6 +1261,180 @@ describe('Backstage Notion authority synchronization', () => {
     expect(result.status).toBe('activated');
     expect(provider.titlePropertyCalls.get(provider.rows[0]!.pageId)).toBe(2);
     expect(provider.titlePropertyCalls.has(provider.rows[1]!.pageId)).toBe(false);
+  });
+
+  it('resolves a database parent before complete paginated title activation', async () => {
+    const titleParts = [
+      ...Array.from({ length: 25 }, (_, index) => `${index}.`),
+      'complete synthetic authority',
+    ];
+    const provider = databaseRootFetch({
+      firstRowDatabaseParent: 'valid',
+      firstRowTitleParts: titleParts,
+    });
+    const repository = repositoryHarness();
+    const embedBatch = jest.fn(async (inputs: readonly string[]) => (
+      inputs.map(() => [1, 0])
+    ));
+
+    const result = await syncBackstageNotionAuthorityRoot(
+      rootAuthority({ initialMinimumPageCount: 2 }),
+      dependencies({
+        repository: repository.repository,
+        fetchImpl: provider.fetchMock as unknown as typeof fetch,
+        embedBatch,
+      })
+    );
+
+    expect(result).toMatchObject({ status: 'activated', pageCount: 3 });
+    expect(repository.activateSnapshot).toHaveBeenCalledTimes(1);
+    const activation = repository.activateSnapshot.mock.calls[0]![0];
+    expect(activation.pages).toHaveLength(3);
+    expect(activation.chunks.length).toBeGreaterThan(0);
+    expect(activation.pages.find(page => page.pageId === provider.rows[0]!.pageId))
+      .toMatchObject({
+        title: titleParts.join(''),
+        path: ['WWE Universe Mode', titleParts.join('')],
+        parentPageId: pageId(0),
+      });
+    expect(provider.titlePropertyCalls.get(provider.rows[0]!.pageId)).toBe(4);
+    expect(provider.metadataCalls.get(provider.rows[0]!.pageId)).toBe(2);
+    expect(provider.metadataCalls.get(provider.rows[1]!.pageId)).toBe(2);
+    expect(embedBatch).toHaveBeenCalled();
+    expect(embedBatch.mock.invocationCallOrder[0]).toBeLessThan(
+      repository.activateSnapshot.mock.invocationCallOrder[0]!
+    );
+  });
+
+  it('retains prior authority when a database member title property is incomplete', async () => {
+    const provider = databaseRootFetch({
+      firstRowDatabaseParent: 'valid', firstRowTitleShapeUncertain: true,
+    });
+    const previous = activeInventory('1'.repeat(64));
+    const repository = repositoryHarness({ active: previous });
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith('/properties/title')) {
+        return jsonResponse({
+          object: 'list',
+          type: 'property_item',
+          results: [{
+            object: 'property_item', id: 'title', type: 'title',
+            title: titleText('PRIVATE-SYNTHETIC-INCOMPLETE-TITLE'),
+          }],
+          has_more: true,
+          next_cursor: null,
+          property_item: { id: 'title', type: 'title', title: {}, next_url: null },
+        });
+      }
+      return provider.fetchMock(input, init);
+    };
+
+    let caught: unknown;
+    try {
+      await syncBackstageNotionAuthorityRoot(rootAuthority(), dependencies({
+        repository: repository.repository,
+        fetchImpl,
+      }));
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toMatchObject({
+      code: BACKSTAGE_NOTION_SYNC_ROOT_FAILED_ERROR_CODE,
+      diagnostics: expect.objectContaining({
+        notionEndpointKind: 'page_title',
+        candidateSnapshotCreated: false,
+        candidateSnapshotValidated: false,
+        candidateSnapshotActivated: false,
+      }),
+    });
+    expect(repository.activateSnapshot).not.toHaveBeenCalled();
+    expect(repository.markActiveSnapshotVerified).not.toHaveBeenCalled();
+    expect(await repository.repository.loadActiveInventory(universeId)).toBe(previous);
+    expect(JSON.stringify(caught)).not.toContain('PRIVATE-SYNTHETIC-INCOMPLETE-TITLE');
+    expect(JSON.stringify(caught)).not.toContain(notionToken);
+  });
+
+  it('rejects database parent complete title drift before activation', async () => {
+    const provider = databaseRootFetch({
+      firstRowDatabaseParent: 'valid',
+      firstRowTitleDrift: true,
+      firstRowTitleShapeUncertain: true,
+    });
+    const repository = repositoryHarness();
+
+    await expect(syncBackstageNotionAuthorityRoot(rootAuthority(), dependencies({
+      repository: repository.repository,
+      fetchImpl: provider.fetchMock as unknown as typeof fetch,
+    }))).rejects.toMatchObject({
+      code: BACKSTAGE_NOTION_SYNC_SOURCE_DRIFT_ERROR_CODE,
+      diagnostics: expect.objectContaining({
+        phase: 'completeness_validation',
+        reason: 'source_changed',
+        candidateSnapshotCreated: true,
+        candidateSnapshotValidated: false,
+        candidateSnapshotActivated: false,
+      }),
+    });
+    expect(provider.titlePropertyCalls.get(provider.rows[0]!.pageId)).toBe(2);
+    expect(repository.activateSnapshot).not.toHaveBeenCalled();
+  });
+
+  it('captures filtered metadata with a database_id parent and complete inline title', async () => {
+    const provider = databaseRootFetch({ firstRowDatabaseParent: 'valid' });
+    const repository = repositoryHarness();
+    const result = await syncBackstageNotionAuthorityRoot(rootAuthority(), dependencies({
+      repository: repository.repository,
+      fetchImpl: provider.fetchMock as unknown as typeof fetch,
+    }));
+    expect(result).toMatchObject({ status: 'activated', pageCount: 3 });
+    expect(provider.metadataCalls.get(provider.rows[0]!.pageId)).toBe(2);
+    expect(provider.titlePropertyCalls.size).toBe(0);
+    expect(repository.activateSnapshot).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['wrong-root', 'drift'] as const)(
+    'rejects a database parent with %s membership', async firstRowDatabaseParent => {
+      const provider = databaseRootFetch({ firstRowDatabaseParent });
+      const repository = repositoryHarness();
+      await expect(syncBackstageNotionAuthorityRoot(rootAuthority(), dependencies({
+        repository: repository.repository,
+        fetchImpl: provider.fetchMock as unknown as typeof fetch,
+      }))).rejects.toMatchObject({
+        code: firstRowDatabaseParent === 'drift'
+          ? BACKSTAGE_NOTION_SYNC_SOURCE_DRIFT_ERROR_CODE
+          : BACKSTAGE_NOTION_SYNC_INCOMPLETE_ERROR_CODE,
+        diagnostics: expect.objectContaining({ candidateSnapshotActivated: false }),
+      });
+      expect(repository.activateSnapshot).not.toHaveBeenCalled();
+      expect(repository.markActiveSnapshotVerified).not.toHaveBeenCalled();
+    }
+  );
+
+  it('rejects a nested child database parent outside queried database membership', async () => {
+    const pages = hierarchyWithEighteenPages();
+    const provider = notionFetch(pages);
+    const repository = repositoryHarness();
+    const fetchImpl: typeof fetch = async (input) => {
+      const response = await provider.fetchMock(input);
+      if (new URL(String(input)).pathname !== `/v1/pages/${pages[1]!.pageId}`) {
+        return response;
+      }
+      const metadata = await response.json() as Record<string, unknown>;
+      return jsonResponse({
+        ...metadata,
+        parent: { type: 'database_id', database_id: pageId(0) },
+      });
+    };
+    await expect(syncBackstageNotionAuthorityRoot(rootAuthority(), dependencies({
+      repository: repository.repository, fetchImpl,
+    }))).rejects.toMatchObject({
+      code: BACKSTAGE_NOTION_SYNC_INCOMPLETE_ERROR_CODE,
+      diagnostics: expect.objectContaining({
+        reason: 'discovered_page_missing', candidateSnapshotActivated: false,
+      }),
+    });
+    expect(repository.activateSnapshot).not.toHaveBeenCalled();
   });
 
   it('rejects complete database-row title drift between verification passes', async () => {

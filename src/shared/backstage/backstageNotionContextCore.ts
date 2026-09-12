@@ -148,6 +148,23 @@ export type BackstageNotionFailureCategory =
   | 'transport_failure'
   | 'invalid_request';
 
+export type BackstageNotionRejectionCode =
+  | 'invalid_utf8'
+  | 'invalid_json'
+  | 'invalid_content_type'
+  | 'page_object'
+  | 'page_identity'
+  | 'page_trash_state'
+  | 'page_last_edited_time'
+  | 'page_parent'
+  | 'page_title';
+
+const NOTION_REJECTION_CODES: ReadonlySet<string> = new Set([
+  'invalid_utf8', 'invalid_json', 'invalid_content_type',
+  'page_object', 'page_identity', 'page_trash_state',
+  'page_last_edited_time', 'page_parent', 'page_title',
+]);
+
 export interface BackstageNotionReadDiagnostics {
   notionHttpStatus: number | null;
   notionProviderCode: string | null;
@@ -155,9 +172,11 @@ export interface BackstageNotionReadDiagnostics {
   notionResponseContentType: string | null;
   notionResponseSchemaValid: boolean | null;
   notionEndpointKind: BackstageNotionEndpointKind | null;
+  notionRejectionCode?: BackstageNotionRejectionCode;
 }
 
 export class BackstageNotionReadError extends Error {
+  declare readonly notionRejectionCode?: BackstageNotionRejectionCode;
   readonly category: string;
   readonly retryAfterMs?: number;
   readonly notionHttpStatus: number | null;
@@ -204,6 +223,10 @@ export class BackstageNotionReadError extends Error {
     )
       ? diagnostics.notionEndpointKind
       : null;
+    const rejectionCode = diagnostics.notionRejectionCode ?? category;
+    if (NOTION_REJECTION_CODES.has(rejectionCode)) {
+      this.notionRejectionCode = rejectionCode as BackstageNotionRejectionCode;
+    }
   }
 }
 
@@ -826,7 +849,7 @@ function parseNotionPageMetadataResponse(
     throw new BackstageNotionReadError(
       'invalid_response',
       undefined,
-      invalidResponseDiagnostics
+      { ...invalidResponseDiagnostics, notionRejectionCode: 'page_object' }
     );
   }
 
@@ -848,10 +871,15 @@ function parseNotionPageMetadataResponse(
     && typeof parent.block_id === 'string'
     ? normalizeNotionPageId(parent.block_id)
     : null;
+  const parentDatabaseId = parent?.type === 'database_id'
+    && typeof parent.database_id === 'string'
+    ? normalizeNotionPageId(parent.database_id)
+    : null;
   const parentValid = parent !== null && (
     (parent.type === 'page_id' && parentPageId !== null)
     || (parent.type === 'data_source_id' && parentDataSourceId !== null)
     || (parent.type === 'block_id' && parentBlockId !== null)
+    || (parent.type === 'database_id' && parentDatabaseId !== null)
     || (parent.type === 'workspace' && parent.workspace === true)
   );
   const lastEditedAt = typeof parsed.last_edited_time === 'string'
@@ -860,19 +888,19 @@ function parseNotionPageMetadataResponse(
   const pageTitle = requireTitle
     ? boundedNotionPageTitle(parsed.properties)
     : null;
-  if (
-    parsed.object !== 'page'
-    || responsePageId !== expectedPageId
-    || typeof parsed.in_trash !== 'boolean'
-    || !lastEditedAt
-    || !Number.isFinite(lastEditedAt.getTime())
-    || !parentValid
-    || (requireTitle && pageTitle === null)
-  ) {
+  const rejectionCode: BackstageNotionRejectionCode | null =
+    parsed.object !== 'page' ? 'page_object'
+      : responsePageId !== expectedPageId ? 'page_identity'
+        : typeof parsed.in_trash !== 'boolean' ? 'page_trash_state'
+          : !lastEditedAt || !Number.isFinite(lastEditedAt.getTime())
+            ? 'page_last_edited_time'
+            : !parentValid ? 'page_parent'
+              : requireTitle && pageTitle === null ? 'page_title' : null;
+  if (rejectionCode !== null || responsePageId === null || lastEditedAt === null) {
     throw new BackstageNotionReadError(
       'invalid_response',
       undefined,
-      invalidResponseDiagnostics
+      { ...invalidResponseDiagnostics, notionRejectionCode: rejectionCode ?? 'page_identity' }
     );
   }
 
@@ -881,11 +909,11 @@ function parseNotionPageMetadataResponse(
     parentPageId,
     parentDataSourceId,
     parentType: parent?.type as BackstageNotionPageMetadata['parentType'],
-    parentId: parentPageId ?? parentDataSourceId ?? parentBlockId,
+    parentId: parentPageId ?? parentDataSourceId ?? parentBlockId ?? parentDatabaseId,
     title: pageTitle?.title ?? null,
     ...(requireTitle ? { titleIsComplete: pageTitle?.isComplete === true } : {}),
     lastEditedAt,
-    inTrash: parsed.in_trash,
+    inTrash: parsed.in_trash as boolean,
   };
 }
 

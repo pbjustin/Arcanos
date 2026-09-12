@@ -3821,6 +3821,7 @@ async function assertBackstageNotionDatabaseAuthorityFixture(): Promise<void> {
   let databaseMetadataRequests = 0;
   let pageMetadataRequests = 0;
   let titlePropertyRequests = 0;
+  let databaseParentMetadataRequests = 0;
   const queryRequests = new Map<string, number>();
   const queryRequestBodies: string[] = [];
   const titleRequestOrigins: string[] = [];
@@ -4000,6 +4001,31 @@ async function assertBackstageNotionDatabaseAuthorityFixture(): Promise<void> {
       });
     }
 
+    if (endpoint.pathname === `/v1/pages/${rowPageIds[1]}`) {
+      assertCommonRequest(endpoint, init, 'GET');
+      databaseParentMetadataRequests += 1;
+      if (
+        endpoint.searchParams.getAll('filter_properties[]').join(',') !== 'title'
+        || init.body !== undefined
+      ) {
+        throw new Error('PREVIEW_BACKSTAGE_NOTION_DATABASE_PARENT_REQUEST_INVALID');
+      }
+      return jsonResponse({
+        object: 'page',
+        id: rowPageIds[1],
+        parent: { type: 'database_id', database_id: databaseId },
+        properties: {
+          'Synthetic renamed heading': {
+            id: 'title',
+            type: 'title',
+            title: [{ type: 'text', text: { content: 'ABC' }, plain_text: 'ABC' }],
+          },
+        },
+        last_edited_time: '2026-09-12T12:00:00.000Z',
+        in_trash: false,
+      });
+    }
+
     if (endpoint.pathname === `/v1/pages/${rowPageIds[0]}/properties/title`) {
       assertCommonRequest(endpoint, init, 'GET');
       titlePropertyRequests += 1;
@@ -4106,6 +4132,54 @@ async function assertBackstageNotionDatabaseAuthorityFixture(): Promise<void> {
   const capturedTitle = await readCompleteTitle();
   const verifiedTitle = await readCompleteTitle();
 
+  // Exercise the observed database-parent metadata representation independently
+  // of data-source discovery; the normal synchronizer owns membership admission.
+  for (let pass = 0; pass < 2; pass += 1) {
+    const databaseParentMetadata = await fetchBackstageNotionPageMetadata(
+      notionFetch,
+      syntheticCredential,
+      rowPageIds[1],
+      signal,
+      { requireTitle: true }
+    );
+    if (
+      databaseParentMetadata.pageId !== rowPageIds[1]
+      || databaseParentMetadata.parentType !== 'database_id'
+      || databaseParentMetadata.parentId !== databaseId
+      || databaseParentMetadata.parentPageId !== null
+      || databaseParentMetadata.parentDataSourceId !== null
+      || databaseParentMetadata.inTrash
+      || databaseParentMetadata.lastEditedAt.toISOString()
+        !== '2026-09-12T12:00:00.000Z'
+      || databaseParentMetadata.title !== 'ABC'
+      || databaseParentMetadata.titleIsComplete !== true
+    ) {
+      throw new Error('PREVIEW_BACKSTAGE_NOTION_DATABASE_PARENT_METADATA_INVALID');
+    }
+  }
+  const malformedParentMarker = 'PRIVATE-MALFORMED-DATABASE-PARENT';
+  let malformedParentRequests = 0;
+  const malformedParentError = await captureBackstageNotionReadError(() => (
+    fetchBackstageNotionPageMetadata(
+      async (input, init = {}) => {
+        const endpoint = input instanceof URL ? input : new URL(String(input));
+        assertCommonRequest(endpoint, init, 'GET');
+        malformedParentRequests += 1;
+        return jsonResponse({
+          object: 'page',
+          id: rowPageIds[1],
+          parent: { type: 'database_id', database_id: malformedParentMarker },
+          last_edited_time: '2026-09-12T12:00:00.000Z',
+          in_trash: false,
+        });
+      },
+      syntheticCredential,
+      rowPageIds[1],
+      signal
+    )
+  ));
+  const serializedMalformedParentError = JSON.stringify(malformedParentError);
+
   const oversizedCursorMarker = 'PRIVATE-OVERSIZED-PROVIDER-CURSOR';
   const oversizedCursor = `${oversizedCursorMarker}${'\u0000'.repeat(90_000)}`;
   let oversizedCursorRequests = 0;
@@ -4157,6 +4231,17 @@ async function assertBackstageNotionDatabaseAuthorityFixture(): Promise<void> {
       '{"page_size":10}',
     ])
     || pageMetadataRequests !== 2
+    || databaseParentMetadataRequests !== 2
+    || malformedParentRequests !== 1
+    || malformedParentError.category !== 'invalid_response'
+    || malformedParentError.notionEndpointKind !== 'page_metadata'
+    || malformedParentError.notionFailureCategory !== 'malformed_response'
+    || malformedParentError.notionResponseSchemaValid !== false
+    || malformedParentError.notionRejectionCode !== 'page_parent'
+    || serializedMalformedParentError.includes(malformedParentMarker)
+    || serializedMalformedParentError.includes(syntheticCredential)
+    || serializedMalformedParentError.includes(databaseId)
+    || serializedMalformedParentError.includes(rowPageIds[1])
     || titlePropertyRequests !== 4
     || titleRequestOrigins.some(origin => origin !== 'https://api.notion.com')
     || capturedTitle !== expectedCompleteTitle
