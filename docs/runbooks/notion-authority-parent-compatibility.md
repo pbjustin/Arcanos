@@ -41,10 +41,14 @@ production-path proof.
 
 ## Run locally
 
-Use the pinned Node/npm toolchain and the repository wrapper. Core regression:
+Use the pinned Node/npm toolchain and build the shared packages before direct
+Jest execution; a fresh checkout has no compiled `@arcanos/cli/client` export.
+The PostgreSQL CI job builds these packages before its integration suites.
+Core regression:
 
 ```text
-node scripts/run-jest.mjs --runTestsByPath tests/backstage-notion-context.test.ts tests/backstage-notion-sync.test.ts tests/backstage-notion-snapshot-status.test.ts tests/native-pr-preview-application.test.ts --coverage=false --runInBand
+npm run build:packages
+node scripts/run-jest.mjs --runTestsByPath tests/backstage-notion-context.test.ts tests/backstage-notion-sync.test.ts tests/backstage-notion-snapshot-status.test.ts tests/native-pr-preview-application.test.ts tests/backstage-notion-parent-preview.test.ts --coverage=false --runInBand
 ```
 
 The candidate-search and authority HTTP suites run synthetic Notion reads
@@ -70,6 +74,40 @@ Their success is local HTTP and PostgreSQL evidence, with synthetic upstream
 data; it does not establish live Notion access, model quality, or hosted runtime
 recovery. Run type checking, lint, build, documentation checks, `sync:check`, and
 the staged `guard:commit` before publication.
+
+## Verify the Railway PR preview
+
+Use the PR's `railway-preview` opt-in and the trusted lifecycle described in
+[Railway deployment](../RAILWAY_DEPLOYMENT.md). Record the controller's exact
+environment, web/worker deployment IDs, source SHA, and hosts after its ownership,
+isolation, worker-first deployment, and readiness checks pass. Run the trusted
+workflow verification, then the PR-head verifier from a clean exact-SHA checkout
+against those same confirmed hosts:
+
+```text
+npm run railway:probe:native-pr -- --pr-number <N> --commit-sha <SHA> --web-base-url <confirmed-web-https-url> --worker-base-url <confirmed-worker-https-url>
+```
+
+The first invocation is a no-network preflight. Within authorized preview scope,
+repeat it with `--execute --allow-network` and retain the executed result outside
+the checkout. The existing Notion-authority selector must return
+`x-arcanos-preview-backstage-notion-parent-compatibility-version` with value
+`backstage-notion-parent-compatibility/v1`. Its synthetic parser assertions cover
+database-parent metadata, complete title hydration, and rejection of malformed
+parents and title fragments. Mutation tests require failure to withhold the
+marker and success body. The supplemental verifier requires this marker while
+retaining the established 138-request bound and legacy proof contracts.
+
+This served component proof does not execute the normal synchronizer or SQL.
+Exact data-source membership, fenced activation, authenticated HTTP retrieval,
+and failed-refresh recovery are established separately by the required
+PostgreSQL suites. The fixed Notion edge canary uses an invalid synthetic bearer
+and proves only bounded connectivity and authentication rejection.
+
+Complete the lifecycle by removing the opt-in label after collecting evidence.
+Require successful cleanup of the independently verified owned environment,
+control-plane absence, and bounded readiness checks on both former hosts. Record
+actual host statuses; a 404 alone is not proof of environment deletion.
 
 ## Deploy (Railway)
 

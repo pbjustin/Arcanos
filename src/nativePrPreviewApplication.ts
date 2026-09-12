@@ -4018,7 +4018,11 @@ async function assertBackstageNotionDatabaseAuthorityFixture(): Promise<void> {
           'Synthetic renamed heading': {
             id: 'title',
             type: 'title',
-            title: [{ type: 'text', text: { content: 'ABC' }, plain_text: 'ABC' }],
+            title: inlineTitleParts.map(plainText => ({
+              type: 'mention',
+              plain_text: plainText,
+              mention: { type: 'page', page: { id: referencePageId } },
+            })),
           },
         },
         last_edited_time: '2026-09-12T12:00:00.000Z',
@@ -4026,7 +4030,9 @@ async function assertBackstageNotionDatabaseAuthorityFixture(): Promise<void> {
       });
     }
 
-    if (endpoint.pathname === `/v1/pages/${rowPageIds[0]}/properties/title`) {
+    if ([rowPageIds[0], rowPageIds[1]].some(pageId => (
+      endpoint.pathname === `/v1/pages/${pageId}/properties/title`
+    ))) {
       assertCommonRequest(endpoint, init, 'GET');
       titlePropertyRequests += 1;
       titleRequestOrigins.push(endpoint.origin);
@@ -4103,16 +4109,29 @@ async function assertBackstageNotionDatabaseAuthorityFixture(): Promise<void> {
     } while (cursor !== null);
   }
 
-  const readCompleteTitle = async (): Promise<string | null> => {
+  const readCompleteTitle = async (
+    pageId: typeof rowPageIds[0] | typeof rowPageIds[1]
+  ): Promise<string | null> => {
     const metadata = await fetchBackstageNotionPageMetadata(
       notionFetch,
       syntheticCredential,
-      rowPageIds[0],
+      pageId,
       signal,
       { requireTitle: true }
     );
     if (
-      metadata.parentDataSourceId !== dataSourceIds[0]
+      metadata.pageId !== pageId
+      || metadata.parentPageId !== null
+      || metadata.inTrash
+      || (pageId === rowPageIds[0]
+        ? metadata.parentDataSourceId !== dataSourceIds[0]
+          || metadata.parentType !== 'data_source_id'
+          || metadata.parentId !== dataSourceIds[0]
+        : metadata.parentDataSourceId !== null
+          || metadata.parentType !== 'database_id'
+          || metadata.parentId !== databaseId
+          || metadata.lastEditedAt.toISOString()
+            !== '2026-09-12T12:00:00.000Z')
       || metadata.titleIsComplete !== false
       || metadata.title !== inlineTitleParts.join('')
     ) {
@@ -4124,7 +4143,7 @@ async function assertBackstageNotionDatabaseAuthorityFixture(): Promise<void> {
       const result = await fetchBackstageNotionPageTitleProperty(
         notionFetch,
         syntheticCredential,
-        rowPageIds[0],
+        pageId,
         cursor,
         signal
       );
@@ -4133,34 +4152,13 @@ async function assertBackstageNotionDatabaseAuthorityFixture(): Promise<void> {
     } while (cursor !== null);
     return assembleBackstageNotionPageTitle(titleParts);
   };
-  const capturedTitle = await readCompleteTitle();
-  const verifiedTitle = await readCompleteTitle();
+  const capturedTitle = await readCompleteTitle(rowPageIds[0]);
+  const verifiedTitle = await readCompleteTitle(rowPageIds[0]);
 
   // Exercise the observed database-parent metadata representation independently
   // of data-source discovery; the normal synchronizer owns membership admission.
-  for (let pass = 0; pass < 2; pass += 1) {
-    const databaseParentMetadata = await fetchBackstageNotionPageMetadata(
-      notionFetch,
-      syntheticCredential,
-      rowPageIds[1],
-      signal,
-      { requireTitle: true }
-    );
-    if (
-      databaseParentMetadata.pageId !== rowPageIds[1]
-      || databaseParentMetadata.parentType !== 'database_id'
-      || databaseParentMetadata.parentId !== databaseId
-      || databaseParentMetadata.parentPageId !== null
-      || databaseParentMetadata.parentDataSourceId !== null
-      || databaseParentMetadata.inTrash
-      || databaseParentMetadata.lastEditedAt.toISOString()
-        !== '2026-09-12T12:00:00.000Z'
-      || databaseParentMetadata.title !== 'ABC'
-      || databaseParentMetadata.titleIsComplete !== true
-    ) {
-      throw new Error('PREVIEW_BACKSTAGE_NOTION_DATABASE_PARENT_METADATA_INVALID');
-    }
-  }
+  const capturedDatabaseParentTitle = await readCompleteTitle(rowPageIds[1]);
+  const verifiedDatabaseParentTitle = await readCompleteTitle(rowPageIds[1]);
   const malformedParentMarker = 'PRIVATE-MALFORMED-DATABASE-PARENT';
   let malformedParentRequests = 0;
   const malformedParentError = await captureBackstageNotionReadError(() => (
@@ -4284,10 +4282,12 @@ async function assertBackstageNotionDatabaseAuthorityFixture(): Promise<void> {
     || serializedMalformedFragmentError.includes(malformedFragmentMarker)
     || serializedMalformedFragmentError.includes(syntheticCredential)
     || serializedMalformedFragmentError.includes(rowPageIds[0])
-    || titlePropertyRequests !== 4
+    || titlePropertyRequests !== 8
     || titleRequestOrigins.some(origin => origin !== 'https://api.notion.com')
     || capturedTitle !== expectedCompleteTitle
     || verifiedTitle !== expectedCompleteTitle
+    || capturedDatabaseParentTitle !== expectedCompleteTitle
+    || verifiedDatabaseParentTitle !== expectedCompleteTitle
     || oversizedCursorRequests !== 1
     || oversizedCursorError.category !== 'invalid_response'
     || oversizedCursorError.notionEndpointKind !== 'data_source_query'
@@ -10220,6 +10220,12 @@ export function createNativePrPreviewApplication(
                 .notionDatabaseAuthorityVersion,
               NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT
                 .notionDatabaseAuthorityProofVersion
+            );
+            response.setHeader(
+              NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.proofHeaders
+                .notionParentCompatibilityVersion,
+              NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT
+                .notionParentCompatibilityProofVersion
             );
           }
           if (

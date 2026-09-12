@@ -59,6 +59,8 @@ export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
       'backstage-notion-read-diagnostics/v1',
     notionDatabaseAuthorityProofVersion:
       'backstage-notion-database-authority/v1',
+    notionParentCompatibilityProofVersion:
+      'backstage-notion-parent-compatibility/v1',
     partitionFailureTelemetryProofVersion:
       'backstage-notion-partition-failure-telemetry/v1',
     queueWaitPolicyProofVersion:
@@ -109,6 +111,8 @@ export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
         'x-arcanos-preview-backstage-notion-read-diagnostics-version',
       notionDatabaseAuthorityVersion:
         'x-arcanos-preview-backstage-notion-database-authority-version',
+      notionParentCompatibilityVersion:
+        'x-arcanos-preview-backstage-notion-parent-compatibility-version',
       partitionFailureTelemetryVersion:
         'x-arcanos-preview-backstage-partition-failure-telemetry-version',
       queueWaitPolicyVersion:
