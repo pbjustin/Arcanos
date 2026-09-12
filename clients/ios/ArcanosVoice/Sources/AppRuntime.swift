@@ -22,21 +22,40 @@ final class AppRuntime {
     private(set) var deviceState: DeviceCredentialState = .unpaired
     private(set) var gatewayAddress = ""
     private(set) var changingPairing = false
+    private(set) var secureStorageUnavailable = false
+    private(set) var recoveredResults: [VoicePresentation] = []
 
     @ObservationIgnored private var session = ArcanosSession(router: AIRouter())
     @ObservationIgnored private let localContext = LocalContextStore()
-    @ObservationIgnored private var latestJobID: String?
+    @ObservationIgnored private var demoLatestJobID: String?
+    @ObservationIgnored private var shipping: ShippingSessionComposition?
+    @ObservationIgnored private var hasActivated = false
     @ObservationIgnored private var generation = UUID()
     @ObservationIgnored private let credentialStore = KeychainCredentialStore()
     @ObservationIgnored private var pairing: DevicePairingClient?
 
     private init() {
+        do { shipping = try makeShippingComposition(nil) }
+        catch { diagnosticMessage = "Recovery storage is currently unavailable. Local intelligence remains available." }
         restoreGateway()
         #if DEBUG
         if UserDefaults.standard.bool(forKey: "arcanos.demo.enabled") {
             setDemonstration(true)
         }
         #endif
+    }
+
+    /// Called by the active scene task. Suspension cancels observation; critical
+    /// submission writes have already happened inside the shared session adapter.
+    func activate() async {
+        guard !demonstration, let shipping else { return }
+        let activeGeneration = generation
+        let firstActivation = !hasActivated
+        hasActivated = true
+        let results = firstActivation ? await shipping.startup() : await shipping.foreground()
+        guard activeGeneration == generation, !Task.isCancelled else { return }
+        recoveredResults = results.map { VoicePresentation($0, demonstration: false) }
+        await refreshDeviceState()
     }
 
     func refreshDiagnostics() async {
@@ -98,7 +117,8 @@ final class AppRuntime {
         do {
             try await pairing.revoke()
             pendingApproval = nil
-            latestJobID = nil
+            demoLatestJobID = nil
+            recoveredResults = []
             generation = UUID()
             diagnosticMessage = "The Gateway revoked this device. Local intelligence remains available."
         } catch { diagnosticMessage = SessionResult.failure(error).text }
@@ -121,14 +141,18 @@ final class AppRuntime {
     func ask(_ command: String) async -> VoicePresentation {
         let activeGeneration = generation
         let context = await localContext.capturedNote()
-        let result = await session.ask(command, localContext: context)
+        let result: SessionResult
+        if !demonstration, let shipping { result = await shipping.ask(command, localContext: context) }
+        else { result = await session.ask(command, localContext: context) }
         await refreshDeviceState()
         return consume(result, generation: activeGeneration)
     }
 
     func approve(_ approvalID: UUID) async -> VoicePresentation {
         let activeGeneration = generation
-        let result = await session.approve(approvalID)
+        let result: SessionResult
+        if !demonstration, let shipping { result = await shipping.approve(approvalID) }
+        else { result = await session.approve(approvalID) }
         await refreshDeviceState()
         if pendingApproval?.id == approvalID { pendingApproval = nil }
         return consume(result, generation: activeGeneration)
@@ -136,17 +160,26 @@ final class AppRuntime {
 
     func cancel(_ approvalID: UUID) async -> VoicePresentation {
         let activeGeneration = generation
-        let result = await session.cancel(approvalID)
+        let result: SessionResult
+        if !demonstration, let shipping { result = await shipping.cancel(approvalID) }
+        else { result = await session.cancel(approvalID) }
         if pendingApproval?.id == approvalID { pendingApproval = nil }
         return consume(result, generation: activeGeneration)
     }
 
-    func checkLatestJob() async -> VoicePresentation {
-        guard let latestJobID else {
-            return VoicePresentation(text: "There is no tracked backend job in this app session. Job tracking is cleared when the app restarts.", status: "No tracked job")
-        }
+    func checkLatestJob(reference: String? = nil) async -> VoicePresentation {
+        let operationID: UUID?
+        if let reference, !reference.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            guard let parsed = UUID(uuidString: reference.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+                return VoicePresentation(text: "Provide the operation reference shown with the ARCANOS result.", status: "Operation reference needed")
+            }
+            operationID = parsed
+        } else { operationID = nil }
         let activeGeneration = generation
-        let result = await session.checkJob(latestJobID)
+        let result: SessionResult
+        if !demonstration, let shipping { result = await shipping.checkLatest(operationID: operationID) }
+        else if demonstration, let demoLatestJobID { result = await session.checkJob(demoLatestJobID) }
+        else { result = .failure(OperationTrackingError.notFound) }
         await refreshDeviceState()
         return consume(result, generation: activeGeneration)
     }
@@ -178,14 +211,16 @@ final class AppRuntime {
                 replacement = try DemoGateway.makeSession()
             } else {
                 if !gatewayAddress.isEmpty, let origin = URL(string: gatewayAddress) {
-                    replacement = try makeGatewaySession(origin)
+                    shipping = try makeShippingComposition(origin)
+                    replacement = ArcanosSession(router: AIRouter())
                 } else { replacement = ArcanosSession(router: AIRouter()) }
             }
             session = replacement
             demonstration = enabled
             generation = UUID()
             pendingApproval = nil
-            latestJobID = nil
+            demoLatestJobID = nil
+            recoveredResults = []
             UserDefaults.standard.set(enabled, forKey: "arcanos.demo.enabled")
             diagnosticMessage = enabled ? "Simulation enabled. No network request or real capability action will run." : "Live device mode enabled. Remote operations require a valid paired session."
         } catch {
@@ -202,26 +237,40 @@ final class AppRuntime {
         catch { diagnosticMessage = "The saved Gateway origin is invalid. Pair again in the app." }
     }
 
-    private func makeGatewaySession(_ origin: URL) throws -> ArcanosSession {
-        let gateway = try GatewayClient(baseURL: origin, credentials: credentialStore)
-        let jobs = JobClient(gateway: gateway)
-        return ArcanosSession(router: AIRouter(remote: RemoteAI(jobs: jobs)),
-                              capabilities: CapabilityClient(gateway: gateway), jobs: jobs)
+    private func makeShippingComposition(_ origin: URL?) throws -> ShippingSessionComposition {
+        // Intents are compiled in this application target and use its sandbox and
+        // Keychain service. No extension or additional shared-container entitlement.
+        guard let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+            throw OperationTrackingError.storageUnavailable
+        }
+        let persistence = FileOperationPersistence(fileURL: support
+            .appendingPathComponent("Arcanos", isDirectory: true).appendingPathComponent("operations.json"))
+        return ShippingSessionComposition(origin: origin, credentials: credentialStore, persistence: persistence)
     }
 
     private func installGateway(_ origin: URL) throws {
-        session = try makeGatewaySession(origin)
+        shipping = try makeShippingComposition(origin)
         pairing = try DevicePairingClient(origin: origin, store: credentialStore)
         gatewayAddress = origin.absoluteString
         generation = UUID()
         pendingApproval = nil
-        latestJobID = nil
+        demoLatestJobID = nil
+        recoveredResults = []
     }
 
     private func refreshDeviceState() async {
         guard !gatewayAddress.isEmpty, let origin = URL(string: gatewayAddress) else { deviceState = .unpaired; return }
-        do { deviceState = try await credentialStore.state(for: origin) }
-        catch { deviceState = .authenticationFailure }
+        do {
+            deviceState = try await credentialStore.state(for: origin)
+            secureStorageUnavailable = false
+        } catch CredentialStoreError.lockedOrUnavailable {
+            secureStorageUnavailable = true
+            pendingApproval = nil
+            recoveredResults = []
+        } catch {
+            secureStorageUnavailable = false
+            deviceState = .authenticationFailure
+        }
     }
 
     private func consume(_ result: SessionResult, generation activeGeneration: UUID) -> VoicePresentation {
@@ -232,7 +281,7 @@ final class AppRuntime {
         if let approvalID = result.approvalID {
             pendingApproval = PendingApproval(id: approvalID, summary: presentation.text)
         }
-        if let jobID = result.jobID { latestJobID = jobID }
+        if demonstration, let jobID = result.jobID { demoLatestJobID = jobID }
         diagnosticMessage = presentation.status
         return presentation
     }

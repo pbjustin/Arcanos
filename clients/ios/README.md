@@ -1,4 +1,4 @@
-# ARCANOS iPhone client — Phase 2 secure connectivity
+# ARCANOS iPhone client — Phase 3B shipping recovery integration
 
 The iPhone is an ARCANOS edge client. Siri, App Intents, App Shortcuts and system
 snippets are its primary interface. The host app provides device pairing, diagnostics,
@@ -34,7 +34,8 @@ separate steps; synthetic tests do not prove live providers, workers, or Siri.
   discovery/invocation, frozen requests, bounded job polling, isolated demo.
 - `Models/`: generated Codable/Sendable OpenAPI DTOs and extensible `JSONValue`.
 - `Runtime/`: session orchestration, conservative result projection, and a
-  one-use confirmation coordinator.
+  one-use confirmation coordinator; `ShippingSessionComposition` connects them
+  to the existing durable operation index for app and intent entry points.
 - `Security/`: origin-bound Keychain identity and atomic session replacement;
   unlocked-device-only, nonsynchronizing, device-only protection. The host accepts
   only a one-use pairing token, with no master/operator credential field.
@@ -53,6 +54,7 @@ interaction; device unlock alone does not approve an action.
 | Summarize this note / Summarize my note / Summarize this / Summarize the note | Local with a nonempty captured note of at most 8,000 UTF-8 bytes |
 | Rewrite this note / Make this note shorter / Turn this note into bullet points | Same bounded local transformation path |
 | What did I just capture? / Read my note / Read this note | Same local context boundary |
+| Check latest Arcanos job / Check my Arcanos job / Check that job / Read the result / Read Arcanos result | Restore one unambiguous recent operation and read its authoritative status; no submission |
 | Check my repository / Check my repo / Git status | Existing Local Agent `git.status` capability, then durable job result |
 | Run tests / Run my tests | Existing Local Agent `tests.run`, `typescript-unit` profile by default, confirmation and job result |
 | Apply that patch / Apply the patch | Only a patch previously supplied to `session.previewPatch` and confirmed applicable by the backend in this session; `patch.apply` with that exact patch and returned hash |
@@ -76,8 +78,9 @@ Eligible on-device inference needs no ARCANOS network connection. Siri's own
 speech availability depends on device/settings and is separate from the model.
 The note is attached to a remote fallback only for the explicit note commands;
 unrelated requests do not upload it. The host explains this behavior. Notes,
-approval challenges and job handles live only in process memory. App termination
-loses them, without cancelling accepted backend jobs. The client never silently
+and approval challenges live only in process memory. Accepted job references and
+their authenticated partitions are saved before the interaction returns. App
+termination loses approval context, without cancelling accepted backend jobs. The client never silently
 queues or automatically replays a disconnected mutation. Foreground polling is
 bounded; pending results expose a Check Latest Arcanos Job action.
 
@@ -402,6 +405,52 @@ authorization, database durability, active worker execution, or provider results
 The [loopback recovery fixture](#durable-operation-recovery-fixture) separately
 covers lost receipts, process termination during submission, and corrupt results.
 
+### Shipping recovery over preview HTTPS
+
+The shipping proof runs `ShippingSessionComposition` against the same owned
+preview and reopens its `FileOperationPersistence` index in separate Swift
+processes. Build `ArcanosPreviewProof` from the clean exact PR head, then run:
+
+```sh
+python3 clients/ios/scripts/run-shipping-recovery-preview.py \
+  --swift-binary "$preview_bin_dir/ArcanosPreviewProof" \
+  --pr-number <PR-number> --commit-sha <exact-40-character-head-SHA> \
+  --web-base-url <confirmed-web-HTTPS-origin> \
+  --worker-base-url <confirmed-worker-HTTPS-origin>
+```
+
+The default validates Git, arguments and proof admission with no HTTP requests
+or operation-index writes. After the trusted lifecycle verifies both deployments,
+repeat with `--execute --allow-network`. Complete all proofs before removing the
+preview label; verify the controller removes its owned environment afterward.
+
+This fixture exercises cancelled and expired approvals, a subsequent accepted
+AI operation, overlapping requests during approval, and recovery of the exact
+AI/capability result after process exit. The independent parent checks persisted
+records, process identities and exact wire counts. A mandatory unknown-handle
+control rejects a false cached completion after an actual HTTPS `not_found`
+response without replaying work or altering the saved index.
+
+The executed parent expects eight processes, including the zero-request dry
+child, and exactly 65 HTTPS requests: one AI create, five capability requests,
+seven result reads and 52 identity/contract reads. The parent has a 120-second
+total deadline, a 40-second child deadline and a 2 MiB aggregate response cap;
+the fixture's transient jobs must
+be restored within their existing retention window.
+
+The fixture stores only a compiled synthetic device session in memory. A narrowly
+scoped test adapter verifies that exact synthetic credential and origin, then
+maps its authorization header to the sealed peer's public test bearer. It retains
+the production HTTPS transport and validates real responses; it does not
+substitute responses or change the server's admission rules. This proves shipping
+session/file/process behavior over preview HTTPS, not real paired-device
+authentication, provider inference, active executor behavior, Siri or system
+Keychain. The following PostgreSQL fixture covers its separate real-backend scope.
+
+The macOS workflow runs parent admission tests and the no-network invocation,
+retaining the explicitly unexecuted report with other recovery artifacts. Those
+CI steps do not establish a served Railway proof.
+
 ## Device Gateway and PostgreSQL end-to-end fixture
 
 `ArcanosDeviceE2E` connects the real Swift pairing, Gateway, session, polling and
@@ -439,6 +488,16 @@ independent idempotency keys for phones sharing an operator/workspace/executor.
 The latter includes same-phone deduplication and caught a database binding
 collision that synthetic repository tests did not detect.
 
+The same command also runs six fresh Swift processes through
+`ShippingSessionComposition`: AI submission and recovery, confirmed capability
+submission and recovery, foreign-device recovery, and revoked-device recovery.
+The parent reads each accepted receipt after its process exits, then claims and
+completes the corresponding PostgreSQL job. Recovery must return the exact result
+for the same operation/job/partition with no new submission. Cancellation must
+leave one dismissed record alongside the single accepted capability operation.
+The parent verifies exactly one AI execution and one synthetic executor result,
+two persisted jobs, and no remaining claimable work for those operations.
+
 The fixture's URLSession transport remaps the fixed logical HTTPS origin to a
 bounded loopback HTTP listener. Production transport and its HTTPS/redirect
 policy are unchanged; this proof does not verify TLS, a physical iPhone, Siri,
@@ -446,16 +505,94 @@ Apple Keychain, Foundation Models or actual Python executor/provider behavior.
 The separate macOS workflow verifies the unsigned iOS Simulator build.
 
 The required PostgreSQL CI job runs this fixture and retains its sanitized
-`ios-device-e2e/v1` JSON artifact. Success requires all eleven Swift observations
-and eleven independent backend assertions, the same run ID/source commit, and
-confirmed server/schema cleanup. The report identifies local uncommitted changes.
+`ios-device-e2e/v1` JSON as `ios-device-e2e-proof-${{ github.sha }}` for seven days.
+Success requires all eleven original Swift observations, nineteen independent
+backend assertions, and the six shipping phases in order with exact request and
+execution counts. Run ID/source commit must match, and server, schema and shipping
+state-directory cleanup must be confirmed. The report identifies local uncommitted changes.
 For pull requests, CI tests GitHub's merge commit; verify that report's source SHA
 and its PR head/base parents when using the artifact as published source evidence.
 
+## Shipping recovery integration fixture
+
+The production `AppRuntime` constructs `ShippingSessionComposition` using the
+app sandbox's Application Support `Arcanos/operations.json` and the existing
+Keychain service. Ask Arcanos, approval entry points, Check Latest Arcanos Job,
+and startup/foreground activation call that adapter. A fresh intent can restore
+the index without opening the host UI first. The single app target contains
+the intents; no extension or App Group was added.
+
+Declining an approval or allowing it to expire before the approved retry marks
+that local record dismissed. It does not compete with accepted jobs during later
+recovery. Approval, cancellation, and capability submission share one admission
+guard so overlapping interactions cannot create an operation that was never sent.
+Accepted receipts and uncertain transport outcomes remain recoverable; dismissing
+a local approval does not report that a backend job was cancelled.
+
+An initial remote ask persists its intention, sends one authenticated create,
+persists the accepted receipt, and returns pending without polling. Later
+invocations observe the same job. Status is fetched again even for a previously
+completed record; cached status is never presented as newly verified. Implicit
+references require exactly one recent candidate. The status intent accepts an
+optional operation reference displayed in the system snippet. Startup and
+foreground read at most four tracked operations per activation; an explicit
+status request reads one. Suspension stops observation and does not cancel work.
+
+The existing array format, identities and idempotency keys are retained. An
+optional allowlisted capability action supports safe restored result projection.
+Each file transaction locks a stable sidecar and reloads current bytes, preserving
+updates across trackers and processes. A locked/unavailable file fails closed.
+Authentication uses one secure snapshot of server-issued device identity and
+credential; every request and result presentation validates that partition.
+Expired, revoked, missing or temporarily inaccessible credentials never select a
+different partition or erase recovery metadata. Local-capable requests remain usable.
+
+There is no API to discover a job after its receipt is lost. Such operations remain
+uncertain with their original identity and idempotency key; recovery sends no create.
+Approval secrets and patch contents are memory-only. Restoration never approves
+or replays a privileged retry and requires a fresh explicit flow when that context
+is gone.
+
+Run the shared shipping adapter proof against its disposable loopback fixture:
+
+```sh
+swift test --package-path clients/ios/ArcanosKit
+swift build --package-path clients/ios/ArcanosKit --product ArcanosShippingRecoveryProof
+shipping_bin_dir=$(swift build --package-path clients/ios/ArcanosKit --show-bin-path)
+python3 clients/ios/scripts/run-shipping-recovery-e2e.py --swift-binary "$shipping_bin_dir/ArcanosShippingRecoveryProof"
+```
+
+The parent observes file-before-wire ordering and independent HTTP/semantic counts,
+terminates the submit process, starts new startup/status processes, and requires
+the same operation/job/partition and verified result. Additional processes cover
+cancelled approvals, expiry while awaiting approval, an already-expired challenge,
+and overlapping actions while submission or the approved retry is suspended.
+They verify durable dismissal, no phantom record or duplicate retry, unchanged
+request bytes/idempotency key, and unambiguous implicit recovery after restart.
+
+Both mandatory negative controls must fail at their specific checks: bypassed
+startup wiring, and an injected persistence double that loses durable dismissal
+after the real cancellation succeeds. To run the latter alone, append
+`--inject-fault dismissal-disabled`; expect exit 1 with
+`APPROVAL_DISMISSAL_NOT_DURABLE`. Its successful child response cannot satisfy
+the parent's independent file check.
+
+The macOS CI job retains core and shipping JSON, including available failed-run
+reports, as `ios-recovery-proofs-${{ github.sha }}` for seven days. Shell pipeline
+failures remain failures when output is captured. Build each binary from the
+recorded source before execution; the reported SHA and binary hash alone do not
+prove that an arbitrary supplied binary was built from that source.
+
+This fixture executes the shared adapter with synthetic server replies, credentials
+and local inference. Actual Gateway/PostgreSQL behavior is covered by the separate
+command above. Neither fixture executes Siri or SwiftUI. See
+[Phase 3B: shipping recovery integration](PHASE3B_ENGINEERING_REPORT.md)
+for executed checks and the physical-device procedure, which is not run by this fixture.
+
 ## Durable operation recovery fixture
 
-The Phase 3 recovery index is a reusable core; it is not yet connected to the
-shipping session, app lifecycle, or App Intents. `ArcanosRecoveryProof` tests that
+The Phase 3 recovery index is the reusable core behind the shipping integration.
+`ArcanosRecoveryProof` separately tests that
 core through production `OperationTracker`, `FileOperationPersistence`,
 `GatewayClient`, and `JobClient` with separate Swift processes and actual HTTP
 requests to a disposable loopback fixture.
@@ -479,8 +616,10 @@ For a standalone expected-failure run, add `--inject-fault corrupt-completion`;
 it must exit nonzero with `CORRUPTED_COMPLETION_REJECTED`.
 
 The executable accepts only `--execute --allow-loopback` with bounded parent
-configuration on stdin. Its test adapter permits only create/result POSTs to a
-fixed logical origin and one exact loopback HTTP port; it disables redirects,
+configuration on stdin. This proof sends only create/result POSTs; its shared
+test adapter also admits the fixed Local Agent capability route used by the
+shipping approval proof. All requests use a fixed logical origin and one exact
+loopback HTTP port; the adapter disables redirects,
 proxies, cookies, and shared credentials. Each process receives its synthetic
 credential independently. The index contains neither credentials nor prompt or
 result content. JSON evidence records the checked-out SHA/dirty state and binary
@@ -531,8 +670,9 @@ negative tests while retaining the existing routing/confirmation orchestration.
 Current portable checks are recorded in the Phase 2 engineering report; the dated
 Phase 1 evidence above is historical and does not validate the new Apple runtime path.
 
-Recommended Phase 3: validate the complete flow on physical hardware against an
-authorized test deployment, then add protected durable job-handle continuity and
+The Phase 3B integration above adds protected durable job-handle continuity.
+Remaining Phase 3 work includes validating the complete flow on physical hardware
+against an authorized test deployment and
 reduce pairing/renewal friction based on those results. Bounded voice parameter
 extraction and a reviewed patch preview/share flow can follow separate approval.
 Backend

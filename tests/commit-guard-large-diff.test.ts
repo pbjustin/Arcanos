@@ -73,6 +73,63 @@ describe('commit guard large staged diff handling', () => {
     expect(result.stderr).toBe('');
   });
 
+  it('accepts Swift named arguments that reference runtime credential fields', () => {
+    const temporaryRepository = createTemporaryRepository({
+      'safe-reference.swift': [
+        'let wire = Configuration(token: configuration.token, runId: configuration.runId)',
+        'let wire = Configuration(token: config.token, runId: config.runId)',
+      ].join('\n'),
+    });
+
+    const result = runCommitGuard(temporaryRepository);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('guard:commit passed');
+    expect(result.stderr).toBe('');
+  });
+
+  it.each(['"', '#"'])('still blocks a Swift %s literal passed to a sensitive named argument', (opener) => {
+    const literal = ['production', 'credential-material', '1234567890'].join('-');
+    const closer = opener === '#"' ? '"#' : '"';
+    const temporaryRepository = createTemporaryRepository({
+      'unsafe-literal.swift': `let wire = Configuration(token: ${opener}${literal}${closer}, runId: identifier)`,
+    });
+
+    const result = runCommitGuard(temporaryRepository);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      'sensitive assignment for "token" appears to contain a literal secret'
+    );
+    expect(result.stderr).not.toContain(literal);
+  });
+
+  it('still blocks literal token signatures in Swift code', () => {
+    const literal = ['ghp', 'a'.repeat(24)].join('_');
+    const temporaryRepository = createTemporaryRepository({
+      'unsafe-signature.swift': `let value = "${literal}"`,
+    });
+
+    const result = runCommitGuard(temporaryRepository);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('potential GitHub token literal');
+    expect(result.stderr).not.toContain(literal);
+  });
+
+  it('keeps unquoted sensitive values blocked outside source code', () => {
+    const temporaryRepository = createTemporaryRepository({
+      'unsafe-reference.txt': 'token: configuration.token',
+    });
+
+    const result = runCommitGuard(temporaryRepository);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      'sensitive assignment for "token" appears to contain a literal secret'
+    );
+  });
+
   it('still blocks a quoted literal assigned to a sensitive source field', () => {
     const sensitiveAssignment = [
       'const ',

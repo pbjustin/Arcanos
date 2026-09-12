@@ -1,9 +1,10 @@
 import { afterAll, beforeAll, describe, expect, jest, test } from '@jest/globals';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import type { Server } from 'node:http';
 import { Pool } from 'pg';
 import express from 'express';
@@ -22,6 +23,10 @@ const assertionNames = [
   'local_agent_executor_result_persisted', 'device_rotation_and_revocation_persisted',
   'cross_device_job_reads_denied', 'secret_free_report',
   'local_agent_device_idempotency_isolated',
+  'shipping_ai_receipt_survives_process_exit', 'shipping_ai_worker_completion_recovered',
+  'shipping_confirmation_receipt_survives_process_exit', 'shipping_confirmation_completion_recovered',
+  'shipping_recovery_no_duplicate_jobs_or_executions', 'shipping_recovery_credential_partition_isolated',
+  'shipping_recovery_revoked_device_denied', 'shipping_recovery_index_secret_free',
 ] as const;
 const assertions = new Map<string, boolean>(assertionNames.map(name => [name, false]));
 const swiftAssertionNames = [
@@ -52,6 +57,11 @@ let aiExecutions = 0;
 let executorExecutions = 0;
 let deniedPeerReads = 0;
 let swiftReport: Record<string, unknown> | undefined;
+const shippingReports: Record<string, unknown>[] = [];
+let shippingDirectory: string | undefined;
+let shippingDirectoryRemoved = false;
+let shippingAIExecutions = 0;
+let shippingExecutorExecutions = 0;
 let db: typeof import('../../src/core/db/client.js');
 let jobs: typeof import('../../src/core/db/repositories/jobRepository.js');
 let localJobs: typeof import('../../src/core/db/repositories/localAgentJobRepository.js');
@@ -104,14 +114,14 @@ const providerFetch: typeof fetch = async (input, init) => {
   return new Response(JSON.stringify(output), { status: 200, headers: { 'content-type': 'application/json' } });
 };
 
-async function executeSwift(configuration: Record<string, unknown>): Promise<Record<string, unknown>> {
+async function executeSwift(configuration: Record<string, unknown>, shipping = false): Promise<Record<string, unknown>> {
   const binary = process.env.IOS_DEVICE_E2E_SWIFT_BINARY!;
   const args = JSON.parse(process.env.IOS_DEVICE_E2E_SWIFT_ARGS ?? '[]') as unknown;
   if (!Array.isArray(args) || args.length > 20 || args.some(value => typeof value !== 'string' || value.length > 2048)) {
     throw new Error('Invalid bounded Swift fixture arguments.');
   }
   return new Promise((resolve, reject) => {
-    const child = spawn(binary, [...args, '--execute', '--allow-loopback'], { shell: false, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'],
+    const child = spawn(binary, [...args, '--execute', '--allow-loopback', ...(shipping ? ['--shipping-recovery'] : [])], { shell: false, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'],
       env: Object.fromEntries(Object.entries(process.env).filter(([key]) =>
         ['PATH', 'SystemRoot', 'TEMP', 'TMP', 'LD_LIBRARY_PATH'].includes(key))) });
     let stdout = '';
@@ -133,6 +143,23 @@ async function executeSwift(configuration: Record<string, unknown>): Promise<Rec
       }
       try {
         const parsed = JSON.parse(stdout) as Record<string, unknown>;
+        if (shipping) {
+          const fixture = configuration.fixture as Record<string, unknown>;
+          if (parsed.version !== 'ios-shipping-device-e2e/v1' || parsed.phase !== configuration.phase
+            || parsed.transport !== 'urlsession-loopback-http-test-adapter' || parsed.credentialStorage !== 'in-memory-fixture'
+            || parsed.liveProvider !== false || parsed.physicalDevice !== false || typeof parsed.ok !== 'boolean'
+            || parsed.runId !== fixture.runId || parsed.sourceSha !== fixture.sourceSha
+            || ['creates', 'capabilities', 'results', 'requestsMade'].some(name => !Number.isInteger(parsed[name]) || Number(parsed[name]) < 0 || Number(parsed[name]) > 80)
+            || !Number.isInteger(parsed.responseBytes) || Number(parsed.responseBytes) < 0 || Number(parsed.responseBytes) > 4_194_304
+            || (parsed.failure !== undefined && parsed.failure !== null && !/^[A-Z_]{1,80}$/u.test(String(parsed.failure)))
+            || /ag[dp]1\./u.test(stdout) || secrets.some(secret => stdout.includes(secret))) throw new Error('Invalid shipping Swift report.');
+          resolve({ version: parsed.version, ok: parsed.ok, phase: parsed.phase, runId: parsed.runId, sourceSha: parsed.sourceSha,
+            transport: parsed.transport, credentialStorage: parsed.credentialStorage, liveProvider: false, physicalDevice: false,
+            creates: parsed.creates, capabilities: parsed.capabilities, results: parsed.results,
+            requestsMade: parsed.requestsMade, responseBytes: parsed.responseBytes,
+            ...(parsed.failure ? { failure: parsed.failure } : {}), processSucceeded: code === 0 });
+          return;
+        }
         if (parsed.version !== 'ios-device-e2e/v1' || !Array.isArray(parsed.assertions)
           || parsed.assertions.some(value => !swiftAssertionNames.includes(String(value)))
           || parsed.transport !== 'urlsession-loopback-http-test-adapter'
@@ -322,6 +349,126 @@ run('Swift client through real device Gateway and PostgreSQL', () => {
     completed = true;
   }, 65_000);
 
+  test('reopens shipping receipts in fresh Swift processes after real Gateway and PostgreSQL completion', async () => {
+    // The original flow's drain is stopped. Nothing executes until the submitting
+    // Swift process has exited and its accepted receipt has been independently read.
+    expect(stop).toBe(true);
+    await draining;
+    if (drainError) throw drainError;
+    const pool = db.getPool()!;
+    const baselineJobs = Number((await pool.query('SELECT count(*) FROM job_data')).rows[0].count);
+    const pairDevice = async () => {
+      const challenge = await request(app).post('/gpt-access/devices/pairing')
+        .set('Authorization', `Bearer ${operatorToken}`).send({ capabilityActions: ['git.status', 'tests.run'] });
+      expect(challenge.status).toBe(201);
+      secrets.push(challenge.body.pairingToken);
+      const response = await request(app).post('/gpt-access/devices/pair')
+        .set('X-Arcanos-Device-Origin', origin)
+        .send({ pairingToken: challenge.body.pairingToken, localIdentity: randomUUID() });
+      expect(response.status).toBe(201);
+      secrets.push(response.body.credential);
+      return response.body as Record<string, unknown>;
+    };
+    const owner = await pairDevice();
+    const peer = await pairDevice();
+    shippingDirectory = path.join(memoryDirectory!, 'arcanos-ios-shipping-' + process.env.IOS_DEVICE_E2E_RUN_ID);
+    mkdirSync(shippingDirectory);
+    const fixture = { version: 'ios-device-e2e/v1', baseURL, origin, pairingTokenA: pairingA,
+      pairingTokenB: pairingB, expectedAIAnswer: answer, runId: process.env.IOS_DEVICE_E2E_RUN_ID,
+      sourceSha: process.env.IOS_DEVICE_E2E_SOURCE_SHA };
+    const phase = async (name: string, session = owner) => {
+      const report = await executeSwift({ fixture, phase: name, session,
+        stateDirectory: pathToFileURL(shippingDirectory!).toString() }, true);
+      shippingReports.push(report);
+      expect(report.ok).toBe(true);
+      expect(report.processSucceeded).toBe(true);
+      return report;
+    };
+    const records = (file: string) => {
+      return JSON.parse(readFileSync(path.join(shippingDirectory!, file), 'utf8')) as
+        { backendJobID?: string; localState: string; capabilityAction?: string }[];
+    };
+    const ownedJobs = async () => (await pool.query(
+      "SELECT * FROM job_data WHERE input->'gptAccessDeviceOwner'->>'deviceId' = $1 ORDER BY created_at", [owner.deviceId])).rows;
+
+    const submittedAI = await phase('ai-submit');
+    const aiRecords = records('ai.json');
+    const acceptedAI = (await ownedJobs())[0];
+    check('shipping_ai_receipt_survives_process_exit', submittedAI.creates === 1 && submittedAI.results === 0
+      && aiRecords.length === 1 && aiRecords[0].backendJobID === acceptedAI?.id && aiRecords[0].localState === 'accepted'
+      && acceptedAI.status === 'pending' && acceptedAI.job_type === 'gpt');
+    const claimed = await jobs.claimNextPendingJob({ workerId: 'ios-shipping-e2e-worker', leaseMs: 60_000, priorityQueueEnabled: false });
+    expect(claimed?.id).toBe(acceptedAI.id);
+    if (!claimed) throw new Error('Shipping AI job was not claimable.');
+    shippingAIExecutions += 1;
+    const outcome = await worker.executeQueuedGptRequest({ jobId: claimed.id, rawInput: claimed.input, startedAt: claimed.started_at });
+    const terminal = await jobs.updateClaimedJobTerminal(claimed.id, outcome.status, {
+      fence: jobs.createClaimedJobFence('ios-shipping-e2e-worker', claimed.claim_generation),
+      output: outcome.output, errorMessage: outcome.errorMessage,
+    });
+    const recoveredAI = await phase('ai-restore');
+    check('shipping_ai_worker_completion_recovered', terminal?.status === 'completed'
+      && terminal.claim_generation === '1' && terminal.last_worker_id === 'ios-shipping-e2e-worker'
+      && JSON.stringify(terminal.output).includes(answer) && recoveredAI.results === 2
+      && recoveredAI.creates === 0 && recoveredAI.capabilities === 0 && records('ai.json')[0].localState === 'terminal');
+
+    const submittedCapability = await phase('capability-submit');
+    const capabilityRecords = records('capability.json');
+    const acceptedCapability = (await ownedJobs()).find(row => row.job_type === 'local-agent');
+    check('shipping_confirmation_receipt_survives_process_exit', submittedCapability.capabilities === 3
+      && submittedCapability.creates === 0 && submittedCapability.results === 0 && capabilityRecords.length === 2
+      && capabilityRecords.filter(record => record.localState === 'dismissed').length === 1
+      && capabilityRecords.some(record => record.backendJobID === acceptedCapability?.id && record.localState === 'accepted')
+      && acceptedCapability?.status === 'pending' && acceptedCapability.input.job.authorization.decision === 'confirmed');
+    const local = await localJobs.claimLocalAgentJob({ deviceId: executorId, claimKeyHash: 'c'.repeat(64),
+      leaseMs: 60_000, deviceScopes: ['git.status', 'tests.run'] });
+    expect(local?.disposition).toBe('CLAIMED');
+    if (!local || local.disposition !== 'CLAIMED') throw new Error('Shipping capability was not claimable.');
+    expect(local.job.id).toBe(acceptedCapability.id);
+    shippingExecutorExecutions += 1;
+    const assignment = localJobs.readLocalAgentJobEnvelope(local.job)!.job;
+    const output = { profile: 'typescript-unit', status: 'passed', exitCode: 0,
+      stdout: 'Synthetic shipping executor fixture completed.', stderr: '', durationMs: 1, truncated: false };
+    const { validateLocalAgentActionOutput } = await import('../../src/services/localAgent/contracts.js');
+    validateLocalAgentActionOutput('tests.run', output);
+    await localJobs.submitLocalAgentJobResult({ jobId: local.job.id, deviceId: executorId,
+      resultKeyHash: 'b'.repeat(64), resultFingerprintHash: 'a'.repeat(64), outcome: 'succeeded', output,
+      metrics: { durationMs: 1, outputTruncated: false },
+      correlation: { traceId: assignment.traceId, requestId: assignment.requestId, deviceId: executorId } });
+    const recoveredCapability = await phase('capability-restore');
+    const completeLocal = (await ownedJobs()).find(row => row.job_type === 'local-agent');
+    check('shipping_confirmation_completion_recovered', recoveredCapability.results === 2
+      && recoveredCapability.creates === 0 && recoveredCapability.capabilities === 0
+      && completeLocal?.status === 'completed' && completeLocal.worker_id === executorId
+      && capabilityRecords.some(record => record.backendJobID === completeLocal.id)
+      && records('capability.json').filter(record => record.localState === 'terminal').length === 1);
+
+    const isolated = await phase('foreign-restore', peer);
+    const deniedPeer = await request(app).post('/gpt-access/jobs/result').set('Authorization', `Bearer ${peer.credential}`)
+      .set('X-Arcanos-Device-Origin', origin).send({ jobId: acceptedAI.id });
+    check('shipping_recovery_credential_partition_isolated', isolated.requestsMade === 0
+      && deniedPeer.status === 200 && deniedPeer.body.status === 'not_found' && deniedPeer.body.result === null);
+    const revoked = await request(app).post(`/gpt-access/devices/${owner.deviceId}/revoke`)
+      .set('Authorization', `Bearer ${owner.credential}`).set('X-Arcanos-Device-Origin', origin).send({});
+    expect(revoked.status).toBe(200);
+    const denied = await phase('revoked-restore');
+    check('shipping_recovery_revoked_device_denied', denied.results === 1 && denied.creates === 0 && denied.capabilities === 0);
+    const finalJobs = await ownedJobs();
+    check('shipping_recovery_no_duplicate_jobs_or_executions', finalJobs.length === 2
+      && Number((await pool.query('SELECT count(*) FROM job_data')).rows[0].count) === baselineJobs + 2
+      && shippingAIExecutions === 1 && shippingExecutorExecutions === 1 && finalJobs.every(row => row.status === 'completed')
+      && await jobs.claimNextPendingJob({ workerId: 'ios-shipping-e2e-worker', leaseMs: 60_000, priorityQueueEnabled: false }) === null
+      && await localJobs.claimLocalAgentJob({ deviceId: executorId, claimKeyHash: '9'.repeat(64),
+        leaseMs: 60_000, deviceScopes: ['git.status', 'tests.run'] }) === null);
+    const files = readdirSync(shippingDirectory);
+    const serialized = files.map(file => readFileSync(path.join(shippingDirectory!, file), 'utf8')).join('');
+    const reportText = JSON.stringify(shippingReports);
+    check('shipping_recovery_index_secret_free', files.length === 4
+      && files.every(file => ['ai.json', 'ai.json.lock', 'capability.json', 'capability.json.lock'].includes(file))
+      && secrets.every(secret => !serialized.includes(secret) && !reportText.includes(secret))
+      && !/ag[dp]1\.|confirmation_token|Explain a deterministic|Synthetic device E2E answer|Synthetic shipping executor/u.test(serialized));
+  }, 90_000);
+
   test('isolates an explicit Local Agent idempotency key between requester devices in PostgreSQL', async () => {
     const { executeLocalAgentActionAsJob } = await import('../../src/services/localAgent/service.js');
     const context = { source: 'gpt-access' as const, principalId: 'operator:ios-e2e', workspaceId: 'ios-e2e',
@@ -362,6 +509,7 @@ run('Swift client through real device Gateway and PostgreSQL', () => {
       if (!memoryDirectory) return;
       if (path.dirname(memoryDirectory) !== path.resolve(tmpdir()) || !path.basename(memoryDirectory).startsWith('arcanos-ios-e2e-memory-')) throw new Error('Invalid memory cleanup target.');
       rmSync(memoryDirectory, { recursive: true, force: true });
+      shippingDirectoryRemoved = Boolean(shippingDirectory && !existsSync(shippingDirectory));
     });
     if (signalListeners) for (const signal of ['SIGINT', 'SIGTERM'] as const) {
       for (const listener of process.listeners(signal)) if (!signalListeners[signal].includes(listener)) process.removeListener(signal, listener);
@@ -369,10 +517,11 @@ run('Swift client through real device Gateway and PostgreSQL', () => {
     const reportPath = process.env.IOS_DEVICE_E2E_REPORT_PATH;
     if (reportPath && path.isAbsolute(reportPath)) writeFileSync(reportPath, JSON.stringify({
       proof: 'ios-device-e2e/v1', runId: process.env.IOS_DEVICE_E2E_RUN_ID, sourceSha: process.env.IOS_DEVICE_E2E_SOURCE_SHA,
-      passed: completed && !cleanupFailed && schemaRemoved && serverClosed && [...assertions.values()].every(Boolean),
+      passed: completed && !cleanupFailed && schemaRemoved && serverClosed && shippingDirectoryRemoved && [...assertions.values()].every(Boolean),
       transport: 'urlsession-loopback-http-test-adapter', assertions: [...assertions].map(([name, passed]) => ({ name, passed })),
       schemaRemoved, serverClosed, synthetic: ['Keychain item storage', 'provider response', 'Local Agent executor'],
-      sql: { aiExecutions, executorExecutions, providerCalls, deniedPeerReads }, swift: swiftReport,
+      sql: { aiExecutions, executorExecutions, providerCalls, deniedPeerReads, shippingAIExecutions, shippingExecutorExecutions }, swift: swiftReport,
+      shipping: { phases: shippingReports, shippingDirectoryRemoved },
     }, null, 2));
     if (cleanupFailed) throw new Error('Isolated fixture cleanup could not be fully verified.');
   }, 30_000);

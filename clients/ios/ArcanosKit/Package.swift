@@ -8,7 +8,8 @@ let package = Package(
         .library(name: "ArcanosKit", targets: ["ArcanosKit"]),
         .executable(name: "ArcanosPreviewProof", targets: ["ArcanosPreviewProof"]),
         .executable(name: "ArcanosDeviceE2E", targets: ["ArcanosDeviceE2E"]),
-        .executable(name: "ArcanosRecoveryProof", targets: ["ArcanosRecoveryProof"])
+        .executable(name: "ArcanosRecoveryProof", targets: ["ArcanosRecoveryProof"]),
+        .executable(name: "ArcanosShippingRecoveryProof", targets: ["ArcanosShippingRecoveryProof"])
     ],
     targets: [
         .target(name: "ArcanosKit"),
@@ -17,6 +18,8 @@ let package = Package(
         .testTarget(name: "ArcanosPreviewProofTests", dependencies: ["ArcanosPreviewProof"]),
         .executableTarget(name: "ArcanosDeviceE2E", dependencies: ["ArcanosKit"]),
         .testTarget(name: "ArcanosDeviceE2ETests", dependencies: ["ArcanosDeviceE2E"]),
-        .executableTarget(name: "ArcanosRecoveryProof", dependencies: ["ArcanosKit"])
+        .target(name: "ArcanosFixtureSupport", dependencies: ["ArcanosKit"]),
+        .executableTarget(name: "ArcanosRecoveryProof", dependencies: ["ArcanosKit", "ArcanosFixtureSupport"]),
+        .executableTarget(name: "ArcanosShippingRecoveryProof", dependencies: ["ArcanosKit", "ArcanosFixtureSupport"])
     ]
 )

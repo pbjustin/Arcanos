@@ -8,7 +8,7 @@ import Darwin
 
 /// Only this fixture uses in-memory item storage. Apple Keychain access is neither
 /// replaced in the app nor represented as proven by a portable cross-process test.
-private final class FixtureCredentialItems: CredentialItemStorage, @unchecked Sendable {
+final class FixtureCredentialItems: CredentialItemStorage, @unchecked Sendable {
     private let lock = NSLock()
     private var items: [String: Data] = [:]
     func read(account: String) throws -> Data? { lock.withLock { items[account] } }
@@ -16,7 +16,7 @@ private final class FixtureCredentialItems: CredentialItemStorage, @unchecked Se
     func remove(account: String) throws { lock.withLock { _ = items.removeValue(forKey: account) } }
 }
 
-private struct FixtureLocalAI: ArcanosAI {
+struct FixtureLocalAI: ArcanosAI {
     func availability() async -> AIAvailability { .available }
     func respond(to request: AIRequest) async throws -> AIResponse {
         AIResponse(text: "Synthetic local fixture answer.", execution: .local)
@@ -46,6 +46,10 @@ private struct DeviceProofReport: Encodable {
 @main
 enum ArcanosDeviceE2E {
     static func main() async {
+        if CommandLine.arguments.dropFirst().contains("--shipping-recovery") {
+            await ShippingDeviceProof.main()
+            return
+        }
         var configuration: DeviceProofConfiguration?
         var transport: LoopbackTransport?
         var assertions: [String] = []

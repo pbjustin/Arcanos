@@ -7,6 +7,7 @@ import yaml from 'js-yaml';
 import {
   buildChildEnvironment,
   REQUIRED_ASSERTIONS,
+  SHIPPING_PHASES,
   runBounded,
   validateDatabaseUrl,
   validateProofReport,
@@ -130,12 +131,24 @@ describe('durable Swift device E2E evidence admission', () => {
     'device_rotation_and_revocation_persisted',
     'cross_device_job_reads_denied',
     'secret_free_report',
+    'shipping_ai_receipt_survives_process_exit',
+    'shipping_ai_worker_completion_recovered',
+    'shipping_confirmation_receipt_survives_process_exit',
+    'shipping_confirmation_completion_recovered',
+    'shipping_recovery_no_duplicate_jobs_or_executions',
+    'shipping_recovery_credential_partition_isolated',
+    'shipping_recovery_revoked_device_denied',
+    'shipping_recovery_index_secret_free',
   ];
   function completeReport() {
     return {
       proof: 'ios-device-e2e/v1', ...binding, passed: true,
       transport: 'urlsession-loopback-http-test-adapter',
       schemaRemoved: true, serverClosed: true,
+      shipping: { shippingDirectoryRemoved: true, phases: SHIPPING_PHASES.map(([phase, creates, capabilities, results]) => ({
+        version: 'ios-shipping-device-e2e/v1', phase, creates, capabilities, results, ...binding, ok: true, processSucceeded: true,
+      })) },
+      sql: { shippingAIExecutions: 1, shippingExecutorExecutions: 1 },
       assertions: requiredNames.map(name => ({ name, passed: true })),
     };
   }
@@ -163,6 +176,14 @@ describe('durable Swift device E2E evidence admission', () => {
     ['overclaimed transport', report => { report.transport = 'shipping-https'; }],
     ['schema cleanup failure', report => { report.schemaRemoved = false; }],
     ['server still running', report => { report.serverClosed = false; }],
+    ['shipping state cleanup failure', report => { report.shipping.shippingDirectoryRemoved = false; }],
+    ['shipping process skipped', report => { report.shipping.phases.pop(); }],
+    ['shipping process failure', report => { report.shipping.phases[0].processSucceeded = false; }],
+    ['shipping process from another commit', report => { report.shipping.phases[0].sourceSha = 'b'.repeat(40); }],
+    ['shipping process from another run', report => { report.shipping.phases[0].runId = 'other-run'; }],
+    ['shipping restoration duplicate creation', report => { report.shipping.phases[1].creates = 1; }],
+    ['shipping duplicate worker execution', report => { report.sql.shippingAIExecutions = 2; }],
+    ['shipping missing executor execution', report => { report.sql.shippingExecutorExecutions = 0; }],
   ])('rejects %s before publishing success', (_name, mutate) => {
     const report = completeReport();
     mutate(report);

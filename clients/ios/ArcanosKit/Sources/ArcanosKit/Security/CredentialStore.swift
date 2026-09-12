@@ -63,6 +63,15 @@ public struct AppleKeychainItemStorage: CredentialItemStorage {
     #endif
 }
 
+/// A single secure-storage snapshot binds authentication to the server-issued identity.
+/// Never persist this value in the operation index or include it in diagnostics.
+public struct AuthenticatedDeviceContext: Sendable, CustomStringConvertible, CustomDebugStringConvertible {
+    public let credential: GatewayCredential
+    public let deviceID: String
+    public var description: String { "AuthenticatedDeviceContext(<redacted>)" }
+    public var debugDescription: String { description }
+}
+
 public actor KeychainCredentialStore: GatewayCredentialProvider {
     struct CredentialChange: Sendable, CustomStringConvertible, CustomDebugStringConvertible {
         let id: UUID
@@ -124,18 +133,31 @@ public actor KeychainCredentialStore: GatewayCredentialProvider {
     }
 
     private func availableCredential(for origin: URL) throws -> GatewayCredential? {
-        switch try state(for: origin) {
+        try authenticatedContext(for: origin)?.credential
+    }
+
+    /// Reads identity and credential together; missing, locked, expired, and revoked
+    /// storage states stay distinct. Reading does not create an installation identity.
+    public func authenticatedContext(for origin: URL) throws -> AuthenticatedDeviceContext? {
+        let canonical = try DeviceAuthentication.origin(origin)
+        guard !blockedOrigins.contains(canonical.absoluteString) else { throw GatewayError.authenticationFailure }
+        guard let record = try read(canonical) else { return nil }
+        switch record.state {
         case .unpaired: return nil
         case .expired: throw GatewayError.credentialExpired
         case .revoked: throw GatewayError.credentialRevoked
         case .authenticationFailure: throw GatewayError.authenticationFailure
         case .paired, .renewalRequired: break
         }
-        guard let record = try read(origin), let expires = DeviceAuthentication.date(record.session.expiresAt) else {
+        guard let expires = DeviceAuthentication.date(record.session.expiresAt),
+              UUID(uuidString: record.session.deviceId) != nil else {
             throw CredentialStoreError.invalidRecord
         }
+        guard expires > now() else { throw GatewayError.credentialExpired }
         let credential = record.session.credential
-        return GatewayCredential(token: credential, origin: try DeviceAuthentication.origin(origin), expiresAt: expires)
+        return AuthenticatedDeviceContext(
+            credential: GatewayCredential(token: credential, origin: canonical, expiresAt: expires),
+            deviceID: record.session.deviceId.lowercased())
     }
 
     public func pairedDeviceID(for origin: URL) throws -> String? { try read(origin)?.session.deviceId }

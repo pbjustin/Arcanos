@@ -39,6 +39,8 @@ const PLACEHOLDER_HINT_PATTERN =
   /\b(example|sample|placeholder|replace|changeme|mock|test|dummy|your-|redacted|xxxxx|<[^>]+>)\b/i;
 
 const CODE_SOURCE_PATH_PATTERN = /\.(?:[cm]?[jt]sx?|py)$/i;
+const SWIFT_SOURCE_PATH_PATTERN = /\.swift$/i;
+const SWIFT_MEMBER_REFERENCE_PATTERN = /^(?:[A-Za-z_][A-Za-z0-9_]*\.)+[A-Za-z_][A-Za-z0-9_]*$/;
 
 const SECRET_LITERAL_PATTERNS = [
   { label: 'OpenAI key', regex: /\bsk-[a-zA-Z0-9]{20,}\b/ },
@@ -202,7 +204,12 @@ function scanLineForSecretLeaks(lineEntry) {
     const looksSensitive = value.length >= 12;
     const safeValue = isPlaceholder(value) || isRuntimeReference(value);
     const isCodeExpression =
-      quotedValue === undefined && CODE_SOURCE_PATH_PATTERN.test(lineEntry.file);
+      quotedValue === undefined && (
+        CODE_SOURCE_PATH_PATTERN.test(lineEntry.file) ||
+        // Swift named arguments may reference runtime fields. Limit this to member
+        // references so Swift raw string literals retain the existing secret check.
+        (SWIFT_SOURCE_PATH_PATTERN.test(lineEntry.file) && SWIFT_MEMBER_REFERENCE_PATTERN.test(rawValue))
+      );
 
     //audit Assumption: long literal assignments to sensitive keys are likely secrets; Failure risk: secret exposure; Invariant: literal sensitive values must be blocked; Handling strategy: require placeholder/runtime-reference or fail.
     if (looksSensitive && !safeValue && !isCodeExpression) {

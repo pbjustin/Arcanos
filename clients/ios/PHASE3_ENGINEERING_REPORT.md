@@ -1,5 +1,9 @@
 # Phase 3 engineering report
 
+This is the historical recovery-core checkpoint. Shipping wiring and subsequent
+local evidence are recorded separately in
+[Phase 3B: shipping recovery integration](PHASE3B_ENGINEERING_REPORT.md).
+
 Date: 2026-09-11. Baseline: branch `work` at merge commit `4503f21`, which contains
 the reported Phase 2 proof commit `506d32a`. The checkout was clean before this
 change. This report is implementation evidence, not physical-device evidence.

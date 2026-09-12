@@ -8,17 +8,22 @@ public actor ArcanosSession {
     private let jobs: JobClient?
     private let confirmations: ConfirmationCoordinator?
     private let testProfile: String
+    private let recovery: DurableSessionRecovery?
     private var knownJobs: [String: JobKind] = [:]
     private var approvalActions: [UUID: JobKind] = [:]
+    private var approvalOperations: [UUID: UUID] = [:]
+    private var capabilitySubmissionInFlight = false
     private var previewedPatch: (patch: String, hash: String)?
 
     public init(router: AIRouter, capabilities: CapabilityClient? = nil, jobs: JobClient? = nil,
-                testProfile: String = "typescript-unit") {
+                testProfile: String = "typescript-unit", recovery: DurableSessionRecovery? = nil,
+                now: @escaping @Sendable () -> Date = { Date() }) {
         self.router = router
         self.capabilities = capabilities
         self.jobs = jobs
-        self.confirmations = capabilities.map { ConfirmationCoordinator(capabilities: $0) }
+        self.confirmations = capabilities.map { ConfirmationCoordinator(capabilities: $0, now: now) }
         self.testProfile = testProfile
+        self.recovery = recovery
     }
 
     public func ask(_ command: String, localContext: String? = nil) async -> SessionResult {
@@ -53,8 +58,10 @@ public actor ArcanosSession {
                 let request = AIRequest(command: command, localContext: needsNote ? localContext : nil)
                 let response = try await router.respond(to: request)
                 if let id = response.jobID {
-                    knownJobs[id] = .ai
-                    return SessionResult(text: response.text, kind: .pending, jobID: id)
+                    if recovery == nil { knownJobs[id] = .ai }
+                    let result = SessionResult(text: response.text, kind: .pending, jobID: id)
+                    if let recovery { return try await recovery.identify(result) }
+                    return result
                 }
                 return SessionResult(text: response.text, kind: .answer)
             } catch { return .failure(error) }
@@ -70,20 +77,54 @@ public actor ArcanosSession {
     }
 
     public func approve(_ approvalID: UUID) async -> SessionResult {
+        guard !capabilitySubmissionInFlight else { return .failure(ConfirmationError.busy) }
         guard let confirmations, let kind = approvalActions.removeValue(forKey: approvalID) else {
             return .failure(ConfirmationError.notPending)
         }
-        do { return try accepted(try await confirmations.approve(approvalID), kind: kind) }
-        catch { return .failure(error) }
+        capabilitySubmissionInFlight = true
+        defer { capabilitySubmissionInFlight = false }
+        let operationID = approvalOperations.removeValue(forKey: approvalID)
+        do {
+            // The coordinator consumes approval before its bound Gateway credential read.
+            // A temporary authentication failure must not leave an orphaned pending token.
+            return try await accepted(try await confirmations.approve(approvalID), kind: kind, operationID: operationID)
+        } catch ConfirmationError.expired {
+            if let recovery, let operationID {
+                do { try await recovery.dismissUnsubmittedApproval(operationID) } catch { return .failure(error) }
+            }
+            return .failure(ConfirmationError.expired)
+        } catch {
+            if let recovery, let operationID {
+                do { try await recovery.uncertain(operationID) } catch { return .failure(error) }
+            }
+            return .failure(error)
+        }
     }
 
     public func cancel(_ approvalID: UUID) async -> SessionResult {
-        approvalActions.removeValue(forKey: approvalID)
-        guard let confirmations, await confirmations.cancel(approvalID) else { return .failure(ConfirmationError.notPending) }
-        return SessionResult(text: "Approval cancelled. ARCANOS will not retry that action.", kind: .cancelled)
+        guard !capabilitySubmissionInFlight else { return .failure(ConfirmationError.busy) }
+        guard let confirmations, approvalActions.removeValue(forKey: approvalID) != nil else {
+            return .failure(ConfirmationError.notPending)
+        }
+        capabilitySubmissionInFlight = true
+        defer { capabilitySubmissionInFlight = false }
+        let operationID = approvalOperations.removeValue(forKey: approvalID)
+        guard await confirmations.cancel(approvalID) else { return .failure(ConfirmationError.notPending) }
+        do {
+            // A cancelled pending challenge proves no approved retry was sent. Keep
+            // its metadata, but exclude it from recovery of potentially running work.
+            if let recovery, let operationID { try await recovery.dismissUnsubmittedApproval(operationID) }
+            return SessionResult(text: "Approval cancelled. ARCANOS will not retry that action.", kind: .cancelled)
+        } catch { return .failure(error) }
+    }
+
+    public func checkLatest(operationID: UUID? = nil) async -> SessionResult {
+        guard let recovery else { return .failure(OperationTrackingError.notFound) }
+        return await presentRecoveredResult(await recovery.checkLatest(operationID: operationID))
     }
 
     public func checkJob(_ jobID: String) async -> SessionResult {
+        if let recovery { return await presentRecoveredResult(await recovery.checkJob(jobID)) }
         guard let jobs, let kind = knownJobs[jobID] else { return .failure(GatewayError.invalidRequest) }
         do {
             let result = try await jobs.result(jobID: jobID)
@@ -123,18 +164,62 @@ public actor ArcanosSession {
 
     private func invoke(action: String, payload: JSONValue, summary: String, kind: JobKind) async -> SessionResult {
         guard let capabilities, let confirmations else { return .failure(GatewayError.unpaired) }
+        guard !capabilitySubmissionInFlight, approvalActions.isEmpty else { return .failure(ConfirmationError.busy) }
+        capabilitySubmissionInFlight = true
+        defer { capabilitySubmissionInFlight = false }
+        var operationID: UUID?
         do {
             let request = try capabilities.prepare(id: "ARCANOS:LOCAL_AGENT", action: action, payload: payload)
+            if let recovery {
+                let trackedKind: TrackedOperationKind = action == "patch.apply" ? .patchApply
+                    : action == "patch.preview" ? .patchPreview : action == "tests.run" ? .confirmation : .capability
+                operationID = try await recovery.prepare(kind: trackedKind, action: action,
+                    summary: "ARCANOS \(action) request", key: request.idempotencyKey)
+            }
             switch try await confirmations.submit(request, summary: summary) {
             case .approval(let approval):
                 approvalActions[approval.id] = kind
-                return SessionResult(text: approval.summary, kind: .confirmationRequired, approvalID: approval.id)
-            case .response(let response): return try accepted(response, kind: kind)
+                if let operationID { approvalOperations[approval.id] = operationID }
+                let result = SessionResult(text: approval.summary, kind: .confirmationRequired, approvalID: approval.id)
+                if let recovery, let operationID {
+                    do { return try await recovery.identify(result, operationID: operationID) }
+                    catch {
+                        _ = await confirmations.cancel(approval.id)
+                        approvalActions.removeValue(forKey: approval.id)
+                        approvalOperations.removeValue(forKey: approval.id)
+                        throw error
+                    }
+                }
+                return result
+            case .response(let response): return try await accepted(response, kind: kind, operationID: operationID)
             }
-        } catch { return .failure(error) }
+        } catch ConfirmationError.expired {
+            if let recovery, let operationID {
+                do { try await recovery.dismissUnsubmittedApproval(operationID) } catch { return .failure(error) }
+            }
+            return .failure(ConfirmationError.expired)
+        } catch {
+            if let recovery, let operationID {
+                do { try await recovery.uncertain(operationID) } catch { return .failure(error) }
+            }
+            return .failure(error)
+        }
     }
 
-    private func accepted(_ response: CapabilityRunResponse, kind: JobKind) throws -> SessionResult {
+    private func presentRecoveredResult(_ result: SessionResult) async -> SessionResult {
+        // Only a live, still-unconsumed preview request may arm a same-session apply.
+        // Restored metadata contains neither the patch nor approval authority.
+        if let recovery, let jobID = result.jobID, result.kind == .answer,
+           case .patchPreview(let patch)? = knownJobs.removeValue(forKey: jobID),
+           let hash = await recovery.takePreviewHash(jobID: jobID) {
+            previewedPatch = (patch, hash)
+            return SessionResult(text: "The backend confirmed the patch preview is applicable. Say Apply that patch to request approval.",
+                kind: .answer, jobID: result.jobID, operationID: result.operationID, partition: result.partition)
+        }
+        return result
+    }
+
+    private func accepted(_ response: CapabilityRunResponse, kind: JobKind, operationID: UUID?) async throws -> SessionResult {
         let result = response.result
         // The outer HTTP envelope can be successful even when Local Agent enqueueing failed.
         guard response.ok, result["ok"]?.boolValue == true,
@@ -142,9 +227,19 @@ public actor ArcanosSession {
               let jobID = result["jobId"]?.stringValue, UUID(uuidString: jobID) != nil else {
             throw GatewayError.invalidResponse
         }
-        knownJobs[jobID] = kind
-        return SessionResult(text: "The backend accepted the action as a durable job. It is pending; completion is not yet confirmed.",
+        if recovery == nil { knownJobs[jobID] = kind }
+        else if case .patchPreview = kind { knownJobs[jobID] = kind }
+        let accepted = SessionResult(text: "The backend accepted the action as a durable job. It is pending; completion is not yet confirmed.",
                              kind: .pending, jobID: jobID)
+        if let recovery, let operationID {
+            try await recovery.accept(operationID, jobID: jobID, status: result["status"]?.stringValue ?? "pending")
+            do { return try await recovery.identify(accepted, operationID: operationID) }
+            catch {
+                return SessionResult(text: "ARCANOS accepted the action and saved its receipt. Completion is unverified. \(SessionResult.failure(error).text)",
+                    kind: .unavailable, jobID: jobID, operationID: operationID, partition: recovery.partition)
+            }
+        }
+        return accepted
     }
 
     private func capabilityText(_ action: String, output: JSONValue) throws -> String {

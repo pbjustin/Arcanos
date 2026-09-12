@@ -89,12 +89,15 @@ struct CancelArcanos: AppIntent {
 
 struct CheckArcanosJob: AppIntent {
     static let title: LocalizedStringResource = "Check Latest Arcanos Job"
-    static let description = IntentDescription("Read the latest backend job result in this app session without resubmitting it.")
+    static let description = IntentDescription("Restore an ARCANOS operation and check its authoritative result, including after an app restart.")
     static let authenticationPolicy: IntentAuthenticationPolicy = .requiresLocalDeviceAuthentication
+
+    @Parameter(title: "Operation reference")
+    var operationReference: String?
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog & ShowsSnippetView {
-        let presentation = await AppRuntime.shared.checkLatestJob()
+        let presentation = await AppRuntime.shared.checkLatestJob(reference: operationReference)
         return .result(dialog: IntentDialog("\(presentation.text)"), view: VoiceSnippet(presentation: presentation))
     }
 }
