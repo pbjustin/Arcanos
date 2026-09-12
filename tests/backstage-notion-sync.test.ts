@@ -135,7 +135,7 @@ function titleInlineReference(
         type: 'mention',
         mention: {
           type: 'user',
-          user: { object: 'user', id: referenceId, type: 'person' },
+          user: { object: 'user', id: referenceId, type: 'person', person: {} },
         },
         annotations: titleAnnotations,
         plain_text: plainText,
@@ -1354,6 +1354,53 @@ describe('Backstage Notion authority synchronization', () => {
     expect(JSON.stringify(caught)).not.toContain('PRIVATE-SYNTHETIC-INCOMPLETE-TITLE');
     expect(JSON.stringify(caught)).not.toContain(notionToken);
   });
+
+  it.each(['text', 'mention', 'equation'] as const)(
+    'retains prior authority when a title %s fragment omits its subtype payload',
+    async fragmentType => {
+      const provider = databaseRootFetch({
+        firstRowDatabaseParent: 'valid', firstRowTitleShapeUncertain: true,
+      });
+      const previous = activeInventory('1'.repeat(64));
+      const repository = repositoryHarness({ active: previous });
+      const fetchImpl: typeof fetch = async (input, init) => {
+        if (new URL(String(input)).pathname.endsWith('/properties/title')) {
+          return jsonResponse({
+            object: 'list', type: 'property_item',
+            results: [{
+              object: 'property_item', id: 'title', type: 'title',
+              title: { type: fragmentType, plain_text: 'PRIVATE-SYNTHETIC-MISSING-SUBTYPE' },
+            }],
+            has_more: false, next_cursor: null,
+            property_item: { id: 'title', type: 'title', title: {}, next_url: null },
+          });
+        }
+        return provider.fetchMock(input, init);
+      };
+      let caught: unknown;
+      try {
+        await syncBackstageNotionAuthorityRoot(rootAuthority(), dependencies({
+          repository: repository.repository, fetchImpl,
+        }));
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toMatchObject({
+        code: BACKSTAGE_NOTION_SYNC_ROOT_FAILED_ERROR_CODE,
+        diagnostics: expect.objectContaining({
+          notionEndpointKind: 'page_title',
+          candidateSnapshotCreated: false,
+          candidateSnapshotValidated: false,
+          candidateSnapshotActivated: false,
+        }),
+      });
+      expect(repository.activateSnapshot).not.toHaveBeenCalled();
+      expect(repository.markActiveSnapshotVerified).not.toHaveBeenCalled();
+      expect(await repository.repository.loadActiveInventory(universeId)).toBe(previous);
+      expect(JSON.stringify(caught)).not.toContain('PRIVATE-SYNTHETIC-MISSING-SUBTYPE');
+      expect(JSON.stringify(caught)).not.toContain(notionToken);
+    }
+  );
 
   it('rejects database parent complete title drift before activation', async () => {
     const provider = databaseRootFetch({

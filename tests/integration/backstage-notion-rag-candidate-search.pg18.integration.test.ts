@@ -1052,7 +1052,8 @@ describeWithDatabase('Backstage Notion candidate search on PostgreSQL 18', () =>
     const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), {
       status, headers: { 'content-type': 'application/json' },
     });
-    let failureMode: 'none' | 'incomplete' | 'drift' = 'none';
+    let failureMode: 'none' | 'incomplete' | 'drift'
+      | 'missing-text' | 'missing-mention' | 'missing-equation' = 'none';
     let titleReads = 0;
     const fetchImpl: typeof fetch = async (input, init) => {
       const url = new URL(String(input));
@@ -1100,7 +1101,10 @@ describeWithDatabase('Backstage Notion candidate search on PostgreSQL 18', () =>
         return json({
           object: 'list', type: 'property_item',
           results: parts.map(part => ({
-            object: 'property_item', id: 'title', type: 'title', title: textItem(part),
+            object: 'property_item', id: 'title', type: 'title',
+            title: failureMode.startsWith('missing-')
+              ? { type: failureMode.slice('missing-'.length), plain_text: part }
+              : textItem(part),
           })),
           has_more: hasMore, next_cursor: cursor,
           property_item: { id: 'title', type: 'title', title: {}, next_url: nextUrl?.toString() ?? null },
@@ -1169,7 +1173,7 @@ describeWithDatabase('Backstage Notion candidate search on PostgreSQL 18', () =>
     expect(complete.coverage).toMatchObject({ status: 'complete', selectedChunks: 2 });
     expect(complete.citations.map(citation => citation.pageId).sort()).toEqual(members);
 
-    for (const mode of ['incomplete', 'drift'] as const) {
+    for (const mode of ['incomplete', 'drift', 'missing-text', 'missing-mention', 'missing-equation'] as const) {
       failureMode = mode;
       titleReads = 0;
       await expect(syncBackstageNotionAuthorityRoot(root, dependencies)).rejects.toMatchObject({

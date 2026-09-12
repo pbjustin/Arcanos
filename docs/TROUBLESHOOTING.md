@@ -257,6 +257,11 @@ If failing, inspect Railway build/deploy logs first.
   never provider content or identifiers. See the
   [parent compatibility rollout runbook](runbooks/notion-authority-parent-compatibility.md)
   for release evidence and the separate production approval boundary.
+  Complete title-property items must also contain valid type-specific rich-text
+  data; a `plain_text` string and type alone cannot establish a complete fragment.
+  `page_title_fragment` rejects missing or malformed fragment payloads before
+  authoritative title assembly. Supported provider rich-text variants retain
+  the existing title bounds and character policy.
 - Partition diagnostics report `cutoverAvailable: false`: this is the safe
   default and does not mean the active monolith or previous complete manifest
   was deleted. Confirm that the existing five configured shards—not hard-coded

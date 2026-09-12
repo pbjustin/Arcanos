@@ -100,6 +100,11 @@ function titlePropertyItem(
     title: {
       type,
       plain_text: plainText,
+      ...(type === 'text'
+        ? { text: { content: plainText, link: null } }
+        : type === 'equation'
+          ? { equation: { expression: plainText } }
+          : { mention: { type: 'page', page: { id: secondPageId } } }),
     },
   };
 }
@@ -746,6 +751,75 @@ describe('Backstage Notion prompt context', () => {
     });
     expect(JSON.stringify(caught)).not.toContain('PRIVATE');
     expect(JSON.stringify(caught)).not.toContain(notionToken);
+  });
+
+  it.each([
+    ['missing text', { type: 'text', plain_text: 'PRIVATE-FRAGMENT' }],
+    ['invalid text content', { type: 'text', plain_text: 'PRIVATE-FRAGMENT', text: { content: 1 } }],
+    ['missing equation', { type: 'equation', plain_text: 'PRIVATE-FRAGMENT' }],
+    ['invalid equation expression', { type: 'equation', plain_text: 'PRIVATE-FRAGMENT', equation: { expression: null } }],
+    ['missing mention', { type: 'mention', plain_text: 'PRIVATE-FRAGMENT' }],
+    ['invalid mention payload', { type: 'mention', plain_text: 'PRIVATE-FRAGMENT', mention: { type: 'page' } }],
+    ['invalid mention identity', { type: 'mention', plain_text: 'PRIVATE-FRAGMENT', mention: { type: 'page', page: { id: 'invalid' } } }],
+    ['invalid link mention', { type: 'mention', plain_text: 'PRIVATE-FRAGMENT', mention: { type: 'link_mention', link_mention: {} } }],
+    ['invalid custom emoji', { type: 'mention', plain_text: 'PRIVATE-FRAGMENT', mention: { type: 'custom_emoji', custom_emoji: { id: 'synthetic', name: 'synthetic' } } }],
+    ['unknown mention variant', { type: 'mention', plain_text: 'PRIVATE-FRAGMENT', mention: { type: 'future', future: {} } }],
+  ])('rejects %s in a complete title property fragment', async (_name, title) => {
+    const fetchMock = jest.fn(async () => jsonResponse({
+      object: 'list',
+      type: 'property_item',
+      results: [{ object: 'property_item', id: 'title', type: 'title', title }],
+      has_more: false,
+      next_cursor: null,
+      property_item: { id: 'title', type: 'title', title: {}, next_url: null },
+    }));
+    let caught: unknown;
+    try {
+      await fetchBackstageNotionPageTitleProperty(
+        asFetch(fetchMock), notionToken, firstPageId, null, new AbortController().signal
+      );
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toMatchObject({
+      category: 'invalid_response',
+      notionEndpointKind: 'page_title',
+      notionFailureCategory: 'malformed_response',
+      notionResponseSchemaValid: false,
+      notionRejectionCode: 'page_title_fragment',
+    });
+    expect(JSON.stringify(caught)).not.toContain('PRIVATE');
+    expect(JSON.stringify(caught)).not.toContain(notionToken);
+  });
+
+  it.each([
+    ['text', { type: 'text', plain_text: 'Synthetic', text: { content: 'Synthetic', link: null } }],
+    ['equation', { type: 'equation', plain_text: 'Synthetic', equation: { expression: 'Synthetic' } }],
+    ['page mention', { type: 'mention', plain_text: 'Synthetic', mention: { type: 'page', page: { id: secondPageId } } }],
+    ['database mention', { type: 'mention', plain_text: 'Synthetic', mention: { type: 'database', database: { id: secondPageId } } }],
+    ['partial-user mention', { type: 'mention', plain_text: '@Anonymous', mention: { type: 'user', user: { object: 'user', id: secondPageId } } }],
+    ['date mention', { type: 'mention', plain_text: 'Synthetic', mention: { type: 'date', date: { start: '2026-09-12', end: null, time_zone: null } } }],
+    ['link-preview mention', { type: 'mention', plain_text: 'Synthetic', mention: { type: 'link_preview', link_preview: { url: 'https://example.invalid/synthetic' } } }],
+    ['template-date mention', { type: 'mention', plain_text: 'Synthetic', mention: { type: 'template_mention', template_mention: { type: 'template_mention_date', template_mention_date: 'today' } } }],
+    ['template-user mention', { type: 'mention', plain_text: 'Synthetic', mention: { type: 'template_mention', template_mention: { type: 'template_mention_user', template_mention_user: 'me' } } }],
+    ['link mention', { type: 'mention', plain_text: 'Synthetic', mention: { type: 'link_mention', link_mention: { href: 'https://example.invalid/synthetic' } } }],
+    ['custom-emoji mention', { type: 'mention', plain_text: 'Synthetic', mention: { type: 'custom_emoji', custom_emoji: { id: secondPageId, name: 'synthetic', url: 'https://example.invalid/synthetic.png' } } }],
+  ])('accepts provider-shaped %s title property fragments', async (_name, title) => {
+    const fetchMock = jest.fn(async () => jsonResponse({
+      object: 'list',
+      type: 'property_item',
+      results: [{ object: 'property_item', id: 'title', type: 'title', title }],
+      has_more: false,
+      next_cursor: null,
+      property_item: { id: 'title', type: 'title', title: {}, next_url: null },
+    }));
+    await expect(fetchBackstageNotionPageTitleProperty(
+      asFetch(fetchMock), notionToken, firstPageId, null, new AbortController().signal
+    )).resolves.toMatchObject({
+      titleParts: [title.plain_text],
+      hasMore: false,
+      nextCursor: null,
+    });
   });
 
   it('retrieves an exact 25-part title through the complete property endpoint', async () => {

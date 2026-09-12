@@ -157,12 +157,14 @@ export type BackstageNotionRejectionCode =
   | 'page_trash_state'
   | 'page_last_edited_time'
   | 'page_parent'
-  | 'page_title';
+  | 'page_title'
+  | 'page_title_fragment';
 
 const NOTION_REJECTION_CODES: ReadonlySet<string> = new Set([
   'invalid_utf8', 'invalid_json', 'invalid_content_type',
   'page_object', 'page_identity', 'page_trash_state',
   'page_last_edited_time', 'page_parent', 'page_title',
+  'page_title_fragment',
 ]);
 
 export interface BackstageNotionReadDiagnostics {
@@ -1156,6 +1158,37 @@ function pageTitleInlineReferenceCount(item: unknown): 0 | 1 | null {
   }
 }
 
+function isCompleteNotionPageTitleFragment(item: unknown): boolean {
+  if (pageTitleInlineReferenceCount(item) !== null) {
+    return true;
+  }
+  if (
+    !isPlainConfigurationObject(item)
+    || typeof item.plain_text !== 'string'
+    || item.type !== 'mention'
+    || !isPlainConfigurationObject(item.mention)
+  ) {
+    return false;
+  }
+  // These current property-item variants have complete semantic payloads, but
+  // do not change the conservative inline-page reference counting policy.
+  const mention = item.mention;
+  if (mention.type === 'link_mention') {
+    return isPlainConfigurationObject(mention.link_mention)
+      && typeof mention.link_mention.href === 'string'
+      && mention.link_mention.href.length > 0;
+  }
+  if (mention.type === 'custom_emoji') {
+    return isPlainConfigurationObject(mention.custom_emoji)
+      && typeof mention.custom_emoji.id === 'string'
+      && mention.custom_emoji.id.length > 0
+      && typeof mention.custom_emoji.name === 'string'
+      && typeof mention.custom_emoji.url === 'string'
+      && mention.custom_emoji.url.length > 0;
+  }
+  return false;
+}
+
 function boundedNotionPageTitle(
   properties: unknown
 ): { title: string; isComplete: boolean } | null {
@@ -1316,14 +1349,21 @@ function parseNotionPageTitlePropertyResponse(
       || rawResult.id !== 'title'
       || rawResult.type !== 'title'
       || titleValue === null
-      || !['equation', 'mention', 'text'].includes(String(titleValue.type))
-      || typeof titleValue.plain_text !== 'string'
     ) {
       throw new BackstageNotionReadError(
         'invalid_response',
         undefined,
         invalidResponseDiagnostics
       );
+    }
+    if (
+      !isCompleteNotionPageTitleFragment(titleValue)
+      || typeof titleValue.plain_text !== 'string'
+    ) {
+      throw new BackstageNotionReadError('invalid_response', undefined, {
+        ...invalidResponseDiagnostics,
+        notionRejectionCode: 'page_title_fragment',
+      });
     }
     titleParts.push(titleValue.plain_text);
   }

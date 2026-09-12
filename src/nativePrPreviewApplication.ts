@@ -4047,7 +4047,11 @@ async function assertBackstageNotionDatabaseAuthorityFixture(): Promise<void> {
           object: 'property_item',
           id: 'title',
           type: 'title',
-          title: { type: 'text', plain_text: plainText },
+          title: {
+            type: 'text',
+            text: { content: plainText, link: null },
+            plain_text: plainText,
+          },
         })),
         has_more: firstPage,
         next_cursor: firstPage ? titleCursor : null,
@@ -4179,6 +4183,35 @@ async function assertBackstageNotionDatabaseAuthorityFixture(): Promise<void> {
     )
   ));
   const serializedMalformedParentError = JSON.stringify(malformedParentError);
+  const malformedFragmentMarker = 'PRIVATE-MALFORMED-TITLE-FRAGMENT';
+  let malformedFragmentRequests = 0;
+  const malformedFragmentError = await captureBackstageNotionReadError(() => (
+    fetchBackstageNotionPageTitleProperty(
+      async (input, init = {}) => {
+        const endpoint = input instanceof URL ? input : new URL(String(input));
+        assertCommonRequest(endpoint, init, 'GET');
+        malformedFragmentRequests += 1;
+        return jsonResponse({
+          object: 'list',
+          type: 'property_item',
+          results: [{
+            object: 'property_item',
+            id: 'title',
+            type: 'title',
+            title: { type: 'text', plain_text: malformedFragmentMarker },
+          }],
+          has_more: false,
+          next_cursor: null,
+          property_item: { id: 'title', type: 'title', title: {}, next_url: null },
+        });
+      },
+      syntheticCredential,
+      rowPageIds[0],
+      null,
+      signal
+    )
+  ));
+  const serializedMalformedFragmentError = JSON.stringify(malformedFragmentError);
 
   const oversizedCursorMarker = 'PRIVATE-OVERSIZED-PROVIDER-CURSOR';
   const oversizedCursor = `${oversizedCursorMarker}${'\u0000'.repeat(90_000)}`;
@@ -4242,6 +4275,15 @@ async function assertBackstageNotionDatabaseAuthorityFixture(): Promise<void> {
     || serializedMalformedParentError.includes(syntheticCredential)
     || serializedMalformedParentError.includes(databaseId)
     || serializedMalformedParentError.includes(rowPageIds[1])
+    || malformedFragmentRequests !== 1
+    || malformedFragmentError.category !== 'invalid_response'
+    || malformedFragmentError.notionEndpointKind !== 'page_title'
+    || malformedFragmentError.notionFailureCategory !== 'malformed_response'
+    || malformedFragmentError.notionResponseSchemaValid !== false
+    || malformedFragmentError.notionRejectionCode !== 'page_title_fragment'
+    || serializedMalformedFragmentError.includes(malformedFragmentMarker)
+    || serializedMalformedFragmentError.includes(syntheticCredential)
+    || serializedMalformedFragmentError.includes(rowPageIds[0])
     || titlePropertyRequests !== 4
     || titleRequestOrigins.some(origin => origin !== 'https://api.notion.com')
     || capturedTitle !== expectedCompleteTitle

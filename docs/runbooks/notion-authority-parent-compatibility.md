@@ -8,6 +8,8 @@ member only alongside exact membership discovered through that root's advertised
 data sources. Capture and verification retain the provider parent and source
 membership independently. No schema, API-version, freshness, credential, title,
 capacity, readiness, or canon-write policy change accompanies this repair.
+The separate title-property reader also requires valid rich-text subtype data
+before declaring a title complete; malformed fragments cannot reach activation.
 
 This document prepares a production operation. It does not authorize or execute
 deployment, synchronization, migration, backfill, or any Notion modification.
