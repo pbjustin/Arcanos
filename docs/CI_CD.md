@@ -161,8 +161,12 @@ fencing, DAG-snapshot fencing, worker-budget identity, stale-recovery batching,
 Backstage roster atomicity, Backstage storyline atomicity, Backstage canon
 storyline atomicity, Notion partition storage, non-GPT terminal retention, and
 paired-device authentication.
-The monolithic Notion candidate-search suite shares the canon-storyline test
-URL; Gaming durable retrieval shares the job-claim fencing test URL.
+The monolithic Notion candidate-search and authority HTTP suites share the
+canon-storyline test URL; Gaming durable retrieval shares the job-claim fencing
+test URL. The authority HTTP fixture runs synchronization and PostgreSQL retrieval
+through the authenticated Booker route with deterministic Notion and model
+responses. It covers activation, failed-refresh continuity, and recovery; it
+does not contact live Notion or model providers.
 The exact suite selection is maintained in the root
 [`package.json`](../package.json), and its target variables are set in
 [the PostgreSQL service job](../.github/workflows/ci-cd.yml). The fencing command

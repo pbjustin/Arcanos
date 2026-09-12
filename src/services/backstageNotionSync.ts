@@ -155,6 +155,7 @@ export interface BackstageNotionSyncFailureDiagnostics {
   notionResponseContentType: string | null;
   notionResponseSchemaValid: boolean | null;
   notionEndpointKind: BackstageNotionEndpointKind | null;
+  notionRejectionCode?: BackstageNotionReadError['notionRejectionCode'];
   elapsedMs: number;
   candidateSnapshotCreated: boolean;
   candidateSnapshotValidated: boolean;
@@ -227,6 +228,7 @@ interface PendingPage {
   path: string[];
   expectedProviderParentPageId?: string | null;
   expectedProviderParentDataSourceId?: string | null;
+  expectedProviderParentDatabaseId?: string;
   membershipDataSourceId?: string | null;
   appendProviderTitleToPath?: boolean;
   preloadedMetadata?: BackstageNotionPageMetadata;
@@ -348,6 +350,9 @@ function snapshotSyncFailureDiagnostics(
     notionResponseContentType: progress.notionResponseContentType,
     notionResponseSchemaValid: progress.notionResponseSchemaValid,
     notionEndpointKind: progress.notionEndpointKind,
+    ...(progress.notionRejectionCode === undefined ? {} : {
+      notionRejectionCode: progress.notionRejectionCode,
+    }),
     elapsedMs: Math.max(0, Date.now() - progress.startedAt),
     candidateSnapshotCreated: progress.candidateSnapshotCreated,
     candidateSnapshotValidated: progress.candidateSnapshotValidated,
@@ -425,6 +430,7 @@ function captureNotionReadDiagnostics(
   progress.notionResponseContentType = error.notionResponseContentType;
   progress.notionResponseSchemaValid = error.notionResponseSchemaValid;
   progress.notionEndpointKind = error.notionEndpointKind;
+  progress.notionRejectionCode = error.notionRejectionCode;
 }
 
 class BackstageNotionRequestDeadlineError extends Error {
@@ -959,6 +965,15 @@ function validateFetchedPage(
       pending.expectedProviderParentDataSourceId !== undefined
       && (metadata.parentDataSourceId ?? null)
         !== pending.expectedProviderParentDataSourceId
+      // Database-parent metadata does not identify a data source. Admit it only
+      // for an exact member discovered from this root's advertised sources.
+      // Complete rediscovery and the manifest retain that independent membership.
+      && !(
+        pending.expectedProviderParentDatabaseId !== undefined
+        && pending.membershipDataSourceId === pending.expectedProviderParentDataSourceId
+        && metadata.parentType === 'database_id'
+        && metadata.parentId === pending.expectedProviderParentDatabaseId
+      )
     )
   ) {
     throw incompleteSyncError(
@@ -1605,6 +1620,7 @@ async function captureHierarchy(input: {
         depth: 1,
         path: [input.root.displayName],
         expectedProviderParentDataSourceId: page.dataSourceId,
+        expectedProviderParentDatabaseId: databaseRoot.metadata.databaseId,
         membershipDataSourceId: page.dataSourceId,
         appendProviderTitleToPath: true,
       });

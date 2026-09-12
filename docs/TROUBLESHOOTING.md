@@ -238,6 +238,30 @@ If failing, inspect Railway build/deploy logs first.
   operational phase that consumed the fixed cycle budget; the deadline is not
   extended by retries, progress, or lease renewal. Investigate the named phase without logging
   Notion content, raw page/block identifiers, upstream bodies, or credentials.
+- A database-root member can return `parent.type: "database_id"` even when it
+  was discovered through a data-source query. The page metadata reader accepts
+  a valid database ID; synchronization admits that representation only when
+  the page was discovered from an advertised source of the exact configured
+  database and its parent matches that database. Source membership remains in
+  the deterministic manifest and complete rediscovery; a different database,
+  ordinary child-page parent mismatch, or parent drift still prevents activation.
+  Never substitute the database ID for the distinct data-source ID. The current
+  [Notion SDK response types](https://github.com/makenotion/notion-sdk-js/blob/main/src/api-endpoints/common.ts)
+  include both parent representations; migration examples showing only a
+  data-source parent are not an exhaustive response union.
+  For rejected metadata, the additive `notionRejectionCode` distinguishes
+  `page_object`, `page_identity`, `page_trash_state`, `page_last_edited_time`,
+  `page_parent`, and `page_title`; decoding/content-type failures use
+  `invalid_utf8`, `invalid_json`, or `invalid_content_type`. Existing public
+  error categories and retry policy remain unchanged. These are fixed codes,
+  never provider content or identifiers. See the
+  [parent compatibility rollout runbook](runbooks/notion-authority-parent-compatibility.md)
+  for release evidence and the separate production approval boundary.
+  Complete title-property items must also contain valid type-specific rich-text
+  data; a `plain_text` string and type alone cannot establish a complete fragment.
+  `page_title_fragment` rejects missing or malformed fragment payloads before
+  authoritative title assembly. Supported provider rich-text variants retain
+  the existing title bounds and character policy.
 - Partition diagnostics report `cutoverAvailable: false`: this is the safe
   default and does not mean the active monolith or previous complete manifest
   was deleted. Confirm that the existing five configured shards—not hard-coded
