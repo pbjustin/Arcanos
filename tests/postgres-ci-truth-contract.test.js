@@ -102,6 +102,22 @@ describe('required PostgreSQL CI truth contract', () => {
     );
   });
 
+  it('builds shared package exports before PostgreSQL HTTP consumers run', () => {
+    const postgresJob = readWorkflowJob(
+      readNormalized('.github/workflows/ci-cd.yml'),
+      'local-agent-postgres-concurrency',
+      'runtime-redis-admission'
+    );
+    const install = postgresJob.indexOf('run: npm ci');
+    const packageBuild = postgresJob.indexOf('npm run build:packages');
+
+    expect(install).toBeGreaterThan(-1);
+    expect(packageBuild).toBeGreaterThan(install);
+    for (const command of ['test:local-agent-postgres', 'test:postgres-fencing']) {
+      expect(postgresJob.indexOf(`run: npm run ${command}`)).toBeGreaterThan(packageBuild);
+    }
+  });
+
   it('runs the aggregate gate after every dependency and fails on non-success', () => {
     const workflow = readNormalized('.github/workflows/ci-cd.yml');
     const aggregateStart = workflow.indexOf('  all-checks-complete:\n');

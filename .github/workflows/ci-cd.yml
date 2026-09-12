@@ -470,6 +470,9 @@ jobs:
       - name: 📦 Install dependencies
         run: npm ci
 
+      - name: Build shared packages for PostgreSQL HTTP consumers
+        run: npm run build:packages
+
       - name: 🗄️ Verify database-enforced local-agent semantics
         run: npm run test:local-agent-postgres
 
@@ -482,7 +485,6 @@ jobs:
           IOS_DEVICE_E2E_DATABASE_URL: ${{ env.GPT_ACCESS_DEVICE_TEST_DATABASE_URL }}
         run: |
           set -euo pipefail
-          npm run build:packages
           swift --version
           swift build --package-path clients/ios/ArcanosKit --product ArcanosDeviceE2E
           ios_device_e2e_bin_dir=$(swift build --package-path clients/ios/ArcanosKit --show-bin-path)
