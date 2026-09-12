@@ -1,0 +1,36 @@
+{
+  "schema": "arcanos-phase3c-signing/v1",
+  "capturedAt": "2026-09-12T03:31:13.592770+00:00",
+  "sourceSha": "4f3652ed4397e8b7de8891696ea6160d4cd51af2",
+  "scheme": "ArcanosVoice-HardwareValidation",
+  "configuration": "HardwareValidation",
+  "bundleIdentifier": "org.arcanos.voice.hardware-validation",
+  "mode": "archive",
+  "signing": {
+    "status": "NOT RUN",
+    "label": "SIGNING NOT RUN",
+    "dependency": "Protected CI signing secrets are not configured",
+    "missingSecretNames": [
+      "IOS_SIGNING_P12_BASE64",
+      "IOS_SIGNING_P12_PASSWORD",
+      "IOS_PROVISIONING_PROFILE_BASE64",
+      "IOS_TEAM_ID"
+    ]
+  },
+  "testFlightUpload": {
+    "status": "NOT RUN"
+  },
+  "physicalDevice": "NOT RUN",
+  "liveArcanos": "NOT RUN",
+  "checks": [],
+  "publishableArtifacts": [
+    "report.json"
+  ],
+  "secretCleanup": "Disposable VM destruction required; no persistent/self-hosted signing supported",
+  "boundaries": {
+    "appLaunched": false,
+    "arcanosTransport": "fixture-only",
+    "rawToolOutputPublished": false,
+    "signedProductsPublishedAsArtifacts": false
+  }
+}

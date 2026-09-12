@@ -23,6 +23,15 @@ struct SettingsView: View {
                         Task { await runtime.refreshDiagnostics() }
                     }
                 }
+                #if ARCANOS_HARDWARE_VALIDATION
+                if let validation = runtime.hardwareValidation {
+                    HardwareValidationView(validation: validation)
+                } else {
+                    Section("Hardware validation unavailable") {
+                        Text("Gateway networking is disabled. Check the validation build configuration.")
+                    }
+                }
+                #else
                 Section("Pairing") {
                     Label(runtime.secureStorageUnavailable
                         ? "Secure storage is temporarily unavailable. Unlock this iPhone and try again. Pairing has not been removed."
@@ -54,7 +63,8 @@ struct SettingsView: View {
                     Button("Forget local credential", role: .destructive) { Task { await runtime.forgetCredential() } }
                         .disabled(runtime.changingPairing || runtime.gatewayAddress.isEmpty || runtime.demonstration)
                 }
-                #if DEBUG
+                #endif
+                #if DEBUG && !ARCANOS_HARDWARE_VALIDATION
                 Section("Developer demonstration") {
                     Toggle("Simulate the Gateway", isOn: Binding(
                         get: { runtime.demonstration },

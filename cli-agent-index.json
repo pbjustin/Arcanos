@@ -1,14 +1,32 @@
 {
-  "generatedAt": "2026-09-12T00:13:48.732Z",
+  "generatedAt": "2026-09-12T03:31:54.004Z",
   "scopes": [
     {
       "scope": "clients",
       "files": [
         {
+          "relativePath": "clients/ios/scripts/generate-validation-icon.py"
+        },
+        {
+          "relativePath": "clients/ios/scripts/phase3c_cloud_report.py"
+        },
+        {
+          "relativePath": "clients/ios/scripts/phase3c_signing.py"
+        },
+        {
           "relativePath": "clients/ios/scripts/run-operation-recovery-e2e.py"
         },
         {
           "relativePath": "clients/ios/scripts/run-operation-recovery-preview.py"
+        },
+        {
+          "relativePath": "clients/ios/scripts/run-phase3c-apple-validation.py"
+        },
+        {
+          "relativePath": "clients/ios/scripts/run-phase3c-portable-validation.py"
+        },
+        {
+          "relativePath": "clients/ios/scripts/run-phase3c-simulator.py"
         },
         {
           "relativePath": "clients/ios/scripts/run-shipping-recovery-e2e.py"
@@ -17,7 +35,25 @@
           "relativePath": "clients/ios/scripts/run-shipping-recovery-preview.py"
         },
         {
+          "relativePath": "clients/ios/scripts/test_hardware_configuration.py"
+        },
+        {
+          "relativePath": "clients/ios/scripts/test_phase3c_cloud_configuration.py"
+        },
+        {
+          "relativePath": "clients/ios/scripts/test_phase3c_cloud_report.py"
+        },
+        {
+          "relativePath": "clients/ios/scripts/test_phase3c_signing.py"
+        },
+        {
+          "relativePath": "clients/ios/scripts/test_phase3c_simulator.py"
+        },
+        {
           "relativePath": "clients/ios/scripts/test_shipping_recovery_preview.py"
+        },
+        {
+          "relativePath": "clients/ios/scripts/validate-hardware-configuration.py"
         }
       ]
     },

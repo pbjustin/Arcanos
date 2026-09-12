@@ -1,0 +1,176 @@
+{
+  "binarySHA256": "8416b28d371e45feb672172f115b4dfb08d4249f4672bfb4d28fb6e956800617",
+  "cleanupConfirmed": true,
+  "createRequests": 3,
+  "independentChecks": [
+    "intent_on_disk_before_each_create",
+    "distinct_processes_and_exact_phase_assertions",
+    "wire_auth_origin_and_job_identity",
+    "no_credentials_prompts_or_results_in_index",
+    "one_create_per_operation_across_restarts",
+    "failed_reads_leave_index_unchanged",
+    "lost_receipt_and_killed_process_do_not_replay"
+  ],
+  "liveBackend": false,
+  "negativeControl": {
+    "childFailure": "COMPLETED_RESULT_MISMATCH",
+    "fault": "corrupt-completion",
+    "rejected": true
+  },
+  "ok": true,
+  "phases": [
+    {
+      "assertions": [
+        "intent_persisted_before_create",
+        "accepted_handle_persisted"
+      ],
+      "mode": "submit",
+      "ok": true,
+      "pid": 1640,
+      "requestsMade": 1,
+      "runId": "e3592536-8b12-48c4-868a-1e9c0fd794ba",
+      "sourceSha": "4f3652ed4397e8b7de8891696ea6160d4cd51af2",
+      "version": "ios-operation-recovery-e2e/v1"
+    },
+    {
+      "assertions": [
+        "foreign_partition_hidden",
+        "no_network"
+      ],
+      "mode": "wrong-device",
+      "ok": true,
+      "pid": 1646,
+      "requestsMade": 0,
+      "runId": "e3592536-8b12-48c4-868a-1e9c0fd794ba",
+      "sourceSha": "4f3652ed4397e8b7de8891696ea6160d4cd51af2",
+      "version": "ios-operation-recovery-e2e/v1"
+    },
+    {
+      "assertions": [
+        "foreign_partition_hidden",
+        "no_network"
+      ],
+      "mode": "wrong-origin",
+      "ok": true,
+      "pid": 1651,
+      "requestsMade": 0,
+      "runId": "e3592536-8b12-48c4-868a-1e9c0fd794ba",
+      "sourceSha": "4f3652ed4397e8b7de8891696ea6160d4cd51af2",
+      "version": "ios-operation-recovery-e2e/v1"
+    },
+    {
+      "assertions": [
+        "accepted_handle_restored",
+        "mismatched_result_rejected",
+        "durable_index_unchanged"
+      ],
+      "mode": "mismatch",
+      "ok": true,
+      "pid": 1656,
+      "requestsMade": 1,
+      "runId": "e3592536-8b12-48c4-868a-1e9c0fd794ba",
+      "sourceSha": "4f3652ed4397e8b7de8891696ea6160d4cd51af2",
+      "version": "ios-operation-recovery-e2e/v1"
+    },
+    {
+      "assertions": [
+        "accepted_handle_restored",
+        "authentication_denial_preserves_index"
+      ],
+      "mode": "denied",
+      "ok": true,
+      "pid": 1662,
+      "requestsMade": 1,
+      "runId": "e3592536-8b12-48c4-868a-1e9c0fd794ba",
+      "sourceSha": "4f3652ed4397e8b7de8891696ea6160d4cd51af2",
+      "version": "ios-operation-recovery-e2e/v1"
+    },
+    {
+      "assertions": [
+        "accepted_handle_restored",
+        "pending_observed",
+        "completed_result_observed",
+        "terminal_state_durable",
+        "late_callbacks_preserve_terminal"
+      ],
+      "mode": "recover",
+      "ok": true,
+      "pid": 1668,
+      "requestsMade": 2,
+      "runId": "e3592536-8b12-48c4-868a-1e9c0fd794ba",
+      "sourceSha": "4f3652ed4397e8b7de8891696ea6160d4cd51af2",
+      "version": "ios-operation-recovery-e2e/v1"
+    },
+    {
+      "assertions": [
+        "terminal_state_restored",
+        "no_network"
+      ],
+      "mode": "check-terminal",
+      "ok": true,
+      "pid": 1675,
+      "requestsMade": 0,
+      "runId": "e3592536-8b12-48c4-868a-1e9c0fd794ba",
+      "sourceSha": "4f3652ed4397e8b7de8891696ea6160d4cd51af2",
+      "version": "ios-operation-recovery-e2e/v1"
+    },
+    {
+      "assertions": [
+        "intent_persisted_before_create",
+        "transport_loss_recorded_uncertain"
+      ],
+      "mode": "submit-uncertain",
+      "ok": true,
+      "pid": 1680,
+      "requestsMade": 1,
+      "runId": "e3592536-8b12-48c4-868a-1e9c0fd794ba",
+      "sourceSha": "4f3652ed4397e8b7de8891696ea6160d4cd51af2",
+      "version": "ios-operation-recovery-e2e/v1"
+    },
+    {
+      "assertions": [
+        "unresolved_intent_restored",
+        "duplicate_prepare_rejected",
+        "no_automatic_replay"
+      ],
+      "mode": "recover-uncertain",
+      "ok": true,
+      "pid": 1686,
+      "requestsMade": 0,
+      "runId": "e3592536-8b12-48c4-868a-1e9c0fd794ba",
+      "sourceSha": "4f3652ed4397e8b7de8891696ea6160d4cd51af2",
+      "version": "ios-operation-recovery-e2e/v1"
+    },
+    {
+      "assertions": [
+        "process_terminated_after_server_accept_before_receipt"
+      ],
+      "expectedTermination": true,
+      "mode": "submit-crash",
+      "pid": 1691
+    },
+    {
+      "assertions": [
+        "unresolved_intent_restored",
+        "duplicate_prepare_rejected",
+        "no_automatic_replay"
+      ],
+      "mode": "recover-uncertain",
+      "ok": true,
+      "pid": 1697,
+      "requestsMade": 0,
+      "runId": "e3592536-8b12-48c4-868a-1e9c0fd794ba",
+      "sourceSha": "4f3652ed4397e8b7de8891696ea6160d4cd51af2",
+      "version": "ios-operation-recovery-e2e/v1"
+    }
+  ],
+  "physicalDevice": false,
+  "processCount": 11,
+  "requestsMade": 7,
+  "scope": "recovery-core-process-file-loopback",
+  "shippingAppLifecycle": false,
+  "sourceDirty": true,
+  "sourceSha": "4f3652ed4397e8b7de8891696ea6160d4cd51af2",
+  "tls": false,
+  "version": "ios-operation-recovery-e2e/v1"
+}

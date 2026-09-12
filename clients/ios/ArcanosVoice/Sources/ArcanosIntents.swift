@@ -15,6 +15,9 @@ struct AskArcanos: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog & ShowsSnippetView {
+        #if ARCANOS_HARDWARE_VALIDATION
+        await AppRuntime.shared.hardwareValidation?.record(.intentAsk)
+        #endif
         let request: String
         if let command, !command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             request = command
@@ -51,6 +54,9 @@ struct ApproveArcanos: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog & ShowsSnippetView {
+        #if ARCANOS_HARDWARE_VALIDATION
+        await AppRuntime.shared.hardwareValidation?.record(.intentApprove)
+        #endif
         let runtime = AppRuntime.shared
         guard let pending = runtime.pendingApproval else {
             let presentation = VoicePresentation(text: "There is no pending approval in this app session. Ask ARCANOS again if the app restarted.", status: "No pending approval")
@@ -76,6 +82,9 @@ struct CancelArcanos: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog & ShowsSnippetView {
+        #if ARCANOS_HARDWARE_VALIDATION
+        await AppRuntime.shared.hardwareValidation?.record(.intentCancel)
+        #endif
         let runtime = AppRuntime.shared
         let presentation: VoicePresentation
         if let pending = runtime.pendingApproval {
@@ -97,6 +106,9 @@ struct CheckArcanosJob: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog & ShowsSnippetView {
+        #if ARCANOS_HARDWARE_VALIDATION
+        await AppRuntime.shared.hardwareValidation?.record(.intentCheck)
+        #endif
         let presentation = await AppRuntime.shared.checkLatestJob(reference: operationReference)
         return .result(dialog: IntentDialog("\(presentation.text)"), view: VoiceSnippet(presentation: presentation))
     }
@@ -116,6 +128,9 @@ struct CaptureArcanosNote: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog & ShowsSnippetView {
+        #if ARCANOS_HARDWARE_VALIDATION
+        await AppRuntime.shared.hardwareValidation?.record(.intentCapture)
+        #endif
         let presentation = await AppRuntime.shared.capture(note)
         return .result(dialog: IntentDialog("\(presentation.text)"), view: VoiceSnippet(presentation: presentation))
     }
