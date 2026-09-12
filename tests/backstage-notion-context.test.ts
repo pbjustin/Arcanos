@@ -1039,6 +1039,104 @@ describe('Backstage Notion prompt context', () => {
     });
   });
 
+  it.each([
+    ['duplicate stable title IDs', ['title', 'title']],
+    ['competing title properties', ['title', 'another-property']],
+  ])('rejects metadata containing %s without choosing a display name', async (_name, propertyIds) => {
+    const fetchMock = jest.fn(async () => jsonResponse(pageMetadataBody({
+      properties: Object.fromEntries(propertyIds.map((id, index) => [
+        `Synthetic heading ${index + 1}`,
+        { id, type: 'title', title: [titlePropertyItem(`PRIVATE-TITLE-${index}`, 'text').title] },
+      ])),
+    })));
+    let caught: unknown;
+    try {
+      await fetchBackstageNotionPageMetadata(
+        asFetch(fetchMock), notionToken, firstPageId, new AbortController().signal,
+        { requireTitle: true }
+      );
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toMatchObject({
+      category: 'invalid_response',
+      notionEndpointKind: 'page_metadata',
+      notionResponseSchemaValid: false,
+      notionRejectionCode: 'page_title',
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(caught)).not.toContain('PRIVATE');
+    expect(JSON.stringify(caught)).not.toContain(notionToken);
+  });
+
+  it.each([
+    ['ASCII', 'x'],
+    ['supplementary Unicode', '\u{1F680}'],
+  ])('preserves exactly 240 %s title code points and rejects 241 without truncation', async (_name, character) => {
+    const maximumTitleParts = [character.repeat(120), character.repeat(120)];
+    const maximumTitle = maximumTitleParts.join('');
+    const overlongTitleParts = [...maximumTitleParts, character];
+    expect(Array.from(maximumTitle)).toHaveLength(240);
+    expect(assembleBackstageNotionPageTitle(maximumTitleParts)).toBe(maximumTitle);
+    expect(assembleBackstageNotionPageTitle(overlongTitleParts)).toBeNull();
+
+    const validFetch = jest.fn(async () => titlePropertyResponse(maximumTitleParts));
+    const completeProperty = await fetchBackstageNotionPageTitleProperty(
+      asFetch(validFetch), notionToken, firstPageId, null, new AbortController().signal
+    );
+    expect(assembleBackstageNotionPageTitle(completeProperty.titleParts))
+      .toBe(maximumTitle);
+    expect(completeProperty.hasMore).toBe(false);
+
+    const overlongFetch = jest.fn(async () => titlePropertyResponse(overlongTitleParts));
+    await expect(fetchBackstageNotionPageTitleProperty(
+      asFetch(overlongFetch), notionToken, firstPageId, null, new AbortController().signal
+    )).rejects.toMatchObject({
+      category: 'invalid_response',
+      notionEndpointKind: 'page_title',
+      notionResponseSchemaValid: false,
+    });
+  });
+
+  it.each([
+    ['C0 control', '\u0000'],
+    ['DEL', '\u007F'],
+    ['C1 control', '\u009F'],
+    ['Arabic letter mark', '\u061C'],
+    ['zero-width space', '\u200B'],
+    ['directional override', '\u202E'],
+    ['directional isolate', '\u2066'],
+    ['byte order mark', '\uFEFF'],
+    ['opening angle bracket', '<'],
+    ['closing angle bracket', '>'],
+  ])('rejects a title containing %s in both metadata and complete properties', async (_name, character) => {
+    const title = `PRIVATE-TITLE${character}SUFFIX`;
+    expect(assembleBackstageNotionPageTitle([title])).toBeNull();
+    const metadataFetch = jest.fn(async () => jsonResponse(pageMetadataBody({
+      properties: {
+        'Synthetic heading': {
+          id: 'title', type: 'title', title: [titlePropertyItem(title, 'text').title],
+        },
+      },
+    })));
+    await expect(fetchBackstageNotionPageMetadata(
+      asFetch(metadataFetch), notionToken, firstPageId, new AbortController().signal,
+      { requireTitle: true }
+    )).rejects.toMatchObject({
+      category: 'invalid_response',
+      notionEndpointKind: 'page_metadata',
+      notionRejectionCode: 'page_title',
+    });
+    const propertyFetch = jest.fn(async () => titlePropertyResponse([title]));
+    await expect(fetchBackstageNotionPageTitleProperty(
+      asFetch(propertyFetch), notionToken, firstPageId, null, new AbortController().signal
+    )).rejects.toMatchObject({
+      category: 'invalid_response',
+      notionEndpointKind: 'page_title',
+      notionResponseSchemaValid: false,
+    });
+  });
+
   it('rejects aggregate title item counts beyond the provider maximum', () => {
     expect(assembleBackstageNotionPageTitle(Array.from(
       { length: BACKSTAGE_NOTION_MAX_PAGE_TITLE_PROPERTY_ITEMS + 1 },
