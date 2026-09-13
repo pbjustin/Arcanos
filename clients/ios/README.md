@@ -46,6 +46,46 @@ App Intents, App Shortcuts, static system snippet and settings view. App Intents
 require local device authentication. Approval is an additional explicit system
 interaction; device unlock alone does not approve an action.
 
+## Isolated hardware validation
+
+Developing on Windows without a Mac is supported by the prepared
+[cloud build and TestFlight runbook](PHASE3C_CLOUD_RUNBOOK.md). GitHub macOS
+compilation, Simulator execution, protected signing, authorized upload and
+physical observations remain separate milestones. The workflows must be
+published through an authorized repository change before they can test this
+revision; local preparation is not cloud or device execution.
+
+Phase 3C uses the same `ArcanosVoice` target and shipping session, recovery and
+App Intent paths. Select the `ArcanosVoice-HardwareValidation` scheme only for
+the isolated procedure in the [device runbook](PHASE3C_DEVICE_RUNBOOK.md).
+Its `HardwareValidation` configuration uses a distinct bundle, Keychain service
+and Application Support directory. It never restores the shipping Gateway
+preference or constructs a live transport. Ordinary Debug and Release exclude
+the hardware adapters. The iOS 18 deployment target is unchanged.
+
+The developer panel supplies explicit synthetic credential initialization,
+read-only Keychain persistence/partition probes, replacement/deletion, real
+LocalAI observations, deterministic accepted/lost receipt controls, and sanitized
+process/operation evidence. Gateway calls stop at an injected durable fixture;
+they are not HTTP requests. Keychain and local inference remain real when the
+Apple runtime is available. No inference fixture is selected by this app mode.
+
+From repository root, prepare local evidence without contacting services:
+
+```sh
+python3 -B clients/ios/scripts/validate-hardware-configuration.py
+python3 -B clients/ios/scripts/run-phase3c-apple-validation.py \
+  --output-dir local_artifacts/ios-phase3c/apple-inspection
+```
+
+On a Mac, add `--build` with a fresh output directory to build unsigned Debug,
+Release and HardwareValidation and inspect their packaging. The helper never
+launches an app. Follow the runbook to install and execute only the isolated
+configuration. A build does not establish Simulator or hardware execution.
+The [Phase 3C evidence](../../docs/audits/ios-phase3c/2026-09-12/README.md)
+tracks compilation, Simulator, physical Keychain, physical local inference,
+voice, recovery and separately authorized live services independently.
+
 ## Routing and offline behavior
 
 | Spoken command / context | Execution |

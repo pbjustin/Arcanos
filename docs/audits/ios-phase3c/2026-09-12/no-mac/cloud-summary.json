@@ -1,0 +1,60 @@
+{
+  "schema": "arcanos-phase3c-cloud-matrix/v1",
+  "revision": "4f3652ed4397e8b7de8891696ea6160d4cd51af2",
+  "evidenceLevels": {
+    "A": {
+      "status": "BLOCKED",
+      "scope": "Cloud Xcode/iOS compilation",
+      "dependency": "See scoped Apple build report; matching complete evidence required"
+    },
+    "B": {
+      "status": "BLOCKED",
+      "scope": "Cloud Simulator build",
+      "dependency": "See scoped Apple build report; matching complete evidence required"
+    },
+    "C": {
+      "status": "BLOCKED",
+      "scope": "Cloud Simulator runtime",
+      "dependency": "See installed-app proof; matching build/runtime evidence required"
+    },
+    "D": {
+      "status": "NOT RUN",
+      "scope": "Signed archive"
+    },
+    "E": {
+      "status": "NOT RUN",
+      "scope": "TestFlight upload"
+    },
+    "F": {
+      "status": "BLOCKED",
+      "scope": "Physical Keychain",
+      "dependency": "Operator observations on an authorized installed iPhone required"
+    },
+    "G": {
+      "status": "BLOCKED",
+      "scope": "Physical Foundation Models",
+      "dependency": "Operator observations on an authorized installed iPhone required"
+    },
+    "H": {
+      "status": "BLOCKED",
+      "scope": "Physical App Intent",
+      "dependency": "Operator observations on an authorized installed iPhone required"
+    },
+    "I": {
+      "status": "BLOCKED",
+      "scope": "Physical Vocal Shortcut",
+      "dependency": "Operator observations on an authorized installed iPhone required"
+    },
+    "J": {
+      "status": "BLOCKED",
+      "scope": "Physical fixture recovery",
+      "dependency": "Operator observations on an authorized installed iPhone required"
+    },
+    "K": {
+      "status": "NOT RUN",
+      "scope": "Live ARCANOS services",
+      "dependency": "Separate authorization required"
+    }
+  },
+  "scope": "Prepared pipelines and Simulator execution never establish physical-device or live-service success"
+}

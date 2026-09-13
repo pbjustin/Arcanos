@@ -1,0 +1,127 @@
+{
+  "sourceSha": "4f3652ed4397e8b7de8891696ea6160d4cd51af2",
+  "workingTreeOverlay": true,
+  "checks": [
+    {
+      "name": "python-regressions",
+      "command": [
+        "python",
+        "-B",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "clients/ios/scripts",
+        "-p",
+        "test_*.py"
+      ],
+      "exitCode": 1,
+      "expectedExitCode": 0,
+      "gateStatus": "FAIL",
+      "finding": "Harness omitted uppercase SYSTEMROOT on Windows. Retained failure; corrected only harness environment allowlist, no source change."
+    },
+    {
+      "name": "apple-preflight",
+      "command": [
+        "python",
+        "-B",
+        "clients/ios/scripts/run-phase3c-apple-validation.py",
+        "--build",
+        "--require-xcode-version",
+        "26.3",
+        "--require-ios-sdk",
+        "26.2",
+        "--output-dir",
+        "C:\\pbjustin\\Arcanos-ios-phase3c\\local_artifacts\\ios-phase3c\\no-mac\\apple"
+      ],
+      "exitCode": 2,
+      "expectedExitCode": 2,
+      "gateStatus": "PASS"
+    },
+    {
+      "name": "simulator-preflight",
+      "command": [
+        "python",
+        "-B",
+        "clients/ios/scripts/run-phase3c-simulator.py",
+        "--app",
+        "C:\\pbjustin\\Arcanos-ios-phase3c\\local_artifacts\\ios-phase3c\\no-mac\\not-built.app",
+        "--revision",
+        "4f3652ed4397e8b7de8891696ea6160d4cd51af2",
+        "--output-dir",
+        "C:\\pbjustin\\Arcanos-ios-phase3c\\local_artifacts\\ios-phase3c\\no-mac\\simulator"
+      ],
+      "exitCode": 2,
+      "expectedExitCode": 2,
+      "gateStatus": "PASS"
+    },
+    {
+      "name": "signing-preflight",
+      "command": [
+        "python",
+        "-B",
+        "clients/ios/scripts/phase3c_signing.py",
+        "--mode",
+        "archive",
+        "--expected-sha",
+        "4f3652ed4397e8b7de8891696ea6160d4cd51af2",
+        "--build-number",
+        "1",
+        "--output-dir",
+        "C:\\pbjustin\\Arcanos-ios-phase3c\\local_artifacts\\ios-phase3c\\no-mac\\signing"
+      ],
+      "exitCode": 0,
+      "expectedExitCode": 0,
+      "gateStatus": "PASS"
+    },
+    {
+      "name": "python-regressions-corrected-harness",
+      "command": [
+        "python",
+        "-B",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "clients/ios/scripts",
+        "-p",
+        "test_*.py"
+      ],
+      "exitCode": 0,
+      "gateStatus": "PASS",
+      "environment": "Credential-free allowlist, preserving Windows SYSTEMROOT"
+    },
+    {
+      "name": "documentation-and-indexes",
+      "gateStatus": "PASS",
+      "checks": 573,
+      "warnings": 0
+    },
+    {
+      "name": "staged-local-links",
+      "gateStatus": "PASS",
+      "localTargets": 422,
+      "externalRequests": 0
+    },
+    {
+      "name": "commit-guard",
+      "gateStatus": "PASS"
+    },
+    {
+      "name": "sync-check",
+      "gateStatus": "PASS",
+      "errors": 0,
+      "warnings": 0,
+      "informational": 5
+    },
+    {
+      "name": "sanitized-audit-scan",
+      "gateStatus": "PASS",
+      "candidateSecretMatches": 0
+    },
+    {
+      "name": "staged-diff-whitespace",
+      "gateStatus": "PASS"
+    }
+  ]
+}

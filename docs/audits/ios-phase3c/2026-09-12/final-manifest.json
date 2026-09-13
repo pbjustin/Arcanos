@@ -1,0 +1,117 @@
+{
+  "schema": "arcanos-phase3c-final-overlay/v1",
+  "capturedAt": "2026-09-12T01:51:10.636471+00:00",
+  "baseline": "4f3652ed4397e8b7de8891696ea6160d4cd51af2",
+  "branch": "codex/ios-phase3c-validation",
+  "gitStatus": [
+    " M backend-index.json",
+    " M cli-agent-index.json",
+    " M clients/ios/ArcanosKit/Package.swift",
+    " M clients/ios/ArcanosVoice/ArcanosVoice.xcodeproj/project.pbxproj",
+    " M clients/ios/ArcanosVoice/Sources/AppRuntime.swift",
+    " M clients/ios/ArcanosVoice/Sources/ArcanosIntents.swift",
+    " M clients/ios/ArcanosVoice/Sources/SettingsView.swift",
+    " M clients/ios/ArcanosVoice/Sources/VoiceSnippet.swift",
+    " M clients/ios/README.md",
+    " M docs/BACKEND_INDEX.md",
+    " M docs/CLI_AGENT_INDEX.md",
+    "?? clients/ios/ArcanosKit/Sources/ArcanosHardwareValidation/HardwareFixtureTransport.swift",
+    "?? clients/ios/ArcanosKit/Tests/ArcanosHardwareValidationTests/HardwareFixtureTests.swift",
+    "?? clients/ios/ArcanosVoice/ArcanosVoice.xcodeproj/xcshareddata/xcschemes/ArcanosVoice-HardwareValidation.xcscheme",
+    "?? clients/ios/ArcanosVoice/Sources/HardwareValidationRuntime.swift",
+    "?? clients/ios/ArcanosVoice/Sources/HardwareValidationView.swift",
+    "?? clients/ios/PHASE3C_DEVICE_RUNBOOK.md",
+    "?? clients/ios/scripts/run-phase3c-apple-validation.py",
+    "?? clients/ios/scripts/run-phase3c-portable-validation.py",
+    "?? clients/ios/scripts/test_hardware_configuration.py",
+    "?? clients/ios/scripts/validate-hardware-configuration.py",
+    "?? docs/audits/ios-phase3c/2026-09-12/README.md",
+    "?? docs/audits/ios-phase3c/2026-09-12/apple-preflight.json",
+    "?? docs/audits/ios-phase3c/2026-09-12/configuration-validation/summary.json",
+    "?? docs/audits/ios-phase3c/2026-09-12/final-manifest.json",
+    "?? docs/audits/ios-phase3c/2026-09-12/portable-baseline/baseline-provenance.json",
+    "?? docs/audits/ios-phase3c/2026-09-12/portable-baseline/core-proof.json",
+    "?? docs/audits/ios-phase3c/2026-09-12/portable-baseline/sanitization.json",
+    "?? docs/audits/ios-phase3c/2026-09-12/portable-baseline/shipping-proof.json",
+    "?? docs/audits/ios-phase3c/2026-09-12/portable-baseline/summary.json",
+    "?? docs/audits/ios-phase3c/2026-09-12/portable-final-2/sanitization.json",
+    "?? docs/audits/ios-phase3c/2026-09-12/portable-final-2/summary.json",
+    "?? docs/audits/ios-phase3c/2026-09-12/portable-final-followup/summary.json",
+    "?? docs/audits/ios-phase3c/2026-09-12/portable-final/summary.json"
+  ],
+  "stagedPaths": [],
+  "filesSHA256": {
+    "backend-index.json": "2d4209e5f90b99d9b22ed78d9ef256532d8c47d8f57a90389bd6bc1b7c08ad42",
+    "cli-agent-index.json": "73e254daf7c2386389187ec4a28f896d8251e40bcf5cacb440f04b45096aa691",
+    "clients/ios/ArcanosKit/Package.swift": "c7f79eb4f297d840ff875eb97895330902a8ac049f85aa79902a59bc9b89a52c",
+    "clients/ios/ArcanosKit/Sources/ArcanosHardwareValidation/HardwareFixtureTransport.swift": "af6eeeafde989fcf411789496c2bb49dd9c0103a711a81ced8e4defab0df52f6",
+    "clients/ios/ArcanosKit/Tests/ArcanosHardwareValidationTests/HardwareFixtureTests.swift": "0a4a47e76e6f0c961c8d7e5384ecf4640f58467f97b45352d05654ef817026be",
+    "clients/ios/ArcanosVoice/ArcanosVoice.xcodeproj/project.pbxproj": "6881d5f6c2179460c43d8d396823c9036d8c85d2b1470b06d9b8bd8378b10b02",
+    "clients/ios/ArcanosVoice/ArcanosVoice.xcodeproj/xcshareddata/xcschemes/ArcanosVoice-HardwareValidation.xcscheme": "241e82165787cc97a4db9f102f8b625d90142acfc89639afbe6385f435866c68",
+    "clients/ios/ArcanosVoice/Sources/AppRuntime.swift": "839f801fb5b4a0d9972809c317ec53e055c2b52379ee3e9bc6f7dbad6bd3178c",
+    "clients/ios/ArcanosVoice/Sources/ArcanosIntents.swift": "23f1db27204839e3e4bc372097b1a4c313d12ac5b130b3c2b582090d2b3ee507",
+    "clients/ios/ArcanosVoice/Sources/HardwareValidationRuntime.swift": "0723b967e6e87fa8e3dc0335273b977b2429dd5eca70f59e0ebe7530287ca5c1",
+    "clients/ios/ArcanosVoice/Sources/HardwareValidationView.swift": "ed7679b0cee893bf38c4aa0e39b83c0cbedca1a296c34d3b664760da87113333",
+    "clients/ios/ArcanosVoice/Sources/SettingsView.swift": "ef1fcee40ba6bbb679ffa179a13b1754eecd4f8a5441b784171f3a8001e7ab22",
+    "clients/ios/ArcanosVoice/Sources/VoiceSnippet.swift": "90c3b2cd2907915283aea6ff3fedcfe033321afe3cb166f61a583b9c89827108",
+    "clients/ios/PHASE3C_DEVICE_RUNBOOK.md": "20499eae9ca86d9d9ab59014988d803f7f0d624c05e4c8c48977ce1bd17a4b6f",
+    "clients/ios/README.md": "24b28b6a90c7e3be40070d3051d4bb24a5844496fb7d4310a1c8f9ab2f68d656",
+    "clients/ios/scripts/run-phase3c-apple-validation.py": "1dc62fbdc8f5b48afcf63f6c24fbfe973280801aec5afcd5e6df5d00e5064166",
+    "clients/ios/scripts/run-phase3c-portable-validation.py": "cf2b3c49e3353656f8e9eb43a3c05dd3764be392c9a743e1c30fb73004dad90b",
+    "clients/ios/scripts/test_hardware_configuration.py": "46a6729e892522f48bab8fa5cbfef60d77fbfbae10b6b48d9ecc9a00c3abb710",
+    "clients/ios/scripts/validate-hardware-configuration.py": "b4e711942e5d29311756ba38292fe82140b025ba390bd1410aba2513db9716d6",
+    "docs/BACKEND_INDEX.md": "c7e0cf8b40c1d43db854d4a32e0c0578956a6bc01bf338f7f7916f70ae7a5ae2",
+    "docs/CLI_AGENT_INDEX.md": "7c11e2acd5824d3843ef1f0edb76790588007a1d3ed194fbab9c8dbcafd82f3b"
+  },
+  "pythonSyntax": "PASS",
+  "newDocumentationLocalTargets": "PASS",
+  "checkedLocalLinks": [
+    {
+      "document": "clients/ios/PHASE3C_DEVICE_RUNBOOK.md",
+      "target": "README.md"
+    },
+    {
+      "document": "clients/ios/PHASE3C_DEVICE_RUNBOOK.md",
+      "target": "PHASE3B_ENGINEERING_REPORT.md"
+    },
+    {
+      "document": "docs/audits/ios-phase3c/2026-09-12/README.md",
+      "target": "../../../../clients/ios/PHASE3C_DEVICE_RUNBOOK.md"
+    },
+    {
+      "document": "docs/audits/ios-phase3c/2026-09-12/README.md",
+      "target": "portable-baseline/baseline-provenance.json"
+    },
+    {
+      "document": "docs/audits/ios-phase3c/2026-09-12/README.md",
+      "target": "portable-baseline/summary.json"
+    },
+    {
+      "document": "docs/audits/ios-phase3c/2026-09-12/README.md",
+      "target": "portable-final-2/summary.json"
+    },
+    {
+      "document": "docs/audits/ios-phase3c/2026-09-12/README.md",
+      "target": "portable-final-followup/summary.json"
+    },
+    {
+      "document": "docs/audits/ios-phase3c/2026-09-12/README.md",
+      "target": "configuration-validation/summary.json"
+    },
+    {
+      "document": "docs/audits/ios-phase3c/2026-09-12/README.md",
+      "target": "apple-preflight.json"
+    },
+    {
+      "document": "docs/audits/ios-phase3c/2026-09-12/README.md",
+      "target": "portable-final/summary.json"
+    },
+    {
+      "document": "docs/audits/ios-phase3c/2026-09-12/README.md",
+      "target": "final-manifest.json"
+    }
+  ],
+  "preservedShippingCoreDiff": "",
+  "scope": "Sanitized final uncommitted source/documentation overlay; no Apple build/device/live-service result implied",
+  "sanitizedAuditCredentialValueScan": "PASS"
+}

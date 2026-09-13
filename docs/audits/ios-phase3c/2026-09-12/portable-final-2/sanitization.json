@@ -1,0 +1,6 @@
+{
+  "scope": "Synthetic credential strings printed as Swift Testing parameter values redacted from retained logs; no real credentials used",
+  "redactions": {
+    "swift-tests.log": 3
+  }
+}
