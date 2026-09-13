@@ -280,8 +280,12 @@ describe('required durable Swift device E2E CI coverage', () => {
   });
 
   it('builds the real Swift executable before resolving its path and fails on errors', () => {
+    const packageBuild = job.steps.find(value => value.run === 'npm run build:packages');
+    expect(packageBuild).toBeDefined();
+    expect(packageBuild.if).toBeUndefined();
+    expect(packageBuild['continue-on-error']).toBeUndefined();
+    expect(job.steps.indexOf(packageBuild)).toBeLessThan(job.steps.indexOf(step));
     expect(step.run).toContain('set -euo pipefail');
-    expect(step.run).toContain('npm run build:packages');
     expect(step.run).toContain('swift --version');
     const build = 'swift build --package-path clients/ios/ArcanosKit --product ArcanosDeviceE2E';
     const locate = 'swift build --package-path clients/ios/ArcanosKit --show-bin-path';

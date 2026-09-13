@@ -76,6 +76,34 @@ describe('Backstage Notion hierarchy RAG core', () => {
     expect(parsed.sanitizedMarkdown).not.toContain('secure.notion-static.com');
   });
 
+  it('distinguishes structural page tags from mention-page references and ordinary links', () => {
+    const parsed = parseBackstageNotionPageMarkdown([
+      `<mention-page url="notion://${childPageId}">Mentioned member</mention-page>`,
+      `[Linked member](https://www.notion.so/${childPageId.replaceAll('-', '')})`,
+      `<mention-page url="notion://${rootPageId}">Self mention</mention-page>`,
+      `<page url="notion://${nestedPageId}">Actual child</page>`,
+    ].join('\n'));
+
+    expect(parsed.childPages).toEqual([{ pageId: nestedPageId, title: 'Actual child' }]);
+    expect(parsed.childPageTagCount).toBe(1);
+    expect(parsed.invalidChildPageTagCount).toBe(0);
+    expect(parsed.sanitizedMarkdown).not.toContain(childPageId);
+    expect(parsed.sanitizedMarkdown).not.toContain(rootPageId);
+    expect(parsed.sanitizedMarkdown).not.toContain('notion://');
+  });
+
+  it.each([
+    `id="invalid" url="notion://${childPageId}"`,
+    `id="${childPageId}" url="notion://invalid"`,
+    `id="${childPageId}" url="notion://${nestedPageId}"`,
+    'url="notion://invalid"',
+  ])('rejects malformed or conflicting structural page attributes: %s', attributes => {
+    const parsed = parseBackstageNotionPageMarkdown(`<page ${attributes}>Child</page>`);
+    expect(parsed.childPages).toEqual([]);
+    expect(parsed.childPageTagCount).toBe(1);
+    expect(parsed.invalidChildPageTagCount).toBe(1);
+  });
+
   it('categorizes kayfabe and major WWE content families deterministically', () => {
     expect(categorizeBackstageNotionRagContent({
       title: 'Kayfabe rules',

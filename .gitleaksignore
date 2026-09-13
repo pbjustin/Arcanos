@@ -6,3 +6,36 @@ db4d8428b19e41bca572397d707e8cd461e31c3c:clients/ios/ArcanosKit/Sources/ArcanosK
 978ffacc324353d8aa4f9c1b8300dc5f25de37f5:tests/integration/ios-device-gateway.e2e.integration.test.ts:generic-api-key:37
 # Swift idempotency-key emptiness/byte-length validation; no credential literal.
 328fcc2f0b824a17e5bf2935220d3ff03bd78ae4:clients/ios/ArcanosKit/Sources/ArcanosKit/Runtime/OperationTracker.swift:generic-api-key:46
+# Phase 3C audit source-manifest SHA-256 digests, verified against the published Swift files with Windows CRLF; no credentials.
+53b984fafd3b513c1e5abce53b1e565a6f623a2c:docs/audits/ios-phase3c/2026-09-12/apple-preflight.json:generic-api-key:212
+53b984fafd3b513c1e5abce53b1e565a6f623a2c:docs/audits/ios-phase3c/2026-09-12/apple-preflight.json:generic-api-key:222
+53b984fafd3b513c1e5abce53b1e565a6f623a2c:docs/audits/ios-phase3c/2026-09-12/apple-preflight.json:generic-api-key:68
+53b984fafd3b513c1e5abce53b1e565a6f623a2c:docs/audits/ios-phase3c/2026-09-12/apple-preflight.json:generic-api-key:78
+53b984fafd3b513c1e5abce53b1e565a6f623a2c:docs/audits/ios-phase3c/2026-09-12/configuration-validation/summary.json:generic-api-key:53
+53b984fafd3b513c1e5abce53b1e565a6f623a2c:docs/audits/ios-phase3c/2026-09-12/configuration-validation/summary.json:generic-api-key:63
+53b984fafd3b513c1e5abce53b1e565a6f623a2c:docs/audits/ios-phase3c/2026-09-12/no-mac-portable/summary.json:generic-api-key:31
+53b984fafd3b513c1e5abce53b1e565a6f623a2c:docs/audits/ios-phase3c/2026-09-12/no-mac-portable/summary.json:generic-api-key:348
+53b984fafd3b513c1e5abce53b1e565a6f623a2c:docs/audits/ios-phase3c/2026-09-12/no-mac-portable/summary.json:generic-api-key:358
+53b984fafd3b513c1e5abce53b1e565a6f623a2c:docs/audits/ios-phase3c/2026-09-12/no-mac-portable/summary.json:generic-api-key:41
+53b984fafd3b513c1e5abce53b1e565a6f623a2c:docs/audits/ios-phase3c/2026-09-12/no-mac/apple-preflight.json:generic-api-key:241
+53b984fafd3b513c1e5abce53b1e565a6f623a2c:docs/audits/ios-phase3c/2026-09-12/no-mac/apple-preflight.json:generic-api-key:251
+53b984fafd3b513c1e5abce53b1e565a6f623a2c:docs/audits/ios-phase3c/2026-09-12/no-mac/apple-preflight.json:generic-api-key:68
+53b984fafd3b513c1e5abce53b1e565a6f623a2c:docs/audits/ios-phase3c/2026-09-12/no-mac/apple-preflight.json:generic-api-key:78
+53b984fafd3b513c1e5abce53b1e565a6f623a2c:docs/audits/ios-phase3c/2026-09-12/physical-recheck/apple-preflight.json:generic-api-key:212
+53b984fafd3b513c1e5abce53b1e565a6f623a2c:docs/audits/ios-phase3c/2026-09-12/physical-recheck/apple-preflight.json:generic-api-key:222
+53b984fafd3b513c1e5abce53b1e565a6f623a2c:docs/audits/ios-phase3c/2026-09-12/physical-recheck/apple-preflight.json:generic-api-key:68
+53b984fafd3b513c1e5abce53b1e565a6f623a2c:docs/audits/ios-phase3c/2026-09-12/physical-recheck/apple-preflight.json:generic-api-key:78
+53b984fafd3b513c1e5abce53b1e565a6f623a2c:docs/audits/ios-phase3c/2026-09-12/portable-baseline/summary.json:generic-api-key:244
+53b984fafd3b513c1e5abce53b1e565a6f623a2c:docs/audits/ios-phase3c/2026-09-12/portable-baseline/summary.json:generic-api-key:254
+53b984fafd3b513c1e5abce53b1e565a6f623a2c:docs/audits/ios-phase3c/2026-09-12/portable-baseline/summary.json:generic-api-key:29
+53b984fafd3b513c1e5abce53b1e565a6f623a2c:docs/audits/ios-phase3c/2026-09-12/portable-baseline/summary.json:generic-api-key:39
+53b984fafd3b513c1e5abce53b1e565a6f623a2c:docs/audits/ios-phase3c/2026-09-12/portable-final-2/summary.json:generic-api-key:297
+53b984fafd3b513c1e5abce53b1e565a6f623a2c:docs/audits/ios-phase3c/2026-09-12/portable-final-2/summary.json:generic-api-key:307
+53b984fafd3b513c1e5abce53b1e565a6f623a2c:docs/audits/ios-phase3c/2026-09-12/portable-final-2/summary.json:generic-api-key:31
+53b984fafd3b513c1e5abce53b1e565a6f623a2c:docs/audits/ios-phase3c/2026-09-12/portable-final-2/summary.json:generic-api-key:41
+53b984fafd3b513c1e5abce53b1e565a6f623a2c:docs/audits/ios-phase3c/2026-09-12/portable-final-followup/summary.json:generic-api-key:167
+53b984fafd3b513c1e5abce53b1e565a6f623a2c:docs/audits/ios-phase3c/2026-09-12/portable-final-followup/summary.json:generic-api-key:177
+53b984fafd3b513c1e5abce53b1e565a6f623a2c:docs/audits/ios-phase3c/2026-09-12/portable-final-followup/summary.json:generic-api-key:21
+53b984fafd3b513c1e5abce53b1e565a6f623a2c:docs/audits/ios-phase3c/2026-09-12/portable-final-followup/summary.json:generic-api-key:31
+53b984fafd3b513c1e5abce53b1e565a6f623a2c:docs/audits/ios-phase3c/2026-09-12/portable-final/summary.json:generic-api-key:31
+53b984fafd3b513c1e5abce53b1e565a6f623a2c:docs/audits/ios-phase3c/2026-09-12/portable-final/summary.json:generic-api-key:41

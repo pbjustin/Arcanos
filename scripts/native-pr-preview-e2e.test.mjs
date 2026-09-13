@@ -261,6 +261,10 @@ function responseHeadersForCase(
                   .proofHeaders.notionDatabaseAuthorityVersion]:
                   NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration
                     .notionDatabaseAuthorityProofVersion,
+                [NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration
+                  .proofHeaders.notionParentCompatibilityVersion]:
+                  NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration
+                    .notionParentCompatibilityProofVersion,
               }
             : {}),
           ...(requestCase.fixtureName === 'partitionFailureTelemetry'
@@ -2350,6 +2354,7 @@ test('executes the bounded credential-free matrix and detects identity stability
       httpStatus: 200,
       method: 'POST',
       notionDatabaseAuthorityVerified: true,
+      notionParentCompatibilityVerified: true,
       notionReadDiagnosticsVerified: true,
       partitionCutoverRepairVerified: true,
       partitionedAuthorityVerified: true,
@@ -3362,6 +3367,28 @@ test('rejects missing synthetic provenance and correlation or security header dr
           NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration.proofHeaders
             .notionDatabaseAuthorityVersion
         ] = 'backstage-notion-database-authority/drifted';
+      },
+    },
+    {
+      caseId: 'backstage-generation-notion-authority-rag',
+      code:
+        'NATIVE_PR_PREVIEW_BACKSTAGE_NOTION_PARENT_COMPATIBILITY_PROOF_INVALID',
+      mutate(headers) {
+        delete headers[
+          NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration.proofHeaders
+            .notionParentCompatibilityVersion
+        ];
+      },
+    },
+    {
+      caseId: 'backstage-generation-notion-authority-rag',
+      code:
+        'NATIVE_PR_PREVIEW_BACKSTAGE_NOTION_PARENT_COMPATIBILITY_PROOF_INVALID',
+      mutate(headers) {
+        headers[
+          NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration.proofHeaders
+            .notionParentCompatibilityVersion
+        ] = 'backstage-notion-parent-compatibility/drifted';
       },
     },
     {

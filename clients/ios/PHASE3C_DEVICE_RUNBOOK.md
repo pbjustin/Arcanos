@@ -80,11 +80,13 @@ python3 -B clients/ios/scripts/run-phase3c-apple-validation.py \
 ```
 
 On a Mac, add `--build` and choose a fresh output directory. It runs Apple Swift
-package tests, builds unsigned Simulator Debug/Release/HardwareValidation, and
-checks the built bundles for fixture exclusion. It does not install or launch
+package tests, builds unsigned Simulator Debug/Release and locally ad-hoc signed
+HardwareValidation, and checks the built bundles for fixture exclusion. The local
+Simulator signature supplies system Keychain entitlements without an Apple
+signing identity or provisioning profile. It does not install or launch
 the app; level B still requires the runtime procedure below. A Windows run
 records A/B as BLOCKED. Logs and build products are retained locally; no cleanup,
-signing change, remote workflow or backend request is performed.
+Apple signing configuration change, remote workflow or backend request is performed.
 
 Use the existing isolated checkout. Do not reset, clean, stash or overwrite
 another checkout. On the operator's Mac, from repository root:
@@ -121,7 +123,7 @@ Baseline project facts to recheck after applying the tooling overlay:
 | Platforms | iPhone, `iphoneos` and `iphonesimulator`; Mac Catalyst disabled |
 | Local package | `../ArcanosKit`; no third-party package dependency |
 | Signing | Automatic; no checked-in development Team; shipping bundle ID `org.arcanos.voice` |
-| Resources | Generated Info.plist and bundled `PrivacyInfo.xcprivacy` |
+| Resources | Generated Info.plist (HardwareValidation merges its revision template) and bundled `PrivacyInfo.xcprivacy` |
 | Entitlements | No custom entitlements file, App Group, shared Keychain group, push entitlement or background mode declared |
 | Intents | Five App Intents are compiled into the app target; no separate extension target |
 | Existing protection | Intents require local device authentication; Keychain is unlocked-only, device-only, nonsynchronizing |

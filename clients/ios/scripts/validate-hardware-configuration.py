@@ -14,6 +14,7 @@ import xml.etree.ElementTree as ET
 FLAG = "ARCANOS_HARDWARE_VALIDATION"
 HARDWARE_FILES = {"HardwareValidationRuntime.swift", "HardwareValidationView.swift", "HardwareFixtureTransport.swift", "SimulatorRecoveryDriver.swift"}
 BUNDLE = "org.arcanos.voice.hardware-validation"
+HARDWARE_INFO_PLIST = "HardwareValidation-Info.plist"
 MARKERS = (b"arcanos-hardware-fixture.invalid", b"org.arcanos.voice.hardware-validation.credentials.v1")
 UNSAFE = ("NSAllowsArbitraryLoads", "NSExceptionAllowsInsecureHTTPLoads", "NSAllowsLocalNetworking",
           "NSAllowsArbitraryLoadsInWebContent", "NSAllowsArbitraryLoadsForMedia", "NSExceptionDomains",
@@ -179,6 +180,13 @@ def validate_sources(ios):
         require(FLAG not in str(settings.get("OTHER_SWIFT_FLAGS", "")), "Hardware flag supplied outside reviewed compilation conditions")
         require(not settings.get("CODE_SIGN_ENTITLEMENTS"), "New entitlement file requires separate review")
         require(settings["PRODUCT_BUNDLE_IDENTIFIER"] == (BUNDLE if hardware else "org.arcanos.voice"), "Bundle isolation changed")
+        # Xcode ignores arbitrary user-defined INFOPLIST_KEY_* settings. Merge
+        # the reviewed template instead; never copy it as an app resource.
+        require(settings.get("GENERATE_INFOPLIST_FILE") == "YES", "Generated Info.plist merge disabled")
+        require(settings.get("INFOPLIST_FILE") == HARDWARE_INFO_PLIST if hardware
+                else not settings.get("INFOPLIST_FILE"), "Validation Info.plist input missing or leaked")
+        require(not any(key.startswith(("INFOPLIST_FILE[", "INFOPLIST_KEY_ArcanosValidationRevision"))
+                        for key in settings), "Revision must use the reviewed Info.plist template")
         require((not HARDWARE_FILES.intersection(excluded)) if hardware else HARDWARE_FILES <= excluded,
                 "Hardware source exclusion changed")
         require(("ValidationAssets.xcassets" not in excluded) if hardware else "ValidationAssets.xcassets" in excluded,
@@ -198,6 +206,12 @@ def validate_sources(ios):
                  if phase["isa"] == "PBXResourcesBuildPhase" for key in phase["files"]]
     require("PrivacyInfo.xcprivacy" in resources, "Privacy manifest not packaged")
     require("ValidationAssets.xcassets" in resources, "Validation icon catalog missing from target")
+    require(not any(Path(path).name == HARDWARE_INFO_PLIST for path in resources),
+            "Validation Info.plist template must not be copied as a resource")
+    info_template = ios / "ArcanosVoice" / HARDWARE_INFO_PLIST
+    require(info_template.is_file(), "Validation Info.plist template missing")
+    require(plistlib.loads(info_template.read_bytes()) == {"ArcanosValidationRevision": "$(ARCANOS_VALIDATION_REVISION)"},
+            "Validation revision template must bind the exact build revision")
     require([objects[key]["productName"] for key in target["packageProductDependencies"]] == ["ArcanosKit"], "App package dependency changed")
     for scheme_name, launch in (("ArcanosVoice", "Debug"), ("ArcanosVoice-HardwareValidation", "HardwareValidation")):
         scheme = ET.parse(project_dir / f"xcshareddata/xcschemes/{scheme_name}.xcscheme").getroot()

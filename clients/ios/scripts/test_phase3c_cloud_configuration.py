@@ -32,9 +32,21 @@ class CloudConfigurationTests(unittest.TestCase):
         self.assertNotIn("cloud-apple/**", source)
         self.assertNotIn("cloud-simulator/**", source)
 
+    def test_only_fixture_simulator_uses_secretless_ad_hoc_signing(self):
+        self.assertEqual(APPLE.simulator_signing_settings("HardwareValidation"),
+                         ["CODE_SIGNING_ALLOWED=YES", "CODE_SIGN_IDENTITY=-", "DEVELOPMENT_TEAM="])
+        for configuration in ("Debug", "Release"):
+            self.assertEqual(APPLE.simulator_signing_settings(configuration), ["CODE_SIGNING_ALLOWED=NO"])
+        with self.assertRaises(ValueError):
+            APPLE.simulator_signing_settings("Distribution")
+        source = (ROOT / "clients/ios/scripts/run-phase3c-apple-validation.py").read_text()
+        self.assertNotIn("-allowProvisioningUpdates", source)
+        self.assertNotIn("-allowProvisioningDeviceRegistration", source)
+
     def test_manifest_covers_distribution_and_app_resources(self):
         manifest = APPLE.source_manifest(ROOT)
         self.assertIn(".github/workflows/ios-phase3c.yml", manifest)
+        self.assertIn("clients/ios/ArcanosVoice/HardwareValidation-Info.plist", manifest)
         self.assertIn("clients/ios/ArcanosVoice/Resources/ValidationAssets.xcassets/ValidationAppIcon.appiconset/ValidationAppIcon.png", manifest)
 
 

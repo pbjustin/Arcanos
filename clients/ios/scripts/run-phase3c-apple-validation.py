@@ -36,12 +36,22 @@ def verify_toolchain(xcode_output, sdk_output, expected_xcode=None, expected_sdk
                 raise ValueError("Required iOS and Simulator SDK versions are unavailable")
 
 
+def simulator_signing_settings(configuration):
+    # Runtime Keychain requires Xcode's normal Simulator entitlement injection.
+    # '-' uses a local ad-hoc signature, not an Apple identity or device profile.
+    if configuration == "HardwareValidation":
+        return ["CODE_SIGNING_ALLOWED=YES", "CODE_SIGN_IDENTITY=-", "DEVELOPMENT_TEAM="]
+    if configuration in ("Debug", "Release"):
+        return ["CODE_SIGNING_ALLOWED=NO"]
+    raise ValueError("Unsupported Simulator build configuration")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", type=Path, required=True,
                         help="New local evidence directory; logs and DerivedData are retained, never cleaned automatically")
     parser.add_argument("--build", action="store_true",
-                        help="Build unsigned Debug, Release and HardwareValidation for generic iOS Simulator; no app execution")
+                        help="Build Debug/Release unsigned and HardwareValidation with local ad-hoc Simulator signing; no app execution")
     parser.add_argument("--require-xcode-version", help="Exact Xcode version; cloud workflow deliberately pins this")
     parser.add_argument("--require-ios-sdk", help="Exact iOS/Simulator SDK version; never substitutes an older SDK")
     args = parser.parse_args()
@@ -167,7 +177,7 @@ def main():
         command = ["xcodebuild", "-project", project, "-scheme", scheme, "-configuration", configuration,
                    "-sdk", "iphonesimulator", "-destination", "generic/platform=iOS Simulator",
                    "-derivedDataPath", str(derived), "-skipPackageUpdates", "-disableAutomaticPackageResolution",
-                   "CODE_SIGNING_ALLOWED=NO", "ARCANOS_VALIDATION_REVISION=" + report["sourceSha"], "build"]
+                   *simulator_signing_settings(configuration), "ARCANOS_VALIDATION_REVISION=" + report["sourceSha"], "build"]
         code, _ = execute("build-" + configuration, command, timeout=900)
         if code != 0:
             report["evidenceLevels"]["A"] = {"status": "FAIL", "dependency": "Build failed or timed out: " + configuration}
@@ -184,7 +194,7 @@ def main():
         report["evidenceLevels"]["A"] = {"status": "FAIL", "dependency": "Source changed during builds"}
         save()
         return 1
-    report["evidenceLevels"]["A"] = {"status": "PASS", "scope": "Unsigned Simulator SDK builds and packaging for Debug/Release/HardwareValidation only"}
+    report["evidenceLevels"]["A"] = {"status": "PASS", "scope": "Simulator SDK builds and packaging; Debug/Release unsigned, HardwareValidation locally ad-hoc signed; no Apple identity or device signing"}
     save()
     return 0
 

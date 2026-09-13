@@ -22,12 +22,13 @@ def matrix(revision, apple=None, simulator=None, signing=None):
         levels[key] = {"status": "BLOCKED", "scope": scope, "dependency": "Operator observations on an authorized installed iPhone required"}
 
     if apple:
-        expected = {"apple-swift-package-tests", "project-inventory", "local-package-resolution"}
+        expected = {"revision", "working-tree", "apple-swift-package-tests", "project-inventory", "local-package-resolution"}
         expected |= {f"{step}-{config}" for step in ("build", "packaging") for config in ("Debug", "Release", "HardwareValidation")}
         successful = {check.get("name") for check in apple.get("checks", [])
                       if check.get("status") == "PASS" and check.get("exitCode") == 0}
         status = apple.get("evidenceLevels", {}).get("A", {}).get("status", "FAIL")
-        if status == "PASS" and not (apple.get("sourceSha") == revision and apple.get("sourceUnchangedDuringCheck") is True
+        if status == "PASS" and not (apple.get("sourceSha") == revision and apple.get("uncommittedChanges") == []
+                                     and apple.get("sourceUnchangedDuringCheck") is True
                                      and expected <= successful):
             status = "FAIL"
         if status not in {"PASS", "FAIL", "BLOCKED", "NOT RUN"}:

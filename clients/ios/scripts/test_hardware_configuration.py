@@ -55,7 +55,13 @@ demo()
         cases = (("Release", "SWIFT_ACTIVE_COMPILATION_CONDITIONS", VALIDATOR.FLAG),
                  ("Debug", "EXCLUDED_SOURCE_FILE_NAMES", ""),
                  ("HardwareValidation", "PRODUCT_BUNDLE_IDENTIFIER", "org.arcanos.voice"),
-                 ("HardwareValidation", "IPHONEOS_DEPLOYMENT_TARGET", "26.0"))
+                 ("HardwareValidation", "IPHONEOS_DEPLOYMENT_TARGET", "26.0"),
+                 ("HardwareValidation", "INFOPLIST_FILE", ""),
+                 ("HardwareValidation", "INFOPLIST_FILE", "Other-Info.plist"),
+                 ("HardwareValidation", "INFOPLIST_FILE[sdk=iphonesimulator*]", "Other-Info.plist"),
+                 ("HardwareValidation", "GENERATE_INFOPLIST_FILE", "NO"),
+                 ("HardwareValidation", "INFOPLIST_KEY_ArcanosValidationRevision", "$(ARCANOS_VALIDATION_REVISION)"),
+                 ("Release", "INFOPLIST_FILE", VALIDATOR.HARDWARE_INFO_PLIST))
         for name, key, value in cases:
             project = VALIDATOR.parse_project(source)
             for obj in project["objects"].values():
@@ -64,6 +70,42 @@ demo()
             with self.subTest(name=name, setting=key), patch.object(VALIDATOR, "parse_project", return_value=project):
                 with self.assertRaises(ValueError):
                     VALIDATOR.validate_sources(ios)
+
+    def test_revision_template_must_exist(self):
+        ios = Path(__file__).resolve().parents[1]
+        original_is_file = Path.is_file
+
+        def missing_template(path):
+            return False if path.name == VALIDATOR.HARDWARE_INFO_PLIST else original_is_file(path)
+
+        with patch.object(Path, "is_file", missing_template), self.assertRaisesRegex(ValueError, "template missing"):
+            VALIDATOR.validate_sources(ios)
+
+    def test_revision_template_requires_exact_build_setting_binding(self):
+        ios = Path(__file__).resolve().parents[1]
+        original_read = Path.read_bytes
+        for values in ({}, {"ArcanosValidationRevision": "UNRECORDED"},
+                       {"ArcanosValidationRevision": "$(OTHER_REVISION)"},
+                       {"ArcanosValidationRevision": "$(ARCANOS_VALIDATION_REVISION)", "OtherKey": "unexpected"}):
+            def mutated_read(path):
+                return plistlib.dumps(values) if path.name == VALIDATOR.HARDWARE_INFO_PLIST else original_read(path)
+
+            with self.subTest(values=values), patch.object(Path, "read_bytes", mutated_read):
+                with self.assertRaisesRegex(ValueError, "exact build revision"):
+                    VALIDATOR.validate_sources(ios)
+
+    def test_revision_template_must_not_be_copied_as_a_resource(self):
+        ios = Path(__file__).resolve().parents[1]
+        source = (ios / "ArcanosVoice/ArcanosVoice.xcodeproj/project.pbxproj").read_text(encoding="utf-8")
+        project = VALIDATOR.parse_project(source)
+        project["objects"]["templateFile"] = {"path": VALIDATOR.HARDWARE_INFO_PLIST}
+        project["objects"]["templateBuildFile"] = {"fileRef": "templateFile"}
+        for obj in project["objects"].values():
+            if obj.get("isa") == "PBXResourcesBuildPhase":
+                obj["files"].append("templateBuildFile")
+        with patch.object(VALIDATOR, "parse_project", return_value=project):
+            with self.assertRaisesRegex(ValueError, "copied as a resource"):
+                VALIDATOR.validate_sources(ios)
 
     def test_source_macro_leak_fails_against_actual_selected_branch(self):
         ios = Path(__file__).resolve().parents[1]

@@ -604,6 +604,16 @@ discard the candidate. A directly configured data-source/view ID is not
 silently re-scoped. The synthetic database container does not count toward
 `initialMinimumPageCount`.
 
+Database query membership is independent of structural containment. Wiki
+inventory can include both a page and that page's nested children. The worker
+loads member metadata once, seeds only provider-confirmed database/data-source
+children, and reaches nested members through their parent's Markdown child-page
+edges. Every queried member must be captured exactly once, with complete provider
+titles and separately retained source membership. Missing containment, cycles,
+conflicting parents, and metadata or membership drift prevent activation.
+Ordinary links and `<mention-page>` references do not expand authority scope;
+`<page>` child edges must agree with the target's provider parent metadata.
+
 The monolithic reader and writer ceilings are both fixed at 4,096 chunks. The
 writer-to-reader invariant is asserted in executable code. Counts from 1 through
 4,096 are eligible for complete candidate construction; 4,097 or more fails

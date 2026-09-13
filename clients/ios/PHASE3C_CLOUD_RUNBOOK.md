@@ -92,6 +92,17 @@ packaged metadata. The existing [iOS Client workflow](../../.github/workflows/io
 retains its separate process/loopback synthetic recovery proofs. Read individual
 results rather than treating an overall workflow badge as all evidence levels.
 
+HardwareValidation merges `HardwareValidation-Info.plist` into the generated
+Info.plist to embed `ARCANOS_VALIDATION_REVISION`; a custom `INFOPLIST_KEY_*`
+setting alone did not package that revision. Debug/Release build unsigned.
+HardwareValidation uses local ad-hoc Simulator signing (`CODE_SIGN_IDENTITY=-`,
+empty development team) so Xcode supplies the entitlements required by system
+Keychain. This uses no Apple signing identity or provisioning profile.
+
+The cloud A/B/C matrix accepts exact-commit success only after successful Git
+revision/status checks and an explicitly clean source tree. Local builds with
+uncommitted changes retain their manifests as separate scoped evidence.
+
 The Simulator procedure installs and launches only HardwareValidation. Its
 automated app entry uses the same session, router, file persistence and recovery
 composition. It coordinates acceptance, app-process termination, a new app
@@ -103,7 +114,7 @@ remain physical tests.
 
 Review sanitized JSON evidence and bounded build/test diagnostics. Record a
 missing runtime as **BLOCKED**, an attempted build/runtime assertion violation
-as **FAIL**, and any unattempted later stage as **NOT RUN**. An unsigned
+as **FAIL**, and any unattempted later stage as **NOT RUN**. A locally signed
 Simulator app cannot be installed on an iPhone or distributed through TestFlight.
 Use `cloud-summary.json` for the expanded A-K cloud/device matrix. The older
 `cloud-apple/report.json` retains the device runbook's A-G schema, while
@@ -366,7 +377,7 @@ not an Apple execution result.
 | Level | Evidence required |
 | --- | --- |
 | A | Cloud Xcode/iOS compilation, package tests, metadata and source checks |
-| B | Actual cloud Simulator-target build; unsigned build evidence only |
+| B | Actual cloud Simulator-target build; HardwareValidation uses local ad-hoc signing, with no device signing evidence |
 | C | Installed Simulator app execution and named fixture lifecycle proof |
 | D | Real signed archive/export validation for the exact fixture identity |
 | E | Explicitly authorized Apple upload receipt; record processing/tester availability separately |
