@@ -23,6 +23,8 @@ import {
   BACKSTAGE_NOTION_MAX_WRITABLE_CHUNKS_PER_SNAPSHOT,
   acquireBackstageNotionSyncLeaseWithLateRelease,
   shouldVerifyBackstageNotionSnapshotUnchanged,
+  hasBackstageNotionParentCycle,
+  type BackstageNotionTopologyRejectionCode,
 } from '@shared/backstage/backstageNotionSyncCore.js';
 import { logger } from '@platform/logging/structuredLogging.js';
 import { getEnv } from '@platform/runtime/env.js';
@@ -156,6 +158,7 @@ export interface BackstageNotionSyncFailureDiagnostics {
   notionResponseSchemaValid: boolean | null;
   notionEndpointKind: BackstageNotionEndpointKind | null;
   notionRejectionCode?: BackstageNotionReadError['notionRejectionCode'];
+  topologyRejectionCode?: BackstageNotionTopologyRejectionCode;
   elapsedMs: number;
   candidateSnapshotCreated: boolean;
   candidateSnapshotValidated: boolean;
@@ -353,6 +356,9 @@ function snapshotSyncFailureDiagnostics(
     ...(progress.notionRejectionCode === undefined ? {} : {
       notionRejectionCode: progress.notionRejectionCode,
     }),
+    ...(progress.topologyRejectionCode === undefined ? {} : {
+      topologyRejectionCode: progress.topologyRejectionCode,
+    }),
     elapsedMs: Math.max(0, Date.now() - progress.startedAt),
     candidateSnapshotCreated: progress.candidateSnapshotCreated,
     candidateSnapshotValidated: progress.candidateSnapshotValidated,
@@ -395,6 +401,21 @@ function incompleteSyncError(
     BACKSTAGE_NOTION_SYNC_INCOMPLETE_ERROR_CODE,
     message,
     snapshotSyncFailureDiagnostics(progress, phase, reason)
+  );
+}
+
+function topologySyncError(
+  progress: BackstageNotionSyncProgress,
+  rejectionCode: BackstageNotionTopologyRejectionCode,
+  phase: BackstageNotionSyncFailurePhase = 'discovery',
+  reason: BackstageNotionSyncFailureReason = 'completeness_mismatch'
+): BackstageNotionSyncError {
+  progress.topologyRejectionCode = rejectionCode;
+  return incompleteSyncError(
+    progress,
+    phase,
+    reason,
+    'The Notion membership inventory and structural hierarchy could not be reconciled.'
   );
 }
 
@@ -976,6 +997,11 @@ function validateFetchedPage(
       )
     )
   ) {
+    if (!metadata.inTrash) {
+      throw topologySyncError(
+        progress, 'provider_parent_mismatch', 'completeness_validation', 'discovered_page_missing'
+      );
+    }
     throw incompleteSyncError(
       progress,
       'completeness_validation',
@@ -1325,10 +1351,10 @@ async function loadDatabaseRootCaptureState(input: {
             'The Notion database authority root contains a nested database that cannot be synchronized completely.'
           );
         }
-        if (
-          seenPageIds.has(result.pageId)
-          || pages.length >= BACKSTAGE_NOTION_SYNC_MAX_PAGES
-        ) {
+        if (seenPageIds.has(result.pageId)) {
+          throw topologySyncError(input.progress, 'duplicate_database_membership', 'completeness_validation');
+        }
+        if (pages.length >= BACKSTAGE_NOTION_SYNC_MAX_PAGES) {
           throw incompleteSyncError(
             input.progress,
             'completeness_validation',
@@ -1549,6 +1575,12 @@ async function captureHierarchy(input: {
     [input.root.rootPageId, null],
   ]);
   const captured: CapturedPage[] = [];
+  // Query membership is an inventory requirement, not structural ownership.
+  // Wiki queries can include pages whose actual parent is another member.
+  const databaseMembers = new Map<string, {
+    dataSourceId: string;
+    metadata: BackstageNotionPageMetadata;
+  }>();
   let totalCodePoints = 0;
   input.progress.pagesDiscovered = 1;
   input.progress.phase = 'page_fetch';
@@ -1611,9 +1643,16 @@ async function captureHierarchy(input: {
       membershipDataSourceId: null,
       databaseDataSourceIds: databaseRoot.metadata.dataSourceIds,
     });
+    input.progress.pagesDiscovered = databaseRoot.pages.length + 1;
     for (const page of databaseRoot.pages) {
-      discovered.set(page.pageId, input.root.rootPageId);
-      queue.push({
+      input.progress.phase = 'page_fetch';
+      const memberMetadata = await input.request(signal =>
+        fetchBackstageNotionPageMetadata(
+          input.fetchImpl, input.accessToken, page.pageId, signal,
+          { requireTitle: true }
+        )
+      );
+      const pending: PendingPage = {
         pageId: page.pageId,
         parentPageId: input.root.rootPageId,
         title: '',
@@ -1623,9 +1662,30 @@ async function captureHierarchy(input: {
         expectedProviderParentDatabaseId: databaseRoot.metadata.databaseId,
         membershipDataSourceId: page.dataSourceId,
         appendProviderTitleToPath: true,
-      });
+        preloadedMetadata: memberMetadata,
+      };
+      if (memberMetadata.parentType === 'page_id' && memberMetadata.parentPageId !== null) {
+        validateFetchedPage({
+          ...pending,
+          expectedProviderParentPageId: memberMetadata.parentPageId,
+          expectedProviderParentDataSourceId: null,
+        }, memberMetadata, input.progress);
+        // A page-parented member must still be reached through its parent's
+        // Markdown. Preloading it must not turn missing containment into coverage.
+        databaseMembers.set(page.pageId, { dataSourceId: page.dataSourceId, metadata: memberMetadata });
+        continue;
+      }
+      validateFetchedPage(pending, memberMetadata, input.progress);
+      databaseMembers.set(page.pageId, { dataSourceId: page.dataSourceId, metadata: memberMetadata });
+      discovered.set(page.pageId, input.root.rootPageId);
+      queue.push(pending);
     }
-    input.progress.pagesDiscovered = discovered.size;
+    input.progress.pagesDiscovered = databaseMembers.size + 1;
+    if (hasBackstageNotionParentCycle(new Map([...databaseMembers].map(([id, member]) => (
+      [id, member.metadata.parentPageId] as const
+    ))))) {
+      throw topologySyncError(input.progress, 'ancestor_cycle');
+    }
   }
   let providerPagesFetched = 0;
   const maximumCapturedRecords = BACKSTAGE_NOTION_SYNC_MAX_PAGES
@@ -1731,12 +1791,7 @@ async function captureHierarchy(input: {
       prepared.invalidChildPageTagCount > 0
       || prepared.childPageTagCount !== rawChildPageTagCount
     ) {
-      throw incompleteSyncError(
-        input.progress,
-        'normalization',
-        'completeness_mismatch',
-        'The Notion hierarchy contains an ambiguous child-page reference.'
-      );
+      throw topologySyncError(input.progress, 'ambiguous_page_edge', 'normalization');
     }
     captured.push({
       prepared,
@@ -1752,29 +1807,39 @@ async function captureHierarchy(input: {
       const priorParent = discovered.get(child.pageId);
       if (priorParent !== undefined) {
         if (priorParent !== pending.pageId) {
-          throw incompleteSyncError(
-            input.progress,
-            'discovery',
-            'completeness_mismatch',
-            'The Notion hierarchy contains a cycle or multi-parent page.'
-          );
+          const parents = new Map(discovered);
+          parents.set(child.pageId, pending.pageId);
+          throw topologySyncError(input.progress, hasBackstageNotionParentCycle(parents)
+            ? 'ancestor_cycle' : 'duplicate_structural_parent');
         }
         continue;
       }
       discovered.set(child.pageId, pending.pageId);
-      input.progress.pagesDiscovered = discovered.size;
+      input.progress.pagesDiscovered = new Set([
+        ...discovered.keys(), ...databaseMembers.keys(),
+      ]).size;
+      const member = databaseMembers.get(child.pageId);
       queue.push({
         pageId: child.pageId,
         parentPageId: pending.pageId,
         title: child.title,
         depth: pending.depth + 1,
-        path: [...path, child.title],
+        path: member ? path : [...path, child.title],
         expectedProviderParentPageId: pending.pageId,
         expectedProviderParentDataSourceId: null,
+        ...(member ? {
+          membershipDataSourceId: member.dataSourceId,
+          preloadedMetadata: member.metadata,
+          appendProviderTitleToPath: true,
+        } : {}),
       });
     }
   }
 
+  const capturedIds = new Set(captured.map(page => page.prepared.pageId));
+  if ([...databaseMembers.keys()].some(id => !capturedIds.has(id))) {
+    throw topologySyncError(input.progress, 'unreachable_database_member');
+  }
   return { pages: captured, databaseRoot };
 }
 

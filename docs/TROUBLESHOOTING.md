@@ -238,6 +238,16 @@ If failing, inspect Railway build/deploy logs first.
   operational phase that consumed the fixed cycle budget; the deadline is not
   extended by retries, progress, or lease renewal. Investigate the named phase without logging
   Notion content, raw page/block identifiers, upstream bodies, or credentials.
+- A `discovery/completeness_mismatch` after the first database member may be a
+  membership/containment collision. Database inventory can contain actual
+  descendants; membership does not assign every member a structural database
+  parent. Verify target metadata and child-page evidence before changing the
+  hierarchy. The additive internal `topologyRejectionCode` identifies
+  `ancestor_cycle`, `duplicate_structural_parent`, `provider_parent_mismatch`,
+  `unreachable_database_member`, `duplicate_database_membership`, or
+  `ambiguous_page_edge`. It contains no identifiers or content and does not
+  change the public failure taxonomy. All queried members must still be reached,
+  fetched, and validated; never ignore a conflicting member to pass a sync.
 - A database-root member can return `parent.type: "database_id"` even when it
   was discovered through a data-source query. The page metadata reader accepts
   a valid database ID; synchronization admits that representation only when

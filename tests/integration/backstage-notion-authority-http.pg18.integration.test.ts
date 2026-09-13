@@ -25,6 +25,7 @@ const UNIVERSE_ID = `http-continuity-pg18-${randomUUID().slice(0, 8)}`;
 const ROOT_PAGE_ID = randomUUID();
 const SOURCE_ID = randomUUID();
 const MEMBERS = [randomUUID(), randomUUID()].sort();
+const EXTERNAL_REFERENCE_ID = randomUUID();
 const QUERY = 'Who holds the synthetic championship?';
 const PROVIDER_ANSWER = '- Synthetic champion one holds the championship.';
 const CONTENT = [
@@ -253,7 +254,7 @@ describeWithDatabase('Backstage Notion authority through authenticated HTTP and 
     if (failures.length > 0) throw new AggregateError(failures, 'PostgreSQL HTTP fixture cleanup failed.');
   }, 120_000);
 
-  test('serves database-parent snapshots, contains failed refreshes, and recovers through the canonical route', async () => {
+  test('serves nested database inventory snapshots, contains failed refreshes, and recovers through the canonical route', async () => {
     jest.spyOn(console, 'log').mockImplementation(() => undefined);
     jest.spyOn(console, 'warn').mockImplementation(() => undefined);
     const unexpectedFetch = jest.spyOn(globalThis, 'fetch').mockRejectedValue(
@@ -274,6 +275,7 @@ describeWithDatabase('Backstage Notion authority through authenticated HTTP and 
       status, headers: { 'content-type': 'application/json' },
     });
     let failTitleRefresh = false;
+    let failTopologyRefresh = false;
     let titleReads = 0;
     const notionRequests: string[] = [];
     const fetchImpl: typeof fetch = async (input, init) => {
@@ -316,7 +318,14 @@ describeWithDatabase('Backstage Notion authority through authenticated HTTP and 
       }
       if (url.pathname.endsWith('/markdown')) return json({
         object: 'page_markdown', id: member,
-        markdown: `# Synthetic championship\n\n${CONTENT[MEMBERS.indexOf(member)]}`,
+        markdown: [
+          '# Synthetic championship',
+          CONTENT[MEMBERS.indexOf(member)],
+          member === MEMBERS[0]
+            ? `<page url="notion://${MEMBERS[1]}">Navigation label is not the provider title</page>`
+            : `<mention-page url="notion://${MEMBERS[0]}">Parent reference</mention-page>`,
+          `<mention-page url="notion://${EXTERNAL_REFERENCE_ID}">External reference</mention-page>`,
+        ].join('\n\n'),
         truncated: false, unknown_block_ids: [],
       });
       expect(url.pathname).toBe(`/v1/pages/${member}`);
@@ -324,7 +333,7 @@ describeWithDatabase('Backstage Notion authority through authenticated HTTP and 
         object: 'page', id: member,
         parent: member === MEMBERS[0]
           ? { type: 'database_id', database_id: ROOT_PAGE_ID }
-          : { type: 'data_source_id', data_source_id: SOURCE_ID, database_id: ROOT_PAGE_ID },
+          : { type: 'page_id', page_id: failTopologyRefresh ? EXTERNAL_REFERENCE_ID : MEMBERS[0] },
         properties: { 'Synthetic label': { id: 'title', type: 'title',
           title: member === MEMBERS[0] ? titleParts.slice(0, 25).map(part => ({
             type: 'mention', mention: { type: 'page', page: { id: MEMBERS[1] } },
@@ -363,9 +372,23 @@ describeWithDatabase('Backstage Notion authority through authenticated HTTP and 
     expect(activated).toMatchObject({ status: 'activated', pageCount: 3, chunkCount: 2 });
     expect(titleReads).toBe(4);
     const inventory = await repository.loadActiveInventory(UNIVERSE_ID);
-    expect(inventory?.pages.find(page => page.pageId === MEMBERS[0])?.title).toBe(titleParts.join(''));
+    expect(inventory?.pages.find(page => page.pageId === MEMBERS[0])).toMatchObject({
+      title: titleParts.join(''), parentPageId: ROOT_PAGE_ID,
+      depth: 1, path: [root.displayName, titleParts.join('')],
+    });
+    expect(inventory?.pages.find(page => page.pageId === MEMBERS[1])).toMatchObject({
+      title: 'Second synthetic member', parentPageId: MEMBERS[0],
+      depth: 2, path: [root.displayName, titleParts.join(''), 'Second synthetic member'],
+    });
+    expect(inventory?.pages.map(page => page.pageId).sort()).toEqual([ROOT_PAGE_ID, ...MEMBERS].sort());
+    for (const member of MEMBERS) {
+      expect(notionRequests.filter(path => path === `/v1/pages/${member}/markdown`)).toHaveLength(1);
+    }
+    expect(notionRequests.some(path => path.includes(EXTERNAL_REFERENCE_ID))).toBe(false);
     expect(await syncStatusRepository.loadLatestSyncAttempt(UNIVERSE_ID)).toMatchObject({
-      outcome: 'activated', activatedSnapshotId: activated.snapshotId, candidateSnapshotActivated: true,
+      outcome: 'activated', activatedSnapshotId: activated.snapshotId,
+      pagesDiscovered: 3, pagesFetched: 2, blocksFetched: 2,
+      candidateSnapshotCreated: true, candidateSnapshotValidated: true, candidateSnapshotActivated: true,
     });
     const denied = await readContinuity('complete_scope', null);
     expect(denied.status).toBe(503);
@@ -389,7 +412,7 @@ describeWithDatabase('Backstage Notion authority through authenticated HTTP and 
       expect(response.body.result.sources.map((source: { contentHash: string }) => source.contentHash).sort())
         .toEqual(stored.rows.map(row => row.content_hash).sort());
       const publicBody = JSON.stringify(response.body);
-      for (const privateValue of [ROOT_PAGE_ID, SOURCE_ID, ...MEMBERS, ...CONTENT]) expect(publicBody).not.toContain(privateValue);
+      for (const privateValue of [ROOT_PAGE_ID, SOURCE_ID, EXTERNAL_REFERENCE_ID, ...MEMBERS, ...CONTENT]) expect(publicBody).not.toContain(privateValue);
     }
     expect(createEmbedding).toHaveBeenCalledWith(QUERY);
     expect(responsesCreate).toHaveBeenCalledTimes(2);
@@ -425,6 +448,25 @@ describeWithDatabase('Backstage Notion authority through authenticated HTTP and 
     expect(responsesCreate).toHaveBeenCalledTimes(providerCount);
 
     failTitleRefresh = false;
+    failTopologyRefresh = true;
+    await expect(sync()).rejects.toMatchObject({
+      code: 'BACKSTAGE_NOTION_SYNC_INCOMPLETE',
+      diagnostics: {
+        topologyRejectionCode: 'provider_parent_mismatch',
+        candidateSnapshotCreated: false, candidateSnapshotValidated: false, candidateSnapshotActivated: false,
+      },
+    });
+    expect(await repository.loadActiveInventory(UNIVERSE_ID)).toEqual(inventory);
+    expect(await syncStatusRepository.loadLatestSyncAttempt(UNIVERSE_ID)).toMatchObject({
+      outcome: 'failed', candidateSnapshotCreated: false,
+      candidateSnapshotValidated: false, candidateSnapshotActivated: false, activatedSnapshotId: null,
+    });
+    const topologyStale = await readContinuity();
+    expect(topologyStale.status).toBe(200);
+    expect(topologyStale.body.result.answer).toContain('Snapshot status: last_known_good');
+    expect(topologyStale.body.result.answer).toContain(PROVIDER_ANSWER.slice(2));
+
+    failTopologyRefresh = false;
     expect(await sync()).toMatchObject({ status: 'unchanged', snapshotId: activated.snapshotId });
     const recovered = await readContinuity();
     expect(recovered.status).toBe(200);
@@ -435,6 +477,7 @@ describeWithDatabase('Backstage Notion authority through authenticated HTTP and 
     expect(queryDatabase).not.toHaveBeenCalled();
     expect(persistModuleConversation).not.toHaveBeenCalled();
     expect(storePattern).not.toHaveBeenCalled();
+    expect(notionRequests.some(path => path.includes(EXTERNAL_REFERENCE_ID))).toBe(false);
     expect(unexpectedFetch).not.toHaveBeenCalled();
     expect(isBackstageNotionEnrichmentAuthorized()).toBe(false);
     process.stdout.write(`NOTION_AUTHORITY_HTTP_E2E ${JSON.stringify({
@@ -442,9 +485,11 @@ describeWithDatabase('Backstage Notion authority through authenticated HTTP and 
       postgresVersion: databaseVersion,
       phases: [
         'invalid_bearer_denied', 'missing_head_denied', 'database_parent_title_pagination_activated',
+        'nested_inventory_member_structural_parent', 'page_mentions_do_not_expand_scope',
         'missing_bearer_denied', 'complete_scope_http_sql_citations', 'relevant_http_sql_citations',
         'failed_refresh_retains_head', 'last_known_good_http_warning',
-        'protected_booking_retrieval_denied', 'unchanged_refresh_restores_current',
+        'protected_booking_retrieval_denied', 'provider_parent_mismatch_retains_head',
+        'topology_failed_refresh_last_known_good_http', 'unchanged_refresh_restores_current',
       ],
       pageCount: 3, chunkCount: 2, retainedSnapshotCount: 1,
       providerCalls: responsesCreate.mock.calls.length,

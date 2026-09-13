@@ -31,6 +31,9 @@ export type BackstageNotionRagCategory =
   | 'storylines';
 
 export interface BackstageNotionChildPageReference {
+  // Enhanced Markdown child_page syntax. Ownership is established only when
+  // the synchronizer reconciles this edge with the target's provider metadata.
+  // Ordinary links and <mention-page> tags are not containment or scope edges.
   pageId: string;
   title: string;
 }
@@ -230,6 +233,7 @@ function childPageIdFromAttributes(attributes: string): string | null {
   NOTION_ATTRIBUTE_PATTERN.lastIndex = 0;
   for (const match of attributes.matchAll(NOTION_ATTRIBUTE_PATTERN)) {
     const pageId = pageIdFromAttributeValue(match[2] ?? '');
+    if (!pageId) return null;
     if (pageId) {
       candidates.add(pageId);
     }
