@@ -70,6 +70,32 @@ private struct Fixture: Sendable {
         #expect(snapshot.semanticExecutionCount == 0)
     }
 
+    @Test func localOnlyRejectionSurvivesRestorationWithoutSubmissionOrResultReads() async throws {
+        let fixture = Fixture()
+        try await fixture.initialize()
+        let initial = await fixture.composition(fixture.transport()).ask(HardwareFixtureConfiguration.remoteCommand)
+        let operationID = try #require(initial.operationID)
+        #expect(initial.kind == .failure)
+        let original = try fixture.records()
+        #expect(original.count == 1)
+        #expect(original[0].localState == .submissionUncertain)
+        #expect(original[0].backendJobID == nil)
+
+        let restored = fixture.composition(fixture.transport())
+        #expect(await restored.startup().first?.operationID == operationID)
+        #expect(await restored.foreground().first?.kind == .unavailable)
+        #expect(await restored.checkLatest(operationID: operationID).kind == .unavailable)
+        #expect(try fixture.records() == original)
+        let snapshot = try await fixture.transport().snapshot()
+        #expect(snapshot.configuration.mode == .localOnly)
+        #expect(snapshot.requestAttempts == 1)
+        #expect(snapshot.submissionAttempts == 1)
+        #expect(snapshot.resultAttempts == 0)
+        #expect(snapshot.rejectedAttempts == 1)
+        #expect(snapshot.jobs.isEmpty)
+        #expect(snapshot.semanticExecutionCount == 0)
+    }
+
     @Test(arguments: [true, false]) func unavailableOrFailedLocalModelCannotProduceFixtureSuccess(available: Bool) async throws {
         let fixture = Fixture()
         try await fixture.initialize()
@@ -180,6 +206,43 @@ private struct Fixture: Sendable {
         #expect(!evidence.contains("agd1."))
         #expect(!evidence.contains("payload"))
         #expect(!evidence.contains(HardwareFixtureConfiguration.remoteCommand))
+    }
+
+    @Test func cancelledFixtureApprovalNeverReplaysOrReturnsAsRecoverableWork() async throws {
+        let fixture = Fixture()
+        try await fixture.initialize()
+        let transport = fixture.transport()
+        try await transport.configure(mode: .fixtures)
+        let live = fixture.composition(transport)
+        let pending = await live.ask("Run tests")
+        let approvalID = try #require(pending.approvalID)
+        let operationID = try #require(pending.operationID)
+        #expect(pending.kind == .confirmationRequired)
+        #expect(await live.cancel(approvalID).kind == .cancelled)
+        #expect(await live.approve(approvalID).kind == .failure)
+        let original = try fixture.records()
+        #expect(original.count == 1)
+        #expect(original[0].localState == .dismissed)
+        #expect(original[0].backendJobID == nil)
+
+        let restored = fixture.composition(fixture.transport())
+        #expect(await restored.startup().isEmpty)
+        #expect(await restored.foreground().isEmpty)
+        #expect(await restored.approve(approvalID).kind == .failure)
+        let result = await restored.checkLatest(operationID: operationID)
+        #expect(result.kind == .cancelled)
+        #expect(result.operationID == operationID)
+        #expect(result.approvalID == nil)
+        #expect(try fixture.records() == original)
+        let snapshot = try await transport.snapshot()
+        #expect(snapshot.requestAttempts == 1)
+        #expect(snapshot.submissionAttempts == 1)
+        #expect(snapshot.resultAttempts == 0)
+        #expect(snapshot.rejectedAttempts == 0)
+        #expect(snapshot.jobs.isEmpty)
+        #expect(snapshot.semanticExecutionCount == 0)
+        #expect(snapshot.events.filter { $0.kind == .challenge }.count == 1)
+        #expect(!snapshot.events.contains { [.accepted, .completed, .resultRead].contains($0.kind) })
     }
 
     @Test(arguments: [HardwareFixtureControls.ApprovedRetry.challengeAgain, .unavailable])

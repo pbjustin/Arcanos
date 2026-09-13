@@ -337,7 +337,8 @@ def main(argv=None):
         exit_code = 1
     except (OSError, ValueError, KeyError, TypeError, AttributeError, plistlib.InvalidFileException, zipfile.BadZipFile):
         report["failureCategory"] = "private-tool-or-artifact-validation-failed"
-        report["signing"]["status"] = "FAIL" if signing_started else "BLOCKED"
+        if report["signing"]["status"] != "PASS":
+            report["signing"]["status"] = "FAIL" if signing_started else "BLOCKED"
         exit_code = 1
     finally:
         (output / "report.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")

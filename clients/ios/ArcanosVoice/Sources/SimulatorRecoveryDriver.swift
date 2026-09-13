@@ -9,9 +9,10 @@ import Foundation
 enum SimulatorRecoveryDriver {
     private static var consumedLaunch = false
     private enum Action: String { case submit, restore, complete, repeatedRestore }
+    private enum Scenario: String { case acceptedReceipt, lostReceipt, cancelledApproval, localOnly }
     private enum ProofError: String, Error {
         case isolationMismatch, nonemptyInitialStore, syntheticKeychainProbeFailed
-        case correlationMismatch, presentationMismatch, missingObservation
+        case correlationMismatch, presentationMismatch, missingObservation, scenarioMismatch
     }
 
     static func runIfRequested(runtime: AppRuntime) async {
@@ -22,10 +23,15 @@ enum SimulatorRecoveryDriver {
               arguments.indices.contains(actionIndex + 1), arguments.indices.contains(runIndex + 1),
               let action = Action(rawValue: arguments[actionIndex + 1]),
               let runID = UUID(uuidString: arguments[runIndex + 1]) else { return }
+        let scenario: Scenario
+        if let index = arguments.firstIndex(of: "--phase3c-simulator-scenario") {
+            guard arguments.indices.contains(index + 1), let value = Scenario(rawValue: arguments[index + 1]) else { return }
+            scenario = value
+        } else { scenario = .acceptedReceipt }
         consumedLaunch = true
         var report: [String: Any] = [
             "schema": "arcanos-phase3c-simulator-stage/v1", "runID": runID.uuidString,
-            "action": action.rawValue, "status": "FAIL",
+            "action": action.rawValue, "scenario": scenario.rawValue, "status": "FAIL",
             "revision": Bundle.main.object(forInfoDictionaryKey: "ArcanosValidationRevision") as? String ?? "UNRECORDED",
             "configuration": "HardwareValidation", "bundleIdentifier": Bundle.main.bundleIdentifier ?? "unknown",
             "processID": ProcessInfo.processInfo.processIdentifier,
@@ -36,6 +42,8 @@ enum SimulatorRecoveryDriver {
             "physicalDevice": "NOT RUN", "liveServices": "NOT RUN", "httpRequests": 0
         ]
         do {
+            guard ![Scenario.cancelledApproval, .localOnly].contains(scenario)
+                    || [Action.submit, .restore].contains(action) else { throw ProofError.scenarioMismatch }
             guard let hardware = runtime.hardwareValidation, !runtime.demonstration,
                   runtime.gatewayAddress == HardwareFixtureConfiguration.origin.absoluteString else {
                 throw ProofError.isolationMismatch
@@ -50,25 +58,49 @@ enum SimulatorRecoveryDriver {
                 // Simulator credentials; normal startup never initializes identity.
                 await hardware.initializeCredential()
                 guard hardware.keychainFinding.hasPrefix("PASS") else { throw ProofError.syntheticKeychainProbeFailed }
-                await hardware.setLocalOnly(false)
+                await hardware.setLocalOnly(scenario == .localOnly)
+                if scenario == .lostReceipt { await hardware.loseNextReceipt() }
             } else {
                 await hardware.probeCredential()
                 guard hardware.keychainFinding.hasPrefix("PASS") else { throw ProofError.syntheticKeychainProbeFailed }
             }
             let result: VoicePresentation
-            switch action {
-            case .submit:
-                result = await runtime.ask(HardwareFixtureConfiguration.remoteCommand)
-            case .restore:
-                result = await runtime.checkLatestJob()
-            case .complete:
-                await hardware.completeJobs()
-                result = await runtime.checkLatestJob()
-            case .repeatedRestore:
-                await runtime.activate()
-                await runtime.activate()
-                _ = await runtime.checkLatestJob()
-                result = await runtime.checkLatestJob()
+            if scenario == .cancelledApproval {
+                let operationReference: String
+                if action == .submit {
+                    let approval = await runtime.ask("Run tests")
+                    guard approval.status == "Approval required", let approvalID = approval.approvalID,
+                          let operationID = approval.operationID else { throw ProofError.presentationMismatch }
+                    operationReference = operationID.uuidString
+                    let cancelled = await runtime.cancel(approvalID)
+                    let replay = await runtime.approve(approvalID)
+                    guard cancelled.status == "Interaction stopped", replay.status == "Unavailable or failed",
+                          replay.approvalID == nil else { throw ProofError.presentationMismatch }
+                    report["approvalRetryRejected"] = true
+                } else {
+                    guard let operations = before["operations"] as? [[String: Any]], operations.count == 1,
+                          let reference = operations[0]["operationID"] as? String else { throw ProofError.missingObservation }
+                    operationReference = reference
+                }
+                guard runtime.pendingApproval == nil, runtime.recoveredResults.compactMap(\.operationID).isEmpty else {
+                    throw ProofError.scenarioMismatch
+                }
+                result = await runtime.checkLatestJob(reference: operationReference)
+            } else {
+                switch action {
+                case .submit:
+                    result = await runtime.ask(HardwareFixtureConfiguration.remoteCommand)
+                case .restore:
+                    result = await runtime.checkLatestJob()
+                case .complete:
+                    await hardware.completeJobs()
+                    result = await runtime.checkLatestJob()
+                case .repeatedRestore:
+                    await runtime.activate()
+                    await runtime.activate()
+                    _ = await runtime.checkLatestJob()
+                    result = await runtime.checkLatestJob()
+                }
             }
             let after = try await observation(hardware)
             guard let operations = after["operations"] as? [[String: Any]], operations.count == 1,
@@ -76,10 +108,44 @@ enum SimulatorRecoveryDriver {
                   result.operationID?.uuidString == operationID, result.approvalID == nil else {
                 throw ProofError.correlationMismatch
             }
-            let expectsCompletion = action == .complete || action == .repeatedRestore
+            let completedStage = action == .complete || action == .repeatedRestore
+            let expectsCompletion = scenario == .acceptedReceipt && completedStage
             let authoritativeResult = result.text == "Hardware validation. \(HardwareFixtureConfiguration.resultText)"
-            guard result.status == (expectsCompletion ? "Response" : "Pending — not completed"),
-                  authoritativeResult == expectsCompletion else { throw ProofError.presentationMismatch }
+            let fixture = try await hardware.transport.snapshot()
+            guard fixture.submissionAttempts == 1, runtime.pendingApproval == nil else { throw ProofError.scenarioMismatch }
+            let expectedStatus: String
+            switch scenario {
+            case .acceptedReceipt:
+                expectedStatus = expectsCompletion ? "Response" : "Pending — not completed"
+            case .lostReceipt:
+                expectedStatus = "Status unavailable"
+                guard fixture.configuration.mode == .fixtures, fixture.jobs.count == 1,
+                      fixture.jobs[0].completed == completedStage,
+                      fixture.semanticExecutionCount == (completedStage ? 1 : 0),
+                      fixture.requestAttempts == 1, fixture.resultAttempts == 0, fixture.rejectedAttempts == 0,
+                      operations[0]["state"] as? String == "submissionUncertain",
+                      operations[0]["jobID"] as? String == "none", operations[0]["backendStatus"] as? String == "none" else {
+                    throw ProofError.scenarioMismatch
+                }
+            case .cancelledApproval:
+                expectedStatus = "Interaction stopped"
+                guard fixture.configuration.mode == .fixtures, fixture.jobs.isEmpty, fixture.semanticExecutionCount == 0,
+                      fixture.requestAttempts == 1, fixture.resultAttempts == 0, fixture.rejectedAttempts == 0,
+                      operations[0]["state"] as? String == "dismissed",
+                      operations[0]["jobID"] as? String == "none", operations[0]["backendStatus"] as? String == "none" else {
+                    throw ProofError.scenarioMismatch
+                }
+                report["cancelledApprovalNotReplayed"] = true
+            case .localOnly:
+                expectedStatus = action == .submit ? "Unavailable or failed" : "Status unavailable"
+                guard fixture.configuration.mode == .localOnly, fixture.jobs.isEmpty, fixture.semanticExecutionCount == 0,
+                      fixture.requestAttempts == 1, fixture.resultAttempts == 0, fixture.rejectedAttempts == 1,
+                      operations[0]["state"] as? String == "submissionUncertain",
+                      operations[0]["jobID"] as? String == "none", operations[0]["backendStatus"] as? String == "none" else {
+                    throw ProofError.scenarioMismatch
+                }
+            }
+            guard result.status == expectedStatus, authoritativeResult == expectsCompletion else { throw ProofError.presentationMismatch }
             report["status"] = "PASS"
             report["fixtureOriginSelected"] = true
             report["productionPreferencesIgnored"] = UserDefaults.standard.string(forKey: "arcanos.gateway.origin")
@@ -87,6 +153,7 @@ enum SimulatorRecoveryDriver {
             report["systemKeychainProbe"] = "PASS — Simulator only; synthetic namespace"
             report["presentationStatus"] = result.status
             report["authoritativeFixtureResultMatched"] = authoritativeResult
+            report["pendingApprovalAbsent"] = runtime.pendingApproval == nil
             report["startupRestoredOperationIDs"] = runtime.recoveredResults.compactMap { $0.operationID?.uuidString }
             report["observation"] = after
         } catch {

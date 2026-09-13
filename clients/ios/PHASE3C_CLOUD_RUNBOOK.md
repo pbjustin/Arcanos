@@ -112,13 +112,36 @@ app automation is not a spoken App Intent invocation. Compiled App Intents
 metadata establishes packaging only; actual Siri and Vocal Shortcut invocation
 remain physical tests.
 
+The workflow runs four scenarios, each in a fresh Simulator and app container:
+
+| Scenario | Installed-app assertion |
+| --- | --- |
+| `acceptedReceipt` | Restore the same accepted operation/job across four processes and retrieve its completed fixture result without resubmitting. |
+| `lostReceipt` | Preserve the uncertain operation across four processes; even after fixture completion, perform no automatic submission or result read without a receipt. |
+| `cancelledApproval` | Cancel the approval, reject reuse of that approval, and exclude the dismissed operation from startup recovery after relaunch. No job executes. |
+| `localOnly` | Reject the attempted remote submission in the in-process transport, preserve uncertainty after relaunch, and perform no automatic retry. No job executes. |
+
+Every scenario probes synthetic credentials through the Simulator system
+Keychain, verifies stale live-origin preferences were ignored, and records zero
+HTTP requests. The controller checks event/job/process correlation, counters,
+process termination and shutdown before passing. Cloud level C requires all four
+complete reports; the workflow's `--require-simulator-success` gate fails on
+missing, inconsistent or failed evidence.
+
+The offline corpus in `scripts/fixtures/phase3c-simulator/` supplies synthetic
+raw observations for adversarial verifier tests. It is not runtime evidence.
+`test_phase3c_signing_e2e.py` separately exercises archive/export/upload controller
+paths using fake Apple tools and temporary synthetic products; it never signs or
+uploads an application. A late upload failure preserves an already verified
+archive result while recording upload failure independently.
+
 Review sanitized JSON evidence and bounded build/test diagnostics. Record a
 missing runtime as **BLOCKED**, an attempted build/runtime assertion violation
 as **FAIL**, and any unattempted later stage as **NOT RUN**. A locally signed
 Simulator app cannot be installed on an iPhone or distributed through TestFlight.
 Use `cloud-summary.json` for the expanded A-K cloud/device matrix. The older
 `cloud-apple/report.json` retains the device runbook's A-G schema, while
-`cloud-simulator/report.json` describes its own installed-app scope. Do not
+`cloud-simulator/<scenario>/report.json` describes its installed-app scenario. Do not
 compare a letter across these schemas without checking its definition.
 
 ## Apple account and signing setup from Windows
@@ -378,7 +401,7 @@ not an Apple execution result.
 | --- | --- |
 | A | Cloud Xcode/iOS compilation, package tests, metadata and source checks |
 | B | Actual cloud Simulator-target build; HardwareValidation uses local ad-hoc signing, with no device signing evidence |
-| C | Installed Simulator app execution and named fixture lifecycle proof |
+| C | All four installed Simulator scenarios with complete, consistent lifecycle evidence |
 | D | Real signed archive/export validation for the exact fixture identity |
 | E | Explicitly authorized Apple upload receipt; record processing/tester availability separately |
 | F | Physical system Keychain actions and lifecycle protection observations |

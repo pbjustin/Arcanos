@@ -1,0 +1,441 @@
+{
+  "schema": "arcanos-phase3c-simulator-synthetic-fixture/v1",
+  "scope": "Static synthetic validator inputs only; not installed-app execution evidence",
+  "scenario": "lostReceipt",
+  "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "runID": "11111111-1111-4111-8111-111111111111",
+  "stages": [
+    {
+      "schema": "arcanos-phase3c-simulator-stage/v1",
+      "scenario": "lostReceipt",
+      "runID": "11111111-1111-4111-8111-111111111111",
+      "action": "submit",
+      "status": "PASS",
+      "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "configuration": "HardwareValidation",
+      "bundleIdentifier": "org.arcanos.voice.hardware-validation",
+      "processID": 100,
+      "processName": "ArcanosVoice",
+      "platform": "iOS Simulator",
+      "appIntentInvocation": "NOT RUN",
+      "voice": "NOT RUN",
+      "foundationModelsInference": "NOT RUN",
+      "physicalDevice": "NOT RUN",
+      "liveServices": "NOT RUN",
+      "httpRequests": 0,
+      "fixtureOriginSelected": true,
+      "productionPreferencesIgnored": true,
+      "systemKeychainProbe": "PASS — Simulator only; synthetic namespace",
+      "authoritativeFixtureResultMatched": false,
+      "pendingApprovalAbsent": true,
+      "presentationStatus": "Status unavailable",
+      "startupRestoredOperationIDs": [],
+      "observation": {
+        "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "configuration": "HardwareValidation",
+        "processID": 100,
+        "operations": [
+          {
+            "operationID": "22222222-2222-4222-8222-222222222222",
+            "jobID": "none",
+            "idempotencyKey": "44444444-4444-4444-8444-444444444444",
+            "state": "submissionUncertain",
+            "backendStatus": "none"
+          }
+        ],
+        "fixture": {
+          "configuration": {
+            "mode": "fixtures",
+            "nextReceipt": "accepted",
+            "authentication": "accepted",
+            "approvedRetry": "accepted"
+          },
+          "requestAttempts": 1,
+          "submissionAttempts": 1,
+          "resultAttempts": 0,
+          "semanticExecutionCount": 0,
+          "rejectedAttempts": 0,
+          "jobs": [
+            {
+              "jobID": "33333333-3333-4333-8333-333333333333",
+              "idempotencyKey": "44444444-4444-4444-8444-444444444444",
+              "action": "ai",
+              "completed": false
+            }
+          ],
+          "events": [
+            {
+              "sequence": 1,
+              "kind": "startup",
+              "processName": "ArcanosVoice",
+              "processID": 100
+            },
+            {
+              "sequence": 2,
+              "kind": "transportAttempt",
+              "processName": "ArcanosVoice",
+              "processID": 100
+            },
+            {
+              "sequence": 3,
+              "kind": "accepted",
+              "processName": "ArcanosVoice",
+              "processID": 100,
+              "jobID": "33333333-3333-4333-8333-333333333333"
+            },
+            {
+              "sequence": 4,
+              "kind": "lostReceipt",
+              "processName": "ArcanosVoice",
+              "processID": 100,
+              "jobID": "33333333-3333-4333-8333-333333333333"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "schema": "arcanos-phase3c-simulator-stage/v1",
+      "scenario": "lostReceipt",
+      "runID": "11111111-1111-4111-8111-111111111111",
+      "action": "restore",
+      "status": "PASS",
+      "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "configuration": "HardwareValidation",
+      "bundleIdentifier": "org.arcanos.voice.hardware-validation",
+      "processID": 101,
+      "processName": "ArcanosVoice",
+      "platform": "iOS Simulator",
+      "appIntentInvocation": "NOT RUN",
+      "voice": "NOT RUN",
+      "foundationModelsInference": "NOT RUN",
+      "physicalDevice": "NOT RUN",
+      "liveServices": "NOT RUN",
+      "httpRequests": 0,
+      "fixtureOriginSelected": true,
+      "productionPreferencesIgnored": true,
+      "systemKeychainProbe": "PASS — Simulator only; synthetic namespace",
+      "authoritativeFixtureResultMatched": false,
+      "pendingApprovalAbsent": true,
+      "presentationStatus": "Status unavailable",
+      "startupRestoredOperationIDs": [
+        "22222222-2222-4222-8222-222222222222"
+      ],
+      "observation": {
+        "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "configuration": "HardwareValidation",
+        "processID": 101,
+        "operations": [
+          {
+            "operationID": "22222222-2222-4222-8222-222222222222",
+            "jobID": "none",
+            "idempotencyKey": "44444444-4444-4444-8444-444444444444",
+            "state": "submissionUncertain",
+            "backendStatus": "none"
+          }
+        ],
+        "fixture": {
+          "configuration": {
+            "mode": "fixtures",
+            "nextReceipt": "accepted",
+            "authentication": "accepted",
+            "approvedRetry": "accepted"
+          },
+          "requestAttempts": 1,
+          "submissionAttempts": 1,
+          "resultAttempts": 0,
+          "semanticExecutionCount": 0,
+          "rejectedAttempts": 0,
+          "jobs": [
+            {
+              "jobID": "33333333-3333-4333-8333-333333333333",
+              "idempotencyKey": "44444444-4444-4444-8444-444444444444",
+              "action": "ai",
+              "completed": false
+            }
+          ],
+          "events": [
+            {
+              "sequence": 1,
+              "kind": "startup",
+              "processName": "ArcanosVoice",
+              "processID": 100
+            },
+            {
+              "sequence": 2,
+              "kind": "transportAttempt",
+              "processName": "ArcanosVoice",
+              "processID": 100
+            },
+            {
+              "sequence": 3,
+              "kind": "accepted",
+              "processName": "ArcanosVoice",
+              "processID": 100,
+              "jobID": "33333333-3333-4333-8333-333333333333"
+            },
+            {
+              "sequence": 4,
+              "kind": "lostReceipt",
+              "processName": "ArcanosVoice",
+              "processID": 100,
+              "jobID": "33333333-3333-4333-8333-333333333333"
+            },
+            {
+              "sequence": 5,
+              "kind": "startup",
+              "processName": "ArcanosVoice",
+              "processID": 101
+            }
+          ]
+        }
+      }
+    },
+    {
+      "schema": "arcanos-phase3c-simulator-stage/v1",
+      "scenario": "lostReceipt",
+      "runID": "11111111-1111-4111-8111-111111111111",
+      "action": "complete",
+      "status": "PASS",
+      "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "configuration": "HardwareValidation",
+      "bundleIdentifier": "org.arcanos.voice.hardware-validation",
+      "processID": 102,
+      "processName": "ArcanosVoice",
+      "platform": "iOS Simulator",
+      "appIntentInvocation": "NOT RUN",
+      "voice": "NOT RUN",
+      "foundationModelsInference": "NOT RUN",
+      "physicalDevice": "NOT RUN",
+      "liveServices": "NOT RUN",
+      "httpRequests": 0,
+      "fixtureOriginSelected": true,
+      "productionPreferencesIgnored": true,
+      "systemKeychainProbe": "PASS — Simulator only; synthetic namespace",
+      "authoritativeFixtureResultMatched": false,
+      "pendingApprovalAbsent": true,
+      "presentationStatus": "Status unavailable",
+      "startupRestoredOperationIDs": [
+        "22222222-2222-4222-8222-222222222222"
+      ],
+      "observation": {
+        "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "configuration": "HardwareValidation",
+        "processID": 102,
+        "operations": [
+          {
+            "operationID": "22222222-2222-4222-8222-222222222222",
+            "jobID": "none",
+            "idempotencyKey": "44444444-4444-4444-8444-444444444444",
+            "state": "submissionUncertain",
+            "backendStatus": "none"
+          }
+        ],
+        "fixture": {
+          "configuration": {
+            "mode": "fixtures",
+            "nextReceipt": "accepted",
+            "authentication": "accepted",
+            "approvedRetry": "accepted"
+          },
+          "requestAttempts": 1,
+          "submissionAttempts": 1,
+          "resultAttempts": 0,
+          "semanticExecutionCount": 1,
+          "rejectedAttempts": 0,
+          "jobs": [
+            {
+              "jobID": "33333333-3333-4333-8333-333333333333",
+              "idempotencyKey": "44444444-4444-4444-8444-444444444444",
+              "action": "ai",
+              "completed": true
+            }
+          ],
+          "events": [
+            {
+              "sequence": 1,
+              "kind": "startup",
+              "processName": "ArcanosVoice",
+              "processID": 100
+            },
+            {
+              "sequence": 2,
+              "kind": "transportAttempt",
+              "processName": "ArcanosVoice",
+              "processID": 100
+            },
+            {
+              "sequence": 3,
+              "kind": "accepted",
+              "processName": "ArcanosVoice",
+              "processID": 100,
+              "jobID": "33333333-3333-4333-8333-333333333333"
+            },
+            {
+              "sequence": 4,
+              "kind": "lostReceipt",
+              "processName": "ArcanosVoice",
+              "processID": 100,
+              "jobID": "33333333-3333-4333-8333-333333333333"
+            },
+            {
+              "sequence": 5,
+              "kind": "startup",
+              "processName": "ArcanosVoice",
+              "processID": 101
+            },
+            {
+              "sequence": 6,
+              "kind": "startup",
+              "processName": "ArcanosVoice",
+              "processID": 102
+            },
+            {
+              "sequence": 7,
+              "kind": "completed",
+              "processName": "ArcanosVoice",
+              "processID": 102,
+              "jobID": "33333333-3333-4333-8333-333333333333"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "schema": "arcanos-phase3c-simulator-stage/v1",
+      "scenario": "lostReceipt",
+      "runID": "11111111-1111-4111-8111-111111111111",
+      "action": "repeatedRestore",
+      "status": "PASS",
+      "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "configuration": "HardwareValidation",
+      "bundleIdentifier": "org.arcanos.voice.hardware-validation",
+      "processID": 103,
+      "processName": "ArcanosVoice",
+      "platform": "iOS Simulator",
+      "appIntentInvocation": "NOT RUN",
+      "voice": "NOT RUN",
+      "foundationModelsInference": "NOT RUN",
+      "physicalDevice": "NOT RUN",
+      "liveServices": "NOT RUN",
+      "httpRequests": 0,
+      "fixtureOriginSelected": true,
+      "productionPreferencesIgnored": true,
+      "systemKeychainProbe": "PASS — Simulator only; synthetic namespace",
+      "authoritativeFixtureResultMatched": false,
+      "pendingApprovalAbsent": true,
+      "presentationStatus": "Status unavailable",
+      "startupRestoredOperationIDs": [
+        "22222222-2222-4222-8222-222222222222"
+      ],
+      "observation": {
+        "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "configuration": "HardwareValidation",
+        "processID": 103,
+        "operations": [
+          {
+            "operationID": "22222222-2222-4222-8222-222222222222",
+            "jobID": "none",
+            "idempotencyKey": "44444444-4444-4444-8444-444444444444",
+            "state": "submissionUncertain",
+            "backendStatus": "none"
+          }
+        ],
+        "fixture": {
+          "configuration": {
+            "mode": "fixtures",
+            "nextReceipt": "accepted",
+            "authentication": "accepted",
+            "approvedRetry": "accepted"
+          },
+          "requestAttempts": 1,
+          "submissionAttempts": 1,
+          "resultAttempts": 0,
+          "semanticExecutionCount": 1,
+          "rejectedAttempts": 0,
+          "jobs": [
+            {
+              "jobID": "33333333-3333-4333-8333-333333333333",
+              "idempotencyKey": "44444444-4444-4444-8444-444444444444",
+              "action": "ai",
+              "completed": true
+            }
+          ],
+          "events": [
+            {
+              "sequence": 1,
+              "kind": "startup",
+              "processName": "ArcanosVoice",
+              "processID": 100
+            },
+            {
+              "sequence": 2,
+              "kind": "transportAttempt",
+              "processName": "ArcanosVoice",
+              "processID": 100
+            },
+            {
+              "sequence": 3,
+              "kind": "accepted",
+              "processName": "ArcanosVoice",
+              "processID": 100,
+              "jobID": "33333333-3333-4333-8333-333333333333"
+            },
+            {
+              "sequence": 4,
+              "kind": "lostReceipt",
+              "processName": "ArcanosVoice",
+              "processID": 100,
+              "jobID": "33333333-3333-4333-8333-333333333333"
+            },
+            {
+              "sequence": 5,
+              "kind": "startup",
+              "processName": "ArcanosVoice",
+              "processID": 101
+            },
+            {
+              "sequence": 6,
+              "kind": "startup",
+              "processName": "ArcanosVoice",
+              "processID": 102
+            },
+            {
+              "sequence": 7,
+              "kind": "completed",
+              "processName": "ArcanosVoice",
+              "processID": 102,
+              "jobID": "33333333-3333-4333-8333-333333333333"
+            },
+            {
+              "sequence": 8,
+              "kind": "startup",
+              "processName": "ArcanosVoice",
+              "processID": 103
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "terminations": [
+    {
+      "status": "PASS",
+      "processID": 100,
+      "action": "submit",
+      "observation": "simctl terminate succeeded; host PID no longer exists"
+    },
+    {
+      "status": "PASS",
+      "processID": 101,
+      "action": "restore",
+      "observation": "simctl terminate succeeded; host PID no longer exists"
+    },
+    {
+      "status": "PASS",
+      "processID": 102,
+      "action": "complete",
+      "observation": "simctl terminate succeeded; host PID no longer exists"
+    }
+  ]
+}
