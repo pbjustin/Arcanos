@@ -131,7 +131,9 @@ def main():
                   ("ios-sdks", ["xcodebuild", "-showsdks"]),
                   ("simulator-runtimes", ["xcrun", "simctl", "list", "runtimes", "--json"])]
     for name, command in inspection:
-        code, log = execute(name, command)
+        # A fresh hosted Mac may need to initialize CoreSimulator before listing
+        # runtimes. Keep that cold-start wait bounded and retain timeout failure.
+        code, log = execute(name, command, timeout=120 if name == "simulator-runtimes" else 30)
         if code != 0:
             report["evidenceLevels"]["A"] = {"status": "BLOCKED", "dependency": "Apple toolchain inspection failed: " + name}
             save()

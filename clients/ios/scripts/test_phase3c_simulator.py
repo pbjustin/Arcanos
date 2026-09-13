@@ -161,6 +161,8 @@ class SimulatorProofTests(unittest.TestCase):
             "changed summary": lambda report: report["proof"].update(interceptedSubmissionAttempts=2),
             "failed controller": lambda report: report["checks"][0].update(status="FAIL"),
             "nonzero controller": lambda report: report["checks"][0].update(exitCode=1),
+            "missing command exit": lambda report: report["checks"][0].pop("exitCode"),
+            "boolean command exit": lambda report: report["checks"][0].update(exitCode=False),
             "missing installation": lambda report: report.update(checks=[item for item in report["checks"]
                                                                          if item["name"] != "install-hardware-validation-app"]),
             "physical claim": lambda report: report.update(physicalDevice="PASS"),

@@ -91,6 +91,8 @@ class CloudReportTests(unittest.TestCase):
                    lambda report: report["stages"][0]["counts"].update(submissionAttempts=2),
                    lambda report: report["proof"].update(httpRequests=1),
                    lambda report: report["checks"][0].update(status="FAIL"),
+                   lambda report: report["checks"][0].pop("exitCode"),
+                   lambda report: report["checks"][0].update(exitCode=False),
                    lambda report: report.update(liveServices="PASS")]
         for change in changes:
             reports = self.simulator()
@@ -105,7 +107,8 @@ class CloudReportTests(unittest.TestCase):
                 self.assertEqual(matrix(self.revision, self.apple(), reports)["evidenceLevels"]["C"]["status"], status)
 
     def test_cli_success_gate_writes_report_before_failing_invalid_evidence(self):
-        cases = ("valid", "missingScenario", "summaryOnly", "tamperedStage", "malformedJSON", "malformedApple")
+        cases = ("valid", "missingScenario", "summaryOnly", "tamperedStage", "missingCommandExit", "booleanCommandExit",
+                 "malformedJSON", "malformedApple")
         for case in cases:
             with self.subTest(case=case), tempfile.TemporaryDirectory(prefix="arcanos-cloud-report-fixture-") as temporary:
                 root = Path(temporary)
@@ -119,6 +122,10 @@ class CloudReportTests(unittest.TestCase):
                         report = {"status": "PASS", "revision": self.revision, "proof": {"status": "PASS"}}
                     if case == "tamperedStage" and scenario == "lostReceipt":
                         report["stages"].pop()
+                    elif case == "missingCommandExit" and scenario == "lostReceipt":
+                        report["checks"][0].pop("exitCode")
+                    elif case == "booleanCommandExit" and scenario == "lostReceipt":
+                        report["checks"][0]["exitCode"] = False
                     path = simulator / scenario / "report.json"
                     path.parent.mkdir(parents=True)
                     path.write_text(json.dumps(report), encoding="utf-8")

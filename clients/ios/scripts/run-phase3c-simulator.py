@@ -242,9 +242,13 @@ def validate_report(report, revision, scenario):
                 "seed-synthetic-stale-preferences", "shutdown-owned-simulator"}
     required |= {"launch-" + action for action in actions_for(scenario)}
     required |= {"terminate-" + action for action in actions_for(scenario)[:-1]}
+    manual_checks = {"source-and-built-app-isolation", "seed-synthetic-stale-preferences"}
     checks = report.get("checks")
     require(isinstance(checks, list) and all(isinstance(check, dict) and check.get("status") == "PASS"
-            and check.get("exitCode", 0) == 0 for check in checks), "Failed Simulator controller check")
+            and isinstance(check.get("name"), str) for check in checks), "Failed Simulator controller check")
+    require(all((check["name"] in manual_checks and "exitCode" not in check)
+                or (type(check.get("exitCode")) is int and check["exitCode"] == 0) for check in checks),
+            "Missing or unsuccessful Simulator command exit code")
     require(required <= {check.get("name") for check in checks}, "Missing Simulator controller checks")
     stages = report.get("stages")
     proof = validate_sequence(stages, report.get("terminations"), scenario)
