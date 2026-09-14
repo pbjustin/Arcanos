@@ -4,6 +4,7 @@ import { assessGamingSourcePolicy, extractGamingFreshnessMetadata } from '../src
 import { gamingClearHash } from '../src/shared/gaming/gamingClearPolicy.js';
 import type { ResolvedGamingDocument } from '../src/services/gamingDocumentResolution.js';
 import type { GamingStoredKnowledgeInput } from '../src/shared/gaming/gamingStoredEvidenceCore.js';
+import { extractGamingHtmlEvidence } from '../src/services/gamingHtmlEvidence.js';
 
 const now = new Date('2026-09-09T12:00:00.000Z');
 function document(game: string, title: string, text: string, partial = false): ResolvedGamingDocument {
@@ -72,6 +73,17 @@ describe('Gaming CLEAR acquired source assessment', () => {
     const doc = document('Elden Ring', 'Elden Ring guide', `Game: Elden Ring. Patch: 1.0. Published at: 2024-01-01. ${prose}`);
     expect(assess(doc, { prompt: 'Which Intelligence build is best currently?', mode: 'build' })).toMatchObject({ decision: 'partial', qualityEligible: false,
       gates: { freshness: 'unknown' }, dimensionScores: { resilience: { unresolvedFacts: expect.arrayContaining(['COMBINED_APPLICABILITY_REQUIRED']) } } });
+  });
+  it('evaluates official structured patch metadata in its supporting role without requiring build equipment and spells', () => {
+    const publicUrl = 'https://swtor.com/patchnotes/synthetic-currentness-test';
+    const evidenceUnits = extractGamingHtmlEvidence({ sourceUrl: publicUrl, contentType: 'text/html',
+      body: '<table><caption>Star Wars: The Old Republic update</caption><tr><th>Build</th><th>Patch</th></tr><tr><td>Hotfix Copper</td><td>2.1</td></tr></table>' }).units;
+    const doc = { ...document('Star Wars: The Old Republic', 'Star Wars: The Old Republic patch notes',
+      `Star Wars: The Old Republic releases this official update for the supported platforms. The following release record identifies the applicable patch and hotfix. ${evidenceUnits.map(unit => unit.text).join(' ')}`),
+    publicUrl, canonicalUrl: publicUrl, evidenceUnits };
+    expect(evidenceUnits.length).toBeGreaterThan(0);
+    expect(assess(doc, { game: 'Star Wars: The Old Republic', prompt: 'What is a good mage build now?', mode: 'build' })).toMatchObject({
+      sourceRole: 'patch_authority', decision: 'accept', dimensionScores: { leverage: { score: 4, reasonCodes: ['SUPPORTING_SOURCE_ROLE'] } } });
   });
   it('rejects explicit wrong patch and future announced changes regardless of other features', () => {
     expect(assess(document('Elden Ring', 'Elden Ring guide', `Patch: 1.0. ${prose}`), { requestedVersion: '2.0' }).decision).toBe('reject');

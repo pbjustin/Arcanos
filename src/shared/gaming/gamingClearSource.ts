@@ -135,7 +135,7 @@ export function assessGamingClearSource(input: GamingStoredKnowledgeInput & { re
   const independentProse = !structural.hasRelevantClaimUnit && structural.hasIndependentProseAnchors
     && proseText.length >= 120 && gamingTermCoverage(proseText, buildGamingRetrievalTerms(input).focusTerms) >= 0.25;
   const usable = structural.hasIntactUsableUnit || intactText.trim().length >= 120;
-  const relevant = structuredClaim ? structural.claimSupported || independentProse : coverage >= 0.25 || supporting;
+  const relevant = supporting || (structuredClaim ? structural.claimSupported || independentProse : coverage >= 0.25);
   const refs = [options.subjectId];
   const evaluated = (score: number, reasonCode: string) => ({ status: 'evaluated' as const, score,
     reasonCodes: [reasonCode], evidenceRefs: refs, unresolvedFacts: [] as string[] });
@@ -183,7 +183,7 @@ export function assessGamingClearSource(input: GamingStoredKnowledgeInput & { re
         reasonCodes: identity.reasonCodes, evidenceRefs: refs, unresolvedFacts: ['GAME_IDENTITY'] },
       resilience: { ...evaluated(document.metrics.truncated ? 3 : 3.5, document.metrics.truncated ? 'EXTRACTION_PARTIAL' : 'TRACEABLE_ACQUIRED_DOCUMENT'),
         unresolvedFacts: ['INDEPENDENT_CORROBORATION_NOT_ESTABLISHED', ...(!stable && !historical && !combinedCurrent ? ['COMBINED_APPLICABILITY_REQUIRED'] : [])] }
-    }, findings: [...(structuredClaim && !structural.claimSupported && !independentProse ? structural.reasonCodes.map(code => ({ code, severity: 'blocking' as const, evidenceRefs: refs })) : []),
+    }, findings: [...(!supporting && structuredClaim && !structural.claimSupported && !independentProse ? structural.reasonCodes.map(code => ({ code, severity: 'blocking' as const, evidenceRefs: refs })) : []),
       ...(future || expired || wrongPatch ? [{ code: future ? 'NOT_YET_EFFECTIVE' : expired ? 'NO_LONGER_EFFECTIVE' : 'PATCH_MISMATCH', severity: 'blocking' as const, evidenceRefs: refs }] : []),
       ...identity.reasonCodes.filter(() => identity.status !== 'verified').map(code => ({ code, severity: identity.status === 'conflict'
       ? 'blocking' as const : 'warning' as const, evidenceRefs: refs })), ...(document.metrics.truncated

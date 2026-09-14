@@ -2,6 +2,7 @@ import { describe, it, expect, jest } from '@jest/globals';
 import { createGamingHybridWorkflow } from '../src/services/gamingHybridKnowledge.js';
 import { GAMING_HYBRID_CONTRACT_VERSION as contractVersion, GAMING_HYBRID_LIMITS } from '../src/shared/gaming/gamingHybridContract.js';
 import type { GamingStoredKnowledgeContext } from '../src/services/gamingStoredKnowledge.js';
+import { GAMING_SOURCE_POLICY_VERSION } from '../src/shared/gaming/gamingFreshnessCore.js';
 
 const now = Date.now();
 const context = { actorKey: 'synthetic-gaming-caller', requestId: 'synthetic-request' };
@@ -165,7 +166,7 @@ describe('Gaming hybrid authenticated handoff', () => {
     const data = knowledge();
     const question = category === 'live_status' ? 'What is the current server status?' : 'What changed for the copper gate in the patch?';
     const sourceText = category === 'live_status' ? 'The current server status is online with normal access to this synthetic game.' : 'The copper gate now requires a carved key after the documented patch change.';
-    const metadata = { id: 'source-1', url: data.sources[0].url, game: query.game, policyVersion: 'gaming-hybrid-source-policy-v1',
+    const metadata = { id: 'source-1', url: data.sources[0].url, game: query.game, policyVersion: GAMING_SOURCE_POLICY_VERSION,
       category: category === 'live_status' ? 'official_status' : 'official_updates', authority: 'official',
       currentness: category === 'live_status' ? 'live_status' : 'article', metadataConfidence: 'content_extracted',
       fetchedAt: checked, verifiedAt: checked, sourceUpdatedAt: checked, patch: '2.1', effectiveFrom: new Date(now - age - 1000).toISOString() };
@@ -246,12 +247,12 @@ describe('Gaming hybrid authenticated handoff', () => {
     expect(retrieve).toHaveBeenCalledTimes(1);
     expect((await workflow.query({ ...query, question: 'Changed question' }, context)).status).toBe(409);
   });
-  it('permits a new logical lookup under a new key', async () => {
+  it('preserves the same workflow budget when a new key repeats the logical lookup', async () => {
     const { workflow, retrieve } = setup();
     const first = await workflow.query(query, context);
     const second = await workflow.query({ ...query, idempotencyKey: 'new-refresh-query' }, context);
-    expect(first.body.workflowId).not.toBe(second.body.workflowId);
-    expect(retrieve).toHaveBeenCalledTimes(2);
+    expect(first.body.workflowId).toBe(second.body.workflowId);
+    expect(retrieve).toHaveBeenCalledTimes(1);
   });
   it('conceals workflows from other authenticated callers', async () => {
     const { workflow, evaluateCandidates } = setup();
@@ -300,7 +301,8 @@ describe('Gaming hybrid authenticated handoff', () => {
     const workflow = createGamingHybridWorkflow({ retrieve: async () => empty, evaluateCandidates, generate, ingest });
     const results: Awaited<ReturnType<typeof workflow.candidates>>[] = [];
     for (let index = 0; index < 5; index += 1) {
-      const first = await workflow.query({ ...query, idempotencyKey: `capacity-query-${index}`, storagePolicy: 'ask_before_store' }, context);
+      const first = await workflow.query({ ...query, currentArea: `Copper Quay ${index}`,
+        idempotencyKey: `capacity-query-${index}`, storagePolicy: 'ask_before_store' }, context);
       results.push(await workflow.candidates({ contractVersion, workflowId: first.body.workflowId,
         idempotencyKey: `capacity-candidates-${index}`, candidates: [{ url: 'https://example.com/lantern' }] }, context));
     }

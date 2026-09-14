@@ -7,12 +7,13 @@ export interface GamingHybridCandidateAttemptInput {
   round: number;
   nextAction?: string;
   maxRounds: number;
+  expectedAction?: 'search' | 'verify_currentness';
 }
 
 /** Payload binding and concurrent promise reuse remain the caller's responsibility. */
 export function resolveGamingHybridCandidateAttempt(input: GamingHybridCandidateAttemptInput): 'begin' | 'resume' | 'deny' {
   if (input.operationKey === input.requestedKey) return 'resume';
-  return input.round >= input.maxRounds || input.nextAction !== 'search' ? 'deny' : 'begin';
+  return input.round >= input.maxRounds || input.nextAction !== (input.expectedAction ?? 'search') ? 'deny' : 'begin';
 }
 
 export interface GamingHybridPublicCandidateDecision {

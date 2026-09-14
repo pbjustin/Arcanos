@@ -247,7 +247,12 @@ backend invoke ChatGPT's web-search tool.
    calls `submitGamingHybridCandidates` with actual URLs and its workflow ID.
 4. ARCANOS independently fetches, validates, extracts, checks applicability and
    selects evidence. Accepted evidence can answer immediately, without storage.
-5. `ingestGamingHybridCandidates` is a separate consequential write. It selects
+5. If a relevant guide is accepted but official currentness is missing,
+   `nextAction: verify_currentness` requests one bounded official corroboration
+   operation through the same candidates Action. The backend reuses its accepted
+   guide, verifies official update identity and checks guide compatibility.
+   Failure remains unverified/stale/conflicting and ends the search sequence.
+6. `ingestGamingHybridCandidates` is a separate consequential write. It selects
    caller-bound candidate IDs, applies storage permission/consent, and queues the
    existing worker. The existing ingestion-status Action reports the outcome.
 
@@ -259,8 +264,9 @@ requires progress clarification. It passes the original validated player context
 spoiler/depth preferences, selected evidence and date/update qualifications to
 the existing generation and citation projection.
 
-The server permits one discovery round (the existing stricter frontend limit),
-three URLs, eight workflows per credential actor, 24 hybrid calls per five
+The server permits one gameplay discovery round and one separate official
+currentness corroboration operation, each with at most three URLs, eight
+workflows per credential actor, 24 hybrid calls per five
 minutes, and 128 workflows total per web process. Workflows expire after ten
 minutes; retained resolved text is bounded to 12 million characters per process.
 At that capacity, new evidence remains transient and returns no storage handle;
@@ -336,8 +342,11 @@ Seasonal questions about patches, hotfixes, balance or builds also require curre
 patch applicability; a season-only index cannot establish it. Malformed or
 truncated scope labels remain unverified rather than implying global applicability.
 
-Metadata adapters are intentionally conservative: supported labeled metadata and
-the reviewed SWTOR dated release index are implemented. Unsupported site layouts
+Metadata adapters are intentionally conservative: supported labeled metadata,
+the reviewed SWTOR dated release index, and the reviewed Elden Ring publisher
+index with its exact linked application/regulation article are implemented.
+New games add reviewed source rules and, when needed, a deterministic adapter;
+the hybrid state machine stays unchanged. Unsupported site layouts
 remain unverified; this is not exhaustive live-service coverage. Bounded explicit
 `Mechanic: name = number` labels detect conflicting numeric values (16 per source);
 equal-authority conflicts fail closed and conflicting weaker sources are excluded.
@@ -345,14 +354,20 @@ An excluded source contributes no other mechanic claims to conflict resolution.
 Arbitrary prose semantic conflicts cannot be resolved exhaustively by lexical rules.
 Answers must retain that
 uncertainty, distinguish official changes from recommendations, and avoid a
-currentness claim without verification. Queries for historical/as-of releases
-are explicitly unsupported because ordinary retrieval selects active records only.
+currentness claim without verification. An explicit historical patch can use
+matching patch evidence among active records; date-only historical mapping and
+searching inactive historical source revisions remain unsupported.
 
 An accepted official index can be retained as a bounded verification attestation
 on the approved source's existing provenance. It is bound to the full approved
 artifact hash and reviewed policy, and expires independently under the currentness
 rules. Later no-URL retrieval can reuse it while applicable. Its citation contains
 server-projected patch/build/season/date facts, not unrelated index story headlines.
+The proof also binds adapter version, official article references, actor scope,
+workflow, game/edition and applicable platform/region. Expiry or a source-policy
+change requires revalidation; a stored guide is never permanently marked current
+and is not deleted merely because a newer patch appears. Corroboration and its
+transient cache do not themselves invoke durable ingestion.
 
 See the [canonical GPT package](ARCANOS_GAMING_CUSTOM_GPT.md) for the exact
 schema/instruction paths and deployment-before-activation procedure.

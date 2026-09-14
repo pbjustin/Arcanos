@@ -28,6 +28,8 @@ import { projectGamingDocumentText } from "@shared/gaming/gamingDocumentProjecti
 import { sanitizeGamingDiscoveryCandidateUrl, sanitizeGamingStructuredDocumentUrl } from "@services/gamingSourceDiscovery.js";
 import type { GamingEvidenceUnit, GamingStructureDiagnostics } from '@shared/gaming/gamingEvidenceUnits.js';
 import { extractGamingDocumentEvidence } from './gamingDocumentEvidence.js';
+import { extractGamingCurrentnessDocument } from './gamingCurrentnessDocument.js';
+import type { GamingCurrentnessDocumentMetadata } from '@shared/gaming/gamingCurrentnessAdapters.js';
 
 export const GAMING_DOCUMENT_RESOLVER_VERSION = "gaming-document-v2";
 const acquisitionAttestations = new WeakMap<GamingDocumentAcquisition, string>();
@@ -36,6 +38,7 @@ const documentBinding = (document: ResolvedGamingDocument): string => createHash
     publicUrl: document.publicUrl, host: document.host, text: document.text, metadata: document.metadata,
     contentType: document.contentType, resolution: document.resolution, metrics: document.metrics,
     acquisition: document.acquisition, evidenceUnits: document.evidenceUnits,
+    ...(document.currentnessDocument ? { currentnessDocument: document.currentnessDocument } : {}),
     sourceUseRestricted: document.sourceUseRestricted }), "utf8").digest("hex");
 
 /** Preserve article selectors; only structured URL payloads need a separate citation projection. */
@@ -97,6 +100,7 @@ export interface ResolvedGamingDocument {
   evidenceUnits?: GamingEvidenceUnit[];
   structureDiagnostics?: GamingStructureDiagnostics;
   sourceUseRestricted?: boolean;
+  currentnessDocument?: GamingCurrentnessDocumentMetadata;
 }
 
 interface GamingDocumentResolver {
@@ -329,6 +333,7 @@ export async function resolveGamingDocument(
     if (boundedRaw) options.onRawDocument?.(boundedRaw);
     const canonicalUrl = resolver.publicUrl(url) ?? acquired.finalUrl ?? description.publicUrl;
     const publicUrl = acquired.finalUrl ? projectGamingDocumentPublicUrl(canonicalUrl) : canonicalUrl;
+    const currentnessDocument = extractGamingCurrentnessDocument(canonicalUrl, boundedRaw);
     const acquisition: GamingDocumentAcquisition | undefined = acquired.finalUrl ? {
       policyVersion: GAMING_DOCUMENT_ACQUISITION_POLICY_VERSION, requestedUrl: description.publicUrl,
       finalUrl: canonicalUrl, redirectCount: acquired.transitions?.length ?? 0,
@@ -359,6 +364,7 @@ export async function resolveGamingDocument(
       ...(contentType ? { contentType } : {}),
       ...(boundedRaw ? { rawDocument: boundedRaw } : {}),
       metadata: safeMetadata,
+      ...(currentnessDocument ? { currentnessDocument } : {}),
       extraction: effectiveExtraction,
       resolution: {
         resolverId: resolver.id,

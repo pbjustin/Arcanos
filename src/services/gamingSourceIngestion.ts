@@ -780,6 +780,7 @@ export async function createGamingSourceIngestion(
 /** Full accepted text and interpretation metadata; never hash a preview or excerpt. */
 export function hashGamingApprovedDocument(document: ResolvedGamingDocument): string {
   return sha256(stableJson({ text: document.text, metadata: document.metadata,
+    ...(document.currentnessDocument ? { currentnessDocument: document.currentnessDocument } : {}),
     ...(document.sourceUseRestricted !== undefined ? { sourceUseRestricted: document.sourceUseRestricted } : {}),
     ...(document.evidenceUnits?.length ? { evidenceUnits: document.evidenceUnits, evidenceUnitPolicyVersion: GAMING_EVIDENCE_UNIT_POLICY_VERSION } : {}),
     requestedUrl: document.requestedUrl, canonicalUrl: document.canonicalUrl,

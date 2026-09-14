@@ -9,8 +9,10 @@ import { resolveGamingPlayerContext, validateGamingPlayerContextInput } from '@s
 import { assessGamingProgressionRequest } from '@shared/gaming/gamingProgressionPolicy.js';
 import { buildGamingRecoveryResponse } from '@shared/gaming/gamingRecoveryResponse.js';
 import { assessGamingSourcePolicy, classifyGamingQuestionFreshness, evaluateGamingFreshness, GAMING_FRESHNESS_DEFAULTS, type GamingFreshnessEvidence } from '@shared/gaming/gamingFreshnessCore.js';
+import { combineGamingCurrentnessEvidence, GAMING_CURRENTNESS_ADAPTER_VERSION } from '@shared/gaming/gamingCurrentnessAdapters.js';
 import { resolveGamingHybridCandidateAttempt, projectGamingHybridCandidateRetention } from '@shared/gaming/gamingHybridPolicyCore.js';
 import { assessGamingClearEvidence } from '@shared/gaming/gamingClearEvidence.js';
+import { gamingClearHash } from '@shared/gaming/gamingClearPolicy.js';
 import { buildStoredGamingKnowledgeContext, type GamingSourceGatewayContext } from './gamingSourceIngestion.js';
 import { formatStoredGamingEvidence, type GamingStoredKnowledgeContext } from './gamingStoredKnowledge.js';
 import type { runGameplayPipeline, GamingPipelineInput } from './gamingPipeline.js';
@@ -20,24 +22,44 @@ import { evaluateGamingHybridCandidates, createApprovedGamingHybridIngestion, ty
 export interface GamingHybridCallContext extends GamingSourceGatewayContext { signal?: AbortSignal; canStore?: boolean; canAutoStore?: boolean }
 export interface GamingHybridResult { status: number; body: GamingHybridResponse }
 type Operation = { hash: string; promise: Promise<GamingHybridResult>; retryable?: boolean };
+type DiscoveryType = 'gameplay_evidence' | 'currentness_verification';
+type CandidateSubmission = { key: string; knowledge: GamingStoredKnowledgeContext;
+  decisions: GamingHybridResponse['candidates']; freshness: GamingFreshnessEvidence[] };
 interface CurrentVerification {
   artifactHash: string;
   indexHash: string;
   evidence: GamingFreshnessEvidence;
   snippet: string;
+  workflowId?: string;
+  actorScopeHash?: string;
+  contextHash?: string;
+  policyVersion?: string;
+  bindingHash?: string;
 }
 type Workflow = {
   id: string; actor: string; createdAt: number; input: GamingHybridQuery; pipeline: GamingPipelineInput;
-  round: number; accepted: GamingHybridAcceptedCandidate[]; operations: Map<string, Operation>;
+  round: number; currentnessRound: number; accepted: GamingHybridAcceptedCandidate[]; operations: Map<string, Operation>;
+  pendingDiscovery?: DiscoveryType;
+  budgetKey: string;
   last?: GamingHybridResponse;
   knowledge?: GamingStoredKnowledgeContext;
   candidateOperationKey?: string;
-  candidateSubmission?: { key: string; knowledge: GamingStoredKnowledgeContext; decisions: GamingHybridResponse['candidates']; freshness: GamingFreshnessEvidence[] };
+  candidateSubmission?: CandidateSubmission;
+  currentnessOperationKey?: string;
+  currentnessSubmission?: CandidateSubmission;
   answer?: GamingHybridResponse['answer'];
   /** Earliest expiry of the actual applicability proof, not the workflow creation time. */
   evidenceExpiresAt?: number;
 };
 const hash = (value: unknown): string => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+const normalizedBudgetValue = (value: unknown): unknown => typeof value === 'string'
+  ? value.normalize('NFKC').trim().replace(/\s+/gu, ' ').toLowerCase()
+  : Array.isArray(value) ? value.map(normalizedBudgetValue) : value;
+function queryBudgetKey(actor: string, input: GamingHybridQuery): string {
+  return hash([actor, Object.entries(input).filter(([key]) => !['idempotencyKey', 'storagePolicy', 'version',
+    'answerDepth', 'spoilerTolerance', 'mode'].includes(key))
+    .sort(([left], [right]) => left.localeCompare(right)).map(([key, value]) => [key, normalizedBudgetValue(value)])]);
+}
 
 /** Dependency seams replace only external effects in deterministic integration tests. */
 export interface GamingHybridDependencies {
@@ -57,6 +79,7 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
   // A restart or another replica misses safely; it never grants additional artifact access.
   const workflows = new Map<string, Workflow>();
   const queries = new Map<string, { workflowId: string; operation: Operation }>();
+  const budgets = new Map<string, string>();
   const rates = new Map<string, { start: number; count: number }>();
   function prune() {
     for (const [id, workflow] of workflows) {
@@ -65,6 +88,7 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
       if (deps.now() - workflow.createdAt >= ttl) workflows.delete(id);
     }
     for (const [id, query] of queries) if (!workflows.has(query.workflowId)) queries.delete(id);
+    for (const [key, id] of budgets) if (!workflows.has(id)) budgets.delete(key);
     for (const [id, rate] of rates) if (deps.now() - rate.start >= LIMITS.rateWindowMs) rates.delete(id);
   }
   function base(context: GamingHybridCallContext, workflow?: Workflow): GamingHybridResponse {
@@ -106,7 +130,7 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
       logger.info('gaming.hybrid.handoff', { requestId: result.body.requestId, workflowId: workflow.id,
         state: result.body.state, reason: result.body.reason, freshnessStatus: result.body.freshnessStatus,
         sourceKnown: result.body.sourceKnown, evidenceSelected: result.body.evidenceSelected, round: workflow.round,
-        candidateCount: workflow.accepted.length });
+        currentnessRound: workflow.currentnessRound, candidateCount: workflow.accepted.length });
       return result;
     } catch {
       // Deliberately no raw exception, question, URL, document, or model reasoning.
@@ -115,18 +139,37 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
       return currentResponse(context, workflow, failed);
     }
   }
-  function searchQueries(workflow: Workflow): string[] {
+  function searchQueries(workflow: Workflow, type: DiscoveryType = 'gameplay_evidence'): string[] {
     const clean = (value: string) => redactString(value).replace(/https?:\/\/\S+|\S+@\S+|\b\d{7,}\b|\[[^\]]*REDACT[^\]]*\]/giu, ' ')
       .replace(/[^\p{L}\p{N} .:'-]/gu, ' ').replace(/\s+/gu, ' ').trim();
     const input = workflow.input;
     // Deliberately omit free-form constraints and unrelated conversation/player fields.
     const scope = [input.game, input.edition, input.platform, input.region, input.requestedVersion].filter(Boolean).map(value => clean(value!)).join(' ');
+    if (type === 'currentness_verification') return [`${scope} official latest patch notes update index`.slice(0, 350),
+      `${scope} official current patch build hotfix history`.slice(0, 350)];
     const focus = clean(input.question).slice(0, 180);
-    return [`${scope} ${focus}`.slice(0, 350), `${scope} official latest patch hotfix release notes`.slice(0, 350)];
+    return [`${scope} ${focus}`.slice(0, 350), `${scope} gameplay guide ${focus}`.slice(0, 350)];
   }
-  function discovery(context: GamingHybridCallContext, workflow: Workflow, body: GamingHybridResponse): GamingHybridResult {
-    return { status: 200, body: { ...body, state: 'discovery_required', nextAction: workflow.round < LIMITS.discoveryRounds ? 'search' : 'stop',
-      discovery: { round: workflow.round, maxRounds: LIMITS.discoveryRounds, maxCandidates: LIMITS.candidates, searchQueries: searchQueries(workflow) } } };
+  function discovery(context: GamingHybridCallContext, workflow: Workflow, body: GamingHybridResponse,
+    hasGameplayEvidence = false): GamingHybridResult {
+    const currentness = hasGameplayEvidence && ['patch_sensitive', 'seasonal'].includes(classifyGamingQuestionFreshness(workflow.pipeline))
+      && ['CURRENT_OFFICIAL_INDEX_REQUIRED', 'REVALIDATION_DUE'].includes(body.reason);
+    const type: DiscoveryType = currentness || workflow.currentnessRound > 0 ? 'currentness_verification' : 'gameplay_evidence';
+    const round = type === 'currentness_verification' ? workflow.currentnessRound : workflow.round;
+    const maxRounds = type === 'currentness_verification' ? LIMITS.currentnessRounds : LIMITS.discoveryRounds;
+    const permitted = round < maxRounds && (type === 'currentness_verification' ? currentness : workflow.currentnessRound === 0);
+    workflow.pendingDiscovery = permitted ? type : undefined;
+    if (permitted && currentness) logger.info('gaming.freshness.verification_requested', {
+      requestId: context.requestId, workflowId: workflow.id, game: workflow.input.game.slice(0, 120),
+      freshnessStatus: body.freshnessStatus, reasonCodes: [body.reason], policyVersion: GAMING_HYBRID_CONTRACT_VERSION,
+      round, maxRounds, cacheStatus: body.reason === 'REVALIDATION_DUE' ? 'expired' : 'missing'
+    });
+    return { status: 200, body: { ...body, state: 'discovery_required',
+      nextAction: permitted ? type === 'currentness_verification' ? 'verify_currentness' : 'search' : 'stop',
+      ...(currentness ? { gameplayEvidenceStatus: permitted ? 'currentness_pending' as const : 'unverified' as const,
+        currentnessRequirements: ['official_source_required', 'current_patch_or_build_required', 'hotfix_check_required_if_supported'] as const
+      } : {}),
+      discovery: { type, round, maxRounds, maxCandidates: LIMITS.candidates, searchQueries: searchQueries(workflow, type) } } };
   }
   function candidateAcquisitionOutcome(result: GamingHybridResult, decisions: GamingHybridResponse['candidates']): GamingHybridResult {
     const acquisitionReasons = new Set(['INVALID_URL', 'URL_BLOCKED', 'REDIRECT_NOT_ALLOWED', 'SOURCE_FETCH_FAILED',
@@ -150,7 +193,17 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
   }
   async function answer(context: GamingHybridCallContext, workflow: Workflow, knowledge: GamingStoredKnowledgeContext,
     candidateFreshness: GamingFreshnessEvidence[] = [], acceptedCandidates: readonly GamingHybridAcceptedCandidate[] = workflow.accepted): Promise<GamingHybridResult> {
+    const evaluationStartedAt = deps.now();
     const input = workflow.input;
+    const verificationContextHash = hash([workflow.actor, workflow.id, input.game, input.edition, input.platform, input.region,
+      input.requestedVersion, GAMING_HYBRID_CONTRACT_VERSION]);
+    const gameplayCandidates = acceptedCandidates.filter(item => !['current_index', 'live_status'].includes(item.freshness.currentness)
+      && item.freshness.category !== 'official_updates' && item.freshness.category !== 'official_status');
+    const gameplayIds = new Set(knowledge.sources.filter(source => {
+      const metadata = candidateFreshness.find(item => item.url === source.url) ?? source.freshnessMetadata;
+      return metadata?.currentness !== 'current_index' && metadata?.category !== 'official_updates' && metadata?.category !== 'official_status';
+    }).map(source => source.sourceId));
+    const hasGameplayEvidence = (knowledge.evidence ?? []).some(chunk => gameplayIds.has(chunk.sourceId));
     let body: GamingHybridResponse = { ...base(context, workflow), sourceKnown: knowledge.sourceKnown === true || knowledge.sources.length > 0 };
     if (assessGamingProgressionRequest(workflow.pipeline).clarificationNeeded) return { status: 200, body: { ...body,
       state: 'clarification_required', nextAction: 'clarify', reason: 'PROGRESS_POINT_REQUIRED',
@@ -168,9 +221,19 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
     // Its own checked time still expires under the ordinary freshness policy.
     for (const source of knowledge.sources) {
       const verification = source.freshnessMetadata?.currentVerification as CurrentVerification | undefined;
+      // Durable cache readers preserve the creating workflow as proof provenance;
+      // they do not pretend a new request created or refreshed that attestation.
+      const originContextHash = verification && hash([workflow.actor, verification.workflowId, input.game,
+        input.edition, input.platform, input.region, input.requestedVersion, GAMING_HYBRID_CONTRACT_VERSION]);
       if (verification && source.approvedContentHash === verification.artifactHash
+        && typeof verification.workflowId === 'string' && /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u.test(verification.workflowId)
+        && verification.actorScopeHash === workflow.actor && verification.contextHash === originContextHash
+        && verification.policyVersion === GAMING_HYBRID_CONTRACT_VERSION
+        && verification.bindingHash === gamingClearHash({ ...verification, bindingHash: undefined })
         && /^[a-f0-9]{64}$/u.test(verification.indexHash) && verification.snippet?.length <= 600
         && verification.evidence?.currentness === 'current_index'
+        && (!verification.evidence.currentnessMetadata
+          || verification.evidence.currentnessMetadata.adapterVersion === GAMING_CURRENTNESS_ADAPTER_VERSION)
         && assessGamingSourcePolicy(verification.evidence.url, input.game).ruleId === verification.evidence.ruleId) {
         if (!evidence.some(item => item.url === verification.evidence.url)) evidence.push(verification.evidence);
         if (!knowledge.sources.some(item => item.url === verification.evidence.url)) {
@@ -185,7 +248,8 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
       }
     }
     // An official release index can corroborate applicability without matching the gameplay question.
-    for (const item of candidateFreshness) if (!evidence.some(existing => existing.url === item.url)) evidence.push(item);
+    for (const item of candidateFreshness) if (!evidence.some(existing => existing.id === item.id && existing.url === item.url)) evidence.push(item);
+    evidence.splice(0, evidence.length, ...combineGamingCurrentnessEvidence(evidence, new Date(deps.now())));
     const freshness = evaluateGamingFreshness({ question: input.question, game: input.game, mode: input.mode,
       requestedVersion: input.requestedVersion, edition: input.edition, platform: input.platform, region: input.region,
       evidence, now: new Date(deps.now()) });
@@ -203,21 +267,27 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
     if (freshness.usable) {
       const index = acceptedCandidates.find(item => item.freshness.currentness === 'current_index' && selected.has(item.candidateId));
       if (index) {
+        const completedIndex = evidence.find(item => item.id === index.candidateId)!;
         const snippet = [
           'Backend-verified official release index; applicability verification only.',
           freshness.effectivePatch ? `Applicable patch: ${freshness.effectivePatch}.` : '',
           freshness.effectiveBuild ? `Applicable build: ${freshness.effectiveBuild}.` : '',
           freshness.season ? `Applicable season: ${freshness.season}.` : '',
-          index.freshness.effectiveFrom ? `Effective from: ${index.freshness.effectiveFrom}.` : '',
-          index.freshness.verifiedAt ? `Verified at: ${index.freshness.verifiedAt}.` : ''
+          completedIndex.effectiveFrom ? `Effective from: ${completedIndex.effectiveFrom}.` : '',
+          completedIndex.verifiedAt ? `Verified at: ${completedIndex.verifiedAt}.` : ''
         ].filter(Boolean).join(' ').slice(0, 600);
         for (const candidate of acceptedCandidates) if (selected.has(candidate.candidateId) && candidate !== index) {
-          Object.assign(candidate.freshness, { currentVerification: { artifactHash: candidate.contentHash,
-            indexHash: index.contentHash, evidence: { ...index.freshness }, snippet } satisfies CurrentVerification });
+          const verification: CurrentVerification = { artifactHash: candidate.contentHash, indexHash: index.contentHash,
+            evidence: { ...completedIndex }, snippet, workflowId: workflow.id, actorScopeHash: workflow.actor,
+            contextHash: verificationContextHash, policyVersion: GAMING_HYBRID_CONTRACT_VERSION };
+          // JSONB may reorder every object's keys. Use the shared canonical hash
+          // while preserving array order and every bound metadata value.
+          verification.bindingHash = gamingClearHash(verification);
+          Object.assign(candidate.freshness, { currentVerification: verification });
         }
         if (!knowledge.sources.some(source => source.sourceId === index.candidateId)) {
           knowledge.sources.push({ sourceId: index.candidateId, url: index.publicUrl, sourceType: 'official_updates',
-            fetchedAt: index.freshness.fetchedAt, snippet, origin: 'live' });
+            fetchedAt: completedIndex.fetchedAt, snippet, origin: 'live', freshnessMetadata: { ...completedIndex } });
           knowledge.evidence ??= [];
           knowledge.evidence.push({ sourceId: index.candidateId, revisionId: index.contentHash, recordId: `${index.candidateId}:verification`,
             recordType: 'guide', publicUrl: index.publicUrl, text: snippet, lexicalScore: 1, combinedScore: 1,
@@ -225,6 +295,16 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
         }
       }
     }
+    if (workflow.currentnessRound > 0) logger.info(freshness.status === 'conflicting'
+      ? 'gaming.currentness.conflicting' : freshness.usable ? 'gaming.currentness.verified' : 'gaming.currentness.candidate_evaluated', {
+      requestId: context.requestId, workflowId: workflow.id, game: input.game.slice(0, 120),
+      ruleIds: evidence.filter(item => item.authority === 'official').flatMap(item => item.ruleId ? [item.ruleId] : []).slice(0, 3),
+      adapterVersion: GAMING_CURRENTNESS_ADAPTER_VERSION, sourceRole: 'currentness_index', freshnessStatus: freshness.status,
+      effectivePatchHash: freshness.effectivePatch ? hash(freshness.effectivePatch) : undefined,
+      effectiveBuildHash: freshness.effectiveBuild ? hash(freshness.effectiveBuild) : undefined,
+      reasonCodes: freshness.reasons.slice(0, 8), policyVersion: freshness.policyVersion, cacheStatus: 'workflow',
+      elapsedMs: Math.max(0, deps.now() - evaluationStartedAt)
+    });
     const candidates = (knowledge.evidence ?? []).flatMap(chunk => {
       const source = knowledge.sources.find(entry => entry.sourceId === chunk.sourceId);
       return source && selected.has(source.sourceId) ? [{ evidence: chunk, source }] : [];
@@ -256,12 +336,34 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
       }
     }
     const gameplaySelected = usable.evidence?.some(chunk => !chunk.recordId.endsWith(':verification')) === true;
+    const guideStatuses = (freshness.guideApplicability ?? []).filter(item => gameplayIds.has(item.evidenceId));
+    for (const guide of guideStatuses.slice(0, 8)) logger.info('gaming.guide.applicability_evaluated', {
+      requestId: context.requestId, workflowId: workflow.id, game: input.game.slice(0, 120),
+      sourceRole: input.mode === 'build' ? 'build_analysis' : 'gameplay_guide', evidenceIdHash: hash(guide.evidenceId),
+      applicabilityStatus: guide.status, freshnessStatus: freshness.status, reasonCodes: guide.reasons.slice(0, 8),
+      effectivePatchHash: guide.effectivePatch ? hash(guide.effectivePatch) : undefined,
+      effectiveBuildHash: guide.effectiveBuild ? hash(guide.effectiveBuild) : undefined,
+      policyVersion: freshness.policyVersion, adapterVersion: GAMING_CURRENTNESS_ADAPTER_VERSION,
+      cacheStatus: 'workflow', elapsedMs: Math.max(0, deps.now() - evaluationStartedAt)
+    });
+    const applicabilityStatus: GamingHybridResponse['applicabilityStatus'] = freshness.status === 'conflicting'
+      || guideStatuses.some(item => item.status === 'conflicting') ? 'conflicting'
+      : guideStatuses.length && guideStatuses.every(item => item.status === 'verified_current') ? 'verified_current'
+        : guideStatuses.some(item => item.status === 'verified_current' || item.status === 'partially_verified') ? 'partially_verified'
+          : guideStatuses.some(item => item.status === 'stale') ? 'stale' : 'unverified';
     body = { ...body, evidenceSelected: gameplaySelected, freshnessStatus: applicabilityUnverified ? 'unverified' : freshness.status,
+      acceptedGameplayCandidateCount: gameplayCandidates.length,
+      ...(freshness.classification !== 'stable' ? { applicabilityStatus,
+        gameplayEvidenceStatus: freshness.usable && gameplaySelected ? 'freshness_verified' as const
+          : applicabilityStatus === 'stale' ? 'stale' as const : hasGameplayEvidence ? 'accepted_transient' as const : 'unverified' as const } : {}),
       ...(freshness.verifiedAsOf && !applicabilityUnverified ? { verifiedAsOf: freshness.verifiedAsOf } : {}),
       ...(freshness.effectivePatch ? { effectivePatch: freshness.effectivePatch } : {}),
       ...(freshness.effectiveBuild ? { effectiveBuild: freshness.effectiveBuild } : {}), qualification };
+    const currentnessReason = hasGameplayEvidence && ['patch_sensitive', 'seasonal'].includes(freshness.classification)
+      ? freshness.reasons.find(reason => ['CURRENT_OFFICIAL_INDEX_REQUIRED', 'REVALIDATION_DUE'].includes(reason)) : undefined;
     if (!freshness.usable || !gameplaySelected) return discovery(context, workflow,
-      { ...body, reason: !knowledge.evidence?.length ? 'COVERAGE_INSUFFICIENT' : freshness.reasons[0] ?? 'CURRENT_APPLICABILITY_UNVERIFIED' });
+      { ...body, reason: !knowledge.evidence?.length ? 'COVERAGE_INSUFFICIENT'
+        : currentnessReason ?? freshness.reasons[0] ?? 'CURRENT_APPLICABILITY_UNVERIFIED' }, hasGameplayEvidence);
     // Quality of individual documents is insufficient: judge the actual retained
     // set after freshness exclusions and the existing context/chunk budgets.
     const clearStartedAt = deps.now();
@@ -290,6 +392,7 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
       || !generated.data.response.trim() || generated.data.response.length > 18_000) {
       return { status: 503, body: { ...body, reason: 'GENERATION_UNAVAILABLE' } };
     }
+    workflow.pendingDiscovery = undefined;
     return { status: 200, body: { ...body, state: 'answer_ready', nextAction: 'answer', reason: 'ACCEPTED_EVIDENCE',
       answer: { response: generated.data.response, sources: generated.data.sources.slice(0, 8).map(source => ({
         url: source.url, title: source.title, sourceId: source.sourceId, patchVersion: source.patchVersion, fetchedAt: source.fetchedAt })),
@@ -326,17 +429,37 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
         if (prior.operation.hash !== hash(input)) return failure(context, 'IDEMPOTENCY_CONFLICT', 409);
         if (!prior.operation.retryable) return prior.operation.promise.then(result => {
           const workflow = workflows.get(prior.workflowId);
-          return workflow ? currentResponse(context, workflow, result) : failure(context, 'WORKFLOW_UNAVAILABLE', 404);
+          return workflow ? currentResponse(context, workflow, { ...result, body: workflow.last ?? result.body }) : failure(context, 'WORKFLOW_UNAVAILABLE', 404);
         });
         workflows.delete(prior.workflowId);
       }
       const actor = hash(context.actorKey);
+      const budgetKey = queryBudgetKey(actor, input);
+      const retainedId = budgets.get(budgetKey);
+      const retained = retainedId ? workflows.get(retainedId) : undefined;
+      if (retained) {
+        // A new key or a changed storage policy cannot create more search operations.
+        // The original storage policy remains authoritative for this retained workflow.
+        const operation = [...queries.values()].find(entry => entry.workflowId === retained.id)?.operation;
+        if (operation) {
+          const promise = retained.last?.ingestion ? protect(context, retained, async () => {
+            retained.knowledge = await deps.retrieve({ ...retained.pipeline, game: retained.input.game,
+              failOnUnavailable: true, hybridRetrieval: true, signal: context.signal });
+            return answer(context, retained, retained.knowledge);
+          }) : operation.promise.then(result => currentResponse(context, retained,
+            { ...result, body: retained.last ?? result.body }));
+          queries.set(key, { workflowId: retained.id, operation: { hash: hash(input), promise } });
+          return promise;
+        }
+      }
       if (workflows.size >= LIMITS.workflows || [...workflows.values()].filter(item => item.actor === actor).length >= LIMITS.workflowsPerActor)
         return failure(context, 'WORKFLOW_CAPACITY_REACHED', 429);
-      const workflow: Workflow = { id: randomUUID(), actor, createdAt: deps.now(), input, round: 0, accepted: [], operations: new Map(),
+      const workflow: Workflow = { id: randomUUID(), actor, budgetKey, createdAt: deps.now(), input,
+        round: 0, currentnessRound: 0, accepted: [], operations: new Map(),
         pipeline: { ...resolveGamingPlayerContext(input, input.question), game: input.game, prompt: input.question,
           mode: input.mode, requestedVersion: input.requestedVersion, region: input.region, guideUrls: [], auditEnabled: false } };
       workflows.set(workflow.id, workflow);
+      budgets.set(budgetKey, workflow.id);
       const promise = protect(context, workflow, async () => {
         workflow.knowledge = await deps.retrieve({ ...workflow.pipeline, game: input.game, failOnUnavailable: true, hybridRetrieval: true, signal: context.signal });
         return answer(context, workflow, workflow.knowledge);
@@ -357,29 +480,43 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
       const input = parsed.data;
       const workflow = own(input.workflowId, context);
       if (!workflow) return failure(context, 'WORKFLOW_UNAVAILABLE', 404);
+      const discoveryType: DiscoveryType = input.discoveryType
+        ?? (workflow.currentnessOperationKey === input.idempotencyKey ? 'currentness_verification'
+          : workflow.candidateOperationKey === input.idempotencyKey ? 'gameplay_evidence'
+            : workflow.pendingDiscovery ?? 'gameplay_evidence');
       return runOnce(workflow, `candidates:${input.idempotencyKey}`, input, context, async () => {
-        if (workflow.candidateSubmission?.key === input.idempotencyKey) {
-          const result = await answer(context, workflow, workflow.candidateSubmission.knowledge, workflow.candidateSubmission.freshness);
-          result.body.candidates = workflow.candidateSubmission.decisions;
+        const currentness = discoveryType === 'currentness_verification';
+        const submission = currentness ? workflow.currentnessSubmission : workflow.candidateSubmission;
+        if (submission?.key === input.idempotencyKey) {
+          const result = await answer(context, workflow, submission.knowledge, submission.freshness);
+          result.body.candidates = submission.decisions;
           return candidateAcquisitionOutcome(result, result.body.candidates);
         }
-        const attempt = resolveGamingHybridCandidateAttempt({ operationKey: workflow.candidateOperationKey,
-          requestedKey: input.idempotencyKey, round: workflow.round, nextAction: workflow.last?.nextAction, maxRounds: LIMITS.discoveryRounds });
-        if (attempt === 'deny') return failure(context, 'DISCOVERY_LIMIT_REACHED', 409, workflow);
+        const attempt = resolveGamingHybridCandidateAttempt({ operationKey: currentness ? workflow.currentnessOperationKey : workflow.candidateOperationKey,
+          requestedKey: input.idempotencyKey, round: currentness ? workflow.currentnessRound : workflow.round,
+          nextAction: workflow.pendingDiscovery === 'currentness_verification' ? 'verify_currentness'
+            : workflow.pendingDiscovery === 'gameplay_evidence' ? 'search' : undefined,
+          expectedAction: currentness ? 'verify_currentness' : 'search',
+          maxRounds: currentness ? LIMITS.currentnessRounds : LIMITS.discoveryRounds });
+        if (attempt === 'deny') return failure(context, currentness ? 'CURRENTNESS_LIMIT_REACHED' : 'DISCOVERY_LIMIT_REACHED', 409, workflow);
+        if (currentness && workflow.accepted.some(item => item.expiresAt <= deps.now()
+          || item.workflowId !== undefined && item.workflowId !== workflow.id
+          || item.actorScopeHash !== undefined && item.actorScopeHash !== createHash('sha256').update(context.actorKey, 'utf8').digest('hex')))
+          return failure(context, 'EVIDENCE_REVALIDATION_REQUIRED', 409, workflow);
         if (attempt === 'begin') {
           // Charge before yielding. A failed acquisition can resume only this payload-bound
           // operation; alternative submissions cannot spend another discovery round.
-          workflow.round += 1;
-          workflow.candidateOperationKey = input.idempotencyKey;
+          if (currentness) { workflow.currentnessRound += 1; workflow.currentnessOperationKey = input.idempotencyKey; }
+          else { workflow.round += 1; workflow.candidateOperationKey = input.idempotencyKey; }
         }
         const evaluated = await deps.evaluateCandidates({ ...workflow.pipeline, game: workflow.input.game,
-          region: workflow.input.region, candidates: input.candidates }, { ...context, workflowId: workflow.id });
+          region: workflow.input.region, candidates: input.candidates, discoveryType }, { ...context, workflowId: workflow.id });
         evaluated.knowledge.sources.forEach(source => { source.origin = 'live'; });
         const retainedChars = [...workflows.values()].flatMap(item => item.accepted).reduce((total, item) => total + item.document.text.length, 0);
         const { retainArtifacts, decisions } = projectGamingHybridCandidateRetention({ retainedChars,
           candidateChars: evaluated.accepted.reduce((total, item) => total + item.document.text.length, 0), decisions: evaluated.decisions });
-        if (retainArtifacts) workflow.accepted = evaluated.accepted;
-        const prior = workflow.knowledge;
+        if (retainArtifacts) workflow.accepted = [...workflow.accepted, ...evaluated.accepted];
+        const prior = currentness ? workflow.candidateSubmission?.knowledge ?? workflow.knowledge : workflow.knowledge;
         const combined = { context: '', sources: [...evaluated.knowledge.sources,
           ...(prior?.sources ?? []).filter(source => !evaluated.knowledge.sources.some(next => next.url === source.url))],
           evidence: [...(evaluated.knowledge.evidence ?? []),
@@ -387,9 +524,13 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
           sourceKnown: prior?.sourceKnown };
         // Retain only bounded evidence/freshness for answer retries when full artifacts
         // do not fit. Their candidate IDs must never advertise a storage handle.
-        const candidateFreshness = evaluated.accepted.map(item => item.freshness);
-        workflow.candidateSubmission = { key: input.idempotencyKey, knowledge: combined, decisions, freshness: candidateFreshness };
-        const result = await answer(context, workflow, combined, candidateFreshness, evaluated.accepted);
+        const candidateFreshness = [...(currentness ? workflow.candidateSubmission?.freshness ?? [] : []),
+          ...evaluated.accepted.map(item => item.freshness), ...(evaluated.currentnessEvidence ?? [])];
+        const nextSubmission = { key: input.idempotencyKey, knowledge: combined, decisions, freshness: candidateFreshness };
+        if (currentness) workflow.currentnessSubmission = nextSubmission;
+        else workflow.candidateSubmission = nextSubmission;
+        const artifacts = retainArtifacts ? workflow.accepted : [...workflow.accepted, ...evaluated.accepted];
+        const result = await answer(context, workflow, combined, candidateFreshness, artifacts);
         result.body.candidates = decisions;
         return candidateAcquisitionOutcome(result, decisions);
       });

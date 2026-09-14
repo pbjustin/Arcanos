@@ -34,6 +34,16 @@ function extract(url: string, text: string, game = 'Prism Siege') {
 }
 
 describe('Gaming question freshness is separate from relevance and source age', () => {
+  test('an applicable conflicting official index cannot be hidden by another matching index', () => {
+    const guide = source('guide', { category: 'specialist_guide', authority: 'specialist', currentness: 'none' });
+    const conflict = index({ id: 'conflicting-index', metadataConflict: true });
+    expect(evaluate([guide, index(), conflict])).toMatchObject({ status: 'conflicting', usable: false,
+      reasons: expect.arrayContaining(['CONFLICTING_CURRENTNESS']) });
+    expect(evaluate([guide, index(), { ...conflict, game: 'Another Game' }])).toMatchObject({ status: 'current' });
+    expect(evaluate([{ ...guide, platforms: ['all'] }, index({ platforms: ['all'] }),
+      { ...conflict, platforms: ['Xbox'] }], { platform: 'PC' })).toMatchObject({ status: 'current' });
+    expect(evaluate([guide, index(), { ...conflict, effectiveFrom: '2099-01-01' }])).toMatchObject({ status: 'current' });
+  });
   test.each([
     ['How do I open the Azure Gate in Lantern Vault?', 'stable'],
     ['What is the best way to solve the bell puzzle?', 'stable'],
@@ -121,7 +131,7 @@ describe('reviewed ownership and independently extracted source metadata', () =>
   test('conflicting explicit labels are rejected rather than choosing the newest-looking value', () => {
     const metadata = extract('https://prism.test/updates/current', 'Game: Prism Siege\nPatch: 2.4.1\nPatch: 999.0\nCurrent patch: 2.4.1\nEffective from: 2026-09-07');
     expect(metadata.metadataConflict).toBe(true);
-    expect(evaluate([metadata])).toMatchObject({ status: 'conflicting', reasons: ['CONTRADICTORY_SOURCE_METADATA'] });
+    expect(evaluate([metadata])).toMatchObject({ status: 'conflicting', reasons: ['CONFLICTING_CURRENTNESS', 'CONTRADICTORY_SOURCE_METADATA'] });
   });
 
   test('unsupported and invalid dates remain unknown, while distinct metadata is preserved', () => {
@@ -164,6 +174,17 @@ describe('current patch, hotfix, baseline, and rollout applicability', () => {
   test('a current official index and matching specialist evidence can answer without redundant discovery', () => {
     const result = evaluate([index(), source('guide', { authority: 'specialist', category: 'specialist_guide', currentness: 'none' })]);
     expect(result).toMatchObject({ status: 'current', effectivePatch: '2.4.1', verifiedAsOf: NOW.toISOString(), selectedEvidenceIds: ['guide', 'current'] });
+  });
+
+  test('retired adapter metadata must be revalidated before direct freshness use', () => {
+    const current = extract('https://prism.test/updates/current', 'Game: Prism Siege\nCurrent patch: 2.4.1\nPatch: 2.4.1\nEffective from: 2026-09-07');
+    const guide = source('guide', { authority: 'specialist', category: 'specialist_guide', currentness: 'none' });
+    expect(evaluate([current, guide]).usable).toBe(true);
+    expect(current.currentnessMetadata?.status).toBe('verified');
+    const retired = JSON.parse(JSON.stringify(current)) as GamingFreshnessEvidence;
+    Reflect.set(retired.currentnessMetadata!, 'adapterVersion', 'gaming-currentness-adapters/retired');
+    expect(evaluate([retired, guide])).toMatchObject({ usable: false, status: 'unverified',
+      reasons: expect.arrayContaining(['CURRENT_OFFICIAL_INDEX_REQUIRED']) });
   });
 
   test('a recent HTTP revalidation of an old article does not prove no newer update exists', () => {
@@ -259,8 +280,9 @@ describe('current patch, hotfix, baseline, and rollout applicability', () => {
     });
     const community = extract('https://prism-community.test/guides/beam', 'Game: Prism Siege\nPatch: 2.4.1\nMechanic: beam damage = 30');
     expect(evaluate([index(), first, community])).toMatchObject({
-      status: 'current', selectedEvidenceIds: [first.id, 'current'],
+      status: 'stale', selectedEvidenceIds: [],
       reasons: expect.arrayContaining(['LOWER_AUTHORITY_CONFLICT_EXCLUDED']),
+      guideApplicability: [{ evidenceId: community.id, status: 'stale', reasons: ['CURRENT_UPDATE_CHANGES_GUIDE_MECHANIC'] }],
     });
     const equivalent = extract('https://prism.test/updates/equivalent', 'Game: Prism Siege\nPatch: 2.4.1\nMechanic: beam damage = 20.0000\nMechanic: beam cooldown = 5s');
     expect(evaluate([index(), first, equivalent]).usable).toBe(true);
