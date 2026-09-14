@@ -276,6 +276,11 @@ a 12-second aggregate budget; HTTP hybrid Actions have a 38-second deadline,
 including generation. Context remains within the existing Gaming budget. The
 same candidate-operation key can resume a failed acquisition without consuming
 another discovery round; different keys remain subject to the one-round limit.
+Equivalent queries share that budget even under new keys. Changing the effective
+mode, spoiler permission, or answer depth returns `409 QUERY_CONTEXT_CONFLICT`
+without replaying the original answer or granting another discovery operation.
+Equivalent preference aliases and question-enforced restrictions may reuse the
+original response; the original storage policy remains authoritative.
 GPT may poll status at most three times; the existing status endpoint retains
 its shared 120-request/five-minute HTTP rate limit. These in-process transient
 limits are not a distributed quota. A different replica or restart can return

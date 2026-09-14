@@ -41,6 +41,10 @@ failures retain their existing error envelopes. Invalid bodies return 400,
 scope/consent failure 403, unknown/expired workflow 404, changed same-key payload
 409, rate/capacity limits 429, and unavailable dependencies 503. Retryable failed
 operations can retry the same key without dropping its payload binding.
+Equivalent queries share the original discovery budget. A new key with changed
+effective mode, spoiler permission, or answer depth returns 409 with
+`reason: QUERY_CONTEXT_CONFLICT` and `nextAction: stop`, without the previous
+answer. Equivalent preference aliases may replay the original response.
 
 Candidate acquisition uses the [bounded HTTPS acquisition policy](GAMING_SOURCE_ACQUISITION.md).
 Approved redirects retain verified final citations and still require Gaming

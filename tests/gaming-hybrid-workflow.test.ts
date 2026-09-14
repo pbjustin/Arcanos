@@ -60,6 +60,58 @@ describe('Gaming hybrid authenticated handoff', () => {
     expect(generate).toHaveBeenCalledTimes(1);
     expect(evaluateCandidates).not.toHaveBeenCalled();
   });
+  it('withholds a retained spoiler-permitting answer when a new query tightens spoiler permission', async () => {
+    const { workflow, generate, retrieve, evaluateCandidates } = setup(knowledge());
+    const first = await workflow.query({ ...query, spoilerTolerance: 'full' }, context);
+    expect(first.body.state).toBe('answer_ready');
+    expect(generate).toHaveBeenCalledWith(expect.objectContaining({ spoilerMode: 'full' }), expect.anything());
+    const restricted = await workflow.query({ ...query, spoilerTolerance: 'none', idempotencyKey: 'restricted-query' }, context);
+    expect(restricted).toMatchObject({ status: 409, body: { nextAction: 'stop', reason: 'QUERY_CONTEXT_CONFLICT' } });
+    expect(restricted.body.answer).toBeUndefined();
+    expect(retrieve).toHaveBeenCalledTimes(1);
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(evaluateCandidates).not.toHaveBeenCalled();
+  });
+  it('does not replay a stable guide answer as a patch-sensitive build answer', async () => {
+    const { workflow, generate, retrieve } = setup(knowledge());
+    expect((await workflow.query(query, context)).body.state).toBe('answer_ready');
+    const build = await workflow.query({ ...query, mode: 'build', idempotencyKey: 'changed-build-query' }, context);
+    expect(build).toMatchObject({ status: 409, body: { reason: 'QUERY_CONTEXT_CONFLICT' } });
+    expect(build.body.answer).toBeUndefined();
+    expect(retrieve).toHaveBeenCalledTimes(1);
+    expect(generate).toHaveBeenCalledTimes(1);
+  });
+  it('preserves equivalent effective preferences and the original response after a rejected change', async () => {
+    const { workflow, generate, retrieve } = setup(knowledge());
+    const first = await workflow.query({ ...query, spoilerTolerance: 'none' }, context);
+    const changed = await workflow.query({ ...query, answerDepth: 'detailed', idempotencyKey: 'depth-change-query' }, context);
+    expect(changed).toMatchObject({ status: 409, body: { reason: 'QUERY_CONTEXT_CONFLICT' } });
+    expect(changed.body.answer).toBeUndefined();
+    const equivalent = await workflow.query({ ...query, spoilerTolerance: 'avoid', answerDepth: 'auto', idempotencyKey: 'equivalent-query' }, context);
+    expect(equivalent).toEqual(first);
+    expect(await workflow.query({ ...query, spoilerTolerance: 'none' }, context)).toEqual(first);
+    expect(retrieve).toHaveBeenCalledTimes(1);
+    expect(generate).toHaveBeenCalledTimes(1);
+  });
+  it('rejects a preference change while discovery is pending without granting another workflow', async () => {
+    const { workflow, retrieve, evaluateCandidates, generate } = setup();
+    const first = await workflow.query(query, context);
+    expect(first.body.nextAction).toBe('search');
+    const changed = await workflow.query({ ...query, answerDepth: 'detailed', idempotencyKey: 'pending-depth-change' }, context);
+    expect(changed).toMatchObject({ status: 409, body: { workflowId: first.body.workflowId, reason: 'QUERY_CONTEXT_CONFLICT' } });
+    expect(await workflow.query({ ...query, idempotencyKey: 'pending-equivalent' }, context)).toEqual(first);
+    expect(retrieve).toHaveBeenCalledTimes(1);
+    expect(evaluateCandidates).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+  });
+  it('reuses preferences whose effective values are fixed by the question', async () => {
+    const { workflow, retrieve } = setup();
+    const prompt = { ...query, question: `${query.question} No spoilers; keep it short.`, spoilerTolerance: 'full', answerDepth: 'detailed' };
+    const first = await workflow.query(prompt, context);
+    const repeated = await workflow.query({ ...prompt, spoilerTolerance: 'none', answerDepth: 'concise', idempotencyKey: 'question-equivalent' }, context);
+    expect(repeated).toEqual(first);
+    expect(retrieve).toHaveBeenCalledTimes(1);
+  });
   it.each(['EU', 'US', undefined])('retains region %s through evidence assessment and generation', async region => {
     const data = knowledge();
     data.sources[0].freshnessMetadata = { id: 'source-1', game: query.game, url: data.sources[0].url,

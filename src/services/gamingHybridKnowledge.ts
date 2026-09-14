@@ -438,6 +438,13 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
       const retainedId = budgets.get(budgetKey);
       const retained = retainedId ? workflows.get(retainedId) : undefined;
       if (retained) {
+        const incomingContext = resolveGamingPlayerContext(input, input.question);
+        // Shared acquisition budgets do not make answers interchangeable across
+        // freshness modes or spoiler/depth preferences. Keep the original workflow
+        // intact and withhold its answer when the effective request has changed.
+        if (input.mode !== retained.pipeline.mode || incomingContext.spoilerMode !== retained.pipeline.spoilerMode
+          || incomingContext.answerDepth !== retained.pipeline.answerDepth)
+          return failure(context, 'QUERY_CONTEXT_CONFLICT', 409, retained);
         // A new key or a changed storage policy cannot create more search operations.
         // The original storage policy remains authoritative for this retained workflow.
         const operation = [...queries.values()].find(entry => entry.workflowId === retained.id)?.operation;

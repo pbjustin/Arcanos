@@ -99,6 +99,8 @@ describe('bounded official currentness corroboration', () => {
     for (const [index, presentation] of [{ answerDepth: 'detailed' }, { spoilerTolerance: 'full' }, { mode: 'guide' }].entries()) {
       const repeated = await test.workflow.query({ ...query, ...presentation, idempotencyKey: `presentation-reset-${index}` }, context);
       expect(repeated.body.workflowId).toBe(first.body.workflowId);
+      expect(repeated).toMatchObject({ status: 409, body: { nextAction: 'stop', reason: 'QUERY_CONTEXT_CONFLICT' } });
+      expect(repeated.body.answer).toBeUndefined();
     }
     expect(test.evaluateCandidates).toHaveBeenCalledTimes(2);
   });
