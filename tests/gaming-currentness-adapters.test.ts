@@ -88,6 +88,44 @@ describe('reviewed publisher paths and a real-layout Elden Ring index', () => {
     expect(combineGamingCurrentnessEvidence([index(`Current build: 1.10.2. ${indexText()}`), article()], NOW)[0])
       .toMatchObject({ metadataConflict: true, currentnessMetadata: { status: 'conflicting' } });
   });
+  test('article adapter cannot overwrite a contradictory acquired platform restriction', () => {
+    const conflicting = article('Platforms: Nintendo Switch 2. Targeted Platforms Steam App Ver. 1.10 Regulation Ver. 1.10.1 This update is required for online play.');
+    expect(conflicting).toMatchObject({ metadataConflict: true, currentnessMetadata: { status: 'conflicting' } });
+    expect(combineGamingCurrentnessEvidence([index(), conflicting], NOW)[0].currentnessMetadata?.status).toBe('incomplete');
+  });
+  test('article adapter keeps the narrower declared platform scope while accepting equivalent platform names', () => {
+    const narrowed = article('Platforms: PC. Targeted Platforms PlayStation 5 / Steam App Ver. 1.10 Regulation Ver. 1.10.1 This update is required for online play.');
+    expect(narrowed.metadataConflict).toBeUndefined();
+    expect(narrowed.platforms).toEqual(['Steam', 'PC']);
+  });
+  test.each([
+    { layout: 'unsupported platform qualifier', companion: article('Platforms: all. Targeted Platforms Steam (rollout starts tomorrow) App Ver. 1.10 Regulation Ver. 1.10.1 This update is required for online play.') },
+    { layout: 'missing reviewed DOM metadata', companion: article('Platforms: all. Targeted Platforms Steam App Ver. 1.10 Regulation Ver. 1.10.1 This update is required for online play.', { currentnessDocument: undefined }) }
+  ])('generic labels cannot replace $layout', ({ companion }) => {
+    expect(combineGamingCurrentnessEvidence([index(), companion], NOW)[0].currentnessMetadata?.status).toBe('incomplete');
+    expect(companion.currentnessMetadata).toMatchObject({ status: 'incomplete', reasons: ['OFFICIAL_ARTICLE_PLATFORM_SCOPE_REQUIRED'] });
+    expect(companion.currentnessMetadata?.releaseActive).toBeUndefined();
+  });
+  test('companion completion preserves explicit index platform and region restrictions', () => {
+    const completed = combineGamingCurrentnessEvidence([index(`Platforms: PC. Regions: EU. ${indexText()}`), article()], NOW)[0];
+    expect(completed).toMatchObject({ platforms: ['Steam', 'PC'], regions: ['EU'],
+      currentnessMetadata: { status: 'verified', platforms: ['Steam', 'PC'], regions: ['EU'] } });
+    expect(completed.platforms).not.toContain('PS5');
+  });
+  test('a broadly scoped companion cannot verify a guide outside the index rollout platform', () => {
+    const guide = extractGamingFreshnessMetadata({ publicUrl: 'https://guide.test/mage',
+      text: 'Game: Elden Ring. Patch: 1.10. Build: 1.10.1. Platforms: PS5. A mage build uses sorcery.' }, { game: 'Elden Ring' }, NOW);
+    expect(evaluateGamingFreshness({ question: 'What is a good mage build now?', game: 'Elden Ring', platform: 'PS5',
+      evidence: [index(`Platforms: PC. ${indexText()}`), article(), guide], now: NOW }))
+      .toMatchObject({ usable: false, reasons: expect.arrayContaining(['PLATFORM_MISMATCH', 'CURRENT_OFFICIAL_INDEX_REQUIRED']) });
+  });
+  test.each([
+    { label: 'Platforms: Nintendo Switch 2.', companion: article() },
+    { label: 'Regions: EU.', companion: { ...article(), regions: ['US'] } }
+  ])('disjoint index and companion rollout scopes conflict: $label', ({ label, companion }) => {
+    expect(combineGamingCurrentnessEvidence([index(`${label} ${indexText()}`), companion], NOW)[0])
+      .toMatchObject({ metadataConflict: true, currentnessMetadata: { status: 'conflicting' } });
+  });
   test('expired index does not become current merely from a fresh article', () => {
     const expired = { ...index(), fetchedAt: new Date(NOW.getTime() - GAMING_CURRENTNESS_LIMITS.revalidateMs - 1).toISOString() };
     expect(combineGamingCurrentnessEvidence([expired, article()], NOW)[0].currentnessMetadata?.status).toBe('incomplete');

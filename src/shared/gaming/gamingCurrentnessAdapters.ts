@@ -91,6 +91,22 @@ const isoDate = (year: string, month: string, day: string): string | undefined =
 const opaqueVersion = '(\\d{1,8}(?:\\.\\d{1,8}){1,3}[a-z]?)(?=$|\\s|[,;()]|\\.(?=\\s|$))';
 interface Release { patch: string; at: string }
 
+/** Combining release evidence may narrow declared applicability, never widen it. */
+function intersectScope(left: string[] | undefined, right: string[] | undefined, platform = false): { values?: string[]; conflicting: boolean } {
+  if (!left?.length) return { values: right, conflicting: false };
+  if (!right?.length) return { values: left, conflicting: false };
+  if (left.some(value => same(value, 'all'))) return { values: right, conflicting: false };
+  if (right.some(value => same(value, 'all'))) return { values: left, conflicting: false };
+  const identity = (value: string): string => {
+    const key = normalize(value).toLowerCase();
+    // These are the same explicit publisher aliases emitted by the article adapter.
+    return platform ? ({ steam: 'pc', 'playstation 4': 'ps4', 'playstation 5': 'ps5' } as Record<string, string>)[key] ?? key : key;
+  };
+  const identities = new Set(left.map(identity));
+  const values = right.filter(value => identities.has(identity(value)));
+  return { values: values.length ? values : undefined, conflicting: !values.length };
+}
+
 /** Dates order an explicitly reviewed release listing. Version strings are opaque identities. */
 function activeRelease(releases: Release[], now: Date): { release?: Release; status: 'verified' | 'incomplete' | 'conflicting'; reason: string } {
   const ordered = releases.filter(item => Date.parse(item.at) <= now.getTime()).sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
@@ -225,16 +241,19 @@ export function runGamingCurrentnessAdapter(input: GamingCurrentnessAdapterInput
     && articleMetadata.ruleId === rule.id && /^[a-f0-9]{64}$/u.test(articleMetadata.rawContentHash)
     && /^(?:PlayStation 4|PlayStation 5|Xbox One|Xbox Series X\|S|Steam)(?:\s*\/\s*(?:PlayStation 4|PlayStation 5|Xbox One|Xbox Series X\|S|Steam))*$/u.test(articleMetadata.platformText)
     ? articleMetadata.platformText : undefined;
-  const platforms = platformText?.split(/\s*\/\s*/u).flatMap(value => value === 'Steam' ? ['Steam', 'PC']
+  if (!platformText) { result.reasons = ['OFFICIAL_ARTICLE_PLATFORM_SCOPE_REQUIRED']; return result; }
+  const platforms = platformText.split(/\s*\/\s*/u).flatMap(value => value === 'Steam' ? ['Steam', 'PC']
     : value === 'PlayStation 4' ? ['PlayStation 4', 'PS4'] : value === 'PlayStation 5' ? ['PlayStation 5', 'PS5'] : [value]);
+  const platformScope = intersectScope(input.fields?.platforms, platforms, true);
   const futureRelease = new RegExp(`\\b(?:This (?:patch|update)|Patch ${escape(app[0])})\\s+(?:(?:is|has been)\\s+)?(?:scheduled|planned|will)\\b`, 'iu').test(text);
   const releaseActive = !futureRelease && (new RegExp(`\\bPatch ${escape(app[0])} has been released for ${escape(rule.game)}\\b`, 'iu').test(text)
     || /\b(?:This update is (?:available now|required for online play)|Online play requires the player to apply this update)\b/iu.test(text));
   result = { ...result, patch: app[0], build: builds[0], versionSemantics: 'app-regulation', releaseActive,
-    ...(platforms?.length ? { platforms } : {}), ...(input.fields?.publishedAt ? { publishedAt: input.fields.publishedAt } : {}),
+    ...(platformScope.values?.length ? { platforms: platformScope.values } : {}), ...(input.fields?.publishedAt ? { publishedAt: input.fields.publishedAt } : {}),
     ...(input.fields?.effectiveFrom ? { effectiveFrom: input.fields.effectiveFrom } : {}),
     ...(input.fields?.effectiveUntil ? { effectiveUntil: input.fields.effectiveUntil } : {}) };
   result.reasons = ['ARTICLE_IS_NOT_CURRENT_INDEX', ...(!releaseActive ? ['OFFICIAL_RELEASE_ACTIVATION_REQUIRED'] : [])];
+  if (platformScope.conflicting) { result.status = 'conflicting'; result.reasons = ['OFFICIAL_ARTICLE_APPLICABILITY_CONFLICT']; }
   return result;
 }
 
@@ -286,14 +305,18 @@ export function combineGamingCurrentnessEvidence<T extends GamingCurrentnessEvid
     if (identities.size !== 1 || index.currentBuild && articles.some(article => !same(article.build, index.currentBuild))) return { ...index, metadataConflict: true, currentnessMetadata: {
       ...metadata, status: 'conflicting', reasons: ['OFFICIAL_ARTICLE_APPLICABILITY_CONFLICT'] } };
     const article = articles[0];
+    const platformScope = intersectScope(index.platforms, article.platforms, true);
+    const regionScope = intersectScope(index.regions, article.regions);
+    if (platformScope.conflicting || regionScope.conflicting) return { ...index, metadataConflict: true, currentnessMetadata: {
+      ...metadata, status: 'conflicting', reasons: ['OFFICIAL_ARTICLE_APPLICABILITY_CONFLICT'] } };
     const verifiedAt = new Date(Math.min(Date.parse(index.verifiedAt!), Date.parse(article.verifiedAt!))).toISOString();
     const untils = [index.effectiveUntil, ...articles.map(item => item.effectiveUntil)].filter((value): value is string => Boolean(value));
     const effectiveUntil = untils.length ? new Date(Math.min(...untils.map(value => Date.parse(value)))).toISOString() : undefined;
-    return { ...index, currentBuild: article.build, platforms: article.platforms, regions: article.regions,
+    return { ...index, currentBuild: article.build, platforms: platformScope.values, regions: regionScope.values,
       ...(effectiveUntil ? { effectiveUntil } : {}),
       metadataUnverified: false, verifiedAt, currentnessMetadata: { ...metadata, currentBuild: article.build,
         ...(effectiveUntil ? { effectiveUntil } : {}),
-        platforms: article.platforms, regions: article.regions, verifiedAt, status: 'verified',
+        platforms: platformScope.values, regions: regionScope.values, verifiedAt, status: 'verified',
         reasons: ['OFFICIAL_INDEX_AND_RELEASE_ARTICLE_VERIFIED'], evidenceRefs: [...metadata.evidenceRefs,
           ...(article.currentnessMetadata?.evidenceRefs ?? [])].slice(0, GAMING_CURRENTNESS_LIMITS.evidence) } };
   });
