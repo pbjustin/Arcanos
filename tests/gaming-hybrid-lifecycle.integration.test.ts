@@ -73,7 +73,7 @@ const { createGamingHybridWorkflow } = await import('../src/services/gamingHybri
 const { evaluateGamingHybridCandidates, createApprovedGamingHybridIngestion } = await import('../src/services/gamingHybridCandidates.js');
 const { executeQueuedGamingSourceIngestion, getGamingSourceIngestionStatus, hashGamingApprovedDocument, refreshGamingSources } = await import('../src/services/gamingSourceIngestion.js');
 const { assessGamingSourcePolicy, extractGamingFreshnessMetadata } = await import('../src/shared/gaming/gamingFreshnessCore.js');
-const { resolveGamingDocument } = await import('../src/services/gamingDocumentResolution.js');
+const { resolveGamingDocument, isResolvedGamingDocumentIdentityVerified } = await import('../src/services/gamingDocumentResolution.js');
 const { logger } = await import('../src/platform/logging/structuredLogging.js');
 // Load the real router before timed lifecycle tests so registration cannot outlive a test's fixture scope.
 const { default: gamingHttpRouter } = await import('../src/routes/gpt-access.js');
@@ -343,6 +343,110 @@ describe('Gaming hybrid durable lifecycle', () => {
       'clearImmediate', 'nextTick', 'hrtime', 'performance', 'queueMicrotask'] });
     jest.setSystemTime(new Date(time));
   }
+
+  /** Synthetic publisher/guide content; no assertion about the live incident's guide title. */
+  async function mageCurrentnessLifecycle(guideLabels = 'Patch: 1.10. Build: 1.10.1.') {
+    setClock('2026-09-09T12:00:00.000Z');
+    const game = 'Elden Ring';
+    const guideUrl = 'https://guides.example.org/elden-ring-mage';
+    const indexUrl = 'https://en.bandainamcoent.eu/elden-ring/elden-ring/news';
+    const articleUrl = 'https://en.bandainamcoent.eu/elden-ring/news/elden-ring-patch-notes-version-110';
+    const mageText = 'In Elden Ring, a good mage build uses the academy staff and Intelligence for sorcery. Allocate vigor for survival and mind for casting. Use a ranged spell to open combat, then recover stamina before casting again. Upgrade the staff before increasing spell variety. This mage build favors safe positioning and spell efficiency over trading hits.';
+    mockHttp.mockImplementation(async (url: string, options: any) => {
+      expect(new globalThis.URL(url).hostname).toBe('93.184.216.34');
+      expect(options).toMatchObject({ maxRedirects: 0, proxy: false, responseType: 'stream' });
+      const path = new globalThis.URL(url).pathname;
+      const text = path.endsWith('/elden-ring-mage')
+        ? `<p>Game: Elden Ring. ${guideLabels} Platforms: all. Regions: all. ${mageText}</p>`
+        : path === '/elden-ring/elden-ring/news'
+          ? '<h1>Latest News on ELDEN RING</h1><div class="search__section"><h2 id="patch-notes">Patch Notes (2)</h2><ul class="cards-list"><li><a href="/elden-ring/news/elden-ring-patch-notes-version-110"><h3>Elden Ring – Patch Notes Version 1.10</h3><span>2 Like</span><time>08/09/2026</time></a></li><li><a href="/elden-ring/news/elden-ring-patch-notes-version-19"><h3>Elden Ring – Patch Notes Version 1.9</h3><span>1 Like</span><time>07/09/2026</time></a></li></ul><p>Load More</p></div><h2>Coming Soon (0)</h2>'
+          : path.includes('patch-notes-version-110')
+            ? '<h1>Elden Ring – Patch Notes Version 1.10</h1><p>08/09/2026</p><p>Targeted Platforms</p><p>Steam</p><p>App Ver. 1.10</p><p>Regulation Ver. 1.10.1</p><p>Online play requires the player to apply this update. These official patch notes identify application and regulation versions. Follow the update instructions before online play. General maintenance fixes are included.</p>'
+            : '<p>Elden Ring merchandise inventory. Village merchants barter leather supplies and canvas tents while craftsmen prepare wooden boxes for visiting traders. Shipping information covers parcel sizes and delivery windows, with payment instructions for physical collectibles.</p>';
+      return { data: `<html><title>${path.endsWith('/elden-ring-mage') ? 'Elden Ring synthetic mage build guide' : path.includes('patch-notes-version-110') ? 'Elden Ring – Patch Notes Version 1.10' : 'Elden Ring news'}</title><body><main>${text}</main></body></html>`, headers: { 'content-type': 'text/html' } };
+    });
+    mockTrinity.mockImplementation(async (request: any) => {
+      const result = `${mageText} [Source 1]`;
+      const { assessment } = await request.context.runOptions.gamingClearAnswerAudit(result, {});
+      return { result, gamingClearAudit: assessment, meta: { provider: { finishReason: 'stop' } } };
+    });
+    const workflow = createGamingHybridWorkflow();
+    const query = { contractVersion, idempotencyKey: 'mage-query-fixture', game, mode: 'build',
+      question: 'What is a good mage build now?', platform: 'PC', storagePolicy: 'transient_only' };
+    const missing = await workflow.query(query, context);
+    expect(missing.body).toMatchObject({ state: 'discovery_required', nextAction: 'search',
+      discovery: { type: 'gameplay_evidence', round: 0, maxRounds: 1 } });
+    const found = await workflow.candidates({ contractVersion, workflowId: missing.body.workflowId,
+      idempotencyKey: 'mage-gameplay-fixture', candidates: [
+        { url: guideUrl, title: 'Untrusted frontend title' },
+        { url: 'https://guides.example.org/elden-ring-merchandise' },
+        { url: 'https://guides.example.org/elden-ring-shipping' }
+      ] }, context);
+    expect(found.body.candidates?.[0]).toMatchObject({ candidateId: expect.any(String) });
+    expect(found.body).toMatchObject({ state: 'discovery_required', nextAction: 'verify_currentness',
+      sourceKnown: true, evidenceSelected: false, freshnessStatus: 'unverified',
+      acceptedGameplayCandidateCount: 1, discovery: { type: 'currentness_verification', round: 0, maxRounds: 1 } });
+    expect(found.body.candidates?.filter(candidate => candidate.candidateId)).toHaveLength(1);
+    expect(found.body.candidates?.filter(candidate => candidate.decision === 'rejected')).toHaveLength(2);
+    expect(found.body.candidates?.filter(candidate => candidate.decision === 'rejected')
+      .every(candidate => candidate.reasonCodes.includes('QUESTION_COVERAGE_INSUFFICIENT'))).toBe(true);
+    const guideAssessment = jest.mocked(logger.info).mock.calls.find(([event, metadata]) => event === 'gaming.clear.source.completed'
+      && metadata?.submittedIndex === 0 && metadata.sourceRole === 'build_analysis')?.[1];
+    expect(guideAssessment).toMatchObject({ decision: 'partial', overall: expect.any(Number) });
+    expect(Number(guideAssessment?.overall)).toBeGreaterThanOrEqual(4);
+    expect(mockTrinity).not.toHaveBeenCalled();
+    const verified = await workflow.candidates({ contractVersion, workflowId: missing.body.workflowId,
+      idempotencyKey: 'mage-official-fixture', discoveryType: 'currentness_verification',
+      candidates: [{ url: indexUrl }, { url: articleUrl }] }, context);
+    expect(verified).toEqual(expect.objectContaining({ status: 200 }));
+    expect(mockHttp.mock.calls.filter(([url]) => new globalThis.URL(url as string).pathname === '/elden-ring-mage')).toHaveLength(1);
+    expect(jobs.size).toBe(0);
+    expect(database.records).toHaveLength(0);
+    expect(database.revisions).toHaveLength(0);
+    return { workflow, query, missing, found, verified, guideUrl, indexUrl, articleUrl };
+  }
+
+  it('corroborates an accepted Elden Ring mage guide through official currentness before grounded Trinity generation', async () => {
+    const { workflow, missing, found, verified, guideUrl, indexUrl } = await mageCurrentnessLifecycle();
+    expect(verified.body).toMatchObject({ state: 'answer_ready', nextAction: 'answer', freshnessStatus: 'current',
+      evidenceSelected: true, effectivePatch: '1.10', effectiveBuild: '1.10.1', applicabilityStatus: 'verified_current' });
+    expect(mockTrinity).toHaveBeenCalledTimes(1);
+    const providerRequest = mockTrinity.mock.calls[0][0] as any;
+    expect(providerRequest.input.body.prompt).toBe('What is a good mage build now?');
+    expect(JSON.stringify(providerRequest.input)).toContain('academy staff');
+    expect(JSON.stringify(providerRequest.input)).toContain('1.10.1');
+    expect(verified.body.answer?.sources.map(source => source.url)).toEqual(expect.arrayContaining([guideUrl, indexUrl]));
+    expect(JSON.stringify(verified.body)).not.toContain('Untrusted frontend title');
+    const denied = await workflow.ingest({ contractVersion, workflowId: missing.body.workflowId,
+      idempotencyKey: 'mage-storage-denied', candidateIds: [found.body.candidates!.find(candidate => candidate.candidateId)!.candidateId],
+      storagePolicy: 'transient_only', confirmStore: true }, context);
+    expect(denied.status).toBe(403);
+    expect(jobs.size).toBe(0);
+  });
+
+  it('binds acquired currentness card links to resolver identity and approved content hash', async () => {
+    const indexUrl = 'https://en.bandainamcoent.eu/elden-ring/elden-ring/news';
+    mockHttp.mockResolvedValue({ data: '<html><title>Elden Ring news</title><body><main><div class="search__section"><h2 id="patch-notes">Patch Notes (1)</h2><ul class="cards-list"><li><a href="/elden-ring/news/elden-ring-patch-notes-version-110"><h3>Elden Ring – Patch Notes Version 1.10</h3><time>08/09/2026</time></a></li></ul></div></main></body></html>', headers: { 'content-type': 'text/html' } });
+    const document = await resolveGamingDocument(indexUrl, 50_000, { documentPurpose: 'durable' });
+    expect(document.currentnessDocument?.adapterId).toBe('bandai-news-index-v1');
+    expect(isResolvedGamingDocumentIdentityVerified(document, indexUrl)).toBe(true);
+    const priorHash = hashGamingApprovedDocument(document);
+    if (document.currentnessDocument?.adapterId !== 'bandai-news-index-v1') throw new Error('Expected reviewed index structure');
+    document.currentnessDocument.cards[0].url += '-older';
+    expect(hashGamingApprovedDocument(document)).not.toBe(priorHash);
+    expect(isResolvedGamingDocumentIdentityVerified(document, indexUrl)).toBe(false);
+  });
+
+  it.each(['Patch: 1.9. Build: 1.9.', ''])('stops official corroboration without a current recommendation for incompatible mage metadata %s', async labels => {
+    const { workflow, query, missing, verified } = await mageCurrentnessLifecycle(labels);
+    expect(verified.body).toMatchObject({ state: 'discovery_required', nextAction: 'stop', evidenceSelected: false });
+    expect(verified.body.freshnessStatus).not.toBe('current');
+    expect(verified.body.answer).toBeUndefined();
+    expect(mockTrinity).not.toHaveBeenCalled();
+    const replay = await workflow.query({ ...query, idempotencyKey: 'mage-reset-attempt' }, context);
+    expect(replay.body.workflowId).toBe(missing.body.workflowId);
+    expect(replay.body.nextAction).toBe('stop');
+  });
 
   it('never approves an already expired stable source for durable ingestion', async () => {
     setClock('2026-09-09T12:00:00.000Z');
