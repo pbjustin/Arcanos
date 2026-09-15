@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-14T21:05:51.149Z",
+  "generatedAt": "2026-09-15T04:24:08.398Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -2681,6 +2681,9 @@
           "relativePath": "src/shared/gaming/gamingCurrentnessAdapters.ts"
         },
         {
+          "relativePath": "src/shared/gaming/gamingCurrentnessPreviewFixture.ts"
+        },
+        {
           "relativePath": "src/shared/gaming/gamingDocumentIngestionCore.ts"
         },
         {
@@ -4118,6 +4121,12 @@
         },
         {
           "relativePath": "tests/gaming-currentness-document.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-currentness-preview-failure.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-currentness-preview.test.ts"
         },
         {
           "relativePath": "tests/gaming-currentness-workflow.test.ts"

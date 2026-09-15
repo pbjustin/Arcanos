@@ -368,6 +368,7 @@ describe('Gaming hybrid durable lifecycle', () => {
   /** Synthetic publisher/guide content; no assertion about the live incident's guide title. */
   async function mageCurrentnessLifecycle(guideLabels = 'Patch: 1.10. Build: 1.10.1.', options: {
     http?: boolean; indexLabels?: string; articleLabels?: string; targetedPlatforms?: string | null;
+    currentPatch?: string; currentBuild?: string; articleLayout?: 'inline_platforms_version_list';
     query?: Record<string, unknown>;
   } = {}) {
     // The imported HTTP router owns a workflow with the real clock captured at registration.
@@ -375,7 +376,16 @@ describe('Gaming hybrid durable lifecycle', () => {
     const game = 'Elden Ring';
     const guideUrl = 'https://guides.example.org/elden-ring-mage';
     const indexUrl = 'https://en.bandainamcoent.eu/elden-ring/elden-ring/news';
-    const articleUrl = 'https://en.bandainamcoent.eu/elden-ring/news/elden-ring-patch-notes-version-110';
+    const currentPatch = options.currentPatch ?? '1.10';
+    const currentBuild = options.currentBuild ?? '1.10.1';
+    const articlePath = `/elden-ring/news/elden-ring-patch-notes-version-${currentPatch.replaceAll('.', '')}`;
+    const articleUrl = `https://en.bandainamcoent.eu${articlePath}`;
+    const articlePlatforms = options.targetedPlatforms === null ? '' : options.articleLayout
+      ? `<p><u>Targeted Platforms</u><br>${options.targetedPlatforms ?? 'Steam'}</p>`
+      : `<p>Targeted Platforms</p><p>${options.targetedPlatforms ?? 'Steam'}</p>`;
+    const articleVersions = options.articleLayout
+      ? `<p>The version number after applying this update will be as follows:</p><ul><li>App Ver. ${currentPatch}</li><li>Regulation Ver. ${currentBuild}</li></ul>`
+      : `<p>App Ver. ${currentPatch}</p><p>Regulation Ver. ${currentBuild}</p>`;
     const mageText = 'In Elden Ring, a good mage build uses the academy staff and Intelligence for sorcery. Allocate vigor for survival and mind for casting. Use a ranged spell to open combat, then recover stamina before casting again. Upgrade the staff before increasing spell variety. This mage build favors safe positioning and spell efficiency over trading hits.';
     mockHttp.mockImplementation(async (url: string, acquisitionOptions: any) => {
       expect(new globalThis.URL(url).hostname).toBe('93.184.216.34');
@@ -384,11 +394,11 @@ describe('Gaming hybrid durable lifecycle', () => {
       const text = path.endsWith('/elden-ring-mage')
         ? `<p>Game: Elden Ring. ${guideLabels} Platforms: all. Regions: all. ${mageText}</p>`
         : path === '/elden-ring/elden-ring/news'
-          ? `<p>${options.indexLabels ?? ''}</p><h1>Latest News on ELDEN RING</h1><div class="search__section"><h2 id="patch-notes">Patch Notes (2)</h2><ul class="cards-list"><li><a href="/elden-ring/news/elden-ring-patch-notes-version-110"><h3>Elden Ring – Patch Notes Version 1.10</h3><span>2 Like</span><time>08/09/2026</time></a></li><li><a href="/elden-ring/news/elden-ring-patch-notes-version-19"><h3>Elden Ring – Patch Notes Version 1.9</h3><span>1 Like</span><time>07/09/2026</time></a></li></ul><p>Load More</p></div><h2>Coming Soon (0)</h2>`
-          : path.includes('patch-notes-version-110')
-            ? `<h1>Elden Ring – Patch Notes Version 1.10</h1><p>08/09/2026</p><p>${options.articleLabels ?? ''}</p>${options.targetedPlatforms === null ? '' : `<p>Targeted Platforms</p><p>${options.targetedPlatforms ?? 'Steam'}</p>`}<p>App Ver. 1.10</p><p>Regulation Ver. 1.10.1</p><p>Online play requires the player to apply this update. These official patch notes identify application and regulation versions. Follow the update instructions before online play. General maintenance fixes are included.</p>`
+          ? `<p>${options.indexLabels ?? ''}</p><h1>Latest News on ELDEN RING</h1><div class="search__section"><h2 id="patch-notes">Patch Notes (2)</h2><ul class="cards-list"><li><a href="${articlePath}"><h3>Elden Ring – Patch Notes Version ${currentPatch}</h3><span>2 Like</span><time>08/09/2026</time></a></li><li><a href="/elden-ring/news/elden-ring-patch-notes-version-19"><h3>Elden Ring – Patch Notes Version 1.9</h3><span>1 Like</span><time>07/09/2026</time></a></li></ul><p>Load More</p></div><h2>Coming Soon (0)</h2>`
+          : path === articlePath
+            ? `<h1>Elden Ring – Patch Notes Version ${currentPatch}</h1><p>08/09/2026</p><p>${options.articleLabels ?? ''}</p>${articlePlatforms}${articleVersions}<p>Online play requires the player to apply this update. These official patch notes identify application and regulation versions. Follow the update instructions before online play. General maintenance fixes are included.</p>`
             : '<p>Elden Ring merchandise inventory. Village merchants barter leather supplies and canvas tents while craftsmen prepare wooden boxes for visiting traders. Shipping information covers parcel sizes and delivery windows, with payment instructions for physical collectibles.</p>';
-      return { data: `<html><title>${path.endsWith('/elden-ring-mage') ? 'Elden Ring synthetic mage build guide' : path.includes('patch-notes-version-110') ? 'Elden Ring – Patch Notes Version 1.10' : 'Elden Ring news'}</title><body><main>${text}</main></body></html>`, headers: { 'content-type': 'text/html' } };
+      return { data: `<html><title>${path.endsWith('/elden-ring-mage') ? 'Elden Ring synthetic mage build guide' : path === articlePath ? `Elden Ring – Patch Notes Version ${currentPatch}` : 'Elden Ring news'}</title><body><main>${text}</main></body></html>`, headers: { 'content-type': 'text/html' } };
     });
     mockTrinity.mockImplementation(async (request: any) => {
       const result = `${mageText} [Source 1]`;
@@ -427,7 +437,7 @@ describe('Gaming hybrid durable lifecycle', () => {
     expect(verified).toEqual(expect.objectContaining({ status: 200 }));
     expect(mockHttp.mock.calls.filter(([url]) => new globalThis.URL(url as string).pathname === '/elden-ring-mage')).toHaveLength(1);
     expect(mockHttp.mock.calls.filter(([url]) => new globalThis.URL(url as string).pathname === '/elden-ring/elden-ring/news')).toHaveLength(1);
-    expect(mockHttp.mock.calls.filter(([url]) => new globalThis.URL(url as string).pathname.endsWith('/elden-ring-patch-notes-version-110'))).toHaveLength(1);
+    expect(mockHttp.mock.calls.filter(([url]) => new globalThis.URL(url as string).pathname === articlePath)).toHaveLength(1);
     expect(mockHttp).toHaveBeenCalledTimes(5);
     expect(jobs.size).toBe(0);
     expect(database.records).toHaveLength(0);
@@ -461,6 +471,64 @@ describe('Gaming hybrid durable lifecycle', () => {
     expect(mockTrinity).toHaveBeenCalledTimes(1);
     expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
     expect(jobs.size).toBe(0);
+    expect(database.queries.some(sql => /^(?:INSERT|UPDATE|DELETE|CREATE|ALTER|DROP)\b/iu.test(sql))).toBe(false);
+  });
+
+  it.each([
+    { name: 'matching patch and build', labels: 'Patch: 1.17. Build: 1.17.', usable: true, reason: 'GUIDE_MATCHES_CURRENT_VERSION' },
+    { name: 'explicit patch and build compatibility baselines',
+      labels: 'Patch: 1.16. Build: 1.16. Baseline valid for patches: 1.17. Baseline valid for builds: 1.17.',
+      usable: true, reason: 'EXPLICIT_COMPATIBILITY_BASELINE' },
+    { name: 'matching patch but missing build', labels: 'Patch: 1.17. Published at: 2026-09-09.',
+      usable: false, reason: 'CURRENT_BUILD_COVERAGE_MISSING' },
+    { name: 'matching patch but wrong build', labels: 'Patch: 1.17. Build: 1.16.',
+      usable: false, reason: 'CURRENT_BUILD_COVERAGE_MISSING' },
+    { name: 'date-only applicability after the official release', labels: 'Published at: 2026-09-09. Source updated at: 2026-09-09.',
+      usable: false, reason: 'APPLICABILITY_METADATA_UNVERIFIED' }
+  ])('checks $name through authenticated HTTP with inline platforms and an installed-version list', async ({ labels, usable, reason }) => {
+    // Authored synthetic bytes exercise the observed DOM grammar; they do not attest any live guide or release.
+    const { workflow, query, missing, verified, guideUrl, indexUrl, articleUrl } = await mageCurrentnessLifecycle(labels, {
+      http: true, currentPatch: '1.17', currentBuild: '1.17', articleLayout: 'inline_platforms_version_list',
+      targetedPlatforms: 'PlayStation 4 / PlayStation 5 / Xbox One / Xbox Series X|S / Steam'
+    });
+    const articleAssessment = jest.mocked(logger.info).mock.calls.find(([event, metadata]) =>
+      event === 'gaming.clear.source.completed' && metadata?.sourceRole === 'patch_authority')?.[1];
+    expect(articleAssessment).toMatchObject({ assessmentStatus: 'completed', acquisition: { stage: 'extraction', redirectCount: 0 },
+      extraction: { strategies: expect.arrayContaining(['html_list']), truncationStages: [], budgetOutcome: 'within_budget' } });
+    expect(jest.mocked(logger.info).mock.calls.some(([event, metadata]) => event === 'gaming.guide.applicability_evaluated'
+      && Array.isArray(metadata?.reasonCodes) && metadata.reasonCodes.includes(reason))).toBe(true);
+    expect(verified.body).toMatchObject({ effectivePatch: '1.17', effectiveBuild: '1.17', acceptedGameplayCandidateCount: 1 });
+    if (usable) {
+      expect(verified.body).toMatchObject({ state: 'answer_ready', nextAction: 'answer', freshnessStatus: 'current',
+        applicabilityStatus: 'verified_current', evidenceSelected: true, answer: { provenance: 'arcanos-trinity' } });
+      expect(verified.body.answer?.response).toContain('[Source 1]');
+      expect(verified.body.answer?.sources.map(source => source.url)).toEqual(expect.arrayContaining([guideUrl, indexUrl]));
+      expect(mockTrinity.mock.calls[0][0]).toMatchObject({ input: { body: { platform: 'PC', mode: 'build' } } });
+    } else {
+      expect(verified.body).toMatchObject({ state: 'discovery_required', nextAction: 'stop', evidenceSelected: false,
+        discovery: { type: 'currentness_verification', round: 1, maxRounds: 1 } });
+      expect(verified.body.freshnessStatus).not.toBe('current');
+      expect(verified.body.answer).toBeUndefined();
+    }
+    const official = { contractVersion, workflowId: missing.body.workflowId, idempotencyKey: 'mage-official-fixture',
+      discoveryType: 'currentness_verification', candidates: [{ url: indexUrl }, { url: articleUrl }] };
+    expect(await workflow.candidates(official, context)).toEqual(verified);
+    const replay = await workflow.query({ ...query, idempotencyKey: 'inline-layout-query-replay' }, context);
+    expect(replay.body.workflowId).toBe(missing.body.workflowId);
+    expect(replay.body.nextAction).toBe(usable ? 'answer' : 'stop');
+    expect(replay.body.answer).toEqual(verified.body.answer);
+    for (const [discoveryType, candidates] of [
+      ['gameplay_evidence', [{ url: guideUrl }]], ['currentness_verification', [{ url: indexUrl }, { url: articleUrl }]]
+    ] as const) {
+      expect((await workflow.candidates({ contractVersion, workflowId: missing.body.workflowId,
+        idempotencyKey: `inline-layout-${discoveryType}-reset`, discoveryType, candidates }, context)).status).toBe(409);
+    }
+    expect(mockHttp).toHaveBeenCalledTimes(5);
+    expect(mockTrinity).toHaveBeenCalledTimes(usable ? 1 : 0);
+    expect(mockAuditCompletion).toHaveBeenCalledTimes(usable ? 1 : 0);
+    expect(jobs.size).toBe(0);
+    expect(database.records).toHaveLength(0);
+    expect(database.revisions).toHaveLength(0);
     expect(database.queries.some(sql => /^(?:INSERT|UPDATE|DELETE|CREATE|ALTER|DROP)\b/iu.test(sql))).toBe(false);
   });
 

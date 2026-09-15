@@ -350,6 +350,20 @@ Launcher behavior:
   hybrid/provider wrappers, SQL persistence, active workers or current gameplay.
   Controlled hybrid integration and disposable PostgreSQL CI establish their
   tested lifecycle boundaries separately; no production credentials are used.
+- The sealed Gaming guide request also evaluates fixed synthetic official
+  index/article evidence and guide applicability through the production
+  currentness and freshness cores. It keeps application and regulation versions
+  distinct and checks PC scope, incomplete or conflicting currentness, missing
+  guide coverage, and stale evidence. All assertions must pass before
+  `x-arcanos-preview-gaming-currentness-version: gaming-currentness/v1` or any
+  other Gaming proof header is emitted. Failure returns only
+  `PREVIEW_GAMING_CURRENTNESS_CONTRACT_INVALID` and withholds the success body.
+  The request matrix and response body are unchanged; use the reviewed PR-head
+  verifier to require the additional marker. This is synthetic served component
+  evidence. The separate `tests/gaming-hybrid-lifecycle.integration.test.ts`
+  fixture exercises the authenticated HTTP workflow, real extraction and answer
+  auditing with controlled transport and a stubbed provider. Neither result
+  establishes live publisher access or a live model answer.
 - The trusted
   [Railway PR preview lifecycle workflow](../.github/workflows/railway-pr-preview-lifecycle.yml)
   owns preview creation and teardown for PRs carrying the exact
