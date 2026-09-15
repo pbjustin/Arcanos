@@ -57,9 +57,17 @@ is rejected before canonical item selection.
 Public consumers retain coarse reason codes. Operator diagnostics add finite
 security/source-policy categories, admission rule identifiers, acquisition stage,
 opaque candidate reference, submitted index, workflow/request correlation,
-redirect count, zero-based failing hop, HTTP status category, policy version,
+redirect count, zero-based failing hop, numeric HTTP status and status category, policy version,
 and elapsed time. They do not include rejected URLs, Location headers, transport
 addresses, client configurations, bodies, cookies, or credentials.
+
+`acquisition.httpStatus` is present only for an observed integer HTTP status
+between 100 and 599. It distinguishes access denial (401/403), a missing page
+(404), and rate limiting (429) without copying response text or headers into
+logs. A DNS or connection failure without a response has no HTTP status. The
+existing public rejection reason, retry limits, and source-safety policy remain
+unchanged; a numeric status is diagnostic evidence, not permission to retry or
+bypass a source restriction.
 
 ## Explicit HTTPS redirect policy
 
