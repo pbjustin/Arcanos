@@ -219,6 +219,151 @@ describeWithDatabase('durable Gaming chunk storage and retrieval on PostgreSQL 1
     mockSourceHttpGet.mockReset(); mockSourceEnqueue.mockReset();
   }, 30000);
 
+  test('persists acquired official currentness through SQL JSONB and reuses only bound, unexpired proof', async () => {
+    const { createGamingHybridWorkflow } = await import('../../src/services/gamingHybridKnowledge.js');
+    const { executeQueuedGamingSourceIngestion } = await import('../../src/services/gamingSourceIngestion.js');
+    const { gamingClearHash } = await import('../../src/shared/gaming/gamingClearPolicy.js');
+    const fixtureId = randomUUID();
+    const guideUrl = `https://guides.example.org/elden-ring/pg18-mage-${fixtureId}`;
+    // Reviewed publisher identities are parser inputs only. Every HTTP attempt is
+    // served below; no request reaches Bandai Namco or any production backend.
+    const indexUrl = 'https://en.bandainamcoent.eu/elden-ring/elden-ring/news';
+    const articleUrl = `https://en.bandainamcoent.eu/elden-ring/news/elden-ring-patch-notes-version-110-pg18-${fixtureId}`;
+    const date = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+    const cardDate = `${date.slice(8, 10)}/${date.slice(5, 7)}/${date.slice(0, 4)}`;
+    const passage = 'For a good Elden Ring mage build, invest in intelligence and vigor, carry a sorcery staff and a light backup weapon, and select ranged spells for safe attacks. This mage build explains equipment, stats, spells and progression.';
+    const documents = new Map([
+      [guideUrl, `<html><title>Elden Ring mage build guide</title><main><p>Game: Elden Ring. Patch: 1.10. Build: 1.10.1. Platforms: all. Regions: all.</p><p>${passage}</p></main></html>`],
+      [indexUrl, `<html><title>ELDEN RING news | Bandai Namco Europe</title><main><p>Latest News on ELDEN RING. Platforms: PC. Regions: EU. This synthetic official release listing establishes the applicable game update and its linked regulation article; it supplies no mage build recommendation.</p><div class="search__section"><h2 id="patch-notes">Patch Notes (1)</h2><ul class="cards-list"><li><a href="${articleUrl}"><h3>Elden Ring – Patch Notes Version 1.10</h3><time>${cardDate}</time></a></li></ul></div></main></html>`],
+      [articleUrl, '<html><title>Elden Ring – Patch Notes Version 1.10 | Bandai Namco Europe</title><main><p>Game: Elden Ring. Regions: all.</p><p>Targeted Platforms</p><p>PlayStation 5 / Steam</p><p>App Ver. 1.10 Regulation Ver. 1.10.1 This update is required for online play.</p><p>This synthetic official article announces the application and regulation versions. It establishes release availability and platform scope without recommending a mage build.</p></main></html>']
+    ]);
+    const environment = { ARCANOS_GAMING_RAG_ENABLED: 'true', ARCANOS_GAMING_WEB_CONTEXT_CHARS: '5000',
+      ARCANOS_GAMING_RAG_MAX_SOURCES: '3', ARCANOS_GAMING_RAG_MAX_CHUNKS: '8', ARCANOS_GAMING_RAG_CHUNK_CHARS: '900' };
+    const previous = Object.fromEntries(Object.keys(environment).map(key => [key, process.env[key]]));
+    Object.assign(process.env, environment);
+    mockSourceHttpGet.mockReset(); mockSourceEnqueue.mockReset();
+    mockSourceHttpGet.mockImplementation(async (url: string, options: any) => {
+      const pinned = new URL(url);
+      expect(pinned.hostname).toBe('93.184.216.34');
+      expect(options).toMatchObject({ maxRedirects: 0, proxy: false });
+      const logicalUrl = `https://${options.headers.Host}${pinned.pathname}`;
+      const document = documents.get(logicalUrl);
+      if (!document) throw new Error('Unexpected source acquisition outside the currentness fixture.');
+      return { data: document, headers: { 'content-type': 'text/html' } };
+    });
+    mockSourceEnqueue.mockImplementation(async (input: any) => ({
+      job: { id: randomUUID(), status: 'pending', created_at: new Date(), input: input.input }, created: true, deduped: false
+    }));
+    // This override bypasses the gameplay pipeline, Trinity and answer audit.
+    // Acquisition, source/combined CLEAR, approval, worker normalization, SQL and
+    // retrieval run; complementary HTTP fixtures cover the full answer pipeline.
+    const generate = jest.fn(async (_input: unknown, prepared: any) => ({ ok: true, route: 'gaming', mode: 'build',
+      data: { response: 'Use the mage build with its verified patch and regulation qualification. [1]',
+        sources: prepared.knowledge.sources, grounding: { groundingStatus: 'grounded' } } } as any));
+    const context = { actorKey: `pg18-currentness-${fixtureId}`, requestId: `pg18-currentness-${fixtureId}`, canStore: true, canAutoStore: false };
+    const request = { contractVersion: 'gaming-hybrid-v1', idempotencyKey: `query-${fixtureId}`, game: 'Elden Ring', mode: 'build',
+      question: 'What is a good Elden Ring mage build now?', platform: 'PC', region: 'EU', storagePolicy: 'ask_before_store' };
+    let savedRevision: string | undefined;
+    let savedProvenance: Record<string, unknown> | undefined;
+    try {
+      const writer = createGamingHybridWorkflow({ generate });
+      const first = await writer.query(request, context);
+      expect(first.body).toMatchObject({ nextAction: 'search', sourceKnown: false });
+      const guide = await writer.candidates({ contractVersion: request.contractVersion, workflowId: first.body.workflowId,
+        idempotencyKey: `guide-${fixtureId}`, discoveryType: 'gameplay_evidence', candidates: [{ url: guideUrl }] }, context);
+      expect(guide.body).toMatchObject({ nextAction: 'verify_currentness', acceptedGameplayCandidateCount: 1, gameplayEvidenceStatus: 'currentness_pending' });
+      expect(generate).not.toHaveBeenCalled();
+      const verified = await writer.candidates({ contractVersion: request.contractVersion, workflowId: first.body.workflowId,
+        idempotencyKey: `official-${fixtureId}`, discoveryType: 'currentness_verification', candidates: [{ url: indexUrl }, { url: articleUrl }] }, context);
+      expect(verified.body).toMatchObject({ state: 'answer_ready', freshnessStatus: 'current', applicabilityStatus: 'verified_current',
+        gameplayEvidenceStatus: 'freshness_verified', effectivePatch: '1.10', effectiveBuild: '1.10.1' });
+      expect(generate).toHaveBeenCalledTimes(1);
+      expect(mockSourceEnqueue).not.toHaveBeenCalled();
+      expect(mockSourceHttpGet).toHaveBeenCalledTimes(3);
+      const beforeIngestion = await databasePool.query<{ source_count: number; revision_count: number }>(
+        `SELECT COUNT(DISTINCT sources.id)::integer AS source_count, COUNT(revisions.id)::integer AS revision_count
+         FROM gaming_sources AS sources LEFT JOIN gaming_source_revisions AS revisions ON revisions.source_id = sources.id
+         WHERE sources.canonical_url = ANY($1::text[])`, [[guideUrl, indexUrl, articleUrl]]);
+      expect(beforeIngestion.rows).toEqual([{ source_count: 0, revision_count: 0 }]);
+
+      const admitted = await writer.ingest({ contractVersion: request.contractVersion, workflowId: first.body.workflowId,
+        idempotencyKey: `store-${fixtureId}`, candidateIds: [guide.body.candidates![0].candidateId],
+        storagePolicy: 'ask_before_store', confirmStore: true }, context);
+      expect(admitted.status).toBe(202);
+      expect(mockSourceEnqueue).toHaveBeenCalledTimes(1);
+      const queued = (mockSourceEnqueue.mock.calls[0][0] as any).input.body;
+      const originalProof = queued.sources[0].hybridApproval.freshness.currentVerification;
+      // JSONB preserves JSON values, so omit only JavaScript's undefined fields
+      // while requiring every serialized proof field to survive exactly.
+      const serializedProof = JSON.parse(JSON.stringify(originalProof));
+      expect(originalProof).toMatchObject({ workflowId: first.body.workflowId,
+        evidence: { currentBuild: '1.10.1', platforms: ['Steam', 'PC'], regions: ['EU'], currentnessMetadata: { status: 'verified' } } });
+      expect(originalProof.evidence.currentnessMetadata.evidenceRefs.map((reference: any) => reference.url)).toContain(articleUrl);
+      const completed = await executeQueuedGamingSourceIngestion(admitted.body.ingestion!.ingestionId, queued);
+      expect(completed.output.sources[0]).toMatchObject({ status: 'stored' });
+      expect(mockSourceHttpGet).toHaveBeenCalledTimes(4);
+      const sourceId = completed.output.sources[0].sourceId!;
+      const revision = await databasePool.query<{ id: string; provenance: Record<string, any>; storage_type: string }>(
+        'SELECT id, provenance, pg_typeof(provenance)::text AS storage_type FROM gaming_source_revisions WHERE source_id = $1', [sourceId]);
+      expect(revision.rows).toHaveLength(1);
+      expect(revision.rows[0].storage_type).toBe('jsonb');
+      savedRevision = revision.rows[0].id;
+      savedProvenance = revision.rows[0].provenance;
+      const storedProof = savedProvenance.hybridFreshness as Record<string, any>;
+      expect(storedProof.currentVerification).toStrictEqual(serializedProof);
+      expect(storedProof.currentVerification.evidence.platforms).not.toContain('PS5');
+      expect(storedProof.currentVerification.evidence.regions).toEqual(['EU']);
+      expect(storedProof.currentVerification.bindingHash)
+        .toBe(gamingClearHash({ ...storedProof.currentVerification, bindingHash: undefined }));
+      const records = await searchActiveGamingKnowledge({ gameKey: 'elden-ring', query: 'mage & intelligence', mode: 'build', sourceIds: [sourceId] });
+      expect(records.length).toBeGreaterThan(0);
+      expect(records.every(record => record.revisionId === savedRevision)).toBe(true);
+      const retrievedFreshness = records[0].provenance?.hybridFreshness as Record<string, unknown>;
+      expect(retrievedFreshness.currentVerification).toStrictEqual(serializedProof);
+
+      const read = (overrides: Record<string, unknown> = {}, actor = context, ageMs = 0) =>
+        createGamingHybridWorkflow({ generate, now: () => Date.now() + ageMs }).query(
+          { ...request, idempotencyKey: `read-${randomUUID()}`, storagePolicy: 'transient_only', ...overrides }, actor);
+      const cached = await read();
+      expect(cached.body.workflowId).not.toBe(first.body.workflowId);
+      expect(cached.body).toMatchObject({ state: 'answer_ready', sourceKnown: true, freshnessStatus: 'current',
+        verifiedAsOf: verified.body.verifiedAsOf, effectivePatch: '1.10', effectiveBuild: '1.10.1' });
+      expect(cached.body.answer?.sources.some(source => source.url === guideUrl && source.sourceId === sourceId)).toBe(true);
+      expect(cached.body.answer?.sources.some(source => source.url === indexUrl)).toBe(true);
+      expect(generate).toHaveBeenCalledTimes(2);
+      for (const blocked of [await read({}, { ...context, actorKey: `different-${fixtureId}` }),
+        await read({ platform: 'Steam' }), await read({ region: 'NA' })]) {
+        expect(blocked.body.answer).toBeUndefined();
+        expect(blocked.body.nextAction).toBe('verify_currentness');
+      }
+      const expired = await read({}, context, 7 * 60 * 60_000);
+      expect(expired.body).toMatchObject({ nextAction: 'verify_currentness', freshnessStatus: 'stale', reason: 'REVALIDATION_DUE' });
+      expect(expired.body.answer).toBeUndefined();
+      expect(generate).toHaveBeenCalledTimes(2);
+      // Mutate one bound article hash in the disposable JSONB row, then read
+      // through the repository again. A valid-looking envelope cannot hide it.
+      await databasePool.query(`UPDATE gaming_source_revisions SET provenance = jsonb_set(provenance,
+        '{hybridFreshness,currentVerification,evidence,currentnessMetadata,evidenceRefs,1,contentHash}', to_jsonb($2::text)) WHERE id = $1`,
+      [savedRevision, 'f'.repeat(64)]);
+      const tampered = await read();
+      expect(tampered.body).toMatchObject({ nextAction: 'verify_currentness', freshnessStatus: 'unverified' });
+      expect(tampered.body.answer).toBeUndefined();
+      expect(generate).toHaveBeenCalledTimes(2);
+      expect(mockSourceHttpGet).toHaveBeenCalledTimes(4);
+      expect(mockSourceEnqueue).toHaveBeenCalledTimes(1);
+    } finally {
+      try {
+        if (savedRevision && savedProvenance) await databasePool.query(
+          'UPDATE gaming_source_revisions SET provenance = $2::jsonb WHERE id = $1', [savedRevision, JSON.stringify(savedProvenance)]);
+      } finally {
+        for (const [key, value] of Object.entries(previous)) {
+          if (value === undefined) delete process.env[key]; else process.env[key] = value;
+        }
+        mockSourceHttpGet.mockReset(); mockSourceEnqueue.mockReset();
+      }
+    }
+  }, 30000);
+
   test('retains JSON record provenance beyond 100K and revisions a late change through actual SQL', async () => {
     const { GAMING_DOCUMENT_RESOLVER_VERSION } = await import('../../src/services/gamingDocumentResolution.js');
     const gameKey = `structured-late-${randomUUID()}`;

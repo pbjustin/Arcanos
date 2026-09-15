@@ -4,6 +4,7 @@ import express from 'express';
 import request from 'supertest';
 import { GamingResolvedSourceHarness } from './testUtils/gamingResolvedSourceHarness.js';
 import { GAMING_CLEAR_DIMENSIONS } from '../src/shared/gaming/gamingClearPolicy.js';
+import type { GamingHybridResult } from '../src/services/gamingHybridKnowledge.js';
 
 const URL = 'https://guides.example.org/amber-vault';
 const SOURCE_GAME = 'Amber Pilgrim';
@@ -20,6 +21,7 @@ let documentTitle: string | undefined;
 let privateDns = false;
 let queueUnavailable = false;
 let jobSequence = 0;
+let httpFixtureSequence = 0;
 class IdempotencyConflict extends Error {}
 
 jest.unstable_mockModule('axios', () => ({ default: gamingAcquisitionAxios(mockHttp) }));
@@ -82,7 +84,8 @@ const input = { game: SOURCE_GAME, mode: 'guide' as const, prompt: 'How do I cro
 const contractVersion = 'gaming-hybrid-v1';
 const environment = { ARCANOS_GAMING_RAG_ENABLED: 'true', ARCANOS_GAMING_DISCOVERY_ENABLED: 'false',
   ARCANOS_GAMING_CURATED_SOURCES_JSON: '[]', ARCANOS_GAMING_WEB_CONTEXT_CHARS: '5000',
-  ARCANOS_GAMING_WEB_CONTEXT_FETCH_TIMEOUT_MS: '1000', ARCANOS_GAMING_RAG_CHUNK_CHARS: '900' };
+  ARCANOS_GAMING_WEB_CONTEXT_FETCH_TIMEOUT_MS: '1000', ARCANOS_GAMING_RAG_CHUNK_CHARS: '900',
+  ARCANOS_GAMING_SOURCE_ACCESS_TOKEN: 'synthetic-gaming-lifecycle-http-token' };
 let prior: Record<string, string | undefined>;
 
 async function evaluate(overrides: Record<string, unknown> = {}) {
@@ -344,24 +347,46 @@ describe('Gaming hybrid durable lifecycle', () => {
     jest.setSystemTime(new Date(time));
   }
 
+  function createHttpWorkflow() {
+    const token = `synthetic-currentness-lifecycle-http-${++httpFixtureSequence}`;
+    process.env.ARCANOS_GAMING_SOURCE_ACCESS_TOKEN = token;
+    const app = express();
+    app.use((req, _res, next) => { req.requestId = `currentness-http-${httpFixtureSequence}`; next(); });
+    app.use(gamingHttpRouter);
+    const invoke = async (action: string, body: unknown): Promise<GamingHybridResult> => {
+      const response = await request(app).post(`/gpt-access/gaming/sources/hybrid/${action}`)
+        .set('Authorization', `Bearer ${token}`).send(body);
+      return { status: response.status, body: response.body };
+    };
+    return {
+      query: (body: unknown, _context: typeof context) => invoke('query', body),
+      candidates: (body: unknown, _context: typeof context) => invoke('candidates', body),
+      ingest: (body: unknown, _context: typeof context) => invoke('ingestions', body)
+    };
+  }
+
   /** Synthetic publisher/guide content; no assertion about the live incident's guide title. */
-  async function mageCurrentnessLifecycle(guideLabels = 'Patch: 1.10. Build: 1.10.1.') {
-    setClock('2026-09-09T12:00:00.000Z');
+  async function mageCurrentnessLifecycle(guideLabels = 'Patch: 1.10. Build: 1.10.1.', options: {
+    http?: boolean; indexLabels?: string; articleLabels?: string; targetedPlatforms?: string | null;
+    query?: Record<string, unknown>;
+  } = {}) {
+    // The imported HTTP router owns a workflow with the real clock captured at registration.
+    if (!options.http) setClock('2026-09-09T12:00:00.000Z');
     const game = 'Elden Ring';
     const guideUrl = 'https://guides.example.org/elden-ring-mage';
     const indexUrl = 'https://en.bandainamcoent.eu/elden-ring/elden-ring/news';
     const articleUrl = 'https://en.bandainamcoent.eu/elden-ring/news/elden-ring-patch-notes-version-110';
     const mageText = 'In Elden Ring, a good mage build uses the academy staff and Intelligence for sorcery. Allocate vigor for survival and mind for casting. Use a ranged spell to open combat, then recover stamina before casting again. Upgrade the staff before increasing spell variety. This mage build favors safe positioning and spell efficiency over trading hits.';
-    mockHttp.mockImplementation(async (url: string, options: any) => {
+    mockHttp.mockImplementation(async (url: string, acquisitionOptions: any) => {
       expect(new globalThis.URL(url).hostname).toBe('93.184.216.34');
-      expect(options).toMatchObject({ maxRedirects: 0, proxy: false, responseType: 'stream' });
+      expect(acquisitionOptions).toMatchObject({ maxRedirects: 0, proxy: false, responseType: 'stream' });
       const path = new globalThis.URL(url).pathname;
       const text = path.endsWith('/elden-ring-mage')
         ? `<p>Game: Elden Ring. ${guideLabels} Platforms: all. Regions: all. ${mageText}</p>`
         : path === '/elden-ring/elden-ring/news'
-          ? '<h1>Latest News on ELDEN RING</h1><div class="search__section"><h2 id="patch-notes">Patch Notes (2)</h2><ul class="cards-list"><li><a href="/elden-ring/news/elden-ring-patch-notes-version-110"><h3>Elden Ring – Patch Notes Version 1.10</h3><span>2 Like</span><time>08/09/2026</time></a></li><li><a href="/elden-ring/news/elden-ring-patch-notes-version-19"><h3>Elden Ring – Patch Notes Version 1.9</h3><span>1 Like</span><time>07/09/2026</time></a></li></ul><p>Load More</p></div><h2>Coming Soon (0)</h2>'
+          ? `<p>${options.indexLabels ?? ''}</p><h1>Latest News on ELDEN RING</h1><div class="search__section"><h2 id="patch-notes">Patch Notes (2)</h2><ul class="cards-list"><li><a href="/elden-ring/news/elden-ring-patch-notes-version-110"><h3>Elden Ring – Patch Notes Version 1.10</h3><span>2 Like</span><time>08/09/2026</time></a></li><li><a href="/elden-ring/news/elden-ring-patch-notes-version-19"><h3>Elden Ring – Patch Notes Version 1.9</h3><span>1 Like</span><time>07/09/2026</time></a></li></ul><p>Load More</p></div><h2>Coming Soon (0)</h2>`
           : path.includes('patch-notes-version-110')
-            ? '<h1>Elden Ring – Patch Notes Version 1.10</h1><p>08/09/2026</p><p>Targeted Platforms</p><p>Steam</p><p>App Ver. 1.10</p><p>Regulation Ver. 1.10.1</p><p>Online play requires the player to apply this update. These official patch notes identify application and regulation versions. Follow the update instructions before online play. General maintenance fixes are included.</p>'
+            ? `<h1>Elden Ring – Patch Notes Version 1.10</h1><p>08/09/2026</p><p>${options.articleLabels ?? ''}</p>${options.targetedPlatforms === null ? '' : `<p>Targeted Platforms</p><p>${options.targetedPlatforms ?? 'Steam'}</p>`}<p>App Ver. 1.10</p><p>Regulation Ver. 1.10.1</p><p>Online play requires the player to apply this update. These official patch notes identify application and regulation versions. Follow the update instructions before online play. General maintenance fixes are included.</p>`
             : '<p>Elden Ring merchandise inventory. Village merchants barter leather supplies and canvas tents while craftsmen prepare wooden boxes for visiting traders. Shipping information covers parcel sizes and delivery windows, with payment instructions for physical collectibles.</p>';
       return { data: `<html><title>${path.endsWith('/elden-ring-mage') ? 'Elden Ring synthetic mage build guide' : path.includes('patch-notes-version-110') ? 'Elden Ring – Patch Notes Version 1.10' : 'Elden Ring news'}</title><body><main>${text}</main></body></html>`, headers: { 'content-type': 'text/html' } };
     });
@@ -370,9 +395,9 @@ describe('Gaming hybrid durable lifecycle', () => {
       const { assessment } = await request.context.runOptions.gamingClearAnswerAudit(result, {});
       return { result, gamingClearAudit: assessment, meta: { provider: { finishReason: 'stop' } } };
     });
-    const workflow = createGamingHybridWorkflow();
+    const workflow = options.http ? createHttpWorkflow() : createGamingHybridWorkflow();
     const query = { contractVersion, idempotencyKey: 'mage-query-fixture', game, mode: 'build',
-      question: 'What is a good mage build now?', platform: 'PC', storagePolicy: 'transient_only' };
+      question: 'What is a good mage build now?', platform: 'PC', storagePolicy: 'transient_only', ...options.query };
     const missing = await workflow.query(query, context);
     expect(missing.body).toMatchObject({ state: 'discovery_required', nextAction: 'search',
       discovery: { type: 'gameplay_evidence', round: 0, maxRounds: 1 } });
@@ -391,20 +416,112 @@ describe('Gaming hybrid durable lifecycle', () => {
     expect(found.body.candidates?.filter(candidate => candidate.decision === 'rejected')
       .every(candidate => candidate.reasonCodes.includes('QUESTION_COVERAGE_INSUFFICIENT'))).toBe(true);
     const guideAssessment = jest.mocked(logger.info).mock.calls.find(([event, metadata]) => event === 'gaming.clear.source.completed'
-      && metadata?.submittedIndex === 0 && metadata.sourceRole === 'build_analysis')?.[1];
+      && metadata?.submittedIndex === 0 && metadata.sourceRole === (query.mode === 'guide' ? 'gameplay_guide' : 'build_analysis'))?.[1];
     expect(guideAssessment).toMatchObject({ decision: 'partial', overall: expect.any(Number) });
     expect(Number(guideAssessment?.overall)).toBeGreaterThanOrEqual(4);
     expect(mockTrinity).not.toHaveBeenCalled();
+    expect(mockAuditCompletion).not.toHaveBeenCalled();
     const verified = await workflow.candidates({ contractVersion, workflowId: missing.body.workflowId,
       idempotencyKey: 'mage-official-fixture', discoveryType: 'currentness_verification',
       candidates: [{ url: indexUrl }, { url: articleUrl }] }, context);
     expect(verified).toEqual(expect.objectContaining({ status: 200 }));
     expect(mockHttp.mock.calls.filter(([url]) => new globalThis.URL(url as string).pathname === '/elden-ring-mage')).toHaveLength(1);
+    expect(mockHttp.mock.calls.filter(([url]) => new globalThis.URL(url as string).pathname === '/elden-ring/elden-ring/news')).toHaveLength(1);
+    expect(mockHttp.mock.calls.filter(([url]) => new globalThis.URL(url as string).pathname.endsWith('/elden-ring-patch-notes-version-110'))).toHaveLength(1);
+    expect(mockHttp).toHaveBeenCalledTimes(5);
     expect(jobs.size).toBe(0);
     expect(database.records).toHaveLength(0);
     expect(database.revisions).toHaveLength(0);
     return { workflow, query, missing, found, verified, guideUrl, indexUrl, articleUrl };
   }
+
+  it.each([
+    { name: 'index platform and region', indexLabels: 'Platforms: PC. Regions: EU.', articleLabels: 'Regions: all.' },
+    { name: 'article platform and index region', indexLabels: 'Platforms: all. Regions: EU.', articleLabels: 'Platforms: PC. Regions: all.' }
+  ])('verifies the narrower $name through authenticated HTTP before one grounded answer', async scope => {
+    const { workflow, query, missing, verified, guideUrl, indexUrl, articleUrl } = await mageCurrentnessLifecycle(undefined, {
+      http: true, ...scope, targetedPlatforms: 'PlayStation 5 / Steam', query: { region: 'EU' }
+    });
+    expect(verified.body).toMatchObject({ state: 'answer_ready', nextAction: 'answer', freshnessStatus: 'current',
+      applicabilityStatus: 'verified_current', effectivePatch: '1.10', effectiveBuild: '1.10.1',
+      answer: { provenance: 'arcanos-trinity' } });
+    expect(verified.body.answer?.response).toContain('[Source 1]');
+    expect(verified.body.answer?.sources.map(source => source.url)).toEqual(expect.arrayContaining([guideUrl, indexUrl]));
+    expect(mockTrinity).toHaveBeenCalledTimes(1);
+    expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
+    expect(mockTrinity.mock.calls[0][0]).toMatchObject({ input: { body: { platform: 'PC', region: 'EU', mode: 'build' } } });
+    const official = { contractVersion, workflowId: missing.body.workflowId, idempotencyKey: 'mage-official-fixture',
+      discoveryType: 'currentness_verification', candidates: [{ url: indexUrl }, { url: articleUrl }] };
+    expect((await workflow.candidates(official, context)).body.answer).toEqual(verified.body.answer);
+    const replay = await workflow.query({ ...query, idempotencyKey: 'fresh-query-key' }, context);
+    expect(replay.body.workflowId).toBe(missing.body.workflowId);
+    expect(replay.body.answer).toEqual(verified.body.answer);
+    expect((await workflow.candidates({ ...official, idempotencyKey: 'second-official-operation' }, context)).status).toBe(409);
+    expect(mockHttp).toHaveBeenCalledTimes(5);
+    expect(mockTrinity).toHaveBeenCalledTimes(1);
+    expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
+    expect(jobs.size).toBe(0);
+    expect(database.queries.some(sql => /^(?:INSERT|UPDATE|DELETE|CREATE|ALTER|DROP)\b/iu.test(sql))).toBe(false);
+  });
+
+  it.each([
+    { name: 'disjoint index/article platforms', indexLabels: 'Platforms: PC.', targetedPlatforms: 'PlayStation 5' },
+    { name: 'disjoint index/article regions', indexLabels: 'Regions: EU.', articleLabels: 'Regions: US.', query: { region: 'EU' } },
+    { name: 'article platform outside the narrower listing', indexLabels: 'Platforms: PC.', targetedPlatforms: 'PlayStation 5 / Steam', query: { platform: 'PlayStation 5' } },
+    { name: 'article region outside the narrower listing', indexLabels: 'Regions: EU.', articleLabels: 'Regions: all.', query: { region: 'US' } },
+    { name: 'contradictory article platform labels', articleLabels: 'Platforms: Nintendo Switch 2.', targetedPlatforms: 'Steam' },
+    { name: 'unsupported targeted platform qualifier', articleLabels: 'Platforms: all.', targetedPlatforms: 'Steam (rollout starts tomorrow)' },
+    { name: 'missing targeted platform DOM', articleLabels: 'Platforms: all.', targetedPlatforms: null }
+  ])('stops authenticated HTTP currentness for $name without provider, persistence, or another round', async scope => {
+    const { workflow, query, missing, verified, guideUrl, indexUrl, articleUrl } = await mageCurrentnessLifecycle(undefined, { http: true, ...scope });
+    expect(verified.body).toMatchObject({ state: 'discovery_required', nextAction: 'stop', evidenceSelected: false,
+      discovery: { type: 'currentness_verification', round: 1, maxRounds: 1 } });
+    expect(verified.body.freshnessStatus).not.toBe('current');
+    expect(verified.body.answer).toBeUndefined();
+    expect(mockTrinity).not.toHaveBeenCalled();
+    expect(mockAuditCompletion).not.toHaveBeenCalled();
+    const replay = await workflow.query({ ...query, idempotencyKey: 'failed-proof-reset-attempt' }, context);
+    expect(replay.body).toMatchObject({ workflowId: missing.body.workflowId, nextAction: 'stop',
+      discovery: { type: 'currentness_verification', round: 1, maxRounds: 1 } });
+    for (const [discoveryType, candidates] of [
+      ['gameplay_evidence', [{ url: guideUrl }]], ['currentness_verification', [{ url: indexUrl }, { url: articleUrl }]]
+    ] as const) {
+      expect((await workflow.candidates({ contractVersion, workflowId: missing.body.workflowId,
+        idempotencyKey: `failed-proof-${discoveryType}-reset`, discoveryType, candidates }, context)).status).toBe(409);
+    }
+    expect(mockHttp).toHaveBeenCalledTimes(5);
+    expect(mockTrinity).not.toHaveBeenCalled();
+    expect(mockAuditCompletion).not.toHaveBeenCalled();
+    expect(jobs.size).toBe(0);
+    expect(database.records).toHaveLength(0);
+    expect(database.revisions).toHaveLength(0);
+    expect(database.queries.some(sql => /^(?:INSERT|UPDATE|DELETE|CREATE|ALTER|DROP)\b/iu.test(sql))).toBe(false);
+  });
+
+  it.each([
+    { name: 'full-to-none spoilers', initial: { spoilerTolerance: 'full' }, changed: { spoilerTolerance: 'none' }, expected: { spoilerMode: 'full' } },
+    { name: 'guide-to-build mode and depth', initial: { mode: 'guide', answerDepth: 'concise' }, changed: { mode: 'build', answerDepth: 'detailed' }, expected: { mode: 'guide', answerDepth: 'concise' } }
+  ])('rejects $name replay through authenticated HTTP without returning the earlier answer or resetting budgets', async ({ initial, changed, expected }) => {
+    const { workflow, query, missing, verified, guideUrl, indexUrl, articleUrl } = await mageCurrentnessLifecycle(undefined, { http: true, query: initial });
+    expect(verified.body.state).toBe('answer_ready');
+    expect(mockTrinity.mock.calls[0][0]).toMatchObject({ input: { body: expected } });
+    const sqlCalls = database.queries.length;
+    const replay = await workflow.query({ ...query, ...changed, idempotencyKey: 'presentation-change-replay' }, context);
+    expect(replay).toMatchObject({ status: 409, body: { workflowId: missing.body.workflowId, nextAction: 'stop', reason: 'QUERY_CONTEXT_CONFLICT' } });
+    expect(replay.body.answer).toBeUndefined();
+    for (const [discoveryType, candidates] of [
+      ['gameplay_evidence', [{ url: guideUrl }]], ['currentness_verification', [{ url: indexUrl }, { url: articleUrl }]]
+    ] as const) {
+      expect((await workflow.candidates({ contractVersion, workflowId: missing.body.workflowId,
+        idempotencyKey: `presentation-${discoveryType}-reset`, discoveryType, candidates }, context)).status).toBe(409);
+    }
+    expect(mockHttp).toHaveBeenCalledTimes(5);
+    expect(mockTrinity).toHaveBeenCalledTimes(1);
+    expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
+    expect(database.queries).toHaveLength(sqlCalls);
+    expect(jobs.size).toBe(0);
+    expect(database.queries.some(sql => /^(?:INSERT|UPDATE|DELETE|CREATE|ALTER|DROP)\b/iu.test(sql))).toBe(false);
+  });
 
   it('corroborates an accepted Elden Ring mage guide through official currentness before grounded Trinity generation', async () => {
     const { workflow, missing, found, verified, guideUrl, indexUrl } = await mageCurrentnessLifecycle();
