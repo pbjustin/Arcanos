@@ -14,6 +14,7 @@ import { runGamingHybridKnowledgePreview } from './shared/gaming/gamingHybridKno
 import { runGamingClearPreview } from './shared/gaming/gamingClearPreviewFixture.js';
 import { runGamingSourceAcquisitionPreview } from './shared/gaming/gamingSourceAcquisitionPreviewFixture.js';
 import { runGamingStructuredEvidencePreview } from './shared/gaming/gamingStructuredEvidencePreviewFixture.js';
+import { runGamingCurrentnessPreview } from './shared/gaming/gamingCurrentnessPreviewFixture.js';
 import {
   createIosGatewayPreviewFixture,
   IOS_GATEWAY_PREVIEW_CONTRACT,
@@ -9521,6 +9522,25 @@ export function createNativePrPreviewApplication(
             );
             return;
           }
+          try {
+            runGamingCurrentnessPreview();
+          } catch {
+            sendBoundedJsonResponse(
+              request,
+              response,
+              { error: 'PREVIEW_GAMING_CURRENTNESS_CONTRACT_INVALID' },
+              {
+                logEvent: 'native_pr_preview.gaming_currentness_invalid',
+                maxBytes: MAX_GAMING_QUERY_RESPONSE_BYTES,
+                statusCode: 500,
+              }
+            );
+            return;
+          }
+          response.setHeader(
+            NATIVE_PR_PREVIEW_GAMING_CONTRACT.currentnessProofHeader,
+            NATIVE_PR_PREVIEW_GAMING_CONTRACT.currentnessProofVersion
+          );
           response.setHeader(
             NATIVE_PR_PREVIEW_GAMING_CONTRACT.structuredEvidenceProofHeader,
             NATIVE_PR_PREVIEW_GAMING_CONTRACT.structuredEvidenceProofVersion

@@ -2,6 +2,7 @@ import { describe, it, expect, jest } from '@jest/globals';
 import { createGamingHybridWorkflow } from '../src/services/gamingHybridKnowledge.js';
 import { GAMING_HYBRID_CONTRACT_VERSION as contractVersion, GAMING_HYBRID_LIMITS } from '../src/shared/gaming/gamingHybridContract.js';
 import type { GamingStoredKnowledgeContext } from '../src/services/gamingStoredKnowledge.js';
+import { GAMING_SOURCE_POLICY_VERSION } from '../src/shared/gaming/gamingFreshnessCore.js';
 
 const now = Date.now();
 const context = { actorKey: 'synthetic-gaming-caller', requestId: 'synthetic-request' };
@@ -58,6 +59,58 @@ describe('Gaming hybrid authenticated handoff', () => {
       answer: { provenance: 'arcanos-trinity', requestId: context.requestId, response: 'Use the copper key to open the gate. [1]' } });
     expect(generate).toHaveBeenCalledTimes(1);
     expect(evaluateCandidates).not.toHaveBeenCalled();
+  });
+  it('withholds a retained spoiler-permitting answer when a new query tightens spoiler permission', async () => {
+    const { workflow, generate, retrieve, evaluateCandidates } = setup(knowledge());
+    const first = await workflow.query({ ...query, spoilerTolerance: 'full' }, context);
+    expect(first.body.state).toBe('answer_ready');
+    expect(generate).toHaveBeenCalledWith(expect.objectContaining({ spoilerMode: 'full' }), expect.anything());
+    const restricted = await workflow.query({ ...query, spoilerTolerance: 'none', idempotencyKey: 'restricted-query' }, context);
+    expect(restricted).toMatchObject({ status: 409, body: { nextAction: 'stop', reason: 'QUERY_CONTEXT_CONFLICT' } });
+    expect(restricted.body.answer).toBeUndefined();
+    expect(retrieve).toHaveBeenCalledTimes(1);
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(evaluateCandidates).not.toHaveBeenCalled();
+  });
+  it('does not replay a stable guide answer as a patch-sensitive build answer', async () => {
+    const { workflow, generate, retrieve } = setup(knowledge());
+    expect((await workflow.query(query, context)).body.state).toBe('answer_ready');
+    const build = await workflow.query({ ...query, mode: 'build', idempotencyKey: 'changed-build-query' }, context);
+    expect(build).toMatchObject({ status: 409, body: { reason: 'QUERY_CONTEXT_CONFLICT' } });
+    expect(build.body.answer).toBeUndefined();
+    expect(retrieve).toHaveBeenCalledTimes(1);
+    expect(generate).toHaveBeenCalledTimes(1);
+  });
+  it('preserves equivalent effective preferences and the original response after a rejected change', async () => {
+    const { workflow, generate, retrieve } = setup(knowledge());
+    const first = await workflow.query({ ...query, spoilerTolerance: 'none' }, context);
+    const changed = await workflow.query({ ...query, answerDepth: 'detailed', idempotencyKey: 'depth-change-query' }, context);
+    expect(changed).toMatchObject({ status: 409, body: { reason: 'QUERY_CONTEXT_CONFLICT' } });
+    expect(changed.body.answer).toBeUndefined();
+    const equivalent = await workflow.query({ ...query, spoilerTolerance: 'avoid', answerDepth: 'auto', idempotencyKey: 'equivalent-query' }, context);
+    expect(equivalent).toEqual(first);
+    expect(await workflow.query({ ...query, spoilerTolerance: 'none' }, context)).toEqual(first);
+    expect(retrieve).toHaveBeenCalledTimes(1);
+    expect(generate).toHaveBeenCalledTimes(1);
+  });
+  it('rejects a preference change while discovery is pending without granting another workflow', async () => {
+    const { workflow, retrieve, evaluateCandidates, generate } = setup();
+    const first = await workflow.query(query, context);
+    expect(first.body.nextAction).toBe('search');
+    const changed = await workflow.query({ ...query, answerDepth: 'detailed', idempotencyKey: 'pending-depth-change' }, context);
+    expect(changed).toMatchObject({ status: 409, body: { workflowId: first.body.workflowId, reason: 'QUERY_CONTEXT_CONFLICT' } });
+    expect(await workflow.query({ ...query, idempotencyKey: 'pending-equivalent' }, context)).toEqual(first);
+    expect(retrieve).toHaveBeenCalledTimes(1);
+    expect(evaluateCandidates).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+  });
+  it('reuses preferences whose effective values are fixed by the question', async () => {
+    const { workflow, retrieve } = setup();
+    const prompt = { ...query, question: `${query.question} No spoilers; keep it short.`, spoilerTolerance: 'full', answerDepth: 'detailed' };
+    const first = await workflow.query(prompt, context);
+    const repeated = await workflow.query({ ...prompt, spoilerTolerance: 'none', answerDepth: 'concise', idempotencyKey: 'question-equivalent' }, context);
+    expect(repeated).toEqual(first);
+    expect(retrieve).toHaveBeenCalledTimes(1);
   });
   it.each(['EU', 'US', undefined])('retains region %s through evidence assessment and generation', async region => {
     const data = knowledge();
@@ -165,7 +218,7 @@ describe('Gaming hybrid authenticated handoff', () => {
     const data = knowledge();
     const question = category === 'live_status' ? 'What is the current server status?' : 'What changed for the copper gate in the patch?';
     const sourceText = category === 'live_status' ? 'The current server status is online with normal access to this synthetic game.' : 'The copper gate now requires a carved key after the documented patch change.';
-    const metadata = { id: 'source-1', url: data.sources[0].url, game: query.game, policyVersion: 'gaming-hybrid-source-policy-v1',
+    const metadata = { id: 'source-1', url: data.sources[0].url, game: query.game, policyVersion: GAMING_SOURCE_POLICY_VERSION,
       category: category === 'live_status' ? 'official_status' : 'official_updates', authority: 'official',
       currentness: category === 'live_status' ? 'live_status' : 'article', metadataConfidence: 'content_extracted',
       fetchedAt: checked, verifiedAt: checked, sourceUpdatedAt: checked, patch: '2.1', effectiveFrom: new Date(now - age - 1000).toISOString() };
@@ -246,12 +299,12 @@ describe('Gaming hybrid authenticated handoff', () => {
     expect(retrieve).toHaveBeenCalledTimes(1);
     expect((await workflow.query({ ...query, question: 'Changed question' }, context)).status).toBe(409);
   });
-  it('permits a new logical lookup under a new key', async () => {
+  it('preserves the same workflow budget when a new key repeats the logical lookup', async () => {
     const { workflow, retrieve } = setup();
     const first = await workflow.query(query, context);
     const second = await workflow.query({ ...query, idempotencyKey: 'new-refresh-query' }, context);
-    expect(first.body.workflowId).not.toBe(second.body.workflowId);
-    expect(retrieve).toHaveBeenCalledTimes(2);
+    expect(first.body.workflowId).toBe(second.body.workflowId);
+    expect(retrieve).toHaveBeenCalledTimes(1);
   });
   it('conceals workflows from other authenticated callers', async () => {
     const { workflow, evaluateCandidates } = setup();
@@ -300,7 +353,8 @@ describe('Gaming hybrid authenticated handoff', () => {
     const workflow = createGamingHybridWorkflow({ retrieve: async () => empty, evaluateCandidates, generate, ingest });
     const results: Awaited<ReturnType<typeof workflow.candidates>>[] = [];
     for (let index = 0; index < 5; index += 1) {
-      const first = await workflow.query({ ...query, idempotencyKey: `capacity-query-${index}`, storagePolicy: 'ask_before_store' }, context);
+      const first = await workflow.query({ ...query, currentArea: `Copper Quay ${index}`,
+        idempotencyKey: `capacity-query-${index}`, storagePolicy: 'ask_before_store' }, context);
       results.push(await workflow.candidates({ contractVersion, workflowId: first.body.workflowId,
         idempotencyKey: `capacity-candidates-${index}`, candidates: [{ url: 'https://example.com/lantern' }] }, context));
     }

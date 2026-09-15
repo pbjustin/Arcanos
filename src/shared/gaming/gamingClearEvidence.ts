@@ -133,6 +133,12 @@ export function assessGamingClearEvidence(
   if (structuredClaim && !structural.claimSupported && !independentProse) for (const reason of structural.reasonCodes) finding(reason);
   if (!traceable) finding('CITATION_PROVENANCE_MISSING');
   if (patchSensitive && !freshnessCoversSet) finding('REQUIRED_FRESHNESS_UNVERIFIED');
+  if (patchSensitive && freshness?.status === 'conflicting') finding('CONFLICTING_CURRENTNESS');
+  if (patchSensitive && !freshnessCoversSet) {
+    for (const code of ['PATCH_MISMATCH', 'CURRENT_PATCH_COVERAGE_MISSING', 'CURRENT_BUILD_COVERAGE_MISSING', 'CURRENT_UPDATE_CHANGES_GUIDE_MECHANIC']) {
+      if (freshness?.reasons.includes(code) || freshness?.guideApplicability?.some(item => item.reasons.includes(code))) finding(code);
+    }
+  }
   if (duplicate) finding('DUPLICATE_EVIDENCE', false);
   if (sources.some(source => !source.clearSourceAssessment)) finding('LEGACY_SOURCE_NOT_PREVIOUSLY_ASSESSED', false);
   const dimension = (score: number | null, code: string, unresolvedFacts: string[] = []) => ({

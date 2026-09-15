@@ -249,6 +249,7 @@ export class GamingDocumentAcquisitionError extends Error {
     policyVersion: typeof GAMING_DOCUMENT_ACQUISITION_POLICY_VERSION;
     redirectCount: number;
     failingHop: number;
+    httpStatus?: number;
     statusCategory?: "3xx" | "4xx" | "5xx";
   };
   constructor(readonly code: "URL_BLOCKED" | "REDIRECT_NOT_ALLOWED" | "SOURCE_FETCH_FAILED" | "SOURCE_TIMEOUT" | "SOURCE_INACCESSIBLE",
@@ -256,9 +257,11 @@ export class GamingDocumentAcquisitionError extends Error {
     ruleId = `gaming.acquisition.${subreason.toLowerCase()}`) {
     super("The source could not be acquired under the public document policy.");
     this.name = "GamingDocumentAcquisitionError";
+    const httpStatus = typeof status === "number" && Number.isInteger(status) && status >= 100 && status <= 599 ? status : undefined;
     this.acquisition = { stage, subreason, ruleId, policyVersion: GAMING_DOCUMENT_ACQUISITION_POLICY_VERSION,
-      redirectCount, failingHop: redirectCount, ...(status && status >= 300 && status < 600
-        ? { statusCategory: `${Math.floor(status / 100)}xx` as "3xx" | "4xx" | "5xx" } : {}) };
+      redirectCount, failingHop: redirectCount, ...(httpStatus !== undefined ? { httpStatus } : {}),
+      ...(httpStatus !== undefined && httpStatus >= 300
+        ? { statusCategory: `${Math.floor(httpStatus / 100)}xx` as "3xx" | "4xx" | "5xx" } : {}) };
   }
 }
 

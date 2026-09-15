@@ -849,6 +849,34 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
     expect(guide).toContain('gpt/arcanos-gaming-hybrid.instructions.md');
   });
 
+  it('accepts additive official corroboration fields while preserving closed request and response shapes', () => {
+    const contract = loadContract();
+    const ajv = new Ajv2020({ strict: false, validateFormats: false });
+    ajv.addSchema(contract, 'gaming-currentness-action');
+    const request = { contractVersion: GAMING_HYBRID_CONTRACT_VERSION,
+      workflowId: '4517e693-b592-43c8-a827-d4b74168c429', idempotencyKey: 'official-currentness-operation',
+      discoveryType: 'currentness_verification', candidates: [{ url: 'https://swtor.com/patchnotes' }] };
+    const requestValidator = ajv.compile({ $ref: 'gaming-currentness-action#/components/schemas/GamingHybridCandidatesRequest' });
+    expect(requestValidator(request)).toBe(true);
+    expect(gamingHybridCandidatesSchema.safeParse(request).success).toBe(true);
+    for (const invalid of [{ ...request, discoveryType: 'unlimited_search' }, { ...request, currentPatch: 'frontend-claim' }]) {
+      expect(requestValidator(invalid)).toBe(false);
+      expect(gamingHybridCandidatesSchema.safeParse(invalid).success).toBe(false);
+    }
+    const response = { contractVersion: GAMING_HYBRID_CONTRACT_VERSION, requestId: 'currentness-response',
+      workflowId: request.workflowId, state: 'discovery_required', nextAction: 'verify_currentness',
+      reason: 'CURRENT_OFFICIAL_INDEX_REQUIRED', sourceKnown: true, evidenceSelected: false, freshnessStatus: 'unverified',
+      acceptedGameplayCandidateCount: 1, gameplayEvidenceStatus: 'currentness_pending', applicabilityStatus: 'unverified',
+      currentnessRequirements: ['official_source_required', 'current_patch_or_build_required', 'hotfix_check_required_if_supported'],
+      discovery: { type: 'currentness_verification', round: 0, maxRounds: 1, maxCandidates: 3,
+        searchQueries: ['Elden Ring official latest patch notes'] } };
+    const responseValidator = ajv.compile({ $ref: 'gaming-currentness-action#/components/schemas/GamingHybridResponse' });
+    expect(responseValidator(response)).toBe(true);
+    expect(responseValidator({ ...response, rawSourceContent: 'private page text' })).toBe(false);
+    expect(responseValidator({ ...response, discovery: { ...response.discovery, type: 'unlimited_search' } })).toBe(false);
+    expect(GAMING_HYBRID_LIMITS.currentnessRounds).toBe(1);
+  });
+
   it('keeps legacy instructions available separately from the opt-in hybrid workflow', () => {
     const instructions = readFileSync(instructionsPath, 'utf8');
     const customGpts = readFileSync(customGptsPath, 'utf8');

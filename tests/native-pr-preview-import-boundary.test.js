@@ -1469,6 +1469,45 @@ describe('native PR preview import boundary', () => {
     );
   });
 
+  it('pins the sealed Gaming currentness preview fixture', async () => {
+    const filePath = 'src/shared/gaming/gamingCurrentnessPreviewFixture.ts';
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).toContain(filePath);
+    const sourceText = await readFile(new URL(`../${filePath}`, import.meta.url), 'utf8');
+    expect(findUnsafeRuntimeSyntax(filePath, sourceText)).toEqual([]);
+    expect(findUnsafeRuntimeSyntax(filePath, `${sourceText}\nexport const unreviewedPolicyChange = true;`)).toEqual(
+      expect.arrayContaining([expect.stringContaining('critical entry file semantic digest')])
+    );
+  });
+
+  it('rejects normal resolver, provider, and service imports from the Gaming currentness fixture', async () => {
+    const fixturePath = 'src/shared/gaming/gamingCurrentnessPreviewFixture.ts';
+    const effectfulFiles = [
+      'src/services/gamingDocumentResolution.ts',
+      'src/services/gamingHybridKnowledge.ts',
+      'src/services/gamingPipeline.ts',
+      'src/services/gamingSourceIngestion.ts',
+      'src/services/openai.ts',
+      'src/core/logic/trinity.ts',
+    ];
+    for (const filePath of effectfulFiles) {
+      expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toContain(filePath);
+    }
+    const graphFiles = [...NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES, ...effectfulFiles];
+    const analyzeDependencies = async () => ({
+      obj: () => Object.fromEntries(graphFiles.map((filePath) => [
+        filePath,
+        filePath === fixturePath ? effectfulFiles : [],
+      ])),
+      warnings: () => ({ skipped: [] }),
+    });
+
+    await expect(findNativePrPreviewImportViolations({ analyzeDependencies })).resolves.toEqual(
+      expect.arrayContaining(effectfulFiles.map((filePath) =>
+        `unreviewed preview import: ${filePath}`
+      ))
+    );
+  }, 30_000);
+
   it('pins the pure Gaming CLEAR decisions without admitting their effectful service graph', async () => {
     for (const name of ['gamingClearPreviewFixture', 'gamingClearPolicy', 'gamingClearSource', 'gamingClearEvidence', 'gamingClearAnswerBinding']) {
       const filePath = `src/shared/gaming/${name}.ts`;

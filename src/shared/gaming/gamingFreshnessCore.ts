@@ -1,9 +1,12 @@
 import { normalizeGamingGameIdentity } from './gamingGameIdentity.js';
 import type { GamingEvidenceUnit } from './gamingEvidenceUnits.js';
 import { readGamingEvidenceUnits } from './gamingStructuralEvidence.js';
+import { runGamingCurrentnessAdapter, combineGamingCurrentnessEvidence, GAMING_CURRENTNESS_ADAPTER_VERSION,
+  type GamingCurrentnessAdapterId, type GamingCurrentnessAdapterResult, type GamingCurrentnessDocumentMetadata } from './gamingCurrentnessAdapters.js';
+import { evaluateGamingGuideApplicability, isGamingGameplayFreshnessEvidence, type GamingGuideApplicability } from './gamingGuideApplicability.js';
 
 export const GAMING_FRESHNESS_POLICY_VERSION = 'gaming-hybrid-freshness-v1';
-export const GAMING_SOURCE_POLICY_VERSION = 'gaming-hybrid-source-policy-v1';
+export const GAMING_SOURCE_POLICY_VERSION = 'gaming-hybrid-source-policy-v2';
 /** These are revalidation deadlines, never evidence that a claim is correct. */
 export const GAMING_FRESHNESS_DEFAULTS = Object.freeze({
   stable: 30 * 24 * 60 * 60 * 1_000,
@@ -31,7 +34,11 @@ export interface GamingReviewedSourceRule {
   currentness: GamingSourceCurrentness;
   durableAllowed: boolean;
   autoStoreAllowed: boolean;
-  metadataAdapter?: 'labeled-v1' | 'swtor-patch-index-v1';
+  metadataAdapter?: GamingCurrentnessAdapterId;
+  /** Explicit companion article rules; neither arbitrary publisher URLs nor frontend hints qualify. */
+  currentnessArticleRuleIds?: readonly string[];
+  platforms?: readonly string[];
+  regions?: readonly string[];
 }
 
 /** Narrow ownership paths derived from the existing Gaming catalog. No subdomain wildcard. */
@@ -40,7 +47,8 @@ export const REVIEWED_GAMING_SOURCE_RULES: readonly GamingReviewedSourceRule[] =
   { id: 'swtor-patch-article', game: 'Star Wars: The Old Republic', hosts: ['www.swtor.com', 'swtor.com'], path: '/patchnotes/', pathMatch: 'prefix', category: 'official_updates', currentness: 'article', durableAllowed: true, autoStoreAllowed: true },
   { id: 'destiny-news-article', game: 'Destiny 2', hosts: ['www.bungie.net'], path: '/7/en/News/Article/', pathMatch: 'prefix', category: 'official_updates', currentness: 'article', durableAllowed: true, autoStoreAllowed: true },
   { id: 'wow-news-article', game: 'World of Warcraft', hosts: ['worldofwarcraft.blizzard.com'], path: '/en-us/news/', pathMatch: 'prefix', category: 'official_updates', currentness: 'article', durableAllowed: true, autoStoreAllowed: true },
-  { id: 'elden-ring-news', game: 'Elden Ring', hosts: ['en.bandainamcoent.eu'], path: '/elden-ring/news/', pathMatch: 'prefix', category: 'official_updates', currentness: 'article', durableAllowed: true, autoStoreAllowed: true },
+  { id: 'elden-ring-update-index', game: 'Elden Ring', hosts: ['en.bandainamcoent.eu'], path: '/elden-ring/elden-ring/news', pathMatch: 'exact', category: 'official_updates', currentness: 'current_index', durableAllowed: false, autoStoreAllowed: false, metadataAdapter: 'bandai-news-index-v1', currentnessArticleRuleIds: ['elden-ring-news'] },
+  { id: 'elden-ring-news', game: 'Elden Ring', hosts: ['en.bandainamcoent.eu'], path: '/elden-ring/news/', pathMatch: 'prefix', category: 'official_updates', currentness: 'article', durableAllowed: true, autoStoreAllowed: true, metadataAdapter: 'bandai-patch-article-v1' },
   { id: 'wow-specialist', game: 'World of Warcraft', hosts: ['www.icy-veins.com', 'icy-veins.com'], path: '/wow/', pathMatch: 'prefix', category: 'specialist_guide', currentness: 'none', durableAllowed: true, autoStoreAllowed: false },
   { id: 'bg3-community-wiki', game: "Baldur's Gate 3", hosts: ['bg3.wiki'], path: '/wiki/', pathMatch: 'prefix', category: 'community', currentness: 'none', durableAllowed: true, autoStoreAllowed: false }
 ]);
@@ -67,6 +75,7 @@ export function assessGamingSourcePolicy(url: string, game: string,
   const identity = normalizeGamingGameIdentity(game);
   const rule = rules.slice(0, 100).find(candidate => normalizeGamingGameIdentity(candidate.game) === identity
     && candidate.hosts.includes(parsed.hostname.toLowerCase())
+    && (candidate.currentness !== 'current_index' || !parsed.search)
     && (candidate.pathMatch === 'exact' ? parsed.pathname === candidate.path
       : candidate.path.endsWith('/') && parsed.pathname.startsWith(candidate.path)));
   if (!rule) return fallback;
@@ -109,6 +118,8 @@ export interface GamingFreshnessEvidence extends GamingSourcePolicyAssessment {
   mechanicValues?: Record<string, string>;
   metadataConflict?: boolean;
   metadataUnverified?: boolean;
+  /** Deterministic reviewed adapter output. Cached proof still expires at the normal freshness deadline. */
+  currentnessMetadata?: GamingCurrentnessAdapterResult;
 }
 
 const normalized = (value: string): string => value.normalize('NFKC').trim().toLowerCase();
@@ -141,7 +152,7 @@ export function classifyGamingQuestionFreshness(input: { prompt: string; mode?: 
  * Reads only fetched text. Dates from footers, HTTP Last-Modified, and frontend hints
  * cannot establish current applicability. Unsupported page layouts stay unverified.
  */
-export function extractGamingFreshnessMetadata(document: { publicUrl: string; canonicalUrl?: string; text: string; metadata?: { title?: string; headings?: string }; evidenceUnits?: readonly GamingEvidenceUnit[] },
+export function extractGamingFreshnessMetadata(document: { publicUrl: string; canonicalUrl?: string; text: string; metadata?: { title?: string; headings?: string }; evidenceUnits?: readonly GamingEvidenceUnit[]; metrics?: { truncated?: boolean; instructionFiltered?: boolean }; currentnessDocument?: GamingCurrentnessDocumentMetadata },
   context: { game: string; edition?: string; platform?: string; region?: string }, now = new Date(),
   rules: readonly GamingReviewedSourceRule[] = REVIEWED_GAMING_SOURCE_RULES): GamingFreshnessEvidence {
   // Citation redaction may shorten a path; only the acquired identity grants publisher policy.
@@ -185,25 +196,25 @@ export function extractGamingFreshnessMetadata(document: { publicUrl: string; ca
   };
   const game = label('Game', 160) ?? context.game;
   const edition = label('Edition', 120);
-  const platforms = boundedList(label('Platforms?', 256));
-  const regions = boundedList(label('Regions?', 256));
+  let platforms = boundedList(label('Platforms?', 256));
+  let regions = boundedList(label('Regions?', 256));
   const rawPublishedAt = label('Published at');
   const rawSourceUpdatedAt = label('Source updated at');
   const rawEffectiveFrom = label('Effective from');
   const rawEffectiveUntil = label('Effective until');
-  const publishedAt = dateValue(rawPublishedAt);
+  let publishedAt = dateValue(rawPublishedAt);
   const sourceUpdatedAt = dateValue(rawSourceUpdatedAt);
   let effectiveFrom = dateValue(rawEffectiveFrom);
   const effectiveUntil = dateValue(rawEffectiveUntil);
   let invalidDate = [[rawPublishedAt, publishedAt], [rawSourceUpdatedAt, sourceUpdatedAt],
     [rawEffectiveFrom, effectiveFrom], [rawEffectiveUntil, effectiveUntil]].some(([raw, parsed]) => Boolean(raw && !parsed));
   let patch = label('Patch');
-  const build = label('Build');
+  let build = label('Build');
   const season = label('Season');
   // Only a reviewed index adapter may attest that an opaque patch ID is current.
   let currentPatch = policy.currentness === 'current_index' ? label('Current patch') : undefined;
-  const currentBuild = policy.currentness === 'current_index' ? label('Current build') : undefined;
-  const currentSeason = policy.currentness === 'current_index' ? label('Current season') : undefined;
+  let currentBuild = policy.currentness === 'current_index' ? label('Current build') : undefined;
+  let currentSeason = policy.currentness === 'current_index' ? label('Current season') : undefined;
   const baselineForPatches = boundedList(label('Baseline valid for patches', 256));
   const baselineForBuilds = boundedList(label('Baseline valid for builds', 256));
   const supersedesPatches = policy.authority === 'official' ? boundedList(label('Supersedes patches', 256)) : undefined;
@@ -220,25 +231,33 @@ export function extractGamingFreshnessMetadata(document: { publicUrl: string; ca
     mechanicValues[key] = value;
   }
   const rule = rules.find(item => item.id === policy.ruleId);
-  if (rule?.metadataAdapter === 'swtor-patch-index-v1') {
-    // Reviewed release index: choose the dated active release, never sort version strings.
-    const releases = [...metadataText.matchAll(/\b(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})\s*[-–]\s*Game Update\s+(\d+(?:\.\d+){1,3}[a-z]?)\b/giu)].slice(0, 100).flatMap(match => {
-      const year = match[3].length === 2 ? `20${match[3]}` : match[3];
-      const at = dateValue(`${year}-${match[1].padStart(2, '0')}-${match[2].padStart(2, '0')}`);
-      return at && Date.parse(at) <= now.getTime() ? [{ at, patch: match[4] }] : [];
-    }).sort((left, right) => Date.parse(right.at) - Date.parse(left.at));
-    if (releases[0]) {
-      // Two versions released on the same date require a more precise official source.
-      const latest = releases.filter(item => item.at === releases[0].at);
-      if (releases[0].at.slice(0, 10) === now.toISOString().slice(0, 10)) {
-        // A date-only announcement on rollout day cannot establish activation time.
-        invalidDate = true;
-      } else if (new Set(latest.map(item => item.patch)).size === 1) {
-        currentPatch = releases[0].patch;
-        patch = currentPatch;
-        effectiveFrom = releases[0].at;
-      } else conflict = true;
+  const currentnessMetadata = rule && policy.authority === 'official' && (rule.metadataAdapter || rule.currentness === 'current_index')
+    ? runGamingCurrentnessAdapter({ document, rule, game: context.game, now, metadataConflict: conflict,
+      metadataUnverified: invalidDate || invalidMetadata, fields: { patch, build, season, currentPatch, currentBuild,
+        currentSeason, effectiveFrom, effectiveUntil, publishedAt, platforms, regions } }) : undefined;
+  if (currentnessMetadata) {
+    const contradictoryAdapterFields = [[patch, currentnessMetadata.patch], [build, currentnessMetadata.build],
+      [currentPatch, currentnessMetadata.currentPatch], [currentBuild, currentnessMetadata.currentBuild]]
+      .some(([claim, extracted]) => claim && extracted && !same(claim, extracted));
+    if (contradictoryAdapterFields) {
+      currentnessMetadata.status = 'conflicting';
+      currentnessMetadata.reasons = ['CONTRADICTORY_ADAPTER_METADATA'];
     }
+    patch = currentnessMetadata.patch ?? patch;
+    build = currentnessMetadata.build ?? build;
+    currentPatch = currentnessMetadata.currentPatch;
+    currentBuild = currentnessMetadata.currentBuild;
+    currentSeason = currentnessMetadata.currentSeason;
+    effectiveFrom = currentnessMetadata.effectiveFrom ?? effectiveFrom;
+    publishedAt = currentnessMetadata.publishedAt ?? publishedAt;
+    platforms = currentnessMetadata.platforms ?? platforms ?? (rule?.platforms ? [...rule.platforms] : undefined);
+    regions = currentnessMetadata.regions ?? regions ?? (rule?.regions ? [...rule.regions] : undefined);
+    conflict ||= currentnessMetadata.status === 'conflicting';
+    const pendingArticle = currentnessMetadata.status === 'incomplete' && Boolean(currentnessMetadata.requiredArticlePatch)
+      && currentnessMetadata.reasons.every(reason => ['OFFICIAL_PATCH_ARTICLE_REQUIRED', 'HOTFIX_BUILD_CHECK_REQUIRED'].includes(reason));
+    // A valid index waiting for its companion article is a usable source in that role.
+    // Its separate adapter status still prevents any currentness success until corroborated.
+    invalidMetadata ||= policy.currentness === 'current_index' && currentnessMetadata.status !== 'verified' && !pendingArticle;
   }
   // Date/version claims remain source claims; currentness additionally needs an official index.
   const patchArticle = /\b(?:patch\s+notes?|hotfix|game\s+update|update\s+\d)\b/iu.test(document.metadata?.title ?? '');
@@ -258,6 +277,7 @@ export function extractGamingFreshnessMetadata(document: { publicUrl: string; ca
     ...(Object.keys(mechanicValues).length ? { mechanicValues } : {}),
     ...(conflict ? { metadataConflict: true } : {}),
     ...(invalidDate || invalidMetadata ? { metadataUnverified: true } : {}),
+    ...(currentnessMetadata ? { currentnessMetadata } : {}),
     metadataConfidence: patch || build || season || effectiveFrom ? 'content_extracted' : 'unknown' };
 }
 
@@ -285,6 +305,8 @@ export interface GamingFreshnessEvaluation {
   effectiveBuild?: string;
   season?: string;
   qualification: string;
+  /** Source quality stays separate from explicit guide/update compatibility. */
+  guideApplicability?: GamingGuideApplicability[];
 }
 
 /** A season identity alone cannot verify balance/build claims within that season. */
@@ -301,22 +323,28 @@ export function evaluateGamingFreshness(input: GamingFreshnessEvaluationInput): 
   const classification = classifyGamingQuestionFreshness({ prompt: input.question, mode: input.mode, requestedVersion: input.requestedVersion });
   const seasonalPatchRequired = gamingSeasonalPatchRequired(input);
   const now = (input.now ?? new Date()).getTime();
+  const historical = /\b(?:as\s+of|historical|previous\s+patch|old\s+patch)\b/iu.test(input.question);
+  let guideApplicability: GamingGuideApplicability[] | undefined;
+  const gameplayEvidence = input.evidence.slice(0, GAMING_FRESHNESS_DEFAULTS.maxEvidence).filter(isGamingGameplayFreshnessEvidence);
   const result = (status: GamingFreshnessStatus, reasons: string[], selected: readonly GamingFreshnessEvidence[] = [], extra: Partial<GamingFreshnessEvaluation> = {}): GamingFreshnessEvaluation => ({
     policyVersion: GAMING_FRESHNESS_POLICY_VERSION, classification, status, usable: status === 'current',
     selectedEvidenceIds: selected.map(item => item.id), reasons,
     qualification: status === 'current' ? classification === 'stable' ? 'Source applicability was checked; gameplay coverage is evaluated separately.' : 'Applies only to the verified update, time, platform, and region.'
-      : 'Current applicability has not been established; do not present these claims as current.', ...extra
+      : 'Current applicability has not been established; do not present these claims as current.',
+    ...(classification !== 'stable' && !historical && gameplayEvidence.length ? { guideApplicability: guideApplicability ?? gameplayEvidence.map(item => ({
+      evidenceId: item.id, status: 'unverified' as const, reasons: reasons.slice(0, 8)
+    })) } : {}), ...extra
   });
   if (!Number.isFinite(now)) return result('unverified', ['INVALID_VERIFICATION_TIME']);
   if (input.evidence.length > GAMING_FRESHNESS_DEFAULTS.maxEvidence) return result('unverified', ['EVIDENCE_LIMIT_EXCEEDED']);
   if (!input.evidence.length) return result('unverified', ['NO_EVIDENCE']);
-  const historical = /\b(?:as\s+of|historical|previous\s+patch|old\s+patch)\b/iu.test(input.question);
   // An explicit historical patch is a different applicability target from today's
   // release. A date-only request still needs a reviewed version/date mapping.
   if (historical && (!input.requestedVersion || /\bas\s+of\s+\d{4}-\d{2}-\d{2}\b/iu.test(input.question)))
     return result('unverified', ['HISTORICAL_AS_OF_UNSUPPORTED']);
   const reasons = new Set<string>();
-  const scoped = input.evidence.filter(item => {
+  let conflictingOfficialCurrentness = false;
+  const scoped = combineGamingCurrentnessEvidence(input.evidence, new Date(now)).filter(item => {
     if (normalizeGamingGameIdentity(item.game) !== normalizeGamingGameIdentity(input.game)) { reasons.add('GAME_MISMATCH'); return false; }
     if (input.edition && !same(item.edition, input.edition)) { reasons.add('EDITION_UNVERIFIED_OR_MISMATCH'); return false; }
     if (!input.edition && item.edition) { reasons.add('EDITION_REQUIRED'); return false; }
@@ -329,11 +357,19 @@ export function evaluateGamingFreshness(input: GamingFreshnessEvaluationInput): 
     const published = timestamp(item.publishedAt);
     if ((from !== undefined && from > now) || (published !== undefined && published > now)) { reasons.add('NOT_YET_EFFECTIVE'); return false; }
     if (!historical && until !== undefined && until <= now) { reasons.add('NO_LONGER_EFFECTIVE'); return false; }
-    if (item.metadataConflict) { reasons.add('CONTRADICTORY_SOURCE_METADATA'); return false; }
+    if (item.metadataConflict || item.currentnessMetadata?.status === 'conflicting') {
+      reasons.add('CONTRADICTORY_SOURCE_METADATA');
+      if (item.authority === 'official' && item.category === 'official_updates') conflictingOfficialCurrentness = true;
+      return false;
+    }
     if (item.metadataUnverified) { reasons.add('APPLICABILITY_METADATA_UNVERIFIED'); return false; }
     if (item.policyVersion !== GAMING_SOURCE_POLICY_VERSION) { reasons.add('SOURCE_POLICY_REVALIDATION_REQUIRED'); return false; }
     return true;
   });
+  // An applicable official contradiction cannot disappear merely because another
+  // index agrees with a guide. Historical and static evidence retain their own scope.
+  if (conflictingOfficialCurrentness && !historical && (classification === 'patch_sensitive' || classification === 'seasonal'))
+    return result('conflicting', ['CONFLICTING_CURRENTNESS', ...reasons]);
   if (!scoped.length) return result(reasons.has('CONTRADICTORY_SOURCE_METADATA') ? 'conflicting' : 'not_applicable', [...reasons]);
   const recent = (item: GamingFreshnessEvidence, age: number): boolean => {
     const checked = timestamp(item.verifiedAt);
@@ -376,6 +412,8 @@ export function evaluateGamingFreshness(input: GamingFreshnessEvaluationInput): 
       : result('unverified', [...reasons, 'LIVE_OFFICIAL_STATUS_REQUIRED']);
   }
   const indexes = scoped.filter(item => item.authority === 'official' && item.currentness === 'current_index'
+    && (!item.currentnessMetadata || item.currentnessMetadata.status === 'verified'
+      && item.currentnessMetadata.adapterVersion === GAMING_CURRENTNESS_ADAPTER_VERSION)
     && item.metadataConfidence === 'content_extracted' && recent(item, GAMING_FRESHNESS_DEFAULTS[classification])
     && (!input.platform || item.platforms?.some(platform => same(platform, input.platform) || same(platform, 'all')))
     && (!input.region || item.regions?.some(region => same(region, input.region) || same(region, 'all')))
@@ -394,10 +432,23 @@ export function evaluateGamingFreshness(input: GamingFreshnessEvaluationInput): 
   const build = index.currentBuild;
   const season = classification === 'seasonal' ? index.currentSeason : undefined;
   if (input.requestedVersion && !same(input.requestedVersion, patch)) return result('not_applicable', [...reasons, 'REQUESTED_PATCH_NOT_CURRENT', 'HISTORICAL_AS_OF_UNSUPPORTED']);
+  const currentOfficialEvidence = scoped.filter(item => item.authority === 'official'
+    && (item.currentness === 'current_index' || (!patch || same(item.patch, patch))
+      && (!build || same(item.build, build) || item.baselineForBuilds?.some(value => same(value, build)))));
+  guideApplicability = gameplayEvidence.map(guide => {
+    const applicability = evaluateGamingGuideApplicability({ guide, game: input.game,
+      edition: input.edition, platform: input.platform, region: input.region, currentness: index,
+      officialEvidence: currentOfficialEvidence, now: new Date(now) });
+    // A matching version cannot restore an artifact excluded by source policy or scope.
+    return applicability.status === 'verified_current' && !scoped.some(item => item.id === guide.id)
+      ? { ...applicability, status: 'unverified' as const, reasons: [...reasons].slice(0, 8) } : applicability;
+  });
+  if (guideApplicability.some(guide => guide.reasons.includes('CURRENT_UPDATE_CHANGES_GUIDE_MECHANIC'))) reasons.add('LOWER_AUTHORITY_CONFLICT_EXCLUDED');
   // A source describing another patch is not mixed into a current recommendation.
   // Explicit baseline applicability can preserve selected unchanged facts, never an entire old corpus.
   const matching = scoped.filter(item => {
     if (item.currentness === 'current_index') return false;
+    if (isGamingGameplayFreshnessEvidence(item)) return guideApplicability!.some(guide => guide.evidenceId === item.id && guide.status === 'verified_current');
     if (input.platform && !item.platforms?.some(platform => same(platform, input.platform) || same(platform, 'all'))) return false;
     if (input.region && !item.regions?.some(region => same(region, input.region) || same(region, 'all'))) return false;
     if (build && !same(item.build, build) && !item.baselineForBuilds?.some(value => same(value, build))) return false;
@@ -443,6 +494,14 @@ export function evaluateGamingFreshness(input: GamingFreshnessEvaluationInput): 
   if (lowerAuthorityConflicts.size) {
     selected = selected.filter(item => !lowerAuthorityConflicts.has(item.id));
     reasons.add('LOWER_AUTHORITY_CONFLICT_EXCLUDED');
+  }
+  if (gameplayEvidence.length && !guideApplicability.some(guide => guide.status === 'verified_current')) {
+    const applicabilityStatus = guideApplicability.some(guide => guide.status === 'conflicting') ? 'conflicting'
+      : guideApplicability.every(guide => guide.status === 'stale') ? 'stale' : 'unverified';
+    return result(applicabilityStatus, [...reasons, 'CURRENT_PATCH_COVERAGE_MISSING',
+      ...new Set(guideApplicability.flatMap(guide => guide.reasons))].slice(0, 16), [], {
+      ...(patch ? { effectivePatch: patch } : {}), ...(build ? { effectiveBuild: build } : {}), ...(season ? { season } : {})
+    });
   }
   if (!selected.length) return result('unverified', [...reasons, 'CURRENT_PATCH_COVERAGE_MISSING'], [], { ...(patch ? { effectivePatch: patch } : {}), ...(season ? { season } : {}) });
   return result('current', [...reasons, 'OFFICIAL_CURRENT_APPLICABILITY_VERIFIED', ...(scoped.length > selected.length + indexes.length ? ['INAPPLICABLE_PATCH_EVIDENCE_EXCLUDED'] : [])], [...selected, ...indexes],

@@ -18,7 +18,8 @@ unchanged.
 Query bodies include `contractVersion`, logical `idempotencyKey`, `question`,
 precise `game`, optional validated context and a `storagePolicy` (default
 `transient_only`). Candidate calls use the returned `workflowId`, their own
-logical key and URLs; the original question and context remain server-owned
+logical key and URLs, optionally naming `discoveryType: gameplay_evidence` or
+`currentness_verification`; the original question and context remain server-owned
 within that workflow. Ingestion selects `candidateIds`, the matching storage
 policy, logical key and `confirmStore` for conversational approval when required.
 
@@ -27,12 +28,23 @@ the state: `answer_ready`, `clarification_required`, `discovery_required`,
 `temporarily_unavailable`, or `ingestion_pending`. `nextAction` directs the GPT;
 it must not parse prose to decide whether to search. `answer` preserves backend
 citations and request provenance. Structured dates/patch/build and qualifications
-describe verified applicability. Discovery is capped at one round and three
-candidates. Handler failures never become missing knowledge; early auth/parser
+describe verified applicability. Gameplay discovery is capped at one round and
+three candidates. When accepted gameplay evidence lacks official currentness,
+`nextAction: verify_currentness` requests one separate corroboration operation
+with at most three official candidates through the same endpoint. Structured
+discovery type, accepted gameplay count, requirements and applicability status
+separate this from generic gameplay search. Legacy candidate calls without the
+optional type use the server's pending operation. After that operation the
+workflow answers or stops with its unresolved status; keys cannot replenish the
+budget. Handler failures never become missing knowledge; early auth/parser
 failures retain their existing error envelopes. Invalid bodies return 400,
 scope/consent failure 403, unknown/expired workflow 404, changed same-key payload
 409, rate/capacity limits 429, and unavailable dependencies 503. Retryable failed
 operations can retry the same key without dropping its payload binding.
+Equivalent queries share the original discovery budget. A new key with changed
+effective mode, spoiler permission, or answer depth returns 409 with
+`reason: QUERY_CONTEXT_CONFLICT` and `nextAction: stop`, without the previous
+answer. Equivalent preference aliases may replay the original response.
 
 Candidate acquisition uses the [bounded HTTPS acquisition policy](GAMING_SOURCE_ACQUISITION.md).
 Approved redirects retain verified final citations and still require Gaming

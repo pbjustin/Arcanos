@@ -211,6 +211,8 @@ export interface NativePrPreviewE2eContract {
     sourceAcquisitionProofVersion: 'gaming-source-acquisition/v1';
     structuredEvidenceProofHeader: 'x-arcanos-preview-gaming-structured-evidence-version';
     structuredEvidenceProofVersion: 'gaming-structured-evidence/v1';
+    currentnessProofHeader: 'x-arcanos-preview-gaming-currentness-version';
+    currentnessProofVersion: 'gaming-currentness/v1';
     game: 'Palworld';
     fixtures: Readonly<{
       guide: 'sealed-preview-guide';

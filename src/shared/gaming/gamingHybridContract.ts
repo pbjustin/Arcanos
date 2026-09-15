@@ -3,8 +3,8 @@ import { z } from 'zod';
 /** Additive opt-in contract; legacy Gaming dispatch and source Actions keep their shapes. */
 export const GAMING_HYBRID_CONTRACT_VERSION = 'gaming-hybrid-v1' as const;
 export const GAMING_HYBRID_LIMITS = {
-  // Existing frontend evidence policy allows one attempt; do not widen it here.
-  discoveryRounds: 1, candidates: 3, workflowTtlMs: 10 * 60_000,
+  // Gameplay discovery and official corroboration are distinct, non-renewable operations.
+  discoveryRounds: 1, currentnessRounds: 1, candidates: 3, workflowTtlMs: 10 * 60_000,
   workflows: 128, workflowsPerActor: 8, operationsPerActor: 24,
   rateWindowMs: 5 * 60_000, candidateTimeoutMs: 12_000, polls: 3
 } as const;
@@ -33,6 +33,7 @@ export const gamingHybridCandidateSchema = z.object({
 }).strict();
 export const gamingHybridCandidatesSchema = z.object({
   contractVersion: version, workflowId: z.string().uuid(), idempotencyKey,
+  discoveryType: z.enum(['gameplay_evidence', 'currentness_verification']).optional(),
   candidates: z.array(gamingHybridCandidateSchema).min(1).max(GAMING_HYBRID_LIMITS.candidates)
 }).strict();
 export const gamingHybridIngestionSchema = z.object({
@@ -47,7 +48,7 @@ export interface GamingHybridResponse {
   requestId: string;
   workflowId?: string;
   state: GamingHybridState;
-  nextAction: 'answer' | 'clarify' | 'search' | 'retry_later' | 'poll_ingestion' | 'stop';
+  nextAction: 'answer' | 'clarify' | 'search' | 'verify_currentness' | 'retry_later' | 'poll_ingestion' | 'stop';
   reason: string;
   sourceKnown: boolean;
   evidenceSelected: boolean;
@@ -55,9 +56,13 @@ export interface GamingHybridResponse {
   verifiedAsOf?: string;
   effectivePatch?: string;
   effectiveBuild?: string;
+  applicabilityStatus?: 'verified_current' | 'partially_verified' | 'stale' | 'conflicting' | 'unverified';
+  gameplayEvidenceStatus?: 'accepted_transient' | 'currentness_pending' | 'freshness_verified' | 'stale' | 'unverified';
+  acceptedGameplayCandidateCount?: number;
+  currentnessRequirements?: Array<'official_source_required' | 'current_patch_or_build_required' | 'hotfix_check_required_if_supported'>;
   qualification?: string;
   clarification?: string;
-  discovery?: { round: number; maxRounds: number; maxCandidates: number; searchQueries: string[] };
+  discovery?: { type?: 'gameplay_evidence' | 'currentness_verification'; round: number; maxRounds: number; maxCandidates: number; searchQueries: string[] };
   candidates?: Array<{ candidateId?: string; url?: string; decision: string; reasonCodes: string[]; sourceCategory?: string }>;
   answer?: { response: string; sources: Array<{ url: string; title?: string; sourceId?: string; patchVersion?: string; fetchedAt?: string }>; provenance: 'arcanos-trinity'; requestId: string };
   ingestion?: { ingestionId: string; status: string; statusUrl: string; maxPolls: number };

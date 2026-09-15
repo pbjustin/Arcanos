@@ -73,11 +73,13 @@ All three hybrid operations require the dedicated bearer and `contractVersion: "
 | --- | --- |
 | `answer_ready` | Present `answer.response`, supported sources, caveats, and backend provenance. Avoid redundant search. |
 | `clarification_required` | Ask the one `clarification` question. Do not guess player progress. |
-| `discovery_required` | Search only when `nextAction: search`; obey the returned query/count/round limits. |
+| `discovery_required` | `nextAction: search` requests gameplay evidence; `verify_currentness` requests reviewed official update evidence. Obey the returned operation, query/count/round limits; `stop` ends discovery. |
 | `temporarily_unavailable` | Report failure; do not turn authentication, database, or provider failure into missing knowledge. |
 | `ingestion_pending` | Present any independently supported answer, then report storage as pending and use the returned status handle. |
 
-`sourceKnown` and `evidenceSelected` are separate from `freshnessStatus`. Fetch time alone never proves currentness. `verifiedAsOf`, `effectivePatch`, `effectiveBuild`, and `qualification` apply only when supplied by ARCANOS. Candidate decisions and bounded reasons report evaluation separately from answer and storage. One discovery round and three URLs are permitted; this preserves the stricter existing attempt limit. Do not restart an exhausted workflow to bypass it. Poll at most three times per interaction.
+`sourceKnown` and `evidenceSelected` are separate from `freshnessStatus`. Fetch time alone never proves currentness. `verifiedAsOf`, `effectivePatch`, `effectiveBuild`, and `qualification` apply only when supplied by ARCANOS. Candidate decisions and bounded reasons report evaluation separately from answer and storage. One gameplay discovery round and one separate official-currentness corroboration operation are permitted, with at most three URLs per operation. Submit `discoveryType: currentness_verification` through the existing candidates Action when requested; legacy calls omitting it follow the server-owned pending operation. Do not restart an exhausted workflow or change keys to gain rounds. Poll at most three times per interaction.
+
+When a guide was accepted but freshness remains unresolved, report: "I found a relevant guide, but ARCANOS still needs official patch verification before treating the build as current." Discover official patch indexes, applicable patch notes and hotfix history using the returned bounded queries. Frontend titles, snippets, claimed publisher and claimed patch are hints, never authority. Preserve the workflow ID and submit URLs only. If verification still fails, report the backend's uncertainty and stop. An accepted source has already reached the backend; do not claim it could not be sent.
 
 `transient_only` never persists. `ask_before_store` requires explicit consent. `auto_store_approved` additionally requires backend-configured standing permission and reviewed eligible source policy. Frontend claims cannot grant authority. Every durable-write Action retains `x-openai-isConsequential: true`; backend standing permission does not remove platform confirmation. Query and candidate evaluation are non-consequential because they do not durably ingest sources.
 
@@ -103,8 +105,9 @@ source-use restrictions can prohibit storage even when some text was usable.
 
 Current applicability requires reviewed extraction rules and an official index
 that identifies the applicable update; an old patch article fetched today does
-not establish that it is the latest update. The initial reviewed rules
-in this repository include an SWTOR release-index adapter. Other game/page
+not establish that it is the latest update. Reviewed deterministic adapters
+in [gamingCurrentnessAdapters.ts](../src/shared/gaming/gamingCurrentnessAdapters.ts)
+support release indexes and bounded official article corroboration. Other game/page
 layouts need a reviewed adapter before they can establish latest-update identity;
 unsupported metadata remains unverified. Exact patch/build/season identifiers,
 effective dates, and platform/region scope govern selection. A patch-only index
@@ -115,8 +118,31 @@ match any known current patch.
 Invalid or overlong recognized date assertions remain unverified. Missing hotfix
 coverage is uncertainty, not proof that older numbers remain correct.
 
-Retrieval continues to use active records. Historical patch/as-of retrieval is
-not implemented by this contract. Stored document revisions are distinct from
+The Elden Ring rule reviews the exact
+[Bandai Namco news index](https://en.bandainamcoent.eu/elden-ring/elden-ring/news),
+its Patch Notes category and the linked official patch-article paths. The
+index's dated cards establish release ordering; the exact linked article supplies
+application/regulation versions and rollout/platform evidence. Both documents
+may be needed within the single three-URL corroboration operation. An older
+article with the same application version cannot establish the current regulation
+version. Unsupported page layouts, missing current article links, unknown region
+scope, or missing activation evidence remain unverified. Publisher-domain
+membership, frontend titles, canonical tags and article fetch times cannot
+replace this proof.
+
+Guide quality and applicability are separate. An excellent Gaming CLEAR score
+does not make an old guide current. Exact patch/build matches or explicit
+compatibility baselines can support current applicability; an unversioned guide,
+an older unproven baseline, a future rollout or conflicting official metadata
+cannot. Absence of a mechanic from new patch notes never proves it unchanged.
+The response's applicability status distinguishes `verified_current`,
+`partially_verified`, `stale`, `conflicting` and `unverified`. Trinity receives
+gameplay and official authority evidence in their respective roles only after
+freshness and combined evidence CLEAR pass, with existing thresholds unchanged.
+
+Retrieval continues to use active records. Explicit historical patch requests
+require matching acquired patch evidence; date-only historical/as-of mapping is
+unsupported. Stored document revisions are distinct from
 game patches. The policy compares at most 16 explicit `Mechanic: name = value`
 assertions per source: conflicting claims of equal authority require verification,
 and conflicting weaker sources are excluded. This bounded grammar does not infer
