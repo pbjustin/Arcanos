@@ -15,11 +15,27 @@ export function extractGamingCurrentnessDocument(sourceUrl: string, raw: { body:
   const $ = load(raw.body);
   $('script,style,noscript,template,nav,footer,aside,form,[hidden],[aria-hidden="true"]').remove();
   if (rule.metadataAdapter === 'bandai-patch-article-v1') {
-    const labels = $('main p, article p, [role="main"] p').filter((_position, node) => $(node).text().trim() === 'Targeted Platforms');
-    const field = labels.length === 1 ? labels.next('p') : undefined;
-    const platformText = field?.text().normalize('NFKC').replace(/\s+/gu, ' ').trim() ?? '';
+    const meaningfulContents = (paragraph: ReturnType<typeof $>) => paragraph.contents().toArray()
+      .filter(child => child.type !== 'text' || $(child).text().trim().length > 0);
+    const labels = $('main p, article p, [role="main"] p').filter((_position, node) => {
+      const first = meaningfulContents($(node))[0];
+      return $(node).text().trim() === 'Targeted Platforms'
+        || first?.type === 'tag' && first.name === 'u' && $(first).text().trim() === 'Targeted Platforms';
+    });
+    let fieldText = '';
+    if (labels.length === 1) {
+      if (labels.text().trim() === 'Targeted Platforms') fieldText = labels.next('p').text();
+      else {
+        // The publisher also puts the underlined label and its complete value
+        // in one paragraph. Extra nodes or qualifications must not be dropped.
+        const contents = meaningfulContents(labels);
+        if (contents.length === 3 && contents[1].type === 'tag' && contents[1].name === 'br'
+          && contents[2].type === 'text') fieldText = $(contents[2]).text();
+      }
+    }
+    const platformText = fieldText.normalize('NFKC').replace(/\s+/gu, ' ').trim();
     return { ruleId: rule.id, adapterId: 'bandai-patch-article-v1', rawContentHash: result.rawContentHash, platformText,
-      status: field?.length === 1 && platformText.length > 0 && platformText.length <= 256
+      status: platformText.length > 0 && platformText.length <= 256
         && filterGamingDocumentInstructions(platformText) === platformText ? 'complete' : 'incomplete' };
   }
   const heading = $('main h2#patch-notes, [role="main"] h2#patch-notes');

@@ -245,7 +245,11 @@ export function runGamingCurrentnessAdapter(input: GamingCurrentnessAdapterInput
   const platforms = platformText.split(/\s*\/\s*/u).flatMap(value => value === 'Steam' ? ['Steam', 'PC']
     : value === 'PlayStation 4' ? ['PlayStation 4', 'PS4'] : value === 'PlayStation 5' ? ['PlayStation 5', 'PS5'] : [value]);
   const platformScope = intersectScope(input.fields?.platforms, platforms, true);
-  const futureRelease = new RegExp(`\\b(?:This (?:patch|update)|Patch ${escape(app[0])})\\s+(?:(?:is|has been)\\s+)?(?:scheduled|planned|will)\\b`, 'iu').test(text);
+  // The reviewed installed-version caption describes what the title screen
+  // will show. Structured evidence can repeat that caption without its version
+  // values; those are validated above. Every other timing qualifier still vetoes.
+  const releaseTimingText = text.replace(/\bafter applying this update will be as follows:/giu, '');
+  const futureRelease = new RegExp(`\\b(?:This (?:patch|update)|Patch ${escape(app[0])})\\s+(?:(?:is|has been)\\s+)?(?:scheduled|planned|will)\\b`, 'iu').test(releaseTimingText);
   const releaseActive = !futureRelease && (new RegExp(`\\bPatch ${escape(app[0])} has been released for ${escape(rule.game)}\\b`, 'iu').test(text)
     || /\b(?:This update is (?:available now|required for online play)|Online play requires the player to apply this update)\b/iu.test(text));
   result = { ...result, patch: app[0], build: builds[0], versionSemantics: 'app-regulation', releaseActive,
