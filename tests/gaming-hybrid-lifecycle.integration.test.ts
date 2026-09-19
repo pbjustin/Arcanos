@@ -520,6 +520,132 @@ describe('Gaming hybrid durable lifecycle', () => {
     expect(mockTrinity).toHaveBeenCalledTimes(1);
   });
 
+  it.each(['relevant records', 'applicability only', 'contradictory metadata'] as const)(
+    'refreshes a submitted same-URL official index through authenticated HTTP: %s', async refreshShape => {
+      const game = 'Star Wars: The Old Republic';
+      const guideUrl = 'https://guides.example.org/swtor-healer-talents';
+      const indexUrl = 'https://www.swtor.com/patchnotes';
+      const oldMarker = 'Previous fixture index passage about healer talents and sustained group healing';
+      const freshMarker = 'Refreshed fixture index passage about healer talents and sustained group healing';
+      const guideText = 'In Star Wars: The Old Republic, healer talents support sustained group healing by reducing healing resource costs and improving recovery. Choose resource efficiency talents before situational burst healing. Maintain healing effects on the active defender, reserve a burst heal for sudden damage, and recover resources between incoming attacks. This healer build favors sustained group healing and careful resource use over damage talents.';
+      const acquisitionPaths: string[] = [];
+      let indexFetches = 0;
+      let guideSourceNumber: number | undefined;
+      mockHttp.mockImplementation(async (target: string, options: any) => {
+        expect(new globalThis.URL(target).hostname).toBe('93.184.216.34');
+        expect(options).toMatchObject({ maxRedirects: 0, proxy: false, responseType: 'stream' });
+        expect(options.headers).not.toHaveProperty('Authorization');
+        const path = new globalThis.URL(target).pathname;
+        acquisitionPaths.push(path);
+        const index = path === '/patchnotes';
+        if (index) indexFetches += 1;
+        const refreshed = index && indexFetches > 1;
+        const labels = index ? `Current patch: 7.0. ${refreshed ? 'Current build: 7.0.1.' : ''}`
+          : 'Patch: 7.0. Build: 7.0.1.';
+        const prose = index ? refreshed ? refreshShape === 'applicability only'
+          ? 'This official release index identifies the active update and installed client version. The release is available for online play. Consult the official release history for announced changes and installation details.'
+          : `${freshMarker}. This official release index establishes version applicability only and does not recommend a particular strategy.`
+          : `${oldMarker}. This official release index establishes the active patch but does not identify an installed client version.`
+          : guideText;
+        return { data: `<html><title>${game} ${index ? 'Patch Notes' : 'Healer Talents Guide'}</title><body><main><p>Game: ${game}. ${labels} ${refreshed && refreshShape === 'contradictory metadata' ? 'Current build: 7.0.2.' : ''} Effective from: 2026-09-08. Platforms: all. Regions: all.</p><p>${prose}</p></main></body></html>`,
+          headers: { 'content-type': 'text/html' } };
+      });
+      mockTrinity.mockImplementation(async (providerRequest: any) => {
+        const sourceBlocks = String(providerRequest.input.prompt).split(/(?=^\[Source \d+\])/mu);
+        const guideBlock = sourceBlocks.find(block => block.startsWith('[Source ')
+          && block.split(/\r?\n/u).includes(`URL: ${guideUrl}`));
+        expect(guideBlock).toBeDefined();
+        guideSourceNumber = Number(/^\[Source (\d+)\]/u.exec(guideBlock!)![1]);
+        const result = `${guideText} [Source ${guideSourceNumber}]`;
+        const { assessment } = await providerRequest.context.runOptions.gamingClearAnswerAudit(result, {});
+        return { result, gamingClearAudit: assessment, meta: { provider: { finishReason: 'stop' } } };
+      });
+      const workflow = createHttpWorkflow();
+      const query = { contractVersion, idempotencyKey: 'same-url-refresh-query', game, mode: 'build', platform: 'PC',
+        question: 'Which healer talents support sustained group healing now?', storagePolicy: 'transient_only' };
+      const missing = await workflow.query(query, context);
+      expect(missing).toMatchObject({ status: 200, body: { nextAction: 'search' } });
+      const gameplayRequest = { contractVersion, workflowId: missing.body.workflowId,
+        idempotencyKey: 'same-url-refresh-gameplay', discoveryType: 'gameplay_evidence', candidates: [{ url: guideUrl }, { url: indexUrl }] };
+      const found = await workflow.candidates(gameplayRequest, context);
+      expect(found).toMatchObject({ status: 200, body: { nextAction: 'verify_currentness', reason: 'CURRENT_BUILD_UNVERIFIED',
+        acceptedGameplayCandidateCount: 1, discovery: { type: 'currentness_verification', round: 0, continuationRequired: true } } });
+      expect(found.body.candidates).toHaveLength(2);
+      expect(found.body.candidates!.every(candidate => candidate.candidateId && candidate.decision !== 'rejected')).toBe(true);
+      const oldIndexId = found.body.candidates!.find(candidate => candidate.url === indexUrl)!.candidateId!;
+      expect(found.body.candidates!.find(candidate => candidate.url === indexUrl)?.reasonCodes).toContain('VALIDATED_RELEVANT_CONTENT');
+      expect(mockHttp).toHaveBeenCalledTimes(2);
+      expect(mockTrinity).not.toHaveBeenCalled();
+      expect(mockAuditCompletion).not.toHaveBeenCalled();
+      const officialRequest = { contractVersion, workflowId: missing.body.workflowId,
+        idempotencyKey: 'same-url-refresh-official', discoveryType: 'currentness_verification', candidates: [{ url: indexUrl }] };
+      const verified = await workflow.candidates(officialRequest, context);
+      const conflict = refreshShape === 'contradictory metadata';
+      let auditEvidence: any;
+      if (conflict) {
+        expect(verified).toMatchObject({ status: 200, body: { state: 'discovery_required', nextAction: 'stop',
+          freshnessStatus: 'conflicting', reason: 'CONFLICTING_CURRENTNESS',
+          discovery: { round: 1, maxRounds: 1, continuationRequired: false } } });
+        expect(verified.body.candidates).toMatchObject([{ decision: 'rejected', reasonCodes: ['CONTRADICTORY_SOURCE_METADATA'] }]);
+        expect(verified.body.answer).toBeUndefined();
+      } else {
+        expect(verified).toMatchObject({ status: 200, body: { state: 'answer_ready', nextAction: 'answer',
+          freshnessStatus: 'current', applicabilityStatus: 'verified_current', effectivePatch: '7.0', effectiveBuild: '7.0.1' } });
+        const freshIndexId = verified.body.candidates!.find(candidate => candidate.url === indexUrl)!.candidateId!;
+        expect(freshIndexId).not.toBe(oldIndexId);
+        expect(verified.body.candidates![0].reasonCodes).toContain(refreshShape === 'applicability only'
+          ? 'VALIDATED_APPLICABILITY_SOURCE' : 'VALIDATED_RELEVANT_CONTENT');
+        expect(verified.body.answer!.sources.map(source => source.url).sort()).toEqual([guideUrl, indexUrl].sort());
+        expect(verified.body.answer!.response).toContain(`[Source ${guideSourceNumber}]`);
+        expect(verified.body.answer!.sources[guideSourceNumber! - 1].url).toBe(guideUrl);
+        const providerInput = JSON.stringify((mockTrinity.mock.calls[0][0] as any).input);
+        expect(providerInput).toContain('7.0.1');
+        expect(providerInput).not.toContain(oldMarker);
+        auditEvidence = JSON.parse((mockAuditCompletion.mock.calls[0][1] as any).messages[1].content);
+        expect(auditEvidence.evidence.some((chunk: any) => chunk.sourceIndex === guideSourceNumber
+          && chunk.text.includes('healer talents support sustained group healing'))).toBe(true);
+        expect(auditEvidence.evidence.some((chunk: any) => chunk.sourceId === oldIndexId || chunk.chunkId.startsWith(`${oldIndexId}:`))).toBe(false);
+        expect(auditEvidence.evidence.some((chunk: any) => chunk.sourceId === freshIndexId)).toBe(true);
+        expect(auditEvidence.applicability.find((source: any) => source.sourceId === freshIndexId))
+          .toMatchObject({ currentPatch: '7.0', currentBuild: '7.0.1', currentness: 'current_index' });
+        expect(auditEvidence.applicability.some((source: any) => source.sourceId === oldIndexId)).toBe(false);
+        expect(JSON.stringify(auditEvidence)).not.toContain(oldMarker);
+      }
+      const sqlReads = database.queries.length;
+      expect((await workflow.candidates(officialRequest, context)).body).toEqual(verified.body);
+      expect((await workflow.candidates(gameplayRequest, context)).body).toEqual(found.body);
+      const replay = await workflow.query({ ...query, idempotencyKey: 'same-url-refresh-new-query-key' }, context);
+      expect(replay.body.workflowId).toBe(missing.body.workflowId);
+      expect(replay.body.nextAction).toBe(verified.body.nextAction);
+      expect(replay.body.answer).toEqual(verified.body.answer);
+      expect(await workflow.candidates({ ...officialRequest, candidates: [{ url: guideUrl }] }, context))
+        .toMatchObject({ status: 409, body: { reason: 'IDEMPOTENCY_CONFLICT' } });
+      expect((await workflow.candidates({ ...officialRequest, idempotencyKey: 'same-url-refresh-extra-official' }, context)).status).toBe(409);
+      expect((await workflow.candidates({ ...gameplayRequest, idempotencyKey: 'same-url-refresh-extra-gameplay' }, context)).status).toBe(409);
+      expect(acquisitionPaths).toEqual(['/swtor-healer-talents', '/patchnotes', '/patchnotes']);
+      expect(mockTrinity).toHaveBeenCalledTimes(conflict ? 0 : 1);
+      expect(mockAuditCompletion).toHaveBeenCalledTimes(conflict ? 0 : 1);
+      expect(database.queries).toHaveLength(sqlReads);
+      expect(database.queries.some(sql => /^(?:INSERT|UPDATE|DELETE|CREATE|ALTER|DROP)\b/iu.test(sql))).toBe(false);
+      expect(database.source).toBeUndefined();
+      expect(database.records).toHaveLength(0);
+      expect(database.revisions).toHaveLength(0);
+      expect(jobs.size).toBe(0);
+      expect(operations.size).toBe(0);
+      const currentnessOperationCount = jest.mocked(logger.info).mock.calls.filter(([event]) => event === 'gaming.currentness.operation_started').length;
+      expect(currentnessOperationCount).toBe(1);
+      if (process.env.GAMING_CURRENTNESS_REFRESH_HTTP_PROOF_PATH && refreshShape === 'relevant records') {
+        writeFileSync(process.env.GAMING_CURRENTNESS_REFRESH_HTTP_PROOF_PATH, JSON.stringify({
+          proof: 'gaming-currentness-same-url-refresh-http/v1',
+          scope: 'real authenticated HTTP router, resolver, extraction, CLEAR and workflow; synthetic DNS/publisher/SQL/provider boundaries',
+          trace: workflow.trace, acquisitionPaths, currentnessOperationCount, answerGenerationCount: mockTrinity.mock.calls.length,
+          answerAuditCount: mockAuditCompletion.mock.calls.length, persistentWrites: 0,
+          providerEvidence: auditEvidence.evidence, providerApplicability: auditEvidence.applicability,
+          replacedSourceId: oldIndexId
+        }, null, 2));
+      }
+    });
+
   it.each(['forbidden', 'decoded_limit'] as const)('terminates honestly when the required article acquisition fails: %s', async articleFailure => {
     const { workflow, verified, officialRequest } = await mageCurrentnessLifecycle(undefined, {
       http: true, registryDiscovery: true, articleFailure

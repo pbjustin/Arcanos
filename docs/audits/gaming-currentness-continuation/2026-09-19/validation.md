@@ -53,3 +53,25 @@ The final PR description records exact-head Railway deployment/verifier status a
 ## Builder follow-up
 
 After production deployment, refresh the existing Gaming GPT Action with `contracts/arcanos_gaming.openapi.v1.json` and replace its opt-in Hybrid instruction fragment with `docs/gpt/arcanos-gaming-hybrid.instructions.md`. Start a new chat and verify real Action sequencing. Preserve the existing GPT identity, authentication, Web Search setting, and unrelated instructions. No Builder change, production deployment, or merge was performed here.
+
+## Review repair: same-URL currentness refresh
+
+Review identified a second continuation defect: if gameplay acquisition already accepted an official index without a build, later acquisition of that same URL with the missing build retained the older positive metadata. Depending on whether the refreshed document yielded relevant records, the workflow either lost the new build during source projection or compared both versions and returned a false conflict. Repair commit `dfd2d19486236f4e8d66d20b4301d0c12ccd6579` replaces superseded positive metadata and source/chunk records while preserving independent contradictory evidence.
+
+Three additional fixtures in `tests/gaming-hybrid-lifecycle.integration.test.ts` exercise this through the actual authenticated HTTP route, resolver, HTML extraction, reviewed SWTOR adapter, source/evidence/answer CLEAR, workflow, and Gaming pipeline:
+
+- A refreshed index with relevant records supplies build `7.0.1`; the answer and its provider evidence contain only the refreshed index identity.
+- An index that supplies applicability metadata without relevant gameplay records still replaces the older index and completes verification.
+- Contradictory build metadata is rejected, ends the sole official operation, and produces no answer.
+
+Positive fixtures require exactly one guide URL and one official index URL in the answer; the generated gameplay citation must identify the guide. Each sequence makes exactly three acquisitions (guide, original index, refreshed index), one currentness operation, and at most one generation/audit. Identical retries and equivalent query replays preserve the response without more acquisition or generation; changed-payload retries and extra gameplay/currentness rounds return 409. SQL mutations, source/revision/record persistence, and queued ingestion remain absent.
+
+The complete authenticated lifecycle suite passes **96/96 tests**. A negative control at unchanged pre-repair `af9001dbbf0692aa32ef8d45a8836d348fb3f321`, with only the finalized lifecycle test file copied in, fails both positive refresh fixtures at their `answer_ready/current` assertion: relevant records stop unverified and applicability-only records stop conflicting. Its contradictory-metadata control still passes. Production source blobs are checked unchanged, and both worktrees use the same test-file blob and pinned runtime.
+
+To capture the authored request/response sequence, set `GAMING_CURRENTNESS_REFRESH_HTTP_PROOF_PATH` to an output file outside the checkout and run:
+
+```text
+node scripts/run-jest.mjs --runTestsByPath tests/gaming-hybrid-lifecycle.integration.test.ts --runInBand --coverage=false
+```
+
+The optional `gaming-currentness-same-url-refresh-http/v1` trace records synthetic requests/responses, acquisition paths, refreshed provider evidence/applicability, and effect counts; it excludes authentication headers. DNS, publisher bytes, SQL results, Trinity output, and semantic audit-provider responses remain controlled fixtures. This proves the HTTP workflow and its real policy composition, not live publisher content, model quality, or PostgreSQL semantics. The sealed Railway preview and disposable PostgreSQL CI remain separate evidence, and their results must be refreshed for the published fixture commit.
