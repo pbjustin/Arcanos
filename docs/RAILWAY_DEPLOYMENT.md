@@ -364,6 +364,22 @@ Launcher behavior:
   fixture exercises the authenticated HTTP workflow, real extraction and answer
   auditing with controlled transport and a stubbed provider. Neither result
   establishes live publisher access or a live model answer.
+- The same sealed guide request executes the production-shared candidate-evidence
+  projection for a missing-build continuation and an accepted same-URL refresh,
+  with and without new gameplay records. It checks removal of superseded source
+  and chunk records, retained contradictions, currentness-operation admission,
+  and the resulting freshness/CLEAR answer admission. Only successful execution
+  emits `x-arcanos-preview-gaming-currentness-continuation-version:
+  gaming-currentness-continuation/v1`. The exact-head supplemental verifier
+  requires that additional header and reports
+  `gamingCurrentnessContinuationVerified`; a missing or changed marker fails.
+  The trusted base verifier remains compatible with the unchanged response body
+  and 138-request matrix. These fixed synthetic component assertions share the
+  normal workflow's projection code but do not run its authenticated routes,
+  companion-fetch scheduling, network acquisition, model, SQL, or active worker.
+  The authenticated lifecycle suite separately covers normal hybrid routes and
+  companion-fetch orchestration with controlled transport/provider/storage
+  dependencies; it does not establish live model, SQL, or active-worker behavior.
 - The trusted
   [Railway PR preview lifecycle workflow](../.github/workflows/railway-pr-preview-lifecycle.yml)
   owns preview creation and teardown for PRs carrying the exact

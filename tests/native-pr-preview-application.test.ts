@@ -3079,6 +3079,9 @@ describe('native PR contained application', () => {
       expect(response.headers[NATIVE_PR_PREVIEW_GAMING_CONTRACT.progressRecoveryProofHeader]).toBe(
         mode === 'guide' ? NATIVE_PR_PREVIEW_GAMING_CONTRACT.progressRecoveryProofVersion : undefined
       );
+      expect(response.headers[NATIVE_PR_PREVIEW_GAMING_CONTRACT.currentnessContinuationProofHeader]).toBe(
+        mode === 'guide' ? NATIVE_PR_PREVIEW_GAMING_CONTRACT.currentnessContinuationProofVersion : undefined
+      );
     }
 
     const invalidCanary = await request(app)

@@ -1,3 +1,6 @@
+import type { GamingFreshnessEvidence } from './gamingFreshnessCore.js';
+import type { GamingStoredKnowledgeContext } from './gamingStoredEvidenceCore.js';
+
 /** These pure decisions are shared by normal services and the sealed preview. */
 export const GAMING_HYBRID_RETAINED_ARTIFACT_CHARS = 12_000_000;
 
@@ -27,6 +30,28 @@ export interface GamingHybridCandidateAttemptInput {
 export function resolveGamingHybridCandidateAttempt(input: GamingHybridCandidateAttemptInput): 'begin' | 'resume' | 'deny' {
   if (input.operationKey === input.requestedKey) return 'resume';
   return input.round >= input.maxRounds || input.nextAction !== (input.expectedAction ?? 'search') ? 'deny' : 'begin';
+}
+
+/** A successful refetch replaces prior positive evidence at its URL, while contradictions remain evidence. */
+export function projectGamingHybridCandidateEvidence(input: {
+  prior?: GamingStoredKnowledgeContext;
+  knowledge: GamingStoredKnowledgeContext;
+  acceptedFreshness: readonly GamingFreshnessEvidence[];
+  priorFreshness?: readonly GamingFreshnessEvidence[];
+  currentnessEvidence?: readonly GamingFreshnessEvidence[];
+}): { knowledge: GamingStoredKnowledgeContext; freshness: GamingFreshnessEvidence[] } {
+  const refreshedUrls = new Set(input.acceptedFreshness.map(item => item.url));
+  return {
+    knowledge: { context: '', sources: [...input.knowledge.sources,
+      ...(input.prior?.sources ?? []).filter(source => !refreshedUrls.has(source.url))],
+      evidence: [...(input.knowledge.evidence ?? []),
+        ...(input.prior?.evidence ?? []).filter(chunk => !refreshedUrls.has(chunk.publicUrl))],
+      sourceKnown: input.prior?.sourceKnown },
+    freshness: [...input.acceptedFreshness,
+      ...(input.priorFreshness ?? []).filter(item => !refreshedUrls.has(item.url)
+        || item.metadataConflict || item.currentnessMetadata?.status === 'conflicting'),
+      ...(input.currentnessEvidence ?? [])]
+  };
 }
 
 export interface GamingHybridPublicCandidateDecision {

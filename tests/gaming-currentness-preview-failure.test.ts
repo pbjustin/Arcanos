@@ -2,10 +2,14 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import request from 'supertest';
 
 const actualFreshness = await import('../src/shared/gaming/gamingFreshnessCore.js');
+const actualPolicy = await import('../src/shared/gaming/gamingHybridPolicyCore.js');
 const extract = jest.fn(actualFreshness.extractGamingFreshnessMetadata);
 const evaluate = jest.fn(actualFreshness.evaluateGamingFreshness);
+const project = jest.fn(actualPolicy.projectGamingHybridCandidateEvidence);
 jest.unstable_mockModule('../src/shared/gaming/gamingFreshnessCore.js', () => ({ ...actualFreshness,
   extractGamingFreshnessMetadata: extract, evaluateGamingFreshness: evaluate }));
+jest.unstable_mockModule('../src/shared/gaming/gamingHybridPolicyCore.js', () => ({ ...actualPolicy,
+  projectGamingHybridCandidateEvidence: project }));
 const { createNativePrPreviewApplication, createNativePrPreviewReadinessState } = await import('../src/nativePrPreviewApplication.js');
 const { NATIVE_PR_PREVIEW_GAMING_CONTRACT: contract, NATIVE_PR_PREVIEW_SYNTHETIC_RESPONSE_HEADER } = await import('../src/nativePrPreviewContract.js');
 
@@ -17,7 +21,8 @@ const proofPairs = () => [
   [contract.hybridKnowledgeProofHeader, contract.hybridKnowledgeProofVersion], [contract.clearProofHeader, contract.clearProofVersion],
   [contract.sourceAcquisitionProofHeader, contract.sourceAcquisitionProofVersion],
   [contract.structuredEvidenceProofHeader, contract.structuredEvidenceProofVersion],
-  [contract.currentnessProofHeader, contract.currentnessProofVersion]
+  [contract.currentnessProofHeader, contract.currentnessProofVersion],
+  [contract.currentnessContinuationProofHeader, contract.currentnessContinuationProofVersion]
 ];
 
 async function queryGuide(mode: 'guide' | 'build' | 'meta' = 'guide') {
@@ -34,7 +39,31 @@ describe('served Gaming currentness proof boundary', () => {
   beforeEach(() => {
     extract.mockReset().mockImplementation(actualFreshness.extractGamingFreshnessMetadata);
     evaluate.mockReset().mockImplementation(actualFreshness.evaluateGamingFreshness);
+    project.mockReset().mockImplementation(actualPolicy.projectGamingHybridCandidateEvidence);
   });
+
+  it.each(['same-URL source retained', 'prior contradiction dropped', 'evaluated contradiction dropped'])(
+    'withholds every Gaming proof and success body after continuation drift: %s', async scenario => {
+      project.mockImplementation(input => {
+        const value = actualPolicy.projectGamingHybridCandidateEvidence(input);
+        if (scenario === 'same-URL source retained') value.knowledge.sources.push(...(input.prior?.sources ?? [])
+          .filter(source => source.sourceId === 'synthetic-continuation-old-index'));
+        if (scenario === 'prior contradiction dropped' && input.priorFreshness?.some(item => item.metadataConflict)
+          || scenario === 'evaluated contradiction dropped' && input.currentnessEvidence?.length) {
+          value.freshness = value.freshness.filter(item => item.id !== 'synthetic-continuation-conflict');
+        }
+        return value;
+      });
+      const response = await queryGuide();
+      expect(response.status).toBe(500);
+      for (const [key, header] of Object.entries(contract)) {
+        if (key === 'proofHeader' || key.endsWith('ProofHeader')) expect(response.headers[header as string]).toBeUndefined();
+      }
+      expect(response.body).toEqual({ error: 'PREVIEW_GAMING_CURRENTNESS_CONTRACT_INVALID' });
+      expect(response.headers[NATIVE_PR_PREVIEW_SYNTHETIC_RESPONSE_HEADER.name]).toBe(NATIVE_PR_PREVIEW_SYNTHETIC_RESPONSE_HEADER.value);
+      expect(response.text).not.toContain('Sealed preview guide response.');
+      expect(response.text).not.toContain('synthetic-continuation');
+    });
 
   it('gates all Gaming proof headers on the fixed currentness scenario and keeps the sealed response', async () => {
     const response = await queryGuide();
@@ -75,6 +104,7 @@ describe('served Gaming currentness proof boundary', () => {
     const response = await queryGuide(mode);
     expect(response.status).toBe(200);
     expect(response.headers[contract.currentnessProofHeader]).toBeUndefined();
+    expect(response.headers[contract.currentnessContinuationProofHeader]).toBeUndefined();
     expect(extract.mock.calls.some(([doc]) => doc.publicUrl.startsWith('https://currentness-preview.example/'))).toBe(false);
   });
 });
