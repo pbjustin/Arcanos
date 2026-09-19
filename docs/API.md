@@ -31,16 +31,32 @@ citations and request provenance. Structured dates/patch/build and qualification
 describe verified applicability. Gameplay discovery is capped at one round and
 three candidates. When accepted gameplay evidence lacks official currentness,
 `nextAction: verify_currentness` requests one separate corroboration operation
-with at most three official candidates through the same endpoint. Structured
-discovery type, accepted gameplay count, requirements and applicability status
-separate this from generic gameplay search. Legacy candidate calls without the
+with at most three official sources through the same endpoint. It is nonterminal
+even when freshness is stale/unverified. `discovery.continuationRequired: true`
+and `round: 0` mean the permitted operation has not run. The caller must submit
+it using the same workflow ID, a new operation key and
+`discoveryType: currentness_verification`; accepted gameplay evidence is retained.
+Bounded `discovery.reviewedSources` hints expose only server-reviewed canonical
+index/status URLs and their rule IDs/roles, never source authority supplied by
+the caller. Prefer an applicable canonical index alone: its adapter-selected
+required article can be acquired under the reviewed companion rule within the
+same three-source/12-second budget. `candidates[].origin` distinguishes
+`submitted` from `required_official_article`. Both undergo normal admission,
+acquisition, extraction, freshness and applicability validation. Without a
+canonical hint, follow the bounded search queries and currentness requirements,
+including `official_live_status_required` when applicable.
+Structured discovery type, accepted gameplay count, requirements and applicability
+status separate this from generic gameplay search. Legacy candidate calls without the
 optional type use the server's pending operation. After that operation the
-workflow answers or stops with its unresolved status; keys cannot replenish the
+workflow answers or returns `nextAction: stop` with its unresolved status and
+`continuationRequired: false`; keys cannot replenish the
 budget. Handler failures never become missing knowledge; early auth/parser
 failures retain their existing error envelopes. Invalid bodies return 400,
 scope/consent failure 403, unknown/expired workflow 404, changed same-key payload
 409, rate/capacity limits 429, and unavailable dependencies 503. Retryable failed
-operations can retry the same key without dropping its payload binding.
+operations returning `nextAction: retry_later` can retry the same key without
+dropping its payload binding. Completed `nextAction: stop` candidate results
+replay without refetching, including acquisition failures reported as HTTP 200.
 Equivalent queries share the original discovery budget. A new key with changed
 effective mode, spoiler permission, or answer depth returns 409 with
 `reason: QUERY_CONTEXT_CONFLICT` and `nextAction: stop`, without the previous

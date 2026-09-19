@@ -4,12 +4,12 @@ import {
 } from './gamingHybridContract.js';
 import {
   assessGamingSourcePolicy, classifyGamingQuestionFreshness, evaluateGamingFreshness,
-  extractGamingFreshnessMetadata, GAMING_FRESHNESS_DEFAULTS,
+  extractGamingFreshnessMetadata, getGamingCurrentnessDiscoverySources, GAMING_FRESHNESS_DEFAULTS,
   type GamingFreshnessEvidence, type GamingReviewedSourceRule
 } from './gamingFreshnessCore.js';
 import {
   GAMING_HYBRID_RETAINED_ARTIFACT_CHARS, resolveGamingHybridCandidateAttempt,
-  projectGamingHybridCandidateRetention, isGamingApprovedArtifactCurrent
+  projectGamingHybridCandidateRetention, isGamingApprovedArtifactCurrent, resolveGamingHybridCurrentnessReason
 } from './gamingHybridPolicyCore.js';
 
 export const GAMING_HYBRID_KNOWLEDGE_PREVIEW_VERSION = 'gaming-hybrid-knowledge/v1';
@@ -63,6 +63,25 @@ function requireClosedContracts(): void {
   requireProof(!assessGamingSourcePolicy(candidates.candidates[0].url, GAME, RULES).autoStoreAllowed);
   requireProof(assessGamingSourcePolicy('https://prism.example.attacker.example/updates/current', GAME, RULES).authority === 'unreviewed');
   requireProof(assessGamingSourcePolicy(INDEX_URL, `${GAME} 2`, RULES).authority === 'unreviewed');
+  // Reviewed discovery hints identify locations only; they never supply caller-owned authority.
+  const hints = getGamingCurrentnessDiscoverySources(GAME, RULES);
+  requireProof(hints.length === 2 && hints[0].url === INDEX_URL && hints[0].role === 'current_index'
+    && hints[1].role === 'live_status' && hints.every(hint => hint.ruleId.startsWith('synthetic-')));
+  requireProof(getGamingCurrentnessDiscoverySources(`${GAME} 2`, RULES).length === 0);
+  requireProof(!gamingHybridCandidatesSchema.safeParse({ ...candidates, reviewedSources: hints }).success);
+  for (const [classification, reason] of [
+    ['patch_sensitive', 'CURRENT_OFFICIAL_INDEX_REQUIRED'], ['seasonal', 'REVALIDATION_DUE'],
+    ['patch_sensitive', 'CURRENT_BUILD_UNVERIFIED'], ['live_status', 'LIVE_OFFICIAL_STATUS_REQUIRED']
+  ] as const) {
+    const pending = { classification, freshnessStatus: 'unverified' as const, hasGameplayEvidence: true, reasons: [reason] };
+    requireProof(resolveGamingHybridCurrentnessReason(pending) === reason);
+    requireProof(resolveGamingHybridCurrentnessReason({ ...pending, hasGameplayEvidence: false }) === undefined);
+    requireProof(resolveGamingHybridCurrentnessReason({ ...pending, freshnessStatus: 'conflicting' }) === undefined);
+    requireProof(resolveGamingHybridCandidateAttempt({ requestedKey: 'official-first', round: 0, maxRounds: 1,
+      nextAction: 'verify_currentness', expectedAction: 'verify_currentness' }) === 'begin');
+    requireProof(resolveGamingHybridCandidateAttempt({ operationKey: 'official-first', requestedKey: 'official-retry',
+      round: 1, maxRounds: 1, nextAction: 'verify_currentness', expectedAction: 'verify_currentness' }) === 'deny');
+  }
 }
 
 function requireCurrentApplicability(): void {

@@ -9542,6 +9542,10 @@ export function createNativePrPreviewApplication(
             NATIVE_PR_PREVIEW_GAMING_CONTRACT.currentnessProofVersion
           );
           response.setHeader(
+            NATIVE_PR_PREVIEW_GAMING_CONTRACT.currentnessContinuationProofHeader,
+            NATIVE_PR_PREVIEW_GAMING_CONTRACT.currentnessContinuationProofVersion
+          );
+          response.setHeader(
             NATIVE_PR_PREVIEW_GAMING_CONTRACT.structuredEvidenceProofHeader,
             NATIVE_PR_PREVIEW_GAMING_CONTRACT.structuredEvidenceProofVersion
           );

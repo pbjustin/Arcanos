@@ -213,6 +213,8 @@ export interface NativePrPreviewE2eContract {
     structuredEvidenceProofVersion: 'gaming-structured-evidence/v1';
     currentnessProofHeader: 'x-arcanos-preview-gaming-currentness-version';
     currentnessProofVersion: 'gaming-currentness/v1';
+    currentnessContinuationProofHeader: 'x-arcanos-preview-gaming-currentness-continuation-version';
+    currentnessContinuationProofVersion: 'gaming-currentness-continuation/v1';
     game: 'Palworld';
     fixtures: Readonly<{
       guide: 'sealed-preview-guide';

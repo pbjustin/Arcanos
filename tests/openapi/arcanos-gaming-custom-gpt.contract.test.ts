@@ -805,7 +805,10 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
       requestId: 'r'.repeat(128), workflowId: '4517e693-b592-43c8-a827-d4b74168c429',
       reason: 'r'.repeat(80), effectivePatch: 'p'.repeat(64), qualification: 'q'.repeat(1000),
       clarification: 'c'.repeat(1000),
-      discovery: { round: 1, maxRounds: 1, maxCandidates: 3, searchQueries: Array(3).fill('q'.repeat(400)) },
+      discovery: { round: 1, maxRounds: 1, maxCandidates: 3, searchQueries: Array(3).fill('q'.repeat(400)),
+        continuationRequired: false, reviewedSources: Array.from({ length: 3 }, () => ({
+          url: 'u'.repeat(2048), ruleId: 'r'.repeat(120), role: 'current_index'
+        })) },
       candidates: Array.from({ length: 3 }, () => ({
         candidateId: 'c25c641a-7031-42f4-a50e-f0db1d6c58c5', url: 'u'.repeat(2048),
         decision: 'eligible_for_ingestion', reasonCodes: Array(8).fill('r'.repeat(80)), sourceCategory: 'official_updates',
@@ -840,6 +843,9 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
       'platform\'s Action confirmation', 'queued or running is', 'not saved',
       'after ChatGPT closes', 'do not promise a later notification',
       'answer.requestId', 'answer.provenance', 'gameplay additions',
+      'verify_currentness is nonterminal', 'discovery.continuationRequired',
+      'discovery.reviewedSources', 'same workflowId', 'Do not resubmit',
+      'Only nextAction stop ends exhausted', 'at most three sources total',
     ]) expect(instructions).toContain(requirement);
     expect(guide).toContain('Do not activate the hybrid instruction section');
     expect(guide).toContain('Do not paste both workflows');
@@ -847,6 +853,8 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
     expect(guide).toContain('A public canary alone cannot prove hybrid support');
     expect(guide).toContain('https://developers.openai.com/api/docs/actions/production');
     expect(guide).toContain('gpt/arcanos-gaming-hybrid.instructions.md');
+    expect(guide).toContain('refresh the existing GPT Builder Action');
+    expect(guide).toContain('real ChatGPT Action sequencing');
   });
 
   it('accepts additive official corroboration fields while preserving closed request and response shapes', () => {
@@ -859,7 +867,9 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
     const requestValidator = ajv.compile({ $ref: 'gaming-currentness-action#/components/schemas/GamingHybridCandidatesRequest' });
     expect(requestValidator(request)).toBe(true);
     expect(gamingHybridCandidatesSchema.safeParse(request).success).toBe(true);
-    for (const invalid of [{ ...request, discoveryType: 'unlimited_search' }, { ...request, currentPatch: 'frontend-claim' }]) {
+    for (const invalid of [{ ...request, discoveryType: 'unlimited_search' }, { ...request, currentPatch: 'frontend-claim' },
+      { ...request, reviewedSources: [{ url: 'https://swtor.com/patchnotes', ruleId: 'swtor-patch-index', role: 'current_index' }] },
+      { ...request, candidates: [{ url: 'https://swtor.com/patchnotes', origin: 'required_official_article' }] }]) {
       expect(requestValidator(invalid)).toBe(false);
       expect(gamingHybridCandidatesSchema.safeParse(invalid).success).toBe(false);
     }
@@ -869,11 +879,39 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
       acceptedGameplayCandidateCount: 1, gameplayEvidenceStatus: 'currentness_pending', applicabilityStatus: 'unverified',
       currentnessRequirements: ['official_source_required', 'current_patch_or_build_required', 'hotfix_check_required_if_supported'],
       discovery: { type: 'currentness_verification', round: 0, maxRounds: 1, maxCandidates: 3,
-        searchQueries: ['Elden Ring official latest patch notes'] } };
+        continuationRequired: true, searchQueries: ['Star Wars The Old Republic official latest patch notes'],
+        reviewedSources: [{ url: 'https://swtor.com/patchnotes', ruleId: 'swtor-patch-index', role: 'current_index' }] } };
     const responseValidator = ajv.compile({ $ref: 'gaming-currentness-action#/components/schemas/GamingHybridResponse' });
     expect(responseValidator(response)).toBe(true);
     expect(responseValidator({ ...response, rawSourceContent: 'private page text' })).toBe(false);
     expect(responseValidator({ ...response, discovery: { ...response.discovery, type: 'unlimited_search' } })).toBe(false);
+    expect(responseValidator({ ...response, discovery: { ...response.discovery, continuationRequired: 'true' } })).toBe(false);
+    for (const reviewedSources of [
+      Array(4).fill(response.discovery.reviewedSources[0]),
+      [{ ...response.discovery.reviewedSources[0], role: 'article' }],
+      [{ ...response.discovery.reviewedSources[0], authority: 'official' }],
+      [{ ...response.discovery.reviewedSources[0], ruleId: 'x'.repeat(121) }],
+      [{ ...response.discovery.reviewedSources[0], url: 'x'.repeat(2049) }],
+    ]) expect(responseValidator({ ...response, discovery: { ...response.discovery, reviewedSources } })).toBe(false);
+    expect(responseValidator({ ...response, nextAction: 'stop', discovery: { ...response.discovery,
+      round: 1, continuationRequired: false } })).toBe(true);
+    for (const responseName of ['GamingHybridResponse', 'GamingHybridFailureResponse', 'GamingHybridRateLimitResponse']) {
+      const validate = ajv.compile({ $ref: `gaming-currentness-action#/components/schemas/${responseName}` });
+      const live = { ...response, currentnessRequirements: ['official_source_required', 'official_live_status_required'],
+        discovery: { ...response.discovery, reviewedSources: [{ url: 'https://status.example.org/game',
+          ruleId: 'synthetic-official-status', role: 'live_status' }] } };
+      expect(validate(live)).toBe(true);
+      expect(validate({ ...live, currentnessRequirements: ['frontend_asserts_current'] })).toBe(false);
+    }
+    for (const origin of ['submitted', 'required_official_article']) {
+      expect(responseValidator({ ...response, candidates: [{ url: 'https://swtor.com/patchnotes',
+        decision: 'accepted_transient', reasonCodes: [], origin }] })).toBe(true);
+    }
+    expect(responseValidator({ ...response, candidates: [{ decision: 'accepted_transient', reasonCodes: [],
+      origin: 'frontend_official' }] })).toBe(false);
+    expect(contract.components.schemas.GamingHybridDiscovery.properties.round.description).toContain('Operations started');
+    expect(contract.components.schemas.GamingHybridDiscovery.properties.maxCandidates.description).toContain('including submitted URLs');
+    expect(contract.paths['/gpt-access/gaming/sources/hybrid/candidates'].post.description).toContain('verify_currentness');
     expect(GAMING_HYBRID_LIMITS.currentnessRounds).toBe(1);
   });
 

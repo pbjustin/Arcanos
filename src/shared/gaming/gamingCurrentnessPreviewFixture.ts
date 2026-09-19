@@ -7,9 +7,12 @@ import { assessGamingClearEvidence } from './gamingClearEvidence.js';
 import { createGamingClearAssessment, gamingClearContextFingerprint, gamingClearHash, parseGamingClearModelAssessment,
   type GamingClearAssessment, type GamingClearDimensions } from './gamingClearPolicy.js';
 import { GAMING_CLEAR_APPROVED_ANSWER, hasBoundGamingClearAnswer } from './gamingClearAnswerBinding.js';
+import { projectGamingHybridCandidateEvidence, resolveGamingHybridCandidateAttempt,
+  resolveGamingHybridCurrentnessReason } from './gamingHybridPolicyCore.js';
 import type { GamingStoredKnowledgeContext } from './gamingStoredEvidenceCore.js';
 
 export const GAMING_CURRENTNESS_PREVIEW_VERSION = 'gaming-currentness/v1';
+export const GAMING_CURRENTNESS_CONTINUATION_PREVIEW_VERSION = 'gaming-currentness-continuation/v1';
 const FAILURE = 'PREVIEW_GAMING_CURRENTNESS_CONTRACT_INVALID';
 const NOW = new Date('2026-09-09T12:00:00.000Z');
 const GAME = 'Elden Ring';
@@ -30,7 +33,10 @@ const RULES: readonly GamingReviewedSourceRule[] = [
     metadataAdapter: 'bandai-news-index-v1', currentnessArticleRuleIds: ['synthetic-currentness-article'] },
   { id: 'synthetic-currentness-article', game: GAME, hosts: [HOST], path: '/updates/', pathMatch: 'prefix',
     category: 'official_updates', currentness: 'article', durableAllowed: false, autoStoreAllowed: false,
-    metadataAdapter: 'bandai-patch-article-v1' }
+    metadataAdapter: 'bandai-patch-article-v1' },
+  { id: 'synthetic-currentness-refresh', game: GAME, hosts: [HOST], path: '/continuation-index', pathMatch: 'exact',
+    category: 'official_updates', currentness: 'current_index', durableAllowed: false, autoStoreAllowed: false,
+    metadataAdapter: 'labeled-v1' }
 ];
 
 function requireProof(condition: unknown): asserts condition {
@@ -80,8 +86,8 @@ function knowledge(evidence: GamingFreshnessEvidence[]): GamingStoredKnowledgeCo
     : 'Official release record identifies the active application patch and regulation build.');
   return { context: passages.join('\n\n'), sources: evidence.map((item, i) => ({ sourceId: item.id, url: item.url,
     game: item.game, sourceType: item.category, fetchedAt: item.fetchedAt, snippet: passages[i], freshnessMetadata: { ...item } })),
-  evidence: evidence.map((item, i) => ({ sourceId: item.id, revisionId: `synthetic-currentness-revision-${i}`,
-    recordId: `synthetic-currentness-chunk-${i}`, recordType: 'build', publicUrl: item.url, text: passages[i],
+  evidence: evidence.map((item, i) => ({ sourceId: item.id, revisionId: `synthetic-currentness-revision-${gamingClearHash(item.id).slice(0, 16)}`,
+    recordId: `synthetic-currentness-chunk-${gamingClearHash(item.id).slice(0, 16)}`, recordType: 'build', publicUrl: item.url, text: passages[i],
     lexicalScore: 1, combinedScore: 1, provenance: { fetchedAt: item.fetchedAt } })) };
 }
 
@@ -94,7 +100,7 @@ function assess(raw: GamingFreshnessEvidence[], input = query()) {
 }
 
 /** Fixed synthetic model projection tests policy admission; it does not perform a model audit. */
-function answerAssessment(evidence: GamingClearAssessment, status: 'completed' | 'not_run' = 'completed'): GamingClearAssessment {
+function answerAssessment(evidence: GamingClearAssessment, status: 'completed' | 'not_run' = 'completed', response = ANSWER): GamingClearAssessment {
   const refs = evidence.dimensionScores.clarity.evidenceRefs;
   const dimension = (): GamingClearDimensions['clarity'] => ({ status: 'evaluated', score: 5,
     reasonCodes: ['SUPPORTED_SYNTHETIC_MAGE_PASSAGE'], evidenceRefs: refs, unresolvedFacts: [] });
@@ -102,7 +108,7 @@ function answerAssessment(evidence: GamingClearAssessment, status: 'completed' |
     alignment: dimension(), resilience: dimension() }, findings: [] }, refs);
   requireProof(model);
   return createGamingClearAssessment({ profile: 'answer', questionProfile: 'current_build',
-    subjectId: 'synthetic-currentness-answer', subjectHash: gamingClearHash(ANSWER),
+    subjectId: 'synthetic-currentness-answer', subjectHash: gamingClearHash(response),
     contextFingerprint: gamingClearContextFingerprint({ question: query(), evidence: evidence.subjectHash }),
     evidenceRefs: refs, gates: { ...evidence.gates }, dimensions: model.dimensions, findings: model.findings,
     assessmentMethod: 'mixed', assessmentStatus: status, evaluatedAt: NOW.toISOString() });
@@ -174,11 +180,96 @@ function requireCurrentPcAnswer(): void {
     && !hasBoundGamingClearAnswer({ response: ANSWER, [GAMING_CLEAR_APPROVED_ANSWER]: unsupported }));
 }
 
+/** Exercise the production merge and policy decisions, without a workflow, acquisition, or provider. */
+function requireSameUrlCurrentnessContinuation(): void {
+  const input = query();
+  const url = `https://${HOST}/continuation-index`;
+  const doc = (build = ''): GamingCurrentnessDocument => ({ publicUrl: url, canonicalUrl: url,
+    metadata: { title: `${GAME} Official Current Update` },
+    text: `Game: ${GAME}\nCurrent patch: 1.17\n${build}\nEffective from: 2026-09-08\nPlatforms: PC` });
+  const gameplay = { ...extract(guide('Patch: 1.17\nBuild: 1.17.1\nPlatforms: PC')), id: 'synthetic-continuation-guide' };
+  const oldIndex = { ...extract(doc()), id: 'synthetic-continuation-old-index' };
+  const freshIndex = { ...extract(doc('Current build: 1.17.1')), id: 'synthetic-continuation-fresh-index' };
+  requireProof(oldIndex.currentnessMetadata?.status === 'verified' && oldIndex.currentBuild === undefined
+    && freshIndex.currentnessMetadata?.status === 'verified' && freshIndex.currentBuild === '1.17.1');
+  const prior = knowledge([gameplay, oldIndex]);
+  const oldMarker = 'Obsolete synthetic index passage about the Intelligence staff mage build.';
+  prior.sources[1].snippet = oldMarker;
+  prior.evidence![1].text = oldMarker;
+  const before = evaluateGamingFreshness({ ...input, question: input.prompt, evidence: [gameplay, oldIndex], now: NOW });
+  requireProof(!before.usable && before.reasons.includes('CURRENT_BUILD_UNVERIFIED'));
+  requireProof(resolveGamingHybridCurrentnessReason({ classification: before.classification, freshnessStatus: before.status,
+    hasGameplayEvidence: true, reasons: before.reasons }) === 'CURRENT_BUILD_UNVERIFIED');
+  const attempt = { requestedKey: 'synthetic-continuation-operation', expectedAction: 'verify_currentness' as const, maxRounds: 1 };
+  requireProof(resolveGamingHybridCandidateAttempt({ ...attempt, round: 0, nextAction: 'verify_currentness' }) === 'begin');
+  requireProof(resolveGamingHybridCandidateAttempt({ ...attempt, operationKey: attempt.requestedKey, round: 1 }) === 'resume');
+  requireProof(resolveGamingHybridCandidateAttempt({ ...attempt, requestedKey: 'synthetic-extra-operation',
+    operationKey: attempt.requestedKey, round: 1, nextAction: 'verify_currentness' }) === 'deny');
+
+  for (const recordsPresent of [true, false]) {
+    const acquired = recordsPresent ? knowledge([freshIndex]) : { context: '', sources: [] };
+    const projected = projectGamingHybridCandidateEvidence({ prior, knowledge: acquired,
+      acceptedFreshness: [freshIndex], priorFreshness: [gameplay, oldIndex] });
+    requireProof(projected.knowledge.sources.length === (recordsPresent ? 2 : 1)
+      && projected.knowledge.evidence?.length === (recordsPresent ? 2 : 1)
+      && projected.knowledge.sources.some(source => source.sourceId === gameplay.id)
+      && !projected.knowledge.sources.some(source => source.sourceId === oldIndex.id)
+      && !projected.knowledge.evidence.some(chunk => chunk.sourceId === oldIndex.id)
+      && new Set(projected.knowledge.evidence.map(chunk => chunk.recordId)).size === projected.knowledge.evidence.length
+      && new Set(projected.knowledge.evidence.map(chunk => chunk.revisionId)).size === projected.knowledge.evidence.length
+      && !JSON.stringify(projected.knowledge).includes(oldMarker)
+      && projected.freshness.length === 2 && projected.freshness[0].id === freshIndex.id
+      && !projected.freshness.some(item => item.id === oldIndex.id));
+    const freshness = evaluateGamingFreshness({ ...input, question: input.prompt, evidence: projected.freshness, now: NOW });
+    const clear = assessGamingClearEvidence(input, projected.knowledge, { freshness, freshnessEvidence: projected.freshness, now: NOW });
+    requireProof(freshness.usable && freshness.status === 'current' && freshness.effectiveBuild === '1.17.1'
+      && freshness.selectedEvidenceIds.includes(gameplay.id) && freshness.selectedEvidenceIds.includes(freshIndex.id)
+      && clear.decision === 'accept');
+    const response = ANSWER.replace('[1]', `[${projected.knowledge.sources.findIndex(source => source.sourceId === gameplay.id) + 1}]`);
+    const answer = answerAssessment(clear, 'completed', response);
+    requireProof(answer.decision === 'accept' && hasBoundGamingClearAnswer({ response, [GAMING_CLEAR_APPROVED_ANSWER]: answer }));
+  }
+  // A refreshed positive source cannot erase separately retained or newly acquired contradictions.
+  const contradiction = { ...extract(doc('Current build: 1.17.1\nCurrent build: 1.17.2')),
+    id: 'synthetic-continuation-conflict' };
+  requireProof(contradiction.metadataConflict && contradiction.currentnessMetadata?.status === 'conflicting');
+  for (const origin of ['prior', 'prior-adapter-only', 'prior-metadata-only', 'evaluated'] as const) {
+    const negative = origin === 'prior-adapter-only' ? { ...contradiction, metadataConflict: false }
+      : origin === 'prior-metadata-only' ? { ...contradiction, currentnessMetadata: undefined } : contradiction;
+    const projected = projectGamingHybridCandidateEvidence({ prior, knowledge: knowledge([freshIndex]), acceptedFreshness: [freshIndex],
+      priorFreshness: [gameplay, oldIndex, ...(origin !== 'evaluated' ? [negative] : [])],
+      currentnessEvidence: origin === 'evaluated' ? [negative] : [] });
+    requireProof(projected.freshness.some(item => item.id === negative.id)
+      && projected.freshness[0].id === freshIndex.id && projected.knowledge.sources[0].freshnessMetadata?.id === freshIndex.id);
+    const freshness = evaluateGamingFreshness({ ...input, question: input.prompt, evidence: projected.freshness, now: NOW });
+    const clear = assessGamingClearEvidence(input, projected.knowledge, { freshness, freshnessEvidence: projected.freshness, now: NOW });
+    requireProof(!freshness.usable && freshness.status === 'conflicting' && clear.decision !== 'accept'
+      && resolveGamingHybridCurrentnessReason({ classification: freshness.classification, freshnessStatus: freshness.status,
+        hasGameplayEvidence: true, reasons: freshness.reasons }) === undefined);
+    requireProof(!hasBoundGamingClearAnswer({ response: ANSWER, [GAMING_CLEAR_APPROVED_ANSWER]: answerAssessment(clear) }));
+  }
+  const outsideScope = { ...contradiction, platforms: ['PS5'] };
+  const scoped = projectGamingHybridCandidateEvidence({ prior, knowledge: knowledge([freshIndex]), acceptedFreshness: [freshIndex],
+    priorFreshness: [gameplay, oldIndex, outsideScope] });
+  const scopedFreshness = evaluateGamingFreshness({ ...input, question: input.prompt, evidence: scoped.freshness, now: NOW });
+  requireProof(scoped.freshness.some(item => item.id === outsideScope.id)
+    && scoped.knowledge.sources[0].freshnessMetadata?.id === freshIndex.id
+    && scopedFreshness.usable && !scopedFreshness.selectedEvidenceIds.includes(outsideScope.id));
+  const scopedClear = assessGamingClearEvidence(input, scoped.knowledge, { now: NOW, freshness: scopedFreshness,
+    freshnessEvidence: scoped.freshness.filter(item => scopedFreshness.selectedEvidenceIds.includes(item.id)) });
+  const scopedResponse = ANSWER.replace('[1]', `[${scoped.knowledge.sources.findIndex(source => source.sourceId === gameplay.id) + 1}]`);
+  requireProof(scopedClear.decision === 'accept'
+    && hasBoundGamingClearAnswer({ response: scopedResponse, [GAMING_CLEAR_APPROVED_ANSWER]: answerAssessment(scopedClear, 'completed', scopedResponse) }));
+  requireProof(prior.sources[1].sourceId === oldIndex.id && prior.evidence![1].text === oldMarker
+    && oldIndex.currentBuild === undefined);
+}
+
 /** Fixed synthetic shared-core proof. DOM projections are synthetic inputs, not a resolver run.
  * No normal query workflow, acquisition, provider/model audit, SQL, cache, logger, or worker executes. */
 export function runGamingCurrentnessPreview(): void {
   try {
     requireCurrentPcAnswer();
+    requireSameUrlCurrentnessContinuation();
   } catch {
     throw new Error(FAILURE);
   }

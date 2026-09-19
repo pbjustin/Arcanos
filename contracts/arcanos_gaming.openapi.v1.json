@@ -561,7 +561,7 @@
       "post": {
         "operationId": "queryGamingHybridKnowledge",
         "summary": "Check Gaming knowledge",
-        "description": "Check stored evidence and freshness for a gameplay question with request-scoped player context. Returns an answer, targeted clarification, or bounded discovery handoff; does not store sources.",
+        "description": "Check stored gameplay evidence and freshness. Follow nextAction: verify_currentness is a required continuation even when freshness is unverified or stale. Submit official candidates in the same workflow before reporting a terminal verification result. Does not store sources.",
         "x-openai-isConsequential": false,
         "security": [
           {
@@ -696,7 +696,7 @@
       "post": {
         "operationId": "submitGamingHybridCandidates",
         "summary": "Evaluate discovered Gaming sources",
-        "description": "Submit up to three candidate URLs for the pending gameplay discovery or official currentness verification operation. ARCANOS acquires and validates evidence, preserves source roles, and enforces one step of each kind. This does not store sources.",
+        "description": "Continue search or verify_currentness with the same workflowId and a new operation key. Prefer returned reviewedSources; submit its index alone to reserve slots for backend-required articles. Up to three sources total per operation. Read nextAction again; unverified is not terminal. Does not store.",
         "x-openai-isConsequential": false,
         "security": [
           {
@@ -2923,6 +2923,7 @@
       "GamingHybridDiscovery": {
         "type": "object",
         "additionalProperties": false,
+        "description": "Bounded pending operation. verify_currentness is nonterminal even when freshness is unverified or stale. Continue the same workflow; only nextAction stop ends exhausted discovery.",
         "required": [
           "round",
           "maxRounds",
@@ -2933,7 +2934,8 @@
           "round": {
             "type": "integer",
             "minimum": 0,
-            "maximum": 1
+            "maximum": 1,
+            "description": "Operations started for this discovery type. Zero means the permitted operation has not run; one consumes its budget. Identical same-key retries do not spend another round."
           },
           "maxRounds": {
             "type": "integer",
@@ -2945,7 +2947,8 @@
             "type": "integer",
             "enum": [
               3
-            ]
+            ],
+            "description": "Total acquisition slots, including submitted URLs and any adapter-required official articles followed by the backend. Submit a reviewed index alone when available to leave companion slots."
           },
           "searchQueries": {
             "type": "array",
@@ -2961,6 +2964,47 @@
             "enum": [
               "gameplay_evidence",
               "currentness_verification"
+            ]
+          },
+          "continuationRequired": {
+            "type": "boolean",
+            "description": "True while this operation is permitted and must be submitted before reporting verification exhausted; false after its budget is exhausted. Follow nextAction on every response."
+          },
+          "reviewedSources": {
+            "type": "array",
+            "maxItems": 3,
+            "description": "Server-reviewed canonical discovery hints for the requested game and source role. These URLs are not acquired evidence or proof of currentness. Submit an applicable index/status URL using the same workflowId and a new idempotencyKey.",
+            "items": {
+              "$ref": "#/components/schemas/GamingHybridReviewedSourceHint"
+            }
+          }
+        }
+      },
+      "GamingHybridReviewedSourceHint": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "url",
+          "ruleId",
+          "role"
+        ],
+        "properties": {
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "minLength": 1,
+            "maxLength": 2048
+          },
+          "ruleId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "current_index",
+              "live_status"
             ]
           }
         }
@@ -3013,6 +3057,14 @@
               "community",
               "unreviewed"
             ]
+          },
+          "origin": {
+            "type": "string",
+            "enum": [
+              "submitted",
+              "required_official_article"
+            ],
+            "description": "Whether the URL was submitted or followed by the backend from an adapter-selected index link under its reviewed companion rule. Both consume the same candidate budget and authority checks."
           }
         }
       },
@@ -3271,7 +3323,8 @@
               "enum": [
                 "official_source_required",
                 "current_patch_or_build_required",
-                "hotfix_check_required_if_supported"
+                "hotfix_check_required_if_supported",
+                "official_live_status_required"
               ]
             }
           }
@@ -3486,7 +3539,8 @@
               "enum": [
                 "official_source_required",
                 "current_patch_or_build_required",
-                "hotfix_check_required_if_supported"
+                "hotfix_check_required_if_supported",
+                "official_live_status_required"
               ]
             }
           }
@@ -3646,7 +3700,8 @@
               "enum": [
                 "official_source_required",
                 "current_patch_or_build_required",
-                "hotfix_check_required_if_supported"
+                "hotfix_check_required_if_supported",
+                "official_live_status_required"
               ]
             }
           }

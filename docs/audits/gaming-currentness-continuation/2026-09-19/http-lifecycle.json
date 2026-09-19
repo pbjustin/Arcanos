@@ -1,0 +1,391 @@
+{
+  "proof": "gaming-currentness-continuation-http/v1",
+  "scope": "real authenticated HTTP router; synthetic DNS/publisher/SQL/provider boundaries",
+  "trace": [
+    {
+      "method": "POST",
+      "path": "/gpt-access/gaming/sources/hybrid/query",
+      "request": {
+        "contractVersion": "gaming-hybrid-v1",
+        "idempotencyKey": "mage-query-fixture",
+        "game": "Elden Ring",
+        "mode": "build",
+        "question": "What is a good mage build now?",
+        "platform": "PC",
+        "storagePolicy": "transient_only"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "contractVersion": "gaming-hybrid-v1",
+          "requestId": "currentness-http-1",
+          "workflowId": "b049b8d3-68a5-4e78-883e-20f7ed23a0ee",
+          "state": "discovery_required",
+          "nextAction": "search",
+          "reason": "COVERAGE_INSUFFICIENT",
+          "sourceKnown": false,
+          "evidenceSelected": false,
+          "freshnessStatus": "unverified",
+          "acceptedGameplayCandidateCount": 0,
+          "applicabilityStatus": "unverified",
+          "gameplayEvidenceStatus": "unverified",
+          "qualification": "Current applicability has not been established; do not present these claims as current. Official changes establish announced mechanics, not the best strategy. Keep community recommendations distinct from official facts.",
+          "discovery": {
+            "type": "gameplay_evidence",
+            "round": 0,
+            "maxRounds": 1,
+            "maxCandidates": 3,
+            "searchQueries": [
+              "Elden Ring PC What is a good mage build now",
+              "Elden Ring PC gameplay guide What is a good mage build now"
+            ],
+            "continuationRequired": true
+          }
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/gpt-access/gaming/sources/hybrid/candidates",
+      "request": {
+        "contractVersion": "gaming-hybrid-v1",
+        "workflowId": "b049b8d3-68a5-4e78-883e-20f7ed23a0ee",
+        "idempotencyKey": "mage-gameplay-fixture",
+        "candidates": [
+          {
+            "url": "https://guides.example.org/elden-ring-mage",
+            "title": "Untrusted frontend title"
+          },
+          {
+            "url": "https://guides.example.org/elden-ring-merchandise"
+          },
+          {
+            "url": "https://guides.example.org/elden-ring-shipping"
+          }
+        ]
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "contractVersion": "gaming-hybrid-v1",
+          "requestId": "currentness-http-1",
+          "workflowId": "b049b8d3-68a5-4e78-883e-20f7ed23a0ee",
+          "state": "discovery_required",
+          "nextAction": "verify_currentness",
+          "reason": "CURRENT_OFFICIAL_INDEX_REQUIRED",
+          "sourceKnown": true,
+          "evidenceSelected": false,
+          "freshnessStatus": "unverified",
+          "acceptedGameplayCandidateCount": 1,
+          "applicabilityStatus": "unverified",
+          "gameplayEvidenceStatus": "currentness_pending",
+          "qualification": "Current applicability has not been established; do not present these claims as current. Official changes establish announced mechanics, not the best strategy. Keep community recommendations distinct from official facts.",
+          "currentnessRequirements": [
+            "official_source_required",
+            "current_patch_or_build_required",
+            "hotfix_check_required_if_supported"
+          ],
+          "discovery": {
+            "type": "currentness_verification",
+            "round": 0,
+            "maxRounds": 1,
+            "maxCandidates": 3,
+            "searchQueries": [
+              "Elden Ring PC official latest patch notes update index",
+              "Elden Ring PC official current patch build hotfix history"
+            ],
+            "continuationRequired": true,
+            "reviewedSources": [
+              {
+                "url": "https://en.bandainamcoent.eu/elden-ring/elden-ring/news",
+                "ruleId": "elden-ring-update-index",
+                "role": "current_index"
+              }
+            ]
+          },
+          "candidates": [
+            {
+              "candidateId": "20615ab0-8572-4135-89c2-5e5109f07fb4",
+              "url": "https://guides.example.org/elden-ring-mage",
+              "decision": "accepted_transient",
+              "reasonCodes": [
+                "VALIDATED_RELEVANT_CONTENT"
+              ],
+              "sourceCategory": "unreviewed"
+            },
+            {
+              "url": "https://guides.example.org/elden-ring-merchandise",
+              "decision": "rejected",
+              "reasonCodes": [
+                "QUESTION_COVERAGE_INSUFFICIENT"
+              ]
+            },
+            {
+              "url": "https://guides.example.org/elden-ring-shipping",
+              "decision": "rejected",
+              "reasonCodes": [
+                "QUESTION_COVERAGE_INSUFFICIENT"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/gpt-access/gaming/sources/hybrid/candidates",
+      "request": {
+        "contractVersion": "gaming-hybrid-v1",
+        "workflowId": "b049b8d3-68a5-4e78-883e-20f7ed23a0ee",
+        "idempotencyKey": "mage-official-fixture",
+        "discoveryType": "currentness_verification",
+        "candidates": [
+          {
+            "url": "https://en.bandainamcoent.eu/elden-ring/elden-ring/news"
+          }
+        ]
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "contractVersion": "gaming-hybrid-v1",
+          "requestId": "currentness-http-1",
+          "workflowId": "b049b8d3-68a5-4e78-883e-20f7ed23a0ee",
+          "state": "answer_ready",
+          "nextAction": "answer",
+          "reason": "ACCEPTED_EVIDENCE",
+          "sourceKnown": true,
+          "evidenceSelected": true,
+          "freshnessStatus": "current",
+          "acceptedGameplayCandidateCount": 1,
+          "applicabilityStatus": "verified_current",
+          "gameplayEvidenceStatus": "freshness_verified",
+          "verifiedAsOf": "2026-09-19T18:10:41.370Z",
+          "effectivePatch": "1.10",
+          "effectiveBuild": "1.10.1",
+          "qualification": "Applies only to the verified update, time, platform, and region. Last backend verification: 2026-09-19T18:10:41.370Z. Applicable update: 1.10. Applicable hotfix/build: 1.10.1. Official changes establish announced mechanics, not the best strategy. Keep community recommendations distinct from official facts.",
+          "answer": {
+            "response": "In Elden Ring, a good mage build uses the academy staff and Intelligence for sorcery. Allocate vigor for survival and mind for casting. Use a ranged spell to open combat, then recover stamina before casting again. Upgrade the staff before increasing spell variety. This mage build favors safe positioning and spell efficiency over trading hits. [Source 1]",
+            "sources": [
+              {
+                "url": "https://guides.example.org/elden-ring-mage",
+                "title": "Elden Ring synthetic mage build guide",
+                "sourceId": "20615ab0-8572-4135-89c2-5e5109f07fb4",
+                "fetchedAt": "2026-09-19T18:10:41.351Z"
+              },
+              {
+                "url": "https://en.bandainamcoent.eu/elden-ring/elden-ring/news",
+                "sourceId": "ebafa516-7884-4076-9c1e-08c332c80c3f",
+                "fetchedAt": "2026-09-19T18:10:41.370Z"
+              }
+            ],
+            "provenance": "arcanos-trinity",
+            "requestId": "currentness-http-1"
+          },
+          "candidates": [
+            {
+              "candidateId": "ebafa516-7884-4076-9c1e-08c332c80c3f",
+              "url": "https://en.bandainamcoent.eu/elden-ring/elden-ring/news",
+              "decision": "accepted_transient",
+              "reasonCodes": [
+                "VALIDATED_APPLICABILITY_SOURCE"
+              ],
+              "sourceCategory": "official_updates"
+            },
+            {
+              "candidateId": "a64c68b4-17d7-4992-8240-af7a757c490d",
+              "url": "https://en.bandainamcoent.eu/elden-ring/news/elden-ring-patch-notes-version-110",
+              "decision": "eligible_for_ingestion",
+              "reasonCodes": [
+                "VALIDATED_APPLICABILITY_SOURCE"
+              ],
+              "sourceCategory": "official_updates",
+              "origin": "required_official_article"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/gpt-access/gaming/sources/hybrid/candidates",
+      "request": {
+        "contractVersion": "gaming-hybrid-v1",
+        "workflowId": "b049b8d3-68a5-4e78-883e-20f7ed23a0ee",
+        "idempotencyKey": "mage-official-fixture",
+        "discoveryType": "currentness_verification",
+        "candidates": [
+          {
+            "url": "https://en.bandainamcoent.eu/elden-ring/elden-ring/news"
+          }
+        ]
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "contractVersion": "gaming-hybrid-v1",
+          "requestId": "currentness-http-1",
+          "workflowId": "b049b8d3-68a5-4e78-883e-20f7ed23a0ee",
+          "state": "answer_ready",
+          "nextAction": "answer",
+          "reason": "ACCEPTED_EVIDENCE",
+          "sourceKnown": true,
+          "evidenceSelected": true,
+          "freshnessStatus": "current",
+          "acceptedGameplayCandidateCount": 1,
+          "applicabilityStatus": "verified_current",
+          "gameplayEvidenceStatus": "freshness_verified",
+          "verifiedAsOf": "2026-09-19T18:10:41.370Z",
+          "effectivePatch": "1.10",
+          "effectiveBuild": "1.10.1",
+          "qualification": "Applies only to the verified update, time, platform, and region. Last backend verification: 2026-09-19T18:10:41.370Z. Applicable update: 1.10. Applicable hotfix/build: 1.10.1. Official changes establish announced mechanics, not the best strategy. Keep community recommendations distinct from official facts.",
+          "answer": {
+            "response": "In Elden Ring, a good mage build uses the academy staff and Intelligence for sorcery. Allocate vigor for survival and mind for casting. Use a ranged spell to open combat, then recover stamina before casting again. Upgrade the staff before increasing spell variety. This mage build favors safe positioning and spell efficiency over trading hits. [Source 1]",
+            "sources": [
+              {
+                "url": "https://guides.example.org/elden-ring-mage",
+                "title": "Elden Ring synthetic mage build guide",
+                "sourceId": "20615ab0-8572-4135-89c2-5e5109f07fb4",
+                "fetchedAt": "2026-09-19T18:10:41.351Z"
+              },
+              {
+                "url": "https://en.bandainamcoent.eu/elden-ring/elden-ring/news",
+                "sourceId": "ebafa516-7884-4076-9c1e-08c332c80c3f",
+                "fetchedAt": "2026-09-19T18:10:41.370Z"
+              }
+            ],
+            "provenance": "arcanos-trinity",
+            "requestId": "currentness-http-1"
+          },
+          "candidates": [
+            {
+              "candidateId": "ebafa516-7884-4076-9c1e-08c332c80c3f",
+              "url": "https://en.bandainamcoent.eu/elden-ring/elden-ring/news",
+              "decision": "accepted_transient",
+              "reasonCodes": [
+                "VALIDATED_APPLICABILITY_SOURCE"
+              ],
+              "sourceCategory": "official_updates"
+            },
+            {
+              "candidateId": "a64c68b4-17d7-4992-8240-af7a757c490d",
+              "url": "https://en.bandainamcoent.eu/elden-ring/news/elden-ring-patch-notes-version-110",
+              "decision": "eligible_for_ingestion",
+              "reasonCodes": [
+                "VALIDATED_APPLICABILITY_SOURCE"
+              ],
+              "sourceCategory": "official_updates",
+              "origin": "required_official_article"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/gpt-access/gaming/sources/hybrid/query",
+      "request": {
+        "contractVersion": "gaming-hybrid-v1",
+        "idempotencyKey": "registry-query-replay",
+        "game": "Elden Ring",
+        "mode": "build",
+        "question": "What is a good mage build now?",
+        "platform": "PC",
+        "storagePolicy": "transient_only"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "contractVersion": "gaming-hybrid-v1",
+          "requestId": "currentness-http-1",
+          "workflowId": "b049b8d3-68a5-4e78-883e-20f7ed23a0ee",
+          "state": "answer_ready",
+          "nextAction": "answer",
+          "reason": "ACCEPTED_EVIDENCE",
+          "sourceKnown": true,
+          "evidenceSelected": true,
+          "freshnessStatus": "current",
+          "acceptedGameplayCandidateCount": 1,
+          "applicabilityStatus": "verified_current",
+          "gameplayEvidenceStatus": "freshness_verified",
+          "verifiedAsOf": "2026-09-19T18:10:41.370Z",
+          "effectivePatch": "1.10",
+          "effectiveBuild": "1.10.1",
+          "qualification": "Applies only to the verified update, time, platform, and region. Last backend verification: 2026-09-19T18:10:41.370Z. Applicable update: 1.10. Applicable hotfix/build: 1.10.1. Official changes establish announced mechanics, not the best strategy. Keep community recommendations distinct from official facts.",
+          "answer": {
+            "response": "In Elden Ring, a good mage build uses the academy staff and Intelligence for sorcery. Allocate vigor for survival and mind for casting. Use a ranged spell to open combat, then recover stamina before casting again. Upgrade the staff before increasing spell variety. This mage build favors safe positioning and spell efficiency over trading hits. [Source 1]",
+            "sources": [
+              {
+                "url": "https://guides.example.org/elden-ring-mage",
+                "title": "Elden Ring synthetic mage build guide",
+                "sourceId": "20615ab0-8572-4135-89c2-5e5109f07fb4",
+                "fetchedAt": "2026-09-19T18:10:41.351Z"
+              },
+              {
+                "url": "https://en.bandainamcoent.eu/elden-ring/elden-ring/news",
+                "sourceId": "ebafa516-7884-4076-9c1e-08c332c80c3f",
+                "fetchedAt": "2026-09-19T18:10:41.370Z"
+              }
+            ],
+            "provenance": "arcanos-trinity",
+            "requestId": "currentness-http-1"
+          },
+          "candidates": [
+            {
+              "candidateId": "ebafa516-7884-4076-9c1e-08c332c80c3f",
+              "url": "https://en.bandainamcoent.eu/elden-ring/elden-ring/news",
+              "decision": "accepted_transient",
+              "reasonCodes": [
+                "VALIDATED_APPLICABILITY_SOURCE"
+              ],
+              "sourceCategory": "official_updates"
+            },
+            {
+              "candidateId": "a64c68b4-17d7-4992-8240-af7a757c490d",
+              "url": "https://en.bandainamcoent.eu/elden-ring/news/elden-ring-patch-notes-version-110",
+              "decision": "eligible_for_ingestion",
+              "reasonCodes": [
+                "VALIDATED_APPLICABILITY_SOURCE"
+              ],
+              "sourceCategory": "official_updates",
+              "origin": "required_official_article"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/gpt-access/gaming/sources/hybrid/candidates",
+      "request": {
+        "contractVersion": "gaming-hybrid-v1",
+        "workflowId": "b049b8d3-68a5-4e78-883e-20f7ed23a0ee",
+        "idempotencyKey": "registry-extra-round",
+        "discoveryType": "currentness_verification",
+        "candidates": [
+          {
+            "url": "https://en.bandainamcoent.eu/elden-ring/elden-ring/news"
+          }
+        ]
+      },
+      "response": {
+        "status": 409,
+        "body": {
+          "contractVersion": "gaming-hybrid-v1",
+          "requestId": "currentness-http-1",
+          "workflowId": "b049b8d3-68a5-4e78-883e-20f7ed23a0ee",
+          "state": "temporarily_unavailable",
+          "nextAction": "stop",
+          "reason": "CURRENTNESS_LIMIT_REACHED",
+          "sourceKnown": false,
+          "evidenceSelected": false,
+          "freshnessStatus": "unverified"
+        }
+      }
+    }
+  ],
+  "answerGenerationCount": 1,
+  "currentnessOperationCount": 1,
+  "acquisitionCount": 5,
+  "persistentWrites": 0
+}

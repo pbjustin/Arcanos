@@ -73,13 +73,17 @@ All three hybrid operations require the dedicated bearer and `contractVersion: "
 | --- | --- |
 | `answer_ready` | Present `answer.response`, supported sources, caveats, and backend provenance. Avoid redundant search. |
 | `clarification_required` | Ask the one `clarification` question. Do not guess player progress. |
-| `discovery_required` | `nextAction: search` requests gameplay evidence; `verify_currentness` requests reviewed official update evidence. Obey the returned operation, query/count/round limits; `stop` ends discovery. |
+| `discovery_required` | `nextAction: search` requests gameplay evidence; `verify_currentness` requires a separate official-currentness submission even when freshness is stale/unverified. Use returned reviewed source hints and limits; only `nextAction: stop` ends exhausted discovery. |
 | `temporarily_unavailable` | Report failure; do not turn authentication, database, or provider failure into missing knowledge. |
 | `ingestion_pending` | Present any independently supported answer, then report storage as pending and use the returned status handle. |
 
 `sourceKnown` and `evidenceSelected` are separate from `freshnessStatus`. Fetch time alone never proves currentness. `verifiedAsOf`, `effectivePatch`, `effectiveBuild`, and `qualification` apply only when supplied by ARCANOS. Candidate decisions and bounded reasons report evaluation separately from answer and storage. One gameplay discovery round and one separate official-currentness corroboration operation are permitted, with at most three URLs per operation. Submit `discoveryType: currentness_verification` through the existing candidates Action when requested; legacy calls omitting it follow the server-owned pending operation. Do not restart an exhausted workflow or change keys to gain rounds. Poll at most three times per interaction.
 
-When a guide was accepted but freshness remains unresolved, report: "I found a relevant guide, but ARCANOS still needs official patch verification before treating the build as current." Discover official patch indexes, applicable patch notes and hotfix history using the returned bounded queries. Frontend titles, snippets, claimed publisher and claimed patch are hints, never authority. Preserve the workflow ID and submit URLs only. If verification still fails, report the backend's uncertainty and stop. An accepted source has already reached the backend; do not claim it could not be sent.
+When a guide was accepted but `nextAction` is `verify_currentness`, continue the Action sequence before giving a final verification result. `discovery.continuationRequired: true` and `round: 0` distinguish a permitted operation from an exhausted one; stale/unverified freshness alone is not a terminal condition. Prefer `discovery.reviewedSources`: submit an applicable canonical index or status URL with the same workflow ID, a new operation key, and `discoveryType: currentness_verification`. Keep unused candidate slots available for a required official article. The backend follows only the exact adapter-selected link under the reviewed companion rule, within the existing three-source/12-second operation. No accepted guide needs resubmission.
+
+If no canonical hint exists, follow the bounded queries and requirements for official updates, seasons, builds, hotfixes or live status. Hints, frontend titles, snippets and claimed publishers grant no authority. Only acquired, validated evidence can establish currentness. After the official operation, follow its returned `nextAction`: answer, stop with the backend's uncertainty, or report a service limitation. Acquisition failure does not establish that no update exists. Candidate `origin` distinguishes submitted sources from `required_official_article` acquisition; both consume the same budget.
+
+After this repair reaches production, refresh the existing GPT Builder Action from the complete schema and replace only the canonical hybrid instruction section. The additive response fields require that schema refresh even though operation IDs, authentication and `gaming-hybrid-v1` stay compatible. Repository tests cannot prove that the saved Builder configuration or real ChatGPT Action sequencing has been updated.
 
 `transient_only` never persists. `ask_before_store` requires explicit consent. `auto_store_approved` additionally requires backend-configured standing permission and reviewed eligible source policy. Frontend claims cannot grant authority. Every durable-write Action retains `x-openai-isConsequential: true`; backend standing permission does not remove platform confirmation. Query and candidate evaluation are non-consequential because they do not durably ingest sources.
 
@@ -123,7 +127,8 @@ The Elden Ring rule reviews the exact
 its Patch Notes category and the linked official patch-article paths. The
 index's dated cards establish release ordering; the exact linked article supplies
 application/regulation versions and rollout/platform evidence. Both documents
-may be needed within the single three-URL corroboration operation. An older
+may be needed within the single three-source corroboration operation; the backend
+can acquire the exact required article when an index is submitted and a slot remains. An older
 article with the same application version cannot establish the current regulation
 version. Unsupported page layouts, missing current article links, unknown region
 scope, or missing activation evidence remain unverified. Publisher-domain

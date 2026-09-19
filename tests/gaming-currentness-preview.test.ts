@@ -4,17 +4,23 @@ const actualFreshness = await import('../src/shared/gaming/gamingFreshnessCore.j
 const actualCurrentness = await import('../src/shared/gaming/gamingCurrentnessAdapters.js');
 const actualEvidence = await import('../src/shared/gaming/gamingClearEvidence.js');
 const actualBinding = await import('../src/shared/gaming/gamingClearAnswerBinding.js');
+const actualPolicy = await import('../src/shared/gaming/gamingHybridPolicyCore.js');
 const extract = jest.fn(actualFreshness.extractGamingFreshnessMetadata);
 const evaluate = jest.fn(actualFreshness.evaluateGamingFreshness);
 const combine = jest.fn(actualCurrentness.combineGamingCurrentnessEvidence);
 const evidence = jest.fn(actualEvidence.assessGamingClearEvidence);
 const binding = jest.fn(actualBinding.hasBoundGamingClearAnswer);
+const project = jest.fn(actualPolicy.projectGamingHybridCandidateEvidence);
+const attempt = jest.fn(actualPolicy.resolveGamingHybridCandidateAttempt);
+const reason = jest.fn(actualPolicy.resolveGamingHybridCurrentnessReason);
 jest.unstable_mockModule('../src/shared/gaming/gamingFreshnessCore.js', () => ({ ...actualFreshness,
   extractGamingFreshnessMetadata: extract, evaluateGamingFreshness: evaluate }));
 jest.unstable_mockModule('../src/shared/gaming/gamingCurrentnessAdapters.js', () => ({ ...actualCurrentness, combineGamingCurrentnessEvidence: combine }));
 jest.unstable_mockModule('../src/shared/gaming/gamingClearEvidence.js', () => ({ ...actualEvidence, assessGamingClearEvidence: evidence }));
 jest.unstable_mockModule('../src/shared/gaming/gamingClearAnswerBinding.js', () => ({ ...actualBinding, hasBoundGamingClearAnswer: binding }));
-const { runGamingCurrentnessPreview, GAMING_CURRENTNESS_PREVIEW_VERSION } = await import('../src/shared/gaming/gamingCurrentnessPreviewFixture.js');
+jest.unstable_mockModule('../src/shared/gaming/gamingHybridPolicyCore.js', () => ({ ...actualPolicy,
+  projectGamingHybridCandidateEvidence: project, resolveGamingHybridCandidateAttempt: attempt, resolveGamingHybridCurrentnessReason: reason }));
+const { runGamingCurrentnessPreview, GAMING_CURRENTNESS_PREVIEW_VERSION, GAMING_CURRENTNESS_CONTINUATION_PREVIEW_VERSION } = await import('../src/shared/gaming/gamingCurrentnessPreviewFixture.js');
 const FAILURE = 'PREVIEW_GAMING_CURRENTNESS_CONTRACT_INVALID';
 
 describe('sealed PC Elden Ring currentness and answer-admission fixture', () => {
@@ -24,12 +30,16 @@ describe('sealed PC Elden Ring currentness and answer-admission fixture', () => 
     combine.mockReset().mockImplementation(actualCurrentness.combineGamingCurrentnessEvidence);
     evidence.mockReset().mockImplementation(actualEvidence.assessGamingClearEvidence);
     binding.mockReset().mockImplementation(actualBinding.hasBoundGamingClearAnswer);
+    project.mockReset().mockImplementation(actualPolicy.projectGamingHybridCandidateEvidence);
+    attempt.mockReset().mockImplementation(actualPolicy.resolveGamingHybridCandidateAttempt);
+    reason.mockReset().mockImplementation(actualPolicy.resolveGamingHybridCurrentnessReason);
   });
 
   it('repeats fixed document extraction, separate App/Regulation and PC answer checks', () => {
     expect(runGamingCurrentnessPreview()).toBeUndefined();
     expect(runGamingCurrentnessPreview()).toBeUndefined();
     expect(GAMING_CURRENTNESS_PREVIEW_VERSION).toBe('gaming-currentness/v1');
+    expect(GAMING_CURRENTNESS_CONTINUATION_PREVIEW_VERSION).toBe('gaming-currentness-continuation/v1');
     expect(extract).toHaveBeenCalledWith(expect.objectContaining({ text: expect.stringContaining('Patch: 1.17\nBuild: 1.17\nPlatforms: PC') }),
       { game: 'Elden Ring' }, new Date('2026-09-09T12:00:00.000Z'), expect.any(Array));
     expect(extract).toHaveBeenCalledWith(expect.objectContaining({ text: expect.stringContaining('Regulation Ver. 1.17.1') }),
@@ -39,6 +49,44 @@ describe('sealed PC Elden Ring currentness and answer-admission fixture', () => 
     expect(evidence).toHaveBeenCalledWith(expect.objectContaining({ platform: 'PC' }), expect.any(Object), { now: new Date('2026-09-09T12:00:00.000Z') });
     expect(binding).toHaveBeenCalledWith(expect.objectContaining({ response: expect.stringContaining('Works on every platform.') }));
     expect(extract.mock.calls.every(([doc]) => new URL(doc.publicUrl).host === 'currentness-preview.example')).toBe(true);
+    expect(project).toHaveBeenCalledWith(expect.objectContaining({ knowledge: { context: '', sources: [] },
+      acceptedFreshness: [expect.objectContaining({ id: 'synthetic-continuation-fresh-index', currentBuild: '1.17.1' })] }));
+    expect(project).toHaveBeenCalledWith(expect.objectContaining({ knowledge: expect.objectContaining({
+      sources: [expect.objectContaining({ sourceId: 'synthetic-continuation-fresh-index' })] }) }));
+  });
+
+  it.each(['old source retained', 'old chunk retained', 'old positive metadata retained', 'prior contradiction dropped',
+    'adapter-only contradiction dropped', 'metadata-only contradiction dropped', 'evaluated contradiction dropped'])(
+    'detects currentness evidence projection drift: %s', scenario => {
+      project.mockImplementation(input => {
+        const value = actualPolicy.projectGamingHybridCandidateEvidence(input);
+        if (scenario === 'old source retained') value.knowledge.sources.push(...(input.prior?.sources ?? [])
+          .filter(source => source.sourceId === 'synthetic-continuation-old-index'));
+        if (scenario === 'old chunk retained') value.knowledge.evidence!.push(...(input.prior?.evidence ?? [])
+          .filter(chunk => chunk.sourceId === 'synthetic-continuation-old-index'));
+        if (scenario === 'old positive metadata retained') value.freshness.push(...(input.priorFreshness ?? [])
+          .filter(item => item.id === 'synthetic-continuation-old-index'));
+        const drop = scenario === 'prior contradiction dropped' && input.priorFreshness?.some(item => item.metadataConflict)
+          || scenario === 'adapter-only contradiction dropped' && input.priorFreshness?.some(item => !item.metadataConflict && item.currentnessMetadata?.status === 'conflicting')
+          || scenario === 'metadata-only contradiction dropped' && input.priorFreshness?.some(item => item.metadataConflict && item.currentnessMetadata?.status !== 'conflicting')
+          || scenario === 'evaluated contradiction dropped' && Boolean(input.currentnessEvidence?.length);
+        if (drop) value.freshness = value.freshness.filter(item => item.id !== 'synthetic-continuation-conflict');
+        return value;
+      });
+      expect(runGamingCurrentnessPreview).toThrow(FAILURE);
+    });
+
+  it('detects missing-build continuation being denied', () => {
+    reason.mockImplementation(input => input.reasons.includes('CURRENT_BUILD_UNVERIFIED') ? undefined
+      : actualPolicy.resolveGamingHybridCurrentnessReason(input));
+    expect(runGamingCurrentnessPreview).toThrow(FAILURE);
+  });
+
+  it.each(['retry denied', 'extra operation admitted'])('detects bounded currentness attempt drift: %s', scenario => {
+    attempt.mockImplementation(input => scenario === 'retry denied' && input.operationKey === input.requestedKey ? 'deny'
+      : scenario === 'extra operation admitted' && input.round === 1 && input.operationKey !== input.requestedKey ? 'begin'
+        : actualPolicy.resolveGamingHybridCandidateAttempt(input));
+    expect(runGamingCurrentnessPreview).toThrow(FAILURE);
   });
 
   it('detects extraction that fills missing regulation metadata from the patch', () => {
