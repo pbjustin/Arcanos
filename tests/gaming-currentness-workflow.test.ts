@@ -1,7 +1,7 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import { createGamingHybridWorkflow } from '../src/services/gamingHybridKnowledge.js';
 import { GAMING_HYBRID_CONTRACT_VERSION as contractVersion } from '../src/shared/gaming/gamingHybridContract.js';
-import { GAMING_SOURCE_POLICY_VERSION } from '../src/shared/gaming/gamingFreshnessCore.js';
+import { extractGamingFreshnessMetadata, GAMING_SOURCE_POLICY_VERSION } from '../src/shared/gaming/gamingFreshnessCore.js';
 import { GAMING_CURRENTNESS_ADAPTER_VERSION } from '../src/shared/gaming/gamingCurrentnessAdapters.js';
 import { gamingClearHash } from '../src/shared/gaming/gamingClearPolicy.js';
 import { resolveGamingHybridCurrentnessReason } from '../src/shared/gaming/gamingHybridPolicyCore.js';
@@ -34,7 +34,7 @@ function fixture(patch: string | undefined = '1.10') {
       patch: '1.10', currentPatch: '1.10', effectiveFrom: new Date(now - 86_400_000).toISOString() } };
   return { guide, index, knowledge };
 }
-function setup(patch: string | undefined = '1.10') {
+function setup(patch: string | undefined = '1.10', clock = () => now) {
   const data = fixture(patch);
   const retrieve = jest.fn(async () => empty);
   const evaluateCandidates = jest.fn(async (input: any) => input.discoveryType === 'currentness_verification'
@@ -46,7 +46,7 @@ function setup(patch: string | undefined = '1.10') {
     data: { response: 'Use the mage build with the verified patch qualification. [1]', sources: prepared.knowledge.sources,
       grounding: { groundingStatus: 'grounded' } } } as any));
   const ingest = jest.fn();
-  const workflow = createGamingHybridWorkflow({ retrieve, evaluateCandidates: evaluateCandidates as any, generate, ingest: ingest as any, now: () => now });
+  const workflow = createGamingHybridWorkflow({ retrieve, evaluateCandidates: evaluateCandidates as any, generate, ingest: ingest as any, now: clock });
   const submit = (workflowId: string, discoveryType: 'gameplay_evidence' | 'currentness_verification', key = discoveryType) => ({
     contractVersion, workflowId, discoveryType, idempotencyKey: `operation-${key}`,
     candidates: [{ url: discoveryType === 'gameplay_evidence' ? guideUrl : indexUrl }] });
@@ -108,6 +108,85 @@ describe('bounded official currentness corroboration', () => {
     const verified = await test.workflow.candidates(test.submit(first.body.workflowId!, 'currentness_verification'), context);
     expect(verified.body).toMatchObject({ state: 'answer_ready', effectiveBuild: '1.10.1' });
     expect(test.generate).toHaveBeenCalledTimes(1);
+  });
+  it.each([
+    { label: 'without refreshed records', refreshedRecords: false, negative: 'none' },
+    { label: 'with refreshed records', refreshedRecords: true, negative: 'none' },
+    { label: 'with an independently applicable contradiction', refreshedRecords: true, negative: 'future' },
+    { label: 'with an out-of-scope contradiction', refreshedRecords: true, negative: 'outside_scope' }
+  ])('refreshes a submitted same-URL index $label', async ({ refreshedRecords, negative }) => {
+    let currentNow = now;
+    const test = setup('1.10', () => currentNow);
+    const game = 'Star Wars: The Old Republic';
+    const officialUrl = 'https://www.swtor.com/patchnotes';
+    const text = passage.replaceAll('Elden Ring', game).replaceAll('mage', 'healer');
+    Object.assign(test.guide.freshness, { game, patch: '7.0', build: '7.0.1' });
+    test.guide.document.text = text;
+    test.knowledge.sources[0].snippet = text;
+    test.knowledge.evidence![0].text = text;
+    const indexText = `Game: ${game}\nCurrent patch: 7.0\nEffective from: ${new Date(now - 86_400_000).toISOString()}\nPlatforms: all\nRegions: all`;
+    const indexDocument = { publicUrl: officialUrl, text: indexText, metadata: { title: `${game} Patch Notes` } };
+    const oldFreshness = extractGamingFreshnessMetadata(indexDocument, { game }, new Date(now));
+    expect(oldFreshness.currentnessMetadata).toMatchObject({ adapterId: 'swtor-patch-index-v1', status: 'verified' });
+    expect(oldFreshness.currentBuild).toBeUndefined();
+    const oldIndex = { ...test.index, publicUrl: officialUrl, document: indexDocument,
+      freshness: { ...oldFreshness, id: indexId } };
+    const oldSnippet = `Older official healer build index passage. ${indexText}`;
+    const oldSource = { sourceId: indexId, url: officialUrl, sourceType: 'official_updates',
+      fetchedAt: oldFreshness.fetchedAt, snippet: oldSnippet, freshnessMetadata: oldIndex.freshness };
+    const oldChunk = { sourceId: indexId, revisionId: oldIndex.contentHash, recordId: 'old-index-record', recordType: 'build' as const,
+      publicUrl: officialUrl, text: oldSnippet, lexicalScore: 1, combinedScore: 1, provenance: { fetchedAt: oldFreshness.fetchedAt } };
+    test.knowledge.sources.push(oldSource);
+    test.knowledge.evidence!.push(oldChunk);
+    const refreshedId = '30000000-0000-4000-8000-000000000003';
+    const refreshedDocument = { ...indexDocument, text: `${indexText}\nCurrent build: 7.0.1` };
+    const refreshedIndex = { ...oldIndex, candidateId: refreshedId, contentHash: 'c'.repeat(64), document: refreshedDocument,
+      freshness: { ...extractGamingFreshnessMetadata(refreshedDocument, { game }, new Date(now)), id: refreshedId } };
+    const freshSnippet = `Refreshed official healer build index passage. ${refreshedDocument.text}`;
+    const refreshedKnowledge = refreshedRecords ? { context: '', sourceKnown: true,
+      sources: [{ ...oldSource, sourceId: refreshedId, snippet: freshSnippet, freshnessMetadata: refreshedIndex.freshness }],
+      evidence: [{ ...oldChunk, sourceId: refreshedId, revisionId: refreshedIndex.contentHash,
+        recordId: 'refreshed-index-record', text: freshSnippet }] } : empty;
+    // A separately acquired official contradiction remains negative evidence even
+    // if a later acquisition of the same canonical URL supplies positive metadata.
+    const negativeDocument = { ...indexDocument, text: `${indexText
+      .replace(`Effective from: ${new Date(now - 86_400_000).toISOString()}`,
+        `Effective from: ${new Date(negative === 'future' ? now + 1_000 : now - 86_400_000).toISOString()}`)
+      .replace('Platforms: all', negative === 'outside_scope' ? 'Platforms: PS5' : 'Platforms: all')}\nCurrent patch: 7.1` };
+    const negativeFreshness = { ...extractGamingFreshnessMetadata(negativeDocument, { game }, new Date(now)),
+      id: '30000000-0000-4000-8000-000000000004' };
+    expect(negativeFreshness.metadataConflict).toBe(true);
+    test.evaluateCandidates.mockResolvedValueOnce({ accepted: [test.guide, oldIndex], knowledge: test.knowledge,
+      ...(negative !== 'none' ? { currentnessEvidence: [negativeFreshness] } : {}),
+      decisions: [test.guide, oldIndex].map(item => ({ candidateId: item.candidateId,
+        decision: 'accepted_transient', reasonCodes: ['VALIDATED_RELEVANT_CONTENT'] })) } as any);
+    test.evaluateCandidates.mockResolvedValueOnce({ accepted: [refreshedIndex], knowledge: refreshedKnowledge,
+      decisions: [{ candidateId: refreshedId, decision: 'accepted_transient', reasonCodes: ['VALIDATED_APPLICABILITY_SOURCE'] }] } as any);
+    const first = await test.workflow.query({ ...query, game, platform: 'PC', question: 'What is a good healer build now?' }, context);
+    const found = await test.workflow.candidates({ ...test.submit(first.body.workflowId!, 'gameplay_evidence'),
+      candidates: [{ url: guideUrl }, { url: officialUrl }] }, context);
+    expect(found.body).toMatchObject({ nextAction: 'verify_currentness', reason: 'CURRENT_BUILD_UNVERIFIED',
+      discovery: { round: 0, continuationRequired: true } });
+    currentNow = now + 2_000;
+    const official = { ...test.submit(first.body.workflowId!, 'currentness_verification'), candidates: [{ url: officialUrl }] };
+    const verified = await test.workflow.candidates(official, context);
+    if (negative === 'future') {
+      expect(verified.body).toMatchObject({ nextAction: 'stop', freshnessStatus: 'conflicting', reason: 'CONFLICTING_CURRENTNESS' });
+      expect(verified.body.answer).toBeUndefined();
+      expect(test.generate).not.toHaveBeenCalled();
+      return;
+    }
+    expect(verified.body).toMatchObject({ state: 'answer_ready', nextAction: 'answer', freshnessStatus: 'current',
+      effectivePatch: '7.0', effectiveBuild: '7.0.1' });
+    expect(await test.workflow.candidates(official, context)).toEqual(verified);
+    expect(test.evaluateCandidates).toHaveBeenCalledTimes(2);
+    expect(test.generate).toHaveBeenCalledTimes(1);
+    const prepared = test.generate.mock.calls[0][1].knowledge;
+    expect(prepared.sources.some((source: { sourceId: string }) => source.sourceId === indexId)).toBe(false);
+    expect(prepared.evidence.some((chunk: { recordId: string }) => chunk.recordId === oldChunk.recordId)).toBe(false);
+    expect(prepared.sources.find((source: { sourceId: string }) => source.sourceId === refreshedId)?.freshnessMetadata)
+      .toMatchObject({ id: refreshedId, currentBuild: '7.0.1' });
+    expect(JSON.stringify(prepared)).not.toContain(oldSnippet);
   });
   it('provides seasonal discovery queries and verifies the retained guide against the official season', async () => {
     const test = setup();

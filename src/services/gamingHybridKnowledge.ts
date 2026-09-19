@@ -546,15 +546,20 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
           candidateChars: evaluated.accepted.reduce((total, item) => total + item.document.text.length, 0), decisions: evaluated.decisions });
         if (retainArtifacts) workflow.accepted = [...workflow.accepted, ...evaluated.accepted];
         const prior = currentness ? workflow.candidateSubmission?.knowledge ?? workflow.knowledge : workflow.knowledge;
+        const refreshedUrls = new Set(evaluated.accepted.map(item => item.freshness.url));
         const combined = { context: '', sources: [...evaluated.knowledge.sources,
-          ...(prior?.sources ?? []).filter(source => !evaluated.knowledge.sources.some(next => next.url === source.url))],
+          ...(prior?.sources ?? []).filter(source => !refreshedUrls.has(source.url))],
           evidence: [...(evaluated.knowledge.evidence ?? []),
-            ...(prior?.evidence ?? []).filter(chunk => !evaluated.knowledge.sources.some(next => next.url === chunk.publicUrl))],
+            ...(prior?.evidence ?? []).filter(chunk => !refreshedUrls.has(chunk.publicUrl))],
           sourceKnown: prior?.sourceKnown };
         // Retain only bounded evidence/freshness for answer retries when full artifacts
         // do not fit. Their candidate IDs must never advertise a storage handle.
-        const candidateFreshness = [...(currentness ? workflow.candidateSubmission?.freshness ?? [] : []),
-          ...evaluated.accepted.map(item => item.freshness), ...(evaluated.currentnessEvidence ?? [])];
+        // A successful refetch replaces that URL's prior positive evidence, even when
+        // the official document contributes no gameplay records. Preserve contradictions.
+        const candidateFreshness = [...evaluated.accepted.map(item => item.freshness),
+          ...(currentness ? workflow.candidateSubmission?.freshness ?? [] : []).filter(item =>
+            !refreshedUrls.has(item.url) || item.metadataConflict || item.currentnessMetadata?.status === 'conflicting'),
+          ...(evaluated.currentnessEvidence ?? [])];
         const nextSubmission = { key: input.idempotencyKey, knowledge: combined, decisions, freshness: candidateFreshness };
         if (currentness) workflow.currentnessSubmission = nextSubmission;
         else workflow.candidateSubmission = nextSubmission;
