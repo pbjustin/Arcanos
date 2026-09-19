@@ -249,9 +249,17 @@ backend invoke ChatGPT's web-search tool.
    selects evidence. Accepted evidence can answer immediately, without storage.
 5. If a relevant guide is accepted but official currentness is missing,
    `nextAction: verify_currentness` requests one bounded official corroboration
-   operation through the same candidates Action. The backend reuses its accepted
-   guide, verifies official update identity and checks guide compatibility.
-   Failure remains unverified/stale/conflicting and ends the search sequence.
+   operation through the same candidates Action. This is nonterminal even when
+   freshness is stale/unverified. `discovery.continuationRequired: true` and
+   `round: 0` identify the pending operation; submit it with the same workflow ID
+   and a new operation key before reporting verification exhausted. Prefer an
+   applicable canonical index/status URL from `discovery.reviewedSources`.
+   Hints do not establish authority: the backend acquires and validates the
+   resource, follows an adapter-required official article under its reviewed
+   companion rule when a slot remains, reuses its accepted guide, and recomputes
+   applicability. Without a hint, use the returned bounded queries. Only
+   `nextAction: stop` ends exhausted discovery; report unresolved freshness
+   honestly. A service failure instead reports its availability limitation.
 6. `ingestGamingHybridCandidates` is a separate consequential write. It selects
    caller-bound candidate IDs, applies storage permission/consent, and queues the
    existing worker. The existing ingestion-status Action reports the outcome.
@@ -265,7 +273,8 @@ spoiler/depth preferences, selected evidence and date/update qualifications to
 the existing generation and citation projection.
 
 The server permits one gameplay discovery round and one separate official
-currentness corroboration operation, each with at most three URLs, eight
+currentness corroboration operation, each with at most three source acquisitions
+(including backend-required articles), eight
 workflows per credential actor, 24 hybrid calls per five
 minutes, and 128 workflows total per web process. Workflows expire after ten
 minutes; retained resolved text is bounded to 12 million characters per process.
@@ -274,8 +283,13 @@ previously retained approvals remain available within their normal lifetime.
 The early authenticated parser caps requests at 16 KiB. Candidate fetching has
 a 12-second aggregate budget; HTTP hybrid Actions have a 38-second deadline,
 including generation. Context remains within the existing Gaming budget. The
-same candidate-operation key can resume a failed acquisition without consuming
-another discovery round; different keys remain subject to the one-round limit.
+same candidate-operation key can resume a retryable service failure returning
+`nextAction: retry_later` without consuming another discovery round. A completed
+candidate result returning `nextAction: stop` replays its result without refetching;
+different keys cannot renew the one-round budget.
+Submit a canonical index alone when available to reserve companion slots.
+Candidate `origin` reports `submitted` or `required_official_article`; neither
+origin bypasses source admission, extraction, authority or freshness checks.
 Equivalent queries share that budget even under new keys. Changing the effective
 mode, spoiler permission, or answer depth returns `409 QUERY_CONTEXT_CONFLICT`
 without replaying the original answer or granting another discovery operation.

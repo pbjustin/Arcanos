@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { writeFileSync } from 'node:fs';
+import { Readable } from 'node:stream';
+import { gzipSync } from 'node:zlib';
 import { gamingAcquisitionAxios } from './testUtils/gamingAcquisitionFixtures.js';
 import express from 'express';
 import request from 'supertest';
@@ -351,17 +354,23 @@ describe('Gaming hybrid durable lifecycle', () => {
     const token = `synthetic-currentness-lifecycle-http-${++httpFixtureSequence}`;
     process.env.ARCANOS_GAMING_SOURCE_ACCESS_TOKEN = token;
     const app = express();
+    // Each fixture has a separate synthetic client; keep the real per-client HTTP limiter.
+    app.set('trust proxy', 'loopback');
+    const clientIp = `192.0.2.${httpFixtureSequence}`;
     app.use((req, _res, next) => { req.requestId = `currentness-http-${httpFixtureSequence}`; next(); });
     app.use(gamingHttpRouter);
+    const trace: Array<{ method: 'POST'; path: string; request: unknown; response: GamingHybridResult }> = [];
     const invoke = async (action: string, body: unknown): Promise<GamingHybridResult> => {
       const response = await request(app).post(`/gpt-access/gaming/sources/hybrid/${action}`)
-        .set('Authorization', `Bearer ${token}`).send(body);
-      return { status: response.status, body: response.body };
+        .set('Authorization', `Bearer ${token}`).set('X-Forwarded-For', clientIp).send(body);
+      const result = { status: response.status, body: response.body };
+      trace.push({ method: 'POST', path: `/gpt-access/gaming/sources/hybrid/${action}`, request: body, response: result });
+      return result;
     };
     return {
       query: (body: unknown, _context: typeof context) => invoke('query', body),
       candidates: (body: unknown, _context: typeof context) => invoke('candidates', body),
-      ingest: (body: unknown, _context: typeof context) => invoke('ingestions', body)
+      ingest: (body: unknown, _context: typeof context) => invoke('ingestions', body), trace
     };
   }
 
@@ -369,6 +378,7 @@ describe('Gaming hybrid durable lifecycle', () => {
   async function mageCurrentnessLifecycle(guideLabels = 'Patch: 1.10. Build: 1.10.1.', options: {
     http?: boolean; indexLabels?: string; articleLabels?: string; targetedPlatforms?: string | null;
     currentPatch?: string; currentBuild?: string; articleLayout?: 'inline_platforms_version_list';
+    registryDiscovery?: boolean; indexOnly?: boolean; articleFailure?: 'forbidden' | 'decoded_limit';
     query?: Record<string, unknown>;
   } = {}) {
     // The imported HTTP router owns a workflow with the real clock captured at registration.
@@ -391,6 +401,15 @@ describe('Gaming hybrid durable lifecycle', () => {
       expect(new globalThis.URL(url).hostname).toBe('93.184.216.34');
       expect(acquisitionOptions).toMatchObject({ maxRedirects: 0, proxy: false, responseType: 'stream' });
       const path = new globalThis.URL(url).pathname;
+      if (path === articlePath && options.articleFailure === 'forbidden') {
+        return { status: 403, data: 'Forbidden', headers: { 'content-type': 'text/plain' } };
+      }
+      if (path === articlePath && options.articleFailure === 'decoded_limit') {
+        const data = Object.assign(Readable.from([gzipSync('x'.repeat(7_000_000))]), {
+          rawHeaders: ['content-type', 'text/html', 'content-encoding', 'gzip']
+        });
+        return { status: 200, data, headers: { 'content-type': 'text/html', 'content-encoding': 'gzip' } };
+      }
       const text = path.endsWith('/elden-ring-mage')
         ? `<p>Game: Elden Ring. ${guideLabels} Platforms: all. Regions: all. ${mageText}</p>`
         : path === '/elden-ring/elden-ring/news'
@@ -431,9 +450,18 @@ describe('Gaming hybrid durable lifecycle', () => {
     expect(Number(guideAssessment?.overall)).toBeGreaterThanOrEqual(4);
     expect(mockTrinity).not.toHaveBeenCalled();
     expect(mockAuditCompletion).not.toHaveBeenCalled();
-    const verified = await workflow.candidates({ contractVersion, workflowId: missing.body.workflowId,
+    if (options.registryDiscovery) {
+      expect(found.body.discovery).toMatchObject({ continuationRequired: true, round: 0, maxRounds: 1,
+        reviewedSources: [{ url: indexUrl, ruleId: 'elden-ring-update-index', role: 'current_index' }] });
+      expect(found.body.answer).toBeUndefined();
+      expect(jest.mocked(logger.info).mock.calls.filter(([event]) => event === 'gaming.currentness.operation_started')).toHaveLength(0);
+    }
+    // The caller uses only the response hint. It never discovers or submits the companion URL.
+    const officialRequest = { contractVersion, workflowId: missing.body.workflowId,
       idempotencyKey: 'mage-official-fixture', discoveryType: 'currentness_verification',
-      candidates: [{ url: indexUrl }, { url: articleUrl }] }, context);
+      candidates: options.registryDiscovery ? found.body.discovery!.reviewedSources!.map(source => ({ url: source.url }))
+        : options.indexOnly ? [{ url: indexUrl }] : [{ url: indexUrl }, { url: articleUrl }] };
+    const verified = await workflow.candidates(officialRequest, context);
     expect(verified).toEqual(expect.objectContaining({ status: 200 }));
     expect(mockHttp.mock.calls.filter(([url]) => new globalThis.URL(url as string).pathname === '/elden-ring-mage')).toHaveLength(1);
     expect(mockHttp.mock.calls.filter(([url]) => new globalThis.URL(url as string).pathname === '/elden-ring/elden-ring/news')).toHaveLength(1);
@@ -442,8 +470,78 @@ describe('Gaming hybrid durable lifecycle', () => {
     expect(jobs.size).toBe(0);
     expect(database.records).toHaveLength(0);
     expect(database.revisions).toHaveLength(0);
-    return { workflow, query, missing, found, verified, guideUrl, indexUrl, articleUrl };
+    return { workflow, query, missing, found, verified, guideUrl, indexUrl, articleUrl, officialRequest };
   }
+
+  it('continues the registry-directed HTTP lifecycle through a required official article before exactly one answer', async () => {
+    const { workflow, query, missing, found, verified, guideUrl, indexUrl, articleUrl, officialRequest } =
+      await mageCurrentnessLifecycle(undefined, { http: true, registryDiscovery: true });
+    expect([missing.body.nextAction, found.body.nextAction, verified.body.nextAction]).toEqual(['search', 'verify_currentness', 'answer']);
+    expect(officialRequest.candidates).toEqual([{ url: indexUrl }]);
+    expect(verified.body).toMatchObject({ workflowId: missing.body.workflowId, state: 'answer_ready',
+      freshnessStatus: 'current', applicabilityStatus: 'verified_current', acceptedGameplayCandidateCount: 1,
+      effectivePatch: '1.10', effectiveBuild: '1.10.1', answer: { provenance: 'arcanos-trinity' } });
+    expect(verified.body.candidates).toEqual(expect.arrayContaining([
+      expect.objectContaining({ url: indexUrl, decision: 'accepted_transient' }),
+      expect.objectContaining({ url: articleUrl, origin: 'required_official_article' })
+    ]));
+    expect(verified.body.answer?.sources.map(source => source.url)).toContain(guideUrl);
+    expect((await workflow.candidates(officialRequest, context)).body.answer).toEqual(verified.body.answer);
+    expect((await workflow.query({ ...query, idempotencyKey: 'registry-query-replay' }, context)).body.answer).toEqual(verified.body.answer);
+    expect((await workflow.candidates({ ...officialRequest, idempotencyKey: 'registry-extra-round' }, context)).status).toBe(409);
+    expect(mockHttp).toHaveBeenCalledTimes(5);
+    expect(mockTrinity).toHaveBeenCalledTimes(1);
+    expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
+    const lifecycle = jest.mocked(logger.info).mock.calls;
+    expect(lifecycle.filter(([event]) => event === 'gaming.currentness.operation_started')).toHaveLength(1);
+    expect(lifecycle.filter(([event]) => event === 'gaming.currentness.exhausted')).toHaveLength(0);
+    expect(lifecycle).toEqual(expect.arrayContaining([
+      ['gaming.hybrid.handoff', expect.objectContaining({ nextAction: 'verify_currentness', currentnessRound: 0 })],
+      ['gaming.hybrid.handoff', expect.objectContaining({ nextAction: 'answer', currentnessRound: 1 })]
+    ]));
+    // Optional, credential-free evidence artifact for this authored HTTP fixture only.
+    if (process.env.GAMING_CURRENTNESS_HTTP_PROOF_PATH && 'trace' in workflow) {
+      writeFileSync(process.env.GAMING_CURRENTNESS_HTTP_PROOF_PATH, JSON.stringify({
+        proof: 'gaming-currentness-continuation-http/v1', scope: 'real authenticated HTTP router; synthetic DNS/publisher/SQL/provider boundaries',
+        trace: workflow.trace, answerGenerationCount: mockTrinity.mock.calls.length,
+        currentnessOperationCount: lifecycle.filter(([event]) => event === 'gaming.currentness.operation_started').length,
+        acquisitionCount: mockHttp.mock.calls.length, persistentWrites: 0
+      }, null, 2));
+    }
+  });
+
+  it('completes one official HTTP operation from an index without caller-supplied companion URLs', async () => {
+    const { officialRequest, verified, indexUrl, articleUrl } = await mageCurrentnessLifecycle(undefined, { http: true, indexOnly: true });
+    expect(officialRequest.candidates).toEqual([{ url: indexUrl }]);
+    expect(verified.body).toMatchObject({ state: 'answer_ready', nextAction: 'answer', freshnessStatus: 'current' });
+    expect(verified.body.candidates).toEqual(expect.arrayContaining([
+      expect.objectContaining({ url: articleUrl, origin: 'required_official_article' })
+    ]));
+    expect(mockTrinity).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['forbidden', 'decoded_limit'] as const)('terminates honestly when the required article acquisition fails: %s', async articleFailure => {
+    const { workflow, verified, officialRequest } = await mageCurrentnessLifecycle(undefined, {
+      http: true, registryDiscovery: true, articleFailure
+    });
+    expect(verified.body).toMatchObject({ state: 'discovery_required', nextAction: 'stop', freshnessStatus: 'unverified',
+      discovery: { type: 'currentness_verification', continuationRequired: false, round: 1, maxRounds: 1 } });
+    expect(verified.body.answer).toBeUndefined();
+    expect(verified.body.candidates).toEqual(expect.arrayContaining([expect.objectContaining({
+      origin: 'required_official_article', decision: 'rejected',
+      reasonCodes: [articleFailure === 'forbidden' ? 'SOURCE_INACCESSIBLE' : 'SOURCE_FETCH_FAILED']
+    })]));
+    expect((await workflow.candidates(officialRequest, context)).body).toEqual(verified.body);
+    expect((await workflow.candidates({ ...officialRequest, idempotencyKey: 'failure-extra-round' }, context)).status).toBe(409);
+    expect(mockHttp).toHaveBeenCalledTimes(5);
+    expect(mockTrinity).not.toHaveBeenCalled();
+    expect(mockAuditCompletion).not.toHaveBeenCalled();
+    expect(jest.mocked(logger.info).mock.calls.filter(([event]) => event === 'gaming.currentness.exhausted')).toHaveLength(1);
+    if (articleFailure === 'decoded_limit') expect(jest.mocked(logger.info).mock.calls).toEqual(expect.arrayContaining([
+      ['gaming.clear.source.not_run', expect.objectContaining({ origin: 'required_official_article',
+        acquisition: expect.objectContaining({ subreason: 'DECODED_LIMIT' }) })]
+    ]));
+  });
 
   it.each([
     { name: 'index platform and region', indexLabels: 'Platforms: PC. Regions: EU.', articleLabels: 'Regions: all.' },

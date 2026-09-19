@@ -1,6 +1,6 @@
 import { describe, expect, test } from '@jest/globals';
 import {
-  assessGamingSourcePolicy, classifyGamingQuestionFreshness, evaluateGamingFreshness, extractGamingFreshnessMetadata,
+  assessGamingSourcePolicy, classifyGamingQuestionFreshness, evaluateGamingFreshness, extractGamingFreshnessMetadata, getGamingCurrentnessDiscoverySources,
   GAMING_FRESHNESS_DEFAULTS, GAMING_SOURCE_POLICY_VERSION,
   type GamingFreshnessEvidence, type GamingReviewedSourceRule
 } from '../src/shared/gaming/gamingFreshnessCore.js';
@@ -33,7 +33,55 @@ function extract(url: string, text: string, game = 'Prism Siege') {
   return extractGamingFreshnessMetadata({ publicUrl: url, text, metadata: { title: game } }, { game }, NOW, RULES);
 }
 
+describe('reviewed currentness discovery starting points', () => {
+  test('uses only exact reviewed index/status paths for the requested game', () => {
+    expect(getGamingCurrentnessDiscoverySources('Prism Siege', RULES)).toEqual([
+      { url: 'https://prism.test/updates/current', ruleId: 'prism-current', role: 'current_index' },
+      { url: 'https://prism.test/status', ruleId: 'prism-status', role: 'live_status' }
+    ]);
+    expect(getGamingCurrentnessDiscoverySources('Clockwork Citadel', RULES)).toEqual([
+      { url: 'https://citadel.test/seasons/current', ruleId: 'citadel-current', role: 'current_index' }
+    ]);
+    expect(getGamingCurrentnessDiscoverySources('Unknown Game', RULES)).toEqual([]);
+  });
+  test('bounds hints and rejects unsafe, filtered, prefix, or nonofficial registry shapes', () => {
+    const base = RULES[1];
+    const invalid: GamingReviewedSourceRule[] = [
+      { ...base, path: '/updates/current?latest=true' }, { ...base, path: '/updates/current#latest' },
+      { ...base, path: '//other.test/current' }, { ...base, path: '/updates/%2e/current' },
+      { ...base, path: '/updates/', pathMatch: 'prefix' }, { ...base, category: 'community' },
+      { ...base, hosts: ['prism.test.evil.test@prism.test'] }, { ...base, hosts: ['127.0.0.1'] },
+      { ...base, path: '/secret/current' }, { ...base, path: `/updates/${'x'.repeat(2_048)}` }
+    ];
+    for (const rule of invalid) expect(getGamingCurrentnessDiscoverySources('Prism Siege', [rule])).toEqual([]);
+    expect(getGamingCurrentnessDiscoverySources('Prism Siege', Array.from({ length: 8 }, (_, index) => ({
+      ...base, id: `reviewed-index-${index}`, path: `/reviewed-current-${index}`
+    })))).toHaveLength(3);
+  });
+  test('filters the requested role before the bounded hint cap', () => {
+    const indexes = Array.from({ length: 3 }, (_, index) => ({ ...RULES[1], id: `index-${index}`, path: `/current-${index}` }));
+    expect(getGamingCurrentnessDiscoverySources('Prism Siege', [...indexes, RULES[3]], 'live_status')).toEqual([
+      { url: 'https://prism.test/status', ruleId: 'prism-status', role: 'live_status' }
+    ]);
+  });
+});
+
 describe('Gaming question freshness is separate from relevance and source age', () => {
+  test('an applicable conflicting live status cannot disappear behind a clean official status', () => {
+    const status = source('status', { category: 'official_status', currentness: 'live_status',
+      sourceUpdatedAt: NOW.toISOString(), platforms: ['all'], regions: ['all'] });
+    const conflict = { ...status, id: 'conflicting-status', metadataConflict: true };
+    const query = { question: 'Are the servers down now?', game: 'Prism Siege', now: NOW };
+    expect(evaluateGamingFreshness({ ...query, evidence: [status, conflict] })).toMatchObject({
+      status: 'conflicting', usable: false, reasons: expect.arrayContaining(['CONFLICTING_CURRENTNESS'])
+    });
+    expect(evaluateGamingFreshness({ ...query, platform: 'PC', evidence: [status, { ...conflict, platforms: ['PS5'] }] }))
+      .toMatchObject({ status: 'current', usable: true });
+    expect(evaluateGamingFreshness({ ...query, region: 'EU', evidence: [status, { ...conflict, regions: ['NA'] }] }))
+      .toMatchObject({ status: 'current', usable: true });
+    expect(evaluateGamingFreshness({ ...query, evidence: [status, source('unrelated-patch', { metadataConflict: true })] }))
+      .toMatchObject({ status: 'current', usable: true });
+  });
   test('an applicable conflicting official index cannot be hidden by another matching index', () => {
     const guide = source('guide', { category: 'specialist_guide', authority: 'specialist', currentness: 'none' });
     const conflict = index({ id: 'conflicting-index', metadataConflict: true });

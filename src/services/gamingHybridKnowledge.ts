@@ -8,9 +8,9 @@ import { GAMING_HYBRID_CONTRACT_VERSION, GAMING_HYBRID_LIMITS as LIMITS,
 import { resolveGamingPlayerContext, validateGamingPlayerContextInput } from '@shared/gaming/gamingPlayerContext.js';
 import { assessGamingProgressionRequest } from '@shared/gaming/gamingProgressionPolicy.js';
 import { buildGamingRecoveryResponse } from '@shared/gaming/gamingRecoveryResponse.js';
-import { assessGamingSourcePolicy, classifyGamingQuestionFreshness, evaluateGamingFreshness, GAMING_FRESHNESS_DEFAULTS, type GamingFreshnessEvidence } from '@shared/gaming/gamingFreshnessCore.js';
+import { assessGamingSourcePolicy, classifyGamingQuestionFreshness, evaluateGamingFreshness, getGamingCurrentnessDiscoverySources, GAMING_FRESHNESS_DEFAULTS, type GamingFreshnessEvidence } from '@shared/gaming/gamingFreshnessCore.js';
 import { combineGamingCurrentnessEvidence, GAMING_CURRENTNESS_ADAPTER_VERSION } from '@shared/gaming/gamingCurrentnessAdapters.js';
-import { resolveGamingHybridCandidateAttempt, projectGamingHybridCandidateRetention } from '@shared/gaming/gamingHybridPolicyCore.js';
+import { resolveGamingHybridCandidateAttempt, resolveGamingHybridCurrentnessReason, projectGamingHybridCandidateRetention } from '@shared/gaming/gamingHybridPolicyCore.js';
 import { assessGamingClearEvidence } from '@shared/gaming/gamingClearEvidence.js';
 import { gamingClearHash } from '@shared/gaming/gamingClearPolicy.js';
 import { buildStoredGamingKnowledgeContext, type GamingSourceGatewayContext } from './gamingSourceIngestion.js';
@@ -128,7 +128,8 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
       workflow.last = result.body;
       if (result.body.answer) workflow.answer = result.body.answer;
       logger.info('gaming.hybrid.handoff', { requestId: result.body.requestId, workflowId: workflow.id,
-        state: result.body.state, reason: result.body.reason, freshnessStatus: result.body.freshnessStatus,
+        state: result.body.state, nextAction: result.body.nextAction, pendingDiscovery: workflow.pendingDiscovery,
+        reason: result.body.reason, freshnessStatus: result.body.freshnessStatus,
         sourceKnown: result.body.sourceKnown, evidenceSelected: result.body.evidenceSelected, round: workflow.round,
         currentnessRound: workflow.currentnessRound, candidateCount: workflow.accepted.length });
       return result;
@@ -145,15 +146,22 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
     const input = workflow.input;
     // Deliberately omit free-form constraints and unrelated conversation/player fields.
     const scope = [input.game, input.edition, input.platform, input.region, input.requestedVersion].filter(Boolean).map(value => clean(value!)).join(' ');
-    if (type === 'currentness_verification') return [`${scope} official latest patch notes update index`.slice(0, 350),
-      `${scope} official current patch build hotfix history`.slice(0, 350)];
+    if (type === 'currentness_verification') {
+      const classification = classifyGamingQuestionFreshness(workflow.pipeline);
+      return classification === 'live_status'
+        ? [`${scope} official live server status`.slice(0, 350), `${scope} official current maintenance status`.slice(0, 350)]
+        : classification === 'seasonal'
+          ? [`${scope} official current season index`.slice(0, 350), `${scope} official season update patch build history`.slice(0, 350)]
+          : [`${scope} official latest patch notes update index`.slice(0, 350), `${scope} official current patch build hotfix history`.slice(0, 350)];
+    }
     const focus = clean(input.question).slice(0, 180);
     return [`${scope} ${focus}`.slice(0, 350), `${scope} gameplay guide ${focus}`.slice(0, 350)];
   }
   function discovery(context: GamingHybridCallContext, workflow: Workflow, body: GamingHybridResponse,
     hasGameplayEvidence = false): GamingHybridResult {
-    const currentness = hasGameplayEvidence && ['patch_sensitive', 'seasonal'].includes(classifyGamingQuestionFreshness(workflow.pipeline))
-      && ['CURRENT_OFFICIAL_INDEX_REQUIRED', 'REVALIDATION_DUE'].includes(body.reason);
+    const classification = classifyGamingQuestionFreshness(workflow.pipeline);
+    const currentness = Boolean(resolveGamingHybridCurrentnessReason({ classification, freshnessStatus: body.freshnessStatus,
+      hasGameplayEvidence, reasons: [body.reason] }));
     const type: DiscoveryType = currentness || workflow.currentnessRound > 0 ? 'currentness_verification' : 'gameplay_evidence';
     const round = type === 'currentness_verification' ? workflow.currentnessRound : workflow.round;
     const maxRounds = type === 'currentness_verification' ? LIMITS.currentnessRounds : LIMITS.discoveryRounds;
@@ -164,12 +172,21 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
       freshnessStatus: body.freshnessStatus, reasonCodes: [body.reason], policyVersion: GAMING_HYBRID_CONTRACT_VERSION,
       round, maxRounds, cacheStatus: body.reason === 'REVALIDATION_DUE' ? 'expired' : 'missing'
     });
+    if (type === 'currentness_verification' && round >= maxRounds) logger.info('gaming.currentness.exhausted', {
+      requestId: context.requestId, workflowId: workflow.id, round, maxRounds,
+      freshnessStatus: body.freshnessStatus, reasonCodes: [body.reason]
+    });
+    const reviewedSources = type === 'currentness_verification'
+      ? getGamingCurrentnessDiscoverySources(workflow.input.game, undefined, classification === 'live_status' ? 'live_status' : 'current_index')
+      : undefined;
     return { status: 200, body: { ...body, state: 'discovery_required',
       nextAction: permitted ? type === 'currentness_verification' ? 'verify_currentness' : 'search' : 'stop',
       ...(currentness ? { gameplayEvidenceStatus: permitted ? 'currentness_pending' as const : 'unverified' as const,
-        currentnessRequirements: ['official_source_required', 'current_patch_or_build_required', 'hotfix_check_required_if_supported'] as const
+        currentnessRequirements: classification === 'live_status' ? ['official_source_required', 'official_live_status_required'] as const
+          : ['official_source_required', 'current_patch_or_build_required', 'hotfix_check_required_if_supported'] as const
       } : {}),
-      discovery: { type, round, maxRounds, maxCandidates: LIMITS.candidates, searchQueries: searchQueries(workflow, type) } } };
+      discovery: { type, round, maxRounds, maxCandidates: LIMITS.candidates, searchQueries: searchQueries(workflow, type),
+        continuationRequired: permitted, ...(reviewedSources?.length ? { reviewedSources } : {}) } } };
   }
   function candidateAcquisitionOutcome(result: GamingHybridResult, decisions: GamingHybridResponse['candidates']): GamingHybridResult {
     const acquisitionReasons = new Set(['INVALID_URL', 'URL_BLOCKED', 'REDIRECT_NOT_ALLOWED', 'SOURCE_FETCH_FAILED',
@@ -299,7 +316,8 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
       ? 'gaming.currentness.conflicting' : freshness.usable ? 'gaming.currentness.verified' : 'gaming.currentness.candidate_evaluated', {
       requestId: context.requestId, workflowId: workflow.id, game: input.game.slice(0, 120),
       ruleIds: evidence.filter(item => item.authority === 'official').flatMap(item => item.ruleId ? [item.ruleId] : []).slice(0, 3),
-      adapterVersion: GAMING_CURRENTNESS_ADAPTER_VERSION, sourceRole: 'currentness_index', freshnessStatus: freshness.status,
+      adapterVersion: GAMING_CURRENTNESS_ADAPTER_VERSION, sourceRole: freshness.classification === 'live_status' ? 'live_status' : 'currentness_index',
+      freshnessStatus: freshness.status,
       effectivePatchHash: freshness.effectivePatch ? hash(freshness.effectivePatch) : undefined,
       effectiveBuildHash: freshness.effectiveBuild ? hash(freshness.effectiveBuild) : undefined,
       reasonCodes: freshness.reasons.slice(0, 8), policyVersion: freshness.policyVersion, cacheStatus: 'workflow',
@@ -359,8 +377,8 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
       ...(freshness.verifiedAsOf && !applicabilityUnverified ? { verifiedAsOf: freshness.verifiedAsOf } : {}),
       ...(freshness.effectivePatch ? { effectivePatch: freshness.effectivePatch } : {}),
       ...(freshness.effectiveBuild ? { effectiveBuild: freshness.effectiveBuild } : {}), qualification };
-    const currentnessReason = hasGameplayEvidence && ['patch_sensitive', 'seasonal'].includes(freshness.classification)
-      ? freshness.reasons.find(reason => ['CURRENT_OFFICIAL_INDEX_REQUIRED', 'REVALIDATION_DUE'].includes(reason)) : undefined;
+    const currentnessReason = resolveGamingHybridCurrentnessReason({ classification: freshness.classification,
+      freshnessStatus: freshness.status, hasGameplayEvidence, reasons: freshness.reasons });
     if (!freshness.usable || !gameplaySelected) return discovery(context, workflow,
       { ...body, reason: !knowledge.evidence?.length ? 'COVERAGE_INSUFFICIENT'
         : currentnessReason ?? freshness.reasons[0] ?? 'CURRENT_APPLICABILITY_UNVERIFIED' }, hasGameplayEvidence);
@@ -513,7 +531,11 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
         if (attempt === 'begin') {
           // Charge before yielding. A failed acquisition can resume only this payload-bound
           // operation; alternative submissions cannot spend another discovery round.
-          if (currentness) { workflow.currentnessRound += 1; workflow.currentnessOperationKey = input.idempotencyKey; }
+          if (currentness) {
+            workflow.currentnessRound += 1; workflow.currentnessOperationKey = input.idempotencyKey;
+            logger.info('gaming.currentness.operation_started', { requestId: context.requestId, workflowId: workflow.id,
+              round: workflow.currentnessRound, maxRounds: LIMITS.currentnessRounds, candidateCount: input.candidates.length });
+          }
           else { workflow.round += 1; workflow.candidateOperationKey = input.idempotencyKey; }
         }
         const evaluated = await deps.evaluateCandidates({ ...workflow.pipeline, game: workflow.input.game,

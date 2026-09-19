@@ -4,6 +4,7 @@ import { readGamingEvidenceUnits } from './gamingStructuralEvidence.js';
 import { runGamingCurrentnessAdapter, combineGamingCurrentnessEvidence, GAMING_CURRENTNESS_ADAPTER_VERSION,
   type GamingCurrentnessAdapterId, type GamingCurrentnessAdapterResult, type GamingCurrentnessDocumentMetadata } from './gamingCurrentnessAdapters.js';
 import { evaluateGamingGuideApplicability, isGamingGameplayFreshnessEvidence, type GamingGuideApplicability } from './gamingGuideApplicability.js';
+import { sanitizeGamingSourceUrl } from './gamingSourceAcquisitionCore.js';
 
 export const GAMING_FRESHNESS_POLICY_VERSION = 'gaming-hybrid-freshness-v1';
 export const GAMING_SOURCE_POLICY_VERSION = 'gaming-hybrid-source-policy-v2';
@@ -85,6 +86,31 @@ export function assessGamingSourcePolicy(url: string, game: string,
   return { policyVersion: GAMING_SOURCE_POLICY_VERSION, ruleId: rule.id, category: rule.category, authority,
     currentness: rule.currentness, durableAllowed,
     autoStoreAllowed: durableAllowed && rule.autoStoreAllowed && authority === 'official' };
+}
+
+/** Reviewed starting points for discovery only. Acquisition and adapter verification remain mandatory. */
+export function getGamingCurrentnessDiscoverySources(game: string,
+  rules: readonly GamingReviewedSourceRule[] = REVIEWED_GAMING_SOURCE_RULES,
+  role?: 'current_index' | 'live_status'
+): Array<{ url: string; ruleId: string; role: 'current_index' | 'live_status' }> {
+  const sources: Array<{ url: string; ruleId: string; role: 'current_index' | 'live_status' }> = [];
+  for (const rule of rules.slice(0, 100)) {
+    if (sources.length >= 3) break;
+    if (normalizeGamingGameIdentity(rule.game) !== normalizeGamingGameIdentity(game) || rule.pathMatch !== 'exact'
+      || role !== undefined && rule.currentness !== role
+      || !['current_index', 'live_status'].includes(rule.currentness) || !rule.hosts.length
+      || !rule.path.startsWith('/') || rule.path.startsWith('//') || /[?#]/u.test(rule.path)) continue;
+    const url = `https://${rule.hosts[0]}${rule.path}`;
+    const admission = sanitizeGamingSourceUrl(url, 2_048);
+    if (admission.rejected || admission.url !== url) continue;
+    const policy = assessGamingSourcePolicy(url, game, rules);
+    if (policy.ruleId !== rule.id || policy.authority !== 'official'
+      || !(policy.category === 'official_updates' && policy.currentness === 'current_index'
+        || policy.category === 'official_status' && policy.currentness === 'live_status')
+      || sources.some(source => source.url === url)) continue;
+    sources.push({ url, ruleId: rule.id, role: policy.currentness as 'current_index' | 'live_status' });
+  }
+  return sources;
 }
 
 export interface GamingFreshnessEvidence extends GamingSourcePolicyAssessment {
@@ -359,7 +385,9 @@ export function evaluateGamingFreshness(input: GamingFreshnessEvaluationInput): 
     if (!historical && until !== undefined && until <= now) { reasons.add('NO_LONGER_EFFECTIVE'); return false; }
     if (item.metadataConflict || item.currentnessMetadata?.status === 'conflicting') {
       reasons.add('CONTRADICTORY_SOURCE_METADATA');
-      if (item.authority === 'official' && item.category === 'official_updates') conflictingOfficialCurrentness = true;
+      if (item.authority === 'official' && (item.category === 'official_updates' && classification !== 'live_status'
+        || item.category === 'official_status' && item.currentness === 'live_status' && classification === 'live_status'))
+        conflictingOfficialCurrentness = true;
       return false;
     }
     if (item.metadataUnverified) { reasons.add('APPLICABILITY_METADATA_UNVERIFIED'); return false; }
@@ -368,7 +396,7 @@ export function evaluateGamingFreshness(input: GamingFreshnessEvaluationInput): 
   });
   // An applicable official contradiction cannot disappear merely because another
   // index agrees with a guide. Historical and static evidence retain their own scope.
-  if (conflictingOfficialCurrentness && !historical && (classification === 'patch_sensitive' || classification === 'seasonal'))
+  if (conflictingOfficialCurrentness && !historical && ['patch_sensitive', 'seasonal', 'live_status'].includes(classification))
     return result('conflicting', ['CONFLICTING_CURRENTNESS', ...reasons]);
   if (!scoped.length) return result(reasons.has('CONTRADICTORY_SOURCE_METADATA') ? 'conflicting' : 'not_applicable', [...reasons]);
   const recent = (item: GamingFreshnessEvidence, age: number): boolean => {

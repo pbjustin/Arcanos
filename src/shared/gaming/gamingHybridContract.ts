@@ -59,11 +59,13 @@ export interface GamingHybridResponse {
   applicabilityStatus?: 'verified_current' | 'partially_verified' | 'stale' | 'conflicting' | 'unverified';
   gameplayEvidenceStatus?: 'accepted_transient' | 'currentness_pending' | 'freshness_verified' | 'stale' | 'unverified';
   acceptedGameplayCandidateCount?: number;
-  currentnessRequirements?: Array<'official_source_required' | 'current_patch_or_build_required' | 'hotfix_check_required_if_supported'>;
+  currentnessRequirements?: Array<'official_source_required' | 'current_patch_or_build_required' | 'hotfix_check_required_if_supported' | 'official_live_status_required'>;
   qualification?: string;
   clarification?: string;
-  discovery?: { type?: 'gameplay_evidence' | 'currentness_verification'; round: number; maxRounds: number; maxCandidates: number; searchQueries: string[] };
-  candidates?: Array<{ candidateId?: string; url?: string; decision: string; reasonCodes: string[]; sourceCategory?: string }>;
+  discovery?: { type?: 'gameplay_evidence' | 'currentness_verification'; round: number; maxRounds: number; maxCandidates: number; searchQueries: string[];
+    continuationRequired?: boolean; reviewedSources?: Array<{ url: string; ruleId: string; role: 'current_index' | 'live_status' }> };
+  candidates?: Array<{ candidateId?: string; url?: string; decision: string; reasonCodes: string[]; sourceCategory?: string;
+    origin?: 'submitted' | 'required_official_article' }>;
   answer?: { response: string; sources: Array<{ url: string; title?: string; sourceId?: string; patchVersion?: string; fetchedAt?: string }>; provenance: 'arcanos-trinity'; requestId: string };
   ingestion?: { ingestionId: string; status: string; statusUrl: string; maxPolls: number };
 }

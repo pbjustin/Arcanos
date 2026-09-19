@@ -4,6 +4,7 @@ import { GAMING_HYBRID_CONTRACT_VERSION as contractVersion } from '../src/shared
 import { GAMING_SOURCE_POLICY_VERSION } from '../src/shared/gaming/gamingFreshnessCore.js';
 import { GAMING_CURRENTNESS_ADAPTER_VERSION } from '../src/shared/gaming/gamingCurrentnessAdapters.js';
 import { gamingClearHash } from '../src/shared/gaming/gamingClearPolicy.js';
+import { resolveGamingHybridCurrentnessReason } from '../src/shared/gaming/gamingHybridPolicyCore.js';
 import type { GamingStoredKnowledgeContext } from '../src/services/gamingStoredKnowledge.js';
 
 const now = Date.now();
@@ -60,10 +61,15 @@ describe('bounded official currentness corroboration', () => {
     const found = await workflow.candidates(submit(first.body.workflowId!, 'gameplay_evidence'), context);
     expect(found.body).toMatchObject({ state: 'discovery_required', nextAction: 'verify_currentness',
       sourceKnown: true, evidenceSelected: false, acceptedGameplayCandidateCount: 1, gameplayEvidenceStatus: 'currentness_pending',
-      discovery: { type: 'currentness_verification', round: 0, maxRounds: 1, maxCandidates: 3 } });
+      discovery: { type: 'currentness_verification', round: 0, maxRounds: 1, maxCandidates: 3, continuationRequired: true,
+        reviewedSources: [{ url: indexUrl, ruleId: 'elden-ring-update-index', role: 'current_index' }] } });
     expect(found.body.candidates?.filter(item => item.decision === 'rejected')).toHaveLength(2);
     expect(found.body.currentnessRequirements).toContain('official_source_required');
     expect(generate).not.toHaveBeenCalled();
+    const replay = await workflow.query({ ...query, idempotencyKey: 'pending-currentness-new-query' }, context);
+    expect(replay.body.workflowId).toBe(first.body.workflowId);
+    expect(replay.body.discovery).toEqual(found.body.discovery);
+    expect(replay.body.nextAction).toBe('verify_currentness');
     const official = submit(first.body.workflowId!, 'currentness_verification');
     const verified = await workflow.candidates(official, context);
     expect(verified.body).toMatchObject({ state: 'answer_ready', nextAction: 'answer', freshnessStatus: 'current',
@@ -81,10 +87,79 @@ describe('bounded official currentness corroboration', () => {
     await test.workflow.candidates(test.submit(first.body.workflowId!, 'gameplay_evidence'), context);
     const final = await test.workflow.candidates(test.submit(first.body.workflowId!, 'currentness_verification'), context);
     expect(final.body.nextAction).toBe('stop');
+    expect(final.body.discovery).toMatchObject({ continuationRequired: false, round: 1, maxRounds: 1 });
     expect(final.body.answer).toBeUndefined();
     expect(test.generate).not.toHaveBeenCalled();
     expect((await test.workflow.candidates(test.submit(first.body.workflowId!, 'gameplay_evidence', 'another-guide'), context)).status).toBe(409);
     expect((await test.workflow.candidates(test.submit(first.body.workflowId!, 'currentness_verification', 'another-index'), context)).status).toBe(409);
+  });
+  it('continues missing build verification when an official patch index is already retained', async () => {
+    const test = setup();
+    Object.assign(test.guide.freshness, { build: '1.10.1' });
+    test.retrieve.mockResolvedValueOnce({ ...empty, sourceKnown: true, sources: [{ sourceId: 'stored-official-index',
+      url: indexUrl, sourceType: 'official_updates', fetchedAt: test.index.freshness.fetchedAt,
+      snippet: 'Official current patch index.', freshnessMetadata: { ...test.index.freshness, id: 'stored-official-index' } }] });
+    const first = await test.workflow.query(query, context);
+    const found = await test.workflow.candidates(test.submit(first.body.workflowId!, 'gameplay_evidence'), context);
+    expect(found.body).toMatchObject({ nextAction: 'verify_currentness', reason: 'CURRENT_BUILD_UNVERIFIED',
+      acceptedGameplayCandidateCount: 1, discovery: { type: 'currentness_verification', round: 0, continuationRequired: true } });
+    expect(test.generate).not.toHaveBeenCalled();
+    Object.assign(test.index.freshness, { currentBuild: '1.10.1' });
+    const verified = await test.workflow.candidates(test.submit(first.body.workflowId!, 'currentness_verification'), context);
+    expect(verified.body).toMatchObject({ state: 'answer_ready', effectiveBuild: '1.10.1' });
+    expect(test.generate).toHaveBeenCalledTimes(1);
+  });
+  it('provides seasonal discovery queries and verifies the retained guide against the official season', async () => {
+    const test = setup();
+    Object.assign(test.guide.freshness, { season: 'Autumn' });
+    Object.assign(test.index.freshness, { currentSeason: 'Autumn', season: 'Autumn' });
+    const first = await test.workflow.query({ ...query, question: 'What is a good mage build for the current season?' }, context);
+    const found = await test.workflow.candidates(test.submit(first.body.workflowId!, 'gameplay_evidence'), context);
+    expect(found.body).toMatchObject({ nextAction: 'verify_currentness', reason: 'CURRENT_OFFICIAL_INDEX_REQUIRED',
+      discovery: { continuationRequired: true, round: 0, maxRounds: 1 } });
+    expect(found.body.discovery?.searchQueries.every(value => value.includes('season') && value.length <= 350)).toBe(true);
+    expect(test.generate).not.toHaveBeenCalled();
+    expect((await test.workflow.candidates(test.submit(first.body.workflowId!, 'currentness_verification'), context)).body)
+      .toMatchObject({ state: 'answer_ready', freshnessStatus: 'current', applicabilityStatus: 'verified_current' });
+    expect(test.generate).toHaveBeenCalledTimes(1);
+  });
+  it('continues a live-status request through one separately budgeted official status operation', async () => {
+    const test = setup();
+    const liveQuery = { ...query, mode: 'guide', question: 'Are Elden Ring servers down now?' };
+    const first = await test.workflow.query(liveQuery, context);
+    const found = await test.workflow.candidates(test.submit(first.body.workflowId!, 'gameplay_evidence'), context);
+    expect(found.body).toMatchObject({ state: 'discovery_required', nextAction: 'verify_currentness',
+      reason: 'LIVE_OFFICIAL_STATUS_REQUIRED', currentnessRequirements: ['official_source_required', 'official_live_status_required'],
+      discovery: { type: 'currentness_verification', round: 0, maxRounds: 1, continuationRequired: true } });
+    expect(found.body.discovery?.searchQueries.every(value => value.includes('status'))).toBe(true);
+    expect(found.body.discovery?.reviewedSources).toBeUndefined();
+    expect(test.generate).not.toHaveBeenCalled();
+    const statusUrl = 'https://status.example.org/elden-ring';
+    const statusText = 'Elden Ring servers are down now for planned maintenance. This official live server status reports the current outage and login availability. Maintenance is active and servers remain offline until the next official status update.';
+    const status = { ...test.index, publicUrl: statusUrl, document: { text: statusText }, freshness: { ...test.index.freshness,
+      url: statusUrl, currentness: 'live_status', category: 'official_status', sourceUpdatedAt: new Date(now).toISOString(),
+      durableAllowed: false, autoStoreAllowed: false } };
+    test.evaluateCandidates.mockResolvedValueOnce({ accepted: [status], decisions: [{ candidateId: indexId,
+      decision: 'accepted_transient', reasonCodes: ['VALIDATED_RELEVANT_CONTENT'] }], knowledge: { context: '', sourceKnown: true,
+      sources: [{ sourceId: indexId, url: statusUrl, sourceType: 'official_status', fetchedAt: status.freshness.fetchedAt, snippet: statusText }],
+      evidence: [{ sourceId: indexId, revisionId: 'status-revision', recordId: 'status-record', recordType: 'guide',
+        publicUrl: statusUrl, text: statusText, lexicalScore: 1, combinedScore: 1, provenance: { fetchedAt: status.freshness.fetchedAt } }] } } as any);
+    const official = { ...test.submit(first.body.workflowId!, 'currentness_verification'), candidates: [{ url: statusUrl }] };
+    const verified = await test.workflow.candidates(official, context);
+    expect(verified.body).toMatchObject({ state: 'answer_ready', nextAction: 'answer', freshnessStatus: 'current' });
+    expect(await test.workflow.candidates(official, context)).toEqual(verified);
+    expect((await test.workflow.candidates({ ...official, idempotencyKey: 'second-live-operation' }, context)).status).toBe(409);
+    expect(test.evaluateCandidates).toHaveBeenCalledTimes(2);
+    expect(test.generate).toHaveBeenCalledTimes(1);
+  });
+  it('does not turn a conflicting release or stale guide into another currentness operation', () => {
+    const input = { classification: 'patch_sensitive' as const, freshnessStatus: 'unverified' as const, hasGameplayEvidence: true,
+      reasons: ['CURRENT_BUILD_UNVERIFIED'] };
+    expect(resolveGamingHybridCurrentnessReason(input)).toBe('CURRENT_BUILD_UNVERIFIED');
+    expect(resolveGamingHybridCurrentnessReason({ ...input, freshnessStatus: 'conflicting' })).toBeUndefined();
+    expect(resolveGamingHybridCurrentnessReason({ ...input, reasons: ['CURRENT_PATCH_COVERAGE_MISSING', 'GUIDE_PATCH_STALE'] })).toBeUndefined();
+    expect(resolveGamingHybridCurrentnessReason({ ...input, classification: 'stable', reasons: ['REVALIDATION_DUE'] })).toBeUndefined();
+    expect(resolveGamingHybridCurrentnessReason({ ...input, hasGameplayEvidence: false })).toBeUndefined();
   });
   it('infers an omitted legacy operation type from server state without granting extra rounds', async () => {
     const test = setup();
