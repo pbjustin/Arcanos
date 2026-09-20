@@ -48,6 +48,15 @@ describe('DAG metrics retention', () => {
       dagMetrics.recordGauge('queued_nodes', observation % 7);
     }
 
+    // Check retained state before snapshot() so read-time trimming cannot hide history.
+    const storage = retainedDurations(dagMetrics);
+    expect(storage.size).toBe(2);
+    expect([...storage.values()].every(value => typeof value === 'number')).toBe(true);
+    expect(Object.fromEntries(storage)).toEqual({
+      node_execution: 10_000,
+      node_execution_failed: 20_000
+    });
+
     const snapshot = dagMetrics.snapshot();
     expect(snapshot.counters).toEqual({ node_success: 10_000, node_failure: 20_000 });
     expect(snapshot.gauges).toEqual({ queued_nodes: 4 });
@@ -62,14 +71,6 @@ describe('DAG metrics retention', () => {
     expect(snapshot.durationsMs).toEqual({
       node_execution: [10_000],
       node_execution_failed: [20_000]
-    });
-
-    const storage = retainedDurations(dagMetrics);
-    expect(storage.size).toBe(2);
-    expect([...storage.values()].every(value => typeof value === 'number')).toBe(true);
-    expect(Object.fromEntries(storage)).toEqual({
-      node_execution: 10_000,
-      node_execution_failed: 20_000
     });
 
     for (let observation = 1; observation <= observationsPerSeries; observation += 1) {

@@ -46,6 +46,9 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Build compiled runtime fixtures
+        run: npm run build
+
       - name: Tests
         run: npm test
 

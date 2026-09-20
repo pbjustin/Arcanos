@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-20T18:10:19.815Z",
+  "generatedAt": "2026-09-20T22:34:44.985Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -4529,6 +4529,9 @@
         },
         {
           "relativePath": "tests/integration/dag-snapshot-generation.pg18.integration.test.ts"
+        },
+        {
+          "relativePath": "tests/integration/dag-worker-metrics.integration.test.ts"
         },
         {
           "relativePath": "tests/integration/gaming-durable-rag.pg18.integration.test.ts"
