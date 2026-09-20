@@ -3,6 +3,7 @@ import { healthMetrics } from '../platform/logging/logger.js';
 export interface DagMetricsSnapshot {
   counters: Record<string, number>;
   gauges: Record<string, number>;
+  /** Latest duration per metric name, wrapped in an array for snapshot compatibility. */
   durationsMs: Record<string, number[]>;
 }
 
@@ -16,7 +17,7 @@ export interface DagMetricsRecorder {
 class InMemoryDagMetricsRecorder implements DagMetricsRecorder {
   private readonly counters = new Map<string, number>();
   private readonly gauges = new Map<string, number>();
-  private readonly durationsMs = new Map<string, number[]>();
+  private readonly durationsMs = new Map<string, number>();
 
   incrementCounter(metricName: string, amount: number = 1): void {
     const currentValue = this.counters.get(metricName) ?? 0;
@@ -31,9 +32,8 @@ class InMemoryDagMetricsRecorder implements DagMetricsRecorder {
   }
 
   recordDuration(metricName: string, durationMs: number): void {
-    const existingDurations = this.durationsMs.get(metricName) ?? [];
-    const nextDurations = [...existingDurations, durationMs];
-    this.durationsMs.set(metricName, nextDurations);
+    // The worker singleton retains one value per fixed metric name, never job history.
+    this.durationsMs.set(metricName, durationMs);
     healthMetrics.record(`dag.duration.${metricName}`, durationMs);
   }
 
@@ -41,7 +41,9 @@ class InMemoryDagMetricsRecorder implements DagMetricsRecorder {
     return {
       counters: Object.fromEntries(this.counters.entries()),
       gauges: Object.fromEntries(this.gauges.entries()),
-      durationsMs: Object.fromEntries(this.durationsMs.entries())
+      durationsMs: Object.fromEntries(
+        Array.from(this.durationsMs, ([metricName, durationMs]) => [metricName, [durationMs]])
+      )
     };
   }
 }
