@@ -22,6 +22,7 @@ import {
   isIosGatewayPreviewRoute,
 } from './shared/ios/iosGatewayPreviewFixture.js';
 import { runIosDevicePolicyPreview } from './shared/ios/iosDevicePreviewFixture.js';
+import { assertDagMetricsRetentionPreviewFixture } from './shared/dag/dagMetricsPreviewFixture.js';
 
 import {
   createGenericJobsRouter,
@@ -41,6 +42,7 @@ import {
   NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT,
   NATIVE_PR_PREVIEW_BACKSTAGE_BOOKER_OPENAPI_CONTRACT,
   NATIVE_PR_PREVIEW_DISPATCH_GPT_IDENTIFIER_CONTRACT,
+  NATIVE_PR_PREVIEW_DAG_METRICS_CONTRACT,
   NATIVE_PR_PREVIEW_FIXTURE_IDS,
   NATIVE_PR_PREVIEW_IOS_DEVICE_CONTRACT,
   NATIVE_PR_PREVIEW_GAMING_CONTRACT,
@@ -9282,12 +9284,15 @@ export function createNativePrPreviewApplication(
       && options.readinessState.fixturesSealed
       && !options.readinessState.draining;
     // Preserve the trusted verifier's response contract while requiring the
-    // deployed device policy fixture before readiness can claim success.
+    // deployed device policy and DAG metrics fixtures before readiness can claim success.
     if (ready) {
       try {
         runIosDevicePolicyPreview();
+        assertDagMetricsRetentionPreviewFixture();
         response.setHeader(NATIVE_PR_PREVIEW_IOS_DEVICE_CONTRACT.proofHeader,
           NATIVE_PR_PREVIEW_IOS_DEVICE_CONTRACT.proofVersion);
+        response.setHeader(NATIVE_PR_PREVIEW_DAG_METRICS_CONTRACT.proofHeader,
+          NATIVE_PR_PREVIEW_DAG_METRICS_CONTRACT.proofVersion);
       } catch {
         ready = false;
       }

@@ -346,6 +346,57 @@ function replaceRequired(sourceText, expected, replacement) {
 }
 
 describe('native PR preview import boundary', () => {
+  it('admits only the reviewed pure DAG recorder and fixture without runtime metrics or workers', async () => {
+    const reviewedFiles = [
+      'src/shared/dag/dagMetricsCore.ts',
+      'src/shared/dag/dagMetricsPreviewFixture.ts',
+    ];
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES.filter(filePath =>
+      filePath.startsWith('src/shared/dag/')
+    )).toEqual(reviewedFiles);
+    for (const forbiddenFile of [
+      'src/utils/metrics.ts',
+      'src/platform/logging/logger.ts',
+      'src/workers/jobRunner.ts',
+      'src/workers/taskRunners.ts',
+    ]) {
+      expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toContain(forbiddenFile);
+      const analyzeDependencies = async () => ({
+        obj: () => Object.fromEntries(
+          [...NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES, forbiddenFile]
+            .map(filePath => [filePath, []])
+        ),
+        warnings: () => ({ skipped: [] }),
+      });
+      await expect(findNativePrPreviewImportViolations({ analyzeDependencies }))
+        .resolves.toContain(`unreviewed preview import: ${forbiddenFile}`);
+    }
+  }, 30_000);
+
+  it.each([
+    'src/shared/dag/dagMetricsCore.ts',
+    'src/shared/dag/dagMetricsPreviewFixture.ts',
+  ])('rejects semantic drift and ambient effects in DAG preview dependency %s', async filePath => {
+    const sourceText = await readFile(new URL(`../${filePath}`, import.meta.url), 'utf8');
+    expect(findUnsafeRuntimeSyntax(filePath, sourceText)).toEqual([]);
+    const semanticDrift = filePath.endsWith('/dagMetricsCore.ts')
+      ? replaceRequired(sourceText,
+        'this.durationsMs.set(metricName, durationMs);',
+        'this.durationsMs.set(`${metricName}.${this.durationsMs.size}`, durationMs);')
+      : replaceRequired(sourceText,
+        'if (!condition) throw new Error(FAILURE);',
+        'if (false) throw new Error(FAILURE);');
+    for (const unreviewedSource of [
+      semanticDrift,
+      `${sourceText}\nfetch('https://unreviewed.invalid');\n`,
+      `${sourceText}\nprocess.env.DAG_METRICS_FIXTURE_MUTATION = 'enabled';\n`,
+    ]) {
+      expect(findUnsafeRuntimeSyntax(filePath, unreviewedSource)).toEqual(
+        expect.arrayContaining([expect.stringContaining('critical entry file semantic digest')])
+      );
+    }
+  });
+
   it.each([
     'src/services/actionPlanExecution/canonical.ts',
     'src/shared/security/gptAccessDevice.ts',

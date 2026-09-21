@@ -4188,6 +4188,13 @@ async function executeRequestCase(
     fail('NATIVE_PR_PREVIEW_IOS_DEVICE_POLICY_PROOF_INVALID', requestCase.caseId);
   }
   if (
+    requestCase.expectedType === 'web-readiness'
+    && response.headers.get(NATIVE_PR_PREVIEW_E2E_CONTRACT.dagMetricsRetention.proofHeader)
+      !== NATIVE_PR_PREVIEW_E2E_CONTRACT.dagMetricsRetention.proofVersion
+  ) {
+    fail('NATIVE_PR_PREVIEW_DAG_METRICS_RETENTION_PROOF_INVALID', requestCase.caseId);
+  }
+  if (
     (
       requestCase.expectedType === 'gaming-source'
       || requestCase.expectedType === 'dispatch-gpt-identifier-contract'
@@ -4693,7 +4700,12 @@ async function executeRequestCase(
       ? { workerBudgetReadinessVerified: true }
       : {}),
     ...(requestCase.expectedType === 'web-readiness'
-      ? { iosDevicePolicyVerified: true }
+      ? {
+          iosDevicePolicyVerified: true,
+          dagMetricsRetentionVerified: true,
+          dagMetricsRetentionProofVersion:
+            NATIVE_PR_PREVIEW_E2E_CONTRACT.dagMetricsRetention.proofVersion,
+        }
       : {}),
     ...(generationProofStartedAt === null
       ? {}

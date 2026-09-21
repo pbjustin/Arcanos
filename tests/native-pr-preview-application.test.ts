@@ -1,16 +1,15 @@
-import { describe, expect, it } from '@jest/globals';
+import { describe, expect, it, jest } from '@jest/globals';
 import request from 'supertest';
 
-import {
-  createNativePrPreviewApplication,
-  createNativePrPreviewReadinessState,
-} from '../src/nativePrPreviewApplication.js';
+import { assertDagMetricsRetentionPreviewFixture } from '../src/shared/dag/dagMetricsPreviewFixture.js';
 import {
   NATIVE_PR_PREVIEW_BACKSTAGE_BOOKER_OPENAPI_CONTRACT,
   NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT,
   NATIVE_PR_PREVIEW_BACKSTAGE_STORYLINE_CONTRACT,
   NATIVE_PR_PREVIEW_DISPATCH_GPT_IDENTIFIER_CONTRACT,
+  NATIVE_PR_PREVIEW_DAG_METRICS_CONTRACT,
   NATIVE_PR_PREVIEW_FIXTURE_IDS,
+  NATIVE_PR_PREVIEW_IOS_DEVICE_CONTRACT,
   NATIVE_PR_PREVIEW_GAMING_CONTRACT,
   NATIVE_PR_PREVIEW_GAMING_SOURCES_CONTRACT,
   NATIVE_PR_PREVIEW_MCP_BODY_CAP_CONTRACT,
@@ -23,6 +22,15 @@ import {
 import {
   resolveNativePrPreviewChildEnvironment,
 } from '../src/start-native-pr-preview.js';
+
+const assertDagMetricsFixture = jest.fn(assertDagMetricsRetentionPreviewFixture);
+jest.unstable_mockModule('../src/shared/dag/dagMetricsPreviewFixture.js', () => ({
+  assertDagMetricsRetentionPreviewFixture: assertDagMetricsFixture,
+}));
+const {
+  createNativePrPreviewApplication,
+  createNativePrPreviewReadinessState,
+} = await import('../src/nativePrPreviewApplication.js');
 
 const identity = {
   prNumber: 1413,
@@ -578,6 +586,8 @@ describe('native PR contained application', () => {
 
     expect(response.status).toBe(200);
     expectNoStore(response);
+    expect(response.headers[NATIVE_PR_PREVIEW_DAG_METRICS_CONTRACT.proofHeader])
+      .toBe(NATIVE_PR_PREVIEW_DAG_METRICS_CONTRACT.proofVersion);
     expect(response.body).toEqual({
       applicationImported: true,
       fixturesSealed: true,
@@ -653,6 +663,63 @@ describe('native PR contained application', () => {
     const draining = await request(app).get('/readyz');
     expect(draining.status).toBe(503);
     expectNoStore(draining);
+  });
+
+  it('requires successful DAG metrics proof for GET and HEAD readiness without changing the body', async () => {
+    const assertFixture = assertDagMetricsFixture;
+    try {
+      const readinessState = createNativePrPreviewReadinessState();
+      const app = createNativePrPreviewApplication({ identity, readinessState });
+      const header = NATIVE_PR_PREVIEW_DAG_METRICS_CONTRACT.proofHeader;
+
+      for (const method of ['get', 'head'] as const) {
+        const pending = await request(app)[method]('/readyz');
+        expect(pending.status).toBe(503);
+        expect(pending.headers[header]).toBeUndefined();
+      }
+      expect(assertFixture).not.toHaveBeenCalled();
+
+      Object.assign(readinessState, {
+        ready: true, applicationImported: true, fixturesSealed: true,
+      });
+      const ready = await request(app).get('/readyz');
+      const head = await request(app).head('/readyz');
+      expect(ready.status).toBe(200);
+      expect(head.status).toBe(200);
+      expect(ready.headers[header]).toBe(NATIVE_PR_PREVIEW_DAG_METRICS_CONTRACT.proofVersion);
+      expect(head.headers[header]).toBe(NATIVE_PR_PREVIEW_DAG_METRICS_CONTRACT.proofVersion);
+      expect(head.text).toBeUndefined();
+      expect(assertFixture).toHaveBeenCalledTimes(2);
+
+      assertFixture.mockImplementation(() => {
+        throw new Error('DAG metrics fixture failure must not be reflected.');
+      });
+      for (const method of ['get', 'head'] as const) {
+        const failed = await request(app)[method]('/readyz');
+        expect(failed.status).toBe(503);
+        expectNoStore(failed);
+        expect(failed.headers[header]).toBeUndefined();
+        expect(failed.headers[NATIVE_PR_PREVIEW_IOS_DEVICE_CONTRACT.proofHeader])
+          .toBeUndefined();
+        expect(JSON.stringify(failed.body)).not.toContain('fixture failure');
+        if (method === 'get') {
+          expect(failed.body).toEqual({ ...ready.body, ready: false });
+        }
+      }
+      expect(assertFixture).toHaveBeenCalledTimes(4);
+      readinessState.draining = true;
+      expect((await request(app).get('/readyz')).status).toBe(503);
+      expect(assertFixture).toHaveBeenCalledTimes(4);
+
+      readinessState.draining = false;
+      assertFixture.mockImplementation(assertDagMetricsRetentionPreviewFixture);
+      const recovered = await request(app).get('/readyz');
+      expect(recovered.status).toBe(200);
+      expect(recovered.body).toEqual(ready.body);
+      expect(recovered.headers[header]).toBe(NATIVE_PR_PREVIEW_DAG_METRICS_CONTRACT.proofVersion);
+    } finally {
+      assertFixture.mockImplementation(assertDagMetricsRetentionPreviewFixture);
+    }
   });
 
   it('executes the real generic job handlers against immutable synthetic fixtures', async () => {

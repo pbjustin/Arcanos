@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-20T22:34:44.985Z",
+  "generatedAt": "2026-09-21T00:14:42.693Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -2636,6 +2636,12 @@
           "relativePath": "src/shared/dag/dagExecutionRouting.ts"
         },
         {
+          "relativePath": "src/shared/dag/dagMetricsCore.ts"
+        },
+        {
+          "relativePath": "src/shared/dag/dagMetricsPreviewFixture.ts"
+        },
+        {
           "relativePath": "src/shared/dispatch/dispatchGptIdentifierBoundary.ts"
         },
         {
@@ -3947,6 +3953,9 @@
         },
         {
           "relativePath": "tests/dag-http-boundary.test.ts"
+        },
+        {
+          "relativePath": "tests/dag-metrics-preview-fixture.test.ts"
         },
         {
           "relativePath": "tests/dag-metrics.test.ts"
