@@ -90,6 +90,8 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/shared/backstage/backstageStoryline.ts',
   'src/shared/backstage/backstageUniverseReadProjection.ts',
   'src/shared/dispatch/dispatchGptIdentifierBoundary.ts',
+  'src/shared/dag/dagMetricsCore.ts',
+  'src/shared/dag/dagMetricsPreviewFixture.ts',
   'src/shared/dispatch/universalDispatch.ts',
   'src/shared/gpt/gptIdentifier.ts',
   'src/shared/gpt/gptAsyncWaitPolicy.ts',
@@ -740,6 +742,8 @@ const CRITICAL_RUNTIME_FUNCTION_DIGESTS = new Map([
   ],
 ]);
 const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
+  ['src/shared/dag/dagMetricsCore.ts', '218990792ca3d3cb72600c48db1f0a61d8321a6fb6c4be5bee895a88a1babffb'],
+  ['src/shared/dag/dagMetricsPreviewFixture.ts', 'a95a64a249b14c04fc90840004ce3138f1e60eba614e2c37ddfa99e484d600a7'],
   ['src/services/actionPlanExecution/canonical.ts', 'b0c24aa5b6d3b588c7970008049bdcacccab8e66cbaa26a51eea49e59811c917'],
   ['src/shared/security/gptAccessDevice.ts', '4f125ee645d846e9a00a6e3ccd92d26dbcbd3710a2f5cfae445bbc1376bcd100'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/security/gptAccessDevicePolicyCore.ts', '82e9adfaba37b14ad163b5f33f75944dc2565e46697d5a89dcdc9c3027724516'], // gitleaks:allow -- public source semantic SHA-256

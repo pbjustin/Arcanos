@@ -107,8 +107,9 @@ describePg('paired-device PostgreSQL transactions', () => {
   test('concurrent rotation permits one replacement and invalidates the old digest', async () => {
     const pair = await seedPairing();
     const device = await withTransaction(client => consumeGptAccessPairingWithClient(client, pair.hash, newDevice(pair.now), pair.now, origin));
+    const now = Date.now();
     const results = await Promise.allSettled([1, 2].map(() => withTransaction(client => rotateGptAccessDeviceWithClient(
-      client, device.credentialHash, hashGptAccessDeviceSecret(randomUUID()), new Date().toISOString(), new Date(Date.now() + 3600_000).toISOString()
+      client, device.credentialHash, hashGptAccessDeviceSecret(randomUUID()), new Date(now).toISOString(), new Date(now + 3600_000).toISOString()
     ))));
     expect(results.filter(value => value.status === 'fulfilled')).toHaveLength(1);
     expect(results.find(value => value.status === 'rejected')).toMatchObject({ reason: { code: 'DEVICE_AUTH_INVALID' } });

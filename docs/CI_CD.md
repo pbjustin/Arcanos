@@ -17,7 +17,13 @@ Core workflows to review first:
   fixture. It builds `ArcanosDeviceE2E`, runs real HTTP/authentication/queue/SQL
   paths with synthetic provider/executor boundaries, and retains only the
   sanitized proof JSON after success. See the [fixture procedure](../clients/ios/README.md#device-gateway-and-postgresql-end-to-end-fixture).
-- [PR CI](../.github/workflows/pr-ci.yml)
+- [PR CI](../.github/workflows/pr-ci.yml): builds the backend before Jest so the
+  compiled DAG metrics fixture exercises emitted runtime modules. To run this
+  fixture locally, use `npm run build`, then
+  `node scripts/run-jest.mjs --runTestsByPath tests/dag-metrics-runtime.test.js tests/integration/dag-worker-metrics.integration.test.ts --coverage=false --runInBand`.
+  The fixtures cover worker dispatch and compiled task-runner metrics with real
+  filesystem artifacts and synthetic queue/provider boundaries; they do not
+  establish live PostgreSQL queue behavior or production memory usage.
 - [iOS client](../.github/workflows/ios-client.yml): canonical Gateway/Swift drift,
   Swift package tests with Xcode 26.3, and an unsigned iOS Simulator build. These
   checks use synthetic credentials and do not deploy or validate a physical iPhone.

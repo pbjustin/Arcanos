@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-15T04:24:08.398Z",
+  "generatedAt": "2026-09-21T00:14:42.693Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -2636,6 +2636,12 @@
           "relativePath": "src/shared/dag/dagExecutionRouting.ts"
         },
         {
+          "relativePath": "src/shared/dag/dagMetricsCore.ts"
+        },
+        {
+          "relativePath": "src/shared/dag/dagMetricsPreviewFixture.ts"
+        },
+        {
           "relativePath": "src/shared/dispatch/dispatchGptIdentifierBoundary.ts"
         },
         {
@@ -3949,6 +3955,12 @@
           "relativePath": "tests/dag-http-boundary.test.ts"
         },
         {
+          "relativePath": "tests/dag-metrics-preview-fixture.test.ts"
+        },
+        {
+          "relativePath": "tests/dag-metrics.test.ts"
+        },
+        {
           "relativePath": "tests/dag-node-prompt-bridge.test.ts"
         },
         {
@@ -4526,6 +4538,9 @@
         },
         {
           "relativePath": "tests/integration/dag-snapshot-generation.pg18.integration.test.ts"
+        },
+        {
+          "relativePath": "tests/integration/dag-worker-metrics.integration.test.ts"
         },
         {
           "relativePath": "tests/integration/gaming-durable-rag.pg18.integration.test.ts"
@@ -5249,6 +5264,9 @@
         },
         {
           "relativePath": "tests/system-state.route.test.ts"
+        },
+        {
+          "relativePath": "tests/task-runners-metrics.test.ts"
         },
         {
           "relativePath": "tests/task-runners.test.ts"
