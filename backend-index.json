@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-22T00:12:44.077Z",
+  "generatedAt": "2026-09-22T01:43:34.047Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -3955,6 +3955,9 @@
           "relativePath": "tests/daemon-tools-trust-boundary.test.ts"
         },
         {
+          "relativePath": "tests/dag-accounting-e2e.test.ts"
+        },
+        {
           "relativePath": "tests/dag-agent-registry.test.ts"
         },
         {
@@ -4553,6 +4556,9 @@
         },
         {
           "relativePath": "tests/integration/dag-snapshot-generation.pg18.integration.test.ts"
+        },
+        {
+          "relativePath": "tests/integration/dag-token-accounting.pg18.integration.test.ts"
         },
         {
           "relativePath": "tests/integration/dag-worker-metrics.integration.test.ts"

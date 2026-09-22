@@ -36,6 +36,8 @@ const POSTGRES_TEST_FILES = [
   'tests/integration/non-gpt-terminal-retention.pg18.integration.test.ts',
   'tests/integration/gaming-durable-rag.pg18.integration.test.ts',
   'tests/integration/gpt-access-device-auth.pg18.integration.test.ts',
+  'tests/integration/dag-token-accounting.pg18.integration.test.ts',
+  'tests/dag-accounting-e2e.test.ts',
 ];
 
 function readNormalized(path) {
@@ -52,7 +54,7 @@ function readWorkflowJob(workflow, jobId, nextJobId) {
 }
 
 describe('required PostgreSQL CI truth contract', () => {
-  it('uses one required-database sentinel for all fourteen PostgreSQL suites', () => {
+  it('uses one required-database sentinel for all sixteen PostgreSQL suites', () => {
     const workflow = readNormalized('.github/workflows/ci-cd.yml');
     const postgresJob = readWorkflowJob(
       workflow,

@@ -161,6 +161,56 @@ describe('DAG attempt usage at the production provider boundary', () => {
     expect(fetch).toHaveBeenCalledTimes(2);
   });
 
+  it('keeps malformed HTTP error usage terminal after a successful SDK retry', async () => {
+    let calls = 0;
+    const fetch = jest.fn(async () => ++calls === 1
+      ? new Response(JSON.stringify({ error: { message: 'Synthetic retry.', type: 'api_error', usage: { total_tokens: -1 } } }), {
+          status: 500, headers: { 'content-type': 'application/json', 'retry-after-ms': '1' }
+        })
+      : new Response(JSON.stringify(providerResponse({ total_tokens: 7 })), {
+          status: 200, headers: { 'content-type': 'application/json' }
+        }));
+    const adapter = createOpenAIAdapter({ apiKey: 'test-key', maxRetries: 1, fetch });
+    const result = await runAttempt(async () => adapter.responses.create({ model: 'gpt-4.1-mini', input: 'Synthetic retry request.' }));
+    expect(result).toMatchObject({
+      status: 'failed', retryable: false,
+      errorMessage: 'Invalid provider token usage for execution attempt.',
+      metrics: { attemptTokenUsage: 7 }
+    });
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('isolates interleaved SDK retries across attempts and deduplicates each terminal error', async () => {
+    const callsByInput = new Map<string, number>();
+    let releaseInitialResponses!: () => void;
+    const bothRequestsStarted = new Promise<void>(resolve => { releaseInitialResponses = resolve; });
+    const fetch = jest.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const { input } = JSON.parse(String(init?.body)) as { input: string };
+      const call = (callsByInput.get(input) ?? 0) + 1;
+      callsByInput.set(input, call);
+      if (call === 1) {
+        if (callsByInput.size === 2) releaseInitialResponses();
+        await bothRequestsStarted;
+      }
+      const success = input === 'second' && call === 2;
+      const tokens = input === 'first' ? (call === 1 ? 18 : 19) : (call === 1 ? 27 : 7);
+      return new Response(JSON.stringify(success
+        ? providerResponse({ total_tokens: tokens })
+        : { error: { message: 'Synthetic interleaved failure.', type: 'api_error', usage: { total_tokens: tokens } } }), {
+        status: success ? 200 : call === 1 ? 500 : 400,
+        headers: { 'content-type': 'application/json', 'retry-after-ms': '1' }
+      });
+    });
+    const adapter = createOpenAIAdapter({ apiKey: 'test-key', maxRetries: 1, fetch });
+    const [first, second] = await Promise.all(['first', 'second'].map(input =>
+      runAttempt(async () => adapter.responses.create({ model: 'gpt-4.1-mini', input }))
+    ));
+    expect(first).toMatchObject({ status: 'failed', metrics: { attemptTokenUsage: 37 } });
+    expect(second).toMatchObject({ status: 'success', metrics: { attemptTokenUsage: 34 } });
+    expect([...callsByInput.values()]).toEqual([2, 2]);
+    expect(fetch).toHaveBeenCalledTimes(4);
+  });
+
   it('charges two failed SDK transports once each, including the final error', async () => {
     const fetch = jest.fn(async () => new Response(JSON.stringify({
       error: { message: 'Synthetic retry.', type: 'api_error', usage: { total_tokens: 18 } }
