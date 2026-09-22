@@ -39,3 +39,5 @@ db4d8428b19e41bca572397d707e8cd461e31c3c:clients/ios/ArcanosKit/Sources/ArcanosK
 53b984fafd3b513c1e5abce53b1e565a6f623a2c:docs/audits/ios-phase3c/2026-09-12/portable-final-followup/summary.json:generic-api-key:31
 53b984fafd3b513c1e5abce53b1e565a6f623a2c:docs/audits/ios-phase3c/2026-09-12/portable-final/summary.json:generic-api-key:31
 53b984fafd3b513c1e5abce53b1e565a6f623a2c:docs/audits/ios-phase3c/2026-09-12/portable-final/summary.json:generic-api-key:41
+# Verified public TypeScript semantic SHA-256 pin for attemptTokenUsage.ts; no credential.
+758d9f1dd9d7aaa9e58dbacd98200fec3a3fb478:scripts/check-native-pr-preview-imports.mjs:generic-api-key:757

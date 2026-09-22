@@ -754,7 +754,7 @@ const CRITICAL_RUNTIME_FUNCTION_DIGESTS = new Map([
 ]);
 const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ['src/shared/dag/dagTokenAccountingPreviewFixture.ts', 'ddf36a96aefef38ec8e4cf1326e42bac53190868f3a5053bc4e7e3be8f65931f'],
-  ['src/services/openai/attemptTokenUsage.ts', '405aa0373b8b18002ea43cc86c5870a61cf50719be01598c015a15b393404013'],
+  ['src/services/openai/attemptTokenUsage.ts', '405aa0373b8b18002ea43cc86c5870a61cf50719be01598c015a15b393404013'], // gitleaks:allow -- public source semantic SHA-256
   ['src/workers/dagChildAccounting.ts', '3bf30d00e7b97d7f041e5ced257a9d493ca5bcb76740469c2b1feb9ac8e47c57'],
   ['src/shared/dag/dagMetricsCore.ts', '218990792ca3d3cb72600c48db1f0a61d8321a6fb6c4be5bee895a88a1babffb'],
   ['src/shared/dag/dagMetricsPreviewFixture.ts', 'a95a64a249b14c04fc90840004ce3138f1e60eba614e2c37ddfa99e484d600a7'],
