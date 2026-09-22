@@ -175,6 +175,19 @@ and confirmation-gated flows after deploy.
 - Validation and auth middleware: `../src/transport/http/middleware/confirmGate.ts`
 
 ## GPT Async Contract
+
+Explicit-session continuity is a request-local exception to the execution paths
+below. A supported prompt-driven module action with a structured `sessionId`
+and a valid `x-arcanos-memory-token` executes through the synchronous module
+dispatcher, including when fast/async/idempotency or `query_and_wait` hints are
+present. It reads bounded prior context (default 12 turns / 8,000 rendered
+characters) before model execution and returns the ordinary synchronous module
+envelope with `Cache-Control: no-store`, `X-GPT-Queue-Bypassed: true`, and route
+reason `session_context_hydration`. Credentials and memory authority are never
+serialized into jobs. Ordinary queries without valid memory authorization
+retain their existing execution behavior and receive no session hydration.
+See [session context hydration](MEMORY_BACKEND_USAGE.md#session-context-hydration)
+for the supported actions, normalization, fail-open behavior, and limits.
 `POST /gpt/:gptId` is the writing plane. It supports a typed async GPT bridge with idempotent retry handling for job-backed requests, but it must not be used for prompt-shaped control-plane retrieval.
 
 Writing vs control:
@@ -1309,7 +1322,11 @@ command, a memory cue exists or no module action is routable, and the effective
 action is absent or `query`. Authenticated interceptions execute directly and
 do not enter the fast path or job queue, even when async, fast, or idempotency
 hints are present. Explicit `query` and `query_and_wait` requests already bypass
-intent interception and retain their existing behavior.
+intent interception. Separately, eligible ordinary queries with explicit
+structured session scope and valid memory authorization use the bounded
+[session context hydration](MEMORY_BACKEND_USAGE.md#session-context-hydration)
+path. Missing or invalid memory credentials on these ordinary queries skip
+hydration without adding an authentication error. Replay payloads are unchanged.
 
 ### Workers, orchestration, and DevOps
 - `GET /workers/status` (public aggregate worker-health projection; `no-store`)

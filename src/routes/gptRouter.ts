@@ -27,6 +27,10 @@ import {
 } from "@services/arcanos-core.js";
 import { classifyGptMemoryInterception } from '@services/memoryDispatchInterception.js';
 import {
+  isSessionContextQueryAction,
+  resolveExplicitSessionContextId,
+} from '@shared/memory/sessionContextPolicy.js';
+import {
   logGptConnection,
   logGptConnectionFailed,
   logGptAckSent,
@@ -2326,6 +2330,7 @@ router.post(
           forceDirectModuleRouting: directGamingRoute || bypassIntentRouting,
         });
         let memoryPlaneAuthorized: true | undefined;
+        let sessionContextAuthorized = false;
         if (memoryInterception.intercept) {
           const memoryAuthentication = authenticateMemoryPlaneRequest(req);
           if (!memoryAuthentication.ok) {
@@ -2334,6 +2339,21 @@ router.post(
           }
           setMemoryPlaneNoStorePolicy(res);
           memoryPlaneAuthorized = true;
+        } else if (
+          resolveExplicitSessionContextId(effectiveBody)
+          && isSessionContextQueryAction(
+            routingValidation.plan.module,
+            memoryInterception.requestedAction ?? routingValidation.plan.action
+          )
+        ) {
+          // Optional continuity never makes ordinary writing require memory access.
+          // Keep verified authority request-local; queued bodies cannot carry it.
+          const memoryAuthentication = authenticateMemoryPlaneRequest(req);
+          if (memoryAuthentication.ok) {
+            setMemoryPlaneNoStorePolicy(res);
+            memoryPlaneAuthorized = true;
+            sessionContextAuthorized = true;
+          }
         }
 
         if (queryAndWaitRequested && !normalizedBody) {
@@ -2585,7 +2605,8 @@ router.post(
         }
 
         if (
-          shouldUseQueryAndWaitDirectActionLane({
+          !sessionContextAuthorized
+          && shouldUseQueryAndWaitDirectActionLane({
             queryAndWaitRequested,
             gptId: incomingGptId,
             promptText
@@ -2773,7 +2794,7 @@ router.post(
               ...classifiedFastPathDecision,
               path: 'orchestrated_path',
               eligible: false,
-              reason: 'memory_dispatch_intercept',
+              reason: sessionContextAuthorized ? 'session_context_hydration' : 'memory_dispatch_intercept',
               queueBypassed: true,
             }
           : protectedBackstageRequestLocalOnly || protectedBackstageQueueRequired
@@ -2927,7 +2948,7 @@ router.post(
           ? {
               ...classifiedExecutionPlan,
               mode: 'sync',
-              reason: 'memory_dispatch_intercept',
+              reason: sessionContextAuthorized ? 'session_context_hydration' : 'memory_dispatch_intercept',
               heavyPrompt: false,
             }
           : protectedBackstageRequestLocalOnly

@@ -1507,6 +1507,122 @@ describe('async /gpt idempotency', () => {
     expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['default', { prompt: 'Continue the explanation.', sessionId: 'context-http' }],
+    ['alias', { action: 'chat', prompt: 'Continue the explanation.', sessionId: 'context-http' }],
+    ['nested scope', { action: 'query', payload: { prompt: 'Continue the explanation.', sessionId: 'context-http' } }],
+    ['query_and_wait', { action: 'query_and_wait', prompt: 'Continue the explanation.', sessionId: 'context-http' }],
+  ])('keeps authorized %s session queries on the request-local dispatcher', async (_label, body) => {
+    process.env.ARCANOS_MEMORY_ACCESS_TOKEN = memoryAccessToken;
+    mockRouteGptRequest.mockResolvedValue({
+      ...buildMemoryDispatchEnvelope(),
+      result: { response: 'Continued explanation.' },
+    });
+
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .set('x-arcanos-memory-token', memoryAccessToken)
+      .set('Idempotency-Key', 'context-http-idempotency')
+      .set('Prefer', 'respond-async')
+      .send({ ...body, executionMode: 'async', mode: 'fast' });
+
+    expect(response.status).toBe(200);
+    expect(response.headers['cache-control']).toBe('no-store');
+    expect(response.headers['x-gpt-route-decision-reason']).toBe('session_context_hydration');
+    expect(response.headers['x-gpt-queue-bypassed']).toBe('true');
+    expect(mockRouteGptRequest).toHaveBeenCalledWith(expect.objectContaining({
+      memoryPlaneAuthorized: true,
+    }));
+    expect(executeDirectGptActionMock).not.toHaveBeenCalled();
+    expect(executeFastGptPromptMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+    expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
+    expect(JSON.stringify(response.body)).not.toContain(memoryAccessToken);
+    expect(JSON.stringify(mockRouteGptRequest.mock.calls[0]?.[0]?.body)).not.toContain(memoryAccessToken);
+  });
+
+  it.each([
+    ['missing', undefined],
+    ['invalid', 'invalid-session-context-token-1234567890'],
+  ])('preserves ordinary session queries with a %s memory credential', async (_label, token) => {
+    process.env.ARCANOS_MEMORY_ACCESS_TOKEN = memoryAccessToken;
+    process.env.GPT_ROUTE_ASYNC_CORE_DEFAULT = 'false';
+    mockRouteGptRequest.mockResolvedValue(buildMemoryDispatchEnvelope());
+    let pending = request(buildApp()).post('/gpt/arcanos-core');
+    if (token) pending = pending.set('x-arcanos-memory-token', token);
+
+    const response = await pending.send({
+      action: 'query', prompt: 'Continue the explanation.', sessionId: 'context-http',
+      memoryPlaneAuthorized: true,
+      __arcanosSessionContext: 'caller-supplied text',
+    });
+
+    expect(response.status).toBe(200);
+    expect(mockRouteGptRequest).toHaveBeenCalledWith(expect.objectContaining({ memoryPlaneAuthorized: undefined }));
+    expect(response.headers['x-gpt-route-decision-reason']).not.toBe('session_context_hydration');
+  });
+
+  it('authorizes the SIM scenario-only prompt carrier without generic prompt aliases', async () => {
+    process.env.ARCANOS_MEMORY_ACCESS_TOKEN = memoryAccessToken;
+    const routing = await mockResolveGptRouting('arcanos-sim');
+    routing.plan.module = 'ARCANOS:SIM';
+    routing.plan.route = 'sim';
+    routing.plan.action = 'run';
+    routing.plan.availableActions = ['run'];
+    mockResolveGptRouting.mockResolvedValue(routing);
+    mockRouteGptRequest.mockResolvedValue(buildMemoryDispatchEnvelope());
+
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-sim')
+      .set('x-arcanos-memory-token', memoryAccessToken)
+      .send({ action: 'run', payload: { scenario: 'Continue the scenario.', sessionId: 'context-http' } });
+
+    expect(response.status).toBe(200);
+    expect(response.headers['x-gpt-route-decision-reason']).toBe('session_context_hydration');
+    expect(mockRouteGptRequest).toHaveBeenCalledWith(expect.objectContaining({ memoryPlaneAuthorized: true }));
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+  });
+
+  it('does not authorize context from a token without structured session scope', async () => {
+    process.env.ARCANOS_MEMORY_ACCESS_TOKEN = memoryAccessToken;
+    process.env.GPT_ROUTE_ASYNC_CORE_DEFAULT = 'false';
+    mockRouteGptRequest.mockResolvedValue(buildMemoryDispatchEnvelope());
+
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .set('x-arcanos-memory-token', memoryAccessToken)
+      .send({ action: 'query', prompt: 'Continue the explanation for session inline-only.' });
+
+    expect(response.status).toBe(200);
+    expect(mockRouteGptRequest).toHaveBeenCalledWith(expect.objectContaining({ memoryPlaneAuthorized: undefined }));
+  });
+
+  it('does not enable query hydration for a protected mutation with a session and token', async () => {
+    process.env.ARCANOS_MEMORY_ACCESS_TOKEN = memoryAccessToken;
+    const controlPlaneToken = 'session-context-mutation-control-plane-token-1234567890';
+    process.env.ARCANOS_CONTROL_PLANE_ACCESS_TOKEN = controlPlaneToken;
+    process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID = 'operator:session-context-test';
+    process.env.ARCANOS_CONTROL_PLANE_SCOPES = 'mcp:invoke';
+    process.env.GPT_ROUTE_ASYNC_CORE_DEFAULT = 'false';
+    configureBackstageRoutingMock();
+    const routing = await mockResolveGptRouting('backstage-booker');
+    routing.plan.action = 'updateRoster';
+    mockResolveGptRouting.mockResolvedValue(routing);
+    mockRouteGptRequest.mockResolvedValue(buildMemoryDispatchEnvelope());
+
+    const response = await request(buildApp())
+      .post('/gpt/backstage-booker')
+      .set('x-arcanos-memory-token', memoryAccessToken)
+      .set('Authorization', `Bearer ${controlPlaneToken}`)
+      .set('X-Confirmed', 'yes')
+      .send({ action: 'updateRoster', payload: [], sessionId: 'context-http', executionMode: 'sync' });
+
+    expect(response.headers['x-gpt-route-decision-reason']).not.toBe('session_context_hydration');
+    expect(response.body).toMatchObject({ ok: true });
+    expect(mockRouteGptRequest).toHaveBeenCalledWith(expect.objectContaining({ memoryPlaneAuthorized: undefined }));
+    expect(response.status).toBe(200);
+  });
+
   it('returns the canonical in-flight job when an equivalent async request is deduped', async () => {
     findOrCreateGptJobMock.mockResolvedValue({
       job: {

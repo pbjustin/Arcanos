@@ -11,6 +11,7 @@ import { OPENAI_LOG_MESSAGES } from "@platform/runtime/openaiLogMessages.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import { buildSystemPromptMessages } from "@shared/messageBuilderUtils.js";
 import { runtime } from "@services/openaiRuntime.js";
+import { buildSessionContextMessages } from '@platform/runtime/sessionContext.js';
 import type OpenAI from 'openai';
 import type { ResponseCreateParamsNonStreaming } from 'openai/resources/responses/responses';
 import {
@@ -483,6 +484,12 @@ export async function createCentralizedCompletion(
   runtime.addMessages(sessionId, arcanosMessages);
   runtime.setMetadata(sessionId, { model });
 
+  // Keep hydrated history out of the runtime's newly recorded interaction.
+  const modelMessages = [...arcanosMessages];
+  const userMessageIndex = modelMessages.findIndex(message => message.role === 'user');
+  modelMessages.splice(userMessageIndex < 0 ? modelMessages.length : userMessageIndex,
+    0, ...buildSessionContextMessages());
+
   logOpenAIEvent('info', `${OPENAI_LOG_MESSAGES.ARCANOS.ROUTING_PREFIX} ${getRoutingMessage()}`, { model });
 
   // Prepare request with token parameters for the specific model
@@ -490,7 +497,7 @@ export async function createCentralizedCompletion(
   
   const requestPayload = {
     model,
-    messages: arcanosMessages,
+    messages: modelMessages,
     temperature: options.temperature ?? OPENAI_COMPLETION_DEFAULTS.TEMPERATURE,
     top_p: options.top_p ?? OPENAI_COMPLETION_DEFAULTS.TOP_P,
     frequency_penalty: options.frequency_penalty ?? OPENAI_COMPLETION_DEFAULTS.FREQUENCY_PENALTY,
@@ -518,7 +525,7 @@ export async function createCentralizedCompletion(
       const responsePayload = buildResponsesRequest({
         prompt: '',
         model,
-        messages: arcanosMessages,
+        messages: modelMessages,
         maxTokens: resolveMaxTokensFromTokenParameters(
           tokenParams as Record<string, unknown>,
           options.max_tokens || ROUTING_MAX_TOKENS
@@ -549,7 +556,7 @@ export async function createCentralizedCompletion(
       const responsePayload = buildResponsesRequest({
         prompt: '',
         model,
-        messages: arcanosMessages,
+        messages: modelMessages,
         maxTokens: resolveMaxTokensFromTokenParameters(
           tokenParams as Record<string, unknown>,
           options.max_tokens || ROUTING_MAX_TOKENS
@@ -565,7 +572,7 @@ export async function createCentralizedCompletion(
       const responsePayload = buildResponsesRequest({
         prompt: '',
         model,
-        messages: arcanosMessages,
+        messages: modelMessages,
         maxTokens: resolveMaxTokensFromTokenParameters(
           tokenParams as Record<string, unknown>,
           options.max_tokens || ROUTING_MAX_TOKENS

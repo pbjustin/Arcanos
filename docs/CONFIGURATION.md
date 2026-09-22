@@ -1213,7 +1213,13 @@ The production mounts for `/api/memory/*`, `/api/save-conversation*`, and
 three HTTP prefixes authenticate before broad body parsing, writing-plane
 consistency checks, confirmation gates, or persistence. Exact GPT interception
 authenticates after parsing but before fast-path execution, job creation, or
-memory execution. Requests that do not enter that GPT branch are unchanged.
+memory execution. Ordinary GPT queries do not require this credential. For a
+supported prompt-driven action with an explicit structured `sessionId`, a valid
+memory credential additionally enables bounded prior context. These requests
+execute synchronously through the module dispatcher; fast, async, idempotency,
+and `query_and_wait` hints cannot bypass request-local memory authorization.
+Missing/invalid credentials on ordinary queries preserve their existing path
+without hydration. The mandatory interception errors remain unchanged.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
@@ -1223,6 +1229,18 @@ This is access containment, not tenant authentication. Any token holder can
 still choose `sessionId`, use global-list/search behavior where supported, and
 address records available to this deployment. Tenant ownership requires a
 separate schema and principal-binding change.
+
+### Session query context
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `SESSION_CONTEXT_MAX_TURNS` | `12` | Maximum recent visible turns hydrated from the exact session's `conversations_core` channel. Accepts decimal positive integers from 1 to 100; missing, malformed, zero, negative, fractional, or larger values use the default. |
+| `SESSION_CONTEXT_MAX_CHARS` | `8000` | Maximum rendered prior-context characters, including delimiters, JSON escaping, and role labels. Accepts decimal positive integers from 1 to 64000; invalid or larger values use the default. A budget too small to fit a visible turn produces no context. The current prompt is outside this prior-context cap. |
+
+Limits are read for each hydration. Reads have a fixed one-second fail-open
+deadline. No environment variable grants memory access or enables anonymous
+hydration. Supported actions, normalization, persistence, and diagnostic limits
+are documented in [Memory backend usage](MEMORY_BACKEND_USAGE.md#session-context-hydration).
 
 ### Worker operator authentication
 

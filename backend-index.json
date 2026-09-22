@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-22T02:21:54.128Z",
+  "generatedAt": "2026-09-22T05:53:26.761Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -1098,6 +1098,9 @@
         },
         {
           "relativePath": "src/platform/runtime/serverMessages.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/sessionContext.ts"
         },
         {
           "relativePath": "src/platform/runtime/startupLifecycle.ts"
@@ -2465,6 +2468,9 @@
           "relativePath": "src/services/sessionCatalogService.ts"
         },
         {
+          "relativePath": "src/services/sessionContextHydrationService.ts"
+        },
+        {
           "relativePath": "src/services/sessionMemoryRepository.ts"
         },
         {
@@ -2949,6 +2955,9 @@
         },
         {
           "relativePath": "src/shared/memory/memoryDispatchRouting.ts"
+        },
+        {
+          "relativePath": "src/shared/memory/sessionContextPolicy.ts"
         },
         {
           "relativePath": "src/shared/memoryValidationMessages.ts"
@@ -4429,6 +4438,9 @@
           "relativePath": "tests/gpt-router-universal-dispatch.test.ts"
         },
         {
+          "relativePath": "tests/gpt-session-context.integration.test.ts"
+        },
+        {
           "relativePath": "tests/gptoss-adapter-eval.test.ts"
         },
         {
@@ -5254,10 +5266,19 @@
           "relativePath": "tests/services-git-coverage.test.ts"
         },
         {
+          "relativePath": "tests/session-context-centralized.test.ts"
+        },
+        {
+          "relativePath": "tests/session-context-model.test.ts"
+        },
+        {
           "relativePath": "tests/session-memory-roundtrip.test.ts"
         },
         {
           "relativePath": "tests/session-system-diagnostics-service.test.ts"
+        },
+        {
+          "relativePath": "tests/sessionContextHydrationService.test.ts"
         },
         {
           "relativePath": "tests/sessionMemoryController.test.ts"
