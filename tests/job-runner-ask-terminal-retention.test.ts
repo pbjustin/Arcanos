@@ -5,6 +5,8 @@ const isDatabaseConnectedMock = jest.fn(() => true);
 const recordJobEventMock = jest.fn(async () => undefined);
 const claimNextMock = jest.fn();
 const runWorkerTrinityPromptMock = jest.fn();
+const runDagNodeJobMock = jest.fn();
+const classifyWorkerAiBudgetErrorMock = jest.fn((_error: unknown): unknown => null);
 const routeGptRequestMock = jest.fn();
 const classifyWorkerExecutionErrorMock = jest.fn((error: unknown) => ({
   message: error instanceof Error ? error.message : String(error),
@@ -89,7 +91,7 @@ jest.unstable_mockModule('@core/scheduler/postgresAdapter.js', () => ({
 
 jest.unstable_mockModule('@core/adapters/openai.adapter.js', () => ({
   assertValidResponsesCreateParams: jest.fn(),
-  classifyWorkerAiBudgetError: jest.fn(() => null),
+  classifyWorkerAiBudgetError: classifyWorkerAiBudgetErrorMock,
   createOpenAIAdapter: getOpenAIAdapterMock,
   normalizeWorkerAiBudgetError: jest.fn((error: unknown) => error),
   normalizeResponsesCreateParams: jest.fn((value: unknown) => value),
@@ -125,7 +127,7 @@ jest.unstable_mockModule('@services/gamingSourceIngestion.js', () => ({
 }));
 
 jest.unstable_mockModule('../src/workers/taskRunners.js', () => ({
-  runDagNodeJob: jest.fn()
+  runDagNodeJob: runDagNodeJobMock
 }));
 
 jest.unstable_mockModule('../src/workers/trinityWorkerPipeline.js', () => ({
@@ -163,9 +165,10 @@ const { getAiExecutionContext } = await import(
   '../src/services/openai/aiExecutionContext.js'
 );
 const { APIConnectionError, APIUserAbortError } = await import('openai');
-const { buildProtectedBackstageQueuedGptJobInput } = await import(
+const { buildProtectedBackstageQueuedGptJobInput, buildQueuedGptJobInput } = await import(
   '../src/shared/gpt/asyncGptJob.js'
 );
+const { recordAttemptTokenUsage } = await import('../src/services/openai/attemptTokenUsage.js');
 const { unprotectBackstageQueuedGptJobOutput } = await import(
   '../src/shared/backstage/backstageQueuedJobResultProtection.js'
 );
@@ -2081,5 +2084,222 @@ describe('job runner terminal persistence', () => {
         jest.useRealTimers();
       }
     }
+  );
+});
+
+describe('DAG attempt accounting at claimed worker terminal persistence', () => {
+  it.each([
+    'late cancellation', 'completion CAS cancellation', 'consumed budget failure', 'unconsumed budget failure',
+    'child success', 'child failure', 'child late cancellation', 'child consumed budget failure', 'child recovery budget failure',
+    'child invalid accounting',
+    'during execution cancellation', 'after execution cancellation', 'child caught cancellation',
+    'post-execution cancellation read failure',
+    'consumed budget failure CAS cancellation', 'child recovery budget failure CAS cancellation',
+    'consumed budget failure stale cancellation fence',
+  ])(
+    'preserves accounting and retry hints through %s',
+    async scenario => {
+      jest.useFakeTimers();
+      jest.setSystemTime(new Date('2026-09-21T12:00:00.000Z'));
+      claimNextMock.mockReset();
+      queryMock.mockReset();
+      runDagNodeJobMock.mockReset();
+      routeGptRequestMock.mockReset();
+      classifyWorkerAiBudgetErrorMock.mockReset().mockReturnValue(null);
+      const child = scenario.startsWith('child ');
+      const invalidAccounting = scenario === 'child invalid accounting';
+      const recoveryBudgetFailure = scenario.startsWith('child recovery budget failure');
+      const budgetFailure = scenario.includes('budget failure');
+      const budgetFailureCasMiss = budgetFailure && (scenario.includes('CAS cancellation') || scenario.includes('stale cancellation fence'));
+      const staleCancellationFence = scenario.includes('stale cancellation fence');
+      const heartbeatCancellation = scenario === 'during execution cancellation'
+        || scenario === 'after execution cancellation' || scenario === 'child caught cancellation'
+        || scenario === 'post-execution cancellation read failure';
+      const knownUsage = scenario !== 'unconsumed budget failure' && !invalidAccounting;
+      const childUsage = scenario === 'child failure' || budgetFailure ? 39 : 107;
+      let childDispatchCompleted = false;
+      const claimedJob = {
+        id: 'dag-accounting-terminal-job', worker_id: 'queue', job_type: child ? 'gpt' : 'dag-node',
+        status: 'running', claim_generation: '1', retry_count: 0, max_retries: child ? 2 : 0,
+        input: child ? buildQueuedGptJobInput({
+          gptId: 'arcanos-core', requestPath: '/gpt-access/jobs/create', bypassIntentRouting: true,
+          body: { action: 'query', prompt: 'Synthetic child accounting.', payload: { input: {
+            pipeline: 'trinity', dagId: 'dag-accounting', nodeId: 'node-a',
+          } } },
+        }) : {
+          dagId: 'dag-accounting', node: { id: 'node-a', type: 'agent', dependencies: [], executionKey: 'planner' },
+          payload: { prompt: 'Synthetic accounting.' }, dependencyResults: {}, sharedState: {},
+          depth: 0, attempt: 0, maxRetries: 2, waitingTimeoutMs: 60_000,
+        },
+        last_worker_id: 'worker-test-slot-1', lease_expires_at: new Date('2026-09-21T12:01:00.000Z'),
+        correlation_id: 'dag-accounting-trace', cancel_requested_at: null, cancel_reason: null,
+        created_at: new Date('2026-09-21T11:59:59.000Z'), updated_at: new Date('2026-09-21T12:00:00.000Z'),
+      };
+      const cancellationRow = { ...claimedJob, cancel_requested_at: new Date(), cancel_reason: 'DAG operator cancellation' };
+      const cancellationRaceRow = staleCancellationFence
+        ? { ...cancellationRow, claim_generation: '2' }
+        : cancellationRow;
+      const dagResult = { nodeId: 'node-a', status: 'success', output: { meta: { tokens: { total_tokens: 7 } } }, metrics: { attemptTokenUsage: 107, tokenUsage: 7 } };
+      const consumedError = Object.assign(new Error('Worker provider admission paused.'), knownUsage ? { attemptTokenUsage: 107 } : {});
+      const childBudgetError = new Error('Child provider admission paused.');
+      let executionStarted = false;
+      let failureCasMissObserved = false;
+      if (child) {
+        getGptModuleMapMock.mockReset().mockResolvedValue({
+          'arcanos-core': { route: 'arcanos-core', module: 'ARCANOS:CORE' },
+          'backstage-booker': { route: 'backstage-booker', module: 'BACKSTAGE:BOOKER' },
+        });
+        routeGptRequestMock.mockImplementationOnce(async () => {
+          executionStarted = true;
+          recordAttemptTokenUsage({ total_tokens: invalidAccounting ? -1 : childUsage });
+          childDispatchCompleted = true;
+          if (scenario === 'child caught cancellation') {
+            await jest.advanceTimersByTimeAsync(10_000);
+            throw new Error('Child provider stopped after durable cancellation.');
+          }
+          if (budgetFailure && !recoveryBudgetFailure) throw childBudgetError;
+          return scenario === 'child failure'
+            ? { ok: false, error: { code: 'MODULE_ERROR', message: 'Temporary provider failure' }, _route: { module: 'ARCANOS:CORE', route: 'arcanos-core' } }
+            : { ok: true, result: { meta: { tokens: { total_tokens: 7 } }, text: 'Completed child.' }, _route: { module: 'ARCANOS:CORE', route: 'arcanos-core' } };
+        });
+        if (budgetFailure) {
+          classifyWorkerAiBudgetErrorMock.mockImplementation(error => error === childBudgetError ? { kind: 'budget_paused', retryAt: null } : null);
+        }
+        if (recoveryBudgetFailure) {
+          probeOpenAIProviderHealthMock.mockImplementation(async () => {
+            if (childDispatchCompleted) throw childBudgetError;
+            return { ok: true, runtime: providerRuntime };
+          });
+        }
+      } else if (heartbeatCancellation) {
+        runDagNodeJobMock.mockImplementationOnce(async (_input: unknown, dependencies: { abortSignal: AbortSignal }) => {
+          executionStarted = true;
+          await jest.advanceTimersByTimeAsync(10_000);
+          expect(dependencies.abortSignal.aborted).toBe(true);
+          if (scenario === 'during execution cancellation') {
+            throw Object.assign(new Error('DAG provider stopped after durable cancellation.'), { attemptTokenUsage: 107 });
+          }
+          return dagResult;
+        });
+      } else if (budgetFailure) {
+        classifyWorkerAiBudgetErrorMock.mockImplementation(error => error === consumedError ? { kind: 'budget_paused', retryAt: null } : null);
+        runDagNodeJobMock.mockRejectedValueOnce(consumedError);
+      } else {
+        runDagNodeJobMock.mockResolvedValueOnce(dagResult);
+      }
+      claimNextMock.mockResolvedValueOnce({ job: claimedJob }).mockResolvedValue({ job: null });
+      let reads = 0;
+      let recoveryFailureRaised = false;
+      const writes: unknown[][] = [];
+      queryMock.mockImplementation(async (sql: unknown, params: unknown[] = []) => {
+        const normalizedSql = String(sql);
+        if (normalizedSql.startsWith('SELECT * FROM job_data')) {
+          if (failureCasMissObserved) return { rows: [cancellationRaceRow] };
+          if (scenario === 'post-execution cancellation read failure') {
+            throw new APIConnectionError({ cause: new Error('Synthetic terminal verification read failure') });
+          }
+          if (recoveryBudgetFailure && childDispatchCompleted && !recoveryFailureRaised) {
+            recoveryFailureRaised = true;
+            throw new APIConnectionError({ cause: new Error('Synthetic post-provider read failure') });
+          }
+          if (child) {
+            return { rows: [scenario === 'child late cancellation' && childDispatchCompleted ? cancellationRow : claimedJob] };
+          }
+          reads += 1;
+          const threshold = scenario === 'completion CAS cancellation' ? 1 : 0;
+          return { rows: [!budgetFailure && reads > threshold ? cancellationRow : claimedJob] };
+        }
+        if (normalizedSql.includes('UPDATE job_data')) {
+          writes.push(params);
+          if (scenario === 'completion CAS cancellation' && writes.length === 1) return { rows: [] };
+          return { rows: [{ ...claimedJob, status: params[0], output: JSON.parse(String(params[1])), completed_at: new Date(), lease_expires_at: null }] };
+        }
+        throw new Error(`Unexpected accounting repository query: ${normalizedSql}`);
+      });
+      const autonomyService = {
+        markDispatcherStarted: jest.fn(async () => undefined), getHeartbeatIntervalMs: () => 30_000,
+        getRecommendedWorkerHeartbeatDelayMs: () => 30_000, recordWorkerHeartbeat: jest.fn(async () => undefined),
+        evaluateBudgetsBeforeClaim: jest.fn(async () => ({ allowed: true })),
+        getWorkerAiCallBudget: () => ({ statsWorkerId: 'worker-test', workerId: 'worker-test-slot-1', maxCallsPerHour: 120 }),
+        setClaimAcceptanceState: jest.fn(async () => undefined), recordClaimAttempt: jest.fn(),
+        getClaimOptions: () => ({ workerId: 'worker-test-slot-1', leaseMs: 30_000 }), recordClaimResult: jest.fn(),
+        markJobStarted: jest.fn(async () => undefined), markIdle: jest.fn(async () => undefined),
+        recordHeartbeat: jest.fn(async () => heartbeatCancellation && executionStarted ? cancellationRow : claimedJob),
+        recordProviderCircuitBreakerReset: jest.fn(async () => undefined), markJobLeaseLost: jest.fn(async () => undefined),
+        markJobCompleted: jest.fn(async () => undefined), markJobCancelled: jest.fn(async () => undefined),
+        handleJobFailure: jest.fn(async () => {
+          failureCasMissObserved = budgetFailureCasMiss;
+          return { action: budgetFailureCasMiss ? 'lease_lost' : 'failed' };
+        }),
+        deferJobForProviderRecovery: jest.fn(async () => ({ action: 'deferred' })),
+        flushSnapshotPipeline: jest.fn(async () => undefined),
+      };
+      try {
+        await expect(runWorkerConsumerSlot(
+          { slotIndex: 0, slotNumber: 1, workerId: 'worker-test-slot-1', statsWorkerId: 'worker-test-stats', isInspectorSlot: true },
+          { pollMs: 1, idleBackoffMs: 1, concurrency: 1, baseWorkerId: 'worker-test', statsWorkerId: 'worker-test-stats' },
+          autonomyService as never,
+        )).rejects.toBe(stopAfterOneIteration);
+        expect(runDagNodeJobMock).toHaveBeenCalledTimes(child ? 0 : 1);
+        if (child) expect(routeGptRequestMock).toHaveBeenCalledTimes(1);
+        if (budgetFailure) {
+          expect(autonomyService.setClaimAcceptanceState).toHaveBeenCalledWith('paused_budget', expect.any(Object));
+          if (knownUsage) {
+            expect(autonomyService.handleJobFailure).toHaveBeenCalledWith(claimedJob, expect.any(String), false, expect.objectContaining(child
+              ? { dagAttemptUsage: childUsage, retryable: true }
+              : { nodeId: 'node-a', status: 'failed', metrics: { attemptTokenUsage: 107 } }));
+            expect(autonomyService.deferJobForProviderRecovery).not.toHaveBeenCalled();
+            if (budgetFailureCasMiss) {
+              expect(autonomyService.handleJobFailure).toHaveBeenCalledTimes(1);
+              if (staleCancellationFence) {
+                expect(writes).toHaveLength(0);
+                expect(autonomyService.markJobCancelled).not.toHaveBeenCalled();
+              } else {
+                expect(writes).toHaveLength(1);
+                expect(writes[0][0]).toBe('cancelled');
+                expect(JSON.parse(String(writes[0][1]))).toMatchObject(child
+                  ? { dagAttemptUsage: childUsage, retryable: true }
+                  : { nodeId: 'node-a', status: 'failed', metrics: { attemptTokenUsage: 107 } });
+                expect(autonomyService.markJobCancelled).toHaveBeenCalledWith(claimedJob.id);
+              }
+            }
+          } else {
+            expect(autonomyService.deferJobForProviderRecovery).toHaveBeenCalledTimes(1);
+            expect(autonomyService.handleJobFailure).not.toHaveBeenCalled();
+          }
+        } else if (invalidAccounting) {
+          expect(autonomyService.handleJobFailure).toHaveBeenCalledWith(claimedJob, expect.any(String), false, {
+            retryable: false,
+            error: { message: 'Invalid provider token usage for execution attempt.' },
+          });
+          expect(autonomyService.deferJobForProviderRecovery).not.toHaveBeenCalled();
+        } else if (scenario === 'child failure') {
+          expect(autonomyService.handleJobFailure).toHaveBeenCalledWith(claimedJob, expect.any(String), false, expect.objectContaining({
+            dagAttemptUsage: 39, retryable: true, ok: false,
+          }));
+          expect(autonomyService.deferJobForProviderRecovery).not.toHaveBeenCalled();
+        } else {
+          const persisted = writes.at(-1)!;
+          expect(persisted[0]).toBe(scenario === 'child success' ? 'completed' : 'cancelled');
+          expect(JSON.parse(String(persisted[1]))).toMatchObject(child
+            ? { dagAttemptUsage: 107, result: scenario === 'child caught cancellation'
+              ? null : { meta: { tokens: { total_tokens: 7 } } } }
+            : { metrics: { attemptTokenUsage: 107 } });
+          expect(scenario === 'child success' ? autonomyService.markJobCompleted : autonomyService.markJobCancelled)
+            .toHaveBeenCalledWith(claimedJob.id);
+          if (heartbeatCancellation) {
+            expect(autonomyService.recordHeartbeat).toHaveBeenCalledTimes(2);
+            expect(writes).toHaveLength(1);
+            expect(autonomyService.handleJobFailure).not.toHaveBeenCalled();
+            expect(autonomyService.deferJobForProviderRecovery).not.toHaveBeenCalled();
+          }
+        }
+        expect(autonomyService.markJobLeaseLost).not.toHaveBeenCalled();
+      } finally {
+        classifyWorkerAiBudgetErrorMock.mockReset().mockReturnValue(null);
+        probeOpenAIProviderHealthMock.mockReset().mockResolvedValue({ ok: true, runtime: providerRuntime });
+        jest.useRealTimers();
+      }
+    },
   );
 });

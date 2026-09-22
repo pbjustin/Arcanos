@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-21T00:14:42.693Z",
+  "generatedAt": "2026-09-22T02:21:54.128Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -2111,6 +2111,9 @@
           "relativePath": "src/services/openai/aiExecutionContext.ts"
         },
         {
+          "relativePath": "src/services/openai/attemptTokenUsage.ts"
+        },
+        {
           "relativePath": "src/services/openai/chatFallbacks.ts"
         },
         {
@@ -2640,6 +2643,9 @@
         },
         {
           "relativePath": "src/shared/dag/dagMetricsPreviewFixture.ts"
+        },
+        {
+          "relativePath": "src/shared/dag/dagTokenAccountingPreviewFixture.ts"
         },
         {
           "relativePath": "src/shared/dispatch/dispatchGptIdentifierBoundary.ts"
@@ -3261,6 +3267,9 @@
         },
         {
           "relativePath": "src/workers/backstageNotionSyncLoop.ts"
+        },
+        {
+          "relativePath": "src/workers/dagChildAccounting.ts"
         },
         {
           "relativePath": "src/workers/dagNodePromptBridge.ts"
@@ -3949,7 +3958,13 @@
           "relativePath": "tests/daemon-tools-trust-boundary.test.ts"
         },
         {
+          "relativePath": "tests/dag-accounting-e2e.test.ts"
+        },
+        {
           "relativePath": "tests/dag-agent-registry.test.ts"
+        },
+        {
+          "relativePath": "tests/dag-child-accounting.test.ts"
         },
         {
           "relativePath": "tests/dag-http-boundary.test.ts"
@@ -3964,6 +3979,9 @@
           "relativePath": "tests/dag-node-prompt-bridge.test.ts"
         },
         {
+          "relativePath": "tests/dag-provider-token-usage.test.ts"
+        },
+        {
           "relativePath": "tests/dag-run-repository.snapshot-generation.test.ts"
         },
         {
@@ -3971,6 +3989,12 @@
         },
         {
           "relativePath": "tests/dag-templates.test.ts"
+        },
+        {
+          "relativePath": "tests/dag-token-accounting-preview-fixture.test.ts"
+        },
+        {
+          "relativePath": "tests/dag-token-accounting.test.ts"
         },
         {
           "relativePath": "tests/dag-tools.test.ts"
@@ -4538,6 +4562,9 @@
         },
         {
           "relativePath": "tests/integration/dag-snapshot-generation.pg18.integration.test.ts"
+        },
+        {
+          "relativePath": "tests/integration/dag-token-accounting.pg18.integration.test.ts"
         },
         {
           "relativePath": "tests/integration/dag-worker-metrics.integration.test.ts"

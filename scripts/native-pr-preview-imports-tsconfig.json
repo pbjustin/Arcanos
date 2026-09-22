@@ -55,6 +55,12 @@
       "@services/publicGamingCanaryFixture.js": [
         "src/services/publicGamingCanaryFixture.ts"
       ],
+      "@services/openai/attemptTokenUsage.js": [
+        "src/services/openai/attemptTokenUsage.ts"
+      ],
+      "@workers/dagChildAccounting.js": [
+        "src/workers/dagChildAccounting.ts"
+      ],
       "@transport/*": [
         "src/transport/*"
       ]

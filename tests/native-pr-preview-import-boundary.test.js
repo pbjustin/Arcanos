@@ -346,32 +346,73 @@ function replaceRequired(sourceText, expected, replacement) {
 }
 
 describe('native PR preview import boundary', () => {
-  it('admits only the reviewed pure DAG recorder and fixture without runtime metrics or workers', async () => {
+  it('admits only the reviewed DAG fixtures without runtime metrics or active workers', async () => {
     const reviewedFiles = [
       'src/shared/dag/dagMetricsCore.ts',
       'src/shared/dag/dagMetricsPreviewFixture.ts',
+      'src/shared/dag/dagTokenAccountingPreviewFixture.ts',
     ];
     expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES.filter(filePath =>
       filePath.startsWith('src/shared/dag/')
     )).toEqual(reviewedFiles);
-    for (const forbiddenFile of [
+    const forbiddenFiles = [
       'src/utils/metrics.ts',
       'src/platform/logging/logger.ts',
       'src/workers/jobRunner.ts',
       'src/workers/taskRunners.ts',
-    ]) {
+      'src/core/adapters/openai.adapter.ts',
+      'src/services/openai/serviceHealth.ts',
+    ];
+    for (const forbiddenFile of forbiddenFiles) {
       expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toContain(forbiddenFile);
-      const analyzeDependencies = async () => ({
-        obj: () => Object.fromEntries(
-          [...NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES, forbiddenFile]
-            .map(filePath => [filePath, []])
-        ),
-        warnings: () => ({ skipped: [] }),
-      });
-      await expect(findNativePrPreviewImportViolations({ analyzeDependencies }))
-        .resolves.toContain(`unreviewed preview import: ${forbiddenFile}`);
+    }
+    // The checker accumulates every violation; scan the shared graph only once.
+    const analyzeDependencies = async () => ({
+      obj: () => Object.fromEntries(
+        [...NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES, ...forbiddenFiles]
+          .map(filePath => [filePath, []])
+      ),
+      warnings: () => ({ skipped: [] }),
+    });
+    const violations = await findNativePrPreviewImportViolations({ analyzeDependencies });
+    for (const forbiddenFile of forbiddenFiles) {
+      expect(violations).toContain(`unreviewed preview import: ${forbiddenFile}`);
     }
   }, 30_000);
+
+  it.each([
+    'src/services/openai/attemptTokenUsage.ts',
+    'src/workers/dagChildAccounting.ts',
+    'src/shared/dag/dagTokenAccountingPreviewFixture.ts',
+  ])('pins each accounting dependency and rejects new effects in %s', async filePath => {
+    const sourceText = await readFile(new URL(`../${filePath}`, import.meta.url), 'utf8');
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).toContain(filePath);
+    expect(findUnsafeRuntimeSyntax(filePath, sourceText)).toEqual([]);
+    for (const suffix of [
+      '\nexport const unreviewedChange = true;\n',
+      '\nfetch("https://unreviewed.invalid");\n',
+      '\nObject.assign(process.env, { UNREVIEWED: "true" });\n',
+      '\nsetTimeout(() => {}, 1);\n',
+    ]) {
+      expect(findUnsafeRuntimeSyntax(filePath, sourceText + suffix)).toEqual(
+        expect.arrayContaining([expect.stringContaining('critical entry file semantic digest')])
+      );
+    }
+  });
+
+  it('restricts accounting async hooks to the reviewed storage binding and bounded timeout', async () => {
+    const filePath = 'src/services/openai/attemptTokenUsage.ts';
+    const sourceText = await readFile(new URL(`../${filePath}`, import.meta.url), 'utf8');
+    for (const changed of [
+      replaceRequired(sourceText, '{ AsyncLocalStorage }', '{ AsyncLocalStorage, createHook }'),
+      replaceRequired(sourceText, 'ERROR_USAGE_READ_TIMEOUT_MS = 250', 'ERROR_USAGE_READ_TIMEOUT_MS = Infinity'),
+      replaceRequired(sourceText, 'usage.closed = true', 'usage.closed = false'),
+    ]) {
+      expect(findUnsafeRuntimeSyntax(filePath, changed)).toEqual(
+        expect.arrayContaining([expect.stringContaining('critical entry file semantic digest')])
+      );
+    }
+  });
 
   it.each([
     'src/shared/dag/dagMetricsCore.ts',

@@ -51,6 +51,14 @@ const POSTGRES_SUITES = [
     path: 'tests/integration/non-gpt-terminal-retention.pg18.integration.test.ts',
     databaseEnvironment: 'NON_GPT_TERMINAL_RETENTION_TEST_DATABASE_URL',
   },
+  {
+    path: 'tests/integration/dag-token-accounting.pg18.integration.test.ts',
+    databaseEnvironment: 'JOB_CLAIM_FENCING_TEST_DATABASE_URL',
+  },
+  {
+    path: 'tests/dag-accounting-e2e.test.ts',
+    databaseEnvironment: 'JOB_CLAIM_FENCING_TEST_DATABASE_URL',
+  },
 ];
 
 function buildDatabaseFreeEnvironment() {

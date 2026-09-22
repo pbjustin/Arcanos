@@ -3,8 +3,11 @@ import type { JobData } from '../core/db/schema.js';
 import type { DAGNode, DAGResult, QueuedDAGNodeDefinition } from '../dag/dagNode.js';
 import { stripDagNodeExecutor } from '../dag/dagNode.js';
 import { DEFAULT_DAG_NODE_TIMEOUT_MS } from '../workers/workerExecutionLimits.js';
+import { normalizeAttemptTokenUsage } from '../services/openai/attemptTokenUsage.js';
 
-const dagNodeMetricsSchema = z.record(z.number().optional()).optional();
+const dagNodeMetricsSchema = z.object({
+  attemptTokenUsage: z.number().int().nonnegative().safe().optional()
+}).catchall(z.number().optional()).optional();
 
 const dagResultSchema = z.object({
   nodeId: z.string().trim().min(1),
@@ -192,6 +195,14 @@ export function buildDagQueueJobRecord(job: JobData): DagQueueJobRecord {
   }
 
   const parsedOutput = dagResultSchema.safeParse(job.output);
+  // Invalid explicit accounting must stop admission, not disappear into a legacy fallback.
+  if (job.output && typeof job.output === 'object') {
+    const metrics = (job.output as { metrics?: { attemptTokenUsage?: unknown } }).metrics;
+    const attemptTokenUsage = normalizeAttemptTokenUsage(metrics?.attemptTokenUsage);
+    if (attemptTokenUsage !== undefined && !parsedOutput.success) {
+      throw new Error(`Invalid DAG result with known attempt token usage for job ${job.id}.`);
+    }
+  }
   const queuedAt = new Date(job.created_at).toISOString();
   const updatedAt = new Date(job.updated_at).toISOString();
   const startedAt = job.started_at ? new Date(job.started_at).toISOString() : undefined;

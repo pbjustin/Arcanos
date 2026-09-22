@@ -23,6 +23,7 @@ import {
 } from './shared/ios/iosGatewayPreviewFixture.js';
 import { runIosDevicePolicyPreview } from './shared/ios/iosDevicePreviewFixture.js';
 import { assertDagMetricsRetentionPreviewFixture } from './shared/dag/dagMetricsPreviewFixture.js';
+import { assertDagTokenAccountingPreviewFixture } from './shared/dag/dagTokenAccountingPreviewFixture.js';
 
 import {
   createGenericJobsRouter,
@@ -43,6 +44,7 @@ import {
   NATIVE_PR_PREVIEW_BACKSTAGE_BOOKER_OPENAPI_CONTRACT,
   NATIVE_PR_PREVIEW_DISPATCH_GPT_IDENTIFIER_CONTRACT,
   NATIVE_PR_PREVIEW_DAG_METRICS_CONTRACT,
+  NATIVE_PR_PREVIEW_DAG_TOKEN_ACCOUNTING_CONTRACT,
   NATIVE_PR_PREVIEW_FIXTURE_IDS,
   NATIVE_PR_PREVIEW_IOS_DEVICE_CONTRACT,
   NATIVE_PR_PREVIEW_GAMING_CONTRACT,
@@ -9277,22 +9279,29 @@ export function createNativePrPreviewApplication(
     response.type('text/plain').send('ok');
   });
 
-  app.get('/readyz', (_request, response) => {
-    let ready =
+  app.get('/readyz', async (_request, response) => {
+    const canReportReady = () =>
       options.readinessState.ready
       && options.readinessState.applicationImported
       && options.readinessState.fixturesSealed
       && !options.readinessState.draining;
+    let ready = canReportReady();
     // Preserve the trusted verifier's response contract while requiring the
-    // deployed device policy and DAG metrics fixtures before readiness can claim success.
+    // deployed device policy and DAG fixtures before readiness can claim success.
     if (ready) {
       try {
         runIosDevicePolicyPreview();
         assertDagMetricsRetentionPreviewFixture();
-        response.setHeader(NATIVE_PR_PREVIEW_IOS_DEVICE_CONTRACT.proofHeader,
-          NATIVE_PR_PREVIEW_IOS_DEVICE_CONTRACT.proofVersion);
-        response.setHeader(NATIVE_PR_PREVIEW_DAG_METRICS_CONTRACT.proofHeader,
-          NATIVE_PR_PREVIEW_DAG_METRICS_CONTRACT.proofVersion);
+        await assertDagTokenAccountingPreviewFixture();
+        ready = canReportReady();
+        if (ready) {
+          response.setHeader(NATIVE_PR_PREVIEW_IOS_DEVICE_CONTRACT.proofHeader,
+            NATIVE_PR_PREVIEW_IOS_DEVICE_CONTRACT.proofVersion);
+          response.setHeader(NATIVE_PR_PREVIEW_DAG_METRICS_CONTRACT.proofHeader,
+            NATIVE_PR_PREVIEW_DAG_METRICS_CONTRACT.proofVersion);
+          response.setHeader(NATIVE_PR_PREVIEW_DAG_TOKEN_ACCOUNTING_CONTRACT.proofHeader,
+            NATIVE_PR_PREVIEW_DAG_TOKEN_ACCOUNTING_CONTRACT.proofVersion);
+        }
       } catch {
         ready = false;
       }

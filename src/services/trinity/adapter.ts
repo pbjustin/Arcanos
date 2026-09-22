@@ -10,6 +10,7 @@ import { arcanosDagRunService } from '@services/arcanosDagRunService.js';
 import { requestJobCancellation } from '@core/db/repositories/jobRepository.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import { sleep } from '@shared/sleep.js';
+import { readDagChildTokenUsage, recordAttemptTokenUsage } from '@services/openai/attemptTokenUsage.js';
 import type {
   CreateDagRunRequest,
   DagRunOptions,
@@ -257,10 +258,14 @@ function unwrapCompletedGptAccessResult(result: unknown): unknown {
     }
 
     if (result.ok === false) {
-      throw new TrinityPipelineAdapterError(
+      const failure = new TrinityPipelineAdapterError(
         'TRINITY_INNER_EXECUTION_FAILED',
         readGatewayErrorMessage(result, 'The inner Trinity execution failed.')
       );
+      if (typeof result.retryable === 'boolean') {
+        Object.assign(failure, { retryable: result.retryable });
+      }
+      throw failure;
     }
   }
 
@@ -528,15 +533,28 @@ export async function routeDagNodeToGptAccess(
     }
 
     const status = normalizeOptionalString(payload.status);
+    // The child executes in another queue attempt, outside this async context.
+    // Import its explicit aggregate once, at terminal observation, before unwrapping
+    // a success or throwing a failure. Old child records retain legacy fallback.
+    if (status === 'completed' || status === 'failed' || status === 'expired') {
+      const childTokenUsage = readDagChildTokenUsage(payload.result);
+      if (childTokenUsage !== undefined) {
+        recordAttemptTokenUsage({ total_tokens: childTokenUsage });
+      }
+    }
     if (status === 'completed') {
       return unwrapCompletedGptAccessResult(payload.result);
     }
     if (status === 'failed' || status === 'expired' || status === 'not_found') {
-      throw new TrinityPipelineAdapterError(
+      const failure = new TrinityPipelineAdapterError(
         'GPT_ACCESS_JOB_TERMINAL_FAILURE',
         readGatewayErrorMessage(payload, `Arcanos core job ${createdJob.jobId} ended with status ${status}.`),
         { statusCode: result.statusCode }
       );
+      if (isRecord(payload.result) && typeof payload.result.retryable === 'boolean') {
+        Object.assign(failure, { retryable: payload.result.retryable });
+      }
+      throw failure;
     }
 
     const remainingMs = deadlineAtMs - Date.now();

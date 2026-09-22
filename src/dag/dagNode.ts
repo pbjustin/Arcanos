@@ -2,6 +2,9 @@ export type DAGNodeType = 'task' | 'decision' | 'agent';
 export type DAGNodeExecutionStatus = 'success' | 'failed' | 'skipped';
 
 export interface DAGNodeMetrics {
+  /** Known provider tokens consumed by this execution attempt, including failed stages. */
+  attemptTokenUsage?: number;
+  /** Legacy output/presentation usage; retained for persisted-result compatibility. */
   tokenUsage?: number;
   durationMs?: number;
   [key: string]: number | undefined;
@@ -118,6 +121,7 @@ export function createDagFailureResult(
   output?: unknown,
   options: {
     retryable?: boolean;
+    metrics?: DAGNodeMetrics;
   } = {}
 ): DAGResult {
   return {
@@ -125,6 +129,7 @@ export function createDagFailureResult(
     status: 'failed',
     output: output ?? { errorMessage },
     errorMessage,
+    ...(options.metrics ? { metrics: options.metrics } : {}),
     ...(typeof options.retryable === 'boolean' ? { retryable: options.retryable } : {})
   };
 }

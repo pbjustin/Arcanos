@@ -14,6 +14,10 @@ export interface NativePrPreviewE2eContract {
     proofHeader: 'x-arcanos-preview-dag-metrics-version';
     proofVersion: 'dag-metrics-retention/v1';
   }>;
+  readonly dagTokenAccounting: Readonly<{
+    proofHeader: 'x-arcanos-preview-dag-token-accounting-version';
+    proofVersion: 'dag-token-accounting/v1';
+  }>;
   readonly iosDevicePolicy: Readonly<{
     path: '/ios/device-contract';
     proofHeader: 'x-arcanos-preview-ios-device-version';

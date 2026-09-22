@@ -168,8 +168,15 @@ Backstage roster atomicity, Backstage storyline atomicity, Backstage canon
 storyline atomicity, Notion partition storage, non-GPT terminal retention, and
 paired-device authentication.
 The monolithic Notion candidate-search and authority HTTP suites share the
-canon-storyline test URL; Gaming durable retrieval shares the job-claim fencing
-test URL. The authority HTTP fixture runs synchronization and PostgreSQL retrieval
+canon-storyline test URL; Gaming durable retrieval and DAG aggregate-token
+accounting share the job-claim fencing test URL. The DAG accounting fixtures
+execute real queue/repository SQL, fenced terminal writes, JSONB readback,
+gateway projection, and parent budget decisions. The connected fixture also
+runs the claimed child worker and SDK with synthetic provider responses; its
+background lifecycle and module dispatch are controlled by the test. Neither
+fixture starts the production worker service or contacts a model provider.
+The connected cases run with an in-memory SQL transport in normal root Jest
+and require PostgreSQL in this job. The authority HTTP fixture runs synchronization and PostgreSQL retrieval
 through the authenticated Booker route with deterministic Notion and model
 responses. It covers activation, failed-refresh continuity, and recovery; it
 does not contact live Notion or model providers.
