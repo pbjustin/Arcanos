@@ -221,3 +221,11 @@ Railway builds packages through the root build. Validate schema changes locally 
 - `../contracts/`
 - `CLI_OVERVIEW.md`
 - `../daemon-python/README.md`
+## Scoped Tutor MCP contract
+
+`packages/protocol/schemas/v1/tools/arcanos-tutor.input.schema.json` and its
+output schema own the `arcanos_tutor` wire shape. They are registered in the
+schema catalog's tools section and exported with TypeScript types through
+`@arcanos/protocol`. This adds no daemon command ID or Python execution
+permission. The dedicated authenticated `/chatgpt/mcp` route exposes this tool;
+catalog membership alone never authorizes execution or re-exports operator tools.

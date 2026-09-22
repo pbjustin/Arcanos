@@ -516,3 +516,12 @@ For reliable memory behavior in clients:
 9. The custom-header-only `/api/memory/table` view is intended for authenticated API/operator clients; ordinary browser navigation cannot attach the credential.
 10. Avoid placing secrets in plain memory text unless your environment policy permits it.
 11. Any token holder can list, read, create, and replay durable `/api/sessions*` records; per-session ownership and read/write scope separation remain future authorization work.
+## ChatGPT Tutor pilot
+
+The OAuth Tutor pilot has no conversation ownership binding and cannot hydrate,
+read or write backend memory. Its strict schema rejects `sessionId`; a supplied
+MCP session header is not an ARCANOS conversation ID. Execution explicitly
+clears inherited authorized session context and skips Trinity memory access and
+optional persistence. Existing authenticated GPT hydration remains unchanged.
+Full memory migration requires a separately reviewed issuer/subject-to-session
+authorization model; ChatGPT memory is not authoritative ARCANOS storage.

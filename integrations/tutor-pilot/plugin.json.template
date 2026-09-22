@@ -1,0 +1,9 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "arcanos-tutor-pilot",
+  "version": "0.1.0",
+  "description": "Repository-derived ARCANOS Tutor pilot; authenticated connection registration pending.",
+  "author": { "name": "ARCANOS" },
+  "repository": "https://github.com/pbjustin/Arcanos",
+  "keywords": ["tutoring", "arcanos", "pilot"]
+}

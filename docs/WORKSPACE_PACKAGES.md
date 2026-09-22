@@ -249,3 +249,7 @@ Railway builds from the root package and uses `scripts/start-railway-service-wit
 - `CLI_OVERVIEW.md`
 - `OPENAI_RESPONSES_TOOLS.md`
 - `../daemon-python/README.md`
+The root `@arcanos/protocol` export includes `chatGptTutorInputSchema`,
+`chatGptTutorOutputSchema`, `ChatGptTutorInput` and `ChatGptTutorOutput` for
+the optional authenticated Tutor MCP boundary. No new subpath export or
+daemon command is introduced.

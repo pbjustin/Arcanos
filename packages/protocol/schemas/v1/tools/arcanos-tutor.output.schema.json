@@ -1,0 +1,21 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "arcanos-tutor.output.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["answer", "metadata"],
+  "properties": {
+    "answer": { "type": "string", "minLength": 1, "maxLength": 32000 },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["module", "memory", "execution", "generation"],
+      "properties": {
+        "module": { "const": "ARCANOS:TUTOR" },
+        "memory": { "const": "unavailable" },
+        "execution": { "const": "synchronous" },
+        "generation": { "enum": ["model", "mock", "shortcut"] }
+      }
+    }
+  }
+}

@@ -318,3 +318,11 @@ For agent-safe asynchronous GPT retrieval over MCP:
 3. Read terminal output with `jobs.result`.
 
 Do not attempt prompt-based job retrieval through a writing tool; retrieval must remain structured by `jobId`.
+## Separate ChatGPT pilot resource
+
+The optional `/chatgpt/mcp` resource is separate from this operator catalog.
+It supports only OAuth-authenticated `arcanos_tutor`, with no generic module
+invocation, memory or job tools. Do not point a consumer plugin at operator
+`/mcp` or copy operator credentials into it. See the
+[connection foundation](chatgpt-migration/ARCHITECTURE.md) and
+[client support evidence](chatgpt-migration/PLATFORM.md).

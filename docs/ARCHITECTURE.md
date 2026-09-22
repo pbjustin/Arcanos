@@ -342,3 +342,11 @@ eligibility. Those remain capability-specific checks; see
 [startup resilience](STARTUP_RESILIENCE.md),
 [Backstage Booker](BACKSTAGE_BOOKER_CUSTOM_GPT.md), and
 [Gaming](ARCANOS_GAMING_CUSTOM_GPT.md).
+## Authenticated Tutor connection foundation
+
+`/chatgpt/mcp` is a separate, default-disabled OAuth resource mounted before
+general body parsing. It authorizes one stateless Tutor query with verified
+resource-bound credentials and reuses the existing Tutor/Trinity/HRC services.
+The [decision record](chatgpt-migration/ARCHITECTURE.md) describes the isolation
+policy, package registration dependencies and deferred conversation/job ownership.
+The existing operator MCP and GPT Actions keep their current boundaries.

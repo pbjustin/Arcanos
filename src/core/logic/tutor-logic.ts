@@ -15,6 +15,14 @@ import { getEnv, getEnvNumber } from "@platform/runtime/env.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import { tryExtractExactLiteralPromptShortcut } from "@services/exactLiteralPromptShortcut.js";
 import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { throwIfRequestAborted } from '@arcanos/runtime';
+
+const isolatedTutorExecution = new AsyncLocalStorage<boolean>();
+/** Server-only policy; never read from Tutor payload or model arguments. */
+export function runWithIsolatedTutorExecution<T>(operation: () => T): T {
+  return isolatedTutorExecution.run(true, operation);
+}
 
 const DEFAULT_TOKEN_LIMIT = getEnvNumber('TUTOR_DEFAULT_TOKEN_LIMIT', 200);
 
@@ -177,7 +185,14 @@ async function runTutorPipeline(
         runtimeBudget: createRuntimeBudget(),
         runOptions: {
           answerMode: 'direct',
-          strictUserVisibleOutput: true
+          strictUserVisibleOutput: true,
+          ...(isolatedTutorExecution.getStore() ? {
+            disableMemoryAccess: true,
+            disableOptionalSideEffects: true,
+            redactAuditContent: true,
+            preserveAggregateAbortContext: true,
+            internalMode: false,
+          } : {})
         }
       }
     });
@@ -198,6 +213,10 @@ async function runTutorPipeline(
       }
     };
   } catch (error: unknown) {
+    if (isolatedTutorExecution.getStore()) {
+      throwIfRequestAborted();
+      throw new Error('Tutor generation unavailable.');
+    }
     //audit Assumption: pipeline failure should fallback to mock
     console.error('Tutor pipeline execution error:', resolveErrorMessage(error));
     const mock = generateMockResponse(prompt, 'query');
@@ -335,6 +354,10 @@ export async function handleTutorQuery(query: TutorQuery) {
     //audit Assumption: payload is optional; Handling: default to empty
     result = await moduleFn(resolvedPayload);
   } catch (error: unknown) {
+    if (isolatedTutorExecution.getStore()) {
+      throwIfRequestAborted();
+      throw new Error('Tutor generation unavailable.');
+    }
     //audit Assumption: module failure triggers fallback
     console.error('Tutor module error:', resolveErrorMessage(error));
     const pipeline = await runTutorPipeline('Fallback tutoring response: summarize the learning request and recommend next steps.');

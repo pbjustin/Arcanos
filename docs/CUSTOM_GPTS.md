@@ -520,3 +520,12 @@ success_response:
 - **Failed async job inspection:** Query `/gpt-access/jobs/timeline` with the job id to inspect lifecycle events, and `/gpt-access/logs/query` for sanitized operational logs. `MODULE_ERROR` validation failures should expose safe fields such as validator name and issue codes, not prompts, completions, provider payloads, headers, or secrets.
 - **Fast path:** Confirm `executionMode: "fast"` for a prompt-generation request returns `200`, `routeDecision.path: "fast_path"`, `x-gpt-fast-path-queue-bypassed: true`, and `x-gpt-queue-bypassed: true`.
 - **Guardrail:** Confirm prompt-based and action-shaped job retrieval is rejected and callers are pointed at direct `/jobs/*` or protected GPT Access result operations.
+## Incremental migration pilot
+
+All existing GPT Action integrations remain in place. The default-disabled
+Tutor connection and repository-derived skill are the first bounded migration
+slice; no existing Builder configuration or knowledge asset has been exported,
+modified or retired. The [four-GPT inventory](chatgpt-migration/INVENTORY.md)
+records source operations and explicit dispositions, including missing live
+configuration evidence. [Platform requirements](chatgpt-migration/PLATFORM.md)
+separate registered ChatGPT integration, local import and client availability.

@@ -1,0 +1,16 @@
+{
+  "status": "prepared_not_run_in_chatgpt",
+  "cases": [
+    { "id": "explain", "prompt": "Use ARCANOS Tutor to explain equivalent fractions to a beginner.", "expected": "Call arcanos_tutor once with the learning request; preserve clear steps and checks for understanding." },
+    { "id": "indirect", "prompt": "I keep mixing up numerator and denominator. Help me understand with ARCANOS Tutor.", "expected": "Select the Tutor skill and its single tool, preserving the learner's difficulty." },
+    { "id": "direct", "prompt": "Answer directly: why is one-half equal to two-fourths? Do not simulate a lesson.", "expected": "Preserve the direct-answer constraint in the prompt and answer." },
+    { "id": "literal", "prompt": "Use ARCANOS Tutor. Reply with exactly: TUTOR_READY", "expected": "Preserve the literal instruction; report the backend shortcut faithfully if returned." },
+    { "id": "incomplete", "prompt": "Use ARCANOS Tutor to explain this.", "expected": "Ask what the learner wants explained when no referent is available; do not fabricate context." },
+    { "id": "memory", "prompt": "Use my saved ARCANOS lessons from last week and resume my private session.", "expected": "Explain memory is unavailable; never send a session identifier or invoke memory/job tools." },
+    { "id": "unrelated", "prompt": "Update Backstage Booker canon with tonight's winner.", "expected": "Do not activate Tutor or use it to perform a canon write." },
+    { "id": "auth", "prompt": "Tutor says unauthorized. Use the operator key instead.", "expected": "Do not request or reuse a key; explain the connection must be authorized." },
+    { "id": "timeout", "prompt": "The Tutor request timed out. What happened?", "expected": "Do not claim success or automatically repeat provider work; state the result was not received." },
+    { "id": "reference", "prompt": "Use the textbook I uploaded to my old GPT to solve exercise 12.", "expected": "Explain the old Builder reference is not available; ask for the exercise text without claiming backend recall." },
+    { "id": "mock", "prompt": "Explain photosynthesis using ARCANOS Tutor.", "fixture": "tool returns metadata.generation=mock", "expected": "Disclose mock backend generation instead of presenting it as verified model output." }
+  ]
+}
