@@ -2699,9 +2699,15 @@ export async function runWorkerConsumerSlot(
       const buildDagAttemptFailure = (error: unknown): unknown => {
         if (!tracksDagAttempt) return null;
         const attemptTokenUsage = readDagAttemptOutputUsage(dagAccountingOutput) ?? readAttemptTokenUsage(error);
-        if (attemptTokenUsage === undefined) return null;
         const errorMessage = resolveErrorMessage(error);
         const retryable = !(error && typeof error === 'object' && (error as { retryable?: boolean }).retryable === false);
+        if (attemptTokenUsage === undefined) {
+          // A terminal child error must retain its retry hint for the parent even
+          // when the provider supplied no valid usage. Do not invent an aggregate.
+          return job.job_type === 'gpt' && !retryable
+            ? { retryable: false, error: { message: errorMessage } }
+            : null;
+        }
         if (job.job_type === 'dag-node') {
           const parsed = parseDagNodeJobInput(job.input);
           return parsed.ok ? createDagFailureResult(parsed.value.node.id, errorMessage, undefined, {

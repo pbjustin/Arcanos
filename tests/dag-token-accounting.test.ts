@@ -451,6 +451,21 @@ describe('DAG aggregate provider-token accounting through the production worker 
     expect(summary.resultsByNodeId.first).toMatchObject({ status: 'failed', metrics: { attemptTokenUsage: 39 } });
   });
 
+  it('does not retry a terminal child accounting failure when consumption is unknown', async () => {
+    const queue = new WorkerBoundaryQueue(remotePrompt({
+      retryable: false,
+      error: { message: 'Invalid provider token usage for execution attempt.' }
+    }, 'failed'));
+    const summary = await orchestrator(queue, 100, 2).runGraph(graph(true), context());
+
+    expect(queue.requests).toHaveLength(1);
+    expect(summary.totalRetries).toBe(0);
+    expect(summary.tokenBudgetUsed).toBe(0);
+    expect(summary.resultsByNodeId.first).toMatchObject({ status: 'failed', retryable: false });
+    expect(summary.resultsByNodeId.first.metrics?.attemptTokenUsage).toBeUndefined();
+    expect(summary.resultsByNodeId.dependent.status).toBe('skipped');
+  });
+
   it('preserves remote consumed tokens when a completed child has a failed inner envelope', async () => {
     const queue = new WorkerBoundaryQueue(remotePrompt({
       ok: false,

@@ -2091,8 +2091,9 @@ describe('DAG attempt accounting at claimed worker terminal persistence', () => 
   it.each([
     'late cancellation', 'completion CAS cancellation', 'consumed budget failure', 'unconsumed budget failure',
     'child success', 'child failure', 'child late cancellation', 'child consumed budget failure', 'child recovery budget failure',
+    'child invalid accounting',
   ])(
-    'preserves known usage through %s',
+    'preserves accounting and retry hints through %s',
     async scenario => {
       jest.useFakeTimers();
       jest.setSystemTime(new Date('2026-09-21T12:00:00.000Z'));
@@ -2102,9 +2103,10 @@ describe('DAG attempt accounting at claimed worker terminal persistence', () => 
       routeGptRequestMock.mockReset();
       classifyWorkerAiBudgetErrorMock.mockReset().mockReturnValue(null);
       const child = scenario.startsWith('child ');
+      const invalidAccounting = scenario === 'child invalid accounting';
       const recoveryBudgetFailure = scenario === 'child recovery budget failure';
       const budgetFailure = scenario.includes('budget failure');
-      const knownUsage = scenario !== 'unconsumed budget failure';
+      const knownUsage = scenario !== 'unconsumed budget failure' && !invalidAccounting;
       const childUsage = scenario === 'child failure' || budgetFailure ? 39 : 107;
       let childDispatchCompleted = false;
       const claimedJob = {
@@ -2134,7 +2136,7 @@ describe('DAG attempt accounting at claimed worker terminal persistence', () => 
           'backstage-booker': { route: 'backstage-booker', module: 'BACKSTAGE:BOOKER' },
         });
         routeGptRequestMock.mockImplementationOnce(async () => {
-          recordAttemptTokenUsage({ total_tokens: childUsage });
+          recordAttemptTokenUsage({ total_tokens: invalidAccounting ? -1 : childUsage });
           childDispatchCompleted = true;
           if (budgetFailure && !recoveryBudgetFailure) throw childBudgetError;
           return scenario === 'child failure'
@@ -2214,6 +2216,12 @@ describe('DAG attempt accounting at claimed worker terminal persistence', () => 
             expect(autonomyService.deferJobForProviderRecovery).toHaveBeenCalledTimes(1);
             expect(autonomyService.handleJobFailure).not.toHaveBeenCalled();
           }
+        } else if (invalidAccounting) {
+          expect(autonomyService.handleJobFailure).toHaveBeenCalledWith(claimedJob, expect.any(String), false, {
+            retryable: false,
+            error: { message: 'Invalid provider token usage for execution attempt.' },
+          });
+          expect(autonomyService.deferJobForProviderRecovery).not.toHaveBeenCalled();
         } else if (scenario === 'child failure') {
           expect(autonomyService.handleJobFailure).toHaveBeenCalledWith(claimedJob, expect.any(String), false, expect.objectContaining({
             dagAttemptUsage: 39, retryable: true, ok: false,
