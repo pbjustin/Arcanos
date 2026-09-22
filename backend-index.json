@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-22T01:43:34.047Z",
+  "generatedAt": "2026-09-22T02:21:54.128Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -2645,6 +2645,9 @@
           "relativePath": "src/shared/dag/dagMetricsPreviewFixture.ts"
         },
         {
+          "relativePath": "src/shared/dag/dagTokenAccountingPreviewFixture.ts"
+        },
+        {
           "relativePath": "src/shared/dispatch/dispatchGptIdentifierBoundary.ts"
         },
         {
@@ -3986,6 +3989,9 @@
         },
         {
           "relativePath": "tests/dag-templates.test.ts"
+        },
+        {
+          "relativePath": "tests/dag-token-accounting-preview-fixture.test.ts"
         },
         {
           "relativePath": "tests/dag-token-accounting.test.ts"

@@ -18,6 +18,10 @@ export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
     proofHeader: 'x-arcanos-preview-dag-metrics-version',
     proofVersion: 'dag-metrics-retention/v1',
   }),
+  dagTokenAccounting: Object.freeze({
+    proofHeader: 'x-arcanos-preview-dag-token-accounting-version',
+    proofVersion: 'dag-token-accounting/v1',
+  }),
   iosDevicePolicy: Object.freeze({
     path: '/ios/device-contract',
     proofHeader: 'x-arcanos-preview-ios-device-version',

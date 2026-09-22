@@ -62,6 +62,7 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/services/publicGamingCanary.ts',
   'src/services/publicGamingCanaryFixture.ts',
   'src/services/queuedJobCompletionPolling.ts',
+  'src/services/openai/attemptTokenUsage.ts',
   'src/shared/backstage/backstageActionPolicy.ts',
   'src/shared/backstage/backstageBookerAccessAuthCore.ts',
   'src/shared/backstage/backstageBookerAsyncContinuation.ts',
@@ -92,6 +93,7 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/shared/dispatch/dispatchGptIdentifierBoundary.ts',
   'src/shared/dag/dagMetricsCore.ts',
   'src/shared/dag/dagMetricsPreviewFixture.ts',
+  'src/shared/dag/dagTokenAccountingPreviewFixture.ts',
   'src/shared/dispatch/universalDispatch.ts',
   'src/shared/gpt/gptIdentifier.ts',
   'src/shared/gpt/gptAsyncWaitPolicy.ts',
@@ -163,6 +165,7 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/transport/http/asyncHandler.ts',
   'src/transport/http/payloadNormalization.ts',
   'src/transport/http/responseHelpers.ts',
+  'src/workers/dagChildAccounting.ts',
 ]);
 const ALLOWED_GRAPH_FILES =
   new Set(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES);
@@ -177,11 +180,11 @@ const FORBIDDEN_LOCAL_IMPORT_PATTERNS = [
   /^src\/routes\/jobs\.ts$/u,
   /^src\/routes\/modules\.ts$/u,
   /^src\/routes\/register\.ts$/u,
-  /^src\/services\/(?!(?:(?:backstageBookerClear|directAnswerMode|gamingModes|gamingDocumentExtraction|gamingDocumentEvidence|gamingHtmlEvidence|gamingJsonEvidence|gamingDocumentChunks|gamingDurableDocumentChunks|gamingGameDetection|gamingPublicDispatcher|publicGamingCanary|publicGamingCanaryFixture|queuedJobCompletionPolling)\.ts$|actionPlanExecution\/canonical\.ts$|controlPlane\/(?:httpAuth|systemStateBodyParser|systemStateHttpBoundary|types)\.ts$))/u,
+  /^src\/services\/(?!(?:(?:backstageBookerClear|directAnswerMode|gamingModes|gamingDocumentExtraction|gamingDocumentEvidence|gamingHtmlEvidence|gamingJsonEvidence|gamingDocumentChunks|gamingDurableDocumentChunks|gamingGameDetection|gamingPublicDispatcher|publicGamingCanary|publicGamingCanaryFixture|queuedJobCompletionPolling)\.ts$|openai\/attemptTokenUsage\.ts$|actionPlanExecution\/canonical\.ts$|controlPlane\/(?:httpAuth|systemStateBodyParser|systemStateHttpBoundary|types)\.ts$))/u,
   /^src\/shared\/http\/index\.ts$/u,
   /^src\/shared\/http\/middleware\.ts$/u,
   /^src\/transport\/http\/middleware\//u,
-  /^src\/workers\//u,
+  /^src\/workers\/(?!dagChildAccounting\.ts$)/u,
 ];
 const LOCAL_IMPORT_PREFIXES = [
   '.',
@@ -207,6 +210,8 @@ const ALLOWED_EXTERNAL_RUNTIME_IMPORTS = new Set([
   'zod',
 ]);
 const FILE_SPECIFIC_EXTERNAL_RUNTIME_IMPORTS = new Map([
+  ['src/services/openai/attemptTokenUsage.ts', new Set(['node:async_hooks'])],
+  ['src/shared/dag/dagTokenAccountingPreviewFixture.ts', new Set(['@arcanos/runtime/redaction'])],
   ['src/services/gamingHtmlEvidence.ts', new Set(['cheerio'])],
   ['src/services/gamingJsonEvidence.ts', new Set(['cheerio'])],
   ['src/shared/gaming/gamingSourceAcquisitionCore.ts', new Set(['node:net', '@arcanos/runtime/redaction'])],
@@ -239,6 +244,12 @@ const FILE_SPECIFIC_EXTERNAL_RUNTIME_IMPORTS = new Map([
   ['src/start-native-pr-preview.ts', new Set(['node:http', 'node:url'])],
 ]);
 const FILE_SPECIFIC_EXTERNAL_IMPORT_BINDINGS = new Map([
+  ['src/services/openai/attemptTokenUsage.ts', new Map([
+    ['node:async_hooks', new Set(['AsyncLocalStorage:AsyncLocalStorage'])],
+  ])],
+  ['src/shared/dag/dagTokenAccountingPreviewFixture.ts', new Map([
+    ['@arcanos/runtime/redaction', new Set(['redactSensitive:redactSensitive'])],
+  ])],
   ['src/services/actionPlanExecution/canonical.ts', new Map([
     ['node:crypto', new Set(['createHash:createHash'])],
   ])],
@@ -742,6 +753,9 @@ const CRITICAL_RUNTIME_FUNCTION_DIGESTS = new Map([
   ],
 ]);
 const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
+  ['src/shared/dag/dagTokenAccountingPreviewFixture.ts', 'ddf36a96aefef38ec8e4cf1326e42bac53190868f3a5053bc4e7e3be8f65931f'],
+  ['src/services/openai/attemptTokenUsage.ts', '405aa0373b8b18002ea43cc86c5870a61cf50719be01598c015a15b393404013'],
+  ['src/workers/dagChildAccounting.ts', '3bf30d00e7b97d7f041e5ced257a9d493ca5bcb76740469c2b1feb9ac8e47c57'],
   ['src/shared/dag/dagMetricsCore.ts', '218990792ca3d3cb72600c48db1f0a61d8321a6fb6c4be5bee895a88a1babffb'],
   ['src/shared/dag/dagMetricsPreviewFixture.ts', 'a95a64a249b14c04fc90840004ce3138f1e60eba614e2c37ddfa99e484d600a7'],
   ['src/services/actionPlanExecution/canonical.ts', 'b0c24aa5b6d3b588c7970008049bdcacccab8e66cbaa26a51eea49e59811c917'],
@@ -5148,6 +5162,12 @@ export function findUnsafeRuntimeSyntax(filePath, sourceText) {
       && ts.isIdentifier(node.expression)
       && FORBIDDEN_RUNTIME_BINDING_NAMES.has(node.expression.text)
       && !isReviewedRequestAbortTimeoutCall(filePath, node)
+      && !(
+        hasExactReviewedEntryDigest
+        && filePath === 'src/services/openai/attemptTokenUsage.ts'
+        && currentFunctionName === 'readBoundedErrorUsageBody'
+        && node.expression.text === 'setTimeout'
+      )
     ) {
       violations.push(
         `${filePath}:${lineNumber}: forbidden ${node.expression.text} call`
@@ -5223,7 +5243,20 @@ export function findUnsafeRuntimeSyntax(filePath, sourceText) {
           ?.get(currentFunctionName);
       if (
         isForbiddenRuntimeNamespaceMember(runtimeNamespaceAccess)
-        || isObjectMutationCapabilityAccess(node.expression)
+        || (
+          isObjectMutationCapabilityAccess(node.expression)
+          && !(
+            hasExactReviewedEntryDigest
+            && propertyAccess?.[0] === 'Object'
+            && propertyAccess[1] === 'assign'
+            && (
+              (filePath === 'src/services/openai/attemptTokenUsage.ts'
+                && currentFunctionName === 'invalidTokenUsage')
+              || (filePath === 'src/workers/dagChildAccounting.ts'
+                && currentFunctionName === 'runWithDagChildAccounting')
+            )
+          )
+        )
         || (
           propertyAccess
           && (

@@ -381,6 +381,27 @@ Launcher behavior:
   The authenticated lifecycle suite separately covers normal hybrid routes and
   companion-fetch orchestration with controlled transport/provider/storage
   dependencies; it does not establish live model, SQL, or active-worker behavior.
+- Web preview `/readyz` additionally runs the production attempt-usage collector
+  and child-envelope accounting wrapper over fixed synthetic observations before
+  returning success. The `x-arcanos-preview-dag-token-accounting-version:
+  dag-token-accounting/v1` marker proves aggregate 107 versus final-stage 7,
+  isolated failed/retry totals 27 and 43, cancellation consumption 39, explicit
+  zero versus unknown usage, partial/error usage, sticky malformed accounting,
+  overflow rejection, concurrent isolation, and ignored late observations.
+  JSON roundtrip and the production redactor preserve the aggregate while
+  redacting public token metadata. Fixture failure or draining during the
+  asynchronous proof returns 503 without success markers; GET and HEAD retain
+  the trusted verifier's existing response contract. The exact-head verifier
+  requires the additive marker without expanding its 138-request plan.
+  Only the three reviewed accounting/fixture files enter the sealed import
+  graph with semantic pins and restricted bindings. This is served accounting
+  component evidence: no SDK transport, live provider, active worker, SQL,
+  gateway route, scheduler, or orchestrator runs in this fixture. Those runtime
+  and persistence boundaries have separate coverage in
+  [`dag-accounting-e2e.test.ts`](../tests/dag-accounting-e2e.test.ts) and the
+  required PostgreSQL CI selection. The fixture and its fault controls are in
+  [`dagTokenAccountingPreviewFixture.ts`](../src/shared/dag/dagTokenAccountingPreviewFixture.ts)
+  and [`dag-token-accounting-preview-fixture.test.ts`](../tests/dag-token-accounting-preview-fixture.test.ts).
 - The trusted
   [Railway PR preview lifecycle workflow](../.github/workflows/railway-pr-preview-lifecycle.yml)
   owns preview creation and teardown for PRs carrying the exact
