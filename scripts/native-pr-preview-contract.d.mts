@@ -18,6 +18,10 @@ export interface NativePrPreviewE2eContract {
     proofHeader: 'x-arcanos-preview-dag-token-accounting-version';
     proofVersion: 'dag-token-accounting/v1';
   }>;
+  readonly sessionContext: Readonly<{
+    proofHeader: 'x-arcanos-session-context-proof';
+    proofVersion: 'session-context/v1';
+  }>;
   readonly iosDevicePolicy: Readonly<{
     path: '/ios/device-contract';
     proofHeader: 'x-arcanos-preview-ios-device-version';

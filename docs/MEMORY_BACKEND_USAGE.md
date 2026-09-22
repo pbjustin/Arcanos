@@ -114,7 +114,7 @@ For a registered `/gpt/:gptId` request, memory handling runs before module actio
 
 The branch is not tied to Backstage Booker, but it is not universal.
 Forced-direct routes and requests that bypass intent routing do not use it.
-Authentication is evaluated only after the exact predicate matches, so ordinary
+Mandatory authentication is evaluated after the exact predicate matches, so ordinary
 GPT writing requests do not require the memory credential. Authenticated
 interceptions execute directly and bypass fast-path and job-backed execution,
 including when async, fast, or idempotency hints are present. The legacy
@@ -132,6 +132,100 @@ This interception contract is distinct from a normal Research `run` dispatch.
 Research owns deterministic `research/<topic-component>/...` result persistence
 inside its aggregate deadline and does not additionally write generic module
 conversation transcripts or history, even when `sessionId` is present.
+
+## Session Context Hydration
+
+`routeGptRequest(...)` reads prior session turns before a supported prompt-driven
+module action when the request has both an explicit structured `sessionId`
+(top-level first, then payload) and server-owned `memoryPlaneAuthorized === true`.
+The HTTP router derives that authority only from the existing
+`x-arcanos-memory-token` verifier. Body flags, inline session labels, session
+existence, and other credentials do not grant hydration authority. Requests
+without a session or valid memory authorization keep their existing behavior.
+
+Supported actions are `query` for CORE, AUDIT, GUIDE, WRITE, TUTOR, and GAMING,
+plus SIM `run`; aliases are resolved before this check. Operational TRACKER
+queries, BUILD jobs, HRC evaluation, typed Research execution, and Backstage
+actions are excluded. Protected writes do not receive this context.
+
+Authorized HTTP context requests stay in the synchronous module dispatcher,
+including with fast/async/idempotency hints or `query_and_wait`. Their response
+uses `Cache-Control: no-store` and route reason `session_context_hydration`.
+Neither credentials nor an authorization flag are serialized into queued jobs.
+This is the existing deployment-wide memory permission, not session ownership
+or tenant isolation.
+
+Hydration reads only the exact `conversations_core` channel. It does not search
+module histories, resolve natural-language aliases, invoke RAG, or hydrate
+`system_meta` as instructions. Recent non-empty text turns are returned in
+chronological order, preserving valid `user`, `assistant`, and `system` labels;
+malformed roles default to `user`, tool/function turns and malformed/empty
+entries are dropped. Stored role labels remain historical data, never model
+system-message authority.
+
+The default bounds are **12 turns and 8,000 rendered characters**, configurable
+with `SESSION_CONTEXT_MAX_TURNS` and `SESSION_CONTEXT_MAX_CHARS`. Invalid values
+fall back to defaults; supported ranges are 1–100 turns and 1–64,000 characters.
+The character budget includes delimiters, role labels, and JSON escaping; older
+turns are omitted and a partial turn retains its most recent text when needed.
+An insufficient budget yields no prior context. The current prompt is separate
+and is not charged to this history limit.
+
+A request-local runtime scope adds an `__arcanosSessionContext` block as
+user-level historical data at model-facing boundaries. Module payloads, current
+prompt routing, Gaming player-context/retrieval input, and persistence inputs
+remain unchanged. A caller-supplied field with that name is not read as trusted
+context. Module persistence continues saving only the current interaction's
+request/response previews, preventing injected history from becoming the next
+saved user turn.
+
+Failed reads, a one-second read deadline, empty sessions, and unusable history
+continue without prior context. Structured internal diagnostics contain route,
+module, action, request/session correlation (subject to existing redaction),
+fixed reason codes, turn counts, and truncation state; they contain no transcript
+or caught error/stack text and are not added to answer text. The repository can
+fall back to its exact-session cache and can return an empty array after a
+storage failure, so `no_session_context` does not prove durable storage health.
+
+Natural-language memory interception remains earlier in dispatch: authorized
+recall with explicit scope may persist the current interaction; sessionless
+recall remains write-free. Replay reconstruction from `conversations_core` and
+`system_meta`, including its public response shape, is unchanged.
+
+### Local session continuity fixture
+
+Run the HTTP continuity fixture with the pinned Node/npm toolchain and installed
+dependencies:
+
+```bash
+npm run build:packages
+node scripts/run-jest.mjs --runTestsByPath tests/gpt-session-context.e2e.test.ts --coverage=false --runInBand
+```
+
+The fixture sends successive requests through the real GPT router, memory-token
+verification, dispatcher, CORE module, Trinity pipeline, provider request mapper,
+and session conversation persistence/repository. It uses an isolated Express
+mount, an in-memory storage adapter, and a deterministic provider transport. The
+provider fixture derives its reply from the actual model input, so successful
+recall requires the earlier interaction to reach that boundary. It does not
+inject a prebuilt session-context scope or replace dispatch with a mock.
+
+This proves application-path continuity with synthetic I/O. It does not establish
+PostgreSQL durability, live model response quality, the full production app's
+startup/middleware composition, or hosted deployment behavior. The normal root
+Jest run discovers this fixture; no live endpoint or credential is needed.
+
+The sealed Railway preview separately executes the production-shared history
+renderer, action eligibility policy, and request-local context scope over fixed
+synthetic turns during web readiness. Its `x-arcanos-session-context-proof:
+session-context/v1` marker is emitted only after those assertions pass. The
+supplemental exact-head verifier requires that marker at initial and final
+readiness; failure or draining returns 503 with no success proof markers.
+This adds hosted component evidence for normalization, escaped delimiters,
+bounds, excluded actions, nested empty scopes, and concurrent isolation. It
+does not import the storage-loading service or normal GPT route. See the
+[Railway preview lifecycle](RAILWAY_DEPLOYMENT.md) for exact-commit verification
+and cleanup.
 
 ### Backstage Booker convenience keys
 

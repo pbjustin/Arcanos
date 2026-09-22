@@ -3,6 +3,7 @@ import request from 'supertest';
 
 import { assertDagMetricsRetentionPreviewFixture } from '../src/shared/dag/dagMetricsPreviewFixture.js';
 import { assertDagTokenAccountingPreviewFixture } from '../src/shared/dag/dagTokenAccountingPreviewFixture.js';
+import { assertSessionContextPreviewFixture } from '../src/shared/memory/sessionContextPreviewFixture.js';
 import {
   NATIVE_PR_PREVIEW_BACKSTAGE_BOOKER_OPENAPI_CONTRACT,
   NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT,
@@ -10,6 +11,7 @@ import {
   NATIVE_PR_PREVIEW_DISPATCH_GPT_IDENTIFIER_CONTRACT,
   NATIVE_PR_PREVIEW_DAG_METRICS_CONTRACT,
   NATIVE_PR_PREVIEW_DAG_TOKEN_ACCOUNTING_CONTRACT,
+  NATIVE_PR_PREVIEW_SESSION_CONTEXT_CONTRACT,
   NATIVE_PR_PREVIEW_FIXTURE_IDS,
   NATIVE_PR_PREVIEW_IOS_DEVICE_CONTRACT,
   NATIVE_PR_PREVIEW_GAMING_CONTRACT,
@@ -32,6 +34,10 @@ jest.unstable_mockModule('../src/shared/dag/dagMetricsPreviewFixture.js', () => 
 const assertDagTokenAccountingFixture = jest.fn(assertDagTokenAccountingPreviewFixture);
 jest.unstable_mockModule('../src/shared/dag/dagTokenAccountingPreviewFixture.js', () => ({
   assertDagTokenAccountingPreviewFixture: assertDagTokenAccountingFixture,
+}));
+const assertSessionContextFixture = jest.fn(assertSessionContextPreviewFixture);
+jest.unstable_mockModule('../src/shared/memory/sessionContextPreviewFixture.js', () => ({
+  assertSessionContextPreviewFixture: assertSessionContextFixture,
 }));
 const {
   createNativePrPreviewApplication,
@@ -803,6 +809,89 @@ describe('native PR contained application', () => {
     } finally {
       releaseFixture();
       assertDagTokenAccountingFixture.mockImplementation(assertDagTokenAccountingPreviewFixture);
+    }
+  });
+
+  it('requires session context proof for GET and HEAD readiness and recovers after fixture failure', async () => {
+    const readinessState = createNativePrPreviewReadinessState();
+    const app = createNativePrPreviewApplication({ identity, readinessState });
+    const proofContracts = [NATIVE_PR_PREVIEW_IOS_DEVICE_CONTRACT,
+      NATIVE_PR_PREVIEW_DAG_METRICS_CONTRACT, NATIVE_PR_PREVIEW_DAG_TOKEN_ACCOUNTING_CONTRACT,
+      NATIVE_PR_PREVIEW_SESSION_CONTEXT_CONTRACT];
+    try {
+      for (const method of ['get', 'head'] as const) {
+        const pending = await request(app)[method]('/readyz');
+        expect(pending.status).toBe(503);
+        for (const contract of proofContracts) expect(pending.headers[contract.proofHeader]).toBeUndefined();
+      }
+      expect(assertSessionContextFixture).not.toHaveBeenCalled();
+      Object.assign(readinessState, { ready: true, applicationImported: true, fixturesSealed: true });
+      const ready = await request(app).get('/readyz');
+      const head = await request(app).head('/readyz');
+      expect(ready.status).toBe(200);
+      expect(head.status).toBe(200);
+      expect(head.text).toBeUndefined();
+      for (const contract of proofContracts) {
+        expect(ready.headers[contract.proofHeader]).toBe(contract.proofVersion);
+        expect(head.headers[contract.proofHeader]).toBe(contract.proofVersion);
+      }
+      for (const asynchronous of [false, true]) {
+        assertSessionContextFixture.mockImplementation(() => {
+          const error = new Error('Session fixture failure must not be reflected.');
+          if (asynchronous) return Promise.reject(error);
+          throw error;
+        });
+        for (const method of ['get', 'head'] as const) {
+          const failed = await request(app)[method]('/readyz');
+          expect(failed.status).toBe(503);
+          expectNoStore(failed);
+          for (const contract of proofContracts) expect(failed.headers[contract.proofHeader]).toBeUndefined();
+          expect(JSON.stringify(failed.body)).not.toContain('fixture failure');
+          if (method === 'get') expect(failed.body).toEqual({ ...ready.body, ready: false });
+        }
+      }
+      assertSessionContextFixture.mockImplementation(assertSessionContextPreviewFixture);
+      const recovered = await request(app).get('/readyz');
+      expect(recovered.status).toBe(200);
+      expect(recovered.body).toEqual(ready.body);
+      expect(recovered.headers[NATIVE_PR_PREVIEW_SESSION_CONTEXT_CONTRACT.proofHeader])
+        .toBe(NATIVE_PR_PREVIEW_SESSION_CONTEXT_CONTRACT.proofVersion);
+    } finally {
+      assertSessionContextFixture.mockImplementation(assertSessionContextPreviewFixture);
+    }
+  });
+
+  it.each(['get', 'head'] as const)('awaits session proof and withholds all markers if draining begins during %s readiness', async method => {
+    const readinessState = createNativePrPreviewReadinessState();
+    Object.assign(readinessState, { ready: true, applicationImported: true, fixturesSealed: true });
+    const app = createNativePrPreviewApplication({ identity, readinessState });
+    let startFixture!: () => void;
+    let releaseFixture!: () => void;
+    const started = new Promise<void>(resolve => { startFixture = resolve; });
+    const pending = new Promise<void>(resolve => { releaseFixture = resolve; });
+    assertSessionContextFixture.mockImplementation(async () => { startFixture(); await pending; });
+    let completed = false;
+    const responsePromise = request(app)[method]('/readyz').then(response => {
+      completed = true;
+      return response;
+    });
+    try {
+      await started;
+      expect(completed).toBe(false);
+      readinessState.draining = true;
+      releaseFixture();
+      const response = await responsePromise;
+      expect(response.status).toBe(503);
+      if (method === 'get') expect(response.body.ready).toBe(false);
+      for (const contract of [NATIVE_PR_PREVIEW_IOS_DEVICE_CONTRACT,
+        NATIVE_PR_PREVIEW_DAG_METRICS_CONTRACT, NATIVE_PR_PREVIEW_DAG_TOKEN_ACCOUNTING_CONTRACT,
+        NATIVE_PR_PREVIEW_SESSION_CONTEXT_CONTRACT]) {
+        expect(response.headers[contract.proofHeader]).toBeUndefined();
+      }
+    } finally {
+      releaseFixture();
+      await responsePromise;
+      assertSessionContextFixture.mockImplementation(assertSessionContextPreviewFixture);
     }
   });
 

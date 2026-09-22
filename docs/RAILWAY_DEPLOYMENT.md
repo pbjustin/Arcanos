@@ -402,6 +402,21 @@ Launcher behavior:
   required PostgreSQL CI selection. The fixture and its fault controls are in
   [`dagTokenAccountingPreviewFixture.ts`](../src/shared/dag/dagTokenAccountingPreviewFixture.ts)
   and [`dag-token-accounting-preview-fixture.test.ts`](../tests/dag-token-accounting-preview-fixture.test.ts).
+- Web preview `/readyz` also awaits the production-shared session-context
+  renderer, action policy, and `AsyncLocalStorage` scope over fixed synthetic
+  history. Successful assertions emit `x-arcanos-session-context-proof:
+  session-context/v1`. The fixture checks normalization, escaped delimiters,
+  latest-turn and rendered-character limits, excluded actions, nested empty
+  scopes, and concurrent isolation. Any fixture failure or draining while it
+  runs returns 503 without any readiness proof markers. GET/HEAD response
+  bodies and the 138-request plan remain compatible with the trusted base
+  verifier; the supplemental exact-head verifier requires the new marker at
+  initial and final readiness. Only the reviewed core, policy, scope, and
+  fixture enter the pinned preview import graph. This is served component
+  evidence; the storage-loading service, normal GPT routes, model/provider,
+  database, and active worker remain outside this fixture. The separate
+  [HTTP continuity fixture](../tests/gpt-session-context.e2e.test.ts) covers
+  authorized dispatch and persistence orchestration with synthetic I/O.
 - The trusted
   [Railway PR preview lifecycle workflow](../.github/workflows/railway-pr-preview-lifecycle.yml)
   owns preview creation and teardown for PRs carrying the exact

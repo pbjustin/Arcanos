@@ -11,6 +11,13 @@ import {
 } from "@services/moduleRegistry.js";
 import type { GptMatchMethod } from "@platform/logging/gptLogger.js";
 import { persistModuleConversation } from "@services/moduleConversationPersistence.js";
+import { hydrateSessionContext } from '@services/sessionContextHydrationService.js';
+import { runWithSessionContext } from '@platform/runtime/sessionContext.js';
+import { logger as structuredLogger } from '@platform/logging/structuredLogging.js';
+import {
+  isSessionContextQueryAction,
+  resolveExplicitSessionContextId,
+} from '@shared/memory/sessionContextPolicy.js';
 import {
   isBackstageLegacyQueuedExecution,
   isBackstageProtectedGenerationExecution,
@@ -79,6 +86,7 @@ import {
   getRequestAbortContext,
   getRequestRemainingMs,
   isAbortError,
+  throwIfRequestAborted,
   runWithRequestAbortTimeout
 } from "@arcanos/runtime";
 import {
@@ -274,18 +282,7 @@ function actionRequiresPrompt(action: string): boolean {
 }
 
 function resolveSessionId(body: unknown, payload: unknown): string | undefined {
-  const bodySessionId = isRecord(body) && typeof body.sessionId === "string" ? body.sessionId.trim() : "";
-  if (bodySessionId) {
-    return bodySessionId;
-  }
-
-  const payloadSessionId =
-    isRecord(payload) && typeof payload.sessionId === "string" ? payload.sessionId.trim() : "";
-  if (payloadSessionId) {
-    return payloadSessionId;
-  }
-
-  return undefined;
+  return resolveExplicitSessionContextId(body, payload);
 }
 
 type PromptIntentClassification = {
@@ -1927,8 +1924,53 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
         : parentAbortSignal ?? activeAbortContext?.signal,
       abortMessage: `Module dispatch timeout after ${timeoutMs}ms`
     };
-    const executeModuleAction = () =>
-      dispatchModuleAction(activeEntry.module, action, payload);
+    const executeModuleAction = async () => {
+      const explicitSessionId = resolveExplicitSessionContextId(body, payload);
+      const hydrationLogger = logger ?? structuredLogger;
+      let renderedContext: string | undefined;
+      const skipReason = !explicitSessionId
+        ? 'missing_session_id'
+        : memoryPlaneAuthorized !== true
+          ? 'memory_plane_unauthorized'
+          : !isSessionContextQueryAction(activeEntry.module, action)
+            ? 'action_not_eligible'
+            : undefined;
+      if (skipReason) {
+        hydrationLogger.info?.('gpt.dispatch.session_context', {
+          requestId,
+          sessionId: explicitSessionId ?? null,
+          module: activeEntry.module,
+          route: activeEntry.route,
+          action,
+          hydrated: false,
+          returnedTurnCount: 0,
+          reason: skipReason,
+        });
+      } else {
+        const context = await hydrateSessionContext({
+          sessionId: explicitSessionId!,
+          moduleName: activeEntry.module,
+          route: activeEntry.route,
+          action,
+          requestId,
+        });
+        if (context.hydrated) renderedContext = context.renderedContext;
+        hydrationLogger.info?.('gpt.dispatch.session_context', {
+          requestId,
+          sessionId: explicitSessionId,
+          module: activeEntry.module,
+          route: activeEntry.route,
+          action,
+          hydrated: context.hydrated,
+          ...context.diagnostics,
+        });
+      }
+      // Keep original payload bytes for policy, module aliases and persistence.
+      // An empty scope also clears any inherited context for excluded dispatches.
+      throwIfRequestAborted();
+      return runWithSessionContext(renderedContext, () =>
+        dispatchModuleAction(activeEntry.module, action, payload));
+    };
     const isPrivateBackstageQueuedGeneration =
       privateBackstageQueuedExecution
       && activeEntry.module === BACKSTAGE_MODULE_NAME

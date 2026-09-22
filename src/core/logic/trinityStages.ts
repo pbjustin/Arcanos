@@ -33,6 +33,7 @@ import type { ChatCompletionMessageParam } from "@services/openai/types.js";
 import { getAuditSafeConfig, createAuditSummary, type AuditLogEntry } from "@services/auditSafe.js";
 import { getMemoryContext } from "@services/memoryAware.js";
 import { logger } from "@platform/logging/structuredLogging.js";
+import { buildSessionContextMessages } from '@platform/runtime/sessionContext.js';
 import { calculateMemoryScoreSummary, logFallbackEvent } from './trinityHelpers.js';
 import type {
   TrinityIntakeOutput,
@@ -366,6 +367,7 @@ export function buildFinalArcanosMessages(
 
   return [
     { role: 'system', content: systemContent },
+    ...buildSessionContextMessages(),
     { role: 'user', content: userRequestContent },
     { role: 'assistant', content: assistantContent },
     { role: 'user', content: honestyInstructionContent },
@@ -429,6 +431,7 @@ export async function runIntakeStage(
   const intakeResponse = await createSingleChatCompletion(client, {
     messages: [
       { role: 'system', content: intakeSystemPrompt },
+      ...buildSessionContextMessages(),
       {
         role: 'user',
         content: [
@@ -546,7 +549,7 @@ export async function runReasoningStage(
   const structuredReasoning = await runStructuredReasoning(
     client,
     gpt5ModelUsed,
-    reasoningPrompt,
+    [...buildSessionContextMessages().map(message => message.content), reasoningPrompt].join('\n\n'),
     runtimeBudget,
     resolveReasoningStageTimeoutMs(runtimeBudget, explicitTimeoutMs),
     {
@@ -768,15 +771,17 @@ export async function runDirectAnswerStage(
 
   let directAnswerResponse: Awaited<ReturnType<typeof createSingleChatCompletion>>;
   try {
+    const messages = buildTrinityDirectAnswerMessages(
+      memoryContextSummary,
+      auditSafePrompt,
+      trustedPolicyPrompt ?? auditSafePrompt,
+      directAnswerSystemPolicyPrompt,
+      directAnswerUntrustedContextPrompt
+    );
+    messages.splice(messages.length - 1, 0, ...buildSessionContextMessages());
     const executeDirectAnswer = () =>
       createSingleChatCompletion(client, {
-        messages: buildTrinityDirectAnswerMessages(
-          memoryContextSummary,
-          auditSafePrompt,
-          trustedPolicyPrompt ?? auditSafePrompt,
-          directAnswerSystemPolicyPrompt,
-          directAnswerUntrustedContextPrompt
-        ),
+        messages,
         temperature,
         model: directAnswerModel,
         signal: useAggregateAbortContext ? aggregateSignal : getRequestAbortSignal(),

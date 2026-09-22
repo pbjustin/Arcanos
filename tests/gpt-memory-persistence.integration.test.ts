@@ -13,6 +13,7 @@ const mockHasNaturalLanguageMemoryCue = jest.fn();
 const mockLoadMemory = jest.fn();
 const mockSaveMemory = jest.fn();
 const mockSaveMessage = jest.fn();
+const mockGetChannel = jest.fn();
 const mockQuery = jest.fn();
 
 jest.unstable_mockModule('@platform/runtime/gptRouterConfig.js', () => ({
@@ -49,6 +50,7 @@ jest.unstable_mockModule('@core/db/index.js', () => ({
 
 jest.unstable_mockModule('@services/sessionMemoryService.js', () => ({
   saveMessage: mockSaveMessage,
+  getChannel: mockGetChannel,
 }));
 
 jest.unstable_mockModule('@services/repoImplementationEvidence.js', () => ({
@@ -94,6 +96,7 @@ describe('GPT memory interception conversation persistence', () => {
     mockLoadMemory.mockReset().mockResolvedValue(null);
     mockSaveMemory.mockReset().mockResolvedValue(undefined);
     mockSaveMessage.mockReset().mockResolvedValue(undefined);
+    mockGetChannel.mockReset().mockResolvedValue([]);
   });
 
   it('persists an authorized recall under the explicit session scope', async () => {
@@ -172,6 +175,7 @@ describe('GPT memory interception conversation persistence', () => {
       })
     );
     expect(mockDispatchModuleAction).not.toHaveBeenCalled();
+    expect(mockGetChannel).not.toHaveBeenCalled();
   });
 
   it('keeps an authorized recall without explicit session scope write-free', async () => {
@@ -198,6 +202,7 @@ describe('GPT memory interception conversation persistence', () => {
     expect(mockLoadMemory).not.toHaveBeenCalled();
     expect(mockSaveMemory).not.toHaveBeenCalled();
     expect(mockDispatchModuleAction).not.toHaveBeenCalled();
+    expect(mockGetChannel).not.toHaveBeenCalled();
   });
 
   it('returns a successful recall when every persistence adapter is unavailable', async () => {
@@ -229,5 +234,6 @@ describe('GPT memory interception conversation persistence', () => {
     expect(mockLoadMemory).toHaveBeenCalledTimes(2);
     expect(mockSaveMemory).toHaveBeenCalledTimes(3);
     expect(mockDispatchModuleAction).not.toHaveBeenCalled();
+    expect(mockGetChannel).not.toHaveBeenCalled();
   });
 });

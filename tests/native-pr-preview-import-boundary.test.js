@@ -346,6 +346,96 @@ function replaceRequired(sourceText, expected, replacement) {
 }
 
 describe('native PR preview import boundary', () => {
+  it('admits only the reviewed session context core without normal storage, environment or providers', async () => {
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES.filter(filePath =>
+      filePath.startsWith('src/shared/memory/')
+    )).toEqual([
+      'src/shared/memory/sessionContextCore.ts',
+      'src/shared/memory/sessionContextPolicy.ts',
+      'src/shared/memory/sessionContextPreviewFixture.ts',
+    ]);
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES.filter(filePath =>
+      filePath.startsWith('src/platform/')
+    )).toEqual([
+      'src/platform/runtime/security.ts',
+      'src/platform/runtime/sessionContext.ts',
+    ]);
+    const forbiddenFiles = [
+      'src/services/sessionContextHydrationService.ts',
+      'src/services/sessionMemoryService.ts',
+      'src/platform/runtime/env.ts',
+      'src/core/db/index.ts',
+      'src/services/openai/clientBridge.ts',
+    ];
+    for (const filePath of forbiddenFiles) {
+      expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toContain(filePath);
+    }
+    const fixturePath = 'src/shared/memory/sessionContextPreviewFixture.ts';
+    const analyzeDependencies = async () => ({
+      obj: () => Object.fromEntries(
+        [...NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES, ...forbiddenFiles]
+          .map(filePath => [filePath, filePath === fixturePath ? forbiddenFiles : []])
+      ),
+      warnings: () => ({ skipped: [] }),
+    });
+    const violations = await findNativePrPreviewImportViolations({ analyzeDependencies });
+    for (const filePath of forbiddenFiles) {
+      expect(violations).toContain(`unreviewed preview import: ${filePath}`);
+      expect(violations).toContain(`forbidden preview import: ${filePath}`);
+    }
+  }, 30_000);
+
+  it.each([
+    'src/platform/runtime/sessionContext.ts',
+    'src/shared/memory/sessionContextCore.ts',
+    'src/shared/memory/sessionContextPolicy.ts',
+    'src/shared/memory/sessionContextPreviewFixture.ts',
+  ])('pins reviewed session context semantics and rejects ambient effects in %s', async filePath => {
+    const sourceText = await readFile(new URL(`../${filePath}`, import.meta.url), 'utf8');
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).toContain(filePath);
+    expect(findUnsafeRuntimeSyntax(filePath, sourceText)).toEqual([]);
+    for (const suffix of [
+      '\nexport const unreviewedSessionPolicy = true;\n',
+      '\nfetch("https://unreviewed.invalid");\n',
+      '\nprocess.env.SESSION_CONTEXT_MAX_CHARS = "64000";\n',
+      '\nsetTimeout(() => {}, 1);\n',
+    ]) {
+      expect(findUnsafeRuntimeSyntax(filePath, sourceText + suffix)).toEqual(
+        expect.arrayContaining([expect.stringContaining('critical entry file semantic digest')])
+      );
+    }
+  });
+
+  it('restricts session async hooks to its reviewed AsyncLocalStorage binding', async () => {
+    const filePath = 'src/platform/runtime/sessionContext.ts';
+    const sourceText = await readFile(new URL(`../${filePath}`, import.meta.url), 'utf8');
+    for (const binding of [
+      '{ AsyncLocalStorage, createHook }',
+      '{ AsyncLocalStorage as OtherStorage }',
+      '* as asyncHooks',
+    ]) {
+      expect(findUnsafeRuntimeSyntax(
+        filePath,
+        replaceRequired(sourceText, '{ AsyncLocalStorage }', binding)
+      )).toEqual(expect.arrayContaining([
+        expect.stringContaining('forbidden runtime import binding'),
+        expect.stringContaining('critical entry file semantic digest'),
+      ]));
+    }
+    for (const otherFile of [
+      'src/shared/memory/sessionContextCore.ts',
+      'src/shared/memory/sessionContextPolicy.ts',
+      'src/shared/memory/sessionContextPreviewFixture.ts',
+    ]) {
+      expect(findUnsafeRuntimeSyntax(
+        otherFile,
+        "import { AsyncLocalStorage } from 'node:async_hooks';"
+      )).toEqual(expect.arrayContaining([
+        expect.stringContaining('external runtime import "node:async_hooks"'),
+      ]));
+    }
+  });
+
   it('admits only the reviewed DAG fixtures without runtime metrics or active workers', async () => {
     const reviewedFiles = [
       'src/shared/dag/dagMetricsCore.ts',
