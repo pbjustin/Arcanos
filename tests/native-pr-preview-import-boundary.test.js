@@ -355,24 +355,28 @@ describe('native PR preview import boundary', () => {
     expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES.filter(filePath =>
       filePath.startsWith('src/shared/dag/')
     )).toEqual(reviewedFiles);
-    for (const forbiddenFile of [
+    const forbiddenFiles = [
       'src/utils/metrics.ts',
       'src/platform/logging/logger.ts',
       'src/workers/jobRunner.ts',
       'src/workers/taskRunners.ts',
       'src/core/adapters/openai.adapter.ts',
       'src/services/openai/serviceHealth.ts',
-    ]) {
+    ];
+    for (const forbiddenFile of forbiddenFiles) {
       expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toContain(forbiddenFile);
-      const analyzeDependencies = async () => ({
-        obj: () => Object.fromEntries(
-          [...NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES, forbiddenFile]
-            .map(filePath => [filePath, []])
-        ),
-        warnings: () => ({ skipped: [] }),
-      });
-      await expect(findNativePrPreviewImportViolations({ analyzeDependencies }))
-        .resolves.toContain(`unreviewed preview import: ${forbiddenFile}`);
+    }
+    // The checker accumulates every violation; scan the shared graph only once.
+    const analyzeDependencies = async () => ({
+      obj: () => Object.fromEntries(
+        [...NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES, ...forbiddenFiles]
+          .map(filePath => [filePath, []])
+      ),
+      warnings: () => ({ skipped: [] }),
+    });
+    const violations = await findNativePrPreviewImportViolations({ analyzeDependencies });
+    for (const forbiddenFile of forbiddenFiles) {
+      expect(violations).toContain(`unreviewed preview import: ${forbiddenFile}`);
     }
   }, 30_000);
 
