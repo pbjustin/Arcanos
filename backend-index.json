@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-22T16:11:02.239Z",
+  "generatedAt": "2026-09-22T16:39:02.592Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -2957,7 +2957,13 @@
           "relativePath": "src/shared/memory/memoryDispatchRouting.ts"
         },
         {
+          "relativePath": "src/shared/memory/sessionContextCore.ts"
+        },
+        {
           "relativePath": "src/shared/memory/sessionContextPolicy.ts"
+        },
+        {
+          "relativePath": "src/shared/memory/sessionContextPreviewFixture.ts"
         },
         {
           "relativePath": "src/shared/memoryValidationMessages.ts"
@@ -5285,6 +5291,9 @@
         },
         {
           "relativePath": "tests/sessionContextHydrationService.test.ts"
+        },
+        {
+          "relativePath": "tests/sessionContextPreviewFixture.test.ts"
         },
         {
           "relativePath": "tests/sessionMemoryController.test.ts"

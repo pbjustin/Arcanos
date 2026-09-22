@@ -194,6 +194,8 @@ function responseHeadersForCase(
             NATIVE_PR_PREVIEW_E2E_CONTRACT.dagMetricsRetention.proofVersion,
           [NATIVE_PR_PREVIEW_E2E_CONTRACT.dagTokenAccounting.proofHeader]:
             NATIVE_PR_PREVIEW_E2E_CONTRACT.dagTokenAccounting.proofVersion,
+          [NATIVE_PR_PREVIEW_E2E_CONTRACT.sessionContext.proofHeader]:
+            NATIVE_PR_PREVIEW_E2E_CONTRACT.sessionContext.proofVersion,
         }
       : {}),
     ...(requestCase.boundedResponse
@@ -2092,10 +2094,15 @@ test('executes the bounded credential-free matrix and detects identity stability
     assert.equal(result.checks.find(check => check.caseId === caseId)?.dagTokenAccountingVerified, true);
     assert.equal(result.checks.find(check => check.caseId === caseId)?.dagTokenAccountingProofVersion,
       'dag-token-accounting/v1');
+    assert.equal(result.checks.find(check => check.caseId === caseId)?.sessionContextVerified, true);
+    assert.equal(result.checks.find(check => check.caseId === caseId)?.sessionContextProofVersion,
+      'session-context/v1');
   }
   assert.deepEqual(result.checks.filter(check => check.dagMetricsRetentionVerified)
     .map(check => check.caseId), ['web-readiness-initial', 'web-readiness-final']);
   assert.deepEqual(result.checks.filter(check => check.dagTokenAccountingVerified)
+    .map(check => check.caseId), ['web-readiness-initial', 'web-readiness-final']);
+  assert.deepEqual(result.checks.filter(check => check.sessionContextVerified)
     .map(check => check.caseId), ['web-readiness-initial', 'web-readiness-final']);
   assert.deepEqual(
     result.checks.filter(({ gamingArchiveGuideEvidenceVerified }) =>
@@ -3005,7 +3012,34 @@ test('rejects absent, unknown, and stale DAG token accounting proof at both read
   }
 });
 
-test('DAG metrics proof does not override an unavailable or unready application', async () => {
+test('rejects absent, unknown, and stale session context proof at both readiness checkpoints', async () => {
+  const requestPlan = buildNativePrPreviewRequestPlan();
+  for (const caseId of ['web-readiness-initial', 'web-readiness-final']) {
+    for (const proofVersion of [undefined, 'session-context/unknown', 'session-context/v0']) {
+      const mock = buildMockFetch(requestPlan, requestCase => {
+        if (requestCase.caseId !== caseId) return undefined;
+        const body = responseBodyForCase(requestCase);
+        const headers = responseHeadersForCase(requestCase, Buffer.byteLength(body));
+        const proofHeader = NATIVE_PR_PREVIEW_E2E_CONTRACT.sessionContext.proofHeader;
+        if (proofVersion === undefined) delete headers[proofHeader];
+        else headers[proofHeader] = proofVersion;
+        const response = new Response(body, { headers, status: 200 });
+        Object.defineProperty(response, 'url', { value: `${WEB_BASE_URL}${requestCase.path}` });
+        return response;
+      });
+      await assert.rejects(runNativePrPreviewE2e({
+        args: validArguments('--execute', '--allow-network'),
+        expectedBackstageBookerOpenApiDocument: EXPECTED_BACKSTAGE_BOOKER_OPENAPI_DOCUMENT,
+        fetchImpl: mock.fetchImpl, localGitState: LOCAL_GIT_STATE,
+        monotonicNow: mock.monotonicNow,
+      }), error => error instanceof NativePrPreviewE2eError
+        && error.code === 'NATIVE_PR_PREVIEW_SESSION_CONTEXT_PROOF_INVALID'
+        && error.caseId === caseId);
+    }
+  }
+});
+
+test('readiness component proofs do not override an unavailable or unready application', async () => {
   const requestPlan = buildNativePrPreviewRequestPlan();
   for (const caseId of ['web-readiness-initial', 'web-readiness-final']) {
     for (const status of [200, 503]) {

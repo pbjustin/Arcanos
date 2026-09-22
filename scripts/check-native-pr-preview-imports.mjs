@@ -42,6 +42,7 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/nativePrPreviewApplication.ts',
   'src/nativePrPreviewContract.ts',
   'src/platform/runtime/security.ts',
+  'src/platform/runtime/sessionContext.ts',
   'src/routes/_core/researchAbortDrain.ts',
   'src/routes/genericJobsRouter.ts',
   'src/services/actionPlanExecution/canonical.ts',
@@ -151,6 +152,9 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/shared/jobs/jobLinks.ts',
   'src/shared/jobs/backstageNotionPartitionSyncJob.ts',
   'src/shared/jobs/jobReadCapability.ts',
+  'src/shared/memory/sessionContextCore.ts',
+  'src/shared/memory/sessionContextPolicy.ts',
+  'src/shared/memory/sessionContextPreviewFixture.ts',
   'src/shared/hrcEvaluationPolicy.ts',
   'src/shared/researchRequest.ts',
   'src/shared/constants.ts',
@@ -176,7 +180,7 @@ const FORBIDDEN_LOCAL_IMPORT_PATTERNS = [
   /^src\/core\/diagnostics\.ts$/u,
   /^src\/core\/init-openai\.ts$/u,
   /^src\/middleware\//u,
-  /^src\/platform\/(?!runtime\/security\.ts$)/u,
+  /^src\/platform\/(?!runtime\/(?:security|sessionContext)\.ts$)/u,
   /^src\/routes\/jobs\.ts$/u,
   /^src\/routes\/modules\.ts$/u,
   /^src\/routes\/register\.ts$/u,
@@ -210,6 +214,7 @@ const ALLOWED_EXTERNAL_RUNTIME_IMPORTS = new Set([
   'zod',
 ]);
 const FILE_SPECIFIC_EXTERNAL_RUNTIME_IMPORTS = new Map([
+  ['src/platform/runtime/sessionContext.ts', new Set(['node:async_hooks'])],
   ['src/services/openai/attemptTokenUsage.ts', new Set(['node:async_hooks'])],
   ['src/shared/dag/dagTokenAccountingPreviewFixture.ts', new Set(['@arcanos/runtime/redaction'])],
   ['src/services/gamingHtmlEvidence.ts', new Set(['cheerio'])],
@@ -244,6 +249,9 @@ const FILE_SPECIFIC_EXTERNAL_RUNTIME_IMPORTS = new Map([
   ['src/start-native-pr-preview.ts', new Set(['node:http', 'node:url'])],
 ]);
 const FILE_SPECIFIC_EXTERNAL_IMPORT_BINDINGS = new Map([
+  ['src/platform/runtime/sessionContext.ts', new Map([
+    ['node:async_hooks', new Set(['AsyncLocalStorage:AsyncLocalStorage'])],
+  ])],
   ['src/services/openai/attemptTokenUsage.ts', new Map([
     ['node:async_hooks', new Set(['AsyncLocalStorage:AsyncLocalStorage'])],
   ])],
@@ -753,6 +761,10 @@ const CRITICAL_RUNTIME_FUNCTION_DIGESTS = new Map([
   ],
 ]);
 const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
+  ['src/platform/runtime/sessionContext.ts', 'ccb6ac8c2d4d739a61e716fd01e890af577adc4aba0a16d5c7d73571c778f53f'], // gitleaks:allow -- public source semantic SHA-256
+  ['src/shared/memory/sessionContextCore.ts', '7d1ffb349363dcb0aee2bf641d20956975980335d9d721ec74ff7191c8730aeb'], // gitleaks:allow -- public source semantic SHA-256
+  ['src/shared/memory/sessionContextPolicy.ts', 'fa9b591e1350a925bd6b62175ca6f160346e12ca4e885a3f5291c7129ac3f740'], // gitleaks:allow -- public source semantic SHA-256
+  ['src/shared/memory/sessionContextPreviewFixture.ts', '45f8143c025f1cda32b65ad624a83373bbbeb480702ea82bf9a69f9d19b81af2'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/dag/dagTokenAccountingPreviewFixture.ts', 'ddf36a96aefef38ec8e4cf1326e42bac53190868f3a5053bc4e7e3be8f65931f'],
   ['src/services/openai/attemptTokenUsage.ts', '405aa0373b8b18002ea43cc86c5870a61cf50719be01598c015a15b393404013'], // gitleaks:allow -- public source semantic SHA-256
   ['src/workers/dagChildAccounting.ts', '3bf30d00e7b97d7f041e5ced257a9d493ca5bcb76740469c2b1feb9ac8e47c57'],

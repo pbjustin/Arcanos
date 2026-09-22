@@ -215,6 +215,18 @@ PostgreSQL durability, live model response quality, the full production app's
 startup/middleware composition, or hosted deployment behavior. The normal root
 Jest run discovers this fixture; no live endpoint or credential is needed.
 
+The sealed Railway preview separately executes the production-shared history
+renderer, action eligibility policy, and request-local context scope over fixed
+synthetic turns during web readiness. Its `x-arcanos-session-context-proof:
+session-context/v1` marker is emitted only after those assertions pass. The
+supplemental exact-head verifier requires that marker at initial and final
+readiness; failure or draining returns 503 with no success proof markers.
+This adds hosted component evidence for normalization, escaped delimiters,
+bounds, excluded actions, nested empty scopes, and concurrent isolation. It
+does not import the storage-loading service or normal GPT route. See the
+[Railway preview lifecycle](RAILWAY_DEPLOYMENT.md) for exact-commit verification
+and cleanup.
+
 ### Backstage Booker convenience keys
 
 Backstage Booker mirrors selected successful action results to bounded,

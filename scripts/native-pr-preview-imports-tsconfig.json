@@ -22,6 +22,9 @@
       "@platform/runtime/security.js": [
         "src/platform/runtime/security.ts"
       ],
+      "@platform/runtime/sessionContext.js": [
+        "src/platform/runtime/sessionContext.ts"
+      ],
       "@shared/redaction.js": [
         "packages/arcanos-runtime/src/redaction.ts"
       ],
