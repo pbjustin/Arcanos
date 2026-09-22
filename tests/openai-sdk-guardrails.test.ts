@@ -16,6 +16,8 @@ const ALLOWED_PATTERN_FILES = new Map<string, Set<string>>([
     'responses.parse',
     new Set([
       path.resolve(REPO_ROOT, 'tests', 'openai-adapter.test.ts'),
+      // Exercises the owned adapter's safe parser, not the raw SDK helper.
+      path.resolve(REPO_ROOT, 'tests', 'dag-provider-token-usage.test.ts'),
     ]),
   ],
   [
