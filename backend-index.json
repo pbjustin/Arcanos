@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-22T05:53:26.761Z",
+  "generatedAt": "2026-09-22T16:11:02.239Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -4114,6 +4114,9 @@
           "relativePath": "tests/fixtures/openai-response-conversion.ts"
         },
         {
+          "relativePath": "tests/fixtures/session-context-e2e.ts"
+        },
+        {
           "relativePath": "tests/gaming-agents.routing.test.ts"
         },
         {
@@ -4436,6 +4439,9 @@
         },
         {
           "relativePath": "tests/gpt-router-universal-dispatch.test.ts"
+        },
+        {
+          "relativePath": "tests/gpt-session-context.e2e.test.ts"
         },
         {
           "relativePath": "tests/gpt-session-context.integration.test.ts"

@@ -192,6 +192,29 @@ recall with explicit scope may persist the current interaction; sessionless
 recall remains write-free. Replay reconstruction from `conversations_core` and
 `system_meta`, including its public response shape, is unchanged.
 
+### Local session continuity fixture
+
+Run the HTTP continuity fixture with the pinned Node/npm toolchain and installed
+dependencies:
+
+```bash
+npm run build:packages
+node scripts/run-jest.mjs --runTestsByPath tests/gpt-session-context.e2e.test.ts --coverage=false --runInBand
+```
+
+The fixture sends successive requests through the real GPT router, memory-token
+verification, dispatcher, CORE module, Trinity pipeline, provider request mapper,
+and session conversation persistence/repository. It uses an isolated Express
+mount, an in-memory storage adapter, and a deterministic provider transport. The
+provider fixture derives its reply from the actual model input, so successful
+recall requires the earlier interaction to reach that boundary. It does not
+inject a prebuilt session-context scope or replace dispatch with a mock.
+
+This proves application-path continuity with synthetic I/O. It does not establish
+PostgreSQL durability, live model response quality, the full production app's
+startup/middleware composition, or hosted deployment behavior. The normal root
+Jest run discovers this fixture; no live endpoint or credential is needed.
+
 ### Backstage Booker convenience keys
 
 Backstage Booker mirrors selected successful action results to bounded,
