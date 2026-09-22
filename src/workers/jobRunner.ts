@@ -85,6 +85,9 @@ import {
 } from '@shared/gpt/bridgeSmoke.js';
 import { parseDagNodeJobInput } from '../jobs/jobSchema.js';
 import { runDagNodeJob } from './taskRunners.js';
+import { createDagFailureResult } from '../dag/dagNode.js';
+import { normalizeAttemptTokenUsage, readAttemptTokenUsage, readDagChildTokenUsage } from '@services/openai/attemptTokenUsage.js';
+import { isDagChildJobInput, runWithDagChildAccounting } from './dagChildAccounting.js';
 import {
   WorkerAutonomyService,
   getWorkerAutonomySettings,
@@ -1224,9 +1227,15 @@ async function executeQueuedDagNode(
     });
   } catch (error: unknown) {
     if (cancellationSignal?.aborted) {
+      const attemptTokenUsage = readAttemptTokenUsage(error);
       return {
         status: 'cancelled',
-        output: null,
+        output: attemptTokenUsage === undefined ? null : createDagFailureResult(
+          parsedDagJobInput.value.node.id,
+          resolveErrorMessage(error),
+          undefined,
+          { retryable: false, metrics: { attemptTokenUsage } }
+        ),
         errorMessage:
           cancellationSignal.reason instanceof Error
             ? cancellationSignal.reason.message
@@ -1240,7 +1249,7 @@ async function executeQueuedDagNode(
   if (cancellationSignal?.aborted) {
     return {
       status: 'cancelled',
-      output: null,
+      output: dagResult.metrics?.attemptTokenUsage === undefined ? null : dagResult,
       errorMessage:
         cancellationSignal.reason instanceof Error
           ? cancellationSignal.reason.message
@@ -1959,6 +1968,7 @@ async function finalizeCancellationAfterTerminalCasMiss(params: {
   jobStartedAtMs: number;
   queuedGptCancellationPrivacy?: QueuedGptCancellationPrivacy | null;
   allowPreExecutionInputFallback?: boolean;
+  dagAccountingOutput?: unknown;
 }): Promise<boolean> {
   const currentJob = await getJobById(params.job.id);
   if (
@@ -1976,7 +1986,7 @@ async function finalizeCancellationAfterTerminalCasMiss(params: {
     ...params,
     cancellationReason,
     cancellationRequestedAt: currentJob.cancel_requested_at,
-    output: null
+    output: params.dagAccountingOutput ?? null
   });
 }
 
@@ -2677,6 +2687,29 @@ export async function runWorkerConsumerSlot(
       const jobStartedAtMs = Date.now();
       let jobLeaseLost = false;
       let jobExecutionStarted = false;
+      const tracksDagAttempt = job.job_type === 'dag-node'
+        || (job.job_type === 'gpt' && isDagChildJobInput(job.input));
+      let dagAccountingOutput: unknown = null;
+      const readDagAttemptOutputUsage = (output: unknown): number | undefined => {
+        if (!tracksDagAttempt) return undefined;
+        return job.job_type === 'dag-node'
+          ? normalizeAttemptTokenUsage((output as { metrics?: { attemptTokenUsage?: unknown } } | null)?.metrics?.attemptTokenUsage)
+          : readDagChildTokenUsage(output);
+      };
+      const buildDagAttemptFailure = (error: unknown): unknown => {
+        if (!tracksDagAttempt) return null;
+        const attemptTokenUsage = readDagAttemptOutputUsage(dagAccountingOutput) ?? readAttemptTokenUsage(error);
+        if (attemptTokenUsage === undefined) return null;
+        const errorMessage = resolveErrorMessage(error);
+        const retryable = !(error && typeof error === 'object' && (error as { retryable?: boolean }).retryable === false);
+        if (job.job_type === 'dag-node') {
+          const parsed = parseDagNodeJobInput(job.input);
+          return parsed.ok ? createDagFailureResult(parsed.value.node.id, errorMessage, undefined, {
+            retryable, metrics: { attemptTokenUsage }
+          }) : null;
+        }
+        return { dagAttemptUsage: attemptTokenUsage, retryable, error: { message: errorMessage } };
+      };
       const queuedGptExecutionPrivacyState: QueuedGptExecutionPrivacyState = {
         cancellationPrivacy: null,
       };
@@ -3030,13 +3063,13 @@ export async function runWorkerConsumerSlot(
               }
               if (job.job_type === 'gpt') {
                 jobExecutionStarted = true;
-                return executeQueuedGptRequest({
+                return runWithDagChildAccounting(job.input, () => executeQueuedGptRequest({
                   jobId: job.id,
                   rawInput: job.input ?? {},
                   cancellationSignal: jobCancellationController.signal,
                   startedAt: job.started_at ?? job.created_at,
                   executionPrivacyState: queuedGptExecutionPrivacyState,
-                });
+                }));
               }
               return {
                 status: 'failed',
@@ -3047,6 +3080,9 @@ export async function runWorkerConsumerSlot(
             }
           )
         );
+        if (readDagAttemptOutputUsage(outcome.output) !== undefined) {
+          dagAccountingOutput = outcome.output;
+        }
         rethrowRecordedWorkerBudgetFailure(aiExecutionContext);
         const aiUsageSummary = summarizeAiExecutionContext(aiExecutionContext);
         if (aiUsageSummary && aiUsageSummary.totals.calls > 0) {
@@ -3115,7 +3151,7 @@ export async function runWorkerConsumerSlot(
           }
           outcome = {
             status: 'cancelled',
-            output: null,
+            output: dagAccountingOutput,
             errorMessage:
               jobAbortState.durableCancellationReason ??
               (jobCancellationController.signal.reason instanceof Error
@@ -3153,6 +3189,7 @@ export async function runWorkerConsumerSlot(
               jobStartedAtMs,
               queuedGptCancellationPrivacy:
                 queuedGptExecutionPrivacyState.cancellationPrivacy,
+              dagAccountingOutput,
             })
           ) {
             continue;
@@ -3240,6 +3277,7 @@ export async function runWorkerConsumerSlot(
             jobStartedAtMs,
             queuedGptCancellationPrivacy:
               queuedGptExecutionPrivacyState.cancellationPrivacy,
+            dagAccountingOutput,
           });
           continue;
         }
@@ -3293,6 +3331,7 @@ export async function runWorkerConsumerSlot(
           );
           continue;
         }
+        const dagFailureOutput = buildDagAttemptFailure(error);
 
         if (jobCancellationController.signal.aborted) {
           if (!shouldPersistClaimedJobCancellation(jobAbortState.cause)) {
@@ -3321,7 +3360,7 @@ export async function runWorkerConsumerSlot(
             autonomyService,
             jobStartedAtMs,
             cancellationReason,
-            output: null,
+            output: dagAccountingOutput ?? dagFailureOutput,
             queuedGptCancellationPrivacy:
               queuedGptExecutionPrivacyState.cancellationPrivacy,
             allowPreExecutionInputFallback: !jobExecutionStarted,
@@ -3337,6 +3376,22 @@ export async function runWorkerConsumerSlot(
 
         const workerAiBudgetFailure = await applyWorkerAiBudgetFailureState(error);
         if (workerAiBudgetFailure) {
+          // A partially consumed DAG attempt must settle before the DAG decides
+          // whether to retry. The independent worker pause above remains in force.
+          if (dagFailureOutput !== null) {
+            const failureResult = await autonomyService.handleJobFailure(
+              job, resolveErrorMessage(error), false, dagFailureOutput
+            );
+            if (failureResult.action === 'lease_lost') {
+              await finalizeCancellationAfterTerminalCasMiss({
+                job, fence: claimFence, autonomyService, jobStartedAtMs,
+                dagAccountingOutput: dagFailureOutput,
+                queuedGptCancellationPrivacy: queuedGptExecutionPrivacyState.cancellationPrivacy
+              });
+            }
+            await sleepUntilWorkerProcessSignal(runtimeSettings.pollMs);
+            continue;
+          }
           const deferralResult = await autonomyService.deferJobForProviderRecovery(job, {
             delayMs: workerAiBudgetFailure.delayMs,
             errorMessage: workerAiBudgetFailure.budgetPaused
@@ -3406,6 +3461,20 @@ export async function runWorkerConsumerSlot(
           if (!workerAiBudgetFailure) {
             throw recoveryError;
           }
+          if (dagFailureOutput !== null) {
+            const failureResult = await autonomyService.handleJobFailure(
+              job, classifiedError.message, false, dagFailureOutput
+            );
+            if (failureResult.action === 'lease_lost') {
+              await finalizeCancellationAfterTerminalCasMiss({
+                job, fence: claimFence, autonomyService, jobStartedAtMs,
+                dagAccountingOutput: dagFailureOutput,
+                queuedGptCancellationPrivacy: queuedGptExecutionPrivacyState.cancellationPrivacy
+              });
+            }
+            await sleepUntilWorkerProcessSignal(runtimeSettings.pollMs);
+            continue;
+          }
           const deferralResult = await autonomyService.deferJobForProviderRecovery(job, {
             delayMs: workerAiBudgetFailure.delayMs,
             errorMessage: workerAiBudgetFailure.budgetPaused
@@ -3458,8 +3527,8 @@ export async function runWorkerConsumerSlot(
       const failureResult = await autonomyService.handleJobFailure(
         job,
         classifiedError.message,
-        classifiedError.retryable,
-        null
+        dagFailureOutput === null ? classifiedError.retryable : false,
+        dagFailureOutput
       );
       if (failureResult.action === 'lease_lost') {
         await finalizeCancellationAfterTerminalCasMiss({
@@ -3470,6 +3539,7 @@ export async function runWorkerConsumerSlot(
           queuedGptCancellationPrivacy:
             queuedGptExecutionPrivacyState.cancellationPrivacy,
           allowPreExecutionInputFallback: !jobExecutionStarted,
+          dagAccountingOutput: dagFailureOutput,
         });
         continue;
       }

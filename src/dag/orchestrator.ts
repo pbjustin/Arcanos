@@ -21,6 +21,7 @@ import {
   type DagMetricsSnapshot
 } from '../utils/metrics.js';
 import { getDagWorkerPoolSettings, type DagWorkerPoolSettings } from '../workers/workerPool.js';
+import { normalizeAttemptTokenUsage } from '../services/openai/attemptTokenUsage.js';
 
 type OrchestratorNodeRuntimeStatus =
   | 'pending'
@@ -189,38 +190,20 @@ function normalizeTerminalDagResult(jobRecord: DagQueueJobRecord): DAGResult {
 }
 
 function extractDagResultTokenUsage(result: DAGResult): number {
-  if (typeof result.metrics?.tokenUsage === 'number') {
-    return result.metrics.tokenUsage;
-  }
+  const aggregate = normalizeAttemptTokenUsage(result.metrics?.attemptTokenUsage);
+  if (aggregate !== undefined) return aggregate;
 
-  if (!result.output || typeof result.output !== 'object') {
-    return 0;
-  }
-
-  const output = result.output as {
+  const output = (result.output && typeof result.output === 'object' ? result.output : {}) as {
     meta?: { tokens?: { total_tokens?: number; totalTokens?: number } };
     usage?: { total_tokens?: number };
     tokensUsed?: number;
   };
 
-  //audit Assumption: queued agent outputs can expose token usage under several known shapes; failure risk: budget accounting silently undercounts downstream AI calls; expected invariant: the first numeric token count found is used; handling strategy: inspect supported output shapes and fall back to zero.
-  if (typeof output.meta?.tokens?.total_tokens === 'number') {
-    return output.meta.tokens.total_tokens;
-  }
-
-  if (typeof output.meta?.tokens?.totalTokens === 'number') {
-    return output.meta.tokens.totalTokens;
-  }
-
-  if (typeof output.usage?.total_tokens === 'number') {
-    return output.usage.total_tokens;
-  }
-
-  if (typeof output.tokensUsed === 'number') {
-    return output.tokensUsed;
-  }
-
-  return 0;
+  // Old persisted records retain their accepted presentation fallback. An explicit
+  // aggregate, including zero, always wins and is never added to that fallback.
+  return [result.metrics?.tokenUsage, output.meta?.tokens?.total_tokens,
+    output.meta?.tokens?.totalTokens, output.usage?.total_tokens, output.tokensUsed]
+    .find(value => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) ?? 0;
 }
 
 /**
@@ -649,10 +632,21 @@ export class DAGOrchestrator {
         if ('error' in completedRunningJob) {
           throw completedRunningJob.error;
         }
-        runningJobsByJobId.delete(completedRunningJob.jobId);
+        // Removing the registered job is the attempt's one consumption point.
+        // Polling notifications never charge, and a removed job cannot settle twice.
+        if (!runningJobsByJobId.delete(completedRunningJob.jobId)) continue;
         this.metrics.recordGauge('running_nodes', runningJobsByJobId.size);
 
         const nodeId = completedRunningJob.record.nodeId;
+        const terminalResult = completedRunningJob.record.status === 'cancelled'
+          ? completedRunningJob.record.output
+          : normalizeTerminalDagResult(completedRunningJob.record);
+        if (terminalResult) {
+          const nextTokenBudgetUsed = tokenBudgetUsed + extractDagResultTokenUsage(terminalResult);
+          normalizeAttemptTokenUsage(nextTokenBudgetUsed);
+          tokenBudgetUsed = nextTokenBudgetUsed;
+          this.metrics.recordGauge('token_budget_used', tokenBudgetUsed);
+        }
         if (completedRunningJob.record.status === 'cancelled') {
           const cancelledAt =
             completedRunningJob.record.timestamps.completedAt ??
@@ -675,14 +669,16 @@ export class DAGOrchestrator {
           continue;
         }
 
-        const terminalResult = normalizeTerminalDagResult(completedRunningJob.record);
+        if (!terminalResult) continue;
 
         if (terminalResult.status === 'failed') {
         const nextAttempt = (attemptsByNodeId.get(nodeId) ?? 0) + 1;
         attemptsByNodeId.set(nodeId, nextAttempt);
         const resultAllowsRetry = terminalResult.retryable !== false;
+        const tokenBudgetAvailable = tokenBudgetUsed < this.settings.maxTokenBudgetPerDag;
         const willRetry =
           resultAllowsRetry &&
+          tokenBudgetAvailable &&
           nextAttempt <= completedRunningJob.record.maxRetries;
         context.observer?.onNodeFailed?.({
           dagId,
@@ -721,15 +717,18 @@ export class DAGOrchestrator {
         runtimeStatusByNodeId.set(nodeId, 'failed');
         resultsByNodeId[nodeId] = terminalResult;
         emitGuardViolation(
-          'max_retries_exceeded',
-          resultAllowsRetry
+          tokenBudgetAvailable ? 'max_retries_exceeded' : 'budget_exceeded',
+          !tokenBudgetAvailable
+            ? `DAG token budget exceeded (${tokenBudgetUsed}/${this.settings.maxTokenBudgetPerDag}).`
+            : resultAllowsRetry
             ? `Node "${nodeId}" exhausted retry budget (${completedRunningJob.record.maxRetries}).`
             : `Node "${nodeId}" failed with a non-retryable error; DAG retries were skipped.`,
           nodeId,
           {
             retries: nextAttempt,
             maxRetries: completedRunningJob.record.maxRetries,
-            retryable: resultAllowsRetry
+            retryable: resultAllowsRetry,
+            ...(tokenBudgetAvailable ? {} : { tokenBudgetUsed, maxTokenBudgetPerDag: this.settings.maxTokenBudgetPerDag })
           }
         );
         cascadeBlockedDependents(
@@ -751,9 +750,7 @@ export class DAGOrchestrator {
 
         runtimeStatusByNodeId.set(nodeId, 'completed');
         resultsByNodeId[nodeId] = terminalResult;
-        tokenBudgetUsed += extractDagResultTokenUsage(terminalResult);
         this.metrics.incrementCounter('node_completed');
-        this.metrics.recordGauge('token_budget_used', tokenBudgetUsed);
         context.observer?.onNodeCompleted?.({
           dagId,
           nodeId,

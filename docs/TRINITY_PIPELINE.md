@@ -175,6 +175,12 @@ Core guardrails:
 
 Structured Responses usage is captured before parsing. Session accounting therefore includes billed reasoning usage even when capped output is incomplete or the result is refused, malformed, or schema-invalid. Successful session/telemetry totals aggregate all three stages, while the public `meta.tokens` field remains final-stage-only for compatibility.
 
+DAG execution uses a separate, attempt-local provider collector. `DAGResult.metrics.attemptTokenUsage` contains the sum of known provider tokens observed during that attempt, including intake, reasoning, final, and any repair or fallback calls. It survives failures and cancellation when usage was received. GPT Access child jobs add `dagAttemptUsage` (aggregate provider tokens) to their existing result envelope; the parent imports it once at terminal observation. A child failure with known usage is returned to the parent before retrying so the DAG budget can govern the next attempt. Usage unavailable before a timeout, cancellation, or provider failure remains unknown.
+
+The orchestrator charges each terminal queue attempt once, before retry or descendant admission. A completed result remains completed even if it exhausts the cap; subsequent work is blocked by the existing budget guard. Explicit aggregate zero is valid. Old queue records without the new metric retain the legacy `tokenUsage`/output-metadata fallback; it is never added to an explicit aggregate. Public `meta.tokens`, cumulative session counters, and worker-wide provider reservations keep their existing meanings. The metric and child-envelope additions use existing JSON persistence and require no database migration.
+
+Failed SDK transport responses are inspected for explicit usage before an internal retry can discard them. Inspection is limited to 64 KiB of JSON and 250 ms, honors cancellation, and does not consume the SDK's response stream. Unavailable or incomplete usage remains unknown. The child wire field `dagAttemptUsage` survives existing GPT Access credential redaction; public token metadata remains subject to that unchanged redaction policy. Existing presentation-based API token projections are not redefined by the new internal budget accounting.
+
 Worker guardrails:
 - Runtime budget: `WORKER_TRINITY_RUNTIME_BUDGET_MS`
 - Stage timeout: `WORKER_TRINITY_STAGE_TIMEOUT_MS`

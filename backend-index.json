@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-21T00:14:42.693Z",
+  "generatedAt": "2026-09-22T00:12:44.077Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -2111,6 +2111,9 @@
           "relativePath": "src/services/openai/aiExecutionContext.ts"
         },
         {
+          "relativePath": "src/services/openai/attemptTokenUsage.ts"
+        },
+        {
           "relativePath": "src/services/openai/chatFallbacks.ts"
         },
         {
@@ -3263,6 +3266,9 @@
           "relativePath": "src/workers/backstageNotionSyncLoop.ts"
         },
         {
+          "relativePath": "src/workers/dagChildAccounting.ts"
+        },
+        {
           "relativePath": "src/workers/dagNodePromptBridge.ts"
         },
         {
@@ -3952,6 +3958,9 @@
           "relativePath": "tests/dag-agent-registry.test.ts"
         },
         {
+          "relativePath": "tests/dag-child-accounting.test.ts"
+        },
+        {
           "relativePath": "tests/dag-http-boundary.test.ts"
         },
         {
@@ -3964,6 +3973,9 @@
           "relativePath": "tests/dag-node-prompt-bridge.test.ts"
         },
         {
+          "relativePath": "tests/dag-provider-token-usage.test.ts"
+        },
+        {
           "relativePath": "tests/dag-run-repository.snapshot-generation.test.ts"
         },
         {
@@ -3971,6 +3983,9 @@
         },
         {
           "relativePath": "tests/dag-templates.test.ts"
+        },
+        {
+          "relativePath": "tests/dag-token-accounting.test.ts"
         },
         {
           "relativePath": "tests/dag-tools.test.ts"

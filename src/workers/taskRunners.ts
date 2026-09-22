@@ -20,6 +20,11 @@ import {
   classifyWorkerAiBudgetError,
   normalizeWorkerAiBudgetError,
 } from '@core/adapters/openai.adapter.js';
+import {
+  createAttemptTokenUsage,
+  readAttemptTokenUsage,
+  runWithAttemptTokenUsage
+} from '../services/openai/attemptTokenUsage.js';
 
 export interface DagTaskRunnerDependencies {
   runPrompt(prompt: string, options: DagAgentPromptOptions): Promise<unknown>;
@@ -99,24 +104,13 @@ function extractTokenUsageFromPromptOutput(promptOutput: unknown): number | unde
     tokensUsed?: number;
   });
 
-  //audit Assumption: Trinity-style outputs report token usage under `meta.tokens.total_tokens`; failure risk: budget tracking misses consumed tokens and over-schedules the DAG; expected invariant: the first available numeric token count is used; handling strategy: inspect known shapes in priority order.
-  if (typeof tokenContainer.meta?.tokens?.total_tokens === 'number') {
-    return tokenContainer.meta.tokens.total_tokens;
-  }
-
-  if (typeof tokenContainer.meta?.tokens?.totalTokens === 'number') {
-    return tokenContainer.meta.tokens.totalTokens;
-  }
-
-  if (typeof tokenContainer.usage?.total_tokens === 'number') {
-    return tokenContainer.usage.total_tokens;
-  }
-
-  if (typeof tokenContainer.tokensUsed === 'number') {
-    return tokenContainer.tokensUsed;
-  }
-
-  return undefined;
+  // Preserve legacy presentation semantics without admitting malformed accounting values.
+  return [
+    tokenContainer.meta?.tokens?.total_tokens,
+    tokenContainer.meta?.tokens?.totalTokens,
+    tokenContainer.usage?.total_tokens,
+    tokenContainer.tokensUsed
+  ].find(value => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0);
 }
 
 function extractPlannerExecutionDetails(error: unknown): PlannerExecutionFailureDetails | null {
@@ -286,6 +280,7 @@ export async function runDagNodeJob(
     depth: jobInput.depth,
     attempt: jobInput.attempt
   };
+  const attemptUsage = createAttemptTokenUsage();
 
   try {
     if (dependencies.abortSignal?.aborted) {
@@ -311,9 +306,13 @@ export async function runDagNodeJob(
       });
     }
 
-    const promptOutput = await agentHandler(executionContext, {
-      runPrompt: dependencies.runPrompt
-    });
+    const promptOutput = await runWithAttemptTokenUsage(attemptUsage, () =>
+      agentHandler(executionContext, { runPrompt: dependencies.runPrompt })
+    );
+    // The provider collector owns the full attempt. Explicit remote/legacy execution
+    // boundaries are accepted only when no raw provider usage was observed locally.
+    const attemptTokenUsage = attemptUsage.totalTokens ?? readAttemptTokenUsage(promptOutput);
+    attemptUsage.totalTokens = attemptTokenUsage;
     if (dependencies.abortSignal?.aborted) {
       throw dependencies.abortSignal.reason instanceof Error
         ? dependencies.abortSignal.reason
@@ -356,7 +355,8 @@ export async function runDagNodeJob(
 
     return attachDagResultArtifactReference(createDagSuccessResult(jobInput.node.id, normalizedPromptOutput, {
       durationMs,
-      tokenUsage
+      tokenUsage,
+      ...(attemptTokenUsage !== undefined ? { attemptTokenUsage } : {})
     }), {
       artifactStore,
       dagId: jobInput.dagId,
@@ -366,17 +366,24 @@ export async function runDagNodeJob(
       logger: activeLogger
     });
   } catch (error: unknown) {
+    const attemptTokenUsage = attemptUsage.totalTokens ?? readAttemptTokenUsage(error);
+    const withKnownUsage = (failure: unknown): unknown => {
+      if (attemptTokenUsage === undefined) return failure;
+      return Object.assign(failure instanceof Error ? failure : new Error(String(failure)), {
+        attemptTokenUsage
+      });
+    };
     if (
       dependencies.abortSignal?.aborted ||
       (error instanceof Error && error.name === 'AbortError')
     ) {
-      throw error instanceof Error
+      throw withKnownUsage(error instanceof Error
         ? error
-        : createAbortError('DAG node execution was cancelled.');
+        : createAbortError('DAG node execution was cancelled.'));
     }
     const normalizedWorkerBudgetError = normalizeWorkerAiBudgetError(error);
     if (classifyWorkerAiBudgetError(normalizedWorkerBudgetError)) {
-      throw normalizedWorkerBudgetError;
+      throw withKnownUsage(normalizedWorkerBudgetError);
     }
     const durationMs = Date.now() - startedAt;
     const errorMessage = error instanceof Error ? error.message : String(error);
@@ -396,9 +403,12 @@ export async function runDagNodeJob(
       jobInput.node.id,
       errorMessage,
       failureOutput.output,
-      typeof failureOutput.retryable === 'boolean'
-        ? { retryable: failureOutput.retryable }
-        : {}
+      {
+        ...(typeof failureOutput.retryable === 'boolean' ? { retryable: failureOutput.retryable } : {}),
+        ...(error && typeof error === 'object' && (error as { retryable?: boolean }).retryable === false
+          ? { retryable: false } : {}),
+        ...(attemptTokenUsage !== undefined ? { metrics: { attemptTokenUsage } } : {})
+      }
     ), {
       artifactStore,
       dagId: jobInput.dagId,

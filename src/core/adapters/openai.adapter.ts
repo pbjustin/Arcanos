@@ -39,6 +39,12 @@ import {
   getAiExecutionContext,
   recordAiOperationResult,
 } from '@services/openai/aiExecutionContext.js';
+import {
+  createAttemptTokenUsageFetch,
+  recordAttemptErrorTokenUsage,
+  recordAttemptTokenUsage,
+  runWithAttemptTokenUsageOperation
+} from '@services/openai/attemptTokenUsage.js';
 import { recordJobEvent } from '@core/db/repositories/jobEventRepository.js';
 import {
   reserveWorkerAiProviderAttempt,
@@ -295,11 +301,15 @@ export async function instrumentOpenAIOperation<T>(input: {
   model?: string | null;
   callback: () => Promise<T>;
   extractUsage?: (result: T) => unknown;
+  /** Parsing wrappers observe the raw response themselves before parsing can throw. */
+  captureAttemptUsage?: false;
 }
 ): Promise<T> {
   assertAiBudgetAllowsCall(input.operation, input.model);
   const startedAtMs = Date.now();
   const aiExecutionContext = getAiExecutionContext();
+  let attemptUsageObserved = false;
+  const usageOperation = { errorUsageObserved: false };
   if (aiExecutionContext?.jobId) {
     void recordJobEvent({
       jobId: aiExecutionContext.jobId,
@@ -315,12 +325,15 @@ export async function instrumentOpenAIOperation<T>(input: {
     });
   }
   try {
-    const result = await input.callback();
-    const normalizedUsage = normalizeUsage(
-      typeof input.extractUsage === 'function'
+    const result = await runWithAttemptTokenUsageOperation(usageOperation, input.callback);
+    const rawUsage = typeof input.extractUsage === 'function'
         ? input.extractUsage(result)
-        : (result as { usage?: unknown } | null)?.usage
-    );
+        : (result as { usage?: unknown } | null)?.usage;
+    if (input.captureAttemptUsage !== false) {
+      recordAttemptTokenUsage(rawUsage);
+      attemptUsageObserved = true;
+    }
+    const normalizedUsage = normalizeUsage(rawUsage);
     recordDependencyCall({
       dependency: 'openai',
       operation: input.operation,
@@ -358,6 +371,9 @@ export async function instrumentOpenAIOperation<T>(input: {
     }
     return result;
   } catch (error) {
+    if (!attemptUsageObserved && input.captureAttemptUsage !== false) {
+      recordAttemptErrorTokenUsage(error, usageOperation);
+    }
     const reportedError = normalizeWorkerAiBudgetError(error);
     const workerBudgetFailure = classifyWorkerAiBudgetError(reportedError);
     if (workerBudgetFailure && aiExecutionContext?.workerBudgetFailure === null) {
@@ -720,7 +736,7 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): OpenAIAdapter 
     apiKey: config.apiKey,
     timeout: config.timeout || 60000,
     maxRetries: config.maxRetries,
-    fetch: createWorkerBudgetedOpenAIFetch(config.fetch ?? globalThis.fetch.bind(globalThis)),
+    fetch: createWorkerBudgetedOpenAIFetch(createAttemptTokenUsageFetch(config.fetch ?? globalThis.fetch.bind(globalThis))),
     ...(config.baseURL ? { baseURL: config.baseURL } : {})
   });
 
@@ -783,20 +799,30 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): OpenAIAdapter 
         create: (
           payload: ResponseCreateParamsNonStreaming,
           requestOptions?: OpenAIResponsesRequestOptions
-        ) => originalResponsesCreate(payload, requestOptions),
+        ) => originalResponsesCreate(payload, requestOptions).then(
+          response => {
+            recordAttemptTokenUsage(response.usage);
+            return response;
+          },
+          error => {
+            recordAttemptErrorTokenUsage(error);
+            throw error;
+          }
+        ),
       },
     };
 
     return instrumentOpenAIOperation({
       operation: 'responses_parse',
       model: requestedModel,
+      captureAttemptUsage: false,
       callback: () => createSafeResponsesParse(
         safeParseClient,
         normalizedParams,
         options,
         { source: 'OpenAI responses.parse' }
       ),
-      extractUsage: (result) => (result as { usage?: unknown } | null)?.usage,
+      extractUsage: result => (result as { usage?: unknown } | null)?.usage,
     });
   };
 
