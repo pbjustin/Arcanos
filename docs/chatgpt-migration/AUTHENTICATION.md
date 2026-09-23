@@ -35,6 +35,8 @@ Local issuer/key fixtures can supply a key resolver to the same verifier. They s
 
 Malformed/expired credentials receive a sanitized 401 and challenge. Valid tokens without Tutor scope receive 403 `insufficient_scope` and a scope challenge. Disabling the integration or incomplete configuration admits no tools or generation. No authentication exception is logged, and no raw prompt or credential is included in this module's logs (it has no logging side effects).
 
+The pre-authentication client throttle uses the existing trusted ingress identity policy: the normalized socket peer by default, or a verified Railway edge's `X-Real-IP` when `PUBLIC_PROVIDER_TRUST_RAILWAY_REAL_IP` permits it. Caller-supplied `X-Forwarded-For` values cannot select a new bucket. Verified issuer/subject limits and shared provider admission remain separate checks after authentication.
+
 ## Identity, sessions and permission boundaries
 
 The credential's verified issuer and subject identify the caller. A display name, skill name, GPT name, claimed role, MCP transport session, ARCANOS `sessionId`, or supplied conversation text grants no authority. The narrow pilot has no job read tool, memory permission, universe authority, source access, canon write, administrative operation or generic module dispatch.

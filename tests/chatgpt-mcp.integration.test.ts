@@ -106,6 +106,19 @@ describe('assembled ChatGPT MCP resource (signed issuer fixtures; generation dep
     expect(denied.headers['www-authenticate']).toContain('resource_metadata=');
     expect(execute).not.toHaveBeenCalled();
   });
+  it('keeps the pre-authentication client limit bound to the network peer when forwarded headers rotate', async () => {
+    const application = app();
+    for (let index = 0; index < 120; index += 1) {
+      const response = await post(application)
+        .set('X-Forwarded-For', `198.51.100.${index + 1}`).send(call);
+      expect(response.status).toBe(401);
+    }
+    const denied = await post(application)
+      .set('X-Forwarded-For', '203.0.113.1').send(call);
+    expect(denied.status).toBe(429);
+    expect(denied.headers['x-ratelimit-bucket']).toBe('chatgpt-mcp-client');
+    expect(execute).not.toHaveBeenCalled();
+  });
   it.each(['Basic abc', 'Bearer operator-token', 'Bearer action-token', 'Bearer malformed.jwt.token'])('rejects non-OAuth credentials %s', async credential => {
     const response = await post().set('Authorization', credential).send(call);
     expect(response.status).toBe(401);

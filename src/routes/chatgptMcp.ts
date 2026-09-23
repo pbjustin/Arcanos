@@ -6,8 +6,9 @@ import { CallToolRequestSchema, ListToolsRequestSchema, type Tool } from '@model
 import { chatGptTutorInputSchema, chatGptTutorOutputSchema } from '@arcanos/protocol';
 import { runWithRequestAbortTimeout } from '@arcanos/runtime';
 import { createClientDisconnectAbortScope } from '@shared/http/clientDisconnectAbort.js';
-import { createRateLimitMiddleware, getRequestClientAddress } from '@platform/runtime/security.js';
-import { publicProviderRateLimit } from '@transport/http/middleware/publicProviderAdmission.js';
+import { createRateLimitMiddleware } from '@platform/runtime/security.js';
+import { config as runtimeConfig } from '@platform/runtime/config.js';
+import { publicProviderRateLimit, resolvePublicProviderClientIdentity } from '@transport/http/middleware/publicProviderAdmission.js';
 import { hasUnsafeBlockingConditions } from '@services/safety/runtimeState.js';
 import {
   CHATGPT_MCP_PATH, CHATGPT_RESOURCE_METADATA_PATH, CHATGPT_TUTOR_SCOPE,
@@ -48,7 +49,9 @@ export function createChatGptMcpRouter(options: {
   const principals = new WeakMap<express.Request, ChatGptPrincipal>();
   const ipLimit = createRateLimitMiddleware({
     bucketName: 'chatgpt-mcp-client', maxRequests: 120, windowMs: 60_000,
-    keyGenerator: req => getRequestClientAddress(req),
+    keyGenerator: req => resolvePublicProviderClientIdentity(req, {
+      trustRailwayRealIp: runtimeConfig.limits.publicProviderTrustRailwayRealIp,
+    }),
   });
   const principalLimit = createRateLimitMiddleware({
     bucketName: 'chatgpt-mcp-principal', maxRequests: 30, windowMs: 60_000,
