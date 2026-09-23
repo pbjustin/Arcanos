@@ -6,6 +6,27 @@ export interface NativePrPreviewE2eContract {
     name: 'x-arcanos-preview-fixture';
     value: 'sealed-synthetic';
   }>;
+  readonly chatGptTutor: Readonly<{
+    path: '/chatgpt/mcp';
+    metadataPath: '/.well-known/oauth-protected-resource/chatgpt/mcp';
+    proofHeader: 'x-arcanos-preview-chatgpt-tutor-version';
+    proofVersion: 'chatgpt-tutor-mock/v1';
+    protocolVersion: '2025-03-26';
+    toolName: 'arcanos_tutor';
+    prompt: 'Sealed Tutor preview: explain one half.';
+    answer: 'Synthetic Tutor preview: one half is one of two equal parts.';
+    inputSchema: Readonly<Record<string, unknown>>;
+    outputSchema: Readonly<Record<string, unknown>>;
+    output: Readonly<{
+      answer: 'Synthetic Tutor preview: one half is one of two equal parts.';
+      metadata: Readonly<{
+        module: 'ARCANOS:TUTOR';
+        memory: 'unavailable';
+        execution: 'synchronous';
+        generation: 'mock';
+      }>;
+    }>;
+  }>;
   readonly workerBudgetReadiness: Readonly<{
     proofHeader: 'x-arcanos-preview-worker-budget-readiness-version';
     proofVersion: 'worker-budget-readiness/v1';

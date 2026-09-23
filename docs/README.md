@@ -197,3 +197,7 @@ Migration-local implementation notes live beside their artifacts under
 - [OpenAI Python SDK](https://github.com/openai/openai-python)
 - [Railway documentation](https://docs.railway.com/)
 - [Railway CLI documentation](https://docs.railway.com/develop/cli)
+Migration companions: [four-GPT operation inventory](chatgpt-migration/INVENTORY.md),
+[connection decision](chatgpt-migration/ARCHITECTURE.md),
+[authentication](chatgpt-migration/AUTHENTICATION.md), and
+[platform/client evidence](chatgpt-migration/PLATFORM.md).

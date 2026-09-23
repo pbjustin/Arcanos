@@ -1,0 +1,2297 @@
+{
+  "schemaVersion": "arcanos-chatgpt-migration-inventory-v1",
+  "reviewedAt": "2026-09-22",
+  "baselineSha": "655cb56fc3912684a0dd7b7bfb735a841f3c4056",
+  "lifecycle": "Maintained migration companion requested for this PR; dated source evidence, not live Builder/deployment proof.",
+  "dispositions": {
+    "REUSE": "Retain existing service/contract without replacing authority.",
+    "WRAP": "Narrow new authorized entry; only named Tutor subset implemented.",
+    "DEFER": "Legacy operation retained pending later scoped PR.",
+    "BLOCKED": "Unresolved authority/account prerequisite."
+  },
+  "coverage": {
+    "uniqueOperationIds": 44,
+    "contractOperationOccurrences": 45,
+    "sources": [
+      {
+        "path": "contracts/arcanos_gaming.openapi.v1.json",
+        "operations": 8
+      },
+      {
+        "path": "contracts/backstage_booker.openapi.v1.json",
+        "operations": 5
+      },
+      {
+        "path": "contracts/custom_gpt_route.openapi.v1.json",
+        "operations": 2
+      },
+      {
+        "path": "openapi/custom-gpt-bridge.yaml",
+        "operations": 5
+      },
+      {
+        "path": "src/services/gptAccessGateway.ts",
+        "operations": 25
+      }
+    ],
+    "note": "canaryArcanosGaming occurs twice. Gateway/bridge are repository alternatives, not proof of saved Builder selection."
+  },
+  "authenticationProfiles": {
+    "writing-route": "Public metadata is not identity; separate server-owned memory/control/mutation authorization.",
+    "public-gameplay": "Public validated fixed Gaming query; separate source bearer.",
+    "public-canary": "Closed deterministic protocol; no administrative authority.",
+    "gaming-bearer": "ARCANOS_GAMING_SOURCE_ACCESS_TOKEN, strict purpose-bound bearer, credential-derived actor. Other legacy secrets rejected. OAuth must separate transient/evaluation from durable storage.",
+    "booker-bearer": "ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN, private request marker and gptClientRegistry identity. One shared trust domain, not individual-user universe membership.",
+    "gateway-operator": "ARCANOS_GPT_ACCESS_TOKEN with ARCANOS_GPT_ACCESS_SCOPES and configured principal/workspace; never inherited by OAuth users.",
+    "operator-or-device": "Gateway operator or separately paired device; scopes, grants and operation-specific ownership. Not ChatGPT identity.",
+    "operator-device": "Trusted operator context creates native-device grant; no pilot exposure.",
+    "pairing": "Single-use native-device material plus exact origin; not OAuth.",
+    "device": "Unexpired unrevoked native credential plus origin; not accepted as ChatGPT JWT.",
+    "bridge-secret": "OPENAI_ACTION_SHARED_SECRET on supported bridge bearer/header; not accepted at new boundary.",
+    "job-capability": "Exact-job capability signed with ARCANOS_JOB_READ_CAPABILITY_SECRET, sent only as x-arcanos-job-read-token; no pilot jobs.",
+    "public-schema": "Public metadata; not execution authority."
+  },
+  "gpts": [
+    {
+      "key": "tutor",
+      "displayName": "ARCANOS TUTOR",
+      "moduleBinding": {
+        "module": "ARCANOS:TUTOR",
+        "route": "tutor",
+        "gptIds": [
+          "arcanos-tutor",
+          "tutor"
+        ],
+        "evidence": {
+          "path": "src/services/moduleCatalog.ts",
+          "line": 192
+        }
+      },
+      "instructionSources": [
+        "src/platform/runtime/tutorPrompts.ts",
+        "src/core/logic/tutor-logic.ts",
+        "docs/CUSTOM_GPTS.md"
+      ],
+      "publishedBuilder": {
+        "status": "UNKNOWN",
+        "exportAvailable": false,
+        "repositoryTextIsLiveEvidence": false
+      },
+      "knowledgeFiles": {
+        "status": "UNKNOWN",
+        "verifiedUploadedFileCount": null,
+        "missingAssets": [
+          "User-controlled published Builder export",
+          "Uploaded knowledge filename/size/hash inventory",
+          "Private reference contents retained outside repository"
+        ]
+      },
+      "operationRefs": [
+        "invokeGptRoute"
+      ],
+      "alternativeRepositoryOperationRefs": [
+        "invokeArcanosGptBridge",
+        "getArcanosBridgeHealth",
+        "getBridgeJobStatus",
+        "getBridgeJobResult",
+        "streamBridgeJobStatus"
+      ],
+      "targetSurfaces": {
+        "intended": [
+          "ChatGPT web",
+          "ChatGPT iOS"
+        ],
+        "verified": []
+      },
+      "evidence": {
+        "source": "INSPECTED",
+        "tests": "SOURCE_REFERENCES_ONLY",
+        "deployed": "NOT_VERIFIED",
+        "connected": "NOT_VERIFIED",
+        "installedBehavior": "NOT_VERIFIED"
+      },
+      "pilot": "WRAP bounded prompt-only default query; synchronous; no domain/module/session/job arguments",
+      "backendActions": [
+        {
+          "action": "query",
+          "disposition": "WRAP",
+          "deferred": [
+            "memory/explain (educational)",
+            "memory/audit (educational)",
+            "research/findSources (scholarly)",
+            "logic/clarify",
+            "legacy queue and session transcript mode"
+          ]
+        }
+      ],
+      "knownReferences": [
+        "src/platform/runtime/tutorPrompts.ts (runtime prompts)",
+        "src/services/scholarlyFetcher.ts (runtime retrieval omitted in pilot)"
+      ],
+      "remainingDependencies": [
+        "Approved provider/account registration",
+        "Private Builder/reference reconciliation",
+        "Session/job ownership before hydration/continuation"
+      ]
+    },
+    {
+      "key": "booker",
+      "displayName": "Backstage Booker",
+      "moduleBinding": {
+        "module": "BACKSTAGE:BOOKER",
+        "route": "backstage-booker",
+        "gptIds": [
+          "backstage-booker",
+          "backstage"
+        ],
+        "evidence": {
+          "path": "src/services/moduleCatalog.ts",
+          "line": 206
+        }
+      },
+      "instructionSources": [
+        "docs/BACKSTAGE_BOOKER_GPT_BUILDER_INSTRUCTIONS.md",
+        "docs/BACKSTAGE_BOOKER_CUSTOM_GPT.md",
+        "src/services/backstageBookerClear.ts"
+      ],
+      "publishedBuilder": {
+        "status": "UNKNOWN",
+        "exportAvailable": false,
+        "repositoryTextIsLiveEvidence": false
+      },
+      "knowledgeFiles": {
+        "status": "UNKNOWN",
+        "verifiedUploadedFileCount": null,
+        "missingAssets": [
+          "User-controlled published Builder export",
+          "Uploaded knowledge filename/size/hash inventory",
+          "Private reference contents retained outside repository"
+        ]
+      },
+      "operationRefs": [
+        "runBackstageBooker",
+        "getBackstageBookerJobResult",
+        "writeBackstageCanon",
+        "getBackstageUniverse",
+        "getBackstageStoryline"
+      ],
+      "alternativeRepositoryOperationRefs": [
+        "invokeGptRoute"
+      ],
+      "targetSurfaces": {
+        "intended": [
+          "ChatGPT web",
+          "ChatGPT iOS"
+        ],
+        "verified": []
+      },
+      "evidence": {
+        "source": "INSPECTED",
+        "tests": "SOURCE_REFERENCES_ONLY",
+        "deployed": "NOT_VERIFIED",
+        "connected": "NOT_VERIFIED",
+        "installedBehavior": "NOT_VERIFIED"
+      },
+      "backendActions": [
+        {
+          "action": "queryContinuity",
+          "disposition": "DEFER"
+        },
+        {
+          "action": "generateBooking",
+          "disposition": "DEFER"
+        },
+        {
+          "action": "generateBookingWithHRC",
+          "disposition": "DEFER"
+        },
+        {
+          "action": "simulateMatch",
+          "disposition": "DEFER"
+        },
+        {
+          "action": "bookEvent",
+          "disposition": "BLOCKED",
+          "reason": "Separate canon/operator mutation stage"
+        },
+        {
+          "action": "updateRoster",
+          "disposition": "BLOCKED",
+          "reason": "Separate canon/operator mutation stage"
+        },
+        {
+          "action": "trackStoryline",
+          "disposition": "BLOCKED",
+          "reason": "Separate canon/operator mutation stage"
+        },
+        {
+          "action": "saveStoryline",
+          "disposition": "BLOCKED",
+          "reason": "Separate canon/operator mutation stage"
+        },
+        {
+          "action": "upsertStoryline",
+          "disposition": "BLOCKED",
+          "reason": "Separate canon/operator mutation stage"
+        },
+        {
+          "action": "appendCanonBeat",
+          "disposition": "BLOCKED",
+          "reason": "Separate canon/operator mutation stage"
+        }
+      ],
+      "knownReferences": [
+        "Exact-universe PostgreSQL and configured Notion-authoritative snapshots; no private IDs/content exported"
+      ],
+      "remainingDependencies": [
+        "Per-user universe membership and registered provenance",
+        "Owned queue/result unsealing",
+        "MCP approval verification before canon"
+      ]
+    },
+    {
+      "key": "core",
+      "displayName": "ARCANOS",
+      "moduleBinding": {
+        "module": "ARCANOS:CORE",
+        "route": "core",
+        "gptIds": [
+          "arcanos-core",
+          "core",
+          "arcanos-daemon"
+        ],
+        "evidence": {
+          "path": "src/services/moduleCatalog.ts",
+          "line": 136
+        }
+      },
+      "instructionSources": [
+        "docs/CUSTOM_GPTS.md",
+        "docs/gpt-access-gateway.md",
+        "src/services/arcanos-core.ts"
+      ],
+      "publishedBuilder": {
+        "status": "UNKNOWN",
+        "exportAvailable": false,
+        "repositoryTextIsLiveEvidence": false
+      },
+      "knowledgeFiles": {
+        "status": "UNKNOWN",
+        "verifiedUploadedFileCount": null,
+        "missingAssets": [
+          "User-controlled published Builder export",
+          "Uploaded knowledge filename/size/hash inventory",
+          "Private reference contents retained outside repository"
+        ]
+      },
+      "operationRefs": [
+        "createDevicePairing",
+        "pairDevice",
+        "getDeviceSession",
+        "renewDeviceCredential",
+        "revokeDevice",
+        "arcanosAccessHealth",
+        "getRuntimeStatus",
+        "getWorkersStatus",
+        "getWorkerHelperHealth",
+        "inspectQueue",
+        "getSelfHealStatus",
+        "listCapabilitiesV1",
+        "getCapabilityV1",
+        "runCapabilityV1",
+        "listGptAccessModulesAlias",
+        "getGptAccessModuleAlias",
+        "createAiJob",
+        "getJobResult",
+        "queryJobEventTimeline",
+        "runDeepDiagnostics",
+        "explainApprovedQuery",
+        "queryBackendLogs",
+        "arcanosMcpControl",
+        "runDispatch",
+        "getGptAccessOpenApi"
+      ],
+      "alternativeRepositoryOperationRefs": [
+        "invokeGptRoute",
+        "invokeArcanosGptBridge",
+        "getArcanosBridgeHealth",
+        "getBridgeJobStatus",
+        "getBridgeJobResult",
+        "streamBridgeJobStatus"
+      ],
+      "targetSurfaces": {
+        "intended": [
+          "ChatGPT web",
+          "ChatGPT iOS"
+        ],
+        "verified": []
+      },
+      "evidence": {
+        "source": "INSPECTED",
+        "tests": "SOURCE_REFERENCES_ONLY",
+        "deployed": "NOT_VERIFIED",
+        "connected": "NOT_VERIFIED",
+        "installedBehavior": "NOT_VERIFIED"
+      },
+      "backendActions": [
+        {
+          "action": "query",
+          "disposition": "DEFER"
+        }
+      ],
+      "knownReferences": [
+        "Authorized backend session/module context; uploaded knowledge unknown"
+      ],
+      "remainingDependencies": [
+        "OAuth-owned jobs/idempotency namespace",
+        "Session ownership",
+        "Separate operator policy"
+      ],
+      "aliasNote": "arcanos is an exact gateway compatibility alias for arcanos-core, not a catalog GPT ID."
+    },
+    {
+      "key": "gaming",
+      "displayName": "Arcanos Gaming",
+      "moduleBinding": {
+        "module": "ARCANOS:GAMING",
+        "route": "gaming",
+        "gptIds": [
+          "arcanos-gaming",
+          "gaming"
+        ],
+        "evidence": {
+          "path": "src/services/moduleCatalog.ts",
+          "line": 143
+        }
+      },
+      "instructionSources": [
+        "docs/ARCANOS_GAMING_CUSTOM_GPT.md",
+        "docs/gpt/arcanos-gaming-hybrid.instructions.md",
+        "docs/GAMING_GUIDE_ASSISTANCE.md"
+      ],
+      "publishedBuilder": {
+        "status": "UNKNOWN",
+        "exportAvailable": false,
+        "repositoryTextIsLiveEvidence": false
+      },
+      "knowledgeFiles": {
+        "status": "UNKNOWN",
+        "verifiedUploadedFileCount": null,
+        "missingAssets": [
+          "User-controlled published Builder export",
+          "Uploaded knowledge filename/size/hash inventory",
+          "Private reference contents retained outside repository"
+        ]
+      },
+      "operationRefs": [
+        "queryArcanosGaming",
+        "canaryArcanosGaming",
+        "ingestGamingSources",
+        "refreshGamingSources",
+        "getGamingSourceIngestionStatus",
+        "queryGamingHybridKnowledge",
+        "submitGamingHybridCandidates",
+        "ingestGamingHybridCandidates"
+      ],
+      "alternativeRepositoryOperationRefs": [
+        "invokeGptRoute"
+      ],
+      "targetSurfaces": {
+        "intended": [
+          "ChatGPT web",
+          "ChatGPT iOS"
+        ],
+        "verified": []
+      },
+      "evidence": {
+        "source": "INSPECTED",
+        "tests": "SOURCE_REFERENCES_ONLY",
+        "deployed": "NOT_VERIFIED",
+        "connected": "NOT_VERIFIED",
+        "installedBehavior": "NOT_VERIFIED"
+      },
+      "backendActions": [
+        {
+          "action": "query",
+          "disposition": "DEFER",
+          "reason": "One module action does not cover eight Actions"
+        }
+      ],
+      "knownReferences": [
+        "Runtime public source acquisition/stored retrieval",
+        "Public canary fixture; neither proves uploaded knowledge"
+      ],
+      "remainingDependencies": [
+        "Complete hybrid/currentness/source lifecycle parity",
+        "Separate transient/durable grants and consent",
+        "Caller-bound workflow and ingestion status"
+      ]
+    }
+  ],
+  "operations": [
+    {
+      "operationId": "queryArcanosGaming",
+      "method": "POST",
+      "endpoint": "/gpt/arcanos-gaming",
+      "group": "gaming",
+      "contractEvidence": [
+        {
+          "path": "contracts/arcanos_gaming.openapi.v1.json",
+          "line": 17,
+          "version": "1.5.0"
+        }
+      ],
+      "legacyConsequentialHint": false,
+      "authenticationProfile": "public-gameplay",
+      "effects": [
+        "generation",
+        "public retrieval",
+        "optional audit/HRC"
+      ],
+      "identifiers": [
+        "mode",
+        "prompt",
+        "game",
+        "player context",
+        "currentness",
+        "applicability"
+      ],
+      "behavior": "Body action=query; reject operational intent; unusable supplied evidence stops before provider.",
+      "disposition": "DEFER",
+      "implementedInPilot": false,
+      "publishedBuilderSelection": "UNKNOWN",
+      "deployedEvidence": "NOT_VERIFIED",
+      "reason": "Gaming full workflow follow-up; no Gaming tools in pilot.",
+      "serviceSources": [
+        "src/routes/gpt-access.ts",
+        "src/services/gamingSourceAccessAuth.ts",
+        "src/routes/gptRouter.ts",
+        "src/services/arcanos-gaming.ts",
+        "src/services/gamingModes.ts"
+      ],
+      "proposedReplacement": "Separate authorized queryArcanosGaming workflow wrapper in its follow-up scope; proposed only, not a registered pilot tool.",
+      "targetSurfaces": [
+        "ChatGPT web (intended; not verified)",
+        "ChatGPT iOS (intended; not verified)"
+      ]
+    },
+    {
+      "operationId": "canaryArcanosGaming",
+      "method": "POST",
+      "endpoint": "/gpt/arcanos-gaming/canary",
+      "group": "gaming",
+      "contractEvidence": [
+        {
+          "path": "contracts/arcanos_gaming.openapi.v1.json",
+          "line": 113,
+          "version": "1.5.0"
+        },
+        {
+          "path": "contracts/custom_gpt_route.openapi.v1.json",
+          "line": 458,
+          "version": "1.5.0"
+        }
+      ],
+      "legacyConsequentialHint": false,
+      "authenticationProfile": "public-canary",
+      "effects": [
+        "deterministic fixture validation only"
+      ],
+      "identifiers": [
+        "action=canary",
+        "scope=public_pipeline"
+      ],
+      "behavior": "No provider/network/queue/storage; component evidence only.",
+      "disposition": "DEFER",
+      "implementedInPilot": false,
+      "publishedBuilderSelection": "UNKNOWN",
+      "deployedEvidence": "NOT_VERIFIED",
+      "reason": "Gaming full workflow follow-up; no Gaming tools in pilot.",
+      "serviceSources": [
+        "src/routes/gpt-access.ts",
+        "src/services/gamingSourceAccessAuth.ts",
+        "src/routes/gptRouter.ts"
+      ],
+      "proposedReplacement": "Separate authorized canaryArcanosGaming workflow wrapper in its follow-up scope; proposed only, not a registered pilot tool.",
+      "targetSurfaces": [
+        "ChatGPT web (intended; not verified)",
+        "ChatGPT iOS (intended; not verified)"
+      ]
+    },
+    {
+      "operationId": "ingestGamingSources",
+      "method": "POST",
+      "endpoint": "/gpt-access/gaming/sources/ingestions",
+      "group": "gaming",
+      "contractEvidence": [
+        {
+          "path": "contracts/arcanos_gaming.openapi.v1.json",
+          "line": 184,
+          "version": "1.5.0"
+        }
+      ],
+      "legacyConsequentialHint": true,
+      "authenticationProfile": "gaming-bearer",
+      "effects": [
+        "durable job",
+        "source fetch",
+        "source/chunk writes"
+      ],
+      "identifiers": [
+        "game",
+        "sourceUrls (1-4)",
+        "idempotencyKey",
+        "ingestionId",
+        "sourceId"
+      ],
+      "behavior": "202 acceptance; actor-bound key reuses same request/conflicts on changed input; explicit storage consent; bounded status polling.",
+      "disposition": "DEFER",
+      "implementedInPilot": false,
+      "publishedBuilderSelection": "UNKNOWN",
+      "deployedEvidence": "NOT_VERIFIED",
+      "reason": "Gaming full workflow follow-up; no Gaming tools in pilot.",
+      "serviceSources": [
+        "src/routes/gpt-access.ts",
+        "src/services/gamingSourceAccessAuth.ts",
+        "src/services/gamingSourceIngestion.ts"
+      ],
+      "proposedReplacement": "Separate authorized ingestGamingSources workflow wrapper in its follow-up scope; proposed only, not a registered pilot tool.",
+      "targetSurfaces": [
+        "ChatGPT web (intended; not verified)",
+        "ChatGPT iOS (intended; not verified)"
+      ]
+    },
+    {
+      "operationId": "refreshGamingSources",
+      "method": "POST",
+      "endpoint": "/gpt-access/gaming/sources/refreshes",
+      "group": "gaming",
+      "contractEvidence": [
+        {
+          "path": "contracts/arcanos_gaming.openapi.v1.json",
+          "line": 326,
+          "version": "1.5.0"
+        }
+      ],
+      "legacyConsequentialHint": true,
+      "authenticationProfile": "gaming-bearer",
+      "effects": [
+        "durable job",
+        "source fetch",
+        "atomic revision writes"
+      ],
+      "identifiers": [
+        "sourceIds (1-4 UUIDs)",
+        "idempotencyKey",
+        "ingestionId"
+      ],
+      "behavior": "Known source IDs only; no replacement URL; explicit storage permission; same-key retry and status continuation.",
+      "disposition": "DEFER",
+      "implementedInPilot": false,
+      "publishedBuilderSelection": "UNKNOWN",
+      "deployedEvidence": "NOT_VERIFIED",
+      "reason": "Gaming full workflow follow-up; no Gaming tools in pilot.",
+      "serviceSources": [
+        "src/routes/gpt-access.ts",
+        "src/services/gamingSourceAccessAuth.ts",
+        "src/services/gamingSourceIngestion.ts"
+      ],
+      "proposedReplacement": "Separate authorized refreshGamingSources workflow wrapper in its follow-up scope; proposed only, not a registered pilot tool.",
+      "targetSurfaces": [
+        "ChatGPT web (intended; not verified)",
+        "ChatGPT iOS (intended; not verified)"
+      ]
+    },
+    {
+      "operationId": "getGamingSourceIngestionStatus",
+      "method": "GET",
+      "endpoint": "/gpt-access/gaming/sources/ingestions/{ingestionId}",
+      "group": "gaming",
+      "contractEvidence": [
+        {
+          "path": "contracts/arcanos_gaming.openapi.v1.json",
+          "line": 466,
+          "version": "1.5.0"
+        }
+      ],
+      "legacyConsequentialHint": false,
+      "authenticationProfile": "gaming-bearer",
+      "effects": [
+        "actor-bound sanitized ingestion read"
+      ],
+      "identifiers": [
+        "ingestionId"
+      ],
+      "behavior": "Actor scope hash required; pending/terminal per-source states; at most three polls per interaction.",
+      "disposition": "DEFER",
+      "implementedInPilot": false,
+      "publishedBuilderSelection": "UNKNOWN",
+      "deployedEvidence": "NOT_VERIFIED",
+      "reason": "Gaming full workflow follow-up; no Gaming tools in pilot.",
+      "serviceSources": [
+        "src/routes/gpt-access.ts",
+        "src/services/gamingSourceAccessAuth.ts",
+        "src/services/gamingSourceIngestion.ts"
+      ],
+      "proposedReplacement": "Separate authorized getGamingSourceIngestionStatus workflow wrapper in its follow-up scope; proposed only, not a registered pilot tool.",
+      "targetSurfaces": [
+        "ChatGPT web (intended; not verified)",
+        "ChatGPT iOS (intended; not verified)"
+      ]
+    },
+    {
+      "operationId": "queryGamingHybridKnowledge",
+      "method": "POST",
+      "endpoint": "/gpt-access/gaming/sources/hybrid/query",
+      "group": "gaming",
+      "contractEvidence": [
+        {
+          "path": "contracts/arcanos_gaming.openapi.v1.json",
+          "line": 562,
+          "version": "1.5.0"
+        }
+      ],
+      "legacyConsequentialHint": false,
+      "authenticationProfile": "gaming-bearer",
+      "effects": [
+        "stored evidence read",
+        "transient workflow",
+        "conditional provider/currentness work"
+      ],
+      "identifiers": [
+        "contractVersion",
+        "workflowId",
+        "idempotencyKey",
+        "question",
+        "game",
+        "storagePolicy",
+        "discoveryType",
+        "nextAction"
+      ],
+      "behavior": "Honor answer_ready/clarification_required/discovery_required/temporarily_unavailable/ingestion_pending; discovery only when requested.",
+      "disposition": "DEFER",
+      "implementedInPilot": false,
+      "publishedBuilderSelection": "UNKNOWN",
+      "deployedEvidence": "NOT_VERIFIED",
+      "reason": "Gaming full workflow follow-up; no Gaming tools in pilot.",
+      "serviceSources": [
+        "src/routes/gpt-access.ts",
+        "src/services/gamingSourceAccessAuth.ts",
+        "src/services/gamingHybridKnowledge.ts"
+      ],
+      "proposedReplacement": "Separate authorized queryGamingHybridKnowledge workflow wrapper in its follow-up scope; proposed only, not a registered pilot tool.",
+      "targetSurfaces": [
+        "ChatGPT web (intended; not verified)",
+        "ChatGPT iOS (intended; not verified)"
+      ]
+    },
+    {
+      "operationId": "submitGamingHybridCandidates",
+      "method": "POST",
+      "endpoint": "/gpt-access/gaming/sources/hybrid/candidates",
+      "group": "gaming",
+      "contractEvidence": [
+        {
+          "path": "contracts/arcanos_gaming.openapi.v1.json",
+          "line": 697,
+          "version": "1.5.0"
+        }
+      ],
+      "legacyConsequentialHint": false,
+      "authenticationProfile": "gaming-bearer",
+      "effects": [
+        "bounded URL validation",
+        "transient decisions",
+        "conditional generation"
+      ],
+      "identifiers": [
+        "contractVersion",
+        "workflowId",
+        "idempotencyKey",
+        "URLs (1-3)",
+        "discoveryType",
+        "candidateIds",
+        "currentness",
+        "applicability"
+      ],
+      "behavior": "Preserve gameplay/currentness rounds, verify_currentness, requiredArticleUrl, reviewedSources and negative decisions; untrusted URL evidence.",
+      "disposition": "DEFER",
+      "implementedInPilot": false,
+      "publishedBuilderSelection": "UNKNOWN",
+      "deployedEvidence": "NOT_VERIFIED",
+      "reason": "Gaming full workflow follow-up; no Gaming tools in pilot.",
+      "serviceSources": [
+        "src/routes/gpt-access.ts",
+        "src/services/gamingSourceAccessAuth.ts",
+        "src/services/gamingHybridKnowledge.ts",
+        "src/services/gamingHybridCandidates.ts"
+      ],
+      "proposedReplacement": "Separate authorized submitGamingHybridCandidates workflow wrapper in its follow-up scope; proposed only, not a registered pilot tool.",
+      "targetSurfaces": [
+        "ChatGPT web (intended; not verified)",
+        "ChatGPT iOS (intended; not verified)"
+      ]
+    },
+    {
+      "operationId": "ingestGamingHybridCandidates",
+      "method": "POST",
+      "endpoint": "/gpt-access/gaming/sources/hybrid/ingestions",
+      "group": "gaming",
+      "contractEvidence": [
+        {
+          "path": "contracts/arcanos_gaming.openapi.v1.json",
+          "line": 832,
+          "version": "1.5.0"
+        }
+      ],
+      "legacyConsequentialHint": true,
+      "authenticationProfile": "gaming-bearer",
+      "effects": [
+        "existing ingestion queue",
+        "durable eligible source/chunk writes"
+      ],
+      "identifiers": [
+        "contractVersion",
+        "workflowId",
+        "candidateIds",
+        "idempotencyKey",
+        "storagePolicy",
+        "confirmStore",
+        "ingestionId"
+      ],
+      "behavior": "transient_only forbids writes; ask_before_store requires consent; auto_store_approved also requires standing server permission.",
+      "disposition": "DEFER",
+      "implementedInPilot": false,
+      "publishedBuilderSelection": "UNKNOWN",
+      "deployedEvidence": "NOT_VERIFIED",
+      "reason": "Gaming full workflow follow-up; no Gaming tools in pilot.",
+      "serviceSources": [
+        "src/routes/gpt-access.ts",
+        "src/services/gamingSourceAccessAuth.ts",
+        "src/services/gamingHybridKnowledge.ts",
+        "src/services/gamingHybridCandidates.ts",
+        "src/services/gamingSourceIngestion.ts"
+      ],
+      "proposedReplacement": "Separate authorized ingestGamingHybridCandidates workflow wrapper in its follow-up scope; proposed only, not a registered pilot tool.",
+      "targetSurfaces": [
+        "ChatGPT web (intended; not verified)",
+        "ChatGPT iOS (intended; not verified)"
+      ]
+    },
+    {
+      "operationId": "runBackstageBooker",
+      "method": "POST",
+      "endpoint": "/gpt/backstage-booker",
+      "group": "booker",
+      "contractEvidence": [
+        {
+          "path": "contracts/backstage_booker.openapi.v1.json",
+          "line": 17,
+          "version": "1.7.0"
+        }
+      ],
+      "legacyConsequentialHint": false,
+      "authenticationProfile": "booker-bearer",
+      "effects": [
+        "continuity reads",
+        "generation proposals",
+        "simulation",
+        "heavy-generation durable jobs"
+      ],
+      "identifiers": [
+        "action",
+        "universeId",
+        "jobId",
+        "retrievalScope",
+        "retrievalMode",
+        "nextCursor",
+        "snapshot"
+      ],
+      "behavior": "Current complete exact authority; continuity synchronous; heavy generation queues despite sync; once-only retry after abort before jobId; no conversation fallback.",
+      "disposition": "DEFER",
+      "implementedInPilot": false,
+      "publishedBuilderSelection": "UNKNOWN",
+      "deployedEvidence": "NOT_VERIFIED",
+      "reason": "Booker authority/provenance and owned-continuation follow-up.",
+      "serviceSources": [
+        "src/routes/gptRouter.ts",
+        "src/routes/gpt-access.ts",
+        "src/services/backstageBookerHttpBoundary.ts",
+        "src/services/backstageBookerAccessAuth.ts",
+        "src/services/backstage-booker.ts"
+      ],
+      "proposedReplacement": "Separate authorized runBackstageBooker workflow wrapper in its follow-up scope; proposed only, not a registered pilot tool.",
+      "targetSurfaces": [
+        "ChatGPT web (intended; not verified)",
+        "ChatGPT iOS (intended; not verified)"
+      ]
+    },
+    {
+      "operationId": "getBackstageBookerJobResult",
+      "method": "GET",
+      "endpoint": "/gpt-access/capabilities/v1/backstage-booker/jobs/{jobId}/result",
+      "group": "booker",
+      "contractEvidence": [
+        {
+          "path": "contracts/backstage_booker.openapi.v1.json",
+          "line": 214,
+          "version": "1.7.0"
+        }
+      ],
+      "legacyConsequentialHint": false,
+      "authenticationProfile": "booker-bearer",
+      "effects": [
+        "protected managed job read/wait"
+      ],
+      "identifiers": [
+        "jobId",
+        "waitForResultMs (0-30000)",
+        "registered provenance"
+      ],
+      "behavior": "Owned/unsealed result only; poll does not create work; pending is not failure; preserve official/authority and sanitized errors.",
+      "disposition": "DEFER",
+      "implementedInPilot": false,
+      "publishedBuilderSelection": "UNKNOWN",
+      "deployedEvidence": "NOT_VERIFIED",
+      "reason": "Booker authority/provenance and owned-continuation follow-up.",
+      "serviceSources": [
+        "src/routes/gptRouter.ts",
+        "src/routes/gpt-access.ts",
+        "src/services/backstageBookerHttpBoundary.ts",
+        "src/services/backstageBookerAccessAuth.ts",
+        "src/services/backstage-booker.ts",
+        "src/routes/jobs.ts"
+      ],
+      "proposedReplacement": "Separate authorized getBackstageBookerJobResult workflow wrapper in its follow-up scope; proposed only, not a registered pilot tool.",
+      "targetSurfaces": [
+        "ChatGPT web (intended; not verified)",
+        "ChatGPT iOS (intended; not verified)"
+      ]
+    },
+    {
+      "operationId": "writeBackstageCanon",
+      "method": "POST",
+      "endpoint": "/gpt-access/capabilities/v1/backstage-booker/run",
+      "group": "booker",
+      "contractEvidence": [
+        {
+          "path": "contracts/backstage_booker.openapi.v1.json",
+          "line": 287,
+          "version": "1.7.0"
+        }
+      ],
+      "legacyConsequentialHint": true,
+      "authenticationProfile": "booker-bearer",
+      "effects": [
+        "durable storyline upsert",
+        "immutable canon append",
+        "mutation receipts"
+      ],
+      "identifiers": [
+        "universeId",
+        "storylineKey",
+        "mutationId",
+        "expectedVersion",
+        "universeRevision"
+      ],
+      "behavior": "Only upsertStoryline/appendCanonBeat; exact allowlist; old consequential flag does not enforce MCP approval; Notion authority denies writes; uncertain outcomes require reconciliation.",
+      "disposition": "BLOCKED",
+      "implementedInPilot": false,
+      "publishedBuilderSelection": "UNKNOWN",
+      "deployedEvidence": "NOT_VERIFIED",
+      "reason": "Needs verified per-user exact-universe authority and supported approval/enforcement design.",
+      "serviceSources": [
+        "src/routes/gptRouter.ts",
+        "src/routes/gpt-access.ts",
+        "src/services/backstageBookerHttpBoundary.ts",
+        "src/services/backstageBookerAccessAuth.ts",
+        "src/services/backstage-booker.ts"
+      ],
+      "proposedReplacement": "Separate authorized writeBackstageCanon workflow wrapper in its follow-up scope; proposed only, not a registered pilot tool.",
+      "targetSurfaces": [
+        "ChatGPT web (intended; not verified)",
+        "ChatGPT iOS (intended; not verified)"
+      ]
+    },
+    {
+      "operationId": "getBackstageUniverse",
+      "method": "GET",
+      "endpoint": "/gpt-access/capabilities/v1/backstage-booker/universes/{universeId}",
+      "group": "booker",
+      "contractEvidence": [
+        {
+          "path": "contracts/backstage_booker.openapi.v1.json",
+          "line": 480,
+          "version": "1.7.0"
+        }
+      ],
+      "legacyConsequentialHint": false,
+      "authenticationProfile": "booker-bearer",
+      "effects": [
+        "bounded exact-universe PostgreSQL read"
+      ],
+      "identifiers": [
+        "universeId"
+      ],
+      "behavior": "No list/name lookup; hasPersistedData=false on empty scope; authority quarantine; shared bearer is not per-user membership.",
+      "disposition": "DEFER",
+      "implementedInPilot": false,
+      "publishedBuilderSelection": "UNKNOWN",
+      "deployedEvidence": "NOT_VERIFIED",
+      "reason": "Booker authority/provenance and owned-continuation follow-up.",
+      "serviceSources": [
+        "src/routes/gptRouter.ts",
+        "src/routes/gpt-access.ts",
+        "src/services/backstageBookerHttpBoundary.ts",
+        "src/services/backstageBookerAccessAuth.ts",
+        "src/services/backstage-booker.ts",
+        "src/services/backstageUniverseRead.ts"
+      ],
+      "proposedReplacement": "Separate authorized getBackstageUniverse workflow wrapper in its follow-up scope; proposed only, not a registered pilot tool.",
+      "targetSurfaces": [
+        "ChatGPT web (intended; not verified)",
+        "ChatGPT iOS (intended; not verified)"
+      ]
+    },
+    {
+      "operationId": "getBackstageStoryline",
+      "method": "GET",
+      "endpoint": "/gpt-access/capabilities/v1/backstage-booker/universes/{universeId}/storyline-summary",
+      "group": "booker",
+      "contractEvidence": [
+        {
+          "path": "contracts/backstage_booker.openapi.v1.json",
+          "line": 615,
+          "version": "1.7.0"
+        }
+      ],
+      "legacyConsequentialHint": false,
+      "authenticationProfile": "booker-bearer",
+      "effects": [
+        "bounded exact-storyline PostgreSQL read"
+      ],
+      "identifiers": [
+        "universeId",
+        "storylineKey",
+        "page",
+        "expectedVersion"
+      ],
+      "behavior": "Unmodified 4000-code-point pages; continuation requires page-zero version; quarantine stays fail closed.",
+      "disposition": "DEFER",
+      "implementedInPilot": false,
+      "publishedBuilderSelection": "UNKNOWN",
+      "deployedEvidence": "NOT_VERIFIED",
+      "reason": "Booker authority/provenance and owned-continuation follow-up.",
+      "serviceSources": [
+        "src/routes/gptRouter.ts",
+        "src/routes/gpt-access.ts",
+        "src/services/backstageBookerHttpBoundary.ts",
+        "src/services/backstageBookerAccessAuth.ts",
+        "src/services/backstage-booker.ts"
+      ],
+      "proposedReplacement": "Separate authorized getBackstageStoryline workflow wrapper in its follow-up scope; proposed only, not a registered pilot tool.",
+      "targetSurfaces": [
+        "ChatGPT web (intended; not verified)",
+        "ChatGPT iOS (intended; not verified)"
+      ]
+    },
+    {
+      "operationId": "invokeGptRoute",
+      "method": "POST",
+      "endpoint": "/gpt/{gptId}",
+      "group": "shared-gpt-route",
+      "contractEvidence": [
+        {
+          "path": "contracts/custom_gpt_route.openapi.v1.json",
+          "line": 17,
+          "version": "1.5.0"
+        }
+      ],
+      "legacyConsequentialHint": null,
+      "authenticationProfile": "writing-route",
+      "effects": [
+        "generation",
+        "explicit-query queue",
+        "explicit-session transcript/history writes"
+      ],
+      "identifiers": [
+        "gptId",
+        "action",
+        "payload",
+        "sessionId",
+        "jobId",
+        "idempotencyKey",
+        "jobReadToken"
+      ],
+      "behavior": "WRAP default synchronous Tutor query only; HTTP queue/domain/session modes DEFER; separate memory/control auth.",
+      "disposition": "WRAP",
+      "implementedInPilot": true,
+      "publishedBuilderSelection": "UNKNOWN",
+      "deployedEvidence": "NOT_VERIFIED",
+      "reason": "Default Tutor subset only; legacy route preserved.",
+      "proposedReplacement": "arcanos_tutor at /chatgpt/mcp; prompt-only synchronous default Tutor query",
+      "serviceSources": [
+        "src/routes/gptRouter.ts",
+        "src/routes/_core/gptDispatch.ts",
+        "src/services/arcanos-tutor.ts",
+        "src/core/logic/tutor-logic.ts"
+      ],
+      "targetSurfaces": [
+        "ChatGPT web (intended; not verified)",
+        "ChatGPT iOS (intended; not verified)"
+      ]
+    },
+    {
+      "operationId": "invokeArcanosGptBridge",
+      "method": "POST",
+      "endpoint": "/api/bridge/gpt",
+      "group": "compatibility-bridge",
+      "contractEvidence": [
+        {
+          "path": "openapi/custom-gpt-bridge.yaml",
+          "line": 24,
+          "version": "1.2.0"
+        }
+      ],
+      "legacyConsequentialHint": null,
+      "authenticationProfile": "bridge-secret",
+      "effects": [
+        "durable GPT writing job",
+        "bounded wait"
+      ],
+      "identifiers": [
+        "gptId",
+        "action",
+        "jobId",
+        "idempotencyKey",
+        "jobReadToken"
+      ],
+      "behavior": "health_echo still queues; retain accepted-job recovery; queue_error is not success.",
+      "disposition": "DEFER",
+      "implementedInPilot": false,
+      "publishedBuilderSelection": "UNKNOWN",
+      "deployedEvidence": "NOT_VERIFIED",
+      "reason": "Legacy bridge retained; OAuth continuation needs ownership adapter.",
+      "serviceSources": [
+        "src/routes/bridge.ts",
+        "src/routes/jobs.ts"
+      ],
+      "proposedReplacement": "Separate authorized invokeArcanosGptBridge workflow wrapper in its follow-up scope; proposed only, not a registered pilot tool.",
+      "targetSurfaces": [
+        "ChatGPT web (intended; not verified)",
+        "ChatGPT iOS (intended; not verified)"
+      ]
+    },
+    {
+      "operationId": "getArcanosBridgeHealth",
+      "method": "GET",
+      "endpoint": "/api/bridge/health",
+      "group": "compatibility-bridge",
+      "contractEvidence": [
+        {
+          "path": "openapi/custom-gpt-bridge.yaml",
+          "line": 170,
+          "version": "1.2.0"
+        }
+      ],
+      "legacyConsequentialHint": null,
+      "authenticationProfile": "bridge-secret",
+      "effects": [
+        "sanitized bridge/database/worker reads"
+      ],
+      "identifiers": [
+        "requestId"
+      ],
+      "behavior": "Unavailable dependencies/signing produce 503; not OAuth/client proof.",
+      "disposition": "DEFER",
+      "implementedInPilot": false,
+      "publishedBuilderSelection": "UNKNOWN",
+      "deployedEvidence": "NOT_VERIFIED",
+      "reason": "Legacy bridge retained; OAuth continuation needs ownership adapter.",
+      "serviceSources": [
+        "src/routes/bridge.ts",
+        "src/routes/jobs.ts"
+      ],
+      "proposedReplacement": "Separate authorized getArcanosBridgeHealth workflow wrapper in its follow-up scope; proposed only, not a registered pilot tool.",
+      "targetSurfaces": [
+        "ChatGPT web (intended; not verified)",
+        "ChatGPT iOS (intended; not verified)"
+      ]
+    },
+    {
+      "operationId": "getBridgeJobStatus",
+      "method": "GET",
+      "endpoint": "/jobs/{jobId}",
+      "group": "compatibility-bridge",
+      "contractEvidence": [
+        {
+          "path": "openapi/custom-gpt-bridge.yaml",
+          "line": 209,
+          "version": "1.2.0"
+        }
+      ],
+      "legacyConsequentialHint": null,
+      "authenticationProfile": "job-capability",
+      "effects": [
+        "public-provenance job status read"
+      ],
+      "identifiers": [
+        "jobId",
+        "x-arcanos-job-read-token"
+      ],
+      "behavior": "Exact public gpt/ask capability; wrong/missing/duplicate/cross-job token concealed as not found.",
+      "disposition": "DEFER",
+      "implementedInPilot": false,
+      "publishedBuilderSelection": "UNKNOWN",
+      "deployedEvidence": "NOT_VERIFIED",
+      "reason": "Legacy bridge retained; OAuth continuation needs ownership adapter.",
+      "serviceSources": [
+        "src/routes/bridge.ts",
+        "src/routes/jobs.ts"
+      ],
+      "proposedReplacement": "Separate authorized getBridgeJobStatus workflow wrapper in its follow-up scope; proposed only, not a registered pilot tool.",
+      "targetSurfaces": [
+        "ChatGPT web (intended; not verified)",
+        "ChatGPT iOS (intended; not verified)"
+      ]
+    },
+    {
+      "operationId": "getBridgeJobResult",
+      "method": "GET",
+      "endpoint": "/jobs/{jobId}/result",
+      "group": "compatibility-bridge",
+      "contractEvidence": [
+        {
+          "path": "openapi/custom-gpt-bridge.yaml",
+          "line": 244,
+          "version": "1.2.0"
+        }
+      ],
+      "legacyConsequentialHint": null,
+      "authenticationProfile": "job-capability",
+      "effects": [
+        "public-provenance job result read"
+      ],
+      "identifiers": [
+        "jobId",
+        "x-arcanos-job-read-token"
+      ],
+      "behavior": "Same exact capability; GPT Access jobs protected; pending and terminal semantics preserved.",
+      "disposition": "DEFER",
+      "implementedInPilot": false,
+      "publishedBuilderSelection": "UNKNOWN",
+      "deployedEvidence": "NOT_VERIFIED",
+      "reason": "Legacy bridge retained; OAuth continuation needs ownership adapter.",
+      "serviceSources": [
+        "src/routes/bridge.ts",
+        "src/routes/jobs.ts"
+      ],
+      "proposedReplacement": "Separate authorized getBridgeJobResult workflow wrapper in its follow-up scope; proposed only, not a registered pilot tool.",
+      "targetSurfaces": [
+        "ChatGPT web (intended; not verified)",
+        "ChatGPT iOS (intended; not verified)"
+      ]
+    },
+    {
+      "operationId": "streamBridgeJobStatus",
+      "method": "GET",
+      "endpoint": "/jobs/{jobId}/stream",
+      "group": "compatibility-bridge",
+      "contractEvidence": [
+        {
+          "path": "openapi/custom-gpt-bridge.yaml",
+          "line": 273,
+          "version": "1.2.0"
+        }
+      ],
+      "legacyConsequentialHint": null,
+      "authenticationProfile": "job-capability",
+      "effects": [
+        "public-provenance job SSE read"
+      ],
+      "identifiers": [
+        "jobId",
+        "x-arcanos-job-read-token"
+      ],
+      "behavior": "Same exact capability; no-store SSE; reconnect creates no work.",
+      "disposition": "DEFER",
+      "implementedInPilot": false,
+      "publishedBuilderSelection": "UNKNOWN",
+      "deployedEvidence": "NOT_VERIFIED",
+      "reason": "Legacy bridge retained; OAuth continuation needs ownership adapter.",
+      "serviceSources": [
+        "src/routes/bridge.ts",
+        "src/routes/jobs.ts"
+      ],
+      "proposedReplacement": "Separate authorized streamBridgeJobStatus workflow wrapper in its follow-up scope; proposed only, not a registered pilot tool.",
+      "targetSurfaces": [
+        "ChatGPT web (intended; not verified)",
+        "ChatGPT iOS (intended; not verified)"
+      ]
+    },
+    {
+      "operationId": "createDevicePairing",
+      "method": "POST",
+      "endpoint": "/gpt-access/devices/pairing",
+      "group": "core-gateway",
+      "contractEvidence": [
+        {
+          "path": "src/services/gptAccessGateway.ts",
+          "line": 3032
+        }
+      ],
+      "legacyConsequentialHint": null,
+      "authenticationProfile": "operator-device",
+      "effects": [
+        "durable single-use pairing challenge"
+      ],
+      "identifiers": [
+        "principalId",
+        "workspaceId",
+        "pairingId",
+        "expiresAt"
+      ],
+      "behavior": "Trusted operator sets least-privilege five-minute grant; separate native iOS integration.",
+      "disposition": "DEFER",
+      "implementedInPilot": false,
+      "publishedBuilderSelection": "UNKNOWN",
+      "deployedEvidence": "NOT_VERIFIED",
+      "reason": "Keep operator/device controls separate; conversational jobs need OAuth ownership adapter.",
+      "serviceSources": [
+        "src/routes/gpt-access.ts",
+        "src/services/gptAccessGateway.ts"
+      ],
+      "proposedReplacement": "Separate authorized createDevicePairing workflow wrapper in its follow-up scope; proposed only, not a registered pilot tool.",
+      "targetSurfaces": [
+        "ChatGPT web (intended; not verified)",
+        "ChatGPT iOS (intended; not verified)"
+      ]
+    },
+    {
+      "operationId": "pairDevice",
+      "method": "POST",
+      "endpoint": "/gpt-access/devices/pair",
+      "group": "core-gateway",
+      "contractEvidence": [
+        {
+          "path": "src/services/gptAccessGateway.ts",
+          "line": 3050
+        }
+      ],
+      "legacyConsequentialHint": null,
+      "authenticationProfile": "pairing",
+      "effects": [
+        "durable device registration",
+        "credential issuance"
+      ],
+      "identifiers": [
+        "pairing material",
+        "installation UUID",
+        "approved origin"
+      ],
+      "behavior": "Single-use exact unexpired challenge; native ARCANOS iOS is not ChatGPT iOS.",
+      "disposition": "DEFER",
+      "implementedInPilot": false,
+      "publishedBuilderSelection": "UNKNOWN",
+      "deployedEvidence": "NOT_VERIFIED",
+      "reason": "Keep operator/device controls separate; conversational jobs need OAuth ownership adapter.",
+      "serviceSources": [
+        "src/routes/gpt-access.ts",
+        "src/services/gptAccessGateway.ts"
+      ],
+      "proposedReplacement": "Separate authorized pairDevice workflow wrapper in its follow-up scope; proposed only, not a registered pilot tool.",
+      "targetSurfaces": [
+        "ChatGPT web (intended; not verified)",
+        "ChatGPT iOS (intended; not verified)"
+      ]
+    },
+    {
+      "operationId": "getDeviceSession",
+      "method": "GET",
+      "endpoint": "/gpt-access/devices/session",
+      "group": "core-gateway",
+      "contractEvidence": [
+        {
+          "path": "src/services/gptAccessGateway.ts",
+          "line": 3071
+        }
+      ],
+      "legacyConsequentialHint": null,
+      "authenticationProfile": "device",
+      "effects": [
+        "own device metadata read"
+      ],
+      "identifiers": [
+        "deviceId",
+        "principalId",
+        "workspaceId",
+        "renewal deadline"
+      ],
+      "behavior": "Current unexpired unrevoked credential; operator bearer rejected.",
+      "disposition": "DEFER",
+      "implementedInPilot": false,
+      "publishedBuilderSelection": "UNKNOWN",
+      "deployedEvidence": "NOT_VERIFIED",
+      "reason": "Keep operator/device controls separate; conversational jobs need OAuth ownership adapter.",
+      "serviceSources": [
+        "src/routes/gpt-access.ts",
+        "src/services/gptAccessGateway.ts"
+      ],
+      "proposedReplacement": "Separate authorized getDeviceSession workflow wrapper in its follow-up scope; proposed only, not a registered pilot tool.",
+      "targetSurfaces": [
+        "ChatGPT web (intended; not verified)",
+        "ChatGPT iOS (intended; not verified)"
+      ]
+    },
+    {
+      "operationId": "renewDeviceCredential",
+      "method": "POST",
+      "endpoint": "/gpt-access/devices/renew",
+      "group": "core-gateway",
+      "contractEvidence": [
+        {
+          "path": "src/services/gptAccessGateway.ts",
+          "line": 3085
+        }
+      ],
+      "legacyConsequentialHint": null,
+      "authenticationProfile": "device",
+      "effects": [
+        "durable credential rotation"
+      ],
+      "identifiers": [
+        "deviceId",
+        "approved origin",
+        "renewal deadline"
+      ],
+      "behavior": "Atomic previous-token invalidation; cannot extend original thirty-day deadline.",
+      "disposition": "DEFER",
+      "implementedInPilot": false,
+      "publishedBuilderSelection": "UNKNOWN",
+      "deployedEvidence": "NOT_VERIFIED",
+      "reason": "Keep operator/device controls separate; conversational jobs need OAuth ownership adapter.",
+      "serviceSources": [
+        "src/routes/gpt-access.ts",
+        "src/services/gptAccessGateway.ts"
+      ],
+      "proposedReplacement": "Separate authorized renewDeviceCredential workflow wrapper in its follow-up scope; proposed only, not a registered pilot tool.",
+      "targetSurfaces": [
+        "ChatGPT web (intended; not verified)",
+        "ChatGPT iOS (intended; not verified)"
+      ]
+    },
+    {
+      "operationId": "revokeDevice",
+      "method": "POST",
+      "endpoint": "/gpt-access/devices/{deviceId}/revoke",
+      "group": "core-gateway",
+      "contractEvidence": [
+        {
+          "path": "src/services/gptAccessGateway.ts",
+          "line": 3103
+        }
+      ],
+      "legacyConsequentialHint": null,
+      "authenticationProfile": "operator-or-device",
+      "effects": [
+        "durable device revocation"
+      ],
+      "identifiers": [
+        "deviceId",
+        "principalId",
+        "workspaceId"
+      ],
+      "behavior": "Self-revoke or operator-owned principal/workspace.",
+      "disposition": "DEFER",
+      "implementedInPilot": false,
+      "publishedBuilderSelection": "UNKNOWN",
+      "deployedEvidence": "NOT_VERIFIED",
+      "reason": "Keep operator/device controls separate; conversational jobs need OAuth ownership adapter.",
+      "serviceSources": [
+        "src/routes/gpt-access.ts",
+        "src/services/gptAccessGateway.ts"
+      ],
+      "proposedReplacement": "Separate authorized revokeDevice workflow wrapper in its follow-up scope; proposed only, not a registered pilot tool.",
+      "targetSurfaces": [
+        "ChatGPT web (intended; not verified)",
+        "ChatGPT iOS (intended; not verified)"
+      ]
+    },
+    {
+      "operationId": "arcanosAccessHealth",
+      "method": "GET",
+      "endpoint": "/gpt-access/health",
+      "group": "core-gateway",
+      "contractEvidence": [
+        {
+          "path": "src/services/gptAccessGateway.ts",
+          "line": 3123
+        }
+      ],
+      "legacyConsequentialHint": null,
+      "authenticationProfile": "gateway-operator",
+      "effects": [
+        "sanitized operational read"
+      ],
+      "identifiers": [
+        "requestId"
+      ],
+      "behavior": "diagnostics.read; health is not generation/client proof.",
+      "disposition": "DEFER",
+      "implementedInPilot": false,
+      "publishedBuilderSelection": "UNKNOWN",
+      "deployedEvidence": "NOT_VERIFIED",
+      "reason": "Keep operator/device controls separate; conversational jobs need OAuth ownership adapter.",
+      "serviceSources": [
+        "src/routes/gpt-access.ts",
+        "src/services/gptAccessGateway.ts"
+      ],
+      "proposedReplacement": "Separate authorized arcanosAccessHealth workflow wrapper in its follow-up scope; proposed only, not a registered pilot tool.",
+      "targetSurfaces": [
+        "ChatGPT web (intended; not verified)",
+        "ChatGPT iOS (intended; not verified)"
+      ]
+    },
+    {
+      "operationId": "getRuntimeStatus",
+      "method": "GET",
+      "endpoint": "/gpt-access/status",
+      "group": "core-gateway",
+      "contractEvidence": [
+        {
+          "path": "src/services/gptAccessGateway.ts",
+          "line": 3162
+        }
+      ],
+      "legacyConsequentialHint": null,
+      "authenticationProfile": "gateway-operator",
+      "effects": [
+        "sanitized runtime read"
+      ],
+      "identifiers": [
+        "requestId"
+      ],
+      "behavior": "runtime.read.",
+      "disposition": "DEFER",
+      "implementedInPilot": false,
+      "publishedBuilderSelection": "UNKNOWN",
+      "deployedEvidence": "NOT_VERIFIED",
+      "reason": "Keep operator/device controls separate; conversational jobs need OAuth ownership adapter.",
+      "serviceSources": [
+        "src/routes/gpt-access.ts",
+        "src/services/gptAccessGateway.ts"
+      ],
+      "proposedReplacement": "Separate authorized getRuntimeStatus workflow wrapper in its follow-up scope; proposed only, not a registered pilot tool.",
+      "targetSurfaces": [
+        "ChatGPT web (intended; not verified)",
+        "ChatGPT iOS (intended; not verified)"
+      ]
+    },
+    {
+      "operationId": "getWorkersStatus",
+      "method": "GET",
+      "endpoint": "/gpt-access/workers/status",
+      "group": "core-gateway",
+      "contractEvidence": [
+        {
+          "path": "src/services/gptAccessGateway.ts",
+          "line": 3170
+        }
+      ],
+      "legacyConsequentialHint": null,
+      "authenticationProfile": "gateway-operator",
+      "effects": [
+        "worker/queue-observed read"
+      ],
+      "identifiers": [
+        "requestId"
+      ],
+      "behavior": "workers.read.",
+      "disposition": "DEFER",
+      "implementedInPilot": false,
+      "publishedBuilderSelection": "UNKNOWN",
+      "deployedEvidence": "NOT_VERIFIED",
+      "reason": "Keep operator/device controls separate; conversational jobs need OAuth ownership adapter.",
+      "serviceSources": [
+        "src/routes/gpt-access.ts",
+        "src/services/gptAccessGateway.ts"
+      ],
+      "proposedReplacement": "Separate authorized getWorkersStatus workflow wrapper in its follow-up scope; proposed only, not a registered pilot tool.",
+      "targetSurfaces": [
+        "ChatGPT web (intended; not verified)",
+        "ChatGPT iOS (intended; not verified)"
+      ]
+    },
+    {
+      "operationId": "getWorkerHelperHealth",
+      "method": "GET",
+      "endpoint": "/gpt-access/worker-helper/health",
+      "group": "core-gateway",
+      "contractEvidence": [
+        {
+          "path": "src/services/gptAccessGateway.ts",
+          "line": 3178
+        }
+      ],
+      "legacyConsequentialHint": null,
+      "authenticationProfile": "gateway-operator",
+      "effects": [
+        "worker helper health read"
+      ],
+      "identifiers": [
+        "requestId"
+      ],
+      "behavior": "workers.read.",
+      "disposition": "DEFER",
+      "implementedInPilot": false,
+      "publishedBuilderSelection": "UNKNOWN",
+      "deployedEvidence": "NOT_VERIFIED",
+      "reason": "Keep operator/device controls separate; conversational jobs need OAuth ownership adapter.",
+      "serviceSources": [
+        "src/routes/gpt-access.ts",
+        "src/services/gptAccessGateway.ts"
+      ],
+      "proposedReplacement": "Separate authorized getWorkerHelperHealth workflow wrapper in its follow-up scope; proposed only, not a registered pilot tool.",
+      "targetSurfaces": [
+        "ChatGPT web (intended; not verified)",
+        "ChatGPT iOS (intended; not verified)"
+      ]
+    },
+    {
+      "operationId": "inspectQueue",
+      "method": "GET",
+      "endpoint": "/gpt-access/queue/inspect",
+      "group": "core-gateway",
+      "contractEvidence": [
+        {
+          "path": "src/services/gptAccessGateway.ts",
+          "line": 3186
+        }
+      ],
+      "legacyConsequentialHint": null,
+      "authenticationProfile": "gateway-operator",
+      "effects": [
+        "queue read"
+      ],
+      "identifiers": [
+        "requestId"
+      ],
+      "behavior": "queue.read; no mutation.",
+      "disposition": "DEFER",
+      "implementedInPilot": false,
+      "publishedBuilderSelection": "UNKNOWN",
+      "deployedEvidence": "NOT_VERIFIED",
+      "reason": "Keep operator/device controls separate; conversational jobs need OAuth ownership adapter.",
+      "serviceSources": [
+        "src/routes/gpt-access.ts",
+        "src/services/gptAccessGateway.ts"
+      ],
+      "proposedReplacement": "Separate authorized inspectQueue workflow wrapper in its follow-up scope; proposed only, not a registered pilot tool.",
+      "targetSurfaces": [
+        "ChatGPT web (intended; not verified)",
+        "ChatGPT iOS (intended; not verified)"
+      ]
+    },
+    {
+      "operationId": "getSelfHealStatus",
+      "method": "GET",
+      "endpoint": "/gpt-access/self-heal/status",
+      "group": "core-gateway",
+      "contractEvidence": [
+        {
+          "path": "src/services/gptAccessGateway.ts",
+          "line": 3206
+        }
+      ],
+      "legacyConsequentialHint": null,
+      "authenticationProfile": "gateway-operator",
+      "effects": [
+        "self-heal status read"
+      ],
+      "identifiers": [
+        "requestId"
+      ],
+      "behavior": "mcp.approved_readonly; no recovery.",
+      "disposition": "DEFER",
+      "implementedInPilot": false,
+      "publishedBuilderSelection": "UNKNOWN",
+      "deployedEvidence": "NOT_VERIFIED",
+      "reason": "Keep operator/device controls separate; conversational jobs need OAuth ownership adapter.",
+      "serviceSources": [
+        "src/routes/gpt-access.ts",
+        "src/services/gptAccessGateway.ts"
+      ],
+      "proposedReplacement": "Separate authorized getSelfHealStatus workflow wrapper in its follow-up scope; proposed only, not a registered pilot tool.",
+      "targetSurfaces": [
+        "ChatGPT web (intended; not verified)",
+        "ChatGPT iOS (intended; not verified)"
+      ]
+    },
+    {
+      "operationId": "listCapabilitiesV1",
+      "method": "GET",
+      "endpoint": "/gpt-access/capabilities/v1",
+      "group": "core-gateway",
+      "contractEvidence": [
+        {
+          "path": "src/services/gptAccessGateway.ts",
+          "line": 3226
+        }
+      ],
+      "legacyConsequentialHint": null,
+      "authenticationProfile": "operator-or-device",
+      "effects": [
+        "safe catalog read"
+      ],
+      "identifiers": [
+        "capabilityId"
+      ],
+      "behavior": "capabilities.read; device grants filter catalog.",
+      "disposition": "DEFER",
+      "implementedInPilot": false,
+      "publishedBuilderSelection": "UNKNOWN",
+      "deployedEvidence": "NOT_VERIFIED",
+      "reason": "Keep operator/device controls separate; conversational jobs need OAuth ownership adapter.",
+      "serviceSources": [
+        "src/routes/gpt-access.ts",
+        "src/services/gptAccessGateway.ts"
+      ],
+      "proposedReplacement": "Separate authorized listCapabilitiesV1 workflow wrapper in its follow-up scope; proposed only, not a registered pilot tool.",
+      "targetSurfaces": [
+        "ChatGPT web (intended; not verified)",
+        "ChatGPT iOS (intended; not verified)"
+      ]
+    },
+    {
+      "operationId": "getCapabilityV1",
+      "method": "GET",
+      "endpoint": "/gpt-access/capabilities/v1/{id}",
+      "group": "core-gateway",
+      "contractEvidence": [
+        {
+          "path": "src/services/gptAccessGateway.ts",
+          "line": 3246
+        }
+      ],
+      "legacyConsequentialHint": null,
+      "authenticationProfile": "operator-or-device",
+      "effects": [
+        "one capability read"
+      ],
+      "identifiers": [
+        "capabilityId"
+      ],
+      "behavior": "capabilities.read; unknown returns exists=false.",
+      "disposition": "DEFER",
+      "implementedInPilot": false,
+      "publishedBuilderSelection": "UNKNOWN",
+      "deployedEvidence": "NOT_VERIFIED",
+      "reason": "Keep operator/device controls separate; conversational jobs need OAuth ownership adapter.",
+      "serviceSources": [
+        "src/routes/gpt-access.ts",
+        "src/services/gptAccessGateway.ts"
+      ],
+      "proposedReplacement": "Separate authorized getCapabilityV1 workflow wrapper in its follow-up scope; proposed only, not a registered pilot tool.",
+      "targetSurfaces": [
+        "ChatGPT web (intended; not verified)",
+        "ChatGPT iOS (intended; not verified)"
+      ]
+    },
+    {
+      "operationId": "runCapabilityV1",
+      "method": "POST",
+      "endpoint": "/gpt-access/capabilities/v1/{id}/run",
+      "group": "core-gateway",
+      "contractEvidence": [
+        {
+          "path": "src/services/gptAccessGateway.ts",
+          "line": 3273
+        }
+      ],
+      "legacyConsequentialHint": null,
+      "authenticationProfile": "operator-or-device",
+      "effects": [
+        "allowlisted execution",
+        "possible writes/jobs"
+      ],
+      "identifiers": [
+        "capabilityId",
+        "action",
+        "idempotencyKey",
+        "confirmation_token",
+        "principalId",
+        "workspaceId"
+      ],
+      "behavior": "capabilities.run plus exact MCP_ALLOW_MODULE_ACTIONS/device grants/risk confirmation; approved exact retry once then stop.",
+      "disposition": "DEFER",
+      "implementedInPilot": false,
+      "publishedBuilderSelection": "UNKNOWN",
+      "deployedEvidence": "NOT_VERIFIED",
+      "reason": "Keep operator/device controls separate; conversational jobs need OAuth ownership adapter.",
+      "serviceSources": [
+        "src/routes/gpt-access.ts",
+        "src/services/gptAccessGateway.ts"
+      ],
+      "proposedReplacement": "Separate authorized runCapabilityV1 workflow wrapper in its follow-up scope; proposed only, not a registered pilot tool.",
+      "targetSurfaces": [
+        "ChatGPT web (intended; not verified)",
+        "ChatGPT iOS (intended; not verified)"
+      ]
+    },
+    {
+      "operationId": "listGptAccessModulesAlias",
+      "method": "GET",
+      "endpoint": "/gpt-access/modules",
+      "group": "core-gateway",
+      "contractEvidence": [
+        {
+          "path": "src/services/gptAccessGateway.ts",
+          "line": 3337
+        }
+      ],
+      "legacyConsequentialHint": null,
+      "authenticationProfile": "gateway-operator",
+      "effects": [
+        "safe catalog alias read"
+      ],
+      "identifiers": [
+        "capabilityId"
+      ],
+      "behavior": "capabilities.read; same catalog.",
+      "disposition": "DEFER",
+      "implementedInPilot": false,
+      "publishedBuilderSelection": "UNKNOWN",
+      "deployedEvidence": "NOT_VERIFIED",
+      "reason": "Keep operator/device controls separate; conversational jobs need OAuth ownership adapter.",
+      "serviceSources": [
+        "src/routes/gpt-access.ts",
+        "src/services/gptAccessGateway.ts"
+      ],
+      "proposedReplacement": "Separate authorized listGptAccessModulesAlias workflow wrapper in its follow-up scope; proposed only, not a registered pilot tool.",
+      "targetSurfaces": [
+        "ChatGPT web (intended; not verified)",
+        "ChatGPT iOS (intended; not verified)"
+      ]
+    },
+    {
+      "operationId": "getGptAccessModuleAlias",
+      "method": "GET",
+      "endpoint": "/gpt-access/modules/{id}",
+      "group": "core-gateway",
+      "contractEvidence": [
+        {
+          "path": "src/services/gptAccessGateway.ts",
+          "line": 3357
+        }
+      ],
+      "legacyConsequentialHint": null,
+      "authenticationProfile": "gateway-operator",
+      "effects": [
+        "one capability alias read"
+      ],
+      "identifiers": [
+        "capabilityId"
+      ],
+      "behavior": "capabilities.read; same lookup.",
+      "disposition": "DEFER",
+      "implementedInPilot": false,
+      "publishedBuilderSelection": "UNKNOWN",
+      "deployedEvidence": "NOT_VERIFIED",
+      "reason": "Keep operator/device controls separate; conversational jobs need OAuth ownership adapter.",
+      "serviceSources": [
+        "src/routes/gpt-access.ts",
+        "src/services/gptAccessGateway.ts"
+      ],
+      "proposedReplacement": "Separate authorized getGptAccessModuleAlias workflow wrapper in its follow-up scope; proposed only, not a registered pilot tool.",
+      "targetSurfaces": [
+        "ChatGPT web (intended; not verified)",
+        "ChatGPT iOS (intended; not verified)"
+      ]
+    },
+    {
+      "operationId": "createAiJob",
+      "method": "POST",
+      "endpoint": "/gpt-access/jobs/create",
+      "group": "core-gateway",
+      "contractEvidence": [
+        {
+          "path": "src/services/gptAccessGateway.ts",
+          "line": 3385
+        }
+      ],
+      "legacyConsequentialHint": null,
+      "authenticationProfile": "operator-or-device",
+      "effects": [
+        "durable AI job",
+        "worker/provider generation"
+      ],
+      "identifiers": [
+        "gptId=arcanos-core",
+        "task",
+        "idempotencyKey",
+        "jobId",
+        "device owner"
+      ],
+      "behavior": "jobs.create; same semantic key reuses job, mismatch conflicts; no mapping all OAuth users to operator.",
+      "disposition": "DEFER",
+      "implementedInPilot": false,
+      "publishedBuilderSelection": "UNKNOWN",
+      "deployedEvidence": "NOT_VERIFIED",
+      "reason": "Keep operator/device controls separate; conversational jobs need OAuth ownership adapter.",
+      "serviceSources": [
+        "src/routes/gpt-access.ts",
+        "src/services/gptAccessGateway.ts"
+      ],
+      "proposedReplacement": "Separate authorized createAiJob workflow wrapper in its follow-up scope; proposed only, not a registered pilot tool.",
+      "targetSurfaces": [
+        "ChatGPT web (intended; not verified)",
+        "ChatGPT iOS (intended; not verified)"
+      ]
+    },
+    {
+      "operationId": "getJobResult",
+      "method": "POST",
+      "endpoint": "/gpt-access/jobs/result",
+      "group": "core-gateway",
+      "contractEvidence": [
+        {
+          "path": "src/services/gptAccessGateway.ts",
+          "line": 3434
+        }
+      ],
+      "legacyConsequentialHint": null,
+      "authenticationProfile": "operator-or-device",
+      "effects": [
+        "protected job read"
+      ],
+      "identifiers": [
+        "jobId",
+        "device owner",
+        "principalId",
+        "workspaceId"
+      ],
+      "behavior": "jobs.result; device immutable owner on every state; operator GPT provenance is broader than user ownership; pending/running poll, terminal stop.",
+      "disposition": "DEFER",
+      "implementedInPilot": false,
+      "publishedBuilderSelection": "UNKNOWN",
+      "deployedEvidence": "NOT_VERIFIED",
+      "reason": "Keep operator/device controls separate; conversational jobs need OAuth ownership adapter.",
+      "serviceSources": [
+        "src/routes/gpt-access.ts",
+        "src/services/gptAccessGateway.ts"
+      ],
+      "proposedReplacement": "Separate authorized getJobResult workflow wrapper in its follow-up scope; proposed only, not a registered pilot tool.",
+      "targetSurfaces": [
+        "ChatGPT web (intended; not verified)",
+        "ChatGPT iOS (intended; not verified)"
+      ]
+    },
+    {
+      "operationId": "queryJobEventTimeline",
+      "method": "POST",
+      "endpoint": "/gpt-access/jobs/timeline",
+      "group": "core-gateway",
+      "contractEvidence": [
+        {
+          "path": "src/services/gptAccessGateway.ts",
+          "line": 3465
+        }
+      ],
+      "legacyConsequentialHint": null,
+      "authenticationProfile": "gateway-operator",
+      "effects": [
+        "sanitized job event read"
+      ],
+      "identifiers": [
+        "jobId",
+        "principalId",
+        "workspaceId",
+        "bounds"
+      ],
+      "behavior": "diagnostics.read; preserve local-agent ownership.",
+      "disposition": "DEFER",
+      "implementedInPilot": false,
+      "publishedBuilderSelection": "UNKNOWN",
+      "deployedEvidence": "NOT_VERIFIED",
+      "reason": "Keep operator/device controls separate; conversational jobs need OAuth ownership adapter.",
+      "serviceSources": [
+        "src/routes/gpt-access.ts",
+        "src/services/gptAccessGateway.ts"
+      ],
+      "proposedReplacement": "Separate authorized queryJobEventTimeline workflow wrapper in its follow-up scope; proposed only, not a registered pilot tool.",
+      "targetSurfaces": [
+        "ChatGPT web (intended; not verified)",
+        "ChatGPT iOS (intended; not verified)"
+      ]
+    },
+    {
+      "operationId": "runDeepDiagnostics",
+      "method": "POST",
+      "endpoint": "/gpt-access/diagnostics/deep",
+      "group": "core-gateway",
+      "contractEvidence": [
+        {
+          "path": "src/services/gptAccessGateway.ts",
+          "line": 3487
+        }
+      ],
+      "legacyConsequentialHint": null,
+      "authenticationProfile": "gateway-operator",
+      "effects": [
+        "approved runtime/database/worker/log/queue reads"
+      ],
+      "identifiers": [
+        "bounded focus"
+      ],
+      "behavior": "diagnostics.read; no arbitrary execution.",
+      "disposition": "DEFER",
+      "implementedInPilot": false,
+      "publishedBuilderSelection": "UNKNOWN",
+      "deployedEvidence": "NOT_VERIFIED",
+      "reason": "Keep operator/device controls separate; conversational jobs need OAuth ownership adapter.",
+      "serviceSources": [
+        "src/routes/gpt-access.ts",
+        "src/services/gptAccessGateway.ts"
+      ],
+      "proposedReplacement": "Separate authorized runDeepDiagnostics workflow wrapper in its follow-up scope; proposed only, not a registered pilot tool.",
+      "targetSurfaces": [
+        "ChatGPT web (intended; not verified)",
+        "ChatGPT iOS (intended; not verified)"
+      ]
+    },
+    {
+      "operationId": "explainApprovedQuery",
+      "method": "POST",
+      "endpoint": "/gpt-access/db/explain",
+      "group": "core-gateway",
+      "contractEvidence": [
+        {
+          "path": "src/services/gptAccessGateway.ts",
+          "line": 3513
+        }
+      ],
+      "legacyConsequentialHint": null,
+      "authenticationProfile": "gateway-operator",
+      "effects": [
+        "approved SELECT-only EXPLAIN ANALYZE"
+      ],
+      "identifiers": [
+        "queryKey",
+        "bounded params"
+      ],
+      "behavior": "db.explain_approved; fixed template and timeout; no raw SQL.",
+      "disposition": "DEFER",
+      "implementedInPilot": false,
+      "publishedBuilderSelection": "UNKNOWN",
+      "deployedEvidence": "NOT_VERIFIED",
+      "reason": "Keep operator/device controls separate; conversational jobs need OAuth ownership adapter.",
+      "serviceSources": [
+        "src/routes/gpt-access.ts",
+        "src/services/gptAccessGateway.ts"
+      ],
+      "proposedReplacement": "Separate authorized explainApprovedQuery workflow wrapper in its follow-up scope; proposed only, not a registered pilot tool.",
+      "targetSurfaces": [
+        "ChatGPT web (intended; not verified)",
+        "ChatGPT iOS (intended; not verified)"
+      ]
+    },
+    {
+      "operationId": "queryBackendLogs",
+      "method": "POST",
+      "endpoint": "/gpt-access/logs/query",
+      "group": "core-gateway",
+      "contractEvidence": [
+        {
+          "path": "src/services/gptAccessGateway.ts",
+          "line": 3543
+        }
+      ],
+      "legacyConsequentialHint": null,
+      "authenticationProfile": "gateway-operator",
+      "effects": [
+        "sanitized bounded log read"
+      ],
+      "identifiers": [
+        "service",
+        "level",
+        "time range",
+        "limit"
+      ],
+      "behavior": "logs.read_sanitized; unconfigured is unavailable.",
+      "disposition": "DEFER",
+      "implementedInPilot": false,
+      "publishedBuilderSelection": "UNKNOWN",
+      "deployedEvidence": "NOT_VERIFIED",
+      "reason": "Keep operator/device controls separate; conversational jobs need OAuth ownership adapter.",
+      "serviceSources": [
+        "src/routes/gpt-access.ts",
+        "src/services/gptAccessGateway.ts"
+      ],
+      "proposedReplacement": "Separate authorized queryBackendLogs workflow wrapper in its follow-up scope; proposed only, not a registered pilot tool.",
+      "targetSurfaces": [
+        "ChatGPT web (intended; not verified)",
+        "ChatGPT iOS (intended; not verified)"
+      ]
+    },
+    {
+      "operationId": "arcanosMcpControl",
+      "method": "POST",
+      "endpoint": "/gpt-access/mcp",
+      "group": "core-gateway",
+      "contractEvidence": [
+        {
+          "path": "src/services/gptAccessGateway.ts",
+          "line": 3575
+        }
+      ],
+      "legacyConsequentialHint": null,
+      "authenticationProfile": "gateway-operator",
+      "effects": [
+        "approved readonly control tool"
+      ],
+      "identifiers": [
+        "fixed tool",
+        "bounded args"
+      ],
+      "behavior": "mcp.approved_readonly plus fixed allowlist.",
+      "disposition": "DEFER",
+      "implementedInPilot": false,
+      "publishedBuilderSelection": "UNKNOWN",
+      "deployedEvidence": "NOT_VERIFIED",
+      "reason": "Keep operator/device controls separate; conversational jobs need OAuth ownership adapter.",
+      "serviceSources": [
+        "src/routes/gpt-access.ts",
+        "src/services/gptAccessGateway.ts"
+      ],
+      "proposedReplacement": "Separate authorized arcanosMcpControl workflow wrapper in its follow-up scope; proposed only, not a registered pilot tool.",
+      "targetSurfaces": [
+        "ChatGPT web (intended; not verified)",
+        "ChatGPT iOS (intended; not verified)"
+      ]
+    },
+    {
+      "operationId": "runDispatch",
+      "method": "POST",
+      "endpoint": "/gpt-access/dispatch/run",
+      "group": "core-gateway",
+      "contractEvidence": [
+        {
+          "path": "src/services/gptAccessGateway.ts",
+          "line": 3603
+        }
+      ],
+      "legacyConsequentialHint": null,
+      "authenticationProfile": "gateway-operator",
+      "effects": [
+        "operational planning",
+        "allowed effects",
+        "possible provider/jobs"
+      ],
+      "identifiers": [
+        "utterance",
+        "DispatchPlan",
+        "idempotencyKey",
+        "confirmation_token"
+      ],
+      "behavior": "Plan-specific scopes/risk/confirmation; general advice uses createAiJob.",
+      "disposition": "DEFER",
+      "implementedInPilot": false,
+      "publishedBuilderSelection": "UNKNOWN",
+      "deployedEvidence": "NOT_VERIFIED",
+      "reason": "Keep operator/device controls separate; conversational jobs need OAuth ownership adapter.",
+      "serviceSources": [
+        "src/routes/gpt-access.ts",
+        "src/services/gptAccessGateway.ts"
+      ],
+      "proposedReplacement": "Separate authorized runDispatch workflow wrapper in its follow-up scope; proposed only, not a registered pilot tool.",
+      "targetSurfaces": [
+        "ChatGPT web (intended; not verified)",
+        "ChatGPT iOS (intended; not verified)"
+      ]
+    },
+    {
+      "operationId": "getGptAccessOpenApi",
+      "method": "GET",
+      "endpoint": "/gpt-access/openapi.json",
+      "group": "core-gateway",
+      "contractEvidence": [
+        {
+          "path": "src/services/gptAccessGateway.ts",
+          "line": 3661
+        }
+      ],
+      "legacyConsequentialHint": null,
+      "authenticationProfile": "public-schema",
+      "effects": [
+        "public contract read"
+      ],
+      "identifiers": [
+        "none"
+      ],
+      "behavior": "Discovery grants no execution; saved Builder selection unknown.",
+      "disposition": "DEFER",
+      "implementedInPilot": false,
+      "publishedBuilderSelection": "UNKNOWN",
+      "deployedEvidence": "NOT_VERIFIED",
+      "reason": "Keep operator/device controls separate; conversational jobs need OAuth ownership adapter.",
+      "serviceSources": [
+        "src/routes/gpt-access.ts",
+        "src/services/gptAccessGateway.ts"
+      ],
+      "proposedReplacement": "Separate authorized getGptAccessOpenApi workflow wrapper in its follow-up scope; proposed only, not a registered pilot tool.",
+      "targetSurfaces": [
+        "ChatGPT web (intended; not verified)",
+        "ChatGPT iOS (intended; not verified)"
+      ]
+    }
+  ],
+  "serviceBoundaryEvidence": [
+    {
+      "path": "src/routes/mcp.ts",
+      "line": 62
+    },
+    {
+      "path": "src/mcp/context.ts",
+      "line": 194
+    },
+    {
+      "path": "src/mcp/server/jobTools.ts",
+      "line": 32
+    },
+    {
+      "path": "src/mcp/modulesAllowlist.ts",
+      "line": 44
+    },
+    {
+      "path": "src/services/gamingSourceAccessAuth.ts",
+      "line": 87
+    },
+    {
+      "path": "src/services/gamingSourceIngestion.ts",
+      "line": 1579
+    },
+    {
+      "path": "src/services/gamingHybridCandidates.ts",
+      "line": 327
+    },
+    {
+      "path": "src/services/backstageBookerAccessAuth.ts",
+      "line": 110
+    },
+    {
+      "path": "src/routes/gpt-access.ts",
+      "line": 1309
+    },
+    {
+      "path": "src/shared/backstage/backstageActionPolicy.ts",
+      "line": 19
+    },
+    {
+      "path": "src/services/gptAccessGateway.ts",
+      "line": 1025
+    },
+    {
+      "path": "src/routes/_core/gptDispatch.ts",
+      "line": 1928
+    },
+    {
+      "path": "src/services/sessionContextHydrationService.ts",
+      "line": 32
+    },
+    {
+      "path": "src/shared/memory/sessionContextCore.ts",
+      "line": 25
+    },
+    {
+      "path": "src/services/moduleConversationPersistence.ts",
+      "line": 75
+    }
+  ],
+  "sharedReuse": [
+    {
+      "component": "Tutor default query pipeline",
+      "disposition": "REUSE",
+      "reason": "Server-only isolated execution policy; no arbitrary domain/job/memory selection."
+    },
+    {
+      "component": "Operator HTTP/stdio MCP",
+      "disposition": "DEFER",
+      "reason": "Remain separate; never re-export operator catalog or credentials."
+    },
+    {
+      "component": "Generic MCP jobs.status/jobs.result",
+      "disposition": "BLOCKED",
+      "reason": "Direct getJobById differs from HTTP capability/owner binding; no OAuth owner."
+    },
+    {
+      "component": "Session hydration",
+      "disposition": "BLOCKED",
+      "reason": "Deployment-wide memory credential plus supplied session is not ownership; pilot disables initialization/access and clears inherited context."
+    },
+    {
+      "component": "Durable queue/owner-aware gateway",
+      "disposition": "REUSE",
+      "reason": "Future owned continuations reuse queue; none added to Tutor pilot."
+    }
+  ],
+  "followUpScopes": [
+    {
+      "id": "tutor-account-validation",
+      "scope": "Approved issuer/resource/scopes in isolated infrastructure, registered authenticated connection, private Builder/reference reconciliation and separate web/iOS/Desktop acceptance.",
+      "exitCriteria": [
+        "Exact deployed SHA/transport",
+        "Real OAuth authorization",
+        "Real package connection reference",
+        "Separate installed-client behavior evidence"
+      ]
+    },
+    {
+      "id": "gaming-workflow-parity",
+      "scope": "Dedicated gameplay/canary/hybrid/source lifecycle wrappers reusing gamingHybridWorkflow and ingestion worker; no generic RAG replacement.",
+      "exitCriteria": [
+        "All eight Actions",
+        "Preserve workflowId/idempotencyKey/contractVersion/discoveryType/nextAction/decisions/currentness/applicability",
+        "transient_only forbids writes; explicit independent storage consent",
+        "Bounded actor-isolated workflow and status"
+      ]
+    },
+    {
+      "id": "booker-read-generation",
+      "scope": "Exact-universe OAuth membership, registered provenance, continuity/generation/simulation, managed polling and bounded reads; preserve authority/quarantine.",
+      "exitCriteria": [
+        "Current complete authority before generation",
+        "Snapshot/request-bound cursor and page version",
+        "Owned managed result unsealing",
+        "No conversation replacement after protected failure; no direct Notion bypass"
+      ]
+    },
+    {
+      "id": "booker-canon-separate",
+      "scope": "Later separately reviewed upsertStoryline/appendCanonBeat with supported client approval and server enforcement. Phase One operator mutations remain isolated.",
+      "exitCriteria": [
+        "Per-client verified approval; old OpenAPI flag insufficient",
+        "Exact-universe membership",
+        "MutationId/expectedVersion/idempotency/unknown-outcome reconciliation",
+        "Notion authority remains read-only"
+      ]
+    },
+    {
+      "id": "core-conversation-ownership",
+      "scope": "Adapt existing jobs.create/jobs.result queue/gateway to OAuth owners, then establish session ownership before memory. Keep control/CLI/device surfaces separate.",
+      "exitCriteria": [
+        "Cross-principal/session/job denial every state",
+        "Stable idempotency/replay",
+        "No operator or deployment-wide memory inheritance",
+        "Conversation contract parity"
+      ]
+    }
+  ],
+  "privateMaterialPolicy": "No credentials, account/app IDs, Builder exports, uploaded private knowledge, private universe content or production configuration values. Future authorized private exports stay outside public repository.",
+  "externalDependencies": [
+    "Approved issuer/JWKS/resource/audience and grant policy",
+    "Account/workspace eligibility and registered authenticated connection",
+    "Real connection identifier before release packaging",
+    "Private Builder/knowledge reconciliation",
+    "Separate deployed/account/installed-client verification"
+  ]
+}

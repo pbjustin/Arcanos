@@ -2209,3 +2209,21 @@ Notes:
   `/api/daemon/*` route.
 - The backend stores results temporarily (in-memory by default).
 - `src/routes/ask/daemonTools.ts` will poll for results up to `DAEMON_RESULT_WAIT_MS` and feed them back to OpenAI as `function_call_output`.
+## Scoped ChatGPT Tutor resource
+
+`POST /chatgpt/mcp` is an optional, default-disabled OAuth resource exposing
+only `arcanos_tutor({ prompt })`. Discovery is
+`GET /.well-known/oauth-protected-resource/chatgpt/mcp`. Authentication precedes
+the 16 KiB uncompressed JSON parser. The prompt limit is 8,000 characters;
+the answer limit is 32,000 characters. UTF-8 encoded JSON must also fit the
+transport byte limit. Every execution requires a verified `arcanos:tutor`
+credential, even if discovery is bypassed. Other MCP methods/tools confer no
+operator access. Disabled returns 404; enabled with incomplete configuration
+returns 503 on this resource only. Unsupported methods return 405 after auth.
+
+The pilot synchronously reuses Tutor with a 60-second aggregate timeout and
+disconnect cancellation. It exposes no conversation, memory, job or execution
+identifier. Fixed error codes do not contain internal exceptions; callers must
+not automatically retry generation after timeouts. See the
+[migration decision](chatgpt-migration/ARCHITECTURE.md) and
+[authentication contract](chatgpt-migration/AUTHENTICATION.md).

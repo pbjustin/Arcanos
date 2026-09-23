@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-22T16:39:02.592Z",
+  "generatedAt": "2026-09-23T07:36:13.767Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -277,6 +277,9 @@
           "relativePath": "packages/protocol/src/backstageBooker.ts"
         },
         {
+          "relativePath": "packages/protocol/src/chatgptTutor.ts"
+        },
+        {
           "relativePath": "packages/protocol/src/commands.ts"
         },
         {
@@ -342,6 +345,12 @@
         },
         {
           "relativePath": "src/brain/registerGpt5Worker.ts"
+        },
+        {
+          "relativePath": "src/chatgpt/auth.ts"
+        },
+        {
+          "relativePath": "src/chatgpt/tutor.ts"
         },
         {
           "relativePath": "src/config/env.ts"
@@ -1290,6 +1299,9 @@
         },
         {
           "relativePath": "src/routes/bridge.ts"
+        },
+        {
+          "relativePath": "src/routes/chatgptMcp.ts"
         },
         {
           "relativePath": "src/routes/clear.ts"
@@ -2636,6 +2648,9 @@
           "relativePath": "src/shared/backstage/backstageUniverseReadProjection.ts"
         },
         {
+          "relativePath": "src/shared/chatgpt/chatgptTutorPreviewFixture.ts"
+        },
+        {
           "relativePath": "src/shared/constants.ts"
         },
         {
@@ -3865,6 +3880,27 @@
           "relativePath": "tests/cef-routing-authority.test.ts"
         },
         {
+          "relativePath": "tests/chatgpt-app-composition.test.ts"
+        },
+        {
+          "relativePath": "tests/chatgpt-auth.test.ts"
+        },
+        {
+          "relativePath": "tests/chatgpt-mcp.integration.test.ts"
+        },
+        {
+          "relativePath": "tests/chatgpt-tutor-preview-fixture.test.ts"
+        },
+        {
+          "relativePath": "tests/chatgpt-tutor-preview.integration.test.ts"
+        },
+        {
+          "relativePath": "tests/chatgpt-tutor.e2e.integration.test.ts"
+        },
+        {
+          "relativePath": "tests/chatgpt-tutor.pipeline.test.ts"
+        },
+        {
           "relativePath": "tests/check-npm-audit-policy.test.ts"
         },
         {
@@ -4112,6 +4148,9 @@
         },
         {
           "relativePath": "tests/fallback-handler.test.ts"
+        },
+        {
+          "relativePath": "tests/fixtures/chatgpt-tutor-e2e.ts"
         },
         {
           "relativePath": "tests/fixtures/gamingClearCalibration.ts"
@@ -5438,6 +5477,9 @@
         },
         {
           "relativePath": "tests/tutor-logic.prompt-forwarding.test.ts"
+        },
+        {
+          "relativePath": "tests/tutor-pilot-package.test.ts"
         },
         {
           "relativePath": "tests/unified-config-nullish-branches.test.ts"

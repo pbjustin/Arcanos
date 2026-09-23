@@ -809,7 +809,9 @@ export async function runThroughBrain(
     escalated: !!internalContext?.escalated
   });
 
-  const memoryContext = getMemoryContext(trustedPolicyPrompt, effectiveMemorySessionId);
+  const memoryContext = options.disableMemoryAccess
+    ? { relevantEntries: [], contextSummary: 'Backend memory unavailable for this request.', memoryPrompt: '', accessLog: [] }
+    : getMemoryContext(trustedPolicyPrompt, effectiveMemorySessionId);
   const relevanceScores = memoryContext.relevantEntries.map(entry => entry.relevanceScore ?? 0);
   const memoryScoreSummary = calculateMemoryScoreSummary(relevanceScores);
 

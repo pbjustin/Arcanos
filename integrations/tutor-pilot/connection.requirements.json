@@ -1,0 +1,16 @@
+{
+  "status": "pending_registration",
+  "registeredAppId": null,
+  "endpointPath": "/chatgpt/mcp",
+  "toolName": "arcanos_tutor",
+  "target": "registered_authenticated_chatgpt_integration",
+  "builderReconciliation": "pending_private_published_export",
+  "referenceCoverage": "no_builder_knowledge_files_available",
+  "releaseBlockers": [
+    "approved_identity_provider_and_nonproduction_endpoint",
+    "real_chatgpt_registered_app_mapping",
+    "account_and_workspace_eligibility",
+    "published_builder_and_reference_reconciliation",
+    "installed_tool_workflow_verification"
+  ]
+}

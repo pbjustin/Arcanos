@@ -32,6 +32,8 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'contracts/backstage_booker.openapi.v1.json',
   'packages/arcanos-runtime/src/redaction.ts',
   'packages/arcanos-runtime/src/requestAbort.ts',
+  'packages/protocol/schemas/v1/tools/arcanos-tutor.input.schema.json',
+  'packages/protocol/schemas/v1/tools/arcanos-tutor.output.schema.json',
   'scripts/native-pr-preview-contract.d.mts',
   'scripts/native-pr-preview-contract.mjs',
   'scripts/start-railway-service.mjs',
@@ -91,6 +93,7 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/shared/backstage/backstageReviewContract.ts',
   'src/shared/backstage/backstageStoryline.ts',
   'src/shared/backstage/backstageUniverseReadProjection.ts',
+  'src/shared/chatgpt/chatgptTutorPreviewFixture.ts',
   'src/shared/dispatch/dispatchGptIdentifierBoundary.ts',
   'src/shared/dag/dagMetricsCore.ts',
   'src/shared/dag/dagMetricsPreviewFixture.ts',
@@ -761,6 +764,7 @@ const CRITICAL_RUNTIME_FUNCTION_DIGESTS = new Map([
   ],
 ]);
 const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
+  ['src/shared/chatgpt/chatgptTutorPreviewFixture.ts', '021be19a56c4185f0a89a28f39bd2e03b3979e2662d8a34f49cca92fb9ef60f6'], // gitleaks:allow -- public source semantic SHA-256
   ['src/platform/runtime/sessionContext.ts', 'ccb6ac8c2d4d739a61e716fd01e890af577adc4aba0a16d5c7d73571c778f53f'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/memory/sessionContextCore.ts', '7d1ffb349363dcb0aee2bf641d20956975980335d9d721ec74ff7191c8730aeb'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/memory/sessionContextPolicy.ts', 'fa9b591e1350a925bd6b62175ca6f160346e12ca4e885a3f5291c7129ac3f740'], // gitleaks:allow -- public source semantic SHA-256

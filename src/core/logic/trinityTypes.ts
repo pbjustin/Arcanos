@@ -262,6 +262,8 @@ export interface TrinityRunOptions {
   dryRunReason?: string;
   /** Disable non-essential feedback and self-improvement writes for tightly bounded workflows. */
   disableOptionalSideEffects?: boolean;
+  /** Server-owned stateless integrations must not initialize or read backend memory. */
+  disableMemoryAccess?: boolean;
   /**
    * Preserve the caller-owned ambient AbortSignal/deadline as the sole
    * cancellation context and await cooperative stage drain on abort.

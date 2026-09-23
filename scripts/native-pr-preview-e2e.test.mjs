@@ -64,6 +64,9 @@ function responseBodyForCase(
   if (requestCase.expectedType === 'head') {
     return null;
   }
+  if (requestCase.expectedType === 'chatgpt-tutor' && requestCase.fixtureName === 'initialized') {
+    return null;
+  }
   const expectedBody = expectedNativePrPreviewResponseBody(requestCase, {
     commitSha,
     expectedBackstageBookerOpenApiDocument,
@@ -161,10 +164,18 @@ function responseHeadersForCase(
     || requestCase.expectedType === 'backstage-generation-contract'
     || requestCase.expectedType === 'dispatch-gpt-identifier-contract'
     || requestCase.expectedType === 'status-auth-boundary-contract'
-    || requestCase.expectedType === 'self-heal-approval-contract';
+    || requestCase.expectedType === 'self-heal-approval-contract'
+    || requestCase.expectedType === 'chatgpt-tutor';
   return {
     'cache-control': 'no-store',
-    'content-type': expectedNativePrPreviewContentType(requestCase),
+    ...(expectedNativePrPreviewContentType(requestCase) === null ? {} : {
+      'content-type': expectedNativePrPreviewContentType(requestCase),
+    }),
+    ...(requestCase.expectedType === 'chatgpt-tutor' ? {
+      [NATIVE_PR_PREVIEW_E2E_CONTRACT.chatGptTutor.proofHeader]:
+        NATIVE_PR_PREVIEW_E2E_CONTRACT.chatGptTutor.proofVersion,
+      ...(requestCase.fixtureName === 'get' ? { allow: 'POST' } : {}),
+    } : {}),
     ...(requestCase.role === 'web'
       ? {
           'content-security-policy':
@@ -406,8 +417,12 @@ function buildMockFetch(
     requestIndex += 1;
     calls.push({ url, init });
     assert.equal(init.redirect, 'error');
-    assert.equal(init.headers.authorization, undefined);
-    assert.equal(init.headers.cookie, undefined);
+    assert.equal(init.headers.authorization,
+      requestCase.caseId === 'web-chatgpt-tutor-authorization-denied'
+        ? 'Bearer mock-preview-invalid-credential' : undefined);
+    assert.equal(init.headers.cookie,
+      requestCase.caseId === 'web-chatgpt-tutor-cookie-denied'
+        ? 'synthetic_preview=invalid' : undefined);
     assert.equal(init.headers['x-arcanos-job-read-token'], undefined);
     if (requestCase.role === 'web') {
       assert.deepEqual(
@@ -762,9 +777,9 @@ test('rejects malformed or unsupported exact-head Backstage Booker versions', as
   }
 });
 
-test('executes the bounded credential-free matrix and detects identity stability', async () => {
+test('executes the bounded synthetic matrix and detects identity stability', async () => {
   const requestPlan = buildNativePrPreviewRequestPlan();
-  assert.equal(requestPlan.length, 138);
+  assert.equal(requestPlan.length, 156);
   assert.equal(
     requestPlan.filter(({ caseId, expectedType }) =>
       expectedType !== 'research-contract'
@@ -775,6 +790,7 @@ test('executes the bounded credential-free matrix and detects identity stability
       && expectedType !== 'dispatch-gpt-identifier-contract'
       && expectedType !== 'status-auth-boundary-contract'
       && expectedType !== 'self-heal-approval-contract'
+      && !caseId.includes('chatgpt-tutor')
       && !caseId.startsWith('gaming-')
       && !caseId.startsWith('worker-gaming-')
       && caseId !== 'worker-research-denied'
@@ -2078,14 +2094,16 @@ test('executes the bounded credential-free matrix and detects identity stability
   assert.equal(result.executed, true);
   assert.equal(result.networkAttempted, true);
   assert.equal(result.summary.status, 'PASS');
-  assert.equal(result.summary.requestsMade, 138);
+  assert.equal(result.summary.requestsMade, 156);
   assert.equal(result.summary.simulatedAuthRequests, 24);
-  assert.equal(result.checks.length, 138);
+  assert.equal(result.checks.length, 156);
   assert.equal(
     result.checks.filter(({ simulatedAuth }) => simulatedAuth).length,
     24
   );
-  assert.equal(mock.requestCount, 138);
+  assert.equal(mock.requestCount, 156);
+  assert.equal(result.limits.maxRequests, 156);
+  assert.equal(result.checks.filter(check => check.chatGptTutorMockVerified).length, 10);
   for (const caseId of ['web-readiness-initial', 'web-readiness-final']) {
     assert.equal(result.checks.find(check => check.caseId === caseId)?.iosDevicePolicyVerified, true);
     assert.equal(result.checks.find(check => check.caseId === caseId)?.dagMetricsRetentionVerified, true);
@@ -2631,13 +2649,143 @@ test('executes the bounded credential-free matrix and detects identity stability
     true
   );
   assert.equal(
-    mock.calls.some(({ init }) =>
+    mock.calls.filter((_call, index) => ![
+      'web-chatgpt-tutor-authorization-denied',
+      'web-chatgpt-tutor-cookie-denied',
+      'web-chatgpt-tutor-session-denied',
+    ].includes(requestPlan[index].caseId)).some(({ init }) =>
       Object.keys(init.headers).some((headerName) =>
         /authorization|cookie|session|token|secret/iu.test(headerName)
       )
     ),
     false
   );
+});
+
+test('plans the finite Tutor MCP exchange and denied credential, session, OAuth and worker boundaries', () => {
+  const contract = NATIVE_PR_PREVIEW_E2E_CONTRACT.chatGptTutor;
+  const cases = buildNativePrPreviewRequestPlan().filter(requestCase => requestCase.chatGptTutorAdmission);
+  assert.equal(cases.length, 18);
+  assert.deepEqual(cases.slice(0, 4).map(({ body }) => body.method), [
+    'initialize', 'notifications/initialized', 'tools/list', 'tools/call',
+  ]);
+  assert.deepEqual(cases.slice(0, 4).map(({ expectedStatus }) => expectedStatus), [200, 202, 200, 200]);
+  assert.deepEqual(cases[3].body.params.arguments, { prompt: contract.prompt });
+  assert.equal(cases[3].body.params.name, contract.toolName);
+  assert.deepEqual(cases.filter(({ chatGptTutorAdmission }) => chatGptTutorAdmission === 'denied')
+    .map(({ caseId }) => caseId), [
+    'web-chatgpt-tutor-authorization-denied',
+    'web-chatgpt-tutor-cookie-denied',
+    'web-chatgpt-tutor-session-denied',
+    'web-chatgpt-tutor-query-denied',
+    'web-chatgpt-tutor-protocol-denied',
+    'worker-chatgpt-tutor-denied',
+    'web-chatgpt-tutor-oauth-metadata-denied',
+    'worker-chatgpt-tutor-oauth-metadata-denied',
+  ]);
+  assert.equal(cases.every(requestCase => requestCase.simulatedAuth !== true), true);
+  assert.equal(cases.every(({ role, path }) => ['web', 'worker'].includes(role)
+    && [contract.path, `${contract.path}?synthetic_preview=invalid`, contract.metadataPath].includes(path)), true);
+});
+
+test('rejects Tutor schema, output, provenance, empty-notification and denial drift', async () => {
+  const requestPlan = buildNativePrPreviewRequestPlan();
+  const contract = NATIVE_PR_PREVIEW_E2E_CONTRACT.chatGptTutor;
+  const proofCode = 'NATIVE_PR_PREVIEW_CHATGPT_TUTOR_PROOF_INVALID';
+  const bodyCode = 'NATIVE_PR_PREVIEW_BODY_MISMATCH';
+  const cases = [
+    ...['initialize', 'initialized', 'tools-list', 'tools-call'].flatMap(fixtureName =>
+      [undefined, 'chatgpt-tutor-mock/v0'].map(version => ({
+        caseId: `web-chatgpt-tutor-${fixtureName}`, code: proofCode,
+        mutate({ headers }) {
+          if (version === undefined) delete headers[contract.proofHeader];
+          else headers[contract.proofHeader] = version;
+        },
+      }))),
+    {
+      caseId: 'web-chatgpt-tutor-tools-list', code: bodyCode,
+      mutate(value) { value.body.result.tools[0].inputSchema.additionalProperties = true; },
+    },
+    {
+      caseId: 'web-chatgpt-tutor-tools-list', code: bodyCode,
+      mutate(value) { delete value.body.result.tools[0].outputSchema; },
+    },
+    {
+      caseId: 'web-chatgpt-tutor-tools-list', code: bodyCode,
+      mutate(value) { value.body.result.tools.push({ name: 'unexpected_tool' }); },
+    },
+    {
+      caseId: 'web-chatgpt-tutor-tools-list', code: bodyCode,
+      mutate(value) { value.body.result.tools[0].securitySchemes = [{ type: 'oauth2' }]; },
+    },
+    {
+      caseId: 'web-chatgpt-tutor-tools-call', code: bodyCode,
+      mutate(value) { value.body.result.structuredContent.answer = 'Unrelated constant answer.'; },
+    },
+    ...['memory', 'generation'].map(key => ({
+      caseId: 'web-chatgpt-tutor-tools-call', code: bodyCode,
+      mutate(value) { value.body.result.structuredContent.metadata[key] = 'live'; },
+    })),
+    {
+      caseId: 'web-chatgpt-tutor-tools-call', code: bodyCode,
+      mutate(value) { value.body.result.content[0].text = 'Mismatched text fallback'; },
+    },
+    {
+      caseId: 'web-chatgpt-tutor-tools-call', code: 'NATIVE_PR_PREVIEW_SYNTHETIC_MARKER_MISSING',
+      mutate({ headers }) { delete headers[NATIVE_PR_PREVIEW_E2E_CONTRACT.syntheticResponseHeader.name]; },
+    },
+    {
+      caseId: 'web-chatgpt-tutor-tools-call', code: proofCode,
+      mutate({ headers }) { headers['mcp-session-id'] = 'unexpected-synthetic-session'; },
+    },
+    {
+      caseId: 'web-chatgpt-tutor-initialized', code: bodyCode,
+      mutate(value) { value.body = 'unexpected notification response'; },
+    },
+    {
+      caseId: 'web-chatgpt-tutor-get', code: proofCode,
+      mutate({ headers }) { headers.allow = 'GET, POST'; },
+    },
+    ...['wrong-prompt', 'wrong-tool', 'extra-arguments'].map(fixtureName => ({
+      caseId: `web-chatgpt-tutor-${fixtureName}`, code: bodyCode,
+      mutate(value) { delete value.body.result.isError; },
+    })),
+    {
+      caseId: 'web-chatgpt-tutor-tools-call', code: 'NATIVE_PR_PREVIEW_CHATGPT_TUTOR_RESPONSE_TOO_LARGE',
+      mutate(value) { value.body = 'x'.repeat(16_385); },
+    },
+    ...['web-chatgpt-tutor-session-denied', 'worker-chatgpt-tutor-denied',
+      'web-chatgpt-tutor-oauth-metadata-denied', 'worker-chatgpt-tutor-oauth-metadata-denied']
+      .map(caseId => ({
+        caseId, code: proofCode,
+        mutate({ headers }) { headers[contract.proofHeader] = contract.proofVersion; },
+      })),
+  ];
+  for (const mutation of cases) {
+    const mock = buildMockFetch(requestPlan, requestCase => {
+      if (requestCase.caseId !== mutation.caseId) return undefined;
+      const original = responseBodyForCase(requestCase);
+      const value = {
+        body: original && expectedNativePrPreviewContentType(requestCase)?.startsWith('application/json')
+          ? JSON.parse(original) : original,
+        headers: responseHeadersForCase(requestCase, Buffer.byteLength(original ?? '')),
+      };
+      mutation.mutate(value);
+      const body = typeof value.body === 'string' ? value.body : JSON.stringify(value.body);
+      if (requestCase.boundedResponse) value.headers['x-response-bytes'] = String(Buffer.byteLength(body));
+      const response = new Response(Buffer.from(body), { headers: value.headers, status: requestCase.expectedStatus });
+      const baseUrl = requestCase.role === 'web' ? WEB_BASE_URL : WORKER_BASE_URL;
+      Object.defineProperty(response, 'url', { value: `${baseUrl}${requestCase.path}` });
+      return response;
+    });
+    await assert.rejects(runNativePrPreviewE2e({
+      args: validArguments('--execute', '--allow-network'),
+      expectedBackstageBookerOpenApiDocument: EXPECTED_BACKSTAGE_BOOKER_OPENAPI_DOCUMENT,
+      fetchImpl: mock.fetchImpl, localGitState: LOCAL_GIT_STATE, monotonicNow: mock.monotonicNow,
+    }), error => error instanceof NativePrPreviewE2eError
+      && error.code === mutation.code && error.caseId === mutation.caseId,
+    `${mutation.caseId}: ${mutation.code}`);
+  }
 });
 
 test('pins the emitted preview imports to the built request-abort runtime', () => {

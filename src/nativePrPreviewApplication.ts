@@ -25,6 +25,7 @@ import { runIosDevicePolicyPreview } from './shared/ios/iosDevicePreviewFixture.
 import { assertDagMetricsRetentionPreviewFixture } from './shared/dag/dagMetricsPreviewFixture.js';
 import { assertDagTokenAccountingPreviewFixture } from './shared/dag/dagTokenAccountingPreviewFixture.js';
 import { assertSessionContextPreviewFixture } from './shared/memory/sessionContextPreviewFixture.js';
+import { handleChatGptTutorPreviewRequest } from './shared/chatgpt/chatgptTutorPreviewFixture.js';
 
 import {
   createGenericJobsRouter,
@@ -43,6 +44,7 @@ import {
   NATIVE_PR_PREVIEW_BACKSTAGE_STORYLINE_CONTRACT,
   NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT,
   NATIVE_PR_PREVIEW_BACKSTAGE_BOOKER_OPENAPI_CONTRACT,
+  NATIVE_PR_PREVIEW_CHATGPT_TUTOR_CONTRACT,
   NATIVE_PR_PREVIEW_DISPATCH_GPT_IDENTIFIER_CONTRACT,
   NATIVE_PR_PREVIEW_DAG_METRICS_CONTRACT,
   NATIVE_PR_PREVIEW_DAG_TOKEN_ACCOUNTING_CONTRACT,
@@ -8927,6 +8929,8 @@ function buildAllowedRouteKeys(): Set<string> {
     `POST ${NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.path}`,
     `POST ${NATIVE_PR_PREVIEW_DISPATCH_GPT_IDENTIFIER_CONTRACT.path}`,
     `POST ${NATIVE_PR_PREVIEW_MCP_BODY_CAP_CONTRACT.path}`,
+    `POST ${NATIVE_PR_PREVIEW_CHATGPT_TUTOR_CONTRACT.path}`,
+    `GET ${NATIVE_PR_PREVIEW_CHATGPT_TUTOR_CONTRACT.path}`,
     `POST ${NATIVE_PR_PREVIEW_RESEARCH_CONTRACT.path}`,
     `POST ${NATIVE_PR_PREVIEW_SELF_HEAL_APPROVAL_CONTRACT.path}`,
     `POST ${NATIVE_PR_PREVIEW_STATUS_AUTH_BOUNDARY_CONTRACT.path}`,
@@ -9062,6 +9066,8 @@ export function createNativePrPreviewApplication(
     const routeKey = `${request.method ?? ''} ${rawPath}`;
     const gamingSourceResolution = resolvePreviewGamingSourcePath(rawPath);
     const gamingSourcePath = gamingSourceResolution !== null;
+    const chatGptTutorPath = rawPath === NATIVE_PR_PREVIEW_CHATGPT_TUTOR_CONTRACT.path;
+    const mcpProtocolVersion = request.header('mcp-protocol-version');
     const sourceFixture = request.header(
       NATIVE_PR_PREVIEW_GAMING_SOURCES_CONTRACT.fixtureHeader
     );
@@ -9100,6 +9106,10 @@ export function createNativePrPreviewApplication(
       || (rawPath.includes('%') && !gamingSourcePath)
       || (!gamingSourcePath && !iosFixtureAdmission && !allowedRouteKeys.has(routeKey))
       || isCredentialCarrierPresent(request, iosFixtureCarriers)
+      || (chatGptTutorPath
+        && (countPreviewRawHeaders(request, 'mcp-protocol-version') > 1
+          || (mcpProtocolVersion !== undefined
+            && mcpProtocolVersion !== NATIVE_PR_PREVIEW_CHATGPT_TUTOR_CONTRACT.protocolVersion)))
       || (
         sourceFixture !== undefined
         && (
@@ -9122,6 +9132,7 @@ export function createNativePrPreviewApplication(
       || gamingSourcePath
       || iosFixtureAdmission
       || rawPath === NATIVE_PR_PREVIEW_IOS_DEVICE_CONTRACT.path
+      || chatGptTutorPath
     ) {
       response.setHeader(
         NATIVE_PR_PREVIEW_SYNTHETIC_RESPONSE_HEADER.name,
@@ -9130,6 +9141,10 @@ export function createNativePrPreviewApplication(
     }
     if (gamingSourcePath) {
       response.setHeader('Pragma', 'no-cache');
+    }
+    if (chatGptTutorPath) {
+      response.setHeader(NATIVE_PR_PREVIEW_CHATGPT_TUTOR_CONTRACT.proofHeader,
+        NATIVE_PR_PREVIEW_CHATGPT_TUTOR_CONTRACT.proofVersion);
     }
     if (iosFixtureAdmission && request.header('authorization') === undefined) {
       respondIosGatewayFixture(request, response);
@@ -9382,6 +9397,25 @@ export function createNativePrPreviewApplication(
         return;
       }
       next(error);
+    });
+  });
+
+  // A finite synthetic MCP peer; normal Tutor, OAuth and provider code stay excluded.
+  // The same credential denial and 4 KiB pre-parser bound apply to this endpoint.
+  app.get(NATIVE_PR_PREVIEW_CHATGPT_TUTOR_CONTRACT.path, (_request, response) => {
+    response.setHeader('Allow', 'POST');
+    response.status(405).type('text/plain').send('method not allowed');
+  });
+  app.post(NATIVE_PR_PREVIEW_CHATGPT_TUTOR_CONTRACT.path, (request, response) => {
+    const result = handleChatGptTutorPreviewRequest(request.body);
+    if (result.payload === undefined) {
+      response.status(result.statusCode).end();
+      return;
+    }
+    sendBoundedJsonResponse(request, response, result.payload, {
+      logEvent: 'native_pr_preview.chatgpt_tutor_fixture',
+      maxBytes: 16_384,
+      statusCode: result.statusCode,
     });
   });
 

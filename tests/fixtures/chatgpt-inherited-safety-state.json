@@ -1,0 +1,12 @@
+{
+  "conditions": [
+    {
+      "conditionId": "synthetic-chatgpt-inherited-safety-state",
+      "code": "PATTERN_INTEGRITY_FAILURE",
+      "message": "Synthetic inherited state for test isolation regression",
+      "blocking": true
+    }
+  ],
+  "quarantines": [],
+  "trustedHashes": {}
+}

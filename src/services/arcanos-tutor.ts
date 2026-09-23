@@ -1,5 +1,6 @@
-import tutorLogic, { type TutorQuery } from "@core/logic/tutor-logic.js";
-import { buildHrcMemoryInspectionGuard, withHRC } from './hrcWrapper.js';
+import tutorLogic, { type TutorQuery, runWithIsolatedTutorExecution } from "@core/logic/tutor-logic.js";
+import { buildHrcMemoryInspectionGuard, evaluateWithHRC, withHRC } from './hrcWrapper.js';
+import { throwIfRequestAborted } from '@arcanos/runtime';
 
 export const ArcanosTutor = {
   name: 'ARCANOS:TUTOR',
@@ -8,8 +9,10 @@ export const ArcanosTutor = {
   gptIds: ['arcanos-tutor', 'tutor'],
   defaultTimeoutMs: 60000,
   actions: {
-    async query(payload: TutorQuery) {
-      const result = await tutorLogic.dispatch(payload);
+    async query(payload: TutorQuery, options: { isolated?: boolean } = {}) {
+      const result = await (options.isolated
+        ? runWithIsolatedTutorExecution(() => tutorLogic.dispatch(payload))
+        : tutorLogic.dispatch(payload));
       const prompt = extractTutorPrompt(payload);
       const sessionId = extractTutorSessionId(payload);
       const hrcGuard = buildHrcMemoryInspectionGuard({ prompt, sessionId });
@@ -27,6 +30,12 @@ export const ArcanosTutor = {
           }
         : result;
 
+      if (options.isolated) {
+        throwIfRequestAborted();
+        const hrc = await evaluateWithHRC(guardedResult.arcanos_tutor, { sensitiveContext: true });
+        throwIfRequestAborted();
+        return { ...guardedResult, hrc };
+      }
       return withHRC(guardedResult, r => r.arcanos_tutor);
     },
   },

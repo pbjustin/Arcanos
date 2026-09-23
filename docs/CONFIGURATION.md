@@ -1890,3 +1890,27 @@ This table mirrors high-impact runtime keys and active operator controls in `.en
 | `TAVILY_API_KEY` | empty | Optional Tavily provider key. |
 | `SERPAPI_API_KEY` | empty | Optional SerpAPI provider key. |
 | `SEARXNG_BASE_URL` | empty | Optional SearXNG instance URL. |
+## Optional ChatGPT Tutor pilot
+
+| Variable | Default / requirement |
+| --- | --- |
+| `CHATGPT_MCP_ENABLED` | `false`; only exact `true` enables the resource. |
+| `CHATGPT_MCP_ISSUER` | Unset; approved HTTPS OAuth issuer, verified exactly. |
+| `CHATGPT_MCP_RESOURCE` | Unset; canonical HTTPS URL ending exactly `/chatgpt/mcp`, used as JWT audience and OAuth resource. |
+| `CHATGPT_MCP_JWKS_URL` | Unset; approved HTTPS signing-key endpoint for that issuer. |
+
+No issuer, app ID or credentials are provisioned by the repository. Incomplete
+enabled configuration fails closed only on the new resource. Issuer policy must
+grant `arcanos:tutor` only to approved pilot users; authentication alone does
+not grant it. Operator and GPT Action tokens cannot be reused. See the
+[complete provider contract](chatgpt-migration/AUTHENTICATION.md).
+
+The existing `PUBLIC_PROVIDER_*` budget/store settings remain authoritative
+for Tutor generation. The new resource also caps each client at 120 transport
+requests/minute and each verified principal at 30/minute per process. These
+local caps do not replace the shared provider admission store.
+
+Rollback: set `CHATGPT_MCP_ENABLED=false` in the separately authorized target
+and restart/redeploy through its approved process. No database migration or
+legacy route removal is required. Existing Action routes and operator MCP keep
+their own configuration and credentials. This PR changes no deployed settings.
