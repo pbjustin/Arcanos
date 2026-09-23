@@ -1,5 +1,11 @@
 import backstageBookerOpenApiDocument from
   '../contracts/backstage_booker.openapi.v1.json' with { type: 'json' };
+import chatGptTutorInputSchema from
+  '../packages/protocol/schemas/v1/tools/arcanos-tutor.input.schema.json' with { type: 'json' };
+import chatGptTutorOutputSchema from
+  '../packages/protocol/schemas/v1/tools/arcanos-tutor.output.schema.json' with { type: 'json' };
+
+const CHATGPT_TUTOR_PREVIEW_ANSWER = 'Synthetic Tutor preview: one half is one of two equal parts.';
 
 export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
   schemaVersion: 1,
@@ -8,6 +14,24 @@ export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
   syntheticResponseHeader: Object.freeze({
     name: 'x-arcanos-preview-fixture',
     value: 'sealed-synthetic',
+  }),
+  chatGptTutor: Object.freeze({
+    path: '/chatgpt/mcp',
+    metadataPath: '/.well-known/oauth-protected-resource/chatgpt/mcp',
+    proofHeader: 'x-arcanos-preview-chatgpt-tutor-version',
+    proofVersion: 'chatgpt-tutor-mock/v1',
+    protocolVersion: '2025-03-26',
+    toolName: 'arcanos_tutor',
+    prompt: 'Sealed Tutor preview: explain one half.',
+    answer: CHATGPT_TUTOR_PREVIEW_ANSWER,
+    inputSchema: chatGptTutorInputSchema,
+    outputSchema: chatGptTutorOutputSchema,
+    output: Object.freeze({
+      answer: CHATGPT_TUTOR_PREVIEW_ANSWER,
+      metadata: Object.freeze({
+        module: 'ARCANOS:TUTOR', memory: 'unavailable', execution: 'synchronous', generation: 'mock',
+      }),
+    }),
   }),
   workerBudgetReadiness: Object.freeze({
     proofHeader:

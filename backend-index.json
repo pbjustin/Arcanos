@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-23T03:27:28.076Z",
+  "generatedAt": "2026-09-23T07:36:13.767Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -2648,6 +2648,9 @@
           "relativePath": "src/shared/backstage/backstageUniverseReadProjection.ts"
         },
         {
+          "relativePath": "src/shared/chatgpt/chatgptTutorPreviewFixture.ts"
+        },
+        {
           "relativePath": "src/shared/constants.ts"
         },
         {
@@ -3884,6 +3887,12 @@
         },
         {
           "relativePath": "tests/chatgpt-mcp.integration.test.ts"
+        },
+        {
+          "relativePath": "tests/chatgpt-tutor-preview-fixture.test.ts"
+        },
+        {
+          "relativePath": "tests/chatgpt-tutor-preview.integration.test.ts"
         },
         {
           "relativePath": "tests/chatgpt-tutor.e2e.integration.test.ts"

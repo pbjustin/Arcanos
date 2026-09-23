@@ -542,6 +542,31 @@ describe('native PR preview import boundary', () => {
       ]));
   });
 
+  it('pins the sealed Tutor peer and admits only its two canonical schema assets', async () => {
+    const filePath = 'src/shared/chatgpt/chatgptTutorPreviewFixture.ts';
+    const sourceText = await readFile(new URL(`../${filePath}`, import.meta.url), 'utf8');
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).toContain(filePath);
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES.filter(file => file.startsWith('packages/protocol/')))
+      .toEqual([
+        'packages/protocol/schemas/v1/tools/arcanos-tutor.input.schema.json',
+        'packages/protocol/schemas/v1/tools/arcanos-tutor.output.schema.json',
+      ]);
+    expect(findUnsafeRuntimeSyntax(filePath, sourceText)).toEqual([]);
+    for (const addition of [
+      'export const unreviewedTutorMutation = true;',
+      'fetch("https://unreviewed.invalid");',
+      'process.env.CHATGPT_MCP_ENABLED = "true";',
+    ]) {
+      expect(findUnsafeRuntimeSyntax(filePath, `${sourceText}\n${addition}`)).toEqual(
+        expect.arrayContaining([expect.stringContaining('critical entry file semantic digest')])
+      );
+    }
+    for (const excluded of ['src/app.ts', 'src/chatgpt/auth.ts', 'src/chatgpt/tutor.ts',
+      'src/routes/chatgptMcp.ts', 'src/core/adapters/openai.adapter.ts']) {
+      expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toContain(excluded);
+    }
+  });
+
   it('keeps the contained application outside production side-effect modules', async () => {
     await expect(findNativePrPreviewImportViolations()).resolves.toEqual([]);
   }, 30_000);

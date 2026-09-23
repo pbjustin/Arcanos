@@ -15,7 +15,7 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 5_000;
 const DEFAULT_TOTAL_TIMEOUT_MS = 60_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 64 * 1024;
 const MAX_AGGREGATE_RESPONSE_BYTES = 512 * 1024;
-const MAX_REQUESTS = 138;
+const MAX_REQUESTS = 156;
 const MAX_BACKSTAGE_BOOKER_OPENAPI_SOURCE_BYTES = 128 * 1024;
 const BACKSTAGE_BOOKER_OPENAPI_GIT_PATH =
   'contracts/backstage_booker.openapi.v1.json';
@@ -632,6 +632,81 @@ export function nativePrPreviewCaseCorrelation(requestCase) {
     requestId: `native-pr-${requestCase.caseId}`,
     traceId: `native-pr-trace-${requestCase.caseId}`,
   };
+}
+
+function buildChatGptTutorRequestCases() {
+  const contract = NATIVE_PR_PREVIEW_E2E_CONTRACT.chatGptTutor;
+  const rpc = (method, params, id = 'tutor-preview') => ({
+    jsonrpc: '2.0', id, method, ...(params === undefined ? {} : { params }),
+  });
+  const toolCall = (argumentsValue, name = contract.toolName) =>
+    rpc('tools/call', { name, arguments: argumentsValue }, 4);
+  const validCall = {
+    ...toolCall({ prompt: contract.prompt }),
+    params: {
+      name: contract.toolName,
+      arguments: { prompt: contract.prompt },
+      _meta: { 'openai/locale': 'en-US' },
+    },
+  };
+  const admitted = (fixtureName, body, overrides = {}) => ({
+    body,
+    boundedResponse: true,
+    caseId: `web-chatgpt-tutor-${fixtureName}`,
+    chatGptTutorAdmission: 'admitted',
+    expectedStatus: 200,
+    expectedType: 'chatgpt-tutor',
+    fixtureName,
+    headers: { 'mcp-protocol-version': contract.protocolVersion },
+    method: 'POST',
+    path: contract.path,
+    pathTemplate: contract.path,
+    role: 'web',
+    ...overrides,
+  });
+  const denied = (fixtureName, overrides = {}) => ({
+    body: validCall,
+    caseId: `web-chatgpt-tutor-${fixtureName}-denied`,
+    chatGptTutorAdmission: 'denied',
+    expectedStatus: 404,
+    expectedType: 'not-found',
+    method: 'POST',
+    path: contract.path,
+    pathTemplate: contract.path,
+    role: 'web',
+    ...overrides,
+  });
+  return [
+    admitted('initialize', rpc('initialize', {
+      protocolVersion: contract.protocolVersion,
+      capabilities: {},
+      clientInfo: { name: 'arcanos-sealed-preview-verifier', version: '1.0.0' },
+    }), { headers: {} }),
+    admitted('initialized', { jsonrpc: '2.0', method: 'notifications/initialized' }, {
+      boundedResponse: false, expectedStatus: 202,
+    }),
+    admitted('tools-list', rpc('tools/list', {}, 3)),
+    admitted('tools-call', validCall),
+    admitted('wrong-prompt', toolCall({ prompt: 'Unsupported synthetic preview prompt.' })),
+    admitted('wrong-tool', toolCall({ prompt: contract.prompt }, 'unavailable_preview_tool')),
+    admitted('extra-arguments', toolCall({ prompt: contract.prompt, sessionId: 'synthetic-preview-session' })),
+    admitted('malformed-json', undefined, {
+      boundedResponse: false, expectedStatus: 400, rawBody: '{',
+    }),
+    admitted('batch', [validCall], { expectedStatus: 400 }),
+    denied('authorization', { headers: { authorization: 'Bearer mock-preview-invalid-credential' } }),
+    denied('cookie', { headers: { cookie: 'synthetic_preview=invalid' } }),
+    denied('session', { headers: { 'mcp-session-id': 'synthetic-preview-session' } }),
+    denied('query', { path: `${contract.path}?synthetic_preview=invalid` }),
+    denied('protocol', { headers: { 'mcp-protocol-version': '1900-01-01' } }),
+    admitted('get', undefined, { boundedResponse: false, expectedStatus: 405, method: 'GET' }),
+    denied('worker', { caseId: 'worker-chatgpt-tutor-denied', role: 'worker' }),
+    ...['web', 'worker'].map(role => denied('oauth-metadata', {
+      body: undefined,
+      caseId: `${role}-chatgpt-tutor-oauth-metadata-denied`,
+      method: 'GET', path: contract.metadataPath, pathTemplate: contract.metadataPath, role,
+    })),
+  ];
 }
 
 export function buildNativePrPreviewRequestPlan() {
@@ -1508,6 +1583,7 @@ export function buildNativePrPreviewRequestPlan() {
       pathTemplate: NATIVE_PR_PREVIEW_E2E_CONTRACT.statusAuthBoundary.path,
       role: 'worker',
     },
+    ...buildChatGptTutorRequestCases(),
     {
       caseId: 'web-readiness-final',
       expectedStatus: 200,
@@ -3553,10 +3629,69 @@ function expectedDispatchGptIdentifierContractPayload(requestCase) {
   };
 }
 
+function expectedChatGptTutorResponse(requestCase) {
+  const contract = NATIVE_PR_PREVIEW_E2E_CONTRACT.chatGptTutor;
+  const result = value => ({ jsonrpc: '2.0', id: requestCase.body.id, result: value });
+  switch (requestCase.fixtureName) {
+    case 'initialize':
+      return result({
+        protocolVersion: contract.protocolVersion,
+        capabilities: { tools: {} },
+        serverInfo: { name: 'arcanos-tutor-sealed-preview', version: '1.0.0' },
+        instructions: 'Synthetic preview only. No OAuth, model provider, memory or saved progress. '
+          + `Use only this exact prompt: "${contract.prompt}"`,
+      });
+    case 'initialized':
+      return '';
+    case 'tools-list':
+      return result({ tools: [{
+        name: contract.toolName,
+        title: 'ARCANOS Tutor (synthetic preview)',
+        description: 'Sealed synthetic Tutor fixture only. '
+          + `Use exactly: "${contract.prompt}" No OAuth, model generation, memory or saved progress.`,
+        inputSchema: contract.inputSchema,
+        outputSchema: contract.outputSchema,
+        securitySchemes: [{ type: 'noauth' }],
+        _meta: { securitySchemes: [{ type: 'noauth' }] },
+        annotations: {
+          readOnlyHint: true, destructiveHint: false, openWorldHint: false, idempotentHint: true,
+        },
+      }] });
+    case 'tools-call':
+      return result({
+        structuredContent: contract.output,
+        content: [{ type: 'text', text: JSON.stringify(contract.output) }],
+      });
+    case 'wrong-prompt':
+    case 'extra-arguments':
+    case 'wrong-tool':
+      return result({
+        isError: true,
+        content: [{ type: 'text', text: requestCase.fixtureName === 'wrong-tool'
+          ? 'TUTOR_PREVIEW_TOOL_UNAVAILABLE' : 'TUTOR_PREVIEW_INPUT_UNSUPPORTED' }],
+      });
+    case 'malformed-json':
+      return { error: 'PREVIEW_REQUEST_INVALID' };
+    case 'batch':
+      return {
+        jsonrpc: '2.0', id: null,
+        error: { code: -32600, message: 'Invalid sealed Tutor preview request.' },
+      };
+    case 'get':
+      return 'method not allowed';
+    default:
+      fail('NATIVE_PR_PREVIEW_CASE_CONTRACT_INVALID', requestCase.caseId);
+  }
+}
+
 export function expectedNativePrPreviewContentType(requestCase) {
+  if (requestCase.expectedType === 'chatgpt-tutor' && requestCase.fixtureName === 'initialized') {
+    return null;
+  }
   if (
     requestCase.expectedType === 'health'
     || requestCase.expectedType === 'not-found'
+    || (requestCase.expectedType === 'chatgpt-tutor' && requestCase.fixtureName === 'get')
     || (
       requestCase.expectedType === 'head'
       && requestCase.path !== '/readyz'
@@ -3577,6 +3712,8 @@ export function expectedNativePrPreviewResponseBody(requestCase, options) {
       return 'ok';
     case 'not-found':
       return 'not found';
+    case 'chatgpt-tutor':
+      return expectedChatGptTutorResponse(requestCase);
     case 'web-readiness':
       return expectedWebReadiness(options);
     case 'worker-readiness':
@@ -4180,6 +4317,19 @@ async function executeRequestCase(
       requestCase.caseId
     );
   }
+  if (requestCase.chatGptTutorAdmission !== undefined) {
+    const contract = NATIVE_PR_PREVIEW_E2E_CONTRACT.chatGptTutor;
+    const admitted = requestCase.chatGptTutorAdmission === 'admitted';
+    if (
+      (admitted && response.headers.get(contract.proofHeader) !== contract.proofVersion)
+      || (!admitted && (response.headers.has(contract.proofHeader)
+        || response.headers.has(NATIVE_PR_PREVIEW_E2E_CONTRACT.syntheticResponseHeader.name)))
+      || response.headers.has('mcp-session-id')
+      || (requestCase.fixtureName === 'get' && response.headers.get('allow') !== 'POST')
+    ) {
+      fail('NATIVE_PR_PREVIEW_CHATGPT_TUTOR_PROOF_INVALID', requestCase.caseId);
+    }
+  }
   if (
     requestCase.expectedType === 'web-readiness'
     && response.headers.get(NATIVE_PR_PREVIEW_E2E_CONTRACT.iosDevicePolicy.proofHeader)
@@ -4228,6 +4378,7 @@ async function executeRequestCase(
       || requestCase.expectedType === 'dispatch-gpt-identifier-contract'
       || requestCase.expectedType === 'status-auth-boundary-contract'
       || requestCase.expectedType === 'self-heal-approval-contract'
+      || requestCase.expectedType === 'chatgpt-tutor'
     )
     && response.headers.get(
       NATIVE_PR_PREVIEW_E2E_CONTRACT.syntheticResponseHeader.name
@@ -4565,6 +4716,9 @@ async function executeRequestCase(
     options.maxResponseBytes,
     aggregateState
   );
+  if (requestCase.expectedType === 'chatgpt-tutor' && bodyBytes.length > 16_384) {
+    fail('NATIVE_PR_PREVIEW_CHATGPT_TUTOR_RESPONSE_TOO_LARGE', requestCase.caseId);
+  }
   if (
     requestCase.expectedType === 'backstage-generation-contract'
     && bodyBytes.length
@@ -4632,6 +4786,12 @@ async function executeRequestCase(
     responseBytes: bodyBytes.length,
     role: requestCase.role,
     simulatedAuth: requestCase.simulatedAuth === true,
+    ...(requestCase.expectedType === 'chatgpt-tutor'
+      ? {
+          chatGptTutorMockVerified: true,
+          chatGptTutorMockProofVersion: NATIVE_PR_PREVIEW_E2E_CONTRACT.chatGptTutor.proofVersion,
+        }
+      : {}),
     ...(requestCase.caseId === 'gaming-query-guide'
       ? {
           gamingArchiveGuideEvidenceVerified: true,
