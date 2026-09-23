@@ -5,11 +5,12 @@ import { once } from 'node:events';
 import { generateKeyPair, exportJWK, createLocalJWKSet, SignJWT } from 'jose';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { afterEach, beforeAll, describe, expect, it, jest } from '@jest/globals';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { getRequestAbortSignal } from '@arcanos/runtime';
 import { createChatGptMcpRouter } from '../src/routes/chatgptMcp.js';
 import { readChatGptAuthConfiguration } from '../src/chatgpt/auth.js';
 import type { ChatGptTutorOutput } from '@arcanos/protocol';
+import { config as runtimeConfig } from '../src/platform/runtime/config.js';
 import { createPublicProviderRateLimitMiddleware } from '../src/transport/http/middleware/publicProviderAdmission.js';
 import { activateUnsafeCondition, resetSafetyRuntimeStateForTests } from '../src/services/safety/runtimeState.js';
 
@@ -34,6 +35,11 @@ beforeAll(async () => {
   key = pair.privateKey;
   keyResolver = createLocalJWKSet({ keys: [{ ...await exportJWK(pair.publicKey), kid: 'fixture' }] });
 });
+beforeEach(() => {
+  // Runtime safety loads persisted state at import. Every fixture must start
+  // clean, including the first case after a different suite persisted a block.
+  resetSafetyRuntimeStateForTests();
+});
 afterEach(async () => {
   resetSafetyRuntimeStateForTests();
   for (const client of clients.splice(0)) await client.close();
@@ -43,8 +49,8 @@ afterEach(async () => {
   }
   execute.mockClear();
 });
-async function token(subject = 'learner-a', scope = 'arcanos:tutor', audience = values.CHATGPT_MCP_RESOURCE) {
-  return new SignJWT({ scope }).setProtectedHeader({ alg: 'RS256', typ: 'at+jwt', kid: 'fixture' })
+async function token(subject = 'learner-a', scope = 'arcanos:tutor', audience = values.CHATGPT_MCP_RESOURCE, tokenId?: string) {
+  return new SignJWT({ scope, ...(tokenId ? { jti: tokenId } : {}) }).setProtectedHeader({ alg: 'RS256', typ: 'at+jwt', kid: 'fixture' })
     .setIssuer(values.CHATGPT_MCP_ISSUER).setAudience(audience).setSubject(subject)
     .setIssuedAt().setExpirationTime('2m').sign(key);
 }
@@ -106,18 +112,99 @@ describe('assembled ChatGPT MCP resource (signed issuer fixtures; generation dep
     expect(denied.headers['www-authenticate']).toContain('resource_metadata=');
     expect(execute).not.toHaveBeenCalled();
   });
-  it('keeps the pre-authentication client limit bound to the network peer when forwarded headers rotate', async () => {
-    const application = app();
-    for (let index = 0; index < 120; index += 1) {
-      const response = await post(application)
-        .set('X-Forwarded-For', `198.51.100.${index + 1}`).send(call);
-      expect(response.status).toBe(401);
+  it.each([false, true])('keeps pre-authentication throttling bound to an untrusted network peer despite forged forwarding headers (Railway trust: %s)', async trustRailwayRealIp => {
+    const policy = jest.replaceProperty(runtimeConfig.limits, 'publicProviderTrustRailwayRealIp', trustRailwayRealIp);
+    const clock = jest.spyOn(Date, 'now').mockReturnValue(Date.now());
+    try {
+      const application = app();
+      for (let index = 0; index < 120; index += 1) {
+        const response = await post(application)
+          .set('X-Forwarded-For', `198.51.100.${index + 1}`)
+          .set('X-Real-IP', `203.0.113.${index + 1}`)
+          .set('X-Railway-Edge', 'iad1').send(call);
+        expect(response.status).toBe(401);
+      }
+      const denied = await post(application)
+        .set('X-Forwarded-For', '198.51.100.121')
+        .set('X-Real-IP', '203.0.113.121')
+        .set('X-Railway-Edge', 'ewr1').send(call);
+      expect(denied.status).toBe(429);
+      expect(denied.headers['x-ratelimit-bucket']).toBe('chatgpt-mcp-client');
+      expect(execute).not.toHaveBeenCalled();
+    } finally {
+      clock.mockRestore();
+      policy.restore();
     }
-    const denied = await post(application)
-      .set('X-Forwarded-For', '203.0.113.1').send(call);
-    expect(denied.status).toBe(429);
-    expect(denied.headers['x-ratelimit-bucket']).toBe('chatgpt-mcp-client');
-    expect(execute).not.toHaveBeenCalled();
+  });
+  it.each([false, true])('uses the configured Railway trust policy at the actual router boundary (enabled: %s)', async trustRailwayRealIp => {
+    const policy = jest.replaceProperty(runtimeConfig.limits, 'publicProviderTrustRailwayRealIp', trustRailwayRealIp);
+    const clock = jest.spyOn(Date, 'now').mockReturnValue(Date.now());
+    try {
+      const application = express();
+      // Simulate only the transport peer; the real route and identity policy
+      // still decide whether a Railway edge can supply a client address.
+      application.use((req, _res, next) => {
+        Object.defineProperty(req.socket, 'remoteAddress', { configurable: true, value: '100.64.0.8' });
+        next();
+      });
+      application.use(app());
+      for (let index = 0; index < 120; index += 1) {
+        const response = await post(application)
+          .set('X-Forwarded-For', `198.51.100.${index + 1}`)
+          .set('X-Real-IP', '203.0.113.10')
+          .set('X-Railway-Edge', 'iad1').send(call);
+        expect(response.status).toBe(401);
+      }
+      const differentClient = await post(application)
+        .set('X-Real-IP', '203.0.113.11').set('X-Railway-Edge', 'iad1').send(call);
+      expect(differentClient.status).toBe(trustRailwayRealIp ? 401 : 429);
+      expect(differentClient.headers['x-ratelimit-remaining']).toBe(trustRailwayRealIp ? '119' : '0');
+      const originalClient = await post(application)
+        .set('X-Forwarded-For', '192.0.2.250')
+        .set('X-Real-IP', '203.0.113.10').set('X-Railway-Edge', 'iad1').send(call);
+      expect(originalClient.status).toBe(429);
+      expect(originalClient.headers['x-ratelimit-bucket']).toBe('chatgpt-mcp-client');
+      expect(execute).not.toHaveBeenCalled();
+    } finally {
+      clock.mockRestore();
+      policy.restore();
+    }
+  });
+  it('bounds discovery per verified subject across token rotation without charging the provider or blocking another subject', async () => {
+    const providerAdmission = jest.fn<express.RequestHandler>((_req, _res, next) => next());
+    const application = app({ providerAdmission });
+    const list = { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} };
+    const tokens = await Promise.all(Array.from({ length: 31 }, (_unused, index) => token(
+      'limited-learner', 'arcanos:tutor', values.CHATGPT_MCP_RESOURCE, `isolated-token-${index}`,
+    )));
+    const separateToken = await token('separate-learner');
+    expect(new Set(tokens).size).toBe(31);
+    const clock = jest.spyOn(Date, 'now').mockReturnValue(Date.now());
+    try {
+      for (const bearer of tokens.slice(0, 30)) {
+        const response = await post(application).auth(bearer, { type: 'bearer' }).send(list);
+        expect(response.status).toBe(200);
+        expect(response.body.result.tools.map((tool: { name: string }) => tool.name)).toEqual(['arcanos_tutor']);
+      }
+      const denied = await post(application).auth(tokens[30], { type: 'bearer' }).send(list);
+      expect(denied.status).toBe(429);
+      expect(denied.headers['x-ratelimit-bucket']).toBe('chatgpt-mcp-principal');
+      const deniedCall = await post(application).auth(tokens[30], { type: 'bearer' }).send(call);
+      expect(deniedCall.status).toBe(429);
+      expect(deniedCall.headers['x-ratelimit-bucket']).toBe('chatgpt-mcp-principal');
+      const separateDiscovery = await post(application).auth(separateToken, { type: 'bearer' }).send(list);
+      expect(separateDiscovery.status).toBe(200);
+      expect(separateDiscovery.body.result.tools).toHaveLength(1);
+      expect(providerAdmission).not.toHaveBeenCalled();
+      expect(execute).not.toHaveBeenCalled();
+      const separateCall = await post(application).auth(separateToken, { type: 'bearer' }).send(call);
+      expect(separateCall.status).toBe(200);
+      expect(separateCall.body.result.structuredContent).toEqual(output);
+      expect(providerAdmission).toHaveBeenCalledTimes(1);
+      expect(execute).toHaveBeenCalledTimes(1);
+    } finally {
+      clock.mockRestore();
+    }
   });
   it.each(['Basic abc', 'Bearer operator-token', 'Bearer action-token', 'Bearer malformed.jwt.token'])('rejects non-OAuth credentials %s', async credential => {
     const response = await post().set('Authorization', credential).send(call);
