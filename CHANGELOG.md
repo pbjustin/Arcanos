@@ -330,6 +330,13 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) where practical
 
 ### Fixed
 
+- Tutor MCP prompt validation now accepts ordinary and multiline prompts in
+  connectors that match the entire schema pattern, preserving the existing
+  non-whitespace requirement, 8,000-character limit and single `prompt` argument.
+- Isolated Tutor responses preserve learner-directed arithmetic checks, including
+  cross-multiplication, without adding an irrelevant live-access limitation.
+  Generic honesty checks and claims about external verification remain protected.
+
 - Restored the Madge TypeScript dependency-cycle gate to the executable
   `check:boundaries` command while retaining its CEF layer-access checks, and
   removed the obsolete unwired TypeScript script.

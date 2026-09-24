@@ -187,6 +187,7 @@ async function runTutorPipeline(
           answerMode: 'direct',
           strictUserVisibleOutput: true,
           ...(isolatedTutorExecution.getStore() ? {
+            instructionalVerificationPolicy: 'tutor-math-v1' as const,
             disableMemoryAccess: true,
             disableOptionalSideEffects: true,
             redactAuditContent: true,

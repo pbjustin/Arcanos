@@ -37,6 +37,28 @@ const DEFAULT_OUTPUT_CONTROLS: TrinityOutputControls = {
 
 const LIVE_VERIFICATION_PATTERN =
   /\b(verified|verify|confirmed|confirm|checked|check|looked up|look up|reviewed|validated|i checked|i verified|i confirmed)\b/i;
+const TUTOR_MATH_INSTRUCTION_PREFIX = /^(?:you\s+(?:can|may|should)\s+(?:check|verify)|(?:to\s+)?(?:check|verify))\b/i;
+const TUTOR_MATH_OPERATION_PATTERN =
+  /\b(?:add|adding|subtract|subtracting|multiply|multiplying|divide|dividing|substitute|substituting|simplify|simplifying|calculate|calculating|equals)\b|\d\s*[+*/×÷=−-]\s*\d/i;
+const TUTOR_MATH_INSTRUCTION_WORDS = new Set((
+  'you can may should check verify to this that your answer work result calculation by both the a an and of for with in into each ' +
+  'same equal equals equality is are gives giving number numbers numerator denominator fraction fractions half halves quarter quarters ' +
+  'third thirds fourth fourths whole wholes zero one two three four five six seven eight nine ten ' +
+  'add adding subtract subtracting multiply multiplying divide dividing substitute substituting simplify simplifying calculate calculating ' +
+  'plus minus times divided over cross x y z'
+).split(' '));
+
+function isTutorLocalMathInstruction(text: string, policy: TrinityOutputControls['instructionalVerificationPolicy']): boolean {
+  if (policy !== 'tutor-math-v1') return false;
+  const instruction = text.trim().replace(/^(?:[-*]|\d+[.)])\s+/u, '').toLowerCase();
+  // A closed arithmetic vocabulary admits learner instructions, not completed
+  // verification claims or external/backend/persistence assertions. Unrecognized
+  // wording keeps the existing honesty checks, including every other caller.
+  return /^[a-z0-9\s.,:;()=+*/×÷−-]+$/u.test(instruction)
+    && TUTOR_MATH_INSTRUCTION_PREFIX.test(instruction)
+    && TUTOR_MATH_OPERATION_PATTERN.test(instruction)
+    && (instruction.match(/[a-z]+/gu) ?? []).every(word => TUTOR_MATH_INSTRUCTION_WORDS.has(word));
+}
 const CURRENT_EXTERNAL_STATE_PATTERN =
   /\b(latest|current|currently|today|this week|recent|recently|up-to-date|as of now)\b/i;
 const EXTERNAL_STATE_CONTEXT_PATTERN =
@@ -925,6 +947,7 @@ function rewriteUnsupportedClaims(params: {
   userPrompt: string;
   capabilityFlags: TrinityCapabilityFlags;
   reasoningHonesty: TrinityReasoningHonesty;
+  instructionalVerificationPolicy?: TrinityOutputControls['instructionalVerificationPolicy'];
 }): { text: string; blockedOrRewrittenClaims: string[] } {
   const blockedOrRewrittenClaims: string[] = [];
   const rewrittenSegments: string[] = [];
@@ -959,7 +982,8 @@ function rewriteUnsupportedClaims(params: {
       inUnsupportedExternalStateSection = false;
     }
 
-    const impliesLiveVerification = LIVE_VERIFICATION_PATTERN.test(segment);
+    const impliesLiveVerification = LIVE_VERIFICATION_PATTERN.test(segment)
+      && !isTutorLocalMathInstruction(segment, params.instructionalVerificationPolicy);
     const impliesCurrentExternalState = impliesCurrentExternalStateClaim(segment);
     const impliesIndirectCurrentExternalState =
       isLikelyCurrentExternalStateFactAssertion(segment, params.userPrompt) ||
@@ -1668,7 +1692,8 @@ export function enforceFinalStageHonesty(
   reasoningHonesty: TrinityReasoningHonesty,
   capabilityFlags: TrinityCapabilityFlags,
   requestIntent: TrinityIntentMode = 'EXECUTE_TASK',
-  preservePresentation = false
+  preservePresentation = false,
+  instructionalVerificationPolicy?: TrinityOutputControls['instructionalVerificationPolicy']
 ): FinalClaimBlockResult {
   const promptGeneration = requestIntent === 'PROMPT_GENERATION';
   const supportsLiveVerification =
@@ -1688,7 +1713,8 @@ export function enforceFinalStageHonesty(
       continue;
     }
 
-    const impliesLiveVerification = LIVE_VERIFICATION_PATTERN.test(line);
+    const impliesLiveVerification = LIVE_VERIFICATION_PATTERN.test(line)
+      && !isTutorLocalMathInstruction(line, instructionalVerificationPolicy);
     const impliesCurrentExternalState = impliesCurrentExternalStateClaim(line);
     const qualifiedCurrentStateLimitation = isQualifiedCurrentStateLimitation(line);
     const allowsProvidedDataVerification = allowsProvidedDataVerificationClaim(line, capabilityFlags);
@@ -1763,7 +1789,9 @@ export function deriveTrinityOutputControls(prompt: string, options: TrinityRunO
     answerMode: resolvedMaxWords !== null && resolvedMaxWords <= 80 && !options.answerMode ? 'direct' : answerMode,
     debugPipeline,
     strictUserVisibleOutput,
-    intentMode
+    intentMode,
+    ...(options.sourceEndpoint === 'tutor.pipeline' && options.instructionalVerificationPolicy === 'tutor-math-v1'
+      ? { instructionalVerificationPolicy: 'tutor-math-v1' as const } : {})
   };
 }
 
@@ -1930,7 +1958,8 @@ export function enforceFinalStageHonestyAndMinimalism(params: {
       text: withoutMetaSections.text,
       userPrompt: params.userPrompt,
       capabilityFlags: params.capabilityFlags,
-      reasoningHonesty: params.reasoningHonesty
+      reasoningHonesty: params.reasoningHonesty,
+      instructionalVerificationPolicy: params.outputControls.instructionalVerificationPolicy
     });
     const safeText = rewrittenClaims.blockedOrRewrittenClaims.length > 0
       ? rewrittenClaims.text : withoutMetaSections.text;
@@ -1957,7 +1986,8 @@ export function enforceFinalStageHonestyAndMinimalism(params: {
         text: promptGenerationTrimmedText,
         userPrompt: params.userPrompt,
         capabilityFlags: params.capabilityFlags,
-        reasoningHonesty: params.reasoningHonesty
+        reasoningHonesty: params.reasoningHonesty,
+        instructionalVerificationPolicy: params.outputControls.instructionalVerificationPolicy
       });
   const textWithRequiredLimitation =
     !promptGeneration || shouldPreservePromptGenerationLimitation
