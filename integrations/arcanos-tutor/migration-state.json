@@ -7,7 +7,7 @@
         "repository-foundation",
         "repository-validation"
       ],
-      "note": "Repository candidate passed scoped build/type/lint and 264 focused tests plus independent review. Full repository CI is reported separately; installed migrated skill behavior remains blocked."
+      "note": "Repository candidate passed scoped build/type/lint and 290 focused tests plus independent review. Full repository CI is reported separately; installed migrated skill behavior remains blocked."
     },
     "BACKEND_DEPLOYED": {
       "status": "VERIFIED",

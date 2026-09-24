@@ -16,7 +16,7 @@ thirteen independent states; there is no single migrated boolean.
 
 | Gate | Current status | Basis |
 | --- | --- | --- |
-| CODE_READY | VERIFIED | Type/build/lint, 264 focused tests and independent review; full repository CI reported separately |
+| CODE_READY | VERIFIED | Type/build/lint, 290 focused tests and independent review; full repository CI reported separately |
 | BACKEND_DEPLOYED | VERIFIED | Railway SUCCESS at the expected PR #1508 merge |
 | OAUTH_CONFIGURED | VERIFIED | Prior same-task Auth0 setup observed; public challenge rechecked |
 | CHATGPT_CONNECTION_REGISTERED | VERIFIED | Prior same-task private connection UI and real technical ID |

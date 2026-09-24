@@ -21,6 +21,7 @@ candidate after the corrections below. This is not release or migration approval
 | Duplicate reference approvals could hide an omitted reference | Migrated source paths and approved source/destination paths are unique; count and exact source matching enforce one-to-one package coverage. |
 | A plausible replacement ID could appear registered | The validator pins the observed non-secret app ID and rejects changing both connection metadata and package mapping to an unobserved replacement. |
 | Completed parity could omit or incorrectly activate Tutor | Positive execution cases require `arcanos_tutor`; non-activation, memory/admin refusal and pre-call clarification cases require no invocation. |
+| Credential labels could bypass content scanning through naming variants | The guard recognizes camelCase, underscore and hyphenated credential fields, plus encrypted and DSA private-key PEM labels. Twenty-six additional synthetic cases cover skill/reference rejection and non-disclosure in validator output. |
 
 Reviewed implementation:
 [validator](../../scripts/validate-arcanos-tutor-package.mjs),

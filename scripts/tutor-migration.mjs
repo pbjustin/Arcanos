@@ -18,13 +18,13 @@ export const endpoint = 'https://acranos-production.up.railway.app/chatgpt/mcp';
 export const skillPath = 'skills/arcanos-tutor/SKILL.md';
 export const maxFileSize = 1024 * 1024;
 const credentialPatterns = [
-  /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/u,
+  /-----BEGIN (?:(?:RSA|EC|DSA|OPENSSH|ENCRYPTED) )?PRIVATE KEY-----/u,
   /\bsk-(?:proj-)?[A-Za-z0-9_-]{20,}/u,
   /\b(?:ghp_|github_pat_)[A-Za-z0-9_]{20,}/u,
   /\bBearer\s+[A-Za-z0-9_.~+/-]{12,}/iu,
   /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/u,
   /(?:postgres(?:ql)?|redis):\/\/[^\s/]+:[^\s@]+@/iu,
-  /["']?(?:access_token|refresh_token|client_secret|authorization_code|password|cookie|openai_api_key)["']?\s*[:=]\s*["']?[^\s"',}{][^\r\n]{3,}/iu
+  /["']?(?:(?:access|refresh|auth)[_-]?token|client[_-]?secret|authorization(?:[_-]?code)?|password|(?:session[_-]?)?cookie|session[_-]?token|(?:openai[_-]?)?api[_-]?key|private(?:[_-]?signing)?[_-]?key|(?:signing|secret)[_-]?key)["']?\s*[:=]\s*["']?[^\s"',}{][^\r\n]{3,}/iu
 ];
 export function requireCondition(condition, code) {
   if (!condition) throw new Error(code);

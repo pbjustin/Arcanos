@@ -12,7 +12,7 @@
       "kind": "repository",
       "status": "VERIFIED",
       "observedAt": "2026-09-24",
-      "summary": "Pinned Node 24.18.1/npm 11.16.0: type-check/build/lint passed; 209 focused backend tests and 55 package/guard tests passed. Source validation passed; actual release exits 2 BLOCKED. Independent code review resolved nine findings. Full repository suite and hosted CI are reported separately in the draft PR; this evidence does not certify account migration or parity."
+      "summary": "Pinned Node 24.18.1/npm 11.16.0: type-check/build/lint passed; 209 focused backend tests and 81 package/guard tests passed. Source validation passed; actual release exits 2 BLOCKED. Independent reviews rechecked release-gate and credential-scanning fixes. Full repository suite and hosted CI are reported separately in the draft PR; this evidence does not certify account migration or parity."
     },
     {
       "id": "repository-foundation",

@@ -206,6 +206,37 @@ describe('Standalone Tutor package and migration release boundary', () => {
     expect(result.status).toBe(1);
     expect(`${result.stdout}${result.stderr}`).not.toContain(mockMaterial);
   });
+  it.each(['clientSecret', 'accessToken', 'refreshToken', 'apiKey', 'privateSigningKey', 'OPENAI_API_KEY',
+    'client-secret', 'access-token', 'refresh-token', 'api-key', 'private-key', 'private_signing_key']
+    .flatMap(key => ['skill', 'approved-reference'].map(target => [key, target])))('rejects named %s material in %s without logging it', (key, target) => {
+    const root = copyPackage();
+    const mockMaterial = 'mock_opaque_material_for_validator_fixture';
+    const content = `${JSON.stringify({ [key]: mockMaterial })}\n`;
+    if (target === 'skill') {
+      const file = path.join(root, 'package', skillPath);
+      writeFileSync(file, `${readFileSync(file, 'utf8')}\n${content}`);
+    } else {
+      const referencePath = 'skills/arcanos-tutor/references/mock-credentials.json';
+      mkdirSync(path.dirname(path.join(root, 'package', referencePath)), { recursive: true });
+      writeFileSync(path.join(root, 'package', referencePath), content);
+      write(root, 'reference-review.json', { schemaVersion: 1, references: [{ sourcePath: 'mock-credentials.json',
+        packagePath: referencePath, sha256: hash(content), sizeBytes: Buffer.byteLength(content),
+        approvedForRepository: true, ...review }] });
+    }
+    const result = validate(root);
+    expect(result.status).toBe(1);
+    expect(`${result.stdout}${result.stderr}`).not.toContain(mockMaterial);
+    expect(`${result.stdout}${result.stderr}`).not.toContain(content.trim());
+  });
+  it.each(['ENCRYPTED', 'DSA'])('rejects a %s private-key label without printing its mock contents', label => {
+    const root = copyPackage();
+    const mockMaterial = ['-----BEGIN', label, 'PRIVATE KEY-----', '\nmock_encoded_fixture_material\n'].join(' ');
+    const file = path.join(root, 'package', skillPath);
+    writeFileSync(file, `${readFileSync(file, 'utf8')}\n${mockMaterial}`);
+    const result = validate(root);
+    expect(result.status).toBe(1);
+    expect(`${result.stdout}${result.stderr}`).not.toContain('mock_encoded_fixture_material');
+  });
   it('rejects a junction in an ancestor and inside the package', () => {
     const root = copyPackage();
     const linked = path.join(root, 'linked');
