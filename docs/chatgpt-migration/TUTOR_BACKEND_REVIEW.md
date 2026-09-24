@@ -84,3 +84,18 @@ The earlier live disclaimer/format issue remains `LIVE_RETEST_PENDING` until an
 authorized deployment, catalog refresh and actual call provide fresh evidence.
 Original-GPT and actual migrated-skill comparisons still require captured
 configuration fingerprints. No accepted difference is inferred from local tests.
+
+## Candidate acceptance follow-up
+
+Review of the owner's exact Test C found another deterministic false positive:
+the closed vocabulary omitted `cross` and `equality`. Two new learner-instruction
+cases failed against the unchanged `607b6424` guard (2 failed, 15 passed). Adding
+only those two arithmetic words passed all 17 cases, including a new mixed
+arithmetic/live-account negative. A separate reviewer found no code blocker.
+The Tutor-only policy, operation/prefix requirements and generic honesty behavior
+remain unchanged; no model output is truncated or rewritten into a test pass.
+
+The [acceptance checkpoint](TUTOR_CANDIDATE_ACCEPTANCE.md) separates repository
+tests from the still-unexecuted authenticated deployment, SDK and ChatGPT tests.
+`LIVE_RETEST_PENDING` remains the live formatting disposition. The earlier
+156/156 sealed preview predates this repair and the previous schema repair.

@@ -6,6 +6,13 @@ This document prepares account-side work; it does not authorize the irreversible
 migration. Keep the PR draft until actual migrated skill/reference reconciliation
 and parity pass.
 
+The [candidate acceptance checkpoint](TUTOR_CANDIDATE_ACCEPTANCE.md) records the
+latest non-production target discovery, pending setup approval, bounded live-test
+plan, fresh publication inspection and release-order recommendation. No approved
+authenticated candidate target was found; no candidate was deployed. The latest
+cross-multiplication repair is deterministic repository evidence only. Production
+remains at the base revision, and baseline-bound old-GPT results remain 0/16.
+
 ## What is ready, and what is not
 
 The [standalone package](../../integrations/arcanos-tutor/README.md) has the final

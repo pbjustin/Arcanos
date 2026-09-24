@@ -132,6 +132,55 @@
       "status": "USER_REPORTED",
       "observedAt": "2026-09-24",
       "summary": "User reports Auth0 is live, access restricted to the approved pilot account, Tutor connected/discovered, one real provider response succeeded, the original ARCANOS TUTOR GPT remains unchanged, and migration has not occurred. Published Builder, knowledge inventory and migration artifacts were not supplied."
+    },
+    {
+      "id": "candidate-repair-validation-20260924",
+      "kind": "repository",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-24T06:47:00Z",
+      "summary": "Candidate source revision 55798a8ee23a2464dea6c9fce15ca39ac90dd23d, base 3f9fffe48219b784dca758bca87ade109324c7c9, isolated Windows worktree, pinned Node 24.18.1/npm 11.16.0: 13 focused suites/410 tests plus four distinct unchanged protocol suites/55 tests passed, 465 unique tests with zero failures/skips. Type-check/build/lint passed, lint zero errors/76 existing warnings; CLI contract/offline passed. Cross-multiplication negative control against 607b6424 failed two new positives while 15 tests passed; repaired 17-test suite passed and is included in 465. Independent code review found no blocker. No candidate deployment or live call occurred."
+    },
+    {
+      "id": "candidate-target-discovery-20260924",
+      "kind": "railway",
+      "status": "BLOCKED",
+      "observedAt": "2026-09-24T06:30:00Z",
+      "summary": "Read-only provider inventory for project 7faf44e5-519c-4e73-8d7a-da9f389e6187 found production and only health-only preview environments Arcanos-pr-1433, Arcanos-pr-1432 and pr-preview-base-20260812. None is an approved authenticated candidate target. Candidate 55798a8ee23a2464dea6c9fce15ca39ac90dd23d remains undeployed. A separate bounded setup proposal requires owner approval; no resources, credentials, test connection or deployment were created. Details and explicit environment IDs: docs/chatgpt-migration/TUTOR_CANDIDATE_ACCEPTANCE.md."
+    },
+    {
+      "id": "production-readonly-recheck-20260924",
+      "kind": "railway",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-24T06:40:00Z",
+      "summary": "Read-only Railway metadata still reports web deployment e14cfd48-0075-4996-b0dd-ec7b620d5d82 SUCCESS at 3f9fffe48219b784dca758bca87ade109324c7c9 in production fb583147-6c39-4343-9267-500f357d25ab. Public resource metadata returned 200, exact production /chatgpt/mcp audience and only arcanos:tutor; anonymous MCP returned 401. No authenticated call or production change. This does not verify candidate 55798a8ee23a2464dea6c9fce15ca39ac90dd23d. Former task preview remains absent in inventory and both former hosts returned 404."
+    },
+    {
+      "id": "published-baseline-recheck-20260924",
+      "kind": "chatgpt",
+      "status": "BLOCKED",
+      "observedAt": "2026-09-24T06:38:00Z",
+      "summary": "Supported owner UI showed original ARCANOS TUTOR Live / Only me, Current version Mar 5, 2026, and editor Last edited Sep 24. Exact latest publication, unpublished-edit state and complete knowledge inventory are not established. Private published-gpt.json remains absent; capture failed closed with BASELINE_INVALID/exit 1 and created no review output. Independent private-record review confirmed ten summary hashes and sixteen prompt hashes, but zero baseline-bound cases. No account mutation, new old-GPT request or migrated result. Repository context 55798a8ee23a2464dea6c9fce15ca39ac90dd23d; published configuration fingerprint unavailable."
+    },
+    {
+      "id": "candidate-sdk-retest-pending",
+      "kind": "repository",
+      "status": "BLOCKED",
+      "observedAt": "2026-09-24T06:47:00Z",
+      "summary": "Candidate source 55798a8ee23a2464dea6c9fce15ca39ac90dd23d: authenticated non-production SDK initialize/discovery/call NOT_STARTED because approved target/auth are unavailable. No environment or deployment ID exists. Deterministic SDK tests are repository evidence only; no production fallback used."
+    },
+    {
+      "id": "candidate-chatgpt-retest-pending",
+      "kind": "chatgpt",
+      "status": "BLOCKED",
+      "observedAt": "2026-09-24T06:47:00Z",
+      "summary": "CHATGPT_CANDIDATE_RETEST=PENDING for candidate 55798a8ee23a2464dea6c9fce15ca39ac90dd23d. No approved separate test connection or candidate environment exists, zero live candidate requests were attempted, and no raw MCP/final ChatGPT formatting comparison is available. LIVE_RETEST_PENDING remains; no accepted difference or migrated parity claim."
+    },
+    {
+      "id": "ios-connection-user-report-20260924",
+      "kind": "user_reported",
+      "status": "USER_REPORTED",
+      "observedAt": "2026-09-24",
+      "summary": "Owner reports iOS connection attempt returned Failed to connect to ARCANOS Tutor. No independent iOS test was performed. Official current MCP mobile documentation separately supports IOS_VERIFIED=BLOCKED_BY_PLATFORM; no backend remediation indicated for that platform limitation. See TUTOR_CANDIDATE_ACCEPTANCE.md; this observation has no candidate-revision binding."
     }
   ],
   "checks": {

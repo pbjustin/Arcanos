@@ -138,3 +138,24 @@ behavioral evidence are still missing. The existing live response's formatting
 issue remains unresolved. No behavioral differences have been accepted. Preserve
 the blocked release gates and the separate explicit confirmation immediately
 before any irreversible account migration.
+
+## Candidate acceptance follow-up review — 2026-09-24
+
+A bounded independent repair review reproduced the Test C cross-multiplication
+false positive. A separate reviewer inspected the two-word vocabulary repair and
+three regression additions without finding a code blocker. Generic, completed,
+external and persistence claims remain protected. This is not a live Test C pass.
+
+Independent baseline review found no private `published-gpt.json` or capture
+output. All sixteen provisional prompt hashes and the ten available sanitized
+summary hashes recomputed correctly; no complete configuration fingerprint or
+publication confirmation exists. The official baseline-bound count stays 0/16,
+all official result fields remain null, and no accepted difference exists.
+
+The same independent reviewer checked the
+[candidate acceptance handoff](TUTOR_CANDIDATE_ACCEPTANCE.md) against source and
+current official documentation. It found no false deployment/readiness claim,
+private-content publication or gate promotion. The real acceptance environment,
+auth setup and separate ChatGPT connection remain unapproved and uncreated;
+startup/access-boundary inspection must precede any future deployment. The
+production mapping is preserved, and the PR remains draft.
