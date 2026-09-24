@@ -42,10 +42,10 @@ const TUTOR_MATH_OPERATION_PATTERN =
   /\b(?:add|adding|subtract|subtracting|multiply|multiplying|divide|dividing|substitute|substituting|simplify|simplifying|calculate|calculating|equals)\b|\d\s*[+*/×÷=−-]\s*\d/i;
 const TUTOR_MATH_INSTRUCTION_WORDS = new Set((
   'you can may should check verify to this that your answer work result calculation by both the a an and of for with in into each ' +
-  'same equal equals is are gives giving number numbers numerator denominator fraction fractions half halves quarter quarters ' +
+  'same equal equals equality is are gives giving number numbers numerator denominator fraction fractions half halves quarter quarters ' +
   'third thirds fourth fourths whole wholes zero one two three four five six seven eight nine ten ' +
   'add adding subtract subtracting multiply multiplying divide dividing substitute substituting simplify simplifying calculate calculating ' +
-  'plus minus times divided over x y z'
+  'plus minus times divided over cross x y z'
 ).split(' '));
 
 function isTutorLocalMathInstruction(text: string, policy: TrinityOutputControls['instructionalVerificationPolicy']): boolean {

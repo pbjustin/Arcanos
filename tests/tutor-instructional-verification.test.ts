@@ -14,6 +14,8 @@ describe('server-owned Tutor local arithmetic instruction policy', () => {
     'You can check this by multiplying both the numerator and denominator of one half by two.',
     'To verify this, multiply both the numerator and denominator of one half by two.',
     'Check that 1 × 4 = 2 × 2.',
+    'You can check the equality by cross-multiplying 1 × 4 and 2 × 2.',
+    'Check the equality by cross multiplying the numerator and denominator.',
     'Verify your answer by substituting x = 3 into 2 * x + 3 = 9.',
   ])('preserves a learner arithmetic instruction through both honesty passes: %s', instruction => {
     const text = `One half and two quarters represent the same amount. ${instruction}`;
@@ -38,6 +40,7 @@ describe('server-owned Tutor local arithmetic instruction policy', () => {
     'Check the calculation and persist the result.',
     'Check the fraction against an online source.',
     'Check the numerator in the account file.',
+    'You can check the equality by cross-multiplying and verify the live account status.',
   ])('does not exempt completed or external/action claims: %s', text => {
     const reasoningHonesty = createDefaultTrinityReasoningHonesty();
     const filtered = enforceFinalStageHonesty(text, reasoningHonesty, flags, 'EXECUTE_TASK', false, policy);
