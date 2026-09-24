@@ -14,6 +14,8 @@
     "action_names_and_schemas",
     "sharing_status",
     "published_version_and_timestamp",
-    "representative_expected_behavior"
+    "representative_expected_behavior",
+    "latest_published_owner_or_account_confirmation",
+    "publication_review_metadata"
   ]
 }

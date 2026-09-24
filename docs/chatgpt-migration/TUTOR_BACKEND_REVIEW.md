@@ -1,9 +1,9 @@
 # Tutor backend regression review
 
-This companion identifies unchanged backend boundaries and the deterministic
-coverage selected for the migration candidate. It is not a live account, provider,
-production Action, or migrated-skill verification result. Execution results belong
-in the draft pull request's validation record.
+This companion records the backend boundaries and deterministic coverage selected
+for the migration candidate, including the scoped repairs reviewed on 2026-09-24.
+It is not a live provider, production Action, or migrated-skill verification result.
+The exact-head sealed preview preceded these repairs and does not cover them.
 
 | Boundary reviewed | Source | Relevant deterministic coverage |
 | --- | --- | --- |
@@ -16,9 +16,11 @@ in the draft pull request's validation record.
 | Existing Tutor Custom GPT Actions remain separate | [GPT router](../../src/routes/gptRouter.ts) | [Application composition](../../tests/chatgpt-app-composition.test.ts) verifies old routing and operator boundaries with the new route disabled/misconfigured. [Migration legacy tests](../../tests/tutor-migration-legacy.test.ts) add a successful legacy `query` response with MCP disabled, misconfigured, and enabled while anonymous MCP remains denied. Legacy execution is mocked; the real HTTP router runs. |
 | Legacy query scheduling is not replaced by synchronous MCP | [GPT execution policy](../../src/routes/_core/gptRouteExecutionPolicy.ts) | [Execution-policy tests](../../tests/gpt-route-execution-policy.test.ts) retain ordinary non-core `query` scheduling and explicit synchronous precedence. The new migration test explicitly selects that existing sync option; it does not change defaults. |
 
-The reviewed backend files are unchanged by this package work. Legacy Tutor
-domain/module selection, scholarly research, queue behavior, and audit output
-remain on their existing routes. None becomes a new plugin argument or capability.
+At previewed head `7f4e8c6de2ad145be04de23a436a2dc106f118e7`, backend and protocol
+files were unchanged from base `3f9fffe48219b784dca758bca87ade109324c7c9`. The
+current candidate includes the two repairs below. Legacy Tutor domain/module
+selection, scholarly research and queue behavior remain on their existing routes.
+None becomes a new plugin argument or capability.
 The plugin continues to call only the isolated generic Tutor adapter with `{prompt}`.
 
 The prior composition suite tested a legacy `ping` success and expected queued
@@ -27,8 +29,58 @@ of a successful legacy Tutor `query` response while the new OAuth route is enabl
 It does not claim that the user's published Builder Action schema or production
 worker behavior was exercised. Those account artifacts are still required.
 
-No backend route, OAuth rule, provider model, teaching prompt, memory policy,
-credential, production variable, or deployment is changed. A real response's
-unrequested disclaimer or formatting difference must remain a parity concern
-until compared with the captured published GPT and explicitly resolved or accepted;
-synthetic transport tests cannot establish pedagogical parity.
+## Scoped repairs and local evidence
+
+The final honesty filter previously treated learner-directed arithmetic such as
+"check this by multiplying" as a claim that the assistant had performed live
+verification. The repair introduces a server-owned `tutor-math-v1` policy only for
+the isolated Tutor pipeline. A closed arithmetic vocabulary permits local learner
+instructions; completed verification claims, external state, account/database
+operations and unrecognized wording retain the existing checks. The policy grants
+no capability and cannot be selected by prompt text or another pipeline source.
+
+The implementation is in [Tutor logic](../../src/core/logic/tutor-logic.ts),
+[Trinity](../../src/core/logic/trinity.ts) and
+[honesty filtering](../../src/core/logic/trinityHonesty.ts).
+[Focused regressions](../../tests/tutor-instructional-verification.test.ts) cover
+both honesty passes, prohibited claims and policy activation. The pipeline suite
+checks the repair with synthetic provider output. A negative control using the old
+guard corrupted the synthetic two-sentence answer: the selected regression failed,
+with 11 other tests intentionally skipped. The repaired four-suite run passed
+118 tests. This reproduces one code-level failure mechanism; it does not fully
+attribute the earlier live response or prove that live teaching style is fixed.
+
+After account reconnect, the connector also rejected an ordinary prompt before
+backend execution because it interpreted the advertised `\S` pattern as a whole
+string match. The [canonical input schema](../../packages/protocol/schemas/v1/tools/arcanos-tutor.input.schema.json)
+now advertises `^[\s\S]*\S[\s\S]*$`. The only argument remains `prompt`, with the
+same non-whitespace requirement, 8,000-character maximum and rejection of extra
+properties. Four MCP SDK regression cases cover ordinary, surrounding-whitespace,
+multiline and 8,000-character boundary prompts; an independent comparison of
+3,379 synthetic strings, including Unicode, found zero acceptance differences
+under JSON Schema pattern semantics.
+
+| Local validation | Result |
+| --- | --- |
+| Initial honesty/Tutor selection | PASS, four suites / 118 tests; included in the broader focused selection below |
+| Final focused selection | PASS, thirteen suites / 407 tests, zero failures or skips |
+| Protocol selection | PASS, four suites / 55 tests, zero failures or skips; nonoverlapping with the thirteen suites |
+| Type-check and build | PASS after generating the local Prisma client; initial script-free dependency setup had skipped its generation |
+| Lint | PASS, zero errors / 76 existing warnings |
+| Backend/CLI contract and offline checks | PASS |
+| Source package validation / release validation | PASS / expected exit 2 with RELEASE_BLOCKED; no archive |
+| Sync check | PASS, zero errors / zero warnings / five informational notices |
+
+The final focused and protocol selections total 17 suites / 462 tests. Do not add
+the earlier 118-test selection again. A separate reviewer inspected the repair
+diff and regression coverage and found no code blocker. Final tracked
+evidence/documentation review also found no repository blocker. The package
+ledger regression suite passed again after fixture isolation: 90/90, already
+included in the 462-test selection above.
+
+These repairs do not change a backend route, OAuth rule, provider model, teaching
+prompt, memory policy, credential or production variable. They are not deployed.
+The earlier live disclaimer/format issue remains `LIVE_RETEST_PENDING` until an
+authorized deployment, catalog refresh and actual call provide fresh evidence.
+Original-GPT and actual migrated-skill comparisons still require captured
+configuration fingerprints. No accepted difference is inferred from local tests.

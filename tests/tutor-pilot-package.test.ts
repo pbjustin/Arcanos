@@ -75,12 +75,25 @@ function completeFixture() {
   edit(root, 'connection.requirements.json', connection => {
     connection.evidence.push({ id: 'mock-account-observation', kind: 'chatgpt', status: 'VERIFIED', observedAt: review.reviewedAt, summary: 'Synthetic account evidence; no actual migration.' });
     connection.evidence.push({ id: 'mock-repo-observation', kind: 'repository', status: 'VERIFIED', observedAt: review.reviewedAt, summary: 'Synthetic reviewed local fixture.' });
+    // A complete synthetic fixture owns its connection claims independently of
+    // the real ledger, whose current live connection may legitimately be blocked.
+    for (const check of Object.values<Json>(connection.checks)) {
+      check.status = 'VERIFIED';
+      check.evidenceIds = ['mock-account-observation'];
+    }
     connection.builderReconciliation = 'VERIFIED';
     connection.referenceReconciliation = 'VERIFIED';
+  });
+  edit(root, 'migration-state.json', state => {
+    for (const name of ['CHATGPT_CONNECTION_REGISTERED', 'OAUTH_CONFIGURED', 'TOOL_DISCOVERY_VERIFIED', 'LIVE_TUTOR_CALL_VERIFIED']) {
+      state.gates[name].status = 'VERIFIED';
+      state.gates[name].evidenceIds = ['mock-account-observation'];
+    }
   });
   const bindings = fingerprints(root, baseline);
   edit(root, 'parity-matrix.json', parity => {
     parity.status = 'VERIFIED';
+    parity.liveEvidenceIds = ['mock-account-observation'];
     for (const item of parity.cases) {
       const summary = `Mock comparison for ${item.id}.`;
       item.oldGpt = { status: 'VERIFIED', summary, sha256: hash(summary), hashBasis: 'sanitized_summary', artifactSha256: baseline.configuration.sha256,

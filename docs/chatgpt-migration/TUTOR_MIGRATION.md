@@ -16,14 +16,14 @@ thirteen independent states; there is no single migrated boolean.
 
 | Gate | Current status | Basis |
 | --- | --- | --- |
-| CODE_READY | VERIFIED | Type/build/lint, 290 focused tests and independent review; full repository CI reported separately |
-| BACKEND_DEPLOYED | VERIFIED | Railway SUCCESS at the expected PR #1508 merge |
-| OAUTH_CONFIGURED | VERIFIED | Prior same-task Auth0 setup observed; public challenge rechecked |
-| CHATGPT_CONNECTION_REGISTERED | VERIFIED | Prior same-task private connection UI and real technical ID |
-| TOOL_DISCOVERY_VERIFIED | VERIFIED | Prior same-task Refresh showed exactly arcanos_tutor |
-| LIVE_TUTOR_CALL_VERIFIED | VERIFIED | Prior same-task expanded tool result reported model generation |
+| CODE_READY | VERIFIED | Scoped repairs and final tracked evidence independently reviewed without repository blockers; local validation below |
+| BACKEND_DEPLOYED | IMPLEMENTED_NOT_VERIFIED | Current backend/schema repairs are not deployed; earlier Railway SUCCESS is historical evidence |
+| OAUTH_CONFIGURED | VERIFIED | Same-account Reconnect completed; fresh UI showed OAuth |
+| CHATGPT_CONNECTION_REGISTERED | VERIFIED | Fresh UI matched the expected resource, raw app ID and technical ID |
+| TOOL_DISCOVERY_VERIFIED | VERIFIED | Fresh Refresh showed exactly arcanos_tutor |
+| LIVE_TUTOR_CALL_VERIFIED | BLOCKED | Current call blocked before backend by connector schema validation; historical model result retained separately |
 | GPT_BASELINE_CAPTURED | BLOCKED | Latest published configuration and knowledge inventory missing |
-| GPT_MIGRATED | NOT_STARTED | No migration requested or performed |
+| GPT_MIGRATED | NOT_STARTED | Migration click has not been authorized or performed |
 | SKILL_RECONCILED | BLOCKED | Actual migrated skill and published instructions missing |
 | REFERENCES_RECONCILED | BLOCKED | Actual published and migrated file inventories missing |
 | PARITY_VERIFIED | BLOCKED | Old/new paired results absent; live formatting issue unresolved |
@@ -34,28 +34,51 @@ Allowed statuses are VERIFIED, USER_REPORTED, IMPLEMENTED_NOT_VERIFIED, BLOCKED
 and NOT_STARTED. VERIFIED always identifies its evidence domain. A successful
 local test cannot verify account migration; user reports cannot become independent
 account evidence merely by changing a label.
+Historical observations remain in the evidence ledger, while the gates describe
+the current candidate. Fresh connection observations do not certify live execution
+or deployment of the repairs. The pre-migration checkpoint below remains false
+independently of these thirteen machine-readable gates.
 
 ## Evidence provenance
 
 [connection.requirements.json](../../integrations/arcanos-tutor/connection.requirements.json)
 contains only non-secret metadata and sanitized summaries:
 
-- Repository: fetched exact main and found no overlapping open PRs; isolated
-  feature worktree; Tutor-only package and test changes.
-- Railway: deployment `e14cfd48-0075-4996-b0dd-ec7b620d5d82` remains SUCCESS at
-  the base SHA. Inspected configuration names only:
+- Repository: the reviewed package candidate and preview used exact head
+  `7f4e8c6de2ad145be04de23a436a2dc106f118e7`. Subsequent scoped Tutor repairs
+  address a false positive for learner-directed mathematical verification and a
+  connector-side nonempty-prompt schema mismatch. A separate reviewer found no
+  code blocker in the repair diff. Local validation passed; final tracked evidence
+  review also found no repository blocker. The repairs have not been deployed.
+- Railway production: the earlier read-only observation identified deployment
+  `e14cfd48-0075-4996-b0dd-ec7b620d5d82` as SUCCESS at the base SHA.
+  Inspected configuration names only:
   `CHATGPT_MCP_ENABLED`, `CHATGPT_MCP_RESOURCE`, `CHATGPT_MCP_ISSUER`,
   `CHATGPT_MCP_JWKS_URL`, and presence of `OPENAI_API_KEY`.
 - Public HTTP: protected-resource metadata returned the exact
   `https://acranos-production.up.railway.app/chatgpt/mcp` resource, Auth0 issuer
   `https://dev-etfsljoipfurdij6.us.auth0.com/`, and only `arcanos:tutor`.
-  Anonymous MCP access returned 401 and readiness reported healthy. This is not
-  authenticated discovery.
+  At `2026-09-24T04:29:23.768Z`, metadata returned 200 and anonymous MCP access
+  returned 401. The earlier readiness observation was healthy. These are public
+  endpoint observations, not authenticated discovery or execution.
 - Earlier authorized work in this same task: Auth0 policy configuration,
   completed OAuth linking, ChatGPT connection Refresh and the expanded real
   tool result were observed through the supported UI. The safe setup audit and
-  task history support these dated observations. This PR did not repeat sign-in,
-  refresh the catalog, inspect session data or make another provider call.
+  task history support these dated observations.
+- Current connection: an initial concise attempt returned `UNAUTHORIZED` and the
+  UI showed **Reconnect**. At approximately 04:32 UTC, supported same-account
+  Reconnect completed and Refresh showed exactly `arcanos_tutor`, the expected
+  resource, OAuth, raw app ID and technical ID. No new registration or scope was
+  introduced. A subsequent direct attempt returned connector `INVALID_ARGUMENT`
+  before backend execution because of the prompt schema pattern. It produced no
+  Tutor answer. Fresh live execution and formatting remain `LIVE_RETEST_PENDING`
+  until the schema repair is deployed, the catalog refreshed and an actual call
+  succeeds; production deployment is not authorized by this task.
+- Current original-GPT observation: Builder showed **Live**, **Only me** and a
+  displayed current version date of **Mar 5, 2026**. That date is not treated as
+  an exact latest-publication timestamp. Owner confirmation of publication and
+  completeness, the complete knowledge inventory and a reviewed local
+  `published-gpt.json` are still missing.
 - User-reported account state: original GPT remains unchanged and unmigrated.
   The user also reported connection/OAuth/live-call success, which is recorded
   separately from the prior observed evidence.
@@ -67,6 +90,96 @@ disclaimer, totaling three sentences. Tool metadata was `generation: model`,
 That is live execution proof, not an original-GPT comparison or proof of the
 new packaged skill. No full private conversation or private chat URL is committed.
 The formatting issue is a blocker to investigate, not an accepted difference.
+
+One fresh, provisional original-GPT concise probe produced two sentences, no
+irrelevant live-access disclaimer, no visible Action invocation and no diagnostic
+claim; it correctly described equal amounts and splitting a half into quarters.
+This observation is not bound to a complete published-configuration fingerprint.
+It therefore does not populate an official `oldGpt` parity result or resolve the
+original-versus-migrated comparison. No migrated skill or migrated result exists.
+
+Ten old-GPT cases have now been observed provisionally, with **0/16 official
+fingerprint-bound results**. No Action invocation was visible in those ten cases.
+The exact-format case produced one ordered list with three items; several other
+cases used diagnostic framing. These are observations, not case passes or parity.
+Safe local summaries, prompt/summary hashes and timestamps are retained only in
+the ignored private review record; no raw transcript enters tracked files.
+Six cases remain unobserved: administration, authentication failure, unavailable
+backend, timeout, cancellation and reference use. The first five need controlled
+nonexecuting account fixtures; reference use also awaits the complete inventory.
+All official `oldGpt` and `plugin` fields remain null and all sixteen rows remain
+`BLOCKER`.
+
+The [backend review](TUTOR_BACKEND_REVIEW.md) records the scoped repair evidence:
+the final focused selection passed thirteen suites / 407 tests, and the separate
+protocol selection passed four suites / 55 tests. Together these nonoverlapping
+selections passed 462 tests with no failures or skips. Type-check, build, lint and
+backend/CLI contract/offline checks passed; lint retains 76 existing warnings.
+Type-check/build initially lacked a generated Prisma client after script-free
+dependency installation and passed after local generation. Four MCP SDK prompt
+cases cover the schema fix, with zero acceptance differences in an independent
+3,379-string comparison. Source package validation passed; release validation
+correctly exited 2 with `RELEASE_BLOCKED` and no archive. Sync check reported zero
+errors, zero warnings and five informational notices.
+
+The old-guard negative control corrupted a synthetic two-sentence answer; its
+selected regression failed with 11 other cases intentionally skipped. That result
+and the repaired initial four-suite / 118-test pass demonstrate a narrow code-level
+cause, not complete attribution of the historical live response. The 118 tests
+are covered by the later focused selection and are not added again. The live
+formatting issue remains `LIVE_RETEST_PENDING`; no migration or parity gate is
+promoted.
+
+## Sealed preview evidence at the earlier exact head
+
+The temporary preview was verified on 2026-09-24 and removed. This evidence covers
+only `7f4e8c6de2ad145be04de23a436a2dc106f118e7`, with trusted workflow/verifier
+`3f9fffe48219b784dca758bca87ade109324c7c9`; it does not cover the subsequent
+repairs or promote any migration, reconciliation or parity gate.
+
+| Evidence | Result |
+| --- | --- |
+| [Hosted lifecycle and E2E](https://github.com/pbjustin/Arcanos/actions/runs/35953275709) | PASS, executed 156/156 requests |
+| Independent clean exact-head verifier | PASS, executed 156/156 requests against the same confirmed hosts |
+| Actual MCP SDK 1.30.0 | PASS, six requests / 2,438 response bytes / 481 ms; synthetic Tutor result |
+| [Cleanup](https://github.com/pbjustin/Arcanos/actions/runs/35954007244) | PASS; owned environment absent in provider inventory and both former hosts returned 404 |
+
+Both full verifiers passed all 18 Tutor cases with `chatgpt-tutor-mock/v1` proof.
+The SDK observed readiness, initialize, initialized notification, optional GET
+rejection, single-tool discovery and tools/call. Its response explicitly reported
+`generation: mock`, `module: ARCANOS:TUTOR`, synchronous execution and unavailable
+memory. The worker was passive. Hosted and independent runs each observed 133,663
+response bytes; the broad verifier used 24 simulated-authentication requests.
+
+The source report is the task-local `PR1509_PREVIEW_PROOF.md`, retained with the
+full JSON proofs outside the checkout. Its final non-draft snapshot describes the
+completed preview task; this migration task subsequently restored draft status.
+No fixture change was needed for that exact-head preview. The new repairs require
+their own validation.
+
+This is credential-free served component and SDK evidence. It does not establish
+real OAuth sign-in, a live model answer, an active queue or worker, database
+behavior, an installed migrated skill, mobile behavior or teaching parity.
+
+## Pre-migration checkpoint
+
+**MIGRATION_CHECKPOINT_READY = false.** This is a manual checkpoint, not an
+additional machine-readable gate. The PR is draft and the preview opt-in label
+is absent. Before requesting the separate migration-click confirmation, require:
+
+- Owner-confirmed latest published version and complete baseline, including the
+  complete knowledge inventory and publication provenance.
+- All applicable old-GPT cases bound to that baseline; provisional observations
+  alone are insufficient.
+- Fresh authenticated connection, exact real app mapping and single-tool catalog.
+- Reviewed migration consequences and rollback limits.
+- Resolution of the live formatting issue, or explicit owner acceptance bound to
+  the exact case and baseline and candidate fingerprints.
+
+Latest-publication/completeness confirmation, complete bound baseline results and
+live retesting of the repairs remain pending. The connection/catalog refresh alone
+does not satisfy these conditions. No migration action, reference publication or
+replacement installation is authorized by this checkpoint document.
 
 ## Before migration: capture the published baseline
 
@@ -164,8 +277,9 @@ for the applicable surface. This PR performs none of those account changes.
 
 For each row record prompt, old-GPT summary, migrated-plugin summary, tool invoked,
 material difference and PASS, ACCEPTED_DIFFERENCE or BLOCKER. An accepted difference
-needs explicit reviewer identity/date and rationale; it is never inferred from
-the narrowed backend scope. No differences have been accepted at this stage.
+needs explicit owner identity/date and rationale, the exact case/prompt binding,
+and both baseline and candidate fingerprints; it is never inferred from the
+narrowed backend scope. No differences have been accepted at this stage.
 
 Failure-path tests use isolated fixtures or separately authorized account tests;
 never break production configuration to exercise them. If there are no reference
@@ -185,7 +299,9 @@ Existing ARCANOS TUTOR Custom GPT remains operational until retirement.
 Existing Custom GPT Actions remain unchanged. Gaming, Booker and Core are outside
 this PR. No production variable or credential change was made **as part of this
 PR**; earlier separately authorized OAuth activation is dated evidence only.
-No deployment, key rotation, account migration, sharing or installation occurs.
+The scoped preview deployment was removed; no production deployment, key rotation,
+account migration, sharing or installation has occurred. The subsequent backend
+repairs have not been deployed.
 The package does not add memory, profiles, persistence, ingestion or admin tools.
 
 Before migration, abandoning the branch/package leaves the existing GPT and

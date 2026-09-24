@@ -5,8 +5,11 @@ the package/validator implementation. Scope: the current Tutor package, release
 validator, capture helper, evidence ledgers, skill, migration handoff and focused
 test definitions. Base: `3f9fffe48219b784dca758bca87ade109324c7c9`.
 
-**Disposition: no remaining code-review blocker found for the draft migration
-candidate after the corrections below. This is not release or migration approval.**
+**Historical disposition: no remaining code-review blocker was found for the
+reviewed draft package candidate after the corrections below. A separate review
+of the subsequent backend/schema repair diff also found no code blocker. Final
+tracked evidence/documentation review found no repository blocker. This is not release or
+migration approval.**
 
 ## Findings resolved and rechecked
 
@@ -40,10 +43,80 @@ raw app-ID form. No credential/private-file leakage was observed in the reviewed
 candidate. The distribution file allowlist, file/aggregate bounds, ancestor-link
 checks and content guard remain in place. Private migration input is ignored.
 
-The backend/protocol diff is empty. No new memory, persistence, administrative
-operation, generic dispatch, or cross-product tool is introduced. Existing GPT
-routes and Actions remain separate; the [backend review](TUTOR_BACKEND_REVIEW.md)
-identifies their regression coverage.
+At previewed head `7f4e8c6de2ad145be04de23a436a2dc106f118e7`, the backend/protocol
+diff from base was empty. Subsequent scoped Tutor repairs address learner-directed
+mathematical verification and connector-side nonempty-prompt validation; the
+historical review is separate from the subsequent code review recorded below.
+Existing GPT routes and Actions remain separate; the
+[backend review](TUTOR_BACKEND_REVIEW.md) identifies both coverage scopes.
+
+## Subsequent code and final evidence review
+
+A separate reviewer inspected the Tutor arithmetic-policy repair, both honesty
+passes, policy ownership and negative regressions, and found no code blocker.
+The schema review also found no code blocker: four MCP SDK cases cover the
+whole-string-compatible pattern, while 3,379 synthetic inputs showed no change in
+JSON Schema acceptance. A final independent audit reviewed the aggregate changes
+from `7f4e8c6de2ad145be04de23a436a2dc106f118e7` through repair commit `be56b7cc`
+and the accompanying evidence/fixture changes. It found no remaining repository
+blocker in publication integrity, private-content handling in tracked files,
+gate status, fingerprint claims, parity, app mapping or formatting disposition.
+The review did not inspect private inputs or certify account observations anew.
+
+The final focused selection passed thirteen suites / 407 tests, and the separate
+protocol selection passed four suites / 55 tests: 17 nonoverlapping suites / 462
+tests, with zero failures or skips. The initial four-suite / 118-test repair
+selection is covered by the broader selection. The old-guard negative control
+failed the selected exact-answer regression with 11 other tests intentionally
+skipped. Type-check/build passed after local Prisma client generation, lint passed
+with zero errors / 76 existing warnings, and backend/CLI contract/offline checks
+passed. Source package validation passed, release validation correctly exited 2
+with `RELEASE_BLOCKED`, and sync check reported zero errors/warnings and five
+informational notices. No result establishes complete historical-response
+attribution or a live formatting fix; the repairs are not deployed.
+
+- The [sealed preview run](https://github.com/pbjustin/Arcanos/actions/runs/35953275709)
+  and independent clean-head verifier each passed 156/156 requests at exact head
+  `7f4e8c6de2ad145be04de23a436a2dc106f118e7`, including 18 Tutor cases.
+  The trusted workflow/verifier was `3f9fffe48219b784dca758bca87ade109324c7c9`.
+  A real MCP SDK client passed six requests with a synthetic `generation: mock`
+  Tutor response. This is separate from live OAuth or migrated-skill evidence.
+- [Cleanup run](https://github.com/pbjustin/Arcanos/actions/runs/35954007244)
+  succeeded; independent provider inventory showed the owned environment absent
+  and both former hosts returned 404. The safe task-local report is
+  `PR1509_PREVIEW_PROOF.md`; the [handoff](TUTOR_MIGRATION.md) records its scope.
+- Public endpoint metadata at `2026-09-24T04:29:23.768Z` returned 200, the exact
+  Tutor resource and only `arcanos:tutor`; anonymous MCP returned 401. A direct
+  connected-tool attempt first returned `UNAUTHORIZED`. Same-account Reconnect
+  subsequently completed at approximately 04:32 UTC and Refresh showed only
+  `arcanos_tutor`, OAuth and the expected endpoint/app identity. A subsequent
+  call was blocked before backend execution by connector `INVALID_ARGUMENT`
+  prompt-schema validation. No fresh live Tutor answer is claimed; deployment,
+  catalog refresh and actual live retesting of the local repair remain pending.
+- Builder publication/completeness remains unconfirmed. The provisional old-GPT
+  concise observation met the two-sentence request, but lacks a complete baseline
+  fingerprint and is not an official parity result. Actual migrated artifacts
+  and paired results remain unavailable.
+- Ten old-GPT cases were observed provisionally, with no visible Action invocation;
+  zero of sixteen official baseline-bound results are captured. The exact-format
+  case showed one ordered list with three items; other cases sometimes used
+  diagnostic framing. No case is promoted to PASS. Six cases remain unobserved:
+  administration, auth failure, unavailable backend, timeout, cancellation and
+  reference use. Controlled nonexecuting fixtures and the complete reference
+  inventory remain prerequisites. Only safe summaries/hashes/timestamps are held
+  in the ignored local record; this review does not publish its private contents.
+- Review privacy claims apply to tracked repository and distribution content.
+  Private Builder instructions, raw transcripts, knowledge bytes and session
+  material must not be copied into this report or the tracked inventories.
+
+Final evidence review retained the blocked baseline and post-migration gates.
+Two wording findings were corrected and rechecked: the SDK boundary case is
+8,000 ASCII characters (Unicode belongs to the separate comparison), and the
+historical discovery entry now distinguishes the later account Refresh.
+Tracked additions contained no private artifacts or credential-shaped matches;
+the synthetic fixture owns its mock connection claims without weakening validation.
+`MIGRATION_CHECKPOINT_READY` remains false. No accepted difference or final
+migration/release-readiness conclusion is recorded by this update.
 
 ## Evidence limits and remaining migration blockers
 

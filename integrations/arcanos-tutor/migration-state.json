@@ -5,52 +5,58 @@
       "status": "VERIFIED",
       "evidenceIds": [
         "repository-foundation",
-        "repository-validation"
+        "repository-validation",
+        "repository-tutor-repair-validation"
       ],
-      "note": "Repository candidate passed scoped build/type/lint and 290 focused tests plus independent review. Full repository CI is reported separately; installed migrated skill behavior remains blocked."
+      "note": "Current scoped Tutor backend/schema repairs passed 17 nonoverlapping suites/462 tests, type-check/build/lint and contract/offline checks; separate code review found no blocker. Final independent tracked-evidence review found no repository blocker; pre-migration blockers remain. Installed migrated-skill behavior remains blocked."
     },
     "BACKEND_DEPLOYED": {
-      "status": "VERIFIED",
+      "status": "IMPLEMENTED_NOT_VERIFIED",
       "evidenceIds": [
-        "railway-deployment"
+        "railway-deployment",
+        "repository-tutor-repair-validation"
       ],
-      "note": "Existing PR 1508 backend deployed; this PR makes no runtime change."
+      "note": "Historical production observation covers the existing PR 1508 backend. Subsequent Tutor backend/schema repairs are not deployed; sealed preview evidence covers only earlier head 7f4e8c6de2ad145be04de23a436a2dc106f118e7 and the preview was removed."
     },
     "OAUTH_CONFIGURED": {
       "status": "VERIFIED",
       "evidenceIds": [
         "auth0-prior-setup",
-        "public-resource"
+        "public-resource",
+        "chatgpt-connection-refresh"
       ],
-      "note": "Same-task prior policy setup observed; current public challenge rechecked."
+      "note": "Prior policy setup and public resource metadata/anonymous denial were observed. Same-account Reconnect resolved the initial UNAUTHORIZED state; fresh UI showed OAuth and the expected catalog. A later connector schema failure supplied no live Tutor answer."
     },
     "CHATGPT_CONNECTION_REGISTERED": {
       "status": "VERIFIED",
       "evidenceIds": [
-        "chatgpt-registration"
+        "chatgpt-registration",
+        "chatgpt-connection-refresh"
       ],
-      "note": "Existing private app mapping, no new registration."
+      "note": "Fresh same-account UI matched the expected endpoint, raw app ID and technical ID. No new registration was created."
     },
     "TOOL_DISCOVERY_VERIFIED": {
       "status": "VERIFIED",
       "evidenceIds": [
-        "chatgpt-discovery"
+        "chatgpt-discovery",
+        "chatgpt-connection-refresh"
       ],
-      "note": "Prior same-task web Refresh showed only arcanos_tutor."
+      "note": "Fresh supported Refresh after same-account Reconnect showed only arcanos_tutor. Successful tool discovery does not establish a successful live tool call."
     },
     "LIVE_TUTOR_CALL_VERIFIED": {
-      "status": "VERIFIED",
+      "status": "BLOCKED",
       "evidenceIds": [
-        "chatgpt-live-call"
+        "chatgpt-current-call-schema-blocked"
       ],
-      "note": "One prior same-task model call; format issue recorded; no parity claim."
+      "note": "One prior same-task model call; format issue remains unresolved. After reconnect, the current direct attempt failed connector schema validation before backend execution. LIVE_RETEST_PENDING; no fresh live formatting or migrated parity claim."
     },
     "GPT_BASELINE_CAPTURED": {
       "status": "BLOCKED",
       "evidenceIds": [
-        "account-user-report"
+        "account-user-report",
+        "published-gpt-inspection-incomplete"
       ],
-      "note": "Latest published Builder configuration and knowledge inventory not supplied."
+      "note": "Builder UI was inspected provisionally, but owner-confirmed latest publication/completeness, full knowledge inventory and reviewed published-gpt.json are still missing. Baseline stays BLOCKED."
     },
     "GPT_MIGRATED": {
       "status": "NOT_STARTED",
@@ -72,9 +78,11 @@
     "PARITY_VERIFIED": {
       "status": "BLOCKED",
       "evidenceIds": [
-        "chatgpt-live-call"
+        "chatgpt-live-call",
+        "old-gpt-unbound-observations-20260924",
+        "chatgpt-current-call-schema-blocked"
       ],
-      "note": "Matrix prepared. Old-GPT and actual migrated-plugin results absent; observed live formatting issue unresolved."
+      "note": "All 16 rows remain BLOCKER. Ten provisional original-GPT observations have zero official baseline-fingerprint-bound results; six cases remain unobserved. Actual migrated-plugin results are absent and every official result field stays null. Live formatting remains LIVE_RETEST_PENDING; no accepted difference."
     },
     "PACKAGE_READY": {
       "status": "BLOCKED",

@@ -43,7 +43,7 @@
       "oldGpt": null,
       "plugin": null,
       "toolInvoked": null,
-      "materialDifference": "Prior standalone MCP call included an irrelevant disclaimer and three sentences; original GPT and migrated skill not compared.",
+      "materialDifference": "Prior standalone model call included an irrelevant disclaimer and three sentences. A fresh original-GPT observation used two sentences without that disclaimer, but is not bound to a complete published baseline fingerprint. After reconnect resolved initial UNAUTHORIZED, the connected-tool attempt failed connector schema validation before backend execution. Neither official oldGpt nor migrated-plugin results exist. LIVE_RETEST_PENDING; formatting and comparison remain blocked.",
       "disposition": "BLOCKER"
     },
     {

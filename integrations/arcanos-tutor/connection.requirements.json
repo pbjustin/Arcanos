@@ -12,14 +12,21 @@
       "kind": "repository",
       "status": "VERIFIED",
       "observedAt": "2026-09-24",
-      "summary": "Pinned Node 24.18.1/npm 11.16.0: type-check/build/lint passed; 209 focused backend tests and 81 package/guard tests passed. Source validation passed; actual release exits 2 BLOCKED. Independent reviews rechecked release-gate and credential-scanning fixes. Full repository suite and hosted CI are reported separately in the draft PR; this evidence does not certify account migration or parity."
+      "summary": "Historical repository validation: pinned Node 24.18.1/npm 11.16.0 type-check/build/lint and 290 focused tests passed for the earlier package candidate. At 7f4e8c6de2ad145be04de23a436a2dc106f118e7, the package repair passed 102 focused tests and hosted PR CI passed 787 suites/13806 tests, with 13 suites/167 tests skipped. Release remained BLOCKED. Subsequent repair validation is recorded separately; none of these results certifies migration or parity."
+    },
+    {
+      "id": "repository-tutor-repair-validation",
+      "kind": "repository",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-24",
+      "summary": "Scoped Tutor backend/schema repairs passed a focused 13-suite/407-test selection and a separate 4-suite/55-test protocol selection: 17 nonoverlapping suites/462 tests, zero failures or skips. The earlier 118-test selection is included, not added. Type-check/build passed after local Prisma generation; lint passed with zero errors/76 existing warnings; backend/CLI contract/offline and source package checks passed. Release correctly exited 2 BLOCKED; sync had zero errors/warnings and five informational notices. Separate repair review found no code blocker; 3379 synthetic strings showed no schema acceptance differences. The old-guard negative control failed one selected exact-answer test with 11 intentional skips. Final independent tracked-evidence review found no repository blocker; pre-migration blockers remain. Repairs are not deployed and LIVE_RETEST_PENDING remains; no complete live-response attribution or migration/parity claim."
     },
     {
       "id": "repository-foundation",
       "kind": "repository",
       "status": "VERIFIED",
       "observedAt": "2026-09-24",
-      "summary": "Fetched origin/main at 3f9fffe48219b784dca758bca87ade109324c7c9, the merge of PR 1508. No overlapping open PRs. Tutor OAuth adapter and prompt-only tool contract inspected; no backend source changes in this migration package."
+      "summary": "The reviewed base is 3f9fffe48219b784dca758bca87ade109324c7c9, the merge of PR 1508. Tutor OAuth adapter and prompt-only tool contract were inspected. Backend/protocol diff was empty at previewed head 7f4e8c6de2ad145be04de23a436a2dc106f118e7; the subsequent scoped Tutor verification repair is separate and is not covered by that historical statement."
     },
     {
       "id": "railway-deployment",
@@ -33,14 +40,14 @@
       "kind": "railway",
       "status": "VERIFIED",
       "observedAt": "2026-09-24",
-      "summary": "Public protected-resource metadata returns the intended HTTPS /chatgpt/mcp resource, the Auth0 issuer and only arcanos:tutor; unauthenticated GET /chatgpt/mcp returns 401; /readyz reports healthy. This does not prove authenticated discovery."
+      "summary": "Historical public protected-resource metadata returned the intended HTTPS /chatgpt/mcp resource, Auth0 issuer and only arcanos:tutor; unauthenticated GET returned 401 and readiness was healthy. The later public-resource-refresh evidence is separate. Public HTTP does not prove authenticated discovery."
     },
     {
       "id": "auth0-prior-setup",
       "kind": "auth0",
       "status": "VERIFIED",
       "observedAt": "2026-09-24",
-      "summary": "Earlier authorized setup in this same task observed the public PKCE client and deployed Post Login restriction to the approved account/client and Tutor resource. Eight local policy cases passed then. No secrets were read or included; no provider policy mutation or repeat login in this PR."
+      "summary": "Earlier authorized setup in this same task observed the public PKCE client and deployed Post Login restriction to the approved account/client and Tutor resource. Eight local policy cases passed then. No secrets were read or included; no provider policy mutation. The later same-account reconnect is recorded separately."
     },
     {
       "id": "chatgpt-registration",
@@ -54,7 +61,7 @@
       "kind": "chatgpt",
       "status": "VERIFIED",
       "observedAt": "2026-09-24",
-      "summary": "Earlier same-task connection Refresh completed and the observed catalog contained exactly arcanos_tutor, prompt-only input, OAuth arcanos:tutor scope, readOnlyHint true and openWorldHint true. Catalog not refreshed again in this PR."
+      "summary": "Earlier same-task connection Refresh completed and the observed catalog contained exactly arcanos_tutor, prompt-only input, OAuth arcanos:tutor scope, readOnlyHint true and openWorldHint true. The subsequent fresh account inspection is recorded separately in chatgpt-connection-refresh."
     },
     {
       "id": "chatgpt-live-call",
@@ -62,6 +69,62 @@
       "status": "VERIFIED",
       "observedAt": "2026-09-24",
       "summary": "Earlier same-task real authenticated ChatGPT call asked why one half equals two quarters in two short sentences. Expanded tool response showed ARCANOS:TUTOR, synchronous, memory unavailable, generation model. Answer explained equivalence but prefixed an irrelevant live-access disclaimer and used three sentences. One call; no retry. This verifies execution, not migrated skill parity."
+    },
+    {
+      "id": "sealed-preview-exact-head",
+      "kind": "railway",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-24",
+      "summary": "At exact head 7f4e8c6de2ad145be04de23a436a2dc106f118e7, trusted run 35953275709 and the independent clean-head verifier each executed and passed 156/156 requests, including 18 Tutor mock cases. Trusted verifier revision: 3f9fffe48219b784dca758bca87ade109324c7c9. A real MCP SDK 1.30.0 client passed six requests with generation mock. Cleanup run 35954007244 succeeded; independent provider inventory showed the owned environment absent and former hosts returned 404. Safe source report: task-local PR1509_PREVIEW_PROOF.md. This is sealed component evidence, not OAuth, live generation, migrated-skill parity or proof of the subsequent backend repair."
+    },
+    {
+      "id": "public-resource-refresh",
+      "kind": "railway",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-24T04:29:23.768Z",
+      "summary": "Read-only public recheck: protected-resource metadata returned HTTP 200 with resource https://acranos-production.up.railway.app/chatgpt/mcp and only scope arcanos:tutor; anonymous MCP returned HTTP 401. This does not establish authenticated discovery, live execution or installed-skill behavior."
+    },
+    {
+      "id": "chatgpt-current-auth-blocked",
+      "kind": "chatgpt",
+      "status": "BLOCKED",
+      "observedAt": "2026-09-24",
+      "summary": "An initial direct connected arcanos_tutor attempt using the concise explanation prompt returned UNAUTHORIZED with reauthentication required and no answer. The account Plugins UI showed Reconnect. This initial failure was subsequently resolved by the separate same-account reconnect observation; it never supplied a Tutor answer."
+    },
+    {
+      "id": "chatgpt-connection-refresh",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-24",
+      "summary": "At approximately 04:32 UTC, supported same-account Reconnect completed and Refresh showed exactly arcanos_tutor, the expected production /chatgpt/mcp resource, OAuth, raw app ID asdk_app_6ab4747769088191856fd8eb02507240 and technical ID plugin_asdk_app_6ab4747769088191856fd8eb02507240. No additional tool family, new registration or scope was introduced. Public scope inspection is recorded separately. This verifies the current UI connection/catalog, not a fresh successful live answer."
+    },
+    {
+      "id": "chatgpt-current-call-schema-blocked",
+      "kind": "chatgpt",
+      "status": "BLOCKED",
+      "observedAt": "2026-09-24",
+      "summary": "After reconnect, a direct ordinary concise prompt was rejected before backend execution with connector INVALID_ARGUMENT prompt-pattern validation. No Tutor answer was returned. A local protocol-schema repair preserves non-whitespace-only input and the 8000-character maximum; it has not been deployed. Fresh live execution and formatting remain LIVE_RETEST_PENDING until deployment, catalog refresh and a successful actual call."
+    },
+    {
+      "id": "published-gpt-inspection-incomplete",
+      "kind": "chatgpt",
+      "status": "BLOCKED",
+      "observedAt": "2026-09-24",
+      "summary": "The original GPT Builder UI showed Live, Only me and a displayed current version date of Mar 5, 2026. No exact latest-published timestamp or completeness assurance is inferred. Owner confirmation, complete knowledge inventory and reviewed published-gpt.json remain pending. No private instructions, file contents or account/session material are stored in this evidence."
+    },
+    {
+      "id": "old-gpt-provisional-concise",
+      "kind": "chatgpt",
+      "status": "BLOCKED",
+      "observedAt": "2026-09-24",
+      "summary": "A provisional original-GPT concise probe produced two sentences, no irrelevant live-access disclaimer, no visible Action invocation and no diagnostic claim; it correctly explained equal amounts and splitting a half into quarters. It is not bound to a complete published baseline fingerprint and cannot populate an official oldGpt parity result. No migrated result exists."
+    },
+    {
+      "id": "old-gpt-unbound-observations-20260924",
+      "kind": "chatgpt",
+      "status": "BLOCKED",
+      "observedAt": "2026-09-24",
+      "summary": "Ten original-GPT cases were observed provisionally; zero of 16 official fingerprint-bound baseline results are captured. No Action invocation was visible. Concise output used two sentences without the irrelevant disclaimer; exact-format output showed one ordered list with three items; other cases sometimes used diagnostic framing. These are observations, not passes or parity. Six cases remain unobserved: administration, authentication failure, unavailable backend, timeout, cancellation and references. Controlled nonexecuting fixtures and complete reference inventory remain required. Safe summaries, prompt/summary hashes and timestamps are retained only in an ignored private review record; no raw transcripts are committed. All official result fields stay null and all 16 rows BLOCKER."
     },
     {
       "id": "account-user-report",
@@ -75,14 +138,16 @@
     "registeredConnection": {
       "status": "VERIFIED",
       "evidenceIds": [
-        "chatgpt-registration"
+        "chatgpt-registration",
+        "chatgpt-connection-refresh"
       ]
     },
     "endpoint": {
       "status": "VERIFIED",
       "evidenceIds": [
         "public-resource",
-        "chatgpt-registration"
+        "chatgpt-registration",
+        "chatgpt-connection-refresh"
       ]
     },
     "authentication": {
@@ -90,19 +155,21 @@
       "evidenceIds": [
         "auth0-prior-setup",
         "chatgpt-registration",
-        "chatgpt-live-call"
+        "chatgpt-live-call",
+        "chatgpt-connection-refresh"
       ]
     },
     "toolDiscovery": {
       "status": "VERIFIED",
       "evidenceIds": [
-        "chatgpt-discovery"
+        "chatgpt-discovery",
+        "chatgpt-connection-refresh"
       ]
     },
     "liveExecution": {
-      "status": "VERIFIED",
+      "status": "BLOCKED",
       "evidenceIds": [
-        "chatgpt-live-call"
+        "chatgpt-current-call-schema-blocked"
       ]
     }
   },
