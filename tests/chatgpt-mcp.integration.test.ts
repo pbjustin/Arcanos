@@ -104,6 +104,24 @@ describe('assembled ChatGPT MCP resource (signed issuer fixtures; generation dep
     const raw = await post().auth(await token(), { type: 'bearer' }).send({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
     expect(raw.body.result.tools[0].securitySchemes).toEqual([{ type: 'oauth2', scopes: ['arcanos:tutor'] }]);
   });
+  it.each([
+    'Explain why one half equals two quarters, in two short sentences.',
+    '  Explain fractions.  ',
+    'First line\nExplain the second line.\n',
+    'x'.repeat(8000),
+  ])('advertises a prompt pattern compatible with whole-string connector validation (%#)', async prompt => {
+    const { client } = await connect();
+    const catalog = await client.listTools();
+    const schema = catalog.tools[0].inputSchema.properties?.prompt as { pattern: string };
+    // Some connected clients apply the advertised pattern as a full match.
+    // Preserve JSON Schema non-whitespace semantics under either interpretation.
+    const connectorPattern = new RegExp(`^(?:${schema.pattern})$`, 'u');
+    expect(connectorPattern.test(prompt)).toBe(true);
+    for (const blank of ['', '   ', '\t\n\r']) expect(connectorPattern.test(blank)).toBe(false);
+    const result = await client.callTool({ name: 'arcanos_tutor', arguments: { prompt } });
+    expect(result.structuredContent).toEqual(output);
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
   it('publishes correct protected-resource metadata and challenges missing credentials before parsing', async () => {
     const response = await request(app()).get('/.well-known/oauth-protected-resource/chatgpt/mcp');
     expect(response.body).toMatchObject({ resource: values.CHATGPT_MCP_RESOURCE, scopes_supported: ['arcanos:tutor'] });

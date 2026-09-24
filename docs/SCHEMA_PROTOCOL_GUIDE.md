@@ -229,3 +229,9 @@ schema catalog's tools section and exported with TypeScript types through
 `@arcanos/protocol`. This adds no daemon command ID or Python execution
 permission. The dedicated authenticated `/chatgpt/mcp` route exposes this tool;
 catalog membership alone never authorizes execution or re-exports operator tools.
+
+Tutor accepts only `prompt`, a string of 1–8,000 characters containing at least
+one non-whitespace character. Its pattern matches the complete string, including
+multiline prompts, so connector clients using whole-string pattern validation
+accept the same inputs as the server's JSON Schema validator. This does not
+change the argument shape, limits, tool catalog, or authorization scope.
