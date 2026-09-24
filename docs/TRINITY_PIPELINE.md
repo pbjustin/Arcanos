@@ -118,6 +118,46 @@ curl -sS -X POST "$ARCANOS_BASE_URL/gpt/arcanos-core" \
 
 Use the internal flow only for the public writing plane. Protected backend diagnostics, async job creation, worker status, queue inspection, and job-result reads belong under `/gpt-access/*` or direct control endpoints.
 
+## Isolated Tutor instructional verification
+
+The isolated ChatGPT Tutor path sets the server-owned `tutor-math-v1` policy in
+`tutor-logic.ts`. `deriveTrinityOutputControls` retains it only for
+`sourceEndpoint: 'tutor.pipeline'`; prompts and tool arguments cannot select it.
+Both the direct-answer and full Trinity paths pass the same policy to the first
+honesty filter and the subsequent honesty/minimalism filter.
+
+Within this policy, learner-directed local calculations are instructions, not
+claims that the backend performed live verification. The shared classifier
+recognizes check/verify imperatives and learner questions, then consumes their
+complete mathematical object or method. Mathematical relations, substitution,
+arithmetic operands and local learner work can be composed; every additional
+clause must also be local. Parsing is bounded, and unknown constructions retain
+the normal honesty checks. Completed verification, external/current context and
+backend/storage actions remain excluded. This exception suppresses only the
+lexical check/verify trigger; it grants no capability or execution authority.
+
+For example, `Can you check the equality by cross-multiplying?` and
+`Check your answer by substituting x = 3 into 2x + 3 = 9.` survive both passes.
+`I checked the answer.`, `Check the value of my portfolio.` and
+`Check your equation by updating your password.` do not qualify. Generic ARCANOS
+callers retain their existing honesty rules.
+
+Honesty cleanup transforms segments within existing lines. Replacing or removing
+a caveat preserves the remaining numbered lines, bullets and paragraph breaks;
+the existing logical grouping of detached numbered markers is retained so an
+unsupported item cannot lose its list context. This change adds no sentence
+truncation or repair of model prose. Existing explicit word-budget compression is
+unchanged and remains outside the layout guarantee. An untouched Tutor answer
+retains its presentation through the first pass.
+
+The production motivation is the [post-#1510 acceptance evidence](https://github.com/pbjustin/Arcanos/blob/68bd5eeebf63f637ccd743110d81da5cce1b1991/docs/chatgpt-migration/TUTOR_RUNTIME_ACCEPTANCE.md):
+raw A/C/D contained inappropriate honesty limitations, while multiline B passed.
+The regression fixtures supply compliant synthetic provider candidates to the
+actual isolated Tutor pipeline with mocked provider/storage dependencies. These
+fixtures demonstrate deterministic post-processing damage before the repair;
+they are not captured production pre-filter provider text or live acceptance.
+Fresh authenticated acceptance remains necessary after an approved deployment.
+
 ## Verification
 Focused test suites:
 

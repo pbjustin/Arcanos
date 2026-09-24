@@ -37,27 +37,77 @@ const DEFAULT_OUTPUT_CONTROLS: TrinityOutputControls = {
 
 const LIVE_VERIFICATION_PATTERN =
   /\b(verified|verify|confirmed|confirm|checked|check|looked up|look up|reviewed|validated|i checked|i verified|i confirmed)\b/i;
-const TUTOR_MATH_INSTRUCTION_PREFIX = /^(?:you\s+(?:can|may|should)\s+(?:check|verify)|(?:to\s+)?(?:check|verify))\b/i;
-const TUTOR_MATH_OPERATION_PATTERN =
-  /\b(?:add|adding|subtract|subtracting|multiply|multiplying|divide|dividing|substitute|substituting|simplify|simplifying|calculate|calculating|equals)\b|\d\s*[+*/×÷=−-]\s*\d/i;
-const TUTOR_MATH_INSTRUCTION_WORDS = new Set((
-  'you can may should check verify to this that your answer work result calculation by both the a an and of for with in into each ' +
-  'same equal equals equality is are gives giving number numbers numerator denominator fraction fractions half halves quarter quarters ' +
-  'third thirds fourth fourths whole wholes zero one two three four five six seven eight nine ten ' +
-  'add adding subtract subtracting multiply multiplying divide dividing substitute substituting simplify simplifying calculate calculating ' +
-  'plus minus times divided over cross x y z'
-).split(' '));
+const TUTOR_LEARNER_VERIFICATION_PREFIX =
+  /^(?:(?:you\s+(?:can|may|should|could)|(?:can|could|would)\s+you)\s+|to\s+)?(?:check|verify)\s+|^as\s+a\s+check,?\s+/i;
+const TUTOR_LOCAL_MATH_OBJECT =
+  /^(?:(?:your|the|this|that|an?|each|both|these|those|original|two|arithmetic)\s+)*(?:answers?|work|understanding|results?|solutions?|calculations?|equalit(?:y|ies)|equations?|expressions?|fractions?|numerators?|denominators?|sides|values?)$/i;
+const TUTOR_LOCAL_MATH_METHOD =
+  /^(cross[- ]?multipl(?:y|ying)|add(?:ing)?|subtract(?:ing)?|multipl(?:y|ying)|divid(?:e|ing)|substitut(?:e|ing)|simplif(?:y|ying)|calculat(?:e|ing)|plug(?:ging)?|compar(?:e|ing)|put(?:ting)?)\b\s*/i;
+const TUTOR_LOCAL_MATH_RELATION =
+  /^(?:[+-]?\d+(?:\.\d+)?[a-z]?|[a-z])(?:\s*[+*/×÷=−-]\s*(?:[+-]?\d+(?:\.\d+)?[a-z]?|[a-z]))*$/i;
+const TUTOR_MATH_NUMBER =
+  /^(?:zero|one|two|three|four|five|six|seven|eight|nine|ten)(?:\s+(?:half|halves|quarters?|thirds?|fourths?|wholes?))?$/i;
+const TUTOR_NONLOCAL_CONTEXT =
+  /\b(?:online|internet|web|brows\w*|search\w*|sources?|accounts?|files?|documents?|records?|transactions?|credentials?|tokens?|memory|storage|network|jobs?|admin|remote|production|deploy\w*|https?)\b/i;
+const TUTOR_COMPLETED_VERIFICATION = /\b(?:checked|verified|confirmed|reviewed|validated|looked\s+up)\b/i;
+
+/** Small, fully consumed math-phrase grammar; unknown tails retain normal honesty checks. */
+function isLocalMathPhrase(text: string, depth = 0): boolean {
+  if (depth > 16) return false;
+  const phrase = text.trim().replace(/[.!?]+$/u, '').trim();
+  if (TUTOR_LOCAL_MATH_OBJECT.test(phrase)
+    || TUTOR_LOCAL_MATH_RELATION.test(phrase)
+    || TUTOR_MATH_NUMBER.test(phrase)) return true;
+
+  const method = phrase.match(TUTOR_LOCAL_MATH_METHOD);
+  if (method) {
+    const operand = phrase.slice(method[0].length);
+    // Bare arithmetic is a local activity; ambiguous verbs still need operands.
+    if (operand ? isLocalMathPhrase(operand, depth + 1)
+      : !/^(?:compar|put|plug)/i.test(method[1] ?? '')) return true;
+  }
+  const relation = phrase.match(/^(.+?)(?:\s+(?:by|(?:back\s+)?into|to|from|of|and|or|equals|equal to)\s+|:\s*|,\s*(?:(?:and|or)\s+)?)(.+)$/i);
+  if (relation) {
+    const left = relation[1] ?? '';
+    const right = relation[2] ?? '';
+    // A demonstrative refers to the current exercise only alongside a local
+    // method/operand. It cannot make an arbitrary following action local.
+    return (isLocalMathPhrase(left, depth + 1) || /^(?:this|that|it)(?: back)?$/i.test(left))
+      && isLocalMathPhrase(right, depth + 1);
+  }
+  const demonstrativeMethod = phrase.match(/^(?:this|that|it),\s*(.+)$/i);
+  if (demonstrativeMethod) return isLocalMathPhrase(demonstrativeMethod[1] ?? '', depth + 1);
+  if (/^by\s+/i.test(phrase)) return isLocalMathPhrase(phrase.slice(3), depth + 1);
+  const equalityQuestion = phrase.match(/^(.+)\s+(?:is|are) equal$/i);
+  return equalityQuestion ? isLocalMathPhrase(equalityQuestion[1] ?? '', depth + 1) : false;
+}
 
 function isTutorLocalMathInstruction(text: string, policy: TrinityOutputControls['instructionalVerificationPolicy']): boolean {
   if (policy !== 'tutor-math-v1') return false;
-  const instruction = text.trim().replace(/^(?:[-*]|\d+[.)])\s+/u, '').toLowerCase();
-  // A closed arithmetic vocabulary admits learner instructions, not completed
-  // verification claims or external/backend/persistence assertions. Unrecognized
-  // wording keeps the existing honesty checks, including every other caller.
-  return /^[a-z0-9\s.,:;()=+*/×÷−-]+$/u.test(instruction)
-    && TUTOR_MATH_INSTRUCTION_PREFIX.test(instruction)
-    && TUTOR_MATH_OPERATION_PATTERN.test(instruction)
-    && (instruction.match(/[a-z]+/gu) ?? []).every(word => TUTOR_MATH_INSTRUCTION_WORDS.has(word));
+  const instruction = text.trim().replace(/^(?:[-*]|\d+[.)])\s+/u, '');
+  // Classify a speech act and its local object, not every word in the prose.
+  // Veto the whole candidate before considering any arithmetic anchor: a local
+  // instruction cannot launder a completed claim, remote lookup, or side effect.
+  // This only exempts the lexical check/verify trigger; it grants no capability.
+  if (TUTOR_COMPLETED_VERIFICATION.test(instruction)
+    || CURRENT_EXTERNAL_STATE_PATTERN.test(instruction)
+    || EXTERNAL_STATE_CONTEXT_PATTERN.test(instruction)
+    || LIVE_RUNTIME_STATE_PATTERN.test(instruction)
+    || BACKEND_ACTION_PATTERN.test(instruction)
+    || BACKEND_ACTION_CONTEXT_PATTERN.test(instruction)
+    || TUTOR_NONLOCAL_CONTEXT.test(instruction)) return false;
+
+  const prefix = instruction.match(TUTOR_LEARNER_VERIFICATION_PREFIX);
+  if (!prefix) return false;
+  const objectOrMethod = instruction.slice(prefix[0].length);
+  // Another verification clause must qualify on its own, never merely inherit
+  // an earlier math word (including completed/passive claims in list items).
+  const clauses = objectOrMethod.split(/\s+(?:and|then)\s+(?=(?:check|verify)\b)/i);
+  return clauses.every(clause => {
+    const localClause = clause.replace(/^(?:check|verify)\s+/i, '').replace(/^(?:that|whether)\s+/i, '');
+    return !LIVE_VERIFICATION_PATTERN.test(localClause)
+      && isLocalMathPhrase(localClause);
+  });
 }
 const CURRENT_EXTERNAL_STATE_PATTERN =
   /\b(latest|current|currently|today|this week|recent|recently|up-to-date|as of now)\b/i;
@@ -347,6 +397,15 @@ function splitIntoSegments(text: string): string[] {
     .flatMap(line => splitLineIntoSegments(line))
     .map(segment => segment.trim())
     .filter(Boolean);
+}
+
+/** Transform honesty segments within their existing lines; never invent list layout. */
+function transformHonestySegments(text: string, transform: (segment: string) => string | null): string {
+  return normalizeWhitespace(normalizeWhitespace(text).split('\n').flatMap(line => {
+    if (!line.trim()) return [''];
+    const transformed = splitLineIntoSegments(line).map(transform).filter(segment => segment !== null);
+    return transformed.length > 0 ? [transformed.join(' ')] : [];
+  }).join('\n'));
 }
 
 function mergeOrphanListMarkerSegments(segments: string[]): string[] {
@@ -950,7 +1009,6 @@ function rewriteUnsupportedClaims(params: {
   instructionalVerificationPolicy?: TrinityOutputControls['instructionalVerificationPolicy'];
 }): { text: string; blockedOrRewrittenClaims: string[] } {
   const blockedOrRewrittenClaims: string[] = [];
-  const rewrittenSegments: string[] = [];
   let liveLimitationAdded = false;
   let backendLimitationAdded = false;
   let persistenceLimitationAdded = false;
@@ -973,10 +1031,13 @@ function rewriteUnsupportedClaims(params: {
     blockedOrRewrittenClaims.push(...sectionRewrite.blockedOrRewrittenClaims);
     liveLimitationAdded = true;
   }
-  const segments = mergeOrphanListMarkerSegments(splitIntoSegments(sectionRewrite.text));
   let inUnsupportedExternalStateSection = false;
 
-  for (const segment of segments) {
+  // Preserve the prior guard's logical grouping for a detached list marker.
+  // Otherwise an unsupported item can lose its list context during removal.
+  // Valid list lines and paragraph boundaries are left intact.
+  const reviewText = sectionRewrite.text.replace(/^(\s*\d+\.)[ \t]*\r?\n\s*(?=\S)/gm, '$1 ');
+  const rewrittenText = transformHonestySegments(reviewText, segment => {
     const externalStateSectionHeading = isLikelyCurrentExternalStateSectionHeading(segment, params.userPrompt);
     if (isSectionHeading(segment) && !externalStateSectionHeading) {
       inUnsupportedExternalStateSection = false;
@@ -1003,40 +1064,40 @@ function rewriteUnsupportedClaims(params: {
         !supportsLiveVerification)
     ) {
       blockedOrRewrittenClaims.push(segment);
+      inUnsupportedExternalStateSection = externalStateSectionHeading || inUnsupportedExternalStateSection || isListItem(segment);
       if (!liveLimitationAdded) {
-        rewrittenSegments.push(ensureSingleSentence(buildLimitationSentence({
+        liveLimitationAdded = true;
+        return ensureSingleSentence(buildLimitationSentence({
           fallbackText: "I can't confirm current external state here without live access",
           existingCaveats: params.reasoningHonesty.userVisibleCaveats,
           blockedSubtasks: params.reasoningHonesty.blockedSubtasks,
           matcher: /\b(live|browse|current|latest|verify|external|competitor)\b/i
-        })));
-        liveLimitationAdded = true;
+        }));
       }
-      inUnsupportedExternalStateSection = externalStateSectionHeading || inUnsupportedExternalStateSection || isListItem(segment);
-      continue;
+      return null;
     }
 
     //audit Assumption: backend success wording is invalid without executed tool evidence.
     if (impliesBackendAction && !supportsBackendAction) {
       blockedOrRewrittenClaims.push(segment);
       if (!backendLimitationAdded) {
-        rewrittenSegments.push(`${BACKEND_STATE_LIMITATION_FALLBACK}.`);
         backendLimitationAdded = true;
+        return `${BACKEND_STATE_LIMITATION_FALLBACK}.`;
       }
-      continue;
+      return null;
     }
 
     if (impliesPersistenceAction && !supportsBackendAction && !params.capabilityFlags.canPersistData) {
       blockedOrRewrittenClaims.push(segment);
       if (!persistenceLimitationAdded) {
-        rewrittenSegments.push(`${PERSISTENCE_ACTION_LIMITATION_FALLBACK}.`);
         persistenceLimitationAdded = true;
+        return `${PERSISTENCE_ACTION_LIMITATION_FALLBACK}.`;
       }
-      continue;
+      return null;
     }
 
-    rewrittenSegments.push(segment);
-  }
+    return segment;
+  });
 
   if (blockedOrRewrittenClaims.length === sectionRewrite.blockedOrRewrittenClaims.length) {
     return {
@@ -1046,7 +1107,7 @@ function rewriteUnsupportedClaims(params: {
   }
 
   return {
-    text: normalizeWhitespace(rewrittenSegments.join(' ')),
+    text: rewrittenText,
     blockedOrRewrittenClaims
   };
 }
@@ -1081,8 +1142,7 @@ function removeOpeningPadding(text: string): string {
     return normalizeWhitespace(text);
   }
   //audit Assumption: disposable opening fillers can appear after an injected limitation sentence, not just as the first segment; failure risk: hard word-limit compression keeps filler instead of the actual answer; expected invariant: standalone padding lines are removed whenever substantive content remains elsewhere; handling strategy: drop only narrow filler segments that match the padding patterns and preserve all other content.
-  const keptSegments = segments.filter(segment => !isOpeningPaddingSegment(segment));
-  return keptSegments.length === segments.length ? normalizeWhitespace(text) : normalizeWhitespace(keptSegments.join(' '));
+  return transformHonestySegments(text, segment => isOpeningPaddingSegment(segment) ? null : segment);
 }
 
 function trimUnrequestedScopeDrift(text: string, userPrompt: string, reasoningHonesty: TrinityReasoningHonesty): string {
@@ -1130,32 +1190,20 @@ function buildPreferredLimitationSegment(
 }
 
 function compressLimitationSegments(text: string, reasoningHonesty: TrinityReasoningHonesty): string {
-  const segments = splitIntoSegments(text);
   const seenCategories = new Set<LimitationCategory>();
-  const keptSegments: string[] = [];
-  let changed = false;
-  for (const segment of segments) {
+  return transformHonestySegments(text, segment => {
     const limitationCategory = classifyLimitationCategory(segment);
     if (!limitationCategory) {
-      keptSegments.push(segment);
-      continue;
+      return segment;
     }
     //audit Assumption: the final answer should keep at most one concise limitation per limitation category; failure risk: stacked caveats crowd out the achievable answer; expected invariant: duplicate live/backend/persistence limitations collapse to one preferred sentence; handling strategy: keep the first category instance and replace it with the most specific caveat available from reasoning metadata.
     if (seenCategories.has(limitationCategory)) {
-      changed = true;
-      continue;
+      return null;
     }
     seenCategories.add(limitationCategory);
     const preferredSegment = buildPreferredLimitationSegment(limitationCategory, reasoningHonesty) ?? ensureSingleSentence(segment);
-    if (normalizeSegmentForComparison(preferredSegment) !== normalizeSegmentForComparison(segment)) {
-      changed = true;
-    }
-    keptSegments.push(preferredSegment);
-  }
-  if (!changed) {
-    return normalizeWhitespace(text);
-  }
-  return normalizeWhitespace(keptSegments.join(' '));
+    return preferredSegment;
+  });
 }
 
 function areNearDuplicateSegments(leftSegment: string, rightSegment: string): boolean {
@@ -1194,19 +1242,14 @@ function areNearDuplicateSegments(leftSegment: string, rightSegment: string): bo
 
 function dedupeNearDuplicateSegments(text: string): string {
   const keptSegments: string[] = [];
-  let removedDuplicate = false;
-  for (const segment of splitIntoSegments(text)) {
+  return transformHonestySegments(text, segment => {
     //audit Assumption: near-duplicate segments are accidental padding, not distinct user value; failure risk: repeated caveats or answer lines make the final output sound verbose and unnatural; expected invariant: only the first materially distinct sentence survives; handling strategy: compare normalized token overlap and drop later repeats.
     if (keptSegments.some(existingSegment => areNearDuplicateSegments(existingSegment, segment))) {
-      removedDuplicate = true;
-      continue;
+      return null;
     }
     keptSegments.push(segment);
-  }
-  if (!removedDuplicate) {
-    return normalizeWhitespace(text);
-  }
-  return normalizeWhitespace(keptSegments.join(' '));
+    return segment;
+  });
 }
 
 function buildReasoningFallbackSet(reasoningHonesty: TrinityReasoningHonesty): Set<string> {
@@ -1244,9 +1287,8 @@ function removeFallbackSplicesFromPartialAnswer(text: string, reasoningHonesty: 
 
   const reasoningFallbacks = buildReasoningFallbackSet(reasoningHonesty);
   const genericFallbacks = buildGenericFallbackSet();
-  const keptSegments = segments.filter(segment => !isUnrequestedFallbackSplice(segment, reasoningFallbacks, genericFallbacks));
-
-  return keptSegments.length === segments.length ? normalizeWhitespace(text) : normalizeWhitespace(keptSegments.join(' '));
+  return transformHonestySegments(text, segment =>
+    isUnrequestedFallbackSplice(segment, reasoningFallbacks, genericFallbacks) ? null : segment);
 }
 
 function removeUnrequestedMetaSections(text: string, outputControls: TrinityOutputControls): { text: string; removedMetaSections: string[] } {
@@ -1763,7 +1805,8 @@ export function enforceFinalStageHonesty(
   }
 
   return {
-    text: preservePresentation && blockedCategories.size === 0 && leadingDisclaimers.length === 0 && rawText.trim()
+    text: (preservePresentation || instructionalVerificationPolicy === 'tutor-math-v1')
+      && blockedCategories.size === 0 && leadingDisclaimers.length === 0 && rawText.trim()
       ? rawText.trim() : text,
     blocked: blockedCategories.size > 0,
     blockedCategories: Array.from(blockedCategories)
