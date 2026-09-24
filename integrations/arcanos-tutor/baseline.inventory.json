@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "status": "BLOCKED",
+  "source": "latest_published_gpt",
+  "configuration": null,
+  "knowledge": [],
+  "missingInputs": [
+    "exact_published_display_name",
+    "published_description",
+    "latest_published_builder_instructions",
+    "conversation_starters",
+    "complete_knowledge_file_inventory_and_supplied_file_hashes",
+    "enabled_capabilities",
+    "action_names_and_schemas",
+    "sharing_status",
+    "published_version_and_timestamp",
+    "representative_expected_behavior"
+  ]
+}

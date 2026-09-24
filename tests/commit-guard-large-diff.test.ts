@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from '@jest/globals';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -46,6 +46,17 @@ afterEach(() => {
 });
 
 describe('commit guard large staged diff handling', () => {
+  it('rejects force-staged private migration inputs even when their contents are benign', () => {
+    const repository = createTemporaryRepository({ '.gitignore': '/.local-migration/\n' });
+    mkdirSync(path.join(repository, '.local-migration/arcanos-tutor'), { recursive: true });
+    const privateFile = '.local-migration/arcanos-tutor/mock-published-gpt.json';
+    writeFileSync(path.join(repository, privateFile), '{"mock":"private fixture"}');
+    execFileSync('git', ['add', '--force', '--', privateFile], { cwd: repository, stdio: 'ignore' });
+    const result = runCommitGuard(repository);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('.local-migration/');
+    expect(result.stderr).not.toContain('private fixture');
+  });
   it('scans a clean staged diff larger than the child-process default buffer', () => {
     const temporaryRepository = createTemporaryRepository({
       'large-safe-diff.txt': 'bounded safe staged content\n'.repeat(60_000),

@@ -1,0 +1,90 @@
+{
+  "schemaVersion": 1,
+  "gates": {
+    "CODE_READY": {
+      "status": "VERIFIED",
+      "evidenceIds": [
+        "repository-foundation",
+        "repository-validation"
+      ],
+      "note": "Repository candidate passed scoped build/type/lint and 264 focused tests plus independent review. Full repository CI is reported separately; installed migrated skill behavior remains blocked."
+    },
+    "BACKEND_DEPLOYED": {
+      "status": "VERIFIED",
+      "evidenceIds": [
+        "railway-deployment"
+      ],
+      "note": "Existing PR 1508 backend deployed; this PR makes no runtime change."
+    },
+    "OAUTH_CONFIGURED": {
+      "status": "VERIFIED",
+      "evidenceIds": [
+        "auth0-prior-setup",
+        "public-resource"
+      ],
+      "note": "Same-task prior policy setup observed; current public challenge rechecked."
+    },
+    "CHATGPT_CONNECTION_REGISTERED": {
+      "status": "VERIFIED",
+      "evidenceIds": [
+        "chatgpt-registration"
+      ],
+      "note": "Existing private app mapping, no new registration."
+    },
+    "TOOL_DISCOVERY_VERIFIED": {
+      "status": "VERIFIED",
+      "evidenceIds": [
+        "chatgpt-discovery"
+      ],
+      "note": "Prior same-task web Refresh showed only arcanos_tutor."
+    },
+    "LIVE_TUTOR_CALL_VERIFIED": {
+      "status": "VERIFIED",
+      "evidenceIds": [
+        "chatgpt-live-call"
+      ],
+      "note": "One prior same-task model call; format issue recorded; no parity claim."
+    },
+    "GPT_BASELINE_CAPTURED": {
+      "status": "BLOCKED",
+      "evidenceIds": [
+        "account-user-report"
+      ],
+      "note": "Latest published Builder configuration and knowledge inventory not supplied."
+    },
+    "GPT_MIGRATED": {
+      "status": "NOT_STARTED",
+      "evidenceIds": [
+        "account-user-report"
+      ],
+      "note": "Original GPT unchanged; irreversible migration is not authorized."
+    },
+    "SKILL_RECONCILED": {
+      "status": "BLOCKED",
+      "evidenceIds": [],
+      "note": "Actual migrated skill and published instructions missing."
+    },
+    "REFERENCES_RECONCILED": {
+      "status": "BLOCKED",
+      "evidenceIds": [],
+      "note": "Actual knowledge and migrated reference inventories missing; an empty inventory is not proof of no files."
+    },
+    "PARITY_VERIFIED": {
+      "status": "BLOCKED",
+      "evidenceIds": [
+        "chatgpt-live-call"
+      ],
+      "note": "Matrix prepared. Old-GPT and actual migrated-plugin results absent; observed live formatting issue unresolved."
+    },
+    "PACKAGE_READY": {
+      "status": "BLOCKED",
+      "evidenceIds": [],
+      "note": "Mapped repository candidate exists; release requires inspected and reconciled private artifacts plus parity."
+    },
+    "RELEASE_READY": {
+      "status": "BLOCKED",
+      "evidenceIds": [],
+      "note": "Remain draft. Do not install/share as the migrated replacement or retire the original GPT."
+    }
+  }
+}

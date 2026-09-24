@@ -1,0 +1,111 @@
+{
+  "schemaVersion": 1,
+  "endpoint": "https://acranos-production.up.railway.app/chatgpt/mcp",
+  "toolNames": [
+    "arcanos_tutor"
+  ],
+  "registeredAppId": "asdk_app_6ab4747769088191856fd8eb02507240",
+  "technicalId": "plugin_asdk_app_6ab4747769088191856fd8eb02507240",
+  "evidence": [
+    {
+      "id": "repository-validation",
+      "kind": "repository",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-24",
+      "summary": "Pinned Node 24.18.1/npm 11.16.0: type-check/build/lint passed; 209 focused backend tests and 55 package/guard tests passed. Source validation passed; actual release exits 2 BLOCKED. Independent code review resolved nine findings. Full repository suite and hosted CI are reported separately in the draft PR; this evidence does not certify account migration or parity."
+    },
+    {
+      "id": "repository-foundation",
+      "kind": "repository",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-24",
+      "summary": "Fetched origin/main at 3f9fffe48219b784dca758bca87ade109324c7c9, the merge of PR 1508. No overlapping open PRs. Tutor OAuth adapter and prompt-only tool contract inspected; no backend source changes in this migration package."
+    },
+    {
+      "id": "railway-deployment",
+      "kind": "railway",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-24",
+      "summary": "Read-only Railway metadata: production web deployment e14cfd48-0075-4996-b0dd-ec7b620d5d82 is SUCCESS at exact commit 3f9fffe48219b784dca758bca87ade109324c7c9. Configuration names inspected only. No production mutation in this PR."
+    },
+    {
+      "id": "public-resource",
+      "kind": "railway",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-24",
+      "summary": "Public protected-resource metadata returns the intended HTTPS /chatgpt/mcp resource, the Auth0 issuer and only arcanos:tutor; unauthenticated GET /chatgpt/mcp returns 401; /readyz reports healthy. This does not prove authenticated discovery."
+    },
+    {
+      "id": "auth0-prior-setup",
+      "kind": "auth0",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-24",
+      "summary": "Earlier authorized setup in this same task observed the public PKCE client and deployed Post Login restriction to the approved account/client and Tutor resource. Eight local policy cases passed then. No secrets were read or included; no provider policy mutation or repeat login in this PR."
+    },
+    {
+      "id": "chatgpt-registration",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-24",
+      "summary": "Earlier same-task ChatGPT UI showed ARCANOS Tutor connected, OAuth used, the exact production endpoint and safe technical ID plugin_asdk_app_6ab4747769088191856fd8eb02507240. Prior dated setup audit corroborates this; not a new account inspection during this PR."
+    },
+    {
+      "id": "chatgpt-discovery",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-24",
+      "summary": "Earlier same-task connection Refresh completed and the observed catalog contained exactly arcanos_tutor, prompt-only input, OAuth arcanos:tutor scope, readOnlyHint true and openWorldHint true. Catalog not refreshed again in this PR."
+    },
+    {
+      "id": "chatgpt-live-call",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-24",
+      "summary": "Earlier same-task real authenticated ChatGPT call asked why one half equals two quarters in two short sentences. Expanded tool response showed ARCANOS:TUTOR, synchronous, memory unavailable, generation model. Answer explained equivalence but prefixed an irrelevant live-access disclaimer and used three sentences. One call; no retry. This verifies execution, not migrated skill parity."
+    },
+    {
+      "id": "account-user-report",
+      "kind": "user_reported",
+      "status": "USER_REPORTED",
+      "observedAt": "2026-09-24",
+      "summary": "User reports Auth0 is live, access restricted to the approved pilot account, Tutor connected/discovered, one real provider response succeeded, the original ARCANOS TUTOR GPT remains unchanged, and migration has not occurred. Published Builder, knowledge inventory and migration artifacts were not supplied."
+    }
+  ],
+  "checks": {
+    "registeredConnection": {
+      "status": "VERIFIED",
+      "evidenceIds": [
+        "chatgpt-registration"
+      ]
+    },
+    "endpoint": {
+      "status": "VERIFIED",
+      "evidenceIds": [
+        "public-resource",
+        "chatgpt-registration"
+      ]
+    },
+    "authentication": {
+      "status": "VERIFIED",
+      "evidenceIds": [
+        "auth0-prior-setup",
+        "chatgpt-registration",
+        "chatgpt-live-call"
+      ]
+    },
+    "toolDiscovery": {
+      "status": "VERIFIED",
+      "evidenceIds": [
+        "chatgpt-discovery"
+      ]
+    },
+    "liveExecution": {
+      "status": "VERIFIED",
+      "evidenceIds": [
+        "chatgpt-live-call"
+      ]
+    }
+  },
+  "builderReconciliation": "BLOCKED",
+  "referenceReconciliation": "BLOCKED"
+}

@@ -520,12 +520,20 @@ success_response:
 - **Failed async job inspection:** Query `/gpt-access/jobs/timeline` with the job id to inspect lifecycle events, and `/gpt-access/logs/query` for sanitized operational logs. `MODULE_ERROR` validation failures should expose safe fields such as validator name and issue codes, not prompts, completions, provider payloads, headers, or secrets.
 - **Fast path:** Confirm `executionMode: "fast"` for a prompt-generation request returns `200`, `routeDecision.path: "fast_path"`, `x-gpt-fast-path-queue-bypassed: true`, and `x-gpt-queue-bypassed: true`.
 - **Guardrail:** Confirm prompt-based and action-shaped job retrieval is rejected and callers are pointed at direct `/jobs/*` or protected GPT Access result operations.
-## Incremental migration pilot
+## ARCANOS TUTOR migration candidate
 
-All existing GPT Action integrations remain in place. The default-disabled
-Tutor connection and repository-derived skill are the first bounded migration
-slice; no existing Builder configuration or knowledge asset has been exported,
-modified or retired. The [four-GPT inventory](chatgpt-migration/INVENTORY.md)
-records source operations and explicit dispositions, including missing live
-configuration evidence. [Platform requirements](chatgpt-migration/PLATFORM.md)
-separate registered ChatGPT integration, local import and client availability.
+Existing ARCANOS TUTOR Custom GPT remains operational until retirement.
+Existing Custom GPT Actions remain unchanged. The authenticated Tutor MCP
+connection has separate deployment, discovery and prior live-call evidence;
+that does not establish migrated skill or knowledge parity.
+
+The [standalone Tutor package](../integrations/arcanos-tutor/README.md) and
+[account-side migration handoff](chatgpt-migration/TUTOR_MIGRATION.md) track each
+gate separately. The latest published Builder export and actual migration
+artifacts are still missing. Do not perform the irreversible migration or call
+the replacement fully migrated until the stated reconciliation and parity gates
+pass. Gaming, Booker and Core remain outside this Tutor migration.
+
+The [four-GPT inventory](chatgpt-migration/INVENTORY.md) remains the dated
+foundation inventory. Current Tutor-only platform findings are in the
+[platform reconciliation](chatgpt-migration/TUTOR_PLATFORM_RECONCILIATION.md).

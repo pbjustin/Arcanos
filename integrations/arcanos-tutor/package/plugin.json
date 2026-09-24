@@ -1,0 +1,17 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "arcanos-tutor",
+  "version": "0.1.0",
+  "description": "ARCANOS TUTOR explanations, lessons and practice through its authenticated Tutor connection. Initial release migration candidate.",
+  "author": { "name": "ARCANOS" },
+  "repository": "https://github.com/pbjustin/Arcanos",
+  "keywords": ["tutoring", "education", "arcanos"],
+  "extensions": {
+    "com.openai": {
+      "apps": "./.app.json",
+      "interface": {
+        "displayName": "ARCANOS TUTOR"
+      }
+    }
+  }
+}
