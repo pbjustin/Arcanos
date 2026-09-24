@@ -6,12 +6,35 @@ This document prepares account-side work; it does not authorize the irreversible
 migration. Keep the PR draft until actual migrated skill/reference reconciliation
 and parity pass.
 
-The [candidate acceptance checkpoint](TUTOR_CANDIDATE_ACCEPTANCE.md) records the
-latest non-production target discovery, pending setup approval, bounded live-test
-plan, fresh publication inspection and release-order recommendation. No approved
-authenticated candidate target was found; no candidate was deployed. The latest
-cross-multiplication repair is deterministic repository evidence only. Production
-remains at the base revision, and baseline-bound old-GPT results remain 0/16.
+The runtime repairs are now independently reviewable in
+[draft PR #1510](https://github.com/pbjustin/Arcanos/pull/1510), head
+`3bf9edc010f8e1680783d6fcd19ba990d88894ad`, extracted from this PR's reviewed
+`aeb38692221082a41f6e4382bb8b651c24c917ca` onto the base above. That PR contains
+only the prompt-schema and isolated Tutor arithmetic-honesty repairs, necessary
+regressions and required documentation/index updates. Published GPT exports,
+knowledge files and migrated-plugin parity are not runtime-code dependencies.
+
+The [candidate acceptance checkpoint](TUTOR_CANDIDATE_ACCEPTANCE.md) retains the
+earlier non-production discovery and pending isolated-target proposal as dated
+evidence. No approved authenticated candidate target was found or deployed. That
+proposal is not a prerequisite for the runtime split. The runtime PR carries the
+current release handoff: repository/CI evidence, pending authenticated acceptance,
+separate owner release approval, controlled rollout and post-deployment checks.
+The established process allows a separately approved rollout to the existing
+production services, subject to its hold, compatibility, source-attestation,
+worker-first and rollback controls. No deployment or live paid test occurred here.
+
+Keep both PRs draft. Until #1510 is actually merged, its runtime changes remain
+in #1509's branch ancestry. Only after that merge, fetch current main and merge it
+into #1509 using the non-destructive workflow in
+[the synchronization skill](../../.agents/skills/arcanos-safe-worktree-sync/SKILL.md).
+Preserve unrelated and ignored local work; do not rebase, force-push or reset.
+Confirm the integrated runtime repair hunks disappear from the remaining diff,
+resolve conflicts without restoring old behavior, and retain packaging,
+published-baseline capture, actual migrated instructions/references and paired
+parity here. This reconciliation has not been performed. All migration gate
+statuses below and in the ledger are unchanged; baseline-bound old-GPT results
+remain 0/16 and the account migration still requires separate owner confirmation.
 
 ## What is ready, and what is not
 
