@@ -57,10 +57,11 @@ function completeFixture() {
   writeFileSync(path.join(inputs, 'migrated-skill.md'), migrated);
   writeFileSync(path.join(root, 'package', skillPath), `${readFileSync(path.join(root, 'package', skillPath), 'utf8')}\n${instruction}\n`);
   cpSync(path.join(root, 'package/plugin.json'), path.join(inputs, 'migrated-plugin.json'));
+  cpSync(path.join(root, 'package/.app.json'), path.join(inputs, '.app.json'));
   const appId = json(root, 'connection.requirements.json').registeredAppId;
   const migration = { schemaVersion: 1, status: 'VERIFIED', registeredAppId: appId,
     skill: { ...artifact(inputs, 'migrated-skill.md'), ...review, approvedForRepository: true },
-    metadata: artifact(inputs, 'migrated-plugin.json'), references: baseline.knowledge, warnings: [],
+    metadata: artifact(inputs, 'migrated-plugin.json'), appMapping: artifact(inputs, '.app.json'), references: baseline.knowledge, warnings: [],
     accountReview: { ...review, confirmedMigrated: true, confirmedWarningsReviewed: true },
     instructionComparison: { status: 'VERIFIED', ...review, disposition: 'PASS', summary: 'Mock exact instruction preservation.',
       baselineInstructionsSha256: baseline.configuration.fields.instructions.sha256,
@@ -169,6 +170,82 @@ describe('Standalone Tutor package and migration release boundary', () => {
     edit(root, 'connection.requirements.json', connection => { connection.toolNames.push('extra_tool'); });
     expect(validate(root).status).toBe(1);
   });
+  it('accepts equivalent property order in the final and migrated app mappings', () => {
+    const root = copyPackage();
+    edit(root, 'package/.app.json', mapping => {
+      const id = mapping.apps['arcanos-tutor'].id;
+      mapping.apps['arcanos-tutor'] = { required: true, id };
+    });
+    expect(validate(root).status).toBe(0);
+    const fixture = completeFixture();
+    edit(fixture.inputs, '.app.json', mapping => {
+      const id = mapping.apps['arcanos-tutor'].id;
+      mapping.apps['arcanos-tutor'] = { required: true, id };
+    });
+    edit(fixture.root, 'migration.inventory.json', migration => { migration.appMapping = artifact(fixture.inputs, '.app.json'); });
+    expect(validate(fixture.root, ['--release', '--inputs', fixture.inputs]).status).toBe(0);
+  });
+  it.each(['registeredAppId', 'appMapping'])('rejects verified migration without its %s binding', field => {
+    const fixture = completeFixture();
+    edit(fixture.root, 'migration.inventory.json', migration => { delete migration[field]; });
+    expect(validate(fixture.root, ['--release', '--inputs', fixture.inputs]).status).toBe(1);
+  });
+  it('rejects a migrated manifest pointing to an unreviewed app mapping', () => {
+    const fixture = completeFixture();
+    cpSync(path.join(fixture.inputs, '.app.json'), path.join(fixture.inputs, 'other-app.json'));
+    edit(fixture.inputs, 'migrated-plugin.json', metadata => { metadata.extensions['com.openai'].apps = './other-app.json'; });
+    edit(fixture.root, 'migration.inventory.json', migration => { migration.metadata = artifact(fixture.inputs, 'migrated-plugin.json'); });
+    expect(validate(fixture.root, ['--release', '--inputs', fixture.inputs]).status).toBe(1);
+  });
+  it('rejects migrated metadata without its app mapping pointer', () => {
+    const fixture = completeFixture();
+    edit(fixture.inputs, 'migrated-plugin.json', metadata => { delete metadata.extensions['com.openai'].apps; });
+    edit(fixture.root, 'migration.inventory.json', migration => { migration.metadata = artifact(fixture.inputs, 'migrated-plugin.json'); });
+    expect(validate(fixture.root, ['--release', '--inputs', fixture.inputs]).status).toBe(1);
+  });
+  it('rejects an actual migrated app mapping for another registered connection', () => {
+    const fixture = completeFixture();
+    edit(fixture.inputs, '.app.json', mapping => { mapping.apps['arcanos-tutor'].id = `asdk_app_${'0'.repeat(32)}`; });
+    edit(fixture.root, 'migration.inventory.json', migration => { migration.appMapping = artifact(fixture.inputs, '.app.json'); });
+    expect(validate(fixture.root, ['--release', '--inputs', fixture.inputs]).status).toBe(1);
+  });
+  it.each(['optional', 'string-required', 'extra-app', 'optional-field', 'array-apps', 'empty-alias'])('rejects a migrated mapping with %s semantics', kind => {
+    const fixture = completeFixture();
+    edit(fixture.inputs, '.app.json', mapping => {
+      const tutor = mapping.apps['arcanos-tutor'];
+      if (kind === 'optional') tutor.required = false;
+      else if (kind === 'string-required') tutor.required = 'true';
+      else if (kind === 'extra-app') mapping.apps.extra = { ...tutor };
+      else if (kind === 'array-apps') mapping.apps = [tutor];
+      else if (kind === 'empty-alias') mapping.apps = { '': tutor };
+      else tutor.optional = true;
+    });
+    edit(fixture.root, 'migration.inventory.json', migration => { migration.appMapping = artifact(fixture.inputs, '.app.json'); });
+    expect(validate(fixture.root, ['--release', '--inputs', fixture.inputs]).status).toBe(1);
+  });
+  it('accepts one migrated alias bound to the same required Tutor connection', () => {
+    const fixture = completeFixture();
+    edit(fixture.inputs, '.app.json', mapping => { mapping.apps = { 'migrated-tutor-alias': mapping.apps['arcanos-tutor'] }; });
+    edit(fixture.root, 'migration.inventory.json', migration => { migration.appMapping = artifact(fixture.inputs, '.app.json'); });
+    expect(validate(fixture.root, ['--release', '--inputs', fixture.inputs]).status).toBe(0);
+  });
+  it.each(['../.app.json', '/.app.json', 'C:/mock/.app.json'])('rejects unsafe migrated app mapping pointer %s', pointer => {
+    const fixture = completeFixture();
+    edit(fixture.inputs, 'migrated-plugin.json', metadata => { metadata.extensions['com.openai'].apps = pointer; });
+    edit(fixture.root, 'migration.inventory.json', migration => { migration.metadata = artifact(fixture.inputs, 'migrated-plugin.json'); });
+    expect(validate(fixture.root, ['--release', '--inputs', fixture.inputs]).status).toBe(1);
+  });
+  it('resolves the migrated app mapping relative to a nested manifest', () => {
+    const fixture = completeFixture();
+    mkdirSync(path.join(fixture.inputs, 'generated'));
+    renameSync(path.join(fixture.inputs, 'migrated-plugin.json'), path.join(fixture.inputs, 'generated/plugin.json'));
+    renameSync(path.join(fixture.inputs, '.app.json'), path.join(fixture.inputs, 'generated/.app.json'));
+    edit(fixture.root, 'migration.inventory.json', migration => {
+      migration.metadata = artifact(fixture.inputs, 'generated/plugin.json');
+      migration.appMapping = artifact(fixture.inputs, 'generated/.app.json');
+    });
+    expect(validate(fixture.root, ['--release', '--inputs', fixture.inputs]).status).toBe(0);
+  });
   it('rejects replacing both mapping records with a plausible but unobserved app ID', () => {
     const root = copyPackage();
     const invented = `asdk_app_${'0'.repeat(32)}`;
@@ -271,9 +348,9 @@ describe('Standalone Tutor package and migration release boundary', () => {
     edit(root, 'migration-state.json', state => { state.gates.GPT_BASELINE_CAPTURED.status = 'VERIFIED'; state.gates.GPT_BASELINE_CAPTURED.evidenceIds = ['repository-foundation']; });
     expect(validate(root).status).toBe(1);
   });
-  it.each(['configuration', 'reference', 'metadata'])('rejects changed private %s bytes after review', target => {
+  it.each(['configuration', 'reference', 'metadata', 'appMapping'])('rejects changed private %s bytes after review', target => {
     const fixture = completeFixture();
-    const file = target === 'configuration' ? 'published-gpt.json' : target === 'reference' ? 'mock-notes.txt' : 'migrated-plugin.json';
+    const file = target === 'configuration' ? 'published-gpt.json' : target === 'reference' ? 'mock-notes.txt' : target === 'appMapping' ? '.app.json' : 'migrated-plugin.json';
     writeFileSync(path.join(fixture.inputs, file), 'Changed mock artifact.');
     expect(validate(fixture.root, ['--release', '--inputs', fixture.inputs]).status).toBe(1);
   });

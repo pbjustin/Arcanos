@@ -62,8 +62,13 @@ and an evidence-based tooling update.
 
 The local sidecar `migration.inventory.json` records:
 
-- `skill`, `metadata`, `references`, actual `warnings`, and the reviewed
-  `registeredAppId` binding.
+- `skill`, `metadata`, `appMapping`, `references`, actual `warnings`, and the
+  reviewed `registeredAppId` binding. A verified migration requires all three
+  artifact records and the registered app ID. `appMapping` records the actual
+  app-mapping file referenced by the migrated manifest, with its path relative to
+  the private input directory, SHA-256 and byte size. The manifest's app path is
+  resolved relative to that manifest and must select this inspected artifact;
+  its single required app must match the registered Tutor connection.
 - `accountReview`: reviewer/date, `confirmedMigrated: true` and
   `confirmedWarningsReviewed: true`. These are human review assertions, not
   fields invented inside the actual generated manifest.

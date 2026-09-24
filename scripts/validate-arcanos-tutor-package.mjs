@@ -23,6 +23,16 @@ const unresolved = /(?:\b(?:TODO|TBD|REPLACE_ME|YOUR_APP_ID)\b|<[^>]*(?:app[_ -]
 const equal = (left, right) => JSON.stringify(left) === JSON.stringify(right);
 const normalize = value => value.replace(/\r\n/gu, '\n').trim();
 
+function tutorAppMapping(mapping, appId, allowMigratedAlias = false) {
+  if (!mapping || typeof mapping !== 'object' || Array.isArray(mapping) || !equal(Object.keys(mapping), ['apps']) ||
+    !mapping.apps || typeof mapping.apps !== 'object' || Array.isArray(mapping.apps)) return false;
+  const aliases = Object.keys(mapping.apps);
+  if (aliases.length !== 1 || !text(aliases[0]) || (!allowMigratedAlias && aliases[0] !== 'arcanos-tutor')) return false;
+  const app = mapping.apps[aliases[0]];
+  return app && typeof app === 'object' && !Array.isArray(app) && equal(Object.keys(app).sort(), ['id', 'required']) &&
+    app.id === appId && app.required === true;
+}
+
 function validateEvidence(connection, state) {
   requireCondition(connection.schemaVersion === 1 && connection.endpoint === endpoint && equal(connection.toolNames, ['arcanos_tutor']), 'CONNECTION_CONTRACT_INVALID');
   requireCondition(connection.registeredAppId === registeredAppId &&
@@ -79,14 +89,15 @@ function validateEvidence(connection, state) {
 function validateMigration(migration) {
   requireCondition(migration.schemaVersion === 1 && statuses.includes(migration.status) && Array.isArray(migration.references) &&
     Array.isArray(migration.warnings) && migration.warnings.every(text), 'MIGRATION_INVENTORY_INVALID');
-  for (const name of ['skill', 'metadata']) if (migration[name] !== null) validateArtifact(migration[name]);
+  for (const name of ['skill', 'metadata', 'appMapping']) if (migration[name] !== null) validateArtifact(migration[name]);
   const referencePaths = new Set();
   for (const artifact of migration.references) {
     validateArtifact(artifact);
     requireCondition(text(artifact.name) && !referencePaths.has(artifact.path), 'REFERENCE_NAME_MISSING');
     referencePaths.add(artifact.path);
   }
-  requireCondition(migration.status !== 'VERIFIED' || (migration.skill && migration.metadata), 'MIGRATION_ARTIFACTS_MISSING');
+  requireCondition(migration.status !== 'VERIFIED' || (migration.skill && migration.metadata && migration.appMapping), 'MIGRATION_ARTIFACTS_MISSING');
+  requireCondition(migration.status !== 'VERIFIED' || text(migration.registeredAppId), 'MIGRATION_CONNECTION_MISSING');
   if (migration.instructionComparison !== null) {
     const comparison = migration.instructionComparison;
     requireCondition(comparison.status === 'VERIFIED' && reviewed(comparison) &&
@@ -204,6 +215,13 @@ async function verifyInputs(inputRoot, baseline, migration, referenceReview, par
   const configuration = JSON.parse((await verifyArtifact(inputRoot, baseline.configuration)).content);
   requireCondition(validateManifest(metadata) && metadata.name === 'arcanos-tutor' &&
     metadata.$schema === 'https://agent-plugins.org/schemas/1.0.0/plugin.schema.json', 'MIGRATED_METADATA_MISMATCH');
+  const mappingPointer = metadata.extensions?.['com.openai']?.apps;
+  requireCondition(text(mappingPointer), 'MIGRATED_APP_MAPPING_MISSING');
+  const mappingRelative = relativeFile(mappingPointer.replace(/^\.\//u, ''));
+  const mappingPath = relativeFile(path.posix.join(path.posix.dirname(migration.metadata.path), mappingRelative));
+  requireCondition(mappingPath === migration.appMapping.path, 'MIGRATED_APP_MAPPING_PATH_MISMATCH');
+  const migratedMapping = JSON.parse((await verifyArtifact(inputRoot, migration.appMapping)).content);
+  requireCondition(tutorAppMapping(migratedMapping, migration.registeredAppId, true), 'MIGRATED_APP_MAPPING_INVALID');
   requireCondition(reviewed(migration.accountReview) && migration.accountReview.confirmedMigrated === true &&
     migration.accountReview.confirmedWarningsReviewed === true, 'MIGRATION_ACCOUNT_REVIEW_MISSING');
   const comparison = migration.instructionComparison;
@@ -280,7 +298,7 @@ export async function validateArcanosTutorPackage(root, { inputRoot } = {}) {
     (extension.interface.defaultPrompt === undefined || (Array.isArray(extension.interface.defaultPrompt) &&
       extension.interface.defaultPrompt.every(text))), 'OPENAI_EXTENSION_INVALID');
   const mapping = JSON.parse(files.get('.app.json').content);
-  requireCondition(equal(mapping, { apps: { 'arcanos-tutor': { id: connection.registeredAppId, required: true } } }), 'APP_MAPPING_INVALID');
+  requireCondition(tutorAppMapping(mapping, connection.registeredAppId), 'APP_MAPPING_INVALID');
   const skill = files.get(skillPath);
   const frontmatter = skill.content.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/u);
   requireCondition(frontmatter, 'SKILL_FRONTMATTER_MISSING');

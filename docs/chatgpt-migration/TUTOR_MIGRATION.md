@@ -143,6 +143,9 @@ metadata and all migration warnings. Keep those artifacts privately first.
    skill instruction into new backend permission or invent saved learning progress.
 4. Confirm generated metadata and the final package use the actual registered
    app, and that normal Tutor behavior no longer needs a legacy Custom Action.
+   Inventory the actual app-mapping file selected by the migrated manifest as
+   `appMapping`; release validation checks its path, hash, byte size and required
+   Tutor app identity instead of relying only on the reviewed app-ID assertion.
 5. Approve each exact reference file for repository publication before copying it.
    Local possession, migration, or metadata review is not content-publication
    permission. If required private content cannot be committed, keep public
