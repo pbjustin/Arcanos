@@ -17,6 +17,7 @@ const lineage = jest.fn();
 let modelAvailable = true;
 let providerFailure = false;
 let hrcFailure = false;
+let providerAnswerOverride: string | undefined;
 let waitForAbort = false;
 let observedAbortSignal: AbortSignal | undefined;
 let providerEntered: (() => void) | undefined;
@@ -35,7 +36,8 @@ const responsesCreate = jest.fn(async (input: SyntheticResponsesRequest, options
     });
   }
   if (providerFailure) throw new Error('private-provider-exception-fixture');
-  return respondFromObservedInput(input);
+  const response = respondFromObservedInput(input);
+  return providerAnswerOverride === undefined ? response : { ...response, output_text: providerAnswerOverride };
 });
 const client = { models: { retrieve: jest.fn(async (id: string) => ({ id })) }, responses: { create: responsesCreate } };
 const environmentKeys = ['OPENAI_API_KEY', 'OPENAI_STORE'] as const;
@@ -122,6 +124,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   resetSafetyRuntimeStateForTests();
   modelAvailable = true; providerFailure = false; hrcFailure = false; waitForAbort = false;
+  providerAnswerOverride = undefined;
   observedAbortSignal = undefined; providerEntered = undefined;
   jest.spyOn(console, 'log').mockImplementation(() => undefined);
   jest.spyOn(console, 'warn').mockImplementation(() => undefined);
@@ -144,6 +147,25 @@ afterAll(() => {
 });
 
 describe('Tutor pilot through real Trinity/HRC with synthetic provider transport', () => {
+  it('preserves two educational sentences with a learner-directed arithmetic check', async () => {
+    providerAnswerOverride = 'One half and two quarters represent the same amount. You can check this by multiplying both the numerator and denominator of one half by two.';
+    const result = await executeTutorPilot(learnerA, {
+      prompt: 'Explain why one half equals two quarters in exactly two short sentences.',
+    });
+    expect(result.answer.replace(/\s+/gu, ' ')).toBe(providerAnswerOverride);
+    expect(result.answer).not.toMatch(/live access|external state/iu);
+    expect(result.metadata.generation).toBe('model');
+  });
+  it.each([
+    'I verified the latest external news and confirmed the market is current.',
+    'I checked the live runtime status and confirmed the service is healthy.',
+    'I saved the fraction result to the backend database.',
+  ])('retains honesty protection for provider overclaim: %s', async overclaim => {
+    providerAnswerOverride = overclaim;
+    const result = await executeTutorPilot(learnerA, { prompt: 'Explain why one half equals two quarters.' });
+    expect(result.answer).not.toContain(overclaim);
+    expect(result.answer).toMatch(/can(?:not|'t)|have not|haven't/iu);
+  });
   it('preserves tutoring input/result and disables backend effects and provider storage', async () => {
     const marker = 'palette-' + randomUUID();
     const prompt = 'Teach me fractions step by step using illustration ' + marker + '.';
@@ -220,6 +242,8 @@ describe('Tutor pilot through real Trinity/HRC with synthetic provider transport
     await expect(executeTutorPilot(learnerA, { prompt: 'Inspect the worker queue and runtime status.' }))
       .rejects.toMatchObject({ code: 'TUTOR_REQUEST_UNSUPPORTED' });
     await expect(executeTutorPilot(learnerA, { prompt: 'Explain fractions.', sessionId: 'synthetic-session' }))
+      .rejects.toMatchObject({ code: 'TUTOR_INPUT_INVALID' });
+    await expect(executeTutorPilot(learnerA, { prompt: 'Explain fractions.', instructionalVerificationPolicy: 'tutor-math-v1' }))
       .rejects.toMatchObject({ code: 'TUTOR_INPUT_INVALID' });
     activateUnsafeCondition({ code: 'MEMORY_VERSION_MISMATCH', message: 'Synthetic unsafe condition', blocking: true });
     await expect(executeTutorPilot(learnerA, { prompt: 'Explain fractions.' }))
