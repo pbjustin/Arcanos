@@ -1086,7 +1086,9 @@ export async function runThroughBrain(
           candidateText,
           reasoningHonesty,
           capabilityFlags,
-          readIntentMode(outputControls)
+          readIntentMode(outputControls),
+          false,
+          outputControls.instructionalVerificationPolicy
         );
         if (honestyFiltered.blocked || directAnswerNeedsCurrentStateLimitation) {
           reasoningHonesty.responseMode = 'partial_refusal';
@@ -1994,7 +1996,8 @@ export async function runThroughBrain(
       reasoningHonesty,
       capabilityFlags,
       readIntentMode(outputControls),
-      Boolean(gamingGuideIntakePolicy)
+      Boolean(gamingGuideIntakePolicy),
+      outputControls.instructionalVerificationPolicy
     );
     const enforcedFinalOutput = enforceFinalStageHonestyAndMinimalism({
       text: honestyFilteredFinal.text,

@@ -90,6 +90,7 @@ export interface TrinityOutputControls {
   debugPipeline: boolean;
   strictUserVisibleOutput: boolean;
   intentMode?: TrinityIntentMode;
+  instructionalVerificationPolicy?: 'tutor-math-v1';
 }
 
 export interface TrinityPipelineDebug {
@@ -281,6 +282,8 @@ export interface TrinityRunOptions {
   /** Abort and drain a timed direct-answer provider call before the stage settles. */
   cooperativeModelStageTimeout?: boolean;
   toolBackedCapabilities?: TrinityToolBackedCapabilities;
+  /** Server-owned Tutor policy for learner-directed local arithmetic instructions; grants no capability. */
+  instructionalVerificationPolicy?: 'tutor-math-v1';
   requestedVerbosity?: TrinityRequestedVerbosity;
   maxWords?: number | null;
   answerMode?: TrinityAnswerMode;
