@@ -5,55 +5,45 @@
       "status": "VERIFIED",
       "evidenceIds": [
         "repository-foundation",
-        "repository-validation",
-        "repository-tutor-repair-validation",
-        "candidate-repair-validation-20260924"
+        "runtime-main-reconciliation-20260924"
       ],
-      "note": "Source revision 55798a8ee23a2464dea6c9fce15ca39ac90dd23d passed 465 unique local tests, type-check/build/lint and CLI contract/offline checks. Independent code review found no blocker; no live candidate acceptance or migration claim."
+      "note": "Repository reconciliation preserves exact merged main8af7 runtime bytes. Fresh local validation is recorded separately in TUTOR_RUNTIME_ACCEPTANCE.md. This repository readiness status is not successful live acceptance: repeated raw honesty/format failures remain."
     },
     "BACKEND_DEPLOYED": {
-      "status": "IMPLEMENTED_NOT_VERIFIED",
+      "status": "VERIFIED",
       "evidenceIds": [
-        "railway-deployment",
-        "repository-tutor-repair-validation",
-        "production-readonly-recheck-20260924",
-        "candidate-target-discovery-20260924"
+        "production-1510-fresh-recheck-20260924"
       ],
-      "note": "Production remains at 3f9fffe48219b784dca758bca87ade109324c7c9. Candidate source 55798a8ee23a2464dea6c9fce15ca39ac90dd23d is not deployed; no approved authenticated non-production target exists. Historical sealed preview covered only 7f4e8c6de2ad145be04de23a436a2dc106f118e7."
+      "note": "PR1510 merge8af7a5712ebd5954a97af06ab31d0e2527ac0b58 is deployed to the freshly reconfirmed worker/web IDs; both sole active SUCCESS and ready. Source is tied to exact-blob upload receipts/deployment identity, not independent in-container Git attestation. No deployment occurred in this task."
     },
     "OAUTH_CONFIGURED": {
       "status": "VERIFIED",
       "evidenceIds": [
-        "auth0-prior-setup",
-        "public-resource",
-        "chatgpt-connection-refresh"
+        "primary-reauth-schema-refresh-20260924"
       ],
-      "note": "Prior policy setup and public resource metadata/anonymous denial were observed. Same-account Reconnect resolved the initial UNAUTHORIZED state; fresh UI showed OAuth and the expected catalog. A later connector schema failure supplied no live Tutor answer."
+      "note": "Existing Primary reauthentication succeeded and four raw authenticated calls returned real model answers. Exact-client refresh-token durability remains unverified; ChatGPT A selected-account binding was not exposed."
     },
     "CHATGPT_CONNECTION_REGISTERED": {
       "status": "VERIFIED",
       "evidenceIds": [
-        "chatgpt-registration",
-        "chatgpt-connection-refresh"
+        "primary-reauth-schema-refresh-20260924"
       ],
-      "note": "Fresh same-account UI matched the expected endpoint, raw app ID and technical ID. No new registration was created."
+      "note": "Fresh existing-connection UI confirmed unchanged registered app, technical identity and production resource. No connection created or replaced."
     },
     "TOOL_DISCOVERY_VERIFIED": {
       "status": "VERIFIED",
       "evidenceIds": [
-        "chatgpt-discovery",
-        "chatgpt-connection-refresh"
+        "primary-reauth-schema-refresh-20260924"
       ],
-      "note": "Fresh supported Refresh after same-account Reconnect showed only arcanos_tutor. Successful tool discovery does not establish a successful live tool call."
+      "note": "Explicit supported Refresh after reconnect exposed exactly arcanos_tutor with current main schema, prompt-only input and scope arcanos:tutor. No additional capabilities observed."
     },
     "LIVE_TUTOR_CALL_VERIFIED": {
       "status": "BLOCKED",
       "evidenceIds": [
-        "chatgpt-current-call-schema-blocked",
-        "candidate-sdk-retest-pending",
-        "candidate-chatgpt-retest-pending"
+        "runtime-raw-acceptance-20260924",
+        "runtime-chatgpt-acceptance-20260924"
       ],
-      "note": "LIVE_RETEST_PENDING. Repository schema and narrow arithmetic fixes passed deterministic tests, but zero live candidate requests have been made. Existing production execution/schema failure is separate; no raw-versus-displayed candidate formatting result exists."
+      "note": "Authentication and refreshed schema succeeded; all four raw calls returned model generation, but A/C/D repeat the irrelevant disclaimer and C omits the learner check. RUNTIME_ACCEPTANCE=FAIL. User-defined absence of a systematic remaining honesty defect is not satisfied. ChatGPT raw/final pairing remains unavailable. No retry, output rewriting or backend repair."
     },
     "GPT_BASELINE_CAPTURED": {
       "status": "BLOCKED",
@@ -90,7 +80,7 @@
         "published-baseline-recheck-20260924",
         "candidate-chatgpt-retest-pending"
       ],
-      "note": "All 16 rows remain BLOCKER. Ten provisional original-GPT observations have zero official baseline-fingerprint-bound results; six cases remain unobserved. Actual migrated-plugin results are absent and every official result field stays null. Live formatting remains LIVE_RETEST_PENDING; no accepted difference."
+      "note": "All16 rows remain BLOCKER; ten provisional old-GPT observations have zero baseline-fingerprint-bound results. Migrated-plugin results absent, official fields null. Current runtime acceptance FAIL is separate from old/new parity; no accepted difference."
     },
     "PACKAGE_READY": {
       "status": "BLOCKED",

@@ -159,3 +159,35 @@ private-content publication or gate promotion. The real acceptance environment,
 auth setup and separate ChatGPT connection remain unapproved and uncreated;
 startup/access-boundary inspection must precede any future deployment. The
 production mapping is preserved, and the PR remains draft.
+
+## Post-#1510 reconciliation and runtime evidence review
+
+On 2026-09-24 a separate reviewer inspected the current main merge and safe
+evidence update against main `8af7a5712ebd5954a97af06ab31d0e2527ac0b58` and
+prior migration head `55eeb0dc597acde29b541b25916cc2a1a744be22`.
+No remaining evidence-publication or reconciliation blocker was found. This
+verdict does not approve runtime release: **RUNTIME_ACCEPTANCE=FAIL** and
+**LIVE_TUTOR_CALL_VERIFIED=BLOCKED**.
+
+- All nine runtime/schema/test repair files and the schema guide match main.
+- All 24 evidence hashes were independently recomputed: eight prompts, eight
+  raw/display answers and eight sanitized summaries. Raw hashes cover structured
+  answer strings; ChatGPT hashes cover visible plain-text transcriptions.
+- The canonical schema hash matches the refreshed UI representation and main.
+- The supported thread export confirms prepared prompts, including B's actual
+  newline. Same-invocation ChatGPT tool arguments and raw results remain absent;
+  no cross-request comparison or quotation was promoted to wrapper attribution.
+- Raw results (1 pass/3 failures) are separate from ChatGPT display results
+  (1 pass/3 failures) and zero fully evidenced raw/final paired passes.
+- All sixteen parity rows remain BLOCKER, with oldGpt/plugin fields null.
+  Baseline and migrated-artifact gates remain blocked; no accepted difference.
+- Tracked additions contain reviewed metadata/hashes/summaries, not private
+  conversations, Builder/knowledge contents or credentials.
+
+Stale in-progress wording and ambiguity about visible-text versus Markdown hash
+provenance were corrected. A separate read-only source reviewer also confirmed
+the [runtime report's](TUTOR_RUNTIME_ACCEPTANCE.md) deterministic honesty cases
+and caveat/list interaction. Constructed pre-guard strings were not captured live
+provider text; source policy forwarding is not runtime option attestation.
+Neither reviewer invoked Tutor, changed production/authentication, or edited
+backend code. Final documentation/sync/staged-guard checks follow these text edits.

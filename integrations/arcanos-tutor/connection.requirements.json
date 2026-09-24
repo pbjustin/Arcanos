@@ -181,44 +181,80 @@
       "status": "USER_REPORTED",
       "observedAt": "2026-09-24",
       "summary": "Owner reports iOS connection attempt returned Failed to connect to ARCANOS Tutor. No independent iOS test was performed. Official current MCP mobile documentation separately supports IOS_VERIFIED=BLOCKED_BY_PLATFORM; no backend remediation indicated for that platform limitation. See TUTOR_CANDIDATE_ACCEPTANCE.md; this observation has no candidate-revision binding."
+    },
+    {
+      "id": "runtime-main-reconciliation-20260924",
+      "kind": "repository",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-24T17:54:59Z",
+      "summary": "PR1510 merged at 8af7a5712ebd5954a97af06ab31d0e2527ac0b58, equal to fetched origin/main. Non-destructive main merge into prior PR1509 head 55eeb0dc597acde29b541b25916cc2a1a744be22 required only four generated-index conflict resolutions. All nine runtime/schema/test repair files and schema guide match main exactly and disappear from remaining diff. Migration packaging/tooling retained; ignored private inputs and unrelated worktrees preserved. Fresh validation is recorded in TUTOR_RUNTIME_ACCEPTANCE.md; no backend edits."
+    },
+    {
+      "id": "production-1510-fresh-recheck-20260924",
+      "kind": "railway",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-24T17:51:14.305Z",
+      "summary": "Production fb583147-6c39-4343-9267-500f357d25ab: worker628f094e-4fee-4523-8eb0-2dc145364e96 and web4d3576b6-8f45-421e-ba6d-23b9f01f079d remain sole active SUCCESS/ready, worker accepting_claims. Source8af7a5712ebd5954a97af06ab31d0e2527ac0b58 is correlated through prior exact-Git-blob upload receipts and unchanged deployment/image identity, not independent container Git attestation. Public metadata200 exact production MCP resource/only arcanos:tutor; anonymous401. Settings/variable fingerprints/visible staged metadata/native triggers unchanged. Readiness is cached dependency state; no deploy/configuration change in this task."
+    },
+    {
+      "id": "primary-reauth-schema-refresh-20260924",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-24T17:56:23Z",
+      "summary": "Supported Reconnect on the existing Primary account completed with Primary is now connected. The Refresh control appeared after reauthentication, was clicked, and reported Tools refreshed. Same app asdk_app_6ab4747769088191856fd8eb02507240 and technical plugin_asdk_app_6ab4747769088191856fd8eb02507240; exact production resource and scope arcanos:tutor; only arcanos_tutor. Prompt-only required string/minLength1/maxLength8000/additionalPropertiesfalse with corrected anchored multiline-safe pattern. Canonical sorted-key schema SHA256 436ed5cc926e0aafc1db6cf40657ae0b0ef3e996f063310a84555e2ef2eef148. No app/connection created, disconnected or replaced; second pre-existing account not reauthenticated."
+    },
+    {
+      "id": "auth0-refresh-diagnosis-20260924",
+      "kind": "auth0",
+      "status": "BLOCKED",
+      "observedAt": "2026-09-24T17:57:08Z",
+      "summary": "Anonymous current OIDC and OAuth server discovery returned200, exact issuer https://dev-etfsljoipfurdij6.us.auth0.com/, offline_access scope, authorization_code and refresh_token grants, S256. Exact existing application/API refresh grant, Allow Offline Access, rotation/lifetimes and historical issuance not verified: dashboard requires owner sign-in, official Auth0 CLI unavailable. Cause remains H UNKNOWN with G connection-state symptom; successful Primary reconnect proves recovery, not durable renewal. No token/secret retrieval or policy mutation."
+    },
+    {
+      "id": "runtime-raw-acceptance-20260924",
+      "kind": "chatgpt",
+      "status": "BLOCKED",
+      "observedAt": "2026-09-24T17:57:31Z",
+      "summary": "Four authenticated connected-tool calls using existing Primary, exactly once A-D after explicit refresh. All returned real model metadata ARCANOS:TUTOR/synchronous/memory unavailable; MCP isErrorfalse, HTTP status not exposed by connector. B PASS. A has3 sentences/canned disclaimer; C has2 sentences/canned disclaimer and missing cross-multiplication request; D has disclaimer and3 inline numbered markers/no separate lines. All raw answers retained privately; prompt/answer/sanitized-summary hashes in TUTOR_RUNTIME_ACCEPTANCE.md. RUNTIME_ACCEPTANCE FAIL; LIVE_TUTOR_CALL_VERIFIED BLOCKED due repeated backend honesty/format failures. No retry or repair."
+    },
+    {
+      "id": "runtime-chatgpt-acceptance-20260924",
+      "kind": "chatgpt",
+      "status": "BLOCKED",
+      "observedAt": "2026-09-24T18:03:44Z",
+      "summary": "New supported ChatGPT Work conversation, A-D each submitted once. A AUTH/UNAUTHORIZED; B displayed two sentences/no disclaimer; C displayed disclaimer/equality plus commentary, omitted requested learner cross-multiplication; D displayed disclaimer/flat three markers plus commentary. B-D explicitly selected existing Primary in request. Expanded UI activity and supported thread reader did not expose same-invocation raw payloads or tool arguments; display-only B success is not a paired raw/final pass and wrapper attribution remains unverified. Actual LF verified in B composer/submitted user message, not independently in tool argument. Four raw plus four ChatGPT slots closed; zero retries."
     }
   ],
   "checks": {
     "registeredConnection": {
       "status": "VERIFIED",
       "evidenceIds": [
-        "chatgpt-registration",
-        "chatgpt-connection-refresh"
+        "primary-reauth-schema-refresh-20260924"
       ]
     },
     "endpoint": {
       "status": "VERIFIED",
       "evidenceIds": [
-        "public-resource",
-        "chatgpt-registration",
-        "chatgpt-connection-refresh"
+        "primary-reauth-schema-refresh-20260924"
       ]
     },
     "authentication": {
       "status": "VERIFIED",
       "evidenceIds": [
-        "auth0-prior-setup",
-        "chatgpt-registration",
-        "chatgpt-live-call",
-        "chatgpt-connection-refresh"
+        "primary-reauth-schema-refresh-20260924"
       ]
     },
     "toolDiscovery": {
       "status": "VERIFIED",
       "evidenceIds": [
-        "chatgpt-discovery",
-        "chatgpt-connection-refresh"
+        "primary-reauth-schema-refresh-20260924"
       ]
     },
     "liveExecution": {
       "status": "BLOCKED",
       "evidenceIds": [
-        "chatgpt-current-call-schema-blocked"
+        "runtime-raw-acceptance-20260924",
+        "runtime-chatgpt-acceptance-20260924"
       ]
     }
   },

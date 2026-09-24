@@ -1,40 +1,54 @@
 # ARCANOS TUTOR migration handoff
 
-Evidence date: **2026-09-24 UTC**. Base main:
-`3f9fffe48219b784dca758bca87ade109324c7c9` (PR #1508).
+Evidence date: **2026-09-24 UTC**. Current main:
+`8af7a5712ebd5954a97af06ab31d0e2527ac0b58` (PR #1510 merge).
 This document prepares account-side work; it does not authorize the irreversible
 migration. Keep the PR draft until actual migrated skill/reference reconciliation
 and parity pass.
 
-The runtime repairs are now independently reviewable in
-[draft PR #1510](https://github.com/pbjustin/Arcanos/pull/1510), head
-`3bf9edc010f8e1680783d6fcd19ba990d88894ad`, extracted from this PR's reviewed
-`aeb38692221082a41f6e4382bb8b651c24c917ca` onto the base above. That PR contains
-only the prompt-schema and isolated Tutor arithmetic-honesty repairs, necessary
-regressions and required documentation/index updates. Published GPT exports,
-knowledge files and migrated-plugin parity are not runtime-code dependencies.
+The runtime repairs were merged through
+[PR #1510](https://github.com/pbjustin/Arcanos/pull/1510) at the current main SHA
+above. Its approved head `3bf9edc010f8e1680783d6fcd19ba990d88894ad` was extracted
+from this PR's reviewed `aeb38692221082a41f6e4382bb8b651c24c917ca` onto the
+earlier `3f9fffe48219b784dca758bca87ade109324c7c9` base. The split contained
+the prompt-schema and isolated Tutor arithmetic-honesty repairs, necessary
+regressions and documentation/index updates. Published GPT exports, knowledge
+files and migrated-plugin parity remain separate migration requirements.
+
+The separately authorized code rollout deployed worker
+`628f094e-4fee-4523-8eb0-2dc145364e96` and web
+`4d3576b6-8f45-421e-ba6d-23b9f01f079d`. A fresh read-only recheck at
+**2026-09-24T17:51:14Z** passed: both expected deployments were sole active
+`SUCCESS` and ready, with no observed configuration drift. This deployment
+evidence does not establish Tutor response acceptance.
 
 The [candidate acceptance checkpoint](TUTOR_CANDIDATE_ACCEPTANCE.md) retains the
 earlier non-production discovery and pending isolated-target proposal as dated
-evidence. No approved authenticated candidate target was found or deployed. That
-proposal is not a prerequisite for the runtime split. The runtime PR carries the
-current release handoff: repository/CI evidence, pending authenticated acceptance,
-separate owner release approval, controlled rollout and post-deployment checks.
-The established process allows a separately approved rollout to the existing
-production services, subject to its hold, compatibility, source-attestation,
-worker-first and rollback controls. No deployment or live paid test occurred here.
+evidence. At that earlier discovery stage, no approved authenticated isolated
+candidate target was found or deployed. The subsequent production rollout and
+current results are recorded in [runtime acceptance](TUTOR_RUNTIME_ACCEPTANCE.md).
+Existing **Primary** authentication and an explicit connection **Refresh**
+succeeded, exposing the corrected prompt schema. All four raw A–D results used
+`generation: model`, but only B passed. A, C and D included a canned live-access
+disclaimer; C omitted cross-multiplication and D used flat numbering.
+Raw results total **1 pass and 3 failures**. ChatGPT displayed results also total
+**1 pass and 3 failures**: A returned an authentication error, B passed display
+requirements, and C/D failed format/content requirements. Same-invocation raw
+payloads were unavailable, leaving **0/4 fully evidenced raw/final paired
+ChatGPT passes**. **RUNTIME_ACCEPTANCE = FAIL** and
+`LIVE_TUTOR_CALL_VERIFIED` stays `BLOCKED` because the repeated raw defect
+violates the required absence of a systematic response defect.
 
-Keep both PRs draft. Until #1510 is actually merged, its runtime changes remain
-in #1509's branch ancestry. Only after that merge, fetch current main and merge it
-into #1509 using the non-destructive workflow in
+Keep #1509 draft. Current main has been merged into its local review checkout
+using the non-destructive workflow in
 [the synchronization skill](../../.agents/skills/arcanos-safe-worktree-sync/SKILL.md).
-Preserve unrelated and ignored local work; do not rebase, force-push or reset.
-Confirm the integrated runtime repair hunks disappear from the remaining diff,
-resolve conflicts without restoring old behavior, and retain packaging,
-published-baseline capture, actual migrated instructions/references and paired
-parity here. This reconciliation has not been performed. All migration gate
-statuses below and in the ledger are unchanged; baseline-bound old-GPT results
-remain 0/16 and the account migration still requires separate owner confirmation.
+Unrelated worktrees and ignored local inputs were preserved. Only the four generated indexes
+conflicted, and regeneration resolved them. All nine runtime/schema/test repair
+paths and the schema guide match main in the index and working tree, so those
+repairs are absent from the remaining diff. Packaging, published
+baseline capture, migrated instructions/references and paired parity remain in
+#1509. Migration gates are unchanged; baseline-bound old-GPT results remain
+0/16 and the account migration still requires separate owner confirmation.
 
 ## What is ready, and what is not
 
@@ -46,12 +60,12 @@ thirteen independent states; there is no single migrated boolean.
 
 | Gate | Current status | Basis |
 | --- | --- | --- |
-| CODE_READY | VERIFIED | Scoped repairs and final tracked evidence independently reviewed without repository blockers; local validation below |
-| BACKEND_DEPLOYED | IMPLEMENTED_NOT_VERIFIED | Current backend/schema repairs are not deployed; earlier Railway SUCCESS is historical evidence |
-| OAUTH_CONFIGURED | VERIFIED | Same-account Reconnect completed; fresh UI showed OAuth |
+| CODE_READY | VERIFIED | Repository scope only: type-check/build and 410 tests across 13 suites passed; independent reconciliation/evidence review found no publication blocker. Live runtime acceptance failed separately. |
+| BACKEND_DEPLOYED | VERIFIED | PR #1510 merge deployed to the exact worker/web IDs above; fresh 17:51:14Z read-only recheck passed |
+| OAUTH_CONFIGURED | VERIFIED | Existing Primary authentication completed; explicit Refresh succeeded |
 | CHATGPT_CONNECTION_REGISTERED | VERIFIED | Fresh UI matched the expected resource, raw app ID and technical ID |
-| TOOL_DISCOVERY_VERIFIED | VERIFIED | Fresh Refresh showed exactly arcanos_tutor |
-| LIVE_TUTOR_CALL_VERIFIED | BLOCKED | Current call blocked before backend by connector schema validation; historical model result retained separately |
+| TOOL_DISCOVERY_VERIFIED | VERIFIED | Explicit Refresh exposed exactly arcanos_tutor with the corrected prompt schema |
+| LIVE_TUTOR_CALL_VERIFIED | BLOCKED | Raw results 1 pass/3 failures; ChatGPT displayed results 1 pass/3 failures with 0/4 same-invocation paired passes; repeated raw defects keep runtime acceptance FAIL |
 | GPT_BASELINE_CAPTURED | BLOCKED | Latest published configuration and knowledge inventory missing |
 | GPT_MIGRATED | NOT_STARTED | Migration click has not been authorized or performed |
 | SKILL_RECONCILED | BLOCKED | Actual migrated skill and published instructions missing |
@@ -65,9 +79,10 @@ and NOT_STARTED. VERIFIED always identifies its evidence domain. A successful
 local test cannot verify account migration; user reports cannot become independent
 account evidence merely by changing a label.
 Historical observations remain in the evidence ledger, while the gates describe
-the current candidate. Fresh connection observations do not certify live execution
-or deployment of the repairs. The pre-migration checkpoint below remains false
-independently of these thirteen machine-readable gates.
+the current candidate. Deployment, refreshed discovery and model execution are
+separate from successful runtime acceptance and migrated-plugin parity. The
+pre-migration checkpoint below remains false independently of these thirteen
+machine-readable gates.
 
 ## Evidence provenance
 
@@ -78,9 +93,12 @@ contains only non-secret metadata and sanitized summaries:
   `7f4e8c6de2ad145be04de23a436a2dc106f118e7`. Subsequent scoped Tutor repairs
   address a false positive for learner-directed mathematical verification and a
   connector-side nonempty-prompt schema mismatch. A separate reviewer found no
-  code blocker in the repair diff. Local validation passed; final tracked evidence
-  review also found no repository blocker. The repairs have not been deployed.
-- Railway production: the earlier read-only observation identified deployment
+  code blocker in the repair diff. Local validation and the earlier tracked
+  evidence review passed. Those repairs subsequently merged and deployed through
+  #1510; independent review of the current reconciliation, hashes and evidence
+  found no publication blocker, while runtime acceptance remains failed.
+- Historical Railway production observation, before the #1510 rollout: the
+  earlier read-only check identified deployment
   `e14cfd48-0075-4996-b0dd-ec7b620d5d82` as SUCCESS at the base SHA.
   Inspected configuration names only:
   `CHATGPT_MCP_ENABLED`, `CHATGPT_MCP_RESOURCE`, `CHATGPT_MCP_ISSUER`,
@@ -95,15 +113,17 @@ contains only non-secret metadata and sanitized summaries:
   completed OAuth linking, ChatGPT connection Refresh and the expanded real
   tool result were observed through the supported UI. The safe setup audit and
   task history support these dated observations.
-- Current connection: an initial concise attempt returned `UNAUTHORIZED` and the
+- Historical connection observation on 2026-09-24 before the rollout: an initial
+  concise attempt returned `UNAUTHORIZED` and the
   UI showed **Reconnect**. At approximately 04:32 UTC, supported same-account
   Reconnect completed and Refresh showed exactly `arcanos_tutor`, the expected
   resource, OAuth, raw app ID and technical ID. No new registration or scope was
   introduced. A subsequent direct attempt returned connector `INVALID_ARGUMENT`
   before backend execution because of the prompt schema pattern. It produced no
-  Tutor answer. Fresh live execution and formatting remain `LIVE_RETEST_PENDING`
-  until the schema repair is deployed, the catalog refreshed and an actual call
-  succeeds; production deployment is not authorized by this task.
+  Tutor answer. This pre-deployment schema failure is superseded by the deployed
+  schema, fresh Primary authentication, explicit Refresh and raw model results
+  recorded in [runtime acceptance](TUTOR_RUNTIME_ACCEPTANCE.md). It does not
+  explain away the current response-quality failures.
 - Current original-GPT observation: Builder showed **Live**, **Only me** and a
   displayed current version date of **Mar 5, 2026**. That date is not treated as
   an exact latest-publication timestamp. Owner confirmation of publication and
@@ -113,7 +133,7 @@ contains only non-secret metadata and sanitized summaries:
   The user also reported connection/OAuth/live-call success, which is recorded
   separately from the prior observed evidence.
 
-The live call asked for a two-sentence explanation of equivalent fractions. It
+The earlier pre-rollout live call asked for a two-sentence explanation of equivalent fractions. It
 returned a mathematically relevant answer with an unnecessary live-access
 disclaimer, totaling three sentences. Tool metadata was `generation: model`,
 `module: ARCANOS:TUTOR`, `execution: synchronous`, `memory: unavailable`.
@@ -140,8 +160,8 @@ nonexecuting account fixtures; reference use also awaits the complete inventory.
 All official `oldGpt` and `plugin` fields remain null and all sixteen rows remain
 `BLOCKER`.
 
-The [backend review](TUTOR_BACKEND_REVIEW.md) records the scoped repair evidence:
-the final focused selection passed thirteen suites / 407 tests, and the separate
+The [backend review](TUTOR_BACKEND_REVIEW.md) records the dated pre-split repair
+evidence: that earlier focused selection passed thirteen suites / 407 tests, and the separate
 protocol selection passed four suites / 55 tests. Together these nonoverlapping
 selections passed 462 tests with no failures or skips. Type-check, build, lint and
 backend/CLI contract/offline checks passed; lint retains 76 existing warnings.
@@ -156,9 +176,10 @@ The old-guard negative control corrupted a synthetic two-sentence answer; its
 selected regression failed with 11 other cases intentionally skipped. That result
 and the repaired initial four-suite / 118-test pass demonstrate a narrow code-level
 cause, not complete attribution of the historical live response. The 118 tests
-are covered by the later focused selection and are not added again. The live
-formatting issue remains `LIVE_RETEST_PENDING`; no migration or parity gate is
-promoted.
+are covered by that later focused selection and are not added again. The current
+post-deployment raw results still fail runtime acceptance; no migration or parity
+gate is promoted. The new runtime report separates this current evidence from
+the earlier `LIVE_RETEST_PENDING` state.
 
 ## Sealed preview evidence at the earlier exact head
 
@@ -207,7 +228,7 @@ is absent. Before requesting the separate migration-click confirmation, require:
   the exact case and baseline and candidate fingerprints.
 
 Latest-publication/completeness confirmation, complete bound baseline results and
-live retesting of the repairs remain pending. The connection/catalog refresh alone
+resolution of failed runtime acceptance remain pending. The connection/catalog refresh alone
 does not satisfy these conditions. No migration action, reference publication or
 replacement installation is authorized by this checkpoint document.
 
@@ -329,9 +350,10 @@ Existing ARCANOS TUTOR Custom GPT remains operational until retirement.
 Existing Custom GPT Actions remain unchanged. Gaming, Booker and Core are outside
 this PR. No production variable or credential change was made **as part of this
 PR**; earlier separately authorized OAuth activation is dated evidence only.
-The scoped preview deployment was removed; no production deployment, key rotation,
-account migration, sharing or installation has occurred. The subsequent backend
-repairs have not been deployed.
+The scoped preview deployment was removed. The subsequent separately authorized
+#1510 runtime rollout deployed the repairs to the worker/web IDs above; fresh
+readiness rechecks passed, while runtime acceptance remains failed. That code
+rollout did not perform account migration, replacement sharing or installation.
 The package does not add memory, profiles, persistence, ingestion or admin tools.
 
 Before migration, abandoning the branch/package leaves the existing GPT and

@@ -1,5 +1,11 @@
 # Tutor candidate acceptance checkpoint
 
+> Historical pre-split proposal and evidence. The later owner-approved #1510 merge,
+> production rollout, existing-account reconnect/Refresh and bounded live results
+> supersede the pending setup/deployment statements below. See
+> [current runtime acceptance](TUTOR_RUNTIME_ACCEPTANCE.md). No new infrastructure
+> is required by this historical proposal; it is not a current approval request.
+
 Observation date: 2026-09-24 UTC. PR [#1509](https://github.com/pbjustin/Arcanos/pull/1509)
 remains draft. The reconciled starting candidate was
 `607b6424554ac412fd8d52901c3e0565165b5144`; base was
