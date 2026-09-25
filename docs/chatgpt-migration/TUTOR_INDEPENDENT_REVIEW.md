@@ -214,3 +214,24 @@ The reviewer suggested clarifying dated connection/discovery wording. Current
 handoff and ledger notes now explicitly identify September 24 observations;
 no new account inspection or refresh is implied. Current validation and the owner
 checkpoint are in [the reconciliation record](TUTOR_RECONCILIATION_20260925.md).
+
+## Partial baseline evidence review (2026-09-25)
+
+Independent reviewers inspected the private read-only UI artifacts without
+publishing raw contents, the safe hash inventory and all ten provisional cases.
+All 11 referenced source hashes and byte sizes matched. The complete current-version
+instruction field and Action schema were captured privately; the YAML and JSON
+schema objects are identical, with two resolving internal references. The existing
+credential guard passes the JSON representation without a validator change.
+
+The selected current-version model differs from the editor. Version History omits
+starters and knowledge; editor emptiness is not proof of published zero entries.
+Schema-declared OAuth does not prove stored Action authentication configuration.
+Exact publication timestamp/timezone and complete latest-publication review remain
+missing. Consequently GPT_BASELINE_CAPTURED stays BLOCKED and no baseline
+fingerprint exists. All ten old-GPT observations remain provisional because their
+configuration identity is unbound; all sixteen official result fields remain null.
+No GPT prompt, account migration or backend/provider call was made.
+
+See [the partial capture record](TUTOR_BASELINE_CAPTURE_20260925.md). This is a
+consistency/privacy review of partial evidence, not completed-baseline verification.

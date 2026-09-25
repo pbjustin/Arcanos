@@ -52,9 +52,11 @@
         "account-user-report",
         "published-gpt-inspection-incomplete",
         "published-baseline-recheck-20260924",
-        "published-baseline-recheck-20260925"
+        "published-baseline-recheck-20260925",
+        "published-current-version-partial-20260925",
+        "published-baseline-incomplete-after-inspection-20260925"
       ],
-      "note": "No published-gpt.json in either permitted existing worktree input directory. Complete latest-published configuration, owner publication review, knowledge inventory and original files remain missing. Historical runtime/provisional observations cannot establish a baseline; unknown inventory is not zero."
+      "note": "Partial current-version UI evidence and full instructions/Action schema are preserved privately. No complete published-gpt.json or baseline fingerprint exists. Published starters/knowledge, exact publication timestamp/timezone, actual Action authentication configuration, representative behavior and complete latest-publication review remain missing; latestPublishedConfirmed=false. The editor model differs from the current version; empty knowledge is not inferred."
     },
     "GPT_MIGRATED": {
       "status": "NOT_STARTED",
@@ -66,7 +68,7 @@
     "SKILL_RECONCILED": {
       "status": "BLOCKED",
       "evidenceIds": [],
-      "note": "Actual migrated skill and published instructions missing."
+      "note": "Actual migrated skill and a complete verified published baseline are missing; partial current-version instructions are preserved privately."
     },
     "REFERENCES_RECONCILED": {
       "status": "BLOCKED",
@@ -80,7 +82,8 @@
         "old-gpt-unbound-observations-20260924",
         "chatgpt-current-call-schema-blocked",
         "published-baseline-recheck-20260924",
-        "candidate-chatgpt-retest-pending"
+        "candidate-chatgpt-retest-pending",
+        "old-gpt-parity-binding-review-20260925"
       ],
       "note": "All16 rows remain BLOCKER; ten provisional old-GPT observations have zero baseline-fingerprint-bound results. Migrated-plugin results absent, official fields null. Current runtime acceptance FAIL is separate from old/new parity; no accepted difference."
     },

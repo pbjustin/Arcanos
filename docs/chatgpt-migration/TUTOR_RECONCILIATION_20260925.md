@@ -1,5 +1,9 @@
 # Tutor migration reconciliation after PR #1513
 
+Later baseline-only follow-up: [partial published-version capture](TUTOR_BASELINE_CAPTURE_20260925.md).
+The reconciliation observations below remain historical; complete baseline capture
+is still blocked.
+
 Evidence date: **2026-09-25 UTC**. This record separates repository reconciliation,
 provider metadata, historical live acceptance and account migration evidence.
 #1509 remains **DRAFT**, auto-merge disabled. **MIGRATION_CHECKPOINT_READY=false**.

@@ -5,16 +5,12 @@
   "configuration": null,
   "knowledge": [],
   "missingInputs": [
-    "exact_published_display_name",
-    "published_description",
-    "latest_published_builder_instructions",
-    "conversation_starters",
-    "complete_knowledge_file_inventory_and_supplied_file_hashes",
-    "enabled_capabilities",
-    "action_names_and_schemas",
-    "sharing_status",
-    "published_version_and_timestamp",
-    "representative_expected_behavior",
+    "complete_latest_published_configuration_artifact",
+    "exact_publication_timestamp_with_timezone",
+    "published_conversation_starters_confirmation",
+    "complete_published_knowledge_inventory_and_original_files_or_explicit_zero_evidence",
+    "actual_published_action_authentication_configuration_type",
+    "representative_expected_behavior_review",
     "latest_published_owner_or_account_confirmation",
     "publication_review_metadata"
   ]

@@ -33,7 +33,9 @@ ChatGPT payloads remain unavailable, so backend/wrapper attribution is unknown.
 Existing Primary recovery and discovery remain dated verified evidence; durable
 refresh-token renewal remains unverified. No new acceptance run is authorized.
 
-No complete published baseline was supplied in the permitted ignored directory.
+Read-only baseline inspection captured partial current-version instructions and
+Action schema under the permitted ignored directory; no complete published
+baseline or fingerprint exists. See the [baseline capture checkpoint](TUTOR_BASELINE_CAPTURE_20260925.md).
 There are **16 parity cases: 0 baseline-bound, 10 provisional/unbound and 6
 unexecuted**. All official old-GPT and plugin result fields remain null. Unknown
 knowledge inventory is not zero files. No GPT/account migration occurred.
@@ -58,7 +60,7 @@ thirteen independent states; there is no single migrated boolean.
 | LIVE_TUTOR_CALL_VERIFIED | BLOCKED | Latest post-#1512 A/C/D checkpoint remains FAIL; #1513 synthetic verification does not clear it |
 | GPT_BASELINE_CAPTURED | BLOCKED | Latest published configuration and knowledge inventory missing |
 | GPT_MIGRATED | NOT_STARTED | Migration click has not been authorized or performed |
-| SKILL_RECONCILED | BLOCKED | Actual migrated skill and published instructions missing |
+| SKILL_RECONCILED | BLOCKED | Actual migrated skill and complete verified published baseline missing; partial instructions preserved privately |
 | REFERENCES_RECONCILED | BLOCKED | Actual published and migrated file inventories missing |
 | PARITY_VERIFIED | BLOCKED | Old/new paired results absent; live formatting issue unresolved |
 | PACKAGE_READY | BLOCKED | Actual artifact inspection and parity still required |

@@ -258,6 +258,27 @@
       "status": "BLOCKED",
       "observedAt": "2026-09-25",
       "summary": "Read-only inspection restricted to .local-migration/arcanos-tutor in the existing branch and prior review worktrees found no published-gpt.json. The prior review directory contains22 historical runtime/provisional files; no complete published configuration or knowledge inventory. Sixteen cases:0 baseline-bound,10 provisional/unbound,6 unexecuted. Prompt and available sanitized-summary hashes verified; no result promoted and no private input copied into Git."
+    },
+    {
+      "id": "published-current-version-partial-20260925",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-25T16:22:03.991Z",
+      "summary": "Supported authenticated read-only Version History selected Current version Mar 5, 2026, displayed Mar 5, 2026 at 11:54 PM without timezone or seconds. Complete disabled name, description and instructions fields captured privately; instructions are 2,389 UTF-8 bytes, SHA-256 53d633ce937a9aef01f2d47749b1127c1accd88b6d4ea95f091c7b11b9909f3f. Four capabilities checked. One Action schema captured, parsed SHA-256 579d931f35ccb59773fdce51175c667139fe4148cdc26c8362480d68b7bc4e04, with POST /ask, operationId ask and declared OAuth2 authorizationCode; actual stored authentication configuration unverified. Current-version model gpt-5-2 differs from the editor showing no recommended model. Published starters and knowledge not exposed; zero not inferred. This verifies partial observations only, not a complete latest-published baseline. No GPT prompt or configuration, save, publish or migration action."
+    },
+    {
+      "id": "published-baseline-incomplete-after-inspection-20260925",
+      "kind": "repository",
+      "status": "BLOCKED",
+      "observedAt": "2026-09-25",
+      "summary": "Only partial read-only UI artifacts were added beneath ignored .local-migration/arcanos-tutor. No complete published-gpt.json, baseline fingerprint or publicationReview exists; latestPublishedConfirmed remains false. Exact timestamp/timezone, published starters, complete knowledge/original files or explicit zero evidence, actual Action authentication configuration, representative behavior and complete latest-publication review remain missing. The raw YAML guard flags the authorizationCode flow label; the same parsed object serialized as JSON passes the unchanged guard. No private content tracked; see TUTOR_BASELINE_CAPTURE_20260925.md."
+    },
+    {
+      "id": "old-gpt-parity-binding-review-20260925",
+      "kind": "repository",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-25",
+      "summary": "All 16 prompt hashes and 10 sanitized-summary hashes match. Historical corrected private record SHA-256 eba9b11616e41cf7af4cb7a2fb64830fad72c1a0eca1511b81fd70d7e8b49c5b, 13,099 bytes, explicitly records publishedVersionConfirmed=false and no configuration/baseline fingerprint. Current partial Version History evidence cannot bind prior observations to an exact configuration. Counts unchanged: 0 baseline-bound, 10 provisional, 6 unexecuted; no results promoted and no new GPT/provider calls. Controlled nonexecuting account fixtures for missing cases are absent."
     }
   ],
   "checks": {
