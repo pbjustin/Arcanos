@@ -1,4 +1,99 @@
-# Published Tutor baseline: partial capture on 2026-09-25
+# Published Tutor baseline on 2026-09-25
+
+## Current follow-up: complete capture, owner review pending
+
+**GPT_BASELINE_CAPTURED=BLOCKED pending complete-transcription owner review.**
+The private input now exists and validates. Two maintained capture runs produced
+identical safe inventories and the same baseline fingerprint. All source files
+remain ignored and untracked; no GPT configuration, connection or runtime changed.
+
+| Current safe metadata | Result |
+| --- | --- |
+| Display name | ARCANOS TUTOR |
+| Latest published entry | Current version, Mar 5, 2026; no newer published entry listed |
+| Displayed timestamp | Mar 5, 2026 at 11:54 PM |
+| ISO representation | 2026-03-05T23:54; literal calendar minute, not an exact instant |
+| Timezone / separate revision ID | unavailable / unavailable |
+| Published starters | 0, explicitly confirmed by the owner |
+| Capabilities | Web Search, Canvas, Image Generation, Code Interpreter & Data Analysis |
+| Action group | 1, named from its exact published display label: acranos-production.up.railway.app |
+| Action operation | POST /ask; operationId ask; separately displayed as Name ask in the editor |
+| Stored Action authentication | None, explicitly confirmed for the published version by the owner |
+| Schema security declaration | OAuth2 authorizationCode; retained unchanged and distinct from stored authentication |
+| Current sharing | Only me, direct authenticated Live / Only me account-header evidence |
+| Published knowledge | 0 files, explicitly confirmed by the owner |
+| KNOWLEDGE_INVENTORY_VERIFIED / KNOWLEDGE_BYTES_VERIFIED | VERIFIED / VERIFIED for the explicitly confirmed empty inventory |
+| Representative behavior | 7 source-grounded expectations reviewed independently; 0 new observations |
+| Complete-baseline latestPublishedConfirmed | false pending owner review of the complete transcription |
+
+The owner confirmed the last update was in March, then explicitly confirmed that
+zero starters, zero knowledge files and authentication None match that published
+version. The prior editor observations alone were not used as published proof.
+Version History comparison identifies Current March 5 and Previous March 3;
+current-entry identity is established separately from completeness review.
+No timezone, seconds or separate revision identifier is exposed. The unchanged
+contract accepts the displayed minute without inventing a timezone. No offset or
+Z was supplied, and the time is not represented as an exact instant.
+
+### Private input and determinism
+
+| Artifact / hash basis | SHA-256 | Bytes |
+| --- | --- | ---: |
+| Complete private published-gpt.json | 445255487dd270aad087e025b738666340ac1d42a2e45b05fe0b7df640e843bf | 10925 |
+| First sanitized capture output | bf77d8a55896dcc92fcb5d44ae606fd4e6037b19b62f1e0914d225dc22b56bae | 1835 |
+| Second sanitized capture output | bf77d8a55896dcc92fcb5d44ae606fd4e6037b19b62f1e0914d225dc22b56bae | 1835 |
+| Private expected-behavior review artifact | d52e1cbae08759653b2876b91b8d1edceb947f59d7bc30aa401ecdbd6f7c27ae | 12874 |
+
+**Baseline fingerprint:**
+`eb1d612dc2b4645841e3035a177ebb91fa6584a2ae633d7918972b9c9dd95e25`.
+This binds the complete configuration file and confirmed empty knowledge
+inventory. It is distinct from the partial-observation hash retained below.
+
+Both CLI runs exited 0 and their output bytes were identical. An independent
+in-memory recapture also matched. Raw source instructions, description, model,
+capabilities and schema equal the prior current-version capture. Seven expected
+behavior descriptions match the independently reviewed private source-grounded
+artifact; all 21 source excerpts and three original source hashes/sizes match.
+No new observed GPT result was generated. Capture-generated field hashes use
+JSON serialization; the older raw UTF-8 field hashes below use a different basis.
+
+The original schema still declares OAuth while stored Action authentication is
+None. This is captured configuration, not a repair or evidence that a backend
+call would authenticate. No secret was read, revealed, stored or changed.
+There are no published knowledge files to compare, hash or duplicate; explicit
+owner confirmation establishes the empty inventory, not absence on disk.
+
+### Review checkpoint and parity
+
+The complete private file is available for owner review. The maintained
+[migration handoff](TUTOR_MIGRATION.md#before-migration-capture-the-published-baseline)
+requires an owner-reviewed local transcription when no formal export exists.
+Technical source/hash review has passed; owner identity/date and complete
+latest-publication confirmation must be recorded before the gate advances.
+
+Current matrix: **16 total / 0 baseline-bound / 10 provisional / 6 unexecuted**.
+No new paid or backend parity calls occurred. Independent review found all ten observations chronologically compatible with
+the published version. Their records still lack a GPT/conversation locator,
+source execution artifact or published-chat-versus-editor-preview designation.
+The new publication evidence does not close that execution identity gap; no
+result was promoted. A fingerprint need not have existed at execution time if
+retained source evidence can later establish that link. Migrated-plugin results remain absent,
+and PARITY_VERIFIED remains BLOCKED independently of baseline completion.
+
+Fresh Node 24.18.1 / npm 11.16.0 checks passed: type-check, build, lint
+(0 errors / 76 existing warnings), 102 migration/privacy tests in 3 suites
+(0 failures / 0 skips), package validation, docs 757/757, 558 local links
+(84 external skipped), all four index checks, sync (0 errors / 0 warnings /
+5 information items), commit guard and whitespace checks. Release correctly
+returns exit 2 / RELEASE_BLOCKED with 14 blockers and no archive. Review corrected
+an owner-evidence status to USER_REPORTED; no validator was weakened. Hosted CI
+belongs to the final pushed head and is recorded in PR #1509. **Migrate to plugin
+is not authorized.**
+
+## Historical partial-capture checkpoint (superseded by the follow-up above)
+
+The remaining content records the earlier incomplete inspection. Its missing
+fields, absent-file status and validation outcomes refer to that earlier checkpoint.
 
 **GPT_BASELINE_CAPTURED=BLOCKED.** Supported authenticated read-only inspection
 captured partial current-version evidence. No complete `published-gpt.json` was

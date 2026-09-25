@@ -235,3 +235,25 @@ No GPT prompt, account migration or backend/provider call was made.
 
 See [the partial capture record](TUTOR_BASELINE_CAPTURE_20260925.md). This is a
 consistency/privacy review of partial evidence, not completed-baseline verification.
+
+## Complete private capture follow-up (2026-09-25)
+
+Independent review matched the complete private input to the captured current
+version and the owner's explicit confirmation of zero starters, zero knowledge
+and stored Action authentication None. The published Action-list display label
+is used as the group name; operationId ask and schema-declared OAuth remain
+distinct from stored authentication. Sharing uses current account-header evidence.
+The timestamp preserves the literal calendar minute with timezone unavailable;
+no offset, seconds or exact instant was invented. Seven expected-behavior
+entries match the reviewed private artifact and are not observed runtime results.
+
+Two CLI captures and an independent in-memory capture agree. Fingerprint:
+`eb1d612dc2b4645841e3035a177ebb91fa6584a2ae633d7918972b9c9dd95e25`.
+Complete-transcription owner review remains pending at this checkpoint; technical
+validation alone does not advance GPT_BASELINE_CAPTURED.
+
+All ten provisional observations fit the publication chronology but lack the
+retained execution identity needed to bind them to this specific published GPT.
+No baseline-at-execution fingerprint requirement was invented; a retained
+conversation/session locator or source record could resolve the gap without a
+new call. Counts remain 16 total, 0 bound, 10 provisional and 6 unexecuted.

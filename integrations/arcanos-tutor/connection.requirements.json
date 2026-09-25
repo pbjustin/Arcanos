@@ -279,6 +279,48 @@
       "status": "VERIFIED",
       "observedAt": "2026-09-25",
       "summary": "All 16 prompt hashes and 10 sanitized-summary hashes match. Historical corrected private record SHA-256 eba9b11616e41cf7af4cb7a2fb64830fad72c1a0eca1511b81fd70d7e8b49c5b, 13,099 bytes, explicitly records publishedVersionConfirmed=false and no configuration/baseline fingerprint. Current partial Version History evidence cannot bind prior observations to an exact configuration. Counts unchanged: 0 baseline-bound, 10 provisional, 6 unexecuted; no results promoted and no new GPT/provider calls. Controlled nonexecuting account fixtures for missing cases are absent."
+    },
+    {
+      "id": "published-entry-identity-followup-20260925",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-25T17:13:02.305Z",
+      "summary": "Supported read-only Version History explicitly marks Mar 5, 2026 as Current version with no newer published entry listed. Comparison labels Current Mar 5, 2026 at 11:54 PM and Previous Mar 3, 2026 at 2:36 PM. No timezone, seconds or separate revision ID exposed. The literal minute 2026-03-05T23:54 is accepted unchanged by the existing capture contract; timezone remains unavailable, not an inferred offset or exact instant. This observation verifies current-entry identity; later owner confirmation supplies the omitted starters, knowledge and stored authentication. Complete-baseline latestPublishedConfirmed remains false pending full-transcription review."
+    },
+    {
+      "id": "editor-authentication-unbound-followup-20260925",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-25",
+      "summary": "Read-only inspection of the existing Action editor found Authentication None selected, with API Key and OAuth unselected. The dialog was closed with Cancel; no credentials read and no setting saved. Published Version History exposes only the already captured schema, which declares OAuth2 authorizationCode. At this earlier inspection checkpoint, editor None was unbound to the published configuration; the later explicit owner confirmation resolves that binding. Published Action name can use its exact displayed group label acranos-production.up.railway.app; editor table Name ask identifies the POST /ask operation separately. Current Live / Only me header supplies current account sharing evidence, not historical March 5 sharing."
+    },
+    {
+      "id": "published-behavior-prepared-followup-20260925",
+      "kind": "repository",
+      "status": "IMPLEMENTED_NOT_VERIFIED",
+      "observedAt": "2026-09-25",
+      "summary": "A private review artifact derives seven expected-behavior categories solely from captured published instructions, capabilities and Action schema, with zero new observations. All 21 source excerpts and three source file hashes/sizes match. Artifact SHA-256 d52e1cbae08759653b2876b91b8d1edceb947f59d7bc30aa401ecdbd6f7c27ae, 12874 bytes. No private excerpts are tracked. At this preparation checkpoint no baseline fingerprint yet existed; the later deterministic capture supplies it. Whole-transcription owner review remains pending and no provisional parity result is promoted."
+    },
+    {
+      "id": "owner-published-settings-confirmation-followup-20260925",
+      "kind": "user_reported",
+      "status": "USER_REPORTED",
+      "observedAt": "2026-09-25T17:17:45Z",
+      "summary": "The owner explicitly confirmed that all three inspected settings match the March published version: zero conversation starters, zero knowledge files and stored Action authentication None. The owner also reported the last update was in March. This resolves the missing published settings without inferring zero from absent files or copying draft values silently. Full local-transcription review remains a separate pending checkpoint."
+    },
+    {
+      "id": "published-capture-determinism-followup-20260925",
+      "kind": "repository",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-25",
+      "summary": "Complete private published-gpt.json passes unchanged schema and credential validation: 10925 bytes, SHA-256 445255487dd270aad087e025b738666340ac1d42a2e45b05fe0b7df640e843bf. Two maintained CLI captures produced identical 1835-byte safe inventories, SHA-256 bf77d8a55896dcc92fcb5d44ae606fd4e6037b19b62f1e0914d225dc22b56bae. Independently recomputed baseline fingerprint eb1d612dc2b4645841e3035a177ebb91fa6584a2ae633d7918972b9c9dd95e25 is identical. Both capture outputs remain IMPLEMENTED_NOT_VERIFIED / USER_REPORTED pending complete-transcription owner review. No private contents are tracked and no calls executed."
+    },
+    {
+      "id": "old-gpt-chronology-review-followup-20260925",
+      "kind": "repository",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-25",
+      "summary": "All ten September 24 provisional observations are chronologically compatible with the March published version and all 16 prompt/10 summary hashes match. Neither original nor corrected local records identifies a GPT/conversation locator, source execution artifact or published-chat-versus-editor-preview surface. The missing execution identity prevents binding to this specific published configuration. No execution-time fingerprint was required retroactively; retained source evidence may resolve the link. No result promoted or new call executed; counts remain 16 total, 0 bound, 10 provisional and 6 unexecuted."
     }
   ],
   "checks": {

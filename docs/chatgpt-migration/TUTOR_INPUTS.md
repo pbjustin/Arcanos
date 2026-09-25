@@ -2,8 +2,8 @@
 
 This is a local input contract for the repository tools, not an OpenAI export
 schema. Preserve actual exports unchanged alongside a reviewed local transcription.
-No complete published baseline input is supplied. Partial current-version UI
-observations are preserved privately; see the [capture checkpoint](TUTOR_BASELINE_CAPTURE_20260925.md). See the [migration handoff](TUTOR_MIGRATION.md)
+A complete private input now validates deterministically; complete-transcription
+owner review is pending. Original UI observations are preserved privately; see the [capture checkpoint](TUTOR_BASELINE_CAPTURE_20260925.md). See the [migration handoff](TUTOR_MIGRATION.md)
 before collecting data or performing account actions.
 
 ## Capture the latest published GPT
@@ -25,6 +25,13 @@ values from repository source. Empty lists mean the owner confirmed there are no
 | sharingStatus | Actual published sharing status |
 | representativeBehavior | Nonempty array of expected-behavior descriptions grounded in the old GPT |
 | knowledge | Complete array of `name` and relative local `path` for supplied original files |
+
+When supported account evidence exposes only a calendar minute and no timezone,
+preserve that literal ISO date/time (for example `2026-03-05T23:54`) without
+adding seconds, an offset or `Z`. Record precision and timezone availability in
+private provenance and safe evidence notes; do not claim an exact instant. The
+existing validator accepts and retains this representation unchanged. These
+qualifiers are not extra fields in the sanitized configuration allowlist.
 
 Knowledge paths stay within the input directory. Retain original file bytes;
 hashes are byte hashes, so changing line endings changes a file's identity.

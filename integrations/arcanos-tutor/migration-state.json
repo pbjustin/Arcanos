@@ -54,9 +54,14 @@
         "published-baseline-recheck-20260924",
         "published-baseline-recheck-20260925",
         "published-current-version-partial-20260925",
-        "published-baseline-incomplete-after-inspection-20260925"
+        "published-baseline-incomplete-after-inspection-20260925",
+        "published-entry-identity-followup-20260925",
+        "editor-authentication-unbound-followup-20260925",
+        "published-behavior-prepared-followup-20260925",
+        "owner-published-settings-confirmation-followup-20260925",
+        "published-capture-determinism-followup-20260925"
       ],
-      "note": "Partial current-version UI evidence and full instructions/Action schema are preserved privately. No complete published-gpt.json or baseline fingerprint exists. Published starters/knowledge, exact publication timestamp/timezone, actual Action authentication configuration, representative behavior and complete latest-publication review remain missing; latestPublishedConfirmed=false. The editor model differs from the current version; empty knowledge is not inferred."
+      "note": "Complete private published-gpt.json was captured twice with deterministic baseline fingerprint eb1d612dc2b4645841e3035a177ebb91fa6584a2ae633d7918972b9c9dd95e25. Owner confirmed zero published starters, zero knowledge files and Action authentication None; current published entry and source fields are verified. The literal timestamp is 2026-03-05T23:54, timezone unavailable. Independent content/hash review passed. Only complete-transcription owner/publication review remains pending; complete-baseline latestPublishedConfirmed=false until that review."
     },
     "GPT_MIGRATED": {
       "status": "NOT_STARTED",
@@ -68,12 +73,12 @@
     "SKILL_RECONCILED": {
       "status": "BLOCKED",
       "evidenceIds": [],
-      "note": "Actual migrated skill and a complete verified published baseline are missing; partial current-version instructions are preserved privately."
+      "note": "Actual migrated skill is missing. Complete captured instructions are private; final baseline owner review remains pending."
     },
     "REFERENCES_RECONCILED": {
       "status": "BLOCKED",
       "evidenceIds": [],
-      "note": "Actual knowledge and migrated reference inventories missing; an empty inventory is not proof of no files."
+      "note": "Published knowledge is explicitly confirmed empty. The actual migrated reference inventory is missing; an empty published baseline alone does not reconcile migrated references."
     },
     "PARITY_VERIFIED": {
       "status": "BLOCKED",
@@ -83,9 +88,10 @@
         "chatgpt-current-call-schema-blocked",
         "published-baseline-recheck-20260924",
         "candidate-chatgpt-retest-pending",
-        "old-gpt-parity-binding-review-20260925"
+        "old-gpt-parity-binding-review-20260925",
+        "old-gpt-chronology-review-followup-20260925"
       ],
-      "note": "All16 rows remain BLOCKER; ten provisional old-GPT observations have zero baseline-fingerprint-bound results. Migrated-plugin results absent, official fields null. Current runtime acceptance FAIL is separate from old/new parity; no accepted difference."
+      "note": "All 16 rows remain BLOCKER. Ten provisional old-GPT observations fit the March publication chronology but lack a retained execution locator or published-chat-versus-preview designation needed to bind this exact GPT configuration. Zero official old-GPT results are bound; migrated-plugin results remain absent. No new calls or accepted differences."
     },
     "PACKAGE_READY": {
       "status": "BLOCKED",

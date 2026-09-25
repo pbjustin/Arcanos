@@ -33,12 +33,15 @@ ChatGPT payloads remain unavailable, so backend/wrapper attribution is unknown.
 Existing Primary recovery and discovery remain dated verified evidence; durable
 refresh-token renewal remains unverified. No new acceptance run is authorized.
 
-Read-only baseline inspection captured partial current-version instructions and
-Action schema under the permitted ignored directory; no complete published
-baseline or fingerprint exists. See the [baseline capture checkpoint](TUTOR_BASELINE_CAPTURE_20260925.md).
+The complete private published configuration now validates and two captures
+produce the same baseline fingerprint. The owner confirmed zero published
+starters/knowledge and Action authentication None. Complete-transcription owner
+review remains pending, so GPT_BASELINE_CAPTURED stays BLOCKED. See the
+[baseline capture checkpoint](TUTOR_BASELINE_CAPTURE_20260925.md).
 There are **16 parity cases: 0 baseline-bound, 10 provisional/unbound and 6
-unexecuted**. All official old-GPT and plugin result fields remain null. Unknown
-knowledge inventory is not zero files. No GPT/account migration occurred.
+unexecuted**. All official old-GPT and plugin result fields remain null. Published
+knowledge is explicitly confirmed empty; migrated references remain unknown. No
+GPT/account migration occurred.
 See the [current reconciliation record](TUTOR_RECONCILIATION_20260925.md),
 [private input contract](TUTOR_INPUTS.md), and the dated historical evidence below.
 
@@ -58,10 +61,10 @@ thirteen independent states; there is no single migrated boolean.
 | CHATGPT_CONNECTION_REGISTERED | VERIFIED | September 24 UI matched the expected resource, raw app ID and technical ID; no new account inspection |
 | TOOL_DISCOVERY_VERIFIED | VERIFIED | September 24 explicit Refresh exposed exactly arcanos_tutor with the corrected prompt schema |
 | LIVE_TUTOR_CALL_VERIFIED | BLOCKED | Latest post-#1512 A/C/D checkpoint remains FAIL; #1513 synthetic verification does not clear it |
-| GPT_BASELINE_CAPTURED | BLOCKED | Latest published configuration and knowledge inventory missing |
+| GPT_BASELINE_CAPTURED | BLOCKED | Complete private capture and deterministic fingerprint validated; complete-transcription owner review pending |
 | GPT_MIGRATED | NOT_STARTED | Migration click has not been authorized or performed |
-| SKILL_RECONCILED | BLOCKED | Actual migrated skill and complete verified published baseline missing; partial instructions preserved privately |
-| REFERENCES_RECONCILED | BLOCKED | Actual published and migrated file inventories missing |
+| SKILL_RECONCILED | BLOCKED | Actual migrated skill missing; complete captured instructions are private and final baseline owner review is pending |
+| REFERENCES_RECONCILED | BLOCKED | Published knowledge explicitly empty; actual migrated reference inventory missing |
 | PARITY_VERIFIED | BLOCKED | Old/new paired results absent; live formatting issue unresolved |
 | PACKAGE_READY | BLOCKED | Actual artifact inspection and parity still required |
 | RELEASE_READY | BLOCKED | Draft only; no replacement release or retirement |
