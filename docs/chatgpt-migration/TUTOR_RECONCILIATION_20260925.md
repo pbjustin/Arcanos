@@ -129,8 +129,8 @@ Local validation used exact Node **24.18.1** / npm **11.16.0**:
 | Focused Jest | PASS; 6 suites, 217 tests, 0 failed/skipped |
 | validate:tutor-package | PASS; three candidate files, no archive |
 | validate:tutor-release | Expected exit 2 / RELEASE_BLOCKED; 14 blocker codes, no archive |
-| docs:check | PASS; 747 checks, 0 failed/warnings |
-| docs:links -- --local-only | PASS; 548 local targets, 0 failed; external network checks skipped |
+| docs:check | PASS; 751 checks, 0 failed/warnings |
+| docs:links -- --local-only | PASS; 552 local targets, 0 failed; external network checks skipped |
 | reindex / reindex:check | Regenerated all four, retained exact-main versions; check PASS |
 | sync:check | PASS; 0 errors/warnings, 5 informational notices |
 | guard:commit / git diff --check | PASS; staged private-input path count 0 |
