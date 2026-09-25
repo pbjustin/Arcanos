@@ -9408,6 +9408,10 @@ export function createNativePrPreviewApplication(
   });
   app.post(NATIVE_PR_PREVIEW_CHATGPT_TUTOR_CONTRACT.path, (request, response) => {
     const result = handleChatGptTutorPreviewRequest(request.body);
+    if (result.honestyVerified === true) {
+      response.setHeader(NATIVE_PR_PREVIEW_CHATGPT_TUTOR_CONTRACT.honestyProofHeader,
+        NATIVE_PR_PREVIEW_CHATGPT_TUTOR_CONTRACT.honestyProofVersion);
+    }
     if (result.payload === undefined) {
       response.status(result.statusCode).end();
       return;

@@ -9,6 +9,10 @@ import {
   findRuntimeRequestAbortTypeResolutionViolations,
   findUnsafeRuntimeSyntax,
 } from '../scripts/check-native-pr-preview-imports.mjs';
+import {
+  TUTOR_HONESTY_PREVIEW_DIST_IMPORT_CONTRACT,
+  findTutorHonestyPreviewDistImportSourceViolations,
+} from '../scripts/check-native-pr-preview-dist-imports.mjs';
 
 const RAILWAY_LAUNCHER_URL =
   new URL('../scripts/start-railway-service.mjs', import.meta.url);
@@ -564,6 +568,100 @@ describe('native PR preview import boundary', () => {
     for (const excluded of ['src/app.ts', 'src/chatgpt/auth.ts', 'src/chatgpt/tutor.ts',
       'src/routes/chatgptMcp.ts', 'src/core/adapters/openai.adapter.ts']) {
       expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toContain(excluded);
+    }
+  });
+
+  it('admits only the pure Tutor honesty fixture graph and rejects normal execution dependencies', async () => {
+    const fixturePath = 'src/shared/chatgpt/tutorHonestyPreviewFixture.ts';
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).toEqual(expect.arrayContaining([
+      fixturePath,
+      'src/core/logic/trinityHonesty.ts',
+      'src/shared/text/countWords.ts',
+      'src/shared/text/intentModeClassifier.ts',
+      'src/shared/promptGuidance.ts',
+    ]));
+    const excluded = [
+      'src/core/logic/trinity.ts',
+      'src/core/logic/tutor-logic.ts',
+      'src/chatgpt/tutor.ts',
+      'src/chatgpt/auth.ts',
+      'src/routes/chatgptMcp.ts',
+      'src/core/adapters/openai.adapter.ts',
+      'src/core/db/index.ts',
+      'src/services/sessionMemoryService.ts',
+    ];
+    for (const filePath of excluded) expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toContain(filePath);
+    const analyzeDependencies = async () => ({
+      obj: () => Object.fromEntries(
+        [...NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES, ...excluded]
+          .map(filePath => [filePath, filePath === fixturePath ? excluded : []])
+      ),
+      warnings: () => ({ skipped: [] }),
+    });
+    const violations = await findNativePrPreviewImportViolations({ analyzeDependencies });
+    for (const filePath of excluded) expect(violations).toContain(`unreviewed preview import: ${filePath}`);
+  }, 30_000);
+
+  it.each([
+    'src/shared/chatgpt/tutorHonestyPreviewFixture.ts',
+    'src/core/logic/trinityHonesty.ts',
+    'src/shared/text/countWords.ts',
+    'src/shared/text/intentModeClassifier.ts',
+    'src/shared/promptGuidance.ts',
+  ])('pins Tutor honesty semantics and rejects introduced effects in %s', async filePath => {
+    const sourceText = await readFile(new URL(`../${filePath}`, import.meta.url), 'utf8');
+    expect(findUnsafeRuntimeSyntax(filePath, sourceText)).toEqual([]);
+    for (const addition of [
+      'export const unreviewedHonestyChange = true;',
+      'fetch("https://unreviewed.invalid");',
+      'process.env.CHATGPT_MCP_ENABLED = "true";',
+      'await import("openai");',
+    ]) {
+      expect(findUnsafeRuntimeSyntax(filePath, `${sourceText}\n${addition}`)).toEqual(
+        expect.arrayContaining([expect.stringContaining('critical entry file semantic digest')])
+      );
+    }
+  });
+
+  it.each(TUTOR_HONESTY_PREVIEW_DIST_IMPORT_CONTRACT)(
+    'rejects added runtime edges in emitted Tutor module $filePath', contract => {
+      const imports = Object.entries(contract.imports).map(([specifier, bindings]) => {
+        const names = bindings.map(binding => binding.split(':').join(' as ')).join(', ');
+        return `import { ${names} } from '${specifier}';`;
+      }).join('\n');
+      expect(findTutorHonestyPreviewDistImportSourceViolations(contract, imports)).toEqual([]);
+      for (const addition of [
+        'import OpenAI from "openai";',
+        'import "../../core/logic/trinity.js";',
+        'import("../../core/logic/trinity.js");',
+        'require("node:fs");',
+        'export * from "../../core/logic/tutor-logic.js";',
+      ]) {
+        expect(findTutorHonestyPreviewDistImportSourceViolations(contract, `${imports}\n${addition}`).length)
+          .toBeGreaterThan(0);
+      }
+    }
+  );
+
+  it('rejects retargeted, renamed, broadened or missing emitted honesty imports', () => {
+    const contract = TUTOR_HONESTY_PREVIEW_DIST_IMPORT_CONTRACT.find(entry =>
+      entry.filePath === 'dist/core/logic/trinityHonesty.js');
+    const source = [
+      "import { countWords } from '../../shared/text/countWords.js';",
+      "import { classifyIntentMode } from '../../shared/text/intentModeClassifier.js';",
+      "import { renderPromptGuidanceSections } from '../../shared/promptGuidance.js';",
+    ].join('\n');
+    expect(findTutorHonestyPreviewDistImportSourceViolations(contract, source)).toEqual([]);
+    for (const mutated of [
+      source.replace('../../shared/text/countWords.js', '../../core/logic/trinity.js'),
+      source.replace('{ countWords }', '{ countWords as replacement }'),
+      source.replace('{ countWords }', '{ countWords, other }'),
+      source.replace('{ countWords }', '* as words'),
+      source.split('\n').slice(1).join('\n'),
+    ]) {
+      expect(findTutorHonestyPreviewDistImportSourceViolations(contract, mutated)).toEqual(
+        expect.arrayContaining([expect.stringContaining('must match the reviewed pure graph')])
+      );
     }
   });
 

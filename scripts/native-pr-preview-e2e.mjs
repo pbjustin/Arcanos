@@ -4320,6 +4320,12 @@ async function executeRequestCase(
   if (requestCase.chatGptTutorAdmission !== undefined) {
     const contract = NATIVE_PR_PREVIEW_E2E_CONTRACT.chatGptTutor;
     const admitted = requestCase.chatGptTutorAdmission === 'admitted';
+    const honestyExpected = admitted && requestCase.fixtureName === 'tools-call';
+    if (honestyExpected
+      ? response.headers.get(contract.honestyProofHeader) !== contract.honestyProofVersion
+      : response.headers.has(contract.honestyProofHeader)) {
+      fail('NATIVE_PR_PREVIEW_TUTOR_HONESTY_PROOF_INVALID', requestCase.caseId);
+    }
     if (
       (admitted && response.headers.get(contract.proofHeader) !== contract.proofVersion)
       || (!admitted && (response.headers.has(contract.proofHeader)
@@ -4790,6 +4796,10 @@ async function executeRequestCase(
       ? {
           chatGptTutorMockVerified: true,
           chatGptTutorMockProofVersion: NATIVE_PR_PREVIEW_E2E_CONTRACT.chatGptTutor.proofVersion,
+          ...(requestCase.fixtureName === 'tools-call' ? {
+            tutorHonestyCompositionVerified: true,
+            tutorHonestyCompositionProofVersion: NATIVE_PR_PREVIEW_E2E_CONTRACT.chatGptTutor.honestyProofVersion,
+          } : {}),
         }
       : {}),
     ...(requestCase.caseId === 'gaming-query-guide'

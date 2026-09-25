@@ -1,5 +1,6 @@
 // eslint-disable-next-line no-restricted-imports -- Sealed preview contract and canonical JSON only; no production graph.
 import { NATIVE_PR_PREVIEW_E2E_CONTRACT } from '../../../scripts/native-pr-preview-contract.mjs';
+import { assertTutorHonestyPreviewFixture } from './tutorHonestyPreviewFixture.js';
 
 const contract = NATIVE_PR_PREVIEW_E2E_CONTRACT.chatGptTutor;
 const instructions = 'Synthetic preview only. No OAuth, model provider, memory or saved progress. '
@@ -22,6 +23,8 @@ const tool = Object.freeze({
 export interface ChatGptTutorPreviewResponse {
   statusCode: number;
   payload?: Record<string, unknown>;
+  /** Internal evidence, never part of the MCP payload. Set only after assertions pass. */
+  honestyVerified?: true;
 }
 
 type RequestId = string | number;
@@ -115,8 +118,13 @@ export function handleChatGptTutorPreviewRequest(body: unknown): ChatGptTutorPre
   if (params.name !== contract.toolName) return toolError(id, 'TUTOR_PREVIEW_TOOL_UNAVAILABLE');
   if (!isRecord(params.arguments) || !hasOnlyKeys(params.arguments, ['prompt'])
     || params.arguments.prompt !== contract.prompt) return toolError(id, 'TUTOR_PREVIEW_INPUT_UNSUPPORTED');
-  return result(id, {
+  try {
+    assertTutorHonestyPreviewFixture();
+  } catch {
+    return rpcError(id, -32603, 'TUTOR_PREVIEW_HONESTY_ASSERTION_FAILED', 500);
+  }
+  return { ...result(id, {
     structuredContent: contract.output,
     content: [{ type: 'text', text: JSON.stringify(contract.output) }],
-  });
+  }), honestyVerified: true };
 }

@@ -427,17 +427,35 @@ Launcher behavior:
   arbitrary prompts, extra arguments, batches, unlisted methods and OAuth
   metadata are unavailable. The pure fixture emits synthetic provenance and
   its versioned Tutor proof header without importing the normal Tutor, OAuth,
-  Trinity, HRC, provider or storage graph. The worker remains passive and denies
+  Trinity execution, HRC, provider or storage graph. The worker remains passive and denies
   this path. The [real MCP SDK interoperability fixture](../tests/chatgpt-tutor-preview.integration.test.ts)
   and [sealed Tutor evidence](audits/chatgpt-migration/2026-09-23-sealed-tutor.md)
   document these checks and their limits. This is synthetic transport evidence;
   real Tutor/OAuth and installed ChatGPT behavior require separate evidence.
-  The PR-head verifier adds 18 Tutor cases for 156 bounded requests; earlier
+  The current verifier includes 18 Tutor cases for 156 bounded requests; earlier
   138-request compatibility references describe the pre-Tutor baseline. The
-  trusted main verifier at `655cb56fc3912684a0dd7b7bfb735a841f3c4056` still runs
-  that 138-request baseline until this change reaches main. A trusted preview
-  status therefore needs the reviewed exact-head supplemental run to establish
-  the added Tutor cases on the same independently confirmed web/worker hosts.
+  trusted workflow uses its own default-branch revision. New PR-head assertions
+  require a reviewed exact-head supplemental run on the same independently
+  confirmed web/worker hosts.
+- The fixed Tutor tool call additionally executes a finite suite against the
+  production-shared pure honesty composition: first-pass classification,
+  direct-answer state admission, and final honesty/minimalism. Constructed A/C/D
+  candidates cover retained learner instructions and numbered lines; adversarial
+  cases cover external/completed claims, persistence, mixed requests, and policy
+  isolation. Only a successful suite earns
+  `x-arcanos-preview-tutor-honesty-version: tutor-honesty-composition/v1`.
+  An assertion failure returns a fixed error without that marker or a success
+  payload. Discovery, denied requests, and worker routes cannot earn it. The
+  original mock payload, prompt allowlist, and 156-request budget are unchanged.
+  The exact-head verifier requires the new marker; an older trusted verifier
+  passing without that assertion does not establish honesty-composition proof.
+  These synthetic candidates are not captured provider inputs. Successful
+  component fixtures do not resolve the post-#1512 production failures: raw A
+  failed authentication, raw C omitted the requested learner check and included
+  a neutral qualification, and raw D included an unwanted introduction. Their original
+  provider candidates were unavailable, so the precise transformation cannot be
+  reconstructed from the final answers. Runtime acceptance remains separate and
+  failed until independently supported by fresh authorized evidence.
 - The trusted
   [Railway PR preview lifecycle workflow](../.github/workflows/railway-pr-preview-lifecycle.yml)
   owns preview creation and teardown for PRs carrying the exact
