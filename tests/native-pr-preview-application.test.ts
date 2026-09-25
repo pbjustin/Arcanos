@@ -4,8 +4,10 @@ import request from 'supertest';
 import { assertDagMetricsRetentionPreviewFixture } from '../src/shared/dag/dagMetricsPreviewFixture.js';
 import { assertDagTokenAccountingPreviewFixture } from '../src/shared/dag/dagTokenAccountingPreviewFixture.js';
 import { assertSessionContextPreviewFixture } from '../src/shared/memory/sessionContextPreviewFixture.js';
+import { assertTutorHonestyPreviewFixture } from '../src/shared/chatgpt/tutorHonestyPreviewFixture.js';
 import {
   NATIVE_PR_PREVIEW_BACKSTAGE_BOOKER_OPENAPI_CONTRACT,
+  NATIVE_PR_PREVIEW_CHATGPT_TUTOR_CONTRACT,
   NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT,
   NATIVE_PR_PREVIEW_BACKSTAGE_STORYLINE_CONTRACT,
   NATIVE_PR_PREVIEW_DISPATCH_GPT_IDENTIFIER_CONTRACT,
@@ -38,6 +40,10 @@ jest.unstable_mockModule('../src/shared/dag/dagTokenAccountingPreviewFixture.js'
 const assertSessionContextFixture = jest.fn(assertSessionContextPreviewFixture);
 jest.unstable_mockModule('../src/shared/memory/sessionContextPreviewFixture.js', () => ({
   assertSessionContextPreviewFixture: assertSessionContextFixture,
+}));
+const assertTutorHonestyFixture = jest.fn(assertTutorHonestyPreviewFixture);
+jest.unstable_mockModule('../src/shared/chatgpt/tutorHonestyPreviewFixture.js', () => ({
+  assertTutorHonestyPreviewFixture: assertTutorHonestyFixture,
 }));
 const {
   createNativePrPreviewApplication,
@@ -677,6 +683,29 @@ describe('native PR contained application', () => {
     const draining = await request(app).get('/readyz');
     expect(draining.status).toBe(503);
     expectNoStore(draining);
+  });
+
+  it('withholds Tutor honesty proof and success output when the shared composition fails', async () => {
+    const contract = NATIVE_PR_PREVIEW_CHATGPT_TUTOR_CONTRACT;
+    const app = createNativePrPreviewApplication({ identity });
+    const call = { jsonrpc: '2.0', id: 1, method: 'tools/call',
+      params: { name: contract.toolName, arguments: { prompt: contract.prompt } } };
+    try {
+      assertTutorHonestyFixture.mockImplementation(() => { throw new Error('private failure detail'); });
+      const failed = await request(app).post(contract.path).send(call);
+      expect(failed.status).toBe(500);
+      expect(failed.headers[contract.honestyProofHeader]).toBeUndefined();
+      expect(failed.body).toEqual({ jsonrpc: '2.0', id: 1,
+        error: { code: -32603, message: 'TUTOR_PREVIEW_HONESTY_ASSERTION_FAILED' } });
+      expect(JSON.stringify(failed.body)).not.toContain('private failure detail');
+      expect(assertTutorHonestyFixture).toHaveBeenCalledTimes(1);
+      const denied = await request(app).post(contract.path).send({ ...call,
+        params: { ...call.params, arguments: { prompt: 'unapproved input' } } });
+      expect(denied.headers[contract.honestyProofHeader]).toBeUndefined();
+      expect(assertTutorHonestyFixture).toHaveBeenCalledTimes(1);
+    } finally {
+      assertTutorHonestyFixture.mockImplementation(assertTutorHonestyPreviewFixture);
+    }
   });
 
   it('requires successful DAG metrics proof for GET and HEAD readiness without changing the body', async () => {

@@ -15,7 +15,7 @@ const PREVIEW_IMPORT_TSCONFIG_FILE =
 const PREVIEW_DIST_IMPORT_CHECKER_FILE =
   'scripts/check-native-pr-preview-dist-imports.mjs';
 const PREVIEW_DIST_IMPORT_CHECKER_DIGEST =
-  '935852fbb8b53d5c6e767cb685c9d80fda9c68f67a114410c6341492e50fa990';
+  '7c4725e8806ed3a0f3727e01e3a12eecd4151d3269362ca7d48acd83ee4070fc';
 const ROOT_PACKAGE_MANIFEST_FILE = 'package.json';
 const ROOT_TSCONFIG_FILE = 'tsconfig.json';
 const RUNTIME_PACKAGE_MANIFEST_FILE =
@@ -38,6 +38,7 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'scripts/native-pr-preview-contract.mjs',
   'scripts/start-railway-service.mjs',
   'src/core/logic/trinityDirectAnswerMode.ts',
+  'src/core/logic/trinityHonesty.ts',
   'src/core/db/repositories/backstageStorylineRepository.ts',
   'src/lib/errors/responses.ts',
   'src/mcp/httpBodyParserCore.ts',
@@ -94,6 +95,7 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/shared/backstage/backstageStoryline.ts',
   'src/shared/backstage/backstageUniverseReadProjection.ts',
   'src/shared/chatgpt/chatgptTutorPreviewFixture.ts',
+  'src/shared/chatgpt/tutorHonestyPreviewFixture.ts',
   'src/shared/dispatch/dispatchGptIdentifierBoundary.ts',
   'src/shared/dag/dagMetricsCore.ts',
   'src/shared/dag/dagMetricsPreviewFixture.ts',
@@ -159,6 +161,7 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/shared/memory/sessionContextPolicy.ts',
   'src/shared/memory/sessionContextPreviewFixture.ts',
   'src/shared/hrcEvaluationPolicy.ts',
+  'src/shared/promptGuidance.ts',
   'src/shared/researchRequest.ts',
   'src/shared/constants.ts',
   'src/shared/security/gptAccessDevice.ts',
@@ -167,6 +170,8 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/shared/security/purposeBoundCredential.ts',
   'src/shared/security/sensitiveProviderStorage.ts',
   'src/shared/selfHealPredictiveApproval.ts',
+  'src/shared/text/countWords.ts',
+  'src/shared/text/intentModeClassifier.ts',
   'src/shared/typeGuards.ts',
   'src/start-native-pr-preview.ts',
   'src/transport/http/asyncHandler.ts',
@@ -764,7 +769,12 @@ const CRITICAL_RUNTIME_FUNCTION_DIGESTS = new Map([
   ],
 ]);
 const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
-  ['src/shared/chatgpt/chatgptTutorPreviewFixture.ts', '021be19a56c4185f0a89a28f39bd2e03b3979e2662d8a34f49cca92fb9ef60f6'], // gitleaks:allow -- public source semantic SHA-256
+  ['src/core/logic/trinityHonesty.ts', 'b1171005cc9fce6880875d72e7def014f61f3c5ac384b5e22e8df52493c80db7'], // gitleaks:allow -- public source semantic SHA-256
+  ['src/shared/text/countWords.ts', '5a1ff6743306061b9634f2d0f043c29be6e3ec404bda3569d8da0f031ac68fc9'], // gitleaks:allow -- public source semantic SHA-256
+  ['src/shared/text/intentModeClassifier.ts', '848e9b19da342101f6b9dfb20cf83f18c1dae32e650cfec8a3e928fca0bc5fe2'], // gitleaks:allow -- public source semantic SHA-256
+  ['src/shared/promptGuidance.ts', 'de0d8aff69e7aa5bb5e3e80cc45c8a70fcd9c848d0b5257f8038f6b0a524283a'], // gitleaks:allow -- public source semantic SHA-256
+  ['src/shared/chatgpt/tutorHonestyPreviewFixture.ts', 'f666ae46d60741f26417e754998e6725dee19d79b3a38f1872637551782b529d'], // gitleaks:allow -- public source semantic SHA-256
+  ['src/shared/chatgpt/chatgptTutorPreviewFixture.ts', 'fa8742e28e947f820087cc90a71198c106fb8b14686355d8c329c73bbd0ec92a'], // gitleaks:allow -- public source semantic SHA-256
   ['src/platform/runtime/sessionContext.ts', 'ccb6ac8c2d4d739a61e716fd01e890af577adc4aba0a16d5c7d73571c778f53f'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/memory/sessionContextCore.ts', '7d1ffb349363dcb0aee2bf641d20956975980335d9d721ec74ff7191c8730aeb'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/memory/sessionContextPolicy.ts', 'fa9b591e1350a925bd6b62175ca6f160346e12ca4e885a3f5291c7129ac3f740'], // gitleaks:allow -- public source semantic SHA-256

@@ -1,7 +1,7 @@
 import { describe, expect, it } from '@jest/globals';
 import {
   createDefaultTrinityReasoningHonesty, deriveTrinityCapabilityFlags, deriveTrinityOutputControls,
-  enforceFinalStageHonesty, enforceFinalStageHonestyAndMinimalism,
+  enforceFinalStageHonesty, enforceFinalStageHonestyAndMinimalism, prepareTrinityDirectAnswerHonesty,
 } from '../src/core/logic/trinityHonesty.js';
 
 const prompt = 'Explain why one half equals two quarters in exactly two short sentences.';
@@ -17,6 +17,28 @@ describe('server-owned Tutor local arithmetic instruction policy', () => {
     'You can check the equality by cross-multiplying 1 × 4 and 2 × 2.',
     'Check the equality by cross multiplying the numerator and denominator.',
     'Verify your answer by substituting x = 3 into 2 * x + 3 = 9.',
+    'Can you check the equality by cross-multiplying?',
+    'Can you check this by multiplying both sides?',
+    'Can you check whether 1/2 = 2/4 by cross-multiplying?',
+    'Check your answer by substituting x = 3 into 2x + 3 = 9.',
+    'Verify this by plugging x = 3 into the equation.',
+    'As a check, multiply both numerator and denominator by two.',
+    'CHECK THAT 1 × 4 = 2 × 2?',
+    'Could you verify the solution by putting it back into the original equation?',
+    'Can you check whether both sides of the equation are equal?',
+    'Check your work.',
+    'Check your understanding by multiplying the numerator and denominator by two.',
+    'Check the equality of 0.5 and 2/4.',
+    'Check this by comparing the two arithmetic expressions.',
+    'Check your work by adding or subtracting.',
+    'Check your work by multiplying or dividing.',
+    'Check your work by adding, subtracting, multiplying, or dividing.',
+    'Check your work by adding 3 to both sides.',
+    'Check your work by subtracting 3 from both sides.',
+    'Check your answer by plugging 3 back into the original equation.',
+    'Check the equation and verify the equality.',
+    'Check your result by simplifying the fraction.',
+    '1. Check your answer by substituting x = 3 into the original equation.',
   ])('preserves a learner arithmetic instruction through both honesty passes: %s', instruction => {
     const text = `One half and two quarters represent the same amount. ${instruction}`;
     const reasoningHonesty = createDefaultTrinityReasoningHonesty();
@@ -28,6 +50,12 @@ describe('server-owned Tutor local arithmetic instruction policy', () => {
     });
     expect(result.text.replace(/\s+/gu, ' ')).toBe(text);
     expect(result.blockedOrRewrittenClaims).toEqual([]);
+    const secondPassOnly = enforceFinalStageHonestyAndMinimalism({
+      text, userPrompt: prompt, capabilityFlags: flags, reasoningHonesty,
+      outputControls: deriveTrinityOutputControls(prompt, options),
+    });
+    expect(secondPassOnly.text).toBe(text);
+    expect(secondPassOnly.blockedOrRewrittenClaims).toEqual([]);
   });
 
   it.each([
@@ -41,6 +69,33 @@ describe('server-owned Tutor local arithmetic instruction policy', () => {
     'Check the fraction against an online source.',
     'Check the numerator in the account file.',
     'You can check the equality by cross-multiplying and verify the live account status.',
+    'I checked that 1/2 equals 2/4.',
+    'We verified the answer.',
+    'This has been confirmed: 1/2 = 2/4.',
+    'Check the latest external news.',
+    'Verify the live runtime status.',
+    'Check the backend database.',
+    'Verify the account record.',
+    'Check the answer and save it.',
+    'Cross-multiply and verify the live account status.',
+    'Can you check 2 + 2 against an online source?',
+    'Can you check the current stock price by dividing two numbers?',
+    'Check the equation by browsing the web.',
+    'Check your work and persist it.',
+    'Check your equation; the answer was verified.',
+    '1. Check 2 + 2 = 4. I checked your account.',
+    'Check the weather by multiplying 2 × 2.',
+    'Check the election result using the equation.',
+    'Check your equation and confirm the transaction.',
+    'Can you check your work and look up the answer?',
+    'Check the equality using the external API.',
+    'Check by comparing the weather forecast.',
+    'As a check, add an administrator.',
+    'Check by putting a message in the inbox.',
+    'Check the result of the football match.',
+    'Check the value of my portfolio.',
+    'Check your equation by updating your password.',
+    'Check the equality and send a message.',
   ])('does not exempt completed or external/action claims: %s', text => {
     const reasoningHonesty = createDefaultTrinityReasoningHonesty();
     const filtered = enforceFinalStageHonesty(text, reasoningHonesty, flags, 'EXECUTE_TASK', false, policy);
@@ -53,6 +108,49 @@ describe('server-owned Tutor local arithmetic instruction policy', () => {
     expect(result.text).not.toContain(text);
   });
 
+  it.each(['other.pipeline', 'gaming.pipeline', 'core.pipeline'])('does not exempt learner instructions for %s', sourceEndpoint => {
+    const text = 'Can you check the equality by cross-multiplying?';
+    const outputControls = deriveTrinityOutputControls(prompt, { ...options, sourceEndpoint });
+    const reasoningHonesty = createDefaultTrinityReasoningHonesty();
+    expect(outputControls.instructionalVerificationPolicy).toBeUndefined();
+    expect(enforceFinalStageHonesty(text, reasoningHonesty, flags, 'EXECUTE_TASK', false,
+      outputControls.instructionalVerificationPolicy).blocked).toBe(true);
+    expect(enforceFinalStageHonestyAndMinimalism({
+      text, userPrompt: prompt, capabilityFlags: flags, reasoningHonesty, outputControls,
+    }).blockedOrRewrittenClaims).toContain(text);
+  });
+
+  it.each([
+    '1. Subtract 3 from both sides.\n2. Divide both sides by 2.\n3. Check your answer by substituting x = 3 into the equation.',
+    '- Check that 0.5 = 1/2.\n- Verify this by plugging x = 3 into 2x + 3 = 9.',
+    'Check your work by simplifying.\n\nCan you check the equality by cross-multiplying?',
+  ])('preserves existing instructional line structure: %s', text => {
+    const reasoningHonesty = createDefaultTrinityReasoningHonesty();
+    const first = enforceFinalStageHonesty(text, reasoningHonesty, flags, 'EXECUTE_TASK', false, policy);
+    expect(first.blocked).toBe(false);
+    const result = enforceFinalStageHonestyAndMinimalism({
+      text: first.text, userPrompt: prompt, capabilityFlags: flags, reasoningHonesty,
+      outputControls: deriveTrinityOutputControls(prompt, options),
+    });
+    expect(result.text).toBe(text);
+  });
+
+  it.each([
+    "I cannot verify live or current external information here.\n\n1. Subtract 3.\n2. Divide by 2.\n3. The answer is x = 3.",
+    "I cannot verify live or current external information here.\n\n- Subtract 3.\n- Divide by 2.\n\nThe answer is x = 3.",
+    'I checked the live account.\n\n1. Subtract 3.\n2. Divide by 2.\n3. The answer is x = 3.',
+  ])('preserves remaining layout when a real limitation is normalized: %s', text => {
+    const reasoningHonesty = createDefaultTrinityReasoningHonesty();
+    reasoningHonesty.responseMode = 'partial_refusal';
+    reasoningHonesty.userVisibleCaveats = ["I can't verify current external state here without live access."];
+    const suffix = text.slice(text.indexOf('\n\n'));
+    const result = enforceFinalStageHonestyAndMinimalism({
+      text, userPrompt: prompt, capabilityFlags: flags, reasoningHonesty,
+      outputControls: deriveTrinityOutputControls(prompt, options),
+    });
+    expect(result.text).toBe(`${reasoningHonesty.userVisibleCaveats[0]}${suffix}`);
+  });
+
   it('preserves the generic default and cannot activate from prompt text or another source', () => {
     const text = 'You can check this by multiplying the numerator by two.';
     expect(enforceFinalStageHonesty(text, createDefaultTrinityReasoningHonesty(), flags).blocked).toBe(true);
@@ -61,5 +159,96 @@ describe('server-owned Tutor local arithmetic instruction policy', () => {
     expect(deriveTrinityOutputControls(prompt, { ...options, sourceEndpoint: 'other.pipeline' })
       .instructionalVerificationPolicy).toBeUndefined();
     expect(Object.values(flags).every(value => value === false)).toBe(true);
+  });
+
+  it('retains unsupported-item classification for detached list markers', () => {
+    const text = '1.\nI verified the live runtime.\n2.\nThe answer is x = 3.';
+    const result = enforceFinalStageHonestyAndMinimalism({
+      text, userPrompt: prompt, capabilityFlags: flags,
+      reasoningHonesty: createDefaultTrinityReasoningHonesty(),
+      outputControls: deriveTrinityOutputControls(prompt, {}),
+    });
+    expect(result.blockedOrRewrittenClaims).toContain('1. I verified the live runtime.');
+    expect(result.text).not.toMatch(/^\d+\.$/mu);
+    // Existing generic policy conservatively carries unsupported list context
+    // through the following item, even when that item is mathematical.
+    expect(result.blockedOrRewrittenClaims).toContain('2. The answer is x = 3.');
+  });
+
+  it('retains inherited unsupported runtime context across detached list markers', () => {
+    const result = enforceFinalStageHonestyAndMinimalism({
+      text: '1.\nI verified the live runtime.\n2.\nThe worker is healthy.',
+      userPrompt: 'Explain the answer.', capabilityFlags: flags,
+      reasoningHonesty: createDefaultTrinityReasoningHonesty(),
+      outputControls: deriveTrinityOutputControls(prompt, {}),
+    });
+    expect(result.blockedOrRewrittenClaims).toEqual([
+      '1. I verified the live runtime.', '2. The worker is healthy.',
+    ]);
+    expect(result.text).not.toContain('worker is healthy');
+  });
+});
+
+// Synthetic candidates: the production pre-honesty candidate for D is unavailable.
+// These inspect the same admission function used by the direct-answer executor.
+describe('Tutor direct-answer caveat admission diagnostics', () => {
+  const cases = [
+    { id: 'A', request: 'Explain why one half equals two quarters, in two short sentences.',
+      candidate: 'One half and two quarters represent the same amount. Check the equality by cross-multiplying.' },
+    { id: 'C', request: 'In exactly two sentences, explain why 1/2 equals 2/4 and ask the learner to check the equality by cross-multiplying.',
+      candidate: 'One half and two quarters represent the same amount. Can you check the equality by cross-multiplying?' },
+    { id: 'D', request: 'Give exactly three numbered steps to solve 2x + 3 = 9, with no introduction.',
+      candidate: '1. Subtract 3 from both sides to get 2x = 6.\n2. Divide both sides by 2 to get x = 3.\n3. Substitute x = 3 into the equation. Check your work.' },
+    { id: '4', request: 'Check your answer by substituting x = 3.', candidate: 'Check your answer by substituting x = 3.' },
+    { id: '5', request: 'Can you check this by multiplying both sides?', candidate: 'Can you check this by multiplying both sides?' },
+    { id: '6', request: 'Verify whether these fractions are equivalent by cross-multiplying.', candidate: 'Check the equality by cross-multiplying.' },
+  ];
+  it.each(cases)('keeps local request $id out of partial refusal before final processing', ({ request, candidate }) => {
+    const outputControls = deriveTrinityOutputControls(request, options);
+    const admission = prepareTrinityDirectAnswerHonesty({ candidateText: candidate, userPrompt: request, capabilityFlags: flags, outputControls });
+    expect({ rules: admission.ruleIds, categories: admission.honestyFiltered.blockedCategories,
+      mode: admission.reasoningHonesty.responseMode, subtasks: admission.reasoningHonesty.blockedSubtasks,
+      caveats: admission.reasoningHonesty.userVisibleCaveats }).toEqual({
+      rules: ['TUTOR_LOCAL_INSTRUCTION_EXEMPT'], categories: [], mode: 'answer', subtasks: [], caveats: [],
+    });
+    const result = enforceFinalStageHonestyAndMinimalism({ text: admission.honestyFiltered.text, userPrompt: request,
+      capabilityFlags: flags, outputControls, reasoningHonesty: admission.reasoningHonesty });
+    expect(result.text).toBe(candidate);
+    expect(result.text).not.toContain("I can't verify current external state here without live access");
+  });
+});
+
+
+describe('Tutor review-unit boundaries', () => {
+  it.each([
+    '3. Substitute x = 3 into the equation. Check your work.',
+    '- Substitute x = 3 into the equation. Check your work.',
+    '3. Check your answer by substituting x = 3. Verify the equality.',
+    '3. The result is 0.5. Check the equality of 0.5 and 1/2.',
+  ])('uses sentence speech acts while preserving the original item: %s', candidate => {
+    const outputControls = deriveTrinityOutputControls(prompt, options);
+    const { honestyFiltered, reasoningHonesty } = prepareTrinityDirectAnswerHonesty({
+      candidateText: candidate, userPrompt: prompt, capabilityFlags: flags, outputControls,
+    });
+    expect(honestyFiltered.blockedCategories).toEqual([]);
+    expect(honestyFiltered.ruleIds).toEqual(['TUTOR_LOCAL_INSTRUCTION_EXEMPT']);
+    expect(honestyFiltered.text).toBe(candidate);
+    expect(reasoningHonesty.responseMode).toBe('answer');
+    for (const text of [candidate, honestyFiltered.text]) {
+      expect(enforceFinalStageHonestyAndMinimalism({ text, userPrompt: prompt, capabilityFlags: flags,
+        outputControls, reasoningHonesty }).text).toBe(candidate);
+    }
+  });
+  it('does not invent a third step when the provider supplies only two clean steps', () => {
+    const candidate = '1. Subtract 3 from both sides.\n2. Divide both sides by 2 to get x = 3.';
+    const request = 'Give exactly three numbered steps to solve 2x + 3 = 9, with no introduction.';
+    const outputControls = deriveTrinityOutputControls(request, options);
+    const { honestyFiltered, reasoningHonesty } = prepareTrinityDirectAnswerHonesty({
+      candidateText: candidate, userPrompt: request, capabilityFlags: flags, outputControls,
+    });
+    expect(honestyFiltered.ruleIds).toEqual(['NO_HONESTY_REWRITE']);
+    expect(reasoningHonesty.responseMode).toBe('answer');
+    expect(enforceFinalStageHonestyAndMinimalism({ text: honestyFiltered.text, userPrompt: request,
+      capabilityFlags: flags, outputControls, reasoningHonesty }).text).toBe(candidate);
   });
 });

@@ -223,6 +223,41 @@
       "status": "BLOCKED",
       "observedAt": "2026-09-24T18:03:44Z",
       "summary": "New supported ChatGPT Work conversation, A-D each submitted once. A AUTH/UNAUTHORIZED; B displayed two sentences/no disclaimer; C displayed disclaimer/equality plus commentary, omitted requested learner cross-multiplication; D displayed disclaimer/flat three markers plus commentary. B-D explicitly selected existing Primary in request. Expanded UI activity and supported thread reader did not expose same-invocation raw payloads or tool arguments; display-only B success is not a paired raw/final pass and wrapper attribution remains unverified. Actual LF verified in B composer/submitted user message, not independently in tool argument. Four raw plus four ChatGPT slots closed; zero retries."
+    },
+    {
+      "id": "runtime-main-reconciliation-20260925",
+      "kind": "repository",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-25",
+      "summary": "Non-destructive merge of current main 71672aec22d7babf62d65b96de667f17abd3f219 into PR1509 prior head 68bd5eeebf63f637ccd743110d81da5cce1b1991. Two generated-index conflicts; regeneration proved content equal and exact main indexes retained. Runtime source, schemas, tests, preview fixtures and production docs match main. Migration/package work and history retained. Current local validation and independent review are recorded in TUTOR_RECONCILIATION_20260925.md; no migration, deployment or live acceptance is claimed."
+    },
+    {
+      "id": "production-1513-metadata-recheck-20260925",
+      "kind": "railway",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-25T15:11:15Z",
+      "summary": "Read-only get_status and list_deployments independently confirm latest worker e08d2468-a287-4d5c-aa1b-f3b8aaf7d0b2 and web a994758c-bc6a-4d4e-a8dc-fd4e66cb5f1e SUCCESS. Both provider metadata records identify main commit 71672aec22d7babf62d65b96de667f17abd3f219; not independent container attestation. Historical PR1511 and PR1512 deployment pairs are REMOVED. No readiness/provider probes, configuration or deployment changes performed."
+    },
+    {
+      "id": "runtime-followup-history-20260925",
+      "kind": "repository",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-25",
+      "summary": "GitHub confirms PR1511 merged at 3f9611c9e59b1283d7aa4e7b9aef57a17841f97f, PR1512 at 331a9676f3c6edf9463b6fb6ddd3f1ce6bb07ed1, and PR1513 at 71672aec22d7babf62d65b96de667f17abd3f219. PR1511/1512 were deployed historically. PR1513 adds sealed synthetic honesty-composition verification, not a runtime behavior fix or live acceptance. Sources: PR1511/1512/1513 and September25 PR1509 runtime checkpoint; historical measurements remain intact."
+    },
+    {
+      "id": "runtime-acceptance-post1512-record-20260925",
+      "kind": "repository",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-25",
+      "summary": "Review of the already published PR1509 and PR1513 acceptance records, not a new live test: six bounded post1512 A/C/D attempts, no retries. Raw A AUTH before execution; Primary recovery succeeded. Raw C omitted learner cross-multiplication and added neutral qualification; raw D retained three numbered lines plus unwanted qualifying introduction. ChatGPT A missing link_id, C/D display failures. Same-invocation raw ChatGPT payloads unavailable; backend/wrapper attribution unknown. RUNTIME_ACCEPTANCE FAIL and LIVE_TUTOR_CALL_VERIFIED BLOCKED. No newer passing evidence found; synthetic preview cannot replace acceptance."
+    },
+    {
+      "id": "published-baseline-recheck-20260925",
+      "kind": "repository",
+      "status": "BLOCKED",
+      "observedAt": "2026-09-25",
+      "summary": "Read-only inspection restricted to .local-migration/arcanos-tutor in the existing branch and prior review worktrees found no published-gpt.json. The prior review directory contains22 historical runtime/provisional files; no complete published configuration or knowledge inventory. Sixteen cases:0 baseline-bound,10 provisional/unbound,6 unexecuted. Prompt and available sanitized-summary hashes verified; no result promoted and no private input copied into Git."
     }
   ],
   "checks": {
@@ -254,7 +289,8 @@
       "status": "BLOCKED",
       "evidenceIds": [
         "runtime-raw-acceptance-20260924",
-        "runtime-chatgpt-acceptance-20260924"
+        "runtime-chatgpt-acceptance-20260924",
+        "runtime-acceptance-post1512-record-20260925"
       ]
     }
   },

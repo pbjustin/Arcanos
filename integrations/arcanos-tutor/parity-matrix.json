@@ -43,7 +43,7 @@
       "oldGpt": null,
       "plugin": null,
       "toolInvoked": null,
-      "materialDifference": "Prior standalone model call included an irrelevant disclaimer and three sentences. A fresh original-GPT observation used two sentences without that disclaimer, but is not bound to a complete published baseline fingerprint. After reconnect resolved initial UNAUTHORIZED, the connected-tool attempt failed connector schema validation before backend execution. Neither official oldGpt nor migrated-plugin results exist. LIVE_RETEST_PENDING; formatting and comparison remain blocked.",
+      "materialDifference": "Historical pre-rollout observation: Prior standalone model call included an irrelevant disclaimer and three sentences. A fresh original-GPT observation used two sentences without that disclaimer, but is not bound to a complete published baseline fingerprint. After reconnect resolved initial UNAUTHORIZED, the connected-tool attempt failed connector schema validation before backend execution. Neither official oldGpt nor migrated-plugin results exist. LIVE_RETEST_PENDING; formatting and comparison remain blocked. Current checkpoint on 2026-09-25: latest recorded post-PR1512 runtime acceptance FAIL; LIVE_TUTOR_CALL_VERIFIED BLOCKED. PR1513 synthetic verification does not advance acceptance. No baseline-bound oldGpt or migrated-plugin result exists.",
       "disposition": "BLOCKER"
     },
     {

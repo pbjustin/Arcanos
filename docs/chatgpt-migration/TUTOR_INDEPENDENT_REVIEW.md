@@ -191,3 +191,26 @@ and caveat/list interaction. Constructed pre-guard strings were not captured liv
 provider text; source policy forwarding is not runtime option attestation.
 Neither reviewer invoked Tutor, changed production/authentication, or edited
 backend code. Final documentation/sync/staged-guard checks follow these text edits.
+
+## Current-main reconciliation review (2026-09-25)
+
+A separate reviewer inspected the reconciliation of #1509 prior head
+`68bd5eeebf63f637ccd743110d81da5cce1b1991` with current main
+`71672aec22d7babf62d65b96de667f17abd3f219`. No in-scope blocker was found:
+
+- Runtime/protocol/preview/workflow and production-documentation paths match main
+  exactly; no #1511/#1512/#1513 change was reverted or recopied as migration work.
+- All four generated indexes match main after regeneration/content comparison.
+- Remaining differences are migration/package tooling, metadata, evidence and
+  private-input safeguards. No private-input path is tracked or staged.
+- Gates remain evidence-consistent. The post-#1512 failed acceptance record is
+  corroborated in #1509 and #1513; sealed #1513 evidence remains synthetic.
+- All 16 official old-GPT/plugin result fields remain null and blocked. The
+  10 provisional observations do not establish published-baseline parity.
+- No migration-complete or live-acceptance success claim is made. #1509 is safe
+  to retain as the draft final migration container, not ready for migration/release.
+
+The reviewer suggested clarifying dated connection/discovery wording. Current
+handoff and ledger notes now explicitly identify September 24 observations;
+no new account inspection or refresh is implied. Current validation and the owner
+checkpoint are in [the reconciliation record](TUTOR_RECONCILIATION_20260925.md).

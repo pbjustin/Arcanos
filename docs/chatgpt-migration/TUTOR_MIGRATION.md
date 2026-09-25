@@ -1,54 +1,44 @@
 # ARCANOS TUTOR migration handoff
 
-Evidence date: **2026-09-24 UTC**. Current main:
-`8af7a5712ebd5954a97af06ab31d0e2527ac0b58` (PR #1510 merge).
-This document prepares account-side work; it does not authorize the irreversible
-migration. Keep the PR draft until actual migrated skill/reference reconciliation
-and parity pass.
+Evidence date: **2026-09-25 UTC**. Current main:
+`71672aec22d7babf62d65b96de667f17abd3f219` (merged PR #1513).
+PR #1509 remains the **DRAFT migration container**, with auto-merge disabled.
+**RUNTIME_ACCEPTANCE=FAIL**, **LIVE_TUTOR_CALL_VERIFIED=BLOCKED**, and
+**MIGRATION_CHECKPOINT_READY=false**. Baseline collection may continue; Migrate to
+plugin is not authorized.
 
-The runtime repairs were merged through
-[PR #1510](https://github.com/pbjustin/Arcanos/pull/1510) at the current main SHA
-above. Its approved head `3bf9edc010f8e1680783d6fcd19ba990d88894ad` was extracted
-from this PR's reviewed `aeb38692221082a41f6e4382bb8b651c24c917ca` onto the
-earlier `3f9fffe48219b784dca758bca87ade109324c7c9` base. The split contained
-the prompt-schema and isolated Tutor arithmetic-honesty repairs, necessary
-regressions and documentation/index updates. Published GPT exports, knowledge
-files and migrated-plugin parity remain separate migration requirements.
+Current main is authoritative for runtime code, schemas, tests, preview fixtures
+and production documentation. It was merged non-destructively into #1509 from
+`68bd5eeebf63f637ccd743110d81da5cce1b1991`. Only `backend-index.json` and
+`docs/BACKEND_INDEX.md` conflicted. All four indexes were regenerated; their content
+matched main except timestamps, so main's exact generated versions were retained
+and `reindex:check` passed. Runtime and preview paths have no remaining diff from
+main. Migration/package tooling, private-input guards and evidence remain here.
 
-The separately authorized code rollout deployed worker
-`628f094e-4fee-4523-8eb0-2dc145364e96` and web
-`4d3576b6-8f45-421e-ba6d-23b9f01f079d`. A fresh read-only recheck at
-**2026-09-24T17:51:14Z** passed: both expected deployments were sole active
-`SUCCESS` and ready, with no observed configuration drift. This deployment
-evidence does not establish Tutor response acceptance.
+[PR #1511](https://github.com/pbjustin/Arcanos/pull/1511) and
+[PR #1512](https://github.com/pbjustin/Arcanos/pull/1512) were merged and deployed
+historically. [PR #1513](https://github.com/pbjustin/Arcanos/pull/1513) adds sealed
+honesty-composition verification, not a runtime behavior fix or live acceptance.
+Read-only provider metadata at **2026-09-25T15:11:15Z** confirmed current worker
+`e08d2468-a287-4d5c-aa1b-f3b8aaf7d0b2` and web
+`a994758c-bc6a-4d4e-a8dc-fd4e66cb5f1e` as latest **SUCCESS**, with main's SHA in
+both metadata records. No deployment, configuration change or live call occurred
+in this reconciliation. Provider commit metadata is not container attestation.
 
-The [candidate acceptance checkpoint](TUTOR_CANDIDATE_ACCEPTANCE.md) retains the
-earlier non-production discovery and pending isolated-target proposal as dated
-evidence. At that earlier discovery stage, no approved authenticated isolated
-candidate target was found or deployed. The subsequent production rollout and
-current results are recorded in [runtime acceptance](TUTOR_RUNTIME_ACCEPTANCE.md).
-Existing **Primary** authentication and an explicit connection **Refresh**
-succeeded, exposing the corrected prompt schema. All four raw A–D results used
-`generation: model`, but only B passed. A, C and D included a canned live-access
-disclaimer; C omitted cross-multiplication and D used flat numbering.
-Raw results total **1 pass and 3 failures**. ChatGPT displayed results also total
-**1 pass and 3 failures**: A returned an authentication error, B passed display
-requirements, and C/D failed format/content requirements. Same-invocation raw
-payloads were unavailable, leaving **0/4 fully evidenced raw/final paired
-ChatGPT passes**. **RUNTIME_ACCEPTANCE = FAIL** and
-`LIVE_TUTOR_CALL_VERIFIED` stays `BLOCKED` because the repeated raw defect
-violates the required absence of a systematic response defect.
+The latest recorded live acceptance is the post-#1512 failed A/C/D checkpoint.
+Raw A failed authentication before execution; raw C omitted the learner check;
+raw D retained three numbered lines but added an unwanted qualification. ChatGPT
+A reported missing link_id; C/D displayed noncompliance. Same-invocation raw
+ChatGPT payloads remain unavailable, so backend/wrapper attribution is unknown.
+Existing Primary recovery and discovery remain dated verified evidence; durable
+refresh-token renewal remains unverified. No new acceptance run is authorized.
 
-Keep #1509 draft. Current main has been merged into its local review checkout
-using the non-destructive workflow in
-[the synchronization skill](../../.agents/skills/arcanos-safe-worktree-sync/SKILL.md).
-Unrelated worktrees and ignored local inputs were preserved. Only the four generated indexes
-conflicted, and regeneration resolved them. All nine runtime/schema/test repair
-paths and the schema guide match main in the index and working tree, so those
-repairs are absent from the remaining diff. Packaging, published
-baseline capture, migrated instructions/references and paired parity remain in
-#1509. Migration gates are unchanged; baseline-bound old-GPT results remain
-0/16 and the account migration still requires separate owner confirmation.
+No complete published baseline was supplied in the permitted ignored directory.
+There are **16 parity cases: 0 baseline-bound, 10 provisional/unbound and 6
+unexecuted**. All official old-GPT and plugin result fields remain null. Unknown
+knowledge inventory is not zero files. No GPT/account migration occurred.
+See the [current reconciliation record](TUTOR_RECONCILIATION_20260925.md),
+[private input contract](TUTOR_INPUTS.md), and the dated historical evidence below.
 
 ## What is ready, and what is not
 
@@ -60,12 +50,12 @@ thirteen independent states; there is no single migrated boolean.
 
 | Gate | Current status | Basis |
 | --- | --- | --- |
-| CODE_READY | VERIFIED | Repository scope only: type-check/build and 410 tests across 13 suites passed; independent reconciliation/evidence review found no publication blocker. Live runtime acceptance failed separately. |
-| BACKEND_DEPLOYED | VERIFIED | PR #1510 merge deployed to the exact worker/web IDs above; fresh 17:51:14Z read-only recheck passed |
-| OAUTH_CONFIGURED | VERIFIED | Existing Primary authentication completed; explicit Refresh succeeded |
-| CHATGPT_CONNECTION_REGISTERED | VERIFIED | Fresh UI matched the expected resource, raw app ID and technical ID |
-| TOOL_DISCOVERY_VERIFIED | VERIFIED | Explicit Refresh exposed exactly arcanos_tutor with the corrected prompt schema |
-| LIVE_TUTOR_CALL_VERIFIED | BLOCKED | Raw results 1 pass/3 failures; ChatGPT displayed results 1 pass/3 failures with 0/4 same-invocation paired passes; repeated raw defects keep runtime acceptance FAIL |
+| CODE_READY | VERIFIED | Repository migration/package scope only; current reconciliation validation is recorded in TUTOR_RECONCILIATION_20260925.md. Live runtime acceptance remains failed. |
+| BACKEND_DEPLOYED | VERIFIED | Current main 71672aec; exact current worker/web IDs above are latest SUCCESS in the 2026-09-25 provider metadata recheck |
+| OAUTH_CONFIGURED | VERIFIED | Dated existing Primary recovery and Refresh evidence; exact-client renewal durability remains unverified |
+| CHATGPT_CONNECTION_REGISTERED | VERIFIED | September 24 UI matched the expected resource, raw app ID and technical ID; no new account inspection |
+| TOOL_DISCOVERY_VERIFIED | VERIFIED | September 24 explicit Refresh exposed exactly arcanos_tutor with the corrected prompt schema |
+| LIVE_TUTOR_CALL_VERIFIED | BLOCKED | Latest post-#1512 A/C/D checkpoint remains FAIL; #1513 synthetic verification does not clear it |
 | GPT_BASELINE_CAPTURED | BLOCKED | Latest published configuration and knowledge inventory missing |
 | GPT_MIGRATED | NOT_STARTED | Migration click has not been authorized or performed |
 | SKILL_RECONCILED | BLOCKED | Actual migrated skill and published instructions missing |
@@ -84,7 +74,7 @@ separate from successful runtime acceptance and migrated-plugin parity. The
 pre-migration checkpoint below remains false independently of these thirteen
 machine-readable gates.
 
-## Evidence provenance
+## Historical evidence provenance (2026-09-24)
 
 [connection.requirements.json](../../integrations/arcanos-tutor/connection.requirements.json)
 contains only non-secret metadata and sanitized summaries:
@@ -351,8 +341,8 @@ Existing Custom GPT Actions remain unchanged. Gaming, Booker and Core are outsid
 this PR. No production variable or credential change was made **as part of this
 PR**; earlier separately authorized OAuth activation is dated evidence only.
 The scoped preview deployment was removed. The subsequent separately authorized
-#1510 runtime rollout deployed the repairs to the worker/web IDs above; fresh
-readiness rechecks passed, while runtime acceptance remains failed. That code
+#1510, #1511 and #1512 runtime rollouts are historical. Current main and the
+current deployment pair are recorded at the top; runtime acceptance remains failed. That code
 rollout did not perform account migration, replacement sharing or installation.
 The package does not add memory, profiles, persistence, ingestion or admin tools.
 
@@ -363,3 +353,58 @@ usable only for the platform's remaining availability; its conversations are
 not moved to the replacement. Retain the private baseline and avoid retiring any
 route while parity is unresolved. A production rollback or retirement would
 require its own explicit authorization; neither is carried out by this task.
+
+## Historical handoff opening (2026-09-24, superseded current-state wording)
+
+The following original checkpoint is retained as history. Its uses of current or
+fresh refer to September 24 and do not supersede the September 25 status above.
+
+Evidence date: **2026-09-24 UTC**. Current main:
+`8af7a5712ebd5954a97af06ab31d0e2527ac0b58` (PR #1510 merge).
+This document prepares account-side work; it does not authorize the irreversible
+migration. Keep the PR draft until actual migrated skill/reference reconciliation
+and parity pass.
+
+The runtime repairs were merged through
+[PR #1510](https://github.com/pbjustin/Arcanos/pull/1510) at the current main SHA
+above. Its approved head `3bf9edc010f8e1680783d6fcd19ba990d88894ad` was extracted
+from this PR's reviewed `aeb38692221082a41f6e4382bb8b651c24c917ca` onto the
+earlier `3f9fffe48219b784dca758bca87ade109324c7c9` base. The split contained
+the prompt-schema and isolated Tutor arithmetic-honesty repairs, necessary
+regressions and documentation/index updates. Published GPT exports, knowledge
+files and migrated-plugin parity remain separate migration requirements.
+
+The separately authorized code rollout deployed worker
+`628f094e-4fee-4523-8eb0-2dc145364e96` and web
+`4d3576b6-8f45-421e-ba6d-23b9f01f079d`. A fresh read-only recheck at
+**2026-09-24T17:51:14Z** passed: both expected deployments were sole active
+`SUCCESS` and ready, with no observed configuration drift. This deployment
+evidence does not establish Tutor response acceptance.
+
+The [candidate acceptance checkpoint](TUTOR_CANDIDATE_ACCEPTANCE.md) retains the
+earlier non-production discovery and pending isolated-target proposal as dated
+evidence. At that earlier discovery stage, no approved authenticated isolated
+candidate target was found or deployed. The subsequent production rollout and
+current results are recorded in [runtime acceptance](TUTOR_RUNTIME_ACCEPTANCE.md).
+Existing **Primary** authentication and an explicit connection **Refresh**
+succeeded, exposing the corrected prompt schema. All four raw A–D results used
+`generation: model`, but only B passed. A, C and D included a canned live-access
+disclaimer; C omitted cross-multiplication and D used flat numbering.
+Raw results total **1 pass and 3 failures**. ChatGPT displayed results also total
+**1 pass and 3 failures**: A returned an authentication error, B passed display
+requirements, and C/D failed format/content requirements. Same-invocation raw
+payloads were unavailable, leaving **0/4 fully evidenced raw/final paired
+ChatGPT passes**. **RUNTIME_ACCEPTANCE = FAIL** and
+`LIVE_TUTOR_CALL_VERIFIED` stays `BLOCKED` because the repeated raw defect
+violates the required absence of a systematic response defect.
+
+Keep #1509 draft. Current main has been merged into its local review checkout
+using the non-destructive workflow in
+[the synchronization skill](../../.agents/skills/arcanos-safe-worktree-sync/SKILL.md).
+Unrelated worktrees and ignored local inputs were preserved. Only the four generated indexes
+conflicted, and regeneration resolved them. All nine runtime/schema/test repair
+paths and the schema guide match main in the index and working tree, so those
+repairs are absent from the remaining diff. Packaging, published
+baseline capture, migrated instructions/references and paired parity remain in
+#1509. Migration gates are unchanged; baseline-bound old-GPT results remain
+0/16 and the account migration still requires separate owner confirmation.

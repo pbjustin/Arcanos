@@ -1,5 +1,10 @@
 # Tutor backend regression review
 
+Current reconciliation: runtime repairs now come entirely from main
+`71672aec22d7babf62d65b96de667f17abd3f219`; none remain as new runtime changes in
+#1509. See [September 25 reconciliation](TUTOR_RECONCILIATION_20260925.md).
+The review and repair descriptions below are historical.
+
 This companion records the backend boundaries and deterministic coverage selected
 for the migration candidate, including the scoped repairs reviewed on 2026-09-24.
 It is not a live provider, production Action, or migrated-skill verification result.
@@ -17,8 +22,8 @@ The exact-head sealed preview preceded these repairs and does not cover them.
 | Legacy query scheduling is not replaced by synchronous MCP | [GPT execution policy](../../src/routes/_core/gptRouteExecutionPolicy.ts) | [Execution-policy tests](../../tests/gpt-route-execution-policy.test.ts) retain ordinary non-core `query` scheduling and explicit synchronous precedence. The new migration test explicitly selects that existing sync option; it does not change defaults. |
 
 At previewed head `7f4e8c6de2ad145be04de23a436a2dc106f118e7`, backend and protocol
-files were unchanged from base `3f9fffe48219b784dca758bca87ade109324c7c9`. The
-current candidate includes the two repairs below. Legacy Tutor domain/module
+files were unchanged from base `3f9fffe48219b784dca758bca87ade109324c7c9`. That
+historical candidate included the two repairs below. Legacy Tutor domain/module
 selection, scholarly research and queue behavior remain on their existing routes.
 None becomes a new plugin argument or capability.
 The plugin continues to call only the isolated generic Tutor adapter with `{prompt}`.

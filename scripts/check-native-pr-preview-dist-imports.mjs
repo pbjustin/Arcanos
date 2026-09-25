@@ -34,6 +34,36 @@ export const NATIVE_PR_PREVIEW_DIST_IMPORT_CONTRACT = Object.freeze([
   }),
 ]);
 
+// This sealed fixture reaches only the production honesty functions and their
+// three pure helpers. Check every emitted edge, including the leaf modules.
+export const TUTOR_HONESTY_PREVIEW_DIST_IMPORT_CONTRACT = Object.freeze([
+  Object.freeze({
+    filePath: 'dist/shared/chatgpt/tutorHonestyPreviewFixture.js',
+    imports: Object.freeze({
+      '../../core/logic/trinityHonesty.js': Object.freeze([
+        'createDefaultTrinityReasoningHonesty:createDefaultTrinityReasoningHonesty',
+        'deriveTrinityCapabilityFlags:deriveTrinityCapabilityFlags',
+        'deriveTrinityOutputControls:deriveTrinityOutputControls',
+        'enforceFinalStageHonestyAndMinimalism:enforceFinalStageHonestyAndMinimalism',
+        'prepareTrinityDirectAnswerHonesty:prepareTrinityDirectAnswerHonesty',
+      ]),
+    }),
+  }),
+  Object.freeze({
+    filePath: 'dist/core/logic/trinityHonesty.js',
+    imports: Object.freeze({
+      '../../shared/text/countWords.js': Object.freeze(['countWords:countWords']),
+      '../../shared/text/intentModeClassifier.js': Object.freeze(['classifyIntentMode:classifyIntentMode']),
+      '../../shared/promptGuidance.js': Object.freeze(['renderPromptGuidanceSections:renderPromptGuidanceSections']),
+    }),
+  }),
+  ...[
+    'dist/shared/text/countWords.js',
+    'dist/shared/text/intentModeClassifier.js',
+    'dist/shared/promptGuidance.js',
+  ].map(filePath => Object.freeze({ filePath, imports: Object.freeze({}) })),
+]);
+
 function runtimeImportBindings(node) {
   const importClause = node.importClause;
   if (!importClause || importClause.isTypeOnly) {
@@ -139,6 +169,45 @@ export function findNativePrPreviewDistImportSourceViolations(
   return violations;
 }
 
+export function findTutorHonestyPreviewDistImportSourceViolations(contract, sourceText) {
+  const sourceFile = ts.createSourceFile(
+    contract.filePath,
+    sourceText.replace(/\r\n?/gu, '\n'),
+    ts.ScriptTarget.ES2022,
+    true,
+    ts.ScriptKind.JS
+  );
+  const violations = [];
+  const observedImports = sourceFile.statements
+    .filter(statement => ts.isImportDeclaration(statement))
+    .map(statement => JSON.stringify([
+      ts.isStringLiteral(statement.moduleSpecifier) ? statement.moduleSpecifier.text : null,
+      runtimeImportBindings(statement),
+    ]))
+    .sort();
+  const expectedImports = Object.entries(contract.imports)
+    .map(([specifier, bindings]) => JSON.stringify([specifier, [...bindings].sort()]))
+    .sort();
+  if (sourceFile.parseDiagnostics.length > 0
+    || observedImports.length !== expectedImports.length
+    || observedImports.some((entry, index) => entry !== expectedImports[index])) {
+    violations.push(`${contract.filePath}: emitted Tutor honesty imports must match the reviewed pure graph`);
+  }
+  const inspect = node => {
+    if ((ts.isExportDeclaration(node) && node.moduleSpecifier)
+      || ts.isImportEqualsDeclaration(node)
+      || (ts.isCallExpression(node) && (
+        node.expression.kind === ts.SyntaxKind.ImportKeyword
+        || (ts.isIdentifier(node.expression) && node.expression.text === 'require')
+      ))) {
+      violations.push(`${contract.filePath}: emitted Tutor honesty graph must not use dynamic imports or runtime re-exports`);
+    }
+    ts.forEachChild(node, inspect);
+  };
+  inspect(sourceFile);
+  return [...new Set(violations)].sort();
+}
+
 export async function findNativePrPreviewDistImportViolations({
   repositoryRoot = REPOSITORY_ROOT,
 } = {}) {
@@ -185,6 +254,14 @@ export async function findNativePrPreviewDistImportViolations({
       violations.push(`${contract.filePath}: built preview module is missing`);
     }
   }
+  for (const contract of TUTOR_HONESTY_PREVIEW_DIST_IMPORT_CONTRACT) {
+    try {
+      const sourceText = await fs.readFile(path.join(repositoryRoot, contract.filePath), 'utf8');
+      violations.push(...findTutorHonestyPreviewDistImportSourceViolations(contract, sourceText));
+    } catch {
+      violations.push(`${contract.filePath}: built Tutor honesty module is missing`);
+    }
+  }
   return [...new Set(violations)].sort();
 }
 
@@ -197,7 +274,7 @@ export async function runCliCheck() {
     return;
   }
   console.log(
-    'check:native-pr-preview-dist-imports passed: emitted preview imports resolve to the reviewed request-abort runtime.'
+    'check:native-pr-preview-dist-imports passed: emitted preview imports match the reviewed request-abort runtime and pure Tutor honesty graph.'
   );
 }
 

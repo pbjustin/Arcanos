@@ -118,6 +118,126 @@ curl -sS -X POST "$ARCANOS_BASE_URL/gpt/arcanos-core" \
 
 Use the internal flow only for the public writing plane. Protected backend diagnostics, async job creation, worker status, queue inspection, and job-result reads belong under `/gpt-access/*` or direct control endpoints.
 
+## Isolated Tutor instructional verification
+
+The isolated ChatGPT Tutor path sets the server-owned `tutor-math-v1` policy in
+`tutor-logic.ts`. `deriveTrinityOutputControls` retains it only for
+`sourceEndpoint: 'tutor.pipeline'`; prompts and tool arguments cannot select it.
+Both the direct-answer and full Trinity paths pass the same policy to the first
+honesty filter and the subsequent honesty/minimalism filter.
+
+Within this policy, learner-directed local calculations are instructions, not
+claims that the backend performed live verification. The shared classifier
+recognizes check/verify imperatives and learner questions, then consumes their
+complete mathematical object or method. Mathematical relations, substitution,
+arithmetic operands and local learner work can be composed; every additional
+clause must also be local. Parsing is bounded, and unknown constructions retain
+the normal honesty checks. Completed verification, external/current context and
+backend/storage actions remain excluded. This exception suppresses only the
+lexical check/verify trigger; it grants no capability or execution authority.
+
+For example, `Can you check the equality by cross-multiplying?` and
+`Check your answer by substituting x = 3 into 2x + 3 = 9.` survive both passes.
+`I checked the answer.`, `Check the value of my portfolio.` and
+`Check your equation by updating your password.` do not qualify. Generic ARCANOS
+callers retain their existing honesty rules.
+
+Honesty cleanup transforms segments within existing lines. Replacing or removing
+a caveat preserves the remaining numbered lines, bullets and paragraph breaks;
+the existing logical grouping of detached numbered markers is retained so an
+unsupported item cannot lose its list context. This change adds no sentence
+truncation or repair of model prose. Existing explicit word-budget compression is
+unchanged and remains outside the layout guarantee. An untouched Tutor answer
+retains its presentation through the first pass.
+
+The production motivation is the [post-#1510 acceptance evidence](https://github.com/pbjustin/Arcanos/blob/68bd5eeebf63f637ccd743110d81da5cce1b1991/docs/chatgpt-migration/TUTOR_RUNTIME_ACCEPTANCE.md):
+raw A/C/D contained inappropriate honesty limitations, while multiline B passed.
+The regression fixtures supply compliant synthetic provider candidates to the
+actual isolated Tutor pipeline with mocked provider/storage dependencies. These
+fixtures demonstrate deterministic post-processing damage before the repair;
+they are not captured production pre-filter provider text or live acceptance.
+Fresh authenticated acceptance remains necessary after an approved deployment.
+
+## Tutor caveat admission after PR #1511
+
+The post-#1511 production evidence separates four raw MCP attempts: A failed
+with AUTH before execution; B passed with an actual newline; C timed out without
+an answer; D returned the live-access caveat and only two numbered steps. Only D
+is fresh direct backend formatting evidence. Same-invocation raw ChatGPT payloads
+were unavailable, so displayed responses do not establish backend causality.
+These are reported observations from the prior rollout, not live calls performed
+for this repair. The original pre-honesty provider candidate for D was not
+captured; constructed candidates below are not reconstructions of that text.
+
+The isolated Tutor execution uses the direct-answer path:
+
+```text
+user request -> Tutor prompt construction -> writing facade -> model candidate
+ -> first honesty review -> direct-answer reasoningHonesty admission
+ -> honesty/minimalism -> direct output contract -> Tutor answer -> HRC
+```
+
+The default Tutor prompts and local A/C/D requests do not trigger the independent
+external-request predicate. The first deterministic error occurs when the first
+honesty review treats an entire numbered item as a single speech act. For example,
+`3. Substitute x = 3 into the equation. Check your work.` contains a local learner
+instruction, but the item does not begin with that instruction. The old guard
+therefore removed the whole item as `live_verification`. Direct-answer admission
+then turned that generic category into `partial_refusal`, a blocked subtask to
+verify current external state, and the exact live-access caveat. The second pass
+could not recover the removed step. PR #1511 tested a single Check-prefixed
+sentence in step three, so it did not exercise this review-unit mismatch.
+
+The first guard now evaluates existing sentence units when admitting the Tutor
+exception. It reuses the unchanged local-math grammar and retains the whole-item
+veto for completed verification, external/current context and backend/storage
+actions. Output lines are never split or rebuilt for this classification. All
+verification sentences in the item must qualify. Generic callers retain their
+original review behavior and limitations.
+
+The internal `prepareTrinityDirectAnswerHonesty` seam is used by the real executor
+and by tests. It exposes bounded rule identifiers to tests, alongside the existing
+first-pass result and refusal state; it adds no public fields or production logs.
+Tutor admission distinguishes unsupported verification from evidence of an
+external subject. Completed or unrecognized nonexternal verification remains
+blocked with a neutral qualification, without inventing external-state subtasks.
+Actual external requests/claims and backend actions retain their limitations.
+The later limitation normalizer and required-caveat insertion honor admitted
+state; this repair changes its causes, rather than deleting a final string.
+
+| Constructed diagnostic fixture | Before | After |
+| --- | --- | --- |
+| A: two sentences with a local check | local instruction; answer; no caveat | unchanged |
+| C: equality plus learner cross-multiplication question | local instruction; answer; no caveat | unchanged |
+| D: three numbered items, with explanation then check in item three | unsupported verification; live_verification; partial_refusal; external caveat; item removed | local instruction; answer; empty blocked subtasks/caveats; all three lines preserved |
+| Completed local verification claim | blocked, with external-state caveat | still blocked, with neutral qualification |
+
+A diagnostic-only extraction, before the behavior repair, produced 82 passing
+cases and the expected D failure. The repaired path also runs through the real
+Tutor/Trinity/HRC orchestration with synthetic provider transport and forbidden or
+mocked storage. It does not grant capabilities, select a policy from user input,
+or change OAuth, tool schemas, providers, timeouts, retries or legacy routes.
+
+This is not general sentence-count or step-count enforcement. A clean two-step
+provider candidate remains two steps; missing content is not fabricated. The
+existing conservative grammar still rejects unknown instruction constructions.
+The generic topic-based request predicate also retains ambiguous cues such as
+`moves`; this separate language-classification limitation is not evidence about
+the captured production D request. Auth recurrence and the timeout are separate
+reliability observations, outside this repair.
+
+No live Tutor calls, deployment, OAuth changes or migration occurred for this
+repair. After review and CI, the next separate approval is merge plus a controlled
+code-only worker-first production rollout, freshly reconfirming compatible
+rollback baselines and the deployed revision. Stop on rollout failure; do not
+retry automatically. Then authorize one raw MCP A/C/D attempt and one ChatGPT
+A/C/D attempt (maximum six Tutor invocations, no retries), preserving each raw
+payload separately from its same-invocation displayed answer. Do not retest B
+unless schema/input handling changes.
+Follow the maintained [Railway deployment procedures](RAILWAY_DEPLOYMENT.md).
+[Migration PR #1509](https://github.com/pbjustin/Arcanos/pull/1509) remains separate
+and blocked; baseline capture may continue, and migration needs owner approval.
+
 ## Verification
 Focused test suites:
 

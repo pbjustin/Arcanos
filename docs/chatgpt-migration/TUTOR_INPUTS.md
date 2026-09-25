@@ -2,7 +2,7 @@
 
 This is a local input contract for the repository tools, not an OpenAI export
 schema. Preserve actual exports unchanged alongside a reviewed local transcription.
-No private input is currently supplied. See the [migration handoff](TUTOR_MIGRATION.md)
+No complete published baseline input is supplied. See the [migration handoff](TUTOR_MIGRATION.md)
 before collecting data or performing account actions.
 
 ## Capture the latest published GPT

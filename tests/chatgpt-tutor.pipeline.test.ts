@@ -146,7 +146,89 @@ afterAll(() => {
   }
 });
 
+// Constructed, already-compliant provider candidates, not captured production
+// outputs. In particular, the check belongs inside D's third step, not a fourth.
+const tutorAcceptanceFixtures = [
+  {
+    caseId: 'A',
+    shape: 'two-sentences',
+    prompt: 'Explain why one half equals two quarters, in two short sentences.',
+    providerAnswer: 'One half is two of four equal parts. Check your understanding by multiplying the numerator and denominator of 1/2 by two.',
+  },
+  {
+    caseId: 'B',
+    shape: 'two-sentences',
+    prompt: 'Explain why 1/2 equals 2/4.\nUse exactly two short sentences and no heading.',
+    providerAnswer: 'Multiplying the numerator and denominator of 1/2 by two gives 2/4. Both fractions describe the same amount.',
+  },
+  {
+    caseId: 'C',
+    shape: 'two-sentences',
+    prompt: 'In exactly two sentences, explain why 1/2 equals 2/4 and ask the learner to check the equality by cross-multiplying.',
+    providerAnswer: 'Multiplying the numerator and denominator of 1/2 by two gives 2/4. Can you check the equality by cross-multiplying 1 × 4 and 2 × 2?',
+  },
+  {
+    caseId: 'D',
+    shape: 'numbered-steps',
+    prompt: 'Give exactly three numbered steps to solve 2x + 3 = 9, with no introduction.',
+    providerAnswer: [
+      '1. Subtract 3 from both sides to get 2x = 6.',
+      '2. Divide both sides by 2 to get x = 3.',
+      '3. Substitute x = 3 into the original equation: 2 × 3 + 3 = 9. Check your work.',
+    ].join('\n'),
+  },
+] as const;
+
+// Read actual transport string values so B's LF cannot be confused with a
+// literal backslash-n by searching a JSON-escaped representation of the request.
+function readTransportStrings(value: unknown): string[] {
+  if (typeof value === 'string') return [value];
+  if (Array.isArray(value)) return value.flatMap(readTransportStrings);
+  if (value && typeof value === 'object') return Object.values(value).flatMap(readTransportStrings);
+  return [];
+}
+
 describe('Tutor pilot through real Trinity/HRC with synthetic provider transport', () => {
+  it.each(tutorAcceptanceFixtures)('preserves compliant synthetic acceptance fixture $caseId through both honesty passes', async fixture => {
+    // Prove the fixture obeys the requested shape before backend processing.
+    const sentenceCount = (text: string) => [...new Intl.Segmenter('en', { granularity: 'sentence' }).segment(text)].length;
+    const expectedSteps = fixture.shape === 'numbered-steps' ? fixture.providerAnswer.split('\n') : undefined;
+    expect(fixture.providerAnswer).not.toMatch(/live access|external state/iu);
+    if (expectedSteps) {
+      expect(expectedSteps).toHaveLength(3);
+      expectedSteps.forEach((step, index) => expect(step).toMatch(new RegExp(`^${index + 1}\\. \\S`)));
+    } else {
+      expect(sentenceCount(fixture.providerAnswer)).toBe(2);
+    }
+    providerAnswerOverride = fixture.providerAnswer;
+
+    const result = await executeTutorPilot(learnerA, { prompt: fixture.prompt });
+    const requests = responsesCreate.mock.calls.map(([input]) => input);
+    const isHrcRequest = (input: SyntheticResponsesRequest) =>
+      readTransportStrings(input.input).some(text => text.includes('Hallucination-Resistant Core'));
+    const generationRequests = requests.filter(input => !isHrcRequest(input));
+    const hrcRequests = requests.filter(isHrcRequest);
+    expect(generationRequests.length).toBeGreaterThan(0);
+    expect(generationRequests.some(input =>
+      readTransportStrings(input.input).some(text => text.includes(fixture.prompt)))).toBe(true);
+    // Tutor selects the actual direct-answer path, not a malformed synthetic
+    // JSON reasoning response or a mocked honesty implementation.
+    expect(generationRequests.every(input => !input.text?.format?.name?.startsWith('trinity_structured_reasoning'))).toBe(true);
+    expect(hrcRequests).toHaveLength(1);
+    expect(readTransportStrings(hrcRequests[0].input).some(text => text.includes(result.answer))).toBe(true);
+    for (const input of requests) expect(input.store).toBe(false);
+    expect(result.metadata).toEqual({
+      module: 'ARCANOS:TUTOR', execution: 'synchronous', memory: 'unavailable', generation: 'model',
+    });
+
+    expect(result.answer).not.toMatch(/live access|external state/iu);
+    if (expectedSteps) {
+      expect(result.answer.split('\n')).toEqual(expectedSteps);
+    } else {
+      expect(sentenceCount(result.answer)).toBe(2);
+      expect(result.answer.replace(/\s+/gu, ' ')).toBe(fixture.providerAnswer);
+    }
+  });
   it('preserves two educational sentences with a learner-directed arithmetic check', async () => {
     providerAnswerOverride = 'One half and two quarters represent the same amount. You can check this by multiplying both the numerator and denominator of one half by two.';
     const result = await executeTutorPilot(learnerA, {

@@ -5,16 +5,16 @@
       "status": "VERIFIED",
       "evidenceIds": [
         "repository-foundation",
-        "runtime-main-reconciliation-20260924"
+        "runtime-main-reconciliation-20260925"
       ],
-      "note": "Repository reconciliation preserves exact merged main8af7 runtime bytes. Fresh local validation is recorded separately in TUTOR_RUNTIME_ACCEPTANCE.md. This repository readiness status is not successful live acceptance: repeated raw honesty/format failures remain."
+      "note": "Repository migration/package scope only. Reconciled runtime bytes equal current main 71672aec22d7babf62d65b96de667f17abd3f219. Validation and independent review are recorded in TUTOR_RECONCILIATION_20260925.md. Live runtime acceptance remains FAIL."
     },
     "BACKEND_DEPLOYED": {
       "status": "VERIFIED",
       "evidenceIds": [
-        "production-1510-fresh-recheck-20260924"
+        "production-1513-metadata-recheck-20260925"
       ],
-      "note": "PR1510 merge8af7a5712ebd5954a97af06ab31d0e2527ac0b58 is deployed to the freshly reconfirmed worker/web IDs; both sole active SUCCESS and ready. Source is tied to exact-blob upload receipts/deployment identity, not independent in-container Git attestation. No deployment occurred in this task."
+      "note": "Current main71672aec is identified in provider metadata for latest worker e08d2468-a287-4d5c-aa1b-f3b8aaf7d0b2 and web a994758c-bc6a-4d4e-a8dc-fd4e66cb5f1e, both SUCCESS at2026-09-25T15:11:15Z. Provider metadata is not container attestation or live acceptance. No deployment performed in this reconciliation."
     },
     "OAUTH_CONFIGURED": {
       "status": "VERIFIED",
@@ -28,31 +28,33 @@
       "evidenceIds": [
         "primary-reauth-schema-refresh-20260924"
       ],
-      "note": "Fresh existing-connection UI confirmed unchanged registered app, technical identity and production resource. No connection created or replaced."
+      "note": "September24 existing-connection UI confirmed unchanged registered app, technical identity and production resource. This is dated evidence; no new account inspection, connection creation or replacement in the September25 reconciliation."
     },
     "TOOL_DISCOVERY_VERIFIED": {
       "status": "VERIFIED",
       "evidenceIds": [
         "primary-reauth-schema-refresh-20260924"
       ],
-      "note": "Explicit supported Refresh after reconnect exposed exactly arcanos_tutor with current main schema, prompt-only input and scope arcanos:tutor. No additional capabilities observed."
+      "note": "September24 explicit supported Refresh after reconnect exposed exactly arcanos_tutor with the corrected schema, prompt-only input and arcanos:tutor scope. No new refresh performed in the September25 reconciliation."
     },
     "LIVE_TUTOR_CALL_VERIFIED": {
       "status": "BLOCKED",
       "evidenceIds": [
         "runtime-raw-acceptance-20260924",
-        "runtime-chatgpt-acceptance-20260924"
+        "runtime-chatgpt-acceptance-20260924",
+        "runtime-acceptance-post1512-record-20260925"
       ],
-      "note": "Authentication and refreshed schema succeeded; all four raw calls returned model generation, but A/C/D repeat the irrelevant disclaimer and C omits the learner check. RUNTIME_ACCEPTANCE=FAIL. User-defined absence of a systematic remaining honesty defect is not satisfied. ChatGPT raw/final pairing remains unavailable. No retry, output rewriting or backend repair."
+      "note": "Latest recorded post1512 A/C/D acceptance remains FAIL: raw A authentication failure, C missing learner check, D unwanted qualifying introduction; ChatGPT A missing link_id and C/D noncompliance. Same-invocation payloads unavailable, attribution unknown. PR1513 sealed synthetic honesty-composition verification is not live acceptance. No new calls."
     },
     "GPT_BASELINE_CAPTURED": {
       "status": "BLOCKED",
       "evidenceIds": [
         "account-user-report",
         "published-gpt-inspection-incomplete",
-        "published-baseline-recheck-20260924"
+        "published-baseline-recheck-20260924",
+        "published-baseline-recheck-20260925"
       ],
-      "note": "Fresh supported UI metadata remains incomplete. Private published-gpt.json is absent; capture failed closed with no review artifact. Owner-confirmed latest publication, complete configuration and complete knowledge inventory remain missing."
+      "note": "No published-gpt.json in either permitted existing worktree input directory. Complete latest-published configuration, owner publication review, knowledge inventory and original files remain missing. Historical runtime/provisional observations cannot establish a baseline; unknown inventory is not zero."
     },
     "GPT_MIGRATED": {
       "status": "NOT_STARTED",

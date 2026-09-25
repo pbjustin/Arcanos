@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-24T17:51:05.571Z",
+  "generatedAt": "2026-09-25T03:32:11.534Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -2649,6 +2649,9 @@
         },
         {
           "relativePath": "src/shared/chatgpt/chatgptTutorPreviewFixture.ts"
+        },
+        {
+          "relativePath": "src/shared/chatgpt/tutorHonestyPreviewFixture.ts"
         },
         {
           "relativePath": "src/shared/constants.ts"
@@ -5474,6 +5477,9 @@
         },
         {
           "relativePath": "tests/trinityJudgedFeedback.test.ts"
+        },
+        {
+          "relativePath": "tests/tutor-honesty-preview-fixture.test.ts"
         },
         {
           "relativePath": "tests/tutor-instructional-verification.test.ts"

@@ -91,10 +91,10 @@ import {
 } from '@arcanos/runtime';
 import { tryExtractExactLiteralPromptShortcut } from '@services/exactLiteralPromptShortcut.js';
 import {
-  createDefaultTrinityReasoningHonesty,
   deriveTrinityCapabilityFlags,
   deriveTrinityOutputControls,
   enforceFinalStageHonesty,
+  prepareTrinityDirectAnswerHonesty,
   enforceFinalStageHonestyAndMinimalism,
   validateTrinityAnswerIntegrity,
   readIntentMode
@@ -1073,38 +1073,16 @@ export async function runThroughBrain(
       }
       checkWatchdog();
 
-      const directAnswerNeedsCurrentStateLimitation =
-        (!capabilityFlags.canVerifyLiveData || !capabilityFlags.canConfirmExternalState) &&
-        /\b(verify|verified|check|checked|confirm|confirmed|latest|current|recent|today|this week|as of now)\b/i.test(directAnswerUserIntentPrompt) &&
-        /\b(competitors?|market|news|pricing|release|launch|moves?|external|trends?|compan(?:y|ies)|regulation|stocks?|status|events?)\b/i.test(directAnswerUserIntentPrompt);
       const integrityTraceId = normalizeTraceString(
         getAiExecutionContext()?.traceId
       );
       const prepareDirectAnswerCandidate = (candidateText: string) => {
-        const reasoningHonesty = createDefaultTrinityReasoningHonesty();
-        const honestyFiltered = enforceFinalStageHonesty(
+        const { reasoningHonesty, honestyFiltered } = prepareTrinityDirectAnswerHonesty({
           candidateText,
-          reasoningHonesty,
+          userPrompt: directAnswerUserIntentPrompt,
           capabilityFlags,
-          readIntentMode(outputControls),
-          false,
-          outputControls.instructionalVerificationPolicy
-        );
-        if (honestyFiltered.blocked || directAnswerNeedsCurrentStateLimitation) {
-          reasoningHonesty.responseMode = 'partial_refusal';
-          if (
-            directAnswerNeedsCurrentStateLimitation
-            || honestyFiltered.blockedCategories.includes('live_verification')
-            || honestyFiltered.blockedCategories.includes('current_external_state')
-          ) {
-            reasoningHonesty.blockedSubtasks.push('verify current external state');
-            reasoningHonesty.userVisibleCaveats.push("I can't verify current external state here without live access.");
-          }
-          if (honestyFiltered.blockedCategories.includes('backend_action')) {
-            reasoningHonesty.blockedSubtasks.push('confirm backend state or run backend actions');
-            reasoningHonesty.userVisibleCaveats.push("I can't confirm backend state or run backend actions here.");
-          }
-        }
+          outputControls
+        });
         const enforcedOutput = enforceFinalStageHonestyAndMinimalism({
           text: honestyFiltered.text,
           userPrompt: directAnswerUserIntentPrompt,

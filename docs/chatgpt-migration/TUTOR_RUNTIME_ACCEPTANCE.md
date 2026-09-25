@@ -1,4 +1,49 @@
-# Tutor runtime acceptance after PR #1510
+# Tutor runtime acceptance
+
+Evidence date: **2026-09-25 UTC**. Current main:
+`71672aec22d7babf62d65b96de667f17abd3f219` (merged PR #1513).
+PR #1509 remains the **DRAFT migration container**, with auto-merge disabled.
+**RUNTIME_ACCEPTANCE=FAIL**, **LIVE_TUTOR_CALL_VERIFIED=BLOCKED**, and
+**MIGRATION_CHECKPOINT_READY=false**. Baseline collection may continue; Migrate to
+plugin is not authorized.
+
+Current main is authoritative for runtime code, schemas, tests, preview fixtures
+and production documentation. It was merged non-destructively into #1509 from
+`68bd5eeebf63f637ccd743110d81da5cce1b1991`. Only `backend-index.json` and
+`docs/BACKEND_INDEX.md` conflicted. All four indexes were regenerated; their content
+matched main except timestamps, so main's exact generated versions were retained
+and `reindex:check` passed. Runtime and preview paths have no remaining diff from
+main. Migration/package tooling, private-input guards and evidence remain here.
+
+[PR #1511](https://github.com/pbjustin/Arcanos/pull/1511) and
+[PR #1512](https://github.com/pbjustin/Arcanos/pull/1512) were merged and deployed
+historically. [PR #1513](https://github.com/pbjustin/Arcanos/pull/1513) adds sealed
+honesty-composition verification, not a runtime behavior fix or live acceptance.
+Read-only provider metadata at **2026-09-25T15:11:15Z** confirmed current worker
+`e08d2468-a287-4d5c-aa1b-f3b8aaf7d0b2` and web
+`a994758c-bc6a-4d4e-a8dc-fd4e66cb5f1e` as latest **SUCCESS**, with main's SHA in
+both metadata records. No deployment, configuration change or live call occurred
+in this reconciliation. Provider commit metadata is not container attestation.
+
+The latest recorded live acceptance is the post-#1512 failed A/C/D checkpoint.
+Raw A failed authentication before execution; raw C omitted the learner check;
+raw D retained three numbered lines but added an unwanted qualification. ChatGPT
+A reported missing link_id; C/D displayed noncompliance. Same-invocation raw
+ChatGPT payloads remain unavailable, so backend/wrapper attribution is unknown.
+Existing Primary recovery and discovery remain dated verified evidence; durable
+refresh-token renewal remains unverified. No new acceptance run is authorized.
+
+No complete published baseline was supplied in the permitted ignored directory.
+There are **16 parity cases: 0 baseline-bound, 10 provisional/unbound and 6
+unexecuted**. All official old-GPT and plugin result fields remain null. Unknown
+knowledge inventory is not zero files. No GPT/account migration occurred.
+See the [current reconciliation record](TUTOR_RECONCILIATION_20260925.md),
+[private input contract](TUTOR_INPUTS.md), and the dated historical evidence below.
+
+## Historical post-#1510 acceptance (2026-09-24)
+
+The original report below is retained unchanged as historical evidence. Its
+current-main, fresh-deployment and validation claims refer to that dated run.
 
 Evidence date: **2026-09-24 UTC**. **RUNTIME_ACCEPTANCE=FAIL**.
 **LIVE_TUTOR_CALL_VERIFIED=BLOCKED**. Authentication, current schema and real model

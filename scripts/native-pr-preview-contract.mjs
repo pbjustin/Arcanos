@@ -20,6 +20,8 @@ export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
     metadataPath: '/.well-known/oauth-protected-resource/chatgpt/mcp',
     proofHeader: 'x-arcanos-preview-chatgpt-tutor-version',
     proofVersion: 'chatgpt-tutor-mock/v1',
+    honestyProofHeader: 'x-arcanos-preview-tutor-honesty-version',
+    honestyProofVersion: 'tutor-honesty-composition/v1',
     protocolVersion: '2025-03-26',
     toolName: 'arcanos_tutor',
     prompt: 'Sealed Tutor preview: explain one half.',
