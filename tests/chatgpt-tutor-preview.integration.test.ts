@@ -133,6 +133,10 @@ describe('sealed Tutor preview through the actual MCP SDK HTTP client', () => {
       result: { protocolVersion: contract.protocolVersion, serverInfo: { name: 'arcanos-tutor-sealed-preview' } },
     });
     expect(observed.find(value => value.method === 'notifications/initialized')?.status).toBe(202);
+    for (const response of observed) {
+      expect(response.headers.get(contract.honestyProofHeader)).toBe(
+        response.method === 'tools/call' ? contract.honestyProofVersion : null);
+    }
     for (const response of observed.filter(value => value.status === 200)) {
       expect(response.headers.get(provenance.name)).toBe(provenance.value);
       expect(response.headers.get(contract.proofHeader)).toBe(contract.proofVersion);
@@ -178,6 +182,7 @@ describe('sealed Tutor preview through the actual MCP SDK HTTP client', () => {
         expect(response.status).toBe(404);
         expect(await response.text()).toBe('not found');
         expect(response.headers.get(contract.proofHeader)).toBeNull();
+        expect(response.headers.get(contract.honestyProofHeader)).toBeNull();
       }
     },
   );

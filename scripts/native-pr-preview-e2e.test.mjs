@@ -174,6 +174,10 @@ function responseHeadersForCase(
     ...(requestCase.expectedType === 'chatgpt-tutor' ? {
       [NATIVE_PR_PREVIEW_E2E_CONTRACT.chatGptTutor.proofHeader]:
         NATIVE_PR_PREVIEW_E2E_CONTRACT.chatGptTutor.proofVersion,
+      ...(requestCase.fixtureName === 'tools-call' ? {
+        [NATIVE_PR_PREVIEW_E2E_CONTRACT.chatGptTutor.honestyProofHeader]:
+          NATIVE_PR_PREVIEW_E2E_CONTRACT.chatGptTutor.honestyProofVersion,
+      } : {}),
       ...(requestCase.fixtureName === 'get' ? { allow: 'POST' } : {}),
     } : {}),
     ...(requestCase.role === 'web'
@@ -2694,6 +2698,18 @@ test('rejects Tutor schema, output, provenance, empty-notification and denial dr
   const proofCode = 'NATIVE_PR_PREVIEW_CHATGPT_TUTOR_PROOF_INVALID';
   const bodyCode = 'NATIVE_PR_PREVIEW_BODY_MISMATCH';
   const cases = [
+    ...[undefined, 'tutor-honesty-composition/v0'].map(version => ({
+      caseId: 'web-chatgpt-tutor-tools-call', code: 'NATIVE_PR_PREVIEW_TUTOR_HONESTY_PROOF_INVALID',
+      mutate({ headers }) {
+        if (version === undefined) delete headers[contract.honestyProofHeader];
+        else headers[contract.honestyProofHeader] = version;
+      },
+    })),
+    ...['web-chatgpt-tutor-tools-list', 'web-chatgpt-tutor-wrong-prompt',
+      'worker-chatgpt-tutor-denied', 'web-chatgpt-tutor-authorization-denied'].map(caseId => ({
+      caseId, code: 'NATIVE_PR_PREVIEW_TUTOR_HONESTY_PROOF_INVALID',
+      mutate({ headers }) { headers[contract.honestyProofHeader] = contract.honestyProofVersion; },
+    })),
     ...['initialize', 'initialized', 'tools-list', 'tools-call'].flatMap(fixtureName =>
       [undefined, 'chatgpt-tutor-mock/v0'].map(version => ({
         caseId: `web-chatgpt-tutor-${fixtureName}`, code: proofCode,
