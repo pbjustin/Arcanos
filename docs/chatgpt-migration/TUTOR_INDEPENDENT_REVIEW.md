@@ -257,3 +257,23 @@ retained execution identity needed to bind them to this specific published GPT.
 No baseline-at-execution fingerprint requirement was invented; a retained
 conversation/session locator or source record could resolve the gap without a
 new call. Counts remain 16 total, 0 bound, 10 provisional and 6 unexecuted.
+
+## Owner approval follow-up (2026-09-25)
+
+Independent review verified the actual owner confirmation following the direct
+complete-file review link. The private review sidecar binds the approval to the
+unchanged 10,925-byte published configuration and baseline fingerprint
+`eb1d612dc2b4645841e3035a177ebb91fa6584a2ae633d7918972b9c9dd95e25`.
+The successor private checklist has all 18 required fields VERIFIED. The seven
+source-derived expected-behavior summaries are included in owner approval; no
+new observed behavior or parity evidence was generated.
+
+The reviewed inventory records Owner (task confirmation), 2026-09-25T20:00:43Z,
+and latestPublishedConfirmed=true. Publication assurance and owner evidence
+remain USER_REPORTED; publicationReview references actual account/owner evidence,
+while repository verification establishes source integrity and determinism.
+Only GPT_BASELINE_CAPTURED changes status. Independent review found no blocker in
+the provenance, private-input boundary, or gate transition. Historical pending
+review records remain historical. Parity stays 16 total, 0 bound, 10 provisional
+and 6 unexecuted; live runtime acceptance remains blocked and migration is not
+authorized. GitHub was confirmed OPEN/DRAFT with auto-merge disabled and no merge.

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "status": "IMPLEMENTED_NOT_VERIFIED",
+  "status": "VERIFIED",
   "source": "latest_published_gpt",
   "publicationAssurance": "USER_REPORTED",
   "configuration": {
@@ -54,8 +54,16 @@
     }
   },
   "knowledge": [],
-  "missingInputs": [
-    "owner_review_of_complete_local_transcription",
-    "publication_review_metadata"
-  ]
+  "missingInputs": [],
+  "publicationReview": {
+    "reviewedBy": "Owner (task confirmation)",
+    "reviewedAt": "2026-09-25T20:00:43Z",
+    "latestPublishedConfirmed": true,
+    "evidenceIds": [
+      "published-current-version-partial-20260925",
+      "published-entry-identity-followup-20260925",
+      "owner-published-settings-confirmation-followup-20260925",
+      "owner-complete-baseline-review-20260925"
+    ]
+  }
 }

@@ -2,8 +2,8 @@
 
 This is a local input contract for the repository tools, not an OpenAI export
 schema. Preserve actual exports unchanged alongside a reviewed local transcription.
-A complete private input now validates deterministically; complete-transcription
-owner review is pending. Original UI observations are preserved privately; see the [capture checkpoint](TUTOR_BASELINE_CAPTURE_20260925.md). See the [migration handoff](TUTOR_MIGRATION.md)
+A complete private input now validates deterministically and has owner approval;
+GPT_BASELINE_CAPTURED is VERIFIED. Original UI observations are preserved privately; see the [capture checkpoint](TUTOR_BASELINE_CAPTURE_20260925.md). See the [migration handoff](TUTOR_MIGRATION.md)
 before collecting data or performing account actions.
 
 ## Capture the latest published GPT

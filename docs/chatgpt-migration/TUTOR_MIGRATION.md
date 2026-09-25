@@ -4,8 +4,8 @@ Evidence date: **2026-09-25 UTC**. Current main:
 `71672aec22d7babf62d65b96de667f17abd3f219` (merged PR #1513).
 PR #1509 remains the **DRAFT migration container**, with auto-merge disabled.
 **RUNTIME_ACCEPTANCE=FAIL**, **LIVE_TUTOR_CALL_VERIFIED=BLOCKED**, and
-**MIGRATION_CHECKPOINT_READY=false**. Baseline collection may continue; Migrate to
-plugin is not authorized.
+**MIGRATION_CHECKPOINT_READY=false**. The published baseline is owner-approved;
+Migrate to plugin is not authorized.
 
 Current main is authoritative for runtime code, schemas, tests, preview fixtures
 and production documentation. It was merged non-destructively into #1509 from
@@ -33,10 +33,13 @@ ChatGPT payloads remain unavailable, so backend/wrapper attribution is unknown.
 Existing Primary recovery and discovery remain dated verified evidence; durable
 refresh-token renewal remains unverified. No new acceptance run is authorized.
 
-The complete private published configuration now validates and two captures
+The complete private published configuration validates and repeated captures
 produce the same baseline fingerprint. The owner confirmed zero published
-starters/knowledge and Action authentication None. Complete-transcription owner
-review remains pending, so GPT_BASELINE_CAPTURED stays BLOCKED. See the
+starters/knowledge and Action authentication None, then approved the complete
+transcription and seven expected-behavior summaries. Review is recorded as Owner
+(task confirmation), 2026-09-25T20:00:43Z. GPT_BASELINE_CAPTURED is VERIFIED and
+latestPublishedConfirmed is true; publication assurance remains USER_REPORTED,
+distinct from independent source/hash verification. See the
 [baseline capture checkpoint](TUTOR_BASELINE_CAPTURE_20260925.md).
 There are **16 parity cases: 0 baseline-bound, 10 provisional/unbound and 6
 unexecuted**. All official old-GPT and plugin result fields remain null. Published
@@ -61,9 +64,9 @@ thirteen independent states; there is no single migrated boolean.
 | CHATGPT_CONNECTION_REGISTERED | VERIFIED | September 24 UI matched the expected resource, raw app ID and technical ID; no new account inspection |
 | TOOL_DISCOVERY_VERIFIED | VERIFIED | September 24 explicit Refresh exposed exactly arcanos_tutor with the corrected prompt schema |
 | LIVE_TUTOR_CALL_VERIFIED | BLOCKED | Latest post-#1512 A/C/D checkpoint remains FAIL; #1513 synthetic verification does not clear it |
-| GPT_BASELINE_CAPTURED | BLOCKED | Complete private capture and deterministic fingerprint validated; complete-transcription owner review pending |
+| GPT_BASELINE_CAPTURED | VERIFIED | Complete private capture, deterministic fingerprint and owner review recorded; latestPublishedConfirmed=true |
 | GPT_MIGRATED | NOT_STARTED | Migration click has not been authorized or performed |
-| SKILL_RECONCILED | BLOCKED | Actual migrated skill missing; complete captured instructions are private and final baseline owner review is pending |
+| SKILL_RECONCILED | BLOCKED | Actual migrated skill missing; owner-approved published instructions remain private |
 | REFERENCES_RECONCILED | BLOCKED | Published knowledge explicitly empty; actual migrated reference inventory missing |
 | PARITY_VERIFIED | BLOCKED | Old/new paired results absent; live formatting issue unresolved |
 | PACKAGE_READY | BLOCKED | Actual artifact inspection and parity still required |

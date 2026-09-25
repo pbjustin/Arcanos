@@ -1,6 +1,66 @@
 # Published Tutor baseline on 2026-09-25
 
-## Current follow-up: complete capture, owner review pending
+## Current checkpoint: owner-approved published baseline
+
+**GPT_BASELINE_CAPTURED=VERIFIED.** After the complete private file was linked for
+review, the owner approved it. The review is recorded as **Owner (task
+confirmation)** at **2026-09-25T20:00:43Z**. It covers the complete latest-published
+transcription, including the seven source-derived expected-behavior summaries.
+The original configuration bytes remain unchanged and ignored/untracked.
+
+| Current safe metadata | Result |
+| --- | --- |
+| Display name | ARCANOS TUTOR |
+| Publication | Current version: Mar 5, 2026; displayed Mar 5, 2026 at 11:54 PM |
+| Timestamp / timezone / separate revision ID | 2026-03-05T23:54, literal calendar minute / unavailable / unavailable |
+| Published starters | 0, owner-confirmed |
+| Enabled capabilities | Web Search, Canvas, Image Generation, Code Interpreter & Data Analysis |
+| Action count / stored authentication | 1 / None, owner-confirmed; schema-declared OAuth2 remains distinct |
+| Knowledge inventory / original bytes | 0 files explicitly confirmed; both integrity checks VERIFIED |
+| Representative behavior | 7 source-derived expectations, independently reviewed and included in owner approval; no new observations |
+| latestPublishedConfirmed | true |
+| Publication assurance | USER_REPORTED, supported by retained account observations and explicit owner confirmation |
+| Review evidence | owner-complete-baseline-review-20260925; owner-reviewed-baseline-integrity-20260925 |
+
+**Baseline fingerprint:**
+`eb1d612dc2b4645841e3035a177ebb91fa6584a2ae633d7918972b9c9dd95e25`.
+The unchanged private input is **10,925 bytes**, SHA-256
+`445255487dd270aad087e025b738666340ac1d42a2e45b05fe0b7df640e843bf`.
+Two fresh maintained in-memory captures reproduced the earlier CLI outputs
+exactly: **1,835 bytes**, SHA-256
+`bf77d8a55896dcc92fcb5d44ae606fd4e6037b19b62f1e0914d225dc22b56bae`.
+The reviewed tracked inventory adds publication-review metadata separately;
+the raw input and its fingerprint were not changed to record approval.
+The private owner-review sidecar is 1,875 bytes, SHA-256
+`dea5092bced9dbd118734563c2379b96f9fef7a5ef1d760638cc45202c5bee17`;
+the successor private checklist resolves all 18 required fields.
+
+No baseline inputs remain outstanding. Existing parity still has **16 total /
+0 baseline-bound / 10 provisional / 6 unexecuted**: owner approval does not supply
+the missing original execution identity. No result was promoted and no new call
+was made. LIVE_TUTOR_CALL_VERIFIED remains BLOCKED, GPT_MIGRATED remains
+NOT_STARTED, and migrated skill/reference reconciliation, paired parity, package
+and release readiness remain BLOCKED. **Migrate to plugin is not authorized.**
+
+The PR was found non-draft at unchanged head `a0595df0` during this approval
+follow-up and restored to DRAFT under the standing owner instruction. Auto-merge
+was disabled and no merge occurred. The draft-conversion lifecycle selected
+cleanup with preview_ready=false and E2E skipped; it was not live acceptance or
+a new deployment. Final-head validation is recorded in PR #1509.
+
+Local approval-follow-up checks passed on Node 24.18.1 / npm 11.16.0: type-check,
+build, lint (0 errors / 76 existing warnings), all 102 focused migration/privacy
+tests, package validation, documentation, local links, index checks, sync and
+whitespace checks. The negative missing-configuration test initially inherited
+the newly verified repository inventory; its fixture now explicitly removes the
+configuration so it still tests rejection of an unsupported verification claim.
+No validator was changed. Release validation returns expected exit 2 /
+RELEASE_BLOCKED with 12 remaining runtime/migration blockers and no archive.
+Private baseline capture and integrity are complete; the release check's
+ACTUAL_INPUT_ARTIFACTS_NOT_INSPECTED blocker concerns the still-required complete
+release input/artifact verification, not missing baseline fields.
+
+## Historical complete-capture checkpoint (superseded by owner approval)
 
 **GPT_BASELINE_CAPTURED=BLOCKED pending complete-transcription owner review.**
 The private input now exists and validates. Two maintained capture runs produced

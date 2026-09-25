@@ -358,6 +358,12 @@ describe('Standalone Tutor package and migration release boundary', () => {
   });
   it('rejects baseline verification claims without captured configuration', () => {
     const root = copyPackage();
+    edit(root, 'baseline.inventory.json', baseline => {
+      baseline.status = 'BLOCKED';
+      baseline.configuration = null;
+      baseline.missingInputs = ['published_configuration'];
+      delete baseline.publicationReview;
+    });
     edit(root, 'migration-state.json', state => { state.gates.GPT_BASELINE_CAPTURED.status = 'VERIFIED'; state.gates.GPT_BASELINE_CAPTURED.evidenceIds = ['repository-foundation']; });
     expect(validate(root).status).toBe(1);
   });

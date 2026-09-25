@@ -321,6 +321,20 @@
       "status": "VERIFIED",
       "observedAt": "2026-09-25",
       "summary": "All ten September 24 provisional observations are chronologically compatible with the March published version and all 16 prompt/10 summary hashes match. Neither original nor corrected local records identifies a GPT/conversation locator, source execution artifact or published-chat-versus-editor-preview surface. The missing execution identity prevents binding to this specific published configuration. No execution-time fingerprint was required retroactively; retained source evidence may resolve the link. No result promoted or new call executed; counts remain 16 total, 0 bound, 10 provisional and 6 unexecuted."
+    },
+    {
+      "id": "owner-complete-baseline-review-20260925",
+      "kind": "user_reported",
+      "status": "USER_REPORTED",
+      "observedAt": "2026-09-25T20:00:43Z",
+      "summary": "The owner approved the complete private published-gpt.json after requesting its location and receiving the direct local file link for review. This completes the latest-published transcription review, including seven source-derived expected-behavior summaries. Review is recorded as Owner (task confirmation) and bound to configuration SHA-256 445255487dd270aad087e025b738666340ac1d42a2e45b05fe0b7df640e843bf and baseline fingerprint eb1d612dc2b4645841e3035a177ebb91fa6584a2ae633d7918972b9c9dd95e25. Earlier explicit confirmation of zero published starters, zero knowledge files and stored Action authentication None remains supporting evidence. Approval applies only to the baseline; it does not authorize migration, GPT changes, live acceptance, deployment, PR readiness or merge."
+    },
+    {
+      "id": "owner-reviewed-baseline-integrity-20260925",
+      "kind": "repository",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-25T20:00:43Z",
+      "summary": "Following owner approval, two maintained in-memory recaptures validate the unchanged private input and reproduce the prior sanitized inventory exactly. Configuration SHA-256 445255487dd270aad087e025b738666340ac1d42a2e45b05fe0b7df640e843bf, 10925 bytes; baseline fingerprint eb1d612dc2b4645841e3035a177ebb91fa6584a2ae633d7918972b9c9dd95e25. Knowledge inventory and bytes are verified for the owner-confirmed empty inventory. Publication review references real account and owner evidence; publicationAssurance remains USER_REPORTED. Raw inputs remain ignored/untracked. Only GPT_BASELINE_CAPTURED advances; no old-GPT parity observation is promoted and no runtime or migration action occurred."
     }
   ],
   "checks": {
