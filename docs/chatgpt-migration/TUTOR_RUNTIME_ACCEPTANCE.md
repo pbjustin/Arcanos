@@ -4,8 +4,8 @@ Evidence date: **2026-09-25 UTC**. Current main:
 `71672aec22d7babf62d65b96de667f17abd3f219` (merged PR #1513).
 PR #1509 remains the **DRAFT migration container**, with auto-merge disabled.
 **RUNTIME_ACCEPTANCE=FAIL**, **LIVE_TUTOR_CALL_VERIFIED=BLOCKED**, and
-**MIGRATION_CHECKPOINT_READY=false**. Baseline collection may continue; Migrate to
-plugin is not authorized.
+**MIGRATION_CHECKPOINT_READY=false**. The published baseline is owner-approved;
+Migrate to plugin is not authorized.
 
 Current main is authoritative for runtime code, schemas, tests, preview fixtures
 and production documentation. It was merged non-destructively into #1509 from
@@ -33,10 +33,13 @@ ChatGPT payloads remain unavailable, so backend/wrapper attribution is unknown.
 Existing Primary recovery and discovery remain dated verified evidence; durable
 refresh-token renewal remains unverified. No new acceptance run is authorized.
 
-No complete published baseline was supplied in the permitted ignored directory.
+The complete published baseline is now owner-approved and verified; see the
+[baseline capture checkpoint](TUTOR_BASELINE_CAPTURE_20260925.md). Its approval
+does not clear the independent failed runtime acceptance.
 There are **16 parity cases: 0 baseline-bound, 10 provisional/unbound and 6
-unexecuted**. All official old-GPT and plugin result fields remain null. Unknown
-knowledge inventory is not zero files. No GPT/account migration occurred.
+unexecuted**. All official old-GPT and plugin result fields remain null. Published
+knowledge is explicitly confirmed empty; migrated references remain unknown.
+No GPT/account migration occurred.
 See the [current reconciliation record](TUTOR_RECONCILIATION_20260925.md),
 [private input contract](TUTOR_INPUTS.md), and the dated historical evidence below.
 

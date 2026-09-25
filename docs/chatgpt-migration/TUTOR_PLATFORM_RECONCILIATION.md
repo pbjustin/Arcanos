@@ -97,8 +97,10 @@ specification. Do not switch to the compatibility layout merely to match it.
 
 PR #1508 intentionally had a template and no registered mapping. Actual safe
 connection metadata can now replace that packaging blocker; it cannot replace
-the missing published Builder baseline, actual migrated skill/references, or
-parity evidence. The app-ID distinction above is now explicit and testable.
+the required published Builder baseline, actual migrated skill/references, or
+parity evidence. The published baseline now has a separate
+[owner-approved capture](TUTOR_BASELINE_CAPTURE_20260925.md); migrated artifacts
+and parity remain blocked. The app-ID distinction above is explicit and testable.
 
 PR #1508's future setup instructions assumed an unconfigured nonproduction
 connection. Current connection and deployment evidence must instead be recorded

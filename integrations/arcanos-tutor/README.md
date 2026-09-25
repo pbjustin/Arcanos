@@ -37,7 +37,7 @@ Keep everything beside `package/` out of distribution:
 
 - `connection.requirements.json`: source-labelled deployment/account evidence.
 - `migration-state.json`: thirteen independent gates.
-- `baseline.inventory.json`: sanitized published-GPT metadata; currently blocked.
+- `baseline.inventory.json`: verified sanitized published-GPT metadata and owner review; raw inputs remain private.
 - `migration.inventory.json`: real output inventory; currently not started.
 - `reference-review.json`: exact-file publication approval; currently empty.
 - `parity-matrix.json`: sixteen public regression definitions and blocked results.

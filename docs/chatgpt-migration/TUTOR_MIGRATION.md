@@ -225,9 +225,10 @@ is absent. Before requesting the separate migration-click confirmation, require:
 - Resolution of the live formatting issue, or explicit owner acceptance bound to
   the exact case and baseline and candidate fingerprints.
 
-Latest-publication/completeness confirmation, complete bound baseline results and
-resolution of failed runtime acceptance remain pending. The connection/catalog refresh alone
-does not satisfy these conditions. No migration action, reference publication or
+Latest-publication/completeness confirmation is recorded in the owner-approved
+baseline. Complete bound baseline results and resolution of failed runtime
+acceptance remain pending. The connection/catalog refresh alone does not satisfy
+these conditions. No migration action, reference publication or
 replacement installation is authorized by this checkpoint document.
 
 ## Before migration: capture the published baseline
@@ -258,9 +259,9 @@ replacement installation is authorized by this checkpoint document.
    refusal, authentication, unavailable backend, timeout, cancellation and
    references.
 
-Baseline remains BLOCKED until the actual latest published data and complete
-inventory are supplied and checked. Independent repository work can finish now.
-Do not check off the gate from this preparation guide.
+The baseline gate requires the actual latest published data and complete
+inventory to be supplied, checked and owner-reviewed. The current baseline
+satisfies those requirements; this preparation guide alone is not evidence.
 
 The [private input contract](TUTOR_INPUTS.md) gives the exact capture command,
 required local fields, sanitized-output review and release-validation command.
