@@ -47,4 +47,15 @@ export interface FinalClaimBlockResult {
   text: string;
   blocked: boolean;
   blockedCategories: Array<'live_verification' | 'current_external_state' | 'backend_action'>;
+  /** Internal classification metadata only; never publish candidate text or reasoning. */
+  ruleIds: TrinityHonestyRuleId[];
 }
+
+export type TrinityHonestyRuleId =
+  | 'LIVE_VERIFICATION_MODEL_CLAIM'
+  | 'UNSUPPORTED_VERIFICATION_CLAIM'
+  | 'CURRENT_EXTERNAL_MODEL_CLAIM'
+  | 'CURRENT_EXTERNAL_USER_REQUEST'
+  | 'BACKEND_ACTION_CLAIM'
+  | 'TUTOR_LOCAL_INSTRUCTION_EXEMPT'
+  | 'NO_HONESTY_REWRITE';

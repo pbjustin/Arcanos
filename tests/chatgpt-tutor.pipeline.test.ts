@@ -174,7 +174,7 @@ const tutorAcceptanceFixtures = [
     providerAnswer: [
       '1. Subtract 3 from both sides to get 2x = 6.',
       '2. Divide both sides by 2 to get x = 3.',
-      '3. Check your answer by substituting x = 3 into the original equation: 2 × 3 + 3 = 9.',
+      '3. Substitute x = 3 into the original equation: 2 × 3 + 3 = 9. Check your work.',
     ].join('\n'),
   },
 ] as const;

@@ -7,6 +7,7 @@ import type {
   FinalClaimBlockResult,
   TrinityCapabilityFlags,
   TrinityEvidenceTag,
+  TrinityHonestyRuleId,
   TrinityReasoningHonesty,
   TrinityToolBackedCapabilities
 } from './trinityHonestyTypes.js';
@@ -82,6 +83,16 @@ function isLocalMathPhrase(text: string, depth = 0): boolean {
   return equalityQuestion ? isLocalMathPhrase(equalityQuestion[1] ?? '', depth + 1) : false;
 }
 
+function hasTutorNonlocalOrCompletedContent(instruction: string): boolean {
+  return TUTOR_COMPLETED_VERIFICATION.test(instruction)
+    || CURRENT_EXTERNAL_STATE_PATTERN.test(instruction)
+    || EXTERNAL_STATE_CONTEXT_PATTERN.test(instruction)
+    || LIVE_RUNTIME_STATE_PATTERN.test(instruction)
+    || BACKEND_ACTION_PATTERN.test(instruction)
+    || BACKEND_ACTION_CONTEXT_PATTERN.test(instruction)
+    || TUTOR_NONLOCAL_CONTEXT.test(instruction);
+}
+
 function isTutorLocalMathInstruction(text: string, policy: TrinityOutputControls['instructionalVerificationPolicy']): boolean {
   if (policy !== 'tutor-math-v1') return false;
   const instruction = text.trim().replace(/^(?:[-*]|\d+[.)])\s+/u, '');
@@ -89,13 +100,7 @@ function isTutorLocalMathInstruction(text: string, policy: TrinityOutputControls
   // Veto the whole candidate before considering any arithmetic anchor: a local
   // instruction cannot launder a completed claim, remote lookup, or side effect.
   // This only exempts the lexical check/verify trigger; it grants no capability.
-  if (TUTOR_COMPLETED_VERIFICATION.test(instruction)
-    || CURRENT_EXTERNAL_STATE_PATTERN.test(instruction)
-    || EXTERNAL_STATE_CONTEXT_PATTERN.test(instruction)
-    || LIVE_RUNTIME_STATE_PATTERN.test(instruction)
-    || BACKEND_ACTION_PATTERN.test(instruction)
-    || BACKEND_ACTION_CONTEXT_PATTERN.test(instruction)
-    || TUTOR_NONLOCAL_CONTEXT.test(instruction)) return false;
+  if (hasTutorNonlocalOrCompletedContent(instruction)) return false;
 
   const prefix = instruction.match(TUTOR_LEARNER_VERIFICATION_PREFIX);
   if (!prefix) return false;
@@ -109,6 +114,19 @@ function isTutorLocalMathInstruction(text: string, policy: TrinityOutputControls
       && isLocalMathPhrase(localClause);
   });
 }
+/**
+ * A review unit can be an entire numbered item, not a single speech act.
+ * Reuse the existing sentence splitter and math grammar without widening either.
+ * Veto the whole unit first: another sentence cannot launder an unsupported claim.
+ */
+function isTutorLocalInstructionReviewUnit(text: string, policy: TrinityOutputControls['instructionalVerificationPolicy']): boolean {
+  if (isTutorLocalMathInstruction(text, policy)) return true;
+  if (policy !== 'tutor-math-v1' || hasTutorNonlocalOrCompletedContent(text)) return false;
+  const verificationSegments = splitLineIntoSegments(text).filter(segment => LIVE_VERIFICATION_PATTERN.test(segment));
+  return verificationSegments.length > 0
+    && verificationSegments.every(segment => isTutorLocalMathInstruction(segment, policy));
+}
+
 const CURRENT_EXTERNAL_STATE_PATTERN =
   /\b(latest|current|currently|today|this week|recent|recently|up-to-date|as of now)\b/i;
 const EXTERNAL_STATE_CONTEXT_PATTERN =
@@ -161,6 +179,7 @@ const BACKEND_STATE_LIMITATION_FALLBACK = "I can't confirm backend state or run 
 const PERSISTENCE_ACTION_LIMITATION_FALLBACK = "I haven't saved or persisted anything here";
 const GENERIC_LIVE_EXTERNAL_INFORMATION_FALLBACK =
   'I can help with general guidance, but I cannot verify live or current external information here.';
+const UNSUBSTANTIATED_VERIFICATION_LIMITATION = 'I have not independently established that claim.';
 const GENERIC_BACKEND_ACTION_FALLBACK =
   'I have not executed any backend or persistence action here.';
 const SCOPE_DRIFT_QUALIFIER_PATTERN =
@@ -1726,6 +1745,56 @@ export function buildFinalHonestyInstruction(
   });
 }
 
+/** A lexical verification signal alone does not establish an external subject. */
+function hasExternalVerificationSubject(text: string): boolean {
+  return CURRENT_EXTERNAL_STATE_PATTERN.test(text) || EXTERNAL_STATE_CONTEXT_PATTERN.test(text)
+    || LIVE_RUNTIME_STATE_PATTERN.test(text) || BACKEND_ACTION_CONTEXT_PATTERN.test(text)
+    || TUTOR_NONLOCAL_CONTEXT.test(text);
+}
+
+/** Internal direct-answer admission seam, shared by execution and deterministic diagnostics. */
+export function prepareTrinityDirectAnswerHonesty(params: {
+  candidateText: string;
+  userPrompt: string;
+  capabilityFlags: TrinityCapabilityFlags;
+  outputControls: TrinityOutputControls;
+}): { honestyFiltered: FinalClaimBlockResult; reasoningHonesty: TrinityReasoningHonesty; ruleIds: TrinityHonestyRuleId[] } {
+  const { capabilityFlags, outputControls } = params;
+  const needsCurrentStateLimitation =
+    (!capabilityFlags.canVerifyLiveData || !capabilityFlags.canConfirmExternalState) &&
+    /\b(verify|verified|check|checked|confirm|confirmed|latest|current|recent|today|this week|as of now)\b/i.test(params.userPrompt) &&
+    /\b(competitors?|market|news|pricing|release|launch|moves?|external|trends?|compan(?:y|ies)|regulation|stocks?|status|events?)\b/i.test(params.userPrompt);
+  const reasoningHonesty = createDefaultTrinityReasoningHonesty();
+  const honestyFiltered = enforceFinalStageHonesty(params.candidateText, reasoningHonesty, capabilityFlags,
+    readIntentMode(outputControls), false, outputControls.instructionalVerificationPolicy);
+  const ruleIds = [...honestyFiltered.ruleIds];
+  if (needsCurrentStateLimitation) ruleIds.push('CURRENT_EXTERNAL_USER_REQUEST');
+  if (honestyFiltered.blocked || needsCurrentStateLimitation) {
+    reasoningHonesty.responseMode = 'partial_refusal';
+    const hasExternalClaim = honestyFiltered.ruleIds.includes('LIVE_VERIFICATION_MODEL_CLAIM')
+      || honestyFiltered.ruleIds.includes('CURRENT_EXTERNAL_MODEL_CLAIM');
+    // Only the isolated Tutor policy uses provenance-aware admission. Generic
+    // callers retain the original conservative category mapping.
+    const hasGenericVerificationBlock = outputControls.instructionalVerificationPolicy !== 'tutor-math-v1'
+      && honestyFiltered.blockedCategories.includes('live_verification');
+    if (needsCurrentStateLimitation || hasExternalClaim || hasGenericVerificationBlock) {
+      reasoningHonesty.blockedSubtasks.push('verify current external state');
+      reasoningHonesty.userVisibleCaveats.push(LIVE_EXTERNAL_STATE_LIMITATION_FALLBACK + '.');
+    }
+    if (outputControls.instructionalVerificationPolicy === 'tutor-math-v1'
+      && !needsCurrentStateLimitation && !hasExternalClaim
+      && honestyFiltered.ruleIds.includes('UNSUPPORTED_VERIFICATION_CLAIM')) {
+      reasoningHonesty.blockedSubtasks.push('substantiate the verification claim');
+      reasoningHonesty.userVisibleCaveats.push(UNSUBSTANTIATED_VERIFICATION_LIMITATION);
+    }
+    if (honestyFiltered.blockedCategories.includes('backend_action')) {
+      reasoningHonesty.blockedSubtasks.push('confirm backend state or run backend actions');
+      reasoningHonesty.userVisibleCaveats.push(BACKEND_STATE_LIMITATION_FALLBACK + '.');
+    }
+  }
+  return { honestyFiltered, reasoningHonesty, ruleIds };
+}
+
 /**
  * Rewrite final-stage output when it overclaims unsupported live verification or executed actions.
  */
@@ -1747,6 +1816,7 @@ export function enforceFinalStageHonesty(
     (capabilityFlags.canPersistData || capabilityFlags.canCallBackend) &&
     hasVerifiedToolEvidence(reasoningHonesty.evidenceTags, 'backend_action');
   const blockedCategories = new Set<'live_verification' | 'current_external_state' | 'backend_action'>();
+  const ruleIds = new Set<TrinityHonestyRuleId>();
   const keptLines: string[] = [];
 
   for (const line of splitIntoReviewLines(rawText)) {
@@ -1755,8 +1825,9 @@ export function enforceFinalStageHonesty(
       continue;
     }
 
-    const impliesLiveVerification = LIVE_VERIFICATION_PATTERN.test(line)
-      && !isTutorLocalMathInstruction(line, instructionalVerificationPolicy);
+    const localInstruction = isTutorLocalInstructionReviewUnit(line, instructionalVerificationPolicy);
+    if (localInstruction) ruleIds.add('TUTOR_LOCAL_INSTRUCTION_EXEMPT');
+    const impliesLiveVerification = LIVE_VERIFICATION_PATTERN.test(line) && !localInstruction;
     const impliesCurrentExternalState = impliesCurrentExternalStateClaim(line);
     const qualifiedCurrentStateLimitation = isQualifiedCurrentStateLimitation(line);
     const allowsProvidedDataVerification = allowsProvidedDataVerificationClaim(line, capabilityFlags);
@@ -1773,12 +1844,19 @@ export function enforceFinalStageHonesty(
       !qualifiedCurrentStateLimitation &&
       (((impliesLiveVerification && !allowsProvidedDataVerification) || impliesCurrentExternalState) && !supportsLiveVerification)
     ) {
-      if (impliesLiveVerification) blockedCategories.add('live_verification');
-      if (impliesCurrentExternalState) blockedCategories.add('current_external_state');
+      if (impliesLiveVerification) {
+        blockedCategories.add('live_verification');
+        ruleIds.add(hasExternalVerificationSubject(line) ? 'LIVE_VERIFICATION_MODEL_CLAIM' : 'UNSUPPORTED_VERIFICATION_CLAIM');
+      }
+      if (impliesCurrentExternalState) {
+        blockedCategories.add('current_external_state');
+        ruleIds.add('CURRENT_EXTERNAL_MODEL_CLAIM');
+      }
       continue;
     }
     if (impliesBackendAction && !supportsBackendAction) {
       blockedCategories.add('backend_action');
+      ruleIds.add('BACKEND_ACTION_CLAIM');
       continue;
     }
     keptLines.push(line);
@@ -1792,7 +1870,10 @@ export function enforceFinalStageHonesty(
     leadingDisclaimers.push(partialRefusalLead);
   }
   if ((blockedCategories.has('live_verification') || blockedCategories.has('current_external_state')) && !/live or current external information/i.test(text)) {
-    leadingDisclaimers.push(GENERIC_LIVE_EXTERNAL_INFORMATION_FALLBACK);
+    const unsubstantiatedTutorClaim = instructionalVerificationPolicy === 'tutor-math-v1'
+      && !ruleIds.has('LIVE_VERIFICATION_MODEL_CLAIM') && !ruleIds.has('CURRENT_EXTERNAL_MODEL_CLAIM');
+    leadingDisclaimers.push(unsubstantiatedTutorClaim
+      ? UNSUBSTANTIATED_VERIFICATION_LIMITATION : GENERIC_LIVE_EXTERNAL_INFORMATION_FALLBACK);
   }
   if (blockedCategories.has('backend_action') && !/backend or persistence action/i.test(text)) {
     leadingDisclaimers.push(GENERIC_BACKEND_ACTION_FALLBACK);
@@ -1809,7 +1890,8 @@ export function enforceFinalStageHonesty(
       && blockedCategories.size === 0 && leadingDisclaimers.length === 0 && rawText.trim()
       ? rawText.trim() : text,
     blocked: blockedCategories.size > 0,
-    blockedCategories: Array.from(blockedCategories)
+    blockedCategories: Array.from(blockedCategories),
+    ruleIds: ruleIds.size ? [...ruleIds] : ['NO_HONESTY_REWRITE']
   };
 }
 

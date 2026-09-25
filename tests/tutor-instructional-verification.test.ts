@@ -1,7 +1,7 @@
 import { describe, expect, it } from '@jest/globals';
 import {
   createDefaultTrinityReasoningHonesty, deriveTrinityCapabilityFlags, deriveTrinityOutputControls,
-  enforceFinalStageHonesty, enforceFinalStageHonestyAndMinimalism,
+  enforceFinalStageHonesty, enforceFinalStageHonestyAndMinimalism, prepareTrinityDirectAnswerHonesty,
 } from '../src/core/logic/trinityHonesty.js';
 
 const prompt = 'Explain why one half equals two quarters in exactly two short sentences.';
@@ -186,5 +186,69 @@ describe('server-owned Tutor local arithmetic instruction policy', () => {
       '1. I verified the live runtime.', '2. The worker is healthy.',
     ]);
     expect(result.text).not.toContain('worker is healthy');
+  });
+});
+
+// Synthetic candidates: the production pre-honesty candidate for D is unavailable.
+// These inspect the same admission function used by the direct-answer executor.
+describe('Tutor direct-answer caveat admission diagnostics', () => {
+  const cases = [
+    { id: 'A', request: 'Explain why one half equals two quarters, in two short sentences.',
+      candidate: 'One half and two quarters represent the same amount. Check the equality by cross-multiplying.' },
+    { id: 'C', request: 'In exactly two sentences, explain why 1/2 equals 2/4 and ask the learner to check the equality by cross-multiplying.',
+      candidate: 'One half and two quarters represent the same amount. Can you check the equality by cross-multiplying?' },
+    { id: 'D', request: 'Give exactly three numbered steps to solve 2x + 3 = 9, with no introduction.',
+      candidate: '1. Subtract 3 from both sides to get 2x = 6.\n2. Divide both sides by 2 to get x = 3.\n3. Substitute x = 3 into the equation. Check your work.' },
+    { id: '4', request: 'Check your answer by substituting x = 3.', candidate: 'Check your answer by substituting x = 3.' },
+    { id: '5', request: 'Can you check this by multiplying both sides?', candidate: 'Can you check this by multiplying both sides?' },
+    { id: '6', request: 'Verify whether these fractions are equivalent by cross-multiplying.', candidate: 'Check the equality by cross-multiplying.' },
+  ];
+  it.each(cases)('keeps local request $id out of partial refusal before final processing', ({ request, candidate }) => {
+    const outputControls = deriveTrinityOutputControls(request, options);
+    const admission = prepareTrinityDirectAnswerHonesty({ candidateText: candidate, userPrompt: request, capabilityFlags: flags, outputControls });
+    expect({ rules: admission.ruleIds, categories: admission.honestyFiltered.blockedCategories,
+      mode: admission.reasoningHonesty.responseMode, subtasks: admission.reasoningHonesty.blockedSubtasks,
+      caveats: admission.reasoningHonesty.userVisibleCaveats }).toEqual({
+      rules: ['TUTOR_LOCAL_INSTRUCTION_EXEMPT'], categories: [], mode: 'answer', subtasks: [], caveats: [],
+    });
+    const result = enforceFinalStageHonestyAndMinimalism({ text: admission.honestyFiltered.text, userPrompt: request,
+      capabilityFlags: flags, outputControls, reasoningHonesty: admission.reasoningHonesty });
+    expect(result.text).toBe(candidate);
+    expect(result.text).not.toContain("I can't verify current external state here without live access");
+  });
+});
+
+
+describe('Tutor review-unit boundaries', () => {
+  it.each([
+    '3. Substitute x = 3 into the equation. Check your work.',
+    '- Substitute x = 3 into the equation. Check your work.',
+    '3. Check your answer by substituting x = 3. Verify the equality.',
+    '3. The result is 0.5. Check the equality of 0.5 and 1/2.',
+  ])('uses sentence speech acts while preserving the original item: %s', candidate => {
+    const outputControls = deriveTrinityOutputControls(prompt, options);
+    const { honestyFiltered, reasoningHonesty } = prepareTrinityDirectAnswerHonesty({
+      candidateText: candidate, userPrompt: prompt, capabilityFlags: flags, outputControls,
+    });
+    expect(honestyFiltered.blockedCategories).toEqual([]);
+    expect(honestyFiltered.ruleIds).toEqual(['TUTOR_LOCAL_INSTRUCTION_EXEMPT']);
+    expect(honestyFiltered.text).toBe(candidate);
+    expect(reasoningHonesty.responseMode).toBe('answer');
+    for (const text of [candidate, honestyFiltered.text]) {
+      expect(enforceFinalStageHonestyAndMinimalism({ text, userPrompt: prompt, capabilityFlags: flags,
+        outputControls, reasoningHonesty }).text).toBe(candidate);
+    }
+  });
+  it('does not invent a third step when the provider supplies only two clean steps', () => {
+    const candidate = '1. Subtract 3 from both sides.\n2. Divide both sides by 2 to get x = 3.';
+    const request = 'Give exactly three numbered steps to solve 2x + 3 = 9, with no introduction.';
+    const outputControls = deriveTrinityOutputControls(request, options);
+    const { honestyFiltered, reasoningHonesty } = prepareTrinityDirectAnswerHonesty({
+      candidateText: candidate, userPrompt: request, capabilityFlags: flags, outputControls,
+    });
+    expect(honestyFiltered.ruleIds).toEqual(['NO_HONESTY_REWRITE']);
+    expect(reasoningHonesty.responseMode).toBe('answer');
+    expect(enforceFinalStageHonestyAndMinimalism({ text: honestyFiltered.text, userPrompt: request,
+      capabilityFlags: flags, outputControls, reasoningHonesty }).text).toBe(candidate);
   });
 });
