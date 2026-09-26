@@ -1,5 +1,7 @@
 # Tutor actual migrated artifact review
 
+**Superseded capture limitation:** the [current 0.8.3 saved-release record](TUTOR_OPTIONAL_APP_RELEASE_20260926.md) verifies actual saved 0.8.2/0.8.3 bytes and one optional existing app. The observations below retain their historical scope.
+
 Evidence date: **2026-09-26 UTC**. Starting PR #1509 head:
 `69af9d7545408aa1844fe346952a3d3dca390fab`; incorporated main:
 `71672aec22d7babf62d65b96de667f17abd3f219`.

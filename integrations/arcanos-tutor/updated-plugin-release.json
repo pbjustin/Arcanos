@@ -1,0 +1,120 @@
+{
+  "schemaVersion": 1,
+  "status": "VERIFIED",
+  "artifactFormat": "PLUGIN_CREATOR_SAVED_RELEASE",
+  "pluginId": "plugin_d292d1e45ae08191b3911299e30e1a25",
+  "packageName": "gpt-e9bcdc399db672af9f66dfd7e18e7953",
+  "version": "0.8.3",
+  "releaseId": "pluginrel_6ab7f17cb4288191b6a60b25c98d5505",
+  "currentReleaseId": "pluginrel_6ab7f17cb4288191b6a60b25c98d5505",
+  "visibility": "PRIVATE",
+  "previousRelease": {
+    "releaseId": "pluginrel_6ab75ba13ae48191bf8e200a51e1274a",
+    "version": "0.8.2+bundle.7661b328b99aa096f930f46e272ef9208de6f11e22c002e77f79d9ab78a15096"
+  },
+  "capture": {
+    "rootPath": "optional-app-update-20260926/saved-0.8.3/extracted",
+    "archive": {
+      "path": "optional-app-update-20260926/saved-0.8.3/current.tar.gz",
+      "sha256": "1e4d048576157434285da32fc239ed16751f31f6ac6f7c0fe4b7f626b6128732",
+      "sizeBytes": 260242
+    },
+    "members": [
+      {
+        "path": ".app.json",
+        "type": "file",
+        "sha256": "38664c6a5fe355454844ca8b992e5c0b0229b9ab293d655e17a112514f0004f2",
+        "sizeBytes": 129
+      },
+      {
+        "path": ".codex-plugin",
+        "type": "directory",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "sizeBytes": 0
+      },
+      {
+        "path": ".codex-plugin/plugin.json",
+        "type": "file",
+        "sha256": "9c8305e777984396407f3caba8fed42da59f078693a78ce0ba8dd32942abc245",
+        "sizeBytes": 1329
+      },
+      {
+        "path": "assets",
+        "type": "directory",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "sizeBytes": 0
+      },
+      {
+        "path": "assets/gpt-icon.png",
+        "type": "file",
+        "sha256": "3a891552d348010ff7b5571d39efd77085db6d5fcecdc0e6641e02dd364c0b06",
+        "sizeBytes": 253896
+      },
+      {
+        "path": "plugin.json",
+        "type": "file",
+        "sha256": "ddbff5914801d65f6c5c8ad57fefd7cabf4a0459125b27157645ed0258248cd3",
+        "sizeBytes": 1466
+      },
+      {
+        "path": "skills",
+        "type": "directory",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "sizeBytes": 0
+      },
+      {
+        "path": "skills/instructions",
+        "type": "directory",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "sizeBytes": 0
+      },
+      {
+        "path": "skills/instructions/agents",
+        "type": "directory",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "sizeBytes": 0
+      },
+      {
+        "path": "skills/instructions/agents/openai.yaml",
+        "type": "file",
+        "sha256": "067d163eb275f2c1ca642972434926560726c5b075abb433bebfc643d50b671d",
+        "sizeBytes": 127
+      },
+      {
+        "path": "skills/instructions/lookup",
+        "type": "directory",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "sizeBytes": 0
+      },
+      {
+        "path": "skills/instructions/lookup/knowledge-index.json",
+        "type": "file",
+        "sha256": "6ac91cab38eae269a4e6457275b3b956f615a7df03de4b1ce88f44b8110efc30",
+        "sizeBytes": 18
+      },
+      {
+        "path": "skills/instructions/SKILL.md",
+        "type": "file",
+        "sha256": "7661b328b99aa096f930f46e272ef9208de6f11e22c002e77f79d9ab78a15096",
+        "sizeBytes": 9209
+      }
+    ],
+    "packageFingerprint": "e88b0dc42a9951869b8ff63c999e1b6a02fd08043df96f154012c165c8d99948"
+  },
+  "approvedSkillSha256": "7661b328b99aa096f930f46e272ef9208de6f11e22c002e77f79d9ab78a15096",
+  "registeredAppId": "asdk_app_6ab4747769088191856fd8eb02507240",
+  "appOptional": true,
+  "skillCount": 1,
+  "referenceCount": 0,
+  "appCount": 1,
+  "accountReview": {
+    "reviewedBy": "Codex supported Plugin Creator source/archive and independent reviewers",
+    "reviewedAt": "2026-09-26T16:26:26.153Z",
+    "confirmedSamePlugin": true,
+    "confirmedPrivate": true,
+    "confirmedCurrentRelease": true
+  },
+  "evidenceIds": [
+    "saved-plugin-optional-app-release-20260926"
+  ]
+}

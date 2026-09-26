@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { createUpdatedFixture } from './helpers/tutor-updated-release-fixture.js';
 
 type Json = ReturnType<typeof JSON.parse>;
 const script = path.join(process.cwd(), 'scripts/validate-arcanos-tutor-package.mjs');
@@ -184,6 +185,13 @@ function completeFixture() {
           'TUTOR_SKILL_COMPOSED', 'TUTOR_SKILL_RECONCILED', 'BACKEND_APP_OPTIONALITY_VERIFIED',
           'MIGRATED_SKILL_RECONCILED'].includes(name) ? ['mock-repo-observation'] : ['mock-account-observation'];
     }
+  });
+  const updated = createUpdatedFixture(inputs, readFileSync(path.join(inputs, composition.outputDirectory, 'package', skillPath), 'utf8'));
+  write(root, 'updated-plugin-release.json', updated.release);
+  edit(root, 'connection.requirements.json', connection => { connection.evidence.push(updated.evidence); });
+  edit(root, 'migration-state.json', state => {
+    state.gates.UPDATED_PLUGIN_ARCHIVE_VERIFIED = { ...updated.state.gates.UPDATED_PLUGIN_ARCHIVE_VERIFIED,
+      note: 'Synthetic saved optional-app release only.' };
   });
   return { root, inputs, baseline, migration, composition, bindings, instruction,
     privatePackage: path.join(inputs, composition.outputDirectory, 'package') };
@@ -810,7 +818,8 @@ describe('Standalone Tutor package and migration release boundary', () => {
       composition.status = 'IMPLEMENTED_NOT_VERIFIED'; composition.ownerReview = { status: 'PENDING' };
     });
     edit(fixture.root, 'migration-state.json', state => {
-      for (const gate of ['TUTOR_SKILL_RECONCILED', 'TUTOR_SKILL_BEHAVIOR_VERIFIED', 'MIGRATED_SKILL_RECONCILED']) {
+      for (const gate of ['TUTOR_SKILL_RECONCILED', 'TUTOR_SKILL_BEHAVIOR_VERIFIED', 'MIGRATED_SKILL_RECONCILED',
+        'UPDATED_PLUGIN_ARCHIVE_VERIFIED']) {
         state.gates[gate].status = 'BLOCKED';
       }
     });

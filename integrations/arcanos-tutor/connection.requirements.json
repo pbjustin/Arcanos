@@ -533,7 +533,11 @@
         "requestedSkillSha256": "7661b328b99aa096f930f46e272ef9208de6f11e22c002e77f79d9ab78a15096",
         "creatorReportedSkillSha256": "7661b328b99aa096f930f46e272ef9208de6f11e22c002e77f79d9ab78a15096",
         "creatorReportedVisibility": "PRIVATE",
-        "creatorReportedCounts": { "skills": 1, "references": 0, "apps": 0 },
+        "creatorReportedCounts": {
+          "skills": 1,
+          "references": 0,
+          "apps": 0
+        },
         "creatorReportedArchiveMemberCount": 6,
         "creatorReportedRootManifest": "plugin.json",
         "accountInstalled": true,
@@ -542,6 +546,43 @@
         "updatedArtifactByteVerification": "PENDING",
         "downloadedArtifactAvailable": false,
         "officialTeachingCasesExecuted": 0
+      }
+    },
+    {
+      "id": "saved-plugin-optional-app-release-20260926",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-26T16:26:26.155Z",
+      "summary": "Supported guarded update of the same PRIVATE plugin from 0.8.2 to 0.8.3. Actual saved before/after archives retrieved via Plugin Creator and independently inventoried. Saved approved skill bytes unchanged; one optional existing app, zero references; no teaching test or backend invocation.",
+      "updatedReleaseBinding": {
+        "artifactFormat": "PLUGIN_CREATOR_SAVED_RELEASE",
+        "pluginId": "plugin_d292d1e45ae08191b3911299e30e1a25",
+        "releaseId": "pluginrel_6ab7f17cb4288191b6a60b25c98d5505",
+        "currentReleaseId": "pluginrel_6ab7f17cb4288191b6a60b25c98d5505",
+        "version": "0.8.3",
+        "visibility": "PRIVATE",
+        "skillSha256": "7661b328b99aa096f930f46e272ef9208de6f11e22c002e77f79d9ab78a15096",
+        "packageFingerprint": "e88b0dc42a9951869b8ff63c999e1b6a02fd08043df96f154012c165c8d99948",
+        "archiveSha256": "1e4d048576157434285da32fc239ed16751f31f6ac6f7c0fe4b7f626b6128732",
+        "registeredAppId": "asdk_app_6ab4747769088191856fd8eb02507240",
+        "appOptional": true
+      }
+    },
+    {
+      "id": "optional-app-primary-associated-20260926",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-26T16:26:26.155Z",
+      "summary": "Existing registered app technical page exposes only arcanos_tutor. Existing Primary account was reconnected using its Reconnect control; no new-account control used. Combined ARCANOS TUTOR 0.8.3 page shows Apps 1, Skills 1 and Connected. Primary page no longer shows authentication update required. No new app, connection, Auth0 client, scope change or backend invocation occurred. Renewal durability and live execution remain unverified. Manage settings additionally shows Uninstall, version 0.8.3 and Use ARCANOS TUTOR enabled.",
+      "binding": {
+        "registeredAppId": "asdk_app_6ab4747769088191856fd8eb02507240",
+        "technicalId": "plugin_asdk_app_6ab4747769088191856fd8eb02507240",
+        "pluginId": "plugin_d292d1e45ae08191b3911299e30e1a25",
+        "version": "0.8.3",
+        "releaseId": "pluginrel_6ab7f17cb4288191b6a60b25c98d5505",
+        "primaryConnection": "ASSOCIATED_AVAILABLE",
+        "appOptional": true,
+        "tutorBackendCalls": 0
       }
     }
   ],

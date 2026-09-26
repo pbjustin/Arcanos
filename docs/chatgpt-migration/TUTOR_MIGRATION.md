@@ -4,12 +4,13 @@ Evidence date: **2026-09-26 UTC**. Current main:
 `71672aec22d7babf62d65b96de667f17abd3f219` (merged PR #1513).
 PR #1509 remains the **DRAFT migration container**, with auto-merge disabled.
 **BACKEND_PLANE=FAIL**, **LIVE_TUTOR_CALL_VERIFIED=BLOCKED**.
-**GPT_MIGRATED=VERIFIED**. Owner-authorized private account migration completed
-on September 26. **SKILL_PLANE=BLOCKED_UPDATED_ARTIFACT_CAPTURE_PENDING**:
-the owner-authorized update is visible as installed/enabled version 0.8.2, and the
-supported skill viewer shows all five approved safeguard headings. Updated raw
-bytes remain unavailable; the fully hashed 0.8.1 capture is historical. See the
-dated follow-up in the [actual artifact review](TUTOR_POST_MIGRATION_RECONCILIATION_20260926.md).
+**GPT_MIGRATED=VERIFIED**, **UPDATED_PLUGIN_ARCHIVE_VERIFIED=VERIFIED**.
+The same PRIVATE plugin is installed/enabled at **0.8.3** with the exact approved
+teaching skill, zero references and one optional existing backend app. The actual
+saved 0.8.2 and 0.8.3 archives were retrieved and independently inventoried.
+Primary is associated/available after a supported reconnect. Teaching behavior,
+live backend acceptance and parity remain BLOCKED. See the
+[current saved-release record](TUTOR_OPTIONAL_APP_RELEASE_20260926.md).
 The [pre-migration checkpoint](TUTOR_PRE_MIGRATION_CHECKPOINT_20260926.md) is historical.
 
 The owner has selected **skill-first tutoring with an optional ARCANOS app**.
@@ -60,9 +61,8 @@ distinct from independent source/hash verification. See the
 There are **16 parity cases: 0 baseline-bound, 10 provisional/unbound and 6
 unexecuted**. All official old-GPT and plugin result fields remain null. Published
 knowledge is explicitly confirmed empty; the complete initial 0.8.1 capture
-confirms zero migrated references and an explicitly empty knowledge index. Creator
-reports zero references for the 0.8.2 update; its complete byte inventory remains
-pending. Account migration and the later supported update occurred, but no
+confirms zero migrated references and an explicitly empty knowledge index. The
+actual saved 0.8.2 and 0.8.3 complete inventories also confirm zero references. Account migration and the later supported update occurred, but no
 teaching test or backend call ran during these artifact-review/update steps.
 See the [current reconciliation record](TUTOR_RECONCILIATION_20260925.md),
 [private input contract](TUTOR_INPUTS.md), and the dated historical evidence below.
@@ -89,17 +89,18 @@ independent states; there is no single migrated boolean.
 | GPT_BASELINE_CAPTURED | VERIFIED | Complete private capture, deterministic fingerprint and owner review recorded; latestPublishedConfirmed=true |
 | TUTOR_SKILL_COMPOSED | VERIFIED | Local composition integrity only; v3/v4 bytes match |
 | TUTOR_SKILL_RECONCILED | VERIFIED | Owner approved unchanged private skill 7661b328b99aa096f930f46e272ef9208de6f11e22c002e77f79d9ab78a15096; exact baseline/package bindings and source integrity rechecked |
-| TUTOR_SKILL_BEHAVIOR_VERIFIED | BLOCKED | Eighteen cases unexecuted; capture/review updated 0.8.2 bytes and establish a safe execution boundary before formal testing |
+| TUTOR_SKILL_BEHAVIOR_VERIFIED | BLOCKED | Eighteen cases unexecuted; current saved bytes verified; ordinary teaching must be tested with zero backend calls |
 | CAPABILITY_EQUIVALENCE_VERIFIED | NOT_APPLICABLE | Owner excludes the four host ChatGPT features from Tutor release scope; their equivalence remains NOT_TESTED |
 | BACKEND_APP_REGISTERED | VERIFIED | Fresh unchanged existing app identity; no new connection |
-| BACKEND_APP_OPTIONALITY_VERIFIED | VERIFIED | Official optional syntax and offline reference contract only; installed behavior unverified |
-| MIGRATED_SKILL_RECONCILED | BLOCKED | Updated 0.8.2 viewer shows five safeguard headings; exact updated bytes/comparison remain pending |
-| GPT_MIGRATED | VERIFIED | Private migration confirmed; initial 0.8.1 artifacts hashed; subsequent 0.8.2 update observed separately |
-| SKILL_RECONCILED | BLOCKED | Creator reports approved hash and safeguards are visible; final saved raw-byte equality remains unverified |
-| REFERENCES_RECONCILED | VERIFIED | Initial 0.8.1 capture matches the published zero-file inventory; updated 0.8.2 inventory is reported only |
+| BACKEND_APP_OPTIONALITY_VERIFIED | VERIFIED | Current supported syntax and saved 0.8.3 mapping verified; installed teaching behavior unverified |
+| UPDATED_PLUGIN_ARCHIVE_VERIFIED | VERIFIED | Actual saved 0.8.3 archive, all members, exact skill bytes and one optional app independently verified |
+| MIGRATED_SKILL_RECONCILED | BLOCKED | Historical native adapter reconciliation remains blocked; current bytes verified separately by UPDATED_PLUGIN_ARCHIVE_VERIFIED |
+| GPT_MIGRATED | VERIFIED | Private migration confirmed; saved 0.8.3 preserves approved skill and optional app |
+| SKILL_RECONCILED | BLOCKED | Historical native comparison remains blocked; current saved raw-byte equality verified under new archive gate |
+| REFERENCES_RECONCILED | VERIFIED | Historical 0.8.1 and saved 0.8.2/0.8.3 complete inventories all contain zero references |
 | PARITY_VERIFIED | BLOCKED | Actual paired old/new results absent; no provisional observations promoted |
-| PACKAGE_READY | BLOCKED | Updated-byte capture/review, native-package reconciliation, behavior and paired parity remain unresolved |
-| RELEASE_READY | BLOCKED | Draft only; no replacement release or retirement |
+| PACKAGE_READY | BLOCKED | Current archive verified; historical native reconciliation, behavior, backend acceptance and paired parity remain unresolved |
+| RELEASE_READY | BLOCKED | Draft/private only; artifact release 0.8.3 is saved, full release readiness remains blocked |
 
 Allowed statuses are VERIFIED, USER_REPORTED, IMPLEMENTED_NOT_VERIFIED, BLOCKED
 and NOT_STARTED. Only CAPABILITY_EQUIVALENCE_VERIFIED additionally permits
@@ -114,7 +115,7 @@ account evidence merely by changing a label.
 Historical observations remain in the evidence ledger, while the gates describe
 the current candidate. Deployment, refreshed discovery and model execution are
 separate from successful runtime acceptance and migrated-plugin parity. The
-manual pre-migration owner-decision checkpoint below is distinct from these twenty
+manual pre-migration owner-decision checkpoint below is distinct from these
 machine-readable release gates.
 
 ## Historical evidence provenance (2026-09-24)

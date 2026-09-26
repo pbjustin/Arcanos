@@ -11,7 +11,7 @@ has no documented unique tutoring capability that ordinary teaching requires.
 | --- | --- | --- |
 | PUBLIC TEMPLATE | `package/` | Portable manifest, optional app mapping, and public integration safeguards with one private teaching insertion marker; not teaching-complete or install-ready |
 | PRIVATE COMPOSED RELEASE CANDIDATE | Ignored `.local-migration/arcanos-tutor/composed-skill-v3/package/` | Exact approved instruction text composed locally with safeguards; owner approved the exact skill hash, behavior remains unverified |
-| ACTUAL MIGRATED PLUGIN ARTIFACT | Ignored `.local-migration/arcanos-tutor/installed-artifacts-20260926/` | Historical initial 0.8.1 native bundle captured byte-for-byte; account now shows an installed/enabled 0.8.2 update whose raw bytes remain uncaptured |
+| ACTUAL MIGRATED PLUGIN ARTIFACT | Ignored `.local-migration/arcanos-tutor/installed-artifacts-20260926/` (historical) and `.local-migration/arcanos-tutor/optional-app-update-20260926/saved-0.8.3/` (current) | Initial 0.8.1 capture retained; actual saved 0.8.3 archive independently verified with the approved skill and one optional app |
 
 The public template and composed candidate app mapping is `{ "id": "asdk_app_6ab4747769088191856fd8eb02507240", "optional": true }`.
 The endpoint, registered account connection, tool `arcanos_tutor`, and scope
@@ -49,18 +49,15 @@ is claimed. Tutor must use only tools actually available in the current session.
 
 The owner approved the unchanged composed skill on 2026-09-26T01:03:47Z.
 TUTOR_SKILL_RECONCILED is VERIFIED for that exact private candidate only.
-Actual migration and the initial capture's zero-reference reconciliation are
-VERIFIED. A subsequent owner-authorized update saved version 0.8.2; the account
-shows it installed/enabled and the supported skill viewer displays all five
-approved safeguard headings. Creator reports the approved skill hash and no apps
-or references. Updated raw bytes remain unavailable: neither export returned a
-file and the cache still contains 0.8.1. The original inventory and difference
-report remain historical; see the dated follow-up in the
-[artifact review](../../docs/chatgpt-migration/TUTOR_POST_MIGRATION_RECONCILIATION_20260926.md).
-Release remains BLOCKED pending skill reconciliation, installed teaching verification and
-paired parity. Backend acceptance remains independently BLOCKED. A failed backend
-must not stop ordinary teaching, and teaching evidence must not certify backend
-operation. Synthetic decision tests prove only the reference contract.
+Actual migration and zero-reference reconciliation are VERIFIED. The existing
+PRIVATE plugin is now version 0.8.3, installed and enabled, with the approved skill
+and one optional existing backend app. Actual saved 0.8.2 and 0.8.3 archives were
+retrieved and independently checked byte-for-byte. Existing Primary is associated
+and available following a supported reconnect. See the
+[current saved-release record](../../docs/chatgpt-migration/TUTOR_OPTIONAL_APP_RELEASE_20260926.md).
+Release remains BLOCKED pending installed teaching verification, migrated parity,
+historical native reconciliation and backend acceptance. No backend call or
+teaching case ran in this update. Synthetic decision tests prove only the reference contract.
 
 ## Safe tracked evidence
 
@@ -71,7 +68,8 @@ operation. Synthetic decision tests prove only the reference contract.
 - `migration-state.json`: separate teaching, backend, migration, parity, and release gates.
 - `baseline.inventory.json`: approved published metadata; original source remains private.
 - `connection.requirements.json`: dated account/runtime evidence, including the stopped final bounded backend attempt window.
-- `migration.inventory.json` and `reference-review.json`: the initial captured 0.8.1 native bundle and its reviewed empty reference inventory; updated 0.8.2 byte capture is pending.
+- `migration.inventory.json` and `reference-review.json`: the initial captured 0.8.1 native bundle and its reviewed empty reference inventory; historical evidence remains unchanged.
+- `updated-plugin-release.json`: actual saved 0.8.3 complete archive inventory, exact skill hash, optional app and guarded release identity.
 - `parity-matrix.json`: sixteen historical comparison definitions; 0 bound, 10 provisional, 6 unexecuted.
 - `schemas/`: unchanged hash-pinned portable schema.
 
@@ -79,7 +77,7 @@ Everything beside `package/` is evidence/tooling, not distributable content.
 The public template is also not the private replacement. Keep all private source,
 composed output, transcripts, and future migrated artifacts exclusively under
 `.local-migration/arcanos-tutor/`, ignored and untracked. Never force-add them.
-Zero published knowledge files does not prove the future migrated inventory empty.
+Both retrieved saved release inventories independently confirm zero references.
 
 Read the [handoff](../../docs/chatgpt-migration/TUTOR_MIGRATION.md),
 [private input contract](../../docs/chatgpt-migration/TUTOR_INPUTS.md), and

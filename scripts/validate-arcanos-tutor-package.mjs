@@ -5,6 +5,7 @@ import Ajv2020 from 'ajv/dist/2020.js';
 import yaml from 'js-yaml';
 import { validateSkillFirst } from './validate-tutor-skill-first.mjs';
 import { inspectNativeMigration, nativeMigrationFormat, validateNativeMigration } from './tutor-native-migration.mjs';
+import { inspectUpdatedTutorRelease, validateUpdatedTutorRelease } from './tutor-updated-plugin-release.mjs';
 import {
   baselineFingerprint, captureBaseline, categories, digest, endpoint, gates, isHash, noSymlinkAncestors, packageFingerprint,
   readSafeFile, relativeFile, requireCondition, reviewed, skillPath, statuses, text,
@@ -90,6 +91,7 @@ function validateEvidence(connection, state) {
     TUTOR_SKILL_COMPOSED: ['repository'], TUTOR_SKILL_RECONCILED: ['repository'],
     TUTOR_SKILL_BEHAVIOR_VERIFIED: ['chatgpt'], CAPABILITY_EQUIVALENCE_VERIFIED: ['chatgpt'],
     BACKEND_APP_REGISTERED: ['chatgpt'], BACKEND_APP_OPTIONALITY_VERIFIED: ['repository'],
+    UPDATED_PLUGIN_ARCHIVE_VERIFIED: ['chatgpt'],
     MIGRATED_SKILL_RECONCILED: ['repository', 'chatgpt'],
     REFERENCES_RECONCILED: ['repository', 'chatgpt'], PARITY_VERIFIED: ['chatgpt'], PACKAGE_READY: ['repository'], RELEASE_READY: ['repository'] };
   for (const gate of gates) if (state.gates[gate].status === 'VERIFIED') requireCondition(state.gates[gate].evidenceIds.some(id =>
@@ -99,6 +101,8 @@ function validateEvidence(connection, state) {
     TUTOR_SKILL_BEHAVIOR_VERIFIED: ['TUTOR_SKILL_RECONCILED'],
     CAPABILITY_EQUIVALENCE_VERIFIED: ['GPT_BASELINE_CAPTURED'],
     BACKEND_APP_REGISTERED: ['CHATGPT_CONNECTION_REGISTERED'],
+    UPDATED_PLUGIN_ARCHIVE_VERIFIED: ['GPT_MIGRATED', 'TUTOR_SKILL_RECONCILED', 'BACKEND_APP_REGISTERED',
+      'BACKEND_APP_OPTIONALITY_VERIFIED'],
     MIGRATED_SKILL_RECONCILED: ['GPT_MIGRATED', 'TUTOR_SKILL_RECONCILED'],
     SKILL_RECONCILED: ['GPT_BASELINE_CAPTURED', 'GPT_MIGRATED'], REFERENCES_RECONCILED: ['GPT_BASELINE_CAPTURED', 'GPT_MIGRATED'],
     PARITY_VERIFIED: ['SKILL_RECONCILED', 'REFERENCES_RECONCILED'], PACKAGE_READY: ['CODE_READY', 'PARITY_VERIFIED', 'LIVE_TUTOR_CALL_VERIFIED'],
@@ -326,6 +330,19 @@ export async function validateArcanosTutorPackage(root, { inputRoot } = {}) {
   const files = await readPackage(root, review.references);
   const skillFirst = await validateSkillFirst({ root, inputRoot, baseline, state, evidence,
     templateFiles: files, referenceReview: review });
+  const updatedReleaseFile = await readSafeFile(root, 'updated-plugin-release.json').catch(error => {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  });
+  const updatedRelease = updatedReleaseFile ? JSON.parse(updatedReleaseFile.content) : null;
+  let updatedPluginArchiveInspection = null;
+  gateConsistent('UPDATED_PLUGIN_ARCHIVE_VERIFIED', updatedRelease?.status === 'VERIFIED');
+  if (updatedRelease) {
+    const options = { expectedSkillSha256: skillFirst.composition.skill?.sha256, evidence, state };
+    validateUpdatedTutorRelease(updatedRelease, options);
+    if (inputRoot) updatedPluginArchiveInspection = await inspectUpdatedTutorRelease({ inputRoot,
+      release: updatedRelease, ...options });
+  }
   const schema = await readSafeFile(root, schemaFile);
   requireCondition(digest(schema.content.replace(/\r\n/gu, '\n')) === schemaDigest, 'SCHEMA_DIGEST_MISMATCH');
   const manifest = JSON.parse(files.get('plugin.json').content);
@@ -370,6 +387,7 @@ export async function validateArcanosTutorPackage(root, { inputRoot } = {}) {
   block(parity.liveEvidenceIds.some(id => evidence.get(id).kind === 'chatgpt' && evidence.get(id).status === 'VERIFIED' &&
     connection.checks.liveExecution.evidenceIds.includes(id)), 'LIVE_CHATGPT_EVIDENCE_MISSING');
   block(Boolean(inputRoot), 'ACTUAL_INPUT_ARTIFACTS_NOT_INSPECTED');
+  block(Boolean(updatedPluginArchiveInspection), 'UPDATED_SAVED_ARCHIVE_NOT_INSPECTED');
   if (migration.registeredAppId !== undefined) requireCondition(migration.registeredAppId === connection.registeredAppId, 'MIGRATION_CONNECTION_MISMATCH');
   gateConsistent('MIGRATED_SKILL_RECONCILED', migration.instructionComparison !== null && connection.builderReconciliation === 'VERIFIED');
   if (inputRoot && blockers.length === 0) await verifyInputs(inputRoot, baseline, migration, review, parity, skillFirst.privateFiles, validator);
@@ -384,6 +402,7 @@ export async function validateArcanosTutorPackage(root, { inputRoot } = {}) {
     skillOnlyTeachingReadiness: skillFirst.teachingReadiness,
     teachingBehaviorDeferred: skillFirst.teachingDeferred,
     migrationArtifactInspection,
+    updatedPluginArchiveInspection,
     capabilityEquivalenceVerified: skillFirst.capabilitiesVerified,
     capabilityScopeExcluded: skillFirst.capabilityScopeExcluded,
     backendReadiness: skillFirst.backendReadiness,
