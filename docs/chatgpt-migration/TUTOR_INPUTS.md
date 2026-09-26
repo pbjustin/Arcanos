@@ -139,14 +139,53 @@ Actual teaching observations are still required before final release.
 ## Actual migrated artifacts
 
 After separately authorized migration, retain the actual migrated skill,
-reference files, portable manifest and warnings locally. Hash each file and record
+reference files, native or portable manifest and warnings locally. Hash each file and record
 only `path`, `sha256` and `sizeBytes` in the migration inventory. References
 also have `name`. Do not rename, recreate or manufacture a generated artifact
 to satisfy the validator. If the in-product metadata format differs from the
 currently supported portable format, leave release blocked for explicit inspection
 and an evidence-based tooling update.
 
-The local sidecar `migration.inventory.json` records:
+The local sidecar `migration.inventory.json` records the artifact format actually
+produced. Migration occurrence does not establish instruction reconciliation,
+app attachment, teaching behavior, parity or release readiness.
+
+For `artifactFormat: CHATGPT_NATIVE_SKILLS_ONLY`, the record requires:
+
+- The actual `skill` and `metadata` records, `baselineFingerprint`,
+  `appAttachment: NOT_ATTACHED`, `appMapping: null`, and no `registeredAppId`.
+- `capture` containing `pluginId`, `cachePackageName`, `version`, `rootPath`,
+  complete `files`, `packageFingerprint`, and a hashed `receipt` record. File and
+  receipt paths are relative to the private input directory. The fingerprint uses
+  bundle-relative paths and excludes the separate `capture-review.json` receipt.
+  The captured directory must contain exactly those files and that receipt. The
+  supported native layout consists of the manifest, `assets/gpt-icon.png`, one
+  skill, its `agents/openai.yaml`, and its `lookup/knowledge-index.json`; extra
+  files or native tool dependencies require separate format review.
+- Reviewed `accountReview` and nonempty unique `evidenceIds` identifying VERIFIED
+  ChatGPT observations. Each observation has an exact `migrationBinding` with
+  `artifactFormat`, `baselineFingerprint`, `pluginId`, `cachePackageName`,
+  `version`, `skillSha256`, `metadataSha256`, `packageFingerprint`, and
+  `appAttachment: NOT_ATTACHED`. A verified GPT_MIGRATED gate uses the same IDs.
+- The unchanged native `.codex-plugin/plugin.json` must identify the captured
+  cache package/version and resolve to its single captured skill. The current
+  native adapter supports only an explicitly empty `lookup/knowledge-index.json`
+  and a confirmed zero-file baseline/reference inventory. Nonempty native reference
+  formats require inspection and a scoped adapter update; they are never discarded.
+
+The receipt records `schemaVersion: 1`, `sourceKind: INSTALLED_PLUGIN_CACHE`,
+`capturedAt`, `copyByteIdentity: true`, the same plugin identity/version and baseline
+fingerprint, plus bundle-relative `files` and `packageFingerprint`. Private bytes,
+the complete file inventory, manifest and receipt are inspected whenever `--inputs`
+is supplied, even while unrelated release gates remain blocked. Unknown native
+manifest layouts fail closed. Never manufacture a portable manifest or app mapping.
+The ignored private-input boundary is checked before inspection. Native capture
+retains `NATIVE_MIGRATED_PACKAGE_RECONCILIATION_REQUIRED` as an explicit release
+blocker until a separately reviewed reconciliation path supports the final package.
+It does not make this installed skill a release-approved private composition.
+
+For the existing portable format (omitted `artifactFormat` or `PORTABLE_PLUGIN`),
+the record continues to require:
 
 - `skill`, `metadata`, `appMapping`, `references`, actual `warnings`, and the
   reviewed `registeredAppId` binding. A verified migration requires all three
@@ -156,6 +195,8 @@ The local sidecar `migration.inventory.json` records:
   resolved relative to that manifest and must select this inspected artifact;
   its single optional app must match the registered Tutor connection, using the
   supported `optional: true` representation without a required-app flag.
+Both formats also retain:
+
 - `accountReview`: reviewer/date, `confirmedMigrated: true` and
   `confirmedWarningsReviewed: true`. These are human review assertions, not
   fields invented inside the actual generated manifest.

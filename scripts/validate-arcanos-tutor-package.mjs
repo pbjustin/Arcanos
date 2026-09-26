@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import Ajv2020 from 'ajv/dist/2020.js';
 import yaml from 'js-yaml';
 import { validateSkillFirst } from './validate-tutor-skill-first.mjs';
+import { inspectNativeMigration, nativeMigrationFormat, validateNativeMigration } from './tutor-native-migration.mjs';
 import {
   baselineFingerprint, captureBaseline, categories, digest, endpoint, gates, isHash, noSymlinkAncestors, packageFingerprint,
   readSafeFile, relativeFile, requireCondition, reviewed, skillPath, statuses, text,
@@ -117,6 +118,8 @@ function validateEvidence(connection, state) {
 function validateMigration(migration) {
   requireCondition(migration.schemaVersion === 1 && statuses.includes(migration.status) && Array.isArray(migration.references) &&
     Array.isArray(migration.warnings) && migration.warnings.every(text), 'MIGRATION_INVENTORY_INVALID');
+  requireCondition(migration.artifactFormat === undefined ||
+    ['PORTABLE_PLUGIN', nativeMigrationFormat].includes(migration.artifactFormat), 'MIGRATION_FORMAT_UNSUPPORTED');
   for (const name of ['skill', 'metadata', 'appMapping']) if (migration[name] !== null) validateArtifact(migration[name]);
   const referencePaths = new Set();
   for (const artifact of migration.references) {
@@ -124,8 +127,10 @@ function validateMigration(migration) {
     requireCondition(text(artifact.name) && !referencePaths.has(artifact.path), 'REFERENCE_NAME_MISSING');
     referencePaths.add(artifact.path);
   }
-  requireCondition(migration.status !== 'VERIFIED' || (migration.skill && migration.metadata && migration.appMapping), 'MIGRATION_ARTIFACTS_MISSING');
-  requireCondition(migration.status !== 'VERIFIED' || text(migration.registeredAppId), 'MIGRATION_CONNECTION_MISSING');
+  if (migration.artifactFormat !== nativeMigrationFormat) {
+    requireCondition(migration.status !== 'VERIFIED' || (migration.skill && migration.metadata && migration.appMapping), 'MIGRATION_ARTIFACTS_MISSING');
+    requireCondition(migration.status !== 'VERIFIED' || text(migration.registeredAppId), 'MIGRATION_CONNECTION_MISSING');
+  }
   if (migration.instructionComparison !== null) {
     const comparison = migration.instructionComparison;
     requireCondition(comparison.status === 'VERIFIED' && reviewed(comparison) &&
@@ -241,15 +246,17 @@ async function verifyInputs(inputRoot, baseline, migration, referenceReview, par
   const migratedSkill = await verifyArtifact(inputRoot, migration.skill);
   const metadata = JSON.parse((await verifyArtifact(inputRoot, migration.metadata)).content);
   const configuration = JSON.parse((await verifyArtifact(inputRoot, baseline.configuration)).content);
-  requireCondition(validateManifest(metadata) && metadata.name === 'arcanos-tutor' &&
-    metadata.$schema === 'https://agent-plugins.org/schemas/1.0.0/plugin.schema.json', 'MIGRATED_METADATA_MISMATCH');
-  const mappingPointer = metadata.extensions?.['com.openai']?.apps;
-  requireCondition(text(mappingPointer), 'MIGRATED_APP_MAPPING_MISSING');
-  const mappingRelative = relativeFile(mappingPointer.replace(/^\.\//u, ''));
-  const mappingPath = relativeFile(path.posix.join(path.posix.dirname(migration.metadata.path), mappingRelative));
-  requireCondition(mappingPath === migration.appMapping.path, 'MIGRATED_APP_MAPPING_PATH_MISMATCH');
-  const migratedMapping = JSON.parse((await verifyArtifact(inputRoot, migration.appMapping)).content);
-  requireCondition(tutorAppMapping(migratedMapping, migration.registeredAppId, true), 'MIGRATED_APP_MAPPING_INVALID');
+  if (migration.artifactFormat !== nativeMigrationFormat) {
+    requireCondition(validateManifest(metadata) && metadata.name === 'arcanos-tutor' &&
+      metadata.$schema === 'https://agent-plugins.org/schemas/1.0.0/plugin.schema.json', 'MIGRATED_METADATA_MISMATCH');
+    const mappingPointer = metadata.extensions?.['com.openai']?.apps;
+    requireCondition(text(mappingPointer), 'MIGRATED_APP_MAPPING_MISSING');
+    const mappingRelative = relativeFile(mappingPointer.replace(/^\.\//u, ''));
+    const mappingPath = relativeFile(path.posix.join(path.posix.dirname(migration.metadata.path), mappingRelative));
+    requireCondition(mappingPath === migration.appMapping.path, 'MIGRATED_APP_MAPPING_PATH_MISMATCH');
+    const migratedMapping = JSON.parse((await verifyArtifact(inputRoot, migration.appMapping)).content);
+    requireCondition(tutorAppMapping(migratedMapping, migration.registeredAppId, true), 'MIGRATED_APP_MAPPING_INVALID');
+  }
   requireCondition(reviewed(migration.accountReview) && migration.accountReview.confirmedMigrated === true &&
     migration.accountReview.confirmedWarningsReviewed === true, 'MIGRATION_ACCOUNT_REVIEW_MISSING');
   const comparison = migration.instructionComparison;
@@ -303,6 +310,11 @@ export async function validateArcanosTutorPackage(root, { inputRoot } = {}) {
   if (baseline.publicationReview) requireCondition(baseline.publicationReview.evidenceIds.every(id => evidence.has(id) &&
     ['chatgpt', 'user_reported'].includes(evidence.get(id).kind)), 'PUBLICATION_REVIEW_PROVENANCE_INVALID');
   validateMigration(migration);
+  let migrationArtifactInspection = null;
+  if (migration.artifactFormat === nativeMigrationFormat) {
+    validateNativeMigration(migration, baseline, evidence, state);
+    if (inputRoot) migrationArtifactInspection = await inspectNativeMigration({ inputRoot, migration, baseline, evidence, state });
+  }
   validateParity(parity, evidence);
   validateReferences(review);
   const gateConsistent = (gate, condition) => requireCondition(state.gates[gate].status !== 'VERIFIED' || condition, 'GATE_STATE_CONTRADICTION');
@@ -341,6 +353,9 @@ export async function validateArcanosTutorPackage(root, { inputRoot } = {}) {
 
   const blockers = [...skillFirst.blockers];
   const block = (condition, code) => { if (!condition) blockers.push(code); };
+  // Native capture proves the account migration and unchanged installed bundle.
+  // A reviewed conversion/reconciliation path to the final package is separate.
+  block(migration.artifactFormat !== nativeMigrationFormat, 'NATIVE_MIGRATED_PACKAGE_RECONCILIATION_REQUIRED');
   // Package/release are derived after artifact inspection, not prerequisites that
   // operators have to self-certify before invoking this validator.
   for (const gate of gates.slice(0, -2)) block(state.gates[gate].status === 'VERIFIED' ||
@@ -368,6 +383,7 @@ export async function validateArcanosTutorPackage(root, { inputRoot } = {}) {
     privatePackageFingerprint: skillFirst.composition.packageFingerprint,
     skillOnlyTeachingReadiness: skillFirst.teachingReadiness,
     teachingBehaviorDeferred: skillFirst.teachingDeferred,
+    migrationArtifactInspection,
     capabilityEquivalenceVerified: skillFirst.capabilitiesVerified,
     capabilityScopeExcluded: skillFirst.capabilityScopeExcluded,
     backendReadiness: skillFirst.backendReadiness,

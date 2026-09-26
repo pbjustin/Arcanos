@@ -478,6 +478,45 @@
           "sha256": "90f8b102b620e9de29beefa520b246cb700987ac8da1bbfeb8bf65b9289365af"
         }
       ]
+    },
+    {
+      "id": "account-plugin-migration-20260926",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-26T02:47:17.941Z",
+      "summary": "Owner-authorized supported migration confirmed success for the latest published March GPT. Plugin starts private and is installed. Current plugin page and local installed bundle have the same generated version. Custom Actions did not transfer; no attached app. Occurrence and artifact capture do not approve transformed package or behavior.",
+      "migrationBinding": {
+        "artifactFormat": "CHATGPT_NATIVE_SKILLS_ONLY",
+        "baselineFingerprint": "eb1d612dc2b4645841e3035a177ebb91fa6584a2ae633d7918972b9c9dd95e25",
+        "pluginId": "plugin_d292d1e45ae08191b3911299e30e1a25",
+        "cachePackageName": "gpt-e9bcdc399db672af9f66dfd7e18e7953",
+        "version": "0.8.1+bundle.951fdf6546409c5382fa49f2bed2fd2b",
+        "skillSha256": "5478886612bfe7f80d09bddd0eebb5002644775763efe6aa9046a7c009c8dc5b",
+        "metadataSha256": "156efe759a1daef64e56ef5a6fc93e147ab7b8da8b542a97fa3a6d102f5fdcd1",
+        "packageFingerprint": "4f4ccff2556b8e8b2560eb16b301647e3edb0d71666dea03feb297b9613745fe",
+        "appAttachment": "NOT_ATTACHED"
+      }
+    },
+    {
+      "id": "installed-artifact-capture-20260926",
+      "kind": "repository",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-26T04:26:08.764Z",
+      "summary": "Five installed bundle files copied byte-for-byte into ignored inputs. Native manifest, skill and empty knowledge-index inspected; no app mapping or unexpected knowledge files. Full package fingerprint and every file hash recorded. Original UI capture remains historical; failed ZIP download no longer prevents byte inspection."
+    },
+    {
+      "id": "installed-skill-differences-20260926",
+      "kind": "repository",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-26T04:30:15.294Z",
+      "summary": "All eight published instruction sections occur exactly once in the migrated body with no omission or rewrite. The generated skill differs from the approved composed candidate: all five public integration safeguard sections and topic-specific activation metadata are absent. No owner acceptance of those differences or installed-skill release approval is inferred."
+    },
+    {
+      "id": "installed-test-surface-20260926",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-26T04:30:15.294Z",
+      "summary": "Try in chat opens a fresh ChatGPT Work composer with migrated Tutor selected. No prompt submitted. Formal teaching execution is blocked by unreconciled integration differences and absence of a demonstrated enforced no-backend test boundary; not by a universal lack of plugin testing support."
     }
   ],
   "checks": {
@@ -521,7 +560,7 @@
     }
   },
   "builderReconciliation": "BLOCKED",
-  "referenceReconciliation": "BLOCKED",
+  "referenceReconciliation": "VERIFIED",
   "usagePolicy": {
     "defaultTeachingPath": "skill_only",
     "appRequired": false,

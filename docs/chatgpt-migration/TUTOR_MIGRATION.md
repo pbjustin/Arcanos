@@ -4,9 +4,11 @@ Evidence date: **2026-09-26 UTC**. Current main:
 `71672aec22d7babf62d65b96de667f17abd3f219` (merged PR #1513).
 PR #1509 remains the **DRAFT migration container**, with auto-merge disabled.
 **BACKEND_PLANE=FAIL**, **LIVE_TUTOR_CALL_VERIFIED=BLOCKED**.
-**SKILL_PLANE=DEFERRED_POST_MIGRATION**. The manual checkpoint is
-**READY_FOR_OWNER_DECISION_WITH_BACKEND_DEGRADED**; this is not release readiness
-or authorization to migrate. See the [final bounded checkpoint](TUTOR_PRE_MIGRATION_CHECKPOINT_20260926.md).
+**GPT_MIGRATED=VERIFIED**. Owner-authorized private account migration completed
+on September 26. **SKILL_PLANE=BLOCKED_MATERIAL_INTEGRATION_DIFFERENCES**:
+the generated skill preserves the published instructions but lacks the separately
+approved integration safeguards. See the [actual artifact review](TUTOR_POST_MIGRATION_RECONCILIATION_20260926.md).
+The [pre-migration checkpoint](TUTOR_PRE_MIGRATION_CHECKPOINT_20260926.md) is historical.
 
 The owner has selected **skill-first tutoring with an optional ARCANOS app**.
 The current package is a public source template; approved private instructions
@@ -55,8 +57,9 @@ distinct from independent source/hash verification. See the
 [baseline capture checkpoint](TUTOR_BASELINE_CAPTURE_20260925.md).
 There are **16 parity cases: 0 baseline-bound, 10 provisional/unbound and 6
 unexecuted**. All official old-GPT and plugin result fields remain null. Published
-knowledge is explicitly confirmed empty; migrated references remain unknown. No
-GPT/account migration occurred.
+knowledge is explicitly confirmed empty; the complete installed bundle now confirms
+zero migrated reference files and an explicitly empty knowledge index. Account
+migration occurred, but no teaching test or backend call ran during artifact reconciliation.
 See the [current reconciliation record](TUTOR_RECONCILIATION_20260925.md),
 [private input contract](TUTOR_INPUTS.md), and the dated historical evidence below.
 
@@ -69,7 +72,7 @@ The deterministic private composition preserves the approved instruction text;
 the owner approved the unchanged exact artifact on 2026-09-26T01:03:47Z.
 Its installed teaching behavior remains unverified.
 The [gate ledger](../../integrations/arcanos-tutor/migration-state.json) records
-twenty independent states; there is no single migrated boolean.
+independent states; there is no single migrated boolean.
 
 | Gate | Current status | Basis |
 | --- | --- | --- |
@@ -82,16 +85,16 @@ twenty independent states; there is no single migrated boolean.
 | GPT_BASELINE_CAPTURED | VERIFIED | Complete private capture, deterministic fingerprint and owner review recorded; latestPublishedConfirmed=true |
 | TUTOR_SKILL_COMPOSED | VERIFIED | Local composition integrity only; v3/v4 bytes match |
 | TUTOR_SKILL_RECONCILED | VERIFIED | Owner approved unchanged private skill 7661b328b99aa096f930f46e272ef9208de6f11e22c002e77f79d9ab78a15096; exact baseline/package bindings and source integrity rechecked |
-| TUTOR_SKILL_BEHAVIOR_VERIFIED | DEFERRED_POST_MIGRATION | Eighteen cases remain unexecuted; desktop test surface unavailable within this task privacy/client boundary |
+| TUTOR_SKILL_BEHAVIOR_VERIFIED | BLOCKED | Eighteen cases unexecuted; supported composer now exists, but safeguards must be reconciled before safe formal testing |
 | CAPABILITY_EQUIVALENCE_VERIFIED | NOT_APPLICABLE | Owner excludes the four host ChatGPT features from Tutor release scope; their equivalence remains NOT_TESTED |
 | BACKEND_APP_REGISTERED | VERIFIED | Fresh unchanged existing app identity; no new connection |
 | BACKEND_APP_OPTIONALITY_VERIFIED | VERIFIED | Official optional syntax and offline reference contract only; installed behavior unverified |
-| MIGRATED_SKILL_RECONCILED | BLOCKED | Actual migrated skill missing; private composition does not substitute for it |
-| GPT_MIGRATED | NOT_STARTED | Migration click has not been authorized or performed |
-| SKILL_RECONCILED | BLOCKED | Actual migrated skill missing; owner-approved published instructions remain private |
-| REFERENCES_RECONCILED | BLOCKED | Published knowledge explicitly empty; actual migrated reference inventory missing |
-| PARITY_VERIFIED | BLOCKED | Old/new paired results absent; live formatting issue unresolved |
-| PACKAGE_READY | BLOCKED | Actual artifact inspection and parity still required |
+| MIGRATED_SKILL_RECONCILED | BLOCKED | Actual skill captured; five approved integration sections absent |
+| GPT_MIGRATED | VERIFIED | Owner-authorized private migration confirmed; native installed artifacts hashed |
+| SKILL_RECONCILED | BLOCKED | Published instruction bytes preserved; approved composed safeguards not present |
+| REFERENCES_RECONCILED | VERIFIED | Complete native bundle matches the published zero-file knowledge inventory |
+| PARITY_VERIFIED | BLOCKED | Actual paired old/new results absent; no provisional observations promoted |
+| PACKAGE_READY | BLOCKED | Actual native capture inspected; integration safeguards, behavior and paired parity remain unresolved |
 | RELEASE_READY | BLOCKED | Draft only; no replacement release or retirement |
 
 Allowed statuses are VERIFIED, USER_REPORTED, IMPLEMENTED_NOT_VERIFIED, BLOCKED
@@ -238,7 +241,7 @@ This is credential-free served component and SDK evidence. It does not establish
 real OAuth sign-in, a live model answer, an active queue or worker, database
 behavior, an installed migrated skill, mobile behavior or teaching parity.
 
-## Pre-migration checkpoint
+## Historical pre-migration checkpoint
 
 **READY_FOR_OWNER_DECISION_WITH_BACKEND_DEGRADED**. The approved baseline and
 exact owner-approved composed skill remain unchanged. Official desktop development
@@ -297,9 +300,10 @@ satisfies those requirements; this preparation guide alone is not evidence.
 The [private input contract](TUTOR_INPUTS.md) gives the exact capture command,
 required local fields, sanitized-output review and release-validation command.
 
-## The irreversible checkpoint
+## Historical migration authorization checkpoint
 
-**Do not press Migrate to plugin in this task.** A later owner decision must
+The owner subsequently authorized and completed migration; do not repeat it.
+The requirements below describe the earlier checkpoint. A later owner decision had to
 explicitly cover migration with the optional backend degraded and acknowledge
 the consequences below. Reconfirm current account eligibility at that time:
 
@@ -313,8 +317,8 @@ the consequences below. Reconfirm current account eligibility at that time:
   unbound, and deferred real-plugin tests and rollback limits below are understood.
 - The owner understands the original GPT becomes read-only; custom Actions,
   conversations, selected model and sharing settings do not transfer.
-- The replacement starts private; migration does not automatically install or
-  share it. Custom Action behavior must be replaced by the scoped registered
+- The replacement starts private; installation must be observed separately from
+  sharing. This account subsequently showed the plugin installed; no sharing occurred. Custom Action behavior must be replaced by the scoped registered
   Tutor tool and then tested.
 
 Once these conditions hold, the exact handoff is **My GPTs → ARCANOS TUTOR →
@@ -338,11 +342,10 @@ metadata and all migration warnings. Keep those artifacts privately first.
 3. Separate migrated teaching instructions from repository-required integration
    safeguards. The backend remains responsible for authorization. Do not turn a
    skill instruction into new backend permission or invent saved learning progress.
-4. Confirm generated metadata and the final package use the actual registered
-   app, and that normal Tutor behavior no longer needs a legacy Custom Action.
-   Inventory the actual app-mapping file selected by the migrated manifest as
-   `appMapping`; release validation checks its path, hash, byte size and required
-   Tutor app identity instead of relying only on the reviewed app-ID assertion.
+4. Inspect the actual generated format. This native migration contains skills only
+   and no app mapping; record NOT_ATTACHED without inventing an app file. The
+   separately composed portable candidate retains its reviewed optional mapping.
+   Validate each format explicitly and preserve the existing connection unchanged.
 5. Approve each exact reference file for repository publication before copying it.
    Local possession, migration, or metadata review is not content-publication
    permission. If required private content cannot be committed, keep public
@@ -380,8 +383,8 @@ blockers are resolved; readiness or merge is never automatic.
 
 ## Production impact and rollback
 
-Existing ARCANOS TUTOR Custom GPT remains unchanged; no retirement was performed.
-Existing Custom GPT Actions remain unchanged. Gaming, Booker and Core are outside
+Supported migration made the original ARCANOS TUTOR Custom GPT read-only.
+No separate edit, deletion or retirement of its historical Actions was performed. Gaming, Booker and Core are outside
 this PR. No production variable or credential change was made **as part of this
 PR**; earlier separately authorized OAuth activation is dated evidence only.
 The scoped preview deployment was removed. The subsequent separately authorized

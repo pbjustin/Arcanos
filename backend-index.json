@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-26T00:02:24.571Z",
+  "generatedAt": "2026-09-26T04:34:43.512Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -5489,6 +5489,9 @@
         },
         {
           "relativePath": "tests/tutor-migration-legacy.test.ts"
+        },
+        {
+          "relativePath": "tests/tutor-native-migration.test.ts"
         },
         {
           "relativePath": "tests/tutor-pilot-package.test.ts"

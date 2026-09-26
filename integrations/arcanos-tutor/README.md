@@ -11,9 +11,9 @@ has no documented unique tutoring capability that ordinary teaching requires.
 | --- | --- | --- |
 | PUBLIC TEMPLATE | `package/` | Portable manifest, optional app mapping, and public integration safeguards with one private teaching insertion marker; not teaching-complete or install-ready |
 | PRIVATE COMPOSED RELEASE CANDIDATE | Ignored `.local-migration/arcanos-tutor/composed-skill-v3/package/` | Exact approved instruction text composed locally with safeguards; owner approved the exact skill hash, behavior remains unverified |
-| ACTUAL MIGRATED PLUGIN ARTIFACT | Not supplied | Only actual output from a separately authorized Custom GPT migration can satisfy migration reconciliation |
+| ACTUAL MIGRATED PLUGIN ARTIFACT | Ignored `.local-migration/arcanos-tutor/installed-artifacts-20260926/` | Native skills-only installed bundle captured byte-for-byte; published text preserved, approved integration safeguards missing; not release-ready |
 
-The app mapping is `{ "id": "asdk_app_6ab4747769088191856fd8eb02507240", "optional": true }`.
+The public template and composed candidate app mapping is `{ "id": "asdk_app_6ab4747769088191856fd8eb02507240", "optional": true }`.
 The endpoint, registered account connection, tool `arcanos_tutor`, and scope
 `arcanos:tutor` are unchanged. No authentication or account configuration is
 performed by composition. The mapping neither grants access nor filters tools.
@@ -49,7 +49,10 @@ is claimed. Tutor must use only tools actually available in the current session.
 
 The owner approved the unchanged composed skill on 2026-09-26T01:03:47Z.
 TUTOR_SKILL_RECONCILED is VERIFIED for that exact private candidate only.
-Release remains BLOCKED pending installed teaching verification, actual migrated artifacts and
+Actual migration and zero-reference reconciliation are VERIFIED. The generated
+skill has no attached app and lacks the five approved integration safeguard
+sections; see the [artifact review](../../docs/chatgpt-migration/TUTOR_POST_MIGRATION_RECONCILIATION_20260926.md).
+Release remains BLOCKED pending skill reconciliation, installed teaching verification and
 paired parity. Backend acceptance remains independently BLOCKED. A failed backend
 must not stop ordinary teaching, and teaching evidence must not certify backend
 operation. Synthetic decision tests prove only the reference contract.

@@ -69,24 +69,28 @@
         "owner-complete-baseline-review-20260925",
         "owner-reviewed-baseline-integrity-20260925"
       ],
-      "note": "Complete latest-published private configuration and seven expected-behavior summaries approved by Owner (task confirmation), recorded 2026-09-25T20:00:43Z. Unchanged configuration SHA-256 445255487dd270aad087e025b738666340ac1d42a2e45b05fe0b7df640e843bf and deterministic baseline fingerprint eb1d612dc2b4645841e3035a177ebb91fa6584a2ae633d7918972b9c9dd95e25 revalidated twice. latestPublishedConfirmed=true with account/owner evidence; publicationAssurance remains USER_REPORTED. Zero starters, zero knowledge files and stored Action authentication None are explicitly owner-confirmed. Publication is the literal 2026-03-05T23:54 minute, timezone unavailable. This verifies the baseline only; live runtime acceptance and migration remain blocked."
+      "note": "Complete latest-published private configuration and seven expected-behavior summaries approved by Owner (task confirmation), recorded 2026-09-25T20:00:43Z. Unchanged configuration SHA-256 445255487dd270aad087e025b738666340ac1d42a2e45b05fe0b7df640e843bf and deterministic baseline fingerprint eb1d612dc2b4645841e3035a177ebb91fa6584a2ae633d7918972b9c9dd95e25 revalidated twice. latestPublishedConfirmed=true with account/owner evidence; publicationAssurance remains USER_REPORTED. Zero starters, zero knowledge files and stored Action authentication None are explicitly owner-confirmed. Publication is the literal 2026-03-05T23:54 minute, timezone unavailable. This verifies the baseline only; live runtime acceptance remains blocked; actual account migration is recorded separately."
     },
     "GPT_MIGRATED": {
-      "status": "NOT_STARTED",
+      "status": "VERIFIED",
       "evidenceIds": [
-        "account-user-report"
+        "account-plugin-migration-20260926"
       ],
-      "note": "Original GPT unchanged; irreversible migration is not authorized."
+      "note": "Owner-authorized latest-published account migration completed privately at 2026-09-26T02:47:17.941Z. Actual native installed bundle is captured with full hashes. This records occurrence/capture only, not private release approval, behavior or parity."
     },
     "SKILL_RECONCILED": {
       "status": "BLOCKED",
-      "evidenceIds": [],
-      "note": "Actual migrated skill is missing. Complete captured instructions remain private; the published baseline now has owner approval."
+      "evidenceIds": [
+        "installed-skill-differences-20260926"
+      ],
+      "note": "Actual skill preserves published teaching text exactly but lacks all five separately approved integration safeguard sections and topic-specific activation metadata. Its hash differs from the approved composed skill. Exact installed artifact is not approved for private release; differences are not accepted."
     },
     "REFERENCES_RECONCILED": {
-      "status": "BLOCKED",
-      "evidenceIds": [],
-      "note": "Published knowledge is explicitly confirmed empty. The actual migrated reference inventory is missing; an empty published baseline alone does not reconcile migrated references."
+      "status": "VERIFIED",
+      "evidenceIds": [
+        "installed-artifact-capture-20260926"
+      ],
+      "note": "Complete five-file installed bundle has an explicit empty knowledge-index and no reference/knowledge files. Published zero-file inventory matches. Icon, manifest, agent UI metadata and empty lookup index are generated support files, not teaching references."
     },
     "PARITY_VERIFIED": {
       "status": "BLOCKED",
@@ -104,12 +108,12 @@
     "PACKAGE_READY": {
       "status": "BLOCKED",
       "evidenceIds": [],
-      "note": "Mapped repository candidate exists; release requires inspected and reconciled private artifacts plus parity."
+      "note": "BLOCKED pending reconciliation of native migrated skill with approved candidate, teaching verification and paired parity. Backend remains unavailable under independent full-release requirements."
     },
     "RELEASE_READY": {
       "status": "BLOCKED",
       "evidenceIds": [],
-      "note": "Remain draft. Do not install/share as the migrated replacement or retire the original GPT."
+      "note": "Remain draft and private. Account migration is complete; no teaching/parity/release claim. No sharing, merge or backend calls are authorized by artifact reconciliation."
     },
     "TUTOR_SKILL_COMPOSED": {
       "status": "VERIFIED",
@@ -127,11 +131,12 @@
       "note": "Owner approved exact private skill SHA-256 7661b328b99aa096f930f46e272ef9208de6f11e22c002e77f79d9ab78a15096 on 2026-09-26T01:03:47Z. Repository inspection confirms unchanged skill/package/baseline/report hashes and bound approval metadata. This reconciles the composed candidate only; teaching behavior, backend acceptance, actual migration and migrated-artifact reconciliation remain separate."
     },
     "TUTOR_SKILL_BEHAVIOR_VERIFIED": {
-      "status": "DEFERRED_POST_MIGRATION",
+      "status": "BLOCKED",
       "evidenceIds": [
-        "skill-execution-surface-deferral-20260926"
+        "installed-test-surface-20260926",
+        "installed-skill-differences-20260926"
       ],
-      "note": "Approved artifact hashes remain exact. Official desktop development testing exists but requires private cache outside the allowed directory and unavailable native client control; no equivalent web skill surface found. Zero executed/passed/failed and eighteen deferred cases; zero skill-test backend calls is not installed-skill no-call proof. Manual checkpoint READY_FOR_OWNER_DECISION_WITH_BACKEND_DEGRADED; release still requires actual behavior evidence."
+      "note": "All eighteen cases remain UNEXECUTED. A supported installed-plugin composer now exists, superseding the historical pre-migration surface deferral. Reconcile missing safeguards and establish a safe no-backend execution boundary before official teaching runs. Backend-explicit and real-failure cases still need separate call authorization."
     },
     "CAPABILITY_EQUIVALENCE_VERIFIED": {
       "status": "NOT_APPLICABLE",
@@ -157,8 +162,10 @@
     },
     "MIGRATED_SKILL_RECONCILED": {
       "status": "BLOCKED",
-      "evidenceIds": [],
-      "note": "Actual migrated skill does not exist. Private composition is not Custom GPT migration."
+      "evidenceIds": [
+        "installed-skill-differences-20260926"
+      ],
+      "note": "Actual skill preserves published teaching text exactly but lacks all five separately approved integration safeguard sections and topic-specific activation metadata. Its hash differs from the approved composed skill. Exact installed artifact is not approved for private release; differences are not accepted."
     }
   }
 }
