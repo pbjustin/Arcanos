@@ -584,6 +584,35 @@
         "appOptional": true,
         "tutorBackendCalls": 0
       }
+    },
+    {
+      "id": "installed-teaching-observations-20260926",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-26T17:13:04.800Z",
+      "summary": "Observed installed PRIVATE Tutor 0.8.3 responses for fifteen of eighteen matrix cases plus three explicit-selection variants; one separate context setup was not scored. Four content failures across eighteen observations include three positively attributed teaching omissions and a host-memory-confounded scope response. Cross-plugin refusal was correct but Tutor activation conflicts with the matrix. This verifies the observation record only, not teaching success, no-call telemetry, parity or release readiness. No backend invocation issued by this task or visible in captured UI/thread evidence; authoritative count unknown. Two backend cases and actual disconnected-state case remain unexecuted. Raw evidence remains ignored/private; approved skill unchanged.",
+      "installedTeachingObservation": {
+        "pluginId": "plugin_d292d1e45ae08191b3911299e30e1a25",
+        "releaseId": "pluginrel_6ab7f17cb4288191b6a60b25c98d5505",
+        "version": "0.8.3",
+        "visibility": "PRIVATE",
+        "skillSha256": "7661b328b99aa096f930f46e272ef9208de6f11e22c002e77f79d9ab78a15096",
+        "packageFingerprint": "e88b0dc42a9951869b8ff63c999e1b6a02fd08043df96f154012c165c8d99948",
+        "matrixCasesObserved": 15,
+        "matrixCasesNotRun": 3,
+        "scoredResponseObservations": 18,
+        "contextSetupObservations": 1,
+        "contentPasses": 14,
+        "contentFailures": 4,
+        "crossPluginActivationMismatch": true,
+        "privateExecutionLedgerSha256": "27e74586e2c14f67a4de3295f2eb96cbcb798eed4eb941a0327398cfb5d56b61",
+        "privateExecutionLedgerSizeBytes": 144242,
+        "privateEvidenceArtifactCount": 56,
+        "visibleBackendCalls": 0,
+        "authoritativeBackendCalls": null,
+        "zeroBackendCallsVerified": false,
+        "report": "docs/chatgpt-migration/TUTOR_INSTALLED_TEACHING_20260926.md"
+      }
     }
   ],
   "checks": {

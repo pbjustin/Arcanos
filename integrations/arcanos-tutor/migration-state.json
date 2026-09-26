@@ -136,9 +136,10 @@
       "status": "BLOCKED",
       "evidenceIds": [
         "installed-test-surface-20260926",
-        "installed-skill-differences-20260926"
+        "installed-skill-differences-20260926",
+        "installed-teaching-observations-20260926"
       ],
-      "note": "All eighteen installed teaching cases remain UNEXECUTED. Saved 0.8.3 skill bytes exactly match owner approval; package structure is not teaching behavior evidence. Next phase must verify ordinary tutoring with zero backend calls. Explicit backend testing requires separate authorization."
+      "note": "Installed 0.8.3 teaching run exercised fifteen of eighteen matrix cases, plus three explicit-selection variants. Observed teaching omissions, unexpected boundary activation, host-memory-confounded scope output, activation uncertainty and missing authoritative zero-call evidence keep this gate BLOCKED. Two backend cases require separate authorization; the disconnected case lacks its real precondition. Historical reference matrix remains unchanged. See TUTOR_INSTALLED_TEACHING_20260926.md; approved skill bytes and release identity remain unchanged."
     },
     "CAPABILITY_EQUIVALENCE_VERIFIED": {
       "status": "NOT_APPLICABLE",
