@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-26T18:17:06.058Z",
+  "generatedAt": "2026-09-26T22:38:16.827Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -4588,6 +4588,9 @@
           "relativePath": "tests/helpers/gptAccessDeviceRepository.ts"
         },
         {
+          "relativePath": "tests/helpers/tutor-installed-teaching-fixture.ts"
+        },
+        {
           "relativePath": "tests/helpers/tutor-skill-revision-fixture.ts"
         },
         {
@@ -5486,6 +5489,9 @@
         },
         {
           "relativePath": "tests/tutor-honesty-preview-fixture.test.ts"
+        },
+        {
+          "relativePath": "tests/tutor-installed-teaching.test.ts"
         },
         {
           "relativePath": "tests/tutor-instructional-verification.test.ts"

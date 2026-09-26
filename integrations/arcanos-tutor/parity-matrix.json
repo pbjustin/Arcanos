@@ -6,18 +6,37 @@
       "id": "direct-activation",
       "category": "direct",
       "prompt": "Use ARCANOS TUTOR to explain why 1/2 equals 2/4.",
-      "expected": "Activate; one arcanos_tutor call with prompt only; explain accurately.",
+      "expected": "Activate the teaching skill and explain accurately; ordinary tutoring requires zero backend calls.",
       "oldGpt": null,
       "plugin": null,
       "toolInvoked": null,
       "materialDifference": null,
-      "disposition": "BLOCKER"
+      "disposition": "BLOCKER",
+      "migratedTeachingProgress": {
+        "status": "RELATED_BEHAVIOR_OBSERVED_EXACT_PARITY_UNEXECUTED",
+        "caseId": "DIRECT_EXPLANATION",
+        "pluginVersion": "0.8.5",
+        "releaseId": "pluginrel_6ab84427e0d4819182de200f7ce49333",
+        "packageFingerprint": "6f945afcce451d822597bc4e79fb1d8b60262416bb75c1eb398a774318d60f5c",
+        "parityPromptSha256": "a55bc9b2f1abb714899ab0470685f0feaf21231442190fe99886a55d33d888ee",
+        "actualPromptSha256": "5f616691800427caa7869ef36c70f95d9d9981495b072b069fdbd43094d91623",
+        "responseSha256": "31287c54b83ce4cdb6c340dcca0f67f9163d5ca5206a3943bbdc716ef00a13d6",
+        "summary": "Explains the requested equivalent fractions through equal scaling of numerator and denominator, with the requested example and no intake delay.",
+        "summarySha256": "5fde40819387fdf75da295392371c064c7bd606f99637edbb033155ad87f3a0b",
+        "contentResult": "PASS",
+        "expectedBackendInvocations": 0,
+        "visibleBackendInvocations": 0,
+        "serverAuthoritativeBackendInvocations": null,
+        "exactPromptMatch": false,
+        "evidenceId": "installed-final-teaching-verification-20260926",
+        "noHistoricalEvidenceRewritten": true
+      }
     },
     {
       "id": "indirect-activation",
       "category": "indirect",
       "prompt": "I keep getting lost when adding fractions with different denominators. Help me understand.",
-      "expected": "Recognize learner intent and invoke Tutor once.",
+      "expected": "Recognize learner intent and teach through the skill without a backend call.",
       "oldGpt": null,
       "plugin": null,
       "toolInvoked": null,
@@ -33,7 +52,26 @@
       "plugin": null,
       "toolInvoked": null,
       "materialDifference": null,
-      "disposition": "BLOCKER"
+      "disposition": "BLOCKER",
+      "migratedTeachingProgress": {
+        "status": "RELATED_BEHAVIOR_OBSERVED_EXACT_PARITY_UNEXECUTED",
+        "caseId": "UNRELATED_WRITING",
+        "pluginVersion": "0.8.5",
+        "releaseId": "pluginrel_6ab84427e0d4819182de200f7ce49333",
+        "packageFingerprint": "6f945afcce451d822597bc4e79fb1d8b60262416bb75c1eb398a774318d60f5c",
+        "parityPromptSha256": "4f9e14b09a437dbf66cea1bab82b90c710358b54a5baef4262b1f8ed54ab1e13",
+        "actualPromptSha256": "a47f69d97d82968e33bb93b3ebe1a02e2d420274a447e99cf1acb9799c1f5197",
+        "responseSha256": "d8e7173fabc2e659b130d27b40f43354adee24e82a8c1b6c8c53ece6c499a013",
+        "summary": "Provides ordinary writing outside a visibly activated Tutor workflow in the fresh unselected conversation. No Sources button or Tutor attribution is exposed; this supports observed non-activation without proving internal runtime inactivity.",
+        "summarySha256": "068e067b61322e56cf98f1522ae28e8fdb95cf056c8e1bce3d397deaf3d9a91e",
+        "contentResult": "PASS",
+        "expectedBackendInvocations": 0,
+        "visibleBackendInvocations": 0,
+        "serverAuthoritativeBackendInvocations": null,
+        "exactPromptMatch": false,
+        "evidenceId": "installed-final-teaching-verification-20260926",
+        "noHistoricalEvidenceRewritten": true
+      }
     },
     {
       "id": "concise-explanation",
@@ -44,7 +82,26 @@
       "plugin": null,
       "toolInvoked": null,
       "materialDifference": "Historical pre-rollout observation: Prior standalone model call included an irrelevant disclaimer and three sentences. A fresh original-GPT observation used two sentences without that disclaimer, but is not bound to a complete published baseline fingerprint. After reconnect resolved initial UNAUTHORIZED, the connected-tool attempt failed connector schema validation before backend execution. Neither official oldGpt nor migrated-plugin results exist. LIVE_RETEST_PENDING; formatting and comparison remain blocked. Current checkpoint on 2026-09-25: latest recorded post-PR1512 runtime acceptance FAIL; LIVE_TUTOR_CALL_VERIFIED BLOCKED. PR1513 synthetic verification does not advance acceptance. No baseline-bound oldGpt or migrated-plugin result exists.",
-      "disposition": "BLOCKER"
+      "disposition": "BLOCKER",
+      "migratedTeachingProgress": {
+        "status": "RELATED_BEHAVIOR_OBSERVED_EXACT_PARITY_UNEXECUTED",
+        "caseId": "CONCISE_FORMAT",
+        "pluginVersion": "0.8.5",
+        "releaseId": "pluginrel_6ab84427e0d4819182de200f7ce49333",
+        "packageFingerprint": "6f945afcce451d822597bc4e79fb1d8b60262416bb75c1eb398a774318d60f5c",
+        "parityPromptSha256": "1889539d24060a7448ed3eb74171dead3e7381ab5121aaef6638d995cba4ef0a",
+        "actualPromptSha256": "7756bffe01e5a94757b9a910ed0eaaba4a9a49f49ce59a0a216bf108ff7b5459",
+        "responseSha256": "7fe892fa53b414f27eda2b6c882004a074acec7a797884b4eabf0a4af50e1132",
+        "summary": "Exactly two short gravity sentences and no extra material, matching the actual submitted teaching prompt rather than the different planned parity prompt.",
+        "summarySha256": "94ff20133b2c8b4642d9b0dde928ecc370b7115bb25ad506cb3f7d0ac0b238f9",
+        "contentResult": "PASS",
+        "expectedBackendInvocations": 0,
+        "visibleBackendInvocations": 0,
+        "serverAuthoritativeBackendInvocations": null,
+        "exactPromptMatch": false,
+        "evidenceId": "installed-final-teaching-verification-20260926",
+        "noHistoricalEvidenceRewritten": true
+      }
     },
     {
       "id": "structured-lesson",
@@ -66,7 +123,26 @@
       "plugin": null,
       "toolInvoked": null,
       "materialDifference": null,
-      "disposition": "BLOCKER"
+      "disposition": "BLOCKER",
+      "migratedTeachingProgress": {
+        "status": "RELATED_BEHAVIOR_OBSERVED_EXACT_PARITY_UNEXECUTED",
+        "caseId": "FOLLOW_UP_CONTEXT",
+        "pluginVersion": "0.8.5",
+        "releaseId": "pluginrel_6ab84427e0d4819182de200f7ce49333",
+        "packageFingerprint": "6f945afcce451d822597bc4e79fb1d8b60262416bb75c1eb398a774318d60f5c",
+        "parityPromptSha256": "b6fc45e4e8d77112d5821869ca4133dd7e681425611767db8aa3d3c07202039c",
+        "actualPromptSha256": "2d867ac91a092ef4cd641af1e40670227aebda37b920a23c793141e170486ef2",
+        "responseSha256": "b08fbda6cc7facdffecee1f332d0600174c68e4b0dfc33ab9ab90498e9a927e7",
+        "summary": "Uses the retained worked-example context and explains its fraction-conversion step without inventing stored history.",
+        "summarySha256": "e7d405150fc558a245cd3d08a3635b04de2e9d5ab49066496fe448df2e541b86",
+        "contentResult": "PASS",
+        "expectedBackendInvocations": 0,
+        "visibleBackendInvocations": 0,
+        "serverAuthoritativeBackendInvocations": null,
+        "exactPromptMatch": false,
+        "evidenceId": "installed-final-teaching-verification-20260926",
+        "noHistoricalEvidenceRewritten": true
+      }
     },
     {
       "id": "difficult-question",
@@ -77,7 +153,26 @@
       "plugin": null,
       "toolInvoked": null,
       "materialDifference": null,
-      "disposition": "BLOCKER"
+      "disposition": "BLOCKER",
+      "migratedTeachingProgress": {
+        "status": "RELATED_BEHAVIOR_OBSERVED_EXACT_PARITY_UNEXECUTED",
+        "caseId": "DIFFICULT_OR_AMBIGUOUS_QUESTION",
+        "pluginVersion": "0.8.5",
+        "releaseId": "pluginrel_6ab84427e0d4819182de200f7ce49333",
+        "packageFingerprint": "6f945afcce451d822597bc4e79fb1d8b60262416bb75c1eb398a774318d60f5c",
+        "parityPromptSha256": "aee14790e745d53d8a9b15756fd79694a2389ecae5a1cf498883986f4303d60d",
+        "actualPromptSha256": "02319dabf47de63f2de95abb685a0e9ead98f9deffd9ffbb47aff4c6b5996275",
+        "responseSha256": "35e2d9575f14495fce1451a0d6432b1fe94777d697ef59d392178bc43b74201b",
+        "summary": "Explains that zero divided by zero does not identify a unique quotient and is undefined; does not invent a numeric answer.",
+        "summarySha256": "b9776fe7291c3d73ae3be18039240b7ed66d7e4028af7de59a2c45367cddd11c",
+        "contentResult": "PASS",
+        "expectedBackendInvocations": 0,
+        "visibleBackendInvocations": 0,
+        "serverAuthoritativeBackendInvocations": null,
+        "exactPromptMatch": false,
+        "evidenceId": "installed-final-teaching-verification-20260926",
+        "noHistoricalEvidenceRewritten": true
+      }
     },
     {
       "id": "unsupported-memory",
@@ -88,7 +183,26 @@
       "plugin": null,
       "toolInvoked": null,
       "materialDifference": null,
-      "disposition": "BLOCKER"
+      "disposition": "BLOCKER",
+      "migratedTeachingProgress": {
+        "status": "RELATED_BEHAVIOR_OBSERVED_EXACT_PARITY_UNEXECUTED",
+        "caseId": "MEMORY_REQUEST",
+        "pluginVersion": "0.8.5",
+        "releaseId": "pluginrel_6ab84427e0d4819182de200f7ce49333",
+        "packageFingerprint": "6f945afcce451d822597bc4e79fb1d8b60262416bb75c1eb398a774318d60f5c",
+        "parityPromptSha256": "6c4d2b27fe3425b48aeb401460c449b09ed39caab96c978aa41c9708b062183e",
+        "actualPromptSha256": "956d39aa94cacebcd233548fead3881b1af6a08f6bfbf607538fa2d11c0e6dde",
+        "responseSha256": "eb8cc01617604ad3c7e899dda26a35b27c89abc82709272fba5f22c52a3cf5b3",
+        "summary": "Declines a permanent Tutor learner profile and distinguishes ChatGPT host memory from Tutor capability. No saved-profile claim or routing to another app appears in the assistant response. A separate host Memory updated indicator is present and is retained as a confounding event.",
+        "summarySha256": "65afa4b23ce92f593e7b79f8e05d92288253df33ee39316886e2c96e12bd29c7",
+        "contentResult": "PASS",
+        "expectedBackendInvocations": 0,
+        "visibleBackendInvocations": 0,
+        "serverAuthoritativeBackendInvocations": null,
+        "exactPromptMatch": false,
+        "evidenceId": "installed-final-teaching-verification-20260926",
+        "noHistoricalEvidenceRewritten": true
+      }
     },
     {
       "id": "unsupported-admin",
@@ -105,7 +219,7 @@
       "id": "clarification",
       "category": "clarification",
       "prompt": "Explain the next step in this problem.",
-      "expected": "Ask one focused question for the missing problem before calling the tool.",
+      "expected": "Ask one focused question for the missing problem; clarification does not require a backend call.",
       "oldGpt": null,
       "plugin": null,
       "toolInvoked": null,
@@ -121,7 +235,26 @@
       "plugin": null,
       "toolInvoked": null,
       "materialDifference": null,
-      "disposition": "BLOCKER"
+      "disposition": "BLOCKER",
+      "migratedTeachingProgress": {
+        "status": "RELATED_BEHAVIOR_OBSERVED_EXACT_PARITY_UNEXECUTED",
+        "caseId": "NUMBERED_FORMAT",
+        "pluginVersion": "0.8.5",
+        "releaseId": "pluginrel_6ab84427e0d4819182de200f7ce49333",
+        "packageFingerprint": "6f945afcce451d822597bc4e79fb1d8b60262416bb75c1eb398a774318d60f5c",
+        "parityPromptSha256": "346f6c176ff641bb26b1b86885d73da9c4df49de0fc87589c99ae1cc00fb5db4",
+        "actualPromptSha256": "f330e0a067be85dcece1f08f35903e04cecefd452128a1fb12e8bc50c4af326c",
+        "responseSha256": "8ac15698563f5848b06e85ba79f59316d582daa5ef8ff7326020ec73a0eb4e32",
+        "summary": "Exactly three correct steps simplify the actual requested fraction. Reviewer B independently confirmed visible numbering and no introductory or closing prose; the different planned algebra prompt was not submitted.",
+        "summarySha256": "9a3688a1df710d240aab765aff8c7c69220ae2a38acf443d1e2c2aab7db40513",
+        "contentResult": "PASS",
+        "expectedBackendInvocations": 0,
+        "visibleBackendInvocations": 0,
+        "serverAuthoritativeBackendInvocations": null,
+        "exactPromptMatch": false,
+        "evidenceId": "installed-final-teaching-verification-20260926",
+        "noHistoricalEvidenceRewritten": true
+      }
     },
     {
       "id": "auth-failure",

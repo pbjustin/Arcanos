@@ -97,8 +97,12 @@ function integration(f: Fixture, inspect: boolean) {
   const state = readJson(path.join(packageRoot, 'migration-state.json'));
   state.gates.GPT_MIGRATED = { ...f.state.gates.GPT_MIGRATED, note: 'Synthetic account migration only.' };
   state.gates.UPDATED_PLUGIN_ARCHIVE_VERIFIED = { status: 'BLOCKED', evidenceIds: [], note: 'Historical migration fixture only.' };
+  state.gates.TUTOR_SKILL_BEHAVIOR_VERIFIED = { status: 'BLOCKED', evidenceIds: [], note: 'Historical migration fixture only.' };
   rmSync(path.join(packageRoot, 'updated-plugin-release.json'), { force: true });
   rmSync(path.join(packageRoot, 'skill-revision.inventory.json'), { force: true });
+  rmSync(path.join(packageRoot, 'diagnostic-revision.inventory.json'), { force: true });
+  rmSync(path.join(packageRoot, 'intake-plugin-release.inventory.json'), { force: true });
+  rmSync(path.join(packageRoot, 'installed-teaching-verification.json'), { force: true });
   writeJson(path.join(packageRoot, 'migration-state.json'), state);
   writeJson(path.join(packageRoot, 'migration.inventory.json'), f.migration);
   const code = `import {validateArcanosTutorPackage} from ${JSON.stringify(validator)};

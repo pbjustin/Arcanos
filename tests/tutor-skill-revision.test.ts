@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { authorizeFixtureRevision } from './helpers/tutor-skill-revision-fixture.js';
+import { authorizeFixtureDiagnosticRevision, authorizeFixtureRevision } from './helpers/tutor-skill-revision-fixture.js';
 import { createUpdatedFixture, refreshUpdatedFixture, writeFixtureJson } from './helpers/tutor-updated-release-fixture.js';
 
 type Json = ReturnType<typeof JSON.parse>;
@@ -26,23 +26,28 @@ function fixture() {
     ownerReview: { status: 'APPROVED', skillSha256: hash(before) } };
   return { root, inputRoot, composition, ...authorizeFixtureRevision(createUpdatedFixture(inputRoot, before)) };
 }
-type Fixture = ReturnType<typeof fixture>;
+type Fixture = ReturnType<typeof fixture> & Partial<ReturnType<typeof authorizeFixtureDiagnosticRevision>>;
 function run(f: Fixture, inspect = true) {
   const options = { inputRoot: f.inputRoot, revision: f.revision, composition: f.composition,
-    currentRelease: f.saved.release, evidence: [f.sourceEvidence, f.ownerEvidence, f.reviewEvidence, f.saved.evidence] };
-  const code = `import {inspectTutorSkillRevision,validateTutorSkillRevision} from ${JSON.stringify(helper)};
+    currentRelease: f.saved.release, diagnosticRevision: f.diagnosticRevision, intakeRelease: f.intakeRelease,
+    evidence: [f.sourceEvidence, f.ownerEvidence, f.reviewEvidence, f.saved.evidence,
+      f.intakeEvidence, f.diagnosticOwnerEvidence, f.diagnosticReviewEvidence].filter(Boolean) };
+  const code = `import {inspectTutorSkillRevisionChain,validateTutorSkillRevisionChain} from ${JSON.stringify(helper)};
     const o=JSON.parse(process.argv[1]);o.evidence=new Map(o.evidence.map(e=>[e.id,e]));
-    try{console.log(JSON.stringify(${inspect ? 'await inspectTutorSkillRevision(o)' : 'validateTutorSkillRevision(o.revision,o)'}));}
+    try{console.log(JSON.stringify(${inspect ? 'await inspectTutorSkillRevisionChain(o)' : 'validateTutorSkillRevisionChain(o)'}));}
     catch(e){console.error(e.message);process.exitCode=1;}`;
   return spawnSync(process.execPath, ['--input-type=module', '-e', code, JSON.stringify(options)], { encoding: 'utf8' });
 }
 function rebindChangedSkill(f: Fixture) {
   const after = readFileSync(path.join(f.saved.bundle, 'skills/instructions/SKILL.md'));
   const changed = hash(after);
-  f.revision.to.skillSha256 = changed;
+  const revision = f.diagnosticRevision ?? f.revision;
+  const owner = f.diagnosticOwnerEvidence ?? f.ownerEvidence;
+  const review = f.diagnosticReviewEvidence ?? f.reviewEvidence;
+  revision.to.skillSha256 = changed;
   f.saved.release.approvedSkillSha256 = changed;
-  f.ownerEvidence.skillRevisionAuthorization.toSkillSha256 = changed;
-  f.reviewEvidence.skillRevisionBinding.toSkillSha256 = changed;
+  owner.skillRevisionAuthorization.toSkillSha256 = changed;
+  review.skillRevisionBinding.toSkillSha256 = changed;
   refreshUpdatedFixture(f.saved);
 }
 afterEach(() => {
@@ -125,5 +130,77 @@ describe('Scoped successor skill approval without historical evidence rewriting'
     }
     refreshUpdatedFixture(f.saved);
     expect(run(f).stderr).toContain('SKILL_REVISION_MANIFEST_SCOPE_CHANGED');
+  });
+});
+
+describe('Diagnostic-only successor chain (synthetic byte and authorization evidence)', () => {
+  function diagnosticFixture() {
+    const first = fixture();
+    return { ...first, ...authorizeFixtureDiagnosticRevision(first) };
+  }
+  it('proves both insertions without rewriting historical composition or intake approval', () => {
+    const f = diagnosticFixture();
+    const original = structuredClone({ composition: f.composition, revision: f.revision });
+    const result = run(f);
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe('');
+    const report = JSON.parse(result.stdout);
+    expect(report).toMatchObject({ sourceValidation: 'PASS', revisionCount: 2,
+      originalBytesPreserved: true, behaviorVerified: false });
+    expect(report.steps.map((step: Json) => step.scope)).toEqual(['CONFIDENCE_TIME_INTAKE_ONLY', 'DIAGNOSTIC_SINGLE_QUESTION_ONLY']);
+    expect(report.steps.every((step: Json) => step.unchangedFileCount === 4 && step.manifestVersionOnlyChanges)).toBe(true);
+    expect({ composition: f.composition, revision: f.revision }).toEqual(original);
+  });
+  it.each(['missing-intake-release', 'missing-diagnostic-record', 'unsupported-version', 'wrong-scope',
+    'wrong-predecessor', 'unbound-intake-evidence', 'missing-owner', 'conflicting-owner', 'missing-review',
+    'conflicting-review', 'changed-first-approval', 'false-records'])(
+    'rejects an unsupported diagnostic chain: %s', failure => {
+      const f: Fixture = diagnosticFixture();
+      if (failure === 'missing-intake-release') delete f.intakeRelease;
+      if (failure === 'missing-diagnostic-record') delete f.diagnosticRevision;
+      if (failure === 'unsupported-version') f.diagnosticRevision.to.version = '0.8.6';
+      if (failure === 'wrong-scope') f.diagnosticRevision.scope = 'GENERAL_TEACHING_REWRITE';
+      if (failure === 'wrong-predecessor') f.diagnosticRevision.from.releaseId = 'pluginrel_mock_unrelated';
+      if (failure === 'unbound-intake-evidence') f.intakeEvidence.updatedReleaseBinding.archiveSha256 = hash('mock unrelated archive');
+      if (failure === 'missing-owner') f.diagnosticRevision.authorization.evidenceIds = [];
+      if (failure === 'conflicting-owner') f.diagnosticOwnerEvidence.skillRevisionAuthorization.insertionSha256 = hash('mock unrelated insertion');
+      if (failure === 'missing-review') f.diagnosticRevision.review.evidenceIds = [];
+      if (failure === 'conflicting-review') f.diagnosticReviewEvidence.skillRevisionBinding.insertionOffsetBytes += 1;
+      if (failure === 'changed-first-approval') f.ownerEvidence.skillRevisionAuthorization.toSkillSha256 = hash('mock rewritten intake approval');
+      if (failure === 'false-records') { f.diagnosticRevision = false; f.intakeRelease = false; }
+      expect(run(f, false).status).toBe(1);
+    });
+  it('rejects diagnostic insertion drift despite rebinding the successor skill digest', () => {
+    const f = diagnosticFixture();
+    const file = path.join(f.saved.bundle, 'skills/instructions/SKILL.md');
+    const bytes = readFileSync(file);
+    bytes[f.diagnosticRevision.insertion.offsetBytes + 1] ^= 1;
+    writeFileSync(file, bytes);
+    rebindChangedSkill(f);
+    expect(run(f).stderr).toContain('SKILL_REVISION_ORIGINAL_BYTES_CHANGED');
+  });
+  it('rejects changes to the already approved intake override during the diagnostic insertion', () => {
+    const f = diagnosticFixture();
+    const file = path.join(f.saved.bundle, 'skills/instructions/SKILL.md');
+    const bytes = readFileSync(file);
+    bytes[f.revision.insertion.offsetBytes + 1] ^= 1;
+    writeFileSync(file, bytes);
+    rebindChangedSkill(f);
+    expect(run(f).stderr).toContain('SKILL_REVISION_ORIGINAL_BYTES_CHANGED');
+  });
+  it('rejects substitution of the actual saved predecessor archive', () => {
+    const f = diagnosticFixture();
+    writeFileSync(path.join(f.inputRoot, f.intakeRelease.capture.archive.path), 'mock replaced predecessor');
+    expect(run(f).stderr).toContain('UPDATED_ARCHIVE_DIGEST_MISMATCH');
+  });
+  it('does not infer a one-task diagnostic from question-mark count in synthetic review fixtures', () => {
+    const reviewed = (caseRecord: { diagnostic: boolean; learnerResponseTasks: number; stackedAlternatives: number }) =>
+      !caseRecord.diagnostic || (caseRecord.learnerResponseTasks === 1 && caseRecord.stackedAlternatives === 0);
+    // These are supplied reviewer facts, not NLP classification or installed model proof.
+    expect(reviewed({ diagnostic: true, learnerResponseTasks: 1, stackedAlternatives: 0 })).toBe(true);
+    expect(reviewed({ diagnostic: true, learnerResponseTasks: 1, stackedAlternatives: 3 })).toBe(false);
+    expect(reviewed({ diagnostic: true, learnerResponseTasks: 2, stackedAlternatives: 0 })).toBe(false);
+    expect(reviewed({ diagnostic: true, learnerResponseTasks: 0, stackedAlternatives: 0 })).toBe(false);
+    expect(reviewed({ diagnostic: false, learnerResponseTasks: 0, stackedAlternatives: 0 })).toBe(true);
   });
 });

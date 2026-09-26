@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "kind": "OWNER_AUTHORIZED_SINGLE_INSERTION",
+  "scope": "DIAGNOSTIC_SINGLE_QUESTION_ONLY",
+  "status": "VERIFIED",
+  "pluginId": "plugin_d292d1e45ae08191b3911299e30e1a25",
+  "from": {
+    "releaseId": "pluginrel_6ab809c1fea4819182a133da08f4152b",
+    "version": "0.8.4",
+    "skillSha256": "02fbc4e2b5a000cf9d49fae9a2d66e1cb59593060cacb6640e5b597202ab3d1d",
+    "packageFingerprint": "ac0e3e75de8159fd4788d64fd306f4cb569c48e7a6f63b649132f1dbbc1b9594",
+    "archive": {
+      "path": "installed-final-verification-20260926/baseline-saved-0.8.4.tar.gz",
+      "sha256": "ee75e6ae3488dd625af68c56aecc910454de0ae25b55910e8c97618a09c55ce7",
+      "sizeBytes": 260445
+    },
+    "rootPath": "installed-final-verification-20260926/baseline-saved",
+    "evidenceId": "saved-plugin-intake-release-20260926"
+  },
+  "to": {
+    "version": "0.8.5",
+    "skillSha256": "282ceeba915a317f6bb3f49eb1929ef5ae9d555781c635b0b8ed7e85977a61b8",
+    "skillSizeBytes": 10406
+  },
+  "insertion": {
+    "offsetBytes": 1095,
+    "sizeBytes": 660,
+    "sha256": "0c884555b21935d5d165675b3caa90b87253164bf9142990535b11d0dcf178eb"
+  },
+  "authorization": {
+    "evidenceIds": [
+      "owner-diagnostic-revision-authorization-20260926"
+    ]
+  },
+  "review": {
+    "reviewedBy": "Independent artifact and integration reviewers",
+    "reviewedAt": "2026-09-26T22:19:15.746Z",
+    "evidenceIds": [
+      "diagnostic-revision-scope-byte-review-20260926"
+    ],
+    "originalBytesPreserved": true
+  }
+}

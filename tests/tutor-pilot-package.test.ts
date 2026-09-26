@@ -5,7 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createUpdatedFixture } from './helpers/tutor-updated-release-fixture.js';
-import { authorizeFixtureRevision } from './helpers/tutor-skill-revision-fixture.js';
+import { authorizeFixtureDiagnosticRevision, authorizeFixtureRevision } from './helpers/tutor-skill-revision-fixture.js';
+import { installedTeachingFixture } from './helpers/tutor-installed-teaching-fixture.js';
 
 type Json = ReturnType<typeof JSON.parse>;
 const script = path.join(process.cwd(), 'scripts/validate-arcanos-tutor-package.mjs');
@@ -38,9 +39,12 @@ function baselineFingerprint(baseline: Json) {
     knowledge: baseline.knowledge.map(({ name, sha256, sizeBytes }: Json) => ({ name, sha256, sizeBytes }))
       .sort((left: Json, right: Json) => left.name.localeCompare(right.name, 'en')) }));
 }
-function completeFixture(intakeRevision = false) {
+function completeFixture(intakeRevision = false, diagnosticRevision = false, currentTeaching = false) {
   const root = copyPackage();
-  rmSync(path.join(root, 'skill-revision.inventory.json'), { force: true });
+  for (const name of ['skill-revision.inventory.json', 'diagnostic-revision.inventory.json', 'intake-plugin-release.inventory.json',
+    'installed-teaching-verification.json']) {
+    rmSync(path.join(root, name), { force: true });
+  }
   expect(spawnSync('git', ['-C', root, 'init', '--quiet'], { windowsHide: true }).status).toBe(0);
   writeFileSync(path.join(root, '.gitignore'), '.local-migration/\n');
   const inputs = path.join(root, '.local-migration/arcanos-tutor');
@@ -195,6 +199,14 @@ function completeFixture(intakeRevision = false) {
     edit(root, 'connection.requirements.json', connection => {
       connection.evidence.push(revised.sourceEvidence, revised.ownerEvidence, revised.reviewEvidence);
     });
+    if (diagnosticRevision) {
+      const chain = authorizeFixtureDiagnosticRevision(revised);
+      write(root, 'diagnostic-revision.inventory.json', chain.diagnosticRevision);
+      write(root, 'intake-plugin-release.inventory.json', chain.intakeRelease);
+      edit(root, 'connection.requirements.json', connection => {
+        connection.evidence.push(chain.intakeEvidence, chain.diagnosticOwnerEvidence, chain.diagnosticReviewEvidence);
+      });
+    }
     edit(root, 'migration-state.json', state => {
       for (const gate of ['TUTOR_SKILL_BEHAVIOR_VERIFIED', 'PARITY_VERIFIED']) state.gates[gate].status = 'BLOCKED';
     });
@@ -205,6 +217,15 @@ function completeFixture(intakeRevision = false) {
     state.gates.UPDATED_PLUGIN_ARCHIVE_VERIFIED = { ...updated.state.gates.UPDATED_PLUGIN_ARCHIVE_VERIFIED,
       note: 'Synthetic saved optional-app release only.' };
   });
+  if (currentTeaching) {
+    const teaching = installedTeachingFixture(inputs, updated.release);
+    write(root, 'installed-teaching-verification.json', teaching.record);
+    edit(root, 'connection.requirements.json', connection => { connection.evidence.push(teaching.evidence); });
+    edit(root, 'migration-state.json', state => {
+      state.gates.TUTOR_SKILL_BEHAVIOR_VERIFIED = { ...teaching.state.gates.TUTOR_SKILL_BEHAVIOR_VERIFIED,
+        note: 'Synthetic complete visible UI review only.' };
+    });
+  }
   return { root, inputs, baseline, migration, composition, bindings, instruction,
     privatePackage: path.join(inputs, composition.outputDirectory, 'package') };
 }
@@ -280,6 +301,38 @@ afterEach(() => {
 });
 
 describe('Standalone Tutor package and migration release boundary', () => {
+  it('accepts separately bound current teaching without promoting successor parity or release', () => {
+    const fixture = completeFixture(true, true, true);
+    const result = validate(fixture.root, ['--inputs', fixture.inputs]);
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe('');
+    const report = JSON.parse(result.stdout);
+    expect(report).toMatchObject({ releaseStatus: 'BLOCKED', skillOnlyTeachingReadiness: 'VERIFIED',
+      gates: { TUTOR_SKILL_BEHAVIOR_VERIFIED: 'VERIFIED', PARITY_VERIFIED: 'BLOCKED', RELEASE_READY: 'BLOCKED' },
+      installedTeachingInspection: { teachingVerified: true, authoritativeBackendCalls: null, artifactInspection: 'PASS' } });
+    expect(report.releaseBlockers).toContain('REVISED_SKILL_PARITY_NOT_VERIFIED');
+    expect(report.releaseBlockers).not.toContain('SKILL_BEHAVIOR_NOT_VERIFIED');
+  });
+  it('rejects current teaching gate promotion without its independent current ledger', () => {
+    const fixture = completeFixture(true, true, true);
+    rmSync(path.join(fixture.root, 'installed-teaching-verification.json'));
+    expect(validate(fixture.root, ['--inputs', fixture.inputs]).status).toBe(1);
+  });
+  it('inspects the complete diagnostic successor chain while keeping behavior and parity blocked', () => {
+    const fixture = completeFixture(true, true);
+    const result = validate(fixture.root, ['--inputs', fixture.inputs]);
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe('');
+    expect(JSON.parse(result.stdout)).toMatchObject({ releaseStatus: 'BLOCKED', skillOnlyTeachingReadiness: 'BLOCKED',
+      skillRevisionInspection: { revisionCount: 2, originalBytesPreserved: true, behaviorVerified: false } });
+    expect(JSON.parse(result.stdout).skillRevisionInspection.steps).toHaveLength(2);
+  });
+  it.each(['skill-revision.inventory.json', 'diagnostic-revision.inventory.json', 'intake-plugin-release.inventory.json'])(
+    'rejects incomplete successor history missing %s', name => {
+      const fixture = completeFixture(true, true);
+      rmSync(path.join(fixture.root, name));
+      expect(validate(fixture.root, ['--inputs', fixture.inputs]).status).toBe(1);
+    });
   it('validates an authorized successor without rewriting the historical composition approval', () => {
     const fixture = completeFixture(true);
     const result = validate(fixture.root, ['--inputs', fixture.inputs]);
@@ -288,7 +341,7 @@ describe('Standalone Tutor package and migration release boundary', () => {
     expect(JSON.parse(result.stdout).skillRevisionInspection).toMatchObject({ originalBytesPreserved: true,
       unchangedFileCount: 4, manifestVersionOnlyChanges: true, behaviorVerified: false });
     expect(JSON.parse(result.stdout)).toMatchObject({ releaseStatus: 'BLOCKED', skillOnlyTeachingReadiness: 'BLOCKED' });
-    expect(JSON.parse(result.stdout).releaseBlockers).toContain('REVISED_SKILL_BEHAVIOR_AND_PARITY_NOT_VERIFIED');
+    expect(JSON.parse(result.stdout).releaseBlockers).toContain('REVISED_SKILL_BEHAVIOR_NOT_VERIFIED');
     expect(json(fixture.root, 'skill-composition.inventory.json').skill.sha256).toBe(fixture.composition.skill.sha256);
   });
   it('rejects a successor hash without its scoped authorization record', () => {

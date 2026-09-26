@@ -1,0 +1,676 @@
+{
+  "schemaVersion": 1,
+  "kind": "CURRENT_RELEASE_SKILL_ONLY_18",
+  "status": "VERIFIED",
+  "evidenceBasis": "COMPLETE_CAPTURED_VISIBLE_UI",
+  "release": {
+    "pluginId": "plugin_d292d1e45ae08191b3911299e30e1a25",
+    "releaseId": "pluginrel_6ab84427e0d4819182de200f7ce49333",
+    "version": "0.8.5",
+    "skillSha256": "282ceeba915a317f6bb3f49eb1929ef5ae9d555781c635b0b8ed7e85977a61b8",
+    "packageFingerprint": "6f945afcce451d822597bc4e79fb1d8b60262416bb75c1eb398a774318d60f5c",
+    "visibility": "PRIVATE"
+  },
+  "inputs": {
+    "plan": {
+      "path": "installed-final-verification-20260926/plan.private.json",
+      "sha256": "b00aee858a9150e6673d3f54f4cda3a115a6ab539045e7faa303d891513d3b43",
+      "sizeBytes": 9038
+    },
+    "attempts": {
+      "path": "installed-final-verification-20260926/attempts.private.json",
+      "sha256": "1c00059c9d3411f1c952c2cdd820346f18d854ace6884bdd8e881c3b7bbd8077",
+      "sizeBytes": 5135
+    },
+    "observations": {
+      "path": "installed-final-verification-20260926/observations.private.json",
+      "sha256": "462c1801d28c2f00d7097417fe6996c4db573b9b0e3d7c429c48e65105ae7861",
+      "sizeBytes": 9380
+    },
+    "contentReview": {
+      "path": "installed-final-verification-20260926/safegrading.json",
+      "sha256": "d68cc8e7508ffaf3af3275b0c4d1f84d41233bea9135ef5cfd3ec6fdf68d86ca",
+      "sizeBytes": 21563
+    },
+    "routingReview": {
+      "path": "installed-final-verification-20260926/reviewer-routing.json",
+      "sha256": "80441e588c56bc89e2cec66088cfc65ddd8c00d4e5d95ed645ce8fc27264f42f",
+      "sizeBytes": 15876
+    }
+  },
+  "cases": [
+    {
+      "id": "DIRECT_EXPLANATION",
+      "actualPromptSha256": "5f616691800427caa7869ef36c70f95d9d9981495b072b069fdbd43094d91623",
+      "plannedPromptSha256": "a55bc9b2f1abb714899ab0470685f0feaf21231442190fe99886a55d33d888ee",
+      "planDeviation": true,
+      "contextCaseId": null,
+      "selection": "PLUGIN",
+      "submissionCount": 1,
+      "contentResult": "PASS",
+      "formatResult": "PASS",
+      "contentGradedAgainst": "ACTUAL_SUBMITTED_PROMPT",
+      "completedVisibleTurn": true,
+      "visibleArcanosBackendCalls": 0,
+      "sourceAttribution": "POSITIVE_SOURCES_MARKER",
+      "otherVisibleHostActivity": [],
+      "submittedCapture": {
+        "path": "installed-final-verification-20260926/DIRECT_EXPLANATION.submitted.private.txt",
+        "sha256": "cd1c3588521c83c527c39190240335549ec58e471864ae2b2a0483d9a4504fd8",
+        "sizeBytes": 1168
+      },
+      "finalCapture": {
+        "path": "installed-final-verification-20260926/DIRECT_EXPLANATION.private.txt",
+        "sha256": "cfdb2270d29417e032cf32b307e2ae290506f034c3496237e46fc5885d5c2c63",
+        "sizeBytes": 2299
+      },
+      "responses": [
+        {
+          "path": "installed-final-verification-20260926/DIRECT_EXPLANATION.response.private.txt",
+          "sha256": "31287c54b83ce4cdb6c340dcca0f67f9163d5ca5206a3943bbdc716ef00a13d6",
+          "sizeBytes": 787
+        }
+      ],
+      "routingResult": "PASS_VISIBLE_UI"
+    },
+    {
+      "id": "DIAGNOSTIC_ASSESSMENT",
+      "actualPromptSha256": "930c0c35fea1a8b2d09c573473a739acaf2d563e80f2f339c536bb9e60d1c732",
+      "plannedPromptSha256": "930c0c35fea1a8b2d09c573473a739acaf2d563e80f2f339c536bb9e60d1c732",
+      "planDeviation": false,
+      "contextCaseId": null,
+      "selection": "PLUGIN",
+      "submissionCount": 1,
+      "contentResult": "PASS",
+      "formatResult": "PASS",
+      "contentGradedAgainst": "ACTUAL_SUBMITTED_PROMPT",
+      "completedVisibleTurn": true,
+      "visibleArcanosBackendCalls": 0,
+      "sourceAttribution": "POSITIVE_SOURCES_MARKER",
+      "otherVisibleHostActivity": [],
+      "submittedCapture": {
+        "path": "installed-final-verification-20260926/DIAGNOSTIC_ASSESSMENT.submitted.private.txt",
+        "sha256": "a4bb584d413fd4be9e03d4a55bc6b38f7238cc88f902b4a33fb2bfc09a150c51",
+        "sizeBytes": 1228
+      },
+      "finalCapture": {
+        "path": "installed-final-verification-20260926/DIAGNOSTIC_ASSESSMENT.private.txt",
+        "sha256": "c849d04d11779f13b9ce0074ffe1d5481da2392b255906e59ebfa4d222dfcd38",
+        "sizeBytes": 1959
+      },
+      "responses": [
+        {
+          "path": "installed-final-verification-20260926/DIAGNOSTIC_ASSESSMENT.response.private.txt",
+          "sha256": "1f691d47776eda1ab0520fdc2b09fc1fd203f169e4fb552c4a13d255027d14c9",
+          "sizeBytes": 447
+        }
+      ],
+      "routingResult": "PASS_VISIBLE_UI"
+    },
+    {
+      "id": "ADAPTIVE_REEXPLANATION",
+      "actualPromptSha256": "dfa2de5db8e7e1b6ca294e0cffb7493aeff0ef626fc4088dc83e37e0afcd7eb0",
+      "plannedPromptSha256": "dfa2de5db8e7e1b6ca294e0cffb7493aeff0ef626fc4088dc83e37e0afcd7eb0",
+      "planDeviation": false,
+      "contextCaseId": "DIRECT_EXPLANATION",
+      "selection": "PLUGIN",
+      "submissionCount": 1,
+      "contentResult": "PASS",
+      "formatResult": "PASS",
+      "contentGradedAgainst": "ACTUAL_SUBMITTED_PROMPT",
+      "completedVisibleTurn": true,
+      "visibleArcanosBackendCalls": 0,
+      "sourceAttribution": "POSITIVE_SOURCES_MARKER",
+      "otherVisibleHostActivity": [],
+      "submittedCapture": {
+        "path": "installed-final-verification-20260926/ADAPTIVE_REEXPLANATION.submitted.private.txt",
+        "sha256": "4c11be3c1421598adb116f1b0fa2e146429b891e923fdba07a1f7260cd44e647",
+        "sizeBytes": 2044
+      },
+      "finalCapture": {
+        "path": "installed-final-verification-20260926/ADAPTIVE_REEXPLANATION.private.txt",
+        "sha256": "c595b4bc6ff4fa3fd283f85541fa18023d2ceca9b553f547538084fd8a8abc58",
+        "sizeBytes": 3796
+      },
+      "responses": [
+        {
+          "path": "installed-final-verification-20260926/ADAPTIVE_REEXPLANATION.response.private.txt",
+          "sha256": "af486b6ec8ea423d076ce004c67feb3a83b6f7284f5e4ecc57659cd48a10be6f",
+          "sizeBytes": 923
+        }
+      ],
+      "routingResult": "PASS_VISIBLE_UI"
+    },
+    {
+      "id": "WORKED_EXAMPLE",
+      "actualPromptSha256": "0a0a26633756deaa1c245fe31805d41fb59c014d3ada3f29a45120c9e178905e",
+      "plannedPromptSha256": "0a0a26633756deaa1c245fe31805d41fb59c014d3ada3f29a45120c9e178905e",
+      "planDeviation": false,
+      "contextCaseId": null,
+      "selection": "PLUGIN",
+      "submissionCount": 1,
+      "contentResult": "PASS",
+      "formatResult": "PASS",
+      "contentGradedAgainst": "ACTUAL_SUBMITTED_PROMPT",
+      "completedVisibleTurn": true,
+      "visibleArcanosBackendCalls": 0,
+      "sourceAttribution": "POSITIVE_SOURCES_MARKER",
+      "otherVisibleHostActivity": [],
+      "submittedCapture": {
+        "path": "installed-final-verification-20260926/WORKED_EXAMPLE.submitted.private.txt",
+        "sha256": "d9cbb8a5bb55dd1a4fbde253d8d09b9286aca53c5573fda35b79eac57808e8dd",
+        "sizeBytes": 1195
+      },
+      "finalCapture": {
+        "path": "installed-final-verification-20260926/WORKED_EXAMPLE.private.txt",
+        "sha256": "930e63c96552c34cf0d05bac9b7f34ba5ea1202fef99cea542e8dae039c93880",
+        "sizeBytes": 3436
+      },
+      "responses": [
+        {
+          "path": "installed-final-verification-20260926/WORKED_EXAMPLE.response.private.txt",
+          "sha256": "afcf2f17a9d45eecdfee0f5c0b3a8f48198840cc28c5d57196ebdeb3fd049447",
+          "sizeBytes": 1924
+        }
+      ],
+      "routingResult": "PASS_VISIBLE_UI"
+    },
+    {
+      "id": "GUIDED_HINT",
+      "actualPromptSha256": "d9c3236776b827e43168b51fbd064a4016679f010024dfd69c8111a1de05250c",
+      "plannedPromptSha256": "d9c3236776b827e43168b51fbd064a4016679f010024dfd69c8111a1de05250c",
+      "planDeviation": false,
+      "contextCaseId": null,
+      "selection": "PLUGIN",
+      "submissionCount": 1,
+      "contentResult": "PASS",
+      "formatResult": "PASS",
+      "contentGradedAgainst": "ACTUAL_SUBMITTED_PROMPT",
+      "completedVisibleTurn": true,
+      "visibleArcanosBackendCalls": 0,
+      "sourceAttribution": "POSITIVE_SOURCES_MARKER",
+      "otherVisibleHostActivity": [],
+      "submittedCapture": {
+        "path": "installed-final-verification-20260926/GUIDED_HINT.submitted.private.txt",
+        "sha256": "b49b03e7f52d4ee04521c8204c18f6e53baafe4d511a245d920174e30a3cbf29",
+        "sizeBytes": 1228
+      },
+      "finalCapture": {
+        "path": "installed-final-verification-20260926/GUIDED_HINT.private.txt",
+        "sha256": "d9b2ac86f56c876131c19389e17bd8d9f25aabb16bd8d9cfab04bcc3ed38a628",
+        "sizeBytes": 1757
+      },
+      "responses": [
+        {
+          "path": "installed-final-verification-20260926/GUIDED_HINT.response.private.txt",
+          "sha256": "a0e25637a0c51b833f55e0716133c600dc8c72e52761174285a1ade5c96351db",
+          "sizeBytes": 245
+        }
+      ],
+      "routingResult": "PASS_VISIBLE_UI"
+    },
+    {
+      "id": "PRACTICE_GENERATION",
+      "actualPromptSha256": "38c1ecdc88c636552ad0d0aaa0dc4a90bb9a0de0e319ea5d2fb32ace9ad40418",
+      "plannedPromptSha256": "38c1ecdc88c636552ad0d0aaa0dc4a90bb9a0de0e319ea5d2fb32ace9ad40418",
+      "planDeviation": false,
+      "contextCaseId": null,
+      "selection": "PLUGIN",
+      "submissionCount": 1,
+      "contentResult": "PASS",
+      "formatResult": "PASS",
+      "contentGradedAgainst": "ACTUAL_SUBMITTED_PROMPT",
+      "completedVisibleTurn": true,
+      "visibleArcanosBackendCalls": 0,
+      "sourceAttribution": "POSITIVE_SOURCES_MARKER",
+      "otherVisibleHostActivity": [],
+      "submittedCapture": {
+        "path": "installed-final-verification-20260926/PRACTICE_GENERATION.submitted.private.txt",
+        "sha256": "3c62bfa680b7d5f50caf26da23a596a353b32b2f254d41ab4bbce5f357f54df1",
+        "sizeBytes": 1232
+      },
+      "finalCapture": {
+        "path": "installed-final-verification-20260926/PRACTICE_GENERATION.private.txt",
+        "sha256": "7865c84b087b2d7f64213912df65455f4aad6217e290a5e694c806849eaf827e",
+        "sizeBytes": 3728
+      },
+      "responses": [
+        {
+          "path": "installed-final-verification-20260926/PRACTICE_GENERATION.variant-1.response.private.txt",
+          "sha256": "6e3102dc336c053bd1ec20841593f0e16329a059576f959880a3f8c48268eaab",
+          "sizeBytes": 832
+        },
+        {
+          "path": "installed-final-verification-20260926/PRACTICE_GENERATION.variant-2.response.private.txt",
+          "sha256": "6e3102dc336c053bd1ec20841593f0e16329a059576f959880a3f8c48268eaab",
+          "sizeBytes": 832
+        }
+      ],
+      "routingResult": "PASS_VISIBLE_UI"
+    },
+    {
+      "id": "PRACTICE_FEEDBACK",
+      "actualPromptSha256": "7e26c1d8daef702fece0ac916bb310f21ee5fa425dcfe23ea77f3d7cc31e3a86",
+      "plannedPromptSha256": "7e26c1d8daef702fece0ac916bb310f21ee5fa425dcfe23ea77f3d7cc31e3a86",
+      "planDeviation": false,
+      "contextCaseId": null,
+      "selection": "PLUGIN",
+      "submissionCount": 1,
+      "contentResult": "PASS",
+      "formatResult": "PASS",
+      "contentGradedAgainst": "ACTUAL_SUBMITTED_PROMPT",
+      "completedVisibleTurn": true,
+      "visibleArcanosBackendCalls": 0,
+      "sourceAttribution": "POSITIVE_SOURCES_MARKER",
+      "otherVisibleHostActivity": [],
+      "submittedCapture": {
+        "path": "installed-final-verification-20260926/PRACTICE_FEEDBACK.submitted.private.txt",
+        "sha256": "2b3c017025a9574ea6f8657e33fbc50d399b8f498f488e2a4328a26f5830bd54",
+        "sizeBytes": 1208
+      },
+      "finalCapture": {
+        "path": "installed-final-verification-20260926/PRACTICE_FEEDBACK.private.txt",
+        "sha256": "a94c154aa030afb2d96cdf8f1e17fd6667b8d30bd1ba44ec55b72e949a76ea67",
+        "sizeBytes": 3434
+      },
+      "responses": [
+        {
+          "path": "installed-final-verification-20260926/PRACTICE_FEEDBACK.response.private.txt",
+          "sha256": "217b5401ab0916480e59eaf93b8ce556b821e9db5de0094c5528cd1e7a9c7309",
+          "sizeBytes": 1922
+        }
+      ],
+      "routingResult": "PASS_VISIBLE_UI"
+    },
+    {
+      "id": "COMPREHENSION_CHECK",
+      "actualPromptSha256": "fb650d82fd25bb5a02ec729847459cc929f74d956a9e3cdef921d05715b2f79d",
+      "plannedPromptSha256": "fb650d82fd25bb5a02ec729847459cc929f74d956a9e3cdef921d05715b2f79d",
+      "planDeviation": false,
+      "contextCaseId": null,
+      "selection": "PLUGIN",
+      "submissionCount": 1,
+      "contentResult": "PASS",
+      "formatResult": "PASS",
+      "contentGradedAgainst": "ACTUAL_SUBMITTED_PROMPT",
+      "completedVisibleTurn": true,
+      "visibleArcanosBackendCalls": 0,
+      "sourceAttribution": "POSITIVE_SOURCES_MARKER",
+      "otherVisibleHostActivity": [],
+      "submittedCapture": {
+        "path": "installed-final-verification-20260926/COMPREHENSION_CHECK.submitted.private.txt",
+        "sha256": "607a605bbcd3777317222cf73d4c6906d3e171d33e2311854e2bcf25aedb4f1f",
+        "sizeBytes": 1238
+      },
+      "finalCapture": {
+        "path": "installed-final-verification-20260926/COMPREHENSION_CHECK.private.txt",
+        "sha256": "737ed43ed027612fc0d035b47b4d5317eb4b80d344d86fe2dff7774d7d83a27d",
+        "sizeBytes": 1736
+      },
+      "responses": [
+        {
+          "path": "installed-final-verification-20260926/COMPREHENSION_CHECK.response.private.txt",
+          "sha256": "87df65d4f323fc845784660e5a4feb7ee09041c5b684bd59dccc104916ae1a4a",
+          "sizeBytes": 224
+        }
+      ],
+      "routingResult": "PASS_VISIBLE_UI"
+    },
+    {
+      "id": "CONCISE_FORMAT",
+      "actualPromptSha256": "7756bffe01e5a94757b9a910ed0eaaba4a9a49f49ce59a0a216bf108ff7b5459",
+      "plannedPromptSha256": "1889539d24060a7448ed3eb74171dead3e7381ab5121aaef6638d995cba4ef0a",
+      "planDeviation": true,
+      "contextCaseId": null,
+      "selection": "PLUGIN",
+      "submissionCount": 1,
+      "contentResult": "PASS",
+      "formatResult": "PASS",
+      "contentGradedAgainst": "ACTUAL_SUBMITTED_PROMPT",
+      "completedVisibleTurn": true,
+      "visibleArcanosBackendCalls": 0,
+      "sourceAttribution": "POSITIVE_SOURCES_MARKER",
+      "otherVisibleHostActivity": [],
+      "submittedCapture": {
+        "path": "installed-final-verification-20260926/CONCISE_FORMAT.submitted.private.txt",
+        "sha256": "1acf78435c008595b56d8923af827e2844b41b6202d19561a6f329d4e563cb27",
+        "sizeBytes": 1195
+      },
+      "finalCapture": {
+        "path": "installed-final-verification-20260926/CONCISE_FORMAT.private.txt",
+        "sha256": "0b218b6089f77daa4b2d75d449fc4a4558dfc654b0c6820459a4f976919ef722",
+        "sizeBytes": 1694
+      },
+      "responses": [
+        {
+          "path": "installed-final-verification-20260926/CONCISE_FORMAT.response.private.txt",
+          "sha256": "7fe892fa53b414f27eda2b6c882004a074acec7a797884b4eabf0a4af50e1132",
+          "sizeBytes": 182
+        }
+      ],
+      "routingResult": "PASS_VISIBLE_UI"
+    },
+    {
+      "id": "NUMBERED_FORMAT",
+      "actualPromptSha256": "f330e0a067be85dcece1f08f35903e04cecefd452128a1fb12e8bc50c4af326c",
+      "plannedPromptSha256": "346f6c176ff641bb26b1b86885d73da9c4df49de0fc87589c99ae1cc00fb5db4",
+      "planDeviation": true,
+      "contextCaseId": null,
+      "selection": "PLUGIN",
+      "submissionCount": 1,
+      "contentResult": "PASS",
+      "formatResult": "PASS",
+      "contentGradedAgainst": "ACTUAL_SUBMITTED_PROMPT",
+      "completedVisibleTurn": true,
+      "visibleArcanosBackendCalls": 0,
+      "sourceAttribution": "POSITIVE_SOURCES_MARKER",
+      "otherVisibleHostActivity": [],
+      "submittedCapture": {
+        "path": "installed-final-verification-20260926/NUMBERED_FORMAT.submitted.private.txt",
+        "sha256": "29a8f153c8c65f523f11fb93da87459637fbfd0aa8ee691433fe308ef1f1b3fc",
+        "sizeBytes": 1229
+      },
+      "finalCapture": {
+        "path": "installed-final-verification-20260926/NUMBERED_FORMAT.private.txt",
+        "sha256": "e85d3c5d5e32298c73e616ac3975c1f34469464c8800603e55a5ed02bb9de6b2",
+        "sizeBytes": 1937
+      },
+      "responses": [
+        {
+          "path": "installed-final-verification-20260926/NUMBERED_FORMAT.response.private.txt",
+          "sha256": "8ac15698563f5848b06e85ba79f59316d582daa5ef8ff7326020ec73a0eb4e32",
+          "sizeBytes": 425
+        }
+      ],
+      "routingResult": "PASS_VISIBLE_UI"
+    },
+    {
+      "id": "DIFFICULT_OR_AMBIGUOUS_QUESTION",
+      "actualPromptSha256": "02319dabf47de63f2de95abb685a0e9ead98f9deffd9ffbb47aff4c6b5996275",
+      "plannedPromptSha256": "aee14790e745d53d8a9b15756fd79694a2389ecae5a1cf498883986f4303d60d",
+      "planDeviation": true,
+      "contextCaseId": null,
+      "selection": "PLUGIN",
+      "submissionCount": 1,
+      "contentResult": "PASS",
+      "formatResult": "PASS",
+      "contentGradedAgainst": "ACTUAL_SUBMITTED_PROMPT",
+      "completedVisibleTurn": true,
+      "visibleArcanosBackendCalls": 0,
+      "sourceAttribution": "POSITIVE_SOURCES_MARKER",
+      "otherVisibleHostActivity": [],
+      "submittedCapture": {
+        "path": "installed-final-verification-20260926/DIFFICULT_OR_AMBIGUOUS_QUESTION.submitted.private.txt",
+        "sha256": "ebb2d5bdb237accd648a9134217332edb91c250fc0bde3eddb7e016010dd72b9",
+        "sizeBytes": 1160
+      },
+      "finalCapture": {
+        "path": "installed-final-verification-20260926/DIFFICULT_OR_AMBIGUOUS_QUESTION.private.txt",
+        "sha256": "9f1004e8b2ea0120e43dae7afba0baa8e46855f52edf97a912502d5d4ea63e37",
+        "sizeBytes": 2178
+      },
+      "responses": [
+        {
+          "path": "installed-final-verification-20260926/DIFFICULT_OR_AMBIGUOUS_QUESTION.response.private.txt",
+          "sha256": "35e2d9575f14495fce1451a0d6432b1fe94777d697ef59d392178bc43b74201b",
+          "sizeBytes": 666
+        }
+      ],
+      "routingResult": "PASS_VISIBLE_UI"
+    },
+    {
+      "id": "FOLLOW_UP_CONTEXT",
+      "actualPromptSha256": "2d867ac91a092ef4cd641af1e40670227aebda37b920a23c793141e170486ef2",
+      "plannedPromptSha256": "b6fc45e4e8d77112d5821869ca4133dd7e681425611767db8aa3d3c07202039c",
+      "planDeviation": true,
+      "contextCaseId": "WORKED_EXAMPLE",
+      "selection": "PLUGIN",
+      "submissionCount": 1,
+      "contentResult": "PASS",
+      "formatResult": "PASS",
+      "contentGradedAgainst": "ACTUAL_SUBMITTED_PROMPT",
+      "completedVisibleTurn": true,
+      "visibleArcanosBackendCalls": 0,
+      "sourceAttribution": "POSITIVE_SOURCES_MARKER",
+      "otherVisibleHostActivity": [],
+      "submittedCapture": {
+        "path": "installed-final-verification-20260926/FOLLOW_UP_CONTEXT.submitted.private.txt",
+        "sha256": "d11f4b8ddeccd0cbf594da51f06263fe07845bc19a70e349681bf5daffc376ba",
+        "sizeBytes": 3165
+      },
+      "finalCapture": {
+        "path": "installed-final-verification-20260926/FOLLOW_UP_CONTEXT.private.txt",
+        "sha256": "dfd04946f29a481b51edd767a690c38eb3b5616aa285e5cd3e240f47e0d81ea6",
+        "sizeBytes": 5517
+      },
+      "responses": [
+        {
+          "path": "installed-final-verification-20260926/FOLLOW_UP_CONTEXT.response.private.txt",
+          "sha256": "b08fbda6cc7facdffecee1f332d0600174c68e4b0dfc33ab9ab90498e9a927e7",
+          "sizeBytes": 1710
+        }
+      ],
+      "routingResult": "PASS_VISIBLE_UI"
+    },
+    {
+      "id": "MEMORY_REQUEST",
+      "actualPromptSha256": "956d39aa94cacebcd233548fead3881b1af6a08f6bfbf607538fa2d11c0e6dde",
+      "plannedPromptSha256": "6c4d2b27fe3425b48aeb401460c449b09ed39caab96c978aa41c9708b062183e",
+      "planDeviation": true,
+      "contextCaseId": null,
+      "selection": "PLUGIN",
+      "submissionCount": 1,
+      "contentResult": "PASS",
+      "formatResult": "PASS",
+      "contentGradedAgainst": "ACTUAL_SUBMITTED_PROMPT",
+      "completedVisibleTurn": true,
+      "visibleArcanosBackendCalls": 0,
+      "sourceAttribution": "POSITIVE_SOURCES_MARKER",
+      "otherVisibleHostActivity": [
+        "MEMORY_UPDATED"
+      ],
+      "submittedCapture": {
+        "path": "installed-final-verification-20260926/MEMORY_REQUEST.submitted.private.txt",
+        "sha256": "d9b557ee012e8b56d861f23fdb254bcdcc4790fb484bc5e25670835b04fdb040",
+        "sizeBytes": 1229
+      },
+      "finalCapture": {
+        "path": "installed-final-verification-20260926/MEMORY_REQUEST.private.txt",
+        "sha256": "ab86c3f63f5fd4ebecc4a148919406c04d57b0ee1721873c2d7d79314db2fd2a",
+        "sizeBytes": 2192
+      },
+      "responses": [
+        {
+          "path": "installed-final-verification-20260926/MEMORY_REQUEST.response.private.txt",
+          "sha256": "eb8cc01617604ad3c7e899dda26a35b27c89abc82709272fba5f22c52a3cf5b3",
+          "sizeBytes": 624
+        }
+      ],
+      "routingResult": "PASS_VISIBLE_UI"
+    },
+    {
+      "id": "UNRELATED_WRITING",
+      "actualPromptSha256": "a47f69d97d82968e33bb93b3ebe1a02e2d420274a447e99cf1acb9799c1f5197",
+      "plannedPromptSha256": "4f9e14b09a437dbf66cea1bab82b90c710358b54a5baef4262b1f8ed54ab1e13",
+      "planDeviation": true,
+      "contextCaseId": null,
+      "selection": "UNSELECTED",
+      "submissionCount": 1,
+      "contentResult": "PASS",
+      "formatResult": "PASS",
+      "contentGradedAgainst": "ACTUAL_SUBMITTED_PROMPT",
+      "completedVisibleTurn": true,
+      "visibleArcanosBackendCalls": 0,
+      "sourceAttribution": "UNSELECTED_NO_VISIBLE_SOURCES",
+      "otherVisibleHostActivity": [],
+      "submittedCapture": {
+        "path": "installed-final-verification-20260926/UNRELATED_WRITING.submitted.private.txt",
+        "sha256": "f75006d82d5d4630a9b843bc7d923b0c0dd900b7e9d10e884022749b05b73a75",
+        "sizeBytes": 1051
+      },
+      "finalCapture": {
+        "path": "installed-final-verification-20260926/UNRELATED_WRITING.private.txt",
+        "sha256": "c08ae71576bfcf22e2726c6ed3a249e9449471328182db80e8045abd91224006",
+        "sizeBytes": 2294
+      },
+      "responses": [
+        {
+          "path": "installed-final-verification-20260926/UNRELATED_WRITING.response.private.txt",
+          "sha256": "d8e7173fabc2e659b130d27b40f43354adee24e82a8c1b6c8c53ece6c499a013",
+          "sizeBytes": 170
+        }
+      ],
+      "routingResult": "PASS_VISIBLE_UI"
+    },
+    {
+      "id": "GAMING_BOUNDARY",
+      "actualPromptSha256": "005e6eacd1207064a4020c9feed9d3346a61de6416bbfc1e14580f0a14acdbb3",
+      "plannedPromptSha256": "005e6eacd1207064a4020c9feed9d3346a61de6416bbfc1e14580f0a14acdbb3",
+      "planDeviation": false,
+      "contextCaseId": null,
+      "selection": "PLUGIN",
+      "submissionCount": 1,
+      "contentResult": "PASS",
+      "formatResult": "PASS",
+      "contentGradedAgainst": "ACTUAL_SUBMITTED_PROMPT",
+      "completedVisibleTurn": true,
+      "visibleArcanosBackendCalls": 0,
+      "sourceAttribution": "POSITIVE_SOURCES_MARKER",
+      "otherVisibleHostActivity": [],
+      "submittedCapture": {
+        "path": "installed-final-verification-20260926/GAMING_BOUNDARY.submitted.private.txt",
+        "sha256": "b1954de05c2a4e6e948a448e764c0892f0f50bb8cb434386447d151b21008b20",
+        "sizeBytes": 1188
+      },
+      "finalCapture": {
+        "path": "installed-final-verification-20260926/GAMING_BOUNDARY.private.txt",
+        "sha256": "0cb3032d80d136a9b228698a9ea80a9260b10046710379d2220f579274e9bd2a",
+        "sizeBytes": 2076
+      },
+      "responses": [
+        {
+          "path": "installed-final-verification-20260926/GAMING_BOUNDARY.response.private.txt",
+          "sha256": "fc97084ed29f4b35faeb5e605302f3191483a1e9d1f7cbb9994685ea9099d418",
+          "sizeBytes": 564
+        }
+      ],
+      "routingResult": "PASS_VISIBLE_UI"
+    },
+    {
+      "id": "BOOKER_BOUNDARY",
+      "actualPromptSha256": "56af72ca8cfe1fc92e5902de63e7471b1ef3074e6fb3ddd1e126ce1d2334bfde",
+      "plannedPromptSha256": "56af72ca8cfe1fc92e5902de63e7471b1ef3074e6fb3ddd1e126ce1d2334bfde",
+      "planDeviation": false,
+      "contextCaseId": null,
+      "selection": "PLUGIN",
+      "submissionCount": 1,
+      "contentResult": "PASS",
+      "formatResult": "PASS",
+      "contentGradedAgainst": "ACTUAL_SUBMITTED_PROMPT",
+      "completedVisibleTurn": true,
+      "visibleArcanosBackendCalls": 0,
+      "sourceAttribution": "POSITIVE_SOURCES_MARKER",
+      "otherVisibleHostActivity": [],
+      "submittedCapture": {
+        "path": "installed-final-verification-20260926/BOOKER_BOUNDARY.submitted.private.txt",
+        "sha256": "e05aa790acc983d62a4c3ee96d71eb820a9a281a7b8471c7f111e6e5a39dc1bc",
+        "sizeBytes": 1186
+      },
+      "finalCapture": {
+        "path": "installed-final-verification-20260926/BOOKER_BOUNDARY.private.txt",
+        "sha256": "e9145262b601540aa65c480e35356229d92ae37a66a7a8716ec12187cdfb8b14",
+        "sizeBytes": 1947
+      },
+      "responses": [
+        {
+          "path": "installed-final-verification-20260926/BOOKER_BOUNDARY.response.private.txt",
+          "sha256": "bf33c20d225b72f8723dace2cf9ffff15572dccf7f798fdb33c477fd49ef0834",
+          "sizeBytes": 435
+        }
+      ],
+      "routingResult": "PASS_VISIBLE_UI"
+    },
+    {
+      "id": "CORE_ADMIN_BOUNDARY",
+      "actualPromptSha256": "d527bd651db8f4efcd93a6561a004119488f5113de42b7edbe9bebf773f662be",
+      "plannedPromptSha256": "d527bd651db8f4efcd93a6561a004119488f5113de42b7edbe9bebf773f662be",
+      "planDeviation": false,
+      "contextCaseId": null,
+      "selection": "PLUGIN",
+      "submissionCount": 1,
+      "contentResult": "PASS",
+      "formatResult": "PASS",
+      "contentGradedAgainst": "ACTUAL_SUBMITTED_PROMPT",
+      "completedVisibleTurn": true,
+      "visibleArcanosBackendCalls": 0,
+      "sourceAttribution": "POSITIVE_SOURCES_MARKER",
+      "otherVisibleHostActivity": [],
+      "submittedCapture": {
+        "path": "installed-final-verification-20260926/CORE_ADMIN_BOUNDARY.submitted.private.txt",
+        "sha256": "9e8ddb1fb445d34e6ab41d61c4638668fb506cdda9ba2ec7700fbec353ff3b9f",
+        "sizeBytes": 1192
+      },
+      "finalCapture": {
+        "path": "installed-final-verification-20260926/CORE_ADMIN_BOUNDARY.private.txt",
+        "sha256": "d27950d0c26bccdb8610a8a0b9ec00bd37c26b868b1783001ac2a699fdac6feb",
+        "sizeBytes": 2245
+      },
+      "responses": [
+        {
+          "path": "installed-final-verification-20260926/CORE_ADMIN_BOUNDARY.response.private.txt",
+          "sha256": "6d1d12fbf8e4559ccb5ffe5a89793c61b03ea3f40c2fe77b09b6df408c96fa04",
+          "sizeBytes": 561
+        }
+      ],
+      "routingResult": "PASS_VISIBLE_UI"
+    },
+    {
+      "id": "ORDINARY_TUTORING_WITHOUT_APP_REQUIREMENT",
+      "actualPromptSha256": "70f20f6dac5afe0413cd30593c128a4345172eab964b8faef04c9453e150be25",
+      "plannedPromptSha256": "70f20f6dac5afe0413cd30593c128a4345172eab964b8faef04c9453e150be25",
+      "planDeviation": false,
+      "contextCaseId": null,
+      "selection": "PLUGIN",
+      "submissionCount": 1,
+      "contentResult": "PASS",
+      "formatResult": "PASS",
+      "contentGradedAgainst": "ACTUAL_SUBMITTED_PROMPT",
+      "completedVisibleTurn": true,
+      "visibleArcanosBackendCalls": 0,
+      "sourceAttribution": "POSITIVE_SOURCES_MARKER",
+      "otherVisibleHostActivity": [],
+      "submittedCapture": {
+        "path": "installed-final-verification-20260926/ORDINARY_TUTORING_WITHOUT_APP_REQUIREMENT.submitted.private.txt",
+        "sha256": "538b2de84ae4abc83b32d146ae64ad08c7e0c027916c30c6153f9c8823fc723d",
+        "sizeBytes": 1214
+      },
+      "finalCapture": {
+        "path": "installed-final-verification-20260926/ORDINARY_TUTORING_WITHOUT_APP_REQUIREMENT.private.txt",
+        "sha256": "b94b37ddf14c37b789e2a91286d5730a10f547bb0137397f126fb3fbc470c448",
+        "sizeBytes": 3094
+      },
+      "responses": [
+        {
+          "path": "installed-final-verification-20260926/ORDINARY_TUTORING_WITHOUT_APP_REQUIREMENT.response.private.txt",
+          "sha256": "6c3d489bacd563bbb6a01e308e5af218f9a09cd62637d6a974b8fb94efe39d12",
+          "sizeBytes": 1582
+        }
+      ],
+      "routingResult": "PASS_VISIBLE_UI"
+    }
+  ],
+  "limits": {
+    "authoritativeBackendCalls": null,
+    "authoritativeZeroBackendCallsVerified": false,
+    "loadedSkillBytesPerTurnVerified": false,
+    "zeroOverallToolActivityClaimed": false,
+    "exactPlannedParityBindingEligible": false
+  },
+  "review": {
+    "reviewedBy": "Independent artifact reviewer A and integration reviewer B",
+    "reviewedAt": "2026-09-26T22:36:21.107Z",
+    "evidenceIds": [
+      "installed-final-teaching-verification-20260926"
+    ]
+  }
+}

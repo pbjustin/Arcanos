@@ -6,7 +6,8 @@ import yaml from 'js-yaml';
 import { validateSkillFirst } from './validate-tutor-skill-first.mjs';
 import { inspectNativeMigration, nativeMigrationFormat, validateNativeMigration } from './tutor-native-migration.mjs';
 import { inspectUpdatedTutorRelease, validateUpdatedTutorRelease } from './tutor-updated-plugin-release.mjs';
-import { inspectTutorSkillRevision, validateTutorSkillRevision } from './tutor-skill-revision.mjs';
+import { inspectTutorSkillRevisionChain, validateTutorSkillRevisionChain } from './tutor-skill-revision.mjs';
+import { inspectInstalledTutorTeaching } from './tutor-installed-teaching.mjs';
 import {
   baselineFingerprint, captureBaseline, categories, digest, endpoint, gates, isHash, noSymlinkAncestors, packageFingerprint,
   readSafeFile, relativeFile, requireCondition, reviewed, skillPath, statuses, text,
@@ -329,27 +330,36 @@ export async function validateArcanosTutorPackage(root, { inputRoot } = {}) {
   gateConsistent('REFERENCES_RECONCILED', connection.referenceReconciliation === 'VERIFIED' && baseline.status === 'VERIFIED' && migration.status === 'VERIFIED');
   gateConsistent('PARITY_VERIFIED', parity.status === 'VERIFIED');
   const files = await readPackage(root, review.references);
+  const revisionSidecar = async name => {
+    const file = await readSafeFile(root, name).catch(error => {
+      if (error.code === 'ENOENT') return null;
+      throw error;
+    });
+    return file ? JSON.parse(file.content) : null;
+  };
+  const updatedRelease = await revisionSidecar('updated-plugin-release.json');
+  const currentTeaching = await revisionSidecar('installed-teaching-verification.json');
   const skillFirst = await validateSkillFirst({ root, inputRoot, baseline, state, evidence,
-    templateFiles: files, referenceReview: review });
-  const updatedReleaseFile = await readSafeFile(root, 'updated-plugin-release.json').catch(error => {
-    if (error.code === 'ENOENT') return null;
-    throw error;
-  });
-  const updatedRelease = updatedReleaseFile ? JSON.parse(updatedReleaseFile.content) : null;
+    templateFiles: files, referenceReview: review, currentTeaching, currentRelease: updatedRelease });
   const skillRevisionFile = await readSafeFile(root, 'skill-revision.inventory.json').catch(error => {
     if (error.code === 'ENOENT') return null;
     throw error;
   });
   const skillRevision = skillRevisionFile ? JSON.parse(skillRevisionFile.content) : null;
-  const revisionOptions = { composition: skillFirst.composition, currentRelease: updatedRelease, evidence };
+  const diagnosticRevision = await revisionSidecar('diagnostic-revision.inventory.json');
+  const intakeRelease = await revisionSidecar('intake-plugin-release.inventory.json');
+  requireCondition(skillRevision || (!diagnosticRevision && !intakeRelease), 'SKILL_REVISION_CHAIN_INCOMPLETE');
+  const revisionOptions = { revision: skillRevision, diagnosticRevision, intakeRelease,
+    composition: skillFirst.composition, currentRelease: updatedRelease, evidence };
   const expectedCurrentSkillSha256 = skillRevision ?
-    validateTutorSkillRevision(skillRevision, revisionOptions).expectedSkillSha256 : skillFirst.composition.skill?.sha256;
+    validateTutorSkillRevisionChain(revisionOptions).expectedSkillSha256 : skillFirst.composition.skill?.sha256;
   // Existing teaching/parity validators are bound to the historical composition.
   // A byte-preserving revision review cannot promote their results to its successor.
-  gateConsistent('TUTOR_SKILL_BEHAVIOR_VERIFIED', !skillRevision);
+  gateConsistent('TUTOR_SKILL_BEHAVIOR_VERIFIED', !skillRevision || skillFirst.currentTeachingVerified);
   gateConsistent('PARITY_VERIFIED', !skillRevision);
   let updatedPluginArchiveInspection = null;
   let skillRevisionInspection = null;
+  let installedTeachingInspection = null;
   gateConsistent('UPDATED_PLUGIN_ARCHIVE_VERIFIED', updatedRelease?.status === 'VERIFIED');
   if (updatedRelease) {
     const options = { expectedSkillSha256: expectedCurrentSkillSha256, evidence, state };
@@ -357,8 +367,9 @@ export async function validateArcanosTutorPackage(root, { inputRoot } = {}) {
     if (inputRoot) updatedPluginArchiveInspection = await inspectUpdatedTutorRelease({ inputRoot,
       release: updatedRelease, ...options });
   }
-  if (skillRevision && inputRoot) skillRevisionInspection = await inspectTutorSkillRevision({ inputRoot,
-    revision: skillRevision, ...revisionOptions });
+  if (skillRevision && inputRoot) skillRevisionInspection = await inspectTutorSkillRevisionChain({ inputRoot, ...revisionOptions });
+  if (currentTeaching && inputRoot) installedTeachingInspection = await inspectInstalledTutorTeaching({ inputRoot,
+    record: currentTeaching, release: updatedRelease, evidence, state });
   const schema = await readSafeFile(root, schemaFile);
   requireCondition(digest(schema.content.replace(/\r\n/gu, '\n')) === schemaDigest, 'SCHEMA_DIGEST_MISMATCH');
   const manifest = JSON.parse(files.get('plugin.json').content);
@@ -405,7 +416,9 @@ export async function validateArcanosTutorPackage(root, { inputRoot } = {}) {
   block(Boolean(inputRoot), 'ACTUAL_INPUT_ARTIFACTS_NOT_INSPECTED');
   block(Boolean(updatedPluginArchiveInspection), 'UPDATED_SAVED_ARCHIVE_NOT_INSPECTED');
   block(!skillRevision || Boolean(skillRevisionInspection), 'SKILL_REVISION_BYTES_NOT_INSPECTED');
-  block(!skillRevision, 'REVISED_SKILL_BEHAVIOR_AND_PARITY_NOT_VERIFIED');
+  block(!currentTeaching || Boolean(installedTeachingInspection), 'INSTALLED_TEACHING_ARTIFACTS_NOT_INSPECTED');
+  block(!skillRevision || skillFirst.currentTeachingVerified, 'REVISED_SKILL_BEHAVIOR_NOT_VERIFIED');
+  block(!skillRevision, 'REVISED_SKILL_PARITY_NOT_VERIFIED');
   if (migration.registeredAppId !== undefined) requireCondition(migration.registeredAppId === connection.registeredAppId, 'MIGRATION_CONNECTION_MISMATCH');
   gateConsistent('MIGRATED_SKILL_RECONCILED', migration.instructionComparison !== null && connection.builderReconciliation === 'VERIFIED');
   if (inputRoot && blockers.length === 0) await verifyInputs(inputRoot, baseline, migration, review, parity, skillFirst.privateFiles, validator);
@@ -417,11 +430,13 @@ export async function validateArcanosTutorPackage(root, { inputRoot } = {}) {
     packageFingerprint: packageFingerprint(files),
     artifactKind: 'PUBLIC_TEMPLATE',
     privatePackageFingerprint: skillFirst.composition.packageFingerprint,
-    skillOnlyTeachingReadiness: skillRevision ? 'BLOCKED' : skillFirst.teachingReadiness,
+    skillOnlyTeachingReadiness: skillRevision && !skillFirst.currentTeachingVerified ? 'BLOCKED' : skillFirst.teachingReadiness,
     teachingBehaviorDeferred: skillFirst.teachingDeferred,
     migrationArtifactInspection,
     updatedPluginArchiveInspection,
     skillRevisionInspection,
+    currentTeachingVerification: skillFirst.currentTeachingVerification,
+    installedTeachingInspection,
     capabilityEquivalenceVerified: skillFirst.capabilitiesVerified,
     capabilityScopeExcluded: skillFirst.capabilityScopeExcluded,
     backendReadiness: skillFirst.backendReadiness,

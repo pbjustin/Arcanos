@@ -11,7 +11,7 @@ has no documented unique tutoring capability that ordinary teaching requires.
 | --- | --- | --- |
 | PUBLIC TEMPLATE | `package/` | Portable manifest, optional app mapping, and public integration safeguards with one private teaching insertion marker; not teaching-complete or install-ready |
 | PRIVATE COMPOSED RELEASE CANDIDATE | Ignored `.local-migration/arcanos-tutor/composed-skill-v3/package/` | Exact approved instruction text composed locally with safeguards; owner approved the exact skill hash, behavior remains unverified |
-| ACTUAL MIGRATED PLUGIN ARTIFACT | Ignored `.local-migration/arcanos-tutor/teaching-intake-revision-20260926/saved-0.8.4/`; earlier captures retained privately | Actual saved 0.8.4 archive independently verified with a scoped owner-authorized intake insertion, all historical approved skill bytes preserved, and one optional app |
+| ACTUAL MIGRATED PLUGIN ARTIFACT | Ignored `.local-migration/arcanos-tutor/installed-final-verification-20260926/saved-0.8.5/`; earlier captures retained privately | Actual saved 0.8.5 archive independently verified with two separately authorized narrow insertions, all historical approved skill bytes preserved, and one optional app |
 
 The public template and composed candidate app mapping is `{ "id": "asdk_app_6ab4747769088191856fd8eb02507240", "optional": true }`.
 The endpoint, registered account connection, tool `arcanos_tutor`, and scope
@@ -50,22 +50,26 @@ is claimed. Tutor must use only tools actually available in the current session.
 The owner approved the unchanged composed skill on 2026-09-26T01:03:47Z.
 TUTOR_SKILL_RECONCILED is VERIFIED for that exact private candidate only.
 Actual migration and zero-reference reconciliation are VERIFIED. The existing
-PRIVATE plugin is now version 0.8.4 with the owner-authorized intake revision and
-one optional existing backend app. Actual saved baseline and successor archives
-were independently checked byte-for-byte; removing the single insertion recovers
-the historical approved skill exactly. Existing Primary association is historical;
-the current app UI shows Reconnect required, and no reconnect was performed.
-See the [current release and regression record](../../docs/chatgpt-migration/TUTOR_INTAKE_REVISION_20260926.md).
-Release remains BLOCKED pending installed teaching verification, migrated parity,
-historical native reconciliation and backend acceptance. Seven focused installed
-observations produced six content passes and one diagnostic failure. No backend
-request was issued; authoritative zero-call evidence remains unavailable.
+PRIVATE plugin is now version 0.8.5 with a narrow diagnostic safeguard and
+one optional existing backend app. Removing both authorized insertions in reverse
+recovers the historical approved skill exactly. All eighteen actual submitted
+installed teaching cases pass content review, with zero visible ARCANOS calls.
+Seven planned-prompt deviations and one separate host Memory update are retained;
+server-authoritative invocation counts are unavailable. Current supported UI shows
+only generic Connect, with no existing Primary row or Reconnect control.
+See the [current installed verification record](../../docs/chatgpt-migration/TUTOR_FINAL_INSTALLED_VERIFICATION_20260926.md).
+Teaching verification is scoped to the retained installed web matrix. Release
+remains BLOCKED pending migrated parity, historical native reconciliation and
+backend acceptance. Reconnect, routing controls and backend A/C/D remain unrun;
+no replacement connection or backend request was issued.
 Synthetic decision tests prove only the reference contract.
 
 ## Safe tracked evidence
 
 - `skill-composition.inventory.json`: hashes, counts, source binding, and approved exact-artifact owner review.
 - `skill-revision.inventory.json`: separately authorized successor hash, exact insertion, historical source archive, and independent preservation review; does not rewrite composition approval.
+- `diagnostic-revision.inventory.json` and `intake-plugin-release.inventory.json`: strict second revision and preserved 0.8.4 predecessor proof.
+- `installed-teaching-verification.json`: current-release eighteen-case visible-client verification, exact evidence hashes, plan deviations and observation limits.
 - `invocation-policy.json`: explicit-only backend contract; no natural-language classifier or tool executor.
 - `teaching-behavior-matrix.json`: historical eighteen-case reference contract; partial installed observations are separately bound in the dated reports and evidence ledger.
 - `capability-equivalence.json`: four published capabilities, untested client equivalents, and the baseline-bound owner decision excluding them from Tutor release scope.
@@ -73,7 +77,7 @@ Synthetic decision tests prove only the reference contract.
 - `baseline.inventory.json`: approved published metadata; original source remains private.
 - `connection.requirements.json`: dated account/runtime evidence, including the stopped final bounded backend attempt window.
 - `migration.inventory.json` and `reference-review.json`: the initial captured 0.8.1 native bundle and its reviewed empty reference inventory; historical evidence remains unchanged.
-- `updated-plugin-release.json`: actual saved 0.8.4 complete archive inventory, revised skill hash, optional app and guarded release identity.
+- `updated-plugin-release.json`: actual saved 0.8.5 complete archive inventory, revised skill hash, optional app and guarded release identity.
 - `parity-matrix.json`: sixteen historical comparison definitions; 0 bound, 10 provisional, 6 unexecuted.
 - `schemas/`: unchanged hash-pinned portable schema.
 
@@ -86,15 +90,15 @@ Both retrieved saved release inventories independently confirm zero references.
 Read the [handoff](../../docs/chatgpt-migration/TUTOR_MIGRATION.md),
 [private input contract](../../docs/chatgpt-migration/TUTOR_INPUTS.md), and
 [skill-first implementation record](../../docs/chatgpt-migration/TUTOR_SKILL_FIRST_20260925.md).
-PR #1509 remains draft. The final bounded backend attempt window is closed; no
-additional calls, migration, deployment, or merge are authorized.
+PR #1509 remains draft. The current three-call backend authorization is unused
+because the existing Primary connection is unavailable in supported UI. It does
+not authorize a replacement connection, deployment, another plugin update, or merge.
 
 ## Historical pre-migration checkpoint
 
 See the [final bounded checkpoint](../../docs/chatgpt-migration/TUTOR_PRE_MIGRATION_CHECKPOINT_20260926.md).
 The following records the earlier checkpoint; migration and the later supported
-updates have since occurred. Current teaching status remains BLOCKED after
-saved-artifact review and partial installed testing. At the earlier checkpoint,
+updates and current installed web verification have since occurred. At the earlier checkpoint,
 SKILL_PLANE was DEFERRED_POST_MIGRATION: official desktop testing exists but needs
 a private cache copy outside this task boundary and unavailable native client
 control. No teaching cases ran. BACKEND_PLANE is FAIL: raw A/C/D were unavailable;

@@ -3,17 +3,20 @@
 Evidence date: **2026-09-26 UTC**. Current main:
 `71672aec22d7babf62d65b96de667f17abd3f219` (merged PR #1513).
 PR #1509 remains the **DRAFT migration container**, with auto-merge disabled.
-**BACKEND_PLANE=FAIL**, **LIVE_TUTOR_CALL_VERIFIED=BLOCKED**.
+**SKILL_PLANE=PASS_VISIBLE_UI**, **TUTOR_SKILL_BEHAVIOR_VERIFIED=VERIFIED**.
+**BACKEND_PLANE=BLOCKED_AUTH_CONNECTION_UNAVAILABLE**, **LIVE_TUTOR_CALL_VERIFIED=BLOCKED**.
 **GPT_MIGRATED=VERIFIED**, **UPDATED_PLUGIN_ARCHIVE_VERIFIED=VERIFIED**.
-The same PRIVATE plugin is installed at **0.8.4** with a scoped owner-authorized
-intake insertion, zero references and one optional existing backend app. Actual
-saved baseline and successor archives were independently inventoried; removing
-the insertion restores all historical approved skill bytes. Seven focused
-installed observations produced six content passes and one diagnostic failure.
-The current app UI shows Reconnect required; earlier Primary association is
-historical and no reconnect occurred. Teaching behavior, live backend acceptance
-and parity remain BLOCKED. See the
-[current release and regression record](TUTOR_INTAKE_REVISION_20260926.md).
+The same PRIVATE plugin is installed at **0.8.5** with separately authorized
+intake and diagnostic insertions, zero references and one optional existing app.
+Actual saved archives and both inverse byte-preservation proofs pass. All eighteen
+actual submitted installed cases pass content review with zero visible ARCANOS
+calls. Seven proposed parity prompts were not executed; both hashes and the
+actual evidence are retained. A host Memory update is disclosed separately from
+Tutor backend activity; server-authoritative counts remain unavailable.
+Current supported UI exposes only generic Connect, without the existing Primary
+row or Reconnect control. No replacement connection, reconnect, metadata Refresh,
+routing control or backend acceptance request occurred in this phase.
+See the [current installed verification record](TUTOR_FINAL_INSTALLED_VERIFICATION_20260926.md).
 The [pre-migration checkpoint](TUTOR_PRE_MIGRATION_CHECKPOINT_20260926.md) is historical.
 
 The owner has selected **skill-first tutoring with an optional ARCANOS app**.
@@ -50,7 +53,7 @@ submitted to protect the six-invocation ceiling. Five test requests were submitt
 with six conservatively counted potential invocations, not six confirmed calls.
 Same-invocation raw ChatGPT payloads and internal retry counts remain unavailable.
 No fresh honesty-transform cause or successful backend acceptance is established.
-Durable renewal remains unverified; no further calls are authorized by this task.
+That historical budget is closed. The later three-call authorization remains unused because its existing-Primary prerequisite is unavailable.
 The post-#1512 formatting failures below remain historical evidence.
 
 The complete private published configuration validates and repeated captures
@@ -65,7 +68,7 @@ There are **16 parity cases: 0 baseline-bound, 10 provisional/unbound and 6
 unexecuted**. All official old-GPT and plugin result fields remain null. Published
 knowledge is explicitly confirmed empty; the complete initial 0.8.1 capture
 confirms zero migrated references and an explicitly empty knowledge index. The
-actual saved 0.8.2, 0.8.3 and 0.8.4 complete inventories also confirm zero references.
+actual saved 0.8.2, 0.8.3, 0.8.4 and 0.8.5 complete inventories also confirm zero references.
 Account migration and supported updates occurred. Later installed teaching
 observations are recorded separately; this task issued no backend request during
 the intake revision. The authoritative execution count remains unknown.
@@ -79,7 +82,7 @@ ARCANOS TUTOR identity and a real optional app mapping. Its tracked skill is a
 public template with integration safeguards, not the private teaching release.
 The deterministic private composition preserves the approved instruction text;
 the owner approved the unchanged exact artifact on 2026-09-26T01:03:47Z.
-Its installed teaching behavior remains unverified.
+The current 0.8.5 installed web teaching matrix is verified within the documented visible-client evidence limits.
 The [gate ledger](../../integrations/arcanos-tutor/migration-state.json) records
 independent states; there is no single migrated boolean.
 
@@ -87,25 +90,25 @@ independent states; there is no single migrated boolean.
 | --- | --- | --- |
 | CODE_READY | VERIFIED | Repository migration/package scope only; current reconciliation validation is recorded in TUTOR_RECONCILIATION_20260925.md. Live runtime acceptance remains failed. |
 | BACKEND_DEPLOYED | VERIFIED | Current main 71672aec; exact current worker/web IDs above are latest SUCCESS in the 2026-09-26 provider metadata recheck |
-| OAUTH_CONFIGURED | VERIFIED | Historical existing configuration; current UI requires reconnect, so present availability and renewal durability remain unverified |
-| CHATGPT_CONNECTION_REGISTERED | VERIFIED | September 26 UI matched the same expected resource and app identity; no replacement connection |
-| TOOL_DISCOVERY_VERIFIED | VERIFIED | Fresh Refresh exposed one tool; current connector prompt contract and public scope verified; full refreshed schema not exposed |
-| LIVE_TUTOR_CALL_VERIFIED | BLOCKED | Fresh raw A/C/D unavailable; ChatGPT A incomplete, C unavailable, D stopped before budget ceiling |
+| OAUTH_CONFIGURED | VERIFIED | Historical existing configuration; current Primary and reconnect controls are unavailable, so present authorization and renewal remain unverified |
+| CHATGPT_CONNECTION_REGISTERED | VERIFIED | Historical Primary registration retained; current UI confirms the same app/resource but no selectable existing account |
+| TOOL_DISCOVERY_VERIFIED | VERIFIED | Historical Refresh exposed one tool; no new Refresh was possible in the current phase |
+| LIVE_TUTOR_CALL_VERIFIED | BLOCKED | Current A/C/D and routing controls NOT_RUN: existing Primary prerequisite unavailable; historical failures remain separate |
 | GPT_BASELINE_CAPTURED | VERIFIED | Complete private capture, deterministic fingerprint and owner review recorded; latestPublishedConfirmed=true |
 | TUTOR_SKILL_COMPOSED | VERIFIED | Local composition integrity only; v3/v4 bytes match |
-| TUTOR_SKILL_RECONCILED | VERIFIED | Historical exact skill approval remains unchanged; 0.8.4 intake insertion has separate scoped authorization and byte-preservation review |
-| TUTOR_SKILL_BEHAVIOR_VERIFIED | BLOCKED | Historical partial run retained; seven 0.8.4 regression observations yield six content passes and one diagnostic failure; full behavior and authoritative zero-call evidence unresolved |
+| TUTOR_SKILL_RECONCILED | VERIFIED | Historical exact-byte approval unchanged; both narrow successor insertions separately authorized and byte-verified |
+| TUTOR_SKILL_BEHAVIOR_VERIFIED | VERIFIED | All eighteen actual installed web cases pass with complete visible zero-backend-call evidence; plan deviations and host memory activity disclosed |
 | CAPABILITY_EQUIVALENCE_VERIFIED | NOT_APPLICABLE | Owner excludes the four host ChatGPT features from Tutor release scope; their equivalence remains NOT_TESTED |
-| BACKEND_APP_REGISTERED | VERIFIED | Fresh unchanged existing app identity; no new connection |
-| BACKEND_APP_OPTIONALITY_VERIFIED | VERIFIED | Current supported syntax and unchanged saved 0.8.4 mapping verified; full installed teaching behavior unverified |
-| UPDATED_PLUGIN_ARCHIVE_VERIFIED | VERIFIED | Actual saved 0.8.4 archive, all members, authorized successor skill bytes and one optional app independently verified |
+| BACKEND_APP_REGISTERED | VERIFIED | Same existing app/resource confirmed; no new app or connection |
+| BACKEND_APP_OPTIONALITY_VERIFIED | VERIFIED | Current saved 0.8.5 mapping contains exactly one unchanged optional app |
+| UPDATED_PLUGIN_ARCHIVE_VERIFIED | VERIFIED | Actual saved 0.8.5 archive, all thirteen members and both inverse insertion proofs independently verified |
 | MIGRATED_SKILL_RECONCILED | BLOCKED | Historical native adapter reconciliation remains blocked; current bytes verified separately by UPDATED_PLUGIN_ARCHIVE_VERIFIED |
-| GPT_MIGRATED | VERIFIED | Private migration confirmed; saved 0.8.4 preserves all historical skill bytes plus the authorized insertion and optional app |
+| GPT_MIGRATED | VERIFIED | Same private migrated identity; saved 0.8.5 preserves all historical bytes plus two authorized insertions and optional app |
 | SKILL_RECONCILED | BLOCKED | Historical native comparison remains blocked; current saved raw-byte equality verified under new archive gate |
-| REFERENCES_RECONCILED | VERIFIED | Historical and current saved 0.8.4 complete inventories all contain zero references |
-| PARITY_VERIFIED | BLOCKED | Actual paired old/new results absent; no provisional observations promoted |
-| PACKAGE_READY | BLOCKED | Current archive verified; historical native reconciliation, behavior, backend acceptance and paired parity remain unresolved |
-| RELEASE_READY | BLOCKED | Draft/private only; artifact release 0.8.4 is saved, full release readiness remains blocked |
+| REFERENCES_RECONCILED | VERIFIED | Historical and current saved 0.8.5 complete inventories contain zero references |
+| PARITY_VERIFIED | BLOCKED | Seven related migrated teaching observations recorded; exact paired old/new results absent and no provisional evidence promoted |
+| PACKAGE_READY | BLOCKED | Current artifact and installed teaching verified; historical native reconciliation, backend acceptance and paired parity unresolved |
+| RELEASE_READY | BLOCKED | Draft/private only; saved 0.8.5 is not full release readiness |
 
 Allowed statuses are VERIFIED, USER_REPORTED, IMPLEMENTED_NOT_VERIFIED, BLOCKED
 and NOT_STARTED. Only CAPABILITY_EQUIVALENCE_VERIFIED additionally permits

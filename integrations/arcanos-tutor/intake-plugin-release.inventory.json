@@ -4,20 +4,20 @@
   "artifactFormat": "PLUGIN_CREATOR_SAVED_RELEASE",
   "pluginId": "plugin_d292d1e45ae08191b3911299e30e1a25",
   "packageName": "gpt-e9bcdc399db672af9f66dfd7e18e7953",
-  "version": "0.8.5",
-  "releaseId": "pluginrel_6ab84427e0d4819182de200f7ce49333",
-  "currentReleaseId": "pluginrel_6ab84427e0d4819182de200f7ce49333",
+  "version": "0.8.4",
+  "releaseId": "pluginrel_6ab809c1fea4819182a133da08f4152b",
+  "currentReleaseId": "pluginrel_6ab809c1fea4819182a133da08f4152b",
   "visibility": "PRIVATE",
   "previousRelease": {
-    "releaseId": "pluginrel_6ab809c1fea4819182a133da08f4152b",
-    "version": "0.8.4"
+    "releaseId": "pluginrel_6ab7f17cb4288191b6a60b25c98d5505",
+    "version": "0.8.3"
   },
   "capture": {
-    "rootPath": "installed-final-verification-20260926/saved-0.8.5",
+    "rootPath": "teaching-intake-revision-20260926/saved-0.8.4",
     "archive": {
-      "path": "installed-final-verification-20260926/saved-0.8.5.tar.gz",
-      "sha256": "b91898941bc04e953758d4036ae0e944f4229859743d5112b380901942568101",
-      "sizeBytes": 260764
+      "path": "teaching-intake-revision-20260926/saved-0.8.4.tar.gz",
+      "sha256": "ee75e6ae3488dd625af68c56aecc910454de0ae25b55910e8c97618a09c55ce7",
+      "sizeBytes": 260445
     },
     "members": [
       {
@@ -35,7 +35,7 @@
       {
         "path": ".codex-plugin/plugin.json",
         "type": "file",
-        "sha256": "a11350ad038eb68089433675aec931ea227edea0fb08c947f7001c35da3f83b4",
+        "sha256": "5640da06aacc4a42e72926229215dc81db1c50076a5bc7ebd753739d6be67bc1",
         "sizeBytes": 1329
       },
       {
@@ -53,7 +53,7 @@
       {
         "path": "plugin.json",
         "type": "file",
-        "sha256": "0ca80c12ca34d587bd3f8ffa2d83edd0807880b969057474bd4dc7cef7944843",
+        "sha256": "dfe7c63672922126fc373953056da7e6755de37f58ff9267e0cac39269281e02",
         "sizeBytes": 1466
       },
       {
@@ -95,13 +95,13 @@
       {
         "path": "skills/instructions/SKILL.md",
         "type": "file",
-        "sha256": "282ceeba915a317f6bb3f49eb1929ef5ae9d555781c635b0b8ed7e85977a61b8",
-        "sizeBytes": 10406
+        "sha256": "02fbc4e2b5a000cf9d49fae9a2d66e1cb59593060cacb6640e5b597202ab3d1d",
+        "sizeBytes": 9746
       }
     ],
-    "packageFingerprint": "6f945afcce451d822597bc4e79fb1d8b60262416bb75c1eb398a774318d60f5c"
+    "packageFingerprint": "ac0e3e75de8159fd4788d64fd306f4cb569c48e7a6f63b649132f1dbbc1b9594"
   },
-  "approvedSkillSha256": "282ceeba915a317f6bb3f49eb1929ef5ae9d555781c635b0b8ed7e85977a61b8",
+  "approvedSkillSha256": "02fbc4e2b5a000cf9d49fae9a2d66e1cb59593060cacb6640e5b597202ab3d1d",
   "registeredAppId": "asdk_app_6ab4747769088191856fd8eb02507240",
   "appOptional": true,
   "skillCount": 1,
@@ -109,12 +109,12 @@
   "appCount": 1,
   "accountReview": {
     "reviewedBy": "Codex supported Plugin Creator source/archive and independent reviewers",
-    "reviewedAt": "2026-09-26T22:19:15.746Z",
+    "reviewedAt": "2026-09-26T18:16:26.201Z",
     "confirmedSamePlugin": true,
     "confirmedPrivate": true,
     "confirmedCurrentRelease": true
   },
   "evidenceIds": [
-    "saved-plugin-diagnostic-release-20260926"
+    "saved-plugin-intake-release-20260926"
   ]
 }

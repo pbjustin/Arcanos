@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { inspectComposedTutorSkill, teachingPlaceholder } from './compose-tutor-skill.mjs';
 import { checkTutorPrivateBoundary } from './check-tutor-private-boundary.mjs';
+import { validateInstalledTutorTeaching } from './tutor-installed-teaching.mjs';
 import { validateTutorInvocationPolicy, validateTutorTeachingMatrix } from './tutor-invocation-policy.mjs';
 import { baselineFingerprint, digest, isHash, packageFingerprint, readSafeFile, relativeFile,
   requireCondition, reviewed, skillPath, text, validateArtifact } from './tutor-migration.mjs';
@@ -128,7 +129,8 @@ export function validateCapabilityEquivalence(ledger, baseline) {
 }
 
 /** Offline evidence checks. No account connection is required for source validation. */
-export async function validateSkillFirst({ root, inputRoot, baseline, state, evidence, templateFiles, referenceReview }) {
+export async function validateSkillFirst({ root, inputRoot, baseline, state, evidence, templateFiles, referenceReview,
+  currentTeaching = null, currentRelease = null }) {
   const read = async name => JSON.parse((await readSafeFile(root, name)).content);
   const composition = validateCompositionInventory(await read('skill-composition.inventory.json'), baseline);
   const policy = await read('invocation-policy.json');
@@ -147,13 +149,17 @@ export async function validateSkillFirst({ root, inputRoot, baseline, state, evi
     return item?.kind === 'user_reported' && item.status === 'USER_REPORTED' &&
       same(item.compositionBinding, bindings);
   });
-  const teachingVerified = matrix.evidenceStatus === 'VERIFIED' && matrix.cases.every(row =>
+  const historicalTeachingVerified = matrix.evidenceStatus === 'VERIFIED' && matrix.cases.every(row =>
     row.evidenceStatus === 'VERIFIED' && row.actualResult?.outcome === 'PASS' &&
     row.actualResult.skillActivated === row.expectedSkillActivation && row.actualResult.appInvoked === row.expectedAppInvocation &&
     row.actualResult.summarySha256 === digest(row.actualResult.summary) &&
     boundObservation(row.verification, evidence, 'teachingBinding', { ...bindings, caseId: row.id,
       promptSha256: digest(row.prompt), summarySha256: row.actualResult.summarySha256,
       artifactSha256: row.actualResult.artifactSha256 }));
+  const currentTeachingVerification = currentTeaching ? validateInstalledTutorTeaching(currentTeaching,
+    { release: currentRelease, evidence, state }) : null;
+  const currentTeachingVerified = Boolean(currentTeachingVerification);
+  const teachingVerified = currentTeachingVerified || historicalTeachingVerified;
   const teachingDeferred = state.gates.TUTOR_SKILL_BEHAVIOR_VERIFIED.status === 'DEFERRED_POST_MIGRATION';
   if (teachingDeferred) {
     // This records an execution-surface limit for the current task. It is not
@@ -224,6 +230,7 @@ export async function validateSkillFirst({ root, inputRoot, baseline, state, evi
       !configuration.representativeBehavior.some(value => actual.content.includes(value)), 'PRIVATE_TEACHING_IN_PUBLIC_TEMPLATE');
   } else blockers.push('PRIVATE_COMPOSITION_NOT_INSPECTED');
   return { composition, privateFiles, blockers, teachingVerified, teachingDeferred, capabilitiesVerified,
+    currentTeachingVerified, currentTeachingVerification,
     capabilityScopeExcluded, capabilityRequirementSatisfied,
     teachingReadiness: ownerApproved && teachingVerified && capabilityRequirementSatisfied ? 'VERIFIED' : 'BLOCKED',
     backendReadiness: state.gates.LIVE_TUTOR_CALL_VERIFIED.status };

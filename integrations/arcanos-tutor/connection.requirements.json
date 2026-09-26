@@ -698,6 +698,107 @@
         "reconnectPerformed": false,
         "report": "docs/chatgpt-migration/TUTOR_INTAKE_REVISION_20260926.md"
       }
+    },
+    {
+      "id": "owner-diagnostic-revision-authorization-20260926",
+      "kind": "user_reported",
+      "status": "USER_REPORTED",
+      "observedAt": "2026-09-26",
+      "summary": "Owner conditionally authorized one diagnostic-only safeguard after a single reproduction of the remaining diagnostic issue. The reproduction contained stacked learner-step alternatives, meeting that condition. Authorization preserves the prior intake override and all original teaching text. Binding identifies derived revision bytes, not a separately quoted owner hash approval.",
+      "skillRevisionAuthorization": {
+        "pluginId": "plugin_d292d1e45ae08191b3911299e30e1a25",
+        "scope": "DIAGNOSTIC_SINGLE_QUESTION_ONLY",
+        "fromSkillSha256": "02fbc4e2b5a000cf9d49fae9a2d66e1cb59593060cacb6640e5b597202ab3d1d",
+        "toSkillSha256": "282ceeba915a317f6bb3f49eb1929ef5ae9d555781c635b0b8ed7e85977a61b8",
+        "targetVersion": "0.8.5",
+        "insertionSha256": "0c884555b21935d5d165675b3caa90b87253164bf9142990535b11d0dcf178eb"
+      }
+    },
+    {
+      "id": "diagnostic-revision-scope-byte-review-20260926",
+      "kind": "repository",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-26T22:19:15.746Z",
+      "summary": "Two independent candidate reviewers verified one diagnostic-only 660-byte insertion at byte 1095, preserving all 9746 prior skill bytes and the earlier intake override. Reverse reconstruction also preserves all 9209 original approved bytes. Only skill bytes and both manifest versions changed; app mapping, support files and assets remain identical. Actual saved inventory matches reviewed candidate. Byte and scope review does not establish installed teaching outcomes, no-call evidence or parity.",
+      "skillRevisionBinding": {
+        "pluginId": "plugin_d292d1e45ae08191b3911299e30e1a25",
+        "scope": "DIAGNOSTIC_SINGLE_QUESTION_ONLY",
+        "fromSkillSha256": "02fbc4e2b5a000cf9d49fae9a2d66e1cb59593060cacb6640e5b597202ab3d1d",
+        "toSkillSha256": "282ceeba915a317f6bb3f49eb1929ef5ae9d555781c635b0b8ed7e85977a61b8",
+        "targetVersion": "0.8.5",
+        "insertionSha256": "0c884555b21935d5d165675b3caa90b87253164bf9142990535b11d0dcf178eb",
+        "fromReleaseId": "pluginrel_6ab809c1fea4819182a133da08f4152b",
+        "fromPackageFingerprint": "ac0e3e75de8159fd4788d64fd306f4cb569c48e7a6f63b649132f1dbbc1b9594",
+        "insertionOffsetBytes": 1095,
+        "insertionSizeBytes": 660
+      }
+    },
+    {
+      "id": "saved-plugin-diagnostic-release-20260926",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-26T22:19:15.746Z",
+      "summary": "After passing focused synthetic checks and independent scoped reviews, supported guarded update changed the same PRIVATE plugin from 0.8.4 to 0.8.5. Actual saved archive was retrieved and completely inventoried; its seven files match the reviewed candidate. One optional existing backend app and zero references remain. No new plugin, app, connection or Auth0 client, backend request or reconnect was performed in this update.",
+      "updatedReleaseBinding": {
+        "artifactFormat": "PLUGIN_CREATOR_SAVED_RELEASE",
+        "pluginId": "plugin_d292d1e45ae08191b3911299e30e1a25",
+        "releaseId": "pluginrel_6ab84427e0d4819182de200f7ce49333",
+        "currentReleaseId": "pluginrel_6ab84427e0d4819182de200f7ce49333",
+        "version": "0.8.5",
+        "visibility": "PRIVATE",
+        "skillSha256": "282ceeba915a317f6bb3f49eb1929ef5ae9d555781c635b0b8ed7e85977a61b8",
+        "packageFingerprint": "6f945afcce451d822597bc4e79fb1d8b60262416bb75c1eb398a774318d60f5c",
+        "archiveSha256": "b91898941bc04e953758d4036ae0e944f4229859743d5112b380901942568101",
+        "registeredAppId": "asdk_app_6ab4747769088191856fd8eb02507240",
+        "appOptional": true
+      }
+    },
+    {
+      "id": "installed-final-teaching-verification-20260926",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-26T22:36:21.107Z",
+      "summary": "Current saved PRIVATE Tutor 0.8.5 is bound to the reviewed eighteen actual submitted skill-only cases. All eighteen content checks pass; complete captured UI shows zero ARCANOS backend activity, seventeen positive Tutor Sources cases and one unselected unrelated case with no visible Tutor attribution. Seven intended plan prompts differed and remain disclosed; these observations are ineligible for exact planned parity. One practice submission has two response variants. A host Memory updated event remains explicit and is not attributed to Tutor persistence. Verification uses the authorized visible UI standard: server call counts and per-turn loaded skill bytes remain unknown. Backend acceptance, parity and release readiness are separate.",
+      "installedTeachingBinding": {
+        "pluginId": "plugin_d292d1e45ae08191b3911299e30e1a25",
+        "releaseId": "pluginrel_6ab84427e0d4819182de200f7ce49333",
+        "version": "0.8.5",
+        "skillSha256": "282ceeba915a317f6bb3f49eb1929ef5ae9d555781c635b0b8ed7e85977a61b8",
+        "packageFingerprint": "6f945afcce451d822597bc4e79fb1d8b60262416bb75c1eb398a774318d60f5c",
+        "visibility": "PRIVATE",
+        "verificationFingerprint": "f7b0629dc6dd34a94d6e3dab3c47685a4132057ae462892167a8230cc6cc08e3"
+      }
+    },
+    {
+      "id": "existing-primary-unavailable-20260926-final",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-26T22:30:02.991Z",
+      "summary": "Read-only current settings identify the same registered Tutor app and production resource, but the refreshed supported UI exposes only generic Connect. The historical Primary row, Reconnect and metadata Refresh are unavailable. The Connect information dialog was closed before Continue. No OAuth flow, connection replacement, backend request, runtime change or deployment occurred. This verifies UI observations only, not an authentication error response or deletion of the historical connection.",
+      "connectionObservation": {
+        "registeredAppId": "asdk_app_6ab4747769088191856fd8eb02507240",
+        "resource": "https://acranos-production.up.railway.app/chatgpt/mcp",
+        "existingPrimaryStatus": "NOT_VISIBLE_IN_CURRENT_SUPPORTED_UI",
+        "reconnectPerformed": false,
+        "metadataRefreshPerformed": false,
+        "newConnectionCreated": false,
+        "newAppCreated": false,
+        "newAuth0ClientCreated": false,
+        "backendAttempts": 0,
+        "backendCallBudget": 3,
+        "backendPlane": "BLOCKED_AUTH_CONNECTION_UNAVAILABLE",
+        "routingControls": {
+          "ordinary": "NOT_RUN_CONNECTION_PREREQUISITE",
+          "explicit": "NOT_RUN_CONNECTION_PREREQUISITE"
+        },
+        "acceptance": {
+          "A": "NOT_RUN_CONNECTION_PREREQUISITE",
+          "C": "NOT_RUN_CONNECTION_PREREQUISITE",
+          "D": "NOT_RUN_CONNECTION_PREREQUISITE"
+        },
+        "privateReportSha256": "77774366c0b63a483953110d16b4347c9fe22ab3a608ee3265150ae31ca7ce9e",
+        "privateReportSizeBytes": 2216
+      }
     }
   ],
   "checks": {

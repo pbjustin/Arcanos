@@ -70,7 +70,7 @@ The six directory members are `.codex-plugin`, `assets`, `skills`,
 `skills/instructions/lookup`. Each is zero bytes and has SHA-256
 `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`.
 The machine-readable complete inventory is in
-[updated-plugin-release.json](../../integrations/arcanos-tutor/updated-plugin-release.json).
+[intake-plugin-release.inventory.json](../../integrations/arcanos-tutor/intake-plugin-release.inventory.json).
 
 ## Installed observations
 
