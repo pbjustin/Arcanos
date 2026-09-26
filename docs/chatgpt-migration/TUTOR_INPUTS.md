@@ -58,6 +58,31 @@ the actual account/owner evidence. Keep publication assurance distinct from file
 hash verification. Update the corresponding gate consistently; the tool never
 changes account state or silently advances the tracked ledger.
 
+## Private skill-first composition
+
+The approved baseline remains unchanged. The owner separately selected direct
+ChatGPT tutoring with an optional backend app. The tracked skill is a public
+template containing the literal `{{PUBLISHED_TUTOR_INSTRUCTIONS}}` insertion
+marker, never the private teaching text. See the [skill-first record](TUTOR_SKILL_FIRST_20260925.md).
+
+`scripts/compose-tutor-skill.mjs` validates the approved baseline, the private
+owner-review sidecar, Git exclusion, and safe paths before composing exact source
+instructions into a new private package. Output is permitted only beneath ignored
+`.local-migration/arcanos-tutor/`. Existing output and source files are never
+overwritten. A second composition in a new directory and read-only inspection
+establish determinism. The private report maps source byte spans to final teaching
+sections; it does not invent new teaching rules or approve its own transformation.
+
+The safe `skill-composition.inventory.json` records hashes/counts and PENDING
+owner review. Approval must identify the exact skill hash, package fingerprint,
+baseline fingerprint, reviewer/date, and owner evidence. Baseline approval is not
+approval of this new artifact. `TUTOR_SKILL_RECONCILED` stays BLOCKED until then.
+Private composition is not actual GPT migration and cannot advance GPT_MIGRATED.
+
+Release validation inspects the composed private package, not private teaching
+text copied into the public template. Exact-artifact private release approval is
+distinct from permission to commit content; no Builder text may enter Git.
+
 ## Actual migrated artifacts
 
 After separately authorized migration, retain the actual migrated skill,
@@ -76,7 +101,8 @@ The local sidecar `migration.inventory.json` records:
   app-mapping file referenced by the migrated manifest, with its path relative to
   the private input directory, SHA-256 and byte size. The manifest's app path is
   resolved relative to that manifest and must select this inspected artifact;
-  its single required app must match the registered Tutor connection.
+  its single optional app must match the registered Tutor connection, using the
+  supported `optional: true` representation without a required-app flag.
 - `accountReview`: reviewer/date, `confirmedMigrated: true` and
   `confirmedWarningsReviewed: true`. These are human review assertions, not
   fields invented inside the actual generated manifest.
@@ -84,8 +110,9 @@ The local sidecar `migration.inventory.json` records:
   hash, final packaged skill hash, reviewer/date, summary and disposition.
   PASS requires the original instruction text to be preserved; intentional
   differences require separate explicit owner acceptance bound to those hashes.
-- The migrated skill needs exact-content repository publication approval before
-  its private text can be incorporated into the public package.
+- The migrated skill needs exact-content private-release review before it can
+  be reconciled with the composed private package. Record `approvedForPrivateRelease`
+  on the reviewed artifact; this does not authorize putting its text in Git.
 
 Every approved reference review records sourcePath, packagePath, SHA-256, byte
 size, approvedForRepository true, reviewer and review date. The source and package
@@ -126,8 +153,10 @@ contract; it is never production or migration evidence.
 Each result's `status` and `evidenceIds` identify its observation. A VERIFIED
 ChatGPT evidence entry has `parityBinding` with the exact `caseId`, `side`
 (`oldGpt` or `plugin`), `promptSha256`, `configurationFingerprint` and
-`summarySha256`. Completed activation cases must record `arcanos_tutor`;
-non-activation and pre-call clarification cases must record no tool invocation.
+`summarySha256`. Ordinary teaching, non-activation and pre-call clarification
+cases must record no tool invocation. Backend failure scenarios require explicit
+backend intent and controlled execution evidence. Historical observations retain
+their original prompts and results; the skill-first contract does not promote them.
 Do not copy the earlier standalone call's evidence ID into new paired results.
 
 After all actual evidence has been reconciled, run:

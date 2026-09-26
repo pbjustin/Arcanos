@@ -8,6 +8,7 @@ import { spawnSync } from 'node:child_process';
 type Json = ReturnType<typeof JSON.parse>;
 const script = path.join(process.cwd(), 'scripts/validate-arcanos-tutor-package.mjs');
 const captureScript = path.join(process.cwd(), 'scripts/capture-tutor-baseline.mjs');
+const compositionScript = path.join(process.cwd(), 'scripts/compose-tutor-skill.mjs');
 const source = path.join(process.cwd(), 'integrations/arcanos-tutor');
 const skillPath = 'skills/arcanos-tutor/SKILL.md';
 const temporaryRoots: string[] = [];
@@ -29,52 +30,79 @@ function artifact(root: string, file: string) {
   const bytes = readFileSync(path.join(root, file));
   return { path: file, sha256: hash(bytes), sizeBytes: bytes.length };
 }
-function fingerprints(root: string, baseline: Json) {
-  const report = JSON.parse(validate(root).stdout);
-  const oldFingerprint = hash(JSON.stringify({ configuration: baseline.configuration.sha256,
+function baselineFingerprint(baseline: Json) {
+  return hash(JSON.stringify({ configuration: baseline.configuration.sha256,
     knowledge: baseline.knowledge.map(({ name, sha256, sizeBytes }: Json) => ({ name, sha256, sizeBytes }))
       .sort((left: Json, right: Json) => left.name.localeCompare(right.name, 'en')) }));
-  return { oldFingerprint, pluginFingerprint: report.packageFingerprint };
 }
 function completeFixture() {
   const root = copyPackage();
-  const inputs = path.join(root, 'mock-private-inputs');
-  mkdirSync(inputs);
+  expect(spawnSync('git', ['-C', root, 'init', '--quiet'], { windowsHide: true }).status).toBe(0);
+  writeFileSync(path.join(root, '.gitignore'), '.local-migration/\n');
+  const inputs = path.join(root, '.local-migration/arcanos-tutor');
+  mkdirSync(inputs, { recursive: true });
   const instruction = 'Mock teaching personality: explain one small step, then invite one practice attempt.';
   write(inputs, 'published-gpt.json', { schemaVersion: 1,
     publication: { status: 'published', version: 'mock-v1', publishedAt: '2026-09-23T00:00:00Z' },
     displayName: 'ARCANOS TUTOR', description: 'Mock Tutor description', instructions: instruction,
-    conversationStarters: ['Explain a fraction.'], enabledCapabilities: [], actions: [{ name: 'mock tutor', schema: { type: 'object' } }],
+    conversationStarters: ['Explain a fraction.'],
+    enabledCapabilities: ['Web Search', 'Canvas', 'Image Generation', 'Code Interpreter & Data Analysis'],
+    actions: [{ name: 'mock tutor', schema: { type: 'object' } }],
     sharingStatus: 'private', representativeBehavior: ['Clear short explanations.'], knowledge: [{ name: 'mock-notes.txt', path: 'mock-notes.txt' }] });
   writeFileSync(path.join(inputs, 'mock-notes.txt'), 'Mock reviewed reference: one half equals two quarters.\n');
   const captured = spawnSync(process.execPath, [captureScript, '--inputs', inputs, '--output', path.join(root, 'mock-baseline.json')], { encoding: 'utf8' });
   expect(captured.status).toBe(0);
   const baseline = json(root, 'mock-baseline.json');
   baseline.status = 'VERIFIED';
-  baseline.publicationReview = { ...review, latestPublishedConfirmed: true, evidenceIds: ['mock-account-observation'] };
+  baseline.publicationReview = { ...review, latestPublishedConfirmed: true, evidenceIds: ['mock-owner-baseline'] };
   write(root, 'baseline.inventory.json', baseline);
-  const migrated = `---\nname: arcanos-tutor\ndescription: Mock migrated Tutor instructions.\n---\n${instruction}\n`;
-  writeFileSync(path.join(inputs, 'migrated-skill.md'), migrated);
-  writeFileSync(path.join(root, 'package', skillPath), `${readFileSync(path.join(root, 'package', skillPath), 'utf8')}\n${instruction}\n`);
-  cpSync(path.join(root, 'package/plugin.json'), path.join(inputs, 'migrated-plugin.json'));
-  cpSync(path.join(root, 'package/.app.json'), path.join(inputs, '.app.json'));
-  const appId = json(root, 'connection.requirements.json').registeredAppId;
-  const migration = { schemaVersion: 1, status: 'VERIFIED', registeredAppId: appId,
-    skill: { ...artifact(inputs, 'migrated-skill.md'), ...review, approvedForRepository: true },
-    metadata: artifact(inputs, 'migrated-plugin.json'), appMapping: artifact(inputs, '.app.json'), references: baseline.knowledge, warnings: [],
-    accountReview: { ...review, confirmedMigrated: true, confirmedWarningsReviewed: true },
-    instructionComparison: { status: 'VERIFIED', ...review, disposition: 'PASS', summary: 'Mock exact instruction preservation.',
-      baselineInstructionsSha256: baseline.configuration.fields.instructions.sha256,
-      migratedSkillSha256: hash(migrated), packagedSkillSha256: artifact(path.join(root, 'package'), skillPath).sha256 } };
-  write(root, 'migration.inventory.json', migration);
+  const oldFingerprint = baselineFingerprint(baseline);
+  write(inputs, 'mock-behavior-review.json', { cases: [{ id: 'tutoring', expectedBehavior: 'Clear short explanations.',
+    privateSourceExcerpts: [{ line: 1, text: instruction, sha256: hash(instruction) }] }] });
+  write(inputs, 'mock-owner-review.json', { ...review, latestPublishedConfirmed: true,
+    completeTranscriptionApproved: true, representativeBehaviorApproved: true, evidenceId: 'mock-owner-baseline',
+    reviewContext: { configurationSha256: baseline.configuration.sha256, baselineFingerprint: oldFingerprint,
+      expectedBehaviorArtifact: artifact(inputs, 'mock-behavior-review.json') } });
   const referencePath = 'skills/arcanos-tutor/references/mock-notes.txt';
   mkdirSync(path.dirname(path.join(root, 'package', referencePath)), { recursive: true });
   cpSync(path.join(inputs, 'mock-notes.txt'), path.join(root, 'package', referencePath));
   write(root, 'reference-review.json', { schemaVersion: 1, references: [{ sourcePath: 'mock-notes.txt', packagePath: referencePath,
     sha256: baseline.knowledge[0].sha256, sizeBytes: baseline.knowledge[0].sizeBytes, approvedForRepository: true, ...review }] });
+  const composed = spawnSync(process.execPath, [compositionScript, '--inputs', inputs,
+    '--baseline', path.join(root, 'baseline.inventory.json'), '--package', path.join(root, 'package'),
+    '--references', path.join(root, 'reference-review.json'), '--owner-review', 'mock-owner-review.json',
+    '--output', 'mock-composed-skill'], { encoding: 'utf8' });
+  expect(composed.stderr).toBe('');
+  expect(composed.status).toBe(0);
+  const composition = JSON.parse(composed.stdout);
+  const bindings = { baselineFingerprint: oldFingerprint, skillSha256: composition.skill.sha256,
+    packageFingerprint: composition.packageFingerprint };
+  write(root, 'skill-composition.inventory.json', { schemaVersion: 1, kind: 'PRIVATE_COMPOSED_RELEASE_CANDIDATE',
+    status: 'VERIFIED', baselineFingerprint: oldFingerprint, configurationSha256: baseline.configuration.sha256,
+    outputDirectory: composition.outputDirectory, skill: composition.skill, packageFingerprint: composition.packageFingerprint,
+    report: composition.report, sectionCount: composition.sectionCount, approvedRuleIds: composition.approvedRuleIds,
+    ownerReview: { status: 'APPROVED', ...review, ...bindings, evidenceIds: ['mock-owner-composition'] },
+    privateContentsTracked: false });
+  const migrated = `---\nname: arcanos-tutor\ndescription: Mock migrated Tutor instructions.\n---\n${instruction}\n`;
+  writeFileSync(path.join(inputs, 'migrated-skill.md'), migrated);
+  cpSync(path.join(root, 'package/plugin.json'), path.join(inputs, 'migrated-plugin.json'));
+  cpSync(path.join(root, 'package/.app.json'), path.join(inputs, '.app.json'));
+  const appId = json(root, 'connection.requirements.json').registeredAppId;
+  const migration = { schemaVersion: 1, status: 'VERIFIED', registeredAppId: appId,
+    skill: { ...artifact(inputs, 'migrated-skill.md'), ...review, approvedForPrivateRelease: true },
+    metadata: artifact(inputs, 'migrated-plugin.json'), appMapping: artifact(inputs, '.app.json'), references: baseline.knowledge, warnings: [],
+    accountReview: { ...review, confirmedMigrated: true, confirmedWarningsReviewed: true },
+    instructionComparison: { status: 'VERIFIED', ...review, disposition: 'PASS', summary: 'Mock exact instruction preservation.',
+      baselineInstructionsSha256: baseline.configuration.fields.instructions.sha256,
+      migratedSkillSha256: hash(migrated), packagedSkillSha256: composition.skill.sha256 } };
+  write(root, 'migration.inventory.json', migration);
   edit(root, 'connection.requirements.json', connection => {
     connection.evidence.push({ id: 'mock-account-observation', kind: 'chatgpt', status: 'VERIFIED', observedAt: review.reviewedAt, summary: 'Synthetic account evidence; no actual migration.' });
     connection.evidence.push({ id: 'mock-repo-observation', kind: 'repository', status: 'VERIFIED', observedAt: review.reviewedAt, summary: 'Synthetic reviewed local fixture.' });
+    connection.evidence.push({ id: 'mock-deploy-observation', kind: 'railway', status: 'VERIFIED', observedAt: review.reviewedAt, summary: 'Synthetic deployment fixture; no deployment performed.' });
+    connection.evidence.push({ id: 'mock-owner-baseline', kind: 'user_reported', status: 'USER_REPORTED', observedAt: review.reviewedAt, summary: 'Synthetic owner baseline approval.' });
+    connection.evidence.push({ id: 'mock-owner-composition', kind: 'user_reported', status: 'USER_REPORTED', observedAt: review.reviewedAt,
+      summary: 'Synthetic owner approval of exact private composition.', compositionBinding: bindings });
     // A complete synthetic fixture owns its connection claims independently of
     // the real ledger, whose current live connection may legitimately be blocked.
     for (const check of Object.values<Json>(connection.checks)) {
@@ -84,21 +112,51 @@ function completeFixture() {
     connection.builderReconciliation = 'VERIFIED';
     connection.referenceReconciliation = 'VERIFIED';
   });
-  edit(root, 'migration-state.json', state => {
-    for (const name of ['CHATGPT_CONNECTION_REGISTERED', 'OAUTH_CONFIGURED', 'TOOL_DISCOVERY_VERIFIED', 'LIVE_TUTOR_CALL_VERIFIED']) {
-      state.gates[name].status = 'VERIFIED';
-      state.gates[name].evidenceIds = ['mock-account-observation'];
+  edit(root, 'teaching-behavior-matrix.json', matrix => {
+    matrix.baselineFingerprint = oldFingerprint;
+    matrix.evidenceStatus = 'VERIFIED';
+    for (const item of matrix.cases) {
+      // Synthetic source bytes are deliberately unrelated to the reviewed real
+      // semantic mapping. These expected checks are fixture safeguards only.
+      item.approvedRuleIds = [];
+      item.baselineRuleStatus = 'INTEGRATION_ONLY';
+      item.ruleProvenance = 'integration_safeguard';
+      item.evidenceStatus = 'VERIFIED';
+      const summary = `Mock observed teaching case ${item.id}; synthetic fixture only.`;
+      item.actualResult = { summary, summarySha256: hash(summary), skillActivated: item.expectedSkillActivation,
+        appInvoked: item.expectedAppInvocation, outcome: 'PASS', artifactSha256: hash(`mock teaching artifact ${item.id}`) };
+      const id = `mock-teaching-${item.id}`;
+      item.verification = { ...review, ...bindings, evidenceIds: [id] };
+      edit(root, 'connection.requirements.json', connection => {
+        connection.evidence.push({ id, kind: 'chatgpt', status: 'VERIFIED', observedAt: review.reviewedAt,
+          summary, teachingBinding: { ...bindings, caseId: item.id, promptSha256: hash(item.prompt),
+            summarySha256: item.actualResult.summarySha256, artifactSha256: item.actualResult.artifactSha256 } });
+      });
     }
   });
-  const bindings = fingerprints(root, baseline);
+  edit(root, 'capability-equivalence.json', ledger => {
+    ledger.baselineConfigurationSha256 = baseline.configuration.sha256;
+    ledger.baselineFingerprint = oldFingerprint;
+    ledger.status = 'VERIFIED';
+    for (const item of ledger.capabilities) {
+      item.status = 'VERIFIED';
+      const id = `mock-capability-${item.id}`;
+      item.verification = { ...review, ...bindings, surface: 'mock-web-surface', evidenceIds: [id] };
+      edit(root, 'connection.requirements.json', connection => {
+        connection.evidence.push({ id, kind: 'chatgpt', status: 'VERIFIED', observedAt: review.reviewedAt,
+          summary: `Mock capability observation for ${item.publishedName}; synthetic fixture only.`,
+          capabilityBinding: { ...bindings, publishedName: item.publishedName, surface: item.verification.surface } });
+      });
+    }
+  });
   edit(root, 'parity-matrix.json', parity => {
     parity.status = 'VERIFIED';
     parity.liveEvidenceIds = ['mock-account-observation'];
     for (const item of parity.cases) {
       const summary = `Mock comparison for ${item.id}.`;
       item.oldGpt = { status: 'VERIFIED', summary, sha256: hash(summary), hashBasis: 'sanitized_summary', artifactSha256: baseline.configuration.sha256,
-        configurationFingerprint: bindings.oldFingerprint, evidenceIds: ['mock-account-observation'] };
-      item.plugin = { ...item.oldGpt, artifactSha256: migration.skill.sha256, configurationFingerprint: bindings.pluginFingerprint };
+        configurationFingerprint: oldFingerprint, evidenceIds: ['mock-account-observation'] };
+      item.plugin = { ...item.oldGpt, artifactSha256: migration.skill.sha256, configurationFingerprint: composition.packageFingerprint };
       for (const side of ['oldGpt', 'plugin']) {
         const id = `mock-parity-${item.id}-${side}`;
         item[side].evidenceIds = [id];
@@ -109,7 +167,7 @@ function completeFixture() {
               summarySha256: item[side].sha256 } });
         });
       }
-      item.toolInvoked = ['non_activation', 'clarification', 'memory', 'admin'].includes(item.category) ? null : 'arcanos_tutor';
+      item.toolInvoked = ['authentication', 'unavailable', 'timeout', 'cancellation'].includes(item.category) ? 'arcanos_tutor' : null;
       item.materialDifference = 'No material difference in this synthetic fixture.';
       item.disposition = 'PASS';
       Object.assign(item, review);
@@ -119,11 +177,14 @@ function completeFixture() {
     for (const [name, gate] of Object.entries<Json>(state.gates)) {
       if (['PACKAGE_READY', 'RELEASE_READY'].includes(name)) { gate.status = 'BLOCKED'; continue; }
       gate.status = 'VERIFIED';
-      if (['CODE_READY', 'GPT_BASELINE_CAPTURED', 'SKILL_RECONCILED', 'REFERENCES_RECONCILED'].includes(name)) gate.evidenceIds = ['mock-repo-observation'];
-      if (['GPT_MIGRATED', 'PARITY_VERIFIED'].includes(name)) gate.evidenceIds = ['mock-account-observation'];
+      gate.evidenceIds = name === 'BACKEND_DEPLOYED' ? ['mock-deploy-observation'] :
+        ['CODE_READY', 'GPT_BASELINE_CAPTURED', 'SKILL_RECONCILED', 'REFERENCES_RECONCILED',
+          'TUTOR_SKILL_COMPOSED', 'TUTOR_SKILL_RECONCILED', 'BACKEND_APP_OPTIONALITY_VERIFIED',
+          'MIGRATED_SKILL_RECONCILED'].includes(name) ? ['mock-repo-observation'] : ['mock-account-observation'];
     }
   });
-  return { root, inputs, baseline, migration };
+  return { root, inputs, baseline, migration, composition, bindings, instruction,
+    privatePackage: path.join(inputs, composition.outputDirectory, 'package') };
 }
 
 afterEach(() => {
@@ -153,7 +214,14 @@ describe('Standalone Tutor package and migration release boundary', () => {
     expect(result.stderr).toBe('');
     expect(result.status).toBe(0);
     expect(JSON.parse(result.stdout)).toMatchObject({ releaseStatus: 'VERIFIED', archiveWritten: false,
+      artifactKind: 'PUBLIC_TEMPLATE', privatePackageFingerprint: fixture.composition.packageFingerprint,
+      skillOnlyTeachingReadiness: 'VERIFIED', backendReadiness: 'VERIFIED',
       gates: { PACKAGE_READY: 'VERIFIED', RELEASE_READY: 'VERIFIED' } });
+    const template = readFileSync(path.join(fixture.root, 'package', skillPath), 'utf8');
+    expect(template).toContain('{{PUBLISHED_TUTOR_INSTRUCTIONS}}');
+    expect(template).not.toContain(fixture.instruction);
+    expect(readFileSync(path.join(fixture.privatePackage, skillPath), 'utf8')).toContain(fixture.instruction);
+    expect(JSON.parse(result.stdout).packageFingerprint).not.toBe(fixture.composition.packageFingerprint);
   });
   it.each(['.env', 'private-builder-export.json', 'mcp.json', 'README.md', '.local-migration.json'])('rejects unreviewed packaged file %s', filename => {
     const root = copyPackage();
@@ -175,6 +243,19 @@ describe('Standalone Tutor package and migration release boundary', () => {
     edit(root, 'package/.app.json', mapping => { mapping.apps['arcanos-tutor'].id = id; });
     expect(validate(root).status).toBe(1);
   });
+  it.each(['required', 'string-required', 'optional-false', 'string-optional', 'both-flags', 'missing-optional'])('rejects a public mapping with %s semantics', kind => {
+    const root = copyPackage();
+    edit(root, 'package/.app.json', mapping => {
+      const tutor = mapping.apps['arcanos-tutor'];
+      if (kind === 'required') { delete tutor.optional; tutor.required = true; }
+      else if (kind === 'string-required') { delete tutor.optional; tutor.required = 'true'; }
+      else if (kind === 'optional-false') tutor.optional = false;
+      else if (kind === 'string-optional') tutor.optional = 'true';
+      else if (kind === 'both-flags') tutor.required = false;
+      else delete tutor.optional;
+    });
+    expect(validate(root).status).toBe(1);
+  });
   it('rejects an extra registered app and tool', () => {
     const root = copyPackage();
     edit(root, 'package/.app.json', mapping => { mapping.apps.extra = { id: mapping.apps['arcanos-tutor'].id, required: true }; });
@@ -187,13 +268,13 @@ describe('Standalone Tutor package and migration release boundary', () => {
     const root = copyPackage();
     edit(root, 'package/.app.json', mapping => {
       const id = mapping.apps['arcanos-tutor'].id;
-      mapping.apps['arcanos-tutor'] = { required: true, id };
+      mapping.apps['arcanos-tutor'] = { optional: true, id };
     });
     expect(validate(root).status).toBe(0);
     const fixture = completeFixture();
     edit(fixture.inputs, '.app.json', mapping => {
       const id = mapping.apps['arcanos-tutor'].id;
-      mapping.apps['arcanos-tutor'] = { required: true, id };
+      mapping.apps['arcanos-tutor'] = { optional: true, id };
     });
     edit(fixture.root, 'migration.inventory.json', migration => { migration.appMapping = artifact(fixture.inputs, '.app.json'); });
     expect(validate(fixture.root, ['--release', '--inputs', fixture.inputs]).status).toBe(0);
@@ -222,21 +303,24 @@ describe('Standalone Tutor package and migration release boundary', () => {
     edit(fixture.root, 'migration.inventory.json', migration => { migration.appMapping = artifact(fixture.inputs, '.app.json'); });
     expect(validate(fixture.root, ['--release', '--inputs', fixture.inputs]).status).toBe(1);
   });
-  it.each(['optional', 'string-required', 'extra-app', 'optional-field', 'array-apps', 'empty-alias'])('rejects a migrated mapping with %s semantics', kind => {
+  it.each(['required', 'string-required', 'optional-false', 'string-optional', 'both-flags', 'missing-optional', 'extra-app', 'array-apps', 'empty-alias'])('rejects a migrated mapping with %s semantics', kind => {
     const fixture = completeFixture();
     edit(fixture.inputs, '.app.json', mapping => {
       const tutor = mapping.apps['arcanos-tutor'];
-      if (kind === 'optional') tutor.required = false;
-      else if (kind === 'string-required') tutor.required = 'true';
+      if (kind === 'required') { delete tutor.optional; tutor.required = true; }
+      else if (kind === 'string-required') { delete tutor.optional; tutor.required = 'true'; }
+      else if (kind === 'optional-false') tutor.optional = false;
+      else if (kind === 'string-optional') tutor.optional = 'true';
+      else if (kind === 'both-flags') tutor.required = false;
+      else if (kind === 'missing-optional') delete tutor.optional;
       else if (kind === 'extra-app') mapping.apps.extra = { ...tutor };
       else if (kind === 'array-apps') mapping.apps = [tutor];
       else if (kind === 'empty-alias') mapping.apps = { '': tutor };
-      else tutor.optional = true;
     });
     edit(fixture.root, 'migration.inventory.json', migration => { migration.appMapping = artifact(fixture.inputs, '.app.json'); });
     expect(validate(fixture.root, ['--release', '--inputs', fixture.inputs]).status).toBe(1);
   });
-  it('accepts one migrated alias bound to the same required Tutor connection', () => {
+  it('accepts one migrated alias bound to the same optional Tutor connection', () => {
     const fixture = completeFixture();
     edit(fixture.inputs, '.app.json', mapping => { mapping.apps = { 'migrated-tutor-alias': mapping.apps['arcanos-tutor'] }; });
     edit(fixture.root, 'migration.inventory.json', migration => { migration.appMapping = artifact(fixture.inputs, '.app.json'); });
@@ -433,7 +517,7 @@ describe('Standalone Tutor package and migration release boundary', () => {
     edit(fixture.root, 'parity-matrix.json', parity => { parity.cases[0].plugin.evidenceIds = ['chatgpt-live-call']; });
     expect(validate(fixture.root, ['--release', '--inputs', fixture.inputs]).status).toBe(1);
   });
-  it.each([['direct', null], ['non_activation', 'arcanos_tutor']])('rejects a passed %s case with the wrong tool activation', (category, tool) => {
+  it.each([['direct', 'arcanos_tutor'], ['non_activation', 'arcanos_tutor'], ['authentication', null]])('rejects a passed %s case with the wrong tool activation', (category, tool) => {
     const fixture = completeFixture();
     edit(fixture.root, 'parity-matrix.json', parity => { parity.cases.find((item: Json) => item.category === category).toolInvoked = tool; });
     expect(validate(fixture.root, ['--release', '--inputs', fixture.inputs]).status).toBe(1);
@@ -447,6 +531,110 @@ describe('Standalone Tutor package and migration release boundary', () => {
     const fixture = completeFixture();
     edit(fixture.root, 'reference-review.json', refs => { refs.references.push({ ...refs.references[0], packagePath: 'skills/arcanos-tutor/references/copy.txt' }); });
     expect(validate(fixture.root).status).toBe(1);
+  });
+  it('keeps the fully synthetic private package ignored and binds all teaching and capability observations', () => {
+    const fixture = completeFixture();
+    expect(spawnSync('git', ['-C', fixture.root, 'check-ignore', '--quiet', '--',
+      '.local-migration/arcanos-tutor/'], { windowsHide: true }).status).toBe(0);
+    expect(spawnSync('git', ['-C', fixture.root, 'ls-files', '--', '.local-migration/arcanos-tutor/'],
+      { encoding: 'utf8', windowsHide: true }).stdout).toBe('');
+    const teaching = json(fixture.root, 'teaching-behavior-matrix.json');
+    expect(teaching.cases).toHaveLength(18);
+    expect(teaching.cases.every((item: Json) => item.verification.packageFingerprint === fixture.composition.packageFingerprint)).toBe(true);
+    expect(json(fixture.root, 'capability-equivalence.json').capabilities).toHaveLength(4);
+    expect(validate(fixture.root, ['--release', '--inputs', fixture.inputs]).status).toBe(0);
+  });
+  it.each(['skillSha256', 'packageFingerprint', 'baselineFingerprint'])('rejects composition owner approval with a stale %s binding', field => {
+    const fixture = completeFixture();
+    edit(fixture.root, 'connection.requirements.json', connection => {
+      connection.evidence.find((item: Json) => item.id === 'mock-owner-composition').compositionBinding[field] = hash('mock stale owner binding');
+    });
+    expect(validate(fixture.root, ['--release', '--inputs', fixture.inputs]).status).toBe(1);
+  });
+  it('rejects baseline approval reused as approval of the composed private skill', () => {
+    const fixture = completeFixture();
+    edit(fixture.root, 'skill-composition.inventory.json', composition => { composition.ownerReview.evidenceIds = ['mock-owner-baseline']; });
+    expect(validate(fixture.root, ['--release', '--inputs', fixture.inputs]).status).toBe(1);
+  });
+  it.each(['instruction-section-001', 'instruction-section-999'])('rejects invented approved source section %s even when the teaching matrix repeats it', section => {
+    const fixture = completeFixture();
+    edit(fixture.root, 'skill-composition.inventory.json', composition => { composition.approvedRuleIds = [section]; });
+    edit(fixture.root, 'teaching-behavior-matrix.json', matrix => {
+      matrix.cases[0].approvedRuleIds = [section];
+      matrix.cases[0].baselineRuleStatus = 'APPROVED_SOURCE_REFERENCE';
+      matrix.cases[0].ruleProvenance = 'approved_baseline_and_integration_safeguard';
+    });
+    expect(validate(fixture.root, ['--release', '--inputs', fixture.inputs]).status).toBe(1);
+  });
+  it.each(['owner-review', 'skill-bytes', 'composition-report'])('rejects changed private composition %s without exposing instructions', target => {
+    const fixture = completeFixture();
+    const file = target === 'owner-review' ? path.join(fixture.inputs, 'mock-owner-review.json') :
+      target === 'skill-bytes' ? path.join(fixture.privatePackage, skillPath) :
+        path.join(fixture.inputs, fixture.composition.outputDirectory, 'composition-report.json');
+    writeFileSync(file, `${readFileSync(file, 'utf8')}\nChanged mock composition bytes.\n`);
+    const result = validate(fixture.root, ['--release', '--inputs', fixture.inputs]);
+    expect(result.status).toBe(1);
+    expect(`${result.stdout}${result.stderr}`).not.toContain(fixture.instruction);
+  });
+  it('rejects loss of the private-input ignore boundary before inspecting release bytes', () => {
+    const fixture = completeFixture();
+    writeFileSync(path.join(fixture.root, '.gitignore'), 'mock-unrelated-directory/\n');
+    expect(validate(fixture.root, ['--release', '--inputs', fixture.inputs]).status).toBe(1);
+  });
+  it('requires private-release approval for a migrated skill even when repository approval is set', () => {
+    const fixture = completeFixture();
+    edit(fixture.root, 'migration.inventory.json', migration => {
+      delete migration.skill.approvedForPrivateRelease;
+      migration.skill.approvedForRepository = true;
+    });
+    expect(validate(fixture.root, ['--release', '--inputs', fixture.inputs]).status).toBe(1);
+  });
+  it.each(['teaching', 'capability'])('cannot promote repository preview evidence into verified %s observations', target => {
+    const fixture = completeFixture();
+    edit(fixture.root, 'connection.requirements.json', connection => {
+      connection.evidence.find((item: Json) => item.id.startsWith(`mock-${target}-`)).kind = 'repository';
+    });
+    expect(validate(fixture.root, ['--release', '--inputs', fixture.inputs]).status).toBe(1);
+  });
+  it.each(['teaching', 'capability'])('rejects %s evidence bound to the public template instead of the private package', target => {
+    const fixture = completeFixture();
+    const publicFingerprint = JSON.parse(validate(fixture.root).stdout).packageFingerprint;
+    const bindingName = target === 'teaching' ? 'teachingBinding' : 'capabilityBinding';
+    edit(fixture.root, 'connection.requirements.json', connection => {
+      connection.evidence.find((item: Json) => item.id.startsWith(`mock-${target}-`))[bindingName].packageFingerprint = publicFingerprint;
+    });
+    expect(validate(fixture.root, ['--release', '--inputs', fixture.inputs]).status).toBe(1);
+  });
+  it('rejects a teaching summary changed without updating its observation binding', () => {
+    const fixture = completeFixture();
+    edit(fixture.root, 'teaching-behavior-matrix.json', matrix => {
+      const result = matrix.cases[0].actualResult;
+      result.summary = 'Mock changed teaching observation.';
+      result.summarySha256 = hash(result.summary);
+    });
+    expect(validate(fixture.root, ['--release', '--inputs', fixture.inputs]).status).toBe(1);
+  });
+  it('rejects a claimed passing teaching result that invoked the optional backend for ordinary tutoring', () => {
+    const fixture = completeFixture();
+    edit(fixture.root, 'teaching-behavior-matrix.json', matrix => {
+      matrix.cases.find((item: Json) => item.id === 'DIRECT_EXPLANATION').actualResult.appInvoked = true;
+    });
+    expect(validate(fixture.root, ['--release', '--inputs', fixture.inputs]).status).toBe(1);
+  });
+  it('rejects capability verification for a different surface', () => {
+    const fixture = completeFixture();
+    edit(fixture.root, 'capability-equivalence.json', ledger => { ledger.capabilities[0].verification.surface = 'mock-mobile-surface'; });
+    expect(validate(fixture.root, ['--release', '--inputs', fixture.inputs]).status).toBe(1);
+  });
+  it.each(['baselineFingerprint', 'skillSha256', 'packageFingerprint'])('rejects capability verification missing its %s binding', field => {
+    const fixture = completeFixture();
+    edit(fixture.root, 'capability-equivalence.json', ledger => { delete ledger.capabilities[0].verification[field]; });
+    expect(validate(fixture.root, ['--release', '--inputs', fixture.inputs]).status).toBe(1);
+  });
+  it('does not infer capability parity from a verified aggregate gate', () => {
+    const fixture = completeFixture();
+    edit(fixture.root, 'capability-equivalence.json', ledger => { ledger.capabilities[0].status = 'NOT_TESTED'; });
+    expect(validate(fixture.root, ['--release', '--inputs', fixture.inputs]).status).toBe(1);
   });
   it('captures only metadata and leaves latest publication unverified', () => {
     const fixture = completeFixture();

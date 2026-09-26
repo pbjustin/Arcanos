@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Ajv2020 from 'ajv/dist/2020.js';
 import yaml from 'js-yaml';
+import { validateSkillFirst } from './validate-tutor-skill-first.mjs';
 import {
   baselineFingerprint, captureBaseline, categories, digest, endpoint, gates, isHash, noSymlinkAncestors, packageFingerprint,
   readSafeFile, relativeFile, requireCondition, reviewed, skillPath, statuses, text,
@@ -29,12 +30,17 @@ function tutorAppMapping(mapping, appId, allowMigratedAlias = false) {
   const aliases = Object.keys(mapping.apps);
   if (aliases.length !== 1 || !text(aliases[0]) || (!allowMigratedAlias && aliases[0] !== 'arcanos-tutor')) return false;
   const app = mapping.apps[aliases[0]];
-  return app && typeof app === 'object' && !Array.isArray(app) && equal(Object.keys(app).sort(), ['id', 'required']) &&
-    app.id === appId && app.required === true;
+  // OpenAI's published optional-app example uses optional:true with no required
+  // flag. The portable schema leaves this extension opaque; enforce it here.
+  return app && typeof app === 'object' && !Array.isArray(app) && equal(Object.keys(app).sort(), ['id', 'optional']) &&
+    app.id === appId && app.optional === true;
 }
 
 function validateEvidence(connection, state) {
   requireCondition(connection.schemaVersion === 1 && connection.endpoint === endpoint && equal(connection.toolNames, ['arcanos_tutor']), 'CONNECTION_CONTRACT_INVALID');
+  requireCondition(equal(connection.usagePolicy, { defaultTeachingPath: 'skill_only', appRequired: false,
+    backendInvocation: 'explicit_request_only', uniqueBackendCapabilities: [], scope: 'arcanos:tutor' }),
+  'OPTIONAL_BACKEND_USAGE_POLICY_INVALID');
   requireCondition(connection.registeredAppId === registeredAppId &&
     connection.technicalId === `plugin_${connection.registeredAppId}`, 'REGISTERED_APP_ID_INVALID');
   requireCondition(Array.isArray(connection.evidence) && connection.evidence.length > 0, 'EVIDENCE_MISSING');
@@ -71,16 +77,25 @@ function validateEvidence(connection, state) {
   const gateKinds = { CODE_READY: ['repository'], BACKEND_DEPLOYED: ['railway'], OAUTH_CONFIGURED: ['auth0', 'chatgpt'],
     CHATGPT_CONNECTION_REGISTERED: ['chatgpt'], TOOL_DISCOVERY_VERIFIED: ['chatgpt'], LIVE_TUTOR_CALL_VERIFIED: ['chatgpt'],
     GPT_BASELINE_CAPTURED: ['repository', 'chatgpt'], GPT_MIGRATED: ['chatgpt'], SKILL_RECONCILED: ['repository', 'chatgpt'],
+    TUTOR_SKILL_COMPOSED: ['repository'], TUTOR_SKILL_RECONCILED: ['repository'],
+    TUTOR_SKILL_BEHAVIOR_VERIFIED: ['chatgpt'], CAPABILITY_EQUIVALENCE_VERIFIED: ['chatgpt'],
+    BACKEND_APP_REGISTERED: ['chatgpt'], BACKEND_APP_OPTIONALITY_VERIFIED: ['repository'],
+    MIGRATED_SKILL_RECONCILED: ['repository', 'chatgpt'],
     REFERENCES_RECONCILED: ['repository', 'chatgpt'], PARITY_VERIFIED: ['chatgpt'], PACKAGE_READY: ['repository'], RELEASE_READY: ['repository'] };
   for (const gate of gates) if (state.gates[gate].status === 'VERIFIED') requireCondition(state.gates[gate].evidenceIds.some(id =>
     evidence.get(id).status === 'VERIFIED' && gateKinds[gate].includes(evidence.get(id).kind)), 'GATE_EVIDENCE_DOMAIN_INVALID');
   const dependencies = { GPT_MIGRATED: ['GPT_BASELINE_CAPTURED', 'CHATGPT_CONNECTION_REGISTERED', 'TOOL_DISCOVERY_VERIFIED'],
+    TUTOR_SKILL_COMPOSED: ['GPT_BASELINE_CAPTURED'], TUTOR_SKILL_RECONCILED: ['TUTOR_SKILL_COMPOSED'],
+    TUTOR_SKILL_BEHAVIOR_VERIFIED: ['TUTOR_SKILL_RECONCILED'],
+    CAPABILITY_EQUIVALENCE_VERIFIED: ['GPT_BASELINE_CAPTURED'],
+    BACKEND_APP_REGISTERED: ['CHATGPT_CONNECTION_REGISTERED'],
+    MIGRATED_SKILL_RECONCILED: ['GPT_MIGRATED', 'TUTOR_SKILL_RECONCILED'],
     SKILL_RECONCILED: ['GPT_BASELINE_CAPTURED', 'GPT_MIGRATED'], REFERENCES_RECONCILED: ['GPT_BASELINE_CAPTURED', 'GPT_MIGRATED'],
     PARITY_VERIFIED: ['SKILL_RECONCILED', 'REFERENCES_RECONCILED'], PACKAGE_READY: ['CODE_READY', 'PARITY_VERIFIED', 'LIVE_TUTOR_CALL_VERIFIED'],
     RELEASE_READY: gates.filter(gate => gate !== 'RELEASE_READY') };
   for (const [gate, prerequisites] of Object.entries(dependencies)) if (state.gates[gate].status === 'VERIFIED') requireCondition(
     prerequisites.every(prerequisite => state.gates[prerequisite].status === 'VERIFIED'), 'GATE_DEPENDENCY_NOT_VERIFIED');
-  for (const [gate, check] of Object.entries({ CHATGPT_CONNECTION_REGISTERED: 'registeredConnection', OAUTH_CONFIGURED: 'authentication', TOOL_DISCOVERY_VERIFIED: 'toolDiscovery', LIVE_TUTOR_CALL_VERIFIED: 'liveExecution' })) {
+  for (const [gate, check] of Object.entries({ CHATGPT_CONNECTION_REGISTERED: 'registeredConnection', BACKEND_APP_REGISTERED: 'registeredConnection', OAUTH_CONFIGURED: 'authentication', TOOL_DISCOVERY_VERIFIED: 'toolDiscovery', LIVE_TUTOR_CALL_VERIFIED: 'liveExecution' })) {
     requireCondition(state.gates[gate].status === connection.checks[check].status, 'CONNECTION_STATE_CONTRADICTION');
   }
   return evidence;
@@ -140,10 +155,10 @@ function validateParity(parity, evidence) {
     }
     if (item.disposition !== 'BLOCKER') {
       requireCondition(item.oldGpt && item.plugin && text(item.materialDifference) && reviewed(item), 'PARITY_COMPARISON_MISSING');
-      if (['direct', 'indirect', 'concise', 'structured', 'difficult', 'exact_format'].includes(item.category)) {
+      if (['authentication', 'unavailable', 'timeout', 'cancellation'].includes(item.category)) {
         requireCondition(item.toolInvoked === 'arcanos_tutor', 'PARITY_TUTOR_EXECUTION_MISSING');
       }
-      if (['non_activation', 'memory', 'admin', 'clarification'].includes(item.category)) {
+      if (['direct', 'indirect', 'concise', 'structured', 'difficult', 'exact_format', 'follow_up', 'references', 'non_activation', 'memory', 'admin', 'clarification'].includes(item.category)) {
         requireCondition(item.toolInvoked === null, 'PARITY_UNEXPECTED_EXECUTION');
       }
     }
@@ -234,7 +249,8 @@ async function verifyInputs(inputRoot, baseline, migration, referenceReview, par
     migratedSkillSha256: migratedSkill.sha256, packagedSkillSha256: packagedSkill.sha256
   }), 'INSTRUCTION_OWNER_ACCEPTANCE_MISSING');
   requireCondition(normalize(packagedSkill.content).includes(normalize(migratedSkill.content).replace(/^---\n[\s\S]*?\n---\n/u, '').trim()), 'MIGRATED_SKILL_NOT_INCLUDED');
-  requireCondition(reviewed(migration.skill) && migration.skill.approvedForRepository === true, 'MIGRATED_SKILL_PUBLICATION_NOT_APPROVED');
+  requireCondition(reviewed(migration.skill) && migration.skill.approvedForPrivateRelease === true,
+    'MIGRATED_SKILL_PRIVATE_RELEASE_NOT_APPROVED');
   const originals = new Map(baseline.knowledge.map(item => [item.name, item]));
   const migrated = new Map();
   for (const item of migration.references) {
@@ -283,6 +299,8 @@ export async function validateArcanosTutorPackage(root, { inputRoot } = {}) {
   gateConsistent('REFERENCES_RECONCILED', connection.referenceReconciliation === 'VERIFIED' && baseline.status === 'VERIFIED' && migration.status === 'VERIFIED');
   gateConsistent('PARITY_VERIFIED', parity.status === 'VERIFIED');
   const files = await readPackage(root, review.references);
+  const skillFirst = await validateSkillFirst({ root, inputRoot, baseline, state, evidence,
+    templateFiles: files, referenceReview: review });
   const schema = await readSafeFile(root, schemaFile);
   requireCondition(digest(schema.content.replace(/\r\n/gu, '\n')) === schemaDigest, 'SCHEMA_DIGEST_MISMATCH');
   const manifest = JSON.parse(files.get('plugin.json').content);
@@ -308,7 +326,7 @@ export async function validateArcanosTutorPackage(root, { inputRoot } = {}) {
   const mentionedTools = new Set(skill.content.match(/\barcanos_[a-z][a-z0-9_]*/gu) ?? []);
   requireCondition(equal([...mentionedTools], ['arcanos_tutor']), 'SKILL_TOOL_DEPENDENCY_INVALID');
 
-  const blockers = [];
+  const blockers = [...skillFirst.blockers];
   const block = (condition, code) => { if (!condition) blockers.push(code); };
   // Package/release are derived after artifact inspection, not prerequisites that
   // operators have to self-certify before invoking this validator.
@@ -323,13 +341,18 @@ export async function validateArcanosTutorPackage(root, { inputRoot } = {}) {
     connection.checks.liveExecution.evidenceIds.includes(id)), 'LIVE_CHATGPT_EVIDENCE_MISSING');
   block(Boolean(inputRoot), 'ACTUAL_INPUT_ARTIFACTS_NOT_INSPECTED');
   if (migration.registeredAppId !== undefined) requireCondition(migration.registeredAppId === connection.registeredAppId, 'MIGRATION_CONNECTION_MISMATCH');
-  if (inputRoot && blockers.length === 0) await verifyInputs(inputRoot, baseline, migration, review, parity, files, validator);
+  gateConsistent('MIGRATED_SKILL_RECONCILED', migration.instructionComparison !== null && connection.builderReconciliation === 'VERIFIED');
+  if (inputRoot && blockers.length === 0) await verifyInputs(inputRoot, baseline, migration, review, parity, skillFirst.privateFiles, validator);
   return {
     sourceValidation: 'PASS', releaseStatus: blockers.length === 0 ? 'VERIFIED' : 'BLOCKED',
     releaseBlockers: [...new Set(blockers)], archiveWritten: false,
     gates: Object.fromEntries(gates.map(gate => [gate, ['PACKAGE_READY', 'RELEASE_READY'].includes(gate) ?
       (blockers.length === 0 ? 'VERIFIED' : 'BLOCKED') : state.gates[gate].status])),
     packageFingerprint: packageFingerprint(files),
+    artifactKind: 'PUBLIC_TEMPLATE',
+    privatePackageFingerprint: skillFirst.composition.packageFingerprint,
+    skillOnlyTeachingReadiness: skillFirst.teachingReadiness,
+    backendReadiness: skillFirst.backendReadiness,
     distributionCandidates: [...files].map(([file, actual]) => ({ path: file, sha256: actual.sha256, sizeBytes: actual.sizeBytes })),
     validatedFileCount: files.size
   };

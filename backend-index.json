@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-25T03:32:11.534Z",
+  "generatedAt": "2026-09-26T00:02:24.571Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -5492,6 +5492,15 @@
         },
         {
           "relativePath": "tests/tutor-pilot-package.test.ts"
+        },
+        {
+          "relativePath": "tests/tutor-private-boundary.test.ts"
+        },
+        {
+          "relativePath": "tests/tutor-skill-composition.test.ts"
+        },
+        {
+          "relativePath": "tests/tutor-teaching-contract.test.ts"
         },
         {
           "relativePath": "tests/unified-config-nullish-branches.test.ts"

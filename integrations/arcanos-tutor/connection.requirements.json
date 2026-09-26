@@ -335,6 +335,34 @@
       "status": "VERIFIED",
       "observedAt": "2026-09-25T20:00:43Z",
       "summary": "Following owner approval, two maintained in-memory recaptures validate the unchanged private input and reproduce the prior sanitized inventory exactly. Configuration SHA-256 445255487dd270aad087e025b738666340ac1d42a2e45b05fe0b7df640e843bf, 10925 bytes; baseline fingerprint eb1d612dc2b4645841e3035a177ebb91fa6584a2ae633d7918972b9c9dd95e25. Knowledge inventory and bytes are verified for the owner-confirmed empty inventory. Publication review references real account and owner evidence; publicationAssurance remains USER_REPORTED. Raw inputs remain ignored/untracked. Only GPT_BASELINE_CAPTURED advances; no old-GPT parity observation is promoted and no runtime or migration action occurred."
+    },
+    {
+      "id": "skill-first-owner-architecture-20260925",
+      "kind": "user_reported",
+      "status": "USER_REPORTED",
+      "observedAt": "2026-09-25",
+      "summary": "Owner explicitly selected skill-first ordinary tutoring, optional backend use only for explicit backend intent or documented unique capability, separate teaching/backend testing, and private-only teaching composition. This authorizes repository restructuring and local composition, not migration, live calls, deployment, or exact composed-artifact approval."
+    },
+    {
+      "id": "private-skill-composition-20260925",
+      "kind": "repository",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-25",
+      "summary": "Two exclusive private compositions and read-only inspections preserve all eight approved instruction sections verbatim with identical 8520-byte skill SHA-256 a883bcb3fdd0cde31b44c144f74302d6ffc102256b25e40b1303d49857596e36 and package fingerprint 35cc450aeb915f4d1edf88ce70eceae02b4c07b794f76ca3effeb407c6d4ecbb. Source SHA-256 and approved baseline fingerprint unchanged. Private report covers 15 teaching categories with source/pending/not-established distinctions. Files ignored/untracked; owner review of this exact new artifact remains PENDING. This is composition integrity, not installed teaching, migration or release evidence."
+    },
+    {
+      "id": "optional-app-schema-contract-20260925",
+      "kind": "repository",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-25",
+      "summary": "Official OpenAI boolean optional-field validation and pinned OpenAI data-analytics example establish optional:true without a required flag. Portable schema structurally matches the unchanged local pin but has opaque extensions, so the repository separately enforces one optional app with the unchanged registered Tutor ID. Deterministic reference decisions keep ordinary teaching independent of backend status. This is schema/source-contract evidence only; installed-client optionality and teaching remain unverified."
+    },
+    {
+      "id": "private-skill-precedence-review-20260926",
+      "kind": "repository",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-26",
+      "summary": "Independent pedagogy review identified conflicting preserved legacy integration wiring. The public safeguards now explicitly supersede legacy Action/API/session/storage/capability directions without altering teaching bytes. Successor private v3/v4 compositions and inspectors are identical: skill 7661b328b99aa096f930f46e272ef9208de6f11e22c002e77f79d9ab78a15096 (9209 bytes), package 4a5bbb9052929adfac18f57d52090b30a8d62e9b66b1b3e6ecc041ecc5f41958, private report afd229757109e34f54dbf7c8de827ee47194aeb00099adc274a16d93e76c3ba8. Original source unchanged; eight sections preserved. Earlier v1/v2 remain historical. Exact composed-artifact owner review is still PENDING; no migration or teaching execution claimed."
     }
   ],
   "checks": {
@@ -372,5 +400,12 @@
     }
   },
   "builderReconciliation": "BLOCKED",
-  "referenceReconciliation": "BLOCKED"
+  "referenceReconciliation": "BLOCKED",
+  "usagePolicy": {
+    "defaultTeachingPath": "skill_only",
+    "appRequired": false,
+    "backendInvocation": "explicit_request_only",
+    "uniqueBackendCapabilities": [],
+    "scope": "arcanos:tutor"
+  }
 }

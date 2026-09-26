@@ -104,6 +104,47 @@
       "status": "BLOCKED",
       "evidenceIds": [],
       "note": "Remain draft. Do not install/share as the migrated replacement or retire the original GPT."
+    },
+    "TUTOR_SKILL_COMPOSED": {
+      "status": "VERIFIED",
+      "evidenceIds": [
+        "private-skill-precedence-review-20260926"
+      ],
+      "note": "Local candidate exists; two deterministic compositions and inspector match exact source, skill and package hashes. This verifies composition only; exact owner artifact review is PENDING and no migration occurred."
+    },
+    "TUTOR_SKILL_RECONCILED": {
+      "status": "BLOCKED",
+      "evidenceIds": [],
+      "note": "Owner must approve the exact composed private skill hash; baseline approval does not approve this new artifact."
+    },
+    "TUTOR_SKILL_BEHAVIOR_VERIFIED": {
+      "status": "BLOCKED",
+      "evidenceIds": [],
+      "note": "Eighteen teaching and routing cases are specified; deterministic contract tests are not installed-skill behavior evidence. Independent of backend live acceptance."
+    },
+    "CAPABILITY_EQUIVALENCE_VERIFIED": {
+      "status": "BLOCKED",
+      "evidenceIds": [],
+      "note": "Four published capabilities require supported-surface verification; toggles do not automatically transfer."
+    },
+    "BACKEND_APP_REGISTERED": {
+      "status": "VERIFIED",
+      "evidenceIds": [
+        "primary-reauth-schema-refresh-20260924"
+      ],
+      "note": "Alias for the existing dated registered Tutor app evidence; no new registration, authentication or connection change."
+    },
+    "BACKEND_APP_OPTIONALITY_VERIFIED": {
+      "status": "VERIFIED",
+      "evidenceIds": [
+        "optional-app-schema-contract-20260925"
+      ],
+      "note": "Official optional:true syntax, unchanged app identity and offline reference decisions verified. Scope is schema/source contract only; installed-client behavior remains unverified under TUTOR_SKILL_BEHAVIOR_VERIFIED."
+    },
+    "MIGRATED_SKILL_RECONCILED": {
+      "status": "BLOCKED",
+      "evidenceIds": [],
+      "note": "Actual migrated skill does not exist. Private composition is not Custom GPT migration."
     }
   }
 }

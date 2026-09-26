@@ -1,5 +1,11 @@
 # ARCANOS TUTOR platform reconciliation
 
+**Current architecture update (2026-09-25):** the owner selected skill-first
+teaching with an optional backend. The [new platform record](TUTOR_SKILL_FIRST_PLATFORM_20260925.md)
+supersedes this dated document's required-app design with supported `optional: true`.
+The account identity and authorization boundary remain unchanged. Historical
+requirements below describe the earlier integration candidate, not the current template.
+
 Companion to [platform requirements](PLATFORM.md). Official sources below were
 accessed on **2026-09-24 UTC** (2026-09-23 in the operator's local time). Recheck
 them before migration or distribution when account controls or formats change.

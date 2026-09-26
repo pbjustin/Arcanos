@@ -1,5 +1,9 @@
 # Published Tutor baseline on 2026-09-25
 
+The later [skill-first composition](TUTOR_SKILL_FIRST_20260925.md) uses this
+unchanged approved baseline. Approval of the published source does not approve
+the exact newly composed private skill; its review remains a separate checkpoint.
+
 ## Current checkpoint: owner-approved published baseline
 
 **GPT_BASELINE_CAPTURED=VERIFIED.** After the complete private file was linked for

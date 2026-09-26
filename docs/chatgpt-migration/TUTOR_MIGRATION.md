@@ -7,6 +7,14 @@ PR #1509 remains the **DRAFT migration container**, with auto-merge disabled.
 **MIGRATION_CHECKPOINT_READY=false**. The published baseline is owner-approved;
 Migrate to plugin is not authorized.
 
+The owner has selected **skill-first tutoring with an optional ARCANOS app**.
+The current package is a public source template; approved private instructions
+are composed only beneath the ignored local input directory. See the
+[skill-first implementation](TUTOR_SKILL_FIRST_20260925.md) and
+[current platform evidence](TUTOR_SKILL_FIRST_PLATFORM_20260925.md).
+Ordinary tutoring does not require a backend connection. Teaching readiness and
+backend acceptance are separate; neither certifies the other.
+
 Current main is authoritative for runtime code, schemas, tests, preview fixtures
 and production documentation. It was merged non-destructively into #1509 from
 `68bd5eeebf63f637ccd743110d81da5cce1b1991`. Only `backend-index.json` and
@@ -51,10 +59,12 @@ See the [current reconciliation record](TUTOR_RECONCILIATION_20260925.md),
 ## What is ready, and what is not
 
 The [standalone package](../../integrations/arcanos-tutor/README.md) has the final
-ARCANOS TUTOR identity and a real required app mapping. Its skill is a reviewed
-repository integration candidate, not a reconstruction of published Builder text.
+ARCANOS TUTOR identity and a real optional app mapping. Its tracked skill is a
+public template with integration safeguards, not the private teaching release.
+The deterministic private composition preserves the approved instruction text;
+the resulting exact artifact still requires owner review.
 The [gate ledger](../../integrations/arcanos-tutor/migration-state.json) records
-thirteen independent states; there is no single migrated boolean.
+twenty independent states; there is no single migrated boolean.
 
 | Gate | Current status | Basis |
 | --- | --- | --- |
@@ -65,6 +75,13 @@ thirteen independent states; there is no single migrated boolean.
 | TOOL_DISCOVERY_VERIFIED | VERIFIED | September 24 explicit Refresh exposed exactly arcanos_tutor with the corrected prompt schema |
 | LIVE_TUTOR_CALL_VERIFIED | BLOCKED | Latest post-#1512 A/C/D checkpoint remains FAIL; #1513 synthetic verification does not clear it |
 | GPT_BASELINE_CAPTURED | VERIFIED | Complete private capture, deterministic fingerprint and owner review recorded; latestPublishedConfirmed=true |
+| TUTOR_SKILL_COMPOSED | VERIFIED | Local composition integrity only; v3/v4 bytes match and exact owner artifact review remains pending |
+| TUTOR_SKILL_RECONCILED | BLOCKED | Exact composed private skill requires separate owner approval |
+| TUTOR_SKILL_BEHAVIOR_VERIFIED | BLOCKED | Eighteen cases specified; deterministic decisions are not installed-skill evidence |
+| CAPABILITY_EQUIVALENCE_VERIFIED | BLOCKED | Four host capability equivalents remain untested |
+| BACKEND_APP_REGISTERED | VERIFIED | Existing dated app registration; no new connection |
+| BACKEND_APP_OPTIONALITY_VERIFIED | VERIFIED | Official optional syntax and offline reference contract only; installed behavior unverified |
+| MIGRATED_SKILL_RECONCILED | BLOCKED | Actual migrated skill missing; private composition does not substitute for it |
 | GPT_MIGRATED | NOT_STARTED | Migration click has not been authorized or performed |
 | SKILL_RECONCILED | BLOCKED | Actual migrated skill missing; owner-approved published instructions remain private |
 | REFERENCES_RECONCILED | BLOCKED | Published knowledge explicitly empty; actual migrated reference inventory missing |

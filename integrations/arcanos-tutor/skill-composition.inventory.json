@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "kind": "PRIVATE_COMPOSED_RELEASE_CANDIDATE",
+  "status": "IMPLEMENTED_NOT_VERIFIED",
+  "baselineFingerprint": "eb1d612dc2b4645841e3035a177ebb91fa6584a2ae633d7918972b9c9dd95e25",
+  "configurationSha256": "445255487dd270aad087e025b738666340ac1d42a2e45b05fe0b7df640e843bf",
+  "outputDirectory": "composed-skill-v3",
+  "skill": {
+    "path": "skills/arcanos-tutor/SKILL.md",
+    "sha256": "7661b328b99aa096f930f46e272ef9208de6f11e22c002e77f79d9ab78a15096",
+    "sizeBytes": 9209
+  },
+  "packageFingerprint": "4a5bbb9052929adfac18f57d52090b30a8d62e9b66b1b3e6ecc041ecc5f41958",
+  "report": {
+    "path": "composition-report.json",
+    "sha256": "afd229757109e34f54dbf7c8de827ee47194aeb00099adc274a16d93e76c3ba8",
+    "sizeBytes": 14487
+  },
+  "sectionCount": 8,
+  "approvedRuleIds": [
+    "instruction-section-001",
+    "instruction-section-002",
+    "instruction-section-004",
+    "instruction-section-006",
+    "instruction-section-007",
+    "instruction-section-008"
+  ],
+  "ownerReview": {
+    "status": "PENDING"
+  },
+  "privateContentsTracked": false
+}

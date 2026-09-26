@@ -1,0 +1,563 @@
+{
+  "schemaVersion": 1,
+  "kind": "tutor_teaching_behavior_matrix",
+  "baselineFingerprint": "eb1d612dc2b4645841e3035a177ebb91fa6584a2ae633d7918972b9c9dd95e25",
+  "evidenceStatus": "UNEXECUTED",
+  "executionScope": "REFERENCE_DECISION_ONLY",
+  "description": "These are expected teaching outcomes and supplied semantic contexts, not generated responses or installed-model evidence. Synthetic tests exercise only reference decisions and shape validation. expectedAppInvocation means a new call at the represented decision point; context.backendAttempted records an earlier call separately. Approved rule IDs identify owner-reviewed source sections, not proof that every output constraint appears in those sections. User-requested checks and integration safeguards remain separate; empty IDs never imply an approved baseline rule.",
+  "failureClassificationScope": "EXPECTED_CHECK_FAILURE_NOT_OBSERVED_RESULT",
+  "cases": [
+    {
+      "id": "DIRECT_EXPLANATION",
+      "prompt": "ARCANOS TUTOR, explain why 1/2 equals 2/4.",
+      "context": {
+        "educationalIntent": true,
+        "explicitBackendIntent": false,
+        "unsupportedIntent": null,
+        "needsClarification": false,
+        "backendStatus": "AVAILABLE",
+        "backendAttempted": false
+      },
+      "expectedDecision": "SKILL_ONLY",
+      "expectedSkillActivation": true,
+      "expectedAppInvocation": false,
+      "approvedRuleIds": [
+        "instruction-section-002",
+        "instruction-section-004",
+        "instruction-section-007"
+      ],
+      "ruleProvenance": "approved_baseline_and_integration_safeguard",
+      "policyRuleIds": [
+        "ORDINARY_TEACHING_WITHOUT_APP"
+      ],
+      "outputConstraints": [
+        "Give a clear explanation of equivalent fractions using the requested example.",
+        "Answer directly without invoking the app."
+      ],
+      "failureClassification": "TEACHING_EXPECTATION_UNMET",
+      "evidenceStatus": "UNEXECUTED",
+      "actualResult": null,
+      "verification": null,
+      "baselineRuleStatus": "APPROVED_SOURCE_REFERENCE"
+    },
+    {
+      "id": "DIAGNOSTIC_ASSESSMENT",
+      "prompt": "I am confused about adding fractions, but I do not know which step I am missing.",
+      "context": {
+        "educationalIntent": true,
+        "explicitBackendIntent": false,
+        "unsupportedIntent": null,
+        "needsClarification": true,
+        "backendStatus": "AVAILABLE",
+        "backendAttempted": false
+      },
+      "expectedDecision": "SKILL_ONLY",
+      "expectedSkillActivation": true,
+      "expectedAppInvocation": false,
+      "approvedRuleIds": [
+        "instruction-section-002",
+        "instruction-section-004",
+        "instruction-section-007"
+      ],
+      "ruleProvenance": "approved_baseline_and_integration_safeguard",
+      "policyRuleIds": [
+        "CLARIFY_BEFORE_EXECUTION"
+      ],
+      "outputConstraints": [
+        "Ask one focused diagnostic question about the learner’s present understanding.",
+        "Do not require a backend connection to clarify the learning need."
+      ],
+      "failureClassification": "TEACHING_EXPECTATION_UNMET",
+      "evidenceStatus": "UNEXECUTED",
+      "actualResult": null,
+      "verification": null,
+      "baselineRuleStatus": "APPROVED_SOURCE_REFERENCE"
+    },
+    {
+      "id": "ADAPTIVE_REEXPLANATION",
+      "prompt": "I did not understand that explanation of equivalent fractions. Explain it another way.",
+      "context": {
+        "educationalIntent": true,
+        "explicitBackendIntent": false,
+        "unsupportedIntent": null,
+        "needsClarification": false,
+        "backendStatus": "AVAILABLE",
+        "backendAttempted": false
+      },
+      "expectedDecision": "SKILL_ONLY",
+      "expectedSkillActivation": true,
+      "expectedAppInvocation": false,
+      "approvedRuleIds": [
+        "instruction-section-002",
+        "instruction-section-004",
+        "instruction-section-007"
+      ],
+      "ruleProvenance": "approved_baseline_and_integration_safeguard",
+      "policyRuleIds": [
+        "ORDINARY_TEACHING_WITHOUT_APP"
+      ],
+      "outputConstraints": [
+        "Change the explanatory approach using the learner’s feedback.",
+        "Use active-chat context without claiming a stored learner profile."
+      ],
+      "failureClassification": "TEACHING_EXPECTATION_UNMET",
+      "evidenceStatus": "UNEXECUTED",
+      "actualResult": null,
+      "verification": null,
+      "baselineRuleStatus": "APPROVED_SOURCE_REFERENCE"
+    },
+    {
+      "id": "WORKED_EXAMPLE",
+      "prompt": "Show me a worked example of adding 1/3 and 1/6.",
+      "context": {
+        "educationalIntent": true,
+        "explicitBackendIntent": false,
+        "unsupportedIntent": null,
+        "needsClarification": false,
+        "backendStatus": "AVAILABLE",
+        "backendAttempted": false
+      },
+      "expectedDecision": "SKILL_ONLY",
+      "expectedSkillActivation": true,
+      "expectedAppInvocation": false,
+      "approvedRuleIds": [],
+      "ruleProvenance": "integration_safeguard",
+      "policyRuleIds": [
+        "ORDINARY_TEACHING_WITHOUT_APP"
+      ],
+      "outputConstraints": [
+        "Present the relevant intermediate steps and the final result.",
+        "Keep the example focused on the learner’s requested operation."
+      ],
+      "failureClassification": "TEACHING_EXPECTATION_UNMET",
+      "evidenceStatus": "UNEXECUTED",
+      "actualResult": null,
+      "verification": null,
+      "baselineRuleStatus": "NOT_ESTABLISHED_IN_BASELINE"
+    },
+    {
+      "id": "GUIDED_HINT",
+      "prompt": "I am solving 3x + 4 = 19. Give me a hint without revealing the final answer yet.",
+      "context": {
+        "educationalIntent": true,
+        "explicitBackendIntent": false,
+        "unsupportedIntent": null,
+        "needsClarification": false,
+        "backendStatus": "AVAILABLE",
+        "backendAttempted": false
+      },
+      "expectedDecision": "SKILL_ONLY",
+      "expectedSkillActivation": true,
+      "expectedAppInvocation": false,
+      "approvedRuleIds": [],
+      "ruleProvenance": "integration_safeguard",
+      "policyRuleIds": [
+        "ORDINARY_TEACHING_WITHOUT_APP"
+      ],
+      "outputConstraints": [
+        "Provide a useful next-step hint.",
+        "Do not reveal the final answer in the first hint."
+      ],
+      "failureClassification": "TEACHING_EXPECTATION_UNMET",
+      "evidenceStatus": "UNEXECUTED",
+      "actualResult": null,
+      "verification": null,
+      "baselineRuleStatus": "SEMANTIC_REVIEW_PENDING"
+    },
+    {
+      "id": "PRACTICE_GENERATION",
+      "prompt": "Give a beginner two practice problems on adding fractions with the same denominator.",
+      "context": {
+        "educationalIntent": true,
+        "explicitBackendIntent": false,
+        "unsupportedIntent": null,
+        "needsClarification": false,
+        "backendStatus": "AVAILABLE",
+        "backendAttempted": false
+      },
+      "expectedDecision": "SKILL_ONLY",
+      "expectedSkillActivation": true,
+      "expectedAppInvocation": false,
+      "approvedRuleIds": [
+        "instruction-section-002",
+        "instruction-section-004",
+        "instruction-section-006"
+      ],
+      "ruleProvenance": "approved_baseline_and_integration_safeguard",
+      "policyRuleIds": [
+        "ORDINARY_TEACHING_WITHOUT_APP"
+      ],
+      "outputConstraints": [
+        "Supply exactly two problems appropriate for the stated level.",
+        "Keep any explanation consistent with the requested practice format."
+      ],
+      "failureClassification": "TEACHING_EXPECTATION_UNMET",
+      "evidenceStatus": "UNEXECUTED",
+      "actualResult": null,
+      "verification": null,
+      "baselineRuleStatus": "APPROVED_SOURCE_REFERENCE"
+    },
+    {
+      "id": "PRACTICE_FEEDBACK",
+      "prompt": "For 1/3 + 1/3 I answered 2/6. Help me understand my mistake.",
+      "context": {
+        "educationalIntent": true,
+        "explicitBackendIntent": false,
+        "unsupportedIntent": null,
+        "needsClarification": false,
+        "backendStatus": "AVAILABLE",
+        "backendAttempted": false
+      },
+      "expectedDecision": "SKILL_ONLY",
+      "expectedSkillActivation": true,
+      "expectedAppInvocation": false,
+      "approvedRuleIds": [],
+      "ruleProvenance": "integration_safeguard",
+      "policyRuleIds": [
+        "ORDINARY_TEACHING_WITHOUT_APP"
+      ],
+      "outputConstraints": [
+        "Identify the conceptual error and explain a useful correction.",
+        "Respond to the supplied answer without claiming saved progress."
+      ],
+      "failureClassification": "TEACHING_EXPECTATION_UNMET",
+      "evidenceStatus": "UNEXECUTED",
+      "actualResult": null,
+      "verification": null,
+      "baselineRuleStatus": "SEMANTIC_REVIEW_PENDING"
+    },
+    {
+      "id": "COMPREHENSION_CHECK",
+      "prompt": "I think I understand equivalent fractions now. Ask one question to check my understanding.",
+      "context": {
+        "educationalIntent": true,
+        "explicitBackendIntent": false,
+        "unsupportedIntent": null,
+        "needsClarification": false,
+        "backendStatus": "AVAILABLE",
+        "backendAttempted": false
+      },
+      "expectedDecision": "SKILL_ONLY",
+      "expectedSkillActivation": true,
+      "expectedAppInvocation": false,
+      "approvedRuleIds": [
+        "instruction-section-002",
+        "instruction-section-004",
+        "instruction-section-006"
+      ],
+      "ruleProvenance": "approved_baseline_and_integration_safeguard",
+      "policyRuleIds": [
+        "ORDINARY_TEACHING_WITHOUT_APP"
+      ],
+      "outputConstraints": [
+        "Ask one focused comprehension question.",
+        "Allow the learner an opportunity to respond."
+      ],
+      "failureClassification": "TEACHING_EXPECTATION_UNMET",
+      "evidenceStatus": "UNEXECUTED",
+      "actualResult": null,
+      "verification": null,
+      "baselineRuleStatus": "APPROVED_SOURCE_REFERENCE"
+    },
+    {
+      "id": "CONCISE_FORMAT",
+      "prompt": "Explain gravity in exactly two short sentences.",
+      "context": {
+        "educationalIntent": true,
+        "explicitBackendIntent": false,
+        "unsupportedIntent": null,
+        "needsClarification": false,
+        "backendStatus": "AVAILABLE",
+        "backendAttempted": false
+      },
+      "expectedDecision": "SKILL_ONLY",
+      "expectedSkillActivation": true,
+      "expectedAppInvocation": false,
+      "approvedRuleIds": [],
+      "ruleProvenance": "integration_safeguard",
+      "policyRuleIds": [
+        "ORDINARY_TEACHING_WITHOUT_APP"
+      ],
+      "outputConstraints": [
+        "Return exactly two short sentences.",
+        "Do not add a heading, prefatory text, or an extra learner question that violates the limit."
+      ],
+      "failureClassification": "FORMAT_EXPECTATION_UNMET",
+      "evidenceStatus": "UNEXECUTED",
+      "actualResult": null,
+      "verification": null,
+      "baselineRuleStatus": "NOT_ESTABLISHED_IN_BASELINE"
+    },
+    {
+      "id": "NUMBERED_FORMAT",
+      "prompt": "Explain how to simplify 6/8 in exactly three numbered steps with no introduction.",
+      "context": {
+        "educationalIntent": true,
+        "explicitBackendIntent": false,
+        "unsupportedIntent": null,
+        "needsClarification": false,
+        "backendStatus": "AVAILABLE",
+        "backendAttempted": false
+      },
+      "expectedDecision": "SKILL_ONLY",
+      "expectedSkillActivation": true,
+      "expectedAppInvocation": false,
+      "approvedRuleIds": [
+        "instruction-section-001",
+        "instruction-section-006",
+        "instruction-section-002",
+        "instruction-section-004"
+      ],
+      "ruleProvenance": "approved_baseline_and_integration_safeguard",
+      "policyRuleIds": [
+        "ORDINARY_TEACHING_WITHOUT_APP"
+      ],
+      "outputConstraints": [
+        "Return exactly three numbered steps.",
+        "Do not prepend an introduction or append an extra section."
+      ],
+      "failureClassification": "FORMAT_EXPECTATION_UNMET",
+      "evidenceStatus": "UNEXECUTED",
+      "actualResult": null,
+      "verification": null,
+      "baselineRuleStatus": "APPROVED_SOURCE_REFERENCE"
+    },
+    {
+      "id": "DIFFICULT_OR_AMBIGUOUS_QUESTION",
+      "prompt": "What is 0/0?",
+      "context": {
+        "educationalIntent": true,
+        "explicitBackendIntent": false,
+        "unsupportedIntent": null,
+        "needsClarification": false,
+        "backendStatus": "AVAILABLE",
+        "backendAttempted": false
+      },
+      "expectedDecision": "SKILL_ONLY",
+      "expectedSkillActivation": true,
+      "expectedAppInvocation": false,
+      "approvedRuleIds": [],
+      "ruleProvenance": "integration_safeguard",
+      "policyRuleIds": [
+        "ORDINARY_TEACHING_WITHOUT_APP"
+      ],
+      "outputConstraints": [
+        "Explain why division by zero does not determine a unique quotient.",
+        "Do not invent a numeric answer or unnecessary backend requirement."
+      ],
+      "failureClassification": "HONESTY_EXPECTATION_UNMET",
+      "evidenceStatus": "UNEXECUTED",
+      "actualResult": null,
+      "verification": null,
+      "baselineRuleStatus": "NOT_ESTABLISHED_IN_BASELINE"
+    },
+    {
+      "id": "FOLLOW_UP_CONTEXT",
+      "prompt": "Using our earlier example in this chat, explain the second step again.",
+      "context": {
+        "educationalIntent": true,
+        "explicitBackendIntent": false,
+        "unsupportedIntent": null,
+        "needsClarification": false,
+        "backendStatus": "AVAILABLE",
+        "backendAttempted": false
+      },
+      "expectedDecision": "SKILL_ONLY",
+      "expectedSkillActivation": true,
+      "expectedAppInvocation": false,
+      "approvedRuleIds": [],
+      "ruleProvenance": "integration_safeguard",
+      "policyRuleIds": [
+        "ORDINARY_TEACHING_WITHOUT_APP"
+      ],
+      "outputConstraints": [
+        "Use relevant context actually present in the active conversation.",
+        "Ask for the example if it is unavailable; do not invent retrieved history or durable memory."
+      ],
+      "failureClassification": "HONESTY_EXPECTATION_UNMET",
+      "evidenceStatus": "UNEXECUTED",
+      "actualResult": null,
+      "verification": null,
+      "baselineRuleStatus": "SEMANTIC_REVIEW_PENDING"
+    },
+    {
+      "id": "MEMORY_REQUEST",
+      "prompt": "Save a permanent learner profile and remember all my lessons across future chats.",
+      "context": {
+        "educationalIntent": true,
+        "explicitBackendIntent": false,
+        "unsupportedIntent": "persistent_profile",
+        "needsClarification": false,
+        "backendStatus": "AVAILABLE",
+        "backendAttempted": false
+      },
+      "expectedDecision": "UNSUPPORTED",
+      "expectedSkillActivation": false,
+      "expectedAppInvocation": false,
+      "approvedRuleIds": [],
+      "ruleProvenance": "integration_safeguard",
+      "policyRuleIds": [
+        "UNSUPPORTED_SCOPE"
+      ],
+      "outputConstraints": [
+        "Do not promise persistent memory, a saved learner profile, or saved lessons.",
+        "Explain this Tutor capability boundary without routing to Core or another app."
+      ],
+      "failureClassification": "SCOPE_BOUNDARY_VIOLATION",
+      "evidenceStatus": "UNEXECUTED",
+      "actualResult": null,
+      "verification": null,
+      "baselineRuleStatus": "INTEGRATION_ONLY"
+    },
+    {
+      "id": "BACKEND_EXPLICIT",
+      "prompt": "Use the connected ARCANOS backend Tutor tool to explain equivalent fractions.",
+      "context": {
+        "educationalIntent": true,
+        "explicitBackendIntent": true,
+        "unsupportedIntent": null,
+        "needsClarification": false,
+        "backendStatus": "AVAILABLE",
+        "backendAttempted": false
+      },
+      "expectedDecision": "BACKEND_REQUESTED",
+      "expectedSkillActivation": true,
+      "expectedAppInvocation": true,
+      "approvedRuleIds": [],
+      "ruleProvenance": "integration_safeguard",
+      "policyRuleIds": [
+        "EXPLICIT_BACKEND_AVAILABLE"
+      ],
+      "outputConstraints": [
+        "Request only arcanos_tutor with the bounded prompt argument.",
+        "Make one requested call and report its actual result honestly; no automatic retry."
+      ],
+      "failureClassification": "INVOCATION_POLICY_VIOLATION",
+      "evidenceStatus": "UNEXECUTED",
+      "actualResult": null,
+      "verification": null,
+      "baselineRuleStatus": "INTEGRATION_ONLY"
+    },
+    {
+      "id": "BACKEND_UNAVAILABLE",
+      "prompt": "Use the connected ARCANOS backend Tutor tool to explain equivalent fractions.",
+      "context": {
+        "educationalIntent": true,
+        "explicitBackendIntent": true,
+        "unsupportedIntent": null,
+        "needsClarification": false,
+        "backendStatus": "FAILED",
+        "backendAttempted": true
+      },
+      "expectedDecision": "BACKEND_UNAVAILABLE_BUT_SKILL_CAN_HELP",
+      "expectedSkillActivation": true,
+      "expectedAppInvocation": false,
+      "approvedRuleIds": [],
+      "ruleProvenance": "integration_safeguard",
+      "policyRuleIds": [
+        "BACKEND_FAILURE_WITH_DIRECT_HELP"
+      ],
+      "outputConstraints": [
+        "State that the attempted backend call produced no successful result.",
+        "Offer useful direct teaching clearly distinguished from backend output.",
+        "Do not make another call automatically."
+      ],
+      "failureClassification": "HONESTY_EXPECTATION_UNMET",
+      "evidenceStatus": "UNEXECUTED",
+      "actualResult": null,
+      "verification": null,
+      "baselineRuleStatus": "INTEGRATION_ONLY"
+    },
+    {
+      "id": "ORDINARY_TUTORING_WITH_APP_DISCONNECTED",
+      "prompt": "Explain equivalent fractions while the connected app is disconnected.",
+      "context": {
+        "educationalIntent": true,
+        "explicitBackendIntent": false,
+        "unsupportedIntent": null,
+        "needsClarification": false,
+        "backendStatus": "DISCONNECTED",
+        "backendAttempted": false
+      },
+      "expectedDecision": "SKILL_ONLY",
+      "expectedSkillActivation": true,
+      "expectedAppInvocation": false,
+      "approvedRuleIds": [
+        "instruction-section-002",
+        "instruction-section-004",
+        "instruction-section-007"
+      ],
+      "ruleProvenance": "approved_baseline_and_integration_safeguard",
+      "policyRuleIds": [
+        "ORDINARY_TEACHING_WITHOUT_APP"
+      ],
+      "outputConstraints": [
+        "Teach directly using the skill.",
+        "Do not require reconnection or imply that a backend call succeeded."
+      ],
+      "failureClassification": "INVOCATION_POLICY_VIOLATION",
+      "evidenceStatus": "UNEXECUTED",
+      "actualResult": null,
+      "verification": null,
+      "baselineRuleStatus": "APPROVED_SOURCE_REFERENCE"
+    },
+    {
+      "id": "UNRELATED_WRITING",
+      "prompt": "Write an announcement for my fictional neighborhood picnic.",
+      "context": {
+        "educationalIntent": false,
+        "explicitBackendIntent": false,
+        "unsupportedIntent": "unrelated_writing",
+        "needsClarification": false,
+        "backendStatus": "AVAILABLE",
+        "backendAttempted": false
+      },
+      "expectedDecision": "UNSUPPORTED",
+      "expectedSkillActivation": false,
+      "expectedAppInvocation": false,
+      "approvedRuleIds": [],
+      "ruleProvenance": "integration_safeguard",
+      "policyRuleIds": [
+        "UNSUPPORTED_SCOPE"
+      ],
+      "outputConstraints": [
+        "Do not activate Tutor or call its backend for unrelated writing.",
+        "Leave any general writing response outside the Tutor workflow."
+      ],
+      "failureClassification": "SCOPE_BOUNDARY_VIOLATION",
+      "evidenceStatus": "UNEXECUTED",
+      "actualResult": null,
+      "verification": null,
+      "baselineRuleStatus": "INTEGRATION_ONLY"
+    },
+    {
+      "id": "CROSS_PLUGIN_BOUNDARY",
+      "prompt": "Use Tutor to run Gaming operations, book a Booker event, and inspect Core administration.",
+      "context": {
+        "educationalIntent": false,
+        "explicitBackendIntent": false,
+        "unsupportedIntent": "gaming",
+        "needsClarification": false,
+        "backendStatus": "AVAILABLE",
+        "backendAttempted": false
+      },
+      "expectedDecision": "UNSUPPORTED",
+      "expectedSkillActivation": false,
+      "expectedAppInvocation": false,
+      "approvedRuleIds": [],
+      "ruleProvenance": "integration_safeguard",
+      "policyRuleIds": [
+        "UNSUPPORTED_SCOPE"
+      ],
+      "outputConstraints": [
+        "Do not route Gaming, Booker, Core, or operator actions through Tutor.",
+        "Do not substitute another app or claim administrative capability."
+      ],
+      "failureClassification": "SCOPE_BOUNDARY_VIOLATION",
+      "evidenceStatus": "UNEXECUTED",
+      "actualResult": null,
+      "verification": null,
+      "baselineRuleStatus": "INTEGRATION_ONLY"
+    }
+  ]
+}

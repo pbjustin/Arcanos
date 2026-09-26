@@ -1,0 +1,174 @@
+{
+  "schemaVersion": 1,
+  "status": "NOT_TESTED",
+  "accessedAt": "2026-09-25",
+  "baselineConfigurationSha256": "445255487dd270aad087e025b738666340ac1d42a2e45b05fe0b7df640e843bf",
+  "baselineFingerprint": "eb1d612dc2b4645841e3035a177ebb91fa6584a2ae633d7918972b9c9dd95e25",
+  "baselineInventory": "baseline.inventory.json",
+  "report": "../../docs/chatgpt-migration/TUTOR_SKILL_FIRST_PLATFORM_20260925.md",
+  "evidenceScope": "Official platform research and reviewed safe published metadata only. No installed-client, old-GPT, migrated-plugin, or live-provider execution was performed.",
+  "platformContract": {
+    "architecture": "one_plugin_with_app_independent_core_and_optional_backend",
+    "registeredAppId": "asdk_app_6ab4747769088191856fd8eb02507240",
+    "appEntryOptional": true,
+    "optionalSyntaxEvidenceIds": ["openai-app-validation", "openai-optional-example"],
+    "portableSchemaVerified": true,
+    "portableSchemaLimit": "Agent Plugins 1.0.0 extension objects do not define app-mapping semantics; optional behavior requires the OpenAI-specific contract and eventual client testing.",
+    "activation": "Explicit skill selection and implicit matching are documented. Core tutoring need not call the backend. Explicit backend intent and an available arcanos_tutor tool are required by this package design.",
+    "privateDistribution": "Private local marketplace packaging is documented. Local installation does not prove web/mobile availability or workspace distribution. No installation, sharing, or migration is recorded here.",
+    "surfaceLimit": "Plugin skills are documented for eligible Chat/Work users on web, desktop and mobile. Desktop-only packages and account policies limit access. This does not certify the custom Tutor backend on mobile.",
+    "evidenceIds": ["openai-migration", "openai-app-reference", "openai-packaging", "openai-skills", "openai-plugin-surfaces"]
+  },
+  "sourceDocs": [
+    {
+      "id": "openai-migration",
+      "url": "https://learn.chatgpt.com/docs/migrate-custom-gpts",
+      "accessedAt": "2026-09-25"
+    },
+    {
+      "id": "openai-app-validation",
+      "url": "https://developers.openai.com/plugins/deploy/submission-errors#mcp-server-reference-errors",
+      "accessedAt": "2026-09-25"
+    },
+    {
+      "id": "openai-optional-example",
+      "url": "https://github.com/openai/plugins/blob/1dc195897af4161d039b80d8471ec0a10c9bbc89/plugins/data-analytics/.app.json",
+      "accessedAt": "2026-09-25",
+      "commit": "1dc195897af4161d039b80d8471ec0a10c9bbc89",
+      "blobSha": "d77eb02de2cbd82d0969902957e4cf90e18db29e"
+    },
+    {
+      "id": "openai-app-reference",
+      "url": "https://learn.chatgpt.com/docs/enterprise/plugin-management#reference-an-existing-app-with-appjson",
+      "accessedAt": "2026-09-25"
+    },
+    {
+      "id": "portable-schema",
+      "url": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+      "accessedAt": "2026-09-25",
+      "localFile": "schemas/agent-plugins-1.0.0.schema.json"
+    },
+    {
+      "id": "openai-packaging",
+      "url": "https://developers.openai.com/plugins/build/plugins",
+      "accessedAt": "2026-09-25"
+    },
+    {
+      "id": "openai-skills",
+      "url": "https://learn.chatgpt.com/docs/build-skills",
+      "accessedAt": "2026-09-25"
+    },
+    {
+      "id": "openai-plugin-surfaces",
+      "url": "https://learn.chatgpt.com/docs/plugins",
+      "accessedAt": "2026-09-25"
+    },
+    {
+      "id": "openai-web-search",
+      "url": "https://learn.chatgpt.com/docs/web-search",
+      "accessedAt": "2026-09-25"
+    },
+    {
+      "id": "openai-images",
+      "url": "https://learn.chatgpt.com/docs/image-generation",
+      "accessedAt": "2026-09-25"
+    },
+    {
+      "id": "openai-files",
+      "url": "https://learn.chatgpt.com/docs/artifacts-viewer",
+      "accessedAt": "2026-09-25"
+    },
+    {
+      "id": "openai-visualizations",
+      "url": "https://learn.chatgpt.com/docs/visualizations#check-availability",
+      "accessedAt": "2026-09-25"
+    },
+    {
+      "id": "openai-work",
+      "url": "https://learn.chatgpt.com/docs/get-started-with-work",
+      "accessedAt": "2026-09-25"
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "web-search",
+      "publishedName": "Web Search",
+      "enabled": true,
+      "proposedEquivalent": "Use available host web search for current or source-grounded tutoring research.",
+      "surfaces": {
+        "web": "Documented subject to workspace restrictions; this package is untested.",
+        "desktop": "Documented host search; this package is untested.",
+        "mobile": "General plugin-skill availability is documented; this capability and account availability are not verified."
+      },
+      "explicitIntent": "Use when the task asks for current facts, verification, or cited research; do not require search for ordinary self-contained tutoring.",
+      "testMethod": "After separate authorization, run explicit skill selection and a normal request for a current sourced explanation on each intended surface; inspect actual search activity, citation support, and the unavailable-tool response.",
+      "status": "NOT_TESTED",
+      "knownDifferences": [
+        "The GPT capability switch does not transfer a guaranteed tool configuration.",
+        "Host search policy, availability and retrieved results can differ; no backend tool is required for this capability."
+      ],
+      "evidenceIds": ["openai-web-search", "openai-migration", "openai-plugin-surfaces"],
+      "executionEvidence": []
+    },
+    {
+      "id": "canvas",
+      "publishedName": "Canvas",
+      "enabled": true,
+      "proposedEquivalent": "Use available host document/code editing, artifact previews, or interactive visualizations for editable learning material.",
+      "surfaces": {
+        "web": "Work file review is documented; visualizations require a supported account. Literal GPT Canvas equivalence is unverified.",
+        "desktop": "File previews and annotations are documented; visualization availability is in rollout. This package is untested.",
+        "mobile": "Visualization rollout depends on account/app version; literal Canvas editing and this package are unverified."
+      },
+      "explicitIntent": "Use when the learner asks for an editable explanation, worksheet, code artifact, or interactive learning aid; do not claim Canvas was opened unless the host actually provides it.",
+      "testMethod": "After separate authorization, create a small editable lesson, revise one selected passage without changing another, and review the resulting artifact on each eligible surface; record any missing editor or preview as a difference.",
+      "status": "NOT_TESTED",
+      "knownDifferences": [
+        "This is a proposed functional alternative, not proof of the original GPT Canvas UI, editing history, or session behavior.",
+        "Visualization rendering is not supported in Codex CLI or the IDE extension; those are not substitute proof for web/desktop/mobile."
+      ],
+      "evidenceIds": ["openai-files", "openai-visualizations", "openai-migration"],
+      "executionEvidence": []
+    },
+    {
+      "id": "image-generation",
+      "publishedName": "Image Generation",
+      "enabled": true,
+      "proposedEquivalent": "Use available host image generation and image editing for requested learning illustrations.",
+      "surfaces": {
+        "web": "Image requests and reference-image input are documented; plan/workspace restrictions apply. This package is untested.",
+        "desktop": "Image creation, editing, and review are documented; this package is untested.",
+        "mobile": "General plugin-skill availability is documented; image execution with this package is unverified."
+      },
+      "explicitIntent": "Require a request to create or edit an image before generating one; distinguish a proposed image from an actual generated result.",
+      "testMethod": "After separate authorization, request one educational illustration with verifiable labels and one specific revision; inspect actual image output, label accuracy, preservation requirements, and missing-tool behavior per intended surface.",
+      "status": "NOT_TESTED",
+      "knownDifferences": [
+        "Available models, limits, image controls and output quality may differ from the original GPT.",
+        "A textual description or successful backend answer does not prove image-generation parity."
+      ],
+      "evidenceIds": ["openai-images", "openai-migration", "openai-plugin-surfaces"],
+      "executionEvidence": []
+    },
+    {
+      "id": "code-interpreter-data-analysis",
+      "publishedName": "Code Interpreter & Data Analysis",
+      "enabled": true,
+      "proposedEquivalent": "Use available host computation and file tools for requested calculations, supplied-data analysis, charts and exports.",
+      "surfaces": {
+        "web": "Work analysis and file creation are documented; exact execution tools and this package remain unverified.",
+        "desktop": "Work can use available local files and tools; exact computation environment and this package remain unverified.",
+        "mobile": "Continuing eligible cloud Work is documented; code execution and generated-file interaction for this package remain unverified."
+      },
+      "explicitIntent": "Use for requested computation or analysis of supplied data, with an agreed output; do not claim code ran or a file was created without actual tool evidence.",
+      "testMethod": "After separate authorization, analyze a small synthetic dataset with known mean and total, produce a labeled chart and an export, independently check the arithmetic and artifact, and record the actual execution environment per intended surface.",
+      "status": "NOT_TESTED",
+      "knownDifferences": [
+        "The original Code Interpreter environment, packages, persistence, execution limits and file lifecycle are not guaranteed.",
+        "Reasoned arithmetic alone is not evidence of code execution or file-generation parity; no backend tool is required for the proposed host workflow."
+      ],
+      "evidenceIds": ["openai-work", "openai-files", "openai-migration", "openai-plugin-surfaces"],
+      "executionEvidence": []
+    }
+  ]
+}

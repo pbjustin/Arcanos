@@ -51,6 +51,7 @@
     "validate:tutor-package": "node scripts/validate-arcanos-tutor-package.mjs",
     "validate:tutor-release": "node scripts/validate-arcanos-tutor-package.mjs --release",
     "capture:tutor-baseline": "node scripts/capture-tutor-baseline.mjs",
+    "compose:tutor-skill": "node scripts/compose-tutor-skill.mjs",
     "lint": "eslint src tests packages workers arcanos-ai-runtime",
     "lint:fix": "eslint src tests packages workers arcanos-ai-runtime --fix",
     "assistants-sync": "npx ts-node scripts/assistants-sync.ts",

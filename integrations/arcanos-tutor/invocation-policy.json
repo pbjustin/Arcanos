@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "kind": "tutor_invocation_reference_policy",
+  "status": "IMPLEMENTED_NOT_VERIFIED",
+  "evidenceScope": "REPOSITORY_REFERENCE_CONTRACT",
+  "description": "Reference decisions over supplied semantic facts only. This does not classify learner text, invoke tools, or establish installed-skill or model behavior. Selecting or naming Tutor does not by itself request backend execution.",
+  "defaultTeachingDecision": "SKILL_ONLY",
+  "uniqueBackendCapabilities": [],
+  "contextFields": [
+    "educationalIntent",
+    "explicitBackendIntent",
+    "unsupportedIntent",
+    "needsClarification",
+    "backendStatus",
+    "backendAttempted"
+  ],
+  "backendStatuses": [
+    "AVAILABLE",
+    "DISABLED",
+    "DISCONNECTED",
+    "AUTHENTICATION_EXPIRED",
+    "UNAVAILABLE",
+    "FAILED",
+    "TIMED_OUT",
+    "CANCELLED"
+  ],
+  "unsupportedIntents": [
+    "administration",
+    "memory",
+    "persistent_profile",
+    "saved_lessons",
+    "source_ingestion",
+    "gaming",
+    "booker",
+    "core",
+    "operator",
+    "unrelated_writing"
+  ],
+  "ruleIds": [
+    "UNSUPPORTED_SCOPE",
+    "NON_EDUCATIONAL_REQUEST",
+    "CLARIFY_BEFORE_EXECUTION",
+    "ORDINARY_TEACHING_WITHOUT_APP",
+    "EXPLICIT_BACKEND_AVAILABLE",
+    "BACKEND_FAILURE_WITH_DIRECT_HELP"
+  ],
+  "backendTool": {
+    "name": "arcanos_tutor",
+    "inputKeys": ["prompt"],
+    "maxPromptCharacters": 8000,
+    "automaticRetry": false
+  },
+  "failurePolicy": {
+    "reportNoSuccessfulBackendResult": true,
+    "allowClearlyDistinguishedDirectHelp": true,
+    "ordinaryTeachingIndependentOfBackend": true,
+    "invokeAppMeansNewCall": true
+  }
+}
