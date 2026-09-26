@@ -73,11 +73,19 @@ overwritten. A second composition in a new directory and read-only inspection
 establish determinism. The private report maps source byte spans to final teaching
 sections; it does not invent new teaching rules or approve its own transformation.
 
-The safe `skill-composition.inventory.json` records hashes/counts and PENDING
-owner review. Approval must identify the exact skill hash, package fingerprint,
+The safe `skill-composition.inventory.json` initially records hashes/counts and
+PENDING owner review. Approval must identify the exact skill hash, package fingerprint,
 baseline fingerprint, reviewer/date, and owner evidence. Baseline approval is not
 approval of this new artifact. `TUTOR_SKILL_RECONCILED` stays BLOCKED until then.
 Private composition is not actual GPT migration and cannot advance GPT_MIGRATED.
+
+The owner subsequently approved the current exact candidate on
+2026-09-26T01:03:47Z; see the [approval record](TUTOR_SKILL_FIRST_20260925.md#owner-approval-of-the-composed-skill).
+The immutable generation report retains its creation-time PENDING labels.
+Subsequent approval belongs in the safe inventory and a separate ignored receipt;
+do not rewrite the skill or generation report to change those historical labels.
+Owner approval does not create observed teaching results or promote source-rule
+classifications that were not established by the baseline.
 
 Release validation inspects the composed private package, not private teaching
 text copied into the public template. Exact-artifact private release approval is

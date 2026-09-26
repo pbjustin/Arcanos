@@ -62,7 +62,8 @@ The [standalone package](../../integrations/arcanos-tutor/README.md) has the fin
 ARCANOS TUTOR identity and a real optional app mapping. Its tracked skill is a
 public template with integration safeguards, not the private teaching release.
 The deterministic private composition preserves the approved instruction text;
-the resulting exact artifact still requires owner review.
+the owner approved the unchanged exact artifact on 2026-09-26T01:03:47Z.
+Its installed teaching behavior remains unverified.
 The [gate ledger](../../integrations/arcanos-tutor/migration-state.json) records
 twenty independent states; there is no single migrated boolean.
 
@@ -75,8 +76,8 @@ twenty independent states; there is no single migrated boolean.
 | TOOL_DISCOVERY_VERIFIED | VERIFIED | September 24 explicit Refresh exposed exactly arcanos_tutor with the corrected prompt schema |
 | LIVE_TUTOR_CALL_VERIFIED | BLOCKED | Latest post-#1512 A/C/D checkpoint remains FAIL; #1513 synthetic verification does not clear it |
 | GPT_BASELINE_CAPTURED | VERIFIED | Complete private capture, deterministic fingerprint and owner review recorded; latestPublishedConfirmed=true |
-| TUTOR_SKILL_COMPOSED | VERIFIED | Local composition integrity only; v3/v4 bytes match and exact owner artifact review remains pending |
-| TUTOR_SKILL_RECONCILED | BLOCKED | Exact composed private skill requires separate owner approval |
+| TUTOR_SKILL_COMPOSED | VERIFIED | Local composition integrity only; v3/v4 bytes match |
+| TUTOR_SKILL_RECONCILED | VERIFIED | Owner approved unchanged private skill 7661b328b99aa096f930f46e272ef9208de6f11e22c002e77f79d9ab78a15096; exact baseline/package bindings and source integrity rechecked |
 | TUTOR_SKILL_BEHAVIOR_VERIFIED | BLOCKED | Eighteen cases specified; deterministic decisions are not installed-skill evidence |
 | CAPABILITY_EQUIVALENCE_VERIFIED | NOT_APPLICABLE | Owner excludes the four host ChatGPT features from Tutor release scope; their equivalence remains NOT_TESTED |
 | BACKEND_APP_REGISTERED | VERIFIED | Existing dated app registration; no new connection |

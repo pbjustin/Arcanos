@@ -110,12 +110,15 @@
       "evidenceIds": [
         "private-skill-precedence-review-20260926"
       ],
-      "note": "Local candidate exists; two deterministic compositions and inspector match exact source, skill and package hashes. This verifies composition only; exact owner artifact review is PENDING and no migration occurred."
+      "note": "Local candidate exists; two deterministic compositions and inspector match exact source, skill and package hashes. Owner approval is separately recorded under TUTOR_SKILL_RECONCILED; no migration or behavior execution occurred."
     },
     "TUTOR_SKILL_RECONCILED": {
-      "status": "BLOCKED",
-      "evidenceIds": [],
-      "note": "Owner must approve the exact composed private skill hash; baseline approval does not approve this new artifact."
+      "status": "VERIFIED",
+      "evidenceIds": [
+        "owner-composed-skill-approval-20260926",
+        "composed-skill-approval-integrity-20260926"
+      ],
+      "note": "Owner approved exact private skill SHA-256 7661b328b99aa096f930f46e272ef9208de6f11e22c002e77f79d9ab78a15096 on 2026-09-26T01:03:47Z. Repository inspection confirms unchanged skill/package/baseline/report hashes and bound approval metadata. This reconciles the composed candidate only; teaching behavior, backend acceptance, actual migration and migrated-artifact reconciliation remain separate."
     },
     "TUTOR_SKILL_BEHAVIOR_VERIFIED": {
       "status": "BLOCKED",

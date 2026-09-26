@@ -51,12 +51,13 @@ located source rules from behavior not established by the published text.
 Composition never changes `published-gpt.json`, approves its own output, installs
 a plugin, calls a model, or performs Custom GPT migration. The safe
 [composition inventory](../../integrations/arcanos-tutor/skill-composition.inventory.json)
-records current hashes/counts and pending owner review. The actual review package
+records current hashes/counts and subsequent exact-artifact owner approval. The actual review package
 lives only under `.local-migration/arcanos-tutor/`; do not upload or commit it.
 
-The owner must review the exact composed skill and package fingerprint before
-TUTOR_SKILL_RECONCILED can advance. Baseline approval does not approve the
-new composition, and a generated candidate is not an actual migrated artifact.
+The owner reviewed and approved the exact composed skill and package fingerprint
+at the later approval checkpoint below. TUTOR_SKILL_RECONCILED is now VERIFIED.
+This is distinct from baseline approval; a generated candidate is not an actual
+migrated artifact.
 
 ## Tests and readiness domains
 
@@ -104,7 +105,8 @@ reference review, exact connection identity, and binding checks remain enforced.
 Validation and independent reviews are recorded after the combined change is
 checked. No deployment, runtime edit, account configuration change, Custom GPT
 edit, migration, or PR merge is part of this task. Keep #1509 OPEN/DRAFT, with
-auto-merge disabled. Stop for approval of the exact local composed-skill hash.
+auto-merge disabled. The original checkpoint stopped for exact local skill
+approval; the subsequent owner approval is recorded below.
 
 ## Final local evidence and independent review
 
@@ -137,7 +139,8 @@ proof. Earlier v1/v2 remain historical and are not the owner-review candidate.
 Reviewer A independently checked the composer/template and exact source spans.
 PED-A-01 identified legacy integration precedence; the successor template resolves
 it narrowly and preserves every teaching byte. Final pedagogy integrity review
-PASS; behavior and exact owner approval remain pending.
+PASS; behavior and exact owner approval were pending at that checkpoint.
+The subsequent owner approval is recorded below; behavior remains unverified.
 
 Reviewer B independently checked integration/privacy/release implementation and
 found two evidence-binding gaps. The validator now requires all capability
@@ -164,7 +167,7 @@ tools/account/surface, and their published baseline settings are unchanged.
 The owner decision is bound to the approved baseline and exact four names.
 CAPABILITY_EQUIVALENCE_VERIFIED is NOT_APPLICABLE, never VERIFIED by this decision.
 Both capability-specific release blockers are removed; every other blocker is
-retained. The private skill/package bytes and pending exact owner review are
+retained. The private skill/package bytes and then-pending exact owner review were
 unchanged. No teaching test, capability test, backend call, account change,
 migration, merge, or deployment is implied by this scope clarification.
 
@@ -184,3 +187,43 @@ Both independent scope reviews PASS: exact owner evidence is required,
 NOT_APPLICABLE cannot bypass other gates, actual verification still requires
 observations, and private/package/app-mapping bytes remain unchanged.
 Final commit checks and hosted results are recorded in PR #1509.
+
+## Owner approval of the composed skill
+
+Owner confirmation recorded **2026-09-26T01:03:47Z**, evidence
+`owner-composed-skill-approval-20260926`, approves the previously presented,
+unchanged private teaching candidate. The owner confirmation is USER_REPORTED;
+`composed-skill-approval-integrity-20260926` separately records repository
+inspection of the exact artifacts and approval binding.
+
+- Skill SHA-256: `7661b328b99aa096f930f46e272ef9208de6f11e22c002e77f79d9ab78a15096`.
+- Package fingerprint: `4a5bbb9052929adfac18f57d52090b30a8d62e9b66b1b3e6ecc041ecc5f41958`.
+- Baseline fingerprint: `eb1d612dc2b4645841e3035a177ebb91fa6584a2ae633d7918972b9c9dd95e25`.
+- Private receipt: `owner-composed-skill-review-20260926.json`, retained only
+  under the ignored private input directory.
+- Receipt SHA-256: `4ddf2236fc129488b44bc18c420b1bd9b7f7d1c639b951e9eb8c837d716200ad`.
+
+The composition inventory is VERIFIED with ownerReview APPROVED, and
+TUTOR_SKILL_RECONCILED is VERIFIED. The baseline, skill, package and generation
+report bytes did not change. The generation report's PENDING labels describe
+creation-time state; this later receipt and the safe inventory record approval
+without rewriting historical artifacts.
+
+All eighteen teaching cases remain UNEXECUTED, and historical parity remains
+0 baseline-bound / 10 provisional / 6 unexecuted. Teaching readiness and backend
+acceptance remain BLOCKED; GPT_MIGRATED remains NOT_STARTED. The host-capability
+exclusion remains NOT_APPLICABLE. No installation, migration, merge, deployment,
+Custom GPT/account modification, or live/paid Tutor call is authorized by this
+artifact approval.
+
+Approval-checkpoint validation: read-only private inspection and package
+validation PASS. Release remains RELEASE_BLOCKED (exit 2), with 14 blockers
+after private inspection; only the two composed-skill approval blockers were
+removed from the prior 16. Ten focused approval/release tests PASS; 167 other
+cases were intentionally not selected in that local run. Documentation: 775
+checks PASS; local links: 576 PASS, 94 external targets skipped. Indexes remain
+current; sync reports zero errors/warnings and five existing notices.
+Two independent approval reviews confirm the exact hash bindings, unchanged
+private bytes, separate evidence domains, and unchanged behavior/migration
+boundaries. No code, tests, template, backend, or account settings changed.
+Final staged privacy/commit checks and hosted CI are recorded in PR #1509.

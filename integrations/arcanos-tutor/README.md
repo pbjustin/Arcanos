@@ -10,7 +10,7 @@ has no documented unique tutoring capability that ordinary teaching requires.
 | Artifact | Location | Meaning |
 | --- | --- | --- |
 | PUBLIC TEMPLATE | `package/` | Portable manifest, optional app mapping, and public integration safeguards with one private teaching insertion marker; not teaching-complete or install-ready |
-| PRIVATE COMPOSED RELEASE CANDIDATE | Ignored `.local-migration/arcanos-tutor/composed-skill-v3/package/` | Exact approved instruction text composed locally with safeguards; requires review of its exact skill hash |
+| PRIVATE COMPOSED RELEASE CANDIDATE | Ignored `.local-migration/arcanos-tutor/composed-skill-v3/package/` | Exact approved instruction text composed locally with safeguards; owner approved the exact skill hash, behavior remains unverified |
 | ACTUAL MIGRATED PLUGIN ARTIFACT | Not supplied | Only actual output from a separately authorized Custom GPT migration can satisfy migration reconciliation |
 
 The app mapping is `{ "id": "asdk_app_6ab4747769088191856fd8eb02507240", "optional": true }`.
@@ -47,15 +47,16 @@ ChatGPT features externally as needed. These remain enabled in the published
 baseline and NOT_TESTED in the evidence ledger; no tool availability or parity
 is claimed. Tutor must use only tools actually available in the current session.
 
-Release remains BLOCKED pending exact private-skill owner review, installed
-teaching verification, actual migrated artifacts and
+The owner approved the unchanged composed skill on 2026-09-26T01:03:47Z.
+TUTOR_SKILL_RECONCILED is VERIFIED for that exact private candidate only.
+Release remains BLOCKED pending installed teaching verification, actual migrated artifacts and
 paired parity. Backend acceptance remains independently BLOCKED. A failed backend
 must not stop ordinary teaching, and teaching evidence must not certify backend
 operation. Synthetic decision tests prove only the reference contract.
 
 ## Safe tracked evidence
 
-- `skill-composition.inventory.json`: hashes, counts, source binding, and pending exact-artifact owner review.
+- `skill-composition.inventory.json`: hashes, counts, source binding, and approved exact-artifact owner review.
 - `invocation-policy.json`: explicit-only backend contract; no natural-language classifier or tool executor.
 - `teaching-behavior-matrix.json`: eighteen teaching, format, fallback, and boundary cases; actual results remain unexecuted.
 - `capability-equivalence.json`: four published capabilities, untested client equivalents, and the baseline-bound owner decision excluding them from Tutor release scope.

@@ -384,6 +384,37 @@
           "Code Interpreter & Data Analysis"
         ]
       }
+    },
+    {
+      "id": "owner-composed-skill-approval-20260926",
+      "kind": "user_reported",
+      "status": "USER_REPORTED",
+      "observedAt": "2026-09-26T01:03:47Z",
+      "summary": "Owner approved the previously presented exact private composed Tutor skill after the host-capability scope clarification. Approval covers only that unchanged artifact; it is not behavior, backend, migration, release or deployment acceptance.",
+      "compositionBinding": {
+        "baselineFingerprint": "eb1d612dc2b4645841e3035a177ebb91fa6584a2ae633d7918972b9c9dd95e25",
+        "skillSha256": "7661b328b99aa096f930f46e272ef9208de6f11e22c002e77f79d9ab78a15096",
+        "packageFingerprint": "4a5bbb9052929adfac18f57d52090b30a8d62e9b66b1b3e6ecc041ecc5f41958"
+      },
+      "ownerReviewArtifact": {
+        "path": "owner-composed-skill-review-20260926.json",
+        "sha256": "4ddf2236fc129488b44bc18c420b1bd9b7f7d1c639b951e9eb8c837d716200ad",
+        "sizeBytes": 1122
+      }
+    },
+    {
+      "id": "composed-skill-approval-integrity-20260926",
+      "kind": "repository",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-26T01:03:47Z",
+      "summary": "Read-only composition inspection and hash checks confirm the owner-approved private skill, package, source and immutable generation report match the recorded exact artifacts. Approval metadata is bound to those hashes; private contents remain ignored/untracked. This verifies reconciliation only, not installed behavior or migration.",
+      "compositionBinding": {
+        "baselineFingerprint": "eb1d612dc2b4645841e3035a177ebb91fa6584a2ae633d7918972b9c9dd95e25",
+        "skillSha256": "7661b328b99aa096f930f46e272ef9208de6f11e22c002e77f79d9ab78a15096",
+        "packageFingerprint": "4a5bbb9052929adfac18f57d52090b30a8d62e9b66b1b3e6ecc041ecc5f41958"
+      },
+      "configurationSha256": "445255487dd270aad087e025b738666340ac1d42a2e45b05fe0b7df640e843bf",
+      "reportSha256": "afd229757109e34f54dbf7c8de827ee47194aeb00099adc274a16d93e76c3ba8"
     }
   ],
   "checks": {
