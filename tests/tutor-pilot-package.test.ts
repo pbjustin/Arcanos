@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createUpdatedFixture } from './helpers/tutor-updated-release-fixture.js';
+import { authorizeFixtureRevision } from './helpers/tutor-skill-revision-fixture.js';
 
 type Json = ReturnType<typeof JSON.parse>;
 const script = path.join(process.cwd(), 'scripts/validate-arcanos-tutor-package.mjs');
@@ -37,8 +38,9 @@ function baselineFingerprint(baseline: Json) {
     knowledge: baseline.knowledge.map(({ name, sha256, sizeBytes }: Json) => ({ name, sha256, sizeBytes }))
       .sort((left: Json, right: Json) => left.name.localeCompare(right.name, 'en')) }));
 }
-function completeFixture() {
+function completeFixture(intakeRevision = false) {
   const root = copyPackage();
+  rmSync(path.join(root, 'skill-revision.inventory.json'), { force: true });
   expect(spawnSync('git', ['-C', root, 'init', '--quiet'], { windowsHide: true }).status).toBe(0);
   writeFileSync(path.join(root, '.gitignore'), '.local-migration/\n');
   const inputs = path.join(root, '.local-migration/arcanos-tutor');
@@ -187,6 +189,16 @@ function completeFixture() {
     }
   });
   const updated = createUpdatedFixture(inputs, readFileSync(path.join(inputs, composition.outputDirectory, 'package', skillPath), 'utf8'));
+  if (intakeRevision) {
+    const revised = authorizeFixtureRevision(updated);
+    write(root, 'skill-revision.inventory.json', revised.revision);
+    edit(root, 'connection.requirements.json', connection => {
+      connection.evidence.push(revised.sourceEvidence, revised.ownerEvidence, revised.reviewEvidence);
+    });
+    edit(root, 'migration-state.json', state => {
+      for (const gate of ['TUTOR_SKILL_BEHAVIOR_VERIFIED', 'PARITY_VERIFIED']) state.gates[gate].status = 'BLOCKED';
+    });
+  }
   write(root, 'updated-plugin-release.json', updated.release);
   edit(root, 'connection.requirements.json', connection => { connection.evidence.push(updated.evidence); });
   edit(root, 'migration-state.json', state => {
@@ -268,6 +280,30 @@ afterEach(() => {
 });
 
 describe('Standalone Tutor package and migration release boundary', () => {
+  it('validates an authorized successor without rewriting the historical composition approval', () => {
+    const fixture = completeFixture(true);
+    const result = validate(fixture.root, ['--inputs', fixture.inputs]);
+    expect(result.stderr).toBe('');
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout).skillRevisionInspection).toMatchObject({ originalBytesPreserved: true,
+      unchangedFileCount: 4, manifestVersionOnlyChanges: true, behaviorVerified: false });
+    expect(JSON.parse(result.stdout)).toMatchObject({ releaseStatus: 'BLOCKED', skillOnlyTeachingReadiness: 'BLOCKED' });
+    expect(JSON.parse(result.stdout).releaseBlockers).toContain('REVISED_SKILL_BEHAVIOR_AND_PARITY_NOT_VERIFIED');
+    expect(json(fixture.root, 'skill-composition.inventory.json').skill.sha256).toBe(fixture.composition.skill.sha256);
+  });
+  it('rejects a successor hash without its scoped authorization record', () => {
+    const fixture = completeFixture(true);
+    rmSync(path.join(fixture.root, 'skill-revision.inventory.json'));
+    expect(validate(fixture.root, ['--inputs', fixture.inputs]).status).toBe(1);
+  });
+  it.each(['TUTOR_SKILL_BEHAVIOR_VERIFIED', 'PARITY_VERIFIED'])(
+    'rejects promotion of historical evidence to a revised skill gate: %s', gate => {
+      const fixture = completeFixture(true);
+      edit(fixture.root, 'migration-state.json', state => { state.gates[gate].status = 'VERIFIED'; });
+      const result = validate(fixture.root, ['--inputs', fixture.inputs]);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain('PACKAGE_INVALID');
+    });
   it('validates the final identity and only the three reviewed distribution files', () => {
     const result = validate();
     expect(result.status).toBe(0);

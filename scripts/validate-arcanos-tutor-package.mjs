@@ -6,6 +6,7 @@ import yaml from 'js-yaml';
 import { validateSkillFirst } from './validate-tutor-skill-first.mjs';
 import { inspectNativeMigration, nativeMigrationFormat, validateNativeMigration } from './tutor-native-migration.mjs';
 import { inspectUpdatedTutorRelease, validateUpdatedTutorRelease } from './tutor-updated-plugin-release.mjs';
+import { inspectTutorSkillRevision, validateTutorSkillRevision } from './tutor-skill-revision.mjs';
 import {
   baselineFingerprint, captureBaseline, categories, digest, endpoint, gates, isHash, noSymlinkAncestors, packageFingerprint,
   readSafeFile, relativeFile, requireCondition, reviewed, skillPath, statuses, text,
@@ -335,14 +336,29 @@ export async function validateArcanosTutorPackage(root, { inputRoot } = {}) {
     throw error;
   });
   const updatedRelease = updatedReleaseFile ? JSON.parse(updatedReleaseFile.content) : null;
+  const skillRevisionFile = await readSafeFile(root, 'skill-revision.inventory.json').catch(error => {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  });
+  const skillRevision = skillRevisionFile ? JSON.parse(skillRevisionFile.content) : null;
+  const revisionOptions = { composition: skillFirst.composition, currentRelease: updatedRelease, evidence };
+  const expectedCurrentSkillSha256 = skillRevision ?
+    validateTutorSkillRevision(skillRevision, revisionOptions).expectedSkillSha256 : skillFirst.composition.skill?.sha256;
+  // Existing teaching/parity validators are bound to the historical composition.
+  // A byte-preserving revision review cannot promote their results to its successor.
+  gateConsistent('TUTOR_SKILL_BEHAVIOR_VERIFIED', !skillRevision);
+  gateConsistent('PARITY_VERIFIED', !skillRevision);
   let updatedPluginArchiveInspection = null;
+  let skillRevisionInspection = null;
   gateConsistent('UPDATED_PLUGIN_ARCHIVE_VERIFIED', updatedRelease?.status === 'VERIFIED');
   if (updatedRelease) {
-    const options = { expectedSkillSha256: skillFirst.composition.skill?.sha256, evidence, state };
+    const options = { expectedSkillSha256: expectedCurrentSkillSha256, evidence, state };
     validateUpdatedTutorRelease(updatedRelease, options);
     if (inputRoot) updatedPluginArchiveInspection = await inspectUpdatedTutorRelease({ inputRoot,
       release: updatedRelease, ...options });
   }
+  if (skillRevision && inputRoot) skillRevisionInspection = await inspectTutorSkillRevision({ inputRoot,
+    revision: skillRevision, ...revisionOptions });
   const schema = await readSafeFile(root, schemaFile);
   requireCondition(digest(schema.content.replace(/\r\n/gu, '\n')) === schemaDigest, 'SCHEMA_DIGEST_MISMATCH');
   const manifest = JSON.parse(files.get('plugin.json').content);
@@ -388,6 +404,8 @@ export async function validateArcanosTutorPackage(root, { inputRoot } = {}) {
     connection.checks.liveExecution.evidenceIds.includes(id)), 'LIVE_CHATGPT_EVIDENCE_MISSING');
   block(Boolean(inputRoot), 'ACTUAL_INPUT_ARTIFACTS_NOT_INSPECTED');
   block(Boolean(updatedPluginArchiveInspection), 'UPDATED_SAVED_ARCHIVE_NOT_INSPECTED');
+  block(!skillRevision || Boolean(skillRevisionInspection), 'SKILL_REVISION_BYTES_NOT_INSPECTED');
+  block(!skillRevision, 'REVISED_SKILL_BEHAVIOR_AND_PARITY_NOT_VERIFIED');
   if (migration.registeredAppId !== undefined) requireCondition(migration.registeredAppId === connection.registeredAppId, 'MIGRATION_CONNECTION_MISMATCH');
   gateConsistent('MIGRATED_SKILL_RECONCILED', migration.instructionComparison !== null && connection.builderReconciliation === 'VERIFIED');
   if (inputRoot && blockers.length === 0) await verifyInputs(inputRoot, baseline, migration, review, parity, skillFirst.privateFiles, validator);
@@ -399,10 +417,11 @@ export async function validateArcanosTutorPackage(root, { inputRoot } = {}) {
     packageFingerprint: packageFingerprint(files),
     artifactKind: 'PUBLIC_TEMPLATE',
     privatePackageFingerprint: skillFirst.composition.packageFingerprint,
-    skillOnlyTeachingReadiness: skillFirst.teachingReadiness,
+    skillOnlyTeachingReadiness: skillRevision ? 'BLOCKED' : skillFirst.teachingReadiness,
     teachingBehaviorDeferred: skillFirst.teachingDeferred,
     migrationArtifactInspection,
     updatedPluginArchiveInspection,
+    skillRevisionInspection,
     capabilityEquivalenceVerified: skillFirst.capabilitiesVerified,
     capabilityScopeExcluded: skillFirst.capabilityScopeExcluded,
     backendReadiness: skillFirst.backendReadiness,

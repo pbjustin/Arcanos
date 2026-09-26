@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "kind": "OWNER_AUTHORIZED_SINGLE_INSERTION",
+  "scope": "CONFIDENCE_TIME_INTAKE_ONLY",
+  "status": "VERIFIED",
+  "pluginId": "plugin_d292d1e45ae08191b3911299e30e1a25",
+  "from": {
+    "releaseId": "pluginrel_6ab7f17cb4288191b6a60b25c98d5505",
+    "version": "0.8.3",
+    "skillSha256": "7661b328b99aa096f930f46e272ef9208de6f11e22c002e77f79d9ab78a15096",
+    "packageFingerprint": "e88b0dc42a9951869b8ff63c999e1b6a02fd08043df96f154012c165c8d99948",
+    "archive": {
+      "path": "teaching-intake-revision-20260926/baseline-0.8.3.tar.gz",
+      "sha256": "1e4d048576157434285da32fc239ed16751f31f6ac6f7c0fe4b7f626b6128732",
+      "sizeBytes": 260242
+    },
+    "rootPath": "teaching-intake-revision-20260926/baseline-0.8.3",
+    "evidenceId": "saved-plugin-optional-app-release-20260926"
+  },
+  "to": {
+    "version": "0.8.4",
+    "skillSha256": "02fbc4e2b5a000cf9d49fae9a2d66e1cb59593060cacb6640e5b597202ab3d1d",
+    "skillSizeBytes": 9746
+  },
+  "insertion": {
+    "offsetBytes": 558,
+    "sizeBytes": 537,
+    "sha256": "b71e8506daacd6859af46b086bb7f6e90c9962c3a26c2ecd73139968a9dd774d"
+  },
+  "authorization": {
+    "evidenceIds": [
+      "owner-intake-revision-authorization-20260926"
+    ]
+  },
+  "review": {
+    "reviewedBy": "Independent artifact and integration reviewers",
+    "reviewedAt": "2026-09-26T18:16:26.201Z",
+    "evidenceIds": [
+      "intake-revision-scope-byte-review-20260926"
+    ],
+    "originalBytesPreserved": true
+  }
+}
