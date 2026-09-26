@@ -11,7 +11,7 @@ has no documented unique tutoring capability that ordinary teaching requires.
 | --- | --- | --- |
 | PUBLIC TEMPLATE | `package/` | Portable manifest, optional app mapping, and public integration safeguards with one private teaching insertion marker; not teaching-complete or install-ready |
 | PRIVATE COMPOSED RELEASE CANDIDATE | Ignored `.local-migration/arcanos-tutor/composed-skill-v3/package/` | Exact approved instruction text composed locally with safeguards; owner approved the exact skill hash, behavior remains unverified |
-| ACTUAL MIGRATED PLUGIN ARTIFACT | Ignored `.local-migration/arcanos-tutor/installed-artifacts-20260926/` | Native skills-only installed bundle captured byte-for-byte; published text preserved, approved integration safeguards missing; not release-ready |
+| ACTUAL MIGRATED PLUGIN ARTIFACT | Ignored `.local-migration/arcanos-tutor/installed-artifacts-20260926/` | Historical initial 0.8.1 native bundle captured byte-for-byte; account now shows an installed/enabled 0.8.2 update whose raw bytes remain uncaptured |
 
 The public template and composed candidate app mapping is `{ "id": "asdk_app_6ab4747769088191856fd8eb02507240", "optional": true }`.
 The endpoint, registered account connection, tool `arcanos_tutor`, and scope
@@ -49,9 +49,14 @@ is claimed. Tutor must use only tools actually available in the current session.
 
 The owner approved the unchanged composed skill on 2026-09-26T01:03:47Z.
 TUTOR_SKILL_RECONCILED is VERIFIED for that exact private candidate only.
-Actual migration and zero-reference reconciliation are VERIFIED. The generated
-skill has no attached app and lacks the five approved integration safeguard
-sections; see the [artifact review](../../docs/chatgpt-migration/TUTOR_POST_MIGRATION_RECONCILIATION_20260926.md).
+Actual migration and the initial capture's zero-reference reconciliation are
+VERIFIED. A subsequent owner-authorized update saved version 0.8.2; the account
+shows it installed/enabled and the supported skill viewer displays all five
+approved safeguard headings. Creator reports the approved skill hash and no apps
+or references. Updated raw bytes remain unavailable: neither export returned a
+file and the cache still contains 0.8.1. The original inventory and difference
+report remain historical; see the dated follow-up in the
+[artifact review](../../docs/chatgpt-migration/TUTOR_POST_MIGRATION_RECONCILIATION_20260926.md).
 Release remains BLOCKED pending skill reconciliation, installed teaching verification and
 paired parity. Backend acceptance remains independently BLOCKED. A failed backend
 must not stop ordinary teaching, and teaching evidence must not certify backend
@@ -66,7 +71,7 @@ operation. Synthetic decision tests prove only the reference contract.
 - `migration-state.json`: separate teaching, backend, migration, parity, and release gates.
 - `baseline.inventory.json`: approved published metadata; original source remains private.
 - `connection.requirements.json`: dated account/runtime evidence, including the stopped final bounded backend attempt window.
-- `migration.inventory.json` and `reference-review.json`: actual migrated output and exact reference approvals, still missing/empty.
+- `migration.inventory.json` and `reference-review.json`: the initial captured 0.8.1 native bundle and its reviewed empty reference inventory; updated 0.8.2 byte capture is pending.
 - `parity-matrix.json`: sixteen historical comparison definitions; 0 bound, 10 provisional, 6 unexecuted.
 - `schemas/`: unchanged hash-pinned portable schema.
 
@@ -82,10 +87,13 @@ Read the [handoff](../../docs/chatgpt-migration/TUTOR_MIGRATION.md),
 PR #1509 remains draft. The final bounded backend attempt window is closed; no
 additional calls, migration, deployment, or merge are authorized.
 
-## Final pre-migration checkpoint
+## Historical pre-migration checkpoint
 
 See the [final bounded checkpoint](../../docs/chatgpt-migration/TUTOR_PRE_MIGRATION_CHECKPOINT_20260926.md).
-SKILL_PLANE is DEFERRED_POST_MIGRATION: official desktop testing exists but needs
+The following records the earlier checkpoint; migration and the later supported
+update have since occurred. Current teaching status is BLOCKED pending updated
+artifact capture/review and safe testing. At the earlier checkpoint,
+SKILL_PLANE was DEFERRED_POST_MIGRATION: official desktop testing exists but needs
 a private cache copy outside this task boundary and unavailable native client
 control. No teaching cases ran. BACKEND_PLANE is FAIL: raw A/C/D were unavailable;
 ChatGPT A incomplete, C unavailable with ambiguous duplicate activity, D stopped

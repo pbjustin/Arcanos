@@ -76,21 +76,21 @@
       "evidenceIds": [
         "account-plugin-migration-20260926"
       ],
-      "note": "Owner-authorized latest-published account migration completed privately at 2026-09-26T02:47:17.941Z. Actual native installed bundle is captured with full hashes. This records occurrence/capture only, not private release approval, behavior or parity."
+      "note": "Owner-authorized latest-published account migration completed privately at 2026-09-26T02:47:17.941Z. The initial 0.8.1 native bundle remains the fully hashed historical capture. A later supported update is visible as installed/enabled version 0.8.2, with all five safeguard headings present in the skill viewer; updated raw bytes are not yet captured. This gate records migration occurrence, not updated-byte reconciliation, behavior or release. See account-plugin-approved-skill-update-ui-20260926."
     },
     "SKILL_RECONCILED": {
       "status": "BLOCKED",
       "evidenceIds": [
         "installed-skill-differences-20260926"
       ],
-      "note": "Actual skill preserves published teaching text exactly but lacks all five separately approved integration safeguard sections and topic-specific activation metadata. Its hash differs from the approved composed skill. Exact installed artifact is not approved for private release; differences are not accepted."
+      "note": "The historical 0.8.1 capture differs from the approved composed skill. The later account update shows version 0.8.2 and all five safeguard headings in rendered Markdown; missing headings are no longer the current UI finding. Creator reports the approved skill hash, but updated raw bytes/export are unavailable and the local cache remains 0.8.1. Exact updated-artifact comparison and review remain pending; no release claim follows from the attachment or rendered view."
     },
     "REFERENCES_RECONCILED": {
       "status": "VERIFIED",
       "evidenceIds": [
         "installed-artifact-capture-20260926"
       ],
-      "note": "Complete five-file installed bundle has an explicit empty knowledge-index and no reference/knowledge files. Published zero-file inventory matches. Icon, manifest, agent UI metadata and empty lookup index are generated support files, not teaching references."
+      "note": "The fully captured initial 0.8.1 five-file bundle has an explicit empty knowledge-index and no reference/knowledge files, matching the published zero-file inventory. Icon, manifest, agent UI metadata and empty lookup index are support files. Creator reports zero references for the 0.8.2 update; complete updated-byte inventory remains pending. This verified reference finding remains bound to the initial capture."
     },
     "PARITY_VERIFIED": {
       "status": "BLOCKED",
@@ -108,12 +108,12 @@
     "PACKAGE_READY": {
       "status": "BLOCKED",
       "evidenceIds": [],
-      "note": "BLOCKED pending reconciliation of native migrated skill with approved candidate, teaching verification and paired parity. Backend remains unavailable under independent full-release requirements."
+      "note": "BLOCKED pending capture and exact review of the account's 0.8.2 update, native-package reconciliation, teaching verification and paired parity. The current UI displays the safeguards; their presence does not prove final raw-byte equality. Backend remains unavailable under independent full-release requirements."
     },
     "RELEASE_READY": {
       "status": "BLOCKED",
       "evidenceIds": [],
-      "note": "Remain draft and private. Account migration is complete; no teaching/parity/release claim. No sharing, merge or backend calls are authorized by artifact reconciliation."
+      "note": "Remain draft and private. Account migration and the owner-authorized supported update are recorded separately; updated bytes are pending capture. No teaching, parity or release claim is made. The update does not authorize sharing, merge, deployment or backend calls."
     },
     "TUTOR_SKILL_COMPOSED": {
       "status": "VERIFIED",
@@ -136,7 +136,7 @@
         "installed-test-surface-20260926",
         "installed-skill-differences-20260926"
       ],
-      "note": "All eighteen cases remain UNEXECUTED. A supported installed-plugin composer now exists, superseding the historical pre-migration surface deferral. Reconcile missing safeguards and establish a safe no-backend execution boundary before official teaching runs. Backend-explicit and real-failure cases still need separate call authorization."
+      "note": "All eighteen cases remain UNEXECUTED. The supported composer exists and the 0.8.2 skill viewer now shows all five safeguard headings. Capture and review the updated exact bytes, then establish a safe no-backend execution boundary before official teaching runs. Rendered headings or Creator hash reports are not behavior evidence. Backend-explicit and real-failure cases still need separate call authorization."
     },
     "CAPABILITY_EQUIVALENCE_VERIFIED": {
       "status": "NOT_APPLICABLE",
@@ -165,7 +165,7 @@
       "evidenceIds": [
         "installed-skill-differences-20260926"
       ],
-      "note": "Actual skill preserves published teaching text exactly but lacks all five separately approved integration safeguard sections and topic-specific activation metadata. Its hash differs from the approved composed skill. Exact installed artifact is not approved for private release; differences are not accepted."
+      "note": "The historical 0.8.1 capture differs from the approved composed skill. The later account update shows version 0.8.2 and all five safeguard headings in rendered Markdown; missing headings are no longer the current UI finding. Creator reports the approved skill hash, but updated raw bytes/export are unavailable and the local cache remains 0.8.1. Exact updated-artifact comparison and review remain pending; no release claim follows from the attachment or rendered view."
     }
   }
 }

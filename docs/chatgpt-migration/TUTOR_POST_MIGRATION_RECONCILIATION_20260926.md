@@ -153,3 +153,65 @@ through a supported edit/update flow, preserve the original capture, then
 recapture and review the exact updated bytes before testing. This artifact-review
 step did not edit or update the installed plugin. Do not accept missing safeguards
 merely to clear a gate. Do not request a new migration or another backend call.
+
+## Follow-up: supported private update, 2026-09-26
+
+Evidence recorded at **05:50:16 UTC**, the review/recording time rather than the
+exact account save time. The preceding artifact findings and validation results
+describe the original captured **0.8.1** bundle. Its missing safeguard sections
+remain a historical finding, not the current account-view finding.
+
+The owner authorized updating the existing private migrated plugin with the exact
+already-approved `composed-skill-v3` skill. Supported Plugin Creator editing saved
+version `0.8.2+bundle.7661b328b99aa096f930f46e272ef9208de6f11e22c002e77f79d9ab78a15096`.
+The independently inspected account page shows that version; plugin settings show
+**Uninstall** and **Use Tutor** checked. The supported skill viewer visibly
+contains all five approved safeguard headings. The existing plugin identity is
+unchanged; this was an update, not another migration.
+
+Plugin Creator reports an exact skill hash match to
+`7661b328b99aa096f930f46e272ef9208de6f11e22c002e77f79d9ab78a15096`, PRIVATE visibility,
+one skill, zero references and zero attached apps. Those reports and the rendered
+Markdown view do **not** independently verify the final saved raw bytes. The
+version suffix is also not a computed file checksum from a captured artifact.
+Creator also reports six archive members, including a root `plugin.json`; that
+archive layout has not been independently inspected.
+
+Both the native browser export and the Creator ZIP download failed to return a
+local artifact path. The available local cache still contains 0.8.1. Consequently,
+the initial private capture, tracked migration inventory, comparison report and
+their original evidence are preserved unchanged. The account update is appended
+as `account-plugin-approved-skill-update-ui-20260926` in the
+[evidence ledger](../../integrations/arcanos-tutor/connection.requirements.json).
+
+All gate statuses remain unchanged. SKILL_RECONCILED and
+MIGRATED_SKILL_RECONCILED remain BLOCKED pending capture and exact review of the
+updated bytes. References remain verified only for the initial captured empty
+inventory. All eighteen teaching cases remain UNEXECUTED; no teaching result,
+backend call, parity result or release approval is inferred. No sharing,
+connection change, deployment or merge occurred in this update.
+
+The next step is to obtain a supported export or updated installed-cache capture,
+preserve it in a new ignored directory, and verify the complete file inventory,
+exact skill hash and baseline/composed-skill bindings before formal testing. The
+native adapter remains unchanged and supports only its previously inspected
+five-file layout, including a changed skill directory. It has not validated the
+reported six-member archive. Do not rewrite generated metadata or weaken release
+gates to accommodate an uninspected layout.
+
+Official editing guidance referenced during this supported flow, accessed
+**2026-09-26 UTC**: [Build plugins](https://learn.chatgpt.com/docs/build-plugins).
+Documentation about the editing flow does not prove this update's artifact bytes
+or behavior.
+
+Follow-up validation used the pinned Node/npm toolchain: type-check, build and
+lint passed (76 existing warnings, zero errors); 345 focused migration, package,
+privacy, composition and teaching-contract tests plus nine commit-guard tests
+passed. An initial command named a nonexistent guard-test path; the actual guard
+suite was then run successfully. Package validation inspected the approved local
+composition and historical captured bundle; it did not inspect uncaptured 0.8.2
+bytes. Release validation retained expected exit 2 and eleven blockers. Local
+links passed (587 targets); external link network checks were skipped. Documentation,
+generated-index checks and workspace synchronization passed. Independent review
+confirmed conservative evidence scope, unchanged gates and no private content in
+the safe diff. Hosted CI must be checked on the final pushed head.

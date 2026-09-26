@@ -5,9 +5,11 @@ Evidence date: **2026-09-26 UTC**. Current main:
 PR #1509 remains the **DRAFT migration container**, with auto-merge disabled.
 **BACKEND_PLANE=FAIL**, **LIVE_TUTOR_CALL_VERIFIED=BLOCKED**.
 **GPT_MIGRATED=VERIFIED**. Owner-authorized private account migration completed
-on September 26. **SKILL_PLANE=BLOCKED_MATERIAL_INTEGRATION_DIFFERENCES**:
-the generated skill preserves the published instructions but lacks the separately
-approved integration safeguards. See the [actual artifact review](TUTOR_POST_MIGRATION_RECONCILIATION_20260926.md).
+on September 26. **SKILL_PLANE=BLOCKED_UPDATED_ARTIFACT_CAPTURE_PENDING**:
+the owner-authorized update is visible as installed/enabled version 0.8.2, and the
+supported skill viewer shows all five approved safeguard headings. Updated raw
+bytes remain unavailable; the fully hashed 0.8.1 capture is historical. See the
+dated follow-up in the [actual artifact review](TUTOR_POST_MIGRATION_RECONCILIATION_20260926.md).
 The [pre-migration checkpoint](TUTOR_PRE_MIGRATION_CHECKPOINT_20260926.md) is historical.
 
 The owner has selected **skill-first tutoring with an optional ARCANOS app**.
@@ -57,9 +59,11 @@ distinct from independent source/hash verification. See the
 [baseline capture checkpoint](TUTOR_BASELINE_CAPTURE_20260925.md).
 There are **16 parity cases: 0 baseline-bound, 10 provisional/unbound and 6
 unexecuted**. All official old-GPT and plugin result fields remain null. Published
-knowledge is explicitly confirmed empty; the complete installed bundle now confirms
-zero migrated reference files and an explicitly empty knowledge index. Account
-migration occurred, but no teaching test or backend call ran during artifact reconciliation.
+knowledge is explicitly confirmed empty; the complete initial 0.8.1 capture
+confirms zero migrated references and an explicitly empty knowledge index. Creator
+reports zero references for the 0.8.2 update; its complete byte inventory remains
+pending. Account migration and the later supported update occurred, but no
+teaching test or backend call ran during these artifact-review/update steps.
 See the [current reconciliation record](TUTOR_RECONCILIATION_20260925.md),
 [private input contract](TUTOR_INPUTS.md), and the dated historical evidence below.
 
@@ -85,16 +89,16 @@ independent states; there is no single migrated boolean.
 | GPT_BASELINE_CAPTURED | VERIFIED | Complete private capture, deterministic fingerprint and owner review recorded; latestPublishedConfirmed=true |
 | TUTOR_SKILL_COMPOSED | VERIFIED | Local composition integrity only; v3/v4 bytes match |
 | TUTOR_SKILL_RECONCILED | VERIFIED | Owner approved unchanged private skill 7661b328b99aa096f930f46e272ef9208de6f11e22c002e77f79d9ab78a15096; exact baseline/package bindings and source integrity rechecked |
-| TUTOR_SKILL_BEHAVIOR_VERIFIED | BLOCKED | Eighteen cases unexecuted; supported composer now exists, but safeguards must be reconciled before safe formal testing |
+| TUTOR_SKILL_BEHAVIOR_VERIFIED | BLOCKED | Eighteen cases unexecuted; capture/review updated 0.8.2 bytes and establish a safe execution boundary before formal testing |
 | CAPABILITY_EQUIVALENCE_VERIFIED | NOT_APPLICABLE | Owner excludes the four host ChatGPT features from Tutor release scope; their equivalence remains NOT_TESTED |
 | BACKEND_APP_REGISTERED | VERIFIED | Fresh unchanged existing app identity; no new connection |
 | BACKEND_APP_OPTIONALITY_VERIFIED | VERIFIED | Official optional syntax and offline reference contract only; installed behavior unverified |
-| MIGRATED_SKILL_RECONCILED | BLOCKED | Actual skill captured; five approved integration sections absent |
-| GPT_MIGRATED | VERIFIED | Owner-authorized private migration confirmed; native installed artifacts hashed |
-| SKILL_RECONCILED | BLOCKED | Published instruction bytes preserved; approved composed safeguards not present |
-| REFERENCES_RECONCILED | VERIFIED | Complete native bundle matches the published zero-file knowledge inventory |
+| MIGRATED_SKILL_RECONCILED | BLOCKED | Updated 0.8.2 viewer shows five safeguard headings; exact updated bytes/comparison remain pending |
+| GPT_MIGRATED | VERIFIED | Private migration confirmed; initial 0.8.1 artifacts hashed; subsequent 0.8.2 update observed separately |
+| SKILL_RECONCILED | BLOCKED | Creator reports approved hash and safeguards are visible; final saved raw-byte equality remains unverified |
+| REFERENCES_RECONCILED | VERIFIED | Initial 0.8.1 capture matches the published zero-file inventory; updated 0.8.2 inventory is reported only |
 | PARITY_VERIFIED | BLOCKED | Actual paired old/new results absent; no provisional observations promoted |
-| PACKAGE_READY | BLOCKED | Actual native capture inspected; integration safeguards, behavior and paired parity remain unresolved |
+| PACKAGE_READY | BLOCKED | Updated-byte capture/review, native-package reconciliation, behavior and paired parity remain unresolved |
 | RELEASE_READY | BLOCKED | Draft only; no replacement release or retirement |
 
 Allowed statuses are VERIFIED, USER_REPORTED, IMPLEMENTED_NOT_VERIFIED, BLOCKED

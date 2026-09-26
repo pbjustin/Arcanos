@@ -517,6 +517,32 @@
       "status": "VERIFIED",
       "observedAt": "2026-09-26T04:30:15.294Z",
       "summary": "Try in chat opens a fresh ChatGPT Work composer with migrated Tutor selected. No prompt submitted. Formal teaching execution is blocked by unreconciled integration differences and absence of a demonstrated enforced no-backend test boundary; not by a universal lack of plugin testing support."
+    },
+    {
+      "id": "account-plugin-approved-skill-update-ui-20260926",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-26T05:50:16Z",
+      "summary": "Owner-authorized supported update of the same private migrated plugin used the exact already-approved composed skill attachment. The account page independently shows version 0.8.2; settings show Uninstall and Use Tutor checked. The supported skill viewer visibly includes all five approved safeguard headings. Plugin Creator reports the requested skill hash, private visibility, one skill, zero references and zero apps. Those reports and rendered Markdown do not verify the saved raw bytes. Native export and Creator ZIP download did not return a local file; cache inspection still finds the historical 0.8.1 bundle. No teaching test, backend call or sharing occurred.",
+      "pluginUpdateObservation": {
+        "recordedAt": "2026-09-26T05:50:16Z",
+        "timeBasis": "Task evidence review and recording time; not the exact account save time.",
+        "pluginId": "plugin_d292d1e45ae08191b3911299e30e1a25",
+        "previousCapturedVersion": "0.8.1+bundle.951fdf6546409c5382fa49f2bed2fd2b",
+        "accountVersion": "0.8.2+bundle.7661b328b99aa096f930f46e272ef9208de6f11e22c002e77f79d9ab78a15096",
+        "requestedSkillSha256": "7661b328b99aa096f930f46e272ef9208de6f11e22c002e77f79d9ab78a15096",
+        "creatorReportedSkillSha256": "7661b328b99aa096f930f46e272ef9208de6f11e22c002e77f79d9ab78a15096",
+        "creatorReportedVisibility": "PRIVATE",
+        "creatorReportedCounts": { "skills": 1, "references": 0, "apps": 0 },
+        "creatorReportedArchiveMemberCount": 6,
+        "creatorReportedRootManifest": "plugin.json",
+        "accountInstalled": true,
+        "accountSkillEnabled": true,
+        "renderedSafeguardHeadingCount": 5,
+        "updatedArtifactByteVerification": "PENDING",
+        "downloadedArtifactAvailable": false,
+        "officialTeachingCasesExecuted": 0
+      }
     }
   ],
   "checks": {
