@@ -1,11 +1,12 @@
 # Tutor runtime acceptance
 
-Evidence date: **2026-09-25 UTC**. Current main:
+Evidence date: **2026-09-26 UTC**. Current main:
 `71672aec22d7babf62d65b96de667f17abd3f219` (merged PR #1513).
 PR #1509 remains the **DRAFT migration container**, with auto-merge disabled.
-**RUNTIME_ACCEPTANCE=FAIL**, **LIVE_TUTOR_CALL_VERIFIED=BLOCKED**, and
-**MIGRATION_CHECKPOINT_READY=false**. The published baseline is owner-approved;
-Migrate to plugin is not authorized.
+**BACKEND_PLANE=FAIL**, **LIVE_TUTOR_CALL_VERIFIED=BLOCKED**.
+**SKILL_PLANE=DEFERRED_POST_MIGRATION**. The manual checkpoint is
+**READY_FOR_OWNER_DECISION_WITH_BACKEND_DEGRADED**; this is not release readiness
+or authorization to migrate. See the [final bounded checkpoint](TUTOR_PRE_MIGRATION_CHECKPOINT_20260926.md).
 
 Current main is authoritative for runtime code, schemas, tests, preview fixtures
 and production documentation. It was merged non-destructively into #1509 from
@@ -19,19 +20,22 @@ main. Migration/package tooling, private-input guards and evidence remain here.
 [PR #1512](https://github.com/pbjustin/Arcanos/pull/1512) were merged and deployed
 historically. [PR #1513](https://github.com/pbjustin/Arcanos/pull/1513) adds sealed
 honesty-composition verification, not a runtime behavior fix or live acceptance.
-Read-only provider metadata at **2026-09-25T15:11:15Z** confirmed current worker
+Read-only provider metadata at **2026-09-26T01:55:51Z** confirmed current worker
 `e08d2468-a287-4d5c-aa1b-f3b8aaf7d0b2` and web
 `a994758c-bc6a-4d4e-a8dc-fd4e66cb5f1e` as latest **SUCCESS**, with main's SHA in
-both metadata records. No deployment, configuration change or live call occurred
-in this reconciliation. Provider commit metadata is not container attestation.
+both metadata records. No deployment or production configuration change occurred.
+Provider commit metadata is not container attestation.
 
-The latest recorded live acceptance is the post-#1512 failed A/C/D checkpoint.
-Raw A failed authentication before execution; raw C omitted the learner check;
-raw D retained three numbered lines but added an unwanted qualification. ChatGPT
-A reported missing link_id; C/D displayed noncompliance. Same-invocation raw
-ChatGPT payloads remain unavailable, so backend/wrapper attribution is unknown.
-Existing Primary recovery and discovery remain dated verified evidence; durable
-refresh-token renewal remains unverified. No new acceptance run is authorized.
+The September 26 final bounded attempt window followed supported existing Primary
+reconnection and Refresh. Raw A/C/D each returned TUTOR_UNAVAILABLE with connector
+INVALID_ARGUMENT. ChatGPT A produced one activity entry and no final result; C
+produced two ambiguous activity entries and an unavailable error; D was not
+submitted to protect the six-invocation ceiling. Five test requests were submitted,
+with six conservatively counted potential invocations, not six confirmed calls.
+Same-invocation raw ChatGPT payloads and internal retry counts remain unavailable.
+No fresh honesty-transform cause or successful backend acceptance is established.
+Durable renewal remains unverified; no further calls are authorized by this task.
+The post-#1512 formatting failures below remain historical evidence.
 
 The complete published baseline is now owner-approved and verified; see the
 [baseline capture checkpoint](TUTOR_BASELINE_CAPTURE_20260925.md). Its approval

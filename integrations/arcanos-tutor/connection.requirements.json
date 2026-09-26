@@ -415,31 +415,98 @@
       },
       "configurationSha256": "445255487dd270aad087e025b738666340ac1d42a2e45b05fe0b7df640e843bf",
       "reportSha256": "afd229757109e34f54dbf7c8de827ee47194aeb00099adc274a16d93e76c3ba8"
+    },
+    {
+      "id": "skill-execution-surface-deferral-20260926",
+      "kind": "repository",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-26",
+      "summary": "Official desktop local-marketplace development testing exists, but needs a private cache copy outside the exclusive allowed input directory and native client control unavailable in this task. ChatGPT web MCP testing does not execute the approved teaching skill. Zero teaching requests, zero skill-plane backend calls, eighteen deferred matrix cases. This is an execution-scope deferral, not teaching success or failure, and does not satisfy release. See TUTOR_PRE_MIGRATION_CHECKPOINT_20260926.md.",
+      "behaviorDeferralBinding": {
+        "baselineFingerprint": "eb1d612dc2b4645841e3035a177ebb91fa6584a2ae633d7918972b9c9dd95e25",
+        "skillSha256": "7661b328b99aa096f930f46e272ef9208de6f11e22c002e77f79d9ab78a15096",
+        "packageFingerprint": "4a5bbb9052929adfac18f57d52090b30a8d62e9b66b1b3e6ecc041ecc5f41958",
+        "reason": "NO_SUPPORTED_SURFACE_WITHIN_TASK_BOUNDARIES",
+        "surface": "ChatGPT web; desktop local marketplace requires private cache outside allowed input directory",
+        "postMigrationRequired": true
+      }
+    },
+    {
+      "id": "primary-final-reauth-refresh-20260926",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-26",
+      "summary": "Supported existing Primary reconnect cleared its authentication-update warning before the bounded calls. Refresh tools completed. Existing app identity and production resource unchanged; UI catalog contains only arcanos_tutor, callable connector exposes prompt and account selector, and public resource metadata exposes only arcanos:tutor. Complete refreshed JSON schema and credential-renewal internals were not exposed. Prior complete schema evidence remains dated. No new connection, app, credential configuration or OAuth policy change; exact-client durable renewal remains unverified."
+    },
+    {
+      "id": "production-final-metadata-20260926",
+      "kind": "railway",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-26T01:55:51Z",
+      "summary": "Read-only provider metadata confirms latest worker e08d2468-a287-4d5c-aa1b-f3b8aaf7d0b2 and web a994758c-bc6a-4d4e-a8dc-fd4e66cb5f1e SUCCESS with main 71672aec22d7babf62d65b96de667f17abd3f219. No queued/building/deploying entry in inspected latest fifty per service. Provider metadata is not container attestation. No deployment or configuration change."
+    },
+    {
+      "id": "final-raw-acceptance-20260926",
+      "kind": "chatgpt",
+      "status": "BLOCKED",
+      "observedAt": "2026-09-26",
+      "summary": "Raw A/C/D each submitted once after Primary recovery, with no root retry. All returned isError=true, TUTOR_UNAVAILABLE and connector INVALID_ARGUMENT. No answer or generation/module/execution/memory metadata; sentence/step/content checks not assessable. Failure category OTHER/backend unavailable; precise internal cause unavailable. These errors neither establish a new honesty-transform defect nor clear historical failure.",
+      "evidenceArtifacts": [
+        {
+          "path": "final-acceptance-cycle-20260926.json",
+          "sha256": "701016965bcd1b9c92375c86a8ac7f7ac497538d69068d760c7d275034c203b8"
+        }
+      ]
+    },
+    {
+      "id": "final-chatgpt-partial-acceptance-20260926",
+      "kind": "chatgpt",
+      "status": "BLOCKED",
+      "observedAt": "2026-09-26",
+      "summary": "New supported ChatGPT conversation: A submitted once, one visible Tutor activity, no final result; C submitted once, two visible Tutor activity entries and final TUTOR_UNAVAILABLE (INVALID_ARGUMENT). Same-invocation payloads and actual service invocation counts unavailable. D NOT_EXECUTED_BUDGET_CEILING. Five total submitted requests (raw three plus ChatGPT two); six conservatively counted potential backend invocations (3+1+2), not six confirmed calls. No root retry; internal ChatGPT retries unobservable. Attempt window stopped before D, with no further calls authorized by this task.",
+      "evidenceArtifacts": [
+        {
+          "path": "final-chatgpt-A-20260926.txt",
+          "sha256": "ccd34b563bfb016fe7614ac788977bc399033009dcfd6842395b6c4ba646ece9"
+        },
+        {
+          "path": "final-chatgpt-C-20260926.txt",
+          "sha256": "563732f247c5f98751705153cadee9268f838c70c0a1621298e8a2126f8f924f"
+        },
+        {
+          "path": "final-chatgpt-supported-reader-20260926.json",
+          "sha256": "90f8b102b620e9de29beefa520b246cb700987ac8da1bbfeb8bf65b9289365af"
+        }
+      ]
     }
   ],
   "checks": {
     "registeredConnection": {
       "status": "VERIFIED",
       "evidenceIds": [
-        "primary-reauth-schema-refresh-20260924"
+        "primary-reauth-schema-refresh-20260924",
+        "primary-final-reauth-refresh-20260926"
       ]
     },
     "endpoint": {
       "status": "VERIFIED",
       "evidenceIds": [
-        "primary-reauth-schema-refresh-20260924"
+        "primary-reauth-schema-refresh-20260924",
+        "primary-final-reauth-refresh-20260926"
       ]
     },
     "authentication": {
       "status": "VERIFIED",
       "evidenceIds": [
-        "primary-reauth-schema-refresh-20260924"
+        "primary-reauth-schema-refresh-20260924",
+        "primary-final-reauth-refresh-20260926"
       ]
     },
     "toolDiscovery": {
       "status": "VERIFIED",
       "evidenceIds": [
-        "primary-reauth-schema-refresh-20260924"
+        "primary-reauth-schema-refresh-20260924",
+        "primary-final-reauth-refresh-20260926"
       ]
     },
     "liveExecution": {
@@ -447,7 +514,9 @@
       "evidenceIds": [
         "runtime-raw-acceptance-20260924",
         "runtime-chatgpt-acceptance-20260924",
-        "runtime-acceptance-post1512-record-20260925"
+        "runtime-acceptance-post1512-record-20260925",
+        "final-raw-acceptance-20260926",
+        "final-chatgpt-partial-acceptance-20260926"
       ]
     }
   },

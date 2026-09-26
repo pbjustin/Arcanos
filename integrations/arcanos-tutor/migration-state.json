@@ -12,39 +12,45 @@
     "BACKEND_DEPLOYED": {
       "status": "VERIFIED",
       "evidenceIds": [
-        "production-1513-metadata-recheck-20260925"
+        "production-1513-metadata-recheck-20260925",
+        "production-final-metadata-20260926"
       ],
-      "note": "Current main71672aec is identified in provider metadata for latest worker e08d2468-a287-4d5c-aa1b-f3b8aaf7d0b2 and web a994758c-bc6a-4d4e-a8dc-fd4e66cb5f1e, both SUCCESS at2026-09-25T15:11:15Z. Provider metadata is not container attestation or live acceptance. No deployment performed in this reconciliation."
+      "note": "Read-only provider metadata confirms latest worker e08d2468-a287-4d5c-aa1b-f3b8aaf7d0b2 and web a994758c-bc6a-4d4e-a8dc-fd4e66cb5f1e SUCCESS with main 71672aec22d7babf62d65b96de667f17abd3f219. No queued/building/deploying entry in inspected latest fifty per service. Provider metadata is not container attestation. No deployment or configuration change."
     },
     "OAUTH_CONFIGURED": {
       "status": "VERIFIED",
       "evidenceIds": [
-        "primary-reauth-schema-refresh-20260924"
+        "primary-reauth-schema-refresh-20260924",
+        "primary-final-reauth-refresh-20260926"
       ],
-      "note": "Existing Primary reauthentication succeeded and four raw authenticated calls returned real model answers. Exact-client refresh-token durability remains unverified; ChatGPT A selected-account binding was not exposed."
+      "note": "Existing Primary reauthentication succeeded before the final bounded attempt window; warning cleared and Refresh completed. Exact-client credential renewal durability remains unverified. Fresh backend calls returned unavailable errors, not successful provider answers."
     },
     "CHATGPT_CONNECTION_REGISTERED": {
       "status": "VERIFIED",
       "evidenceIds": [
-        "primary-reauth-schema-refresh-20260924"
+        "primary-reauth-schema-refresh-20260924",
+        "primary-final-reauth-refresh-20260926"
       ],
-      "note": "September24 existing-connection UI confirmed unchanged registered app, technical identity and production resource. This is dated evidence; no new account inspection, connection creation or replacement in the September25 reconciliation."
+      "note": "Fresh supported UI inspection confirmed the same existing app identity and resource after Primary recovery. No new app or connection created."
     },
     "TOOL_DISCOVERY_VERIFIED": {
       "status": "VERIFIED",
       "evidenceIds": [
-        "primary-reauth-schema-refresh-20260924"
+        "primary-reauth-schema-refresh-20260924",
+        "primary-final-reauth-refresh-20260926"
       ],
-      "note": "September24 explicit supported Refresh after reconnect exposed exactly arcanos_tutor with the corrected schema, prompt-only input and arcanos:tutor scope. No new refresh performed in the September25 reconciliation."
+      "note": "Fresh Refresh completed; catalog contains only arcanos_tutor and public scope remains arcanos:tutor. Callable connector is prompt plus account selector. Prior complete JSON-schema evidence remains dated because current UI did not expose the full refreshed schema."
     },
     "LIVE_TUTOR_CALL_VERIFIED": {
       "status": "BLOCKED",
       "evidenceIds": [
         "runtime-raw-acceptance-20260924",
         "runtime-chatgpt-acceptance-20260924",
-        "runtime-acceptance-post1512-record-20260925"
+        "runtime-acceptance-post1512-record-20260925",
+        "final-raw-acceptance-20260926",
+        "final-chatgpt-partial-acceptance-20260926"
       ],
-      "note": "Latest recorded post1512 A/C/D acceptance remains FAIL: raw A authentication failure, C missing learner check, D unwanted qualifying introduction; ChatGPT A missing link_id and C/D noncompliance. Same-invocation payloads unavailable, attribution unknown. PR1513 sealed synthetic honesty-composition verification is not live acceptance. No new calls."
+      "note": "Final bounded attempt window remains FAIL: raw A/C/D all TUTOR_UNAVAILABLE (INVALID_ARGUMENT); ChatGPT A no final result, C unavailable with two ambiguous activity entries; D not attempted to protect the six-invocation ceiling. Five submitted requests, six conservatively counted potential invocations; actual service count and internal retries unobservable. No successful backend result, no new honesty-transform attribution. Optional backend failure is independent of skill deferral."
     },
     "GPT_BASELINE_CAPTURED": {
       "status": "VERIFIED",
@@ -121,9 +127,11 @@
       "note": "Owner approved exact private skill SHA-256 7661b328b99aa096f930f46e272ef9208de6f11e22c002e77f79d9ab78a15096 on 2026-09-26T01:03:47Z. Repository inspection confirms unchanged skill/package/baseline/report hashes and bound approval metadata. This reconciles the composed candidate only; teaching behavior, backend acceptance, actual migration and migrated-artifact reconciliation remain separate."
     },
     "TUTOR_SKILL_BEHAVIOR_VERIFIED": {
-      "status": "BLOCKED",
-      "evidenceIds": [],
-      "note": "Eighteen teaching and routing cases are specified; deterministic contract tests are not installed-skill behavior evidence. Independent of backend live acceptance."
+      "status": "DEFERRED_POST_MIGRATION",
+      "evidenceIds": [
+        "skill-execution-surface-deferral-20260926"
+      ],
+      "note": "Approved artifact hashes remain exact. Official desktop development testing exists but requires private cache outside the allowed directory and unavailable native client control; no equivalent web skill surface found. Zero executed/passed/failed and eighteen deferred cases; zero skill-test backend calls is not installed-skill no-call proof. Manual checkpoint READY_FOR_OWNER_DECISION_WITH_BACKEND_DEGRADED; release still requires actual behavior evidence."
     },
     "CAPABILITY_EQUIVALENCE_VERIFIED": {
       "status": "NOT_APPLICABLE",
@@ -135,9 +143,10 @@
     "BACKEND_APP_REGISTERED": {
       "status": "VERIFIED",
       "evidenceIds": [
-        "primary-reauth-schema-refresh-20260924"
+        "primary-reauth-schema-refresh-20260924",
+        "primary-final-reauth-refresh-20260926"
       ],
-      "note": "Alias for the existing dated registered Tutor app evidence; no new registration, authentication or connection change."
+      "note": "Same existing registered Tutor app verified after authorized Primary recovery; no app registration or replacement connection created."
     },
     "BACKEND_APP_OPTIONALITY_VERIFIED": {
       "status": "VERIFIED",

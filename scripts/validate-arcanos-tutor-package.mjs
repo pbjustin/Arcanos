@@ -51,13 +51,18 @@ function validateEvidence(connection, state) {
     requireCondition(item.kind !== 'user_reported' || item.status !== 'VERIFIED', 'USER_REPORT_IS_NOT_VERIFICATION');
     evidence.set(item.id, item);
   }
-  const validateClaim = (claim, allowHostCapabilityExclusion = false) => {
-    const excluded = allowHostCapabilityExclusion && claim?.status === 'NOT_APPLICABLE';
-    requireCondition(claim && (statuses.includes(claim.status) || excluded) && Array.isArray(claim.evidenceIds) &&
+  const validateClaim = (claim, gate) => {
+    const excluded = gate === 'CAPABILITY_EQUIVALENCE_VERIFIED' && claim?.status === 'NOT_APPLICABLE';
+    const deferred = gate === 'TUTOR_SKILL_BEHAVIOR_VERIFIED' && claim?.status === 'DEFERRED_POST_MIGRATION';
+    requireCondition(claim && (statuses.includes(claim.status) || excluded || deferred) && Array.isArray(claim.evidenceIds) &&
       claim.evidenceIds.every(id => evidence.has(id)), 'EVIDENCE_REFERENCE_INVALID');
     if (excluded) requireCondition(claim.evidenceIds.length > 0 && claim.evidenceIds.every(id =>
       evidence.get(id).kind === 'user_reported' && evidence.get(id).status === 'USER_REPORTED'),
     'CAPABILITY_SCOPE_EVIDENCE_INVALID');
+    if (deferred) requireCondition(claim.evidenceIds.length > 0 &&
+      new Set(claim.evidenceIds).size === claim.evidenceIds.length && claim.evidenceIds.every(id =>
+        ['repository', 'chatgpt'].includes(evidence.get(id).kind) && evidence.get(id).status === 'VERIFIED'),
+    'BEHAVIOR_DEFERRAL_EVIDENCE_INVALID');
     if (['VERIFIED', 'USER_REPORTED'].includes(claim.status)) requireCondition(claim.evidenceIds.length > 0, 'CLAIM_EVIDENCE_MISSING');
     if (claim.status === 'VERIFIED') requireCondition(claim.evidenceIds.some(id => evidence.get(id).status === 'VERIFIED' && evidence.get(id).kind !== 'user_reported'), 'VERIFICATION_EVIDENCE_MISSING');
   };
@@ -75,7 +80,7 @@ function validateEvidence(connection, state) {
   requireCondition(statuses.includes(connection.builderReconciliation) && statuses.includes(connection.referenceReconciliation), 'RECONCILIATION_STATUS_INVALID');
   requireCondition(state.schemaVersion === 1 && equal(Object.keys(state.gates ?? {}).sort(), [...gates].sort()), 'MIGRATION_GATES_INVALID');
   for (const gate of gates) {
-    validateClaim(state.gates[gate], gate === 'CAPABILITY_EQUIVALENCE_VERIFIED');
+    validateClaim(state.gates[gate], gate);
     requireCondition(text(state.gates[gate].note), 'GATE_NOTE_MISSING');
   }
   const gateKinds = { CODE_READY: ['repository'], BACKEND_DEPLOYED: ['railway'], OAUTH_CONFIGURED: ['auth0', 'chatgpt'],
@@ -362,6 +367,7 @@ export async function validateArcanosTutorPackage(root, { inputRoot } = {}) {
     artifactKind: 'PUBLIC_TEMPLATE',
     privatePackageFingerprint: skillFirst.composition.packageFingerprint,
     skillOnlyTeachingReadiness: skillFirst.teachingReadiness,
+    teachingBehaviorDeferred: skillFirst.teachingDeferred,
     capabilityEquivalenceVerified: skillFirst.capabilitiesVerified,
     capabilityScopeExcluded: skillFirst.capabilityScopeExcluded,
     backendReadiness: skillFirst.backendReadiness,

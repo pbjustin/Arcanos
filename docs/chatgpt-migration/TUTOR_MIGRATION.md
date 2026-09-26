@@ -1,11 +1,12 @@
 # ARCANOS TUTOR migration handoff
 
-Evidence date: **2026-09-25 UTC**. Current main:
+Evidence date: **2026-09-26 UTC**. Current main:
 `71672aec22d7babf62d65b96de667f17abd3f219` (merged PR #1513).
 PR #1509 remains the **DRAFT migration container**, with auto-merge disabled.
-**RUNTIME_ACCEPTANCE=FAIL**, **LIVE_TUTOR_CALL_VERIFIED=BLOCKED**, and
-**MIGRATION_CHECKPOINT_READY=false**. The published baseline is owner-approved;
-Migrate to plugin is not authorized.
+**BACKEND_PLANE=FAIL**, **LIVE_TUTOR_CALL_VERIFIED=BLOCKED**.
+**SKILL_PLANE=DEFERRED_POST_MIGRATION**. The manual checkpoint is
+**READY_FOR_OWNER_DECISION_WITH_BACKEND_DEGRADED**; this is not release readiness
+or authorization to migrate. See the [final bounded checkpoint](TUTOR_PRE_MIGRATION_CHECKPOINT_20260926.md).
 
 The owner has selected **skill-first tutoring with an optional ARCANOS app**.
 The current package is a public source template; approved private instructions
@@ -27,19 +28,22 @@ main. Migration/package tooling, private-input guards and evidence remain here.
 [PR #1512](https://github.com/pbjustin/Arcanos/pull/1512) were merged and deployed
 historically. [PR #1513](https://github.com/pbjustin/Arcanos/pull/1513) adds sealed
 honesty-composition verification, not a runtime behavior fix or live acceptance.
-Read-only provider metadata at **2026-09-25T15:11:15Z** confirmed current worker
+Read-only provider metadata at **2026-09-26T01:55:51Z** confirmed current worker
 `e08d2468-a287-4d5c-aa1b-f3b8aaf7d0b2` and web
 `a994758c-bc6a-4d4e-a8dc-fd4e66cb5f1e` as latest **SUCCESS**, with main's SHA in
-both metadata records. No deployment, configuration change or live call occurred
-in this reconciliation. Provider commit metadata is not container attestation.
+both metadata records. No deployment or production configuration change occurred.
+Provider commit metadata is not container attestation.
 
-The latest recorded live acceptance is the post-#1512 failed A/C/D checkpoint.
-Raw A failed authentication before execution; raw C omitted the learner check;
-raw D retained three numbered lines but added an unwanted qualification. ChatGPT
-A reported missing link_id; C/D displayed noncompliance. Same-invocation raw
-ChatGPT payloads remain unavailable, so backend/wrapper attribution is unknown.
-Existing Primary recovery and discovery remain dated verified evidence; durable
-refresh-token renewal remains unverified. No new acceptance run is authorized.
+The September 26 final bounded attempt window followed supported existing Primary
+reconnection and Refresh. Raw A/C/D each returned TUTOR_UNAVAILABLE with connector
+INVALID_ARGUMENT. ChatGPT A produced one activity entry and no final result; C
+produced two ambiguous activity entries and an unavailable error; D was not
+submitted to protect the six-invocation ceiling. Five test requests were submitted,
+with six conservatively counted potential invocations, not six confirmed calls.
+Same-invocation raw ChatGPT payloads and internal retry counts remain unavailable.
+No fresh honesty-transform cause or successful backend acceptance is established.
+Durable renewal remains unverified; no further calls are authorized by this task.
+The post-#1512 formatting failures below remain historical evidence.
 
 The complete private published configuration validates and repeated captures
 produce the same baseline fingerprint. The owner confirmed zero published
@@ -70,17 +74,17 @@ twenty independent states; there is no single migrated boolean.
 | Gate | Current status | Basis |
 | --- | --- | --- |
 | CODE_READY | VERIFIED | Repository migration/package scope only; current reconciliation validation is recorded in TUTOR_RECONCILIATION_20260925.md. Live runtime acceptance remains failed. |
-| BACKEND_DEPLOYED | VERIFIED | Current main 71672aec; exact current worker/web IDs above are latest SUCCESS in the 2026-09-25 provider metadata recheck |
-| OAUTH_CONFIGURED | VERIFIED | Dated existing Primary recovery and Refresh evidence; exact-client renewal durability remains unverified |
-| CHATGPT_CONNECTION_REGISTERED | VERIFIED | September 24 UI matched the expected resource, raw app ID and technical ID; no new account inspection |
-| TOOL_DISCOVERY_VERIFIED | VERIFIED | September 24 explicit Refresh exposed exactly arcanos_tutor with the corrected prompt schema |
-| LIVE_TUTOR_CALL_VERIFIED | BLOCKED | Latest post-#1512 A/C/D checkpoint remains FAIL; #1513 synthetic verification does not clear it |
+| BACKEND_DEPLOYED | VERIFIED | Current main 71672aec; exact current worker/web IDs above are latest SUCCESS in the 2026-09-26 provider metadata recheck |
+| OAUTH_CONFIGURED | VERIFIED | Fresh existing Primary recovery and Refresh; exact-client renewal durability remains unverified |
+| CHATGPT_CONNECTION_REGISTERED | VERIFIED | September 26 UI matched the same expected resource and app identity; no replacement connection |
+| TOOL_DISCOVERY_VERIFIED | VERIFIED | Fresh Refresh exposed one tool; current connector prompt contract and public scope verified; full refreshed schema not exposed |
+| LIVE_TUTOR_CALL_VERIFIED | BLOCKED | Fresh raw A/C/D unavailable; ChatGPT A incomplete, C unavailable, D stopped before budget ceiling |
 | GPT_BASELINE_CAPTURED | VERIFIED | Complete private capture, deterministic fingerprint and owner review recorded; latestPublishedConfirmed=true |
 | TUTOR_SKILL_COMPOSED | VERIFIED | Local composition integrity only; v3/v4 bytes match |
 | TUTOR_SKILL_RECONCILED | VERIFIED | Owner approved unchanged private skill 7661b328b99aa096f930f46e272ef9208de6f11e22c002e77f79d9ab78a15096; exact baseline/package bindings and source integrity rechecked |
-| TUTOR_SKILL_BEHAVIOR_VERIFIED | BLOCKED | Eighteen cases specified; deterministic decisions are not installed-skill evidence |
+| TUTOR_SKILL_BEHAVIOR_VERIFIED | DEFERRED_POST_MIGRATION | Eighteen cases remain unexecuted; desktop test surface unavailable within this task privacy/client boundary |
 | CAPABILITY_EQUIVALENCE_VERIFIED | NOT_APPLICABLE | Owner excludes the four host ChatGPT features from Tutor release scope; their equivalence remains NOT_TESTED |
-| BACKEND_APP_REGISTERED | VERIFIED | Existing dated app registration; no new connection |
+| BACKEND_APP_REGISTERED | VERIFIED | Fresh unchanged existing app identity; no new connection |
 | BACKEND_APP_OPTIONALITY_VERIFIED | VERIFIED | Official optional syntax and offline reference contract only; installed behavior unverified |
 | MIGRATED_SKILL_RECONCILED | BLOCKED | Actual migrated skill missing; private composition does not substitute for it |
 | GPT_MIGRATED | NOT_STARTED | Migration click has not been authorized or performed |
@@ -94,15 +98,17 @@ Allowed statuses are VERIFIED, USER_REPORTED, IMPLEMENTED_NOT_VERIFIED, BLOCKED
 and NOT_STARTED. Only CAPABILITY_EQUIVALENCE_VERIFIED additionally permits
 NOT_APPLICABLE, with the exact four-feature owner scope decision and baseline-bound
 evidence required by [the input contract](TUTOR_INPUTS.md#host-capability-release-scope).
-This is not verified equivalence or a general gate bypass.
+Only TUTOR_SKILL_BEHAVIOR_VERIFIED additionally permits DEFERRED_POST_MIGRATION
+with exact approved-artifact and execution-surface binding; this never satisfies
+release dependencies. These exceptions are not verified behavior or a general gate bypass.
 VERIFIED always identifies its evidence domain. A successful
 local test cannot verify account migration; user reports cannot become independent
 account evidence merely by changing a label.
 Historical observations remain in the evidence ledger, while the gates describe
 the current candidate. Deployment, refreshed discovery and model execution are
 separate from successful runtime acceptance and migrated-plugin parity. The
-pre-migration checkpoint below remains false independently of these twenty
-machine-readable gates.
+manual pre-migration owner-decision checkpoint below is distinct from these twenty
+machine-readable release gates.
 
 ## Historical evidence provenance (2026-09-24)
 
@@ -234,30 +240,32 @@ behavior, an installed migrated skill, mobile behavior or teaching parity.
 
 ## Pre-migration checkpoint
 
-**MIGRATION_CHECKPOINT_READY = false.** This is a manual checkpoint, not an
-additional machine-readable gate. The PR is draft and the preview opt-in label
-is absent. Before requesting the separate migration-click confirmation, require:
+**READY_FOR_OWNER_DECISION_WITH_BACKEND_DEGRADED**. The approved baseline and
+exact owner-approved composed skill remain unchanged. Official desktop development
+testing exists but cannot be used inside this task's exclusive private-input
+boundary or available web-only control. All eighteen actual teaching cases are
+formally deferred, with no synthetic substitute or claimed pass.
 
-- Owner-confirmed latest published version and complete baseline, including the
-  complete knowledge inventory and publication provenance.
-- All applicable old-GPT cases bound to that baseline; provisional observations
-  alone are insufficient.
-- Fresh authenticated connection, exact real app mapping and single-tool catalog.
-- Reviewed migration consequences and rollback limits.
-- Resolution of the live formatting issue, or explicit owner acceptance bound to
-  the exact case and baseline and candidate fingerprints.
+The optional backend failed the final bounded attempt window. The owner may now
+decide whether to migrate with that backend explicitly unavailable/degraded.
+There is no new pre-migration engineering requirement from this evidence. Actual
+migration, installed-skill testing, generated references, and paired parity are
+post-migration work, not missing prerequisites for presenting this decision.
+The sixteen old-GPT parity rows remain 0 bound / 10 provisional / 6 unexecuted.
 
-Latest-publication/completeness confirmation is recorded in the owner-approved
-baseline. Complete bound baseline results and resolution of failed runtime
-acceptance remain pending. The connection/catalog refresh alone does not satisfy
-these conditions. No migration action, reference publication or
-replacement installation is authorized by this checkpoint document.
+The [final checkpoint](TUTOR_PRE_MIGRATION_CHECKPOINT_20260926.md) records the exact
+artifact hashes, call budget limits, official surface evidence, and thirteen-item
+post-migration checklist. The PR stays draft, release stays blocked, and a separate
+explicit migration decision is still required. No migration action is authorized
+by this document.
 
 ## Before migration: capture the published baseline
 
+This baseline procedure is already completed for the current candidate.
+
 1. In the owner's actual **My GPTs** controls, inspect ARCANOS TUTOR. Confirm its
-   exact display name and latest published version/date. Publish essential
-   pending edits yourself, then capture that published version. An unpublished
+   exact display name and latest published version/date. Publishing edits requires
+   separate owner authorization; capture the actual published version. An unpublished
    draft or repository prompt is not the baseline.
 2. Privately save the published description, full Builder instructions,
    conversation starters, enabled capabilities, Action names and complete schemas,
@@ -272,9 +280,10 @@ replacement installation is authorized by this checkpoint document.
    enter tracked inventories. Do not commit private Builder text, knowledge, raw
    transcripts, credentials or session material. Filename metadata can itself be
    sensitive; review it before copying it into the public inventory.
-5. Run the old GPT against every applicable row in the
-   [parity matrix](../../integrations/arcanos-tutor/parity-matrix.json) while it is
-   available. Record sanitized summaries plus hashes of local result artifacts.
+5. Preserve existing old-GPT observations in the
+   [parity matrix](../../integrations/arcanos-tutor/parity-matrix.json). Any later
+   old-GPT execution needs separate authorization; unbound observations do not
+   block presenting the current owner decision. Record sanitized summaries plus hashes of local result artifacts.
    Keep the full source privately. The sixteen definitions cover direct/indirect
    activation, non-activation, clarification, concise explanation, structured
    lesson, learner follow-up, difficult questions, exact format, memory/admin
@@ -290,15 +299,18 @@ required local fields, sanitized-output review and release-validation command.
 
 ## The irreversible checkpoint
 
-**Do not press Migrate to plugin yet.** Immediately before that click, prove all
-of the following against actual account and local evidence:
+**Do not press Migrate to plugin in this task.** A later owner decision must
+explicitly cover migration with the optional backend degraded and acknowledge
+the consequences below. Reconfirm current account eligibility at that time:
 
 - Essential changes are published and the complete published baseline is captured.
-- The existing approved account can authenticate; a fresh connection inspection
-  still points to the intended resource and exposes exactly `arcanos_tutor`.
+- The existing app identity and single-tool boundary remain as documented. Its
+  failed acceptance must be disclosed; backend health is not a technical
+  prerequisite for the skill-first migration decision.
 - The package mapping matches that real connection, and the account actually offers
   migration. A prior web tool call does not prove migration eligibility.
-- Baseline regression results are captured, and rollback limits below are understood.
+- The approved baseline is preserved, historical observations remain accurately
+  unbound, and deferred real-plugin tests and rollback limits below are understood.
 - The owner understands the original GPT becomes read-only; custom Actions,
   conversations, selected model and sharing settings do not transfer.
 - The replacement starts private; migration does not automatically install or
@@ -343,7 +355,8 @@ Use connection **Refresh** after MCP catalog changes, then inspect discovery.
 MCP-imported skills require a new scan; submitted versions require a new reviewed
 version; local packages require refreshing their installed copy/restarting the
 desktop client. Follow the [current platform reconciliation](TUTOR_PLATFORM_RECONCILIATION.md)
-for the applicable surface. This PR performs none of those account changes.
+for the applicable surface. This checkpoint performed only the authorized existing
+Primary reconnect and metadata Refresh; it did not install or scan a teaching skill.
 
 ## Parity disposition and release
 
@@ -367,7 +380,7 @@ blockers are resolved; readiness or merge is never automatic.
 
 ## Production impact and rollback
 
-Existing ARCANOS TUTOR Custom GPT remains operational until retirement.
+Existing ARCANOS TUTOR Custom GPT remains unchanged; no retirement was performed.
 Existing Custom GPT Actions remain unchanged. Gaming, Booker and Core are outside
 this PR. No production variable or credential change was made **as part of this
 PR**; earlier separately authorized OAuth activation is dated evidence only.
@@ -388,7 +401,7 @@ require its own explicit authorization; neither is carried out by this task.
 ## Historical handoff opening (2026-09-24, superseded current-state wording)
 
 The following original checkpoint is retained as history. Its uses of current or
-fresh refer to September 24 and do not supersede the September 25 status above.
+fresh refer to September 24 and do not supersede the September 26 status above.
 
 Evidence date: **2026-09-24 UTC**. Current main:
 `8af7a5712ebd5954a97af06ab31d0e2527ac0b58` (PR #1510 merge).

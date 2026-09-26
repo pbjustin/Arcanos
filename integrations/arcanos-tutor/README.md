@@ -62,7 +62,7 @@ operation. Synthetic decision tests prove only the reference contract.
 - `capability-equivalence.json`: four published capabilities, untested client equivalents, and the baseline-bound owner decision excluding them from Tutor release scope.
 - `migration-state.json`: separate teaching, backend, migration, parity, and release gates.
 - `baseline.inventory.json`: approved published metadata; original source remains private.
-- `connection.requirements.json`: dated account/runtime evidence; no new live acceptance.
+- `connection.requirements.json`: dated account/runtime evidence, including the stopped final bounded backend attempt window.
 - `migration.inventory.json` and `reference-review.json`: actual migrated output and exact reference approvals, still missing/empty.
 - `parity-matrix.json`: sixteen historical comparison definitions; 0 bound, 10 provisional, 6 unexecuted.
 - `schemas/`: unchanged hash-pinned portable schema.
@@ -76,4 +76,16 @@ Zero published knowledge files does not prove the future migrated inventory empt
 Read the [handoff](../../docs/chatgpt-migration/TUTOR_MIGRATION.md),
 [private input contract](../../docs/chatgpt-migration/TUTOR_INPUTS.md), and
 [skill-first implementation record](../../docs/chatgpt-migration/TUTOR_SKILL_FIRST_20260925.md).
-PR #1509 remains draft; migration, deployment, merge, and live calls are not authorized.
+PR #1509 remains draft. The final bounded backend attempt window is closed; no
+additional calls, migration, deployment, or merge are authorized.
+
+## Final pre-migration checkpoint
+
+See the [final bounded checkpoint](../../docs/chatgpt-migration/TUTOR_PRE_MIGRATION_CHECKPOINT_20260926.md).
+SKILL_PLANE is DEFERRED_POST_MIGRATION: official desktop testing exists but needs
+a private cache copy outside this task boundary and unavailable native client
+control. No teaching cases ran. BACKEND_PLANE is FAIL: raw A/C/D were unavailable;
+ChatGPT A incomplete, C unavailable with ambiguous duplicate activity, D stopped
+before the invocation ceiling. READY_FOR_OWNER_DECISION_WITH_BACKEND_DEGRADED
+means the owner can decide on migration with an unavailable optional backend; it
+does not advance release gates or authorize migration.

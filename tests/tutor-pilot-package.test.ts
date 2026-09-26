@@ -226,6 +226,32 @@ function editCapabilityScope(fixture: ReturnType<typeof capabilityExclusionFixtu
   });
 }
 
+function behaviorDeferralFixture() {
+  const fixture = completeFixture();
+  const evidenceId = 'mock-behavior-deferral';
+  edit(fixture.root, 'teaching-behavior-matrix.json', matrix => {
+    matrix.evidenceStatus = 'UNEXECUTED';
+    for (const item of matrix.cases) {
+      item.evidenceStatus = 'UNEXECUTED';
+      item.actualResult = null;
+      item.verification = null;
+    }
+  });
+  edit(fixture.root, 'connection.requirements.json', connection => {
+    connection.evidence = connection.evidence.filter((item: Json) => !item.id.startsWith('mock-teaching-'));
+    connection.evidence.push({ id: evidenceId, kind: 'repository', status: 'VERIFIED', observedAt: review.reviewedAt,
+      summary: 'Mock review of task execution-surface limits; no teaching execution.',
+      behaviorDeferralBinding: { ...fixture.bindings, reason: 'NO_SUPPORTED_SURFACE_WITHIN_TASK_BOUNDARIES',
+        surface: 'ChatGPT web; desktop local marketplace requires private cache outside allowed input directory',
+        postMigrationRequired: true } });
+  });
+  edit(fixture.root, 'migration-state.json', state => {
+    state.gates.TUTOR_SKILL_BEHAVIOR_VERIFIED.status = 'DEFERRED_POST_MIGRATION';
+    state.gates.TUTOR_SKILL_BEHAVIOR_VERIFIED.evidenceIds = [evidenceId];
+  });
+  return { ...fixture, evidenceId };
+}
+
 afterEach(() => {
   for (const root of temporaryRoots.splice(0)) {
     if (path.dirname(root) !== path.resolve(os.tmpdir()) || !path.basename(root).startsWith('arcanos-tutor-package-')) throw new Error('Unexpected temporary test path');
@@ -793,6 +819,91 @@ describe('Standalone Tutor package and migration release boundary', () => {
     expect(JSON.parse(result.stdout)).toMatchObject({ releaseStatus: 'BLOCKED', skillOnlyTeachingReadiness: 'BLOCKED',
       capabilityEquivalenceVerified: false, capabilityScopeExcluded: true });
     expect(JSON.parse(result.stdout).releaseBlockers).toContain('PRIVATE_SKILL_OWNER_REVIEW_MISSING');
+  });
+  it('accepts a bound behavior deferral while keeping actual teaching and release blocked', () => {
+    const fixture = behaviorDeferralFixture();
+    expect(validate(fixture.root).status).toBe(0);
+    const result = validate(fixture.root, ['--release', '--inputs', fixture.inputs]);
+    expect(result.stderr).toBe('');
+    expect(result.status).toBe(2);
+    const report = JSON.parse(result.stdout);
+    expect(report).toMatchObject({ teachingBehaviorDeferred: true, skillOnlyTeachingReadiness: 'BLOCKED',
+      releaseStatus: 'BLOCKED', gates: { TUTOR_SKILL_BEHAVIOR_VERIFIED: 'DEFERRED_POST_MIGRATION',
+        PACKAGE_READY: 'BLOCKED', RELEASE_READY: 'BLOCKED' } });
+    expect(report.releaseBlockers).toEqual(expect.arrayContaining(['TUTOR_SKILL_BEHAVIOR_VERIFIED', 'SKILL_BEHAVIOR_NOT_VERIFIED']));
+    const matrix = json(fixture.root, 'teaching-behavior-matrix.json');
+    expect(matrix.cases).toHaveLength(18);
+    expect(matrix.cases.every((item: Json) => item.evidenceStatus === 'UNEXECUTED' &&
+      item.actualResult === null && item.verification === null)).toBe(true);
+  });
+  it('rejects behavior deferral with stale, incomplete, untrusted, or broadened evidence', () => {
+    const fixture = behaviorDeferralFixture();
+    const original = readFileSync(path.join(fixture.root, 'connection.requirements.json'));
+    const mutations: Array<(item: Json) => void> = [
+      item => { delete item.behaviorDeferralBinding; },
+      ...['baselineFingerprint', 'skillSha256', 'packageFingerprint'].map(field =>
+        (item: Json) => { item.behaviorDeferralBinding[field] = hash('mock stale artifact'); }),
+      item => { item.behaviorDeferralBinding.reason = 'NO_PREVIEW_EXISTS_ANYWHERE'; },
+      item => { item.behaviorDeferralBinding.surface = 'Mock unsupported universal claim'; },
+      item => { item.behaviorDeferralBinding.postMigrationRequired = false; },
+      item => { item.behaviorDeferralBinding.releaseExempt = true; },
+      item => { item.kind = 'user_reported'; item.status = 'USER_REPORTED'; }
+    ];
+    for (const mutate of mutations) {
+      writeFileSync(path.join(fixture.root, 'connection.requirements.json'), original);
+      edit(fixture.root, 'connection.requirements.json', connection => {
+        mutate(connection.evidence.find((item: Json) => item.id === fixture.evidenceId));
+      });
+      expect(validate(fixture.root).status).toBe(1);
+    }
+    writeFileSync(path.join(fixture.root, 'connection.requirements.json'), original);
+    for (const evidenceIds of [[], [fixture.evidenceId, fixture.evidenceId]]) {
+      edit(fixture.root, 'migration-state.json', state => {
+        state.gates.TUTOR_SKILL_BEHAVIOR_VERIFIED.evidenceIds = evidenceIds;
+      });
+      expect(validate(fixture.root).status).toBe(1);
+    }
+  });
+  it('limits behavior deferral to its own gate without allowing connection or evidence deferral', () => {
+    const fixture = behaviorDeferralFixture();
+    const originalState = readFileSync(path.join(fixture.root, 'migration-state.json'));
+    for (const gate of Object.keys(json(fixture.root, 'migration-state.json').gates).filter(name => name !== 'TUTOR_SKILL_BEHAVIOR_VERIFIED')) {
+      writeFileSync(path.join(fixture.root, 'migration-state.json'), originalState);
+      edit(fixture.root, 'migration-state.json', state => { state.gates[gate].status = 'DEFERRED_POST_MIGRATION'; });
+      expect(validate(fixture.root).status).toBe(1);
+    }
+    writeFileSync(path.join(fixture.root, 'migration-state.json'), originalState);
+    const originalConnection = readFileSync(path.join(fixture.root, 'connection.requirements.json'));
+    for (const check of Object.keys(json(fixture.root, 'connection.requirements.json').checks)) {
+      writeFileSync(path.join(fixture.root, 'connection.requirements.json'), originalConnection);
+      edit(fixture.root, 'connection.requirements.json', connection => { connection.checks[check].status = 'DEFERRED_POST_MIGRATION'; });
+      expect(validate(fixture.root).status).toBe(1);
+    }
+    writeFileSync(path.join(fixture.root, 'connection.requirements.json'), originalConnection);
+    edit(fixture.root, 'connection.requirements.json', connection => {
+      connection.evidence.find((item: Json) => item.id === fixture.evidenceId).status = 'DEFERRED_POST_MIGRATION';
+    });
+    expect(validate(fixture.root).status).toBe(1);
+  });
+  it('rejects behavior deferral without owner approval or with a teaching execution claim', () => {
+    const fixture = behaviorDeferralFixture();
+    edit(fixture.root, 'skill-composition.inventory.json', composition => {
+      composition.status = 'IMPLEMENTED_NOT_VERIFIED'; composition.ownerReview = { status: 'PENDING' };
+    });
+    edit(fixture.root, 'migration-state.json', state => {
+      state.gates.TUTOR_SKILL_RECONCILED.status = 'BLOCKED';
+      state.gates.MIGRATED_SKILL_RECONCILED.status = 'BLOCKED';
+    });
+    expect(validate(fixture.root).status).toBe(1);
+    const executedFixture = completeFixture();
+    const deferralEvidence = json(fixture.root, 'connection.requirements.json').evidence.find((item: Json) => item.id === fixture.evidenceId);
+    deferralEvidence.behaviorDeferralBinding = { ...deferralEvidence.behaviorDeferralBinding, ...executedFixture.bindings };
+    edit(executedFixture.root, 'connection.requirements.json', connection => { connection.evidence.push(deferralEvidence); });
+    edit(executedFixture.root, 'migration-state.json', state => {
+      state.gates.TUTOR_SKILL_BEHAVIOR_VERIFIED.status = 'DEFERRED_POST_MIGRATION';
+      state.gates.TUTOR_SKILL_BEHAVIOR_VERIFIED.evidenceIds = [fixture.evidenceId];
+    });
+    expect(validate(executedFixture.root).status).toBe(1);
   });
   it('captures only metadata and leaves latest publication unverified', () => {
     const fixture = completeFixture();

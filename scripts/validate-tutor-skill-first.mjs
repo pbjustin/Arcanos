@@ -154,6 +154,27 @@ export async function validateSkillFirst({ root, inputRoot, baseline, state, evi
     boundObservation(row.verification, evidence, 'teachingBinding', { ...bindings, caseId: row.id,
       promptSha256: digest(row.prompt), summarySha256: row.actualResult.summarySha256,
       artifactSha256: row.actualResult.artifactSha256 }));
+  const teachingDeferred = state.gates.TUTOR_SKILL_BEHAVIOR_VERIFIED.status === 'DEFERRED_POST_MIGRATION';
+  if (teachingDeferred) {
+    // This records an execution-surface limit for the current task. It is not
+    // teaching evidence and never satisfies the existing release dependencies.
+    requireCondition(baseline.status === 'VERIFIED' && composition.status === 'VERIFIED' && ownerApproved &&
+      ['GPT_BASELINE_CAPTURED', 'TUTOR_SKILL_COMPOSED', 'TUTOR_SKILL_RECONCILED'].every(gate =>
+        state.gates[gate].status === 'VERIFIED'), 'BEHAVIOR_DEFERRAL_PREREQUISITES_INVALID');
+    requireCondition(matrix.evidenceStatus === 'UNEXECUTED' && matrix.cases.every(row =>
+      row.evidenceStatus === 'UNEXECUTED' && row.actualResult === null && row.verification === null),
+    'BEHAVIOR_DEFERRAL_CLAIMS_EXECUTION');
+    const deferralBinding = { ...bindings, reason: 'NO_SUPPORTED_SURFACE_WITHIN_TASK_BOUNDARIES',
+      surface: 'ChatGPT web; desktop local marketplace requires private cache outside allowed input directory',
+      postMigrationRequired: true };
+    const ids = state.gates.TUTOR_SKILL_BEHAVIOR_VERIFIED.evidenceIds;
+    requireCondition(ids.length > 0 && new Set(ids).size === ids.length && ids.every(id => {
+      const item = evidence.get(id);
+      return ['repository', 'chatgpt'].includes(item?.kind) && item.status === 'VERIFIED' &&
+        same(Object.keys(item.behaviorDeferralBinding ?? {}).sort(), Object.keys(deferralBinding).sort()) &&
+        Object.entries(deferralBinding).every(([key, value]) => same(item.behaviorDeferralBinding[key], value));
+    }), 'BEHAVIOR_DEFERRAL_EVIDENCE_INVALID');
+  }
   const capabilitiesVerified = capabilities.capabilities.every(row => row.status === 'VERIFIED' &&
     text(row.verification?.surface) && boundObservation(row.verification, evidence, 'capabilityBinding',
       { ...bindings, publishedName: row.publishedName, surface: row.verification.surface }));
@@ -202,7 +223,7 @@ export async function validateSkillFirst({ root, inputRoot, baseline, state, evi
     for (const actual of templateFiles.values()) requireCondition(!actual.content.includes(configuration.instructions) &&
       !configuration.representativeBehavior.some(value => actual.content.includes(value)), 'PRIVATE_TEACHING_IN_PUBLIC_TEMPLATE');
   } else blockers.push('PRIVATE_COMPOSITION_NOT_INSPECTED');
-  return { composition, privateFiles, blockers, teachingVerified, capabilitiesVerified,
+  return { composition, privateFiles, blockers, teachingVerified, teachingDeferred, capabilitiesVerified,
     capabilityScopeExcluded, capabilityRequirementSatisfied,
     teachingReadiness: ownerApproved && teachingVerified && capabilityRequirementSatisfied ? 'VERIFIED' : 'BLOCKED',
     backendReadiness: state.gates.LIVE_TUTOR_CALL_VERIFIED.status };

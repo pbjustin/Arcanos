@@ -115,6 +115,27 @@ capability equivalence claim requires its actual bound execution evidence.
 Private skill approval, teaching behavior, backend acceptance, migration,
 reference review, and paired parity remain separately enforced.
 
+## Scoped teaching-execution deferral
+
+Only TUTOR_SKILL_BEHAVIOR_VERIFIED may use DEFERRED_POST_MIGRATION. This records
+the current task's execution/privacy limit; it is neither behavior verification
+nor a failed teaching test. It does not satisfy release dependencies.
+
+The gate requires nonempty unique evidenceIds pointing to VERIFIED repository or
+chatgpt evidence, the verified baseline/composition/exact owner review, and all
+eighteen matrix rows UNEXECUTED with null actualResult and verification. Each
+evidence entry must have an exact behaviorDeferralBinding containing current
+baselineFingerprint, skillSha256, packageFingerprint,
+reason=NO_SUPPORTED_SURFACE_WITHIN_TASK_BOUNDARIES,
+surface="ChatGPT web; desktop local marketplace requires private cache outside allowed input directory",
+and postMigrationRequired=true. Extra binding fields are rejected.
+
+The [surface review](TUTOR_PRE_MIGRATION_CHECKPOINT_20260926.md) establishes that
+official non-migrating desktop testing exists. No equivalent usable web surface
+was found within this task. Deferred installed-plugin evidence is post-migration
+work for the current owner checkpoint, not an invented pre-migration blocker.
+Actual teaching observations are still required before final release.
+
 ## Actual migrated artifacts
 
 After separately authorized migration, retain the actual migrated skill,
