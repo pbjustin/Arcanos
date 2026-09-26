@@ -1,5 +1,9 @@
 # ChatGPT Tutor authentication decision
 
+This is the historical PR #1508 design record. The existing Auth0-backed Tutor
+connection is now documented in the [Tutor migration handoff](TUTOR_MIGRATION.md)
+and its linked safe evidence. The JWT/resource-server design below is unchanged.
+
 Decision recorded before implementation on 2026-09-22. This is a resource-server foundation, not an authorization server, registered ChatGPT connection, account installation, or completed OAuth flow.
 
 The pilot adds `/chatgpt/mcp` beside the existing operator `/mcp` route. It uses the existing `jose` dependency to verify OAuth access tokens issued by a separately approved established identity provider. Only the `arcanos:tutor` permission is usable. The integration starts disabled, and incomplete configuration disables its operations without aborting application startup or changing existing GPT Action routes. No approved identity-provider tenant or real account authorization was established for this PR.

@@ -1,0 +1,185 @@
+{
+  "schemaVersion": 1,
+  "status": "BLOCKED",
+  "cases": [
+    {
+      "id": "direct-activation",
+      "category": "direct",
+      "prompt": "Use ARCANOS TUTOR to explain why 1/2 equals 2/4.",
+      "expected": "Activate; one arcanos_tutor call with prompt only; explain accurately.",
+      "oldGpt": null,
+      "plugin": null,
+      "toolInvoked": null,
+      "materialDifference": null,
+      "disposition": "BLOCKER"
+    },
+    {
+      "id": "indirect-activation",
+      "category": "indirect",
+      "prompt": "I keep getting lost when adding fractions with different denominators. Help me understand.",
+      "expected": "Recognize learner intent and invoke Tutor once.",
+      "oldGpt": null,
+      "plugin": null,
+      "toolInvoked": null,
+      "materialDifference": null,
+      "disposition": "BLOCKER"
+    },
+    {
+      "id": "non-activation",
+      "category": "non_activation",
+      "prompt": "Write a party invitation for Saturday.",
+      "expected": "Do not activate Tutor or call its backend for unrelated writing.",
+      "oldGpt": null,
+      "plugin": null,
+      "toolInvoked": null,
+      "materialDifference": null,
+      "disposition": "BLOCKER"
+    },
+    {
+      "id": "concise-explanation",
+      "category": "concise",
+      "prompt": "Explain why one half equals two quarters, in two short sentences.",
+      "expected": "Two accurate sentences with no irrelevant external-state disclaimer.",
+      "oldGpt": null,
+      "plugin": null,
+      "toolInvoked": null,
+      "materialDifference": "Historical pre-rollout observation: Prior standalone model call included an irrelevant disclaimer and three sentences. A fresh original-GPT observation used two sentences without that disclaimer, but is not bound to a complete published baseline fingerprint. After reconnect resolved initial UNAUTHORIZED, the connected-tool attempt failed connector schema validation before backend execution. Neither official oldGpt nor migrated-plugin results exist. LIVE_RETEST_PENDING; formatting and comparison remain blocked. Current checkpoint on 2026-09-25: latest recorded post-PR1512 runtime acceptance FAIL; LIVE_TUTOR_CALL_VERIFIED BLOCKED. PR1513 synthetic verification does not advance acceptance. No baseline-bound oldGpt or migrated-plugin result exists.",
+      "disposition": "BLOCKER"
+    },
+    {
+      "id": "structured-lesson",
+      "category": "structured",
+      "prompt": "Teach me equivalent fractions with an objective, a worked example, and two practice questions.",
+      "expected": "Preserve the requested lesson sections and exactly two practice questions.",
+      "oldGpt": null,
+      "plugin": null,
+      "toolInvoked": null,
+      "materialDifference": null,
+      "disposition": "BLOCKER"
+    },
+    {
+      "id": "learner-follow-up",
+      "category": "follow_up",
+      "prompt": "Using the fraction example I just gave you in this chat, explain the next step.",
+      "expected": "Use supplied chat context only; clarify if absent; never claim stored progress.",
+      "oldGpt": null,
+      "plugin": null,
+      "toolInvoked": null,
+      "materialDifference": null,
+      "disposition": "BLOCKER"
+    },
+    {
+      "id": "difficult-question",
+      "category": "difficult",
+      "prompt": "Is zero divided by zero equal to one? Explain the ambiguity carefully.",
+      "expected": "Explain undefined division accurately and handle ambiguity without invented certainty.",
+      "oldGpt": null,
+      "plugin": null,
+      "toolInvoked": null,
+      "materialDifference": null,
+      "disposition": "BLOCKER"
+    },
+    {
+      "id": "unsupported-memory",
+      "category": "memory",
+      "prompt": "Recall my saved lessons and update my permanent learner profile.",
+      "expected": "No backend memory access or persistence claims; explain unsupported scope.",
+      "oldGpt": null,
+      "plugin": null,
+      "toolInvoked": null,
+      "materialDifference": null,
+      "disposition": "BLOCKER"
+    },
+    {
+      "id": "unsupported-admin",
+      "category": "admin",
+      "prompt": "Restart the Tutor backend and change its production variables.",
+      "expected": "No tool call, administration or alternative backend route.",
+      "oldGpt": null,
+      "plugin": null,
+      "toolInvoked": null,
+      "materialDifference": null,
+      "disposition": "BLOCKER"
+    },
+    {
+      "id": "clarification",
+      "category": "clarification",
+      "prompt": "Explain the next step in this problem.",
+      "expected": "Ask one focused question for the missing problem before calling the tool.",
+      "oldGpt": null,
+      "plugin": null,
+      "toolInvoked": null,
+      "materialDifference": null,
+      "disposition": "BLOCKER"
+    },
+    {
+      "id": "exact-format",
+      "category": "exact_format",
+      "prompt": "Give exactly three numbered steps to solve 2x + 3 = 9, with no introduction.",
+      "expected": "Preserve exactly three numbered steps; no extra prose.",
+      "oldGpt": null,
+      "plugin": null,
+      "toolInvoked": null,
+      "materialDifference": null,
+      "disposition": "BLOCKER"
+    },
+    {
+      "id": "auth-failure",
+      "category": "authentication",
+      "prompt": "Explain equivalent fractions.",
+      "expected": "With a controlled expired/denied account fixture, show sign-in/access outcome without credentials or automatic retry.",
+      "oldGpt": null,
+      "plugin": null,
+      "toolInvoked": null,
+      "materialDifference": null,
+      "disposition": "BLOCKER"
+    },
+    {
+      "id": "backend-unavailable",
+      "category": "unavailable",
+      "prompt": "Explain equivalent fractions.",
+      "expected": "With an isolated unavailable-tool fixture, report no successful backend result and do not route around it.",
+      "oldGpt": null,
+      "plugin": null,
+      "toolInvoked": null,
+      "materialDifference": null,
+      "disposition": "BLOCKER"
+    },
+    {
+      "id": "timeout",
+      "category": "timeout",
+      "prompt": "Explain equivalent fractions.",
+      "expected": "With a controlled timeout fixture, report TUTOR_TIMEOUT without claiming completion or automatic retry.",
+      "oldGpt": null,
+      "plugin": null,
+      "toolInvoked": null,
+      "materialDifference": null,
+      "disposition": "BLOCKER"
+    },
+    {
+      "id": "cancellation",
+      "category": "cancellation",
+      "prompt": "Explain equivalent fractions.",
+      "expected": "With a controlled cancellation fixture, report TUTOR_CANCELLED without claiming completion or background polling.",
+      "oldGpt": null,
+      "plugin": null,
+      "toolInvoked": null,
+      "materialDifference": null,
+      "disposition": "BLOCKER"
+    },
+    {
+      "id": "reference-use",
+      "category": "references",
+      "prompt": "Explain the concept from the reference material I supplied and identify the relevant passage.",
+      "expected": "If actual references exist, confirm correct file use with safe provenance; otherwise require verified empty published and migrated inventories and an explicit reviewed not-applicable disposition.",
+      "oldGpt": null,
+      "plugin": null,
+      "toolInvoked": null,
+      "materialDifference": null,
+      "disposition": "BLOCKER"
+    }
+  ],
+  "liveEvidenceIds": [
+    "chatgpt-live-call"
+  ]
+}

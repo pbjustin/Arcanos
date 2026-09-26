@@ -1,0 +1,266 @@
+# Private Tutor inputs and reviewed evidence
+
+This is a local input contract for the repository tools, not an OpenAI export
+schema. Preserve actual exports unchanged alongside a reviewed local transcription.
+A complete private input now validates deterministically and has owner approval;
+GPT_BASELINE_CAPTURED is VERIFIED. Original UI observations are preserved privately; see the [capture checkpoint](TUTOR_BASELINE_CAPTURE_20260925.md). See the [migration handoff](TUTOR_MIGRATION.md)
+before collecting data or performing account actions.
+
+## Capture the latest published GPT
+
+Create ignored `.local-migration/arcanos-tutor/published-gpt.json` only from the
+owner's actual latest published GPT. Supply every field below; do not fill missing
+values from repository source. Empty lists mean the owner confirmed there are none.
+
+| Field | Required local value |
+| --- | --- |
+| schemaVersion | Number 1 |
+| publication | Object with status `published`, actual version label, and publishedAt ISO date/time |
+| displayName | Exact published display name |
+| description | Complete published description |
+| instructions | Complete published Builder instruction text |
+| conversationStarters | Array of exact starter strings |
+| enabledCapabilities | Array of actual capability names |
+| actions | Array of objects with actual `name` and complete non-secret `schema` object |
+| sharingStatus | Actual published sharing status |
+| representativeBehavior | Nonempty array of expected-behavior descriptions grounded in the old GPT |
+| knowledge | Complete array of `name` and relative local `path` for supplied original files |
+
+When supported account evidence exposes only a calendar minute and no timezone,
+preserve that literal ISO date/time (for example `2026-03-05T23:54`) without
+adding seconds, an offset or `Z`. Record precision and timezone availability in
+private provenance and safe evidence notes; do not claim an exact instant. The
+existing validator accepts and retains this representation unchanged. These
+qualifiers are not extra fields in the sanitized configuration allowlist.
+
+Knowledge paths stay within the input directory. Retain original file bytes;
+hashes are byte hashes, so changing line endings changes a file's identity.
+Do not put authorization headers, Action credentials or provider keys in schemas.
+If safe export/transcription is incomplete, leave the tracked baseline BLOCKED.
+
+From the repository root:
+
+```sh
+node scripts/capture-tutor-baseline.mjs --inputs .local-migration/arcanos-tutor --output baseline.inventory.review.json
+```
+
+The command creates a new review file without overwriting an existing one. It
+does not print private contents. It records only file metadata, hashes,
+capability/Action names and field hashes, and marks capture
+IMPLEMENTED_NOT_VERIFIED with publication assurance USER_REPORTED. It cannot
+independently know that a supplied file represents the latest published account
+version. Review names and metadata for privacy before moving the sanitized result
+to `integrations/arcanos-tutor/baseline.inventory.json`.
+
+To verify the baseline, record `publicationReview` with `reviewedBy`,
+`reviewedAt`, `latestPublishedConfirmed: true` and `evidenceIds` referencing
+the actual account/owner evidence. Keep publication assurance distinct from file
+hash verification. Update the corresponding gate consistently; the tool never
+changes account state or silently advances the tracked ledger.
+
+## Private skill-first composition
+
+The approved baseline remains unchanged. The owner separately selected direct
+ChatGPT tutoring with an optional backend app. The tracked skill is a public
+template containing the literal `{{PUBLISHED_TUTOR_INSTRUCTIONS}}` insertion
+marker, never the private teaching text. See the [skill-first record](TUTOR_SKILL_FIRST_20260925.md).
+
+`scripts/compose-tutor-skill.mjs` validates the approved baseline, the private
+owner-review sidecar, Git exclusion, and safe paths before composing exact source
+instructions into a new private package. Output is permitted only beneath ignored
+`.local-migration/arcanos-tutor/`. Existing output and source files are never
+overwritten. A second composition in a new directory and read-only inspection
+establish determinism. The private report maps source byte spans to final teaching
+sections; it does not invent new teaching rules or approve its own transformation.
+
+The safe `skill-composition.inventory.json` initially records hashes/counts and
+PENDING owner review. Approval must identify the exact skill hash, package fingerprint,
+baseline fingerprint, reviewer/date, and owner evidence. Baseline approval is not
+approval of this new artifact. `TUTOR_SKILL_RECONCILED` stays BLOCKED until then.
+Private composition is not actual GPT migration and cannot advance GPT_MIGRATED.
+
+The owner subsequently approved the current exact candidate on
+2026-09-26T01:03:47Z; see the [approval record](TUTOR_SKILL_FIRST_20260925.md#owner-approval-of-the-composed-skill).
+The immutable generation report retains its creation-time PENDING labels.
+Subsequent approval belongs in the safe inventory and a separate ignored receipt;
+do not rewrite the skill or generation report to change those historical labels.
+Owner approval does not create observed teaching results or promote source-rule
+classifications that were not established by the baseline.
+
+Release validation inspects the composed private package, not private teaching
+text copied into the public template. Exact-artifact private release approval is
+distinct from permission to commit content; no Builder text may enter Git.
+
+## Host capability release scope
+
+The owner excludes Web Search, Canvas, Image Generation, and Code Interpreter &
+Data Analysis from Tutor release-equivalence requirements, using host ChatGPT
+features externally as needed. Preserve all four published enabled settings.
+Their evidence results remain NOT_TESTED; exclusions do not prove availability,
+transfer, client compatibility, or parity.
+
+`capability-equivalence.json` requires `scopeDecision`: either null (equivalence
+evidence remains required) or a closed owner decision with `decision` set to
+`HOST_CHATGPT_FEATURES_OUTSIDE_TUTOR`, `reviewedBy`, `reviewedAt`, `reason`,
+`baselineFingerprint`, `configurationSha256`, the exact ordered four
+`capabilityNames`, and nonempty `evidenceIds`. Each linked user-reported evidence
+entry must carry the same fields except evidenceIds in `capabilityScopeBinding`.
+The current owner clarification is recorded as
+`owner-host-capability-scope-20260926`; it approves scope only.
+
+Only CAPABILITY_EQUIVALENCE_VERIFIED may use NOT_APPLICABLE, with those same
+evidence IDs and a verified baseline. This removes only the capability-equivalence
+release requirement; it never marks capability results VERIFIED. Reinstating a
+capability equivalence claim requires its actual bound execution evidence.
+Private skill approval, teaching behavior, backend acceptance, migration,
+reference review, and paired parity remain separately enforced.
+
+## Scoped teaching-execution deferral
+
+Only TUTOR_SKILL_BEHAVIOR_VERIFIED may use DEFERRED_POST_MIGRATION. This records
+the current task's execution/privacy limit; it is neither behavior verification
+nor a failed teaching test. It does not satisfy release dependencies.
+
+The gate requires nonempty unique evidenceIds pointing to VERIFIED repository or
+chatgpt evidence, the verified baseline/composition/exact owner review, and all
+eighteen matrix rows UNEXECUTED with null actualResult and verification. Each
+evidence entry must have an exact behaviorDeferralBinding containing current
+baselineFingerprint, skillSha256, packageFingerprint,
+reason=NO_SUPPORTED_SURFACE_WITHIN_TASK_BOUNDARIES,
+surface="ChatGPT web; desktop local marketplace requires private cache outside allowed input directory",
+and postMigrationRequired=true. Extra binding fields are rejected.
+
+The [surface review](TUTOR_PRE_MIGRATION_CHECKPOINT_20260926.md) establishes that
+official non-migrating desktop testing exists. No equivalent usable web surface
+was found within this task. Deferred installed-plugin evidence is post-migration
+work for the current owner checkpoint, not an invented pre-migration blocker.
+Actual teaching observations are still required before final release.
+
+## Actual migrated artifacts
+
+After separately authorized migration, retain the actual migrated skill,
+reference files, native or portable manifest and warnings locally. Hash each file and record
+only `path`, `sha256` and `sizeBytes` in the migration inventory. References
+also have `name`. Do not rename, recreate or manufacture a generated artifact
+to satisfy the validator. If the in-product metadata format differs from the
+currently supported portable format, leave release blocked for explicit inspection
+and an evidence-based tooling update.
+
+The local sidecar `migration.inventory.json` records the artifact format actually
+produced. Migration occurrence does not establish instruction reconciliation,
+app attachment, teaching behavior, parity or release readiness.
+
+For `artifactFormat: CHATGPT_NATIVE_SKILLS_ONLY`, the record requires:
+
+- The actual `skill` and `metadata` records, `baselineFingerprint`,
+  `appAttachment: NOT_ATTACHED`, `appMapping: null`, and no `registeredAppId`.
+- `capture` containing `pluginId`, `cachePackageName`, `version`, `rootPath`,
+  complete `files`, `packageFingerprint`, and a hashed `receipt` record. File and
+  receipt paths are relative to the private input directory. The fingerprint uses
+  bundle-relative paths and excludes the separate `capture-review.json` receipt.
+  The captured directory must contain exactly those files and that receipt. The
+  supported native layout consists of the manifest, `assets/gpt-icon.png`, one
+  skill, its `agents/openai.yaml`, and its `lookup/knowledge-index.json`; extra
+  files or native tool dependencies require separate format review.
+- Reviewed `accountReview` and nonempty unique `evidenceIds` identifying VERIFIED
+  ChatGPT observations. Each observation has an exact `migrationBinding` with
+  `artifactFormat`, `baselineFingerprint`, `pluginId`, `cachePackageName`,
+  `version`, `skillSha256`, `metadataSha256`, `packageFingerprint`, and
+  `appAttachment: NOT_ATTACHED`. A verified GPT_MIGRATED gate uses the same IDs.
+- The unchanged native `.codex-plugin/plugin.json` must identify the captured
+  cache package/version and resolve to its single captured skill. The current
+  native adapter supports only an explicitly empty `lookup/knowledge-index.json`
+  and a confirmed zero-file baseline/reference inventory. Nonempty native reference
+  formats require inspection and a scoped adapter update; they are never discarded.
+
+The receipt records `schemaVersion: 1`, `sourceKind: INSTALLED_PLUGIN_CACHE`,
+`capturedAt`, `copyByteIdentity: true`, the same plugin identity/version and baseline
+fingerprint, plus bundle-relative `files` and `packageFingerprint`. Private bytes,
+the complete file inventory, manifest and receipt are inspected whenever `--inputs`
+is supplied, even while unrelated release gates remain blocked. Unknown native
+manifest layouts fail closed. Never manufacture a portable manifest or app mapping.
+The ignored private-input boundary is checked before inspection. Native capture
+retains `NATIVE_MIGRATED_PACKAGE_RECONCILIATION_REQUIRED` as an explicit release
+blocker until a separately reviewed reconciliation path supports the final package.
+It does not make this installed skill a release-approved private composition.
+
+For the existing portable format (omitted `artifactFormat` or `PORTABLE_PLUGIN`),
+the record continues to require:
+
+- `skill`, `metadata`, `appMapping`, `references`, actual `warnings`, and the
+  reviewed `registeredAppId` binding. A verified migration requires all three
+  artifact records and the registered app ID. `appMapping` records the actual
+  app-mapping file referenced by the migrated manifest, with its path relative to
+  the private input directory, SHA-256 and byte size. The manifest's app path is
+  resolved relative to that manifest and must select this inspected artifact;
+  its single optional app must match the registered Tutor connection, using the
+  supported `optional: true` representation without a required-app flag.
+Both formats also retain:
+
+- `accountReview`: reviewer/date, `confirmedMigrated: true` and
+  `confirmedWarningsReviewed: true`. These are human review assertions, not
+  fields invented inside the actual generated manifest.
+- `instructionComparison`: baseline instruction field hash, migrated skill
+  hash, final packaged skill hash, reviewer/date, summary and disposition.
+  PASS requires the original instruction text to be preserved; intentional
+  differences require separate explicit owner acceptance bound to those hashes.
+- The migrated skill needs exact-content private-release review before it can
+  be reconciled with the composed private package. Record `approvedForPrivateRelease`
+  on the reviewed artifact; this does not authorize putting its text in Git.
+
+Every approved reference review records sourcePath, packagePath, SHA-256, byte
+size, approvedForRepository true, reviewer and review date. The source and package
+inventories must cover the same reviewed files exactly once. Missing, renamed,
+changed or additional files remain blocked pending reconciliation. A file that
+cannot be published must not be silently dropped to make validation pass.
+
+The initial validator permits UTF-8 reference `.md`, `.txt`, `.json` and
+`.csv` files only. Every inspected file is bounded to 1 MiB; the distributable
+total is bounded to 4 MiB. Binary/oversized reference publication is deliberately
+unsupported until its actual format and scanning policy are reviewed. Baseline
+metadata capture can hash supplied binary bytes within the size bound. Do not
+convert a file and then claim byte-identical migration.
+
+## Paired parity evidence
+
+Each old/new result records a sanitized summary and its SHA-256 with hashBasis
+`sanitized_summary`. This hash identifies the summary, not the full private
+conversation. Keep private originals locally and bind each result to the
+configuration actually tested. The old result identifies the published
+configuration artifact; the new result identifies the actual migrated skill.
+
+The validator also requires complete configuration fingerprints. Its
+`baselineFingerprint` helper binds the published configuration and all knowledge
+file names, hashes and sizes. Its `packageFingerprint` binds every final package
+file path, hash and size, including manifest, app mapping, safeguards and references.
+The source-validation JSON reports the latter fingerprint. Re-run affected parity
+after changing any of those files; an old passing summary cannot certify new bytes.
+
+VERIFIED parity requires actual paired ChatGPT observations for the specific
+prompt and configurations. A user-reported result remains USER_REPORTED, and the
+earlier standalone live call cannot substitute for installed migrated-skill
+results. Accepted differences need explicit owner acceptance, date and rationale
+bound to the prompt and old/new fingerprints, separately from ordinary review.
+The complete synthetic fixture in the package tests illustrates the metadata
+contract; it is never production or migration evidence.
+
+Each result's `status` and `evidenceIds` identify its observation. A VERIFIED
+ChatGPT evidence entry has `parityBinding` with the exact `caseId`, `side`
+(`oldGpt` or `plugin`), `promptSha256`, `configurationFingerprint` and
+`summarySha256`. Ordinary teaching, non-activation and pre-call clarification
+cases must record no tool invocation. Backend failure scenarios require explicit
+backend intent and controlled execution evidence. Historical observations retain
+their original prompts and results; the skill-first contract does not promote them.
+Do not copy the earlier standalone call's evidence ID into new paired results.
+
+After all actual evidence has been reconciled, run:
+
+```sh
+node scripts/validate-arcanos-tutor-package.mjs --release --inputs .local-migration/arcanos-tutor
+```
+
+Only successful artifact inspection derives PACKAGE_READY and RELEASE_READY.
+The validator emits a report and file hashes; it does not copy private content,
+write an archive, install a plugin, publish, migrate the GPT or retire routes.
+The caller must review and record the result before any separately authorized
+release. Missing artifacts remain a release block.

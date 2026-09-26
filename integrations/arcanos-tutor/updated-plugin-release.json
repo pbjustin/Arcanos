@@ -1,0 +1,120 @@
+{
+  "schemaVersion": 1,
+  "status": "VERIFIED",
+  "artifactFormat": "PLUGIN_CREATOR_SAVED_RELEASE",
+  "pluginId": "plugin_d292d1e45ae08191b3911299e30e1a25",
+  "packageName": "gpt-e9bcdc399db672af9f66dfd7e18e7953",
+  "version": "0.8.4",
+  "releaseId": "pluginrel_6ab809c1fea4819182a133da08f4152b",
+  "currentReleaseId": "pluginrel_6ab809c1fea4819182a133da08f4152b",
+  "visibility": "PRIVATE",
+  "previousRelease": {
+    "releaseId": "pluginrel_6ab7f17cb4288191b6a60b25c98d5505",
+    "version": "0.8.3"
+  },
+  "capture": {
+    "rootPath": "teaching-intake-revision-20260926/saved-0.8.4",
+    "archive": {
+      "path": "teaching-intake-revision-20260926/saved-0.8.4.tar.gz",
+      "sha256": "ee75e6ae3488dd625af68c56aecc910454de0ae25b55910e8c97618a09c55ce7",
+      "sizeBytes": 260445
+    },
+    "members": [
+      {
+        "path": ".app.json",
+        "type": "file",
+        "sha256": "38664c6a5fe355454844ca8b992e5c0b0229b9ab293d655e17a112514f0004f2",
+        "sizeBytes": 129
+      },
+      {
+        "path": ".codex-plugin",
+        "type": "directory",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "sizeBytes": 0
+      },
+      {
+        "path": ".codex-plugin/plugin.json",
+        "type": "file",
+        "sha256": "5640da06aacc4a42e72926229215dc81db1c50076a5bc7ebd753739d6be67bc1",
+        "sizeBytes": 1329
+      },
+      {
+        "path": "assets",
+        "type": "directory",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "sizeBytes": 0
+      },
+      {
+        "path": "assets/gpt-icon.png",
+        "type": "file",
+        "sha256": "3a891552d348010ff7b5571d39efd77085db6d5fcecdc0e6641e02dd364c0b06",
+        "sizeBytes": 253896
+      },
+      {
+        "path": "plugin.json",
+        "type": "file",
+        "sha256": "dfe7c63672922126fc373953056da7e6755de37f58ff9267e0cac39269281e02",
+        "sizeBytes": 1466
+      },
+      {
+        "path": "skills",
+        "type": "directory",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "sizeBytes": 0
+      },
+      {
+        "path": "skills/instructions",
+        "type": "directory",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "sizeBytes": 0
+      },
+      {
+        "path": "skills/instructions/agents",
+        "type": "directory",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "sizeBytes": 0
+      },
+      {
+        "path": "skills/instructions/agents/openai.yaml",
+        "type": "file",
+        "sha256": "067d163eb275f2c1ca642972434926560726c5b075abb433bebfc643d50b671d",
+        "sizeBytes": 127
+      },
+      {
+        "path": "skills/instructions/lookup",
+        "type": "directory",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "sizeBytes": 0
+      },
+      {
+        "path": "skills/instructions/lookup/knowledge-index.json",
+        "type": "file",
+        "sha256": "6ac91cab38eae269a4e6457275b3b956f615a7df03de4b1ce88f44b8110efc30",
+        "sizeBytes": 18
+      },
+      {
+        "path": "skills/instructions/SKILL.md",
+        "type": "file",
+        "sha256": "02fbc4e2b5a000cf9d49fae9a2d66e1cb59593060cacb6640e5b597202ab3d1d",
+        "sizeBytes": 9746
+      }
+    ],
+    "packageFingerprint": "ac0e3e75de8159fd4788d64fd306f4cb569c48e7a6f63b649132f1dbbc1b9594"
+  },
+  "approvedSkillSha256": "02fbc4e2b5a000cf9d49fae9a2d66e1cb59593060cacb6640e5b597202ab3d1d",
+  "registeredAppId": "asdk_app_6ab4747769088191856fd8eb02507240",
+  "appOptional": true,
+  "skillCount": 1,
+  "referenceCount": 0,
+  "appCount": 1,
+  "accountReview": {
+    "reviewedBy": "Codex supported Plugin Creator source/archive and independent reviewers",
+    "reviewedAt": "2026-09-26T18:16:26.201Z",
+    "confirmedSamePlugin": true,
+    "confirmedPrivate": true,
+    "confirmedCurrentRelease": true
+  },
+  "evidenceIds": [
+    "saved-plugin-intake-release-20260926"
+  ]
+}

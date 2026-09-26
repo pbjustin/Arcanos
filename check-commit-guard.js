@@ -21,6 +21,7 @@ import { execSync } from 'node:child_process';
 const MAX_GIT_OUTPUT_BYTES = 64 * 1024 * 1024;
 
 const BLOCKED_STAGE_PATH_PATTERNS = [
+  /^\.local-migration\//i,
   /^\.env$/i,
   /(^|\/)\.env$/i,
   /(^|\/)\.venv\//i,

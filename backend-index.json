@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-25T03:32:11.534Z",
+  "generatedAt": "2026-09-26T18:17:06.058Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -4588,6 +4588,12 @@
           "relativePath": "tests/helpers/gptAccessDeviceRepository.ts"
         },
         {
+          "relativePath": "tests/helpers/tutor-skill-revision-fixture.ts"
+        },
+        {
+          "relativePath": "tests/helpers/tutor-updated-release-fixture.ts"
+        },
+        {
           "relativePath": "tests/hrc.test.ts"
         },
         {
@@ -5491,7 +5497,25 @@
           "relativePath": "tests/tutor-migration-legacy.test.ts"
         },
         {
+          "relativePath": "tests/tutor-native-migration.test.ts"
+        },
+        {
           "relativePath": "tests/tutor-pilot-package.test.ts"
+        },
+        {
+          "relativePath": "tests/tutor-private-boundary.test.ts"
+        },
+        {
+          "relativePath": "tests/tutor-skill-composition.test.ts"
+        },
+        {
+          "relativePath": "tests/tutor-skill-revision.test.ts"
+        },
+        {
+          "relativePath": "tests/tutor-teaching-contract.test.ts"
+        },
+        {
+          "relativePath": "tests/tutor-updated-plugin-release.test.ts"
         },
         {
           "relativePath": "tests/unified-config-nullish-branches.test.ts"

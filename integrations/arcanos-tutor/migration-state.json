@@ -1,0 +1,189 @@
+{
+  "schemaVersion": 1,
+  "gates": {
+    "CODE_READY": {
+      "status": "VERIFIED",
+      "evidenceIds": [
+        "repository-foundation",
+        "runtime-main-reconciliation-20260925"
+      ],
+      "note": "Repository migration/package scope only. Reconciled runtime bytes equal current main 71672aec22d7babf62d65b96de667f17abd3f219. Validation and independent review are recorded in TUTOR_RECONCILIATION_20260925.md. Live runtime acceptance remains FAIL."
+    },
+    "BACKEND_DEPLOYED": {
+      "status": "VERIFIED",
+      "evidenceIds": [
+        "production-1513-metadata-recheck-20260925",
+        "production-final-metadata-20260926"
+      ],
+      "note": "Read-only provider metadata confirms latest worker e08d2468-a287-4d5c-aa1b-f3b8aaf7d0b2 and web a994758c-bc6a-4d4e-a8dc-fd4e66cb5f1e SUCCESS with main 71672aec22d7babf62d65b96de667f17abd3f219. No queued/building/deploying entry in inspected latest fifty per service. Provider metadata is not container attestation. No deployment or configuration change."
+    },
+    "OAUTH_CONFIGURED": {
+      "status": "VERIFIED",
+      "evidenceIds": [
+        "primary-reauth-schema-refresh-20260924",
+        "primary-final-reauth-refresh-20260926",
+        "installed-intake-teaching-observations-20260926"
+      ],
+      "note": "Historical existing Tutor app registration, scope and Primary association remain recorded. Current installed 0.8.4 UI shows Reconnect required, so present availability and credential durability are not verified. No reconnect, new app/connection/Auth0 client, scope change or backend invocation occurred during the intake revision."
+    },
+    "CHATGPT_CONNECTION_REGISTERED": {
+      "status": "VERIFIED",
+      "evidenceIds": [
+        "primary-reauth-schema-refresh-20260924",
+        "primary-final-reauth-refresh-20260926",
+        "optional-app-primary-associated-20260926",
+        "installed-intake-teaching-observations-20260926"
+      ],
+      "note": "Historical existing Tutor app registration, scope and Primary association remain recorded. Current installed 0.8.4 UI shows Reconnect required, so present availability and credential durability are not verified. No reconnect, new app/connection/Auth0 client, scope change or backend invocation occurred during the intake revision."
+    },
+    "TOOL_DISCOVERY_VERIFIED": {
+      "status": "VERIFIED",
+      "evidenceIds": [
+        "primary-reauth-schema-refresh-20260924",
+        "primary-final-reauth-refresh-20260926"
+      ],
+      "note": "Fresh Refresh completed; catalog contains only arcanos_tutor and public scope remains arcanos:tutor. Callable connector is prompt plus account selector. Prior complete JSON-schema evidence remains dated because current UI did not expose the full refreshed schema."
+    },
+    "LIVE_TUTOR_CALL_VERIFIED": {
+      "status": "BLOCKED",
+      "evidenceIds": [
+        "runtime-raw-acceptance-20260924",
+        "runtime-chatgpt-acceptance-20260924",
+        "runtime-acceptance-post1512-record-20260925",
+        "final-raw-acceptance-20260926",
+        "final-chatgpt-partial-acceptance-20260926"
+      ],
+      "note": "Final bounded attempt window remains FAIL: raw A/C/D all TUTOR_UNAVAILABLE (INVALID_ARGUMENT); ChatGPT A no final result, C unavailable with two ambiguous activity entries; D not attempted to protect the six-invocation ceiling. Five submitted requests, six conservatively counted potential invocations; actual service count and internal retries unobservable. No successful backend result, no new honesty-transform attribution. Optional backend failure is independent of skill deferral."
+    },
+    "GPT_BASELINE_CAPTURED": {
+      "status": "VERIFIED",
+      "evidenceIds": [
+        "account-user-report",
+        "published-gpt-inspection-incomplete",
+        "published-baseline-recheck-20260924",
+        "published-baseline-recheck-20260925",
+        "published-current-version-partial-20260925",
+        "published-baseline-incomplete-after-inspection-20260925",
+        "published-entry-identity-followup-20260925",
+        "editor-authentication-unbound-followup-20260925",
+        "published-behavior-prepared-followup-20260925",
+        "owner-published-settings-confirmation-followup-20260925",
+        "published-capture-determinism-followup-20260925",
+        "owner-complete-baseline-review-20260925",
+        "owner-reviewed-baseline-integrity-20260925"
+      ],
+      "note": "Complete latest-published private configuration and seven expected-behavior summaries approved by Owner (task confirmation), recorded 2026-09-25T20:00:43Z. Unchanged configuration SHA-256 445255487dd270aad087e025b738666340ac1d42a2e45b05fe0b7df640e843bf and deterministic baseline fingerprint eb1d612dc2b4645841e3035a177ebb91fa6584a2ae633d7918972b9c9dd95e25 revalidated twice. latestPublishedConfirmed=true with account/owner evidence; publicationAssurance remains USER_REPORTED. Zero starters, zero knowledge files and stored Action authentication None are explicitly owner-confirmed. Publication is the literal 2026-03-05T23:54 minute, timezone unavailable. This verifies the baseline only; live runtime acceptance remains blocked; actual account migration is recorded separately."
+    },
+    "GPT_MIGRATED": {
+      "status": "VERIFIED",
+      "evidenceIds": [
+        "account-plugin-migration-20260926"
+      ],
+      "note": "Owner-authorized account migration remains verified. Historical native capture and evidence are unchanged. Actual saved current 0.8.4 archive is independently verified under UPDATED_PLUGIN_ARCHIVE_VERIFIED; the scoped intake revision preserves all original approved teaching bytes. Migration occurrence does not verify behavior or release readiness."
+    },
+    "SKILL_RECONCILED": {
+      "status": "BLOCKED",
+      "evidenceIds": [
+        "installed-skill-differences-20260926"
+      ],
+      "note": "Historical 0.8.1 native reconciliation remains blocked under its unchanged adapter contract. Saved 0.8.4 bytes and the separately authorized intake insertion are verified under UPDATED_PLUGIN_ARCHIVE_VERIFIED and skill-revision.inventory.json. This does not promote historical comparison or behavior evidence."
+    },
+    "REFERENCES_RECONCILED": {
+      "status": "VERIFIED",
+      "evidenceIds": [
+        "installed-artifact-capture-20260926",
+        "saved-plugin-optional-app-release-20260926",
+        "saved-plugin-intake-release-20260926"
+      ],
+      "note": "Historical captured archives and the independently retrieved saved 0.8.4 archive have zero references and an empty knowledge index. Current complete member inventory is in updated-plugin-release.json."
+    },
+    "PARITY_VERIFIED": {
+      "status": "BLOCKED",
+      "evidenceIds": [
+        "chatgpt-live-call",
+        "old-gpt-unbound-observations-20260924",
+        "chatgpt-current-call-schema-blocked",
+        "published-baseline-recheck-20260924",
+        "candidate-chatgpt-retest-pending",
+        "old-gpt-parity-binding-review-20260925",
+        "old-gpt-chronology-review-followup-20260925"
+      ],
+      "note": "All 16 rows remain BLOCKER. Ten provisional old-GPT observations fit the March publication chronology but lack a retained execution locator or published-chat-versus-preview designation needed to bind this exact GPT configuration. Zero official old-GPT results are bound; migrated-plugin results remain absent. No new calls or accepted differences."
+    },
+    "PACKAGE_READY": {
+      "status": "BLOCKED",
+      "evidenceIds": [],
+      "note": "BLOCKED pending current installed teaching behavior, migrated parity, historical native reconciliation and required backend acceptance. Saved 0.8.4 archive and exact single-insertion byte preservation are verified separately."
+    },
+    "RELEASE_READY": {
+      "status": "BLOCKED",
+      "evidenceIds": [],
+      "note": "Remain DRAFT and PRIVATE. Current archive and scoped revision byte verification are complete; teaching, parity and live acceptance remain blocked. Existing app currently requests reconnect; no backend request or merge occurred during the intake revision."
+    },
+    "TUTOR_SKILL_COMPOSED": {
+      "status": "VERIFIED",
+      "evidenceIds": [
+        "private-skill-precedence-review-20260926"
+      ],
+      "note": "Local candidate exists; two deterministic compositions and inspector match exact source, skill and package hashes. Owner approval is separately recorded under TUTOR_SKILL_RECONCILED; no migration or behavior execution occurred."
+    },
+    "TUTOR_SKILL_RECONCILED": {
+      "status": "VERIFIED",
+      "evidenceIds": [
+        "owner-composed-skill-approval-20260926",
+        "composed-skill-approval-integrity-20260926"
+      ],
+      "note": "Owner approved exact private skill SHA-256 7661b328b99aa096f930f46e272ef9208de6f11e22c002e77f79d9ab78a15096 on 2026-09-26T01:03:47Z. Repository inspection confirms unchanged skill/package/baseline/report hashes and bound approval metadata. This reconciles the composed candidate only; teaching behavior, backend acceptance, actual migration and migrated-artifact reconciliation remain separate. The later 0.8.4 intake-only revision is authorized separately in skill-revision.inventory.json; this historical approval record is not rewritten."
+    },
+    "TUTOR_SKILL_BEHAVIOR_VERIFIED": {
+      "status": "BLOCKED",
+      "evidenceIds": [
+        "installed-test-surface-20260926",
+        "installed-skill-differences-20260926",
+        "installed-teaching-observations-20260926",
+        "installed-intake-teaching-observations-20260926"
+      ],
+      "note": "BLOCKED. Historical 0.8.3 observations of fifteen matrix cases plus three variants remain unchanged. After the owner-authorized intake revision, seven focused explicitly selected installed 0.8.4 responses have positive Tutor Sources: six content PASS and one diagnostic FAIL for giving two questions instead of one. Full matrix, uncertain historical activation and authoritative zero-call evidence are unresolved; the scoped revision does not inherit historical behavior approval. See TUTOR_INTAKE_REVISION_20260926.md."
+    },
+    "CAPABILITY_EQUIVALENCE_VERIFIED": {
+      "status": "NOT_APPLICABLE",
+      "evidenceIds": [
+        "owner-host-capability-scope-20260926"
+      ],
+      "note": "Owner excludes Web Search, Canvas, Image Generation, and Code Interpreter & Data Analysis from Tutor release equivalence requirements and will use host ChatGPT features externally as needed. Baseline flags stay enabled and capability results stay NOT_TESTED. No host availability or parity is claimed; all teaching, private review, backend and migration gates remain enforced."
+    },
+    "BACKEND_APP_REGISTERED": {
+      "status": "VERIFIED",
+      "evidenceIds": [
+        "primary-reauth-schema-refresh-20260924",
+        "primary-final-reauth-refresh-20260926",
+        "optional-app-primary-associated-20260926",
+        "installed-intake-teaching-observations-20260926"
+      ],
+      "note": "Historical existing Tutor app registration, scope and Primary association remain recorded. Current installed 0.8.4 UI shows Reconnect required, so present availability and credential durability are not verified. No reconnect, new app/connection/Auth0 client, scope change or backend invocation occurred during the intake revision."
+    },
+    "BACKEND_APP_OPTIONALITY_VERIFIED": {
+      "status": "VERIFIED",
+      "evidenceIds": [
+        "optional-app-schema-contract-20260925",
+        "saved-plugin-optional-app-release-20260926",
+        "saved-plugin-intake-release-20260926"
+      ],
+      "note": "Current official syntax and strict package validation enforce one raw registered app ID with boolean optional:true and no required conflict. Actual saved 0.8.4 mapping is unchanged and independently verified. Teaching behavior and connection availability remain separate."
+    },
+    "MIGRATED_SKILL_RECONCILED": {
+      "status": "BLOCKED",
+      "evidenceIds": [
+        "installed-skill-differences-20260926"
+      ],
+      "note": "Historical 0.8.1 native reconciliation remains blocked under its unchanged adapter contract. Saved 0.8.4 bytes and the separately authorized intake insertion are verified under UPDATED_PLUGIN_ARCHIVE_VERIFIED and skill-revision.inventory.json. This does not promote historical comparison or behavior evidence."
+    },
+    "UPDATED_PLUGIN_ARCHIVE_VERIFIED": {
+      "status": "VERIFIED",
+      "evidenceIds": [
+        "saved-plugin-intake-release-20260926"
+      ],
+      "note": "Actual saved PRIVATE 0.8.4 archive independently verified: same plugin identity, complete thirteen-member inventory, one owner-authorized intake insertion with every historical approved byte preserved, zero references and exactly one optional existing app. Scoped revision authorization is separate from historical composition approval. Package bytes do not establish teaching behavior, live acceptance or parity."
+    }
+  }
+}
