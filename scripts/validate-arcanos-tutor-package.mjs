@@ -51,9 +51,13 @@ function validateEvidence(connection, state) {
     requireCondition(item.kind !== 'user_reported' || item.status !== 'VERIFIED', 'USER_REPORT_IS_NOT_VERIFICATION');
     evidence.set(item.id, item);
   }
-  const validateClaim = claim => {
-    requireCondition(claim && statuses.includes(claim.status) && Array.isArray(claim.evidenceIds) &&
+  const validateClaim = (claim, allowHostCapabilityExclusion = false) => {
+    const excluded = allowHostCapabilityExclusion && claim?.status === 'NOT_APPLICABLE';
+    requireCondition(claim && (statuses.includes(claim.status) || excluded) && Array.isArray(claim.evidenceIds) &&
       claim.evidenceIds.every(id => evidence.has(id)), 'EVIDENCE_REFERENCE_INVALID');
+    if (excluded) requireCondition(claim.evidenceIds.length > 0 && claim.evidenceIds.every(id =>
+      evidence.get(id).kind === 'user_reported' && evidence.get(id).status === 'USER_REPORTED'),
+    'CAPABILITY_SCOPE_EVIDENCE_INVALID');
     if (['VERIFIED', 'USER_REPORTED'].includes(claim.status)) requireCondition(claim.evidenceIds.length > 0, 'CLAIM_EVIDENCE_MISSING');
     if (claim.status === 'VERIFIED') requireCondition(claim.evidenceIds.some(id => evidence.get(id).status === 'VERIFIED' && evidence.get(id).kind !== 'user_reported'), 'VERIFICATION_EVIDENCE_MISSING');
   };
@@ -71,7 +75,7 @@ function validateEvidence(connection, state) {
   requireCondition(statuses.includes(connection.builderReconciliation) && statuses.includes(connection.referenceReconciliation), 'RECONCILIATION_STATUS_INVALID');
   requireCondition(state.schemaVersion === 1 && equal(Object.keys(state.gates ?? {}).sort(), [...gates].sort()), 'MIGRATION_GATES_INVALID');
   for (const gate of gates) {
-    validateClaim(state.gates[gate]);
+    validateClaim(state.gates[gate], gate === 'CAPABILITY_EQUIVALENCE_VERIFIED');
     requireCondition(text(state.gates[gate].note), 'GATE_NOTE_MISSING');
   }
   const gateKinds = { CODE_READY: ['repository'], BACKEND_DEPLOYED: ['railway'], OAUTH_CONFIGURED: ['auth0', 'chatgpt'],
@@ -94,7 +98,11 @@ function validateEvidence(connection, state) {
     PARITY_VERIFIED: ['SKILL_RECONCILED', 'REFERENCES_RECONCILED'], PACKAGE_READY: ['CODE_READY', 'PARITY_VERIFIED', 'LIVE_TUTOR_CALL_VERIFIED'],
     RELEASE_READY: gates.filter(gate => gate !== 'RELEASE_READY') };
   for (const [gate, prerequisites] of Object.entries(dependencies)) if (state.gates[gate].status === 'VERIFIED') requireCondition(
-    prerequisites.every(prerequisite => state.gates[prerequisite].status === 'VERIFIED'), 'GATE_DEPENDENCY_NOT_VERIFIED');
+    prerequisites.every(prerequisite => state.gates[prerequisite].status === 'VERIFIED' ||
+      // Only this gate supports owner exclusion. The exact scope and owner
+      // evidence binding are validated by validateSkillFirst before any success.
+      (prerequisite === 'CAPABILITY_EQUIVALENCE_VERIFIED' &&
+        state.gates[prerequisite].status === 'NOT_APPLICABLE')), 'GATE_DEPENDENCY_NOT_VERIFIED');
   for (const [gate, check] of Object.entries({ CHATGPT_CONNECTION_REGISTERED: 'registeredConnection', BACKEND_APP_REGISTERED: 'registeredConnection', OAUTH_CONFIGURED: 'authentication', TOOL_DISCOVERY_VERIFIED: 'toolDiscovery', LIVE_TUTOR_CALL_VERIFIED: 'liveExecution' })) {
     requireCondition(state.gates[gate].status === connection.checks[check].status, 'CONNECTION_STATE_CONTRADICTION');
   }
@@ -330,7 +338,9 @@ export async function validateArcanosTutorPackage(root, { inputRoot } = {}) {
   const block = (condition, code) => { if (!condition) blockers.push(code); };
   // Package/release are derived after artifact inspection, not prerequisites that
   // operators have to self-certify before invoking this validator.
-  for (const gate of gates.slice(0, -2)) block(state.gates[gate].status === 'VERIFIED', gate);
+  for (const gate of gates.slice(0, -2)) block(state.gates[gate].status === 'VERIFIED' ||
+    (gate === 'CAPABILITY_EQUIVALENCE_VERIFIED' && skillFirst.capabilityScopeExcluded &&
+      skillFirst.capabilityRequirementSatisfied), gate);
   block(baseline.status === 'VERIFIED', 'PUBLISHED_BASELINE_MISSING');
   block(migration.status === 'VERIFIED' && migration.skill && migration.metadata, 'MIGRATED_ARTIFACTS_MISSING');
   block(migration.instructionComparison !== null && connection.builderReconciliation === 'VERIFIED', 'SKILL_RECONCILIATION_MISSING');
@@ -352,6 +362,8 @@ export async function validateArcanosTutorPackage(root, { inputRoot } = {}) {
     artifactKind: 'PUBLIC_TEMPLATE',
     privatePackageFingerprint: skillFirst.composition.packageFingerprint,
     skillOnlyTeachingReadiness: skillFirst.teachingReadiness,
+    capabilityEquivalenceVerified: skillFirst.capabilitiesVerified,
+    capabilityScopeExcluded: skillFirst.capabilityScopeExcluded,
     backendReadiness: skillFirst.backendReadiness,
     distributionCandidates: [...files].map(([file, actual]) => ({ path: file, sha256: actual.sha256, sizeBytes: actual.sizeBytes })),
     validatedFileCount: files.size

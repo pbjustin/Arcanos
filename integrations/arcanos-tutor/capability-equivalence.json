@@ -170,5 +170,22 @@
       "evidenceIds": ["openai-work", "openai-files", "openai-migration", "openai-plugin-surfaces"],
       "executionEvidence": []
     }
-  ]
+  ],
+  "scopeDecision": {
+    "decision": "HOST_CHATGPT_FEATURES_OUTSIDE_TUTOR",
+    "reviewedBy": "Owner (task clarification)",
+    "reviewedAt": "2026-09-26T00:33:03Z",
+    "reason": "Owner will use Web Search, Canvas, Image Generation, and Code Interpreter & Data Analysis through the host ChatGPT app as needed. Reproducing or verifying their equivalence is outside the Tutor plugin release scope.",
+    "baselineFingerprint": "eb1d612dc2b4645841e3035a177ebb91fa6584a2ae633d7918972b9c9dd95e25",
+    "configurationSha256": "445255487dd270aad087e025b738666340ac1d42a2e45b05fe0b7df640e843bf",
+    "capabilityNames": [
+      "Web Search",
+      "Canvas",
+      "Image Generation",
+      "Code Interpreter & Data Analysis"
+    ],
+    "evidenceIds": [
+      "owner-host-capability-scope-20260926"
+    ]
+  }
 }

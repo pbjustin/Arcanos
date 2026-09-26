@@ -76,7 +76,9 @@ UNEXECUTED. No live backend/provider or paid parity calls occurred.
 
 The [capability matrix](../../integrations/arcanos-tutor/capability-equivalence.json)
 tracks Web Search, Canvas, Image Generation, and Code Interpreter & Data Analysis.
-All four are NOT_TESTED. Host tools and surface/account restrictions replace no
+All four are NOT_TESTED and, under the owner's subsequent scope clarification,
+excluded from Tutor release-equivalence requirements. They are host ChatGPT
+features the owner will use externally as needed. Host tools and surface/account restrictions replace no
 GPT switch automatically; Canvas equivalence is explicitly unproven. The approved
 zero-file knowledge inventory requires no copied source files, but actual migrated
 references still require inspection after a separately authorized migration.
@@ -87,8 +89,10 @@ comparisons expect no backend invocation under the new architecture; backend
 failure scenarios require explicit intent and controlled evidence. No historical
 observation was promoted or made to fit the new contract.
 
-Skill-only readiness requires owner review, teaching verification, and capability
-review independently of backend acceptance. Backend readiness remains BLOCKED.
+Skill-only readiness requires exact private-skill owner review and teaching
+verification independently of backend acceptance. Capability equivalence is
+required only when it is in release scope; the current exact four-feature owner
+exclusion is separately validated. Backend readiness remains BLOCKED.
 Final replacement release still requires actual migrated artifact/reference review,
 paired parity, and all existing release safeguards; no migration gate was removed.
 The release validator reads private composed bytes instead of requiring private
@@ -148,3 +152,35 @@ changes, including source section `instruction-section-008` being subject to the
 new optional-backend/current-chat-only safeguards. It does not authorize migration.
 Required hosted checks are evaluated against the final pushed head and recorded
 in PR #1509; historical green checks do not certify a later commit.
+
+## Owner scope clarification
+
+Recorded **2026-09-26T00:33:03Z**, evidence
+`owner-host-capability-scope-20260926`: Web Search, Canvas, Image Generation,
+and Code Interpreter & Data Analysis are outside Tutor's release-equivalence
+requirements. They remain available only according to the host's actual
+tools/account/surface, and their published baseline settings are unchanged.
+
+The owner decision is bound to the approved baseline and exact four names.
+CAPABILITY_EQUIVALENCE_VERIFIED is NOT_APPLICABLE, never VERIFIED by this decision.
+Both capability-specific release blockers are removed; every other blocker is
+retained. The private skill/package bytes and pending exact owner review are
+unchanged. No teaching test, capability test, backend call, account change,
+migration, merge, or deployment is implied by this scope clarification.
+
+Scope-update validation on Node 24.18.1/npm 11.16.0: package and real private
+inspection PASS; release remains RELEASE_BLOCKED (exit 2), with exactly 16
+remaining blockers when private inputs are inspected, down from 18. Both removed
+codes concern capability equivalence. The report explicitly records
+capabilityEquivalenceVerified=false and capabilityScopeExcluded=true.
+
+Four focused suites cover 289 tests, including 54 new scope regressions.
+The package suite passed 176 cases on its full run; one inconsistent synthetic
+fixture was corrected and its remaining case passed on focused rerun. The other
+three suites passed all 112 cases. Type-check/build/lint, focused tooling lint,
+774 documentation checks, 575 local link targets, index drift and sync checks
+PASS; 76 existing lint warnings and five existing sync notices remain.
+Both independent scope reviews PASS: exact owner evidence is required,
+NOT_APPLICABLE cannot bypass other gates, actual verification still requires
+observations, and private/package/app-mapping bytes remain unchanged.
+Final commit checks and hosted results are recorded in PR #1509.

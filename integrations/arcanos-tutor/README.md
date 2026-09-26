@@ -41,8 +41,14 @@ section spans, hashes, and private review metadata bind the resulting skill to t
 owner-approved baseline. The command cannot approve its own output, install,
 migrate, call a provider, write a release archive, or publish private contents.
 
+The owner excludes Web Search, Canvas, Image Generation, and Code Interpreter &
+Data Analysis from Tutor release-equivalence requirements and will use host
+ChatGPT features externally as needed. These remain enabled in the published
+baseline and NOT_TESTED in the evidence ledger; no tool availability or parity
+is claimed. Tutor must use only tools actually available in the current session.
+
 Release remains BLOCKED pending exact private-skill owner review, installed
-teaching verification, capability equivalence, actual migrated artifacts and
+teaching verification, actual migrated artifacts and
 paired parity. Backend acceptance remains independently BLOCKED. A failed backend
 must not stop ordinary teaching, and teaching evidence must not certify backend
 operation. Synthetic decision tests prove only the reference contract.
@@ -52,7 +58,7 @@ operation. Synthetic decision tests prove only the reference contract.
 - `skill-composition.inventory.json`: hashes, counts, source binding, and pending exact-artifact owner review.
 - `invocation-policy.json`: explicit-only backend contract; no natural-language classifier or tool executor.
 - `teaching-behavior-matrix.json`: eighteen teaching, format, fallback, and boundary cases; actual results remain unexecuted.
-- `capability-equivalence.json`: four published capabilities, official requirements, differences, and untested client equivalents.
+- `capability-equivalence.json`: four published capabilities, untested client equivalents, and the baseline-bound owner decision excluding them from Tutor release scope.
 - `migration-state.json`: separate teaching, backend, migration, parity, and release gates.
 - `baseline.inventory.json`: approved published metadata; original source remains private.
 - `connection.requirements.json`: dated account/runtime evidence; no new live acceptance.

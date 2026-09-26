@@ -83,6 +83,30 @@ Release validation inspects the composed private package, not private teaching
 text copied into the public template. Exact-artifact private release approval is
 distinct from permission to commit content; no Builder text may enter Git.
 
+## Host capability release scope
+
+The owner excludes Web Search, Canvas, Image Generation, and Code Interpreter &
+Data Analysis from Tutor release-equivalence requirements, using host ChatGPT
+features externally as needed. Preserve all four published enabled settings.
+Their evidence results remain NOT_TESTED; exclusions do not prove availability,
+transfer, client compatibility, or parity.
+
+`capability-equivalence.json` requires `scopeDecision`: either null (equivalence
+evidence remains required) or a closed owner decision with `decision` set to
+`HOST_CHATGPT_FEATURES_OUTSIDE_TUTOR`, `reviewedBy`, `reviewedAt`, `reason`,
+`baselineFingerprint`, `configurationSha256`, the exact ordered four
+`capabilityNames`, and nonempty `evidenceIds`. Each linked user-reported evidence
+entry must carry the same fields except evidenceIds in `capabilityScopeBinding`.
+The current owner clarification is recorded as
+`owner-host-capability-scope-20260926`; it approves scope only.
+
+Only CAPABILITY_EQUIVALENCE_VERIFIED may use NOT_APPLICABLE, with those same
+evidence IDs and a verified baseline. This removes only the capability-equivalence
+release requirement; it never marks capability results VERIFIED. Reinstating a
+capability equivalence claim requires its actual bound execution evidence.
+Private skill approval, teaching behavior, backend acceptance, migration,
+reference review, and paired parity remain separately enforced.
+
 ## Actual migrated artifacts
 
 After separately authorized migration, retain the actual migrated skill,

@@ -123,9 +123,11 @@
       "note": "Eighteen teaching and routing cases are specified; deterministic contract tests are not installed-skill behavior evidence. Independent of backend live acceptance."
     },
     "CAPABILITY_EQUIVALENCE_VERIFIED": {
-      "status": "BLOCKED",
-      "evidenceIds": [],
-      "note": "Four published capabilities require supported-surface verification; toggles do not automatically transfer."
+      "status": "NOT_APPLICABLE",
+      "evidenceIds": [
+        "owner-host-capability-scope-20260926"
+      ],
+      "note": "Owner excludes Web Search, Canvas, Image Generation, and Code Interpreter & Data Analysis from Tutor release equivalence requirements and will use host ChatGPT features externally as needed. Baseline flags stay enabled and capability results stay NOT_TESTED. No host availability or parity is claimed; all teaching, private review, backend and migration gates remain enforced."
     },
     "BACKEND_APP_REGISTERED": {
       "status": "VERIFIED",

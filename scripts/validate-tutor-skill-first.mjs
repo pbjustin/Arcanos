@@ -59,7 +59,7 @@ function boundObservation(verification, evidence, bindingName, bindings) {
 
 export function validateCapabilityEquivalence(ledger, baseline) {
   closed(ledger, ['schemaVersion', 'status', 'accessedAt', 'baselineConfigurationSha256', 'baselineFingerprint',
-    'baselineInventory', 'report', 'evidenceScope', 'platformContract', 'sourceDocs', 'capabilities'], 'CAPABILITY_SAFE_FIELDS_REQUIRED');
+    'baselineInventory', 'report', 'evidenceScope', 'platformContract', 'sourceDocs', 'capabilities', 'scopeDecision'], 'CAPABILITY_SAFE_FIELDS_REQUIRED');
   requireCondition(ledger?.schemaVersion === 1 && ledger.baselineFingerprint === baselineFingerprint(baseline) &&
     ledger.baselineConfigurationSha256 === baseline.configuration.sha256 &&
     Array.isArray(ledger.capabilities) && ledger.capabilities.length === 4 &&
@@ -106,6 +106,24 @@ export function validateCapabilityEquivalence(ledger, baseline) {
   }
   requireCondition(ledger.status !== 'VERIFIED' || ledger.capabilities.every(row => row.status === 'VERIFIED'),
     'CAPABILITY_AGGREGATE_INVALID');
+  if (ledger.scopeDecision !== null) {
+    const decision = ledger.scopeDecision;
+    closed(decision, ['decision', 'reviewedBy', 'reviewedAt', 'reason', 'baselineFingerprint',
+      'configurationSha256', 'capabilityNames', 'evidenceIds'], 'CAPABILITY_SCOPE_DECISION_INVALID');
+    requireCondition(decision.decision === 'HOST_CHATGPT_FEATURES_OUTSIDE_TUTOR' && reviewed(decision) &&
+      text(decision.reason) && same(decision.capabilityNames, capabilityNames) &&
+      Array.isArray(decision.evidenceIds) && decision.evidenceIds.length > 0 &&
+      decision.evidenceIds.every(text) && new Set(decision.evidenceIds).size === decision.evidenceIds.length,
+    'CAPABILITY_SCOPE_DECISION_INVALID');
+    requireCondition(baseline.status === 'VERIFIED' &&
+      decision.baselineFingerprint === ledger.baselineFingerprint &&
+      decision.configurationSha256 === ledger.baselineConfigurationSha256, 'CAPABILITY_SCOPE_BINDING_INVALID');
+    // Owner exclusion changes release scope, never the historical enabled settings
+    // or execution evidence. It cannot be presented as verified equivalence.
+    requireCondition(ledger.status === 'NOT_TESTED' && ledger.capabilities.every(row =>
+      row.status === 'NOT_TESTED' && row.executionEvidence.length === 0 && !row.verification),
+    'CAPABILITY_EXCLUSION_CLAIMS_VERIFICATION');
+  }
   return ledger;
 }
 
@@ -139,6 +157,21 @@ export async function validateSkillFirst({ root, inputRoot, baseline, state, evi
   const capabilitiesVerified = capabilities.capabilities.every(row => row.status === 'VERIFIED' &&
     text(row.verification?.surface) && boundObservation(row.verification, evidence, 'capabilityBinding',
       { ...bindings, publishedName: row.publishedName, surface: row.verification.surface }));
+  const capabilityScopeExcluded = capabilities.scopeDecision !== null;
+  if (capabilityScopeExcluded) {
+    const { evidenceIds, ...binding } = capabilities.scopeDecision;
+    requireCondition(evidenceIds.every(id => {
+      const item = evidence.get(id);
+      return item?.kind === 'user_reported' && item.status === 'USER_REPORTED' &&
+        same(Object.keys(item.capabilityScopeBinding ?? {}).sort(), Object.keys(binding).sort()) &&
+        Object.entries(binding).every(([key, value]) => same(item.capabilityScopeBinding[key], value));
+    }), 'CAPABILITY_SCOPE_EVIDENCE_INVALID');
+    requireCondition(state.gates.GPT_BASELINE_CAPTURED.status === 'VERIFIED' &&
+      same(state.gates.CAPABILITY_EQUIVALENCE_VERIFIED.evidenceIds, evidenceIds), 'CAPABILITY_SCOPE_GATE_INVALID');
+  }
+  requireCondition((state.gates.CAPABILITY_EQUIVALENCE_VERIFIED.status === 'NOT_APPLICABLE') === capabilityScopeExcluded,
+    'CAPABILITY_SCOPE_GATE_INVALID');
+  const capabilityRequirementSatisfied = capabilitiesVerified || capabilityScopeExcluded;
   const consistent = (gate, condition) => requireCondition(state.gates[gate].status !== 'VERIFIED' || condition,
     'SKILL_FIRST_GATE_CONTRADICTION');
   consistent('TUTOR_SKILL_COMPOSED', Boolean(composition.skill));
@@ -149,7 +182,7 @@ export async function validateSkillFirst({ root, inputRoot, baseline, state, evi
   if (!composition.skill) blockers.push('PRIVATE_COMPOSED_SKILL_MISSING');
   if (!ownerApproved) blockers.push('PRIVATE_SKILL_OWNER_REVIEW_MISSING');
   if (!teachingVerified) blockers.push('SKILL_BEHAVIOR_NOT_VERIFIED');
-  if (!capabilitiesVerified) blockers.push('CAPABILITY_EQUIVALENCE_NOT_VERIFIED');
+  if (!capabilityRequirementSatisfied) blockers.push('CAPABILITY_EQUIVALENCE_NOT_VERIFIED');
   let privateFiles;
   if (inputRoot && composition.skill) {
     await checkTutorPrivateBoundary(inputRoot);
@@ -170,6 +203,7 @@ export async function validateSkillFirst({ root, inputRoot, baseline, state, evi
       !configuration.representativeBehavior.some(value => actual.content.includes(value)), 'PRIVATE_TEACHING_IN_PUBLIC_TEMPLATE');
   } else blockers.push('PRIVATE_COMPOSITION_NOT_INSPECTED');
   return { composition, privateFiles, blockers, teachingVerified, capabilitiesVerified,
-    teachingReadiness: ownerApproved && teachingVerified && capabilitiesVerified ? 'VERIFIED' : 'BLOCKED',
+    capabilityScopeExcluded, capabilityRequirementSatisfied,
+    teachingReadiness: ownerApproved && teachingVerified && capabilityRequirementSatisfied ? 'VERIFIED' : 'BLOCKED',
     backendReadiness: state.gates.LIVE_TUTOR_CALL_VERIFIED.status };
 }

@@ -78,7 +78,7 @@ twenty independent states; there is no single migrated boolean.
 | TUTOR_SKILL_COMPOSED | VERIFIED | Local composition integrity only; v3/v4 bytes match and exact owner artifact review remains pending |
 | TUTOR_SKILL_RECONCILED | BLOCKED | Exact composed private skill requires separate owner approval |
 | TUTOR_SKILL_BEHAVIOR_VERIFIED | BLOCKED | Eighteen cases specified; deterministic decisions are not installed-skill evidence |
-| CAPABILITY_EQUIVALENCE_VERIFIED | BLOCKED | Four host capability equivalents remain untested |
+| CAPABILITY_EQUIVALENCE_VERIFIED | NOT_APPLICABLE | Owner excludes the four host ChatGPT features from Tutor release scope; their equivalence remains NOT_TESTED |
 | BACKEND_APP_REGISTERED | VERIFIED | Existing dated app registration; no new connection |
 | BACKEND_APP_OPTIONALITY_VERIFIED | VERIFIED | Official optional syntax and offline reference contract only; installed behavior unverified |
 | MIGRATED_SKILL_RECONCILED | BLOCKED | Actual migrated skill missing; private composition does not substitute for it |
@@ -90,13 +90,17 @@ twenty independent states; there is no single migrated boolean.
 | RELEASE_READY | BLOCKED | Draft only; no replacement release or retirement |
 
 Allowed statuses are VERIFIED, USER_REPORTED, IMPLEMENTED_NOT_VERIFIED, BLOCKED
-and NOT_STARTED. VERIFIED always identifies its evidence domain. A successful
+and NOT_STARTED. Only CAPABILITY_EQUIVALENCE_VERIFIED additionally permits
+NOT_APPLICABLE, with the exact four-feature owner scope decision and baseline-bound
+evidence required by [the input contract](TUTOR_INPUTS.md#host-capability-release-scope).
+This is not verified equivalence or a general gate bypass.
+VERIFIED always identifies its evidence domain. A successful
 local test cannot verify account migration; user reports cannot become independent
 account evidence merely by changing a label.
 Historical observations remain in the evidence ledger, while the gates describe
 the current candidate. Deployment, refreshed discovery and model execution are
 separate from successful runtime acceptance and migrated-plugin parity. The
-pre-migration checkpoint below remains false independently of these thirteen
+pre-migration checkpoint below remains false independently of these twenty
 machine-readable gates.
 
 ## Historical evidence provenance (2026-09-24)

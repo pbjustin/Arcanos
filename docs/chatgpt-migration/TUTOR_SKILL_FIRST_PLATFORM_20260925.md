@@ -15,6 +15,13 @@ baseline fingerprint
 It records proposed equivalents and unexecuted tests; it contains no new
 old-GPT or migrated-plugin observations.
 
+Owner scope clarification recorded **2026-09-26T00:33:03Z**: the four features
+above are host ChatGPT features used externally as needed, outside Tutor's
+release-equivalence requirements. The research and proposed tests below remain
+historical reference material, not remaining release tasks. Their results stay
+NOT_TESTED; host availability and equivalence are not certified. The gate is
+NOT_APPLICABLE under the [owner scope contract](TUTOR_INPUTS.md#host-capability-release-scope).
+
 ## Recommended package relationship
 
 Use one plugin with a core tutoring skill that can answer ordinary learning

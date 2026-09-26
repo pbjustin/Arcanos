@@ -14,6 +14,7 @@ const skillPath = 'skills/arcanos-tutor/SKILL.md';
 const temporaryRoots: string[] = [];
 const hash = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
 const review = { reviewedBy: 'mock fixture reviewer', reviewedAt: '2026-09-24T00:00:00Z' };
+const hostCapabilityNames = ['Web Search', 'Canvas', 'Image Generation', 'Code Interpreter & Data Analysis'];
 function json(root: string, file: string): Json { return JSON.parse(readFileSync(path.join(root, file), 'utf8')); }
 function write(root: string, file: string, value: Json) { writeFileSync(path.join(root, file), `${JSON.stringify(value, null, 2)}\n`); }
 function edit(root: string, file: string, mutate: (value: Json) => void) { const value = json(root, file); mutate(value); write(root, file, value); }
@@ -135,6 +136,7 @@ function completeFixture() {
     }
   });
   edit(root, 'capability-equivalence.json', ledger => {
+    ledger.scopeDecision = null;
     ledger.baselineConfigurationSha256 = baseline.configuration.sha256;
     ledger.baselineFingerprint = oldFingerprint;
     ledger.status = 'VERIFIED';
@@ -187,6 +189,43 @@ function completeFixture() {
     privatePackage: path.join(inputs, composition.outputDirectory, 'package') };
 }
 
+function capabilityExclusionFixture() {
+  const fixture = completeFixture();
+  const evidenceId = 'mock-owner-host-feature-exclusion';
+  const binding = { decision: 'HOST_CHATGPT_FEATURES_OUTSIDE_TUTOR', ...review,
+    reason: 'Mock owner excludes these host features from Tutor release scope.',
+    baselineFingerprint: baselineFingerprint(fixture.baseline), configurationSha256: fixture.baseline.configuration.sha256,
+    capabilityNames: [...hostCapabilityNames] };
+  edit(fixture.root, 'capability-equivalence.json', ledger => {
+    ledger.scopeDecision = { ...binding, evidenceIds: [evidenceId] };
+    ledger.status = 'NOT_TESTED';
+    for (const item of ledger.capabilities) {
+      item.status = 'NOT_TESTED';
+      item.executionEvidence = [];
+      delete item.verification;
+    }
+  });
+  edit(fixture.root, 'connection.requirements.json', connection => {
+    connection.evidence = connection.evidence.filter((item: Json) => !item.id.startsWith('mock-capability-'));
+    connection.evidence.push({ id: evidenceId, kind: 'user_reported', status: 'USER_REPORTED', observedAt: review.reviewedAt,
+      summary: 'Mock owner scope decision only; no capability execution or equivalence claim.', capabilityScopeBinding: binding });
+  });
+  edit(fixture.root, 'migration-state.json', state => {
+    state.gates.CAPABILITY_EQUIVALENCE_VERIFIED.status = 'NOT_APPLICABLE';
+    state.gates.CAPABILITY_EQUIVALENCE_VERIFIED.evidenceIds = [evidenceId];
+  });
+  return { ...fixture, evidenceId };
+}
+
+function editCapabilityScope(fixture: ReturnType<typeof capabilityExclusionFixture>, mutate: (scope: Json) => void) {
+  edit(fixture.root, 'capability-equivalence.json', ledger => { mutate(ledger.scopeDecision); });
+  const binding = { ...json(fixture.root, 'capability-equivalence.json').scopeDecision };
+  delete binding.evidenceIds;
+  edit(fixture.root, 'connection.requirements.json', connection => {
+    connection.evidence.find((item: Json) => item.id === fixture.evidenceId).capabilityScopeBinding = binding;
+  });
+}
+
 afterEach(() => {
   for (const root of temporaryRoots.splice(0)) {
     if (path.dirname(root) !== path.resolve(os.tmpdir()) || !path.basename(root).startsWith('arcanos-tutor-package-')) throw new Error('Unexpected temporary test path');
@@ -216,6 +255,7 @@ describe('Standalone Tutor package and migration release boundary', () => {
     expect(JSON.parse(result.stdout)).toMatchObject({ releaseStatus: 'VERIFIED', archiveWritten: false,
       artifactKind: 'PUBLIC_TEMPLATE', privatePackageFingerprint: fixture.composition.packageFingerprint,
       skillOnlyTeachingReadiness: 'VERIFIED', backendReadiness: 'VERIFIED',
+      capabilityEquivalenceVerified: true, capabilityScopeExcluded: false,
       gates: { PACKAGE_READY: 'VERIFIED', RELEASE_READY: 'VERIFIED' } });
     const template = readFileSync(path.join(fixture.root, 'package', skillPath), 'utf8');
     expect(template).toContain('{{PUBLISHED_TUTOR_INSTRUCTIONS}}');
@@ -635,6 +675,124 @@ describe('Standalone Tutor package and migration release boundary', () => {
     const fixture = completeFixture();
     edit(fixture.root, 'capability-equivalence.json', ledger => { ledger.capabilities[0].status = 'NOT_TESTED'; });
     expect(validate(fixture.root, ['--release', '--inputs', fixture.inputs]).status).toBe(1);
+  });
+  it('releases a complete synthetic fixture with exact owner-excluded host features without claiming capability verification', () => {
+    const fixture = capabilityExclusionFixture();
+    const result = validate(fixture.root, ['--release', '--inputs', fixture.inputs]);
+    expect(result.stderr).toBe('');
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({ releaseStatus: 'VERIFIED', releaseBlockers: [], archiveWritten: false,
+      skillOnlyTeachingReadiness: 'VERIFIED', capabilityEquivalenceVerified: false, capabilityScopeExcluded: true,
+      backendReadiness: 'VERIFIED', gates: { CAPABILITY_EQUIVALENCE_VERIFIED: 'NOT_APPLICABLE',
+        PACKAGE_READY: 'VERIFIED', RELEASE_READY: 'VERIFIED' } });
+    const ledger = json(fixture.root, 'capability-equivalence.json');
+    expect(ledger.status).toBe('NOT_TESTED');
+    expect(ledger.scopeDecision.capabilityNames).toEqual(hostCapabilityNames);
+    expect(ledger.capabilities.every((item: Json) => item.status === 'NOT_TESTED' && item.executionEvidence.length === 0 &&
+      item.verification === undefined)).toBe(true);
+    expect(json(fixture.root, 'connection.requirements.json').evidence.some((item: Json) => item.id.startsWith('mock-capability-'))).toBe(false);
+  });
+  it('keeps the actual package blocked after the host-feature exclusion without inspecting private inputs', () => {
+    const result = validate(source, ['--release']);
+    expect(result.status).toBe(2);
+    const report = JSON.parse(result.stdout);
+    expect(report).toMatchObject({ releaseStatus: 'BLOCKED', capabilityEquivalenceVerified: false, capabilityScopeExcluded: true,
+      gates: { CAPABILITY_EQUIVALENCE_VERIFIED: 'NOT_APPLICABLE', PACKAGE_READY: 'BLOCKED', RELEASE_READY: 'BLOCKED' } });
+    expect(report.releaseBlockers).toContain('ACTUAL_INPUT_ARTIFACTS_NOT_INSPECTED');
+    expect(report.releaseBlockers).not.toContain('CAPABILITY_EQUIVALENCE_NOT_VERIFIED');
+    expect(report.releaseBlockers).not.toContain('CAPABILITY_EQUIVALENCE_VERIFIED');
+  });
+  it.each(['missing-decision', 'null-decision', 'empty-evidence', 'missing-evidence', 'wrong-kind', 'wrong-status',
+    'missing-binding', 'mismatched-binding', 'unreviewed-owner', 'mismatched-gate-evidence', 'verified-gate', 'blocked-gate'])(
+    'rejects host-feature exclusion with %s', failure => {
+      const fixture = capabilityExclusionFixture();
+      edit(fixture.root, 'capability-equivalence.json', ledger => {
+        if (failure === 'missing-decision') delete ledger.scopeDecision;
+        if (failure === 'null-decision') ledger.scopeDecision = null;
+        if (failure === 'empty-evidence') ledger.scopeDecision.evidenceIds = [];
+        if (failure === 'unreviewed-owner') ledger.scopeDecision.reviewedBy = '';
+      });
+      edit(fixture.root, 'connection.requirements.json', connection => {
+        const item = connection.evidence.find((entry: Json) => entry.id === fixture.evidenceId);
+        if (failure === 'missing-evidence') connection.evidence = connection.evidence.filter((entry: Json) => entry.id !== fixture.evidenceId);
+        if (failure === 'wrong-kind') item.kind = 'repository';
+        if (failure === 'wrong-status') item.status = 'VERIFIED';
+        if (failure === 'missing-binding') delete item.capabilityScopeBinding;
+        if (failure === 'mismatched-binding') item.capabilityScopeBinding.reason = 'Mock different owner decision.';
+      });
+      edit(fixture.root, 'migration-state.json', state => {
+        if (failure === 'mismatched-gate-evidence') state.gates.CAPABILITY_EQUIVALENCE_VERIFIED.evidenceIds = ['mock-owner-baseline'];
+        if (failure === 'verified-gate') state.gates.CAPABILITY_EQUIVALENCE_VERIFIED.status = 'VERIFIED';
+        if (failure === 'blocked-gate') state.gates.CAPABILITY_EQUIVALENCE_VERIFIED.status = 'BLOCKED';
+      });
+      expect(validate(fixture.root, ['--release', '--inputs', fixture.inputs]).status).toBe(1);
+    });
+  it.each(['baselineFingerprint', 'configurationSha256'])('rejects a consistently forged host-feature %s scope binding', field => {
+    const fixture = capabilityExclusionFixture();
+    editCapabilityScope(fixture, scope => { scope[field] = hash('mock other published baseline'); });
+    expect(validate(fixture.root, ['--release', '--inputs', fixture.inputs]).status).toBe(1);
+  });
+  it.each(['unknown-feature', 'partial-set', 'duplicate-feature', 'reordered-set', 'extra-feature'])(
+    'rejects a host-feature exclusion with %s even when its evidence matches', failure => {
+      const fixture = capabilityExclusionFixture();
+      editCapabilityScope(fixture, scope => {
+        if (failure === 'unknown-feature') scope.capabilityNames[0] = 'Mock unknown capability';
+        if (failure === 'partial-set') scope.capabilityNames.pop();
+        if (failure === 'duplicate-feature') scope.capabilityNames[1] = scope.capabilityNames[0];
+        if (failure === 'reordered-set') scope.capabilityNames.reverse();
+        if (failure === 'extra-feature') scope.capabilityNames.push('Mock extra capability');
+      });
+      expect(validate(fixture.root, ['--release', '--inputs', fixture.inputs]).status).toBe(1);
+    });
+  it.each(['aggregate', 'row', 'verification', 'execution-evidence', 'row-not-applicable'])(
+    'rejects capability %s claims under owner scope exclusion', failure => {
+      const fixture = capabilityExclusionFixture();
+      edit(fixture.root, 'capability-equivalence.json', ledger => {
+        if (failure === 'aggregate') ledger.status = 'VERIFIED';
+        if (failure === 'row') ledger.capabilities[0].status = 'VERIFIED';
+        if (failure === 'row-not-applicable') ledger.capabilities[0].status = 'NOT_APPLICABLE';
+        if (failure === 'verification') ledger.capabilities[0].verification = { ...review, ...fixture.bindings,
+          surface: 'mock-web-surface', evidenceIds: ['mock-account-observation'] };
+        if (failure === 'execution-evidence') ledger.capabilities[0].executionEvidence = ['mock-account-observation'];
+      });
+      expect(validate(fixture.root, ['--release', '--inputs', fixture.inputs]).status).toBe(1);
+    });
+  it.each(Object.keys(json(source, 'migration-state.json').gates).filter(name => name !== 'CAPABILITY_EQUIVALENCE_VERIFIED'))(
+    'does not permit NOT_APPLICABLE on the unrelated %s gate', gate => {
+      const fixture = capabilityExclusionFixture();
+      edit(fixture.root, 'migration-state.json', state => { state.gates[gate].status = 'NOT_APPLICABLE'; });
+      expect(validate(fixture.root, ['--release', '--inputs', fixture.inputs]).status).toBe(1);
+    });
+  it.each(Object.keys(json(source, 'connection.requirements.json').checks))(
+    'does not permit NOT_APPLICABLE on connection check %s', check => {
+      const fixture = capabilityExclusionFixture();
+      edit(fixture.root, 'connection.requirements.json', connection => { connection.checks[check].status = 'NOT_APPLICABLE'; });
+      expect(validate(fixture.root, ['--release', '--inputs', fixture.inputs]).status).toBe(1);
+    });
+  it.each(['evidence', 'builderReconciliation', 'referenceReconciliation'])(
+    'does not permit NOT_APPLICABLE on connection %s', target => {
+      const fixture = capabilityExclusionFixture();
+      edit(fixture.root, 'connection.requirements.json', connection => {
+        if (target === 'evidence') connection.evidence.find((item: Json) => item.id === fixture.evidenceId).status = 'NOT_APPLICABLE';
+        else connection[target] = 'NOT_APPLICABLE';
+      });
+      expect(validate(fixture.root, ['--release', '--inputs', fixture.inputs]).status).toBe(1);
+    });
+  it('does not let host-feature exclusion clear pending private-skill owner approval', () => {
+    const fixture = capabilityExclusionFixture();
+    edit(fixture.root, 'skill-composition.inventory.json', composition => {
+      composition.status = 'IMPLEMENTED_NOT_VERIFIED'; composition.ownerReview = { status: 'PENDING' };
+    });
+    edit(fixture.root, 'migration-state.json', state => {
+      for (const gate of ['TUTOR_SKILL_RECONCILED', 'TUTOR_SKILL_BEHAVIOR_VERIFIED', 'MIGRATED_SKILL_RECONCILED']) {
+        state.gates[gate].status = 'BLOCKED';
+      }
+    });
+    const result = validate(fixture.root, ['--release', '--inputs', fixture.inputs]);
+    expect(result.status).toBe(2);
+    expect(JSON.parse(result.stdout)).toMatchObject({ releaseStatus: 'BLOCKED', skillOnlyTeachingReadiness: 'BLOCKED',
+      capabilityEquivalenceVerified: false, capabilityScopeExcluded: true });
+    expect(JSON.parse(result.stdout).releaseBlockers).toContain('PRIVATE_SKILL_OWNER_REVIEW_MISSING');
   });
   it('captures only metadata and leaves latest publication unverified', () => {
     const fixture = completeFixture();
