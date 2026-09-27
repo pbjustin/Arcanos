@@ -16,8 +16,9 @@ export function authorizeFixtureRevision(saved: SavedFixture) {
   const skillFile = path.join(saved.bundle, 'skills/instructions/SKILL.md');
   const before = readFileSync(skillFile);
   const insertion = Buffer.from('\nMock scoped intake override: teach immediately with reasonable defaults.\n');
-  const offsetBytes = before.indexOf(Buffer.from('\n---\n')) + 5;
-  if (offsetBytes < 5) throw new Error('Fixture frontmatter missing');
+  const frontmatter = before.toString('utf8').match(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/u);
+  if (!frontmatter) throw new Error('Fixture frontmatter missing');
+  const offsetBytes = Buffer.byteLength(frontmatter[0]);
   const after = Buffer.concat([before.subarray(0, offsetBytes), insertion, before.subarray(offsetBytes)]);
   writeFileSync(skillFile, after);
   for (const name of ['plugin.json', '.codex-plugin/plugin.json']) {

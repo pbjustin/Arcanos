@@ -12,7 +12,7 @@ type Json = ReturnType<typeof JSON.parse>;
 const helper = pathToFileURL(path.join(process.cwd(), 'scripts/tutor-skill-revision.mjs')).href;
 const roots: string[] = [];
 const hash = (value: Buffer | string) => createHash('sha256').update(value).digest('hex');
-function fixture() {
+function fixture(lineEnding = '\n') {
   const root = mkdtempSync(path.join(os.tmpdir(), 'arcanos-tutor-revision-'));
   roots.push(root);
   expect(spawnSync('git', ['init', '--quiet', root], { windowsHide: true }).status).toBe(0);
@@ -21,10 +21,11 @@ function fixture() {
   mkdirSync(inputRoot, { recursive: true });
   writeFixtureJson(path.join(inputRoot, 'published-gpt.json'), { instructions: 'Mock published baseline held separately from the revised skill.',
     representativeBehavior: ['Mock expected original teaching behavior.'] });
-  const before = '---\nname: arcanos-tutor\ndescription: Mock Tutor skill.\n---\nMock original teaching text stays unchanged.\n';
+  const frontmatter = ['---', 'name: arcanos-tutor', 'description: Mock Tutor caf\u00e9 skill.', '---', ''].join(lineEnding);
+  const before = `${frontmatter}Mock original teaching text stays unchanged.${lineEnding}`;
   const composition = { status: 'VERIFIED', skill: { sha256: hash(before), sizeBytes: Buffer.byteLength(before) },
     ownerReview: { status: 'APPROVED', skillSha256: hash(before) } };
-  return { root, inputRoot, composition, ...authorizeFixtureRevision(createUpdatedFixture(inputRoot, before)) };
+  return { root, inputRoot, composition, frontmatter, before, ...authorizeFixtureRevision(createUpdatedFixture(inputRoot, before)) };
 }
 type Fixture = ReturnType<typeof fixture> & Partial<ReturnType<typeof authorizeFixtureDiagnosticRevision>>;
 function run(f: Fixture, inspect = true) {
@@ -60,9 +61,14 @@ afterEach(() => {
 });
 
 describe('Scoped successor skill approval without historical evidence rewriting', () => {
-  it('proves one authorized insertion and preserves the original approved skill bytes', () => {
-    const f = fixture();
+  it.each([['LF', '\n'], ['CRLF', '\r\n']])('preserves %s source bytes across one authorized insertion', (_name, lineEnding) => {
+    const f = fixture(lineEnding);
     const original = structuredClone(f.composition);
+    expect(f.revision.insertion.offsetBytes).toBe(Buffer.byteLength(f.frontmatter));
+    const after = readFileSync(path.join(f.saved.bundle, 'skills/instructions/SKILL.md'));
+    const { offsetBytes, sizeBytes } = f.revision.insertion;
+    expect(Buffer.concat([after.subarray(0, offsetBytes), after.subarray(offsetBytes + sizeBytes)]))
+      .toEqual(Buffer.from(f.before));
     const result = run(f);
     expect(result.stderr).toBe('');
     expect(result.status).toBe(0);
@@ -134,12 +140,12 @@ describe('Scoped successor skill approval without historical evidence rewriting'
 });
 
 describe('Diagnostic-only successor chain (synthetic byte and authorization evidence)', () => {
-  function diagnosticFixture() {
-    const first = fixture();
+  function diagnosticFixture(lineEnding = '\n') {
+    const first = fixture(lineEnding);
     return { ...first, ...authorizeFixtureDiagnosticRevision(first) };
   }
-  it('proves both insertions without rewriting historical composition or intake approval', () => {
-    const f = diagnosticFixture();
+  it.each([['LF', '\n'], ['CRLF', '\r\n']])('preserves %s source bytes across both authorized insertions', (_name, lineEnding) => {
+    const f = diagnosticFixture(lineEnding);
     const original = structuredClone({ composition: f.composition, revision: f.revision });
     const result = run(f);
     expect(result.status).toBe(0);
