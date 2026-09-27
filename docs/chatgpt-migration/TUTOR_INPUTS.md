@@ -184,6 +184,27 @@ retains `NATIVE_MIGRATED_PACKAGE_RECONCILIATION_REQUIRED` as an explicit release
 blocker until a separately reviewed reconciliation path supports the final package.
 It does not make this installed skill a release-approved private composition.
 
+### Reviewed current saved-release successor
+
+`current-reconciliation.inventory.json` supports the reviewed 0.8.5 successor
+without modifying the initial native inventory. Its closed record binds the
+baseline fingerprint/configuration hash, approved composition hashes, both
+separately authorized insertion records, current saved release/archive, empty
+references and unchanged optional app. The review references must match the
+existing composition approval, revision authorization/review and saved-release
+evidence exactly. A separate installed capture records its ignored relative
+root and matching package fingerprint. Reconciliation gates cite the exact
+current review evidence binding; historical approval is never retargeted.
+
+With `--inputs`, the validator must inspect the baseline/composition source,
+original approval, saved archive, both inverse insertion proofs and all installed
+members before accepting current artifact reconciliation. Missing, changed,
+symlinked or conflicting artifacts fail closed even when other release gates
+remain blocked. Without private inputs, source validation may pass but
+`CURRENT_RECONCILIATION_BYTES_NOT_INSPECTED` keeps release blocked. This path
+does not promote teaching outcomes, live backend acceptance or paired parity.
+See the [current reconciliation record](TUTOR_CURRENT_RELEASE_RECONCILIATION_20260927.md).
+
 For the existing portable format (omitted `artifactFormat` or `PORTABLE_PLUGIN`),
 the record continues to require:
 

@@ -5,6 +5,8 @@ import Ajv2020 from 'ajv/dist/2020.js';
 import yaml from 'js-yaml';
 import { validateSkillFirst } from './validate-tutor-skill-first.mjs';
 import { inspectNativeMigration, nativeMigrationFormat, validateNativeMigration } from './tutor-native-migration.mjs';
+import { inspectCurrentTutorReconciliation, validateCurrentTutorReconciliation,
+  verifyCurrentTutorReleaseInputs } from './tutor-current-reconciliation.mjs';
 import { inspectUpdatedTutorRelease, validateUpdatedTutorRelease } from './tutor-updated-plugin-release.mjs';
 import { inspectTutorSkillRevisionChain, validateTutorSkillRevisionChain } from './tutor-skill-revision.mjs';
 import { inspectInstalledTutorTeaching } from './tutor-installed-teaching.mjs';
@@ -326,7 +328,6 @@ export async function validateArcanosTutorPackage(root, { inputRoot } = {}) {
   const gateConsistent = (gate, condition) => requireCondition(state.gates[gate].status !== 'VERIFIED' || condition, 'GATE_STATE_CONTRADICTION');
   gateConsistent('GPT_BASELINE_CAPTURED', baseline.status === 'VERIFIED');
   gateConsistent('GPT_MIGRATED', migration.status === 'VERIFIED' && migration.skill && migration.metadata);
-  gateConsistent('SKILL_RECONCILED', migration.instructionComparison !== null && connection.builderReconciliation === 'VERIFIED');
   gateConsistent('REFERENCES_RECONCILED', connection.referenceReconciliation === 'VERIFIED' && baseline.status === 'VERIFIED' && migration.status === 'VERIFIED');
   gateConsistent('PARITY_VERIFIED', parity.status === 'VERIFIED');
   const files = await readPackage(root, review.references);
@@ -351,6 +352,21 @@ export async function validateArcanosTutorPackage(root, { inputRoot } = {}) {
   requireCondition(skillRevision || (!diagnosticRevision && !intakeRelease), 'SKILL_REVISION_CHAIN_INCOMPLETE');
   const revisionOptions = { revision: skillRevision, diagnosticRevision, intakeRelease,
     composition: skillFirst.composition, currentRelease: updatedRelease, evidence };
+  const currentReconciliationRecord = await revisionSidecar('current-reconciliation.inventory.json');
+  const currentReconciliationOptions = { ...revisionOptions, record: currentReconciliationRecord,
+    baseline, referenceReview: review, state, packageRoot: path.join(root, 'package') };
+  let currentReconciliation = null;
+  let currentReconciliationInspection = null;
+  if (currentReconciliationRecord) {
+    requireCondition(migration.artifactFormat === nativeMigrationFormat &&
+      migration.capture.pluginId === updatedRelease?.pluginId, 'CURRENT_RECONCILIATION_MIGRATION_IDENTITY_INVALID');
+    currentReconciliation = validateCurrentTutorReconciliation(currentReconciliationOptions);
+    if (inputRoot) currentReconciliationInspection = await inspectCurrentTutorReconciliation({ inputRoot,
+      ...currentReconciliationOptions });
+  }
+  const skillReconciled = connection.builderReconciliation === 'VERIFIED' &&
+    (currentReconciliationRecord ? Boolean(currentReconciliation) : migration.instructionComparison !== null);
+  gateConsistent('SKILL_RECONCILED', skillReconciled);
   const expectedCurrentSkillSha256 = skillRevision ?
     validateTutorSkillRevisionChain(revisionOptions).expectedSkillSha256 : skillFirst.composition.skill?.sha256;
   // Existing teaching/parity validators are bound to the historical composition.
@@ -399,7 +415,10 @@ export async function validateArcanosTutorPackage(root, { inputRoot } = {}) {
   const block = (condition, code) => { if (!condition) blockers.push(code); };
   // Native capture proves the account migration and unchanged installed bundle.
   // A reviewed conversion/reconciliation path to the final package is separate.
-  block(migration.artifactFormat !== nativeMigrationFormat, 'NATIVE_MIGRATED_PACKAGE_RECONCILIATION_REQUIRED');
+  block(migration.artifactFormat !== nativeMigrationFormat || Boolean(currentReconciliation),
+    'NATIVE_MIGRATED_PACKAGE_RECONCILIATION_REQUIRED');
+  block(!currentReconciliationRecord || currentReconciliationInspection?.artifactInspection === 'VERIFIED',
+    'CURRENT_RECONCILIATION_BYTES_NOT_INSPECTED');
   // Package/release are derived after artifact inspection, not prerequisites that
   // operators have to self-certify before invoking this validator.
   for (const gate of gates.slice(0, -2)) block(state.gates[gate].status === 'VERIFIED' ||
@@ -407,7 +426,7 @@ export async function validateArcanosTutorPackage(root, { inputRoot } = {}) {
       skillFirst.capabilityRequirementSatisfied), gate);
   block(baseline.status === 'VERIFIED', 'PUBLISHED_BASELINE_MISSING');
   block(migration.status === 'VERIFIED' && migration.skill && migration.metadata, 'MIGRATED_ARTIFACTS_MISSING');
-  block(migration.instructionComparison !== null && connection.builderReconciliation === 'VERIFIED', 'SKILL_RECONCILIATION_MISSING');
+  block(skillReconciled, 'SKILL_RECONCILIATION_MISSING');
   block(connection.referenceReconciliation === 'VERIFIED', 'REFERENCE_RECONCILIATION_MISSING');
   block(parity.status === 'VERIFIED' && parity.cases.every(item => item.disposition !== 'BLOCKER'), 'PARITY_BLOCKERS_REMAIN');
   block(connectionChecks.every(name => connection.checks[name].status === 'VERIFIED'), 'CONNECTION_VERIFICATION_INCOMPLETE');
@@ -420,8 +439,11 @@ export async function validateArcanosTutorPackage(root, { inputRoot } = {}) {
   block(!skillRevision || skillFirst.currentTeachingVerified, 'REVISED_SKILL_BEHAVIOR_NOT_VERIFIED');
   block(!skillRevision, 'REVISED_SKILL_PARITY_NOT_VERIFIED');
   if (migration.registeredAppId !== undefined) requireCondition(migration.registeredAppId === connection.registeredAppId, 'MIGRATION_CONNECTION_MISMATCH');
-  gateConsistent('MIGRATED_SKILL_RECONCILED', migration.instructionComparison !== null && connection.builderReconciliation === 'VERIFIED');
-  if (inputRoot && blockers.length === 0) await verifyInputs(inputRoot, baseline, migration, review, parity, skillFirst.privateFiles, validator);
+  gateConsistent('MIGRATED_SKILL_RECONCILED', skillReconciled);
+  if (inputRoot && blockers.length === 0) {
+    if (currentReconciliationRecord) await verifyCurrentTutorReleaseInputs({ inputRoot, ...currentReconciliationOptions, parity });
+    else await verifyInputs(inputRoot, baseline, migration, review, parity, skillFirst.privateFiles, validator);
+  }
   return {
     sourceValidation: 'PASS', releaseStatus: blockers.length === 0 ? 'VERIFIED' : 'BLOCKED',
     releaseBlockers: [...new Set(blockers)], archiveWritten: false,
@@ -435,6 +457,8 @@ export async function validateArcanosTutorPackage(root, { inputRoot } = {}) {
     migrationArtifactInspection,
     updatedPluginArchiveInspection,
     skillRevisionInspection,
+    currentReconciliation,
+    currentReconciliationInspection,
     currentTeachingVerification: skillFirst.currentTeachingVerification,
     installedTeachingInspection,
     capabilityEquivalenceVerified: skillFirst.capabilitiesVerified,

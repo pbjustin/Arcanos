@@ -93,16 +93,21 @@ function integration(f: Fixture, inspect: boolean) {
   cpSync(source, packageRoot, { recursive: true });
   const connection = readJson(path.join(packageRoot, 'connection.requirements.json'));
   connection.evidence.push(...f.evidence);
+  connection.builderReconciliation = 'BLOCKED';
   writeJson(path.join(packageRoot, 'connection.requirements.json'), connection);
   const state = readJson(path.join(packageRoot, 'migration-state.json'));
   state.gates.GPT_MIGRATED = { ...f.state.gates.GPT_MIGRATED, note: 'Synthetic account migration only.' };
   state.gates.UPDATED_PLUGIN_ARCHIVE_VERIFIED = { status: 'BLOCKED', evidenceIds: [], note: 'Historical migration fixture only.' };
   state.gates.TUTOR_SKILL_BEHAVIOR_VERIFIED = { status: 'BLOCKED', evidenceIds: [], note: 'Historical migration fixture only.' };
+  for (const gate of ['SKILL_RECONCILED', 'MIGRATED_SKILL_RECONCILED']) {
+    state.gates[gate] = { status: 'BLOCKED', evidenceIds: [], note: 'Historical migration fixture only.' };
+  }
   rmSync(path.join(packageRoot, 'updated-plugin-release.json'), { force: true });
   rmSync(path.join(packageRoot, 'skill-revision.inventory.json'), { force: true });
   rmSync(path.join(packageRoot, 'diagnostic-revision.inventory.json'), { force: true });
   rmSync(path.join(packageRoot, 'intake-plugin-release.inventory.json'), { force: true });
   rmSync(path.join(packageRoot, 'installed-teaching-verification.json'), { force: true });
+  rmSync(path.join(packageRoot, 'current-reconciliation.inventory.json'), { force: true });
   writeJson(path.join(packageRoot, 'migration-state.json'), state);
   writeJson(path.join(packageRoot, 'migration.inventory.json'), f.migration);
   const code = `import {validateArcanosTutorPackage} from ${JSON.stringify(validator)};

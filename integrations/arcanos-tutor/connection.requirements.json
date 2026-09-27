@@ -799,6 +799,60 @@
         "privateReportSha256": "77774366c0b63a483953110d16b4347c9fe22ab3a608ee3265150ae31ca7ce9e",
         "privateReportSizeBytes": 2216
       }
+    },
+    {
+      "id": "current-release-reconciliation-20260927",
+      "kind": "repository",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-27T01:38:31.073Z",
+      "summary": "Current PRIVATE 0.8.5 metadata rechecked through supported Plugin Creator. Independent byte review confirms all thirteen installed-cache members match the saved archive; both separately authorized insertions invert to the original approved composition exactly. All eight baseline sections and five safeguards remain byte-exact. Zero references and one unchanged optional app. Historical native capture retained. No new teaching tests, backend calls or account mutations; this reconciles artifacts only.",
+      "currentReconciliationBinding": {
+        "baselineFingerprint": "eb1d612dc2b4645841e3035a177ebb91fa6584a2ae633d7918972b9c9dd95e25",
+        "configurationSha256": "445255487dd270aad087e025b738666340ac1d42a2e45b05fe0b7df640e843bf",
+        "approvedSkillSha256": "7661b328b99aa096f930f46e272ef9208de6f11e22c002e77f79d9ab78a15096",
+        "approvedPackageFingerprint": "4a5bbb9052929adfac18f57d52090b30a8d62e9b66b1b3e6ecc041ecc5f41958",
+        "pluginId": "plugin_d292d1e45ae08191b3911299e30e1a25",
+        "releaseId": "pluginrel_6ab84427e0d4819182de200f7ce49333",
+        "version": "0.8.5",
+        "skillSha256": "282ceeba915a317f6bb3f49eb1929ef5ae9d555781c635b0b8ed7e85977a61b8",
+        "packageFingerprint": "6f945afcce451d822597bc4e79fb1d8b60262416bb75c1eb398a774318d60f5c",
+        "archiveSha256": "b91898941bc04e953758d4036ae0e944f4229859743d5112b380901942568101",
+        "revisionChainFingerprint": "ab1870f702ce905a33cac1089c362e0fa4066548f350da2e3198c968fb5f880e",
+        "referenceCount": 0,
+        "registeredAppId": "asdk_app_6ab4747769088191856fd8eb02507240",
+        "appOptional": true,
+        "sourceEvidenceIds": {
+          "compositionApproval": [
+            "owner-composed-skill-approval-20260926"
+          ],
+          "intakeAuthorization": [
+            "owner-intake-revision-authorization-20260926"
+          ],
+          "intakeReview": [
+            "intake-revision-scope-byte-review-20260926"
+          ],
+          "diagnosticAuthorization": [
+            "owner-diagnostic-revision-authorization-20260926"
+          ],
+          "diagnosticReview": [
+            "diagnostic-revision-scope-byte-review-20260926"
+          ],
+          "savedRelease": [
+            "saved-plugin-diagnostic-release-20260926"
+          ]
+        },
+        "installedCapture": {
+          "rootPath": "current-reconciliation-20260926/installed-package",
+          "packageFingerprint": "6f945afcce451d822597bc4e79fb1d8b60262416bb75c1eb398a774318d60f5c"
+        }
+      }
+    },
+    {
+      "id": "connection-inspection-surface-unavailable-20260927",
+      "kind": "repository",
+      "status": "BLOCKED",
+      "observedAt": "2026-09-27T01:38:31.073Z",
+      "summary": "Supported UI inventory exposed no apps or browsers; current existing Primary availability could not be rechecked. Prior generic Connect-only account finding remains historical. No Connect, Continue, Reconnect, Refresh or backend request. Ignored observation SHA-256 45ecd1844005f840a9f5c9ffdffc27f3ec3a48b220272147878147e082b17169."
     }
   ],
   "checks": {
@@ -841,7 +895,7 @@
       ]
     }
   },
-  "builderReconciliation": "BLOCKED",
+  "builderReconciliation": "VERIFIED",
   "referenceReconciliation": "VERIFIED",
   "usagePolicy": {
     "defaultTeachingPath": "skill_only",

@@ -55,12 +55,16 @@ one optional existing backend app. Removing both authorized insertions in revers
 recovers the historical approved skill exactly. All eighteen actual submitted
 installed teaching cases pass content review, with zero visible ARCANOS calls.
 Seven planned-prompt deviations and one separate host Memory update are retained;
-server-authoritative invocation counts are unavailable. Current supported UI shows
-only generic Connect, with no existing Primary row or Reconnect control.
+server-authoritative invocation counts are unavailable. The September 26 UI
+inspection showed only generic Connect, with no existing Primary row or Reconnect
+control. The latest recheck exposed no supported browser surface, so present
+connection availability is unverified.
 See the [current installed verification record](../../docs/chatgpt-migration/TUTOR_FINAL_INSTALLED_VERIFICATION_20260926.md).
 Teaching verification is scoped to the retained installed web matrix. Release
-remains BLOCKED pending migrated parity, historical native reconciliation and
-backend acceptance. Reconnect, routing controls and backend A/C/D remain unrun;
+remains BLOCKED pending migrated parity and backend acceptance. The reviewed
+current-release reconciliation preserves the initial native capture as history;
+see the [current artifact reconciliation](../../docs/chatgpt-migration/TUTOR_CURRENT_RELEASE_RECONCILIATION_20260927.md).
+Reconnect, routing controls and backend A/C/D remain unrun;
 no replacement connection or backend request was issued.
 Synthetic decision tests prove only the reference contract.
 
@@ -78,6 +82,7 @@ Synthetic decision tests prove only the reference contract.
 - `connection.requirements.json`: dated account/runtime evidence, including the stopped final bounded backend attempt window.
 - `migration.inventory.json` and `reference-review.json`: the initial captured 0.8.1 native bundle and its reviewed empty reference inventory; historical evidence remains unchanged.
 - `updated-plugin-release.json`: actual saved 0.8.5 complete archive inventory, revised skill hash, optional app and guarded release identity.
+- `current-reconciliation.inventory.json`: exact baseline/composition/revision/archive binding and separate installed-cache capture; clears artifact reconciliation only after private byte inspection.
 - `parity-matrix.json`: sixteen historical comparison definitions; 0 bound, 10 provisional, 6 unexecuted.
 - `schemas/`: unchanged hash-pinned portable schema.
 

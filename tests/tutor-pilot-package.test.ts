@@ -42,7 +42,7 @@ function baselineFingerprint(baseline: Json) {
 function completeFixture(intakeRevision = false, diagnosticRevision = false, currentTeaching = false) {
   const root = copyPackage();
   for (const name of ['skill-revision.inventory.json', 'diagnostic-revision.inventory.json', 'intake-plugin-release.inventory.json',
-    'installed-teaching-verification.json']) {
+    'installed-teaching-verification.json', 'current-reconciliation.inventory.json']) {
     rmSync(path.join(root, name), { force: true });
   }
   expect(spawnSync('git', ['-C', root, 'init', '--quiet'], { windowsHide: true }).status).toBe(0);

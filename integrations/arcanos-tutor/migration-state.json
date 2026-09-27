@@ -24,7 +24,7 @@
         "primary-final-reauth-refresh-20260926",
         "installed-intake-teaching-observations-20260926"
       ],
-      "note": "Historical existing Tutor app registration, scope and Primary association remain recorded. Current installed 0.8.4 UI shows Reconnect required, so present availability and credential durability are not verified. No reconnect, new app/connection/Auth0 client, scope change or backend invocation occurred during the intake revision."
+      "note": "Historical existing configuration and Primary association remain recorded. The 0.8.4 Reconnect observation was superseded by the 0.8.5 generic Connect-only observation with no Primary/Reconnect control. Latest supported UI inventory exposes no browser surface, so present connection availability and credential durability remain unverified. No replacement connection or OAuth change."
     },
     "CHATGPT_CONNECTION_REGISTERED": {
       "status": "VERIFIED",
@@ -34,7 +34,7 @@
         "optional-app-primary-associated-20260926",
         "installed-intake-teaching-observations-20260926"
       ],
-      "note": "Historical existing Tutor app registration, scope and Primary association remain recorded. Current installed 0.8.4 UI shows Reconnect required, so present availability and credential durability are not verified. No reconnect, new app/connection/Auth0 client, scope change or backend invocation occurred during the intake revision."
+      "note": "Historical existing configuration and Primary association remain recorded. The 0.8.4 Reconnect observation was superseded by the 0.8.5 generic Connect-only observation with no Primary/Reconnect control. Latest supported UI inventory exposes no browser surface, so present connection availability and credential durability remain unverified. No replacement connection or OAuth change."
     },
     "TOOL_DISCOVERY_VERIFIED": {
       "status": "VERIFIED",
@@ -42,7 +42,7 @@
         "primary-reauth-schema-refresh-20260924",
         "primary-final-reauth-refresh-20260926"
       ],
-      "note": "Fresh Refresh completed; catalog contains only arcanos_tutor and public scope remains arcanos:tutor. Callable connector is prompt plus account selector. Prior complete JSON-schema evidence remains dated because current UI did not expose the full refreshed schema."
+      "note": "Historical supported Refresh exposed only arcanos_tutor with scope arcanos:tutor. No new Refresh occurred in the current reconciliation; present authenticated discovery is unverified while the existing Primary connection is unavailable for inspection."
     },
     "LIVE_TUTOR_CALL_VERIFIED": {
       "status": "BLOCKED",
@@ -80,14 +80,14 @@
       "evidenceIds": [
         "account-plugin-migration-20260926"
       ],
-      "note": "Owner-authorized account migration remains verified. Historical native capture and evidence are unchanged. Actual saved current 0.8.4 archive is independently verified under UPDATED_PLUGIN_ARCHIVE_VERIFIED; the scoped intake revision preserves all original approved teaching bytes. Migration occurrence does not verify behavior or release readiness."
+      "note": "Owner-authorized account migration remains verified. Historical native capture is unchanged. Current PRIVATE 0.8.5 archive and installed bytes are independently reconciled; both separately authorized insertions preserve all original approved teaching bytes. Migration occurrence does not itself verify behavior or release readiness."
     },
     "SKILL_RECONCILED": {
-      "status": "BLOCKED",
+      "status": "VERIFIED",
       "evidenceIds": [
-        "installed-skill-differences-20260926"
+        "current-release-reconciliation-20260927"
       ],
-      "note": "Historical 0.8.1 native reconciliation remains blocked under its unchanged adapter contract. Saved 0.8.4 bytes and the separately authorized intake insertion are verified under UPDATED_PLUGIN_ARCHIVE_VERIFIED and skill-revision.inventory.json. This does not promote historical comparison or behavior evidence."
+      "note": "Current PRIVATE 0.8.5 reconciled against the approved baseline/composition, both separately authorized insertions, complete saved archive and matching independent installed-cache capture. Historical 0.8.1 native capture and differences remain unchanged. Release inspection requires private byte proofs; no behavior, parity or backend promotion."
     },
     "REFERENCES_RECONCILED": {
       "status": "VERIFIED",
@@ -116,12 +116,12 @@
     "PACKAGE_READY": {
       "status": "BLOCKED",
       "evidenceIds": [],
-      "note": "BLOCKED pending exact migrated parity, historical native reconciliation and backend acceptance. Actual saved PRIVATE 0.8.5 archive, both narrow insertion proofs and the current installed eighteen-case teaching matrix are verified within their separate evidence domains."
+      "note": "Current saved/installed artifact reconciliation and eighteen-case visible-client teaching verification are complete. Live backend acceptance and baseline-bound paired parity remain blocked. Current revised-skill parity requires separately reviewed exact-release evidence. No merge, public sharing or production change authorized."
     },
     "RELEASE_READY": {
       "status": "BLOCKED",
       "evidenceIds": [],
-      "note": "Remain DRAFT and PRIVATE. Saved 0.8.5 and current installed web teaching are verified; live backend acceptance, exact parity and historical native reconciliation remain blocked. No merge, runtime deployment or new account resource occurred."
+      "note": "Current saved/installed artifact reconciliation and eighteen-case visible-client teaching verification are complete. Live backend acceptance and baseline-bound paired parity remain blocked. Current revised-skill parity requires separately reviewed exact-release evidence. No merge, public sharing or production change authorized."
     },
     "TUTOR_SKILL_COMPOSED": {
       "status": "VERIFIED",
@@ -174,11 +174,11 @@
       "note": "Current official syntax and strict package validation enforce one raw registered app ID with boolean optional:true and no required conflict. Saved 0.8.5 mapping is unchanged and verified. Teaching behavior and current connection availability are separate."
     },
     "MIGRATED_SKILL_RECONCILED": {
-      "status": "BLOCKED",
+      "status": "VERIFIED",
       "evidenceIds": [
-        "installed-skill-differences-20260926"
+        "current-release-reconciliation-20260927"
       ],
-      "note": "Historical 0.8.1 native reconciliation remains blocked under its unchanged adapter contract. Saved 0.8.4 bytes and the separately authorized intake insertion are verified under UPDATED_PLUGIN_ARCHIVE_VERIFIED and skill-revision.inventory.json. This does not promote historical comparison or behavior evidence."
+      "note": "Current PRIVATE 0.8.5 reconciled against the approved baseline/composition, both separately authorized insertions, complete saved archive and matching independent installed-cache capture. Historical 0.8.1 native capture and differences remain unchanged. Release inspection requires private byte proofs; no behavior, parity or backend promotion."
     },
     "UPDATED_PLUGIN_ARCHIVE_VERIFIED": {
       "status": "VERIFIED",

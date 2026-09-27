@@ -17,6 +17,11 @@ Current supported UI exposes only generic Connect, without the existing Primary
 row or Reconnect control. No replacement connection, reconnect, metadata Refresh,
 routing control or backend acceptance request occurred in this phase.
 See the [current installed verification record](TUTOR_FINAL_INSTALLED_VERIFICATION_20260926.md).
+The [current artifact reconciliation](TUTOR_CURRENT_RELEASE_RECONCILIATION_20260927.md)
+now binds that saved release to the approved composition and a fresh matching
+installed cache. Historical 0.8.1 differences remain unchanged. The latest
+connection recheck had no supported browser surface, so current Primary
+availability remains unverified; the generic Connect observation above is dated.
 The [pre-migration checkpoint](TUTOR_PRE_MIGRATION_CHECKPOINT_20260926.md) is historical.
 
 The owner has selected **skill-first tutoring with an optional ARCANOS app**.
@@ -102,12 +107,12 @@ independent states; there is no single migrated boolean.
 | BACKEND_APP_REGISTERED | VERIFIED | Same existing app/resource confirmed; no new app or connection |
 | BACKEND_APP_OPTIONALITY_VERIFIED | VERIFIED | Current saved 0.8.5 mapping contains exactly one unchanged optional app |
 | UPDATED_PLUGIN_ARCHIVE_VERIFIED | VERIFIED | Actual saved 0.8.5 archive, all thirteen members and both inverse insertion proofs independently verified |
-| MIGRATED_SKILL_RECONCILED | BLOCKED | Historical native adapter reconciliation remains blocked; current bytes verified separately by UPDATED_PLUGIN_ARCHIVE_VERIFIED |
+| MIGRATED_SKILL_RECONCILED | VERIFIED | Reviewed current-release adapter binds approved composition, both authorized insertions, saved archive and matching installed cache; initial native history preserved |
 | GPT_MIGRATED | VERIFIED | Same private migrated identity; saved 0.8.5 preserves all historical bytes plus two authorized insertions and optional app |
-| SKILL_RECONCILED | BLOCKED | Historical native comparison remains blocked; current saved raw-byte equality verified under new archive gate |
+| SKILL_RECONCILED | VERIFIED | Current 0.8.5 preserves approved instructions and safeguards; exact source, revision, archive and installed-byte proofs required |
 | REFERENCES_RECONCILED | VERIFIED | Historical and current saved 0.8.5 complete inventories contain zero references |
 | PARITY_VERIFIED | BLOCKED | Seven related migrated teaching observations recorded; exact paired old/new results absent and no provisional evidence promoted |
-| PACKAGE_READY | BLOCKED | Current artifact and installed teaching verified; historical native reconciliation, backend acceptance and paired parity unresolved |
+| PACKAGE_READY | BLOCKED | Current artifact and installed teaching verified; backend acceptance and paired parity unresolved |
 | RELEASE_READY | BLOCKED | Draft/private only; saved 0.8.5 is not full release readiness |
 
 Allowed statuses are VERIFIED, USER_REPORTED, IMPLEMENTED_NOT_VERIFIED, BLOCKED
