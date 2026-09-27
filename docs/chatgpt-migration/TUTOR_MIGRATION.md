@@ -1,4 +1,97 @@
-# ARCANOS TUTOR migration handoff
+# ARCANOS plugin migration infrastructure — Tutor pilot
+
+## Infrastructure acceptance
+
+Owner scope decision, 2026-09-27: Tutor was the infrastructure pilot for future
+Custom GPT migrations. The existing private 0.8.5 artifact is a pilot, not the
+final Tutor design. The owner plans a later redesign directly as a plugin.
+The current merge decision concerns repository infrastructure, not Tutor release.
+
+| Conclusion | Acceptance boundary |
+| --- | --- |
+| `MIGRATION_INFRASTRUCTURE_READY` | The demonstrated repository foundation is coherent, safe and tested for reuse as a starting point. Actual identity, integrity, privacy, authorization or build defects block this conclusion. |
+| `TUTOR_PRODUCT_RELEASE_READY` | Complete Tutor teaching, connection, backend and parity requirements. This remains BLOCKED; infrastructure acceptance neither accepts differences nor changes product gates. |
+
+The final tested head, comparison base, hosted CI and independent review are
+recorded on [PR #1509](https://github.com/pbjustin/Arcanos/pull/1509). Infrastructure
+may be VERIFIED while Tutor product release remains BLOCKED. Repository merge
+does not update the installed plugin, restore an account connection, certify a
+backend or authorize Tutor release. Historical readiness statements below and
+in dated reports describe their original scope and evidence date.
+
+| Demonstrated mechanism | Evidence and limit |
+| --- | --- |
+| Published-configuration capture | `capture-tutor-baseline.mjs` and `baseline.inventory.json` track provenance, completeness and hashes. Local validation does not independently prove account publication; owner/account evidence is labeled separately. |
+| Deterministic private composition | `compose-tutor-skill.mjs` binds exact approved instruction bytes, sections and owner review to a new ignored output. Synthetic tests reject missing approvals, altered bytes and path escapes. The public template contains no private teaching text. |
+| Package/schema and app mapping validation | The pinned schema and Tutor identity/tool/scope checks validate one optional registered-app mapping. A valid mapping proves neither current OAuth authorization nor live execution. |
+| Captured artifact identity and reconciliation | Native/saved inventories, archive hashes, extracted bytes and installed captures are bound by `tutor-native-migration.mjs`, `tutor-updated-plugin-release.mjs` and `tutor-current-reconciliation.mjs`. Existing observed private operations are documented in the [artifact reconciliation](TUTOR_CURRENT_RELEASE_RECONCILIATION_20260927.md); this task collects no new archive or account evidence. |
+| Approved-content preservation | `tutor-skill-revision.mjs` verifies both separately authorized insertions and inverse recovery of approved bytes. Tests reject stale identities, reused authorization and changed content; Windows LF/CRLF fixtures preserve byte offsets. |
+| Privacy and integrity controls | Ignored `.local-migration/arcanos-tutor/`, the staged-path commit guard, credential exclusion, bounded reads, symlink/path rejection and private-boundary scanning remain enforced. Negative tests reject missing, altered or mismatched evidence. |
+
+These mechanisms have source implementation, deterministic/synthetic coverage
+and the specifically recorded account/artifact observations. Historical
+authenticated backend results retain their dates and limitations; they are not
+proof of current authorization. Current live Tutor behavior remains unresolved.
+This is not universal production proof: native/archive layouts, empty-reference
+handling and the two supported revision transitions are intentionally Tutor-specific.
+The public template is not a teaching-complete or install-ready replacement.
+
+Existing commands express the separation without another readiness framework:
+
+- `npm run validate:tutor-package` must exit 0 with `sourceValidation: PASS`.
+  Integrity failures still fail validation, even when product release is deferred.
+- `npm run validate:tutor-release -- --inputs .local-migration/arcanos-tutor`
+  retains the complete product contract. With the existing exact private bytes,
+  its expected result is exit 2, `code: RELEASE_BLOCKED`, `releaseStatus: BLOCKED`
+  and `archiveWritten: false`, with the unresolved codes in the
+  [dated blocker report](TUTOR_BLOCKER_CLOSURE_20260927.md#release-and-remaining-work).
+  Parse and verify that result; exit 1, malformed output, changed blocker codes or
+  an unexpected exception require investigation. Do not ignore arbitrary failures.
+
+## Retained Tutor product follow-ups
+
+- Existing-account authorization and successful live backend acceptance remain unresolved.
+- Missing-context and host-memory behavior, plus remaining plugin-activation evidence, need product-specific investigation.
+- Unresolved parity decisions, historical admin comparison and controlled failure-case client evidence remain unaccepted; six paired PASS and ten BLOCKER cases are preserved.
+- Empty references do not invent a reference-N/A disposition. The revised-skill validator deliberately remains fail-closed until its documented future contract and qualifying evidence are reviewed.
+- Tutor's later product redesign needs its own approved requirements, artifact changes and validation.
+
+None of these follow-ups is fixed, accepted or passed by the infrastructure scope
+decision. All prior reports, hashes, approvals and private inputs stay in place.
+
+## Next GPT migration
+
+Reuse the capture/provenance workflow, private composition and artifact-verification
+patterns, package/mapping validation, authorization checkpoints and negative-test
+patterns. Establish separately for each GPT its approved source instructions and
+knowledge inventory; plugin and registered-app identities; tools, scopes and
+capability boundaries; domain behavior and acceptance criteria; and installation,
+account authorization and live integration evidence.
+
+Tutor filenames and fixed identities remain in this pilot. Copying its app ID,
+scope, validators or teaching rules does not migrate Gaming, Booker or Core.
+Their permissions and workflows require independent review; generalization and
+nonempty-reference compatibility have not been demonstrated here.
+
+## Merge and review-state effects
+
+The full PR adds four opt-in npm commands and strengthens the private-path commit
+guard; it changes no dependency/lockfile, install/build/start hook, runtime import,
+deployment configuration or workflow trigger. It does not install or publish a
+plugin. Repository `ready_for_review`/edit events run preview reconciliation, but
+without `railway-preview` the controller returns before calling Railway. Preserve
+that opt-in setting and verify provider-native PR settings before marking ready.
+
+Merging triggers main CI and can invoke existing operational workflows. The
+unchanged `20260830-job-events-worker-budget-v1` hold blocks automatic promotion
+in `railway-auto-deploy.yml`; it does not govern provider-native triggers.
+Existing merge/close workflows can clean owned previews, `register.yml` posts
+repository metadata to a backend, and documentation analysis may call a provider.
+Manual publish/deploy workflows remain separately authorized. The final PR
+handoff records the observed provider settings and safe review-state decision;
+infrastructure acceptance does not grant merge or deployment authority.
+
+## Dated Tutor product evidence
 
 Evidence date: **2026-09-27 UTC**. The latest
 [exact blocker review](TUTOR_BLOCKER_CLOSURE_20260927.md) records the unchanged

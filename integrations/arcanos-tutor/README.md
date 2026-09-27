@@ -1,4 +1,17 @@
-# ARCANOS TUTOR
+# ARCANOS plugin migration infrastructure — Tutor pilot
+
+Tutor exercised the repository infrastructure for future Custom GPT migrations.
+The existing private 0.8.5 artifact is a pilot, not the final Tutor design; the
+owner plans to redesign Tutor later, directly as a plugin. PR #1509 now seeks
+infrastructure-scope merge review. `MIGRATION_INFRASTRUCTURE_READY` and
+`TUTOR_PRODUCT_RELEASE_READY` are separate conclusions: the first may be VERIFIED
+while the second remains BLOCKED. This scope decision accepts no Tutor behavior
+or parity difference and changes no product-release gate.
+
+Repository merge does not approve Tutor release, update its installed skill,
+restore its account connection, or certify its backend. See the
+[infrastructure acceptance and reuse handoff](../../docs/chatgpt-migration/TUTOR_MIGRATION.md#infrastructure-acceptance)
+for demonstrated mechanisms, evidence limits and retained product follow-ups.
 
 ARCANOS TUTOR is now a **skill-first public source template**. Ordinary tutoring
 runs through the approved teaching skill directly in ChatGPT. The ARCANOS app
@@ -97,7 +110,9 @@ Both retrieved saved release inventories independently confirm zero references.
 Read the [handoff](../../docs/chatgpt-migration/TUTOR_MIGRATION.md),
 [private input contract](../../docs/chatgpt-migration/TUTOR_INPUTS.md), and
 [skill-first implementation record](../../docs/chatgpt-migration/TUTOR_SKILL_FIRST_20260925.md).
-PR #1509 remains draft. The September 27 production acceptance cycle is NOT_RUN:
+The September 27 product-evidence checkpoint recorded the PR as draft; its
+current review state and tested head are recorded on PR #1509. That checkpoint's
+production acceptance cycle remains NOT_RUN:
 0/6 potential invocations across raw MCP A/C/D and ChatGPT explicit-backend A/C/D,
 with zero retries, because the existing Primary association could not be safely
 restored in supported UI. That recorded budget does not authorize a new run,
