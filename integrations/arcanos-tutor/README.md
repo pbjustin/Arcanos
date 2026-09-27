@@ -55,13 +55,15 @@ one optional existing backend app. Removing both authorized insertions in revers
 recovers the historical approved skill exactly. All eighteen actual submitted
 installed teaching cases pass content review, with zero visible ARCANOS calls.
 Seven planned-prompt deviations and one separate host Memory update are retained;
-server-authoritative invocation counts are unavailable. The September 26 UI
-inspection showed only generic Connect, with no existing Primary row or Reconnect
-control. The latest recheck exposed no supported browser surface, so present
-connection availability is unverified.
-See the [current installed verification record](../../docs/chatgpt-migration/TUTOR_FINAL_INSTALLED_VERIFICATION_20260926.md).
-Teaching verification is scoped to the retained installed web matrix. Release
-remains BLOCKED pending migrated parity and backend acceptance. The reviewed
+server-authoritative invocation counts are unavailable. That historical record
+does not certify current aggregate teaching readiness. The September 27 exact
+comparison found a missing-context follow-up failure and unresolved host-memory
+behavior; current teaching readiness is BLOCKED. Supported account UI showed
+only generic Connect, with no Primary, Reconnect or Refresh. Existing-connection
+restoration and live backend acceptance remain unverified.
+See the [latest blocker review](../../docs/chatgpt-migration/TUTOR_BLOCKER_CLOSURE_20260927.md)
+and [historical installed verification record](../../docs/chatgpt-migration/TUTOR_FINAL_INSTALLED_VERIFICATION_20260926.md).
+Release remains BLOCKED by both parity and backend acceptance. The reviewed
 current-release reconciliation preserves the initial native capture as history;
 see the [current artifact reconciliation](../../docs/chatgpt-migration/TUTOR_CURRENT_RELEASE_RECONCILIATION_20260927.md).
 Reconnect, routing controls and backend A/C/D remain unrun;
@@ -73,7 +75,7 @@ Synthetic decision tests prove only the reference contract.
 - `skill-composition.inventory.json`: hashes, counts, source binding, and approved exact-artifact owner review.
 - `skill-revision.inventory.json`: separately authorized successor hash, exact insertion, historical source archive, and independent preservation review; does not rewrite composition approval.
 - `diagnostic-revision.inventory.json` and `intake-plugin-release.inventory.json`: strict second revision and preserved 0.8.4 predecessor proof.
-- `installed-teaching-verification.json`: current-release eighteen-case visible-client verification, exact evidence hashes, plan deviations and observation limits.
+- `installed-teaching-verification.json`: retained eighteen-case visible-client verification, exact evidence hashes, plan deviations and observation limits; the later blocked aggregate gate remains authoritative.
 - `invocation-policy.json`: explicit-only backend contract; no natural-language classifier or tool executor.
 - `teaching-behavior-matrix.json`: historical eighteen-case reference contract; partial installed observations are separately bound in the dated reports and evidence ledger.
 - `capability-equivalence.json`: four published capabilities, untested client equivalents, and the baseline-bound owner decision excluding them from Tutor release scope.
@@ -83,7 +85,7 @@ Synthetic decision tests prove only the reference contract.
 - `migration.inventory.json` and `reference-review.json`: the initial captured 0.8.1 native bundle and its reviewed empty reference inventory; historical evidence remains unchanged.
 - `updated-plugin-release.json`: actual saved 0.8.5 complete archive inventory, revised skill hash, optional app and guarded release identity.
 - `current-reconciliation.inventory.json`: exact baseline/composition/revision/archive binding and separate installed-cache capture; clears artifact reconciliation only after private byte inspection.
-- `parity-matrix.json`: sixteen historical comparison definitions; 0 bound, 10 provisional, 6 unexecuted.
+- `parity-matrix.json`: sixteen comparisons; ten old-GPT observations baseline-bound, zero provisional, six unexecuted; six paired PASS and ten BLOCKER dispositions.
 - `schemas/`: unchanged hash-pinned portable schema.
 
 Everything beside `package/` is evidence/tooling, not distributable content.
@@ -95,9 +97,11 @@ Both retrieved saved release inventories independently confirm zero references.
 Read the [handoff](../../docs/chatgpt-migration/TUTOR_MIGRATION.md),
 [private input contract](../../docs/chatgpt-migration/TUTOR_INPUTS.md), and
 [skill-first implementation record](../../docs/chatgpt-migration/TUTOR_SKILL_FIRST_20260925.md).
-PR #1509 remains draft. The current three-call backend authorization is unused
-because the existing Primary connection is unavailable in supported UI. It does
-not authorize a replacement connection, deployment, another plugin update, or merge.
+PR #1509 remains draft. The September 27 production acceptance cycle is NOT_RUN:
+0/6 potential invocations across raw MCP A/C/D and ChatGPT explicit-backend A/C/D,
+with zero retries, because the existing Primary association could not be safely
+restored in supported UI. That recorded budget does not authorize a new run,
+replacement connection, deployment, another plugin update, or merge.
 
 ## Historical pre-migration checkpoint
 
