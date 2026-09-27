@@ -22,9 +22,10 @@
       "evidenceIds": [
         "primary-reauth-schema-refresh-20260924",
         "primary-final-reauth-refresh-20260926",
-        "installed-intake-teaching-observations-20260926"
+        "installed-intake-teaching-observations-20260926",
+        "existing-primary-connection-ui-20260927"
       ],
-      "note": "Historical existing configuration and Primary association remain recorded. The 0.8.4 Reconnect observation was superseded by the 0.8.5 generic Connect-only observation with no Primary/Reconnect control. Latest supported UI inventory exposes no browser surface, so present connection availability and credential durability remain unverified. No replacement connection or OAuth change."
+      "note": "Historical registration and Primary association remain recorded. Fresh 2026-09-27 supported account UI confirms the existing app and production resource, but only generic Connect is exposed: no Primary, Reconnect or Refresh. Safe same-association recovery cannot be established. No connection or OAuth configuration was changed."
     },
     "CHATGPT_CONNECTION_REGISTERED": {
       "status": "VERIFIED",
@@ -32,17 +33,19 @@
         "primary-reauth-schema-refresh-20260924",
         "primary-final-reauth-refresh-20260926",
         "optional-app-primary-associated-20260926",
-        "installed-intake-teaching-observations-20260926"
+        "installed-intake-teaching-observations-20260926",
+        "existing-primary-connection-ui-20260927"
       ],
-      "note": "Historical existing configuration and Primary association remain recorded. The 0.8.4 Reconnect observation was superseded by the 0.8.5 generic Connect-only observation with no Primary/Reconnect control. Latest supported UI inventory exposes no browser surface, so present connection availability and credential durability remain unverified. No replacement connection or OAuth change."
+      "note": "Historical registration and Primary association remain recorded. Fresh 2026-09-27 supported account UI confirms the existing app and production resource, but only generic Connect is exposed: no Primary, Reconnect or Refresh. Safe same-association recovery cannot be established. No connection or OAuth configuration was changed."
     },
     "TOOL_DISCOVERY_VERIFIED": {
       "status": "VERIFIED",
       "evidenceIds": [
         "primary-reauth-schema-refresh-20260924",
-        "primary-final-reauth-refresh-20260926"
+        "primary-final-reauth-refresh-20260926",
+        "existing-primary-connection-ui-20260927"
       ],
-      "note": "Historical supported Refresh exposed only arcanos_tutor with scope arcanos:tutor. No new Refresh occurred in the current reconciliation; present authenticated discovery is unverified while the existing Primary connection is unavailable for inspection."
+      "note": "Historical authenticated discovery of exactly arcanos_tutor with scope arcanos:tutor remains recorded. Fresh app Details exposes only arcanos_tutor, but current scope authorization and authenticated discovery are unverified. No Refresh is available."
     },
     "LIVE_TUTOR_CALL_VERIFIED": {
       "status": "BLOCKED",
@@ -52,9 +55,10 @@
         "runtime-acceptance-post1512-record-20260925",
         "final-raw-acceptance-20260926",
         "final-chatgpt-partial-acceptance-20260926",
-        "existing-primary-unavailable-20260926-final"
+        "existing-primary-unavailable-20260926-final",
+        "production-acceptance-not-run-connection-20260927"
       ],
-      "note": "BLOCKED. Current supported UI confirms the existing app/resource but exposes no Primary or Reconnect control. No reconnect, metadata Refresh, routing control or backend A/C/D was submitted in this phase (0/3 attempts). This is a connection-availability blocker, not a fresh backend response; earlier runtime failures remain historical."
+      "note": "BLOCKED: existing Primary readiness cannot be safely established in the current supported UI. This newly authorized production cycle never started: raw MCP A/C/D and ChatGPT explicit-backend A/C/D all NOT_RUN, zero of six potential invocations and zero retries. No current backend content conclusion follows; historical failures remain preserved."
     },
     "GPT_BASELINE_CAPTURED": {
       "status": "VERIFIED",
@@ -109,19 +113,40 @@
         "candidate-chatgpt-retest-pending",
         "old-gpt-parity-binding-review-20260925",
         "old-gpt-chronology-review-followup-20260925",
-        "installed-final-teaching-verification-20260926"
+        "installed-final-teaching-verification-20260926",
+        "current-exact-direct-activation-20260927",
+        "current-exact-indirect-activation-20260927",
+        "current-exact-non-activation-20260927",
+        "current-exact-concise-explanation-20260927",
+        "current-exact-structured-lesson-20260927",
+        "current-exact-learner-follow-up-20260927",
+        "current-exact-difficult-question-20260927",
+        "current-exact-unsupported-memory-20260927",
+        "current-exact-unsupported-admin-20260927",
+        "current-exact-clarification-20260927",
+        "current-exact-exact-format-20260927",
+        "old-gpt-historical-concise-explanation-bound-20260927",
+        "old-gpt-historical-direct-activation-bound-20260927",
+        "old-gpt-historical-indirect-activation-bound-20260927",
+        "old-gpt-historical-non-activation-bound-20260927",
+        "old-gpt-historical-structured-lesson-bound-20260927",
+        "old-gpt-historical-learner-follow-up-bound-20260927",
+        "old-gpt-historical-difficult-question-bound-20260927",
+        "old-gpt-historical-unsupported-memory-bound-20260927",
+        "old-gpt-historical-clarification-bound-20260927",
+        "old-gpt-historical-exact-format-bound-20260927"
       ],
-      "note": "All sixteen historical comparison rows remain BLOCKER and official paired results remain null. Seven related current teaching observations are bound to saved 0.8.5 and actual prompt/response hashes; planned parity prompts were not submitted, so no exact comparison or old-GPT evidence is promoted."
+      "note": "BLOCKED after exact current 0.8.5 review: ten historical published-GPT observations retrospectively baseline-bound without new old-GPT execution; eleven exact current prompts submitted once, ten observations bound and one activation unverified. Six paired PASS, zero accepted differences, zero N/A, ten BLOCKER. Current follow-up context failure and host-memory confound remain visible; historical related-prompt evidence is unchanged."
     },
     "PACKAGE_READY": {
       "status": "BLOCKED",
       "evidenceIds": [],
-      "note": "Current saved/installed artifact reconciliation and eighteen-case visible-client teaching verification are complete. Live backend acceptance and baseline-bound paired parity remain blocked. Current revised-skill parity requires separately reviewed exact-release evidence. No merge, public sharing or production change authorized."
+      "note": "BLOCKED: current 0.8.5 artifact identities and inverse proofs pass. Exact paired parity is six PASS and ten BLOCKER; current-release revised-skill parity is incomplete. Existing Primary cannot be safely restored through current UI, so production acceptance remains unrun at zero of six. Current release policy does not permit optional-backend degradation to clear required gates."
     },
     "RELEASE_READY": {
       "status": "BLOCKED",
       "evidenceIds": [],
-      "note": "Current saved/installed artifact reconciliation and eighteen-case visible-client teaching verification are complete. Live backend acceptance and baseline-bound paired parity remain blocked. Current revised-skill parity requires separately reviewed exact-release evidence. No merge, public sharing or production change authorized."
+      "note": "BLOCKED: current 0.8.5 artifact identities and inverse proofs pass. Exact paired parity is six PASS and ten BLOCKER; current-release revised-skill parity is incomplete. Existing Primary cannot be safely restored through current UI, so production acceptance remains unrun at zero of six. Current release policy does not permit optional-backend degradation to clear required gates."
     },
     "TUTOR_SKILL_COMPOSED": {
       "status": "VERIFIED",
@@ -139,11 +164,13 @@
       "note": "Owner approved exact private skill SHA-256 7661b328b99aa096f930f46e272ef9208de6f11e22c002e77f79d9ab78a15096 on 2026-09-26T01:03:47Z. Repository inspection confirms unchanged skill/package/baseline/report hashes and bound approval metadata. This reconciles the composed candidate only; teaching behavior, backend acceptance, actual migration and migrated-artifact reconciliation remain separate. The later 0.8.4 intake-only revision is authorized separately in skill-revision.inventory.json; this historical approval record is not rewritten."
     },
     "TUTOR_SKILL_BEHAVIOR_VERIFIED": {
-      "status": "VERIFIED",
+      "status": "BLOCKED",
       "evidenceIds": [
-        "installed-final-teaching-verification-20260926"
+        "installed-final-teaching-verification-20260926",
+        "current-exact-learner-follow-up-20260927",
+        "current-exact-unsupported-memory-20260927"
       ],
-      "note": "VERIFIED for the current-release skill-only eighteen actual submitted cases under complete captured visible UI evidence: eighteen content PASS, zero visible ARCANOS backend activity, seventeen positive Tutor Sources cases and one unselected unrelated case with no visible Tutor attribution. Seven plan-prompt deviations, host Memory activity and unknown server/per-turn byte state remain explicit. Historical reference matrix and earlier failed runs are unchanged. This does not verify exact planned parity, live backend acceptance or release readiness."
+      "note": "BLOCKED for current aggregate behavior: exact 0.8.5 follow-up supplied an example absent from the fresh chat instead of clarifying, and exact memory behavior remains confounded by host Memory/history use. Historical eighteen-case installed teaching records and their PASS results remain unchanged and valid for those actual prompts only. Eleven fresh exact prompts were submitted once: eight behavior passes, one activation-unverified result, and two unresolved behavior results. Zero visible Tutor backend activity; server-authoritative counts remain unavailable."
     },
     "CAPABILITY_EQUIVALENCE_VERIFIED": {
       "status": "NOT_APPLICABLE",
@@ -159,9 +186,10 @@
         "primary-final-reauth-refresh-20260926",
         "optional-app-primary-associated-20260926",
         "installed-intake-teaching-observations-20260926",
-        "existing-primary-unavailable-20260926-final"
+        "existing-primary-unavailable-20260926-final",
+        "existing-primary-connection-ui-20260927"
       ],
-      "note": "Existing raw app identity and production MCP resource reverified; same app remains optional in PRIVATE 0.8.5. Historical Primary association remains recorded, but current supported UI has no Primary/Reconnect control. No replacement app, connection or Auth0 client was created."
+      "note": "Historical registration and Primary association remain recorded. Fresh 2026-09-27 supported account UI confirms the existing app and production resource, but only generic Connect is exposed: no Primary, Reconnect or Refresh. Safe same-association recovery cannot be established. No connection or OAuth configuration was changed."
     },
     "BACKEND_APP_OPTIONALITY_VERIFIED": {
       "status": "VERIFIED",

@@ -313,6 +313,26 @@ describe('Standalone Tutor package and migration release boundary', () => {
     expect(report.releaseBlockers).toContain('REVISED_SKILL_PARITY_NOT_VERIFIED');
     expect(report.releaseBlockers).not.toContain('SKILL_BEHAVIOR_NOT_VERIFIED');
   });
+  it('keeps aggregate teaching blocked when a retained passing review is superseded by a later finding', () => {
+    const fixture = completeFixture(true, true, true);
+    const retainedReview = json(fixture.root, 'installed-teaching-verification.json');
+    edit(fixture.root, 'migration-state.json', state => {
+      state.gates.TUTOR_SKILL_BEHAVIOR_VERIFIED.status = 'BLOCKED';
+      state.gates.TUTOR_SKILL_BEHAVIOR_VERIFIED.note =
+        'Mock later finding blocks aggregate behavior; the retained eighteen-case review remains valid.';
+    });
+    const result = validate(fixture.root, ['--release', '--inputs', fixture.inputs]);
+    expect(result.status).toBe(2);
+    expect(result.stderr).toBe('');
+    const report = JSON.parse(result.stdout);
+    expect(report).toMatchObject({ sourceValidation: 'PASS', releaseStatus: 'BLOCKED',
+      skillOnlyTeachingReadiness: 'BLOCKED',
+      gates: { TUTOR_SKILL_BEHAVIOR_VERIFIED: 'BLOCKED', RELEASE_READY: 'BLOCKED' },
+      installedTeachingInspection: { teachingVerified: true, caseCount: 18, contentPasses: 18,
+        artifactInspection: 'PASS', inspectedArtifactCount: 60 } });
+    expect(report.releaseBlockers).toContain('TUTOR_SKILL_BEHAVIOR_VERIFIED');
+    expect(json(fixture.root, 'installed-teaching-verification.json')).toEqual(retainedReview);
+  });
   it('rejects current teaching gate promotion without its independent current ledger', () => {
     const fixture = completeFixture(true, true, true);
     rmSync(path.join(fixture.root, 'installed-teaching-verification.json'));

@@ -853,6 +853,681 @@
       "status": "BLOCKED",
       "observedAt": "2026-09-27T01:38:31.073Z",
       "summary": "Supported UI inventory exposed no apps or browsers; current existing Primary availability could not be rechecked. Prior generic Connect-only account finding remains historical. No Connect, Continue, Reconnect, Refresh or backend request. Ignored observation SHA-256 45ecd1844005f840a9f5c9ffdffc27f3ec3a48b220272147878147e082b17169."
+    },
+    {
+      "id": "old-gpt-historical-concise-explanation-bound-20260927",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-27T14:59:52.962Z",
+      "summary": "Read-only account-history retrieval recovers the exact historical prompt and full response on the original published GPT. Retained supported execution calls and version-history evidence bind the result to the approved published baseline. Original historical observation and sanitized summary are preserved; no new generation or backend invocation.",
+      "parityBinding": {
+        "caseId": "concise-explanation",
+        "side": "oldGpt",
+        "promptSha256": "1889539d24060a7448ed3eb74171dead3e7381ab5121aaef6638d995cba4ef0a",
+        "configurationFingerprint": "eb1d612dc2b4645841e3035a177ebb91fa6584a2ae633d7918972b9c9dd95e25",
+        "summarySha256": "4c7f727896331854f5f71066a6f525f97a2944c2279f658910dee38f1b5f1b97"
+      },
+      "historicalObservedAt": "2026-09-24T04:30:18.548Z",
+      "publishedGptId": "g-68b01358d4bc81919975e408fad4de4f",
+      "responseSha256": "83ea4518c86237eb6f7be2087bf4206d0edc792c314848dbdb76684969514427",
+      "retrievalCaptureSha256": "88281bf945d3660c86ecfd2938b9ecf5dd28e136ab015569911cbf8abbe7d3b3",
+      "sourceExecutionEvidenceId": "old-gpt-unbound-observations-20260924",
+      "publishedVersion": "Mar 5, 2026",
+      "backendInvocationsAdded": 0,
+      "historicalResponseRewritten": false
+    },
+    {
+      "id": "old-gpt-historical-direct-activation-bound-20260927",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-27T15:00:49.467Z",
+      "summary": "Read-only account-history retrieval recovers the exact historical prompt and full response on the original published GPT. Retained supported execution calls and version-history evidence bind the result to the approved published baseline. Original historical observation and sanitized summary are preserved; no new generation or backend invocation.",
+      "parityBinding": {
+        "caseId": "direct-activation",
+        "side": "oldGpt",
+        "promptSha256": "a55bc9b2f1abb714899ab0470685f0feaf21231442190fe99886a55d33d888ee",
+        "configurationFingerprint": "eb1d612dc2b4645841e3035a177ebb91fa6584a2ae633d7918972b9c9dd95e25",
+        "summarySha256": "e285ec5362500ec144bbfc1cf18be06b71b3070c4c9180c1fc19f612d7486919"
+      },
+      "historicalObservedAt": "2026-09-24T04:36:29.089Z",
+      "publishedGptId": "g-68b01358d4bc81919975e408fad4de4f",
+      "responseSha256": "0f687c00735504ea73f6aba3179a8d541c3800772b2620ebdceebe6893b4861f",
+      "retrievalCaptureSha256": "b2a0089958d167396d09e97834d8b8b08d1700e1f4915dcc1d409e334c0eb9f8",
+      "sourceExecutionEvidenceId": "old-gpt-unbound-observations-20260924",
+      "publishedVersion": "Mar 5, 2026",
+      "backendInvocationsAdded": 0,
+      "historicalResponseRewritten": false
+    },
+    {
+      "id": "old-gpt-historical-indirect-activation-bound-20260927",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-27T15:01:28.041Z",
+      "summary": "Read-only account-history retrieval recovers the exact historical prompt and full response on the original published GPT. Retained supported execution calls and version-history evidence bind the result to the approved published baseline. Original historical observation and sanitized summary are preserved; no new generation or backend invocation.",
+      "parityBinding": {
+        "caseId": "indirect-activation",
+        "side": "oldGpt",
+        "promptSha256": "55bfbb8e2878acb71a00aced408d5bd920f6fdc78bf6917c3eeefcf59f38c99d",
+        "configurationFingerprint": "eb1d612dc2b4645841e3035a177ebb91fa6584a2ae633d7918972b9c9dd95e25",
+        "summarySha256": "2e2518d9812031465fb2ed9045e9e1010548e36ab9adc2499ac72a68c1e9486d"
+      },
+      "historicalObservedAt": "2026-09-24T04:37:33.759Z",
+      "publishedGptId": "g-68b01358d4bc81919975e408fad4de4f",
+      "responseSha256": "e79a902b88c1f8ac12157308b4a354ef368a5dbe6dd455aaa2cae52e933168d0",
+      "retrievalCaptureSha256": "af3a91e4b4606970f273d434802c4a72bc11329e373b00d72fde8425c06165a0",
+      "sourceExecutionEvidenceId": "old-gpt-unbound-observations-20260924",
+      "publishedVersion": "Mar 5, 2026",
+      "backendInvocationsAdded": 0,
+      "historicalResponseRewritten": false
+    },
+    {
+      "id": "old-gpt-historical-non-activation-bound-20260927",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-27T15:02:01.554Z",
+      "summary": "Read-only account-history retrieval recovers the exact historical prompt and full response on the original published GPT. Retained supported execution calls and version-history evidence bind the result to the approved published baseline. Original historical observation and sanitized summary are preserved; no new generation or backend invocation.",
+      "parityBinding": {
+        "caseId": "non-activation",
+        "side": "oldGpt",
+        "promptSha256": "4f9e14b09a437dbf66cea1bab82b90c710358b54a5baef4262b1f8ed54ab1e13",
+        "configurationFingerprint": "eb1d612dc2b4645841e3035a177ebb91fa6584a2ae633d7918972b9c9dd95e25",
+        "summarySha256": "7235e62cc8365db3ad24e58d187659af2c0a90a6172d1f00385aa7ec69726cbb"
+      },
+      "historicalObservedAt": "2026-09-24T04:38:17.420Z",
+      "publishedGptId": "g-68b01358d4bc81919975e408fad4de4f",
+      "responseSha256": "7dcb2b65b23138ed4d0234b5eb197a5ea7c3dca84c4d1b78f8692793f6591873",
+      "retrievalCaptureSha256": "9adb9ed66bd18de0fe2acafe1a85d4e0b52878847c8cca3bcb97950bc400a461",
+      "sourceExecutionEvidenceId": "old-gpt-unbound-observations-20260924",
+      "publishedVersion": "Mar 5, 2026",
+      "backendInvocationsAdded": 0,
+      "historicalResponseRewritten": false
+    },
+    {
+      "id": "old-gpt-historical-structured-lesson-bound-20260927",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-27T15:02:31.694Z",
+      "summary": "Read-only account-history retrieval recovers the exact historical prompt and full response on the original published GPT. Retained supported execution calls and version-history evidence bind the result to the approved published baseline. Original historical observation and sanitized summary are preserved; no new generation or backend invocation.",
+      "parityBinding": {
+        "caseId": "structured-lesson",
+        "side": "oldGpt",
+        "promptSha256": "cb8cf57b7efc56016a8d5561e14b429b34983b7f627efa730bd8ce02b0335083",
+        "configurationFingerprint": "eb1d612dc2b4645841e3035a177ebb91fa6584a2ae633d7918972b9c9dd95e25",
+        "summarySha256": "8bd3f4bf2eee31607c98b6977fbc7aeedf0da92a915bc5793e2c25085a5fa1e3"
+      },
+      "historicalObservedAt": "2026-09-24T04:39:13.655Z",
+      "publishedGptId": "g-68b01358d4bc81919975e408fad4de4f",
+      "responseSha256": "0d587e3dc1b2c3f79987ee5edaf259277b86459999f4c732d907a306af60be88",
+      "retrievalCaptureSha256": "2ffb5e22b28d897f03e288584d86d63f53cd4e92025f1a31947a678c2e73f390",
+      "sourceExecutionEvidenceId": "old-gpt-unbound-observations-20260924",
+      "publishedVersion": "Mar 5, 2026",
+      "backendInvocationsAdded": 0,
+      "historicalResponseRewritten": false
+    },
+    {
+      "id": "old-gpt-historical-learner-follow-up-bound-20260927",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-27T15:03:00.950Z",
+      "summary": "Read-only account-history retrieval recovers the exact historical prompt and full response on the original published GPT. Retained supported execution calls and version-history evidence bind the result to the approved published baseline. Original historical observation and sanitized summary are preserved; no new generation or backend invocation.",
+      "parityBinding": {
+        "caseId": "learner-follow-up",
+        "side": "oldGpt",
+        "promptSha256": "b6fc45e4e8d77112d5821869ca4133dd7e681425611767db8aa3d3c07202039c",
+        "configurationFingerprint": "eb1d612dc2b4645841e3035a177ebb91fa6584a2ae633d7918972b9c9dd95e25",
+        "summarySha256": "dff97aae8562d5fead407e2c5fce1b07cce7b2ab51ee232ab052e9eaeb7d4ccb"
+      },
+      "historicalObservedAt": "2026-09-24T04:39:56.998Z",
+      "publishedGptId": "g-68b01358d4bc81919975e408fad4de4f",
+      "responseSha256": "ee7b4f771efb9445cdd620f38a3a19e49995f9a17dbc2fd92bf5cdb462a307bf",
+      "retrievalCaptureSha256": "6ab5c02d977e3482c55f6dfba24befe057470367e9ad89685392482d07fe45e9",
+      "sourceExecutionEvidenceId": "old-gpt-unbound-observations-20260924",
+      "publishedVersion": "Mar 5, 2026",
+      "backendInvocationsAdded": 0,
+      "historicalResponseRewritten": false
+    },
+    {
+      "id": "old-gpt-historical-difficult-question-bound-20260927",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-27T15:03:37.727Z",
+      "summary": "Read-only account-history retrieval recovers the exact historical prompt and full response on the original published GPT. Retained supported execution calls and version-history evidence bind the result to the approved published baseline. Original historical observation and sanitized summary are preserved; no new generation or backend invocation.",
+      "parityBinding": {
+        "caseId": "difficult-question",
+        "side": "oldGpt",
+        "promptSha256": "aee14790e745d53d8a9b15756fd79694a2389ecae5a1cf498883986f4303d60d",
+        "configurationFingerprint": "eb1d612dc2b4645841e3035a177ebb91fa6584a2ae633d7918972b9c9dd95e25",
+        "summarySha256": "57d311046a4ba025e5be36622c808c1b67382b46483994562feb87dec27e4c9a"
+      },
+      "historicalObservedAt": "2026-09-24T04:42:52.059Z",
+      "publishedGptId": "g-68b01358d4bc81919975e408fad4de4f",
+      "responseSha256": "fca67da3ba0a6b228a90b21e1949a1c9fda36ff2037d70146145f64b2cef103a",
+      "retrievalCaptureSha256": "199957d33cec023ad61cfa020a3b0745be6d36303776a25f7cfe9ccc87e8b27d",
+      "sourceExecutionEvidenceId": "old-gpt-unbound-observations-20260924",
+      "publishedVersion": "Mar 5, 2026",
+      "backendInvocationsAdded": 0,
+      "historicalResponseRewritten": false
+    },
+    {
+      "id": "old-gpt-historical-unsupported-memory-bound-20260927",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-27T15:04:03.390Z",
+      "summary": "Read-only account-history retrieval recovers the exact historical prompt and full response on the original published GPT. Retained supported execution calls and version-history evidence bind the result to the approved published baseline. Original historical observation and sanitized summary are preserved; no new generation or backend invocation.",
+      "parityBinding": {
+        "caseId": "unsupported-memory",
+        "side": "oldGpt",
+        "promptSha256": "6c4d2b27fe3425b48aeb401460c449b09ed39caab96c978aa41c9708b062183e",
+        "configurationFingerprint": "eb1d612dc2b4645841e3035a177ebb91fa6584a2ae633d7918972b9c9dd95e25",
+        "summarySha256": "e6c770bdde5153210b16bd5f8ac09f2937e2f740de1c148696d8a25bf05f2833"
+      },
+      "historicalObservedAt": "2026-09-24T04:40:50.779Z",
+      "publishedGptId": "g-68b01358d4bc81919975e408fad4de4f",
+      "responseSha256": "cde1cecc50d1c899e4bccfa8d056c5a36d7c0d197f4c8a323953b3940779b763",
+      "retrievalCaptureSha256": "4b67a1d433ed39dadc388e3d89602adff6c6be4f19275482454f80aef5b7ebaa",
+      "sourceExecutionEvidenceId": "old-gpt-unbound-observations-20260924",
+      "publishedVersion": "Mar 5, 2026",
+      "backendInvocationsAdded": 0,
+      "historicalResponseRewritten": false
+    },
+    {
+      "id": "old-gpt-historical-clarification-bound-20260927",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-27T15:05:16.701Z",
+      "summary": "Read-only account-history retrieval recovers the exact historical prompt and full response on the original published GPT. Retained supported execution calls and version-history evidence bind the result to the approved published baseline. Original historical observation and sanitized summary are preserved; no new generation or backend invocation.",
+      "parityBinding": {
+        "caseId": "clarification",
+        "side": "oldGpt",
+        "promptSha256": "9f2b50dc3519abd8ece71943d6621198b816e40cc0192e102e04f3ffa567f0e8",
+        "configurationFingerprint": "eb1d612dc2b4645841e3035a177ebb91fa6584a2ae633d7918972b9c9dd95e25",
+        "summarySha256": "4d11499b40b8122c7d844eb472debc4d01fff3edfabddbf2b94ab164fa0ee016"
+      },
+      "historicalObservedAt": "2026-09-24T04:41:05.533Z",
+      "publishedGptId": "g-68b01358d4bc81919975e408fad4de4f",
+      "responseSha256": "8f503aa61908d0567b49d7df1fb421e05d485fab2e962bea474588c8b5e6f188",
+      "retrievalCaptureSha256": "a92073cb8848db64f9da9e82378d49057931482ed624b0db93825def4af2c52a",
+      "sourceExecutionEvidenceId": "old-gpt-unbound-observations-20260924",
+      "publishedVersion": "Mar 5, 2026",
+      "backendInvocationsAdded": 0,
+      "historicalResponseRewritten": false
+    },
+    {
+      "id": "old-gpt-historical-exact-format-bound-20260927",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-27T15:05:42.562Z",
+      "summary": "Read-only account-history retrieval recovers the exact historical prompt and full response on the original published GPT. Retained supported execution calls and version-history evidence bind the result to the approved published baseline. Original historical observation and sanitized summary are preserved; no new generation or backend invocation.",
+      "parityBinding": {
+        "caseId": "exact-format",
+        "side": "oldGpt",
+        "promptSha256": "346f6c176ff641bb26b1b86885d73da9c4df49de0fc87589c99ae1cc00fb5db4",
+        "configurationFingerprint": "eb1d612dc2b4645841e3035a177ebb91fa6584a2ae633d7918972b9c9dd95e25",
+        "summarySha256": "4bc5e6aa96d529c81eb05aeeab0788d50fc0d64f90c60a6ea89a70dbf2de8b82"
+      },
+      "historicalObservedAt": "2026-09-24T04:41:30.008Z",
+      "publishedGptId": "g-68b01358d4bc81919975e408fad4de4f",
+      "responseSha256": "61408b603d40b53ba65b95288ec89954e12813929c3b78be32fd76403cc44ed3",
+      "retrievalCaptureSha256": "f30041edb27033a59120a05bd6b50cda391bbcfb22eeef44ec726d6c6ff3cf3f",
+      "sourceExecutionEvidenceId": "old-gpt-unbound-observations-20260924",
+      "publishedVersion": "Mar 5, 2026",
+      "backendInvocationsAdded": 0,
+      "historicalResponseRewritten": false
+    },
+    {
+      "id": "current-exact-direct-activation-20260927",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-27T14:56:17.743Z",
+      "summary": "Accurate fraction-equivalence explanation with scaling and a visual example. Current Tutor skill is visibly attributed. No visible Tutor backend activity.",
+      "parityBinding": {
+        "caseId": "direct-activation",
+        "side": "plugin",
+        "promptSha256": "a55bc9b2f1abb714899ab0470685f0feaf21231442190fe99886a55d33d888ee",
+        "configurationFingerprint": "6f945afcce451d822597bc4e79fb1d8b60262416bb75c1eb398a774318d60f5c",
+        "summarySha256": "c6370be22b9dbca351af0449e212cb15f97e97dc82155b3fa1016022df1b3644"
+      },
+      "execution": {
+        "pluginVersion": "0.8.5",
+        "releaseId": "pluginrel_6ab84427e0d4819182de200f7ce49333",
+        "packageFingerprint": "6f945afcce451d822597bc4e79fb1d8b60262416bb75c1eb398a774318d60f5c",
+        "skillSha256": "282ceeba915a317f6bb3f49eb1929ef5ae9d555781c635b0b8ed7e85977a61b8",
+        "promptSha256": "a55bc9b2f1abb714899ab0470685f0feaf21231442190fe99886a55d33d888ee",
+        "responseSha256": "ba8751a0bf2552d0b42b318f2aca108f324af51bb75a8044eeb36b51186e7db6",
+        "responseHashBasis": "retained_rendered_answer_text",
+        "captureSha256": "e7b1f78222fcce573229feed1ef18ef5baddac5a9cb2168ff96574174acb6734",
+        "submittedAt": "2026-09-27T14:55:39.647Z",
+        "capturedAt": "2026-09-27T14:56:17.743Z",
+        "exactPromptMatch": true,
+        "submissionCount": 1,
+        "expectedBackendInvocations": 0,
+        "visibleBackendInvocations": 0,
+        "serverAuthoritativeBackendInvocations": null,
+        "pluginAttributionVerified": true,
+        "expectedNonactivationVerified": false,
+        "contentResult": "PASS",
+        "evidenceId": "current-exact-direct-activation-20260927"
+      }
+    },
+    {
+      "id": "current-exact-indirect-activation-20260927",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-27T14:57:12.486Z",
+      "summary": "Recognizes learner intent and explains common denominators with a worked fraction example and interactive illustration. Tutor skill is visibly attributed; no visible Tutor backend activity.",
+      "parityBinding": {
+        "caseId": "indirect-activation",
+        "side": "plugin",
+        "promptSha256": "55bfbb8e2878acb71a00aced408d5bd920f6fdc78bf6917c3eeefcf59f38c99d",
+        "configurationFingerprint": "6f945afcce451d822597bc4e79fb1d8b60262416bb75c1eb398a774318d60f5c",
+        "summarySha256": "a00909095ed164808df68702a2b3ffc26daebadc5243c8e091ac186ff9d90114"
+      },
+      "execution": {
+        "pluginVersion": "0.8.5",
+        "releaseId": "pluginrel_6ab84427e0d4819182de200f7ce49333",
+        "packageFingerprint": "6f945afcce451d822597bc4e79fb1d8b60262416bb75c1eb398a774318d60f5c",
+        "skillSha256": "282ceeba915a317f6bb3f49eb1929ef5ae9d555781c635b0b8ed7e85977a61b8",
+        "promptSha256": "55bfbb8e2878acb71a00aced408d5bd920f6fdc78bf6917c3eeefcf59f38c99d",
+        "responseSha256": "cbb5963894b074b9ce1605b9043485417f646ff6c33a40d08f2a75c59bc52213",
+        "responseHashBasis": "retained_rendered_answer_text",
+        "captureSha256": "95e7129160043f70ed29c52df7eb8b08d9d01289ad97b942433f0c941d3006ea",
+        "submittedAt": "2026-09-27T14:56:39.935Z",
+        "capturedAt": "2026-09-27T14:57:12.486Z",
+        "exactPromptMatch": true,
+        "submissionCount": 1,
+        "expectedBackendInvocations": 0,
+        "visibleBackendInvocations": 0,
+        "serverAuthoritativeBackendInvocations": null,
+        "pluginAttributionVerified": true,
+        "expectedNonactivationVerified": false,
+        "contentResult": "PASS",
+        "evidenceId": "current-exact-indirect-activation-20260927"
+      }
+    },
+    {
+      "id": "current-exact-non-activation-20260927",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-27T14:57:38.353Z",
+      "summary": "Produces the requested party invitation. No Tutor attribution, Sources control or visible Tutor backend activity, consistent with expected nonactivation.",
+      "parityBinding": {
+        "caseId": "non-activation",
+        "side": "plugin",
+        "promptSha256": "4f9e14b09a437dbf66cea1bab82b90c710358b54a5baef4262b1f8ed54ab1e13",
+        "configurationFingerprint": "6f945afcce451d822597bc4e79fb1d8b60262416bb75c1eb398a774318d60f5c",
+        "summarySha256": "060b7edccf4f77cfb4de6db60a934bf709cfa70887c77b556509efec510e90d4"
+      },
+      "execution": {
+        "pluginVersion": "0.8.5",
+        "releaseId": "pluginrel_6ab84427e0d4819182de200f7ce49333",
+        "packageFingerprint": "6f945afcce451d822597bc4e79fb1d8b60262416bb75c1eb398a774318d60f5c",
+        "skillSha256": "282ceeba915a317f6bb3f49eb1929ef5ae9d555781c635b0b8ed7e85977a61b8",
+        "promptSha256": "4f9e14b09a437dbf66cea1bab82b90c710358b54a5baef4262b1f8ed54ab1e13",
+        "responseSha256": "e5f477250134326a1c325ab83eb1c86c856b10f03d8595bb79a98ec6539f4f14",
+        "responseHashBasis": "retained_rendered_answer_text",
+        "captureSha256": "2ec114ecda7edc9e72ed7764e2acbdca57ef1fae782c9b8f3a7823b4089679c5",
+        "submittedAt": "2026-09-27T14:57:19.052Z",
+        "capturedAt": "2026-09-27T14:57:38.353Z",
+        "exactPromptMatch": true,
+        "submissionCount": 1,
+        "expectedBackendInvocations": 0,
+        "visibleBackendInvocations": 0,
+        "serverAuthoritativeBackendInvocations": null,
+        "pluginAttributionVerified": false,
+        "expectedNonactivationVerified": true,
+        "contentResult": "PASS",
+        "evidenceId": "current-exact-non-activation-20260927"
+      }
+    },
+    {
+      "id": "current-exact-concise-explanation-20260927",
+      "kind": "chatgpt",
+      "status": "BLOCKED",
+      "observedAt": "2026-09-27T14:58:02.020Z",
+      "summary": "Accurate explanation in exactly two short sentences without an irrelevant disclaimer. The unselected conversation exposes no Tutor attribution, so content passes but current-plugin activation is unverified. No repeat was submitted.",
+      "parityBinding": {
+        "caseId": "concise-explanation",
+        "side": "plugin",
+        "promptSha256": "1889539d24060a7448ed3eb74171dead3e7381ab5121aaef6638d995cba4ef0a",
+        "configurationFingerprint": "6f945afcce451d822597bc4e79fb1d8b60262416bb75c1eb398a774318d60f5c",
+        "summarySha256": "8b6cea330958bc600b186d4d2647f09691177f2c32fffa0064f2ed025c77f563"
+      },
+      "execution": {
+        "pluginVersion": "0.8.5",
+        "releaseId": "pluginrel_6ab84427e0d4819182de200f7ce49333",
+        "packageFingerprint": "6f945afcce451d822597bc4e79fb1d8b60262416bb75c1eb398a774318d60f5c",
+        "skillSha256": "282ceeba915a317f6bb3f49eb1929ef5ae9d555781c635b0b8ed7e85977a61b8",
+        "promptSha256": "1889539d24060a7448ed3eb74171dead3e7381ab5121aaef6638d995cba4ef0a",
+        "responseSha256": "7a322bc3317e402587f8c90e80a4cb7aecf73b009c4d8ccb8b6538c405c17c2b",
+        "responseHashBasis": "retained_rendered_answer_text",
+        "captureSha256": "b4498321cd0712e7ea758d66d3d7790a8ffdc7955394251707bad7600d0fedef",
+        "submittedAt": "2026-09-27T14:57:43.076Z",
+        "capturedAt": "2026-09-27T14:58:02.020Z",
+        "exactPromptMatch": true,
+        "submissionCount": 1,
+        "expectedBackendInvocations": 0,
+        "visibleBackendInvocations": 0,
+        "serverAuthoritativeBackendInvocations": null,
+        "pluginAttributionVerified": false,
+        "expectedNonactivationVerified": false,
+        "contentResult": "PASS",
+        "evidenceId": "current-exact-concise-explanation-20260927"
+      }
+    },
+    {
+      "id": "current-exact-structured-lesson-20260927",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-27T14:59:05.441Z",
+      "summary": "Provides an objective, a correct worked equivalent-fraction example and exactly two practice questions. Tutor skill is visibly attributed; no visible Tutor backend activity.",
+      "parityBinding": {
+        "caseId": "structured-lesson",
+        "side": "plugin",
+        "promptSha256": "cb8cf57b7efc56016a8d5561e14b429b34983b7f627efa730bd8ce02b0335083",
+        "configurationFingerprint": "6f945afcce451d822597bc4e79fb1d8b60262416bb75c1eb398a774318d60f5c",
+        "summarySha256": "1e0fe559332b8577ed469bf680510bb9b81c1e0356767b5eb2c0a630b4e78209"
+      },
+      "execution": {
+        "pluginVersion": "0.8.5",
+        "releaseId": "pluginrel_6ab84427e0d4819182de200f7ce49333",
+        "packageFingerprint": "6f945afcce451d822597bc4e79fb1d8b60262416bb75c1eb398a774318d60f5c",
+        "skillSha256": "282ceeba915a317f6bb3f49eb1929ef5ae9d555781c635b0b8ed7e85977a61b8",
+        "promptSha256": "cb8cf57b7efc56016a8d5561e14b429b34983b7f627efa730bd8ce02b0335083",
+        "responseSha256": "c459ee03f8da8e753b6417864942593d6c45cc7c3b80edf329a2dfc9b85cd5af",
+        "responseHashBasis": "retained_rendered_answer_text",
+        "captureSha256": "8f57b8232d8c0244215d93bc28f5fea198385307c807d971900e18e3456bec83",
+        "submittedAt": "2026-09-27T14:58:22.220Z",
+        "capturedAt": "2026-09-27T14:59:05.441Z",
+        "exactPromptMatch": true,
+        "submissionCount": 1,
+        "expectedBackendInvocations": 0,
+        "visibleBackendInvocations": 0,
+        "serverAuthoritativeBackendInvocations": null,
+        "pluginAttributionVerified": true,
+        "expectedNonactivationVerified": false,
+        "contentResult": "PASS",
+        "evidenceId": "current-exact-structured-lesson-20260927"
+      }
+    },
+    {
+      "id": "current-exact-learner-follow-up-20260927",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-27T15:00:49.487Z",
+      "summary": "In a fresh conversation without a supplied fraction example, supplies a concrete example instead of asking for the missing context. Tutor skill is visibly attributed; this fails the current-chat-context expectation. No visible Tutor backend activity; root cause is not established.",
+      "parityBinding": {
+        "caseId": "learner-follow-up",
+        "side": "plugin",
+        "promptSha256": "b6fc45e4e8d77112d5821869ca4133dd7e681425611767db8aa3d3c07202039c",
+        "configurationFingerprint": "6f945afcce451d822597bc4e79fb1d8b60262416bb75c1eb398a774318d60f5c",
+        "summarySha256": "7f49ee0a61e8b46a9555875ab54c78face697e1348005fba2ddeb3f873bab7f6"
+      },
+      "execution": {
+        "pluginVersion": "0.8.5",
+        "releaseId": "pluginrel_6ab84427e0d4819182de200f7ce49333",
+        "packageFingerprint": "6f945afcce451d822597bc4e79fb1d8b60262416bb75c1eb398a774318d60f5c",
+        "skillSha256": "282ceeba915a317f6bb3f49eb1929ef5ae9d555781c635b0b8ed7e85977a61b8",
+        "promptSha256": "b6fc45e4e8d77112d5821869ca4133dd7e681425611767db8aa3d3c07202039c",
+        "responseSha256": "db7d534de10bafd1b841cf1363ca525db3b78f8ca451ac9cf4eae760c7c145cf",
+        "responseHashBasis": "retained_rendered_answer_text",
+        "captureSha256": "b2a0089958d167396d09e97834d8b8b08d1700e1f4915dcc1d409e334c0eb9f8",
+        "submittedAt": "2026-09-27T14:59:42.622Z",
+        "capturedAt": "2026-09-27T15:00:49.487Z",
+        "exactPromptMatch": true,
+        "submissionCount": 1,
+        "expectedBackendInvocations": 0,
+        "visibleBackendInvocations": 0,
+        "serverAuthoritativeBackendInvocations": null,
+        "pluginAttributionVerified": true,
+        "expectedNonactivationVerified": false,
+        "contentResult": "FAIL_MISSING_CONTEXT",
+        "evidenceId": "current-exact-learner-follow-up-20260927"
+      }
+    },
+    {
+      "id": "current-exact-difficult-question-20260927",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-27T15:01:50.087Z",
+      "summary": "Correctly distinguishes undefined zero-over-zero division from indeterminate limits and explains with examples. Tutor skill is visibly attributed; no visible Tutor backend activity.",
+      "parityBinding": {
+        "caseId": "difficult-question",
+        "side": "plugin",
+        "promptSha256": "aee14790e745d53d8a9b15756fd79694a2389ecae5a1cf498883986f4303d60d",
+        "configurationFingerprint": "6f945afcce451d822597bc4e79fb1d8b60262416bb75c1eb398a774318d60f5c",
+        "summarySha256": "18ba2c6baab7224c5e4f8b3932202d6e47fb4d4abde8b1e58341cfd22c481f7c"
+      },
+      "execution": {
+        "pluginVersion": "0.8.5",
+        "releaseId": "pluginrel_6ab84427e0d4819182de200f7ce49333",
+        "packageFingerprint": "6f945afcce451d822597bc4e79fb1d8b60262416bb75c1eb398a774318d60f5c",
+        "skillSha256": "282ceeba915a317f6bb3f49eb1929ef5ae9d555781c635b0b8ed7e85977a61b8",
+        "promptSha256": "aee14790e745d53d8a9b15756fd79694a2389ecae5a1cf498883986f4303d60d",
+        "responseSha256": "0d33ed93d804d92280852054ac92ff9b38dfcb43bcc30195245ed13b7e6e1205",
+        "responseHashBasis": "retained_rendered_answer_text",
+        "captureSha256": "106f7c42288e017f1c5974751e222af6fa0db23c045c82a2a00565aaf7bc3134",
+        "submittedAt": "2026-09-27T15:01:06.527Z",
+        "capturedAt": "2026-09-27T15:01:50.087Z",
+        "exactPromptMatch": true,
+        "submissionCount": 1,
+        "expectedBackendInvocations": 0,
+        "visibleBackendInvocations": 0,
+        "serverAuthoritativeBackendInvocations": null,
+        "pluginAttributionVerified": true,
+        "expectedNonactivationVerified": false,
+        "contentResult": "PASS",
+        "evidenceId": "current-exact-difficult-question-20260927"
+      }
+    },
+    {
+      "id": "current-exact-unsupported-memory-20260927",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-27T15:03:26.514Z",
+      "summary": "Host Memory activity is visible and the response makes prior-lesson and learner-profile claims, then explicitly distinguishes ChatGPT memory from unavailable Tutor saved lessons or permanent backend profile. Tutor skill and host history/memory sources are present. This material host-context behavior remains blocked; no Tutor backend persistence or invocation is evidenced.",
+      "parityBinding": {
+        "caseId": "unsupported-memory",
+        "side": "plugin",
+        "promptSha256": "6c4d2b27fe3425b48aeb401460c449b09ed39caab96c978aa41c9708b062183e",
+        "configurationFingerprint": "6f945afcce451d822597bc4e79fb1d8b60262416bb75c1eb398a774318d60f5c",
+        "summarySha256": "1b3bb9bfb26527417a3a0fc376551363d1c6d4db2f31b904e34f23c03c7d5227"
+      },
+      "execution": {
+        "pluginVersion": "0.8.5",
+        "releaseId": "pluginrel_6ab84427e0d4819182de200f7ce49333",
+        "packageFingerprint": "6f945afcce451d822597bc4e79fb1d8b60262416bb75c1eb398a774318d60f5c",
+        "skillSha256": "282ceeba915a317f6bb3f49eb1929ef5ae9d555781c635b0b8ed7e85977a61b8",
+        "promptSha256": "6c4d2b27fe3425b48aeb401460c449b09ed39caab96c978aa41c9708b062183e",
+        "responseSha256": "545d30af1f2f9b5c431f836eb11c78ccca0c08f7964394bf4a1964ea65d7420e",
+        "responseHashBasis": "retained_rendered_answer_text",
+        "captureSha256": "11c773242e1f8831e488c2913756e18a4a1a86e5e20f04cf228c4a09618c19e1",
+        "submittedAt": "2026-09-27T15:02:08.195Z",
+        "capturedAt": "2026-09-27T15:03:26.514Z",
+        "exactPromptMatch": true,
+        "submissionCount": 1,
+        "expectedBackendInvocations": 0,
+        "visibleBackendInvocations": 0,
+        "serverAuthoritativeBackendInvocations": null,
+        "pluginAttributionVerified": true,
+        "expectedNonactivationVerified": false,
+        "contentResult": "HOST_MEMORY_CONFOUNDED",
+        "evidenceId": "current-exact-unsupported-memory-20260927"
+      }
+    },
+    {
+      "id": "current-exact-unsupported-admin-20260927",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-27T15:04:43.284Z",
+      "summary": "Declines requested production administration, accurately states unavailable controls and does not expose or execute an operator route. Tutor skill is visibly attributed; no visible Tutor backend activity.",
+      "parityBinding": {
+        "caseId": "unsupported-admin",
+        "side": "plugin",
+        "promptSha256": "ab2af90ca3558468b419a913deb2c8c0fda85ef87398695cbd94c75cd71e6995",
+        "configurationFingerprint": "6f945afcce451d822597bc4e79fb1d8b60262416bb75c1eb398a774318d60f5c",
+        "summarySha256": "7d2965570559fc4819cff2afe995fcca356b33c0affe86b56d2049e9815dc497"
+      },
+      "execution": {
+        "pluginVersion": "0.8.5",
+        "releaseId": "pluginrel_6ab84427e0d4819182de200f7ce49333",
+        "packageFingerprint": "6f945afcce451d822597bc4e79fb1d8b60262416bb75c1eb398a774318d60f5c",
+        "skillSha256": "282ceeba915a317f6bb3f49eb1929ef5ae9d555781c635b0b8ed7e85977a61b8",
+        "promptSha256": "ab2af90ca3558468b419a913deb2c8c0fda85ef87398695cbd94c75cd71e6995",
+        "responseSha256": "4b2ff7fa791ba9333eba7ad2ca563868a0bbe5033136465ebd22a257dcc70d8b",
+        "responseHashBasis": "retained_rendered_answer_text",
+        "captureSha256": "ca9e30190f2ee069295c6cefc4704363602aff16b4f47a09f3bf4df1cbcfb3ca",
+        "submittedAt": "2026-09-27T15:03:44.834Z",
+        "capturedAt": "2026-09-27T15:04:43.284Z",
+        "exactPromptMatch": true,
+        "submissionCount": 1,
+        "expectedBackendInvocations": 0,
+        "visibleBackendInvocations": 0,
+        "serverAuthoritativeBackendInvocations": null,
+        "pluginAttributionVerified": true,
+        "expectedNonactivationVerified": false,
+        "contentResult": "PASS",
+        "evidenceId": "current-exact-unsupported-admin-20260927"
+      }
+    },
+    {
+      "id": "current-exact-clarification-20260927",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-27T15:05:42.076Z",
+      "summary": "Asks a single focused question requesting the problem and unclear step. Tutor skill is visibly attributed; no visible Tutor backend activity.",
+      "parityBinding": {
+        "caseId": "clarification",
+        "side": "plugin",
+        "promptSha256": "9f2b50dc3519abd8ece71943d6621198b816e40cc0192e102e04f3ffa567f0e8",
+        "configurationFingerprint": "6f945afcce451d822597bc4e79fb1d8b60262416bb75c1eb398a774318d60f5c",
+        "summarySha256": "2ba507eb48af98fa1513e43a7c51f80f03700774840f0fda4a8c5fd2105ce1ab"
+      },
+      "execution": {
+        "pluginVersion": "0.8.5",
+        "releaseId": "pluginrel_6ab84427e0d4819182de200f7ce49333",
+        "packageFingerprint": "6f945afcce451d822597bc4e79fb1d8b60262416bb75c1eb398a774318d60f5c",
+        "skillSha256": "282ceeba915a317f6bb3f49eb1929ef5ae9d555781c635b0b8ed7e85977a61b8",
+        "promptSha256": "9f2b50dc3519abd8ece71943d6621198b816e40cc0192e102e04f3ffa567f0e8",
+        "responseSha256": "aaeab3f8d6dda9c7f9dd4a4fb5b746560834d4155f8d006662bb35b80fe37d42",
+        "responseHashBasis": "retained_rendered_answer_text",
+        "captureSha256": "f30041edb27033a59120a05bd6b50cda391bbcfb22eeef44ec726d6c6ff3cf3f",
+        "submittedAt": "2026-09-27T15:04:58.373Z",
+        "capturedAt": "2026-09-27T15:05:42.076Z",
+        "exactPromptMatch": true,
+        "submissionCount": 1,
+        "expectedBackendInvocations": 0,
+        "visibleBackendInvocations": 0,
+        "serverAuthoritativeBackendInvocations": null,
+        "pluginAttributionVerified": true,
+        "expectedNonactivationVerified": false,
+        "contentResult": "PASS",
+        "evidenceId": "current-exact-clarification-20260927"
+      }
+    },
+    {
+      "id": "current-exact-exact-format-20260927",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-27T15:06:45.009Z",
+      "summary": "Gives exactly three correct numbered algebra steps with no introduction. DOM verification confirms one ordered list starting at one and exactly three list items. Tutor skill is visibly attributed; no visible Tutor backend activity.",
+      "parityBinding": {
+        "caseId": "exact-format",
+        "side": "plugin",
+        "promptSha256": "346f6c176ff641bb26b1b86885d73da9c4df49de0fc87589c99ae1cc00fb5db4",
+        "configurationFingerprint": "6f945afcce451d822597bc4e79fb1d8b60262416bb75c1eb398a774318d60f5c",
+        "summarySha256": "5cc98c683427555ec2bb50a5ab7a00616ed88c163e132fb07b216d55f4bb40c5"
+      },
+      "execution": {
+        "pluginVersion": "0.8.5",
+        "releaseId": "pluginrel_6ab84427e0d4819182de200f7ce49333",
+        "packageFingerprint": "6f945afcce451d822597bc4e79fb1d8b60262416bb75c1eb398a774318d60f5c",
+        "skillSha256": "282ceeba915a317f6bb3f49eb1929ef5ae9d555781c635b0b8ed7e85977a61b8",
+        "promptSha256": "346f6c176ff641bb26b1b86885d73da9c4df49de0fc87589c99ae1cc00fb5db4",
+        "responseSha256": "b50d18588cbfa8498e089264a9799536e0edb5148e2caf86f932d277c7d51863",
+        "responseHashBasis": "retained_rendered_answer_text",
+        "captureSha256": "cde84d8883193148e63af596894afdb2f91e84be00553fcf3b78f945ddb43527",
+        "submittedAt": "2026-09-27T15:05:59.931Z",
+        "capturedAt": "2026-09-27T15:06:45.009Z",
+        "exactPromptMatch": true,
+        "submissionCount": 1,
+        "expectedBackendInvocations": 0,
+        "visibleBackendInvocations": 0,
+        "serverAuthoritativeBackendInvocations": null,
+        "pluginAttributionVerified": true,
+        "expectedNonactivationVerified": false,
+        "contentResult": "PASS",
+        "evidenceId": "current-exact-exact-format-20260927"
+      }
+    },
+    {
+      "id": "existing-primary-connection-ui-20260927",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-27T14:54:29.296Z",
+      "summary": "Current supported ChatGPT account UI identifies the existing registered ARCANOS Tutor app and exact production MCP resource. Details list only arcanos_tutor. Generic Connect is visible; no Primary row, Reconnect or Refresh is exposed. The UI does not establish same-association restoration semantics. Connect was not clicked, Primary was not restored and no new connection was created. This verifies current UI observations only; current scope authorization and backend usability are not verified.",
+      "connectionObservation": {
+        "registeredAppId": "asdk_app_6ab4747769088191856fd8eb02507240",
+        "resource": "https://acranos-production.up.railway.app/chatgpt/mcp",
+        "visibleToolNames": [
+          "arcanos_tutor"
+        ],
+        "visibleToolCount": 1,
+        "requiredScope": "arcanos:tutor",
+        "currentScopeAuthorizationVerified": false,
+        "existingPrimaryStatus": "NOT_VISIBLE_IN_CURRENT_SUPPORTED_UI",
+        "genericConnectVisible": true,
+        "connectClicked": false,
+        "sameAssociationRestorationEstablished": false,
+        "reconnectPerformed": false,
+        "metadataRefreshPerformed": false,
+        "newConnectionCreated": false,
+        "newAppCreated": false,
+        "newAuth0ClientCreated": false
+      },
+      "evidenceArtifacts": [
+        {
+          "path": "blocker-closure-20260927/ui-captures/012-call_odADh9ZB92bOSXrSV32ASVph.block-1.txt",
+          "sha256": "256a7c5a6150e5c7df7b70db15aa4cd1da7c15a76ac28ad40cda3b3cf4d267a8"
+        },
+        {
+          "path": "blocker-closure-20260927/ui-captures/015-call_7JNC8qo1byISgyiZadyAG77R.block-1.txt",
+          "sha256": "8dce32b5d8ef4bafc3b670135510c061dad202d8fa8d39db0cd9f25e02ff0f5b"
+        }
+      ]
+    },
+    {
+      "id": "production-acceptance-not-run-connection-20260927",
+      "kind": "chatgpt",
+      "status": "BLOCKED",
+      "observedAt": "2026-09-27T14:54:29.296Z",
+      "summary": "Fresh production acceptance cycle was not started because existing connection readiness could not be established safely. Raw MCP A/C/D and ChatGPT explicit-backend A/C/D were all NOT_RUN. Classification CONNECTION; zero of six potential Tutor backend invocations used, six reserved, zero retries. No actual backend answer or same-invocation tool result exists for this cycle; no new content, format or qualification defect is inferred. Production and existing account configuration were unchanged.",
+      "acceptanceObservation": {
+        "classification": "CONNECTION",
+        "callBudgetStarted": false,
+        "maximumPotentialTutorInvocations": 6,
+        "potentialTutorInvocationsUsed": 0,
+        "remainingPotentialTutorInvocations": 6,
+        "automaticRetries": 0,
+        "rawMcp": {
+          "A": "NOT_RUN",
+          "C": "NOT_RUN",
+          "D": "NOT_RUN"
+        },
+        "chatgptExplicitBackend": {
+          "A": "NOT_RUN",
+          "C": "NOT_RUN",
+          "D": "NOT_RUN"
+        },
+        "backendContentAssessed": false,
+        "previewUsedForLiveAcceptance": false,
+        "productionFailureManufactured": false
+      },
+      "evidenceArtifacts": [
+        {
+          "path": "blocker-closure-20260927/connection-backend-report.sanitized.draft.json",
+          "sha256": "8852bd2f39e27a6547353f25e0f78424e19e963c78a15c4437c98fe7825e7dc7"
+        }
+      ]
     }
   ],
   "checks": {
@@ -860,14 +1535,16 @@
       "status": "VERIFIED",
       "evidenceIds": [
         "primary-reauth-schema-refresh-20260924",
-        "primary-final-reauth-refresh-20260926"
+        "primary-final-reauth-refresh-20260926",
+        "existing-primary-connection-ui-20260927"
       ]
     },
     "endpoint": {
       "status": "VERIFIED",
       "evidenceIds": [
         "primary-reauth-schema-refresh-20260924",
-        "primary-final-reauth-refresh-20260926"
+        "primary-final-reauth-refresh-20260926",
+        "existing-primary-connection-ui-20260927"
       ]
     },
     "authentication": {
@@ -881,7 +1558,8 @@
       "status": "VERIFIED",
       "evidenceIds": [
         "primary-reauth-schema-refresh-20260924",
-        "primary-final-reauth-refresh-20260926"
+        "primary-final-reauth-refresh-20260926",
+        "existing-primary-connection-ui-20260927"
       ]
     },
     "liveExecution": {
@@ -891,7 +1569,8 @@
         "runtime-chatgpt-acceptance-20260924",
         "runtime-acceptance-post1512-record-20260925",
         "final-raw-acceptance-20260926",
-        "final-chatgpt-partial-acceptance-20260926"
+        "final-chatgpt-partial-acceptance-20260926",
+        "production-acceptance-not-run-connection-20260927"
       ]
     }
   },

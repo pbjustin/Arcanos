@@ -232,6 +232,7 @@ export async function validateSkillFirst({ root, inputRoot, baseline, state, evi
   return { composition, privateFiles, blockers, teachingVerified, teachingDeferred, capabilitiesVerified,
     currentTeachingVerified, currentTeachingVerification,
     capabilityScopeExcluded, capabilityRequirementSatisfied,
-    teachingReadiness: ownerApproved && teachingVerified && capabilityRequirementSatisfied ? 'VERIFIED' : 'BLOCKED',
+    teachingReadiness: ownerApproved && teachingVerified && capabilityRequirementSatisfied &&
+      state.gates.TUTOR_SKILL_BEHAVIOR_VERIFIED.status === 'VERIFIED' ? 'VERIFIED' : 'BLOCKED',
     backendReadiness: state.gates.LIVE_TUTOR_CALL_VERIFIED.status };
 }

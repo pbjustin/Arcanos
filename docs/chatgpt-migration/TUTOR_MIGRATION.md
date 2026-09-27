@@ -1,6 +1,20 @@
 # ARCANOS TUTOR migration handoff
 
-Evidence date: **2026-09-26 UTC**. Current main:
+Evidence date: **2026-09-27 UTC**. The latest
+[exact blocker review](TUTOR_BLOCKER_CLOSURE_20260927.md) records the unchanged
+PRIVATE 0.8.5 artifact, ten retrospectively baseline-bound old-GPT observations,
+eleven exact current submissions, and **6 paired PASS / 10 BLOCKER**.
+Current teaching readiness is **BLOCKED** by fresh missing-context behavior and
+unresolved host-memory behavior. The historical eighteen-case passing record
+below remains valid only for those actual prompts. Current supported account UI
+exposes only generic Connect, with no Primary, Reconnect or Refresh; the newly
+authorized production acceptance cycle remains **NOT_RUN, 0/6**.
+Release remains **BLOCKED — BOTH backend and parity**. No plugin change, new
+connection, production change, deployment or merge occurred.
+
+Historical checkpoint follows.
+
+Historical evidence date: **2026-09-26 UTC**. Current main:
 `71672aec22d7babf62d65b96de667f17abd3f219` (merged PR #1513).
 PR #1509 remains the **DRAFT migration container**, with auto-merge disabled.
 **SKILL_PLANE=PASS_VISIBLE_UI**, **TUTOR_SKILL_BEHAVIOR_VERIFIED=VERIFIED**.
