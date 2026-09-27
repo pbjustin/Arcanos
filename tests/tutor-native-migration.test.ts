@@ -108,6 +108,18 @@ function integration(f: Fixture, inspect: boolean) {
   rmSync(path.join(packageRoot, 'intake-plugin-release.inventory.json'), { force: true });
   rmSync(path.join(packageRoot, 'installed-teaching-verification.json'), { force: true });
   rmSync(path.join(packageRoot, 'current-reconciliation.inventory.json'), { force: true });
+  // This native-only fixture has no saved successor or paired plugin observations.
+  const parity = readJson(path.join(packageRoot, 'parity-matrix.json'));
+  parity.status = 'BLOCKED';
+  parity.liveEvidenceIds = [];
+  for (const row of parity.cases) {
+    row.plugin = null;
+    row.disposition = 'BLOCKER';
+    row.materialDifference = 'Synthetic native migration has no reviewed paired plugin observation.';
+    delete row.exactCurrentObservation;
+    delete row.migratedTeachingProgress;
+  }
+  writeJson(path.join(packageRoot, 'parity-matrix.json'), parity);
   writeJson(path.join(packageRoot, 'migration-state.json'), state);
   writeJson(path.join(packageRoot, 'migration.inventory.json'), f.migration);
   const code = `import {validateArcanosTutorPackage} from ${JSON.stringify(validator)};

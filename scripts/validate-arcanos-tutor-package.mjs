@@ -152,7 +152,37 @@ function ownerAccepted(acceptance, bindings) {
     text(acceptance.reason) && Object.entries(bindings).every(([key, value]) => acceptance[key] === value);
 }
 
-function validateParity(parity, evidence) {
+function validateCurrentParityObservation(item, evidence, currentRelease) {
+  const observation = item.exactCurrentObservation;
+  const result = item.plugin;
+  const hasExecution = result?.evidenceIds.some(id => evidence.get(id).execution !== undefined);
+  // Older retained observations use the original summary binding. Current
+  // captures additionally bind the execution record, including adverse results.
+  if (observation === undefined && !hasExecution) return;
+  const observed = evidence.get(observation?.evidenceId);
+  const execution = observed?.execution;
+  requireCondition(observation && typeof observation === 'object' && !Array.isArray(observation) &&
+    execution && typeof execution === 'object' && !Array.isArray(execution) &&
+    equal(Object.keys(observation).sort(), Object.keys(execution).sort()) &&
+    Object.entries(observation).every(([key, value]) => value === execution[key]) &&
+    result?.evidenceIds.includes(observation.evidenceId), 'PARITY_CURRENT_OBSERVATION_MISMATCH');
+  const binding = observed.parityBinding;
+  requireCondition(observed.kind === 'chatgpt' && binding?.caseId === item.id && binding.side === 'plugin' &&
+    binding.promptSha256 === digest(item.prompt) && binding.configurationFingerprint === result.configurationFingerprint &&
+    binding.summarySha256 === result.sha256 && observation.promptSha256 === binding.promptSha256 &&
+    observation.skillSha256 === result.artifactSha256 && observation.packageFingerprint === result.configurationFingerprint &&
+    observation.pluginVersion === currentRelease?.version && observation.releaseId === currentRelease?.releaseId &&
+    observation.skillSha256 === currentRelease?.approvedSkillSha256 &&
+    observation.packageFingerprint === currentRelease?.capture?.packageFingerprint && observation.exactPromptMatch === true &&
+    isHash(observation.responseSha256) && isHash(observation.captureSha256), 'PARITY_CURRENT_OBSERVATION_BINDING_INVALID');
+  if (item.disposition !== 'BLOCKER') requireCondition(observed.status === 'VERIFIED' &&
+    (item.category === 'non_activation' ? observation.expectedNonactivationVerified === true :
+      observation.pluginAttributionVerified === true), 'PARITY_CURRENT_OBSERVATION_NOT_VERIFIED');
+  if (item.disposition === 'PASS') requireCondition(observation.contentResult === 'PASS',
+    'PARITY_CURRENT_OBSERVATION_NOT_PASSED');
+}
+
+function validateParity(parity, evidence, currentRelease) {
   requireCondition(parity.schemaVersion === 1 && statuses.includes(parity.status) && Array.isArray(parity.cases) &&
     Array.isArray(parity.liveEvidenceIds) && parity.liveEvidenceIds.every(id => evidence.has(id)), 'PARITY_MATRIX_INVALID');
   const ids = new Set();
@@ -179,8 +209,10 @@ function validateParity(parity, evidence) {
         }), 'PARITY_OBSERVATION_BINDING_MISSING');
       }
     }
+    validateCurrentParityObservation(item, evidence, currentRelease);
     if (item.disposition !== 'BLOCKER') {
       requireCondition(item.oldGpt && item.plugin && text(item.materialDifference) && reviewed(item), 'PARITY_COMPARISON_MISSING');
+      requireCondition(item.oldGpt.status === 'VERIFIED' && item.plugin.status === 'VERIFIED', 'PARITY_UNVERIFIED_PAIR');
       if (['authentication', 'unavailable', 'timeout', 'cancellation'].includes(item.category)) {
         requireCondition(item.toolInvoked === 'arcanos_tutor', 'PARITY_TUTOR_EXECUTION_MISSING');
       }
@@ -323,7 +355,6 @@ export async function validateArcanosTutorPackage(root, { inputRoot } = {}) {
     validateNativeMigration(migration, baseline, evidence, state);
     if (inputRoot) migrationArtifactInspection = await inspectNativeMigration({ inputRoot, migration, baseline, evidence, state });
   }
-  validateParity(parity, evidence);
   validateReferences(review);
   const gateConsistent = (gate, condition) => requireCondition(state.gates[gate].status !== 'VERIFIED' || condition, 'GATE_STATE_CONTRADICTION');
   gateConsistent('GPT_BASELINE_CAPTURED', baseline.status === 'VERIFIED');
@@ -339,6 +370,7 @@ export async function validateArcanosTutorPackage(root, { inputRoot } = {}) {
     return file ? JSON.parse(file.content) : null;
   };
   const updatedRelease = await revisionSidecar('updated-plugin-release.json');
+  validateParity(parity, evidence, updatedRelease);
   const currentTeaching = await revisionSidecar('installed-teaching-verification.json');
   const skillFirst = await validateSkillFirst({ root, inputRoot, baseline, state, evidence,
     templateFiles: files, referenceReview: review, currentTeaching, currentRelease: updatedRelease });

@@ -162,6 +162,8 @@ function completeFixture(intakeRevision = false, diagnosticRevision = false, cur
     parity.status = 'VERIFIED';
     parity.liveEvidenceIds = ['mock-account-observation'];
     for (const item of parity.cases) {
+      // These synthetic historical results replace the current captured observations.
+      delete item.exactCurrentObservation;
       const summary = `Mock comparison for ${item.id}.`;
       item.oldGpt = { status: 'VERIFIED', summary, sha256: hash(summary), hashBasis: 'sanitized_summary', artifactSha256: baseline.configuration.sha256,
         configurationFingerprint: oldFingerprint, evidenceIds: ['mock-account-observation'] };
@@ -301,6 +303,115 @@ afterEach(() => {
 });
 
 describe('Standalone Tutor package and migration release boundary', () => {
+  describe('current parity observations', () => {
+    function changeObservation(root: string, caseId: string, mutate: (row: Json) => void, bindExecution = false) {
+      edit(root, 'parity-matrix.json', matrix => { mutate(matrix.cases.find((row: Json) => row.id === caseId)); });
+      if (bindExecution) {
+        const row = json(root, 'parity-matrix.json').cases.find((item: Json) => item.id === caseId);
+        edit(root, 'connection.requirements.json', connection => {
+          connection.evidence.find((item: Json) => item.id === row.plugin.evidenceIds[0]).execution = row.exactCurrentObservation;
+        });
+      }
+    }
+
+    it('accepts the retained six PASS and ten BLOCKER cases without promoting readiness', () => {
+      const matrix = json(source, 'parity-matrix.json');
+      expect(matrix.cases.filter((row: Json) => row.disposition === 'PASS')).toHaveLength(6);
+      expect(matrix.cases.filter((row: Json) => row.disposition === 'BLOCKER')).toHaveLength(10);
+      const result = validate();
+      expect(result.stderr).toBe('');
+      expect(result.status).toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({ sourceValidation: 'PASS', releaseStatus: 'BLOCKED',
+        skillOnlyTeachingReadiness: 'BLOCKED', gates: { PARITY_VERIFIED: 'BLOCKED' } });
+    });
+
+    it.each(['learner-follow-up', 'unsupported-memory', 'concise-explanation'])(
+      'rejects promotion of the retained adverse or unattributed %s observation', caseId => {
+        const root = copyPackage();
+        changeObservation(root, caseId, row => { row.disposition = 'PASS'; });
+        expect(validate(root).status).toBe(1);
+      });
+
+    it.each(['observation', 'execution'])(
+      'rejects a missing current %s while its paired record remains', missing => {
+        const root = copyPackage();
+        if (missing === 'observation') changeObservation(root, 'indirect-activation', row => { delete row.exactCurrentObservation; });
+        else edit(root, 'connection.requirements.json', connection => {
+          delete connection.evidence.find((item: Json) => item.id === 'current-exact-indirect-activation-20260927').execution;
+        });
+        expect(validate(root).status).toBe(1);
+      });
+
+    it.each([
+      ['response hash', (row: Json) => { row.exactCurrentObservation.responseSha256 = hash('mock different answer'); }],
+      ['capture hash', (row: Json) => { row.exactCurrentObservation.captureSha256 = hash('mock different capture'); }],
+      ['evidence ID', (row: Json) => { row.exactCurrentObservation.evidenceId = 'current-exact-structured-lesson-20260927'; }]
+    ] as const)('rejects a current %s that disagrees with execution evidence', (_label, mutate) => {
+      const root = copyPackage();
+      changeObservation(root, 'indirect-activation', mutate);
+      expect(validate(root).status).toBe(1);
+    });
+
+    it.each([
+      ['prompt', (row: Json) => { row.exactCurrentObservation.promptSha256 = hash('mock different prompt'); }],
+      ['skill', (row: Json) => { row.exactCurrentObservation.skillSha256 = hash('mock different skill'); }],
+      ['package', (row: Json) => { row.exactCurrentObservation.packageFingerprint = hash('mock different package'); }],
+      ['version', (row: Json) => { row.exactCurrentObservation.pluginVersion = '0.8.4'; }],
+      ['release', (row: Json) => { row.exactCurrentObservation.releaseId = 'mock-previous-release'; }],
+      ['exact prompt', (row: Json) => { row.exactCurrentObservation.exactPromptMatch = false; }],
+      ['content', (row: Json) => { row.exactCurrentObservation.contentResult = 'FAIL_MISSING_CONTEXT'; }],
+      ['activation', (row: Json) => { row.exactCurrentObservation.pluginAttributionVerified = false; }]
+    ] as const)('rejects matching current records with contradictory %s claims', (_label, mutate) => {
+      const root = copyPackage();
+      changeObservation(root, 'indirect-activation', mutate, true);
+      expect(validate(root).status).toBe(1);
+    });
+
+    it('requires expected nonactivation for a passed unrelated request', () => {
+      const root = copyPackage();
+      changeObservation(root, 'non-activation', row => { row.exactCurrentObservation.expectedNonactivationVerified = false; }, true);
+      expect(validate(root).status).toBe(1);
+    });
+
+    it('requires verified pairs for a PASS even while aggregate parity is blocked', () => {
+      const root = copyPackage();
+      changeObservation(root, 'indirect-activation', row => { row.plugin.status = 'USER_REPORTED'; });
+      expect(validate(root).status).toBe(1);
+    });
+
+    it('requires the selected execution to be verified even when another summary is verified', () => {
+      const root = copyPackage();
+      const additionalId = 'mock-additional-verified-summary';
+      changeObservation(root, 'indirect-activation', row => { row.plugin.evidenceIds.push(additionalId); });
+      edit(root, 'connection.requirements.json', connection => {
+        const selected = connection.evidence.find((item: Json) => item.id === 'current-exact-indirect-activation-20260927');
+        const additional = { ...selected, id: additionalId };
+        delete additional.execution;
+        connection.evidence.push(additional);
+        selected.status = 'BLOCKED';
+      });
+      expect(validate(root).status).toBe(1);
+    });
+
+    it.each(['direct-activation', 'learner-follow-up'])(
+      'retains case-bound owner acceptance for the current %s material difference', caseId => {
+        const root = copyPackage();
+        changeObservation(root, caseId, row => { row.disposition = 'ACCEPTED_DIFFERENCE'; });
+        expect(validate(root).status).toBe(1);
+        changeObservation(root, caseId, row => {
+          row.ownerAcceptance = { accepted: true, acceptedBy: 'mock fixture owner', acceptedAt: review.reviewedAt,
+            reason: 'Mock accepted content difference.', promptSha256: hash(row.prompt),
+            oldFingerprint: row.oldGpt.configurationFingerprint, pluginFingerprint: row.plugin.configurationFingerprint };
+        });
+        const result = validate(root);
+        expect(result.stderr).toBe('');
+        expect(result.status).toBe(0);
+        expect(JSON.parse(result.stdout).releaseStatus).toBe('BLOCKED');
+        changeObservation(root, caseId, row => { row.exactCurrentObservation.pluginAttributionVerified = false; }, true);
+        expect(validate(root).status).toBe(1);
+      });
+  });
+
   it('accepts separately bound current teaching without promoting successor parity or release', () => {
     const fixture = completeFixture(true, true, true);
     const result = validate(fixture.root, ['--inputs', fixture.inputs]);
