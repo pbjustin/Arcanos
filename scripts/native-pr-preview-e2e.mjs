@@ -15,7 +15,7 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 5_000;
 const DEFAULT_TOTAL_TIMEOUT_MS = 60_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 64 * 1024;
 const MAX_AGGREGATE_RESPONSE_BYTES = 512 * 1024;
-const MAX_REQUESTS = 156;
+const MAX_REQUESTS = 157;
 const MAX_BACKSTAGE_BOOKER_OPENAPI_SOURCE_BYTES = 128 * 1024;
 const BACKSTAGE_BOOKER_OPENAPI_GIT_PATH =
   'contracts/backstage_booker.openapi.v1.json';
@@ -694,6 +694,10 @@ function buildChatGptTutorRequestCases() {
       boundedResponse: false, expectedStatus: 400, rawBody: '{',
     }),
     admitted('batch', [validCall], { expectedStatus: 400 }),
+    admitted('oversized-body', undefined, {
+      boundedResponse: false, expectedStatus: 404, expectedType: 'not-found',
+      rawBody: JSON.stringify(validCall).padEnd(4_097, ' '),
+    }),
     denied('authorization', { headers: { authorization: 'Bearer mock-preview-invalid-credential' } }),
     denied('cookie', { headers: { cookie: 'synthetic_preview=invalid' } }),
     denied('session', { headers: { 'mcp-session-id': 'synthetic-preview-session' } }),
@@ -4317,6 +4321,15 @@ async function executeRequestCase(
       requestCase.caseId
     );
   }
+  const migrationContract = NATIVE_PR_PREVIEW_E2E_CONTRACT.pluginMigration;
+  const migrationExpected = requestCase.role === 'web'
+    && requestCase.chatGptTutorAdmission === 'admitted'
+    && requestCase.fixtureName === 'tools-call';
+  if (migrationExpected
+    ? response.headers.get(migrationContract.proofHeader) !== migrationContract.proofVersion
+    : response.headers.has(migrationContract.proofHeader)) {
+    fail('NATIVE_PR_PREVIEW_PLUGIN_MIGRATION_PROOF_INVALID', requestCase.caseId);
+  }
   if (requestCase.chatGptTutorAdmission !== undefined) {
     const contract = NATIVE_PR_PREVIEW_E2E_CONTRACT.chatGptTutor;
     const admitted = requestCase.chatGptTutorAdmission === 'admitted';
@@ -4384,7 +4397,7 @@ async function executeRequestCase(
       || requestCase.expectedType === 'dispatch-gpt-identifier-contract'
       || requestCase.expectedType === 'status-auth-boundary-contract'
       || requestCase.expectedType === 'self-heal-approval-contract'
-      || requestCase.expectedType === 'chatgpt-tutor'
+      || requestCase.chatGptTutorAdmission === 'admitted'
     )
     && response.headers.get(
       NATIVE_PR_PREVIEW_E2E_CONTRACT.syntheticResponseHeader.name
@@ -4799,6 +4812,8 @@ async function executeRequestCase(
           ...(requestCase.fixtureName === 'tools-call' ? {
             tutorHonestyCompositionVerified: true,
             tutorHonestyCompositionProofVersion: NATIVE_PR_PREVIEW_E2E_CONTRACT.chatGptTutor.honestyProofVersion,
+            pluginMigrationPackageCoreVerified: true,
+            pluginMigrationPackageCoreProofVersion: NATIVE_PR_PREVIEW_E2E_CONTRACT.pluginMigration.proofVersion,
           } : {}),
         }
       : {}),

@@ -1,6 +1,7 @@
-import { createHash } from 'node:crypto';
 import { lstat, readFile, realpath } from 'node:fs/promises';
 import path from 'node:path';
+import { assertArtifactDigest, digest } from './tutor-package-core.mjs';
+export { digest, packageFingerprint } from './tutor-package-core.mjs';
 
 export const statuses = Object.freeze(['VERIFIED', 'USER_REPORTED', 'IMPLEMENTED_NOT_VERIFIED', 'BLOCKED', 'NOT_STARTED']);
 export const gates = Object.freeze([
@@ -32,17 +33,10 @@ const credentialPatterns = [
 export function requireCondition(condition, code) {
   if (!condition) throw new Error(code);
 }
-export function digest(value) {
-  return createHash('sha256').update(value).digest('hex');
-}
 export function baselineFingerprint(baseline) {
   return digest(JSON.stringify({ configuration: baseline.configuration.sha256,
     knowledge: baseline.knowledge.map(({ name, sha256, sizeBytes }) => ({ name, sha256, sizeBytes }))
       .sort((left, right) => left.name.localeCompare(right.name, 'en')) }));
-}
-export function packageFingerprint(files) {
-  return digest(JSON.stringify([...files].map(([file, { sha256, sizeBytes }]) => ({ path: file, sha256, sizeBytes }))
-    .sort((left, right) => left.path.localeCompare(right.path, 'en'))));
 }
 export function isHash(value) {
   return typeof value === 'string' && /^[a-f0-9]{64}$/u.test(value);
@@ -96,7 +90,7 @@ export function validateArtifact(artifact) {
 export async function verifyArtifact(root, artifact) {
   validateArtifact(artifact);
   const actual = await readSafeFile(root, artifact.path);
-  requireCondition(actual.sha256 === artifact.sha256 && actual.sizeBytes === artifact.sizeBytes, 'ARTIFACT_DIGEST_MISMATCH');
+  assertArtifactDigest(actual, artifact);
   return actual;
 }
 const builderFields = ['description', 'instructions', 'conversationStarters', 'enabledCapabilities', 'actions', 'sharingStatus', 'representativeBehavior'];

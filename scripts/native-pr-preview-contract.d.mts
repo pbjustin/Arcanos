@@ -6,6 +6,10 @@ export interface NativePrPreviewE2eContract {
     name: 'x-arcanos-preview-fixture';
     value: 'sealed-synthetic';
   }>;
+  readonly pluginMigration: Readonly<{
+    proofHeader: 'x-arcanos-preview-plugin-migration-version';
+    proofVersion: 'plugin-migration-package-core/v1';
+  }>;
   readonly chatGptTutor: Readonly<{
     path: '/chatgpt/mcp';
     metadataPath: '/.well-known/oauth-protected-resource/chatgpt/mcp';

@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Ajv2020 from 'ajv/dist/2020.js';
 import yaml from 'js-yaml';
+import { assertTutorAppMapping, assertTutorPackageManifestIdentity, tutorAppMapping } from './tutor-package-core.mjs';
 import { validateSkillFirst } from './validate-tutor-skill-first.mjs';
 import { inspectNativeMigration, nativeMigrationFormat, validateNativeMigration } from './tutor-native-migration.mjs';
 import { inspectCurrentTutorReconciliation, validateCurrentTutorReconciliation,
@@ -29,18 +30,6 @@ const crossCapability = /\b(?:ARCANOS[: _-](?:GAMING|CORE)|BACKSTAGE[: _-]BOOKER
 const unresolved = /(?:\b(?:TODO|TBD|REPLACE_ME|YOUR_APP_ID)\b|<[^>]*(?:app[_ -]?id|placeholder)[^>]*>|\$\{[^}]+\})/iu;
 const equal = (left, right) => JSON.stringify(left) === JSON.stringify(right);
 const normalize = value => value.replace(/\r\n/gu, '\n').trim();
-
-function tutorAppMapping(mapping, appId, allowMigratedAlias = false) {
-  if (!mapping || typeof mapping !== 'object' || Array.isArray(mapping) || !equal(Object.keys(mapping), ['apps']) ||
-    !mapping.apps || typeof mapping.apps !== 'object' || Array.isArray(mapping.apps)) return false;
-  const aliases = Object.keys(mapping.apps);
-  if (aliases.length !== 1 || !text(aliases[0]) || (!allowMigratedAlias && aliases[0] !== 'arcanos-tutor')) return false;
-  const app = mapping.apps[aliases[0]];
-  // OpenAI's published optional-app example uses optional:true with no required
-  // flag. The portable schema leaves this extension opaque; enforce it here.
-  return app && typeof app === 'object' && !Array.isArray(app) && equal(Object.keys(app).sort(), ['id', 'optional']) &&
-    app.id === appId && app.optional === true;
-}
 
 function validateEvidence(connection, state) {
   requireCondition(connection.schemaVersion === 1 && connection.endpoint === endpoint && equal(connection.toolNames, ['arcanos_tutor']), 'CONNECTION_CONTRACT_INVALID');
@@ -423,17 +412,9 @@ export async function validateArcanosTutorPackage(root, { inputRoot } = {}) {
   const manifest = JSON.parse(files.get('plugin.json').content);
   const validator = new Ajv2020({ allErrors: true, strict: true }).compile(JSON.parse(schema.content));
   requireCondition(validator(manifest), 'MANIFEST_SCHEMA_INVALID');
-  requireCondition(manifest.name === 'arcanos-tutor' && !/pilot/iu.test(manifest.description ?? '') &&
-    equal(Object.keys(manifest.extensions ?? {}), ['com.openai']), 'MANIFEST_IDENTITY_INVALID');
-  const extension = manifest.extensions['com.openai'];
-  const interfaceFields = ['displayName', 'shortDescription', 'longDescription', 'developerName', 'category', 'capabilities', 'defaultPrompt'];
-  requireCondition(equal(Object.keys(extension).sort(), ['apps', 'interface']) && extension.apps === './.app.json' &&
-    Object.keys(extension.interface ?? {}).every(key => interfaceFields.includes(key)) && extension.interface.displayName === 'ARCANOS TUTOR' &&
-    (extension.interface.capabilities === undefined || equal(extension.interface.capabilities, ['Read'])) &&
-    (extension.interface.defaultPrompt === undefined || (Array.isArray(extension.interface.defaultPrompt) &&
-      extension.interface.defaultPrompt.every(text))), 'OPENAI_EXTENSION_INVALID');
+  assertTutorPackageManifestIdentity(manifest, { name: 'arcanos-tutor', displayName: 'ARCANOS TUTOR' });
   const mapping = JSON.parse(files.get('.app.json').content);
-  requireCondition(tutorAppMapping(mapping, connection.registeredAppId), 'APP_MAPPING_INVALID');
+  assertTutorAppMapping(mapping, connection.registeredAppId);
   const skill = files.get(skillPath);
   const frontmatter = skill.content.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/u);
   requireCondition(frontmatter, 'SKILL_FRONTMATTER_MISSING');

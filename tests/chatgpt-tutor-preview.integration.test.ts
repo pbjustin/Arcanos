@@ -13,6 +13,7 @@ import { createNativePrPreviewApplication } from '../src/nativePrPreviewApplicat
 import { NATIVE_PR_PREVIEW_E2E_CONTRACT } from '../scripts/native-pr-preview-contract.mjs';
 
 const contract = NATIVE_PR_PREVIEW_E2E_CONTRACT.chatGptTutor;
+const migrationContract = NATIVE_PR_PREVIEW_E2E_CONTRACT.pluginMigration;
 const provenance = NATIVE_PR_PREVIEW_E2E_CONTRACT.syntheticResponseHeader;
 const validateOutput = new Ajv().compile(chatGptTutorOutputSchema);
 const identity = { prNumber: 1508, sourceCommit: 'a'.repeat(40) };
@@ -83,6 +84,10 @@ async function post(body: unknown, headers: Record<string, string> = {}, path = 
     body: typeof body === 'string' ? body : JSON.stringify(body),
   });
 }
+function expectNoSuccessProof(response: { headers: Headers }) {
+  expect(response.headers.get(contract.honestyProofHeader)).toBeNull();
+  expect(response.headers.get(migrationContract.proofHeader)).toBeNull();
+}
 async function connect() {
   const client = new Client({ name: 'sealed-tutor-interoperability-test', version: '1.0.0' });
   clients.push(client);
@@ -136,6 +141,8 @@ describe('sealed Tutor preview through the actual MCP SDK HTTP client', () => {
     for (const response of observed) {
       expect(response.headers.get(contract.honestyProofHeader)).toBe(
         response.method === 'tools/call' ? contract.honestyProofVersion : null);
+      expect(response.headers.get(migrationContract.proofHeader)).toBe(
+        response.method === 'tools/call' ? migrationContract.proofVersion : null);
     }
     for (const response of observed.filter(value => value.status === 200)) {
       expect(response.headers.get(provenance.name)).toBe(provenance.value);
@@ -152,26 +159,30 @@ describe('sealed Tutor preview through the actual MCP SDK HTTP client', () => {
     { prompt: 'Sealed Tutor preview: explain one half.', module: 'ARCANOS:CORE' },
     { prompt: 'Sealed Tutor preview: explain one half.', credentials: 'synthetic-forbidden' },
   ])('rejects non-fixture or privileged arguments without substituting a success (%#)', async argumentsValue => {
-    const { client } = await connect();
+    const { client, observed } = await connect();
     const denied = await client.callTool({ name: contract.toolName, arguments: argumentsValue });
     expect(denied).toMatchObject({ isError: true, content: [{ type: 'text', text: 'TUTOR_PREVIEW_INPUT_UNSUPPORTED' }] });
     expect(denied.structuredContent).toBeUndefined();
+    expectNoSuccessProof(observed.find(response => response.method === 'tools/call')!);
     expect((await client.callTool(tutorArguments())).structuredContent).toEqual(contract.output);
   });
 
   it.each(['modules.invoke', 'memory.search', 'jobs.get'])('denies unadvertised direct tool %s', async name => {
-    const { client } = await connect();
+    const { client, observed } = await connect();
     expect(await client.callTool({ name, arguments: { prompt: contract.prompt } })).toMatchObject({
       isError: true, content: [{ type: 'text', text: 'TUTOR_PREVIEW_TOOL_UNAVAILABLE' }],
     });
+    expectNoSuccessProof(observed.find(response => response.method === 'tools/call')!);
   });
 
   it('rejects malformed JSON and JSON-RPC batches with bounded errors', async () => {
     const malformed = await post('{malformed JSON');
     expect(malformed.status).toBe(400);
+    expectNoSuccessProof(malformed);
     expect(await malformed.json()).toEqual({ error: 'PREVIEW_REQUEST_INVALID' });
     const batch = await post([envelope('tools/call', tutorArguments()), envelope('tools/list', {}, 2)]);
     expect(batch.status).toBe(400);
+    expectNoSuccessProof(batch);
     expect(await batch.json()).toMatchObject({ jsonrpc: '2.0', id: null, error: { code: -32600 } });
   });
 
@@ -182,7 +193,7 @@ describe('sealed Tutor preview through the actual MCP SDK HTTP client', () => {
         expect(response.status).toBe(404);
         expect(await response.text()).toBe('not found');
         expect(response.headers.get(contract.proofHeader)).toBeNull();
-        expect(response.headers.get(contract.honestyProofHeader)).toBeNull();
+        expectNoSuccessProof(response);
       }
     },
   );
@@ -191,7 +202,17 @@ describe('sealed Tutor preview through the actual MCP SDK HTTP client', () => {
     const exactBody = JSON.stringify(envelope('tools/call', tutorArguments())).padEnd(4_096, ' ');
     const exact = await post(exactBody);
     expect(exact.status).toBe(200);
+    expect(exact.headers.get(migrationContract.proofHeader)).toBe(migrationContract.proofVersion);
     expect(await exact.json()).toMatchObject({ result: { structuredContent: contract.output } });
+    const oversizedBody = JSON.stringify(envelope('tools/call', tutorArguments())).padEnd(4_097, ' ');
+    expect(Buffer.byteLength(oversizedBody, 'utf8')).toBe(4_097);
+    expect(JSON.parse(oversizedBody)).toEqual(envelope('tools/call', tutorArguments()));
+    const oversized = await post(oversizedBody);
+    expect(oversized.status).toBe(404);
+    expect(oversized.headers.get(provenance.name)).toBe(provenance.value);
+    expect(oversized.headers.get(contract.proofHeader)).toBe(contract.proofVersion);
+    expectNoSuccessProof(oversized);
+    expect(await oversized.text()).toBe('not found');
     for (const [body, headers] of [
       ['x'.repeat(4_097), {}],
       [JSON.stringify(envelope('tools/call', tutorArguments())), { 'Content-Type': 'text/plain' }],
@@ -199,6 +220,7 @@ describe('sealed Tutor preview through the actual MCP SDK HTTP client', () => {
     ] as const) {
       const response = await post(body, headers);
       expect(response.status).toBe(404);
+      expectNoSuccessProof(response);
       expect(await response.text()).toBe('not found');
     }
   });
@@ -214,6 +236,7 @@ describe('sealed Tutor preview through the actual MCP SDK HTTP client', () => {
     expect(JSON.stringify(body)).not.toContain(marker);
     const invalid = await post(envelope('tools/call', { ...tutorArguments(), _meta: marker }));
     expect(invalid.status).toBe(200);
+    expectNoSuccessProof(invalid);
     expect(await invalid.json()).toMatchObject({ error: { code: -32602 } });
   });
 
@@ -221,6 +244,7 @@ describe('sealed Tutor preview through the actual MCP SDK HTTP client', () => {
     const body = JSON.stringify(envelope('tools/list'));
     const unsupported = await post(body, { 'Mcp-Protocol-Version': '2024-01-01' });
     expect(unsupported.status).toBe(404);
+    expectNoSuccessProof(unsupported);
     const duplicateStatus = await withDeadline(new Promise<number>((resolve, reject) => {
       const outgoing = httpRequest(new URL(origin + contract.path), {
         method: 'POST', headers: [
@@ -230,6 +254,8 @@ describe('sealed Tutor preview through the actual MCP SDK HTTP client', () => {
           'Mcp-Protocol-Version', contract.protocolVersion,
         ],
       }, response => {
+        expect(response.headers[contract.honestyProofHeader]).toBeUndefined();
+        expect(response.headers[migrationContract.proofHeader]).toBeUndefined();
         response.resume();
         response.once('end', () => resolve(response.statusCode ?? 0));
         response.once('error', reject);
@@ -244,17 +270,22 @@ describe('sealed Tutor preview through the actual MCP SDK HTTP client', () => {
   it('keeps OAuth metadata, streaming, alternate methods and noncanonical paths unavailable', async () => {
     const streaming = await loopbackFetch(origin + contract.path, { method: 'GET' });
     expect(streaming.status).toBe(405);
+    expectNoSuccessProof(streaming);
     expect(streaming.headers.get('allow')).toBe('POST');
     expect(await streaming.text()).toBe('method not allowed');
     for (const method of ['HEAD', 'DELETE', 'OPTIONS']) {
       const response = await loopbackFetch(origin + contract.path, { method });
       expect(response.status).toBe(404);
       expect(response.headers.get(contract.proofHeader)).toBeNull();
+      expectNoSuccessProof(response);
     }
     for (const path of [contract.path + '?fixture=1', '/chatgpt/%6dcp']) {
       const response = await post(envelope('tools/call', tutorArguments()), {}, path);
       expect(response.status).toBe(404);
+      expectNoSuccessProof(response);
     }
-    expect((await loopbackFetch(origin + contract.metadataPath)).status).toBe(404);
+    const metadata = await loopbackFetch(origin + contract.metadataPath);
+    expect(metadata.status).toBe(404);
+    expectNoSuccessProof(metadata);
   });
 });

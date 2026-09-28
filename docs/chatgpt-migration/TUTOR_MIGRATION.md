@@ -48,6 +48,32 @@ Existing commands express the separation without another readiness framework:
   Parse and verify that result; exit 1, malformed output, changed blocker codes or
   an unexpected exception require investigation. Do not ignore arbitrary failures.
 
+## Sealed preview evidence boundaries
+
+The dated preview record on [PR #1509](https://github.com/pbjustin/Arcanos/pull/1509)
+binds each result to its exact head, controller-owned environment, deployments,
+verifier revision and teardown. A dry run is not hosted evidence. The tested chain
+is exact PR source, trusted GitHub lifecycle, isolated Railway web/worker,
+contained synthetic application, shared package validation core, sealed MCP
+protocol, exact-head verifier and teardown.
+
+| Mechanism | Evidence boundary |
+| --- | --- |
+| Exact deployment identity; credential-empty web/passive worker | PREVIEW_PROVABLE through controller metadata, served identity and isolation guards. |
+| MCP initialize/list/call; canonical schemas; only `arcanos_tutor`; no memory/session/admin/operator tools | PREVIEW_PROVABLE for the fixed synthetic transport, not normal authenticated execution. |
+| Credential/header/method/path/body handling | PREVIEW_PROVABLE through bounded declared rejection cases and absent success markers. |
+| Manifest identity, optional registered-app mapping, deterministic fingerprint and artifact digest checks | PREVIEW_PROVABLE through the same pure package core used by the CLI; one fixed server-owned fixture, no private bytes. |
+| Full package/schema validation; baseline/composition/revision integrity; complete archive/hash/inventory reconciliation | CI/LOCAL_ONLY for complete workflow validation, with separately dated VERIFIED_ARTIFACT observations. The served fingerprint/digest seam does not establish full reconciliation. |
+| Private paths, symlinks, credential exclusion and staged Git guards | CI/LOCAL_ONLY; sealed import/environment boundaries prevent preview access to those inputs. |
+| ChatGPT installation and account authorization | ACCOUNT_SIDE_ONLY; NOT_PROVEN_BY_PREVIEW. |
+| Real OAuth exchange, provider/model generation and production MCP availability | PRODUCTION_ONLY; NOT_PROVEN_BY_PREVIEW. |
+
+The new marker is `plugin-migration-package-core/v1`; the exact-head verifier has
+157 requests, including one new oversized Tutor request. The unchanged trusted
+main verifier has 156. Neither count includes the existing cached synthetic-invalid
+Notion edge canary. No live ChatGPT/OAuth/model-provider acceptance is inferred.
+The fixture does not make Tutor product release ready or demonstrate other GPTs.
+
 ## Retained Tutor product follow-ups
 
 - Existing-account authorization and successful live backend acceptance remain unresolved.
@@ -76,8 +102,10 @@ nonempty-reference compatibility have not been demonstrated here.
 ## Merge and review-state effects
 
 The full PR adds four opt-in npm commands and strengthens the private-path commit
-guard; it changes no dependency/lockfile, install/build/start hook, runtime import,
-deployment configuration or workflow trigger. It does not install or publish a
+guard. Preview verification adds a pure CLI package-core extraction, a sealed
+preview fixture and corresponding import guards, verifier assertions and tests.
+Normal production runtime imports, dependencies/lockfiles, install/build/start
+hooks, deployment configuration and workflow triggers are unchanged. It does not install or publish a
 plugin. Repository `ready_for_review`/edit events run preview reconciliation, but
 without `railway-preview` the controller returns before calling Railway. Preserve
 that opt-in setting and verify provider-native PR settings before marking ready.

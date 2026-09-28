@@ -165,18 +165,20 @@ function responseHeadersForCase(
     || requestCase.expectedType === 'dispatch-gpt-identifier-contract'
     || requestCase.expectedType === 'status-auth-boundary-contract'
     || requestCase.expectedType === 'self-heal-approval-contract'
-    || requestCase.expectedType === 'chatgpt-tutor';
+    || requestCase.chatGptTutorAdmission === 'admitted';
   return {
     'cache-control': 'no-store',
     ...(expectedNativePrPreviewContentType(requestCase) === null ? {} : {
       'content-type': expectedNativePrPreviewContentType(requestCase),
     }),
-    ...(requestCase.expectedType === 'chatgpt-tutor' ? {
+    ...(requestCase.chatGptTutorAdmission === 'admitted' ? {
       [NATIVE_PR_PREVIEW_E2E_CONTRACT.chatGptTutor.proofHeader]:
         NATIVE_PR_PREVIEW_E2E_CONTRACT.chatGptTutor.proofVersion,
       ...(requestCase.fixtureName === 'tools-call' ? {
         [NATIVE_PR_PREVIEW_E2E_CONTRACT.chatGptTutor.honestyProofHeader]:
           NATIVE_PR_PREVIEW_E2E_CONTRACT.chatGptTutor.honestyProofVersion,
+        [NATIVE_PR_PREVIEW_E2E_CONTRACT.pluginMigration.proofHeader]:
+          NATIVE_PR_PREVIEW_E2E_CONTRACT.pluginMigration.proofVersion,
       } : {}),
       ...(requestCase.fixtureName === 'get' ? { allow: 'POST' } : {}),
     } : {}),
@@ -783,7 +785,7 @@ test('rejects malformed or unsupported exact-head Backstage Booker versions', as
 
 test('executes the bounded synthetic matrix and detects identity stability', async () => {
   const requestPlan = buildNativePrPreviewRequestPlan();
-  assert.equal(requestPlan.length, 156);
+  assert.equal(requestPlan.length, 157);
   assert.equal(
     requestPlan.filter(({ caseId, expectedType }) =>
       expectedType !== 'research-contract'
@@ -2098,16 +2100,21 @@ test('executes the bounded synthetic matrix and detects identity stability', asy
   assert.equal(result.executed, true);
   assert.equal(result.networkAttempted, true);
   assert.equal(result.summary.status, 'PASS');
-  assert.equal(result.summary.requestsMade, 156);
+  assert.equal(result.summary.requestsMade, 157);
   assert.equal(result.summary.simulatedAuthRequests, 24);
-  assert.equal(result.checks.length, 156);
+  assert.equal(result.checks.length, 157);
   assert.equal(
     result.checks.filter(({ simulatedAuth }) => simulatedAuth).length,
     24
   );
-  assert.equal(mock.requestCount, 156);
-  assert.equal(result.limits.maxRequests, 156);
+  assert.equal(mock.requestCount, 157);
+  assert.equal(result.limits.maxRequests, 157);
   assert.equal(result.checks.filter(check => check.chatGptTutorMockVerified).length, 10);
+  const migrationChecks = result.checks.filter(check => check.pluginMigrationPackageCoreVerified);
+  assert.equal(migrationChecks.length, 1);
+  assert.equal(migrationChecks[0].caseId, 'web-chatgpt-tutor-tools-call');
+  assert.equal(migrationChecks[0].pluginMigrationPackageCoreProofVersion,
+    'plugin-migration-package-core/v1');
   for (const caseId of ['web-readiness-initial', 'web-readiness-final']) {
     assert.equal(result.checks.find(check => check.caseId === caseId)?.iosDevicePolicyVerified, true);
     assert.equal(result.checks.find(check => check.caseId === caseId)?.dagMetricsRetentionVerified, true);
@@ -2669,13 +2676,19 @@ test('executes the bounded synthetic matrix and detects identity stability', asy
 test('plans the finite Tutor MCP exchange and denied credential, session, OAuth and worker boundaries', () => {
   const contract = NATIVE_PR_PREVIEW_E2E_CONTRACT.chatGptTutor;
   const cases = buildNativePrPreviewRequestPlan().filter(requestCase => requestCase.chatGptTutorAdmission);
-  assert.equal(cases.length, 18);
+  assert.equal(cases.length, 19);
   assert.deepEqual(cases.slice(0, 4).map(({ body }) => body.method), [
     'initialize', 'notifications/initialized', 'tools/list', 'tools/call',
   ]);
   assert.deepEqual(cases.slice(0, 4).map(({ expectedStatus }) => expectedStatus), [200, 202, 200, 200]);
   assert.deepEqual(cases[3].body.params.arguments, { prompt: contract.prompt });
   assert.equal(cases[3].body.params.name, contract.toolName);
+  const oversized = cases.find(({ fixtureName }) => fixtureName === 'oversized-body');
+  assert.equal(oversized.expectedStatus, 404);
+  assert.equal(oversized.expectedType, 'not-found');
+  assert.equal(oversized.chatGptTutorAdmission, 'admitted');
+  assert.equal(Buffer.byteLength(oversized.rawBody, 'utf8'), 4_097);
+  assert.deepEqual(JSON.parse(oversized.rawBody), cases[3].body);
   assert.deepEqual(cases.filter(({ chatGptTutorAdmission }) => chatGptTutorAdmission === 'denied')
     .map(({ caseId }) => caseId), [
     'web-chatgpt-tutor-authorization-denied',
@@ -2698,6 +2711,23 @@ test('rejects Tutor schema, output, provenance, empty-notification and denial dr
   const proofCode = 'NATIVE_PR_PREVIEW_CHATGPT_TUTOR_PROOF_INVALID';
   const bodyCode = 'NATIVE_PR_PREVIEW_BODY_MISMATCH';
   const cases = [
+    ...[undefined, 'plugin-migration-package-core/v0'].map(version => ({
+      caseId: 'web-chatgpt-tutor-tools-call', code: 'NATIVE_PR_PREVIEW_PLUGIN_MIGRATION_PROOF_INVALID',
+      mutate({ headers }) {
+        const migration = NATIVE_PR_PREVIEW_E2E_CONTRACT.pluginMigration;
+        if (version === undefined) delete headers[migration.proofHeader];
+        else headers[migration.proofHeader] = version;
+      },
+    })),
+    ...requestPlan.filter(requestCase => requestCase.caseId !== 'web-chatgpt-tutor-tools-call'
+      && (requestCase.chatGptTutorAdmission !== undefined || requestCase.role === 'worker'))
+      .map(({ caseId }) => ({
+        caseId, code: 'NATIVE_PR_PREVIEW_PLUGIN_MIGRATION_PROOF_INVALID',
+        mutate({ headers }) {
+          const migration = NATIVE_PR_PREVIEW_E2E_CONTRACT.pluginMigration;
+          headers[migration.proofHeader] = migration.proofVersion;
+        },
+      })),
     ...[undefined, 'tutor-honesty-composition/v0'].map(version => ({
       caseId: 'web-chatgpt-tutor-tools-call', code: 'NATIVE_PR_PREVIEW_TUTOR_HONESTY_PROOF_INVALID',
       mutate({ headers }) {
@@ -2706,6 +2736,7 @@ test('rejects Tutor schema, output, provenance, empty-notification and denial dr
       },
     })),
     ...['web-chatgpt-tutor-tools-list', 'web-chatgpt-tutor-wrong-prompt',
+      'web-chatgpt-tutor-malformed-json', 'web-chatgpt-tutor-oversized-body',
       'worker-chatgpt-tutor-denied', 'web-chatgpt-tutor-authorization-denied'].map(caseId => ({
       caseId, code: 'NATIVE_PR_PREVIEW_TUTOR_HONESTY_PROOF_INVALID',
       mutate({ headers }) { headers[contract.honestyProofHeader] = contract.honestyProofVersion; },
@@ -2749,6 +2780,14 @@ test('rejects Tutor schema, output, provenance, empty-notification and denial dr
     {
       caseId: 'web-chatgpt-tutor-tools-call', code: 'NATIVE_PR_PREVIEW_SYNTHETIC_MARKER_MISSING',
       mutate({ headers }) { delete headers[NATIVE_PR_PREVIEW_E2E_CONTRACT.syntheticResponseHeader.name]; },
+    },
+    {
+      caseId: 'web-chatgpt-tutor-oversized-body', code: 'NATIVE_PR_PREVIEW_SYNTHETIC_MARKER_MISSING',
+      mutate({ headers }) { delete headers[NATIVE_PR_PREVIEW_E2E_CONTRACT.syntheticResponseHeader.name]; },
+    },
+    {
+      caseId: 'web-chatgpt-tutor-oversized-body', code: proofCode,
+      mutate({ headers }) { delete headers[contract.proofHeader]; },
     },
     {
       caseId: 'web-chatgpt-tutor-tools-call', code: proofCode,

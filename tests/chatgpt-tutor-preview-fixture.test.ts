@@ -1,4 +1,4 @@
-import { describe, expect, it } from '@jest/globals';
+import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { Ajv } from 'ajv';
 import { chatGptTutorInputSchema, chatGptTutorOutputSchema } from '@arcanos/protocol';
 import {
@@ -6,7 +6,17 @@ import {
   JSONRPCResultResponseSchema, ListToolsResultSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import { NATIVE_PR_PREVIEW_E2E_CONTRACT } from '../scripts/native-pr-preview-contract.mjs';
-import { handleChatGptTutorPreviewRequest as handle } from '../src/shared/chatgpt/chatgptTutorPreviewFixture.js';
+const actualMigration = await import('../src/shared/chatgpt/pluginMigrationPreviewFixture.js');
+const actualHonesty = await import('../src/shared/chatgpt/tutorHonestyPreviewFixture.js');
+const migrationAssertion = jest.fn(actualMigration.assertPluginMigrationPreviewFixture);
+const honestyAssertion = jest.fn(actualHonesty.assertTutorHonestyPreviewFixture);
+jest.unstable_mockModule('../src/shared/chatgpt/pluginMigrationPreviewFixture.js', () => ({
+  assertPluginMigrationPreviewFixture: migrationAssertion,
+}));
+jest.unstable_mockModule('../src/shared/chatgpt/tutorHonestyPreviewFixture.js', () => ({
+  assertTutorHonestyPreviewFixture: honestyAssertion,
+}));
+const { handleChatGptTutorPreviewRequest: handle } = await import('../src/shared/chatgpt/chatgptTutorPreviewFixture.js');
 
 const contract = NATIVE_PR_PREVIEW_E2E_CONTRACT.chatGptTutor;
 const initializeParams = {
@@ -37,6 +47,11 @@ function expectInvalidParams(method: string, params: unknown) {
     error: { code: -32602, message: 'Invalid sealed Tutor preview parameters.' },
   });
 }
+
+beforeEach(() => {
+  migrationAssertion.mockReset().mockImplementation(actualMigration.assertPluginMigrationPreviewFixture);
+  honestyAssertion.mockReset().mockImplementation(actualHonesty.assertTutorHonestyPreviewFixture);
+});
 
 describe('sealed Tutor preview pure MCP peer', () => {
   it('negotiates a supported version and advertises only tools with explicit synthetic instructions', () => {
@@ -81,6 +96,36 @@ describe('sealed Tutor preview pure MCP peer', () => {
       content: [{ type: 'text', text: JSON.stringify(contract.output) }],
     });
     expect(Buffer.byteLength(JSON.stringify(output))).toBeLessThan(4096);
+  });
+
+  it('sets both internal proof flags only after both fixed fixtures pass', () => {
+    const response = handle(request('tools/call', callParams));
+    expect(honestyAssertion).toHaveBeenCalledTimes(1);
+    expect(migrationAssertion).toHaveBeenCalledTimes(1);
+    expect(response).toMatchObject({ statusCode: 200, honestyVerified: true, migrationVerified: true });
+    expect(response.payload).toEqual({ jsonrpc: '2.0', id: 1, result: {
+      structuredContent: contract.output,
+      content: [{ type: 'text', text: JSON.stringify(contract.output) }],
+    } });
+  });
+
+  it.each(['honesty', 'migration'])(
+    'withholds both proof flags and the success body when %s assertions fail', dependency => {
+      const fail = () => { throw new Error('Mock internal failure detail.'); };
+      if (dependency === 'honesty') honestyAssertion.mockImplementation(fail);
+      else migrationAssertion.mockImplementation(fail);
+      const response = handle(request('tools/call', callParams));
+      expect(response).toEqual({ statusCode: 500, payload: { jsonrpc: '2.0', id: 1,
+        error: { code: -32603, message: dependency === 'honesty'
+          ? 'TUTOR_PREVIEW_HONESTY_ASSERTION_FAILED' : 'TUTOR_PREVIEW_MIGRATION_ASSERTION_FAILED' } } });
+      expect(migrationAssertion).toHaveBeenCalledTimes(dependency === 'honesty' ? 0 : 1);
+      expect(JSON.stringify(response)).not.toContain('Mock internal failure detail.');
+    });
+
+  it('does not run package assertions for discovery or unsupported caller-selected arguments', () => {
+    result('tools/list');
+    result('tools/call', { name: contract.toolName, arguments: { prompt: 'plugin-test-fixture' } });
+    expect(migrationAssertion).not.toHaveBeenCalled();
   });
 
   it('requires no handshake state and returns the same result before and after initialization', () => {
