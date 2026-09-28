@@ -26,6 +26,7 @@ import { assertDagMetricsRetentionPreviewFixture } from './shared/dag/dagMetrics
 import { assertDagTokenAccountingPreviewFixture } from './shared/dag/dagTokenAccountingPreviewFixture.js';
 import { assertSessionContextPreviewFixture } from './shared/memory/sessionContextPreviewFixture.js';
 import { handleChatGptTutorPreviewRequest } from './shared/chatgpt/chatgptTutorPreviewFixture.js';
+import { handleGamingMcpPreviewRequest } from './shared/chatgpt/gamingMcpPreviewFixture.js';
 
 import {
   createGenericJobsRouter,
@@ -45,6 +46,7 @@ import {
   NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT,
   NATIVE_PR_PREVIEW_BACKSTAGE_BOOKER_OPENAPI_CONTRACT,
   NATIVE_PR_PREVIEW_CHATGPT_TUTOR_CONTRACT,
+  NATIVE_PR_PREVIEW_CHATGPT_GAMING_CONTRACT,
   NATIVE_PR_PREVIEW_PLUGIN_MIGRATION_CONTRACT,
   NATIVE_PR_PREVIEW_DISPATCH_GPT_IDENTIFIER_CONTRACT,
   NATIVE_PR_PREVIEW_DAG_METRICS_CONTRACT,
@@ -8932,6 +8934,8 @@ function buildAllowedRouteKeys(): Set<string> {
     `POST ${NATIVE_PR_PREVIEW_MCP_BODY_CAP_CONTRACT.path}`,
     `POST ${NATIVE_PR_PREVIEW_CHATGPT_TUTOR_CONTRACT.path}`,
     `GET ${NATIVE_PR_PREVIEW_CHATGPT_TUTOR_CONTRACT.path}`,
+    `POST ${NATIVE_PR_PREVIEW_CHATGPT_GAMING_CONTRACT.path}`,
+    `GET ${NATIVE_PR_PREVIEW_CHATGPT_GAMING_CONTRACT.path}`,
     `POST ${NATIVE_PR_PREVIEW_RESEARCH_CONTRACT.path}`,
     `POST ${NATIVE_PR_PREVIEW_SELF_HEAL_APPROVAL_CONTRACT.path}`,
     `POST ${NATIVE_PR_PREVIEW_STATUS_AUTH_BOUNDARY_CONTRACT.path}`,
@@ -9068,6 +9072,7 @@ export function createNativePrPreviewApplication(
     const gamingSourceResolution = resolvePreviewGamingSourcePath(rawPath);
     const gamingSourcePath = gamingSourceResolution !== null;
     const chatGptTutorPath = rawPath === NATIVE_PR_PREVIEW_CHATGPT_TUTOR_CONTRACT.path;
+    const chatGptGamingPath = rawPath === NATIVE_PR_PREVIEW_CHATGPT_GAMING_CONTRACT.path;
     const mcpProtocolVersion = request.header('mcp-protocol-version');
     const sourceFixture = request.header(
       NATIVE_PR_PREVIEW_GAMING_SOURCES_CONTRACT.fixtureHeader
@@ -9107,10 +9112,11 @@ export function createNativePrPreviewApplication(
       || (rawPath.includes('%') && !gamingSourcePath)
       || (!gamingSourcePath && !iosFixtureAdmission && !allowedRouteKeys.has(routeKey))
       || isCredentialCarrierPresent(request, iosFixtureCarriers)
-      || (chatGptTutorPath
+      || ((chatGptTutorPath || chatGptGamingPath)
         && (countPreviewRawHeaders(request, 'mcp-protocol-version') > 1
           || (mcpProtocolVersion !== undefined
-            && mcpProtocolVersion !== NATIVE_PR_PREVIEW_CHATGPT_TUTOR_CONTRACT.protocolVersion)))
+            && mcpProtocolVersion !== (chatGptGamingPath ? NATIVE_PR_PREVIEW_CHATGPT_GAMING_CONTRACT.protocolVersion
+              : NATIVE_PR_PREVIEW_CHATGPT_TUTOR_CONTRACT.protocolVersion))))
       || (
         sourceFixture !== undefined
         && (
@@ -9134,6 +9140,7 @@ export function createNativePrPreviewApplication(
       || iosFixtureAdmission
       || rawPath === NATIVE_PR_PREVIEW_IOS_DEVICE_CONTRACT.path
       || chatGptTutorPath
+      || chatGptGamingPath
     ) {
       response.setHeader(
         NATIVE_PR_PREVIEW_SYNTHETIC_RESPONSE_HEADER.name,
@@ -9423,6 +9430,25 @@ export function createNativePrPreviewApplication(
       logEvent: 'native_pr_preview.chatgpt_tutor_fixture',
       maxBytes: 16_384,
       statusCode: result.statusCode,
+    });
+  });
+
+  // Fixed Gaming schema/write-policy proof. Never imports the production Gaming MCP/OAuth services.
+  app.get(NATIVE_PR_PREVIEW_CHATGPT_GAMING_CONTRACT.path, (_request, response) => {
+    response.setHeader('Allow', 'POST');
+    response.status(405).type('text/plain').send('method not allowed');
+  });
+  app.post(NATIVE_PR_PREVIEW_CHATGPT_GAMING_CONTRACT.path, (request, response) => {
+    const result = handleGamingMcpPreviewRequest(request.body);
+    if (result.gamingVerified === true && result.migrationVerified === true) {
+      response.setHeader(NATIVE_PR_PREVIEW_CHATGPT_GAMING_CONTRACT.proofHeader,
+        NATIVE_PR_PREVIEW_CHATGPT_GAMING_CONTRACT.proofVersion);
+      response.setHeader(NATIVE_PR_PREVIEW_PLUGIN_MIGRATION_CONTRACT.proofHeader,
+        NATIVE_PR_PREVIEW_PLUGIN_MIGRATION_CONTRACT.proofVersion);
+    }
+    if (result.payload === undefined) { response.status(result.statusCode).end(); return; }
+    sendBoundedJsonResponse(request, response, result.payload, {
+      logEvent: 'native_pr_preview.chatgpt_gaming_fixture', maxBytes: 65_536, statusCode: result.statusCode,
     });
   });
 

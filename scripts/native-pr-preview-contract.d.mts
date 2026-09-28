@@ -10,6 +10,21 @@ export interface NativePrPreviewE2eContract {
     proofHeader: 'x-arcanos-preview-plugin-migration-version';
     proofVersion: 'plugin-migration-package-core/v1';
   }>;
+  readonly chatGptGaming: Readonly<{
+    path: '/chatgpt/gaming/mcp';
+    metadataPath: '/.well-known/oauth-protected-resource/chatgpt/gaming/mcp';
+    proofHeader: 'x-arcanos-preview-chatgpt-gaming-version';
+    proofVersion: 'chatgpt-gaming-mcp-core/v1';
+    catalogSha256: string;
+    protocolVersion: '2025-03-26';
+    instructions: string;
+    game: string;
+    workflowId: string;
+    queryInput: Readonly<Record<string, unknown>>;
+    hybridInput: Readonly<Record<string, unknown>>;
+    queryOutput: Readonly<Record<string, unknown>>;
+    hybridOutput: Readonly<Record<string, unknown>>;
+  }>;
   readonly chatGptTutor: Readonly<{
     path: '/chatgpt/mcp';
     metadataPath: '/.well-known/oauth-protected-resource/chatgpt/mcp';
