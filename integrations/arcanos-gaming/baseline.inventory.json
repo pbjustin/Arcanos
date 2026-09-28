@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "status": "VERIFIED",
+  "source": "latest_published_gpt",
+  "publicationAssurance": "USER_REPORTED",
+  "configuration": {
+    "path": "published-gpt.json",
+    "sha256": "d956b592e539a48bf7d16314a49c7604d4848195ae0acd3f74ccffb0ead50eac",
+    "sizeBytes": 140106,
+    "publishedVersion": "Sep 19, 2026 (Current version)",
+    "publishedAt": "2026-09-19T19:28",
+    "displayName": "Arcanos Gaming",
+    "enabledCapabilities": [
+      "Web Search",
+      "Canvas",
+      "Image Generation",
+      "Code Interpreter & Data Analysis"
+    ],
+    "actions": [
+      {
+        "name": "acranos-production.up.railway.app",
+        "schemaSha256": "767a6f7dad1a88b5189c03ba297f6e9e6e8ac3635f5a68928a8656ae118c254d"
+      }
+    ],
+    "fields": {
+      "description": {
+        "sha256": "abe2bba306b7528b54e0b9c56f011416b4c5fa9fbc6649fc9e349b2207c7db67",
+        "sizeBytes": 127
+      },
+      "instructions": {
+        "sha256": "7d7d0d115bfad91ca86d4b9e6506510db8cac31960c958845995bafe13f49688",
+        "sizeBytes": 8125
+      },
+      "conversationStarters": {
+        "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "sizeBytes": 2
+      },
+      "enabledCapabilities": {
+        "sha256": "a160ca298ea3b3175a28d75d3b680338771807d3693956a1f98cf28b6479a9b7",
+        "sizeBytes": 77
+      },
+      "actions": {
+        "sha256": "917f3e117664a46588fa518e7aa3b64fc2e7855b77ecc574f73d793c73f84d28",
+        "sizeBytes": 58686
+      },
+      "sharingStatus": {
+        "sha256": "c4b3caed42b4268b5820cc646173fb2194cfa65ebd4357ae70c79a57117fd6f7",
+        "sizeBytes": 9
+      },
+      "representativeBehavior": {
+        "sha256": "d2f7958de5a96ca79febd1e3f3d25d7397aeb0ea13d768ee894a2233de0e25f7",
+        "sizeBytes": 680
+      }
+    }
+  },
+  "knowledge": [],
+  "missingInputs": [],
+  "publicationReview": {
+    "reviewedBy": "Owner (task confirmation)",
+    "reviewedAt": "2026-09-28T14:55:44Z",
+    "latestPublishedConfirmed": true,
+    "evidenceIds": [
+      "gaming-published-version-dom-20260928",
+      "gaming-owner-supplied-action-schema-20260928",
+      "gaming-owner-complete-transcription-approval-20260928"
+    ]
+  }
+}

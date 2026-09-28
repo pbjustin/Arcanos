@@ -1,0 +1,364 @@
+{
+  "schemaVersion": "arcanos-gaming-behavior-matrix/v1",
+  "status": "PROVISIONAL_REPOSITORY_DERIVED",
+  "sourceCommit": "8f31f3eb5c95af1919e5a36e780cfb75e011a7a9",
+  "actionSchemaVersion": "1.5.0",
+  "contractVersion": "gaming-hybrid-v1",
+  "publishedBaselineApproval": "VERIFIED",
+  "privateSkillApproval": "PENDING",
+  "executionStatus": "NOT_RUN",
+  "notes": [
+    "These repository-derived scenarios are corroborated by the owner-approved published Gaming source; installed-skill execution remains untested.",
+    "Tool names and scopes are proposed; app registration and live OAuth grants are not claimed.",
+    "The 18 cases are contract expectations, not 18 passing behavioral tests.",
+    "Acceptance must distinguish local fixtures, sealed preview, installed skill, OAuth, live reads, and authorized production writes."
+  ],
+  "cases": [
+    {
+      "id": "G01",
+      "scenario": "Guide with sufficient progression context",
+      "fixture": "Synthetic guide asks what next with currentArea and lastCompletedObjective plus relevant stored evidence.",
+      "classification": "BACKEND_HYBRID",
+      "expectedSkillActivation": "Gaming skill forwards original question and explicit player context; presents supported answer.",
+      "expectedBackendTools": [
+        "arcanos_gaming_hybrid_query"
+      ],
+      "expectedSideEffect": "Stored evidence read and bounded generation; transient workflow only.",
+      "expectedScopes": [
+        "arcanos:gaming:query"
+      ],
+      "expectedState": "answer_ready",
+      "expectedNextAction": "answer",
+      "expectedPersistence": "No durable source write or player memory.",
+      "expectedFailureClass": "NONE with controlled usable evidence; never promote fallback to grounded answer.",
+      "executionStatus": "NOT_RUN"
+    },
+    {
+      "id": "G02",
+      "scenario": "Guide missing progression anchor",
+      "fixture": "Ambiguous what-next question without current area, checkpoint, objective, or a usable question anchor.",
+      "classification": "BACKEND_HYBRID",
+      "expectedSkillActivation": "Gaming skill asks the backend's targeted clarification without inventing progress or searching.",
+      "expectedBackendTools": [
+        "arcanos_gaming_hybrid_query"
+      ],
+      "expectedSideEffect": "Transient workflow and bounded stored lookup; no gameplay generation for unresolved progress.",
+      "expectedScopes": [
+        "arcanos:gaming:query"
+      ],
+      "expectedState": "clarification_required",
+      "expectedNextAction": "clarify",
+      "expectedPersistence": "None durable.",
+      "expectedFailureClass": "PROGRESS_POINT_REQUIRED is a controlled clarification, not service failure.",
+      "executionStatus": "NOT_RUN"
+    },
+    {
+      "id": "G03",
+      "scenario": "Build request",
+      "fixture": "Synthetic stable build question with class, equipment constraints, exact edition, and usable stored strategy evidence.",
+      "classification": "BACKEND_HYBRID",
+      "expectedSkillActivation": "Gaming skill selects mode build and preserves constraints without invented statistics or rankings.",
+      "expectedBackendTools": [
+        "arcanos_gaming_hybrid_query"
+      ],
+      "expectedSideEffect": "Stored evidence read and bounded generation.",
+      "expectedScopes": [
+        "arcanos:gaming:query"
+      ],
+      "expectedState": "answer_ready",
+      "expectedNextAction": "answer",
+      "expectedPersistence": "Transient workflow only; storagePolicy defaults transient_only.",
+      "expectedFailureClass": "NONE with controlled evidence; patch notes alone cannot establish best build.",
+      "executionStatus": "NOT_RUN"
+    },
+    {
+      "id": "G04",
+      "scenario": "Meta request",
+      "fixture": "Current-patch viability question with accepted gameplay evidence but missing current official applicability proof.",
+      "classification": "BACKEND_HYBRID",
+      "expectedSkillActivation": "Gaming skill selects mode meta, keeps original question, and continues official verification.",
+      "expectedBackendTools": [
+        "arcanos_gaming_hybrid_query",
+        "arcanos_gaming_submit_candidates"
+      ],
+      "expectedSideEffect": "Stored read followed by bounded official acquisition; no source storage.",
+      "expectedScopes": [
+        "arcanos:gaming:query"
+      ],
+      "expectedState": "discovery_required until applicable official evidence passes",
+      "expectedNextAction": "verify_currentness; then follow backend answer, stop, or retry_later",
+      "expectedPersistence": "Transient workflow only.",
+      "expectedFailureClass": "Unverified freshness is not an invented current meta answer.",
+      "executionStatus": "NOT_RUN"
+    },
+    {
+      "id": "G05",
+      "scenario": "Spoiler-sensitive request",
+      "fixture": "Explicit no-spoiler text conflicts with structured full tolerance; fixture includes future-reveal headings and current-objective evidence.",
+      "classification": "BACKEND_HYBRID",
+      "expectedSkillActivation": "Gaming skill preserves stricter effective spoiler limits and only supported current-objective guidance.",
+      "expectedBackendTools": [
+        "arcanos_gaming_hybrid_query"
+      ],
+      "expectedSideEffect": "Conservative evidence selection and bounded generation; no spoiler-policy override.",
+      "expectedScopes": [
+        "arcanos:gaming:query"
+      ],
+      "expectedState": "answer_ready for safe portion, or clarification_required if necessary",
+      "expectedNextAction": "answer or clarify as returned",
+      "expectedPersistence": "None durable; no remembered spoiler preference claimed.",
+      "expectedFailureClass": "No fabricated guarantee of perfect spoiler filtering.",
+      "executionStatus": "NOT_RUN"
+    },
+    {
+      "id": "G06",
+      "scenario": "Stored answer_ready evidence",
+      "fixture": "Backend returns answer_ready, evidenceSelected true, accepted citations, provenance, and qualification.",
+      "classification": "BACKEND_HYBRID",
+      "expectedSkillActivation": "Gaming skill presents answer.response and material provenance/qualifications without redundant Web Search.",
+      "expectedBackendTools": [
+        "arcanos_gaming_hybrid_query"
+      ],
+      "expectedSideEffect": "Read/generation only; no discovery request or durable ingestion.",
+      "expectedScopes": [
+        "arcanos:gaming:query"
+      ],
+      "expectedState": "answer_ready",
+      "expectedNextAction": "answer",
+      "expectedPersistence": "Transient workflow only.",
+      "expectedFailureClass": "No conflation of sourceKnown, evidenceSelected, freshness, or document coverage.",
+      "executionStatus": "NOT_RUN"
+    },
+    {
+      "id": "G07",
+      "scenario": "Gameplay discovery_required",
+      "fixture": "Backend returns gameplay_evidence discovery, round zero, one maximum round, and at most three candidates.",
+      "classification": "BACKEND_HYBRID",
+      "expectedSkillActivation": "Gaming skill uses bounded Web Search for URLs, then submits only defined URL-hint fields under the same workflow.",
+      "expectedBackendTools": [
+        "arcanos_gaming_hybrid_query",
+        "arcanos_gaming_submit_candidates"
+      ],
+      "expectedSideEffect": "Built-in discovery and bounded backend acquisition/evaluation; conditional generation.",
+      "expectedScopes": [
+        "arcanos:gaming:query"
+      ],
+      "expectedState": "discovery_required initially; then backend-controlled result",
+      "expectedNextAction": "search initially; then answer, verify_currentness, stop, or retry_later as returned",
+      "expectedPersistence": "Transient accepted artifacts only.",
+      "expectedFailureClass": "No snippets, unrelated history, credentials, private player details, or factual prompt additions.",
+      "executionStatus": "NOT_RUN"
+    },
+    {
+      "id": "G08",
+      "scenario": "Currentness verification continuation",
+      "fixture": "Accepted guide plus stale/unverified freshness, continuationRequired true, round zero, and reviewed official index hint.",
+      "classification": "BACKEND_HYBRID",
+      "expectedSkillActivation": "Gaming skill submits applicable official hint with currentness_verification, same workflow, and new operation key before a final verdict.",
+      "expectedBackendTools": [
+        "arcanos_gaming_submit_candidates"
+      ],
+      "expectedSideEffect": "One bounded official operation including any required article within three-source/12-second budget.",
+      "expectedScopes": [
+        "arcanos:gaming:query"
+      ],
+      "expectedState": "discovery_required until backend verification resolves",
+      "expectedNextAction": "verify_currentness initially; then honor returned nextAction",
+      "expectedPersistence": "No durable write; preserve original guide and context.",
+      "expectedFailureClass": "Do not declare exhaustion early, resubmit accepted guide, or infer authority from hints.",
+      "executionStatus": "NOT_RUN"
+    },
+    {
+      "id": "G09",
+      "scenario": "Candidate acceptance and rejection",
+      "fixture": "Synthetic candidates include accepted readable evidence and an invalid/private URL or identity-mismatched source.",
+      "classification": "BACKEND_HYBRID",
+      "expectedSkillActivation": "Gaming skill preserves decisions/reasons, cites only accepted evidence, and retains returned candidate IDs.",
+      "expectedBackendTools": [
+        "arcanos_gaming_submit_candidates"
+      ],
+      "expectedSideEffect": "Bounded validation/acquisition; rejected private URL never fetched; accepted source not implicitly stored.",
+      "expectedScopes": [
+        "arcanos:gaming:query"
+      ],
+      "expectedState": "Backend-controlled answer_ready or discovery_required",
+      "expectedNextAction": "Follow returned answer, verify_currentness, stop, or retry_later",
+      "expectedPersistence": "Transient actor-bound candidates only.",
+      "expectedFailureClass": "INVALID_URL, URL_BLOCKED, or backend reason; all acquisition rejection may be SOURCE_ACQUISITION_UNVERIFIED, not proof of nonexistent sources.",
+      "executionStatus": "NOT_RUN"
+    },
+    {
+      "id": "G10",
+      "scenario": "Temporarily unavailable",
+      "fixture": "Mock stored repository/provider failure returns temporarily_unavailable and retry_later.",
+      "classification": "BACKEND_HYBRID",
+      "expectedSkillActivation": "Gaming skill reports the limitation and stops; no generic search fallback or stored-evidence claim.",
+      "expectedBackendTools": [
+        "arcanos_gaming_hybrid_query"
+      ],
+      "expectedSideEffect": "Failed bounded request only; no manufactured production failure.",
+      "expectedScopes": [
+        "arcanos:gaming:query"
+      ],
+      "expectedState": "temporarily_unavailable",
+      "expectedNextAction": "retry_later",
+      "expectedPersistence": "No durable source write.",
+      "expectedFailureClass": "SERVICE_UNAVAILABLE; not missing knowledge or exhausted verification.",
+      "executionStatus": "NOT_RUN"
+    },
+    {
+      "id": "G11",
+      "scenario": "Explicit source ingestion",
+      "fixture": "Owner explicitly requests storing one to four allowed public HTTPS URLs; isolated fixture grants write scope and confirmation.",
+      "classification": "BACKEND_WRITE",
+      "expectedSkillActivation": "Gaming skill forwards bounded URLs/origin and request-specific key only after explicit storage intent.",
+      "expectedBackendTools": [
+        "arcanos_gaming_ingest_sources"
+      ],
+      "expectedSideEffect": "One authorized durable ingestion job; worker may later fetch and write source/chunks.",
+      "expectedScopes": [
+        "arcanos:gaming:sources:write"
+      ],
+      "expectedState": "Source lifecycle queued or running; not a hybrid state",
+      "expectedNextAction": "Read returned ingestion status when completion is needed",
+      "expectedPersistence": "Job durable on acceptance; source storage claimed only from terminal per-source results.",
+      "expectedFailureClass": "Missing write authority or confirmation must reject before service invocation.",
+      "executionStatus": "NOT_RUN"
+    },
+    {
+      "id": "G12",
+      "scenario": "Ingestion status",
+      "fixture": "Owned returned ingestion ID transitions through pending to terminal per-source results; also attempt a different actor's handle.",
+      "classification": "BACKEND_QUERY",
+      "expectedSkillActivation": "Gaming skill polls at most three times, obeys retry hints, reports storage separately, and stops on terminal status.",
+      "expectedBackendTools": [
+        "arcanos_gaming_ingestion_status"
+      ],
+      "expectedSideEffect": "Sanitized actor-bound status read only.",
+      "expectedScopes": [
+        "arcanos:gaming:query"
+      ],
+      "expectedState": "Source lifecycle queued/running or completed/completed_with_errors/failed/cancelled/expired",
+      "expectedNextAction": "Poll within bound or stop; INGESTION_RESULT_REQUIRED requires a per-source status read",
+      "expectedPersistence": "No new writes from polling; stored/updated/unchanged results establish storage separately.",
+      "expectedFailureClass": "Unowned or unavailable job is denied without leaking job details.",
+      "executionStatus": "NOT_RUN"
+    },
+    {
+      "id": "G13",
+      "scenario": "Refresh known sources",
+      "fixture": "Configured private owner approves refresh of one to four admitted UUIDs from shared Gaming corpus.",
+      "classification": "BACKEND_WRITE",
+      "expectedSkillActivation": "Gaming skill uses admitted source IDs, explicit confirmation, and new logical-operation key.",
+      "expectedBackendTools": [
+        "arcanos_gaming_refresh_sources"
+      ],
+      "expectedSideEffect": "Durable refresh job and later bounded refetch/atomic revision update.",
+      "expectedScopes": [
+        "arcanos:gaming:sources:write"
+      ],
+      "expectedState": "Source lifecycle queued or running",
+      "expectedNextAction": "Poll returned ingestion ID within bound",
+      "expectedPersistence": "Job then eligible source revision; no replacement URL accepted.",
+      "expectedFailureClass": "Unknown IDs rejected; query-only or non-owner principal denied before refresh. Shared corpus does not imply per-source tenant ownership.",
+      "executionStatus": "NOT_RUN"
+    },
+    {
+      "id": "G14",
+      "scenario": "Explicit accepted-candidate storage",
+      "fixture": "Owned workflow starts ask_before_store; one to three accepted unexpired eligible candidates; owner approves confirmStore true.",
+      "classification": "BACKEND_WRITE",
+      "expectedSkillActivation": "Gaming skill preserves workflow, candidate IDs, contractVersion, original storagePolicy, confirmation, and operation key.",
+      "expectedBackendTools": [
+        "arcanos_gaming_ingest_candidates"
+      ],
+      "expectedSideEffect": "Existing authorized ingestion queue; no alternate storage service.",
+      "expectedScopes": [
+        "arcanos:gaming:sources:write"
+      ],
+      "expectedState": "ingestion_pending for new job; preserve any independent supported answer",
+      "expectedNextAction": "poll_ingestion; terminal replay may require one status read",
+      "expectedPersistence": "Durable job and later eligible source storage; exact candidate content/policy/actor binding revalidated.",
+      "expectedFailureClass": "transient_only, policy mismatch, stale/unowned candidate, or disallowed source category denies storage.",
+      "executionStatus": "NOT_RUN"
+    },
+    {
+      "id": "G15",
+      "scenario": "Missing storage confirmation or write authority",
+      "fixture": "Attempt all three write tools with read scope only; separately attempt ask_before_store with confirmStore false.",
+      "classification": "BACKEND_WRITE",
+      "expectedSkillActivation": "Gaming skill requests explicit storage approval when needed; direct malicious tool calls still fail server-side.",
+      "expectedBackendTools": [
+        "arcanos_gaming_ingest_sources",
+        "arcanos_gaming_refresh_sources",
+        "arcanos_gaming_ingest_candidates"
+      ],
+      "expectedSideEffect": "None; no enqueue, source fetch, or source write before authorization/confirmation.",
+      "expectedScopes": [
+        "arcanos:gaming:sources:write"
+      ],
+      "expectedState": "MCP authorization/confirmation error; existing hybrid consent denial is temporarily_unavailable",
+      "expectedNextAction": "stop; never retry with fabricated consent or upgraded storagePolicy",
+      "expectedPersistence": "None durable.",
+      "expectedFailureClass": "Insufficient scope/confirmation; existing hybrid GAMING_HYBRID_CONFIRMATION_REQUIRED, GAMING_HYBRID_STORAGE_FORBIDDEN, or STORAGE_POLICY_DENIED.",
+      "executionStatus": "NOT_RUN"
+    },
+    {
+      "id": "G16",
+      "scenario": "Idempotency replay and mismatch",
+      "fixture": "Same actor/key/payload is replayed; then same key with changed semantic input; mock durable enqueue and hybrid operations.",
+      "classification": "BACKEND_WRITE",
+      "expectedSkillActivation": "Gaming skill retains key only for identical retry and does not renew discovery budgets.",
+      "expectedBackendTools": [
+        "arcanos_gaming_ingest_sources",
+        "arcanos_gaming_hybrid_query",
+        "arcanos_gaming_submit_candidates"
+      ],
+      "expectedSideEffect": "Identical durable replay reuses one job; mismatch produces no second enqueue; transient replay retains workflow limits.",
+      "expectedScopes": [
+        "arcanos:gaming:sources:write",
+        "arcanos:gaming:query"
+      ],
+      "expectedState": "Prior operation result for valid replay; conflict for changed input",
+      "expectedNextAction": "Preserve returned continuation; terminal ingestion replay requires source result evidence",
+      "expectedPersistence": "At most the original authorized durable job; query/evaluation remain transient.",
+      "expectedFailureClass": "IDEMPOTENCY_CONFLICT or existing source-ingestion conflict; no cross-principal replay.",
+      "executionStatus": "NOT_RUN"
+    },
+    {
+      "id": "G17",
+      "scenario": "Exhausted discovery workflow",
+      "fixture": "Gameplay/currentness operation is exhausted and response has nextAction stop; try new keys for same normalized request.",
+      "classification": "BACKEND_HYBRID",
+      "expectedSkillActivation": "Gaming skill reports backend uncertainty and stops without restarting search or workflow.",
+      "expectedBackendTools": [
+        "arcanos_gaming_submit_candidates"
+      ],
+      "expectedSideEffect": "No extra acquisition/generation after exhausted operation; backend prevents budget renewal.",
+      "expectedScopes": [
+        "arcanos:gaming:query"
+      ],
+      "expectedState": "discovery_required",
+      "expectedNextAction": "stop",
+      "expectedPersistence": "Transient workflow only.",
+      "expectedFailureClass": "Bounded discovery exhausted; retry_later/service failure must not be mislabeled exhaustion.",
+      "executionStatus": "NOT_RUN"
+    },
+    {
+      "id": "G18",
+      "scenario": "Cross-plugin and administrative request denial",
+      "fixture": "Request Tutor/Booker/Core execution, arbitrary module, generic job, database inspection, Railway administration, or global memory administration.",
+      "classification": "SKILL_ONLY",
+      "expectedSkillActivation": "Gaming skill declines the out-of-scope operation; backend rejects unknown tools and authority-bearing input fields independently.",
+      "expectedBackendTools": [],
+      "expectedSideEffect": "None; catalog contains only fixed Gaming tools.",
+      "expectedScopes": [],
+      "expectedState": "No Gaming workflow for scope denial",
+      "expectedNextAction": "stop",
+      "expectedPersistence": "None.",
+      "expectedFailureClass": "Unknown tool, closed-schema violation, or authorization denial; never inherit another plugin's scope or credentials.",
+      "executionStatus": "NOT_RUN"
+    }
+  ],
+  "baselineFingerprint": "7ecae0312c25c56f1cb66e39ee3de0e56385244632227320d8c2c1bde66b4ac6"
+}

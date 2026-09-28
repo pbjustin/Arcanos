@@ -1,0 +1,10 @@
+{
+  "baseCommit": "8f31f3eb5c95af1919e5a36e780cfb75e011a7a9",
+  "artifacts": [
+    {
+      "path": "docs/gpt/arcanos-gaming-hybrid.instructions.md",
+      "sha256": "8a30dad3b83cced79724b58fb21d3f9d538c29f89779f090cd54b1cbdc99e406",
+      "sizeBytes": 7796
+    }
+  ]
+}
