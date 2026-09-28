@@ -1,5 +1,11 @@
 # Workspace Packages
 
+The `@arcanos/protocol/chatgptGaming` leaf exports `CHATGPT_GAMING_TOOL_NAMES`,
+`chatGptGamingSchemas`, `ChatGptGamingToolName` and `ChatGptGamingOutput`. It reads
+only the dedicated Gaming tool schema; sealed previews use this leaf to avoid
+loading unrelated protocol families. The root package also re-exports these
+names and registers all eight tool schemas in `getProtocolSchemaCatalog()`.
+
 ## Overview
 Arcanos is an npm workspace. The root backend owns deploy/runtime startup, while shared TypeScript packages own protocol, CLI, runtime helpers, and OpenAI adapter utilities.
 

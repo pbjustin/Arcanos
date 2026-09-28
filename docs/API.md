@@ -2209,6 +2209,92 @@ Notes:
   `/api/daemon/*` route.
 - The backend stores results temporarily (in-memory by default).
 - `src/routes/ask/daemonTools.ts` will poll for results up to `DAEMON_RESULT_WAIT_MS` and feed them back to OpenAI as `function_call_output`.
+## Private ChatGPT Gaming resource
+
+`POST /chatgpt/gaming/mcp` is a separate, disabled-by-default single-owner OAuth
+resource. Its public discovery document is
+`GET /.well-known/oauth-protected-resource/chatgpt/gaming/mcp`. It authenticates
+before its 32 KiB JSON parser, verifies the exact configured issuer/audience and
+owner subject, and accepts only `arcanos:gaming:query` plus the separately granted
+`arcanos:gaming:sources:write`. It shares JWT/JWKS verification mechanics with
+Tutor but uses a distinct resource, scopes, app registration and owner gate.
+It exposes no general dispatcher, jobs, database or operator tools.
+
+| Tool | Fixed service reused | Effect and timeout |
+| --- | --- | --- |
+| `arcanos_gaming_query` | `ArcanosGaming.actions.query`; canonical public query validation | Gameplay generation, retrieval/public sources; no source storage; 60 s |
+| `arcanos_gaming_canary` | `executePublicGamingCanary` | Bundled public-pipeline fixture only; no provider/database; 5 s |
+| `arcanos_gaming_hybrid_query` | `gamingHybridWorkflow.query` | Stored retrieval/generation and temporary owned workflow; 38 s |
+| `arcanos_gaming_submit_candidates` | `gamingHybridWorkflow.candidates` | Up to three bounded public candidates; temporary artifacts/currentness continuation; 38 s |
+| `arcanos_gaming_ingestion_status` | `getGamingSourceIngestionStatus` | Sanitized owned job status; 10 s |
+| `arcanos_gaming_ingest_sources` | `createGamingSourceIngestion` | Durable worker ingestion of up to four explicit URLs; 20 s admission |
+| `arcanos_gaming_refresh_sources` | `refreshGamingSources` | Durable refresh of up to four known source IDs; 20 s admission |
+| `arcanos_gaming_ingest_candidates` | `gamingHybridWorkflow.ingest` | Durable ingestion of up to three approved candidate IDs; 38 s admission |
+
+Schemas live in `packages/protocol/schemas/v1/tools/arcanos-gaming.schema.json`.
+Query input is the existing Gaming query payload, canary input is `{}`, status
+input is `{ingestionId}`, and hybrid inputs preserve `gaming-hybrid-v1` shapes.
+Direct ingestion/refresh inputs are their existing payloads plus required
+`idempotencyKey`, `storagePolicy`, and literal `confirmStore: true`. Candidate
+ingestion likewise requires affirmative confirmation. Outputs are
+`{statusCode, result}`, preserving the existing service result and structured
+state, `nextAction`, workflow, provenance, freshness and ingestion fields.
+Errors with a service result retain it; transport/authorization exceptions use
+fixed sanitized codes. Tool input cannot supply authorization, owner identity,
+backend hosts or module selection. Gameplay `role` is player context, not caller
+authority.
+The canary projects `route: gaming_mcp_canary` and `checks.publicRoute: skipped`:
+it validates the fixed dispatcher request and bundled fixture, not the legacy
+HTTP Action route. Its message explicitly excludes live provider/storage proof.
+
+Query, canary and status advertise `readOnlyHint: true`. Hybrid query/candidate
+operations mutate temporary actor-bound workflow/artifact state, so they
+conservatively advertise `readOnlyHint: false` while requiring only query scope.
+They cannot enqueue source storage: their adapter supplies `canStore: false`
+and `canAutoStore: false`. The three durable tools require both OAuth scopes,
+`confirmStore: true`, and a non-transient storage policy before any service call.
+All three advertise `destructiveHint: true` because existing sources can be
+updated or reactivated. Existing URL admission, content/provenance validation,
+source bounds and worker semantics remain authoritative.
+`auto_store_approved` is supported only for eligible approved candidates when
+configured standing permission is enabled; explicit consent and write scope
+remain mandatory. Direct ingest/refresh reject that policy. Annotations guide
+host confirmation; server checks enforce authority and consent independently.
+See [OpenAI tool annotations](https://developers.openai.com/plugins/build/mcp-server#tool-annotations-and-elicitation).
+
+The actor key hashes verified issuer and subject in a Gaming-only OAuth
+namespace and survives token renewal. It never derives from or impersonates
+the old Action bearer. Existing job idempotency/status and hybrid workflow /
+candidate ownership use that key. Old bearer-owned ingestion IDs remain
+inaccessible. The existing Gaming source corpus is global within this private
+deployment; the exact owner gate grants that owner access to the corpus.
+No storage schema or arbitrary-user tenancy model was added.
+
+Do not automatically retry generation. Preserve the same idempotency key and
+unchanged inputs for explicitly retried hybrid/storage operations; conflicting
+inputs fail. A timed-out durable admission may have enqueued work: never retry
+with a new key, and poll owned status when an ID is known. Durable job replay
+is persisted; hybrid replay, budgets and candidates are process-local with a
+maximum ten-minute lifetime and fail closed across expiry/restart/replica misses.
+Discovery remains one gameplay round and one currentness round; poll at most
+three times per interaction. Sealed preview does not verify OAuth, installed
+ChatGPT behavior, production storage, workers or real providers.
+
+After the maintained native preview verifier passes against the trusted exact
+PR-head web/worker deployment, run the supplemental Gaming verifier from its
+clean exact-head checkout with the same confirmed hosts:
+
+```text
+node scripts/gaming-mcp-preview-e2e.mjs --pr-number <N> --commit-sha <SHA> --web-base-url <confirmed-web-https-url> --worker-base-url <confirmed-worker-https-url>
+```
+
+The default is a no-network plan. Within the authorized preview lifecycle, add
+`--execute --allow-network` for 21 bounded requests covering MCP initialization,
+the exact eight-tool catalog/schemas/annotations, fixed query and hybrid state,
+candidate bounds, denied writes/authority, body limits, worker denial and
+success-only Gaming/shared-package proof markers. These synthetic assertions
+supplement the maintained verifier; they do not establish live OAuth or storage.
+
 ## Scoped ChatGPT Tutor resource
 
 `POST /chatgpt/mcp` is an optional, default-disabled OAuth resource exposing

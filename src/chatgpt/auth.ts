@@ -48,7 +48,7 @@ const MAX_TOKEN_LENGTH = 16_384;
 const SCOPE_TOKEN_PATTERN = /^[\x21\x23-\x5B\x5D-\x7E]+$/u;
 
 /** Validate configured URLs without normalizing security-sensitive identifiers. */
-function readHttpsIdentifier(value: string | undefined): string | null {
+export function readHttpsIdentifier(value: string | undefined): string | null {
   if (!value || value.length > 2_048 || value !== value.trim() || !value.startsWith('https://')) return null;
   try {
     const parsed = new URL(value);
@@ -112,11 +112,16 @@ export function buildChatGptAuthChallenge(
 
 /** Recheck the trusted identity at execution, including expiry after request admission. */
 export function hasChatGptTutorPermission(principal: ChatGptPrincipal | undefined): boolean {
+  return hasVerifiedChatGptPermission(principal, CHATGPT_TUTOR_SCOPE);
+}
+
+/** Shared identity check; only the resource verifier can create trusted principals. */
+export function hasVerifiedChatGptPermission(principal: ChatGptPrincipal | undefined, scope: string): boolean {
   return Boolean(
     principal
     && verifiedPrincipals.has(principal)
     && principal.expiresAt > Math.floor(Date.now() / 1_000)
-    && principal.scopes.includes(CHATGPT_TUTOR_SCOPE),
+    && principal.scopes.includes(scope),
   );
 }
 
@@ -131,6 +136,17 @@ export function createChatGptTokenVerifier(
     keyResolver?: JWTVerifyGetKey;
     readEnvironmentValue?: EnvironmentReader;
   } = {},
+): ChatGptTokenVerifier {
+  return createScopedChatGptTokenVerifier(config, {
+    requiredScope: CHATGPT_TUTOR_SCOPE, allowedScopes: [CHATGPT_TUTOR_SCOPE],
+  }, options);
+}
+
+/** Fixed server-side policy shared by dedicated resources; never taken from tool input. */
+export function createScopedChatGptTokenVerifier(
+  config: ReadyChatGptAuthConfiguration,
+  policy: { requiredScope: string; allowedScopes: readonly string[]; ownerSubject?: string },
+  options: { keyResolver?: JWTVerifyGetKey; readEnvironmentValue?: EnvironmentReader } = {},
 ): ChatGptTokenVerifier {
   const keyResolver = options.keyResolver ?? createRemoteJWKSet(new URL(config.jwksUrl), {
     timeoutDuration: 3_000,
@@ -178,13 +194,14 @@ export function createChatGptTokenVerifier(
       if (typeof payload.scope !== 'string' || payload.scope.length > 2_048) return INSUFFICIENT_SCOPE;
       const scopes = payload.scope.split(' ');
       if (scopes.some((scope) => !SCOPE_TOKEN_PATTERN.test(scope))) return INSUFFICIENT_SCOPE;
-      if (!scopes.includes(CHATGPT_TUTOR_SCOPE)) return INSUFFICIENT_SCOPE;
+      if (!scopes.includes(policy.requiredScope)) return INSUFFICIENT_SCOPE;
+      if (policy.ownerSubject !== undefined && payload.sub !== policy.ownerSubject) return INVALID_TOKEN;
 
       const principal: ChatGptPrincipal = Object.freeze({
         issuer: config.issuer,
         subject: payload.sub,
         resource: config.resource,
-        scopes: Object.freeze([CHATGPT_TUTOR_SCOPE]),
+        scopes: Object.freeze(policy.allowedScopes.filter(scope => scopes.includes(scope))),
         expiresAt: payload.exp,
       });
       verifiedPrincipals.add(principal);

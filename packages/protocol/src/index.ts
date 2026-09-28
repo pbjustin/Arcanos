@@ -140,3 +140,4 @@ export {
   validateProtocolResponseEnvelope
 } from "./validation.js";
 export * from './chatgptTutor.js';
+export * from './chatgptGaming.js';

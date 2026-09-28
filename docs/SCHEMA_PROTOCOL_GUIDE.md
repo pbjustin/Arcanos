@@ -1,5 +1,14 @@
 # Schema and Protocol Guide
 
+The private Gaming MCP schemas are in
+[`packages/protocol/schemas/v1/tools/arcanos-gaming.schema.json`](../packages/protocol/schemas/v1/tools/arcanos-gaming.schema.json),
+registered as eight named tools in the protocol catalog. Existing Gaming
+service shapes remain equivalent to Action 1.5.0; MCP writes add required
+storage policy, explicit `confirmStore: true`, and idempotency. The Gaming
+protocol leaf exports self-contained, reachable-definition-only JSON schemas.
+This surface is not a daemon command, generic operator tool or new Python API.
+See [Gaming resource behavior](API.md#private-chatgpt-gaming-resource).
+
 The Gaming hybrid Action contract is an additive module HTTP contract in
 [`contracts/arcanos_gaming.openapi.v1.json`](../contracts/arcanos_gaming.openapi.v1.json),
 with runtime request schemas/types in

@@ -5,6 +5,7 @@ import {
   findNativePrPreviewImportViolations,
   findNativePrPreviewBuildScriptViolations,
   findPreviewDistImportCheckerDigestViolations,
+  findGamingMcpProtocolExportViolations,
   findRuntimeRequestAbortExportViolations,
   findRuntimeRequestAbortTypeResolutionViolations,
   findUnsafeRuntimeSyntax,
@@ -12,6 +13,7 @@ import {
 import {
   TUTOR_HONESTY_PREVIEW_DIST_IMPORT_CONTRACT,
   PLUGIN_MIGRATION_PREVIEW_DIST_IMPORT_CONTRACT,
+  GAMING_MCP_PREVIEW_DIST_IMPORT_CONTRACT,
   findTutorHonestyPreviewDistImportSourceViolations,
 } from '../scripts/check-native-pr-preview-dist-imports.mjs';
 
@@ -547,7 +549,7 @@ describe('native PR preview import boundary', () => {
       ]));
   });
 
-  it('pins the sealed Tutor peer and admits only its two canonical schema assets', async () => {
+  it('pins the sealed Tutor peer and admits only reviewed Tutor and Gaming protocol assets', async () => {
     const filePath = 'src/shared/chatgpt/chatgptTutorPreviewFixture.ts';
     const sourceText = await readFile(new URL(`../${filePath}`, import.meta.url), 'utf8');
     expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).toContain(filePath);
@@ -555,6 +557,8 @@ describe('native PR preview import boundary', () => {
       .toEqual([
         'packages/protocol/schemas/v1/tools/arcanos-tutor.input.schema.json',
         'packages/protocol/schemas/v1/tools/arcanos-tutor.output.schema.json',
+        'packages/protocol/schemas/v1/tools/arcanos-gaming.schema.json',
+        'packages/protocol/src/chatgptGaming.ts',
       ]);
     expect(findUnsafeRuntimeSyntax(filePath, sourceText)).toEqual([]);
     for (const addition of [
@@ -667,6 +671,44 @@ describe('native PR preview import boundary', () => {
       'scripts/tutor-skill-revision.mjs', 'scripts/tutor-updated-plugin-release.mjs']) {
       expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toContain(excluded);
     }
+  });
+
+  it.each([
+    'src/shared/chatgpt/gamingMcpPreviewFixture.ts',
+    'src/shared/chatgpt/gamingMcpContract.ts',
+    'packages/protocol/src/chatgptGaming.ts',
+  ])('pins the pure Gaming MCP seam and rejects effects in %s', async filePath => {
+    const sourceText = await readFile(new URL(`../${filePath}`, import.meta.url), 'utf8');
+    expect(findUnsafeRuntimeSyntax(filePath, sourceText)).toEqual([]);
+    for (const addition of ['fetch("https://unreviewed.invalid");', 'process.env.TOKEN;',
+      'import { gamingHybridWorkflow } from "../../services/gamingHybridKnowledge.js";']) {
+      expect(findUnsafeRuntimeSyntax(filePath, `${sourceText}\n${addition}`)).toEqual(
+        expect.arrayContaining([expect.stringContaining('critical entry file semantic digest')])
+      );
+    }
+    for (const excluded of ['src/chatgpt/gamingMcp.ts', 'src/chatgpt/gamingAuth.ts', 'src/services/gamingHybridKnowledge.ts'])
+      expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toContain(excluded);
+  });
+
+  it('rejects absent or retargeted Gaming protocol exports outside the reviewed leaf', async () => {
+    const manifest = JSON.parse(await readFile(new URL('../packages/protocol/package.json', import.meta.url), 'utf8'));
+    expect(findGamingMcpProtocolExportViolations(manifest)).toEqual([]);
+    for (const leaf of [undefined, './dist/src/index.js',
+      { ...manifest.exports['./chatgptGaming'], import: './dist/src/index.js' },
+      { ...manifest.exports['./chatgptGaming'], default: './dist/src/index.js' }]) {
+      expect(findGamingMcpProtocolExportViolations({ ...manifest, exports: { ...manifest.exports, './chatgptGaming': leaf } })).toEqual([
+        'packages/protocol/package.json: chatgptGaming export must match the reviewed ESM leaf surface',
+      ]);
+    }
+  });
+
+  it('keeps the emitted Gaming core outside broad protocol and production services', () => {
+    const contract = GAMING_MCP_PREVIEW_DIST_IMPORT_CONTRACT.find(entry => entry.filePath === 'dist/shared/chatgpt/gamingMcpContract.js');
+    const source = 'import { Ajv } from "ajv";\nimport { CHATGPT_GAMING_TOOL_NAMES, chatGptGamingSchemas } from "@arcanos/protocol/chatgptGaming";';
+    expect(findTutorHonestyPreviewDistImportSourceViolations(contract, source)).toEqual([]);
+    for (const mutated of [source.replace('/chatgptGaming', ''), `${source}\nimport "../../chatgpt/gamingAuth.js";`,
+      `${source}\nawait import("node:fs");`])
+      expect(findTutorHonestyPreviewDistImportSourceViolations(contract, mutated).length).toBeGreaterThan(0);
   });
 
   it('rejects retargeted, renamed, broadened or missing emitted honesty imports', () => {

@@ -18,6 +18,10 @@
       "types": "./dist/src/constants.d.ts",
       "import": "./dist/src/constants.js"
     },
+    "./chatgptGaming": {
+      "types": "./dist/src/chatgptGaming.d.ts",
+      "import": "./dist/src/chatgptGaming.js"
+    },
     "./schemaCatalog": {
       "types": "./dist/src/schemaCatalog.d.ts",
       "import": "./dist/src/schemaCatalog.js"

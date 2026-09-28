@@ -15,11 +15,12 @@ const PREVIEW_IMPORT_TSCONFIG_FILE =
 const PREVIEW_DIST_IMPORT_CHECKER_FILE =
   'scripts/check-native-pr-preview-dist-imports.mjs';
 const PREVIEW_DIST_IMPORT_CHECKER_DIGEST =
-  'cf75978a2a4ea56ee29f26bc0ae6cfd07d516d6d481832c33158baf8dfe51416';
+  '5bd60f3dcdd929f426c9fcaafecff6734dd297312ebe7fa9fa46da30d741a54b';
 const ROOT_PACKAGE_MANIFEST_FILE = 'package.json';
 const ROOT_TSCONFIG_FILE = 'tsconfig.json';
 const RUNTIME_PACKAGE_MANIFEST_FILE =
   'packages/arcanos-runtime/package.json';
+const PROTOCOL_PACKAGE_MANIFEST_FILE = 'packages/protocol/package.json';
 const PREVIEW_ENTRY_FILES = [
   'packages/arcanos-runtime/src/requestAbort.ts',
   'scripts/native-pr-preview-contract.mjs',
@@ -35,6 +36,8 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'packages/arcanos-runtime/src/requestAbort.ts',
   'packages/protocol/schemas/v1/tools/arcanos-tutor.input.schema.json',
   'packages/protocol/schemas/v1/tools/arcanos-tutor.output.schema.json',
+  'packages/protocol/schemas/v1/tools/arcanos-gaming.schema.json',
+  'packages/protocol/src/chatgptGaming.ts',
   'scripts/native-pr-preview-contract.d.mts',
   'scripts/native-pr-preview-contract.mjs',
   'scripts/tutor-package-core.d.mts',
@@ -98,6 +101,8 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/shared/backstage/backstageStoryline.ts',
   'src/shared/backstage/backstageUniverseReadProjection.ts',
   'src/shared/chatgpt/chatgptTutorPreviewFixture.ts',
+  'src/shared/chatgpt/gamingMcpContract.ts',
+  'src/shared/chatgpt/gamingMcpPreviewFixture.ts',
   'src/shared/chatgpt/pluginMigrationPreviewFixture.ts',
   'src/shared/chatgpt/tutorHonestyPreviewFixture.ts',
   'src/shared/dispatch/dispatchGptIdentifierBoundary.ts',
@@ -226,6 +231,7 @@ const ALLOWED_EXTERNAL_RUNTIME_IMPORTS = new Set([
   'zod',
 ]);
 const FILE_SPECIFIC_EXTERNAL_RUNTIME_IMPORTS = new Map([
+  ['src/shared/chatgpt/gamingMcpContract.ts', new Set(['ajv', '@arcanos/protocol/chatgptGaming'])],
   ['src/platform/runtime/sessionContext.ts', new Set(['node:async_hooks'])],
   ['src/services/openai/attemptTokenUsage.ts', new Set(['node:async_hooks'])],
   ['src/shared/dag/dagTokenAccountingPreviewFixture.ts', new Set(['@arcanos/runtime/redaction'])],
@@ -261,6 +267,10 @@ const FILE_SPECIFIC_EXTERNAL_RUNTIME_IMPORTS = new Map([
   ['src/start-native-pr-preview.ts', new Set(['node:http', 'node:url'])],
 ]);
 const FILE_SPECIFIC_EXTERNAL_IMPORT_BINDINGS = new Map([
+  ['src/shared/chatgpt/gamingMcpContract.ts', new Map([
+    ['ajv', new Set(['Ajv:Ajv'])],
+    ['@arcanos/protocol/chatgptGaming', new Set(['CHATGPT_GAMING_TOOL_NAMES:CHATGPT_GAMING_TOOL_NAMES', 'chatGptGamingSchemas:chatGptGamingSchemas'])],
+  ])],
   ['scripts/tutor-package-core.mjs', new Map([
     ['node:crypto', new Set(['createHash:createHash'])],
   ])],
@@ -776,6 +786,9 @@ const CRITICAL_RUNTIME_FUNCTION_DIGESTS = new Map([
   ],
 ]);
 const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
+  ['src/shared/chatgpt/gamingMcpPreviewFixture.ts', '9f84672e926862180864f7c46338eab0eb0b134e3a26a1a2e1e429df04e368a4'],
+  ['src/shared/chatgpt/gamingMcpContract.ts', 'be13dbb5b25a764ac4f3df0d5a990affff89a1f49b5c5732b8f9f0c9a430fd70'],
+  ['packages/protocol/src/chatgptGaming.ts', '71a4f0a17e8a31558b78ae2a90d153010efc6276728ebb48a236325e9743d79e'],
   ['scripts/tutor-package-core.mjs', '1aa853e7dcc157d863dfe6f506e6c8779cd4a1defbea70b453d7d2954cfce2d8'], // gitleaks:allow -- public source semantic SHA-256
   ['scripts/tutor-package-core.d.mts', '4b2596dbe443c4f26069252eee614b810977632ac606c6d12d9c273b1db8ccb8'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/chatgpt/pluginMigrationPreviewFixture.ts', 'c723fbc47ff3faf54ada2c46b991ddcddc7b781076100335d3379c9fb9791b92'], // gitleaks:allow -- public source semantic SHA-256
@@ -5575,6 +5588,19 @@ export function findUnsafeRuntimeSyntax(filePath, sourceText) {
   return violations;
 }
 
+export function findGamingMcpProtocolExportViolations(manifest) {
+  const leaf = manifest?.exports?.['./chatgptGaming'];
+  const keys = leaf && typeof leaf === 'object' && !Array.isArray(leaf)
+    ? Object.keys(leaf).sort() : [];
+  if (manifest?.name === '@arcanos/protocol' && manifest.type === 'module'
+    && leaf?.types === './dist/src/chatgptGaming.d.ts'
+    && leaf?.import === './dist/src/chatgptGaming.js'
+    && keys.length === 2 && keys[0] === 'import' && keys[1] === 'types') {
+    return [];
+  }
+  return [`${PROTOCOL_PACKAGE_MANIFEST_FILE}: chatgptGaming export must match the reviewed ESM leaf surface`];
+}
+
 export function findRuntimeRequestAbortExportViolations(manifest) {
   const manifestObject = (
     manifest
@@ -5682,6 +5708,14 @@ export async function findNativePrPreviewImportViolations({
   const violations = [];
   const skippedImports = graph.warnings().skipped ?? [];
 
+  try {
+    const protocolPackageManifest = JSON.parse(await fs.readFile(
+      path.join(repositoryRoot, PROTOCOL_PACKAGE_MANIFEST_FILE), 'utf8'
+    ));
+    violations.push(...findGamingMcpProtocolExportViolations(protocolPackageManifest));
+  } catch {
+    violations.push(`${PROTOCOL_PACKAGE_MANIFEST_FILE}: chatgptGaming export manifest is unreadable`);
+  }
   try {
     const runtimePackageManifest = JSON.parse(await fs.readFile(
       path.join(repositoryRoot, RUNTIME_PACKAGE_MANIFEST_FILE),

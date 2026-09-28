@@ -93,6 +93,33 @@ export const PLUGIN_MIGRATION_PREVIEW_DIST_IMPORT_CONTRACT = Object.freeze([
   }),
 ]);
 
+export const GAMING_MCP_PREVIEW_DIST_IMPORT_CONTRACT = Object.freeze([
+  Object.freeze({
+    filePath: 'dist/shared/chatgpt/gamingMcpPreviewFixture.js',
+    imports: Object.freeze({
+      '../../../scripts/native-pr-preview-contract.mjs': Object.freeze(['NATIVE_PR_PREVIEW_E2E_CONTRACT:NATIVE_PR_PREVIEW_E2E_CONTRACT']),
+      './pluginMigrationPreviewFixture.js': Object.freeze(['assertPluginMigrationPreviewFixture:assertPluginMigrationPreviewFixture']),
+      './gamingMcpContract.js': Object.freeze([
+        'gamingMcpTools:gamingMcpTools', 'gamingMcpWritePolicyError:gamingMcpWritePolicyError',
+        'isGamingMcpInput:isGamingMcpInput', 'isGamingMcpOutput:isGamingMcpOutput',
+        'isGamingMcpToolName:isGamingMcpToolName', 'isGamingMcpWrite:isGamingMcpWrite',
+        'GAMING_QUERY_SCOPE:GAMING_QUERY_SCOPE', 'GAMING_WRITE_SCOPE:GAMING_WRITE_SCOPE',
+      ]),
+    }),
+  }),
+  Object.freeze({
+    filePath: 'dist/shared/chatgpt/gamingMcpContract.js',
+    imports: Object.freeze({
+      ajv: Object.freeze(['Ajv:Ajv']),
+      '@arcanos/protocol/chatgptGaming': Object.freeze(['CHATGPT_GAMING_TOOL_NAMES:CHATGPT_GAMING_TOOL_NAMES', 'chatGptGamingSchemas:chatGptGamingSchemas']),
+    }),
+  }),
+  Object.freeze({
+    filePath: 'packages/protocol/dist/src/chatgptGaming.js',
+    imports: Object.freeze({ '../schemas/v1/tools/arcanos-gaming.schema.json': Object.freeze(['default:contract']) }),
+  }),
+]);
+
 function runtimeImportBindings(node) {
   const importClause = node.importClause;
   if (!importClause || importClause.isTypeOnly) {
@@ -284,7 +311,7 @@ export async function findNativePrPreviewDistImportViolations({
     }
   }
   for (const contract of [...TUTOR_HONESTY_PREVIEW_DIST_IMPORT_CONTRACT,
-    ...PLUGIN_MIGRATION_PREVIEW_DIST_IMPORT_CONTRACT]) {
+    ...PLUGIN_MIGRATION_PREVIEW_DIST_IMPORT_CONTRACT, ...GAMING_MCP_PREVIEW_DIST_IMPORT_CONTRACT]) {
     try {
       const sourceText = await fs.readFile(path.join(repositoryRoot, contract.filePath), 'utf8');
       violations.push(...findTutorHonestyPreviewDistImportSourceViolations(contract, sourceText));
