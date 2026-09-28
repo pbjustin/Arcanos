@@ -11,6 +11,7 @@ import {
 } from '../scripts/check-native-pr-preview-imports.mjs';
 import {
   TUTOR_HONESTY_PREVIEW_DIST_IMPORT_CONTRACT,
+  PLUGIN_MIGRATION_PREVIEW_DIST_IMPORT_CONTRACT,
   findTutorHonestyPreviewDistImportSourceViolations,
 } from '../scripts/check-native-pr-preview-dist-imports.mjs';
 
@@ -623,8 +624,8 @@ describe('native PR preview import boundary', () => {
     }
   });
 
-  it.each(TUTOR_HONESTY_PREVIEW_DIST_IMPORT_CONTRACT)(
-    'rejects added runtime edges in emitted Tutor module $filePath', contract => {
+  it.each([...TUTOR_HONESTY_PREVIEW_DIST_IMPORT_CONTRACT, ...PLUGIN_MIGRATION_PREVIEW_DIST_IMPORT_CONTRACT])(
+    'rejects added runtime edges in emitted sealed module $filePath', contract => {
       const imports = Object.entries(contract.imports).map(([specifier, bindings]) => {
         const names = bindings.map(binding => binding.split(':').join(' as ')).join(', ');
         return `import { ${names} } from '${specifier}';`;
@@ -642,6 +643,31 @@ describe('native PR preview import boundary', () => {
       }
     }
   );
+
+  it.each([
+    'scripts/tutor-package-core.mjs',
+    'scripts/tutor-package-core.d.mts',
+    'src/shared/chatgpt/pluginMigrationPreviewFixture.ts',
+  ])('pins the shared migration seam and rejects effects in %s', async filePath => {
+    const sourceText = await readFile(new URL(`../${filePath}`, import.meta.url), 'utf8');
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).toContain(filePath);
+    expect(findUnsafeRuntimeSyntax(filePath, sourceText)).toEqual([]);
+    for (const addition of [
+      'fetch("https://unreviewed.invalid");',
+      'process.env.PRIVATE_INPUT_ROOT = ".local-migration";',
+      'import { readFile } from "node:fs/promises";',
+      'await import("./tutor-migration.mjs");',
+    ]) {
+      expect(findUnsafeRuntimeSyntax(filePath, `${sourceText}\n${addition}`)).toEqual(
+        expect.arrayContaining([expect.stringContaining('critical entry file semantic digest')])
+      );
+    }
+    for (const excluded of ['scripts/tutor-migration.mjs',
+      'scripts/validate-arcanos-tutor-package.mjs', 'scripts/tutor-current-reconciliation.mjs',
+      'scripts/tutor-skill-revision.mjs', 'scripts/tutor-updated-plugin-release.mjs']) {
+      expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toContain(excluded);
+    }
+  });
 
   it('rejects retargeted, renamed, broadened or missing emitted honesty imports', () => {
     const contract = TUTOR_HONESTY_PREVIEW_DIST_IMPORT_CONTRACT.find(entry =>

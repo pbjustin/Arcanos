@@ -432,7 +432,7 @@ Launcher behavior:
   and [sealed Tutor evidence](audits/chatgpt-migration/2026-09-23-sealed-tutor.md)
   document these checks and their limits. This is synthetic transport evidence;
   real Tutor/OAuth and installed ChatGPT behavior require separate evidence.
-  The current verifier includes 18 Tutor cases for 156 bounded requests; earlier
+  The current verifier includes 19 Tutor cases for 157 bounded requests; earlier
   138-request compatibility references describe the pre-Tutor baseline. The
   trusted workflow uses its own default-branch revision. New PR-head assertions
   require a reviewed exact-head supplemental run on the same independently
@@ -446,7 +446,7 @@ Launcher behavior:
   `x-arcanos-preview-tutor-honesty-version: tutor-honesty-composition/v1`.
   An assertion failure returns a fixed error without that marker or a success
   payload. Discovery, denied requests, and worker routes cannot earn it. The
-  original mock payload, prompt allowlist, and 156-request budget are unchanged.
+  original mock payload and prompt allowlist are unchanged.
   The exact-head verifier requires the new marker; an older trusted verifier
   passing without that assertion does not establish honesty-composition proof.
   These synthetic candidates are not captured provider inputs. Successful
@@ -456,6 +456,27 @@ Launcher behavior:
   provider candidates were unavailable, so the precise transformation cannot be
   reconstructed from the final answers. Runtime acceptance remains separate and
   failed until independently supported by fresh authorized evidence.
+- That same fixed Tutor call executes the server-owned
+  [migration package fixture](../src/shared/chatgpt/pluginMigrationPreviewFixture.ts)
+  against the pure [package core](../scripts/tutor-package-core.mjs) shared with
+  the migration CLI. Synthetic identities and bytes exercise manifest identity,
+  one optional registered-app mapping, deterministic inventory fingerprints and
+  artifact digest/size checks, including representative malformed, identity,
+  optionality and altered-byte rejections. Only complete success earns
+  `x-arcanos-preview-plugin-migration-version: plugin-migration-package-core/v1`.
+  Failure returns a fixed error with neither Tutor honesty nor migration success
+  marker. No new route or caller-selected fixture exists; the worker denies
+  `/chatgpt/mcp`. The core and fixture have pinned source and emitted import
+  boundaries and cannot read private files, accounts, storage or credentials.
+  The existing 156 requests remain compatible with the trusted main verifier;
+  the exact-head verifier adds one valid JSON body of 4,097 bytes to test the
+  existing 4 KiB cap, for 157 requests with unchanged time/response limits and no
+  retries. All non-success responses must omit the migration marker.
+  This proves the deployed package-core seam, not complete schema validation,
+  private composition/revision authorization, archive parsing or current-release
+  reconciliation. Those remain local/CI and artifact evidence. See the
+  [migration handoff](chatgpt-migration/TUTOR_MIGRATION.md#sealed-preview-evidence-boundaries)
+  for the classification and exact-head run record.
 - The trusted
   [Railway PR preview lifecycle workflow](../.github/workflows/railway-pr-preview-lifecycle.yml)
   owns preview creation and teardown for PRs carrying the exact

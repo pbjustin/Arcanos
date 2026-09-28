@@ -1,5 +1,10 @@
 # Platform requirements and client evidence
 
+Historical PR #1508 snapshot. Current Tutor connection evidence and migration
+gates are in the [Tutor platform reconciliation](TUTOR_PLATFORM_RECONCILIATION.md)
+and [migration handoff](TUTOR_MIGRATION.md). Setup-pending statements below
+describe the foundation PR, not the subsequently connected account.
+
 Access date: **2026-09-22**. These are fetched official documentation findings,
 not evidence that this account has the corresponding controls. No account,
 workspace, Builder configuration, installed plugin, or mobile client was changed.

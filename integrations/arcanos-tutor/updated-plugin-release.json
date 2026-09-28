@@ -1,0 +1,120 @@
+{
+  "schemaVersion": 1,
+  "status": "VERIFIED",
+  "artifactFormat": "PLUGIN_CREATOR_SAVED_RELEASE",
+  "pluginId": "plugin_d292d1e45ae08191b3911299e30e1a25",
+  "packageName": "gpt-e9bcdc399db672af9f66dfd7e18e7953",
+  "version": "0.8.5",
+  "releaseId": "pluginrel_6ab84427e0d4819182de200f7ce49333",
+  "currentReleaseId": "pluginrel_6ab84427e0d4819182de200f7ce49333",
+  "visibility": "PRIVATE",
+  "previousRelease": {
+    "releaseId": "pluginrel_6ab809c1fea4819182a133da08f4152b",
+    "version": "0.8.4"
+  },
+  "capture": {
+    "rootPath": "installed-final-verification-20260926/saved-0.8.5",
+    "archive": {
+      "path": "installed-final-verification-20260926/saved-0.8.5.tar.gz",
+      "sha256": "b91898941bc04e953758d4036ae0e944f4229859743d5112b380901942568101",
+      "sizeBytes": 260764
+    },
+    "members": [
+      {
+        "path": ".app.json",
+        "type": "file",
+        "sha256": "38664c6a5fe355454844ca8b992e5c0b0229b9ab293d655e17a112514f0004f2",
+        "sizeBytes": 129
+      },
+      {
+        "path": ".codex-plugin",
+        "type": "directory",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "sizeBytes": 0
+      },
+      {
+        "path": ".codex-plugin/plugin.json",
+        "type": "file",
+        "sha256": "a11350ad038eb68089433675aec931ea227edea0fb08c947f7001c35da3f83b4",
+        "sizeBytes": 1329
+      },
+      {
+        "path": "assets",
+        "type": "directory",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "sizeBytes": 0
+      },
+      {
+        "path": "assets/gpt-icon.png",
+        "type": "file",
+        "sha256": "3a891552d348010ff7b5571d39efd77085db6d5fcecdc0e6641e02dd364c0b06",
+        "sizeBytes": 253896
+      },
+      {
+        "path": "plugin.json",
+        "type": "file",
+        "sha256": "0ca80c12ca34d587bd3f8ffa2d83edd0807880b969057474bd4dc7cef7944843",
+        "sizeBytes": 1466
+      },
+      {
+        "path": "skills",
+        "type": "directory",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "sizeBytes": 0
+      },
+      {
+        "path": "skills/instructions",
+        "type": "directory",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "sizeBytes": 0
+      },
+      {
+        "path": "skills/instructions/agents",
+        "type": "directory",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "sizeBytes": 0
+      },
+      {
+        "path": "skills/instructions/agents/openai.yaml",
+        "type": "file",
+        "sha256": "067d163eb275f2c1ca642972434926560726c5b075abb433bebfc643d50b671d",
+        "sizeBytes": 127
+      },
+      {
+        "path": "skills/instructions/lookup",
+        "type": "directory",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "sizeBytes": 0
+      },
+      {
+        "path": "skills/instructions/lookup/knowledge-index.json",
+        "type": "file",
+        "sha256": "6ac91cab38eae269a4e6457275b3b956f615a7df03de4b1ce88f44b8110efc30",
+        "sizeBytes": 18
+      },
+      {
+        "path": "skills/instructions/SKILL.md",
+        "type": "file",
+        "sha256": "282ceeba915a317f6bb3f49eb1929ef5ae9d555781c635b0b8ed7e85977a61b8",
+        "sizeBytes": 10406
+      }
+    ],
+    "packageFingerprint": "6f945afcce451d822597bc4e79fb1d8b60262416bb75c1eb398a774318d60f5c"
+  },
+  "approvedSkillSha256": "282ceeba915a317f6bb3f49eb1929ef5ae9d555781c635b0b8ed7e85977a61b8",
+  "registeredAppId": "asdk_app_6ab4747769088191856fd8eb02507240",
+  "appOptional": true,
+  "skillCount": 1,
+  "referenceCount": 0,
+  "appCount": 1,
+  "accountReview": {
+    "reviewedBy": "Codex supported Plugin Creator source/archive and independent reviewers",
+    "reviewedAt": "2026-09-26T22:19:15.746Z",
+    "confirmedSamePlugin": true,
+    "confirmedPrivate": true,
+    "confirmedCurrentRelease": true
+  },
+  "evidenceIds": [
+    "saved-plugin-diagnostic-release-20260926"
+  ]
+}

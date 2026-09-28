@@ -1,0 +1,66 @@
+{
+  "schemaVersion": 1,
+  "status": "BLOCKED_MATERIAL_INTEGRATION_DIFFERENCES",
+  "reviewedBy": "Codex artifact inspection",
+  "reviewedAt": "2026-09-26T04:27:35.707Z",
+  "approvedComposedSkillSha256": "7661b328b99aa096f930f46e272ef9208de6f11e22c002e77f79d9ab78a15096",
+  "migratedSkillSha256": "5478886612bfe7f80d09bddd0eebb5002644775763efe6aa9046a7c009c8dc5b",
+  "bodyExactlyPublishedInstructions": true,
+  "publishedTextOccurrences": 1,
+  "privateInstructionOmissions": 0,
+  "privateInstructionRewrites": 0,
+  "privateInstructionDuplications": 0,
+  "publicSections": [
+    {
+      "id": "integration-section-1",
+      "title": "## Repository-required privacy and security safeguards",
+      "sha256": "d81d21a1d9972fcf3dec570a049b977f2db55cfdbde2b77cf3c599cafbe5b27e",
+      "presentInMigrated": false,
+      "presentInApproved": true
+    },
+    {
+      "id": "integration-section-2",
+      "title": "## Skill activation and non-activation",
+      "sha256": "c6bf9e0eb08c223e1e51ed1f9aa18c29f8a07dd35ca62ffa56ac7774add7ea21",
+      "presentInMigrated": false,
+      "presentInApproved": true
+    },
+    {
+      "id": "integration-section-3",
+      "title": "## Optional app invocation policy",
+      "sha256": "a1d595c4b01c84e38794fdc4ed43b64d5380bf638cbac42f6903d3696ba55b01",
+      "presentInMigrated": false,
+      "presentInApproved": true
+    },
+    {
+      "id": "integration-section-4",
+      "title": "## Fixed backend failure handling",
+      "sha256": "2ac44c82b502c1a6478c7d767fd5202cb33d75745405e774e2d5376570e001be",
+      "presentInMigrated": false,
+      "presentInApproved": true
+    },
+    {
+      "id": "integration-section-5",
+      "title": "## Capability availability and backend authorization",
+      "sha256": "182f87ac1a8b962a2ed554d333507cbdb996baa6687cf54011a2cd9c631ae45e",
+      "presentInMigrated": false,
+      "presentInApproved": true
+    }
+  ],
+  "disposition": "BLOCKED_MATERIAL_INTEGRATION_DIFFERENCES",
+  "ownerAcceptance": null,
+  "automaticSelectionDescription": "GENERIC_PLUGIN_INVOCATION_NOT_TOPIC_SPECIFIC",
+  "rawContentsTracked": false,
+  "sourceKind": "INSTALLED_PLUGIN_CACHE",
+  "knowledgeCount": 0,
+  "knowledgeIndexExplicitlyEmpty": true,
+  "unexpectedReferenceFiles": 0,
+  "appAttachment": "NOT_ATTACHED",
+  "installedPackageFingerprint": "4f4ccff2556b8e8b2560eb16b301647e3edb0d71666dea03feb297b9613745fe",
+  "ownerReviewOfInstalledArtifact": "NOT_APPROVED",
+  "evidenceIds": [
+    "account-plugin-migration-20260926",
+    "installed-artifact-capture-20260926",
+    "installed-skill-differences-20260926"
+  ]
+}

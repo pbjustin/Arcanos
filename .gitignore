@@ -247,6 +247,9 @@ collected-ts/
 local_artifacts/
 unsloth_compiled_cache/
 
+# Private published GPT exports, knowledge files, migration output and parity transcripts.
+/.local-migration/
+
 # Self-improve runtime artifacts
 governance/evidence_packs/
 memory/safety-runtime-state.json

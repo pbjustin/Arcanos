@@ -15,6 +15,10 @@ export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
     name: 'x-arcanos-preview-fixture',
     value: 'sealed-synthetic',
   }),
+  pluginMigration: Object.freeze({
+    proofHeader: 'x-arcanos-preview-plugin-migration-version',
+    proofVersion: 'plugin-migration-package-core/v1',
+  }),
   chatGptTutor: Object.freeze({
     path: '/chatgpt/mcp',
     metadataPath: '/.well-known/oauth-protected-resource/chatgpt/mcp',

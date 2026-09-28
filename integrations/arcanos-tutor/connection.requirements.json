@@ -1,0 +1,1586 @@
+{
+  "schemaVersion": 1,
+  "endpoint": "https://acranos-production.up.railway.app/chatgpt/mcp",
+  "toolNames": [
+    "arcanos_tutor"
+  ],
+  "registeredAppId": "asdk_app_6ab4747769088191856fd8eb02507240",
+  "technicalId": "plugin_asdk_app_6ab4747769088191856fd8eb02507240",
+  "evidence": [
+    {
+      "id": "repository-validation",
+      "kind": "repository",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-24",
+      "summary": "Historical repository validation: pinned Node 24.18.1/npm 11.16.0 type-check/build/lint and 290 focused tests passed for the earlier package candidate. At 7f4e8c6de2ad145be04de23a436a2dc106f118e7, the package repair passed 102 focused tests and hosted PR CI passed 787 suites/13806 tests, with 13 suites/167 tests skipped. Release remained BLOCKED. Subsequent repair validation is recorded separately; none of these results certifies migration or parity."
+    },
+    {
+      "id": "repository-tutor-repair-validation",
+      "kind": "repository",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-24",
+      "summary": "Scoped Tutor backend/schema repairs passed a focused 13-suite/407-test selection and a separate 4-suite/55-test protocol selection: 17 nonoverlapping suites/462 tests, zero failures or skips. The earlier 118-test selection is included, not added. Type-check/build passed after local Prisma generation; lint passed with zero errors/76 existing warnings; backend/CLI contract/offline and source package checks passed. Release correctly exited 2 BLOCKED; sync had zero errors/warnings and five informational notices. Separate repair review found no code blocker; 3379 synthetic strings showed no schema acceptance differences. The old-guard negative control failed one selected exact-answer test with 11 intentional skips. Final independent tracked-evidence review found no repository blocker; pre-migration blockers remain. Repairs are not deployed and LIVE_RETEST_PENDING remains; no complete live-response attribution or migration/parity claim."
+    },
+    {
+      "id": "repository-foundation",
+      "kind": "repository",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-24",
+      "summary": "The reviewed base is 3f9fffe48219b784dca758bca87ade109324c7c9, the merge of PR 1508. Tutor OAuth adapter and prompt-only tool contract were inspected. Backend/protocol diff was empty at previewed head 7f4e8c6de2ad145be04de23a436a2dc106f118e7; the subsequent scoped Tutor verification repair is separate and is not covered by that historical statement."
+    },
+    {
+      "id": "railway-deployment",
+      "kind": "railway",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-24",
+      "summary": "Read-only Railway metadata: production web deployment e14cfd48-0075-4996-b0dd-ec7b620d5d82 is SUCCESS at exact commit 3f9fffe48219b784dca758bca87ade109324c7c9. Configuration names inspected only. No production mutation in this PR."
+    },
+    {
+      "id": "public-resource",
+      "kind": "railway",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-24",
+      "summary": "Historical public protected-resource metadata returned the intended HTTPS /chatgpt/mcp resource, Auth0 issuer and only arcanos:tutor; unauthenticated GET returned 401 and readiness was healthy. The later public-resource-refresh evidence is separate. Public HTTP does not prove authenticated discovery."
+    },
+    {
+      "id": "auth0-prior-setup",
+      "kind": "auth0",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-24",
+      "summary": "Earlier authorized setup in this same task observed the public PKCE client and deployed Post Login restriction to the approved account/client and Tutor resource. Eight local policy cases passed then. No secrets were read or included; no provider policy mutation. The later same-account reconnect is recorded separately."
+    },
+    {
+      "id": "chatgpt-registration",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-24",
+      "summary": "Earlier same-task ChatGPT UI showed ARCANOS Tutor connected, OAuth used, the exact production endpoint and safe technical ID plugin_asdk_app_6ab4747769088191856fd8eb02507240. Prior dated setup audit corroborates this; not a new account inspection during this PR."
+    },
+    {
+      "id": "chatgpt-discovery",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-24",
+      "summary": "Earlier same-task connection Refresh completed and the observed catalog contained exactly arcanos_tutor, prompt-only input, OAuth arcanos:tutor scope, readOnlyHint true and openWorldHint true. The subsequent fresh account inspection is recorded separately in chatgpt-connection-refresh."
+    },
+    {
+      "id": "chatgpt-live-call",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-24",
+      "summary": "Earlier same-task real authenticated ChatGPT call asked why one half equals two quarters in two short sentences. Expanded tool response showed ARCANOS:TUTOR, synchronous, memory unavailable, generation model. Answer explained equivalence but prefixed an irrelevant live-access disclaimer and used three sentences. One call; no retry. This verifies execution, not migrated skill parity."
+    },
+    {
+      "id": "sealed-preview-exact-head",
+      "kind": "railway",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-24",
+      "summary": "At exact head 7f4e8c6de2ad145be04de23a436a2dc106f118e7, trusted run 35953275709 and the independent clean-head verifier each executed and passed 156/156 requests, including 18 Tutor mock cases. Trusted verifier revision: 3f9fffe48219b784dca758bca87ade109324c7c9. A real MCP SDK 1.30.0 client passed six requests with generation mock. Cleanup run 35954007244 succeeded; independent provider inventory showed the owned environment absent and former hosts returned 404. Safe source report: task-local PR1509_PREVIEW_PROOF.md. This is sealed component evidence, not OAuth, live generation, migrated-skill parity or proof of the subsequent backend repair."
+    },
+    {
+      "id": "public-resource-refresh",
+      "kind": "railway",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-24T04:29:23.768Z",
+      "summary": "Read-only public recheck: protected-resource metadata returned HTTP 200 with resource https://acranos-production.up.railway.app/chatgpt/mcp and only scope arcanos:tutor; anonymous MCP returned HTTP 401. This does not establish authenticated discovery, live execution or installed-skill behavior."
+    },
+    {
+      "id": "chatgpt-current-auth-blocked",
+      "kind": "chatgpt",
+      "status": "BLOCKED",
+      "observedAt": "2026-09-24",
+      "summary": "An initial direct connected arcanos_tutor attempt using the concise explanation prompt returned UNAUTHORIZED with reauthentication required and no answer. The account Plugins UI showed Reconnect. This initial failure was subsequently resolved by the separate same-account reconnect observation; it never supplied a Tutor answer."
+    },
+    {
+      "id": "chatgpt-connection-refresh",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-24",
+      "summary": "At approximately 04:32 UTC, supported same-account Reconnect completed and Refresh showed exactly arcanos_tutor, the expected production /chatgpt/mcp resource, OAuth, raw app ID asdk_app_6ab4747769088191856fd8eb02507240 and technical ID plugin_asdk_app_6ab4747769088191856fd8eb02507240. No additional tool family, new registration or scope was introduced. Public scope inspection is recorded separately. This verifies the current UI connection/catalog, not a fresh successful live answer."
+    },
+    {
+      "id": "chatgpt-current-call-schema-blocked",
+      "kind": "chatgpt",
+      "status": "BLOCKED",
+      "observedAt": "2026-09-24",
+      "summary": "After reconnect, a direct ordinary concise prompt was rejected before backend execution with connector INVALID_ARGUMENT prompt-pattern validation. No Tutor answer was returned. A local protocol-schema repair preserves non-whitespace-only input and the 8000-character maximum; it has not been deployed. Fresh live execution and formatting remain LIVE_RETEST_PENDING until deployment, catalog refresh and a successful actual call."
+    },
+    {
+      "id": "published-gpt-inspection-incomplete",
+      "kind": "chatgpt",
+      "status": "BLOCKED",
+      "observedAt": "2026-09-24",
+      "summary": "The original GPT Builder UI showed Live, Only me and a displayed current version date of Mar 5, 2026. No exact latest-published timestamp or completeness assurance is inferred. Owner confirmation, complete knowledge inventory and reviewed published-gpt.json remain pending. No private instructions, file contents or account/session material are stored in this evidence."
+    },
+    {
+      "id": "old-gpt-provisional-concise",
+      "kind": "chatgpt",
+      "status": "BLOCKED",
+      "observedAt": "2026-09-24",
+      "summary": "A provisional original-GPT concise probe produced two sentences, no irrelevant live-access disclaimer, no visible Action invocation and no diagnostic claim; it correctly explained equal amounts and splitting a half into quarters. It is not bound to a complete published baseline fingerprint and cannot populate an official oldGpt parity result. No migrated result exists."
+    },
+    {
+      "id": "old-gpt-unbound-observations-20260924",
+      "kind": "chatgpt",
+      "status": "BLOCKED",
+      "observedAt": "2026-09-24",
+      "summary": "Ten original-GPT cases were observed provisionally; zero of 16 official fingerprint-bound baseline results are captured. No Action invocation was visible. Concise output used two sentences without the irrelevant disclaimer; exact-format output showed one ordered list with three items; other cases sometimes used diagnostic framing. These are observations, not passes or parity. Six cases remain unobserved: administration, authentication failure, unavailable backend, timeout, cancellation and references. Controlled nonexecuting fixtures and complete reference inventory remain required. Safe summaries, prompt/summary hashes and timestamps are retained only in an ignored private review record; no raw transcripts are committed. All official result fields stay null and all 16 rows BLOCKER."
+    },
+    {
+      "id": "account-user-report",
+      "kind": "user_reported",
+      "status": "USER_REPORTED",
+      "observedAt": "2026-09-24",
+      "summary": "User reports Auth0 is live, access restricted to the approved pilot account, Tutor connected/discovered, one real provider response succeeded, the original ARCANOS TUTOR GPT remains unchanged, and migration has not occurred. Published Builder, knowledge inventory and migration artifacts were not supplied."
+    },
+    {
+      "id": "candidate-repair-validation-20260924",
+      "kind": "repository",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-24T06:47:00Z",
+      "summary": "Candidate source revision 55798a8ee23a2464dea6c9fce15ca39ac90dd23d, base 3f9fffe48219b784dca758bca87ade109324c7c9, isolated Windows worktree, pinned Node 24.18.1/npm 11.16.0: 13 focused suites/410 tests plus four distinct unchanged protocol suites/55 tests passed, 465 unique tests with zero failures/skips. Type-check/build/lint passed, lint zero errors/76 existing warnings; CLI contract/offline passed. Cross-multiplication negative control against 607b6424 failed two new positives while 15 tests passed; repaired 17-test suite passed and is included in 465. Independent code review found no blocker. No candidate deployment or live call occurred."
+    },
+    {
+      "id": "candidate-target-discovery-20260924",
+      "kind": "railway",
+      "status": "BLOCKED",
+      "observedAt": "2026-09-24T06:30:00Z",
+      "summary": "Read-only provider inventory for project 7faf44e5-519c-4e73-8d7a-da9f389e6187 found production and only health-only preview environments Arcanos-pr-1433, Arcanos-pr-1432 and pr-preview-base-20260812. None is an approved authenticated candidate target. Candidate 55798a8ee23a2464dea6c9fce15ca39ac90dd23d remains undeployed. A separate bounded setup proposal requires owner approval; no resources, credentials, test connection or deployment were created. Details and explicit environment IDs: docs/chatgpt-migration/TUTOR_CANDIDATE_ACCEPTANCE.md."
+    },
+    {
+      "id": "production-readonly-recheck-20260924",
+      "kind": "railway",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-24T06:40:00Z",
+      "summary": "Read-only Railway metadata still reports web deployment e14cfd48-0075-4996-b0dd-ec7b620d5d82 SUCCESS at 3f9fffe48219b784dca758bca87ade109324c7c9 in production fb583147-6c39-4343-9267-500f357d25ab. Public resource metadata returned 200, exact production /chatgpt/mcp audience and only arcanos:tutor; anonymous MCP returned 401. No authenticated call or production change. This does not verify candidate 55798a8ee23a2464dea6c9fce15ca39ac90dd23d. Former task preview remains absent in inventory and both former hosts returned 404."
+    },
+    {
+      "id": "published-baseline-recheck-20260924",
+      "kind": "chatgpt",
+      "status": "BLOCKED",
+      "observedAt": "2026-09-24T06:38:00Z",
+      "summary": "Supported owner UI showed original ARCANOS TUTOR Live / Only me, Current version Mar 5, 2026, and editor Last edited Sep 24. Exact latest publication, unpublished-edit state and complete knowledge inventory are not established. Private published-gpt.json remains absent; capture failed closed with BASELINE_INVALID/exit 1 and created no review output. Independent private-record review confirmed ten summary hashes and sixteen prompt hashes, but zero baseline-bound cases. No account mutation, new old-GPT request or migrated result. Repository context 55798a8ee23a2464dea6c9fce15ca39ac90dd23d; published configuration fingerprint unavailable."
+    },
+    {
+      "id": "candidate-sdk-retest-pending",
+      "kind": "repository",
+      "status": "BLOCKED",
+      "observedAt": "2026-09-24T06:47:00Z",
+      "summary": "Candidate source 55798a8ee23a2464dea6c9fce15ca39ac90dd23d: authenticated non-production SDK initialize/discovery/call NOT_STARTED because approved target/auth are unavailable. No environment or deployment ID exists. Deterministic SDK tests are repository evidence only; no production fallback used."
+    },
+    {
+      "id": "candidate-chatgpt-retest-pending",
+      "kind": "chatgpt",
+      "status": "BLOCKED",
+      "observedAt": "2026-09-24T06:47:00Z",
+      "summary": "CHATGPT_CANDIDATE_RETEST=PENDING for candidate 55798a8ee23a2464dea6c9fce15ca39ac90dd23d. No approved separate test connection or candidate environment exists, zero live candidate requests were attempted, and no raw MCP/final ChatGPT formatting comparison is available. LIVE_RETEST_PENDING remains; no accepted difference or migrated parity claim."
+    },
+    {
+      "id": "ios-connection-user-report-20260924",
+      "kind": "user_reported",
+      "status": "USER_REPORTED",
+      "observedAt": "2026-09-24",
+      "summary": "Owner reports iOS connection attempt returned Failed to connect to ARCANOS Tutor. No independent iOS test was performed. Official current MCP mobile documentation separately supports IOS_VERIFIED=BLOCKED_BY_PLATFORM; no backend remediation indicated for that platform limitation. See TUTOR_CANDIDATE_ACCEPTANCE.md; this observation has no candidate-revision binding."
+    },
+    {
+      "id": "runtime-main-reconciliation-20260924",
+      "kind": "repository",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-24T17:54:59Z",
+      "summary": "PR1510 merged at 8af7a5712ebd5954a97af06ab31d0e2527ac0b58, equal to fetched origin/main. Non-destructive main merge into prior PR1509 head 55eeb0dc597acde29b541b25916cc2a1a744be22 required only four generated-index conflict resolutions. All nine runtime/schema/test repair files and schema guide match main exactly and disappear from remaining diff. Migration packaging/tooling retained; ignored private inputs and unrelated worktrees preserved. Fresh validation is recorded in TUTOR_RUNTIME_ACCEPTANCE.md; no backend edits."
+    },
+    {
+      "id": "production-1510-fresh-recheck-20260924",
+      "kind": "railway",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-24T17:51:14.305Z",
+      "summary": "Production fb583147-6c39-4343-9267-500f357d25ab: worker628f094e-4fee-4523-8eb0-2dc145364e96 and web4d3576b6-8f45-421e-ba6d-23b9f01f079d remain sole active SUCCESS/ready, worker accepting_claims. Source8af7a5712ebd5954a97af06ab31d0e2527ac0b58 is correlated through prior exact-Git-blob upload receipts and unchanged deployment/image identity, not independent container Git attestation. Public metadata200 exact production MCP resource/only arcanos:tutor; anonymous401. Settings/variable fingerprints/visible staged metadata/native triggers unchanged. Readiness is cached dependency state; no deploy/configuration change in this task."
+    },
+    {
+      "id": "primary-reauth-schema-refresh-20260924",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-24T17:56:23Z",
+      "summary": "Supported Reconnect on the existing Primary account completed with Primary is now connected. The Refresh control appeared after reauthentication, was clicked, and reported Tools refreshed. Same app asdk_app_6ab4747769088191856fd8eb02507240 and technical plugin_asdk_app_6ab4747769088191856fd8eb02507240; exact production resource and scope arcanos:tutor; only arcanos_tutor. Prompt-only required string/minLength1/maxLength8000/additionalPropertiesfalse with corrected anchored multiline-safe pattern. Canonical sorted-key schema SHA256 436ed5cc926e0aafc1db6cf40657ae0b0ef3e996f063310a84555e2ef2eef148. No app/connection created, disconnected or replaced; second pre-existing account not reauthenticated."
+    },
+    {
+      "id": "auth0-refresh-diagnosis-20260924",
+      "kind": "auth0",
+      "status": "BLOCKED",
+      "observedAt": "2026-09-24T17:57:08Z",
+      "summary": "Anonymous current OIDC and OAuth server discovery returned200, exact issuer https://dev-etfsljoipfurdij6.us.auth0.com/, offline_access scope, authorization_code and refresh_token grants, S256. Exact existing application/API refresh grant, Allow Offline Access, rotation/lifetimes and historical issuance not verified: dashboard requires owner sign-in, official Auth0 CLI unavailable. Cause remains H UNKNOWN with G connection-state symptom; successful Primary reconnect proves recovery, not durable renewal. No token/secret retrieval or policy mutation."
+    },
+    {
+      "id": "runtime-raw-acceptance-20260924",
+      "kind": "chatgpt",
+      "status": "BLOCKED",
+      "observedAt": "2026-09-24T17:57:31Z",
+      "summary": "Four authenticated connected-tool calls using existing Primary, exactly once A-D after explicit refresh. All returned real model metadata ARCANOS:TUTOR/synchronous/memory unavailable; MCP isErrorfalse, HTTP status not exposed by connector. B PASS. A has3 sentences/canned disclaimer; C has2 sentences/canned disclaimer and missing cross-multiplication request; D has disclaimer and3 inline numbered markers/no separate lines. All raw answers retained privately; prompt/answer/sanitized-summary hashes in TUTOR_RUNTIME_ACCEPTANCE.md. RUNTIME_ACCEPTANCE FAIL; LIVE_TUTOR_CALL_VERIFIED BLOCKED due repeated backend honesty/format failures. No retry or repair."
+    },
+    {
+      "id": "runtime-chatgpt-acceptance-20260924",
+      "kind": "chatgpt",
+      "status": "BLOCKED",
+      "observedAt": "2026-09-24T18:03:44Z",
+      "summary": "New supported ChatGPT Work conversation, A-D each submitted once. A AUTH/UNAUTHORIZED; B displayed two sentences/no disclaimer; C displayed disclaimer/equality plus commentary, omitted requested learner cross-multiplication; D displayed disclaimer/flat three markers plus commentary. B-D explicitly selected existing Primary in request. Expanded UI activity and supported thread reader did not expose same-invocation raw payloads or tool arguments; display-only B success is not a paired raw/final pass and wrapper attribution remains unverified. Actual LF verified in B composer/submitted user message, not independently in tool argument. Four raw plus four ChatGPT slots closed; zero retries."
+    },
+    {
+      "id": "runtime-main-reconciliation-20260925",
+      "kind": "repository",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-25",
+      "summary": "Non-destructive merge of current main 71672aec22d7babf62d65b96de667f17abd3f219 into PR1509 prior head 68bd5eeebf63f637ccd743110d81da5cce1b1991. Two generated-index conflicts; regeneration proved content equal and exact main indexes retained. Runtime source, schemas, tests, preview fixtures and production docs match main. Migration/package work and history retained. Current local validation and independent review are recorded in TUTOR_RECONCILIATION_20260925.md; no migration, deployment or live acceptance is claimed."
+    },
+    {
+      "id": "production-1513-metadata-recheck-20260925",
+      "kind": "railway",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-25T15:11:15Z",
+      "summary": "Read-only get_status and list_deployments independently confirm latest worker e08d2468-a287-4d5c-aa1b-f3b8aaf7d0b2 and web a994758c-bc6a-4d4e-a8dc-fd4e66cb5f1e SUCCESS. Both provider metadata records identify main commit 71672aec22d7babf62d65b96de667f17abd3f219; not independent container attestation. Historical PR1511 and PR1512 deployment pairs are REMOVED. No readiness/provider probes, configuration or deployment changes performed."
+    },
+    {
+      "id": "runtime-followup-history-20260925",
+      "kind": "repository",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-25",
+      "summary": "GitHub confirms PR1511 merged at 3f9611c9e59b1283d7aa4e7b9aef57a17841f97f, PR1512 at 331a9676f3c6edf9463b6fb6ddd3f1ce6bb07ed1, and PR1513 at 71672aec22d7babf62d65b96de667f17abd3f219. PR1511/1512 were deployed historically. PR1513 adds sealed synthetic honesty-composition verification, not a runtime behavior fix or live acceptance. Sources: PR1511/1512/1513 and September25 PR1509 runtime checkpoint; historical measurements remain intact."
+    },
+    {
+      "id": "runtime-acceptance-post1512-record-20260925",
+      "kind": "repository",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-25",
+      "summary": "Review of the already published PR1509 and PR1513 acceptance records, not a new live test: six bounded post1512 A/C/D attempts, no retries. Raw A AUTH before execution; Primary recovery succeeded. Raw C omitted learner cross-multiplication and added neutral qualification; raw D retained three numbered lines plus unwanted qualifying introduction. ChatGPT A missing link_id, C/D display failures. Same-invocation raw ChatGPT payloads unavailable; backend/wrapper attribution unknown. RUNTIME_ACCEPTANCE FAIL and LIVE_TUTOR_CALL_VERIFIED BLOCKED. No newer passing evidence found; synthetic preview cannot replace acceptance."
+    },
+    {
+      "id": "published-baseline-recheck-20260925",
+      "kind": "repository",
+      "status": "BLOCKED",
+      "observedAt": "2026-09-25",
+      "summary": "Read-only inspection restricted to .local-migration/arcanos-tutor in the existing branch and prior review worktrees found no published-gpt.json. The prior review directory contains22 historical runtime/provisional files; no complete published configuration or knowledge inventory. Sixteen cases:0 baseline-bound,10 provisional/unbound,6 unexecuted. Prompt and available sanitized-summary hashes verified; no result promoted and no private input copied into Git."
+    },
+    {
+      "id": "published-current-version-partial-20260925",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-25T16:22:03.991Z",
+      "summary": "Supported authenticated read-only Version History selected Current version Mar 5, 2026, displayed Mar 5, 2026 at 11:54 PM without timezone or seconds. Complete disabled name, description and instructions fields captured privately; instructions are 2,389 UTF-8 bytes, SHA-256 53d633ce937a9aef01f2d47749b1127c1accd88b6d4ea95f091c7b11b9909f3f. Four capabilities checked. One Action schema captured, parsed SHA-256 579d931f35ccb59773fdce51175c667139fe4148cdc26c8362480d68b7bc4e04, with POST /ask, operationId ask and declared OAuth2 authorizationCode; actual stored authentication configuration unverified. Current-version model gpt-5-2 differs from the editor showing no recommended model. Published starters and knowledge not exposed; zero not inferred. This verifies partial observations only, not a complete latest-published baseline. No GPT prompt or configuration, save, publish or migration action."
+    },
+    {
+      "id": "published-baseline-incomplete-after-inspection-20260925",
+      "kind": "repository",
+      "status": "BLOCKED",
+      "observedAt": "2026-09-25",
+      "summary": "Only partial read-only UI artifacts were added beneath ignored .local-migration/arcanos-tutor. No complete published-gpt.json, baseline fingerprint or publicationReview exists; latestPublishedConfirmed remains false. Exact timestamp/timezone, published starters, complete knowledge/original files or explicit zero evidence, actual Action authentication configuration, representative behavior and complete latest-publication review remain missing. The raw YAML guard flags the authorizationCode flow label; the same parsed object serialized as JSON passes the unchanged guard. No private content tracked; see TUTOR_BASELINE_CAPTURE_20260925.md."
+    },
+    {
+      "id": "old-gpt-parity-binding-review-20260925",
+      "kind": "repository",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-25",
+      "summary": "All 16 prompt hashes and 10 sanitized-summary hashes match. Historical corrected private record SHA-256 eba9b11616e41cf7af4cb7a2fb64830fad72c1a0eca1511b81fd70d7e8b49c5b, 13,099 bytes, explicitly records publishedVersionConfirmed=false and no configuration/baseline fingerprint. Current partial Version History evidence cannot bind prior observations to an exact configuration. Counts unchanged: 0 baseline-bound, 10 provisional, 6 unexecuted; no results promoted and no new GPT/provider calls. Controlled nonexecuting account fixtures for missing cases are absent."
+    },
+    {
+      "id": "published-entry-identity-followup-20260925",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-25T17:13:02.305Z",
+      "summary": "Supported read-only Version History explicitly marks Mar 5, 2026 as Current version with no newer published entry listed. Comparison labels Current Mar 5, 2026 at 11:54 PM and Previous Mar 3, 2026 at 2:36 PM. No timezone, seconds or separate revision ID exposed. The literal minute 2026-03-05T23:54 is accepted unchanged by the existing capture contract; timezone remains unavailable, not an inferred offset or exact instant. This observation verifies current-entry identity; later owner confirmation supplies the omitted starters, knowledge and stored authentication. Complete-baseline latestPublishedConfirmed remains false pending full-transcription review."
+    },
+    {
+      "id": "editor-authentication-unbound-followup-20260925",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-25",
+      "summary": "Read-only inspection of the existing Action editor found Authentication None selected, with API Key and OAuth unselected. The dialog was closed with Cancel; no credentials read and no setting saved. Published Version History exposes only the already captured schema, which declares OAuth2 authorizationCode. At this earlier inspection checkpoint, editor None was unbound to the published configuration; the later explicit owner confirmation resolves that binding. Published Action name can use its exact displayed group label acranos-production.up.railway.app; editor table Name ask identifies the POST /ask operation separately. Current Live / Only me header supplies current account sharing evidence, not historical March 5 sharing."
+    },
+    {
+      "id": "published-behavior-prepared-followup-20260925",
+      "kind": "repository",
+      "status": "IMPLEMENTED_NOT_VERIFIED",
+      "observedAt": "2026-09-25",
+      "summary": "A private review artifact derives seven expected-behavior categories solely from captured published instructions, capabilities and Action schema, with zero new observations. All 21 source excerpts and three source file hashes/sizes match. Artifact SHA-256 d52e1cbae08759653b2876b91b8d1edceb947f59d7bc30aa401ecdbd6f7c27ae, 12874 bytes. No private excerpts are tracked. At this preparation checkpoint no baseline fingerprint yet existed; the later deterministic capture supplies it. Whole-transcription owner review remains pending and no provisional parity result is promoted."
+    },
+    {
+      "id": "owner-published-settings-confirmation-followup-20260925",
+      "kind": "user_reported",
+      "status": "USER_REPORTED",
+      "observedAt": "2026-09-25T17:17:45Z",
+      "summary": "The owner explicitly confirmed that all three inspected settings match the March published version: zero conversation starters, zero knowledge files and stored Action authentication None. The owner also reported the last update was in March. This resolves the missing published settings without inferring zero from absent files or copying draft values silently. Full local-transcription review remains a separate pending checkpoint."
+    },
+    {
+      "id": "published-capture-determinism-followup-20260925",
+      "kind": "repository",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-25",
+      "summary": "Complete private published-gpt.json passes unchanged schema and credential validation: 10925 bytes, SHA-256 445255487dd270aad087e025b738666340ac1d42a2e45b05fe0b7df640e843bf. Two maintained CLI captures produced identical 1835-byte safe inventories, SHA-256 bf77d8a55896dcc92fcb5d44ae606fd4e6037b19b62f1e0914d225dc22b56bae. Independently recomputed baseline fingerprint eb1d612dc2b4645841e3035a177ebb91fa6584a2ae633d7918972b9c9dd95e25 is identical. Both capture outputs remain IMPLEMENTED_NOT_VERIFIED / USER_REPORTED pending complete-transcription owner review. No private contents are tracked and no calls executed."
+    },
+    {
+      "id": "old-gpt-chronology-review-followup-20260925",
+      "kind": "repository",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-25",
+      "summary": "All ten September 24 provisional observations are chronologically compatible with the March published version and all 16 prompt/10 summary hashes match. Neither original nor corrected local records identifies a GPT/conversation locator, source execution artifact or published-chat-versus-editor-preview surface. The missing execution identity prevents binding to this specific published configuration. No execution-time fingerprint was required retroactively; retained source evidence may resolve the link. No result promoted or new call executed; counts remain 16 total, 0 bound, 10 provisional and 6 unexecuted."
+    },
+    {
+      "id": "owner-complete-baseline-review-20260925",
+      "kind": "user_reported",
+      "status": "USER_REPORTED",
+      "observedAt": "2026-09-25T20:00:43Z",
+      "summary": "The owner approved the complete private published-gpt.json after requesting its location and receiving the direct local file link for review. This completes the latest-published transcription review, including seven source-derived expected-behavior summaries. Review is recorded as Owner (task confirmation) and bound to configuration SHA-256 445255487dd270aad087e025b738666340ac1d42a2e45b05fe0b7df640e843bf and baseline fingerprint eb1d612dc2b4645841e3035a177ebb91fa6584a2ae633d7918972b9c9dd95e25. Earlier explicit confirmation of zero published starters, zero knowledge files and stored Action authentication None remains supporting evidence. Approval applies only to the baseline; it does not authorize migration, GPT changes, live acceptance, deployment, PR readiness or merge."
+    },
+    {
+      "id": "owner-reviewed-baseline-integrity-20260925",
+      "kind": "repository",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-25T20:00:43Z",
+      "summary": "Following owner approval, two maintained in-memory recaptures validate the unchanged private input and reproduce the prior sanitized inventory exactly. Configuration SHA-256 445255487dd270aad087e025b738666340ac1d42a2e45b05fe0b7df640e843bf, 10925 bytes; baseline fingerprint eb1d612dc2b4645841e3035a177ebb91fa6584a2ae633d7918972b9c9dd95e25. Knowledge inventory and bytes are verified for the owner-confirmed empty inventory. Publication review references real account and owner evidence; publicationAssurance remains USER_REPORTED. Raw inputs remain ignored/untracked. Only GPT_BASELINE_CAPTURED advances; no old-GPT parity observation is promoted and no runtime or migration action occurred."
+    },
+    {
+      "id": "skill-first-owner-architecture-20260925",
+      "kind": "user_reported",
+      "status": "USER_REPORTED",
+      "observedAt": "2026-09-25",
+      "summary": "Owner explicitly selected skill-first ordinary tutoring, optional backend use only for explicit backend intent or documented unique capability, separate teaching/backend testing, and private-only teaching composition. This authorizes repository restructuring and local composition, not migration, live calls, deployment, or exact composed-artifact approval."
+    },
+    {
+      "id": "private-skill-composition-20260925",
+      "kind": "repository",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-25",
+      "summary": "Two exclusive private compositions and read-only inspections preserve all eight approved instruction sections verbatim with identical 8520-byte skill SHA-256 a883bcb3fdd0cde31b44c144f74302d6ffc102256b25e40b1303d49857596e36 and package fingerprint 35cc450aeb915f4d1edf88ce70eceae02b4c07b794f76ca3effeb407c6d4ecbb. Source SHA-256 and approved baseline fingerprint unchanged. Private report covers 15 teaching categories with source/pending/not-established distinctions. Files ignored/untracked; owner review of this exact new artifact remains PENDING. This is composition integrity, not installed teaching, migration or release evidence."
+    },
+    {
+      "id": "optional-app-schema-contract-20260925",
+      "kind": "repository",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-25",
+      "summary": "Official OpenAI boolean optional-field validation and pinned OpenAI data-analytics example establish optional:true without a required flag. Portable schema structurally matches the unchanged local pin but has opaque extensions, so the repository separately enforces one optional app with the unchanged registered Tutor ID. Deterministic reference decisions keep ordinary teaching independent of backend status. This is schema/source-contract evidence only; installed-client optionality and teaching remain unverified."
+    },
+    {
+      "id": "private-skill-precedence-review-20260926",
+      "kind": "repository",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-26",
+      "summary": "Independent pedagogy review identified conflicting preserved legacy integration wiring. The public safeguards now explicitly supersede legacy Action/API/session/storage/capability directions without altering teaching bytes. Successor private v3/v4 compositions and inspectors are identical: skill 7661b328b99aa096f930f46e272ef9208de6f11e22c002e77f79d9ab78a15096 (9209 bytes), package 4a5bbb9052929adfac18f57d52090b30a8d62e9b66b1b3e6ecc041ecc5f41958, private report afd229757109e34f54dbf7c8de827ee47194aeb00099adc274a16d93e76c3ba8. Original source unchanged; eight sections preserved. Earlier v1/v2 remain historical. Exact composed-artifact owner review is still PENDING; no migration or teaching execution claimed."
+    },
+    {
+      "id": "owner-host-capability-scope-20260926",
+      "kind": "user_reported",
+      "status": "USER_REPORTED",
+      "observedAt": "2026-09-26T00:33:03Z",
+      "summary": "Owner explicitly excludes the four published host capability equivalents from Tutor release scope. This is a scope decision, not capability parity, tool availability, skill approval, backend acceptance, or migration evidence.",
+      "capabilityScopeBinding": {
+        "decision": "HOST_CHATGPT_FEATURES_OUTSIDE_TUTOR",
+        "reviewedBy": "Owner (task clarification)",
+        "reviewedAt": "2026-09-26T00:33:03Z",
+        "reason": "Owner will use Web Search, Canvas, Image Generation, and Code Interpreter & Data Analysis through the host ChatGPT app as needed. Reproducing or verifying their equivalence is outside the Tutor plugin release scope.",
+        "baselineFingerprint": "eb1d612dc2b4645841e3035a177ebb91fa6584a2ae633d7918972b9c9dd95e25",
+        "configurationSha256": "445255487dd270aad087e025b738666340ac1d42a2e45b05fe0b7df640e843bf",
+        "capabilityNames": [
+          "Web Search",
+          "Canvas",
+          "Image Generation",
+          "Code Interpreter & Data Analysis"
+        ]
+      }
+    },
+    {
+      "id": "owner-composed-skill-approval-20260926",
+      "kind": "user_reported",
+      "status": "USER_REPORTED",
+      "observedAt": "2026-09-26T01:03:47Z",
+      "summary": "Owner approved the previously presented exact private composed Tutor skill after the host-capability scope clarification. Approval covers only that unchanged artifact; it is not behavior, backend, migration, release or deployment acceptance.",
+      "compositionBinding": {
+        "baselineFingerprint": "eb1d612dc2b4645841e3035a177ebb91fa6584a2ae633d7918972b9c9dd95e25",
+        "skillSha256": "7661b328b99aa096f930f46e272ef9208de6f11e22c002e77f79d9ab78a15096",
+        "packageFingerprint": "4a5bbb9052929adfac18f57d52090b30a8d62e9b66b1b3e6ecc041ecc5f41958"
+      },
+      "ownerReviewArtifact": {
+        "path": "owner-composed-skill-review-20260926.json",
+        "sha256": "4ddf2236fc129488b44bc18c420b1bd9b7f7d1c639b951e9eb8c837d716200ad",
+        "sizeBytes": 1122
+      }
+    },
+    {
+      "id": "composed-skill-approval-integrity-20260926",
+      "kind": "repository",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-26T01:03:47Z",
+      "summary": "Read-only composition inspection and hash checks confirm the owner-approved private skill, package, source and immutable generation report match the recorded exact artifacts. Approval metadata is bound to those hashes; private contents remain ignored/untracked. This verifies reconciliation only, not installed behavior or migration.",
+      "compositionBinding": {
+        "baselineFingerprint": "eb1d612dc2b4645841e3035a177ebb91fa6584a2ae633d7918972b9c9dd95e25",
+        "skillSha256": "7661b328b99aa096f930f46e272ef9208de6f11e22c002e77f79d9ab78a15096",
+        "packageFingerprint": "4a5bbb9052929adfac18f57d52090b30a8d62e9b66b1b3e6ecc041ecc5f41958"
+      },
+      "configurationSha256": "445255487dd270aad087e025b738666340ac1d42a2e45b05fe0b7df640e843bf",
+      "reportSha256": "afd229757109e34f54dbf7c8de827ee47194aeb00099adc274a16d93e76c3ba8"
+    },
+    {
+      "id": "skill-execution-surface-deferral-20260926",
+      "kind": "repository",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-26",
+      "summary": "Official desktop local-marketplace development testing exists, but needs a private cache copy outside the exclusive allowed input directory and native client control unavailable in this task. ChatGPT web MCP testing does not execute the approved teaching skill. Zero teaching requests, zero skill-plane backend calls, eighteen deferred matrix cases. This is an execution-scope deferral, not teaching success or failure, and does not satisfy release. See TUTOR_PRE_MIGRATION_CHECKPOINT_20260926.md.",
+      "behaviorDeferralBinding": {
+        "baselineFingerprint": "eb1d612dc2b4645841e3035a177ebb91fa6584a2ae633d7918972b9c9dd95e25",
+        "skillSha256": "7661b328b99aa096f930f46e272ef9208de6f11e22c002e77f79d9ab78a15096",
+        "packageFingerprint": "4a5bbb9052929adfac18f57d52090b30a8d62e9b66b1b3e6ecc041ecc5f41958",
+        "reason": "NO_SUPPORTED_SURFACE_WITHIN_TASK_BOUNDARIES",
+        "surface": "ChatGPT web; desktop local marketplace requires private cache outside allowed input directory",
+        "postMigrationRequired": true
+      }
+    },
+    {
+      "id": "primary-final-reauth-refresh-20260926",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-26",
+      "summary": "Supported existing Primary reconnect cleared its authentication-update warning before the bounded calls. Refresh tools completed. Existing app identity and production resource unchanged; UI catalog contains only arcanos_tutor, callable connector exposes prompt and account selector, and public resource metadata exposes only arcanos:tutor. Complete refreshed JSON schema and credential-renewal internals were not exposed. Prior complete schema evidence remains dated. No new connection, app, credential configuration or OAuth policy change; exact-client durable renewal remains unverified."
+    },
+    {
+      "id": "production-final-metadata-20260926",
+      "kind": "railway",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-26T01:55:51Z",
+      "summary": "Read-only provider metadata confirms latest worker e08d2468-a287-4d5c-aa1b-f3b8aaf7d0b2 and web a994758c-bc6a-4d4e-a8dc-fd4e66cb5f1e SUCCESS with main 71672aec22d7babf62d65b96de667f17abd3f219. No queued/building/deploying entry in inspected latest fifty per service. Provider metadata is not container attestation. No deployment or configuration change."
+    },
+    {
+      "id": "final-raw-acceptance-20260926",
+      "kind": "chatgpt",
+      "status": "BLOCKED",
+      "observedAt": "2026-09-26",
+      "summary": "Raw A/C/D each submitted once after Primary recovery, with no root retry. All returned isError=true, TUTOR_UNAVAILABLE and connector INVALID_ARGUMENT. No answer or generation/module/execution/memory metadata; sentence/step/content checks not assessable. Failure category OTHER/backend unavailable; precise internal cause unavailable. These errors neither establish a new honesty-transform defect nor clear historical failure.",
+      "evidenceArtifacts": [
+        {
+          "path": "final-acceptance-cycle-20260926.json",
+          "sha256": "701016965bcd1b9c92375c86a8ac7f7ac497538d69068d760c7d275034c203b8"
+        }
+      ]
+    },
+    {
+      "id": "final-chatgpt-partial-acceptance-20260926",
+      "kind": "chatgpt",
+      "status": "BLOCKED",
+      "observedAt": "2026-09-26",
+      "summary": "New supported ChatGPT conversation: A submitted once, one visible Tutor activity, no final result; C submitted once, two visible Tutor activity entries and final TUTOR_UNAVAILABLE (INVALID_ARGUMENT). Same-invocation payloads and actual service invocation counts unavailable. D NOT_EXECUTED_BUDGET_CEILING. Five total submitted requests (raw three plus ChatGPT two); six conservatively counted potential backend invocations (3+1+2), not six confirmed calls. No root retry; internal ChatGPT retries unobservable. Attempt window stopped before D, with no further calls authorized by this task.",
+      "evidenceArtifacts": [
+        {
+          "path": "final-chatgpt-A-20260926.txt",
+          "sha256": "ccd34b563bfb016fe7614ac788977bc399033009dcfd6842395b6c4ba646ece9"
+        },
+        {
+          "path": "final-chatgpt-C-20260926.txt",
+          "sha256": "563732f247c5f98751705153cadee9268f838c70c0a1621298e8a2126f8f924f"
+        },
+        {
+          "path": "final-chatgpt-supported-reader-20260926.json",
+          "sha256": "90f8b102b620e9de29beefa520b246cb700987ac8da1bbfeb8bf65b9289365af"
+        }
+      ]
+    },
+    {
+      "id": "account-plugin-migration-20260926",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-26T02:47:17.941Z",
+      "summary": "Owner-authorized supported migration confirmed success for the latest published March GPT. Plugin starts private and is installed. Current plugin page and local installed bundle have the same generated version. Custom Actions did not transfer; no attached app. Occurrence and artifact capture do not approve transformed package or behavior.",
+      "migrationBinding": {
+        "artifactFormat": "CHATGPT_NATIVE_SKILLS_ONLY",
+        "baselineFingerprint": "eb1d612dc2b4645841e3035a177ebb91fa6584a2ae633d7918972b9c9dd95e25",
+        "pluginId": "plugin_d292d1e45ae08191b3911299e30e1a25",
+        "cachePackageName": "gpt-e9bcdc399db672af9f66dfd7e18e7953",
+        "version": "0.8.1+bundle.951fdf6546409c5382fa49f2bed2fd2b",
+        "skillSha256": "5478886612bfe7f80d09bddd0eebb5002644775763efe6aa9046a7c009c8dc5b",
+        "metadataSha256": "156efe759a1daef64e56ef5a6fc93e147ab7b8da8b542a97fa3a6d102f5fdcd1",
+        "packageFingerprint": "4f4ccff2556b8e8b2560eb16b301647e3edb0d71666dea03feb297b9613745fe",
+        "appAttachment": "NOT_ATTACHED"
+      }
+    },
+    {
+      "id": "installed-artifact-capture-20260926",
+      "kind": "repository",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-26T04:26:08.764Z",
+      "summary": "Five installed bundle files copied byte-for-byte into ignored inputs. Native manifest, skill and empty knowledge-index inspected; no app mapping or unexpected knowledge files. Full package fingerprint and every file hash recorded. Original UI capture remains historical; failed ZIP download no longer prevents byte inspection."
+    },
+    {
+      "id": "installed-skill-differences-20260926",
+      "kind": "repository",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-26T04:30:15.294Z",
+      "summary": "All eight published instruction sections occur exactly once in the migrated body with no omission or rewrite. The generated skill differs from the approved composed candidate: all five public integration safeguard sections and topic-specific activation metadata are absent. No owner acceptance of those differences or installed-skill release approval is inferred."
+    },
+    {
+      "id": "installed-test-surface-20260926",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-26T04:30:15.294Z",
+      "summary": "Try in chat opens a fresh ChatGPT Work composer with migrated Tutor selected. No prompt submitted. Formal teaching execution is blocked by unreconciled integration differences and absence of a demonstrated enforced no-backend test boundary; not by a universal lack of plugin testing support."
+    },
+    {
+      "id": "account-plugin-approved-skill-update-ui-20260926",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-26T05:50:16Z",
+      "summary": "Owner-authorized supported update of the same private migrated plugin used the exact already-approved composed skill attachment. The account page independently shows version 0.8.2; settings show Uninstall and Use Tutor checked. The supported skill viewer visibly includes all five approved safeguard headings. Plugin Creator reports the requested skill hash, private visibility, one skill, zero references and zero apps. Those reports and rendered Markdown do not verify the saved raw bytes. Native export and Creator ZIP download did not return a local file; cache inspection still finds the historical 0.8.1 bundle. No teaching test, backend call or sharing occurred.",
+      "pluginUpdateObservation": {
+        "recordedAt": "2026-09-26T05:50:16Z",
+        "timeBasis": "Task evidence review and recording time; not the exact account save time.",
+        "pluginId": "plugin_d292d1e45ae08191b3911299e30e1a25",
+        "previousCapturedVersion": "0.8.1+bundle.951fdf6546409c5382fa49f2bed2fd2b",
+        "accountVersion": "0.8.2+bundle.7661b328b99aa096f930f46e272ef9208de6f11e22c002e77f79d9ab78a15096",
+        "requestedSkillSha256": "7661b328b99aa096f930f46e272ef9208de6f11e22c002e77f79d9ab78a15096",
+        "creatorReportedSkillSha256": "7661b328b99aa096f930f46e272ef9208de6f11e22c002e77f79d9ab78a15096",
+        "creatorReportedVisibility": "PRIVATE",
+        "creatorReportedCounts": {
+          "skills": 1,
+          "references": 0,
+          "apps": 0
+        },
+        "creatorReportedArchiveMemberCount": 6,
+        "creatorReportedRootManifest": "plugin.json",
+        "accountInstalled": true,
+        "accountSkillEnabled": true,
+        "renderedSafeguardHeadingCount": 5,
+        "updatedArtifactByteVerification": "PENDING",
+        "downloadedArtifactAvailable": false,
+        "officialTeachingCasesExecuted": 0
+      }
+    },
+    {
+      "id": "saved-plugin-optional-app-release-20260926",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-26T16:26:26.155Z",
+      "summary": "Supported guarded update of the same PRIVATE plugin from 0.8.2 to 0.8.3. Actual saved before/after archives retrieved via Plugin Creator and independently inventoried. Saved approved skill bytes unchanged; one optional existing app, zero references; no teaching test or backend invocation.",
+      "updatedReleaseBinding": {
+        "artifactFormat": "PLUGIN_CREATOR_SAVED_RELEASE",
+        "pluginId": "plugin_d292d1e45ae08191b3911299e30e1a25",
+        "releaseId": "pluginrel_6ab7f17cb4288191b6a60b25c98d5505",
+        "currentReleaseId": "pluginrel_6ab7f17cb4288191b6a60b25c98d5505",
+        "version": "0.8.3",
+        "visibility": "PRIVATE",
+        "skillSha256": "7661b328b99aa096f930f46e272ef9208de6f11e22c002e77f79d9ab78a15096",
+        "packageFingerprint": "e88b0dc42a9951869b8ff63c999e1b6a02fd08043df96f154012c165c8d99948",
+        "archiveSha256": "1e4d048576157434285da32fc239ed16751f31f6ac6f7c0fe4b7f626b6128732",
+        "registeredAppId": "asdk_app_6ab4747769088191856fd8eb02507240",
+        "appOptional": true
+      }
+    },
+    {
+      "id": "optional-app-primary-associated-20260926",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-26T16:26:26.155Z",
+      "summary": "Existing registered app technical page exposes only arcanos_tutor. Existing Primary account was reconnected using its Reconnect control; no new-account control used. Combined ARCANOS TUTOR 0.8.3 page shows Apps 1, Skills 1 and Connected. Primary page no longer shows authentication update required. No new app, connection, Auth0 client, scope change or backend invocation occurred. Renewal durability and live execution remain unverified. Manage settings additionally shows Uninstall, version 0.8.3 and Use ARCANOS TUTOR enabled.",
+      "binding": {
+        "registeredAppId": "asdk_app_6ab4747769088191856fd8eb02507240",
+        "technicalId": "plugin_asdk_app_6ab4747769088191856fd8eb02507240",
+        "pluginId": "plugin_d292d1e45ae08191b3911299e30e1a25",
+        "version": "0.8.3",
+        "releaseId": "pluginrel_6ab7f17cb4288191b6a60b25c98d5505",
+        "primaryConnection": "ASSOCIATED_AVAILABLE",
+        "appOptional": true,
+        "tutorBackendCalls": 0
+      }
+    },
+    {
+      "id": "installed-teaching-observations-20260926",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-26T17:13:04.800Z",
+      "summary": "Observed installed PRIVATE Tutor 0.8.3 responses for fifteen of eighteen matrix cases plus three explicit-selection variants; one separate context setup was not scored. Four content failures across eighteen observations include three positively attributed teaching omissions and a host-memory-confounded scope response. Cross-plugin refusal was correct but Tutor activation conflicts with the matrix. This verifies the observation record only, not teaching success, no-call telemetry, parity or release readiness. No backend invocation issued by this task or visible in captured UI/thread evidence; authoritative count unknown. Two backend cases and actual disconnected-state case remain unexecuted. Raw evidence remains ignored/private; approved skill unchanged.",
+      "installedTeachingObservation": {
+        "pluginId": "plugin_d292d1e45ae08191b3911299e30e1a25",
+        "releaseId": "pluginrel_6ab7f17cb4288191b6a60b25c98d5505",
+        "version": "0.8.3",
+        "visibility": "PRIVATE",
+        "skillSha256": "7661b328b99aa096f930f46e272ef9208de6f11e22c002e77f79d9ab78a15096",
+        "packageFingerprint": "e88b0dc42a9951869b8ff63c999e1b6a02fd08043df96f154012c165c8d99948",
+        "matrixCasesObserved": 15,
+        "matrixCasesNotRun": 3,
+        "scoredResponseObservations": 18,
+        "contextSetupObservations": 1,
+        "contentPasses": 14,
+        "contentFailures": 4,
+        "crossPluginActivationMismatch": true,
+        "privateExecutionLedgerSha256": "27e74586e2c14f67a4de3295f2eb96cbcb798eed4eb941a0327398cfb5d56b61",
+        "privateExecutionLedgerSizeBytes": 144242,
+        "privateEvidenceArtifactCount": 56,
+        "visibleBackendCalls": 0,
+        "authoritativeBackendCalls": null,
+        "zeroBackendCallsVerified": false,
+        "report": "docs/chatgpt-migration/TUTOR_INSTALLED_TEACHING_20260926.md"
+      }
+    },
+    {
+      "id": "owner-intake-revision-authorization-20260926",
+      "kind": "user_reported",
+      "status": "USER_REPORTED",
+      "observedAt": "2026-09-26",
+      "summary": "Owner explicitly approved the proposed minimal confidence/time intake override in this task. The binding identifies the resulting derived revision; it does not claim that the owner separately quoted or approved the resulting hash. Historical exact-byte skill approval remains unchanged.",
+      "skillRevisionAuthorization": {
+        "pluginId": "plugin_d292d1e45ae08191b3911299e30e1a25",
+        "scope": "CONFIDENCE_TIME_INTAKE_ONLY",
+        "fromSkillSha256": "7661b328b99aa096f930f46e272ef9208de6f11e22c002e77f79d9ab78a15096",
+        "toSkillSha256": "02fbc4e2b5a000cf9d49fae9a2d66e1cb59593060cacb6640e5b597202ab3d1d",
+        "targetVersion": "0.8.4",
+        "insertionSha256": "b71e8506daacd6859af46b086bb7f6e90c9962c3a26c2ecd73139968a9dd774d"
+      }
+    },
+    {
+      "id": "intake-revision-scope-byte-review-20260926",
+      "kind": "repository",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-26T18:16:26.201Z",
+      "summary": "Two independent reviewers verified one 537-byte intake insertion at byte 558. Removing the insertion recovers all 9209 original approved skill bytes exactly. Only the skill and versions in both manifests changed; app mapping, assets and support files are unchanged. Actual saved successor archive independently matches the candidate. This is scope and byte-preservation review, not successful teaching behavior, authoritative no-call evidence or parity.",
+      "skillRevisionBinding": {
+        "pluginId": "plugin_d292d1e45ae08191b3911299e30e1a25",
+        "scope": "CONFIDENCE_TIME_INTAKE_ONLY",
+        "fromSkillSha256": "7661b328b99aa096f930f46e272ef9208de6f11e22c002e77f79d9ab78a15096",
+        "toSkillSha256": "02fbc4e2b5a000cf9d49fae9a2d66e1cb59593060cacb6640e5b597202ab3d1d",
+        "targetVersion": "0.8.4",
+        "insertionSha256": "b71e8506daacd6859af46b086bb7f6e90c9962c3a26c2ecd73139968a9dd774d",
+        "fromReleaseId": "pluginrel_6ab7f17cb4288191b6a60b25c98d5505",
+        "fromPackageFingerprint": "e88b0dc42a9951869b8ff63c999e1b6a02fd08043df96f154012c165c8d99948",
+        "insertionOffsetBytes": 558,
+        "insertionSizeBytes": 537
+      }
+    },
+    {
+      "id": "saved-plugin-intake-release-20260926",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-26T18:16:26.201Z",
+      "summary": "Supported guarded update changed the same PRIVATE plugin from 0.8.3 to 0.8.4. Actual saved archive was retrieved and independently verified with all thirteen members. The skill contains the separately owner-authorized minimal intake insertion; all original teaching bytes remain preserved. One optional existing backend app and zero references remain. No new plugin, app, connection or Auth0 client and no backend request were created in this revision task.",
+      "updatedReleaseBinding": {
+        "artifactFormat": "PLUGIN_CREATOR_SAVED_RELEASE",
+        "pluginId": "plugin_d292d1e45ae08191b3911299e30e1a25",
+        "releaseId": "pluginrel_6ab809c1fea4819182a133da08f4152b",
+        "currentReleaseId": "pluginrel_6ab809c1fea4819182a133da08f4152b",
+        "version": "0.8.4",
+        "visibility": "PRIVATE",
+        "skillSha256": "02fbc4e2b5a000cf9d49fae9a2d66e1cb59593060cacb6640e5b597202ab3d1d",
+        "packageFingerprint": "ac0e3e75de8159fd4788d64fd306f4cb569c48e7a6f63b649132f1dbbc1b9594",
+        "archiveSha256": "ee75e6ae3488dd625af68c56aecc910454de0ae25b55910e8c97618a09c55ce7",
+        "registeredAppId": "asdk_app_6ab4747769088191856fd8eb02507240",
+        "appOptional": true
+      }
+    },
+    {
+      "id": "installed-intake-teaching-observations-20260926",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-26T18:16:26.201Z",
+      "summary": "Seven fresh explicitly selected installed Tutor 0.8.4 responses have positive Tutor Sources attribution. Six content checks pass; the diagnostic response fails the one-question requirement by giving two questions. This is a focused regression, not the full eighteen-case matrix or parity. No backend request issued by this task or visible in retained UI; authoritative invocation count remains unknown. Current installed UI shows the existing app requires reconnect; no reconnect was performed. The historical Primary association remains recorded without asserting current availability.",
+      "installedTeachingObservation": {
+        "pluginId": "plugin_d292d1e45ae08191b3911299e30e1a25",
+        "releaseId": "pluginrel_6ab809c1fea4819182a133da08f4152b",
+        "version": "0.8.4",
+        "visibility": "PRIVATE",
+        "skillSha256": "02fbc4e2b5a000cf9d49fae9a2d66e1cb59593060cacb6640e5b597202ab3d1d",
+        "packageFingerprint": "ac0e3e75de8159fd4788d64fd306f4cb569c48e7a6f63b649132f1dbbc1b9594",
+        "focusedCasesObserved": 7,
+        "scoredResponseObservations": 7,
+        "contentPasses": 6,
+        "contentFailures": 1,
+        "positiveTutorSourceAttribution": 7,
+        "selection": "EXPLICIT",
+        "fullMatrixVerified": false,
+        "privateExecutionLedgerSha256": "1f3eeb0b2dd16b3575b74b08e6e3032f0bd4b89b54e4db46c43fb92c14c9d6c0",
+        "privateExecutionLedgerSizeBytes": 17229,
+        "privateEvidenceArtifactCount": 18,
+        "visibleBackendCalls": 0,
+        "authoritativeBackendCalls": null,
+        "zeroBackendCallsVerified": false,
+        "currentConnectionStatus": "RECONNECT_REQUIRED",
+        "reconnectPerformed": false,
+        "report": "docs/chatgpt-migration/TUTOR_INTAKE_REVISION_20260926.md"
+      }
+    },
+    {
+      "id": "owner-diagnostic-revision-authorization-20260926",
+      "kind": "user_reported",
+      "status": "USER_REPORTED",
+      "observedAt": "2026-09-26",
+      "summary": "Owner conditionally authorized one diagnostic-only safeguard after a single reproduction of the remaining diagnostic issue. The reproduction contained stacked learner-step alternatives, meeting that condition. Authorization preserves the prior intake override and all original teaching text. Binding identifies derived revision bytes, not a separately quoted owner hash approval.",
+      "skillRevisionAuthorization": {
+        "pluginId": "plugin_d292d1e45ae08191b3911299e30e1a25",
+        "scope": "DIAGNOSTIC_SINGLE_QUESTION_ONLY",
+        "fromSkillSha256": "02fbc4e2b5a000cf9d49fae9a2d66e1cb59593060cacb6640e5b597202ab3d1d",
+        "toSkillSha256": "282ceeba915a317f6bb3f49eb1929ef5ae9d555781c635b0b8ed7e85977a61b8",
+        "targetVersion": "0.8.5",
+        "insertionSha256": "0c884555b21935d5d165675b3caa90b87253164bf9142990535b11d0dcf178eb"
+      }
+    },
+    {
+      "id": "diagnostic-revision-scope-byte-review-20260926",
+      "kind": "repository",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-26T22:19:15.746Z",
+      "summary": "Two independent candidate reviewers verified one diagnostic-only 660-byte insertion at byte 1095, preserving all 9746 prior skill bytes and the earlier intake override. Reverse reconstruction also preserves all 9209 original approved bytes. Only skill bytes and both manifest versions changed; app mapping, support files and assets remain identical. Actual saved inventory matches reviewed candidate. Byte and scope review does not establish installed teaching outcomes, no-call evidence or parity.",
+      "skillRevisionBinding": {
+        "pluginId": "plugin_d292d1e45ae08191b3911299e30e1a25",
+        "scope": "DIAGNOSTIC_SINGLE_QUESTION_ONLY",
+        "fromSkillSha256": "02fbc4e2b5a000cf9d49fae9a2d66e1cb59593060cacb6640e5b597202ab3d1d",
+        "toSkillSha256": "282ceeba915a317f6bb3f49eb1929ef5ae9d555781c635b0b8ed7e85977a61b8",
+        "targetVersion": "0.8.5",
+        "insertionSha256": "0c884555b21935d5d165675b3caa90b87253164bf9142990535b11d0dcf178eb",
+        "fromReleaseId": "pluginrel_6ab809c1fea4819182a133da08f4152b",
+        "fromPackageFingerprint": "ac0e3e75de8159fd4788d64fd306f4cb569c48e7a6f63b649132f1dbbc1b9594",
+        "insertionOffsetBytes": 1095,
+        "insertionSizeBytes": 660
+      }
+    },
+    {
+      "id": "saved-plugin-diagnostic-release-20260926",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-26T22:19:15.746Z",
+      "summary": "After passing focused synthetic checks and independent scoped reviews, supported guarded update changed the same PRIVATE plugin from 0.8.4 to 0.8.5. Actual saved archive was retrieved and completely inventoried; its seven files match the reviewed candidate. One optional existing backend app and zero references remain. No new plugin, app, connection or Auth0 client, backend request or reconnect was performed in this update.",
+      "updatedReleaseBinding": {
+        "artifactFormat": "PLUGIN_CREATOR_SAVED_RELEASE",
+        "pluginId": "plugin_d292d1e45ae08191b3911299e30e1a25",
+        "releaseId": "pluginrel_6ab84427e0d4819182de200f7ce49333",
+        "currentReleaseId": "pluginrel_6ab84427e0d4819182de200f7ce49333",
+        "version": "0.8.5",
+        "visibility": "PRIVATE",
+        "skillSha256": "282ceeba915a317f6bb3f49eb1929ef5ae9d555781c635b0b8ed7e85977a61b8",
+        "packageFingerprint": "6f945afcce451d822597bc4e79fb1d8b60262416bb75c1eb398a774318d60f5c",
+        "archiveSha256": "b91898941bc04e953758d4036ae0e944f4229859743d5112b380901942568101",
+        "registeredAppId": "asdk_app_6ab4747769088191856fd8eb02507240",
+        "appOptional": true
+      }
+    },
+    {
+      "id": "installed-final-teaching-verification-20260926",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-26T22:36:21.107Z",
+      "summary": "Current saved PRIVATE Tutor 0.8.5 is bound to the reviewed eighteen actual submitted skill-only cases. All eighteen content checks pass; complete captured UI shows zero ARCANOS backend activity, seventeen positive Tutor Sources cases and one unselected unrelated case with no visible Tutor attribution. Seven intended plan prompts differed and remain disclosed; these observations are ineligible for exact planned parity. One practice submission has two response variants. A host Memory updated event remains explicit and is not attributed to Tutor persistence. Verification uses the authorized visible UI standard: server call counts and per-turn loaded skill bytes remain unknown. Backend acceptance, parity and release readiness are separate.",
+      "installedTeachingBinding": {
+        "pluginId": "plugin_d292d1e45ae08191b3911299e30e1a25",
+        "releaseId": "pluginrel_6ab84427e0d4819182de200f7ce49333",
+        "version": "0.8.5",
+        "skillSha256": "282ceeba915a317f6bb3f49eb1929ef5ae9d555781c635b0b8ed7e85977a61b8",
+        "packageFingerprint": "6f945afcce451d822597bc4e79fb1d8b60262416bb75c1eb398a774318d60f5c",
+        "visibility": "PRIVATE",
+        "verificationFingerprint": "f7b0629dc6dd34a94d6e3dab3c47685a4132057ae462892167a8230cc6cc08e3"
+      }
+    },
+    {
+      "id": "existing-primary-unavailable-20260926-final",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-26T22:30:02.991Z",
+      "summary": "Read-only current settings identify the same registered Tutor app and production resource, but the refreshed supported UI exposes only generic Connect. The historical Primary row, Reconnect and metadata Refresh are unavailable. The Connect information dialog was closed before Continue. No OAuth flow, connection replacement, backend request, runtime change or deployment occurred. This verifies UI observations only, not an authentication error response or deletion of the historical connection.",
+      "connectionObservation": {
+        "registeredAppId": "asdk_app_6ab4747769088191856fd8eb02507240",
+        "resource": "https://acranos-production.up.railway.app/chatgpt/mcp",
+        "existingPrimaryStatus": "NOT_VISIBLE_IN_CURRENT_SUPPORTED_UI",
+        "reconnectPerformed": false,
+        "metadataRefreshPerformed": false,
+        "newConnectionCreated": false,
+        "newAppCreated": false,
+        "newAuth0ClientCreated": false,
+        "backendAttempts": 0,
+        "backendCallBudget": 3,
+        "backendPlane": "BLOCKED_AUTH_CONNECTION_UNAVAILABLE",
+        "routingControls": {
+          "ordinary": "NOT_RUN_CONNECTION_PREREQUISITE",
+          "explicit": "NOT_RUN_CONNECTION_PREREQUISITE"
+        },
+        "acceptance": {
+          "A": "NOT_RUN_CONNECTION_PREREQUISITE",
+          "C": "NOT_RUN_CONNECTION_PREREQUISITE",
+          "D": "NOT_RUN_CONNECTION_PREREQUISITE"
+        },
+        "privateReportSha256": "77774366c0b63a483953110d16b4347c9fe22ab3a608ee3265150ae31ca7ce9e",
+        "privateReportSizeBytes": 2216
+      }
+    },
+    {
+      "id": "current-release-reconciliation-20260927",
+      "kind": "repository",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-27T01:38:31.073Z",
+      "summary": "Current PRIVATE 0.8.5 metadata rechecked through supported Plugin Creator. Independent byte review confirms all thirteen installed-cache members match the saved archive; both separately authorized insertions invert to the original approved composition exactly. All eight baseline sections and five safeguards remain byte-exact. Zero references and one unchanged optional app. Historical native capture retained. No new teaching tests, backend calls or account mutations; this reconciles artifacts only.",
+      "currentReconciliationBinding": {
+        "baselineFingerprint": "eb1d612dc2b4645841e3035a177ebb91fa6584a2ae633d7918972b9c9dd95e25",
+        "configurationSha256": "445255487dd270aad087e025b738666340ac1d42a2e45b05fe0b7df640e843bf",
+        "approvedSkillSha256": "7661b328b99aa096f930f46e272ef9208de6f11e22c002e77f79d9ab78a15096",
+        "approvedPackageFingerprint": "4a5bbb9052929adfac18f57d52090b30a8d62e9b66b1b3e6ecc041ecc5f41958",
+        "pluginId": "plugin_d292d1e45ae08191b3911299e30e1a25",
+        "releaseId": "pluginrel_6ab84427e0d4819182de200f7ce49333",
+        "version": "0.8.5",
+        "skillSha256": "282ceeba915a317f6bb3f49eb1929ef5ae9d555781c635b0b8ed7e85977a61b8",
+        "packageFingerprint": "6f945afcce451d822597bc4e79fb1d8b60262416bb75c1eb398a774318d60f5c",
+        "archiveSha256": "b91898941bc04e953758d4036ae0e944f4229859743d5112b380901942568101",
+        "revisionChainFingerprint": "ab1870f702ce905a33cac1089c362e0fa4066548f350da2e3198c968fb5f880e",
+        "referenceCount": 0,
+        "registeredAppId": "asdk_app_6ab4747769088191856fd8eb02507240",
+        "appOptional": true,
+        "sourceEvidenceIds": {
+          "compositionApproval": [
+            "owner-composed-skill-approval-20260926"
+          ],
+          "intakeAuthorization": [
+            "owner-intake-revision-authorization-20260926"
+          ],
+          "intakeReview": [
+            "intake-revision-scope-byte-review-20260926"
+          ],
+          "diagnosticAuthorization": [
+            "owner-diagnostic-revision-authorization-20260926"
+          ],
+          "diagnosticReview": [
+            "diagnostic-revision-scope-byte-review-20260926"
+          ],
+          "savedRelease": [
+            "saved-plugin-diagnostic-release-20260926"
+          ]
+        },
+        "installedCapture": {
+          "rootPath": "current-reconciliation-20260926/installed-package",
+          "packageFingerprint": "6f945afcce451d822597bc4e79fb1d8b60262416bb75c1eb398a774318d60f5c"
+        }
+      }
+    },
+    {
+      "id": "connection-inspection-surface-unavailable-20260927",
+      "kind": "repository",
+      "status": "BLOCKED",
+      "observedAt": "2026-09-27T01:38:31.073Z",
+      "summary": "Supported UI inventory exposed no apps or browsers; current existing Primary availability could not be rechecked. Prior generic Connect-only account finding remains historical. No Connect, Continue, Reconnect, Refresh or backend request. Ignored observation SHA-256 45ecd1844005f840a9f5c9ffdffc27f3ec3a48b220272147878147e082b17169."
+    },
+    {
+      "id": "old-gpt-historical-concise-explanation-bound-20260927",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-27T14:59:52.962Z",
+      "summary": "Read-only account-history retrieval recovers the exact historical prompt and full response on the original published GPT. Retained supported execution calls and version-history evidence bind the result to the approved published baseline. Original historical observation and sanitized summary are preserved; no new generation or backend invocation.",
+      "parityBinding": {
+        "caseId": "concise-explanation",
+        "side": "oldGpt",
+        "promptSha256": "1889539d24060a7448ed3eb74171dead3e7381ab5121aaef6638d995cba4ef0a",
+        "configurationFingerprint": "eb1d612dc2b4645841e3035a177ebb91fa6584a2ae633d7918972b9c9dd95e25",
+        "summarySha256": "4c7f727896331854f5f71066a6f525f97a2944c2279f658910dee38f1b5f1b97"
+      },
+      "historicalObservedAt": "2026-09-24T04:30:18.548Z",
+      "publishedGptId": "g-68b01358d4bc81919975e408fad4de4f",
+      "responseSha256": "83ea4518c86237eb6f7be2087bf4206d0edc792c314848dbdb76684969514427",
+      "retrievalCaptureSha256": "88281bf945d3660c86ecfd2938b9ecf5dd28e136ab015569911cbf8abbe7d3b3",
+      "sourceExecutionEvidenceId": "old-gpt-unbound-observations-20260924",
+      "publishedVersion": "Mar 5, 2026",
+      "backendInvocationsAdded": 0,
+      "historicalResponseRewritten": false
+    },
+    {
+      "id": "old-gpt-historical-direct-activation-bound-20260927",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-27T15:00:49.467Z",
+      "summary": "Read-only account-history retrieval recovers the exact historical prompt and full response on the original published GPT. Retained supported execution calls and version-history evidence bind the result to the approved published baseline. Original historical observation and sanitized summary are preserved; no new generation or backend invocation.",
+      "parityBinding": {
+        "caseId": "direct-activation",
+        "side": "oldGpt",
+        "promptSha256": "a55bc9b2f1abb714899ab0470685f0feaf21231442190fe99886a55d33d888ee",
+        "configurationFingerprint": "eb1d612dc2b4645841e3035a177ebb91fa6584a2ae633d7918972b9c9dd95e25",
+        "summarySha256": "e285ec5362500ec144bbfc1cf18be06b71b3070c4c9180c1fc19f612d7486919"
+      },
+      "historicalObservedAt": "2026-09-24T04:36:29.089Z",
+      "publishedGptId": "g-68b01358d4bc81919975e408fad4de4f",
+      "responseSha256": "0f687c00735504ea73f6aba3179a8d541c3800772b2620ebdceebe6893b4861f",
+      "retrievalCaptureSha256": "b2a0089958d167396d09e97834d8b8b08d1700e1f4915dcc1d409e334c0eb9f8",
+      "sourceExecutionEvidenceId": "old-gpt-unbound-observations-20260924",
+      "publishedVersion": "Mar 5, 2026",
+      "backendInvocationsAdded": 0,
+      "historicalResponseRewritten": false
+    },
+    {
+      "id": "old-gpt-historical-indirect-activation-bound-20260927",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-27T15:01:28.041Z",
+      "summary": "Read-only account-history retrieval recovers the exact historical prompt and full response on the original published GPT. Retained supported execution calls and version-history evidence bind the result to the approved published baseline. Original historical observation and sanitized summary are preserved; no new generation or backend invocation.",
+      "parityBinding": {
+        "caseId": "indirect-activation",
+        "side": "oldGpt",
+        "promptSha256": "55bfbb8e2878acb71a00aced408d5bd920f6fdc78bf6917c3eeefcf59f38c99d",
+        "configurationFingerprint": "eb1d612dc2b4645841e3035a177ebb91fa6584a2ae633d7918972b9c9dd95e25",
+        "summarySha256": "2e2518d9812031465fb2ed9045e9e1010548e36ab9adc2499ac72a68c1e9486d"
+      },
+      "historicalObservedAt": "2026-09-24T04:37:33.759Z",
+      "publishedGptId": "g-68b01358d4bc81919975e408fad4de4f",
+      "responseSha256": "e79a902b88c1f8ac12157308b4a354ef368a5dbe6dd455aaa2cae52e933168d0",
+      "retrievalCaptureSha256": "af3a91e4b4606970f273d434802c4a72bc11329e373b00d72fde8425c06165a0",
+      "sourceExecutionEvidenceId": "old-gpt-unbound-observations-20260924",
+      "publishedVersion": "Mar 5, 2026",
+      "backendInvocationsAdded": 0,
+      "historicalResponseRewritten": false
+    },
+    {
+      "id": "old-gpt-historical-non-activation-bound-20260927",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-27T15:02:01.554Z",
+      "summary": "Read-only account-history retrieval recovers the exact historical prompt and full response on the original published GPT. Retained supported execution calls and version-history evidence bind the result to the approved published baseline. Original historical observation and sanitized summary are preserved; no new generation or backend invocation.",
+      "parityBinding": {
+        "caseId": "non-activation",
+        "side": "oldGpt",
+        "promptSha256": "4f9e14b09a437dbf66cea1bab82b90c710358b54a5baef4262b1f8ed54ab1e13",
+        "configurationFingerprint": "eb1d612dc2b4645841e3035a177ebb91fa6584a2ae633d7918972b9c9dd95e25",
+        "summarySha256": "7235e62cc8365db3ad24e58d187659af2c0a90a6172d1f00385aa7ec69726cbb"
+      },
+      "historicalObservedAt": "2026-09-24T04:38:17.420Z",
+      "publishedGptId": "g-68b01358d4bc81919975e408fad4de4f",
+      "responseSha256": "7dcb2b65b23138ed4d0234b5eb197a5ea7c3dca84c4d1b78f8692793f6591873",
+      "retrievalCaptureSha256": "9adb9ed66bd18de0fe2acafe1a85d4e0b52878847c8cca3bcb97950bc400a461",
+      "sourceExecutionEvidenceId": "old-gpt-unbound-observations-20260924",
+      "publishedVersion": "Mar 5, 2026",
+      "backendInvocationsAdded": 0,
+      "historicalResponseRewritten": false
+    },
+    {
+      "id": "old-gpt-historical-structured-lesson-bound-20260927",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-27T15:02:31.694Z",
+      "summary": "Read-only account-history retrieval recovers the exact historical prompt and full response on the original published GPT. Retained supported execution calls and version-history evidence bind the result to the approved published baseline. Original historical observation and sanitized summary are preserved; no new generation or backend invocation.",
+      "parityBinding": {
+        "caseId": "structured-lesson",
+        "side": "oldGpt",
+        "promptSha256": "cb8cf57b7efc56016a8d5561e14b429b34983b7f627efa730bd8ce02b0335083",
+        "configurationFingerprint": "eb1d612dc2b4645841e3035a177ebb91fa6584a2ae633d7918972b9c9dd95e25",
+        "summarySha256": "8bd3f4bf2eee31607c98b6977fbc7aeedf0da92a915bc5793e2c25085a5fa1e3"
+      },
+      "historicalObservedAt": "2026-09-24T04:39:13.655Z",
+      "publishedGptId": "g-68b01358d4bc81919975e408fad4de4f",
+      "responseSha256": "0d587e3dc1b2c3f79987ee5edaf259277b86459999f4c732d907a306af60be88",
+      "retrievalCaptureSha256": "2ffb5e22b28d897f03e288584d86d63f53cd4e92025f1a31947a678c2e73f390",
+      "sourceExecutionEvidenceId": "old-gpt-unbound-observations-20260924",
+      "publishedVersion": "Mar 5, 2026",
+      "backendInvocationsAdded": 0,
+      "historicalResponseRewritten": false
+    },
+    {
+      "id": "old-gpt-historical-learner-follow-up-bound-20260927",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-27T15:03:00.950Z",
+      "summary": "Read-only account-history retrieval recovers the exact historical prompt and full response on the original published GPT. Retained supported execution calls and version-history evidence bind the result to the approved published baseline. Original historical observation and sanitized summary are preserved; no new generation or backend invocation.",
+      "parityBinding": {
+        "caseId": "learner-follow-up",
+        "side": "oldGpt",
+        "promptSha256": "b6fc45e4e8d77112d5821869ca4133dd7e681425611767db8aa3d3c07202039c",
+        "configurationFingerprint": "eb1d612dc2b4645841e3035a177ebb91fa6584a2ae633d7918972b9c9dd95e25",
+        "summarySha256": "dff97aae8562d5fead407e2c5fce1b07cce7b2ab51ee232ab052e9eaeb7d4ccb"
+      },
+      "historicalObservedAt": "2026-09-24T04:39:56.998Z",
+      "publishedGptId": "g-68b01358d4bc81919975e408fad4de4f",
+      "responseSha256": "ee7b4f771efb9445cdd620f38a3a19e49995f9a17dbc2fd92bf5cdb462a307bf",
+      "retrievalCaptureSha256": "6ab5c02d977e3482c55f6dfba24befe057470367e9ad89685392482d07fe45e9",
+      "sourceExecutionEvidenceId": "old-gpt-unbound-observations-20260924",
+      "publishedVersion": "Mar 5, 2026",
+      "backendInvocationsAdded": 0,
+      "historicalResponseRewritten": false
+    },
+    {
+      "id": "old-gpt-historical-difficult-question-bound-20260927",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-27T15:03:37.727Z",
+      "summary": "Read-only account-history retrieval recovers the exact historical prompt and full response on the original published GPT. Retained supported execution calls and version-history evidence bind the result to the approved published baseline. Original historical observation and sanitized summary are preserved; no new generation or backend invocation.",
+      "parityBinding": {
+        "caseId": "difficult-question",
+        "side": "oldGpt",
+        "promptSha256": "aee14790e745d53d8a9b15756fd79694a2389ecae5a1cf498883986f4303d60d",
+        "configurationFingerprint": "eb1d612dc2b4645841e3035a177ebb91fa6584a2ae633d7918972b9c9dd95e25",
+        "summarySha256": "57d311046a4ba025e5be36622c808c1b67382b46483994562feb87dec27e4c9a"
+      },
+      "historicalObservedAt": "2026-09-24T04:42:52.059Z",
+      "publishedGptId": "g-68b01358d4bc81919975e408fad4de4f",
+      "responseSha256": "fca67da3ba0a6b228a90b21e1949a1c9fda36ff2037d70146145f64b2cef103a",
+      "retrievalCaptureSha256": "199957d33cec023ad61cfa020a3b0745be6d36303776a25f7cfe9ccc87e8b27d",
+      "sourceExecutionEvidenceId": "old-gpt-unbound-observations-20260924",
+      "publishedVersion": "Mar 5, 2026",
+      "backendInvocationsAdded": 0,
+      "historicalResponseRewritten": false
+    },
+    {
+      "id": "old-gpt-historical-unsupported-memory-bound-20260927",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-27T15:04:03.390Z",
+      "summary": "Read-only account-history retrieval recovers the exact historical prompt and full response on the original published GPT. Retained supported execution calls and version-history evidence bind the result to the approved published baseline. Original historical observation and sanitized summary are preserved; no new generation or backend invocation.",
+      "parityBinding": {
+        "caseId": "unsupported-memory",
+        "side": "oldGpt",
+        "promptSha256": "6c4d2b27fe3425b48aeb401460c449b09ed39caab96c978aa41c9708b062183e",
+        "configurationFingerprint": "eb1d612dc2b4645841e3035a177ebb91fa6584a2ae633d7918972b9c9dd95e25",
+        "summarySha256": "e6c770bdde5153210b16bd5f8ac09f2937e2f740de1c148696d8a25bf05f2833"
+      },
+      "historicalObservedAt": "2026-09-24T04:40:50.779Z",
+      "publishedGptId": "g-68b01358d4bc81919975e408fad4de4f",
+      "responseSha256": "cde1cecc50d1c899e4bccfa8d056c5a36d7c0d197f4c8a323953b3940779b763",
+      "retrievalCaptureSha256": "4b67a1d433ed39dadc388e3d89602adff6c6be4f19275482454f80aef5b7ebaa",
+      "sourceExecutionEvidenceId": "old-gpt-unbound-observations-20260924",
+      "publishedVersion": "Mar 5, 2026",
+      "backendInvocationsAdded": 0,
+      "historicalResponseRewritten": false
+    },
+    {
+      "id": "old-gpt-historical-clarification-bound-20260927",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-27T15:05:16.701Z",
+      "summary": "Read-only account-history retrieval recovers the exact historical prompt and full response on the original published GPT. Retained supported execution calls and version-history evidence bind the result to the approved published baseline. Original historical observation and sanitized summary are preserved; no new generation or backend invocation.",
+      "parityBinding": {
+        "caseId": "clarification",
+        "side": "oldGpt",
+        "promptSha256": "9f2b50dc3519abd8ece71943d6621198b816e40cc0192e102e04f3ffa567f0e8",
+        "configurationFingerprint": "eb1d612dc2b4645841e3035a177ebb91fa6584a2ae633d7918972b9c9dd95e25",
+        "summarySha256": "4d11499b40b8122c7d844eb472debc4d01fff3edfabddbf2b94ab164fa0ee016"
+      },
+      "historicalObservedAt": "2026-09-24T04:41:05.533Z",
+      "publishedGptId": "g-68b01358d4bc81919975e408fad4de4f",
+      "responseSha256": "8f503aa61908d0567b49d7df1fb421e05d485fab2e962bea474588c8b5e6f188",
+      "retrievalCaptureSha256": "a92073cb8848db64f9da9e82378d49057931482ed624b0db93825def4af2c52a",
+      "sourceExecutionEvidenceId": "old-gpt-unbound-observations-20260924",
+      "publishedVersion": "Mar 5, 2026",
+      "backendInvocationsAdded": 0,
+      "historicalResponseRewritten": false
+    },
+    {
+      "id": "old-gpt-historical-exact-format-bound-20260927",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-27T15:05:42.562Z",
+      "summary": "Read-only account-history retrieval recovers the exact historical prompt and full response on the original published GPT. Retained supported execution calls and version-history evidence bind the result to the approved published baseline. Original historical observation and sanitized summary are preserved; no new generation or backend invocation.",
+      "parityBinding": {
+        "caseId": "exact-format",
+        "side": "oldGpt",
+        "promptSha256": "346f6c176ff641bb26b1b86885d73da9c4df49de0fc87589c99ae1cc00fb5db4",
+        "configurationFingerprint": "eb1d612dc2b4645841e3035a177ebb91fa6584a2ae633d7918972b9c9dd95e25",
+        "summarySha256": "4bc5e6aa96d529c81eb05aeeab0788d50fc0d64f90c60a6ea89a70dbf2de8b82"
+      },
+      "historicalObservedAt": "2026-09-24T04:41:30.008Z",
+      "publishedGptId": "g-68b01358d4bc81919975e408fad4de4f",
+      "responseSha256": "61408b603d40b53ba65b95288ec89954e12813929c3b78be32fd76403cc44ed3",
+      "retrievalCaptureSha256": "f30041edb27033a59120a05bd6b50cda391bbcfb22eeef44ec726d6c6ff3cf3f",
+      "sourceExecutionEvidenceId": "old-gpt-unbound-observations-20260924",
+      "publishedVersion": "Mar 5, 2026",
+      "backendInvocationsAdded": 0,
+      "historicalResponseRewritten": false
+    },
+    {
+      "id": "current-exact-direct-activation-20260927",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-27T14:56:17.743Z",
+      "summary": "Accurate fraction-equivalence explanation with scaling and a visual example. Current Tutor skill is visibly attributed. No visible Tutor backend activity.",
+      "parityBinding": {
+        "caseId": "direct-activation",
+        "side": "plugin",
+        "promptSha256": "a55bc9b2f1abb714899ab0470685f0feaf21231442190fe99886a55d33d888ee",
+        "configurationFingerprint": "6f945afcce451d822597bc4e79fb1d8b60262416bb75c1eb398a774318d60f5c",
+        "summarySha256": "c6370be22b9dbca351af0449e212cb15f97e97dc82155b3fa1016022df1b3644"
+      },
+      "execution": {
+        "pluginVersion": "0.8.5",
+        "releaseId": "pluginrel_6ab84427e0d4819182de200f7ce49333",
+        "packageFingerprint": "6f945afcce451d822597bc4e79fb1d8b60262416bb75c1eb398a774318d60f5c",
+        "skillSha256": "282ceeba915a317f6bb3f49eb1929ef5ae9d555781c635b0b8ed7e85977a61b8",
+        "promptSha256": "a55bc9b2f1abb714899ab0470685f0feaf21231442190fe99886a55d33d888ee",
+        "responseSha256": "ba8751a0bf2552d0b42b318f2aca108f324af51bb75a8044eeb36b51186e7db6",
+        "responseHashBasis": "retained_rendered_answer_text",
+        "captureSha256": "e7b1f78222fcce573229feed1ef18ef5baddac5a9cb2168ff96574174acb6734",
+        "submittedAt": "2026-09-27T14:55:39.647Z",
+        "capturedAt": "2026-09-27T14:56:17.743Z",
+        "exactPromptMatch": true,
+        "submissionCount": 1,
+        "expectedBackendInvocations": 0,
+        "visibleBackendInvocations": 0,
+        "serverAuthoritativeBackendInvocations": null,
+        "pluginAttributionVerified": true,
+        "expectedNonactivationVerified": false,
+        "contentResult": "PASS",
+        "evidenceId": "current-exact-direct-activation-20260927"
+      }
+    },
+    {
+      "id": "current-exact-indirect-activation-20260927",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-27T14:57:12.486Z",
+      "summary": "Recognizes learner intent and explains common denominators with a worked fraction example and interactive illustration. Tutor skill is visibly attributed; no visible Tutor backend activity.",
+      "parityBinding": {
+        "caseId": "indirect-activation",
+        "side": "plugin",
+        "promptSha256": "55bfbb8e2878acb71a00aced408d5bd920f6fdc78bf6917c3eeefcf59f38c99d",
+        "configurationFingerprint": "6f945afcce451d822597bc4e79fb1d8b60262416bb75c1eb398a774318d60f5c",
+        "summarySha256": "a00909095ed164808df68702a2b3ffc26daebadc5243c8e091ac186ff9d90114"
+      },
+      "execution": {
+        "pluginVersion": "0.8.5",
+        "releaseId": "pluginrel_6ab84427e0d4819182de200f7ce49333",
+        "packageFingerprint": "6f945afcce451d822597bc4e79fb1d8b60262416bb75c1eb398a774318d60f5c",
+        "skillSha256": "282ceeba915a317f6bb3f49eb1929ef5ae9d555781c635b0b8ed7e85977a61b8",
+        "promptSha256": "55bfbb8e2878acb71a00aced408d5bd920f6fdc78bf6917c3eeefcf59f38c99d",
+        "responseSha256": "cbb5963894b074b9ce1605b9043485417f646ff6c33a40d08f2a75c59bc52213",
+        "responseHashBasis": "retained_rendered_answer_text",
+        "captureSha256": "95e7129160043f70ed29c52df7eb8b08d9d01289ad97b942433f0c941d3006ea",
+        "submittedAt": "2026-09-27T14:56:39.935Z",
+        "capturedAt": "2026-09-27T14:57:12.486Z",
+        "exactPromptMatch": true,
+        "submissionCount": 1,
+        "expectedBackendInvocations": 0,
+        "visibleBackendInvocations": 0,
+        "serverAuthoritativeBackendInvocations": null,
+        "pluginAttributionVerified": true,
+        "expectedNonactivationVerified": false,
+        "contentResult": "PASS",
+        "evidenceId": "current-exact-indirect-activation-20260927"
+      }
+    },
+    {
+      "id": "current-exact-non-activation-20260927",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-27T14:57:38.353Z",
+      "summary": "Produces the requested party invitation. No Tutor attribution, Sources control or visible Tutor backend activity, consistent with expected nonactivation.",
+      "parityBinding": {
+        "caseId": "non-activation",
+        "side": "plugin",
+        "promptSha256": "4f9e14b09a437dbf66cea1bab82b90c710358b54a5baef4262b1f8ed54ab1e13",
+        "configurationFingerprint": "6f945afcce451d822597bc4e79fb1d8b60262416bb75c1eb398a774318d60f5c",
+        "summarySha256": "060b7edccf4f77cfb4de6db60a934bf709cfa70887c77b556509efec510e90d4"
+      },
+      "execution": {
+        "pluginVersion": "0.8.5",
+        "releaseId": "pluginrel_6ab84427e0d4819182de200f7ce49333",
+        "packageFingerprint": "6f945afcce451d822597bc4e79fb1d8b60262416bb75c1eb398a774318d60f5c",
+        "skillSha256": "282ceeba915a317f6bb3f49eb1929ef5ae9d555781c635b0b8ed7e85977a61b8",
+        "promptSha256": "4f9e14b09a437dbf66cea1bab82b90c710358b54a5baef4262b1f8ed54ab1e13",
+        "responseSha256": "e5f477250134326a1c325ab83eb1c86c856b10f03d8595bb79a98ec6539f4f14",
+        "responseHashBasis": "retained_rendered_answer_text",
+        "captureSha256": "2ec114ecda7edc9e72ed7764e2acbdca57ef1fae782c9b8f3a7823b4089679c5",
+        "submittedAt": "2026-09-27T14:57:19.052Z",
+        "capturedAt": "2026-09-27T14:57:38.353Z",
+        "exactPromptMatch": true,
+        "submissionCount": 1,
+        "expectedBackendInvocations": 0,
+        "visibleBackendInvocations": 0,
+        "serverAuthoritativeBackendInvocations": null,
+        "pluginAttributionVerified": false,
+        "expectedNonactivationVerified": true,
+        "contentResult": "PASS",
+        "evidenceId": "current-exact-non-activation-20260927"
+      }
+    },
+    {
+      "id": "current-exact-concise-explanation-20260927",
+      "kind": "chatgpt",
+      "status": "BLOCKED",
+      "observedAt": "2026-09-27T14:58:02.020Z",
+      "summary": "Accurate explanation in exactly two short sentences without an irrelevant disclaimer. The unselected conversation exposes no Tutor attribution, so content passes but current-plugin activation is unverified. No repeat was submitted.",
+      "parityBinding": {
+        "caseId": "concise-explanation",
+        "side": "plugin",
+        "promptSha256": "1889539d24060a7448ed3eb74171dead3e7381ab5121aaef6638d995cba4ef0a",
+        "configurationFingerprint": "6f945afcce451d822597bc4e79fb1d8b60262416bb75c1eb398a774318d60f5c",
+        "summarySha256": "8b6cea330958bc600b186d4d2647f09691177f2c32fffa0064f2ed025c77f563"
+      },
+      "execution": {
+        "pluginVersion": "0.8.5",
+        "releaseId": "pluginrel_6ab84427e0d4819182de200f7ce49333",
+        "packageFingerprint": "6f945afcce451d822597bc4e79fb1d8b60262416bb75c1eb398a774318d60f5c",
+        "skillSha256": "282ceeba915a317f6bb3f49eb1929ef5ae9d555781c635b0b8ed7e85977a61b8",
+        "promptSha256": "1889539d24060a7448ed3eb74171dead3e7381ab5121aaef6638d995cba4ef0a",
+        "responseSha256": "7a322bc3317e402587f8c90e80a4cb7aecf73b009c4d8ccb8b6538c405c17c2b",
+        "responseHashBasis": "retained_rendered_answer_text",
+        "captureSha256": "b4498321cd0712e7ea758d66d3d7790a8ffdc7955394251707bad7600d0fedef",
+        "submittedAt": "2026-09-27T14:57:43.076Z",
+        "capturedAt": "2026-09-27T14:58:02.020Z",
+        "exactPromptMatch": true,
+        "submissionCount": 1,
+        "expectedBackendInvocations": 0,
+        "visibleBackendInvocations": 0,
+        "serverAuthoritativeBackendInvocations": null,
+        "pluginAttributionVerified": false,
+        "expectedNonactivationVerified": false,
+        "contentResult": "PASS",
+        "evidenceId": "current-exact-concise-explanation-20260927"
+      }
+    },
+    {
+      "id": "current-exact-structured-lesson-20260927",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-27T14:59:05.441Z",
+      "summary": "Provides an objective, a correct worked equivalent-fraction example and exactly two practice questions. Tutor skill is visibly attributed; no visible Tutor backend activity.",
+      "parityBinding": {
+        "caseId": "structured-lesson",
+        "side": "plugin",
+        "promptSha256": "cb8cf57b7efc56016a8d5561e14b429b34983b7f627efa730bd8ce02b0335083",
+        "configurationFingerprint": "6f945afcce451d822597bc4e79fb1d8b60262416bb75c1eb398a774318d60f5c",
+        "summarySha256": "1e0fe559332b8577ed469bf680510bb9b81c1e0356767b5eb2c0a630b4e78209"
+      },
+      "execution": {
+        "pluginVersion": "0.8.5",
+        "releaseId": "pluginrel_6ab84427e0d4819182de200f7ce49333",
+        "packageFingerprint": "6f945afcce451d822597bc4e79fb1d8b60262416bb75c1eb398a774318d60f5c",
+        "skillSha256": "282ceeba915a317f6bb3f49eb1929ef5ae9d555781c635b0b8ed7e85977a61b8",
+        "promptSha256": "cb8cf57b7efc56016a8d5561e14b429b34983b7f627efa730bd8ce02b0335083",
+        "responseSha256": "c459ee03f8da8e753b6417864942593d6c45cc7c3b80edf329a2dfc9b85cd5af",
+        "responseHashBasis": "retained_rendered_answer_text",
+        "captureSha256": "8f57b8232d8c0244215d93bc28f5fea198385307c807d971900e18e3456bec83",
+        "submittedAt": "2026-09-27T14:58:22.220Z",
+        "capturedAt": "2026-09-27T14:59:05.441Z",
+        "exactPromptMatch": true,
+        "submissionCount": 1,
+        "expectedBackendInvocations": 0,
+        "visibleBackendInvocations": 0,
+        "serverAuthoritativeBackendInvocations": null,
+        "pluginAttributionVerified": true,
+        "expectedNonactivationVerified": false,
+        "contentResult": "PASS",
+        "evidenceId": "current-exact-structured-lesson-20260927"
+      }
+    },
+    {
+      "id": "current-exact-learner-follow-up-20260927",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-27T15:00:49.487Z",
+      "summary": "In a fresh conversation without a supplied fraction example, supplies a concrete example instead of asking for the missing context. Tutor skill is visibly attributed; this fails the current-chat-context expectation. No visible Tutor backend activity; root cause is not established.",
+      "parityBinding": {
+        "caseId": "learner-follow-up",
+        "side": "plugin",
+        "promptSha256": "b6fc45e4e8d77112d5821869ca4133dd7e681425611767db8aa3d3c07202039c",
+        "configurationFingerprint": "6f945afcce451d822597bc4e79fb1d8b60262416bb75c1eb398a774318d60f5c",
+        "summarySha256": "7f49ee0a61e8b46a9555875ab54c78face697e1348005fba2ddeb3f873bab7f6"
+      },
+      "execution": {
+        "pluginVersion": "0.8.5",
+        "releaseId": "pluginrel_6ab84427e0d4819182de200f7ce49333",
+        "packageFingerprint": "6f945afcce451d822597bc4e79fb1d8b60262416bb75c1eb398a774318d60f5c",
+        "skillSha256": "282ceeba915a317f6bb3f49eb1929ef5ae9d555781c635b0b8ed7e85977a61b8",
+        "promptSha256": "b6fc45e4e8d77112d5821869ca4133dd7e681425611767db8aa3d3c07202039c",
+        "responseSha256": "db7d534de10bafd1b841cf1363ca525db3b78f8ca451ac9cf4eae760c7c145cf",
+        "responseHashBasis": "retained_rendered_answer_text",
+        "captureSha256": "b2a0089958d167396d09e97834d8b8b08d1700e1f4915dcc1d409e334c0eb9f8",
+        "submittedAt": "2026-09-27T14:59:42.622Z",
+        "capturedAt": "2026-09-27T15:00:49.487Z",
+        "exactPromptMatch": true,
+        "submissionCount": 1,
+        "expectedBackendInvocations": 0,
+        "visibleBackendInvocations": 0,
+        "serverAuthoritativeBackendInvocations": null,
+        "pluginAttributionVerified": true,
+        "expectedNonactivationVerified": false,
+        "contentResult": "FAIL_MISSING_CONTEXT",
+        "evidenceId": "current-exact-learner-follow-up-20260927"
+      }
+    },
+    {
+      "id": "current-exact-difficult-question-20260927",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-27T15:01:50.087Z",
+      "summary": "Correctly distinguishes undefined zero-over-zero division from indeterminate limits and explains with examples. Tutor skill is visibly attributed; no visible Tutor backend activity.",
+      "parityBinding": {
+        "caseId": "difficult-question",
+        "side": "plugin",
+        "promptSha256": "aee14790e745d53d8a9b15756fd79694a2389ecae5a1cf498883986f4303d60d",
+        "configurationFingerprint": "6f945afcce451d822597bc4e79fb1d8b60262416bb75c1eb398a774318d60f5c",
+        "summarySha256": "18ba2c6baab7224c5e4f8b3932202d6e47fb4d4abde8b1e58341cfd22c481f7c"
+      },
+      "execution": {
+        "pluginVersion": "0.8.5",
+        "releaseId": "pluginrel_6ab84427e0d4819182de200f7ce49333",
+        "packageFingerprint": "6f945afcce451d822597bc4e79fb1d8b60262416bb75c1eb398a774318d60f5c",
+        "skillSha256": "282ceeba915a317f6bb3f49eb1929ef5ae9d555781c635b0b8ed7e85977a61b8",
+        "promptSha256": "aee14790e745d53d8a9b15756fd79694a2389ecae5a1cf498883986f4303d60d",
+        "responseSha256": "0d33ed93d804d92280852054ac92ff9b38dfcb43bcc30195245ed13b7e6e1205",
+        "responseHashBasis": "retained_rendered_answer_text",
+        "captureSha256": "106f7c42288e017f1c5974751e222af6fa0db23c045c82a2a00565aaf7bc3134",
+        "submittedAt": "2026-09-27T15:01:06.527Z",
+        "capturedAt": "2026-09-27T15:01:50.087Z",
+        "exactPromptMatch": true,
+        "submissionCount": 1,
+        "expectedBackendInvocations": 0,
+        "visibleBackendInvocations": 0,
+        "serverAuthoritativeBackendInvocations": null,
+        "pluginAttributionVerified": true,
+        "expectedNonactivationVerified": false,
+        "contentResult": "PASS",
+        "evidenceId": "current-exact-difficult-question-20260927"
+      }
+    },
+    {
+      "id": "current-exact-unsupported-memory-20260927",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-27T15:03:26.514Z",
+      "summary": "Host Memory activity is visible and the response makes prior-lesson and learner-profile claims, then explicitly distinguishes ChatGPT memory from unavailable Tutor saved lessons or permanent backend profile. Tutor skill and host history/memory sources are present. This material host-context behavior remains blocked; no Tutor backend persistence or invocation is evidenced.",
+      "parityBinding": {
+        "caseId": "unsupported-memory",
+        "side": "plugin",
+        "promptSha256": "6c4d2b27fe3425b48aeb401460c449b09ed39caab96c978aa41c9708b062183e",
+        "configurationFingerprint": "6f945afcce451d822597bc4e79fb1d8b60262416bb75c1eb398a774318d60f5c",
+        "summarySha256": "1b3bb9bfb26527417a3a0fc376551363d1c6d4db2f31b904e34f23c03c7d5227"
+      },
+      "execution": {
+        "pluginVersion": "0.8.5",
+        "releaseId": "pluginrel_6ab84427e0d4819182de200f7ce49333",
+        "packageFingerprint": "6f945afcce451d822597bc4e79fb1d8b60262416bb75c1eb398a774318d60f5c",
+        "skillSha256": "282ceeba915a317f6bb3f49eb1929ef5ae9d555781c635b0b8ed7e85977a61b8",
+        "promptSha256": "6c4d2b27fe3425b48aeb401460c449b09ed39caab96c978aa41c9708b062183e",
+        "responseSha256": "545d30af1f2f9b5c431f836eb11c78ccca0c08f7964394bf4a1964ea65d7420e",
+        "responseHashBasis": "retained_rendered_answer_text",
+        "captureSha256": "11c773242e1f8831e488c2913756e18a4a1a86e5e20f04cf228c4a09618c19e1",
+        "submittedAt": "2026-09-27T15:02:08.195Z",
+        "capturedAt": "2026-09-27T15:03:26.514Z",
+        "exactPromptMatch": true,
+        "submissionCount": 1,
+        "expectedBackendInvocations": 0,
+        "visibleBackendInvocations": 0,
+        "serverAuthoritativeBackendInvocations": null,
+        "pluginAttributionVerified": true,
+        "expectedNonactivationVerified": false,
+        "contentResult": "HOST_MEMORY_CONFOUNDED",
+        "evidenceId": "current-exact-unsupported-memory-20260927"
+      }
+    },
+    {
+      "id": "current-exact-unsupported-admin-20260927",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-27T15:04:43.284Z",
+      "summary": "Declines requested production administration, accurately states unavailable controls and does not expose or execute an operator route. Tutor skill is visibly attributed; no visible Tutor backend activity.",
+      "parityBinding": {
+        "caseId": "unsupported-admin",
+        "side": "plugin",
+        "promptSha256": "ab2af90ca3558468b419a913deb2c8c0fda85ef87398695cbd94c75cd71e6995",
+        "configurationFingerprint": "6f945afcce451d822597bc4e79fb1d8b60262416bb75c1eb398a774318d60f5c",
+        "summarySha256": "7d2965570559fc4819cff2afe995fcca356b33c0affe86b56d2049e9815dc497"
+      },
+      "execution": {
+        "pluginVersion": "0.8.5",
+        "releaseId": "pluginrel_6ab84427e0d4819182de200f7ce49333",
+        "packageFingerprint": "6f945afcce451d822597bc4e79fb1d8b60262416bb75c1eb398a774318d60f5c",
+        "skillSha256": "282ceeba915a317f6bb3f49eb1929ef5ae9d555781c635b0b8ed7e85977a61b8",
+        "promptSha256": "ab2af90ca3558468b419a913deb2c8c0fda85ef87398695cbd94c75cd71e6995",
+        "responseSha256": "4b2ff7fa791ba9333eba7ad2ca563868a0bbe5033136465ebd22a257dcc70d8b",
+        "responseHashBasis": "retained_rendered_answer_text",
+        "captureSha256": "ca9e30190f2ee069295c6cefc4704363602aff16b4f47a09f3bf4df1cbcfb3ca",
+        "submittedAt": "2026-09-27T15:03:44.834Z",
+        "capturedAt": "2026-09-27T15:04:43.284Z",
+        "exactPromptMatch": true,
+        "submissionCount": 1,
+        "expectedBackendInvocations": 0,
+        "visibleBackendInvocations": 0,
+        "serverAuthoritativeBackendInvocations": null,
+        "pluginAttributionVerified": true,
+        "expectedNonactivationVerified": false,
+        "contentResult": "PASS",
+        "evidenceId": "current-exact-unsupported-admin-20260927"
+      }
+    },
+    {
+      "id": "current-exact-clarification-20260927",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-27T15:05:42.076Z",
+      "summary": "Asks a single focused question requesting the problem and unclear step. Tutor skill is visibly attributed; no visible Tutor backend activity.",
+      "parityBinding": {
+        "caseId": "clarification",
+        "side": "plugin",
+        "promptSha256": "9f2b50dc3519abd8ece71943d6621198b816e40cc0192e102e04f3ffa567f0e8",
+        "configurationFingerprint": "6f945afcce451d822597bc4e79fb1d8b60262416bb75c1eb398a774318d60f5c",
+        "summarySha256": "2ba507eb48af98fa1513e43a7c51f80f03700774840f0fda4a8c5fd2105ce1ab"
+      },
+      "execution": {
+        "pluginVersion": "0.8.5",
+        "releaseId": "pluginrel_6ab84427e0d4819182de200f7ce49333",
+        "packageFingerprint": "6f945afcce451d822597bc4e79fb1d8b60262416bb75c1eb398a774318d60f5c",
+        "skillSha256": "282ceeba915a317f6bb3f49eb1929ef5ae9d555781c635b0b8ed7e85977a61b8",
+        "promptSha256": "9f2b50dc3519abd8ece71943d6621198b816e40cc0192e102e04f3ffa567f0e8",
+        "responseSha256": "aaeab3f8d6dda9c7f9dd4a4fb5b746560834d4155f8d006662bb35b80fe37d42",
+        "responseHashBasis": "retained_rendered_answer_text",
+        "captureSha256": "f30041edb27033a59120a05bd6b50cda391bbcfb22eeef44ec726d6c6ff3cf3f",
+        "submittedAt": "2026-09-27T15:04:58.373Z",
+        "capturedAt": "2026-09-27T15:05:42.076Z",
+        "exactPromptMatch": true,
+        "submissionCount": 1,
+        "expectedBackendInvocations": 0,
+        "visibleBackendInvocations": 0,
+        "serverAuthoritativeBackendInvocations": null,
+        "pluginAttributionVerified": true,
+        "expectedNonactivationVerified": false,
+        "contentResult": "PASS",
+        "evidenceId": "current-exact-clarification-20260927"
+      }
+    },
+    {
+      "id": "current-exact-exact-format-20260927",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-27T15:06:45.009Z",
+      "summary": "Gives exactly three correct numbered algebra steps with no introduction. DOM verification confirms one ordered list starting at one and exactly three list items. Tutor skill is visibly attributed; no visible Tutor backend activity.",
+      "parityBinding": {
+        "caseId": "exact-format",
+        "side": "plugin",
+        "promptSha256": "346f6c176ff641bb26b1b86885d73da9c4df49de0fc87589c99ae1cc00fb5db4",
+        "configurationFingerprint": "6f945afcce451d822597bc4e79fb1d8b60262416bb75c1eb398a774318d60f5c",
+        "summarySha256": "5cc98c683427555ec2bb50a5ab7a00616ed88c163e132fb07b216d55f4bb40c5"
+      },
+      "execution": {
+        "pluginVersion": "0.8.5",
+        "releaseId": "pluginrel_6ab84427e0d4819182de200f7ce49333",
+        "packageFingerprint": "6f945afcce451d822597bc4e79fb1d8b60262416bb75c1eb398a774318d60f5c",
+        "skillSha256": "282ceeba915a317f6bb3f49eb1929ef5ae9d555781c635b0b8ed7e85977a61b8",
+        "promptSha256": "346f6c176ff641bb26b1b86885d73da9c4df49de0fc87589c99ae1cc00fb5db4",
+        "responseSha256": "b50d18588cbfa8498e089264a9799536e0edb5148e2caf86f932d277c7d51863",
+        "responseHashBasis": "retained_rendered_answer_text",
+        "captureSha256": "cde84d8883193148e63af596894afdb2f91e84be00553fcf3b78f945ddb43527",
+        "submittedAt": "2026-09-27T15:05:59.931Z",
+        "capturedAt": "2026-09-27T15:06:45.009Z",
+        "exactPromptMatch": true,
+        "submissionCount": 1,
+        "expectedBackendInvocations": 0,
+        "visibleBackendInvocations": 0,
+        "serverAuthoritativeBackendInvocations": null,
+        "pluginAttributionVerified": true,
+        "expectedNonactivationVerified": false,
+        "contentResult": "PASS",
+        "evidenceId": "current-exact-exact-format-20260927"
+      }
+    },
+    {
+      "id": "existing-primary-connection-ui-20260927",
+      "kind": "chatgpt",
+      "status": "VERIFIED",
+      "observedAt": "2026-09-27T14:54:29.296Z",
+      "summary": "Current supported ChatGPT account UI identifies the existing registered ARCANOS Tutor app and exact production MCP resource. Details list only arcanos_tutor. Generic Connect is visible; no Primary row, Reconnect or Refresh is exposed. The UI does not establish same-association restoration semantics. Connect was not clicked, Primary was not restored and no new connection was created. This verifies current UI observations only; current scope authorization and backend usability are not verified.",
+      "connectionObservation": {
+        "registeredAppId": "asdk_app_6ab4747769088191856fd8eb02507240",
+        "resource": "https://acranos-production.up.railway.app/chatgpt/mcp",
+        "visibleToolNames": [
+          "arcanos_tutor"
+        ],
+        "visibleToolCount": 1,
+        "requiredScope": "arcanos:tutor",
+        "currentScopeAuthorizationVerified": false,
+        "existingPrimaryStatus": "NOT_VISIBLE_IN_CURRENT_SUPPORTED_UI",
+        "genericConnectVisible": true,
+        "connectClicked": false,
+        "sameAssociationRestorationEstablished": false,
+        "reconnectPerformed": false,
+        "metadataRefreshPerformed": false,
+        "newConnectionCreated": false,
+        "newAppCreated": false,
+        "newAuth0ClientCreated": false
+      },
+      "evidenceArtifacts": [
+        {
+          "path": "blocker-closure-20260927/ui-captures/012-call_odADh9ZB92bOSXrSV32ASVph.block-1.txt",
+          "sha256": "256a7c5a6150e5c7df7b70db15aa4cd1da7c15a76ac28ad40cda3b3cf4d267a8"
+        },
+        {
+          "path": "blocker-closure-20260927/ui-captures/015-call_7JNC8qo1byISgyiZadyAG77R.block-1.txt",
+          "sha256": "8dce32b5d8ef4bafc3b670135510c061dad202d8fa8d39db0cd9f25e02ff0f5b"
+        }
+      ]
+    },
+    {
+      "id": "production-acceptance-not-run-connection-20260927",
+      "kind": "chatgpt",
+      "status": "BLOCKED",
+      "observedAt": "2026-09-27T14:54:29.296Z",
+      "summary": "Fresh production acceptance cycle was not started because existing connection readiness could not be established safely. Raw MCP A/C/D and ChatGPT explicit-backend A/C/D were all NOT_RUN. Classification CONNECTION; zero of six potential Tutor backend invocations used, six reserved, zero retries. No actual backend answer or same-invocation tool result exists for this cycle; no new content, format or qualification defect is inferred. Production and existing account configuration were unchanged.",
+      "acceptanceObservation": {
+        "classification": "CONNECTION",
+        "callBudgetStarted": false,
+        "maximumPotentialTutorInvocations": 6,
+        "potentialTutorInvocationsUsed": 0,
+        "remainingPotentialTutorInvocations": 6,
+        "automaticRetries": 0,
+        "rawMcp": {
+          "A": "NOT_RUN",
+          "C": "NOT_RUN",
+          "D": "NOT_RUN"
+        },
+        "chatgptExplicitBackend": {
+          "A": "NOT_RUN",
+          "C": "NOT_RUN",
+          "D": "NOT_RUN"
+        },
+        "backendContentAssessed": false,
+        "previewUsedForLiveAcceptance": false,
+        "productionFailureManufactured": false
+      },
+      "evidenceArtifacts": [
+        {
+          "path": "blocker-closure-20260927/connection-backend-report.sanitized.draft.json",
+          "sha256": "8852bd2f39e27a6547353f25e0f78424e19e963c78a15c4437c98fe7825e7dc7"
+        }
+      ]
+    }
+  ],
+  "checks": {
+    "registeredConnection": {
+      "status": "VERIFIED",
+      "evidenceIds": [
+        "primary-reauth-schema-refresh-20260924",
+        "primary-final-reauth-refresh-20260926",
+        "existing-primary-connection-ui-20260927"
+      ]
+    },
+    "endpoint": {
+      "status": "VERIFIED",
+      "evidenceIds": [
+        "primary-reauth-schema-refresh-20260924",
+        "primary-final-reauth-refresh-20260926",
+        "existing-primary-connection-ui-20260927"
+      ]
+    },
+    "authentication": {
+      "status": "VERIFIED",
+      "evidenceIds": [
+        "primary-reauth-schema-refresh-20260924",
+        "primary-final-reauth-refresh-20260926"
+      ]
+    },
+    "toolDiscovery": {
+      "status": "VERIFIED",
+      "evidenceIds": [
+        "primary-reauth-schema-refresh-20260924",
+        "primary-final-reauth-refresh-20260926",
+        "existing-primary-connection-ui-20260927"
+      ]
+    },
+    "liveExecution": {
+      "status": "BLOCKED",
+      "evidenceIds": [
+        "runtime-raw-acceptance-20260924",
+        "runtime-chatgpt-acceptance-20260924",
+        "runtime-acceptance-post1512-record-20260925",
+        "final-raw-acceptance-20260926",
+        "final-chatgpt-partial-acceptance-20260926",
+        "production-acceptance-not-run-connection-20260927"
+      ]
+    }
+  },
+  "builderReconciliation": "VERIFIED",
+  "referenceReconciliation": "VERIFIED",
+  "usagePolicy": {
+    "defaultTeachingPath": "skill_only",
+    "appRequired": false,
+    "backendInvocation": "explicit_request_only",
+    "uniqueBackendCapabilities": [],
+    "scope": "arcanos:tutor"
+  }
+}

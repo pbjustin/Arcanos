@@ -45,6 +45,7 @@ import {
   NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT,
   NATIVE_PR_PREVIEW_BACKSTAGE_BOOKER_OPENAPI_CONTRACT,
   NATIVE_PR_PREVIEW_CHATGPT_TUTOR_CONTRACT,
+  NATIVE_PR_PREVIEW_PLUGIN_MIGRATION_CONTRACT,
   NATIVE_PR_PREVIEW_DISPATCH_GPT_IDENTIFIER_CONTRACT,
   NATIVE_PR_PREVIEW_DAG_METRICS_CONTRACT,
   NATIVE_PR_PREVIEW_DAG_TOKEN_ACCOUNTING_CONTRACT,
@@ -9408,9 +9409,11 @@ export function createNativePrPreviewApplication(
   });
   app.post(NATIVE_PR_PREVIEW_CHATGPT_TUTOR_CONTRACT.path, (request, response) => {
     const result = handleChatGptTutorPreviewRequest(request.body);
-    if (result.honestyVerified === true) {
+    if (result.honestyVerified === true && result.migrationVerified === true) {
       response.setHeader(NATIVE_PR_PREVIEW_CHATGPT_TUTOR_CONTRACT.honestyProofHeader,
         NATIVE_PR_PREVIEW_CHATGPT_TUTOR_CONTRACT.honestyProofVersion);
+      response.setHeader(NATIVE_PR_PREVIEW_PLUGIN_MIGRATION_CONTRACT.proofHeader,
+        NATIVE_PR_PREVIEW_PLUGIN_MIGRATION_CONTRACT.proofVersion);
     }
     if (result.payload === undefined) {
       response.status(result.statusCode).end();

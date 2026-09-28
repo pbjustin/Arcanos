@@ -5,9 +5,11 @@ import { assertDagMetricsRetentionPreviewFixture } from '../src/shared/dag/dagMe
 import { assertDagTokenAccountingPreviewFixture } from '../src/shared/dag/dagTokenAccountingPreviewFixture.js';
 import { assertSessionContextPreviewFixture } from '../src/shared/memory/sessionContextPreviewFixture.js';
 import { assertTutorHonestyPreviewFixture } from '../src/shared/chatgpt/tutorHonestyPreviewFixture.js';
+import { assertPluginMigrationPreviewFixture } from '../src/shared/chatgpt/pluginMigrationPreviewFixture.js';
 import {
   NATIVE_PR_PREVIEW_BACKSTAGE_BOOKER_OPENAPI_CONTRACT,
   NATIVE_PR_PREVIEW_CHATGPT_TUTOR_CONTRACT,
+  NATIVE_PR_PREVIEW_PLUGIN_MIGRATION_CONTRACT,
   NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT,
   NATIVE_PR_PREVIEW_BACKSTAGE_STORYLINE_CONTRACT,
   NATIVE_PR_PREVIEW_DISPATCH_GPT_IDENTIFIER_CONTRACT,
@@ -44,6 +46,10 @@ jest.unstable_mockModule('../src/shared/memory/sessionContextPreviewFixture.js',
 const assertTutorHonestyFixture = jest.fn(assertTutorHonestyPreviewFixture);
 jest.unstable_mockModule('../src/shared/chatgpt/tutorHonestyPreviewFixture.js', () => ({
   assertTutorHonestyPreviewFixture: assertTutorHonestyFixture,
+}));
+const assertPluginMigrationFixture = jest.fn(assertPluginMigrationPreviewFixture);
+jest.unstable_mockModule('../src/shared/chatgpt/pluginMigrationPreviewFixture.js', () => ({
+  assertPluginMigrationPreviewFixture: assertPluginMigrationFixture,
 }));
 const {
   createNativePrPreviewApplication,
@@ -695,6 +701,7 @@ describe('native PR contained application', () => {
       const failed = await request(app).post(contract.path).send(call);
       expect(failed.status).toBe(500);
       expect(failed.headers[contract.honestyProofHeader]).toBeUndefined();
+      expect(failed.headers[NATIVE_PR_PREVIEW_PLUGIN_MIGRATION_CONTRACT.proofHeader]).toBeUndefined();
       expect(failed.body).toEqual({ jsonrpc: '2.0', id: 1,
         error: { code: -32603, message: 'TUTOR_PREVIEW_HONESTY_ASSERTION_FAILED' } });
       expect(JSON.stringify(failed.body)).not.toContain('private failure detail');
@@ -705,6 +712,30 @@ describe('native PR contained application', () => {
       expect(assertTutorHonestyFixture).toHaveBeenCalledTimes(1);
     } finally {
       assertTutorHonestyFixture.mockImplementation(assertTutorHonestyPreviewFixture);
+    }
+  });
+
+  it('withholds both Tutor success markers and output when the migration core fixture fails', async () => {
+    const contract = NATIVE_PR_PREVIEW_CHATGPT_TUTOR_CONTRACT;
+    const app = createNativePrPreviewApplication({ identity });
+    const call = { jsonrpc: '2.0', id: 1, method: 'tools/call',
+      params: { name: contract.toolName, arguments: { prompt: contract.prompt } } };
+    try {
+      assertPluginMigrationFixture.mockImplementation(() => { throw new Error('private failure detail'); });
+      const failed = await request(app).post(contract.path).send(call);
+      expect(failed.status).toBe(500);
+      expect(failed.headers[contract.honestyProofHeader]).toBeUndefined();
+      expect(failed.headers[NATIVE_PR_PREVIEW_PLUGIN_MIGRATION_CONTRACT.proofHeader]).toBeUndefined();
+      expect(failed.body).toEqual({ jsonrpc: '2.0', id: 1,
+        error: { code: -32603, message: 'TUTOR_PREVIEW_MIGRATION_ASSERTION_FAILED' } });
+      expect(JSON.stringify(failed.body)).not.toContain('private failure detail');
+      expect(assertPluginMigrationFixture).toHaveBeenCalledTimes(1);
+      const denied = await request(app).post(contract.path).send({ ...call,
+        params: { ...call.params, arguments: { prompt: 'unapproved input' } } });
+      expect(denied.headers[NATIVE_PR_PREVIEW_PLUGIN_MIGRATION_CONTRACT.proofHeader]).toBeUndefined();
+      expect(assertPluginMigrationFixture).toHaveBeenCalledTimes(1);
+    } finally {
+      assertPluginMigrationFixture.mockImplementation(assertPluginMigrationPreviewFixture);
     }
   });
 

@@ -1,0 +1,72 @@
+{
+  "schemaVersion": 1,
+  "status": "VERIFIED",
+  "artifactFormat": "CHATGPT_NATIVE_SKILLS_ONLY",
+  "skill": {
+    "path": "installed-artifacts-20260926/skills/instructions/SKILL.md",
+    "sha256": "5478886612bfe7f80d09bddd0eebb5002644775763efe6aa9046a7c009c8dc5b",
+    "sizeBytes": 2531
+  },
+  "references": [],
+  "metadata": {
+    "path": "installed-artifacts-20260926/.codex-plugin/plugin.json",
+    "sha256": "156efe759a1daef64e56ef5a6fc93e147ab7b8da8b542a97fa3a6d102f5fdcd1",
+    "sizeBytes": 1327
+  },
+  "appMapping": null,
+  "appAttachment": "NOT_ATTACHED",
+  "warnings": [
+    "Custom Actions are unsupported and did not transfer. No app is attached to the migrated plugin.",
+    "The generated skill preserves published instructions but omits the separately approved repository integration safeguards."
+  ],
+  "instructionComparison": null,
+  "baselineFingerprint": "eb1d612dc2b4645841e3035a177ebb91fa6584a2ae633d7918972b9c9dd95e25",
+  "capture": {
+    "pluginId": "plugin_d292d1e45ae08191b3911299e30e1a25",
+    "cachePackageName": "gpt-e9bcdc399db672af9f66dfd7e18e7953",
+    "version": "0.8.1+bundle.951fdf6546409c5382fa49f2bed2fd2b",
+    "rootPath": "installed-artifacts-20260926",
+    "files": [
+      {
+        "path": "installed-artifacts-20260926/.codex-plugin/plugin.json",
+        "sha256": "156efe759a1daef64e56ef5a6fc93e147ab7b8da8b542a97fa3a6d102f5fdcd1",
+        "sizeBytes": 1327
+      },
+      {
+        "path": "installed-artifacts-20260926/assets/gpt-icon.png",
+        "sha256": "3a891552d348010ff7b5571d39efd77085db6d5fcecdc0e6641e02dd364c0b06",
+        "sizeBytes": 253896
+      },
+      {
+        "path": "installed-artifacts-20260926/skills/instructions/agents/openai.yaml",
+        "sha256": "067d163eb275f2c1ca642972434926560726c5b075abb433bebfc643d50b671d",
+        "sizeBytes": 127
+      },
+      {
+        "path": "installed-artifacts-20260926/skills/instructions/lookup/knowledge-index.json",
+        "sha256": "6ac91cab38eae269a4e6457275b3b956f615a7df03de4b1ce88f44b8110efc30",
+        "sizeBytes": 18
+      },
+      {
+        "path": "installed-artifacts-20260926/skills/instructions/SKILL.md",
+        "sha256": "5478886612bfe7f80d09bddd0eebb5002644775763efe6aa9046a7c009c8dc5b",
+        "sizeBytes": 2531
+      }
+    ],
+    "packageFingerprint": "4f4ccff2556b8e8b2560eb16b301647e3edb0d71666dea03feb297b9613745fe",
+    "receipt": {
+      "path": "installed-artifacts-20260926/capture-review.json",
+      "sha256": "5689bff48ae9d35618c194e5680ff89e39e21d1b0bc1523cb3e85baca5777c80",
+      "sizeBytes": 3201
+    }
+  },
+  "accountReview": {
+    "reviewedBy": "Codex supported account UI and installed artifact inspection",
+    "reviewedAt": "2026-09-26T04:30:15.294Z",
+    "confirmedMigrated": true,
+    "confirmedWarningsReviewed": true
+  },
+  "evidenceIds": [
+    "account-plugin-migration-20260926"
+  ]
+}

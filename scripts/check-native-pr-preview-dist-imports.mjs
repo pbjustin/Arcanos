@@ -64,6 +64,35 @@ export const TUTOR_HONESTY_PREVIEW_DIST_IMPORT_CONTRACT = Object.freeze([
   ].map(filePath => Object.freeze({ filePath, imports: Object.freeze({}) })),
 ]);
 
+// The CLI core stays at scripts/ in the image. No filesystem/private-input
+// adapters may enter this emitted fixture graph, including through its leaf.
+export const PLUGIN_MIGRATION_PREVIEW_DIST_IMPORT_CONTRACT = Object.freeze([
+  Object.freeze({
+    filePath: 'dist/shared/chatgpt/chatgptTutorPreviewFixture.js',
+    imports: Object.freeze({
+      '../../../scripts/native-pr-preview-contract.mjs': Object.freeze(['NATIVE_PR_PREVIEW_E2E_CONTRACT:NATIVE_PR_PREVIEW_E2E_CONTRACT']),
+      './tutorHonestyPreviewFixture.js': Object.freeze(['assertTutorHonestyPreviewFixture:assertTutorHonestyPreviewFixture']),
+      './pluginMigrationPreviewFixture.js': Object.freeze(['assertPluginMigrationPreviewFixture:assertPluginMigrationPreviewFixture']),
+    }),
+  }),
+  Object.freeze({
+    filePath: 'dist/shared/chatgpt/pluginMigrationPreviewFixture.js',
+    imports: Object.freeze({
+      '../../../scripts/tutor-package-core.mjs': Object.freeze([
+        'assertArtifactDigest:assertArtifactDigest',
+        'assertTutorAppMapping:assertTutorAppMapping',
+        'assertTutorPackageManifestIdentity:assertTutorPackageManifestIdentity',
+        'digest:digest',
+        'packageFingerprint:packageFingerprint',
+      ]),
+    }),
+  }),
+  Object.freeze({
+    filePath: 'scripts/tutor-package-core.mjs',
+    imports: Object.freeze({ 'node:crypto': Object.freeze(['createHash:createHash']) }),
+  }),
+]);
+
 function runtimeImportBindings(node) {
   const importClause = node.importClause;
   if (!importClause || importClause.isTypeOnly) {
@@ -191,7 +220,7 @@ export function findTutorHonestyPreviewDistImportSourceViolations(contract, sour
   if (sourceFile.parseDiagnostics.length > 0
     || observedImports.length !== expectedImports.length
     || observedImports.some((entry, index) => entry !== expectedImports[index])) {
-    violations.push(`${contract.filePath}: emitted Tutor honesty imports must match the reviewed pure graph`);
+    violations.push(`${contract.filePath}: emitted sealed preview imports must match the reviewed pure graph`);
   }
   const inspect = node => {
     if ((ts.isExportDeclaration(node) && node.moduleSpecifier)
@@ -200,7 +229,7 @@ export function findTutorHonestyPreviewDistImportSourceViolations(contract, sour
         node.expression.kind === ts.SyntaxKind.ImportKeyword
         || (ts.isIdentifier(node.expression) && node.expression.text === 'require')
       ))) {
-      violations.push(`${contract.filePath}: emitted Tutor honesty graph must not use dynamic imports or runtime re-exports`);
+      violations.push(`${contract.filePath}: emitted sealed preview graph must not use dynamic imports or runtime re-exports`);
     }
     ts.forEachChild(node, inspect);
   };
@@ -254,12 +283,13 @@ export async function findNativePrPreviewDistImportViolations({
       violations.push(`${contract.filePath}: built preview module is missing`);
     }
   }
-  for (const contract of TUTOR_HONESTY_PREVIEW_DIST_IMPORT_CONTRACT) {
+  for (const contract of [...TUTOR_HONESTY_PREVIEW_DIST_IMPORT_CONTRACT,
+    ...PLUGIN_MIGRATION_PREVIEW_DIST_IMPORT_CONTRACT]) {
     try {
       const sourceText = await fs.readFile(path.join(repositoryRoot, contract.filePath), 'utf8');
       violations.push(...findTutorHonestyPreviewDistImportSourceViolations(contract, sourceText));
     } catch {
-      violations.push(`${contract.filePath}: built Tutor honesty module is missing`);
+      violations.push(`${contract.filePath}: reviewed sealed preview module is missing`);
     }
   }
   return [...new Set(violations)].sort();
@@ -274,7 +304,7 @@ export async function runCliCheck() {
     return;
   }
   console.log(
-    'check:native-pr-preview-dist-imports passed: emitted preview imports match the reviewed request-abort runtime and pure Tutor honesty graph.'
+    'check:native-pr-preview-dist-imports passed: emitted preview imports match the reviewed runtime, honesty and migration-package core graphs.'
   );
 }
 

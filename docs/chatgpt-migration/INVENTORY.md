@@ -1,5 +1,9 @@
 # Four-GPT migration inventory
 
+For current Tutor-only connection metadata and migration gates, use the
+[standalone Tutor handoff](TUTOR_MIGRATION.md). This dated foundation inventory
+does not update the other GPTs or represent a captured Builder export.
+
 This maintained companion and [machine-readable manifest](inventory.json) describe
 repository contracts inspected on 2026-09-22 at
 `655cb56fc3912684a0dd7b7bfb735a841f3c4056`. They support the scoped Tutor

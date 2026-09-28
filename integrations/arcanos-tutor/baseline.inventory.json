@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "status": "VERIFIED",
+  "source": "latest_published_gpt",
+  "publicationAssurance": "USER_REPORTED",
+  "configuration": {
+    "path": "published-gpt.json",
+    "sha256": "445255487dd270aad087e025b738666340ac1d42a2e45b05fe0b7df640e843bf",
+    "sizeBytes": 10925,
+    "publishedVersion": "Mar 5, 2026",
+    "publishedAt": "2026-03-05T23:54",
+    "displayName": "ARCANOS TUTOR",
+    "enabledCapabilities": [
+      "Web Search",
+      "Canvas",
+      "Image Generation",
+      "Code Interpreter & Data Analysis"
+    ],
+    "actions": [
+      {
+        "name": "acranos-production.up.railway.app",
+        "schemaSha256": "579d931f35ccb59773fdce51175c667139fe4148cdc26c8362480d68b7bc4e04"
+      }
+    ],
+    "fields": {
+      "description": {
+        "sha256": "a461f8664c30ec3e2a9e6b1172534d14c0f8942b9b6237217d7932aaa333e8b4",
+        "sizeBytes": 270
+      },
+      "instructions": {
+        "sha256": "dc0d1823a95a445666de8ef9d1d4c64f136488b2c51136a2178888c8ad162144",
+        "sizeBytes": 2447
+      },
+      "conversationStarters": {
+        "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "sizeBytes": 2
+      },
+      "enabledCapabilities": {
+        "sha256": "a160ca298ea3b3175a28d75d3b680338771807d3693956a1f98cf28b6479a9b7",
+        "sizeBytes": 77
+      },
+      "actions": {
+        "sha256": "02f579e8bd5f9e6167cdaa42c4dcff396b8546426a0dcb3df184c986aa5f3544",
+        "sizeBytes": 2545
+      },
+      "sharingStatus": {
+        "sha256": "c4b3caed42b4268b5820cc646173fb2194cfa65ebd4357ae70c79a57117fd6f7",
+        "sizeBytes": 9
+      },
+      "representativeBehavior": {
+        "sha256": "a020a9f3e46b43a1298568b82d7da3c39b4f3d83de5983aa86c4903620b032fc",
+        "sizeBytes": 914
+      }
+    }
+  },
+  "knowledge": [],
+  "missingInputs": [],
+  "publicationReview": {
+    "reviewedBy": "Owner (task confirmation)",
+    "reviewedAt": "2026-09-25T20:00:43Z",
+    "latestPublishedConfirmed": true,
+    "evidenceIds": [
+      "published-current-version-partial-20260925",
+      "published-entry-identity-followup-20260925",
+      "owner-published-settings-confirmation-followup-20260925",
+      "owner-complete-baseline-review-20260925"
+    ]
+  }
+}
