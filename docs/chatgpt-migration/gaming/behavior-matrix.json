@@ -1,6 +1,6 @@
 {
   "schemaVersion": "arcanos-gaming-behavior-matrix/v1",
-  "status": "PROVISIONAL_REPOSITORY_DERIVED",
+  "status": "BASELINE_BOUND_ACCEPTANCE_PLAN",
   "sourceCommit": "8f31f3eb5c95af1919e5a36e780cfb75e011a7a9",
   "actionSchemaVersion": "1.5.0",
   "contractVersion": "gaming-hybrid-v1",
@@ -9,7 +9,7 @@
   "executionStatus": "NOT_RUN",
   "notes": [
     "These repository-derived scenarios are corroborated by the owner-approved published Gaming source; installed-skill execution remains untested.",
-    "Tool names and scopes are proposed; app registration and live OAuth grants are not claimed.",
+    "Tool names, schemas and scopes are implemented by the separate backend prerequisite and planned connection contract; app registration and live OAuth grants are not claimed.",
     "The 18 cases are contract expectations, not 18 passing behavioral tests.",
     "Acceptance must distinguish local fixtures, sealed preview, installed skill, OAuth, live reads, and authorized production writes."
   ],
@@ -217,6 +217,7 @@
       ],
       "expectedSideEffect": "One authorized durable ingestion job; worker may later fetch and write source/chunks.",
       "expectedScopes": [
+        "arcanos:gaming:query",
         "arcanos:gaming:sources:write"
       ],
       "expectedState": "Source lifecycle queued or running; not a hybrid state",
@@ -255,6 +256,7 @@
       ],
       "expectedSideEffect": "Durable refresh job and later bounded refetch/atomic revision update.",
       "expectedScopes": [
+        "arcanos:gaming:query",
         "arcanos:gaming:sources:write"
       ],
       "expectedState": "Source lifecycle queued or running",
@@ -274,6 +276,7 @@
       ],
       "expectedSideEffect": "Existing authorized ingestion queue; no alternate storage service.",
       "expectedScopes": [
+        "arcanos:gaming:query",
         "arcanos:gaming:sources:write"
       ],
       "expectedState": "ingestion_pending for new job; preserve any independent supported answer",
@@ -295,6 +298,7 @@
       ],
       "expectedSideEffect": "None; no enqueue, source fetch, or source write before authorization/confirmation.",
       "expectedScopes": [
+        "arcanos:gaming:query",
         "arcanos:gaming:sources:write"
       ],
       "expectedState": "MCP authorization/confirmation error; existing hybrid consent denial is temporarily_unavailable",
@@ -316,8 +320,8 @@
       ],
       "expectedSideEffect": "Identical durable replay reuses one job; mismatch produces no second enqueue; transient replay retains workflow limits.",
       "expectedScopes": [
-        "arcanos:gaming:sources:write",
-        "arcanos:gaming:query"
+        "arcanos:gaming:query",
+        "arcanos:gaming:sources:write"
       ],
       "expectedState": "Prior operation result for valid replay; conflict for changed input",
       "expectedNextAction": "Preserve returned continuation; terminal ingestion replay requires source result evidence",
@@ -360,5 +364,27 @@
       "executionStatus": "NOT_RUN"
     }
   ],
-  "baselineFingerprint": "7ecae0312c25c56f1cb66e39ee3de0e56385244632227320d8c2c1bde66b4ac6"
+  "baselineFingerprint": "7ecae0312c25c56f1cb66e39ee3de0e56385244632227320d8c2c1bde66b4ac6",
+  "authorizationModel": {
+    "readOnlyTools": [
+      "arcanos_gaming_query",
+      "arcanos_gaming_canary",
+      "arcanos_gaming_ingestion_status"
+    ],
+    "transientStateTools": [
+      "arcanos_gaming_hybrid_query",
+      "arcanos_gaming_submit_candidates"
+    ],
+    "durableWriteTools": [
+      "arcanos_gaming_ingest_sources",
+      "arcanos_gaming_refresh_sources",
+      "arcanos_gaming_ingest_candidates"
+    ],
+    "queryScope": "arcanos:gaming:query",
+    "durableWriteScopes": [
+      "arcanos:gaming:query",
+      "arcanos:gaming:sources:write"
+    ],
+    "durableWriteConfirmation": "confirmStore must be true; admitted non-transient storage policy required"
+  }
 }

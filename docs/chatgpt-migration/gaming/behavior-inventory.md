@@ -1,11 +1,12 @@
 # Arcanos Gaming behavior inventory
 
-Status: **PROVISIONAL_REPOSITORY_DERIVED**. Inspected against main
+Status: **BASELINE_BOUND_ACCEPTANCE_PLAN**. Inspected against main
 `8f31f3eb5c95af1919e5a36e780cfb75e011a7a9` on 2026-09-28. This is a contract
-inventory and proposed acceptance plan, not a captured published GPT baseline,
-approved private skill, installed-plugin result, or live-service result. The
-published baseline is now owner-approved and corroborates hybrid-first
-orchestration. The private skill and its acceptance results remain pending.
+inventory and acceptance plan bound to the owner-approved published baseline
+`7ecae0312c25c56f1cb66e39ee3de0e56385244632227320d8c2c1bde66b4ac6`.
+That baseline corroborates hybrid-first orchestration. The private skill and
+its acceptance results remain pending; this is not an installed-plugin or
+live-service result.
 No private Builder text is included.
 
 ## Authoritative inputs and behavior selection
@@ -143,14 +144,26 @@ respecting retry hints. Stop at `completed`, `completed_with_errors`, `failed`,
 read even if its state is `answer_ready`. Failed storage does not invalidate
 independently supported gameplay evidence. Ingestion is storage, not training.
 
-## Proposed authority boundary and concrete gaps
+## Authority contract and separate backend prerequisite
 
-The proposed Gaming scopes are `arcanos:gaming:query` for fixed read/query tools
-and `arcanos:gaming:sources:write` for the three durable writes. These are design
-identifiers, not registered or verified grants. Neither query access nor owner
+The separate backend prerequisite implements `arcanos:gaming:query` for all
+eight fixed tools and additionally requires `arcanos:gaming:sources:write`
+for the three durable writes. These scopes are the planned connection contract,
+not registered or live-verified grants. Neither query access nor owner
 identity alone grants write access. No Tutor scope, app identity, operator
 catalog, generic `modules.invoke`, generic jobs, memory administration, database,
 or Railway capabilities belong in this plugin.
+
+| Tool class | Tools | MCP annotations | Required scopes |
+| --- | --- | --- | --- |
+| Read-only | `arcanos_gaming_query`, `arcanos_gaming_canary`, `arcanos_gaming_ingestion_status` | `readOnlyHint: true`, `destructiveHint: false` | Query |
+| Transient workflow state | `arcanos_gaming_hybrid_query`, `arcanos_gaming_submit_candidates` | `readOnlyHint: false`, `destructiveHint: false` | Query |
+| Durable source storage | `arcanos_gaming_ingest_sources`, `arcanos_gaming_refresh_sources`, `arcanos_gaming_ingest_candidates` | `readOnlyHint: false`, `destructiveHint: true` | Query and source write |
+
+Transient-state tools cannot enqueue source storage. The three durable tools
+can update or reactivate existing revisions, so their destructive annotations
+are conservative. Every durable request also requires explicit confirmation and
+an admitted non-transient storage policy before its service is invoked.
 
 Reuse `GamingSourceGatewayContext.actorKey` for a stable server-derived Gaming
 owner identity after OAuth issuer/audience/signature/expiry/scope validation and
@@ -160,13 +173,13 @@ the private owner's allowlist. The caller cannot submit this identity.
 Do not map the OAuth owner to the legacy bearer or let it read that bearer's old
 workflow/status handles implicitly.
 
-Two important implementation details need a narrow backend adapter:
+Two implementation details are addressed by that narrow backend adapter:
 
 1. Legacy `createGamingSourceIngestion` and `refreshGamingSources` expect an
    already-authorized context and do not themselves require `canStore` or
-   `confirmStore`. The MCP wrapper must enforce write scope and explicit
+   `confirmStore`. The MCP wrapper enforces both scopes and explicit
    confirmation before either service is called. Hybrid candidate ingestion
-   already has server-side storage/consent checks that must remain intact.
+   retains its existing server-side storage/consent checks.
 2. The Gaming corpus is shared, while jobs and transient workflows are
    actor-bound. `refreshGamingSources` looks up admitted source UUIDs globally;
    it does not check per-source tenant ownership. The private app must explicitly
@@ -178,9 +191,11 @@ Reuse fixed service calls (`gamingHybridWorkflow.query/candidates/ingest`,
 `createGamingSourceIngestion`, `refreshGamingSources`,
 `getGamingSourceIngestionStatus`, fixed gameplay, and fixed canary). Preserve
 the caller context through those services; do not proxy legacy bearer HTTP.
-Concrete public tool schemas, OAuth registration, timeout/cancellation behavior,
-and server-enforced MCP confirmation require backend implementation and tests
-before an app connection or migration can proceed.
+The prerequisite defines public tool schemas, timeout/cancellation behavior,
+and server-enforced confirmation with focused tests. It must be independently
+merged, deployed and verified before migration resumes. OAuth registration,
+connection and live acceptance remain separate owner checkpoints; implementation
+and synthetic verification alone do not satisfy them.
 
 ## Verification boundary
 

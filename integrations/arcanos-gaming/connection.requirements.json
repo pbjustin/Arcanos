@@ -3,7 +3,12 @@
   "product": "Arcanos Gaming",
   "visibility": "PRIVATE",
   "accountModel": "single_owner",
-  "status": "BLOCKED_BACKEND_PR_REQUIRED",
+  "status": "BLOCKED_BACKEND_DEPLOYMENT",
+  "backendPrerequisite": {
+    "pullRequest": "https://github.com/pbjustin/Arcanos/pull/1515",
+    "initialHead": "5524618cae27bcc2676c701816172dd6eaac6455",
+    "productionStatus": "NOT_DEPLOYED"
+  },
   "proposedEndpoint": "https://acranos-production.up.railway.app/chatgpt/gaming/mcp",
   "endpointDeployed": false,
   "registeredAppId": null,
@@ -31,7 +36,7 @@
     "identity": "Verified JWT issuer, subject, audience, expiration and signature; explicit configured single owner",
     "actor": "Stable server-derived Gaming OAuth actor; never the legacy bearer-derived actor",
     "ownership": "Actor-bound workflows, candidate IDs, ingestion jobs and idempotency; shared Gaming corpus refresh restricted to configured owner",
-    "writes": "Separate write scope, explicit confirmation, storage policy, bounded accepted inputs and backend standing permission where applicable",
+    "writes": "Both query and source-write scopes, explicit confirmation, storage policy, bounded accepted inputs and backend standing permission where applicable",
     "readToolsCanStore": false,
     "legacyBearerForwarded": false,
     "callerAuthorityFieldsAccepted": false

@@ -7,7 +7,9 @@ The migration branch is `codex/arcanos-gaming-plugin-migration`.
 **Migration is paused at a genuine backend prerequisite.** Main's existing MCP
 resource is Tutor-only. Gaming's lower-level services can be reused, but a
 separate Gaming OAuth principal adapter and fixed eight-tool MCP resource are
-required. The prerequisite belongs on `codex/arcanos-gaming-mcp-auth`; it needs
+required. The prerequisite is [PR #1515](https://github.com/pbjustin/Arcanos/pull/1515)
+on `codex/arcanos-gaming-mcp-auth`, initially validated at
+`5524618cae27bcc2676c701816172dd6eaac6455`; it needs
 separate owner-authorized merge, deployment and verification before this
 migration resumes. Neither PR is authorized to merge automatically.
 

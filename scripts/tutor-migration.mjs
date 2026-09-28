@@ -27,7 +27,7 @@ const credentialPatterns = [
   /\b(?:ghp_|github_pat_)[A-Za-z0-9_]{20,}/u,
   // Public Gaming Action descriptions use the complete phrase "bearer authentication".
   // Only that standalone word is prose; token suffixes still trigger the guard.
-  /\bBearer\s+(?!authentication(?![A-Za-z0-9_.~+/-]))[A-Za-z0-9_.~+/-]{12,}/iu,
+  /\bBearer\s+(?!authentication(?![A-Za-z0-9_.~+/=-]))[A-Za-z0-9_.~+/-]{12,}/iu,
   /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/u,
   /(?:postgres(?:ql)?|redis):\/\/[^\s/]+:[^\s@]+@/iu,
   /["']?(?:(?:access|refresh|auth)[_-]?token|client[_-]?secret|authorization(?:[_-]?code)?|password|(?:session[_-]?)?cookie|session[_-]?token|(?:openai[_-]?)?api[_-]?key|private(?:[_-]?signing)?[_-]?key|(?:signing|secret)[_-]?key)["']?\s*[:=]\s*["']?[^\s"',}{][^\r\n]{3,}/iu

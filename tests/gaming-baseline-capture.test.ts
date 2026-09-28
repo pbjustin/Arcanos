@@ -126,7 +126,7 @@ describe('Migration credential scan handles public Gaming authentication prose n
     expect(scan(canonicalSchema).status).toBe(0);
   });
 
-  it.each(['authentication123', 'authentication.other', 'authentication-credential', 'authentication/credential'])('rejects bearer token suffix %s', suffix => {
+  it.each(['authentication123', 'authentication.other', 'authentication-credential', 'authentication/credential', 'authentication=', 'authentication=='])('rejects bearer token suffix %s', suffix => {
     const result = scan(['Bearer', suffix].join(' '));
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('POSSIBLE_CREDENTIAL');
