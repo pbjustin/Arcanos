@@ -2231,7 +2231,7 @@ It exposes no general dispatcher, jobs, database or operator tools.
 | `arcanos_gaming_refresh_sources` | `refreshGamingSources` | Durable refresh of up to four known source IDs; 20 s admission |
 | `arcanos_gaming_ingest_candidates` | `gamingHybridWorkflow.ingest` | Durable ingestion of up to three approved candidate IDs; 38 s admission |
 
-Schemas live in `packages/protocol/schemas/v1/tools/arcanos-gaming.schema.json`.
+Schemas live in `packages/protocol/schemas/v1/tools/arcanos-gaming/contract.schema.json`.
 Query input is the existing Gaming query payload, canary input is `{}`, status
 input is `{ingestionId}`, and hybrid inputs preserve `gaming-hybrid-v1` shapes.
 Direct ingestion/refresh inputs are their existing payloads plus required

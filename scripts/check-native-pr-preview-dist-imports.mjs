@@ -116,7 +116,7 @@ export const GAMING_MCP_PREVIEW_DIST_IMPORT_CONTRACT = Object.freeze([
   }),
   Object.freeze({
     filePath: 'packages/protocol/dist/src/chatgptGaming.js',
-    imports: Object.freeze({ '../schemas/v1/tools/arcanos-gaming.schema.json': Object.freeze(['default:contract']) }),
+    imports: Object.freeze({ '../schemas/v1/tools/arcanos-gaming/contract.schema.json': Object.freeze(['default:contract']) }),
   }),
 ]);
 

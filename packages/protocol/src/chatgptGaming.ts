@@ -1,4 +1,4 @@
-import contract from '../schemas/v1/tools/arcanos-gaming.schema.json' with { type: 'json' };
+import contract from '../schemas/v1/tools/arcanos-gaming/contract.schema.json' with { type: 'json' };
 
 type JsonSchema = Record<string, unknown>;
 export type ChatGptGamingToolName = keyof typeof contract.tools;

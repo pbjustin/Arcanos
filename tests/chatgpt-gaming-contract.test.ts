@@ -3,7 +3,7 @@ import { chatGptGamingSchemas, CHATGPT_GAMING_TOOL_NAMES } from '@arcanos/protoc
 import { isGamingMcpInput, gamingMcpTools } from '../src/shared/chatgpt/gamingMcpContract.js';
 
 const openapi = JSON.parse(readFileSync(new URL('../contracts/arcanos_gaming.openapi.v1.json', import.meta.url), 'utf8'));
-const contract = JSON.parse(readFileSync(new URL('../packages/protocol/schemas/v1/tools/arcanos-gaming.schema.json', import.meta.url), 'utf8'));
+const contract = JSON.parse(readFileSync(new URL('../packages/protocol/schemas/v1/tools/arcanos-gaming/contract.schema.json', import.meta.url), 'utf8'));
 describe('Gaming MCP contracts preserve the service contract', () => {
   it('keeps shared source definitions equal to Action 1.5.0, with local schema references', () => {
     expect(openapi.info.version).toBe('1.5.0');

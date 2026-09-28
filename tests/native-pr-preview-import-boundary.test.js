@@ -557,7 +557,7 @@ describe('native PR preview import boundary', () => {
       .toEqual([
         'packages/protocol/schemas/v1/tools/arcanos-tutor.input.schema.json',
         'packages/protocol/schemas/v1/tools/arcanos-tutor.output.schema.json',
-        'packages/protocol/schemas/v1/tools/arcanos-gaming.schema.json',
+        'packages/protocol/schemas/v1/tools/arcanos-gaming/contract.schema.json',
         'packages/protocol/src/chatgptGaming.ts',
       ]);
     expect(findUnsafeRuntimeSyntax(filePath, sourceText)).toEqual([]);
@@ -709,6 +709,11 @@ describe('native PR preview import boundary', () => {
     for (const mutated of [source.replace('/chatgptGaming', ''), `${source}\nimport "../../chatgpt/gamingAuth.js";`,
       `${source}\nawait import("node:fs");`])
       expect(findTutorHonestyPreviewDistImportSourceViolations(contract, mutated).length).toBeGreaterThan(0);
+    const leaf = GAMING_MCP_PREVIEW_DIST_IMPORT_CONTRACT.find(entry => entry.filePath === 'packages/protocol/dist/src/chatgptGaming.js');
+    const leafSource = 'import contract from "../schemas/v1/tools/arcanos-gaming/contract.schema.json" with { type: "json" };';
+    expect(findTutorHonestyPreviewDistImportSourceViolations(leaf, leafSource)).toEqual([]);
+    expect(findTutorHonestyPreviewDistImportSourceViolations(leaf,
+      leafSource.replace('arcanos-gaming/contract.schema.json', 'arcanos-gaming.schema.json')).length).toBeGreaterThan(0);
   });
 
   it('rejects retargeted, renamed, broadened or missing emitted honesty imports', () => {

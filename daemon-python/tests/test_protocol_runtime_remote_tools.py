@@ -24,6 +24,15 @@ def _caller_context(tmp_path: Path, *, scopes: list[str] | None = None) -> dict[
     }
 
 
+def test_gaming_mcp_bundle_does_not_enter_daemon_tool_catalog() -> None:
+    """The shared Gaming MCP family must not break or extend daemon tool discovery."""
+
+    contract = load_protocol_contract()
+    assert "repo.listTree" in contract.tools
+    assert not any("gaming" in tool_name for tool_name in contract.tools)
+    assert (contract.schema_root / "tools" / "arcanos-gaming" / "contract.schema.json").is_file()
+
+
 def test_context_inspect_exposes_git_remote_metadata(monkeypatch, tmp_path: Path) -> None:
     """context.inspect returns remote source metadata when a git-backed remote is configured."""
 
