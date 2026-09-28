@@ -1,8 +1,9 @@
 # Arcanos Gaming private migration
 
 This is the second consumer of the migration foundation merged in PR #1509.
-It is a private, single-owner Gaming migration. It is paused at the backend
-prerequisite, not a distributable plugin or completed account migration.
+It is a private, single-owner Gaming migration. Its backend prerequisite is
+merged and deployed; the draft migration remains blocked by incomplete live
+gameplay acceptance and pending account/package checkpoints.
 
 The published GPT remains unchanged. Raw configuration, instructions, knowledge
 files, composition output, and future saved archives belong exclusively in
@@ -17,6 +18,15 @@ guard. Never put credentials in those files either.
 - [Connection requirements](connection.requirements.json)
 - [Baseline inventory](baseline.inventory.json)
 - [Reuse assessment](../../docs/chatgpt-migration/gaming/foundation-reuse.md)
+
+Backend [PR #1515](https://github.com/pbjustin/Arcanos/pull/1515) merged as
+`4db5f9db8c8baa12cb3c26b69dac32a8520b6852` and its maintained production rollout
+succeeded worker-first. The bounded read run passed six checks and failed the
+legacy gameplay query; the [connection record](connection.requirements.json)
+contains the single `BACKEND_QUERY` blocker and exact rollout evidence.
+No retry or durable Gaming write occurred. Gaming MCP remains disabled;
+OAuth scopes and principal mapping have local test evidence only. Deployment
+success does not establish fully verified live Gaming behavior.
 
 ## Baseline capture
 

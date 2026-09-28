@@ -1890,6 +1890,33 @@ This table mirrors high-impact runtime keys and active operator controls in `.en
 | `TAVILY_API_KEY` | empty | Optional Tavily provider key. |
 | `SERPAPI_API_KEY` | empty | Optional SerpAPI provider key. |
 | `SEARXNG_BASE_URL` | empty | Optional SearXNG instance URL. |
+## Optional private ChatGPT Gaming resource
+
+The [Gaming MCP resource](API.md#private-chatgpt-gaming-resource) requires a
+distinct Gaming app registration and OAuth resource. No app ID or credential
+is created by this code. Account registration and production configuration
+require separate owner authorization; do not reuse Tutor identity/scope or
+the legacy Gaming Action bearer.
+
+| Variable | Default and meaning |
+| --- | --- |
+| `CHATGPT_GAMING_ENABLED` | `false`; only exact `true` enables Gaming. |
+| `CHATGPT_GAMING_ISSUER` | Unset; exact approved HTTPS issuer. |
+| `CHATGPT_GAMING_RESOURCE` | Unset; exact HTTPS origin plus `/chatgpt/gaming/mcp`, used as audience/resource. |
+| `CHATGPT_GAMING_JWKS_URL` | Unset; approved HTTPS signing-key endpoint. |
+| `CHATGPT_GAMING_OWNER_SUBJECT` | Unset; exact single permitted verified OAuth subject. Missing/invalid value fails closed. Do not put owner identity in plugin files. |
+| `CHATGPT_GAMING_AUTO_STORE_APPROVED` | `false`; exact `true` enables standing storage permission for eligible backend-approved candidates only. Both scopes and `confirmStore: true` remain required. |
+
+Register `arcanos:gaming:query` independently from
+`arcanos:gaming:sources:write`; ordinary query consent must not grant writes.
+Use OAuth authorization-code with PKCE S256 and supported discovery. Configure
+access-token issuer, audience and `typ: at+jwt` consistently with the verifier.
+Never transmit legacy application bearers to ChatGPT. The adapter hashes the
+verified owner into a stable Gaming actor; client input cannot select an actor.
+Incomplete enabled configuration returns 503; disabled returns 404. Rollback
+is `CHATGPT_GAMING_ENABLED=false` in a separately authorized target; this does
+not stop accepted durable jobs or delete stored knowledge.
+
 ## Optional ChatGPT Tutor pilot
 
 | Variable | Default / requirement |

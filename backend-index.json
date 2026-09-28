@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-28T15:00:56.347Z",
+  "generatedAt": "2026-09-28T17:14:04.280Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -277,6 +277,9 @@
           "relativePath": "packages/protocol/src/backstageBooker.ts"
         },
         {
+          "relativePath": "packages/protocol/src/chatgptGaming.ts"
+        },
+        {
           "relativePath": "packages/protocol/src/chatgptTutor.ts"
         },
         {
@@ -348,6 +351,12 @@
         },
         {
           "relativePath": "src/chatgpt/auth.ts"
+        },
+        {
+          "relativePath": "src/chatgpt/gaming.ts"
+        },
+        {
+          "relativePath": "src/chatgpt/gamingAuth.ts"
         },
         {
           "relativePath": "src/chatgpt/tutor.ts"
@@ -1299,6 +1308,9 @@
         },
         {
           "relativePath": "src/routes/bridge.ts"
+        },
+        {
+          "relativePath": "src/routes/chatgptGamingMcp.ts"
         },
         {
           "relativePath": "src/routes/chatgptMcp.ts"
@@ -2651,6 +2663,12 @@
           "relativePath": "src/shared/chatgpt/chatgptTutorPreviewFixture.ts"
         },
         {
+          "relativePath": "src/shared/chatgpt/gamingMcpContract.ts"
+        },
+        {
+          "relativePath": "src/shared/chatgpt/gamingMcpPreviewFixture.ts"
+        },
+        {
           "relativePath": "src/shared/chatgpt/pluginMigrationPreviewFixture.ts"
         },
         {
@@ -3892,6 +3910,12 @@
           "relativePath": "tests/chatgpt-auth.test.ts"
         },
         {
+          "relativePath": "tests/chatgpt-gaming-contract.test.ts"
+        },
+        {
+          "relativePath": "tests/chatgpt-gaming.integration.test.ts"
+        },
+        {
           "relativePath": "tests/chatgpt-mcp.integration.test.ts"
         },
         {
@@ -4304,6 +4328,15 @@
         },
         {
           "relativePath": "tests/gaming-large-guide-rag.integration.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-mcp-preview-fixture.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-mcp-preview-verifier.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-mcp-preview.integration.test.ts"
         },
         {
           "relativePath": "tests/gaming-player-context.e2e.test.ts"

@@ -4,6 +4,9 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "paths": {
+      "@arcanos/protocol/chatgptGaming": [
+        "packages/protocol/src/chatgptGaming.ts"
+      ],
       "@arcanos/runtime/requestAbort": [
         "packages/arcanos-runtime/src/requestAbort.ts"
       ],

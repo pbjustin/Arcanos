@@ -1,17 +1,42 @@
 # Gaming migration checkpoint
 
-Arcanos Gaming is a private, single-owner migration. Current main was fetched
-and matched `8f31f3eb5c95af1919e5a36e780cfb75e011a7a9`, including PR #1509.
+Arcanos Gaming is a private, single-owner migration. The initial fetched main
+baseline was `8f31f3eb5c95af1919e5a36e780cfb75e011a7a9`, including PR #1509.
 The migration branch is `codex/arcanos-gaming-plugin-migration`.
 
-**Migration is paused at a genuine backend prerequisite.** Main's existing MCP
-resource is Tutor-only. Gaming's lower-level services can be reused, but a
-separate Gaming OAuth principal adapter and fixed eight-tool MCP resource are
-required. The prerequisite is [PR #1515](https://github.com/pbjustin/Arcanos/pull/1515)
-on `codex/arcanos-gaming-mcp-auth`, initially validated at
-`5524618cae27bcc2676c701816172dd6eaac6455`; it needs
-separate owner-authorized merge, deployment and verification before this
-migration resumes. Neither PR is authorized to merge automatically.
+**The draft migration remains release-blocked.** The separate backend
+prerequisite [PR #1515](https://github.com/pbjustin/Arcanos/pull/1515), approved
+at `a5250617102513447f75d22fa85aff3055f74f04`, was owner-authorized, merged and
+deployed as `4db5f9db8c8baa12cb3c26b69dac32a8520b6852`. Its merge tree matches
+the approved head. [Migration PR #1514](https://github.com/pbjustin/Arcanos/pull/1514)
+reconciles that main baseline; its final merge remains unauthorized.
+
+## Backend deployment and bounded read evidence
+
+The [maintained production workflow](https://github.com/pbjustin/Arcanos/actions/runs/36455211881)
+succeeded worker-first, then web. Worker deployment
+`8fcc9e4b-779b-4e51-b987-a90d18c267bd` and web deployment
+`e543ed1b-fb45-4c42-b8b4-359ebda59810` were each `SUCCESS`, ready and the sole
+active deployment of their service; both predecessors were removed/stopped.
+Workflow checkout/upload evidence and the CLI deployment messages bind the
+merge SHA. Railway's provider `commitHash` was null, so it is not a separate
+provider Git attestation. Configuration hash remained
+`a892fb83e671a35a9b5e4553ea5fcac832905feee5bb3f01ba1a88a543897d2c`;
+native source-trigger count remained zero.
+
+Bounded production acceptance on 2026-09-28 passed six checks: worker/web
+readiness, web deployment identity, both disabled Gaming MCP boundaries, and
+the legacy public bundled canary. The seventh check returned a gameplay
+fallback with no usable evidence and failed acceptance. The
+[connection record](../../../integrations/arcanos-gaming/connection.requirements.json)
+records the single remaining `BACKEND_QUERY` blocker, exact reason and counts.
+Execution stopped with zero retries and zero durable Gaming writes.
+
+The deployed Gaming resource remains disabled and has no registered Gaming
+app. Live OAuth scope/principal mapping, authenticated MCP calls and hybrid
+acceptance have not run. Local authorization tests and the successful canary
+do not prove those capabilities; the canary skipped provider/network execution.
+The backend is deployed, but live Gaming acceptance is incomplete.
 
 ## Published configuration evidence
 
@@ -74,12 +99,16 @@ configured single-owner gate, not fictional per-source tenant ownership.
 
 ## Remaining sequence
 
-1. Validate and independently review the narrow backend/auth prerequisite,
-   including its credential-free sealed exact-head preview and teardown.
-2. Obtain owner authorization for the prerequisite merge/deployment; verify it
-   independently before reconciling this branch with current main.
-3. Reconfirm the approved baseline fingerprint after backend reconciliation;
-   the published capture and owner review are complete at this checkpoint.
+1. Resolve the recorded gameplay acceptance blocker; do not repeat the failed
+   live request without owner direction. Keep the migration draft and
+   release-blocked.
+2. Main reconciliation with `4db5f9db8c8baa12cb3c26b69dac32a8520b6852` is
+   complete. Hosted CI for the reconciled head is a separate gate recorded on
+   the migration PR.
+3. The approved baseline fingerprint
+   `7ecae0312c25c56f1cb66e39ee3de0e56385244632227320d8c2c1bde66b4ac6`
+   was reconfirmed after reconciliation; published capture and owner review
+   remain verified.
 4. Compose and review the private Gaming skill, validate a package with the
    separately registered Gaming app, and bind its actual artifacts.
 5. Obtain separate account/app-registration and **Migrate to plugin** approvals.
@@ -87,7 +116,8 @@ configured single-owner gate, not fictional per-source tenant ownership.
    read acceptance, and separately authorized durable-write acceptance.
 7. Obtain final owner merge authorization only after Gaming-specific gates pass.
 
-Package composition, registration, migration, artifact reconciliation and live
-acceptance have not happened. Sealed preview evidence will not prove OAuth,
-production retrieval or durable storage. No public publication or sharing is
-part of this task.
+Package composition, app registration/connection, migration and artifact
+reconciliation have not happened. Account changes, **Migrate to plugin**,
+production durable-write tests and final migration merge remain unauthorized.
+The limited live read results above do not complete plugin acceptance. No
+public publication or sharing is part of this task.

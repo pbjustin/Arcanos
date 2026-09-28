@@ -3,14 +3,61 @@
   "product": "Arcanos Gaming",
   "visibility": "PRIVATE",
   "accountModel": "single_owner",
-  "status": "BLOCKED_BACKEND_DEPLOYMENT",
+  "status": "BLOCKED_BACKEND_QUERY_ACCEPTANCE",
   "backendPrerequisite": {
     "pullRequest": "https://github.com/pbjustin/Arcanos/pull/1515",
     "initialHead": "5524618cae27bcc2676c701816172dd6eaac6455",
-    "productionStatus": "NOT_DEPLOYED"
+    "productionStatus": "DEPLOYED_ROLLOUT_VERIFIED_READ_ACCEPTANCE_INCOMPLETE",
+    "approvedHead": "a5250617102513447f75d22fa85aff3055f74f04",
+    "mergeSha": "4db5f9db8c8baa12cb3c26b69dac32a8520b6852",
+    "rollout": {
+      "workflow": "https://github.com/pbjustin/Arcanos/actions/runs/36455211881",
+      "status": "SUCCESS",
+      "order": [
+        "worker",
+        "web"
+      ],
+      "workerDeploymentId": "8fcc9e4b-779b-4e51-b987-a90d18c267bd",
+      "webDeploymentId": "e543ed1b-fb45-4c42-b8b4-359ebda59810",
+      "bothSoleActiveAndReady": true,
+      "predecessorsRemovedAndStopped": true,
+      "sourceIdentity": "Workflow checkout and CLI upload messages bind the merge SHA; Railway provider commitHash was null.",
+      "providerCommitHash": null,
+      "configurationSha256": "a892fb83e671a35a9b5e4553ea5fcac832905feee5bb3f01ba1a88a543897d2c",
+      "configurationChanged": false,
+      "nativeTriggers": 0
+    },
+    "readAcceptance": {
+      "completedAt": "2026-09-28T17:12:58.654Z",
+      "passed": 6,
+      "failed": 1,
+      "retries": 0,
+      "durableGamingWrites": 0,
+      "passedBoundaries": [
+        "worker readiness",
+        "web readiness",
+        "web deployment identity",
+        "Gaming metadata disabled guard",
+        "Gaming MCP disabled guard",
+        "legacy public Gaming canary"
+      ],
+      "blocker": {
+        "failureClass": "BACKEND_QUERY",
+        "reasonCode": "INTAKE_RETRIEVAL_FAILED",
+        "operation": "legacy public Portal guide query",
+        "httpStatus": 200,
+        "durationMs": 260,
+        "sourceCount": 0,
+        "usableSourceCount": 0,
+        "citableSourceCount": 0,
+        "selectedChunkCount": 0,
+        "groundingStatus": "unavailable"
+      },
+      "evidenceLimit": "The canary used bundled data and skipped provider/network execution. Disabled guards do not prove authenticated MCP, OAuth, hybrid state or live source storage."
+    }
   },
   "proposedEndpoint": "https://acranos-production.up.railway.app/chatgpt/gaming/mcp",
-  "endpointDeployed": false,
+  "endpointDeployed": true,
   "registeredAppId": null,
   "pluginId": null,
   "releaseId": null,
@@ -39,15 +86,19 @@
     "writes": "Both query and source-write scopes, explicit confirmation, storage policy, bounded accepted inputs and backend standing permission where applicable",
     "readToolsCanStore": false,
     "legacyBearerForwarded": false,
-    "callerAuthorityFieldsAccepted": false
+    "callerAuthorityFieldsAccepted": false,
+    "scopeVerification": "Local signed-token and mocked authorization tests; live Gaming OAuth scope and principal mapping acceptance not run."
   },
   "checkpoints": {
-    "backendMergedDeployedVerified": "PENDING_OWNER_AUTHORIZATION",
+    "backendMergedDeployedVerified": "DEPLOYMENT_VERIFIED_READ_ACCEPTANCE_INCOMPLETE",
     "ownerBaselineApproval": "VERIFIED",
     "ownerSkillApproval": "NOT_STARTED",
     "appRegistration": "NOT_STARTED_REQUIRES_OWNER_AUTHORIZATION",
     "migration": "NOT_STARTED_REQUIRES_OWNER_AUTHORIZATION",
     "productionDurableWrites": "NOT_AUTHORIZED",
-    "finalMigrationMerge": "NOT_AUTHORIZED"
-  }
+    "finalMigrationMerge": "NOT_AUTHORIZED",
+    "productionReadAcceptance": "FAILED_BACKEND_QUERY",
+    "authenticatedMcpAcceptance": "NOT_RUN_GAMING_DISABLED_ACCOUNT_SETUP_PENDING"
+  },
+  "endpointEnabled": false
 }
