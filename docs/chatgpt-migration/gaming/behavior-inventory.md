@@ -4,9 +4,10 @@ Status: **BASELINE_BOUND_ACCEPTANCE_PLAN**. Inspected against main
 `8f31f3eb5c95af1919e5a36e780cfb75e011a7a9` on 2026-09-28. This is a contract
 inventory and acceptance plan bound to the owner-approved published baseline
 `7ecae0312c25c56f1cb66e39ee3de0e56385244632227320d8c2c1bde66b4ac6`.
-That baseline corroborates hybrid-first orchestration. Approval of the exact
-composed private skill and its behavior acceptance results remain pending;
-this is not an installed-plugin or live-service result.
+That baseline corroborates hybrid-first orchestration. The owner has approved
+the complete composed private skill at the exact hash in the
+[checkpoint](README.md). Behavior acceptance remains pending; content approval
+is not an installed-plugin or live-service result.
 No private Builder text is included.
 
 ## Authoritative inputs and behavior selection
@@ -19,7 +20,7 @@ No private Builder text is included.
 - [Foundation inventory](../INVENTORY.md) and [its manifest](../inventory.json):
   eight Gaming operations were deferred from the Tutor pilot
 - [Machine-readable proposed matrix](behavior-matrix.json): 18 scenarios;
-  baseline owner approval is recorded; all execution results remain pending
+  baseline and exact-skill owner approval are recorded; all execution results remain pending
 
 The canonical hybrid instructions send gameplay questions to hybrid query
 first. The same Custom GPT guide also preserves a clearly marked legacy

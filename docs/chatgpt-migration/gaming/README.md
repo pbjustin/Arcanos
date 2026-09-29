@@ -134,9 +134,10 @@ fingerprint and tooling revision. Generate twice from unchanged inputs to
 compare exact skill bytes and stable content fingerprints. Keep observation
 timestamps outside stable content hashes.
 
-The owner checkpoint is review of the complete local candidate and private
-reconciliation report at the exact recorded skill hash. Technical composition
-checks do not attest future model behavior or owner approval. Map the existing
+The owner checkpoint binds review of the complete local candidate and private
+reconciliation report to the exact recorded skill hash. Explicit owner approval
+is now recorded separately from technical composition checks, which do not
+attest future model behavior or owner approval. Map the existing
 18 behavior cases to composed rule identifiers without marking those cases as
 passed. A local candidate has no registered app, plugin or release identity and
 does not establish an installable connected package.
@@ -156,23 +157,30 @@ Two independent generations produced identical skill, reconciliation, review
 and manifest bytes. All 30 retained input/evidence files remained unchanged.
 The eight Action names map to the implemented MCP tools; argument shape,
 empty canary input, integration availability and consequential-write confirmation
-are recorded explicitly. Owner decisions remain pending for supplied-guide
-grounding within the supported hybrid contract and actual client confirmation.
-Local composition is verified; owner review of the complete new skill is pending.
+are recorded explicitly. The owner approved the complete new skill at the hash
+above, including the proposed wording for `gaming-supplied-source-contract` and
+`gaming-client-confirmation`. Supplied-guide acquisition and actual client
+confirmation behavior remain unverified.
+Local composition and exact-content owner approval are verified.
 This does not verify any of the 18 behavior cases or create an app-bound package.
 
-1. Obtain owner approval of the exact composed skill hash after local review.
-   That approval covers only those instruction bytes.
-2. Keep backend query acceptance blocked until separately authorized execution
+The private approval record is `owner-skill-review-a2cd3cfb.json` under the same
+private input root, bound to the skill, all four candidate files, baseline and
+tooling hashes. Its safe digest is in the connection record. The original
+candidate manifest and review reports retain their generation-time pending
+status and unchanged bytes; the separate approval record advances only the
+current owner content-review checkpoint. It grants no additional authority.
+
+1. Keep backend query acceptance blocked until separately authorized execution
    verifies it. Do not retry the Elden Ring request, fetch the supplied guide,
    configure OAuth, enable the endpoint or register an app for composition.
-3. Obtain separate account/app-registration and migration authorization before
+2. Obtain separate account/app-registration and migration authorization before
    those activities. Actual Gaming registration is required before validating
    an app-bound package and binding its real artifacts.
-4. Complete authenticated MCP acceptance, installed behavior, actual saved
+3. Complete authenticated MCP acceptance, installed behavior, actual saved
    archive/release reconciliation and separately authorized durable-write
    acceptance under their respective later gates.
-5. Obtain final owner merge authorization only after Gaming-specific gates pass.
+4. Obtain final owner merge authorization only after Gaming-specific gates pass.
 
 Main reconciliation with `4db5f9db8c8baa12cb3c26b69dac32a8520b6852` is complete.
 The approved baseline remains verified. Hosted CI is a separate code-validation

@@ -5,7 +5,9 @@
   "actionSchemaVersion": "1.5.0",
   "contractVersion": "gaming-hybrid-v1",
   "publishedBaselineApproval": "VERIFIED",
-  "privateSkillApproval": "PENDING",
+  "privateSkillApproval": "VERIFIED",
+  "privateSkillSha256": "a2cd3cfb2eb677eaef47c7fc148b41565b58e051486a49b29df48ee53c048081",
+  "privateSkillApprovalReference": "owner-skill-review-a2cd3cfb.json",
   "executionStatus": "NOT_RUN",
   "notes": [
     "These repository-derived scenarios are corroborated by the owner-approved published Gaming source; installed-skill execution remains untested.",

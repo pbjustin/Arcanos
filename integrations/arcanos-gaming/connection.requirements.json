@@ -125,7 +125,7 @@
   "checkpoints": {
     "backendMergedDeployedVerified": "DEPLOYMENT_VERIFIED_READ_ACCEPTANCE_INCOMPLETE",
     "ownerBaselineApproval": "VERIFIED",
-    "ownerSkillApproval": "PENDING",
+    "ownerSkillApproval": "VERIFIED",
     "appRegistration": "NOT_STARTED_REQUIRES_OWNER_AUTHORIZATION",
     "migration": "NOT_STARTED_REQUIRES_OWNER_AUTHORIZATION",
     "productionDurableWrites": "NOT_AUTHORIZED",
@@ -137,6 +137,7 @@
   "localComposition": {
     "status": "VERIFIED",
     "compositionStatus": "COMPOSED_PENDING_OWNER_REVIEW",
+    "compositionStatusBasis": "Immutable generation-time result; current exact-content owner approval is recorded separately in ownerReview and ownerReviewEvidence.",
     "baselineFingerprint": "7ecae0312c25c56f1cb66e39ee3de0e56385244632227320d8c2c1bde66b4ac6",
     "privateOutputRoot": ".local-migration/arcanos-gaming/composed-skill-v1",
     "skill": {
@@ -174,8 +175,16 @@
     "deterministicGeneration": "PASS",
     "baselineBytesUnchanged": true,
     "retainedInputFilesUnchanged": 30,
-    "ownerReview": "PENDING",
-    "pendingReviewIds": [
+    "ownerReview": "VERIFIED",
+    "ownerReviewEvidence": {
+      "path": "owner-skill-review-a2cd3cfb.json",
+      "sizeBytes": 2420,
+      "sha256": "5fd8073904265e804ed395980c68133b76514840a2f5073453fdd2566b8444fb",
+      "skillSha256": "a2cd3cfb2eb677eaef47c7fc148b41565b58e051486a49b29df48ee53c048081",
+      "scope": "Explicit owner approval of the complete exact-hash skill and its proposed integration wording only. Candidate files and generation-time review reports remain unchanged; no additional execution or account authority is granted."
+    },
+    "pendingReviewIds": [],
+    "approvedIntegrationReviewIds": [
       "gaming-supplied-source-contract",
       "gaming-client-confirmation"
     ],
@@ -187,7 +196,7 @@
     "archiveReconciliation": "NOT_STARTED",
     "packageStatus": "BLOCKED",
     "releaseStatus": "BLOCKED",
-    "evidenceLimit": "Local source binding, deterministic file generation and synthetic checks only. No owner attestation, model obedience, behavior-matrix execution, account, installed-client or live backend evidence.",
+    "evidenceLimit": "Local source binding, deterministic file generation, synthetic checks and explicit owner approval of the exact skill content only. Supplied-guide acquisition remains unresolved; actual client confirmation, model obedience, behavior-matrix execution, account, installed-client and live backend acceptance remain unverified.",
     "validation": {
       "sourceBinding": "PASS",
       "skillFormat": "PASS",

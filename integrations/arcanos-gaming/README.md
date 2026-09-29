@@ -81,6 +81,12 @@ source binding before owner review. Owner approval of the baseline is not
 approval of the new skill: review the complete local skill at its recorded hash.
 That approval does not authorize registration, backend changes or migration.
 
+The current exact-content approval is recorded in `connection.requirements.json`
+and the [migration checkpoint](../../docs/chatgpt-migration/gaming/README.md).
+The private `owner-skill-review-a2cd3cfb.json` binds that approval to the complete
+skill hash. Candidate bytes and generation-time pending review reports are
+preserved; content approval does not establish live or installed behavior.
+
 ## Package boundary
 
 No app ID or installable package is supplied yet. The future package has one
