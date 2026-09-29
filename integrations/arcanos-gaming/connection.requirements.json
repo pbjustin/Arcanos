@@ -54,8 +54,41 @@
         "groundingStatus": "unavailable"
       },
       "evidenceLimit": "The canary used bundled data and skipped provider/network execution. Disabled guards do not prove authenticated MCP, OAuth, hybrid state or live source storage."
+    },
+    "currentAssessment": {
+      "status": "BLOCKED",
+      "basis": "Retained local evidence only; the historical readAcceptance record is preserved and no new request is required for composition.",
+      "portal": {
+        "classification": "EXPECTED_NO_EVIDENCE",
+        "repairWarrantedByRequest": false,
+        "evidenceReference": "portal-characterization-results.json",
+        "evidenceKind": "LOCAL_MOCKED_CHARACTERIZATION_NOT_LIVE_EVIDENCE",
+        "sourceHead": "b3abef63c5fe175892747dd4dac99591b80266ba",
+        "evidenceLimit": "Local characterization does not constitute another live backend acceptance result.",
+        "evidenceSha256": "0ee7c0447e67f1c2a097f96686758b619884673f466d3e24f1c89b52fad51b63",
+        "evidenceSizeBytes": 8801
+      },
+      "eldenRing": {
+        "status": "BLOCKED",
+        "classification": "GAMING_SOURCE_UNAVAILABLE",
+        "failureClass": "BACKEND_QUERY",
+        "evidenceReference": "positive-read-acceptance-elden-ring.json",
+        "httpStatus": 200,
+        "resultOk": false,
+        "attempts": 1,
+        "retries": 0,
+        "suppliedGuideAcquired": false,
+        "suppliedGuideGroundingEstablished": false,
+        "successfulAnswerGenerationEstablished": false,
+        "acquisitionCauseResolved": false,
+        "evidenceLimit": "Catalog membership or alternative-source retrieval does not establish supplied-guide accessibility, grounding, currentness or successful generation. The underlying acquisition cause remains unresolved.",
+        "evidenceSha256": "d2c46153a0d1b1d8d92051980c258c2ea59b02685504449a6300ce574a35de83",
+        "evidenceSizeBytes": 2142
+      },
+      "authenticatedMcpAcceptanceEstablished": false
     }
   },
+  "compositionDependency": "Verified owner-approved baseline plus valid local tooling permits private instruction composition. Backend query acceptance, enabled endpoint, app registration, live connection and production writes are not composition prerequisites; their activation and release gates remain in force.",
   "proposedEndpoint": "https://acranos-production.up.railway.app/chatgpt/gaming/mcp",
   "endpointDeployed": true,
   "registeredAppId": null,
@@ -92,7 +125,7 @@
   "checkpoints": {
     "backendMergedDeployedVerified": "DEPLOYMENT_VERIFIED_READ_ACCEPTANCE_INCOMPLETE",
     "ownerBaselineApproval": "VERIFIED",
-    "ownerSkillApproval": "NOT_STARTED",
+    "ownerSkillApproval": "PENDING",
     "appRegistration": "NOT_STARTED_REQUIRES_OWNER_AUTHORIZATION",
     "migration": "NOT_STARTED_REQUIRES_OWNER_AUTHORIZATION",
     "productionDurableWrites": "NOT_AUTHORIZED",
@@ -100,5 +133,94 @@
     "productionReadAcceptance": "FAILED_BACKEND_QUERY",
     "authenticatedMcpAcceptance": "NOT_RUN_GAMING_DISABLED_ACCOUNT_SETUP_PENDING"
   },
-  "endpointEnabled": false
+  "endpointEnabled": false,
+  "localComposition": {
+    "status": "VERIFIED",
+    "compositionStatus": "COMPOSED_PENDING_OWNER_REVIEW",
+    "baselineFingerprint": "7ecae0312c25c56f1cb66e39ee3de0e56385244632227320d8c2c1bde66b4ac6",
+    "privateOutputRoot": ".local-migration/arcanos-gaming/composed-skill-v1",
+    "skill": {
+      "path": "skills/arcanos-gaming/SKILL.md",
+      "sizeBytes": 15210,
+      "sha256": "a2cd3cfb2eb677eaef47c7fc148b41565b58e051486a49b29df48ee53c048081"
+    },
+    "files": [
+      {
+        "path": "skills/arcanos-gaming/SKILL.md",
+        "sizeBytes": 15210,
+        "sha256": "a2cd3cfb2eb677eaef47c7fc148b41565b58e051486a49b29df48ee53c048081"
+      },
+      {
+        "path": "reconciliation-map.json",
+        "sizeBytes": 42182,
+        "sha256": "fc665276615baa1043998b0f35854b2ed272491b39c153fecc0d6569dd572e56"
+      },
+      {
+        "path": "review-summary.md",
+        "sizeBytes": 2942,
+        "sha256": "ef2454d5a351500eb8b9d45a1bff8f7cd5b619635e56520a70c227d26ec1c20c"
+      },
+      {
+        "path": "candidate-manifest.json",
+        "sizeBytes": 993,
+        "sha256": "280638809da8d277b889176d4b62729ba959b8aec1ae8d1a5ba3520fb0337510"
+      }
+    ],
+    "contentFingerprint": "1fab2d64375d721517bc050fc790f6f9bb8b025ae6e07ba04c855724898e446d",
+    "toolingRevision": "22d8a0d34350638f8d044817a176be6c4f03673455dd4cbd6bb49b982478e4ec",
+    "sourceSections": 15,
+    "preservedSections": 8,
+    "transformedSections": 7,
+    "deterministicGeneration": "PASS",
+    "baselineBytesUnchanged": true,
+    "retainedInputFilesUnchanged": 30,
+    "ownerReview": "PENDING",
+    "pendingReviewIds": [
+      "gaming-supplied-source-contract",
+      "gaming-client-confirmation"
+    ],
+    "backendAcceptance": "BLOCKED",
+    "authenticatedMcpAcceptance": "NOT_STARTED",
+    "appRegistration": "NOT_STARTED",
+    "migration": "NOT_STARTED",
+    "installedBehavior": "NOT_STARTED",
+    "archiveReconciliation": "NOT_STARTED",
+    "packageStatus": "BLOCKED",
+    "releaseStatus": "BLOCKED",
+    "evidenceLimit": "Local source binding, deterministic file generation and synthetic checks only. No owner attestation, model obedience, behavior-matrix execution, account, installed-client or live backend evidence.",
+    "validation": {
+      "sourceBinding": "PASS",
+      "skillFormat": "PASS",
+      "sharedMigrationTests": 69,
+      "gamingCompositionTests": 19,
+      "compositionAndTutorRegressionTests": 47,
+      "uniqueFocusedTests": 88,
+      "build": "PASS",
+      "typeCheck": "PASS",
+      "lint": {
+        "errors": 0,
+        "preexistingWarnings": 76
+      },
+      "docs": "PASS",
+      "localLinks": "PASS",
+      "indexes": "PASS",
+      "sync": "PASS",
+      "independentTechnicalReviews": [
+        {
+          "path": "composition-instruction-technical-review-v1.json",
+          "sha256": "16f819427fab3fc5794984f285a333befd9263160381f0be05e87964d657a60b",
+          "sizeBytes": 1816,
+          "status": "VERIFIED"
+        },
+        {
+          "path": "integration-privacy-review-v1.json",
+          "sha256": "b365f1d77440064f7b9d38374a53d172be2033a164b5721647e5b54cd0933656",
+          "sizeBytes": 2657,
+          "status": "VERIFIED"
+        }
+      ],
+      "behaviorCasesExecuted": 0,
+      "gamingReleaseValidator": "Not present; no Tutor product gates applied. Local candidate remains package and release BLOCKED."
+    }
+  }
 }

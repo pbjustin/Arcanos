@@ -4,9 +4,9 @@ Status: **BASELINE_BOUND_ACCEPTANCE_PLAN**. Inspected against main
 `8f31f3eb5c95af1919e5a36e780cfb75e011a7a9` on 2026-09-28. This is a contract
 inventory and acceptance plan bound to the owner-approved published baseline
 `7ecae0312c25c56f1cb66e39ee3de0e56385244632227320d8c2c1bde66b4ac6`.
-That baseline corroborates hybrid-first orchestration. The private skill and
-its acceptance results remain pending; this is not an installed-plugin or
-live-service result.
+That baseline corroborates hybrid-first orchestration. Approval of the exact
+composed private skill and its behavior acceptance results remain pending;
+this is not an installed-plugin or live-service result.
 No private Builder text is included.
 
 ## Authoritative inputs and behavior selection
@@ -28,6 +28,22 @@ documentation alone cannot establish the published instruction set. The
 separate authenticated capture and owner review now confirm hybrid-first
 behavior; see [the checkpoint](README.md). Do not substitute a Tutor-style
 zero-backend-call rule.
+
+## Local composition traceability
+
+The existing 18-case matrix maps each case to `composedRuleIds` in the private
+candidate. These identifiers trace source instructions and implemented contract
+rules; they do not demonstrate future model obedience or case execution. All
+18 cases retain `executionStatus: NOT_RUN`. The `gaming-local-preparation`
+rule describes the preparation boundary and does not create another behavior
+case or certify backend acceptance.
+
+The approved baseline and valid local composition tooling are sufficient to
+prepare a private candidate for local owner review. Backend query acceptance
+can remain blocked during this work. Successful authenticated execution,
+app registration, installed behavior and release evidence retain their
+separate gates. Composition neither grants connection authority nor authorizes
+source ingestion, refresh, registration, activation or migration.
 
 | Classification | Repository-derived trigger | Required behavior |
 | --- | --- | --- |

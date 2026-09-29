@@ -3,7 +3,8 @@
 This is the second consumer of the migration foundation merged in PR #1509.
 It is a private, single-owner Gaming migration. Its backend prerequisite is
 merged and deployed; the draft migration remains blocked by incomplete live
-gameplay acceptance and pending account/package checkpoints.
+gameplay acceptance and pending account/package checkpoints. The approved
+baseline can be composed and reviewed locally while those gates remain blocked.
 
 The published GPT remains unchanged. Raw configuration, instructions, knowledge
 files, composition output, and future saved archives belong exclusively in
@@ -23,10 +24,18 @@ Backend [PR #1515](https://github.com/pbjustin/Arcanos/pull/1515) merged as
 `4db5f9db8c8baa12cb3c26b69dac32a8520b6852` and its maintained production rollout
 succeeded worker-first. The bounded read run passed six checks and failed the
 legacy gameplay query; the [connection record](connection.requirements.json)
-contains the single `BACKEND_QUERY` blocker and exact rollout evidence.
+preserves that historical result and exact rollout evidence.
 No retry or durable Gaming write occurred. Gaming MCP remains disabled;
 OAuth scopes and principal mapping have local test evidence only. Deployment
 success does not establish fully verified live Gaming behavior.
+
+The connection record's current retained assessment classifies Portal as
+`EXPECTED_NO_EVIDENCE`, with no repair warranted for that request. Its local
+mocked characterization is not new live telemetry. Elden Ring remains
+`GAMING_SOURCE_UNAVAILABLE`; the supplied guide was not acquired and the cause
+remains unresolved. HTTP 200, catalog membership or alternative-source retrieval
+does not establish supplied-guide grounding, currentness or answer generation.
+No new backend request is required or authorized for instruction composition.
 
 ## Baseline capture
 
@@ -50,6 +59,28 @@ to new files, changes at the public path, index-only leaks, and forced staging
 of ignored inputs. On a CRLF checkout, restore the reviewed public file's exact
 Git bytes locally before this byte-level check; do not weaken the hash check.
 
+## Private composition
+
+With the approved baseline and its owner-review binding present locally:
+
+```powershell
+npm run compose:gaming-skill -- --inputs .local-migration/arcanos-gaming --owner-review owner-baseline-review.json --output composed-skill-v1
+npm run compose:gaming-skill -- --inputs .local-migration/arcanos-gaming --owner-review owner-baseline-review.json --output composed-skill-v1 --inspect
+```
+
+The candidate is written beneath `.local-migration/arcanos-gaming/composed-skill-v1/`:
+`skills/arcanos-gaming/SKILL.md`, `reconciliation-map.json`, `review-summary.md`
+and `candidate-manifest.json`. Preserve baseline bytes and prior evidence.
+The full source-to-skill map and review report stay private; tracked metadata
+contains only safe hashes, counts, identifiers and status summaries.
+
+Composition requires the verified source and local tooling. It does not require
+a successful gameplay answer, live connection, enabled endpoint, app registration
+or durable storage. Generate twice from unchanged inputs and inspect hashes and
+source binding before owner review. Owner approval of the baseline is not
+approval of the new skill: review the complete local skill at its recorded hash.
+That approval does not authorize registration, backend changes or migration.
+
 ## Package boundary
 
 No app ID or installable package is supplied yet. The future package has one
@@ -69,3 +100,7 @@ The next package phase must validate the portable manifest against the existing
 pinned Agent Plugins schema, enforce exact Gaming mapping and approved member
 inventory, hash every archive member, and bind the saved release identity.
 Tutor's optional-app rule, pedagogy matrix and release validator do not apply.
+Local preparation can succeed with blocked backend acceptance, but must never
+produce release success or falsely label an unregistered package ready. Account,
+authenticated MCP, installed behavior, actual archive and release evidence stay
+pending until their distinct requirements are met.

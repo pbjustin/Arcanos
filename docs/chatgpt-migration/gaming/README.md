@@ -11,6 +11,10 @@ deployed as `4db5f9db8c8baa12cb3c26b69dac32a8520b6852`. Its merge tree matches
 the approved head. [Migration PR #1514](https://github.com/pbjustin/Arcanos/pull/1514)
 reconciles that main baseline; its final merge remains unauthorized.
 
+The approved baseline and valid local composition tooling are sufficient to
+prepare the private skill for local owner review. Backend acceptance remains a
+separate activation and release gate; it does not block instruction composition.
+
 ## Backend deployment and bounded read evidence
 
 The [maintained production workflow](https://github.com/pbjustin/Arcanos/actions/runs/36455211881)
@@ -29,8 +33,20 @@ readiness, web deployment identity, both disabled Gaming MCP boundaries, and
 the legacy public bundled canary. The seventh check returned a gameplay
 fallback with no usable evidence and failed acceptance. The
 [connection record](../../../integrations/arcanos-gaming/connection.requirements.json)
-records the single remaining `BACKEND_QUERY` blocker, exact reason and counts.
+preserves that historical acceptance result, exact reason and counts.
 Execution stopped with zero retries and zero durable Gaming writes.
+
+The retained local assessment classifies the Portal request as
+`EXPECTED_NO_EVIDENCE`; no repair is warranted by that request. This assessment
+includes local mocked characterization and is not new live execution evidence.
+The retained Elden Ring supplied-guide attempt remains blocked with
+`GAMING_SOURCE_UNAVAILABLE`: the guide was not successfully acquired, and the
+underlying acquisition cause remains unresolved. Its HTTP 200 response reported
+failure. A catalog entry or retrieval from another source does not establish
+successful supplied-guide grounding, currentness or answer generation. The
+[current connection assessment](../../../integrations/arcanos-gaming/connection.requirements.json)
+keeps these findings separate from the historical Portal acceptance record.
+No repeat query or source-acquisition request is needed for composition.
 
 The deployed Gaming resource remains disabled and has no registered Gaming
 app. Live OAuth scope/principal mapping, authenticated MCP calls and hybrid
@@ -97,27 +113,72 @@ must never grant durable-write authority. Jobs, candidates and workflows retain
 actor ownership; source refresh operates on the shared Gaming corpus under the
 configured single-owner gate, not fictional per-source tenant ownership.
 
+## Local preparation and owner review
+
+Compose from the approved private baseline without modifying its bytes. The
+Gaming adapter reuses the maintained shared composition implementation and
+produces one hybrid-first workflow with traceable Action-to-MCP transformations.
+All source wording, transformed instructions and reconciliation details stay
+under `.local-migration/arcanos-gaming/`. The tracked inventory may record safe
+hashes, counts, rule IDs and status summaries only.
+
+```powershell
+npm run compose:gaming-skill -- --inputs .local-migration/arcanos-gaming --owner-review owner-baseline-review.json --output composed-skill-v1
+npm run compose:gaming-skill -- --inputs .local-migration/arcanos-gaming --owner-review owner-baseline-review.json --output composed-skill-v1 --inspect
+```
+
+The private output directory contains `skills/arcanos-gaming/SKILL.md`,
+`reconciliation-map.json`, `review-summary.md` and `candidate-manifest.json`.
+The manifest records local paths, byte sizes, SHA-256 hashes, approved baseline
+fingerprint and tooling revision. Generate twice from unchanged inputs to
+compare exact skill bytes and stable content fingerprints. Keep observation
+timestamps outside stable content hashes.
+
+The owner checkpoint is review of the complete local candidate and private
+reconciliation report at the exact recorded skill hash. Technical composition
+checks do not attest future model behavior or owner approval. Map the existing
+18 behavior cases to composed rule identifiers without marking those cases as
+passed. A local candidate has no registered app, plugin or release identity and
+does not establish an installable connected package.
+
 ## Remaining sequence
 
-1. Resolve the recorded gameplay acceptance blocker; do not repeat the failed
-   live request without owner direction. Keep the migration draft and
-   release-blocked.
-2. Main reconciliation with `4db5f9db8c8baa12cb3c26b69dac32a8520b6852` is
-   complete. Hosted CI for the reconciled head is a separate gate recorded on
-   the migration PR.
-3. The approved baseline fingerprint
-   `7ecae0312c25c56f1cb66e39ee3de0e56385244632227320d8c2c1bde66b4ac6`
-   was reconfirmed after reconciliation; published capture and owner review
-   remain verified.
-4. Compose and review the private Gaming skill, validate a package with the
-   separately registered Gaming app, and bind its actual artifacts.
-5. Obtain separate account/app-registration and **Migrate to plugin** approvals.
-6. Reconcile the actual saved private archive and release; run bounded live
-   read acceptance, and separately authorized durable-write acceptance.
-7. Obtain final owner merge authorization only after Gaming-specific gates pass.
+The current local candidate is `composed-skill-v1/skills/arcanos-gaming/SKILL.md`
+under the private input root, **15,210 bytes**, SHA-256
+`a2cd3cfb2eb677eaef47c7fc148b41565b58e051486a49b29df48ee53c048081`.
+Its sibling `reconciliation-map.json` preserves all 15 source sections:
+eight unchanged and seven with explicit integration transformations. The
+review summary and candidate manifest are in the same private directory.
+The [connection record](../../../integrations/arcanos-gaming/connection.requirements.json)
+contains their safe hashes and the composition tooling revision.
 
-Package composition, app registration/connection, migration and artifact
-reconciliation have not happened. Account changes, **Migrate to plugin**,
-production durable-write tests and final migration merge remain unauthorized.
-The limited live read results above do not complete plugin acceptance. No
-public publication or sharing is part of this task.
+Two independent generations produced identical skill, reconciliation, review
+and manifest bytes. All 30 retained input/evidence files remained unchanged.
+The eight Action names map to the implemented MCP tools; argument shape,
+empty canary input, integration availability and consequential-write confirmation
+are recorded explicitly. Owner decisions remain pending for supplied-guide
+grounding within the supported hybrid contract and actual client confirmation.
+Local composition is verified; owner review of the complete new skill is pending.
+This does not verify any of the 18 behavior cases or create an app-bound package.
+
+1. Obtain owner approval of the exact composed skill hash after local review.
+   That approval covers only those instruction bytes.
+2. Keep backend query acceptance blocked until separately authorized execution
+   verifies it. Do not retry the Elden Ring request, fetch the supplied guide,
+   configure OAuth, enable the endpoint or register an app for composition.
+3. Obtain separate account/app-registration and migration authorization before
+   those activities. Actual Gaming registration is required before validating
+   an app-bound package and binding its real artifacts.
+4. Complete authenticated MCP acceptance, installed behavior, actual saved
+   archive/release reconciliation and separately authorized durable-write
+   acceptance under their respective later gates.
+5. Obtain final owner merge authorization only after Gaming-specific gates pass.
+
+Main reconciliation with `4db5f9db8c8baa12cb3c26b69dac32a8520b6852` is complete.
+The approved baseline remains verified. Hosted CI is a separate code-validation
+gate recorded at the migration PR's final head. App registration/connection,
+migration, installed behavior and actual archive reconciliation remain pending.
+Backend query acceptance remains blocked; OAuth/authenticated MCP acceptance
+remains unverified. Account changes, deployments, production durable-write
+tests, migration and final merge are outside this composition task. No public
+publication or sharing is authorized.

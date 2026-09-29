@@ -13,7 +13,7 @@ names; renaming them is unnecessary for this scoped migration.
 | Existing public canonical instructions | Pin exact pre-existing Git blobs at reviewed paths. Exempt only identical bytes there; copies, modifications and staged-only leaks remain rejected. |
 | Hashes and package fingerprint | Reuse pure `digest`, `packageFingerprint`, `assertArtifactDigest` from `scripts/tutor-package-core.mjs`. |
 | Portable manifest schema | Reuse the pinned Agent Plugins schema already in `integrations/arcanos-tutor/schemas/`; do not duplicate it. |
-| Deterministic composition | Preserve source-plus-safeguards method; later add a narrow Gaming composer after complete baseline approval. Tutor's composition implementation embeds pedagogy and reviewed Tutor hashes and is not appropriate wholesale. |
+| Deterministic composition | Reuse the maintained shared composition core through a narrow Gaming adapter after verified baseline approval. Preserve source sections, record each integration transformation, and keep full reconciliation private. Tutor pedagogy and reviewed Tutor hashes do not apply. |
 | App mapping | Gaming needs exactly its own app for backend execution. Tutor's optional single-app policy and app identity do not generalize. |
 | Archive/release reconciliation | Reuse bounded member inventory/hash design; current Tutor archive code hardcodes Tutor layout/identity and must not certify Gaming. No actual Gaming archive exists yet. |
 | Release evidence | Keep source, package, account, installed skill, OAuth, live reads, and durable writes separate. Gaming gates must be derived from its contract. |
@@ -37,5 +37,16 @@ any credential.
 OAuth service exposure is a real backend prerequisite rather than migration
 framework work. It is split so the migration does not accumulate undeployed
 runtime changes. Product composition, app optionality, behavioral acceptance and
-release identity remain Gaming-specific. This checkpoint demonstrates capture
-and boundary reuse; it does not yet demonstrate a completed second migration.
+release identity remain Gaming-specific. Approved input plus valid local tooling
+allows instruction composition while live acceptance remains blocked. No live
+answer, enabled endpoint, app registration, account connection or production
+write is a composition prerequisite. Backend connectivity and authenticated
+execution still gate activation and release.
+
+The local candidate is a review artifact, with no fabricated app/plugin/release
+identity. Synthetic composition checks cover source binding, deterministic bytes,
+traceable transformations and privacy boundaries. They do not prove model
+obedience, installed behavior or any of the 18 live behavior cases. Actual
+app-bound package validation and archive reconciliation remain later work;
+Tutor-specific product gates must not certify Gaming. This preparation does not
+complete the second migration.
