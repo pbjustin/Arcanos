@@ -190,3 +190,32 @@ Backend query acceptance remains blocked; OAuth/authenticated MCP acceptance
 remains unverified. Account changes, deployments, production durable-write
 tests, migration and final merge are outside this composition task. No public
 publication or sharing is authorized.
+
+## Repository dependency reconciliation (2026-09-29)
+
+Owner-approved [PR #1516](https://github.com/pbjustin/Arcanos/pull/1516) merged
+as `674b97fd8200107b7980e74420388908a660e3cf`. The migration branch incorporates
+that main commit through a normal merge, preserving its existing history.
+The reviewed overrides resolve `ip-address` 10.7.1 and `undici` 7.29.1; the
+fresh local production npm audit and unchanged checker report zero actionable
+findings. Development-only findings remain a separate inventory, not waived.
+
+The approved skill remains 15,210 bytes with SHA-256
+`a2cd3cfb2eb677eaef47c7fc148b41565b58e051486a49b29df48ee53c048081`.
+Read-only inspection verifies the approved baseline fingerprint and candidate
+bytes; the private approval binding and existing reconciliation artifacts are
+unchanged. No skill regeneration or additional owner content approval occurred.
+The exact reconciliation head and final-head hosted CI results are recorded in
+[PR #1514](https://github.com/pbjustin/Arcanos/pull/1514).
+
+This checkpoint changes the repository only. Production is not yet patched,
+and Gaming activation remains `NOT_STARTED`. `BACKEND_QUERY_ACCEPTANCE` remains
+`BLOCKED`; the historical Portal `EXPECTED_NO_EVIDENCE` and supplied-guide
+`GAMING_SOURCE_UNAVAILABLE` findings, including the unresolved acquisition cause,
+remain unchanged. No new gameplay or source-acquisition request was made.
+
+The next checkpoint is a separately authorized production rollout of the
+dependency-patched main through the maintained writer-held release process,
+followed by the reviewed Gaming configuration activation prerequisite. Neither
+operation, account setup, plugin migration, nor the final #1514 merge is part of
+this repository reconciliation.

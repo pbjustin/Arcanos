@@ -1,10 +1,14 @@
 import { spawnSync } from 'node:child_process';
+import { once } from 'node:events';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { ipKeyGenerator } from 'express-rate-limit';
+import { Address4, Address6 } from 'ip-address';
+import { Agent, fetch as undiciFetch } from 'undici';
 
 type Severity = 'info' | 'low' | 'moderate' | 'high' | 'critical';
 
@@ -347,9 +351,9 @@ describe('npm audit policy', () => {
     expect(rootPackage.overrides).toMatchObject({
       'express-rate-limit': '8.3.0',
       'fast-uri': fastUriArtifact.resolved,
-      'ip-address': '10.3.1',
+      'ip-address': 'https://registry.npmjs.org/ip-address/-/ip-address-10.7.1.tgz',
       qs: qsArtifact.resolved,
-      undici: '7.29.0',
+      undici: 'https://registry.npmjs.org/undici/-/undici-7.29.1.tgz',
     });
     expect(runtimePackage.overrides).toMatchObject({
       qs: qsArtifact.resolved,
@@ -374,18 +378,18 @@ describe('npm audit policy', () => {
       },
       'node_modules/fast-uri': fastUriArtifact,
       'node_modules/ip-address': {
-        version: '10.3.1',
+        version: '10.7.1',
         resolved:
-          'https://registry.npmjs.org/ip-address/-/ip-address-10.3.1.tgz',
+          'https://registry.npmjs.org/ip-address/-/ip-address-10.7.1.tgz',
         integrity:
-          'sha512-1e9d3kb97NHJTIJDZW9rKqW2h6+dFa50Dy0fpPSMQp2ADje5gvKsXmdiK6dwY5t76TaTt5+P5N1Y/LoToIxP6g==',
+          'sha512-4OUAqU9Z1i3vCnS05hzGiFnEMDpQ+62pAD/MVQOp83fYyNC8GleCqaS0QikQBmcWCrKFiUs/B8ztRRiYOAXuCA==',
       },
       'node_modules/undici': {
-        version: '7.29.0',
+        version: '7.29.1',
         resolved:
-          'https://registry.npmjs.org/undici/-/undici-7.29.0.tgz',
+          'https://registry.npmjs.org/undici/-/undici-7.29.1.tgz',
         integrity:
-          'sha512-IDxfleLmmbSskfWSUATiN1nfn2rDuvnMOqb5CWR92iIfojA0Ud+ulOAAEQ57LPr9rWmsreUyf5lwyao+7GNNVw==',
+          'sha512-RYONW2MeafgYlkVOKYKkA/Ag7BmXqgIWCa8t1m0JcxrQg9pI9lEqRhAOruOBCbAohOa/gkCF+iPi9hrgvTzu6Q==',
       },
       'node_modules/qs': qsArtifact,
     };
@@ -421,6 +425,118 @@ describe('npm audit policy', () => {
     expect(sameSubnetKey).toBe(firstSubnetKey);
     expect(otherSubnetKey).toBe('2001:db8:abcd:13::/64');
     expect(otherSubnetKey).not.toBe(firstSubnetKey);
+  });
+
+  it.each([
+    ['fe7f::1', false],
+    ['fe80::1', true],
+    ['fe81::1', true],
+    ['febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff', true],
+    ['fec0::1', false],
+  ])('classifies the complete IPv6 link-local boundary: %s', (address, expected) => {
+    expect(new Address6(address as string).isLinkLocal()).toBe(expected);
+  });
+
+  it('recognizes local-use NAT64 and rejects cross-family subnet membership', () => {
+    expect(new Address6('64:ff9b:1:7f00:0:100::').isPrivate()).toBe(true);
+    const ipv6 = new Address6('a00::1');
+    const ipv4Subnet = new Address4('10.0.0.0/8');
+    expect(ipv6.isInSubnet(ipv4Subnet)).toBe(false);
+    expect(ipv6.isHostInSubnet(ipv4Subnet)).toBe(false);
+    expect(new Address4('32.1.13.184').isInSubnet(new Address6('2001:db8::/32'))).toBe(false);
+  });
+
+  it('rejects overlong IPv6 input without expanding diagnostic markup', () => {
+    try {
+      new Address6('!'.repeat(100));
+      throw new Error('Expected invalid address to be rejected');
+    } catch (error) {
+      expect(error).toMatchObject({ name: 'AddressError' });
+      expect((error as { parseMessage?: string }).parseMessage).toBeUndefined();
+    }
+  });
+
+  it('uses npm-installed Undici for loopback fetch and in-flight body cancellation', async () => {
+    const server = createServer((request, response) => {
+      response.writeHead(200, { 'Content-Type': 'application/json' });
+      if (request.url === '/pending') response.write('{');
+      else response.end('{"ok":true}');
+    });
+    const dispatcher = new Agent();
+    const controller = new AbortController();
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const address = server.address() as { port: number };
+    const url = `http://127.0.0.1:${address.port}`;
+    try {
+      const response = await undiciFetch(url, { dispatcher, signal: AbortSignal.timeout(2_000) });
+      expect(await response.json()).toEqual({ ok: true });
+      const pending = await undiciFetch(`${url}/pending`, {
+        dispatcher,
+        signal: AbortSignal.any([controller.signal, AbortSignal.timeout(2_000)]),
+      });
+      const body = pending.text();
+      controller.abort();
+      await expect(body).rejects.toMatchObject({ name: 'AbortError' });
+    } finally {
+      controller.abort();
+      await dispatcher.destroy();
+      server.closeAllConnections();
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+  });
+
+  it('rejects a bounded malformed compressed WebSocket frame without crashing', () => {
+    // Isolate the upstream crash regression from Jest. The fixture talks only to loopback.
+    // https://github.com/nodejs/undici/commit/63cf698b611fecc6ee0a17b185b930051e4b982f
+    const result = spawnSync(process.execPath, ['--input-type=module', '--eval', `
+      import assert from 'node:assert/strict';
+      import { once } from 'node:events';
+      import { createDeflateRaw, constants } from 'node:zlib';
+      import { WebSocketServer } from 'ws';
+      import { WebSocket, Agent } from 'undici';
+      const limit = 1024 * 1024;
+      const server = new WebSocketServer({ host: '127.0.0.1', port: 0, perMessageDeflate: true });
+      const agent = new Agent({ webSocket: { maxPayloadSize: limit } });
+      let sent = false;
+      let received = false;
+      let timer;
+      await once(server, 'listening');
+      server.on('connection', socket => {
+        const compressor = createDeflateRaw();
+        const chunks = [];
+        compressor.on('data', chunk => chunks.push(chunk));
+        compressor.write(Buffer.alloc(limit + 64 * 1024));
+        compressor.flush(constants.Z_SYNC_FLUSH, () => {
+          const payload = Buffer.concat([...chunks, Buffer.from([0, 0, 0, 0, 0, 255, 255])]);
+          compressor.destroy();
+          const header = Buffer.alloc(10);
+          header[0] = 0xc2;
+          header[1] = 0x7f;
+          header.writeUInt32BE(payload.length, 6);
+          sent = true;
+          socket._socket.write(Buffer.concat([header, payload]));
+        });
+      });
+      try {
+        const client = new WebSocket('ws://127.0.0.1:' + server.address().port, { dispatcher: agent });
+        client.addEventListener('message', () => { received = true; });
+        await Promise.race([
+          once(client, 'close'),
+          new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('close timeout')), 3000); }),
+        ]);
+        assert.equal(sent, true);
+        assert.equal(received, false);
+        assert.equal(client.readyState, WebSocket.CLOSED);
+      } finally {
+        clearTimeout(timer);
+        for (const socket of server.clients) socket.terminate();
+        await agent.destroy();
+        await new Promise(resolve => server.close(resolve));
+      }
+    `], { cwd: repositoryRoot, encoding: 'utf8', timeout: 6_000 });
+    expect({ status: result.status, signal: result.signal, stderr: result.stderr, error: result.error?.message })
+      .toEqual({ status: 0, signal: null, stderr: '', error: undefined });
   });
 
   it('contains no temporary npm vulnerability exception registry', () => {
