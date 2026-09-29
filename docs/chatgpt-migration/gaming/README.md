@@ -191,6 +191,24 @@ remains unverified. Account changes, deployments, production durable-write
 tests, migration and final merge are outside this composition task. No public
 publication or sharing is authorized.
 
+## Sealed preview composition coverage
+
+The Gaming MCP preview's fixed query and hybrid requests execute the same
+pure instruction-section engine used by local composition, with synthetic
+source text and replacements. Its `gaming-instruction-sections/v1` marker is
+emitted only after exact output, trace, UTF-8/LF/CRLF offsets, determinism and
+section-limit assertions pass. Failure suppresses every Gaming success marker
+and the success body. The bounded Gaming verifier checks this proof alongside
+the schema, catalog, write-denial and transport boundaries; see
+[Railway preview verification](../../RAILWAY_DEPLOYMENT.md).
+
+This fixture neither reads nor regenerates the approved private candidate.
+The composer and its existing tooling inputs remain unchanged. Served synthetic
+section-engine proof does not execute the full local CLI or verify private
+instruction fidelity, owner approval, installed behavior, OAuth, supplied-guide
+acquisition or backend query acceptance. The 18-case behavior matrix remains
+`NOT_RUN` until its own acceptance evidence exists.
+
 ## Repository dependency reconciliation (2026-09-29)
 
 Owner-approved [PR #1516](https://github.com/pbjustin/Arcanos/pull/1516) merged

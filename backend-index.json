@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-29T01:19:19.204Z",
+  "generatedAt": "2026-09-29T18:31:17.058Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -2663,6 +2663,9 @@
           "relativePath": "src/shared/chatgpt/chatgptTutorPreviewFixture.ts"
         },
         {
+          "relativePath": "src/shared/chatgpt/gamingCompositionPreviewFixture.ts"
+        },
+        {
           "relativePath": "src/shared/chatgpt/gamingMcpContract.ts"
         },
         {
@@ -4238,6 +4241,9 @@
         },
         {
           "relativePath": "tests/gaming-clear-source.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-composition-preview-fixture.test.ts"
         },
         {
           "relativePath": "tests/gaming-currentness-adapters.test.ts"

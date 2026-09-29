@@ -105,6 +105,7 @@ export const GAMING_MCP_PREVIEW_DIST_IMPORT_CONTRACT = Object.freeze([
         'isGamingMcpToolName:isGamingMcpToolName', 'isGamingMcpWrite:isGamingMcpWrite',
         'GAMING_QUERY_SCOPE:GAMING_QUERY_SCOPE', 'GAMING_WRITE_SCOPE:GAMING_WRITE_SCOPE',
       ]),
+      './gamingCompositionPreviewFixture.js': Object.freeze(['assertGamingCompositionPreviewFixture:assertGamingCompositionPreviewFixture']),
     }),
   }),
   Object.freeze({
@@ -117,6 +118,24 @@ export const GAMING_MCP_PREVIEW_DIST_IMPORT_CONTRACT = Object.freeze([
   Object.freeze({
     filePath: 'packages/protocol/dist/src/chatgptGaming.js',
     imports: Object.freeze({ '../schemas/v1/tools/arcanos-gaming/contract.schema.json': Object.freeze(['default:contract']) }),
+  }),
+]);
+
+// The same pure section mapper used by private composition receives only fixed
+// synthetic text here. Keep the filesystem adapters and public/private inputs out.
+export const GAMING_COMPOSITION_PREVIEW_DIST_IMPORT_CONTRACT = Object.freeze([
+  Object.freeze({
+    filePath: 'dist/shared/chatgpt/gamingCompositionPreviewFixture.js',
+    imports: Object.freeze({
+      '../../../scripts/skill-composition-core.mjs': Object.freeze([
+        'instructionSectionMap:instructionSectionMap',
+        'transformInstructionSections:transformInstructionSections',
+      ]),
+    }),
+  }),
+  Object.freeze({
+    filePath: 'scripts/skill-composition-core.mjs',
+    imports: Object.freeze({ './tutor-package-core.mjs': Object.freeze(['digest:digest']) }),
   }),
 ]);
 
@@ -311,7 +330,8 @@ export async function findNativePrPreviewDistImportViolations({
     }
   }
   for (const contract of [...TUTOR_HONESTY_PREVIEW_DIST_IMPORT_CONTRACT,
-    ...PLUGIN_MIGRATION_PREVIEW_DIST_IMPORT_CONTRACT, ...GAMING_MCP_PREVIEW_DIST_IMPORT_CONTRACT]) {
+    ...PLUGIN_MIGRATION_PREVIEW_DIST_IMPORT_CONTRACT, ...GAMING_MCP_PREVIEW_DIST_IMPORT_CONTRACT,
+    ...GAMING_COMPOSITION_PREVIEW_DIST_IMPORT_CONTRACT]) {
     try {
       const sourceText = await fs.readFile(path.join(repositoryRoot, contract.filePath), 'utf8');
       violations.push(...findTutorHonestyPreviewDistImportSourceViolations(contract, sourceText));

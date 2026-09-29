@@ -15,7 +15,7 @@ const PREVIEW_IMPORT_TSCONFIG_FILE =
 const PREVIEW_DIST_IMPORT_CHECKER_FILE =
   'scripts/check-native-pr-preview-dist-imports.mjs';
 const PREVIEW_DIST_IMPORT_CHECKER_DIGEST =
-  'dd0393303dd7333a6ba5a2f154ab40618277c114198bbba277e5a703feb37e33';
+  '8ba9395a9d366f35433dbe4d622e667b8924f22bbd0a7d0f21201c253566a1af';
 const ROOT_PACKAGE_MANIFEST_FILE = 'package.json';
 const ROOT_TSCONFIG_FILE = 'tsconfig.json';
 const RUNTIME_PACKAGE_MANIFEST_FILE =
@@ -24,6 +24,7 @@ const PROTOCOL_PACKAGE_MANIFEST_FILE = 'packages/protocol/package.json';
 const PREVIEW_ENTRY_FILES = [
   'packages/arcanos-runtime/src/requestAbort.ts',
   'scripts/native-pr-preview-contract.mjs',
+  'scripts/skill-composition-core.mjs',
   'scripts/tutor-package-core.mjs',
   'scripts/start-railway-service.mjs',
   'src/nativePrPreviewApplication.ts',
@@ -40,6 +41,8 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'packages/protocol/src/chatgptGaming.ts',
   'scripts/native-pr-preview-contract.d.mts',
   'scripts/native-pr-preview-contract.mjs',
+  'scripts/skill-composition-core.d.mts',
+  'scripts/skill-composition-core.mjs',
   'scripts/tutor-package-core.d.mts',
   'scripts/tutor-package-core.mjs',
   'scripts/start-railway-service.mjs',
@@ -101,6 +104,7 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/shared/backstage/backstageStoryline.ts',
   'src/shared/backstage/backstageUniverseReadProjection.ts',
   'src/shared/chatgpt/chatgptTutorPreviewFixture.ts',
+  'src/shared/chatgpt/gamingCompositionPreviewFixture.ts',
   'src/shared/chatgpt/gamingMcpContract.ts',
   'src/shared/chatgpt/gamingMcpPreviewFixture.ts',
   'src/shared/chatgpt/pluginMigrationPreviewFixture.ts',
@@ -786,7 +790,10 @@ const CRITICAL_RUNTIME_FUNCTION_DIGESTS = new Map([
   ],
 ]);
 const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
-  ['src/shared/chatgpt/gamingMcpPreviewFixture.ts', '9f84672e926862180864f7c46338eab0eb0b134e3a26a1a2e1e429df04e368a4'],
+  ['scripts/skill-composition-core.d.mts', '08ca7185c7242734ab7015259990da9dd7eeec38432139a9eaecf03257c8810f'], // gitleaks:allow -- public source semantic SHA-256
+  ['scripts/skill-composition-core.mjs', '669365ee5906d523ab1f841d4d25a5086ee8669f152eadfe01e466d939147982'], // gitleaks:allow -- public source semantic SHA-256
+  ['src/shared/chatgpt/gamingCompositionPreviewFixture.ts', '5c66dd4fb92143ea053c59663c845252324fd69e1c4709c47484eeb6e7bf7a45'], // gitleaks:allow -- public source semantic SHA-256
+  ['src/shared/chatgpt/gamingMcpPreviewFixture.ts', '4d3c65bf8110e14b0522b62f4197994d3432bef019f2b61a83fdc9833f16fedd'],
   ['src/shared/chatgpt/gamingMcpContract.ts', 'be13dbb5b25a764ac4f3df0d5a990affff89a1f49b5c5732b8f9f0c9a430fd70'],
   ['packages/protocol/src/chatgptGaming.ts', '41ded1c72533e9dd50b26b03e46b2fa4a8e6cc8cf6bfd93d81e3739ccd7c6e46'],
   ['scripts/tutor-package-core.mjs', '1aa853e7dcc157d863dfe6f506e6c8779cd4a1defbea70b453d7d2954cfce2d8'], // gitleaks:allow -- public source semantic SHA-256

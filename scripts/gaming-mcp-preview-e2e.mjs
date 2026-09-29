@@ -78,7 +78,8 @@ export async function runGamingMcpPreviewE2e({ args = [], localGitState, fetchIm
       }
       const bytes = Buffer.concat(chunks);
       const text = bytes.toString('utf8');
-      for (const [name, version] of [[contract.proofHeader, contract.proofVersion], [migration.proofHeader, migration.proofVersion]])
+      for (const [name, version] of [[contract.proofHeader, contract.proofVersion], [migration.proofHeader, migration.proofVersion],
+        [contract.compositionProofHeader, contract.compositionProofVersion]])
         assert(item.proof ? response.headers.get(name) === version : !response.headers.has(name), 'GAMING_PREVIEW_SUCCESS_PROOF', item.id);
       assert(!response.headers.has(NATIVE_PR_PREVIEW_E2E_CONTRACT.chatGptTutor.honestyProofHeader), 'GAMING_PREVIEW_CROSS_FAMILY_PROOF', item.id);
       if (item.denied) assert(text === 'not found', 'GAMING_PREVIEW_DENIAL_BODY', item.id);
@@ -103,11 +104,12 @@ export async function runGamingMcpPreviewE2e({ args = [], localGitState, fetchIm
         }
       }
       checks.push({ caseId: item.id, httpStatus: response.status, role: item.role, responseBytes: length, bodySha256: hash(bytes),
-        ...(item.proof ? { gamingMcpCoreVerified: true, pluginMigrationPackageCoreVerified: true } : {}) });
+        ...(item.proof ? { gamingMcpCoreVerified: true, pluginMigrationPackageCoreVerified: true,
+          gamingInstructionSectionsVerified: true, gamingInstructionSectionsProofVersion: contract.compositionProofVersion } : {}) });
     } finally { clearTimeout(timer); controller.abort(); }
   }
   return { kind: 'gaming_mcp_sealed_preview', executed: true, networkAttempted: true, target, limits, checks,
-    evidenceScope: 'Credential-free served schemas, catalog, synthetic protocol and write-policy components. No OAuth, production service, provider, database or source storage proof.',
+    evidenceScope: 'Credential-free served schemas, catalog, synthetic protocol, write-policy and shared instruction-section composition components. No private candidate or full composition CLI, owner approval, installed skill, OAuth, production service, provider, database or source storage proof.',
     summary: { status: 'PASS', code: 'GAMING_MCP_SEALED_PREVIEW_PASS', requestsMade: checks.length, totalResponseBytes: totalBytes } };
 }
 

@@ -14,6 +14,7 @@ import {
   TUTOR_HONESTY_PREVIEW_DIST_IMPORT_CONTRACT,
   PLUGIN_MIGRATION_PREVIEW_DIST_IMPORT_CONTRACT,
   GAMING_MCP_PREVIEW_DIST_IMPORT_CONTRACT,
+  GAMING_COMPOSITION_PREVIEW_DIST_IMPORT_CONTRACT,
   findTutorHonestyPreviewDistImportSourceViolations,
 } from '../scripts/check-native-pr-preview-dist-imports.mjs';
 
@@ -689,6 +690,51 @@ describe('native PR preview import boundary', () => {
     for (const excluded of ['src/chatgpt/gamingMcp.ts', 'src/chatgpt/gamingAuth.ts', 'src/services/gamingHybridKnowledge.ts'])
       expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toContain(excluded);
   });
+
+  it.each([
+    'scripts/skill-composition-core.mjs',
+    'scripts/skill-composition-core.d.mts',
+    'src/shared/chatgpt/gamingCompositionPreviewFixture.ts',
+  ])('pins the shared Gaming composition seam and rejects effects in %s', async filePath => {
+    const sourceText = await readFile(new URL(`../${filePath}`, import.meta.url), 'utf8');
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).toContain(filePath);
+    expect(findUnsafeRuntimeSyntax(filePath, sourceText)).toEqual([]);
+    for (const addition of [
+      'fetch("https://unreviewed.invalid");',
+      'process.env.PRIVATE_INPUT_ROOT;',
+      'import { readFile } from "node:fs/promises";',
+      'await import("./compose-gaming-skill.mjs");',
+      'export const unreviewedCompositionChange = true;',
+    ]) {
+      expect(findUnsafeRuntimeSyntax(filePath, `${sourceText}\n${addition}`)).toEqual(
+        expect.arrayContaining([expect.stringContaining('critical entry file semantic digest')])
+      );
+    }
+    for (const excluded of ['scripts/compose-gaming-skill.mjs', 'scripts/compose-tutor-skill.mjs',
+      'scripts/tutor-migration.mjs', 'scripts/check-plugin-private-boundary.mjs',
+      'scripts/capture-gaming-baseline.mjs', 'integrations/arcanos-gaming/baseline.inventory.json']) {
+      expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toContain(excluded);
+    }
+  });
+
+  it.each(GAMING_COMPOSITION_PREVIEW_DIST_IMPORT_CONTRACT)(
+    'keeps emitted Gaming composition imports exact in $filePath', contract => {
+      const imports = Object.entries(contract.imports).map(([specifier, bindings]) =>
+        `import { ${bindings.map(binding => binding.split(':')[0]).join(', ')} } from '${specifier}';`
+      ).join('\n');
+      expect(findTutorHonestyPreviewDistImportSourceViolations(contract, imports)).toEqual([]);
+      for (const mutated of [
+        '',
+        imports.replace(/\{ /u, '{ unexpectedBinding, '),
+        imports.replace(/ from '[^']+'/u, " from './compose-gaming-skill.mjs'"),
+        `${imports}\nimport { readFile } from 'node:fs/promises';`,
+        `${imports}\nawait import('./tutor-migration.mjs');`,
+        `${imports}\nexport * from './compose-gaming-skill.mjs';`,
+      ]) {
+        expect(findTutorHonestyPreviewDistImportSourceViolations(contract, mutated).length).toBeGreaterThan(0);
+      }
+    }
+  );
 
   it('rejects absent or retargeted Gaming protocol exports outside the reviewed leaf', async () => {
     const manifest = JSON.parse(await readFile(new URL('../packages/protocol/package.json', import.meta.url), 'utf8'));

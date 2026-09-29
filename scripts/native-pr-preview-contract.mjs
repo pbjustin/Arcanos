@@ -24,6 +24,8 @@ export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
     metadataPath: '/.well-known/oauth-protected-resource/chatgpt/gaming/mcp',
     proofHeader: 'x-arcanos-preview-chatgpt-gaming-version',
     proofVersion: 'chatgpt-gaming-mcp-core/v1',
+    compositionProofHeader: 'x-arcanos-preview-gaming-composition-version',
+    compositionProofVersion: 'gaming-instruction-sections/v1',
     catalogSha256: '019aa3cff6728930c03d8d40e1d30b782d3fd999d4ac0edcaf9b2b7c9ee23f60', // gitleaks:allow -- public synthetic catalog digest
     protocolVersion: '2025-03-26',
     instructions: 'Synthetic Gaming preview only. Fixed query/hybrid fixtures; all writes denied. No OAuth, live providers, source acquisition or storage.',

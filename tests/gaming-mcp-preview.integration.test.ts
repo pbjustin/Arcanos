@@ -19,6 +19,7 @@ const app = () => createNativePrPreviewApplication({ identity,
 });
 const noProof = (headers: Record<string, unknown>) => {
   expect(headers[contract.proofHeader]).toBeUndefined(); expect(headers[migration.proofHeader]).toBeUndefined();
+  expect(headers[contract.compositionProofHeader]).toBeUndefined();
 };
 
 describe('Gaming MCP sealed HTTP boundary', () => {
@@ -57,6 +58,7 @@ describe('Gaming MCP sealed HTTP boundary', () => {
     expect(success.status).toBe(200);
     expect(success.headers[contract.proofHeader]).toBe(contract.proofVersion);
     expect(success.headers[migration.proofHeader]).toBe(migration.proofVersion);
+    expect(success.headers[contract.compositionProofHeader]).toBe(contract.compositionProofVersion);
     for (const body of [rpc('tools/list'), rpc('tools/call', { name: 'modules.invoke', arguments: {} }),
       rpc('tools/call', { name: 'arcanos_gaming_ingest_sources', arguments: { confirmStore: true } })]) {
       const response = await request(fixtureApp).post(contract.path).send(body); noProof(response.headers);
@@ -88,6 +90,10 @@ describe('Gaming MCP sealed HTTP boundary', () => {
     expect(result.summary).toMatchObject({ status: 'PASS', requestsMade: 21 });
     expect(requests).toBe(21);
     expect(result.checks.filter((check: { gamingMcpCoreVerified?: boolean }) => check.gamingMcpCoreVerified)).toHaveLength(2);
+    expect(result.checks.filter((check: { gamingInstructionSectionsVerified?: boolean }) => check.gamingInstructionSectionsVerified)).toEqual([
+      expect.objectContaining({ caseId: 'query', gamingInstructionSectionsProofVersion: 'gaming-instruction-sections/v1' }),
+      expect.objectContaining({ caseId: 'hybrid', gamingInstructionSectionsProofVersion: 'gaming-instruction-sections/v1' }),
+    ]);
     const dry = await runGamingMcpPreviewE2e({ args: args.slice(0, -2), localGitState, fetchImpl: async () => { throw new Error('Dry-run network'); } });
     expect(dry.executed).toBe(false);
   });
