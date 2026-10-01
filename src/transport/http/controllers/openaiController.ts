@@ -11,7 +11,6 @@ import { Request, Response } from 'express';
 import { runTrinityWritingPipeline } from '@core/logic/trinityWritingPipeline.js';
 import { GenerativeModelPolicyError, resolveGenerativeModel } from '@services/openai/credentialProvider.js';
 import {
-  getDefaultModel,
   getFallbackModel,
   getGPT5Model,
   getOpenAIServiceHealth,
@@ -33,6 +32,7 @@ import {
 import type { AIRequestDTO, AIResponseDTO, ErrorResponseDTO } from "@shared/types/dto.js";
 import { getConfirmGateConfiguration } from "@transport/http/middleware/confirmGate.js";
 import { config } from "@platform/runtime/config.js";
+import { getConfig } from "@platform/runtime/unifiedConfig.js";
 import { getEnv } from "@platform/runtime/env.js";
 import { runWithRequestAbortTimeout, getRequestAbortSignal } from '@arcanos/runtime';
 import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
@@ -416,6 +416,7 @@ export function getOpenAIStatus(_: Request, res: Response): void {
   const health = getOpenAIServiceHealth();
   const confirmation = getConfirmGateConfiguration();
   const keySource = getOpenAIKeySource();
+  const modelConfig = getConfig();
 
   res.json({
     status: 'ok',
@@ -424,8 +425,8 @@ export function getOpenAIStatus(_: Request, res: Response): void {
       configured: health.apiKey.configured,
       keyStatus: health.apiKey.status,
       keySource,
-      defaultModel: getDefaultModel(),
-      fallbackModel: getFallbackModel(),
+      defaultModel: modelConfig.defaultModel,
+      fallbackModel: modelConfig.fallbackModel,
       gpt5Model: getGPT5Model(),
       clientInitialized: health.client.initialized,
       timeout: health.client.timeout,

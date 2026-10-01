@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-01T18:02:48.881Z",
+  "generatedAt": "2026-10-01T19:38:18.792Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -4435,6 +4435,9 @@
           "relativePath": "tests/gaming.direct-answer.test.ts"
         },
         {
+          "relativePath": "tests/generation-authority-diagnostics.test.ts"
+        },
+        {
           "relativePath": "tests/git.service.test.ts"
         },
         {
@@ -5423,6 +5426,9 @@
         },
         {
           "relativePath": "tests/startup-health-routes.test.ts"
+        },
+        {
+          "relativePath": "tests/startup-missing-authority.test.ts"
         },
         {
           "relativePath": "tests/status.route.test.ts"

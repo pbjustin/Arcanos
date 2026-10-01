@@ -587,7 +587,7 @@ function buildAiProviderStatusSnapshot(
         : providerRuntime.lastFailureAt
           ? false
           : null),
-    model: previous?.model ?? getFallbackModel(),
+    model: previous?.model ?? health.client.model,
     baseUrl: health.client.baseURL ?? previous?.baseUrl ?? null,
     lastAttemptAt: providerRuntime.lastAttemptAt ?? previous?.lastAttemptAt ?? null,
     lastSuccessAt: providerRuntime.lastSuccessAt ?? previous?.lastSuccessAt ?? null,

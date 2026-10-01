@@ -4,6 +4,7 @@
  */
 
 import type OpenAI from 'openai';
+import { getConfig } from '@platform/runtime/unifiedConfig.js';
 import {
   classifyWorkerAiBudgetError,
   instrumentOpenAIOperation,
@@ -902,9 +903,10 @@ export function buildDryRunPreview(
   finalLane: 'routine' | 'escalation' = 'routine'
 ): TrinityDryRunPreview {
   const intakeModelCandidate = getTrinityIntakeModel();
+  const modelConfig = getConfig();
   const finalModelCandidate = finalLane === 'escalation'
-    ? getTrinityFinalEscalationModel()
-    : getTrinityFinalModel();
+    ? modelConfig.trinityFinalEscalationModel
+    : modelConfig.trinityFinalModel;
   const gpt5ModelCandidate = getTrinityReasoningModel();
   const routingPlan = [
     `ARCANOS-INTAKE:${intakeModelCandidate}`,

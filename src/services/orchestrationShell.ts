@@ -9,6 +9,7 @@ import { getTrinityFinalModel } from './openai/credentialProvider.js';
 import { getOpenAIClientOrAdapter } from './openai/clientBridge.js';
 import { generateRequestId } from "@shared/idGenerator.js";
 import { getEnv } from "@platform/runtime/env.js";
+import { getConfig } from "@platform/runtime/unifiedConfig.js";
 import {
   ISOLATE_MODULE_PROMPT,
   PURGE_MEMORY_PROMPT,
@@ -56,7 +57,7 @@ export async function resetOrchestrationShell(initConfig: GPT5OrchestrationConfi
       meta: {
         timestamp: new Date().toISOString(),
         stages: ["FAILED_INITIALIZATION"],
-        gpt5Model: getTrinityFinalModel(),
+        gpt5Model: getConfig().trinityFinalModel,
         safeguardsApplied: false
       },
       logs: ["❌ OpenAI adapter initialization failed"]
@@ -168,7 +169,7 @@ export async function resetOrchestrationShell(initConfig: GPT5OrchestrationConfi
       meta: {
         timestamp: new Date().toISOString(),
         stages,
-        gpt5Model: getTrinityFinalModel(),
+        gpt5Model: getConfig().trinityFinalModel,
         safeguardsApplied: false
       },
       logs
@@ -190,7 +191,7 @@ export async function getOrchestrationShellStatus(): Promise<{
   
   return {
     active: !!client,
-    model: getTrinityFinalModel(),
+    model: getConfig().trinityFinalModel,
     // Use config layer for env access (adapter boundary pattern)
     lastReset: getEnv('ORCHESTRATION_LAST_RESET'),
     memoryEntries: memoryContext.relevantEntries.length

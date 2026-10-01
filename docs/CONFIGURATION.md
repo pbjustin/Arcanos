@@ -398,6 +398,12 @@ generative model or historical fine-tune fallback. Normal, escalated and recover
 final calls use the same authority for the executing service. `FALLBACK_MODEL`,
 `AI_FALLBACK_MODEL` and `RAILWAY_OPENAI_FALLBACK_MODEL` do not replace it.
 
+An unset authority remains optional for deterministic startup, confirmation,
+status reads and dry-run previews. These paths report configured model metadata
+without admitting generation. A configured malformed authority still fails
+startup environment validation; generation still rejects unavailable authority
+before provider transport.
+
 These are source-defined selectors, not evidence of a deployed model or provider
 availability (`src/platform/runtime/unifiedConfig.ts`, `getConfig`). Web and
 worker can retain different configured fine-tune identities; this policy does

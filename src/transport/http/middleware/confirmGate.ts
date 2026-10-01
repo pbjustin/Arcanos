@@ -9,7 +9,6 @@ import {
 import { sendInternalErrorPayload } from '@shared/http/index.js';
 import { timingSafeEqualOpaqueSecret } from '@shared/security/opaqueSecret.js';
 import { consumeOneTimeToken } from "@core/lib/tokenStore.js";
-import { getDefaultModel } from "@services/openai/credentialProvider.js";
 import { getConfig } from "@platform/runtime/unifiedConfig.js";
 import { getAutomationAuth, getEnv } from "@platform/runtime/env.js";
 import { resolveHeader } from "@transport/http/requestHeaders.js";
@@ -68,8 +67,7 @@ function collectFineTunedAutomationIds(): string[] {
     config.defaultModel, // From config (handles FINETUNED_MODEL_ID, etc.)
     getEnv('OPENAI_MODEL'),
     getEnv('RAILWAY_OPENAI_MODEL'),
-    getEnv('AI_MODEL'),
-    getDefaultModel()
+    getEnv('AI_MODEL')
   ];
 
   const fineTunedIds = new Set<string>();
