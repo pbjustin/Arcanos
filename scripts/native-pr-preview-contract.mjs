@@ -132,6 +132,8 @@ export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
       'backstage-booker-queue-wait-policy/v2',
     trinityReasoningPolicyProofVersion:
       'trinity-reasoning-provider-policy/v1',
+    gpt6ReasoningPolicyProofVersion:
+      'gpt6-reasoning-policy/v1',
     managedAsyncContinuationProofVersion:
       'backstage-booker-managed-async-continuation/v2',
     protectedFailureNoFallbackProofVersion:
@@ -184,6 +186,8 @@ export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
         'x-arcanos-preview-backstage-queue-wait-policy-version',
       trinityReasoningPolicyVersion:
         'x-arcanos-preview-trinity-reasoning-policy-version',
+      gpt6ReasoningPolicyVersion:
+        'x-arcanos-preview-gpt6-reasoning-policy-version',
       managedAsyncContinuationVersion:
         'x-arcanos-preview-backstage-managed-async-version',
       protectedFailureNoFallbackVersion:

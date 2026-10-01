@@ -268,6 +268,10 @@ function responseHeadersForCase(
                   .proofHeaders.trinityReasoningPolicyVersion]:
                   NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration
                     .trinityReasoningPolicyProofVersion,
+                [NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration
+                  .proofHeaders.gpt6ReasoningPolicyVersion]:
+                  NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration
+                    .gpt6ReasoningPolicyProofVersion,
               }
             : {}),
           ...(requestCase.fixtureName === 'notionAuthorityRag'
@@ -2393,6 +2397,7 @@ test('executes the bounded synthetic matrix and detects identity stability', asy
       pathTemplate: '/backstage/generation-contract',
       queueWaitPolicyVerified: true,
       trinityReasoningPolicyVerified: true,
+      gpt6ReasoningPolicyVerified: true,
       responseBytes: Buffer.byteLength(JSON.stringify(
         expectedNativePrPreviewResponseBody(routeBudgetCase, {
           commitSha: COMMIT_SHA,
@@ -3529,6 +3534,26 @@ test('rejects missing synthetic provenance and correlation or security header dr
           NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration.proofHeaders
             .trinityReasoningPolicyVersion
         ] = 'trinity-reasoning-provider-policy/drifted';
+      },
+    },
+    {
+      caseId: 'backstage-generation-route-budget',
+      code: 'NATIVE_PR_PREVIEW_GPT6_REASONING_POLICY_PROOF_INVALID',
+      mutate(headers) {
+        delete headers[
+          NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration.proofHeaders
+            .gpt6ReasoningPolicyVersion
+        ];
+      },
+    },
+    {
+      caseId: 'backstage-generation-route-budget',
+      code: 'NATIVE_PR_PREVIEW_GPT6_REASONING_POLICY_PROOF_INVALID',
+      mutate(headers) {
+        headers[
+          NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration.proofHeaders
+            .gpt6ReasoningPolicyVersion
+        ] = 'gpt6-reasoning-policy/drifted';
       },
     },
     {
