@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-01T04:32:15.956Z",
+  "generatedAt": "2026-10-01T18:02:48.881Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -3670,6 +3670,9 @@
           "relativePath": "tests/autoscaling-architecture.test.ts"
         },
         {
+          "relativePath": "tests/backend-model-policy-boundaries.test.ts"
+        },
+        {
           "relativePath": "tests/backstage-action-policy.test.ts"
         },
         {
@@ -4918,6 +4921,9 @@
           "relativePath": "tests/model-lane-selectors.test.ts"
         },
         {
+          "relativePath": "tests/module-generative-policy.test.ts"
+        },
+        {
           "relativePath": "tests/module-registry-initialization.test.ts"
         },
         {
@@ -5000,6 +5006,9 @@
         },
         {
           "relativePath": "tests/openai-startup-probe-isolation.test.ts"
+        },
+        {
+          "relativePath": "tests/openai-stream-model-policy.test.ts"
         },
         {
           "relativePath": "tests/openai-structured-reasoning-preview-chaos.test.ts"
@@ -5408,6 +5417,9 @@
         },
         {
           "relativePath": "tests/sessionResolver.persistence.test.ts"
+        },
+        {
+          "relativePath": "tests/shared-generative-policy.test.ts"
         },
         {
           "relativePath": "tests/startup-health-routes.test.ts"

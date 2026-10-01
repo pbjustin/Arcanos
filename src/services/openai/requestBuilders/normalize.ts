@@ -3,6 +3,7 @@ import type { ResponseInput } from 'openai/resources/responses/responses';
 
 import { getRoutingMessage } from '@arcanos/openai/unifiedClient';
 import { getTokenParameter } from '@shared/tokenParameterHelper.js';
+import { getDefaultModel } from '../credentialProvider.js';
 import { extractTextFromContentParts } from '@arcanos/openai/responseParsing';
 
 import type {
@@ -96,7 +97,7 @@ export function normalizeResponsesDraft(draft: ResponsesRequestDraft): Normalize
       };
     });
 
-  const tokenParameters = getTokenParameter(draft.model || 'gpt-4.1-mini', draft.maxTokens);
+  const tokenParameters = getTokenParameter(draft.model || getDefaultModel(), draft.maxTokens);
   const maxOutputTokens = (tokenParameters as { max_completion_tokens?: number; max_tokens?: number }).max_completion_tokens
     || (tokenParameters as { max_tokens?: number }).max_tokens
     || draft.maxTokens;
@@ -112,7 +113,7 @@ export function normalizeResponsesDraft(draft: ResponsesRequestDraft): Normalize
     : baseInput) as unknown as ResponseInput;
 
   return {
-    model: draft.model || 'gpt-4.1-mini',
+    model: draft.model || getDefaultModel(),
     temperature: draft.temperature,
     top_p: draft.top_p,
     maxOutputTokens,
@@ -148,10 +149,10 @@ export function normalizeVisionResponsesDraft(draft: VisionResponsesDraft): Norm
 
 export function normalizeChatCompletionDraft(draft: ChatCompletionDraft): NormalizedChatCompletionRequest {
   const routedMessages = ensureRoutingMessage(draft.preparedMessages, draft.includeRoutingMessage);
-  const tokenParams = getTokenParameter(draft.model || 'gpt-4o-mini', draft.maxTokens) as unknown as Record<string, unknown>;
+  const tokenParams = getTokenParameter(draft.model || getDefaultModel(), draft.maxTokens) as unknown as Record<string, unknown>;
 
   return {
-    model: draft.model || 'gpt-4o-mini',
+    model: draft.model || getDefaultModel(),
     temperature: draft.temperature,
     top_p: draft.top_p,
     frequency_penalty: draft.frequency_penalty,

@@ -37,6 +37,7 @@ export type BackstageOutputBudgetClass =
 
 export type BackstageOutputModelCapability =
   | 'extended_gpt5'
+  | 'configured_authority'
   | 'baseline_fallback';
 
 export type BackstageOutputBudgetReason =
@@ -61,6 +62,8 @@ export interface BackstageOutputBudgetInput {
   notionAuthorityContext?: boolean;
   completeBookingContainerComponentCount?: boolean;
   model: string;
+  /** Server-owned configured final authority; never supplied by request data. */
+  finalAuthorityModel?: string;
   modelStageTimeoutMs: number;
 }
 
@@ -107,7 +110,13 @@ function resolveConfiguredWorkerTokenLimit(value: number | undefined): number {
   );
 }
 
-function resolveModelCapability(model: string): BackstageOutputModelCapability {
+function resolveModelCapability(model: string, finalAuthorityModel?: string): BackstageOutputModelCapability {
+  const authority = finalAuthorityModel?.trim();
+  // Authority identity is case-sensitive. An unrelated fine-tune does not gain
+  // the existing protected worker allowance merely by using an ft: prefix.
+  if (authority && /^ft:[^\s]+$/.test(authority) && model.trim() === authority) {
+    return 'configured_authority';
+  }
   const normalizedModel = model.trim().toLowerCase();
   const supportsBoundedExtendedOutput =
     /^gpt-5\.1(?:$|-\d{4}-\d{2}-\d{2}$)/.test(normalizedModel)
@@ -274,7 +283,7 @@ export function resolveBackstageOutputBudget(
   const expectedOutputWords = normalizePositiveInteger(input.expectedOutputWords);
   const expectedItemCount = normalizePositiveInteger(input.expectedItemCount ?? 0);
   const modelStageTimeoutMs = normalizePositiveInteger(input.modelStageTimeoutMs);
-  const modelCapability = resolveModelCapability(input.model);
+  const modelCapability = resolveModelCapability(input.model, input.finalAuthorityModel);
   const requestedFormat = resolveBackstageRequestedOutputFormat(input);
   const boundedRequestTokenLimit = input.action === 'queryContinuity'
     ? BACKSTAGE_CONTINUITY_QUERY_TOKEN_LIMIT
@@ -330,7 +339,7 @@ export function resolveBackstageOutputBudget(
     );
   }
 
-  if (modelCapability !== 'extended_gpt5') {
+  if (modelCapability !== 'extended_gpt5' && modelCapability !== 'configured_authority') {
     return buildDecision(
       'bounded_request',
       'unsupported_extended_model',

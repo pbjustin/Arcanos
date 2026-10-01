@@ -5566,6 +5566,58 @@ function runBackstageProductionOutputScenario(
 function runBackstageProductionOutputContractsFixture(
   fixture: string
 ): Record<string, unknown> {
+  // Exercise authority eligibility without importing provider configuration into
+  // this contained fixture. All identifiers and workload metadata are synthetic.
+  const authorityModel = 'ft:gpt-4.1:synthetic:preview-authority';
+  const authorityBudgetInput = {
+    action: 'generateBooking' as const,
+    profile: 'queued_generation' as const,
+    requestedFormat: 'structured_booking' as const,
+    requestedTokenLimit: 2_400,
+    configuredWorkerTokenLimit: BACKSTAGE_WORKER_OUTPUT_TOKEN_LIMIT_DEFAULT,
+    promptCodeUnits: 1_600,
+    retrievedContextCodeUnits: 0,
+    expectedOutputWords: 600,
+    model: authorityModel,
+    finalAuthorityModel: authorityModel,
+    modelStageTimeoutMs: 75_000,
+  };
+  const authorityBudget = resolveBackstageOutputBudget(authorityBudgetInput);
+  const rejectedAuthorityBudgets = [
+    { finalAuthorityModel: undefined },
+    { model: 'ft:gpt-4.1:synthetic:other-authority' },
+    { model: authorityModel.toUpperCase() },
+    { model: 'gpt-6.1-sol', finalAuthorityModel: 'gpt-6.1-sol' },
+  ].map(overrides => resolveBackstageOutputBudget({
+    ...authorityBudgetInput,
+    ...overrides,
+  }));
+  const finiteAuthorityCaps = [
+    [{ profile: 'bounded_sync_generation' as const }, 2_400],
+    [{ action: 'queryContinuity' as const }, 900],
+    [{ requestedFormat: 'bounded_review' as const }, 2_400],
+    [{ modelStageTimeoutMs: 40_000 }, 2_400],
+    [{ modelStageTimeoutMs: 45_000 }, 4_000],
+    [{ modelStageTimeoutMs: 60_000 }, 5_000],
+    [{ configuredWorkerTokenLimit: 999_999 }, 8_000],
+  ] as const;
+  const authorityCapacityValid =
+    authorityBudget.modelCapability === 'configured_authority'
+    && authorityBudget.budgetClass === 'queued_extended'
+    && authorityBudget.tokenLimit === BACKSTAGE_WORKER_OUTPUT_TOKEN_LIMIT_DEFAULT
+    && authorityBudget.tokenCap === BACKSTAGE_WORKER_OUTPUT_TOKEN_LIMIT_DEFAULT
+    && rejectedAuthorityBudgets.every(budget => (
+      budget.modelCapability === 'baseline_fallback'
+      && budget.budgetClass === 'bounded_request'
+      && budget.tokenLimit === 2_400
+      && budget.tokenCap === 2_400
+    ))
+    && finiteAuthorityCaps.every(([overrides, expected]) => {
+      const budget = resolveBackstageOutputBudget({ ...authorityBudgetInput, ...overrides });
+      return budget.tokenLimit === expected
+        && budget.tokenCap <= 8_000
+        && budget.tokenLimit <= budget.tokenCap;
+    });
   const exactCompact = runBackstageProductionOutputScenario({
     action: 'generateBookingWithHRC',
     prompt: [
@@ -5624,7 +5676,7 @@ function runBackstageProductionOutputContractsFixture(
       && exactCompact.enforceParsedItemContract === true,
     productionCapacitySelected: commonCapacityValid,
   };
-  if (Object.values(contracts).some(value => !value)) {
+  if (!authorityCapacityValid || Object.values(contracts).some(value => !value)) {
     throw new Error(
       'PREVIEW_BACKSTAGE_PRODUCTION_OUTPUT_CONTRACT_INVALID'
     );

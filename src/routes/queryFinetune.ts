@@ -1,7 +1,7 @@
 import { Request, Response, Router } from 'express';
 import { z } from 'zod';
 
-import { DEFAULT_FINE_TUNE } from '../config/openai.js';
+import { getConfiguredFineTune } from '../config/openai.js';
 import { runTrinity } from '../trinity/trinity.js';
 import {
   createRateLimitMiddleware,
@@ -12,9 +12,12 @@ import { sendInternalErrorPayload } from '@shared/http/index.js';
 import {
   beginAiRouteTrace,
   completeAiRouteTrace,
-  failAiRouteTrace
+  failAiRouteTrace,
+  type AiRouteTraceContext
 } from '@transport/http/aiRouteTelemetry.js';
 import { resolveQueryFinetuneAttemptLatencyBudgetMs } from '@config/queryFinetune.js';
+import { GenerativeModelPolicyError } from '@services/openai/credentialProvider.js';
+import { sendOpenAIServiceUnavailable } from '@platform/resilience/serviceUnavailable.js';
 
 const router = Router();
 
@@ -48,12 +51,15 @@ export async function queryFinetuneHandler(req: Request, res: Response) {
   }
 
   const prompt = parsedRequest.data.prompt;
-  const routeTrace = beginAiRouteTrace(req, 'query-finetune', prompt, DEFAULT_FINE_TUNE);
+  let routeTrace: AiRouteTraceContext | undefined;
+  let model: string | undefined;
 
   try {
+    model = getConfiguredFineTune();
+    routeTrace = beginAiRouteTrace(req, 'query-finetune', prompt, model);
     const result = await runTrinity({
       prompt,
-      model: DEFAULT_FINE_TUNE,
+      model,
       temperature: 0.5,
       structured: true,
       latencyBudgetMs: QUERY_FINETUNE_ATTEMPT_LATENCY_BUDGET_MS
@@ -73,10 +79,15 @@ export async function queryFinetuneHandler(req: Request, res: Response) {
       ...result
     });
   } catch (error) {
-    failAiRouteTrace(req, routeTrace, error, {
-      activeModel: DEFAULT_FINE_TUNE,
-      statusCode: 500
+    const unavailableAuthority = error instanceof GenerativeModelPolicyError && error.code === 'FINAL_AUTHORITY_UNAVAILABLE';
+    failAiRouteTrace(req, routeTrace ?? beginAiRouteTrace(req, 'query-finetune', prompt), error, {
+      activeModel: model,
+      statusCode: unavailableAuthority ? 503 : 500
     });
+    if (unavailableAuthority) {
+      sendOpenAIServiceUnavailable(res, error.message);
+      return;
+    }
     return sendInternalErrorPayload(res, {
       success: false,
       error: error instanceof Error ? error.message : String(error)

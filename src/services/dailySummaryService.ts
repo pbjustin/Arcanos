@@ -1,7 +1,8 @@
 import fs from 'fs';
 import path from 'path';
 import { z } from 'zod';
-import { callOpenAI, getDefaultModel } from './openai.js';
+import { callOpenAI } from './openai.js';
+import { resolveGenerativeModel } from './openai/credentialProvider.js';
 import { loadState, updateState } from './stateManager.js';
 import { getEnv } from "@platform/runtime/env.js";
 import { DAILY_SUMMARY_PROMPT_LINES } from "@platform/runtime/dailySummaryTemplates.js";
@@ -97,7 +98,7 @@ export async function generateDailySummary(triggeredBy: string = 'cli'): Promise
     await buildSummarySources()
   ) as SummarySources;
   // Use config layer for env access (adapter boundary pattern)
-  const model = getEnv('DAILY_SUMMARY_MODEL') || getDefaultModel();
+  const model = resolveGenerativeModel('final', getEnv('DAILY_SUMMARY_MODEL'));
   const prompt = buildPrompt(model, sources);
 
   let parsed: Record<string, unknown> = {};

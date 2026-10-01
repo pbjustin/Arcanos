@@ -8,7 +8,7 @@ import {
   type OpenAIAdapter
 } from "@core/adapters/openai.adapter.js";
 import { prepareGPT5Request } from './requestTransforms.js';
-import { getDefaultModel, getFallbackModel, getGPT5Model } from './credentialProvider.js';
+import { resolveGenerativeModel, type GenerativeModelRole } from './credentialProvider.js';
 import { RESILIENCE_CONSTANTS } from './resilience.js';
 import {
   executeWithResilience,
@@ -385,6 +385,7 @@ const executeChatCompletionRequest = async (
         ),
       requestSignal
     );
+    ensureModelMatchesExpectation(response, payload.model);
     return convertResponseToLegacyChatCompletion(response, payload.model);
   }
 
@@ -404,6 +405,7 @@ const executeChatCompletionRequest = async (
       requestScope.signal,
     );
 
+    ensureModelMatchesExpectation(response, payload.model);
     return convertResponseToLegacyChatCompletion(response, payload.model);
   } finally {
     requestScope.cleanup();
@@ -488,7 +490,7 @@ async function attemptGPT5Call(
  * Outputs: actual model identifier string.
  * Edge cases: throws when response model is missing or mismatched.
  */
-const ensureModelMatchesExpectation = (response: ChatCompletionResponse, expectedModel: string): string => {
+const ensureModelMatchesExpectation = (response: { model?: unknown }, expectedModel: string): string => {
   const actualModel = typeof response?.model === 'string' ? response.model.trim() : '';
 
   //audit Assumption: response must include model identifier; risk: downstream mismatches; invariant: non-empty model id; handling: throw explicit error.
@@ -499,10 +501,12 @@ const ensureModelMatchesExpectation = (response: ChatCompletionResponse, expecte
   const normalizedActual = normalizeModelId(actualModel);
   const normalizedExpected = normalizeModelId(expectedModel);
 
-  const matchesExpected =
-    normalizedActual === normalizedExpected ||
-    normalizedActual.startsWith(`${normalizedExpected}-`) ||
-    normalizedActual.startsWith(`${normalizedExpected}.`);
+  const matchesExpected = normalizedExpected.startsWith('ft:')
+    ? actualModel === expectedModel.trim()
+    : normalizedActual === normalizedExpected || (
+      normalizedActual.startsWith(`${normalizedExpected}-`) ||
+      normalizedActual.startsWith(`${normalizedExpected}.`)
+    );
 
   //audit Assumption: model should match expected prefix; risk: unexpected model usage; invariant: prefix match or exact match; handling: throw explicit error.
   if (!matchesExpected) {
@@ -556,7 +560,7 @@ const executeModelFallbacks = async <T>(
 };
 
 /**
- * Create a chat completion with multi-stage model fallbacks.
+ * Create a chat completion with bounded recovery attempts on the same role model.
  * Inputs: clientOrAdapter (OpenAI client or adapter), params (chat completion params).
  * Outputs: completion response augmented with fallback metadata.
  * Edge cases: throws when all fallback attempts fail.
@@ -564,10 +568,12 @@ const executeModelFallbacks = async <T>(
 export const createChatCompletionWithFallback = async (
   clientOrAdapter: OpenAI | OpenAIAdapter,
   params: ChatCompletionParams,
+  role: GenerativeModelRole = 'final',
 ): Promise<ChatCompletionWithFallback> => {
-  const primaryModel = params.model ?? getDefaultModel();
-  const gpt5Model = getGPT5Model();
-  const finalFallbackModel = getFallbackModel();
+  const primaryModel = resolveGenerativeModel(role, params.model);
+  //audit Recovery changes attempts, never authority; helper failures never auto-escalate audits.
+  const gpt5Model = primaryModel;
+  const finalFallbackModel = primaryModel;
 
   const attempts = [
     {
@@ -629,8 +635,9 @@ export const createChatCompletionWithFallback = async (
 export const createSingleChatCompletion = async (
   clientOrAdapter: OpenAI | OpenAIAdapter,
   params: ChatCompletionParams,
+  role: GenerativeModelRole = 'final',
 ): Promise<ChatCompletionWithFallback> => {
-  const primaryModel = params.model ?? getDefaultModel();
+  const primaryModel = resolveGenerativeModel(role, params.model);
   const { response, model } = await attemptModelCall(
     clientOrAdapter,
     params,

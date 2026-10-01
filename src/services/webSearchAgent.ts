@@ -4,7 +4,8 @@ import { fetchAndCleanDocument } from '@shared/webFetcher.js';
 import { runTrinityWritingPipeline } from '@core/logic/trinityWritingPipeline.js';
 import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 import { buildClear2Summary } from '@services/clear2.js';
-import { getDefaultModel, hasValidAPIKey } from '@services/openai.js';
+import { hasValidAPIKey } from '@services/openai.js';
+import { resolveGenerativeModel } from '@services/openai/credentialProvider.js';
 import { getOpenAIClientOrAdapter } from '@services/openai/clientBridge.js';
 import { getEnv, getEnvBoolean, getEnvNumber } from '@platform/runtime/env.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
@@ -1196,13 +1197,13 @@ export async function webSearchAgent(query: string, options: WebSearchAgentOptio
     } else if (clear.decision === 'block') {
       notes.push('Synthesis skipped because CLEAR blocked this search plan.');
     } else {
-      const synthesisModel = options.synthesisModel?.trim() || getDefaultModel();
       try {
+        const synthesisModel = resolveGenerativeModel('final', options.synthesisModel);
         answer = await synthesizeSources(query, sources, synthesisModel, client);
-    } catch (error) {
-      //audit Assumption: synthesis is an optional enrichment layer; failure risk: upstream model issues hide otherwise useful grounded packets; expected invariant: raw search packets remain available even when synthesis fails; handling strategy: append a note and return answer as null.
-      notes.push(`Synthesis failed: ${resolveErrorMessage(error)}`);
-    }
+      } catch (error) {
+        //audit Assumption: synthesis is an optional enrichment layer; failure risk: upstream model issues hide otherwise useful grounded packets; expected invariant: raw search packets remain available even when synthesis fails; handling strategy: append a note and return answer as null.
+        notes.push(`Synthesis failed: ${resolveErrorMessage(error)}`);
+      }
     }
   }
 

@@ -1,4 +1,5 @@
 import type OpenAI from 'openai';
+import type { GenerativeModelRole } from './credentialProvider.js';
 
 export type ChatCompletionMessageParam = OpenAI.Chat.Completions.ChatCompletionMessageParam;
 export type ChatCompletionResponseFormat =
@@ -18,6 +19,8 @@ export type ImageSize =
   | 'auto';
 
 export interface CallOpenAIOptions {
+  /** Backend helper role; omitted calls are authoritative final composition. */
+  modelRole?: GenerativeModelRole;
   systemPrompt?: string;
   messages?: ChatCompletionMessageParam[];
   temperature?: number;

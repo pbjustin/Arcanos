@@ -1,4 +1,4 @@
-import { DEFAULT_MODEL } from '../config/openai.js';
+import { resolveGenerativeModel } from '@services/openai/credentialProvider.js';
 import { runTrinityWritingPipeline } from '@core/logic/trinityWritingPipeline.js';
 import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 import { getOpenAIClientOrAdapter } from '@services/openai/clientBridge.js';
@@ -18,15 +18,16 @@ function buildStructuredPrompt(prompt: string): string {
 /**
  * Purpose: execute the legacy fine-tuned Trinity route through the canonical Trinity generation facade.
  * Inputs/Outputs: prompt + compatibility options -> legacy response envelope backed by TrinityResult.
- * Edge cases: `model` and `temperature` are preserved as compatibility metadata; model selection is owned by Trinity.
+ * Edge cases: `model` may confirm the configured authority; conflicting overrides fail before execution. Temperature remains compatibility metadata.
  */
 export async function runTrinity({
   prompt,
-  model = DEFAULT_MODEL,
+  model: requestedModel,
   temperature = 0.7,
   structured = true,
   latencyBudgetMs
 }: TrinityOptions) {
+  const model = resolveGenerativeModel('final', requestedModel);
   const { client } = getOpenAIClientOrAdapter();
   if (!client) {
     throw new Error('OpenAI client unavailable for query-finetune Trinity facade.');

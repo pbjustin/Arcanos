@@ -2,18 +2,21 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, jest } from '@je
 import { promises as fsp } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { getDefaultModel, getFallbackModel, getGPT5Model } from '../src/services/openai/credentialProvider.js';
 
 const callOpenAIMock = jest.fn();
 const runTrinityWritingPipelineMock = jest.fn();
 const validateAIRequestMock = jest.fn();
 const handleAIErrorMock = jest.fn();
 const controlPlaneAccessToken = 'prompt-debug-route-token-1234567890';
+const authority = 'ft:synthetic:prompt-debug-authority';
 const controlPlaneEnvironmentNames = [
   'ARCANOS_CONTROL_PLANE_ACCESS_TOKEN',
   'ARCANOS_CONTROL_PLANE_PRINCIPAL_ID',
   'ARCANOS_CONTROL_PLANE_SCOPES',
   'PROMPT_DEBUG_TRACE_MODE',
   'PROMPT_DEBUG_TRACE_PERSIST',
+  'FINETUNED_MODEL_ID',
 ] as const;
 const originalControlPlaneEnvironment = new Map(
   controlPlaneEnvironmentNames.map(
@@ -23,9 +26,9 @@ const originalControlPlaneEnvironment = new Map(
 
 jest.unstable_mockModule('@services/openai.js', () => ({
   callOpenAI: callOpenAIMock,
-  getDefaultModel: () => 'gpt-5',
-  getFallbackModel: () => 'gpt-4.1-mini',
-  getGPT5Model: () => 'gpt-5',
+  getDefaultModel,
+  getFallbackModel,
+  getGPT5Model,
   getOpenAIServiceHealth: () => ({
     apiKey: { configured: true, status: 'ok' },
     client: { initialized: true, timeout: 30000, baseURL: null },
@@ -94,16 +97,6 @@ jest.unstable_mockModule('@platform/runtime/config.js', () => ({
   },
 }));
 
-jest.unstable_mockModule('@platform/runtime/env.js', () => ({
-  getEnv: (_key?: string, defaultValue?: string) => defaultValue ?? null,
-  getEnvNumber: (_key: string, defaultValue?: number) => defaultValue ?? 0,
-  getEnvBoolean: (_key: string, defaultValue?: boolean) => defaultValue ?? false,
-  getAutomationAuth: () => null,
-  getBackendBaseUrl: () => 'http://localhost:3000',
-  getBackendBaseUrlValue: () => 'http://localhost:3000',
-  readRuntimeEnv: () => null,
-}));
-
 jest.unstable_mockModule('@arcanos/runtime', () => ({
   OpenAIAbortError: class OpenAIAbortError extends Error {},
   createAbortError: jest.fn((message: string) => new Error(message)),
@@ -141,6 +134,7 @@ describe('prompt debug routes', () => {
     process.env.PROMPT_DEBUG_EVENTS_PATH = storagePath;
     process.env.PROMPT_DEBUG_TRACE_MODE = 'full';
     process.env.PROMPT_DEBUG_TRACE_PERSIST = 'false';
+    process.env.FINETUNED_MODEL_ID = authority;
     process.env.ARCANOS_CONTROL_PLANE_ACCESS_TOKEN = controlPlaneAccessToken;
     process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID = 'operator:prompt-debug-test';
     process.env.ARCANOS_CONTROL_PLANE_SCOPES = 'arcanos:read';
@@ -155,7 +149,7 @@ describe('prompt debug routes', () => {
     });
     runTrinityWritingPipelineMock.mockResolvedValue({
       result: 'Observed a response.',
-      activeModel: 'gpt-5',
+      activeModel: authority,
       fallbackFlag: false,
       routingStages: ['TRINITY'],
       auditSafe: { mode: 'true', passed: true, flags: [] },
@@ -212,11 +206,11 @@ describe('prompt debug routes', () => {
       droppedConstraints: [],
       finalExecutorPayload: expect.objectContaining({
         executor: 'runTrinityWritingPipeline',
-        model: 'gpt-5',
+        model: authority,
       }),
       responseReturned: expect.objectContaining({
         result: 'Observed a response.',
-        model: 'gpt-5',
+        model: authority,
       }),
     });
 

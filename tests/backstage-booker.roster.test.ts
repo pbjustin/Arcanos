@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
+const authorityModel = 'ft:gpt-4.1:synthetic:backstage-authority';
 const mockRunTrinityWritingPipeline = jest.fn();
 const mockGetGPT5Model = jest.fn();
 const mockGetOpenAIClientOrAdapter = jest.fn();
@@ -56,7 +57,8 @@ jest.unstable_mockModule('@core/db/index.js', () => ({
 }));
 
 jest.unstable_mockModule('@platform/runtime/env.js', () => ({
-  getEnv: mockGetEnv,
+  getEnv: (key: string, fallback?: string) => key === 'FINETUNED_MODEL_ID'
+    ? authorityModel : mockGetEnv(key, fallback),
   getEnvNumber: mockGetEnvNumber,
   getEnvBoolean: mockGetEnvBoolean
 }));

@@ -9,6 +9,7 @@
 
 import { Request, Response } from 'express';
 import { runTrinityWritingPipeline } from '@core/logic/trinityWritingPipeline.js';
+import { GenerativeModelPolicyError, resolveGenerativeModel } from '@services/openai/credentialProvider.js';
 import {
   getDefaultModel,
   getFallbackModel,
@@ -96,14 +97,28 @@ export async function handlePrompt(
     rawPrompt,
   });
 
+  // Capture the compatibility field before standard DTO normalization strips it.
+  const modelOverride = typeof req.body?.model === 'string' ? req.body.model.trim() : undefined;
   const validation = validateAIRequest(req, res, 'prompt');
   if (!validation) {
     return;
   }
 
   const { client: openai, input: prompt, body } = validation;
-  const modelOverride = typeof req.body.model === 'string' ? req.body.model.trim() : undefined;
-  const model = modelOverride && modelOverride.length > 0 ? modelOverride : getDefaultModel();
+  let model: string;
+  try {
+    model = resolveGenerativeModel('final', modelOverride || undefined);
+  } catch (error) {
+    if (error instanceof GenerativeModelPolicyError) {
+      res.status(error.code === 'MODEL_OVERRIDE_CONFLICT' ? 400 : 503).json({
+        error: error.code,
+        details: [error.message]
+      });
+      return;
+    }
+    handleAIError(error, prompt, 'prompt', res);
+    return;
+  }
   const promptRouteMitigation = getPromptRouteMitigationState();
   const promptRoutePolicy = getPromptRouteExecutionPolicy(PROMPT_MAX_TOKENS);
   recordPromptDebugTrace(requestId, 'routing', {

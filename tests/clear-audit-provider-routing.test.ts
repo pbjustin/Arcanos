@@ -102,28 +102,42 @@ describe('CLEAR lane routing through the actual Responses conversion and validat
     expectSingleBoundedRequest(model);
   });
 
-  it('keeps an actual incomplete Gaming provider response unavailable without another call or escalation', async () => {
-    responsesCreate.mockResolvedValue({ ...response(routineModel, { dimensions, findings: [] }),
+  it.each(lanes)('keeps an actual incomplete Gaming %s audit unavailable without another call', async (lane, model) => {
+    responsesCreate.mockResolvedValue({ ...response(model, { dimensions, findings: [] }),
       status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' } });
-    const result = await runGamingClearAnswerAudit(client, input, createRuntimeBudgetWithLimit(10_000, 0));
+    const result = await runGamingClearAnswerAudit(client, input, createRuntimeBudgetWithLimit(10_000, 0), lane);
     expect(result.assessment).toMatchObject({ assessmentStatus: 'unavailable', decision: 'unavailable', overall: null });
     expect(result.assessment.findings.map(finding => finding.code)).toContain('AUDIT_PROVIDER_INCOMPLETE');
-    expectSingleBoundedRequest(routineModel, true);
+    expectSingleBoundedRequest(model, true);
   });
 
-  it('keeps legacy rollback model reasoning parameters omitted for both audit paths', async () => {
+  it('ignores legacy module-local audit selectors for both production audit paths', async () => {
     process.env.CLEAR_AUDIT_MODEL = 'gpt-5.1';
+    process.env.CLEAR_AUDIT_ESCALATION_MODEL = 'gpt-4.1';
     try {
-      responsesCreate.mockResolvedValue(response('gpt-5.1', scores));
+      responsesCreate.mockResolvedValue(response(routineModel, scores));
       expect(await runClearAudit(client, ledger)).toEqual(scores);
-      expect(responsesCreate.mock.calls[0][0]).toMatchObject({ model: 'gpt-5.1', max_output_tokens: 1_024 });
-      expect((responsesCreate.mock.calls[0][0] as Record<string, unknown>).reasoning).toBeUndefined();
-      responsesCreate.mockReset().mockResolvedValue(response('gpt-5.1', { dimensions, findings: [] }));
+      expectSingleBoundedRequest(routineModel);
+      responsesCreate.mockReset().mockResolvedValue(response(routineModel, { dimensions, findings: [] }));
       expect((await runGamingClearAnswerAudit(client, input, createRuntimeBudgetWithLimit(10_000, 0))).assessment.decision).toBe('accept');
-      expect(responsesCreate).toHaveBeenCalledTimes(1);
-      expect((responsesCreate.mock.calls[0][0] as Record<string, unknown>).reasoning).toBeUndefined();
+      expectSingleBoundedRequest(routineModel, true);
+      responsesCreate.mockReset().mockResolvedValue(response(escalationModel, { dimensions, findings: [] }));
+      expect((await runGamingClearAnswerAudit(client, input, createRuntimeBudgetWithLimit(10_000, 0), 'escalation')).assessment.decision).toBe('accept');
+      expectSingleBoundedRequest(escalationModel, true);
     } finally {
       process.env.CLEAR_AUDIT_MODEL = routineModel;
+      process.env.CLEAR_AUDIT_ESCALATION_MODEL = escalationModel;
     }
+  });
+
+  it.each(lanes)('keeps %s provider failures bounded without automatic audit escalation', async (lane, model) => {
+    responsesCreate.mockRejectedValue(new Error('Synthetic provider unavailable'));
+    expect(await runClearAudit(client, ledger, createRuntimeBudgetWithLimit(10_000, 0), undefined, lane))
+      .toEqual({ clarity: 0, leverage: 0, efficiency: 0, alignment: 0, resilience: 0, overall: 0 });
+    expectSingleBoundedRequest(model);
+    responsesCreate.mockReset().mockRejectedValue(new Error('Synthetic provider unavailable'));
+    expect((await runGamingClearAnswerAudit(client, input, createRuntimeBudgetWithLimit(10_000, 0), lane)).assessment)
+      .toMatchObject({ assessmentStatus: 'unavailable', decision: 'unavailable', overall: null });
+    expectSingleBoundedRequest(model, true);
   });
 });

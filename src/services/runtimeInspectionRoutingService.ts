@@ -105,7 +105,7 @@ function buildWorkersStatusSnapshot() {
       runtime: runtimeStatus,
     },
     system: {
-      model: getConfig().defaultModel || 'gpt-4o',
+      model: getConfig().defaultModel || null,
       environment: getConfig().nodeEnv,
     },
   };

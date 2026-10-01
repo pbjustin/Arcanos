@@ -1,6 +1,7 @@
 import type OpenAI from 'openai';
 import { z } from 'zod';
 import { getDefaultModel } from "@services/openai.js";
+import { ensureModelMatchesExpectation } from '@services/openai/chatFallbacks.js';
 import { buildFunctionToolSet, type FunctionToolDefinition } from '@services/openai/functionTools.js';
 import { getTokenParameter } from "@shared/tokenParameterHelper.js";
 import { shouldStoreOpenAIResponses } from "@config/openaiStore.js";
@@ -142,6 +143,7 @@ async function tryDispatchDaemonToolsWithChatCompletions(
     tool_choice: 'auto',
     ...tokenParams
   });
+  ensureModelMatchesExpectation(response, model);
 
   const toolCalls: ChatCompletionToolCall[] = response?.choices?.[0]?.message?.tool_calls ?? [];
   if (!toolCalls.length) {
@@ -301,6 +303,7 @@ export async function tryDispatchDaemonTools(
     tool_choice: 'auto',
     max_output_tokens: maxOutputTokens
   });
+  ensureModelMatchesExpectation(response, model);
 
   let lastText = extractResponseOutputText(response, '');
 
@@ -478,6 +481,7 @@ export async function tryDispatchDaemonTools(
     });
     toolLoopTranscript = continuationRequest.nextTranscript;
     response = await responsesApi.create(continuationRequest.request);
+    ensureModelMatchesExpectation(response, model);
 
     lastText = extractResponseOutputText(response, lastText);
   }

@@ -29,7 +29,7 @@ import {
   type AuditLogEntry
 } from "@services/auditSafe.js";
 import { getMemoryContext, storePattern } from "@services/memoryAware.js";
-import { getTrinityIntakeModel, getTrinityFinalModel, getTrinityFinalEscalationModel, getTrinityReasoningModel } from "@services/openai/credentialProvider.js";
+import { getTrinityIntakeModel, getTrinityFinalModel, getTrinityFinalEscalationModel, getTrinityReasoningModel, resolveGenerativeModel } from "@services/openai/credentialProvider.js";
 import { logger } from "@platform/logging/structuredLogging.js";
 import { getAiExecutionContext } from '@services/openai/aiExecutionContext.js';
 import type {
@@ -930,6 +930,9 @@ export async function runThroughBrain(
     });
     return shortcutResult;
   }
+
+  // Validate final authority before helper work, while deterministic shortcuts stay provider-free.
+  resolveGenerativeModel('final', options.directAnswerModelOverride);
 
   // --- Concurrency governor + watchdog ---
   let releaseTierSlot: (() => void) | undefined;
@@ -1893,6 +1896,41 @@ export async function runThroughBrain(
     let finalRecoveryAction: TrinitySelfHealingAction | null = selfHealingMitigation.bypassFinalStage
       ? selfHealingMitigation.activeAction
       : null;
+    const recoverFinalWithAuthority = async (): Promise<Awaited<ReturnType<typeof runFinalStage>>> => {
+      const recoveredOutput = await runLoggedStage({
+        requestId,
+        stage: 'final-authority-recovery',
+        runtimeBudget,
+        sourceEndpoint: options.sourceEndpoint,
+        preserveAggregateAbortContext: options.preserveAggregateAbortContext,
+        redactErrorDetails: options.redactAuditContent,
+        timeoutMs: resolveAuxiliaryStageTimeoutMs(
+          'TRINITY_DIRECT_ANSWER_RECOVERY_TIMEOUT_MS',
+          DEFAULT_TRINITY_DIRECT_ANSWER_RECOVERY_TIMEOUT_MS,
+          runtimeBudget
+        ),
+        operation: () => runDirectAnswerStage(
+          client,
+          memoryContext.contextSummary,
+          auditSafePrompt,
+          cognitiveDomain,
+          runtimeBudget,
+          requestId,
+          options.directAnswerModelOverride ?? getTrinityFinalEscalationModel(),
+          options.directAnswerTokenLimitOverride,
+          stageTimeoutOverrideMs,
+          options.preserveAggregateAbortContext,
+          options.directAnswerTokenCapOverride,
+          options.redactAuditContent,
+          trustedPolicyPrompt,
+          options.directAnswerSystemPolicyPrompt,
+          options.directAnswerUntrustedContextPrompt,
+          options.cooperativeModelStageTimeout
+        )
+      });
+      // Recovery remains fallback output and cannot admit a completed Gaming answer.
+      return { ...recoveredOutput, fallbackUsed: true };
+    };
     let finalOutput: Awaited<ReturnType<typeof runFinalStage>>;
     if (selfHealingMitigation.bypassFinalStage) {
       auditFlags.push('SELF_HEAL_V2_FINAL_BYPASS');
@@ -1903,17 +1941,7 @@ export async function runThroughBrain(
         tier,
         action: selfHealingMitigation.activeAction
       });
-      finalOutput = {
-        output:
-          outputControls.answerMode === 'direct'
-            ? applyTrinityDirectAnswerOutputContract(gpt5Output, trustedPolicyPrompt)
-            : gpt5Output,
-        activeModel: gpt5ModelUsed,
-        fallbackUsed: true,
-        usage: undefined,
-        responseId: undefined,
-        created: undefined
-      };
+      finalOutput = await recoverFinalWithAuthority();
     } else {
       try {
         finalOutput = await runLoggedStage({
@@ -1955,17 +1983,7 @@ export async function runThroughBrain(
             tier,
             action: finalRecoveryAction
           });
-          finalOutput = {
-            output:
-              outputControls.answerMode === 'direct'
-                ? applyTrinityDirectAnswerOutputContract(gpt5Output, trustedPolicyPrompt)
-                : gpt5Output,
-            activeModel: gpt5ModelUsed,
-            fallbackUsed: true,
-            usage: undefined,
-            responseId: undefined,
-            created: undefined
-          };
+          finalOutput = await recoverFinalWithAuthority();
         } else {
           throw error;
         }

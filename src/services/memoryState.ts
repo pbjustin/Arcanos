@@ -4,7 +4,7 @@
  */
 
 import { query } from "@core/db/index.js";
-import { getDefaultModel } from './openai.js';
+import { getClearAuditModel } from './openai/credentialProvider.js';
 import { getOpenAIClientOrAdapter } from './openai/clientBridge.js';
 import { buildMemoryValidationMessages } from "@shared/memoryValidationMessages.js";
 import { extractResponseOutputText } from '@arcanos/openai/responseParsing';
@@ -86,7 +86,8 @@ export async function validateMemory(
     }));
 
   const response = await adapter.responses.create({
-    model: getDefaultModel(),
+    model: getClearAuditModel(),
+    reasoning: { effort: 'none' },
     ...(instructions ? { instructions } : {}),
     input: input.length > 0
       ? input

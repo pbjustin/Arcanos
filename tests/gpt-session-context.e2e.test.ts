@@ -31,6 +31,7 @@ const environmentKeys = [
   'PRIORITY_QUEUE_ENABLED', 'GPT_MODULE_MAP', 'GPTID_CORE', 'GPT_FAST_PATH_ENABLED',
   'SAFETY_EXPECTED_HASH_GPT_ROUTER_CONFIG', 'PUBLIC_PROVIDER_RATE_LIMIT_MAX',
   'PUBLIC_PROVIDER_CLIENT_RATE_LIMIT_MAX', 'OPENAI_STORE',
+  'FINETUNED_MODEL_ID',
 ] as const;
 const originalEnvironment = new Map(environmentKeys.map(key => [key, process.env[key]]));
 const accessToken = `synthetic-memory-${'q'.repeat(48)}`;
@@ -41,6 +42,7 @@ process.env.GPT_FAST_PATH_ENABLED = 'false';
 process.env.PUBLIC_PROVIDER_RATE_LIMIT_MAX = '1000';
 process.env.PUBLIC_PROVIDER_CLIENT_RATE_LIMIT_MAX = '999';
 process.env.OPENAI_STORE = 'false';
+process.env.FINETUNED_MODEL_ID = 'ft:synthetic:session-context-authority';
 delete process.env.GPT_MODULE_MAP;
 delete process.env.GPTID_CORE;
 delete process.env.SAFETY_EXPECTED_HASH_GPT_ROUTER_CONFIG;
@@ -64,23 +66,14 @@ jest.unstable_mockModule('@core/db/index.js', () => ({
   loadAllRagDocs: async () => [],
   loadRagDocsByIds: async () => [],
 }));
+const actualCredentialProvider = await import('../src/services/openai/credentialProvider.js');
 jest.unstable_mockModule('@services/openai/credentialProvider.js', () => ({
-  getTrinityIntakeModel: () => 'gpt-5.1',
-  getTrinityFinalModel: () => 'gpt-5.1',
-  getTrinityFinalEscalationModel: () => 'gpt-5.1',
-  getClearAuditModel: () => 'gpt-5.1',
-  getClearAuditEscalationModel: () => 'gpt-5.1',
+  ...actualCredentialProvider,
   resolveOpenAIBaseURL: () => undefined,
   resolveOpenAIKey: () => null,
   getOpenAIKeySource: () => 'synthetic',
   resetCredentialCache: jest.fn(),
   hasValidAPIKey: () => true,
-  setDefaultModel: jest.fn(),
-  getDefaultModel: () => 'gpt-5.1',
-  getComplexModel: () => 'gpt-5.1',
-  getFallbackModel: () => 'gpt-4.1',
-  getGPT5Model: () => 'gpt-5.1',
-  getTrinityReasoningModel: () => 'gpt-5.6-terra',
 }));
 jest.unstable_mockModule('@services/openai/clientBridge.js', () => ({
   getOpenAIClientOrAdapter: () => ({ client: modelClient }),

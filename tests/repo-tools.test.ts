@@ -26,8 +26,9 @@ describe('repo tool ask mode', () => {
     });
 
     const responsesCreate = jest
-      .fn()
-      .mockResolvedValueOnce({
+      .fn<(payload: { model: string }) => Promise<Record<string, unknown>>>()
+      .mockImplementationOnce(async ({ model }) => ({
+        model,
         id: 'resp-1',
         output: [
           {
@@ -37,8 +38,9 @@ describe('repo tool ask mode', () => {
             arguments: '{}'
           }
         ]
-      })
-      .mockResolvedValueOnce({
+      }))
+      .mockImplementationOnce(async ({ model }) => ({
+        model,
         id: 'resp-2',
         output: [
           {
@@ -47,7 +49,7 @@ describe('repo tool ask mode', () => {
             content: [{ type: 'output_text', text: 'The CLI is implemented based on repo inspection.' }]
           }
         ]
-      });
+      }));
 
     const response = await tryDispatchRepoTools(
       { responses: { create: responsesCreate } } as any,

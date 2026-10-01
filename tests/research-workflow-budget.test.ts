@@ -35,27 +35,12 @@ jest.unstable_mockModule('@platform/resilience/runtimeBudget.js', () => ({
   getRemainingMs: (budget: { hardDeadline: number }) => budget.hardDeadline - Date.now()
 }));
 
-jest.unstable_mockModule('../src/services/openai.js', () => ({
-  getDefaultModel: jest.fn(() => 'research-test-model')
-}));
-
 jest.unstable_mockModule('../src/services/openai/clientBridge.js', () => ({
   getOpenAIClientOrAdapter: jest.fn(() => ({ client: { testClient: true } }))
 }));
 
 jest.unstable_mockModule('../src/services/memory.js', () => ({
   setMemory: mockSetMemory
-}));
-
-jest.unstable_mockModule('@platform/runtime/env.js', () => ({
-  getEnvNumber: jest.fn((_name: string, fallback: number) => fallback),
-  getEnvIntegerAtLeast: jest.fn((name: string, fallback: number) => {
-    const parsed = Number.parseInt(process.env[name] ?? '', 10);
-    return Number.isFinite(parsed) && parsed >= 1 ? parsed : fallback;
-  }),
-  getEnv: jest.fn((name: string) => (
-    name === 'OPENAI_API_KEY' ? 'research-test-key' : undefined
-  ))
 }));
 
 const {

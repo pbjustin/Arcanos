@@ -11,13 +11,7 @@ jest.unstable_mockModule('@arcanos/openai/unifiedClient', () => ({
   getOrCreateClient: jest.fn(() => fakeOpenAIClient)
 }));
 
-jest.unstable_mockModule('@services/openai/credentialProvider.js', () => ({
-  hasValidAPIKey: jest.fn(() => {
-    const key = process.env.OPENAI_API_KEY?.trim() ?? '';
-    return key.length > 0 && !key.startsWith('sk-mock-') && key !== 'sk-mock-for-ci-testing';
-  })
-}));
-
+const { resetCredentialCache } = await import('../src/services/openai/credentialProvider.js');
 const {
   INTENT_CLARIFICATION_REQUIRED,
   createCapabilityRegistry,
@@ -83,6 +77,7 @@ function buildLlmPlanResponse(overrides: Partial<{
 describe('LLM natural-language dispatch resolver', () => {
   beforeEach(() => {
     responsesCreateMock.mockReset();
+    resetCredentialCache();
     process.env.GPT_ACCESS_NL_DISPATCH_MODE = 'hybrid';
     process.env.OPENAI_API_KEY = 'test-openai-key';
     delete process.env.GPT_ACCESS_DISPATCH_MODEL;
@@ -94,6 +89,7 @@ describe('LLM natural-language dispatch resolver', () => {
     restoreEnvValue('GPT_ACCESS_DISPATCH_MODEL');
     restoreEnvValue('GPT_ACCESS_DISPATCH_LLM_TIMEOUT_MS');
     restoreEnvValue('OPENAI_API_KEY');
+    resetCredentialCache();
   });
 
   it('keeps rule matches ahead of LLM calls in hybrid mode', async () => {

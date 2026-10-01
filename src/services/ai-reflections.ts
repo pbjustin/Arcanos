@@ -5,7 +5,7 @@
 
 import { callOpenAI } from './openai/chatFlow/index.js';
 import { rethrowWorkerAiBudgetError } from '@core/adapters/openai.adapter.js';
-import { getDefaultModel } from './openai/credentialProvider.js';
+import { resolveGenerativeModel } from './openai/credentialProvider.js';
 import { saveSelfReflection } from "@core/db/repositories/selfReflectionRepository.js";
 import {
   AI_REFLECTION_DEFAULT_SYSTEM_PROMPT,
@@ -93,7 +93,7 @@ export async function buildPatchSet(options: PatchSetOptions = {}): Promise<Patc
   const shouldPersistReflection = useMemory;
 
   // Use config layer for env access (adapter boundary pattern)
-  const reflectionModel = options.model || getEnv('AI_REFLECTION_MODEL') || getDefaultModel();
+  const reflectionModel = resolveGenerativeModel('reasoning', options.model || getEnv('AI_REFLECTION_MODEL'));
   const tokenLimit = options.tokenLimit ?? getEnvNumber('AI_REFLECTION_TOKEN_LIMIT', 200);
   const temperature = options.temperature ?? parseFloat(getEnv('AI_REFLECTION_TEMPERATURE') || '0.2');
   const topP = options.topP ?? parseFloat(getEnv('AI_REFLECTION_TOP_P') || '1');
@@ -124,6 +124,7 @@ export async function buildPatchSet(options: PatchSetOptions = {}): Promise<Patc
     });
 
     const aiResponse = await callOpenAI(reflectionModel, reflectionPrompt, tokenLimit, useCache, {
+      modelRole: 'reasoning',
       systemPrompt,
       temperature,
       top_p: topP,

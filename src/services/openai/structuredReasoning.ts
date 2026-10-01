@@ -1,4 +1,5 @@
 import type OpenAI from 'openai';
+import { resolveGenerativeModel } from '@services/openai/credentialProvider.js';
 import type { RuntimeBudget } from '@arcanos/runtime/runtimeBudget';
 import type {
   TrinityCompactStructuredReasoning,
@@ -143,6 +144,7 @@ export async function runStructuredReasoning(
   timeoutMs?: number,
   options: StructuredReasoningSchemaOptions = {}
 ): Promise<TrinityResolvedStructuredReasoning> {
+  model = resolveGenerativeModel('reasoning', model);
   const schemaVariant = options.schemaVariant ?? 'full';
   const activePreviewChaosHook = activatePreviewChaosHook(options.previewChaosHook);
   const reasoningEffort = options.reasoningEffort

@@ -16,6 +16,7 @@ const mockSaveMemory = jest.fn();
 const mockSaveWithAuditCheck = jest.fn();
 const mockEvaluateWithHRC = jest.fn();
 const mockCreateBackstageBookerRepository = jest.fn();
+const authorityModel = 'ft:gpt-4.1:synthetic:backstage-authority';
 const mockRunTrinityWritingPipeline = jest.fn();
 const mockGetGPT5Model = jest.fn();
 const mockGetOpenAIClientOrAdapter = jest.fn();
@@ -215,7 +216,7 @@ jest.unstable_mockModule('@services/backstageNotionPartitionCutover.js', () => (
 }));
 
 jest.unstable_mockModule('@platform/runtime/env.js', () => ({
-  getEnv: jest.fn(() => undefined),
+  getEnv: (key: string) => key === 'FINETUNED_MODEL_ID' ? authorityModel : undefined,
   getEnvBoolean: jest.fn((_key: string, fallback: boolean) => fallback),
   getEnvNumber: jest.fn((_key: string, fallback: number) => fallback)
 }));

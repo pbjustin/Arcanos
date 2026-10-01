@@ -7,6 +7,7 @@ import { getTokenParameter } from "@shared/tokenParameterHelper.js";
 import type { OpenAIAdapter } from "@core/adapters/openai.adapter.js";
 import { extractResponseOutputText } from '@arcanos/openai/responseParsing';
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
+import { getClearAuditModel } from './openai/credentialProvider.js';
 
 export type ShadowTag = 'content_generation' | 'agent_role_check';
 
@@ -16,7 +17,7 @@ async function routeToModule(clientOrAdapter: OpenAI | OpenAIAdapter, tag: Shado
       ? 'You are creative_architect, an advanced AI module for synthesizing content. Mirror the described ARCANOS event and respond.'
       : 'You are role_alignment_tracker, an advanced AI module monitoring role adherence and drift. Mirror the described ARCANOS event and respond.';
 
-  const model = 'gpt-4o';
+  const model = getClearAuditModel();
   const tokenParams = getTokenParameter(model, 500);
   const maxOutputTokens =
     typeof tokenParams.max_tokens === 'number'
@@ -27,6 +28,7 @@ async function routeToModule(clientOrAdapter: OpenAI | OpenAIAdapter, tag: Shado
 
   const response = await (clientOrAdapter.responses as any).create({
     model,
+    reasoning: { effort: 'none' },
     instructions: systemPrompt,
     input: [{ role: 'user', content: [{ type: 'input_text', text: content }] }],
     temperature: 0.2,

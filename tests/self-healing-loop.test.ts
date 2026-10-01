@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import type { PredictiveHealingDecisionResult } from '../src/services/selfImprove/predictiveHealingService.js';
 
-const getConfigMock = jest.fn();
+const actualUnifiedConfig = await import('../src/platform/runtime/unifiedConfig.js');
+const getConfigMock = jest.fn(() => createConfig());
 const runSelfImproveCycleMock = jest.fn();
 const getTrinitySelfHealingStatusMock = jest.fn();
 const activateTrinitySelfHealingMitigationMock = jest.fn();
@@ -124,6 +125,7 @@ const {
 
 function createConfig(overrides: Record<string, unknown> = {}) {
   return {
+    ...actualUnifiedConfig.getConfig(),
     selfImproveEnabled: false,
     selfImproveActuatorMode: 'pr_bot',
     selfImproveFrozen: false,
@@ -135,7 +137,7 @@ function createConfig(overrides: Record<string, unknown> = {}) {
 function createWorkerRuntime(overrides: Record<string, unknown> = {}) {
   return {
     enabled: true,
-    model: 'gpt-4o',
+    model: actualUnifiedConfig.getConfig().trinityFinalModel,
     configuredCount: 4,
     started: true,
     activeListeners: 1,

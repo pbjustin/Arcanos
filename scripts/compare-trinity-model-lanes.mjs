@@ -47,11 +47,14 @@ function summarize(results) {
 /** Default is an offline plan. The injected runtime exists for synthetic adapter tests only. */
 export async function runModelLaneComparison({ execute = false, confirmNonProduction = false,
   evaluationTarget, runtime } = {}) {
+  // Historical baselines include retired helper/final models. They are retained
+  // only as an offline plan; execution must not partly dispatch before policy rejects them.
+  if (execute) throw new Error('HISTORICAL_MODEL_COMPARISON_DISABLED');
   const results = cases.flatMap(fixture => fixture.models.map(model => ({ lane: fixture.lane, model,
     fixtureHash: hash(fixture.prompt), promptChars: fixture.prompt.length, maxOutputTokens: fixture.maxOutputTokens,
     attempted: false, status: 'not_run', ...emptyMetrics() })));
   const report = { schemaVersion: 'trinity-model-lane-comparison/v1', syntheticOnly: true,
-    execution: execute ? 'provider_evaluation' : 'dry_run', limits: COMPARISON_LIMITS, aggregateBudgetExhausted: false,
+    execution: 'dry_run', historicalOnly: true, limits: COMPARISON_LIMITS, aggregateBudgetExhausted: false,
     measurementScope: 'Single bounded lane requests; full-pipeline fallback and CLEAR judgment are not assessed.',
     results, summary: summarize(results) };
   if (!execute) return report;

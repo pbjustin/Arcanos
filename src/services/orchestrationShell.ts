@@ -4,7 +4,8 @@
  * Integrates with existing ARCANOS infrastructure
  */
 
-import { getGPT5Model, call_gpt5_strict } from './openai.js';
+import { call_gpt5_strict } from './openai.js';
+import { getTrinityFinalModel } from './openai/credentialProvider.js';
 import { getOpenAIClientOrAdapter } from './openai/clientBridge.js';
 import { generateRequestId } from "@shared/idGenerator.js";
 import { getEnv } from "@platform/runtime/env.js";
@@ -55,7 +56,7 @@ export async function resetOrchestrationShell(initConfig: GPT5OrchestrationConfi
       meta: {
         timestamp: new Date().toISOString(),
         stages: ["FAILED_INITIALIZATION"],
-        gpt5Model: getGPT5Model(),
+        gpt5Model: getTrinityFinalModel(),
         safeguardsApplied: false
       },
       logs: ["❌ OpenAI adapter initialization failed"]
@@ -72,7 +73,7 @@ export async function resetOrchestrationShell(initConfig: GPT5OrchestrationConfi
     overrideUsed: false,
     inputSummary: 'GPT-5.1 Orchestration Shell purge and redeploy',
     outputSummary: 'Processing...',
-    modelUsed: getGPT5Model(),
+    modelUsed: getTrinityFinalModel(),
     memoryAccessed: [],
     processedSafely: true,
     auditFlags: ['ORCHESTRATION', 'SYSTEM_RESET']
@@ -127,7 +128,7 @@ export async function resetOrchestrationShell(initConfig: GPT5OrchestrationConfi
     });
 
     // Log successful completion
-    logArcanosRouting('ORCHESTRATION_RESET_COMPLETE', getGPT5Model(), `Stages: ${stages.join(' -> ')}`);
+    logArcanosRouting('ORCHESTRATION_RESET_COMPLETE', getTrinityFinalModel(), `Stages: ${stages.join(' -> ')}`);
     
     const finalMessage = "✅ GPT-5.1 orchestration shell has been purged and redeployed with ARCANOS integration.";
     logs.push(finalMessage);
@@ -144,7 +145,7 @@ export async function resetOrchestrationShell(initConfig: GPT5OrchestrationConfi
       meta: {
         timestamp: new Date().toISOString(),
         stages,
-        gpt5Model: getGPT5Model(),
+        gpt5Model: getTrinityFinalModel(),
         safeguardsApplied: true
       },
       logs
@@ -167,7 +168,7 @@ export async function resetOrchestrationShell(initConfig: GPT5OrchestrationConfi
       meta: {
         timestamp: new Date().toISOString(),
         stages,
-        gpt5Model: getGPT5Model(),
+        gpt5Model: getTrinityFinalModel(),
         safeguardsApplied: false
       },
       logs
@@ -189,7 +190,7 @@ export async function getOrchestrationShellStatus(): Promise<{
   
   return {
     active: !!client,
-    model: getGPT5Model(),
+    model: getTrinityFinalModel(),
     // Use config layer for env access (adapter boundary pattern)
     lastReset: getEnv('ORCHESTRATION_LAST_RESET'),
     memoryEntries: memoryContext.relevantEntries.length

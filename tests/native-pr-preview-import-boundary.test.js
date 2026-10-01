@@ -1460,6 +1460,18 @@ describe('native PR preview import boundary', () => {
         expect.stringContaining('critical entry file semantic digest'),
       ]));
     }
+
+    for (const weakenedAuthorityCheck of [
+      'model.trim().toLowerCase() === authority.toLowerCase()',
+      'model.trim().startsWith(authority)',
+    ]) {
+      expect(findUnsafeRuntimeSyntax(
+        reviewedFiles[0],
+        replaceRequired(sources[0], 'model.trim() === authority', weakenedAuthorityCheck)
+      )).toEqual(expect.arrayContaining([
+        expect.stringContaining('critical entry file semantic digest'),
+      ]));
+    }
   });
 
   it('pins the central Research helper and its one reviewed Reflect read', async () => {

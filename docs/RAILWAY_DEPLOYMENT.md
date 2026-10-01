@@ -729,7 +729,7 @@ Environment variables:
 | `ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY` | Required on both web and worker for any job-backed Booker generation | Canonical base64 for exactly 32 random bytes, distinct from all other credentials. It seals private queue input and output; never put it in Builder, requests, logs, or source. Rotate in worker-first deployment order: both roles K1 current/K2 previous, then worker K2 current/K1 previous, then web K2 current/K1 previous. |
 | `ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_PREVIOUS_KEY` | Optional on web and worker during key rotation | Decryption-only previous 32-byte base64 key. Retain through the maximum protected-job retention window, then remove. |
 | `BOOKER_CONTINUITY_STAGE_TIMEOUT_MS` | Optional; defaults 20000 | Lightweight synchronous continuity provider stage, clamped to 1000-25000 ms. |
-| `BOOKER_WORKER_TOKEN_LIMIT` | Optional on worker; defaults 6000 | Protected queued production-generation output budget, clamped to 4000-8000 and further constrained by the compatible GPT-5.1/GPT-5.6 request contract and remaining finite primary-stage tier. Review, continuity, unsupported-model, synchronous rollback, and genuinely small compact calls retain smaller caps. Explicit compact presentation remains enforced when other workload signals require production capacity. |
+| `BOOKER_WORKER_TOKEN_LIMIT` | Optional on worker; defaults 6000 | Protected queued production-generation output budget, clamped to 4000-8000 and further constrained by exact server-configured fine-tune authority eligibility and the remaining finite primary-stage tier. Other fine-tunes, Sol, or invalid authority retain baseline eligibility. Review, continuity, unsupported-model, synchronous rollback, and genuinely small compact calls retain smaller caps. Explicit compact presentation remains enforced when other workload signals require production capacity. |
 | `BOOKER_WORKER_JOB_TIMEOUT_MS` | Optional on worker; defaults 180000 | Finite protected-generation deadline anchored to durable first execution start, clamped to 120000-180000 ms, with 30000 ms orchestration headroom and 10000 ms reserved for terminal result persistence, including a finite 2000 ms cooperative abort drain. |
 | `BOOKER_WORKER_GENERATION_STAGE_TIMEOUT_MS` | Optional on worker; defaults 80000 | Protected-generation primary provider stage, clamped to 45000-90000 ms and shortened to fit the job plan. |
 | `BOOKER_REPAIR_STAGE_TIMEOUT_MS` | Optional on worker; defaults 45000 | One bounded protected-generation recovery stage, clamped to 10000-45000 ms and skipped when time or output budget is insufficient. |
@@ -1136,7 +1136,12 @@ grandfathered rows even after Phase B removes new legacy admission.
 
 Queued production generation selects a finite workload-aware output allowance
 from `BOOKER_WORKER_TOKEN_LIMIT` (default `6000`, clamped to `4000`-`8000`),
-then reduces it when the compatible provider-stage budget is shorter. Review,
+then reduces it when the compatible provider-stage budget is shorter. The
+server-owned `finalAuthorityModel` must be a valid `ft:` identity and match the
+selected model exactly, including case, for `configured_authority` eligibility.
+An unrelated service fine-tune, Sol or invalid authority retains baseline
+eligibility. This preserves existing workload/profile, stage and global caps;
+request data cannot nominate the authority. Review,
 continuity, unsupported-model, synchronous rollback, and genuinely small compact
 paths do not receive the extended cap. Capacity selection does not replace an
 explicit exact or maximum compact-list presentation contract. Provider `incomplete` or `max_output_tokens` output
