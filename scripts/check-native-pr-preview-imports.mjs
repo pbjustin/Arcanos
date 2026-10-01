@@ -15,7 +15,7 @@ const PREVIEW_IMPORT_TSCONFIG_FILE =
 const PREVIEW_DIST_IMPORT_CHECKER_FILE =
   'scripts/check-native-pr-preview-dist-imports.mjs';
 const PREVIEW_DIST_IMPORT_CHECKER_DIGEST =
-  'dd0393303dd7333a6ba5a2f154ab40618277c114198bbba277e5a703feb37e33';
+  'c60aba007150084cc18ef8bd92d588bb13e7bd6c28f70c917cd3414a9c7b8819';
 const ROOT_PACKAGE_MANIFEST_FILE = 'package.json';
 const ROOT_TSCONFIG_FILE = 'tsconfig.json';
 const RUNTIME_PACKAGE_MANIFEST_FILE =
@@ -117,6 +117,8 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/shared/gpt/gptJobLifecycle.ts',
   'src/shared/gpt/gptJobResult.ts',
   'src/shared/gpt/trinityReasoningPolicy.ts',
+  'src/shared/gpt/generativeModelPolicyCore.ts',
+  'src/shared/gpt/generativeModelPolicyPreviewFixture.ts',
   'src/shared/ios/iosGatewayPreviewFixture.ts',
   'src/shared/ios/iosDevicePreviewFixture.ts',
   'src/shared/gaming/gamingArchiveResourceCore.ts',
@@ -786,6 +788,8 @@ const CRITICAL_RUNTIME_FUNCTION_DIGESTS = new Map([
   ],
 ]);
 const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
+  ['src/shared/gpt/generativeModelPolicyCore.ts', 'c1e29caf983333a351e66e6141ef59758ee45a4a158bb28c6290d9d9887ba1d3'], // gitleaks:allow -- public source semantic SHA-256
+  ['src/shared/gpt/generativeModelPolicyPreviewFixture.ts', '82268c7fd04fb2b6a236f6bac72ccb5d08ed666cf497541634d96cc73f5c0d2c'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/chatgpt/gamingMcpPreviewFixture.ts', '9f84672e926862180864f7c46338eab0eb0b134e3a26a1a2e1e429df04e368a4'],
   ['src/shared/chatgpt/gamingMcpContract.ts', 'be13dbb5b25a764ac4f3df0d5a990affff89a1f49b5c5732b8f9f0c9a430fd70'],
   ['packages/protocol/src/chatgptGaming.ts', '41ded1c72533e9dd50b26b03e46b2fa4a8e6cc8cf6bfd93d81e3739ccd7c6e46'],

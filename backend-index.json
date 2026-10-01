@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-01T20:30:38.002Z",
+  "generatedAt": "2026-10-01T22:10:31.884Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -2828,6 +2828,12 @@
           "relativePath": "src/shared/gpt/bridgeSmoke.ts"
         },
         {
+          "relativePath": "src/shared/gpt/generativeModelPolicyCore.ts"
+        },
+        {
+          "relativePath": "src/shared/gpt/generativeModelPolicyPreviewFixture.ts"
+        },
+        {
           "relativePath": "src/shared/gpt/gptAsyncWaitPolicy.ts"
         },
         {
@@ -4439,6 +4445,12 @@
         },
         {
           "relativePath": "tests/generation-authority-diagnostics.test.ts"
+        },
+        {
+          "relativePath": "tests/generative-model-policy-preview-application.test.ts"
+        },
+        {
+          "relativePath": "tests/generative-model-policy-preview-fixture.test.ts"
         },
         {
           "relativePath": "tests/generative-model-policy-transport.e2e.test.ts"

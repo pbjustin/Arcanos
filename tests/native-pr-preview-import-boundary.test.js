@@ -652,6 +652,8 @@ describe('native PR preview import boundary', () => {
     'scripts/tutor-package-core.mjs',
     'scripts/tutor-package-core.d.mts',
     'src/shared/chatgpt/pluginMigrationPreviewFixture.ts',
+    'src/shared/gpt/generativeModelPolicyCore.ts',
+    'src/shared/gpt/generativeModelPolicyPreviewFixture.ts',
   ])('pins the shared migration seam and rejects effects in %s', async filePath => {
     const sourceText = await readFile(new URL(`../${filePath}`, import.meta.url), 'utf8');
     expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).toContain(filePath);

@@ -1,4 +1,6 @@
 import { getConfig } from "@platform/runtime/unifiedConfig.js";
+import { resolveGenerativeModelFromConfig, type GenerativeModelRole } from '@shared/gpt/generativeModelPolicyCore.js';
+export { GenerativeModelPolicyError, type GenerativeModelRole } from '@shared/gpt/generativeModelPolicyCore.js';
 
 const OPENAI_KEY_PLACEHOLDERS = new Set([
   '',
@@ -16,40 +18,9 @@ function isPlaceholderOpenAIKey(apiKey: string): boolean {
   return OPENAI_KEY_PLACEHOLDERS.has(trimmed) || trimmed.startsWith('sk-mock-');
 }
 
-export type GenerativeModelRole =
-  | 'intake' | 'reasoning' | 'final' | 'final-escalation' | 'audit' | 'audit-escalation';
-
-/** Policy failures are safe to classify at HTTP boundaries without exposing configured IDs. */
-export class GenerativeModelPolicyError extends Error {
-  constructor(public readonly code: 'MODEL_OVERRIDE_CONFLICT' | 'FINAL_AUTHORITY_UNAVAILABLE', role: GenerativeModelRole) {
-    super(code === 'MODEL_OVERRIDE_CONFLICT'
-      ? `Generative model policy: model override conflicts with ${role} role`
-      : `Generative model policy: configured fine-tune authority unavailable for ${role}`);
-    this.name = 'GenerativeModelPolicyError';
-  }
-}
-
 /** Resolve a backend generation role; conflicting caller models fail before transport. */
 export function resolveGenerativeModel(role: GenerativeModelRole, requestedModel?: string): string {
-  const config = getConfig();
-  const models: Record<GenerativeModelRole, string> = {
-    intake: config.trinityIntakeModel,
-    reasoning: config.trinityReasoningModel,
-    final: config.trinityFinalModel,
-    'final-escalation': config.trinityFinalEscalationModel,
-    audit: config.clearAuditModel,
-    'audit-escalation': config.clearAuditEscalationModel
-  };
-  const model = models[role]?.trim();
-  //audit Never substitute a helper or historical fine-tune for this service's authority.
-  if (!model || ((role === 'final' || role === 'final-escalation') && !/^ft:[^\s]+$/.test(model))) {
-    throw new GenerativeModelPolicyError('FINAL_AUTHORITY_UNAVAILABLE', role);
-  }
-  //audit Explicit model parameters can confirm a role but cannot independently select its model.
-  if (requestedModel !== undefined && requestedModel.trim() !== model) {
-    throw new GenerativeModelPolicyError('MODEL_OVERRIDE_CONFLICT', role);
-  }
-  return model;
+  return resolveGenerativeModelFromConfig(getConfig(), role, requestedModel);
 }
 
 export function resolveOpenAIBaseURL(): string | undefined {

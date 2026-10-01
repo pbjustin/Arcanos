@@ -176,6 +176,15 @@ reasoning, usage, recovery, and SSE cancellation through the real SDK. These
 fixtures prove local application and transport contracts, not live provider
 availability, model quality, database or queue behavior, or deployed acceptance.
 
+For an authorized Railway preview, the separate sealed
+`GET /models/generative-contract` fixture exercises the same production role
+and raw reply-identity primitives with fixed synthetic inputs. The reviewed
+exact-head native verifier checks its complete report, proof version, readiness,
+and worker/query/method denials over HTTPS. Follow the maintained
+[preview lifecycle](RAILWAY_DEPLOYMENT.md#configuration) to obtain and attest
+the exact hosts before executing its paired network flags. This served component
+proof supplements the app/SDK/Trinity fixtures; it does not run a live provider.
+
 ## Repository agent skills
 
 Codex can discover the shared workflows in `.agents/skills/` when working in

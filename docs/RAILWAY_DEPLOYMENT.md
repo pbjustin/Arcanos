@@ -433,7 +433,7 @@ Launcher behavior:
   and [sealed Tutor evidence](audits/chatgpt-migration/2026-09-23-sealed-tutor.md)
   document these checks and their limits. This is synthetic transport evidence;
   real Tutor/OAuth and installed ChatGPT behavior require separate evidence.
-  The current verifier includes 19 Tutor cases for 157 bounded requests; earlier
+  The current verifier includes 19 Tutor cases in its 161 bounded requests; earlier
   138-request compatibility references describe the pre-Tutor baseline. The
   trusted workflow uses its own default-branch revision. New PR-head assertions
   require a reviewed exact-head supplemental run on the same independently
@@ -471,13 +471,36 @@ Launcher behavior:
   boundaries and cannot read private files, accounts, storage or credentials.
   The existing 156 requests remain compatible with the trusted main verifier;
   the exact-head verifier adds one valid JSON body of 4,097 bytes to test the
-  existing 4 KiB cap, for 157 requests with unchanged time/response limits and no
+  existing 4 KiB cap, taking the pre-model-policy matrix to 157 requests with unchanged time/response limits and no
   retries. All non-success responses must omit the migration marker.
   This proves the deployed package-core seam, not complete schema validation,
   private composition/revision authorization, archive parsing or current-release
   reconciliation. Those remain local/CI and artifact evidence. See the
   [migration handoff](chatgpt-migration/TUTOR_MIGRATION.md#sealed-preview-evidence-boundaries)
   for the classification and exact-head run record.
+- The exact `GET /models/generative-contract` route executes the
+  [model-policy fixture](../src/shared/gpt/generativeModelPolicyPreviewFixture.ts)
+  against the [pure production core](../src/shared/gpt/generativeModelPolicyCore.ts)
+  also used by the backend credential resolver and raw provider-response guard.
+  Fixed synthetic inputs verify all six role selections, matching overrides,
+  helper admission without final authority, missing/malformed final authority,
+  rejected overrides, exact case-sensitive fine-tune reply identity, helper
+  snapshots, and missing/mismatched raw identities. Rejected model admission
+  never reaches the fixture's synthetic downstream boundary. Complete success
+  alone earns `x-arcanos-preview-generative-model-policy-version:
+  shared-generative-model-policy/v1`; the 4 KiB report includes the PR and commit
+  identity. Readiness runs the same assertions before all success markers while
+  preserving the trusted verifier's response body. Failure returns a fixed error
+  without the report or proof marker; worker, query and method denials cannot
+  earn proof. Source semantic pins and exact compiled imports keep configuration,
+  credentials, SDK, provider and normal Trinity execution outside this graph.
+  The supplemental verifier adds four requests for a total of 161, requires the
+  marker at readiness, compares the complete report, and checks worker/query/POST
+  denials with unchanged time and aggregate response bounds and no retries.
+  This is served component evidence for the production policy and identity
+  primitives. The separate app/SDK/Trinity E2E fixtures cover their actual
+  composition using synthetic loopback providers; preview proof does not establish
+  live provider or production acceptance.
 - The trusted
   [Railway PR preview lifecycle workflow](../.github/workflows/railway-pr-preview-lifecycle.yml)
   owns preview creation and teardown for PRs carrying the exact
@@ -516,7 +539,7 @@ Launcher behavior:
   adds a selector must therefore execute its exact-head verifier separately
   against the lifecycle-created hosts until that verifier reaches the default
   branch. After the lifecycle reports the exact preview hosts, execute the
-  current 157-request PR-head probe with both network flags from a separate, clean
+  current 161-request PR-head probe with both network flags from a separate, clean
   checkout of the revalidated exact PR head. This supplemental run is
   credential-free and explicitly covers its contract's PR-head selectors and worker
   denials; it has no Railway create, ownership, or cleanup authority.

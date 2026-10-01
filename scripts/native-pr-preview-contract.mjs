@@ -79,6 +79,12 @@ export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
     proofHeader: 'x-arcanos-session-context-proof',
     proofVersion: 'session-context/v1',
   }),
+  generativeModelPolicy: Object.freeze({
+    path: '/models/generative-contract',
+    maxResponseBytes: 4_096,
+    proofHeader: 'x-arcanos-preview-generative-model-policy-version',
+    proofVersion: 'shared-generative-model-policy/v1',
+  }),
   iosDevicePolicy: Object.freeze({
     path: '/ios/device-contract',
     proofHeader: 'x-arcanos-preview-ios-device-version',

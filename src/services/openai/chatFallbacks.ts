@@ -9,6 +9,7 @@ import {
 } from "@core/adapters/openai.adapter.js";
 import { prepareGPT5Request } from './requestTransforms.js';
 import { resolveGenerativeModel, type GenerativeModelRole } from './credentialProvider.js';
+import { assertGenerativeModelResponseIdentity as ensureModelMatchesExpectation } from '@shared/gpt/generativeModelPolicyCore.js';
 import { RESILIENCE_CONSTANTS } from './resilience.js';
 import {
   executeWithResilience,
@@ -37,7 +38,6 @@ import {
   throwIfRequestAborted
 } from "@arcanos/runtime";
 
-const normalizeModelId = (model: string): string => model.trim().toLowerCase();
 const DEFAULT_CHAT_COMPLETION_TIMEOUT_MS = 8_000;
 const PRESERVED_AGGREGATE_ABORT_REASON = Symbol('preservedAggregateAbortReason');
 
@@ -483,40 +483,6 @@ async function attemptGPT5Call(
   aiLogger.info(buildGpt5SuccessLog(gpt5Model), logContext);
   return { response, model: gpt5Model };
 }
-
-/**
- * Ensure response model matches the expected model family.
- * Inputs: response (OpenAI response), expectedModel (string).
- * Outputs: actual model identifier string.
- * Edge cases: throws when response model is missing or mismatched.
- */
-const ensureModelMatchesExpectation = (response: { model?: unknown }, expectedModel: string): string => {
-  const actualModel = typeof response?.model === 'string' ? response.model.trim() : '';
-
-  //audit Assumption: response must include model identifier; risk: downstream mismatches; invariant: non-empty model id; handling: throw explicit error.
-  if (!actualModel) {
-    throw new Error(`GPT-5.1 reasoning response did not include a model identifier. Expected '${expectedModel}'.`);
-  }
-
-  const normalizedActual = normalizeModelId(actualModel);
-  const normalizedExpected = normalizeModelId(expectedModel);
-
-  const matchesExpected = normalizedExpected.startsWith('ft:')
-    ? actualModel === expectedModel.trim()
-    : normalizedActual === normalizedExpected || (
-      normalizedActual.startsWith(`${normalizedExpected}-`) ||
-      normalizedActual.startsWith(`${normalizedExpected}.`)
-    );
-
-  //audit Assumption: model should match expected prefix; risk: unexpected model usage; invariant: prefix match or exact match; handling: throw explicit error.
-  if (!matchesExpected) {
-    throw new Error(
-      `GPT-5.1 reasoning response used unexpected model '${actualModel}'. Expected model to start with '${expectedModel}'.`,
-    );
-  }
-
-  return actualModel;
-};
 
 type ModelAttemptResult = { response: ChatCompletionResponse; model: string };
 type ModelAttemptTransformer<T> = (result: ModelAttemptResult) => T;
