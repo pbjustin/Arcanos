@@ -1637,6 +1637,7 @@ export async function runThroughBrain(
     budget.increment();
     checkWatchdog();
 
+    const requestedIntakeModel = getTrinityIntakeModel();
     const arcanosModel = await runLoggedStage({
       requestId,
       stage: 'model-validation',
@@ -1693,6 +1694,9 @@ export async function runThroughBrain(
         return recoveredResult;
       }
       throw error;
+    }
+    if (arcanosModel !== requestedIntakeModel) {
+      intakeOutput.fallbackUsed = true;
     }
     // The task card is a navigation aid, never a replacement for selected evidence.
     // The reasoning envelope escapes this JSON before inserting it as untrusted data.
@@ -1930,8 +1934,7 @@ export async function runThroughBrain(
               internalDirective,
               runtimeBudget,
               stageTimeoutOverrideMs,
-              tier !== 'simple' || arcanosModel !== getTrinityIntakeModel()
-                || intakeOutput.fallbackUsed || reasoningOutput.fallbackUsed
+              tier !== 'simple' || intakeOutput.fallbackUsed || reasoningOutput.fallbackUsed
                 ? 'escalation' : 'routine'
             )
         });

@@ -115,6 +115,7 @@ describe('Trinity model lanes at the actual bounded provider boundary', () => {
     expect(calls.at(-1)).toMatchObject({ model: finalModel,
       reasoning: { effort: finalModel === 'gpt-6-luna' ? 'none' : 'low' } });
     expect(result.result).toContain(answer);
+    expect(result.fallbackFlag).toBe(false);
     for (const [payload, options] of responsesCreate.mock.calls as [ResponseCreateParamsNonStreaming, { signal: AbortSignal }][]) {
       expect(payload.max_output_tokens).toBeGreaterThan(0);
       expect(payload.max_output_tokens).toBeLessThanOrEqual(8_000);
@@ -153,11 +154,38 @@ describe('Trinity model lanes at the actual bounded provider boundary', () => {
     // A distinct synthetic ID avoids the model-validation cache from successful cases.
     process.env.TRINITY_INTAKE_MODEL = 'synthetic-unavailable-intake';
     retrieveModel.mockRejectedValue(new Error('Synthetic model unavailable'));
-    await run(simplePrompt);
+    const result = await run(simplePrompt, { debugPipeline: true });
     expect(retrieveModel).toHaveBeenCalledWith('synthetic-unavailable-intake', expect.anything());
     expect(requests().map(payload => payload.model)).toEqual([
       'gpt-4.1-mini', 'gpt-6.1-sol', 'gpt-6-luna', 'gpt-6.1-sol',
     ]);
+    expect(result.fallbackFlag).toBe(true);
+    expect(result.fallbackSummary).toEqual({
+      intakeFallbackUsed: true, gpt5FallbackUsed: false, finalFallbackUsed: false,
+      fallbackReasons: ['Intake fallback used'],
+    });
+    expect(result.pipelineDebug?.intakeOutput).toMatchObject({
+      activeModel: 'gpt-4.1-mini', fallbackUsed: true,
+    });
+  });
+
+  it('withholds Gaming final-answer audit admission after intake validation substitution', async () => {
+    process.env.TRINITY_INTAKE_MODEL = 'synthetic-unavailable-gaming-intake';
+    retrieveModel.mockRejectedValue(new Error('Synthetic model unavailable'));
+    const gamingAudit = jest.fn(async () => {
+      throw new Error('Gaming audit must not admit a validation fallback.');
+    });
+    const result = await run(simplePrompt, {
+      sourceEndpoint: 'arcanos-gaming.guide', gamingGuideIntakePolicy: 'compact-v1',
+      gamingClearAnswerAudit: gamingAudit,
+    });
+    expect(requests().map(payload => payload.model)).toEqual([
+      'gpt-4.1-mini', 'gpt-6.1-sol', 'gpt-6.1-sol',
+    ]);
+    expect(gamingAudit).not.toHaveBeenCalled();
+    expect(result.fallbackFlag).toBe(true);
+    expect(result.fallbackSummary.intakeFallbackUsed).toBe(true);
+    expect(result.gamingClearAudit).toBeUndefined();
   });
 
   it('honors an explicit direct-answer override without adding GPT-6 fields to legacy requests', async () => {
