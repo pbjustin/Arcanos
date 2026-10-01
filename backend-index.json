@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-28T15:05:41.175Z",
+  "generatedAt": "2026-10-01T04:32:15.956Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -3934,6 +3934,12 @@
           "relativePath": "tests/check-npm-audit-policy.test.ts"
         },
         {
+          "relativePath": "tests/clear-audit-provider-routing.test.ts"
+        },
+        {
+          "relativePath": "tests/clear-audit-routing.test.ts"
+        },
+        {
           "relativePath": "tests/clear-decision-contract.test.ts"
         },
         {
@@ -4906,6 +4912,12 @@
           "relativePath": "tests/mocks/prisma-client.ts"
         },
         {
+          "relativePath": "tests/model-lane-comparison-runner.test.ts"
+        },
+        {
+          "relativePath": "tests/model-lane-selectors.test.ts"
+        },
+        {
           "relativePath": "tests/module-registry-initialization.test.ts"
         },
         {
@@ -5500,7 +5512,13 @@
           "relativePath": "tests/trinity-integrity-recovery.test.ts"
         },
         {
+          "relativePath": "tests/trinity-model-lanes.test.ts"
+        },
+        {
           "relativePath": "tests/trinity-pipeline-adapter.test.ts"
+        },
+        {
+          "relativePath": "tests/trinity-pipeline-model-lanes.test.ts"
         },
         {
           "relativePath": "tests/trinity-reasoning-policy.test.ts"

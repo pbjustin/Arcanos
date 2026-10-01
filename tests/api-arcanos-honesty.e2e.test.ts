@@ -51,6 +51,11 @@ jest.unstable_mockModule('@services/openai.js', () => ({
 }));
 
 jest.unstable_mockModule('@services/openai/credentialProvider.js', () => ({
+  getTrinityIntakeModel: () => 'arcanos-intake-model',
+  getTrinityFinalModel: () => 'arcanos-final-model',
+  getTrinityFinalEscalationModel: () => 'arcanos-final-model',
+  getClearAuditModel: () => 'gpt-5-reasoning-model',
+  getClearAuditEscalationModel: () => 'gpt-5-reasoning-model',
   resolveOpenAIBaseURL: () => undefined,
   resolveOpenAIKey: () => null,
   getOpenAIKeySource: () => 'test',

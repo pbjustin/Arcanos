@@ -11,9 +11,10 @@ import {
 } from '@core/adapters/openai.adapter.js';
 import { logGPT5Invocation } from "@platform/logging/aiLogger.js";
 import {
-  getDefaultModel,
+  getTrinityIntakeModel,
   getTrinityReasoningModel,
-  getComplexModel,
+  getTrinityFinalModel,
+  getTrinityFinalEscalationModel,
   getFallbackModel
 } from "@services/openai/credentialProvider.js";
 import { createSingleChatCompletion } from "@services/openai/chatFallbacks.js";
@@ -82,6 +83,8 @@ import {
 import { runWithCooperativeAbortDrain } from '@shared/async/cooperativeAbortDrain.js';
 import {
   resolveTrinityReasoningProviderPolicy,
+  normalizeTrinityReasoningEffort,
+  resolveOpenAIModelCapabilities,
   supportsDisabledReasoningEffort,
 } from '@shared/gpt/trinityReasoningPolicy.js';
 
@@ -278,7 +281,7 @@ export async function validateModel(
 ): Promise<string> {
   if (runtimeBudget) assertBudgetAvailable(runtimeBudget);
 
-  const defaultModel = getDefaultModel();
+  const defaultModel = getTrinityIntakeModel();
   const cachedValidationExpiresAt = validatedModelCache.get(defaultModel) ?? 0;
   if (cachedValidationExpiresAt > Date.now()) {
     return defaultModel;
@@ -450,8 +453,11 @@ export async function runIntakeStage(
       }
     ],
     temperature,
+    model: arcanosModel,
+    ...(resolveOpenAIModelCapabilities(arcanosModel).normalizeReasoningRequests
+      ? { reasoning_effort: normalizeTrinityReasoningEffort(arcanosModel, 'none') }
+      : {}),
     ...(gamingIntakeContract ? {
-      model: arcanosModel,
       ...(gamingIntakeContract.reasoningEffort ? { reasoning_effort: gamingIntakeContract.reasoningEffort } : {})
     } : {}),
     timeoutMs: resolveIntakeStageTimeoutMs(runtimeBudget, explicitTimeoutMs),
@@ -648,11 +654,14 @@ export async function runFinalStage(
   cognitiveDomain?: CognitiveDomain,
   systemPromptOverride?: string,
   runtimeBudget?: RuntimeBudget,
-  explicitTimeoutMs?: number
+  explicitTimeoutMs?: number,
+  finalLane: 'routine' | 'escalation' = 'routine'
 ): Promise<TrinityFinalOutput> {
   if (runtimeBudget) assertBudgetAvailable(runtimeBudget);
 
-  const complexModel = getComplexModel();
+  const complexModel = finalLane === 'escalation'
+    ? getTrinityFinalEscalationModel()
+    : getTrinityFinalModel();
   const cappedLimit = enforceTokenCap(APPLICATION_CONSTANTS.DEFAULT_TOKEN_LIMIT);
   const finalTokenParams = getTokenParameter(complexModel, cappedLimit);
   const temperature = resolveTemperature(cognitiveDomain);
@@ -673,6 +682,9 @@ export async function runFinalStage(
     ),
     temperature,
     model: complexModel,
+    ...(resolveOpenAIModelCapabilities(complexModel).normalizeReasoningRequests
+      ? { reasoning_effort: normalizeTrinityReasoningEffort(complexModel, 'none') }
+      : {}),
     timeoutMs: resolveFinalStageTimeoutMs(runtimeBudget, explicitTimeoutMs),
     ...finalTokenParams
   });
@@ -747,7 +759,9 @@ export async function runDirectAnswerStage(
     directAnswerTokenCapOverride
   );
   const directAnswerTokenParams = getTokenParameter(directAnswerModel, cappedTokenLimit);
-  const directAnswerReasoningEffort = supportsDisabledReasoningEffort(directAnswerModel)
+  const directAnswerReasoningEffort = resolveOpenAIModelCapabilities(directAnswerModel).normalizeReasoningRequests
+    ? normalizeTrinityReasoningEffort(directAnswerModel, 'none')
+    : supportsDisabledReasoningEffort(directAnswerModel)
     ? 'none' as const
     : undefined;
   const temperature = Math.min(resolveTemperature(cognitiveDomain), 0.2);
@@ -885,10 +899,13 @@ export function buildDryRunPreview(
   auditFlags: string[],
   memoryEntryCount: number,
   auditSafeMode: boolean,
-  dryRunReason?: string
+  dryRunReason?: string,
+  finalLane: 'routine' | 'escalation' = 'routine'
 ): TrinityDryRunPreview {
-  const intakeModelCandidate = getDefaultModel();
-  const finalModelCandidate = getComplexModel();
+  const intakeModelCandidate = getTrinityIntakeModel();
+  const finalModelCandidate = finalLane === 'escalation'
+    ? getTrinityFinalEscalationModel()
+    : getTrinityFinalModel();
   const gpt5ModelCandidate = getTrinityReasoningModel();
   const routingPlan = [
     `ARCANOS-INTAKE:${intakeModelCandidate}`,

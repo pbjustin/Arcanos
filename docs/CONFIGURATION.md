@@ -403,13 +403,151 @@ availability (`src/platform/runtime/unifiedConfig.ts`, `getConfig`). The
 `src/services/gptFastPath.ts` does not pass it into Trinity. The inline lane
 therefore uses the applicable Trinity selectors rather than that setting.
 
-### GPT-5 and Backstage Booker generation
+### Trinity and CLEAR model lanes
 
-`TRINITY_REASONING_MODEL` selects only Trinity's schema-constrained Responses reasoning model. Its precedence is `TRINITY_REASONING_MODEL`, `GPT5_MODEL`, `GPT51_MODEL`, then the built-in `gpt-5.6-terra` default. The shared `GPT5_MODEL` selector used by other GPT-5 execution paths retains its existing `GPT5_MODEL`, `GPT51_MODEL`, then GPT-5.1 behavior, so the Terra migration does not silently move unrelated calls that lack an explicit effort. Trinity structured reasoning requests an explicit effort by tier: `simple` uses `none`, `complex` uses `low`, and `critical` uses `medium`. At the provider boundary, `none` is normalized to `minimal` only for exact `gpt-5` and dated GPT-5 snapshots because that model family does not support disabled reasoning; GPT-5.1 and GPT-5.6 retain `none`. `TRINITY_REASONING_MAX_OUTPUT_TOKENS` defaults to `8000`; strict positive base-10 integers are clamped to `16`-`8000`, while invalid or unset values use `8000`. This Responses limit includes both hidden reasoning tokens and visible structured JSON. `TRINITY_REASONING_STAGE_TIMEOUT_MS` defaults to `20000` and is further clamped to the remaining request and runtime budget.
+Lane selectors affect only their named workload. Shared `getDefaultModel()`,
+`getComplexModel()`, `getGPT5Model()` and generic OpenAI callers keep their
+existing precedence and defaults. `OPENAI_MODEL=gpt-6-luna` is not the migration
+mechanism. Values in `.env.example` are examples, not deployed Railway values.
+
+| Lane | Environment variable | Default when all listed overrides are absent | Precedence after explicit lane value | Rollback variable | Unrelated workloads affected by lane variable |
+| --- | --- | --- | --- | --- | --- |
+| Trinity intake/classification | `TRINITY_INTAKE_MODEL` | `gpt-6-luna` | explicit legacy default chain below | `TRINITY_INTAKE_MODEL=<prior intake model>` | No |
+| Trinity structured reasoning | `TRINITY_REASONING_MODEL` | `gpt-6.1-sol` | `GPT5_MODEL`, `GPT51_MODEL` | `TRINITY_REASONING_MODEL=gpt-5.6-terra` (or prior configured model) | No |
+| Trinity routine final composition | `TRINITY_FINAL_MODEL` | `gpt-6-luna` | explicit legacy default chain below | `TRINITY_FINAL_MODEL=<prior final model>` | No |
+| Trinity complex/critical/failure final | `TRINITY_FINAL_ESCALATION_MODEL` | `gpt-6.1-sol` | `GPT5_MODEL`, `GPT51_MODEL` | `TRINITY_FINAL_ESCALATION_MODEL=<prior complex model>` | No |
+| Routine CLEAR and Gaming CLEAR | `CLEAR_AUDIT_MODEL` | `gpt-6-luna` | `GPT5_MODEL`, `GPT51_MODEL` | `CLEAR_AUDIT_MODEL=<prior getGPT5Model result>` | No |
+| Explicit internal audit escalation | `CLEAR_AUDIT_ESCALATION_MODEL` | `gpt-6.1-sol` | `GPT5_MODEL`, `GPT51_MODEL` | `CLEAR_AUDIT_ESCALATION_MODEL=<prior audit model>` | No |
+
+For every lane, `getEnvVar` checks the named variable, then `RAILWAY_<lane variable>`.
+Intake/routine final then use the existing explicit default chain:
+`FINETUNED_MODEL_ID`, `RAILWAY_FINETUNED_MODEL_ID`, `FINE_TUNED_MODEL_ID`, `AI_MODEL`,
+`OPENAI_MODEL`, `RAILWAY_OPENAI_MODEL`; their materialized shared default is not
+inherited when all are absent. For reasoning/audit/escalation, each legacy key
+checks its own Railway alias before moving to the next key. Whitespace-only
+values are absent. An intake, routine final, or shared default of Luna cannot
+steer complex final work; escalation has an independent selector. Explicit
+legacy shared selectors remain broad rollbacks and can affect multiple lanes;
+prefer lane variables for a narrow rollout or rollback.
+
+Trinity validates the scoped intake model with its existing bounded validation
+cache/timeout. Validation failure retains the existing `gpt-4.1-mini` fallback,
+and a subsequent simple final routes to the escalation selector. Complex or
+critical tiers and upstream fallback flags also select escalation, with one
+final call and no new retry. Routine direct answers use the final selector;
+complex, timeout recovery and existing approved structural continuation use the
+escalation selector. A trusted `directAnswerModelOverride` remains authoritative
+for callers such as Backstage. The standalone direct-answer stage retains its
+legacy fallback default for callers that provide no override.
+
+Both audit functions default to the routine lane. Their optional trusted internal
+`modelLane='escalation'` selects the escalation model for the same single call.
+No public request field or environment switch enables automatic escalation, and
+no retry, recursion or repair loop is added. Gaming retains at most one audit,
+no tools, the 1024 output-token ceiling, aggregate runtime budget, strict result
+validation, citation/evidence binding and fail-closed unavailable outcomes.
+General CLEAR retains its zero-score unavailable result and timeout behavior.
+GPT-6 audit requests explicitly use Luna none or Sol low reasoning within the
+existing output caps; configured legacy audit models retain their prior request.
+
+#### Model capability contract
+
+The centralized `resolveOpenAIModelCapabilities` policy recognizes exact IDs
+and dated snapshots. Unknown models retain legacy pass-through behavior; they
+are not claimed to have GPT-6 capabilities. API guidance was checked against
+[official GPT-6 migration guidance](https://developers.openai.com/api/docs/guides/latest-model),
+[GPT-6 Luna](https://developers.openai.com/api/docs/models/gpt-6-luna), and
+[GPT-6.1 Sol](https://developers.openai.com/api/docs/models/gpt-6.1-sol).
+
+| Model | Disabled reasoning | API effort values | Structured reasoning | Normalization used here |
+| --- | --- | --- | --- | --- |
+| GPT-5 | No | minimal, low, medium, high | Supported | requested none becomes minimal; legacy sampling behavior preserved |
+| GPT-5.1 | Yes | none, low, medium, high | Supported | none preserved; legacy behavior preserved |
+| GPT-5.6 Terra | Yes | none, low, medium, high, xhigh, max | Supported | none preserved; legacy behavior preserved |
+| GPT-6 Luna | Yes | none, low, medium, high, xhigh, max | Supported | minimal becomes low; none remains none |
+| GPT-6.1 Sol | No | low, medium, high, xhigh, max | Supported | none/minimal become low |
+
+For the reviewed GPT-6 models, active reasoning (including omitted default
+medium effort) removes `temperature`, `top_p`, `top_logprobs`, `logprobs`, and
+Responses output-text logprobs includes. Luna with explicit none can retain
+supported sampling parameters. Existing adapters still convert token aliases
+into `max_output_tokens`, preserve bounded signals, validate structured JSON,
+and reject incomplete output. Lightweight intake/final explicitly request none
+(Luna) or low (Sol) within their existing caps. Trinity structured effort remains
+tier-based: simple none (normalized to low for Sol), complex low, critical medium.
+
+The lockfile and installed SDK are OpenAI **6.25.0** (manifest `^6.25.0`). New
+model IDs are allowed as strings, and none/low/medium are type-supported. No SDK
+update is required. `max` is an API capability but is not in this SDK's request
+type; outbound GPT-6 max is rejected and requires a later reviewed SDK update.
+No new mode, tool, service-tier or caching fields are introduced.
+
+`TRINITY_REASONING_MAX_OUTPUT_TOKENS` defaults to `8000`; strict positive base-10
+integers are clamped to `16`-`8000`, and invalid or unset values use `8000`.
+This includes hidden reasoning tokens plus visible JSON. All other existing
+intake/final/audit caps, worker admission budgets, stage/request deadlines,
+cancellation, redaction and fallback paths remain in force. The reasoning stage
+timeout defaults to `20000` ms and is clamped to the remaining request/runtime
+budget.
+
+#### Gated rollout and rollback
+
+This code/configuration change does not modify Railway variables or deploy.
+Before deploying Phase 1, record the existing effective models and explicitly
+pin all six lane variables to those values; pin structured reasoning to Terra
+only if that is the existing deployment value. A code default is not evidence of
+a deployed value. Keep shared selectors and `FALLBACK_MODEL` unchanged.
+
+1. Introduce selectors/capability policy with all current effective models pinned.
+2. Compare Luna on intake and routine audit using approved synthetic fixtures.
+3. Compare Sol on structured reasoning with schema validity, latency, timeouts,
+   fallback, token usage and incomplete-output evidence.
+4. Compare Luna on routine final composition.
+5. Enable Sol for existing complex/failure final paths or opt in to a separately
+   reviewed internal audit escalation choice only after comparison evidence passes.
+
+Rollback one lane by restoring its recorded prior model in the corresponding
+lane variable and applying the separately authorized deployment/config reload.
+Restore all six recorded values for a full routing rollback. Do not merely unset
+lane variables: the new code defaults can become active when shared overrides
+are absent. Existing shared rollback selectors and fallback chains remain
+available for their original callers.
+
+#### Synthetic model comparison
+
+The bounded runner defaults to an offline plan with zero provider calls:
+
+```bash
+node scripts/compare-trinity-model-lanes.mjs --dry-run
+```
+
+After a successful build, a separately approved non-production evaluation can
+use the existing adapter and real structured validator:
+
+```bash
+node --import ./scripts/register-esm-loader.mjs scripts/compare-trinity-model-lanes.mjs --execute --confirm-non-production --evaluation-target https://api.openai.com/v1
+```
+
+The execution gate requires a credential and the exact explicit provider target;
+production settings, Railway environment IDs and disabled external calls block
+execution. Only six fixed invented fixture requests are possible: Terra versus
+Sol structured reasoning, GPT-4.1-mini versus Luna intake, and GPT-4.1 versus
+Luna final. These baseline IDs describe prior repository defaults, not deployed
+Railway values. No user prompts, input files or remote fixture data are accepted.
+There is one attempt per model/case, zero retries or repairs, a four-second
+attempt deadline and a thirty-second aggregate deadline. Output ceilings are
+2048 reasoning, 500 intake and 1024 final tokens.
+
+The report contains fixture hashes and counts, status, schema validity, latency,
+timeouts, token accounting and incomplete/truncated metadata when observed.
+It contains no raw prompts, outputs, provider errors or credentials. Dry-run
+measurements remain null. Full-pipeline fallback and CLEAR acceptance also remain
+null because this runner makes isolated lane calls without extra audits. Those
+outcomes require separate approved pipeline comparisons before rollout.
 
 Responses usage is observed before structured parsing, so the session token audit still records billed reasoning tokens when the provider returns incomplete, refused, malformed, or schema-invalid output. Successful pipeline telemetry and the session audit aggregate intake, structured reasoning, and final-stage usage. For response compatibility, `meta.tokens` remains the final user-visible stage's usage rather than the aggregate pipeline total.
 
-Backstage Booker direct answers remain a separate Chat Completions path. The obsolete exact `gpt-5` alias is normalized to `gpt-5.1`; supported GPT-5.1 and GPT-5.6 Sol/Terra/Luna direct-answer requests explicitly disable reasoning so their bounded output budget remains available for visible text.
+Backstage Booker direct answers retain their trusted model override through the existing Responses adapter path. The obsolete exact `gpt-5` alias is normalized to `gpt-5.1`; supported GPT-5.1 and GPT-5.6 Sol/Terra/Luna direct-answer requests explicitly disable reasoning so their bounded output budget remains available for visible text.
 
 `BOOKER_TOKEN_LIMIT` defaults to `2400` for ordinary synchronous generation and remains bounded by the standard Backstage `2400`-token cap. Ordinary Trinity callers retain the global `1200`-token cap, while compact direct-answer prompts may use a smaller prompt-derived budget. Explicit full-show, card, or booking-state review/evaluation prompts use a six-bullet synthesis contract and `min(BOOKER_TOKEN_LIMIT, 1600)` so the review can complete before the provider-stage and HRC deadlines. The classifier uses a quote-aware scan of directive-shaped request clauses throughout the prompt; an explicit mixed request to book, rebook, rewrite, draft, or continue vetoes bounded mode and retains the ordinary generation budget. Quoted or attributed dialogue inside supplied show state is inert, while narrow decision analysis or recommendations also stay in ordinary mode. A deployment retaining an explicit historical value such as `512` or `1200` will continue to use that value; remove or update the variable to adopt the `2400` default.
 
@@ -1752,7 +1890,12 @@ This table mirrors high-impact runtime keys and active operator controls in `.en
 | `NODE_ENV` | `development` | Runtime mode. |
 | `OPENAI_API_KEY` | `your-openai-api-key-here` | OpenAI API key used by server/runtime. |
 | `OPENAI_MODEL` | `gpt-4o-mini` | Default model name from `.env.example`; the runtime can still fall back to its built-in model when unset. |
-| `TRINITY_REASONING_MODEL` | `gpt-5.6-terra` (commented) | Trinity-only structured Responses selector. Precedence: this variable, `GPT5_MODEL`, `GPT51_MODEL`, then Terra. |
+| `TRINITY_INTAKE_MODEL` | `gpt-6-luna` (commented) | Intake-only selector; explicit legacy default overrides precede the built-in lane default. |
+| `TRINITY_REASONING_MODEL` | `gpt-6.1-sol` (commented) | Trinity-only structured Responses selector; explicit GPT5/GPT51 rollbacks precede the built-in Sol default. |
+| `TRINITY_FINAL_MODEL` | `gpt-6-luna` (commented) | Routine final selector; explicit legacy default overrides precede the built-in Luna default. |
+| `TRINITY_FINAL_ESCALATION_MODEL` | `gpt-6.1-sol` (commented) | Complex/failure final selector independent of intake/shared default; GPT5/GPT51 remain rollback overrides. |
+| `CLEAR_AUDIT_MODEL` | `gpt-6-luna` (commented) | Routine CLEAR/Gaming audit selector; explicit GPT5/GPT51 rollbacks precede the lane default. |
+| `CLEAR_AUDIT_ESCALATION_MODEL` | `gpt-6.1-sol` (commented) | Explicit internal single-call audit seam; automatic escalation remains disabled. |
 | `GPT5_MODEL` | empty (commented) | Shared GPT-5-family override for legacy/non-Trinity paths. When unset, `GPT51_MODEL` and then GPT-5.1 remain the fallback. Backstage normalizes only the obsolete exact `gpt-5` alias to `gpt-5.1`. |
 | `TRINITY_REASONING_MAX_OUTPUT_TOKENS` | `8000` (commented) | Structured Responses ceiling for hidden reasoning plus visible JSON. Strict positive base-10 integers are clamped to `16`-`8000`; invalid or unset values use `8000`. |
 | `TRINITY_REASONING_STAGE_TIMEOUT_MS` | `20000` (commented) | Structured reasoning timeout, further clamped to the remaining request/runtime budget. |

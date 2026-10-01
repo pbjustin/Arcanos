@@ -18,7 +18,7 @@ function isPlaceholderOpenAIKey(apiKey: string): boolean {
   return OPENAI_KEY_PLACEHOLDERS.has(trimmed) || trimmed.startsWith('sk-mock-');
 }
 
-/** Backend prefers fine-tuned model when set; otherwise OPENAI_MODEL then fallback. */
+/** Shared default precedence lives in unifiedConfig and is independent of lane overrides. */
 function computeDefaultModelFromConfig(): string {
   const appConfig = getConfig();
   return appConfig.defaultModel || APPLICATION_CONSTANTS.MODEL_GPT_4_1_MINI;
@@ -33,7 +33,7 @@ function computeGPT5ModelFromConfig(): string {
   const appConfig = getConfig();
   const configuredGPT5Model = getEnvVar('GPT5_MODEL');
 
-  //audit Assumption: operators may intentionally steer shared GPT-5 traffic with GPT5_MODEL while keeping GPT51_MODEL as a compatibility fallback; failure risk: a scoped Trinity migration silently changes unrelated GPT-5 callers; expected invariant: shared callers retain their existing GPT5_MODEL -> GPT51_MODEL -> GPT-5.1 selection; handling strategy: keep this selector unchanged and use the dedicated Trinity selector below for Terra.
+  //audit Assumption: shared GPT-5 traffic retains GPT5_MODEL -> GPT51_MODEL -> GPT-5.1; failure risk: a scoped lane migration silently moves unrelated callers; handling strategy: keep this selector unchanged and use independent lane selectors below.
   if (configuredGPT5Model) {
     return configuredGPT5Model;
   }
@@ -43,23 +43,6 @@ function computeGPT5ModelFromConfig(): string {
   }
 
   return APPLICATION_CONSTANTS.MODEL_GPT_5_1;
-}
-
-/**
- * Purpose: Resolve the model used only by Trinity's structured Responses reasoning stage.
- * Inputs/outputs: Reads explicit selector environment variables and returns one model identifier.
- * Edge case behavior: Preserves global and legacy rollback overrides before using the scoped Terra default.
- */
-function computeTrinityReasoningModelFromConfig(): string {
-  const configuredTrinityModel = getEnvVar('TRINITY_REASONING_MODEL');
-  const configuredGPT5Model = getEnvVar('GPT5_MODEL');
-  const configuredGPT51Model = getEnvVar('GPT51_MODEL');
-
-  //audit Assumption: Terra should migrate only Trinity's structured reasoning call; failure risk: changing the shared selector moves unrelated callers that do not send an explicit effort; expected invariant: TRINITY_REASONING_MODEL wins, explicit shared/legacy overrides remain rollbacks, and only an entirely unset Trinity selector defaults to Terra; handling strategy: resolve raw selectors in narrow-to-broad order without consulting materialized config defaults.
-  return configuredTrinityModel
-    || configuredGPT5Model
-    || configuredGPT51Model
-    || APPLICATION_CONSTANTS.MODEL_GPT_5_6_TERRA;
 }
 
 export function resolveOpenAIBaseURL(): string | undefined {
@@ -125,7 +108,7 @@ export function getFallbackModel(): string {
   return appConfig.fallbackModel || APPLICATION_CONSTANTS.MODEL_GPT_4_1;
 }
 
-/** Model for complex tasks (e.g. final ARCANOS stage). Prefers fine-tune when set; else gpt-4.1 for deep analysis. */
+/** Legacy shared complex selector. Trinity uses its independent final/escalation selectors. */
 export function getComplexModel(): string {
   const appConfig = getConfig();
   // Prefer a specifically configured default model if it differs from the lightweight mini model.
@@ -147,5 +130,26 @@ export function getGPT5Model(): string {
 
 /** Dedicated model selector for Trinity's structured Responses reasoning stage. */
 export function getTrinityReasoningModel(): string {
-  return computeTrinityReasoningModelFromConfig();
+  return getConfig().trinityReasoningModel;
+}
+
+/** Lane precedence is defined once in unifiedConfig; shared selectors remain unchanged. */
+export function getTrinityIntakeModel(): string {
+  return getConfig().trinityIntakeModel;
+}
+
+export function getTrinityFinalModel(): string {
+  return getConfig().trinityFinalModel;
+}
+
+export function getTrinityFinalEscalationModel(): string {
+  return getConfig().trinityFinalEscalationModel;
+}
+
+export function getClearAuditModel(): string {
+  return getConfig().clearAuditModel;
+}
+
+export function getClearAuditEscalationModel(): string {
+  return getConfig().clearAuditEscalationModel;
 }

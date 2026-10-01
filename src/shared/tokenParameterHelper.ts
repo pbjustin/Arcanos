@@ -10,6 +10,7 @@
 
 import type OpenAI from 'openai';
 import { APPLICATION_CONSTANTS } from "@shared/constants.js";
+import { resolveOpenAIModelCapabilities } from '@shared/gpt/trinityReasoningPolicy.js';
 
 // Known models that require max_completion_tokens instead of max_tokens
 // Store lowercase variants to ensure detection is case-insensitive
@@ -128,6 +129,11 @@ export function getTokenParameter(
  * @returns The parameter type to use
  */
 function determineTokenParameter(modelName: string): 'max_tokens' | 'max_completion_tokens' {
+  const capabilities = resolveOpenAIModelCapabilities(modelName);
+  if (capabilities.normalizeReasoningRequests && capabilities.outputTokenPolicy.chatParameter) {
+    return capabilities.outputTokenPolicy.chatParameter;
+  }
+
   // Check explicit list first
   //audit Assumption: explicit list overrides heuristics; Handling: direct return
   if (MAX_COMPLETION_TOKENS_MODELS.has(modelName)) {

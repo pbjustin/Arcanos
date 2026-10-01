@@ -10,6 +10,11 @@ const storePattern = jest.fn();
 const recordFeedback = jest.fn();
 
 jest.unstable_mockModule('@services/openai/credentialProvider.js', () => ({
+  getTrinityIntakeModel: () => 'gpt-5.1',
+  getTrinityFinalModel: () => 'gpt-5.1',
+  getTrinityFinalEscalationModel: () => 'gpt-5.1',
+  getClearAuditModel: () => 'gpt-5.1',
+  getClearAuditEscalationModel: () => 'gpt-5.1',
   resolveOpenAIBaseURL: () => undefined,
   resolveOpenAIKey: () => null,
   getOpenAIKeySource: () => 'test',

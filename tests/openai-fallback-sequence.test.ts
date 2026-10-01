@@ -170,6 +170,33 @@ describe('createChatCompletionWithFallback', () => {
     expect(createSpy.mock.calls[0]?.[0]).not.toHaveProperty('reasoning_effort');
   });
 
+  it.each([
+    ['gpt-6-luna', 'none', 'none'],
+    ['gpt-6.1-sol', 'none', 'low'],
+  ] as const)('normalizes the raw-client %s boundary inside the existing call budget', async (model, requested, expected) => {
+    const createSpy = jest.fn().mockResolvedValue({
+      id: 'resp_scoped_raw', model, status: 'completed',
+      output_text: 'Synthetic complete answer.', output: [],
+    });
+    await createSingleChatCompletion({ responses: { create: createSpy } } as any, {
+      model, messages: [{ role: 'user', content: 'Synthetic routing fixture.' }],
+      max_completion_tokens: 500, reasoning_effort: requested,
+      temperature: 0.1, top_p: 1, timeoutMs: 500,
+    });
+    expect(createSpy).toHaveBeenCalledTimes(1);
+    expect(createSpy).toHaveBeenCalledWith(expect.objectContaining({
+      model, reasoning: { effort: expected }, max_output_tokens: 500,
+    }), expect.objectContaining({ signal: expect.any(AbortSignal), timeout: 500 }));
+    const params = createSpy.mock.calls[0]?.[0];
+    if (expected === 'none') {
+      expect(params).toHaveProperty('temperature', 0.1);
+      expect(params).toHaveProperty('top_p', 1);
+    } else {
+      expect(params).not.toHaveProperty('temperature');
+      expect(params).not.toHaveProperty('top_p');
+    }
+  });
+
   it('passes an extended finite GPT-5.1 budget to Responses and rejects truncation', async () => {
     const createSpy = jest.fn().mockResolvedValue({
       id: 'resp_extended_incomplete',

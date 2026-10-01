@@ -39,6 +39,12 @@ export interface AppConfig {
   fallbackModel: string;
   gpt5Model: string;
   gpt51Model: string;
+  trinityIntakeModel: string;
+  trinityReasoningModel: string;
+  trinityFinalModel: string;
+  trinityFinalEscalationModel: string;
+  clearAuditModel: string;
+  clearAuditEscalationModel: string;
   openaiMaxRetries: number;
 
   // Database Configuration
@@ -329,12 +335,22 @@ export function isWorkerRuntimeSuppressedForServiceRole(
   return !workerRuntimeMode.resolvedRunWorkers && workerRuntimeMode.processKind === 'web';
 }
 
+function resolveDefaultLaneModel(key: string): string {
+  // Lane override (including Railway alias) -> the existing explicit default
+  // selector chain (including its fine-tuned Railway alias) -> lane default.
+  return getEnvVar(key) || getEnvVar('FINETUNED_MODEL_ID', [
+    'FINE_TUNED_MODEL_ID', 'AI_MODEL', 'OPENAI_MODEL', 'RAILWAY_OPENAI_MODEL'
+  ]) || APPLICATION_CONSTANTS.MODEL_GPT_6_LUNA;
+}
+
+function resolveReasoningLaneModel(key: string, defaultModel: string): string {
+  // Each key retains getEnvVar's primary -> RAILWAY_<key> precedence before
+  // moving to the next legacy rollback selector.
+  return getEnvVar(key) || getEnvVar('GPT5_MODEL') || getEnvVar('GPT51_MODEL') || defaultModel;
+}
+
 /**
- * Gets unified application configuration
- * 
- * Resolves all configuration values with Railway fallbacks
- * and provides type-safe access to configuration.
- * 
+ * Gets unified application configuration with Railway fallbacks.
  * @returns Application configuration object
  */
 export function getConfig(): AppConfig {
@@ -374,6 +390,15 @@ export function getConfig(): AppConfig {
     ]) || APPLICATION_CONSTANTS.MODEL_GPT_4_1,
     gpt5Model: getEnvVar('GPT5_MODEL') || APPLICATION_CONSTANTS.MODEL_GPT_5,
     gpt51Model: getEnvVar('GPT51_MODEL') || APPLICATION_CONSTANTS.MODEL_GPT_5_1,
+    // Lane override -> explicit legacy rollback selectors -> lane default.
+    // Resolve raw environment values so shared materialized defaults do not mask lane defaults.
+    trinityIntakeModel: resolveDefaultLaneModel('TRINITY_INTAKE_MODEL'),
+    trinityReasoningModel: resolveReasoningLaneModel('TRINITY_REASONING_MODEL', APPLICATION_CONSTANTS.MODEL_GPT_6_1_SOL),
+    trinityFinalModel: resolveDefaultLaneModel('TRINITY_FINAL_MODEL'),
+    // Never inherit the intake/default/final selector for complex work.
+    trinityFinalEscalationModel: resolveReasoningLaneModel('TRINITY_FINAL_ESCALATION_MODEL', APPLICATION_CONSTANTS.MODEL_GPT_6_1_SOL),
+    clearAuditModel: resolveReasoningLaneModel('CLEAR_AUDIT_MODEL', APPLICATION_CONSTANTS.MODEL_GPT_6_LUNA),
+    clearAuditEscalationModel: resolveReasoningLaneModel('CLEAR_AUDIT_ESCALATION_MODEL', APPLICATION_CONSTANTS.MODEL_GPT_6_1_SOL),
     openaiMaxRetries: getEnvNumber('OPENAI_MAX_RETRIES', APPLICATION_CONSTANTS.DEFAULT_OPENAI_MAX_RETRIES),
 
     // Database Configuration

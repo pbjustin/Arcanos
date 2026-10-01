@@ -13,6 +13,24 @@ describe('structured reasoning service wrapper', () => {
     runStructuredReasoningGenericMock.mockReset();
   });
 
+  it.each([
+    ['gpt-6-luna', 'none', 'none'],
+    ['gpt-6-luna', 'minimal', 'low'],
+    ['gpt-6.1-sol', 'none', 'low'],
+    ['gpt-6.1-sol', 'minimal', 'low'],
+  ] as const)('normalizes %s structured reasoning effort %s', async (model, requested, expected) => {
+    runStructuredReasoningGenericMock.mockResolvedValue({ final_answer: 'synthetic answer' });
+    const budget = { startedAt: 0, hardDeadline: 60_000, watchdogLimit: 60_000, safetyBuffer: 0 };
+    await runStructuredReasoning({} as never, model, 'synthetic prompt', budget, 500, {
+      schemaVariant: 'compact', reasoningEffort: requested, maxOutputTokens: 500,
+    });
+    expect(runStructuredReasoningGenericMock).toHaveBeenCalledTimes(1);
+    expect(runStructuredReasoningGenericMock).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      model, reasoningEffort: expected, budget, timeoutMs: 500, maxOutputTokens: 500,
+      validate: expect.any(Function),
+    }));
+  });
+
   it('forwards provider-compatible effort and output cap to the shared helper', async () => {
     runStructuredReasoningGenericMock.mockResolvedValue({
       response_mode: 'answer',

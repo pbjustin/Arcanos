@@ -29,7 +29,7 @@ import {
   type AuditLogEntry
 } from "@services/auditSafe.js";
 import { getMemoryContext, storePattern } from "@services/memoryAware.js";
-import { getGPT5Model, getTrinityReasoningModel } from "@services/openai/credentialProvider.js";
+import { getTrinityIntakeModel, getTrinityFinalModel, getTrinityFinalEscalationModel, getTrinityReasoningModel } from "@services/openai/credentialProvider.js";
 import { logger } from "@platform/logging/structuredLogging.js";
 import { getAiExecutionContext } from '@services/openai/aiExecutionContext.js';
 import type {
@@ -817,7 +817,7 @@ export async function runThroughBrain(
 
   if (options.dryRun) {
     const { userPrompt: auditSafePrompt, auditFlags } = applyAuditSafeConstraints('', prompt, auditConfig);
-    const dryRunPreview = buildDryRunPreview(requestId, prompt, auditSafePrompt, capabilityFlags, auditFlags, memoryContext.relevantEntries.length, auditConfig.auditSafeMode, options.dryRunReason);
+    const dryRunPreview = buildDryRunPreview(requestId, prompt, auditSafePrompt, capabilityFlags, auditFlags, memoryContext.relevantEntries.length, auditConfig.auditSafeMode, options.dryRunReason, tier === 'simple' ? 'routine' : 'escalation');
     return buildDryRunTrinityResult(
       requestId,
       dryRunPreview,
@@ -1012,7 +1012,8 @@ export async function runThroughBrain(
 
       logArcanosRouting(
         'DIRECT_ANSWER',
-        getGPT5Model(),
+        options.directAnswerModelOverride ?? (directAnswerOptions.recovery || tier !== 'simple'
+          ? getTrinityFinalEscalationModel() : getTrinityFinalModel()),
         `Tier: ${tier}, Input length: ${prompt.length}, Memory entries: ${memoryContext.relevantEntries.length}, AuditSafe: ${auditConfig.auditSafeMode}`
       );
       if (!routingStages.includes(TRINITY_DIRECT_ANSWER_STAGE)) {
@@ -1050,7 +1051,8 @@ export async function runThroughBrain(
               cognitiveDomain,
               runtimeBudget,
               requestId,
-              options.directAnswerModelOverride,
+              options.directAnswerModelOverride ?? (directAnswerOptions.recovery || tier !== 'simple'
+                ? getTrinityFinalEscalationModel() : getTrinityFinalModel()),
               options.directAnswerTokenLimitOverride,
               stageTimeoutOverrideMs,
               options.preserveAggregateAbortContext,
@@ -1277,7 +1279,7 @@ export async function runThroughBrain(
                 cognitiveDomain,
                 runtimeBudget,
                 requestId,
-                options.directAnswerModelOverride,
+                options.directAnswerModelOverride ?? getTrinityFinalEscalationModel(),
                 approvedRepairDecision.tokenLimit,
                 approvedRepairDecision.timeoutMs,
                 false,
@@ -1927,7 +1929,10 @@ export async function runThroughBrain(
               cognitiveDomain,
               internalDirective,
               runtimeBudget,
-              stageTimeoutOverrideMs
+              stageTimeoutOverrideMs,
+              tier !== 'simple' || arcanosModel !== getTrinityIntakeModel()
+                || intakeOutput.fallbackUsed || reasoningOutput.fallbackUsed
+                ? 'escalation' : 'routine'
             )
         });
       } catch (error) {

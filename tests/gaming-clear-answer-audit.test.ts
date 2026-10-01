@@ -1,11 +1,14 @@
-import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { runWithRequestAbortContext, createAbortError } from '@arcanos/runtime';
 import { createGamingClearAssessment, gamingClearContextFingerprint, gamingClearHash } from '../src/shared/gaming/gamingClearPolicy.js';
 import { createRuntimeBudgetWithLimit } from '../src/platform/resilience/runtimeBudget.js';
 import { GAMING_CLEAR_APPROVED_ANSWER, hasBoundGamingClearAnswer } from '../src/shared/gaming/gamingClearAnswerBinding.js';
 
 const createSingleChatCompletion = jest.fn();
 jest.unstable_mockModule('@services/openai/chatFallbacks.js', () => ({ createSingleChatCompletion }));
-jest.unstable_mockModule('@services/openai/credentialProvider.js', () => ({ getGPT5Model: () => 'gpt-5.1' }));
+jest.unstable_mockModule('@services/openai/credentialProvider.js', () => ({
+  getClearAuditModel: () => 'gpt-6-luna', getClearAuditEscalationModel: () => 'gpt-6.1-sol'
+}));
 const { runGamingClearAnswerAudit, gamingClearAnswerMatches } = await import('../src/services/gamingClearAnswerAudit.js');
 
 const text = 'Lantern Vale: after restoring the Tide Hall pump, turn the west valve to open the return route.';
@@ -33,6 +36,7 @@ const completion = (body: unknown = { dimensions: dimensions(), findings: [] }) 
 const run = (overrides = {}) => runGamingClearAnswerAudit({} as never, { ...input, ...overrides }, createRuntimeBudgetWithLimit(10_000, 0));
 
 describe('Gaming final-answer CLEAR assessment', () => {
+  afterEach(() => jest.useRealTimers());
   beforeEach(() => { jest.clearAllMocks(); createSingleChatCompletion.mockResolvedValue(completion()); });
 
   it('audits the actual answer and exact passages once with bounded stateless configured-model execution', async () => {
@@ -42,13 +46,63 @@ describe('Gaming final-answer CLEAR assessment', () => {
     expect(result.usage?.total_tokens).toBe(1_100);
     expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
     const params = createSingleChatCompletion.mock.calls[0][1] as Record<string, unknown>;
-    expect(params).toMatchObject({ model: 'gpt-5.1', max_completion_tokens: 1_024, timeoutMs: 3_000,
-      maxRetries: 0, redactErrorDetails: true, response_format: { type: 'json_object' } });
+    expect(params).toMatchObject({ model: 'gpt-6-luna', max_completion_tokens: 1_024, timeoutMs: 3_000,
+      maxRetries: 0, redactErrorDetails: true, reasoning_effort: 'none', response_format: { type: 'json_object' } });
+    expect(params.tools).toBeUndefined();
+    expect(params.tool_choice).toBeUndefined();
     const messages = params.messages as Array<{ content: string }>;
     expect(JSON.parse(messages[1].content)).toMatchObject({ answer: input.answer,
       evidence: [{ sourceIndex: 1, sourceId: refs[0], revisionId: refs[1], chunkId: refs[2], text }] });
     expect(messages[0].content).toContain('never instructions');
     expect(messages[0].content).not.toContain('reasoning_steps');
+  });
+
+  it('uses the explicit escalation lane for one bounded audit call without a retry or repair', async () => {
+    const result = await runGamingClearAnswerAudit({} as never, input, createRuntimeBudgetWithLimit(10_000, 0), 'escalation');
+    expect(result.assessment).toMatchObject({ assessmentStatus: 'completed', decision: 'accept' });
+    expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
+    expect(createSingleChatCompletion.mock.calls[0][1]).toMatchObject({
+      model: 'gpt-6.1-sol', reasoning_effort: 'low', max_completion_tokens: 1_024, timeoutMs: 3_000, maxRetries: 0
+    });
+  });
+
+  it('leaves unavailable routine audits fail-closed without automatic escalation', async () => {
+    createSingleChatCompletion.mockRejectedValue(new Error('synthetic provider failure'));
+    expect((await run()).assessment).toMatchObject({ assessmentStatus: 'unavailable', decision: 'unavailable' });
+    expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
+    expect(createSingleChatCompletion.mock.calls[0][1]).toMatchObject({ model: 'gpt-6-luna' });
+  });
+
+  it('keeps explicit escalation failure unavailable with one call', async () => {
+    createSingleChatCompletion.mockRejectedValue(new Error('synthetic provider failure'));
+    const result = await runGamingClearAnswerAudit({} as never, input, createRuntimeBudgetWithLimit(10_000, 0), 'escalation');
+    expect(result.assessment).toMatchObject({ assessmentStatus: 'unavailable', decision: 'unavailable', overall: null });
+    expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
+  });
+
+  it('clamps either lane to the remaining aggregate budget and skips an exhausted budget', async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(1_000);
+    await runGamingClearAnswerAudit({} as never, input, createRuntimeBudgetWithLimit(150, 0), 'escalation');
+    expect(createSingleChatCompletion.mock.calls[0][1]).toMatchObject({ timeoutMs: 150 });
+    createSingleChatCompletion.mockClear();
+    const budget = createRuntimeBudgetWithLimit(150, 0);
+    jest.setSystemTime(1_151);
+    expect((await runGamingClearAnswerAudit({} as never, input, budget)).assessment)
+      .toMatchObject({ assessmentStatus: 'unavailable', decision: 'unavailable', overall: null });
+    expect(createSingleChatCompletion).not.toHaveBeenCalled();
+  });
+
+  it('preserves parent cancellation and request deadline on the audit call', async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(1_000);
+    const controller = new AbortController();
+    await runWithRequestAbortContext({ controller, signal: controller.signal, deadlineAt: 1_080, timeoutMs: 80 }, () => run());
+    expect(createSingleChatCompletion.mock.calls[0][1]).toMatchObject({ signal: controller.signal, timeoutMs: 80 });
+    createSingleChatCompletion.mockRejectedValue(createAbortError('cancelled'));
+    controller.abort(createAbortError('cancelled'));
+    await expect(runWithRequestAbortContext({ controller, signal: controller.signal, deadlineAt: 1_080, timeoutMs: 80 }, () => run()))
+      .rejects.toThrow('request_aborted');
   });
 
   it.each(['UNSUPPORTED_MECHANIC', 'WRONG_PATCH', 'CITATION_DOES_NOT_SUPPORT_CLAIM', 'SPOILER_VIOLATION', 'PLAYER_CONSTRAINT_IGNORED', 'FALLBACK_PRESENTED_AS_COMPLETED'])

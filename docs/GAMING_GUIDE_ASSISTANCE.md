@@ -538,10 +538,12 @@ unavailable audits use honest recovery rather than recursively requesting new
 answers. This keeps the one-round/three-candidate discovery bounds. Source and
 evidence assessments are deterministic and add zero model calls or network
 requests. Gaming uses at most one final-answer audit in place of its prior ledger
-audit; it uses the configured existing reasoning model and provider adapter,
+audit; it uses `CLEAR_AUDIT_MODEL` (default `gpt-6-luna`, after explicit
+legacy GPT5/GPT51 rollback selectors) and the existing provider adapter,
 with no tools or browsing, transport retries fixed to zero and the existing audit deadline
-capped by the remaining aggregate request/runtime budget. No production model,
-timeout, environment variable or deployment setting is changed.
+capped by the remaining aggregate request/runtime budget. The trusted internal `modelLane` seam can select `CLEAR_AUDIT_ESCALATION_MODEL`
+for the same single call; automatic escalation is disabled. This code change
+does not modify deployed Railway variables or deployment state.
 
 The final audit permits only server-owned `STYLE_CONCISION`, `STYLE_REPETITION`
 and `STYLE_PRESENTATION` warning codes to remain nonblocking. Every other answer

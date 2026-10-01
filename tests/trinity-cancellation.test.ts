@@ -18,6 +18,11 @@ const mockGetMemoryContext = jest.fn(() => ({
 }));
 
 jest.unstable_mockModule('@services/openai/credentialProvider.js', () => ({
+  getTrinityIntakeModel: () => 'arcanos-intake-model',
+  getTrinityFinalModel: () => 'arcanos-final-model',
+  getTrinityFinalEscalationModel: () => 'arcanos-final-model',
+  getClearAuditModel: () => 'gpt-5.1',
+  getClearAuditEscalationModel: () => 'gpt-5.1',
   resolveOpenAIBaseURL: () => undefined,
   resolveOpenAIKey: () => null,
   getOpenAIKeySource: () => 'test',

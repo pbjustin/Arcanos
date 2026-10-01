@@ -50,6 +50,10 @@ import {
   reserveWorkerAiProviderAttempt,
   WORKER_BUDGET_NON_JOB_SUBJECT_ID
 } from '@core/db/repositories/workerBudgetRepository.js';
+import {
+  normalizeOpenAIModelReasoningEffort,
+  resolveOpenAIModelCapabilities,
+} from '@shared/gpt/trinityReasoningPolicy.js';
 
 /**
  * OpenAI adapter configuration
@@ -571,6 +575,38 @@ export function normalizeResponsesCreateParams(
 ): ResponseCreateParamsNonStreaming {
   const normalized = { ...params } as ResponseCreateParamsNonStreaming & { max_completion_tokens?: number };
 
+  const model = typeof normalized.model === 'string' ? normalized.model : '';
+  const capabilities = resolveOpenAIModelCapabilities(model);
+  if (capabilities.normalizeReasoningRequests) {
+    let effort = normalized.reasoning?.effort ?? capabilities.defaultReasoningEffort;
+    if (effort !== undefined) {
+      try {
+        effort = normalizeOpenAIModelReasoningEffort(model, effort);
+      } catch (error) {
+        throw new OpenAIRequestValidationError(
+          error instanceof Error ? error.message : 'Invalid model reasoning effort.'
+        );
+      }
+      if (normalized.reasoning?.effort) {
+        normalized.reasoning = { ...normalized.reasoning, effort };
+      }
+    }
+
+    // Omitted effort uses GPT-6's medium default. Sampling/logprob parameters
+    // are valid only with disabled reasoning; normalize after effort is known.
+    if (effort !== 'none') {
+      delete normalized.temperature;
+      delete normalized.top_p;
+      // Strip untyped legacy fields as well; they are not SDK Responses fields.
+      const legacyFields = normalized as unknown as Record<string, unknown>;
+      delete legacyFields.top_logprobs;
+      delete legacyFields.logprobs;
+      if (normalized.include) {
+        normalized.include = normalized.include.filter(item => item !== 'message.output_text.logprobs');
+      }
+    }
+  }
+
   if (typeof normalized.max_output_tokens === 'number') {
     normalized.max_output_tokens = Math.max(MIN_RESPONSE_TOKENS, Math.floor(normalized.max_output_tokens));
   }
@@ -644,6 +680,14 @@ function buildResponsesRequestFromChatParams(
   }
   if (typeof params.top_p === 'number') {
     payload.top_p = params.top_p;
+  }
+  // Preserve scoped reasoning controls when a legacy chat request uses the
+  // canonical Responses adapter path. Existing unrelated chat requests omit it.
+  if (
+    resolveOpenAIModelCapabilities(params.model).normalizeReasoningRequests
+    && typeof params.reasoning_effort === 'string'
+  ) {
+    payload.reasoning = { effort: params.reasoning_effort };
   }
   if (typeof maxOutputTokens === 'number' && Number.isFinite(maxOutputTokens)) {
     payload.max_output_tokens = maxOutputTokens;
