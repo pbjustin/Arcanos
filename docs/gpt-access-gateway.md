@@ -335,9 +335,9 @@ $env:ARCANOS_GPT_ACCESS_SCOPES = "runtime.read,workers.read,queue.read,jobs.crea
 npm run dev
 ```
 
-For live async Trinity execution, also configure a database and OpenAI key in the API and worker environments:
+For live async Trinity execution, also configure a database, OpenAI key and fine-tune authority in the API and worker environments:
 
-Set `OPENAI_API_KEY` and `DATABASE_URL` in the API and worker runtime environments.
+Set `OPENAI_API_KEY`, `DATABASE_URL` and one valid [fine-tune authority alias](CONFIGURATION.md#default-model-resolution-order) in each runtime environment. Each service retains its own configured authority identity.
 
 Use placeholders in docs. Store real values only in local `.env` files, deployment variables, or secret managers.
 
@@ -349,7 +349,7 @@ The optional LLM resolver is a semantic planner only. It never calls backend rou
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `GPT_ACCESS_NL_DISPATCH_MODE` | unset | When unset, the gateway uses `hybrid` if a real resolved OpenAI key is configured, otherwise `rules`. `rules` keeps deterministic rule-only behavior. `hybrid` tries rules first, then LLM only when rules need clarification. `llm_first` tries LLM first and falls back to rules only when the LLM cannot run or returns invalid output. Invalid values resolve to `rules`. |
-| `GPT_ACCESS_DISPATCH_MODEL` | `gpt-4.1-mini` | Responses API model used only by the semantic planner. This does not follow the general `OPENAI_MODEL` fallback chain. |
+| `GPT_ACCESS_DISPATCH_MODEL` | shared intake: `gpt-6-luna` | Optional confirmation of the shared intake model used only by the semantic planner. Conflicting overrides fail before transport; existing deterministic fallback, scope policy and confirmation checks still apply. This setting cannot select final authority. |
 | `GPT_ACCESS_DISPATCH_LLM_TIMEOUT_MS` | `5000` | Per-dispatch LLM planning timeout, capped at `10000`. Invalid or non-positive values use `5000`. Timeout/failure never executes an LLM plan; execution can continue only through a deterministic rule plan that passes policy and confirmation. |
 
 `GET /gpt-access/health`, `runtime.inspect`, and deep diagnostics include sanitized `nlDispatch` fields: `mode`, `effectiveMode`, `llmEnabled`, `model`, `timeoutMs`, and `reasonIfDisabled`. They do not expose keys, prompts, headers, raw utterances, or cross-request resolver state.

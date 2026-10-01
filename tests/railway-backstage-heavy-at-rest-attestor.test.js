@@ -7,6 +7,7 @@ import {
 } from '../scripts/railway-backstage-heavy-at-rest-attestor.mjs';
 import {
   BACKSTAGE_HEAVY_OPENAI_FIXTURE_COMPLETED_OUTPUT,
+  BACKSTAGE_HEAVY_OPENAI_FIXTURE_MODEL_ID,
   BACKSTAGE_HEAVY_OPENAI_FIXTURE_PARTIAL_OUTPUT,
   BACKSTAGE_HEAVY_OPENAI_FIXTURE_PROMPT_SENTINEL,
   BACKSTAGE_HEAVY_OPENAI_FIXTURE_SDK_KEY,
@@ -344,6 +345,7 @@ describe('Backstage heavy at-rest attestor', () => {
     expect(client.queries[3].sql).toContain('WITH target AS');
     expect(client.queries[3].sql).toContain('FROM public.job_data');
     expect(client.queries[3].sql).toContain('FROM public.job_events');
+    expect(client.queries[3].sql).toContain("metadata->>'model' IS DISTINCT FROM $9::text");
     expect(client.queries[3].sql).not.toMatch(
       /\b(?:ALTER|CREATE|DELETE|DROP|INSERT|TRUNCATE|UPDATE)\b/iu
     );
@@ -356,6 +358,7 @@ describe('Backstage heavy at-rest attestor', () => {
       BACKSTAGE_HEAVY_OPENAI_FIXTURE_COMPLETED_OUTPUT,
       'backstage-heavy-proof-worker-v1',
       `fixture-${RUN_ID}`,
+      BACKSTAGE_HEAVY_OPENAI_FIXTURE_MODEL_ID,
     ]);
     expect(client.queries[4]).toEqual({ sql: 'ROLLBACK', params: undefined });
 
@@ -402,6 +405,24 @@ describe('Backstage heavy at-rest attestor', () => {
     expect(client.queries.filter(({ sql }) => sql === 'ROLLBACK'))
       .toHaveLength(2);
     expect(client.ended).toBe(1);
+  });
+
+  it('retains zero tolerance for any provider model mismatch in durable evidence', async () => {
+    const config = resolveBackstageHeavyAtRestConfig(buildArguments({ execute: true }));
+    const harness = createSuccessfulClientHarness(completeDatabaseEvidence({
+      ai_model_mismatch_count: 1,
+    }));
+    const fetchImpl = jest.fn();
+    let currentTime = 0;
+    await expect(runBackstageHeavyAtRestAttestor(config, {
+      Client: harness.Client,
+      env: buildRuntimeEnvironment(),
+      fetchImpl,
+      now: () => currentTime,
+      sleep: async () => { currentTime = 15_000; },
+    })).rejects.toThrow('BACKSTAGE_HEAVY_AT_REST_DATABASE_EVIDENCE_INCOMPLETE');
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(harness.instances[0].ended).toBe(1);
   });
 
   it('maps database query errors to a stable redacted failure', async () => {

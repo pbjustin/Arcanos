@@ -401,11 +401,11 @@ final calls use the same authority for the executing service. `FALLBACK_MODEL`,
 These are source-defined selectors, not evidence of a deployed model or provider
 availability (`src/platform/runtime/unifiedConfig.ts`, `getConfig`). Web and
 worker can retain different configured fine-tune identities; this policy does
-not hardcode either identity or reconcile production values. The
-`GPT_FAST_PATH_MODEL` compatibility setting is parsed in
-`src/shared/gpt/gptFastPath.ts`, but `executeFastGptPrompt` in
-`src/services/gptFastPath.ts` does not pass it into Trinity. The inline lane
-therefore uses the applicable Trinity selectors rather than that setting.
+not hardcode either identity or reconcile production values.
+`GPT_FAST_PATH_MODEL` is ignored and is no longer read by
+`src/shared/gpt/gptFastPath.ts`. Fast-path classification keeps its existing
+eligibility rules; `executeFastGptPrompt` in `src/services/gptFastPath.ts` uses
+the shared policy's configured fine-tune for inline authoritative output.
 
 ### Trinity and CLEAR model lanes
 

@@ -82,6 +82,7 @@ export function buildChildEnvironment(parentEnv, options) {
     CI: 'true', NODE_ENV: 'test', LOG_LEVEL: 'error',
     DISABLE_EXTERNAL_CALLS: 'true', USE_MOCK_SERVICES: 'true', RUN_WORKERS: 'false',
     OPENAI_API_KEY: 'test-ios-e2e-provider-placeholder',
+    FINETUNED_MODEL_ID: 'ft:synthetic:test:ios-device-e2e-authority',
     IOS_DEVICE_E2E: '1',
     IOS_DEVICE_E2E_DATABASE_URL: options.databaseUrl,
     IOS_DEVICE_E2E_SWIFT_BINARY: options.swiftBinary,

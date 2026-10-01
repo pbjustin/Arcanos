@@ -40,6 +40,8 @@ jobs:
           export OPENAI_API_KEY=mock-api-key
           export FORCE_MOCK=true
           export OPENAI_BASE_URL=http://127.0.0.1:9/v1
+          # Synthetic authority for this mocked normal-server startup only.
+          export AI_MODEL=ft:gpt-4.1-2025-04-14:arcanos-test:authority:offline
           export ARCANOS_CONTROL_PLANE_ACCESS_TOKEN=ci-codebase-route-smoke-7d3e9f2c8a1b4d6f
           export ARCANOS_CONTROL_PLANE_PRINCIPAL_ID=operator:ci-codebase-smoke
           export ARCANOS_CONTROL_PLANE_SCOPES=repo:read

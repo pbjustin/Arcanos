@@ -16,7 +16,10 @@ import {
   isBackstageBookerCompactRetryOutputValid,
   resolveBackstageCompactOutputContract,
 } from '../src/shared/backstage/backstageCompactOutputContract.js';
-import { BACKSTAGE_HEAVY_OPENAI_FIXTURE_COMPLETED_OUTPUT } from '../scripts/railway-backstage-heavy-openai-fixture.mjs';
+import {
+  BACKSTAGE_HEAVY_OPENAI_FIXTURE_COMPLETED_OUTPUT,
+  BACKSTAGE_HEAVY_OPENAI_FIXTURE_MODEL_ID,
+} from '../scripts/railway-backstage-heavy-openai-fixture.mjs';
 
 const ID = {
   project: '11111111-1111-4111-8111-111111111111',
@@ -415,10 +418,12 @@ describe('Backstage heavy network proof', () => {
       promptCodeUnits: prompt.length,
       retrievedContextCodeUnits: 0,
       expectedOutputWords: 600,
-      model: 'gpt-5.1',
+      model: BACKSTAGE_HEAVY_OPENAI_FIXTURE_MODEL_ID,
+      finalAuthorityModel: BACKSTAGE_HEAVY_OPENAI_FIXTURE_MODEL_ID,
       modelStageTimeoutMs: 80_000,
     });
     expect(budget).toMatchObject({
+      modelCapability: 'configured_authority',
       budgetClass: 'queued_extended',
       tokenLimit: 6_000,
       tokenCap: 6_000,
@@ -437,6 +442,22 @@ describe('Backstage heavy network proof', () => {
       `${BACKSTAGE_HEAVY_OPENAI_FIXTURE_COMPLETED_OUTPUT}\n7. A seventh fictional item is forbidden.`,
       compactContract
     )).toBe(false);
+  });
+
+  it.each([
+    [80_000, 6_000, 6_000], [45_000, 6_000, 4_000], [60_000, 6_000, 5_000],
+    [80_000, Number.MAX_SAFE_INTEGER, 8_000],
+  ])('keeps the configured fixture authority bounded at stage %s and configured limit %s', (modelStageTimeoutMs, configuredWorkerTokenLimit, tokenLimit) => {
+    const budget = resolveBackstageOutputBudget({
+      action: 'generateBooking', profile: 'queued_generation', requestedFormat: 'structured_booking',
+      requestedTokenLimit: 2400, configuredWorkerTokenLimit,
+      promptCodeUnits: 1600, retrievedContextCodeUnits: 0, expectedOutputWords: 600,
+      model: BACKSTAGE_HEAVY_OPENAI_FIXTURE_MODEL_ID,
+      finalAuthorityModel: BACKSTAGE_HEAVY_OPENAI_FIXTURE_MODEL_ID,
+      modelStageTimeoutMs,
+    });
+    expect(budget).toMatchObject({ modelCapability: 'configured_authority', tokenLimit, tokenCap: tokenLimit });
+    expect(budget.tokenLimit).toBeLessThanOrEqual(8000);
   });
 
   it('attests exact four-service, two-volume, secret-isolated topology', () => {

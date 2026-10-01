@@ -17,6 +17,7 @@ import {
   BACKSTAGE_HEAVY_OPENAI_FIXTURE_BASE_URL,
   BACKSTAGE_HEAVY_OPENAI_FIXTURE_COMPLETED_OUTPUT,
   BACKSTAGE_HEAVY_OPENAI_FIXTURE_MARKER,
+  BACKSTAGE_HEAVY_OPENAI_FIXTURE_MODEL_ID,
   BACKSTAGE_HEAVY_OPENAI_FIXTURE_PARTIAL_OUTPUT,
   BACKSTAGE_HEAVY_OPENAI_FIXTURE_PROMPT_SENTINEL,
   BACKSTAGE_HEAVY_OPENAI_FIXTURE_SDK_KEY,
@@ -123,7 +124,7 @@ events AS (
     )::integer AS worker_mismatch_count,
     COUNT(*) FILTER (
       WHERE event_type IN ('ai.request.started', 'ai.request.completed')
-      AND metadata->>'model' IS DISTINCT FROM 'gpt-5.1'
+      AND metadata->>'model' IS DISTINCT FROM $9::text
     )::integer AS ai_model_mismatch_count,
     COUNT(*) FILTER (
       WHERE event_type IN ('ai.request.started', 'ai.request.completed')
@@ -581,6 +582,7 @@ async function readDatabaseEvidence(
         BACKSTAGE_HEAVY_OPENAI_FIXTURE_COMPLETED_OUTPUT,
         EXPECTED_WORKER_ID,
         `fixture-${config.runId}`,
+        BACKSTAGE_HEAVY_OPENAI_FIXTURE_MODEL_ID,
       ]);
       row = result.rows?.[0] ?? null;
       await client.query('ROLLBACK');

@@ -14,6 +14,7 @@ import {
 
 import {
   BACKSTAGE_HEAVY_OPENAI_FIXTURE_CHILD_ARGUMENT,
+  BACKSTAGE_HEAVY_OPENAI_FIXTURE_MODEL_ID,
   BACKSTAGE_HEAVY_OPENAI_FIXTURE_READY_SENTINEL,
   BACKSTAGE_HEAVY_OPENAI_FIXTURE_SDK_KEY,
 } from '../scripts/railway-backstage-heavy-openai-fixture.mjs';
@@ -28,6 +29,7 @@ import {
   resolveBackstageHeavyProofTargetOrThrow,
   runBackstageHeavyProofSupervisor,
 } from '../scripts/railway-backstage-heavy-proof-supervisor.mjs';
+import { resolveGenerativeModel } from '../src/services/openai/credentialProvider.js';
 
 const IDS = {
   project: '11111111-1111-4111-8111-111111111111',
@@ -320,7 +322,7 @@ describe('one-shot Backstage heavy Railway proof supervisor', () => {
         'postgresql://proof-user:proof-password@postgres.railway.internal:5432/railway?sslmode=no-verify',
       OPENAI_API_KEY: BACKSTAGE_HEAVY_OPENAI_FIXTURE_SDK_KEY,
       OPENAI_MAX_RETRIES: '0',
-      GPT5_MODEL: 'gpt-5.1',
+      FINETUNED_MODEL_ID: BACKSTAGE_HEAVY_OPENAI_FIXTURE_MODEL_ID,
       BOOKER_WORKER_GENERATION_STAGE_TIMEOUT_MS: '80000',
       BOOKER_WORKER_TOKEN_LIMIT: '6000',
       JOB_EVENT_RECORD_HEARTBEATS: 'true',
@@ -351,6 +353,7 @@ describe('one-shot Backstage heavy Railway proof supervisor', () => {
 
     expect(child).toMatchObject({
       OPENAI_API_KEY: BACKSTAGE_HEAVY_OPENAI_FIXTURE_SDK_KEY,
+      FINETUNED_MODEL_ID: BACKSTAGE_HEAVY_OPENAI_FIXTURE_MODEL_ID,
       OPENAI_BASE_URL: 'http://127.0.0.1:9/v1',
       OPENAI_MAX_RETRIES: '0',
     });
@@ -361,6 +364,36 @@ describe('one-shot Backstage heavy Railway proof supervisor', () => {
       ...environment,
       OPENAI_API_KEY: BACKSTAGE_HEAVY_OPENAI_FIXTURE_SDK_KEY,
     })).toThrow(/BACKSTAGE_HEAVY_/u);
+  });
+
+  it.each(['worker', 'web'])('resolves the synthetic authority through the real central policy for the isolated %s child', processKind => {
+    const environment = {
+      ...buildEnvironment(processKind),
+      FINETUNED_MODEL_ID: 'ft:synthetic:ambient-authority',
+    };
+    const target = resolveBackstageHeavyProofTargetOrThrow(processKind, environment);
+    const child = buildBackstageHeavyApplicationChildEnvironment(target, environment);
+    const previousAuthority = process.env.FINETUNED_MODEL_ID;
+    try {
+      process.env.FINETUNED_MODEL_ID = child.FINETUNED_MODEL_ID;
+      expect(resolveGenerativeModel('final')).toBe(BACKSTAGE_HEAVY_OPENAI_FIXTURE_MODEL_ID);
+      expect(resolveGenerativeModel('final-escalation')).toBe(BACKSTAGE_HEAVY_OPENAI_FIXTURE_MODEL_ID);
+      expect(resolveGenerativeModel('intake')).toBe('gpt-6-luna');
+      expect(resolveGenerativeModel('reasoning')).toBe('gpt-6.1-sol');
+      expect(() => resolveGenerativeModel('final', 'gpt-6.1-sol')).toThrow(/model override conflicts/);
+      expect(child).not.toHaveProperty('GPT5_MODEL');
+      expect(child).not.toHaveProperty('GPT51_MODEL');
+      expect(child).not.toHaveProperty('OPENAI_MODEL');
+      expect(child).not.toHaveProperty('RAILWAY_OPENAI_MODEL');
+      expect(environment.FINETUNED_MODEL_ID).toBe('ft:synthetic:ambient-authority');
+      expect(environment).not.toHaveProperty('OPENAI_API_KEY');
+      expect(child.OPENAI_BASE_URL).toBe(environment.OPENAI_BASE_URL);
+      expect(child.FORCE_MOCK).toBe('true');
+      expect(child.ALLOW_MOCK_OPENAI).toBe('true');
+    } finally {
+      if (previousAuthority === undefined) delete process.env.FINETUNED_MODEL_ID;
+      else process.env.FINETUNED_MODEL_ID = previousAuthority;
+    }
   });
 
   it('derives the TLS compatibility mode only for validated application children', () => {
