@@ -433,7 +433,7 @@ Launcher behavior:
   and [sealed Tutor evidence](audits/chatgpt-migration/2026-09-23-sealed-tutor.md)
   document these checks and their limits. This is synthetic transport evidence;
   real Tutor/OAuth and installed ChatGPT behavior require separate evidence.
-  The current verifier includes 19 Tutor cases for 157 bounded requests; earlier
+  The current verifier includes 19 Tutor cases in its 161 bounded requests; earlier
   138-request compatibility references describe the pre-Tutor baseline. The
   trusted workflow uses its own default-branch revision. New PR-head assertions
   require a reviewed exact-head supplemental run on the same independently
@@ -471,13 +471,36 @@ Launcher behavior:
   boundaries and cannot read private files, accounts, storage or credentials.
   The existing 156 requests remain compatible with the trusted main verifier;
   the exact-head verifier adds one valid JSON body of 4,097 bytes to test the
-  existing 4 KiB cap, for 157 requests with unchanged time/response limits and no
+  existing 4 KiB cap, taking the pre-model-policy matrix to 157 requests with unchanged time/response limits and no
   retries. All non-success responses must omit the migration marker.
   This proves the deployed package-core seam, not complete schema validation,
   private composition/revision authorization, archive parsing or current-release
   reconciliation. Those remain local/CI and artifact evidence. See the
   [migration handoff](chatgpt-migration/TUTOR_MIGRATION.md#sealed-preview-evidence-boundaries)
   for the classification and exact-head run record.
+- The exact `GET /models/generative-contract` route executes the
+  [model-policy fixture](../src/shared/gpt/generativeModelPolicyPreviewFixture.ts)
+  against the [pure production core](../src/shared/gpt/generativeModelPolicyCore.ts)
+  also used by the backend credential resolver and raw provider-response guard.
+  Fixed synthetic inputs verify all six role selections, matching overrides,
+  helper admission without final authority, missing/malformed final authority,
+  rejected overrides, exact case-sensitive fine-tune reply identity, helper
+  snapshots, and missing/mismatched raw identities. Rejected model admission
+  never reaches the fixture's synthetic downstream boundary. Complete success
+  alone earns `x-arcanos-preview-generative-model-policy-version:
+  shared-generative-model-policy/v1`; the 4 KiB report includes the PR and commit
+  identity. Readiness runs the same assertions before all success markers while
+  preserving the trusted verifier's response body. Failure returns a fixed error
+  without the report or proof marker; worker, query and method denials cannot
+  earn proof. Source semantic pins and exact compiled imports keep configuration,
+  credentials, SDK, provider and normal Trinity execution outside this graph.
+  The supplemental verifier adds four requests for a total of 161, requires the
+  marker at readiness, compares the complete report, and checks worker/query/POST
+  denials with unchanged time and aggregate response bounds and no retries.
+  This is served component evidence for the production policy and identity
+  primitives. The separate app/SDK/Trinity E2E fixtures cover their actual
+  composition using synthetic loopback providers; preview proof does not establish
+  live provider or production acceptance.
 - The trusted
   [Railway PR preview lifecycle workflow](../.github/workflows/railway-pr-preview-lifecycle.yml)
   owns preview creation and teardown for PRs carrying the exact
@@ -516,7 +539,7 @@ Launcher behavior:
   adds a selector must therefore execute its exact-head verifier separately
   against the lifecycle-created hosts until that verifier reaches the default
   branch. After the lifecycle reports the exact preview hosts, execute the
-  current 157-request PR-head probe with both network flags from a separate, clean
+  current 161-request PR-head probe with both network flags from a separate, clean
   checkout of the revalidated exact PR head. This supplemental run is
   credential-free and explicitly covers its contract's PR-head selectors and worker
   denials; it has no Railway create, ownership, or cleanup authority.
@@ -729,7 +752,7 @@ Environment variables:
 | `ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_KEY` | Required on both web and worker for any job-backed Booker generation | Canonical base64 for exactly 32 random bytes, distinct from all other credentials. It seals private queue input and output; never put it in Builder, requests, logs, or source. Rotate in worker-first deployment order: both roles K1 current/K2 previous, then worker K2 current/K1 previous, then web K2 current/K1 previous. |
 | `ARCANOS_BACKSTAGE_BOOKER_JOB_PAYLOAD_PREVIOUS_KEY` | Optional on web and worker during key rotation | Decryption-only previous 32-byte base64 key. Retain through the maximum protected-job retention window, then remove. |
 | `BOOKER_CONTINUITY_STAGE_TIMEOUT_MS` | Optional; defaults 20000 | Lightweight synchronous continuity provider stage, clamped to 1000-25000 ms. |
-| `BOOKER_WORKER_TOKEN_LIMIT` | Optional on worker; defaults 6000 | Protected queued production-generation output budget, clamped to 4000-8000 and further constrained by the compatible GPT-5.1/GPT-5.6 request contract and remaining finite primary-stage tier. Review, continuity, unsupported-model, synchronous rollback, and genuinely small compact calls retain smaller caps. Explicit compact presentation remains enforced when other workload signals require production capacity. |
+| `BOOKER_WORKER_TOKEN_LIMIT` | Optional on worker; defaults 6000 | Protected queued production-generation output budget, clamped to 4000-8000 and further constrained by exact server-configured fine-tune authority eligibility and the remaining finite primary-stage tier. Other fine-tunes, Sol, or invalid authority retain baseline eligibility. Review, continuity, unsupported-model, synchronous rollback, and genuinely small compact calls retain smaller caps. Explicit compact presentation remains enforced when other workload signals require production capacity. |
 | `BOOKER_WORKER_JOB_TIMEOUT_MS` | Optional on worker; defaults 180000 | Finite protected-generation deadline anchored to durable first execution start, clamped to 120000-180000 ms, with 30000 ms orchestration headroom and 10000 ms reserved for terminal result persistence, including a finite 2000 ms cooperative abort drain. |
 | `BOOKER_WORKER_GENERATION_STAGE_TIMEOUT_MS` | Optional on worker; defaults 80000 | Protected-generation primary provider stage, clamped to 45000-90000 ms and shortened to fit the job plan. |
 | `BOOKER_REPAIR_STAGE_TIMEOUT_MS` | Optional on worker; defaults 45000 | One bounded protected-generation recovery stage, clamped to 10000-45000 ms and skipped when time or output budget is insufficient. |
@@ -758,11 +781,11 @@ Environment variables:
 | `ARCANOS_GPT_ACCESS_BASE_URL` | Required for GPT Action import | Public HTTPS origin advertised by `/gpt-access/openapi.json`; do not rely on request headers in production. |
 | `ARCANOS_GPT_ACCESS_SCOPES` | Required for generic protected GPT access | Grant only the scopes needed by generic gateway operations. Async job submission and result retrieval use `jobs.create,jobs.result`; add other read, recovery, or capability scopes only when intentionally enabled. The dedicated Backstage read/canon and Gaming source lifecycle credentials do not use generic GPT Access scopes. A generic token can still reach the Backstage canon route only with `capabilities.run`, backend confirmation, and the exact server-side module-action allowlist; it cannot reach either exact Backstage read. |
 | `GPT_ACCESS_NL_DISPATCH_MODE` | Optional, web service only | When unset, `/gpt-access/dispatch/run` uses `hybrid` if the web service has a real resolved OpenAI key and `rules` otherwise. Valid values are `rules`, `hybrid`, and `llm_first`; invalid values resolve to `rules`. Set `rules` to force deterministic dispatch. |
-| `GPT_ACCESS_DISPATCH_MODEL` | Optional | Defaults to `gpt-4.1-mini`; used only by the semantic dispatch planner. |
+| `GPT_ACCESS_DISPATCH_MODEL` | Optional | Semantic dispatch uses the shared intake role, `gpt-6-luna`. This value may confirm that model; a conflicting override fails before transport and retains existing deterministic fallback and policy checks. |
 | `GPT_ACCESS_DISPATCH_LLM_TIMEOUT_MS` | Optional | Defaults to `5000` and caps at `10000`; timeout/failure never executes an LLM plan and can only fall back through deterministic rules and policy checks. |
 | `ARC_LOG_PATH` | Optional | Defaults to `/tmp/arc/log`. |
 | `GPT_FAST_PATH_ENABLED` | Optional | Defaults to `true`; disables inline prompt-generation fast path when set to `false`. |
-| `GPT_FAST_PATH_MODEL` | Optional | Defaults to `gpt-4.1-mini`; use a low-latency model for inline fast-path requests. |
+| `GPT_FAST_PATH_MODEL` | Ignored | Fast-path configuration no longer reads this setting. Inline authoritative output uses the executing service's configured fine-tune through the shared model policy; classifier eligibility rules remain unchanged. |
 | `GPT_FAST_PATH_TIMEOUT_MS` | Optional | Defaults to `8000`; inline model timeout for fast-path requests. |
 | `GPT_FAST_PATH_GPT_ALLOWLIST` | Optional | Comma-separated GPT IDs allowed to use fast path; empty means all GPT IDs. |
 
@@ -1136,7 +1159,12 @@ grandfathered rows even after Phase B removes new legacy admission.
 
 Queued production generation selects a finite workload-aware output allowance
 from `BOOKER_WORKER_TOKEN_LIMIT` (default `6000`, clamped to `4000`-`8000`),
-then reduces it when the compatible provider-stage budget is shorter. Review,
+then reduces it when the compatible provider-stage budget is shorter. The
+server-owned `finalAuthorityModel` must be a valid `ft:` identity and match the
+selected model exactly, including case, for `configured_authority` eligibility.
+An unrelated service fine-tune, Sol or invalid authority retains baseline
+eligibility. This preserves existing workload/profile, stage and global caps;
+request data cannot nominate the authority. Review,
 continuity, unsupported-model, synchronous rollback, and genuinely small compact
 paths do not receive the extended cap. Capacity selection does not replace an
 explicit exact or maximum compact-list presentation contract. Provider `incomplete` or `max_output_tokens` output

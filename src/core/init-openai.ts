@@ -16,9 +16,7 @@ import {
   resolveOpenAIBaseURL,
   getOpenAIKeySource,
   hasValidAPIKey,
-  setDefaultModel,
-  getDefaultModel,
-  getFallbackModel
+  setDefaultModel
 } from "@services/openai/credentialProvider.js";
 import { getCircuitBreakerSnapshot } from "@services/openai/resilience.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
@@ -36,8 +34,9 @@ export function configureBackendUnifiedOpenAIClient(): void {
     getApiKeySource: getOpenAIKeySource,
     hasValidAPIKey,
     setDefaultModel,
-    getDefaultModel,
-    getFallbackModel,
+    // Health metadata remains readable when generation authority is unavailable.
+    getDefaultModel: () => getConfig().defaultModel,
+    getFallbackModel: () => getConfig().fallbackModel,
 
     getTimeoutMs: () => getConfig().workerApiTimeoutMs,
     getMaxRetries: () => getConfig().openaiMaxRetries,

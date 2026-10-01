@@ -87,6 +87,7 @@ export async function runClearAudit(
     result = await createGPT5Reasoning(client, ledgerText, auditPrompt, {
       // Escalation is an explicit internal lane choice for this call, never a retry or model-directed loop.
       model,
+      modelRole: modelLane === 'escalation' ? 'audit-escalation' : 'audit',
       ...(reasoningEffort ? { reasoningEffort } : {}),
       signal: getRequestAbortSignal(),
       timeoutMs: resolveClearAuditTimeoutMs(runtimeBudget)

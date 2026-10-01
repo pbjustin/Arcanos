@@ -46,7 +46,7 @@ import { truncateText, hasContent } from "@shared/promptUtils.js";
 import { createChatCompletionWithFallback, ensureModelMatchesExpectation } from '../chatFallbacks.js';
 import { RESILIENCE_CONSTANTS } from '../resilience.js';
 import { getApiTimeoutMs, getRoutingMessage } from '@arcanos/openai/unifiedClient';
-import { getDefaultModel, getGPT5Model } from '../credentialProvider.js';
+import { resolveGenerativeModel, type GenerativeModelRole } from '../credentialProvider.js';
 import { classifyOpenAIError } from "@core/lib/errors/reusable.js";
 import { getTokenParameter } from "@shared/tokenParameterHelper.js";
 import { resolveMaxTokensFromTokenParameters } from './utils.js';
@@ -84,6 +84,8 @@ export async function callOpenAI(
   useCache: boolean = true,
   options: CallOpenAIOptions = {}
 ): Promise<CallOpenAIResult> {
+  //audit Resolve before client access and caching so overrides cannot bypass role policy.
+  model = resolveGenerativeModel(options.modelRole ?? 'final', model);
   const { adapter } = getOpenAIClientOrAdapter();
 
   const { reinforcementMetadata, preparedMessages, cacheKey } = prepareChatFlow(
@@ -140,6 +142,7 @@ export async function callOpenAI(
   try {
     // execute (network) → parse (text + legacy shape)
     const rawResponse = await executeChatFlow(adapter, model, preparedMessages, tokenLimit, options);
+    ensureModelMatchesExpectation(rawResponse, model);
     const { output, activeModel, legacyResponse } = parseChatFlowResponse(rawResponse, model);
 
     // Success logging that depends on usage (available after parse)
@@ -187,8 +190,9 @@ const extractReasoningText = (response: ChatCompletion, fallback: string = REASO
   response?.choices?.[0]?.message?.content?.trim() || fallback;
 
 interface OpenAIResponsesRequestOptions {
-  /** Trusted caller override; omission preserves the shared GPT-5 selector. */
+  /** Optional confirmation of the centrally selected model. */
   model?: string;
+  modelRole?: GenerativeModelRole;
   reasoningEffort?: NonNullable<NonNullable<ResponseCreateParamsNonStreaming['reasoning']>['effort']>;
   signal?: AbortSignal;
   headers?: Record<string, string>;
@@ -247,6 +251,7 @@ async function invokeResponsesCompletion(
       headers: options.headers
     };
     const responsesResult = await createResponsesWithBoundary(clientOrAdapter, payload, requestOptions);
+    ensureModelMatchesExpectation(responsesResult, expectedModel);
     return convertResponseToLegacyChatCompletion(responsesResult, expectedModel);
   } finally {
     requestScope.cleanup();
@@ -254,8 +259,8 @@ async function invokeResponsesCompletion(
 }
 
 /**
- * Centralized GPT-5.1 helper function for reasoning tasks
- * Used by both core logic and workers
+ * Compatibility helper for centrally selected reasoning, intake and audit roles.
+ * Final composition uses separate authority-enforcing helpers.
  */
 export const createGPT5Reasoning = async (
   clientOrAdapter: OpenAI | OpenAIAdapter | null,
@@ -267,7 +272,12 @@ export const createGPT5Reasoning = async (
     return { content: '[Fallback: GPT-5.1 unavailable - no OpenAI client]', error: 'No OpenAI client' };
   }
 
-  const gpt5Model = options.model ?? getGPT5Model();
+  const role = options.modelRole ?? 'reasoning';
+  //audit This helper cannot be used to turn intake/audit output into final authority.
+  if (role !== 'reasoning' && role !== 'audit' && role !== 'audit-escalation' && role !== 'intake') {
+    throw new Error('Generative model policy: reasoning helper requires a helper role');
+  }
+  const gpt5Model = resolveGenerativeModel(role, options.model);
 
   try {
     logOpenAIEvent('info', OPENAI_LOG_MESSAGES.GPT5.REASONING_START(gpt5Model));
@@ -310,8 +320,8 @@ export const createGPT5Reasoning = async (
 };
 
 /**
- * Enhanced GPT-5.1 reasoning layer that refines ARCANOS responses
- * Implements the layered approach: ARCANOS -> GPT-5.1 reasoning -> refined output
+ * Compatibility refinement layer; generated refinements retain fine-tune authority.
+ * Existing failure metadata preserves the caller's original result on failure.
  */
 export const createGPT5ReasoningLayer = async (
   clientOrAdapter: OpenAI | OpenAIAdapter | null,
@@ -334,7 +344,8 @@ export const createGPT5ReasoningLayer = async (
     };
   }
 
-  const gpt5Model = getGPT5Model();
+  // The refinement is returned to the caller as its final answer.
+  const gpt5Model = resolveGenerativeModel('final', options.model);
 
   try {
     logOpenAIEvent('info', OPENAI_LOG_MESSAGES.GPT5.LAYER_REFINING, { model: gpt5Model });
@@ -393,8 +404,8 @@ export const createGPT5ReasoningLayer = async (
 };
 
 /**
- * Strict GPT-5.1 call function that only uses GPT-5.1 with no fallback
- * Raises RuntimeError if the response doesn't come from GPT-5.1
+ * Legacy-named strict final call with configured fine-tune authority and no fallback.
+ * Rejects provider output from any different model.
  * @confidence 0.95 - Type-safe with proper OpenAI SDK types
  */
 export async function call_gpt5_strict(
@@ -407,7 +418,7 @@ export async function call_gpt5_strict(
     throw new Error("GPT-5.1 call failed — no fallback allowed. OpenAI client not available.");
   }
 
-  const gpt5Model = getGPT5Model();
+  const gpt5Model = resolveGenerativeModel('final', options.model ?? kwargs.model);
 
   try {
     logOpenAIEvent('info', OPENAI_LOG_MESSAGES.GPT5.STRICT_CALL, { model: gpt5Model });
@@ -476,8 +487,7 @@ export async function createCentralizedCompletion(
     throw new Error('OpenAI client not initialized - API key required');
   }
 
-  // Use fine-tuned model by default, allow override via options.model
-  const model = options.model || getDefaultModel();
+  const model = resolveGenerativeModel('final', options.model);
   
   // Prepend ARCANOS routing system message to ensure proper handling
   const arcanosMessages: ChatCompletionMessageParam[] = [
@@ -523,7 +533,7 @@ export async function createCentralizedCompletion(
 
     let response: ChatCompletion | AsyncIterable<unknown>;
     if (requestPayload.stream) {
-      //audit Assumption: streaming compatibility remains on chat.completions temporarily; risk: behavior mismatch with Responses stream events; invariant: non-stream calls still use Responses API; handling: preserve legacy stream path until stream abstraction is standardized.
+      // Preserve Responses stream events while verifying their final-authority metadata.
       const streamClient = client ?? adapter?.getClient();
       if (!streamClient) {
         throw new Error('OpenAI client not initialized - streaming unavailable');
@@ -551,12 +561,55 @@ export async function createCentralizedCompletion(
       });
 
       try {
-        response = await (streamClient as any).responses.create(
+        const providerStream: AsyncIterable<unknown> = await (streamClient as any).responses.create(
           { ...responsePayload, stream: true },
           { ...requestOptions, signal: requestScope.signal }
         );
-      } finally {
+        const validatedStream = (async function* () {
+          let modelValidated = false;
+          try {
+            requestScope.signal.throwIfAborted();
+            for await (const event of providerStream) {
+              requestScope.signal.throwIfAborted();
+              const eventRecord = event && typeof event === 'object'
+                ? event as { response?: { model?: unknown } }
+                : undefined;
+              if (eventRecord && 'response' in eventRecord) {
+                ensureModelMatchesExpectation(eventRecord.response ?? {}, model);
+                modelValidated = true;
+              }
+              // No event (including output/tool deltas) escapes before authority is proven.
+              if (!modelValidated) {
+                ensureModelMatchesExpectation({}, model);
+              }
+              yield event;
+            }
+            requestScope.signal.throwIfAborted();
+            if (!modelValidated) {
+              ensureModelMatchesExpectation({}, model);
+            }
+          } finally {
+            // Closing this iterator also closes the SDK iterator and cancels its request.
+            requestScope.cleanup();
+          }
+        })();
+        // Async generator cleanup does not run when closed before its first read.
+        const closeStream = validatedStream.return.bind(validatedStream);
+        const throwIntoStream = validatedStream.throw.bind(validatedStream);
+        validatedStream.return = async value => {
+          requestScope.controller.abort();
+          requestScope.cleanup();
+          return closeStream(value);
+        };
+        validatedStream.throw = async error => {
+          requestScope.controller.abort(error);
+          requestScope.cleanup();
+          return throwIntoStream(error);
+        };
+        response = validatedStream;
+      } catch (error) {
         requestScope.cleanup();
+        throw error;
       }
     } else if (adapter) {
       const responsePayload = buildResponsesRequest({

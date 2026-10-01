@@ -116,14 +116,16 @@ describe('trinity stage budgets', () => {
       expect.anything(),
       expect.objectContaining({
         timeoutMs: 6000
-      })
+      }),
+      'intake'
     );
     expect(createSingleChatCompletionMock).toHaveBeenNthCalledWith(
       2,
       expect.anything(),
       expect.objectContaining({
         timeoutMs: 4000
-      })
+      }),
+      'final'
     );
   });
 
@@ -194,14 +196,16 @@ describe('trinity stage budgets', () => {
       expect.anything(),
       expect.objectContaining({
         timeoutMs: 15_000
-      })
+      }),
+      'intake'
     );
     expect(createSingleChatCompletionMock).toHaveBeenNthCalledWith(
       2,
       expect.anything(),
       expect.objectContaining({
         timeoutMs: 15_000
-      })
+      }),
+      'final'
     );
   });
 

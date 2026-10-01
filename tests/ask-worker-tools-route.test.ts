@@ -208,6 +208,42 @@ describe('/ask worker tools integration', () => {
     expect(handleAIErrorMock).not.toHaveBeenCalled();
   });
 
+  it.each(['', 'gpt-6.1-sol'])('keeps worker reads and error handling available with unavailable authority %s', async authority => {
+    const authorityKeys = [
+      'FINETUNED_MODEL_ID', 'RAILWAY_FINETUNED_MODEL_ID', 'FINE_TUNED_MODEL_ID',
+      'RAILWAY_FINE_TUNED_MODEL_ID', 'AI_MODEL', 'RAILWAY_AI_MODEL',
+      'OPENAI_MODEL', 'RAILWAY_OPENAI_MODEL', 'RAILWAY_RAILWAY_OPENAI_MODEL'
+    ];
+    const savedAuthority = authorityKeys.map(key => process.env[key]);
+    authorityKeys.forEach(key => { process.env[key] = ''; });
+    process.env.AI_MODEL = authority;
+    try {
+      const response = await request(buildApp()).post('/brain').send({ prompt: 'show me worker status' });
+      expect(response.status).toBe(200);
+      expect(response.body).toMatchObject({ result: 'Workers are healthy.', module: 'worker-tools' });
+      expect(createJobMock).not.toHaveBeenCalled();
+      expect(handleAIErrorMock).not.toHaveBeenCalled();
+
+      const failure = new Error('Synthetic tool failure');
+      tryDispatchDaemonToolsMock.mockRejectedValue(failure);
+      handleAIErrorMock.mockImplementation((...args: unknown[]) => {
+        const res = args[3] as import('express').Response;
+        res.status(503).json({ error: 'Synthetic tool failure' });
+      });
+      const failed = await request(buildApp()).post('/brain').send({ prompt: 'show me worker status' });
+      expect(failed.status).toBe(503);
+      expect(failed.body).toEqual({ error: 'Synthetic tool failure' });
+      expect(handleAIErrorMock).toHaveBeenCalledWith(failure, 'show me worker status', 'brain', expect.anything());
+      expect(createJobMock).not.toHaveBeenCalled();
+    } finally {
+      authorityKeys.forEach((key, index) => {
+        if (savedAuthority[index] === undefined) delete process.env[key];
+        else process.env[key] = savedAuthority[index];
+      });
+      handleAIErrorMock.mockReset();
+    }
+  });
+
   it('returns DAG tool responses before worker tool handling', async () => {
     validateAIRequestMock.mockReturnValue({
       client: { responses: { create: jest.fn() } },

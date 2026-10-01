@@ -41,7 +41,7 @@ import type {
 import { tryDispatchDaemonTools } from './daemonTools.js';
 import { tryDispatchDagTools } from './dagTools.js';
 import { tryDispatchWorkerTools } from './workerTools.js';
-import { getGPT5Model } from '@services/openai.js';
+import { getConfig } from '@platform/runtime/unifiedConfig.js';
 import {
   buildCompletedQueuedAskOutput,
   buildQueuedAskJobInput,
@@ -899,7 +899,7 @@ export const handleAIRequest = async (
   });
   // Log request for feedback loop
   logRequestFeedback(prompt, endpointName);
-  const routeTrace = beginAiRouteTrace(req, endpointName, prompt, getGPT5Model());
+  const routeTrace = beginAiRouteTrace(req, endpointName, prompt, getConfig().defaultModel);
 
   try {
     const daemonToolResponse = await tryDispatchDaemonTools(openai, prompt, metadata);
@@ -1508,7 +1508,7 @@ export const handleAIRequest = async (
       fallbackReason: err instanceof Error ? err.message : String(err),
     });
     failAiRouteTrace(req, routeTrace, err, {
-      activeModel: getGPT5Model(),
+      activeModel: getConfig().defaultModel,
       statusCode: 500,
       extra: {
         aiUsage: summarizeAiExecutionContext()

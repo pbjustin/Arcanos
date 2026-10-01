@@ -3,12 +3,14 @@ import { buildDryRunPreview, runDirectAnswerStage, runFinalStage, runIntakeStage
 import { createSingleChatCompletion } from '../src/services/openai/chatFallbacks.js';
 import { resetCredentialCache, getDefaultModel } from '../src/services/openai/credentialProvider.js';
 import { createRuntimeBudgetWithLimit } from '../src/platform/resilience/runtimeBudget.js';
+import { runStructuredReasoning } from '../src/services/openai/structuredReasoning.js';
 
 const capabilityFlags = {
   canBrowse: false, canVerifyProvidedData: false, canVerifyLiveData: false,
   canConfirmExternalState: false, canPersistData: false, canCallBackend: false
 };
-const envNames = ['TRINITY_INTAKE_MODEL', 'TRINITY_REASONING_MODEL', 'TRINITY_FINAL_MODEL', 'TRINITY_FINAL_ESCALATION_MODEL'];
+const authorityModel = 'ft:gpt-4.1:synthetic:trinity-authority';
+const envNames = ['FINETUNED_MODEL_ID', 'TRINITY_INTAKE_MODEL', 'TRINITY_REASONING_MODEL', 'TRINITY_FINAL_MODEL', 'TRINITY_FINAL_ESCALATION_MODEL'];
 const saved = envNames.map(key => process.env[key]);
 const create = jest.fn();
 const retrieve = jest.fn();
@@ -22,7 +24,8 @@ const structured = {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  envNames.forEach((key, index) => { process.env[key] = index === 1 || index === 3 ? 'gpt-6.1-sol' : 'gpt-6-luna'; });
+  process.env.FINETUNED_MODEL_ID = authorityModel;
+  for (const key of envNames.slice(1)) process.env[key] = 'gpt-4.1';
   resetCredentialCache();
   retrieve.mockResolvedValue({ id: 'gpt-6-luna' });
   create.mockImplementation(async (payload: any) => ({
@@ -52,19 +55,20 @@ describe('Trinity model lanes at the real Responses/schema boundary', () => {
     expect(create.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal);
   });
 
-  it.each([['routine', 'gpt-6-luna', 'none'], ['escalation', 'gpt-6.1-sol', 'low']] as const)(
-    'selects %s final model with one bounded call', async (lane, model, effort) => {
+  it.each(['routine', 'escalation'] as const)(
+    'selects the configured authority for %s final composition with one bounded call', async lane => {
       const result = await runFinalStage(client, '', 'Synthetic final', 'Synthetic reasoning', capabilityFlags, controls, undefined, undefined, undefined, budget(), undefined, lane);
-      expect(result.activeModel).toBe(model);
+      expect(result.activeModel).toBe(authorityModel);
       expect(create).toHaveBeenCalledTimes(1);
-      expect(create.mock.calls[0][0]).toMatchObject({ model, reasoning: { effort }, max_output_tokens: 1000 });
+      expect(create.mock.calls[0][0]).toMatchObject({ model: authorityModel, max_output_tokens: 1000 });
+      expect(create.mock.calls[0][0]).not.toHaveProperty('reasoning');
       expect(create.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal);
     }
   );
 
   it('uses the same final lane for dry-run metadata', () => {
-    expect(buildDryRunPreview('synthetic', 'Prompt', 'Prompt', capabilityFlags, [], 0, false).finalModelCandidate).toBe('gpt-6-luna');
-    expect(buildDryRunPreview('synthetic', 'Prompt', 'Prompt', capabilityFlags, [], 0, false, undefined, 'escalation').finalModelCandidate).toBe('gpt-6.1-sol');
+    expect(buildDryRunPreview('synthetic', 'Prompt', 'Prompt', capabilityFlags, [], 0, false).finalModelCandidate).toBe(authorityModel);
+    expect(buildDryRunPreview('synthetic', 'Prompt', 'Prompt', capabilityFlags, [], 0, false, undefined, 'escalation').finalModelCandidate).toBe(authorityModel);
   });
 
   it('preserves unrelated default completions when intake is Luna', async () => {
@@ -73,17 +77,38 @@ describe('Trinity model lanes at the real Responses/schema boundary', () => {
     expect(create.mock.calls[0][0].model).toBe(expectedModel);
   });
 
-  it('does not send reasoning fields to a legacy final rollback model', async () => {
+  it('ignores a module-local final selector and keeps the configured fine-tune authority', async () => {
     process.env.TRINITY_FINAL_MODEL = 'gpt-4.1';
     await runFinalStage(client, '', 'Synthetic', 'Synthetic', capabilityFlags, controls, undefined, undefined, undefined, budget());
-    expect(create.mock.calls[0][0].model).toBe('gpt-4.1');
+    expect(create.mock.calls[0][0].model).toBe(authorityModel);
     expect(create.mock.calls[0][0]).not.toHaveProperty('reasoning');
   });
 
-  it('supports an explicit Sol direct-answer escalation with unchanged visible output cap', async () => {
-    const result = await runDirectAnswerStage(client, '', 'Synthetic direct answer', undefined, budget(), undefined, 'gpt-6.1-sol');
-    expect(result.activeModel).toBe('gpt-6.1-sol');
-    expect(create.mock.calls[0][0].reasoning).toEqual({ effort: 'low' });
+  it('accepts an explicit confirmation of the configured direct-answer authority with unchanged output cap', async () => {
+    const result = await runDirectAnswerStage(client, '', 'Synthetic direct answer', undefined, budget(), undefined, authorityModel);
+    expect(result.activeModel).toBe(authorityModel);
+    expect(create.mock.calls[0][0]).not.toHaveProperty('reasoning');
     expect(create.mock.calls[0][0].max_output_tokens).toBeLessThanOrEqual(1200);
+  });
+
+  it.each(['gpt-4.1', 'gpt-6.1-sol', 'ft:gpt-4.1:synthetic:other-service'])(
+    'rejects direct-answer override %s before provider invocation', async model => {
+      await expect(runDirectAnswerStage(client, '', 'Synthetic direct answer', undefined, budget(), undefined, model))
+        .rejects.toThrow('model override conflicts with final role');
+      expect(create).not.toHaveBeenCalled();
+    }
+  );
+
+  it('fails safely when configured final authority is a helper model', async () => {
+    process.env.FINETUNED_MODEL_ID = 'gpt-6.1-sol';
+    await expect(runFinalStage(client, '', 'Synthetic final', 'Synthetic reasoning', capabilityFlags, controls,
+      undefined, undefined, undefined, budget())).rejects.toThrow('configured fine-tune authority unavailable');
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it('rejects a legacy structured reasoning override at the production adapter boundary', async () => {
+    await expect(runStructuredReasoning(client, 'gpt-5.1', 'Synthetic reasoning', budget()))
+      .rejects.toThrow('model override conflicts with reasoning role');
+    expect(create).not.toHaveBeenCalled();
   });
 });

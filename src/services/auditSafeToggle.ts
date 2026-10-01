@@ -10,7 +10,7 @@
  * Compatible with OpenAI SDK (chat/completions).
  */
 
-import { getDefaultModel } from './openai.js';
+import { getTrinityIntakeModel } from './openai/credentialProvider.js';
 import { getOpenAIClientOrAdapter } from './openai/clientBridge.js';
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import { extractResponseOutputText } from '@arcanos/openai/responseParsing';
@@ -84,7 +84,8 @@ export async function interpretCommand(userCommand: string) {
 
   try {
     const response = await adapter.responses.create({
-      model: getDefaultModel(),
+      model: getTrinityIntakeModel(),
+      reasoning: { effort: 'none' },
       instructions: 'You are an AI that maps natural language commands to audit-safe mode toggles. Return only one of: true, false, passive, log-only.',
       input: [{ role: 'user', content: [{ type: 'input_text', text: userCommand }] }],
       max_output_tokens: 16

@@ -29,6 +29,43 @@ const HEAVY_QUEUED_INPUT: BackstageOutputBudgetInput = {
 };
 
 describe('Backstage workload-aware output budget', () => {
+  const authority = 'ft:gpt-4.1:synthetic:backstage-authority';
+
+  it('preserves the protected finite worker allowance for the exact configured authority', () => {
+    expect(resolveBackstageOutputBudget({
+      ...HEAVY_QUEUED_INPUT, model: authority, finalAuthorityModel: authority,
+    })).toMatchObject({
+      modelCapability: 'configured_authority', budgetClass: 'queued_extended',
+      tokenLimit: 6_000, tokenCap: 6_000,
+    });
+  });
+
+  it.each([
+    [undefined, authority],
+    [authority, 'ft:gpt-4.1:synthetic:other-service'],
+    ['gpt-6.1-sol', 'gpt-6.1-sol'],
+    [authority, authority.toUpperCase()],
+  ])('keeps unconfirmed or different model identities bounded (%s / %s)', (configured, model) => {
+    expect(resolveBackstageOutputBudget({
+      ...HEAVY_QUEUED_INPUT, model, finalAuthorityModel: configured,
+    })).toMatchObject({
+      modelCapability: 'baseline_fallback', budgetClass: 'bounded_request', tokenLimit: 2_400,
+    });
+  });
+
+  it.each([
+    ['bounded sync', { profile: 'bounded_sync_generation' as const }, 2_400],
+    ['continuity', { action: 'queryContinuity' as const }, 900],
+    ['short stage', { modelStageTimeoutMs: 40_000 }, 2_400],
+    ['minimum stage', { modelStageTimeoutMs: BACKSTAGE_EXTENDED_OUTPUT_STAGE_MIN_MS }, 4_000],
+    ['medium stage', { modelStageTimeoutMs: BACKSTAGE_EXTENDED_OUTPUT_STAGE_MEDIUM_MS }, 5_000],
+    ['global cap', { configuredWorkerTokenLimit: 999_999 }, BACKSTAGE_OUTPUT_TOKEN_LIMIT_MAX],
+  ])('retains the %s cap for configured authority', (_label, overrides, expected) => {
+    expect(resolveBackstageOutputBudget({
+      ...HEAVY_QUEUED_INPUT, model: authority, finalAuthorityModel: authority, ...overrides,
+    }).tokenLimit).toBe(expected);
+  });
+
   it('gives production-sized queued generation a larger finite budget', () => {
     expect(resolveBackstageOutputBudget(HEAVY_QUEUED_INPUT)).toMatchObject({
       budgetClass: 'queued_extended',

@@ -7,6 +7,7 @@ import type {
 import { shouldStoreOpenAIResponses } from '@config/openaiStore.js';
 import { extractResponseOutputText } from '@arcanos/openai/responseParsing';
 import { getDefaultModel } from '@services/openai.js';
+import { ensureModelMatchesExpectation } from '@services/openai/chatFallbacks.js';
 import { getTokenParameter } from '@shared/tokenParameterHelper.js';
 
 import {
@@ -272,6 +273,7 @@ export async function runAskToolMode<TToolName extends string>({
       tool_choice: 'auto',
       ...tokenParams,
     });
+    ensureModelMatchesExpectation(response as { model?: unknown }, model);
 
     const toolCalls: ChatCompletionToolCall[] =
       (response as { choices?: Array<{ message?: { tool_calls?: ChatCompletionToolCall[] } }> }).choices?.[0]?.message
@@ -317,6 +319,7 @@ export async function runAskToolMode<TToolName extends string>({
     tool_choice: 'auto',
     max_output_tokens: maxOutputTokens,
   });
+  ensureModelMatchesExpectation(response as { model?: unknown }, model);
   let lastText = extractResponseOutputText(response, '');
   const executionSummaries: string[] = [];
 
@@ -373,6 +376,7 @@ export async function runAskToolMode<TToolName extends string>({
     });
     toolLoopTranscript = continuationRequest.nextTranscript;
     response = await responsesCreate(continuationRequest.request);
+    ensureModelMatchesExpectation(response as { model?: unknown }, model);
     lastText = extractResponseOutputText(response, lastText);
   }
 

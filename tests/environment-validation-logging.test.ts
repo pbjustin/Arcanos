@@ -44,7 +44,7 @@ describe('environment validation logging', () => {
     process.env.OPENAI_API_KEY = 'sk-test-openai-key-1234567890abcdefghijklmn';
     process.env.RAILWAY_API_TOKEN = 'railway_token_1234567890abcdefghijkl';
     process.env.DATABASE_URL = 'postgresql://postgres:super-secret-password@db.example.com:5432/arcanos';
-    process.env.AI_MODEL = 'gpt-4.1';
+    process.env.AI_MODEL = 'ft:gpt-4.1:synthetic:environment-authority';
     process.env.PORT = '8080';
     process.env.ARCANOS_JOB_READ_CAPABILITY_SECRET =
       'logging-current-job-read-secret-1234567890';
@@ -94,7 +94,7 @@ describe('environment validation logging', () => {
       expect.objectContaining({
         state: 'set',
         sensitivity: 'public',
-        valuePreview: 'gpt-4.1...'
+        valuePreview: 'ft:gpt-4.1:synthetic...'
       })
     );
     expect(loggerDebugMock).toHaveBeenCalledWith(

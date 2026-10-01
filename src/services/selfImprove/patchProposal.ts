@@ -6,7 +6,7 @@ import { execFile } from "child_process";
 import { promisify } from "util";
 import { callOpenAI } from "@services/openai/chatFlow/index.js";
 import { rethrowWorkerAiBudgetError } from "@core/adapters/openai.adapter.js";
-import { getDefaultModel } from "@services/openai/credentialProvider.js";
+import { resolveGenerativeModel } from "@services/openai/credentialProvider.js";
 import { getEnv, getEnvNumber } from "@platform/runtime/env.js";
 import { getConfig } from "@platform/runtime/unifiedConfig.js";
 import { applySecurityCompliance } from "@services/securityCompliance.js";
@@ -761,7 +761,7 @@ export async function generatePatchProposal(args: {
   context?: Record<string, unknown>;
   prohibitedPaths: string[];
 }): Promise<PatchProposal> {
-  const model = getEnv("SELF_IMPROVE_PATCH_MODEL") || getDefaultModel();
+  const model = resolveGenerativeModel('final', getEnv("SELF_IMPROVE_PATCH_MODEL"));
   const tokenLimit = getEnvNumber("SELF_IMPROVE_PATCH_TOKEN_LIMIT", 900);
   const maxAttempts = Math.max(1, Math.min(5, getEnvNumber("SELF_IMPROVE_PATCH_ATTEMPTS", 3)));
   let lastDiagnosticCode: PatchProposalDiagnosticCode =

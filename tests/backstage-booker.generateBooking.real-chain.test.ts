@@ -78,6 +78,8 @@ jest.unstable_mockModule('../src/services/backstageNotionAuthority.js', () => ({
   resolveEffectiveBackstageNotionAuthorityRoot: jest.fn(async () => null),
 }));
 
+const authorityModel = 'ft:gpt-4.1:synthetic:backstage-authority';
+const originalFineTuneModel = process.env.FINETUNED_MODEL_ID;
 const originalGpt5Model = process.env.GPT5_MODEL;
 const originalBookerTokenLimit = process.env.BOOKER_TOKEN_LIMIT;
 const originalBookerWorkerTokenLimit = process.env.BOOKER_WORKER_TOKEN_LIMIT;
@@ -86,6 +88,7 @@ const originalOpenAIStore = process.env.OPENAI_STORE;
 const originalNotionAccessToken = process.env.ARCANOS_BACKSTAGE_NOTION_ACCESS_TOKEN;
 const originalNotionUniversePages = process.env.ARCANOS_BACKSTAGE_NOTION_UNIVERSE_PAGES_JSON;
 const originalFetch = globalThis.fetch;
+process.env.FINETUNED_MODEL_ID = authorityModel;
 process.env.GPT5_MODEL = 'gpt-5';
 process.env.BOOKER_TOKEN_LIMIT = '2400';
 process.env.BOOKER_WORKER_TOKEN_LIMIT = '6000';
@@ -108,6 +111,7 @@ function restoreEnv(name: string, value: string | undefined): void {
 
 afterAll(() => {
   restoreEnv('GPT5_MODEL', originalGpt5Model);
+  restoreEnv('FINETUNED_MODEL_ID', originalFineTuneModel);
   restoreEnv('BOOKER_TOKEN_LIMIT', originalBookerTokenLimit);
   restoreEnv('BOOKER_WORKER_TOKEN_LIMIT', originalBookerWorkerTokenLimit);
   restoreEnv(
@@ -143,7 +147,7 @@ describe('backstage-booker generateBooking real provider chain', () => {
     });
     responsesCreate.mockResolvedValue({
       id: 'resp_backstage_booking',
-      model: 'gpt-5.1',
+      model: authorityModel,
       status: 'completed',
       output_text: 'Rivalry matrix output.',
       output: [],
@@ -174,7 +178,7 @@ describe('backstage-booker generateBooking real provider chain', () => {
     ].join('\n');
     responsesCreate.mockResolvedValueOnce({
       id: 'resp_backstage_booking_three_rivalries',
-      model: 'gpt-5.1',
+      model: authorityModel,
       status: 'completed',
       output_text: providerBooking,
       output: [],
@@ -201,10 +205,10 @@ describe('backstage-booker generateBooking real provider chain', () => {
       { signal?: AbortSignal }
     ];
     expect(request).toEqual(expect.objectContaining({
-      model: 'gpt-5.1',
-      max_output_tokens: 2400,
-      reasoning: { effort: 'none' }
+      model: authorityModel,
+      max_output_tokens: 2400
     }));
+    expect(request).not.toHaveProperty('reasoning');
     expect(request).not.toHaveProperty('reasoning_effort');
     expect(JSON.stringify(request.input)).toContain(
       'Generate three rivalries for RAW after WrestleMania.'
@@ -234,10 +238,10 @@ describe('backstage-booker generateBooking real provider chain', () => {
       { signal?: AbortSignal; timeout?: number }
     ];
     expect(request).toEqual(expect.objectContaining({
-      model: 'gpt-5.1',
-      max_output_tokens: 6_000,
-      reasoning: { effort: 'none' }
+      model: authorityModel,
+      max_output_tokens: 6_000
     }));
+    expect(request).not.toHaveProperty('reasoning');
     const serializedInput = JSON.stringify(request.input);
     expect(serializedInput).toContain('<<BACKSTAGE_OUTPUT_BUDGET>>');
     expect(serializedInput).toContain(
@@ -253,7 +257,7 @@ describe('backstage-booker generateBooking real provider chain', () => {
     responsesCreate
       .mockResolvedValueOnce({
         id: 'resp_backstage_repair_primary',
-        model: 'gpt-5.1',
+        model: authorityModel,
         status: 'completed',
         output_text:
           'Cody Rhodes defeats Seth Rollins. The closing angle should',
@@ -266,7 +270,7 @@ describe('backstage-booker generateBooking real provider chain', () => {
       })
       .mockResolvedValueOnce({
         id: 'resp_backstage_repair_continuation',
-        model: 'gpt-5.1',
+        model: authorityModel,
         status: 'completed',
         output_text: 'end with Roman Reigns watching from the stage.',
         output: [],
@@ -306,7 +310,7 @@ describe('backstage-booker generateBooking real provider chain', () => {
     responsesCreate
       .mockResolvedValueOnce({
         id: 'resp_backstage_repair_filtered_primary',
-        model: 'gpt-5.1',
+        model: authorityModel,
         status: 'completed',
         output_text: 'The closing angle should',
         output: [],
@@ -318,7 +322,7 @@ describe('backstage-booker generateBooking real provider chain', () => {
       })
       .mockResolvedValueOnce({
         id: 'resp_backstage_repair_filtered',
-        model: 'gpt-5.1',
+        model: authorityModel,
         status: 'incomplete',
         incomplete_details: { reason: 'content_filter' },
         output_text: 'PRIVATE-FILTERED-REPAIR',
@@ -356,7 +360,7 @@ describe('backstage-booker generateBooking real provider chain', () => {
     responsesCreate
       .mockResolvedValueOnce({
         id: 'resp_backstage_ungrounded_primary',
-        model: 'gpt-5.1',
+        model: authorityModel,
         status: 'completed',
         output_text:
           'Cody Rhodes defeats Seth Rollins. The closing angle should',
@@ -369,7 +373,7 @@ describe('backstage-booker generateBooking real provider chain', () => {
       })
       .mockResolvedValueOnce({
         id: 'resp_backstage_ungrounded_repair',
-        model: 'gpt-5.1',
+        model: authorityModel,
         status: 'completed',
         output_text: inventedFact,
         output: [],
@@ -406,7 +410,7 @@ describe('backstage-booker generateBooking real provider chain', () => {
       'At WrestleMania 41. Cody Rhodes retains. At WrestleMania 42. Roman Reigns challenges.';
     responsesCreate.mockResolvedValueOnce({
       id: 'resp_backstage_event_number_prose',
-      model: 'gpt-5.1',
+      model: authorityModel,
       status: 'completed',
       output_text: chronology,
       output: [],
@@ -439,7 +443,7 @@ describe('backstage-booker generateBooking real provider chain', () => {
     responsesCreate
       .mockResolvedValueOnce({
         id: 'resp_backstage_unnumbered_primary',
-        model: 'gpt-5.1',
+        model: authorityModel,
         status: 'completed',
         output_text: unnumberedOutput,
         output: [],
@@ -451,7 +455,7 @@ describe('backstage-booker generateBooking real provider chain', () => {
       })
       .mockResolvedValueOnce({
         id: 'resp_backstage_unnumbered_repair',
-        model: 'gpt-5.1',
+        model: authorityModel,
         status: 'completed',
         output_text: 'STRUCTURAL_REPAIR_UNAVAILABLE',
         output: [],
@@ -491,7 +495,7 @@ describe('backstage-booker generateBooking real provider chain', () => {
     ].join('\n');
     responsesCreate.mockResolvedValueOnce({
       id: 'resp_backstage_extended_booking',
-      model: 'gpt-5.1',
+      model: authorityModel,
       status: 'completed',
       output_text: providerReview,
       output: [],
@@ -522,7 +526,7 @@ describe('backstage-booker generateBooking real provider chain', () => {
       Record<string, unknown>
     ];
     expect(request).toEqual(expect.objectContaining({
-      model: 'gpt-5.1',
+      model: authorityModel,
       max_output_tokens: 1600
     }));
     const serializedInput = JSON.stringify(request.input);
@@ -560,7 +564,7 @@ describe('backstage-booker generateBooking real provider chain', () => {
     ].join('\n');
     responsesCreate.mockResolvedValueOnce({
       id: 'resp_backstage_notion_review',
-      model: 'gpt-5.1',
+      model: authorityModel,
       status: 'completed',
       output_text: providerReview,
       output: [],
@@ -644,7 +648,7 @@ describe('backstage-booker generateBooking real provider chain', () => {
     })) as typeof fetch;
     responsesCreate.mockResolvedValueOnce({
       id: 'resp_backstage_notion_ordinary',
-      model: 'gpt-5.1',
+      model: authorityModel,
       status: 'completed',
       output_text: 'The next chapter keeps the champion and challenger on a collision course.',
       output: [],
@@ -675,7 +679,7 @@ describe('backstage-booker generateBooking real provider chain', () => {
     responsesCreate
       .mockResolvedValueOnce({
         id: 'resp_backstage_incomplete_booking',
-        model: 'gpt-5.1',
+        model: authorityModel,
         status: 'incomplete',
         incomplete_details: { reason: 'max_output_tokens' },
         output_text: 'Partial booking review that must not be returned.',
@@ -688,7 +692,7 @@ describe('backstage-booker generateBooking real provider chain', () => {
       })
       .mockResolvedValueOnce({
         id: 'resp_backstage_incomplete_booking_retry',
-        model: 'gpt-5.1',
+        model: authorityModel,
         status: 'incomplete',
         incomplete_details: { reason: 'max_output_tokens' },
         output_text: 'Private compact retry output that must not be returned.',
@@ -742,7 +746,7 @@ describe('backstage-booker generateBooking real provider chain', () => {
     responsesCreate
       .mockResolvedValueOnce({
         id: 'resp_backstage_compact_retry_primary',
-        model: 'gpt-5.1',
+        model: authorityModel,
         status: 'incomplete',
         incomplete_details: { reason: 'max_output_tokens' },
         output_text: discardedPartial,
@@ -751,7 +755,7 @@ describe('backstage-booker generateBooking real provider chain', () => {
       })
       .mockResolvedValueOnce({
         id: 'resp_backstage_compact_retry_completed',
-        model: 'gpt-5.1',
+        model: authorityModel,
         status: 'completed',
         output_text: completedRetry,
         output: [],
@@ -786,7 +790,7 @@ describe('backstage-booker generateBooking real provider chain', () => {
   ])('does not compact-retry %s', async (_label, incompleteDetails, privatePartial) => {
     responsesCreate.mockResolvedValueOnce({
       id: 'resp_backstage_non_length_incomplete',
-      model: 'gpt-5.1',
+      model: authorityModel,
       status: 'incomplete',
       ...(incompleteDetails ? { incomplete_details: incompleteDetails } : {}),
       output_text: privatePartial,
@@ -821,7 +825,7 @@ describe('backstage-booker generateBooking real provider chain', () => {
   it('retains the honesty caveat when the user directive requests current external events', async () => {
     responsesCreate.mockResolvedValueOnce({
       id: 'resp_backstage_external_rivalries',
-      model: 'gpt-5.1',
+      model: authorityModel,
       status: 'completed',
       output_text: [
         '1. Cody Rhodes starts a rivalry with Seth Rollins.',
@@ -855,7 +859,7 @@ describe('backstage-booker generateBooking real provider chain', () => {
     ].join('\n');
     responsesCreate.mockResolvedValueOnce({
       id: 'resp_backstage_honest_review',
-      model: 'gpt-5.1',
+      model: authorityModel,
       status: 'completed',
       output_text: providerReview,
       output: [],
@@ -904,7 +908,7 @@ describe('backstage-booker generateBooking real provider chain', () => {
     ].join('\n');
     responsesCreate.mockResolvedValueOnce({
       id: 'resp_backstage_unsupported_live_claim',
-      model: 'gpt-5.1',
+      model: authorityModel,
       status: 'completed',
       output_text: providerReview,
       output: [],
@@ -940,7 +944,7 @@ describe('backstage-booker generateBooking real provider chain', () => {
       () => new Promise(resolve => {
         setTimeout(() => resolve({
           id: 'resp_backstage_slow_booking',
-          model: 'gpt-5.1',
+          model: authorityModel,
           status: 'completed',
           output_text: 'Long-form booking output.',
           output: [],

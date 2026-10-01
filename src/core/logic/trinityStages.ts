@@ -4,6 +4,7 @@
  */
 
 import type OpenAI from 'openai';
+import { getConfig } from '@platform/runtime/unifiedConfig.js';
 import {
   classifyWorkerAiBudgetError,
   instrumentOpenAIOperation,
@@ -272,7 +273,7 @@ function resolveFinalStageTimeoutMs(
 
 /**
  * Validates the availability of the configured AI model.
- * Falls back to GPT-4.1-mini if the primary model is unavailable.
+ * Fails safely if the shared intake model is unavailable; another role cannot substitute for intake.
  */
 export async function validateModel(
   client: OpenAI,
@@ -304,7 +305,7 @@ export async function validateModel(
         });
       }
     );
-    logger.info('Fine-tuned model validation successful', {
+    logger.info('Intake model validation successful', {
       module: 'trinity',
       operation: 'model-validation',
       model: defaultModel,
@@ -318,15 +319,14 @@ export async function validateModel(
       throw normalizedError;
     }
 
-    logger.warn('MODEL_FALLBACK_TRIGGERED', {
+    logger.warn('TRINITY_INTAKE_MODEL_UNAVAILABLE', {
       module: 'trinity',
       operation: 'model-fallback',
       stage: 'TRINITY-MODEL-VALIDATION',
       requestedModel: defaultModel,
-      fallbackModel: APPLICATION_CONSTANTS.MODEL_GPT_4_1_MINI,
       reason: resolveErrorMessage(normalizedError)
     });
-    return APPLICATION_CONSTANTS.MODEL_GPT_4_1_MINI;
+    throw normalizedError;
   }
 }
 
@@ -462,7 +462,7 @@ export async function runIntakeStage(
     } : {}),
     timeoutMs: resolveIntakeStageTimeoutMs(runtimeBudget, explicitTimeoutMs),
     ...intakeTokenParams
-  }).catch((error: unknown) => {
+  }, 'intake').catch((error: unknown) => {
     if (gamingIntakeContract) {
       const incomplete = typeof error === 'object' && error !== null
         && 'code' in error && error.code === 'OPENAI_COMPLETION_INCOMPLETE';
@@ -687,7 +687,7 @@ export async function runFinalStage(
       : {}),
     timeoutMs: resolveFinalStageTimeoutMs(runtimeBudget, explicitTimeoutMs),
     ...finalTokenParams
-  });
+  }, finalLane === 'escalation' ? 'final-escalation' : 'final');
   const finalText = finalResponse.choices[0]?.message?.content || '';
   const finalModel = finalResponse.activeModel || complexModel;
   const finalFallback = finalResponse.fallbackFlag || false;
@@ -903,9 +903,10 @@ export function buildDryRunPreview(
   finalLane: 'routine' | 'escalation' = 'routine'
 ): TrinityDryRunPreview {
   const intakeModelCandidate = getTrinityIntakeModel();
+  const modelConfig = getConfig();
   const finalModelCandidate = finalLane === 'escalation'
-    ? getTrinityFinalEscalationModel()
-    : getTrinityFinalModel();
+    ? modelConfig.trinityFinalEscalationModel
+    : modelConfig.trinityFinalModel;
   const gpt5ModelCandidate = getTrinityReasoningModel();
   const routingPlan = [
     `ARCANOS-INTAKE:${intakeModelCandidate}`,

@@ -538,12 +538,18 @@ unavailable audits use honest recovery rather than recursively requesting new
 answers. This keeps the one-round/three-candidate discovery bounds. Source and
 evidence assessments are deterministic and add zero model calls or network
 requests. Gaming uses at most one final-answer audit in place of its prior ledger
-audit; it uses `CLEAR_AUDIT_MODEL` (default `gpt-6-luna`, after explicit
-legacy GPT5/GPT51 rollback selectors) and the existing provider adapter,
+audit; the shared backend routine-audit role selects `gpt-6-luna` through the
+existing provider adapter,
 with no tools or browsing, transport retries fixed to zero and the existing audit deadline
-capped by the remaining aggregate request/runtime budget. The trusted internal `modelLane` seam can select `CLEAR_AUDIT_ESCALATION_MODEL`
+capped by the remaining aggregate request/runtime budget. The trusted internal `modelLane` seam can select the shared `gpt-6.1-sol` audit-escalation role
 for the same single call; automatic escalation is disabled. This code change
-does not modify deployed Railway variables or deployment state.
+does not modify deployed Railway variables or deployment state. Legacy
+`CLEAR_AUDIT*_MODEL` and GPT5/GPT51 values cannot replace these roles. Gaming's
+authoritative final and recovery composition retain the executing service's
+configured fine-tune authority; missing or non-fine-tuned authority fails safely
+and conflicting explicit model choices reject before transport. Embeddings keep
+their separate model selection, and Gaming plugin auth/scope boundaries remain
+unchanged. PR1517 deployment remains held pending the separate rollout gates.
 
 The final audit permits only server-owned `STYLE_CONCISION`, `STYLE_REPETITION`
 and `STYLE_PRESENTATION` warning codes to remain nonblocking. Every other answer

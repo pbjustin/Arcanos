@@ -2,6 +2,7 @@ import type { ChatCompletionMessageParam, ChatCompletionResponseFormat, ImageSiz
 import { buildSystemPromptMessages } from '@shared/messageBuilderUtils.js';
 import { DEFAULT_IMAGE_SIZE, IMAGE_GENERATION_MODEL, ROUTING_MAX_TOKENS } from '../config.js';
 import { OPENAI_COMPLETION_DEFAULTS } from '../constants.js';
+import { getDefaultModel } from '../credentialProvider.js';
 
 import type { ChatParams, VisionParams, TranscriptionParams, ImageParams, EmbeddingParams } from './types.js';
 
@@ -106,7 +107,7 @@ export function buildResponsesDraft(params: ChatParams): ResponsesRequestDraft {
     kind: 'responses.chat',
     prompt,
     systemPrompt,
-    model: model || 'gpt-4.1-mini',
+    model: model || getDefaultModel(),
     maxTokens,
     temperature,
     top_p,
@@ -123,7 +124,7 @@ export function buildVisionResponsesDraft(params: VisionParams): VisionResponses
     prompt,
     imageBase64,
     mimeType = 'image/png',
-    model = 'gpt-4o',
+    model = getDefaultModel(),
     maxTokens = ROUTING_MAX_TOKENS,
     temperature = OPENAI_COMPLETION_DEFAULTS.TEMPERATURE
   } = params;
@@ -162,7 +163,7 @@ export function buildChatCompletionDraft(params: ChatParams): ChatCompletionDraf
     kind: 'chat.completions',
     prompt,
     systemPrompt,
-    model: model || 'gpt-4o-mini',
+    model: model || getDefaultModel(),
     maxTokens,
     temperature,
     top_p,
@@ -180,7 +181,7 @@ export function buildVisionChatCompletionDraft(params: VisionParams): VisionChat
     prompt,
     imageBase64,
     mimeType = 'image/png',
-    model = 'gpt-4o',
+    model = getDefaultModel(),
     maxTokens = ROUTING_MAX_TOKENS,
     temperature = OPENAI_COMPLETION_DEFAULTS.TEMPERATURE,
     detail = 'auto'

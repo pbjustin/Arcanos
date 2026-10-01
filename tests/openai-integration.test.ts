@@ -92,21 +92,23 @@ describe('OpenAI SDK Integration Tests', () => {
       }
     });
 
-    it('should fallback to AI_MODEL when FINETUNED_MODEL_ID is not set', async () => {
+    it('uses the AI_MODEL fine-tune authority when fine-tune aliases are not set', async () => {
       const originalModels = {
         FINETUNED_MODEL_ID: process.env.FINETUNED_MODEL_ID,
+        FINE_TUNED_MODEL_ID: process.env.FINE_TUNED_MODEL_ID,
         AI_MODEL: process.env.AI_MODEL
       };
 
       delete process.env.FINETUNED_MODEL_ID;
-      process.env.AI_MODEL = 'gpt-3.5-turbo-test';
+      delete process.env.FINE_TUNED_MODEL_ID;
+      process.env.AI_MODEL = 'ft:synthetic:ai-model-authority';
 
       try {
         await resetOpenAITestState();
         const { getDefaultModel } = await import('../src/services/openai.js');
         
         const defaultModel = getDefaultModel();
-        expect(defaultModel).toBe('gpt-3.5-turbo-test');
+        expect(defaultModel).toBe('ft:synthetic:ai-model-authority');
       } finally {
         // Restore original environment
         Object.entries(originalModels).forEach(([key, value]) => {
@@ -119,7 +121,7 @@ describe('OpenAI SDK Integration Tests', () => {
       }
     });
 
-    it('should prioritize GPT5_MODEL over GPT51_MODEL for shared and Trinity fallback selection', async () => {
+    it('keeps shared and Trinity reasoning on Sol when legacy GPT selectors conflict', async () => {
       const originalModels = {
         TRINITY_REASONING_MODEL: process.env.TRINITY_REASONING_MODEL,
         GPT5_MODEL: process.env.GPT5_MODEL,
@@ -134,8 +136,8 @@ describe('OpenAI SDK Integration Tests', () => {
         await resetOpenAITestState();
         const { getGPT5Model, getTrinityReasoningModel } = await import('../src/services/openai.js');
 
-        expect(getGPT5Model()).toBe('gpt-5-custom');
-        expect(getTrinityReasoningModel()).toBe('gpt-5-custom');
+        expect(getGPT5Model()).toBe('gpt-6.1-sol');
+        expect(getTrinityReasoningModel()).toBe('gpt-6.1-sol');
       } finally {
         Object.entries(originalModels).forEach(([key, value]) => {
           if (value) {
@@ -147,7 +149,7 @@ describe('OpenAI SDK Integration Tests', () => {
       }
     });
 
-    it('should fallback to GPT51_MODEL when newer selectors are not set', async () => {
+    it('keeps Sol reasoning when only the legacy GPT51 selector is configured', async () => {
       const originalModels = {
         TRINITY_REASONING_MODEL: process.env.TRINITY_REASONING_MODEL,
         GPT5_MODEL: process.env.GPT5_MODEL,
@@ -162,8 +164,8 @@ describe('OpenAI SDK Integration Tests', () => {
         await resetOpenAITestState();
         const { getGPT5Model, getTrinityReasoningModel } = await import('../src/services/openai.js');
 
-        expect(getGPT5Model()).toBe('gpt-5.1-configured');
-        expect(getTrinityReasoningModel()).toBe('gpt-5.1-configured');
+        expect(getGPT5Model()).toBe('gpt-6.1-sol');
+        expect(getTrinityReasoningModel()).toBe('gpt-6.1-sol');
       } finally {
         Object.entries(originalModels).forEach(([key, value]) => {
           if (value) {
@@ -175,7 +177,7 @@ describe('OpenAI SDK Integration Tests', () => {
       }
     });
 
-    it('should scope the GPT-6.1 Sol default to Trinity structured reasoning', async () => {
+    it('uses the same Sol reasoning selector across shared and Trinity helpers', async () => {
       const originalModels = {
         TRINITY_REASONING_MODEL: process.env.TRINITY_REASONING_MODEL,
         GPT5_MODEL: process.env.GPT5_MODEL,
@@ -190,7 +192,7 @@ describe('OpenAI SDK Integration Tests', () => {
         await resetOpenAITestState();
         const { getGPT5Model, getTrinityReasoningModel } = await import('../src/services/openai.js');
 
-        expect(getGPT5Model()).toBe('gpt-5.1');
+        expect(getGPT5Model()).toBe('gpt-6.1-sol');
         expect(getTrinityReasoningModel()).toBe('gpt-6.1-sol');
       } finally {
         Object.entries(originalModels).forEach(([key, value]) => {
@@ -203,7 +205,7 @@ describe('OpenAI SDK Integration Tests', () => {
       }
     });
 
-    it('should prioritize TRINITY_REASONING_MODEL over shared GPT-5 selectors', async () => {
+    it('does not permit independent Trinity reasoning overrides of the reusable policy', async () => {
       const originalModels = {
         TRINITY_REASONING_MODEL: process.env.TRINITY_REASONING_MODEL,
         GPT5_MODEL: process.env.GPT5_MODEL,
@@ -218,8 +220,8 @@ describe('OpenAI SDK Integration Tests', () => {
         await resetOpenAITestState();
         const { getGPT5Model, getTrinityReasoningModel } = await import('../src/services/openai.js');
 
-        expect(getGPT5Model()).toBe('gpt-5-shared');
-        expect(getTrinityReasoningModel()).toBe('gpt-5.6-terra-custom');
+        expect(getGPT5Model()).toBe('gpt-6.1-sol');
+        expect(getTrinityReasoningModel()).toBe('gpt-6.1-sol');
       } finally {
         Object.entries(originalModels).forEach(([key, value]) => {
           if (value) {
@@ -402,7 +404,7 @@ describe('OpenAI SDK Integration Tests', () => {
 
   describe('Circuit Breaker and Error Handling', () => {
     it('should have circuit breaker for API resilience', async () => {
-      const { callOpenAI } = await import('../src/services/openai.js');
+      const { callOpenAI, getDefaultModel } = await import('../src/services/openai.js');
       
       // Function should exist and be callable
       expect(callOpenAI).toBeDefined();
@@ -413,7 +415,7 @@ describe('OpenAI SDK Integration Tests', () => {
       delete process.env.OPENAI_API_KEY;
       
       try {
-        const result = await callOpenAI('gpt-4', 'Test prompt', 100, false);
+        const result = await callOpenAI(getDefaultModel(), 'Test prompt', 100, false);
 
         // Should return a result even without API key (fallback)
         expect(result).toHaveProperty('response');

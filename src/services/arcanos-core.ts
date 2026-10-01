@@ -16,7 +16,7 @@ import { generateMockResponse } from '@services/openai.js';
 import { getOpenAIClientOrAdapter } from '@services/openai/clientBridge.js';
 import { getAiExecutionContext } from '@services/openai/aiExecutionContext.js';
 import { getArcanosCoreOperatorDispatch } from '@services/arcanosCoreOperatorDispatchPort.js';
-import { APPLICATION_CONSTANTS } from '@shared/constants.js';
+import { getTrinityFinalModel } from '@services/openai/credentialProvider.js';
 import {
   ARCANOS_SUPPRESS_TIMEOUT_FALLBACK_FLAG,
   normalizeBooleanFlagValue
@@ -584,7 +584,7 @@ function buildCoreDegradedRunOptions(
     maxWords: resolveCoreDegradedMaxWords(runOptions?.maxWords ?? null),
     debugPipeline: false,
     strictUserVisibleOutput: true,
-    directAnswerModelOverride: APPLICATION_CONSTANTS.MODEL_GPT_4_1_MINI,
+    directAnswerModelOverride: getTrinityFinalModel(),
     ...(typeof watchdogModelTimeoutMs === 'number' && Number.isFinite(watchdogModelTimeoutMs) && watchdogModelTimeoutMs > 0
       ? { watchdogModelTimeoutMs: Math.trunc(watchdogModelTimeoutMs) }
       : {})

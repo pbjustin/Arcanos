@@ -13,6 +13,7 @@ const QUERY = 'Who holds the Women\'s World Championship on Raw?';
 const NOTION_CONTENT = 'Rhea Ripley holds the Women\'s World Championship on Raw.';
 const PROVIDER_ANSWER = '- Rhea Ripley holds the Women\'s World Championship.';
 const BACKSTAGE_NOTION_MAX_READABLE_CHUNKS_PER_SNAPSHOT = 4_096;
+const authorityModel = 'ft:gpt-4.1:synthetic:backstage-authority';
 
 const responsesCreate = jest.fn();
 const createEmbedding = jest.fn();
@@ -154,6 +155,7 @@ const TEST_ENVIRONMENT_KEYS = [
   'ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN',
   'ARCANOS_BACKSTAGE_NOTION_AUTHORITY_ROOTS_JSON',
   'BOOKER_GENERATION_STAGE_TIMEOUT_MS',
+  'FINETUNED_MODEL_ID',
   'GPT5_MODEL',
   'GPTID_BACKSTAGE_BOOKER',
   'GPT_ASYNC_HEAVY_PROMPT_CHARS',
@@ -174,6 +176,7 @@ process.env.ARCANOS_BACKSTAGE_NOTION_AUTHORITY_ROOTS_JSON = JSON.stringify({
   },
 });
 process.env.BOOKER_GENERATION_STAGE_TIMEOUT_MS = '40000';
+process.env.FINETUNED_MODEL_ID = authorityModel;
 process.env.GPT5_MODEL = 'gpt-5';
 process.env.GPT_ASYNC_HEAVY_PROMPT_CHARS = '1';
 process.env.OPENAI_STORE = 'true';
@@ -301,7 +304,7 @@ describe('Backstage continuity canonical route real chain', () => {
     });
     responsesCreate.mockResolvedValue({
       id: 'resp_backstage_continuity_route',
-      model: 'gpt-5.1',
+      model: authorityModel,
       status: 'completed',
       output_text: PROVIDER_ANSWER,
       output: [],
@@ -390,7 +393,7 @@ describe('Backstage continuity canonical route real chain', () => {
       { signal?: AbortSignal }
     ];
     expect(providerRequest).toEqual(expect.objectContaining({
-      model: 'gpt-5.1',
+      model: authorityModel,
       max_output_tokens: 900,
       store: false,
     }));

@@ -28,7 +28,7 @@ Configuration:
 | Variable | Default | Notes |
 | --- | --- | --- |
 | `GPT_FAST_PATH_ENABLED` | `true` | Set `false` to route all requests through existing orchestration. |
-| `GPT_FAST_PATH_MODEL` | `gpt-4.1-mini` | Parsed by `resolveGptFastPathConfig`, but not passed to `executeFastGptPrompt` or its Trinity call. It currently does not select the inline provider model; see the model selectors in [CONFIGURATION.md](CONFIGURATION.md#default-model-resolution-order). |
+| `GPT_FAST_PATH_MODEL` | ignored | No longer read by `resolveGptFastPathConfig`. Inline authoritative output uses the service's configured fine-tune through the [shared model policy](CONFIGURATION.md#default-model-resolution-order); classifier eligibility rules remain unchanged. |
 | `GPT_FAST_PATH_TIMEOUT_MS` | `8000` | Inline model timeout, clamped from 500ms to 20000ms. |
 | `GPT_FAST_PATH_MAX_PROMPT_CHARS` | `900` | Maximum prompt size for automatic fast-path classification. |
 | `GPT_FAST_PATH_MAX_MESSAGE_COUNT` | `3` | Maximum `messages[]` count. |
@@ -221,6 +221,6 @@ If a request unexpectedly falls back to async, check:
 - Whether the request has `action`, non-empty `payload`, `tools`, `dag`, `files`, `research`, or other heavy fields.
 - Whether an `Idempotency-Key` header was provided.
 - Whether `GPT_FAST_PATH_ENABLED=false` or `GPT_FAST_PATH_GPT_ALLOWLIST` excludes the GPT ID.
-- Which model the returned Trinity metadata identifies and which applicable model selectors are configured. `GPT_FAST_PATH_MODEL` is currently parsed but does not reach the execution call.
+- Which configured fine-tune the returned Trinity metadata identifies. Inline authoritative output requires the executing service's configured authority; `GPT_FAST_PATH_MODEL` is ignored.
 - Whether prompt size, message count, or `maxWords` exceeds configured limits.
 - Whether logs show `gpt.request.fast_path_fallback`, which means the classifier selected fast path but inline execution failed and the request continued through the existing orchestrated path.

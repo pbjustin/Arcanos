@@ -8,25 +8,9 @@ const runStructuredReasoning = jest.fn();
 const createGPT5Reasoning = jest.fn();
 const storePattern = jest.fn();
 const recordFeedback = jest.fn();
+const authorityModel = 'ft:gpt-4.1:synthetic:gaming-intake-authority';
+const previousAuthorityModel = process.env.FINETUNED_MODEL_ID;
 
-jest.unstable_mockModule('@services/openai/credentialProvider.js', () => ({
-  getTrinityIntakeModel: () => 'gpt-5.1',
-  getTrinityFinalModel: () => 'gpt-5.1',
-  getTrinityFinalEscalationModel: () => 'gpt-5.1',
-  getClearAuditModel: () => 'gpt-5.1',
-  getClearAuditEscalationModel: () => 'gpt-5.1',
-  resolveOpenAIBaseURL: () => undefined,
-  resolveOpenAIKey: () => null,
-  getOpenAIKeySource: () => 'test',
-  resetCredentialCache: jest.fn(),
-  hasValidAPIKey: () => true,
-  setDefaultModel: jest.fn(),
-  getDefaultModel: () => 'gpt-5.1',
-  getComplexModel: () => 'gpt-5.1',
-  getFallbackModel: () => 'gpt-4.1',
-  getGPT5Model: () => 'gpt-5.1',
-  getTrinityReasoningModel: () => 'gpt-5.6-terra'
-}));
 jest.unstable_mockModule('@services/openai/structuredReasoning.js', () => ({ runStructuredReasoning }));
 jest.unstable_mockModule('@services/openai/chatFlow/index.js', () => ({ createGPT5Reasoning }));
 jest.unstable_mockModule('@services/memoryAware.js', () => ({
@@ -52,7 +36,7 @@ const { createAbortError, runWithRequestAbortContext } = await import('@arcanos/
 const { logger } = await import('../src/platform/logging/structuredLogging.js');
 
 const client = {
-  models: { retrieve: jest.fn().mockResolvedValue({ id: 'gpt-5.1' }) },
+  models: { retrieve: jest.fn().mockResolvedValue({ id: 'gpt-6-luna' }) },
   responses: { create: responsesCreate }
 } as never;
 const capabilities = {
@@ -63,10 +47,10 @@ const syntheticEvidence = 'Source [1], sourceId=fixture-guide, revisionId=revisi
 const originalPrompt = `Answer directly: What next in Lantern Vale? Current area: Tide Hall. Last completed objective: restored pump. Spoiler mode: none. Depth: concise.\n<untrusted_evidence>${syntheticEvidence}</untrusted_evidence>`;
 const finalAnswer = '**Open the return route.**\n\n1. Turn the west valve. [1]\n   - Follow the lit corridor.\n\nKeep the [guide](https://example.com/guide) handy.';
 
-function response(text: string, incomplete = false) {
+function response(text: string, incomplete = false, model = 'gpt-6-luna') {
   return {
     id: incomplete ? 'req_1788735955551_b3xj3-synthetic' : 'completed-synthetic',
-    model: 'gpt-5.1',
+    model,
     status: incomplete ? 'incomplete' : 'completed',
     ...(incomplete ? { incomplete_details: { reason: 'max_output_tokens' } } : {}),
     output_text: text,
@@ -102,11 +86,14 @@ function request(prompt = originalPrompt) {
 
 describe('Gaming compact Trinity intake through the real Responses adapter', () => {
   afterEach(() => {
+    if (previousAuthorityModel === undefined) delete process.env.FINETUNED_MODEL_ID;
+    else process.env.FINETUNED_MODEL_ID = previousAuthorityModel;
     jest.useRealTimers();
     jest.restoreAllMocks();
   });
 
   beforeEach(() => {
+    process.env.FINETUNED_MODEL_ID = authorityModel;
     jest.clearAllMocks();
     responsesCreate.mockReset();
     runStructuredReasoning.mockResolvedValue({
@@ -121,7 +108,7 @@ describe('Gaming compact Trinity intake through the real Responses adapter', () 
   });
 
   it.each(['accept', 'reject', 'unavailable'] as const)('replaces ledger CLEAR with one actual final-answer review for %s, including simple tier', async decision => {
-    responsesCreate.mockResolvedValueOnce(response('Question: next step. Evidence [1].')).mockResolvedValueOnce(response(finalAnswer));
+    responsesCreate.mockResolvedValueOnce(response('Question: next step. Evidence [1].')).mockResolvedValueOnce(response(finalAnswer, false, authorityModel));
     const requestInput = request();
     const audit = jest.fn(async (text: string) => ({ assessment: createGamingClearAssessment({
       profile: 'answer', questionProfile: 'walkthrough', subjectId: 'answer-test', subjectHash: gamingClearHash(text),
@@ -151,18 +138,19 @@ describe('Gaming compact Trinity intake through the real Responses adapter', () 
   it('forwards Gaming-only zero transport retries without changing ordinary provider defaults', async () => {
     const { createSingleChatCompletion } = await import('../src/services/openai/chatFallbacks.js');
     responsesCreate.mockResolvedValue(response('{}'));
-    await createSingleChatCompletion(client, { model: 'gpt-5.1', messages: [{ role: 'user', content: 'Synthetic audit' }],
-      max_completion_tokens: 128, maxRetries: 0, redactErrorDetails: true });
+    await createSingleChatCompletion(client, { model: 'gpt-6-luna', messages: [{ role: 'user', content: 'Synthetic audit' }],
+      max_completion_tokens: 128, maxRetries: 0, redactErrorDetails: true }, 'audit');
     expect(responsesCreate.mock.calls[0][1]).toMatchObject({ maxRetries: 0 });
     expect(responsesCreate.mock.calls[0][0]).toMatchObject({ store: false });
-    await createSingleChatCompletion(client, { model: 'gpt-5.1', messages: [{ role: 'user', content: 'Synthetic ordinary request' }], max_completion_tokens: 128 });
+    responsesCreate.mockResolvedValue(response('{}', false, authorityModel));
+    await createSingleChatCompletion(client, { model: authorityModel, messages: [{ role: 'user', content: 'Synthetic ordinary request' }], max_completion_tokens: 128 });
     expect(responsesCreate.mock.calls[1][1]).not.toHaveProperty('maxRetries');
   });
 
   it('reproduces the historical settled 500-token truncation with the ordinary intake contract', async () => {
     responsesCreate.mockResolvedValue(response('PRIVATE unfinished walkthrough', true));
     await expect(runIntakeStage(
-      client, 'gpt-5.1', originalPrompt, '', capabilities,
+      client, 'gpt-6-luna', originalPrompt, '', capabilities,
       { strictUserVisibleOutput: true }, undefined, undefined, createRuntimeBudgetWithLimit(30_000, 0)
     )).rejects.toMatchObject({
       code: 'OPENAI_COMPLETION_INCOMPLETE', finishReason: 'length', incompleteReason: 'max_output_tokens'
@@ -174,16 +162,16 @@ describe('Gaming compact Trinity intake through the real Responses adapter', () 
 
   it('uses compact instructions, existing token adapter and normal intake/reasoning/CLEAR/final stages', async () => {
     responsesCreate.mockResolvedValueOnce(response('Question: next step. Constraints: none spoilers; concise. Evidence [1].'))
-      .mockResolvedValueOnce(response(finalAnswer));
+      .mockResolvedValueOnce(response(finalAnswer, false, authorityModel));
     const result = await runTrinityWritingPipeline(request());
     expect(responsesCreate).toHaveBeenCalledTimes(2);
     const intake = responsesCreate.mock.calls[0]?.[0] as Record<string, unknown>;
-    expect(intake).toMatchObject({ model: 'gpt-5.1', max_output_tokens: 500, reasoning: { effort: 'none' } });
+    expect(intake).toMatchObject({ model: 'gpt-6-luna', max_output_tokens: 500, reasoning: { effort: 'none' } });
     expect(intake).not.toHaveProperty('max_tokens');
     expect(intake).not.toHaveProperty('max_completion_tokens');
     expect(JSON.stringify(intake)).toContain('at most 120 words');
     expect(JSON.stringify(intake)).toContain('Do not write the walkthrough or answer');
-    const sharedContract = buildGamingGuideIntakeContract('gpt-5.1');
+    const sharedContract = buildGamingGuideIntakeContract('gpt-6-luna');
     expect(intake.max_output_tokens).toBe(sharedContract.outputAllocation);
     expect(JSON.stringify(intake)).toContain(JSON.stringify(sharedContract.instructions).slice(1, -1));
     expect(runStructuredReasoning).toHaveBeenCalledTimes(1);
@@ -205,7 +193,7 @@ describe('Gaming compact Trinity intake through the real Responses adapter', () 
   });
 
   it.each(['build', 'meta'])('forwards original scoped hybrid %s evidence through the full Trinity writing facade', async mode => {
-    responsesCreate.mockResolvedValueOnce(response('Compact task card.')).mockResolvedValueOnce(response(finalAnswer));
+    responsesCreate.mockResolvedValueOnce(response('Compact task card.')).mockResolvedValueOnce(response(finalAnswer, false, authorityModel));
     const input = request();
     input.input.sourceEndpoint = `arcanos-gaming.hybrid-${mode}`;
     input.input.body = { ...input.input.body, mode, [GAMING_HYBRID_INTAKE]: true } as typeof input.input.body;
@@ -220,7 +208,7 @@ describe('Gaming compact Trinity intake through the real Responses adapter', () 
   });
 
   it.each(['guide', 'build', 'meta'])('honors Gaming %s audit redaction and disables optional reasoning persistence', async mode => {
-    responsesCreate.mockResolvedValue(response(finalAnswer));
+    responsesCreate.mockImplementation(async (payload: { model: string }) => response(finalAnswer, false, payload.model));
     const input = request();
     input.input.sourceEndpoint = `arcanos-gaming.${mode}`;
     input.input.body = { ...input.input.body, mode };
@@ -236,7 +224,7 @@ describe('Gaming compact Trinity intake through the real Responses adapter', () 
     ['Iron Comet', 'Boss: Cinder Warden; difficulty: veteran; shield only.'],
     ['Orbital Loom', 'Ship: survey frigate; role: explorer; power budget constrained.']
   ])('retains scoped constraints and selected evidence for %s', async (game, context) => {
-    responsesCreate.mockResolvedValueOnce(response('Compact task card.')).mockResolvedValueOnce(response('Use the supported option. [1]'));
+    responsesCreate.mockResolvedValueOnce(response('Compact task card.')).mockResolvedValueOnce(response('Use the supported option. [1]', false, authorityModel));
     const prompt = `Help with ${game}. ${context}\n${syntheticEvidence}`;
     await runTrinityWritingPipeline(request(prompt));
     expect(runStructuredReasoning.mock.calls[0]?.[2]).toContain(context);
@@ -358,13 +346,13 @@ describe('Gaming compact Trinity intake through the real Responses adapter', () 
     expect(logInfo).not.toHaveBeenCalledWith('trinity.gaming.intake.complete', expect.objectContaining({ completionStatus: 'completed' }));
   });
 
-  it('leaves non-Gaming intake instructions, token allocation and reasoning-effort defaults unchanged', async () => {
+  it('preserves non-Gaming intake instructions and token allocation under the shared intake role', async () => {
     responsesCreate.mockResolvedValue(response('Original framed request.'));
-    await runIntakeStage(client, 'gpt-5.1', 'Prepare a release summary.', '', capabilities,
+    await runIntakeStage(client, 'gpt-6-luna', 'Prepare a release summary.', '', capabilities,
       { strictUserVisibleOutput: true }, undefined, undefined, createRuntimeBudgetWithLimit(30_000, 0));
     const intake = responsesCreate.mock.calls[0]?.[0] as Record<string, unknown>;
     expect(intake).toMatchObject({ max_output_tokens: 500 });
-    expect(intake).not.toHaveProperty('reasoning');
+    expect(intake).toMatchObject({ reasoning: { effort: 'none' } });
     expect(JSON.stringify(intake)).not.toContain('compact-v1');
   });
 
@@ -377,12 +365,12 @@ describe('Gaming compact Trinity intake through the real Responses adapter', () 
     { moduleId: 'ARCANOS:GAMING', sourceEndpoint: 'arcanos-gaming.guide', body: {} }
   ])('rejects the trusted policy outside the exact module/source/mode scope: $moduleId $sourceEndpoint $body.mode', async input => {
     responsesCreate.mockResolvedValueOnce(response('Original framed request only.'))
-      .mockResolvedValueOnce(response('A completed summary.'));
+      .mockResolvedValueOnce(response('A completed summary.', false, authorityModel));
     const params = request('Prepare a release summary.\nRetain the release facts.');
     await runTrinityWritingPipeline({ ...params, input: { ...params.input, ...input } });
     const intake = responsesCreate.mock.calls[0]?.[0] as Record<string, unknown>;
     expect(JSON.stringify(intake)).not.toContain('compact-v1');
-    expect(intake).not.toHaveProperty('reasoning');
+    expect(intake).toMatchObject({ reasoning: { effort: 'none' } });
     expect(runStructuredReasoning.mock.calls[0]?.[2]).not.toContain('originalGamingRequest');
     expect(createGPT5Reasoning.mock.calls[0]?.[1]).not.toContain('originalGamingRequest');
   });

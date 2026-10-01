@@ -4,9 +4,6 @@ import { buildMockArcanosResponse } from "@platform/runtime/arcanosPrompts.js";
 import { getDefaultModel } from './openai.js';
 import { getOpenAIClientOrAdapter } from './openai/clientBridge.js';
 
-// Use centralized model configuration for mock compatibility only.
-const FT_MODEL = getDefaultModel();
-
 /**
  * Purpose: Execute the ARCANOS query surface through the canonical Trinity generation facade.
  * Inputs/Outputs: Accepts a text prompt and returns a finalized response string.
@@ -16,7 +13,7 @@ export async function arcanosQuery(prompt: string): Promise<string> {
   const { client } = getOpenAIClientOrAdapter();
 
   if (!client) {
-    return buildMockArcanosResponse(prompt, FT_MODEL);
+    return buildMockArcanosResponse(prompt, getDefaultModel());
   }
 
   const result = await runTrinityWritingPipeline({

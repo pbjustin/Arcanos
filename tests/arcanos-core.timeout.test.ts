@@ -1,4 +1,12 @@
-import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { afterAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
+
+const authorityModel = 'ft:gpt-4.1:synthetic:core-timeout-authority';
+const originalFineTune = process.env.FINETUNED_MODEL_ID;
+process.env.FINETUNED_MODEL_ID = authorityModel;
+afterAll(() => {
+  if (originalFineTune === undefined) delete process.env.FINETUNED_MODEL_ID;
+  else process.env.FINETUNED_MODEL_ID = originalFineTune;
+});
 
 const runTrinityWritingPipelineMock = jest.fn();
 const createRuntimeBudgetWithLimitMock = jest.fn((watchdogLimit: number, safetyBuffer = 0) => ({
@@ -114,7 +122,7 @@ function createTrinityResult(overrides: Record<string, unknown> = {}) {
       id: 'trinity-direct-1',
       created: 1772917000000
     },
-    activeModel: 'gpt-4.1-mini',
+    activeModel: authorityModel,
     fallbackFlag: true,
     dryRun: false,
     fallbackSummary: {
@@ -157,7 +165,7 @@ describe('runArcanosCoreQuery timeout clamp', () => {
   it('returns a normal GPT result for a fast simple query without engaging fallback', async () => {
     const trinityResult = createTrinityResult({
       result: 'Hello.',
-      activeModel: 'gpt-4.1-mini',
+      activeModel: authorityModel,
       fallbackFlag: false,
       fallbackSummary: {
         intakeFallbackUsed: false,
@@ -244,7 +252,7 @@ describe('runArcanosCoreQuery timeout clamp', () => {
           requestedVerbosity: 'minimal',
           maxWords: 60,
           strictUserVisibleOutput: true,
-          directAnswerModelOverride: 'gpt-4.1-mini'
+          directAnswerModelOverride: authorityModel
         })
       })
     });

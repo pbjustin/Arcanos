@@ -16,10 +16,6 @@ jest.unstable_mockModule('@config/openaiStore.js', () => ({
   shouldStoreOpenAIResponses: jest.fn(() => false)
 }));
 
-jest.unstable_mockModule('@platform/runtime/env.js', () => ({
-  getEnv: jest.fn((name: string, fallback: string) => fallback)
-}));
-
 jest.unstable_mockModule('@routes/api-daemon.js', () => ({
   createPendingDaemonActions: createPendingDaemonActionsMock,
   getDaemonCommandResultForInstance: getDaemonCommandResultForInstanceMock,
@@ -28,10 +24,6 @@ jest.unstable_mockModule('@routes/api-daemon.js', () => ({
 
 jest.unstable_mockModule('@services/safety/auditEvents.js', () => ({
   emitSafetyAuditEvent: jest.fn()
-}));
-
-jest.unstable_mockModule('@arcanos/openai/responseParsing', () => ({
-  extractResponseOutputText: jest.fn((response: { output_text?: string }, fallback: string) => response.output_text || fallback)
 }));
 
 const { tryDispatchDaemonTools } = await import('../src/routes/ask/daemonTools.js');

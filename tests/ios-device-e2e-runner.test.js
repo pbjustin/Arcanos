@@ -83,6 +83,11 @@ describe('durable Swift device E2E runner admission', () => {
       PATH: '/fixture/tools',
       SystemRoot: 'C:\\Windows',
       OPENAI_API_KEY: 'private-test-provider-marker',
+      FINETUNED_MODEL_ID: 'private-authority-marker',
+      FINE_TUNED_MODEL_ID: 'private-authority-alias-marker',
+      AI_MODEL: 'private-ai-model-marker',
+      OPENAI_MODEL: 'private-openai-model-marker',
+      RAILWAY_OPENAI_MODEL: 'private-railway-model-marker',
       DATABASE_URL: 'private-production-database-marker',
       PGOPTIONS: '-c search_path=public',
       REDIS_URL: 'private-cache-marker',
@@ -95,13 +100,38 @@ describe('durable Swift device E2E runner admission', () => {
     }, options);
     expect(environment.PATH).toBe('/fixture/tools');
     expect(environment.CI).toBe('true');
+    expect(environment.FINETUNED_MODEL_ID).toBe('ft:synthetic:test:ios-device-e2e-authority');
+    expect(environment.DISABLE_EXTERNAL_CALLS).toBe('true');
+    expect(environment.USE_MOCK_SERVICES).toBe('true');
+    expect(environment.RUN_WORKERS).toBe('false');
     expect(environment.IOS_DEVICE_E2E).toBe('1');
     expect(environment.IOS_DEVICE_E2E_DATABASE_URL).toBe(databaseUrl);
     expect(environment.IOS_DEVICE_E2E_SWIFT_BINARY).toBe(process.execPath);
     expect(JSON.stringify(environment)).not.toMatch(/private-|untrusted-preload|unvalidated-target|search_path=public/);
     for (const name of ['DATABASE_URL', 'PGOPTIONS', 'REDIS_URL', 'ARCANOS_GPT_ACCESS_TOKEN',
-      'RAILWAY_TOKEN', 'NODE_OPTIONS', 'UNRELATED_ENVIRONMENT']) {
+      'RAILWAY_TOKEN', 'NODE_OPTIONS', 'UNRELATED_ENVIRONMENT', 'FINE_TUNED_MODEL_ID',
+      'AI_MODEL', 'OPENAI_MODEL', 'RAILWAY_OPENAI_MODEL']) {
       expect(environment[name]).toBeUndefined();
+    }
+  });
+
+  it('resolves final authority from the closed synthetic child environment through the real central policy', async () => {
+    const environment = buildChildEnvironment({ FINETUNED_MODEL_ID: 'private-parent-authority-marker' }, {
+      databaseUrl,
+      swiftBinary: process.execPath,
+      reportPath: path.resolve('fixture-report.json'),
+      runId: 'fixture-run-123',
+      sourceSha,
+    });
+    const originalAuthority = process.env.FINETUNED_MODEL_ID;
+    try {
+      process.env.FINETUNED_MODEL_ID = environment.FINETUNED_MODEL_ID;
+      const { resolveGenerativeModel } = await import('../src/services/openai/credentialProvider.js');
+      expect(resolveGenerativeModel('final')).toBe(environment.FINETUNED_MODEL_ID);
+      expect(resolveGenerativeModel('final-escalation')).toBe(environment.FINETUNED_MODEL_ID);
+    } finally {
+      if (originalAuthority === undefined) delete process.env.FINETUNED_MODEL_ID;
+      else process.env.FINETUNED_MODEL_ID = originalAuthority;
     }
   });
 

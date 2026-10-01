@@ -9,7 +9,7 @@ import {
 import { getOrCreateClient } from '@arcanos/openai/unifiedClient';
 import { createAbortError, getRequestAbortSignal } from '@arcanos/runtime';
 import { getEnv } from '@platform/runtime/env.js';
-import { hasValidAPIKey } from '@services/openai/credentialProvider.js';
+import { hasValidAPIKey, resolveGenerativeModel } from '@services/openai/credentialProvider.js';
 
 import {
   INTENT_CLARIFICATION_REQUIRED,
@@ -54,7 +54,6 @@ export const LLM_DISPATCH_FALLBACK_REASONS = new Set([
   'llm_output_invalid'
 ]);
 
-const DEFAULT_DISPATCH_MODEL = 'gpt-4.1-mini';
 const DEFAULT_DISPATCH_LLM_TIMEOUT_MS = 5000;
 const MAX_DISPATCH_LLM_TIMEOUT_MS = 10000;
 const MAX_DISPATCH_LLM_OUTPUT_TOKENS = 700;
@@ -109,7 +108,7 @@ function throwIfDispatchPlanningAborted(signal: AbortSignal | undefined): void {
 }
 
 export function getLlmDispatchModel(): string {
-  return getEnv('GPT_ACCESS_DISPATCH_MODEL')?.trim() || DEFAULT_DISPATCH_MODEL;
+  return resolveGenerativeModel('intake', getEnv('GPT_ACCESS_DISPATCH_MODEL'));
 }
 
 export function getLlmDispatchTimeoutMs(): number {
@@ -484,7 +483,8 @@ export async function resolveLlmDispatchPlan(input: ResolveLlmDispatchPlanInput)
     const { outputParsed } = await callStructuredResponse<LlmDispatchResponse>(
       client,
       {
-        model: input.model ?? getLlmDispatchModel(),
+        model: resolveGenerativeModel('intake', input.model ?? getLlmDispatchModel()),
+        reasoning: { effort: 'none' },
         instructions: buildPlannerInstructions({
           actions: actions.map(toCatalogAction)
         }),

@@ -21,15 +21,12 @@ async function loadAIReflectionsHarness(): Promise<AIReflectionsHarness> {
   const callOpenAIMock = jest.fn(async () => ({
     output: 'Mock reflection output',
     cached: false,
-    model: 'gpt-test-model'
+    model: 'gpt-6.1-sol'
   }));
   const saveSelfReflectionMock = jest.fn(async () => undefined);
 
   jest.unstable_mockModule('../src/services/openai/chatFlow/index.js', () => ({
     callOpenAI: callOpenAIMock
-  }));
-  jest.unstable_mockModule('../src/services/openai/credentialProvider.js', () => ({
-    getDefaultModel: () => 'gpt-test-model'
   }));
   jest.unstable_mockModule('@core/db/repositories/selfReflectionRepository.js', () => ({
     saveSelfReflection: saveSelfReflectionMock
@@ -39,10 +36,6 @@ async function loadAIReflectionsHarness(): Promise<AIReflectionsHarness> {
     buildReflectionPrompt: () => 'test-reflection-prompt',
     buildDefaultPatchContent: () => 'default-fallback-content',
     buildFallbackPatchContent: () => 'error-fallback-content'
-  }));
-  jest.unstable_mockModule('@platform/runtime/env.js', () => ({
-    getEnv: (_key: string) => undefined,
-    getEnvNumber: (_key: string, fallback: number) => fallback
   }));
 
   const module = await import('../src/services/ai-reflections.js');

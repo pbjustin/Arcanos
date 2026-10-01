@@ -25,6 +25,7 @@ import { runIosDevicePolicyPreview } from './shared/ios/iosDevicePreviewFixture.
 import { assertDagMetricsRetentionPreviewFixture } from './shared/dag/dagMetricsPreviewFixture.js';
 import { assertDagTokenAccountingPreviewFixture } from './shared/dag/dagTokenAccountingPreviewFixture.js';
 import { assertSessionContextPreviewFixture } from './shared/memory/sessionContextPreviewFixture.js';
+import { assertGenerativeModelPolicyPreviewFixture } from './shared/gpt/generativeModelPolicyPreviewFixture.js';
 import { handleChatGptTutorPreviewRequest } from './shared/chatgpt/chatgptTutorPreviewFixture.js';
 import { handleGamingMcpPreviewRequest } from './shared/chatgpt/gamingMcpPreviewFixture.js';
 
@@ -52,6 +53,7 @@ import {
   NATIVE_PR_PREVIEW_DAG_METRICS_CONTRACT,
   NATIVE_PR_PREVIEW_DAG_TOKEN_ACCOUNTING_CONTRACT,
   NATIVE_PR_PREVIEW_SESSION_CONTEXT_CONTRACT,
+  NATIVE_PR_PREVIEW_GENERATIVE_MODEL_POLICY_CONTRACT,
   NATIVE_PR_PREVIEW_FIXTURE_IDS,
   NATIVE_PR_PREVIEW_IOS_DEVICE_CONTRACT,
   NATIVE_PR_PREVIEW_GAMING_CONTRACT,
@@ -5566,6 +5568,58 @@ function runBackstageProductionOutputScenario(
 function runBackstageProductionOutputContractsFixture(
   fixture: string
 ): Record<string, unknown> {
+  // Exercise authority eligibility without importing provider configuration into
+  // this contained fixture. All identifiers and workload metadata are synthetic.
+  const authorityModel = 'ft:gpt-4.1:synthetic:preview-authority';
+  const authorityBudgetInput = {
+    action: 'generateBooking' as const,
+    profile: 'queued_generation' as const,
+    requestedFormat: 'structured_booking' as const,
+    requestedTokenLimit: 2_400,
+    configuredWorkerTokenLimit: BACKSTAGE_WORKER_OUTPUT_TOKEN_LIMIT_DEFAULT,
+    promptCodeUnits: 1_600,
+    retrievedContextCodeUnits: 0,
+    expectedOutputWords: 600,
+    model: authorityModel,
+    finalAuthorityModel: authorityModel,
+    modelStageTimeoutMs: 75_000,
+  };
+  const authorityBudget = resolveBackstageOutputBudget(authorityBudgetInput);
+  const rejectedAuthorityBudgets = [
+    { finalAuthorityModel: undefined },
+    { model: 'ft:gpt-4.1:synthetic:other-authority' },
+    { model: authorityModel.toUpperCase() },
+    { model: 'gpt-6.1-sol', finalAuthorityModel: 'gpt-6.1-sol' },
+  ].map(overrides => resolveBackstageOutputBudget({
+    ...authorityBudgetInput,
+    ...overrides,
+  }));
+  const finiteAuthorityCaps = [
+    [{ profile: 'bounded_sync_generation' as const }, 2_400],
+    [{ action: 'queryContinuity' as const }, 900],
+    [{ requestedFormat: 'bounded_review' as const }, 2_400],
+    [{ modelStageTimeoutMs: 40_000 }, 2_400],
+    [{ modelStageTimeoutMs: 45_000 }, 4_000],
+    [{ modelStageTimeoutMs: 60_000 }, 5_000],
+    [{ configuredWorkerTokenLimit: 999_999 }, 8_000],
+  ] as const;
+  const authorityCapacityValid =
+    authorityBudget.modelCapability === 'configured_authority'
+    && authorityBudget.budgetClass === 'queued_extended'
+    && authorityBudget.tokenLimit === BACKSTAGE_WORKER_OUTPUT_TOKEN_LIMIT_DEFAULT
+    && authorityBudget.tokenCap === BACKSTAGE_WORKER_OUTPUT_TOKEN_LIMIT_DEFAULT
+    && rejectedAuthorityBudgets.every(budget => (
+      budget.modelCapability === 'baseline_fallback'
+      && budget.budgetClass === 'bounded_request'
+      && budget.tokenLimit === 2_400
+      && budget.tokenCap === 2_400
+    ))
+    && finiteAuthorityCaps.every(([overrides, expected]) => {
+      const budget = resolveBackstageOutputBudget({ ...authorityBudgetInput, ...overrides });
+      return budget.tokenLimit === expected
+        && budget.tokenCap <= 8_000
+        && budget.tokenLimit <= budget.tokenCap;
+    });
   const exactCompact = runBackstageProductionOutputScenario({
     action: 'generateBookingWithHRC',
     prompt: [
@@ -5624,7 +5678,7 @@ function runBackstageProductionOutputContractsFixture(
       && exactCompact.enforceParsedItemContract === true,
     productionCapacitySelected: commonCapacityValid,
   };
-  if (Object.values(contracts).some(value => !value)) {
+  if (!authorityCapacityValid || Object.values(contracts).some(value => !value)) {
     throw new Error(
       'PREVIEW_BACKSTAGE_PRODUCTION_OUTPUT_CONTRACT_INVALID'
     );
@@ -9005,6 +9059,7 @@ function buildAllowedRouteKeys(): Set<string> {
     'HEAD /healthz',
     'GET /readyz',
     'HEAD /readyz',
+    `GET ${NATIVE_PR_PREVIEW_GENERATIVE_MODEL_POLICY_CONTRACT.path}`,
     `GET ${NATIVE_PR_PREVIEW_IOS_DEVICE_CONTRACT.path}`,
     `GET ${NATIVE_PR_PREVIEW_BACKSTAGE_BOOKER_OPENAPI_CONTRACT.path}`,
     `POST ${NATIVE_PR_PREVIEW_BACKSTAGE_STORYLINE_CONTRACT.path}`,
@@ -9218,6 +9273,7 @@ export function createNativePrPreviewApplication(
       || gamingSourcePath
       || iosFixtureAdmission
       || rawPath === NATIVE_PR_PREVIEW_IOS_DEVICE_CONTRACT.path
+      || rawPath === NATIVE_PR_PREVIEW_GENERATIVE_MODEL_POLICY_CONTRACT.path
       || chatGptTutorPath
       || chatGptGamingPath
     ) {
@@ -9391,13 +9447,14 @@ export function createNativePrPreviewApplication(
       && !options.readinessState.draining;
     let ready = canReportReady();
     // Preserve the trusted verifier's response contract while requiring the
-    // deployed device, DAG, and session fixtures before readiness can claim success.
+    // deployed device, DAG, session and model-policy fixtures before readiness can claim success.
     if (ready) {
       try {
         runIosDevicePolicyPreview();
         assertDagMetricsRetentionPreviewFixture();
         await assertDagTokenAccountingPreviewFixture();
         await assertSessionContextPreviewFixture();
+        assertGenerativeModelPolicyPreviewFixture();
         ready = canReportReady();
         if (ready) {
           response.setHeader(NATIVE_PR_PREVIEW_IOS_DEVICE_CONTRACT.proofHeader,
@@ -9408,6 +9465,8 @@ export function createNativePrPreviewApplication(
             NATIVE_PR_PREVIEW_DAG_TOKEN_ACCOUNTING_CONTRACT.proofVersion);
           response.setHeader(NATIVE_PR_PREVIEW_SESSION_CONTEXT_CONTRACT.proofHeader,
             NATIVE_PR_PREVIEW_SESSION_CONTEXT_CONTRACT.proofVersion);
+          response.setHeader(NATIVE_PR_PREVIEW_GENERATIVE_MODEL_POLICY_CONTRACT.proofHeader,
+            NATIVE_PR_PREVIEW_GENERATIVE_MODEL_POLICY_CONTRACT.proofVersion);
         }
       } catch {
         ready = false;
@@ -9440,6 +9499,27 @@ export function createNativePrPreviewApplication(
       sendBoundedJsonResponse(request, response, {
         ok: false, error: 'IOS_DEVICE_PREVIEW_FIXTURE_FAILED',
       }, { logEvent: 'native_pr_preview.ios_device_policy_failed', maxBytes: 1024, statusCode: 500 });
+    }
+  });
+
+  app.get(NATIVE_PR_PREVIEW_GENERATIVE_MODEL_POLICY_CONTRACT.path, (request, response) => {
+    try {
+      const proof = assertGenerativeModelPolicyPreviewFixture();
+      response.setHeader(NATIVE_PR_PREVIEW_GENERATIVE_MODEL_POLICY_CONTRACT.proofHeader,
+        NATIVE_PR_PREVIEW_GENERATIVE_MODEL_POLICY_CONTRACT.proofVersion);
+      sendBoundedJsonResponse(request, response, {
+        ...proof, prNumber: options.identity.prNumber, sourceCommit: options.identity.sourceCommit,
+      }, {
+        logEvent: 'native_pr_preview.generative_model_policy',
+        maxBytes: NATIVE_PR_PREVIEW_GENERATIVE_MODEL_POLICY_CONTRACT.maxResponseBytes,
+        statusCode: 200,
+      });
+    } catch {
+      sendBoundedJsonResponse(request, response, {
+        ok: false, error: 'GENERATIVE_MODEL_POLICY_PREVIEW_FIXTURE_FAILED',
+      }, {
+        logEvent: 'native_pr_preview.generative_model_policy_failed', maxBytes: 1024, statusCode: 500,
+      });
     }
   });
 

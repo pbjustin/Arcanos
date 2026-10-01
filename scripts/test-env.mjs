@@ -69,7 +69,7 @@ for (const key of productionOnlyKeys) {
 }
 
 const testDefaults = {
-  AI_MODEL: 'gpt-4o-mini',
+  AI_MODEL: 'ft:gpt-4.1-2025-04-14:arcanos-test:authority:offline',
   ALLOW_MOCK_OPENAI: 'true',
   ARCANOS_JOB_READ_CAPABILITY_SECRET:
     'test-job-read-capability-secret-for-local-workflows-only',

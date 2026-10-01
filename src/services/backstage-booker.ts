@@ -26,7 +26,7 @@ import {
 import { runTrinityWritingPipeline } from '@core/logic/trinityWritingPipeline.js';
 import { computeTierSoftCap } from '@core/logic/trinityGuards.js';
 import { detectTier } from '@core/logic/trinityTier.js';
-import { getGPT5Model } from "@services/openai.js";
+import { getTrinityFinalModel } from "@services/openai/credentialProvider.js";
 import { getOpenAIClientOrAdapter } from '@services/openai/clientBridge.js';
 import { saveWithAuditCheck } from "@services/persistenceManager.js";
 import {
@@ -96,7 +96,6 @@ import {
 } from '@platform/resilience/runtimeBudget.js';
 import { logger } from '@platform/logging/structuredLogging.js';
 import { resolveErrorMessage } from '@shared/errorUtils.js';
-import { APPLICATION_CONSTANTS } from '@shared/constants.js';
 import {
   BACKSTAGE_GENERATION_STAGE_TIMEOUT_DEFAULT_MS,
   BACKSTAGE_GENERATION_TOKEN_LIMIT_DEFAULT,
@@ -1598,15 +1597,12 @@ async function buildStructuredBookingPrompt(
 
 /**
  * Resolve the model used for backstage booking generation.
- * Inputs/outputs: none -> the shared GPT-5 model preference.
- * Edge cases: trims the configured model, falls back from blank values, and maps the obsolete base `gpt-5` alias to the reasoning-disable-capable GPT-5.1 baseline.
+ * Inputs/outputs: none -> the service-configured authoritative final model.
+ * Edge cases: fails closed when the central final-authority configuration is unavailable.
  */
 function resolveBackstageBookerModel(): string {
-  //audit Assumption: USER_GPT_ID identifies a user-facing GPT and is not an OpenAI provider model; failure risk: forwarding that alias as `model` makes Booker and HRC generation fail; expected invariant: provider selection comes only from the shared model configuration; handling strategy: use getGPT5Model() and normalize only the exact legacy gpt-5 alias to GPT-5.1.
-  const resolvedModel = getGPT5Model().trim();
-  return !resolvedModel || resolvedModel.toLowerCase() === APPLICATION_CONSTANTS.MODEL_GPT_5
-    ? APPLICATION_CONSTANTS.MODEL_GPT_5_1
-    : resolvedModel;
+  // USER_GPT_ID is a user-facing GPT alias; provider authority belongs to the shared policy.
+  return getTrinityFinalModel();
 }
 
 function snapshotFallbackEvent(id: string, data: EventData): FallbackEventEntry {
@@ -2805,6 +2801,7 @@ export async function generateBooking(
     notionAuthorityContext: structuredPrompt.notionAuthorityContext,
     completeBookingContainerComponentCount: structuredBookingContainerRequest,
     model,
+    finalAuthorityModel: getTrinityFinalModel(),
     modelStageTimeoutMs: effectiveModelStageBudgetMs,
   });
   const tokenLimit = outputBudget.tokenLimit;

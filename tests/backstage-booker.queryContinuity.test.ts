@@ -10,6 +10,7 @@ import {
   isBackstageContinuityCursorRequestValid,
 } from '../src/shared/backstage/backstageContinuityQueryCore.js';
 
+const authorityModel = 'ft:gpt-4.1:synthetic:backstage-authority';
 const mockRunTrinityWritingPipeline = jest.fn();
 const mockGetGPT5Model = jest.fn();
 const mockGetOpenAIClientOrAdapter = jest.fn();
@@ -45,11 +46,14 @@ jest.unstable_mockModule('@services/openai/clientBridge.js', () => ({
 }));
 
 jest.unstable_mockModule('@platform/runtime/env.js', () => ({
+  getEnv: (key: string, fallback?: string) => key === 'FINETUNED_MODEL_ID' ? authorityModel : fallback,
+  getEnvBoolean: (_key: string, fallback: boolean) => fallback,
   getEnvNumber: mockGetEnvNumber,
 }));
 
 jest.unstable_mockModule('@platform/logging/structuredLogging.js', () => ({
   logger: { error: mockLoggerError, info: mockLoggerInfo },
+  aiLogger: { error: mockLoggerError, info: mockLoggerInfo, warn: jest.fn(), debug: jest.fn() },
 }));
 
 jest.unstable_mockModule('@platform/resilience/runtimeBudget.js', () => ({
@@ -519,7 +523,7 @@ describe('Backstage Booker queryContinuity', () => {
   it.each([
     ['blank configuration', '   '],
     ['legacy gpt-5 configuration', 'gpt-5'],
-  ])('normalizes %s to the supported gpt-5.1 model', async (
+  ])('ignores %s while keeping the configured final authority', async (
     _caseName,
     configuredModel
   ) => {
@@ -549,13 +553,13 @@ describe('Backstage Booker queryContinuity', () => {
       expect.objectContaining({
         input: expect.objectContaining({
           body: expect.objectContaining({
-            model: 'gpt-5.1',
+            model: authorityModel,
             retrievalMode: 'relevant',
           }),
         }),
         context: expect.objectContaining({
           runOptions: expect.objectContaining({
-            directAnswerModelOverride: 'gpt-5.1',
+            directAnswerModelOverride: authorityModel,
           }),
         }),
       })

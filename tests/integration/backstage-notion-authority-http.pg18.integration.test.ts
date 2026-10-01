@@ -28,6 +28,7 @@ const MEMBERS = [randomUUID(), randomUUID()].sort();
 const EXTERNAL_REFERENCE_ID = randomUUID();
 const QUERY = 'Who holds the synthetic championship?';
 const PROVIDER_ANSWER = '- Synthetic champion one holds the championship.';
+const AUTHORITY_MODEL = 'ft:synthetic:test:backstage-pg18-http-authority';
 const CONTENT = [
   'PRIVATE_SYNTHETIC_RECORD_1: Synthetic champion one holds the championship.',
   'PRIVATE_SYNTHETIC_RECORD_2: Synthetic champion two is the next challenger.',
@@ -101,6 +102,7 @@ jest.unstable_mockModule('@transport/http/middleware/publicProviderAdmission.js'
 }));
 
 const environment = {
+  FINETUNED_MODEL_ID: AUTHORITY_MODEL,
   ARCANOS_BACKSTAGE_BOOKER_ACCESS_TOKEN: ACCESS_TOKEN,
   ARCANOS_BACKSTAGE_NOTION_AUTHORITY_ROOTS_JSON: JSON.stringify({
     [UNIVERSE_ID]: { rootPageId: ROOT_PAGE_ID, displayName: root.displayName },
@@ -261,7 +263,7 @@ describeWithDatabase('Backstage Notion authority through authenticated HTTP and 
       new Error('External fetch is forbidden in the PostgreSQL HTTP fixture.')
     );
     responsesCreate.mockResolvedValue({
-      id: 'resp_backstage_pg18_http_fixture', model: 'gpt-5.1', status: 'completed',
+      id: 'resp_backstage_pg18_http_fixture', model: AUTHORITY_MODEL, status: 'completed',
       output_text: PROVIDER_ANSWER, output: [],
       usage: { input_tokens: 40, output_tokens: 12, total_tokens: 52 },
     });
@@ -417,13 +419,13 @@ describeWithDatabase('Backstage Notion authority through authenticated HTTP and 
     expect(createEmbedding).toHaveBeenCalledWith(QUERY);
     expect(responsesCreate).toHaveBeenCalledTimes(2);
     for (const [providerRequest, providerOptions] of responsesCreate.mock.calls as unknown as [
-      { input: unknown; store: boolean; max_output_tokens: number }, { signal: AbortSignal },
+      { input: unknown; model: string; store: boolean; max_output_tokens: number }, { signal: AbortSignal },
     ][]) {
       const prompt = JSON.stringify(providerRequest.input);
       expect(prompt).toContain(QUERY);
       for (const content of CONTENT) expect(prompt).toContain(content);
       expect(prompt).toContain('instruction_authority: none');
-      expect(providerRequest).toMatchObject({ store: false, max_output_tokens: 900 });
+      expect(providerRequest).toMatchObject({ model: AUTHORITY_MODEL, store: false, max_output_tokens: 900 });
       expect(providerOptions.signal).toBeInstanceOf(AbortSignal);
     }
 

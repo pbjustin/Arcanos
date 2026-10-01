@@ -152,7 +152,7 @@ export async function runGamingClearAnswerAudit(client: OpenAI, input: GamingCle
       messages: [{ role: 'system', content: instructions }, { role: 'user', content: data }],
       response_format: { type: 'json_object' }, signal: getRequestAbortSignal(), timeoutMs,
       redactErrorDetails: true, maxRetries: 0
-    });
+    }, modelLane === 'escalation' ? 'audit-escalation' : 'audit');
     usage = response.usage;
     const content = response.choices[0]?.message.content;
     if (response.choices[0]?.finish_reason !== 'stop' || typeof content !== 'string' || content.length > 16_000) {

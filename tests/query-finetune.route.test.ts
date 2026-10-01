@@ -46,13 +46,18 @@ function buildApp() {
 
 describe('/query-finetune route', () => {
   let consoleLogSpy: ReturnType<typeof jest.spyOn>;
+  let originalAuthority: string | undefined;
 
   beforeEach(() => {
+    originalAuthority = process.env.FINETUNED_MODEL_ID;
+    process.env.FINETUNED_MODEL_ID = 'ft:route-authority';
     consoleLogSpy = jest.spyOn(console, 'log').mockImplementation(() => undefined);
     runTrinityMock.mockReset();
   });
 
   afterEach(() => {
+    if (originalAuthority === undefined) delete process.env.FINETUNED_MODEL_ID;
+    else process.env.FINETUNED_MODEL_ID = originalAuthority;
     consoleLogSpy.mockRestore();
   });
 
@@ -87,7 +92,7 @@ describe('/query-finetune route', () => {
     }));
     expect(runTrinityMock).toHaveBeenCalledWith(expect.objectContaining({
       prompt: 'health check',
-      model: expect.any(String),
+      model: 'ft:route-authority',
       structured: true,
       latencyBudgetMs: 12_000
     }));

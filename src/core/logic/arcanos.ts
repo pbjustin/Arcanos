@@ -1,6 +1,7 @@
 import type OpenAI from 'openai';
 import { runHealthCheck } from "@platform/logging/diagnostics.js";
-import { call_gpt5_strict, getGPT5Model } from "@services/openai.js";
+import { call_gpt5_strict } from "@services/openai.js";
+import { getTrinityFinalModel } from "@services/openai/credentialProvider.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import { getTokenParameter } from "@shared/tokenParameterHelper.js";
 import { generateRequestId } from "@shared/idGenerator.js";
@@ -106,8 +107,8 @@ export async function runARCANOS(
   // Create the ARCANOS prompt with shell wrapper and memory context
   const prompt = arcanosPrompt(auditSafeUserPrompt, memoryContext);
   
-  // Use strict GPT-5.1 calls only - no fallback allowed
-  const gpt5Model = getGPT5Model();
+  // The strict call returns the configured authoritative final answer without a helper fallback.
+  const gpt5Model = getTrinityFinalModel();
   let finalResult: string;
   let response: GPT5StrictResponse | null = null;
   

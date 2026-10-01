@@ -1,13 +1,12 @@
-import { afterEach, describe, expect, it, jest } from '@jest/globals';
+import { afterAll, afterEach, describe, expect, it, jest } from '@jest/globals';
 import fs from 'fs/promises';
 import path from 'path';
 import { promisify } from 'util';
 
 const execFileMock = jest.fn();
 const callOpenAIMock = jest.fn();
-const getEnvNumberMock = jest.fn((key: string, fallback: number) =>
-  key === 'SELF_IMPROVE_PATCH_ATTEMPTS' ? 1 : fallback
-);
+const originalAttempts = process.env.SELF_IMPROVE_PATCH_ATTEMPTS;
+process.env.SELF_IMPROVE_PATCH_ATTEMPTS = '1';
 
 execFileMock[promisify.custom] = (...args: unknown[]) =>
   new Promise((resolve, reject) => {
@@ -29,19 +28,6 @@ jest.unstable_mockModule('child_process', () => ({
 
 jest.unstable_mockModule('@services/openai/chatFlow/index.js', () => ({
   callOpenAI: callOpenAIMock
-}));
-
-jest.unstable_mockModule('@services/openai/credentialProvider.js', () => ({
-  getDefaultModel: () => 'test-model'
-}));
-
-jest.unstable_mockModule('@platform/runtime/env.js', () => ({
-  getEnv: () => undefined,
-  getEnvNumber: getEnvNumberMock
-}));
-
-jest.unstable_mockModule('@platform/runtime/unifiedConfig.js', () => ({
-  getConfig: () => ({ selfImproveEnvironment: 'test' })
 }));
 
 jest.unstable_mockModule('@services/securityCompliance.js', () => ({
@@ -82,8 +68,12 @@ function buildDiff(repositoryPath: string, eol = '\n'): string {
 afterEach(() => {
   execFileMock.mockReset();
   callOpenAIMock.mockReset();
-  getEnvNumberMock.mockClear();
   jest.restoreAllMocks();
+});
+
+afterAll(() => {
+  if (originalAttempts === undefined) delete process.env.SELF_IMPROVE_PATCH_ATTEMPTS;
+  else process.env.SELF_IMPROVE_PATCH_ATTEMPTS = originalAttempts;
 });
 
 describe('self-improve patch process boundary', () => {

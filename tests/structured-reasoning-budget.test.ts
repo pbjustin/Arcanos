@@ -118,6 +118,29 @@ describe('runStructuredReasoning budget handling', () => {
     );
   });
 
+  it('accounts for billed usage before rejecting reply identity and never parses the rejected output', async () => {
+    const usage = { input_tokens: 3, output_tokens: 4, total_tokens: 7 };
+    const reply = { model: 'unexpected-provider-model', status: 'completed', output_text: 'invalid JSON', output: [], usage };
+    const create = jest.fn().mockResolvedValue(reply);
+    const order: string[] = [];
+    const identityError = new Error('Unexpected reasoning model');
+    const validate = jest.fn((value: unknown): value is { answer: string } => typeof value === 'object');
+    const validateResponse = jest.fn(() => { order.push('identity'); throw identityError; });
+    const onUsage = jest.fn(() => { order.push('usage'); throw new Error('Synthetic observer failure'); });
+
+    await expect(runStructuredReasoning({ responses: { create } } as any, {
+      model: 'gpt-6.1-sol', prompt: 'Synthetic prompt',
+      budget: { startedAt: 0, hardDeadline: 60_000, watchdogLimit: 60_000, safetyBuffer: 0 },
+      schema: { type: 'json_schema', name: 'synthetic', schema: {} },
+      validate, validateResponse, onUsage
+    })).rejects.toBe(identityError);
+
+    expect(order).toEqual(['usage', 'identity']);
+    expect(onUsage).toHaveBeenCalledWith(usage);
+    expect(validateResponse).toHaveBeenCalledWith(reply);
+    expect(validate).not.toHaveBeenCalled();
+  });
+
   it('rejects an invalid structured reasoning output cap before calling the SDK', async () => {
     const create = jest.fn();
     const beforeCall = jest.fn();

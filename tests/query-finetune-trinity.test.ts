@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const runTrinityWritingPipelineMock = jest.fn();
 const getOpenAIClientOrAdapterMock = jest.fn();
@@ -44,10 +44,18 @@ function buildTrinityResult(overrides: Record<string, unknown> = {}) {
 }
 
 describe('runTrinity fine-tuned route compatibility facade', () => {
+  let originalAuthority: string | undefined;
   beforeEach(() => {
+    originalAuthority = process.env.FINETUNED_MODEL_ID;
+    process.env.FINETUNED_MODEL_ID = 'ft:custom-model';
     jest.clearAllMocks();
     getOpenAIClientOrAdapterMock.mockReturnValue({ client: { responses: {} } });
     runTrinityWritingPipelineMock.mockResolvedValue(buildTrinityResult());
+  });
+
+  afterEach(() => {
+    if (originalAuthority === undefined) delete process.env.FINETUNED_MODEL_ID;
+    else process.env.FINETUNED_MODEL_ID = originalAuthority;
   });
 
   it('preserves structured JSON prompting while executing through Trinity', async () => {
@@ -94,6 +102,7 @@ describe('runTrinity fine-tuned route compatibility facade', () => {
   });
 
   it('passes latency budgets into Trinity watchdog options', async () => {
+    process.env.FINETUNED_MODEL_ID = 'ft:slow-model';
     await runTrinity({
       prompt: 'health check',
       model: 'ft:slow-model',

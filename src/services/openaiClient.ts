@@ -8,6 +8,8 @@ import {
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import { getConfig } from '@platform/runtime/unifiedConfig.js';
 import { redactString } from '@shared/redaction.js';
+import { resolveGenerativeModel, type GenerativeModelRole } from '@services/openai/credentialProvider.js';
+import { ensureModelMatchesExpectation } from '@services/openai/chatFallbacks.js';
 
 export interface NormalizedOpenAIError {
   name: string;
@@ -18,6 +20,7 @@ export interface NormalizedOpenAIError {
 }
 
 export interface ResponsesCreateOptions extends OpenAIAdapterRequestOptions {
+  modelRole?: GenerativeModelRole;
   requestId?: string | null;
   jobId?: string | null;
 }
@@ -110,12 +113,15 @@ export async function createResponses(
   options: ResponsesCreateOptions = {}
 ) {
   assertResponsesPayload(payload);
+  const model = resolveGenerativeModel(options.modelRole ?? 'final', payload.model);
   try {
     const adapter = getConfiguredOpenAIAdapter();
-    return await adapter.responses.create(payload, {
+    const response = await adapter.responses.create({ ...payload, model }, {
       signal: options.signal,
       headers: options.headers
     });
+    ensureModelMatchesExpectation(response, model);
+    return response;
   } catch (error: unknown) {
     const normalized = normalizeOpenAIError(error);
     throw Object.assign(new Error(normalized.message), {

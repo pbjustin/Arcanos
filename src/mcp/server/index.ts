@@ -13,7 +13,7 @@ import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import { runARCANOS } from '@core/logic/arcanos.js';
 import { runTrinityWritingPipeline } from '@core/logic/trinityWritingPipeline.js';
 import { runTrinity } from '@trinity/trinity.js';
-import { DEFAULT_FINE_TUNE } from '@config/openai.js';
+import { getConfiguredFineTune } from '@config/openai.js';
 
 import { actionPlanInputSchema, type ActionPlanRecord } from '@shared/types/actionPlan.js';
 import { buildClear2Summary } from '@services/clear2.js';
@@ -500,7 +500,7 @@ export async function createMcpServer(ctx: McpRequestContext): Promise<AnyMcpSer
       inputSchema: z.object({ prompt: z.string() }),
     },
     wrapTool('trinity.query_finetune', ctx, async (args: any) => {
-      const out = await runTrinity({ prompt: args.prompt, model: DEFAULT_FINE_TUNE });
+      const out = await runTrinity({ prompt: args.prompt, model: getConfiguredFineTune() });
       return mcpText(out);
     })
   );

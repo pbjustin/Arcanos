@@ -8,7 +8,6 @@ import {
   isAbortError,
 } from '@arcanos/runtime';
 import { runTrinityWritingPipeline } from '@core/logic/trinityWritingPipeline.js';
-import { APPLICATION_CONSTANTS } from '@shared/constants.js';
 import {
   BACKSTAGE_CONTINUITY_QUERY_TOKEN_LIMIT,
   buildBackstageBookerTrinityRunOptions,
@@ -40,7 +39,7 @@ import {
 } from '@platform/resilience/runtimeBudget.js';
 import { logger } from '@platform/logging/structuredLogging.js';
 import { getEnvNumber } from '@platform/runtime/env.js';
-import { getGPT5Model } from '@services/openai.js';
+import { getTrinityFinalModel } from '@services/openai/credentialProvider.js';
 import { getOpenAIClientOrAdapter } from '@services/openai/clientBridge.js';
 import {
   BACKSTAGE_NOTION_RAG_SYSTEM_POLICY_PROMPT,
@@ -52,10 +51,7 @@ import {
 import { normalizeBackstageBookerActionPayload } from './backstageBookerContracts.js';
 
 function resolveContinuityQueryModel(): string {
-  const configured = getGPT5Model().trim();
-  return !configured || configured.toLowerCase() === APPLICATION_CONSTANTS.MODEL_GPT_5
-    ? APPLICATION_CONSTANTS.MODEL_GPT_5_1
-    : configured;
+  return getTrinityFinalModel();
 }
 
 function resolveContinuityAttemptTimeoutMs(input: {
@@ -150,6 +146,7 @@ export async function queryBackstageContinuity(
       retrievedContextCodeUnits: retrieval.prompt.length,
       expectedOutputWords: 0,
       model,
+      finalAuthorityModel: getTrinityFinalModel(),
       modelStageTimeoutMs: executionBudget.modelStageTimeoutMs,
     });
     logger.info(
