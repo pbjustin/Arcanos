@@ -1020,7 +1020,7 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ],
   [
     'src/shared/constants.ts',
-    '43418a19a3fd513380dc4ce0eebd17e93f90964d21900fcd4b5c8169a8a162d1',
+    '70b710c59d37dd6e3023b3bdc8b45e73bc1f8d7405641653d1d5d177dff5bf00',
   ],
   [
     'src/shared/dispatch/dispatchGptIdentifierBoundary.ts',
@@ -1044,7 +1044,7 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ],
   [
     'src/shared/gpt/trinityReasoningPolicy.ts',
-    'd0bae4a2763b145f3eae9aa5b62525f3106791ef00f8ebfbccf6132187b2ede1',
+    '85c8bee9ad1e39123e42d221c0ef82617afb65ed37fc0e6e457b7d8a03e506a7',
   ],
   [
     'src/services/queuedJobCompletionPolling.ts',

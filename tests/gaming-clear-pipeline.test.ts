@@ -7,7 +7,9 @@ const createSingleChatCompletion = jest.fn();
 jest.unstable_mockModule('@core/logic/trinityWritingPipeline.js', () => ({ runTrinityWritingPipeline }));
 jest.unstable_mockModule('@services/openai/chatFallbacks.js', () => ({ createSingleChatCompletion }));
 jest.unstable_mockModule('@services/openai/clientBridge.js', () => ({ getOpenAIClientOrAdapter: () => ({ client: {} }) }));
-jest.unstable_mockModule('@services/openai/credentialProvider.js', () => ({ getGPT5Model: () => 'gpt-5.1' }));
+jest.unstable_mockModule('@services/openai/credentialProvider.js', () => ({
+  getClearAuditModel: () => 'gpt-6-luna', getClearAuditEscalationModel: () => 'gpt-6.1-sol'
+}));
 jest.unstable_mockModule('@services/gamingSourceIngestion.js', () => ({ buildStoredGamingKnowledgeContext: jest.fn() }));
 const { runGameplayPipeline } = await import('../src/services/gamingPipeline.js');
 const { ResponseComposerAgent } = await import('../src/services/gamingAgents.js');
@@ -47,6 +49,7 @@ describe('Gaming CLEAR real pipeline delivery decisions', () => {
     expect(result.data.response).toBe(answer);
     expect(result.data.fallbackReason).toBeUndefined();
     expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
+    expect(createSingleChatCompletion.mock.calls[0][1]).toMatchObject({ model: 'gpt-6-luna' });
     expect(JSON.stringify(result)).not.toContain('dimensionScores');
     const composed = ResponseComposerAgent.compose({ intent: { ...input, mode: 'build' } as never, backendEnvelope: result });
     expect(composed.data.response).toBe(answer);

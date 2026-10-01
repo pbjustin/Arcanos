@@ -175,7 +175,7 @@ describe('OpenAI SDK Integration Tests', () => {
       }
     });
 
-    it('should scope the GPT-5.6 Terra default to Trinity structured reasoning', async () => {
+    it('should scope the GPT-6.1 Sol default to Trinity structured reasoning', async () => {
       const originalModels = {
         TRINITY_REASONING_MODEL: process.env.TRINITY_REASONING_MODEL,
         GPT5_MODEL: process.env.GPT5_MODEL,
@@ -191,7 +191,7 @@ describe('OpenAI SDK Integration Tests', () => {
         const { getGPT5Model, getTrinityReasoningModel } = await import('../src/services/openai.js');
 
         expect(getGPT5Model()).toBe('gpt-5.1');
-        expect(getTrinityReasoningModel()).toBe('gpt-5.6-terra');
+        expect(getTrinityReasoningModel()).toBe('gpt-6.1-sol');
       } finally {
         Object.entries(originalModels).forEach(([key, value]) => {
           if (value) {

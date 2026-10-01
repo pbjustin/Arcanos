@@ -288,6 +288,8 @@ import {
   resolveGptClientJobProvenance,
 } from './shared/gpt/gptClientRegistry.js';
 import {
+  normalizeOpenAIModelReasoningEffort,
+  resolveOpenAIModelCapabilities,
   resolveTrinityReasoningProviderPolicy,
   supportsDisabledReasoningEffort,
 } from './shared/gpt/trinityReasoningPolicy.js';
@@ -2483,6 +2485,82 @@ function assertTrinityReasoningPolicyFixture(): typeof NATIVE_PR_PREVIEW_BACKSTA
     .trinityReasoningPolicyProofVersion;
 }
 
+function assertGpt6ReasoningPolicyFixture(): void {
+  const failure = 'PREVIEW_GPT6_REASONING_POLICY_INVALID';
+  const requireProof = (condition: boolean): void => {
+    if (!condition) throw new Error(failure);
+  };
+  try {
+    const modelCases = [
+      { model: 'gpt-6-luna', family: 'gpt-6-luna', disabled: true, none: 'none' },
+      { model: 'gpt-6-luna-2026-09-15', family: 'gpt-6-luna', disabled: true, none: 'none' },
+      { model: 'gpt-6.1-sol', family: 'gpt-6.1-sol', disabled: false, none: 'low' },
+      { model: 'gpt-6.1-sol-2026-09-15', family: 'gpt-6.1-sol', disabled: false, none: 'low' },
+    ] as const;
+    const tokenCases = [
+      { configured: undefined, expected: 8_000 },
+      { configured: '1', expected: 16 },
+      { configured: '16', expected: 16 },
+      { configured: '4000', expected: 4_000 },
+      { configured: '8000', expected: 8_000 },
+      { configured: '12000', expected: 8_000 },
+      { configured: '4000junk', expected: 8_000 },
+    ];
+    for (const testCase of modelCases) {
+      const capabilities = resolveOpenAIModelCapabilities(testCase.model);
+      const expectedEfforts = testCase.disabled
+        ? ['none', 'low', 'medium', 'high', 'xhigh', 'max']
+        : ['low', 'medium', 'high', 'xhigh', 'max'];
+      requireProof(capabilities.family === testCase.family
+        && capabilities.normalizeReasoningRequests
+        && capabilities.structuredReasoning === 'supported'
+        && capabilities.supportsDisabledReasoning === testCase.disabled
+        && supportsDisabledReasoningEffort(testCase.model) === testCase.disabled
+        && capabilities.defaultReasoningEffort === 'medium'
+        && JSON.stringify(capabilities.allowedReasoningEfforts) === JSON.stringify(expectedEfforts)
+        && capabilities.outputTokenPolicy.responsesParameter === 'max_output_tokens'
+        && capabilities.outputTokenPolicy.chatParameter === 'max_completion_tokens'
+        && capabilities.outputTokenPolicy.minimum === 16
+        && capabilities.outputTokenPolicy.trinityReasoningMaximum === 8_000);
+      requireProof(normalizeOpenAIModelReasoningEffort(testCase.model, 'none') === testCase.none
+        && normalizeOpenAIModelReasoningEffort(testCase.model, 'minimal') === 'low');
+      for (const effort of ['low', 'medium', 'high', 'xhigh'] as const) {
+        requireProof(normalizeOpenAIModelReasoningEffort(testCase.model, effort) === effort);
+      }
+      let sdkMaxRejected = false;
+      try {
+        normalizeOpenAIModelReasoningEffort(testCase.model,
+          'max' as Parameters<typeof normalizeOpenAIModelReasoningEffort>[1]);
+      } catch (error) {
+        sdkMaxRejected = error instanceof RangeError;
+      }
+      requireProof(sdkMaxRejected);
+      for (const tokenCase of tokenCases) {
+        const policy = resolveTrinityReasoningProviderPolicy({
+          model: testCase.model, requestedEffort: 'none',
+          configuredMaxOutputTokens: tokenCase.configured,
+        });
+        requireProof(policy.reasoningEffort === testCase.none
+          && policy.maxOutputTokens === tokenCase.expected);
+      }
+    }
+    for (const model of ['gpt-6-luna-custom', 'gpt-6.1-sol-custom',
+      'ft:gpt-6-luna:synthetic', 'gpt-6-luna-2026-9-15']) {
+      const capabilities = resolveOpenAIModelCapabilities(model);
+      requireProof(capabilities.family === 'unknown'
+        && !capabilities.normalizeReasoningRequests
+        && !capabilities.supportsDisabledReasoning
+        && capabilities.structuredReasoning === 'unverified'
+        && capabilities.allowedReasoningEfforts.length === 0
+        && capabilities.outputTokenPolicy.chatParameter === undefined
+        && normalizeOpenAIModelReasoningEffort(model, 'none') === 'none'
+        && normalizeOpenAIModelReasoningEffort(model, 'minimal') === 'minimal');
+    }
+  } catch {
+    throw new Error(failure);
+  }
+}
+
 async function assertBackstageQueueWaitPolicyFixture(): Promise<
   typeof NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.queueWaitPolicyProofVersion
 > {
@@ -2643,6 +2721,7 @@ async function runBackstageRouteBudgetFixture(
   fixture: string
 ): Promise<Record<string, unknown>> {
   assertTrinityReasoningPolicyFixture();
+  assertGpt6ReasoningPolicyFixture();
   await assertBackstageQueueWaitPolicyFixture();
   if (!isBackstageGptRoute(BACKSTAGE_MODULE_ROUTE)) {
     throw new Error('PREVIEW_BACKSTAGE_CANONICAL_ROUTE_POLICY_INVALID');
@@ -10367,6 +10446,12 @@ export function createNativePrPreviewApplication(
               NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT
                 .trinityReasoningPolicyProofVersion
             );
+            response.setHeader(
+              NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.proofHeaders
+                .gpt6ReasoningPolicyVersion,
+              NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT
+                .gpt6ReasoningPolicyProofVersion
+            );
           }
           if (
             fixture
@@ -10472,7 +10557,17 @@ export function createNativePrPreviewApplication(
             }
           );
         })
-        .catch(next);
+        .catch(error => {
+          if (error instanceof Error && error.message === 'PREVIEW_GPT6_REASONING_POLICY_INVALID') {
+            return sendBoundedJsonResponse(request, response,
+              { error: 'PREVIEW_GPT6_REASONING_POLICY_INVALID' }, {
+                logEvent: 'native_pr_preview.gpt6_reasoning_policy_failed',
+                maxBytes: MAX_BACKSTAGE_GENERATION_RESPONSE_BYTES,
+                statusCode: 500,
+              });
+          }
+          return next(error);
+        });
       return undefined;
     }
   );

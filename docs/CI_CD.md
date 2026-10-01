@@ -96,7 +96,7 @@ Release automation boundaries:
   vulnerability as actionable; there is no npm advisory, package, dependency
   path, or platform-profile exception registry. Workflows record npm's raw audit
   exit code while relying on this fail-closed zero-vulnerability policy.
-- The MCP SDK's Hono override uses the official npm `hono-4.13.5.tgz` artifact,
+- The MCP SDK's Hono override uses the official npm `hono-4.13.7.tgz` artifact,
   with its integrity recorded in `package-lock.json`. Registry version metadata
   lagged the available security-release tarball; the direct artifact keeps the
   patched dependency reproducible without weakening the audit policy.

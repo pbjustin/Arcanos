@@ -123,6 +123,11 @@ jest.unstable_mockModule('@arcanos/openai/unifiedClient', () => ({
 }));
 
 jest.unstable_mockModule('@services/openai/credentialProvider.js', () => ({
+  getTrinityIntakeModel: jest.fn(() => 'gpt-4.1-mini'),
+  getTrinityFinalModel: jest.fn(() => 'gpt-4.1'),
+  getTrinityFinalEscalationModel: jest.fn(() => 'gpt-4.1'),
+  getClearAuditModel: jest.fn(() => 'gpt-5'),
+  getClearAuditEscalationModel: jest.fn(() => 'gpt-5'),
   resolveOpenAIBaseURL: jest.fn(() => undefined),
   resolveOpenAIKey: jest.fn(() => null),
   getOpenAIKeySource: jest.fn(() => null),

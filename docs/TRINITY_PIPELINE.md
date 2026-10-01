@@ -276,9 +276,19 @@ Tier detection logic:
 Structured reasoning effort:
 - `critical`: `medium`
 - `complex`: `low`
-- `simple`: requests `none`; exact `gpt-5` and dated GPT-5 snapshots send `minimal` because they do not support disabled reasoning
+- `simple`: requests `none`; exact/dated GPT-5 sends `minimal`, while GPT-6.1 Sol sends `low`
 
-The structured stage alone defaults to `gpt-5.6-terra`. Model precedence is `TRINITY_REASONING_MODEL`, `GPT5_MODEL`, `GPT51_MODEL`, then Terra; other GPT-5 execution paths keep their existing shared selector and GPT-5.1 default. GPT-5.1 and GPT-5.6 models retain the requested `none` effort.
+Trinity intake and routine final composition have independent Luna defaults;
+structured reasoning and complex/critical/failure final paths have independent
+Sol defaults. Explicit lane variables win over the documented legacy rollback
+selectors. Intake/shared default changes cannot steer complex final calls.
+CLEAR and Gaming CLEAR use their own routine audit selector and an explicit
+internal single-call escalation seam; automatic audit escalation is disabled.
+See [model lane configuration and gated rollout](CONFIGURATION.md#trinity-and-clear-model-lanes).
+Other GPT-5 callers retain the shared selector and GPT-5.1 default. GPT-5.1,
+GPT-5.6 and GPT-6 Luna preserve `none`. All existing caps, schema validators,
+cancellation and runtime/stage budgets remain in force. These source defaults
+and environment examples do not represent deployed Railway settings.
 
 Injection guard:
 - If prompt includes forbidden phrases such as `set tier to`, tier is forced to `simple`.

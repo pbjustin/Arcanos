@@ -6,6 +6,7 @@ import { assertDagTokenAccountingPreviewFixture } from '../src/shared/dag/dagTok
 import { assertSessionContextPreviewFixture } from '../src/shared/memory/sessionContextPreviewFixture.js';
 import { assertTutorHonestyPreviewFixture } from '../src/shared/chatgpt/tutorHonestyPreviewFixture.js';
 import { assertPluginMigrationPreviewFixture } from '../src/shared/chatgpt/pluginMigrationPreviewFixture.js';
+import * as trinityReasoningPolicy from '../src/shared/gpt/trinityReasoningPolicy.js';
 import {
   NATIVE_PR_PREVIEW_BACKSTAGE_BOOKER_OPENAPI_CONTRACT,
   NATIVE_PR_PREVIEW_CHATGPT_TUTOR_CONTRACT,
@@ -50,6 +51,15 @@ jest.unstable_mockModule('../src/shared/chatgpt/tutorHonestyPreviewFixture.js', 
 const assertPluginMigrationFixture = jest.fn(assertPluginMigrationPreviewFixture);
 jest.unstable_mockModule('../src/shared/chatgpt/pluginMigrationPreviewFixture.js', () => ({
   assertPluginMigrationPreviewFixture: assertPluginMigrationFixture,
+}));
+const normalizeModelReasoningEffort = jest.fn(trinityReasoningPolicy.normalizeOpenAIModelReasoningEffort);
+const resolveModelCapabilities = jest.fn(trinityReasoningPolicy.resolveOpenAIModelCapabilities);
+const resolveReasoningProviderPolicy = jest.fn(trinityReasoningPolicy.resolveTrinityReasoningProviderPolicy);
+jest.unstable_mockModule('../src/shared/gpt/trinityReasoningPolicy.js', () => ({
+  ...trinityReasoningPolicy,
+  normalizeOpenAIModelReasoningEffort: normalizeModelReasoningEffort,
+  resolveOpenAIModelCapabilities: resolveModelCapabilities,
+  resolveTrinityReasoningProviderPolicy: resolveReasoningProviderPolicy,
 }));
 const {
   createNativePrPreviewApplication,
@@ -1997,6 +2007,8 @@ describe('native PR contained application', () => {
         contract.proofHeaders.trinityReasoningPolicyVersion
       ]
     ).toBe(contract.trinityReasoningPolicyProofVersion);
+    expect(routeBudget.headers[contract.proofHeaders.gpt6ReasoningPolicyVersion])
+      .toBe(contract.gpt6ReasoningPolicyProofVersion);
     expect(
       notionAuthorityRag.headers[
         contract.proofHeaders.partitionedAuthorityVersion
@@ -2067,6 +2079,7 @@ describe('native PR contained application', () => {
           contract.proofHeaders.trinityReasoningPolicyVersion
         ]
       ).toBeUndefined();
+      expect(response.headers[contract.proofHeaders.gpt6ReasoningPolicyVersion]).toBeUndefined();
     }
     for (const response of [
       routeBudget,
@@ -2579,6 +2592,55 @@ describe('native PR contained application', () => {
     );
   });
 
+  it.each(['capabilities', 'effort', 'output-cap', 'sdk-max'] as const)(
+    'withholds GPT6 reasoning proof and success output on %s core drift', async drift => {
+      const { app } = buildApplication();
+      const contract = NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT;
+      try {
+        if (drift === 'capabilities') {
+          resolveModelCapabilities.mockImplementation(model => {
+            const capabilities = trinityReasoningPolicy.resolveOpenAIModelCapabilities(model);
+            return model.startsWith('gpt-6')
+              ? { ...capabilities, normalizeReasoningRequests: false } : capabilities;
+          });
+        } else if (drift === 'effort') {
+          normalizeModelReasoningEffort.mockImplementation((model, effort) =>
+            model.startsWith('gpt-6.1-sol') && effort === 'none' ? 'none'
+              : trinityReasoningPolicy.normalizeOpenAIModelReasoningEffort(model, effort));
+        } else if (drift === 'output-cap') {
+          resolveReasoningProviderPolicy.mockImplementation(params => {
+            const policy = trinityReasoningPolicy.resolveTrinityReasoningProviderPolicy(params);
+            return params.model.startsWith('gpt-6') ? { ...policy, maxOutputTokens: 15 } : policy;
+          });
+        } else {
+          normalizeModelReasoningEffort.mockImplementation((model, effort) =>
+            effort === ('max' as string) ? 'low'
+              : trinityReasoningPolicy.normalizeOpenAIModelReasoningEffort(model, effort));
+        }
+        const failed = await request(app).post(contract.path)
+          .send({ fixture: contract.fixtures.routeBudget });
+        expect(failed.status).toBe(500);
+        expect(failed.body).toEqual({ error: 'PREVIEW_GPT6_REASONING_POLICY_INVALID' });
+        expect(failed.body).not.toHaveProperty('accepted');
+        for (const header of Object.values(contract.proofHeaders)) {
+          expect(failed.headers[header]).toBeUndefined();
+        }
+        expectContainedResponseHeaders(failed, 'native-pr-preview', 'native-pr-preview', true);
+      } finally {
+        normalizeModelReasoningEffort.mockImplementation(trinityReasoningPolicy.normalizeOpenAIModelReasoningEffort);
+        resolveModelCapabilities.mockImplementation(trinityReasoningPolicy.resolveOpenAIModelCapabilities);
+        resolveReasoningProviderPolicy.mockImplementation(trinityReasoningPolicy.resolveTrinityReasoningProviderPolicy);
+      }
+      const recovered = await request(app).post(contract.path)
+        .send({ fixture: contract.fixtures.routeBudget });
+      expect(recovered.status).toBe(200);
+      expect(recovered.headers[contract.proofHeaders.gpt6ReasoningPolicyVersion])
+        .toBe(contract.gpt6ReasoningPolicyProofVersion);
+      expect(recovered.headers[contract.proofHeaders.trinityReasoningPolicyVersion])
+        .toBe(contract.trinityReasoningPolicyProofVersion);
+    }, 25_000
+  );
+
   it('keeps Backstage generation fixtures sealed', async () => {
     const { app } = buildApplication();
     const contract = NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT;
@@ -2602,6 +2664,7 @@ describe('native PR contained application', () => {
           contract.proofHeaders.trinityReasoningPolicyVersion
         ]
       ).toBeUndefined();
+      expect(response.headers[contract.proofHeaders.gpt6ReasoningPolicyVersion]).toBeUndefined();
       expect(
         response.headers[contract.proofHeaders.partitionedAuthorityVersion]
       ).toBeUndefined();

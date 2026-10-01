@@ -334,11 +334,11 @@ describe('npm audit policy', () => {
     );
 
     const fastUriArtifact = {
-      version: '3.1.7',
+      version: '3.1.8',
       resolved:
-        'https://codeload.github.com/fastify/fast-uri/tar.gz/412e40abd4eb8beabfb952d80abf949a2baf27a3',
+        'https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.8.tgz',
       integrity:
-        'sha512-5unwS9zaFqbeaj/WllGpj11NYZg78jpAM8leZ+xZvL4p1Vc6QFMS6Bpd84SN4jzkWsPCgZT7ilSHpn542Kp8Mg==',
+        'sha512-GZMtZUTNRpOVIECoXwLNZS5xUGE+mVNbTB8h/7Rwh2TFWcBQiPzTgyZi05BF9UMZKkLJv8XBRJTlU7zg8+ZfMg==',
     };
     const qsArtifact = {
       version: '6.16.0',
@@ -359,15 +359,15 @@ describe('npm audit policy', () => {
       qs: qsArtifact.resolved,
     });
     expect(rootPackage.overrides['brace-expansion']).toBeUndefined();
-    expect(vendorPackage.dependencies['brace-expansion']).toBe('5.0.9');
+    expect(vendorPackage.dependencies['brace-expansion']).toBe('5.0.12');
 
     const expectedLockIdentities = {
       'vendor/minimatch-9.0.7/node_modules/brace-expansion': {
-        version: '5.0.9',
+        version: '5.0.12',
         resolved:
-          'https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.9.tgz',
+          'https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.12.tgz',
         integrity:
-          'sha512-ScQ4IuvIEF1TMlP7Zt+vjJ//9zlPb2SDcxWxM3bk8s6t6GGdJ7KO1dCcTidOPJKePW30LE/2cT7wCyPho9/Wxg==',
+          'sha512-YovQ3rzhaLMIrDjNDMkNS01tea93qhEhG5xy8f6+R0l+dw3Ki+5sCoIoI942iuLZTHWogWktgwVDhU09iNEimQ==',
       },
       'node_modules/express-rate-limit': {
         version: '8.3.0',

@@ -187,6 +187,9 @@ const extractReasoningText = (response: ChatCompletion, fallback: string = REASO
   response?.choices?.[0]?.message?.content?.trim() || fallback;
 
 interface OpenAIResponsesRequestOptions {
+  /** Trusted caller override; omission preserves the shared GPT-5 selector. */
+  model?: string;
+  reasoningEffort?: NonNullable<NonNullable<ResponseCreateParamsNonStreaming['reasoning']>['effort']>;
   signal?: AbortSignal;
   headers?: Record<string, string>;
   timeoutMs?: number;
@@ -264,7 +267,7 @@ export const createGPT5Reasoning = async (
     return { content: '[Fallback: GPT-5.1 unavailable - no OpenAI client]', error: 'No OpenAI client' };
   }
 
-  const gpt5Model = getGPT5Model();
+  const gpt5Model = options.model ?? getGPT5Model();
 
   try {
     logOpenAIEvent('info', OPENAI_LOG_MESSAGES.GPT5.REASONING_START(gpt5Model));
@@ -282,6 +285,9 @@ export const createGPT5Reasoning = async (
       ),
       includeRoutingMessage: false
     });
+    if (options.reasoningEffort !== undefined) {
+      requestPayload.reasoning = { effort: options.reasoningEffort };
+    }
     const response = await invokeResponsesCompletion(clientOrAdapter, requestPayload, gpt5Model, options);
     const resolvedModel = ensureModelMatchesExpectation(response as ChatCompletion, gpt5Model);
 
