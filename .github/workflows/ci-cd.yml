@@ -83,6 +83,9 @@ jobs:
       - name: 🔨 Build project
         run: npm run build
 
+      - name: 🧪 Compiled app model-policy E2E
+        run: npm run test:model-policy:app:e2e
+
       - name: 📊 Upload build artifacts
         uses: actions/upload-artifact@v4
         with:

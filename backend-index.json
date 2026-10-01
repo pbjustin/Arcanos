@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-01T19:38:18.792Z",
+  "generatedAt": "2026-10-01T20:30:38.002Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -4195,6 +4195,9 @@
           "relativePath": "tests/fixtures/gamingClearCalibration.ts"
         },
         {
+          "relativePath": "tests/fixtures/generative-model-policy-provider.ts"
+        },
+        {
           "relativePath": "tests/fixtures/openai-response-conversion.ts"
         },
         {
@@ -4436,6 +4439,9 @@
         },
         {
           "relativePath": "tests/generation-authority-diagnostics.test.ts"
+        },
+        {
+          "relativePath": "tests/generative-model-policy-transport.e2e.test.ts"
         },
         {
           "relativePath": "tests/git.service.test.ts"
@@ -5531,6 +5537,9 @@
         },
         {
           "relativePath": "tests/trinity-model-lanes.test.ts"
+        },
+        {
+          "relativePath": "tests/trinity-model-policy.e2e.test.ts"
         },
         {
           "relativePath": "tests/trinity-pipeline-adapter.test.ts"

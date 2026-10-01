@@ -152,6 +152,30 @@ There is no root documentation-site build or Markdown formatting command.
 
 Use `npm run build:packages` before full backend validation whenever `packages/*`, protocol schemas, or package exports changed.
 
+### Model-policy end-to-end fixtures
+
+Run `npm run test:model-policy:e2e` to build the backend and verify model policy
+through the compiled HTTP app, the installed OpenAI SDK, and the Trinity writing
+pipeline. After a current build, `npm run test:model-policy:app:e2e` runs only the
+compiled app scenarios; CI runs this command after its build step.
+
+The app scenarios use fresh child processes and temporary state directories.
+They retain the real preflight, routes, middleware, and unconfigured Redis
+lifecycle, while replacing dependency initialization and background activation
+with local fixtures. They verify diagnostics, readiness transitions, missing
+authority HTTP 503 responses, invalid-authority startup rejection, and conflicting
+override HTTP 400 responses with zero provider requests. A positive vision
+request traverses the complete compiled app and real SDK, returning the matching
+fine-tune reply and usage from one loopback HTTP provider request. `FORCE_MOCK=true` skips
+the startup provider probe; an accepted synthetic key ensures the tested prompt
+route reaches policy admission rather than its missing-key mock response.
+
+The transport and Trinity suites use a bounded HTTP provider on an ephemeral
+IPv4 loopback port. They verify serialized model IDs, reply identity, structured
+reasoning, usage, recovery, and SSE cancellation through the real SDK. These
+fixtures prove local application and transport contracts, not live provider
+availability, model quality, database or queue behavior, or deployed acceptance.
+
 ## Repository agent skills
 
 Codex can discover the shared workflows in `.agents/skills/` when working in

@@ -1,5 +1,6 @@
 import type OpenAI from 'openai';
 import { resolveGenerativeModel } from '@services/openai/credentialProvider.js';
+import { ensureModelMatchesExpectation } from '@services/openai/chatFallbacks.js';
 import type { RuntimeBudget } from '@arcanos/runtime/runtimeBudget';
 import type {
   TrinityCompactStructuredReasoning,
@@ -162,6 +163,7 @@ export async function runStructuredReasoning(
         : TRINITY_STRUCTURED_REASONING_SCHEMA)
     } as any,
     validate: schemaVariant === 'compact' ? isCompactStructuredReasoningPayload : isStructuredReasoningPayload,
+    validateResponse: response => { ensureModelMatchesExpectation(response, model); },
     extractRefusal: extractRefusalReason as any,
     ...(reasoningEffort ? { reasoningEffort } : {}),
     ...(typeof options.maxOutputTokens === 'number' ? { maxOutputTokens: options.maxOutputTokens } : {}),

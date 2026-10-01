@@ -39,6 +39,7 @@ export interface StructuredReasoningOptions<T> {
   reasoningEffort?: StructuredReasoningEffort;
   maxOutputTokens?: number;
   onUsage?: (usage: StructuredReasoningUsage) => void | Promise<void>;
+  validateResponse?: (response: { model?: unknown }) => void;
   beforeCall?: (signal: AbortSignal) => Promise<void>;
 }
 
@@ -117,6 +118,9 @@ export async function runStructuredReasoning<T>(
     // Capture billed usage before parsing so incomplete, refused, malformed, and schema-invalid
     // Responses still reach accounting while preserving the original parse error.
     reportUsageSafely(opts.onUsage as StructuredReasoningOptions<unknown>['onUsage'], response.usage);
+
+    // Provider identity checks precede parsing but follow billed-usage reporting.
+    opts.validateResponse?.(response);
 
     const outputParsed = parseStructuredJson<T>(response, {
       validate: opts.validate,
