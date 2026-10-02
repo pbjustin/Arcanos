@@ -247,6 +247,18 @@ export interface NativePrPreviewE2eContract {
         'x-arcanos-preview-status-downstream-calls';
     }>;
   }>;
+  readonly heartbeatIngress: Readonly<{
+    path: '/heartbeat/ingress-contract';
+    fixtures: Readonly<{
+      authParserQuota: 'auth-parser-quota';
+    }>;
+    bodyLimitBytes: 4096;
+    maxRequests: 60;
+    maxResponseBytes: 8192;
+    requiredScope: 'mcp:invoke';
+    proofHeader: 'x-arcanos-preview-heartbeat-ingress-version';
+    proofVersion: 'heartbeat-http-boundary/v1';
+  }>;
   readonly selfHealApproval: Readonly<{
     path: '/self-heal/approval-contract';
     fixtures: Readonly<{

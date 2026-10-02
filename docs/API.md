@@ -419,6 +419,12 @@ the default principal quota, actual correlated telemetry, preserved heartbeat
 log files, and public health routes. This is local HTTP evidence; it does not
 verify deployed ingress or production configuration.
 
+The [sealed Railway preview](RAILWAY_DEPLOYMENT.md#configuration) separately
+serves `/heartbeat/ingress-contract` for the fixed `auth-parser-quota` selector.
+It exercises the shared heartbeat boundary with internal synthetic streams;
+the normal acknowledgement route, confirmation and logging remain covered by
+the compiled-app E2E above.
+
 In the normal root application, `src/app.ts` registers `/healthz` and calls
 `setupDiagnostics(app)` before `registerRoutes(app)`. Both `/healthz` and
 `/health` therefore use `src/core/diagnostics.ts:writePublicHealthResponse`,
