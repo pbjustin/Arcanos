@@ -411,6 +411,14 @@ Root `/heartbeat` clients must now supply the dedicated control-plane bearer;
 confirmation alone does not authenticate them. Daemon and local-agent heartbeat
 contracts and public health/readiness routes are unchanged.
 
+Run `npm run build` followed by `npm run test:heartbeat:app:e2e` to exercise
+the normal compiled app over real loopback HTTP. The fixture uses synthetic
+operator credentials and isolated temporary state, with application egress
+blocked. It verifies confirmation retries/replay, schema and byte limits,
+the default principal quota, actual correlated telemetry, preserved heartbeat
+log files, and public health routes. This is local HTTP evidence; it does not
+verify deployed ingress or production configuration.
+
 In the normal root application, `src/app.ts` registers `/healthz` and calls
 `setupDiagnostics(app)` before `registerRoutes(app)`. Both `/healthz` and
 `/health` therefore use `src/core/diagnostics.ts:writePublicHealthResponse`,
