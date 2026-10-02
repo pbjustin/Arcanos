@@ -418,6 +418,24 @@ Launcher behavior:
   database, and active worker remain outside this fixture. The separate
   [HTTP continuity fixture](../tests/gpt-session-context.e2e.test.ts) covers
   authorized dispatch and persistence orchestration with synthetic I/O.
+- The fixed `GET /memory/session-context-contract` route adds production-shared
+  payload forwarding and prompt extraction to that session fixture. Fixed
+  synthetic inputs check outer/nested/conflicting scope, missing/invalid scope,
+  alias and Gateway task-data non-inference, unchanged original payload/current
+  prompt, and escaped system/developer history. Complete success emits
+  `x-arcanos-preview-session-scope-version: session-scope-contract/v1` and a
+  4 KiB-bounded report with the exact PR/commit identity. Readiness GET/HEAD also
+  requires the extended assertions and marker while retaining the trusted body.
+  Startup, draining, and asynchronous assertion failure cannot earn proof;
+  query, method, body, credential, and worker denials remain fixed. The reviewed
+  payload helpers have source semantic pins and enter only the sealed graph.
+  The supplemental verifier adds four cases for a total of 165 with unchanged
+  timeout/response bounds and no retries, compares the entire report, rejects
+  missing or misplaced markers, and reports `sessionScopeContractVerified`.
+  This is served component evidence; the report explicitly leaves authentication,
+  persistence, real Gateway production, worker execution and provider boundaries
+  false. See the [fixture regressions](../tests/session-context-preview-fixture.test.ts)
+  and [served boundary tests](../tests/session-context-preview-application.test.ts).
 - The sealed web preview also exposes a fixed, stateless Tutor MCP mock at
   `POST /chatgpt/mcp`. MCP initialize, initialized notification, tool listing
   and the single prompt `Sealed Tutor preview: explain one half.` use protocol
@@ -433,7 +451,7 @@ Launcher behavior:
   and [sealed Tutor evidence](audits/chatgpt-migration/2026-09-23-sealed-tutor.md)
   document these checks and their limits. This is synthetic transport evidence;
   real Tutor/OAuth and installed ChatGPT behavior require separate evidence.
-  The current verifier includes 19 Tutor cases in its 161 bounded requests; earlier
+  The current verifier includes 19 Tutor cases in its 165 bounded requests; earlier
   138-request compatibility references describe the pre-Tutor baseline. The
   trusted workflow uses its own default-branch revision. New PR-head assertions
   require a reviewed exact-head supplemental run on the same independently
@@ -494,7 +512,8 @@ Launcher behavior:
   without the report or proof marker; worker, query and method denials cannot
   earn proof. Source semantic pins and exact compiled imports keep configuration,
   credentials, SDK, provider and normal Trinity execution outside this graph.
-  The supplemental verifier adds four requests for a total of 161, requires the
+  The model-policy addition introduced four requests (161 before the session-scope
+  addition); the supplemental verifier requires the
   marker at readiness, compares the complete report, and checks worker/query/POST
   denials with unchanged time and aggregate response bounds and no retries.
   This is served component evidence for the production policy and identity
@@ -539,7 +558,7 @@ Launcher behavior:
   adds a selector must therefore execute its exact-head verifier separately
   against the lifecycle-created hosts until that verifier reaches the default
   branch. After the lifecycle reports the exact preview hosts, execute the
-  current 161-request PR-head probe with both network flags from a separate, clean
+  current 165-request PR-head probe with both network flags from a separate, clean
   checkout of the revalidated exact PR head. This supplemental run is
   credential-free and explicitly covers its contract's PR-head selectors and worker
   denials; it has no Railway create, ownership, or cleanup authority.

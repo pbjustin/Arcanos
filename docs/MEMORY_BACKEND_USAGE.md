@@ -280,6 +280,23 @@ does not import the storage-loading service or normal GPT route. See the
 [Railway preview lifecycle](RAILWAY_DEPLOYMENT.md) for exact-commit verification
 and cleanup.
 
+The fixed `GET /memory/session-context-contract` preview route additionally
+executes the production payload builder and prompt extractor. Its synthetic
+vectors check outer/nested/conflicting session scope, absent and invalid scope,
+alias and Gateway task-data non-inference, unchanged caller payloads and current
+prompts, and untrusted system/developer history. Complete success returns a
+4 KiB-bounded report with the exact PR/commit identity and
+`x-arcanos-preview-session-scope-version: session-scope-contract/v1`. Readiness
+also requires these assertions and emits that marker without changing its body.
+The supplemental verifier compares the whole report and denies the route on the
+worker, with a query, or with POST. Startup, draining and assertion failures
+withhold the success report and marker; all caller body/credential carriers are
+denied before fixture execution. Its `runtimeBoundaries` explicitly exclude
+authentication, persistence, Gateway production, active workers and providers.
+The [fixture regression tests](../tests/session-context-preview-fixture.test.ts)
+and [served boundary tests](../tests/session-context-preview-application.test.ts)
+verify that broken payload, scope, escaping or isolation seams fail closed.
+
 ### Backstage Booker convenience keys
 
 Backstage Booker mirrors selected successful action results to bounded,

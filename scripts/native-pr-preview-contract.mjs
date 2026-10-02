@@ -78,6 +78,10 @@ export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
   sessionContext: Object.freeze({
     proofHeader: 'x-arcanos-session-context-proof',
     proofVersion: 'session-context/v1',
+    contractPath: '/memory/session-context-contract',
+    contractProofHeader: 'x-arcanos-preview-session-scope-version',
+    contractProofVersion: 'session-scope-contract/v1',
+    maxResponseBytes: 4096,
   }),
   generativeModelPolicy: Object.freeze({
     path: '/models/generative-contract',
