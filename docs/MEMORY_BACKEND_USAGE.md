@@ -155,6 +155,43 @@ Neither credentials nor an authorization flag are serialized into queued jobs.
 This is the existing deployment-wide memory permission, not session ownership
 or tenant isolation.
 
+For this supported continuity path, a client sends the same explicit session
+identifier on each request to `POST /gpt/:gptId`, with its authorized
+`x-arcanos-memory-token` supplied through the client's credential configuration.
+For example, the request body can be:
+
+```json
+{
+  "action": "query",
+  "sessionId": "synthetic-example-thread",
+  "payload": { "prompt": "Continue the earlier discussion." }
+}
+```
+
+The dispatcher forwards an outer `sessionId` into an object payload when the
+payload does not already contain that field. Clients should supply one canonical
+identifier, or identical outer and payload identifiers. Conflicting identifiers
+are not a supported continuity recipe: hydration and transcript persistence
+select the outer identifier, while a module's local memory lookup can retain the
+payload identifier. Session IDs, prompt text, network addresses, GPT IDs, and
+transport session headers do not establish user or plugin ownership.
+
+The Gateway `POST /gpt-access/jobs/create` contract is different. Its strict
+request schema has no conversation `sessionId`; `input.sessionId`, if present,
+remains opaque task data. Its worker receives no memory hydration authority.
+Neither job result polling nor reusing an idempotency key establishes a
+conversation. Supporting authorized conversation history there requires a
+separately reviewed ownership and queued-authorization contract; clients must
+not embed credentials or authorization flags in task data.
+
+The legacy local-memory messages `Context retrieval skipped: no explicit session
+scope` and `Memory entries: 0` describe the local pattern index, not the
+`conversations_core` hydration result. Check the correlated
+`gpt.dispatch.session_context` diagnostic and dispatch route reason when
+investigating authorized history. A sessionless request also intentionally skips
+module conversation persistence. These messages alone do not establish that a
+client supplied a valid conversation scope or that the backend lost one.
+
 Hydration reads only the exact `conversations_core` channel. It does not search
 module histories, resolve natural-language aliases, invoke RAG, or hydrate
 `system_meta` as instructions. Recent non-empty text turns are returned in
@@ -214,6 +251,22 @@ This proves application-path continuity with synthetic I/O. It does not establis
 PostgreSQL durability, live model response quality, the full production app's
 startup/middleware composition, or hosted deployment behavior. The normal root
 Jest run discovers this fixture; no live endpoint or credential is needed.
+
+The queue boundary fixture uses the actual Gateway validator/producer, serialized
+queue parser, passive worker handler, dispatcher, CORE/Trinity, and conversation
+repository with synthetic database and provider transports:
+
+```bash
+node scripts/run-jest.mjs --runTestsByPath tests/gpt-session-queue-contract.integration.test.ts --coverage=false --runInBand
+```
+
+It checks that legacy explicit body scope survives the queue round trip without
+granting history hydration, and that Gateway task data does not become scope.
+Retry checks cover the producer's idempotency hashes and actor namespace; they
+do not establish PostgreSQL atomic deduplication or exactly-once transcript
+writes. The current transcript append path has no interaction deduplication or
+same-session atomicity guarantee. Distinct-session fixtures and deployment-wide
+token verification do not prove principal/plugin-owned conversation isolation.
 
 The sealed Railway preview separately executes the production-shared history
 renderer, action eligibility policy, and request-local context scope over fixed
