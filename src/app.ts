@@ -43,6 +43,7 @@ import {
 import {
   systemStateBodyParser,
 } from '@services/controlPlane/systemStateBodyParser.js';
+import { heartbeatHttpBoundary } from '@services/controlPlane/heartbeatHttpBoundary.js';
 import {
   ragHttpBoundary,
 } from '@services/controlPlane/ragHttpBoundary.js';
@@ -240,6 +241,9 @@ export function createApp(): Express {
   // deprecated public GET health alias remains unchanged.
   app.post('/status', systemStateHttpBoundary);
   app.post('/status', systemStateBodyParser);
+  // Heartbeat telemetry requires operator trust and a small JSON body before
+  // broad parsing; the leaf router repeats this idempotent boundary.
+  app.post('/heartbeat', heartbeatHttpBoundary);
   // System-state is a direct control-plane surface. Establish operator identity,
   // method-specific scope, and a bounded body before the broad application parser.
   app.use('/system-state', systemStateHttpBoundary);

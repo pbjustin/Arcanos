@@ -66,6 +66,7 @@ import {
   NATIVE_PR_PREVIEW_RESEARCH_CONTRACT,
   NATIVE_PR_PREVIEW_SELF_HEAL_APPROVAL_CONTRACT,
   NATIVE_PR_PREVIEW_STATUS_AUTH_BOUNDARY_CONTRACT,
+  NATIVE_PR_PREVIEW_HEARTBEAT_INGRESS_CONTRACT,
   NATIVE_PR_PREVIEW_SYNTHETIC_RESPONSE_HEADER,
   NATIVE_PR_PREVIEW_TRUST_SCOPE,
   type NativePrPreviewIdentity,
@@ -76,6 +77,10 @@ import {
 import {
   createSystemStateHttpBoundary,
 } from './services/controlPlane/systemStateHttpBoundary.js';
+import {
+  createHeartbeatHttpBoundary,
+  HEARTBEAT_BODY_LIMIT_BYTES,
+} from './services/controlPlane/heartbeatHttpBoundary.js';
 import {
   SYSTEM_STATE_BODY_LIMIT_BYTES,
   systemStateBodyParser,
@@ -587,6 +592,26 @@ interface SyntheticStatusAuthBoundaryScenario {
   expectedErrorCode: string | null;
   expectedStatusCode: number;
   name: string;
+}
+
+interface SyntheticHeartbeatIngressOutcome {
+  name: string;
+  statusCode: number;
+  errorCode: string | null;
+  bodyBytes: number;
+  bodyBytesRead: number;
+  downstreamCalls: number;
+  remaining: number | null;
+}
+
+interface SyntheticHeartbeatIngressScenario {
+  name: string;
+  body: string;
+  environment: NodeJS.ProcessEnv;
+  authorization?: string;
+  chunked?: boolean;
+  headers?: Record<string, string>;
+  duplicateMedia?: boolean;
 }
 
 interface StorylineFixtureRow {
@@ -1621,6 +1646,265 @@ async function runStatusAuthBoundaryFixture(
       requiredScope:
         NATIVE_PR_PREVIEW_STATUS_AUTH_BOUNDARY_CONTRACT.requiredScope,
       serverOwnedBodies: true,
+    },
+  };
+}
+
+async function runHeartbeatIngressScenario(
+  scenario: SyntheticHeartbeatIngressScenario,
+  boundary: express.RequestHandler = createHeartbeatHttpBoundary({
+    authenticationEnvironment: scenario.environment,
+  }),
+  leafBoundary?: express.RequestHandler
+): Promise<SyntheticHeartbeatIngressOutcome & { retryAfterPresent: boolean }> {
+  const body = Buffer.from(scenario.body, 'utf8');
+  let bodyBytesRead = 0;
+  const request = Readable.from((function* streamHeartbeatBody() {
+    const first = Math.floor(body.length / 3);
+    const second = Math.floor(body.length * 2 / 3);
+    for (const chunk of [
+      body.subarray(0, first), body.subarray(first, second), body.subarray(second),
+    ]) {
+      bodyBytesRead += chunk.length;
+      yield chunk;
+    }
+  })()) as unknown as express.Request;
+  const headers: Record<string, string> = {
+    'content-type': 'application/json',
+    ...(scenario.chunked
+      ? { 'transfer-encoding': 'chunked' }
+      : { 'content-length': String(body.length) }),
+    ...(scenario.authorization ? { authorization: scenario.authorization } : {}),
+    ...scenario.headers,
+  };
+  request.headers = headers;
+  request.rawHeaders = Object.entries(headers).flat();
+  if (scenario.duplicateMedia) {
+    request.rawHeaders.push('Content-Type', 'application/json');
+  }
+  request.method = 'POST';
+  request.url = '/heartbeat';
+  request.originalUrl = '/heartbeat';
+  const getHeader = (name: string) => headers[name.toLowerCase()];
+  request.get = getHeader as express.Request['get'];
+  request.header = getHeader as express.Request['header'];
+  const responseHeaders: Record<string, string> = {};
+  let statusCode = 200;
+  let downstreamCalls = 0;
+  try {
+    return await new Promise((resolve, reject) => {
+      let settled = false;
+      const finish = (responseBody: unknown): void => {
+        if (settled) return;
+        settled = true;
+        if (responseHeaders['cache-control'] !== 'no-store'
+          || responseHeaders.pragma !== 'no-cache') {
+          reject(new Error('PREVIEW_HEARTBEAT_INGRESS_CACHE_INVALID'));
+          return;
+        }
+        resolve({
+          name: scenario.name,
+          statusCode,
+          errorCode: readStatusAuthFixtureErrorCode(responseBody),
+          bodyBytes: body.length,
+          bodyBytesRead,
+          downstreamCalls,
+          remaining: responseHeaders['x-ratelimit-remaining'] === undefined
+            ? null : Number(responseHeaders['x-ratelimit-remaining']),
+          retryAfterPresent: Number(responseHeaders['retry-after'] ?? '0') > 0,
+        });
+      };
+      const response = {
+        json(value: unknown) { finish(value); return this; },
+        set(nameOrHeaders: string | Record<string, unknown>, value?: unknown) {
+          if (typeof nameOrHeaders === 'string') {
+            responseHeaders[nameOrHeaders.toLowerCase()] = String(value);
+          } else {
+            for (const [name, headerValue] of Object.entries(nameOrHeaders)) {
+              responseHeaders[name.toLowerCase()] = String(headerValue);
+            }
+          }
+          return this;
+        },
+        setHeader(name: string, value: unknown) {
+          responseHeaders[name.toLowerCase()] = String(value); return this;
+        },
+        status(value: number) { statusCode = value; return this; },
+      } as unknown as express.Response;
+      const onParsed = ((error?: unknown): void => {
+        if (error !== undefined) { reject(error); return; }
+        if (request.body === undefined) {
+          reject(new Error('PREVIEW_HEARTBEAT_INGRESS_BODY_NOT_PARSED'));
+          return;
+        }
+        downstreamCalls += 1;
+        statusCode = 204;
+        finish(null);
+      }) as express.NextFunction;
+      const onRepeatedBoundary = ((error?: unknown): void => {
+        if (error !== undefined) { reject(error); return; }
+        if (!leafBoundary) { reject(new Error('PREVIEW_HEARTBEAT_INGRESS_LEAF_MISSING')); return; }
+        try { leafBoundary(request, response, onParsed); }
+        catch (middlewareError) { reject(middlewareError); }
+      }) as express.NextFunction;
+      const onFirstBoundary = ((error?: unknown): void => {
+        if (error !== undefined) { reject(error); return; }
+        if (leafBoundary) {
+          try { boundary(request, response, onRepeatedBoundary); }
+          catch (middlewareError) { reject(middlewareError); }
+        } else {
+          onParsed();
+        }
+      }) as express.NextFunction;
+      request.on('error', reject);
+      try { boundary(request, response, onFirstBoundary); }
+      catch (middlewareError) { reject(middlewareError); }
+    });
+  } finally {
+    request.destroy();
+  }
+}
+
+async function runHeartbeatIngressFixture(
+  identity: NativePrPreviewIdentity
+): Promise<Record<string, unknown>> {
+  const contract = NATIVE_PR_PREVIEW_HEARTBEAT_INGRESS_CONTRACT;
+  requireStatusAuthBoundaryFixtureInvariant(
+    HEARTBEAT_BODY_LIMIT_BYTES === contract.bodyLimitBytes,
+    'PREVIEW_HEARTBEAT_INGRESS_LIMIT_INVALID'
+  );
+  const environment = buildStatusAuthFixtureEnvironment(contract.requiredScope);
+  const authorization = `Bearer ${STATUS_AUTH_FIXTURE_CREDENTIAL}`;
+  const exact = '{}' + ' '.repeat(contract.bodyLimitBytes - 2);
+  const over = exact + ' ';
+  const scenarios: readonly [
+    SyntheticHeartbeatIngressScenario, number, string | null, number, number | null,
+  ][] = [
+    [{ name: 'unavailable-config-over', body: over, environment: Object.freeze({}) }, 503, 'CONTROL_PLANE_AUTH_UNAVAILABLE', 0, null],
+    [{ name: 'missing-auth-over', body: over, environment }, 401, 'CONTROL_PLANE_AUTH_REQUIRED', 0, null],
+    [{ name: 'invalid-auth-over', body: over, environment, authorization: `Bearer ${STATUS_AUTH_FIXTURE_INVALID_CREDENTIAL}` }, 401, 'CONTROL_PLANE_AUTH_REQUIRED', 0, null],
+    [{ name: 'read-scope-over', body: over, environment: buildStatusAuthFixtureEnvironment('arcanos:read'), authorization }, 403, 'CONTROL_PLANE_SCOPE_DENIED', 0, 59],
+    [{ name: 'known-length-exact', body: exact, environment, authorization }, 204, null, 4096, 59],
+    [{ name: 'known-length-over', body: over, environment, authorization }, 413, 'HEARTBEAT_REQUEST_INVALID', 4097, 59],
+    [{ name: 'chunked-exact', body: exact, environment, authorization, chunked: true }, 204, null, 4096, 59],
+    [{ name: 'chunked-over', body: over, environment, authorization, chunked: true }, 413, 'HEARTBEAT_REQUEST_INVALID', 4097, 59],
+    [{ name: 'malformed', body: '{', environment, authorization }, 400, 'HEARTBEAT_REQUEST_INVALID', 1, 59],
+    [{ name: 'scalar', body: '"scalar"', environment, authorization }, 400, 'HEARTBEAT_REQUEST_INVALID', 8, 59],
+    [{ name: 'vendor-json', body: '{}', environment, authorization, headers: { 'content-type': 'application/heartbeat+json' } }, 204, null, 2, 59],
+    [{ name: 'unsupported-media', body: '{}', environment, authorization, headers: { 'content-type': 'text/plain' } }, 415, 'HEARTBEAT_REQUEST_INVALID', 0, 59],
+    [{ name: 'compressed', body: '{}', environment, authorization, headers: { 'content-encoding': 'gzip' } }, 415, 'HEARTBEAT_REQUEST_INVALID', 0, 59],
+    [{ name: 'duplicate-media', body: '{}', environment, authorization, duplicateMedia: true }, 415, 'HEARTBEAT_REQUEST_INVALID', 0, 59],
+  ];
+  const cases: SyntheticHeartbeatIngressOutcome[] = [];
+  for (const [scenario, expectedStatus, expectedError, expectedRead, expectedRemaining] of scenarios) {
+    const measured = await runHeartbeatIngressScenario(scenario);
+    const outcome: SyntheticHeartbeatIngressOutcome = {
+      name: measured.name,
+      statusCode: measured.statusCode,
+      errorCode: measured.errorCode,
+      bodyBytes: measured.bodyBytes,
+      bodyBytesRead: measured.bodyBytesRead,
+      downstreamCalls: measured.downstreamCalls,
+      remaining: measured.remaining,
+    };
+    requireStatusAuthBoundaryFixtureInvariant(
+      outcome.statusCode === expectedStatus && outcome.errorCode === expectedError
+        && outcome.bodyBytesRead === expectedRead
+        && outcome.downstreamCalls === (expectedStatus === 204 ? 1 : 0)
+        && outcome.remaining === expectedRemaining,
+      'PREVIEW_HEARTBEAT_INGRESS_OUTCOME_INVALID'
+    );
+    cases.push(outcome);
+  }
+  const quotaBoundary = createHeartbeatHttpBoundary({ authenticationEnvironment: environment });
+  const leafBoundary = createHeartbeatHttpBoundary({ authenticationEnvironment: environment });
+  for (let index = 0; index < 3; index += 1) {
+    const denied = await runHeartbeatIngressScenario({
+      name: 'quota-invalid-auth', body: '{', environment,
+      authorization: `Bearer ${STATUS_AUTH_FIXTURE_INVALID_CREDENTIAL}`,
+    }, quotaBoundary);
+    requireStatusAuthBoundaryFixtureInvariant(
+      denied.statusCode === 401 && denied.bodyBytesRead === 0 && denied.remaining === null,
+      'PREVIEW_HEARTBEAT_INGRESS_INVALID_BEARER_QUOTA'
+    );
+  }
+  let firstRemaining = -1;
+  let lastRemaining = -1;
+  let acceptedBodies = 0;
+  let malformedBodies = 0;
+  for (let index = 1; index <= contract.maxRequests; index += 1) {
+    const malformed = index % 2 === 0;
+    const outcome = await runHeartbeatIngressScenario({
+      name: 'quota-attempt', body: malformed ? '{' : '{}', environment, authorization,
+      headers: {
+        'x-forwarded-for': `198.51.100.${index}`,
+        'x-session-id': `preview-caller-session-${index}`,
+        'x-client-id': `preview-caller-${index}`,
+      },
+    }, quotaBoundary, index === 1 ? leafBoundary : undefined);
+    requireStatusAuthBoundaryFixtureInvariant(
+      outcome.statusCode === (malformed ? 400 : 204)
+        && outcome.remaining === contract.maxRequests - index
+        && outcome.bodyBytesRead === (malformed ? 1 : 2)
+        && outcome.downstreamCalls === (malformed ? 0 : 1),
+      'PREVIEW_HEARTBEAT_INGRESS_QUOTA_ACCOUNTING_INVALID'
+    );
+    if (index === 1) firstRemaining = outcome.remaining;
+    lastRemaining = outcome.remaining;
+    if (malformed) malformedBodies += 1;
+    else acceptedBodies += 1;
+  }
+  const limited = await runHeartbeatIngressScenario({
+    name: 'quota-over', body: '{}', environment, authorization,
+    headers: { 'x-forwarded-for': '203.0.113.1', 'x-session-id': 'preview-new-session' },
+  }, quotaBoundary);
+  requireStatusAuthBoundaryFixtureInvariant(
+    firstRemaining === 59 && lastRemaining === 0
+      && acceptedBodies === 30 && malformedBodies === 30
+      && limited.statusCode === 429 && limited.bodyBytesRead === 0
+      && limited.downstreamCalls === 0 && limited.retryAfterPresent,
+    'PREVIEW_HEARTBEAT_INGRESS_QUOTA_LIMIT_INVALID'
+  );
+  return {
+    accepted: true,
+    confirmationAttempted: false,
+    databaseBoundaryReached: false,
+    durablePersistenceAttempted: false,
+    effectsBoundaryReached: false,
+    fixture: contract.fixtures.authParserQuota,
+    filesystemBoundaryReached: false,
+    identity: { prNumber: identity.prNumber, sourceCommit: identity.sourceCommit },
+    loggerSinkExecuted: false,
+    memoryBoundaryReached: false,
+    networkBoundaryReached: false,
+    normalRouteExecuted: false,
+    protectedEffectsEnabled: false,
+    providerBoundaryReached: false,
+    schemaVersion: 1,
+    heartbeatIngress: {
+      authBeforeParser: cases.slice(0, 4).every(outcome => outcome.bodyBytesRead === 0),
+      bodyLimitBytes: contract.bodyLimitBytes,
+      callerBodyControlsProbe: false,
+      caseCount: cases.length,
+      cases,
+      componentExecuted: true,
+      requiredScope: contract.requiredScope,
+      serverOwnedBodies: true,
+      syntheticAuthentication: true,
+      quota: {
+        maxRequests: contract.maxRequests,
+        invalidBearerAttempts: 3,
+        acceptedBodies,
+        malformedBodies,
+        idempotentBoundaryApplications: 3,
+        firstRemaining,
+        lastRemaining,
+        limitedStatus: limited.statusCode,
+        limitedBodyBytesRead: limited.bodyBytesRead,
+        limitedDownstreamCalls: limited.downstreamCalls,
+        retryAfterPresent: limited.retryAfterPresent,
+        callerIdentityChangesIgnored: true,
+      },
     },
   };
 }
@@ -9077,6 +9361,7 @@ function buildAllowedRouteKeys(): Set<string> {
     `POST ${NATIVE_PR_PREVIEW_RESEARCH_CONTRACT.path}`,
     `POST ${NATIVE_PR_PREVIEW_SELF_HEAL_APPROVAL_CONTRACT.path}`,
     `POST ${NATIVE_PR_PREVIEW_STATUS_AUTH_BOUNDARY_CONTRACT.path}`,
+    `POST ${NATIVE_PR_PREVIEW_HEARTBEAT_INGRESS_CONTRACT.path}`,
     `POST ${NATIVE_PR_PREVIEW_GAMING_CONTRACT.canaryPath}`,
     `POST ${NATIVE_PR_PREVIEW_GAMING_CONTRACT.queryPath}`,
     `POST ${NATIVE_PR_PREVIEW_GAMING_SOURCES_CONTRACT.ingestionPath}`,
@@ -10319,6 +10604,44 @@ export function createNativePrPreviewApplication(
         MAX_RESEARCH_RESPONSE_BYTES,
         'native_pr_preview.dispatch_gpt_identifier_fixture'
       );
+    }
+  );
+
+  app.post(
+    NATIVE_PR_PREVIEW_HEARTBEAT_INGRESS_CONTRACT.path,
+    (request, response) => {
+      const contract = NATIVE_PR_PREVIEW_HEARTBEAT_INGRESS_CONTRACT;
+      const body = request.body as unknown;
+      const keys = isPreviewRecord(body) ? Object.keys(body) : [];
+      if (keys.length !== 1 || keys[0] !== 'fixture'
+        || (body as { fixture?: unknown }).fixture !== contract.fixtures.authParserQuota) {
+        sendBoundedJsonResponse(request, response, {
+          error: 'PREVIEW_HEARTBEAT_INGRESS_FIXTURE_INVALID',
+        }, { logEvent: 'native_pr_preview.heartbeat_ingress_fixture_invalid',
+          maxBytes: contract.maxResponseBytes, statusCode: 400 });
+        return;
+      }
+      void runHeartbeatIngressFixture(options.identity).then(payload => {
+        requireStatusAuthBoundaryFixtureInvariant(
+          Buffer.byteLength(JSON.stringify(payload), 'utf8') <= contract.maxResponseBytes,
+          'PREVIEW_HEARTBEAT_INGRESS_RESPONSE_TOO_LARGE'
+        );
+        response.setHeader(NATIVE_PR_PREVIEW_SYNTHETIC_RESPONSE_HEADER.name,
+          NATIVE_PR_PREVIEW_SYNTHETIC_RESPONSE_HEADER.value);
+        response.setHeader(contract.proofHeader, contract.proofVersion);
+        response.setHeader('Pragma', 'no-cache');
+        return sendBoundedJsonResponse(request, response, payload, {
+          logEvent: 'native_pr_preview.heartbeat_ingress_fixture',
+          maxBytes: contract.maxResponseBytes, statusCode: 200,
+        });
+      }).catch(() => {
+        response.removeHeader(contract.proofHeader);
+        response.removeHeader(NATIVE_PR_PREVIEW_SYNTHETIC_RESPONSE_HEADER.name);
+        sendBoundedJsonResponse(request, response, {
+          error: 'PREVIEW_HEARTBEAT_INGRESS_ASSERTION_FAILED',
+        }, { logEvent: 'native_pr_preview.heartbeat_ingress_fixture_failed',
+          maxBytes: contract.maxResponseBytes, statusCode: 500 });
+      });
     }
   );
 

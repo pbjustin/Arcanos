@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import type { RedisLifecycleSnapshot } from '../src/platform/runtime/redisLifecycle.js';
 import type { StartupLifecycleSnapshot } from '../src/platform/runtime/startupLifecycle.js';
+import { PURPOSE_BOUND_CREDENTIAL_ENV_NAMES } from '../src/shared/security/purposeBoundCredential.js';
 
 const request = (await import('supertest')).default;
 const CURRENT_GPT_ROUTER_HASH = 'e02a4e9739fe4772aac59afe24a99f45348090434c90d7acb560d28c14bd4e2a';
@@ -126,6 +127,9 @@ async function buildAppHealthHarness(): Promise<AppHealthHarness> {
 }
 
 const HEALTH_ENV_NAMES = [
+  ...PURPOSE_BOUND_CREDENTIAL_ENV_NAMES,
+  'ARCANOS_CONTROL_PLANE_PRINCIPAL_ID',
+  'ARCANOS_CONTROL_PLANE_SCOPES',
   'NODE_ENV',
   'OPENAI_API_KEY',
   'DATABASE_URL',
@@ -170,6 +174,56 @@ describe('actual Express startup health route ordering', () => {
       }
     }
   });
+
+  it('protects root heartbeat before broad parsing while preserving health routes', async () => {
+    for (const name of PURPOSE_BOUND_CREDENTIAL_ENV_NAMES) {
+      process.env[name] = '';
+    }
+    const token = 'test-root-heartbeat-control-token-1234567890';
+    process.env.ARCANOS_CONTROL_PLANE_ACCESS_TOKEN = token;
+    process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID = 'operator:root-heartbeat';
+    process.env.ARCANOS_CONTROL_PLANE_SCOPES = 'mcp:invoke';
+    const harness = await buildAppHealthHarness();
+
+    for (const path of ['/heartbeat', '/HEARTBEAT/']) {
+      const denied = await request(harness.app).post(path)
+        .set('X-Confirmed', 'yes')
+        .set('Content-Type', 'application/json')
+        .send('{"payload":');
+      expect(denied.status).toBe(401);
+      expect(denied.body.error.code).toBe('CONTROL_PLANE_AUTH_REQUIRED');
+      expect(denied.headers['cache-control']).toBe('no-store');
+    }
+
+    const oversized = await request(harness.app).post('/heartbeat')
+      .set('Authorization', `Bearer ${token}`)
+      .set('X-Confirmed', 'yes')
+      .send({ padding: 'x'.repeat(4096) });
+    expect(oversized.status).toBe(413);
+    expect(oversized.body.error.code).toBe('HEARTBEAT_REQUEST_INVALID');
+
+    const accepted = await request(harness.app).post('/heartbeat')
+      .set('Authorization', `Bearer ${token}`)
+      .set('X-Confirmed', 'yes')
+      .send({
+        timestamp: '2026-10-02T04:24:33.000Z',
+        mode: 'monitor',
+        payload: {
+          write_override: false,
+          db_write_enable: false,
+          suppression_level: 'none',
+          confirmation: 'approved',
+        },
+      });
+    expect(accepted.status).toBe(200);
+    expect(accepted.body.message).toBe(
+      'Heartbeat acknowledged. Mode: monitor, write operations disabled, suppression level: none. Confirmation: approved.'
+    );
+    expect((await request(harness.app).get('/health')).status).toBe(200);
+    expect((await request(harness.app).get('/healthz')).status).toBe(200);
+    expect((await request(harness.app).get('/readyz')).status).toBe(503);
+    expect(harness.createClientMock).not.toHaveBeenCalled();
+  }, 60_000);
 
   it('keeps liveness public while readiness tracks STARTING, DEGRADED, and READY', async () => {
     const harness = await buildAppHealthHarness();

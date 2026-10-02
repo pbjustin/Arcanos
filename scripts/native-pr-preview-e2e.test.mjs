@@ -166,6 +166,7 @@ function responseHeadersForCase(
     || requestCase.expectedType === 'backstage-generation-contract'
     || requestCase.expectedType === 'dispatch-gpt-identifier-contract'
     || requestCase.expectedType === 'status-auth-boundary-contract'
+    || requestCase.expectedType === 'heartbeat-ingress-contract'
     || requestCase.expectedType === 'self-heal-approval-contract'
     || requestCase.expectedType === 'generative-model-policy-contract'
     || requestCase.expectedType === 'session-scope-contract'
@@ -391,6 +392,7 @@ function responseHeadersForCase(
       requestCase.expectedType === 'gaming-source'
       || requestCase.expectedType === 'dispatch-gpt-identifier-contract'
       || requestCase.expectedType === 'status-auth-boundary-contract'
+      || requestCase.expectedType === 'heartbeat-ingress-contract'
       ? { pragma: 'no-cache' }
       : {}
     ),
@@ -424,6 +426,12 @@ function responseHeadersForCase(
             .downstreamCalls]: '1',
         }
       : {}),
+    ...(requestCase.expectedType === 'heartbeat-ingress-contract'
+      ? {
+          [NATIVE_PR_PREVIEW_E2E_CONTRACT.heartbeatIngress.proofHeader]:
+            NATIVE_PR_PREVIEW_E2E_CONTRACT.heartbeatIngress.proofVersion,
+        }
+      : {}),
     ...(overrides ?? {}),
   };
 }
@@ -444,7 +452,7 @@ function buildMockFetch(
     calls.push({ url, init });
     assert.equal(init.redirect, 'error');
     assert.equal(init.headers.authorization,
-      requestCase.caseId === 'web-chatgpt-tutor-authorization-denied'
+      ['web-chatgpt-tutor-authorization-denied', 'web-heartbeat-ingress-authorization-denied'].includes(requestCase.caseId)
         ? 'Bearer mock-preview-invalid-credential' : undefined);
     assert.equal(init.headers.cookie,
       requestCase.caseId === 'web-chatgpt-tutor-cookie-denied'
@@ -803,9 +811,146 @@ test('rejects malformed or unsupported exact-head Backstage Booker versions', as
   }
 });
 
+test('adds only the sealed heartbeat selector and scoped denials', () => {
+  const contract = NATIVE_PR_PREVIEW_E2E_CONTRACT.heartbeatIngress;
+  const cases = buildNativePrPreviewRequestPlan().filter(({ caseId }) =>
+    caseId.includes('heartbeat-ingress')
+  );
+  assert.equal(cases.length, 6);
+  assert.deepEqual(cases.map(({ caseId, expectedStatus, expectedType, role }) => ({
+    caseId, expectedStatus, expectedType, role,
+  })), [
+    { caseId: 'heartbeat-ingress-auth-parser-quota', expectedStatus: 200,
+      expectedType: 'heartbeat-ingress-contract', role: 'web' },
+    { caseId: 'web-heartbeat-ingress-query-denied', expectedStatus: 404,
+      expectedType: 'not-found', role: 'web' },
+    { caseId: 'web-heartbeat-ingress-authorization-denied', expectedStatus: 404,
+      expectedType: 'not-found', role: 'web' },
+    { caseId: 'web-heartbeat-ingress-invalid-selector-denied', expectedStatus: 400,
+      expectedType: 'heartbeat-ingress-invalid', role: 'web' },
+    { caseId: 'web-heartbeat-ingress-extra-field-denied', expectedStatus: 400,
+      expectedType: 'heartbeat-ingress-invalid', role: 'web' },
+    { caseId: 'worker-heartbeat-ingress-denied', expectedStatus: 404,
+      expectedType: 'not-found', role: 'worker' },
+  ]);
+  assert.deepEqual(cases[0].body, { fixture: contract.fixtures.authParserQuota });
+  assert.equal(cases[0].simulatedAuth, true);
+  assert(cases.every(({ pathTemplate }) => pathTemplate === contract.path));
+  assert(cases.every(({ path }) => path.startsWith(contract.path)));
+  assert.equal(contract.bodyLimitBytes, 4096);
+  assert.equal(contract.maxRequests, 60);
+  assert.equal(contract.proofVersion, 'heartbeat-http-boundary/v1');
+});
+
+test('requires exact heartbeat proof and forbids success markers on denials', async () => {
+  const plan = buildNativePrPreviewRequestPlan();
+  const contract = NATIVE_PR_PREVIEW_E2E_CONTRACT.heartbeatIngress;
+  const cases = [
+    ['heartbeat-ingress-auth-parser-quota', headers => { delete headers[contract.proofHeader]; }],
+    ['heartbeat-ingress-auth-parser-quota', headers => { headers[contract.proofHeader] = 'heartbeat-http-boundary/drifted'; }],
+    ['web-heartbeat-ingress-invalid-selector-denied', headers => { headers[contract.proofHeader] = contract.proofVersion; }],
+    ['web-heartbeat-ingress-extra-field-denied', headers => {
+      headers[NATIVE_PR_PREVIEW_E2E_CONTRACT.syntheticResponseHeader.name] =
+        NATIVE_PR_PREVIEW_E2E_CONTRACT.syntheticResponseHeader.value;
+    }],
+    ['worker-heartbeat-ingress-denied', headers => { headers[contract.proofHeader] = contract.proofVersion; }],
+    ['heartbeat-ingress-auth-parser-quota', headers => { headers['x-response-truncated'] = 'true'; }],
+  ];
+  for (const [caseId, mutate] of cases) {
+    const mock = buildMockFetch(plan, requestCase => {
+      if (requestCase.caseId !== caseId) return undefined;
+      const body = responseBodyForCase(requestCase);
+      const headers = responseHeadersForCase(requestCase, Buffer.byteLength(body));
+      mutate(headers);
+      const response = new Response(body, { status: requestCase.expectedStatus, headers });
+      Object.defineProperty(response, 'url', {
+        value: `${requestCase.role === 'worker' ? WORKER_BASE_URL : WEB_BASE_URL}${requestCase.path}`,
+      });
+      return response;
+    });
+    await assert.rejects(runNativePrPreviewE2e({
+      args: validArguments('--execute', '--allow-network'),
+      expectedBackstageBookerOpenApiDocument: EXPECTED_BACKSTAGE_BOOKER_OPENAPI_DOCUMENT,
+      fetchImpl: mock.fetchImpl, localGitState: LOCAL_GIT_STATE,
+      monotonicNow: mock.monotonicNow,
+    }), error => error instanceof NativePrPreviewE2eError
+      && error.code === 'NATIVE_PR_PREVIEW_HEARTBEAT_INGRESS_PROOF_INVALID'
+      && error.caseId === caseId);
+  }
+});
+
+test('rejects heartbeat component counter or effect-boundary drift', async () => {
+  const plan = buildNativePrPreviewRequestPlan();
+  const mutations = [
+    body => { body.heartbeatIngress.cases[0].bodyBytesRead = 1; },
+    body => { body.heartbeatIngress.quota.maxRequests = 61; },
+    body => { body.heartbeatIngress.quota.limitedBodyBytesRead = 1; },
+    body => { body.heartbeatIngress.syntheticAuthentication = false; },
+    body => { body.confirmationAttempted = true; },
+    body => { body.filesystemBoundaryReached = true; },
+    body => { body.loggerSinkExecuted = true; },
+    body => { body.normalRouteExecuted = true; },
+    body => { body.identity.sourceCommit = 'b'.repeat(40); },
+  ];
+  for (const mutate of mutations) {
+    const mock = buildMockFetch(plan, requestCase => {
+      if (requestCase.expectedType !== 'heartbeat-ingress-contract') return undefined;
+      const payload = expectedNativePrPreviewResponseBody(requestCase, {
+        prNumber: PR_NUMBER, commitSha: COMMIT_SHA,
+      });
+      mutate(payload);
+      const body = JSON.stringify(payload);
+      const response = new Response(body, {
+        status: 200, headers: responseHeadersForCase(requestCase, Buffer.byteLength(body)),
+      });
+      Object.defineProperty(response, 'url', { value: `${WEB_BASE_URL}${requestCase.path}` });
+      return response;
+    });
+    await assert.rejects(runNativePrPreviewE2e({
+      args: validArguments('--execute', '--allow-network'),
+      expectedBackstageBookerOpenApiDocument: EXPECTED_BACKSTAGE_BOOKER_OPENAPI_DOCUMENT,
+      fetchImpl: mock.fetchImpl, localGitState: LOCAL_GIT_STATE,
+      monotonicNow: mock.monotonicNow,
+    }), error => error instanceof NativePrPreviewE2eError
+      && error.code === 'NATIVE_PR_PREVIEW_BODY_MISMATCH'
+      && error.caseId === 'heartbeat-ingress-auth-parser-quota');
+  }
+});
+
+test('enforces the heartbeat response ceiling for success and selector failures', async () => {
+  const plan = buildNativePrPreviewRequestPlan();
+  const contract = NATIVE_PR_PREVIEW_E2E_CONTRACT.heartbeatIngress;
+  for (const caseId of [
+    'heartbeat-ingress-auth-parser-quota',
+    'web-heartbeat-ingress-invalid-selector-denied',
+  ]) {
+    const mock = buildMockFetch(plan, requestCase => {
+      if (requestCase.caseId !== caseId) return undefined;
+      const exactBody = responseBodyForCase(requestCase);
+      const paddingBytes = contract.maxResponseBytes - Buffer.byteLength(exactBody) + 1;
+      assert.ok(paddingBytes > 0);
+      const body = `${exactBody}${' '.repeat(paddingBytes)}`;
+      const response = new Response(body, {
+        status: requestCase.expectedStatus,
+        headers: responseHeadersForCase(requestCase, Buffer.byteLength(body)),
+      });
+      Object.defineProperty(response, 'url', { value: `${WEB_BASE_URL}${requestCase.path}` });
+      return response;
+    });
+    await assert.rejects(runNativePrPreviewE2e({
+      args: validArguments('--execute', '--allow-network'),
+      expectedBackstageBookerOpenApiDocument: EXPECTED_BACKSTAGE_BOOKER_OPENAPI_DOCUMENT,
+      fetchImpl: mock.fetchImpl, localGitState: LOCAL_GIT_STATE,
+      monotonicNow: mock.monotonicNow,
+    }), error => error instanceof NativePrPreviewE2eError
+      && error.code === 'NATIVE_PR_PREVIEW_HEARTBEAT_INGRESS_RESPONSE_TOO_LARGE'
+      && error.caseId === caseId);
+  }
+});
+
 test('executes the bounded synthetic matrix and detects identity stability', async () => {
   const requestPlan = buildNativePrPreviewRequestPlan();
-  assert.equal(requestPlan.length, 165);
+  assert.equal(requestPlan.length, 171);
   assert.equal(
     requestPlan.filter(({ caseId, expectedType }) =>
       expectedType !== 'research-contract'
@@ -818,6 +963,7 @@ test('executes the bounded synthetic matrix and detects identity stability', asy
       && expectedType !== 'self-heal-approval-contract'
       && !caseId.includes('generative-model-policy')
       && !caseId.includes('session-scope')
+      && !caseId.includes('heartbeat-ingress')
       && !caseId.includes('chatgpt-tutor')
       && !caseId.startsWith('gaming-')
       && !caseId.startsWith('worker-gaming-')
@@ -906,7 +1052,7 @@ test('executes the bounded synthetic matrix and detects identity stability', asy
   );
   assert.equal(
     requestPlan.filter(({ simulatedAuth }) => simulatedAuth === true).length,
-    24
+    25
   );
   assert.equal(
     requestPlan.filter(({ expectedType, simulatedAuth }) =>
@@ -2122,15 +2268,15 @@ test('executes the bounded synthetic matrix and detects identity stability', asy
   assert.equal(result.executed, true);
   assert.equal(result.networkAttempted, true);
   assert.equal(result.summary.status, 'PASS');
-  assert.equal(result.summary.requestsMade, 165);
-  assert.equal(result.summary.simulatedAuthRequests, 24);
-  assert.equal(result.checks.length, 165);
+  assert.equal(result.summary.requestsMade, 171);
+  assert.equal(result.summary.simulatedAuthRequests, 25);
+  assert.equal(result.checks.length, 171);
   assert.equal(
     result.checks.filter(({ simulatedAuth }) => simulatedAuth).length,
-    24
+    25
   );
-  assert.equal(mock.requestCount, 165);
-  assert.equal(result.limits.maxRequests, 165);
+  assert.equal(mock.requestCount, 171);
+  assert.equal(result.limits.maxRequests, 171);
   assert.deepEqual(result.checks.filter(check => check.generativeModelPolicyVerified)
     .map(check => check.caseId), ['web-readiness-initial', 'web-generative-model-policy',
       'web-readiness-head', 'web-readiness-final']);
@@ -2291,6 +2437,11 @@ test('executes the bounded synthetic matrix and detects identity stability', asy
       statusAuthBoundaryVerified: true,
     }
   );
+  assert.deepEqual(result.checks.filter(({ heartbeatIngressVerified }) =>
+    heartbeatIngressVerified === true
+  ).map(({ caseId, heartbeatIngressProofVersion }) => ({ caseId, heartbeatIngressProofVersion })), [
+    { caseId: 'heartbeat-ingress-auth-parser-quota', heartbeatIngressProofVersion: 'heartbeat-http-boundary/v1' },
+  ]);
   const managedAsyncContinuationCheck = result.checks.find(({ caseId }) =>
     caseId === 'backstage-generation-managed-async-continuation'
   );
@@ -2701,6 +2852,7 @@ test('executes the bounded synthetic matrix and detects identity stability', asy
   assert.equal(
     mock.calls.filter((_call, index) => ![
       'web-chatgpt-tutor-authorization-denied',
+      'web-heartbeat-ingress-authorization-denied',
       'web-chatgpt-tutor-cookie-denied',
       'web-chatgpt-tutor-session-denied',
     ].includes(requestPlan[index].caseId)).some(({ init }) =>
