@@ -496,6 +496,25 @@ Launcher behavior:
   reconciliation. Those remain local/CI and artifact evidence. See the
   [migration handoff](chatgpt-migration/TUTOR_MIGRATION.md#sealed-preview-evidence-boundaries)
   for the classification and exact-head run record.
+- The fixed Gaming MCP query and hybrid responses additionally execute the
+  [synthetic instruction-section fixture](../src/shared/chatgpt/gamingCompositionPreviewFixture.ts)
+  against the unchanged [shared composition core](../scripts/skill-composition-core.mjs)
+  used by the Gaming and Tutor CLIs. It checks exact synthetic transformations,
+  section traces, LF/CRLF and UTF-8 byte offsets, deterministic output and the
+  512-section boundary. Complete success earns
+  `x-arcanos-preview-gaming-composition-version: gaming-instruction-sections/v1`.
+  Any assertion failure withholds the Gaming, package and composition markers
+  and the success body. Catalog, malformed, unauthorized and worker responses
+  cannot earn these markers. Source and emitted-import guards prohibit private
+  capture/composition adapters and their filesystem or process dependencies.
+  The 21-request [Gaming verifier](../scripts/gaming-mcp-preview-e2e.mjs) requires
+  the exact marker on both successful responses and its absence elsewhere.
+  Run its dry mode first, then both network flags against the independently
+  confirmed exact-head lifecycle hosts. This supplements the trusted 161-request
+  verifier; no new route or caller-selected composition input is exposed.
+  The served proof covers the shared section engine over synthetic inputs.
+  The actual Gaming adapter, private candidate, owner approval, installed skill,
+  OAuth, live source acquisition and release acceptance retain separate gates.
 - The exact `GET /models/generative-contract` route executes the
   [model-policy fixture](../src/shared/gpt/generativeModelPolicyPreviewFixture.ts)
   against the [pure production core](../src/shared/gpt/generativeModelPolicyCore.ts)

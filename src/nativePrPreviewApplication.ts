@@ -9640,9 +9640,11 @@ export function createNativePrPreviewApplication(
   });
   app.post(NATIVE_PR_PREVIEW_CHATGPT_GAMING_CONTRACT.path, (request, response) => {
     const result = handleGamingMcpPreviewRequest(request.body);
-    if (result.gamingVerified === true && result.migrationVerified === true) {
+    if (result.gamingVerified === true && result.migrationVerified === true && result.compositionVerified === true) {
       response.setHeader(NATIVE_PR_PREVIEW_CHATGPT_GAMING_CONTRACT.proofHeader,
         NATIVE_PR_PREVIEW_CHATGPT_GAMING_CONTRACT.proofVersion);
+      response.setHeader(NATIVE_PR_PREVIEW_CHATGPT_GAMING_CONTRACT.compositionProofHeader,
+        NATIVE_PR_PREVIEW_CHATGPT_GAMING_CONTRACT.compositionProofVersion);
       response.setHeader(NATIVE_PR_PREVIEW_PLUGIN_MIGRATION_CONTRACT.proofHeader,
         NATIVE_PR_PREVIEW_PLUGIN_MIGRATION_CONTRACT.proofVersion);
     }

@@ -16,7 +16,8 @@ function fakeFetch(changedId: string, mutate: Mutation) {
   return async () => {
     const item = plan[cursor++];
     const headers: Record<string, string> = { 'cache-control': 'no-store', 'x-arcanos-preview-fixture': 'sealed-synthetic' };
-    if (item.proof) { headers[gaming.proofHeader] = gaming.proofVersion; headers[migration.proofHeader] = migration.proofVersion; }
+    if (item.proof) { headers[gaming.proofHeader] = gaming.proofVersion; headers[migration.proofHeader] = migration.proofVersion;
+      headers[gaming.compositionProofHeader] = gaming.compositionProofVersion; }
     let body: Record<string, unknown>;
     if (item.path === '/readyz') body = expectedNativePrPreviewResponseBody({ expectedType: `${item.role}-readiness` }, options);
     else if (item.id === 'malformed') body = { error: 'PREVIEW_REQUEST_INVALID' };
@@ -31,6 +32,11 @@ describe('Gaming supplemental exact-head verifier fails closed', () => {
   it.each([
     ['query', (_body, headers) => { delete headers[gaming.proofHeader]; }, 'SUCCESS_PROOF'],
     ['hybrid', (_body, headers) => { delete headers[migration.proofHeader]; }, 'SUCCESS_PROOF'],
+    ['query', (_body, headers) => { delete headers[gaming.compositionProofHeader]; }, 'SUCCESS_PROOF'],
+    ['hybrid', (_body, headers) => { headers[gaming.compositionProofHeader] = 'gaming-instruction-sections/v0'; }, 'SUCCESS_PROOF'],
+    ['catalog', (_body, headers) => { headers[gaming.compositionProofHeader] = gaming.compositionProofVersion; }, 'SUCCESS_PROOF'],
+    ['worker-denial', (_body, headers) => { headers[gaming.compositionProofHeader] = gaming.compositionProofVersion; }, 'SUCCESS_PROOF'],
+    ['arcanos_gaming_ingest_sources', (_body, headers) => { headers[gaming.compositionProofHeader] = gaming.compositionProofVersion; }, 'SUCCESS_PROOF'],
     ['catalog', (_body, headers) => { headers[gaming.proofHeader] = gaming.proofVersion; }, 'SUCCESS_PROOF'],
     ['arcanos_gaming_ingest_sources', (_body, headers) => { headers[migration.proofHeader] = migration.proofVersion; }, 'SUCCESS_PROOF'],
     ['worker-denial', (_body, headers) => { headers[gaming.proofHeader] = gaming.proofVersion; }, 'SUCCESS_PROOF'],

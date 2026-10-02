@@ -15,6 +15,8 @@ export interface NativePrPreviewE2eContract {
     metadataPath: '/.well-known/oauth-protected-resource/chatgpt/gaming/mcp';
     proofHeader: 'x-arcanos-preview-chatgpt-gaming-version';
     proofVersion: 'chatgpt-gaming-mcp-core/v1';
+    compositionProofHeader: 'x-arcanos-preview-gaming-composition-version';
+    compositionProofVersion: 'gaming-instruction-sections/v1';
     catalogSha256: string;
     protocolVersion: '2025-03-26';
     instructions: string;

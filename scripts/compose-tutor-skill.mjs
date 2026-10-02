@@ -2,6 +2,8 @@ import { mkdir, readdir, realpath, writeFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { instructionSectionMap } from './skill-composition-core.mjs';
+export { instructionSectionMap } from './skill-composition-core.mjs';
 import {
   baselineFingerprint, captureBaseline, digest, maxFileSize, noSymlinkAncestors,
   packageFingerprint, readSafeFile, relativeFile, requireCondition, reviewed, safeContent,
@@ -101,29 +103,6 @@ async function referenceReview(options, packageRoot) {
     paths.add(item.packagePath);
   }
   return review;
-}
-
-/** Map every source byte exactly once; labels never include private section titles. */
-export function instructionSectionMap(instructions, outputStartByte) {
-  const starts = [0];
-  for (const match of instructions.matchAll(/\r?\n[ \t]*\r?\n/gu)) {
-    const next = match.index + match[0].length;
-    if (next < instructions.length) starts.push(next);
-  }
-  requireCondition(starts.length <= 512, 'TOO_MANY_INSTRUCTION_SECTIONS');
-  const sections = starts.map((start, index) => {
-    const end = starts[index + 1] ?? instructions.length;
-    const bytes = Buffer.from(instructions.slice(start, end), 'utf8');
-    const sourceStartByte = Buffer.byteLength(instructions.slice(0, start), 'utf8');
-    const suffix = String(index + 1).padStart(3, '0');
-    return {
-      sourceId: `instruction-section-${suffix}`, targetId: `teaching-core-section-${suffix}`,
-      sourceStartByte, sourceEndByte: sourceStartByte + bytes.length,
-      outputStartByte: outputStartByte + sourceStartByte,
-      outputEndByte: outputStartByte + sourceStartByte + bytes.length, sha256: digest(bytes)
-    };
-  });
-  return sections;
 }
 
 async function teachingRuleMap(inputRoot, configuration, sections, owner) {

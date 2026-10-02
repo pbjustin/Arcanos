@@ -9,10 +9,12 @@ import {
 } from '../src/shared/memory/sessionContextPreviewFixture.js';
 import { assertTutorHonestyPreviewFixture } from '../src/shared/chatgpt/tutorHonestyPreviewFixture.js';
 import { assertPluginMigrationPreviewFixture } from '../src/shared/chatgpt/pluginMigrationPreviewFixture.js';
+import { assertGamingCompositionPreviewFixture } from '../src/shared/chatgpt/gamingCompositionPreviewFixture.js';
 import * as trinityReasoningPolicy from '../src/shared/gpt/trinityReasoningPolicy.js';
 import {
   NATIVE_PR_PREVIEW_BACKSTAGE_BOOKER_OPENAPI_CONTRACT,
   NATIVE_PR_PREVIEW_CHATGPT_TUTOR_CONTRACT,
+  NATIVE_PR_PREVIEW_CHATGPT_GAMING_CONTRACT,
   NATIVE_PR_PREVIEW_PLUGIN_MIGRATION_CONTRACT,
   NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT,
   NATIVE_PR_PREVIEW_BACKSTAGE_STORYLINE_CONTRACT,
@@ -55,6 +57,10 @@ jest.unstable_mockModule('../src/shared/chatgpt/tutorHonestyPreviewFixture.js', 
 const assertPluginMigrationFixture = jest.fn(assertPluginMigrationPreviewFixture);
 jest.unstable_mockModule('../src/shared/chatgpt/pluginMigrationPreviewFixture.js', () => ({
   assertPluginMigrationPreviewFixture: assertPluginMigrationFixture,
+}));
+const assertGamingCompositionFixture = jest.fn(assertGamingCompositionPreviewFixture);
+jest.unstable_mockModule('../src/shared/chatgpt/gamingCompositionPreviewFixture.js', () => ({
+  assertGamingCompositionPreviewFixture: assertGamingCompositionFixture,
 }));
 const normalizeModelReasoningEffort = jest.fn(trinityReasoningPolicy.normalizeOpenAIModelReasoningEffort);
 const resolveModelCapabilities = jest.fn(trinityReasoningPolicy.resolveOpenAIModelCapabilities);
@@ -750,6 +756,26 @@ describe('native PR contained application', () => {
       expect(assertPluginMigrationFixture).toHaveBeenCalledTimes(1);
     } finally {
       assertPluginMigrationFixture.mockImplementation(assertPluginMigrationPreviewFixture);
+    }
+  });
+
+  it.each(['query', 'hybrid'] as const)('withholds all Gaming proof headers and output on %s composition failure', async mode => {
+    const contract = NATIVE_PR_PREVIEW_CHATGPT_GAMING_CONTRACT;
+    const app = createNativePrPreviewApplication({ identity });
+    const call = { jsonrpc: '2.0', id: 1, method: 'tools/call', params: {
+      name: mode === 'query' ? 'arcanos_gaming_query' : 'arcanos_gaming_hybrid_query',
+      arguments: mode === 'query' ? contract.queryInput : contract.hybridInput,
+    } };
+    try {
+      assertGamingCompositionFixture.mockImplementation(() => { throw new Error('synthetic private detail'); });
+      const failed = await request(app).post(contract.path).send(call);
+      expect(failed.status).toBe(500);
+      for (const header of [contract.proofHeader, contract.compositionProofHeader,
+        NATIVE_PR_PREVIEW_PLUGIN_MIGRATION_CONTRACT.proofHeader]) expect(failed.headers[header]).toBeUndefined();
+      expect(failed.body).toEqual({ jsonrpc: '2.0', id: 1,
+        error: { code: -32603, message: 'GAMING_PREVIEW_ASSERTION_FAILED' } });
+    } finally {
+      assertGamingCompositionFixture.mockImplementation(assertGamingCompositionPreviewFixture);
     }
   });
 

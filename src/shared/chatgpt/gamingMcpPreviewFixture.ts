@@ -1,6 +1,7 @@
 // eslint-disable-next-line no-restricted-imports -- Fixed public synthetic contract; no production execution graph.
 import { NATIVE_PR_PREVIEW_E2E_CONTRACT } from '../../../scripts/native-pr-preview-contract.mjs';
 import { assertPluginMigrationPreviewFixture } from './pluginMigrationPreviewFixture.js';
+import { assertGamingCompositionPreviewFixture } from './gamingCompositionPreviewFixture.js';
 import {
   gamingMcpTools, gamingMcpWritePolicyError, isGamingMcpInput, isGamingMcpOutput,
   isGamingMcpToolName, isGamingMcpWrite, GAMING_QUERY_SCOPE, GAMING_WRITE_SCOPE,
@@ -20,6 +21,7 @@ export interface GamingMcpPreviewResponse {
   /** Success-only component evidence; never part of the tool output. */
   gamingVerified?: true;
   migrationVerified?: true;
+  compositionVerified?: true;
 }
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -74,6 +76,7 @@ export function assertGamingMcpPreviewFixture(): void {
   requireProof(gamingMcpWritePolicyError({ ...sources, storagePolicy: 'transient_only' }, false) === 'GAMING_STORAGE_POLICY_DENIED');
   requireProof(gamingMcpWritePolicyError({ ...sources, storagePolicy: 'auto_store_approved' }, false) === 'GAMING_AUTO_STORAGE_FORBIDDEN');
   assertPluginMigrationPreviewFixture();
+  assertGamingCompositionPreviewFixture();
 }
 
 /** Finite stateless synthetic peer. Credentials are rejected before this function by the HTTP boundary. */
@@ -118,5 +121,5 @@ export function handleGamingMcpPreviewRequest(body: unknown): GamingMcpPreviewRe
   try { assertGamingMcpPreviewFixture(); } catch { return rpcError(id, -32603, FAILURE, 500); }
   const output = isQuery ? contract.queryOutput : contract.hybridOutput;
   return { ...rpcResult(id, { structuredContent: output, content: [{ type: 'text', text: JSON.stringify(output) }] }),
-    gamingVerified: true, migrationVerified: true };
+    gamingVerified: true, migrationVerified: true, compositionVerified: true };
 }

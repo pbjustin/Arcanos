@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-02T07:51:43.474Z",
+  "generatedAt": "2026-10-02T08:44:03.783Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -2663,6 +2663,9 @@
           "relativePath": "src/shared/chatgpt/chatgptTutorPreviewFixture.ts"
         },
         {
+          "relativePath": "src/shared/chatgpt/gamingCompositionPreviewFixture.ts"
+        },
+        {
           "relativePath": "src/shared/chatgpt/gamingMcpContract.ts"
         },
         {
@@ -4231,6 +4234,9 @@
           "relativePath": "tests/gaming-archive-resources.test.ts"
         },
         {
+          "relativePath": "tests/gaming-baseline-capture.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-clear-answer-audit.test.ts"
         },
         {
@@ -4253,6 +4259,9 @@
         },
         {
           "relativePath": "tests/gaming-clear-source.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-composition-preview-fixture.test.ts"
         },
         {
           "relativePath": "tests/gaming-currentness-adapters.test.ts"
@@ -4391,6 +4400,9 @@
         },
         {
           "relativePath": "tests/gaming-search-discovery.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-skill-composition.test.ts"
         },
         {
           "relativePath": "tests/gaming-source-acquisition-preview-failure.test.ts"
@@ -5084,6 +5096,9 @@
         },
         {
           "relativePath": "tests/plugin-migration-preview-fixture.test.ts"
+        },
+        {
+          "relativePath": "tests/plugin-private-boundary.test.ts"
         },
         {
           "relativePath": "tests/port-utils.test.ts"
