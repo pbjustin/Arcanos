@@ -383,9 +383,33 @@ The groups below highlight stable public routes, operator/control routes, compat
   confirmation required; authentication and the fixed 64 KiB JSON cap run
   before broad parsing, all responses are no-store, and persistence failures
   return fixed text)
-- `POST /heartbeat` (confirmation required)
+- `POST /heartbeat` (control-plane bearer, operator role, `mcp:invoke`, and
+  confirmation required; authentication, principal throttling, and a fixed
+  4 KiB JSON cap run before broad parsing; all responses are no-store)
 - `GET /api/test`
 - `GET /api/fallback/test`
+
+Heartbeat accepts only `timestamp` (ISO 8601 with timezone), `mode` (1–64
+visible ASCII characters), and `payload` containing boolean `write_override`
+and `db_write_enable`, `suppression_level` (1–64 visible ASCII characters),
+and `confirmation` (1–128 visible ASCII characters). Extra fields at either
+level are rejected with `400`. Send uncompressed `application/json` or
+`application/*+json`; unsupported media types or compression return `415`,
+and bodies over 4,096 bytes return `413`. Missing/invalid bearer credentials
+return `401`; missing/invalid server auth configuration returns `503`.
+The server-bound operator principal is limited to 60 requests per minute per
+process, including invalid bodies and confirmation attempts; exceeding it
+returns `429` with `Retry-After`. Changing client headers or source IP does
+not reset this limit. This is not a fleet-wide quota.
+
+Valid, confirmed heartbeats retain the existing `{ message }` acknowledgement.
+They emit the fixed `heartbeat.received` event through the structured request
+logger with boolean metadata and request/trace correlation; caller text and
+payloads are not retained. The route no longer creates or appends
+`logs/heartbeat.log`; existing log files are not deleted by this change.
+Root `/heartbeat` clients must now supply the dedicated control-plane bearer;
+confirmation alone does not authenticate them. Daemon and local-agent heartbeat
+contracts and public health/readiness routes are unchanged.
 
 In the normal root application, `src/app.ts` registers `/healthz` and calls
 `setupDiagnostics(app)` before `registerRoutes(app)`. Both `/healthz` and
