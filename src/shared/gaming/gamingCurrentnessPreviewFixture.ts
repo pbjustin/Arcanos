@@ -10,10 +10,13 @@ import { createGamingClearAssessment, gamingClearContextFingerprint, gamingClear
 import { GAMING_CLEAR_APPROVED_ANSWER, hasBoundGamingClearAnswer } from './gamingClearAnswerBinding.js';
 import { projectGamingHybridCandidateEvidence, resolveGamingHybridCandidateAttempt,
   resolveGamingHybridCurrentnessReason } from './gamingHybridPolicyCore.js';
+import { GAMING_STALE_GUIDE_WARNING, GAMING_UNVERIFIED_GUIDE_WARNING, gamingAnswerClaimsVerifiedCurrentness,
+  isGamingAdvisoryCurrentnessOperation, resolveGamingFreshnessDisposition, selectGamingAdvisoryGameplayEvidence } from './gamingFreshnessDisposition.js';
 import type { GamingStoredKnowledgeContext } from './gamingStoredEvidenceCore.js';
 
 export const GAMING_CURRENTNESS_PREVIEW_VERSION = 'gaming-currentness/v1';
 export const GAMING_CURRENTNESS_CONTINUATION_PREVIEW_VERSION = 'gaming-currentness-continuation/v1';
+export const GAMING_ADVISORY_FRESHNESS_PREVIEW_VERSION = 'gaming-advisory-freshness/v1';
 const FAILURE = 'PREVIEW_GAMING_CURRENTNESS_CONTRACT_INVALID';
 const NOW = new Date('2026-09-09T12:00:00.000Z');
 const GAME = 'Elden Ring';
@@ -101,14 +104,15 @@ function assess(raw: GamingFreshnessEvidence[], input = query()) {
 }
 
 /** Fixed synthetic model projection tests policy admission; it does not perform a model audit. */
-function answerAssessment(evidence: GamingClearAssessment, status: 'completed' | 'not_run' = 'completed', response = ANSWER): GamingClearAssessment {
+function answerAssessment(evidence: GamingClearAssessment, status: 'completed' | 'not_run' = 'completed', response = ANSWER,
+  questionProfile: 'current_build' | 'advisory_recommendation' = 'current_build'): GamingClearAssessment {
   const refs = evidence.dimensionScores.clarity.evidenceRefs;
   const dimension = (): GamingClearDimensions['clarity'] => ({ status: 'evaluated', score: 5,
     reasonCodes: ['SUPPORTED_SYNTHETIC_MAGE_PASSAGE'], evidenceRefs: refs, unresolvedFacts: [] });
   const model = parseGamingClearModelAssessment({ dimensions: { clarity: dimension(), leverage: dimension(), efficiency: dimension(),
     alignment: dimension(), resilience: dimension() }, findings: [] }, refs);
   requireProof(model);
-  return createGamingClearAssessment({ profile: 'answer', questionProfile: 'current_build',
+  return createGamingClearAssessment({ profile: 'answer', questionProfile,
     subjectId: 'synthetic-currentness-answer', subjectHash: gamingClearHash(response),
     contextFingerprint: gamingClearContextFingerprint({ question: query(), evidence: evidence.subjectHash }),
     evidenceRefs: refs, gates: { ...evidence.gates }, dimensions: model.dimensions, findings: model.findings,
@@ -265,12 +269,71 @@ function requireSameUrlCurrentnessContinuation(): void {
     && oldIndex.currentBuild === undefined);
 }
 
+/** Synthetic shared-core admission only; no generation or semantic model audit executes. */
+function requireAdvisoryFreshnessDisposition(): void {
+  const input = query();
+  requireProof(resolveGamingFreshnessDisposition(input) === 'ADVISORY');
+  requireProof(isGamingAdvisoryCurrentnessOperation({ decisions: [{ decision: 'rejected', reasonCodes: ['INSUFFICIENT_EXTRACTION'] }] }));
+  for (const reason of ['SOURCE_INSTRUCTIONS_REJECTED', 'URL_BLOCKED', 'REVIEWED_OFFICIAL_CURRENTNESS_SOURCE_REQUIRED']) {
+    requireProof(!isGamingAdvisoryCurrentnessOperation({ decisions: [{ decision: 'rejected', reasonCodes: [reason] }] }));
+  }
+  for (const stale of [false, true]) {
+    const gameplay = extract(guide(`Patch: 1.17\nBuild: 1.17\nPlatforms: PC${stale ? '\nEffective until: 2026-09-08' : ''}`));
+    const metadata = [gameplay];
+    const data = knowledge(metadata);
+    const before = gamingClearHash({ metadata, data });
+    const freshness = evaluateGamingFreshness({ ...input, question: input.prompt, evidence: metadata, now: NOW });
+    requireProof(!freshness.usable);
+    const advisory = selectGamingAdvisoryGameplayEvidence({ game: input.game, freshness, evidence: metadata, now: NOW });
+    requireProof(!advisory.conflict && advisory.selectedEvidenceIds.join('|') === gameplay.id
+      && advisory.status === (stale ? 'stale' : 'unverified')
+      && advisory.qualification === (stale ? GAMING_STALE_GUIDE_WARNING : GAMING_UNVERIFIED_GUIDE_WARNING));
+    const strict = assessGamingClearEvidence(input, data, { freshness, freshnessEvidence: metadata, now: NOW });
+    requireProof(strict.decision !== 'accept' && strict.gates.freshness === 'unknown');
+    const clear = assessGamingClearEvidence(input, data, { freshness, freshnessEvidence: metadata, now: NOW,
+      allowAdvisoryFreshness: true });
+    requireProof(clear.decision === 'accept' && clear.policyProfile === 'gaming-clear-policy/v1:advisory_recommendation:evidence'
+      && clear.gates.freshness === 'unknown' && clear.gates.claimSupport === 'verified'
+      && clear.gates.compatibility === 'verified' && clear.gates.provenance === 'verified');
+    for (const qualification of ['This build has not been tested on the current patch.',
+      'These recommendations have never been verified compatible with the latest patch.']) {
+      const response = `${advisory.qualification}\n\n${ANSWER} ${qualification}`;
+      requireProof(response.includes(stale ? GAMING_STALE_GUIDE_WARNING : GAMING_UNVERIFIED_GUIDE_WARNING)
+        && !gamingAnswerClaimsVerifiedCurrentness(response));
+      const answer = answerAssessment(clear, 'completed', response, 'advisory_recommendation');
+      requireProof(answer.decision === 'accept' && answer.gates.freshness === 'unknown'
+        && hasBoundGamingClearAnswer({ response, [GAMING_CLEAR_APPROVED_ANSWER]: answer })
+        && !hasBoundGamingClearAnswer({ response: `${response} This build works on the current patch.`,
+          [GAMING_CLEAR_APPROVED_ANSWER]: answer }));
+      requireProof(gamingAnswerClaimsVerifiedCurrentness(`${response} This build works on the current patch.`));
+    }
+    requireProof(gamingClearHash({ metadata, data }) === before);
+    for (const prompt of [
+      'Recommend an Intelligence staff mage build and summarize the latest patch notes.',
+      'Recommend an Intelligence staff mage build and list the current season.',
+      'What time does maintenance end today?'
+    ]) {
+      const required = { ...input, prompt };
+      requireProof(resolveGamingFreshnessDisposition(required) === 'REQUIRED');
+      const blocked = assessGamingClearEvidence(required, data, { freshness, freshnessEvidence: metadata, now: NOW,
+        allowAdvisoryFreshness: true });
+      requireProof(blocked.decision !== 'accept' && blocked.gates.freshness === 'unknown'
+        && blocked.policyProfile !== 'gaming-clear-policy/v1:advisory_recommendation:evidence'
+        && blocked.blockingFindings.some(finding => finding.code === 'REQUIRED_FRESHNESS_UNVERIFIED'));
+      const answer = answerAssessment(blocked);
+      requireProof(answer.decision !== 'accept'
+        && !hasBoundGamingClearAnswer({ response: ANSWER, [GAMING_CLEAR_APPROVED_ANSWER]: answer }));
+    }
+  }
+}
+
 /** Fixed synthetic shared-core proof. DOM projections are synthetic inputs, not a resolver run.
  * No normal query workflow, acquisition, provider/model audit, SQL, cache, logger, or worker executes. */
 export function runGamingCurrentnessPreview(): void {
   try {
     requireCurrentPcAnswer();
     requireSameUrlCurrentnessContinuation();
+    requireAdvisoryFreshnessDisposition();
   } catch {
     throw new Error(FAILURE);
   }

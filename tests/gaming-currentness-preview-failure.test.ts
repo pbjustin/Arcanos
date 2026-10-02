@@ -3,13 +3,18 @@ import request from 'supertest';
 
 const actualFreshness = await import('../src/shared/gaming/gamingFreshnessCore.js');
 const actualPolicy = await import('../src/shared/gaming/gamingHybridPolicyCore.js');
+const actualDisposition = await import('../src/shared/gaming/gamingFreshnessDisposition.js');
 const extract = jest.fn(actualFreshness.extractGamingFreshnessMetadata);
 const evaluate = jest.fn(actualFreshness.evaluateGamingFreshness);
 const project = jest.fn(actualPolicy.projectGamingHybridCandidateEvidence);
+const disposition = jest.fn(actualDisposition.resolveGamingFreshnessDisposition);
+const claimsCurrentness = jest.fn(actualDisposition.gamingAnswerClaimsVerifiedCurrentness);
 jest.unstable_mockModule('../src/shared/gaming/gamingFreshnessCore.js', () => ({ ...actualFreshness,
   extractGamingFreshnessMetadata: extract, evaluateGamingFreshness: evaluate }));
 jest.unstable_mockModule('../src/shared/gaming/gamingHybridPolicyCore.js', () => ({ ...actualPolicy,
   projectGamingHybridCandidateEvidence: project }));
+jest.unstable_mockModule('../src/shared/gaming/gamingFreshnessDisposition.js', () => ({ ...actualDisposition,
+  resolveGamingFreshnessDisposition: disposition, gamingAnswerClaimsVerifiedCurrentness: claimsCurrentness }));
 const { createNativePrPreviewApplication, createNativePrPreviewReadinessState } = await import('../src/nativePrPreviewApplication.js');
 const { NATIVE_PR_PREVIEW_GAMING_CONTRACT: contract, NATIVE_PR_PREVIEW_SYNTHETIC_RESPONSE_HEADER } = await import('../src/nativePrPreviewContract.js');
 
@@ -22,7 +27,8 @@ const proofPairs = () => [
   [contract.sourceAcquisitionProofHeader, contract.sourceAcquisitionProofVersion],
   [contract.structuredEvidenceProofHeader, contract.structuredEvidenceProofVersion],
   [contract.currentnessProofHeader, contract.currentnessProofVersion],
-  [contract.currentnessContinuationProofHeader, contract.currentnessContinuationProofVersion]
+  [contract.currentnessContinuationProofHeader, contract.currentnessContinuationProofVersion],
+  [contract.advisoryFreshnessProofHeader, contract.advisoryFreshnessProofVersion]
 ];
 
 async function queryGuide(mode: 'guide' | 'build' | 'meta' = 'guide') {
@@ -40,7 +46,32 @@ describe('served Gaming currentness proof boundary', () => {
     extract.mockReset().mockImplementation(actualFreshness.extractGamingFreshnessMetadata);
     evaluate.mockReset().mockImplementation(actualFreshness.evaluateGamingFreshness);
     project.mockReset().mockImplementation(actualPolicy.projectGamingHybridCandidateEvidence);
+    disposition.mockReset().mockImplementation(actualDisposition.resolveGamingFreshnessDisposition);
+    claimsCurrentness.mockReset().mockImplementation(actualDisposition.gamingAnswerClaimsVerifiedCurrentness);
   });
+
+  it.each(['mixed current-state request admitted', 'honest passive warning rejected', 'affirmative currentness claim admitted'])(
+    'withholds every Gaming proof and success body after advisory freshness drift: %s', async scenario => {
+      if (scenario === 'mixed current-state request admitted') disposition.mockImplementation(input =>
+        input.prompt === 'Recommend an Intelligence staff mage build and summarize the latest patch notes.'
+          ? 'ADVISORY' : actualDisposition.resolveGamingFreshnessDisposition(input));
+      if (scenario === 'honest passive warning rejected') claimsCurrentness.mockImplementation(answer =>
+        answer.includes('This build has not been tested on the current patch.')
+          && !answer.includes('This build works on the current patch.')
+          ? true : actualDisposition.gamingAnswerClaimsVerifiedCurrentness(answer));
+      if (scenario === 'affirmative currentness claim admitted') claimsCurrentness.mockImplementation(answer =>
+        answer.includes('This build works on the current patch.')
+          ? false : actualDisposition.gamingAnswerClaimsVerifiedCurrentness(answer));
+      const response = await queryGuide();
+      expect(response.status).toBe(500);
+      for (const [key, header] of Object.entries(contract)) {
+        if (key === 'proofHeader' || key.endsWith('ProofHeader')) expect(response.headers[header as string]).toBeUndefined();
+      }
+      expect(response.body).toEqual({ error: 'PREVIEW_GAMING_CURRENTNESS_CONTRACT_INVALID' });
+      expect(response.headers[NATIVE_PR_PREVIEW_SYNTHETIC_RESPONSE_HEADER.name]).toBe(NATIVE_PR_PREVIEW_SYNTHETIC_RESPONSE_HEADER.value);
+      expect(response.text).not.toContain('Sealed preview guide response.');
+      expect(response.text).not.toContain('currentness-preview.example');
+    });
 
   it.each(['same-URL source retained', 'prior contradiction dropped', 'evaluated contradiction dropped'])(
     'withholds every Gaming proof and success body after continuation drift: %s', async scenario => {
@@ -105,6 +136,7 @@ describe('served Gaming currentness proof boundary', () => {
     expect(response.status).toBe(200);
     expect(response.headers[contract.currentnessProofHeader]).toBeUndefined();
     expect(response.headers[contract.currentnessContinuationProofHeader]).toBeUndefined();
+    expect(response.headers[contract.advisoryFreshnessProofHeader]).toBeUndefined();
     expect(extract.mock.calls.some(([doc]) => doc.publicUrl.startsWith('https://currentness-preview.example/'))).toBe(false);
   });
 });

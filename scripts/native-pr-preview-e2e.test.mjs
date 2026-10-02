@@ -266,6 +266,8 @@ function responseHeadersForCase(
             NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.currentnessProofVersion,
           [NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.currentnessContinuationProofHeader]:
             NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.currentnessContinuationProofVersion,
+          [NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.advisoryFreshnessProofHeader]:
+            NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.advisoryFreshnessProofVersion,
         }
       : {}),
     ...(requestCase.expectedType === 'backstage-generation-contract'
@@ -2243,6 +2245,12 @@ test('executes the bounded synthetic matrix and detects identity stability', asy
     ).map(({ caseId }) => caseId),
     ['gaming-query-guide']
   );
+  assert.deepEqual(
+    result.checks.filter(({ gamingAdvisoryFreshnessVerified }) =>
+      gamingAdvisoryFreshnessVerified === true
+    ).map(({ caseId, gamingAdvisoryFreshnessProofVersion }) => ({ caseId, gamingAdvisoryFreshnessProofVersion })),
+    [{ caseId: 'gaming-query-guide', gamingAdvisoryFreshnessProofVersion: 'gaming-advisory-freshness/v1' }]
+  );
   assert.equal(
     result.checks.find(({ caseId }) =>
       caseId === 'worker-readiness-initial'
@@ -3547,6 +3555,20 @@ test('rejects missing synthetic provenance and correlation or security header dr
       code: 'NATIVE_PR_PREVIEW_GAMING_CURRENTNESS_CONTINUATION_PROOF_INVALID',
       mutate(headers) {
         headers[NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.currentnessContinuationProofHeader] = 'gaming-currentness-continuation/drifted';
+      },
+    },
+    {
+      caseId: 'gaming-query-guide',
+      code: 'NATIVE_PR_PREVIEW_GAMING_ADVISORY_FRESHNESS_PROOF_INVALID',
+      mutate(headers) {
+        delete headers[NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.advisoryFreshnessProofHeader];
+      },
+    },
+    {
+      caseId: 'gaming-query-guide',
+      code: 'NATIVE_PR_PREVIEW_GAMING_ADVISORY_FRESHNESS_PROOF_INVALID',
+      mutate(headers) {
+        headers[NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.advisoryFreshnessProofHeader] = 'gaming-advisory-freshness/drifted';
       },
     },
     {
