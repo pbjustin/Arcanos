@@ -15,6 +15,8 @@ import {
 } from '@shared/gaming/gamingClearPolicy.js';
 import type { GamingPlayerContext } from '@shared/gaming/gamingPlayerContext.js';
 import type { GamingStoredKnowledgeContext } from '@shared/gaming/gamingStoredEvidenceCore.js';
+import { GAMING_STALE_GUIDE_WARNING, GAMING_UNVERIFIED_GUIDE_WARNING, gamingAnswerClaimsVerifiedCurrentness,
+  resolveGamingFreshnessDisposition } from '@shared/gaming/gamingFreshnessDisposition.js';
 
 export const GAMING_CLEAR_ANSWER_BUDGET = Object.freeze({ maxCalls: 1, maxRepairs: 0, maxOutputTokens: 1_024,
   maxInputChars: 32_000, maxTotalPromptChars: 38_000, maxAnswerChars: 12_000, maxTimeoutMs: 3_000 });
@@ -47,7 +49,9 @@ export function gamingClearAnswerEvidence(input: GamingClearAnswerInput) {
 
 function baseAssessment(input: GamingClearAnswerInput) {
   const evidenceRefs = [...new Set((input.knowledge.evidence ?? []).flatMap(chunk => [chunk.sourceId, chunk.revisionId, chunk.recordId]))];
-  return { profile: 'answer' as const, questionProfile: classifyGamingClearQuestion(input),
+  const advisoryFreshness = input.evidenceAssessment.policyProfile.split(':')[1] === 'advisory_recommendation'
+    && resolveGamingFreshnessDisposition(input) === 'ADVISORY';
+  return { profile: 'answer' as const, questionProfile: classifyGamingClearQuestion({ ...input, allowAdvisoryFreshness: advisoryFreshness }),
     subjectId: `answer:${gamingClearHash(input.answer).slice(0, 32)}`, subjectHash: gamingClearHash(input.answer),
     contextFingerprint: input.evidenceAssessment.contextFingerprint, evidenceRefs,
     gates: { ...input.evidenceAssessment.gates } };
@@ -87,6 +91,13 @@ export async function runGamingClearAnswerAudit(client: OpenAI, input: GamingCle
   if (invalidCitation) return finish(createGamingClearAssessment({ ...base, dimensions: unknownDimensions(),
     assessmentMethod: 'deterministic', findings: [{ code: 'CITATION_NOT_FOUND', severity: 'blocking', evidenceRefs: [] }] }));
   if (input.evidenceAssessment.decision !== 'accept') return finish(unavailable('EVIDENCE_NOT_SUFFICIENT'));
+  if (base.questionProfile === 'advisory_recommendation') {
+    const qualified = input.answer.includes(GAMING_UNVERIFIED_GUIDE_WARNING) || input.answer.includes(GAMING_STALE_GUIDE_WARNING);
+    if (!qualified || gamingAnswerClaimsVerifiedCurrentness(input.answer)) {
+      return finish(createGamingClearAssessment({ ...base, dimensions: unknownDimensions(), assessmentMethod: 'deterministic',
+        findings: [{ code: qualified ? 'UNSUPPORTED_CURRENTNESS_CLAIM' : 'FRESHNESS_WARNING_REQUIRED', severity: 'blocking', evidenceRefs: base.evidenceRefs }] }));
+    }
+  }
   const applicability = input.knowledge.sources.map(source => {
     const metadata = source.freshnessMetadata ?? {};
     const sourceReasonCodes = [...new Set([...(source.clearSourceAssessment?.findings.map(finding => finding.code) ?? []),
@@ -133,6 +144,10 @@ export async function runGamingClearAnswerAudit(client: OpenAI, input: GamingCle
     'Reject unsupported gameplay claims, wrong game/edition/patch, unsupported currentness, ignored constraints, unnecessary spoilers, or fallback presented as completed guidance with blocking findings.',
     'The only nonblocking warning codes are STYLE_CONCISION, STYLE_REPETITION, and STYLE_PRESENTATION. All factual, citation, applicability, completion or constraint defects are blocking.',
     'For partialExtraction sources, only intact supplied passages support claims. Require material extraction limitations to be qualified; missing prerequisites and unseen guide sections remain unknown.',
+    ...(base.questionProfile === 'advisory_recommendation' ? [
+      'Currentness is advisory for this recommendation. A visible server-owned warning states that patch compatibility is unverified or stale. Judge gameplay claims only against the supplied gameplay passages; absent current patch proof alone is not a gameplay defect.',
+      'Reject any claim that these recommendations are current, latest-patch compatible, verified for the current release, or presently optimal. Known source patch/version/date facts remain attributable facts, not proof of current compatibility.'
+    ] : []),
     'Evaluate leverage against the actual question; patch notes alone cannot justify a best-build recommendation. Unknown relevant facts remain unknown. Scores are judgments, not accuracy probabilities.',
     'Return JSON with exactly dimensions and findings. dimensions has exactly clarity, leverage, efficiency, alignment, resilience.',
     'Each dimension has exactly status (evaluated or unknown), score (a finite number 0 through 5 when evaluated, otherwise null), reasonCodes (up to 8 UPPER_SNAKE_CASE codes), evidenceRefs (existing sourceId/revisionId/chunkId values only), unresolvedFacts (up to 4 UPPER_SNAKE_CASE codes).',

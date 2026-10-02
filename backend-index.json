@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-02T08:44:03.783Z",
+  "generatedAt": "2026-10-02T18:51:07.366Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -2744,6 +2744,15 @@
           "relativePath": "src/shared/gaming/gamingCurrentnessPreviewFixture.ts"
         },
         {
+          "relativePath": "src/shared/gaming/gamingCurrentnessRegistry.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingCurrentnessRegistryTypes.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingCurrentnessSourceData.ts"
+        },
+        {
           "relativePath": "src/shared/gaming/gamingDocumentIngestionCore.ts"
         },
         {
@@ -2760,6 +2769,9 @@
         },
         {
           "relativePath": "src/shared/gaming/gamingFreshnessCore.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingFreshnessDisposition.ts"
         },
         {
           "relativePath": "src/shared/gaming/gamingGameIdentity.ts"
@@ -4201,6 +4213,9 @@
           "relativePath": "tests/fixtures/chatgpt-tutor-e2e.ts"
         },
         {
+          "relativePath": "tests/fixtures/gaming-currentness/second-publisher.ts"
+        },
+        {
           "relativePath": "tests/fixtures/gamingClearCalibration.ts"
         },
         {
@@ -4211,6 +4226,9 @@
         },
         {
           "relativePath": "tests/fixtures/session-context-e2e.ts"
+        },
+        {
+          "relativePath": "tests/gaming-advisory-strictness.test.ts"
         },
         {
           "relativePath": "tests/gaming-agents.routing.test.ts"
@@ -4279,6 +4297,9 @@
           "relativePath": "tests/gaming-currentness-preview.test.ts"
         },
         {
+          "relativePath": "tests/gaming-currentness-registry.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-currentness-workflow.test.ts"
         },
         {
@@ -4298,6 +4319,9 @@
         },
         {
           "relativePath": "tests/gaming-durable-rag-preview.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-freshness-disposition.test.ts"
         },
         {
           "relativePath": "tests/gaming-freshness.test.ts"

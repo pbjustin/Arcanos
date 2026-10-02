@@ -378,7 +378,7 @@ describe('Gaming hybrid durable lifecycle', () => {
   async function mageCurrentnessLifecycle(guideLabels = 'Patch: 1.10. Build: 1.10.1.', options: {
     http?: boolean; indexLabels?: string; articleLabels?: string; targetedPlatforms?: string | null;
     currentPatch?: string; currentBuild?: string; articleLayout?: 'inline_platforms_version_list';
-    registryDiscovery?: boolean; indexOnly?: boolean; articleFailure?: 'forbidden' | 'decoded_limit';
+    registryDiscovery?: boolean; indexOnly?: boolean; indexExtractionFailure?: boolean; articleFailure?: 'forbidden' | 'decoded_limit';
     query?: Record<string, unknown>;
   } = {}) {
     // The imported HTTP router owns a workflow with the real clock captured at registration.
@@ -401,6 +401,10 @@ describe('Gaming hybrid durable lifecycle', () => {
       expect(new globalThis.URL(url).hostname).toBe('93.184.216.34');
       expect(acquisitionOptions).toMatchObject({ maxRedirects: 0, proxy: false, responseType: 'stream' });
       const path = new globalThis.URL(url).pathname;
+      if (path === '/elden-ring/elden-ring/news' && options.indexExtractionFailure) {
+        return { data: '<html><title>Elden Ring news</title><body><main><h1>Latest News on ELDEN RING</h1><div class="search__section">Patch Notes</div></main></body></html>',
+          headers: { 'content-type': 'text/html' } };
+      }
       if (path === articlePath && options.articleFailure === 'forbidden') {
         return { status: 403, data: 'Forbidden', headers: { 'content-type': 'text/plain' } };
       }
@@ -465,13 +469,36 @@ describe('Gaming hybrid durable lifecycle', () => {
     expect(verified).toEqual(expect.objectContaining({ status: 200 }));
     expect(mockHttp.mock.calls.filter(([url]) => new globalThis.URL(url as string).pathname === '/elden-ring-mage')).toHaveLength(1);
     expect(mockHttp.mock.calls.filter(([url]) => new globalThis.URL(url as string).pathname === '/elden-ring/elden-ring/news')).toHaveLength(1);
-    expect(mockHttp.mock.calls.filter(([url]) => new globalThis.URL(url as string).pathname === articlePath)).toHaveLength(1);
-    expect(mockHttp).toHaveBeenCalledTimes(5);
+    expect(mockHttp.mock.calls.filter(([url]) => new globalThis.URL(url as string).pathname === articlePath)).toHaveLength(options.indexExtractionFailure ? 0 : 1);
+    expect(mockHttp).toHaveBeenCalledTimes(options.indexExtractionFailure ? 4 : 5);
     expect(jobs.size).toBe(0);
     expect(database.records).toHaveLength(0);
     expect(database.revisions).toHaveLength(0);
     return { workflow, query, missing, found, verified, guideUrl, indexUrl, articleUrl, officialRequest };
   }
+
+  it('generates a warned grounded answer through real HTTP and CLEAR after official index extraction fails', async () => {
+    const { workflow, verified, guideUrl, officialRequest } = await mageCurrentnessLifecycle(undefined, {
+      http: true, indexOnly: true, indexExtractionFailure: true
+    });
+    expect(verified.body).toMatchObject({ state: 'answer_ready', nextAction: 'answer', evidenceSelected: true,
+      freshnessStatus: 'unverified', applicabilityStatus: 'unverified', acceptedGameplayCandidateCount: 1 });
+    expect(verified.body.candidates).toMatchObject([{ decision: 'rejected', reasonCodes: ['INSUFFICIENT_EXTRACTION'] }]);
+    expect(verified.body.answer?.response).toContain('Current patch compatibility could not be verified');
+    expect(verified.body.answer?.response).toContain('may be outdated');
+    expect(verified.body.answer?.response).toContain('[Source 1]');
+    expect(verified.body.answer?.sources.map(source => source.url)).toEqual([guideUrl]);
+    expect(mockTrinity).toHaveBeenCalledTimes(1);
+    expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
+    const auditInput = JSON.parse((mockAuditCompletion.mock.calls[0][1] as any).messages[1].content);
+    expect(auditInput.verifiedEvidenceGates.freshness).toBe('unknown');
+    expect(auditInput.answer).toContain('may be outdated');
+    expect(jest.mocked(logger.info).mock.calls.filter(([event]) => event === 'gaming.currentness.operation_started')).toHaveLength(1);
+    expect((await workflow.candidates(officialRequest, context)).body.answer).toEqual(verified.body.answer);
+    expect((await workflow.candidates({ ...officialRequest, idempotencyKey: 'failed-index-extra-round' }, context)).status).toBe(409);
+    expect(mockTrinity).toHaveBeenCalledTimes(1);
+    expect(database.queries.some(sql => /^(?:INSERT|UPDATE|DELETE|CREATE|ALTER|DROP)\b/iu.test(sql))).toBe(false);
+  });
 
   it('continues the registry-directed HTTP lifecycle through a required official article before exactly one answer', async () => {
     const { workflow, query, missing, found, verified, guideUrl, indexUrl, articleUrl, officialRequest } =
@@ -729,17 +756,17 @@ describe('Gaming hybrid durable lifecycle', () => {
       expect(verified.body.answer?.sources.map(source => source.url)).toEqual(expect.arrayContaining([guideUrl, indexUrl]));
       expect(mockTrinity.mock.calls[0][0]).toMatchObject({ input: { body: { platform: 'PC', mode: 'build' } } });
     } else {
-      expect(verified.body).toMatchObject({ state: 'discovery_required', nextAction: 'stop', evidenceSelected: false,
-        discovery: { type: 'currentness_verification', round: 1, maxRounds: 1 } });
+      expect(verified.body).toMatchObject({ state: 'answer_ready', nextAction: 'answer', evidenceSelected: true });
       expect(verified.body.freshnessStatus).not.toBe('current');
-      expect(verified.body.answer).toBeUndefined();
+      expect(verified.body.answer?.response).toContain('may be outdated');
+      expect(verified.body.answer?.sources.map(source => source.url)).toEqual([guideUrl]);
     }
     const official = { contractVersion, workflowId: missing.body.workflowId, idempotencyKey: 'mage-official-fixture',
       discoveryType: 'currentness_verification', candidates: [{ url: indexUrl }, { url: articleUrl }] };
     expect(await workflow.candidates(official, context)).toEqual(verified);
     const replay = await workflow.query({ ...query, idempotencyKey: 'inline-layout-query-replay' }, context);
     expect(replay.body.workflowId).toBe(missing.body.workflowId);
-    expect(replay.body.nextAction).toBe(usable ? 'answer' : 'stop');
+    expect(replay.body.nextAction).toBe('answer');
     expect(replay.body.answer).toEqual(verified.body.answer);
     for (const [discoveryType, candidates] of [
       ['gameplay_evidence', [{ url: guideUrl }]], ['currentness_verification', [{ url: indexUrl }, { url: articleUrl }]]
@@ -748,8 +775,8 @@ describe('Gaming hybrid durable lifecycle', () => {
         idempotencyKey: `inline-layout-${discoveryType}-reset`, discoveryType, candidates }, context)).status).toBe(409);
     }
     expect(mockHttp).toHaveBeenCalledTimes(5);
-    expect(mockTrinity).toHaveBeenCalledTimes(usable ? 1 : 0);
-    expect(mockAuditCompletion).toHaveBeenCalledTimes(usable ? 1 : 0);
+    expect(mockTrinity).toHaveBeenCalledTimes(1);
+    expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
     expect(jobs.size).toBe(0);
     expect(database.records).toHaveLength(0);
     expect(database.revisions).toHaveLength(0);
@@ -762,10 +789,22 @@ describe('Gaming hybrid durable lifecycle', () => {
     { name: 'article platform outside the narrower listing', indexLabels: 'Platforms: PC.', targetedPlatforms: 'PlayStation 5 / Steam', query: { platform: 'PlayStation 5' } },
     { name: 'article region outside the narrower listing', indexLabels: 'Regions: EU.', articleLabels: 'Regions: all.', query: { region: 'US' } },
     { name: 'contradictory article platform labels', articleLabels: 'Platforms: Nintendo Switch 2.', targetedPlatforms: 'Steam' },
-    { name: 'unsupported targeted platform qualifier', articleLabels: 'Platforms: all.', targetedPlatforms: 'Steam (rollout starts tomorrow)' },
-    { name: 'missing targeted platform DOM', articleLabels: 'Platforms: all.', targetedPlatforms: null }
-  ])('stops authenticated HTTP currentness for $name without provider, persistence, or another round', async scope => {
+    { name: 'unsupported targeted platform qualifier', articleLabels: 'Platforms: all.', targetedPlatforms: 'Steam (rollout starts tomorrow)', advisory: true },
+    { name: 'missing targeted platform DOM', articleLabels: 'Platforms: all.', targetedPlatforms: null, advisory: true }
+  ])('preserves strict conflicts or qualifies incomplete HTTP currentness for $name', async scope => {
     const { workflow, query, missing, verified, guideUrl, indexUrl, articleUrl } = await mageCurrentnessLifecycle(undefined, { http: true, ...scope });
+    if (scope.advisory) {
+      expect(verified.body).toMatchObject({ state: 'answer_ready', nextAction: 'answer', evidenceSelected: true, freshnessStatus: 'unverified' });
+      expect(verified.body.answer?.response).toContain('may be outdated');
+      expect(mockTrinity).toHaveBeenCalledTimes(1);
+      expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
+      expect((await workflow.candidates({ contractVersion, workflowId: missing.body.workflowId,
+        idempotencyKey: 'incomplete-metadata-extra-round', discoveryType: 'currentness_verification',
+        candidates: [{ url: indexUrl }] }, context)).status).toBe(409);
+      expect(jobs.size).toBe(0);
+      expect(database.queries.some(sql => /^(?:INSERT|UPDATE|DELETE|CREATE|ALTER|DROP)\b/iu.test(sql))).toBe(false);
+      return;
+    }
     expect(verified.body).toMatchObject({ state: 'discovery_required', nextAction: 'stop', evidenceSelected: false,
       discovery: { type: 'currentness_verification', round: 1, maxRounds: 1 } });
     expect(verified.body.freshnessStatus).not.toBe('current');
@@ -837,24 +876,24 @@ describe('Gaming hybrid durable lifecycle', () => {
     const indexUrl = 'https://en.bandainamcoent.eu/elden-ring/elden-ring/news';
     mockHttp.mockResolvedValue({ data: '<html><title>Elden Ring news</title><body><main><div class="search__section"><h2 id="patch-notes">Patch Notes (1)</h2><ul class="cards-list"><li><a href="/elden-ring/news/elden-ring-patch-notes-version-110"><h3>Elden Ring – Patch Notes Version 1.10</h3><time>08/09/2026</time></a></li></ul></div></main></body></html>', headers: { 'content-type': 'text/html' } });
     const document = await resolveGamingDocument(indexUrl, 50_000, { documentPurpose: 'durable' });
-    expect(document.currentnessDocument?.adapterId).toBe('bandai-news-index-v1');
+    expect(document.currentnessDocument?.adapterId).toBe('article-index-v1');
     expect(isResolvedGamingDocumentIdentityVerified(document, indexUrl)).toBe(true);
     const priorHash = hashGamingApprovedDocument(document);
-    if (document.currentnessDocument?.adapterId !== 'bandai-news-index-v1') throw new Error('Expected reviewed index structure');
+    if (document.currentnessDocument?.adapterId !== 'article-index-v1') throw new Error('Expected reviewed index structure');
     document.currentnessDocument.cards[0].url += '-older';
     expect(hashGamingApprovedDocument(document)).not.toBe(priorHash);
     expect(isResolvedGamingDocumentIdentityVerified(document, indexUrl)).toBe(false);
   });
 
-  it.each(['Patch: 1.9. Build: 1.9.', ''])('stops official corroboration without a current recommendation for incompatible mage metadata %s', async labels => {
+  it.each(['Patch: 1.9. Build: 1.9.', ''])('qualifies grounded recommendations with incompatible mage freshness metadata %s', async labels => {
     const { workflow, query, missing, verified } = await mageCurrentnessLifecycle(labels);
-    expect(verified.body).toMatchObject({ state: 'discovery_required', nextAction: 'stop', evidenceSelected: false });
+    expect(verified.body).toMatchObject({ state: 'answer_ready', nextAction: 'answer', evidenceSelected: true });
     expect(verified.body.freshnessStatus).not.toBe('current');
-    expect(verified.body.answer).toBeUndefined();
-    expect(mockTrinity).not.toHaveBeenCalled();
+    expect(verified.body.answer?.response).toContain('may be outdated');
+    expect(mockTrinity).toHaveBeenCalledTimes(1);
     const replay = await workflow.query({ ...query, idempotencyKey: 'mage-reset-attempt' }, context);
     expect(replay.body.workflowId).toBe(missing.body.workflowId);
-    expect(replay.body.nextAction).toBe('stop');
+    expect(replay.body.nextAction).toBe('answer');
   });
 
   it('never approves an already expired stable source for durable ingestion', async () => {

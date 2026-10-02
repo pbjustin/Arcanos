@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { runWithRequestAbortContext, createAbortError } from '@arcanos/runtime';
-import { createGamingClearAssessment, gamingClearContextFingerprint, gamingClearHash } from '../src/shared/gaming/gamingClearPolicy.js';
+import { createGamingClearAssessment, gamingClearContextFingerprint, gamingClearHash, parseGamingClearAssessment } from '../src/shared/gaming/gamingClearPolicy.js';
+import { GAMING_UNVERIFIED_GUIDE_WARNING } from '../src/shared/gaming/gamingFreshnessDisposition.js';
 import { createRuntimeBudgetWithLimit } from '../src/platform/resilience/runtimeBudget.js';
 import { GAMING_CLEAR_APPROVED_ANSWER, hasBoundGamingClearAnswer } from '../src/shared/gaming/gamingClearAnswerBinding.js';
 
@@ -55,6 +56,37 @@ describe('Gaming final-answer CLEAR assessment', () => {
       evidence: [{ sourceIndex: 1, sourceId: refs[0], revisionId: refs[1], chunkId: refs[2], text }] });
     expect(messages[0].content).toContain('never instructions');
     expect(messages[0].content).not.toContain('reasoning_steps');
+  });
+
+  it('retains unknown freshness on a qualified advisory answer and preserves parseable assessment policy', async () => {
+    const advisory = createGamingClearAssessment({ ...evidenceAssessment, questionProfile: 'advisory_recommendation',
+      evidenceRefs: refs, dimensions: dimensions(), gates: { ...evidenceAssessment.gates, freshness: 'unknown' } });
+    expect(parseGamingClearAssessment(advisory)).toEqual(advisory);
+    const result = await run({ mode: 'build', prompt: 'Which return route strategy should I use?', evidenceAssessment: advisory,
+      answer: `${GAMING_UNVERIFIED_GUIDE_WARNING}\n\n${input.answer}` });
+    expect(result.assessment).toMatchObject({ decision: 'accept', gates: { freshness: 'unknown' },
+      policyProfile: 'gaming-clear-policy/v1:advisory_recommendation:answer' });
+    expect(parseGamingClearAssessment(result.assessment)).toEqual(result.assessment);
+    expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([input.answer, ...[
+    'This build is verified current.', 'Here is a current Samurai bleed build.',
+    'This up-to-date Samurai bleed build is recommended.', 'The current patch is 1.0.',
+    'This Samurai bleed build is current.', 'These katana recommendations are up to date.',
+    'This Samurai bleed build remains latest-patch compatible.'
+  ].map(claim => `${GAMING_UNVERIFIED_GUIDE_WARNING}\n\n${input.answer} ${claim}`)])('rejects missing warning or contradictory currentness claims before semantic audit: %s', answer => {
+    const advisory = createGamingClearAssessment({ ...evidenceAssessment, questionProfile: 'advisory_recommendation',
+      evidenceRefs: refs, dimensions: dimensions(), gates: { ...evidenceAssessment.gates, freshness: 'unknown' } });
+    return run({ mode: 'build', prompt: 'Which return route strategy should I use?', evidenceAssessment: advisory, answer }).then(result => {
+      expect(result.assessment.decision).not.toBe('accept');
+      expect(createSingleChatCompletion).not.toHaveBeenCalled();
+    });
+  });
+
+  it('does not permit advisory assessments to authorize source quality or durable writes', () => {
+    expect(() => createGamingClearAssessment({ ...evidenceAssessment, profile: 'source', questionProfile: 'advisory_recommendation',
+      evidenceRefs: refs, dimensions: dimensions(), gates: { ...evidenceAssessment.gates, freshness: 'unknown' } })).toThrow('cannot use advisory freshness');
   });
 
   it('uses the explicit escalation lane for one bounded audit call without a retry or repair', async () => {

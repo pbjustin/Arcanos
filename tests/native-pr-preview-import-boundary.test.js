@@ -1991,6 +1991,21 @@ describe('native PR preview import boundary', () => {
     );
   });
 
+  it('pins the pure Gaming currentness registry and advisory disposition without granting acquisition', async () => {
+    for (const name of ['gamingCurrentnessRegistry', 'gamingCurrentnessSourceData', 'gamingFreshnessDisposition']) {
+      const filePath = `src/shared/gaming/${name}.ts`;
+      expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).toContain(filePath);
+      const sourceText = await readFile(new URL(`../${filePath}`, import.meta.url), 'utf8');
+      expect(findUnsafeRuntimeSyntax(filePath, sourceText)).toEqual([]);
+      expect(findUnsafeRuntimeSyntax(filePath, `${sourceText}\nexport const unreviewedPolicyChange = true;`)).toEqual(
+        expect.arrayContaining([expect.stringContaining('critical entry file semantic digest')])
+      );
+      expect(findUnsafeRuntimeSyntax(filePath, `${sourceText}\nimport { readFile } from 'node:fs/promises';`)).toEqual(
+        expect.arrayContaining([expect.stringMatching(/(?:forbidden runtime import binding|unreviewed external runtime import)/u)])
+      );
+    }
+  });
+
   it('rejects normal resolver, provider, and service imports from the Gaming currentness fixture', async () => {
     const fixturePath = 'src/shared/gaming/gamingCurrentnessPreviewFixture.ts';
     const effectfulFiles = [

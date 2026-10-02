@@ -80,16 +80,15 @@ describe('bounded official currentness corroboration', () => {
     expect(ingest).not.toHaveBeenCalled();
     expect(JSON.stringify(verified.body)).not.toContain('INTERNAL_PAGE_CONTENT');
   });
-  it.each(['1.9', undefined])('stops after official verification when guide patch %s is insufficient', async patch => {
+  it.each(['1.9', undefined])('qualifies usable guide advice when guide patch %s is unverified', async patch => {
     const test = setup(patch);
     if (patch === undefined) delete test.guide.freshness.patch;
     const first = await test.workflow.query(query, context);
     await test.workflow.candidates(test.submit(first.body.workflowId!, 'gameplay_evidence'), context);
     const final = await test.workflow.candidates(test.submit(first.body.workflowId!, 'currentness_verification'), context);
-    expect(final.body.nextAction).toBe('stop');
-    expect(final.body.discovery).toMatchObject({ continuationRequired: false, round: 1, maxRounds: 1 });
-    expect(final.body.answer).toBeUndefined();
-    expect(test.generate).not.toHaveBeenCalled();
+    expect(final.body).toMatchObject({ state: 'answer_ready', nextAction: 'answer', evidenceSelected: true, freshnessStatus: 'unverified', applicabilityStatus: 'unverified' });
+    expect(final.body.answer?.response).toContain('may be outdated');
+    expect(test.generate).toHaveBeenCalledTimes(1);
     expect((await test.workflow.candidates(test.submit(first.body.workflowId!, 'gameplay_evidence', 'another-guide'), context)).status).toBe(409);
     expect((await test.workflow.candidates(test.submit(first.body.workflowId!, 'currentness_verification', 'another-index'), context)).status).toBe(409);
   });
@@ -127,7 +126,7 @@ describe('bounded official currentness corroboration', () => {
     const indexText = `Game: ${game}\nCurrent patch: 7.0\nEffective from: ${new Date(now - 86_400_000).toISOString()}\nPlatforms: all\nRegions: all`;
     const indexDocument = { publicUrl: officialUrl, text: indexText, metadata: { title: `${game} Patch Notes` } };
     const oldFreshness = extractGamingFreshnessMetadata(indexDocument, { game }, new Date(now));
-    expect(oldFreshness.currentnessMetadata).toMatchObject({ adapterId: 'swtor-patch-index-v1', status: 'verified' });
+    expect(oldFreshness.currentnessMetadata).toMatchObject({ adapterId: 'dated-release-index-v1', status: 'verified' });
     expect(oldFreshness.currentBuild).toBeUndefined();
     const oldIndex = { ...test.index, publicUrl: officialUrl, document: indexDocument,
       freshness: { ...oldFreshness, id: indexId } };
@@ -231,12 +230,12 @@ describe('bounded official currentness corroboration', () => {
     expect(test.evaluateCandidates).toHaveBeenCalledTimes(2);
     expect(test.generate).toHaveBeenCalledTimes(1);
   });
-  it('does not turn a conflicting release or stale guide into another currentness operation', () => {
+  it('keeps conflicts strict while allowing one freshness attempt for stale guides', () => {
     const input = { classification: 'patch_sensitive' as const, freshnessStatus: 'unverified' as const, hasGameplayEvidence: true,
       reasons: ['CURRENT_BUILD_UNVERIFIED'] };
     expect(resolveGamingHybridCurrentnessReason(input)).toBe('CURRENT_BUILD_UNVERIFIED');
     expect(resolveGamingHybridCurrentnessReason({ ...input, freshnessStatus: 'conflicting' })).toBeUndefined();
-    expect(resolveGamingHybridCurrentnessReason({ ...input, reasons: ['CURRENT_PATCH_COVERAGE_MISSING', 'GUIDE_PATCH_STALE'] })).toBeUndefined();
+    expect(resolveGamingHybridCurrentnessReason({ ...input, reasons: ['CURRENT_PATCH_COVERAGE_MISSING', 'GUIDE_PATCH_STALE'] })).toBe('CURRENT_PATCH_COVERAGE_MISSING');
     expect(resolveGamingHybridCurrentnessReason({ ...input, classification: 'stable', reasons: ['REVALIDATION_DUE'] })).toBeUndefined();
     expect(resolveGamingHybridCurrentnessReason({ ...input, hasGameplayEvidence: false })).toBeUndefined();
   });
@@ -272,14 +271,101 @@ describe('bounded official currentness corroboration', () => {
     expect((await test.workflow.candidates({ ...official, candidates: [{ url: `${indexUrl}/changed` }] }, context)).status).toBe(409);
     expect(test.evaluateCandidates).toHaveBeenCalledTimes(2);
   });
-  it('distinguishes official fetch failure from an absence of updates and stops', async () => {
+  it('qualifies accepted gameplay when the optional official index is unavailable', async () => {
     const test = setup();
     const first = await test.workflow.query(query, context);
     await test.workflow.candidates(test.submit(first.body.workflowId!, 'gameplay_evidence'), context);
     test.evaluateCandidates.mockResolvedValueOnce({ decisions: [{ decision: 'rejected', reasonCodes: ['SOURCE_FETCH_FAILED'] }], accepted: [], knowledge: empty } as any);
     const failed = await test.workflow.candidates(test.submit(first.body.workflowId!, 'currentness_verification'), context);
-    expect(failed.body).toMatchObject({ nextAction: 'stop', reason: 'SOURCE_ACQUISITION_UNVERIFIED',
-      freshnessStatus: 'unverified', gameplayEvidenceStatus: 'unverified' });
+    expect(failed.body).toMatchObject({ state: 'answer_ready', nextAction: 'answer', evidenceSelected: true, freshnessStatus: 'unverified', gameplayEvidenceStatus: 'accepted_transient' });
+    expect(failed.body.answer?.response).toContain('could not be verified');
+    expect(test.generate).toHaveBeenCalledTimes(1);
+  });
+  it('applies the existing answer size limit after attaching the advisory warning', async () => {
+    const test = setup();
+    const first = await test.workflow.query(query, context);
+    await test.workflow.candidates(test.submit(first.body.workflowId!, 'gameplay_evidence'), context);
+    test.evaluateCandidates.mockResolvedValueOnce({ decisions: [{ decision: 'rejected', reasonCodes: ['INSUFFICIENT_EXTRACTION'] }], accepted: [], knowledge: empty } as any);
+    test.generate.mockImplementationOnce(async (_input, prepared) => ({ ok: true, route: 'gaming', mode: 'build',
+      data: { response: 'a'.repeat(18_000), sources: prepared.knowledge.sources, grounding: { groundingStatus: 'grounded' } } } as any));
+    const failed = await test.workflow.candidates(test.submit(first.body.workflowId!, 'currentness_verification'), context);
+    expect(failed).toMatchObject({ status: 503, body: { reason: 'GENERATION_UNAVAILABLE' } });
+    expect(failed.body.answer).toBeUndefined();
+    expect(test.generate).toHaveBeenCalledTimes(1);
+  });
+  it('retains two grounded Samurai bleed guides when the official index extraction is insufficient', async () => {
+    const test = setup();
+    const secondId = '30000000-0000-4000-8000-000000000005';
+    const secondUrl = 'https://guides.example.org/elden-ring-samurai-bleed';
+    const bleedPassage = 'For an Elden Ring Samurai bleed build, invest in vigor and dexterity and use an Uchigatana with bleed buildup. This Samurai build guide explains weapons, stats, equipment and the bleed mechanic.';
+    test.guide.document.text = bleedPassage;
+    test.knowledge.sources[0].snippet = bleedPassage;
+    test.knowledge.evidence![0].text = bleedPassage;
+    const second = { ...test.guide, candidateId: secondId, publicUrl: secondUrl,
+      freshness: { ...test.guide.freshness, id: secondId, url: secondUrl },
+      document: { text: `${bleedPassage} Use measured attacks and preserve enough stamina for a dodge.` } };
+    const knowledge = { ...test.knowledge, sources: [...test.knowledge.sources,
+      { ...test.knowledge.sources[0], sourceId: secondId, url: secondUrl, snippet: second.document.text }],
+      evidence: [...test.knowledge.evidence!, { ...test.knowledge.evidence![0], sourceId: secondId,
+        publicUrl: secondUrl, recordId: 'second-guide-record', text: second.document.text }] };
+    test.evaluateCandidates.mockResolvedValueOnce({ accepted: [test.guide, second], knowledge,
+      decisions: [test.guide, second].map(item => ({ candidateId: item.candidateId,
+        decision: 'accepted_transient', reasonCodes: ['VALIDATED_RELEVANT_CONTENT'] })) } as any);
+    const first = await test.workflow.query({ ...query, question: 'bleed Samurai build' }, context);
+    const gameplay = await test.workflow.candidates({ ...test.submit(first.body.workflowId!, 'gameplay_evidence'),
+      candidates: [{ url: guideUrl }, { url: secondUrl }] }, context);
+    expect(gameplay.body).toMatchObject({ nextAction: 'verify_currentness', acceptedGameplayCandidateCount: 2 });
+    expect(test.generate).not.toHaveBeenCalled();
+    test.evaluateCandidates.mockResolvedValueOnce({ accepted: [], knowledge: empty,
+      decisions: [{ decision: 'rejected', reasonCodes: ['INSUFFICIENT_EXTRACTION'] }] } as any);
+    const submission = test.submit(first.body.workflowId!, 'currentness_verification');
+    const answer = await test.workflow.candidates(submission, context);
+    expect(answer.body).toMatchObject({ state: 'answer_ready', nextAction: 'answer', evidenceSelected: true,
+      freshnessStatus: 'unverified', applicabilityStatus: 'unverified', acceptedGameplayCandidateCount: 2 });
+    expect(answer.body.answer?.response).toContain('Current patch compatibility could not be verified');
+    expect(answer.body.answer?.response).toContain('may be outdated');
+    expect(answer.body.answer?.sources.map(source => source.url)).toEqual([guideUrl, secondUrl]);
+    expect(test.generate).toHaveBeenCalledTimes(1);
+    expect(test.generate.mock.calls[0][1]).toMatchObject({ current: false, advisoryFreshnessAllowed: true });
+    expect(await test.workflow.candidates(submission, context)).toEqual(answer);
+    expect((await test.workflow.candidates({ ...submission, idempotencyKey: 'another-official-index' }, context)).status).toBe(409);
+    expect(test.evaluateCandidates).toHaveBeenCalledTimes(2);
+    expect(test.ingest).not.toHaveBeenCalled();
+  });
+  it('answers known superseded but usable guide evidence with a stronger stale warning', async () => {
+    const test = setup('1.9');
+    Object.assign(test.index.freshness, { supersedesPatches: ['1.9'] });
+    const first = await test.workflow.query(query, context);
+    await test.workflow.candidates(test.submit(first.body.workflowId!, 'gameplay_evidence'), context);
+    const final = await test.workflow.candidates(test.submit(first.body.workflowId!, 'currentness_verification'), context);
+    expect(final.body).toMatchObject({ state: 'answer_ready', evidenceSelected: true, freshnessStatus: 'stale', applicabilityStatus: 'stale' });
+    expect(final.body.answer?.response).toContain('appears out of date');
+    expect(final.body.qualification).toContain('Guide-reported patch: 1.9');
+    expect(test.generate).toHaveBeenCalledTimes(1);
+    expect(test.generate.mock.calls[0][1].knowledge.sources.every((source: any) => source.sourceType !== 'official_updates')).toBe(true);
+  });
+  it.each(['Are servers down now?', 'Are servers currently online?', 'Is the event still live?',
+    'Recommend a healer class and tell me whether the live event is active now.',
+    'What is the current/latest Elden Ring patch?', 'What patch is Elden Ring on now?',
+    'Which Elden Ring patch is live?', 'What version is current?', 'What build is Elden Ring running now?',
+    'Give me a Samurai bleed build and tell me which patch is active today.',
+    'Give me an event strategy and tell me if the event has ended.'])('keeps unavailable current state strict: %s', async question => {
+    const test = setup();
+    const first = await test.workflow.query({ ...query, question, mode: 'guide' }, context);
+    await test.workflow.candidates(test.submit(first.body.workflowId!, 'gameplay_evidence'), context);
+    test.evaluateCandidates.mockResolvedValueOnce({ accepted: [], knowledge: empty,
+      decisions: [{ decision: 'rejected', reasonCodes: ['INSUFFICIENT_EXTRACTION'] }] } as any);
+    const final = await test.workflow.candidates(test.submit(first.body.workflowId!, 'currentness_verification'), context);
+    expect(final.body.nextAction).toBe('stop');
+    expect(final.body.answer).toBeUndefined();
+    expect(test.generate).not.toHaveBeenCalled();
+  });
+  it('does not generate when independent gameplay coverage is insufficient', async () => {
+    const test = setup();
+    test.knowledge.evidence![0].text = 'This page explains an unrelated puzzle and includes no requested combat recommendation.';
+    const first = await test.workflow.query(query, context);
+    const final = await test.workflow.candidates(test.submit(first.body.workflowId!, 'gameplay_evidence'), context);
+    expect(final.body).toMatchObject({ evidenceSelected: false, nextAction: 'stop', reason: 'QUESTION_COVERAGE_INSUFFICIENT' });
     expect(test.generate).not.toHaveBeenCalled();
   });
   it('prioritizes missing official currentness after an accepted guide even when retained old policy evidence was excluded', async () => {
@@ -300,7 +386,7 @@ describe('bounded official currentness corroboration', () => {
   it('reuses origin-bound durable currentness across workflows without refreshing its age or accepting a different actor or scope', async () => {
     const test = setup();
     (test.index.freshness as any).currentnessMetadata = { game: query.game, ruleId: test.index.freshness.ruleId,
-      adapterId: 'bandai-news-index-v1', adapterVersion: GAMING_CURRENTNESS_ADAPTER_VERSION,
+      adapterId: 'article-index-v1', adapterVersion: GAMING_CURRENTNESS_ADAPTER_VERSION,
       verifiedAt: test.index.freshness.verifiedAt, status: 'verified', reasons: ['SYNTHETIC_OFFICIAL_INDEX'],
       currentPatch: '1.10', effectiveFrom: test.index.freshness.effectiveFrom,
       evidenceRefs: [{ url: indexUrl, contentHash: test.index.contentHash }] };

@@ -1,4 +1,5 @@
 import { describe, expect, test } from '@jest/globals';
+import { readFileSync } from 'node:fs';
 import { extractGamingCurrentnessDocument } from '../src/services/gamingCurrentnessDocument.js';
 import { extractGamingFreshnessMetadata } from '../src/shared/gaming/gamingFreshnessCore.js';
 import { combineGamingCurrentnessEvidence } from '../src/shared/gaming/gamingCurrentnessAdapters.js';
@@ -45,7 +46,52 @@ describe('reviewed official DOM currentness references', () => {
     }
   });
   test('missing or duplicate platform fields are not interpreted as global scope', () => {
-    expect(parse(ARTICLE, '<main><p>Steam</p></main>')).toMatchObject({ adapterId: 'bandai-patch-article-v1', status: 'incomplete' });
+    expect(parse(ARTICLE, '<main><p>Steam</p></main>')).toMatchObject({ adapterId: 'patch-article-v1', status: 'incomplete' });
     expect(parse(ARTICLE, articleHtml() + articleHtml())).toMatchObject({ status: 'incomplete' });
+  });
+});
+
+describe('a second publisher uses the same article index and patch article implementations', () => {
+  test('different titles, labels, dates and selectors normalize through registry data alone', async () => {
+    const fixture = await import('./fixtures/gaming-currentness/second-publisher.js');
+    const parseSecond = (url: string, body: string) => extractGamingCurrentnessDocument(url,
+      { body, truncated: false, contentType: 'text/html' }, fixture.SECOND_PUBLISHER_RULES);
+    const listing = parseSecond(fixture.SECOND_PUBLISHER_INDEX, fixture.SECOND_PUBLISHER_INDEX_HTML);
+    expect(listing).toMatchObject({ adapterId: 'article-index-v1', status: 'complete', cards: [{
+      title: 'Clockwork Citadel - Release Notes Revision 2.10', publishedDate: '2026-09-08', url: fixture.SECOND_PUBLISHER_ARTICLE
+    }] });
+    const secondIndex = extractGamingFreshnessMetadata({ publicUrl: fixture.SECOND_PUBLISHER_INDEX,
+      text: 'Recent releases for Clockwork Citadel. Releases (1).', metadata: { title: 'Clockwork Citadel releases | Aurora Forge' },
+      currentnessDocument: listing }, { game: fixture.SECOND_PUBLISHER_GAME }, NOW, fixture.SECOND_PUBLISHER_RULES);
+    const secondArticle = extractGamingFreshnessMetadata({ publicUrl: fixture.SECOND_PUBLISHER_ARTICLE,
+      text: 'Available Platforms Windows Application Version 2.10 Data Version 2.10.3 Update 2.10 is available now for Clockwork Citadel.',
+      metadata: { title: 'Clockwork Citadel - Release Notes Revision 2.10 | Aurora Forge' },
+      currentnessDocument: parseSecond(fixture.SECOND_PUBLISHER_ARTICLE, fixture.SECOND_PUBLISHER_ARTICLE_HTML)
+    }, { game: fixture.SECOND_PUBLISHER_GAME }, NOW, fixture.SECOND_PUBLISHER_RULES);
+    expect(secondIndex).toMatchObject({ currentPatch: '2.10', effectiveFrom: '2026-09-08T00:00:00.000Z',
+      currentnessMetadata: { adapterId: 'article-index-v1', status: 'incomplete' } });
+    expect(secondArticle).toMatchObject({ patch: '2.10', build: '2.10.3', platforms: ['Windows', 'PC'],
+      currentnessMetadata: { adapterId: 'patch-article-v1', releaseActive: true } });
+    expect(combineGamingCurrentnessEvidence([secondIndex, secondArticle], NOW)[0]).toMatchObject({ currentPatch: '2.10',
+      currentBuild: '2.10.3', currentnessMetadata: { status: 'verified', versionSemantics: 'opaque' } });
+  });
+});
+
+
+describe('sanitized public Bandai HTML drift fixture (offline)', () => {
+  test('preserves current card extraction while companion proof remains required', () => {
+    const html = readFileSync(new URL('./fixtures/gaming-currentness/bandai-news-index-2026-10-02.sanitized.html', import.meta.url), 'utf8');
+    const listing = parse(INDEX, html);
+    expect(listing).toMatchObject({ adapterId: 'article-index-v1', status: 'complete', categoryCount: 27,
+      cards: [{ title: 'Elden Ring – Patch Notes Version 1.17', publishedDate: '27/08/2026',
+        url: 'https://en.bandainamcoent.eu/elden-ring/news/elden-ring-patch-notes-version-117' },
+      { title: 'Elden Ring – Patch Notes Version 1.16.1' }, { title: 'Elden Ring – Patch Notes Version 1.16' }] });
+    const evidence = extractGamingFreshnessMetadata({ publicUrl: INDEX, text: 'Latest News on ELDEN RING. Patch Notes (27).',
+      metadata: { title: 'ELDEN RING news | Bandai Namco Europe' }, currentnessDocument: listing
+    }, { game: 'Elden Ring' }, new Date('2026-10-02T12:00:00Z'));
+    expect(evidence).toMatchObject({ currentPatch: '1.17', effectiveFrom: '2026-08-27T00:00:00.000Z',
+      currentnessMetadata: { status: 'incomplete', requiredArticlePatch: '1.17',
+        requiredArticleUrl: 'https://en.bandainamcoent.eu/elden-ring/news/elden-ring-patch-notes-version-117' } });
+    expect(evidence.currentBuild).toBeUndefined();
   });
 });

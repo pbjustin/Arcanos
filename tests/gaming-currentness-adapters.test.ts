@@ -1,6 +1,7 @@
 import { describe, expect, test } from '@jest/globals';
+import { REVIEWED_GAMING_SOURCE_RULES } from '../src/shared/gaming/gamingCurrentnessRegistry.js';
 import { assessGamingSourcePolicy, extractGamingFreshnessMetadata, evaluateGamingFreshness } from '../src/shared/gaming/gamingFreshnessCore.js';
-import { combineGamingCurrentnessEvidence, runGamingCurrentnessAdapter, GAMING_CURRENTNESS_LIMITS,
+import { combineGamingCurrentnessEvidence, runGamingCurrentnessAdapter, GAMING_CURRENTNESS_LIMITS, GAMING_CURRENTNESS_ADAPTER_VERSION,
   type GamingCurrentnessAdapterRule } from '../src/shared/gaming/gamingCurrentnessAdapters.js';
 
 const NOW = new Date('2026-09-09T12:00:00Z');
@@ -10,7 +11,7 @@ const indexText = (cards = 'Elden Ring – Patch Notes Version 1.10 2 Like 08/09
   `Latest News on ELDEN RING. Patch Notes (${count}) ${cards} Load More Coming Soon (0)`;
 const index = (text = indexText(), extra = {}) => extractGamingFreshnessMetadata({ publicUrl: INDEX_URL,
   text, metadata: { title: 'ELDEN RING news | Bandai Namco Europe' }, currentnessDocument: {
-    ruleId: 'elden-ring-update-index', adapterId: 'bandai-news-index-v1', status: 'complete', rawContentHash: 'a'.repeat(64),
+    ruleId: 'elden-ring-update-index', adapterId: 'article-index-v1', status: 'complete', rawContentHash: 'a'.repeat(64),
     categoryCount: Number(/Patch Notes \((\d+)\)/u.exec(text)?.[1]),
     cards: [...text.matchAll(/(Elden Ring [–-] .+?)(?:\s+\d+\s*Like)?\s*(\d{2}\/\d{2}\/\d{4})/gu)].map(match => ({
       title: match[1], publishedDate: match[2], url: `https://en.bandainamcoent.eu/elden-ring/news/elden-ring-patch-notes-version-${/Version ([\d.]+)/u.exec(match[1])?.[1].replace(/\./gu, '') ?? 'unknown'}`
@@ -18,7 +19,7 @@ const index = (text = indexText(), extra = {}) => extractGamingFreshnessMetadata
   }, ...extra }, { game: 'Elden Ring' }, NOW);
 const article = (text = 'Targeted Platforms PlayStation 4 / PlayStation 5 / Xbox One / Xbox Series X|S / Steam App Ver. 1.10 Regulation Ver. 1.10.1 This update is required for online play.', extra = {}) =>
   extractGamingFreshnessMetadata({ publicUrl: ARTICLE_URL, text, metadata: { title: 'Elden Ring – Patch Notes Version 1.10 | Bandai Namco Europe' },
-    currentnessDocument: { ruleId: 'elden-ring-news', adapterId: 'bandai-patch-article-v1', status: 'complete', rawContentHash: 'b'.repeat(64),
+    currentnessDocument: { ruleId: 'elden-ring-news', adapterId: 'patch-article-v1', status: 'complete', rawContentHash: 'b'.repeat(64),
       platformText: /Targeted Platforms (.+?) App Ver\./u.exec(text)?.[1] ?? '' }, ...extra }, { game: 'Elden Ring' }, NOW);
 
 describe('reviewed publisher paths and a real-layout Elden Ring index', () => {
@@ -126,6 +127,13 @@ describe('reviewed publisher paths and a real-layout Elden Ring index', () => {
     expect(combineGamingCurrentnessEvidence([index(`${label} ${indexText()}`), companion], NOW)[0])
       .toMatchObject({ metadataConflict: true, currentnessMetadata: { status: 'conflicting' } });
   });
+  test('cached publisher-specific adapter proof requires revalidation under the generic adapter version', () => {
+    const completed = combineGamingCurrentnessEvidence([index(), article()], NOW)[0];
+    const legacy = { ...completed, currentnessMetadata: { ...completed.currentnessMetadata!,
+      adapterVersion: 'gaming-currentness-adapters/v1' as typeof GAMING_CURRENTNESS_ADAPTER_VERSION } };
+    expect(evaluateGamingFreshness({ question: 'What is the latest patch?', game: 'Elden Ring', platform: 'PC', evidence: [legacy], now: NOW }))
+      .toMatchObject({ status: 'unverified', usable: false, reasons: expect.arrayContaining(['CURRENT_OFFICIAL_INDEX_REQUIRED']) });
+  });
   test('expired index does not become current merely from a fresh article', () => {
     const expired = { ...index(), fetchedAt: new Date(NOW.getTime() - GAMING_CURRENTNESS_LIMITS.revalidateMs - 1).toISOString() };
     expect(combineGamingCurrentnessEvidence([expired, article()], NOW)[0].currentnessMetadata?.status).toBe('incomplete');
@@ -144,8 +152,9 @@ describe('reviewed publisher paths and a real-layout Elden Ring index', () => {
 });
 
 describe('adapter contract supports other reviewed publisher styles without state-machine changes', () => {
-  const MMO: GamingCurrentnessAdapterRule = { id: 'synthetic-mmo-patches', game: 'Synthetic MMO', currentness: 'current_index', metadataAdapter: 'swtor-patch-index-v1' };
-  const SEASON: GamingCurrentnessAdapterRule = { id: 'synthetic-season', game: 'Seasonal Arena', currentness: 'current_index', metadataAdapter: 'labeled-v1' };
+  const MMO: GamingCurrentnessAdapterRule = { id: 'synthetic-mmo-patches', game: 'Synthetic MMO', currentness: 'current_index', metadataAdapter: 'dated-release-index-v1',
+    metadataAdapterConfig: REVIEWED_GAMING_SOURCE_RULES.find(rule => rule.id === 'swtor-patch-index')!.metadataAdapterConfig };
+  const SEASON: GamingCurrentnessAdapterRule = { id: 'synthetic-season', game: 'Seasonal Arena', currentness: 'current_index', metadataAdapter: 'labeled-metadata-v1' };
   const run = (rule: GamingCurrentnessAdapterRule, text: string, fields = {}) => runGamingCurrentnessAdapter({
     document: { publicUrl: 'https://official.test/current', text }, rule, game: rule.game, now: NOW, fields
   });

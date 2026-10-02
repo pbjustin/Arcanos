@@ -71,7 +71,7 @@ All three hybrid operations require the dedicated bearer and `contractVersion: "
 
 | Response state | Frontend behavior |
 | --- | --- |
-| `answer_ready` | Present `answer.response`, supported sources, caveats, and backend provenance. Avoid redundant search. |
+| `answer_ready` | Present `answer.response`, supported sources, caveats, and backend provenance. An advisory recommendation can be unverified/stale and must retain its freshness warning. Claim current compatibility only when verified. Avoid redundant search. |
 | `clarification_required` | Ask the one `clarification` question. Do not guess player progress. |
 | `discovery_required` | `nextAction: search` requests gameplay evidence; `verify_currentness` requires a separate official-currentness submission even when freshness is stale/unverified. Use returned reviewed source hints and limits; only `nextAction: stop` ends exhausted discovery. |
 | `temporarily_unavailable` | Report failure; do not turn authentication, database, or provider failure into missing knowledge. |
@@ -98,9 +98,26 @@ These deadlines trigger verification; they never establish correctness by
 themselves. A live-status answer additionally requires an appropriately current
 official status resource and is never eligible for durable ingestion.
 
-The reviewed policy uses exact game identities, exact hosts, and bounded paths
-from [the freshness core](../src/shared/gaming/gamingFreshnessCore.ts). Candidate
-claims such as `claimedCategory: official` grant no authority. Verified official
+Gameplay grounding and freshness are separate. The server resolves freshness
+disposition from the requested fact: stable gameplay can be `NOT_REQUIRED`;
+ordinary guides, builds, loadouts, strategies and class/weapon/meta-style
+recommendations are `ADVISORY`; live status, current event state and the
+latest/current patch or build itself are `REQUIRED`. A request for a patch-sensitive
+recommendation still attempts official currentness under the existing bounded
+workflow. It can produce a grounded answer after a non-conflicting verification
+failure, but must warn visibly that compatibility could not be verified and the
+advice may be outdated. Required current-state questions still fail honestly when
+freshness cannot be verified.
+
+The typed `gaming-currentness-sources/v1`
+[reviewed source registry](../src/shared/gaming/gamingCurrentnessSourceData.ts)
+supplies exact game identities, exact hosts and
+bounded paths to [the freshness core](../src/shared/gaming/gamingFreshnessCore.ts).
+Its [validator](../src/shared/gaming/gamingCurrentnessRegistry.ts) rejects unsafe
+hosts/paths, duplicate/ambiguous rules, unsupported adapter/configuration shapes
+and invalid companion extraction contracts on module initialization. Registry
+data cannot override acquisition security, actor binding, consent or durable-write
+controls. Candidate claims such as `claimedCategory: official` grant no authority. Verified official
 updates may qualify for automatic storage only with extracted update identity
 and publication/effective dates, configured standing permission, and an
 authorized consequential write. Specialist, community, and unreviewed sources
@@ -111,8 +128,10 @@ Current applicability requires reviewed extraction rules and an official index
 that identifies the applicable update; an old patch article fetched today does
 not establish that it is the latest update. Reviewed deterministic adapters
 in [gamingCurrentnessAdapters.ts](../src/shared/gaming/gamingCurrentnessAdapters.ts)
-support release indexes and bounded official article corroboration. Other game/page
-layouts need a reviewed adapter before they can establish latest-update identity;
+support release indexes and bounded official article corroboration. Publisher/game
+extraction parameters are reviewed registry data; a second publisher using the
+same supported shape needs no new execution branch. Other page layouts need a
+supported reviewed extraction contract before they can establish latest-update identity;
 unsupported metadata remains unverified. Exact patch/build/season identifiers,
 effective dates, and platform/region scope govern selection. A patch-only index
 cannot establish that an observed build is current, even when an official article
@@ -143,7 +162,20 @@ cannot. Absence of a mechanic from new patch notes never proves it unchanged.
 The response's applicability status distinguishes `verified_current`,
 `partially_verified`, `stale`, `conflicting` and `unverified`. Trinity receives
 gameplay and official authority evidence in their respective roles only after
-freshness and combined evidence CLEAR pass, with existing thresholds unchanged.
+combined gameplay evidence CLEAR passes. Advisory unverified/stale freshness can
+remain explicit uncertainty; required currentness and material conflicts retain
+their blocking gates, with existing quality thresholds unchanged.
+
+After the single official operation cannot verify freshness, adequate advisory
+gameplay evidence is retained. Grounded successful generation returns
+`state: answer_ready`, `nextAction: answer`, `evidenceSelected: true`, accepted
+citations and a visible `qualification`. `freshnessStatus: unverified` says current
+patch compatibility could not be verified; `stale` uses a stronger warning that
+the evidence appears out of date. Neither state supports `verified_current` or a
+claim of latest-patch compatibility. Reliable material conflicts still block;
+coverage failures, game mismatch, integrity failures and inaccessible required
+supplied guides still block generation. A supplied guide must actually be acquired
+and validated; snippets, catalog presence or unrelated sources cannot replace it.
 
 Retrieval continues to use active records. Explicit historical patch requests
 require matching acquired patch evidence; date-only historical/as-of mapping is

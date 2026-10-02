@@ -60,6 +60,7 @@ import { assessGamingClearEvidence } from '@shared/gaming/gamingClearEvidence.js
 import { type GamingClearAssessment } from '@shared/gaming/gamingClearPolicy.js';
 import { gamingClearAnswerMatches, runGamingClearAnswerAudit } from '@services/gamingClearAnswerAudit.js';
 import { GAMING_CLEAR_APPROVED_ANSWER } from '@shared/gaming/gamingClearAnswerBinding.js';
+import { resolveGamingFreshnessDisposition } from '@shared/gaming/gamingFreshnessDisposition.js';
 
 export type GamingPipelineInput = Pick<
   ValidatedGamingRequest,
@@ -616,6 +617,8 @@ export interface GamingPreparedEvidence {
   actorScopeHash?: string;
   knowledge: GamingStoredKnowledgeContext;
   current: boolean;
+  /** Hybrid-only grant after the bounded currentness operation was exhausted. */
+  advisoryFreshnessAllowed?: boolean;
   qualification: string;
   clearEvidenceAssessment?: GamingClearAssessment;
 }
@@ -1056,7 +1059,14 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
     fallbackReason = undefined;
   }
 
-  if (freshnessSensitive && !currentEvidenceAvailable) {
+  const allowAdvisoryFreshness = prepared?.advisoryFreshnessAllowed === true
+    && prepared.qualification.trim().length > 0
+    && resolveGamingFreshnessDisposition(resolvedParams) === 'ADVISORY';
+  // Audit and publish the same deterministically qualified text, even when the
+  // provider omits the required warning from its candidate answer.
+  const qualifyAdvisoryAnswer = (answer: string): string => allowAdvisoryFreshness && prepared
+    && !answer.includes(prepared.qualification) ? `${prepared.qualification}\n\n${answer}` : answer;
+  if (freshnessSensitive && !currentEvidenceAvailable && !allowAdvisoryFreshness) {
     const currentEvidenceFallbackReason: GamingFallbackReason = "CURRENT_EVIDENCE_UNAVAILABLE";
     logger.warn("gaming.fallback.used", {
       ...baseLogContext,
@@ -1098,7 +1108,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
   }
 
   clearKnowledge = { ...clearKnowledge, context: webContext };
-  const auditContext = { actorScopeHash: prepared?.actorScopeHash };
+  const auditContext = { actorScopeHash: prepared?.actorScopeHash, allowAdvisoryFreshness };
   const evidenceAssessment = assessGamingClearEvidence({ ...resolvedParams, game: resolvedParams.game ?? '' }, clearKnowledge, auditContext);
   logger.info('gaming.clear.evidence.completed', {
     ...baseLogContext, rubricVersion: evidenceAssessment.rubricVersion, profile: evidenceAssessment.profile,
@@ -1194,7 +1204,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
             runOptions: {
               ...buildGamingRunOptions(params.mode, guideUrls.length > 0 && retrievalHadUsableSources),
               gamingClearAnswerAudit: (answer, runtimeBudget) => runGamingClearAnswerAudit(client, {
-                ...resolvedParams, game: resolvedParams.game ?? '', answer, knowledge: clearKnowledge,
+                ...resolvedParams, game: resolvedParams.game ?? '', answer: qualifyAdvisoryAnswer(answer), knowledge: clearKnowledge,
                 evidenceAssessment: assessGamingClearEvidence({ ...resolvedParams, game: resolvedParams.game ?? '' }, clearKnowledge, auditContext), requestId
               }, runtimeBudget),
               ...(prepared ? { disableOptionalSideEffects: true, redactAuditContent: true, gamingGuideIntakePolicy: 'compact-v1' as const } : {}),
@@ -1240,6 +1250,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
         code: "GAMING_PROVIDER_UNUSABLE_RESPONSE"
       });
     }
+    trinityResult.result = qualifyAdvisoryAnswer(trinityResult.result);
   } catch (error) {
     const elapsedMs = Date.now() - providerStartedAt;
     logger.info("gaming.stream.end", {

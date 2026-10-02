@@ -1,3 +1,4 @@
+import { REVIEWED_GAMING_SOURCE_RULES } from './gamingCurrentnessRegistry.js';
 import { GAMING_HYBRID_CONTRACT_VERSION, gamingHybridQuerySchema } from './gamingHybridContract.js';
 import { combineGamingCurrentnessEvidence, GAMING_CURRENTNESS_LIMITS,
   type GamingCurrentnessDocument } from './gamingCurrentnessAdapters.js';
@@ -30,13 +31,13 @@ const RULES: readonly GamingReviewedSourceRule[] = [
     category: 'specialist_guide', currentness: 'none', durableAllowed: true, autoStoreAllowed: false },
   { id: 'synthetic-currentness-index', game: GAME, hosts: [HOST], path: '/updates', pathMatch: 'exact',
     category: 'official_updates', currentness: 'current_index', durableAllowed: false, autoStoreAllowed: false,
-    metadataAdapter: 'bandai-news-index-v1', currentnessArticleRuleIds: ['synthetic-currentness-article'] },
+    metadataAdapter: 'article-index-v1', metadataAdapterConfig: REVIEWED_GAMING_SOURCE_RULES.find(rule => rule.id === 'elden-ring-update-index')!.metadataAdapterConfig, currentnessArticleRuleIds: ['synthetic-currentness-article'] },
   { id: 'synthetic-currentness-article', game: GAME, hosts: [HOST], path: '/updates/', pathMatch: 'prefix',
     category: 'official_updates', currentness: 'article', durableAllowed: false, autoStoreAllowed: false,
-    metadataAdapter: 'bandai-patch-article-v1' },
+    metadataAdapter: 'patch-article-v1', metadataAdapterConfig: REVIEWED_GAMING_SOURCE_RULES.find(rule => rule.id === 'elden-ring-news')!.metadataAdapterConfig },
   { id: 'synthetic-currentness-refresh', game: GAME, hosts: [HOST], path: '/continuation-index', pathMatch: 'exact',
     category: 'official_updates', currentness: 'current_index', durableAllowed: false, autoStoreAllowed: false,
-    metadataAdapter: 'labeled-v1' }
+    metadataAdapter: 'labeled-metadata-v1' }
 ];
 
 function requireProof(condition: unknown): asserts condition {
@@ -61,7 +62,7 @@ function index(): GamingCurrentnessDocument {
     + 'Elden Ring – Patch Notes Version 1.17 08/09/2026 Elden Ring – Patch Notes Version 1.16 07/09/2026';
   return { publicUrl: INDEX_URL, canonicalUrl: INDEX_URL, text,
     metadata: { title: 'ELDEN RING news | Synthetic publisher' }, currentnessDocument: {
-      ruleId: 'synthetic-currentness-index', adapterId: 'bandai-news-index-v1', status: 'complete',
+      ruleId: 'synthetic-currentness-index', adapterId: 'article-index-v1', status: 'complete',
       rawContentHash: gamingClearHash(text), categoryCount: 2,
       cards: [{ title: 'Elden Ring – Patch Notes Version 1.17', publishedDate: '08/09/2026', url: ARTICLE_URL },
         { title: 'Elden Ring – Patch Notes Version 1.16', publishedDate: '07/09/2026', url: `https://${HOST}/updates/patch-116` }]
@@ -72,7 +73,7 @@ function article(build = '1.17', release = 'This update is required for online p
   const text = `Targeted Platforms PlayStation 5 / Steam App Ver. 1.17 Regulation Ver. ${build} ${release}`;
   return { publicUrl: ARTICLE_URL, canonicalUrl: ARTICLE_URL, text,
     metadata: { title: 'Elden Ring – Patch Notes Version 1.17 | Synthetic publisher' }, currentnessDocument: {
-      ruleId: 'synthetic-currentness-article', adapterId: 'bandai-patch-article-v1', status: 'complete',
+      ruleId: 'synthetic-currentness-article', adapterId: 'patch-article-v1', status: 'complete',
       rawContentHash: gamingClearHash(text), platformText: 'PlayStation 5 / Steam'
     } };
 }
