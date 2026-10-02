@@ -1,16 +1,18 @@
 import { createHash } from 'node:crypto';
 import { normalizeGamingGameIdentity } from './gamingGameIdentity.js';
 import type { GamingEvidenceUnit } from './gamingEvidenceUnits.js';
+import type { GamingCurrentnessAdapterId, GamingCurrentnessAdapterConfig, GamingReleaseTitleConfig } from './gamingCurrentnessRegistry.js';
+export type { GamingCurrentnessAdapterId } from './gamingCurrentnessRegistry.js';
 
-export const GAMING_CURRENTNESS_ADAPTER_VERSION = 'gaming-currentness-adapters/v1';
+export const GAMING_CURRENTNESS_ADAPTER_VERSION = 'gaming-currentness-adapters/v2';
 export const GAMING_CURRENTNESS_LIMITS = Object.freeze({ textChars: 32_000, entries: 100, evidence: 20, revalidateMs: 6 * 60 * 60_000 });
-export type GamingCurrentnessAdapterId = 'labeled-v1' | 'swtor-patch-index-v1' | 'bandai-news-index-v1' | 'bandai-patch-article-v1';
 
 /** Supplied by the reviewed registry, never the frontend or a page's metadata. */
 export interface GamingCurrentnessAdapterRule {
   id: string;
   game: string;
   metadataAdapter?: GamingCurrentnessAdapterId;
+  metadataAdapterConfig?: GamingCurrentnessAdapterConfig;
   currentness: string;
   currentnessArticleRuleIds?: readonly string[];
 }
@@ -56,7 +58,7 @@ export interface GamingCurrentnessDocument {
 /** Resolver-owned links from the reviewed current listing; includes its independently bounded DOM hash. */
 export interface GamingCurrentnessDocumentIndex {
   ruleId: string;
-  adapterId: 'bandai-news-index-v1';
+  adapterId: 'article-index-v1';
   categoryCount: number;
   cards: Array<{ title: string; publishedDate: string; url: string }>;
   rawContentHash: string;
@@ -64,7 +66,7 @@ export interface GamingCurrentnessDocumentIndex {
 }
 export interface GamingCurrentnessDocumentArticle {
   ruleId: string;
-  adapterId: 'bandai-patch-article-v1';
+  adapterId: 'patch-article-v1';
   platformText: string;
   rawContentHash: string;
   status: 'complete' | 'incomplete';
@@ -89,6 +91,17 @@ const isoDate = (year: string, month: string, day: string): string | undefined =
   return Number.isFinite(value) && new Date(value).toISOString().slice(0, 10) === date ? new Date(value).toISOString() : undefined;
 };
 const opaqueVersion = '(\\d{1,8}(?:\\.\\d{1,8}){1,3}[a-z]?)(?=$|\\s|[,;()]|\\.(?=\\s|$))';
+/** Config chooses a closed date format; impossible calendar dates remain incomplete. */
+export function parseGamingCurrentnessDate(value: string, format: 'day/month/year' | 'month/day/year' | 'year-month-day'): string | undefined {
+  const date = format === 'year-month-day' ? /^(\d{4})-(\d{2})-(\d{2})$/u.exec(value)
+    : /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/u.exec(value);
+  if (!date) return undefined;
+  return format === 'year-month-day' ? isoDate(date[1], date[2], date[3])
+    : isoDate(date[3], date[format === 'month/day/year' ? 1 : 2], date[format === 'month/day/year' ? 2 : 1]);
+}
+function releaseTitlePattern(config: GamingReleaseTitleConfig, publisherSuffix = false): RegExp {
+  return new RegExp(`^${escape(config.prefix)}\\s*[–-]\\s*${escape(config.label)}\\s*(?:[–-]\\s*)?${escape(config.versionLabel)}\\s+${opaqueVersion}${publisherSuffix ? '(?:\\s*\\||$)' : '$'}`, 'iu');
+}
 interface Release { patch: string; at: string }
 
 /** Combining release evidence may narrow declared applicability, never widen it. */
@@ -121,7 +134,7 @@ function activeRelease(releases: Release[], now: Date): { release?: Release; sta
 /** Deterministic extraction from a safely acquired document; no fetching, model, or HTML canonical trust. */
 export function runGamingCurrentnessAdapter(input: GamingCurrentnessAdapterInput): GamingCurrentnessAdapterResult {
   const { document, rule, now } = input;
-  const adapterId = rule.metadataAdapter ?? 'labeled-v1';
+  const adapterId = rule.metadataAdapter ?? 'labeled-metadata-v1';
   let result: GamingCurrentnessAdapterResult = {
     game: rule.game, ruleId: rule.id, adapterId, adapterVersion: GAMING_CURRENTNESS_ADAPTER_VERSION,
     verifiedAt: Number.isFinite(now.getTime()) ? now.toISOString() : '', status: 'incomplete', reasons: [],
@@ -137,14 +150,14 @@ export function runGamingCurrentnessAdapter(input: GamingCurrentnessAdapterInput
   if (input.metadataUnverified || document.metrics?.truncated || document.metrics?.instructionFiltered) {
     result.reasons = ['APPLICABILITY_METADATA_UNVERIFIED']; return result;
   }
-  if (adapterId !== 'bandai-news-index-v1' && document.text.length > GAMING_CURRENTNESS_LIMITS.textChars) {
+  if (adapterId !== 'article-index-v1' && document.text.length > GAMING_CURRENTNESS_LIMITS.textChars) {
     result.reasons = ['CURRENTNESS_METADATA_INPUT_LIMIT']; return result;
   }
   if ([input.fields?.currentPatch, input.fields?.currentBuild, input.fields?.currentSeason]
     .some(value => value !== undefined && (!value || value.length > 64))) {
     result.reasons = ['CURRENTNESS_IDENTIFIER_UNSUPPORTED']; return result;
   }
-  if (adapterId === 'labeled-v1') {
+  if (adapterId === 'labeled-metadata-v1') {
     if ([input.fields?.patch, input.fields?.build, input.fields?.season, input.fields?.currentPatch,
       input.fields?.currentBuild, input.fields?.currentSeason].some(value => value !== undefined && (!value || value.length > 64))) {
       result.reasons = ['CURRENTNESS_IDENTIFIER_UNSUPPORTED']; return result;
@@ -159,18 +172,21 @@ export function runGamingCurrentnessAdapter(input: GamingCurrentnessAdapterInput
     return result;
   }
   const text = normalize(document.text.slice(0, GAMING_CURRENTNESS_LIMITS.textChars));
-  if (adapterId === 'swtor-patch-index-v1') {
-    const matches = [...text.matchAll(new RegExp(`\\b(\\d{1,2})/(\\d{1,2})/(\\d{2}|\\d{4})\\s*[-–]\\s*Game Update\\s+${opaqueVersion}\\b`, 'giu'))];
-    const releaseLabels = [...text.matchAll(/\bGame Update\s+/giu)];
+  const config = rule.metadataAdapterConfig;
+  if (!config) { result.reasons = ['ADAPTER_EXTRACTION_CONTRACT_REQUIRED']; return result; }
+  if (adapterId === 'dated-release-index-v1' && config.kind === 'dated-release-index') {
+    const matches = [...text.matchAll(new RegExp(`\\b(\\d{1,2})/(\\d{1,2})/(\\d{2}|\\d{4})\\s*[-–]\\s*${escape(config.releaseLabel)}\\s+${opaqueVersion}\\b`, 'giu'))];
+    const releaseLabels = [...text.matchAll(new RegExp(`\\b${escape(config.releaseLabel)}\\s+`, 'giu'))];
     if (matches.length !== releaseLabels.length) { result.reasons = ['OFFICIAL_RELEASE_VERSION_UNSUPPORTED']; return result; }
-    // Preserve the existing reviewed index's closed currentness labels when it has no dated listing.
-    if (!releaseLabels.length && input.fields?.currentPatch) {
-      const labeled = runGamingCurrentnessAdapter({ ...input, rule: { ...rule, metadataAdapter: 'labeled-v1' } });
+    // A reviewed fallback still uses the same closed currentness label contract.
+    if (config.allowLabeledFallback && !releaseLabels.length && input.fields?.currentPatch) {
+      const labeled = runGamingCurrentnessAdapter({ ...input, rule: { ...rule, metadataAdapter: 'labeled-metadata-v1' } });
       return { ...labeled, adapterId };
     }
     if (matches.length > GAMING_CURRENTNESS_LIMITS.entries) { result.reasons = ['CURRENTNESS_ENTRY_LIMIT']; return result; }
     const releases = matches.flatMap(match => {
-      const at = isoDate(match[3].length === 2 ? `20${match[3]}` : match[3], match[1], match[2]);
+      const at = isoDate(match[3].length === 2 ? `20${match[3]}` : match[3],
+        match[config.dateFormat === 'month/day/year' ? 1 : 2], match[config.dateFormat === 'month/day/year' ? 2 : 1]);
       return at ? [{ at, patch: match[4] }] : [];
     });
     if (releases.length !== matches.length) { result.reasons = ['INVALID_RELEASE_DATE']; return result; }
@@ -188,9 +204,9 @@ export function runGamingCurrentnessAdapter(input: GamingCurrentnessAdapterInput
     }
     return result;
   }
-  if (adapterId === 'bandai-news-index-v1') {
-    if (!new RegExp(`^${escape(rule.game)} news(?:\\s*\\||$)`, 'iu').test(normalize(document.metadata?.title ?? ''))
-      && !new RegExp(`Latest News on ${escape(rule.game)}\\b`, 'iu').test(text)) {
+  if (adapterId === 'article-index-v1' && config.kind === 'article-index') {
+    if (!new RegExp(`^${escape(config.pageTitle)}(?:\\s*\\||$)`, 'iu').test(normalize(document.metadata?.title ?? ''))
+      && !new RegExp(`${escape(config.pageText)}\\b`, 'iu').test(text)) {
       result.reasons = ['OFFICIAL_INDEX_LAYOUT_UNRECOGNIZED']; return result;
     }
     const listing = document.currentnessDocument;
@@ -199,16 +215,15 @@ export function runGamingCurrentnessAdapter(input: GamingCurrentnessAdapterInput
       result.reasons = ['OFFICIAL_INDEX_LINKS_REQUIRED']; return result;
     }
     const categoryCount = listing.categoryCount;
-    const pattern = new RegExp(`^${escape(rule.game)}\\s*[–-]\\s*Patch Notes\\s*(?:[–-]\\s*)?Version\\s+${opaqueVersion}$`, 'iu');
-    // The reviewed first page publishes three latest cards, or every card when fewer exist.
+    const pattern = releaseTitlePattern(config.releaseTitle);
+    // The reviewed first-page contract declares the number of latest cards, or every card when fewer exist.
     // Missing/truncated cards cannot be interpreted as evidence that no later release exists.
-    if (!Number.isFinite(categoryCount) || categoryCount < 1 || listing.cards.length !== Math.min(3, categoryCount)) {
+    if (!Number.isFinite(categoryCount) || categoryCount < 1 || listing.cards.length !== Math.min(config.pageSize, categoryCount)) {
       result.reasons = ['OFFICIAL_RELEASE_CARDS_INCOMPLETE']; return result;
     }
     const releases = listing.cards.flatMap(card => {
       const title = pattern.exec(card.title);
-      const date = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/u.exec(card.publishedDate);
-      const at = date && isoDate(date[3], date[2], date[1]);
+      const at = parseGamingCurrentnessDate(card.publishedDate, config.dateFormat);
       return title && at ? [{ at, patch: title[1], url: card.url }] : [];
     });
     if (releases.length !== listing.cards.length) { result.reasons = ['OFFICIAL_RELEASE_CARD_UNSUPPORTED']; return result; }
@@ -220,16 +235,21 @@ export function runGamingCurrentnessAdapter(input: GamingCurrentnessAdapterInput
     if (active.release) result = { ...result, ...input.fields, status: 'incomplete', currentPatch: active.release.patch,
       patch: active.release.patch, effectiveFrom: input.fields?.effectiveFrom ?? active.release.at, requiredArticlePatch: active.release.patch,
       requiredArticleUrl: [...activeUrls][0],
-      requiredArticleRuleIds: [...(rule.currentnessArticleRuleIds ?? [])], versionSemantics: 'app-regulation',
+      requiredArticleRuleIds: [...(rule.currentnessArticleRuleIds ?? [])], versionSemantics: config.versionSemantics,
       reasons: ['OFFICIAL_PATCH_ARTICLE_REQUIRED', 'HOTFIX_BUILD_CHECK_REQUIRED'] };
     return result;
   }
-  // The publisher article's App and Regulation labels establish its release only, never latest.
+  if (adapterId !== 'patch-article-v1' || config.kind !== 'patch-article') {
+    result.reasons = ['ADAPTER_EXTRACTION_CONTRACT_REQUIRED']; return result;
+  }
+  // Article version labels establish the release only, never that no later release exists.
   const title = normalize(document.metadata?.title ?? '');
-  const titledPatch = new RegExp(`^${escape(rule.game)}\\s*[–-]\\s*Patch Notes\\s*(?:[–-]\\s*)?Version\\s+${opaqueVersion}(?:\\s*\\||$)`, 'iu').exec(title)?.[1];
-  const app = [...text.matchAll(new RegExp(`\\bApp Ver\\.\\s*${opaqueVersion}\\b`, 'giu'))].map(match => match[1]);
-  const builds = [...text.matchAll(new RegExp(`\\bRegulation Ver\\.\\s*${opaqueVersion}\\b`, 'giu'))].map(match => match[1]);
-  if (app.length !== [...text.matchAll(/\bApp Ver\./giu)].length || builds.length !== [...text.matchAll(/\bRegulation Ver\./giu)].length) {
+  const titledPatch = releaseTitlePattern(config.releaseTitle, true).exec(title)?.[1];
+  const versions = (label: string) => [...text.matchAll(new RegExp(`\\b${escape(label)}\\s*${opaqueVersion}\\b`, 'giu'))].map(match => match[1]);
+  const app = versions(config.patchLabel);
+  const builds = versions(config.buildLabel);
+  if (app.length !== [...text.matchAll(new RegExp(`\\b${escape(config.patchLabel)}`, 'giu'))].length
+    || builds.length !== [...text.matchAll(new RegExp(`\\b${escape(config.buildLabel)}`, 'giu'))].length) {
     result.reasons = ['OFFICIAL_ARTICLE_VERSION_UNSUPPORTED']; return result;
   }
   if (new Set(app).size > 1 || new Set(builds).size > 1 || titledPatch && app.length && !same(titledPatch, app[0])) {
@@ -237,22 +257,28 @@ export function runGamingCurrentnessAdapter(input: GamingCurrentnessAdapterInput
   }
   if (!titledPatch || !app.length || !builds.length) { result.reasons = ['OFFICIAL_ARTICLE_VERSION_REQUIRED']; return result; }
   const articleMetadata = document.currentnessDocument;
-  const platformText = articleMetadata?.adapterId === 'bandai-patch-article-v1' && articleMetadata.status === 'complete'
+  const platformText = articleMetadata?.adapterId === 'patch-article-v1' && articleMetadata.status === 'complete'
     && articleMetadata.ruleId === rule.id && /^[a-f0-9]{64}$/u.test(articleMetadata.rawContentHash)
-    && /^(?:PlayStation 4|PlayStation 5|Xbox One|Xbox Series X\|S|Steam)(?:\s*\/\s*(?:PlayStation 4|PlayStation 5|Xbox One|Xbox Series X\|S|Steam))*$/u.test(articleMetadata.platformText)
     ? articleMetadata.platformText : undefined;
-  if (!platformText) { result.reasons = ['OFFICIAL_ARTICLE_PLATFORM_SCOPE_REQUIRED']; return result; }
-  const platforms = platformText.split(/\s*\/\s*/u).flatMap(value => value === 'Steam' ? ['Steam', 'PC']
-    : value === 'PlayStation 4' ? ['PlayStation 4', 'PS4'] : value === 'PlayStation 5' ? ['PlayStation 5', 'PS5'] : [value]);
+  const platformLabels = platformText?.split(/\s*\/\s*/u);
+  if (!platformLabels?.length || platformLabels.length > 8
+    || platformLabels.some(value => !config.platforms.some(platform => platform.label === value))) {
+    result.reasons = ['OFFICIAL_ARTICLE_PLATFORM_SCOPE_REQUIRED']; return result;
+  }
+  const platforms = platformLabels.flatMap(value => {
+    const platform = config.platforms.find(item => item.label === value)!;
+    return [platform.label, ...platform.aliases];
+  });
   const platformScope = intersectScope(input.fields?.platforms, platforms, true);
-  // The reviewed installed-version caption describes what the title screen
-  // will show. Structured evidence can repeat that caption without its version
-  // values; those are validated above. Every other timing qualifier still vetoes.
-  const releaseTimingText = text.replace(/\bafter applying this update will be as follows:/giu, '');
+  // A reviewed installed-version caption may describe displayed values, but other future qualifiers still veto.
+  const releaseTimingText = config.installedVersionCaption
+    ? text.replace(new RegExp(`\\b${escape(config.installedVersionCaption)}`, 'giu'), '') : text;
   const futureRelease = new RegExp(`\\b(?:This (?:patch|update)|Patch ${escape(app[0])})\\s+(?:(?:is|has been)\\s+)?(?:scheduled|planned|will)\\b`, 'iu').test(releaseTimingText);
-  const releaseActive = !futureRelease && (new RegExp(`\\bPatch ${escape(app[0])} has been released for ${escape(rule.game)}\\b`, 'iu').test(text)
-    || /\b(?:This update is (?:available now|required for online play)|Online play requires the player to apply this update)\b/iu.test(text));
-  result = { ...result, patch: app[0], build: builds[0], versionSemantics: 'app-regulation', releaseActive,
+  const releaseActive = !futureRelease && config.activeReleaseStatements.some(statement => {
+    const literal = statement.replace(/\{game\}/gu, rule.game).replace(/\{patch\}/gu, app[0]);
+    return new RegExp(`\\b${escape(literal)}\\b`, 'iu').test(text);
+  });
+  result = { ...result, patch: app[0], build: builds[0], versionSemantics: config.versionSemantics, releaseActive,
     ...(platformScope.values?.length ? { platforms: platformScope.values } : {}), ...(input.fields?.publishedAt ? { publishedAt: input.fields.publishedAt } : {}),
     ...(input.fields?.effectiveFrom ? { effectiveFrom: input.fields.effectiveFrom } : {}),
     ...(input.fields?.effectiveUntil ? { effectiveUntil: input.fields.effectiveUntil } : {}) };

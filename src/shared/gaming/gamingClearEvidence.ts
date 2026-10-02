@@ -7,6 +7,7 @@ import { classifyGamingQuestionFreshness, evaluateGamingFreshness, type GamingFr
 import type { GamingStoredKnowledgeContext, GamingStoredKnowledgeSource } from './gamingStoredEvidenceCore.js';
 import { assessGamingStructuralUsability } from './gamingStructuralEvidence.js';
 import { gamingClearIntactProseText } from './gamingClearSource.js';
+import { resolveGamingFreshnessDisposition } from './gamingFreshnessDisposition.js';
 
 export interface GamingClearEvidenceOptions {
   freshness?: GamingFreshnessEvaluation;
@@ -15,6 +16,8 @@ export interface GamingClearEvidenceOptions {
   actorScopeHash?: string;
   /** Existing backend acquisition/catalog identity checks, never frontend labels. */
   identityVerified?: boolean;
+  /** Internal workflow grant; never supplied through a public request. */
+  allowAdvisoryFreshness?: boolean;
 }
 
 function sourceMetadata(source: GamingStoredKnowledgeSource): GamingFreshnessEvidence | undefined {
@@ -46,7 +49,8 @@ export function assessGamingClearEvidence(
   const selected = chunks.slice(0, 8);
   const sources = knowledge.sources.slice(0, 8);
   const refs = [...new Set(selected.flatMap(chunk => [chunk.sourceId, chunk.revisionId, chunk.recordId]))];
-  const questionProfile = classifyGamingClearQuestion(input);
+  const advisoryFreshness = options.allowAdvisoryFreshness === true && resolveGamingFreshnessDisposition(input) === 'ADVISORY';
+  const questionProfile = classifyGamingClearQuestion({ ...input, allowAdvisoryFreshness: advisoryFreshness });
   const metadata = options.freshnessEvidence ?? sources.flatMap(source => {
     const value = sourceMetadata(source);
     return value ? [value] : [];
@@ -72,7 +76,7 @@ export function assessGamingClearEvidence(
   const compatibilityConflict = relevantMetadata.some(item => item.metadataConflict
     || (item.effectiveFrom && Date.parse(item.effectiveFrom) > evaluatedNow.getTime())
     || (item.publishedAt && Date.parse(item.publishedAt) > evaluatedNow.getTime())
-    || (!historicalPatchVerified && item.effectiveUntil && Date.parse(item.effectiveUntil) <= evaluatedNow.getTime())
+    || (!historicalPatchVerified && !advisoryFreshness && item.effectiveUntil && Date.parse(item.effectiveUntil) <= evaluatedNow.getTime())
     || (item.edition && normalizeGamingGameIdentity(item.edition) !== normalizeGamingGameIdentity(input.edition ?? ''))
     || (input.platform && item.platforms?.length && !item.platforms.some(platform => ['all', input.platform!.toLowerCase()].includes(platform.toLowerCase())))
     || (input.region && item.regions?.length && !item.regions.some(region => ['all', input.region!.toLowerCase()].includes(region.toLowerCase())))
@@ -98,7 +102,7 @@ export function assessGamingClearEvidence(
     const item = relevantMetadata.find(entry => entry.id === chunk.sourceId || entry.url === chunk.publicUrl);
     const role = source?.clearSourceAssessment?.sourceRole;
     if (chunk.recordId.endsWith(':verification') || role === 'currentness_index' || item?.currentness === 'current_index') return false;
-    return questionProfile !== 'current_build' || (role !== 'patch_authority' && source?.sourceType !== 'official_updates'
+    return !['current_build', 'advisory_recommendation'].includes(questionProfile) || (role !== 'patch_authority' && source?.sourceType !== 'official_updates'
       && source?.sourceType !== 'patch_notes' && item?.category !== 'official_updates');
   });
   const text = gameplayChunks.map(chunk => chunk.text).join('\n\n');
@@ -132,11 +136,13 @@ export function assessGamingClearEvidence(
   if (!hasSupport) finding('QUESTION_COVERAGE_INSUFFICIENT');
   if (structuredClaim && !structural.claimSupported && !independentProse) for (const reason of structural.reasonCodes) finding(reason);
   if (!traceable) finding('CITATION_PROVENANCE_MISSING');
-  if (patchSensitive && !freshnessCoversSet) finding('REQUIRED_FRESHNESS_UNVERIFIED');
+  if (patchSensitive && !freshnessCoversSet) finding(advisoryFreshness ? 'ADVISORY_FRESHNESS_UNVERIFIED' : 'REQUIRED_FRESHNESS_UNVERIFIED', !advisoryFreshness);
   if (patchSensitive && freshness?.status === 'conflicting') finding('CONFLICTING_CURRENTNESS');
   if (patchSensitive && !freshnessCoversSet) {
     for (const code of ['PATCH_MISMATCH', 'CURRENT_PATCH_COVERAGE_MISSING', 'CURRENT_BUILD_COVERAGE_MISSING', 'CURRENT_UPDATE_CHANGES_GUIDE_MECHANIC']) {
-      if (freshness?.reasons.includes(code) || freshness?.guideApplicability?.some(item => item.reasons.includes(code))) finding(code);
+      if (freshness?.reasons.includes(code) || freshness?.guideApplicability?.some(item => item.reasons.includes(code))) {
+        finding(code, !advisoryFreshness || code === 'CURRENT_UPDATE_CHANGES_GUIDE_MECHANIC');
+      }
     }
   }
   if (duplicate) finding('DUPLICATE_EVIDENCE', false);
@@ -152,7 +158,7 @@ export function assessGamingClearEvidence(
       ...(chunk.evidenceUnits?.length ? [chunk.evidenceUnits] : [])])),
     contextFingerprint: gamingClearContextFingerprint({ input, actorScopeHash: options.actorScopeHash,
       freshness: freshness ? [freshness.policyVersion, freshness.status, freshness.effectivePatch, freshness.effectiveBuild, freshness.verifiedAsOf] : null,
-      applicability: relevantMetadata }), evidenceRefs: refs, assessmentMethod: 'deterministic', assessmentStatus: 'completed',
+      applicability: relevantMetadata, ...(advisoryFreshness ? { freshnessDisposition: 'ADVISORY' } : {}) }), evidenceRefs: refs, assessmentMethod: 'deterministic', assessmentStatus: 'completed',
     ...(options.now ? { evaluatedAt: options.now.toISOString() } : {}),
     gates: { identity, compatibility: compatibilityConflict || contradictory ? 'conflict' : compatibilityUnknown ? 'unknown' : 'verified', claimSupport: hasSupport && bounded ? 'verified' : 'unknown',
       freshness: !patchSensitive ? 'not_applicable' : freshnessCoversSet ? 'verified' : 'unknown',
@@ -163,6 +169,6 @@ export function assessGamingClearEvidence(
       leverage: dimension(selected.length ? Math.min(4.5, 2.5 + 2 * coverage) : null, 'COMBINED_TOPIC_COVERAGE', hasSupport ? [] : ['REQUEST_COVERAGE_INCOMPLETE']),
       efficiency: dimension(selected.length ? duplicate ? 3 : 4.2 : null, 'BOUNDED_NONREDUNDANT_SELECTION'),
       alignment: dimension(identityVerified && applicable ? 4.5 : null, 'REQUEST_APPLICABILITY', identityVerified ? [] : ['GAME_IDENTITY_UNVERIFIED']),
-      resilience: dimension(traceable && applicable && (!patchSensitive || freshnessCoversSet) ? 3.8 : null, 'TRACEABLE_APPLICABLE_EVIDENCE', ['SEMANTIC_CLAIM_SUPPORT_REQUIRES_ANSWER_AUDIT'])
+      resilience: dimension(traceable && applicable && (!patchSensitive || freshnessCoversSet || advisoryFreshness) ? 3.8 : null, 'TRACEABLE_APPLICABLE_EVIDENCE', ['SEMANTIC_CLAIM_SUPPORT_REQUIRES_ANSWER_AUDIT'])
     }, findings });
 }

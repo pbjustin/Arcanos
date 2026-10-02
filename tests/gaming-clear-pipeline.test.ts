@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals
 import { createGamingClearAssessment } from '../src/shared/gaming/gamingClearPolicy.js';
 import { GAMING_SOURCE_POLICY_VERSION, GAMING_FRESHNESS_DEFAULTS } from '../src/shared/gaming/gamingFreshnessCore.js';
 import type { GamingStoredKnowledgeContext } from '../src/shared/gaming/gamingStoredEvidenceCore.js';
+import { GAMING_UNVERIFIED_GUIDE_WARNING } from '../src/shared/gaming/gamingFreshnessDisposition.js';
 const runTrinityWritingPipeline = jest.fn();
 const createSingleChatCompletion = jest.fn();
 jest.unstable_mockModule('@core/logic/trinityWritingPipeline.js', () => ({ runTrinityWritingPipeline }));
@@ -27,19 +28,20 @@ const dimensions = () => Object.fromEntries(['clarity', 'leverage', 'efficiency'
 ])) as Parameters<typeof createGamingClearAssessment>[0]['dimensions'];
 let findings: Array<{ code: string; severity: string; evidenceRefs: string[] }> = [];
 let tamper = false;
+let candidateAnswer = answer;
 const run = (overrides = {}, evidence = knowledge()) => runGameplayPipeline({ ...input, ...overrides }, { knowledge: evidence, current: true, qualification: '' });
 
 describe('Gaming CLEAR real pipeline delivery decisions', () => {
   afterEach(() => jest.useRealTimers());
   beforeEach(() => {
-    jest.clearAllMocks(); findings = []; tamper = false;
+    jest.clearAllMocks(); findings = []; tamper = false; candidateAnswer = answer;
     createSingleChatCompletion.mockImplementation(async () => ({ choices: [{ finish_reason: 'stop', message: {
       content: JSON.stringify({ dimensions: dimensions(), findings }) } }], usage: { prompt_tokens: 500, completion_tokens: 150, total_tokens: 650 } }));
     runTrinityWritingPipeline.mockImplementation(async (request: {
       context: { runtimeBudget: never; runOptions: { gamingClearAnswerAudit: (text: string, budget: never) => Promise<{ assessment: unknown }> } }
     }) => {
-      const audit = await request.context.runOptions.gamingClearAnswerAudit(answer, request.context.runtimeBudget);
-      return { result: tamper ? `${answer}\nInvented mechanic.` : answer, gamingClearAudit: audit.assessment,
+      const audit = await request.context.runOptions.gamingClearAnswerAudit(candidateAnswer, request.context.runtimeBudget);
+      return { result: tamper ? `${candidateAnswer}\nInvented mechanic.` : candidateAnswer, gamingClearAudit: audit.assessment,
         fallbackFlag: false, dryRun: false, activeModel: 'synthetic', meta: { provider: { finishReason: 'stop', responseStatus: 'completed' } } };
     });
   });
@@ -121,6 +123,44 @@ describe('Gaming CLEAR real pipeline delivery decisions', () => {
     runTrinityWritingPipeline.mockRejectedValue(new Error('synthetic generation failure'));
     const result = await run();
     expect(result.data.fallbackReason).toBe('GAMING_PROVIDER_ERROR');
+    expect(createSingleChatCompletion).not.toHaveBeenCalled();
+  });
+
+  it('generates once from internally authorized advisory gameplay and binds the visible warning to the audited answer', async () => {
+    const result = await runGameplayPipeline({ ...input, prompt: 'Which return route strategy should I use?', mode: 'build' },
+      { knowledge: knowledge(), current: false, advisoryFreshnessAllowed: true, qualification: GAMING_UNVERIFIED_GUIDE_WARNING });
+    expect(result.data.response).toBe(`${GAMING_UNVERIFIED_GUIDE_WARNING}\n\n${answer}`);
+    expect(result.data.fallbackReason).toBeUndefined();
+    expect(runTrinityWritingPipeline).toHaveBeenCalledTimes(1);
+    expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
+    const params = createSingleChatCompletion.mock.calls[0][1] as { messages: Array<{ content: string }> };
+    expect(JSON.parse(params.messages[1].content)).toMatchObject({ answer: result.data.response, verifiedEvidenceGates: { freshness: 'unknown' } });
+  });
+
+  it('rejects fabricated current compatibility even when the gameplay recommendation has adequate coverage', async () => {
+    candidateAnswer = `${answer}\n\nThis strategy is compatible with the latest patch.`;
+    const result = await runGameplayPipeline({ ...input, prompt: 'Which return route strategy should I use?', mode: 'build' },
+      { knowledge: knowledge(), current: false, advisoryFreshnessAllowed: true, qualification: GAMING_UNVERIFIED_GUIDE_WARNING });
+    expect(result.data.fallbackReason).toBe('CURRENT_EVIDENCE_UNAVAILABLE');
+    expect(result.data.response).not.toContain('compatible with the latest patch');
+    expect(runTrinityWritingPipeline).toHaveBeenCalledTimes(1);
+    expect(createSingleChatCompletion).not.toHaveBeenCalled();
+  });
+
+  it('blocks contradictory gameplay before generation despite the advisory grant', async () => {
+    const evidence: GamingStoredKnowledgeContext = knowledge();
+    const contradictory = { ...evidence.sources[0], sourceId: 'source-2', url: 'https://example.com/other-guide' };
+    const metadata = { game: input.game, policyVersion: GAMING_SOURCE_POLICY_VERSION, patch: '1.0',
+      fetchedAt: evidence.sources[0].fetchedAt, verifiedAt: evidence.sources[0].fetchedAt,
+      category: 'specialist_guide', authority: 'specialist', currentness: 'none',
+      durableAllowed: true, autoStoreAllowed: false, metadataConfidence: 'content_extracted' };
+    evidence.sources[0].freshnessMetadata = { ...metadata, id: 'source-1', url: evidence.sources[0].url, mechanicValues: { 'valve turns': '2' } };
+    contradictory.freshnessMetadata = { ...metadata, id: 'source-2', url: contradictory.url, mechanicValues: { 'valve turns': '3' } };
+    evidence.sources.push(contradictory);
+    const result = await runGameplayPipeline({ ...input, prompt: 'Which return route strategy should I use?', mode: 'build' },
+      { knowledge: evidence, current: false, advisoryFreshnessAllowed: true, qualification: GAMING_UNVERIFIED_GUIDE_WARNING });
+    expect(result.data.fallbackReason).toBeDefined();
+    expect(runTrinityWritingPipeline).not.toHaveBeenCalled();
     expect(createSingleChatCompletion).not.toHaveBeenCalled();
   });
 

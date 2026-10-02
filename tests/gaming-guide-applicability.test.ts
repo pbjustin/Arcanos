@@ -8,7 +8,7 @@ const now = new Date('2026-09-14T12:00:00Z');
 const game = 'Elden Ring';
 const rules: readonly GamingReviewedSourceRule[] = [
   { id: 'synthetic-publisher-index', game, hosts: ['publisher.test'], path: '/updates', pathMatch: 'exact', category: 'official_updates',
-    currentness: 'current_index', metadataAdapter: 'labeled-v1', durableAllowed: false, autoStoreAllowed: false },
+    currentness: 'current_index', metadataAdapter: 'labeled-metadata-v1', durableAllowed: false, autoStoreAllowed: false },
   { id: 'synthetic-publisher-notes', game, hosts: ['publisher.test'], path: '/updates/', pathMatch: 'prefix', category: 'official_updates',
     currentness: 'article', durableAllowed: true, autoStoreAllowed: false },
   { id: 'synthetic-specialist', game, hosts: ['specialist.test'], path: '/builds/', pathMatch: 'prefix', category: 'specialist_guide',

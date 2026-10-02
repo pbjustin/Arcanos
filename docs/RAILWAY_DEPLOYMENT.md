@@ -398,6 +398,23 @@ Launcher behavior:
   The authenticated lifecycle suite separately covers normal hybrid routes and
   companion-fetch orchestration with controlled transport/provider/storage
   dependencies; it does not establish live model, SQL, or active-worker behavior.
+- The sealed guide request also executes the production freshness-disposition,
+  answer-claim and evidence-admission cores with fixed synthetic advisory and
+  required-currentness scenarios. Honest passive warnings remain admissible,
+  nearby affirmative current-patch claims are rejected, and mixed patch-note,
+  season-identity and maintenance-time requests remain strict. Stale or
+  unverified gameplay evidence is admitted only with the internal advisory
+  grant and retains unknown freshness; that grant cannot bypass a required
+  current-state request. Successful execution emits
+  `x-arcanos-preview-gaming-advisory-freshness-version:
+  gaming-advisory-freshness/v1`. The reviewed PR-head verifier requires this
+  additional marker and reports `gamingAdvisoryFreshnessVerified`; a missing
+  or changed marker fails. Fixture failure withholds every Gaming proof header
+  and the success body. The response body and request matrix remain compatible
+  with the trusted verifier. This proves synthetic execution of the shared
+  policy cores, while normal authenticated workflow, acquisition, semantic
+  model auditing, live providers, SQL and active workers require separate
+  evidence.
 - Web preview `/readyz` additionally runs the production attempt-usage collector
   and child-envelope accounting wrapper over fixed synthetic observations before
   returning success. The `x-arcanos-preview-dag-token-accounting-version:

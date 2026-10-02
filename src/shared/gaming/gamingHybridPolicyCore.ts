@@ -4,7 +4,7 @@ import type { GamingStoredKnowledgeContext } from './gamingStoredEvidenceCore.js
 /** These pure decisions are shared by normal services and the sealed preview. */
 export const GAMING_HYBRID_RETAINED_ARTIFACT_CHARS = 12_000_000;
 
-/** Missing official proof can continue; conflicting proof or stale gameplay alone cannot. */
+/** A bounded currentness attempt is distinct from selecting grounded gameplay evidence. */
 export function resolveGamingHybridCurrentnessReason(input: {
   classification: 'stable' | 'patch_sensitive' | 'seasonal' | 'live_status';
   freshnessStatus: 'current' | 'stale' | 'unverified' | 'not_applicable' | 'conflicting';
@@ -13,7 +13,8 @@ export function resolveGamingHybridCurrentnessReason(input: {
 }): string | undefined {
   if (!input.hasGameplayEvidence || input.classification === 'stable' || input.freshnessStatus === 'conflicting') return undefined;
   const permittedReasons = input.classification === 'live_status' ? ['LIVE_OFFICIAL_STATUS_REQUIRED']
-    : ['CURRENT_OFFICIAL_INDEX_REQUIRED', 'REVALIDATION_DUE', 'CURRENT_BUILD_UNVERIFIED'];
+    : ['CURRENT_OFFICIAL_INDEX_REQUIRED', 'REVALIDATION_DUE', 'CURRENT_BUILD_UNVERIFIED',
+      'CURRENT_PATCH_COVERAGE_MISSING', 'NO_LONGER_EFFECTIVE'];
   return permittedReasons.find(reason => input.reasons.includes(reason));
 }
 

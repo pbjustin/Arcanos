@@ -5,6 +5,7 @@ const actualCurrentness = await import('../src/shared/gaming/gamingCurrentnessAd
 const actualEvidence = await import('../src/shared/gaming/gamingClearEvidence.js');
 const actualBinding = await import('../src/shared/gaming/gamingClearAnswerBinding.js');
 const actualPolicy = await import('../src/shared/gaming/gamingHybridPolicyCore.js');
+const actualDisposition = await import('../src/shared/gaming/gamingFreshnessDisposition.js');
 const extract = jest.fn(actualFreshness.extractGamingFreshnessMetadata);
 const evaluate = jest.fn(actualFreshness.evaluateGamingFreshness);
 const combine = jest.fn(actualCurrentness.combineGamingCurrentnessEvidence);
@@ -13,6 +14,10 @@ const binding = jest.fn(actualBinding.hasBoundGamingClearAnswer);
 const project = jest.fn(actualPolicy.projectGamingHybridCandidateEvidence);
 const attempt = jest.fn(actualPolicy.resolveGamingHybridCandidateAttempt);
 const reason = jest.fn(actualPolicy.resolveGamingHybridCurrentnessReason);
+const disposition = jest.fn(actualDisposition.resolveGamingFreshnessDisposition);
+const currentnessClaim = jest.fn(actualDisposition.gamingAnswerClaimsVerifiedCurrentness);
+const advisorySelection = jest.fn(actualDisposition.selectGamingAdvisoryGameplayEvidence);
+const advisoryOperation = jest.fn(actualDisposition.isGamingAdvisoryCurrentnessOperation);
 jest.unstable_mockModule('../src/shared/gaming/gamingFreshnessCore.js', () => ({ ...actualFreshness,
   extractGamingFreshnessMetadata: extract, evaluateGamingFreshness: evaluate }));
 jest.unstable_mockModule('../src/shared/gaming/gamingCurrentnessAdapters.js', () => ({ ...actualCurrentness, combineGamingCurrentnessEvidence: combine }));
@@ -20,7 +25,11 @@ jest.unstable_mockModule('../src/shared/gaming/gamingClearEvidence.js', () => ({
 jest.unstable_mockModule('../src/shared/gaming/gamingClearAnswerBinding.js', () => ({ ...actualBinding, hasBoundGamingClearAnswer: binding }));
 jest.unstable_mockModule('../src/shared/gaming/gamingHybridPolicyCore.js', () => ({ ...actualPolicy,
   projectGamingHybridCandidateEvidence: project, resolveGamingHybridCandidateAttempt: attempt, resolveGamingHybridCurrentnessReason: reason }));
-const { runGamingCurrentnessPreview, GAMING_CURRENTNESS_PREVIEW_VERSION, GAMING_CURRENTNESS_CONTINUATION_PREVIEW_VERSION } = await import('../src/shared/gaming/gamingCurrentnessPreviewFixture.js');
+jest.unstable_mockModule('../src/shared/gaming/gamingFreshnessDisposition.js', () => ({ ...actualDisposition,
+  resolveGamingFreshnessDisposition: disposition, gamingAnswerClaimsVerifiedCurrentness: currentnessClaim,
+  selectGamingAdvisoryGameplayEvidence: advisorySelection, isGamingAdvisoryCurrentnessOperation: advisoryOperation }));
+const { runGamingCurrentnessPreview, GAMING_CURRENTNESS_PREVIEW_VERSION, GAMING_CURRENTNESS_CONTINUATION_PREVIEW_VERSION,
+  GAMING_ADVISORY_FRESHNESS_PREVIEW_VERSION } = await import('../src/shared/gaming/gamingCurrentnessPreviewFixture.js');
 const FAILURE = 'PREVIEW_GAMING_CURRENTNESS_CONTRACT_INVALID';
 
 describe('sealed PC Elden Ring currentness and answer-admission fixture', () => {
@@ -33,6 +42,10 @@ describe('sealed PC Elden Ring currentness and answer-admission fixture', () => 
     project.mockReset().mockImplementation(actualPolicy.projectGamingHybridCandidateEvidence);
     attempt.mockReset().mockImplementation(actualPolicy.resolveGamingHybridCandidateAttempt);
     reason.mockReset().mockImplementation(actualPolicy.resolveGamingHybridCurrentnessReason);
+    disposition.mockReset().mockImplementation(actualDisposition.resolveGamingFreshnessDisposition);
+    currentnessClaim.mockReset().mockImplementation(actualDisposition.gamingAnswerClaimsVerifiedCurrentness);
+    advisorySelection.mockReset().mockImplementation(actualDisposition.selectGamingAdvisoryGameplayEvidence);
+    advisoryOperation.mockReset().mockImplementation(actualDisposition.isGamingAdvisoryCurrentnessOperation);
   });
 
   it('repeats fixed document extraction, separate App/Regulation and PC answer checks', () => {
@@ -40,6 +53,7 @@ describe('sealed PC Elden Ring currentness and answer-admission fixture', () => 
     expect(runGamingCurrentnessPreview()).toBeUndefined();
     expect(GAMING_CURRENTNESS_PREVIEW_VERSION).toBe('gaming-currentness/v1');
     expect(GAMING_CURRENTNESS_CONTINUATION_PREVIEW_VERSION).toBe('gaming-currentness-continuation/v1');
+    expect(GAMING_ADVISORY_FRESHNESS_PREVIEW_VERSION).toBe('gaming-advisory-freshness/v1');
     expect(extract).toHaveBeenCalledWith(expect.objectContaining({ text: expect.stringContaining('Patch: 1.17\nBuild: 1.17\nPlatforms: PC') }),
       { game: 'Elden Ring' }, new Date('2026-09-09T12:00:00.000Z'), expect.any(Array));
     expect(extract).toHaveBeenCalledWith(expect.objectContaining({ text: expect.stringContaining('Regulation Ver. 1.17.1') }),
@@ -54,6 +68,75 @@ describe('sealed PC Elden Ring currentness and answer-admission fixture', () => 
     expect(project).toHaveBeenCalledWith(expect.objectContaining({ knowledge: expect.objectContaining({
       sources: [expect.objectContaining({ sourceId: 'synthetic-continuation-fresh-index' })] }) }));
   });
+
+  it('executes advisory unknown/stale gameplay admission and strict mixed-current-state checks', () => {
+    expect(runGamingCurrentnessPreview()).toBeUndefined();
+    expect(evidence).toHaveBeenCalledWith(expect.objectContaining({ mode: 'build' }), expect.objectContaining({
+      sources: [expect.objectContaining({ freshnessMetadata: expect.objectContaining({ effectiveUntil: '2026-09-08T00:00:00.000Z' }) })]
+    }), expect.objectContaining({ allowAdvisoryFreshness: true }));
+    expect(currentnessClaim).toHaveBeenCalledWith(expect.stringContaining('This build has not been tested on the current patch.'));
+    expect(currentnessClaim).toHaveBeenCalledWith(expect.stringContaining('have never been verified compatible with the latest patch.'));
+    for (const prompt of ['Recommend an Intelligence staff mage build and summarize the latest patch notes.',
+      'Recommend an Intelligence staff mage build and list the current season.', 'What time does maintenance end today?']) {
+      expect(disposition).toHaveBeenCalledWith(expect.objectContaining({ prompt }));
+      expect(evidence).toHaveBeenCalledWith(expect.objectContaining({ prompt }), expect.any(Object),
+        expect.objectContaining({ allowAdvisoryFreshness: true }));
+    }
+  });
+
+  it('detects known stale gameplay using the weaker unverified qualification', () => {
+    advisorySelection.mockImplementation(input => {
+      const value = actualDisposition.selectGamingAdvisoryGameplayEvidence(input);
+      return value.status === 'stale' ? { ...value, qualification: actualDisposition.GAMING_UNVERIFIED_GUIDE_WARNING } : value;
+    });
+    expect(runGamingCurrentnessPreview).toThrow(FAILURE);
+  });
+
+  it.each(['SOURCE_INSTRUCTIONS_REJECTED', 'URL_BLOCKED', 'REVIEWED_OFFICIAL_CURRENTNESS_SOURCE_REQUIRED'])(
+    'detects forbidden currentness rejection granting advisory admission: %s', reasonCode => {
+      advisoryOperation.mockImplementation(input => input.decisions.some(item => item.reasonCodes.includes(reasonCode))
+        || actualDisposition.isGamingAdvisoryCurrentnessOperation(input));
+      expect(runGamingCurrentnessPreview).toThrow(FAILURE);
+    });
+
+  it.each(['has not been tested', 'have never been verified compatible'])(
+    'detects honest passive uncertainty being rejected: %s', phrase => {
+      currentnessClaim.mockImplementation(answer => answer.includes(phrase)
+        || actualDisposition.gamingAnswerClaimsVerifiedCurrentness(answer));
+      expect(runGamingCurrentnessPreview).toThrow(FAILURE);
+    });
+
+  it('detects an affirmative claim being hidden by a preceding negative clause', () => {
+    currentnessClaim.mockImplementation(answer => answer.includes('This build works on the current patch.') ? false
+      : actualDisposition.gamingAnswerClaimsVerifiedCurrentness(answer));
+    expect(runGamingCurrentnessPreview).toThrow(FAILURE);
+  });
+
+  it.each(['summarize the latest patch notes', 'list the current season', 'maintenance end today'])(
+    'detects required current-state facts being classified as advisory: %s', phrase => {
+      disposition.mockImplementation(input => input.prompt.includes(phrase) ? 'ADVISORY'
+        : actualDisposition.resolveGamingFreshnessDisposition(input));
+      expect(runGamingCurrentnessPreview).toThrow(FAILURE);
+    });
+
+  it.each(['advisory gameplay rejected', 'unknown freshness promoted', 'required fact admitted', 'missing grant admitted'])(
+    'detects advisory evidence-admission drift: %s', scenario => {
+      evidence.mockImplementation((input, knowledge, options) => {
+        const value = actualEvidence.assessGamingClearEvidence(input, knowledge, options);
+        const advisory = options?.allowAdvisoryFreshness === true;
+        if (scenario === 'advisory gameplay rejected' && advisory && value.decision === 'accept') return { ...value, decision: 'reject' };
+        if (scenario === 'unknown freshness promoted' && advisory && value.decision === 'accept') {
+          return { ...value, gates: { ...value.gates, freshness: 'verified' } };
+        }
+        if (scenario === 'required fact admitted' && advisory && actualDisposition.resolveGamingFreshnessDisposition(input) === 'REQUIRED') {
+          return { ...value, decision: 'accept' };
+        }
+        if (scenario === 'missing grant admitted' && !advisory && options?.freshnessEvidence?.length === 1
+          && actualDisposition.resolveGamingFreshnessDisposition(input) === 'ADVISORY') return { ...value, decision: 'accept' };
+        return value;
+      });
+      expect(runGamingCurrentnessPreview).toThrow(FAILURE);
+    });
 
   it.each(['old source retained', 'old chunk retained', 'old positive metadata retained', 'prior contradiction dropped',
     'adapter-only contradiction dropped', 'metadata-only contradiction dropped', 'evaluated contradiction dropped'])(

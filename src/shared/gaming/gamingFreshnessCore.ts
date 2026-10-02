@@ -2,9 +2,13 @@ import { normalizeGamingGameIdentity } from './gamingGameIdentity.js';
 import type { GamingEvidenceUnit } from './gamingEvidenceUnits.js';
 import { readGamingEvidenceUnits } from './gamingStructuralEvidence.js';
 import { runGamingCurrentnessAdapter, combineGamingCurrentnessEvidence, GAMING_CURRENTNESS_ADAPTER_VERSION,
-  type GamingCurrentnessAdapterId, type GamingCurrentnessAdapterResult, type GamingCurrentnessDocumentMetadata } from './gamingCurrentnessAdapters.js';
+  type GamingCurrentnessAdapterResult, type GamingCurrentnessDocumentMetadata } from './gamingCurrentnessAdapters.js';
 import { evaluateGamingGuideApplicability, isGamingGameplayFreshnessEvidence, type GamingGuideApplicability } from './gamingGuideApplicability.js';
 import { sanitizeGamingSourceUrl } from './gamingSourceAcquisitionCore.js';
+import { REVIEWED_GAMING_SOURCE_RULES, gamingRuleAuthority,
+  type GamingReviewedSourceRule, type GamingSourceCategory, type GamingSourceAuthority, type GamingSourceCurrentness } from './gamingCurrentnessRegistry.js';
+export { REVIEWED_GAMING_SOURCE_RULES } from './gamingCurrentnessRegistry.js';
+export type { GamingReviewedSourceRule, GamingSourceCategory, GamingSourceAuthority, GamingSourceCurrentness } from './gamingCurrentnessRegistry.js';
 
 export const GAMING_FRESHNESS_POLICY_VERSION = 'gaming-hybrid-freshness-v1';
 export const GAMING_SOURCE_POLICY_VERSION = 'gaming-hybrid-source-policy-v2';
@@ -20,40 +24,6 @@ export const GAMING_FRESHNESS_DEFAULTS = Object.freeze({
 
 export type GamingQuestionFreshness = 'stable' | 'patch_sensitive' | 'seasonal' | 'live_status';
 export type GamingFreshnessStatus = 'current' | 'stale' | 'unverified' | 'not_applicable' | 'conflicting';
-export type GamingSourceCategory = 'official_updates' | 'official_status' | 'official_documentation' | 'specialist_guide' | 'community' | 'unreviewed';
-export type GamingSourceAuthority = 'official' | 'specialist' | 'community' | 'unreviewed';
-export type GamingSourceCurrentness = 'current_index' | 'article' | 'live_status' | 'none';
-
-/** Code-reviewed server configuration, never candidate-supplied metadata. */
-export interface GamingReviewedSourceRule {
-  id: string;
-  game: string;
-  hosts: readonly string[];
-  path: string;
-  pathMatch: 'exact' | 'prefix';
-  category: GamingSourceCategory;
-  currentness: GamingSourceCurrentness;
-  durableAllowed: boolean;
-  autoStoreAllowed: boolean;
-  metadataAdapter?: GamingCurrentnessAdapterId;
-  /** Explicit companion article rules; neither arbitrary publisher URLs nor frontend hints qualify. */
-  currentnessArticleRuleIds?: readonly string[];
-  platforms?: readonly string[];
-  regions?: readonly string[];
-}
-
-/** Narrow ownership paths derived from the existing Gaming catalog. No subdomain wildcard. */
-export const REVIEWED_GAMING_SOURCE_RULES: readonly GamingReviewedSourceRule[] = Object.freeze([
-  { id: 'swtor-patch-index', game: 'Star Wars: The Old Republic', hosts: ['www.swtor.com', 'swtor.com'], path: '/patchnotes', pathMatch: 'exact', category: 'official_updates', currentness: 'current_index', durableAllowed: false, autoStoreAllowed: false, metadataAdapter: 'swtor-patch-index-v1' },
-  { id: 'swtor-patch-article', game: 'Star Wars: The Old Republic', hosts: ['www.swtor.com', 'swtor.com'], path: '/patchnotes/', pathMatch: 'prefix', category: 'official_updates', currentness: 'article', durableAllowed: true, autoStoreAllowed: true },
-  { id: 'destiny-news-article', game: 'Destiny 2', hosts: ['www.bungie.net'], path: '/7/en/News/Article/', pathMatch: 'prefix', category: 'official_updates', currentness: 'article', durableAllowed: true, autoStoreAllowed: true },
-  { id: 'wow-news-article', game: 'World of Warcraft', hosts: ['worldofwarcraft.blizzard.com'], path: '/en-us/news/', pathMatch: 'prefix', category: 'official_updates', currentness: 'article', durableAllowed: true, autoStoreAllowed: true },
-  { id: 'elden-ring-update-index', game: 'Elden Ring', hosts: ['en.bandainamcoent.eu'], path: '/elden-ring/elden-ring/news', pathMatch: 'exact', category: 'official_updates', currentness: 'current_index', durableAllowed: false, autoStoreAllowed: false, metadataAdapter: 'bandai-news-index-v1', currentnessArticleRuleIds: ['elden-ring-news'] },
-  { id: 'elden-ring-news', game: 'Elden Ring', hosts: ['en.bandainamcoent.eu'], path: '/elden-ring/news/', pathMatch: 'prefix', category: 'official_updates', currentness: 'article', durableAllowed: true, autoStoreAllowed: true, metadataAdapter: 'bandai-patch-article-v1' },
-  { id: 'wow-specialist', game: 'World of Warcraft', hosts: ['www.icy-veins.com', 'icy-veins.com'], path: '/wow/', pathMatch: 'prefix', category: 'specialist_guide', currentness: 'none', durableAllowed: true, autoStoreAllowed: false },
-  { id: 'bg3-community-wiki', game: "Baldur's Gate 3", hosts: ['bg3.wiki'], path: '/wiki/', pathMatch: 'prefix', category: 'community', currentness: 'none', durableAllowed: true, autoStoreAllowed: false }
-]);
-
 export interface GamingSourcePolicyAssessment {
   policyVersion: typeof GAMING_SOURCE_POLICY_VERSION;
   ruleId?: string;
@@ -80,8 +50,7 @@ export function assessGamingSourcePolicy(url: string, game: string,
     && (candidate.pathMatch === 'exact' ? parsed.pathname === candidate.path
       : candidate.path.endsWith('/') && parsed.pathname.startsWith(candidate.path)));
   if (!rule) return fallback;
-  const authority: GamingSourceAuthority = rule.category.startsWith('official_') ? 'official'
-    : rule.category === 'specialist_guide' ? 'specialist' : rule.category === 'community' ? 'community' : 'unreviewed';
+  const authority = gamingRuleAuthority(rule);
   const durableAllowed = rule.durableAllowed && rule.category !== 'official_status' && rule.currentness !== 'live_status';
   return { policyVersion: GAMING_SOURCE_POLICY_VERSION, ruleId: rule.id, category: rule.category, authority,
     currentness: rule.currentness, durableAllowed,
@@ -163,13 +132,20 @@ const dateValue = (value: string | undefined): string | undefined => {
 /** Question policy is conservative even when an explicit client mode says "guide". */
 export function classifyGamingQuestionFreshness(input: { prompt: string; mode?: string; requestedVersion?: string }): GamingQuestionFreshness {
   const prompt = input.prompt.slice(0, 8_000);
-  if (/\b(?:server\s+(?:status|outage|maintenance|down)|servers?\s+(?:are\s+)?(?:down|offline)|outage|login\s+(?:issues?|problems?)|maintenance\s+(?:now|today)|live\s+status|current\s+event\s+status)\b/iu.test(prompt)) return 'live_status';
+  if (/\b(?:server\s+(?:status|outage|maintenance|down)|servers?\s+(?:are\s+)?(?:down|offline)|outage|login\s+(?:issues?|problems?)|maintenance\s+(?:now|today)|live\s+status|current\s+event\s+status)\b/iu.test(prompt)
+    || /\bmaintenance\b[^?!.\n]{0,40}\b(?:end(?:s|ed)?|start(?:s|ed)?|begin(?:s)?|finish(?:es|ed)?|scheduled)\b[^?!.\n]{0,30}\b(?:now|today|currently|tonight|tomorrow)\b/iu.test(prompt)
+    || /\b(?:is|are)\b.{0,100}\b(?:event|maintenance|servers?)\b.{0,60}\b(?:active|running|available|online|offline|down|live|over|ongoing|today|now)\b/iu.test(prompt)
+    || /\b(?:event|maintenance|servers?)\b.{0,40}\b(?:is|are|still)\s+(?:still\s+)?(?:active|running|available|online|offline|down|live|over|ongoing)\b/iu.test(prompt)
+    || /\b(?:event|maintenance)\b.{0,40}\b(?:has|have|is)\s+(?:already\s+|now\s+)?(?:end(?:ed)?|finish(?:ed)?|begun|started|cancelled|canceled|postponed)\b/iu.test(prompt)
+    || /\b(?:has|have|did)\b.{0,60}\b(?:event|maintenance)\b.{0,30}\b(?:end(?:ed)?|finish(?:ed)?|begun|started|cancelled|canceled|postponed)\b/iu.test(prompt)
+    || /\b(?:what|which)\b.{0,60}\bevent\b.{0,30}\b(?:current|active|running|live)\b/iu.test(prompt)) return 'live_status';
   if (/\b(?:season|seasonal|battle\s+pass|current\s+league)\b/iu.test(prompt)) return 'seasonal';
   // Strength questions occur in either order ("best build" / "which build is best").
   // Keep ordinary routes and puzzles stable unless their own question needs freshness.
   const combatSubject = /\b(?:weapons?|builds?|class(?:es)?|loadouts?|talents?|equipment|skills?|abilit(?:y|ies)|gear|armou?r|rotations?)\b/iu.test(prompt);
   const effectivenessOrTime = /\b(?:best|better|strong(?:est|er)?|weak(?:est|er)?|effective(?:ness)?|powerful|optimal|viab(?:le|ility)|top|good|today|currently|now)\b/iu.test(prompt);
-  if (input.requestedVersion || input.mode === 'meta' || input.mode === 'build' || (combatSubject && effectivenessOrTime)
+  const recommendationIntent = /\b(?:recommend(?:ed|ation|ations)?|suggest(?:ed|ion|ions)?)\b|\bshould\b.{0,80}\b(?:choose|pick|select|use|equip|play)\b/iu.test(prompt);
+  if (input.requestedVersion || input.mode === 'meta' || input.mode === 'build' || (combatSubject && (effectivenessOrTime || recommendationIntent))
     || /\b(?:patch|hotfix|balance|nerf|buff|meta|viable|latest|current(?!\s+(?:area|checkpoint|location|objective|progress|quest)\b)|right\s+now|dps|damage\s+(?:value|number)|weapon\s+effectiveness|(?:best|strongest)\s+(?:weapon|build|class|loadout|talent|equipment))\b/iu.test(prompt)) return 'patch_sensitive';
   return 'stable';
 }

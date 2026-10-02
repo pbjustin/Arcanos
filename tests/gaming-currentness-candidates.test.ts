@@ -13,6 +13,7 @@ const { evaluateGamingHybridCandidates } = await import('../src/services/gamingH
 const { assessGamingSourcePolicy, evaluateGamingFreshness, extractGamingFreshnessMetadata } = await import('../src/shared/gaming/gamingFreshnessCore.js');
 const { GAMING_CURRENTNESS_ADAPTER_VERSION, combineGamingCurrentnessEvidence } = await import('../src/shared/gaming/gamingCurrentnessAdapters.js');
 const { GamingDocumentAcquisitionError } = await import('../src/shared/gaming/gamingSourceAcquisitionCore.js');
+const { isGamingAdvisoryCurrentnessOperation } = await import('../src/shared/gaming/gamingFreshnessDisposition.js');
 import type { GamingReviewedSourceRule } from '../src/shared/gaming/gamingFreshnessCore.js';
 const { resolveGamingDocument } = await import('../src/services/gamingDocumentResolution.js');
 const contractVersion = 'gaming-hybrid-v1';
@@ -74,6 +75,46 @@ describe('scoped rejected official contradictions survive candidate evaluation',
     expect(result.decisions).toMatchObject([{ decision: 'rejected', reasonCodes: ['REVIEWED_OFFICIAL_CURRENTNESS_SOURCE_REQUIRED'] }]);
     expect(result.accepted).toHaveLength(0);
   });
+  it.each([
+    { url: guideUrl, failure: 'insufficient extraction' },
+    { url: 'https://swtor.com/unreviewed-update-index', failure: 'fetch failure' }
+  ])('rejects unreviewed currentness before acquisition can yield $failure', async ({ url, failure }) => {
+    const resolveDocument = jest.fn<typeof resolveGamingDocument>();
+    if (failure === 'fetch failure') resolveDocument.mockRejectedValue(new GamingDocumentAcquisitionError(
+      'SOURCE_FETCH_FAILED', 'transport', 'HTTP_RESPONSE_UNUSABLE', 0, 503));
+    else resolveDocument.mockResolvedValue({ text: '' } as any);
+    const result = await evaluateGamingHybridCandidates({ game, prompt: 'What is a good mage build now?', mode: 'build',
+      discoveryType: 'currentness_verification', candidates: [{ url, claimedPublisher: 'official' }] }, context, { resolveDocument });
+    expect(resolveDocument).not.toHaveBeenCalled();
+    expect(result.decisions).toMatchObject([{ decision: 'rejected', reasonCodes: ['REVIEWED_OFFICIAL_CURRENTNESS_SOURCE_REQUIRED'] }]);
+    expect(result.accepted).toHaveLength(0);
+    expect(isGamingAdvisoryCurrentnessOperation({ decisions: result.decisions })).toBe(false);
+  });
+  it('permits an advisory outcome after an actual reviewed official acquisition is unavailable', async () => {
+    const resolveDocument = jest.fn<typeof resolveGamingDocument>().mockRejectedValue(new GamingDocumentAcquisitionError(
+      'SOURCE_FETCH_FAILED', 'transport', 'HTTP_RESPONSE_UNUSABLE', 0, 503));
+    const result = await evaluateGamingHybridCandidates({ game, prompt: 'What is a good mage build now?', mode: 'build',
+      discoveryType: 'currentness_verification', candidates: [{ url: indexUrl }] }, context, { resolveDocument });
+    expect(resolveDocument).toHaveBeenCalledTimes(1);
+    expect(result.decisions).toMatchObject([{ decision: 'rejected', reasonCodes: ['SOURCE_FETCH_FAILED'] }]);
+    expect(result.currentnessFailureBlocksAdvisory).toBeUndefined();
+    expect(isGamingAdvisoryCurrentnessOperation({ decisions: result.decisions })).toBe(true);
+  });
+  it.each([
+    { url: guideUrl, reason: 'REVIEWED_OFFICIAL_CURRENTNESS_SOURCE_REQUIRED', advisory: false },
+    { url: indexUrl, reason: 'FETCH_BUDGET_EXHAUSTED', advisory: true }
+  ])('checks reviewed eligibility before exhausted currentness budget at $url', async ({ url, reason, advisory }) => {
+    const resolveDocument = jest.fn<typeof resolveGamingDocument>();
+    const timestamp = Date.now();
+    const clock = jest.spyOn(Date, 'now').mockReturnValueOnce(timestamp).mockReturnValue(timestamp + 12_001);
+    try {
+      const result = await evaluateGamingHybridCandidates({ game, prompt: 'What is a good mage build now?', mode: 'build',
+        discoveryType: 'currentness_verification', candidates: [{ url }] }, context, { resolveDocument });
+      expect(resolveDocument).not.toHaveBeenCalled();
+      expect(result.decisions).toMatchObject([{ decision: 'rejected', reasonCodes: [reason] }]);
+      expect(isGamingAdvisoryCurrentnessOperation({ decisions: result.decisions })).toBe(advisory);
+    } finally { clock.mockRestore(); }
+  });
 });
 
 describe('required official companion acquisition shares the currentness operation budget', () => {
@@ -83,7 +124,7 @@ describe('required official companion acquisition shares the currentness operati
   const rules: GamingReviewedSourceRule[] = [
     { id: 'prism-current', game: syntheticGame, hosts: ['prism.test'], path: '/updates/current', pathMatch: 'exact',
       category: 'official_updates', currentness: 'current_index', durableAllowed: false, autoStoreAllowed: false,
-      metadataAdapter: 'labeled-v1', currentnessArticleRuleIds: ['prism-release'] },
+      metadataAdapter: 'labeled-metadata-v1', currentnessArticleRuleIds: ['prism-release'] },
     { id: 'prism-release', game: syntheticGame, hosts: ['prism.test'], path: '/updates/', pathMatch: 'prefix',
       category: 'official_updates', currentness: 'article', durableAllowed: true, autoStoreAllowed: false },
     { id: 'prism-status', game: syntheticGame, hosts: ['prism.test'], path: '/status', pathMatch: 'exact',
@@ -109,7 +150,7 @@ describe('required official companion acquisition shares the currentness operati
         requiredArticlePatch: freshness.currentPatch, requiredArticleUrl: requiredUrl, requiredArticleRuleIds: requiredRules
       };
       if (freshness.currentness === 'article') freshness.currentnessMetadata = {
-        game: syntheticGame, ruleId: freshness.ruleId!, adapterId: 'labeled-v1', adapterVersion: GAMING_CURRENTNESS_ADAPTER_VERSION,
+        game: syntheticGame, ruleId: freshness.ruleId!, adapterId: 'labeled-metadata-v1', adapterVersion: GAMING_CURRENTNESS_ADAPTER_VERSION,
         status: 'incomplete', reasons: ['ARTICLE_IS_NOT_CURRENT_INDEX'], verifiedAt: freshness.verifiedAt!, evidenceRefs: [], releaseActive: true
       };
       return freshness;
@@ -200,7 +241,22 @@ describe('required official companion acquisition shares the currentness operati
     const result = await evaluate([officialIndex]);
     expect(result.decisions[1]).toMatchObject({ origin: 'required_official_article', decision: 'rejected', reasonCodes: [error.code] });
     expect(result.accepted).toHaveLength(1);
+    expect(result.currentnessFailureBlocksAdvisory).toBe(true);
     expect(result.accepted[0].freshness.currentnessMetadata?.status).toBe('incomplete');
+  });
+  it.each([
+    new GamingDocumentAcquisitionError('SOURCE_FETCH_FAILED', 'transport', 'HTTP_RESPONSE_UNUSABLE', 0, 503),
+    new GamingDocumentAcquisitionError('SOURCE_TIMEOUT', 'transport', 'DEADLINE_EXCEEDED')
+  ])('keeps ordinary currentness unavailability distinct from acquisition integrity failure', async error => {
+    const { evaluate, resolveDocument } = setup();
+    resolveDocument.mockImplementation(async (...args) => {
+      if (args[0] === officialArticle) throw error;
+      return resolveGamingDocument(...args);
+    });
+    const result = await evaluate([officialIndex]);
+    expect(result.decisions[1]).toMatchObject({ decision: 'rejected', reasonCodes: [error.code] });
+    expect(result.currentnessFailureBlocksAdvisory).toBeUndefined();
+    expect(result.accepted).toHaveLength(1);
   });
   it('does not add another acquisition window after the shared deadline expires', async () => {
     const { evaluate, resolveDocument } = setup();

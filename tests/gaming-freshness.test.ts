@@ -96,16 +96,25 @@ describe('Gaming question freshness is separate from relevance and source age', 
     ['How do I open the Azure Gate in Lantern Vault?', 'stable'],
     ['What is the best way to solve the bell puzzle?', 'stable'],
     ['What is the best dungeon route?', 'stable'],
+    ['Recommend a route through the dungeon', 'stable'],
+    ['Suggest a way to solve the bell puzzle', 'stable'],
     ['My current area is the tower; what next?', 'stable'],
     ['What is the best weapon build in Prism Siege?', 'patch_sensitive'],
     ['Which build is best?', 'patch_sensitive'],
     ['What weapons are strong today?', 'patch_sensitive'],
     ['How effective are these abilities?', 'patch_sensitive'],
     ['Which class is weakest?', 'patch_sensitive'],
+    ['Recommend a weapon for Samurai', 'patch_sensitive'],
+    ['Which class should I choose?', 'patch_sensitive'],
+    ['Suggest talents for a healer', 'patch_sensitive'],
+    ['Which weapon should I equip?', 'patch_sensitive'],
     ['How much damage do weapons do today?', 'patch_sensitive'],
     ['Did the hotfix reduce beam damage?', 'patch_sensitive'],
     ['How does the current season work in Clockwork Citadel?', 'seasonal'],
-    ['Are the servers down right now?', 'live_status']
+    ['Are the servers down right now?', 'live_status'],
+    ['Give me an event strategy and tell me if the event has ended.', 'live_status'],
+    ['Has the live event already finished?', 'live_status'],
+    ['Did maintenance end?', 'live_status']
   ] as const)('classifies %s', (prompt, expected) => {
     expect(classifyGamingQuestionFreshness({ prompt, mode: 'guide' })).toBe(expected);
   });

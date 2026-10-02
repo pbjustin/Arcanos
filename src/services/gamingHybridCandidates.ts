@@ -87,6 +87,12 @@ const sourceMetadataBinding = (freshness: GamingFreshnessEvidence, policy: Retur
   return gamingClearHash({ freshness: metadata, policy });
 };
 
+function isReviewedOfficialCurrentnessSource(policy: ReturnType<typeof assessGamingSourcePolicy>): boolean {
+  return Boolean(policy.ruleId && policy.authority === 'official'
+    && (policy.category === 'official_updates' && ['current_index', 'article'].includes(policy.currentness)
+      || policy.category === 'official_status' && policy.currentness === 'live_status'));
+}
+
 function unsafeHints(candidate: GamingHybridCandidateInput): boolean {
   return Object.entries(candidate).some(([key, value]) => key !== 'url' && value !== undefined
     && (typeof value !== 'string' || value.length > 240
@@ -100,7 +106,7 @@ export async function evaluateGamingHybridCandidates(
   context: { actorKey: string; requestId?: string; traceId?: string; workflowId?: string; signal?: AbortSignal },
   dependencies: GamingHybridCandidateDependencies = {}
 ): Promise<{ decisions: GamingHybridCandidateDecision[]; accepted: GamingHybridAcceptedCandidate[]; knowledge: GamingStoredKnowledgeContext;
-  currentnessEvidence?: GamingFreshnessEvidence[] }> {
+  currentnessEvidence?: GamingFreshnessEvidence[]; currentnessFailureBlocksAdvisory?: boolean }> {
   if (!context.actorKey || input.candidates.length < 1 || input.candidates.length > GAMING_HYBRID_CANDIDATE_LIMITS.count) {
     throw Object.assign(new Error('Submit one to three candidate URLs within an authenticated workflow.'), { code: 'GAMING_HYBRID_CANDIDATE_LIMIT' });
   }
@@ -111,6 +117,7 @@ export async function evaluateGamingHybridCandidates(
   const accepted: GamingHybridAcceptedCandidate[] = [];
   const decisions: GamingHybridCandidateDecision[] = [];
   const currentnessEvidence: GamingFreshnessEvidence[] = [];
+  let currentnessFailureBlocksAdvisory = false;
   const allRecords: GamingStoredEvidenceRecord[] = [];
   const terms = buildGamingRetrievalTerms(input).focusTerms;
   const queue: Array<{ candidate: GamingHybridCandidateInput; submittedIndex: number; origin?: 'required_official_article' }> =
@@ -134,7 +141,6 @@ export async function evaluateGamingHybridCandidates(
         elapsedMs: Date.now() - sourceStartedAt });
       decisions.push({ submittedIndex, ...(origin ? { origin } : {}), ...(publicUrl ? { url: projectGamingDocumentPublicUrl(publicUrl) } : {}), decision: 'rejected', reasonCodes: [reason] });
     };
-    if (Date.now() >= deadlineAt) { reject('FETCH_BUDGET_EXHAUSTED'); continue; }
     if (unsafeHints(candidate)) { reject('UNTRUSTED_METADATA_INVALID'); continue; }
     try {
       if (typeof candidate.url !== 'string' || candidate.url.length > 2_048) { reject('INVALID_URL'); continue; }
@@ -149,6 +155,13 @@ export async function evaluateGamingHybridCandidates(
       }
       const description = describeGamingDocumentSource(admission.url);
       publicUrl = selectGamingSourceAdmissionUrl(admission.url, description);
+      // An unavailable or unreadable arbitrary URL is not an official currentness
+      // attempt. Review the admitted identity before acquisition, then recheck the
+      // trusted resolver's final identity below; frontend hints grant no authority.
+      if (input.discoveryType === 'currentness_verification'
+        && !isReviewedOfficialCurrentnessSource((dependencies.sourcePolicy ?? assessGamingSourcePolicy)(publicUrl, input.game))) {
+        reject('REVIEWED_OFFICIAL_CURRENTNESS_SOURCE_REQUIRED'); continue;
+      }
       if (seen.has(publicUrl)) { reject('DUPLICATE_URL'); continue; }
       seen.add(publicUrl);
       if (Date.now() >= deadlineAt) { reject('FETCH_BUDGET_EXHAUSTED'); continue; }
@@ -175,10 +188,7 @@ export async function evaluateGamingHybridCandidates(
       }
       const reviewedPolicy = (dependencies.sourcePolicy ?? assessGamingSourcePolicy)(document.publicUrl, input.game);
       // Frontend role/publisher hints and an acquired canonical tag cannot create authority.
-      if (input.discoveryType === 'currentness_verification' && !(reviewedPolicy.ruleId
-        && reviewedPolicy.authority === 'official'
-        && (reviewedPolicy.category === 'official_updates' && ['current_index', 'article'].includes(reviewedPolicy.currentness)
-          || reviewedPolicy.category === 'official_status' && reviewedPolicy.currentness === 'live_status'))) {
+      if (input.discoveryType === 'currentness_verification' && !isReviewedOfficialCurrentnessSource(reviewedPolicy)) {
         reject('REVIEWED_OFFICIAL_CURRENTNESS_SOURCE_REQUIRED'); continue;
       }
       const policy = classifyGamingQuestionFreshness({ prompt: input.prompt, mode: input.mode }) === 'live_status'
@@ -292,6 +302,11 @@ export async function evaluateGamingHybridCandidates(
       if (signal?.aborted) throw error;
       if (error instanceof GamingDocumentAcquisitionError) {
         acquisitionDiagnostic = { ...error.acquisition };
+        // Public acquisition reasons are deliberately coarse. Preserve the internal
+        // integrity/security distinction so an unavailable index cannot hide it.
+        const unavailable = ['DNS_FAILED', 'FETCH_FAILED', 'DEADLINE_EXCEEDED', 'HTTP_RESPONSE_UNUSABLE', 'CONDITIONAL_CONTENT_UNAVAILABLE'];
+        if (!unavailable.includes(error.acquisition.subreason) || error.status === 401 || error.status === 403)
+          currentnessFailureBlocksAdvisory = true;
         reject(error.code); continue;
       }
       const status = (error as { response?: { status?: number } })?.response?.status;
@@ -313,7 +328,8 @@ export async function evaluateGamingHybridCandidates(
     acceptedCount: accepted.length, rejectedCount: decisions.filter(decision => decision.decision === 'rejected').length,
     selectedChunkCount: knowledge.evidence?.length ?? 0, selectedContextChars: knowledge.context.length,
     decisions: decisions.map(decision => ({ candidateId: decision.candidateId, decision: decision.decision, reasons: decision.reasonCodes })) });
-  return { decisions, accepted, knowledge, ...(currentnessEvidence.length ? { currentnessEvidence } : {}) };
+  return { decisions, accepted, knowledge, ...(currentnessEvidence.length ? { currentnessEvidence } : {}),
+    ...(currentnessFailureBlocksAdvisory ? { currentnessFailureBlocksAdvisory } : {}) };
 }
 
 /** Storage eligibility, actor permission, and consent are independent of answer sufficiency. */

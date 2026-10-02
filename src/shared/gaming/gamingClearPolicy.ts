@@ -1,13 +1,14 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { classifyGamingQuestionFreshness } from './gamingFreshnessCore.js';
+import { resolveGamingFreshnessDisposition } from './gamingFreshnessDisposition.js';
 
 export const GAMING_CLEAR_VERSION = 'gaming-clear/v1' as const;
 export const GAMING_CLEAR_POLICY_VERSION = 'gaming-clear-policy/v1' as const;
 export const GAMING_CLEAR_DIMENSIONS = ['clarity', 'leverage', 'efficiency', 'alignment', 'resilience'] as const;
 export type GamingClearDimension = typeof GAMING_CLEAR_DIMENSIONS[number];
 export type GamingClearProfile = 'source' | 'evidence' | 'answer';
-export type GamingClearQuestionProfile = 'walkthrough' | 'current_build' | 'patch_change' | 'live_status' | 'explanation';
+export type GamingClearQuestionProfile = 'walkthrough' | 'current_build' | 'patch_change' | 'live_status' | 'explanation' | 'advisory_recommendation';
 export type GamingClearSourceRole = 'gameplay_guide' | 'build_analysis' | 'patch_authority' | 'currentness_index' | 'live_status' | 'community_observation' | 'corroboration';
 
 /** The single executable rubric. Profiles change the subject, never the acronym. */
@@ -28,7 +29,7 @@ const staticWeights = Object.freeze({ clarity: 0.25, leverage: 0.25, efficiency:
 const currentWeights = Object.freeze({ clarity: 0.15, leverage: 0.20, efficiency: 0.10, alignment: 0.30, resilience: 0.25 });
 export const GAMING_CLEAR_WEIGHTS: Readonly<Record<GamingClearQuestionProfile, Readonly<Record<GamingClearDimension, number>>>> = Object.freeze({
   walkthrough: staticWeights, explanation: staticWeights, current_build: currentWeights,
-  patch_change: currentWeights, live_status: currentWeights
+  patch_change: currentWeights, live_status: currentWeights, advisory_recommendation: currentWeights
 });
 export const GAMING_CLEAR_THRESHOLDS = Object.freeze({
   transient: Object.freeze({ overall: 3.25, clarity: 3, alignment: 3.5, resilience: 3 }),
@@ -96,7 +97,8 @@ export function gamingClearHash(value: unknown): string {
 export function gamingClearContextFingerprint(value: unknown): string {
   return gamingClearHash({ rubricVersion: GAMING_CLEAR_VERSION, policyVersion: GAMING_CLEAR_POLICY_VERSION, context: value });
 }
-export function classifyGamingClearQuestion(input: { prompt: string; mode?: string; requestedVersion?: string }): GamingClearQuestionProfile {
+export function classifyGamingClearQuestion(input: { prompt: string; mode?: string; requestedVersion?: string; allowAdvisoryFreshness?: boolean }): GamingClearQuestionProfile {
+  if (input.allowAdvisoryFreshness === true && resolveGamingFreshnessDisposition(input) === 'ADVISORY') return 'advisory_recommendation';
   const freshness = classifyGamingQuestionFreshness(input);
   if (freshness === 'live_status') return 'live_status';
   if (freshness !== 'stable') return /\b(?:patch|hotfix|nerf|buff|change|changed)\b/iu.test(input.prompt) && !/\bbuild\b/iu.test(input.prompt) ? 'patch_change' : 'current_build';
@@ -156,8 +158,13 @@ export interface GamingClearAssessmentInput {
 }
 
 export function createGamingClearAssessment(input: GamingClearAssessmentInput): GamingClearAssessment {
+  // Advisory disposition authorizes transient answers only. Source quality and
+  // durable-write eligibility always retain their existing freshness policy.
+  if (input.profile === 'source' && input.questionProfile === 'advisory_recommendation') {
+    throw new TypeError('Gaming source assessments cannot use advisory freshness.');
+  }
   const identity = z.object({
-    profile: z.enum(['source', 'evidence', 'answer']), questionProfile: z.enum(['walkthrough', 'current_build', 'patch_change', 'live_status', 'explanation']),
+    profile: z.enum(['source', 'evidence', 'answer']), questionProfile: z.enum(['walkthrough', 'current_build', 'patch_change', 'live_status', 'explanation', 'advisory_recommendation']),
     sourceRole: z.enum(['gameplay_guide', 'build_analysis', 'patch_authority', 'currentness_index', 'live_status', 'community_observation', 'corroboration']).optional(),
     subjectId: reference, subjectHash: z.string().regex(/^[a-f0-9]{64}$/u), contextFingerprint: z.string().regex(/^[a-f0-9]{64}$/u),
     assessmentMethod: z.enum(['deterministic', 'model_assisted', 'mixed']).default('deterministic'),
@@ -176,7 +183,8 @@ export function createGamingClearAssessment(input: GamingClearAssessmentInput): 
     else findings[index] = { ...findings[index], severity: 'blocking' };
   };
   const supportingSource = input.profile === 'source' && ['patch_authority', 'currentness_index', 'corroboration'].includes(input.sourceRole ?? '');
-  const freshnessRequired = !['walkthrough', 'explanation'].includes(input.questionProfile) && !supportingSource;
+  const currentReliabilityRequired = !['walkthrough', 'explanation'].includes(input.questionProfile) && !supportingSource;
+  const freshnessRequired = currentReliabilityRequired && input.questionProfile !== 'advisory_recommendation';
   for (const [name, state] of Object.entries(gates)) {
     if (state === 'conflict') append(`${name.toUpperCase()}_CONFLICT`);
     if (state === 'not_applicable' && (name !== 'freshness' || freshnessRequired)) append(`${name.toUpperCase()}_REQUIRED`);
@@ -192,7 +200,7 @@ export function createGamingClearAssessment(input: GamingClearAssessmentInput): 
   const threshold = GAMING_CLEAR_THRESHOLDS[input.profile === 'source' ? 'transient' : input.profile];
   const meets = (floors: typeof threshold) => overall !== null && overall >= floors.overall
     && dimensionScores.clarity.score! >= floors.clarity && dimensionScores.alignment.score! >= floors.alignment
-    && dimensionScores.resilience.score! >= Math.max(floors.resilience, freshnessRequired ? 3.5 : 0);
+    && dimensionScores.resilience.score! >= Math.max(floors.resilience, currentReliabilityRequired ? 3.5 : 0);
   if (status === 'completed' && !allEvaluated) append('DIMENSION_UNEVALUATED');
   if (status === 'completed' && input.profile === 'answer'
     && Object.values(dimensionScores).some(dimension => dimension.unresolvedFacts.length > 0)) append('MATERIAL_FACT_UNRESOLVED');

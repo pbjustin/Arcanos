@@ -257,9 +257,12 @@ backend invoke ChatGPT's web-search tool.
    Hints do not establish authority: the backend acquires and validates the
    resource, follows an adapter-required official article under its reviewed
    companion rule when a slot remains, reuses its accepted guide, and recomputes
-   applicability. Without a hint, use the returned bounded queries. Only
-   `nextAction: stop` ends exhausted discovery; report unresolved freshness
-   honestly. A service failure instead reports its availability limitation.
+   applicability. Without a hint, use the returned bounded queries. After that
+   operation, ordinary recommendations can return `answer_ready` from the
+   retained gameplay evidence with a visible unverified/stale warning. Only
+   `nextAction: stop` ends exhausted discovery. Current-state facts and material
+   conflicts still stop without verified evidence. A service failure instead
+   reports its availability limitation.
 6. `ingestGamingHybridCandidates` is a separate consequential write. It selects
    caller-bound candidate IDs, applies storage permission/consent, and queues the
    existing worker. The existing ingestion-status Action reports the outcome.
@@ -267,8 +270,11 @@ backend invoke ChatGPT's web-search tool.
 `sourceKnown`, `evidenceSelected`, and `freshnessStatus` are independent. A known
 catalog entry does not establish coverage. Lookup/auth/provider failures become
 temporary unavailability, never an invitation to reinterpret an outage as an
-empty corpus. The hybrid path skips Trinity when evidence is missing, stale or
-requires progress clarification. It passes the original validated player context,
+empty corpus. The hybrid path skips Trinity when gameplay evidence fails coverage,
+conflicts materially, requires progress clarification, or lacks required
+current-state verification. Stale or unverified freshness alone does not discard
+adequate gameplay evidence for an ordinary recommendation. It passes the original
+validated player context,
 spoiler/depth preferences, selected evidence and date/update qualifications to
 the existing generation and citation projection.
 
@@ -349,24 +355,57 @@ effective interval, patch, build, season, platform, region and metadata confiden
 Legacy stable evidence may use its last backend fetch date; legacy patch labels
 alone never establish the current release.
 
-Dynamic questions require an applicable official current-update index and
-compatible gameplay material. Newly fetched old patch notes, missing/contradictory
-metadata, future releases and ambiguous date-only rollout-day announcements do
-not establish active applicability. Opaque version strings are never sorted to
-guess the latest patch. A known current hotfix/build excludes incompatible older
-builds; exact declared patch/build baseline applicability can retain unchanged facts. Absence of a
+Gameplay grounding and currentness are separate dimensions. The generic
+[`resolveGamingFreshnessDisposition`](../src/shared/gaming/gamingFreshnessDisposition.ts)
+policy uses the requested fact, not game or publisher identity:
+
+| Disposition | Request | Behavior |
+| --- | --- | --- |
+| `NOT_REQUIRED` | Stable gameplay facts with no current-state or patch-sensitive recommendation requirement | Coverage, compatibility and CLEAR still apply; no current-patch claim is implied. |
+| `ADVISORY` | Ordinary guide, build, loadout, strategy, class/weapon and meta-style recommendations, including patch-sensitive recommendations | Attempt the requested bounded official verification first. If it cannot verify freshness without a material conflict, retain adequate gameplay evidence and generate once with a visible freshness warning. |
+| `REQUIRED` | Server/outage/maintenance or live-event status, the latest/current patch or build itself, other explicit real-time state facts, and historical/as-of patch facts | Unavailable or unverified currentness blocks a current-state answer; historical facts require acquired matching patch applicability. Stale gameplay material cannot replace that proof. |
+
+An applicable official current-update index and compatible gameplay material are
+needed to describe recommendations as verified current. Newly fetched old patch
+notes, missing/contradictory metadata, future releases and ambiguous date-only
+rollout-day announcements do not establish active applicability. Opaque version
+strings are never sorted to
+guess the latest patch. A known current hotfix/build prevents incompatible older
+builds from being described as verified current; exact declared patch/build
+baseline applicability can retain unchanged facts. Absence of a
 change in newer notes never proves an older fact remains valid. A 304 validates
 only that resource, not the absence of updates elsewhere.
-Seasonal questions about patches, hotfixes, balance or builds also require current
-patch applicability; a season-only index cannot establish it. Malformed or
+Seasonal recommendations still attempt current patch applicability; a season-only
+index cannot establish it. A requested current season or live-event state remains
+`REQUIRED`. Malformed or
 truncated scope labels remain unverified rather than implying global applicability.
 
-Metadata adapters are intentionally conservative: supported labeled metadata,
-the reviewed SWTOR dated release index, and the reviewed Elden Ring publisher
-index with its exact linked application/regulation article are implemented.
-New games add reviewed source rules and, when needed, a deterministic adapter;
-the hybrid state machine stays unchanged. Unsupported site layouts
-remain unverified; this is not exhaustive live-service coverage. Bounded explicit
+Reviewed game/publisher definitions live in the typed declarative
+[`gamingCurrentnessSourceData.ts`](../src/shared/gaming/gamingCurrentnessSourceData.ts)
+registry, format `gaming-currentness-sources/v1`. Each record describes game/rule
+identity, HTTPS hosts and exact/prefix path, category and narrowed authority,
+currentness role, storage eligibility, adapter/configuration, companion article
+rules and optional platform/region restrictions. Publisher-specific extraction
+parameters are bounded literals, selectors and release/platform/date contracts.
+The generic pipeline normalizes them to `GamingFreshnessEvidence`, then applies
+the same freshness/applicability policy.
+
+[`gamingCurrentnessRegistry.ts`](../src/shared/gaming/gamingCurrentnessRegistry.ts)
+validates and freezes the registry on module initialization, including compiled
+build import checks and tests. It rejects unsafe HTTPS hosts/paths, duplicate IDs,
+ambiguous overlapping exact rules, unsupported adapter/configuration fields,
+unbounded/unsupported selectors, invalid companion references, and indexes with
+no appropriate extraction contract. Configuration accepts no arbitrary regexes,
+module imports or executable code. Category authority and live-status storage
+ceilings remain code-owned; data can narrow them. URL/DNS/private-network checks,
+redirect/body/time/count limits, content filtering, integrity/CLEAR, actor binding,
+OAuth scopes, owner gate, consent, durable-write policy and idempotency/round limits
+remain in reviewed code and cannot be overridden by registry data.
+
+The reusable adapter types are `labeled-metadata-v1`, `dated-release-index-v1`,
+`article-index-v1` and `patch-article-v1`. New publishers using those supported
+shapes add reviewed records rather than an execution branch. Unsupported site
+layouts remain unverified; this is not exhaustive live-service coverage. Bounded explicit
 `Mechanic: name = number` labels detect conflicting numeric values (16 per source);
 equal-authority conflicts fail closed and conflicting weaker sources are excluded.
 An excluded source contributes no other mechanic claims to conflict resolution.
@@ -376,6 +415,31 @@ uncertainty, distinguish official changes from recommendations, and avoid a
 currentness claim without verification. An explicit historical patch can use
 matching patch evidence among active records; date-only historical mapping and
 searching inactive historical source revisions remain unsupported.
+
+After the one official-currentness operation is consumed, insufficient extraction,
+an unavailable official index, incomplete currentness metadata or unavailable
+revalidation can produce an advisory `answer_ready` only if independent gameplay
+coverage and CLEAR pass and grounded generation succeeds. The response retains
+`evidenceSelected: true`, accepted source citations and known source dates/patches,
+with `freshnessStatus: unverified` or `stale` and an honest applicability status.
+It never sets `current` or `verified_current` without the corresponding proof.
+The answer text and `qualification` visibly state that current patch compatibility
+could not be verified and the advice may be outdated. Known stale evidence gets a
+stronger warning that it appears out of date.
+
+The currentness operation must use a reviewed official source. Unreviewed URLs
+cannot unlock an advisory answer through an extraction failure, fetch failure or
+exhausted budget; eligibility is checked before acquisition and again against the
+resolved source identity.
+
+`conflicting` evidence still fails closed. Gameplay coverage failures, unusable
+evidence, game mismatch, unsupported relationships, acquisition/integrity failures
+and unavailable required supplied guides still block generation. A required guide
+must actually be acquired and validated; snippets, catalog entries and unrelated
+sources cannot satisfy that grounding requirement. Authentication, authorization,
+provider generation and audit failures retain their existing unavailable/failure
+states. Advisory answers do not add discovery rounds, candidate slots, storage
+permissions or durable writes.
 
 An accepted official index can be retained as a bounded verification attestation
 on the approved source's existing provenance. It is bound to the full approved
@@ -391,14 +455,46 @@ transient cache do not themselves invoke durable ingestion.
 See the [canonical GPT package](ARCANOS_GAMING_CUSTOM_GPT.md) for the exact
 schema/instruction paths and deployment-before-activation procedure.
 
-This PR updates repository schemas only. After a separately authorized backend
-release, open the deployed Gaming Custom GPT in **Edit GPT → Configure →
-Actions**, select its existing ARCANOS Gaming Action, and replace its schema with
-the complete contents of `contracts/arcanos_gaming.openapi.v1.json`. Preserve
-the existing server URL, authentication, and access scope, then save/update the
-GPT. If it uses the generic router Action instead, refresh from
-`contracts/custom_gpt_route.openapi.v1.json`. This repository PR does not perform
-that manual configuration change or authorize backend promotion.
+The advisory-currentness change preserves `gaming-hybrid-v1` and its existing
+response fields. It requires no installed Gaming plugin or approved skill edit.
+Storage authorization, consequential-write confirmation and the exact eight-tool
+Gaming MCP boundary remain unchanged. Coding and offline validation do not
+authorize backend promotion or live Gaming calls.
+
+### Post-merge live acceptance (separate authorization)
+
+Do not execute this case in the currentness PR. After merge, obtain separate
+deployment authorization and deploy the reviewed backend revision before the
+live acceptance call. Preserve the configured integration, approved skill,
+authentication and storage policy.
+
+1. Submit question **“bleed Samurai build”**, game **Elden Ring**, mode **build**
+   through the normal actor-bound `gaming-hybrid-v1` workflow.
+2. Relevant gameplay guides may be accepted only after actual acquisition,
+   coverage and CLEAR pass. Confirm provider generation does not occur before
+   those gameplay requirements pass.
+3. Continue the requested official-currentness operation with the same workflow,
+   its own idempotency key and the returned reviewed source hints. Confirm one
+   gameplay discovery round, one currentness round and at most three source slots
+   per operation; do not restart discovery to acquire another round.
+4. If official currentness succeeds and guide applicability is verified, expect
+   `answer_ready` with verified freshness and accepted source citations.
+5. If official currentness again fails solely because it cannot be verified,
+   expect provider generation from the accepted gameplay evidence, followed by
+   `answer_ready`, `nextAction: answer`, `evidenceSelected: true`, unverified or
+   stale freshness, and applicability other than `verified_current`. The answer
+   must prominently say **current patch compatibility could not be verified**
+   and the advice **may be outdated**; known stale evidence must carry the stronger
+   stale warning. It must not claim the answer is current or latest-patch compatible.
+6. Preserve citations and known guide dates/patches, distinguish recommendations
+   from official patch evidence, and confirm no durable ingestion occurs without
+   the existing separate storage consent and consequential-write confirmation.
+   Any material conflict, failed gameplay coverage, required-guide failure or
+   actual generation failure must retain the existing honest blocking outcome.
+
+Record the deployed SHA and workflow outcome for this separate acceptance task.
+An offline regression proves service behavior, not live extraction or provider
+compliance; no deployment or production Gaming call is part of this PR.
 
 ## Gaming CLEAR (`gaming-clear/v1`)
 
@@ -457,7 +553,10 @@ compensates for a failed floor or a material blocking finding. Identity,
 compatibility, adequate claim support, provenance and acquisition security must
 be verified. Freshness can be not applicable for stable claims or for a source
 contributing only patch authority/currentness/corroboration; the assembled
-current evidence and answer must still independently satisfy freshness.
+evidence and answer must satisfy the semantic disposition above. An advisory
+recommendation may pass with unverified/stale freshness only when its gameplay
+support independently passes and its uncertainty is explicit. A current-state
+answer still requires verified freshness.
 All five dimensions are required in v1; dimension-level `not_applicable` is
 reserved and rejected, preventing removal of an inconvenient dimension.
 

@@ -14,7 +14,7 @@ import { runGamingHybridKnowledgePreview } from './shared/gaming/gamingHybridKno
 import { runGamingClearPreview } from './shared/gaming/gamingClearPreviewFixture.js';
 import { runGamingSourceAcquisitionPreview } from './shared/gaming/gamingSourceAcquisitionPreviewFixture.js';
 import { runGamingStructuredEvidencePreview } from './shared/gaming/gamingStructuredEvidencePreviewFixture.js';
-import { runGamingCurrentnessPreview } from './shared/gaming/gamingCurrentnessPreviewFixture.js';
+import { runGamingCurrentnessPreview, GAMING_ADVISORY_FRESHNESS_PREVIEW_VERSION } from './shared/gaming/gamingCurrentnessPreviewFixture.js';
 import {
   createIosGatewayPreviewFixture,
   IOS_GATEWAY_PREVIEW_CONTRACT,
@@ -10117,6 +10117,10 @@ export function createNativePrPreviewApplication(
           response.setHeader(
             NATIVE_PR_PREVIEW_GAMING_CONTRACT.currentnessContinuationProofHeader,
             NATIVE_PR_PREVIEW_GAMING_CONTRACT.currentnessContinuationProofVersion
+          );
+          response.setHeader(
+            NATIVE_PR_PREVIEW_GAMING_CONTRACT.advisoryFreshnessProofHeader,
+            GAMING_ADVISORY_FRESHNESS_PREVIEW_VERSION
           );
           response.setHeader(
             NATIVE_PR_PREVIEW_GAMING_CONTRACT.structuredEvidenceProofHeader,

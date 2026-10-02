@@ -165,6 +165,49 @@ describe('Gaming CLEAR bounded evidence decisions', () => {
     checked.selectedEvidenceIds = ['unrelated'];
     expect(assessGamingClearEvidence(input, set.data, { now, freshness: checked }).decision).not.toBe('accept');
   });
+
+  test('the internal advisory grant preserves gameplay coverage with an honestly unknown freshness gate', () => {
+    const input = { game: 'Elden Ring', mode: 'build' as const, prompt: 'Which copper staff build should I use?' };
+    const data = knowledge(input.game, ['For the copper staff build, equip the copper staff before the shield.']);
+    expect(run(input, data).decision).not.toBe('accept');
+    const accepted = assessGamingClearEvidence(input, data, { now, allowAdvisoryFreshness: true });
+    expect(accepted).toMatchObject({ decision: 'accept', policyProfile: 'gaming-clear-policy/v1:advisory_recommendation:evidence',
+      gates: { freshness: 'unknown', claimSupport: 'verified', provenance: 'verified' } });
+    expect(accepted.findings).toContainEqual(expect.objectContaining({ code: 'ADVISORY_FRESHNESS_UNVERIFIED', severity: 'warning' }));
+    expect(assessGamingClearEvidence({ ...input, prompt: 'Which sapphire wand build should I use?' }, data,
+      { now, allowAdvisoryFreshness: true }).decision).not.toBe('accept');
+  });
+
+  test('expired but otherwise usable gameplay intervals may be qualified without changing source metadata', () => {
+    const input = { game: 'Elden Ring', mode: 'build' as const, prompt: 'Which copper staff build should I use?' };
+    const data = knowledge(input.game, ['For the copper staff build, equip the copper staff before the shield.']);
+    data.sources[0].freshnessMetadata = { ...freshness(input.game, 0, { effectiveUntil: '2026-09-09T00:00:00Z' }) };
+    const before = JSON.stringify(data);
+    expect(assessGamingClearEvidence(input, data, { now, allowAdvisoryFreshness: true })).toMatchObject({
+      decision: 'accept', gates: { compatibility: 'verified', freshness: 'unknown' } });
+    expect(JSON.stringify(data)).toBe(before);
+  });
+
+  test.each(['Are the servers down now?', 'What is the latest Elden Ring patch?'])('an advisory flag cannot waive requested current-state proof: %s', prompt => {
+    const input = { game: 'Elden Ring', mode: 'guide' as const, prompt };
+    const data = knowledge(input.game, [`Elden Ring gameplay guide: ${prompt} The synthetic old source discusses servers and patch 1.0.`]);
+    expect(assessGamingClearEvidence(input, data, { now, allowAdvisoryFreshness: true }).decision).not.toBe('accept');
+  });
+
+  test('advisory freshness never softens contradictory mechanics or known official mechanic changes', () => {
+    const input = { game: 'Elden Ring', mode: 'build' as const, prompt: 'Which copper staff build should I use?' };
+    const data = knowledge(input.game, ['The copper staff build adds two shield points.', 'The copper staff build adds three shield points.']);
+    data.sources.forEach((source, index) => { source.freshnessMetadata = { ...freshness(input.game, index), mechanicValues: { 'staff shield points': String(index + 2) } }; });
+    expect(assessGamingClearEvidence(input, data, { now, allowAdvisoryFreshness: true })).toMatchObject({
+      decision: 'reject', blockingFindings: expect.arrayContaining([expect.objectContaining({ code: 'CONTRADICTORY_EVIDENCE' })]) });
+    const changed = currentSet(input.game, 'For the copper staff build, equip the copper staff before the shield.');
+    const evaluated = evaluateGamingFreshness({ game: input.game, mode: input.mode, question: input.prompt, evidence: changed.metadata, now });
+    evaluated.usable = false;
+    evaluated.status = 'stale';
+    evaluated.reasons.push('CURRENT_UPDATE_CHANGES_GUIDE_MECHANIC');
+    expect(assessGamingClearEvidence(input, changed.data, { now, freshness: evaluated, allowAdvisoryFreshness: true })).toMatchObject({
+      decision: 'reject', blockingFindings: expect.arrayContaining([expect.objectContaining({ code: 'CURRENT_UPDATE_CHANGES_GUIDE_MECHANIC' })]) });
+  });
 });
 
 // Synthetic passages are invented evaluation data, not real gameplay guidance.

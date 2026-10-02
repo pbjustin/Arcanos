@@ -297,6 +297,8 @@ export interface NativePrPreviewE2eContract {
     currentnessProofVersion: 'gaming-currentness/v1';
     currentnessContinuationProofHeader: 'x-arcanos-preview-gaming-currentness-continuation-version';
     currentnessContinuationProofVersion: 'gaming-currentness-continuation/v1';
+    advisoryFreshnessProofHeader: 'x-arcanos-preview-gaming-advisory-freshness-version';
+    advisoryFreshnessProofVersion: 'gaming-advisory-freshness/v1';
     game: 'Palworld';
     fixtures: Readonly<{
       guide: 'sealed-preview-guide';
