@@ -70,6 +70,28 @@ describe('Gaming final-answer CLEAR assessment', () => {
     expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    'This guide has not been updated for the latest patch.',
+    'This build has not been tested on the current patch.'
+  ])('audits honest advisory uncertainty without treating it as an affirmative claim: %s', async qualification => {
+    const advisory = createGamingClearAssessment({ ...evidenceAssessment, questionProfile: 'advisory_recommendation',
+      evidenceRefs: refs, dimensions: dimensions(), gates: { ...evidenceAssessment.gates, freshness: 'unknown' } });
+    const result = await run({ mode: 'build', prompt: 'Which return route strategy should I use?', evidenceAssessment: advisory,
+      answer: `${GAMING_UNVERIFIED_GUIDE_WARNING}\n\n${input.answer} ${qualification}` });
+    expect(result.assessment).toMatchObject({ assessmentStatus: 'completed', decision: 'accept', gates: { freshness: 'unknown' } });
+    expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
+  });
+
+  it('still rejects an affirmative currentness clause after an honest uncertainty clause', async () => {
+    const advisory = createGamingClearAssessment({ ...evidenceAssessment, questionProfile: 'advisory_recommendation',
+      evidenceRefs: refs, dimensions: dimensions(), gates: { ...evidenceAssessment.gates, freshness: 'unknown' } });
+    const result = await run({ mode: 'build', prompt: 'Which return route strategy should I use?', evidenceAssessment: advisory,
+      answer: `${GAMING_UNVERIFIED_GUIDE_WARNING}\n\n${input.answer} This guide has not been updated for the latest patch, but this build works on the current patch.` });
+    expect(result.assessment).toMatchObject({ decision: 'reject',
+      blockingFindings: expect.arrayContaining([expect.objectContaining({ code: 'UNSUPPORTED_CURRENTNESS_CLAIM' })]) });
+    expect(createSingleChatCompletion).not.toHaveBeenCalled();
+  });
+
   it.each([input.answer, ...[
     'This build is verified current.', 'Here is a current Samurai bleed build.',
     'This up-to-date Samurai bleed build is recommended.', 'The current patch is 1.0.',

@@ -133,6 +133,7 @@ const dateValue = (value: string | undefined): string | undefined => {
 export function classifyGamingQuestionFreshness(input: { prompt: string; mode?: string; requestedVersion?: string }): GamingQuestionFreshness {
   const prompt = input.prompt.slice(0, 8_000);
   if (/\b(?:server\s+(?:status|outage|maintenance|down)|servers?\s+(?:are\s+)?(?:down|offline)|outage|login\s+(?:issues?|problems?)|maintenance\s+(?:now|today)|live\s+status|current\s+event\s+status)\b/iu.test(prompt)
+    || /\bmaintenance\b[^?!.\n]{0,40}\b(?:end(?:s|ed)?|start(?:s|ed)?|begin(?:s)?|finish(?:es|ed)?|scheduled)\b[^?!.\n]{0,30}\b(?:now|today|currently|tonight|tomorrow)\b/iu.test(prompt)
     || /\b(?:is|are)\b.{0,100}\b(?:event|maintenance|servers?)\b.{0,60}\b(?:active|running|available|online|offline|down|live|over|ongoing|today|now)\b/iu.test(prompt)
     || /\b(?:event|maintenance|servers?)\b.{0,40}\b(?:is|are|still)\s+(?:still\s+)?(?:active|running|available|online|offline|down|live|over|ongoing)\b/iu.test(prompt)
     || /\b(?:event|maintenance)\b.{0,40}\b(?:has|have|is)\s+(?:already\s+|now\s+)?(?:end(?:ed)?|finish(?:ed)?|begun|started|cancelled|canceled|postponed)\b/iu.test(prompt)

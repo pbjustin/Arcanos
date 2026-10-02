@@ -136,6 +136,34 @@ describe('advisory Gaming currentness keeps strict evidence boundaries', () => {
     expect(result.body.answer).toBeUndefined();
     expect(test.generate).toHaveBeenCalledTimes(1);
   });
+
+  it('keeps a mixed patch-notes request blocking after currentness extraction fails', async () => {
+    const test = setup();
+    const datedNotes = `${passage} This guide can inform a recommendation and summarize dated patch notes from patch 1.10. The notes describe katana bleed changes; latest patch applicability is unknown.`;
+    test.guide.document.text = datedNotes;
+    test.knowledge.sources[0].snippet = datedNotes;
+    test.knowledge.evidence![0].text = datedNotes;
+    const initial = await test.workflow.query({ ...query,
+      question: 'Recommend a bleed Samurai build and summarize the latest patch notes.' }, actor);
+    const gameplay = await test.workflow.candidates(test.submit(initial.body.workflowId!, 'gameplay_evidence'), actor);
+    expect(gameplay.body.nextAction).toBe('verify_currentness');
+    const result = await test.workflow.candidates(test.submit(initial.body.workflowId!, 'currentness_verification'), actor);
+    expect(result.body.nextAction).toBe('stop');
+    expect(result.body.answer).toBeUndefined();
+    expect(test.generate).not.toHaveBeenCalled();
+  });
+
+  it('retains an honest passive freshness qualification after the bounded attempt', async () => {
+    const test = setup();
+    test.generate.mockImplementation(async (_input: unknown, prepared: any) => ({ ok: true, route: 'gaming', mode: 'build',
+      data: { response: 'This build has not been tested on the current patch. Use the cited Samurai bleed build. [1]',
+        sources: prepared.knowledge.sources, grounding: { groundingStatus: 'grounded' } } } as any));
+    const { result } = await continueCurrentness(test);
+    expect(result.body).toMatchObject({ state: 'answer_ready', nextAction: 'answer', evidenceSelected: true,
+      freshnessStatus: 'unverified' });
+    expect(result.body.answer?.response).toContain('has not been tested on the current patch');
+    expect(test.generate).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('current state facts retain REQUIRED freshness inside recommendation requests', () => {
@@ -164,7 +192,8 @@ describe('advisory warning cannot coexist with affirmative currentness claims', 
     'This build is verified current.',
     'This Samurai bleed build is current.',
     'These katana recommendations are up to date.',
-    'This Samurai bleed build remains latest-patch compatible.'
+    'This Samurai bleed build remains latest-patch compatible.',
+    'The guide has not been updated for the latest patch, but this build works on the latest patch.'
   ])('rejects: %s', answer => {
     expect(gamingAnswerClaimsVerifiedCurrentness(answer)).toBe(true);
   });
@@ -172,6 +201,9 @@ describe('advisory warning cannot coexist with affirmative currentness claims', 
     'Current patch compatibility could not be verified. These recommendations may be outdated.',
     'The available guide describes patch 1.10; compatibility with the current patch has not been established.',
     'These recommendations are not verified current.',
+    'This build has not been tested on the current patch.',
+    'The guide has not been updated for the latest patch.',
+    'The guide has never been verified compatible with the latest patch.',
     'Use the Samurai bleed build described in the cited guide.',
     'This guide is not current.'
   ])('permits honest qualification: %s', answer => {

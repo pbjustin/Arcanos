@@ -17,10 +17,17 @@ export function resolveGamingFreshnessDisposition(input: { prompt: string; mode?
     && /\b(?:current|latest|active|live|running|now|today)\b/iu.test(identityStatePredicate)
     && !/\b(?:best|better|good|viable|effective|optimal|works?|recommended|should)\b/iu.test(identityBeforeState[1] + identityStatePredicate));
   const currentRelease = /\b(?:current|latest|newest|active)\b[^?!.\n]{0,80}\b(?:patch|hotfix|update|release|version)\b/iu.test(prompt);
+  const currentStateRequest = prompt.split(/[?!.;\n]|\b(?:and|but|then)\b/iu).some(clause => {
+    const object = /\b(?:tell\s+me|show\s+me|identify|list|summarize|describe|explain|report)\s+(?:the\s+)?((?:current|latest|newest|active)\b.{0,120})/iu.exec(clause)?.[1] ?? '';
+    return /\b(?:patch|hotfix|update|release)\s+(?:notes|changes|details|number|version|identity)\b/iu.test(object)
+      || /\b(?:patch|hotfix|update|release|version|season|league|event)\b/iu.test(object)
+      && !/\b(?:build|loadout|strategy|guide|weapons?|class|meta|recommend(?:ation|ations)?|tactics?)\b/iu.test(object);
+  });
   if (classification === 'live_status'
     || /\b(?:as\s+of|historical|previous\s+patch|old\s+patch)\b/iu.test(prompt)
     || asksIdentity
     || asksActiveIdentity
+    || currentStateRequest
     || currentRelease && !/\b(?:build|loadout|strategy|guide|weapons?|class|meta|recommend(?:ation|ations)?|tactics?)\b/iu.test(prompt)
     || currentRelease && /\b(?:tell\s+me|show\s+me|identify|list)\s+(?:the\s+)?(?:current|latest|newest|active)\b|\bwhat\s+(?:changed|changes)\b|\bpatch\s+(?:number|version)\b/iu.test(prompt)
     || /\b(?:current|latest)\b[^?!.\n]{0,80}\bbuild\s+(?:number|version)\b/iu.test(prompt)
@@ -38,7 +45,7 @@ export const GAMING_STALE_GUIDE_WARNING = 'The available grounded guide evidence
 /** Obvious affirmative freshness claims are forbidden on qualified recommendations. */
 export function gamingAnswerClaimsVerifiedCurrentness(answer: string): boolean {
   const text = answer.replaceAll(GAMING_UNVERIFIED_GUIDE_WARNING, '').replaceAll(GAMING_STALE_GUIDE_WARNING, '')
-    .replace(/\b(?:not|never)\s+(?:verified|confirmed|proven|guaranteed|compatible|tested|updated|optimized)\b/giu, 'unverified');
+    .replace(/\b(?:not|never)\s+(?:(?:yet|been|be)\s+){0,2}(?:(?:verified|confirmed|proven|guaranteed)(?:\s+(?:(?:to\s+be|as)\s+)?compatible)?|compatible|tested|updated|optimized)\b/giu, 'unverified');
   return /\b(?:verified|confirmed|proven|guaranteed)(?:\s+(?:to\s+be|as))?\s+(?:current|up[- ]to[- ]date|compatible\s+with\s+(?:the\s+)?(?:latest|current)\s+patch)\b/iu.test(text)
     || /\b(?:this|the|these|my|our)\s+(?:[\p{L}\p{N}'’-]+\s+){0,6}(?:build|guide|recommendations?|advice|loadout|strategy)\s+(?:is|are|remains?)\s+(?:verified\s+)?(?:current|up[- ]to[- ]date|(?:latest|current)[- ]patch\s+compatible)\b/iu.test(text)
     || /\b(?:this|the|these|my|our)\s+(?:build|guide|recommendations?|advice|loadout|strategy)\s+(?:(?:is|are|remains?)\s+)?(?:verified\s+)?(?:current|up[- ]to[- ]date)\b/iu.test(text)
