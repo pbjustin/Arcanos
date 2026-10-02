@@ -259,6 +259,18 @@ export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
       downstreamCalls: 'x-arcanos-preview-status-downstream-calls',
     }),
   }),
+  heartbeatIngress: Object.freeze({
+    path: '/heartbeat/ingress-contract',
+    fixtures: Object.freeze({
+      authParserQuota: 'auth-parser-quota',
+    }),
+    bodyLimitBytes: 4_096,
+    maxRequests: 60,
+    maxResponseBytes: 8_192,
+    requiredScope: 'mcp:invoke',
+    proofHeader: 'x-arcanos-preview-heartbeat-ingress-version',
+    proofVersion: 'heartbeat-http-boundary/v1',
+  }),
   selfHealApproval: Object.freeze({
     path: '/self-heal/approval-contract',
     fixtures: Object.freeze({

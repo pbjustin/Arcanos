@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-02T18:51:07.366Z",
+  "generatedAt": "2026-10-02T23:23:51.222Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -1800,6 +1800,9 @@
         },
         {
           "relativePath": "src/services/controlPlane/gptPolicy.ts"
+        },
+        {
+          "relativePath": "src/services/controlPlane/heartbeatHttpBoundary.ts"
         },
         {
           "relativePath": "src/services/controlPlane/httpAuth.ts"
@@ -4688,6 +4691,9 @@
         },
         {
           "relativePath": "tests/gptRouteTimeout.test.ts"
+        },
+        {
+          "relativePath": "tests/heartbeat-http-boundary.test.ts"
         },
         {
           "relativePath": "tests/helpers/gptAccessDeviceRepository.ts"

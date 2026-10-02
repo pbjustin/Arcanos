@@ -15,7 +15,7 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 5_000;
 const DEFAULT_TOTAL_TIMEOUT_MS = 60_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 64 * 1024;
 const MAX_AGGREGATE_RESPONSE_BYTES = 512 * 1024;
-const MAX_REQUESTS = 165;
+const MAX_REQUESTS = 171;
 const MAX_BACKSTAGE_BOOKER_OPENAPI_SOURCE_BYTES = 128 * 1024;
 const BACKSTAGE_BOOKER_OPENAPI_GIT_PATH =
   'contracts/backstage_booker.openapi.v1.json';
@@ -507,6 +507,60 @@ function statusAuthBoundaryCase(caseId, fixtureName) {
     role: 'web',
     simulatedAuth: true,
   };
+}
+
+function buildHeartbeatIngressRequestCases() {
+  const contract = NATIVE_PR_PREVIEW_E2E_CONTRACT.heartbeatIngress;
+  const body = { fixture: contract.fixtures.authParserQuota };
+  const denied = (suffix, overrides = {}) => ({
+    body,
+    caseId: `web-heartbeat-ingress-${suffix}-denied`,
+    expectedStatus: 404,
+    expectedType: 'not-found',
+    heartbeatIngressAdmission: 'denied',
+    method: 'POST',
+    path: contract.path,
+    pathTemplate: contract.path,
+    role: 'web',
+    ...overrides,
+  });
+  return [
+    {
+      body,
+      boundedResponse: true,
+      caseId: 'heartbeat-ingress-auth-parser-quota',
+      expectedStatus: 200,
+      expectedType: 'heartbeat-ingress-contract',
+      fixture: contract.fixtures.authParserQuota,
+      fixtureName: 'authParserQuota',
+      heartbeatIngressAdmission: 'admitted',
+      method: 'POST',
+      path: contract.path,
+      pathTemplate: contract.path,
+      role: 'web',
+      simulatedAuth: true,
+    },
+    denied('query', { path: `${contract.path}?fixture=auth-parser-quota` }),
+    denied('authorization', {
+      headers: { authorization: 'Bearer mock-preview-invalid-credential' },
+    }),
+    denied('invalid-selector', {
+      body: { fixture: 'unlisted-heartbeat-fixture' },
+      boundedResponse: true,
+      expectedStatus: 400,
+      expectedType: 'heartbeat-ingress-invalid',
+    }),
+    denied('extra-field', {
+      body: { ...body, callerOverride: true },
+      boundedResponse: true,
+      expectedStatus: 400,
+      expectedType: 'heartbeat-ingress-invalid',
+    }),
+    denied('worker', {
+      caseId: 'worker-heartbeat-ingress-denied',
+      role: 'worker',
+    }),
+  ];
 }
 
 function selfHealApprovalCase(caseId, fixtureName) {
@@ -1633,6 +1687,7 @@ export function buildNativePrPreviewRequestPlan() {
       pathTemplate: NATIVE_PR_PREVIEW_E2E_CONTRACT.statusAuthBoundary.path,
       role: 'worker',
     },
+    ...buildHeartbeatIngressRequestCases(),
     ...buildChatGptTutorRequestCases(),
     {
       caseId: 'web-readiness-final',
@@ -3506,6 +3561,74 @@ function expectedGamingSourcePayload(requestCase) {
 const DISPATCH_GPT_IDENTIFIER_TIMESTAMP_SENTINEL =
   '<validated-iso-8601-timestamp>';
 
+function expectedHeartbeatIngressContractPayload(requestCase, options) {
+  const contract = NATIVE_PR_PREVIEW_E2E_CONTRACT.heartbeatIngress;
+  if (requestCase.fixtureName !== 'authParserQuota') {
+    fail('NATIVE_PR_PREVIEW_CASE_CONTRACT_INVALID', requestCase.caseId);
+  }
+  const outcome = (name, statusCode, errorCode, bodyBytes, bodyBytesRead,
+    downstreamCalls = 0, remaining = 59) => ({
+    name, statusCode, errorCode, bodyBytes, bodyBytesRead, downstreamCalls, remaining,
+  });
+  return {
+    accepted: true,
+    confirmationAttempted: false,
+    databaseBoundaryReached: false,
+    durablePersistenceAttempted: false,
+    effectsBoundaryReached: false,
+    filesystemBoundaryReached: false,
+    fixture: contract.fixtures.authParserQuota,
+    identity: { prNumber: options.prNumber, sourceCommit: options.commitSha },
+    loggerSinkExecuted: false,
+    memoryBoundaryReached: false,
+    networkBoundaryReached: false,
+    normalRouteExecuted: false,
+    protectedEffectsEnabled: false,
+    providerBoundaryReached: false,
+    schemaVersion: 1,
+    heartbeatIngress: {
+      authBeforeParser: true,
+      bodyLimitBytes: contract.bodyLimitBytes,
+      callerBodyControlsProbe: false,
+      caseCount: 14,
+      cases: [
+        outcome('unavailable-config-over', 503, 'CONTROL_PLANE_AUTH_UNAVAILABLE', 4097, 0, 0, null),
+        outcome('missing-auth-over', 401, 'CONTROL_PLANE_AUTH_REQUIRED', 4097, 0, 0, null),
+        outcome('invalid-auth-over', 401, 'CONTROL_PLANE_AUTH_REQUIRED', 4097, 0, 0, null),
+        outcome('read-scope-over', 403, 'CONTROL_PLANE_SCOPE_DENIED', 4097, 0),
+        outcome('known-length-exact', 204, null, 4096, 4096, 1),
+        outcome('known-length-over', 413, 'HEARTBEAT_REQUEST_INVALID', 4097, 4097),
+        outcome('chunked-exact', 204, null, 4096, 4096, 1),
+        outcome('chunked-over', 413, 'HEARTBEAT_REQUEST_INVALID', 4097, 4097),
+        outcome('malformed', 400, 'HEARTBEAT_REQUEST_INVALID', 1, 1),
+        outcome('scalar', 400, 'HEARTBEAT_REQUEST_INVALID', 8, 8),
+        outcome('vendor-json', 204, null, 2, 2, 1),
+        outcome('unsupported-media', 415, 'HEARTBEAT_REQUEST_INVALID', 2, 0),
+        outcome('compressed', 415, 'HEARTBEAT_REQUEST_INVALID', 2, 0),
+        outcome('duplicate-media', 415, 'HEARTBEAT_REQUEST_INVALID', 2, 0),
+      ],
+      componentExecuted: true,
+      quota: {
+        maxRequests: contract.maxRequests,
+        invalidBearerAttempts: 3,
+        acceptedBodies: 30,
+        malformedBodies: 30,
+        idempotentBoundaryApplications: 3,
+        firstRemaining: 59,
+        lastRemaining: 0,
+        limitedStatus: 429,
+        limitedBodyBytesRead: 0,
+        limitedDownstreamCalls: 0,
+        retryAfterPresent: true,
+        callerIdentityChangesIgnored: true,
+      },
+      requiredScope: contract.requiredScope,
+      serverOwnedBodies: true,
+      syntheticAuthentication: true,
+    },
+  };
+}
+
 function expectedStatusAuthBoundaryContractPayload(requestCase, options) {
   const contract = NATIVE_PR_PREVIEW_E2E_CONTRACT.statusAuthBoundary;
   if (requestCase.fixtureName !== 'authBeforeParser') {
@@ -3903,6 +4026,10 @@ export function expectedNativePrPreviewResponseBody(requestCase, options) {
       return expectedDispatchGptIdentifierContractPayload(requestCase);
     case 'status-auth-boundary-contract':
       return expectedStatusAuthBoundaryContractPayload(requestCase, options);
+    case 'heartbeat-ingress-contract':
+      return expectedHeartbeatIngressContractPayload(requestCase, options);
+    case 'heartbeat-ingress-invalid':
+      return { error: 'PREVIEW_HEARTBEAT_INGRESS_FIXTURE_INVALID' };
     case 'self-heal-approval-contract':
       return expectedSelfHealApprovalContractPayload(requestCase);
     case 'gaming-canary':
@@ -4498,6 +4625,7 @@ async function executeRequestCase(
       requestCase.expectedType === 'gaming-source'
       || requestCase.expectedType === 'dispatch-gpt-identifier-contract'
       || requestCase.expectedType === 'status-auth-boundary-contract'
+      || requestCase.expectedType === 'heartbeat-ingress-contract'
     )
     && response.headers.get('pragma') !== 'no-cache'
   ) {
@@ -4512,6 +4640,7 @@ async function executeRequestCase(
       || requestCase.expectedType === 'backstage-generation-contract'
       || requestCase.expectedType === 'dispatch-gpt-identifier-contract'
       || requestCase.expectedType === 'status-auth-boundary-contract'
+      || requestCase.expectedType === 'heartbeat-ingress-contract'
       || requestCase.expectedType === 'self-heal-approval-contract'
       || requestCase.expectedType === 'generative-model-policy-contract'
       || requestCase.expectedType === 'session-scope-contract'
@@ -4864,6 +4993,17 @@ async function executeRequestCase(
       );
     }
   }
+  if (requestCase.heartbeatIngressAdmission !== undefined) {
+    const contract = NATIVE_PR_PREVIEW_E2E_CONTRACT.heartbeatIngress;
+    const admitted = requestCase.heartbeatIngressAdmission === 'admitted';
+    if ((admitted
+      ? response.headers.get(contract.proofHeader) !== contract.proofVersion
+      : response.headers.has(contract.proofHeader)
+        || response.headers.has(NATIVE_PR_PREVIEW_E2E_CONTRACT.syntheticResponseHeader.name))
+      || response.headers.has('x-response-truncated')) {
+      fail('NATIVE_PR_PREVIEW_HEARTBEAT_INGRESS_PROOF_INVALID', requestCase.caseId);
+    }
+  }
 
   const bodyBytes = await readBoundedResponseBody(
     response,
@@ -4910,6 +5050,11 @@ async function executeRequestCase(
       'NATIVE_PR_PREVIEW_STATUS_AUTH_BOUNDARY_RESPONSE_TOO_LARGE',
       requestCase.caseId
     );
+  }
+  if ((requestCase.expectedType === 'heartbeat-ingress-contract'
+    || requestCase.expectedType === 'heartbeat-ingress-invalid')
+    && bodyBytes.length > NATIVE_PR_PREVIEW_E2E_CONTRACT.heartbeatIngress.maxResponseBytes) {
+    fail('NATIVE_PR_PREVIEW_HEARTBEAT_INGRESS_RESPONSE_TOO_LARGE', requestCase.caseId);
   }
   validateResponseBody(requestCase, bodyBytes, options);
   if (
@@ -5041,6 +5186,12 @@ async function executeRequestCase(
       : {}),
     ...(requestCase.expectedType === 'status-auth-boundary-contract'
       ? { statusAuthBoundaryVerified: true }
+      : {}),
+    ...(requestCase.expectedType === 'heartbeat-ingress-contract'
+      ? {
+          heartbeatIngressVerified: true,
+          heartbeatIngressProofVersion: NATIVE_PR_PREVIEW_E2E_CONTRACT.heartbeatIngress.proofVersion,
+        }
       : {}),
     ...(requestCase.expectedType === 'backstage-booker-openapi'
       ? { backstageBookerOpenApiVerified: true }

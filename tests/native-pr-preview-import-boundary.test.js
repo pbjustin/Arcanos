@@ -1244,6 +1244,32 @@ describe('native PR preview import boundary', () => {
     }
   });
 
+  it('pins the exact heartbeat ingress boundary without admitting its effects-bearing route', async () => {
+    const filePath = 'src/services/controlPlane/heartbeatHttpBoundary.ts';
+    const source = (await readFile(new URL(`../${filePath}`, import.meta.url), 'utf8'))
+      .replace(/\r\n?/gu, '\n');
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).toContain(filePath);
+    for (const forbidden of ['src/app.ts', 'src/routes/heartbeat.ts',
+      'src/transport/http/middleware/confirmGate.ts', 'src/platform/logging/structuredLogging.ts']) {
+      expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toContain(forbidden);
+    }
+    expect(findUnsafeRuntimeSyntax(filePath, source)).toEqual([]);
+    expect(findUnsafeRuntimeSyntax(filePath, source.replace(/\n/gu, '\r\n'))).toEqual([]);
+    for (const [original, replacement] of [
+      ['4 * 1024', '5 * 1024'],
+      ['inflate: false', 'inflate: true'],
+      ["requireControlPlaneHttpScopes(['mcp:invoke']", "requireControlPlaneHttpScopes(['arcanos:read']"],
+      ['options.maxRequests ?? 60', 'options.maxRequests ?? 61'],
+    ]) {
+      expect(findUnsafeRuntimeSyntax(filePath, replaceRequired(source, original, replacement))).toEqual(
+        expect.arrayContaining([expect.stringContaining('critical entry file semantic digest')])
+      );
+    }
+    expect(findUnsafeRuntimeSyntax(filePath, `${source}\nconst unreviewed = process.env;`)).toEqual(
+      expect.arrayContaining([expect.stringContaining('critical entry file semantic digest')])
+    );
+  });
+
   it('admits and pins only the production status auth and body-parser seam', async () => {
     const reviewedFiles = [
       'src/platform/runtime/security.ts',

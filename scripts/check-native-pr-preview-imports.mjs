@@ -68,6 +68,7 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/services/gamingGameDetection.ts',
   'src/services/backstageBookerClear.ts',
   'src/services/controlPlane/httpAuth.ts',
+  'src/services/controlPlane/heartbeatHttpBoundary.ts',
   'src/services/controlPlane/systemStateBodyParser.ts',
   'src/services/controlPlane/systemStateHttpBoundary.ts',
   'src/services/directAnswerMode.ts',
@@ -214,7 +215,7 @@ const FORBIDDEN_LOCAL_IMPORT_PATTERNS = [
   /^src\/routes\/jobs\.ts$/u,
   /^src\/routes\/modules\.ts$/u,
   /^src\/routes\/register\.ts$/u,
-  /^src\/services\/(?!(?:(?:backstageBookerClear|directAnswerMode|gamingModes|gamingDocumentExtraction|gamingDocumentEvidence|gamingHtmlEvidence|gamingJsonEvidence|gamingDocumentChunks|gamingDurableDocumentChunks|gamingGameDetection|gamingPublicDispatcher|publicGamingCanary|publicGamingCanaryFixture|queuedJobCompletionPolling)\.ts$|openai\/attemptTokenUsage\.ts$|actionPlanExecution\/canonical\.ts$|controlPlane\/(?:httpAuth|systemStateBodyParser|systemStateHttpBoundary|types)\.ts$))/u,
+  /^src\/services\/(?!(?:(?:backstageBookerClear|directAnswerMode|gamingModes|gamingDocumentExtraction|gamingDocumentEvidence|gamingHtmlEvidence|gamingJsonEvidence|gamingDocumentChunks|gamingDurableDocumentChunks|gamingGameDetection|gamingPublicDispatcher|publicGamingCanary|publicGamingCanaryFixture|queuedJobCompletionPolling)\.ts$|openai\/attemptTokenUsage\.ts$|actionPlanExecution\/canonical\.ts$|controlPlane\/(?:httpAuth|heartbeatHttpBoundary|systemStateBodyParser|systemStateHttpBoundary|types)\.ts$))/u,
   /^src\/shared\/http\/index\.ts$/u,
   /^src\/shared\/http\/middleware\.ts$/u,
   /^src\/transport\/http\/middleware\//u,
@@ -403,6 +404,12 @@ const FILE_SPECIFIC_EXTERNAL_IMPORT_BINDINGS = new Map([
     'src/platform/runtime/security.ts',
     new Map([
       ['node:crypto', new Set(['default:crypto'])],
+    ]),
+  ],
+  [
+    'src/services/controlPlane/heartbeatHttpBoundary.ts',
+    new Map([
+      ['express', new Set(['default:express'])],
     ]),
   ],
   [
@@ -1112,6 +1119,10 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
     '09075362c98cfa17d157ed83be7601d430b9171106de2e69153379ff8667a447',
   ],
   [
+    'src/services/controlPlane/heartbeatHttpBoundary.ts',
+    '1a09aed697274496d208c57cddf47bdc2ace3a21cbc38f57c1ed3f31f9bdab8a',
+  ],
+  [
     'src/services/controlPlane/systemStateHttpBoundary.ts',
     'b6f69af614c4a008337a54e9ea1bebf59cd11c799c41b2c4d28b0aa13a0f6c47',
   ],
@@ -1126,8 +1137,10 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
 ]);
 const REVIEWED_STATUS_AUTH_DYNAMIC_CALL_FILE =
   'src/services/controlPlane/httpAuth.ts';
-const REVIEWED_STATUS_AUTH_CAPABILITY_REFERENCE_FILE =
-  'src/services/controlPlane/systemStateHttpBoundary.ts';
+const REVIEWED_HTTP_BOUNDARY_CAPABILITY_REFERENCE_FILES = new Set([
+  'src/services/controlPlane/systemStateHttpBoundary.ts',
+  'src/services/controlPlane/heartbeatHttpBoundary.ts',
+]);
 const FORBIDDEN_AMBIENT_IDENTIFIER_NAMES = new Set([
   'EventSource',
   'Function',
@@ -4973,7 +4986,7 @@ export function findUnsafeRuntimeSyntax(filePath, sourceText) {
     && filePath === REVIEWED_STATUS_AUTH_DYNAMIC_CALL_FILE;
   const allowsReviewedStatusAuthCapabilityReference =
     hasExactReviewedEntryDigest
-    && filePath === REVIEWED_STATUS_AUTH_CAPABILITY_REFERENCE_FILE;
+    && REVIEWED_HTTP_BOUNDARY_CAPABILITY_REFERENCE_FILES.has(filePath);
   const listenerObjectBindingNames =
     collectListenerObjectBindingNames(syntaxNodes);
   const invokedBindingNames =

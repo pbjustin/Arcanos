@@ -11,6 +11,7 @@ import { assertTutorHonestyPreviewFixture } from '../src/shared/chatgpt/tutorHon
 import { assertPluginMigrationPreviewFixture } from '../src/shared/chatgpt/pluginMigrationPreviewFixture.js';
 import { assertGamingCompositionPreviewFixture } from '../src/shared/chatgpt/gamingCompositionPreviewFixture.js';
 import * as trinityReasoningPolicy from '../src/shared/gpt/trinityReasoningPolicy.js';
+import * as heartbeatBoundary from '../src/services/controlPlane/heartbeatHttpBoundary.js';
 import {
   NATIVE_PR_PREVIEW_BACKSTAGE_BOOKER_OPENAPI_CONTRACT,
   NATIVE_PR_PREVIEW_CHATGPT_TUTOR_CONTRACT,
@@ -31,6 +32,7 @@ import {
   NATIVE_PR_PREVIEW_RESEARCH_CONTRACT,
   NATIVE_PR_PREVIEW_SELF_HEAL_APPROVAL_CONTRACT,
   NATIVE_PR_PREVIEW_STATUS_AUTH_BOUNDARY_CONTRACT,
+  NATIVE_PR_PREVIEW_HEARTBEAT_INGRESS_CONTRACT,
   NATIVE_PR_PREVIEW_SYNTHETIC_RESPONSE_HEADER,
 } from '../src/nativePrPreviewContract.js';
 import {
@@ -65,6 +67,11 @@ jest.unstable_mockModule('../src/shared/chatgpt/gamingCompositionPreviewFixture.
 const normalizeModelReasoningEffort = jest.fn(trinityReasoningPolicy.normalizeOpenAIModelReasoningEffort);
 const resolveModelCapabilities = jest.fn(trinityReasoningPolicy.resolveOpenAIModelCapabilities);
 const resolveReasoningProviderPolicy = jest.fn(trinityReasoningPolicy.resolveTrinityReasoningProviderPolicy);
+const createHeartbeatHttpBoundary = jest.fn(heartbeatBoundary.createHeartbeatHttpBoundary);
+jest.unstable_mockModule('../src/services/controlPlane/heartbeatHttpBoundary.js', () => ({
+  ...heartbeatBoundary,
+  createHeartbeatHttpBoundary,
+}));
 jest.unstable_mockModule('../src/shared/gpt/trinityReasoningPolicy.js', () => ({
   ...trinityReasoningPolicy,
   normalizeOpenAIModelReasoningEffort: normalizeModelReasoningEffort,
@@ -2963,6 +2970,111 @@ describe('native PR contained application', () => {
     expect(response.text).not.toContain('native-pr-preview-status-boundary');
     expect(response.headers.location).toBeUndefined();
     expect(response.headers['set-cookie']).toBeUndefined();
+  });
+
+  it('executes the shared heartbeat auth, parser, and principal quota in sealed requests', async () => {
+    const { app } = buildApplication();
+    const contract = NATIVE_PR_PREVIEW_HEARTBEAT_INGRESS_CONTRACT;
+    const response = await request(app).post(contract.path)
+      .set('x-request-id', 'req-heartbeat-ingress').set('x-trace-id', 'trace-heartbeat-ingress')
+      .send({ fixture: contract.fixtures.authParserQuota });
+    expect(response.status).toBe(200);
+    expect(response.headers[contract.proofHeader]).toBe(contract.proofVersion);
+    expectContainedResponseHeaders(response, 'req-heartbeat-ingress', 'trace-heartbeat-ingress', true);
+    expect(response.headers.pragma).toBe('no-cache');
+    expect(response.body).toEqual(expect.objectContaining({
+      accepted: true, confirmationAttempted: false, filesystemBoundaryReached: false,
+      databaseBoundaryReached: false, durablePersistenceAttempted: false,
+      networkBoundaryReached: false, providerBoundaryReached: false,
+      loggerSinkExecuted: false, normalRouteExecuted: false, protectedEffectsEnabled: false,
+      identity, fixture: contract.fixtures.authParserQuota,
+    }));
+    const ingress = response.body.heartbeatIngress;
+    expect(ingress).toEqual(expect.objectContaining({
+      authBeforeParser: true, bodyLimitBytes: 4096, caseCount: 14,
+      componentExecuted: true, requiredScope: 'mcp:invoke', serverOwnedBodies: true,
+      syntheticAuthentication: true, callerBodyControlsProbe: false,
+      quota: {
+        maxRequests: 60, invalidBearerAttempts: 3, acceptedBodies: 30, malformedBodies: 30,
+        idempotentBoundaryApplications: 3, firstRemaining: 59, lastRemaining: 0,
+        limitedStatus: 429, limitedBodyBytesRead: 0, limitedDownstreamCalls: 0,
+        retryAfterPresent: true, callerIdentityChangesIgnored: true,
+      },
+    }));
+    expect(ingress.cases.map((entry: Record<string, unknown>) => [entry.name,
+      entry.statusCode, entry.bodyBytesRead, entry.downstreamCalls, entry.remaining])).toEqual([
+      ['unavailable-config-over', 503, 0, 0, null], ['missing-auth-over', 401, 0, 0, null],
+      ['invalid-auth-over', 401, 0, 0, null], ['read-scope-over', 403, 0, 0, 59],
+      ['known-length-exact', 204, 4096, 1, 59], ['known-length-over', 413, 4097, 0, 59],
+      ['chunked-exact', 204, 4096, 1, 59], ['chunked-over', 413, 4097, 0, 59],
+      ['malformed', 400, 1, 0, 59], ['scalar', 400, 8, 0, 59],
+      ['vendor-json', 204, 2, 1, 59], ['unsupported-media', 415, 0, 0, 59],
+      ['compressed', 415, 0, 0, 59], ['duplicate-media', 415, 0, 0, 59],
+    ]);
+    expect(response.text).not.toContain('Bearer ');
+    expect(response.text).not.toContain('native-pr-preview-status-boundary');
+    expect(Buffer.byteLength(response.text, 'utf8')).toBeLessThanOrEqual(contract.maxResponseBytes);
+    expect(response.headers['x-response-bytes']).toBe(String(Buffer.byteLength(response.text, 'utf8')));
+  });
+
+  it('redacts asynchronous heartbeat component failures and recovers without proof leakage', async () => {
+    const { app } = buildApplication();
+    const contract = NATIVE_PR_PREVIEW_HEARTBEAT_INGRESS_CONTRACT;
+    try {
+      createHeartbeatHttpBoundary.mockImplementation(options => {
+        const realBoundary = heartbeatBoundary.createHeartbeatHttpBoundary(options);
+        return (request, response, next) => realBoundary(request, response, error => {
+          next(error ?? new Error('private heartbeat failure detail'));
+        });
+      });
+      const failed = await request(app).post(contract.path)
+        .send({ fixture: contract.fixtures.authParserQuota });
+      expect(failed.status).toBe(500);
+      expect(failed.body).toEqual({ error: 'PREVIEW_HEARTBEAT_INGRESS_ASSERTION_FAILED' });
+      expect(failed.headers[contract.proofHeader]).toBeUndefined();
+      expect(failed.headers[NATIVE_PR_PREVIEW_SYNTHETIC_RESPONSE_HEADER.name]).toBeUndefined();
+      expect(failed.text).not.toContain('private heartbeat failure detail');
+      expectNoStore(failed);
+      expect((await request(app).get('/healthz')).status).toBe(200);
+    } finally {
+      createHeartbeatHttpBoundary.mockImplementation(heartbeatBoundary.createHeartbeatHttpBoundary);
+    }
+    const recovered = await request(app).post(contract.path)
+      .send({ fixture: contract.fixtures.authParserQuota });
+    expect(recovered.status).toBe(200);
+    expect(recovered.headers[contract.proofHeader]).toBe(contract.proofVersion);
+  });
+
+  it('withholds heartbeat proof markers for every unlisted or credential-bearing request', async () => {
+    const { app } = buildApplication();
+    const contract = NATIVE_PR_PREVIEW_HEARTBEAT_INGRESS_CONTRACT;
+    const fixture = contract.fixtures.authParserQuota;
+    for (const response of await Promise.all([
+      request(app).post(contract.path).send({ fixture: 'unlisted' }),
+      request(app).post(contract.path).send({ fixture, extra: true }),
+    ])) {
+      expect(response.status).toBe(400);
+      expect(response.body).toEqual({ error: 'PREVIEW_HEARTBEAT_INGRESS_FIXTURE_INVALID' });
+      expect(response.headers[contract.proofHeader]).toBeUndefined();
+      expect(response.headers[NATIVE_PR_PREVIEW_SYNTHETIC_RESPONSE_HEADER.name]).toBeUndefined();
+      expectNoStore(response);
+    }
+    for (const response of await Promise.all([
+      request(app).post(`${contract.path}?fixture=${fixture}`).send({ fixture }),
+      request(app).post(contract.path).set('authorization', 'Bearer sensitive-sentinel').send({ fixture }),
+      request(app).post(contract.path).set('content-encoding', 'gzip').send({ fixture }),
+      request(app).post('/heartbeat%2fingress-contract').send({ fixture }),
+      request(app).post(contract.path).send({ fixture: 'x'.repeat(4097) }),
+      request(app).post('/heartbeat').send({ fixture }),
+      request(app).get(contract.path),
+    ])) {
+      expect(response.status).toBe(404);
+      expect(response.text).toBe('not found');
+      expect(response.headers[contract.proofHeader]).toBeUndefined();
+      expect(response.headers[NATIVE_PR_PREVIEW_SYNTHETIC_RESPONSE_HEADER.name]).toBeUndefined();
+      expect(response.text).not.toContain('sensitive-sentinel');
+      expectNoStore(response);
+    }
   });
 
   it('keeps the status auth-boundary fixture sealed before outer parsing', async () => {
