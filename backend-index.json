@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-01T22:10:31.884Z",
+  "generatedAt": "2026-10-02T07:51:43.474Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -4561,6 +4561,9 @@
           "relativePath": "tests/gpt-session-context.integration.test.ts"
         },
         {
+          "relativePath": "tests/gpt-session-queue-contract.integration.test.ts"
+        },
+        {
           "relativePath": "tests/gptoss-adapter-eval.test.ts"
         },
         {
@@ -5414,6 +5417,12 @@
         },
         {
           "relativePath": "tests/session-context-model.test.ts"
+        },
+        {
+          "relativePath": "tests/session-context-preview-application.test.ts"
+        },
+        {
+          "relativePath": "tests/session-context-preview-fixture.test.ts"
         },
         {
           "relativePath": "tests/session-memory-roundtrip.test.ts"

@@ -168,6 +168,7 @@ function responseHeadersForCase(
     || requestCase.expectedType === 'status-auth-boundary-contract'
     || requestCase.expectedType === 'self-heal-approval-contract'
     || requestCase.expectedType === 'generative-model-policy-contract'
+    || requestCase.expectedType === 'session-scope-contract'
     || requestCase.chatGptTutorAdmission === 'admitted';
   return {
     'cache-control': 'no-store',
@@ -180,6 +181,12 @@ function responseHeadersForCase(
     ...(expectedNativePrPreviewContentType(requestCase) === null ? {} : {
       'content-type': expectedNativePrPreviewContentType(requestCase),
     }),
+    ...(requestCase.expectedType === 'web-readiness'
+      || (requestCase.role === 'web' && requestCase.expectedType === 'head' && requestCase.path === '/readyz')
+      || requestCase.expectedType === 'session-scope-contract' ? {
+        [NATIVE_PR_PREVIEW_E2E_CONTRACT.sessionContext.contractProofHeader]:
+          NATIVE_PR_PREVIEW_E2E_CONTRACT.sessionContext.contractProofVersion,
+      } : {}),
     ...(requestCase.chatGptTutorAdmission === 'admitted' ? {
       [NATIVE_PR_PREVIEW_E2E_CONTRACT.chatGptTutor.proofHeader]:
         NATIVE_PR_PREVIEW_E2E_CONTRACT.chatGptTutor.proofVersion,
@@ -798,7 +805,7 @@ test('rejects malformed or unsupported exact-head Backstage Booker versions', as
 
 test('executes the bounded synthetic matrix and detects identity stability', async () => {
   const requestPlan = buildNativePrPreviewRequestPlan();
-  assert.equal(requestPlan.length, 161);
+  assert.equal(requestPlan.length, 165);
   assert.equal(
     requestPlan.filter(({ caseId, expectedType }) =>
       expectedType !== 'research-contract'
@@ -810,6 +817,7 @@ test('executes the bounded synthetic matrix and detects identity stability', asy
       && expectedType !== 'status-auth-boundary-contract'
       && expectedType !== 'self-heal-approval-contract'
       && !caseId.includes('generative-model-policy')
+      && !caseId.includes('session-scope')
       && !caseId.includes('chatgpt-tutor')
       && !caseId.startsWith('gaming-')
       && !caseId.startsWith('worker-gaming-')
@@ -2114,15 +2122,15 @@ test('executes the bounded synthetic matrix and detects identity stability', asy
   assert.equal(result.executed, true);
   assert.equal(result.networkAttempted, true);
   assert.equal(result.summary.status, 'PASS');
-  assert.equal(result.summary.requestsMade, 161);
+  assert.equal(result.summary.requestsMade, 165);
   assert.equal(result.summary.simulatedAuthRequests, 24);
-  assert.equal(result.checks.length, 161);
+  assert.equal(result.checks.length, 165);
   assert.equal(
     result.checks.filter(({ simulatedAuth }) => simulatedAuth).length,
     24
   );
-  assert.equal(mock.requestCount, 161);
-  assert.equal(result.limits.maxRequests, 161);
+  assert.equal(mock.requestCount, 165);
+  assert.equal(result.limits.maxRequests, 165);
   assert.deepEqual(result.checks.filter(check => check.generativeModelPolicyVerified)
     .map(check => check.caseId), ['web-readiness-initial', 'web-generative-model-policy',
       'web-readiness-head', 'web-readiness-final']);
@@ -2151,6 +2159,18 @@ test('executes the bounded synthetic matrix and detects identity stability', asy
     .map(check => check.caseId), ['web-readiness-initial', 'web-readiness-final']);
   assert.deepEqual(result.checks.filter(check => check.sessionContextVerified)
     .map(check => check.caseId), ['web-readiness-initial', 'web-readiness-final']);
+  assert.deepEqual(result.checks.filter(check => check.sessionScopeContractVerified)
+    .map(check => check.caseId), ['web-readiness-initial', 'web-session-scope-contract',
+      'web-readiness-head', 'web-readiness-final']);
+  for (const check of result.checks.filter(check => check.sessionScopeContractVerified)) {
+    assert.equal(check.sessionScopeProofVersion, 'session-scope-contract/v1');
+  }
+  for (const caseId of ['worker-session-scope-contract-denied',
+    'web-session-scope-query-denied', 'web-session-scope-post-denied']) {
+    const check = result.checks.find(item => item.caseId === caseId);
+    assert.equal(check.httpStatus, 404);
+    assert.equal(check.sessionScopeContractVerified, undefined);
+  }
   assert.deepEqual(
     result.checks.filter(({ gamingArchiveGuideEvidenceVerified }) =>
       gamingArchiveGuideEvidenceVerified === true
@@ -4196,4 +4216,164 @@ test('returns a stable case-scoped failure without consuming a mismatched body',
       && error.caseId === 'web-readiness-initial'
       && !error.message.includes('sensitive-sentinel')
   );
+});
+
+async function assertSessionScopeVerifierRejects({
+  caseId = 'web-session-scope-contract',
+  code = 'NATIVE_PR_PREVIEW_BODY_MISMATCH',
+  changeBody,
+  changeHeaders,
+  paddingBytes = 0,
+  status,
+}) {
+  const requestPlan = buildNativePrPreviewRequestPlan();
+  const mock = buildMockFetch(requestPlan, requestCase => {
+    if (requestCase.caseId !== caseId) return undefined;
+    let body = responseBodyForCase(requestCase);
+    if (changeBody) {
+      const parsed = JSON.parse(body);
+      changeBody(parsed);
+      body = JSON.stringify(parsed);
+    }
+    if (paddingBytes) body += ' '.repeat(paddingBytes);
+    const headers = responseHeadersForCase(requestCase, Buffer.byteLength(body ?? ''));
+    changeHeaders?.(headers);
+    const response = new Response(body, {
+      headers,
+      status: status ?? requestCase.expectedStatus,
+    });
+    Object.defineProperty(response, 'url', {
+      value: `${requestCase.role === 'web' ? WEB_BASE_URL : WORKER_BASE_URL}${requestCase.path}`,
+    });
+    return response;
+  });
+  await assert.rejects(runNativePrPreviewE2e({
+    args: validArguments('--execute', '--allow-network'),
+    expectedBackstageBookerOpenApiDocument: EXPECTED_BACKSTAGE_BOOKER_OPENAPI_DOCUMENT,
+    fetchImpl: mock.fetchImpl,
+    localGitState: LOCAL_GIT_STATE,
+    monotonicNow: mock.monotonicNow,
+  }), error => error instanceof NativePrPreviewE2eError
+    && error.code === code && error.caseId === caseId);
+}
+
+test('pins the session-scope request surface and bounded component-only body', () => {
+  const contract = NATIVE_PR_PREVIEW_E2E_CONTRACT.sessionContext;
+  assert.equal(contract.contractPath, '/memory/session-context-contract');
+  assert.equal(contract.contractProofHeader, 'x-arcanos-preview-session-scope-version');
+  assert.equal(contract.contractProofVersion, 'session-scope-contract/v1');
+  assert.equal(contract.maxResponseBytes, 4_096);
+  const requestPlan = buildNativePrPreviewRequestPlan();
+  assert.deepEqual(requestPlan.filter(item => item.caseId.includes('session-scope'))
+    .map(({ caseId, role, method, path, expectedStatus }) => ({
+      caseId, role, method, path, expectedStatus,
+    })), [
+    { caseId: 'web-session-scope-contract', role: 'web', method: 'GET',
+      path: contract.contractPath, expectedStatus: 200 },
+    { caseId: 'worker-session-scope-contract-denied', role: 'worker', method: 'GET',
+      path: contract.contractPath, expectedStatus: 404 },
+    { caseId: 'web-session-scope-query-denied', role: 'web', method: 'GET',
+      path: `${contract.contractPath}?sessionId=synthetic-denied`, expectedStatus: 404 },
+    { caseId: 'web-session-scope-post-denied', role: 'web', method: 'POST',
+      path: contract.contractPath, expectedStatus: 404 },
+  ]);
+  const success = requestPlan.find(item => item.caseId === 'web-session-scope-contract');
+  assert.equal(success.boundedResponse, true);
+  assert.deepEqual(JSON.parse(responseBodyForCase(success)), {
+    ok: true,
+    scope: 'sealed-component',
+    proofVersion: 'session-scope-contract/v1',
+    payloadForwarding: true,
+    scopePrecedence: true,
+    scopeNonInference: true,
+    escapedUserHistory: true,
+    currentPromptPreserved: true,
+    originalPayloadUnchanged: true,
+    requestContextIsolated: true,
+    runtimeBoundaries: {
+      authentication: false, persistence: false, gatewayProducer: false,
+      workerExecution: false, provider: false,
+    },
+    prNumber: PR_NUMBER,
+    sourceCommit: COMMIT_SHA,
+  });
+});
+
+test('rejects corrupted session-scope evidence, expanded boundaries, and wrong identity', async () => {
+  const evidenceFields = ['payloadForwarding', 'scopePrecedence', 'scopeNonInference',
+    'escapedUserHistory', 'currentPromptPreserved', 'originalPayloadUnchanged',
+    'requestContextIsolated'];
+  for (const field of evidenceFields) {
+    await assertSessionScopeVerifierRejects({ changeBody(body) { body[field] = false; } });
+  }
+  for (const field of ['authentication', 'persistence', 'gatewayProducer', 'workerExecution', 'provider']) {
+    await assertSessionScopeVerifierRejects({ changeBody(body) { body.runtimeBoundaries[field] = true; } });
+  }
+  for (const changeBody of [
+    body => { body.ok = false; },
+    body => { body.scope = 'live-service'; },
+    body => { body.proofVersion = 'session-scope-contract/v0'; },
+    body => { body.prNumber = PR_NUMBER + 1; },
+    body => { body.sourceCommit = 'b'.repeat(40); },
+    body => { delete body.scopeNonInference; },
+    body => { delete body.runtimeBoundaries; },
+    body => { body.runtimeBoundaries.database = false; },
+    body => { body.transcript = 'synthetic-unexpected-reflection'; },
+  ]) {
+    await assertSessionScopeVerifierRejects({ changeBody });
+  }
+});
+
+test('requires the supplemental scope marker on contract and web GET/HEAD readiness', async () => {
+  const proofHeader = NATIVE_PR_PREVIEW_E2E_CONTRACT.sessionContext.contractProofHeader;
+  for (const caseId of ['web-session-scope-contract', 'web-readiness-initial',
+    'web-readiness-head', 'web-readiness-final']) {
+    for (const value of [undefined, 'session-scope-contract/v0', 'session-scope-contract/unknown']) {
+      await assertSessionScopeVerifierRejects({
+        caseId, code: 'NATIVE_PR_PREVIEW_SESSION_SCOPE_PROOF_INVALID',
+        changeHeaders(headers) {
+          if (value === undefined) delete headers[proofHeader];
+          else headers[proofHeader] = value;
+        },
+      });
+    }
+  }
+});
+
+test('rejects scope proof leakage outside the exact contract and web readiness surface', async () => {
+  const contract = NATIVE_PR_PREVIEW_E2E_CONTRACT.sessionContext;
+  const plan = buildNativePrPreviewRequestPlan();
+  const representativeCases = [
+    'worker-readiness-initial', 'worker-readiness-final', 'worker-readiness-head',
+    'web-generative-model-policy', 'worker-session-scope-contract-denied',
+    'web-session-scope-query-denied', 'web-session-scope-post-denied',
+    plan.find(item => item.role === 'web' && item.expectedType === 'health').caseId,
+  ];
+  for (const caseId of representativeCases) {
+    await assertSessionScopeVerifierRejects({
+      caseId, code: 'NATIVE_PR_PREVIEW_SESSION_SCOPE_PROOF_INVALID',
+      changeHeaders(headers) { headers[contract.contractProofHeader] = contract.contractProofVersion; },
+    });
+  }
+  for (const caseId of ['worker-session-scope-contract-denied',
+    'web-session-scope-query-denied', 'web-session-scope-post-denied']) {
+    await assertSessionScopeVerifierRejects({
+      caseId, code: 'NATIVE_PR_PREVIEW_HTTP_STATUS_MISMATCH', status: 200,
+    });
+  }
+});
+
+test('rejects session-scope responses over 4096 bytes even with valid JSON and declared length', async () => {
+  const contract = NATIVE_PR_PREVIEW_E2E_CONTRACT.sessionContext;
+  const success = buildNativePrPreviewRequestPlan()
+    .find(item => item.caseId === 'web-session-scope-contract');
+  const paddingBytes = contract.maxResponseBytes - Buffer.byteLength(responseBodyForCase(success)) + 1;
+  assert.ok(paddingBytes > 0);
+  await assertSessionScopeVerifierRejects({
+    code: 'NATIVE_PR_PREVIEW_SESSION_SCOPE_RESPONSE_LIMIT', paddingBytes,
+  });
+  await assertSessionScopeVerifierRejects({
+    code: 'NATIVE_PR_PREVIEW_BOUNDED_RESPONSE_INVALID',
+    changeHeaders(headers) { headers['x-response-bytes'] = '1'; },
+  });
 });
