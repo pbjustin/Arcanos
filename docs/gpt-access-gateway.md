@@ -388,6 +388,17 @@ The protected Trinity job path is:
 
 This path intentionally avoids an HTTP hop through `/gpt/:gptId` for protected backend operations.
 
+`createAiJob` is stateless with respect to conversation history. Its closed
+request shape accepts `gptId`, `task`, `input`, `context`, `maxOutputTokens`, and
+`idempotencyKey`, but no top-level conversation `sessionId`. An
+`input.sessionId` remains task data and is not promoted into dispatch scope;
+`context` is caller-provided task context, not authorized stored history. The
+worker receives neither the caller's credential nor memory hydration authority.
+Job ownership and idempotent reuse protect jobs; they do not bind a conversation
+namespace to a user or plugin. See
+[explicit session hydration](MEMORY_BACKEND_USAGE.md#session-context-hydration)
+for the existing synchronous, memory-authorized writing path and its limits.
+
 Queued Trinity DAG nodes use the reusable adapter at `src/services/trinity/adapter.ts`:
 
 ```text

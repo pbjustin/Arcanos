@@ -3,7 +3,10 @@ import request from 'supertest';
 
 import { assertDagMetricsRetentionPreviewFixture } from '../src/shared/dag/dagMetricsPreviewFixture.js';
 import { assertDagTokenAccountingPreviewFixture } from '../src/shared/dag/dagTokenAccountingPreviewFixture.js';
-import { assertSessionContextPreviewFixture } from '../src/shared/memory/sessionContextPreviewFixture.js';
+import {
+  assertSessionContextPreviewFixture,
+  runSessionContextPreviewContract,
+} from '../src/shared/memory/sessionContextPreviewFixture.js';
 import { assertTutorHonestyPreviewFixture } from '../src/shared/chatgpt/tutorHonestyPreviewFixture.js';
 import { assertPluginMigrationPreviewFixture } from '../src/shared/chatgpt/pluginMigrationPreviewFixture.js';
 import { assertGamingCompositionPreviewFixture } from '../src/shared/chatgpt/gamingCompositionPreviewFixture.js';
@@ -45,6 +48,7 @@ jest.unstable_mockModule('../src/shared/dag/dagTokenAccountingPreviewFixture.js'
 const assertSessionContextFixture = jest.fn(assertSessionContextPreviewFixture);
 jest.unstable_mockModule('../src/shared/memory/sessionContextPreviewFixture.js', () => ({
   assertSessionContextPreviewFixture: assertSessionContextFixture,
+  runSessionContextPreviewContract,
 }));
 const assertTutorHonestyFixture = jest.fn(assertTutorHonestyPreviewFixture);
 jest.unstable_mockModule('../src/shared/chatgpt/tutorHonestyPreviewFixture.js', () => ({

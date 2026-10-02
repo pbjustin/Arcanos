@@ -414,6 +414,80 @@ describe('native PR preview import boundary', () => {
     }
   });
 
+  it('admits only the reviewed GPT request shaping seams for synthetic session continuity', () => {
+    expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).toEqual(expect.arrayContaining([
+      'src/shared/gpt/gptRequestAction.ts',
+      'src/shared/gpt/messageContentText.ts',
+      'src/shared/gpt/gptDirectAction.ts',
+      'src/shared/http/diagnosticRequest.ts',
+    ]));
+    for (const filePath of [
+      'src/routes/gptRouter.ts',
+      'src/routes/_core/gptDispatch.ts',
+      'src/services/gptAccessGateway.ts',
+      'src/services/sessionMemoryService.ts',
+      'src/workers/jobRunner.ts',
+    ]) {
+      expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toContain(filePath);
+    }
+  });
+
+  it.each([
+    'src/shared/gpt/gptRequestAction.ts',
+    'src/shared/gpt/messageContentText.ts',
+    'src/shared/gpt/gptDirectAction.ts',
+    'src/shared/http/diagnosticRequest.ts',
+  ])('pins request shaping semantics and rejects ambient effects and dynamic capabilities in %s', async filePath => {
+    const sourceText = await readFile(new URL(`../${filePath}`, import.meta.url), 'utf8');
+    expect(findUnsafeRuntimeSyntax(filePath, sourceText)).toEqual([]);
+    for (const [addition, expectedViolation] of [
+      ['export const unreviewedRequestPolicy = true;', 'critical entry file semantic digest'],
+      ['fetch("https://unreviewed.invalid");', 'forbidden fetch call'],
+      ['process.env.SESSION_CONTEXT_MAX_CHARS = "64000";', 'forbidden process state mutation'],
+      ['setTimeout(() => {}, 1);', 'forbidden setTimeout call'],
+      ['import { readFileSync } from "node:fs";', 'external runtime import "node:fs"'],
+      ['import(unreviewedModuleName);', 'non-literal dynamic import'],
+      ['globalThis[unreviewedEffectName]();', 'forbidden dynamic runtime effect call'],
+      ['const unreviewedEffect = globalThis[unreviewedEffectName]; unreviewedEffect();', 'forbidden runtime capability reference'],
+    ]) {
+      expect(findUnsafeRuntimeSyntax(filePath, `${sourceText}\n${addition}\n`)).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining(expectedViolation),
+          expect.stringContaining('critical entry file semantic digest'),
+        ])
+      );
+    }
+  });
+
+  it('rejects normal dispatch, storage and worker imports reached through request shaping seams', async () => {
+    const requestShapingFiles = [
+      'src/shared/gpt/gptRequestAction.ts',
+      'src/shared/gpt/messageContentText.ts',
+      'src/shared/gpt/gptDirectAction.ts',
+      'src/shared/http/diagnosticRequest.ts',
+    ];
+    const forbiddenFiles = [
+      'src/routes/_core/gptDispatch.ts',
+      'src/services/gptAccessGateway.ts',
+      'src/services/sessionMemoryService.ts',
+      'src/workers/jobRunner.ts',
+    ];
+    const analyzeDependencies = async () => ({
+      obj: () => Object.fromEntries(
+        [...NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES, ...forbiddenFiles]
+          .map(filePath => [filePath, requestShapingFiles.includes(filePath) ? forbiddenFiles : []])
+      ),
+      warnings: () => ({ skipped: [] }),
+    });
+    const violations = await findNativePrPreviewImportViolations({ analyzeDependencies });
+    for (const filePath of forbiddenFiles) {
+      expect(violations).toContain(`unreviewed preview import: ${filePath}`);
+    }
+    for (const filePath of forbiddenFiles.filter(filePath => !filePath.startsWith('src/routes/'))) {
+      expect(violations).toContain(`forbidden preview import: ${filePath}`);
+    }
+  }, 30_000);
+
   it('restricts session async hooks to its reviewed AsyncLocalStorage binding', async () => {
     const filePath = 'src/platform/runtime/sessionContext.ts';
     const sourceText = await readFile(new URL(`../${filePath}`, import.meta.url), 'utf8');

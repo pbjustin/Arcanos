@@ -24,7 +24,10 @@ import {
 import { runIosDevicePolicyPreview } from './shared/ios/iosDevicePreviewFixture.js';
 import { assertDagMetricsRetentionPreviewFixture } from './shared/dag/dagMetricsPreviewFixture.js';
 import { assertDagTokenAccountingPreviewFixture } from './shared/dag/dagTokenAccountingPreviewFixture.js';
-import { assertSessionContextPreviewFixture } from './shared/memory/sessionContextPreviewFixture.js';
+import {
+  assertSessionContextPreviewFixture,
+  runSessionContextPreviewContract,
+} from './shared/memory/sessionContextPreviewFixture.js';
 import { assertGenerativeModelPolicyPreviewFixture } from './shared/gpt/generativeModelPolicyPreviewFixture.js';
 import { handleChatGptTutorPreviewRequest } from './shared/chatgpt/chatgptTutorPreviewFixture.js';
 import { handleGamingMcpPreviewRequest } from './shared/chatgpt/gamingMcpPreviewFixture.js';
@@ -9059,6 +9062,7 @@ function buildAllowedRouteKeys(): Set<string> {
     'HEAD /healthz',
     'GET /readyz',
     'HEAD /readyz',
+    `GET ${NATIVE_PR_PREVIEW_SESSION_CONTEXT_CONTRACT.contractPath}`,
     `GET ${NATIVE_PR_PREVIEW_GENERATIVE_MODEL_POLICY_CONTRACT.path}`,
     `GET ${NATIVE_PR_PREVIEW_IOS_DEVICE_CONTRACT.path}`,
     `GET ${NATIVE_PR_PREVIEW_BACKSTAGE_BOOKER_OPENAPI_CONTRACT.path}`,
@@ -9274,6 +9278,7 @@ export function createNativePrPreviewApplication(
       || iosFixtureAdmission
       || rawPath === NATIVE_PR_PREVIEW_IOS_DEVICE_CONTRACT.path
       || rawPath === NATIVE_PR_PREVIEW_GENERATIVE_MODEL_POLICY_CONTRACT.path
+      || rawPath === NATIVE_PR_PREVIEW_SESSION_CONTEXT_CONTRACT.contractPath
       || chatGptTutorPath
       || chatGptGamingPath
     ) {
@@ -9465,6 +9470,8 @@ export function createNativePrPreviewApplication(
             NATIVE_PR_PREVIEW_DAG_TOKEN_ACCOUNTING_CONTRACT.proofVersion);
           response.setHeader(NATIVE_PR_PREVIEW_SESSION_CONTEXT_CONTRACT.proofHeader,
             NATIVE_PR_PREVIEW_SESSION_CONTEXT_CONTRACT.proofVersion);
+          response.setHeader(NATIVE_PR_PREVIEW_SESSION_CONTEXT_CONTRACT.contractProofHeader,
+            NATIVE_PR_PREVIEW_SESSION_CONTEXT_CONTRACT.contractProofVersion);
           response.setHeader(NATIVE_PR_PREVIEW_GENERATIVE_MODEL_POLICY_CONTRACT.proofHeader,
             NATIVE_PR_PREVIEW_GENERATIVE_MODEL_POLICY_CONTRACT.proofVersion);
         }
@@ -9485,6 +9492,40 @@ export function createNativePrPreviewApplication(
       sourceCommit: options.identity.sourceCommit,
       trustScope: NATIVE_PR_PREVIEW_TRUST_SCOPE,
     });
+  });
+
+  app.get(NATIVE_PR_PREVIEW_SESSION_CONTEXT_CONTRACT.contractPath, async (request, response) => {
+    const canReportProof = () => options.readinessState.ready
+      && options.readinessState.applicationImported
+      && options.readinessState.fixturesSealed
+      && !options.readinessState.draining;
+    const sendUnavailable = () => sendBoundedJsonResponse(request, response, {
+      ok: false, error: 'SESSION_CONTEXT_PREVIEW_UNAVAILABLE',
+    }, { logEvent: 'native_pr_preview.session_context_unavailable', maxBytes: 1024, statusCode: 503 });
+    if (!canReportProof()) {
+      sendUnavailable();
+      return;
+    }
+    try {
+      const proof = await runSessionContextPreviewContract();
+      if (!canReportProof()) {
+        sendUnavailable();
+        return;
+      }
+      response.setHeader(NATIVE_PR_PREVIEW_SESSION_CONTEXT_CONTRACT.contractProofHeader,
+        NATIVE_PR_PREVIEW_SESSION_CONTEXT_CONTRACT.contractProofVersion);
+      sendBoundedJsonResponse(request, response, {
+        ...proof, prNumber: options.identity.prNumber, sourceCommit: options.identity.sourceCommit,
+      }, {
+        logEvent: 'native_pr_preview.session_context',
+        maxBytes: NATIVE_PR_PREVIEW_SESSION_CONTEXT_CONTRACT.maxResponseBytes,
+        statusCode: 200,
+      });
+    } catch {
+      sendBoundedJsonResponse(request, response, {
+        ok: false, error: 'SESSION_CONTEXT_PREVIEW_FIXTURE_FAILED',
+      }, { logEvent: 'native_pr_preview.session_context_failed', maxBytes: 1024, statusCode: 500 });
+    }
   });
 
   app.get(NATIVE_PR_PREVIEW_IOS_DEVICE_CONTRACT.path, (request, response) => {

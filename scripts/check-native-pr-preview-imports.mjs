@@ -117,9 +117,12 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/shared/gpt/gptIdentifier.ts',
   'src/shared/gpt/gptAsyncWaitPolicy.ts',
   'src/shared/gpt/gptClientRegistry.ts',
+  'src/shared/gpt/gptDirectAction.ts',
   'src/shared/gpt/gptIdempotency.ts',
   'src/shared/gpt/gptJobLifecycle.ts',
   'src/shared/gpt/gptJobResult.ts',
+  'src/shared/gpt/gptRequestAction.ts',
+  'src/shared/gpt/messageContentText.ts',
   'src/shared/gpt/trinityReasoningPolicy.ts',
   'src/shared/gpt/generativeModelPolicyCore.ts',
   'src/shared/gpt/generativeModelPolicyPreviewFixture.ts',
@@ -164,6 +167,7 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/shared/gaming/gamingGrounding.ts',
   'src/shared/http/clientJsonPayload.ts',
   'src/shared/http/clientResponseCommon.ts',
+  'src/shared/http/diagnosticRequest.ts',
   'src/shared/http/errors.ts',
   'src/shared/http/gptRouteTimeout.ts',
   'src/shared/http/sendBoundedJsonResponse.ts',
@@ -812,7 +816,11 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ['src/platform/runtime/sessionContext.ts', 'ccb6ac8c2d4d739a61e716fd01e890af577adc4aba0a16d5c7d73571c778f53f'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/memory/sessionContextCore.ts', '7d1ffb349363dcb0aee2bf641d20956975980335d9d721ec74ff7191c8730aeb'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/memory/sessionContextPolicy.ts', 'fa9b591e1350a925bd6b62175ca6f160346e12ca4e885a3f5291c7129ac3f740'], // gitleaks:allow -- public source semantic SHA-256
-  ['src/shared/memory/sessionContextPreviewFixture.ts', '45f8143c025f1cda32b65ad624a83373bbbeb480702ea82bf9a69f9d19b81af2'], // gitleaks:allow -- public source semantic SHA-256
+  ['src/shared/memory/sessionContextPreviewFixture.ts', 'cfc47b2f6c7361e28003d445fe8ffb14156e48be8517fd17323743496687a130'], // gitleaks:allow -- public source semantic SHA-256
+  ['src/shared/gpt/gptRequestAction.ts', 'faa0203d85104d3d39b2cc8c7cf54de9b1f562008fe3b3fd403fd9d4e37e3482'], // gitleaks:allow -- public source semantic SHA-256
+  ['src/shared/gpt/messageContentText.ts', '0d1e9be00e46a0c01f43ee266c258fc38fc99f56c7130b86f45dbfa7af834f7f'], // gitleaks:allow -- public source semantic SHA-256
+  ['src/shared/gpt/gptDirectAction.ts', '6c00926d0b11b1aff3c83643d85ee4c9273fb35ee47f22bde419b55c5c4ec594'], // gitleaks:allow -- public source semantic SHA-256
+  ['src/shared/http/diagnosticRequest.ts', '8fd7cf62fe8f8308a6f6777924ac1d3359e0efa8f0a194ec2c9579bb43e89db4'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/dag/dagTokenAccountingPreviewFixture.ts', 'ddf36a96aefef38ec8e4cf1326e42bac53190868f3a5053bc4e7e3be8f65931f'],
   ['src/services/openai/attemptTokenUsage.ts', '405aa0373b8b18002ea43cc86c5870a61cf50719be01598c015a15b393404013'], // gitleaks:allow -- public source semantic SHA-256
   ['src/workers/dagChildAccounting.ts', '3bf30d00e7b97d7f041e5ced257a9d493ca5bcb76740469c2b1feb9ac8e47c57'],

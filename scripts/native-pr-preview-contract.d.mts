@@ -65,6 +65,10 @@ export interface NativePrPreviewE2eContract {
   readonly sessionContext: Readonly<{
     proofHeader: 'x-arcanos-session-context-proof';
     proofVersion: 'session-context/v1';
+    contractPath: '/memory/session-context-contract';
+    contractProofHeader: 'x-arcanos-preview-session-scope-version';
+    contractProofVersion: 'session-scope-contract/v1';
+    maxResponseBytes: 4096;
   }>;
   readonly generativeModelPolicy: Readonly<{
     path: '/models/generative-contract';
