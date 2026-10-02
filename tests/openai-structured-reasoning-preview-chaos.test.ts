@@ -13,6 +13,24 @@ describe('structured reasoning service wrapper', () => {
     runStructuredReasoningGenericMock.mockReset();
   });
 
+  it.each([
+    ['gpt-6.1-sol', 'none', 'low'],
+    ['gpt-6.1-sol', 'minimal', 'low'],
+    ['gpt-6.1-sol', 'low', 'low'],
+    ['gpt-6.1-sol', 'medium', 'medium'],
+  ] as const)('normalizes %s structured reasoning effort %s', async (model, requested, expected) => {
+    runStructuredReasoningGenericMock.mockResolvedValue({ final_answer: 'synthetic answer' });
+    const budget = { startedAt: 0, hardDeadline: 60_000, watchdogLimit: 60_000, safetyBuffer: 0 };
+    await runStructuredReasoning({} as never, model, 'synthetic prompt', budget, 500, {
+      schemaVariant: 'compact', reasoningEffort: requested, maxOutputTokens: 500,
+    });
+    expect(runStructuredReasoningGenericMock).toHaveBeenCalledTimes(1);
+    expect(runStructuredReasoningGenericMock).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      model, reasoningEffort: expected, budget, timeoutMs: 500, maxOutputTokens: 500,
+      validate: expect.any(Function),
+    }));
+  });
+
   it('forwards provider-compatible effort and output cap to the shared helper', async () => {
     runStructuredReasoningGenericMock.mockResolvedValue({
       response_mode: 'answer',
@@ -25,7 +43,7 @@ describe('structured reasoning service wrapper', () => {
 
     await runStructuredReasoning(
       {} as never,
-      'gpt-5',
+      'gpt-6.1-sol',
       'test prompt',
       { startedAt: 0, hardDeadline: 60_000, watchdogLimit: 60_000, safetyBuffer: 0 },
       5_000,
@@ -39,13 +57,22 @@ describe('structured reasoning service wrapper', () => {
     expect(runStructuredReasoningGenericMock).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
-        model: 'gpt-5',
-        reasoningEffort: 'minimal',
+        model: 'gpt-6.1-sol',
+        reasoningEffort: 'low',
         maxOutputTokens: 16,
         timeoutMs: 5_000
       })
     );
   });
+
+  it.each(['gpt-6-luna', 'gpt-5', 'ft:gpt-4.1:synthetic:authority'])(
+    'rejects caller-selected structured reasoning model %s before generic transport', async model => {
+      await expect(runStructuredReasoning({} as never, model, 'Synthetic prompt',
+        { startedAt: 0, hardDeadline: 60_000, watchdogLimit: 60_000, safetyBuffer: 0 }))
+        .rejects.toThrow('model override conflicts with reasoning role');
+      expect(runStructuredReasoningGenericMock).not.toHaveBeenCalled();
+    }
+  );
 });
 
 describe('preview reasoning chaos hook', () => {
@@ -71,7 +98,7 @@ describe('preview reasoning chaos hook', () => {
 
     await expect(runStructuredReasoning(
       {} as never,
-      'gpt-5',
+      'gpt-6.1-sol',
       'test prompt',
       { startedAt: 0, hardDeadline: 60_000, watchdogLimit: 60_000, safetyBuffer: 0 },
       5_000,
@@ -120,7 +147,7 @@ describe('preview reasoning chaos hook', () => {
 
     await expect(runStructuredReasoning(
       {} as never,
-      'gpt-5',
+      'gpt-6.1-sol',
       'test prompt',
       { startedAt: 0, hardDeadline: 60_000, watchdogLimit: 60_000, safetyBuffer: 0 },
       5_000,
@@ -132,7 +159,7 @@ describe('preview reasoning chaos hook', () => {
 
     const recovered = await runStructuredReasoning(
       {} as never,
-      'gpt-5',
+      'gpt-6.1-sol',
       'test prompt',
       { startedAt: 0, hardDeadline: 60_000, watchdogLimit: 60_000, safetyBuffer: 0 },
       5_000,

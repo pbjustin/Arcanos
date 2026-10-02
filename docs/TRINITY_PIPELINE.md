@@ -69,6 +69,7 @@ Use placeholders in docs, scripts, and tickets. Never paste real bearer tokens, 
 | `ARCANOS_GPT_ACCESS_TOKEN` | Generic protected `/gpt-access/*` operations | Store only in the runtime environment or generic GPT Action auth field. Public OpenAPI metadata needs no bearer; dedicated Booker, Gaming source, and local-agent executor operations use their own credentials. |
 | `ARCANOS_GPT_ACCESS_SCOPES` | `/gpt-access/jobs/create` | Must explicitly include `jobs.create`; include `jobs.result` for result polling. |
 | `OPENAI_API_KEY` | Live Trinity output and worker execution | The config layer also supports fallback key names documented in `CONFIGURATION.md`, but `OPENAI_API_KEY` is the preferred operator setting. |
+| One fine-tune authority alias | Every authoritative final/recovery call | Existing alias order is `FINETUNED_MODEL_ID`, `RAILWAY_FINETUNED_MODEL_ID`, `FINE_TUNED_MODEL_ID`, `AI_MODEL`, `OPENAI_MODEL`, `RAILWAY_OPENAI_MODEL`. Retain each executing service's configured identity; missing or non-`ft:` authority fails safely. |
 | `DATABASE_URL` or complete `PG*` set | Durable GPT jobs and worker queue | Web and worker services must point at the same database. |
 | `ARCANOS_PROCESS_KIND` | Railway launcher | Set `web` on the API service and `worker` on the worker service. Omit for direct local `npm start` / `npm run start:worker`. |
 | `PORT` | Local API process | Railway injects `PORT`; do not hard-code it in Railway Variables. |
@@ -276,9 +277,27 @@ Tier detection logic:
 Structured reasoning effort:
 - `critical`: `medium`
 - `complex`: `low`
-- `simple`: requests `none`; exact `gpt-5` and dated GPT-5 snapshots send `minimal` because they do not support disabled reasoning
+- `simple`: requests `none`, normalized to `low` for the shared GPT-6.1 Sol reasoning role
 
-The structured stage alone defaults to `gpt-5.6-terra`. Model precedence is `TRINITY_REASONING_MODEL`, `GPT5_MODEL`, `GPT51_MODEL`, then Terra; other GPT-5 execution paths keep their existing shared selector and GPT-5.1 default. GPT-5.1 and GPT-5.6 models retain the requested `none` effort.
+Backend modules share the reusable generative role policy. Intake and routine
+audits use `gpt-6-luna`; structured reasoning and explicit internal audit
+escalation use `gpt-6.1-sol`. Normal, complex/critical, direct-answer, degraded and
+recovery finals resolve the executing service's configured fine-tune authority.
+Intake validation fallback retains the Luna role. Missing or non-fine-tuned
+authority fails safely before transport without substituting a helper.
+
+Legacy lane/GPT5/fallback variables do not replace these roles. Trusted explicit
+model parameters must match the role's resolved model, including
+`directAnswerModelOverride`; conflicts reject before transport. Compatibility
+`setDefaultModel()` validates authority without caching a replacement. CLEAR and
+Gaming CLEAR retain the single-call internal escalation seam; automatic audit
+escalation stays disabled. See [model policy and rollout gates](CONFIGURATION.md#trinity-and-clear-model-lanes).
+
+All existing caps, schema validators, cancellation and runtime/stage budgets
+remain in force. Web and worker fine-tune identities remain service-configured
+and may differ. This source policy does not change Railway values or authorize
+provider calls; PR1517 deployment remains held, with drain/migration and runtime
+configuration reconciliation separate from code readiness.
 
 Injection guard:
 - If prompt includes forbidden phrases such as `set tier to`, tier is forced to `simple`.
@@ -358,6 +377,13 @@ These control-plane routes must not enter Trinity:
 - `/trinity/status`
 
 Legacy ask tool runtimes, daemon tools, DAG tooling, worker status tools, HRC scoring, memory validation, audit-safe mode interpretation, auto-heal planning, daily summaries, self-improve patch proposal generation, idle/provider probes, vision, embeddings, simulation streaming compatibility, and adapter wrappers are intentionally outside the writing facade because they are control/evaluation/infrastructure paths, non-text-generation SDK boundaries, or stream transports Trinity does not yet expose. They must not be exposed as arbitrary user writing routes, and they must not call back through `/gpt/:gptId`.
+
+Backend text-generation/evaluation paths outside the writing facade still use
+the shared model policy for their server-owned role. Embeddings and media retain
+separate selectors. Standalone `workers/` and `arcanos-ai-runtime/` packages,
+portable `src/runtime/`, and Python clients retain their independent documented
+transport configuration. Model selection does not grant a plugin additional
+scopes or bypass existing credentials and execution gates.
 
 Raw SDK calls are allowed only at these boundaries:
 - OpenAI adapter and shared OpenAI service helpers (`src/core/adapters/openai.adapter.ts`, `src/services/openai/*`, `src/services/openaiClient.ts`)

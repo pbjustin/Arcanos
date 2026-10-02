@@ -17,12 +17,12 @@ import {
 describe('platform runtime static configuration', () => {
   it('exports the stable GPT sync configuration and messages', () => {
     expect(GPT_SYNC_CONFIG).toEqual({
-      defaultModel: 'gpt-4',
       maxCompletionTokens: 1000,
       temperature: 0.7,
       fallbackResponse: 'No response generated',
       logPrefix: '[GPT-SYNC]'
     });
+    expect(GPT_SYNC_CONFIG).not.toHaveProperty('defaultModel');
     expect(GPT_SYNC_STRINGS.baseInstruction).toContain('Arcanos');
     expect(GPT_SYNC_STRINGS.diagnosticPrompt).toContain('system diagnostic');
     expect(GPT_SYNC_ERRORS.clientUnavailable).toContain('OPENAI_API_KEY');

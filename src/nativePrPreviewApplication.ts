@@ -25,6 +25,7 @@ import { runIosDevicePolicyPreview } from './shared/ios/iosDevicePreviewFixture.
 import { assertDagMetricsRetentionPreviewFixture } from './shared/dag/dagMetricsPreviewFixture.js';
 import { assertDagTokenAccountingPreviewFixture } from './shared/dag/dagTokenAccountingPreviewFixture.js';
 import { assertSessionContextPreviewFixture } from './shared/memory/sessionContextPreviewFixture.js';
+import { assertGenerativeModelPolicyPreviewFixture } from './shared/gpt/generativeModelPolicyPreviewFixture.js';
 import { handleChatGptTutorPreviewRequest } from './shared/chatgpt/chatgptTutorPreviewFixture.js';
 import { handleGamingMcpPreviewRequest } from './shared/chatgpt/gamingMcpPreviewFixture.js';
 
@@ -52,6 +53,7 @@ import {
   NATIVE_PR_PREVIEW_DAG_METRICS_CONTRACT,
   NATIVE_PR_PREVIEW_DAG_TOKEN_ACCOUNTING_CONTRACT,
   NATIVE_PR_PREVIEW_SESSION_CONTEXT_CONTRACT,
+  NATIVE_PR_PREVIEW_GENERATIVE_MODEL_POLICY_CONTRACT,
   NATIVE_PR_PREVIEW_FIXTURE_IDS,
   NATIVE_PR_PREVIEW_IOS_DEVICE_CONTRACT,
   NATIVE_PR_PREVIEW_GAMING_CONTRACT,
@@ -288,6 +290,8 @@ import {
   resolveGptClientJobProvenance,
 } from './shared/gpt/gptClientRegistry.js';
 import {
+  normalizeOpenAIModelReasoningEffort,
+  resolveOpenAIModelCapabilities,
   resolveTrinityReasoningProviderPolicy,
   supportsDisabledReasoningEffort,
 } from './shared/gpt/trinityReasoningPolicy.js';
@@ -2483,6 +2487,82 @@ function assertTrinityReasoningPolicyFixture(): typeof NATIVE_PR_PREVIEW_BACKSTA
     .trinityReasoningPolicyProofVersion;
 }
 
+function assertGpt6ReasoningPolicyFixture(): void {
+  const failure = 'PREVIEW_GPT6_REASONING_POLICY_INVALID';
+  const requireProof = (condition: boolean): void => {
+    if (!condition) throw new Error(failure);
+  };
+  try {
+    const modelCases = [
+      { model: 'gpt-6-luna', family: 'gpt-6-luna', disabled: true, none: 'none' },
+      { model: 'gpt-6-luna-2026-09-15', family: 'gpt-6-luna', disabled: true, none: 'none' },
+      { model: 'gpt-6.1-sol', family: 'gpt-6.1-sol', disabled: false, none: 'low' },
+      { model: 'gpt-6.1-sol-2026-09-15', family: 'gpt-6.1-sol', disabled: false, none: 'low' },
+    ] as const;
+    const tokenCases = [
+      { configured: undefined, expected: 8_000 },
+      { configured: '1', expected: 16 },
+      { configured: '16', expected: 16 },
+      { configured: '4000', expected: 4_000 },
+      { configured: '8000', expected: 8_000 },
+      { configured: '12000', expected: 8_000 },
+      { configured: '4000junk', expected: 8_000 },
+    ];
+    for (const testCase of modelCases) {
+      const capabilities = resolveOpenAIModelCapabilities(testCase.model);
+      const expectedEfforts = testCase.disabled
+        ? ['none', 'low', 'medium', 'high', 'xhigh', 'max']
+        : ['low', 'medium', 'high', 'xhigh', 'max'];
+      requireProof(capabilities.family === testCase.family
+        && capabilities.normalizeReasoningRequests
+        && capabilities.structuredReasoning === 'supported'
+        && capabilities.supportsDisabledReasoning === testCase.disabled
+        && supportsDisabledReasoningEffort(testCase.model) === testCase.disabled
+        && capabilities.defaultReasoningEffort === 'medium'
+        && JSON.stringify(capabilities.allowedReasoningEfforts) === JSON.stringify(expectedEfforts)
+        && capabilities.outputTokenPolicy.responsesParameter === 'max_output_tokens'
+        && capabilities.outputTokenPolicy.chatParameter === 'max_completion_tokens'
+        && capabilities.outputTokenPolicy.minimum === 16
+        && capabilities.outputTokenPolicy.trinityReasoningMaximum === 8_000);
+      requireProof(normalizeOpenAIModelReasoningEffort(testCase.model, 'none') === testCase.none
+        && normalizeOpenAIModelReasoningEffort(testCase.model, 'minimal') === 'low');
+      for (const effort of ['low', 'medium', 'high', 'xhigh'] as const) {
+        requireProof(normalizeOpenAIModelReasoningEffort(testCase.model, effort) === effort);
+      }
+      let sdkMaxRejected = false;
+      try {
+        normalizeOpenAIModelReasoningEffort(testCase.model,
+          'max' as Parameters<typeof normalizeOpenAIModelReasoningEffort>[1]);
+      } catch (error) {
+        sdkMaxRejected = error instanceof RangeError;
+      }
+      requireProof(sdkMaxRejected);
+      for (const tokenCase of tokenCases) {
+        const policy = resolveTrinityReasoningProviderPolicy({
+          model: testCase.model, requestedEffort: 'none',
+          configuredMaxOutputTokens: tokenCase.configured,
+        });
+        requireProof(policy.reasoningEffort === testCase.none
+          && policy.maxOutputTokens === tokenCase.expected);
+      }
+    }
+    for (const model of ['gpt-6-luna-custom', 'gpt-6.1-sol-custom',
+      'ft:gpt-6-luna:synthetic', 'gpt-6-luna-2026-9-15']) {
+      const capabilities = resolveOpenAIModelCapabilities(model);
+      requireProof(capabilities.family === 'unknown'
+        && !capabilities.normalizeReasoningRequests
+        && !capabilities.supportsDisabledReasoning
+        && capabilities.structuredReasoning === 'unverified'
+        && capabilities.allowedReasoningEfforts.length === 0
+        && capabilities.outputTokenPolicy.chatParameter === undefined
+        && normalizeOpenAIModelReasoningEffort(model, 'none') === 'none'
+        && normalizeOpenAIModelReasoningEffort(model, 'minimal') === 'minimal');
+    }
+  } catch {
+    throw new Error(failure);
+  }
+}
+
 async function assertBackstageQueueWaitPolicyFixture(): Promise<
   typeof NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.queueWaitPolicyProofVersion
 > {
@@ -2643,6 +2723,7 @@ async function runBackstageRouteBudgetFixture(
   fixture: string
 ): Promise<Record<string, unknown>> {
   assertTrinityReasoningPolicyFixture();
+  assertGpt6ReasoningPolicyFixture();
   await assertBackstageQueueWaitPolicyFixture();
   if (!isBackstageGptRoute(BACKSTAGE_MODULE_ROUTE)) {
     throw new Error('PREVIEW_BACKSTAGE_CANONICAL_ROUTE_POLICY_INVALID');
@@ -5487,6 +5568,58 @@ function runBackstageProductionOutputScenario(
 function runBackstageProductionOutputContractsFixture(
   fixture: string
 ): Record<string, unknown> {
+  // Exercise authority eligibility without importing provider configuration into
+  // this contained fixture. All identifiers and workload metadata are synthetic.
+  const authorityModel = 'ft:gpt-4.1:synthetic:preview-authority';
+  const authorityBudgetInput = {
+    action: 'generateBooking' as const,
+    profile: 'queued_generation' as const,
+    requestedFormat: 'structured_booking' as const,
+    requestedTokenLimit: 2_400,
+    configuredWorkerTokenLimit: BACKSTAGE_WORKER_OUTPUT_TOKEN_LIMIT_DEFAULT,
+    promptCodeUnits: 1_600,
+    retrievedContextCodeUnits: 0,
+    expectedOutputWords: 600,
+    model: authorityModel,
+    finalAuthorityModel: authorityModel,
+    modelStageTimeoutMs: 75_000,
+  };
+  const authorityBudget = resolveBackstageOutputBudget(authorityBudgetInput);
+  const rejectedAuthorityBudgets = [
+    { finalAuthorityModel: undefined },
+    { model: 'ft:gpt-4.1:synthetic:other-authority' },
+    { model: authorityModel.toUpperCase() },
+    { model: 'gpt-6.1-sol', finalAuthorityModel: 'gpt-6.1-sol' },
+  ].map(overrides => resolveBackstageOutputBudget({
+    ...authorityBudgetInput,
+    ...overrides,
+  }));
+  const finiteAuthorityCaps = [
+    [{ profile: 'bounded_sync_generation' as const }, 2_400],
+    [{ action: 'queryContinuity' as const }, 900],
+    [{ requestedFormat: 'bounded_review' as const }, 2_400],
+    [{ modelStageTimeoutMs: 40_000 }, 2_400],
+    [{ modelStageTimeoutMs: 45_000 }, 4_000],
+    [{ modelStageTimeoutMs: 60_000 }, 5_000],
+    [{ configuredWorkerTokenLimit: 999_999 }, 8_000],
+  ] as const;
+  const authorityCapacityValid =
+    authorityBudget.modelCapability === 'configured_authority'
+    && authorityBudget.budgetClass === 'queued_extended'
+    && authorityBudget.tokenLimit === BACKSTAGE_WORKER_OUTPUT_TOKEN_LIMIT_DEFAULT
+    && authorityBudget.tokenCap === BACKSTAGE_WORKER_OUTPUT_TOKEN_LIMIT_DEFAULT
+    && rejectedAuthorityBudgets.every(budget => (
+      budget.modelCapability === 'baseline_fallback'
+      && budget.budgetClass === 'bounded_request'
+      && budget.tokenLimit === 2_400
+      && budget.tokenCap === 2_400
+    ))
+    && finiteAuthorityCaps.every(([overrides, expected]) => {
+      const budget = resolveBackstageOutputBudget({ ...authorityBudgetInput, ...overrides });
+      return budget.tokenLimit === expected
+        && budget.tokenCap <= 8_000
+        && budget.tokenLimit <= budget.tokenCap;
+    });
   const exactCompact = runBackstageProductionOutputScenario({
     action: 'generateBookingWithHRC',
     prompt: [
@@ -5545,7 +5678,7 @@ function runBackstageProductionOutputContractsFixture(
       && exactCompact.enforceParsedItemContract === true,
     productionCapacitySelected: commonCapacityValid,
   };
-  if (Object.values(contracts).some(value => !value)) {
+  if (!authorityCapacityValid || Object.values(contracts).some(value => !value)) {
     throw new Error(
       'PREVIEW_BACKSTAGE_PRODUCTION_OUTPUT_CONTRACT_INVALID'
     );
@@ -8926,6 +9059,7 @@ function buildAllowedRouteKeys(): Set<string> {
     'HEAD /healthz',
     'GET /readyz',
     'HEAD /readyz',
+    `GET ${NATIVE_PR_PREVIEW_GENERATIVE_MODEL_POLICY_CONTRACT.path}`,
     `GET ${NATIVE_PR_PREVIEW_IOS_DEVICE_CONTRACT.path}`,
     `GET ${NATIVE_PR_PREVIEW_BACKSTAGE_BOOKER_OPENAPI_CONTRACT.path}`,
     `POST ${NATIVE_PR_PREVIEW_BACKSTAGE_STORYLINE_CONTRACT.path}`,
@@ -9139,6 +9273,7 @@ export function createNativePrPreviewApplication(
       || gamingSourcePath
       || iosFixtureAdmission
       || rawPath === NATIVE_PR_PREVIEW_IOS_DEVICE_CONTRACT.path
+      || rawPath === NATIVE_PR_PREVIEW_GENERATIVE_MODEL_POLICY_CONTRACT.path
       || chatGptTutorPath
       || chatGptGamingPath
     ) {
@@ -9312,13 +9447,14 @@ export function createNativePrPreviewApplication(
       && !options.readinessState.draining;
     let ready = canReportReady();
     // Preserve the trusted verifier's response contract while requiring the
-    // deployed device, DAG, and session fixtures before readiness can claim success.
+    // deployed device, DAG, session and model-policy fixtures before readiness can claim success.
     if (ready) {
       try {
         runIosDevicePolicyPreview();
         assertDagMetricsRetentionPreviewFixture();
         await assertDagTokenAccountingPreviewFixture();
         await assertSessionContextPreviewFixture();
+        assertGenerativeModelPolicyPreviewFixture();
         ready = canReportReady();
         if (ready) {
           response.setHeader(NATIVE_PR_PREVIEW_IOS_DEVICE_CONTRACT.proofHeader,
@@ -9329,6 +9465,8 @@ export function createNativePrPreviewApplication(
             NATIVE_PR_PREVIEW_DAG_TOKEN_ACCOUNTING_CONTRACT.proofVersion);
           response.setHeader(NATIVE_PR_PREVIEW_SESSION_CONTEXT_CONTRACT.proofHeader,
             NATIVE_PR_PREVIEW_SESSION_CONTEXT_CONTRACT.proofVersion);
+          response.setHeader(NATIVE_PR_PREVIEW_GENERATIVE_MODEL_POLICY_CONTRACT.proofHeader,
+            NATIVE_PR_PREVIEW_GENERATIVE_MODEL_POLICY_CONTRACT.proofVersion);
         }
       } catch {
         ready = false;
@@ -9361,6 +9499,27 @@ export function createNativePrPreviewApplication(
       sendBoundedJsonResponse(request, response, {
         ok: false, error: 'IOS_DEVICE_PREVIEW_FIXTURE_FAILED',
       }, { logEvent: 'native_pr_preview.ios_device_policy_failed', maxBytes: 1024, statusCode: 500 });
+    }
+  });
+
+  app.get(NATIVE_PR_PREVIEW_GENERATIVE_MODEL_POLICY_CONTRACT.path, (request, response) => {
+    try {
+      const proof = assertGenerativeModelPolicyPreviewFixture();
+      response.setHeader(NATIVE_PR_PREVIEW_GENERATIVE_MODEL_POLICY_CONTRACT.proofHeader,
+        NATIVE_PR_PREVIEW_GENERATIVE_MODEL_POLICY_CONTRACT.proofVersion);
+      sendBoundedJsonResponse(request, response, {
+        ...proof, prNumber: options.identity.prNumber, sourceCommit: options.identity.sourceCommit,
+      }, {
+        logEvent: 'native_pr_preview.generative_model_policy',
+        maxBytes: NATIVE_PR_PREVIEW_GENERATIVE_MODEL_POLICY_CONTRACT.maxResponseBytes,
+        statusCode: 200,
+      });
+    } catch {
+      sendBoundedJsonResponse(request, response, {
+        ok: false, error: 'GENERATIVE_MODEL_POLICY_PREVIEW_FIXTURE_FAILED',
+      }, {
+        logEvent: 'native_pr_preview.generative_model_policy_failed', maxBytes: 1024, statusCode: 500,
+      });
     }
   });
 
@@ -10369,6 +10528,12 @@ export function createNativePrPreviewApplication(
               NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT
                 .trinityReasoningPolicyProofVersion
             );
+            response.setHeader(
+              NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT.proofHeaders
+                .gpt6ReasoningPolicyVersion,
+              NATIVE_PR_PREVIEW_BACKSTAGE_GENERATION_CONTRACT
+                .gpt6ReasoningPolicyProofVersion
+            );
           }
           if (
             fixture
@@ -10474,7 +10639,17 @@ export function createNativePrPreviewApplication(
             }
           );
         })
-        .catch(next);
+        .catch(error => {
+          if (error instanceof Error && error.message === 'PREVIEW_GPT6_REASONING_POLICY_INVALID') {
+            return sendBoundedJsonResponse(request, response,
+              { error: 'PREVIEW_GPT6_REASONING_POLICY_INVALID' }, {
+                logEvent: 'native_pr_preview.gpt6_reasoning_policy_failed',
+                maxBytes: MAX_BACKSTAGE_GENERATION_RESPONSE_BYTES,
+                statusCode: 500,
+              });
+          }
+          return next(error);
+        });
       return undefined;
     }
   );

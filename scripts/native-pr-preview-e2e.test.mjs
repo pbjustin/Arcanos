@@ -21,7 +21,9 @@ import {
 } from './native-pr-preview-contract.mjs';
 import {
   NATIVE_PR_PREVIEW_DIST_IMPORT_CONTRACT,
+  GENERATIVE_MODEL_POLICY_PREVIEW_DIST_IMPORT_CONTRACT,
   findNativePrPreviewDistImportSourceViolations,
+  findTutorHonestyPreviewDistImportSourceViolations,
 } from './check-native-pr-preview-dist-imports.mjs';
 
 const COMMIT_SHA = 'a'.repeat(40);
@@ -165,9 +167,16 @@ function responseHeadersForCase(
     || requestCase.expectedType === 'dispatch-gpt-identifier-contract'
     || requestCase.expectedType === 'status-auth-boundary-contract'
     || requestCase.expectedType === 'self-heal-approval-contract'
+    || requestCase.expectedType === 'generative-model-policy-contract'
     || requestCase.chatGptTutorAdmission === 'admitted';
   return {
     'cache-control': 'no-store',
+    ...(requestCase.expectedType === 'web-readiness'
+      || (requestCase.role === 'web' && requestCase.expectedType === 'head' && requestCase.path === '/readyz')
+      || requestCase.expectedType === 'generative-model-policy-contract' ? {
+        [NATIVE_PR_PREVIEW_E2E_CONTRACT.generativeModelPolicy.proofHeader]:
+          NATIVE_PR_PREVIEW_E2E_CONTRACT.generativeModelPolicy.proofVersion,
+      } : {}),
     ...(expectedNativePrPreviewContentType(requestCase) === null ? {} : {
       'content-type': expectedNativePrPreviewContentType(requestCase),
     }),
@@ -268,6 +277,10 @@ function responseHeadersForCase(
                   .proofHeaders.trinityReasoningPolicyVersion]:
                   NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration
                     .trinityReasoningPolicyProofVersion,
+                [NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration
+                  .proofHeaders.gpt6ReasoningPolicyVersion]:
+                  NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration
+                    .gpt6ReasoningPolicyProofVersion,
               }
             : {}),
           ...(requestCase.fixtureName === 'notionAuthorityRag'
@@ -785,7 +798,7 @@ test('rejects malformed or unsupported exact-head Backstage Booker versions', as
 
 test('executes the bounded synthetic matrix and detects identity stability', async () => {
   const requestPlan = buildNativePrPreviewRequestPlan();
-  assert.equal(requestPlan.length, 157);
+  assert.equal(requestPlan.length, 161);
   assert.equal(
     requestPlan.filter(({ caseId, expectedType }) =>
       expectedType !== 'research-contract'
@@ -796,6 +809,7 @@ test('executes the bounded synthetic matrix and detects identity stability', asy
       && expectedType !== 'dispatch-gpt-identifier-contract'
       && expectedType !== 'status-auth-boundary-contract'
       && expectedType !== 'self-heal-approval-contract'
+      && !caseId.includes('generative-model-policy')
       && !caseId.includes('chatgpt-tutor')
       && !caseId.startsWith('gaming-')
       && !caseId.startsWith('worker-gaming-')
@@ -2100,15 +2114,19 @@ test('executes the bounded synthetic matrix and detects identity stability', asy
   assert.equal(result.executed, true);
   assert.equal(result.networkAttempted, true);
   assert.equal(result.summary.status, 'PASS');
-  assert.equal(result.summary.requestsMade, 157);
+  assert.equal(result.summary.requestsMade, 161);
   assert.equal(result.summary.simulatedAuthRequests, 24);
-  assert.equal(result.checks.length, 157);
+  assert.equal(result.checks.length, 161);
   assert.equal(
     result.checks.filter(({ simulatedAuth }) => simulatedAuth).length,
     24
   );
-  assert.equal(mock.requestCount, 157);
-  assert.equal(result.limits.maxRequests, 157);
+  assert.equal(mock.requestCount, 161);
+  assert.equal(result.limits.maxRequests, 161);
+  assert.deepEqual(result.checks.filter(check => check.generativeModelPolicyVerified)
+    .map(check => check.caseId), ['web-readiness-initial', 'web-generative-model-policy',
+      'web-readiness-head', 'web-readiness-final']);
+  assert.equal(result.checks.find(check => check.caseId === 'worker-generative-model-policy-denied').httpStatus, 404);
   assert.equal(result.checks.filter(check => check.chatGptTutorMockVerified).length, 10);
   const migrationChecks = result.checks.filter(check => check.pluginMigrationPackageCoreVerified);
   assert.equal(migrationChecks.length, 1);
@@ -2393,6 +2411,7 @@ test('executes the bounded synthetic matrix and detects identity stability', asy
       pathTemplate: '/backstage/generation-contract',
       queueWaitPolicyVerified: true,
       trinityReasoningPolicyVerified: true,
+      gpt6ReasoningPolicyVerified: true,
       responseBytes: Buffer.byteLength(JSON.stringify(
         expectedNativePrPreviewResponseBody(routeBudgetCase, {
           commitSha: COMMIT_SHA,
@@ -2703,6 +2722,80 @@ test('plans the finite Tutor MCP exchange and denied credential, session, OAuth 
   assert.equal(cases.every(requestCase => requestCase.simulatedAuth !== true), true);
   assert.equal(cases.every(({ role, path }) => ['web', 'worker'].includes(role)
     && [contract.path, `${contract.path}?synthetic_preview=invalid`, contract.metadataPath].includes(path)), true);
+});
+
+test('requires model-policy proof and exact bounded report, suppressing proof on denials', async () => {
+  const requestPlan = buildNativePrPreviewRequestPlan();
+  const contract = NATIVE_PR_PREVIEW_E2E_CONTRACT.generativeModelPolicy;
+  const proofCode = 'NATIVE_PR_PREVIEW_GENERATIVE_MODEL_POLICY_PROOF_INVALID';
+  const bodyCode = 'NATIVE_PR_PREVIEW_BODY_MISMATCH';
+  const mutations = [
+    ...['web-readiness-initial', 'web-readiness-final', 'web-readiness-head',
+      'web-generative-model-policy'].flatMap(caseId => [undefined, 'shared-generative-model-policy/v0']
+      .map(version => ({ caseId, code: proofCode, mutate(value) {
+        if (version === undefined) delete value.headers[contract.proofHeader];
+        else value.headers[contract.proofHeader] = version;
+      } }))),
+    ...['worker-readiness-initial', 'worker-generative-model-policy-denied',
+      'web-generative-model-policy-query-denied', 'web-generative-model-policy-post-denied']
+      .map(caseId => ({ caseId, code: proofCode, mutate(value) {
+        value.headers[contract.proofHeader] = contract.proofVersion;
+      } })),
+    { caseId: 'web-generative-model-policy', code: bodyCode,
+      mutate(value) { value.body.roleModels.final = 'gpt-6.1-sol'; } },
+    { caseId: 'web-generative-model-policy', code: bodyCode,
+      mutate(value) { value.body.roleModels['final-escalation'] = 'ft:synthetic:other'; } },
+    { caseId: 'web-generative-model-policy', code: bodyCode,
+      mutate(value) { value.body.checks.deniedSyntheticTransportCalls = 1; } },
+    { caseId: 'web-generative-model-policy', code: bodyCode,
+      mutate(value) { value.body.checks.rejectedReplyIdentity = 0; } },
+    { caseId: 'web-generative-model-policy', code: bodyCode,
+      mutate(value) { value.body.sourceCommit = 'b'.repeat(40); } },
+    { caseId: 'web-generative-model-policy', code: 'NATIVE_PR_PREVIEW_SYNTHETIC_MARKER_MISSING',
+      mutate(value) { delete value.headers[NATIVE_PR_PREVIEW_E2E_CONTRACT.syntheticResponseHeader.name]; } },
+    { caseId: 'web-generative-model-policy', code: 'NATIVE_PR_PREVIEW_GENERATIVE_MODEL_POLICY_RESPONSE_LIMIT',
+      mutate(value) { value.body = JSON.stringify(value.body).padEnd(contract.maxResponseBytes + 1, ' '); } },
+  ];
+  for (const mutation of mutations) {
+    const mock = buildMockFetch(requestPlan, requestCase => {
+      if (requestCase.caseId !== mutation.caseId) return undefined;
+      const original = responseBodyForCase(requestCase);
+      const value = {
+        body: original && expectedNativePrPreviewContentType(requestCase)?.startsWith('application/json')
+          ? JSON.parse(original) : original,
+        headers: responseHeadersForCase(requestCase, Buffer.byteLength(original ?? '')),
+      };
+      mutation.mutate(value);
+      const body = typeof value.body === 'string' ? value.body : JSON.stringify(value.body);
+      if (requestCase.boundedResponse) value.headers['x-response-bytes'] = String(Buffer.byteLength(body));
+      const response = new Response(body, { headers: value.headers, status: requestCase.expectedStatus });
+      Object.defineProperty(response, 'url', {
+        value: `${requestCase.role === 'web' ? WEB_BASE_URL : WORKER_BASE_URL}${requestCase.path}`,
+      });
+      return response;
+    });
+    await assert.rejects(runNativePrPreviewE2e({
+      args: validArguments('--execute', '--allow-network'),
+      expectedBackstageBookerOpenApiDocument: EXPECTED_BACKSTAGE_BOOKER_OPENAPI_DOCUMENT,
+      fetchImpl: mock.fetchImpl, localGitState: LOCAL_GIT_STATE, monotonicNow: mock.monotonicNow,
+    }), error => error instanceof NativePrPreviewE2eError
+      && error.code === mutation.code && error.caseId === mutation.caseId,
+    `${mutation.caseId}: ${mutation.code}`);
+  }
+});
+
+test('compiled model-policy graph rejects SDK, credential and dynamic edges', () => {
+  for (const contract of GENERATIVE_MODEL_POLICY_PREVIEW_DIST_IMPORT_CONTRACT) {
+    const source = Object.entries(contract.imports).map(([specifier, bindings]) =>
+      `import { ${bindings.map(binding => binding.split(':')[0]).join(', ')} } from ${JSON.stringify(specifier)};`
+    ).join('\n');
+    assert.deepEqual(findTutorHonestyPreviewDistImportSourceViolations(contract, source), []);
+    for (const effect of ['import OpenAI from "openai";',
+      'import "../../services/openai/credentialProvider.js";',
+      'import("node:fs");', 'export * from "../../core/logic/trinity.js";']) {
+      assert.ok(findTutorHonestyPreviewDistImportSourceViolations(contract, `${source}\n${effect}`).length > 0);
+    }
+  }
 });
 
 test('rejects Tutor schema, output, provenance, empty-notification and denial drift', async () => {
@@ -3529,6 +3622,26 @@ test('rejects missing synthetic provenance and correlation or security header dr
           NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration.proofHeaders
             .trinityReasoningPolicyVersion
         ] = 'trinity-reasoning-provider-policy/drifted';
+      },
+    },
+    {
+      caseId: 'backstage-generation-route-budget',
+      code: 'NATIVE_PR_PREVIEW_GPT6_REASONING_POLICY_PROOF_INVALID',
+      mutate(headers) {
+        delete headers[
+          NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration.proofHeaders
+            .gpt6ReasoningPolicyVersion
+        ];
+      },
+    },
+    {
+      caseId: 'backstage-generation-route-budget',
+      code: 'NATIVE_PR_PREVIEW_GPT6_REASONING_POLICY_PROOF_INVALID',
+      mutate(headers) {
+        headers[
+          NATIVE_PR_PREVIEW_E2E_CONTRACT.backstageGeneration.proofHeaders
+            .gpt6ReasoningPolicyVersion
+        ] = 'gpt6-reasoning-policy/drifted';
       },
     },
     {

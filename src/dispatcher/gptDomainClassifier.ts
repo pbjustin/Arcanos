@@ -3,6 +3,7 @@ import type { CognitiveDomain } from '@shared/types/cognitiveDomain.js';
 import { normalizeResponsesCreateParams } from '@core/adapters/openai.adapter.js';
 import { aiLogger } from '@platform/logging/structuredLogging.js';
 import { extractResponseOutputText } from '@arcanos/openai/responseParsing';
+import { getTrinityIntakeModel } from '@services/openai/credentialProvider.js';
 
 const VALID_DOMAINS: ReadonlySet<string> = new Set([
   'diagnostic', 'code', 'creative', 'natural', 'execution'
@@ -55,7 +56,8 @@ export async function gptFallbackClassifier(
   const truncated = truncateAtSemanticBoundary(prompt, MAX_CLASSIFIER_INPUT_LENGTH);
 
   const payload = normalizeResponsesCreateParams({
-    model: 'gpt-4o-mini',
+    model: getTrinityIntakeModel(),
+    reasoning: { effort: 'none' },
     temperature: 0,
     max_output_tokens: 64,
     instructions:

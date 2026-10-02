@@ -854,7 +854,9 @@ describe('jobRunnerRuntime', () => {
   });
 
   it('declares the worker ready only after every consumer slot starts its dispatcher', () => {
-    const source = fs.readFileSync(path.resolve('src/workers/jobRunner.ts'), 'utf8');
+    const source = fs
+      .readFileSync(path.resolve('src/workers/jobRunner.ts'), 'utf8')
+      .replace(/\r\n/gu, '\n');
     const runtimeSettingsIndex = source.indexOf(
       'const runtimeSettings = resolveJobRunnerRuntimeSettings()'
     );

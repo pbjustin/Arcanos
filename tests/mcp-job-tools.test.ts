@@ -94,7 +94,7 @@ jest.unstable_mockModule('../src/trinity/trinity.js', () => ({
 }));
 
 jest.unstable_mockModule('../src/config/openai.js', () => ({
-  DEFAULT_FINE_TUNE: 'ft:test',
+  getConfiguredFineTune: () => 'ft:test',
 }));
 
 jest.unstable_mockModule('../src/shared/types/actionPlan.js', () => ({

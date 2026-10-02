@@ -36,11 +36,11 @@ The split files in `config/env/*.env.example` are examples to consult, not a
 runtime-loaded configuration stack: `src/platform/runtime/env.ts` loads the
 working directory's `.env` through `dotenv.config()`. Example assignments are
 explicit choices, not evidence of runtime defaults or deployed values. In
-particular, `config/env/openai.env.example` still lists
-`OPENAI_COMPLEX_MODEL` and `OPENAI_VISION_MODEL`, but current backend selectors
-do not read those variables: `getComplexModel()` derives the configured
-default model, and `buildVisionResponsesDraft()` uses its per-call model or
-`gpt-4o`. Those example entries need a separate configuration cleanup.
+particular, the backend's shared generative policy selects its helper roles
+and service-configured final authority as documented below. Image generation and
+embeddings retain their separate selectors. Vision request builders use the
+central final-authority default; the backend vision route also validates any
+per-call model against that service's configured fine-tune authority.
 Likewise, the security example's trusted-ID comment must be read with the
 presence-only confirmation limitation documented below, not as caller
 authentication.
@@ -66,7 +66,7 @@ outbound call.
 | `NODE_ENV` | No | `development` | Affects host binding and runtime behavior. |
 | `OPENAI_API_KEY` | No for explicit local/test mock paths; yes by default in production/Railway and for live AI | none | Default production/Railway startup validation rejects a missing or placeholder key. |
 | `OPENAI_BASE_URL` | No | none | Optional OpenAI endpoint override. |
-| `OPENAI_MODEL` | No | fallback chain | Participates in default model resolution chain. |
+| `OPENAI_MODEL` | One authority alias is required for authoritative generation | none | Lower-precedence alias for this service's configured fine-tune authority; a missing or non-`ft:` selection fails safely. |
 | `DATABASE_URL` | No | none | Primary PostgreSQL connection string; alternatively provide all five `PGUSER`, `PGPASSWORD`, `PGHOST`, `PGPORT`, and `PGDATABASE` fields. |
 | `DATABASE_PRIVATE_URL` / `DATABASE_PUBLIC_URL` | No | none | Additional database candidates, considered only when `DATABASE_URL` or the complete five-field `PG*` set is also present. See the current alias-only limitation below. |
 | `REDIS_URL` | No | none | Preferred `redis://` or TLS `rediss://` connection string; discrete `REDISHOST`/`REDISPORT`/`REDISUSER`/`REDISPASSWORD` are fallback inputs. Without a valid discrete fallback, a malformed non-empty value is treated as configured but unavailable. |
@@ -381,39 +381,177 @@ The OpenAI client resolves keys in this order:
 4. `OPENAI_KEY`
 
 ### Default model resolution order
-1. `FINETUNED_MODEL_ID`
-2. `FINE_TUNED_MODEL_ID`
-3. `AI_MODEL`
-4. `OPENAI_MODEL`
-5. `RAILWAY_OPENAI_MODEL`
-6. `gpt-4.1-mini`
 
-### Fallback model resolution order
-1. `FALLBACK_MODEL`
-2. `AI_FALLBACK_MODEL`
-3. `RAILWAY_OPENAI_FALLBACK_MODEL`
-4. `FINETUNED_MODEL_ID`
-5. `FINE_TUNED_MODEL_ID`
-6. `gpt-4.1`
+The default for authoritative final and recovery calls resolves in this order:
+
+1. `FINETUNED_MODEL_ID`
+2. `RAILWAY_FINETUNED_MODEL_ID`
+3. `FINE_TUNED_MODEL_ID`
+4. `AI_MODEL`
+5. `OPENAI_MODEL`
+6. `RAILWAY_OPENAI_MODEL`
+
+Whitespace-only values are absent. The first configured value must identify a
+fine-tune (`ft:` with no whitespace); missing or non-fine-tuned authority returns
+`FINAL_AUTHORITY_UNAVAILABLE` before provider transport. There is no built-in
+generative model or historical fine-tune fallback. Normal, escalated and recovery
+final calls use the same authority for the executing service. `FALLBACK_MODEL`,
+`AI_FALLBACK_MODEL` and `RAILWAY_OPENAI_FALLBACK_MODEL` do not replace it.
+
+An unset authority remains optional for deterministic startup, confirmation,
+status reads and dry-run previews. These paths report configured model metadata
+without admitting generation. A configured malformed authority still fails
+startup environment validation; generation still rejects unavailable authority
+before provider transport.
 
 These are source-defined selectors, not evidence of a deployed model or provider
-availability (`src/platform/runtime/unifiedConfig.ts`, `getConfig`). The
-`GPT_FAST_PATH_MODEL` compatibility setting is parsed in
-`src/shared/gpt/gptFastPath.ts`, but `executeFastGptPrompt` in
-`src/services/gptFastPath.ts` does not pass it into Trinity. The inline lane
-therefore uses the applicable Trinity selectors rather than that setting.
+availability (`src/platform/runtime/unifiedConfig.ts`, `getConfig`). Web and
+worker can retain different configured fine-tune identities; this policy does
+not hardcode either identity or reconcile production values.
+`GPT_FAST_PATH_MODEL` is ignored and is no longer read by
+`src/shared/gpt/gptFastPath.ts`. Fast-path classification keeps its existing
+eligibility rules; `executeFastGptPrompt` in `src/services/gptFastPath.ts` uses
+the shared policy's configured fine-tune for inline authoritative output.
 
-### GPT-5 and Backstage Booker generation
+### Trinity and CLEAR model lanes
 
-`TRINITY_REASONING_MODEL` selects only Trinity's schema-constrained Responses reasoning model. Its precedence is `TRINITY_REASONING_MODEL`, `GPT5_MODEL`, `GPT51_MODEL`, then the built-in `gpt-5.6-terra` default. The shared `GPT5_MODEL` selector used by other GPT-5 execution paths retains its existing `GPT5_MODEL`, `GPT51_MODEL`, then GPT-5.1 behavior, so the Terra migration does not silently move unrelated calls that lack an explicit effort. Trinity structured reasoning requests an explicit effort by tier: `simple` uses `none`, `complex` uses `low`, and `critical` uses `medium`. At the provider boundary, `none` is normalized to `minimal` only for exact `gpt-5` and dated GPT-5 snapshots because that model family does not support disabled reasoning; GPT-5.1 and GPT-5.6 retain `none`. `TRINITY_REASONING_MAX_OUTPUT_TOKENS` defaults to `8000`; strict positive base-10 integers are clamped to `16`-`8000`, while invalid or unset values use `8000`. This Responses limit includes both hidden reasoning tokens and visible structured JSON. `TRINITY_REASONING_STAGE_TIMEOUT_MS` defaults to `20000` and is further clamped to the remaining request and runtime budget.
+Backend generative callers use the reusable `resolveGenerativeModel` policy in
+`src/services/openai/credentialProvider.ts`, backed by unified configuration.
+The role is selected by trusted backend code and enforced again at shared call
+boundaries. Values in `.env.example` are examples, not deployed Railway values.
+
+| Role | Effective model | Existing selectors |
+| --- | --- | --- |
+| Intake/classification | `gpt-6-luna` | `getTrinityIntakeModel()` |
+| Structured reasoning | `gpt-6.1-sol` | `getTrinityReasoningModel()`, compatibility `getGPT5Model()` |
+| Normal authoritative final | Configured service fine-tune | `getTrinityFinalModel()`, `getDefaultModel()` |
+| Escalated/recovery authoritative final | Same configured service fine-tune | `getTrinityFinalEscalationModel()`, `getComplexModel()`, `getFallbackModel()` |
+| Routine CLEAR/Gaming CLEAR and evaluation audits | `gpt-6-luna` | `getClearAuditModel()` |
+| Explicit internal audit escalation | `gpt-6.1-sol` | `getClearAuditEscalationModel()` |
+
+Legacy `TRINITY_*_MODEL`, `CLEAR_AUDIT*_MODEL`, `GPT5_MODEL`, `GPT51_MODEL`
+and their Railway aliases no longer change these backend roles. Module-level
+model parameters can confirm the selected role's model but a conflicting value
+returns `MODEL_OVERRIDE_CONFLICT` before transport. This includes trusted
+`directAnswerModelOverride` and Backstage generation/continuity calls; a caller
+cannot choose a helper or legacy model for the authoritative final. The
+compatibility `setDefaultModel()` validates the configured final authority and
+does not cache a runtime replacement.
+
+Trinity retains bounded intake model validation and its existing timeout. An
+intake-validation failure fails safely if the central Luna model is unavailable;
+it never selects a legacy model. Complex or critical
+tiers and upstream fallback flags select the final-escalation role, with one
+final call and no new retry. Routine direct answers, direct-answer defaults,
+timeout recovery and approved structural continuation retain fine-tune authority.
+
+Both audit functions default to the routine lane. Their optional trusted internal
+`modelLane='escalation'` selects the escalation model for the same single call.
+No public request field or environment switch enables automatic escalation, and
+no retry, recursion or repair loop is added. Gaming retains at most one audit,
+no tools, the 1024 output-token ceiling, aggregate runtime budget, strict result
+validation, citation/evidence binding and fail-closed unavailable outcomes.
+General CLEAR retains its zero-score unavailable result and timeout behavior.
+GPT-6 audit requests explicitly use Luna none or Sol low reasoning within the
+existing output caps.
+
+Embeddings, image generation and transcription keep separate model selection.
+Backend vision text answers require the configured fine-tune authority. The
+standalone `workers/` and `arcanos-ai-runtime/` packages, portable
+`src/runtime/`, and Python transport clients retain their documented transport
+contracts; this backend policy change does not alter their independent model
+configuration. Plugin scopes, credentials, writing/control boundaries and
+production safeguards remain in force.
+
+#### Model capability contract
+
+The centralized `resolveOpenAIModelCapabilities` policy recognizes exact IDs
+and dated snapshots. Unknown models retain legacy pass-through behavior; they
+are not claimed to have GPT-6 capabilities. API guidance was checked against
+[official GPT-6 migration guidance](https://developers.openai.com/api/docs/guides/latest-model),
+[GPT-6 Luna](https://developers.openai.com/api/docs/models/gpt-6-luna), and
+[GPT-6.1 Sol](https://developers.openai.com/api/docs/models/gpt-6.1-sol).
+
+| Model | Disabled reasoning | API effort values | Structured reasoning | Normalization used here |
+| --- | --- | --- | --- | --- |
+| GPT-5 | No | minimal, low, medium, high | Supported | requested none becomes minimal; legacy sampling behavior preserved |
+| GPT-5.1 | Yes | none, low, medium, high | Supported | none preserved; legacy behavior preserved |
+| GPT-5.6 Terra | Yes | none, low, medium, high, xhigh, max | Supported | none preserved; legacy behavior preserved |
+| GPT-6 Luna | Yes | none, low, medium, high, xhigh, max | Supported | minimal becomes low; none remains none |
+| GPT-6.1 Sol | No | low, medium, high, xhigh, max | Supported | none/minimal become low |
+
+For the reviewed GPT-6 models, active reasoning (including omitted default
+medium effort) removes `temperature`, `top_p`, `top_logprobs`, `logprobs`, and
+Responses output-text logprobs includes. Luna with explicit none can retain
+supported sampling parameters. Existing adapters still convert token aliases
+into `max_output_tokens`, preserve bounded signals, validate structured JSON,
+and reject incomplete output. Lightweight intake explicitly requests none
+(Luna); fine-tuned finals retain the adapter's model-capability handling within
+their existing caps. Trinity structured effort remains
+tier-based: simple none (normalized to low for Sol), complex low, critical medium.
+
+The lockfile and installed SDK are OpenAI **6.25.0** (manifest `^6.25.0`). New
+model IDs are allowed as strings, and none/low/medium are type-supported. No SDK
+update is required. `max` is an API capability but is not in this SDK's request
+type; outbound GPT-6 max is rejected and requires a later reviewed SDK update.
+No new mode, tool, service-tier or caching fields are introduced.
+
+`TRINITY_REASONING_MAX_OUTPUT_TOKENS` defaults to `8000`; strict positive base-10
+integers are clamped to `16`-`8000`, and invalid or unset values use `8000`.
+This includes hidden reasoning tokens plus visible JSON. All other existing
+intake/final/audit caps, worker admission budgets, stage/request deadlines,
+cancellation, redaction and fallback paths remain in force. The reasoning stage
+timeout defaults to `20000` ms and is clamped to the remaining request/runtime
+budget.
+
+#### Gated rollout and rollback
+
+This follow-up prepares code and offline regression evidence for a separate
+draft PR. Deployment of merged PR1517 remains held; code readiness is not a
+release or provider-availability claim. This change does not deploy, merge,
+change Railway variables/secrets, drain queues, migrate data or enable provider
+calls. Coordinated-drain/migration work and runtime-setting reconciliation remain
+separate rollout gates.
+
+A later authorized rollout must verify each executing service's configured
+fine-tune source and preserve distinct service identities. Live model acceptance
+and paid API comparisons require separate approval. Legacy lane or fallback
+variables cannot roll back this policy. Any release rollback needs a separately
+reviewed code/deployment plan that preserves authority and production safeguards.
+
+#### Synthetic model comparison
+
+The bounded runner defaults to an offline plan with zero provider calls:
+
+```bash
+node scripts/compare-trinity-model-lanes.mjs --dry-run
+```
+
+This historical comparison harness lists prior repository helper/final
+baselines and does not represent the approved backend authority policy. Its
+isolated final comparison cannot establish configured fine-tune resolution, and
+shared backend helpers reject conflicting baseline models. The runner rejects
+`--execute` with `HISTORICAL_MODEL_COMPARISON_DISABLED` before importing the
+runtime, reading credentials or creating transport. Do not use the harness as
+rollout evidence; its dry-run measurements remain unmeasured.
+Current regression coverage must exercise the production resolver and module,
+recovery and override call paths with offline provider fixtures. No user prompts,
+input files or remote fixture data are accepted by the historical harness.
+
+The report contains fixture hashes and counts, status, schema validity, latency,
+timeouts, token accounting and incomplete/truncated metadata when observed.
+It contains no raw prompts, outputs, provider errors or credentials. Dry-run
+measurements remain null. Full-pipeline fallback and CLEAR acceptance also remain
+null because this runner makes isolated lane calls without extra audits. Those
+outcomes require separate approved pipeline comparisons before rollout.
 
 Responses usage is observed before structured parsing, so the session token audit still records billed reasoning tokens when the provider returns incomplete, refused, malformed, or schema-invalid output. Successful pipeline telemetry and the session audit aggregate intake, structured reasoning, and final-stage usage. For response compatibility, `meta.tokens` remains the final user-visible stage's usage rather than the aggregate pipeline total.
 
-Backstage Booker direct answers remain a separate Chat Completions path. The obsolete exact `gpt-5` alias is normalized to `gpt-5.1`; supported GPT-5.1 and GPT-5.6 Sol/Terra/Luna direct-answer requests explicitly disable reasoning so their bounded output budget remains available for visible text.
+Backstage Booker generation, continuity and bounded recovery use the executing service's configured fine-tune authority through the existing Responses adapter path. A trusted model override must match that authority. Compatible requests retain their existing reasoning and visible-output budget handling.
 
 `BOOKER_TOKEN_LIMIT` defaults to `2400` for ordinary synchronous generation and remains bounded by the standard Backstage `2400`-token cap. Ordinary Trinity callers retain the global `1200`-token cap, while compact direct-answer prompts may use a smaller prompt-derived budget. Explicit full-show, card, or booking-state review/evaluation prompts use a six-bullet synthesis contract and `min(BOOKER_TOKEN_LIMIT, 1600)` so the review can complete before the provider-stage and HRC deadlines. The classifier uses a quote-aware scan of directive-shaped request clauses throughout the prompt; an explicit mixed request to book, rebook, rewrite, draft, or continue vetoes bounded mode and retains the ordinary generation budget. Quoted or attributed dialogue inside supplied show state is inert, while narrow decision analysis or recommendations also stay in ordinary mode. A deployment retaining an explicit historical value such as `512` or `1200` will continue to use that value; remove or update the variable to adopt the `2400` default.
 
-`BOOKER_WORKER_TOKEN_LIMIT` controls only authenticated protected queued production generation. It defaults to `6000`, clamps to `4000`-`8000`, and is further constrained by the finite primary provider-stage budget: less than 45 seconds retains `2400`, 45-60 seconds permits at most `4000`, 60-75 seconds at most `5000`, and 75 seconds or more permits the configured value. The extended policy is available only for the known GPT-5.1 and GPT-5.6 Sol/Terra/Luna request contracts. Unsupported model identifiers fail safely to `2400`. Bounded-review, query-continuity, synchronous rollback, and genuinely small queued compact workloads keep their smaller established budgets. Capacity and presentation are separate: an explicit top-level exact or maximum compact-list shape remains enforced after HRC, Notion authority, prompt size, or retrieved context promotes capacity. Conversely, match or segment counts nested inside a requested complete card, show, or event do not redefine the whole response as that many compact top-level items. The selected cap is passed through the installed SDK as the compatible Responses `max_output_tokens` field, and provider `incomplete`/`max_output_tokens` metadata remains a failure signal rather than successful booking text. Every attempt receives a server-owned instruction to finish all requested sections within the selected finite budget.
+`BOOKER_WORKER_TOKEN_LIMIT` controls only authenticated protected queued production generation. It defaults to `6000`, clamps to `4000`-`8000`, and is further constrained by the finite primary provider-stage budget: less than 45 seconds retains `2400`, 45-60 seconds permits at most `4000`, 60-75 seconds at most `5000`, and 75 seconds or more permits the configured value. The pure output-budget helper retains its known GPT-5.1/GPT-5.6 compatibility contracts and also recognizes `configured_authority` when the selected model exactly matches the server-owned `finalAuthorityModel`: a valid case-sensitive `ft:` identity for this executing service. Backend final selection still uses only that configured authority. Another service's fine-tune, a case mismatch, Sol, or an invalid authority does not gain the allowance and retains the baseline cap. Request data cannot supply `finalAuthorityModel`. Bounded-review, query-continuity, synchronous rollback, and genuinely small queued compact workloads keep their smaller established budgets. All existing workload/profile, provider-stage and global caps remain in force. Capacity and presentation are separate: an explicit top-level exact or maximum compact-list shape remains enforced after HRC, Notion authority, prompt size, or retrieved context promotes capacity. Conversely, match or segment counts nested inside a requested complete card, show, or event do not redefine the whole response as that many compact top-level items. The selected cap is passed through the installed SDK as the compatible Responses `max_output_tokens` field, and provider `incomplete`/`max_output_tokens` metadata remains a failure signal rather than successful booking text. Every attempt receives a server-owned instruction to finish all requested sections within the selected finite budget.
 
 Backstage execution uses finite profile-specific timeout plans. `BOOKER_CONTINUITY_STAGE_TIMEOUT_MS` defaults to `20000` and is capped at `25000`, retaining a low-latency synchronous continuity path. Synchronous generation retains `BOOKER_GENERATION_STAGE_TIMEOUT_MS=40000`; although the compatibility parser accepts values through `45000`, the execution plan caps ordinary generation at `40000` to reserve one 10-second recovery and finalization, and caps HRC generation at `30000` to reserve recovery plus its 10-second review stage below the route's 60-second cap.
 
@@ -1643,7 +1781,7 @@ Use `npm run build` before `npm run job-events:timeline -- --job-id <uuid> --out
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `GPT_ACCESS_NL_DISPATCH_MODE` | unset | When unset, effective mode is `hybrid` if a real resolved OpenAI key is configured, using the OpenAI key resolution order above, and `rules` otherwise. `rules` never calls the LLM; `hybrid` runs rules first and calls the LLM only when rules require clarification; `llm_first` calls the LLM first and returns semantic LLM clarification as-is, falling back to deterministic rules only when the LLM is unavailable, fails, times out, or returns invalid output. Invalid values resolve to `rules`. |
-| `GPT_ACCESS_DISPATCH_MODEL` | `gpt-4.1-mini` | OpenAI Responses API model for the semantic planner only; it does not follow the general `OPENAI_MODEL` precedence chain. |
+| `GPT_ACCESS_DISPATCH_MODEL` | unset; shared intake role is `gpt-6-luna` | Optional semantic-planner compatibility value; it must match the shared intake model or fails before transport. It does not select final authority. |
 | `GPT_ACCESS_DISPATCH_LLM_TIMEOUT_MS` | `5000` | Per-dispatch LLM planning timeout. Invalid or non-positive values use the default and positive values are capped at `10000`. Timeout/failure never executes an LLM plan; execution can continue only through a deterministic rule plan that still passes policy and confirmation. |
 
 The semantic planner can only propose one registered action plus a JSON-object payload. The gateway still enforces registry lookup, GPT Access scopes, `MCP_ALLOW_MODULE_ACTIONS`, risk-aware confidence policy, unsafe payload-field rejection, prohibited action names, and confirmation. Confidence thresholds are fixed in code, not environment-configured: readonly `0.65`, privileged `0.78`, and destructive `0.90`; clarification bands are readonly `0.55-<0.65` and privileged `0.70-<0.78`. Worker recycle/recover dispatch is registered as privileged `workers.recycle` / `workers.recover`, requires explicit `workers.recover` scope and confirmation, and only reclaims stale queue jobs through the approved recovery runner. `GET /gpt-access/health` exposes sanitized `nlDispatch` configuration for deployment verification.
@@ -1703,7 +1841,7 @@ arcanos
 ## Troubleshooting
 - Local server uses an unexpected port: set `PORT=3000` in `.env` explicitly.
 - Railway launcher fatal startup error: set `ARCANOS_PROCESS_KIND` to `web` or `worker` on that service.
-- Unexpected model in use: verify model precedence chain and remove conflicting variables.
+- Unexpected model or rejected override: verify the service's final-authority alias order and remove conflicting module model parameters; legacy lane/fallback variables do not select backend roles.
 - Confirmation bypass not working: verify header name and secret match exactly.
 
 ## Generated Directories
@@ -1751,13 +1889,13 @@ This table mirrors high-impact runtime keys and active operator controls in `.en
 | `PORT` | `3000` | HTTP port the server binds to. |
 | `NODE_ENV` | `development` | Runtime mode. |
 | `OPENAI_API_KEY` | `your-openai-api-key-here` | OpenAI API key used by server/runtime. |
-| `OPENAI_MODEL` | `gpt-4o-mini` | Default model name from `.env.example`; the runtime can still fall back to its built-in model when unset. |
-| `TRINITY_REASONING_MODEL` | `gpt-5.6-terra` (commented) | Trinity-only structured Responses selector. Precedence: this variable, `GPT5_MODEL`, `GPT51_MODEL`, then Terra. |
-| `GPT5_MODEL` | empty (commented) | Shared GPT-5-family override for legacy/non-Trinity paths. When unset, `GPT51_MODEL` and then GPT-5.1 remain the fallback. Backstage normalizes only the obsolete exact `gpt-5` alias to `gpt-5.1`. |
+| `OPENAI_MODEL` | empty placeholder | Lower-precedence service fine-tune authority alias; no helper-model fallback. Set one valid authority alias before authoritative generation. |
+| `FINETUNED_MODEL_ID` / `FINE_TUNED_MODEL_ID` / `AI_MODEL` | empty (commented) | Existing fine-tune authority aliases in the documented precedence order; retain each service's configured identity. |
+| `TRINITY_*_MODEL` / `CLEAR_AUDIT*_MODEL` / `GPT5_MODEL` / `GPT51_MODEL` | no effective backend override | Legacy values no longer select roles. Intake/routine audit use Luna, reasoning/explicit audit escalation use Sol, and all finals use the configured fine-tune. |
 | `TRINITY_REASONING_MAX_OUTPUT_TOKENS` | `8000` (commented) | Structured Responses ceiling for hidden reasoning plus visible JSON. Strict positive base-10 integers are clamped to `16`-`8000`; invalid or unset values use `8000`. |
 | `TRINITY_REASONING_STAGE_TIMEOUT_MS` | `20000` (commented) | Structured reasoning timeout, further clamped to the remaining request/runtime budget. |
 | `BOOKER_TOKEN_LIMIT` | `2400` (commented) | Standard Backstage Booker output budget, bounded by its `2400`-token cap. Full-show/card review-only prompts use at most `1600`, compact direct-answer prompts can use a smaller derived budget, and ordinary Trinity callers remain capped at `1200`. |
-| `BOOKER_WORKER_TOKEN_LIMIT` | `6000` (commented) | Protected queued production-generation budget, clamped to `4000`-`8000` and further limited by the compatible model and remaining finite provider-stage tier. It does not enlarge continuity, review, unsupported-model, synchronous rollback, or genuinely small compact calls. Explicit compact presentation remains enforced when HRC, Notion authority, prompt size, or retrieved context independently requires production capacity. |
+| `BOOKER_WORKER_TOKEN_LIMIT` | `6000` (commented) | Protected queued production-generation budget, clamped to `4000`-`8000` and further limited by exact server-configured fine-tune authority eligibility and the remaining finite provider-stage tier. Other fine-tunes, Sol, or invalid authority retain baseline eligibility. It does not enlarge continuity, review, unsupported-model, synchronous rollback, or genuinely small compact calls. Explicit compact presentation remains enforced when HRC, Notion authority, prompt size, or retrieved context independently requires production capacity. |
 | `BOOKER_GENERATION_STAGE_TIMEOUT_MS` | `40000` (commented) | Synchronous Backstage generation stage preference. Values parse through `45000`, while the plan effectively caps ordinary generation at `40000` and HRC generation at `30000` to preserve recovery, review, and response-finalization reserves below the route deadline. |
 | `BOOKER_CONTINUITY_STAGE_TIMEOUT_MS` | `20000` (commented) | Lightweight synchronous continuity stage timeout, clamped to `1000`-`25000`. |
 | `BOOKER_WORKER_JOB_TIMEOUT_MS` | `180000` (commented) | Protected queued-generation terminal deadline anchored to durable first execution start, clamped to `120000`-`180000`; includes 30 seconds of orchestration headroom plus a reserved 10-second result-finalization window. |
@@ -1800,7 +1938,7 @@ This table mirrors high-impact runtime keys and active operator controls in `.en
 | `ARCANOS_LOCAL_AGENT_EXECUTOR_PREVIOUS_TOKEN_EXPIRES_AT` | commented ISO-8601 placeholder | Previous-token expiry, limited to at most 24 hours from validation time. |
 | `ARCANOS_LOCAL_AGENT_HEARTBEAT_TTL_MS` | `90000` (commented) | Fresh-device window before local-agent enqueue fails closed; clamped to 10 seconds-15 minutes. |
 | `GPT_ACCESS_NL_DISPATCH_MODE` | unset (commented) | Optional `/gpt-access/dispatch/run` resolver mode: `rules`, `hybrid`, or `llm_first`; unset defaults from real OpenAI credential availability. |
-| `GPT_ACCESS_DISPATCH_MODEL` | `gpt-4.1-mini` (commented) | Model used only by the optional semantic dispatcher. |
+| `GPT_ACCESS_DISPATCH_MODEL` | `gpt-6-luna` (commented) | Optional semantic-dispatch compatibility value; must match the shared intake role. |
 | `GPT_ACCESS_DISPATCH_LLM_TIMEOUT_MS` | `5000` (commented) | Optional semantic dispatcher timeout, capped at `10000`; failures fall back only through deterministic rules and policy checks. |
 | `DEFAULT_GPT_ID` | `arcanos-core` | Default GPT id for bridge requests that omit `gptId`. |
 | `ARCANOS_PROCESS_KIND` | `web` (commented) | Explicit Railway launcher role: `web` or `worker`. |

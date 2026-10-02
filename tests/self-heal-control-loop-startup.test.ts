@@ -4,7 +4,8 @@ const loggerInfoMock = jest.fn();
 const loggerWarnMock = jest.fn();
 const loggerErrorMock = jest.fn();
 const loggerDebugMock = jest.fn();
-const getConfigMock = jest.fn();
+const actualUnifiedConfig = await import('../src/platform/runtime/unifiedConfig.js');
+const getConfigMock = jest.fn(() => actualUnifiedConfig.getConfig());
 const loggerMock = {
   info: loggerInfoMock,
   warn: loggerWarnMock,
@@ -62,6 +63,7 @@ describe('self-heal control loop startup in tests', () => {
     process.env.NODE_ENV = 'test';
     delete process.env.ENABLE_SELF_HEAL_CONTROL_LOOP_IN_TESTS;
     getConfigMock.mockReturnValue({
+      ...actualUnifiedConfig.getConfig(),
       selfImproveEnabled: true,
       selfImproveActuatorMode: 'daemon',
       selfImproveAutonomyLevel: 3,

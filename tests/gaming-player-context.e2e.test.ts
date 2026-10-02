@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { afterAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import express from 'express';
 import request from 'supertest';
 
@@ -7,20 +7,14 @@ const runStructuredReasoning = jest.fn();
 const createGPT5Reasoning = jest.fn();
 const storePattern = jest.fn();
 const recordFeedback = jest.fn();
+const authorityModel = 'ft:gpt-4.1:synthetic:gaming-player-context-authority';
+const previousAuthorityModel = process.env.FINETUNED_MODEL_ID;
+process.env.FINETUNED_MODEL_ID = authorityModel;
+afterAll(() => {
+  if (previousAuthorityModel === undefined) delete process.env.FINETUNED_MODEL_ID;
+  else process.env.FINETUNED_MODEL_ID = previousAuthorityModel;
+});
 
-jest.unstable_mockModule('@services/openai/credentialProvider.js', () => ({
-  resolveOpenAIBaseURL: () => undefined,
-  resolveOpenAIKey: () => null,
-  getOpenAIKeySource: () => 'test',
-  resetCredentialCache: jest.fn(),
-  hasValidAPIKey: () => true,
-  setDefaultModel: jest.fn(),
-  getDefaultModel: () => 'gpt-5.1',
-  getComplexModel: () => 'gpt-5.1',
-  getFallbackModel: () => 'gpt-4.1',
-  getGPT5Model: () => 'gpt-5.1',
-  getTrinityReasoningModel: () => 'gpt-5.6-terra'
-}));
 jest.unstable_mockModule('@services/openai/structuredReasoning.js', () => ({ runStructuredReasoning }));
 jest.unstable_mockModule('@services/openai/chatFlow/index.js', () => ({ createGPT5Reasoning }));
 jest.unstable_mockModule('@services/memoryAware.js', () => ({
@@ -43,11 +37,12 @@ const searchActiveGamingKnowledge = jest.fn();
 const findActiveGamingSourceIdentities = jest.fn();
 const forbiddenWrite = jest.fn(() => { throw new Error('No persistent writes allowed in this fixture'); });
 const modelClient = {
-  models: { retrieve: jest.fn().mockResolvedValue({ id: 'gpt-5.1' }) },
+  models: { retrieve: jest.fn().mockResolvedValue({ id: 'gpt-6-luna' }) },
   responses: { create: responsesCreate }
 };
 jest.unstable_mockModule('@services/openai/clientBridge.js', () => ({ getOpenAIClientOrAdapter: () => ({ client: modelClient }) }));
-jest.unstable_mockModule('@services/openai.js', () => ({ generateMockResponse: jest.fn(), getGPT5Model: () => 'gpt-5.1' }));
+const { getGPT5Model } = await import('../src/services/openai/credentialProvider.js');
+jest.unstable_mockModule('@services/openai.js', () => ({ generateMockResponse: jest.fn(), getGPT5Model }));
 jest.unstable_mockModule('@services/hrcWrapper.js', () => ({ evaluateWithHRC: forbiddenWrite }));
 jest.unstable_mockModule('@services/workerAutonomyService.js', () => ({ planAutonomousWorkerJob: forbiddenWrite }));
 jest.unstable_mockModule('@core/db/repositories/jobRepository.js', () => ({
@@ -159,9 +154,9 @@ function record(fixture: typeof corpus.cases[number], text = fixture.evidence, i
   };
 }
 
-function completion(text: string, incomplete = false) {
+function completion(text: string, incomplete = false, model = 'gpt-6-luna') {
   return {
-    id: 'synthetic-player-context', model: 'gpt-5.1', status: incomplete ? 'incomplete' : 'completed',
+    id: 'synthetic-player-context', model, status: incomplete ? 'incomplete' : 'completed',
     ...(incomplete ? { incomplete_details: { reason: 'max_output_tokens' } } : {}),
     output_text: text, output: [],
     usage: { input_tokens: 700, output_tokens: incomplete ? 500 : 80, total_tokens: incomplete ? 1200 : 780 }
@@ -200,7 +195,7 @@ describe('public Gaming player context to selected evidence and normal Trinity r
       record(fixture, fixture.excludedFuture ?? 'An unrelated distant chapter reveals the ending and final identity.', 'future-unrelated')
     ]);
     responsesCreate.mockResolvedValueOnce(completion('Question and player constraints retained; verify source [1].'))
-      .mockResolvedValueOnce(completion(fixture.referenceAnswer))
+      .mockResolvedValueOnce(completion(fixture.referenceAnswer, false, authorityModel))
       .mockResolvedValueOnce(completion(JSON.stringify({ dimensions: Object.fromEntries(
         ['clarity', 'leverage', 'efficiency', 'alignment', 'resilience'].map(name => [name,
           { status: 'evaluated', score: 4.5, reasonCodes: ['SUPPORTED'], evidenceRefs: [fixture.id], unresolvedFacts: [] }

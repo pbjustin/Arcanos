@@ -155,7 +155,8 @@ describe('paired-device credential lifecycle', () => {
   });
 
   test('runtime SQL and migration share exact table/index statements with explicit rollback', () => {
-    const sql = readFileSync('migrations/20260911_gpt_access_devices_v1.sql', 'utf8');
+    const sql = readFileSync('migrations/20260911_gpt_access_devices_v1.sql', 'utf8')
+      .replace(/\r\n/gu, '\n');
     for (const definition of GPT_ACCESS_DEVICE_TABLE_DEFINITIONS) expect(sql).toContain(`${definition};`);
     const rollback = readFileSync('migrations/20260911_gpt_access_devices_v1.rollback.sql', 'utf8');
     expect(rollback).toContain('DROP TABLE IF EXISTS gpt_access_devices;');

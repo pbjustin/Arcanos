@@ -19,6 +19,7 @@ import {
   BACKSTAGE_HEAVY_OPENAI_FIXTURE_CHILD_ENV,
   BACKSTAGE_HEAVY_OPENAI_FIXTURE_CHILD_VALUE,
   BACKSTAGE_HEAVY_OPENAI_FIXTURE_MARKER,
+  BACKSTAGE_HEAVY_OPENAI_FIXTURE_MODEL_ID,
   BACKSTAGE_HEAVY_OPENAI_FIXTURE_READY_SENTINEL,
   BACKSTAGE_HEAVY_OPENAI_FIXTURE_RUN_ID_ENV,
   BACKSTAGE_HEAVY_OPENAI_FIXTURE_SDK_KEY,
@@ -474,13 +475,11 @@ export function buildBackstageHeavyApplicationChildEnvironment(
     // derived only after the parent has rejected ambient provider credentials;
     // the web child retains its validated dead-loopback provider base.
     OPENAI_API_KEY: BACKSTAGE_HEAVY_OPENAI_FIXTURE_SDK_KEY,
+    // Only validated disposable application children receive this fictional authority.
+    FINETUNED_MODEL_ID: BACKSTAGE_HEAVY_OPENAI_FIXTURE_MODEL_ID,
     OPENAI_MAX_RETRIES: '0',
     ...(proofTarget.processKind === 'worker'
       ? {
-          GPT5_MODEL: 'gpt-5.1',
-          GPT51_MODEL: 'gpt-5.1',
-          OPENAI_MODEL: 'gpt-5.1',
-          RAILWAY_OPENAI_MODEL: 'gpt-5.1',
           BOOKER_REPAIR_STAGE_TIMEOUT_MS: '45000',
           BOOKER_TOKEN_LIMIT: '2400',
           BOOKER_WORKER_GENERATION_STAGE_TIMEOUT_MS: '80000',

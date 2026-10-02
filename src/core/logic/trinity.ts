@@ -29,7 +29,7 @@ import {
   type AuditLogEntry
 } from "@services/auditSafe.js";
 import { getMemoryContext, storePattern } from "@services/memoryAware.js";
-import { getGPT5Model, getTrinityReasoningModel } from "@services/openai/credentialProvider.js";
+import { getTrinityIntakeModel, getTrinityFinalModel, getTrinityFinalEscalationModel, getTrinityReasoningModel, resolveGenerativeModel } from "@services/openai/credentialProvider.js";
 import { logger } from "@platform/logging/structuredLogging.js";
 import { getAiExecutionContext } from '@services/openai/aiExecutionContext.js';
 import type {
@@ -817,7 +817,7 @@ export async function runThroughBrain(
 
   if (options.dryRun) {
     const { userPrompt: auditSafePrompt, auditFlags } = applyAuditSafeConstraints('', prompt, auditConfig);
-    const dryRunPreview = buildDryRunPreview(requestId, prompt, auditSafePrompt, capabilityFlags, auditFlags, memoryContext.relevantEntries.length, auditConfig.auditSafeMode, options.dryRunReason);
+    const dryRunPreview = buildDryRunPreview(requestId, prompt, auditSafePrompt, capabilityFlags, auditFlags, memoryContext.relevantEntries.length, auditConfig.auditSafeMode, options.dryRunReason, tier === 'simple' ? 'routine' : 'escalation');
     return buildDryRunTrinityResult(
       requestId,
       dryRunPreview,
@@ -931,6 +931,9 @@ export async function runThroughBrain(
     return shortcutResult;
   }
 
+  // Validate final authority before helper work, while deterministic shortcuts stay provider-free.
+  resolveGenerativeModel('final', options.directAnswerModelOverride);
+
   // --- Concurrency governor + watchdog ---
   let releaseTierSlot: (() => void) | undefined;
   let observedReasoningUsage: TrinityReasoningUsage | undefined;
@@ -1012,7 +1015,8 @@ export async function runThroughBrain(
 
       logArcanosRouting(
         'DIRECT_ANSWER',
-        getGPT5Model(),
+        options.directAnswerModelOverride ?? (directAnswerOptions.recovery || tier !== 'simple'
+          ? getTrinityFinalEscalationModel() : getTrinityFinalModel()),
         `Tier: ${tier}, Input length: ${prompt.length}, Memory entries: ${memoryContext.relevantEntries.length}, AuditSafe: ${auditConfig.auditSafeMode}`
       );
       if (!routingStages.includes(TRINITY_DIRECT_ANSWER_STAGE)) {
@@ -1050,7 +1054,8 @@ export async function runThroughBrain(
               cognitiveDomain,
               runtimeBudget,
               requestId,
-              options.directAnswerModelOverride,
+              options.directAnswerModelOverride ?? (directAnswerOptions.recovery || tier !== 'simple'
+                ? getTrinityFinalEscalationModel() : getTrinityFinalModel()),
               options.directAnswerTokenLimitOverride,
               stageTimeoutOverrideMs,
               options.preserveAggregateAbortContext,
@@ -1277,7 +1282,7 @@ export async function runThroughBrain(
                 cognitiveDomain,
                 runtimeBudget,
                 requestId,
-                options.directAnswerModelOverride,
+                options.directAnswerModelOverride ?? getTrinityFinalEscalationModel(),
                 approvedRepairDecision.tokenLimit,
                 approvedRepairDecision.timeoutMs,
                 false,
@@ -1635,6 +1640,7 @@ export async function runThroughBrain(
     budget.increment();
     checkWatchdog();
 
+    const requestedIntakeModel = getTrinityIntakeModel();
     const arcanosModel = await runLoggedStage({
       requestId,
       stage: 'model-validation',
@@ -1691,6 +1697,9 @@ export async function runThroughBrain(
         return recoveredResult;
       }
       throw error;
+    }
+    if (arcanosModel !== requestedIntakeModel) {
+      intakeOutput.fallbackUsed = true;
     }
     // The task card is a navigation aid, never a replacement for selected evidence.
     // The reasoning envelope escapes this JSON before inserting it as untrusted data.
@@ -1887,6 +1896,41 @@ export async function runThroughBrain(
     let finalRecoveryAction: TrinitySelfHealingAction | null = selfHealingMitigation.bypassFinalStage
       ? selfHealingMitigation.activeAction
       : null;
+    const recoverFinalWithAuthority = async (): Promise<Awaited<ReturnType<typeof runFinalStage>>> => {
+      const recoveredOutput = await runLoggedStage({
+        requestId,
+        stage: 'final-authority-recovery',
+        runtimeBudget,
+        sourceEndpoint: options.sourceEndpoint,
+        preserveAggregateAbortContext: options.preserveAggregateAbortContext,
+        redactErrorDetails: options.redactAuditContent,
+        timeoutMs: resolveAuxiliaryStageTimeoutMs(
+          'TRINITY_DIRECT_ANSWER_RECOVERY_TIMEOUT_MS',
+          DEFAULT_TRINITY_DIRECT_ANSWER_RECOVERY_TIMEOUT_MS,
+          runtimeBudget
+        ),
+        operation: () => runDirectAnswerStage(
+          client,
+          memoryContext.contextSummary,
+          auditSafePrompt,
+          cognitiveDomain,
+          runtimeBudget,
+          requestId,
+          options.directAnswerModelOverride ?? getTrinityFinalEscalationModel(),
+          options.directAnswerTokenLimitOverride,
+          stageTimeoutOverrideMs,
+          options.preserveAggregateAbortContext,
+          options.directAnswerTokenCapOverride,
+          options.redactAuditContent,
+          trustedPolicyPrompt,
+          options.directAnswerSystemPolicyPrompt,
+          options.directAnswerUntrustedContextPrompt,
+          options.cooperativeModelStageTimeout
+        )
+      });
+      // Recovery remains fallback output and cannot admit a completed Gaming answer.
+      return { ...recoveredOutput, fallbackUsed: true };
+    };
     let finalOutput: Awaited<ReturnType<typeof runFinalStage>>;
     if (selfHealingMitigation.bypassFinalStage) {
       auditFlags.push('SELF_HEAL_V2_FINAL_BYPASS');
@@ -1897,17 +1941,7 @@ export async function runThroughBrain(
         tier,
         action: selfHealingMitigation.activeAction
       });
-      finalOutput = {
-        output:
-          outputControls.answerMode === 'direct'
-            ? applyTrinityDirectAnswerOutputContract(gpt5Output, trustedPolicyPrompt)
-            : gpt5Output,
-        activeModel: gpt5ModelUsed,
-        fallbackUsed: true,
-        usage: undefined,
-        responseId: undefined,
-        created: undefined
-      };
+      finalOutput = await recoverFinalWithAuthority();
     } else {
       try {
         finalOutput = await runLoggedStage({
@@ -1927,7 +1961,9 @@ export async function runThroughBrain(
               cognitiveDomain,
               internalDirective,
               runtimeBudget,
-              stageTimeoutOverrideMs
+              stageTimeoutOverrideMs,
+              tier !== 'simple' || intakeOutput.fallbackUsed || reasoningOutput.fallbackUsed
+                ? 'escalation' : 'routine'
             )
         });
       } catch (error) {
@@ -1947,17 +1983,7 @@ export async function runThroughBrain(
             tier,
             action: finalRecoveryAction
           });
-          finalOutput = {
-            output:
-              outputControls.answerMode === 'direct'
-                ? applyTrinityDirectAnswerOutputContract(gpt5Output, trustedPolicyPrompt)
-                : gpt5Output,
-            activeModel: gpt5ModelUsed,
-            fallbackUsed: true,
-            usage: undefined,
-            responseId: undefined,
-            created: undefined
-          };
+          finalOutput = await recoverFinalWithAuthority();
         } else {
           throw error;
         }

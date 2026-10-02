@@ -1,11 +1,12 @@
 import path from 'node:path';
-import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const mockMkdir = jest.fn();
 const mockSetMemory = jest.fn();
 const mockFetchAndClean = jest.fn();
 const mockRunTrinityWritingPipeline = jest.fn();
 const mockGetOpenAIClientOrAdapter = jest.fn(() => ({ client: null }));
+const originalAuthorityModel = process.env.FINETUNED_MODEL_ID;
 
 jest.unstable_mockModule('fs', () => ({
   promises: {
@@ -34,24 +35,12 @@ jest.unstable_mockModule('@platform/resilience/runtimeBudget.js', () => ({
   getRemainingMs: jest.fn((budget: { hardDeadline: number }) => budget.hardDeadline - Date.now()),
 }));
 
-jest.unstable_mockModule('../src/services/openai.js', () => ({
-  getDefaultModel: jest.fn(() => 'mock-model'),
-}));
-
 jest.unstable_mockModule('../src/services/openai/clientBridge.js', () => ({
   getOpenAIClientOrAdapter: mockGetOpenAIClientOrAdapter,
 }));
 
 jest.unstable_mockModule('../src/services/memory.js', () => ({
   setMemory: mockSetMemory,
-}));
-
-jest.unstable_mockModule('@platform/runtime/env.js', () => ({
-  getEnvNumber: jest.fn((_name: string, fallback: number) => fallback),
-  getEnvIntegerAtLeast: jest.fn((_name: string, fallback: number) => fallback),
-  getEnv: jest.fn((name: string) => (
-    name === 'OPENAI_API_KEY' ? 'test_key_for_mocking' : undefined
-  )),
 }));
 
 const {
@@ -64,8 +53,17 @@ const RESEARCH_STORAGE_TOPIC_COMPONENT_MAX_BYTES = 97;
 describe('research storage topic component', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    process.env.FINETUNED_MODEL_ID = 'ft:synthetic:test:research-storage-authority';
     mockMkdir.mockResolvedValue(undefined);
     mockSetMemory.mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    if (originalAuthorityModel === undefined) {
+      delete process.env.FINETUNED_MODEL_ID;
+    } else {
+      process.env.FINETUNED_MODEL_ID = originalAuthorityModel;
+    }
   });
 
   it.each([

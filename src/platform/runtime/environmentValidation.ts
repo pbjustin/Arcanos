@@ -208,9 +208,8 @@ const environmentChecks: EnvironmentCheck[] = [
   {
     name: 'AI_MODEL',
     required: false,
-    description: 'Default AI model to use',
-    defaultValue: 'gpt-4o',
-    validator: (value) => value.includes('gpt') || value.includes('ft:')
+    description: 'Service-configured fine-tune authority for generative final answers',
+    validator: (value) => /^ft:[^\s]+$/.test(value.trim())
   },
   {
     name: 'FINETUNED_MODEL_ID',
@@ -218,7 +217,7 @@ const environmentChecks: EnvironmentCheck[] = [
     description: 'Alias for AI_MODEL - OpenAI fine-tuned model identifier for Railway compatibility',
     suggestions: [
       'This is an alias for AI_MODEL for Railway deployment compatibility',
-      'Use your fine-tuned model ID or a standard model like gpt-4o or gpt-4o-mini',
+      'Use this service\'s configured fine-tuned model ID; helper models cannot supply final authority',
       'If both AI_MODEL and FINETUNED_MODEL_ID are set, FINETUNED_MODEL_ID takes precedence'
     ]
   },
@@ -368,6 +367,10 @@ function isCheckRequired(check: EnvironmentCheck): boolean {
 function resolveEnvironmentCheckValue(checkName: string): string | undefined {
   if (checkName === 'OPENAI_API_KEY') {
     return getConfig().openaiApiKey;
+  }
+  if (checkName === 'AI_MODEL') {
+    // Validate the same effective authority used at generation, including its aliases.
+    return getConfig().defaultModel || undefined;
   }
 
   return getEnv(checkName);

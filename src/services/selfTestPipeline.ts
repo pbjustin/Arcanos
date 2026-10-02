@@ -3,6 +3,7 @@ import path from 'path';
 import { updateState } from './stateManager.js';
 import { DEFAULT_SELF_TEST_PROMPTS, SELF_TEST_USER_AGENT, SelfTestPrompt } from "@platform/runtime/selfTestConfig.js";
 import { getBackendBaseUrl, getEnv } from "@platform/runtime/env.js";
+import { getTrinityFinalModel } from './openai/credentialProvider.js';
 
 export interface SelfTestResult {
   id: string;
@@ -243,7 +244,7 @@ export async function runSelfTestPipeline(options: SelfTestOptions = {}): Promis
   const baseUrl = options.baseUrl || resolveBaseUrl();
   const prompts = options.prompts && options.prompts.length > 0 ? options.prompts : DEFAULT_SELF_TEST_PROMPTS;
   // Use config layer for env access (adapter boundary pattern)
-  const targetModel = options.targetModel || getEnv('FINETUNED_MODEL_ID') || getEnv('AI_MODEL') || 'gpt-4o';
+  const targetModel = options.targetModel || getTrinityFinalModel();
   const triggeredBy = options.triggeredBy || 'cli';
 
   const results: SelfTestResult[] = [];

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-29T18:31:17.058Z",
+  "generatedAt": "2026-10-02T03:17:44.304Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -2831,6 +2831,12 @@
           "relativePath": "src/shared/gpt/bridgeSmoke.ts"
         },
         {
+          "relativePath": "src/shared/gpt/generativeModelPolicyCore.ts"
+        },
+        {
+          "relativePath": "src/shared/gpt/generativeModelPolicyPreviewFixture.ts"
+        },
+        {
           "relativePath": "src/shared/gpt/gptAsyncWaitPolicy.ts"
         },
         {
@@ -3673,6 +3679,9 @@
           "relativePath": "tests/autoscaling-architecture.test.ts"
         },
         {
+          "relativePath": "tests/backend-model-policy-boundaries.test.ts"
+        },
+        {
           "relativePath": "tests/backstage-action-policy.test.ts"
         },
         {
@@ -3937,6 +3946,12 @@
           "relativePath": "tests/check-npm-audit-policy.test.ts"
         },
         {
+          "relativePath": "tests/clear-audit-provider-routing.test.ts"
+        },
+        {
+          "relativePath": "tests/clear-audit-routing.test.ts"
+        },
+        {
           "relativePath": "tests/clear-decision-contract.test.ts"
         },
         {
@@ -4189,6 +4204,9 @@
           "relativePath": "tests/fixtures/gamingClearCalibration.ts"
         },
         {
+          "relativePath": "tests/fixtures/generative-model-policy-provider.ts"
+        },
+        {
           "relativePath": "tests/fixtures/openai-response-conversion.ts"
         },
         {
@@ -4436,6 +4454,18 @@
         },
         {
           "relativePath": "tests/gaming.direct-answer.test.ts"
+        },
+        {
+          "relativePath": "tests/generation-authority-diagnostics.test.ts"
+        },
+        {
+          "relativePath": "tests/generative-model-policy-preview-application.test.ts"
+        },
+        {
+          "relativePath": "tests/generative-model-policy-preview-fixture.test.ts"
+        },
+        {
+          "relativePath": "tests/generative-model-policy-transport.e2e.test.ts"
         },
         {
           "relativePath": "tests/git.service.test.ts"
@@ -4918,6 +4948,15 @@
           "relativePath": "tests/mocks/prisma-client.ts"
         },
         {
+          "relativePath": "tests/model-lane-comparison-runner.test.ts"
+        },
+        {
+          "relativePath": "tests/model-lane-selectors.test.ts"
+        },
+        {
+          "relativePath": "tests/module-generative-policy.test.ts"
+        },
+        {
           "relativePath": "tests/module-registry-initialization.test.ts"
         },
         {
@@ -5000,6 +5039,9 @@
         },
         {
           "relativePath": "tests/openai-startup-probe-isolation.test.ts"
+        },
+        {
+          "relativePath": "tests/openai-stream-model-policy.test.ts"
         },
         {
           "relativePath": "tests/openai-structured-reasoning-preview-chaos.test.ts"
@@ -5413,7 +5455,13 @@
           "relativePath": "tests/sessionResolver.persistence.test.ts"
         },
         {
+          "relativePath": "tests/shared-generative-policy.test.ts"
+        },
+        {
           "relativePath": "tests/startup-health-routes.test.ts"
+        },
+        {
+          "relativePath": "tests/startup-missing-authority.test.ts"
         },
         {
           "relativePath": "tests/status.route.test.ts"
@@ -5515,7 +5563,16 @@
           "relativePath": "tests/trinity-integrity-recovery.test.ts"
         },
         {
+          "relativePath": "tests/trinity-model-lanes.test.ts"
+        },
+        {
+          "relativePath": "tests/trinity-model-policy.e2e.test.ts"
+        },
+        {
           "relativePath": "tests/trinity-pipeline-adapter.test.ts"
+        },
+        {
+          "relativePath": "tests/trinity-pipeline-model-lanes.test.ts"
         },
         {
           "relativePath": "tests/trinity-reasoning-policy.test.ts"

@@ -1,12 +1,13 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import type OpenAI from 'openai';
 import { tryDispatchDaemonTools } from '../src/routes/ask/daemonTools.js';
+import { getDefaultModel } from '../src/services/openai/credentialProvider.js';
 
 function createOpenAiClientWithToolArgs(toolName: string, argumentsJson: string): OpenAI {
   const createMock = jest.fn(async () => ({
     id: 'chatcmpl-test',
     created: 1770700000,
-    model: 'gpt-4.1-mini',
+    model: getDefaultModel(),
     usage: {
       prompt_tokens: 10,
       completion_tokens: 5,
@@ -101,7 +102,7 @@ describe('daemon tools trust boundary', () => {
       .fn()
       .mockResolvedValueOnce({
         id: 'resp-1',
-        model: 'gpt-4.1-mini',
+        model: getDefaultModel(),
         output: [
           {
             type: 'function_call',

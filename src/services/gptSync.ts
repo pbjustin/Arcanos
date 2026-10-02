@@ -10,6 +10,7 @@ import { GPT_SYNC_CONFIG } from "@platform/runtime/gptSyncConfig.js";
 import { GPT_SYNC_ERRORS, GPT_SYNC_LOG_MESSAGES, GPT_SYNC_STRINGS } from "@platform/runtime/gptSyncMessages.js";
 import { requireOpenAIClientOrAdapter } from './openai/clientBridge.js';
 import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
+import { getTrinityFinalModel, resolveGenerativeModel } from './openai/credentialProvider.js';
 
 function getRequiredClient() {
   return requireOpenAIClientOrAdapter(GPT_SYNC_ERRORS.clientUnavailable).client;
@@ -49,6 +50,7 @@ function buildSystemPrompt(
 }
 
 async function createSyncedCompletion(systemPrompt: string, userPrompt: string, model: string) {
+  const finalModel = resolveGenerativeModel('final', model);
   const client = getRequiredClient();
 
   const response = await runTrinityWritingPipeline({
@@ -58,7 +60,7 @@ async function createSyncedCompletion(systemPrompt: string, userPrompt: string, 
       sourceEndpoint: 'gpt-sync',
       requestedAction: 'query',
       body: {
-        model,
+        model: finalModel,
         maxCompletionTokens: GPT_SYNC_CONFIG.maxCompletionTokens,
         temperature: GPT_SYNC_CONFIG.temperature
       },
@@ -84,7 +86,7 @@ async function createSyncedCompletion(systemPrompt: string, userPrompt: string, 
 export async function askGPTWithSync(
   userPrompt: string,
   port: number = config.server.port,
-  model: string = GPT_SYNC_CONFIG.defaultModel
+  model: string = getTrinityFinalModel()
 ): Promise<string> {
   try {
     // Get current backend state
@@ -121,7 +123,7 @@ export async function askGPTWithContext(
   userPrompt: string,
   additionalContext: Record<string, any> = {},
   port: number = config.server.port,
-  model: string = GPT_SYNC_CONFIG.defaultModel
+  model: string = getTrinityFinalModel()
 ): Promise<{
   response: string;
   backendState: SystemState;

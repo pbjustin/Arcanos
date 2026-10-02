@@ -1,4 +1,5 @@
-import { callOpenAI, getDefaultModel } from './openai.js';
+import { callOpenAI } from './openai.js';
+import { getConfig } from '@platform/runtime/unifiedConfig.js';
 import { z } from 'zod';
 import type { WorkerInfoDTO, WorkerStatusResponseDTO } from "@shared/types/dto.js";
 import { parseModelOutputWithSchema } from "@services/safety/aiOutputBoundary.js";
@@ -65,7 +66,7 @@ function buildHeuristicPlan(context: AutoHealContext, model: string): AutoHealPl
 }
 
 export async function buildAutoHealPlan(status: WorkerStatusResponseDTO): Promise<AutoHealPlan> {
-  const model = getDefaultModel();
+  const model = getConfig().defaultModel;
   const context: AutoHealContext = {
     failingWorkers: status.workers.filter(worker => !worker.available),
     lastError: status.arcanosWorkers.runtime.lastError,

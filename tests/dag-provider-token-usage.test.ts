@@ -1,4 +1,4 @@
-import { describe, expect, it, jest } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 import { dagAgentManager } from '../src/agents/agentManager.js';
 import { createOpenAIAdapter, instrumentOpenAIOperation } from '../src/core/adapters/openai.adapter.js';
@@ -11,6 +11,8 @@ import { runDagNodeJob } from '../src/workers/taskRunners.js';
 import type { DagNodeJobInput } from '../src/jobs/jobSchema.js';
 
 const logger = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} };
+const authorityModel = 'ft:gpt-4.1:synthetic:dag-usage-authority';
+const previousAuthorityModel = process.env.FINETUNED_MODEL_ID;
 let nextNode = 0;
 
 async function runAttempt(callback: () => Promise<unknown>) {
@@ -32,10 +34,10 @@ async function runAttempt(callback: () => Promise<unknown>) {
   });
 }
 
-function providerResponse(usage: unknown, text = 'Synthetic provider response.') {
+function providerResponse(usage: unknown, text = 'Synthetic provider response.', model = 'gpt-4.1-mini') {
   return {
     id: 'response-usage-fixture', object: 'response', created_at: 1,
-    model: 'gpt-4.1-mini', status: 'completed', usage,
+    model, status: 'completed', usage,
     output: [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text, annotations: [] }] }]
   };
 }
@@ -55,15 +57,20 @@ async function observeUsage(usage: unknown) {
 }
 
 describe('DAG attempt usage at the production provider boundary', () => {
+  beforeEach(() => { process.env.FINETUNED_MODEL_ID = authorityModel; });
+  afterEach(() => {
+    if (previousAuthorityModel === undefined) delete process.env.FINETUNED_MODEL_ID;
+    else process.env.FINETUNED_MODEL_ID = previousAuthorityModel;
+  });
   it('aggregates real intake, structured reasoning, and final stages without redefining public usage', async () => {
     const structured = JSON.stringify({
       response_mode: 'answer', achievable_subtasks: [], blocked_subtasks: [],
       user_visible_caveats: [], claim_tags: [], final_answer: 'A structured answer.'
     });
     const { adapter, fetch } = syntheticAdapter([
-      providerResponse({ input_tokens: 8, output_tokens: 3, total_tokens: 11 }),
-      providerResponse({ input_tokens: 80, output_tokens: 9, total_tokens: 89, output_tokens_details: { reasoning_tokens: 4 } }, structured),
-      providerResponse({ input_tokens: 5, output_tokens: 2, total_tokens: 7 })
+      providerResponse({ input_tokens: 8, output_tokens: 3, total_tokens: 11 }, 'Synthetic intake.', 'gpt-6-luna'),
+      providerResponse({ input_tokens: 80, output_tokens: 9, total_tokens: 89, output_tokens_details: { reasoning_tokens: 4 } }, structured, 'gpt-6.1-sol'),
+      providerResponse({ input_tokens: 5, output_tokens: 2, total_tokens: 7 }, 'Synthetic provider response.', authorityModel)
     ]);
     const outputControls = {
       requestedVerbosity: 'normal' as const, maxWords: null, answerMode: 'direct' as const,
@@ -73,7 +80,7 @@ describe('DAG attempt usage at the production provider boundary', () => {
     const result = await runAttempt(async () => {
       const client = adapter.getClient();
       const budget = createRuntimeBudget();
-      const intake = await runIntakeStage(client, 'gpt-4.1-mini', 'A synthetic request.', '', flags, outputControls, undefined, undefined, budget);
+      const intake = await runIntakeStage(client, 'gpt-6-luna', 'A synthetic request.', '', flags, outputControls, undefined, undefined, budget);
       const reasoning = await runReasoningStage(client, intake.framedRequest, flags, outputControls, 'simple', { effort: 'none' }, budget);
       const final = await runFinalStage(client, '', 'A synthetic request.', reasoning.output, flags, outputControls, reasoning.reasoningHonesty, undefined, undefined, budget);
       expect([intake.usage?.total_tokens, reasoning.usage?.total_tokens, final.usage?.total_tokens]).toEqual([11, 89, 7]);

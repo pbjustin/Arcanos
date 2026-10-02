@@ -11,6 +11,16 @@ import {
   getGPT5Model,
   getTrinityReasoningModel
 } from './openai/credentialProvider.js';
+export {
+  resolveGenerativeModel,
+  GenerativeModelPolicyError,
+  getTrinityIntakeModel,
+  getTrinityFinalModel,
+  getTrinityFinalEscalationModel,
+  getClearAuditModel,
+  getClearAuditEscalationModel
+} from './openai/credentialProvider.js';
+export type { GenerativeModelRole } from './openai/credentialProvider.js';
 import { generateMockResponse } from './openai/mock.js';
 import { getCircuitBreakerSnapshot } from './openai/resilience.js';
 import { createChatCompletionWithFallback, createSingleChatCompletion } from './openai/chatFallbacks.js';

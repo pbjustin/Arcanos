@@ -1,5 +1,9 @@
-import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { countWords } from '../src/shared/text/countWords.js';
+
+const authorityModel = 'ft:gpt-4.1:synthetic:honesty-authority';
+const previousAuthorityModel = process.env.FINETUNED_MODEL_ID;
+const realCredentialProvider = await import('../src/services/openai/credentialProvider.js');
 
 const mockValidateAIRequest = jest.fn();
 const mockHandleAIError = jest.fn((error: unknown) => {
@@ -38,30 +42,12 @@ jest.unstable_mockModule('@services/promptRouteShortcuts.js', () => ({
 }));
 
 jest.unstable_mockModule('@services/openai.js', () => ({
-  getDefaultModel: () => 'arcanos-intake-model',
-  getComplexModel: () => 'arcanos-final-model',
-  getFallbackModel: () => 'gpt-4.1',
-  getGPT5Model: () => 'gpt-5-reasoning-model',
-  getTrinityReasoningModel: () => 'gpt-5-reasoning-model',
+  ...realCredentialProvider,
   generateMockResponse: mockGenerateMockResponse,
   createChatCompletionWithFallback: mockCreateChatCompletionWithFallback,
   createSingleChatCompletion: mockCreateChatCompletionWithFallback,
   runStructuredReasoning: mockRunStructuredReasoning,
   createGPT5Reasoning: jest.fn()
-}));
-
-jest.unstable_mockModule('@services/openai/credentialProvider.js', () => ({
-  resolveOpenAIBaseURL: () => undefined,
-  resolveOpenAIKey: () => null,
-  getOpenAIKeySource: () => 'test',
-  resetCredentialCache: jest.fn(),
-  hasValidAPIKey: () => true,
-  setDefaultModel: jest.fn(),
-  getDefaultModel: () => 'arcanos-intake-model',
-  getComplexModel: () => 'arcanos-final-model',
-  getFallbackModel: () => 'gpt-4.1',
-  getGPT5Model: () => 'gpt-5-reasoning-model',
-  getTrinityReasoningModel: () => 'gpt-5-reasoning-model'
 }));
 
 jest.unstable_mockModule('@services/openai/chatFallbacks.js', () => ({
@@ -166,7 +152,7 @@ function buildIntegrityCompletion(input: {
       content_filtered: false,
       ...(input.providerMetadata ?? {}),
     },
-    activeModel: 'gpt-4.1',
+    activeModel: authorityModel,
     fallbackFlag: false,
     usage: {
       prompt_tokens: 80,
@@ -186,7 +172,12 @@ function buildApp() {
 }
 
 describe('/api/arcanos/ask honesty e2e', () => {
+  afterEach(() => {
+    if (previousAuthorityModel === undefined) delete process.env.FINETUNED_MODEL_ID;
+    else process.env.FINETUNED_MODEL_ID = previousAuthorityModel;
+  });
   beforeEach(() => {
+    process.env.FINETUNED_MODEL_ID = authorityModel;
     jest.clearAllMocks();
     process.env.ASK_ROUTE_MODE = 'compat';
 
@@ -209,7 +200,7 @@ describe('/api/arcanos/ask honesty e2e', () => {
     mockValidateAIRequest.mockImplementation((_req: unknown, _res: unknown) => ({
       client: {
         models: {
-          retrieve: jest.fn().mockResolvedValue({ id: 'arcanos-intake-model' })
+          retrieve: jest.fn().mockResolvedValue({ id: 'gpt-6-luna' })
         }
       },
       input: 'Verify the latest competitor moves without browsing and build me a launch plan.',
@@ -227,7 +218,7 @@ describe('/api/arcanos/ask honesty e2e', () => {
             }
           }
         ],
-        activeModel: 'arcanos-intake-model',
+        activeModel: 'gpt-6-luna',
         fallbackFlag: false,
         usage: {
           prompt_tokens: 10,
@@ -253,7 +244,7 @@ describe('/api/arcanos/ask honesty e2e', () => {
             }
           }
         ],
-        activeModel: 'arcanos-final-model',
+        activeModel: authorityModel,
         fallbackFlag: false,
         usage: {
           prompt_tokens: 20,
@@ -331,7 +322,7 @@ describe('/api/arcanos/ask honesty e2e', () => {
     mockValidateAIRequest.mockImplementation((_req: unknown, _res: unknown) => ({
       client: {
         models: {
-          retrieve: jest.fn().mockResolvedValue({ id: 'arcanos-intake-model' })
+          retrieve: jest.fn().mockResolvedValue({ id: 'gpt-6-luna' })
         }
       },
       input: 'Generate a prompt for Codex to update my documentation in my repo.',
@@ -349,7 +340,7 @@ describe('/api/arcanos/ask honesty e2e', () => {
             }
           }
         ],
-        activeModel: 'arcanos-intake-model',
+        activeModel: 'gpt-6-luna',
         fallbackFlag: false,
         usage: {
           prompt_tokens: 10,
@@ -371,7 +362,7 @@ describe('/api/arcanos/ask honesty e2e', () => {
             }
           }
         ],
-        activeModel: 'arcanos-final-model',
+        activeModel: authorityModel,
         fallbackFlag: false,
         usage: {
           prompt_tokens: 18,
@@ -437,7 +428,7 @@ describe('/api/arcanos/ask honesty e2e', () => {
     mockValidateAIRequest.mockImplementation((_req: unknown, _res: unknown) => ({
       client: {
         models: {
-          retrieve: jest.fn().mockResolvedValue({ id: 'arcanos-intake-model' })
+          retrieve: jest.fn().mockResolvedValue({ id: 'gpt-6-luna' })
         }
       },
       input: 'Direct answer only: verify the latest competitor moves without browsing and build me a launch plan.',
@@ -463,7 +454,7 @@ describe('/api/arcanos/ask honesty e2e', () => {
           }
         }
       ],
-      activeModel: 'gpt-4.1',
+      activeModel: authorityModel,
       fallbackFlag: false,
       usage: {
         prompt_tokens: 18,
@@ -511,7 +502,7 @@ describe('/api/arcanos/ask honesty e2e', () => {
         length_truncated: false,
         content_filtered: false
       },
-      activeModel: 'gpt-4.1',
+      activeModel: authorityModel,
       fallbackFlag: false,
       usage: {
         prompt_tokens: 8,
@@ -548,7 +539,7 @@ describe('/api/arcanos/ask honesty e2e', () => {
       selectionReason: 'explicit_answer_mode',
       recovery: false,
       trinityStage: 'direct-answer',
-      activeModel: 'gpt-4.1',
+      activeModel: authorityModel,
       finishReason: 'stop',
       responseStatus: 'completed',
       incompleteReason: 'none',
@@ -955,7 +946,7 @@ describe('/api/arcanos/ask honesty e2e', () => {
     mockValidateAIRequest.mockImplementation((_req: unknown, _res: unknown) => ({
       client: {
         models: {
-          retrieve: jest.fn().mockResolvedValue({ id: 'arcanos-intake-model' })
+          retrieve: jest.fn().mockResolvedValue({ id: 'gpt-6-luna' })
         }
       },
       input: 'Direct answer only under 20 words: give me a launch plan and note any limitation around competitor moves.',
@@ -974,7 +965,7 @@ describe('/api/arcanos/ask honesty e2e', () => {
             }
           }
         ],
-        activeModel: 'arcanos-intake-model',
+        activeModel: 'gpt-6-luna',
         fallbackFlag: false,
         usage: {
           prompt_tokens: 10,
@@ -997,7 +988,7 @@ describe('/api/arcanos/ask honesty e2e', () => {
             }
           }
         ],
-        activeModel: 'arcanos-final-model',
+        activeModel: authorityModel,
         fallbackFlag: false,
         usage: {
           prompt_tokens: 18,
@@ -1079,7 +1070,7 @@ describe('/api/arcanos/ask honesty e2e', () => {
     mockValidateAIRequest.mockImplementation((_req: unknown, _res: unknown) => ({
       client: {
         models: {
-          retrieve: jest.fn().mockResolvedValue({ id: 'arcanos-intake-model' })
+          retrieve: jest.fn().mockResolvedValue({ id: 'gpt-6-luna' })
         }
       },
       input: 'Assess this launch plan and note any limitation around competitor moves.',
@@ -1098,7 +1089,7 @@ describe('/api/arcanos/ask honesty e2e', () => {
             }
           }
         ],
-        activeModel: 'arcanos-intake-model',
+        activeModel: 'gpt-6-luna',
         fallbackFlag: false,
         usage: {
           prompt_tokens: 12,
@@ -1116,7 +1107,7 @@ describe('/api/arcanos/ask honesty e2e', () => {
             }
           }
         ],
-        activeModel: 'arcanos-final-model',
+        activeModel: authorityModel,
         fallbackFlag: false,
         usage: {
           prompt_tokens: 18,

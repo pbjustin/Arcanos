@@ -77,19 +77,10 @@ async function loadAuditSafeHarness(): Promise<AuditSafeHarness> {
   jest.unstable_mockModule('@core/db/auditStore.js', () => ({
     createAuditStore: () => fakeAuditStore,
   }));
-  jest.unstable_mockModule('@platform/runtime/env.js', () => ({
-    getEnv: (key: string, fallback?: string) => {
-      const value = process.env[key];
-      return value === undefined || value === '' ? fallback : value;
-    },
-  }));
   jest.unstable_mockModule('fs', () => ({
     promises: {
       appendFile: appendFileMock,
     },
-  }));
-  jest.unstable_mockModule('../src/services/openai.js', () => ({
-    getDefaultModel: () => 'gpt-test',
   }));
   jest.unstable_mockModule('@services/openai/clientBridge.js', () => ({
     getOpenAIClientOrAdapter: () => ({ adapter: null, client: null }),

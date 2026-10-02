@@ -1266,6 +1266,16 @@ and is owned by `setupDiagnostics(app)` before the health-group router mounts.
 - `POST /api/transcribe`
 - `GET /api/openai/status`
 - `POST /api/openai/prompt`
+- `POST /query-finetune`
+
+Provider-backed prompt, vision, and fine-tune queries use the service's
+configured fine-tune for authoritative output. The optional `model` on
+`/api/openai/prompt` and `/api/vision` may confirm that identity; a conflicting
+model returns HTTP `400` before provider execution. An unavailable or
+non-fine-tuned authority returns HTTP `503`. Vision provider failures retain
+the normal processing error response without switching to a helper model.
+The `trinity.query_finetune` MCP tool uses the same configured authority within
+its existing tool authorization boundary. See [model role configuration](CONFIGURATION.md).
 
 ### Memory, codebase, and reusable code
 

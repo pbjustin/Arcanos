@@ -1,4 +1,6 @@
-export const DEFAULT_MODEL = process.env.ARCANOS_MODEL || 'gpt-5';
-
-export const DEFAULT_FINE_TUNE =
-  process.env.ARCANOS_FINE_TUNE || 'ft:gpt-4.1-2025-04-14:personal:arcanos:C8Msdote';
+// Resolve lazily so importing routes does not require an available authority.
+// Both legacy entry points share the service's configured final model policy.
+export {
+  getDefaultModel as getConfiguredModel,
+  getTrinityFinalModel as getConfiguredFineTune
+} from '@services/openai/credentialProvider.js';

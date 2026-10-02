@@ -19,7 +19,8 @@ const mockGetAuthoritativeAgent = jest.fn();
 const mockUpdateHeartbeat = jest.fn();
 const mockListAuthoritativeAgents = jest.fn();
 const mockGrantAuthoritativeCapabilities = jest.fn();
-const mockGetConfig = jest.fn();
+const actualUnifiedConfig = await import('../src/platform/runtime/unifiedConfig.js');
+const mockGetConfig = jest.fn(() => ({ ...actualUnifiedConfig.getConfig(), enableActionPlans: true }));
 const mockApiLoggerError = jest.fn();
 
 jest.unstable_mockModule('../src/stores/agentRegistry.js', () => ({
@@ -86,11 +87,11 @@ describe('agents routes', () => {
     mockGrantAuthoritativeCapabilities.mockReset();
     mockGetConfig.mockReset();
     mockApiLoggerError.mockReset();
-    mockGetConfig.mockReturnValue({ enableActionPlans: true });
+    mockGetConfig.mockReturnValue({ ...actualUnifiedConfig.getConfig(), enableActionPlans: true });
   });
 
   it('returns 503 when action plans are disabled', async () => {
-    mockGetConfig.mockReturnValue({ enableActionPlans: false });
+    mockGetConfig.mockReturnValue({ ...actualUnifiedConfig.getConfig(), enableActionPlans: false });
 
     const response = await authorizeOperator(request(buildApp())
       .post('/agents/register')

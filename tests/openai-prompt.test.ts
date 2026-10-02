@@ -35,6 +35,7 @@ let resetPromptRouteMitigationStateForTests: () => void;
 let DEFAULT_PROMPT_ROUTE_PIPELINE_TIMEOUT_MS: number;
 let DEFAULT_PROMPT_ROUTE_PROVIDER_TIMEOUT_MS: number;
 let originalNodeEnv: string | undefined;
+let originalAuthority: string | undefined;
 
 function buildTrinityPromptResult(result: string, activeModel: string) {
   return {
@@ -67,6 +68,8 @@ beforeEach(async () => {
   jest.clearAllMocks();
   originalNodeEnv = process.env.NODE_ENV;
   process.env.NODE_ENV = 'test';
+  originalAuthority = process.env.FINETUNED_MODEL_ID;
+  process.env.FINETUNED_MODEL_ID = 'ft:default-model';
 
   jest.unstable_mockModule('../src/services/openai.js', () => ({
     callOpenAI,
@@ -123,11 +126,14 @@ beforeEach(async () => {
 afterEach(() => {
   resetPromptRouteMitigationStateForTests();
   process.env.NODE_ENV = originalNodeEnv;
+  if (originalAuthority === undefined) delete process.env.FINETUNED_MODEL_ID;
+  else process.env.FINETUNED_MODEL_ID = originalAuthority;
   jest.clearAllMocks();
 });
 
 describe('handlePrompt', () => {
-  it('uses provided model when specified', async () => {
+  it('accepts a provided model matching the configured authority', async () => {
+    process.env.FINETUNED_MODEL_ID = 'ft:custom-model';
     validateAIRequest.mockReturnValue({ input: 'hi', client: {} });
     runTrinityWritingPipeline.mockResolvedValue(buildTrinityPromptResult('ok', 'ft:custom-model'));
 
@@ -186,6 +192,7 @@ describe('handlePrompt', () => {
   });
 
   it('trims provided model names before sending to OpenAI', async () => {
+    process.env.FINETUNED_MODEL_ID = 'ft:custom-model';
     validateAIRequest.mockReturnValue({ input: 'hi', client: {} });
     runTrinityWritingPipeline.mockResolvedValue(buildTrinityPromptResult('ok', 'ft:custom-model'));
 
@@ -220,7 +227,6 @@ describe('handlePrompt', () => {
 
     await handlePrompt(req, res);
 
-    expect(getDefaultModel).toHaveBeenCalled();
     expect(runTrinityWritingPipeline).toHaveBeenCalledWith(expect.objectContaining({
       input: expect.objectContaining({
         prompt: 'hello',

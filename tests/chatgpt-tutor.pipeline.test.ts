@@ -40,10 +40,11 @@ const responsesCreate = jest.fn(async (input: SyntheticResponsesRequest, options
   return providerAnswerOverride === undefined ? response : { ...response, output_text: providerAnswerOverride };
 });
 const client = { models: { retrieve: jest.fn(async (id: string) => ({ id })) }, responses: { create: responsesCreate } };
-const environmentKeys = ['OPENAI_API_KEY', 'OPENAI_STORE'] as const;
+const environmentKeys = ['OPENAI_API_KEY', 'OPENAI_STORE', 'FINETUNED_MODEL_ID'] as const;
 const originalEnvironment = new Map(environmentKeys.map(key => [key, process.env[key]]));
 process.env.OPENAI_API_KEY = 'test-tutor-pipeline-fixture';
 process.env.OPENAI_STORE = 'true'; // Isolated execution must override this.
+process.env.FINETUNED_MODEL_ID = 'ft:gpt-4.1:synthetic:tutor-pipeline-authority';
 
 const { AUDITED_TRANSIENT_READ_QUERIES } = await import('../src/core/db/transientReadRegistry.js');
 jest.unstable_mockModule('@core/db/index.js', () => ({
@@ -59,14 +60,6 @@ jest.unstable_mockModule('@core/db/index.js', () => ({
   isDatabaseConnected: () => false, isDatabaseSchemaReady: () => false,
   isTransactionCommitAmbiguousError: () => false,
   loadAllRagDocs: async () => [], loadRagDocsByIds: async () => [],
-}));
-jest.unstable_mockModule('@services/openai/credentialProvider.js', () => ({
-  resolveOpenAIBaseURL: () => undefined, resolveOpenAIKey: () => null,
-  getOpenAIKeySource: () => 'synthetic', resetCredentialCache: jest.fn(),
-  hasValidAPIKey: () => true, setDefaultModel: jest.fn(),
-  getDefaultModel: () => 'gpt-5.1', getComplexModel: () => 'gpt-5.1',
-  getFallbackModel: () => 'gpt-4.1', getGPT5Model: () => 'gpt-5.1',
-  getTrinityReasoningModel: () => 'gpt-5.6-terra',
 }));
 jest.unstable_mockModule('@services/openai/clientBridge.js', () => ({
   getOpenAIClientOrAdapter: () => ({ client: modelAvailable ? client : null, adapter: modelAvailable ? client : null }),

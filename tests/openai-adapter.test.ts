@@ -59,6 +59,93 @@ beforeEach(async () => {
 
 describe('openai adapter', () => {
   it.each([
+    ['gpt-6-luna', 'none', 'none', true],
+    ['gpt-6-luna', 'minimal', 'low', false],
+    ['gpt-6-luna', 'low', 'low', false],
+    ['gpt-6.1-sol', 'none', 'low', false],
+    ['gpt-6.1-sol', 'minimal', 'low', false],
+    ['gpt-6.1-sol', 'medium', 'medium', false],
+  ])('normalizes %s effort %s without changing caps or caller parameters', (model, requested, expected, samplingAllowed) => {
+    const params = {
+      model, input: 'synthetic prompt', max_output_tokens: 500,
+      reasoning: { effort: requested, summary: 'auto' },
+      temperature: 0.1, top_p: 0.5, top_logprobs: 2,
+      include: ['message.output_text.logprobs', 'reasoning.encrypted_content'],
+    };
+    const normalized = normalizeResponsesCreateParams(params as never);
+    expect(normalized).toMatchObject({
+      max_output_tokens: 500, reasoning: { effort: expected, summary: 'auto' },
+    });
+    if (samplingAllowed) {
+      expect(normalized).toMatchObject({ temperature: 0.1, top_p: 0.5, top_logprobs: 2 });
+      expect(normalized.include).toEqual(params.include);
+    } else {
+      expect(normalized).not.toHaveProperty('temperature');
+      expect(normalized).not.toHaveProperty('top_p');
+      expect(normalized).not.toHaveProperty('top_logprobs');
+      expect(normalized.include).toEqual(['reasoning.encrypted_content']);
+    }
+    expect(params.reasoning.effort).toBe(requested);
+    expect(params.include).toHaveLength(2);
+    expect(params.temperature).toBe(0.1);
+  });
+
+  it.each(['gpt-6-luna', 'gpt-6.1-sol'])('removes sampling with the omitted medium default for %s', model => {
+    const normalized = normalizeResponsesCreateParams({
+      model, input: 'synthetic prompt', temperature: 0.1, top_p: 1,
+      top_logprobs: 3, logprobs: true, include: ['message.output_text.logprobs'],
+    });
+    expect(normalized).not.toHaveProperty('reasoning');
+    expect(normalized).not.toHaveProperty('temperature');
+    expect(normalized).not.toHaveProperty('top_p');
+    expect(normalized).not.toHaveProperty('top_logprobs');
+    expect(normalized).not.toHaveProperty('logprobs');
+    expect(normalized.include).toEqual([]);
+  });
+
+  it.each(['gpt-5', 'gpt-5.1', 'gpt-5.6-terra', 'custom-legacy-model']) (
+    'preserves legacy request fields for %s', model => {
+      const params = {
+        model, input: 'synthetic prompt', temperature: 0.1, top_p: 1,
+        reasoning: { effort: 'none' as const }, top_logprobs: 3,
+        include: ['message.output_text.logprobs' as const],
+      };
+      expect(normalizeResponsesCreateParams(params)).toEqual(params);
+    }
+  );
+
+  it.each(['max', 'unsupported', ''])('rejects GPT-6 effort %s before SDK admission', async effort => {
+    const adapter = createOpenAIAdapter({ apiKey: 'test-key' });
+    await expect(adapter.responses.create({
+      model: 'gpt-6.1-sol', input: 'synthetic prompt', reasoning: { effort },
+    })).rejects.toMatchObject({ name: 'OpenAIRequestValidationError', retryable: false });
+    expect(responsesCreateMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['gpt-6-luna', 'none', 'none'],
+    ['gpt-6.1-sol', 'none', 'low'],
+  ])('maps scoped chat effort for %s through Responses while retaining abort options', async (model, requested, expected) => {
+    responsesCreateMock.mockResolvedValue({
+      id: 'resp_scoped', created_at: 1, model, status: 'completed',
+      output_text: 'synthetic answer', output: [],
+      usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+    });
+    const adapter = createOpenAIAdapter({ apiKey: 'test-key' });
+    const signal = new AbortController().signal;
+    await adapter.chat.completions.create({
+      model, messages: [{ role: 'user', content: 'synthetic prompt' }],
+      reasoning_effort: requested, max_completion_tokens: 500, temperature: 0.1,
+    } as never, { signal, timeout: 500 });
+    expect(responsesCreateMock).toHaveBeenCalledTimes(1);
+    expect(responsesCreateMock.mock.calls[0]).toEqual([
+      expect.objectContaining({ model, reasoning: { effort: expected }, max_output_tokens: 500 }),
+      { signal, timeout: 500 },
+    ]);
+    expect(chatCreateMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
     [1, 16],
     [15.9, 16],
     [16, 16],

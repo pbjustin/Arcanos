@@ -21,6 +21,7 @@ jest.unstable_mockModule('../src/platform/logging/structuredLogging.js', () => (
 }));
 
 const { validateEnvironment } = await import('../src/platform/runtime/environmentValidation.js');
+const { getConfig } = await import('../src/platform/runtime/unifiedConfig.js');
 
 const CI_GPT_ACCESS_SCOPES = [
   'runtime.read',
@@ -44,6 +45,13 @@ describe('environment validation', () => {
     RAILWAY_API_TOKEN: process.env.RAILWAY_API_TOKEN,
     DATABASE_URL: process.env.DATABASE_URL,
     AI_MODEL: process.env.AI_MODEL,
+    FINETUNED_MODEL_ID: process.env.FINETUNED_MODEL_ID,
+    RAILWAY_FINETUNED_MODEL_ID: process.env.RAILWAY_FINETUNED_MODEL_ID,
+    FINE_TUNED_MODEL_ID: process.env.FINE_TUNED_MODEL_ID,
+    RAILWAY_FINE_TUNED_MODEL_ID: process.env.RAILWAY_FINE_TUNED_MODEL_ID,
+    RAILWAY_AI_MODEL: process.env.RAILWAY_AI_MODEL,
+    OPENAI_MODEL: process.env.OPENAI_MODEL,
+    RAILWAY_OPENAI_MODEL: process.env.RAILWAY_OPENAI_MODEL,
     PORT: process.env.PORT,
     RAILWAY_ENVIRONMENT: process.env.RAILWAY_ENVIRONMENT,
     NODE_ENV: process.env.NODE_ENV,
@@ -75,7 +83,10 @@ describe('environment validation', () => {
     process.env.OPENAI_API_KEY = 'sk-test-openai-key-1234567890abcdefghijklmn';
     process.env.RAILWAY_API_TOKEN = 'railway_token_1234567890abcdefghijkl';
     process.env.DATABASE_URL = 'postgresql://postgres:super-secret-password@db.example.com:5432/arcanos';
-    process.env.AI_MODEL = 'gpt-4.1';
+    process.env.AI_MODEL = 'ft:gpt-4.1:synthetic:environment-authority';
+    for (const name of ['FINETUNED_MODEL_ID', 'RAILWAY_FINETUNED_MODEL_ID', 'FINE_TUNED_MODEL_ID', 'RAILWAY_FINE_TUNED_MODEL_ID', 'RAILWAY_AI_MODEL', 'OPENAI_MODEL', 'RAILWAY_OPENAI_MODEL']) {
+      delete process.env[name];
+    }
     process.env.PORT = '8080';
     process.env.NODE_ENV = 'development';
     process.env.ARCANOS_GPT_ACCESS_TOKEN = 'test-gpt-access-token-1234567890';
@@ -103,6 +114,58 @@ describe('environment validation', () => {
         process.env[environmentKey] = originalValue;
       }
     }
+  });
+
+  it.each(['gpt-4.1-mini', 'gpt-6-luna', 'gpt-6.1-sol'])('rejects %s as the configured final authority', model => {
+    process.env.AI_MODEL = model;
+
+    const result = validateEnvironment();
+
+    expect(result.isValid).toBe(false);
+    expect(result.errors).toContain(`❌ Invalid value for AI_MODEL: "${model}"`);
+    expect(process.env.AI_MODEL).toBe(model);
+  });
+
+  it.each(['FINETUNED_MODEL_ID', 'RAILWAY_FINETUNED_MODEL_ID', 'FINE_TUNED_MODEL_ID'])('validates higher-priority %s authority while retaining stale lower-priority AI_MODEL', alias => {
+    process.env[alias] = 'ft:gpt-4.1:synthetic:alias-authority';
+    process.env.AI_MODEL = 'gpt-4o';
+
+    const result = validateEnvironment();
+
+    expect(result.isValid).toBe(true);
+    expect(getConfig().defaultModel).toBe('ft:gpt-4.1:synthetic:alias-authority');
+    expect(process.env.AI_MODEL).toBe('gpt-4o');
+    expect(process.env[alias]).toBe('ft:gpt-4.1:synthetic:alias-authority');
+  });
+
+  it.each(['OPENAI_MODEL', 'RAILWAY_OPENAI_MODEL'])('accepts effective %s authority when AI_MODEL is absent', alias => {
+    delete process.env.AI_MODEL;
+    process.env[alias] = 'ft:gpt-4.1:synthetic:alias-authority';
+
+    expect(validateEnvironment().isValid).toBe(true);
+    expect(getConfig().defaultModel).toBe('ft:gpt-4.1:synthetic:alias-authority');
+    expect(process.env.AI_MODEL).toBeUndefined();
+  });
+
+  it('rejects an invalid selected authority even when a lower-priority fine-tune is present', () => {
+    process.env.FINETUNED_MODEL_ID = 'gpt-6.1-sol';
+
+    const result = validateEnvironment();
+
+    expect(result.isValid).toBe(false);
+    expect(result.errors).toContain('❌ Invalid value for AI_MODEL: "gpt-6.1-sol"');
+  });
+
+  it('does not inject a standard model when final authority is unset', () => {
+    delete process.env.AI_MODEL;
+
+    const result = validateEnvironment();
+
+    expect(result.isValid).toBe(true);
+    expect(process.env.AI_MODEL).toBeUndefined();
+    expect(result.warnings).not.toEqual(expect.arrayContaining([
+      expect.stringContaining('AI_MODEL not set, using default')
+    ]));
   });
 
   it('accepts custom Railway environment labels such as DEBUG', () => {

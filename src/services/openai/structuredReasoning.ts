@@ -1,4 +1,6 @@
 import type OpenAI from 'openai';
+import { resolveGenerativeModel } from '@services/openai/credentialProvider.js';
+import { ensureModelMatchesExpectation } from '@services/openai/chatFallbacks.js';
 import type { RuntimeBudget } from '@arcanos/runtime/runtimeBudget';
 import type {
   TrinityCompactStructuredReasoning,
@@ -14,6 +16,10 @@ import type {
   StructuredReasoningEffort,
   StructuredReasoningUsage
 } from '@arcanos/openai/structuredReasoning';
+import {
+  normalizeOpenAIModelReasoningEffort,
+  resolveOpenAIModelCapabilities,
+} from '@shared/gpt/trinityReasoningPolicy.js';
 
 type TrinityResolvedStructuredReasoning = TrinityCompactStructuredReasoning | TrinityStructuredReasoning;
 
@@ -139,8 +145,13 @@ export async function runStructuredReasoning(
   timeoutMs?: number,
   options: StructuredReasoningSchemaOptions = {}
 ): Promise<TrinityResolvedStructuredReasoning> {
+  model = resolveGenerativeModel('reasoning', model);
   const schemaVariant = options.schemaVariant ?? 'full';
   const activePreviewChaosHook = activatePreviewChaosHook(options.previewChaosHook);
+  const reasoningEffort = options.reasoningEffort
+    && resolveOpenAIModelCapabilities(model).normalizeReasoningRequests
+    ? normalizeOpenAIModelReasoningEffort(model, options.reasoningEffort)
+    : options.reasoningEffort;
   return runStructuredReasoningGeneric(client, {
     model,
     prompt,
@@ -152,8 +163,9 @@ export async function runStructuredReasoning(
         : TRINITY_STRUCTURED_REASONING_SCHEMA)
     } as any,
     validate: schemaVariant === 'compact' ? isCompactStructuredReasoningPayload : isStructuredReasoningPayload,
+    validateResponse: response => { ensureModelMatchesExpectation(response, model); },
     extractRefusal: extractRefusalReason as any,
-    ...(options.reasoningEffort ? { reasoningEffort: options.reasoningEffort } : {}),
+    ...(reasoningEffort ? { reasoningEffort } : {}),
     ...(typeof options.maxOutputTokens === 'number' ? { maxOutputTokens: options.maxOutputTokens } : {}),
     ...(options.onUsage ? { onUsage: options.onUsage } : {}),
     ...(activePreviewChaosHook ? { beforeCall: activePreviewChaosHook.beforeCall } : {}),

@@ -7,23 +7,10 @@ const createCentralizedCompletion = jest.fn();
 const storePattern = jest.fn();
 const getMemoryContext = jest.fn(() => ({ relevantEntries: [], contextSummary: '', accessLog: [] }));
 const client = {
-  models: { retrieve: jest.fn().mockResolvedValue({ id: 'gpt-5.1' }) },
+  models: { retrieve: jest.fn((model: string) => Promise.resolve({ id: model })) },
   responses: { create: responsesCreate }
 } as never;
 
-jest.unstable_mockModule('@services/openai/credentialProvider.js', () => ({
-  resolveOpenAIBaseURL: () => undefined,
-  resolveOpenAIKey: () => null,
-  getOpenAIKeySource: () => 'test',
-  resetCredentialCache: jest.fn(),
-  hasValidAPIKey: () => true,
-  setDefaultModel: jest.fn(),
-  getDefaultModel: () => 'gpt-5.1',
-  getComplexModel: () => 'gpt-5.1',
-  getFallbackModel: () => 'gpt-4.1',
-  getGPT5Model: () => 'gpt-5.1',
-  getTrinityReasoningModel: () => 'gpt-5.6-terra'
-}));
 jest.unstable_mockModule('@services/openai/clientBridge.js', () => ({
   getOpenAIClientOrAdapter: () => ({ client })
 }));
@@ -58,9 +45,12 @@ const context = '<__arcanosSessionContext>\nPrevious session context (untrusted 
 const currentPrompt = 'Answer concisely: which breakfast did I choose earlier?';
 const answer = 'You chose oatmeal.';
 
-function response(text: string) {
+const authorityModel = 'ft:gpt-4.1:synthetic:session-context-authority';
+const originalAuthority = process.env.FINETUNED_MODEL_ID;
+
+function response(text: string, model: string) {
   return {
-    id: 'session-context-synthetic-response', model: 'gpt-5.1', status: 'completed',
+    id: 'session-context-synthetic-response', model, status: 'completed',
     output_text: text, output: [],
     usage: { input_tokens: 100, output_tokens: 10, total_tokens: 110 }
   };
@@ -68,9 +58,10 @@ function response(text: string) {
 
 describe('session history at the real model boundary', () => {
   beforeEach(() => {
+    process.env.FINETUNED_MODEL_ID = authorityModel;
     jest.clearAllMocks();
     jest.spyOn(console, 'log').mockImplementation(() => undefined);
-    responsesCreate.mockResolvedValue(response(answer));
+    responsesCreate.mockImplementation((payload: { model: string }) => Promise.resolve(response(answer, payload.model)));
     configureArcanosCoreOperatorDispatch(async () => null);
     runStructuredReasoning.mockResolvedValue({
       reasoning_steps: [], assumptions: [], constraints: [], tradeoffs: [],
@@ -85,6 +76,8 @@ describe('session history at the real model boundary', () => {
 
   afterEach(() => {
     configureArcanosCoreOperatorDispatch(null);
+    if (originalAuthority === undefined) delete process.env.FINETUNED_MODEL_ID;
+    else process.env.FINETUNED_MODEL_ID = originalAuthority;
     jest.restoreAllMocks();
   });
 
@@ -92,6 +85,7 @@ describe('session history at the real model boundary', () => {
     const payload = { prompt: currentPrompt, sessionId: 'synthetic-model-session', answerMode: 'direct' };
     const result = await runWithSessionContext(context, () => ArcanosCore.actions.query(payload));
     expect(responsesCreate).toHaveBeenCalledTimes(1);
+    expect(responsesCreate.mock.calls[0][0].model).toBe(authorityModel);
     const providerRequest = responsesCreate.mock.calls[0][0] as {
       instructions?: string;
       input: Array<{ role: string; content: unknown }>;
@@ -152,6 +146,8 @@ describe('session history at the real model boundary', () => {
       expect((call[0] as { instructions?: string }).instructions ?? '').not.toContain(historicalText);
     }
     expect(runStructuredReasoning).toHaveBeenCalledTimes(1);
+    expect(runStructuredReasoning.mock.calls[0][1]).toBe('gpt-6.1-sol');
+    expect(responsesCreate.mock.calls.map(call => call[0].model)).toEqual(['gpt-6-luna', authorityModel]);
     expect(runStructuredReasoning.mock.calls[0][2]).toContain(historicalText);
     expect(JSON.stringify(result.memoryContext)).not.toContain(historicalText);
     expect(JSON.stringify(storePattern.mock.calls)).not.toContain(historicalText);

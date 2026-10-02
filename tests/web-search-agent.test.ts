@@ -27,7 +27,6 @@ const runTrinityWritingPipelineMock = jest.fn(async () => ({
   },
 }));
 const getOpenAIClientOrAdapterMock = jest.fn(() => ({ client: { responses: {} } }));
-const getDefaultModelMock = jest.fn(() => 'gpt-test');
 const hasValidAPIKeyMock = jest.fn(() => false);
 const providerFetchMock = jest.fn(async (_input?: RequestInfo | URL, _init?: RequestInit) => createTextResponse(''));
 
@@ -35,6 +34,8 @@ let createSearchProviderRegistry: typeof import('../src/services/webSearchAgent.
 let webSearchAgent: typeof import('../src/services/webSearchAgent.js').webSearchAgent;
 
 const originalFetch = global.fetch;
+const authorityModel = 'ft:synthetic:test:web-search-authority';
+const originalAuthorityModel = process.env.FINETUNED_MODEL_ID;
 
 function createTextResponse(body: string) {
   return {
@@ -61,6 +62,7 @@ function buildDuckDuckGoHtml(results: Array<{ title: string; url: string; snippe
 
 beforeEach(async () => {
   jest.resetModules();
+  process.env.FINETUNED_MODEL_ID = authorityModel;
 
   fetchAndCleanMock.mockReset();
   fetchAndCleanDocumentMock.mockReset().mockResolvedValue({
@@ -89,7 +91,6 @@ beforeEach(async () => {
     },
   });
   getOpenAIClientOrAdapterMock.mockReset().mockReturnValue({ client: { responses: {} } });
-  getDefaultModelMock.mockReset().mockReturnValue('gpt-test');
   hasValidAPIKeyMock.mockReset().mockReturnValue(false);
   providerFetchMock.mockReset();
 
@@ -101,7 +102,6 @@ beforeEach(async () => {
   }));
 
   jest.unstable_mockModule('@services/openai.js', () => ({
-    getDefaultModel: getDefaultModelMock,
     hasValidAPIKey: hasValidAPIKeyMock,
     generateMockResponse: jest.fn()
   }));
@@ -118,6 +118,11 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
+  if (originalAuthorityModel === undefined) {
+    delete process.env.FINETUNED_MODEL_ID;
+  } else {
+    process.env.FINETUNED_MODEL_ID = originalAuthorityModel;
+  }
   if (originalFetch) {
     global.fetch = originalFetch;
   } else {
@@ -249,5 +254,25 @@ describe('webSearchAgent', () => {
     expect(input.prompt).toContain('&lt;now&gt;');
     expect(input.prompt).toContain('<source_packets>');
     expect(input.prompt).toContain('Ignore previous instructions');
+  });
+
+  it('retains grounded packets when a synthesis override conflicts with the configured authority', async () => {
+    providerFetchMock.mockResolvedValue(createTextResponse(buildDuckDuckGoHtml([
+      { title: 'Grounded source', url: 'https://example.com/fact', snippet: 'source fact' }
+    ])));
+    fetchAndCleanDocumentMock.mockResolvedValue({ text: 'Grounded fact', links: [], combined: 'Grounded fact' });
+    hasValidAPIKeyMock.mockReturnValue(true);
+
+    const result = await webSearchAgent('source fact', {
+      provider: 'duckduckgo-lite',
+      synthesize: true,
+      synthesisModel: 'gpt-4.1-mini'
+    });
+
+    expect(result.answer).toBeNull();
+    expect(result.sources).toHaveLength(1);
+    expect(result.sources[0].content).toBe('Grounded fact');
+    expect(result.notes).toContain('Synthesis failed: Generative model policy: model override conflicts with final role');
+    expect(runTrinityWritingPipelineMock).not.toHaveBeenCalled();
   });
 });

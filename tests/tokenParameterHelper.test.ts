@@ -20,6 +20,17 @@ describe('tokenParameterHelper - Gemini detection and parameter selection', () =
     }
   });
 
+  test.each(['gpt-6-luna', 'gpt-6-luna-2026-09-30', 'gpt-6.1-sol', ' GPT-6.1-SOL '])(
+    'uses the reviewed GPT-6 completion token parameter for %s', model => {
+      expect(getTokenParameter(model, 500)).toEqual({ max_completion_tokens: 500 });
+      expect(getTokenParameter(model, 99_999)).toEqual({ max_completion_tokens: 8_000 });
+    }
+  );
+
+  test('retains unknown-model parameter behavior for unreviewed GPT-6 IDs', () => {
+    expect(getTokenParameter('gpt-6-luna-custom', 500)).toEqual({ max_tokens: 500 });
+  });
+
   test('forceParameter option enforces selection', () => {
     const forced = getTokenParameter('gpt-4.1', 5, { forceParameter: 'max_completion_tokens' as any });
     expect(forced).toHaveProperty('max_completion_tokens');

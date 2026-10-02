@@ -2,7 +2,8 @@ import { config } from "@platform/runtime/config.js";
 import { validateEnvironment, printValidationResults, createStartupReport, validateRailwayEnvironment, checkEphemeralFS } from "@platform/runtime/environmentValidation.js";
 import { logger } from "@platform/logging/structuredLogging.js";
 import { initializeDatabaseWithSchema as initializeDatabase } from "@core/db/index.js";
-import { validateAPIKeyAtStartup, getDefaultModel } from "@services/openai.js";
+import { validateAPIKeyAtStartup } from "@services/openai.js";
+import { getConfig } from "@platform/runtime/unifiedConfig.js";
 import { verifySchema } from './persistenceManagerHierarchy.js';
 import { initializeEnvironmentSecurity, getEnvironmentSecuritySummary } from "@platform/runtime/environmentSecurity.js";
 import memoryStore from "@core/memory/store.js";
@@ -87,7 +88,7 @@ export async function performStartupPreflight(): Promise<void> {
   const queryFinetuneAttemptLatencyBudgetDiagnostics =
     getQueryFinetuneAttemptLatencyBudgetDiagnostics();
 
-  logger.info(`🧠 ARCANOS AI - Default Model: ${getDefaultModel()}`);
+  logger.info(`🧠 ARCANOS AI - Default Model: ${getConfig().defaultModel || 'unconfigured'}`);
   logger.info(`🔄 ARCANOS AI - Fallback Model: ${config.ai.fallbackModel}`);
   logger.info('🕒 ARCANOS QUERY-FINETUNE - Attempt latency budget', {
     queryFinetuneAttemptLatencyBudgetMs: queryFinetuneAttemptLatencyBudgetDiagnostics.resolvedValueMs,

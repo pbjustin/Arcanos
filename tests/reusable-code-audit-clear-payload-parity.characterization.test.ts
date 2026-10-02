@@ -144,7 +144,7 @@ jest.unstable_mockModule('../src/trinity/trinity.js', () => ({
 }));
 
 jest.unstable_mockModule('../src/config/openai.js', () => ({
-  DEFAULT_FINE_TUNE: 'ft:reusable-code-audit',
+  getConfiguredFineTune: () => 'ft:reusable-code-audit',
 }));
 
 jest.unstable_mockModule('../src/services/webRag.js', () => ({

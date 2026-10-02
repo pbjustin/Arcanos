@@ -21,10 +21,6 @@ jest.unstable_mockModule('@config/openaiStore.js', () => ({
   shouldStoreOpenAIResponses: jest.fn(() => false)
 }));
 
-jest.unstable_mockModule('@arcanos/openai/responseParsing', () => ({
-  extractResponseOutputText: jest.fn((response: { output_text?: string }, fallback: string) => response.output_text || fallback)
-}));
-
 jest.unstable_mockModule('@services/arcanosDagRunService.js', () => ({
   arcanosDagRunService: {
     getFeatureFlags: getFeatureFlagsMock,

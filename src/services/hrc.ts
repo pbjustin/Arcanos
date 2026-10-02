@@ -1,4 +1,4 @@
-import { getDefaultModel } from "@services/openai.js";
+import { resolveGenerativeModel } from "@services/openai/credentialProvider.js";
 import { HRC_SYSTEM_PROMPT } from "@platform/runtime/hrcPrompts.js";
 import { getOpenAIClientOrAdapter } from "@services/openai/clientBridge.js";
 import { getEnv } from "@platform/runtime/env.js";
@@ -50,7 +50,7 @@ function isHRCResult(value: unknown): value is ParsedHRCPayload {
  * Hallucination-Resistant Core
  * Simple implementation that scores incoming text for fidelity and resilience
  * using the OpenAI SDK. Falls back gracefully when the client is unavailable.
- * Targets the project's fine-tuned model by default and can be overridden via HRC_MODEL.
+ * Uses the central routine-audit lane; a compatible HRC_MODEL override is validated by that policy.
  */
 export class HRCCore {
   async evaluate(input: string, options: HRCEvaluationOptions = {}): Promise<HRCResult> {
@@ -81,9 +81,10 @@ export class HRCCore {
 
     try {
       // Use config layer for env access (adapter boundary pattern)
-      const model = getEnv('HRC_MODEL') || getDefaultModel();
+      const model = resolveGenerativeModel('audit', getEnv('HRC_MODEL'));
       const { outputParsed } = await callStructuredResponse<ParsedHRCPayload>(adapter as any, {
         model,
+        reasoning: { effort: 'none' },
         input: [
           {
             role: 'system',

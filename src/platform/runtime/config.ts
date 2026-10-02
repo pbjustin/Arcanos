@@ -7,6 +7,7 @@ import dotenv from 'dotenv';
 import type { ReinforcementMode } from "@shared/types/reinforcement.js";
 import { APPLICATION_CONSTANTS } from "@shared/constants.js";
 import { getEnvNumber, getEnv } from "@platform/runtime/env.js";
+import { getConfig } from '@platform/runtime/unifiedConfig.js';
 import { resolveRuntimeCorsConfig } from '@platform/runtime/corsConfig.js';
 import { resolveAssistantRegistryPath } from '@platform/runtime/protectedConfigCandidatePaths.js';
 import {
@@ -89,8 +90,8 @@ export const config = {
   // AI configuration
   ai: {
     apiKey: getEnv('OPENAI_API_KEY'),
-    model: getEnv('AI_MODEL') || getEnv('OPENAI_MODEL') || APPLICATION_CONSTANTS.MODEL_GPT_4O_MINI,
-    fallbackModel: APPLICATION_CONSTANTS.MODEL_GPT_4,
+    model: getConfig().defaultModel,
+    fallbackModel: getConfig().fallbackModel,
     defaultMaxTokens: parseNumber(getEnv('OPENAI_DEFAULT_MAX_TOKENS'), 256, 1),
     defaultTemperature: 0.2
   },

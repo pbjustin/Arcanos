@@ -7,7 +7,7 @@ import {
   getRemainingMs,
   type RuntimeBudget
 } from '@platform/resilience/runtimeBudget.js';
-import { getDefaultModel } from './openai.js';
+import { resolveGenerativeModel } from './openai/credentialProvider.js';
 import { getOpenAIClientOrAdapter } from './openai/clientBridge.js';
 import { setMemory } from './memory.js';
 import { RESEARCH_SUMMARIZER_PROMPT, RESEARCH_SYNTHESIS_PROMPT } from "@platform/runtime/researchPrompts.js";
@@ -226,8 +226,7 @@ async function runResearchWorkflow<T>(
 }
 
 function resolveResearchModel(): string {
-  const configuredModel = getEnv('RESEARCH_MODEL_ID')?.trim();
-  return configuredModel && configuredModel.length > 0 ? configuredModel : getDefaultModel();
+  return resolveGenerativeModel('final', getEnv('RESEARCH_MODEL_ID'));
 }
 
 function resolveSourcesDir(storageTopicComponent: string): string {

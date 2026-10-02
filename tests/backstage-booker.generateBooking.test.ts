@@ -7,6 +7,7 @@ import {
   BACKSTAGE_WORKER_OUTPUT_TOKEN_LIMIT_MIN,
 } from '../src/shared/backstage/backstageOutputBudget.js';
 
+const authorityModel = 'ft:gpt-4.1:synthetic:backstage-authority';
 const mockRunTrinityWritingPipeline = jest.fn();
 const mockGetGPT5Model = jest.fn();
 const mockGetOpenAIClientOrAdapter = jest.fn();
@@ -82,7 +83,8 @@ jest.unstable_mockModule('@core/db/index.js', () => ({
 }));
 
 jest.unstable_mockModule('@platform/runtime/env.js', () => ({
-  getEnv: mockGetEnv,
+  getEnv: (key: string, fallback?: string) => key === 'FINETUNED_MODEL_ID'
+    ? authorityModel : mockGetEnv(key, fallback),
   getEnvNumber: mockGetEnvNumber,
   getEnvBoolean: mockGetEnvBoolean
 }));
@@ -111,7 +113,7 @@ describe('backstage-booker generateBooking', () => {
     );
   });
 
-  it('uses the shared GPT-5 model and default output budget when USER_GPT_ID is absent', async () => {
+  it('uses the configured fine-tune authority and default output budget when USER_GPT_ID is absent', async () => {
     await expect(generateBooking('Generate three rivalries for RAW after WrestleMania.')).resolves.toBe('Rivalry matrix output');
 
     expect(mockRunTrinityWritingPipeline).toHaveBeenCalledWith({
@@ -122,7 +124,7 @@ describe('backstage-booker generateBooking', () => {
         requestedAction: 'generateBooking',
         tokenLimit: 2400,
         body: expect.objectContaining({
-          model: 'gpt-5.1-test',
+          model: authorityModel,
           tokenLimit: 2400,
         }),
       }),
@@ -132,7 +134,7 @@ describe('backstage-booker generateBooking', () => {
           answerMode: 'direct',
           internalMode: false,
           strictUserVisibleOutput: true,
-          directAnswerModelOverride: 'gpt-5.1-test',
+          directAnswerModelOverride: authorityModel,
           directAnswerTokenLimitOverride: 2400,
           directAnswerTokenCapOverride: 2400,
           directAnswerUserIntentPrompt: 'Generate three rivalries for RAW after WrestleMania.',
@@ -655,7 +657,7 @@ describe('backstage-booker generateBooking', () => {
         profile: 'queued_generation',
         requestedFormat: 'structured_booking',
         budgetClass: 'queued_extended',
-        modelCapability: 'extended_gpt5',
+        modelCapability: 'configured_authority',
         tokenLimit: 6_000,
         tokenCap: 6_000,
       });
@@ -1577,28 +1579,28 @@ describe('backstage-booker generateBooking', () => {
 
     expect(mockRunTrinityWritingPipeline).toHaveBeenCalledWith(expect.objectContaining({
       input: expect.objectContaining({
-        body: expect.objectContaining({ model: 'gpt-5.1' })
+        body: expect.objectContaining({ model: authorityModel })
       }),
       context: expect.objectContaining({
         runOptions: expect.objectContaining({
-          directAnswerModelOverride: 'gpt-5.1'
+          directAnswerModelOverride: authorityModel
         })
       })
     }));
   });
 
-  it('falls back to the GPT-5.1 direct-answer baseline when the shared model is blank', async () => {
+  it('keeps configured final authority when the legacy helper preference is blank', async () => {
     mockGetGPT5Model.mockReturnValue('   ');
 
     await expect(generateBooking('Generate three rivalries for RAW after WrestleMania.')).resolves.toBe('Rivalry matrix output');
 
     expect(mockRunTrinityWritingPipeline).toHaveBeenCalledWith(expect.objectContaining({
       input: expect.objectContaining({
-        body: expect.objectContaining({ model: 'gpt-5.1' })
+        body: expect.objectContaining({ model: authorityModel })
       }),
       context: expect.objectContaining({
         runOptions: expect.objectContaining({
-          directAnswerModelOverride: 'gpt-5.1'
+          directAnswerModelOverride: authorityModel
         })
       })
     }));
@@ -1614,11 +1616,11 @@ describe('backstage-booker generateBooking', () => {
 
     expect(mockRunTrinityWritingPipeline).toHaveBeenCalledWith(expect.objectContaining({
       input: expect.objectContaining({
-        body: expect.objectContaining({ model: 'gpt-5.6-terra' })
+        body: expect.objectContaining({ model: authorityModel })
       }),
       context: expect.objectContaining({
         runOptions: expect.objectContaining({
-          directAnswerModelOverride: 'gpt-5.6-terra'
+          directAnswerModelOverride: authorityModel
         })
       })
     }));

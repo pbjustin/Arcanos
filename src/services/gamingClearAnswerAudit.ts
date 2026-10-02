@@ -1,6 +1,7 @@
 import type OpenAI from 'openai';
 import { createSingleChatCompletion } from '@services/openai/chatFallbacks.js';
-import { getGPT5Model } from '@services/openai/credentialProvider.js';
+import { getClearAuditModel, getClearAuditEscalationModel } from '@services/openai/credentialProvider.js';
+import { normalizeOpenAIModelReasoningEffort, resolveOpenAIModelCapabilities } from '@shared/gpt/trinityReasoningPolicy.js';
 import { getEnv } from '@platform/runtime/env.js';
 import { getSafeRemainingMs, type RuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 import { getRequestAbortSignal, getRequestRemainingMs, isAbortError, throwIfRequestAborted } from '@arcanos/runtime';
@@ -60,7 +61,8 @@ export function gamingClearAnswerMatches(assessment: GamingClearAssessment | und
 
 /** One stateless semantic review replaces Gaming's ledger review. No model tools, retries or repairs. */
 export async function runGamingClearAnswerAudit(client: OpenAI, input: GamingClearAnswerInput,
-  runtimeBudget: RuntimeBudget): Promise<{ assessment: GamingClearAssessment; usage?: TrinityMetaTokens }> {
+  runtimeBudget: RuntimeBudget, modelLane: 'routine' | 'escalation' = 'routine'
+): Promise<{ assessment: GamingClearAssessment; usage?: TrinityMetaTokens }> {
   const startedAt = Date.now();
   let modelCallStarted = false;
   const base = baseAssessment(input);
@@ -139,14 +141,18 @@ export async function runGamingClearAnswerAudit(client: OpenAI, input: GamingCle
   if (instructions.length + data.length > GAMING_CLEAR_ANSWER_BUDGET.maxTotalPromptChars) return finish(unavailable('AUDIT_INPUT_UNAVAILABLE'));
   let usage: TrinityMetaTokens | undefined;
   try {
-    const model = getGPT5Model();
+    // Trusted callers may choose an escalation lane for the single audit slot; automatic escalation stays disabled.
+    const model = modelLane === 'escalation' ? getClearAuditEscalationModel() : getClearAuditModel();
+    const reasoningEffort = resolveOpenAIModelCapabilities(model).normalizeReasoningRequests
+      ? normalizeOpenAIModelReasoningEffort(model, 'none') : undefined;
     modelCallStarted = true;
     const response = await createSingleChatCompletion(client, {
       model, ...getTokenParameter(model, GAMING_CLEAR_ANSWER_BUDGET.maxOutputTokens),
+      ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
       messages: [{ role: 'system', content: instructions }, { role: 'user', content: data }],
       response_format: { type: 'json_object' }, signal: getRequestAbortSignal(), timeoutMs,
       redactErrorDetails: true, maxRetries: 0
-    });
+    }, modelLane === 'escalation' ? 'audit-escalation' : 'audit');
     usage = response.usage;
     const content = response.choices[0]?.message.content;
     if (response.choices[0]?.finish_reason !== 'stop' || typeof content !== 'string' || content.length > 16_000) {

@@ -122,17 +122,14 @@ jest.unstable_mockModule('@arcanos/openai/unifiedClient', () => ({
   getOrCreateClient: jest.fn(() => fakeOpenAIClient)
 }));
 
+const actualCredentialProvider = await import('../src/services/openai/credentialProvider.js');
 jest.unstable_mockModule('@services/openai/credentialProvider.js', () => ({
+  ...actualCredentialProvider,
   resolveOpenAIBaseURL: jest.fn(() => undefined),
   resolveOpenAIKey: jest.fn(() => null),
   getOpenAIKeySource: jest.fn(() => null),
   resetCredentialCache: jest.fn(),
-  hasValidAPIKey: hasValidOpenAiKeyMock,
-  setDefaultModel: jest.fn(),
-  getDefaultModel: jest.fn(() => 'gpt-4.1-mini'),
-  getFallbackModel: jest.fn(() => 'gpt-4.1'),
-  getComplexModel: jest.fn(() => 'gpt-4.1'),
-  getGPT5Model: jest.fn(() => 'gpt-5')
+  hasValidAPIKey: hasValidOpenAiKeyMock
 }));
 
 jest.unstable_mockModule('../src/services/runtimeDiagnosticsService.js', () => ({

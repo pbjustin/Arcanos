@@ -10,6 +10,8 @@ import {
   convertResponseToLegacyChatCompletion
 } from "@services/openai/requestBuilders/index.js";
 import { getOpenAIClientOrAdapter } from "@services/openai/clientBridge.js";
+import { GenerativeModelPolicyError, resolveGenerativeModel } from '@services/openai/credentialProvider.js';
+import { ensureModelMatchesExpectation } from '@services/openai/chatFallbacks.js';
 import { sendOpenAIProcessingFailed, sendOpenAIServiceUnavailable } from "@platform/resilience/serviceUnavailable.js";
 
 const router = express.Router();
@@ -56,11 +58,7 @@ function normalizeImagePayload(rawValue: string): { base64: string; mimeType: st
 }
 
 function resolveVisionModel(override?: string): string {
-  if (override && override.trim().length > 0) {
-    return override.trim();
-  }
-  // Default vision model (config can be extended later)
-  return 'gpt-4o';
+  return resolveGenerativeModel('final', override?.trim() || undefined);
 }
 
 function calculateVisionCost(inputTokens: number, outputTokens: number): number {
@@ -130,6 +128,7 @@ router.post('/api/vision', visionValidation, asyncHandler(async (req: Request<{}
     const response = await adapter.responses.create(requestPayload, {
       headers: req.requestId ? { 'x-request-id': req.requestId } : undefined
     });
+    ensureModelMatchesExpectation(response, visionModel);
     const completion = convertResponseToLegacyChatCompletion(response, visionModel);
 
     const responseText = completion.choices[0]?.message?.content || '';
@@ -158,6 +157,13 @@ router.post('/api/vision', visionValidation, asyncHandler(async (req: Request<{}
       model: visionModel
     });
   } catch (error: unknown) {
+    if (error instanceof GenerativeModelPolicyError) {
+      if (error.code === 'MODEL_OVERRIDE_CONFLICT') {
+        return res.status(400).json(buildValidationErrorResponse([error.message]));
+      }
+      sendOpenAIServiceUnavailable(res, error.message);
+      return;
+    }
     aiLogger.error('Vision request failed', { operation: 'vision' }, undefined, error instanceof Error ? error : undefined);
     recordTraceEvent('openai.vision.error', {
       error: resolveErrorMessage(error)

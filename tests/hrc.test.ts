@@ -1,21 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const getOpenAIClientOrAdapter = jest.fn();
-const getDefaultModel = jest.fn(() => 'gpt-4.1-mini');
-const getEnv = jest.fn(() => undefined);
-const getEnvNumber = jest.fn(() => undefined);
 
 jest.unstable_mockModule('@services/openai/clientBridge.js', () => ({
   getOpenAIClientOrAdapter,
-}));
-
-jest.unstable_mockModule('@services/openai.js', () => ({
-  getDefaultModel,
-}));
-
-jest.unstable_mockModule('@platform/runtime/env.js', () => ({
-  getEnv,
-  getEnvNumber,
 }));
 
 const { HRCCore, isHRCResultCacheable } = await import('../src/services/hrc.ts');

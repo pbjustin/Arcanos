@@ -93,6 +93,25 @@ export const PLUGIN_MIGRATION_PREVIEW_DIST_IMPORT_CONTRACT = Object.freeze([
   }),
 ]);
 
+// The served model-policy fixture shares only these pure production functions.
+// Neither the configuration/credential adapter nor the SDK graph may enter it.
+export const GENERATIVE_MODEL_POLICY_PREVIEW_DIST_IMPORT_CONTRACT = Object.freeze([
+  Object.freeze({
+    filePath: 'dist/shared/gpt/generativeModelPolicyPreviewFixture.js',
+    imports: Object.freeze({
+      './generativeModelPolicyCore.js': Object.freeze([
+        'GenerativeModelPolicyError:GenerativeModelPolicyError',
+        'assertGenerativeModelResponseIdentity:assertGenerativeModelResponseIdentity',
+        'resolveGenerativeModelFromConfig:resolveGenerativeModelFromConfig',
+      ]),
+    }),
+  }),
+  Object.freeze({
+    filePath: 'dist/shared/gpt/generativeModelPolicyCore.js',
+    imports: Object.freeze({}),
+  }),
+]);
+
 export const GAMING_MCP_PREVIEW_DIST_IMPORT_CONTRACT = Object.freeze([
   Object.freeze({
     filePath: 'dist/shared/chatgpt/gamingMcpPreviewFixture.js',
@@ -331,7 +350,8 @@ export async function findNativePrPreviewDistImportViolations({
   }
   for (const contract of [...TUTOR_HONESTY_PREVIEW_DIST_IMPORT_CONTRACT,
     ...PLUGIN_MIGRATION_PREVIEW_DIST_IMPORT_CONTRACT, ...GAMING_MCP_PREVIEW_DIST_IMPORT_CONTRACT,
-    ...GAMING_COMPOSITION_PREVIEW_DIST_IMPORT_CONTRACT]) {
+    ...GAMING_COMPOSITION_PREVIEW_DIST_IMPORT_CONTRACT,
+    ...GENERATIVE_MODEL_POLICY_PREVIEW_DIST_IMPORT_CONTRACT]) {
     try {
       const sourceText = await fs.readFile(path.join(repositoryRoot, contract.filePath), 'utf8');
       violations.push(...findTutorHonestyPreviewDistImportSourceViolations(contract, sourceText));

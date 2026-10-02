@@ -39,6 +39,12 @@ export interface AppConfig {
   fallbackModel: string;
   gpt5Model: string;
   gpt51Model: string;
+  trinityIntakeModel: string;
+  trinityReasoningModel: string;
+  trinityFinalModel: string;
+  trinityFinalEscalationModel: string;
+  clearAuditModel: string;
+  clearAuditEscalationModel: string;
   openaiMaxRetries: number;
 
   // Database Configuration
@@ -330,16 +336,17 @@ export function isWorkerRuntimeSuppressedForServiceRole(
 }
 
 /**
- * Gets unified application configuration
- * 
- * Resolves all configuration values with Railway fallbacks
- * and provides type-safe access to configuration.
- * 
+ * Gets unified application configuration with Railway fallbacks.
  * @returns Application configuration object
  */
 export function getConfig(): AppConfig {
   const workerRuntimeMode = getStableWorkerRuntimeMode();
   const databaseUrl = getEnvVar('DATABASE_URL');
+  //audit Preserve each service's configured authority and its existing alias precedence;
+  // missing/invalid authority is rejected at generation, never replaced by a helper model.
+  const authorityModel = getEnvVar('FINETUNED_MODEL_ID', [
+    'FINE_TUNED_MODEL_ID', 'AI_MODEL', 'OPENAI_MODEL', 'RAILWAY_OPENAI_MODEL'
+  ]) || '';
   const config: AppConfig = {
     // Server Configuration
     nodeEnv: getEnv('NODE_ENV', 'development'),
@@ -359,21 +366,16 @@ export function getConfig(): AppConfig {
       'OPENAI_API_BASE_URL',
       'OPENAI_API_BASE'
     ]),
-    defaultModel: getEnvVar('FINETUNED_MODEL_ID', [
-      'FINE_TUNED_MODEL_ID',
-      'AI_MODEL',
-      'OPENAI_MODEL',
-      'RAILWAY_OPENAI_MODEL'
-    ]) || APPLICATION_CONSTANTS.MODEL_GPT_4_1_MINI,
-    fallbackModel: getEnvVar('FALLBACK_MODEL', [
-      'AI_FALLBACK_MODEL',
-      'RAILWAY_OPENAI_FALLBACK_MODEL',
-      // Allow fine-tuned model identifiers to act as fallback when explicitly provided
-      'FINETUNED_MODEL_ID',
-      'FINE_TUNED_MODEL_ID'
-    ]) || APPLICATION_CONSTANTS.MODEL_GPT_4_1,
-    gpt5Model: getEnvVar('GPT5_MODEL') || APPLICATION_CONSTANTS.MODEL_GPT_5,
-    gpt51Model: getEnvVar('GPT51_MODEL') || APPLICATION_CONSTANTS.MODEL_GPT_5_1,
+    defaultModel: authorityModel,
+    fallbackModel: authorityModel,
+    gpt5Model: APPLICATION_CONSTANTS.MODEL_GPT_6_1_SOL,
+    gpt51Model: APPLICATION_CONSTANTS.MODEL_GPT_6_1_SOL,
+    trinityIntakeModel: APPLICATION_CONSTANTS.MODEL_GPT_6_LUNA,
+    trinityReasoningModel: APPLICATION_CONSTANTS.MODEL_GPT_6_1_SOL,
+    trinityFinalModel: authorityModel,
+    trinityFinalEscalationModel: authorityModel,
+    clearAuditModel: APPLICATION_CONSTANTS.MODEL_GPT_6_LUNA,
+    clearAuditEscalationModel: APPLICATION_CONSTANTS.MODEL_GPT_6_1_SOL,
     openaiMaxRetries: getEnvNumber('OPENAI_MAX_RETRIES', APPLICATION_CONSTANTS.DEFAULT_OPENAI_MAX_RETRIES),
 
     // Database Configuration

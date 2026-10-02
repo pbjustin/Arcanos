@@ -15,7 +15,7 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 5_000;
 const DEFAULT_TOTAL_TIMEOUT_MS = 60_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 64 * 1024;
 const MAX_AGGREGATE_RESPONSE_BYTES = 512 * 1024;
-const MAX_REQUESTS = 157;
+const MAX_REQUESTS = 161;
 const MAX_BACKSTAGE_BOOKER_OPENAPI_SOURCE_BYTES = 128 * 1024;
 const BACKSTAGE_BOOKER_OPENAPI_GIT_PATH =
   'contracts/backstage_booker.openapi.v1.json';
@@ -733,6 +733,29 @@ export function buildNativePrPreviewRequestPlan() {
       pathTemplate: '/readyz',
       role: 'worker',
     },
+    {
+      caseId: 'web-generative-model-policy',
+      boundedResponse: true,
+      expectedStatus: 200,
+      expectedType: 'generative-model-policy-contract',
+      method: 'GET',
+      path: NATIVE_PR_PREVIEW_E2E_CONTRACT.generativeModelPolicy.path,
+      pathTemplate: NATIVE_PR_PREVIEW_E2E_CONTRACT.generativeModelPolicy.path,
+      role: 'web',
+    },
+    ...[
+      { caseId: 'worker-generative-model-policy-denied', role: 'worker', method: 'GET', suffix: '' },
+      { caseId: 'web-generative-model-policy-query-denied', role: 'web', method: 'GET', suffix: '?model=gpt-6-sol' },
+      { caseId: 'web-generative-model-policy-post-denied', role: 'web', method: 'POST', suffix: '' },
+    ].map(({ caseId, role, method, suffix }) => ({
+      caseId,
+      expectedStatus: 404,
+      expectedType: 'not-found',
+      method,
+      path: `${NATIVE_PR_PREVIEW_E2E_CONTRACT.generativeModelPolicy.path}${suffix}`,
+      pathTemplate: `${NATIVE_PR_PREVIEW_E2E_CONTRACT.generativeModelPolicy.path}${suffix ? '?query' : ''}`,
+      role,
+    })),
     {
       caseId: 'web-backstage-booker-openapi',
       expectedStatus: 200,
@@ -3722,6 +3745,31 @@ export function expectedNativePrPreviewResponseBody(requestCase, options) {
       return expectedWebReadiness(options);
     case 'worker-readiness':
       return expectedWorkerReadiness(options);
+    case 'generative-model-policy-contract':
+      return {
+        proofVersion: 'shared-generative-model-policy/v1',
+        synthetic: true,
+        roleModels: {
+          intake: 'gpt-6-luna',
+          reasoning: 'gpt-6.1-sol',
+          final: 'ft:synthetic:preview-authority',
+          'final-escalation': 'ft:synthetic:preview-authority',
+          audit: 'gpt-6-luna',
+          'audit-escalation': 'gpt-6.1-sol',
+        },
+        checks: {
+          roleResolution: 6,
+          matchingOverrides: 6,
+          helperRolesWithoutAuthority: 4,
+          unavailableAuthority: 10,
+          overrideConflict: 18,
+          acceptedReplyIdentity: 5,
+          rejectedReplyIdentity: 11,
+          deniedSyntheticTransportCalls: 0,
+        },
+        prNumber: options.prNumber,
+        sourceCommit: options.commitSha,
+      };
     case 'backstage-booker-openapi':
       if (!options.expectedBackstageBookerOpenApiDocument) {
         fail('NATIVE_PR_PREVIEW_CASE_CONTRACT_INVALID', requestCase.caseId);
@@ -3850,6 +3898,10 @@ function validateResponseBody(requestCase, bodyBytes, options) {
   }
 
   const body = parseJsonBody(bodyText, requestCase.caseId);
+  if (requestCase.expectedType === 'generative-model-policy-contract'
+    && bodyBytes.length > NATIVE_PR_PREVIEW_E2E_CONTRACT.generativeModelPolicy.maxResponseBytes) {
+    fail('NATIVE_PR_PREVIEW_GENERATIVE_MODEL_POLICY_RESPONSE_LIMIT', requestCase.caseId);
+  }
   if (requestCase.expectedType === 'backstage-booker-openapi') {
     const managedResultPath =
       '/gpt-access/capabilities/v1/backstage-booker/jobs/{jobId}/result';
@@ -4322,6 +4374,15 @@ async function executeRequestCase(
     );
   }
   const migrationContract = NATIVE_PR_PREVIEW_E2E_CONTRACT.pluginMigration;
+  const modelPolicyContract = NATIVE_PR_PREVIEW_E2E_CONTRACT.generativeModelPolicy;
+  const modelPolicyExpected = requestCase.expectedType === 'web-readiness'
+    || (requestCase.role === 'web' && requestCase.expectedType === 'head' && requestCase.path === '/readyz')
+    || requestCase.expectedType === 'generative-model-policy-contract';
+  if (modelPolicyExpected
+    ? response.headers.get(modelPolicyContract.proofHeader) !== modelPolicyContract.proofVersion
+    : response.headers.has(modelPolicyContract.proofHeader)) {
+    fail('NATIVE_PR_PREVIEW_GENERATIVE_MODEL_POLICY_PROOF_INVALID', requestCase.caseId);
+  }
   const migrationExpected = requestCase.role === 'web'
     && requestCase.chatGptTutorAdmission === 'admitted'
     && requestCase.fixtureName === 'tools-call';
@@ -4397,6 +4458,7 @@ async function executeRequestCase(
       || requestCase.expectedType === 'dispatch-gpt-identifier-contract'
       || requestCase.expectedType === 'status-auth-boundary-contract'
       || requestCase.expectedType === 'self-heal-approval-contract'
+      || requestCase.expectedType === 'generative-model-policy-contract'
       || requestCase.chatGptTutorAdmission === 'admitted'
     )
     && response.headers.get(
@@ -4528,6 +4590,17 @@ async function executeRequestCase(
     ) {
       fail(
         'NATIVE_PR_PREVIEW_TRINITY_REASONING_POLICY_PROOF_INVALID',
+        requestCase.caseId
+      );
+    }
+    if (
+      requestCase.fixtureName === 'routeBudget'
+      && response.headers.get(
+        contract.proofHeaders.gpt6ReasoningPolicyVersion
+      ) !== contract.gpt6ReasoningPolicyProofVersion
+    ) {
+      fail(
+        'NATIVE_PR_PREVIEW_GPT6_REASONING_POLICY_PROOF_INVALID',
         requestCase.caseId
       );
     }
@@ -4805,6 +4878,10 @@ async function executeRequestCase(
     responseBytes: bodyBytes.length,
     role: requestCase.role,
     simulatedAuth: requestCase.simulatedAuth === true,
+    ...(modelPolicyExpected ? {
+      generativeModelPolicyVerified: true,
+      generativeModelPolicyProofVersion: modelPolicyContract.proofVersion,
+    } : {}),
     ...(requestCase.expectedType === 'chatgpt-tutor'
       ? {
           chatGptTutorMockVerified: true,
@@ -4843,6 +4920,10 @@ async function executeRequestCase(
     ...(requestCase.expectedType === 'backstage-generation-contract'
       && requestCase.fixtureName === 'routeBudget'
       ? { trinityReasoningPolicyVerified: true }
+      : {}),
+    ...(requestCase.expectedType === 'backstage-generation-contract'
+      && requestCase.fixtureName === 'routeBudget'
+      ? { gpt6ReasoningPolicyVerified: true }
       : {}),
     ...(requestCase.expectedType === 'backstage-generation-contract'
       && requestCase.fixtureName === 'notionAuthorityRag'

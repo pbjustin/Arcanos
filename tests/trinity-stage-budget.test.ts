@@ -6,6 +6,11 @@ const getTokenParameterMock = jest.fn();
 const getTrinityReasoningModelMock = jest.fn(() => 'gpt-5.6-terra');
 
 jest.unstable_mockModule('@services/openai/credentialProvider.js', () => ({
+  getTrinityIntakeModel: () => 'ft:test-default',
+  getTrinityFinalModel: () => 'ft:test-complex',
+  getTrinityFinalEscalationModel: () => 'ft:test-complex',
+  getClearAuditModel: () => 'gpt-5.1',
+  getClearAuditEscalationModel: () => 'gpt-5.1',
   getDefaultModel: () => 'ft:test-default',
   getGPT5Model: () => 'gpt-5.1',
   getTrinityReasoningModel: getTrinityReasoningModelMock,
@@ -111,14 +116,16 @@ describe('trinity stage budgets', () => {
       expect.anything(),
       expect.objectContaining({
         timeoutMs: 6000
-      })
+      }),
+      'intake'
     );
     expect(createSingleChatCompletionMock).toHaveBeenNthCalledWith(
       2,
       expect.anything(),
       expect.objectContaining({
         timeoutMs: 4000
-      })
+      }),
+      'final'
     );
   });
 
@@ -189,14 +196,16 @@ describe('trinity stage budgets', () => {
       expect.anything(),
       expect.objectContaining({
         timeoutMs: 15_000
-      })
+      }),
+      'intake'
     );
     expect(createSingleChatCompletionMock).toHaveBeenNthCalledWith(
       2,
       expect.anything(),
       expect.objectContaining({
         timeoutMs: 15_000
-      })
+      }),
+      'final'
     );
   });
 

@@ -6,6 +6,11 @@ const loggerInfoMock = jest.fn();
 const loggerWarnMock = jest.fn();
 
 jest.unstable_mockModule('@services/openai/credentialProvider.js', () => ({
+  getTrinityIntakeModel: () => 'ft:test-default',
+  getTrinityFinalModel: () => 'ft:test-complex',
+  getTrinityFinalEscalationModel: () => 'ft:test-complex',
+  getClearAuditModel: () => 'gpt-5.1',
+  getClearAuditEscalationModel: () => 'gpt-5.1',
   getDefaultModel: () => 'ft:test-default',
   getGPT5Model: () => 'gpt-5.1',
   getTrinityReasoningModel: () => 'gpt-5.6-terra',

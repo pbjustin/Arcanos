@@ -17,6 +17,9 @@ import {
   resetTelemetry,
 } from '../src/platform/logging/telemetry.js';
 
+const authority = 'ft:gpt-4.1-2025-04-14:synthetic:authority:fallback';
+const savedAuthority = process.env.FINETUNED_MODEL_ID;
+
 async function restoreCircuitBreakerIsolation(): Promise<void> {
   const snapshot = getCircuitBreakerSnapshot();
   if (snapshot.state === 'CLOSED' && snapshot.failureCount === 0) {
@@ -25,7 +28,7 @@ async function restoreCircuitBreakerIsolation(): Promise<void> {
 
   const healthyCreate = jest.fn().mockResolvedValue({
     id: 'test-breaker-recovery',
-    model: 'gpt-4.1',
+    model: authority,
     status: 'completed',
     output_text: 'Recovered for test isolation.'
   });
@@ -42,7 +45,7 @@ async function restoreCircuitBreakerIsolation(): Promise<void> {
     for (let index = 0; index < recoveryCalls; index += 1) {
       await createSingleChatCompletion(
         { responses: { create: healthyCreate } } as any,
-        { model: 'gpt-4.1', messages: [] }
+        { model: authority, messages: [] }
       );
     }
   } finally {
@@ -57,6 +60,7 @@ async function restoreCircuitBreakerIsolation(): Promise<void> {
 
 describe('createChatCompletionWithFallback', () => {
   beforeEach(async () => {
+    process.env.FINETUNED_MODEL_ID = authority;
     jest.restoreAllMocks();
     await restoreCircuitBreakerIsolation();
     resetTelemetry();
@@ -66,11 +70,12 @@ describe('createChatCompletionWithFallback', () => {
     jest.useRealTimers();
     jest.restoreAllMocks();
     await restoreCircuitBreakerIsolation();
+    if (savedAuthority === undefined) delete process.env.FINETUNED_MODEL_ID;
+    else process.env.FINETUNED_MODEL_ID = savedAuthority;
   });
 
-  it('attempts models in the expected fallback order', async () => {
+  it('retains final authority through every fallback attempt', async () => {
     const primaryModel = getDefaultModel();
-    const gpt5Model = getGPT5Model();
     const finalModel = getFallbackModel();
 
     const createSpy = jest
@@ -96,7 +101,8 @@ describe('createChatCompletionWithFallback', () => {
     expect(createSpy).toHaveBeenCalledTimes(4);
     expect(createSpy.mock.calls[0][0].model).toBe(primaryModel);
     expect(createSpy.mock.calls[1][0].model).toBe(primaryModel);
-    expect(createSpy.mock.calls[2][0].model).toBe(gpt5Model);
+    expect(createSpy.mock.calls[2][0].model).toBe(primaryModel);
+    expect(createSpy.mock.calls.map(call => call[0].model)).not.toContain(getGPT5Model());
     expect(createSpy.mock.calls[3][0].model).toBe(finalModel);
     expect(result.activeModel).toBe(finalModel);
     expect(result.fallbackFlag).toBe(true);
@@ -105,7 +111,7 @@ describe('createChatCompletionWithFallback', () => {
   it('does not return incomplete provider output as a successful single completion', async () => {
     const createSpy = jest.fn().mockResolvedValue({
       id: 'resp_incomplete_single',
-      model: 'gpt-4.1',
+      model: authority,
       status: 'incomplete',
       incomplete_details: { reason: 'max_output_tokens' },
       output_text: '1. Open with threat. 2. Keep mitigation',
@@ -121,7 +127,7 @@ describe('createChatCompletionWithFallback', () => {
 
     await expect(
       createSingleChatCompletion(client, {
-        model: 'gpt-4.1',
+        model: authority,
         messages: [{ role: 'user', content: 'SWTOR tanking guide' }]
       })
     ).rejects.toMatchObject({
@@ -136,7 +142,7 @@ describe('createChatCompletionWithFallback', () => {
   it('emits chat reasoning effort in the Responses request shape', async () => {
     const createSpy = jest.fn().mockResolvedValue({
       id: 'resp_reasoning_effort',
-      model: 'gpt-5.1',
+      model: authority,
       status: 'completed',
       output_text: 'Complete booking output.',
       output: []
@@ -148,7 +154,7 @@ describe('createChatCompletionWithFallback', () => {
     } as any;
 
     await createSingleChatCompletion(client, {
-      model: 'gpt-5.1',
+      model: authority,
       messages: [{ role: 'user', content: 'Build a complete wrestling show.' }],
       max_completion_tokens: 777,
       reasoning_effort: 'none',
@@ -158,7 +164,7 @@ describe('createChatCompletionWithFallback', () => {
     expect(createSpy).toHaveBeenCalledTimes(1);
     expect(createSpy).toHaveBeenCalledWith(
       expect.objectContaining({
-        model: 'gpt-5.1',
+        model: authority,
         max_output_tokens: 777,
         reasoning: { effort: 'none' }
       }),
@@ -170,10 +176,37 @@ describe('createChatCompletionWithFallback', () => {
     expect(createSpy.mock.calls[0]?.[0]).not.toHaveProperty('reasoning_effort');
   });
 
-  it('passes an extended finite GPT-5.1 budget to Responses and rejects truncation', async () => {
+  it.each([
+    ['gpt-6-luna', 'none', 'none'],
+    ['gpt-6.1-sol', 'none', 'low'],
+  ] as const)('normalizes the raw-client %s boundary inside the existing call budget', async (model, requested, expected) => {
+    const createSpy = jest.fn().mockResolvedValue({
+      id: 'resp_scoped_raw', model, status: 'completed',
+      output_text: 'Synthetic complete answer.', output: [],
+    });
+    await createSingleChatCompletion({ responses: { create: createSpy } } as any, {
+      model, messages: [{ role: 'user', content: 'Synthetic routing fixture.' }],
+      max_completion_tokens: 500, reasoning_effort: requested,
+      temperature: 0.1, top_p: 1, timeoutMs: 500,
+    }, model === 'gpt-6-luna' ? 'intake' : 'reasoning');
+    expect(createSpy).toHaveBeenCalledTimes(1);
+    expect(createSpy).toHaveBeenCalledWith(expect.objectContaining({
+      model, reasoning: { effort: expected }, max_output_tokens: 500,
+    }), expect.objectContaining({ signal: expect.any(AbortSignal), timeout: 500 }));
+    const params = createSpy.mock.calls[0]?.[0];
+    if (expected === 'none') {
+      expect(params).toHaveProperty('temperature', 0.1);
+      expect(params).toHaveProperty('top_p', 1);
+    } else {
+      expect(params).not.toHaveProperty('temperature');
+      expect(params).not.toHaveProperty('top_p');
+    }
+  });
+
+  it('passes an extended finite authority budget to Responses and rejects truncation', async () => {
     const createSpy = jest.fn().mockResolvedValue({
       id: 'resp_extended_incomplete',
-      model: 'gpt-5.1',
+      model: authority,
       status: 'incomplete',
       incomplete_details: { reason: 'max_output_tokens' },
       output_text: 'PRIVATE-PARTIAL-BOOKING-SENTINEL',
@@ -187,7 +220,7 @@ describe('createChatCompletionWithFallback', () => {
     } as any;
 
     await expect(createSingleChatCompletion(client, {
-      model: 'gpt-5.1',
+      model: authority,
       messages: [{ role: 'user', content: 'Build a complete wrestling show.' }],
       max_completion_tokens: 6_000,
       reasoning_effort: 'none'
@@ -201,7 +234,7 @@ describe('createChatCompletionWithFallback', () => {
 
     expect(createSpy).toHaveBeenCalledWith(
       expect.objectContaining({
-        model: 'gpt-5.1',
+        model: authority,
         max_output_tokens: 6_000,
         reasoning: { effort: 'none' }
       }),
@@ -212,7 +245,7 @@ describe('createChatCompletionWithFallback', () => {
   it('omits blank chat reasoning effort from the Responses request shape', async () => {
     const createSpy = jest.fn().mockResolvedValue({
       id: 'resp_blank_reasoning_effort',
-      model: 'gpt-5.1',
+      model: authority,
       status: 'completed',
       output_text: 'Complete booking output.',
       output: []
@@ -224,7 +257,7 @@ describe('createChatCompletionWithFallback', () => {
     } as any;
 
     await createSingleChatCompletion(client, {
-      model: 'gpt-5.1',
+      model: authority,
       messages: [{ role: 'user', content: 'Build a complete wrestling show.' }],
       max_completion_tokens: 777,
       reasoning_effort: '   ' as never
@@ -235,7 +268,7 @@ describe('createChatCompletionWithFallback', () => {
     expect(createSpy.mock.calls[0]?.[0]).not.toHaveProperty('reasoning_effort');
   });
 
-  it('falls through to another model when a fallback-sequence attempt is incomplete', async () => {
+  it('retries the same authority when a fallback-sequence attempt is incomplete', async () => {
     const primaryModel = getDefaultModel();
     const gpt5Model = getGPT5Model();
 
@@ -327,7 +360,7 @@ describe('createChatCompletionWithFallback', () => {
         timeoutMs: 30_000
       },
       () => createSingleChatCompletion(client, {
-        model: 'gpt-4.1',
+        model: authority,
         messages: [{ role: 'user', content: 'Summarize the bounded research.' }],
         signal: controller.signal,
         preserveAggregateAbortContext: true
@@ -388,7 +421,7 @@ describe('createChatCompletionWithFallback', () => {
           timeoutMs: 30_000
         },
         () => createSingleChatCompletion(client, {
-          model: 'gpt-4.1',
+          model: authority,
           messages: [{ role: 'user', content: 'Summarize bounded research.' }],
           signal: controller.signal,
           preserveAggregateAbortContext: true
@@ -420,7 +453,7 @@ describe('createChatCompletionWithFallback', () => {
     const preCancelledReason = createAbortError('cancelled before admission');
     preCancelledController.abort(preCancelledReason);
     await expect(createSingleChatCompletion(client, {
-      model: 'gpt-4.1',
+      model: authority,
       messages: [{ role: 'user', content: 'Do not admit cancelled work.' }],
       signal: preCancelledController.signal,
       preserveAggregateAbortContext: true
@@ -435,14 +468,14 @@ describe('createChatCompletionWithFallback', () => {
 
     const healthyCreate = jest.fn().mockResolvedValue({
       id: 'healthy-after-cancellations',
-      model: 'gpt-4.1',
+      model: authority,
       status: 'completed',
       output_text: 'Healthy admitted result.'
     });
     const healthy = await createSingleChatCompletion(
       { responses: { create: healthyCreate } } as any,
       {
-        model: 'gpt-4.1',
+        model: authority,
         messages: [{ role: 'user', content: 'Run healthy admitted work.' }]
       }
     );
@@ -487,7 +520,7 @@ describe('createChatCompletionWithFallback', () => {
           timeoutMs: 30_000,
         },
         () => createSingleChatCompletion(client, {
-          model: 'gpt-4.1',
+          model: authority,
           messages: [{ role: 'user', content: 'Run bounded synchronous work.' }],
           timeoutMs: 20_000,
         })
@@ -562,7 +595,7 @@ describe('createChatCompletionWithFallback', () => {
       () => createSingleChatCompletion(
         { responses: { create: providerCreate } } as any,
         {
-          model: 'gpt-4.1',
+          model: authority,
           messages: [{ role: 'user', content: 'Exercise normalized cancellation accounting.' }],
           signal: controller.signal,
           preserveAggregateAbortContext: true
@@ -598,7 +631,7 @@ describe('createChatCompletionWithFallback', () => {
       index += 1
     ) {
       await expect(createSingleChatCompletion(client, {
-        model: 'gpt-4.1',
+        model: authority,
         messages: [{ role: 'user', content: 'Exercise provider failure accounting.' }],
         signal: activeAggregateController.signal,
         preserveAggregateAbortContext: true
@@ -623,19 +656,19 @@ describe('createChatCompletionWithFallback', () => {
 
     const blockedHealthyCreate = jest.fn().mockResolvedValue({
       id: 'blocked-while-open',
-      model: 'gpt-4.1',
+      model: authority,
       status: 'completed',
       output_text: 'must not run while open'
     });
     await expect(createSingleChatCompletion(
       { responses: { create: blockedHealthyCreate } } as any,
-      { model: 'gpt-4.1', messages: [] }
+      { model: authority, messages: [] }
     )).rejects.toThrow('Circuit breaker is OPEN');
     expect(blockedHealthyCreate).not.toHaveBeenCalled();
 
     const recoveredCreate = jest.fn().mockResolvedValue({
       id: 'breaker-recovery',
-      model: 'gpt-4.1',
+      model: authority,
       status: 'completed',
       output_text: 'Recovered.'
     });
@@ -645,11 +678,11 @@ describe('createChatCompletionWithFallback', () => {
     try {
       await createSingleChatCompletion(
         { responses: { create: recoveredCreate } } as any,
-        { model: 'gpt-4.1', messages: [] }
+        { model: authority, messages: [] }
       );
       await createSingleChatCompletion(
         { responses: { create: recoveredCreate } } as any,
-        { model: 'gpt-4.1', messages: [] }
+        { model: authority, messages: [] }
       );
     } finally {
       now.mockRestore();
@@ -690,7 +723,7 @@ describe('createChatCompletionWithFallback', () => {
       const completion = createSingleChatCompletion(
         { responses: { create: providerCreate } } as any,
         {
-          model: 'gpt-4.1',
+          model: authority,
           messages: [{ role: 'user', content: 'Preserve provider failure provenance.' }],
           signal: controller.signal,
           preserveAggregateAbortContext
@@ -725,7 +758,7 @@ describe('createChatCompletionWithFallback', () => {
     ) {
       await expect(createSingleChatCompletion(
         { responses: { create: failingCreate } } as any,
-        { model: 'gpt-4.1', messages: [] }
+        { model: authority, messages: [] }
       )).rejects.toBe(providerFailure);
     }
     expect(getCircuitBreakerSnapshot().state).toBe('OPEN');
@@ -738,7 +771,7 @@ describe('createChatCompletionWithFallback', () => {
     await expect(createChatCompletionWithFallback(
       { responses: { create: cancelledCreate } } as any,
       {
-        model: 'gpt-4.1',
+        model: authority,
         messages: [],
         signal: controller.signal,
       }
