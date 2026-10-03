@@ -45,6 +45,14 @@ gap can guide targeted search; an unknown gap remains `unknown` with a
 conservative public topic hint or clarification. No generic build checklist or
 precise missing mechanic is inferred without support. Broad or ambiguous
 requests receive needed clarification rather than invented player state.
+Independent requested facts may each use a different complete table row. V2
+retains that clause coverage policy through generation and final validation;
+missing facts and contradictory rows still block the answer. V1 keeps its
+existing structural claim policy.
+Conflict comparison checks complete source batches within each document's
+existing limit, so a larger combined pool cannot hide trailing disagreements.
+If the full comparison cannot be validated within the combined pool bound,
+the workflow stops with `STRUCTURAL_CONFLICT_ASSESSMENT_UNVERIFIED`.
 Public diagnostic fields do not expose source passages, private context or
 internal reasoning. Telemetry remains content-free: IDs, protocol/revision,
 decision/reason codes, evidence counts, coverage, allowance, timing and outcome.

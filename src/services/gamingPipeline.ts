@@ -624,6 +624,8 @@ export interface GamingPreparedEvidence {
   advisoryFreshnessAllowed?: boolean;
   qualification: string;
   clearEvidenceAssessment?: GamingClearAssessment;
+  /** Backend-only v2 policy retained through admission, answer audit and delivery. */
+  requireRequestCoverage?: boolean;
   /** Internal, actor/workflow-valid acquired receipts; never a public discovery hint. */
   suppliedGuides?: Array<{ requestedUrl: string; sourceId: string; publicUrl: string }>;
 }
@@ -1128,7 +1130,8 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
   }
 
   clearKnowledge = { ...clearKnowledge, context: webContext };
-  const auditContext = { actorScopeHash: prepared?.actorScopeHash, allowAdvisoryFreshness };
+  const auditContext = { actorScopeHash: prepared?.actorScopeHash, allowAdvisoryFreshness,
+    requireRequestCoverage: prepared?.requireRequestCoverage === true };
   const evidenceAssessment = assessGamingClearEvidence({ ...resolvedParams, game: resolvedParams.game ?? '' }, clearKnowledge, auditContext);
   logger.info('gaming.clear.evidence.completed', {
     ...baseLogContext, rubricVersion: evidenceAssessment.rubricVersion, profile: evidenceAssessment.profile,

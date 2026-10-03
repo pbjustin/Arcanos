@@ -386,9 +386,12 @@ export function selectGamingHybridAcceptedEvidence(input: GamingStoredKnowledgeI
     || normalizeGamingGameIdentity(candidate.sourceContext.game) !== normalizeGamingGameIdentity(input.game))) {
     throw Object.assign(new Error('Accepted evidence does not belong to this valid workflow.'), { code: 'EVIDENCE_MEMBERSHIP_INVALID' });
   }
-  const records = accepted.flatMap(candidate => (candidate.evidenceRecords ?? []).filter(record => record.sourceId === candidate.candidateId
-    && record.revisionId === candidate.contentHash && record.publicUrl === candidate.publicUrl
-    && gamingClearIntactSourceText(candidate.document).includes(typeof record.normalized.text === 'string' ? record.normalized.text : record.searchText)));
+  const records = accepted.flatMap(candidate => {
+    const intactText = gamingClearIntactSourceText(candidate.document);
+    return (candidate.evidenceRecords ?? []).filter(record => record.sourceId === candidate.candidateId
+      && record.revisionId === candidate.contentHash && record.publicUrl === candidate.publicUrl
+      && intactText.includes(typeof record.normalized.text === 'string' ? record.normalized.text : record.searchText));
+  });
   const limits = hybridEvidenceLimits();
   const fullPool: GamingStoredKnowledgeContext = { context: '', sources: accepted.map(candidate => ({
     sourceId: candidate.candidateId, game: candidate.sourceContext.game, edition: candidate.sourceContext.edition,
@@ -405,6 +408,8 @@ export function selectGamingHybridAcceptedEvidence(input: GamingStoredKnowledgeI
     requiredSourceIds: requiredGamingHybridSourceIds(input, accepted) }, limits);
   const knowledge = formatStoredGamingEvidence(selected, input, limits);
   knowledge.materialConflict = hasGamingMaterialConflict(fullAssessment);
+  knowledge.structuralConflictAssessmentUnavailable = fullAssessment.blockingFindings
+    .some(finding => finding.code === 'STRUCTURAL_CONFLICT_ASSESSMENT_UNVERIFIED');
   for (const source of knowledge.sources) source.origin = 'live';
   return knowledge;
 }
@@ -429,6 +434,7 @@ export interface GamingHybridEvidenceSelection extends GamingRequestCoverageAsse
   selectedCandidateIds: string[];
   selectedEvidenceIds: string[];
   materialConflict: boolean;
+  inspectionUnavailable?: boolean;
 }
 
 export function selectGamingHybridEvidence(input: GamingStoredKnowledgeInput,
@@ -436,6 +442,11 @@ export function selectGamingHybridEvidence(input: GamingStoredKnowledgeInput,
   const limits = hybridEvidenceLimits();
   const fullAssessment = assessGamingClearEvidence({ ...input, game: input.game }, knowledge, { requireRequestCoverage: true });
   const materialConflict = knowledge.materialConflict === true || hasGamingMaterialConflict(fullAssessment);
+  const inspectionUnavailable = knowledge.structuralConflictAssessmentUnavailable === true || fullAssessment.blockingFindings
+    .some(finding => finding.code === 'STRUCTURAL_CONFLICT_ASSESSMENT_UNVERIFIED');
+  if (inspectionUnavailable) return { knowledge: { context: '', sources: [], evidence: [], sourceKnown: knowledge.sourceKnown,
+    structuralConflictAssessmentUnavailable: true }, selectedCandidateIds: [], selectedEvidenceIds: [], coverageSatisfied: false,
+    missingCoverage: [], gapAssessmentStatus: 'unknown' as const, requirementSupport: [], materialConflict, inspectionUnavailable: true };
   if (materialConflict) return { knowledge: { context: '', sources: [], evidence: [], sourceKnown: knowledge.sourceKnown },
     selectedCandidateIds: [], selectedEvidenceIds: [], coverageSatisfied: false, missingCoverage: [],
     gapAssessmentStatus: 'unknown' as const, requirementSupport: [], materialConflict: true };

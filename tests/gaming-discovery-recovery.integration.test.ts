@@ -34,7 +34,7 @@ jest.unstable_mockModule('@services/openai/chatFallbacks.js', () => ({
 }));
 
 const { createGamingHybridWorkflow } = await import('../src/services/gamingHybridKnowledge.js');
-const { evaluateGamingHybridCandidates } = await import('../src/services/gamingHybridCandidates.js');
+const { evaluateGamingHybridCandidates, selectGamingHybridAcceptedEvidence } = await import('../src/services/gamingHybridCandidates.js');
 const { createGamingMcpExecutor } = await import('../src/chatgpt/gaming.js');
 const { createChatGptGamingMcpRouter } = await import('../src/routes/chatgptGamingMcp.js');
 const { readGamingAuthConfiguration } = await import('../src/chatgpt/gamingAuth.js');
@@ -134,6 +134,14 @@ function addPage(url: string, text: string, answer = text, pageGame = game, extr
 function sources() {
   addPage(gateUrl, gateText); addPage(bridgeUrl, bridgeText); addPage(completeUrl, `${gateText} ${bridgeText}`);
 }
+function addStatPage(url: string, item: string, value: number) {
+  const text = `Item: ${item} | Stat: weight | Value: ${value} | Unit: points | Scope: base`;
+  addPage(url, text, `The source reports ${item}'s base weight as ${value} points. Current in-game applicability is unverified.`, game, {
+    html: `<html><title>${game} guide</title><body><p>${game} gameplay reference.</p><table><caption>${game} stats</caption>
+      <tr><th>Item</th><th>Stat</th><th>Value</th><th>Unit</th><th>Scope</th></tr>
+      <tr><td>${item}</td><td>weight</td><td>${value}</td><td>points</td><td>base</td></tr></table></body></html>`
+  });
+}
 async function authToken(subject = configuration.ownerSubject) {
   const now = Math.floor(Date.now() / 1000);
   return new SignJWT({ iss: configuration.issuer, aud: configuration.resource, sub: subject,
@@ -209,6 +217,100 @@ describe('backend-authoritative Gaming discovery recovery through served MCP', (
     const audited = JSON.parse((mockAuditCompletion.mock.calls[0][1] as any).messages[1].content);
     expect(audited.evidence.map((chunk: any) => chunk.sourceId).sort()).toEqual(answer.result.selectedCandidateIds!.sort());
     expect(mockTrinity).toHaveBeenCalledTimes(1);
+  });
+
+  it('delivers independently supported structured clauses through the pipeline audit and final validation', async () => {
+    const copper = 'https://guides.example.org/copperblade-stats';
+    const silver = 'https://second.example.org/silverblade-stats';
+    addStatPage(copper, 'Copperblade', 10); addStatPage(silver, 'Silverblade', 11);
+    const run = harness();
+    const initial = await run.query({ question: 'What is Copperblade weight value and Silverblade weight value?' });
+    const answer = await run.submit(initial.result, [copper, silver]);
+    expect(answer.result).toMatchObject({ state: 'answer_ready', nextAction: 'answer', coverageSatisfied: true, missingCoverage: [] });
+    expect(answer.result.selectedCandidateIds).toHaveLength(2);
+    expect(answer.result.requirementSupport!.map(requirement => requirement.evidenceIds.length)).toEqual([1, 1]);
+    expect(answer.result.answer!.sources.map(source => source.url).sort()).toEqual([copper, silver].sort());
+    expect(answer.result.answer!.response).toContain("Copperblade's base weight as 10 points");
+    expect(answer.result.answer!.response).toContain("Silverblade's base weight as 11 points");
+    const audited = JSON.parse((mockAuditCompletion.mock.calls[0][1] as any).messages[1].content);
+    expect(audited.verifiedEvidenceGates.claimSupport).toBe('verified');
+    expect(audited.evidence.map((chunk: any) => chunk.sourceId).sort()).toEqual(answer.result.selectedCandidateIds!.sort());
+    expect(mockHttp).toHaveBeenCalledTimes(2); expect(mockTrinity).toHaveBeenCalledTimes(1);
+    expect(mockAuditCompletion).toHaveBeenCalledTimes(1); expect(mockIngest).not.toHaveBeenCalled();
+  });
+
+  it('withholds structured generation when one independent requested clause is missing', async () => {
+    const copper = 'https://guides.example.org/copperblade-only';
+    addStatPage(copper, 'Copperblade', 10);
+    const run = harness();
+    const initial = await run.query({ question: 'What is Copperblade weight value and Silverblade weight value?' });
+    const partial = await run.submit(initial.result, [copper]);
+    expect(partial.result).toMatchObject({ nextAction: 'search', coverageSatisfied: false, missingCoverage: ['requested topic 2'] });
+    expect(partial.result.answer).toBeUndefined(); expect(mockTrinity).not.toHaveBeenCalled();
+    expect(mockAuditCompletion).not.toHaveBeenCalled(); expect(mockIngest).not.toHaveBeenCalled();
+  });
+
+  it('stops conflicting structured clauses before generation even when each clause has a matching row', async () => {
+    const copper = 'https://guides.example.org/copperblade-one';
+    const conflictingCopper = 'https://different.example.org/copperblade-two';
+    const silver = 'https://second.example.org/silverblade-stat';
+    addStatPage(copper, 'Copperblade', 10); addStatPage(conflictingCopper, 'Copperblade', 99); addStatPage(silver, 'Silverblade', 11);
+    const run = harness();
+    const initial = await run.query({ question: 'What is Copperblade weight value and Silverblade weight value?' });
+    const conflict = await run.submit(initial.result, [copper, conflictingCopper, silver]);
+    expect(conflict.result).toMatchObject({ nextAction: 'stop', coverageSatisfied: false, reason: 'CONTRADICTORY_EVIDENCE' });
+    expect(conflict.result.answer).toBeUndefined(); expect(mockTrinity).not.toHaveBeenCalled();
+    expect(mockAuditCompletion).not.toHaveBeenCalled(); expect(mockIngest).not.toHaveBeenCalled();
+  });
+
+  it('inspects omitted acquired contradictions even when global capacity prevents retaining the artifacts', async () => {
+    const copper = 'https://guides.example.org/capacity-copperblade-one';
+    const conflictUrl = 'https://different.example.org/capacity-copperblade-two';
+    let seedSequence = 0;
+    const run = harness({ evaluateCandidates: async (input, context) => {
+      if (input.protocolVersion !== v2) {
+        // Existing v1 dependency seam supplies only retention pressure. These
+        // skeleton artifacts have no answer evidence and cause no acquisition.
+        const accepted = input.candidates.map(candidate => {
+          const candidateId = `20000000-0000-4000-8000-${String(++seedSequence).padStart(12, '0')}`;
+          return { candidateId, document: { text: 's'.repeat(1_000_000) }, freshness: {
+            id: candidateId, url: candidate.url, game, currentness: 'stable', fetchedAt: new Date(clock).toISOString()
+          } };
+        });
+        return { accepted: accepted as never, knowledge: empty, decisions: accepted.map((candidate, submittedIndex) => ({
+          submittedIndex, candidateId: candidate.candidateId, url: input.candidates[submittedIndex].url,
+          decision: 'accepted_transient' as const, reasonCodes: ['VALIDATED_RELEVANT_CONTENT']
+        })) };
+      }
+      const evaluated = await evaluateGamingHybridCandidates(input, context);
+      expect(evaluated.accepted).toHaveLength(2);
+      // Model bounded ranking that keeps the first good passage and omits the
+      // lower-ranked conflicting row. Actual artifacts remain intact and bound.
+      evaluated.knowledge = selectGamingHybridAcceptedEvidence(input, [evaluated.accepted[0]], {
+        actorKey: context.actorKey, workflowId: context.workflowId!, now: clock
+      });
+      expect(evaluated.knowledge.sources).toHaveLength(1);
+      expect(evaluated.knowledge.materialConflict).toBe(false);
+      return evaluated;
+    } });
+    for (let index = 0; index < 4; index += 1) {
+      const seed = await run.query({ contractVersion: 'gaming-hybrid-v1', question: `Explain fixture objective ${index}.`,
+        idempotencyKey: `capacity-seed-query-${index}` });
+      const seeded = await run.submit(seed.result, [0, 1, 2].map(candidate => `https://seed.example.org/${index}/${candidate}`),
+        `capacity-seed-candidates-${index}`);
+      expect(seeded.result.candidates!.every(candidate => candidate.candidateId)).toBe(true);
+    }
+    expect(seedSequence).toBe(12); expect(mockHttp).not.toHaveBeenCalled(); expect(mockTrinity).not.toHaveBeenCalled();
+    addStatPage(copper, 'Copperblade', 10); addStatPage(conflictUrl, 'Copperblade', 11);
+    const initial = await run.query({ question: 'What is Copperblade weight value?' });
+    const conflict = await run.submit(initial.result, [copper, conflictUrl], 'capacity-conflict-candidates');
+    expect(conflict.result).toMatchObject({ nextAction: 'stop', reason: 'CONTRADICTORY_EVIDENCE', coverageSatisfied: false });
+    expect(conflict.result.answer).toBeUndefined();
+    expect(conflict.result.candidates).toHaveLength(2);
+    expect(conflict.result.candidates!.every(candidate => candidate.decision === 'accepted_transient'
+      && !candidate.candidateId && candidate.reasonCodes.includes('ARTIFACT_CAPACITY_REACHED'))).toBe(true);
+    expect(mockHttp).toHaveBeenCalledTimes(2); expect(mockTrinity).not.toHaveBeenCalled();
+    expect(mockAuditCompletion).not.toHaveBeenCalled(); expect(mockIngest).not.toHaveBeenCalled();
   });
 
   it('follows one explicit recovery grant after unsupported/access failures and retains useful evidence', async () => {

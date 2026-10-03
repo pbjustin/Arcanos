@@ -118,6 +118,8 @@ export interface GamingStoredKnowledgeContext {
   clearEvidenceAssessment?: GamingClearAssessment;
   /** Backend-only full accepted-pool veto, assessed before bounded selection. */
   materialConflict?: boolean;
+  /** Backend-only inability to inspect the complete source pool safely. */
+  structuralConflictAssessmentUnavailable?: boolean;
 }
 
 export type GamingStoredPatchResolver<RecordType extends GamingStoredEvidenceRecord = GamingStoredEvidenceRecord> = (record: RecordType) => string | undefined;

@@ -25,6 +25,20 @@ function submission(workflowId: string, expectedRevision: number, suffix = 'init
 }
 
 describe('v2 actor-bound recovery lifecycle', () => {
+  it('stops when the complete structural conflict assessment is unavailable', async () => {
+    const generate = jest.fn<any>();
+    const evaluateCandidates = jest.fn<any>();
+    const workflow = createGamingHybridWorkflow({ retrieve: async () => ({ ...empty,
+      structuralConflictAssessmentUnavailable: true }), generate, evaluateCandidates, now: () => start });
+    const result = await workflow.query(query, context);
+    expect(result.body).toMatchObject({ contractVersion, revision: 0, nextAction: 'stop',
+      reason: 'STRUCTURAL_CONFLICT_ASSESSMENT_UNVERIFIED', evidenceSelected: false, coverageSatisfied: false,
+      gapAssessmentStatus: 'unknown', selectedCandidateIds: [], selectedEvidenceIds: [],
+      discovery: { continuationRequired: false, replacementAllowed: false } });
+    expect(result.body.answer).toBeUndefined();
+    expect(generate).not.toHaveBeenCalled(); expect(evaluateCandidates).not.toHaveBeenCalled();
+  });
+
   it('preserves the requested protocol on query conflicts and capacity failures', async () => {
     const { workflow } = setup();
     const first = await workflow.query(query, context);

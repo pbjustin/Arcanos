@@ -5,7 +5,7 @@ import { assessGamingProgressionRequest } from './gamingProgressionPolicy.js';
 import { buildGamingRetrievalTerms, buildGamingRequestRequirements, gamingRequestRequirementLimitExceeded, gamingTermCoverage, type GamingRetrievalPolicyInput } from './gamingRetrievalPolicy.js';
 import { classifyGamingQuestionFreshness, evaluateGamingFreshness, type GamingFreshnessEvaluation, type GamingFreshnessEvidence } from './gamingFreshnessCore.js';
 import type { GamingStoredKnowledgeContext, GamingStoredKnowledgeSource } from './gamingStoredEvidenceCore.js';
-import { assessGamingStructuralUsability } from './gamingStructuralEvidence.js';
+import { assessGamingStructuralUsability, gamingCrossSourceStructuralConflict } from './gamingStructuralEvidence.js';
 import { gamingClearIntactProseText } from './gamingClearSource.js';
 import { resolveGamingFreshnessDisposition } from './gamingFreshnessDisposition.js';
 
@@ -113,22 +113,30 @@ export function assessGamingClearEvidence(
   const structuralUnits = gameplayChunks.flatMap(chunk => chunk.evidenceUnits ?? []);
   const proseText = gamingClearIntactProseText({ text, evidenceUnits: structuralUnits, metrics: { truncated: false } });
   const structural = assessGamingStructuralUsability({ units: structuralUnits, ...input, proseText, compareAcrossSources: options.requireRequestCoverage });
-  const fullStructural = options.requireRequestCoverage ? assessGamingStructuralUsability({
-    units: (knowledge.evidence ?? []).flatMap(chunk => chunk.evidenceUnits ?? []), ...input, compareAcrossSources: true }) : structural;
+  const fullStructuralConflict = options.requireRequestCoverage ? gamingCrossSourceStructuralConflict({ ...input,
+    sources: knowledge.sources.map(source => ({ sourceUrl: source.url,
+      units: chunks.filter(chunk => chunk.sourceId === source.sourceId && chunk.publicUrl === source.url)
+        .flatMap(chunk => chunk.evidenceUnits ?? []) })) }) : structural.materialConflict;
+  const structuralInspectionUnavailable = options.requireRequestCoverage === true
+    && (knowledge.structuralConflictAssessmentUnavailable === true || fullStructuralConflict === undefined);
   const structuredClaim = structuralUnits.length > 0 && structural.claimShape !== 'none';
   const independentProse = !structural.hasRelevantClaimUnit && structural.hasIndependentProseAnchors
     && proseText.length >= 120 && gamingTermCoverage(proseText, focusTerms) >= 0.5;
   const progress = assessGamingProgressionRequest(input);
+  const requestCoverage = options.requireRequestCoverage ? assessGamingRequestCoverage(input, {
+    context: knowledge.context, sources, evidence: gameplayChunks
+  }) : undefined;
+  // Independent explicit facts can each be grounded in their own intact row.
+  // The legacy single-claim gate still applies when the request has no clauses.
+  const explicitRequestSupported = requestCoverage?.coverageSatisfied === true && buildGamingRequestRequirements(input).length > 0;
   const hasSupport = gameplayChunks.length > 0 && focusTerms.length > 0
-    && (structuredClaim ? structural.claimSupported || independentProse : coverage >= 0.5) && !progress.clarificationNeeded
-    && (!options.requireRequestCoverage || assessGamingRequestCoverage(input, {
-      context: knowledge.context, sources, evidence: gameplayChunks
-    }).coverageSatisfied);
+    && (structuredClaim ? structural.claimSupported || independentProse || explicitRequestSupported : coverage >= 0.5) && !progress.clarificationNeeded
+    && !structuralInspectionUnavailable && (!options.requireRequestCoverage || requestCoverage?.coverageSatisfied === true);
   const uniqueText = new Set(selected.map(chunk => gamingClearHash(chunk.text.normalize('NFKC').toLowerCase().replace(/\s+/gu, ' ').trim())));
   // Identical or syndicated text never earns independent-corroboration credit.
   const duplicate = uniqueText.size < selected.length;
   const claims = new Map<string, string>();
-  let contradictory = fullStructural.materialConflict === true;
+  let contradictory = fullStructuralConflict === true;
   for (const item of relevantMetadata) for (const [key, value] of Object.entries(item.mechanicValues ?? {}).slice(0, 16)) {
     if (claims.has(key) && claims.get(key) !== value) contradictory = true;
     claims.set(key, value);
@@ -136,13 +144,14 @@ export function assessGamingClearEvidence(
   const findings: Array<{ code: string; severity: 'blocking' | 'warning'; evidenceRefs: string[] }> = [];
   const finding = (code: string, blocking = true) => findings.push({ code, severity: blocking ? 'blocking' : 'warning', evidenceRefs: refs.slice(0, 8) });
   if (!bounded) finding('EVIDENCE_BUDGET_EXCEEDED');
+  if (structuralInspectionUnavailable) finding('STRUCTURAL_CONFLICT_ASSESSMENT_UNVERIFIED');
   if (identityConflict) finding('GAME_MISMATCH');
   if (compatibilityConflict) finding('APPLICABILITY_CONFLICT');
   if (compatibilityUnknown) finding('APPLICABILITY_UNVERIFIED');
   if (contradictory) finding('CONTRADICTORY_EVIDENCE');
   if (progress.clarificationNeeded) finding('PROGRESS_POINT_REQUIRED');
   if (!hasSupport) finding('QUESTION_COVERAGE_INSUFFICIENT');
-  if (structuredClaim && !structural.claimSupported && !independentProse) for (const reason of structural.reasonCodes) finding(reason);
+  if (structuredClaim && !structural.claimSupported && !independentProse && !explicitRequestSupported) for (const reason of structural.reasonCodes) finding(reason);
   if (!traceable) finding('CITATION_PROVENANCE_MISSING');
   if (patchSensitive && !freshnessCoversSet) finding(advisoryFreshness ? 'ADVISORY_FRESHNESS_UNVERIFIED' : 'REQUIRED_FRESHNESS_UNVERIFIED', !advisoryFreshness);
   if (patchSensitive && freshness?.status === 'conflicting') finding('CONFLICTING_CURRENTNESS');
@@ -227,10 +236,10 @@ export function assessGamingRequestCoverage(input: GamingRetrievalPolicyInput,
   const structuredClaim = units.length > 0 && structural.claimShape !== 'none';
   const independentProse = !structural.hasRelevantClaimUnit && structural.hasIndependentProseAnchors
     && proseText.length >= 120 && gamingTermCoverage(proseText, focusTerms) >= 0.5;
-  const topicSupport = chunks.length > 0 && focusTerms.length > 0
-    && (structuredClaim ? structural.claimSupported || independentProse : gamingTermCoverage(text, focusTerms) >= 0.5)
-    && !structural.materialConflict;
   const requirements = buildGamingRequestRequirements(input);
+  const topicSupport = chunks.length > 0 && focusTerms.length > 0
+    && (structuredClaim && !requirements.length ? structural.claimSupported || independentProse : gamingTermCoverage(text, focusTerms) >= 0.5)
+    && !structural.materialConflict;
   const requirementUnitSupport: Array<{ requirement: string; evidenceUnitIds: string[] }> = [];
   const support = requirements.map(requirement => {
     // A clause needs its own intact passage or record; words from unrelated rows

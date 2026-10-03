@@ -17,6 +17,7 @@ const { isGamingMcpOutput } = await import('../src/shared/chatgpt/gamingMcpContr
 const { buildGamingRequestRequirements } = await import('../src/shared/gaming/gamingRetrievalPolicy.js');
 const { extractGamingFreshnessMetadata } = await import('../src/shared/gaming/gamingFreshnessCore.js');
 const { GamingDocumentAcquisitionError } = await import('../src/services/gamingDocumentResolution.js');
+const { gamingCrossSourceStructuralConflict, readGamingEvidenceUnits } = await import('../src/shared/gaming/gamingStructuralEvidence.js');
 const fetchedAt = new Date().toISOString();
 
 function knowledge(texts: string[], game = 'Lantern Voyage'): GamingStoredKnowledgeContext {
@@ -213,6 +214,46 @@ describe('v2 existing backend evidence selection and request coverage', () => {
     expect(selectGamingHybridEvidence(request, data)).toMatchObject({ materialConflict: true, coverageSatisfied: false, selectedEvidenceIds: [] });
   });
 
+  it('supports independent requested structural facts without requiring one row to contain both entities', () => {
+    const data = knowledge(['', '']);
+    for (const [index, chunk] of data.evidence!.entries()) {
+      const fields = [{ label: 'Item', value: index ? 'Silverblade' : 'Copperblade' }, { label: 'Stat', value: 'weight' },
+        { label: 'Value', value: String(10 + index) }, { label: 'Unit', value: 'points' }, { label: 'Scope', value: 'base' }];
+      const unit: GamingEvidenceUnit = { id: `weight-unit-${index}`, kind: 'table_row',
+        text: fields.map(field => `${field.label}: ${field.value}`).join(' | '), fields,
+        context: { scope: 'stats' }, integrity: { status: 'complete', reasons: [] },
+        provenance: { sourceUrl: chunk.publicUrl, strategy: 'html_table', representation: 'html_dom',
+          policyVersion: 'gaming-evidence-units/v1', locator: 'table[0]/tr[0]' } };
+      chunk.evidenceUnits = [unit]; chunk.text = unit.text;
+    }
+    const request = { ...input, prompt: 'What is Copperblade weight value and Silverblade weight value?' };
+    const coverage = assessGamingRequestCoverage(request, data);
+    expect(coverage.requirementSupport.map(item => item.evidenceIds)).toEqual([['record-0'], ['record-1']]);
+    expect(coverage).toMatchObject({ coverageSatisfied: true, missingCoverage: [] });
+    const selected = selectGamingHybridEvidence(request, data);
+    expect(selected).toMatchObject({ coverageSatisfied: true, materialConflict: false, selectedEvidenceIds: ['record-0', 'record-1'] });
+    const v2 = assessGamingClearEvidence(request, selected.knowledge, { requireRequestCoverage: true });
+    expect(v2.gates.claimSupport).toBe('verified');
+    expect(v2.blockingFindings).toEqual([]);
+    expect(assessGamingClearEvidence(request, data).gates.claimSupport).toBe('unknown');
+    expect(assessGamingRequestCoverage(request, { ...data, evidence: data.evidence!.slice(0, 1) }))
+      .toMatchObject({ coverageSatisfied: false, missingCoverage: ['requested topic 2'] });
+    for (const missingField of ['Value', 'Unit', 'Scope']) {
+      const incomplete = structuredClone(data);
+      const chunk = incomplete.evidence![1];
+      const unit = chunk.evidenceUnits![0];
+      unit.fields = unit.fields.filter(field => field.label !== missingField);
+      unit.text = unit.fields.map(field => `${field.label}: ${field.value}`).join(' | ');
+      chunk.text = unit.text;
+      expect(assessGamingRequestCoverage(request, incomplete))
+        .toMatchObject({ coverageSatisfied: false, missingCoverage: ['requested topic 2'] });
+      expect(assessGamingClearEvidence(request, incomplete, { requireRequestCoverage: true }).gates.claimSupport).toBe('unknown');
+    }
+    const invalid = structuredClone(data);
+    invalid.evidence![1].evidenceUnits![0].integrity.status = 'partial';
+    expect(selectGamingHybridEvidence(request, invalid).coverageSatisfied).toBe(false);
+  });
+
   it('stored source identities cannot impersonate accepted workflow candidate handles', () => {
     const data = knowledge(['Activate amber gate using the copper switch. Cross crystal bridge following the blue lanterns.']);
     data.sources[0].origin = 'stored';
@@ -221,6 +262,39 @@ describe('v2 existing backend evidence selection and request coverage', () => {
     expect(selected.selectedCandidateIds).toEqual([]);
     expect(selected.selectedEvidenceIds).toEqual(['record-0']);
     expect(selected.requirementSupport.every(item => item.candidateIds.length === 0)).toBe(true);
+  });
+
+  it('keeps unavailable full-pool inspection distinct from a verified contradiction through compaction', () => {
+    const text = 'Activate amber gate using the copper switch. Cross crystal bridge following the blue lanterns.';
+    const permitted = knowledge(Array.from({ length: 17 }, () => text));
+    expect(selectGamingHybridEvidence(input, permitted)).toMatchObject({ materialConflict: false, coverageSatisfied: true });
+    const unavailable = knowledge(Array.from({ length: 18 }, () => text));
+    const selected = selectGamingHybridEvidence(input, unavailable);
+    expect(selected).toMatchObject({ materialConflict: false, inspectionUnavailable: true, coverageSatisfied: false,
+      gapAssessmentStatus: 'unknown', selectedCandidateIds: [], selectedEvidenceIds: [] });
+    expect(assessGamingClearEvidence(input, unavailable, { requireRequestCoverage: true }).blockingFindings)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ code: 'STRUCTURAL_CONFLICT_ASSESSMENT_UNVERIFIED' })]));
+    const compact = { ...knowledge([text]), structuralConflictAssessmentUnavailable: true };
+    expect(selectGamingHybridEvidence(input, compact)).toMatchObject({ materialConflict: false, inspectionUnavailable: true, selectedEvidenceIds: [] });
+    expect(assessGamingClearEvidence(input, compact, { requireRequestCoverage: true }).gates.claimSupport).toBe('unknown');
+  });
+
+  it('validates whole source batches without enlarging the document cap or accepting split oversized sources', () => {
+    const sourceUrl = 'https://guides.example.org/weights';
+    const unit: GamingEvidenceUnit = { id: 'weight-unit', kind: 'table_row',
+      text: 'Item: Copperblade | Stat: weight | Value: 10 | Unit: points | Scope: base',
+      fields: [{ label: 'Item', value: 'Copperblade' }, { label: 'Stat', value: 'weight' },
+        { label: 'Value', value: '10' }, { label: 'Unit', value: 'points' }, { label: 'Scope', value: 'base' }],
+      context: { scope: 'stats' }, integrity: { status: 'complete', reasons: [] },
+      provenance: { sourceUrl, strategy: 'html_table', representation: 'html_dom', policyVersion: 'gaming-evidence-units/v1', locator: 'table[0]/tr[0]' } };
+    const request = { prompt: 'What is Copperblade weight value?' };
+    const units = Array.from({ length: 2_049 }, (_unused, index) => ({ ...unit, id: `weight-unit-${index}` }));
+    expect(readGamingEvidenceUnits(units)).toEqual([]);
+    expect(gamingCrossSourceStructuralConflict({ ...request, sources: [{ sourceUrl, units }] })).toBeUndefined();
+    expect(gamingCrossSourceStructuralConflict({ ...request, sources: [{ sourceUrl, units: units.slice(0, 2_048) },
+      { sourceUrl, units: units.slice(2_048) }] })).toBeUndefined();
+    expect(gamingCrossSourceStructuralConflict({ ...request, sources: [{ sourceUrl, units: [unit] }, { sourceUrl, units: [unit] }] })).toBe(false);
+    expect(gamingCrossSourceStructuralConflict({ ...request, sources: [{ sourceUrl, units: [{ ...unit, text: 'Malformed unrelated text.' }] }] })).toBeUndefined();
   });
 });
 
@@ -264,6 +338,25 @@ describe('v2 independently acquired bound artifacts and failure work accounting'
     expect(retained.sources.length).toBeLessThanOrEqual(3);
     expect(retained.materialConflict).toBe(true);
     expect(selectGamingHybridEvidence(input, retained)).toMatchObject({ materialConflict: true, selectedEvidenceIds: [], coverageSatisfied: false });
+  });
+
+  it('retains a structural conflict veto when six acquired tables exceed the per-document unit limit in aggregate', async () => {
+    mockHttp.mockImplementation(async (requestUrl: string) => ({ status: 200, headers: { 'content-type': 'text/html' },
+      data: `<html><title>Lantern Voyage guide</title><body><article>Lantern Voyage weapon weights.
+        <table><thead><tr><th>Item</th><th>Stat</th><th>Value</th><th>Unit</th><th>Scope</th><th>Note</th></tr></thead><tbody>
+        ${Array.from({ length: 350 }, (_unused, index) => `<tr><td>Copperblade</td><td>weight</td><td>${requestUrl.endsWith('/contradiction') ? 11 : 10}</td><td>points</td><td>base</td><td>entry ${index}</td></tr>`).join('')}
+        </tbody></table></article></body></html>` }));
+    const request = { ...input, prompt: 'What is Copperblade weight value?' };
+    const urls = Array.from({ length: 6 }, (_unused, index) => `https://guides.example.org/${index === 5 ? 'contradiction' : `weight-${index}`}`);
+    const first = await evaluateGamingHybridCandidates({ ...request, protocolVersion: 'gaming-hybrid-v2', candidates: urls.slice(0, 3).map(url => ({ url })) }, actor);
+    const second = await evaluateGamingHybridCandidates({ ...request, protocolVersion: 'gaming-hybrid-v2', candidates: urls.slice(3).map(url => ({ url })) }, actor);
+    const accepted = [...first.accepted, ...second.accepted];
+    expect(accepted).toHaveLength(6);
+    expect(accepted.flatMap(candidate => candidate.evidenceRecords ?? []).flatMap(record => record.normalized.evidenceUnits ?? []).length)
+      .toBeGreaterThan(2_048);
+    const retained = selectGamingHybridAcceptedEvidence(request, accepted, actor);
+    expect(retained.materialConflict).toBe(true);
+    expect(selectGamingHybridEvidence(request, retained)).toMatchObject({ materialConflict: true, selectedEvidenceIds: [], coverageSatisfied: false });
   });
 
   it('admits an intact explicitly requested facet below the whole-question lexical floor only in v2', async () => {

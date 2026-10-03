@@ -2,6 +2,7 @@ import type { GamingEvidenceUnit } from './gamingEvidenceUnits.js';
 import { GAMING_EVIDENCE_UNIT_POLICY_VERSION } from './gamingEvidenceUnits.js';
 import { resolveGamingAnswerPolicy } from './gamingAnswerPolicy.js';
 import { buildGamingRetrievalTerms, gamingLexicalTokens, gamingTermCoverage } from './gamingRetrievalPolicy.js';
+import { GAMING_HYBRID_V2_LIMITS } from './gamingHybridContract.js';
 
 export const GAMING_STRUCTURAL_SUFFICIENCY_VERSION = 'gaming-structural-sufficiency/v1';
 export const GAMING_STRUCTURAL_EVIDENCE_LIMITS = Object.freeze({ units: 2_048, unitChars: 4_096, usableUnitChars: 2_000, fields: 32, valueChars: 1_024 });
@@ -146,6 +147,34 @@ function conflictingUnits(units: readonly GamingEvidenceUnit[], claimShape: Gami
     entry.values.add(assertion); entry.units.push(unit); assertions.set(identity, entry);
   }
   return new Set([...assertions.values()].filter(entry => entry.values.size > 1).flatMap(entry => entry.units));
+}
+
+/** Compare full source batches while preserving each document's validation cap. */
+export function gamingCrossSourceStructuralConflict(input: {
+  sources: readonly { sourceUrl: string; units: readonly GamingEvidenceUnit[] }[];
+  prompt?: string; mode?: 'guide' | 'build' | 'meta';
+}): boolean | undefined {
+  // Inspection covers the existing six gameplay + three official artifacts and
+  // eight stored sources. Selected generation context keeps its smaller caps.
+  const maxSources = GAMING_HYBRID_V2_LIMITS.totalCandidateUrls
+    + GAMING_HYBRID_V2_LIMITS.currentnessRounds * GAMING_HYBRID_V2_LIMITS.candidates + 8;
+  if (input.sources.length > maxSources) return undefined;
+  const bySource = new Map<string, Map<string, GamingEvidenceUnit>>();
+  for (const source of input.sources) {
+    const batch = readGamingEvidenceUnits(source.units, source.sourceUrl);
+    if (batch.length !== source.units.length) return undefined;
+    const unique = bySource.get(source.sourceUrl) ?? new Map<string, GamingEvidenceUnit>();
+    for (const unit of batch) {
+      const previous = unique.get(unit.id);
+      if (previous && JSON.stringify(previous) !== JSON.stringify(unit)) return undefined;
+      unique.set(unit.id, unit);
+    }
+    // Never inspect a prefix or split one oversized source into smaller batches.
+    if (unique.size > GAMING_STRUCTURAL_EVIDENCE_LIMITS.units) return undefined;
+    bySource.set(source.sourceUrl, unique);
+  }
+  const units = [...bySource.values()].flatMap(source => [...source.values()]);
+  return conflictingUnits(units, shape(input, units), true).size > 0;
 }
 
 /** Document-wide source disagreements are retained, never resolved toward a user's requested value. */

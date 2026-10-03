@@ -224,7 +224,8 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
     const acquisitionRemaining = v2 ? Math.max(0, GAMING_HYBRID_V2_LIMITS.totalCandidateTimeoutMs - workflow.acquisitionWorkMs) : LIMITS.candidateTimeoutMs;
     const urlsRemaining = v2 ? Math.max(0, GAMING_HYBRID_V2_LIMITS.totalCandidateUrls - workflow.submittedUrls.size) : LIMITS.candidates;
     const blocked = v2 && (workflow.closed || body.coverageSatisfied === true && type === 'gameplay_evidence'
-      || ['CONFLICTING_CURRENTNESS', 'CONTRADICTORY_EVIDENCE', 'APPLICABILITY_CONFLICT', 'SOURCE_USE_RESTRICTED'].includes(body.reason));
+      || ['CONFLICTING_CURRENTNESS', 'CONTRADICTORY_EVIDENCE', 'APPLICABILITY_CONFLICT', 'SOURCE_USE_RESTRICTED',
+        'STRUCTURAL_CONFLICT_ASSESSMENT_UNVERIFIED'].includes(body.reason));
     const permitted = !blocked && (type === 'currentness_verification' || acquisitionRemaining > 0 && urlsRemaining > 0) && round < maxRounds && (type === 'currentness_verification' ? currentness : v2 || workflow.currentnessRound === 0);
     workflow.pendingDiscovery = permitted ? type : undefined;
     if (permitted && currentness) logger.info('gaming.freshness.verification_requested', {
@@ -317,6 +318,8 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
       body = { ...body, selectedCandidateIds: selection.selectedCandidateIds, selectedEvidenceIds: selection.selectedEvidenceIds,
         coverageSatisfied: selection.coverageSatisfied, missingCoverage: selection.missingCoverage,
         gapAssessmentStatus: selection.gapAssessmentStatus, requirementSupport: selection.requirementSupport };
+      if (selection.inspectionUnavailable) return discovery(context, workflow, { ...body, evidenceSelected: false,
+        coverageSatisfied: false, reason: 'STRUCTURAL_CONFLICT_ASSESSMENT_UNVERIFIED' });
       if (selection.materialConflict) return discovery(context, workflow, { ...body, evidenceSelected: false,
         coverageSatisfied: false, reason: 'CONTRADICTORY_EVIDENCE' });
       if ('clarification' in selection && selection.clarification) return { status: 200, body: { ...body, state: 'clarification_required',
@@ -464,6 +467,8 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
       body = { ...body, selectedCandidateIds: selection.selectedCandidateIds, selectedEvidenceIds: selection.selectedEvidenceIds,
         coverageSatisfied: selection.coverageSatisfied, missingCoverage: selection.missingCoverage,
         gapAssessmentStatus: selection.gapAssessmentStatus, requirementSupport: selection.requirementSupport };
+      if (selection.inspectionUnavailable) return discovery(context, workflow, { ...body, evidenceSelected: false,
+        coverageSatisfied: false, reason: 'STRUCTURAL_CONFLICT_ASSESSMENT_UNVERIFIED' });
       if (selection.materialConflict) return discovery(context, workflow, { ...body, evidenceSelected: false,
         coverageSatisfied: false, reason: 'CONTRADICTORY_EVIDENCE' });
       if (!selection.coverageSatisfied) return discovery(context, workflow, { ...body,
@@ -546,7 +551,7 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
     usable.clearEvidenceAssessment = clearEvidenceAssessment;
     const preparedKnowledge = { knowledge: { ...usable, sourceKnown: body.sourceKnown },
       current: freshness.usable, qualification, actorScopeHash: workflow.actor, advisoryFreshnessAllowed: advisoryAllowed,
-      ...(v2 ? { suppliedGuides: projectGamingHybridSuppliedGuides({ requiredUrls: workflow.pipeline.guideUrls ?? [],
+      ...(v2 ? { requireRequestCoverage: true, suppliedGuides: projectGamingHybridSuppliedGuides({ requiredUrls: workflow.pipeline.guideUrls ?? [],
         accepted: acceptedCandidates, knowledge: usable, actorScopeHash: createHash('sha256').update(context.actorKey, 'utf8').digest('hex'),
         workflowId: workflow.id, now: deps.now() }) } : {}) };
     if (v2) context.signal?.throwIfAborted();
@@ -567,7 +572,7 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
     }
     if (v2) {
       const finalPipelineEvidenceAssessment = assessGamingClearEvidence({ ...workflow.pipeline, game: input.game }, usable,
-        { actorScopeHash: workflow.actor, allowAdvisoryFreshness: advisoryAllowed });
+        { actorScopeHash: workflow.actor, allowAdvisoryFreshness: advisoryAllowed, requireRequestCoverage: true });
       const answerAssessment = (generated.data as typeof generated.data & GamingClearAnswerCarrier)[GAMING_CLEAR_APPROVED_ANSWER];
       const allowedRefs = new Set((usable.evidence ?? []).flatMap(chunk => [chunk.sourceId, chunk.revisionId, chunk.recordId]));
       const answerRefs = [...Object.values(answerAssessment?.dimensionScores ?? {}).flatMap(dimension => dimension.evidenceRefs),
@@ -786,6 +791,7 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
         const { retainArtifacts, decisions } = projectGamingHybridCandidateRetention({ retainedChars,
           candidateChars: evaluated.accepted.reduce((total, item) => total + item.document.text.length, 0), decisions: evaluated.decisions });
         if (retainArtifacts) workflow.accepted = [...workflow.accepted, ...evaluated.accepted];
+        const artifacts = retainArtifacts ? workflow.accepted : [...workflow.accepted, ...evaluated.accepted];
         const prior = v2 ? workflow.currentnessSubmission?.knowledge ?? workflow.candidateSubmission?.knowledge ?? workflow.knowledge
           : currentness ? workflow.candidateSubmission?.knowledge ?? workflow.knowledge : workflow.knowledge;
         // Retain only bounded evidence/freshness for answer retries when full artifacts
@@ -796,12 +802,14 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
             : currentness ? workflow.candidateSubmission?.freshness : undefined,
           currentnessEvidence: evaluated.currentnessEvidence
         });
-        if (v2 && retainArtifacts) {
-          const retained = selectGamingHybridAcceptedEvidence({ ...workflow.pipeline, game: workflow.input.game }, workflow.accepted,
+        if (v2) {
+          const retained = selectGamingHybridAcceptedEvidence({ ...workflow.pipeline, game: workflow.input.game }, artifacts,
             { actorKey: context.actorKey, workflowId: workflow.id, now: deps.now() });
           // Re-select complete backend artifacts so incomplete accepted documents
-          // remain available to complement the recovery sources.
+          // remain available to complement recovery. Retention capacity never
+          // bypasses full-pool conflict inspection for transient artifacts.
           combined.materialConflict ||= retained.materialConflict;
+          combined.structuralConflictAssessmentUnavailable ||= retained.structuralConflictAssessmentUnavailable;
           const retainedSourceIds = new Set(retained.sources.map(source => source.sourceId));
           combined.sources = [...retained.sources, ...combined.sources.filter(source => !retainedSourceIds.has(source.sourceId))];
           combined.evidence = [...(retained.evidence ?? []), ...(combined.evidence ?? []).filter(chunk => !retainedSourceIds.has(chunk.sourceId))];
@@ -810,7 +818,6 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
           ...(evaluated.currentnessFailureBlocksAdvisory ? { currentnessFailureBlocksAdvisory: true } : {}) };
         if (currentness) workflow.currentnessSubmission = nextSubmission;
         else workflow.candidateSubmission = nextSubmission;
-        const artifacts = retainArtifacts ? workflow.accepted : [...workflow.accepted, ...evaluated.accepted];
         const result = await answer(context, workflow, combined, candidateFreshness, artifacts);
         result.body.candidates = decisions;
         if (v2 && !retainArtifacts && result.body.discovery && result.body.nextAction !== 'stop') {
