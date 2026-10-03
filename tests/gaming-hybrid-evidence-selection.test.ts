@@ -66,6 +66,49 @@ describe('v2 existing backend evidence selection and request coverage', () => {
     expect(assess.mock.calls.length).toBeLessThan(100);
   });
 
+  it.each([
+    { name: 'table-only negative', complete: false, prose: false, requiredProof: false, location: false },
+    { name: 'valid table positive', complete: true, prose: false, requiredProof: false, location: false },
+    { name: 'mixed partial negative', complete: false, prose: true, requiredProof: false, location: false },
+    { name: 'independent prose positive', complete: true, prose: true, requiredProof: false, location: false },
+    { name: 'mandatory excluded proof with prose', complete: true, prose: true, requiredProof: true, location: false },
+    { name: 'mixed tuple shapes negative', complete: false, prose: false, requiredProof: false, location: true },
+    { name: 'mixed tuple shapes positive', complete: true, prose: false, requiredProof: false, location: true }
+  ])('bounds wrong-statistic search and preserves coverage: $name', ({ complete, prose, requiredProof, location }) => {
+    const request = { ...input, prompt: location ? 'Find Copperblade weight value' : 'What is Copperblade weight value?' };
+    const data = knowledge(Array.from({ length: 20 }, () => 'Placeholder table row.'));
+    for (const [index, chunk] of data.evidence!.entries()) {
+      const fields = location && index === 18 ? [{ label: 'System', value: 'Alpha' }, { label: 'Body', value: 'Beta' },
+        { label: 'Site', value: 'T-1' }, { label: 'Resource', value: 'Copperblade' }] :
+        [{ label: 'Item', value: 'Copperblade' }, { label: 'Stat', value: complete && index === 19 ? 'weight' : 'damage' },
+        { label: 'Value', value: '10' }, { label: 'Unit', value: 'points' }, { label: 'Scope', value: 'base' }];
+      const unit: GamingEvidenceUnit = { id: `bounded-row-${index}`, kind: 'table_row',
+        text: fields.map(field => `${field.label}: ${field.value}`).join(' | '), fields,
+        context: { scope: 'stats' }, integrity: { status: 'complete', reasons: [] },
+        provenance: { sourceUrl: chunk.publicUrl, strategy: 'html_table', representation: 'html_dom',
+          policyVersion: 'gaming-evidence-units/v1', locator: 'table[0]/tr[0]' } };
+      chunk.text = unit.text; chunk.evidenceUnits = [unit];
+    }
+    if (prose) {
+      data.evidence![19].evidenceUnits = [];
+      data.evidence![19].text = complete ? 'Copperblade weight value is 10 points for the base equipment described in this guide.'
+        : 'Copperblade rests beside the quiet eastern lantern. This intact guide explains the unrelated cabinet route.';
+    }
+    if (requiredProof) data.evidence![0].recordId += ':verification';
+    const assess = jest.fn((...args: Parameters<typeof assessGamingRequestCoverage>) => {
+      if (assess.mock.calls.length > 1000) throw new Error('Synthetic selector assessment ceiling exceeded');
+      return assessGamingRequestCoverage(...args);
+    });
+    const selected = selectGamingCoverageEvidence(data.evidence!.map((evidence, index) => ({ evidence, source: data.sources[index] })),
+      { ...request, requireRequestCoverage: true, requiredSourceIds: requiredProof ? ['candidate-0'] : [] },
+      { chunkChars: 1600, maxChunks: 8, maxSources: 3, maxContextChars: 5000, structuredEvidenceChars: 8000 }, assess);
+    expect(assessGamingRequestCoverage(request, { context: '', sources: selected.map(candidate => candidate.source),
+      evidence: selected.map(candidate => candidate.evidence) }).coverageSatisfied).toBe(complete);
+    expect(assess.mock.calls.length).toBeLessThan(1000);
+    if (complete) expect(selected.map(candidate => candidate.evidence.recordId).sort())
+      .toEqual(requiredProof ? ['record-0:verification', 'record-19'] : ['record-19']);
+  });
+
   it('selects one complete source and removes redundant alternatives without requiring publishers', () => {
     const data = knowledge(['Activate amber gate using the copper switch. Cross crystal bridge by following the blue lanterns.',
       'Activate amber gate using the copper switch. Cross crystal bridge by following the blue lanterns. The guide repeats these complete instructions.']);
