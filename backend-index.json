@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-03T02:52:49.126Z",
+  "generatedAt": "2026-10-03T05:07:44.433Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -2771,6 +2771,9 @@
           "relativePath": "src/shared/gaming/gamingEvidenceUnits.ts"
         },
         {
+          "relativePath": "src/shared/gaming/gamingExecutionBudgetCore.ts"
+        },
+        {
           "relativePath": "src/shared/gaming/gamingFreshnessCore.ts"
         },
         {
@@ -4328,6 +4331,9 @@
         },
         {
           "relativePath": "tests/gaming-durable-rag-preview.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-execution-budget.test.ts"
         },
         {
           "relativePath": "tests/gaming-freshness-disposition.test.ts"

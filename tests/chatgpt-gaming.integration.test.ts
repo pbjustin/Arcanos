@@ -3,7 +3,7 @@ import request from 'supertest';
 import { jest } from '@jest/globals';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
-import { getRequestAbortSignal } from '@arcanos/runtime';
+import { getRequestAbortContext, getRequestAbortSignal, runWithRequestAbortContext } from '@arcanos/runtime';
 import { generateKeyPair, exportJWK, createLocalJWKSet, SignJWT, type JWTPayload } from 'jose';
 import { createChatGptGamingMcpRouter } from '../src/routes/chatgptGamingMcp.js';
 import { createGamingMcpExecutor, type GamingMcpServices } from '../src/chatgpt/gaming.js';
@@ -13,6 +13,8 @@ import { GAMING_MCP_PATH, GAMING_METADATA_PATH, GAMING_QUERY_SCOPE, GAMING_WRITE
 import { PURPOSE_BOUND_CREDENTIAL_ENV_NAMES } from '../src/shared/security/purposeBoundCredential.js';
 import { resetSafetyRuntimeStateForTests } from '../src/services/safety/runtimeState.js';
 import { runWithSessionContext, readSessionContext } from '../src/platform/runtime/sessionContext.js';
+import { readRuntimeEnv, unsetRuntimeEnv, writeRuntimeEnv } from '../src/platform/runtime/env.js';
+import { GAMING_PROVIDER_BACKED_MCP_TIMEOUT_MS } from '../src/shared/gaming/gamingExecutionBudgetCore.js';
 import type { ChatGptGamingToolName } from '@arcanos/protocol';
 
 const env: Record<string, string> = { CHATGPT_GAMING_ENABLED: 'true', CHATGPT_GAMING_ISSUER: 'https://gaming-issuer.invalid/',
@@ -55,8 +57,14 @@ function services(): GamingMcpServices {
 const writeInput = { game: 'Fixture Game', sourceUrls: ['https://guide.example.invalid/fixture'], idempotencyKey: 'fixture-store-001',
   storagePolicy: 'ask_before_store', confirmStore: true };
 const queryInput = { contractVersion: 'gaming-hybrid-v1', question: 'Where next?', game: 'Fixture Game', idempotencyKey: 'fixture-query-001', storagePolicy: 'ask_before_store' };
-function app(options: Parameters<typeof createChatGptGamingMcpRouter>[0] = {}) {
+function app(options: Parameters<typeof createChatGptGamingMcpRouter>[0] = {}, parentRemainingMs?: number,
+  parentController?: AbortController) {
   const result = express();
+  if (parentRemainingMs !== undefined) result.use((_req, _res, next) => {
+    const controller = parentController ?? new AbortController();
+    runWithRequestAbortContext({ controller, signal: controller.signal, deadlineAt: Date.now() + parentRemainingMs,
+      timeoutMs: parentRemainingMs }, () => next());
+  });
   result.use(createChatGptGamingMcpRouter({ configuration, verification: { keyResolver, readEnvironmentValue: () => undefined },
     providerAdmission: (_req, _res, next) => next(), ...options }));
   result.use(express.json()); result.post('/gpt/fixture', (req, res) => res.json(req.body));
@@ -147,6 +155,106 @@ describe('Gaming fixed service execution and persistence boundary', () => {
     expect(deps.ingestionStatus).toHaveBeenCalledWith(hybrid.workflowId, expect.objectContaining({ actorKey: gamingPrincipalActorKey(owner), canStore: false }));
     deps.hybridQuery = jest.fn(async () => ({ status: 200, body: { state: 'answer_ready' } }));
     await expect(createGamingMcpExecutor(deps)(owner, 'arcanos_gaming_hybrid_query', queryInput)).rejects.toThrow('GAMING_OUTPUT_INVALID');
+  });
+});
+
+describe('Gaming MCP execution deadlines', () => {
+  let originalModuleTimeoutMs: string | undefined;
+  beforeEach(() => {
+    originalModuleTimeoutMs = readRuntimeEnv('ARCANOS_GAMING_MODULE_TIMEOUT_MS');
+    unsetRuntimeEnv('ARCANOS_GAMING_MODULE_TIMEOUT_MS');
+  });
+  afterEach(() => {
+    if (originalModuleTimeoutMs === undefined) unsetRuntimeEnv('ARCANOS_GAMING_MODULE_TIMEOUT_MS');
+    else writeRuntimeEnv('ARCANOS_GAMING_MODULE_TIMEOUT_MS', originalModuleTimeoutMs);
+  });
+  const providerOperations: [ChatGptGamingToolName, Record<string, unknown>][] = [
+    ['arcanos_gaming_query', { mode: 'build', prompt: 'bleed Samurai build', game: 'Elden Ring' }],
+    ['arcanos_gaming_hybrid_query', queryInput],
+    ['arcanos_gaming_submit_candidates', { contractVersion: 'gaming-hybrid-v1', workflowId: hybrid.workflowId,
+      idempotencyKey: 'fixture-candidates-001', candidates: [{ url: 'https://guide.example.invalid/fixture' }] }],
+  ];
+  async function observedTimeout(name: ChatGptGamingToolName, input: Record<string, unknown>,
+    options: Parameters<typeof createChatGptGamingMcpRouter>[0] = {}, parentRemainingMs?: number) {
+    let timeoutMs: number | undefined;
+    const execute = jest.fn(async () => {
+      timeoutMs = getRequestAbortContext()?.timeoutMs;
+      return { statusCode: 200, result: hybrid };
+    });
+    const response = await post(app({ ...options, execute }, parentRemainingMs))
+      .set('Authorization', 'Bearer ' + await token({ scope: GAMING_QUERY_SCOPE + ' ' + GAMING_WRITE_SCOPE }))
+      .send(rpc(name, input)).expect(200);
+    expect(response.body.result.structuredContent).toEqual({ statusCode: 200, result: hybrid });
+    expect(execute).toHaveBeenCalledTimes(1);
+    return timeoutMs!;
+  }
+  it.each(providerOperations)('%s receives the shared 60-second provider envelope', async (name, input) => {
+    expect(GAMING_PROVIDER_BACKED_MCP_TIMEOUT_MS).toBe(60_000);
+    expect(await observedTimeout(name, input)).toBe(GAMING_PROVIDER_BACKED_MCP_TIMEOUT_MS);
+  });
+  it.each(providerOperations)('%s respects a lower operator module cap', async (name, input) => {
+    writeRuntimeEnv('ARCANOS_GAMING_MODULE_TIMEOUT_MS', '25000');
+    expect(await observedTimeout(name, input)).toBe(25_000);
+  });
+  it.each(providerOperations)('%s cannot expand the safe envelope through a higher override', async (name, input) => {
+    writeRuntimeEnv('ARCANOS_GAMING_MODULE_TIMEOUT_MS', '120000');
+    expect(await observedTimeout(name, input, { timeoutMs: 120_000 })).toBe(60_000);
+  });
+  it.each(providerOperations)('%s retains the internal lower timeout cap', async (name, input) => {
+    expect(await observedTimeout(name, input, { timeoutMs: 25_000 })).toBe(25_000);
+  });
+  it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY])('rejects an exhausted or invalid internal timeout cap: %s', async timeoutMs => {
+    const execute = jest.fn<ReturnType<typeof createGamingMcpExecutor>>();
+    const response = await post(app({ execute, timeoutMs })).set('Authorization', 'Bearer ' + await token())
+      .send(rpc('arcanos_gaming_hybrid_query', queryInput)).expect(200);
+    expect(response.body.result).toMatchObject({ isError: true, content: [{ text: 'GAMING_TIMEOUT' }] });
+    expect(execute).not.toHaveBeenCalled();
+  });
+  it.each(providerOperations)('%s clamps to a caller with only 30 seconds remaining', async (name, input) => {
+    const timeoutMs = await observedTimeout(name, input, {}, 30_000);
+    expect(timeoutMs).toBeGreaterThan(29_000);
+    expect(timeoutMs).toBeLessThanOrEqual(30_000);
+  });
+  it.each([
+    ['arcanos_gaming_canary', {}, 5_000],
+    ['arcanos_gaming_ingestion_status', { ingestionId: hybrid.workflowId }, 10_000],
+    ['arcanos_gaming_ingest_sources', writeInput, 20_000],
+    ['arcanos_gaming_refresh_sources', { sourceIds: [hybrid.workflowId], idempotencyKey: 'fixture-refresh-001',
+      storagePolicy: 'ask_before_store', confirmStore: true }, 20_000],
+    ['arcanos_gaming_ingest_candidates', { contractVersion: 'gaming-hybrid-v1', workflowId: hybrid.workflowId,
+      candidateIds: ['22222222-2222-4222-8222-222222222222'], idempotencyKey: 'fixture-store-candidates',
+      storagePolicy: 'ask_before_store', confirmStore: true }, 38_000],
+  ] as [ChatGptGamingToolName, Record<string, unknown>, number][])(
+    '%s retains its shorter fixture/status/write deadline', async (name, input, expectedTimeoutMs) => {
+      expect(await observedTimeout(name, input)).toBe(expectedTimeoutMs);
+    });
+  it('does not start an operation after its parent deadline is exhausted', async () => {
+    const execute = jest.fn<ReturnType<typeof createGamingMcpExecutor>>();
+    const response = await post(app({ execute }, 0)).set('Authorization', 'Bearer ' + await token())
+      .send(rpc('arcanos_gaming_hybrid_query', queryInput)).expect(200);
+    expect(response.body.result).toMatchObject({ isError: true, content: [{ text: 'GAMING_TIMEOUT' }] });
+    expect(execute).not.toHaveBeenCalled();
+  });
+  it('inherits parent cancellation before executing backend work', async () => {
+    const controller = new AbortController(); controller.abort();
+    const execute = jest.fn<ReturnType<typeof createGamingMcpExecutor>>();
+    const response = await post(app({ execute }, 30_000, controller)).set('Authorization', 'Bearer ' + await token())
+      .send(rpc('arcanos_gaming_hybrid_query', queryInput)).expect(200);
+    expect(response.body.result).toMatchObject({ isError: true, content: [{ text: 'GAMING_CANCELLED' }] });
+    expect(execute).not.toHaveBeenCalled();
+  });
+  it('logs the execution envelope without question or OAuth identity', async () => {
+    const info = jest.fn();
+    const application = express();
+    application.use((req, _res, next) => {
+      req.logger = { info, debug: jest.fn(), warn: jest.fn(), error: jest.fn() }; next();
+    });
+    application.use(app({ execute: async () => ({ statusCode: 200, result: hybrid }) }));
+    await post(application).set('Authorization', 'Bearer ' + await token())
+      .send(rpc('arcanos_gaming_hybrid_query', queryInput)).expect(200);
+    expect(info).toHaveBeenCalledWith('gaming.mcp.execution_budget', { mcpOperationTimeoutMs: 60_000, requestRemainingMs: null });
+    expect(JSON.stringify(info.mock.calls)).not.toContain(queryInput.question);
+    expect(JSON.stringify(info.mock.calls)).not.toContain(configuration.ownerSubject);
   });
 });
 

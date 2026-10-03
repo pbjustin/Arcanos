@@ -70,6 +70,6 @@ describe('Gaming reusable generation allocation', () => {
     expect(getGamingConfiguredStageTimeoutMs('build')).toBe(2_000);
     expect(getGamingConfiguredStageTimeoutMs('meta')).toBe(4_000);
     expect(getGamingPipelineTimeoutMs('build', null)).toBe(30_000);
-    expect(getGamingPipelineTimeoutMs('build', 20_000)).toBe(19_000);
+    expect(getGamingPipelineTimeoutMs('build', 20_000)).toBe(10_000);
   });
 });

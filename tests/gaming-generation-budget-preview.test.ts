@@ -1,26 +1,33 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const budget = await import('../src/shared/gaming/gamingGenerationBudgetCore.js');
+const execution = await import('../src/shared/gaming/gamingExecutionBudgetCore.js');
 const recovery = await import('../src/shared/gaming/gamingRecoveryResponse.js');
 const allocate = jest.fn(budget.resolveGamingGenerationBudget);
+const executeBudget = jest.fn(execution.resolveGamingExecutionBudget);
 const classifyFailure = jest.fn(recovery.resolveGamingGenerationFailureReason);
 const classifyRecovery = jest.fn(recovery.resolveGamingRecoveryClass);
 const recoveryResponse = jest.fn(recovery.buildGamingRecoveryResponse);
 jest.unstable_mockModule('../src/shared/gaming/gamingGenerationBudgetCore.js', () => ({
   ...budget, resolveGamingGenerationBudget: allocate
 }));
+jest.unstable_mockModule('../src/shared/gaming/gamingExecutionBudgetCore.js', () => ({
+  ...execution, resolveGamingExecutionBudget: executeBudget
+}));
 jest.unstable_mockModule('../src/shared/gaming/gamingRecoveryResponse.js', () => ({
   ...recovery, resolveGamingGenerationFailureReason: classifyFailure,
   resolveGamingRecoveryClass: classifyRecovery, buildGamingRecoveryResponse: recoveryResponse
 }));
 const {
-  assertGamingGenerationBudgetPreviewFixture, GAMING_GENERATION_BUDGET_PREVIEW_VERSION
+  assertGamingGenerationBudgetPreviewFixture, GAMING_GENERATION_BUDGET_PREVIEW_VERSION,
+  GAMING_EXECUTION_BUDGET_PREVIEW_VERSION
 } = await import('../src/shared/gaming/gamingGenerationBudgetPreviewFixture.js');
 const FAILURE = 'PREVIEW_GAMING_GENERATION_BUDGET_CONTRACT_INVALID';
 
 describe('sealed Gaming generation budget production-policy proof', () => {
   beforeEach(() => {
     allocate.mockReset().mockImplementation(budget.resolveGamingGenerationBudget);
+    executeBudget.mockReset().mockImplementation(execution.resolveGamingExecutionBudget);
     classifyFailure.mockReset().mockImplementation(recovery.resolveGamingGenerationFailureReason);
     classifyRecovery.mockReset().mockImplementation(recovery.resolveGamingRecoveryClass);
     recoveryResponse.mockReset().mockImplementation(recovery.buildGamingRecoveryResponse);
@@ -30,6 +37,13 @@ describe('sealed Gaming generation budget production-policy proof', () => {
     expect(assertGamingGenerationBudgetPreviewFixture).not.toThrow();
     expect(assertGamingGenerationBudgetPreviewFixture).not.toThrow();
     expect(GAMING_GENERATION_BUDGET_PREVIEW_VERSION).toBe('gaming-generation-budget/v1');
+    expect(GAMING_EXECUTION_BUDGET_PREVIEW_VERSION).toBe('gaming-execution-budget/v1');
+    expect(executeBudget).toHaveBeenCalledWith({});
+    expect(executeBudget).toHaveBeenCalledWith({ requestRemainingMs: 30_000 });
+    expect(executeBudget).toHaveBeenCalledWith({ moduleTimeoutMs: 45_000, configuredPipelineTimeoutMs: 12_000 });
+    expect(executeBudget).toHaveBeenCalledWith({ requestRemainingMs: Number.NaN });
+    expect(allocate).toHaveBeenCalledWith(expect.objectContaining({ stage: 'final', pipelineTimeoutMs: 50_000,
+      pipelineElapsedMs: 21_817, requestRemainingMs: 38_183, runtimeRemainingMs: 27_683 }));
     expect(allocate).toHaveBeenCalledWith(expect.objectContaining({ mode: 'guide', stage: 'intake' }));
     expect(allocate).toHaveBeenCalledWith(expect.objectContaining({ mode: 'meta', stage: 'reasoning', pipelineElapsedMs: 5_000 }));
     expect(allocate).toHaveBeenCalledWith(expect.objectContaining({ stage: 'direct-answer', pipelineTimeoutMs: 9_000 }));
@@ -37,6 +51,63 @@ describe('sealed Gaming generation budget production-policy proof', () => {
     expect(classifyFailure).toHaveBeenCalledWith({ fallbackReason: 'INTAKE_UPSTREAM_TIMEOUT', evidenceSelected: true });
     expect(classifyFailure).toHaveBeenCalledWith({ fallbackReason: 'PROVIDER_COMPLETION_INCOMPLETE', evidenceSelected: true });
     expect(classifyRecovery).toHaveBeenCalledWith(expect.objectContaining({ sourceKnown: true, evidenceSelected: false, timedOut: true }));
+  });
+
+  it.each(['operation', 'pipeline'] as const)('withholds proof when the %s default retains the old deadline', cap => {
+    executeBudget.mockImplementation(input => execution.resolveGamingExecutionBudget({ ...input,
+      ...(cap === 'operation' ? { moduleTimeoutMs: 38_000 } : { configuredPipelineTimeoutMs: 35_000 }) }));
+    expect(assertGamingGenerationBudgetPreviewFixture).toThrow(FAILURE);
+  });
+
+  it.each(['caller', 'module', 'pipeline'] as const)('withholds proof when an execution %s cap is ignored', cap => {
+    executeBudget.mockImplementation(input => execution.resolveGamingExecutionBudget({ ...input,
+      ...(cap === 'caller' ? { requestRemainingMs: null } : cap === 'module'
+        ? { moduleTimeoutMs: undefined } : { configuredPipelineTimeoutMs: undefined }) }));
+    expect(assertGamingGenerationBudgetPreviewFixture).toThrow(FAILURE);
+  });
+
+  it('withholds proof when higher overrides expand the safe execution envelope', () => {
+    executeBudget.mockImplementation((input = {}) => {
+      const result = execution.resolveGamingExecutionBudget(input);
+      return (input.moduleTimeoutMs ?? 0) > 60_000
+        ? { ...result, mcpOperationTimeoutMs: input.moduleTimeoutMs!, pipelineTimeoutMs: input.configuredPipelineTimeoutMs! }
+        : result;
+    });
+    expect(assertGamingGenerationBudgetPreviewFixture).toThrow(FAILURE);
+  });
+
+  it('withholds proof when acquisition and cancellation headroom disappear', () => {
+    executeBudget.mockImplementation(input => ({ ...execution.resolveGamingExecutionBudget(input), outerHeadroomMs: 0 }));
+    expect(assertGamingGenerationBudgetPreviewFixture).toThrow(FAILURE);
+  });
+
+  it('withholds proof when exhausted or invalid callers receive a new deadline', () => {
+    executeBudget.mockImplementation((input = {}) => {
+      const result = execution.resolveGamingExecutionBudget(input);
+      return typeof input.requestRemainingMs === 'number'
+        && (!Number.isFinite(input.requestRemainingMs) || input.requestRemainingMs <= 0)
+        ? { ...result, mcpOperationTimeoutMs: 1, pipelineTimeoutMs: 1 } : result;
+    });
+    expect(assertGamingGenerationBudgetPreviewFixture).toThrow(FAILURE);
+  });
+
+  it('withholds proof when the 17,317ms reasoning trace loses its exact final allocation', () => {
+    allocate.mockImplementation(input => {
+      const result = budget.resolveGamingGenerationBudget(input);
+      return input.pipelineTimeoutMs === 50_000 && input.stage === 'final' && input.pipelineElapsedMs === 21_817
+        ? { ...result, effectiveStageTimeoutMs: 25_000 } : result;
+    });
+    expect(assertGamingGenerationBudgetPreviewFixture).toThrow(FAILURE);
+  });
+
+  it('returns only the fixed failure after an unexpected execution-seam exception', () => {
+    executeBudget.mockImplementation(() => { throw new Error('private-execution-preview-sentinel'); });
+    let failure: unknown;
+    try { assertGamingGenerationBudgetPreviewFixture(); } catch (error) { failure = error; }
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toBe(FAILURE);
+    expect((failure as Error).cause).toBeUndefined();
+    expect(String(failure)).not.toContain('private-execution-preview-sentinel');
   });
 
   it('withholds proof when reasoning is still capped at the former 12-second default', () => {

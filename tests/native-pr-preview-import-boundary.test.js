@@ -1011,6 +1011,7 @@ describe('native PR preview import boundary', () => {
     'src/shared/gaming/gamingGameIdentity.ts',
     'src/shared/gaming/gamingRecoveryResponse.ts',
     'src/shared/gaming/gamingGenerationBudgetCore.ts',
+    'src/shared/gaming/gamingExecutionBudgetCore.ts',
     'src/shared/gaming/gamingGenerationBudgetPreviewFixture.ts',
     'src/shared/gaming/gamingProgressionPolicy.ts',
     'src/shared/gaming/gamingGuideIntakeCore.ts',

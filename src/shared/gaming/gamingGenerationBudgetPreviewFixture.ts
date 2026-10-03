@@ -1,10 +1,12 @@
 import { resolveGamingGenerationBudget } from './gamingGenerationBudgetCore.js';
+import { resolveGamingExecutionBudget } from './gamingExecutionBudgetCore.js';
 import {
   buildGamingRecoveryResponse, resolveGamingGenerationFailureReason, resolveGamingRecoveryClass,
   type GamingRecoveryInput
 } from './gamingRecoveryResponse.js';
 
 export const GAMING_GENERATION_BUDGET_PREVIEW_VERSION = 'gaming-generation-budget/v1';
+export const GAMING_EXECUTION_BUDGET_PREVIEW_VERSION = 'gaming-execution-budget/v1';
 const FAILURE = 'PREVIEW_GAMING_GENERATION_BUDGET_CONTRACT_INVALID';
 
 function requireProof(condition: unknown): asserts condition {
@@ -23,6 +25,86 @@ function requireAllocation(
   requireProof(allocation.downstreamReserveMs === reserveMs);
   requireProof(Number.isFinite(allocation.effectiveStageTimeoutMs) && allocation.effectiveStageTimeoutMs >= 0);
   requireProof(allocation.effectiveStageTimeoutMs <= Math.max(0, remainingMs - reserveMs));
+}
+
+function requireExecutionBudget(
+  input: Parameters<typeof resolveGamingExecutionBudget>[0],
+  operationMs: number,
+  pipelineMs: number,
+  callerRemainingMs: number,
+  outerHeadroomMs = 10_000
+): ReturnType<typeof resolveGamingExecutionBudget> {
+  const execution = resolveGamingExecutionBudget(input);
+  requireProof(execution.mcpOperationTimeoutMs === operationMs);
+  requireProof(execution.pipelineTimeoutMs === pipelineMs);
+  requireProof(execution.requestRemainingMs === callerRemainingMs);
+  requireProof(execution.outerHeadroomMs === outerHeadroomMs);
+  requireProof(execution.providerDispatchHeadroomMs === Math.min(5_000, outerHeadroomMs));
+  requireProof(execution.terminalReserveMs === Math.min(1_000, pipelineMs));
+  requireProof(Number.isFinite(operationMs) && operationMs >= 0 && operationMs <= 60_000);
+  requireProof(Number.isFinite(pipelineMs) && pipelineMs >= 0 && pipelineMs <= 50_000);
+  requireProof(pipelineMs + outerHeadroomMs <= operationMs);
+  requireProof(operationMs <= callerRemainingMs);
+  return execution;
+}
+
+function requireExecutionEnvelope(): void {
+  requireExecutionBudget({}, 60_000, 50_000, 60_000);
+  requireExecutionBudget({ requestRemainingMs: 30_000 }, 30_000, 20_000, 30_000);
+  requireExecutionBudget({ requestRemainingMs: 56_000 }, 56_000, 46_000, 56_000);
+  requireExecutionBudget({ moduleTimeoutMs: 45_000 }, 45_000, 35_000, 45_000);
+  // The environment wrapper selects the mode-specific value; this pure seam enforces its cap.
+  requireExecutionBudget({ configuredPipelineTimeoutMs: 30_000 }, 60_000, 30_000, 60_000);
+  requireExecutionBudget({ moduleTimeoutMs: 45_000, configuredPipelineTimeoutMs: 12_000 },
+    45_000, 12_000, 45_000);
+  requireExecutionBudget({ moduleTimeoutMs: 90_000, requestRemainingMs: 120_000,
+    configuredPipelineTimeoutMs: 90_000 }, 60_000, 50_000, 120_000);
+  requireExecutionBudget({ moduleTimeoutMs: 40_000, requestRemainingMs: 30_000,
+    configuredPipelineTimeoutMs: 60_000 }, 30_000, 20_000, 30_000);
+  requireExecutionBudget({ moduleTimeoutMs: 25_000, requestRemainingMs: null },
+    25_000, 15_000, 25_000);
+  for (const remainingMs of [500, 5_000, 9_999, 10_000]) {
+    requireExecutionBudget({ requestRemainingMs: remainingMs }, remainingMs, 0, remainingMs, remainingMs);
+  }
+  for (const invalid of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+    requireExecutionBudget({ requestRemainingMs: invalid }, 0, 0, 0, 0);
+    requireExecutionBudget({ moduleTimeoutMs: invalid }, 0, 0, 0, 0);
+    requireExecutionBudget({ configuredPipelineTimeoutMs: invalid }, 60_000, 0, 60_000);
+  }
+}
+
+function requireVirtualExecutionTrace(): void {
+  const execution = requireExecutionBudget({}, 60_000, 50_000, 60_000);
+  const validationMs = 500;
+  const intakeMs = 4_000;
+  const reasoningMs = 17_317;
+  const finalMs = 12_000;
+  const auditMs = 3_000;
+  const reasoningStartedMs = validationMs + intakeMs;
+  const finalStartedMs = reasoningStartedMs + reasoningMs;
+  for (const mode of ['guide', 'build', 'meta'] as const) {
+    requireAllocation({ mode, stage: 'reasoning', pipelineTimeoutMs: execution.pipelineTimeoutMs,
+      pipelineElapsedMs: reasoningStartedMs, requestRemainingMs: execution.requestRemainingMs - reasoningStartedMs,
+      runtimeRemainingMs: 45_000 }, 36_000, 45_000, 9_000);
+    requireAllocation({ mode, stage: 'final', pipelineTimeoutMs: execution.pipelineTimeoutMs,
+      pipelineElapsedMs: finalStartedMs, requestRemainingMs: execution.requestRemainingMs - finalStartedMs,
+      runtimeRemainingMs: 27_683 }, 23_683, 27_683, 4_000);
+    requireProof(reasoningMs < 36_000 && finalMs < 23_683);
+    const completionMs = finalStartedMs + finalMs + auditMs;
+    requireProof(completionMs === 36_817);
+    requireProof(completionMs < execution.pipelineTimeoutMs - execution.terminalReserveMs);
+    requireProof(completionMs + execution.outerHeadroomMs < execution.mcpOperationTimeoutMs);
+    // Allocation-only overrun: timers/cancellation and public failure mapping are tested outside the sealed graph.
+    requireProof(25_000 > 23_683);
+    requireAllocation({ mode, stage: 'final', pipelineTimeoutMs: execution.pipelineTimeoutMs,
+      pipelineElapsedMs: finalStartedMs + 23_683, requestRemainingMs: 14_500,
+      runtimeRemainingMs: 4_000 }, 0, 4_000, 4_000);
+  }
+  const shortExecution = requireExecutionBudget({ requestRemainingMs: 30_000 }, 30_000, 20_000, 30_000);
+  requireAllocation({ mode: 'build', stage: 'reasoning', pipelineTimeoutMs: shortExecution.pipelineTimeoutMs,
+    pipelineElapsedMs: reasoningStartedMs, requestRemainingMs: shortExecution.requestRemainingMs - reasoningStartedMs,
+    runtimeRemainingMs: 15_000 }, 6_000, 15_000, 9_000);
+  requireProof(reasoningMs > 6_000 && reasoningStartedMs + 6_000 < shortExecution.requestRemainingMs);
 }
 
 function requireAdaptiveStages(): void {
@@ -115,6 +197,8 @@ function requireHonestTimeoutRecovery(): void {
 /** Fixed pure policy proof; no clocks, provider dispatch, SQL, cache, or retry-workflow execution. */
 export function assertGamingGenerationBudgetPreviewFixture(): void {
   try {
+    requireExecutionEnvelope();
+    requireVirtualExecutionTrace();
     requireAdaptiveStages();
     requireDeadlineCaps();
     requireShortDirectAnswer();
