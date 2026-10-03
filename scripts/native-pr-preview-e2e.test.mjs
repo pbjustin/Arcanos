@@ -269,6 +269,8 @@ function responseHeadersForCase(
             NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.currentnessContinuationProofVersion,
           [NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.advisoryFreshnessProofHeader]:
             NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.advisoryFreshnessProofVersion,
+          [NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.generationBudgetProofHeader]:
+            NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.generationBudgetProofVersion,
         }
       : {}),
     ...(requestCase.expectedType === 'backstage-generation-contract'
@@ -2397,6 +2399,12 @@ test('executes the bounded synthetic matrix and detects identity stability', asy
     ).map(({ caseId, gamingAdvisoryFreshnessProofVersion }) => ({ caseId, gamingAdvisoryFreshnessProofVersion })),
     [{ caseId: 'gaming-query-guide', gamingAdvisoryFreshnessProofVersion: 'gaming-advisory-freshness/v1' }]
   );
+  assert.deepEqual(
+    result.checks.filter(({ gamingGenerationBudgetVerified }) =>
+      gamingGenerationBudgetVerified === true
+    ).map(({ caseId, gamingGenerationBudgetProofVersion }) => ({ caseId, gamingGenerationBudgetProofVersion })),
+    [{ caseId: 'gaming-query-guide', gamingGenerationBudgetProofVersion: 'gaming-generation-budget/v1' }]
+  );
   assert.equal(
     result.checks.find(({ caseId }) =>
       caseId === 'worker-readiness-initial'
@@ -3728,6 +3736,20 @@ test('rejects missing synthetic provenance and correlation or security header dr
       code: 'NATIVE_PR_PREVIEW_GAMING_CLEAR_PROOF_INVALID',
       mutate(headers) {
         delete headers[NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.clearProofHeader];
+      },
+    },
+    {
+      caseId: 'gaming-query-guide',
+      code: 'NATIVE_PR_PREVIEW_GAMING_GENERATION_BUDGET_PROOF_INVALID',
+      mutate(headers) {
+        delete headers[NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.generationBudgetProofHeader];
+      },
+    },
+    {
+      caseId: 'gaming-query-guide',
+      code: 'NATIVE_PR_PREVIEW_GAMING_GENERATION_BUDGET_PROOF_INVALID',
+      mutate(headers) {
+        headers[NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.generationBudgetProofHeader] = 'gaming-generation-budget/drifted';
       },
     },
     {

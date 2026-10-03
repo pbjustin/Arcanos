@@ -243,7 +243,7 @@ and compact intake-policy cores over fixed adventure, action, and ship cases.
 Success adds `x-arcanos-preview-gaming-guide-assistance-version:
 gaming-guide-assistance/v1`; any assertion failure withholds all Gaming success
 markers. The supplemental exact-head verifier requires that marker and reports
-`gamingGuideAssistanceVerified` within the existing bounded 138-request plan.
+`gamingGuideAssistanceVerified` within the existing bounded 171-request plan.
 
 This is deployed production-core component evidence. The separate
 `gaming-player-context.e2e.test.ts` exercises actual public validation, agent
@@ -267,7 +267,7 @@ changed/filtered/truncated refetch rejection using synthetic hashes.
 
 Success adds `x-arcanos-preview-gaming-hybrid-knowledge-version: gaming-hybrid-knowledge/v1`;
 the supplemental exact-head verifier requires it and reports
-`gamingHybridKnowledgeVerified`. The guide response body and bounded 138-request
+`gamingHybridKnowledgeVerified`. The guide response body and bounded 171-request
 plan remain unchanged. Any hybrid assertion failure returns the fixed
 `PREVIEW_GAMING_HYBRID_KNOWLEDGE_CONTRACT_INVALID` error and withholds all Gaming
 success markers and the success body. The
@@ -288,6 +288,33 @@ pre-persistence rejection. The guarded
 [PostgreSQL 18 suite](../tests/integration/gaming-durable-rag.pg18.integration.test.ts)
 provides separate evidence for real lexical retrieval and active-revision
 transactions when executed against an authorized disposable database.
+
+### Generation budget component proof
+
+The sealed guide request also runs
+[the generation budget fixture](../src/shared/gaming/gamingGenerationBudgetPreviewFixture.ts)
+against the same pure allocator used by the normal Gaming pipeline. Its fixed
+cases check 24-second guide versus 12-second build/meta intake, 20.5-second
+reasoning after five seconds of intake, final/audit/terminal reserves, explicit
+operator caps, parent/runtime deadline exhaustion, short direct answers, and
+bounded critical reflection. It also checks the production timeout reason and
+safe recovery text with and without selected evidence; known catalog sources
+alone do not count as selected evidence.
+
+Success adds `x-arcanos-preview-gaming-generation-budget-version:
+gaming-generation-budget/v1`. The supplemental exact-head verifier requires
+this marker and reports `gamingGenerationBudgetVerified`, using the unchanged
+guide body and bounded 171-request plan. Assertion failure returns the fixed
+`PREVIEW_GAMING_GENERATION_BUDGET_CONTRACT_INVALID` error with status 503 and
+withholds every Gaming success marker.
+[Mutation tests](../tests/gaming-generation-budget-preview.test.ts) reject
+policy drift, and [served failure tests](../tests/gaming-generation-budget-preview-failure.test.ts)
+check marker containment. The fixture does not dispatch Trinity or a provider,
+advance a clock, or execute a hybrid retry. Separate
+[Trinity dispatch tests](../tests/gaming-trinity-generation-budget.test.ts) and
+[hybrid workflow tests](../tests/gaming-hybrid-workflow.test.ts) cover that
+composition with controlled dependencies. Preview proof does not establish
+successful live generation for the retained production timeout case.
 
 ## Custom GPT operator step
 
