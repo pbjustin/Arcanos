@@ -1,7 +1,7 @@
 import { describe, expect, it } from '@jest/globals';
 import { assessGamingProgressionRequest } from '../src/shared/gaming/gamingProgressionPolicy.js';
 import { resolveGamingPlayerContext } from '../src/shared/gaming/gamingPlayerContext.js';
-import { buildGamingRecoveryResponse, resolveGamingRecoveryClass } from '../src/shared/gaming/gamingRecoveryResponse.js';
+import { buildGamingRecoveryResponse, resolveGamingRecoveryClass, resolveGamingGenerationFailureReason } from '../src/shared/gaming/gamingRecoveryResponse.js';
 import { IntentRouterAgent, ResponseComposerAgent } from '../src/services/gamingAgents.js';
 
 describe('Gaming progression sufficiency and player recovery', () => {
@@ -95,6 +95,17 @@ describe('Gaming progression sufficiency and player recovery', () => {
     const response = buildGamingRecoveryResponse({ mode: 'guide', game: 'Lantern Voyage', prompt: 'What next?', evidenceSelected: false, timedOut: true });
     expect(response.match(/\?/gu)).toHaveLength(1);
     expect(response).not.toContain('timed out');
+  });
+
+  it.each(['INTAKE_UPSTREAM_TIMEOUT', 'INTAKE_UNKNOWN_TIMEOUT'])('normalizes %s independently of source availability', fallbackReason => {
+    expect(resolveGamingGenerationFailureReason({ fallbackReason, evidenceSelected: true })).toBe('PROVIDER_TIMEOUT_WITH_EVIDENCE');
+    expect(resolveGamingGenerationFailureReason({ fallbackReason, evidenceSelected: false })).toBe('PROVIDER_TIMEOUT_WITHOUT_EVIDENCE');
+  });
+
+  it.each([undefined, 'GAMING_PROVIDER_ERROR', 'GAMING_PROVIDER_UNAVAILABLE', 'PROVIDER_COMPLETION_INCOMPLETE',
+    'GAMING_ANSWER_AUDIT_UNAVAILABLE', 'GAMING_ANSWER_REJECTED', 'INTAKE_RETRIEVAL_TIMEOUT', 'INTAKE_PARSE_TIMEOUT',
+    'private exception mentioning TIMEOUT'])('does not label failure metadata %s as a provider timeout', fallbackReason => {
+    expect(resolveGamingGenerationFailureReason({ fallbackReason, evidenceSelected: true })).toBe('GENERATION_UNAVAILABLE');
   });
 
   it('preserves recovery text and diagnostic metadata separately through response composition', () => {

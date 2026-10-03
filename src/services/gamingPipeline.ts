@@ -1,7 +1,8 @@
 import { runTrinityWritingPipeline } from "@core/logic/trinityWritingPipeline.js";
 import { logger } from "@platform/logging/structuredLogging.js";
-import { createRuntimeBudgetWithLimit } from "@platform/resilience/runtimeBudget.js";
+import { createRuntimeBudgetWithLimit, getSafeRemainingMs, type RuntimeBudget } from "@platform/resilience/runtimeBudget.js";
 import {
+  createAbortError,
   getRequestAbortContext,
   getRequestAbortSignal,
   getRequestRemainingMs,
@@ -10,9 +11,11 @@ import {
 } from "@arcanos/runtime";
 import {
   GAMING_RUNTIME_BUDGET_SAFETY_BUFFER_MS,
+  getGamingConfiguredStageTimeoutMs,
   getGamingPipelineTimeoutMs,
-  getGamingStageTimeoutMs,
-  getGamingWebContextMaxChars
+  getGamingWebContextMaxChars,
+  resolveGamingGenerationBudget,
+  type GamingGenerationStage
 } from "@services/gamingConfig.js";
 import { getOpenAIClientOrAdapter } from "@services/openai/clientBridge.js";
 import { assessGamingProgressionRequest } from "@shared/gaming/gamingProgressionPolicy.js";
@@ -1155,14 +1158,37 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
     });
   }
 
-  const pipelineTimeoutMs = getGamingPipelineTimeoutMs(params.mode, getRequestRemainingMs());
-  const stageTimeoutMs = getGamingStageTimeoutMs(params.mode, pipelineTimeoutMs);
+  const requestRemainingMsAtDispatch = getRequestRemainingMs();
+  const pipelineTimeoutMs = getGamingPipelineTimeoutMs(params.mode, requestRemainingMsAtDispatch);
+  const configuredStageTimeoutMs = getGamingConfiguredStageTimeoutMs(params.mode);
   const providerStartedAt = Date.now();
+  let lastGenerationBudget = resolveGamingGenerationBudget({ mode: params.mode, stage: "intake",
+    pipelineTimeoutMs, requestRemainingMs: requestRemainingMsAtDispatch, configuredStageTimeoutMs });
+  const stageTimeoutMs = lastGenerationBudget.effectiveStageTimeoutMs;
+  const generationBudgetLog = () => ({ pipelineTimeoutMs,
+    effectiveStageTimeoutMs: lastGenerationBudget.effectiveStageTimeoutMs,
+    requestRemainingMsAtDispatch, generationRemainingMs: lastGenerationBudget.generationRemainingMs,
+    generationDownstreamReserveMs: lastGenerationBudget.downstreamReserveMs, configuredStageTimeoutMs: configuredStageTimeoutMs ?? null,
+    evidenceSelected: retrievalHadUsableSources, freshnessDisposition: resolveGamingFreshnessDisposition(resolvedParams) });
+  const resolveModelStageTimeoutMs = (stage: GamingGenerationStage, runtimeBudget: RuntimeBudget, remainingWatchdogMs: number): number => {
+    const elapsedMs = Date.now() - providerStartedAt;
+    lastGenerationBudget = resolveGamingGenerationBudget({ mode: params.mode, stage, pipelineTimeoutMs,
+      pipelineElapsedMs: elapsedMs, requestRemainingMs: requestRemainingMsAtDispatch === null
+        ? null : Math.max(0, requestRemainingMsAtDispatch - elapsedMs),
+      runtimeRemainingMs: Math.min(getSafeRemainingMs(runtimeBudget), remainingWatchdogMs), configuredStageTimeoutMs });
+    logger.info("gaming.provider.stage_budget", { ...baseLogContext, provider: "trinity", stage,
+      ...generationBudgetLog(), remainingWatchdogMs, elapsedMs });
+    if (lastGenerationBudget.effectiveStageTimeoutMs <= 0) {
+      throw Object.assign(createAbortError("Gaming generation budget exhausted."), { timeoutPhase: stage });
+    }
+    return lastGenerationBudget.effectiveStageTimeoutMs;
+  };
   logger.info("gaming.provider.start", {
     ...baseLogContext,
     provider: "trinity",
     timeoutMs: pipelineTimeoutMs,
-    stageTimeoutMs
+    stageTimeoutMs,
+    ...generationBudgetLog()
   });
   logger.info("gaming.stream.start", {
     ...baseLogContext,
@@ -1172,6 +1198,9 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
 
   let trinityResult: Awaited<ReturnType<typeof runTrinityWritingPipeline>>;
   try {
+    if (stageTimeoutMs <= 0) {
+      throw Object.assign(createAbortError("Gaming generation budget exhausted."), { timeoutPhase: "provider" });
+    }
     trinityResult = await runWithRequestAbortTimeout(
       {
         timeoutMs: pipelineTimeoutMs,
@@ -1214,7 +1243,8 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
                 ? { toolBackedCapabilities: { verifyProvidedData: true } }
                 : {}),
               watchdogModelTimeoutMs: pipelineTimeoutMs,
-              modelStageTimeoutMs: stageTimeoutMs
+              modelStageTimeoutMs: stageTimeoutMs,
+              resolveModelStageTimeoutMs
             }
           }
         })
@@ -1278,6 +1308,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
       const fallbackReason = classifyGamingProviderFallbackReason(timeoutPhase);
       logger.warn("gaming.provider.timeout", {
         ...baseLogContext,
+        ...generationBudgetLog(),
         provider: "trinity",
         timeoutMs: pipelineTimeoutMs,
         stageTimeoutMs,

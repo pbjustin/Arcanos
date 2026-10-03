@@ -11,6 +11,20 @@ export interface GamingRecoveryInput extends GamingProgressionInput {
   timedOut?: boolean;
 }
 
+export type GamingGenerationFailureReason = 'PROVIDER_TIMEOUT_WITH_EVIDENCE'
+  | 'PROVIDER_TIMEOUT_WITHOUT_EVIDENCE' | 'GENERATION_UNAVAILABLE';
+
+/** Only normalized provider timeout metadata can classify generation as timed out. */
+export function resolveGamingGenerationFailureReason(input: {
+  fallbackReason?: string;
+  evidenceSelected: boolean;
+}): GamingGenerationFailureReason {
+  const providerTimedOut = input.fallbackReason === 'INTAKE_UPSTREAM_TIMEOUT'
+    || input.fallbackReason === 'INTAKE_UNKNOWN_TIMEOUT';
+  if (providerTimedOut) return input.evidenceSelected ? 'PROVIDER_TIMEOUT_WITH_EVIDENCE' : 'PROVIDER_TIMEOUT_WITHOUT_EVIDENCE';
+  return 'GENERATION_UNAVAILABLE';
+}
+
 export function resolveGamingRecoveryClass(input: GamingRecoveryInput): GamingRecoveryClass {
   if (input.mode === 'guide' && assessGamingProgressionRequest(input).clarificationNeeded) return 'clarification_required';
   if (input.timedOut) return input.evidenceSelected ? 'provider_timeout_with_evidence' : 'provider_timeout_without_evidence';

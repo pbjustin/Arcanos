@@ -72,6 +72,29 @@ describe('advisory Gaming currentness keeps strict evidence boundaries', () => {
     expect(test.ingest).not.toHaveBeenCalled();
   });
 
+  it('preserves accepted advisory evidence and the warning on a retryable reasoning timeout', async () => {
+    const test = setup();
+    test.generate.mockImplementationOnce(async (_input: unknown, prepared: any) => ({ ok: true, route: 'gaming', mode: 'build',
+      data: { response: 'Answer generation timed out.', sources: prepared.knowledge.sources,
+        grounding: { groundingStatus: 'grounded' }, fallbackReason: 'INTAKE_UPSTREAM_TIMEOUT', timeoutPhase: 'reasoning' } } as any));
+    const { request, result } = await continueCurrentness(test);
+    expect(result).toMatchObject({ status: 503, body: { state: 'temporarily_unavailable', nextAction: 'retry_later',
+      reason: 'PROVIDER_TIMEOUT_WITH_EVIDENCE', sourceKnown: true, evidenceSelected: true, freshnessStatus: 'unverified',
+      acceptedGameplayCandidateCount: 1, applicabilityStatus: 'unverified', gameplayEvidenceStatus: 'accepted_transient' } });
+    expect(result.body.qualification).toMatch(/(?:could not be verified|unverified).*may be outdated/iu);
+    expect(result.body.answer).toBeUndefined();
+    expect(test.generate).toHaveBeenCalledTimes(1);
+    expect(test.evaluateCandidates).toHaveBeenCalledTimes(2);
+    const [recovered, replay] = await Promise.all([test.workflow.candidates(request, actor), test.workflow.candidates(request, actor)]);
+    expect(recovered.body).toMatchObject({ workflowId: result.body.workflowId, state: 'answer_ready', nextAction: 'answer',
+      evidenceSelected: true, freshnessStatus: 'unverified' });
+    expect(recovered.body.answer?.response).toMatch(/(?:could not be verified|unverified).*may be outdated/iu);
+    expect(replay).toEqual(recovered);
+    expect(test.generate).toHaveBeenCalledTimes(2);
+    expect(test.evaluateCandidates).toHaveBeenCalledTimes(2);
+    expect(test.ingest).not.toHaveBeenCalled();
+  });
+
   it.each(['SOURCE_INACCESSIBLE', 'URL_BLOCKED', 'REDIRECT_NOT_ALLOWED', 'RESOLVED_SOURCE_IDENTITY_MISMATCH',
     'SOURCE_INSTRUCTIONS_REJECTED', 'SOURCE_USE_RESTRICTED', 'GAME_MISMATCH', 'QUESTION_COVERAGE_INSUFFICIENT'])
   ('does not turn currentness rejection %s into advisory generation', async rejection => {

@@ -1210,6 +1210,25 @@ describe('Gaming hybrid durable lifecycle', () => {
     expect(request.input.prompt).toContain('detailed'); expect(request.input.prompt).toContain(query.question);
   });
 
+  it('preserves the actual pipeline reasoning-timeout fallback as a safe retryable hybrid reason', async () => {
+    mockTrinity.mockRejectedValueOnce(Object.assign(new Error('Synthetic private provider timeout diagnostic'), {
+      name: 'OpenAIAbortError', timeoutPhase: 'reasoning'
+    }));
+    const { found } = await discoverCurrent('build');
+    expect(found).toMatchObject({ status: 503, body: { state: 'temporarily_unavailable', nextAction: 'retry_later',
+      reason: 'PROVIDER_TIMEOUT_WITH_EVIDENCE', sourceKnown: true, evidenceSelected: true, freshnessStatus: 'current' } });
+    expect(found.body.qualification).toBeTruthy();
+    expect(found.body.answer).toBeUndefined();
+    expect(JSON.stringify(found.body)).not.toContain('Synthetic private provider timeout diagnostic');
+    expect(jest.mocked(logger.info).mock.calls).toContainEqual(['gaming.recovery.selected', expect.objectContaining({
+      recoveryClass: 'provider_timeout_with_evidence', fallbackReason: 'INTAKE_UPSTREAM_TIMEOUT',
+      timeoutPhase: 'reasoning', sourceKnown: true, evidenceSelected: true
+    })]);
+    expect(mockTrinity).toHaveBeenCalledTimes(1);
+    expect(mockAuditCompletion).not.toHaveBeenCalled();
+    expect(jobs.size).toBe(0);
+  });
+
   it('preserves an independently grounded answer when enqueue fails and safely retries the same storage operation', async () => {
     const { workflow, found, missing, patchUrl } = await discoverCurrent('build');
     expect(found.body.state).toBe('answer_ready');

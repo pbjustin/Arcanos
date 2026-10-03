@@ -279,6 +279,12 @@ export interface TrinityRunOptions {
   watchdogModelTimeoutMs?: number;
   /** Optional per-model-stage cap when it must differ from the overall Trinity watchdog. */
   modelStageTimeoutMs?: number;
+  /** Server-owned allocation evaluated at each model stage against the shared runtime budget. */
+  resolveModelStageTimeoutMs?: (
+    stage: 'model-validation' | 'intake' | 'reasoning' | 'final' | 'direct-answer',
+    runtimeBudget: import('@platform/resilience/runtimeBudget.js').RuntimeBudget,
+    remainingWatchdogMs: number
+  ) => number;
   /** Abort and drain a timed direct-answer provider call before the stage settles. */
   cooperativeModelStageTimeout?: boolean;
   toolBackedCapabilities?: TrinityToolBackedCapabilities;

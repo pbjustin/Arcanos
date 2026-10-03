@@ -90,8 +90,10 @@ provider errors, exhausted runtime, and cancellation remain terminal/degraded.
 Successful-looking fallback, dry-run, or incomplete Trinity results are not
 promoted to completed guide answers.
 
-Existing default guide budgets remain a 60-second module window, 50-second
-pipeline window, 24-second stage window, and 500 ms runtime safety buffer, with
+Default guide budgets retain a 60-second module window, 50-second pipeline
+window, 24-second intake cap, and 500 ms runtime safety buffer. Build/meta retain
+their 35-second pipeline windows and 12-second intake caps. Reasoning and final
+model stages use the remaining safe generation budget described below, with
 existing request-deadline clamping and session/global provider limits. Ordinary
 guide requests retain the full Trinity sequence even when the question asks to
 "answer directly". The pre-existing exact-literal compatibility shortcut remains;
@@ -99,6 +101,59 @@ the existing self-heal final-stage bypass remains a fallback and cannot become a
 completed grounded guide answer. Optional pattern storage and raw audit content are disabled
 for this request-scoped guide policy. Non-Gaming behavior remains on its existing
 path.
+
+### Generation-stage allocation and timeout recovery
+
+The reusable `resolveGamingGenerationBudget` policy recalculates each model-stage
+window from mode, total pipeline limit, consumed pipeline time, current request
+remaining time, safe runtime remaining time, remaining Trinity watchdog time and
+explicit operator limits. The
+minimum of these enclosing deadlines wins. The request keeps its 1,000 ms
+headroom and the runtime keeps its 500 ms safety buffer. Reasoning additionally
+reserves 5,000 ms for final generation, 3,000 ms for CLEAR's answer audit and
+1,000 ms for postprocessing, transport serialization and abort cleanup. Final
+generation retains the audit and terminal reserves. Intake retains its bounded
+mode default while preserving downstream reserves. Insufficient usable budget
+stops dispatch; it never disables a timeout or extends a parent deadline.
+
+With a 35,000 ms build pipeline and 5,000 ms already consumed by intake, reasoning
+can receive 20,500 ms when the parent request permits it. It therefore does not
+abort solely at the old default 12,000 ms boundary. Completing reasoning earlier
+leaves more time for final generation. The overall request, Gaming pipeline,
+Trinity watchdog, abort signal, runtime safety and provider dispatch headroom
+remain enforced; each stage remains finite.
+
+For both pipeline and stage configuration, a valid
+`ARCANOS_GAMING_<MODE>_*_TIMEOUT_MS` override takes precedence over the generic
+`ARCANOS_GAMING_*_TIMEOUT_MS` override. Pipeline defaults remain mode-specific,
+including the existing module-limit-derived default. Stage overrides are
+optional: an explicit value caps every model stage and may narrow the adaptive
+window; it cannot exceed safe remaining time or consume reserved headroom.
+Leaving stage overrides unset enables adaptive reasoning/final allocation.
+The commented 12s/24s configuration examples are explicit limits if enabled.
+
+Hybrid maps an actual upstream generation timeout with accepted evidence to
+`state: temporarily_unavailable`, `nextAction: retry_later`, and
+`reason: PROVIDER_TIMEOUT_WITH_EVIDENCE`. It preserves source/evidence selection,
+qualification, freshness and applicability diagnostics. Retrieval timeouts and
+other unsuccessful generation outcomes retain their separate existing fallback
+handling; an empty, incomplete, unavailable, invalid, refused or dishonest answer
+does not become a provider timeout. A logical generation operation makes one
+provider-generation attempt; there is no automatic second attempt. Existing
+retryable operations can be retried later with the same keys and retained valid
+evidence within their existing TTL and acquisition/currentness limits.
+
+The payload retains one Gaming system instruction, user request, player-context
+block and bounded evidence block. Compact Trinity intake refers to evidence
+without copying it into the task card; reasoning/final stages intentionally
+retain the original request/evidence. The observed approximately 7,792-character
+prompt is consistent with the 5,000-character default evidence context plus
+instructions. This change does not truncate evidence or change token/model policy.
+Budget telemetry records bounded numeric timing and selection/currentness
+metadata without prompt, evidence or private provider content.
+
+See the [retained timeout trace and exact post-merge live acceptance procedure](audits/2026-10-03/gaming-generation-timeout.md).
+The procedure is documented only; this coding PR does not deploy or execute it.
 
 ## Retrieval, spoilers, and attribution
 

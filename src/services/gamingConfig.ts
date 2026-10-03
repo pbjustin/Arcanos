@@ -41,6 +41,47 @@ const HARD_MAX_GAMING_DISCOVERY_PROVIDER_RESPONSE_BYTES = 1_000_000;
 export const GAMING_REQUEST_TIMEOUT_HEADROOM_MS = 1_000;
 export const GAMING_PROVIDER_DISPATCH_HEADROOM_MS = 5_000;
 export const GAMING_RUNTIME_BUDGET_SAFETY_BUFFER_MS = 500;
+export const GAMING_GENERATION_FINAL_STAGE_RESERVE_MS = 5_000;
+export const GAMING_GENERATION_ANSWER_AUDIT_RESERVE_MS = 3_000;
+export const GAMING_GENERATION_TERMINAL_HEADROOM_MS = 1_000;
+
+export type GamingGenerationStage = "model-validation" | "intake" | "reasoning" | "final" | "direct-answer";
+
+/** Operator limits are caps, not adaptive defaults: mode-specific wins over generic. */
+export function getGamingConfiguredStageTimeoutMs(mode: GamingMode): number | undefined {
+  return getOptionalEnvIntegerAtLeast(`ARCANOS_GAMING_${mode.toUpperCase()}_STAGE_TIMEOUT_MS`, 1)
+    ?? getOptionalEnvIntegerAtLeast("ARCANOS_GAMING_STAGE_TIMEOUT_MS", 1);
+}
+
+/** Allocate only existing usable time, retaining downstream work and terminal cleanup. */
+export function resolveGamingGenerationBudget(params: {
+  mode: GamingMode;
+  stage: GamingGenerationStage;
+  pipelineTimeoutMs: number;
+  pipelineElapsedMs?: number;
+  requestRemainingMs?: number | null;
+  runtimeRemainingMs?: number;
+  configuredStageTimeoutMs?: number;
+}) {
+  const boundedMs = (value: number) => Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
+  const pipelineRemainingMs = boundedMs(boundedMs(params.pipelineTimeoutMs)
+    - boundedMs(params.pipelineElapsedMs ?? 0) - GAMING_RUNTIME_BUDGET_SAFETY_BUFFER_MS);
+  const requestUsableMs = params.requestRemainingMs == null ? pipelineRemainingMs
+    : boundedMs(boundedMs(params.requestRemainingMs) - GAMING_REQUEST_TIMEOUT_HEADROOM_MS);
+  const generationRemainingMs = Math.max(0, Math.min(pipelineRemainingMs, requestUsableMs,
+    params.runtimeRemainingMs === undefined ? pipelineRemainingMs : boundedMs(params.runtimeRemainingMs)));
+  const downstreamReserveMs = GAMING_GENERATION_TERMINAL_HEADROOM_MS
+    + GAMING_GENERATION_ANSWER_AUDIT_RESERVE_MS
+    + (params.stage === "final" || params.stage === "direct-answer" ? 0 : GAMING_GENERATION_FINAL_STAGE_RESERVE_MS);
+  const availableStageMs = Math.max(0, Math.floor(generationRemainingMs - downstreamReserveMs));
+  const intakeDefaultMs = params.mode === "guide" ? DEFAULT_GAMING_GUIDE_STAGE_TIMEOUT_MS : DEFAULT_GAMING_STAGE_TIMEOUT_MS;
+  const defaultStageMs = params.stage === "intake" || params.stage === "model-validation"
+    ? intakeDefaultMs : availableStageMs;
+  const effectiveStageTimeoutMs = Math.min(availableStageMs, params.configuredStageTimeoutMs === undefined
+    ? defaultStageMs : boundedMs(params.configuredStageTimeoutMs));
+  return { effectiveStageTimeoutMs, generationRemainingMs, pipelineRemainingMs, downstreamReserveMs,
+    configuredStageTimeoutMs: params.configuredStageTimeoutMs ?? null };
+}
 
 export function getGamingModuleTimeoutMs(): number {
   return getEnvIntegerAtLeast(
@@ -281,14 +322,6 @@ export function getGamingPipelineTimeoutMs(
 }
 
 export function getGamingStageTimeoutMs(mode: GamingMode, pipelineTimeoutMs: number): number {
-  const fallback =
-    mode === "guide" ? DEFAULT_GAMING_GUIDE_STAGE_TIMEOUT_MS : DEFAULT_GAMING_STAGE_TIMEOUT_MS;
-  const genericTimeoutMs = getEnvIntegerAtLeast("ARCANOS_GAMING_STAGE_TIMEOUT_MS", fallback, 1);
-  const modeTimeoutMs = getEnvIntegerAtLeast(
-    `ARCANOS_GAMING_${mode.toUpperCase()}_STAGE_TIMEOUT_MS`,
-    genericTimeoutMs,
-    1
-  );
-
-  return Math.max(1, Math.min(modeTimeoutMs, Math.max(1, pipelineTimeoutMs - GAMING_REQUEST_TIMEOUT_HEADROOM_MS)));
+  return resolveGamingGenerationBudget({ mode, stage: "intake", pipelineTimeoutMs,
+    configuredStageTimeoutMs: getGamingConfiguredStageTimeoutMs(mode) }).effectiveStageTimeoutMs;
 }

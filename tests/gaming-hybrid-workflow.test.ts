@@ -251,6 +251,61 @@ describe('Gaming hybrid authenticated handoff', () => {
     expect((await workflow.query(query, context)).body.state).toBe('discovery_required');
     expect(retrieve).toHaveBeenCalledTimes(2);
   });
+  it('reports a provider timeout with evidence and waits for a client retry without another provider call', async () => {
+    const { workflow, generate, retrieve } = setup(knowledge());
+    generate.mockImplementationOnce(async (_input: unknown, prepared: any) => ({ ok: true, route: 'gaming', mode: 'guide',
+      data: { response: 'Answer generation timed out.', sources: prepared.knowledge.sources,
+        grounding: { groundingStatus: 'grounded' }, fallbackReason: 'INTAKE_UPSTREAM_TIMEOUT', timeoutPhase: 'reasoning' } } as any));
+    const failed = await workflow.query(query, context);
+    expect(failed).toMatchObject({ status: 503, body: { state: 'temporarily_unavailable', nextAction: 'retry_later',
+      reason: 'PROVIDER_TIMEOUT_WITH_EVIDENCE', sourceKnown: true, evidenceSelected: true, freshnessStatus: 'current' } });
+    expect(failed.body.qualification).toBeTruthy();
+    expect(failed.body.answer).toBeUndefined();
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(retrieve).toHaveBeenCalledTimes(1);
+    expect((await workflow.query({ ...query, question: 'Substituted question' }, context)).status).toBe(409);
+    expect(generate).toHaveBeenCalledTimes(1);
+    const [recovered, replay] = await Promise.all([workflow.query(query, context), workflow.query(query, context)]);
+    expect(recovered.body).toMatchObject({ workflowId: failed.body.workflowId, state: 'answer_ready', evidenceSelected: true });
+    expect(replay).toEqual(recovered);
+    expect(retrieve).toHaveBeenCalledTimes(1);
+    expect(generate).toHaveBeenCalledTimes(2);
+  });
+  it('reassesses aged evidence before a same-workflow client retry after a provider timeout', async () => {
+    let clock = now;
+    const data = knowledge();
+    data.sources[0].fetchedAt = new Date(now - (30 * 24 * 60 * 60 * 1_000) + 1_000).toISOString();
+    const retrieve = jest.fn(async () => data);
+    const generate = jest.fn(async (_input: unknown, prepared: any) => ({ ok: true, route: 'gaming', mode: 'guide',
+      data: { response: 'Answer generation timed out.', sources: prepared.knowledge.sources,
+        grounding: { groundingStatus: 'grounded' }, fallbackReason: 'INTAKE_UPSTREAM_TIMEOUT' } } as any));
+    const workflow = createGamingHybridWorkflow({ retrieve, generate, now: () => clock });
+    const failed = await workflow.query(query, context);
+    expect(failed.body.reason).toBe('PROVIDER_TIMEOUT_WITH_EVIDENCE');
+    clock += 1_001;
+    const retry = await workflow.query(query, context);
+    expect(retry.body).toMatchObject({ workflowId: failed.body.workflowId, state: 'discovery_required', evidenceSelected: false });
+    expect(retry.body.answer).toBeUndefined();
+    expect(retrieve).toHaveBeenCalledTimes(1);
+    expect(generate).toHaveBeenCalledTimes(1);
+  });
+  it('binds retained-evidence timeout retry to the original operation after another workflow response', async () => {
+    const { workflow, generate, retrieve, evaluateCandidates } = setup(knowledge());
+    generate.mockImplementationOnce(async (_input: unknown, prepared: any) => ({ ok: true, route: 'gaming', mode: 'guide',
+      data: { response: 'Answer generation timed out.', sources: prepared.knowledge.sources,
+        grounding: { groundingStatus: 'grounded' }, fallbackReason: 'INTAKE_UPSTREAM_TIMEOUT' } } as any));
+    const failed = await workflow.query(query, context);
+    expect(failed.body.reason).toBe('PROVIDER_TIMEOUT_WITH_EVIDENCE');
+    const intervening = await workflow.candidates({ contractVersion, workflowId: failed.body.workflowId,
+      idempotencyKey: 'timeout-interleaved-candidates', candidates: [{ url: 'https://example.com/lantern' }] }, context);
+    expect(intervening).toMatchObject({ status: 409, body: { reason: 'DISCOVERY_LIMIT_REACHED' } });
+    const [retry, replay] = await Promise.all([workflow.query(query, context), workflow.query(query, context)]);
+    expect(retry.body).toMatchObject({ workflowId: failed.body.workflowId, state: 'answer_ready', evidenceSelected: true });
+    expect(replay).toEqual(retry);
+    expect(retrieve).toHaveBeenCalledTimes(1);
+    expect(evaluateCandidates).not.toHaveBeenCalled();
+    expect(generate).toHaveBeenCalledTimes(2);
+  });
   it('retries generation from held candidate evidence without refetch or changed-key payload reuse', async () => {
     const { generate } = setup();
     let available = false;
@@ -286,11 +341,32 @@ describe('Gaming hybrid authenticated handoff', () => {
     expect(evaluateCandidates).toHaveBeenCalledTimes(2);
     expect(generate).toHaveBeenCalledTimes(1);
   });
-  it('does not promote provider fallback or overlarge output to an answer', async () => {
-    for (const data of [{ response: 'Fallback text', fallbackReason: 'GAMING_PROVIDER_ERROR' }, { response: 'a'.repeat(18_001) }]) {
-      const workflow = createGamingHybridWorkflow({ retrieve: async () => knowledge(), generate: async () => ({ ok: true, route: 'gaming', mode: 'guide', data: { ...data, sources: [] } } as any) });
-      expect((await workflow.query(query, context)).body.state).toBe('temporarily_unavailable');
-    }
+  it.each([
+    { response: 'Fallback text', fallbackReason: 'GAMING_PROVIDER_ERROR' },
+    { response: 'Unavailable', fallbackReason: 'GAMING_PROVIDER_UNAVAILABLE' },
+    { response: 'Incomplete', fallbackReason: 'PROVIDER_COMPLETION_INCOMPLETE' },
+    { response: 'I cannot browse or access the web.', fallbackReason: 'GAMING_PROVIDER_ERROR' },
+    { response: 'Refused', fallbackReason: 'GAMING_ANSWER_REJECTED' },
+    { response: '' },
+    { response: 'Insufficient grounding', grounding: { groundingStatus: 'insufficient_evidence' } },
+    { response: 'a'.repeat(18_001) }
+  ])('keeps a non-timeout generation failure unavailable without a timeout label', async data => {
+    const generate = jest.fn(async () => ({ ok: true, route: 'gaming', mode: 'guide', data: {
+      grounding: { groundingStatus: 'grounded' }, ...data, sources: [] } } as any));
+    const workflow = createGamingHybridWorkflow({ retrieve: async () => knowledge(), generate });
+    expect((await workflow.query(query, context)).body).toMatchObject({ state: 'temporarily_unavailable',
+      nextAction: 'retry_later', reason: 'GENERATION_UNAVAILABLE', sourceKnown: true, evidenceSelected: true });
+    expect(generate).toHaveBeenCalledTimes(1);
+  });
+  it('keeps a provider answer integrity exception separate from timeout recovery', async () => {
+    const generate = jest.fn(async () => { throw Object.assign(new Error('Private integrity diagnostic'), {
+      code: 'TRINITY_OUTPUT_INTEGRITY_FAILED'
+    }); });
+    const workflow = createGamingHybridWorkflow({ retrieve: async () => knowledge(), generate });
+    const result = await workflow.query(query, context);
+    expect(result.body).toMatchObject({ state: 'temporarily_unavailable', nextAction: 'retry_later', reason: 'SERVICE_UNAVAILABLE' });
+    expect(JSON.stringify(result.body)).not.toContain('Private integrity diagnostic');
+    expect(generate).toHaveBeenCalledTimes(1);
   });
   it('coalesces concurrent same-key retries and rejects payload substitution', async () => {
     const { workflow, retrieve } = setup();

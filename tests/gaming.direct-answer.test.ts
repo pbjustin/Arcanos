@@ -1,4 +1,6 @@
-import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import type { TrinityRunOptions } from '../src/core/logic/trinityTypes.js';
+import type { RuntimeBudget } from '../src/platform/resilience/runtimeBudget.js';
 import { createGamingClearAssessment, gamingClearContextFingerprint, gamingClearHash } from '../src/shared/gaming/gamingClearPolicy.js';
 import { gamingAcquisitionAxios } from './testUtils/gamingAcquisitionFixtures.js';
 import type { FetchAndCleanOptions, FetchAndCleanExtractionMetrics } from '../src/shared/webFetcher.js';
@@ -147,6 +149,7 @@ const { IntentRouterAgent, ResponseComposerAgent } = await import('../src/servic
 const { shapeClientRouteResult } = await import('../src/shared/http/clientRouteResultShape.js');
 
 describe('gaming guide output hardening', () => {
+  afterEach(() => jest.useRealTimers());
   beforeEach(() => {
     jest.resetAllMocks();
     acquisitionOptions.clear();
@@ -1714,7 +1717,7 @@ describe('gaming guide output hardening', () => {
 
   it('clamps guide stage timeout below the guide pipeline timeout when env overrides exceed the budget', async () => {
     useControlledStoredGuideEvidence();
-    process.env.ARCANOS_GAMING_GUIDE_PIPELINE_TIMEOUT_MS = '9000';
+    process.env.ARCANOS_GAMING_GUIDE_PIPELINE_TIMEOUT_MS = '15000';
     process.env.ARCANOS_GAMING_GUIDE_STAGE_TIMEOUT_MS = '25000';
     mockRunTrinityWritingPipeline.mockResolvedValueOnce({
       result: '1. Hold threat. 2. Face enemies away. 3. Use mitigation before spikes.',
@@ -1736,13 +1739,74 @@ describe('gaming guide output hardening', () => {
       };
     };
     expect(trinityRequest.context.runtimeBudget).toEqual(expect.objectContaining({
-      watchdogLimit: 9000,
+      watchdogLimit: 15000,
       safetyBuffer: 500
     }));
     expect(trinityRequest.context.runOptions).toEqual(expect.objectContaining({
-      watchdogModelTimeoutMs: 9000,
-      modelStageTimeoutMs: 8000
+      watchdogModelTimeoutMs: 15000,
+      modelStageTimeoutMs: 5500
     }));
+  });
+
+  it('allocates build reasoning from the remaining Gaming pipeline and calls Trinity once', async () => {
+    jest.useFakeTimers({ now: 100_000 });
+    useControlledStoredGuideEvidence();
+    let reasoningTimeoutMs: number | undefined;
+    mockRunTrinityWritingPipeline.mockImplementationOnce(async (input: { context: {
+      runtimeBudget: RuntimeBudget; runOptions: TrinityRunOptions
+    } }) => {
+      await new Promise(resolve => setTimeout(resolve, 5_000));
+      reasoningTimeoutMs = input.context.runOptions.resolveModelStageTimeoutMs?.('reasoning', input.context.runtimeBudget, 30_000);
+      await new Promise(resolve => setTimeout(resolve, 13_000));
+      return { result: 'Use the supported starter equipment. [1]', meta: { provider: { finishReason: 'stop' } } };
+    });
+    const operation = runBuildPipeline({ game: 'Fixture Quest', prompt: 'Give me a grounded starter build.', guideUrls: [], auditEnabled: false });
+    await jest.advanceTimersByTimeAsync(5_000);
+    expect(reasoningTimeoutMs).toBe(20_500);
+    await jest.advanceTimersByTimeAsync(13_000);
+    const result = await operation;
+    expect(result.data.fallbackReason).toBeUndefined();
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledTimes(1);
+  });
+
+  it('retains the overall pipeline watchdog when a provider does not settle', async () => {
+    jest.useFakeTimers({ now: 100_000 });
+    useControlledStoredGuideEvidence();
+    mockRunTrinityWritingPipeline.mockImplementationOnce(() => new Promise(() => {}));
+    const operation = runBuildPipeline({ game: 'Fixture Quest', prompt: 'Give me a grounded starter build.', guideUrls: [], auditEnabled: false });
+    await jest.advanceTimersByTimeAsync(34_999);
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledTimes(1);
+    await jest.advanceTimersByTimeAsync(1);
+    const result = await operation;
+    expect(result.data.fallbackReason).toBe('INTAKE_UPSTREAM_TIMEOUT');
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledTimes(1);
+  });
+
+  it('clamps stage allocation below a short parent request deadline with all downstream headroom', async () => {
+    jest.useFakeTimers({ now: 100_000 });
+    useControlledStoredGuideEvidence();
+    process.env.ARCANOS_GAMING_STAGE_TIMEOUT_MS = '50000';
+    mockRunTrinityWritingPipeline.mockImplementationOnce(async (input: { context: {
+      runtimeBudget: RuntimeBudget; runOptions: TrinityRunOptions
+    } }) => {
+      expect(input.context.runOptions.resolveModelStageTimeoutMs?.('reasoning', input.context.runtimeBudget, 11_000)).toBe(1_500);
+      return { result: 'Use the supported starter equipment. [1]', meta: { provider: { finishReason: 'stop' } } };
+    });
+    const controller = new AbortController();
+    const result = await runWithRequestAbortContext({ controller, signal: controller.signal,
+      timeoutMs: 12_000, deadlineAt: Date.now() + 12_000 }, () => runBuildPipeline({
+      game: 'Fixture Quest', prompt: 'Give me a grounded starter build.', guideUrls: [], auditEnabled: false
+    }));
+    expect(result.data.fallbackReason).toBeUndefined();
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns controlled timeout recovery before dispatch when downstream headroom is unavailable', async () => {
+    useControlledStoredGuideEvidence();
+    process.env.ARCANOS_GAMING_PIPELINE_TIMEOUT_MS = '9000';
+    const result = await runBuildPipeline({ game: 'Fixture Quest', prompt: 'Give me a grounded starter build.', guideUrls: [], auditEnabled: false });
+    expect(result.data.fallbackReason).toBe('INTAKE_UPSTREAM_TIMEOUT');
+    expect(mockRunTrinityWritingPipeline).not.toHaveBeenCalled();
   });
 
   it('uses an explicit module timeout as the default guide provider budget', async () => {

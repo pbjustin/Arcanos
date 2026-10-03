@@ -7,7 +7,7 @@ import { GAMING_HYBRID_CONTRACT_VERSION, GAMING_HYBRID_LIMITS as LIMITS,
   type GamingHybridQuery, type GamingHybridResponse } from '@shared/gaming/gamingHybridContract.js';
 import { resolveGamingPlayerContext, validateGamingPlayerContextInput } from '@shared/gaming/gamingPlayerContext.js';
 import { assessGamingProgressionRequest } from '@shared/gaming/gamingProgressionPolicy.js';
-import { buildGamingRecoveryResponse } from '@shared/gaming/gamingRecoveryResponse.js';
+import { buildGamingRecoveryResponse, resolveGamingGenerationFailureReason } from '@shared/gaming/gamingRecoveryResponse.js';
 import { assessGamingSourcePolicy, classifyGamingQuestionFreshness, evaluateGamingFreshness, getGamingCurrentnessDiscoverySources, GAMING_FRESHNESS_DEFAULTS, type GamingFreshnessEvidence } from '@shared/gaming/gamingFreshnessCore.js';
 import { combineGamingCurrentnessEvidence, GAMING_CURRENTNESS_ADAPTER_VERSION } from '@shared/gaming/gamingCurrentnessAdapters.js';
 import { resolveGamingHybridCandidateAttempt, resolveGamingHybridCurrentnessReason, projectGamingHybridCandidateRetention,
@@ -24,7 +24,7 @@ import { evaluateGamingHybridCandidates, createApprovedGamingHybridIngestion, ty
 
 export interface GamingHybridCallContext extends GamingSourceGatewayContext { signal?: AbortSignal; canStore?: boolean; canAutoStore?: boolean }
 export interface GamingHybridResult { status: number; body: GamingHybridResponse }
-type Operation = { hash: string; promise: Promise<GamingHybridResult>; retryable?: boolean };
+type Operation = { hash: string; promise: Promise<GamingHybridResult>; retryable?: boolean; generationTimedOutWithEvidence?: boolean };
 type DiscoveryType = 'gameplay_evidence' | 'currentness_verification';
 type CandidateSubmission = { key: string; knowledge: GamingStoredKnowledgeContext;
   decisions: GamingHybridResponse['candidates']; freshness: GamingFreshnessEvidence[]; currentnessFailureBlocksAdvisory?: boolean };
@@ -436,7 +436,9 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
     if (generated.data.fallbackReason || generated.data.grounding?.groundingStatus !== 'grounded'
       || !generated.data.response.trim() || response.length > 18_000
       || advisoryAllowed && gamingAnswerClaimsVerifiedCurrentness(generated.data.response)) {
-      return { status: 503, body: { ...body, reason: 'GENERATION_UNAVAILABLE' } };
+      return { status: 503, body: { ...body, reason: resolveGamingGenerationFailureReason({
+        fallbackReason: generated.data.fallbackReason, evidenceSelected: body.evidenceSelected
+      }) } };
     }
     workflow.pendingDiscovery = undefined;
     return { status: 200, body: { ...body, state: 'answer_ready', nextAction: 'answer', reason: 'ACCEPTED_EVIDENCE',
@@ -477,6 +479,22 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
           const workflow = workflows.get(prior.workflowId);
           return workflow ? currentResponse(context, workflow, { ...result, body: workflow.last ?? result.body }) : failure(context, 'WORKFLOW_UNAVAILABLE', 404);
         });
+        const retained = workflows.get(prior.workflowId);
+        if (retained?.knowledge && prior.operation.generationTimedOutWithEvidence) {
+          // A client retry resumes this payload-bound generation operation. Reassess
+          // the retained evidence under its original age/TTL before another attempt.
+          const knowledge = retained.knowledge;
+          const operation: Operation = { hash: prior.operation.hash, promise: Promise.resolve().then(() =>
+            protect(context, retained, () => answer(context, retained, knowledge))).then(result => {
+            if (result.status >= 500 || result.status === 429) {
+              operation.retryable = true;
+              operation.generationTimedOutWithEvidence = result.body.reason === 'PROVIDER_TIMEOUT_WITH_EVIDENCE';
+            }
+            return result;
+          }) };
+          prior.operation = operation;
+          return operation.promise;
+        }
         workflows.delete(prior.workflowId);
       }
       const actor = hash(context.actorKey);
@@ -519,7 +537,10 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
       }).then(result => {
         if (result.status >= 500 || result.status === 429) {
           const entry = queries.get(key);
-          if (entry) entry.operation.retryable = true;
+          if (entry) {
+            entry.operation.retryable = true;
+            entry.operation.generationTimedOutWithEvidence = result.body.reason === 'PROVIDER_TIMEOUT_WITH_EVIDENCE';
+          }
         }
         return result;
       });
