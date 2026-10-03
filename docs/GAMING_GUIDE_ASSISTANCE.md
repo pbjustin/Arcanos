@@ -171,6 +171,14 @@ reserves, provider elapsed time and timeout phase. Existing Trinity stage logs
 retain elapsed stage time. Raw evidence, prompts, OAuth identities, tokens and
 reasoning content are excluded from these budget events.
 
+The Railway sealed guide fixture executes both production pure budget cores
+with fixed envelope, deadline, reserve, and virtual trace cases. The PR-head
+verifier requires `gaming-execution-budget/v1` before reporting execution-budget
+proof. Its unchanged synthetic guide body remains compatible with the trusted
+lifecycle verifier. This served fixture does not execute Trinity or a live
+provider; the real mocked Trinity cancellation and single-attempt tests above
+remain separate evidence. See [Railway preview coverage](RAILWAY_DEPLOYMENT.md).
+
 ### Post-merge live acceptance (not executed by this change)
 
 After a separately authorized merge and deployment, request **"bleed Samurai build"**

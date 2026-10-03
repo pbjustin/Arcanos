@@ -415,6 +415,22 @@ Launcher behavior:
   policy cores, while normal authenticated workflow, acquisition, semantic
   model auditing, live providers, SQL and active workers require separate
   evidence.
+- The sealed Gaming guide request also executes the semantic-digest-pinned
+  execution and generation budget cores. Fixed cases cover the 60,000 ms
+  operation / 50,000 ms pipeline envelope, a 30,000 ms caller / 20,000 ms
+  pipeline, operator caps, required reserves, and zero usable time. A virtual
+  500 ms validation, 4,000 ms intake, and 17,317 ms reasoning trace gives final
+  synthesis 23,683 ms; 12,000 ms final synthesis plus a 3,000 ms audit completes
+  at 36,817 ms. Successful combined assertions emit
+  `x-arcanos-preview-gaming-execution-budget-version: gaming-execution-budget/v1`
+  alongside the unchanged `gaming-generation-budget/v1` marker and response.
+  The supplemental PR-head verifier requires the new marker and reports
+  `gamingExecutionBudgetVerified`; a missing or changed marker fails. Any fixture
+  failure withholds every Gaming marker and the success body. This is served
+  pure-core evidence with virtual time; actual timer cancellation and no
+  automatic recovery generation are covered by the mocked real Trinity tests
+  in `tests/gaming-trinity-generation-budget.test.ts`. The preview does not
+  invoke Trinity, live models, authenticated Gaming MCP, SQL, or an active worker.
 - Web preview `/readyz` additionally runs the production attempt-usage collector
   and child-envelope accounting wrapper over fixed synthetic observations before
   returning success. The `x-arcanos-preview-dag-token-accounting-version:

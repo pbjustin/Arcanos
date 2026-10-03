@@ -18,6 +18,7 @@ import { runGamingCurrentnessPreview, GAMING_ADVISORY_FRESHNESS_PREVIEW_VERSION 
 import {
   assertGamingGenerationBudgetPreviewFixture,
   GAMING_GENERATION_BUDGET_PREVIEW_VERSION,
+  GAMING_EXECUTION_BUDGET_PREVIEW_VERSION,
 } from '@shared/gaming/gamingGenerationBudgetPreviewFixture.js';
 import {
   createIosGatewayPreviewFixture,
@@ -10132,6 +10133,10 @@ export function createNativePrPreviewApplication(
           response.setHeader(
             NATIVE_PR_PREVIEW_GAMING_CONTRACT.generationBudgetProofHeader,
             GAMING_GENERATION_BUDGET_PREVIEW_VERSION
+          );
+          response.setHeader(
+            NATIVE_PR_PREVIEW_GAMING_CONTRACT.executionBudgetProofHeader,
+            GAMING_EXECUTION_BUDGET_PREVIEW_VERSION
           );
           response.setHeader(
             NATIVE_PR_PREVIEW_GAMING_CONTRACT.currentnessProofHeader,

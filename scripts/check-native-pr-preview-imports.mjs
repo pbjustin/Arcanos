@@ -167,6 +167,7 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/shared/gaming/gamingGameIdentity.ts',
   'src/shared/gaming/gamingRecoveryResponse.ts',
   'src/shared/gaming/gamingGenerationBudgetCore.ts',
+  'src/shared/gaming/gamingExecutionBudgetCore.ts',
   'src/shared/gaming/gamingGenerationBudgetPreviewFixture.ts',
   'src/shared/gaming/gamingGuideIntakeCore.ts',
   'src/shared/gaming/gamingPromptCore.ts',
@@ -809,7 +810,8 @@ const CRITICAL_RUNTIME_FUNCTION_DIGESTS = new Map([
 ]);
 const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ['src/shared/gaming/gamingGenerationBudgetCore.ts', 'd9bbe4bbee0bf41c686efbd1fc4bfa4ead92d488e17dfe68f02679e62353f42c'], // gitleaks:allow -- public source semantic SHA-256
-  ['src/shared/gaming/gamingGenerationBudgetPreviewFixture.ts', '36c29659b26aeb22a7d87a7a5037bfc84497ca2e32fa08c585fc2a8b63b26bd6'], // gitleaks:allow -- public source semantic SHA-256
+  ['src/shared/gaming/gamingExecutionBudgetCore.ts', '8409207a0ff4ab57efc15e6837cd924b0441d5e63595c101d394acb334955e0d'], // gitleaks:allow -- public source semantic SHA-256
+  ['src/shared/gaming/gamingGenerationBudgetPreviewFixture.ts', '4dc2366b2106af7ea462905c8db5ef7dfcf6778ca95baa39eca51809319cf1bb'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/gaming/gamingFreshnessDisposition.ts', 'e1e752366471b145255335d72e664892fd52ba2de5e15c9b5c03e2d324419e4a'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/gaming/gamingCurrentnessSourceData.ts', '06395950d7b88b4673fec5128a342a1893bb031ec011c666acab03ad30ae63b2'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/gaming/gamingCurrentnessRegistry.ts', '4bab0ad79adc496c4441e837f2eca52e604ffbf93c04ef39d9ee9ce8f55be2e0'], // gitleaks:allow -- public source semantic SHA-256

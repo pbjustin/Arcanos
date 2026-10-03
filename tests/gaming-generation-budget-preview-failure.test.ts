@@ -1,6 +1,11 @@
 import { jest } from '@jest/globals';
 import request from 'supertest';
 
+const execution = await import('../src/shared/gaming/gamingExecutionBudgetCore.js');
+const executeBudget = jest.fn(execution.resolveGamingExecutionBudget);
+jest.unstable_mockModule('../src/shared/gaming/gamingExecutionBudgetCore.js', () => ({
+  ...execution, resolveGamingExecutionBudget: executeBudget,
+}));
 const actualBudgetFixture = await import('../src/shared/gaming/gamingGenerationBudgetPreviewFixture.js');
 const assertBudgetFixture = jest.fn(actualBudgetFixture.assertGamingGenerationBudgetPreviewFixture);
 jest.unstable_mockModule('../src/shared/gaming/gamingGenerationBudgetPreviewFixture.js', () => ({
@@ -20,7 +25,7 @@ const gamingProofHeaders = Object.entries(contract).flatMap(([key, value]) =>
 async function queryGuide() {
   const readinessState = createNativePrPreviewReadinessState();
   const app = createNativePrPreviewApplication({
-    identity: { prNumber: 1522, sourceCommit: 'a'.repeat(40) },
+    identity: { prNumber: 1523, sourceCommit: 'a'.repeat(40) },
     readinessState,
     notionConnectivityProbe: async () => ({ apiReached: true, authenticationRejected: true }),
   });
@@ -34,18 +39,34 @@ async function queryGuide() {
 }
 
 describe('served Gaming generation budget proof boundary', () => {
-  beforeEach(() => assertBudgetFixture.mockReset().mockImplementation(actualBudgetFixture.assertGamingGenerationBudgetPreviewFixture));
+  beforeEach(() => {
+    assertBudgetFixture.mockReset().mockImplementation(actualBudgetFixture.assertGamingGenerationBudgetPreviewFixture);
+    executeBudget.mockReset().mockImplementation(execution.resolveGamingExecutionBudget);
+  });
 
   it('adds budget proof after assertions pass and preserves the guide response', async () => {
     const response = await queryGuide();
     expect(response.status).toBe(200);
     expect(assertBudgetFixture).toHaveBeenCalledTimes(1);
     expect(response.headers[contract.generationBudgetProofHeader]).toBe('gaming-generation-budget/v1');
+    expect(response.headers[contract.executionBudgetProofHeader]).toBe('gaming-execution-budget/v1');
     for (const header of gamingProofHeaders) expect(response.headers[header]).toBeDefined();
     expect(response.body.result).toEqual({
       ok: true, route: 'gaming', mode: 'guide',
       data: { response: 'Sealed preview guide response.', sources: [] },
     });
+  });
+
+  it('returns fixed 503 and withholds every Gaming marker when the actual execution envelope drifts', async () => {
+    executeBudget.mockImplementation(input => execution.resolveGamingExecutionBudget({ ...input, moduleTimeoutMs: 38_000 }));
+    const response = await queryGuide();
+    expect(response.status).toBe(503);
+    expect(assertBudgetFixture).toHaveBeenCalledTimes(1);
+    expect(executeBudget).toHaveBeenCalledWith({});
+    for (const header of gamingProofHeaders) expect(response.headers[header]).toBeUndefined();
+    expect(response.headers[NATIVE_PR_PREVIEW_SYNTHETIC_RESPONSE_HEADER.name]).toBe(NATIVE_PR_PREVIEW_SYNTHETIC_RESPONSE_HEADER.value);
+    expect(response.body).toEqual({ error: 'PREVIEW_GAMING_GENERATION_BUDGET_CONTRACT_INVALID' });
+    expect(response.text).not.toContain('Sealed preview guide response.');
   });
 
   it.each(['assertion failure', 'partial fixture failure'])('returns fixed 503 and withholds every Gaming marker after %s', async scenario => {

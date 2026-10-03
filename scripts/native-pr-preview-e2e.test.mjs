@@ -271,6 +271,8 @@ function responseHeadersForCase(
             NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.advisoryFreshnessProofVersion,
           [NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.generationBudgetProofHeader]:
             NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.generationBudgetProofVersion,
+          [NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.executionBudgetProofHeader]:
+            NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.executionBudgetProofVersion,
         }
       : {}),
     ...(requestCase.expectedType === 'backstage-generation-contract'
@@ -2405,6 +2407,14 @@ test('executes the bounded synthetic matrix and detects identity stability', asy
     ).map(({ caseId, gamingGenerationBudgetProofVersion }) => ({ caseId, gamingGenerationBudgetProofVersion })),
     [{ caseId: 'gaming-query-guide', gamingGenerationBudgetProofVersion: 'gaming-generation-budget/v1' }]
   );
+  assert.deepEqual(
+    result.checks.filter(({ gamingExecutionBudgetVerified }) =>
+      gamingExecutionBudgetVerified === true
+    ).map(({ caseId, gamingExecutionBudgetProofVersion, gamingExecutionBudgetProofScope }) =>
+      ({ caseId, gamingExecutionBudgetProofVersion, gamingExecutionBudgetProofScope })),
+    [{ caseId: 'gaming-query-guide', gamingExecutionBudgetProofVersion: 'gaming-execution-budget/v1',
+      gamingExecutionBudgetProofScope: 'pure-policy-virtual-trace' }]
+  );
   assert.equal(
     result.checks.find(({ caseId }) =>
       caseId === 'worker-readiness-initial'
@@ -3545,6 +3555,55 @@ test('readiness component proofs do not override an unavailable or unready appli
           ? 'NATIVE_PR_PREVIEW_HTTP_STATUS_MISMATCH' : 'NATIVE_PR_PREVIEW_BODY_MISMATCH')
         && error.caseId === caseId);
     }
+  }
+});
+
+test('requires Gaming execution-budget proof only on the fixed guide selector and retains its exact safe body', async () => {
+  const requestPlan = buildNativePrPreviewRequestPlan();
+  const contract = NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming;
+  const proofCode = 'NATIVE_PR_PREVIEW_GAMING_EXECUTION_BUDGET_PROOF_INVALID';
+  const mutations = [
+    ...[undefined, 'gaming-execution-budget/v0', 'gaming-execution-budget/unknown']
+      .map(version => ({ caseId: 'gaming-query-guide', code: proofCode, mutate(value) {
+        if (version === undefined) delete value.headers[contract.executionBudgetProofHeader];
+        else value.headers[contract.executionBudgetProofHeader] = version;
+      } })),
+    ...['gaming-query-build', 'gaming-query-meta', 'gaming-query-mode-required',
+      'gaming-query-operational-guard', 'worker-gaming-canary-denied', 'web-readiness-initial']
+      .map(caseId => ({ caseId, code: proofCode, mutate(value) {
+        value.headers[contract.executionBudgetProofHeader] = contract.executionBudgetProofVersion;
+      } })),
+    { caseId: 'gaming-query-guide', code: 'NATIVE_PR_PREVIEW_BODY_MISMATCH', mutate(value) {
+      value.body.executionBudget = { mcpOperationTimeoutMs: 60_000, pipelineTimeoutMs: 50_000 };
+    } },
+    { caseId: 'gaming-query-guide', code: 'NATIVE_PR_PREVIEW_BODY_MISMATCH', mutate(value) {
+      value.body.result.data.sources = [{ url: 'https://unapproved.example.invalid/guide' }];
+    } },
+  ];
+  for (const mutation of mutations) {
+    const mock = buildMockFetch(requestPlan, requestCase => {
+      if (requestCase.caseId !== mutation.caseId) return undefined;
+      const originalBody = responseBodyForCase(requestCase);
+      const value = {
+        body: requestCase.expectedType === 'not-found' ? originalBody : JSON.parse(originalBody),
+        headers: responseHeadersForCase(requestCase, Buffer.byteLength(originalBody)),
+      };
+      mutation.mutate(value);
+      const body = typeof value.body === 'string' ? value.body : JSON.stringify(value.body);
+      if (requestCase.boundedResponse) value.headers['x-response-bytes'] = String(Buffer.byteLength(body));
+      const response = new Response(body, { headers: value.headers, status: requestCase.expectedStatus });
+      Object.defineProperty(response, 'url', { value: `${requestCase.role === 'worker' ? WORKER_BASE_URL : WEB_BASE_URL}${requestCase.path}` });
+      return response;
+    });
+    await assert.rejects(runNativePrPreviewE2e({
+      args: validArguments('--execute', '--allow-network'),
+      expectedBackstageBookerOpenApiDocument: EXPECTED_BACKSTAGE_BOOKER_OPENAPI_DOCUMENT,
+      fetchImpl: mock.fetchImpl, localGitState: LOCAL_GIT_STATE, monotonicNow: mock.monotonicNow,
+    }), error => error instanceof NativePrPreviewE2eError
+      && error.code === mutation.code && error.caseId === mutation.caseId,
+    `${mutation.caseId}: ${mutation.code}`);
+    // Verification stops on the failed response without retrying or making later requests.
+    assert.equal(mock.requestCount, requestPlan.findIndex(item => item.caseId === mutation.caseId) + 1);
   }
 });
 
