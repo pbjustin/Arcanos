@@ -56,7 +56,7 @@ import {
   buildAuditLogEntry
 } from './trinityStages.js';
 import { TRINITY_HARD_TOKEN_CAP } from './trinityConstants.js';
-import { type Tier, detectTier, buildReasoningConfig, getInvocationBudget, runReflection, recordLatency, detectLatencyDrift } from './trinityTier.js';
+import { type Tier, detectTier, buildReasoningConfig, getInvocationBudget, runReflection, resolveReflectionTimeoutMs, recordLatency, detectLatencyDrift } from './trinityTier.js';
 import {
   acquireTierSlot,
   InvocationBudget,
@@ -974,7 +974,9 @@ export async function runThroughBrain(
     const resolveModelStageTimeoutMs = (stage: Parameters<NonNullable<TrinityRunOptions['resolveModelStageTimeoutMs']>>[0]) => {
       if (!options.resolveModelStageTimeoutMs) return stageTimeoutOverrideMs;
       const remainingWatchdogMs = Math.max(0, effectiveLimit - watchdog.elapsed());
-      const allocatedTimeoutMs = options.resolveModelStageTimeoutMs(stage, runtimeBudget, remainingWatchdogMs);
+      const additionalDownstreamReserveMs = tier === 'critical' && stage !== 'final' && stage !== 'direct-answer'
+        ? resolveReflectionTimeoutMs(runtimeBudget) : 0;
+      const allocatedTimeoutMs = options.resolveModelStageTimeoutMs(stage, runtimeBudget, remainingWatchdogMs, additionalDownstreamReserveMs);
       const effectiveTimeoutMs = Math.min(Math.trunc(allocatedTimeoutMs), remainingWatchdogMs, getSafeRemainingMs(runtimeBudget));
       if (!Number.isFinite(effectiveTimeoutMs) || effectiveTimeoutMs <= 0) {
         throw Object.assign(createAbortError('Model stage budget exhausted.'), { timeoutPhase: stage });

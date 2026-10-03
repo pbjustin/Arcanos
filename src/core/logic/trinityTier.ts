@@ -74,7 +74,7 @@ export function getInvocationBudget(tier: Tier): number {
   }
 }
 
-function resolveReflectionTimeoutMs(runtimeBudget?: RuntimeBudget): number {
+export function resolveReflectionTimeoutMs(runtimeBudget?: RuntimeBudget): number {
   const configuredTimeoutMs = Number.parseInt(process.env.TRINITY_REFLECTION_STAGE_TIMEOUT_MS ?? '', 10);
   const normalizedConfiguredTimeoutMs =
     Number.isFinite(configuredTimeoutMs) && configuredTimeoutMs > 0

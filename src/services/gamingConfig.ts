@@ -62,6 +62,7 @@ export function resolveGamingGenerationBudget(params: {
   requestRemainingMs?: number | null;
   runtimeRemainingMs?: number;
   configuredStageTimeoutMs?: number;
+  additionalDownstreamReserveMs?: number;
 }) {
   const boundedMs = (value: number) => Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
   const pipelineRemainingMs = boundedMs(boundedMs(params.pipelineTimeoutMs)
@@ -72,7 +73,8 @@ export function resolveGamingGenerationBudget(params: {
     params.runtimeRemainingMs === undefined ? pipelineRemainingMs : boundedMs(params.runtimeRemainingMs)));
   const downstreamReserveMs = GAMING_GENERATION_TERMINAL_HEADROOM_MS
     + GAMING_GENERATION_ANSWER_AUDIT_RESERVE_MS
-    + (params.stage === "final" || params.stage === "direct-answer" ? 0 : GAMING_GENERATION_FINAL_STAGE_RESERVE_MS);
+    + (params.stage === "final" || params.stage === "direct-answer" ? 0 : GAMING_GENERATION_FINAL_STAGE_RESERVE_MS)
+    + boundedMs(params.additionalDownstreamReserveMs ?? 0);
   const availableStageMs = Math.max(0, Math.floor(generationRemainingMs - downstreamReserveMs));
   const intakeDefaultMs = params.mode === "guide" ? DEFAULT_GAMING_GUIDE_STAGE_TIMEOUT_MS : DEFAULT_GAMING_STAGE_TIMEOUT_MS;
   const defaultStageMs = params.stage === "intake" || params.stage === "model-validation"

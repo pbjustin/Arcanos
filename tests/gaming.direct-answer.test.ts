@@ -1757,6 +1757,7 @@ describe('gaming guide output hardening', () => {
     } }) => {
       await new Promise(resolve => setTimeout(resolve, 5_000));
       reasoningTimeoutMs = input.context.runOptions.resolveModelStageTimeoutMs?.('reasoning', input.context.runtimeBudget, 30_000);
+      expect(input.context.runOptions.resolveModelStageTimeoutMs?.('reasoning', input.context.runtimeBudget, 30_000, 3_000)).toBe(17_500);
       await new Promise(resolve => setTimeout(resolve, 13_000));
       return { result: 'Use the supported starter equipment. [1]', meta: { provider: { finishReason: 'stop' } } };
     });
@@ -1801,12 +1802,37 @@ describe('gaming guide output hardening', () => {
     expect(mockRunTrinityWritingPipeline).toHaveBeenCalledTimes(1);
   });
 
-  it('returns controlled timeout recovery before dispatch when downstream headroom is unavailable', async () => {
+  it('allows a short direct-answer build budget without reserving an unused final stage', async () => {
+    jest.useFakeTimers({ now: 100_000 });
     useControlledStoredGuideEvidence();
     process.env.ARCANOS_GAMING_PIPELINE_TIMEOUT_MS = '9000';
-    const result = await runBuildPipeline({ game: 'Fixture Quest', prompt: 'Give me a grounded starter build.', guideUrls: [], auditEnabled: false });
+    mockRunTrinityWritingPipeline.mockImplementationOnce(async (input: { context: {
+      runtimeBudget: RuntimeBudget; runOptions: TrinityRunOptions
+    } }) => {
+      expect(input.context.runOptions.answerMode).toBe('direct');
+      expect(input.context.runOptions.resolveModelStageTimeoutMs?.('direct-answer', input.context.runtimeBudget, 8_500)).toBe(4_500);
+      await new Promise(resolve => setTimeout(resolve, 3_000));
+      return { result: 'Use the supported starter equipment. [1]', meta: { provider: { finishReason: 'stop' } } };
+    });
+    const operation = runBuildPipeline({ game: 'Fixture Quest', prompt: 'Give me a grounded starter build.', guideUrls: [], auditEnabled: false });
+    await jest.advanceTimersByTimeAsync(3_000);
+    const result = await operation;
+    expect(result.data.fallbackReason).toBeUndefined();
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns controlled timeout recovery when the selected intake stage has no downstream headroom', async () => {
+    useControlledStoredGuideEvidence();
+    process.env.ARCANOS_GAMING_GUIDE_PIPELINE_TIMEOUT_MS = '9000';
+    mockRunTrinityWritingPipeline.mockImplementationOnce(async (input: { context: {
+      runtimeBudget: RuntimeBudget; runOptions: TrinityRunOptions
+    } }) => {
+      input.context.runOptions.resolveModelStageTimeoutMs?.('intake', input.context.runtimeBudget, 8_500);
+      throw new Error('An exhausted intake budget must stop before model dispatch.');
+    });
+    const result = await runGuidePipeline({ game: 'Fixture Quest', prompt: 'How do I defeat the Ash Sentinel?', guideUrls: [], auditEnabled: false });
     expect(result.data.fallbackReason).toBe('INTAKE_UPSTREAM_TIMEOUT');
-    expect(mockRunTrinityWritingPipeline).not.toHaveBeenCalled();
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledTimes(1);
   });
 
   it('uses an explicit module timeout as the default guide provider budget', async () => {

@@ -113,8 +113,13 @@ headroom and the runtime keeps its 500 ms safety buffer. Reasoning additionally
 reserves 5,000 ms for final generation, 3,000 ms for CLEAR's answer audit and
 1,000 ms for postprocessing, transport serialization and abort cleanup. Final
 generation retains the audit and terminal reserves. Intake retains its bounded
-mode default while preserving downstream reserves. Insufficient usable budget
-stops dispatch; it never disables a timeout or extends a parent deadline.
+mode default while preserving downstream reserves. Critical Trinity requests
+also reserve their configured, bounded reflection window before intake and
+reasoning, so reflection cannot consume the final-generation allowance.
+Admission uses the model stage Trinity actually selects: direct-answer requests
+retain audit and terminal reserves without reserving an unused final stage.
+Insufficient usable budget stops model dispatch; it never disables a timeout or
+extends a parent deadline.
 
 With a 35,000 ms build pipeline and 5,000 ms already consumed by intake, reasoning
 can receive 20,500 ms when the parent request permits it. It therefore does not

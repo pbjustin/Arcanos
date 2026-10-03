@@ -1170,12 +1170,14 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
     requestRemainingMsAtDispatch, generationRemainingMs: lastGenerationBudget.generationRemainingMs,
     generationDownstreamReserveMs: lastGenerationBudget.downstreamReserveMs, configuredStageTimeoutMs: configuredStageTimeoutMs ?? null,
     evidenceSelected: retrievalHadUsableSources, freshnessDisposition: resolveGamingFreshnessDisposition(resolvedParams) });
-  const resolveModelStageTimeoutMs = (stage: GamingGenerationStage, runtimeBudget: RuntimeBudget, remainingWatchdogMs: number): number => {
+  const resolveModelStageTimeoutMs = (stage: GamingGenerationStage, runtimeBudget: RuntimeBudget, remainingWatchdogMs: number,
+    additionalDownstreamReserveMs = 0): number => {
     const elapsedMs = Date.now() - providerStartedAt;
     lastGenerationBudget = resolveGamingGenerationBudget({ mode: params.mode, stage, pipelineTimeoutMs,
       pipelineElapsedMs: elapsedMs, requestRemainingMs: requestRemainingMsAtDispatch === null
         ? null : Math.max(0, requestRemainingMsAtDispatch - elapsedMs),
-      runtimeRemainingMs: Math.min(getSafeRemainingMs(runtimeBudget), remainingWatchdogMs), configuredStageTimeoutMs });
+      runtimeRemainingMs: Math.min(getSafeRemainingMs(runtimeBudget), remainingWatchdogMs), configuredStageTimeoutMs,
+      additionalDownstreamReserveMs });
     logger.info("gaming.provider.stage_budget", { ...baseLogContext, provider: "trinity", stage,
       ...generationBudgetLog(), remainingWatchdogMs, elapsedMs });
     if (lastGenerationBudget.effectiveStageTimeoutMs <= 0) {
@@ -1198,9 +1200,8 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
 
   let trinityResult: Awaited<ReturnType<typeof runTrinityWritingPipeline>>;
   try {
-    if (stageTimeoutMs <= 0) {
-      throw Object.assign(createAbortError("Gaming generation budget exhausted."), { timeoutPhase: "provider" });
-    }
+    // Trinity selects the actual first model stage before its allocator admits
+    // dispatch; direct answers do not need an unused intake/final-stage reserve.
     trinityResult = await runWithRequestAbortTimeout(
       {
         timeoutMs: pipelineTimeoutMs,

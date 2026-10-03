@@ -32,6 +32,13 @@ describe('Gaming reusable generation allocation', () => {
       pipelineElapsedMs: 5_000, configuredStageTimeoutMs: 2_000 }).effectiveStageTimeoutMs).toBe(2_000);
   });
 
+  it('retains final, audit and terminal time after pending reflection within a shorter watchdog', () => {
+    const budget = resolveGamingGenerationBudget({ mode: 'build', stage: 'reasoning', pipelineTimeoutMs: 35_000,
+      pipelineElapsedMs: 5_000, runtimeRemainingMs: 25_000, additionalDownstreamReserveMs: 7_000 });
+    expect(budget.downstreamReserveMs).toBe(16_000);
+    expect(budget.effectiveStageTimeoutMs).toBe(9_000);
+  });
+
   it('clamps even an explicit large cap to a shorter parent request deadline', () => {
     const budget = resolveGamingGenerationBudget({ mode: 'build', stage: 'reasoning', pipelineTimeoutMs: 35_000,
       requestRemainingMs: 12_000, configuredStageTimeoutMs: 50_000 });
