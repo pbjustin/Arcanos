@@ -170,6 +170,25 @@ Equivalent coordination cases use a second game through the same implementation.
 Frontend sequencing is simulated; these tests do not establish actual Web Search,
 installed-client behavior, live providers or database acceptance.
 
+The sealed Railway guide fixture adds two supplemental proof markers:
+`gaming-discovery-recovery-protocol/v1` checks the production v2 request/revision
+schemas, bounded attempt policy and supplied-guide projection;
+`gaming-discovery-recovery-evidence/v1` checks independent intact table rows,
+missing fields, unchanged v1 admission, trailing contradictions across 2,100
+units and unavailable full-pool inspection. The original safe response body and
+171-request verifier bound remain unchanged. The reviewed PR-head verifier
+requires both markers only on the fixed guide selector. Any fixture failure
+withholds every Gaming proof header and the success body.
+
+Deliberate corruption controls cover the actual served coordination seams:
+disabling v2 pipeline coverage rejects the independently supported answer;
+skipping unretained artifact inspection exposes the contradictory capacity
+case; downgrading gateway fallbacks fails v2 service/deadline responses.
+Restoring the exact source bytes restores the passing suites. Separately,
+corrupting the synthetic table stat causes the sealed guide route to fail.
+These are controlled served-component proofs; the sealed preview does not run
+the normal OAuth coordinator, discovery provider, model, SQL or active worker.
+
 The existing selector bounds remain three source records and eight chunks per
 answer. Coverage must pass within those bounds; six discovery URLs do not
 authorize a larger generation context. Public numbered topic labels correspond

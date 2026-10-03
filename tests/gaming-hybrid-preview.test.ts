@@ -9,16 +9,20 @@ const mockSourcePolicy = jest.fn(freshness.assessGamingSourcePolicy);
 const mockAttempt = jest.fn(policy.resolveGamingHybridCandidateAttempt);
 const mockRetention = jest.fn(policy.projectGamingHybridCandidateRetention);
 const mockArtifact = jest.fn(policy.isGamingApprovedArtifactCurrent);
+const mockSuppliedGuides = jest.fn(policy.projectGamingHybridSuppliedGuides);
 const mockQuerySafeParse = jest.fn((input: unknown) => contract.gamingHybridQuerySchema.safeParse(input));
+const mockCandidatesSafeParse = jest.fn((input: unknown) => contract.gamingHybridCandidatesSchema.safeParse(input));
 jest.unstable_mockModule('../src/shared/gaming/gamingFreshnessCore.js', () => ({ ...freshness,
   evaluateGamingFreshness: mockEvaluate, extractGamingFreshnessMetadata: mockExtract, assessGamingSourcePolicy: mockSourcePolicy }));
 jest.unstable_mockModule('../src/shared/gaming/gamingHybridPolicyCore.js', () => ({ ...policy,
   resolveGamingHybridCandidateAttempt: mockAttempt, projectGamingHybridCandidateRetention: mockRetention,
-  isGamingApprovedArtifactCurrent: mockArtifact }));
+  isGamingApprovedArtifactCurrent: mockArtifact, projectGamingHybridSuppliedGuides: mockSuppliedGuides }));
 jest.unstable_mockModule('../src/shared/gaming/gamingHybridContract.js', () => ({ ...contract,
+  gamingHybridCandidatesSchema: { ...contract.gamingHybridCandidatesSchema, safeParse: mockCandidatesSafeParse },
   gamingHybridQuerySchema: { ...contract.gamingHybridQuerySchema, safeParse: mockQuerySafeParse,
     parse: (input: unknown) => contract.gamingHybridQuerySchema.parse(input) } }));
-const { runGamingHybridKnowledgePreview, GAMING_HYBRID_KNOWLEDGE_PREVIEW_VERSION } = await import('../src/shared/gaming/gamingHybridKnowledgePreviewFixture.js');
+const { runGamingHybridKnowledgePreview, GAMING_HYBRID_KNOWLEDGE_PREVIEW_VERSION,
+  GAMING_DISCOVERY_RECOVERY_PROTOCOL_PREVIEW_VERSION } = await import('../src/shared/gaming/gamingHybridKnowledgePreviewFixture.js');
 const FAILURE = 'PREVIEW_GAMING_HYBRID_KNOWLEDGE_CONTRACT_INVALID';
 
 describe('sealed Gaming hybrid knowledge production-core proof', () => {
@@ -29,13 +33,22 @@ describe('sealed Gaming hybrid knowledge production-core proof', () => {
     mockAttempt.mockReset().mockImplementation(policy.resolveGamingHybridCandidateAttempt);
     mockRetention.mockReset().mockImplementation(policy.projectGamingHybridCandidateRetention);
     mockArtifact.mockReset().mockImplementation(policy.isGamingApprovedArtifactCurrent);
+    mockSuppliedGuides.mockReset().mockImplementation(policy.projectGamingHybridSuppliedGuides);
     mockQuerySafeParse.mockReset().mockImplementation(input => contract.gamingHybridQuerySchema.safeParse(input));
+    mockCandidatesSafeParse.mockReset().mockImplementation(input => contract.gamingHybridCandidatesSchema.safeParse(input));
   });
 
   it('repeats fixed schema, freshness, retry, capacity and refetch assertions without caller input', () => {
     expect(runGamingHybridKnowledgePreview).not.toThrow();
     expect(runGamingHybridKnowledgePreview).not.toThrow();
     expect(GAMING_HYBRID_KNOWLEDGE_PREVIEW_VERSION).toBe('gaming-hybrid-knowledge/v1');
+    expect(GAMING_DISCOVERY_RECOVERY_PROTOCOL_PREVIEW_VERSION).toBe('gaming-discovery-recovery-protocol/v1');
+    expect(mockCandidatesSafeParse).toHaveBeenCalledWith(expect.objectContaining({
+      contractVersion: contract.GAMING_HYBRID_V2_CONTRACT_VERSION, expectedRevision: 0 }));
+    expect(mockCandidatesSafeParse).toHaveBeenCalledWith(expect.objectContaining({
+      contractVersion: contract.GAMING_HYBRID_V2_CONTRACT_VERSION, expectedRevision: undefined }));
+    expect(mockAttempt).toHaveBeenCalledWith(expect.objectContaining({ requestedKey: 'synthetic-v2-candidates-2', round: 1, maxRounds: 2 }));
+    expect(mockSuppliedGuides).toHaveBeenCalledWith(expect.objectContaining({ requiredUrls: ['https://community.example/guides/beam#section'] }));
     expect(mockEvaluate).toHaveBeenCalledWith(expect.objectContaining({ question: 'What are the latest hotfix beam damage values this season?' }));
     expect(mockExtract).toHaveBeenCalledWith(expect.objectContaining({ text: expect.stringContaining('Platforms:') }),
       expect.objectContaining({ game: 'Prism Siege' }), new Date('2026-09-09T12:00:00.000Z'), expect.any(Array));
@@ -59,6 +72,53 @@ describe('sealed Gaming hybrid knowledge production-core proof', () => {
     mockSourcePolicy.mockImplementation((...args) => ({ ...freshness.assessGamingSourcePolicy(...args), authority: 'official' }));
     expect(runGamingHybridKnowledgePreview).toThrow(FAILURE);
   });
+
+  it.each(['missing revision', 'v1 revision upgrade'])('fails closed when the candidate contract accepts %s', scenario => {
+    mockCandidatesSafeParse.mockImplementation(input => {
+      const result = contract.gamingHybridCandidatesSchema.safeParse(input);
+      if (!input || typeof input !== 'object' || !('contractVersion' in input)) return result;
+      const request = input as Record<string, unknown>;
+      const bypass = scenario === 'missing revision'
+        ? request.contractVersion === contract.GAMING_HYBRID_V2_CONTRACT_VERSION && request.expectedRevision === undefined
+        : request.contractVersion === contract.GAMING_HYBRID_CONTRACT_VERSION && 'expectedRevision' in request;
+      return bypass ? { success: true, data: contract.gamingHybridCandidatesSchema.parse({ ...request,
+        contractVersion: contract.GAMING_HYBRID_V2_CONTRACT_VERSION, expectedRevision: 0 }) } : result;
+    });
+    expect(runGamingHybridKnowledgePreview).toThrow(FAILURE);
+  });
+
+  it.each(['second recovery revoked', 'third recovery allowed', 'v1 recovery upgraded', 'currentness renewed'])(
+    'fails closed when %s', scenario => {
+      mockAttempt.mockImplementation(input => {
+        if (scenario === 'second recovery revoked' && input.requestedKey === 'synthetic-v2-candidates-2'
+          && input.round === 1 && input.maxRounds === 2) return 'deny';
+        if (scenario === 'third recovery allowed' && input.requestedKey === 'synthetic-v2-candidates-3') return 'begin';
+        if (scenario === 'v1 recovery upgraded' && input.requestedKey === 'synthetic-v2-candidates-2'
+          && input.maxRounds === 1 && input.nextAction === 'search') return 'begin';
+        if (scenario === 'currentness renewed' && input.requestedKey === 'synthetic-v2-candidates-2'
+          && input.nextAction === 'verify_currentness') return 'begin';
+        return policy.resolveGamingHybridCandidateAttempt(input);
+      });
+      expect(runGamingHybridKnowledgePreview).toThrow(FAILURE);
+    });
+
+  it.each(['actor', 'workflow', 'expiry', 'target', 'source', 'evidence', 'empty evidence', 'public citation'])(
+    'fails closed when supplied-guide %s binding is bypassed', scenario => {
+      mockSuppliedGuides.mockImplementation(input => {
+        const candidate = input.accepted[0];
+        const bypass = scenario === 'actor' && candidate.actorScopeHash !== input.actorScopeHash
+          || scenario === 'workflow' && candidate.workflowId !== input.workflowId
+          || scenario === 'expiry' && candidate.expiresAt <= input.now
+          || scenario === 'target' && input.requiredUrls.includes('https://community.example/guides/other')
+          || scenario === 'source' && input.knowledge.sources.length === 0
+          || scenario === 'evidence' && input.knowledge.evidence?.length === 0
+          || scenario === 'empty evidence' && input.knowledge.evidence?.some(chunk => !chunk.text.trim())
+          || scenario === 'public citation' && input.knowledge.evidence?.some(chunk => chunk.publicUrl !== candidate.publicUrl);
+        return bypass ? [{ requestedUrl: candidate.document.requestedUrl, sourceId: candidate.candidateId,
+          publicUrl: candidate.publicUrl }] : policy.projectGamingHybridSuppliedGuides(input);
+      });
+      expect(runGamingHybridKnowledgePreview).toThrow(FAILURE);
+    });
 
   it('fails closed when a season-only index admits patch-sensitive questions', () => {
     mockEvaluate.mockImplementation(input => {

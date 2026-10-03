@@ -1,7 +1,7 @@
 import {
   assessGamingClearSource, gamingClearIntactSourceText
 } from './gamingClearSource.js';
-import { assessGamingClearEvidence } from './gamingClearEvidence.js';
+import { assessGamingClearEvidence, assessGamingRequestCoverage } from './gamingClearEvidence.js';
 import {
   createGamingClearAssessment, gamingClearContextFingerprint, gamingClearHash,
   parseGamingClearAssessment, parseGamingClearModelAssessment,
@@ -14,8 +14,11 @@ import {
 } from './gamingFreshnessCore.js';
 import type { ResolvedGamingDocument } from '@services/gamingDocumentResolution.js';
 import type { GamingStoredKnowledgeContext, GamingStoredKnowledgeInput } from './gamingStoredEvidenceCore.js';
+import type { GamingEvidenceUnit } from './gamingEvidenceUnits.js';
+import { gamingCrossSourceStructuralConflict, readGamingEvidenceUnits } from './gamingStructuralEvidence.js';
 
 export const GAMING_CLEAR_PREVIEW_VERSION = 'gaming-clear/v1';
+export const GAMING_DISCOVERY_RECOVERY_EVIDENCE_PREVIEW_VERSION = 'gaming-discovery-recovery-evidence/v1';
 const FAILURE = 'PREVIEW_GAMING_CLEAR_CONTRACT_INVALID';
 const GAME = 'Elden Ring';
 const NOW = new Date('2026-09-09T12:00:00.000Z');
@@ -25,6 +28,9 @@ const PROSE = 'In Elden Ring, Intelligence supports the listed sorcery requireme
 const ANSWER = 'Compare staves and spell choices against the equipped staff requirements before choosing spells. [1]';
 const ACTOR = 'synthetic-clear-private-actor';
 const INPUT: GamingStoredKnowledgeInput = { game: GAME, prompt: 'How do Intelligence, staves, and spell choices work?', mode: 'guide' };
+const RECOVERY_WEIGHT_STAT = 'weight';
+const RECOVERY_INPUT: GamingStoredKnowledgeInput = { game: GAME,
+  prompt: 'What is Copperblade weight value and Silverblade weight value?', mode: 'guide' };
 const RULES: readonly GamingReviewedSourceRule[] = [
   { id: 'synthetic-clear-guide', game: GAME, hosts: ['clear-preview.example'], path: '/guides/', pathMatch: 'prefix',
     category: 'specialist_guide', currentness: 'none', durableAllowed: true, autoStoreAllowed: false },
@@ -119,6 +125,85 @@ function requireEvidenceApplicability(): GamingClearAssessment {
   return accepted;
 }
 
+function recoveryWeightUnit(sourceIndex: number, rowIndex: number, item = 'Copperblade', value = '10'): GamingEvidenceUnit {
+  const fields = [{ label: 'Item', value: item }, { label: 'Stat', value: RECOVERY_WEIGHT_STAT }, { label: 'Value', value },
+    { label: 'Unit', value: 'points' }, { label: 'Scope', value: 'base' }, { label: 'Note', value: `entry ${rowIndex}` }];
+  return { id: `synthetic-recovery-unit-${sourceIndex}-${rowIndex}`, kind: 'table_row',
+    text: fields.map(field => `${field.label}: ${field.value}`).join(' | '), fields,
+    context: { scope: 'stats' }, integrity: { status: 'complete', reasons: [] },
+    provenance: { sourceUrl: `${SOURCE_URL}/weights-${sourceIndex}`, strategy: 'html_table', representation: 'html_dom',
+      policyVersion: 'gaming-evidence-units/v1', locator: `table[0]/tr[${rowIndex}]` } };
+}
+
+/** Synthetic source-bound records, without acquiring documents or simulating storage. */
+function recoveryKnowledge(groups: readonly (readonly GamingEvidenceUnit[])[]): GamingStoredKnowledgeContext {
+  const sources = groups.map((_units, index) => ({ sourceId: `synthetic-recovery-source-${index}`, game: GAME,
+    url: `${SOURCE_URL}/weights-${index}`, sourceType: 'supplied', origin: 'live' as const,
+    fetchedAt: NOW.toISOString(), snippet: '' }));
+  return { context: '', sources, evidence: groups.flatMap((units, index) => units.map((unit, row) => ({
+    sourceId: sources[index].sourceId, revisionId: `synthetic-recovery-revision-${index}`,
+    recordId: `synthetic-recovery-record-${index}-${row}`, recordType: 'guide' as const,
+    publicUrl: sources[index].url, text: unit.text, evidenceUnits: [unit], lexicalScore: 1, combinedScore: 1,
+    provenance: { fetchedAt: NOW.toISOString() }
+  }))) };
+}
+
+function requireDiscoveryRecoveryEvidence(): void {
+  const complete = recoveryKnowledge([[recoveryWeightUnit(0, 0)], [recoveryWeightUnit(1, 0, 'Silverblade', '11')]]);
+  const assess = (data: GamingStoredKnowledgeContext, input = RECOVERY_INPUT) =>
+    assessGamingClearEvidence(input, data, { now: NOW, requireRequestCoverage: true });
+  const coverage = assessGamingRequestCoverage(RECOVERY_INPUT, complete);
+  requireProof(coverage.coverageSatisfied && coverage.missingCoverage.length === 0);
+  requireProof(coverage.requirementSupport.length === 2 && coverage.requirementSupport.every((item, index) =>
+    item.candidateIds.join('|') === complete.sources[index].sourceId
+    && item.evidenceIds.join('|') === complete.evidence![index].recordId));
+  requireProof(coverage.requirementUnitSupport?.length === 2 && coverage.requirementUnitSupport.every((item, index) =>
+    item.evidenceUnitIds.join('|') === complete.evidence![index].evidenceUnits![0].id));
+  const accepted = assess(complete);
+  requireProof(accepted.decision === 'accept' && accepted.gates.claimSupport === 'verified' && !accepted.blockingFindings.length);
+  requireProof(assessGamingClearEvidence(RECOVERY_INPUT, complete, { now: NOW }).gates.claimSupport === 'unknown');
+  const absent = { ...complete, evidence: complete.evidence!.slice(0, 1) };
+  requireProof(!assessGamingRequestCoverage(RECOVERY_INPUT, absent).coverageSatisfied && assess(absent).decision !== 'accept');
+  for (const field of ['Value', 'Unit', 'Scope']) {
+    const incomplete = structuredClone(complete);
+    const unit = incomplete.evidence![1].evidenceUnits![0];
+    unit.fields = unit.fields.filter(entry => entry.label !== field);
+    unit.text = unit.fields.map(entry => `${entry.label}: ${entry.value}`).join(' | ');
+    incomplete.evidence![1].text = unit.text;
+    const missing = assessGamingRequestCoverage(RECOVERY_INPUT, incomplete);
+    requireProof(!missing.coverageSatisfied && missing.missingCoverage.join('|') === 'requested topic 2');
+    requireProof(assess(incomplete).gates.claimSupport === 'unknown' && assess(incomplete).decision !== 'accept');
+  }
+  const invalid = structuredClone(complete);
+  invalid.evidence![1].evidenceUnits![0].integrity.status = 'partial';
+  requireProof(!assessGamingRequestCoverage(RECOVERY_INPUT, invalid).coverageSatisfied && assess(invalid).decision !== 'accept');
+
+  // Each source is below its existing document cap; only their full union exceeds it.
+  const groups = Array.from({ length: 6 }, (_source, sourceIndex) => Array.from({ length: 350 }, (_row, rowIndex) =>
+    recoveryWeightUnit(sourceIndex, rowIndex)));
+  const input = { ...RECOVERY_INPUT, prompt: 'What is Copperblade weight value?' };
+  requireProof(groups.flat().length === 2_100 && readGamingEvidenceUnits(groups.flat()).length === 0);
+  const batches = groups.map((units, index) => ({ sourceUrl: `${SOURCE_URL}/weights-${index}`, units }));
+  requireProof(gamingCrossSourceStructuralConflict({ ...input, sources: batches }) === false);
+  requireProof(!assess(recoveryKnowledge(groups), input).blockingFindings.some(finding => finding.code === 'CONTRADICTORY_EVIDENCE'));
+  groups[5][349] = recoveryWeightUnit(5, 349, 'Copperblade', '11');
+  requireProof(gamingCrossSourceStructuralConflict({ ...input, sources: batches }) === true);
+  const contradiction = assess(recoveryKnowledge(groups), input);
+  requireProof(contradiction.decision === 'reject' && contradiction.blockingFindings.some(finding => finding.code === 'CONTRADICTORY_EVIDENCE'));
+
+  const unavailable = recoveryKnowledge(Array.from({ length: 18 }, (_unused, index) => [recoveryWeightUnit(index, 0)]));
+  const unknown = assess(unavailable, input);
+  requireProof(unknown.decision !== 'accept' && unknown.gates.claimSupport === 'unknown'
+    && unknown.blockingFindings.some(finding => finding.code === 'STRUCTURAL_CONFLICT_ASSESSMENT_UNVERIFIED')
+    && !unknown.blockingFindings.some(finding => finding.code === 'CONTRADICTORY_EVIDENCE'));
+  const compacted = assess({ ...complete, structuralConflictAssessmentUnavailable: true });
+  requireProof(compacted.decision !== 'accept' && compacted.gates.claimSupport === 'unknown'
+    && compacted.blockingFindings.some(finding => finding.code === 'STRUCTURAL_CONFLICT_ASSESSMENT_UNVERIFIED'));
+  const oversized = Array.from({ length: 2_049 }, (_unused, index) => recoveryWeightUnit(0, index));
+  requireProof(readGamingEvidenceUnits(oversized).length === 0);
+  requireProof(gamingCrossSourceStructuralConflict({ ...input, sources: [{ sourceUrl: `${SOURCE_URL}/weights-0`, units: oversized }] }) === undefined);
+}
+
 function requireAuditAndAnswerBinding(evidence: GamingClearAssessment): void {
   const refs = evidence.dimensionScores.clarity.evidenceRefs;
   const dimension = (): GamingClearDimensions['clarity'] => ({ status: 'evaluated', score: 5,
@@ -169,6 +254,7 @@ export function runGamingClearPreview(): void {
   try {
     requireAcquiredApplicability();
     const evidence = requireEvidenceApplicability();
+    requireDiscoveryRecoveryEvidence();
     requireAuditAndAnswerBinding(evidence);
   } catch {
     throw new Error(FAILURE);

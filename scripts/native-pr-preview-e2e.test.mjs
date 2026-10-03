@@ -257,6 +257,10 @@ function responseHeadersForCase(
             NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.progressRecoveryProofVersion,
           [NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.hybridKnowledgeProofHeader]:
             NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.hybridKnowledgeProofVersion,
+          [NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.discoveryRecoveryProtocolProofHeader]:
+            NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.discoveryRecoveryProtocolProofVersion,
+          [NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.discoveryRecoveryEvidenceProofHeader]:
+            NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.discoveryRecoveryEvidenceProofVersion,
           [NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.clearProofHeader]:
             NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.clearProofVersion,
           [NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.sourceAcquisitionProofHeader]:
@@ -3554,6 +3558,54 @@ test('readiness component proofs do not override an unavailable or unready appli
         && error.code === (status === 503
           ? 'NATIVE_PR_PREVIEW_HTTP_STATUS_MISMATCH' : 'NATIVE_PR_PREVIEW_BODY_MISMATCH')
         && error.caseId === caseId);
+    }
+  }
+});
+
+test('requires v2 discovery protocol and evidence proofs only on the fixed guide selector', async () => {
+  const requestPlan = buildNativePrPreviewRequestPlan();
+  const contract = NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming;
+  const run = mock => runNativePrPreviewE2e({
+    args: validArguments('--execute', '--allow-network'),
+    expectedBackstageBookerOpenApiDocument: EXPECTED_BACKSTAGE_BOOKER_OPENAPI_DOCUMENT,
+    fetchImpl: mock.fetchImpl, localGitState: LOCAL_GIT_STATE,
+    monotonicNow: mock.monotonicNow,
+  });
+  const result = await run(buildMockFetch(requestPlan));
+  const guide = result.checks.find(check => check.caseId === 'gaming-query-guide');
+  assert.equal(guide.gamingDiscoveryRecoveryProtocolVerified, true);
+  assert.equal(guide.gamingDiscoveryRecoveryProtocolProofVersion, contract.discoveryRecoveryProtocolProofVersion);
+  assert.equal(guide.gamingDiscoveryRecoveryProtocolProofScope, 'pure-v2-schema-attempt-policy');
+  assert.equal(guide.gamingDiscoveryRecoveryEvidenceVerified, true);
+  assert.equal(guide.gamingDiscoveryRecoveryEvidenceProofVersion, contract.discoveryRecoveryEvidenceProofVersion);
+  assert.equal(guide.gamingDiscoveryRecoveryEvidenceProofScope, 'pure-v2-requirement-structural-evidence');
+  assert.equal(result.checks.length, 171);
+  for (const [header, version, code] of [
+    [contract.discoveryRecoveryProtocolProofHeader, contract.discoveryRecoveryProtocolProofVersion,
+      'NATIVE_PR_PREVIEW_GAMING_DISCOVERY_RECOVERY_PROTOCOL_PROOF_INVALID'],
+    [contract.discoveryRecoveryEvidenceProofHeader, contract.discoveryRecoveryEvidenceProofVersion,
+      'NATIVE_PR_PREVIEW_GAMING_DISCOVERY_RECOVERY_EVIDENCE_PROOF_INVALID'],
+  ]) {
+    const controls = [
+      ...[undefined, 'gaming-discovery-recovery/stale', 'gaming-discovery-recovery/unknown']
+        .map(proof => ({ caseId: 'gaming-query-guide', proof })),
+      ...['gaming-query-build', 'gaming-query-meta', 'gaming-query-mode-required',
+        'gaming-query-operational-guard', 'worker-gaming-canary-denied', 'web-readiness-initial']
+        .map(caseId => ({ caseId, proof: version })),
+    ];
+    for (const control of controls) {
+      const mock = buildMockFetch(requestPlan, requestCase => {
+        if (requestCase.caseId !== control.caseId) return undefined;
+        const body = responseBodyForCase(requestCase);
+        const headers = responseHeadersForCase(requestCase, Buffer.byteLength(body));
+        if (control.proof === undefined) delete headers[header];
+        else headers[header] = control.proof;
+        const response = new Response(body, { headers, status: requestCase.expectedStatus });
+        Object.defineProperty(response, 'url', { value: `${requestCase.role === 'worker' ? WORKER_BASE_URL : WEB_BASE_URL}${requestCase.path}` });
+        return response;
+      });
+      await assert.rejects(run(mock), error => error instanceof NativePrPreviewE2eError
+        && error.code === code && error.caseId === control.caseId);
     }
   }
 });

@@ -3590,6 +3590,12 @@ describe('native PR contained application', () => {
       expect(response.headers[NATIVE_PR_PREVIEW_GAMING_CONTRACT.generationBudgetProofHeader]).toBe(
         mode === 'guide' ? NATIVE_PR_PREVIEW_GAMING_CONTRACT.generationBudgetProofVersion : undefined
       );
+      expect(response.headers[NATIVE_PR_PREVIEW_GAMING_CONTRACT.discoveryRecoveryProtocolProofHeader]).toBe(
+        mode === 'guide' ? NATIVE_PR_PREVIEW_GAMING_CONTRACT.discoveryRecoveryProtocolProofVersion : undefined
+      );
+      expect(response.headers[NATIVE_PR_PREVIEW_GAMING_CONTRACT.discoveryRecoveryEvidenceProofHeader]).toBe(
+        mode === 'guide' ? NATIVE_PR_PREVIEW_GAMING_CONTRACT.discoveryRecoveryEvidenceProofVersion : undefined
+      );
     }
 
     const invalidCanary = await request(app)

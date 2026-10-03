@@ -4760,6 +4760,20 @@ async function executeRequestCase(
     fail('NATIVE_PR_PREVIEW_GAMING_GENERATION_BUDGET_PROOF_INVALID', requestCase.caseId);
   }
   const gamingExecutionBudgetContract = NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming;
+  for (const [proofHeader, proofVersion, proofCode] of [
+    [gamingExecutionBudgetContract.discoveryRecoveryProtocolProofHeader,
+      gamingExecutionBudgetContract.discoveryRecoveryProtocolProofVersion,
+      'NATIVE_PR_PREVIEW_GAMING_DISCOVERY_RECOVERY_PROTOCOL_PROOF_INVALID'],
+    [gamingExecutionBudgetContract.discoveryRecoveryEvidenceProofHeader,
+      gamingExecutionBudgetContract.discoveryRecoveryEvidenceProofVersion,
+      'NATIVE_PR_PREVIEW_GAMING_DISCOVERY_RECOVERY_EVIDENCE_PROOF_INVALID'],
+  ]) {
+    if (requestCase.caseId === 'gaming-query-guide'
+      ? response.headers.get(proofHeader) !== proofVersion
+      : response.headers.has(proofHeader)) {
+      fail(proofCode, requestCase.caseId);
+    }
+  }
   if (requestCase.caseId === 'gaming-query-guide'
     ? response.headers.get(gamingExecutionBudgetContract.executionBudgetProofHeader)
       !== gamingExecutionBudgetContract.executionBudgetProofVersion
@@ -5129,6 +5143,12 @@ async function executeRequestCase(
           gamingGuideAssistanceVerified: true,
           gamingProgressRecoveryVerified: true,
           gamingHybridKnowledgeVerified: true,
+          gamingDiscoveryRecoveryProtocolVerified: true,
+          gamingDiscoveryRecoveryProtocolProofVersion: NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.discoveryRecoveryProtocolProofVersion,
+          gamingDiscoveryRecoveryProtocolProofScope: 'pure-v2-schema-attempt-policy',
+          gamingDiscoveryRecoveryEvidenceVerified: true,
+          gamingDiscoveryRecoveryEvidenceProofVersion: NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.discoveryRecoveryEvidenceProofVersion,
+          gamingDiscoveryRecoveryEvidenceProofScope: 'pure-v2-requirement-structural-evidence',
           gamingClearVerified: true,
           gamingSourceAcquisitionVerified: true,
           gamingStructuredEvidenceVerified: true,

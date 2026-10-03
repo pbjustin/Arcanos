@@ -368,6 +368,22 @@ Launcher behavior:
   hybrid/provider wrappers, SQL persistence, active workers or current gameplay.
   Controlled hybrid integration and disposable PostgreSQL CI establish their
   tested lifecycle boundaries separately; no production credentials are used.
+- The fixed sealed Gaming guide request checks v2 discovery-recovery request
+  schemas, required revision bounds, one recovery attempt and supplied-guide
+  projection, plus per-clause structural coverage and full-pool conflict
+  inspection. It emits `gaming-discovery-recovery-protocol/v1` and
+  `gaming-discovery-recovery-evidence/v1` through the corresponding
+  `x-arcanos-preview-gaming-discovery-recovery-*-version` headers only after
+  every Gaming fixture passes. Independent table rows can support distinct
+  facts; missing tuple fields, a trailing contradiction in a 2,100-unit pool,
+  and an uninspectable pool cannot produce approved evidence. Fixture drift
+  withholds all Gaming headers and the success body. The reviewed PR-head
+  verifier requires both markers on the guide selector and rejects them on
+  unrelated routes and passive-worker denials. Its original safe response body
+  and 171-request bound remain unchanged. These pure production-core fixtures
+  do not execute normal workflow state, acquisition, model or database services;
+  the served coordination and gateway regressions cover those mocked seams
+  separately. See [Gaming discovery recovery](GAMING_DISCOVERY_RECOVERY.md).
 - The sealed Gaming guide request also evaluates fixed synthetic official
   index/article evidence and guide applicability through the production
   currentness and freshness cores. It keeps application and regulation versions

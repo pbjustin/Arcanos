@@ -3,15 +3,21 @@ import request from 'supertest';
 
 const actualPolicy = await import('../src/shared/gaming/gamingHybridPolicyCore.js');
 const actualFreshness = await import('../src/shared/gaming/gamingFreshnessCore.js');
+const actualContract = await import('../src/shared/gaming/gamingHybridContract.js');
 const mockAttempt = jest.fn(actualPolicy.resolveGamingHybridCandidateAttempt);
 const mockRetention = jest.fn(actualPolicy.projectGamingHybridCandidateRetention);
 const mockApproval = jest.fn(actualPolicy.isGamingApprovedArtifactCurrent);
 const mockFreshness = jest.fn(actualFreshness.evaluateGamingFreshness);
 const mockExtract = jest.fn(actualFreshness.extractGamingFreshnessMetadata);
+const mockSuppliedGuides = jest.fn(actualPolicy.projectGamingHybridSuppliedGuides);
+const mockCandidatesSafeParse = jest.fn((input: unknown) => actualContract.gamingHybridCandidatesSchema.safeParse(input));
 jest.unstable_mockModule('../src/shared/gaming/gamingHybridPolicyCore.js', () => ({
   ...actualPolicy, resolveGamingHybridCandidateAttempt: mockAttempt,
-  projectGamingHybridCandidateRetention: mockRetention, isGamingApprovedArtifactCurrent: mockApproval
+  projectGamingHybridCandidateRetention: mockRetention, isGamingApprovedArtifactCurrent: mockApproval,
+  projectGamingHybridSuppliedGuides: mockSuppliedGuides
 }));
+jest.unstable_mockModule('../src/shared/gaming/gamingHybridContract.js', () => ({ ...actualContract,
+  gamingHybridCandidatesSchema: { ...actualContract.gamingHybridCandidatesSchema, safeParse: mockCandidatesSafeParse } }));
 jest.unstable_mockModule('../src/shared/gaming/gamingFreshnessCore.js', () => ({
   ...actualFreshness, evaluateGamingFreshness: mockFreshness, extractGamingFreshnessMetadata: mockExtract
 }));
@@ -24,8 +30,16 @@ const proofPairs = () => [
   [contract.guideAssistanceProofHeader, contract.guideAssistanceProofVersion],
   [contract.progressRecoveryProofHeader, contract.progressRecoveryProofVersion],
   [contract.hybridKnowledgeProofHeader, contract.hybridKnowledgeProofVersion],
+  [contract.discoveryRecoveryProtocolProofHeader, contract.discoveryRecoveryProtocolProofVersion],
+  [contract.discoveryRecoveryEvidenceProofHeader, contract.discoveryRecoveryEvidenceProofVersion],
   [contract.clearProofHeader, contract.clearProofVersion],
-  [contract.sourceAcquisitionProofHeader, contract.sourceAcquisitionProofVersion]
+  [contract.sourceAcquisitionProofHeader, contract.sourceAcquisitionProofVersion],
+  [contract.structuredEvidenceProofHeader, contract.structuredEvidenceProofVersion],
+  [contract.currentnessProofHeader, contract.currentnessProofVersion],
+  [contract.currentnessContinuationProofHeader, contract.currentnessContinuationProofVersion],
+  [contract.advisoryFreshnessProofHeader, contract.advisoryFreshnessProofVersion],
+  [contract.generationBudgetProofHeader, contract.generationBudgetProofVersion],
+  [contract.executionBudgetProofHeader, contract.executionBudgetProofVersion]
 ];
 
 async function queryGuide() {
@@ -45,6 +59,8 @@ describe('served Gaming hybrid component-proof boundary', () => {
     mockApproval.mockReset().mockImplementation(actualPolicy.isGamingApprovedArtifactCurrent);
     mockFreshness.mockReset().mockImplementation(actualFreshness.evaluateGamingFreshness);
     mockExtract.mockReset().mockImplementation(actualFreshness.extractGamingFreshnessMetadata);
+    mockSuppliedGuides.mockReset().mockImplementation(actualPolicy.projectGamingHybridSuppliedGuides);
+    mockCandidatesSafeParse.mockReset().mockImplementation(input => actualContract.gamingHybridCandidatesSchema.safeParse(input));
   });
 
   it('keeps the trusted response body compatible and reports every production-core proof', async () => {
@@ -53,12 +69,40 @@ describe('served Gaming hybrid component-proof boundary', () => {
     for (const [header, version] of proofPairs()) expect(response.headers[header]).toBe(version);
     expect(response.body.result).toEqual({ ok: true, route: 'gaming', mode: 'guide',
       data: { response: 'Sealed preview guide response.', sources: [] } });
-    for (const mock of [mockAttempt, mockRetention, mockApproval, mockFreshness, mockExtract]) expect(mock).toHaveBeenCalled();
+    for (const mock of [mockAttempt, mockRetention, mockApproval, mockFreshness, mockExtract,
+      mockCandidatesSafeParse, mockSuppliedGuides]) expect(mock).toHaveBeenCalled();
   });
 
-  it.each(['retry limit bypass', 'capacity handle leak', 'partial artifact accepted', 'freshness bypass', 'public identity promotion', 'private identity leak', 'unexpected failure'])(
+  it.each(['missing v2 revision', 'v1 revision upgrade', 'second recovery revoked', 'third recovery allowed',
+    'supplied guide actor bypass', 'supplied guide workflow bypass', 'supplied guide expiry bypass', 'supplied guide evidence bypass',
+    'retry limit bypass', 'capacity handle leak', 'partial artifact accepted', 'freshness bypass', 'public identity promotion', 'private identity leak', 'unexpected failure'])(
     'withholds every Gaming proof and the success body after %s', async scenario => {
-      if (scenario === 'retry limit bypass') mockAttempt.mockReturnValue('begin');
+      if (scenario === 'missing v2 revision' || scenario === 'v1 revision upgrade') mockCandidatesSafeParse.mockImplementation(input => {
+        const result = actualContract.gamingHybridCandidatesSchema.safeParse(input);
+        if (!input || typeof input !== 'object' || !('contractVersion' in input)) return result;
+        const candidateRequest = input as Record<string, unknown>;
+        const bypass = scenario === 'missing v2 revision'
+          ? candidateRequest.contractVersion === actualContract.GAMING_HYBRID_V2_CONTRACT_VERSION && candidateRequest.expectedRevision === undefined
+          : candidateRequest.contractVersion === actualContract.GAMING_HYBRID_CONTRACT_VERSION && 'expectedRevision' in candidateRequest;
+        return bypass ? { success: true, data: actualContract.gamingHybridCandidatesSchema.parse({ ...candidateRequest,
+          contractVersion: actualContract.GAMING_HYBRID_V2_CONTRACT_VERSION, expectedRevision: 0 }) } : result;
+      });
+      else if (scenario === 'second recovery revoked' || scenario === 'third recovery allowed') mockAttempt.mockImplementation(input => {
+        if (scenario === 'second recovery revoked' && input.requestedKey === 'synthetic-v2-candidates-2'
+          && input.round === 1 && input.maxRounds === 2) return 'deny';
+        if (scenario === 'third recovery allowed' && input.requestedKey === 'synthetic-v2-candidates-3') return 'begin';
+        return actualPolicy.resolveGamingHybridCandidateAttempt(input);
+      });
+      else if (scenario.startsWith('supplied guide')) mockSuppliedGuides.mockImplementation(input => {
+        const candidate = input.accepted[0];
+        const bypass = scenario === 'supplied guide actor bypass' && candidate.actorScopeHash !== input.actorScopeHash
+          || scenario === 'supplied guide workflow bypass' && candidate.workflowId !== input.workflowId
+          || scenario === 'supplied guide expiry bypass' && candidate.expiresAt <= input.now
+          || scenario === 'supplied guide evidence bypass' && input.knowledge.evidence?.length === 0;
+        return bypass ? [{ requestedUrl: candidate.document.requestedUrl, sourceId: candidate.candidateId,
+          publicUrl: candidate.publicUrl }] : actualPolicy.projectGamingHybridSuppliedGuides(input);
+      });
+      else if (scenario === 'retry limit bypass') mockAttempt.mockReturnValue('begin');
       else if (scenario === 'capacity handle leak') mockRetention.mockImplementation(input => ({
         retainArtifacts: true, decisions: input.decisions.map(decision => ({ ...decision }))
       }));
