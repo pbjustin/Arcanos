@@ -15,6 +15,7 @@ const { selectGamingHybridEvidence, evaluateGamingHybridCandidates, selectGaming
 const { assessGamingClearEvidence, assessGamingRequestCoverage } = await import('../src/shared/gaming/gamingClearEvidence.js');
 const { isGamingMcpOutput } = await import('../src/shared/chatgpt/gamingMcpContract.js');
 const { buildGamingRequestRequirements } = await import('../src/shared/gaming/gamingRetrievalPolicy.js');
+const { GAMING_HYBRID_V2_LIMITS } = await import('../src/shared/gaming/gamingHybridContract.js');
 const { extractGamingFreshnessMetadata } = await import('../src/shared/gaming/gamingFreshnessCore.js');
 const { GamingDocumentAcquisitionError } = await import('../src/services/gamingDocumentResolution.js');
 const { selectGamingCoverageEvidence } = await import('../src/shared/gaming/gamingStoredEvidenceCore.js');
@@ -457,7 +458,7 @@ describe('v2 independently acquired bound artifacts and failure work accounting'
     expect(() => assertGamingHybridEvidenceMembership(fabricated, evaluated.accepted, actor)).toThrow();
   });
 
-  it('assesses all six acquired artifacts for conflict before the existing source/chunk selection bound', async () => {
+  it('assesses all six acquired artifacts for conflict before bounded context selection', async () => {
     mockHttp.mockImplementation(async () => ({ status: 200, headers: { 'content-type': 'text/html' },
       data: `<html><title>Lantern Voyage guide</title><body><article>Lantern Voyage guide. Activate amber gate using the copper switch beside the lantern.
         Cross crystal bridge following the blue lanterns. This guide explains intact amber gate activation and crystal bridge crossing in Lantern Voyage.</article></body></html>` }));
@@ -471,11 +472,12 @@ describe('v2 independently acquired bound artifacts and failure work accounting'
     const accepted = [...first.accepted, ...second.accepted];
     expect(accepted).toHaveLength(6);
     const retained = selectGamingHybridAcceptedEvidence(input, accepted, actor);
-    expect(retained.sources.length).toBeLessThanOrEqual(3);
+    expect(retained.sources).toHaveLength(1);
     expect(retained.materialConflict).toBe(true);
     expect(selectGamingHybridEvidence(input, retained)).toMatchObject({ materialConflict: true, selectedEvidenceIds: [], coverageSatisfied: false });
   });
 
+  // Six HTML parses and 2,100 rows exercise both existing acquisition rounds under CI coverage.
   it('retains a structural conflict veto when six acquired tables exceed the per-document unit limit in aggregate', async () => {
     mockHttp.mockImplementation(async (requestUrl: string) => ({ status: 200, headers: { 'content-type': 'text/html' },
       data: `<html><title>Lantern Voyage guide</title><body><article>Lantern Voyage weapon weights.
@@ -488,12 +490,15 @@ describe('v2 independently acquired bound artifacts and failure work accounting'
     const second = await evaluateGamingHybridCandidates({ ...request, protocolVersion: 'gaming-hybrid-v2', candidates: urls.slice(3).map(url => ({ url })) }, actor);
     const accepted = [...first.accepted, ...second.accepted];
     expect(accepted).toHaveLength(6);
+    expect(mockHttp).toHaveBeenCalledTimes(6);
+    expect(accepted.map(candidate => (candidate.document.evidenceUnits ?? []).filter(unit => unit.kind === 'table_row').length))
+      .toEqual(Array(6).fill(350));
     expect(accepted.flatMap(candidate => candidate.evidenceRecords ?? []).flatMap(record => record.normalized.evidenceUnits ?? []).length)
       .toBeGreaterThan(2_048);
     const retained = selectGamingHybridAcceptedEvidence(request, accepted, actor);
     expect(retained.materialConflict).toBe(true);
     expect(selectGamingHybridEvidence(request, retained)).toMatchObject({ materialConflict: true, selectedEvidenceIds: [], coverageSatisfied: false });
-  });
+  }, GAMING_HYBRID_V2_LIMITS.totalCandidateTimeoutMs);
 
   it('admits an intact explicitly requested facet below the whole-question lexical floor only in v2', async () => {
     mockHttp.mockImplementation(async () => ({ status: 200, headers: { 'content-type': 'text/html' },
