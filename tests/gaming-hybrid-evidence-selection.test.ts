@@ -17,6 +17,7 @@ const { isGamingMcpOutput } = await import('../src/shared/chatgpt/gamingMcpContr
 const { buildGamingRequestRequirements } = await import('../src/shared/gaming/gamingRetrievalPolicy.js');
 const { extractGamingFreshnessMetadata } = await import('../src/shared/gaming/gamingFreshnessCore.js');
 const { GamingDocumentAcquisitionError } = await import('../src/services/gamingDocumentResolution.js');
+const { selectGamingCoverageEvidence } = await import('../src/shared/gaming/gamingStoredEvidenceCore.js');
 const { gamingCrossSourceStructuralConflict, readGamingEvidenceUnits } = await import('../src/shared/gaming/gamingStructuralEvidence.js');
 const fetchedAt = new Date().toISOString();
 
@@ -33,6 +34,38 @@ const input = { game: 'Lantern Voyage', mode: 'guide' as const,
   prompt: 'How do I activate amber gate and cross crystal bridge?' };
 
 describe('v2 existing backend evidence selection and request coverage', () => {
+  it('chooses the smallest complete passage for a single topic without explicit clauses', () => {
+    const request = { ...input, prompt: 'How do I activate amber gate?' };
+    expect(buildGamingRequestRequirements(request)).toEqual([]);
+    const data = knowledge(['Activate amber gate using the copper switch beside the lantern.',
+      'Activate amber gate using the copper switch beside the lantern. This redundant guide repeats the complete activation instructions.']);
+    const selected = selectGamingHybridEvidence(request, data);
+    expect(selected.coverageSatisfied).toBe(true);
+    expect(selected.selectedCandidateIds).toEqual(['candidate-0']);
+  });
+
+  it('fails closed when the pure v2 selector has no authoritative coverage assessor', () => {
+    const data = knowledge(['Activate amber gate using the copper switch. Cross crystal bridge by following the blue lanterns.']);
+    const candidates = [{ source: data.sources[0], evidence: data.evidence![0] }];
+    const limits = { chunkChars: 1600, maxChunks: 8, maxSources: 3, maxContextChars: 5000, structuredEvidenceChars: 8000 };
+    expect(selectGamingCoverageEvidence(candidates, { ...input, requireRequestCoverage: true }, limits)).toEqual([]);
+    expect(selectGamingCoverageEvidence(candidates, { ...input, requireRequestCoverage: true }, limits, assessGamingRequestCoverage)).toHaveLength(1);
+  });
+
+  it('prunes a twenty-passage prose pool that cannot cover a single requested topic', () => {
+    const request = { ...input, prompt: 'Explain Copperstaff Zephyrglass Sunspire Moonvault' };
+    expect(buildGamingRequestRequirements(request)).toEqual([]);
+    const data = knowledge(Array.from({ length: 20 }, (_unused, index) =>
+      `Copperstaff rests beside the quiet eastern lantern. This intact passage explains the unrelated cabinet route ${index}.`));
+    const candidates = data.evidence!.map((evidence, index) => ({ evidence, source: data.sources[index] }));
+    const assess = jest.fn(assessGamingRequestCoverage);
+    const selected = selectGamingCoverageEvidence(candidates, { ...request, requireRequestCoverage: true },
+      { chunkChars: 1600, maxChunks: 8, maxSources: 3, maxContextChars: 5000, structuredEvidenceChars: 8000 }, assess);
+    expect(assessGamingRequestCoverage(request, { context: '', sources: selected.map(candidate => candidate.source),
+      evidence: selected.map(candidate => candidate.evidence) }).coverageSatisfied).toBe(false);
+    expect(assess.mock.calls.length).toBeLessThan(100);
+  });
+
   it('selects one complete source and removes redundant alternatives without requiring publishers', () => {
     const data = knowledge(['Activate amber gate using the copper switch. Cross crystal bridge by following the blue lanterns.',
       'Activate amber gate using the copper switch. Cross crystal bridge by following the blue lanterns. The guide repeats these complete instructions.']);
@@ -149,7 +182,7 @@ describe('v2 existing backend evidence selection and request coverage', () => {
     expect(selected.requirementSupport.every(item => item.evidenceIds.every(id => id !== 'candidate-1:verification'))).toBe(true);
   });
 
-  it('reserves currentness proof within the existing combined source cap and stops honestly when a fourth source is necessary', () => {
+  it('reserves currentness proof by bounded evidence cost when a fourth source is necessary', () => {
     const request = { ...input, prompt: 'activate amber gate and cross crystal bridge and repair silver lever' };
     const data = knowledge(['Activate amber gate using the copper switch beside the lantern.',
       'Cross crystal bridge following the blue lanterns past the entrance.',
@@ -160,10 +193,70 @@ describe('v2 existing backend evidence selection and request coverage', () => {
       currentness: 'current_index', category: 'official_updates', fetchedAt };
     data.evidence![3].recordId = 'candidate-3:verification';
     const selected = selectGamingHybridEvidence(request, data, { requiredSourceIds: ['candidate-3'] });
-    expect(selected.knowledge.sources).toHaveLength(3);
+    expect(selected.knowledge.sources).toHaveLength(4);
     expect(selected.selectedEvidenceIds).toContain('candidate-3:verification');
-    expect(selected.coverageSatisfied).toBe(false);
-    expect(selected.missingCoverage).toHaveLength(1);
+    expect(selected.coverageSatisfied).toBe(true);
+    expect(selected.missingCoverage).toHaveLength(0);
+  });
+
+  describe('discovery identities versus bounded generation evidence cost', () => {
+    const clauses = ['activate amber gate', 'cross crystal bridge', 'repair silver lever', 'unlock copper vault'];
+    const passages = clauses.map(clause => `${clause} using the instructions beside the eastern lantern. Follow these intact guide steps carefully.`);
+    const request = { ...input, prompt: clauses.join(' and ') };
+
+    it.each([
+      { name: 'one source', texts: [passages.join(' ')], sources: 1 },
+      { name: 'two complementary sources', texts: [passages.slice(0, 2).join(' '), passages.slice(2).join(' ')], sources: 2 },
+      { name: 'three sources', texts: [passages.slice(0, 2).join(' '), passages[2], passages[3]], sources: 3 },
+      { name: 'four tiny sources', texts: passages, sources: 4 }
+    ])('covers all independent clauses using $name inside unchanged context limits', ({ texts, sources }) => {
+      const result = selectGamingHybridEvidence(request, knowledge(texts));
+      expect(result.coverageSatisfied).toBe(true);
+      expect(result.knowledge.sources).toHaveLength(sources);
+      expect(result.knowledge.evidence!.length).toBeLessThanOrEqual(8);
+      expect(result.knowledge.context.length).toBeLessThanOrEqual(5_000);
+      expect(result.requirementSupport).toHaveLength(4);
+      expect(result.requirementSupport.every(item => item.evidenceIds.length > 0)).toBe(true);
+      const selectedUrls = result.knowledge.sources.map(source => source.url);
+      expect(result.knowledge.evidence!.every(chunk => selectedUrls.includes(chunk.publicUrl))).toBe(true);
+    });
+
+    it('stops honestly when four intact complementary passages exceed the available context', () => {
+      const data = knowledge(passages.map(passage => passage.padEnd(600, ' harmless background')));
+      const result = selectGamingHybridEvidence({ ...request, maxContextChars: 1_200 }, data);
+      expect(result.coverageSatisfied).toBe(false);
+      expect(result.missingCoverage.length).toBeGreaterThan(0);
+      expect(result.knowledge.context.length).toBeLessThanOrEqual(1_200);
+      expect(result.knowledge.evidence!.length).toBeLessThanOrEqual(8);
+      expect(result.knowledge.evidence!.every(chunk => data.evidence!.some(original => original.text === chunk.text))).toBe(true);
+    });
+
+    it('selects the two-source minimum cover from six accepted identities and exposes only selected citations', () => {
+      const data = knowledge([passages.slice(0, 2).join(' '), passages.slice(2).join(' '), ...passages]);
+      const result = selectGamingHybridEvidence(request, data);
+      expect(result.coverageSatisfied).toBe(true);
+      expect(result.selectedCandidateIds.sort()).toEqual(['candidate-0', 'candidate-1']);
+      expect(result.selectedEvidenceIds.sort()).toEqual(['record-0', 'record-1']);
+      expect(result.knowledge.sources.map(source => source.url).sort()).toEqual(data.sources.slice(0, 2).map(source => source.url).sort());
+      expect(result.requirementSupport.every(item => item.candidateIds.every(id => result.selectedCandidateIds.includes(id)))).toBe(true);
+    });
+
+    it('still vetoes an unselected conflicting identity in the complete acquired pool', () => {
+      const data = knowledge([passages.slice(0, 2).join(' '), passages.slice(2).join(' '), ...passages]);
+      for (const [index, source] of data.sources.entries()) source.freshnessMetadata = { id: source.sourceId,
+        game: input.game, url: source.url, fetchedAt, mechanicValues: { amber_gate_switch: index === 5 ? 'west' : 'east' } };
+      expect(selectGamingHybridEvidence(request, data)).toMatchObject({ materialConflict: true, coverageSatisfied: false,
+        selectedCandidateIds: [], selectedEvidenceIds: [], knowledge: { sources: [] } });
+    });
+
+    it('uses two compact passages instead of one costly complete source that would not fit the reserved context', () => {
+      const data = knowledge([passages.join(' ').padEnd(1_200, ' harmless background'),
+        passages.slice(0, 2).join(' '), passages.slice(2).join(' ')]);
+      const result = selectGamingHybridEvidence({ ...request, maxContextChars: 1_100 }, data);
+      expect(result.coverageSatisfied).toBe(true);
+      expect(result.selectedCandidateIds.sort()).toEqual(['candidate-1', 'candidate-2']);
+      expect(result.knowledge.context.length).toBeLessThanOrEqual(1_100);
+    });
   });
 
   it('bounds public evidence IDs for rich tables and records only actually supporting unit relationships', () => {

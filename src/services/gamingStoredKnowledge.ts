@@ -17,7 +17,7 @@ import { getGamingRagChunkChars, getGamingRagMaxChunks, getGamingRagMaxSources, 
 import { canonicalizeGamingGameName } from './gamingGameDetection.js';
 import { normalizeGamingGameIdentity } from '@shared/gaming/gamingGameIdentity.js';
 import { buildGamingRetrievalTerms, GAMING_RETRIEVAL_POLICY_VERSION } from '@shared/gaming/gamingRetrievalPolicy.js';
-import { assessGamingClearEvidence } from '@shared/gaming/gamingClearEvidence.js';
+import { assessGamingClearEvidence, assessGamingRequestCoverage } from '@shared/gaming/gamingClearEvidence.js';
 import { parseGamingClearAssessment } from '@shared/gaming/gamingClearPolicy.js';
 
 export { buildStoredGamingLexicalQuery } from '@shared/gaming/gamingStoredEvidenceCore.js';
@@ -55,7 +55,7 @@ export function selectStoredGamingEvidence(records: readonly GamingKnowledgeProv
       && assessment.subjectHash === (record.provenance?.approvedContentHash ?? record.revisionId);
     return { ...record, ...(bound ? { clearSourceAssessment: assessment } : {}) };
   });
-  return selectStoredGamingEvidenceCore(validatedRecords, input, getStoredGamingEvidenceLimits(), resolvePatch);
+  return selectStoredGamingEvidenceCore(validatedRecords, input, getStoredGamingEvidenceLimits(), resolvePatch, assessGamingRequestCoverage);
 }
 
 /** Preserve the service formatter API while keeping configuration outside the core. */

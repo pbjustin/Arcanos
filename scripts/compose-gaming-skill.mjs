@@ -108,6 +108,89 @@ export async function gamingRecoveryCompositionPatch() {
       'Do not update the installed plugin or assign release readiness from this recipe.'] };
 }
 
+/** Apply an explicitly pinned public recipe locally; output is never owner-approved. */
+export function applyGamingRecoveryCompositionPatch(baselineBytes, recipe) {
+  const invalid = 'GAMING_RECOVERY_COMPOSITION_INVALID';
+  try {
+    requireCondition(Buffer.isBuffer(baselineBytes) && baselineBytes.length <= maxFileSize, invalid);
+    const baseline = recipe?.approvedSkillBaseline;
+    requireCondition(Number.isSafeInteger(baseline?.sizeBytes) && baseline.sizeBytes > 0 &&
+      baseline.sizeBytes === baselineBytes.length && /^[a-f0-9]{64}$/u.test(baseline.sha256) &&
+      digest(baselineBytes) === baseline.sha256, invalid);
+    const before = Buffer.from(baselineBytes);
+    const originalText = new TextDecoder('utf-8', { fatal: true }).decode(before);
+    safeContent(originalText);
+    requireCondition(recipe.schemaVersion === 1 && recipe.status === 'PROPOSED_NOT_OWNER_APPROVED' &&
+      recipe.contractVersion === 'gaming-hybrid-v2', invalid);
+    const begin = '<!-- ARCANOS:GAMING HYBRID WORKFLOW BEGIN gaming-hybrid-v1 -->';
+    const end = '<!-- ARCANOS:GAMING HYBRID WORKFLOW END gaming-hybrid-v1 -->';
+    const v2Begin = begin.replace('gaming-hybrid-v1', 'gaming-hybrid-v2');
+    const v2End = end.replace('gaming-hybrid-v1', 'gaming-hybrid-v2');
+    requireCondition(equal(recipe.replacement, { begin, end,
+      operation: 'replace_exactly_one_complete_marked_workflow' }), invalid);
+    const expectedRules = gamingRecoveryRuleRevisions.map(revision => ({ id: revision.id,
+      before: gamingRules.find(rule => rule.id === revision.id).text, after: revision.text }));
+    requireCondition(equal(recipe.ruleReplacements, expectedRules), invalid);
+    const workflow = recipe.workflow;
+    requireCondition(workflow?.path === gamingRecoveryInstructionSource && typeof workflow.content === 'string', invalid);
+    const replacement = Buffer.from(workflow.content, 'utf8');
+    requireCondition(replacement.length === workflow.sizeBytes && replacement.length <= maxFileSize &&
+      digest(replacement) === workflow.sha256 && workflow.content.startsWith(v2Begin) &&
+      workflow.content.trimEnd().endsWith(v2End) && workflow.content.split(v2Begin).length === 2 &&
+      workflow.content.split(v2End).length === 2 && !workflow.content.includes(begin) &&
+      !workflow.content.includes(end) && !originalText.includes(v2Begin) && !originalText.includes(v2End), invalid);
+    safeContent(workflow.content);
+    const uniqueOffset = text => {
+      const needle = Buffer.from(text, 'utf8');
+      const offset = before.indexOf(needle);
+      requireCondition(offset >= 0 && before.indexOf(needle, offset + 1) === -1, invalid);
+      return offset;
+    };
+    const workflowStart = uniqueOffset(begin);
+    const workflowEnd = uniqueOffset(end);
+    const atLineStart = offset => offset === 0 || before[offset - 1] === 10;
+    const atLineEnd = offset => offset === before.length || before[offset] === 10 ||
+      (before[offset] === 13 && before[offset + 1] === 10);
+    requireCondition(workflowStart < workflowEnd && atLineStart(workflowStart) && atLineStart(workflowEnd) &&
+      atLineEnd(workflowStart + Buffer.byteLength(begin)) && atLineEnd(workflowEnd + Buffer.byteLength(end)), invalid);
+    const changes = [{ id: 'gaming-hybrid-workflow', sourceStartByte: workflowStart,
+      sourceEndByte: workflowEnd + Buffer.byteLength(end), replacement }];
+    for (const rule of expectedRules) {
+      requireCondition(!before.includes(Buffer.from(rule.after, 'utf8')), invalid);
+      const sourceStartByte = uniqueOffset(rule.before);
+      changes.push({ id: rule.id, sourceStartByte,
+        sourceEndByte: sourceStartByte + Buffer.byteLength(rule.before),
+        replacement: Buffer.from(rule.after, 'utf8') });
+    }
+    changes.sort((left, right) => left.sourceStartByte - right.sourceStartByte);
+    const parts = [];
+    const replacements = [];
+    let sourceOffset = 0;
+    let outputOffset = 0;
+    for (const change of changes) {
+      requireCondition(change.sourceStartByte >= sourceOffset, invalid);
+      const preserved = before.subarray(sourceOffset, change.sourceStartByte);
+      parts.push(preserved, change.replacement);
+      outputOffset += preserved.length;
+      replacements.push({ id: change.id, sourceStartByte: change.sourceStartByte,
+        sourceEndByte: change.sourceEndByte, outputStartByte: outputOffset,
+        outputEndByte: outputOffset + change.replacement.length });
+      outputOffset += change.replacement.length;
+      sourceOffset = change.sourceEndByte;
+    }
+    parts.push(before.subarray(sourceOffset));
+    const bytes = Buffer.concat(parts);
+    requireCondition(bytes.length <= maxFileSize, invalid);
+    safeContent(bytes.toString('utf8'));
+    return { status: 'PROPOSED_NOT_OWNER_APPROVED', contractVersion: 'gaming-hybrid-v2',
+      approvedSkillBaseline: { ...baseline }, bytes, sizeBytes: bytes.length,
+      sha256: digest(bytes), replacements };
+  } catch {
+    // Neither private source text nor caller-provided diagnostics may escape.
+    throw new Error(invalid);
+  }
+}
+
 async function privateRoot(inputRoot) {
   requireCondition(typeof inputRoot === 'string', 'PRIVATE_INPUT_ROOT_REQUIRED');
   const resolved = path.resolve(inputRoot);

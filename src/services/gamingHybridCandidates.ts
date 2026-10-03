@@ -8,7 +8,7 @@ import {
   type GamingFreshnessEvidence
 } from '@shared/gaming/gamingFreshnessCore.js';
 import {
-  selectStoredGamingEvidence, formatStoredGamingEvidence,
+  selectStoredGamingEvidence, projectStoredGamingEvidenceCandidates, selectGamingCoverageEvidence, formatStoredGamingEvidence,
   type GamingStoredEvidenceRecord, type GamingStoredEvidenceChunk, type GamingStoredKnowledgeContext, type GamingStoredKnowledgeInput
 } from '@shared/gaming/gamingStoredEvidenceCore.js';
 import { filterGamingDocumentInstructions } from './gamingDocumentExtraction.js';
@@ -341,7 +341,7 @@ export async function evaluateGamingHybridCandidates(
   // Rank the complete bounded document before the existing selector's top-20 bound.
   allRecords.sort((a, b) => b.relevance - a.relevance || a.recordId.localeCompare(b.recordId));
   const selected = selectStoredGamingEvidence(allRecords, v2 ? { ...selectionInput,
-    requiredSourceIds: requiredGamingHybridSourceIds(input, accepted) } : selectionInput, limits);
+    requiredSourceIds: requiredGamingHybridSourceIds(input, accepted) } : selectionInput, limits, undefined, assessGamingRequestCoverage);
   const knowledge = formatStoredGamingEvidence(selected, input, limits);
   knowledge.context = knowledge.context.replaceAll('Origin: stored gaming knowledge;', 'Origin: backend-validated transient Gaming evidence;');
   logger.info('gaming.hybrid.candidates_evaluated', { requestId: context.requestId, traceId: context.traceId,
@@ -405,7 +405,7 @@ export function selectGamingHybridAcceptedEvidence(input: GamingStoredKnowledgeI
   })) };
   const fullAssessment = assessGamingClearEvidence(input, fullPool, { requireRequestCoverage: true, now: new Date(context.now ?? Date.now()) });
   const selected = selectStoredGamingEvidence(records, { ...input, requireRequestCoverage: true,
-    requiredSourceIds: requiredGamingHybridSourceIds(input, accepted) }, limits);
+    requiredSourceIds: requiredGamingHybridSourceIds(input, accepted) }, limits, undefined, assessGamingRequestCoverage);
   const knowledge = formatStoredGamingEvidence(selected, input, limits);
   knowledge.materialConflict = hasGamingMaterialConflict(fullAssessment);
   knowledge.structuralConflictAssessmentUnavailable = fullAssessment.blockingFindings
@@ -469,47 +469,24 @@ export function selectGamingHybridEvidence(input: GamingStoredKnowledgeInput,
       && chunk.text.length > 0 && chunk.text.length <= 8_000);
     const evidence = passages.find(chunk => chunk.recordId === `${source.sourceId}:verification`) ?? passages[0];
     return evidence ? [{ evidence, source }] : [];
-  }).slice(0, Math.min(8, limits.maxChunks, limits.maxSources));
+  });
   const proofIds = new Set(proofs.map(proof => proof.source.sourceId));
-  // Reserve the existing source/chunk capacity for mandatory proof before
-  // gameplay selection; exceeding the bounded set produces honest insufficiency.
-  const selectionLimits = { ...limits, maxSources: Math.max(0, limits.maxSources - proofs.length),
-    maxChunks: Math.max(0, Math.min(8, limits.maxChunks) - proofs.length) };
-  const selected = selectStoredGamingEvidence(records.filter(record => !proofIds.has(record.sourceId)),
-    { ...input, requireRequestCoverage: true, requiredSourceIds: context.requiredSourceIds }, selectionLimits,
+  // Admission still uses the established bounded record projection. Selection
+  // costs the original intact passages and required proof together, including
+  // their headers, rather than imposing a separate source-identity ceiling.
+  const projected = projectStoredGamingEvidenceCandidates(records.filter(record => !proofIds.has(record.sourceId)),
+    { ...input, requireRequestCoverage: true, requiredSourceIds: context.requiredSourceIds }, limits,
     record => knowledge.sources.find(source => source.sourceId === record.sourceId)?.patchVersion);
   // Preserve server-owned metadata/provenance and intact original passages rather
   // than introducing a second excerpt or rewriting citation identity.
-  let candidates = selected.flatMap(candidate => {
+  const candidates = projected.flatMap(candidate => {
     const original = knowledge.evidence?.find(chunk => chunk.recordId === candidate.evidence.recordId && chunk.sourceId === candidate.evidence.sourceId);
     const source = knowledge.sources.find(item => item.sourceId === candidate.source.sourceId && item.url === candidate.source.url);
     return original && source ? [{ evidence: original, source }] : [];
   });
-  // A backend-selected currentness attestation need not match gameplay terms.
-  // These original proof passages already reserved bounded selector capacity.
-  candidates.push(...proofs);
-  const assess = (entries: typeof candidates) => assessGamingRequestCoverage(input,
-    formatStoredGamingEvidence(entries, input, limits));
-  const fullCoverage = assess(candidates);
-  if (fullCoverage.coverageSatisfied && !materialConflict) {
-    // Remove redundant material only while every requested requirement remains
-    // covered. Zero/one/several sources are all legitimate selection outcomes.
-    for (let index = candidates.length - 1; index >= 0; index -= 1) {
-      const removed = candidates[index];
-      if (context.requiredSourceIds?.includes(removed.source.sourceId)
-        && candidates.filter(candidate => candidate.source.sourceId === removed.source.sourceId).length === 1) continue;
-      const reduced = candidates.filter((_candidate, position) => position !== index);
-      if (assess(reduced).coverageSatisfied) candidates = reduced;
-    }
-  }
-  const chunkLimit = Math.min(8, limits.maxChunks);
-  if (candidates.length > chunkLimit) {
-    // Reserve bounded passages for explicitly required proof instead of silently
-    // dropping it. Coverage is reassessed below when the remaining prose is cut.
-    candidates = [...candidates.filter(candidate => context.requiredSourceIds?.includes(candidate.source.sourceId)),
-      ...candidates.filter(candidate => !context.requiredSourceIds?.includes(candidate.source.sourceId))].slice(0, chunkLimit);
-  }
-  const compact = formatStoredGamingEvidence(candidates, input, limits);
+  const selected = selectGamingCoverageEvidence([...candidates, ...proofs],
+    { ...input, requireRequestCoverage: true, requiredSourceIds: context.requiredSourceIds }, limits, assessGamingRequestCoverage);
+  const compact = formatStoredGamingEvidence(selected, input, limits);
   compact.sourceKnown = knowledge.sourceKnown;
   const coverage = assessGamingRequestCoverage(input, compact);
   return { knowledge: compact, selectedCandidateIds: [...new Set(compact.sources.filter(source => source.origin === 'live').map(source => source.sourceId))],
@@ -522,7 +499,7 @@ function isGamingHybridChunkBound(chunk: GamingStoredEvidenceChunk, candidate: G
     && item.sourceId === candidate.candidateId && item.revisionId === candidate.contentHash && item.publicUrl === candidate.publicUrl);
   if (!record || !gamingClearIntactSourceText(candidate.document).includes(typeof record.normalized.text === 'string'
     ? record.normalized.text : record.searchText)) return false;
-  const projected = selectStoredGamingEvidence([record], { ...candidate.sourceContext, requireRequestCoverage: true }, hybridEvidenceLimits())[0]?.evidence;
+  const projected = projectStoredGamingEvidenceCandidates([record], { ...candidate.sourceContext, requireRequestCoverage: true }, hybridEvidenceLimits())[0]?.evidence;
   return projected?.text === chunk.text && (chunk.evidenceUnits ?? []).every(unit => projected.evidenceUnits
     ?.some(approved => gamingClearHash(approved) === gamingClearHash(unit)));
 }

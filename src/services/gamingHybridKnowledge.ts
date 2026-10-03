@@ -457,11 +457,14 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
       ].filter(Boolean).join(' ')) : []),
       'Official changes establish announced mechanics, not the best strategy. Keep community recommendations distinct from official facts.'
     ].filter(Boolean).join(' ').slice(0, 1_000);
+    const generationContextBudget = Math.max(0, getGamingWebContextMaxChars() - qualification.length - 2);
     let usable = formatStoredGamingEvidence(candidates, { spoilerMode: workflow.pipeline.spoilerMode,
-      maxContextChars: Math.max(0, getGamingWebContextMaxChars() - qualification.length - 2) });
-    if (v2 && usable.evidence?.length) {
+      maxContextChars: generationContextBudget });
+    if (v2 && candidates.length) {
       const requiredProofIds = evidence.filter(item => selected.has(item.id) && ['current_index', 'live_status'].includes(item.currentness)).map(item => item.id);
-      const selection = selectGamingHybridEvidence({ ...workflow.pipeline, game: input.game }, usable,
+      const selection = selectGamingHybridEvidence({ ...workflow.pipeline, game: input.game,
+        maxContextChars: generationContextBudget }, { ...knowledge, context: '',
+        evidence: candidates.map(candidate => candidate.evidence), sources: knowledge.sources.filter(source => selected.has(source.sourceId)) },
         { requiredSourceIds: [...new Set([...requiredSourceIds, ...requiredProofIds])] });
       usable = selection.knowledge;
       body = { ...body, selectedCandidateIds: selection.selectedCandidateIds, selectedEvidenceIds: selection.selectedEvidenceIds,

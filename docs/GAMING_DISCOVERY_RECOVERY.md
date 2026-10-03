@@ -180,6 +180,13 @@ units and unavailable full-pool inspection. The original safe response body and
 requires both markers only on the fixed guide selector. Any fixture failure
 withholds every Gaming proof header and the success body.
 
+Hosted sealed-preview execution and teardown were proved at historical head
+`c95c01d65682a67b255bf44cd7f00c42c25553de`: the trusted and supplemental
+verifiers each passed 171 requests. That evidence does not attest later commits.
+Final gap closure reruns the native application fixtures and failure controls
+locally and the maintained CI on the final head; it does not deploy another
+preview. The PR description records the exact final candidate and test totals.
+
 Deliberate corruption controls cover the actual served coordination seams:
 disabling v2 pipeline coverage rejects the independently supported answer;
 skipping unretained artifact inspection exposes the contradictory capacity
@@ -189,19 +196,60 @@ corrupting the synthetic table stat causes the sealed guide route to fail.
 These are controlled served-component proofs; the sealed preview does not run
 the normal OAuth coordinator, discovery provider, model, SQL or active worker.
 
-The existing selector bounds remain three source records and eight chunks per
-answer. Coverage must pass within those bounds; six discovery URLs do not
-authorize a larger generation context. Public numbered topic labels correspond
+Discovery capacity is distinct from generation context capacity. V2 selects the
+least-cost complete evidence set, including intact passages, numbered headers
+and required currentness/supplied-guide records. Four compact source identities
+may be selected when they fit the existing context ceiling. Six accepted URLs
+do not automatically become six generation sources. The configured chunk limit
+still applies (six by default, at most eight), as does the established context
+character ceiling (5,000 by default); qualification text consumes that same
+budget. No passage is clipped to manufacture clause coverage. If complete
+coverage cannot fit, the workflow reports missing coverage and stops or uses
+its one permitted recovery. V1 retains its previous source cap and selection.
+Full acquired-pool conflict checks still precede compaction, and final citations
+include only selected sources. Public numbered topic labels correspond
 to requested clause order and avoid publishing private question prose. Unknown
 gaps receive conservative search hints rather than invented mechanics.
 
-Workflow state and locks use the existing process-local, expiring cache. A
-process restart or requests routed to another replica cannot resume a local
-workflow; a shared durable workflow store is outside this change. The dedicated
+**Availability limitation:** workflow state and locks remain process-local.
+A process restart or requests routed to another replica cannot resume a local
+workflow: continuation fails with `WORKFLOW_UNAVAILABLE` before acquisition or
+generation. Actor binding, protocol binding, revision compare-and-swap,
+idempotency and acquisition accounting are authoritative within the owning
+process. They do not promise cross-process continuation or duplicate suppression.
+The absolute workflow lifetime is at most ten minutes, may be shorter for
+freshness, and is never renewed by continuation or recovery. Expired state and
+its hints are removed. No source content is persisted to coordinate workflows.
+
+The pre-merge read-only production metadata audit found one configured web
+replica and one running replica. The existing contract explicitly describes
+ephemeral process-local workflows; it has no restart/fleet continuity guarantee.
+This is therefore a retained availability limit, not a reason to introduce a
+durable source store. Recheck the one-replica assumption before an authorized
+rollout; a multi-replica rollout requires a separate coordination/privacy review.
+Deterministic two-instance and restart simulations prove fail-closed continuation,
+and original-expiry tests prove hints and recovery cannot renew the workflow.
+The dedicated
 MCP catalog remains below the existing 64,000-byte fixture ceiling; schema
 growth must continue to respect that bound.
 
+Acquisition hints remain URL-only. Multiple failures on a host have not
+demonstrated a benefit sufficient to add domain-level hints. One failed URL
+cannot poison another allowed URL on that host. Hints are advisory, expire with
+the workflow, and never decide backend acceptance; security failures are not
+converted into access hints or a reason to bypass the server's hard URL policy.
+
 ## Frontend instruction candidate and rollout
+
+The final pre-merge audit verified the existing instruction-byte normalization,
+v2 failure response diagnostics, complete structural evidence admission,
+sealed-preview proof fixtures and narrow synthetic-fixture secret-scan repair
+before changing selection. Those five findings were already closed. New local
+controls demonstrate one through four compact complementary sources, oversized
+four-source evidence stopping honestly, six candidates needing only two,
+unselected conflicts vetoing generation, and selected-only citations. A real
+served MCP fixture acquires three initial sources and one granted replacement,
+returns the four-source grounded answer, and performs zero durable writes.
 
 [The proposed v2 MCP workflow](gpt/arcanos-gaming-hybrid-v2.instructions.md)
 uses the actual installed-tool names `arcanos_gaming_hybrid_query` and
@@ -212,44 +260,82 @@ existing eight-tool catalog and query/write scopes remain unchanged.
 
 [`gamingRecoveryCompositionPatch()`](../scripts/compose-gaming-skill.mjs)
 provides the exact public replacement workflow and explicit before/after
-revisions for existing composed safeguards. The default composer still produces
-v1. To compose privately, first verify the actual approved skill is 15,210 bytes
+revisions for existing composed safeguards. Pass that recipe and the verified
+private baseline bytes to the pure `applyGamingRecoveryCompositionPatch()`
+helper for local composition. The default composer still produces v1. Before
+applying the canonical recipe, verify the actual approved skill is 15,210 bytes
 with SHA-256
 `a2cd3cfb2eb677eaef47c7fc148b41565b58e051486a49b29df48ee53c048081`.
-Replace exactly one marked v1 workflow and each exact matching safeguard rule;
-an absent or ambiguous match blocks composition. Preserve unrelated private
-baseline bytes and owner-approval records. Store the complete proposed skill,
-its exact diff, size, hash and pending-review record only under a new ignored
-`.local-migration/arcanos-gaming/` directory. A public recipe hash is not the
-complete private skill hash or owner approval.
+The helper requires exactly one complete, ordered v1 workflow marker pair and
+exactly one occurrence of each of the eight canonical old safeguard texts.
+Missing, duplicate, conflicting or overlapping matches fail closed. It replaces
+only those byte ranges, preserves every unrelated byte, and returns the proposed
+candidate's size, hash and reversible range map. UTF-8 and line endings are not
+normalized. The helper does not change owner-approval records or write files.
+Store the complete proposed skill, its exact private diff, size, hash and
+pending-review record only under a new ignored `.local-migration/arcanos-gaming/`
+directory or a private task Temp directory. Never commit or upload private bytes.
 
-At this task's initial local inspection the private directory and approved skill
-inputs were absent. Actual baseline verification and complete private composition
-are blocked. The independently prepared public patch is in the ignored local
-`.local-migration/arcanos-gaming/proposed-v2-instruction-patch/` directory with
-the exact public workflow diff, rule replacement recipe and a proposed manifest.
-The workflow replacement is 9,046 bytes, SHA-256
+The review worktree has no private baseline inputs. Read-only inspection of a
+prior private workspace independently found skill files matching the historical
+approved size and hash above. That match does not verify the current installed
+plugin identity or its current skill bytes, and it does not approve a v2
+candidate. Public recipe tests use a clearly synthetic pinned baseline; actual
+private composition must use the untouched canonical recipe and independently
+verified historical bytes. Complete candidate review remains a separate owner
+checkpoint.
+
+Local application of that canonical recipe to the verified historical baseline
+produced a complete private candidate with exactly nine replacements. Repeating
+application produced identical candidate bytes/hash, all unrelated byte slices
+were preserved, and reversing the recorded ranges recovered the original
+baseline. The candidate and exact diff remain private and pending owner review;
+this does not establish current installed identity or behavior.
+
+The public workflow replacement is 9,046 bytes, SHA-256
 `2f8f4d08442674d014a0e36a2dc1e19b6628092199697720355bd6a1ed98c6be`;
 the recipe is 17,658 bytes, SHA-256
 `8e26255da88cef187236c6e771886595d3c8c64936c292b106abf930464ea3fb`.
-These are public patch hashes, not complete private skill hashes. The manifest
-marks the historical approved skill metadata unverified locally and private
-composition blocked. The public replacement recipe is independent of private inputs;
-no private content is invented and no private upload is required. Historical
-approval records are unchanged. Deterministic frontend/provider fixtures are
-distinct from actual installed-client and live-provider acceptance.
+These identify public patch bytes. The complete private candidate has its own
+separately recorded hash and remains `PROPOSED_NOT_OWNER_APPROVED`; neither a
+public recipe hash nor historical baseline approval approves it. Historical
+approval records stay unchanged. Composition evidence and deterministic
+frontend/provider fixtures do not establish installed-client or live-provider
+acceptance.
 
 Rollout requires separate authorization, in this order:
 
 1. Review and deploy the backward-compatible backend.
-2. Verify the deployed dedicated tools actually support v2.
+2. Verify the **production** dedicated tool catalog and closed schemas support
+   `gaming-hybrid-v2`, including candidate `expectedRevision` and the returned
+   recovery/coverage fields. Confirm the same eight Gaming tools and separate
+   Gaming query/write scopes; local or sealed-preview schemas do not prove
+   production support.
 3. Review the complete proposed frontend instruction artifact and approve its
-   exact new hash.
-4. Update the **same** private Gaming plugin with those approved bytes.
-5. Run bounded installed-client acceptance with separately authorized live
-   boundaries; record currentness, failures and storage separately.
+   exact private diff and new hash. Baseline approval is insufficient.
+4. Verify the existing private Gaming plugin identity, then update that **same**
+   plugin with the owner-approved bytes through the guarded in-place update.
+   Preserve its private identity and unrelated configuration; do not create
+   another plugin or repeat migration.
+5. Establish a fresh authorized linked Gaming account/connection and verify its
+   installed tool discovery. Distinguish connection/authentication failures from
+   backend, source and provider failures; stale client discovery is insufficient.
+6. Run bounded installed-client discovery with separately authorized live
+   boundaries: send the original question/context first, actually use available
+   Web Search under a backend discovery grant, submit at most three initial and
+   three recovery URL hints, and retain the same workflow, protocol and latest
+   revision. No workflow restart or silent protocol downgrade grants more work.
+7. Prove a grounded positive result: `answer_ready`, `evidenceSelected: true`,
+   `coverageSatisfied: true`, actor/workflow-bound selected IDs, usable selected
+   citations/provenance, the validated answer and required qualifications, with
+   no fallback or unsupported claims. Record actual currentness separately.
+8. Prove the exhaustion negative: insufficient evidence after the permitted
+   continuation yields an explicit stop/limitation before generation, with no
+   new workflow, extra acquisition or provider retry to manufacture success.
 
-This implementation task ends at a reviewable draft PR and local instruction
-patch. It authorizes no production/preview deployment, live Gaming/provider
-calls, installed-plugin/account/configuration changes, durable Gaming writes
-or merge.
+Keep acceptance at zero ingestion, refresh or other durable source writes.
+Those operations require separate user authorization and their existing scope,
+policy, consent and confirmation gates; candidate acceptance, owner instruction
+approval and successful generation do not grant storage permission.
+Code, composition and fixture evidence do not authorize deployment, plugin or
+account changes, live acceptance, durable writes or merge by themselves.

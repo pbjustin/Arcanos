@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it, jest } from '@jest/globals';
 import { createGamingHybridWorkflow } from '../src/services/gamingHybridKnowledge.js';
+import { evaluateGamingHybridCandidates } from '../src/services/gamingHybridCandidates.js';
 import { GAMING_HYBRID_CONTRACT_VERSION, GAMING_HYBRID_V2_CONTRACT_VERSION as contractVersion,
   GAMING_HYBRID_V2_LIMITS } from '../src/shared/gaming/gamingHybridContract.js';
 import { gamingHybridCitationTargets, projectGamingHybridSuppliedGuides } from '../src/shared/gaming/gamingHybridPolicyCore.js';
@@ -117,6 +118,80 @@ describe('v2 actor-bound recovery lifecycle', () => {
     expect((await workflow.candidates(submission(first.body.workflowId!, 0), context)).body.reason).toBe('WORKFLOW_UNAVAILABLE');
     expect((await workflow.query(query, context)).body).toMatchObject({ contractVersion, nextAction: 'stop', reason: 'WORKFLOW_EXPIRED' });
     expect(evaluateCandidates).not.toHaveBeenCalled();
+  });
+
+  it('rejects an otherwise valid continuation on another replica or a restarted coordinator before work', async () => {
+    const original = setup();
+    const first = await original.workflow.query(query, context);
+    const grant = await original.workflow.candidates(submission(first.body.workflowId!, 0), context);
+    expect(grant.body.discovery).toMatchObject({ replacementAllowed: true, recoveryRemaining: 1 });
+    const continuation = submission(first.body.workflowId!, grant.body.revision!, 'instance-continuation');
+    // Fresh constructors model independent memory on another replica and after
+    // restart. Neither receives the original workflow's state or allowances.
+    for (const isolated of [setup(), setup()]) {
+      const rejected = await isolated.workflow.candidates(continuation, context);
+      expect(rejected).toMatchObject({ status: 404, body: { contractVersion, reason: 'WORKFLOW_UNAVAILABLE', nextAction: 'stop' } });
+      expect(rejected.body.answer).toBeUndefined();
+      expect(isolated.evaluateCandidates).not.toHaveBeenCalled(); expect(isolated.generate).not.toHaveBeenCalled();
+    }
+    const completed = await original.workflow.candidates(continuation, context);
+    expect(completed.body).toMatchObject({ revision: 2, discovery: { round: 2, recoveryRemaining: 0 } });
+    expect(original.evaluateCandidates).toHaveBeenCalledTimes(2); expect(original.generate).not.toHaveBeenCalled();
+  });
+
+  it('keeps acquisition hints and replay observations on the original absolute expiry through recovery', async () => {
+    const { workflow, evaluateCandidates, generate, advance } = setup();
+    const first = await workflow.query(query, context);
+    advance(9 * 60_000);
+    const initial = submission(first.body.workflowId!, 0);
+    const grant = await workflow.candidates(initial, context);
+    const expiry = new Date(start + GAMING_HYBRID_V2_LIMITS.workflowTtlMs).toISOString();
+    expect(grant.body.discovery!.acquisitionHints).toEqual([{ scope: 'url', target: 'https://fixture.example/failed',
+      reasonCode: 'SOURCE_INACCESSIBLE', observedAt: new Date(start + 9 * 60_000).toISOString(), expiresAt: expiry }]);
+    advance(15_000);
+    expect(await workflow.candidates(initial, context)).toEqual(grant);
+    expect(evaluateCandidates).toHaveBeenCalledTimes(1);
+    advance(15_000);
+    const recovery = await workflow.candidates(submission(first.body.workflowId!, grant.body.revision!, 'hint-recovery'), context);
+    expect(recovery.body.discovery!.acquisitionHints).toEqual([{ scope: 'url', target: 'https://fixture.example/failed',
+      reasonCode: 'SOURCE_INACCESSIBLE', observedAt: new Date(start + 9 * 60_000 + 30_000).toISOString(), expiresAt: expiry }]);
+    advance(30_000);
+    const expired = await workflow.candidates(submission(first.body.workflowId!, recovery.body.revision!, 'after-hint-expiry'), context);
+    expect(expired).toMatchObject({ status: 404, body: { reason: 'WORKFLOW_UNAVAILABLE', nextAction: 'stop' } });
+    expect(expired.body.discovery).toBeUndefined();
+    expect((await workflow.query(query, context)).body).toMatchObject({ reason: 'WORKFLOW_EXPIRED', nextAction: 'stop' });
+    expect(evaluateCandidates).toHaveBeenCalledTimes(2); expect(generate).not.toHaveBeenCalled();
+  });
+
+  it('keeps one URL access observation from poisoning another allowed URL or overriding security admission', async () => {
+    let clock = start;
+    const resolveDocument = jest.fn(async (_url: string) => {
+      clock += 250;
+      throw new Error('Synthetic acquisition fixture failure.');
+    });
+    const evaluateCandidates = jest.fn<typeof evaluateGamingHybridCandidates>((input, callContext) =>
+      evaluateGamingHybridCandidates(input, callContext, { resolveDocument }));
+    const generate = jest.fn<any>();
+    const workflow = createGamingHybridWorkflow({ retrieve: async () => empty, evaluateCandidates, generate, now: () => clock });
+    const failedUrl = 'https://fixture.example/first-unavailable';
+    const allowedUrl = 'https://fixture.example/another-guide';
+    const blockedUrl = 'https://127.0.0.1/private-guide';
+    const first = await workflow.query(query, context);
+    const grant = await workflow.candidates({ ...submission(first.body.workflowId!, 0), candidates: [{ url: failedUrl }] }, context);
+    expect(grant.body.discovery!.acquisitionHints).toEqual([expect.objectContaining({ scope: 'url', target: failedUrl,
+      reasonCode: 'SOURCE_FETCH_FAILED', expiresAt: new Date(start + GAMING_HYBRID_V2_LIMITS.workflowTtlMs).toISOString() })]);
+    const recovery = await workflow.candidates({ ...submission(first.body.workflowId!, grant.body.revision!, 'safe-url-recovery'),
+      candidates: [{ url: allowedUrl }, { url: blockedUrl }] }, context);
+    // The real candidate admission still attempts the independent safe path;
+    // injected document resolution supplies the failure without network access.
+    expect(resolveDocument).toHaveBeenCalledTimes(2);
+    expect(resolveDocument.mock.calls.map(([url]) => url)).toEqual([failedUrl, allowedUrl]);
+    expect(recovery.body.candidates).toEqual([expect.objectContaining({ url: allowedUrl, reasonCodes: ['SOURCE_FETCH_FAILED'] }),
+      expect.objectContaining({ decision: 'rejected', reasonCodes: ['URL_BLOCKED'] })]);
+    expect(recovery.body.discovery!.acquisitionHints).toEqual([expect.objectContaining({ scope: 'url', target: allowedUrl,
+      reasonCode: 'SOURCE_FETCH_FAILED' })]);
+    expect(recovery.body.discovery!.acquisitionHints!.every(hint => hint.scope === 'url' && hint.target !== blockedUrl)).toBe(true);
+    expect(generate).not.toHaveBeenCalled();
   });
 
   it('cancellation charges elapsed acquisition and closes the workflow before a continuation', async () => {

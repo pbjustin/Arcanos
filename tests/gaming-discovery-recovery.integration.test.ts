@@ -239,6 +239,29 @@ describe('backend-authoritative Gaming discovery recovery through served MCP', (
     expect(mockAuditCompletion).toHaveBeenCalledTimes(1); expect(mockIngest).not.toHaveBeenCalled();
   });
 
+  it('answers four compact independent clauses after one recovery without expanding the generation budget', async () => {
+    process.env.ARCANOS_GAMING_WEB_CONTEXT_CHARS = '5000';
+    const clauses = ['activate amber gate', 'cross crystal bridge', 'repair silver lever', 'unlock copper vault'];
+    const urls = clauses.map((_clause, index) => `https://guides.example.org/compact-clause-${index}`);
+    clauses.forEach((clause, index) => addPage(urls[index],
+      `To ${clause}, follow the marked instructions beside the eastern lantern. Complete the indicated step carefully and wait for the confirmation light before continuing along the route.`));
+    const run = harness();
+    const initial = await run.query({ question: `How do I ${clauses.join(' and ')}?` });
+    const partial = await run.submit(initial.result, urls.slice(0, 3));
+    expect(partial.result).toMatchObject({ nextAction: 'search', coverageSatisfied: false });
+    expect(mockTrinity).not.toHaveBeenCalled();
+    const answer = await run.submit(partial.result, urls.slice(3), 'compact-four-recovery');
+    expect(answer.result).toMatchObject({ state: 'answer_ready', nextAction: 'answer', coverageSatisfied: true, missingCoverage: [] });
+    expect(answer.result.selectedCandidateIds).toHaveLength(4);
+    expect(answer.result.answer!.sources.map(source => source.url).sort()).toEqual(urls.sort());
+    expect(answer.result.requirementSupport!.every(item => item.evidenceIds.length > 0)).toBe(true);
+    const audit = JSON.parse((mockAuditCompletion.mock.calls[0][1] as any).messages[1].content);
+    expect(audit.evidence.length).toBeLessThanOrEqual(8);
+    expect(audit.evidence.map((chunk: any) => chunk.sourceId).sort()).toEqual(answer.result.selectedCandidateIds!.sort());
+    expect(mockHttp).toHaveBeenCalledTimes(4); expect(mockTrinity).toHaveBeenCalledTimes(1);
+    expect(mockAuditCompletion).toHaveBeenCalledTimes(1); expect(mockIngest).not.toHaveBeenCalled();
+  });
+
   it('withholds structured generation when one independent requested clause is missing', async () => {
     const copper = 'https://guides.example.org/copperblade-only';
     addStatPage(copper, 'Copperblade', 10);
