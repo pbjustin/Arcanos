@@ -173,6 +173,8 @@ jest.unstable_mockModule('../src/platform/runtime/workerConfig.js', () => ({
 const ArcanosCli = (await import('../src/services/arcanos-cli.js')).default;
 const { MODULE_CATALOG } = await import('../src/services/moduleCatalog.js');
 const { default: gptAccessRouter } = await import('../src/routes/gpt-access.js');
+const { gamingHybridWorkflow } = await import('../src/services/gamingHybridKnowledge.js');
+const { isGamingMcpOutput } = await import('../src/shared/chatgpt/gamingMcpContract.js');
 const { gptAccessDeviceRepository } = await import('../src/core/db/repositories/gptAccessDeviceRepository.js');
 const { gptAccessDeviceHttpBoundary } = await import('../src/services/gptAccessDeviceHttpBoundary.js');
 const { backstageBookerHttpBoundary } = await import(
@@ -4949,6 +4951,61 @@ describe('/gpt-access gateway', () => {
     expect(globalBearerDenied.headers['cache-control']).toContain('no-store');
     expect(globalBearerDenied.body.error.code).toBe('UNAUTHORIZED_GPT_ACCESS');
     expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+  });
+
+  it.each((['gaming-hybrid-v1', 'gaming-hybrid-v2'] as const).flatMap(contractVersion =>
+    (['query', 'candidates', 'ingest'] as const).map(operation => ({ contractVersion, operation }))))
+  ('preserves $contractVersion on a hybrid $operation outer service failure', async ({ contractVersion, operation }) => {
+    const body = operation === 'query' ? { contractVersion, idempotencyKey: 'hybrid-outer-failure-query',
+      game: 'Amber Pilgrim', question: 'How do I open the amber gate?' }
+      : operation === 'candidates' ? { contractVersion, workflowId: COMPLETED_JOB_ID, idempotencyKey: 'hybrid-outer-failure-candidates',
+        candidates: [{ url: 'https://guides.example.org/amber-gate' }],
+        ...(contractVersion === 'gaming-hybrid-v2' ? { expectedRevision: 1 } : {}) }
+        : { contractVersion, workflowId: COMPLETED_JOB_ID, idempotencyKey: 'hybrid-outer-failure-ingest',
+          candidateIds: [CREATED_JOB_ID], storagePolicy: 'ask_before_store', confirmStore: true };
+    const mocked = jest.spyOn(gamingHybridWorkflow, operation).mockRejectedValue(new Error('Private simulated hybrid service failure'));
+    try {
+      const response = await gamingSourceAuthorized(request(buildApp())
+        .post(`/gpt-access/gaming/sources/hybrid/${operation === 'ingest' ? 'ingestions' : operation}`)).send(body);
+      expect(response.status).toBe(503);
+      expect(response.body).toMatchObject({ contractVersion, state: 'temporarily_unavailable',
+        nextAction: 'retry_later', reason: 'SERVICE_UNAVAILABLE', sourceKnown: false, evidenceSelected: false });
+      expect(response.body.answer).toBeUndefined();
+      expect(JSON.stringify(response.body)).not.toContain('Private simulated');
+      const tool = operation === 'query' ? 'arcanos_gaming_hybrid_query'
+        : operation === 'candidates' ? 'arcanos_gaming_submit_candidates' : 'arcanos_gaming_ingest_candidates';
+      expect(isGamingMcpOutput(tool, { statusCode: response.status, result: response.body })).toBe(true);
+      if (contractVersion === 'gaming-hybrid-v2') expect(response.body).toMatchObject({ revision: 0,
+        selectedCandidateIds: [], selectedEvidenceIds: [], coverageSatisfied: false, missingCoverage: [],
+        gapAssessmentStatus: 'not_assessed', requirementSupport: [] });
+      else expect(response.body.revision).toBeUndefined();
+      expect(mocked).toHaveBeenCalledTimes(1);
+    } finally { mocked.mockRestore(); }
+  });
+
+  it.each(['gaming-hybrid-v1', 'gaming-hybrid-v2'] as const)
+  ('preserves %s after the hybrid route deadline aborts pending execution', async contractVersion => {
+    jest.useFakeTimers({ doNotFake: ['setImmediate', 'clearImmediate', 'nextTick', 'hrtime', 'performance', 'queueMicrotask'] });
+    let started!: () => void;
+    const executionStarted = new Promise<void>(resolve => { started = resolve; });
+    const mocked = jest.spyOn(gamingHybridWorkflow, 'query').mockImplementation(async (_input, context) => {
+      started();
+      return new Promise((_resolve, reject) => context.signal!.addEventListener('abort', () => reject(context.signal!.reason), { once: true }));
+    });
+    try {
+      const pending = gamingSourceAuthorized(request(buildApp()).post('/gpt-access/gaming/sources/hybrid/query'))
+        .send({ contractVersion, idempotencyKey: 'hybrid-outer-timeout-query', game: 'Amber Pilgrim',
+          question: 'How do I open the amber gate?' }).then(response => response);
+      await executionStarted;
+      await jest.advanceTimersByTimeAsync(38_001);
+      const response = await pending;
+      expect(response.status).toBe(503);
+      expect(response.body).toMatchObject({ contractVersion, state: 'temporarily_unavailable',
+        nextAction: 'retry_later', reason: 'SERVICE_UNAVAILABLE' });
+      expect(response.body.answer).toBeUndefined();
+      expect(isGamingMcpOutput('arcanos_gaming_hybrid_query', { statusCode: response.status, result: response.body })).toBe(true);
+      expect(mocked).toHaveBeenCalledTimes(1);
+    } finally { mocked.mockRestore(); jest.useRealTimers(); }
   });
 
   it('does not let the dedicated Gaming source bearer access generic GPT Access routes', async () => {

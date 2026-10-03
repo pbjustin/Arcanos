@@ -25,6 +25,24 @@ function submission(workflowId: string, expectedRevision: number, suffix = 'init
 }
 
 describe('v2 actor-bound recovery lifecycle', () => {
+  it('preserves the requested protocol on query conflicts and capacity failures', async () => {
+    const { workflow } = setup();
+    const first = await workflow.query(query, context);
+    expect((await workflow.query({ ...query, question: 'How do I open the silver gate?' }, context)).body)
+      .toMatchObject({ contractVersion, revision: 0, reason: 'IDEMPOTENCY_CONFLICT', nextAction: 'stop' });
+    expect((await workflow.query({ ...query, idempotencyKey: 'v2-version-conflict',
+      version: '1.0', requestedVersion: '2.0' }, context)).body)
+      .toMatchObject({ contractVersion, reason: 'VERSION_CONTEXT_CONFLICT', nextAction: 'stop' });
+    expect((await workflow.query({ ...query, idempotencyKey: 'v2-context-invalid', requestedVersion: 'latest' }, context)).body)
+      .toMatchObject({ contractVersion, reason: 'INVALID_REQUEST', nextAction: 'stop' });
+    for (let index = 1; index < GAMING_HYBRID_V2_LIMITS.workflowsPerActor; index += 1) {
+      await workflow.query({ ...query, idempotencyKey: `v2-capacity-${index}`, question: `Explain fixture objective ${index}.` }, context);
+    }
+    expect((await workflow.query({ ...query, idempotencyKey: 'v2-capacity-overflow', question: 'Explain fixture overflow.' }, context)).body)
+      .toMatchObject({ contractVersion, revision: 0, reason: 'WORKFLOW_CAPACITY_REACHED', nextAction: 'retry_later' });
+    expect(first.body.contractVersion).toBe(contractVersion);
+  });
+
   it('grants exactly one recovery, charges failures and replays completed operations without work', async () => {
     const { workflow, evaluateCandidates, generate } = setup();
     const first = await workflow.query(query, context);

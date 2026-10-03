@@ -97,6 +97,8 @@ has a new idempotency key; an identical permitted retry retains its original key
 and payload. Changed payloads under the same key fail. Completed replays do not
 refetch or regenerate, concurrent continuations cannot spend allowance twice,
 and stale revisions cannot advance a newer workflow.
+Failures for validated v2 requests retain the v2 response version and diagnostics,
+including query conflicts, context validation and workflow capacity failures.
 
 A provider timeout retains accepted evidence and its provider-specific failure;
 it does not authorize source refetch, discovery recovery or automatic generation

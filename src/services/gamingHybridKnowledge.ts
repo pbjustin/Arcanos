@@ -610,16 +610,17 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
     async query(payload: unknown, context: GamingHybridCallContext): Promise<GamingHybridResult> {
       const parsed = gamingHybridQuerySchema.safeParse(payload);
       const denied = admit(context, parsed.success ? parsed.data.contractVersion : undefined); if (denied) return denied;
-      if (!parsed.success || validateGamingPlayerContextInput(parsed.data)) return failure(context, 'INVALID_REQUEST', 400);
+      if (!parsed.success) return failure(context, 'INVALID_REQUEST', 400);
+      if (validateGamingPlayerContextInput(parsed.data)) return failure(context, 'INVALID_REQUEST', 400, undefined, parsed.data.contractVersion);
       const input = parsed.data;
       input.requestedVersion ??= input.version;
-      if (input.version && input.requestedVersion !== input.version) return failure(context, 'VERSION_CONTEXT_CONFLICT', 400);
+      if (input.version && input.requestedVersion !== input.version) return failure(context, 'VERSION_CONTEXT_CONFLICT', 400, undefined, input.contractVersion);
       const key = hash([context.actorKey, input.idempotencyKey]);
       if (input.contractVersion === GAMING_HYBRID_V2_CONTRACT_VERSION && expiredQueries.has(key))
         return failure(context, 'WORKFLOW_EXPIRED', 409, undefined, input.contractVersion);
       const prior = queries.get(key);
       if (prior) {
-        if (prior.operation.hash !== hash(input)) return failure(context, 'IDEMPOTENCY_CONFLICT', 409);
+        if (prior.operation.hash !== hash(input)) return failure(context, 'IDEMPOTENCY_CONFLICT', 409, undefined, input.contractVersion);
         if (input.contractVersion === GAMING_HYBRID_V2_CONTRACT_VERSION || !prior.operation.retryable) return prior.operation.promise.then(result => {
           const workflow = workflows.get(prior.workflowId);
           return workflow ? currentResponse(context, workflow, { ...result, body: workflow.last ?? result.body }) : failure(context, 'WORKFLOW_UNAVAILABLE', 404, undefined, input.contractVersion);
@@ -669,7 +670,7 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
         }
       }
       if (workflows.size >= LIMITS.workflows || [...workflows.values()].filter(item => item.actor === actor).length >= LIMITS.workflowsPerActor)
-        return failure(context, 'WORKFLOW_CAPACITY_REACHED', 429);
+        return failure(context, 'WORKFLOW_CAPACITY_REACHED', 429, undefined, input.contractVersion);
       const workflow: Workflow = { id: randomUUID(), actor, budgetKey, createdAt: deps.now(), input,
         revision: 0, acquisitionWorkMs: 0, submittedUrls: new Set(),
         round: 0, currentnessRound: 0, accepted: [], operations: new Map(),

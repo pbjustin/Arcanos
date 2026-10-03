@@ -116,6 +116,8 @@ import {
 import { gamingSourceBodyParser } from '@services/gamingSourceBodyParser.js';
 import { requireGamingSourceAccessAuthentication } from '@services/gamingSourceAccessAuth.js';
 import { gamingHybridWorkflow } from '@services/gamingHybridKnowledge.js';
+import { GAMING_HYBRID_CONTRACT_VERSION, GAMING_HYBRID_V2_CONTRACT_VERSION,
+  gamingHybridQuerySchema, gamingHybridCandidatesSchema, gamingHybridIngestionSchema } from '@shared/gaming/gamingHybridContract.js';
 import { getRequestAbortSignal, runWithRequestAbortTimeout } from '@arcanos/runtime';
 import { gptAccessRateLimit } from '@services/gptAccessRateLimit.js';
 import { authorizeDeviceCapability } from '@services/gptAccessDeviceAuth.js';
@@ -2266,10 +2268,10 @@ router.post(
   })
 );
 
-for (const [path, operation] of [
-  ['/gpt-access/gaming/sources/hybrid/query', 'query'],
-  ['/gpt-access/gaming/sources/hybrid/candidates', 'candidates'],
-  ['/gpt-access/gaming/sources/hybrid/ingestions', 'ingest']
+for (const [path, operation, inputSchema] of [
+  ['/gpt-access/gaming/sources/hybrid/query', 'query', gamingHybridQuerySchema],
+  ['/gpt-access/gaming/sources/hybrid/candidates', 'candidates', gamingHybridCandidatesSchema],
+  ['/gpt-access/gaming/sources/hybrid/ingestions', 'ingest', gamingHybridIngestionSchema]
 ] as const) {
   router.post(path, requireGamingSourceAccessAuthentication, asyncHandler(async (req, res) => {
     const abortScope = createClientDisconnectAbortScope(req, res, 'Gaming hybrid client disconnected');
@@ -2282,7 +2284,14 @@ for (const [path, operation] of [
       })));
       res.status(result.status).json(result.body);
     } catch {
-      res.status(503).json({ contractVersion: 'gaming-hybrid-v1', requestId: req.requestId ?? 'unavailable',
+      // Only the operation's validated contract selects fallback output; raw
+      // caller labels cannot approve v2 state or invent a workflow revision.
+      const parsedInput = inputSchema.safeParse(req.body);
+      const contractVersion = parsedInput.success ? parsedInput.data.contractVersion : GAMING_HYBRID_CONTRACT_VERSION;
+      res.status(503).json({ contractVersion, requestId: req.requestId ?? 'unavailable',
+        ...(contractVersion === GAMING_HYBRID_V2_CONTRACT_VERSION ? { revision: 0,
+          selectedCandidateIds: [], selectedEvidenceIds: [], coverageSatisfied: false, missingCoverage: [],
+          gapAssessmentStatus: 'not_assessed', requirementSupport: [] } : {}),
         state: 'temporarily_unavailable', nextAction: 'retry_later', reason: 'SERVICE_UNAVAILABLE',
         sourceKnown: false, evidenceSelected: false, freshnessStatus: 'unverified' });
     } finally { abortScope.cleanup(); }
