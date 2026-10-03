@@ -72,6 +72,8 @@ describe('Private Gaming source composition, separate from live acceptance', () 
     expect(patch.approvedSkillBaseline).toEqual({ sizeBytes: 15_210,
       sha256: 'a2cd3cfb2eb677eaef47c7fc148b41565b58e051486a49b29df48ee53c048081' });
     const workflow = readFileSync(path.join(process.cwd(), patch.workflow.path));
+    expect(workflow.length).toBe(9_046);
+    expect(hash(workflow)).toBe('2f8f4d08442674d014a0e36a2dc1e19b6628092199697720355bd6a1ed98c6be');
     expect(patch.workflow.sizeBytes).toBe(workflow.length);
     expect(patch.workflow.sha256).toBe(hash(workflow));
     expect(patch.workflow.content).toBe(workflow.toString('utf8'));
