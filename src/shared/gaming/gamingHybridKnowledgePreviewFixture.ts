@@ -126,7 +126,7 @@ function requireV2RecoveryContracts(): void {
   requireProof(resolveGamingHybridCandidateAttempt({ ...recovery, maxRounds: v2.currentnessRounds,
     nextAction: 'verify_currentness', expectedAction: 'verify_currentness' }) === 'deny');
   const ingestion = { contractVersion: GAMING_HYBRID_V2_CONTRACT_VERSION, workflowId: WORKFLOW_ID,
-    idempotencyKey: 'synthetic-v2-ingestion-1', candidateIds: [CANDIDATE_ID], storagePolicy: 'ask_before_store' };
+    idempotencyKey: 'test-test-test', candidateIds: [CANDIDATE_ID], storagePolicy: 'ask_before_store' };
   requireProof(gamingHybridIngestionSchema.parse(ingestion).confirmStore === false);
   requireProof(!gamingHybridIngestionSchema.safeParse({ ...ingestion, confirmed: true }).success);
 }
