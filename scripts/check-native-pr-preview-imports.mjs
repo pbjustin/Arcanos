@@ -166,6 +166,8 @@ export const NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES = Object.freeze([
   'src/shared/gaming/gamingCurrentnessRegistry.ts',
   'src/shared/gaming/gamingGameIdentity.ts',
   'src/shared/gaming/gamingRecoveryResponse.ts',
+  'src/shared/gaming/gamingGenerationBudgetCore.ts',
+  'src/shared/gaming/gamingGenerationBudgetPreviewFixture.ts',
   'src/shared/gaming/gamingGuideIntakeCore.ts',
   'src/shared/gaming/gamingPromptCore.ts',
   'src/shared/gaming/gamingGrounding.ts',
@@ -806,6 +808,8 @@ const CRITICAL_RUNTIME_FUNCTION_DIGESTS = new Map([
   ],
 ]);
 const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
+  ['src/shared/gaming/gamingGenerationBudgetCore.ts', 'd9bbe4bbee0bf41c686efbd1fc4bfa4ead92d488e17dfe68f02679e62353f42c'], // gitleaks:allow -- public source semantic SHA-256
+  ['src/shared/gaming/gamingGenerationBudgetPreviewFixture.ts', '36c29659b26aeb22a7d87a7a5037bfc84497ca2e32fa08c585fc2a8b63b26bd6'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/gaming/gamingFreshnessDisposition.ts', 'e1e752366471b145255335d72e664892fd52ba2de5e15c9b5c03e2d324419e4a'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/gaming/gamingCurrentnessSourceData.ts', '06395950d7b88b4673fec5128a342a1893bb031ec011c666acab03ad30ae63b2'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/gaming/gamingCurrentnessRegistry.ts', '4bab0ad79adc496c4441e837f2eca52e604ffbf93c04ef39d9ee9ce8f55be2e0'], // gitleaks:allow -- public source semantic SHA-256
@@ -864,7 +868,7 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ['src/shared/gaming/gamingFreshnessCore.ts', '65d23e1e7fa48571acbaed19bc0346da5913a1b42e256532201269a5a77da619'],
   ['src/shared/gaming/gamingProgressRecoveryPreviewFixture.ts', '3b62bb34437b2152dd991218ee675b567fbf558c6d9e1f55b8d90d61d97eb5ef'],
   ['src/shared/gaming/gamingGameIdentity.ts', '253612cf9df001cbae65b56cdf13fc9a813aa659f63a4554619e54b62c70957a'],
-  ['src/shared/gaming/gamingRecoveryResponse.ts', '637fcd8afec14041b303c4a8255e7fe940e1b9aa76b68f8fb17d0fb9ad4b141e'],
+  ['src/shared/gaming/gamingRecoveryResponse.ts', '3a0d1e80f92f84dcf88b9ad63522c14f1acb607bb9b343ef0089f4a949ad25ca'],
   ['src/shared/gaming/gamingProgressionPolicy.ts', '91a221a4fa378b8a51bd45a61978fe5d62a386d319659293a05235d81288554b'],
   ['src/shared/gaming/gamingGuideIntakeCore.ts', '008664ce2d7a69c08d080d4f59d1c8041fa4d3a8f9788ba0a4a62ca34f12aa0f'],
   ['src/shared/gaming/gamingGuideAssistancePreviewFixture.ts', 'b913a94b6eb908252b426ded9a73547daef5c2af61ad9e12254df0f2b7ff7810'],

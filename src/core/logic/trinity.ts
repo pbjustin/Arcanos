@@ -56,7 +56,7 @@ import {
   buildAuditLogEntry
 } from './trinityStages.js';
 import { TRINITY_HARD_TOKEN_CAP } from './trinityConstants.js';
-import { type Tier, detectTier, buildReasoningConfig, getInvocationBudget, runReflection, recordLatency, detectLatencyDrift } from './trinityTier.js';
+import { type Tier, detectTier, buildReasoningConfig, getInvocationBudget, runReflection, resolveReflectionTimeoutMs, recordLatency, detectLatencyDrift } from './trinityTier.js';
 import {
   acquireTierSlot,
   InvocationBudget,
@@ -82,6 +82,7 @@ import {
   getSafeRemainingMs
 } from '@platform/resilience/runtimeBudget.js';
 import {
+  createAbortError,
   getRequestAbortContext,
   getRequestAbortSignal,
   getRequestRemainingMs,
@@ -970,6 +971,18 @@ export async function runThroughBrain(
       modelStageTimeoutMs > 0
         ? Math.max(1, Math.min(Math.trunc(modelStageTimeoutMs), effectiveLimit))
         : undefined;
+    const resolveModelStageTimeoutMs = (stage: Parameters<NonNullable<TrinityRunOptions['resolveModelStageTimeoutMs']>>[0]) => {
+      if (!options.resolveModelStageTimeoutMs) return stageTimeoutOverrideMs;
+      const remainingWatchdogMs = Math.max(0, effectiveLimit - watchdog.elapsed());
+      const additionalDownstreamReserveMs = tier === 'critical' && stage !== 'final' && stage !== 'direct-answer'
+        ? resolveReflectionTimeoutMs(runtimeBudget) : 0;
+      const allocatedTimeoutMs = options.resolveModelStageTimeoutMs(stage, runtimeBudget, remainingWatchdogMs, additionalDownstreamReserveMs);
+      const effectiveTimeoutMs = Math.min(Math.trunc(allocatedTimeoutMs), remainingWatchdogMs, getSafeRemainingMs(runtimeBudget));
+      if (!Number.isFinite(effectiveTimeoutMs) || effectiveTimeoutMs <= 0) {
+        throw Object.assign(createAbortError('Model stage budget exhausted.'), { timeoutPhase: stage });
+      }
+      return effectiveTimeoutMs;
+    };
     const checkWatchdog = () => {
       throwIfRequestAborted();
       assertBudgetAvailable(runtimeBudget);
@@ -1057,7 +1070,7 @@ export async function runThroughBrain(
               options.directAnswerModelOverride ?? (directAnswerOptions.recovery || tier !== 'simple'
                 ? getTrinityFinalEscalationModel() : getTrinityFinalModel()),
               options.directAnswerTokenLimitOverride,
-              stageTimeoutOverrideMs,
+              resolveModelStageTimeoutMs('direct-answer'),
               options.preserveAggregateAbortContext,
               options.directAnswerTokenCapOverride,
               options.redactAuditContent,
@@ -1646,7 +1659,7 @@ export async function runThroughBrain(
       stage: 'model-validation',
       runtimeBudget,
       sourceEndpoint: options.sourceEndpoint,
-      operation: () => validateModel(client, runtimeBudget, stageTimeoutOverrideMs)
+      operation: () => validateModel(client, runtimeBudget, resolveModelStageTimeoutMs('model-validation'))
     });
     logArcanosRouting('INTAKE', arcanosModel, `Tier: ${tier}, Input length: ${prompt.length}, Memory entries: ${memoryContext.relevantEntries.length}, AuditSafe: ${auditConfig.auditSafeMode}`);
     routingStages.push(`ARCANOS-INTAKE:${arcanosModel}`);
@@ -1654,11 +1667,13 @@ export async function runThroughBrain(
     let intakeRecoveryAction: TrinitySelfHealingAction | null = null;
     let intakeOutput: Awaited<ReturnType<typeof runIntakeStage>>;
     try {
+      const intakeTimeoutMs = resolveModelStageTimeoutMs('intake');
       intakeOutput = await runLoggedStage({
         requestId,
         stage: 'intake',
         runtimeBudget,
         sourceEndpoint: options.sourceEndpoint,
+        ...(options.resolveModelStageTimeoutMs ? { timeoutMs: intakeTimeoutMs } : {}),
         operation: () =>
           runIntakeStage(
             client,
@@ -1670,7 +1685,7 @@ export async function runThroughBrain(
             cognitiveDomain,
             internalDirective,
             runtimeBudget,
-            stageTimeoutOverrideMs,
+            intakeTimeoutMs,
             gamingGuideIntakePolicy
           )
       });
@@ -1719,11 +1734,13 @@ export async function runThroughBrain(
     let reasoningRecoveryAction: TrinitySelfHealingAction | null = null;
     let reasoningOutput: Awaited<ReturnType<typeof runReasoningStage>>;
     try {
+      const reasoningTimeoutMs = resolveModelStageTimeoutMs('reasoning');
       reasoningOutput = await runLoggedStage({
         requestId,
         stage: 'reasoning',
         runtimeBudget,
         sourceEndpoint: options.sourceEndpoint,
+        ...(options.resolveModelStageTimeoutMs ? { timeoutMs: reasoningTimeoutMs } : {}),
         operation: () =>
           runReasoningStage(
             client,
@@ -1733,7 +1750,7 @@ export async function runThroughBrain(
             tier,
             reasoningConfig,
             runtimeBudget,
-            stageTimeoutOverrideMs,
+            reasoningTimeoutMs,
             options.reasoningStagePreviewChaosHook,
             usage => {
               observedReasoningUsage = usage;
@@ -1918,7 +1935,7 @@ export async function runThroughBrain(
           requestId,
           options.directAnswerModelOverride ?? getTrinityFinalEscalationModel(),
           options.directAnswerTokenLimitOverride,
-          stageTimeoutOverrideMs,
+          resolveModelStageTimeoutMs('direct-answer'),
           options.preserveAggregateAbortContext,
           options.directAnswerTokenCapOverride,
           options.redactAuditContent,
@@ -1944,11 +1961,13 @@ export async function runThroughBrain(
       finalOutput = await recoverFinalWithAuthority();
     } else {
       try {
+        const finalTimeoutMs = resolveModelStageTimeoutMs('final');
         finalOutput = await runLoggedStage({
           requestId,
           stage: 'final',
           runtimeBudget,
           sourceEndpoint: options.sourceEndpoint,
+          ...(options.resolveModelStageTimeoutMs ? { timeoutMs: finalTimeoutMs } : {}),
           operation: () =>
             runFinalStage(
               client,
@@ -1961,7 +1980,7 @@ export async function runThroughBrain(
               cognitiveDomain,
               internalDirective,
               runtimeBudget,
-              stageTimeoutOverrideMs,
+              finalTimeoutMs,
               tier !== 'simple' || intakeOutput.fallbackUsed || reasoningOutput.fallbackUsed
                 ? 'escalation' : 'routine'
             )

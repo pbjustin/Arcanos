@@ -16,6 +16,10 @@ import { runGamingSourceAcquisitionPreview } from './shared/gaming/gamingSourceA
 import { runGamingStructuredEvidencePreview } from './shared/gaming/gamingStructuredEvidencePreviewFixture.js';
 import { runGamingCurrentnessPreview, GAMING_ADVISORY_FRESHNESS_PREVIEW_VERSION } from './shared/gaming/gamingCurrentnessPreviewFixture.js';
 import {
+  assertGamingGenerationBudgetPreviewFixture,
+  GAMING_GENERATION_BUDGET_PREVIEW_VERSION,
+} from '@shared/gaming/gamingGenerationBudgetPreviewFixture.js';
+import {
   createIosGatewayPreviewFixture,
   IOS_GATEWAY_PREVIEW_CONTRACT,
   isIosGatewayPreviewAdmission,
@@ -10110,6 +10114,25 @@ export function createNativePrPreviewApplication(
             );
             return;
           }
+          try {
+            assertGamingGenerationBudgetPreviewFixture();
+          } catch {
+            sendBoundedJsonResponse(
+              request,
+              response,
+              { error: 'PREVIEW_GAMING_GENERATION_BUDGET_CONTRACT_INVALID' },
+              {
+                logEvent: 'native_pr_preview.gaming_generation_budget_invalid',
+                maxBytes: MAX_GAMING_QUERY_RESPONSE_BYTES,
+                statusCode: 503,
+              }
+            );
+            return;
+          }
+          response.setHeader(
+            NATIVE_PR_PREVIEW_GAMING_CONTRACT.generationBudgetProofHeader,
+            GAMING_GENERATION_BUDGET_PREVIEW_VERSION
+          );
           response.setHeader(
             NATIVE_PR_PREVIEW_GAMING_CONTRACT.currentnessProofHeader,
             NATIVE_PR_PREVIEW_GAMING_CONTRACT.currentnessProofVersion
