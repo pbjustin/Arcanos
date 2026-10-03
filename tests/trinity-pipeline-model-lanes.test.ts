@@ -178,7 +178,7 @@ describe('Trinity model lanes at the actual bounded provider boundary', () => {
     expect(result.activeModel).toBe(authorityModel);
   });
 
-  it('withholds Gaming final-answer audit admission after bounded final-authority recovery', async () => {
+  it('aborts Gaming final-authority timeout without retrying or admitting the answer audit', async () => {
     let authorityCalls = 0;
     responsesCreate.mockImplementation(async (payload: ResponseCreateParamsNonStreaming) => {
       if (payload.model === authorityModel && authorityCalls++ === 0) {
@@ -187,20 +187,18 @@ describe('Trinity model lanes at the actual bounded provider boundary', () => {
       return syntheticResponse(payload);
     });
     const gamingAudit = jest.fn(async () => {
-      throw new Error('Gaming audit must not admit recovery fallback.');
+      throw new Error('Gaming audit must not admit timed-out generation.');
     });
-    const result = await run(simplePrompt, {
+    await expect(run(simplePrompt, {
       sourceEndpoint: 'arcanos-gaming.guide', gamingGuideIntakePolicy: 'compact-v1',
       gamingClearAnswerAudit: gamingAudit,
-    });
+    })).rejects.toMatchObject({ name: 'AbortError', message: 'Synthetic final timeout', timeoutPhase: 'final' });
     expect(requests().map(payload => payload.model)).toEqual([
-      'gpt-6-luna', 'gpt-6.1-sol', authorityModel, authorityModel,
+      'gpt-6-luna', 'gpt-6.1-sol', authorityModel,
     ]);
+    expect(requests().at(-1)).not.toHaveProperty('reasoning');
+    expect(authorityCalls).toBe(1);
     expect(gamingAudit).not.toHaveBeenCalled();
-    expect(result.fallbackFlag).toBe(true);
-    expect(result.fallbackSummary.finalFallbackUsed).toBe(true);
-    expect(result.activeModel).toBe(authorityModel);
-    expect(result.gamingClearAudit).toBeUndefined();
   });
 
   it('accepts a direct-answer override only when it confirms configured authority', async () => {

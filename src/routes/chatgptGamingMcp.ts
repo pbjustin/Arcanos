@@ -2,20 +2,23 @@ import express, { type RequestHandler } from 'express';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { CallToolRequestSchema, ListToolsRequestSchema, type Tool } from '@modelcontextprotocol/sdk/types.js';
-import { runWithRequestAbortTimeout } from '@arcanos/runtime';
+import { getRequestAbortSignal, getRequestRemainingMs, runWithRequestAbortTimeout } from '@arcanos/runtime';
 import { createClientDisconnectAbortScope } from '@shared/http/clientDisconnectAbort.js';
 import { createRateLimitMiddleware } from '@platform/runtime/security.js';
 import { config as runtimeConfig } from '@platform/runtime/config.js';
 import { publicProviderRateLimit, resolvePublicProviderClientIdentity } from '@transport/http/middleware/publicProviderAdmission.js';
 import { GAMING_MCP_PATH, GAMING_METADATA_PATH, gamingMcpTools, isGamingMcpToolName, isGamingMcpWrite, isGamingMcpInput } from '@shared/chatgpt/gamingMcpContract.js';
+import { resolveGamingExecutionBudget } from '@shared/gaming/gamingExecutionBudgetCore.js';
+import { getGamingModuleTimeoutMs } from '@services/gamingConfig.js';
+import type { ChatGptGamingToolName } from '@arcanos/protocol';
 import { createGamingTokenVerifier, gamingAuthChallenge, gamingPrincipalActorKey, gamingProtectedResourceMetadata,
   hasGamingPermission, readGamingAuthConfiguration, type GamingAuthConfiguration } from '../chatgpt/gamingAuth.js';
 import type { ChatGptPrincipal } from '../chatgpt/auth.js';
 import { executeGamingMcp, GamingMcpError } from '../chatgpt/gaming.js';
 
-const providerTools = new Set(['arcanos_gaming_query', 'arcanos_gaming_hybrid_query', 'arcanos_gaming_submit_candidates']);
-const timeouts: Record<string, number> = { arcanos_gaming_query: 60_000, arcanos_gaming_canary: 5_000,
-  arcanos_gaming_hybrid_query: 38_000, arcanos_gaming_submit_candidates: 38_000,
+const providerTools = new Set<ChatGptGamingToolName>(['arcanos_gaming_query', 'arcanos_gaming_hybrid_query', 'arcanos_gaming_submit_candidates']);
+// Provider-capable reads share the execution envelope; fixtures/status and durable writes stay bounded.
+const boundedOperationTimeouts: Partial<Record<ChatGptGamingToolName, number>> = { arcanos_gaming_canary: 5_000,
   arcanos_gaming_ingestion_status: 10_000, arcanos_gaming_ingest_sources: 20_000,
   arcanos_gaming_refresh_sources: 20_000, arcanos_gaming_ingest_candidates: 38_000 };
 
@@ -96,10 +99,20 @@ export function createChatGptGamingMcpRouter(options: {
           ? [gamingAuthChallenge(configuration, write, 'insufficient_scope')] : [] } };
       if (!isGamingMcpToolName(name)) return { isError: true, content: [{ type: 'text', text: 'GAMING_TOOL_UNAVAILABLE' }] };
       if (!isGamingMcpInput(name, request.params.arguments)) return { isError: true, content: [{ type: 'text', text: 'GAMING_INPUT_INVALID' }] };
-      const signal = AbortSignal.any([disconnect.signal, extra.signal]);
+      const inheritedSignal = getRequestAbortSignal();
+      const signal = AbortSignal.any([disconnect.signal, extra.signal, ...(inheritedSignal ? [inheritedSignal] : [])]);
+      const requestRemainingMs = getRequestRemainingMs();
+      const executionBudget = resolveGamingExecutionBudget({ moduleTimeoutMs: getGamingModuleTimeoutMs(), requestRemainingMs });
+      const operationCapMs = options.timeoutMs === undefined ? executionBudget.mcpOperationTimeoutMs
+        : resolveGamingExecutionBudget({ moduleTimeoutMs: options.timeoutMs, requestRemainingMs }).mcpOperationTimeoutMs;
+      const mcpOperationTimeoutMs = Math.min(executionBudget.mcpOperationTimeoutMs,
+        providerTools.has(name) ? executionBudget.mcpOperationTimeoutMs : boundedOperationTimeouts[name] ?? 0,
+        operationCapMs);
+      req.logger?.info?.('gaming.mcp.execution_budget', { mcpOperationTimeoutMs, requestRemainingMs });
+      if (mcpOperationTimeoutMs <= 0) return { isError: true, content: [{ type: 'text', text: 'GAMING_TIMEOUT' }] };
       let aborted = false;
       try {
-        const output = await runWithRequestAbortTimeout({ timeoutMs: Math.min(timeouts[name], Math.max(1, options.timeoutMs ?? timeouts[name])),
+        const output = await runWithRequestAbortTimeout({ timeoutMs: mcpOperationTimeoutMs,
           parentSignal: signal, abortMessage: 'Gaming request timed out.', onAbort: () => { aborted = true; } },
         () => execute(principal, name, request.params.arguments, { requestId: req.requestId, traceId: req.traceId,
           autoStoreApproved: configuration.status === 'ready' && configuration.autoStoreApproved }));

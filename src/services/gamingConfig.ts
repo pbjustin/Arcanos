@@ -1,6 +1,7 @@
 import { getEnv, getEnvBoolean, getEnvIntegerAtLeast, getEnvNumber, getOptionalEnvIntegerAtLeast } from "@platform/runtime/env.js";
 import type { GamingMode } from "@services/gamingModes.js";
-import { GAMING_REQUEST_TIMEOUT_HEADROOM_MS, resolveGamingGenerationBudget } from "@shared/gaming/gamingGenerationBudgetCore.js";
+import { resolveGamingGenerationBudget } from "@shared/gaming/gamingGenerationBudgetCore.js";
+import { resolveGamingExecutionBudget } from "@shared/gaming/gamingExecutionBudgetCore.js";
 
 export {
   DEFAULT_GAMING_STAGE_TIMEOUT_MS, DEFAULT_GAMING_GUIDE_STAGE_TIMEOUT_MS,
@@ -9,8 +10,13 @@ export {
   GAMING_GENERATION_TERMINAL_HEADROOM_MS, resolveGamingGenerationBudget,
   type GamingGenerationStage
 } from "@shared/gaming/gamingGenerationBudgetCore.js";
+export {
+  DEFAULT_GAMING_MODULE_TIMEOUT_MS, DEFAULT_GAMING_PIPELINE_TIMEOUT_MS,
+  DEFAULT_GAMING_GUIDE_PIPELINE_TIMEOUT_MS, GAMING_PROVIDER_BACKED_MCP_TIMEOUT_MS,
+  GAMING_EXECUTION_OUTER_HEADROOM_MS, GAMING_PROVIDER_DISPATCH_HEADROOM_MS,
+  resolveGamingExecutionBudget
+} from "@shared/gaming/gamingExecutionBudgetCore.js";
 
-export const DEFAULT_GAMING_MODULE_TIMEOUT_MS = 60_000;
 export const DEFAULT_GAMING_WEB_CONTEXT_CHARS = 5_000;
 export const DEFAULT_GAMING_WEB_CONTEXT_MAX_URLS = 15;
 export const DEFAULT_GAMING_WEB_CONTEXT_FETCH_TIMEOUT_MS = 5_000;
@@ -19,8 +25,6 @@ export const DEFAULT_GAMING_RAG_MAX_CHUNKS = 6;
 export const DEFAULT_GAMING_RAG_CHUNK_CHARS = 900;
 export const DEFAULT_GAMING_RAG_META_TTL_MS = 15 * 60_000;
 export const DEFAULT_GAMING_RAG_GUIDE_TTL_MS = 24 * 60 * 60_000;
-export const DEFAULT_GAMING_PIPELINE_TIMEOUT_MS = 35_000;
-export const DEFAULT_GAMING_GUIDE_PIPELINE_TIMEOUT_MS = 50_000;
 export const DEFAULT_GAMING_DISCOVERY_SEARCH_RESULT_LIMIT = 8;
 export const DEFAULT_GAMING_DISCOVERY_FETCH_CANDIDATE_LIMIT = 3;
 export const DEFAULT_GAMING_DISCOVERY_TIMEOUT_MS = 4_000;
@@ -45,7 +49,6 @@ const HARD_MAX_GAMING_DISCOVERY_BUDGET_MS = 15_000;
 const HARD_MAX_GAMING_DISCOVERY_CACHE_TTL_MS = 24 * 60 * 60_000;
 const HARD_MAX_GAMING_DISCOVERY_CACHE_ENTRIES = 500;
 const HARD_MAX_GAMING_DISCOVERY_PROVIDER_RESPONSE_BYTES = 1_000_000;
-export const GAMING_PROVIDER_DISPATCH_HEADROOM_MS = 5_000;
 
 /** Operator limits are caps, not adaptive defaults: mode-specific wins over generic. */
 export function getGamingConfiguredStageTimeoutMs(mode: GamingMode): number | undefined {
@@ -54,11 +57,9 @@ export function getGamingConfiguredStageTimeoutMs(mode: GamingMode): number | un
 }
 
 export function getGamingModuleTimeoutMs(): number {
-  return getEnvIntegerAtLeast(
-    "ARCANOS_GAMING_MODULE_TIMEOUT_MS",
-    DEFAULT_GAMING_MODULE_TIMEOUT_MS,
-    1
-  );
+  return resolveGamingExecutionBudget({
+    moduleTimeoutMs: getOptionalEnvIntegerAtLeast("ARCANOS_GAMING_MODULE_TIMEOUT_MS", 1)
+  }).mcpOperationTimeoutMs;
 }
 
 export function getGamingWebContextMaxChars(): number {
@@ -255,40 +256,25 @@ export function getGamingDiscoveryMaxProviderResponseBytes(): number {
   ), HARD_MAX_GAMING_DISCOVERY_PROVIDER_RESPONSE_BYTES);
 }
 
-function clampToRequestRemaining(timeoutMs: number, remainingRequestMs: number | null): number {
-  if (remainingRequestMs === null) {
-    return timeoutMs;
-  }
-
-  return Math.max(1, Math.min(timeoutMs, remainingRequestMs - GAMING_REQUEST_TIMEOUT_HEADROOM_MS));
-}
-
-function getDefaultGamingPipelineTimeoutMs(mode: GamingMode): number {
-  const modeDefault = mode === "guide" ? DEFAULT_GAMING_GUIDE_PIPELINE_TIMEOUT_MS : DEFAULT_GAMING_PIPELINE_TIMEOUT_MS;
-  const configuredModuleTimeoutMs = getOptionalEnvIntegerAtLeast("ARCANOS_GAMING_MODULE_TIMEOUT_MS", 1);
-  if (configuredModuleTimeoutMs !== undefined) {
-    const moduleBoundTimeoutMs = Math.max(1, configuredModuleTimeoutMs - GAMING_PROVIDER_DISPATCH_HEADROOM_MS);
-    return configuredModuleTimeoutMs > DEFAULT_GAMING_MODULE_TIMEOUT_MS
-      ? Math.max(modeDefault, moduleBoundTimeoutMs)
-      : Math.min(modeDefault, moduleBoundTimeoutMs);
-  }
-
-  return modeDefault;
+/** Mode-specific pipeline override wins; all operator values remain parent-bounded caps. */
+export function getGamingConfiguredPipelineTimeoutMs(mode: GamingMode): number | undefined {
+  return getOptionalEnvIntegerAtLeast(`ARCANOS_GAMING_${mode.toUpperCase()}_PIPELINE_TIMEOUT_MS`, 1)
+    ?? getOptionalEnvIntegerAtLeast("ARCANOS_GAMING_PIPELINE_TIMEOUT_MS", 1);
 }
 
 export function getGamingPipelineTimeoutMs(
   mode: GamingMode,
   remainingRequestMs: number | null
 ): number {
-  const fallback = getDefaultGamingPipelineTimeoutMs(mode);
-  const genericTimeoutMs = getEnvIntegerAtLeast("ARCANOS_GAMING_PIPELINE_TIMEOUT_MS", fallback, 1);
-  const modeTimeoutMs = getEnvIntegerAtLeast(
-    `ARCANOS_GAMING_${mode.toUpperCase()}_PIPELINE_TIMEOUT_MS`,
-    genericTimeoutMs,
-    1
-  );
+  return getGamingExecutionBudget(mode, remainingRequestMs).pipelineTimeoutMs;
+}
 
-  return clampToRequestRemaining(modeTimeoutMs, remainingRequestMs);
+export function getGamingExecutionBudget(mode: GamingMode, remainingRequestMs: number | null) {
+  return resolveGamingExecutionBudget({
+    moduleTimeoutMs: getGamingModuleTimeoutMs(),
+    requestRemainingMs: remainingRequestMs,
+    configuredPipelineTimeoutMs: getGamingConfiguredPipelineTimeoutMs(mode)
+  });
 }
 
 export function getGamingStageTimeoutMs(mode: GamingMode, pipelineTimeoutMs: number): number {

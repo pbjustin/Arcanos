@@ -1953,9 +1953,9 @@ This table mirrors high-impact runtime keys and active operator controls in `.en
 | `TRINITY_MULT_SIMPLE` | `1.0` | Multiplier for simple Trinity calls. |
 | `TRINITY_MULT_COMPLEX` | `1.4` | Multiplier for complex Trinity calls. |
 | `TRINITY_MULT_CRITICAL` | `1.8` | Multiplier for critical Trinity calls. |
-| `ARCANOS_GAMING_MODULE_TIMEOUT_MS` | `60000` (commented) | ARCANOS:GAMING module dispatch timeout. Raising it can expand provider pipeline defaults while preserving normal mode defaults at the documented 60s budget. |
-| `ARCANOS_GAMING_PIPELINE_TIMEOUT_MS` | `35000` (commented) | Generic Gaming provider pipeline timeout for guide/build/meta when a mode-specific override is not set. |
-| `ARCANOS_GAMING_GUIDE_PIPELINE_TIMEOUT_MS` | `50000` (commented) | Guide-mode Gaming provider pipeline timeout; kept below the module dispatch timeout so provider stalls become controlled generation timeouts. |
+| `ARCANOS_GAMING_MODULE_TIMEOUT_MS` | `60000` (commented) | ARCANOS:GAMING module and provider-capable MCP operation cap, bounded above by the shared 60s execution envelope. Lower limits narrow the pipeline; larger values never expand the safe envelope. |
+| `ARCANOS_GAMING_PIPELINE_TIMEOUT_MS` | `50000` (commented) | Generic guide/build/meta pipeline cap, bounded above by 50s and the remaining module/caller deadline minus 10s outer headroom. |
+| `ARCANOS_GAMING_GUIDE_PIPELINE_TIMEOUT_MS` | `50000` (commented) | Guide pipeline cap overriding the generic value. `ARCANOS_GAMING_BUILD_PIPELINE_TIMEOUT_MS` and `ARCANOS_GAMING_META_PIPELINE_TIMEOUT_MS` follow the same precedence and parent bounds. |
 | `ARCANOS_GAMING_STAGE_TIMEOUT_MS` | unset (`12000` commented override example) | Explicit generic Gaming model-stage cap. When unset, intake retains its 12s build/meta or 24s guide cap; reasoning/final budgets adapt to remaining time and downstream reserves. |
 | `ARCANOS_GAMING_GUIDE_STAGE_TIMEOUT_MS` | unset (`24000` commented override example) | Explicit guide model-stage cap, taking precedence over the generic stage override. Every explicit cap remains authoritative within the safe remaining deadline. |
 | `ARCANOS_GAMING_WEB_CONTEXT_CHARS` | `5000` (commented) | Per-guide snippet size used by Gaming guide URL enrichment. |

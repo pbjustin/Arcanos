@@ -90,9 +90,13 @@ provider errors, exhausted runtime, and cancellation remain terminal/degraded.
 Successful-looking fallback, dry-run, or incomplete Trinity results are not
 promoted to completed guide answers.
 
-Default guide budgets retain a 60-second module window, 50-second pipeline
-window, 24-second intake cap, and 500 ms runtime safety buffer. Build/meta retain
-their 35-second pipeline windows and 12-second intake caps. Reasoning and final
+Provider-capable Gaming MCP operations share a 60-second maximum/default module
+window. Guide/build/meta share a 50-second maximum/default pipeline window,
+with 10 seconds of required outer headroom for acquisition, setup, serialization
+and cancellation cleanup. A shorter module or remaining caller deadline clamps
+the pipeline down; an exhausted envelope stops before Trinity dispatch. Guide
+retains its 24-second intake cap; build/meta retain their 12-second intake caps.
+The runtime safety buffer remains 500 ms. Reasoning and final
 model stages use the remaining safe generation budget described below, with
 existing request-deadline clamping and session/global provider limits. Ordinary
 guide requests retain the full Trinity sequence even when the question asks to
@@ -121,21 +125,66 @@ retain audit and terminal reserves without reserving an unused final stage.
 Insufficient usable budget stops model dispatch; it never disables a timeout or
 extends a parent deadline.
 
-With a 35,000 ms build pipeline and 5,000 ms already consumed by intake, reasoning
-can receive 20,500 ms when the parent request permits it. It therefore does not
-abort solely at the old default 12,000 ms boundary. Completing reasoning earlier
-leaves more time for final generation. The overall request, Gaming pipeline,
+`resolveGamingExecutionBudget` owns the enclosing MCP/module/pipeline relationship;
+`resolveGamingGenerationBudget` owns the dynamic stage allocation. The invariants
+are operation timeout >= pipeline timeout + outer headroom, and stage timeout
+<= remaining pipeline/request/runtime/watchdog budget minus downstream reserves.
+All dispatched timeouts are positive and finite. Zero usable time stops dispatch.
+An operator override cannot expand a parent or remove required reserves.
+
+With a 60,000 ms caller and 50,000 ms pipeline, a deterministic sequence of
+500 ms model validation, 4,000 ms intake and 17,317 ms reasoning leaves a
+23,683 ms final-model allocation while retaining the 3,000 ms answer audit,
+1,000 ms terminal headroom and 500 ms runtime safety buffer. A 12,000 ms final
+completion and 3,000 ms accepted audit finish at 36,817 ms, crossing the previous
+8,515 ms final boundary safely. A 30,000 ms caller instead supplies a 20,000 ms
+pipeline; the same slow reasoning then times out cleanly within its smaller
+allocation. These are fake-time regression results, not live provider evidence.
+The overall request, Gaming pipeline,
 Trinity watchdog, abort signal, runtime safety and provider dispatch headroom
 remain enforced; each stage remains finite.
 
 For both pipeline and stage configuration, a valid
 `ARCANOS_GAMING_<MODE>_*_TIMEOUT_MS` override takes precedence over the generic
-`ARCANOS_GAMING_*_TIMEOUT_MS` override. Pipeline defaults remain mode-specific,
-including the existing module-limit-derived default. Stage overrides are
+`ARCANOS_GAMING_*_TIMEOUT_MS` override. All pipeline modes default to 50,000 ms;
+the selected override is capped at 50,000 ms and the smaller module/caller envelope
+minus 10,000 ms outer headroom. The module and provider-capable MCP cap is 60,000 ms.
+Missing or invalid overrides retain defaults; valid lower overrides remain caps.
+Stage overrides are
 optional: an explicit value caps every model stage and may narrow the adaptive
 window; it cannot exceed safe remaining time or consume reserved headroom.
 Leaving stage overrides unset enables adaptive reasoning/final allocation.
 The commented 12s/24s configuration examples are explicit limits if enabled.
+
+The shared provider class applies to `arcanos_gaming_query`,
+`arcanos_gaming_hybrid_query` and `arcanos_gaming_submit_candidates`. Canary
+retains 5,000 ms, ingestion status 10,000 ms, source ingest/refresh writes
+20,000 ms and candidate ingestion writes 38,000 ms. Every operation also respects
+a shorter caller deadline and its inherited cancellation signal. Tool names and
+schemas remain unchanged. A final-model timeout on the Gaming path does not enter
+Trinity's automatic simple-request recovery; the caller receives timeout recovery
+and can explicitly retry the same operation with retained valid evidence.
+
+Safe structured budget telemetry includes operation/pipeline timeouts, request,
+pipeline and generation remaining time, stage allocation, downstream and outer
+reserves, provider elapsed time and timeout phase. Existing Trinity stage logs
+retain elapsed stage time. Raw evidence, prompts, OAuth identities, tokens and
+reasoning content are excluded from these budget events.
+
+### Post-merge live acceptance (not executed by this change)
+
+After a separately authorized merge and deployment, request **"bleed Samurai build"**
+for **Elden Ring**, mode **build**, through the installed Gaming MCP integration.
+Verify accepted gameplay evidence and an attempted currentness check. If
+currentness remains unverified, keep the visible may-be-outdated qualification.
+Inspect safe telemetry to verify adaptive reasoning can complete at approximately
+17 seconds and final synthesis receives the realistic remaining model allowance.
+Successful grounded completion must return `state: answer_ready`, `nextAction:
+answer`, `evidenceSelected: true`, `freshnessStatus: unverified` and the qualification
+when currentness remains unverified. If the complete safe provider deadline is
+exceeded, require `state: temporarily_unavailable`, `nextAction: retry_later` and
+`reason: PROVIDER_TIMEOUT_WITH_EVIDENCE`, with no automatic provider retry or new
+discovery/currentness round. No live acceptance call is part of this PR.
 
 Hybrid maps an actual upstream generation timeout with accepted evidence to
 `state: temporarily_unavailable`, `nextAction: retry_later`, and

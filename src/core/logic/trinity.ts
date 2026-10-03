@@ -1691,7 +1691,7 @@ export async function runThroughBrain(
       });
     } catch (error) {
       throwIfRequestAborted();
-      if (!gamingGuideIntakePolicy && tier === 'simple' && isAbortError(error)) {
+      if (!gamingAnswerAudit && !gamingGuideIntakePolicy && tier === 'simple' && isAbortError(error)) {
         intakeRecoveryAction = recordTrinityStageFailure({
           stage: 'intake',
           error: resolveErrorMessage(error),
@@ -1759,7 +1759,7 @@ export async function runThroughBrain(
       });
     } catch (error) {
       throwIfRequestAborted();
-      if (!gamingGuideIntakePolicy && tier === 'simple' && isAbortError(error)) {
+      if (!gamingAnswerAudit && !gamingGuideIntakePolicy && tier === 'simple' && isAbortError(error)) {
         reasoningRecoveryAction = recordTrinityStageFailure({
           stage: 'reasoning',
           error: resolveErrorMessage(error),
@@ -1987,7 +1987,7 @@ export async function runThroughBrain(
         });
       } catch (error) {
         throwIfRequestAborted();
-        if (tier === 'simple' && isAbortError(error)) {
+        if (!gamingAnswerAudit && !gamingGuideIntakePolicy && tier === 'simple' && isAbortError(error)) {
           finalRecoveryAction = recordTrinityStageFailure({
             stage: 'final',
             error: resolveErrorMessage(error),

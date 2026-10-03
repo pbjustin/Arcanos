@@ -12,7 +12,7 @@ import {
 import {
   GAMING_RUNTIME_BUDGET_SAFETY_BUFFER_MS,
   getGamingConfiguredStageTimeoutMs,
-  getGamingPipelineTimeoutMs,
+  getGamingExecutionBudget,
   getGamingWebContextMaxChars,
   resolveGamingGenerationBudget,
   type GamingGenerationStage
@@ -1159,20 +1159,38 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
   }
 
   const requestRemainingMsAtDispatch = getRequestRemainingMs();
-  const pipelineTimeoutMs = getGamingPipelineTimeoutMs(params.mode, requestRemainingMsAtDispatch);
+  const executionBudget = getGamingExecutionBudget(params.mode, requestRemainingMsAtDispatch);
+  const { pipelineTimeoutMs } = executionBudget;
+  const mcpOperationTimeoutMs = getRequestAbortContext()?.timeoutMs ?? executionBudget.mcpOperationTimeoutMs;
   const configuredStageTimeoutMs = getGamingConfiguredStageTimeoutMs(params.mode);
   const providerStartedAt = Date.now();
   let lastGenerationBudget = resolveGamingGenerationBudget({ mode: params.mode, stage: "intake",
     pipelineTimeoutMs, requestRemainingMs: requestRemainingMsAtDispatch, configuredStageTimeoutMs });
+  let lastGenerationStage: GamingGenerationStage = "intake";
+  let lastAdditionalDownstreamReserveMs = 0;
   const stageTimeoutMs = lastGenerationBudget.effectiveStageTimeoutMs;
-  const generationBudgetLog = () => ({ pipelineTimeoutMs,
-    effectiveStageTimeoutMs: lastGenerationBudget.effectiveStageTimeoutMs,
-    requestRemainingMsAtDispatch, generationRemainingMs: lastGenerationBudget.generationRemainingMs,
-    generationDownstreamReserveMs: lastGenerationBudget.downstreamReserveMs, configuredStageTimeoutMs: configuredStageTimeoutMs ?? null,
-    evidenceSelected: retrievalHadUsableSources, freshnessDisposition: resolveGamingFreshnessDisposition(resolvedParams) });
+  const generationBudgetLog = () => {
+    const providerElapsedMs = Math.max(0, Date.now() - providerStartedAt);
+    const requestRemainingMs = requestRemainingMsAtDispatch === null
+      ? null : Math.max(0, requestRemainingMsAtDispatch - providerElapsedMs);
+    const remaining = resolveGamingGenerationBudget({ mode: params.mode, stage: lastGenerationStage,
+      pipelineTimeoutMs, pipelineElapsedMs: providerElapsedMs, requestRemainingMs,
+      additionalDownstreamReserveMs: lastAdditionalDownstreamReserveMs });
+    return { mcpOperationTimeoutMs, pipelineTimeoutMs, requestRemainingMs,
+      pipelineRemainingMs: remaining.pipelineRemainingMs, generationRemainingMs: remaining.generationRemainingMs,
+      effectiveStageTimeoutMs: lastGenerationBudget.effectiveStageTimeoutMs,
+      downstreamReserveMs: lastGenerationBudget.downstreamReserveMs,
+      generationDownstreamReserveMs: lastGenerationBudget.downstreamReserveMs,
+      outerHeadroomMs: executionBudget.outerHeadroomMs, providerDispatchHeadroomMs: executionBudget.providerDispatchHeadroomMs,
+      terminalReserveMs: executionBudget.terminalReserveMs, providerElapsedMs, requestRemainingMsAtDispatch,
+      configuredStageTimeoutMs: configuredStageTimeoutMs ?? null,
+      evidenceSelected: retrievalHadUsableSources, freshnessDisposition: resolveGamingFreshnessDisposition(resolvedParams) };
+  };
   const resolveModelStageTimeoutMs = (stage: GamingGenerationStage, runtimeBudget: RuntimeBudget, remainingWatchdogMs: number,
     additionalDownstreamReserveMs = 0): number => {
     const elapsedMs = Date.now() - providerStartedAt;
+    lastGenerationStage = stage;
+    lastAdditionalDownstreamReserveMs = additionalDownstreamReserveMs;
     lastGenerationBudget = resolveGamingGenerationBudget({ mode: params.mode, stage, pipelineTimeoutMs,
       pipelineElapsedMs: elapsedMs, requestRemainingMs: requestRemainingMsAtDispatch === null
         ? null : Math.max(0, requestRemainingMsAtDispatch - elapsedMs),
@@ -1200,6 +1218,10 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
 
   let trinityResult: Awaited<ReturnType<typeof runTrinityWritingPipeline>>;
   try {
+    // A zero budget must stop before runtime constructors normalize it upward.
+    if (pipelineTimeoutMs <= 0) {
+      throw Object.assign(createAbortError("Gaming execution budget exhausted."), { timeoutPhase: "provider" });
+    }
     // Trinity selects the actual first model stage before its allocator admits
     // dispatch; direct answers do not need an unused intake/final-stage reserve.
     trinityResult = await runWithRequestAbortTimeout(
@@ -1509,6 +1531,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
   });
   logger.info("gaming.provider.end", {
     ...baseLogContext,
+    ...generationBudgetLog(),
     provider: "trinity",
     elapsedMs: Date.now() - providerStartedAt,
     generationElapsedMs: Date.now() - providerStartedAt,

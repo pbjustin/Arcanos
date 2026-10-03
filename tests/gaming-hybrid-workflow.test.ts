@@ -251,11 +251,11 @@ describe('Gaming hybrid authenticated handoff', () => {
     expect((await workflow.query(query, context)).body.state).toBe('discovery_required');
     expect(retrieve).toHaveBeenCalledTimes(2);
   });
-  it('reports a provider timeout with evidence and waits for a client retry without another provider call', async () => {
+  it.each(['reasoning', 'final'])('reports a %s provider timeout with retained evidence and waits for a client retry', async timeoutPhase => {
     const { workflow, generate, retrieve } = setup(knowledge());
     generate.mockImplementationOnce(async (_input: unknown, prepared: any) => ({ ok: true, route: 'gaming', mode: 'guide',
       data: { response: 'Answer generation timed out.', sources: prepared.knowledge.sources,
-        grounding: { groundingStatus: 'grounded' }, fallbackReason: 'INTAKE_UPSTREAM_TIMEOUT', timeoutPhase: 'reasoning' } } as any));
+        grounding: { groundingStatus: 'grounded' }, fallbackReason: 'INTAKE_UPSTREAM_TIMEOUT', timeoutPhase } } as any));
     const failed = await workflow.query(query, context);
     expect(failed).toMatchObject({ status: 503, body: { state: 'temporarily_unavailable', nextAction: 'retry_later',
       reason: 'PROVIDER_TIMEOUT_WITH_EVIDENCE', sourceKnown: true, evidenceSelected: true, freshnessStatus: 'current' } });
