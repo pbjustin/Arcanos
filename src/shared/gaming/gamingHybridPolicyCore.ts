@@ -89,3 +89,40 @@ export function isGamingApprovedArtifactCurrent(input: {
 }): boolean {
   return input.approvedContentHash === input.documentContentHash && !input.instructionFiltered && !input.truncated;
 }
+
+/** Identity for quota accounting only; admission and acquisition remain authoritative. */
+export function normalizeGamingHybridCandidateUrl(value: string): string {
+  try { const url = new URL(value); url.hash = ''; return url.href; } catch { return value.trim(); }
+}
+
+/** Original supplied links are required evidence, never discovery substitutes. */
+export function gamingHybridRequiredGuideUrls(question: string): string[] {
+  return [...new Set((question.match(/https?:\/\/[^\s<>\[\]{}]+/giu) ?? [])
+    .map(value => value.replace(/[),.;!?]+$/gu, '')).map(normalizeGamingHybridCandidateUrl))].slice(0, 7);
+}
+
+/** Parse targets without rewriting approved source URLs or swallowing sentence punctuation. */
+export function gamingHybridCitationTargets(answer: string): string[] {
+  const targets: string[] = [];
+  const withoutLinks = answer.replace(/\[[^\]]*\]\((https?:\/\/[^\s)]+)(?:\s+[^)]*)?\)/gu, (_match, target: string) => {
+    targets.push(target); return '';
+  });
+  for (const value of withoutLinks.match(/https?:\/\/[^\s<>]+/gu) ?? []) targets.push(value.replace(/[),.;!?]+$/gu, ''));
+  return [...new Set(targets)];
+}
+
+/** Backend receipts for the ordinary pipeline's supplied-guide grounding guard. */
+export interface GamingHybridSuppliedGuideAcquisition { requestedUrl: string; sourceId: string; publicUrl: string }
+export function projectGamingHybridSuppliedGuides(input: {
+  requiredUrls: readonly string[];
+  accepted: readonly { candidateId: string; actorScopeHash: string; workflowId?: string; expiresAt: number;
+    publicUrl: string; document: { requestedUrl: string } }[];
+  knowledge: GamingStoredKnowledgeContext; actorScopeHash: string; workflowId: string; now: number;
+}): GamingHybridSuppliedGuideAcquisition[] {
+  return input.accepted.filter(candidate => candidate.actorScopeHash === input.actorScopeHash
+    && candidate.workflowId === input.workflowId && candidate.expiresAt > input.now
+    && input.requiredUrls.some(url => normalizeGamingHybridCandidateUrl(url) === normalizeGamingHybridCandidateUrl(candidate.document.requestedUrl))
+    && input.knowledge.sources.some(source => source.sourceId === candidate.candidateId && source.url === candidate.publicUrl)
+    && input.knowledge.evidence?.some(chunk => chunk.sourceId === candidate.candidateId && chunk.publicUrl === candidate.publicUrl && chunk.text.trim()))
+    .map(candidate => ({ requestedUrl: candidate.document.requestedUrl, sourceId: candidate.candidateId, publicUrl: candidate.publicUrl }));
+}

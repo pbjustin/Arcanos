@@ -16,6 +16,8 @@ export interface GamingStructuralUsability {
   supportingUnitIds: string[];
   missingFields: string[];
   reasonCodes: string[];
+  /** Optional v2 aggregate conflict result; local/v1 tuple policy remains unchanged. */
+  materialConflict?: boolean;
 }
 
 const aliases: Readonly<Record<string, string>> = Object.freeze({
@@ -128,7 +130,7 @@ function requestedFieldBindings(prompt: string, claimShape: GamingStructuralClai
   return bindings;
 }
 
-function conflictingUnits(units: readonly GamingEvidenceUnit[], claimShape: GamingStructuralClaimShape): Set<GamingEvidenceUnit> {
+function conflictingUnits(units: readonly GamingEvidenceUnit[], claimShape: GamingStructuralClaimShape, compareAcrossSources = false): Set<GamingEvidenceUnit> {
   const assertions = new Map<string, { units: GamingEvidenceUnit[]; values: Set<string> }>();
   for (const unit of units) {
     const fields = new Map(unit.fields.map(field => [fieldKey(field.label), normal(field.value)]));
@@ -136,7 +138,7 @@ function conflictingUnits(units: readonly GamingEvidenceUnit[], claimShape: Gami
       : claimShape === 'statistic' ? ['item', 'stat', fields.has('patch') ? 'patch' : 'scope']
       : claimShape === 'patch_change' ? ['mechanic', fields.has('patch') ? 'patch' : 'scope'] : [];
     if (!identityKeys.length || identityKeys.some(key => !fields.get(key))) continue;
-    const identity = JSON.stringify([unit.provenance.sourceUrl, ...identityKeys.map(key => fields.get(key))]);
+    const identity = JSON.stringify([...(compareAcrossSources ? [] : [unit.provenance.sourceUrl]), ...identityKeys.map(key => fields.get(key))]);
     const valueKeys = claimShape === 'location' ? ['resource'] : claimShape === 'statistic' ? ['value', 'unit'] : ['change', 'before', 'after'];
     if (!valueKeys.some(key => fields.get(key))) continue;
     const assertion = JSON.stringify([...valueKeys.map(key => fields.get(key) ?? null), ...(unit.context.qualifiers ?? []).map(normal)]);
@@ -161,7 +163,7 @@ export function markGamingEvidenceUnitConflicts(input: readonly GamingEvidenceUn
 
 /** One record must support a tuple. Extraction, authority, applicability and consent stay separate decisions. */
 export function assessGamingStructuralUsability(input: {
-  units?: readonly GamingEvidenceUnit[]; prompt?: string; game?: string; mode?: 'guide' | 'build' | 'meta'; proseText?: string;
+  units?: readonly GamingEvidenceUnit[]; prompt?: string; game?: string; mode?: 'guide' | 'build' | 'meta'; proseText?: string; compareAcrossSources?: boolean;
 }): GamingStructuralUsability {
   const units = readGamingEvidenceUnits(input.units);
   const usable = units.filter(intact);
@@ -209,7 +211,7 @@ export function assessGamingStructuralUsability(input: {
     const relevant = terms.length > 0 && hasValueAnchor && gamingTermCoverage(unit.text, terms) >= 0.25;
     return { unit, missing, relevant, sameScope, qualified };
   });
-  const conflicts = conflictingUnits(units, claimShape);
+  const conflicts = conflictingUnits(units, claimShape, input.compareAcrossSources);
   const contradictory = (unit: GamingEvidenceUnit) => conflicts.has(unit);
   const supporting = candidates.filter(item => !item.missing.length && item.relevant && item.sameScope && !item.qualified && !contradictory(item.unit));
   const nearest = candidates.filter(item => item.relevant && item.sameScope).sort((a, b) => a.missing.length - b.missing.length)[0];
@@ -217,6 +219,7 @@ export function assessGamingStructuralUsability(input: {
     : nearest?.missing.length ? nearest.missing : requiredFields(claimShape, new Map()).filter(key => !units.some(unit => unit.fields.some(field => fieldKey(field.label) === key)));
   return { hasIntactUsableUnit: usable.length > 0, hasRelevantClaimUnit, hasIndependentProseAnchors, claimShape,
     claimSupported: supporting.length > 0,
+    ...(input.compareAcrossSources ? { materialConflict: conflicts.size > 0 } : {}),
     usableUnitIds: usable.map(unit => unit.id), supportingUnitIds: supporting.map(item => item.unit.id), missingFields,
     reasonCodes: !usable.length ? ['NO_INTACT_STRUCTURAL_UNIT'] : supporting.length ? ['INTACT_RECORD_CLAIM_SUPPORTED']
       : [candidates.some(item => item.relevant && contradictory(item.unit)) ? 'CONTRADICTORY_STRUCTURAL_RECORDS'

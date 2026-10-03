@@ -95,3 +95,59 @@ export function safeGamingEvidenceMetadata(value: string, input: GamingRetrieval
   // prose metadata entirely; internal provenance still retains sanitized heading paths.
   return '';
 }
+
+/** Public labels describe requested topics only; player context never becomes a discovery requirement. */
+export interface GamingRequestRequirement { requirement: string; terms: string[] }
+
+/**
+ * Explicit lists/conjunctions retain their independent requested topics. A single
+ * broad topic is assessed by the established topic floor rather than an invented
+ * universal build checklist. This bounded lexical adapter makes no semantic claim.
+ */
+function gamingRequestClauses(input: GamingRetrievalPolicyInput): string[] {
+  const question = input.prompt.slice(0, 8_000)
+    .replace(/https?:\/\/[^\s)]+/giu, '')
+    // Required-guide identity is enforced separately by backend intake. A
+    // source-selection preamble is not an independent gameplay requirement.
+    .replace(/\b(?:use|using)\s+(?:only|exclusively)\s*([.!?]|$)/giu, '$1')
+    .replace(/\b(?:using|use|according to|based on|from)\s+(?:(?:this|the|a|these|my)\s+)?(?:(?:required|supplied|provided|linked)\s+)?(?:guides?|sources?|articles?)\s*(?:\([^)]*\))?\s*[:,]?\s*/giu, '')
+    .replace(/\b(?:account|user|player|character)\s*(?:id|identifier|name)\s*[:=]\s*\S+/giu, '')
+    .replace(/\b(?:password|token|secret|api[ _-]?key|credential)\s*[:=]\s*\S+/giu, '');
+  const detailStart = /\b(?:including|covering|include|covers?)\s+|\bwith\s+(?=[^.!?]*(?:\band\b|;))/iu.exec(question);
+  const requested = detailStart ? question.slice(detailStart.index + detailStart[0].length) : question;
+  return requested.split(/\s+(?:and|plus|as well as)\s+|[;,]/iu)
+    .filter(clause => buildGamingRetrievalTerms({ game: input.game, prompt: clause }).requestTerms.length > 0);
+}
+
+/** Overflow asks for a narrower scope; it never silently omits requested facts. */
+export function gamingRequestRequirementLimitExceeded(input: GamingRetrievalPolicyInput): boolean {
+  return gamingRequestClauses(input).length > 8;
+}
+
+export function buildGamingRequestRequirements(input: GamingRetrievalPolicyInput): GamingRequestRequirement[] {
+  const clauses = gamingRequestClauses(input);
+  if (clauses.length > 8) return [];
+  const requirements = clauses.map((clause, index) => {
+    const terms = buildGamingRetrievalTerms({ game: input.game, prompt: clause }).requestTerms
+      .filter(term => !['recommend', 'recommended', 'recommendation', 'recommendations', 'provide', 'describe', 'including', 'include', 'cover', 'covering'].includes(term))
+      .filter(term => !/[0-9]{6,}/u.test(term));
+    // This finite diagnostic vocabulary supplies labels only when explicitly
+    // requested. It adds no mandatory facets and contains no player/source text.
+    const clauseWords = new Set(terms);
+    const canonical = [
+      { label: 'weapon configuration', words: ['weapon', 'configuration'] },
+      { label: 'stat allocation', words: ['stat', 'allocation'] },
+      { label: 'stat allocation', words: ['stats', 'allocation'] },
+      { label: 'team composition', words: ['team', 'composition'] },
+      { label: 'upgrade route', words: ['upgrade', 'route'] },
+      { label: 'equipment selection', words: ['equipment', 'selection'] },
+      { label: 'skill selection', words: ['skill', 'selection'] }
+    ].find(facet => facet.words.every(word => clauseWords.has(word)));
+    return { requirement: canonical?.label ?? `requested topic ${index + 1}`, terms };
+  }).filter(requirement => requirement.terms.length > 0 && requirement.requirement.length > 0);
+  // Conjunctions used in a name or polite phrase must not manufacture precise gaps.
+  return requirements.length > 1 && requirements.every(requirement => requirement.terms.length >= 1)
+    ? requirements.map((requirement, index) => ({ ...requirement,
+      requirement: requirements.filter(entry => entry.requirement === requirement.requirement).length > 1
+        ? `${requirement.requirement} (requested topic ${index + 1})` : requirement.requirement })) : [];
+}

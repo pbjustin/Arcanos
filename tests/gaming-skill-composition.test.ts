@@ -63,6 +63,51 @@ afterEach(() => {
 });
 
 describe('Private Gaming source composition, separate from live acceptance', () => {
+  it('provides an exact public v2 replacement recipe without composing or approving missing private inputs', () => {
+    const code = `const {gamingRecoveryCompositionPatch,gamingRules}=await import(${JSON.stringify(pathToFileURL(script).href)}); console.log(JSON.stringify({patch:await gamingRecoveryCompositionPatch(),rules:gamingRules}));`;
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', code], { encoding: 'utf8' });
+    expect(result.status).toBe(0);
+    const { patch, rules } = JSON.parse(result.stdout);
+    expect(patch.status).toBe('PROPOSED_NOT_OWNER_APPROVED');
+    expect(patch.approvedSkillBaseline).toEqual({ sizeBytes: 15_210,
+      sha256: 'a2cd3cfb2eb677eaef47c7fc148b41565b58e051486a49b29df48ee53c048081' });
+    const workflow = readFileSync(path.join(process.cwd(), patch.workflow.path));
+    expect(patch.workflow.sizeBytes).toBe(workflow.length);
+    expect(patch.workflow.sha256).toBe(hash(workflow));
+    expect(patch.workflow.content).toBe(workflow.toString('utf8'));
+    expect(patch.replacement.operation).toBe('replace_exactly_one_complete_marked_workflow');
+    for (const replacement of patch.ruleReplacements) {
+      expect(rules.find((rule: Json) => rule.id === replacement.id).text).toBe(replacement.before);
+      expect(replacement.after).not.toBe(replacement.before);
+    }
+    expect(patch.requirements).toContain('Verify actual private baseline size and hash before applying.');
+    expect(patch.requirements).toContain('Preserve all unrelated baseline bytes and owner-approval records unchanged.');
+    expect(patch.requirements).toContain('Do not update the installed plugin or assign release readiness from this recipe.');
+    const proposed = patch.workflow.content + patch.ruleReplacements.map((rule: Json) => rule.after).join('\n');
+    for (const name of proposed.match(/\barcanos_gaming_[a-z_]+\b/gu) ?? []) {
+      const contract = readJson(path.join(process.cwd(), 'packages/protocol/schemas/v1/tools/arcanos-gaming/contract.schema.json'));
+      expect(Object.keys(contract.tools)).toContain(name);
+    }
+    for (const text of ['expectedRevision', 'replacementAllowed', 'continuationRequired', 'gapAssessmentStatus',
+      'selectedCandidateIds', 'selectedEvidenceIds', 'coverageSatisfied', 'requirementSupport',
+      'six distinct', '24 seconds', 'same workflowId', 'Actually use available Web Search',
+      'private player information', 'provider timed out', 'Keep surrounding punctuation outside hyperlink targets']) {
+      expect(proposed).toContain(text);
+    }
+    expect(proposed.indexOf('arcanos_gaming_hybrid_query')).toBeLessThan(proposed.indexOf('Actually use available Web Search'));
+    expect(proposed).not.toContain('queryGamingHybridKnowledge');
+    expect(proposed).not.toContain('submitGamingHybridCandidates');
+    const publicV1 = readFileSync(path.join(process.cwd(), 'docs/gpt/arcanos-gaming-hybrid.instructions.md'));
+    expect(publicV1.length).toBe(7_796);
+    expect(hash(publicV1)).toBe('8a30dad3b83cced79724b58fb21d3f9d538c29f89779f090cd54b1cbdc99e406');
+    const f = fixture();
+    expect(compose(f).status).toBe(0);
+    const legacy = readFileSync(path.join(f.inputRoot, 'mock-composed', skillPath), 'utf8');
+    expect(legacy).toContain('under gaming-hybrid-v1');
+    expect(legacy).toContain('Respect one gameplay round');
+    expect(legacy).not.toContain('gaming-hybrid-v2');
+  });
+
   it('binds approved source, preserves every UTF-8/CRLF section and produces deterministic private files', () => {
     const f = fixture();
     const before = readFileSync(path.join(f.inputRoot, 'published-gpt.json'));

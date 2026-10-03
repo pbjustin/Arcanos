@@ -377,6 +377,13 @@ successful live generation for the retained production timeout case.
 
 ### Hybrid knowledge handoff (`gaming-hybrid-v1`)
 
+The original v1 one-round contract remains supported unchanged. Explicitly
+opted-in v2 reuses this workflow and adds one backend-granted gameplay recovery
+round; see [Gaming discovery recovery](GAMING_DISCOVERY_RECOVERY.md) for version
+binding, selected evidence and coverage contracts, exact accounting, frontend
+instructions and separately authorized rollout. V2 does not change currentness
+qualifications or generation deadlines described here.
+
 The additive authenticated Gaming hybrid Actions reuse stored lexical retrieval,
 the shared document resolver, existing ingestion jobs, source revisions and chunks,
 and the normal Gaming Trinity pipeline. Older gameplay and source Actions retain

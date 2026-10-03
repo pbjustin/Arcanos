@@ -2,14 +2,14 @@ import { createHash, randomUUID } from 'node:crypto';
 import { logger } from '@platform/logging/structuredLogging.js';
 import { normalizeGamingGameIdentity, resolveGamingGuideIdentity } from '@shared/gaming/gamingGameIdentity.js';
 import { classifyGamingDocumentQuality, selectGamingSourceAdmissionUrl } from '@shared/gaming/gamingDocumentIngestionCore.js';
-import { buildGamingRetrievalTerms, gamingTermCoverage } from '@shared/gaming/gamingRetrievalPolicy.js';
+import { buildGamingRetrievalTerms, buildGamingRequestRequirements, gamingTermCoverage } from '@shared/gaming/gamingRetrievalPolicy.js';
 import {
   assessGamingSourcePolicy, extractGamingFreshnessMetadata, classifyGamingQuestionFreshness, gamingSeasonalPatchRequired,
   type GamingFreshnessEvidence
 } from '@shared/gaming/gamingFreshnessCore.js';
 import {
   selectStoredGamingEvidence, formatStoredGamingEvidence,
-  type GamingStoredEvidenceRecord, type GamingStoredKnowledgeContext, type GamingStoredKnowledgeInput
+  type GamingStoredEvidenceRecord, type GamingStoredEvidenceChunk, type GamingStoredKnowledgeContext, type GamingStoredKnowledgeInput
 } from '@shared/gaming/gamingStoredEvidenceCore.js';
 import { filterGamingDocumentInstructions } from './gamingDocumentExtraction.js';
 import { describeGamingDocumentSource, resolveGamingDocument, isResolvedGamingDocumentIdentityVerified, projectGamingDocumentPublicUrl,
@@ -20,13 +20,16 @@ import { getGamingRagChunkChars, getGamingRagMaxChunks, getGamingRagMaxSources, 
 import { createApprovedGamingSourceIngestion, hashGamingApprovedDocument, type GamingSourceGatewayContext } from './gamingSourceIngestion.js';
 import { assessGamingClearSource, gamingClearHistoricalSourceVerified, gamingClearIntactSourceText } from '@shared/gaming/gamingClearSource.js';
 import { GAMING_CLEAR_VERSION, gamingClearHash, type GamingClearAssessment } from '@shared/gaming/gamingClearPolicy.js';
+import { GAMING_HYBRID_LIMITS } from '@shared/gaming/gamingHybridContract.js';
 import { pickGamingPlayerContext } from '@shared/gaming/gamingPlayerContext.js';
 import { assessGamingStructuralUsability } from '@shared/gaming/gamingStructuralEvidence.js';
 import type { GamingStructureDiagnostics } from '@shared/gaming/gamingEvidenceUnits.js';
 import { GAMING_CURRENTNESS_ADAPTER_VERSION } from '@shared/gaming/gamingCurrentnessAdapters.js';
+import { assessGamingClearEvidence, assessGamingRequestCoverage, gamingSelectedEvidenceIds, type GamingRequestCoverageAssessment } from '@shared/gaming/gamingClearEvidence.js';
 
 export const GAMING_HYBRID_CANDIDATE_POLICY_VERSION = 'gaming-hybrid-candidates/v1';
-export const GAMING_HYBRID_CANDIDATE_LIMITS = Object.freeze({ count: 3, artifactTtlMs: 10 * 60_000, totalFetchMs: 12_000 });
+export const GAMING_HYBRID_CANDIDATE_LIMITS = Object.freeze({ count: GAMING_HYBRID_LIMITS.candidates,
+  artifactTtlMs: GAMING_HYBRID_LIMITS.workflowTtlMs, totalFetchMs: GAMING_HYBRID_LIMITS.candidateTimeoutMs });
 export type GamingHybridStoragePolicy = 'transient_only' | 'ask_before_store' | 'auto_store_approved';
 
 /** Every frontend field is only a hint. Only url is used to acquire evidence. */
@@ -70,6 +73,8 @@ export interface GamingHybridAcceptedCandidate {
   assessmentBinding: string;
   sourceContext: GamingStoredKnowledgeInput & { region?: string };
   sourceMetadataBinding: string;
+  /** Server-created content-bound records retained for v2 recovery selection. */
+  evidenceRecords?: GamingStoredEvidenceRecord[];
 }
 
 interface GamingHybridCandidateDependencies {
@@ -102,17 +107,26 @@ function unsafeHints(candidate: GamingHybridCandidateInput): boolean {
 /** Safe acquisition happens once. Full documents stay internal; existing chunks and selection bound context. */
 export async function evaluateGamingHybridCandidates(
   input: GamingStoredKnowledgeInput & { candidates: readonly GamingHybridCandidateInput[]; region?: string;
-    discoveryType?: 'gameplay_evidence' | 'currentness_verification' },
-  context: { actorKey: string; requestId?: string; traceId?: string; workflowId?: string; signal?: AbortSignal },
+    discoveryType?: 'gameplay_evidence' | 'currentness_verification'; protocolVersion?: 'gaming-hybrid-v1' | 'gaming-hybrid-v2' },
+  context: { actorKey: string; requestId?: string; traceId?: string; workflowId?: string; signal?: AbortSignal; maxElapsedMs?: number },
   dependencies: GamingHybridCandidateDependencies = {}
 ): Promise<{ decisions: GamingHybridCandidateDecision[]; accepted: GamingHybridAcceptedCandidate[]; knowledge: GamingStoredKnowledgeContext;
-  currentnessEvidence?: GamingFreshnessEvidence[]; currentnessFailureBlocksAdvisory?: boolean }> {
+  currentnessEvidence?: GamingFreshnessEvidence[]; currentnessFailureBlocksAdvisory?: boolean; acquisitionWorkMs?: number }> {
   if (!context.actorKey || input.candidates.length < 1 || input.candidates.length > GAMING_HYBRID_CANDIDATE_LIMITS.count) {
     throw Object.assign(new Error('Submit one to three candidate URLs within an authenticated workflow.'), { code: 'GAMING_HYBRID_CANDIDATE_LIMIT' });
   }
   const now = dependencies.now ?? (() => new Date());
-  const deadlineAt = Date.now() + GAMING_HYBRID_CANDIDATE_LIMITS.totalFetchMs;
-  const signal = context.signal ?? input.signal;
+  const acquisitionStartedAt = Date.now();
+  const allowedMs = context.maxElapsedMs === undefined ? GAMING_HYBRID_CANDIDATE_LIMITS.totalFetchMs
+    : Math.max(0, Math.min(GAMING_HYBRID_CANDIDATE_LIMITS.totalFetchMs, context.maxElapsedMs));
+  const deadlineAt = acquisitionStartedAt + allowedMs;
+  const v2 = input.protocolVersion === 'gaming-hybrid-v2';
+  const selectionInput = v2 ? { ...input, requireRequestCoverage: true } : input;
+  const callerSignal = context.signal ?? input.signal;
+  // The same absolute acquisition deadline also bounds extraction/chunking,
+  // while external cancellation retains its distinct workflow failure meaning.
+  const acquisitionSignal = v2 ? AbortSignal.timeout(Math.max(0, Math.ceil(allowedMs))) : undefined;
+  const signal = acquisitionSignal && callerSignal ? AbortSignal.any([callerSignal, acquisitionSignal]) : acquisitionSignal ?? callerSignal;
   const seen = new Set<string>();
   const accepted: GamingHybridAcceptedCandidate[] = [];
   const decisions: GamingHybridCandidateDecision[] = [];
@@ -123,7 +137,7 @@ export async function evaluateGamingHybridCandidates(
   const queue: Array<{ candidate: GamingHybridCandidateInput; submittedIndex: number; origin?: 'required_official_article' }> =
     input.candidates.map((candidate, submittedIndex) => ({ candidate, submittedIndex }));
   for (const { candidate, submittedIndex, origin } of queue) {
-    signal?.throwIfAborted();
+    callerSignal?.throwIfAborted();
     let publicUrl: string | undefined;
     let sourceAssessed = false;
     const sourceStartedAt = Date.now();
@@ -147,7 +161,8 @@ export async function evaluateGamingHybridCandidates(
       const admission = sanitizeGamingDiscoveryCandidateUrl(candidate.url);
       if (!admission.url || admission.rejected) {
         if (admission.rejection) acquisitionDiagnostic = { ...acquisitionDiagnostic, ...admission.rejection };
-        reject('URL_BLOCKED'); continue;
+        reject(v2 && ['unsupported_document_type', 'source_category_excluded'].includes(admission.rejection?.subreason ?? '')
+          ? 'UNSUPPORTED_SOURCE_FORMAT' : 'URL_BLOCKED'); continue;
       }
       if (new URL(admission.url).protocol !== 'https:') {
         acquisitionDiagnostic = { ...acquisitionDiagnostic, category: 'security', subreason: 'unsupported_scheme', ruleId: 'gaming.https_required' };
@@ -168,7 +183,8 @@ export async function evaluateGamingHybridCandidates(
       const document = await (dependencies.resolveDocument ?? resolveGamingDocument)(publicUrl,
         GAMING_DURABLE_DOCUMENT_LIMITS.documentChars, { documentPurpose: 'durable', signal, deadlineAt,
           timeoutMs: Math.min(5_000, getGamingWebContextFetchTimeoutMs(), Math.max(1, deadlineAt - Date.now())), includeLinks: false });
-      signal?.throwIfAborted();
+      callerSignal?.throwIfAborted();
+      if (v2 && (acquisitionSignal?.aborted || Date.now() >= deadlineAt)) { reject('SOURCE_TIMEOUT'); continue; }
       extractionDiagnostic = document.structureDiagnostics;
       acquisitionDiagnostic = { stage: 'extraction', policyVersion: document.acquisition?.policyVersion ?? GAMING_DOCUMENT_ACQUISITION_POLICY_VERSION,
         redirectCount: document.acquisition?.redirectCount ?? 0, failingHop: document.acquisition?.redirectCount ?? 0 };
@@ -197,7 +213,7 @@ export async function evaluateGamingHybridCandidates(
       if (policy.authority === 'official' && (policy.category === 'official_updates'
         || policy.category === 'official_status' && policy.currentness === 'live_status')) {
         logger.info('gaming.currentness.candidate_evaluated', {
-          requestId: context.requestId, workflowId: context.workflowId, origin: origin ?? 'submitted', game: normalizeGamingGameIdentity(input.game).slice(0, 120),
+          requestId: context.requestId, workflowId: context.workflowId, origin: origin ?? 'submitted', gameIdentityHash: gamingClearHash(input.game),
           ruleId: policy.ruleId, adapterVersion: freshness.currentnessMetadata?.adapterVersion,
           sourceRole: policy.currentness === 'current_index' ? 'currentness_index' : policy.currentness === 'live_status' ? 'live_status' : 'patch_authority',
           adapterStatus: freshness.currentnessMetadata?.status ?? (policy.currentness === 'live_status' ? undefined : 'incomplete'),
@@ -229,7 +245,7 @@ export async function evaluateGamingHybridCandidates(
       const candidateId = randomUUID();
       freshness.id = candidateId;
       const sourceAssessment = assessGamingClearSource(input, document, { subjectId: candidateId, subjectHash: contentHash,
-        actorScopeHash: actorHash(context.actorKey), sourcePolicy: policy, freshness, now: now() });
+        actorScopeHash: actorHash(context.actorKey), sourcePolicy: policy, freshness, now: now(), ...(v2 ? { allowPartialCoverage: true } : {}) });
       sourceAssessed = true;
       logger.info('gaming.clear.source.completed', { requestId: context.requestId, traceId: context.traceId,
         rubricVersion: sourceAssessment.rubricVersion, profile: sourceAssessment.profile, policyProfile: sourceAssessment.policyProfile,
@@ -248,6 +264,8 @@ export async function evaluateGamingHybridCandidates(
           ?? sourceAssessment.blockingFindings[0]?.code ?? 'GAMING_CLEAR_SOURCE_REJECTED'); continue;
       }
       const chunks = await chunkGamingDocument(intactText, { signal, evidenceUnits: document.evidenceUnits });
+      callerSignal?.throwIfAborted();
+      if (v2 && (acquisitionSignal?.aborted || Date.now() >= deadlineAt)) { reject('SOURCE_TIMEOUT'); continue; }
       const records = chunks.chunks.map(chunk => ({
         recordId: `${candidateId}:${chunk.ordinal}`, recordType: input.mode === 'guide' ? 'guide' as const : input.mode === 'build' ? 'build' as const : 'meta' as const,
         title: document.metadata.title ?? null, searchText: chunk.text,
@@ -258,7 +276,8 @@ export async function evaluateGamingHybridCandidates(
         fetchedAt: now(), publishedAt: null, provenance: { resolverId: document.resolution.resolverId,
           resolverVersion: document.resolution.resolverVersion, resolutionStrategy: document.resolution.strategy,
           gameName: input.game, edition: input.edition, gamingClear: sourceAssessment },
-        relevance: gamingTermCoverage(chunk.text, terms)
+        relevance: Math.max(gamingTermCoverage(chunk.text, terms), v2 && buildGamingRequestRequirements(input)
+          .some(requirement => gamingTermCoverage(chunk.text, requirement.terms) === 1) ? 0.25 : 0)
       })).filter(record => record.relevance >= 0.25);
       // An official index/status page can verify applicability even when it does not cover the gameplay anchor.
       if (!records.length && !['current_index', 'live_status'].includes(policy.currentness)
@@ -273,7 +292,7 @@ export async function evaluateGamingHybridCandidates(
         recordType: input.mode,
         publicUrl, document: { ...document, rawDocument: undefined }, freshness, sourcePolicy: policy,
         sourceAssessment, assessmentBinding: gamingClearHash({ sourceAssessment, sourceContext }), sourceContext,
-        sourceMetadataBinding: sourceMetadataBinding(freshness, policy) };
+        sourceMetadataBinding: sourceMetadataBinding(freshness, policy), ...(v2 ? { evidenceRecords: records } : {}) };
       accepted.push(artifact);
       allRecords.push(...records);
       decisions.push({ submittedIndex, ...(origin ? { origin } : {}), candidateId, url: publicUrl,
@@ -299,7 +318,8 @@ export async function evaluateGamingHybridCandidates(
         }
       }
     } catch (error) {
-      if (signal?.aborted) throw error;
+      if (callerSignal?.aborted) throw error;
+      if (acquisitionSignal?.aborted) { reject('SOURCE_TIMEOUT'); continue; }
       if (error instanceof GamingDocumentAcquisitionError) {
         acquisitionDiagnostic = { ...error.acquisition };
         // Public acquisition reasons are deliberately coarse. Preserve the internal
@@ -307,7 +327,8 @@ export async function evaluateGamingHybridCandidates(
         const unavailable = ['DNS_FAILED', 'FETCH_FAILED', 'DEADLINE_EXCEEDED', 'HTTP_RESPONSE_UNUSABLE', 'CONDITIONAL_CONTENT_UNAVAILABLE'];
         if (!unavailable.includes(error.acquisition.subreason) || error.status === 401 || error.status === 403)
           currentnessFailureBlocksAdvisory = true;
-        reject(error.code); continue;
+        reject(v2 && error.acquisition.subreason === 'UNSUPPORTED_CONTENT_TYPE' ? 'UNSUPPORTED_SOURCE_FORMAT'
+          : v2 && error.acquisition.subreason === 'DOCUMENT_EXTRACTION_FAILED' ? 'EXTRACTION_INTEGRITY_FAILED' : error.code); continue;
       }
       const status = (error as { response?: { status?: number } })?.response?.status;
       reject(status === 401 || status === 403 ? 'SOURCE_INACCESSIBLE' : status && [301, 302, 303, 307, 308].includes(status)
@@ -319,7 +340,8 @@ export async function evaluateGamingHybridCandidates(
     maxSources: Math.min(3, getGamingRagMaxSources()), maxContextChars: getGamingWebContextMaxChars(), structuredEvidenceChars: 8_000 };
   // Rank the complete bounded document before the existing selector's top-20 bound.
   allRecords.sort((a, b) => b.relevance - a.relevance || a.recordId.localeCompare(b.recordId));
-  const selected = selectStoredGamingEvidence(allRecords, input, limits);
+  const selected = selectStoredGamingEvidence(allRecords, v2 ? { ...selectionInput,
+    requiredSourceIds: requiredGamingHybridSourceIds(input, accepted) } : selectionInput, limits);
   const knowledge = formatStoredGamingEvidence(selected, input, limits);
   knowledge.context = knowledge.context.replaceAll('Origin: stored gaming knowledge;', 'Origin: backend-validated transient Gaming evidence;');
   logger.info('gaming.hybrid.candidates_evaluated', { requestId: context.requestId, traceId: context.traceId,
@@ -328,8 +350,184 @@ export async function evaluateGamingHybridCandidates(
     acceptedCount: accepted.length, rejectedCount: decisions.filter(decision => decision.decision === 'rejected').length,
     selectedChunkCount: knowledge.evidence?.length ?? 0, selectedContextChars: knowledge.context.length,
     decisions: decisions.map(decision => ({ candidateId: decision.candidateId, decision: decision.decision, reasons: decision.reasonCodes })) });
-  return { decisions, accepted, knowledge, ...(currentnessEvidence.length ? { currentnessEvidence } : {}),
+  return { decisions, accepted, knowledge, acquisitionWorkMs: Math.max(0, Date.now() - acquisitionStartedAt), ...(currentnessEvidence.length ? { currentnessEvidence } : {}),
     ...(currentnessFailureBlocksAdvisory ? { currentnessFailureBlocksAdvisory } : {}) };
+}
+
+/** Artifact validity never comes from discovery hints or caller-selected IDs. */
+function validGamingHybridArtifact(candidate: GamingHybridAcceptedCandidate,
+  context: { actorKey: string; workflowId: string; now?: number }): boolean {
+  return candidate.actorScopeHash === actorHash(context.actorKey) && candidate.workflowId === context.workflowId
+    && candidate.expiresAt > (context.now ?? Date.now()) && candidate.policyVersion === GAMING_HYBRID_CANDIDATE_POLICY_VERSION
+    && candidate.publicUrl === candidate.document.publicUrl
+    && isResolvedGamingDocumentIdentityVerified(candidate.document, candidate.document.requestedUrl)
+    && candidate.contentHash === hashGamingApprovedDocument(candidate.document)
+    && candidate.sourceAssessment?.rubricVersion === GAMING_CLEAR_VERSION
+    && candidate.sourceAssessment.subjectHash === candidate.contentHash
+    && candidate.assessmentBinding === gamingClearHash({ sourceAssessment: candidate.sourceAssessment, sourceContext: candidate.sourceContext })
+    && candidate.sourceMetadataBinding === sourceMetadataBinding(candidate.freshness, candidate.sourcePolicy);
+}
+
+/** Original supplied URL identity is backend-intake data, never a publisher/ranking hint. */
+function requiredGamingHybridSourceIds(input: GamingStoredKnowledgeInput,
+  accepted: readonly GamingHybridAcceptedCandidate[]): string[] {
+  const requiredUrls = new Set((input.guideUrls ?? []).flatMap(url => {
+    const admission = sanitizeGamingDiscoveryCandidateUrl(url);
+    return admission.url && !admission.rejected ? [admission.url] : [];
+  }));
+  return accepted.filter(candidate => requiredUrls.has(candidate.document.requestedUrl)).map(candidate => candidate.candidateId);
+}
+
+/** Reuse the existing record selector over every still-valid accepted artifact. */
+export function selectGamingHybridAcceptedEvidence(input: GamingStoredKnowledgeInput,
+  accepted: readonly GamingHybridAcceptedCandidate[], context: { actorKey: string; workflowId: string; now?: number }): GamingStoredKnowledgeContext {
+  if (accepted.some(candidate => !validGamingHybridArtifact(candidate, context)
+    || candidate.sourceContext.prompt !== input.prompt || candidate.sourceContext.mode !== input.mode
+    || normalizeGamingGameIdentity(candidate.sourceContext.game) !== normalizeGamingGameIdentity(input.game))) {
+    throw Object.assign(new Error('Accepted evidence does not belong to this valid workflow.'), { code: 'EVIDENCE_MEMBERSHIP_INVALID' });
+  }
+  const records = accepted.flatMap(candidate => (candidate.evidenceRecords ?? []).filter(record => record.sourceId === candidate.candidateId
+    && record.revisionId === candidate.contentHash && record.publicUrl === candidate.publicUrl
+    && gamingClearIntactSourceText(candidate.document).includes(typeof record.normalized.text === 'string' ? record.normalized.text : record.searchText)));
+  const limits = hybridEvidenceLimits();
+  const fullPool: GamingStoredKnowledgeContext = { context: '', sources: accepted.map(candidate => ({
+    sourceId: candidate.candidateId, game: candidate.sourceContext.game, edition: candidate.sourceContext.edition,
+    url: candidate.publicUrl, sourceType: candidate.sourcePolicy.category, origin: 'live',
+    fetchedAt: candidate.freshness.fetchedAt, snippet: '', clearSourceAssessment: candidate.sourceAssessment,
+    freshnessMetadata: { ...candidate.freshness }
+  })), evidence: records.map(record => ({ sourceId: record.sourceId, revisionId: record.revisionId, recordId: record.recordId,
+    recordType: record.recordType, publicUrl: record.publicUrl, text: record.searchText,
+    ...(Array.isArray(record.normalized.evidenceUnits) ? { evidenceUnits: record.normalized.evidenceUnits as ResolvedGamingDocument['evidenceUnits'] } : {}),
+    lexicalScore: record.relevance, combinedScore: record.relevance, provenance: { fetchedAt: record.fetchedAt.toISOString() }
+  })) };
+  const fullAssessment = assessGamingClearEvidence(input, fullPool, { requireRequestCoverage: true, now: new Date(context.now ?? Date.now()) });
+  const selected = selectStoredGamingEvidence(records, { ...input, requireRequestCoverage: true,
+    requiredSourceIds: requiredGamingHybridSourceIds(input, accepted) }, limits);
+  const knowledge = formatStoredGamingEvidence(selected, input, limits);
+  knowledge.materialConflict = hasGamingMaterialConflict(fullAssessment);
+  for (const source of knowledge.sources) source.origin = 'live';
+  return knowledge;
+}
+
+function hasGamingMaterialConflict(assessment: GamingClearAssessment): boolean {
+  return assessment.blockingFindings.some(finding => ['CONTRADICTORY_EVIDENCE', 'CONTRADICTORY_STRUCTURAL_RECORDS',
+    'APPLICABILITY_CONFLICT', 'CONFLICTING_CURRENTNESS'].includes(finding.code));
+}
+
+function hybridEvidenceLimits() {
+  return { chunkChars: getGamingRagChunkChars(), maxChunks: getGamingRagMaxChunks(),
+    maxSources: Math.min(3, getGamingRagMaxSources()), maxContextChars: getGamingWebContextMaxChars(), structuredEvidenceChars: 8_000 };
+}
+
+/**
+ * Compact the already-admissible pool using the existing selector and coverage
+ * adapter. Contradictions are assessed by CLEAR on the full pool before this
+ * projection, so removing redundant chunks never adjudicates a material conflict.
+ */
+export interface GamingHybridEvidenceSelection extends GamingRequestCoverageAssessment {
+  knowledge: GamingStoredKnowledgeContext;
+  selectedCandidateIds: string[];
+  selectedEvidenceIds: string[];
+  materialConflict: boolean;
+}
+
+export function selectGamingHybridEvidence(input: GamingStoredKnowledgeInput,
+  knowledge: GamingStoredKnowledgeContext, context: { requiredSourceIds?: readonly string[] } = {}): GamingHybridEvidenceSelection {
+  const limits = hybridEvidenceLimits();
+  const fullAssessment = assessGamingClearEvidence({ ...input, game: input.game }, knowledge, { requireRequestCoverage: true });
+  const materialConflict = knowledge.materialConflict === true || hasGamingMaterialConflict(fullAssessment);
+  if (materialConflict) return { knowledge: { context: '', sources: [], evidence: [], sourceKnown: knowledge.sourceKnown },
+    selectedCandidateIds: [], selectedEvidenceIds: [], coverageSatisfied: false, missingCoverage: [],
+    gapAssessmentStatus: 'unknown' as const, requirementSupport: [], materialConflict: true };
+  const records: GamingStoredEvidenceRecord[] = (knowledge.evidence ?? []).flatMap(chunk => {
+    const source = knowledge.sources.find(item => item.sourceId === chunk.sourceId && item.url === chunk.publicUrl);
+    if (!source) return [];
+    const fetchedAt = new Date(chunk.provenance.fetchedAt);
+    if (!Number.isFinite(fetchedAt.getTime())) return [];
+    return [{ recordId: chunk.recordId, recordType: chunk.recordType, title: source.title ?? null, gameName: source.game,
+      searchText: chunk.text, normalized: { text: chunk.text, ...(chunk.evidenceUnits?.length ? { evidenceUnits: chunk.evidenceUnits } : {}) },
+      sourceId: chunk.sourceId, publicUrl: chunk.publicUrl, sourceType: source.sourceType, revisionId: chunk.revisionId,
+      fetchedAt, publishedAt: source.publishedAt ? new Date(source.publishedAt) : null,
+      clearSourceAssessment: source.clearSourceAssessment, provenance: {}, relevance: Math.max(0.01, chunk.lexicalScore) }];
+  });
+  const proofs = knowledge.sources.flatMap(source => {
+    if (!context.requiredSourceIds?.includes(source.sourceId)
+      || !(['currentness_index', 'live_status'].includes(source.clearSourceAssessment?.sourceRole ?? '')
+        || ['current_index', 'live_status'].includes(String(source.freshnessMetadata?.currentness ?? '')))) return [];
+    const passages = (knowledge.evidence ?? []).filter(chunk => chunk.sourceId === source.sourceId && chunk.publicUrl === source.url
+      && chunk.text.length > 0 && chunk.text.length <= 8_000);
+    const evidence = passages.find(chunk => chunk.recordId === `${source.sourceId}:verification`) ?? passages[0];
+    return evidence ? [{ evidence, source }] : [];
+  }).slice(0, Math.min(8, limits.maxChunks, limits.maxSources));
+  const proofIds = new Set(proofs.map(proof => proof.source.sourceId));
+  // Reserve the existing source/chunk capacity for mandatory proof before
+  // gameplay selection; exceeding the bounded set produces honest insufficiency.
+  const selectionLimits = { ...limits, maxSources: Math.max(0, limits.maxSources - proofs.length),
+    maxChunks: Math.max(0, Math.min(8, limits.maxChunks) - proofs.length) };
+  const selected = selectStoredGamingEvidence(records.filter(record => !proofIds.has(record.sourceId)),
+    { ...input, requireRequestCoverage: true, requiredSourceIds: context.requiredSourceIds }, selectionLimits,
+    record => knowledge.sources.find(source => source.sourceId === record.sourceId)?.patchVersion);
+  // Preserve server-owned metadata/provenance and intact original passages rather
+  // than introducing a second excerpt or rewriting citation identity.
+  let candidates = selected.flatMap(candidate => {
+    const original = knowledge.evidence?.find(chunk => chunk.recordId === candidate.evidence.recordId && chunk.sourceId === candidate.evidence.sourceId);
+    const source = knowledge.sources.find(item => item.sourceId === candidate.source.sourceId && item.url === candidate.source.url);
+    return original && source ? [{ evidence: original, source }] : [];
+  });
+  // A backend-selected currentness attestation need not match gameplay terms.
+  // These original proof passages already reserved bounded selector capacity.
+  candidates.push(...proofs);
+  const assess = (entries: typeof candidates) => assessGamingRequestCoverage(input,
+    formatStoredGamingEvidence(entries, input, limits));
+  const fullCoverage = assess(candidates);
+  if (fullCoverage.coverageSatisfied && !materialConflict) {
+    // Remove redundant material only while every requested requirement remains
+    // covered. Zero/one/several sources are all legitimate selection outcomes.
+    for (let index = candidates.length - 1; index >= 0; index -= 1) {
+      const removed = candidates[index];
+      if (context.requiredSourceIds?.includes(removed.source.sourceId)
+        && candidates.filter(candidate => candidate.source.sourceId === removed.source.sourceId).length === 1) continue;
+      const reduced = candidates.filter((_candidate, position) => position !== index);
+      if (assess(reduced).coverageSatisfied) candidates = reduced;
+    }
+  }
+  const chunkLimit = Math.min(8, limits.maxChunks);
+  if (candidates.length > chunkLimit) {
+    // Reserve bounded passages for explicitly required proof instead of silently
+    // dropping it. Coverage is reassessed below when the remaining prose is cut.
+    candidates = [...candidates.filter(candidate => context.requiredSourceIds?.includes(candidate.source.sourceId)),
+      ...candidates.filter(candidate => !context.requiredSourceIds?.includes(candidate.source.sourceId))].slice(0, chunkLimit);
+  }
+  const compact = formatStoredGamingEvidence(candidates, input, limits);
+  compact.sourceKnown = knowledge.sourceKnown;
+  const coverage = assessGamingRequestCoverage(input, compact);
+  return { knowledge: compact, selectedCandidateIds: [...new Set(compact.sources.filter(source => source.origin === 'live').map(source => source.sourceId))],
+    selectedEvidenceIds: gamingSelectedEvidenceIds(compact), ...coverage, materialConflict };
+}
+
+/** Match the established source-bound projection, which may select disjoint intact sentences. */
+function isGamingHybridChunkBound(chunk: GamingStoredEvidenceChunk, candidate: GamingHybridAcceptedCandidate): boolean {
+  const record = candidate.evidenceRecords?.find(item => item.recordId === chunk.recordId
+    && item.sourceId === candidate.candidateId && item.revisionId === candidate.contentHash && item.publicUrl === candidate.publicUrl);
+  if (!record || !gamingClearIntactSourceText(candidate.document).includes(typeof record.normalized.text === 'string'
+    ? record.normalized.text : record.searchText)) return false;
+  const projected = selectStoredGamingEvidence([record], { ...candidate.sourceContext, requireRequestCoverage: true }, hybridEvidenceLimits())[0]?.evidence;
+  return projected?.text === chunk.text && (chunk.evidenceUnits ?? []).every(unit => projected.evidenceUnits
+    ?.some(approved => gamingClearHash(approved) === gamingClearHash(unit)));
+}
+
+/** Defense in depth at both generation and citation return boundaries. */
+export function assertGamingHybridEvidenceMembership(knowledge: GamingStoredKnowledgeContext,
+  accepted: readonly GamingHybridAcceptedCandidate[], context: { actorKey: string; workflowId: string; now?: number }): void {
+  const invalid = accepted.some(candidate => !validGamingHybridArtifact(candidate, context));
+  const live = knowledge.sources.filter(source => source.origin === 'live');
+  const missing = live.some(source => !accepted.some(candidate => candidate.candidateId === source.sourceId && candidate.publicUrl === source.url))
+    || (knowledge.evidence ?? []).some(chunk => !knowledge.sources.some(source => source.sourceId === chunk.sourceId && source.url === chunk.publicUrl)
+      || live.some(source => source.sourceId === chunk.sourceId) && !accepted.some(candidate => candidate.candidateId === chunk.sourceId
+        && candidate.publicUrl === chunk.publicUrl && candidate.contentHash === chunk.revisionId
+        && (chunk.recordId === `${candidate.candidateId}:verification` && candidate.freshness.currentness === 'current_index'
+          || isGamingHybridChunkBound(chunk, candidate))));
+  if (invalid || missing) throw Object.assign(new Error('Selected evidence does not belong to this valid workflow.'), { code: 'EVIDENCE_MEMBERSHIP_INVALID' });
 }
 
 /** Storage eligibility, actor permission, and consent are independent of answer sufficiency. */
