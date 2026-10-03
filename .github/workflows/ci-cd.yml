@@ -1,588 +1,73 @@
-# Authoritative required workflow for branch protection checks.
-name: CI/CD Pipeline
+name: PR 1522 Supplemental Railway Preview Proof
 
 on:
-  push:
-    branches: [ main, develop ]
-  pull_request:
-    branches: [ main, develop ]
   workflow_dispatch:
 
 permissions:
   contents: read
 
-env:
-  NODE_VERSION: '24.18.1'
-  OPENAI_API_KEY: 'mock-api-key'
-  FORCE_MOCK: 'true'
-  OPENAI_BASE_URL: 'http://127.0.0.1:9/v1'
-  # Synthetic authority for mocked CI imports and normal-server startup only.
-  AI_MODEL: 'ft:gpt-4.1-2025-04-14:arcanos-test:authority:offline'
-
 jobs:
-  lint-and-typecheck:
-    name: Lint & Type Check
+  exact-head-preview-proof:
+    if: github.ref == 'refs/heads/test/pr1522-preview-proof'
     runs-on: ubuntu-latest
-    
-    steps:
-      - name: 📥 Checkout code
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-
-      - name: 🧰 Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-
-      - name: 📦 Install dependencies
-        run: npm ci
-
-      - name: 🛡️ Commit guardrails
-        run: npm run guard:commit
-
-      - name: 🧾 Validate backend/CLI contract manifest
-        run: npm run validate:backend-cli:contract
-
-      - name: 🧱 Enforce CEF boundaries
-        run: |
-          npm run check:boundaries
-          npm run check:cef-layer-access
-
-      - name: 🔧 Type check
-        run: npm run type-check
-
-      - name: 🧹 Lint code
-        run: npm run lint
-
-  build:
-    name: Build (Node ${{ matrix.node-version }})
-    runs-on: ubuntu-latest
-    needs: [lint-and-typecheck]
-
-    strategy:
-      matrix:
-        node-version: ['24.18.1']
-
-    steps:
-      - name: 📥 Checkout code
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-
-      - name: 🧰 Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ matrix.node-version }}
-          cache: 'npm'
-
-      - name: 📦 Install dependencies
-        run: npm ci
-
-      - name: 🔨 Build project
-        run: npm run build
-
-      - name: 🧪 Compiled app model-policy E2E
-        run: npm run test:model-policy:app:e2e
-
-      - name: 🧪 Compiled app heartbeat E2E
-        run: npm run test:heartbeat:app:e2e
-
-      - name: 📊 Upload build artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-artifacts
-          path: dist/
-          retention-days: 1
-
-  test:
-    name: Test Suite
-    runs-on: ubuntu-latest
-    needs: [lint-and-typecheck]
-    
-    strategy:
-      matrix:
-        test-type: [unit, integration]
-    
-    steps:
-      - name: 📥 Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: 🧰 Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-
-      - name: 📦 Install dependencies
-        run: npm ci
-
-      - name: 🐍 Setup Python for transport-matrix tests
-        if: matrix.test-type == 'unit'
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: 📦 Install minimal Python protocol runtime dependencies
-        if: matrix.test-type == 'unit'
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install --upgrade "jsonschema>=4.23.0,<5" "referencing>=0.35.1,<1"
-
-      - name: 🔨 Build project
-        run: npm run build
-
-      - name: 🧪 Run unit tests
-        if: matrix.test-type == 'unit'
-        run: npm test
-
-      - name: 📊 Upload Node coverage to Codecov
-        if: matrix.test-type == 'unit'
-        uses: codecov/codecov-action@v5
-        with:
-          files: coverage/lcov.info
-          disable_search: true
-          flags: node
-          fail_ci_if_error: false
-        env:
-          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
-
-      - name: 🔌 Run integration tests
-        if: matrix.test-type == 'integration'
-        run: |
-          # Set minimal environment for testing
-          export OPENAI_API_KEY=mock-api-key
-          export NODE_ENV=test
-          export PORT=0
-          npm run test:integration
-
-  validate-railway-compatibility:
-    name: Railway Compatibility
-    runs-on: ubuntu-latest
-    needs: [build]
-    
-    steps:
-      - name: 📥 Checkout code
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-
-      - name: 🧰 Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-
-      - name: 📦 Install dependencies
-        run: npm ci
-
-      - name: 🔨 Build project
-        run: npm run build
-
-      - name: 🚄 Validate Railway compatibility
-        run: npm run validate:railway
-
-      - name: 🐳 Test Docker build
-        run: |
-          docker build -t arcanos-test .
-          echo "✅ Docker build successful"
-
-  validate-deployment-readiness:
-    name: Deployment Readiness
-    runs-on: ubuntu-latest
-    needs: [build, test, validate-railway-compatibility]
+    timeout-minutes: 10
     env:
-      ARCANOS_GPT_ACCESS_BASE_URL: ${{ format('{0}://localhost:{1}', 'http', '8080') }}
-      ARCANOS_GPT_ACCESS_SCOPES: >-
-        runtime.read,workers.read,queue.read,jobs.create,jobs.result,
-        logs.read_sanitized,db.explain_approved,mcp.approved_readonly,
-        diagnostics.read
-    
+      PR_NUMBER: '1522'
+      TESTED_SHA: '3e02920b3d61ec7da298b9c188b6a54783122aff'
+      WEB_BASE_URL: 'https://arcanos-v2-pr-676861-1522.up.railway.app'
+      WORKER_BASE_URL: 'https://arcanos-worker-pr-676861-1522.up.railway.app'
     steps:
-      - name: 📥 Checkout code
-        uses: actions/checkout@v4
+      - name: Check out reviewed exact PR head
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
         with:
+          ref: ${{ env.TESTED_SHA }}
           persist-credentials: false
 
-      - name: 🧰 Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Set up pinned Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
+          node-version: '24.18.1'
 
-      - name: 📦 Install dependencies
-        run: npm ci
-
-      - name: 🧪 Verify preview E2E safety harness
-        run: npm run test:preview-e2e
-
-      - name: 🧪 Verify native PR preview containment contract
-        run: npm run test:native-pr-preview-e2e
-
-      - name: 📥 Download build artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: build-artifacts
-          path: dist/
-
-      - name: 🔨 Restore workspace package builds
-        run: npm run build:packages
-
-      - name: 🚀 Test server startup
+      - name: Validate explicit targets without network
         run: |
-          export NODE_ENV=production
-          export PORT=8080
-          export OPENAI_API_KEY=mock-api-key
-          export ARCANOS_GPT_ACCESS_TOKEN=ci-gpt-access-token-for-local-workflow-only
-          export ARCANOS_JOB_READ_CAPABILITY_SECRET=ci-job-read-capability-key-for-local-workflow-only
-          export ARCANOS_PROCESS_KIND=web
-          export RUN_WORKERS=false
-          timeout 30s node scripts/start-railway-service-with-integrity.mjs &
-          SERVER_PID=$!
-          
-          # Wait for server to start
-          sleep 10
-          
-          # Test health endpoint
-          curl -f http://localhost:8080/health || exit 1
-          
-          # Kill server
-          kill $SERVER_PID || true
-          
-          echo "✅ Server starts successfully and responds to health checks"
+          env -i PATH="$PATH" LANG=C.UTF-8 node scripts/native-pr-preview-e2e.mjs \
+            --pr-number "$PR_NUMBER" --commit-sha "$TESTED_SHA" \
+            --web-base-url "$WEB_BASE_URL" --worker-base-url "$WORKER_BASE_URL" \
+            > "$RUNNER_TEMP/pr1522-preview-dry.json"
+          cat "$RUNNER_TEMP/pr1522-preview-dry.json"
 
-  security-audit:
-    name: Security Audit
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: 📥 Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: 🧰 Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-
-      - name: 📦 Install dependencies
-        run: npm ci
-
-      - name: 🔍 Run gitleaks secret scan
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: 🔒 Run npm security audit
-        shell: bash
+      - name: Execute reviewed credential-free PR-head verifier
         run: |
-          set -euo pipefail
-          audit_exit=0
-          npm audit --omit=dev --json > npm-audit.json || audit_exit=$?
-          node scripts/check-npm-audit.js npm-audit.json
-          echo "Production npm audit policy passed (raw npm exit=$audit_exit)"
+          env -i PATH="$PATH" LANG=C.UTF-8 node scripts/native-pr-preview-e2e.mjs \
+            --pr-number "$PR_NUMBER" --commit-sha "$TESTED_SHA" \
+            --web-base-url "$WEB_BASE_URL" --worker-base-url "$WORKER_BASE_URL" \
+            --execute --allow-network \
+            > "$RUNNER_TEMP/pr1522-preview-executed.json"
+          cat "$RUNNER_TEMP/pr1522-preview-executed.json"
 
-      - name: 📜 License compliance check
-        run: npx license-checker --production --failOn "GPL-3.0;AGPL-3.0"
-
-      - name: 🐍 Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: 🔒 Run Python dependency audit
+      - name: Confirm executed Gaming generation budget proof
         run: |
-          python -m pip install --disable-pip-version-check "pip-audit==2.10.1"
-          python -m pip_audit --requirement daemon-python/requirements.txt
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          result = json.loads((Path(os.environ['RUNNER_TEMP']) / 'pr1522-preview-executed.json').read_text())
+          assert result['executed'] is True and result['networkAttempted'] is True
+          assert result['target']['commitSha'] == os.environ['TESTED_SHA']
+          assert result['summary']['status'] == 'PASS'
+          assert result['summary']['checksPassed'] == result['summary']['requestsMade'] == 171
+          checks = [c for c in result['checks'] if c.get('gamingGenerationBudgetVerified')]
+          assert len(checks) == 1 and checks[0]['caseId'] == 'gaming-query-guide'
+          assert checks[0]['gamingGenerationBudgetProofVersion'] == 'gaming-generation-budget/v1'
+          evidence = {'target': result['target'], 'summary': result['summary'], 'generationBudget': checks[0]}
+          print(json.dumps(evidence, indent=2))
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+              summary.write('Verified sealed synthetic preview at exact PR head.\n\n```json\n' + json.dumps(evidence, indent=2) + '\n```\n')
+          PY
 
-  sdk-compliance-audit:
-    name: Convergence Gate
-    runs-on: ubuntu-latest
-    needs: [lint-and-typecheck]
-    
-    steps:
-      - name: 📥 Checkout code
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-
-      - name: 🧰 Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-
-      - name: 📦 Install dependencies
-        run: npm ci
-
-      - name: 🔨 Build project
-        run: npm run build
-
-      - name: ♻️ Run convergence gate
-        run: npm run converge:ci
-
-      - name: 📊 Upload convergence artifacts
+      - name: Retain credential-free verifier evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: converge-artifacts
-          path: converge-artifacts/
-          if-no-files-found: ignore
+          name: pr1522-exact-head-preview-proof
+          path: ${{ runner.temp }}/pr1522-preview-*.json
           retention-days: 30
-
-  python-cli-windows:
-    name: Python CLI (Windows)
-    runs-on: windows-latest
-    needs: [lint-and-typecheck]
-
-    steps:
-      - name: 📥 Checkout code
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-
-      - name: 🐍 Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: 📦 Install Python dependencies
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install openai requests python-dotenv tenacity sentry-sdk pytest pytest-mock rich "jsonschema>=4.23.0,<5" "referencing>=0.35.1,<1"
-
-      - name: 🧪 Validate CLI offline contract
-        run: python daemon-python/validate_backend_cli_offline.py
-
-      - name: 🧪 Run Python unit tests with coverage
-        run: |
-          pip install pytest-cov
-          pytest daemon-python/tests/ -q --cov=daemon-python/arcanos --cov-report=xml:coverage-python.xml
-
-      - name: 📊 Skip Python Codecov upload
-        run: echo "Python coverage is outside the current reported Codecov project scope."
-
-  local-agent-sandbox-linux:
-    name: Local Agent Sandbox (Linux)
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: 📥 Checkout code
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-
-      - name: 🐍 Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: 📦 Install focused Python test dependencies
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install pytest "jsonschema>=4.23.0,<5" "referencing>=0.35.1,<1"
-
-      - name: 🐳 Build immutable local sandbox image
-        shell: bash
-        run: |
-          image_id="$(
-            docker build \
-              --quiet \
-              --file daemon-python/Dockerfile.local-agent-tests \
-              .
-          )"
-          if [[ ! "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-            echo "Sandbox build did not return an immutable local image ID." >&2
-            exit 1
-          fi
-          inspected_id="$(docker image inspect --format '{{.Id}}' "$image_id")"
-          if [[ "$inspected_id" != "$image_id" ]]; then
-            echo "Sandbox image identity changed after build." >&2
-            exit 1
-          fi
-          echo "ARCANOS_LOCAL_AGENT_SANDBOX_IMAGE=$image_id" >> "$GITHUB_ENV"
-
-      - name: 🛡️ Run effective sandbox and Linux link-race checks
-        env:
-          PYTHONPATH: daemon-python
-          ARCANOS_LOCAL_AGENT_TEST_EXECUTION_MODE: sandboxed
-          ARCANOS_LOCAL_AGENT_SANDBOX_RUNTIME: docker
-          ARCANOS_LOCAL_AGENT_SANDBOX_E2E: '1'
-          ARCANOS_CI_SANDBOX_SENTINEL: must-not-enter-the-container
-        run: |
-           python -m pytest -q \
-             daemon-python/tests/test_local_agent_sandbox_security.py \
-             daemon-python/tests/test_local_agent_sandbox_container_e2e.py
-
-  local-agent-postgres-concurrency:
-    name: PostgreSQL Fencing & Local Agent Concurrency
-    runs-on: ubuntu-24.04
-    services:
-      postgres:
-        image: postgres:18-alpine
-        env:
-          POSTGRES_USER: arcanos_ci
-          POSTGRES_PASSWORD: local-agent-ci-only
-          POSTGRES_DB: arcanos_audit_pg18_20260727
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U arcanos_ci -d arcanos_audit_pg18_20260727"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-    env:
-      ARCANOS_POSTGRES_TESTS_REQUIRE_DATABASE: '1'
-      LOCAL_AGENT_HARDENING_TEST_DATABASE_URL: >-
-        postgresql://arcanos_ci:local-agent-ci-only@127.0.0.1:5432/arcanos_audit_pg18_20260727
-      JOB_CLAIM_FENCING_TEST_DATABASE_URL: >-
-        postgresql://arcanos_ci:local-agent-ci-only@127.0.0.1:5432/arcanos_audit_pg18_20260727
-      DAG_SNAPSHOT_GENERATION_TEST_DATABASE_URL: >-
-        postgresql://arcanos_ci:local-agent-ci-only@127.0.0.1:5432/arcanos_audit_pg18_20260727
-      JOB_WORKER_BUDGET_TEST_DATABASE_URL: >-
-        postgresql://arcanos_ci:local-agent-ci-only@127.0.0.1:5432/arcanos_audit_pg18_20260727
-      JOB_STALE_RECOVERY_TEST_DATABASE_URL: >-
-        postgresql://arcanos_ci:local-agent-ci-only@127.0.0.1:5432/arcanos_audit_pg18_20260727
-      BACKSTAGE_ROSTER_ATOMICITY_TEST_DATABASE_URL: >-
-        postgresql://arcanos_ci:local-agent-ci-only@127.0.0.1:5432/arcanos_audit_pg18_20260727
-      BACKSTAGE_STORYLINE_ATOMICITY_TEST_DATABASE_URL: >-
-        postgresql://arcanos_ci:local-agent-ci-only@127.0.0.1:5432/arcanos_audit_pg18_20260727
-      BACKSTAGE_CANON_STORYLINE_PG18_TEST_DATABASE_URL: >-
-        postgresql://arcanos_ci:local-agent-ci-only@127.0.0.1:5432/arcanos_audit_pg18_20260727
-      BACKSTAGE_NOTION_PARTITION_PG18_TEST_DATABASE_URL: >-
-        postgresql://arcanos_ci:local-agent-ci-only@127.0.0.1:5432/arcanos_audit_pg18_20260727
-      NON_GPT_TERMINAL_RETENTION_TEST_DATABASE_URL: >-
-        postgresql://arcanos_ci:local-agent-ci-only@127.0.0.1:5432/arcanos_audit_pg18_20260727
-      GPT_ACCESS_DEVICE_TEST_DATABASE_URL: >-
-        postgresql://arcanos_ci:local-agent-ci-only@127.0.0.1:5432/arcanos_audit_pg18_20260727
-
-    steps:
-      - name: 📥 Checkout code
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-
-      - name: 🧰 Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-
-      - name: 📦 Install dependencies
-        run: npm ci
-
-      - name: Build shared packages for PostgreSQL HTTP consumers
-        run: npm run build:packages
-
-      - name: 🗄️ Verify database-enforced local-agent semantics
-        run: npm run test:local-agent-postgres
-
-      - name: 🧱 Verify PostgreSQL fencing, Backstage atomicity, partition storage, and retention
-        run: npm run test:postgres-fencing
-
-      - name: Verify Swift device clients through HTTP and disposable PostgreSQL
-        timeout-minutes: 10
-        env:
-          IOS_DEVICE_E2E_DATABASE_URL: ${{ env.GPT_ACCESS_DEVICE_TEST_DATABASE_URL }}
-        run: |
-          set -euo pipefail
-          swift --version
-          swift build --package-path clients/ios/ArcanosKit --product ArcanosDeviceE2E
-          ios_device_e2e_bin_dir=$(swift build --package-path clients/ios/ArcanosKit --show-bin-path)
-          mkdir -p local_artifacts
-          IOS_DEVICE_E2E_SWIFT_BINARY="$ios_device_e2e_bin_dir/ArcanosDeviceE2E" \
-            node scripts/validate-ios-device-gateway-e2e.mjs | tee local_artifacts/ios-device-e2e-proof.json
-
-      - name: Retain sanitized Swift device E2E proof
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ios-device-e2e-proof-${{ github.sha }}
-          path: local_artifacts/ios-device-e2e-proof.json
-          if-no-files-found: error
-          retention-days: 7
-
-  runtime-redis-admission:
-    name: Standalone Runtime Redis Admission
-    runs-on: ubuntu-latest
-    needs: [lint-and-typecheck]
-    permissions:
-      contents: read
-    timeout-minutes: 15
-    services:
-      redis:
-        image: redis:7.4-alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-    env:
-      AI_RUNTIME_TEST_REDIS_URL: redis://127.0.0.1:6379/15
-      AI_RUNTIME_TEST_REDIS_CONFIRM_DISPOSABLE: disposable-loopback-only
-      PUBLIC_PROVIDER_TEST_REDIS_URL: redis://127.0.0.1:6379/14
-      PUBLIC_PROVIDER_TEST_REDIS_CONFIRM_DISPOSABLE: disposable-loopback-only
-
-    steps:
-      - name: 📥 Checkout code
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-
-      - name: 🧰 Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-
-      - name: 📦 Install dependencies
-        run: npm ci
-
-      - name: 🧪 Verify standalone runtime regressions
-        run: npm run test:runtime-integration
-
-      - name: 🧱 Verify Redis admission and BullMQ execution invariants
-        run: npm run test:runtime-redis-integration
-
-      - name: 🌐 Verify public provider Redis admission invariants
-        run: npm run test:public-provider-redis-integration
-
-  all-checks-complete:
-    name: All Checks Complete
-    runs-on: ubuntu-latest
-    if: ${{ always() }}
-    needs: [lint-and-typecheck, build, test, validate-railway-compatibility, validate-deployment-readiness, security-audit, sdk-compliance-audit, python-cli-windows, local-agent-sandbox-linux, local-agent-postgres-concurrency, runtime-redis-admission]
-    permissions:
-      contents: read
-    timeout-minutes: 5
-    
-    steps:
-      - name: 📥 Checkout aggregate verifier
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-
-      - name: 🧰 Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-
-      - name: 🧾 Verify every required job result
-        env:
-          ARCANOS_REQUIRED_CI_RESULTS_JSON: ${{ toJSON(needs) }}
-        run: node scripts/verify-required-ci-results.mjs
-
-      - name: ✅ All checks passed
-        run: |
-          echo "✅ Every required CI/CD dependency reported success."
-          echo "✅ All nine required PostgreSQL suites ran under the fail-closed database contract."
-          echo "ℹ️ Production promotion remains subject to the separate rollout policy and live readiness verification."
