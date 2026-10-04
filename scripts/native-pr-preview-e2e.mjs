@@ -4761,6 +4761,9 @@ async function executeRequestCase(
   }
   const gamingExecutionBudgetContract = NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming;
   for (const [proofHeader, proofVersion, proofCode] of [
+    [gamingExecutionBudgetContract.baseGameScopeProofHeader,
+      gamingExecutionBudgetContract.baseGameScopeProofVersion,
+      'NATIVE_PR_PREVIEW_GAMING_BASE_GAME_SCOPE_PROOF_INVALID'],
     [gamingExecutionBudgetContract.discoveryRecoveryProtocolProofHeader,
       gamingExecutionBudgetContract.discoveryRecoveryProtocolProofVersion,
       'NATIVE_PR_PREVIEW_GAMING_DISCOVERY_RECOVERY_PROTOCOL_PROOF_INVALID'],
@@ -5152,6 +5155,8 @@ async function executeRequestCase(
           gamingClearVerified: true,
           gamingSourceAcquisitionVerified: true,
           gamingStructuredEvidenceVerified: true,
+          gamingBaseGameScopeVerified: true,
+          gamingBaseGameScopeProofVersion: NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.baseGameScopeProofVersion,
           gamingCurrentnessVerified: true,
           gamingCurrentnessContinuationVerified: true,
           gamingAdvisoryFreshnessVerified: true,

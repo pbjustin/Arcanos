@@ -438,6 +438,140 @@ describe('v2 existing backend evidence selection and request coverage', () => {
 describe('v2 independently acquired bound artifacts and failure work accounting', () => {
   const actor = { actorKey: 'fixture-actor', workflowId: 'fixture-workflow' };
   const url = 'https://guides.example.org/lantern-gate';
+  describe('acquired Elden Ring base-game applicability', () => {
+    const sourceUrl = 'https://guides.example.org/samurai-uchigatana';
+    const request = { game: 'Elden Ring', edition: 'Base game', mode: 'build' as const,
+      prompt: 'Create an early-game PvE Samurai Uchigatana guide for the base game, covering stats through level 50, weapon upgrades, Ashes of War, and combat rotation.' };
+    const descriptions = [
+      'Early-game PvE Samurai Uchigatana stats through level 50 prioritize Vigor for survival, then Dexterity for the weapon requirements. Keep enough Endurance for medium rolls.',
+      'Samurai Uchigatana weapon upgrades progress from the starting weapon to +3 with Smithing Stones, then +6 as more stones become available. Upgrade the weapon before spreading combat stats.',
+      'Samurai Uchigatana Ashes of War guidance retains Unsheathe for early-game PvE. Use the Unsheathe heavy attack when an enemy recovery window permits a safe stance-breaking strike.',
+      'Samurai Uchigatana combat rotation starts with a safe light attack, waits for enemy recovery, then uses Unsheathe. Dodge the retaliation and recover stamina before repeating the rotation.'
+    ];
+    function row(description: string, scope = 'base-game') {
+      return `<tr><td>Samurai</td><td>Uchigatana</td><td>Unsheathe</td><td>${scope}</td><td>${description}</td></tr>`;
+    }
+    function mechanicRow(description: string, scope = 'base-game') {
+      return `<tr><td>Samurai Uchigatana Unsheathe</td><td>${scope}</td><td>${description}</td></tr>`;
+    }
+    function page(rows: string, options: { game?: string; scopeLabel?: string; mechanics?: boolean; before?: string; after?: string } = {}) {
+      const game = options.game ?? request.game;
+      mockHttp.mockImplementation(async () => ({ status: 200, headers: { 'content-type': 'text/html' },
+        data: `<html><title>${game} Samurai Uchigatana guide</title><body><article>
+          <p>In ${game}, this Samurai Uchigatana guide explains the starting katana and Unsheathe skill with intact gameplay instructions.</p>
+          ${options.before ?? ''}<table><thead><tr>${options.mechanics ? '<th>Mechanic</th>' : '<th>Build</th><th>Item</th><th>Skill</th>'}<th>${options.scopeLabel ?? 'Scope'}</th><th>Description</th></tr></thead>
+          <tbody>${rows}</tbody></table>${options.after ?? ''}</article></body></html>` }));
+    }
+    async function evaluate(overrides: Partial<typeof request> = {}) {
+      return evaluateGamingHybridCandidates({ ...request, ...overrides, protocolVersion: 'gaming-hybrid-v2',
+        candidates: [{ url: sourceUrl }] }, actor);
+    }
+
+    it.each(['Scope', 'Applicability'])('retains an independently acquired Uchigatana record with explicit %s', async scopeLabel => {
+      page(row(descriptions[2]), { scopeLabel });
+      const input = { ...request, prompt: 'How do I use Samurai Uchigatana Unsheathe?' };
+      const evaluated = await evaluate({ prompt: input.prompt });
+      expect(evaluated.decisions).toMatchObject([{ decision: 'accepted_transient', reasonCodes: ['VALIDATED_RELEVANT_CONTENT'] }]);
+      expect(evaluated.accepted).toHaveLength(1);
+      expect(evaluated.accepted[0].freshness.edition).toBe('base-game');
+      expect(evaluated.accepted[0].sourceAssessment.qualityEligible).toBe(false);
+      const retained = selectGamingHybridAcceptedEvidence(input, evaluated.accepted, actor);
+      expect(() => assertGamingHybridEvidenceMembership(retained, evaluated.accepted, actor)).not.toThrow();
+      expect(retained.evidence?.flatMap(chunk => chunk.evidenceUnits ?? [])).toEqual(expect.arrayContaining([
+        expect.objectContaining({ kind: 'table_row', integrity: { status: 'complete', reasons: [] } })
+      ]));
+      expect(assessGamingRequestCoverage(input, retained).coverageSatisfied).toBe(true);
+    });
+
+    it('allows all requested early-game Samurai facets to contribute independently supported coverage', async () => {
+      page(descriptions.map(description => mechanicRow(description)).join(''), { mechanics: true });
+      const evaluated = await evaluate();
+      expect(evaluated.accepted).toHaveLength(1);
+      expect(evaluated.decisions[0].reasonCodes).not.toContain('EDITION_UNVERIFIED_OR_MISMATCH');
+      const retained = selectGamingHybridAcceptedEvidence(request, evaluated.accepted, actor);
+      expect(() => assertGamingHybridEvidenceMembership(retained, evaluated.accepted, actor)).not.toThrow();
+      const selected = selectGamingHybridEvidence(request, retained);
+      expect(selected).toMatchObject({ coverageSatisfied: true, missingCoverage: [], gapAssessmentStatus: 'assessed' });
+      expect(selected.requirementSupport).toHaveLength(4);
+      expect(selected.requirementSupport.every(support => support.candidateIds.length === 1 && support.evidenceIds.length > 0)).toBe(true);
+      expect(selected.knowledge.evidence?.flatMap(chunk => chunk.evidenceUnits ?? [])).toHaveLength(4);
+      expect(evaluated.accepted[0].sourceAssessment.qualityEligible).toBe(false);
+    });
+
+    it('preserves acquisition of a prose source explicitly labeled Edition: Base game', async () => {
+      page('', { before: `<p>Edition: Base game.</p>${descriptions.map(description => `<p>${description}</p>`).join('')}` });
+      const evaluated = await evaluate();
+      expect(evaluated.accepted).toHaveLength(1);
+      expect(evaluated.accepted[0].freshness.edition).toBe('base-game');
+      const retained = selectGamingHybridAcceptedEvidence(request, evaluated.accepted, actor);
+      expect(() => assertGamingHybridEvidenceMembership(retained, evaluated.accepted, actor)).not.toThrow();
+      expect(assessGamingRequestCoverage(request, retained).coverageSatisfied).toBe(true);
+    });
+
+    it('rejects explicit DLC-only applicability for the correct game', async () => {
+      page(descriptions.map(description => row(description, 'Shadow of the Erdtree')).join(''),
+        { before: '<p>Edition: Shadow of the Erdtree.</p>' });
+      const evaluated = await evaluate();
+      expect(evaluated.decisions).toMatchObject([{ decision: 'rejected', reasonCodes: ['EDITION_UNVERIFIED_OR_MISMATCH'] }]);
+      expect(evaluated.accepted).toEqual([]);
+    });
+
+    it('rejects entity names, an old publication date and a matching guide title without edition provenance', async () => {
+      page(descriptions.map(description => row(description, 'unverified')).join(''),
+        { before: '<p>Published at: 2023-01-01</p>' });
+      const evaluated = await evaluate();
+      expect(evaluated.decisions).toMatchObject([{ decision: 'rejected', reasonCodes: ['EDITION_UNVERIFIED_OR_MISMATCH'] }]);
+      expect(evaluated.accepted).toEqual([]);
+      expect(evaluated.knowledge.evidence ?? []).toEqual([]);
+    });
+
+    it('rejects another game despite shared katana terms and acquired base-game scope', async () => {
+      page(descriptions.map(description => row(description)).join(''), { game: 'Final Fantasy XIV', before: '<p>Game: Final Fantasy XIV</p>' });
+      const evaluated = await evaluate();
+      expect(evaluated.decisions).toMatchObject([{ decision: 'rejected', reasonCodes: ['GAME_MISMATCH'] }]);
+      expect(evaluated.accepted).toEqual([]);
+    });
+
+    it.each(['Scope', 'Applicability', 'Edition'])('retains only independently scoped base-game facts from mixed %s records and binds the original acquired artifact', async scopeLabel => {
+      const dlc = 'DLC_ONLY_SENTINEL: use the expansion katana after reaching the expansion area.';
+      const unscoped = 'UNSCOPED_SENTINEL: an unrelated katana rotation recommends an unsupported equipment substitution.';
+      page(descriptions.map((description, index) => mechanicRow(description)
+        + (index === 1 ? mechanicRow(dlc, 'Shadow of the Erdtree') : '')).join(''),
+        { scopeLabel, mechanics: true, after: `<p>${unscoped}</p>` });
+      const evaluated = await evaluate();
+      expect(evaluated.accepted).toHaveLength(1);
+      const artifact = evaluated.accepted[0];
+      expect(artifact.document.text).toContain(dlc);
+      expect(artifact.document.text).toContain(unscoped);
+      expect(artifact.sourceAssessment.subjectHash).toBe(artifact.contentHash);
+      expect(artifact.sourceAssessment.qualityEligible).toBe(false);
+      expect(evaluated.decisions[0].decision).toBe('accepted_transient');
+      const retained = selectGamingHybridAcceptedEvidence(request, evaluated.accepted, actor);
+      expect(() => assertGamingHybridEvidenceMembership(retained, evaluated.accepted, actor)).not.toThrow();
+      const selected = selectGamingHybridEvidence(request, retained);
+      expect(selected.coverageSatisfied).toBe(true);
+      expect(selected.knowledge.context).not.toMatch(/DLC_ONLY_SENTINEL|UNSCOPED_SENTINEL|Shadow of the Erdtree/u);
+      for (const chunk of selected.knowledge.evidence ?? []) {
+        expect(chunk.text).not.toMatch(/DLC_ONLY_SENTINEL|UNSCOPED_SENTINEL|Shadow of the Erdtree/u);
+        expect(chunk.evidenceUnits?.every(unit => unit.fields.some(field => field.label === scopeLabel && field.value === 'base-game'))).toBe(true);
+      }
+    });
+
+    it.each(['Scope', 'Applicability', 'Edition'])('rejects global base-game labeling when all acquired %s records are DLC-only', async scopeLabel => {
+      page(descriptions.map(description => mechanicRow(description, 'Shadow of the Erdtree')).join(''),
+        { scopeLabel, mechanics: true, before: '<p>Edition: Base game.</p>' });
+      const evaluated = await evaluate();
+      expect(evaluated.decisions).toMatchObject([{ decision: 'rejected', reasonCodes: ['EDITION_UNVERIFIED_OR_MISMATCH'] }]);
+      expect(evaluated.accepted).toEqual([]);
+    });
+
+    it('rejects a base-game record whose own facts contain incompatible DLC qualifiers', async () => {
+      page(row(`${descriptions[2]} This setup requires Shadow of the Erdtree expansion equipment.`));
+      const evaluated = await evaluate();
+      expect(evaluated.decisions).toMatchObject([{ decision: 'rejected', reasonCodes: ['EDITION_UNVERIFIED_OR_MISMATCH'] }]);
+      expect(evaluated.accepted).toEqual([]);
+    });
+  });
   function readableDocument() {
     mockHttp.mockImplementation(async () => ({ status: 200, headers: { 'content-type': 'text/html' },
       data: `<html><title>Lantern Voyage guide</title><body><article>Lantern Voyage guide. Activate amber gate using the copper switch beside the lantern.

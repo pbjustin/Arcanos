@@ -1,4 +1,4 @@
-import { normalizeGamingGameIdentity } from './gamingGameIdentity.js';
+import { gamingEditionIdentitiesMatch, normalizeGamingGameIdentity } from './gamingGameIdentity.js';
 import type { GamingCurrentnessEvidenceShape } from './gamingCurrentnessAdapters.js';
 
 /** Minimal structural contract keeps the applicability comparator independent of policy orchestration. */
@@ -56,7 +56,7 @@ export function evaluateGamingGuideApplicability(input: {
   if (normalizeGamingGameIdentity(guide.game) !== normalizeGamingGameIdentity(input.game)) return result('conflicting', 'GAME_MISMATCH');
   if (guide.metadataConflict) return result('conflicting', 'CONTRADICTORY_SOURCE_METADATA');
   if (guide.metadataUnverified || guide.metadataConfidence !== 'content_extracted') return result('unverified', 'APPLICABILITY_METADATA_UNVERIFIED');
-  if ((input.edition && !same(guide.edition, input.edition)) || (!input.edition && guide.edition)) return result('unverified', 'EDITION_UNVERIFIED_OR_MISMATCH');
+  if ((input.edition && !gamingEditionIdentitiesMatch(guide.edition, input.edition)) || (!input.edition && guide.edition)) return result('unverified', 'EDITION_UNVERIFIED_OR_MISMATCH');
   for (const [values, wanted, field] of [[guide.platforms, input.platform, 'PLATFORM'], [guide.regions, input.region, 'REGION']] as const) {
     if (values?.length && !includes(values, 'all') && !includes(values, wanted)) return result(wanted ? 'conflicting' : 'unverified', `${field}_UNVERIFIED_OR_MISMATCH`);
     if (wanted && !values?.length) return result('unverified', `${field}_UNVERIFIED_OR_MISMATCH`);

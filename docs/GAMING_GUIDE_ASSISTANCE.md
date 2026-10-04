@@ -905,3 +905,34 @@ edition, freshness, complete claim coverage and storage permission remain
 separate checks. See [Gaming structured source evidence](GAMING_STRUCTURED_EVIDENCE.md)
 for exact format/resource bounds, integrity and provenance rules, refresh
 behavior, synthetic regression mapping and live-evidence limits.
+
+Base-game applicability uses the exact edition aliases `Base game`, `base game`
+and `base-game`, canonicalized to `base-game`. Previously, hybrid candidate
+admission required an acquired `Edition:` assertion and CLEAR independently
+required the requested edition phrase. Intact structural `Scope` and
+`Applicability` assertions were already extracted but did not establish edition,
+so otherwise relevant base-game records were rejected as
+`EDITION_UNVERIFIED_OR_MISMATCH`. Downstream edition comparisons also disagreed
+about spaces and hyphens.
+
+For an explicit base-game request, complete source-bound records with exact
+base-game `Edition`, `Scope` or `Applicability` values can now establish
+applicability. Only those records contribute gameplay evidence in hybrid and
+supplied-guide retrieval; unscoped prose and DLC records from a mixed page are
+excluded. Patch, platform, region and date metadata from excluded records cannot
+establish or contradict the selected records' applicability. Structural units
+containing only recognized metadata fields remain document-wide assertions;
+an edition-only definition does not become a scoped gameplay record or erase
+otherwise usable globally labeled prose. Incomplete or out-of-bounds global
+metadata remains unverified even when local base-game scope is intact.
+Global edition assertions remain
+vetoes, as do wrong-game records, conflicting record scope and disputed base-game
+records. The original acquired document and hash remain bound to the artifact.
+Record-scoped applicability cannot establish the original whole page's durable
+storage eligibility, so its CLEAR `qualityEligible` value remains false under
+the existing storage gate. Coverage, currentness and answer validation remain
+independent. No internal provenance catalog exists for Samurai, Uchigatana or
+Unsheathe: their names alone, titles, snippets, publication dates, frontend
+labels and expansion-label absence remain insufficient. Pages without positive
+applicability evidence still fail closed; historical URLs have not been
+reacquired or asserted to be acceptable.

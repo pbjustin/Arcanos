@@ -188,6 +188,75 @@ describe('Archive guide document reaches the Gaming provider and HTTP envelope',
     }
   });
 
+  describe('acquired base-game records through the public guide request', () => {
+    const guideUrl = 'https://guides.example.org/samurai-uchigatana';
+    const baseDescription = 'Use the Unsheathe heavy attack when enemy recovery permits a safe stance-breaking strike.';
+    const answer = `**Unsheathe:** ${baseDescription} [1]\n\n*Source scope:* Base game.`;
+    const excluded = /DLC_ONLY_SENTINEL|UNSCOPED_SENTINEL|Shadow of the Erdtree/u;
+
+    function baseGameQuery() {
+      return request(app()).post('/gpt/arcanos-gaming').send({
+        action: 'query', payload: { mode: 'guide', game: 'Elden Ring', edition: 'Base game',
+          prompt: 'Use the supplied guide to explain Samurai Uchigatana Unsheathe combat rotation.', guideUrl },
+      });
+    }
+
+    function acquirePage(scopeLabel: string, includeBase = true) {
+      const row = (scope: string, description: string) =>
+        `<tr><td>Samurai</td><td>Uchigatana</td><td>Unsheathe</td><td>${scope}</td><td>${description}</td></tr>`;
+      mockAxiosGet.mockResolvedValue({ headers: { 'content-type': 'text/html' },
+        data: `<html><title>Elden Ring Samurai Uchigatana guide</title><body><article>
+          <p>In Elden Ring, this Samurai Uchigatana guide explains the starting katana and Unsheathe skill with intact gameplay instructions.</p>
+          <table><thead><tr><th>Build</th><th>Item</th><th>Skill</th><th>${scopeLabel}</th><th>Description</th></tr></thead><tbody>
+          ${includeBase ? row('base-game', baseDescription) : ''}
+          ${row('Shadow of the Erdtree', 'DLC_ONLY_SENTINEL: use expansion katana after reaching the expansion area.')}
+          </tbody></table>
+          <p>UNSCOPED_SENTINEL: this Elden Ring Samurai Uchigatana guide explains Unsheathe with unsupported equipment substitution and combat rotation. Equip the weapon and extra armor to achieve reliable combat damage and safe rolls.</p>
+          </article></body></html>` });
+    }
+
+    it.each(['Scope', 'Applicability', 'Edition'])('preserves the grounded guide while excluding incompatible %s records before generation and audit', async scopeLabel => {
+      acquirePage(scopeLabel);
+      const providerAnswer = `\n ${answer} \n`;
+      mockProvider.mockResolvedValue({ result: providerAnswer });
+      const response = await baseGameQuery();
+      expect(response.status).toBe(200);
+      expect(validateResponse(response.body)).toBe(true);
+      expect(response.body.result).toMatchObject({ ok: true, data: { response: providerAnswer, grounding: {
+        groundingStatus: 'grounded', fetchedSuppliedSourceCount: 1, suppliedEvidenceSourceCount: 1,
+        groundedInSuppliedEvidence: true, selectedChunkCount: 1, citableSourceCount: 1,
+      } } });
+      expect(response.body.result.data.fallbackReason).toBeUndefined();
+      expect(response.body.result.data.sources).toEqual([{ url: guideUrl, snippet: expect.stringContaining(baseDescription) }]);
+      expect(JSON.stringify(response.body)).not.toMatch(excluded);
+      expect(mockProvider).toHaveBeenCalledTimes(1);
+      const providerPrompt = (mockProvider.mock.calls[0][0] as TrinityWritingPipelineRequest).input.prompt;
+      expect(providerPrompt).toContain(baseDescription);
+      expect(providerPrompt).not.toMatch(excluded);
+      expect(mockAuditResponsesCreate).toHaveBeenCalledTimes(1);
+      const audited = auditData(mockAuditResponsesCreate.mock.calls[0][0] as AuditRequest);
+      expect(audited.answer).toBe(providerAnswer);
+      expect(audited.evidence).toHaveLength(1);
+      expect(audited.evidence[0].text).toContain(baseDescription);
+      expect(JSON.stringify(audited)).not.toMatch(excluded);
+      expect(mockAxiosGet).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(['Scope', 'Applicability', 'Edition'])('stops before generation when acquired %s records are DLC-only', async scopeLabel => {
+      acquirePage(scopeLabel, false);
+      const response = await baseGameQuery();
+      expect(response.status).toBe(200);
+      expect(validateResponse(response.body)).toBe(true);
+      expect(response.body.result).toMatchObject({ ok: false, error: { code: 'GAMING_SOURCE_UNREADABLE', details: { grounding: {
+        groundingStatus: 'insufficient_evidence', fetchedSuppliedSourceCount: 1,
+        selectedChunkCount: 0, citableSourceCount: 0, groundedInSuppliedEvidence: false,
+      } } } });
+      expect(mockProvider).not.toHaveBeenCalled();
+      expect(mockAuditResponsesCreate).not.toHaveBeenCalled();
+      expect(mockStoredContext).not.toHaveBeenCalled();
+    });
+  });
+
   it.each([
     gamingArchiveLandingHtml,
     gamingArchiveLandingHtml.replace('Kingdom Hearts HD 1.5 Remix.', 'Kingdom Hearts HD 1.5 Remix beginner build and weapon manual for the complete walkthrough.'),

@@ -1,6 +1,6 @@
 import { createGamingClearAssessment, classifyGamingClearQuestion, gamingClearContextFingerprint, gamingClearHash,
   type GamingClearAssessment } from './gamingClearPolicy.js';
-import { normalizeGamingGameIdentity, normalizeGamingEvidenceGameIdentity, resolveGamingGuideIdentity } from './gamingGameIdentity.js';
+import { gamingEditionIdentitiesMatch, normalizeGamingEvidenceGameIdentity, resolveGamingGuideIdentity } from './gamingGameIdentity.js';
 import { assessGamingProgressionRequest } from './gamingProgressionPolicy.js';
 import { buildGamingRetrievalTerms, buildGamingRequestRequirements, gamingRequestRequirementLimitExceeded, gamingTermCoverage, type GamingRetrievalPolicyInput } from './gamingRetrievalPolicy.js';
 import { classifyGamingQuestionFreshness, evaluateGamingFreshness, type GamingFreshnessEvaluation, type GamingFreshnessEvidence } from './gamingFreshnessCore.js';
@@ -80,18 +80,18 @@ export function assessGamingClearEvidence(
     || (item.effectiveFrom && Date.parse(item.effectiveFrom) > evaluatedNow.getTime())
     || (item.publishedAt && Date.parse(item.publishedAt) > evaluatedNow.getTime())
     || (!historicalPatchVerified && !advisoryFreshness && item.effectiveUntil && Date.parse(item.effectiveUntil) <= evaluatedNow.getTime())
-    || (item.edition && normalizeGamingGameIdentity(item.edition) !== normalizeGamingGameIdentity(input.edition ?? ''))
+    || (item.edition && !gamingEditionIdentitiesMatch(item.edition, input.edition))
     || (input.platform && item.platforms?.length && !item.platforms.some(platform => ['all', input.platform!.toLowerCase()].includes(platform.toLowerCase())))
     || (input.region && item.regions?.length && !item.regions.some(region => ['all', input.region!.toLowerCase()].includes(region.toLowerCase())))
     || (input.requestedVersion && item.patch && item.currentness !== 'current_index'
       && item.patch !== input.requestedVersion && !item.baselineForPatches?.includes(input.requestedVersion)))
-    || sources.some(source => source.edition && normalizeGamingGameIdentity(source.edition) !== normalizeGamingGameIdentity(input.edition ?? ''));
+    || sources.some(source => source.edition && !gamingEditionIdentitiesMatch(source.edition, input.edition));
   const compatibilityUnknown = relevantMetadata.some(item => item.metadataUnverified
     || (!input.platform && item.platforms?.length && !item.platforms.some(platform => platform.toLowerCase() === 'all'))
     || (!input.region && item.regions?.length && !item.regions.some(region => region.toLowerCase() === 'all'))
     || [item.effectiveFrom, item.effectiveUntil, item.publishedAt].some(value => value && !Number.isFinite(Date.parse(value))))
     || Boolean(input.edition && sources.some(source => !source.edition
-      && !relevantMetadata.some(item => (item.id === source.sourceId || item.url === source.url) && item.edition === input.edition)
+      && !relevantMetadata.some(item => (item.id === source.sourceId || item.url === source.url) && gamingEditionIdentitiesMatch(item.edition, input.edition))
       && normalizeGamingEvidenceGameIdentity(source.game ?? '') !== normalizeGamingEvidenceGameIdentity(resolveGamingGuideIdentity(input.game, input.edition))));
   const identityVerified = !identityConflict && (options.identityVerified === true
     || (sources.length > 0 && sources.every(source => source.game && expected.has(normalizeGamingEvidenceGameIdentity(source.game)))));

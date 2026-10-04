@@ -34,6 +34,22 @@ function knowledge(evidence: GamingFreshnessEvidence[]): GamingStoredKnowledgeCo
 }
 
 describe('explicit guide applicability against independent official currentness', () => {
+  test('base-game aliases remain equivalent through extraction, freshness, guide applicability and CLEAR evidence', () => {
+    const evidence = [guide('Patch: 1.10\nEdition: Base game\nEdition: base-game'), index('Current patch: 1.10\nEdition: base game')];
+    expect(evidence.every(item => item.edition === 'base-game' && !item.metadataConflict)).toBe(true);
+    expect(evaluate(evidence, { edition: 'Base game' })).toMatchObject({ status: 'current', usable: true,
+      guideApplicability: [{ status: 'verified_current', reasons: ['GUIDE_MATCHES_CURRENT_VERSION'] }] });
+    expect(assessGamingClearEvidence({ game, edition: 'Base game', prompt: 'What is a good copper staff mage build now?', mode: 'build' },
+      knowledge(evidence), { now })).toMatchObject({ decision: 'accept', gates: { compatibility: 'verified', freshness: 'verified' } });
+  });
+
+  test('conflicting acquired edition assertions remain conflicts after base-game canonicalization', () => {
+    const conflicting = guide('Patch: 1.10\nEdition: Base game\nEdition: Shadow of the Erdtree');
+    expect(conflicting).toMatchObject({ metadataConflict: true });
+    expect(conflicting.edition).toBeUndefined();
+    expect(evaluate([conflicting, index('Current patch: 1.10\nEdition: base-game')], { edition: 'Base game' }).usable).toBe(false);
+  });
+
   test('matching acquired patch plus current official index supports combined evidence', () => {
     const evidence = [guide(), index()];
     expect(evaluate(evidence)).toMatchObject({ status: 'current', usable: true, guideApplicability: [{ status: 'verified_current', reasons: ['GUIDE_MATCHES_CURRENT_VERSION'] }] });

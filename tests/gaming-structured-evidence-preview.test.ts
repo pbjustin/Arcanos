@@ -6,6 +6,7 @@ const actualSource = await import('../src/shared/gaming/gamingClearSource.js');
 const actualClear = await import('../src/shared/gaming/gamingClearEvidence.js');
 const actualChunks = await import('../src/services/gamingDurableDocumentChunks.js');
 const actualStored = await import('../src/shared/gaming/gamingStoredEvidenceCore.js');
+const actualFreshness = await import('../src/shared/gaming/gamingFreshnessCore.js');
 const extract = jest.fn(actualExtract.extractGamingDocumentEvidence);
 const structural = jest.fn(actualStructural.assessGamingStructuralUsability);
 const source = jest.fn(actualSource.assessGamingClearSource);
@@ -15,13 +16,19 @@ const chunks = jest.fn(actualChunks.chunkGamingDocument);
 const hash = jest.fn(actualChunks.hashGamingDocumentRevision);
 const select = jest.fn(actualStored.selectStoredGamingEvidence);
 const format = jest.fn(actualStored.formatStoredGamingEvidence);
+const editionScope = jest.fn(actualStructural.selectGamingEditionScopedEvidence);
+const freshness = jest.fn(actualFreshness.extractGamingFreshnessMetadata);
+const evaluateFreshness = jest.fn(actualFreshness.evaluateGamingFreshness);
 jest.unstable_mockModule('../src/services/gamingDocumentEvidence.js', () => ({ ...actualExtract, extractGamingDocumentEvidence: extract }));
-jest.unstable_mockModule('../src/shared/gaming/gamingStructuralEvidence.js', () => ({ ...actualStructural, assessGamingStructuralUsability: structural }));
+jest.unstable_mockModule('../src/shared/gaming/gamingStructuralEvidence.js', () => ({ ...actualStructural,
+  assessGamingStructuralUsability: structural, selectGamingEditionScopedEvidence: editionScope }));
+jest.unstable_mockModule('../src/shared/gaming/gamingFreshnessCore.js', () => ({ ...actualFreshness,
+  extractGamingFreshnessMetadata: freshness, evaluateGamingFreshness: evaluateFreshness }));
 jest.unstable_mockModule('../src/shared/gaming/gamingClearSource.js', () => ({ ...actualSource, assessGamingClearSource: source, gamingClearIntactSourceText: intact }));
 jest.unstable_mockModule('../src/shared/gaming/gamingClearEvidence.js', () => ({ ...actualClear, assessGamingClearEvidence: clear }));
 jest.unstable_mockModule('../src/services/gamingDurableDocumentChunks.js', () => ({ ...actualChunks, chunkGamingDocument: chunks, hashGamingDocumentRevision: hash }));
 jest.unstable_mockModule('../src/shared/gaming/gamingStoredEvidenceCore.js', () => ({ ...actualStored, selectStoredGamingEvidence: select, formatStoredGamingEvidence: format }));
-const { runGamingStructuredEvidencePreview, GAMING_STRUCTURED_EVIDENCE_PREVIEW_VERSION } =
+const { runGamingStructuredEvidencePreview, GAMING_STRUCTURED_EVIDENCE_PREVIEW_VERSION, GAMING_BASE_GAME_SCOPE_PREVIEW_VERSION } =
   await import('../src/shared/gaming/gamingStructuredEvidencePreviewFixture.js');
 const FAILURE = 'PREVIEW_GAMING_STRUCTURED_EVIDENCE_CONTRACT_INVALID';
 
@@ -36,12 +43,16 @@ describe('sealed Gaming structured evidence component proof', () => {
     hash.mockReset().mockImplementation(actualChunks.hashGamingDocumentRevision);
     select.mockReset().mockImplementation(actualStored.selectStoredGamingEvidence);
     format.mockReset().mockImplementation(actualStored.formatStoredGamingEvidence);
+    editionScope.mockReset().mockImplementation(actualStructural.selectGamingEditionScopedEvidence);
+    freshness.mockReset().mockImplementation(actualFreshness.extractGamingFreshnessMetadata);
+    evaluateFreshness.mockReset().mockImplementation(actualFreshness.evaluateGamingFreshness);
   });
 
   it('runs actual extraction, source/evidence CLEAR, chunking and stored selection repeatedly without caller data', async () => {
     await expect(runGamingStructuredEvidencePreview()).resolves.toBeUndefined();
     await expect(runGamingStructuredEvidencePreview()).resolves.toBeUndefined();
     expect(GAMING_STRUCTURED_EVIDENCE_PREVIEW_VERSION).toBe('gaming-structured-evidence/v1');
+    expect(GAMING_BASE_GAME_SCOPE_PREVIEW_VERSION).toBe('gaming-base-game-scope/v1');
     expect(extract).toHaveBeenCalledWith(expect.objectContaining({ contentType: 'application/json' }));
     expect(source).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({ text: expect.any(String), evidenceUnits: expect.any(Array) }), expect.any(Object));
     expect(source.mock.calls.some(([, doc]) => doc.text.length < 120 && !/[.!?]$/u.test(doc.text))).toBe(true);
@@ -51,6 +62,53 @@ describe('sealed Gaming structured evidence component proof', () => {
     expect(select.mock.calls.some(([rows]) => rows[0]?.revisionId === 'synthetic-structured-revision')).toBe(true);
     expect(clear).toHaveBeenCalled();
     expect(hash).toHaveBeenCalled();
+    expect(editionScope).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({ game: 'Elden Ring', edition: 'Base game' }));
+    expect(freshness).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({ game: 'Elden Ring', edition: 'Base game' }), expect.any(Date), expect.any(Array));
+    expect(evaluateFreshness).toHaveBeenCalledWith(expect.objectContaining({ game: 'Elden Ring', requestedVersion: '1.16' }));
+  });
+
+  it('detects excluded edition facts restored into the selected projection', async () => {
+    editionScope.mockImplementation((doc, input) => {
+      const selected = actualStructural.selectGamingEditionScopedEvidence(doc, input);
+      return selected.status === 'verified' ? { ...selected, text: doc.text, units: [...doc.evidenceUnits ?? []] } : selected;
+    });
+    await expect(runGamingStructuredEvidencePreview()).rejects.toThrow(FAILURE);
+  });
+
+  it('detects names or unsupported scope values used as base-game proof', async () => {
+    editionScope.mockImplementation((doc, input) => {
+      const selected = actualStructural.selectGamingEditionScopedEvidence(doc, input);
+      return selected.status === 'unverified' ? { ...selected, status: 'verified', text: doc.text, units: [...doc.evidenceUnits ?? []] } : selected;
+    });
+    await expect(runGamingStructuredEvidencePreview()).rejects.toThrow(FAILURE);
+  });
+
+  it('detects record-level scope granting original-page storage eligibility', async () => {
+    source.mockImplementation((input, doc, options) => {
+      const assessment = actualSource.assessGamingClearSource(input, doc, options);
+      return input.edition === 'Base game' ? { ...assessment, qualityEligible: true } : assessment;
+    });
+    await expect(runGamingStructuredEvidencePreview()).rejects.toThrow(FAILURE);
+  });
+
+  it('detects excluded DLC patch metadata promoted to base-game currentness', async () => {
+    freshness.mockImplementation((doc, input, ...args) => {
+      const metadata = actualFreshness.extractGamingFreshnessMetadata(doc, input, ...args);
+      return input.edition && doc.text.includes('DLC_SCOPE_SENTINEL') && !metadata.patch
+        ? { ...metadata, patch: '1.16', metadataConfidence: 'content_extracted' } : metadata;
+    });
+    await expect(runGamingStructuredEvidencePreview()).rejects.toThrow(FAILURE);
+  });
+
+  it.each(['global edition', 'metadata bound', 'partial metadata'])('detects loss of the %s applicability veto', async scenario => {
+    freshness.mockImplementation((doc, input, ...args) => {
+      const metadata = actualFreshness.extractGamingFreshnessMetadata(doc, input, ...args);
+      if (!input.edition) return metadata;
+      const change = scenario === 'global edition' ? metadata.edition === 'Shadow of the Erdtree'
+        : scenario === 'metadata bound' ? doc.text.length > 32_000 : doc.evidenceUnits?.some(unit => unit.integrity.status !== 'complete');
+      return change ? { ...metadata, edition: 'base-game', metadataUnverified: undefined } : metadata;
+    });
+    await expect(runGamingStructuredEvidencePreview()).rejects.toThrow(FAILURE);
   });
 
   it.each(['no recovered units', 'padding workaround', 'wrong field association', 'lost provenance'])(

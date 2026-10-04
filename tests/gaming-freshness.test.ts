@@ -1,4 +1,6 @@
 import { describe, expect, test } from '@jest/globals';
+import { extractGamingHtmlEvidence } from '../src/services/gamingHtmlEvidence.js';
+import { selectGamingEditionScopedEvidence } from '../src/shared/gaming/gamingStructuralEvidence.js';
 import {
   assessGamingSourcePolicy, classifyGamingQuestionFreshness, evaluateGamingFreshness, extractGamingFreshnessMetadata, getGamingCurrentnessDiscoverySources,
   GAMING_FRESHNESS_DEFAULTS, GAMING_SOURCE_POLICY_VERSION,
@@ -32,6 +34,95 @@ function evaluate(evidence: GamingFreshnessEvidence[], overrides: Record<string,
 function extract(url: string, text: string, game = 'Prism Siege') {
   return extractGamingFreshnessMetadata({ publicUrl: url, text, metadata: { title: game } }, { game }, NOW, RULES);
 }
+
+describe('record-scoped edition freshness metadata', () => {
+  const context = { game: 'Elden Ring', edition: 'Base game' };
+  const url = 'https://guides.example.org/samurai';
+  function document(baseMetadata = '', other = '', prose = '') {
+    const body = `<html><body><article><h1>Elden Ring guide</h1>${prose}
+      <table><tr><th>Mechanic</th><th>Scope</th><th>Description</th>${baseMetadata ? '<th>Patch</th>' : ''}</tr>
+      <tr><td>Unsheathe</td><td>Base game</td><td>Wait for enemy recovery before using the heavy Unsheathe attack, then dodge and recover stamina.</td>${baseMetadata ? `<td>${baseMetadata}</td>` : ''}</tr></table>${other}
+      </article></body></html>`;
+    const extracted = extractGamingHtmlEvidence({ body, contentType: 'text/html', sourceUrl: url });
+    expect(extracted.units.every(unit => unit.integrity.status === 'complete')).toBe(true);
+    return { publicUrl: url, text: [prose.replace(/<[^>]+>/gu, ''), ...extracted.units.map(unit => unit.text)].join('\n\n'),
+      metadata: { title: 'Elden Ring guide' }, evidenceUnits: extracted.units };
+  }
+  const dlc = (metadata: string) => `<table><tr><th>Mechanic</th><th>Scope</th>${metadata.split(';').map(value => `<th>${value.split(':')[0]}</th>`).join('')}</tr>
+    <tr><td>Expansion skill</td><td>Shadow of the Erdtree</td>${metadata.split(';').map(value => `<td>${value.slice(value.indexOf(':') + 1).trim()}</td>`).join('')}</tr></table>`;
+
+  test('excluded edition records cannot establish historical or current base-game applicability', () => {
+    const doc = document('', dlc('Patch: 1.16;Platforms: PC;Regions: EU;Published at: 2026-09-01'));
+    expect(selectGamingEditionScopedEvidence(doc, context).status).toBe('verified');
+    const evidence = extractGamingFreshnessMetadata(doc, context, NOW);
+    expect(evaluateGamingFreshness({ question: 'Explain the historical Unsheathe build', ...context,
+      requestedVersion: '1.16', platform: 'PC', region: 'EU', evidence: [evidence], now: NOW }).usable).toBe(false);
+    expect(evidence).toMatchObject({ edition: 'base-game', metadataConfidence: 'unknown' });
+    expect(evidence.patch).toBeUndefined();
+    expect(evidence.platforms).toBeUndefined();
+    expect(evidence.regions).toBeUndefined();
+    expect(evidence.publishedAt).toBeUndefined();
+    const current = index({ game: context.game, edition: 'base-game', currentPatch: '1.16', platforms: ['PC'], regions: ['EU'] });
+    expect(evaluateGamingFreshness({ question: 'What is the best Unsheathe build?', ...context,
+      platform: 'PC', region: 'EU', evidence: [evidence, current], now: NOW }).guideApplicability)
+      .toEqual([expect.objectContaining({ status: 'unverified' })]);
+  });
+
+  test('excluded edition records do not contradict selected base-game metadata', () => {
+    const evidence = extractGamingFreshnessMetadata(document('1.16', dlc('Patch: 2.0;Platforms: PS5;Effective from: 2099-01-01')), context, NOW);
+    expect(evidence).toMatchObject({ edition: 'base-game', patch: '1.16', metadataConfidence: 'content_extracted' });
+    expect(evidence.metadataConflict).toBeUndefined();
+    expect(evidence.platforms).toBeUndefined();
+    expect(evidence.effectiveFrom).toBeUndefined();
+  });
+
+  test('metadata-only structural edition assertions remain global vetoes', () => {
+    const doc = document('', '<dl><dt>Edition</dt><dd>Shadow of the Erdtree</dd></dl>');
+    const evidence = extractGamingFreshnessMetadata(doc, context, NOW);
+    expect(evidence.edition).toBe('Shadow of the Erdtree');
+  });
+
+  test('a global structural base-game label retains the whole prose evidence path', () => {
+    const extracted = extractGamingHtmlEvidence({ body: '<html><body><dl><dt>Edition</dt><dd>Base game</dd></dl></body></html>',
+      contentType: 'text/html', sourceUrl: url });
+    const doc = { publicUrl: url, text: `Elden Ring Unsheathe instructions. ${extracted.units[0].text}`, evidenceUnits: extracted.units };
+    expect(selectGamingEditionScopedEvidence(doc, context)).toMatchObject({ status: 'unverified', units: [], reasonCodes: [] });
+    expect(extractGamingFreshnessMetadata(doc, context, NOW).edition).toBe('base-game');
+  });
+
+  test.each(['characters', 'lines', 'structural fields'])('scope proof cannot conceal global edition assertions beyond metadata %s bounds', bound => {
+    const doc = bound === 'structural fields'
+      ? document('', `<table><tr><th>Patch</th></tr>${Array.from({ length: 501 }, (_, index) => `<tr><td>1.${index}</td></tr>`).join('')}</table><dl><dt>Edition</dt><dd>Shadow of the Erdtree</dd></dl>`)
+      : document('', '', `${bound === 'characters' ? 'x'.repeat(GAMING_FRESHNESS_DEFAULTS.maxMetadataChars) : 'unscoped prose\n'.repeat(501)}\nEdition: Shadow of the Erdtree`);
+    expect(selectGamingEditionScopedEvidence(doc, context).status).toBe('verified');
+    const evidence = extractGamingFreshnessMetadata(doc, context, NOW);
+    expect(evidence.metadataUnverified).toBe(true);
+    expect(evaluateGamingFreshness({ question: 'How do I use Unsheathe?', ...context, evidence: [evidence], now: NOW }).usable).toBe(false);
+  });
+
+  test.each(['label', 'value'])('scope proof cannot conceal a global edition %s crossing the character cutoff', crossing => {
+    const prefix = 'x'.repeat(GAMING_FRESHNESS_DEFAULTS.maxMetadataChars
+      - (crossing === 'label' ? 3 : ' Edition: base-game'.length));
+    const prose = `${prefix} Edition: ${crossing === 'label' ? 'Shadow of the Erdtree' : 'base-game with Shadow of the Erdtree equipment'}`;
+    const evidence = extractGamingFreshnessMetadata(document('', '', prose), context, NOW);
+    expect(evidence.metadataUnverified).toBe(true);
+    expect(evaluateGamingFreshness({ question: 'How do I use Unsheathe?', ...context, evidence: [evidence], now: NOW }).usable).toBe(false);
+  });
+
+  test('global base-game metadata cannot discard its conflicting edition context', () => {
+    const doc = document('', '<section><h2>Shadow of the Erdtree</h2><dl><dt>Edition</dt><dd>Base game</dd></dl></section>');
+    expect(selectGamingEditionScopedEvidence(doc, context)).toMatchObject({ status: 'conflict', reasonCodes: ['CONFLICTING_EDITION_SCOPE'] });
+  });
+
+  test.each(['partial', 'ambiguous'] as const)('scope proof cannot hide %s global edition restrictions', status => {
+    const doc = document('', '<dl><dt>Edition</dt><dd>Shadow of the Erdtree</dd></dl>');
+    doc.evidenceUnits = doc.evidenceUnits.map(unit => unit.fields.some(field => field.label === 'Edition')
+      ? { ...unit, integrity: { status, reasons: ['required_context_missing'] } } : unit);
+    const evidence = extractGamingFreshnessMetadata(doc, context, NOW);
+    expect(evidence.metadataUnverified).toBe(true);
+    expect(evaluateGamingFreshness({ question: 'How do I use Unsheathe?', ...context, evidence: [evidence], now: NOW }).usable).toBe(false);
+  });
+});
 
 describe('reviewed currentness discovery starting points', () => {
   test('uses only exact reviewed index/status paths for the requested game', () => {

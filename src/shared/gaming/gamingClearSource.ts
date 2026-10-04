@@ -1,10 +1,10 @@
 import { detectGamingDocumentGame } from './gamingDocumentIngestionCore.js';
-import { normalizeGamingGameIdentity, resolveGamingGuideIdentity } from './gamingGameIdentity.js';
+import { normalizeGamingGameIdentity, normalizeGamingEditionIdentity, gamingEditionIdentitiesMatch, resolveGamingGuideIdentity } from './gamingGameIdentity.js';
 import { buildGamingRetrievalTerms, buildGamingRequestRequirements, gamingTermCoverage } from './gamingRetrievalPolicy.js';
-import { assessGamingSourcePolicy, classifyGamingQuestionFreshness, evaluateGamingFreshness, type GamingFreshnessEvidence, type GamingSourcePolicyAssessment } from './gamingFreshnessCore.js';
+import { assessGamingSourcePolicy, classifyGamingQuestionFreshness, extractGamingFreshnessMetadata, evaluateGamingFreshness, type GamingFreshnessEvidence, type GamingSourcePolicyAssessment } from './gamingFreshnessCore.js';
 import type { GamingStoredKnowledgeInput } from './gamingStoredEvidenceCore.js';
 import type { ResolvedGamingDocument } from '@services/gamingDocumentResolution.js';
-import { assessGamingStructuralUsability, readGamingEvidenceUnits } from './gamingStructuralEvidence.js';
+import { assessGamingStructuralUsability, readGamingEvidenceUnits, selectGamingEditionScopedEvidence } from './gamingStructuralEvidence.js';
 import { createGamingClearAssessment, classifyGamingClearQuestion, gamingClearContextFingerprint,
   type GamingClearSourceRole } from './gamingClearPolicy.js';
 
@@ -51,10 +51,14 @@ export function gamingClearHistoricalSourceVerified(input: Pick<GamingStoredKnow
 }
 
 /** Acquired labels are assertions, never independent proof. Complete names preserve edition distinctions. */
-export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDocument, 'text' | 'metadata' | 'publicUrl'>,
+export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDocument, 'text' | 'metadata' | 'publicUrl'> & Partial<Pick<ResolvedGamingDocument, 'evidenceUnits'>>,
   input: Pick<GamingStoredKnowledgeInput, 'game' | 'edition' | 'prompt' | 'mode'>,
   policy: GamingSourcePolicyAssessment, allowPartialCoverage = false): { status: 'verified' | 'unknown' | 'conflict'; reasonCodes: string[] } {
   const expected = new Set([normalizeGamingGameIdentity(input.game), resolveGamingGuideIdentity(input.game, input.edition)]);
+  const scoped = selectGamingEditionScopedEvidence(document, input);
+  if (scoped.reasonCodes.includes('GAME_MISMATCH')) return { status: 'conflict', reasonCodes: ['GAME_MISMATCH'] };
+  if (scoped.status === 'conflict') return { status: 'conflict', reasonCodes: ['EDITION_UNVERIFIED'] };
+  if (scoped.status === 'unverified' && scoped.reasonCodes.length) return { status: 'unknown', reasonCodes: ['EDITION_UNVERIFIED'] };
   const labels = [...document.text.slice(0, 32_000).matchAll(/\bgame\s*:\s*(.{1,160}?)(?=\.(?:\s|$)|;|\||\n|\s+(?:Edition|Platform|Region|Patch|Build|Published at|Effective from)\s*:|$)/giu)];
   if (labels.some(label => !expected.has(normalizeGamingGameIdentity(label[1])))) return { status: 'conflict', reasonCodes: ['GAME_MISMATCH'] };
   const metadata = [document.metadata.title, document.metadata.headings].filter((value): value is string => Boolean(value));
@@ -108,8 +112,18 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
   const reviewedAssociation = Boolean(policy.ruleId) && ['official', 'specialist', 'community'].includes(policy.authority);
   if (!(metadataAnchor && proseAnchor && relevant) && !(reviewedAssociation && metadataAnchor))
     return { status: 'unknown', reasonCodes: ['GAME_IDENTITY_UNVERIFIED'] };
-  if (input.edition && !containsIdentity([document.metadata.title, document.metadata.headings, prose].join(' '), input.edition))
-    return { status: 'unknown', reasonCodes: ['EDITION_UNVERIFIED'] };
+  if (input.edition) {
+    // Game identity remains independently verified above. Base-game applicability
+    // needs an acquired assertion, never the title or an incidental entity name.
+    if (normalizeGamingEditionIdentity(input.edition) === 'base-game') {
+      const applicability = extractGamingFreshnessMetadata(document, input);
+      if (applicability.metadataConflict) return { status: 'conflict', reasonCodes: ['EDITION_UNVERIFIED'] };
+      if (applicability.metadataUnverified || !gamingEditionIdentitiesMatch(applicability.edition, input.edition))
+        return { status: 'unknown', reasonCodes: ['EDITION_UNVERIFIED'] };
+    } else if (!containsIdentity([document.metadata.title, document.metadata.headings, prose].join(' '), input.edition)) {
+      return { status: 'unknown', reasonCodes: ['EDITION_UNVERIFIED'] };
+    }
+  }
   return { status: 'verified', reasonCodes: [ordinaryTitle ? 'ACQUIRED_TITLE_AND_PASSAGE_IDENTITY' : reviewedAssociation
     ? 'REVIEWED_GAME_ASSOCIATION' : 'ACQUIRED_METADATA_AND_BODY_IDENTITY'] };
 }
@@ -127,12 +141,14 @@ export function assessGamingClearSource(input: GamingStoredKnowledgeInput & { re
     freshness: GamingFreshnessEvidence; now: Date; allowPartialCoverage?: boolean }) {
   const role = gamingClearSourceRole(input, options.sourcePolicy);
   const identity = assessGamingClearSourceIdentity(document, input, options.sourcePolicy, options.allowPartialCoverage);
+  const scoped = selectGamingEditionScopedEvidence(document, input);
+  const evidenceDocument = scoped.status === 'verified' ? { ...document, text: scoped.text, evidenceUnits: scoped.units } : document;
   const supporting = ['patch_authority', 'currentness_index', 'live_status'].includes(role);
-  const intactText = gamingClearIntactSourceText(document);
+  const intactText = gamingClearIntactSourceText(evidenceDocument);
   const coverage = gamingTermCoverage(intactText, buildGamingRetrievalTerms(input).focusTerms);
-  const proseText = gamingClearIntactProseText(document);
-  const structural = assessGamingStructuralUsability({ units: document.evidenceUnits, ...input, proseText });
-  const structuredClaim = Boolean(document.evidenceUnits?.length) && structural.claimShape !== 'none';
+  const proseText = gamingClearIntactProseText(evidenceDocument);
+  const structural = assessGamingStructuralUsability({ units: evidenceDocument.evidenceUnits, ...input, proseText });
+  const structuredClaim = Boolean(evidenceDocument.evidenceUnits?.length) && structural.claimShape !== 'none';
   const independentProse = !structural.hasRelevantClaimUnit && structural.hasIndependentProseAnchors
     && proseText.length >= 120 && gamingTermCoverage(proseText, buildGamingRetrievalTerms(input).focusTerms) >= 0.25;
   const usable = structural.hasIntactUsableUnit || intactText.trim().length >= 120;
@@ -169,7 +185,7 @@ export function assessGamingClearSource(input: GamingStoredKnowledgeInput & { re
   const substantiveFreshness = stable || historical || combinedCurrent ? 'verified' as const : role === 'live_status'
     ? evaluateGamingFreshness({ question: input.prompt, game: input.game, evidence: [options.freshness], now: options.now }).usable
       ? 'verified' as const : 'unknown' as const : supporting ? 'not_applicable' as const : 'unknown' as const;
-  return createGamingClearAssessment({ profile: 'source', questionProfile: classifyGamingClearQuestion(input), sourceRole: role,
+  const assessment = createGamingClearAssessment({ profile: 'source', questionProfile: classifyGamingClearQuestion(input), sourceRole: role,
     subjectId: options.subjectId, subjectHash: options.subjectHash,
     contextFingerprint: gamingClearContextFingerprint({ actorScopeHash: options.actorScopeHash, game: input.game, edition: input.edition,
       prompt: input.prompt, mode: input.mode, platform: input.platform, region: input.region, requestedVersion: input.requestedVersion,
@@ -194,4 +210,7 @@ export function assessGamingClearSource(input: GamingStoredKnowledgeInput & { re
       ? 'blocking' as const : 'warning' as const, evidenceRefs: refs })), ...(document.metrics.truncated
       ? [{ code: 'EXTRACTION_PARTIAL', severity: 'warning' as const, evidenceRefs: refs }] : [])], evaluatedAt: options.now.toISOString()
   });
+  // Applicability established for individual records cannot authorize storing the
+  // original whole page as base-game content. The existing storage gate enforces this.
+  return scoped.status === 'verified' ? { ...assessment, qualityEligible: false } : assessment;
 }

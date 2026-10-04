@@ -309,6 +309,8 @@ export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
     sourceAcquisitionProofVersion: 'gaming-source-acquisition/v1',
     structuredEvidenceProofHeader: 'x-arcanos-preview-gaming-structured-evidence-version',
     structuredEvidenceProofVersion: 'gaming-structured-evidence/v1',
+    baseGameScopeProofHeader: 'x-arcanos-preview-gaming-base-game-scope-version',
+    baseGameScopeProofVersion: 'gaming-base-game-scope/v1',
     currentnessProofHeader: 'x-arcanos-preview-gaming-currentness-version',
     currentnessProofVersion: 'gaming-currentness/v1',
     currentnessContinuationProofHeader: 'x-arcanos-preview-gaming-currentness-continuation-version',
