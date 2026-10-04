@@ -7,7 +7,7 @@ import { createClientDisconnectAbortScope } from '@shared/http/clientDisconnectA
 import { createRateLimitMiddleware } from '@platform/runtime/security.js';
 import { config as runtimeConfig } from '@platform/runtime/config.js';
 import { publicProviderRateLimit, resolvePublicProviderClientIdentity } from '@transport/http/middleware/publicProviderAdmission.js';
-import { GAMING_MCP_PATH, GAMING_METADATA_PATH, gamingMcpTools, isGamingMcpToolName, isGamingMcpWrite, isGamingMcpInput } from '@shared/chatgpt/gamingMcpContract.js';
+import { GAMING_MCP_PATH, GAMING_METADATA_PATH, gamingMcpTools, isGamingMcpToolName, isGamingMcpWrite, isGamingMcpInput, isGamingMcpOutput } from '@shared/chatgpt/gamingMcpContract.js';
 import { resolveGamingExecutionBudget } from '@shared/gaming/gamingExecutionBudgetCore.js';
 import { getGamingModuleTimeoutMs } from '@services/gamingConfig.js';
 import type { ChatGptGamingToolName } from '@arcanos/protocol';
@@ -87,7 +87,7 @@ export function createChatGptGamingMcpRouter(options: {
     const principal = principals.get(req)!;
     const disconnect = createClientDisconnectAbortScope(req, res, 'Gaming client disconnected.');
     const server = new Server({ name: 'arcanos-gaming-private', version: '1.0.0' }, { capabilities: { tools: {} },
-      instructions: 'Gaming tools only. Preserve structured nextAction and workflow state. Never store sources without the separate write tool and confirmation. Do not restart exhausted discovery; poll at most three times. A timed-out write may have been accepted: retry only the identical idempotency key.' });
+      instructions: 'Gaming tools only. Preserve structured protocol version, revision, nextAction and workflow state. Search only when the backend requests discovery. Explicit v2 recovery requires the returned grant, same workflowId, current expectedRevision and a new operation key. Never restart or downgrade an exhausted workflow. Never store sources without the separate write tool and confirmation. Do not restart exhausted discovery; poll at most three times. A timed-out write may have been accepted: retry only the identical idempotency key.' });
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: hasGamingPermission(principal) ? gamingMcpTools as Tool[] : [] }));
     server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
@@ -116,6 +116,7 @@ export function createChatGptGamingMcpRouter(options: {
           parentSignal: signal, abortMessage: 'Gaming request timed out.', onAbort: () => { aborted = true; } },
         () => execute(principal, name, request.params.arguments, { requestId: req.requestId, traceId: req.traceId,
           autoStoreApproved: configuration.status === 'ready' && configuration.autoStoreApproved }));
+        if (!isGamingMcpOutput(name, output)) throw new GamingMcpError('GAMING_OUTPUT_INVALID');
         return { structuredContent: { ...output }, content: [{ type: 'text', text: JSON.stringify(output) }],
           ...(output.statusCode >= 400 ? { isError: true } : {}) };
       } catch (error) {

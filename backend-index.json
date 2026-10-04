@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-03T05:07:44.433Z",
+  "generatedAt": "2026-10-03T22:55:52.208Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -4315,6 +4315,9 @@
           "relativePath": "tests/gaming-currentness-workflow.test.ts"
         },
         {
+          "relativePath": "tests/gaming-discovery-recovery.integration.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-document-ingestion-preview-failure.test.ts"
         },
         {
@@ -4378,6 +4381,9 @@
           "relativePath": "tests/gaming-html-evidence.test.ts"
         },
         {
+          "relativePath": "tests/gaming-hybrid-evidence-selection.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-hybrid-lifecycle.integration.test.ts"
         },
         {
@@ -4385,6 +4391,9 @@
         },
         {
           "relativePath": "tests/gaming-hybrid-preview.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-hybrid-v2-lifecycle.test.ts"
         },
         {
           "relativePath": "tests/gaming-hybrid-workflow.test.ts"

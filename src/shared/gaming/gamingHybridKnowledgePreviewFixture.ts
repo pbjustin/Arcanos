@@ -1,5 +1,6 @@
 import {
-  GAMING_HYBRID_CONTRACT_VERSION, GAMING_HYBRID_LIMITS, gamingHybridQuerySchema,
+  GAMING_HYBRID_CONTRACT_VERSION, GAMING_HYBRID_V2_CONTRACT_VERSION, GAMING_HYBRID_LIMITS,
+  gamingHybridLimitsForVersion, gamingHybridQuerySchema,
   gamingHybridCandidatesSchema, gamingHybridIngestionSchema
 } from './gamingHybridContract.js';
 import {
@@ -9,10 +10,13 @@ import {
 } from './gamingFreshnessCore.js';
 import {
   GAMING_HYBRID_RETAINED_ARTIFACT_CHARS, resolveGamingHybridCandidateAttempt,
-  projectGamingHybridCandidateRetention, isGamingApprovedArtifactCurrent, resolveGamingHybridCurrentnessReason
+  projectGamingHybridCandidateRetention, isGamingApprovedArtifactCurrent, resolveGamingHybridCurrentnessReason,
+  projectGamingHybridSuppliedGuides
 } from './gamingHybridPolicyCore.js';
+import type { GamingStoredKnowledgeContext } from './gamingStoredEvidenceCore.js';
 
 export const GAMING_HYBRID_KNOWLEDGE_PREVIEW_VERSION = 'gaming-hybrid-knowledge/v1';
+export const GAMING_DISCOVERY_RECOVERY_PROTOCOL_PREVIEW_VERSION = 'gaming-discovery-recovery-protocol/v1';
 const FAILURE = 'PREVIEW_GAMING_HYBRID_KNOWLEDGE_CONTRACT_INVALID';
 const GAME = 'Prism Siege';
 const NOW = new Date('2026-09-09T12:00:00.000Z');
@@ -82,6 +86,76 @@ function requireClosedContracts(): void {
     requireProof(resolveGamingHybridCandidateAttempt({ operationKey: 'official-first', requestedKey: 'official-retry',
       round: 1, maxRounds: 1, nextAction: 'verify_currentness', expectedAction: 'verify_currentness' }) === 'deny');
   }
+}
+
+function requireV2RecoveryContracts(): void {
+  const query = { contractVersion: GAMING_HYBRID_V2_CONTRACT_VERSION, idempotencyKey: 'synthetic-v2-query-1',
+    game: GAME, question: 'How do I open the copper gate?' };
+  const parsed = gamingHybridQuerySchema.parse(query);
+  requireProof(parsed.contractVersion === GAMING_HYBRID_V2_CONTRACT_VERSION
+    && parsed.mode === 'guide' && parsed.storagePolicy === 'transient_only');
+  for (const field of ['canStore', 'coverageSatisfied', 'selectedCandidateIds', 'acquisitionBudgetMs'])
+    requireProof(!gamingHybridQuerySchema.safeParse({ ...query, [field]: true }).success);
+  const candidates = { contractVersion: GAMING_HYBRID_V2_CONTRACT_VERSION, workflowId: WORKFLOW_ID,
+    idempotencyKey: 'synthetic-v2-candidates-1', expectedRevision: 0,
+    candidates: [{ url: 'https://community.example/guides/beam', claimedCategory: 'official_updates' }] };
+  requireProof(gamingHybridCandidatesSchema.safeParse(candidates).success);
+  requireProof(!gamingHybridCandidatesSchema.safeParse({ ...candidates, expectedRevision: undefined }).success);
+  for (const revision of [-1, 0.5, '1', 1_000_001])
+    requireProof(!gamingHybridCandidatesSchema.safeParse({ ...candidates, expectedRevision: revision }).success);
+  requireProof(gamingHybridCandidatesSchema.safeParse({ ...candidates, expectedRevision: 1_000_000 }).success);
+  requireProof(!gamingHybridCandidatesSchema.safeParse({ ...candidates, candidates: Array.from({ length: 4 }, () => candidates.candidates[0]) }).success);
+  requireProof(!gamingHybridCandidatesSchema.safeParse({ ...candidates, contractVersion: GAMING_HYBRID_CONTRACT_VERSION }).success);
+  requireProof(!gamingHybridCandidatesSchema.safeParse({ ...candidates, candidates: [{ ...candidates.candidates[0], content: 'caller-written evidence' }] }).success);
+  const v1 = gamingHybridLimitsForVersion(GAMING_HYBRID_CONTRACT_VERSION);
+  const v2 = gamingHybridLimitsForVersion(GAMING_HYBRID_V2_CONTRACT_VERSION);
+  requireProof(v1 === GAMING_HYBRID_LIMITS && v1.discoveryRounds === 1 && v2.discoveryRounds === 2
+    && 'totalCandidateUrls' in v2 && v2.totalCandidateUrls === 6
+    && 'totalCandidateTimeoutMs' in v2 && v2.totalCandidateTimeoutMs === 24_000
+    && v2.candidates === 3 && v2.currentnessRounds === 1 && v2.workflowTtlMs === v1.workflowTtlMs);
+  const first = { requestedKey: 'synthetic-v2-candidates-1', round: 0, nextAction: 'search', maxRounds: v2.discoveryRounds };
+  requireProof(resolveGamingHybridCandidateAttempt(first) === 'begin');
+  const recovery = { ...first, operationKey: first.requestedKey, requestedKey: 'synthetic-v2-candidates-2', round: 1 };
+  requireProof(resolveGamingHybridCandidateAttempt(recovery) === 'begin');
+  requireProof(resolveGamingHybridCandidateAttempt({ ...recovery, maxRounds: v1.discoveryRounds }) === 'deny');
+  requireProof(resolveGamingHybridCandidateAttempt({ ...recovery, nextAction: 'stop' }) === 'deny');
+  requireProof(resolveGamingHybridCandidateAttempt({ ...recovery, operationKey: recovery.requestedKey,
+    requestedKey: 'synthetic-v2-candidates-3', round: 2 }) === 'deny');
+  requireProof(resolveGamingHybridCandidateAttempt({ ...recovery, operationKey: recovery.requestedKey,
+    round: 2, nextAction: 'stop' }) === 'resume');
+  requireProof(resolveGamingHybridCandidateAttempt({ ...recovery, maxRounds: v2.currentnessRounds,
+    nextAction: 'verify_currentness', expectedAction: 'verify_currentness' }) === 'deny');
+  const ingestion = { contractVersion: GAMING_HYBRID_V2_CONTRACT_VERSION, workflowId: WORKFLOW_ID,
+    idempotencyKey: 'test-test-test', candidateIds: [CANDIDATE_ID], storagePolicy: 'ask_before_store' };
+  requireProof(gamingHybridIngestionSchema.parse(ingestion).confirmStore === false);
+  requireProof(!gamingHybridIngestionSchema.safeParse({ ...ingestion, confirmed: true }).success);
+}
+
+function requireSuppliedGuideBindings(): void {
+  const requestedUrl = 'https://community.example/guides/beam';
+  const publicUrl = 'https://community.example/guides/beam-final';
+  const actorScopeHash = 'a'.repeat(64);
+  const candidate = { candidateId: CANDIDATE_ID, actorScopeHash, workflowId: WORKFLOW_ID,
+    expiresAt: NOW.getTime() + 1, publicUrl, document: { requestedUrl } };
+  const knowledge: GamingStoredKnowledgeContext = { context: '',
+    sources: [{ sourceId: CANDIDATE_ID, url: publicUrl, sourceType: 'community', fetchedAt: NOW.toISOString(), snippet: 'Intact beam guide.' }],
+    evidence: [{ sourceId: CANDIDATE_ID, revisionId: 'synthetic-beam-revision', recordId: 'synthetic-beam-record', recordType: 'guide',
+      publicUrl, text: 'Intact beam guide.', lexicalScore: 1, combinedScore: 1, provenance: { fetchedAt: NOW.toISOString() } }] };
+  const guideProjectionInput = { requiredUrls: [`${requestedUrl}#section`], accepted: [candidate], knowledge,
+    actorScopeHash, workflowId: WORKFLOW_ID, now: NOW.getTime() };
+  const projected = projectGamingHybridSuppliedGuides(guideProjectionInput);
+  requireProof(projected.length === 1 && projected[0].requestedUrl === requestedUrl
+    && projected[0].publicUrl === publicUrl && projected[0].sourceId === CANDIDATE_ID);
+  for (const denied of [{ ...candidate, actorScopeHash: 'b'.repeat(64) },
+    { ...candidate, workflowId: '10000000-0000-4000-8000-000000000002' }, { ...candidate, expiresAt: NOW.getTime() }])
+    requireProof(projectGamingHybridSuppliedGuides({ ...guideProjectionInput, accepted: [denied] }).length === 0);
+  requireProof(projectGamingHybridSuppliedGuides({ ...guideProjectionInput, requiredUrls: ['https://community.example/guides/other'] }).length === 0);
+  requireProof(projectGamingHybridSuppliedGuides({ ...guideProjectionInput, knowledge: { ...knowledge, sources: [] } }).length === 0);
+  requireProof(projectGamingHybridSuppliedGuides({ ...guideProjectionInput, knowledge: { ...knowledge, evidence: [] } }).length === 0);
+  for (const text of ['', '   ']) requireProof(projectGamingHybridSuppliedGuides({ ...guideProjectionInput,
+    knowledge: { ...knowledge, evidence: [{ ...knowledge.evidence![0], text }] } }).length === 0);
+  requireProof(projectGamingHybridSuppliedGuides({ ...guideProjectionInput,
+    knowledge: { ...knowledge, evidence: [{ ...knowledge.evidence![0], publicUrl: requestedUrl }] } }).length === 0);
 }
 
 function requireCurrentApplicability(): void {
@@ -218,6 +292,8 @@ function requireLifecycleRepairs(): void {
 export function runGamingHybridKnowledgePreview(): void {
   try {
     requireClosedContracts();
+    requireV2RecoveryContracts();
+    requireSuppliedGuideBindings();
     requireCurrentApplicability();
     requireAcquiredIdentityFreshness();
     requireSeasonalAndScopeRepairs();

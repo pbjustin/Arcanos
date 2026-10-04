@@ -22,7 +22,15 @@ const proofPairs = () => [
   [contract.guideAssistanceProofHeader, contract.guideAssistanceProofVersion],
   [contract.progressRecoveryProofHeader, contract.progressRecoveryProofVersion],
   [contract.hybridKnowledgeProofHeader, contract.hybridKnowledgeProofVersion], [contract.clearProofHeader, contract.clearProofVersion],
-  [contract.sourceAcquisitionProofHeader, contract.sourceAcquisitionProofVersion]
+  [contract.discoveryRecoveryProtocolProofHeader, contract.discoveryRecoveryProtocolProofVersion],
+  [contract.discoveryRecoveryEvidenceProofHeader, contract.discoveryRecoveryEvidenceProofVersion],
+  [contract.sourceAcquisitionProofHeader, contract.sourceAcquisitionProofVersion],
+  [contract.structuredEvidenceProofHeader, contract.structuredEvidenceProofVersion],
+  [contract.currentnessProofHeader, contract.currentnessProofVersion],
+  [contract.currentnessContinuationProofHeader, contract.currentnessContinuationProofVersion],
+  [contract.advisoryFreshnessProofHeader, contract.advisoryFreshnessProofVersion],
+  [contract.generationBudgetProofHeader, contract.generationBudgetProofVersion],
+  [contract.executionBudgetProofHeader, contract.executionBudgetProofVersion]
 ];
 
 async function queryGuide() {
@@ -68,6 +76,35 @@ describe('served Gaming CLEAR proof boundary', () => {
       expect(response.body).toEqual({ error: 'PREVIEW_GAMING_CLEAR_CONTRACT_INVALID' });
       expect(response.text).not.toContain('Sealed preview guide response.');
       expect(response.text).not.toContain('private-clear-preview-sentinel');
+    }
+  );
+
+  it.each(['independent rows rejected', 'missing tuple fields admitted', 'trailing pool disagreement hidden', 'inspection limit bypassed', 'compacted inspection veto lost'])(
+    'withholds every Gaming proof and the success body after discovery recovery drift: %s', async scenario => {
+      evidence.mockImplementation((input, data, options) => {
+        const result = actualEvidence.assessGamingClearEvidence(input, data, options);
+        if (!options?.requireRequestCoverage) return result;
+        if (scenario === 'independent rows rejected' && input.prompt.includes('Silverblade') && result.gates.claimSupport === 'verified')
+          return { ...result, decision: 'reject', gates: { ...result.gates, claimSupport: 'unknown' } };
+        if (scenario === 'missing tuple fields admitted' && data.evidence?.some(chunk => chunk.evidenceUnits?.some(unit =>
+          !unit.fields.some(field => field.label === 'Unit'))))
+          return { ...result, decision: 'accept', gates: { ...result.gates, claimSupport: 'verified' } };
+        if (scenario === 'trailing pool disagreement hidden' && (data.evidence?.length ?? 0) > 2_048)
+          return { ...result, blockingFindings: result.blockingFindings.filter(finding => finding.code !== 'CONTRADICTORY_EVIDENCE') };
+        if (scenario === 'inspection limit bypassed' && data.sources.length === 18)
+          return { ...result, decision: 'accept', gates: { ...result.gates, claimSupport: 'verified' }, blockingFindings: [] };
+        if (scenario === 'compacted inspection veto lost' && data.structuralConflictAssessmentUnavailable)
+          return actualEvidence.assessGamingClearEvidence(input, { ...data, structuralConflictAssessmentUnavailable: false }, options);
+        return result;
+      });
+      const response = await queryGuide();
+      expect(response.status).toBe(500);
+      for (const [header] of proofPairs()) expect(response.headers[header]).toBeUndefined();
+      expect(response.headers[NATIVE_PR_PREVIEW_SYNTHETIC_RESPONSE_HEADER.name]).toBe(NATIVE_PR_PREVIEW_SYNTHETIC_RESPONSE_HEADER.value);
+      expect(response.body).toEqual({ error: 'PREVIEW_GAMING_CLEAR_CONTRACT_INVALID' });
+      expect(response.text).not.toContain('Sealed preview guide response.');
+      expect(response.text).not.toContain('Copperblade');
+      expect(response.text).not.toContain('synthetic-recovery');
     }
   );
 });

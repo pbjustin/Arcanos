@@ -158,6 +158,16 @@ describe('Gaming fixed service execution and persistence boundary', () => {
   });
 });
 
+describe('Gaming MCP declared output boundary', () => {
+  it('rejects invalid structured output even from an alternate executor', async () => {
+    const execute = jest.fn(async () => ({ statusCode: 200, result: { ...hybrid, frontendApproved: true } }));
+    const response = await post(app({ execute })).set('Authorization', 'Bearer ' + await token())
+      .send(rpc('arcanos_gaming_hybrid_query', queryInput)).expect(200);
+    expect(response.body.result).toMatchObject({ isError: true, content: [{ text: 'GAMING_OUTPUT_INVALID' }] });
+    expect(response.body.result.structuredContent).toBeUndefined();
+  });
+});
+
 describe('Gaming MCP execution deadlines', () => {
   let originalModuleTimeoutMs: string | undefined;
   beforeEach(() => {
@@ -177,14 +187,16 @@ describe('Gaming MCP execution deadlines', () => {
   async function observedTimeout(name: ChatGptGamingToolName, input: Record<string, unknown>,
     options: Parameters<typeof createChatGptGamingMcpRouter>[0] = {}, parentRemainingMs?: number) {
     let timeoutMs: number | undefined;
+    const { canary: _unusedCanary, ...fixtureServices } = services();
+    const output = await createGamingMcpExecutor(fixtureServices)(await principal(true), name, input);
     const execute = jest.fn(async () => {
       timeoutMs = getRequestAbortContext()?.timeoutMs;
-      return { statusCode: 200, result: hybrid };
+      return output;
     });
     const response = await post(app({ ...options, execute }, parentRemainingMs))
       .set('Authorization', 'Bearer ' + await token({ scope: GAMING_QUERY_SCOPE + ' ' + GAMING_WRITE_SCOPE }))
       .send(rpc(name, input)).expect(200);
-    expect(response.body.result.structuredContent).toEqual({ statusCode: 200, result: hybrid });
+    expect(response.body.result.structuredContent).toEqual(output);
     expect(execute).toHaveBeenCalledTimes(1);
     return timeoutMs!;
   }

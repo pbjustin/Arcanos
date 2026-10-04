@@ -287,6 +287,10 @@ export interface NativePrPreviewE2eContract {
     progressRecoveryProofVersion: 'gaming-progress-recovery/v1';
     hybridKnowledgeProofHeader: 'x-arcanos-preview-gaming-hybrid-knowledge-version';
     hybridKnowledgeProofVersion: 'gaming-hybrid-knowledge/v1';
+    discoveryRecoveryProtocolProofHeader: 'x-arcanos-preview-gaming-discovery-recovery-protocol-version';
+    discoveryRecoveryProtocolProofVersion: 'gaming-discovery-recovery-protocol/v1';
+    discoveryRecoveryEvidenceProofHeader: 'x-arcanos-preview-gaming-discovery-recovery-evidence-version';
+    discoveryRecoveryEvidenceProofVersion: 'gaming-discovery-recovery-evidence/v1';
     clearProofHeader: 'x-arcanos-preview-gaming-clear-version';
     clearProofVersion: 'gaming-clear/v1';
     sourceAcquisitionProofHeader: 'x-arcanos-preview-gaming-source-acquisition-version';

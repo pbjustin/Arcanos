@@ -55,6 +55,76 @@ function compose(f: Fixture, output = 'mock-composed', args: string[] = []) {
 }
 function mutate(file: string, callback: (value: Json) => void) { const value = readJson(file); callback(value); writeJson(file, value); }
 
+function recoveryComposition(scenario = 'valid') {
+  const code = `
+    import {readFileSync} from 'node:fs';
+    import {createHash} from 'node:crypto';
+    import {gamingRecoveryCompositionPatch,applyGamingRecoveryCompositionPatch,gamingRules}
+      from ${JSON.stringify(pathToFileURL(script).href)};
+    const hash = bytes => createHash('sha256').update(bytes).digest('hex');
+    globalThis.fetch = () => { throw new Error('NETWORK_FORBIDDEN'); };
+    const recipe = await gamingRecoveryCompositionPatch();
+    const publicV1 = readFileSync('docs/gpt/arcanos-gaming-hybrid.instructions.md', 'utf8');
+    let source = '\\uFEFFSynthetic unrelated π prefix.\\r\\n\\r\\n' + publicV1 +
+      '\\r\\nSynthetic retained middle.\\r\\n' + gamingRules.map(rule =>
+        '### ' + rule.id + '\\r\\n\\r\\n' + rule.text).join('\\r\\n\\r\\n') +
+      '\\r\\n\\r\\nSynthetic unrelated suffix.\\r\\n';
+    const scenario = process.argv[1];
+    if (scenario === 'absent begin') source = source.replace(recipe.replacement.begin, 'Synthetic absent marker.');
+    if (scenario === 'absent end') source = source.replace(recipe.replacement.end, 'Synthetic absent marker.');
+    if (scenario === 'duplicate workflow') source += publicV1;
+    if (scenario === 'reversed markers') source = source.replace(recipe.replacement.begin, 'Synthetic marker swap')
+      .replace(recipe.replacement.end, recipe.replacement.begin).replace('Synthetic marker swap', recipe.replacement.end);
+    if (scenario === 'inline begin') source = source.replace(recipe.replacement.begin, 'inline ' + recipe.replacement.begin);
+    if (scenario === 'inline end') source = source.replace(recipe.replacement.end, 'inline ' + recipe.replacement.end);
+    if (scenario === 'missing safeguard') source = source.replace(recipe.ruleReplacements[0].before, 'Synthetic missing safeguard.');
+    if (scenario === 'duplicate safeguard') source += recipe.ruleReplacements[0].before;
+    if (scenario === 'existing replacement safeguard') source += recipe.ruleReplacements[0].after;
+    if (scenario === 'overlapping safeguard') source = source.replace(recipe.ruleReplacements[0].before, '')
+      .replace(recipe.replacement.begin, recipe.replacement.begin + '\\n' + recipe.ruleReplacements[0].before);
+    if (scenario === 'mixed v2 baseline') source += recipe.workflow.content;
+    let bytes = Buffer.from(source, 'utf8');
+    if (scenario === 'invalid UTF-8') bytes = Buffer.concat([bytes, Buffer.from([255])]);
+    // This is a synthetic pinned descriptor, never the actual approved private baseline.
+    recipe.approvedSkillBaseline = {sizeBytes:bytes.length,sha256:hash(bytes)};
+    if (scenario === 'changed pinned bytes') bytes = Buffer.concat([bytes, Buffer.from('Synthetic changed source.')]);
+    if (scenario === 'wrong baseline digest') recipe.approvedSkillBaseline.sha256 = '0'.repeat(64);
+    if (scenario === 'wrong baseline size') recipe.approvedSkillBaseline.sizeBytes += 1;
+    if (scenario === 'conflicting safeguard') recipe.ruleReplacements[0].after += 'Synthetic conflicting guard.';
+    if (scenario === 'duplicate recipe rule') recipe.ruleReplacements[1] = recipe.ruleReplacements[0];
+    if (scenario === 'wrong workflow digest') recipe.workflow.sha256 = '0'.repeat(64);
+    if (scenario === 'changed workflow bytes') recipe.workflow.content += 'Synthetic changed workflow.';
+    if (scenario === 'wrong contract') recipe.contractVersion = 'gaming-hybrid-v1';
+    if (scenario === 'wrong marker recipe') recipe.replacement.begin = 'Synthetic alternate marker.';
+    if (scenario === 'non-byte baseline') bytes = source;
+    try {
+      const inputBefore = Buffer.from(bytes);
+      const first = applyGamingRecoveryCompositionPatch(bytes, recipe);
+      const second = applyGamingRecoveryCompositionPatch(bytes, recipe);
+      let sourceOffset = 0, outputOffset = 0, preserved = true;
+      const restored = [];
+      for (const change of first.replacements) {
+        const oldGap = bytes.subarray(sourceOffset, change.sourceStartByte);
+        const newGap = first.bytes.subarray(outputOffset, change.outputStartByte);
+        preserved = preserved && oldGap.equals(newGap);
+        restored.push(newGap, bytes.subarray(change.sourceStartByte, change.sourceEndByte));
+        sourceOffset = change.sourceEndByte;
+        outputOffset = change.outputEndByte;
+      }
+      preserved = preserved && bytes.subarray(sourceOffset).equals(first.bytes.subarray(outputOffset));
+      restored.push(first.bytes.subarray(outputOffset));
+      console.log(JSON.stringify({status:first.status,contractVersion:first.contractVersion,
+        deterministic:first.bytes.equals(second.bytes) && first.sha256 === second.sha256 &&
+          JSON.stringify(first.replacements) === JSON.stringify(second.replacements),
+        preserved,reversible:Buffer.concat(restored).equals(bytes),inputUntouched:bytes.equals(inputBefore),
+        replacements:first.replacements.length,sizeMatches:first.sizeBytes === first.bytes.length,
+        hashMatches:first.sha256 === hash(first.bytes),v1MarkersRemoved:!first.bytes.includes(Buffer.from(recipe.replacement.begin)),
+        v2WorkflowCount:first.bytes.toString('utf8').split('WORKFLOW BEGIN gaming-hybrid-v2').length - 1}));
+    } catch (error) { console.error(error.message); process.exitCode = 1; }
+  `;
+  return spawnSync(process.execPath, ['--input-type=module', '-e', code, scenario], { encoding: 'utf8' });
+}
+
 afterEach(() => {
   for (const root of roots.splice(0)) {
     if (path.dirname(root) !== path.resolve(os.tmpdir()) || !path.basename(root).startsWith('arcanos-gaming-composition-')) throw new Error('Unexpected fixture path');
@@ -63,6 +133,74 @@ afterEach(() => {
 });
 
 describe('Private Gaming source composition, separate from live acceptance', () => {
+  it('applies the actual public recipe to synthetic pinned bytes with deterministic, reversible preservation', () => {
+    const result = recoveryComposition();
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe('');
+    expect(JSON.parse(result.stdout)).toEqual({ status: 'PROPOSED_NOT_OWNER_APPROVED',
+      contractVersion: 'gaming-hybrid-v2', deterministic: true, preserved: true, reversible: true,
+      inputUntouched: true, replacements: 9, sizeMatches: true, hashMatches: true,
+      v1MarkersRemoved: true, v2WorkflowCount: 1 });
+  });
+
+  it.each(['absent begin', 'absent end', 'duplicate workflow', 'reversed markers', 'inline begin', 'inline end',
+    'missing safeguard', 'duplicate safeguard', 'existing replacement safeguard', 'overlapping safeguard', 'mixed v2 baseline', 'invalid UTF-8',
+    'changed pinned bytes', 'wrong baseline digest', 'wrong baseline size', 'conflicting safeguard',
+    'duplicate recipe rule', 'wrong workflow digest', 'changed workflow bytes', 'wrong contract',
+    'wrong marker recipe', 'non-byte baseline'])('blocks v2 composition for %s without revealing source text', scenario => {
+    const result = recoveryComposition(scenario);
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toBe('GAMING_RECOVERY_COMPOSITION_INVALID\n');
+  });
+
+  it('provides an exact public v2 replacement recipe without composing or approving missing private inputs', () => {
+    const code = `const {gamingRecoveryCompositionPatch,gamingRules}=await import(${JSON.stringify(pathToFileURL(script).href)}); console.log(JSON.stringify({patch:await gamingRecoveryCompositionPatch(),rules:gamingRules}));`;
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', code], { encoding: 'utf8' });
+    expect(result.status).toBe(0);
+    const { patch, rules } = JSON.parse(result.stdout);
+    expect(patch.status).toBe('PROPOSED_NOT_OWNER_APPROVED');
+    expect(patch.approvedSkillBaseline).toEqual({ sizeBytes: 15_210,
+      sha256: 'a2cd3cfb2eb677eaef47c7fc148b41565b58e051486a49b29df48ee53c048081' });
+    const workflow = readFileSync(path.join(process.cwd(), patch.workflow.path));
+    expect(workflow.length).toBe(9_046);
+    expect(hash(workflow)).toBe('2f8f4d08442674d014a0e36a2dc1e19b6628092199697720355bd6a1ed98c6be');
+    expect(patch.workflow.sizeBytes).toBe(workflow.length);
+    expect(patch.workflow.sha256).toBe(hash(workflow));
+    expect(patch.workflow.content).toBe(workflow.toString('utf8'));
+    expect(patch.replacement.operation).toBe('replace_exactly_one_complete_marked_workflow');
+    for (const replacement of patch.ruleReplacements) {
+      expect(rules.find((rule: Json) => rule.id === replacement.id).text).toBe(replacement.before);
+      expect(replacement.after).not.toBe(replacement.before);
+    }
+    expect(patch.requirements).toContain('Verify actual private baseline size and hash before applying.');
+    expect(patch.requirements).toContain('Preserve all unrelated baseline bytes and owner-approval records unchanged.');
+    expect(patch.requirements).toContain('Do not update the installed plugin or assign release readiness from this recipe.');
+    const proposed = patch.workflow.content + patch.ruleReplacements.map((rule: Json) => rule.after).join('\n');
+    for (const name of proposed.match(/\barcanos_gaming_[a-z_]+\b/gu) ?? []) {
+      const contract = readJson(path.join(process.cwd(), 'packages/protocol/schemas/v1/tools/arcanos-gaming/contract.schema.json'));
+      expect(Object.keys(contract.tools)).toContain(name);
+    }
+    for (const text of ['expectedRevision', 'replacementAllowed', 'continuationRequired', 'gapAssessmentStatus',
+      'selectedCandidateIds', 'selectedEvidenceIds', 'coverageSatisfied', 'requirementSupport',
+      'six distinct', '24 seconds', 'same workflowId', 'Actually use available Web Search',
+      'private player information', 'provider timed out', 'Keep surrounding punctuation outside hyperlink targets']) {
+      expect(proposed).toContain(text);
+    }
+    expect(proposed.indexOf('arcanos_gaming_hybrid_query')).toBeLessThan(proposed.indexOf('Actually use available Web Search'));
+    expect(proposed).not.toContain('queryGamingHybridKnowledge');
+    expect(proposed).not.toContain('submitGamingHybridCandidates');
+    const publicV1 = readFileSync(path.join(process.cwd(), 'docs/gpt/arcanos-gaming-hybrid.instructions.md'));
+    expect(publicV1.length).toBe(7_796);
+    expect(hash(publicV1)).toBe('8a30dad3b83cced79724b58fb21d3f9d538c29f89779f090cd54b1cbdc99e406');
+    const f = fixture();
+    expect(compose(f).status).toBe(0);
+    const legacy = readFileSync(path.join(f.inputRoot, 'mock-composed', skillPath), 'utf8');
+    expect(legacy).toContain('under gaming-hybrid-v1');
+    expect(legacy).toContain('Respect one gameplay round');
+    expect(legacy).not.toContain('gaming-hybrid-v2');
+  });
+
   it('binds approved source, preserves every UTF-8/CRLF section and produces deterministic private files', () => {
     const f = fixture();
     const before = readFileSync(path.join(f.inputRoot, 'published-gpt.json'));

@@ -825,6 +825,42 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
     expect(JSON.stringify(maximal).length).toBeLessThan(100000);
   });
 
+  it('validates opted-in v2 requests and responses without granting v2 authority to v1', () => {
+    const contract = loadContract();
+    expect(contract['x-arcanos-gaming-hybrid-supported-contract-versions']).toEqual(['gaming-hybrid-v1', 'gaming-hybrid-v2']);
+    const ajv = new Ajv2020({ strict: false, validateFormats: false });
+    ajv.addSchema(contract, 'gaming-recovery-v2-action');
+    const candidates = ajv.compile({ $ref: 'gaming-recovery-v2-action#/components/schemas/GamingHybridCandidatesRequest' });
+    const request = { contractVersion: 'gaming-hybrid-v2', workflowId: '4517e693-b592-43c8-a827-d4b74168c429',
+      idempotencyKey: 'recovery-v2-action', expectedRevision: 2, candidates: [{ url: 'https://guides.example.org/routes' }] };
+    expect(candidates(request)).toBe(true);
+    expect(gamingHybridCandidatesSchema.safeParse(request).success).toBe(true);
+    const { expectedRevision: _revision, ...noRevision } = request;
+    for (const invalid of [noRevision, { ...request, expectedRevision: -1 }, { ...request, contractVersion: 'gaming-hybrid-v1' },
+      { ...request, selectedEvidenceIds: ['frontend-approval'] }, { ...request, acquisitionBudgetMs: 1_000_000 }]) {
+      expect(candidates(invalid)).toBe(false);
+      expect(gamingHybridCandidatesSchema.safeParse(invalid).success).toBe(false);
+    }
+    const result = { contractVersion: 'gaming-hybrid-v2', requestId: 'req_recovery', workflowId: request.workflowId,
+      state: 'discovery_required', nextAction: 'search', reason: 'COVERAGE_INSUFFICIENT', sourceKnown: false,
+      evidenceSelected: true, freshnessStatus: 'unverified', revision: 2,
+      selectedCandidateIds: ['c25c641a-7031-42f4-a50e-f0db1d6c58c5'], selectedEvidenceIds: ['evidence-route-1'],
+      coverageSatisfied: false, missingCoverage: ['alternate route'], gapAssessmentStatus: 'assessed',
+      requirementSupport: [{ requirement: 'first route', candidateIds: ['c25c641a-7031-42f4-a50e-f0db1d6c58c5'], evidenceIds: ['evidence-route-1'] }],
+      discovery: { type: 'gameplay_evidence', round: 1, maxRounds: 2, maxCandidates: 3,
+        continuationRequired: true, searchQueries: ['Fixture Game alternate route guide'], replacementAllowed: true,
+        recoveryRemaining: 1, nextSubmissionCandidateLimit: 3, remainingTotalAcquisitionMs: 18_000, remainingCandidateUrls: 3 } };
+    for (const schemaName of ['GamingHybridResponse', 'GamingHybridFailureResponse', 'GamingHybridRateLimitResponse']) {
+      const validate = ajv.compile({ $ref: `gaming-recovery-v2-action#/components/schemas/${schemaName}` });
+      expect(validate(result)).toBe(true);
+      expect(validate({ ...result, contractVersion: 'gaming-hybrid-v1' })).toBe(false);
+      expect(validate({ ...result, discovery: { ...result.discovery, maxRounds: 3 } })).toBe(false);
+      expect(validate({ ...result, rawSourcePassage: 'Private evidence text' })).toBe(false);
+      const { coverageSatisfied: _coverage, ...noCoverage } = result;
+      expect(validate(noCoverage)).toBe(false);
+    }
+  });
+
   it('packages bounded frontend orchestration and a backend-first activation gate', () => {
     const instructions = readFileSync(hybridInstructionsPath, 'utf8');
     const guide = readFileSync(instructionsPath, 'utf8');

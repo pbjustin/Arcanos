@@ -1089,6 +1089,9 @@ describe('Gaming hybrid durable lifecycle', () => {
   });
 
   it('retains late rows beyond the diagnostic preview, hashes substantive changes and preserves last-good records on approval failure', async () => {
+    // This exercises content preservation, not elapsed acquisition time. Keep
+    // CPU scheduling from spending the mocked source's extraction deadline.
+    setClock('2026-01-01T00:00:00Z');
     const prefix = `<article>${'Village traders exchange copper coins for canvas and wood. '.repeat(2_400)}</article>`;
     useSparseTable(undefined, prefix);
     const first = await evaluate({ prompt: locationQuestion });

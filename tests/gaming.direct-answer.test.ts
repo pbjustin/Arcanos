@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals
 import type { TrinityRunOptions } from '../src/core/logic/trinityTypes.js';
 import type { RuntimeBudget } from '../src/platform/resilience/runtimeBudget.js';
 import { createGamingClearAssessment, gamingClearContextFingerprint, gamingClearHash } from '../src/shared/gaming/gamingClearPolicy.js';
+import { assessGamingRequestCoverage } from '../src/shared/gaming/gamingClearEvidence.js';
 import { gamingAcquisitionAxios } from './testUtils/gamingAcquisitionFixtures.js';
 import type { FetchAndCleanOptions, FetchAndCleanExtractionMetrics } from '../src/shared/webFetcher.js';
 
@@ -41,7 +42,9 @@ function orchestrationAssessment(profile: 'evidence' | 'answer', text: string, i
   });
 }
 jest.unstable_mockModule('@shared/gaming/gamingClearEvidence.js', () => ({
-  assessGamingClearEvidence: () => orchestrationAssessment('evidence', 'controlled orchestration evidence')
+  assessGamingClearEvidence: () => orchestrationAssessment('evidence', 'controlled orchestration evidence'),
+  // Keep the real coverage policy when the v2 selector is imported by this v1 harness.
+  assessGamingRequestCoverage
 }));
 
 /** Provider-only regressions must first have real selected evidence from the controlled repository. */

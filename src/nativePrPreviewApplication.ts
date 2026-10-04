@@ -10,8 +10,8 @@ import { runGamingArchiveGroundingPreview } from './shared/gaming/gamingArchiveP
 import { runGamingGuideResponsePreview } from './shared/gaming/gamingGuideResponsePreviewFixture.js';
 import { runGamingDocumentIngestionPreview } from './shared/gaming/gamingDocumentIngestionPreviewFixture.js';
 import { runGamingDurableRagPreview } from './shared/gaming/gamingDurableRagPreviewFixture.js';
-import { runGamingHybridKnowledgePreview } from './shared/gaming/gamingHybridKnowledgePreviewFixture.js';
-import { runGamingClearPreview } from './shared/gaming/gamingClearPreviewFixture.js';
+import { runGamingHybridKnowledgePreview, GAMING_DISCOVERY_RECOVERY_PROTOCOL_PREVIEW_VERSION } from './shared/gaming/gamingHybridKnowledgePreviewFixture.js';
+import { runGamingClearPreview, GAMING_DISCOVERY_RECOVERY_EVIDENCE_PREVIEW_VERSION } from './shared/gaming/gamingClearPreviewFixture.js';
 import { runGamingSourceAcquisitionPreview } from './shared/gaming/gamingSourceAcquisitionPreviewFixture.js';
 import { runGamingStructuredEvidencePreview } from './shared/gaming/gamingStructuredEvidencePreviewFixture.js';
 import { runGamingCurrentnessPreview, GAMING_ADVISORY_FRESHNESS_PREVIEW_VERSION } from './shared/gaming/gamingCurrentnessPreviewFixture.js';
@@ -10165,6 +10165,14 @@ export function createNativePrPreviewApplication(
           response.setHeader(
             NATIVE_PR_PREVIEW_GAMING_CONTRACT.hybridKnowledgeProofHeader,
             NATIVE_PR_PREVIEW_GAMING_CONTRACT.hybridKnowledgeProofVersion
+          );
+          response.setHeader(
+            NATIVE_PR_PREVIEW_GAMING_CONTRACT.discoveryRecoveryProtocolProofHeader,
+            GAMING_DISCOVERY_RECOVERY_PROTOCOL_PREVIEW_VERSION
+          );
+          response.setHeader(
+            NATIVE_PR_PREVIEW_GAMING_CONTRACT.discoveryRecoveryEvidenceProofHeader,
+            GAMING_DISCOVERY_RECOVERY_EVIDENCE_PREVIEW_VERSION
           );
           response.setHeader(
             NATIVE_PR_PREVIEW_GAMING_CONTRACT.durableRagProofHeader,

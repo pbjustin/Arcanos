@@ -20,7 +20,8 @@ jest.unstable_mockModule('../src/shared/gaming/gamingClearPolicy.js', () => ({ .
   createGamingClearAssessment: mockCreate, parseGamingClearModelAssessment: mockParseModel, parseGamingClearAssessment: mockParseAudit }));
 jest.unstable_mockModule('../src/shared/gaming/gamingClearAnswerBinding.js', () => ({ ...actualBinding,
   hasBoundGamingClearAnswer: mockBinding }));
-const { runGamingClearPreview, GAMING_CLEAR_PREVIEW_VERSION } = await import('../src/shared/gaming/gamingClearPreviewFixture.js');
+const { runGamingClearPreview, GAMING_CLEAR_PREVIEW_VERSION, GAMING_DISCOVERY_RECOVERY_EVIDENCE_PREVIEW_VERSION } =
+  await import('../src/shared/gaming/gamingClearPreviewFixture.js');
 const FAILURE = 'PREVIEW_GAMING_CLEAR_CONTRACT_INVALID';
 
 describe('sealed Gaming CLEAR production-core fixture', () => {
@@ -38,12 +39,18 @@ describe('sealed Gaming CLEAR production-core fixture', () => {
     expect(runGamingClearPreview()).toBeUndefined();
     expect(runGamingClearPreview()).toBeUndefined();
     expect(GAMING_CLEAR_PREVIEW_VERSION).toBe('gaming-clear/v1');
+    expect(GAMING_DISCOVERY_RECOVERY_EVIDENCE_PREVIEW_VERSION).toBe('gaming-discovery-recovery-evidence/v1');
     expect(mockSource).toHaveBeenCalledWith(expect.objectContaining({ requestedVersion: '2.0' }),
       expect.objectContaining({ text: expect.stringContaining('Baseline valid for patches: 2.0') }), expect.objectContaining({ now: new Date('2026-09-09T12:00:00.000Z') }));
     expect(mockEvidence).toHaveBeenCalledWith(expect.objectContaining({ region: 'EU' }), expect.any(Object), expect.any(Object));
     expect(mockEvidence).toHaveBeenCalledWith(expect.objectContaining({ region: 'US' }), expect.any(Object), expect.any(Object));
     expect(mockCreate).toHaveBeenCalledWith(expect.objectContaining({ profile: 'answer', findings: [expect.objectContaining({ code: 'UNSUPPORTED_MECHANIC', severity: 'warning' })] }));
     expect(mockBinding).toHaveBeenCalledWith(expect.objectContaining({ response: expect.stringContaining('Guaranteed on every patch.') }));
+    expect(mockEvidence).toHaveBeenCalledWith(expect.objectContaining({ prompt: 'What is Copperblade weight value and Silverblade weight value?' }),
+      expect.objectContaining({ sources: expect.arrayContaining([expect.objectContaining({ sourceId: 'synthetic-recovery-source-1' })]) }),
+      expect.objectContaining({ requireRequestCoverage: true }));
+    expect(mockEvidence).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({ structuralConflictAssessmentUnavailable: true }),
+      expect.objectContaining({ requireRequestCoverage: true }));
   });
 
   it.each(['valid baseline rejected', 'wrong patch admitted', 'wrong game admitted', 'filtered source admitted'])(
@@ -68,6 +75,28 @@ describe('sealed Gaming CLEAR production-core fixture', () => {
     mockIntactText.mockImplementation(doc => doc.text);
     expect(runGamingClearPreview).toThrow(FAILURE);
   });
+
+  it.each(['independent rows rejected', 'missing tuple fields admitted', 'trailing pool disagreement hidden', 'inspection limit bypassed', 'compacted inspection veto lost'])(
+    'fails closed on discovery recovery evidence drift: %s', scenario => {
+      mockEvidence.mockImplementation((input, data, options) => {
+        const result = actualEvidence.assessGamingClearEvidence(input, data, options);
+        if (!options?.requireRequestCoverage) return result;
+        if (scenario === 'independent rows rejected' && input.prompt.includes('Silverblade') && result.gates.claimSupport === 'verified')
+          return { ...result, decision: 'reject', gates: { ...result.gates, claimSupport: 'unknown' } };
+        if (scenario === 'missing tuple fields admitted' && data.evidence?.some(chunk => chunk.evidenceUnits?.some(unit =>
+          !unit.fields.some(field => field.label === 'Unit'))))
+          return { ...result, decision: 'accept', gates: { ...result.gates, claimSupport: 'verified' } };
+        if (scenario === 'trailing pool disagreement hidden' && (data.evidence?.length ?? 0) > 2_048)
+          return { ...result, blockingFindings: result.blockingFindings.filter(finding => finding.code !== 'CONTRADICTORY_EVIDENCE') };
+        if (scenario === 'inspection limit bypassed' && data.sources.length === 18)
+          return { ...result, decision: 'accept', gates: { ...result.gates, claimSupport: 'verified' }, blockingFindings: [] };
+        if (scenario === 'compacted inspection veto lost' && data.structuralConflictAssessmentUnavailable)
+          return actualEvidence.assessGamingClearEvidence(input, { ...data, structuralConflictAssessmentUnavailable: false }, options);
+        return result;
+      });
+      expect(runGamingClearPreview).toThrow(FAILURE);
+    }
+  );
 
   it.each(['matching region discarded', 'missing region accepted', 'conflicting region accepted', 'insufficient support accepted', 'currentness bypassed'])(
     'fails closed when evidence behavior drifts: %s', scenario => {

@@ -530,7 +530,8 @@
         "contractVersion": {
           "type": "string",
           "enum": [
-            "gaming-hybrid-v1"
+            "gaming-hybrid-v1",
+            "gaming-hybrid-v2"
           ]
         },
         "workflowId": {
@@ -560,6 +561,34 @@
             "currentness_verification"
           ],
           "description": "Optional operation role. Omit for legacy calls; the backend infers only its pending operation and enforces separate one-shot budgets."
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000,
+          "description": "Required only for v2. Must equal the current backend workflow revision; never inferred or advanced by the frontend."
+        }
+      },
+      "if": {
+        "properties": {
+          "contractVersion": {
+            "enum": [
+              "gaming-hybrid-v2"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "expectedRevision"
+        ],
+        "properties": {
+          "expectedRevision": {}
+        }
+      },
+      "else": {
+        "properties": {
+          "expectedRevision": false
         }
       }
     },
@@ -674,7 +703,8 @@
         "contractVersion": {
           "type": "string",
           "enum": [
-            "gaming-hybrid-v1"
+            "gaming-hybrid-v1",
+            "gaming-hybrid-v2"
           ]
         },
         "idempotencyKey": {
@@ -829,7 +859,8 @@
         "contractVersion": {
           "type": "string",
           "enum": [
-            "gaming-hybrid-v1"
+            "gaming-hybrid-v1",
+            "gaming-hybrid-v2"
           ]
         },
         "requestId": {
@@ -904,12 +935,10 @@
           "minLength": 1,
           "maxLength": 1000
         },
-        "discovery": {
-          "$ref": "#/$defs/GamingHybridDiscovery"
-        },
+        "discovery": {},
         "candidates": {
           "type": "array",
-          "maxItems": 3,
+          "maxItems": 6,
           "items": {
             "$ref": "#/$defs/GamingHybridCandidateDecision"
           }
@@ -948,7 +977,7 @@
         "acceptedGameplayCandidateCount": {
           "type": "integer",
           "minimum": 0,
-          "maximum": 3
+          "maximum": 6
         },
         "currentnessRequirements": {
           "type": "array",
@@ -963,6 +992,113 @@
               "official_live_status_required"
             ]
           }
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000
+        },
+        "selectedCandidateIds": {
+          "type": "array",
+          "maxItems": 6,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "format": "uuid",
+            "maxLength": 36
+          }
+        },
+        "selectedEvidenceIds": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "coverageSatisfied": {
+          "type": "boolean"
+        },
+        "missingCoverage": {
+          "type": "array",
+          "maxItems": 12,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          }
+        },
+        "gapAssessmentStatus": {
+          "type": "string",
+          "enum": [
+            "assessed",
+            "unknown",
+            "not_assessed"
+          ]
+        },
+        "requirementSupport": {
+          "type": "array",
+          "maxItems": 12,
+          "items": {
+            "$ref": "#/$defs/GamingHybridRequirementSupport"
+          }
+        }
+      },
+      "if": {
+        "properties": {
+          "contractVersion": {
+            "enum": [
+              "gaming-hybrid-v2"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "revision",
+          "selectedCandidateIds",
+          "selectedEvidenceIds",
+          "coverageSatisfied",
+          "missingCoverage",
+          "gapAssessmentStatus",
+          "requirementSupport"
+        ],
+        "properties": {
+          "discovery": {
+            "$ref": "#/$defs/GamingHybridDiscoveryV2"
+          },
+          "revision": {},
+          "selectedCandidateIds": {},
+          "selectedEvidenceIds": {},
+          "coverageSatisfied": {},
+          "missingCoverage": {},
+          "gapAssessmentStatus": {},
+          "requirementSupport": {}
+        }
+      },
+      "else": {
+        "properties": {
+          "discovery": {
+            "$ref": "#/$defs/GamingHybridDiscovery"
+          },
+          "candidates": {
+            "maxItems": 3,
+            "type": "array"
+          },
+          "acceptedGameplayCandidateCount": {
+            "maximum": 3,
+            "type": "integer"
+          },
+          "revision": false,
+          "selectedCandidateIds": false,
+          "selectedEvidenceIds": false,
+          "coverageSatisfied": false,
+          "missingCoverage": false,
+          "gapAssessmentStatus": false,
+          "requirementSupport": false
         }
       }
     },
@@ -2182,7 +2318,8 @@
         "contractVersion": {
           "type": "string",
           "enum": [
-            "gaming-hybrid-v1"
+            "gaming-hybrid-v1",
+            "gaming-hybrid-v2"
           ]
         },
         "workflowId": {
@@ -2399,6 +2536,222 @@
         "details": {
           "type": "object",
           "additionalProperties": true
+        }
+      }
+    },
+    "GamingHybridRequirementSupport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requirement",
+        "candidateIds",
+        "evidenceIds"
+      ],
+      "properties": {
+        "requirement": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        },
+        "candidateIds": {
+          "type": "array",
+          "maxItems": 6,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "format": "uuid",
+            "maxLength": 36
+          }
+        },
+        "evidenceIds": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        }
+      }
+    },
+    "GamingHybridAcquisitionHint": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Short-lived backend observation, scoped to this workflow. It is not evidence, a domain quality decision or a permanent blacklist.",
+      "required": [
+        "scope",
+        "target",
+        "reasonCode",
+        "observedAt",
+        "expiresAt"
+      ],
+      "properties": {
+        "scope": {
+          "type": "string",
+          "enum": [
+            "url",
+            "domain"
+          ]
+        },
+        "target": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "reasonCode": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "observedAt": {
+          "type": "string",
+          "format": "date-time",
+          "maxLength": 64
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time",
+          "maxLength": 64
+        }
+      }
+    },
+    "GamingHybridDiscoveryV2": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Backend-granted v2 discovery. Gameplay permits two submissions total; currentness keeps its separate existing one-shot acquisition limits. Recovery never renews the workflow TTL or generation deadlines.",
+      "required": [
+        "round",
+        "maxRounds",
+        "maxCandidates",
+        "searchQueries",
+        "replacementAllowed",
+        "recoveryRemaining",
+        "nextSubmissionCandidateLimit",
+        "remainingTotalAcquisitionMs",
+        "remainingCandidateUrls",
+        "continuationRequired"
+      ],
+      "properties": {
+        "round": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2,
+          "description": "Operations started for this discovery type. Zero means the permitted operation has not run; one consumes its budget. Identical same-key retries do not spend another round."
+        },
+        "maxRounds": {
+          "type": "integer",
+          "enum": [
+            1,
+            2
+          ]
+        },
+        "maxCandidates": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3,
+          "description": "Candidate limit for the pending submission; companion acquisitions retain their existing bounded slots."
+        },
+        "searchQueries": {
+          "type": "array",
+          "maxItems": 3,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 400
+          }
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "gameplay_evidence",
+            "currentness_verification"
+          ]
+        },
+        "continuationRequired": {
+          "type": "boolean",
+          "description": "True while this operation is permitted and must be submitted before reporting verification exhausted; false after its budget is exhausted. Follow nextAction on every response."
+        },
+        "reviewedSources": {
+          "type": "array",
+          "maxItems": 3,
+          "description": "Server-reviewed canonical discovery hints for the requested game and source role. These URLs are not acquired evidence or proof of currentness. Submit an applicable index/status URL using the same workflowId and a new idempotencyKey.",
+          "items": {
+            "$ref": "#/$defs/GamingHybridReviewedSourceHint"
+          }
+        },
+        "replacementAllowed": {
+          "type": "boolean"
+        },
+        "recoveryRemaining": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "nextSubmissionCandidateLimit": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3
+        },
+        "remainingTotalAcquisitionMs": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 24000
+        },
+        "remainingCandidateUrls": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 6
+        },
+        "acquisitionHints": {
+          "type": "array",
+          "maxItems": 6,
+          "items": {
+            "$ref": "#/$defs/GamingHybridAcquisitionHint"
+          }
+        }
+      },
+      "if": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "currentness_verification"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "round": {
+            "maximum": 1,
+            "type": "integer"
+          },
+          "maxRounds": {
+            "enum": [
+              1
+            ],
+            "type": "integer"
+          },
+          "replacementAllowed": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "maxRounds": {
+            "enum": [
+              2
+            ],
+            "type": "integer"
+          }
         }
       }
     }

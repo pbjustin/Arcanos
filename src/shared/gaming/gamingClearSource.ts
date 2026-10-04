@@ -1,6 +1,6 @@
 import { detectGamingDocumentGame } from './gamingDocumentIngestionCore.js';
 import { normalizeGamingGameIdentity, resolveGamingGuideIdentity } from './gamingGameIdentity.js';
-import { buildGamingRetrievalTerms, gamingTermCoverage } from './gamingRetrievalPolicy.js';
+import { buildGamingRetrievalTerms, buildGamingRequestRequirements, gamingTermCoverage } from './gamingRetrievalPolicy.js';
 import { assessGamingSourcePolicy, classifyGamingQuestionFreshness, evaluateGamingFreshness, type GamingFreshnessEvidence, type GamingSourcePolicyAssessment } from './gamingFreshnessCore.js';
 import type { GamingStoredKnowledgeInput } from './gamingStoredEvidenceCore.js';
 import type { ResolvedGamingDocument } from '@services/gamingDocumentResolution.js';
@@ -53,7 +53,7 @@ export function gamingClearHistoricalSourceVerified(input: Pick<GamingStoredKnow
 /** Acquired labels are assertions, never independent proof. Complete names preserve edition distinctions. */
 export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDocument, 'text' | 'metadata' | 'publicUrl'>,
   input: Pick<GamingStoredKnowledgeInput, 'game' | 'edition' | 'prompt' | 'mode'>,
-  policy: GamingSourcePolicyAssessment): { status: 'verified' | 'unknown' | 'conflict'; reasonCodes: string[] } {
+  policy: GamingSourcePolicyAssessment, allowPartialCoverage = false): { status: 'verified' | 'unknown' | 'conflict'; reasonCodes: string[] } {
   const expected = new Set([normalizeGamingGameIdentity(input.game), resolveGamingGuideIdentity(input.game, input.edition)]);
   const labels = [...document.text.slice(0, 32_000).matchAll(/\bgame\s*:\s*(.{1,160}?)(?=\.(?:\s|$)|;|\||\n|\s+(?:Edition|Platform|Region|Patch|Build|Published at|Effective from)\s*:|$)/giu)];
   if (labels.some(label => !expected.has(normalizeGamingGameIdentity(label[1])))) return { status: 'conflict', reasonCodes: ['GAME_MISMATCH'] };
@@ -103,7 +103,8 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
   const metadataAnchor = metadata.some(value => [...expected].some(game => containsIdentity(value, game)));
   const proseAnchor = [...expected].some(game => containsIdentity(document.text.replace(/\bgame\s*:[^.;|\n]{1,160}[.;]?/giu, ''), game));
   // The resolver already bounded this document; identity relevance must not erase a late intact passage.
-  const relevant = gamingTermCoverage(document.text, buildGamingRetrievalTerms(input).focusTerms) >= 0.25;
+  const relevant = gamingTermCoverage(document.text, buildGamingRetrievalTerms(input).focusTerms) >= 0.25
+    || allowPartialCoverage && buildGamingRequestRequirements(input).some(requirement => gamingTermCoverage(document.text, requirement.terms) === 1);
   const reviewedAssociation = Boolean(policy.ruleId) && ['official', 'specialist', 'community'].includes(policy.authority);
   if (!(metadataAnchor && proseAnchor && relevant) && !(reviewedAssociation && metadataAnchor))
     return { status: 'unknown', reasonCodes: ['GAME_IDENTITY_UNVERIFIED'] };
@@ -123,9 +124,9 @@ export function gamingClearSourceRole(input: Pick<GamingStoredKnowledgeInput, 'm
 /** All values are backend features after hard acquisition checks. No source-selected policy or model call. */
 export function assessGamingClearSource(input: GamingStoredKnowledgeInput & { region?: string }, document: ResolvedGamingDocument,
   options: { subjectId: string; subjectHash: string; actorScopeHash: string; sourcePolicy: GamingSourcePolicyAssessment;
-    freshness: GamingFreshnessEvidence; now: Date }) {
+    freshness: GamingFreshnessEvidence; now: Date; allowPartialCoverage?: boolean }) {
   const role = gamingClearSourceRole(input, options.sourcePolicy);
-  const identity = assessGamingClearSourceIdentity(document, input, options.sourcePolicy);
+  const identity = assessGamingClearSourceIdentity(document, input, options.sourcePolicy, options.allowPartialCoverage);
   const supporting = ['patch_authority', 'currentness_index', 'live_status'].includes(role);
   const intactText = gamingClearIntactSourceText(document);
   const coverage = gamingTermCoverage(intactText, buildGamingRetrievalTerms(input).focusTerms);
@@ -135,7 +136,11 @@ export function assessGamingClearSource(input: GamingStoredKnowledgeInput & { re
   const independentProse = !structural.hasRelevantClaimUnit && structural.hasIndependentProseAnchors
     && proseText.length >= 120 && gamingTermCoverage(proseText, buildGamingRetrievalTerms(input).focusTerms) >= 0.25;
   const usable = structural.hasIntactUsableUnit || intactText.trim().length >= 120;
-  const relevant = supporting || (structuredClaim ? structural.claimSupported || independentProse : coverage >= 0.25);
+  const partialTopic = options.allowPartialCoverage === true
+    && buildGamingRequestRequirements(input).some(requirement => gamingTermCoverage(intactText, requirement.terms) === 1);
+  const partial = options.allowPartialCoverage === true && structural.hasIntactUsableUnit && (coverage >= 0.25 || partialTopic)
+    && !structural.reasonCodes.includes('CONTRADICTORY_STRUCTURAL_RECORDS');
+  const relevant = supporting || (structuredClaim ? structural.claimSupported || independentProse || partial : coverage >= 0.25 || partialTopic);
   const refs = [options.subjectId];
   const evaluated = (score: number, reasonCode: string) => ({ status: 'evaluated' as const, score,
     reasonCodes: [reasonCode], evidenceRefs: refs, unresolvedFacts: [] as string[] });
@@ -183,7 +188,7 @@ export function assessGamingClearSource(input: GamingStoredKnowledgeInput & { re
         reasonCodes: identity.reasonCodes, evidenceRefs: refs, unresolvedFacts: ['GAME_IDENTITY'] },
       resilience: { ...evaluated(document.metrics.truncated ? 3 : 3.5, document.metrics.truncated ? 'EXTRACTION_PARTIAL' : 'TRACEABLE_ACQUIRED_DOCUMENT'),
         unresolvedFacts: ['INDEPENDENT_CORROBORATION_NOT_ESTABLISHED', ...(!stable && !historical && !combinedCurrent ? ['COMBINED_APPLICABILITY_REQUIRED'] : [])] }
-    }, findings: [...(!supporting && structuredClaim && !structural.claimSupported && !independentProse ? structural.reasonCodes.map(code => ({ code, severity: 'blocking' as const, evidenceRefs: refs })) : []),
+    }, findings: [...(!supporting && structuredClaim && !structural.claimSupported && !independentProse && !partial ? structural.reasonCodes.map(code => ({ code, severity: 'blocking' as const, evidenceRefs: refs })) : []),
       ...(future || expired || wrongPatch ? [{ code: future ? 'NOT_YET_EFFECTIVE' : expired ? 'NO_LONGER_EFFECTIVE' : 'PATCH_MISMATCH', severity: 'blocking' as const, evidenceRefs: refs }] : []),
       ...identity.reasonCodes.filter(() => identity.status !== 'verified').map(code => ({ code, severity: identity.status === 'conflict'
       ? 'blocking' as const : 'warning' as const, evidenceRefs: refs })), ...(document.metrics.truncated

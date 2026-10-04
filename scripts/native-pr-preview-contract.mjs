@@ -26,7 +26,7 @@ export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
     proofVersion: 'chatgpt-gaming-mcp-core/v1',
     compositionProofHeader: 'x-arcanos-preview-gaming-composition-version',
     compositionProofVersion: 'gaming-instruction-sections/v1',
-    catalogSha256: '019aa3cff6728930c03d8d40e1d30b782d3fd999d4ac0edcaf9b2b7c9ee23f60', // gitleaks:allow -- public synthetic catalog digest
+    catalogSha256: '6cb2f10ae4f8998edebe5fe102c33a85c052163bb1711d167187b6d973ed272c', // gitleaks:allow -- public synthetic catalog digest
     protocolVersion: '2025-03-26',
     instructions: 'Synthetic Gaming preview only. Fixed query/hybrid fixtures; all writes denied. No OAuth, live providers, source acquisition or storage.',
     game: 'Synthetic Canal Adventure',
@@ -299,6 +299,10 @@ export const NATIVE_PR_PREVIEW_E2E_CONTRACT = Object.freeze({
     progressRecoveryProofVersion: 'gaming-progress-recovery/v1',
     hybridKnowledgeProofHeader: 'x-arcanos-preview-gaming-hybrid-knowledge-version',
     hybridKnowledgeProofVersion: 'gaming-hybrid-knowledge/v1',
+    discoveryRecoveryProtocolProofHeader: 'x-arcanos-preview-gaming-discovery-recovery-protocol-version',
+    discoveryRecoveryProtocolProofVersion: 'gaming-discovery-recovery-protocol/v1',
+    discoveryRecoveryEvidenceProofHeader: 'x-arcanos-preview-gaming-discovery-recovery-evidence-version',
+    discoveryRecoveryEvidenceProofVersion: 'gaming-discovery-recovery-evidence/v1',
     clearProofHeader: 'x-arcanos-preview-gaming-clear-version',
     clearProofVersion: 'gaming-clear/v1',
     sourceAcquisitionProofHeader: 'x-arcanos-preview-gaming-source-acquisition-version',

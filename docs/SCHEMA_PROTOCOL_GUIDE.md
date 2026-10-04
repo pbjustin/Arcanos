@@ -3,7 +3,7 @@
 The private Gaming MCP schemas are in
 [`packages/protocol/schemas/v1/tools/arcanos-gaming/contract.schema.json`](../packages/protocol/schemas/v1/tools/arcanos-gaming/contract.schema.json),
 registered as eight named tools in the protocol catalog. Existing Gaming
-service shapes remain equivalent to Action 1.5.0; MCP writes add required
+service shapes share the maintained Gaming Action contract; MCP writes add required
 storage policy, explicit `confirmStore: true`, and idempotency. The Gaming
 protocol leaf exports self-contained, reachable-definition-only JSON schemas.
 This surface is not a daemon command, generic operator tool or new Python API.
@@ -15,7 +15,17 @@ The Gaming hybrid Action contract is an additive module HTTP contract in
 [`contracts/arcanos_gaming.openapi.v1.json`](../contracts/arcanos_gaming.openapi.v1.json),
 with runtime request schemas/types in
 [`src/shared/gaming/gamingHybridContract.ts`](../src/shared/gaming/gamingHybridContract.ts).
-It explicitly opts in through `contractVersion: gaming-hybrid-v1`; legacy
+It explicitly opts in through `contractVersion: gaming-hybrid-v1` or
+`gaming-hybrid-v2`; the selected version is bound at workflow creation. V1 keeps
+its one-round behavior. V2 candidate continuations require `expectedRevision`
+matching the backend response `revision` and permit one bounded gameplay
+recovery round. Version changes, stale revisions and closed-workflow continuations
+cannot grant additional authority. Closed schemas reject client-supplied evidence
+selection, coverage, freshness, storage approval or budget overrides. Backend
+response selection/coverage fields and discovery allowances are declared in
+both maintained contracts. Structured MCP `result` values must validate against
+their declared output schemas; tool annotations do not replace server checks.
+See [Gaming discovery recovery](GAMING_DISCOVERY_RECOVERY.md). Legacy
 Gaming gameplay/source contracts and canary schema identity remain unchanged.
 It adds no command-envelope ID, ActionPlan shape, Python-owned protocol or
 schema-catalog family. Query, transient candidate validation, and consequential

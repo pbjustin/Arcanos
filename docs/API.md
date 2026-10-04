@@ -2,11 +2,12 @@
 
 ## Gaming hybrid knowledge Actions
 
-The additive `gaming-hybrid-v1` contract uses the existing dedicated Gaming
+The opt-in `gaming-hybrid-v1` and `gaming-hybrid-v2` contracts use the existing dedicated Gaming
 source bearer credential, no-store/authentication boundary and 16 KiB JSON cap.
 The canonical [Gaming Action schema](../contracts/arcanos_gaming.openapi.v1.json)
 defines the complete closed request and response shapes. Legacy operations are
-unchanged.
+unchanged. These operation names describe legacy Actions; the private MCP
+mapping is documented under [Private ChatGPT Gaming resource](#private-chatgpt-gaming-resource).
 
 | Method/path | Operation | Effect |
 | --- | --- | --- |
@@ -29,7 +30,18 @@ the state: `answer_ready`, `clarification_required`, `discovery_required`,
 it must not parse prose to decide whether to search. `answer` preserves backend
 citations and request provenance. Structured dates/patch/build and qualifications
 describe verified applicability. Gameplay discovery is capped at one round and
-three candidates. When accepted gameplay evidence lacks official currentness,
+three candidates for v1. V2 explicitly opts into at most two gameplay submissions
+of three URLs each, six distinct URLs and 24 seconds cumulative acquisition,
+with at most 12 seconds per submission. Recovery requires the backend's
+`replacementAllowed`, `nextAction: search`, `continuationRequired: true` and
+remaining allowance; failed acquisition work consumes the budget. V2 submits
+the latest returned `revision` as `expectedRevision`, keeping workflow ID and
+protocol version. Version mismatches, stale continuations and closed workflows
+are rejected; recovery never extends TTL or generation deadlines. V2 returns
+selected candidate/evidence IDs, requirement-support links, coverage status and
+honest assessed/unknown gaps. Selection and acceptance do not establish coverage
+or storage consent. See [Gaming discovery recovery](GAMING_DISCOVERY_RECOVERY.md).
+When accepted gameplay evidence lacks official currentness,
 `nextAction: verify_currentness` requests one separate corroboration operation
 with at most three official sources through the same endpoint. It is nonterminal
 even when freshness is stale/unverified. `discovery.continuationRequired: true`
@@ -2281,7 +2293,14 @@ It exposes no general dispatcher, jobs, database or operator tools.
 
 Schemas live in `packages/protocol/schemas/v1/tools/arcanos-gaming/contract.schema.json`.
 Query input is the existing Gaming query payload, canary input is `{}`, status
-input is `{ingestionId}`, and hybrid inputs preserve `gaming-hybrid-v1` shapes.
+input is `{ingestionId}`, and hybrid inputs preserve `gaming-hybrid-v1` shapes
+alongside explicitly opted-in `gaming-hybrid-v2`. V2 uses the same dedicated
+hybrid tools, requires `expectedRevision` on candidate submissions, and returns
+backend selection, coverage and bounded recovery diagnostics. It adds no tool,
+generic invocation path, scope or model selector. The
+[proposed frontend instructions](gpt/arcanos-gaming-hybrid-v2.instructions.md)
+require deployed-v2 verification and exact-content owner approval before updating
+the same private plugin; repository tests do not establish installed acceptance.
 Direct ingestion/refresh inputs are their existing payloads plus required
 `idempotencyKey`, `storagePolicy`, and literal `confirmStore: true`. Candidate
 ingestion likewise requires affirmative confirmation. Outputs are

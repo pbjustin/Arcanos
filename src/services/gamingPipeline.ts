@@ -624,6 +624,10 @@ export interface GamingPreparedEvidence {
   advisoryFreshnessAllowed?: boolean;
   qualification: string;
   clearEvidenceAssessment?: GamingClearAssessment;
+  /** Backend-only v2 policy retained through admission, answer audit and delivery. */
+  requireRequestCoverage?: boolean;
+  /** Internal, actor/workflow-valid acquired receipts; never a public discovery hint. */
+  suppliedGuides?: Array<{ requestedUrl: string; sourceId: string; publicUrl: string }>;
 }
 
 export async function runGameplayPipeline(params: GamingPipelineInput, prepared?: GamingPreparedEvidence): Promise<GamingSuccessEnvelope> {
@@ -722,6 +726,21 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
     retrievalHadUsableSources = sources.length > 0 && selectedChunkCount > 0;
     storedSourceKnown = prepared.knowledge.sourceKnown === true;
     currentEvidenceAvailable = prepared.current;
+    if (prepared.suppliedGuides) {
+      const normalizeSuppliedUrl = (value: string): string => {
+        try { const url = new URL(value.trim()); url.hash = ''; return url.href; } catch { return value.trim(); }
+      };
+      const requiredUrls = new Set(guideUrls.map(normalizeSuppliedUrl));
+      const matched = prepared.suppliedGuides.filter(receipt => requiredUrls.has(normalizeSuppliedUrl(receipt.requestedUrl))
+        && prepared.knowledge.sources.some(source => source.sourceId === receipt.sourceId && source.url === receipt.publicUrl)
+        && prepared.knowledge.evidence?.some(chunk => chunk.sourceId === receipt.sourceId && chunk.publicUrl === receipt.publicUrl && chunk.text.trim()));
+      // Every explicitly required guide must have an acquired receipt and retained
+      // passage. A partial mapping cannot turn unrelated discovery into supplied grounding.
+      if ([...requiredUrls].every(url => matched.some(receipt => normalizeSuppliedUrl(receipt.requestedUrl) === url))) {
+        fetchedSuppliedSourceCount = new Set(matched.map(receipt => normalizeSuppliedUrl(receipt.requestedUrl))).size;
+        suppliedEvidenceSourceCount = new Set(matched.map(receipt => receipt.sourceId)).size;
+      }
+    }
   } else try {
     const webContextResult = await buildGamingRagContext(params, baseLogContext, getRequestAbortSignal());
     clearKnowledge = webContextResult.clearKnowledge ?? { context: '', sources: [], evidence: [] };
@@ -1111,7 +1130,8 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
   }
 
   clearKnowledge = { ...clearKnowledge, context: webContext };
-  const auditContext = { actorScopeHash: prepared?.actorScopeHash, allowAdvisoryFreshness };
+  const auditContext = { actorScopeHash: prepared?.actorScopeHash, allowAdvisoryFreshness,
+    requireRequestCoverage: prepared?.requireRequestCoverage === true };
   const evidenceAssessment = assessGamingClearEvidence({ ...resolvedParams, game: resolvedParams.game ?? '' }, clearKnowledge, auditContext);
   logger.info('gaming.clear.evidence.completed', {
     ...baseLogContext, rubricVersion: evidenceAssessment.rubricVersion, profile: evidenceAssessment.profile,
