@@ -795,7 +795,16 @@ acquired platform or region scope when the question does not depend on that
 scope; the answer qualification reports the source restriction and leaves other
 scopes unverified. Explicit incompatible requested scopes still block. Questions
 about keybindings, controls, crossplay or regional/server behavior require the
-corresponding material user scope. Invalid publication/update dates alone warn
+corresponding material user scope. V2 can resolve a narrowly recognized explicit
+question target such as `on PC`, `on PlayStation 5`, or `in Europe` when the
+structured field is absent. Comparisons, competing targets, negative or
+hypothetical claims, quoted source claims and URL text do not establish that
+scope. Structured request fields retain precedence. The effective request is
+canonicalized before idempotency and acquisition-budget binding and is passed
+unchanged to acquisition evaluation, applicability and freshness; question-derived
+platform provenance remains `question`. This is user context, never verification
+of a source's platform or region. Explicit v1 retains its existing behavior.
+Invalid publication/update dates alone warn
 for gameplay guides; malformed effective intervals and official currentness
 metadata remain blockers.
 

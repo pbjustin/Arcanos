@@ -6,7 +6,7 @@ import { redactString } from '@shared/redaction.js';
 import { GAMING_HYBRID_CONTRACT_VERSION, GAMING_HYBRID_V2_CONTRACT_VERSION, GAMING_HYBRID_V2_LIMITS, gamingHybridLimitsForVersion, GAMING_HYBRID_LIMITS as LIMITS,
   gamingHybridQuerySchema, gamingHybridCandidatesSchema, gamingHybridIngestionSchema, gamingHybridRequestedContractVersion,
   type GamingHybridQuery, type GamingHybridResponse } from '@shared/gaming/gamingHybridContract.js';
-import { resolveGamingPlayerContext, validateGamingPlayerContextInput } from '@shared/gaming/gamingPlayerContext.js';
+import { resolveGamingPlayerContext, resolveGamingQuestionScope, validateGamingPlayerContextInput } from '@shared/gaming/gamingPlayerContext.js';
 import { gamingApplicabilityScopeRequired } from '@shared/gaming/gamingGuideApplicability.js';
 import { buildGamingRetrievalTerms } from '@shared/gaming/gamingRetrievalPolicy.js';
 import { assessGamingProgressionRequest } from '@shared/gaming/gamingProgressionPolicy.js';
@@ -675,7 +675,15 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
       const denied = admit(context, parsed.success ? parsed.data.contractVersion : gamingHybridRequestedContractVersion(payload)); if (denied) return denied;
       if (!parsed.success) return failure(context, 'INVALID_REQUEST', 400, undefined, gamingHybridRequestedContractVersion(payload));
       if (validateGamingPlayerContextInput(parsed.data)) return failure(context, 'INVALID_REQUEST', 400, undefined, parsed.data.contractVersion);
-      const input = parsed.data;
+      const questionScope = parsed.data.contractVersion === GAMING_HYBRID_V2_CONTRACT_VERSION
+        ? resolveGamingQuestionScope(parsed.data.question) : {};
+      // Canonicalize the effective request before idempotency and budget identity;
+      // equivalent explicit fields and unambiguous question scope share the fences.
+      const input = parsed.data.contractVersion === GAMING_HYBRID_V2_CONTRACT_VERSION
+        ? gamingHybridQuerySchema.parse({ ...parsed.data,
+          ...(!parsed.data.platform && questionScope.platform ? { platform: questionScope.platform } : {}),
+          ...(!parsed.data.region && questionScope.region ? { region: questionScope.region } : {}) }) : parsed.data;
+      if (validateGamingPlayerContextInput(input)) return failure(context, 'INVALID_REQUEST', 400, undefined, input.contractVersion);
       input.requestedVersion ??= input.version;
       if (input.version && input.requestedVersion !== input.version) return failure(context, 'VERSION_CONTEXT_CONFLICT', 400, undefined, input.contractVersion);
       const key = hash([context.actorKey, input.idempotencyKey]);
@@ -734,10 +742,13 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
       }
       if (workflows.size >= LIMITS.workflows || [...workflows.values()].filter(item => item.actor === actor).length >= LIMITS.workflowsPerActor)
         return failure(context, 'WORKFLOW_CAPACITY_REACHED', 429, undefined, input.contractVersion);
+      const playerContext = resolveGamingPlayerContext(input, input.question);
+      if (!parsed.data.platform && questionScope.platform)
+        playerContext.contextOrigins = { ...playerContext.contextOrigins, platform: 'question' };
       const workflow: Workflow = { id: randomUUID(), actor, budgetKey, createdAt: deps.now(), input,
         revision: 0, acquisitionWorkMs: 0, submittedUrls: new Set(),
         round: 0, currentnessRound: 0, accepted: [], operations: new Map(),
-        pipeline: { ...resolveGamingPlayerContext(input, input.question), game: input.game, prompt: input.question,
+        pipeline: { ...playerContext, game: input.game, prompt: input.question,
           mode: input.mode, requestedVersion: input.requestedVersion, region: input.region, edition: resolveGamingRequestEdition(input),
           guideUrls: input.contractVersion === GAMING_HYBRID_V2_CONTRACT_VERSION ? gamingHybridRequiredGuideUrls(input.question) : [], auditEnabled: false } };
       workflows.set(workflow.id, workflow);
