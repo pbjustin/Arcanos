@@ -70,6 +70,22 @@ describe('ordinary base-game request interpretation', () => {
     expect(result.accepted[0].sourceContext.edition).toBe('base-game');
     expect(result.decisions[0].reasonCodes).not.toContain('EDITION_UNVERIFIED');
   });
+  it('admits acquired base-game facts for a generic DLC-necessity question', async () => {
+    const request = { ...input, prompt: 'Is DLC required to obtain the Uchigatana?' };
+    const source = 'In Elden Ring, the Uchigatana is the starting katana for Samurai. Obtain the Uchigatana as starting equipment by selecting Samurai. This starting weapon is available in the base game. Preserve stamina for a dodge after each katana strike.';
+    const result = await acquire('Edition: Base game.', source, 'Elden Ring Uchigatana location guide', request);
+    expect(result.accepted).toHaveLength(1);
+    expect(result.accepted[0].sourceContext.edition).toBe('base-game');
+    expect(result.decisions[0].reasonCodes).not.toContain('EDITION_UNVERIFIED');
+    expect(result.accepted[0].publicUrl).toBe(request.candidates[0].url);
+    expect(() => assertGamingHybridEvidenceMembership(result.knowledge, result.accepted, actor)).not.toThrow();
+  });
+  it('excludes explicitly expansion-only facts for a generic DLC-necessity question', async () => {
+    const request = { ...input, prompt: 'Is DLC required to obtain the Uchigatana?' };
+    const result = await acquire('Edition: Shadow of the Erdtree.', `${prose} This DLC-only guide requires the expansion.`, undefined, request);
+    expect(result.accepted).toEqual([]);
+    expect(result.decisions[0].reasonCodes).toContain('EDITION_CONFLICT');
+  });
   it('requires expansion evidence when the question explicitly names Shadow of the Erdtree', async () => {
     const request = { ...input, prompt: 'How do Samurai katana attacks work in Shadow of the Erdtree?' };
     expect(resolveGamingRequestEdition(request)).toBe('shadow of the erdtree');

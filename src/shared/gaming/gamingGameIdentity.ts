@@ -38,16 +38,19 @@ export function resolveGamingRequestEdition(input: { game?: string; edition?: st
   if (normalizeGamingGameIdentity(input.game ?? '') !== 'elden-ring') return undefined;
   const shadow = /\bshadow[\s-]+of[\s-]+the[\s-]+erdtree\b/iu;
   const baseRequested = /\bbase[\s-]+game\b/iu.test(question);
+  // A closed generic necessity question requests a fact; acquired evidence must
+  // prove availability. Never remove named or remaining positive expansion scope.
+  const withoutNecessity = question.replace(/\bis\s+dlc\s+(?:required|needed|necessary)\s+to\s+obtain\b/giu, ' ');
   // Closed negative clauses express base scope, rather than expansion intent.
   // Keep double negations and mixed positive/negative scope unresolved.
   const negativeScope = /\b(?:without|no|excluding)\s+(?:(?:any|the)\s+)?(?:dlcs?|expansions?(?:\s+content)?|shadow[\s-]+of[\s-]+the[\s-]+erdtree)\b/giu;
-  const remaining = question.replace(negativeScope, (clause: string, offset: number) =>
-    /\b(?:not|without|no)\s*$/iu.test(question.slice(0, offset)) ? clause : ' ');
-  const negativeRequested = remaining !== question;
+  const remaining = withoutNecessity.replace(negativeScope, (clause: string, offset: number) =>
+    /\b(?:not|without|no)\s*$/iu.test(withoutNecessity.slice(0, offset)) ? clause : ' ');
+  const negativeRequested = remaining !== withoutNecessity;
   const expansionRequested = /\b(?:dlcs?|expansions?)\b/iu.test(remaining) || shadow.test(remaining);
   if (expansionRequested && (baseRequested || negativeRequested)) return undefined;
   if (shadow.test(remaining)) return 'shadow of the erdtree';
-  // Unspecified expansion and necessity-only questions remain material ambiguity.
+  // Unspecified expansion requests and unrecognized language remain unresolved.
   if (expansionRequested) return undefined;
   return 'base-game';
 }

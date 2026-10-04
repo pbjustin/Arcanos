@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-04T21:34:49.751Z",
+  "generatedAt": "2026-10-04T21:40:07.267Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -4463,6 +4463,9 @@
         },
         {
           "relativePath": "tests/gaming-rag-local-fetch.integration.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-request-scope-necessity.test.ts"
         },
         {
           "relativePath": "tests/gaming-request-scope-negation.test.ts"

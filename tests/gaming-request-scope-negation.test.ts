@@ -28,7 +28,7 @@ describe('explicit base-game and negative expansion request scope', () => {
   test('preserves explicitly named positive expansion scope', () => {
     expect(scope('Recommend a Samurai build for Shadow of the Erdtree.')).toBe('shadow of the erdtree');
   });
-  test('leaves a necessity-only DLC question unresolved without inferring entity availability', () => {
-    expect(scope('Is DLC required to obtain Uchigatana?')).toBeUndefined();
+  test('leaves unrecognized DLC necessity language unresolved', () => {
+    expect(scope('Is DLC essential for obtaining Uchigatana?')).toBeUndefined();
   });
 });
