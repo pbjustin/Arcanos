@@ -2,17 +2,19 @@ import { extractGamingDocumentEvidence } from '@services/gamingDocumentEvidence.
 import { chunkGamingDocument, hashGamingDocumentRevision } from '@services/gamingDurableDocumentChunks.js';
 import type { ResolvedGamingDocument } from '@services/gamingDocumentResolution.js';
 import { GAMING_EVIDENCE_UNIT_POLICY_VERSION, type GamingEvidenceUnit } from './gamingEvidenceUnits.js';
-import { assessGamingStructuralUsability } from './gamingStructuralEvidence.js';
+import { assessGamingStructuralUsability, selectGamingEditionScopedEvidence } from './gamingStructuralEvidence.js';
 import { projectGamingDocumentText } from './gamingDocumentProjectionCore.js';
 import { buildGamingDocumentSearchText, classifyGamingDocumentQuality } from './gamingDocumentIngestionCore.js';
 import { assessGamingClearSource, gamingClearIntactSourceText } from './gamingClearSource.js';
 import { assessGamingClearEvidence } from './gamingClearEvidence.js';
 import { gamingClearHash } from './gamingClearPolicy.js';
-import { assessGamingSourcePolicy, extractGamingFreshnessMetadata, type GamingReviewedSourceRule } from './gamingFreshnessCore.js';
+import { assessGamingSourcePolicy, evaluateGamingFreshness, extractGamingFreshnessMetadata, GAMING_FRESHNESS_DEFAULTS,
+  type GamingFreshnessEvidence, type GamingReviewedSourceRule } from './gamingFreshnessCore.js';
 import { formatStoredGamingEvidence, selectStoredGamingEvidence,
   type GamingStoredEvidenceRecord, type GamingStoredKnowledgeInput } from './gamingStoredEvidenceCore.js';
 
 export const GAMING_STRUCTURED_EVIDENCE_PREVIEW_VERSION = 'gaming-structured-evidence/v1';
+export const GAMING_BASE_GAME_SCOPE_PREVIEW_VERSION = 'gaming-base-game-scope/v1';
 const FAILURE = 'PREVIEW_GAMING_STRUCTURED_EVIDENCE_CONTRACT_INVALID';
 const URL = 'https://structured-preview.example/records';
 const GAME = 'Testspace';
@@ -29,7 +31,7 @@ const DEFINITIONS = '<dl><dt>System</dt><dd>TEST-ORION-01</dd><dt>Body</dt><dd>B
 const JSON_RECORD = '{"system":"TEST-ORION-01","body":"B 2","site":"PML 7","resource":"Platinum"}';
 const LIMITS = Object.freeze({ chunkChars: 2_000, maxChunks: 8, maxSources: 3, maxContextChars: 8_000, structuredEvidenceChars: 8_000 });
 // Fixed source associations exercise CLEAR policy without elevating any page's self-described authority.
-const RULES: readonly GamingReviewedSourceRule[] = [GAME, 'Ashfall', 'Rift Seasons'].map(game => ({
+const RULES: readonly GamingReviewedSourceRule[] = [GAME, 'Ashfall', 'Rift Seasons', 'Elden Ring'].map(game => ({
   id: `synthetic-structured-${game.replace(/ /gu, '-').toLowerCase()}`, game, hosts: ['structured-preview.example'],
   path: '/records', pathMatch: 'exact', category: 'specialist_guide', currentness: 'none', durableAllowed: true, autoStoreAllowed: false
 }));
@@ -230,6 +232,85 @@ async function requireDeterministicLateRevision(): Promise<void> {
   await requireStoredLifecycle(changed, { ...INPUT, prompt: 'Where is Platinum? Site: PML 8' }, 100_000);
 }
 
+async function requireBaseGameScope(): Promise<void> {
+  const input: GamingStoredKnowledgeInput = { ...INPUT, game: 'Elden Ring', edition: 'Base game',
+    prompt: 'How do I use Samurai Uchigatana Unsheathe?' };
+  const fact = 'Samurai Uchigatana Unsheathe attacks wait for enemy recovery. Use the heavy attack during a safe opening, then dodge and recover stamina.';
+  const dlc = 'DLC_SCOPE_SENTINEL: this expansion record describes a different equipment rotation.';
+  const prose = 'UNSCOPED_SCOPE_SENTINEL: this paragraph recommends another Samurai Uchigatana rotation.';
+  const table = (label: string, scope: string, description = fact, metadata: Record<string, string> = {}) =>
+    '<table><caption>Elden Ring guide</caption><tr><th>Mechanic</th>' + `<th>${label}</th><th>Description</th>`
+    + Object.keys(metadata).map(key => `<th>${key}</th>`).join('') + '</tr><tr><td>Samurai Uchigatana Unsheathe</td>'
+    + `<td>${scope}</td><td>${description}</td>` + Object.values(metadata).map(value => `<td>${value}</td>`).join('') + '</tr></table>';
+  const doc = (body: string, acquiredProse = '') => document(extract(body), input.game, acquiredProse);
+  const fresh = (value: ResolvedGamingDocument) => extractGamingFreshnessMetadata(value, input, NOW, RULES);
+  const scope = (value: ResolvedGamingDocument) => selectGamingEditionScopedEvidence(value, input);
+  for (const [label, alias] of [['Scope', 'Base game'], ['Applicability', 'base game'], ['Edition', 'base-game']]) {
+    const original = doc(table(label, alias) + table(label, 'Shadow of the Erdtree', dlc), prose);
+    const selected = scope(original);
+    requireProof(selected.status === 'verified' && selected.units.length === 1 && selected.text === selected.units[0].text);
+    requireProof(original.text.includes(dlc) && original.text.includes(prose) && selected.text.includes(fact));
+    requireProof(!/DLC_SCOPE_SENTINEL|UNSCOPED_SCOPE_SENTINEL|Shadow of the Erdtree/u.test(selected.text));
+    requireProof(selected.units[0].provenance.sourceUrl === URL && selected.units[0].integrity.status === 'complete');
+    const assessment = source(original, input);
+    requireProof(assessment.decision === 'accept' && assessment.gates.identity === 'verified' && !assessment.qualityEligible);
+    requireProof(assessment.subjectHash === gamingClearHash(JSON.stringify({ text: original.text, units: original.evidenceUnits })));
+    requireProof(fresh(original).edition === 'base-game');
+    const chunked = await chunkGamingDocument(selected.text, { evidenceUnits: selected.units });
+    requireProof(chunked.chunks.length === 1 && chunked.chunks[0].text === selected.text
+      && JSON.stringify(chunked.chunks[0].evidenceUnits) === JSON.stringify(selected.units));
+  }
+  const unknown = doc(table('Topic', 'Samurai Uchigatana Unsheathe'));
+  requireProof(scope(unknown).status === 'unverified' && !fresh(unknown).edition && source(unknown, input).decision !== 'accept');
+  const incompatible = doc(table('Scope', 'Shadow of the Erdtree'), 'Edition: Base game.');
+  requireProof(scope(incompatible).status === 'unverified' && source(incompatible, input).decision !== 'accept');
+  const wrongGame = doc(table('Scope', 'base-game', fact, { Game: 'Dark Souls III' }));
+  requireProof(scope(wrongGame).reasonCodes.includes('GAME_MISMATCH') && source(wrongGame, input).decision !== 'accept');
+  const contradictory = doc(table('Scope', 'base-game', fact, { Edition: 'Shadow of the Erdtree' }));
+  requireProof(scope(contradictory).status === 'conflict' && source(contradictory, input).decision !== 'accept');
+
+  const excluded = doc(table('Scope', 'base-game') + table('Scope', 'Shadow of the Erdtree', dlc,
+    { Patch: '1.16', Platforms: 'PC', Regions: 'EU', 'Published at': '2026-09-01', 'Effective from': '2026-09-01' }));
+  const metadata = fresh(excluded);
+  requireProof(metadata.edition === 'base-game' && metadata.metadataConfidence === 'unknown'
+    && !metadata.patch && !metadata.platforms && !metadata.regions && !metadata.publishedAt && !metadata.effectiveFrom);
+  const historical = { question: 'Explain the historical Samurai Uchigatana Unsheathe build', game: input.game,
+    edition: input.edition, requestedVersion: '1.16', evidence: [metadata], now: NOW };
+  requireProof(!evaluateGamingFreshness(historical).usable);
+  const current: GamingFreshnessEvidence = { ...metadata, id: 'synthetic-base-game-current', url: 'https://structured-preview.example/current',
+    category: 'official_updates', authority: 'official', currentness: 'current_index', metadataConfidence: 'content_extracted', currentPatch: '1.16' };
+  const currentEvaluation = evaluateGamingFreshness({ ...historical, question: 'What is the best Samurai Uchigatana Unsheathe build?',
+    requestedVersion: undefined, evidence: [metadata, current] });
+  requireProof(currentEvaluation.guideApplicability?.some(item => item.evidenceId === metadata.id && item.status === 'unverified'));
+  const selectedMetadata = fresh(doc(table('Scope', 'base-game', fact, { Patch: '1.16' })
+    + table('Scope', 'Shadow of the Erdtree', dlc, { Patch: '2.0', Platforms: 'PS5', 'Effective from': '2099-01-01' })));
+  requireProof(selectedMetadata.patch === '1.16' && selectedMetadata.edition === 'base-game'
+    && !selectedMetadata.metadataConflict && !selectedMetadata.platforms && !selectedMetadata.effectiveFrom);
+  requireProof(evaluateGamingFreshness({ ...historical, evidence: [selectedMetadata] }).usable);
+
+  const globalDocument = doc(table('Scope', 'base-game') + '<dl><dt>Edition</dt><dd>Shadow of the Erdtree</dd></dl>');
+  requireProof(fresh(globalDocument).edition === 'Shadow of the Erdtree' && source(globalDocument, input).decision !== 'accept');
+  const contextual = doc(table('Scope', 'base-game')
+    + '<section><h2>Shadow of the Erdtree</h2><dl><dt>Edition</dt><dd>Base game</dd></dl></section>');
+  requireProof(scope(contextual).status === 'conflict');
+  const partial = doc(table('Scope', 'base-game') + '<dl><dt>Edition</dt><dd>Shadow of the Erdtree</dl>');
+  requireProof(partial.evidenceUnits?.some(unit => unit.integrity.status !== 'complete'));
+  requireProof(fresh(partial).metadataUnverified && source(partial, input).decision !== 'accept');
+  for (const trailing of [
+    'x'.repeat(GAMING_FRESHNESS_DEFAULTS.maxMetadataChars) + '\nEdition: Shadow of the Erdtree',
+    'x'.repeat(GAMING_FRESHNESS_DEFAULTS.maxMetadataChars - 3) + ' Edition: Shadow of the Erdtree',
+    'x'.repeat(GAMING_FRESHNESS_DEFAULTS.maxMetadataChars - ' Edition: base-game'.length) + ' Edition: base-game with expansion equipment'
+  ]) {
+    const limited = doc(table('Scope', 'base-game'), trailing);
+    requireProof(scope(limited).status === 'verified' && fresh(limited).metadataUnverified && source(limited, input).decision !== 'accept');
+  }
+  const boundedFields = doc(table('Scope', 'base-game') + '<table><tr><th>Patch</th></tr>'
+    + Array.from({ length: 501 }, (_, index) => `<tr><td>1.${index}</td></tr>`).join('')
+    + '</table><dl><dt>Edition</dt><dd>Shadow of the Erdtree</dd></dl>');
+  requireProof(scope(boundedFields).status === 'verified' && fresh(boundedFields).metadataUnverified
+    && source(boundedFields, input).decision !== 'accept');
+}
+
 /** Served fixed component proof only. No HTTP, caller inputs, SQL, persistence, provider, or production configuration. */
 export async function runGamingStructuredEvidencePreview(): Promise<void> {
   try {
@@ -237,6 +318,7 @@ export async function runGamingStructuredEvidencePreview(): Promise<void> {
     requireRejections();
     requireIntegrityAndInertJson();
     await requireDeterministicLateRevision();
+    await requireBaseGameScope();
   } catch {
     throw new Error(FAILURE);
   }

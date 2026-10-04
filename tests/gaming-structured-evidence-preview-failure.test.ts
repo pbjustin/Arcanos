@@ -28,6 +28,7 @@ describe('served Gaming structured evidence proof boundary', () => {
     expect(fixture).toHaveBeenCalledTimes(1);
     expect(fixture).toHaveBeenCalledWith();
     expect(response.headers[contract.structuredEvidenceProofHeader]).toBe('gaming-structured-evidence/v1');
+    expect(response.headers[contract.baseGameScopeProofHeader]).toBe('gaming-base-game-scope/v1');
     expect(response.body.result).toEqual({ ok: true, route: 'gaming', mode: 'guide',
       data: { response: 'Sealed preview guide response.', sources: [] } });
   });
@@ -49,5 +50,6 @@ describe('served Gaming structured evidence proof boundary', () => {
     expect(response.status).toBe(200);
     expect(fixture).not.toHaveBeenCalled();
     expect(response.headers[contract.structuredEvidenceProofHeader]).toBeUndefined();
+    expect(response.headers[contract.baseGameScopeProofHeader]).toBeUndefined();
   });
 });

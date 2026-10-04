@@ -10155,6 +10155,10 @@ export function createNativePrPreviewApplication(
             NATIVE_PR_PREVIEW_GAMING_CONTRACT.structuredEvidenceProofVersion
           );
           response.setHeader(
+            NATIVE_PR_PREVIEW_GAMING_CONTRACT.baseGameScopeProofHeader,
+            NATIVE_PR_PREVIEW_GAMING_CONTRACT.baseGameScopeProofVersion
+          );
+          response.setHeader(
             NATIVE_PR_PREVIEW_GAMING_CONTRACT.sourceAcquisitionProofHeader,
             NATIVE_PR_PREVIEW_GAMING_CONTRACT.sourceAcquisitionProofVersion
           );

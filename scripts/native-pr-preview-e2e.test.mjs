@@ -267,6 +267,8 @@ function responseHeadersForCase(
             NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.sourceAcquisitionProofVersion,
           [NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.structuredEvidenceProofHeader]:
             NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.structuredEvidenceProofVersion,
+          [NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.baseGameScopeProofHeader]:
+            NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.baseGameScopeProofVersion,
           [NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.currentnessProofHeader]:
             NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.currentnessProofVersion,
           [NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.currentnessContinuationProofHeader]:
@@ -2388,6 +2390,12 @@ test('executes the bounded synthetic matrix and detects identity stability', asy
     ['gaming-query-guide']
   );
   assert.deepEqual(
+    result.checks.filter(({ gamingBaseGameScopeVerified }) =>
+      gamingBaseGameScopeVerified === true
+    ).map(({ caseId, gamingBaseGameScopeProofVersion }) => ({ caseId, gamingBaseGameScopeProofVersion })),
+    [{ caseId: 'gaming-query-guide', gamingBaseGameScopeProofVersion: 'gaming-base-game-scope/v1' }]
+  );
+  assert.deepEqual(
     result.checks.filter(({ gamingCurrentnessVerified }) =>
       gamingCurrentnessVerified === true
     ).map(({ caseId }) => caseId),
@@ -3800,6 +3808,28 @@ test('rejects missing synthetic provenance and correlation or security header dr
         headers[NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.structuredEvidenceProofHeader] = 'gaming-structured-evidence/drifted';
       },
     },
+    {
+      caseId: 'gaming-query-guide',
+      code: 'NATIVE_PR_PREVIEW_GAMING_BASE_GAME_SCOPE_PROOF_INVALID',
+      mutate(headers) {
+        delete headers[NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.baseGameScopeProofHeader];
+      },
+    },
+    {
+      caseId: 'gaming-query-guide',
+      code: 'NATIVE_PR_PREVIEW_GAMING_BASE_GAME_SCOPE_PROOF_INVALID',
+      mutate(headers) {
+        headers[NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.baseGameScopeProofHeader] = 'gaming-base-game-scope/drifted';
+      },
+    },
+    ...['gaming-query-build', 'gaming-query-meta', 'gaming-query-mode-required',
+      'worker-gaming-canary-denied', 'web-readiness-initial'].map(caseId => ({
+      caseId,
+      code: 'NATIVE_PR_PREVIEW_GAMING_BASE_GAME_SCOPE_PROOF_INVALID',
+      mutate(headers) {
+        headers[NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.baseGameScopeProofHeader] = 'gaming-base-game-scope/v1';
+      },
+    })),
     {
       caseId: 'gaming-query-guide',
       code: 'NATIVE_PR_PREVIEW_GAMING_CURRENTNESS_PROOF_INVALID',

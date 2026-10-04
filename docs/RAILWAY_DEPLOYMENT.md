@@ -368,6 +368,20 @@ Launcher behavior:
   hybrid/provider wrappers, SQL persistence, active workers or current gameplay.
   Controlled hybrid integration and disposable PostgreSQL CI establish their
   tested lifecycle boundaries separately; no production credentials are used.
+- The same structured-evidence fixture also checks base-game applicability using
+  mixed base-game/DLC tables and document metadata. It proves that explicit
+  record scope excludes DLC and unscoped prose, that excluded records cannot
+  supply patch/platform/date proof or veto retained records, and that global
+  edition restrictions and incomplete metadata still fail closed. The additive
+  `x-arcanos-preview-gaming-base-game-scope-version: gaming-base-game-scope/v1`
+  marker is emitted only after all Gaming fixtures succeed. The reviewed
+  PR-head verifier requires it and reports `gamingBaseGameScopeVerified`;
+  a missing or changed marker fails verification. The trusted base verifier
+  remains compatible with the unchanged request matrix and response body.
+  These are served synthetic parser and decision-component assertions; they do
+  not establish normal-route acquisition, live guide generation, or provider
+  compliance. Those boundaries require separate public-path and live-model
+  evidence.
 - The fixed sealed Gaming guide request checks v2 discovery-recovery request
   schemas, required revision bounds, one recovery attempt and supplied-guide
   projection, plus per-clause structural coverage and full-pool conflict
