@@ -8,11 +8,40 @@ import type { ResolvedGamingDocument } from '@services/gamingDocumentResolution.
 import { assessGamingStructuralUsability, classifyGamingEditionRequirements, readGamingEvidenceUnits, selectGamingEditionScopedEvidence } from './gamingStructuralEvidence.js';
 import { createGamingClearAssessment, classifyGamingClearQuestion, gamingClearContextFingerprint,
   type GamingClearSourceRole } from './gamingClearPolicy.js';
+import { detectGamingLeadingGameAlias } from '@services/gamingGameDetection.js';
 
 const containsIdentity = (text: string, expected: string): boolean => (`-${normalizeGamingGameIdentity(text)}-`)
   .includes(`-${normalizeGamingGameIdentity(expected)}-`);
 const DOCUMENT_LABEL = /^(?:(?:beginner|boss|build|class|combat|current|endgame|loadout|mechanics|patch|progression|pve|pvp|quest|raid|route|season|strategy|survival|synthetic)-){0,4}(?:guide|build|loadout|walkthrough|wiki|tips|patch-notes|release-notes|update-notes)$/u;
 const DISTINCT_SCOPE = /^(?:ii|iii|iv|\d+|nightreign|classic|remastered|remake|bedrock|java|shadow-of-the-erdtree|dlc|expansion)(?:-|$)/u;
+
+/** Inspect bounded acquired scope clauses, preserving visibly quoted/reference context. */
+function acquiredBodySubjects(prose: string): string[] {
+  const unquoted = prose.replace(/"[^"]*"|“[^”]*”|`[^`]*`|(?:^|\s)'(?:[^']|(?<=\w)'(?=\w))*'|‘[^’]*’/gu,
+    (quote, offset: number) => {
+      const name = quote.replace(/^[\s"“`'‘]+|[\s"”`'’]+$/gu, '');
+      // Quoting a game name does not turn an affirmative scope into a quoted passage.
+      const scopeName = /\b(?:this (?:guide|build|walkthrough) (?:covers|is for)|in(?: the game)?)\s*$/iu.test(prose.slice(0, offset));
+      const titleSuffix = prose.slice(offset + quote.length).match(/^\s+(?:guide|build|loadout|meta|walkthrough|wiki|tips?)\b/iu)?.[0] ?? '';
+      const namedSubject = detectGamingDocumentGame({ canonicalUrl: '', pageTitle: `${name}${titleSuffix}` });
+      return detectGamingLeadingGameAlias(name, true).game || (scopeName && (detectGamingLeadingGameAlias(name).game
+        || namedSubject.source === 'page_metadata' && namedSubject.confidence >= 0.8))
+        ? quote.replace(/^[\s"“`'‘]+|[\s"”`'’]+$/gu, boundary => ' '.repeat(boundary.length)) : ' '.repeat(quote.length);
+    });
+  const subjects: string[] = [];
+  for (const match of unquoted.matchAll(/\b(?:this (?:guide|build|walkthrough) (?:covers|is for)|in(?: the game)?)\s+/giu)) {
+    const before = unquoted.slice(0, match.index);
+    const prefix = before.slice(Math.max(...['.', '!', '?', ';', ',', '\n'].map(boundary => before.lastIndexOf(boundary))) + 1);
+    const subject = unquoted.slice(match.index + match[0].length).split(/[,;.!?\n]/u, 1)[0].slice(0, 160).trim();
+    // Reference qualifiers apply locally, so a later affirmative clause after
+    // a comma or sentence boundary is still independently inspected.
+    if (/\b(?:unlike|compared(?:\s+to)?|comparison(?:\s+with)?|contrast(?:\s+to)?|similar(?:ly)?|rather\s+than|instead\s+of|as(?:\s+is\s+the\s+case)?|like)\s*$/iu.test(prefix)
+      || /\b(?:not(?:\s+(?:apply|applicable|valid|available|supported|used|found|present|exist|included|be|for)){0,4}|(?:doesn|isn|aren|don|didn)['’]?t(?:\s+(?:apply|exist|work))?|without|except|excluding|unavailable|unsupported)\s*$/iu.test(prefix)
+      || /^(?:contrast|comparison|case|addition|particular)\b/iu.test(subject)) continue;
+    if (subject) subjects.push(subject);
+  }
+  return subjects;
+}
 
 /** Structural serialization never becomes fallback prose, even when repeated. */
 export function gamingClearIntactProseText(document: Pick<ResolvedGamingDocument, 'text' | 'evidenceUnits'> & {
@@ -89,12 +118,16 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
     if (detected.game && detected.confidence >= 0.8 && !expected.has(normalizeGamingGameIdentity(detected.game))
       && ![...expected].some(game => containsIdentity(heading.split(':')[0], game))) return { status: 'conflict', reasonCodes: ['GAME_MISMATCH'] };
   }
-  // Only an explicit body subject can veto metadata; incidental comparisons do not establish a different subject.
-  const bodySubject = /(?:^|[.!?]\s+)(?:this (?:guide|build|walkthrough) (?:covers|is for)|in(?: the game)?)\s+([^.!?\n]{2,160})/iu.exec(prose.trim())?.[1];
-  if (bodySubject) {
-    const detected = detectGamingDocumentGame({ canonicalUrl: '', pageTitle: bodySubject });
+  // Every affirmative acquired subject binds; matching titles and earlier
+  // requested-game subjects cannot hide a later different gameplay scope.
+  for (const bodySubject of acquiredBodySubjects(prose)) {
+    const leading = detectGamingLeadingGameAlias(bodySubject);
+    const metadataSubject = detectGamingDocumentGame({ canonicalUrl: '', pageTitle: bodySubject });
+    const detected = leading.game ? leading : metadataSubject.source !== 'alias' ? metadataSubject : leading;
+    const subjectIdentity = normalizeGamingGameIdentity(bodySubject);
+    const expectedSubject = [...expected].some(game => subjectIdentity === game || subjectIdentity.startsWith(`${game}-`));
     if (detected.game && detected.confidence >= 0.8 && !expected.has(normalizeGamingGameIdentity(detected.game))
-      && ![...expected].some(game => containsIdentity(bodySubject, game)))
+      && !(leading.game ? expectedSubject : [...expected].some(game => containsIdentity(bodySubject, game))))
       return { status: 'conflict', reasonCodes: ['GAME_MISMATCH'] };
     if ([...expected].some(game => {
       const bodyIdentity = normalizeGamingGameIdentity(bodySubject);

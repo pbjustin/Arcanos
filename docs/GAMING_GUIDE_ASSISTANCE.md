@@ -790,7 +790,13 @@ that guide fails with `QUESTION_COVERAGE_INSUFFICIENT`, not
 `GAME_IDENTITY_UNVERIFIED`. Missing game proof remains unverified, while explicit
 wrong-game evidence remains `GAME_MISMATCH`. Edition uncertainty uses
 `EDITION_UNVERIFIED`; explicit incompatible edition scope uses `EDITION_CONFLICT`
-and blocks compatibility without claiming a different game. Currentness
+and blocks compatibility without claiming a different game. The bounded acquired
+body scan checks each affirmative game scope independently: a matching heading
+or earlier matching scope cannot hide later conflicting gameplay instructions.
+Known game names at the start of a scope clause determine its subject even when
+a later comparison mentions the requested game. Comparative, negative and
+visibly quoted passages remain references; a quoted game or edition name in an
+affirmative scope remains a scope claim. Currentness
 uncertainty, platform uncertainty and region uncertainty remain distinct from
 explicit applicability contradictions. Ordinary gameplay evidence may retain an
 acquired platform or region scope when the question does not depend on that
