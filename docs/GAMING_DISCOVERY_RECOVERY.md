@@ -86,6 +86,14 @@ evidence. Redirects and companion fetches remain under the existing source/fetch
 limits and acquisition protections. Failed work is not refunded. Gameplay
 recovery cannot replenish official currentness or generation budgets.
 
+V2 budget identity uses the backend's effective request edition. An ordinary
+Elden Ring request without an edition and explicit `Base game` / `base-game`
+aliases reuse the same workflow and its remaining or exhausted budget under new
+idempotency keys. Explicit DLC scope remains separate. This does not normalize
+the query operation payload: changing its edition under the same idempotency key
+still returns `IDEMPOTENCY_CONFLICT`. Actor isolation, revisions, URL deduplication,
+TTL and the original storage policy remain authoritative; v1 behavior is unchanged.
+
 Recovery is permitted only when the backend returns
 `discovery.replacementAllowed`, `nextAction: search`,
 `discovery.continuationRequired: true` and a remaining allowance that permits

@@ -67,7 +67,11 @@ const normalizedBudgetValue = (value: unknown): unknown => typeof value === 'str
   ? value.normalize('NFKC').trim().replace(/\s+/gu, ' ').toLowerCase()
   : Array.isArray(value) ? value.map(normalizedBudgetValue) : value;
 function queryBudgetKey(actor: string, input: GamingHybridQuery): string {
-  return hash([actor, Object.entries(input).filter(([key]) => !['idempotencyKey', 'storagePolicy', 'version',
+  const edition = input.contractVersion === GAMING_HYBRID_V2_CONTRACT_VERSION ? resolveGamingRequestEdition(input) : undefined;
+  // Equivalent v2 request interpretations share acquisition limits. Keep the
+  // actual query input untouched so operation idempotency remains payload-bound.
+  const budgetInput = edition ? { ...input, edition } : input;
+  return hash([actor, Object.entries(budgetInput).filter(([key]) => !['idempotencyKey', 'storagePolicy', 'version',
     'answerDepth', 'spoilerTolerance', 'mode'].includes(key))
     .sort(([left], [right]) => left.localeCompare(right)).map(([key, value]) => [key, normalizedBudgetValue(value)])]);
 }
