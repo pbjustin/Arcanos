@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-04T21:17:32.349Z",
+  "generatedAt": "2026-10-04T21:19:49.336Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -4472,6 +4472,9 @@
         },
         {
           "relativePath": "tests/gaming-retrieval-policy.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-samurai-guide-workflow.integration.test.ts"
         },
         {
           "relativePath": "tests/gaming-search-discovery.test.ts"
