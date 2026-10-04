@@ -100,6 +100,29 @@ or silently downgrade v2 to obtain attempts.
 
 ## Continuation and failure meanings
 
+Guide responses add `frontendOutcome` and, when another guide could help,
+`searchHint`. Existing `state`, `nextAction`, revisions and discovery grants
+remain authoritative for wire compatibility and bounded operations.
+
+| Frontend outcome | Meaning |
+| --- | --- |
+| `answer_ready` | Present the approved grounded answer and qualifications. |
+| `need_new_source` | Acquire a different relevant guide if the existing workflow grants discovery. |
+| `clarification_required` | Ask the targeted question whose answer changes correct guidance. |
+| `temporarily_unavailable` | Report service/access failure using the reason and next action. |
+
+`discovery_required` maps to `need_new_source`, including terminal exhausted
+discovery and strict currentness replacement needs. This mapping grants no
+additional attempts. `ingestion_pending` remains a separate storage lifecycle
+and carries no guide outcome. Search hints use public topic words; free-form
+player progress, account identifiers and unrelated context never enter them.
+Absent harmless metadata does not itself create a clarification.
+V2 asks for a platform or region only for guidance that depends on that scope,
+such as keybindings or regional release times. An unnamed requested expansion
+build asks whether to include Shadow of the Erdtree; an ordinary Elden Ring
+build safely uses the base game. The verb “control” in basic stamina advice does
+not make that question platform-specific.
+
 V2 candidate submissions use the same `workflowId` and `contractVersion` and
 the latest response `revision` as `expectedRevision`. Each distinct operation
 has a new idempotency key; an identical permitted retry retains its original key

@@ -1045,6 +1045,20 @@
           "items": {
             "$ref": "#/$defs/GamingHybridRequirementSupport"
           }
+        },
+        "frontendOutcome": {
+          "type": "string",
+          "enum": [
+            "answer_ready",
+            "need_new_source",
+            "clarification_required",
+            "temporarily_unavailable"
+          ]
+        },
+        "searchHint": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 350
         }
       },
       "if": {

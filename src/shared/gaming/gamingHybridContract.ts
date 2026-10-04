@@ -68,7 +68,11 @@ export const gamingHybridIngestionSchema = z.object({
 }).strict();
 export type GamingHybridQuery = z.infer<typeof gamingHybridQuerySchema>;
 export type GamingHybridState = 'answer_ready' | 'clarification_required' | 'discovery_required' | 'temporarily_unavailable' | 'ingestion_pending';
+export type GamingGuideOutcome = 'answer_ready' | 'need_new_source' | 'clarification_required' | 'temporarily_unavailable';
 export interface GamingHybridResponse {
+  /** Additive frontend projection; legacy state/nextAction still govern authority and budgets. */
+  frontendOutcome?: GamingGuideOutcome;
+  searchHint?: string;
   contractVersion: GamingHybridContractVersion;
   requestId: string;
   revision?: number;

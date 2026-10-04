@@ -1,4 +1,4 @@
-import { resolveGamingRequestEdition } from '@shared/gaming/gamingGameIdentity.js';
+import { normalizeGamingGameIdentity, resolveGamingRequestEdition } from '@shared/gaming/gamingGameIdentity.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { getEnvBoolean } from '@platform/runtime/env.js';
 import { logger } from '@platform/logging/structuredLogging.js';
@@ -7,13 +7,14 @@ import { GAMING_HYBRID_CONTRACT_VERSION, GAMING_HYBRID_V2_CONTRACT_VERSION, GAMI
   gamingHybridQuerySchema, gamingHybridCandidatesSchema, gamingHybridIngestionSchema, gamingHybridRequestedContractVersion,
   type GamingHybridQuery, type GamingHybridResponse } from '@shared/gaming/gamingHybridContract.js';
 import { resolveGamingPlayerContext, validateGamingPlayerContextInput } from '@shared/gaming/gamingPlayerContext.js';
+import { gamingApplicabilityScopeRequired } from '@shared/gaming/gamingGuideApplicability.js';
 import { buildGamingRetrievalTerms } from '@shared/gaming/gamingRetrievalPolicy.js';
 import { assessGamingProgressionRequest } from '@shared/gaming/gamingProgressionPolicy.js';
 import { buildGamingRecoveryResponse, resolveGamingGenerationFailureReason } from '@shared/gaming/gamingRecoveryResponse.js';
 import { assessGamingSourcePolicy, classifyGamingQuestionFreshness, evaluateGamingFreshness, getGamingCurrentnessDiscoverySources, GAMING_FRESHNESS_DEFAULTS, type GamingFreshnessEvidence } from '@shared/gaming/gamingFreshnessCore.js';
 import { combineGamingCurrentnessEvidence, GAMING_CURRENTNESS_ADAPTER_VERSION } from '@shared/gaming/gamingCurrentnessAdapters.js';
 import { resolveGamingHybridCandidateAttempt, resolveGamingHybridCurrentnessReason, projectGamingHybridCandidateRetention,
-  projectGamingHybridCandidateEvidence, normalizeGamingHybridCandidateUrl, gamingHybridRequiredGuideUrls, gamingHybridCitationTargets, projectGamingHybridSuppliedGuides } from '@shared/gaming/gamingHybridPolicyCore.js';
+  projectGamingHybridCandidateEvidence, normalizeGamingHybridCandidateUrl, gamingHybridRequiredGuideUrls, gamingHybridCitationTargets, projectGamingHybridSuppliedGuides, projectGamingGuideOutcome, gamingGuideSearchHint } from '@shared/gaming/gamingHybridPolicyCore.js';
 import { assessGamingClearEvidence } from '@shared/gaming/gamingClearEvidence.js';
 import { GAMING_CLEAR_APPROVED_ANSWER, hasBoundGamingClearAnswer, type GamingClearAnswerCarrier } from '@shared/gaming/gamingClearAnswerBinding.js';
 import { gamingClearHash } from '@shared/gaming/gamingClearPolicy.js';
@@ -118,7 +119,8 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
       reason: 'SERVICE_UNAVAILABLE', sourceKnown: false, evidenceSelected: false, freshnessStatus: 'unverified' };
   }
   function failure(context: GamingHybridCallContext, reason: string, status: number, workflow?: Workflow, requestedContractVersion?: GamingHybridQuery['contractVersion']): GamingHybridResult {
-    return { status, body: { ...base(context, workflow, requestedContractVersion), reason, nextAction: status >= 500 || status === 429 ? 'retry_later' : 'stop' } };
+    const body: GamingHybridResponse = { ...base(context, workflow, requestedContractVersion), reason, nextAction: status >= 500 || status === 429 ? 'retry_later' : 'stop' };
+    return { status, body: { ...body, ...projectGamingGuideOutcome(body) } };
   }
   function currentResponse(context: GamingHybridCallContext, workflow: Workflow, result: GamingHybridResult): GamingHybridResult {
     if (result.body.answer && workflow.evidenceExpiresAt !== undefined && deps.now() >= workflow.evidenceExpiresAt) {
@@ -127,7 +129,9 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
       expired.body.sourceKnown = result.body.sourceKnown;
       return expired;
     }
-    return result;
+    const outcome = projectGamingGuideOutcome(result.body);
+    return { ...result, body: { ...result.body, ...outcome, ...(outcome.frontendOutcome === 'need_new_source'
+      ? { searchHint: gamingGuideSearchHint({ ...workflow.input, game: redactString(workflow.input.game) }) } : {}) } };
   }
   function admit(context: GamingHybridCallContext, requestedContractVersion?: GamingHybridQuery['contractVersion']): GamingHybridResult | undefined {
     prune();
@@ -304,6 +308,20 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
     const requiredSourceIds = acceptedCandidates.filter(candidate => (workflow.pipeline.guideUrls ?? []).some(url =>
       normalizeGamingHybridCandidateUrl(candidate.document.requestedUrl) === normalizeGamingHybridCandidateUrl(url))).map(candidate => candidate.candidateId);
     if (v2) {
+      if (!workflow.pipeline.platform && gamingApplicabilityScopeRequired(workflow.pipeline, 'platform'))
+        return { status: 200, body: { ...body, state: 'clarification_required', nextAction: 'clarify',
+          reason: 'PLATFORM_REQUIRED', clarification: 'Which platform should the controls or platform-specific guidance cover?' } };
+      if (!workflow.pipeline.region && gamingApplicabilityScopeRequired(workflow.pipeline, 'region'))
+        return { status: 200, body: { ...body, state: 'clarification_required', nextAction: 'clarify',
+          reason: 'REGION_REQUIRED', clarification: 'Which region should the regional guidance cover?' } };
+      // A requested expansion build is a scope decision; a factual question about
+      // whether DLC is required does not create that same missing decision.
+      const unspecifiedExpansionContent = !workflow.pipeline.edition && normalizeGamingGameIdentity(input.game) === 'elden-ring'
+        && /\b(?:dlc|expansion)[\s-]+(?:builds?|guides?|content|weapons?|equipment|bosses?|quests?)\b/iu.test(input.question)
+        && !/\b(?:no|without|avoid(?:ing)?|excluding)[\s-]+(?:the\s+)?(?:dlc|expansion)\b/iu.test(input.question);
+      if (unspecifiedExpansionContent)
+        return { status: 200, body: { ...body, state: 'clarification_required', nextAction: 'clarify',
+          reason: 'EDITION_REQUIRED', clarification: 'Should this request use Shadow of the Erdtree content, or stay within the Elden Ring base game?' } };
       const genericBuildTerms = new Set(['give', 'make', 'recommend', 'suggest', 'provide', 'best', 'good', 'some', 'build', 'character']);
       if ((input.mode === 'build' || /\bbuild\b/iu.test(input.question)) && !input.class && !input.role && !input.constraints?.length
         && !buildGamingRetrievalTerms(workflow.pipeline).requestTerms.some(term => !genericBuildTerms.has(term)))

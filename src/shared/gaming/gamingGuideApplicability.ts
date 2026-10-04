@@ -29,7 +29,7 @@ const includes = (values: readonly string[] | undefined, value: string | undefin
 export function gamingApplicabilityScopeRequired(input: { prompt?: string; question?: string }, field: 'platform' | 'region'): boolean {
   const question = (input.prompt ?? input.question ?? '').slice(0, 8_000);
   return field === 'platform'
-    ? /\b(?:keybindings?|controls?|button prompts?|cross[ -]?(?:play|save)|platform[ -]specific|console[ -]exclusive|keyboard|controller|save transfer|system requirements)\b/iu.test(question)
+    ? /\b(?:keybindings?|controls|control schemes?|button prompts?|cross[ -]?(?:play|save)|platform[ -]specific|console[ -]exclusive|keyboard|controller|save transfer|system requirements)\b/iu.test(question)
     : /\b(?:region[ -]specific|regional|server shards?|regional prices?|release times?|maintenance|server status)\b/iu.test(question);
 }
 
