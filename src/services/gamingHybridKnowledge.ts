@@ -55,6 +55,7 @@ type Workflow = {
   knowledge?: GamingStoredKnowledgeContext;
   candidateOperationKey?: string;
   candidateSubmission?: CandidateSubmission;
+  candidateDecisions?: NonNullable<GamingHybridResponse['candidates']>;
   currentnessOperationKey?: string;
   currentnessSubmission?: CandidateSubmission;
   answer?: GamingHybridResponse['answer'];
@@ -268,6 +269,30 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
     }
     if (!result.body.answer && !result.body.evidenceSelected && decisions?.length
       && decisions.every(item => item.decision === 'rejected')) {
+      const reasons = [...new Set(decisions.flatMap(item => item.reasonCodes))];
+      const labels: Record<string, string> = {
+        SOURCE_TOO_LARGE: 'source too large', SOURCE_FETCH_FAILED: 'source acquisition failed', SOURCE_INACCESSIBLE: 'source inaccessible',
+        SOURCE_TIMEOUT: 'source timed out', SOURCE_EXTRACTION_FAILED: 'source extraction failed', INSUFFICIENT_EXTRACTION: 'source extraction insufficient',
+        UNSUPPORTED_SOURCE_FORMAT: 'unsupported source format', URL_BLOCKED: 'URL blocked', GAME_MISMATCH: 'wrong-game source',
+        GAME_IDENTITY_UNVERIFIED: 'source game identity unverified', EDITION_REQUIRED: 'source edition scope unresolved',
+        EDITION_CONFLICT: 'source edition conflicts with the request', EDITION_UNVERIFIED: 'source edition unverified',
+        QUESTION_COVERAGE_INSUFFICIENT: 'source insufficiently relevant', SOURCE_INSTRUCTIONS_REJECTED: 'source instructions rejected'
+      };
+      if (reasons.length > 1 && !['CONTRADICTORY_EVIDENCE', 'CONFLICTING_CURRENTNESS', 'APPLICABILITY_CONFLICT'].includes(result.body.reason)) {
+        const counts = new Map<string, number>();
+        for (const decision of decisions) {
+          const label = labels[decision.reasonCodes[0]] ?? 'source could not be validated';
+          counts.set(label, (counts.get(label) ?? 0) + 1);
+        }
+        result.body.reason = 'CANDIDATE_SOURCES_REJECTED';
+        result.body.qualification = `Submitted guide outcomes: ${[...counts].map(([label, count]) => `${count} ${label}`).join('; ')}. Another relevant public guide is needed. These outcomes do not establish that public evidence does not exist.`;
+        return result;
+      }
+      if (reasons.length === 1 && ['SOURCE_TOO_LARGE', 'SOURCE_EXTRACTION_FAILED', 'UNSUPPORTED_SOURCE_FORMAT'].includes(reasons[0])) {
+        result.body.reason = reasons[0];
+        result.body.qualification = 'The submitted guide could not provide usable evidence. Submit a different readable public guide; this does not establish that public evidence does not exist.';
+        return result;
+      }
       if (decisions.every(item => item.reasonCodes.includes('INSUFFICIENT_EXTRACTION'))) {
         result.body.reason = 'SOURCE_EXTRACTION_INSUFFICIENT';
         result.body.qualification = 'Could not extract intact usable evidence from the supplied sources. This does not establish that no public guide or location exists.';
@@ -848,12 +873,14 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
           combined.sources = [...retained.sources, ...combined.sources.filter(source => !retainedSourceIds.has(source.sourceId))];
           combined.evidence = [...(retained.evidence ?? []), ...(combined.evidence ?? []).filter(chunk => !retainedSourceIds.has(chunk.sourceId))];
         }
-        const nextSubmission = { key: input.idempotencyKey, knowledge: combined, decisions, freshness: candidateFreshness,
+        if (v2 && !currentness) workflow.candidateDecisions = [...(workflow.candidateDecisions ?? []), ...decisions].slice(0, GAMING_HYBRID_V2_LIMITS.totalCandidateUrls);
+        const publicDecisions = v2 && !currentness ? workflow.candidateDecisions! : decisions;
+        const nextSubmission = { key: input.idempotencyKey, knowledge: combined, decisions: publicDecisions, freshness: candidateFreshness,
           ...(evaluated.currentnessFailureBlocksAdvisory ? { currentnessFailureBlocksAdvisory: true } : {}) };
         if (currentness) workflow.currentnessSubmission = nextSubmission;
         else workflow.candidateSubmission = nextSubmission;
         const result = await answer(context, workflow, combined, candidateFreshness, artifacts);
-        result.body.candidates = decisions;
+        result.body.candidates = publicDecisions;
         if (v2 && !retainArtifacts && result.body.discovery && result.body.nextAction !== 'stop') {
           workflow.pendingDiscovery = undefined;
           result.body.nextAction = 'stop'; result.body.reason = 'ARTIFACT_CAPACITY_REACHED';
@@ -868,7 +895,7 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
             expiresAt: new Date(workflow.createdAt + Math.min(LIMITS.workflowTtlMs,
               GAMING_FRESHNESS_DEFAULTS[classifyGamingQuestionFreshness(workflow.pipeline)])).toISOString() }));
         }
-        return candidateAcquisitionOutcome(result, decisions);
+        return candidateAcquisitionOutcome(result, publicDecisions);
       }).finally(() => { if (reservedOperation && workflow.activeOperationKey === operationKey) workflow.activeOperationKey = undefined; });
     },
     async ingest(payload: unknown, context: GamingHybridCallContext): Promise<GamingHybridResult> {

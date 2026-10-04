@@ -123,6 +123,15 @@ build asks whether to include Shadow of the Erdtree; an ordinary Elden Ring
 build safely uses the base game. The verb “control” in basic stamina advice does
 not make that question platform-specific.
 
+Mixed rejected candidates return `CANDIDATE_SOURCES_REJECTED` with bounded
+per-candidate reasons and a sanitized count summary. They never imply that
+public guides do not exist. A uniform size failure retains `SOURCE_TOO_LARGE`
+at workflow level. V2 retains up to six gameplay candidate outcomes across its
+initial and recovery submissions; currentness decisions remain a separate
+operation. Diagnostics cannot renew budgets, reopen a closed workflow or
+override material conflicts. The October 4 Samurai regression covers the
+legacy fetch/edition/identity pattern and its replacement-source mapping.
+
 V2 candidate submissions use the same `workflowId` and `contractVersion` and
 the latest response `revision` as `expectedRevision`. Each distinct operation
 has a new idempotency key; an identical permitted retry retains its original key

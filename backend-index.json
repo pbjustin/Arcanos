@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-04T21:09:01.878Z",
+  "generatedAt": "2026-10-04T21:10:28.191Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -4427,6 +4427,9 @@
         },
         {
           "relativePath": "tests/gaming-mcp-preview.integration.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-mixed-candidate-failures.test.ts"
         },
         {
           "relativePath": "tests/gaming-partial-guide-admission.test.ts"

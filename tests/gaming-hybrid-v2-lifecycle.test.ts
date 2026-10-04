@@ -201,7 +201,8 @@ describe('v2 actor-bound recovery lifecycle', () => {
     // injected document resolution supplies the failure without network access.
     expect(resolveDocument).toHaveBeenCalledTimes(2);
     expect(resolveDocument.mock.calls.map(([url]) => url)).toEqual([failedUrl, allowedUrl]);
-    expect(recovery.body.candidates).toEqual([expect.objectContaining({ url: allowedUrl, reasonCodes: ['SOURCE_FETCH_FAILED'] }),
+    expect(recovery.body.candidates).toEqual([expect.objectContaining({ url: failedUrl, reasonCodes: ['SOURCE_FETCH_FAILED'] }),
+      expect.objectContaining({ url: allowedUrl, reasonCodes: ['SOURCE_FETCH_FAILED'] }),
       expect.objectContaining({ decision: 'rejected', reasonCodes: ['URL_BLOCKED'] })]);
     expect(recovery.body.discovery!.acquisitionHints).toEqual([expect.objectContaining({ scope: 'url', target: allowedUrl,
       reasonCode: 'SOURCE_FETCH_FAILED' })]);
