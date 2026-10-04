@@ -1,6 +1,6 @@
 import { gamingEditionIdentitiesMatch, normalizeGamingEditionIdentity, normalizeGamingGameIdentity } from './gamingGameIdentity.js';
 import type { GamingEvidenceUnit } from './gamingEvidenceUnits.js';
-import { readGamingEvidenceUnits, selectGamingEditionScopedEvidence } from './gamingStructuralEvidence.js';
+import { isGamingDocumentMetadataUnit, readGamingEvidenceUnits, selectGamingEditionScopedEvidence } from './gamingStructuralEvidence.js';
 import { runGamingCurrentnessAdapter, combineGamingCurrentnessEvidence, GAMING_CURRENTNESS_ADAPTER_VERSION,
   type GamingCurrentnessAdapterResult, type GamingCurrentnessDocumentMetadata } from './gamingCurrentnessAdapters.js';
 import { evaluateGamingGuideApplicability, isGamingGameplayFreshnessEvidence, type GamingGuideApplicability } from './gamingGuideApplicability.js';
@@ -168,20 +168,36 @@ export function extractGamingFreshnessMetadata(document: { publicUrl: string; ca
   // The shared document instruction filter normalizes whitespace. Recover only
   // this closed label grammar; do not infer metadata from arbitrary date mentions.
   const labels = 'Game|Edition|Platforms?|Regions?|Published at|Source updated at|Effective from|Effective until|Patch|Build|Season|Current patch|Current build|Current season|Baseline valid for patches|Baseline valid for builds|Supersedes patches|Supersedes builds|Mechanic';
-  const lines = metadataText.replace(new RegExp(`(?:^|\\s)(${labels}):\\s*`, 'giu'), '\n$1: ')
-    .split(/\r?\n/u).slice(0, 500).map(line => line.split(/\.(?=\s+[A-Z])/u)[0].trim().replace(/\.$/u, ''));
+  const metadataLines = metadataText.replace(new RegExp(`(?:^|\\s)(${labels}):\\s*`, 'giu'), '\n$1: ').split(/\r?\n/u);
+  const lines = metadataLines.slice(0, 500).map(line => line.split(/\.(?=\s+[A-Z])/u)[0].trim().replace(/\.$/u, ''));
+  // Local edition proof must not hide global restrictions outside the metadata
+  // parser's bounds. Such labels remain uncertainty, never additional proof.
+  let invalidMetadata = false;
+  if (editionScoped?.status === 'verified') {
+    const assertions = [...proseText.matchAll(new RegExp(`(?:^|\\s)(?:${labels}):\\s*`, 'giu'))];
+    invalidMetadata = assertions.some((assertion, index) => {
+      const valueStart = assertion.index + assertion[0].length;
+      const value = proseText.slice(valueStart, assertions[index + 1]?.index ?? proseText.length);
+      const end = valueStart + (/\r?\n|\.(?=\s+[A-Z])/u.exec(value)?.index ?? value.length);
+      return end > GAMING_FRESHNESS_DEFAULTS.maxMetadataChars;
+    }) || metadataLines.slice(500).some(line => new RegExp(`^\\s*(?:${labels}):`, 'iu').test(line))
+      || evidenceUnits.some(unit => isGamingDocumentMetadataUnit(unit) && unit.integrity.status !== 'complete');
+  }
   // Read explicit fields as individual source assertions. Record labels such as
   // Mechanic and Build do not become the separate prose metadata grammar.
   const structuralLabel = /^(?:Game|Edition|Platforms?|Regions?|Published at|Source updated at|Effective from|Effective until|Patch|Season|Current patch|Current build|Current season|Baseline valid for patches|Baseline valid for builds|Supersedes patches|Supersedes builds)$/iu;
-  for (const unit of evidenceUnits) if (unit.integrity.status === 'complete') for (const field of unit.fields) {
+  const scopedUnits = new Set(editionScoped?.units);
+  for (const unit of evidenceUnits) if (unit.integrity.status === 'complete'
+    && (editionScoped?.status !== 'verified' || scopedUnits.has(unit) || isGamingDocumentMetadataUnit(unit))) for (const field of unit.fields) {
     const leaf = field.label.split(/\s+\/\s+/u).at(-1)!;
-    // Independently scoped records keep their local editions. They do not turn
-    // a mixed page into contradictory document-wide edition assertions.
-    if (editionScoped?.status === 'verified' && /^Edition$/iu.test(leaf)) continue;
-    if (structuralLabel.test(leaf) && lines.length < 500) lines.push(`${leaf}: ${field.value}`);
+    // Excluded gameplay records cannot supply selected facts' applicability.
+    // Metadata-only records retain the same global assertion semantics as prose.
+    if (structuralLabel.test(leaf)) {
+      if (lines.length < 500) lines.push(`${leaf}: ${field.value}`);
+      else if (editionScoped?.status === 'verified') invalidMetadata = true;
+    }
   }
   let conflict = false;
-  let invalidMetadata = false;
   const label = (name: string, max = 80): string | undefined => {
     const pattern = new RegExp(`^\\s*(?:${name}):\\s*([^\\r\\n]*)$`, 'iu');
     const claims = lines.flatMap(line => { const match = pattern.exec(line); return match ? [match[1].trim()] : []; });

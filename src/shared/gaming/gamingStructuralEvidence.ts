@@ -33,6 +33,12 @@ const aliases: Readonly<Record<string, string>> = Object.freeze({
   mechanic: 'mechanic', change: 'change', before: 'before', after: 'after', skill: 'skill', build: 'build'
 });
 const normal = (value: string) => value.normalize('NFKC').toLowerCase().replace(/\s+/gu, ' ').trim();
+const documentMetadataLabel = /^(?:Game|Edition|Platforms?|Regions?|Published at|Source updated at|Effective from|Effective until|Patch|Season|Current patch|Current build|Current season|Baseline valid for patches|Baseline valid for builds|Supersedes patches|Supersedes builds)$/iu;
+
+/** Closed metadata-only records remain page assertions, rather than scoped gameplay facts. */
+export function isGamingDocumentMetadataUnit(unit: GamingEvidenceUnit): boolean {
+  return unit.fields.length > 0 && unit.fields.every(field => documentMetadataLabel.test(normal(field.label.split(/\s+\/\s+/u).at(-1)!)));
+}
 
 /**
  * Positive edition assertions belong to their intact records, not the whole page.
@@ -60,9 +66,10 @@ export function selectGamingEditionScopedEvidence(document: {
       && normalizeGamingGameIdentity(field.value) !== normalizeGamingGameIdentity(input.game))) {
       return result('conflict', [], ['GAME_MISMATCH']);
     }
+    const metadataOnly = isGamingDocumentMetadataUnit(unit);
     const scopes = unit.fields.filter(field => ['edition', 'scope', 'applicability'].includes(leaf(field.label)))
       .map(field => normalizeGamingEditionIdentity(field.value));
-    scopedRecords ||= scopes.length > 0;
+    scopedRecords ||= !metadataOnly && scopes.length > 0;
     if (!scopes.includes('base-game')) continue;
     if (scopes.some(scope => scope !== 'base-game')
       || /\b(?:shadow[\s-]+of[\s-]+the[\s-]+erdtree|dlc|expansion|nightreign)\b/iu.test(
@@ -71,7 +78,7 @@ export function selectGamingEditionScopedEvidence(document: {
     }
     // Do not hide a disputed base-game fact by dropping its ambiguous record.
     if (unit.integrity.status !== 'complete') uncertainBaseRecord = true;
-    else selected.push(unit);
+    else if (!metadataOnly) selected.push(unit);
   }
   if (uncertainBaseRecord) return result('unverified', [], ['EDITION_SCOPE_NOT_INTACT']);
   return selected.length ? result('verified', selected, ['INTACT_BASE_GAME_SCOPE'])
