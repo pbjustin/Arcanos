@@ -859,7 +859,7 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ['src/shared/gaming/gamingSourceAcquisitionPreviewFixture.ts', '1c943c7e72b7919ca99db84126517518898e414f1117873eb903f56cb52614a4'],
   ['src/shared/gaming/gamingClearPreviewFixture.ts', '47d59048ec4f2c9e3163b6fcd2c7517ef72d39bd0571e412c5d4d18e3a8b5252'],
   ['src/shared/gaming/gamingClearPolicy.ts', 'df077132e5325ead7d428a83c10091410ac8bdf2f7a8b6c572d7f6e87c4ec51a'],
-  ['src/shared/gaming/gamingClearSource.ts', '48acd38a7cc53cf347912eba3dc99916690bc18bda26ec87816a69f4fda95c7a'],
+  ['src/shared/gaming/gamingClearSource.ts', '206cd0765882950272e2ae9a5f815950fa40205bd1f44d0f7da6e8f73d51d622'],
   ['src/shared/gaming/gamingClearEvidence.ts', 'a1204f51b7918c03edb42cd1ca71f53e913d6e586fde1065eab8a32799da9c76'],
   ['src/shared/gaming/gamingClearAnswerBinding.ts', '2f6d1353e2643ae471705f182415521b1a6548ca484c3e684d4920910f3d0f75'],
   ['src/shared/gaming/gamingHybridPolicyCore.ts', '53b988c723f94cfdf4fbff1b24d827eb791afe32c0f7cfdd466317317c2241b0'],
@@ -886,7 +886,7 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ['src/shared/gaming/gamingDocumentProjectionCore.ts', 'c403ed2f5627abfc8b23f8750deb8f77573942abd8bec8d3403616edc66ea014'],
   ['src/shared/gaming/gamingDocumentIngestionCore.ts', '1a9bb865e100882384df9d864d2f3be380ec9fa481a10e9539294102c743b398'],
   ['src/shared/gaming/gamingEvidenceUnits.ts', 'adddd31db84f73d67f9be61fd5bc51aae8d9385622c7587e1a150fe1dbbbf8b9'],
-  ['src/shared/gaming/gamingStructuralEvidence.ts', 'f3368516cc3887d8544daa0fa47fbbb2ab79f2ed72363c092a8ad0fb8dbe5f64'],
+  ['src/shared/gaming/gamingStructuralEvidence.ts', '48bccdbb4a54925f7429164ce6b57e4969188e33cb5a175d6e604024313c2ae6'],
   ['src/shared/gaming/gamingDocumentIngestionPreviewFixture.ts', 'bf530a9fe88a67fdb7a217828d2b68122b2180e9f4fbff2ef6b1c1fb17f81b84'],
   [
     'src/shared/gaming/gamingGuideResponsePreviewFixture.ts',

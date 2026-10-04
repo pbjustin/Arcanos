@@ -810,6 +810,15 @@ Invalid publication/update dates alone warn
 for gameplay guides; malformed effective intervals and official currentness
 metadata remain blockers.
 
+Closed acquired statements such as “This base-game weapon does not require DLC”,
+“DLC is not required”, or “No DLC is needed” are negative requirements, not
+edition conflicts. CLEAR and intact structured
+records share this bounded interpretation. Original source text remains evidence;
+conditional, modal, questioned, double-negated, or clipped requirements remain
+`EDITION_UNVERIFIED` when their applicability materially affects the evidence.
+Explicit positive and mixed positive restrictions remain `EDITION_CONFLICT`;
+negative prose cannot override an explicit DLC title or scope field.
+
 Source roles are `gameplay_guide`, `build_analysis`, `patch_authority`,
 `currentness_index`, `live_status`, `community_observation`, and `corroboration`.
 Role-appropriate contribution is scored once; publisher reputation, fetch time

@@ -5,7 +5,7 @@ import { buildGamingRetrievalTerms, buildGamingRequestRequirements, hasGamingRel
 import { assessGamingSourcePolicy, classifyGamingQuestionFreshness, extractGamingFreshnessMetadata, evaluateGamingFreshness, type GamingFreshnessEvidence, type GamingSourcePolicyAssessment } from './gamingFreshnessCore.js';
 import type { GamingStoredKnowledgeInput } from './gamingStoredEvidenceCore.js';
 import type { ResolvedGamingDocument } from '@services/gamingDocumentResolution.js';
-import { assessGamingStructuralUsability, readGamingEvidenceUnits, selectGamingEditionScopedEvidence } from './gamingStructuralEvidence.js';
+import { assessGamingStructuralUsability, classifyGamingEditionRequirements, readGamingEvidenceUnits, selectGamingEditionScopedEvidence } from './gamingStructuralEvidence.js';
 import { createGamingClearAssessment, classifyGamingClearQuestion, gamingClearContextFingerprint,
   type GamingClearSourceRole } from './gamingClearPolicy.js';
 
@@ -116,12 +116,13 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
   if (!(metadataAnchor && proseAnchor) && !(reviewedAssociation && metadataAnchor))
     return { status: 'unknown', reasonCodes: ['GAME_IDENTITY_UNVERIFIED'] };
   // Evaluate game contradictions before reporting narrower edition scope.
-  if (editionScopeConflict || scoped.status === 'conflict') return { status: 'conflict', reasonCodes: ['EDITION_CONFLICT'] };
-  if (scoped.status === 'unverified' && scoped.reasonCodes.length) return { status: 'unknown', reasonCodes: ['EDITION_UNVERIFIED'] };
-  if (input.edition && normalizeGamingEditionIdentity(input.edition) === 'base-game'
-    && (metadata.some(value => /\bshadow[\s-]+of[\s-]+the[\s-]+erdtree\b/iu.test(value))
-      || scoped.status !== 'verified' && /\b(?:dlc|expansion)[ -]only\b|\b(?:requires?|exclusive to|only available in)\b[^.!?\n]{0,60}\b(?:shadow[\s-]+of[\s-]+the[\s-]+erdtree|dlc|expansion)\b/iu.test(document.text)))
+  const baseRequest = input.edition && normalizeGamingEditionIdentity(input.edition) === 'base-game';
+  const requirements = baseRequest && scoped.status !== 'verified' ? classifyGamingEditionRequirements(document.text) : 'clear';
+  if (editionScopeConflict || scoped.status === 'conflict' || requirements === 'conflict'
+    || baseRequest && metadata.some(value => /\bshadow[\s-]+of[\s-]+the[\s-]+erdtree\b/iu.test(value)))
     return { status: 'conflict', reasonCodes: ['EDITION_CONFLICT'] };
+  if (requirements === 'unverified' || scoped.status === 'unverified' && scoped.reasonCodes.length)
+    return { status: 'unknown', reasonCodes: ['EDITION_UNVERIFIED'] };
   if (input.edition) {
     // Game identity is independently verified. An ordinary base-game request
     // allows absent edition metadata; positive scope claims and conflicts still bind.
