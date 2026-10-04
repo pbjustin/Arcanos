@@ -1,4 +1,4 @@
-import { gamingEditionIdentitiesMatch, normalizeGamingEditionIdentity, normalizeGamingGameIdentity, resolveGamingGuideIdentity } from '../src/shared/gaming/gamingGameIdentity.js';
+import { gamingEditionIdentitiesMatch, normalizeGamingEditionIdentity, normalizeGamingGameIdentity, resolveGamingGuideIdentity, resolveGamingRequestEdition } from '../src/shared/gaming/gamingGameIdentity.js';
 
 describe('conservative edition normalization', () => {
   test.each(['Base game', 'base game', 'base-game', ' BASE GAME '])('canonicalizes the explicit base-game alias %s', edition => {
@@ -48,5 +48,16 @@ describe('stored game identity formatting', () => {
     ['Ashbound Arena+', 'Ashbound Arena']
   ])('does not merge meaningful identities %s and %s', (left, right) => {
     expect(normalizeGamingGameIdentity(left)).not.toBe(normalizeGamingGameIdentity(right));
+  });
+});
+
+
+describe('request edition display identity', () => {
+  test.each(['Remastered', 'Shadow of the Erdtree', 'Reforged Edition'])('preserves explicit non-base edition display label %s', edition => {
+    expect(resolveGamingRequestEdition({ game: 'Amber Pilgrim', edition })).toBe(edition);
+    expect(gamingEditionIdentitiesMatch(resolveGamingRequestEdition({ game: 'Amber Pilgrim', edition }), edition.toLowerCase())).toBe(true);
+  });
+  test.each(['Base game', 'base game', 'base-game', ' BASE GAME '])('continues normalizing closed base-game alias %s', edition => {
+    expect(resolveGamingRequestEdition({ game: 'Amber Pilgrim', edition })).toBe('base-game');
   });
 });

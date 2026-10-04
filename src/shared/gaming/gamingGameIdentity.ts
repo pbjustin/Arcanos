@@ -33,7 +33,7 @@ export function normalizeGamingEvidenceGameIdentity(game: string): string {
 
 /** Request interpretation only; never an assertion about acquired source metadata. */
 export function resolveGamingRequestEdition(input: { game?: string; edition?: string; prompt?: string; question?: string }): string | undefined {
-  if (input.edition) return normalizeGamingEditionIdentity(input.edition);
+  if (input.edition) return normalizeGamingEditionIdentity(input.edition) === 'base-game' ? 'base-game' : input.edition;
   const question = input.prompt ?? input.question ?? '';
   if (normalizeGamingGameIdentity(input.game ?? '') !== 'elden-ring') return undefined;
   if (/\bshadow[\s-]+of[\s-]+the[\s-]+erdtree\b/iu.test(question)) return 'shadow of the erdtree';

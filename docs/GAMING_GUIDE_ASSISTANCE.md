@@ -82,7 +82,8 @@ and explicit precise game titles are preserved. Ordinary requests naming only
 Elden Ring use a backend-derived base-game request scope. An explicit Shadow of
 the Erdtree request selects that expansion; unspecified DLC/expansion requests
 retain their ambiguity. This request interpretation does not add an acquired
-Edition assertion. Missing edition metadata on an ordinary base-game guide is
+Edition assertion. Explicit non-base edition display labels remain unchanged;
+identity comparisons use the existing normalized comparison helpers. Missing edition metadata on an ordinary base-game guide is
 not a contradiction; explicit incompatible source scope remains excluded.
 
 `answerDepth` accepts `auto`, `concise`, `standard`, or `detailed`. Clear current

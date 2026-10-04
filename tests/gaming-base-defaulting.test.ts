@@ -73,7 +73,7 @@ describe('ordinary base-game request interpretation', () => {
   });
   it('preserves explicit editions and leaves materially unspecified expansion requests unresolved', () => {
     expect(resolveGamingRequestEdition({ ...input, edition: 'Base game' })).toBe('base-game');
-    expect(resolveGamingRequestEdition({ ...input, edition: 'Remastered' })).toBe('remastered');
+    expect(resolveGamingRequestEdition({ ...input, edition: 'Remastered' })).toBe('Remastered');
     expect(resolveGamingRequestEdition({ ...input, prompt: 'Recommend a DLC build' })).toBeUndefined();
     expect(resolveGamingRequestEdition({ game: 'Minecraft', prompt: 'Recommend a build' })).toBeUndefined();
   });
