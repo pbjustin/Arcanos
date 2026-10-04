@@ -16,6 +16,17 @@ const containsIdentity = (text: string, expected: string): boolean => (`-${norma
 const DOCUMENT_LABEL = /^(?:(?:beginner|boss|build|class|combat|current|endgame|loadout|mechanics|patch|progression|pve|pvp|quest|raid|route|season|strategy|survival|synthetic)-){0,4}(?:guide|build|loadout|walkthrough|wiki|tips|patch-notes|release-notes|update-notes)$/u;
 const DISTINCT_SCOPE = /^(?:ii|iii|iv|\d+|nightreign|classic|remastered|remake|bedrock|java|dungeons|legends|shadow-of-the-erdtree|dlc|expansion)(?:-|$)/u;
 
+const SAMURAI_TOPIC_TITLE_WORDS = new Set(['samurai', 'katana', 'katanas', 'blade', 'blades', 'build', 'builds',
+  'guide', 'guides', 'early', 'game', 'beginner', 'beginners', 'starter', 'starting', 'combat', 'progression']);
+
+/** Closed acquired topic headings are not affirmative game-name declarations. */
+function isAcquiredSamuraiTopicTitle(value: string): boolean {
+  const words = normalizeGamingGameIdentity(value).split('-');
+  return words.length <= 12 && words.every(word => SAMURAI_TOPIC_TITLE_WORDS.has(word))
+    && words.some(word => ['samurai', 'katana', 'katanas', 'blade', 'blades'].includes(word))
+    && words.some(word => ['build', 'builds', 'guide', 'guides'].includes(word));
+}
+
 /** Inspect bounded acquired scope clauses, preserving visibly quoted/reference context. */
 function acquiredBodySubjects(prose: string): Array<{ text: string; explicitGameScope: boolean }> {
   const unquoted = prose.replace(/"[^"]*"|“[^”]*”|`[^`]*`|(?:^|\s)'(?:[^']|(?<=\w)'(?=\w))*'|‘[^’]*’/gu,
@@ -113,7 +124,7 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
     // outside the alias catalog. A URL label must not hide that contradiction.
     const detected = detectGamingDocumentGame({ canonicalUrl: '', pageTitle: value });
     const acquiredBody = document.text.replace(/\bgame\s*:[^.;|\n]{1,160}[.;]?/giu, '');
-    if (detected.game && (detected.source === 'alias' || containsIdentity(acquiredBody, detected.game)) && detected.confidence >= 0.8 && !expected.has(normalizeGamingGameIdentity(detected.game))
+    if (detected.game && (detected.source === 'alias' || !isAcquiredSamuraiTopicTitle(value) && containsIdentity(acquiredBody, detected.game)) && detected.confidence >= 0.8 && !expected.has(normalizeGamingGameIdentity(detected.game))
       && ![...expected].some(game => containsIdentity(value, game))) return { status: 'conflict', reasonCodes: ['GAME_MISMATCH'] };
 
   }
@@ -123,7 +134,8 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
   for (const heading of bodyHeadings) {
     // URL-first detection must not hide an explicit conflicting subject in acquired prose.
     const detected = detectGamingDocumentGame({ canonicalUrl: '', pageTitle: heading.slice(0, 240) });
-    if (detected.game && detected.confidence >= 0.8 && !expected.has(normalizeGamingGameIdentity(detected.game))
+    if (detected.game && (detected.source === 'alias' || !isAcquiredSamuraiTopicTitle(heading.split(':')[0]))
+      && detected.confidence >= 0.8 && !expected.has(normalizeGamingGameIdentity(detected.game))
       && ![...expected].some(game => containsIdentity(heading.split(':')[0], game))) return { status: 'conflict', reasonCodes: ['GAME_MISMATCH'] };
   }
   // Every affirmative acquired subject binds; matching titles and earlier
@@ -161,7 +173,14 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
   const metadataAnchor = metadata.some(value => [...expected].some(game => containsIdentity(value, game)));
   const proseAnchor = [...expected].some(game => containsIdentity(document.text.replace(/\bgame\s*:[^.;|\n]{1,160}[.;]?/giu, ''), game));
   const reviewedAssociation = Boolean(policy.ruleId) && ['official', 'specialist', 'community'].includes(policy.authority);
-  if (!(metadataAnchor && proseAnchor) && !(reviewedAssociation && metadataAnchor))
+  // A generic acquired topic title still needs an affirmative acquired game
+  // declaration. Neither matching player/topic terms nor a reference mention
+  // can supply that proof, and all acquired contradictions above still bind.
+  const acquiredBodyScope = !metadataAnchor && metadata.some(isAcquiredSamuraiTopicTitle) && acquiredBodySubjects(prose).some(({ text: subject }) => {
+    const declared = detectGamingLeadingGameAlias(subject);
+    return declared.game && declared.confidence >= 0.8 && expected.has(normalizeGamingGameIdentity(declared.game));
+  });
+  if (!(metadataAnchor && proseAnchor) && !(reviewedAssociation && metadataAnchor) && !acquiredBodyScope)
     return { status: 'unknown', reasonCodes: ['GAME_IDENTITY_UNVERIFIED'] };
   // Parent Minecraft scope is acquired independently from a requested edition choice.
   if (minecraftScope.status === 'conflict') return { status: 'conflict', reasonCodes: ['EDITION_CONFLICT'] };
@@ -199,7 +218,7 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
       return { status: 'unknown', reasonCodes: ['EDITION_UNVERIFIED'] };
     }
   }
-  return { status: 'verified', reasonCodes: [ordinaryTitle ? 'ACQUIRED_TITLE_AND_PASSAGE_IDENTITY' : reviewedAssociation
+  return { status: 'verified', reasonCodes: [acquiredBodyScope ? 'ACQUIRED_BODY_SCOPE_IDENTITY' : ordinaryTitle ? 'ACQUIRED_TITLE_AND_PASSAGE_IDENTITY' : reviewedAssociation
     ? 'REVIEWED_GAME_ASSOCIATION' : 'ACQUIRED_METADATA_AND_BODY_IDENTITY'] };
 }
 
