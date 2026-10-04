@@ -917,8 +917,15 @@ about spaces and hyphens.
 
 For an explicit base-game request, complete source-bound records with exact
 base-game `Edition`, `Scope` or `Applicability` values can now establish
-applicability. Only those records contribute gameplay evidence; unscoped prose
-and DLC records from a mixed page are excluded. Global edition assertions remain
+applicability. Only those records contribute gameplay evidence in hybrid and
+supplied-guide retrieval; unscoped prose and DLC records from a mixed page are
+excluded. Patch, platform, region and date metadata from excluded records cannot
+establish or contradict the selected records' applicability. Structural units
+containing only recognized metadata fields remain document-wide assertions;
+an edition-only definition does not become a scoped gameplay record or erase
+otherwise usable globally labeled prose. Incomplete or out-of-bounds global
+metadata remains unverified even when local base-game scope is intact.
+Global edition assertions remain
 vetoes, as do wrong-game records, conflicting record scope and disputed base-game
 records. The original acquired document and hash remain bound to the artifact.
 Record-scoped applicability cannot establish the original whole page's durable

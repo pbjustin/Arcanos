@@ -5,7 +5,7 @@ import type { GamingPlayerContext } from '@shared/gaming/gamingPlayerContext.js'
 import type { GamingStoredKnowledgeContext } from '@shared/gaming/gamingStoredEvidenceCore.js';
 import type { GamingEvidenceUnit } from '@shared/gaming/gamingEvidenceUnits.js';
 import { GAMING_EVIDENCE_UNIT_POLICY_VERSION } from '@shared/gaming/gamingEvidenceUnits.js';
-import { assessGamingStructuralUsability, readGamingEvidenceUnits } from '@shared/gaming/gamingStructuralEvidence.js';
+import { assessGamingStructuralUsability, readGamingEvidenceUnits, selectGamingEditionScopedEvidence } from '@shared/gaming/gamingStructuralEvidence.js';
 import { assessGamingClearSource, gamingClearIntactProseText } from '@shared/gaming/gamingClearSource.js';
 import { gamingClearHash, type GamingClearAssessment } from '@shared/gaming/gamingClearPolicy.js';
 import { assessGamingSourcePolicy, extractGamingFreshnessMetadata } from '@shared/gaming/gamingFreshnessCore.js';
@@ -2459,9 +2459,16 @@ function rankChunks(documents: GamingFetchedDocument[], terms: string[], input: 
   const maxChunkChars = getGamingRagChunkChars();
   const scoredChunks: GamingRankedChunk[] = [];
   for (const document of documents) {
-    const units = readGamingEvidenceUnits(document.evidenceUnits, document.candidate.url, document.text);
-    const proseText = units.length ? gamingClearIntactProseText({ text: document.text, evidenceUnits: units,
-      metrics: { truncated: document.candidate.partialExtraction === true } }) : document.text;
+    const acquiredUnits = readGamingEvidenceUnits(document.evidenceUnits, document.candidate.url, document.text);
+    const editionScoped = input.game ? selectGamingEditionScopedEvidence({ text: document.text,
+      publicUrl: document.candidate.url, evidenceUnits: document.evidenceUnits }, { game: input.game, edition: input.edition }) : undefined;
+    if (editionScoped?.status === 'conflict' || editionScoped?.status === 'unverified' && editionScoped.reasonCodes.length) continue;
+    // Record applicability authorizes only those acquired facts, including at
+    // the ordinary supplied-guide boundary; whole-page prose stays unscoped.
+    const evidenceText = editionScoped?.status === 'verified' ? editionScoped.text : document.text;
+    const units = editionScoped?.status === 'verified' ? editionScoped.units : acquiredUnits;
+    const proseText = units.length ? gamingClearIntactProseText({ text: evidenceText, evidenceUnits: units,
+      metrics: { truncated: document.candidate.partialExtraction === true } }) : evidenceText;
     const structural = assessGamingStructuralUsability({ units, ...input, proseText });
     const structuredClaim = units.length > 0 && structural.claimShape !== 'none';
     const independentProse = !structural.hasRelevantClaimUnit && structural.hasIndependentProseAnchors
@@ -2471,7 +2478,7 @@ function rankChunks(documents: GamingFetchedDocument[], terms: string[], input: 
       const assessedAt = new Date();
       const sourceAssessment = assessGamingClearSource({ ...input, game: input.game }, document.resolvedDocument, {
         subjectId: `live:${hashChunk(document.candidate.url)}`,
-        subjectHash: gamingClearHash({ text: document.text, evidenceUnits: units, policyVersion: GAMING_EVIDENCE_UNIT_POLICY_VERSION }),
+        subjectHash: gamingClearHash({ text: document.text, evidenceUnits: acquiredUnits, policyVersion: GAMING_EVIDENCE_UNIT_POLICY_VERSION }),
         actorScopeHash: gamingClearHash('request-scoped-supplied-retrieval'),
         sourcePolicy: assessGamingSourcePolicy(document.candidate.fetchUrl, input.game),
         freshness: extractGamingFreshnessMetadata(document.resolvedDocument, { game: input.game, edition: input.edition, platform: input.platform }, new Date(document.fetchedAt)),
