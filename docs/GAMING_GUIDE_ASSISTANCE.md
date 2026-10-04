@@ -822,7 +822,11 @@ or earlier matching scope cannot hide later conflicting gameplay instructions.
 Known game names at the start of a scope clause determine its subject even when
 a later comparison mentions the requested game. Comparative, negative and
 visibly quoted passages remain references; a quoted game or edition name in an
-affirmative scope remains a scope claim. Currentness
+affirmative scope remains a scope claim. Bare location instructions such as
+`In Stormveil Castle guide your Samurai` or `In Nyx System build a safe route`
+do not turn their location names into games. Known game aliases and explicit
+`this guide covers`, `this guide is for`, and `in the game` declarations still
+bind independently. Currentness
 uncertainty, platform uncertainty and region uncertainty remain distinct from
 explicit applicability contradictions. Ordinary gameplay evidence may retain an
 acquired platform or region scope when the question does not depend on that

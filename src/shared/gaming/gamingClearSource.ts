@@ -17,7 +17,7 @@ const DOCUMENT_LABEL = /^(?:(?:beginner|boss|build|class|combat|current|endgame|
 const DISTINCT_SCOPE = /^(?:ii|iii|iv|\d+|nightreign|classic|remastered|remake|bedrock|java|dungeons|legends|shadow-of-the-erdtree|dlc|expansion)(?:-|$)/u;
 
 /** Inspect bounded acquired scope clauses, preserving visibly quoted/reference context. */
-function acquiredBodySubjects(prose: string): string[] {
+function acquiredBodySubjects(prose: string): Array<{ text: string; explicitGameScope: boolean }> {
   const unquoted = prose.replace(/"[^"]*"|“[^”]*”|`[^`]*`|(?:^|\s)'(?:[^']|(?<=\w)'(?=\w))*'|‘[^’]*’/gu,
     (quote, offset: number) => {
       const name = quote.replace(/^[\s"“`'‘]+|[\s"”`'’]+$/gu, '');
@@ -29,7 +29,7 @@ function acquiredBodySubjects(prose: string): string[] {
         || namedSubject.source === 'page_metadata' && namedSubject.confidence >= 0.8))
         ? quote.replace(/^[\s"“`'‘]+|[\s"”`'’]+$/gu, boundary => ' '.repeat(boundary.length)) : ' '.repeat(quote.length);
     });
-  const subjects: string[] = [];
+  const subjects: Array<{ text: string; explicitGameScope: boolean }> = [];
   for (const match of unquoted.matchAll(/\b(?:this (?:guide|build|walkthrough) (?:covers|is for)|in(?: the game)?)\s+/giu)) {
     const before = unquoted.slice(0, match.index);
     const prefix = before.slice(Math.max(...['.', '!', '?', ';', ',', '\n'].map(boundary => before.lastIndexOf(boundary))) + 1);
@@ -39,7 +39,7 @@ function acquiredBodySubjects(prose: string): string[] {
     if (/\b(?:unlike|compared(?:\s+to)?|comparison(?:\s+with)?|contrast(?:\s+to)?|similar(?:ly)?|rather\s+than|instead\s+of|as(?:\s+is\s+the\s+case)?|like)\s*$/iu.test(prefix)
       || /\b(?:not(?:\s+(?:apply|applicable|valid|available|supported|used|found|present|exist|included|be|for)){0,4}|(?:doesn|isn|aren|don|didn)['’]?t(?:\s+(?:apply|exist|work))?|without|except|excluding|unavailable|unsupported)\s*$/iu.test(prefix)
       || /^(?:contrast|comparison|case|addition|particular)\b/iu.test(subject)) continue;
-    if (subject) subjects.push(subject);
+    if (subject) subjects.push({ text: subject, explicitGameScope: /^(?:this|in the game)\b/iu.test(match[0]) });
   }
   return subjects;
 }
@@ -128,10 +128,17 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
   }
   // Every affirmative acquired subject binds; matching titles and earlier
   // requested-game subjects cannot hide a later different gameplay scope.
-  for (const bodySubject of acquiredBodySubjects(prose)) {
+  for (const { text: bodySubject, explicitGameScope } of acquiredBodySubjects(prose)) {
     const leading = detectGamingLeadingGameAlias(bodySubject);
     const metadataSubject = detectGamingDocumentGame({ canonicalUrl: '', pageTitle: bodySubject });
-    const detected = leading.game ? leading : metadataSubject.source !== 'alias' ? metadataSubject : leading;
+    // Bare location clauses can use guide/build as imperative verbs. Their
+    // objects do not declare a new game; explicit game scopes and aliases do.
+    const firstInstructionMarker = /\b(?:guide|build|loadout|meta|walkthrough|wiki|tips?|tier(?:\s+list)?|patch\s+notes)\b/iu.exec(bodySubject);
+    const instructionalClause = !explicitGameScope && Boolean(firstInstructionMarker
+      && /^(?:guide|build)$/iu.test(firstInstructionMarker[0])
+      && /^\s+(?:a|an|the|your|our|their|my|his|her|its|them|him|us|me)\b/iu.test(
+        bodySubject.slice(firstInstructionMarker.index + firstInstructionMarker[0].length)));
+    const detected = leading.game ? leading : metadataSubject.source !== 'alias' && !instructionalClause ? metadataSubject : leading;
     const subjectIdentity = normalizeGamingGameIdentity(bodySubject);
     const expectedSubject = [...expected].some(game => subjectIdentity === game || subjectIdentity.startsWith(`${game}-`));
     if (detected.game && detected.confidence >= 0.8 && !expected.has(normalizeGamingGameIdentity(detected.game))
