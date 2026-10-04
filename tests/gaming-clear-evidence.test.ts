@@ -69,13 +69,20 @@ describe('Gaming CLEAR bounded evidence decisions', () => {
     expect(run(input, old.data).decision).not.toBe('accept');
   });
 
-  test.each([{ platforms: ['Xbox'] }, { regions: ['EU'] }])('explicit static applicability restrictions require the missing player constraint: %j', restriction => {
+  test.each([{ platforms: ['Xbox'] }, { regions: ['EU'] }])('ordinary static advice retains source restrictions without inventing a missing player decision: %j', restriction => {
     const data = knowledge(staticInput.game, ['Open the copper gate with the key from the hollow pedestal.']);
     data.sources[0].freshnessMetadata = { ...freshness(staticInput.game, 0, { patch: undefined, ...restriction }) };
-    expect(run(staticInput, data)).toMatchObject({ decision: 'clarify', overall: null,
-      gates: { compatibility: 'unknown', freshness: 'not_applicable' }, dimensionScores: { alignment: { score: null } } });
+    expect(run(staticInput, data)).toMatchObject({ decision: 'accept',
+      gates: { compatibility: 'verified', freshness: 'not_applicable' } });
     expect(assessGamingClearEvidence({ ...staticInput, platform: 'Xbox', region: 'EU' }, data, { now }).decision).toBe('accept');
     expect(assessGamingClearEvidence({ ...staticInput, platform: 'PC', region: 'US' }, data, { now }).decision).toBe('reject');
+  });
+
+  test('a controls question still requires a material missing platform decision', () => {
+    const input = { ...staticInput, prompt: 'Which keybindings open the copper gate?' };
+    const data = knowledge(input.game, ['The copper gate keybindings controls use the interact button to open the gate.']);
+    data.sources[0].freshnessMetadata = { ...freshness(input.game, 0, { patch: undefined, platforms: ['Xbox'] }) };
+    expect(run(input, data)).toMatchObject({ decision: 'clarify', gates: { compatibility: 'unknown' } });
   });
 
   test('all-platform/all-region stable evidence needs no irrelevant patch metadata', () => {

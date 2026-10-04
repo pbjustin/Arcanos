@@ -52,11 +52,16 @@ describe('Gaming CLEAR acquired source assessment', () => {
     'does not accept title-only identity with unrelated substantive body: %s', body => {
       expect(assess(document('Elden Ring', 'Elden Ring guide', `Game: Elden Ring. ${body}`)).decision).not.toBe('accept');
     });
-  it.each(['Elden Ring Nightreign', 'Elden Ring Shadow of the Erdtree', 'Elden Ring 2', 'Elden Ring Remastered'])(
+  it.each(['Elden Ring Nightreign', 'Elden Ring 2', 'Elden Ring Remastered'])(
     'does not confuse the base game with explicitly distinct scope %s', game => {
       const doc = document(game, `${game} guide`, `${game} offers Intelligence, staves and spell choices. ${prose}`);
       expect(assess(doc).gates.identity).toBe('conflict');
     });
+  it('separates same-game expansion scope from a different game', () => {
+    const doc = document('Elden Ring Shadow of the Erdtree', 'Elden Ring Shadow of the Erdtree guide', prose);
+    expect(assess(doc)).toMatchObject({ decision: 'reject', gates: { identity: 'verified', compatibility: 'conflict' },
+      findings: expect.arrayContaining([expect.objectContaining({ code: 'EDITION_CONFLICT' })]) });
+  });
   it('keeps exact requested edition identity supported without broad alias collapse', () => {
     const doc = document('Minecraft Java', 'Minecraft Java guide', 'In Minecraft Java, the copper gate opens after aligning the redstone switches. Activate the eastern switch before crossing the bridge.');
     const input = { game: 'Minecraft Java', prompt: 'How do I open the copper gate?', mode: 'guide' as const };

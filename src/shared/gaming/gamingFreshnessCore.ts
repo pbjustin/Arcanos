@@ -3,7 +3,7 @@ import type { GamingEvidenceUnit } from './gamingEvidenceUnits.js';
 import { isGamingDocumentMetadataUnit, readGamingEvidenceUnits, selectGamingEditionScopedEvidence } from './gamingStructuralEvidence.js';
 import { runGamingCurrentnessAdapter, combineGamingCurrentnessEvidence, GAMING_CURRENTNESS_ADAPTER_VERSION,
   type GamingCurrentnessAdapterResult, type GamingCurrentnessDocumentMetadata } from './gamingCurrentnessAdapters.js';
-import { evaluateGamingGuideApplicability, isGamingGameplayFreshnessEvidence, type GamingGuideApplicability } from './gamingGuideApplicability.js';
+import { gamingApplicabilityScopeRequired, evaluateGamingGuideApplicability, isGamingGameplayFreshnessEvidence, type GamingGuideApplicability } from './gamingGuideApplicability.js';
 import { sanitizeGamingSourceUrl } from './gamingSourceAcquisitionCore.js';
 import { REVIEWED_GAMING_SOURCE_RULES, gamingRuleAuthority,
   type GamingReviewedSourceRule, type GamingSourceCategory, type GamingSourceAuthority, type GamingSourceCurrentness } from './gamingCurrentnessRegistry.js';
@@ -113,6 +113,8 @@ export interface GamingFreshnessEvidence extends GamingSourcePolicyAssessment {
   mechanicValues?: Record<string, string>;
   metadataConflict?: boolean;
   metadataUnverified?: boolean;
+  /** Acquired nonmaterial uncertainty; never a compatibility assertion. */
+  metadataWarnings?: string[];
   /** Deterministic reviewed adapter output. Cached proof still expires at the normal freshness deadline. */
   currentnessMetadata?: GamingCurrentnessAdapterResult;
 }
@@ -288,6 +290,10 @@ export function extractGamingFreshnessMetadata(document: { publicUrl: string; ca
     // Its separate adapter status still prevents any currentness success until corroborated.
     invalidMetadata ||= policy.currentness === 'current_index' && currentnessMetadata.status !== 'verified' && !pendingArticle;
   }
+  const invalidEffectiveDate = [[rawEffectiveFrom, effectiveFrom], [rawEffectiveUntil, dateValue(rawEffectiveUntil)]]
+    .some(([raw, parsed]) => Boolean(raw && !parsed));
+  const nonmaterialDateOnly = invalidDate && !invalidEffectiveDate && !invalidMetadata && policy.currentness === 'none'
+    && !['official_updates', 'official_status'].includes(policy.category);
   // Date/version claims remain source claims; currentness additionally needs an official index.
   const patchArticle = /\b(?:patch\s+notes?|hotfix|game\s+update|update\s+\d)\b/iu.test(document.metadata?.title ?? '');
   const autoStoreAllowed = policy.autoStoreAllowed && policy.category === 'official_updates'
@@ -305,7 +311,8 @@ export function extractGamingFreshnessMetadata(document: { publicUrl: string; ca
     ...(supersedesBuilds?.length ? { supersedesBuilds } : {}),
     ...(Object.keys(mechanicValues).length ? { mechanicValues } : {}),
     ...(conflict ? { metadataConflict: true } : {}),
-    ...(invalidDate || invalidMetadata ? { metadataUnverified: true } : {}),
+    ...(invalidDate && !nonmaterialDateOnly || invalidMetadata ? { metadataUnverified: true } : {}),
+    ...(nonmaterialDateOnly ? { metadataWarnings: ['PUBLICATION_DATE_UNVERIFIED'] } : {}),
     ...(currentnessMetadata ? { currentnessMetadata } : {}),
     metadataConfidence: patch || build || season || effectiveFrom ? 'content_extracted' : 'unknown' };
 }
@@ -376,12 +383,12 @@ export function evaluateGamingFreshness(input: GamingFreshnessEvaluationInput): 
   let conflictingOfficialCurrentness = false;
   const scoped = combineGamingCurrentnessEvidence(input.evidence, new Date(now)).filter(item => {
     if (normalizeGamingGameIdentity(item.game) !== normalizeGamingGameIdentity(input.game)) { reasons.add('GAME_MISMATCH'); return false; }
-    if (input.edition && !gamingEditionEvidenceMatchesRequest(item.edition, input.edition)) { reasons.add('EDITION_UNVERIFIED_OR_MISMATCH'); return false; }
-    if (!input.edition && item.edition) { reasons.add('EDITION_REQUIRED'); return false; }
+    if (input.edition && !gamingEditionEvidenceMatchesRequest(item.edition, input.edition)) { reasons.add(item.edition ? 'EDITION_CONFLICT' : 'EDITION_UNVERIFIED'); return false; }
+    if (!input.edition && item.edition) { reasons.add('EDITION_UNVERIFIED'); return false; }
     if (input.platform && item.platforms?.length && !item.platforms.some(platform => same(platform, input.platform) || same(platform, 'all'))) { reasons.add('PLATFORM_MISMATCH'); return false; }
-    if (!input.platform && item.platforms?.length && !item.platforms.some(platform => same(platform, 'all'))) { reasons.add('PLATFORM_REQUIRED'); return false; }
+    if (!input.platform && (gamingApplicabilityScopeRequired(input, 'platform') || !isGamingGameplayFreshnessEvidence(item)) && item.platforms?.length && !item.platforms.some(platform => same(platform, 'all'))) { reasons.add('PLATFORM_REQUIRED'); return false; }
     if (input.region && item.regions?.length && !item.regions.some(region => same(region, input.region) || same(region, 'all'))) { reasons.add('REGION_MISMATCH'); return false; }
-    if (!input.region && item.regions?.length && !item.regions.some(region => same(region, 'all'))) { reasons.add('REGION_REQUIRED'); return false; }
+    if (!input.region && (gamingApplicabilityScopeRequired(input, 'region') || !isGamingGameplayFreshnessEvidence(item)) && item.regions?.length && !item.regions.some(region => same(region, 'all'))) { reasons.add('REGION_REQUIRED'); return false; }
     const from = timestamp(item.effectiveFrom);
     const until = timestamp(item.effectiveUntil);
     const published = timestamp(item.publishedAt);
@@ -468,7 +475,7 @@ export function evaluateGamingFreshness(input: GamingFreshnessEvaluationInput): 
     && (item.currentness === 'current_index' || (!patch || same(item.patch, patch))
       && (!build || same(item.build, build) || item.baselineForBuilds?.some(value => same(value, build)))));
   guideApplicability = gameplayEvidence.map(guide => {
-    const applicability = evaluateGamingGuideApplicability({ guide, game: input.game,
+    const applicability = evaluateGamingGuideApplicability({ guide, game: input.game, question: input.question,
       edition: input.edition, platform: input.platform, region: input.region, currentness: index,
       officialEvidence: currentOfficialEvidence, now: new Date(now) });
     // A matching version cannot restore an artifact excluded by source policy or scope.

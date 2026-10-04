@@ -769,6 +769,23 @@ anchors can establish identity without requiring a particular guide-title shape;
 a frontend label or a source's `Game:` label alone cannot establish identity.
 Broad franchise overlap and explicit incompatible editions remain blocked.
 
+Game identity and topic coverage are evaluated independently. Acquired game
+anchors can verify Elden Ring even when a guide does not cover Samurai advice;
+that guide fails with `QUESTION_COVERAGE_INSUFFICIENT`, not
+`GAME_IDENTITY_UNVERIFIED`. Missing game proof remains unverified, while explicit
+wrong-game evidence remains `GAME_MISMATCH`. Edition uncertainty uses
+`EDITION_UNVERIFIED`; explicit incompatible edition scope uses `EDITION_CONFLICT`
+and blocks compatibility without claiming a different game. Currentness
+uncertainty, platform uncertainty and region uncertainty remain distinct from
+explicit applicability contradictions. Ordinary gameplay evidence may retain an
+acquired platform or region scope when the question does not depend on that
+scope; the answer qualification reports the source restriction and leaves other
+scopes unverified. Explicit incompatible requested scopes still block. Questions
+about keybindings, controls, crossplay or regional/server behavior require the
+corresponding material user scope. Invalid publication/update dates alone warn
+for gameplay guides; malformed effective intervals and official currentness
+metadata remain blockers.
+
 Source roles are `gameplay_guide`, `build_analysis`, `patch_authority`,
 `currentness_index`, `live_status`, `community_observation`, and `corroboration`.
 Role-appropriate contribution is scored once; publisher reputation, fetch time

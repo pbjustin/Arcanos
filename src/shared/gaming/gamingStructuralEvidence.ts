@@ -61,6 +61,7 @@ export function selectGamingEditionScopedEvidence(document: {
   const selected: GamingEvidenceUnit[] = [];
   let scopedRecords = false;
   let uncertainBaseRecord = false;
+  let explicitOtherEdition = false;
   for (const unit of units) {
     const leaf = (label: string) => normal(label.split(/\s+\/\s+/u).at(-1)!);
     // Even an excluded record cannot hide an explicit different game.
@@ -72,7 +73,10 @@ export function selectGamingEditionScopedEvidence(document: {
     const scopes = unit.fields.filter(field => ['edition', 'scope', 'applicability'].includes(leaf(field.label)))
       .map(field => normalizeGamingEditionIdentity(field.value));
     scopedRecords ||= !metadataOnly && scopes.length > 0;
-    if (!scopes.includes('base-game')) continue;
+    if (!scopes.includes('base-game')) {
+      explicitOtherEdition ||= !metadataOnly && scopes.some(scope => /^(?:shadow of the erdtree|dlc|expansion)$/u.test(scope));
+      continue;
+    }
     if (scopes.some(scope => scope !== 'base-game')
       || /\b(?:shadow[\s-]+of[\s-]+the[\s-]+erdtree|dlc|expansion|nightreign)\b/iu.test(
         [unit.text, unit.context.heading, unit.context.caption, ...(unit.context.qualifiers ?? [])].join(' '))) {
@@ -84,7 +88,7 @@ export function selectGamingEditionScopedEvidence(document: {
   }
   if (uncertainBaseRecord) return result('unverified', [], ['EDITION_SCOPE_NOT_INTACT']);
   return selected.length ? result('verified', selected, ['INTACT_BASE_GAME_SCOPE'])
-    : result('unverified', [], scopedRecords ? ['EDITION_SCOPE_UNVERIFIED'] : []);
+    : explicitOtherEdition ? result('conflict', [], ['CONFLICTING_EDITION_SCOPE']) : result('unverified', [], scopedRecords ? ['EDITION_SCOPE_UNVERIFIED'] : []);
 }
 function mentionsValue(request: string, value: string): boolean {
   let index = request.indexOf(value);

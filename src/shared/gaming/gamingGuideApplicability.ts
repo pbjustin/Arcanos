@@ -25,6 +25,14 @@ const normalized = (value: string): string => value.normalize('NFKC').trim().toL
 const same = (left?: string, right?: string): boolean => Boolean(left && right && normalized(left) === normalized(right));
 const includes = (values: readonly string[] | undefined, value: string | undefined): boolean => Boolean(value && values?.some(item => same(item, value)));
 
+/** Only facts whose behavior depends on these scopes need a missing user decision. */
+export function gamingApplicabilityScopeRequired(input: { prompt?: string; question?: string }, field: 'platform' | 'region'): boolean {
+  const question = (input.prompt ?? input.question ?? '').slice(0, 8_000);
+  return field === 'platform'
+    ? /\b(?:keybindings?|controls?|button prompts?|cross[ -]?(?:play|save)|platform[ -]specific|console[ -]exclusive|keyboard|controller|save transfer|system requirements)\b/iu.test(question)
+    : /\b(?:region[ -]specific|regional|server shards?|regional prices?|release times?|maintenance|server status)\b/iu.test(question);
+}
+
 /** Authority records contribute currentness; they are not complete gameplay recommendations. */
 export function isGamingGameplayFreshnessEvidence(evidence: GamingApplicabilityEvidence): boolean {
   return !['current_index', 'live_status'].includes(evidence.currentness)
@@ -39,6 +47,7 @@ export function isGamingGameplayFreshnessEvidence(evidence: GamingApplicabilityE
 export function evaluateGamingGuideApplicability(input: {
   guide: GamingApplicabilityEvidence;
   game: string;
+  question?: string;
   edition?: string;
   platform?: string;
   region?: string;
@@ -56,11 +65,13 @@ export function evaluateGamingGuideApplicability(input: {
   });
   if (normalizeGamingGameIdentity(guide.game) !== normalizeGamingGameIdentity(input.game)) return result('conflicting', 'GAME_MISMATCH');
   if (guide.metadataConflict) return result('conflicting', 'CONTRADICTORY_SOURCE_METADATA');
-  if (guide.metadataUnverified || guide.metadataConfidence !== 'content_extracted') return result('unverified', 'APPLICABILITY_METADATA_UNVERIFIED');
-  if ((input.edition && !gamingEditionEvidenceMatchesRequest(guide.edition, input.edition)) || (!input.edition && guide.edition)) return result('unverified', 'EDITION_UNVERIFIED_OR_MISMATCH');
+  if (input.edition && guide.edition && !gamingEditionEvidenceMatchesRequest(guide.edition, input.edition)) return result('conflicting', 'EDITION_CONFLICT');
+  if ((input.edition && !gamingEditionEvidenceMatchesRequest(guide.edition, input.edition)) || (!input.edition && guide.edition)) return result('unverified', 'EDITION_UNVERIFIED');
+  if (guide.metadataUnverified) return result('unverified', 'APPLICABILITY_METADATA_UNVERIFIED');
   for (const [values, wanted, field] of [[guide.platforms, input.platform, 'PLATFORM'], [guide.regions, input.region, 'REGION']] as const) {
-    if (values?.length && !includes(values, 'all') && !includes(values, wanted)) return result(wanted ? 'conflicting' : 'unverified', `${field}_UNVERIFIED_OR_MISMATCH`);
-    if (wanted && !values?.length) return result('unverified', `${field}_UNVERIFIED_OR_MISMATCH`);
+    if (values?.length && !includes(values, 'all') && !includes(values, wanted)
+      && (wanted || gamingApplicabilityScopeRequired(input, field.toLowerCase() as 'platform' | 'region'))) return result(wanted ? 'conflicting' : 'unverified', `${field}_${wanted ? 'CONFLICT' : 'UNVERIFIED'}`);
+    if (wanted && !values?.length) return result('unverified', `${field}_UNVERIFIED`);
   }
   for (const value of [guide.effectiveFrom, guide.effectiveUntil, guide.publishedAt]) {
     if (value && !Number.isFinite(Date.parse(value))) return result('unverified', 'APPLICABILITY_METADATA_UNVERIFIED');
@@ -69,7 +80,7 @@ export function evaluateGamingGuideApplicability(input: {
   if (guide.effectiveUntil && Date.parse(guide.effectiveUntil) <= input.now.getTime()) return result('stale', 'NO_LONGER_EFFECTIVE');
   if (!currentness || currentness.authority !== 'official' || currentness.currentness !== 'current_index'
     || (currentness.currentnessMetadata && currentness.currentnessMetadata.status !== 'verified')
-    || (!patch && !currentness.currentSeason)) return result('unverified', 'CURRENT_OFFICIAL_INDEX_REQUIRED');
+    || (!patch && !currentness.currentSeason)) return result('unverified', 'CURRENTNESS_UNVERIFIED');
 
   const official = [currentness, ...(input.officialEvidence ?? []).filter(item => item.authority === 'official')].slice(0, 20);
   const sameMechanicChanged = official.some(item => Object.entries(guide.mechanicValues ?? {}).slice(0, 16)

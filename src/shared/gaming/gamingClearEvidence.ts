@@ -1,3 +1,4 @@
+import { gamingApplicabilityScopeRequired } from './gamingGuideApplicability.js';
 import { resolveGamingRequestEdition, gamingEditionEvidenceMatchesRequest } from './gamingGameIdentity.js';
 import { createGamingClearAssessment, classifyGamingClearQuestion, gamingClearContextFingerprint, gamingClearHash,
   type GamingClearAssessment } from './gamingClearPolicy.js';
@@ -89,8 +90,8 @@ export function assessGamingClearEvidence(
       && item.patch !== input.requestedVersion && !item.baselineForPatches?.includes(input.requestedVersion)))
     || sources.some(source => source.edition && !gamingEditionEvidenceMatchesRequest(source.edition, input.edition));
   const compatibilityUnknown = relevantMetadata.some(item => item.metadataUnverified
-    || (!input.platform && item.platforms?.length && !item.platforms.some(platform => platform.toLowerCase() === 'all'))
-    || (!input.region && item.regions?.length && !item.regions.some(region => region.toLowerCase() === 'all'))
+    || (!input.platform && gamingApplicabilityScopeRequired(input, 'platform') && item.platforms?.length && !item.platforms.some(platform => platform.toLowerCase() === 'all'))
+    || (!input.region && gamingApplicabilityScopeRequired(input, 'region') && item.regions?.length && !item.regions.some(region => region.toLowerCase() === 'all'))
     || [item.effectiveFrom, item.effectiveUntil, item.publishedAt].some(value => value && !Number.isFinite(Date.parse(value))))
     || Boolean(input.edition && input.edition !== 'base-game' && sources.some(source => !source.edition
       && !relevantMetadata.some(item => (item.id === source.sourceId || item.url === source.url) && gamingEditionIdentitiesMatch(item.edition, input.edition))

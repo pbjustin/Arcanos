@@ -1,3 +1,4 @@
+import { gamingApplicabilityScopeRequired } from '@shared/gaming/gamingGuideApplicability.js';
 import { resolveGamingRequestEdition, gamingEditionEvidenceMatchesRequest } from '@shared/gaming/gamingGameIdentity.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { logger } from '@platform/logging/structuredLogging.js';
@@ -233,13 +234,18 @@ export async function evaluateGamingHybridCandidates(
       if (normalizeGamingGameIdentity(freshness.game) !== normalizeGamingGameIdentity(input.game)) { reject('GAME_MISMATCH'); continue; }
       const scoped = selectGamingEditionScopedEvidence(document, input);
       if (scoped.reasonCodes.includes('GAME_MISMATCH')) { reject('GAME_MISMATCH'); continue; }
-      if (scoped.status === 'conflict' || scoped.status === 'unverified' && scoped.reasonCodes.length
-        || input.edition && !gamingEditionEvidenceMatchesRequest(freshness.edition, input.edition)) { reject('EDITION_UNVERIFIED_OR_MISMATCH'); continue; }
-      if (!input.edition && freshness.edition) { reject('EDITION_REQUIRED'); continue; }
+      if (scoped.status === 'conflict') { reject('EDITION_CONFLICT'); continue; }
+      if (scoped.status === 'unverified' && scoped.reasonCodes.length) { reject('EDITION_UNVERIFIED'); continue; }
+      if (input.edition && !gamingEditionEvidenceMatchesRequest(freshness.edition, input.edition)) {
+        reject(freshness.edition ? 'EDITION_CONFLICT' : 'EDITION_UNVERIFIED'); continue;
+      }
+      if (!input.edition && freshness.edition) { reject('EDITION_UNVERIFIED'); continue; }
       const applies = (values: string[] | undefined, wanted: string | undefined) => !values?.length
         || values.some(value => value.toLowerCase() === 'all' || value.toLowerCase() === wanted?.toLowerCase());
-      if (!applies(freshness.platforms, input.platform)) { reject(input.platform ? 'PLATFORM_MISMATCH' : 'PLATFORM_REQUIRED'); continue; }
-      if (!applies(freshness.regions, input.region)) { reject(input.region ? 'REGION_MISMATCH' : 'REGION_REQUIRED'); continue; }
+      if (!applies(freshness.platforms, input.platform) && (input.platform || gamingApplicabilityScopeRequired(input, 'platform')
+        || input.discoveryType === 'currentness_verification')) { reject(input.platform ? 'PLATFORM_MISMATCH' : 'PLATFORM_UNVERIFIED'); continue; }
+      if (!applies(freshness.regions, input.region) && (input.region || gamingApplicabilityScopeRequired(input, 'region')
+        || input.discoveryType === 'currentness_verification')) { reject(input.region ? 'REGION_MISMATCH' : 'REGION_UNVERIFIED'); continue; }
       if (freshness.metadataConflict) {
         // A rejected, scoped official contradiction remains negative evidence. Dropping
         // it would let another accepted index falsely appear unanimous.
@@ -265,10 +271,10 @@ export async function evaluateGamingHybridCandidates(
         elapsedMs: Date.now() - sourceStartedAt, budgetOutcome: 'within_existing_acquisition_budget' });
       const identityReasons = sourceAssessment.dimensionScores.alignment.reasonCodes;
       if (!['accept', 'partial'].includes(sourceAssessment.decision)
-        || identityReasons.some(reason => ['GAME_MISMATCH', 'GAME_IDENTITY_UNVERIFIED', 'EDITION_UNVERIFIED'].includes(reason))) {
-        reject(identityReasons.find(reason => reason === 'GAME_MISMATCH')
-          ?? sourceAssessment.dimensionScores.leverage.reasonCodes.find(reason => reason === 'QUESTION_COVERAGE_INSUFFICIENT')
+        || identityReasons.some(reason => ['GAME_MISMATCH', 'GAME_IDENTITY_UNVERIFIED', 'EDITION_CONFLICT', 'EDITION_UNVERIFIED'].includes(reason))) {
+        reject(identityReasons.find(reason => ['GAME_MISMATCH', 'EDITION_CONFLICT'].includes(reason))
           ?? identityReasons.find(reason => ['GAME_IDENTITY_UNVERIFIED', 'EDITION_UNVERIFIED'].includes(reason))
+          ?? sourceAssessment.dimensionScores.leverage.reasonCodes.find(reason => reason === 'QUESTION_COVERAGE_INSUFFICIENT')
           ?? sourceAssessment.blockingFindings[0]?.code ?? 'GAMING_CLEAR_SOURCE_REJECTED'); continue;
       }
       const chunks = await chunkGamingDocument(scoped.status === 'verified' ? scoped.text : intactText,

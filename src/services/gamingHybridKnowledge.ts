@@ -444,6 +444,14 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
     const applicabilityUnverified = structuredReport && freshness.classification === 'stable'
       && !freshness.effectivePatch;
     const qualification = [advisory ? advisory.qualification : freshness.qualification,
+      ...evidence.filter(item => selected.has(item.id)).slice(0, 3).flatMap(item => [
+        !input.platform && item.platforms?.length && !item.platforms.some(value => value.toLowerCase() === 'all')
+          ? `A cited guide reports platform scope ${JSON.stringify(item.platforms.slice(0, 2))}; applicability to other platforms was not independently verified.` : '',
+        !input.region && item.regions?.length && !item.regions.some(value => value.toLowerCase() === 'all')
+          ? `A cited guide reports region scope ${JSON.stringify(item.regions.slice(0, 2))}; applicability to other regions was not independently verified.` : '',
+        item.metadataWarnings?.includes('PUBLICATION_DATE_UNVERIFIED')
+          ? 'A cited guide reports an unusable publication or update date; that date was not used as freshness proof.' : ''
+      ]),
       structuredReport ? 'Structured records are source reports. Preserve their qualifiers and attribution; they do not establish independent in-game observation.' : '',
       applicabilityUnverified ? 'Current in-game applicability is unverified. A recent source fetch verifies acquisition only.' : '',
       knowledge.sources.some(source => source.clearSourceAssessment?.findings.some(finding => finding.code === 'EXTRACTION_PARTIAL'))

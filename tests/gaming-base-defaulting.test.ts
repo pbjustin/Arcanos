@@ -46,6 +46,23 @@ describe('ordinary base-game request interpretation', () => {
     expect(result.accepted).toEqual([]);
     expect(result.decisions[0].decision).toBe('rejected');
   });
+  it('admits ordinary gameplay advice while retaining acquired platform and region restrictions', async () => {
+    const result = await acquire('Platforms: PC. Regions: North America.');
+    expect(result.accepted).toHaveLength(1);
+    expect(result.accepted[0].freshness).toMatchObject({ platforms: ['PC'], regions: ['North America'] });
+    expect(evaluateGamingFreshness({ question: input.prompt, game: input.game, mode: input.mode,
+      evidence: result.accepted.map(item => item.freshness) }).usable).toBe(true);
+    expect(assessGamingClearEvidence(input, result.knowledge, { identityVerified: true, requireRequestCoverage: true }).decision).toBe('accept');
+    expect((await acquire('Platforms: PC.', prose, undefined, { ...input, platform: 'PS5' } as typeof input)).accepted).toEqual([]);
+  });
+  it('qualifies an invalid publication date without treating it as an unknown edition or applicability interval', async () => {
+    const result = await acquire('Published at: malformed.');
+    expect(result.accepted).toHaveLength(1);
+    expect(result.accepted[0].freshness).toMatchObject({ metadataWarnings: ['PUBLICATION_DATE_UNVERIFIED'] });
+    expect(result.accepted[0].freshness.publishedAt).toBeUndefined();
+    expect(result.accepted[0].sourceAssessment.findings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'PUBLICATION_DATE_UNVERIFIED', severity: 'warning' })]));
+  });
   it('requires expansion evidence when the question explicitly names Shadow of the Erdtree', async () => {
     const request = { ...input, prompt: 'How do Samurai katana attacks work in Shadow of the Erdtree?' };
     expect(resolveGamingRequestEdition(request)).toBe('shadow of the erdtree');
@@ -59,5 +76,21 @@ describe('ordinary base-game request interpretation', () => {
     expect(resolveGamingRequestEdition({ ...input, edition: 'Remastered' })).toBe('remastered');
     expect(resolveGamingRequestEdition({ ...input, prompt: 'Recommend a DLC build' })).toBeUndefined();
     expect(resolveGamingRequestEdition({ game: 'Minecraft', prompt: 'Recommend a build' })).toBeUndefined();
+  });
+});
+
+
+describe('candidate semantic outcome classification', () => {
+  it('reports a correct-game irrelevant guide as missing question coverage', async () => {
+    const result = await acquire('', 'In Elden Ring, exploration uses map markers and discovered sites of grace. Follow the route to the cave and return to a nearby checkpoint when exploration is complete. These map navigation instructions do not describe combat.', 'Elden Ring exploration guide');
+    expect(result.decisions).toMatchObject([{ decision: 'rejected', reasonCodes: ['QUESTION_COVERAGE_INSUFFICIENT'] }]);
+  });
+  it('reports unproved game identity independently from topical relevance', async () => {
+    const result = await acquire('', prose.replace('In Elden Ring, ', ''), 'Unidentified notebook guide');
+    expect(result.decisions).toMatchObject([{ decision: 'rejected', reasonCodes: ['GAME_IDENTITY_UNVERIFIED'] }]);
+  });
+  it('reports explicit wrong-game evidence independently from topical relevance', async () => {
+    const result = await acquire('', prose.replace('Elden Ring', 'Diablo 4'), 'Diablo 4 Samurai katana guide');
+    expect(result.decisions).toMatchObject([{ decision: 'rejected', reasonCodes: ['GAME_MISMATCH'] }]);
   });
 });
