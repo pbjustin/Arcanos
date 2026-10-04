@@ -252,7 +252,8 @@ export class GamingDocumentAcquisitionError extends Error {
     httpStatus?: number;
     statusCategory?: "3xx" | "4xx" | "5xx";
   };
-  constructor(readonly code: "URL_BLOCKED" | "REDIRECT_NOT_ALLOWED" | "SOURCE_FETCH_FAILED" | "SOURCE_TIMEOUT" | "SOURCE_INACCESSIBLE",
+  constructor(readonly code: "URL_BLOCKED" | "REDIRECT_NOT_ALLOWED" | "SOURCE_FETCH_FAILED" | "SOURCE_TIMEOUT" | "SOURCE_INACCESSIBLE"
+    | "SOURCE_TOO_LARGE" | "UNSUPPORTED_SOURCE_FORMAT" | "SOURCE_EXTRACTION_FAILED",
     stage: "admission" | "redirect" | "transport" | "extraction", subreason: string, redirectCount = 0, readonly status?: number,
     ruleId = `gaming.acquisition.${subreason.toLowerCase()}`) {
     super("The source could not be acquired under the public document policy.");

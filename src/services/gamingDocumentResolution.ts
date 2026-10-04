@@ -230,7 +230,7 @@ async function acquireGenericGamingDocument(url: string, maxChars: number, optio
           response.status === 401 || response.status === 403 ? "SOURCE_INACCESSIBLE" : "SOURCE_FETCH_FAILED",
           "transport", response.status === 304 ? "CONDITIONAL_CONTENT_UNAVAILABLE" : "HTTP_RESPONSE_UNUSABLE", transitions.length, response.status);
         if (response.contentType && !["text/html", "text/plain", "application/xhtml+xml", "application/json"].includes(response.contentType)) {
-          throw new GamingDocumentAcquisitionError("SOURCE_FETCH_FAILED", "extraction", "UNSUPPORTED_CONTENT_TYPE", transitions.length);
+          throw new GamingDocumentAcquisitionError("UNSUPPORTED_SOURCE_FORMAT", "extraction", "UNSUPPORTED_CONTENT_TYPE", transitions.length);
         }
         let extracted: webFetcher.FetchAndCleanDocument;
         let structure: ReturnType<typeof extractGamingDocumentEvidence>;
@@ -249,7 +249,7 @@ async function acquireGenericGamingDocument(url: string, maxChars: number, optio
             gamingDocumentFetchOptions(currentUrl, { ...options, onRawDocument: undefined }), Date.now() - startedAt);
         } catch {
           session.assertActive();
-          throw new GamingDocumentAcquisitionError("SOURCE_FETCH_FAILED", "extraction", "DOCUMENT_EXTRACTION_FAILED", transitions.length);
+          throw new GamingDocumentAcquisitionError("SOURCE_EXTRACTION_FAILED", "extraction", "DOCUMENT_EXTRACTION_FAILED", transitions.length);
         }
         session.assertActive();
         return { text: extracted.combined, finalUrl: currentUrl, transitions, supportsStructuredExtraction: true, structure };
@@ -266,7 +266,9 @@ async function acquireGenericGamingDocument(url: string, maxChars: number, optio
     if (error instanceof webFetcher.ProtectedDocumentFetchError) throw new GamingDocumentAcquisitionError(
       error.code === "NETWORK_DESTINATION_BLOCKED" || error.code === "INVALID_TARGET" ? "URL_BLOCKED"
         : error.code === "REDIRECT_LOCATION_INVALID" ? "REDIRECT_NOT_ALLOWED"
-          : error.code === "DEADLINE_EXCEEDED" ? "SOURCE_TIMEOUT" : "SOURCE_FETCH_FAILED",
+          : error.code === "DEADLINE_EXCEEDED" ? "SOURCE_TIMEOUT"
+            : error.code === "TRANSFER_LIMIT" || error.code === "DECODED_LIMIT" ? "SOURCE_TOO_LARGE"
+              : error.code === "UNSUPPORTED_ENCODING" ? "UNSUPPORTED_SOURCE_FORMAT" : "SOURCE_FETCH_FAILED",
       "transport", error.code, transitions.length, error.status);
     throw error;
   } finally { session.dispose(); }

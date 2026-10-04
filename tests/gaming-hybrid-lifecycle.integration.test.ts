@@ -130,6 +130,35 @@ async function discoverCurrent(mode: 'build' | 'meta', extras: Record<string, un
  * This is not PostgreSQL FTS evidence or proof of ChatGPT's real web-tool sequencing.
  */
 describe('Gaming hybrid durable lifecycle', () => {
+  it.each(['gaming-hybrid-v1', 'gaming-hybrid-v2'] as const)('returns a sanitized oversized-source decision under %s while the decoded limit still fires', async protocolVersion => {
+    const previousByteLimit = process.env.WEB_FETCH_MAX_BYTES;
+    process.env.WEB_FETCH_MAX_BYTES = '128';
+    try {
+      const compressed = gzipSync('x'.repeat(4096));
+      expect(compressed.length).toBeLessThan(128);
+      const data = Object.assign(Readable.from([compressed]), {
+        rawHeaders: ['content-type', 'text/html', 'content-encoding', 'gzip']
+      });
+      mockHttp.mockResolvedValue({ status: 200, data, headers: { 'content-type': 'text/html', 'content-encoding': 'gzip' } });
+      const evaluated = await evaluate({ protocolVersion });
+      expect(evaluated.decisions).toEqual([{ submittedIndex: 0, url: URL, decision: 'rejected', reasonCodes: ['SOURCE_TOO_LARGE'] }]);
+      expect(evaluated.accepted).toEqual([]);
+      expect(evaluated.knowledge.evidence ?? []).toEqual([]);
+      expect(evaluated.currentnessFailureBlocksAdvisory).toBe(true);
+      expect(JSON.stringify(evaluated)).not.toMatch(/DECODED_LIMIT|93\.184\.216\.34|rawHeaders|content-encoding/iu);
+      expect(jest.mocked(logger.info).mock.calls).toEqual(expect.arrayContaining([
+        ['gaming.clear.source.not_run', expect.objectContaining({ acquisition: expect.objectContaining({ subreason: 'DECODED_LIMIT' }),
+          reasonCodes: ['SOURCE_TOO_LARGE'] })]
+      ]));
+      expect(mockHttp).toHaveBeenCalledTimes(1);
+      expect(mockTrinity).not.toHaveBeenCalled();
+      expect(jobs.size).toBe(0);
+    } finally {
+      if (previousByteLimit === undefined) delete process.env.WEB_FETCH_MAX_BYTES;
+      else process.env.WEB_FETCH_MAX_BYTES = previousByteLimit;
+    }
+  });
+
   it('keeps planner payloads out of acquisition failure decisions', async () => {
     const publicUrl = 'https://guides.example.org/build-planner';
     const payload = '{private-failed-build-fixture';
@@ -741,7 +770,7 @@ describe('Gaming hybrid durable lifecycle', () => {
     expect(verified.body.answer).toBeUndefined();
     expect(verified.body.candidates).toEqual(expect.arrayContaining([expect.objectContaining({
       origin: 'required_official_article', decision: 'rejected',
-      reasonCodes: [articleFailure === 'forbidden' ? 'SOURCE_INACCESSIBLE' : 'SOURCE_FETCH_FAILED']
+      reasonCodes: [articleFailure === 'forbidden' ? 'SOURCE_INACCESSIBLE' : 'SOURCE_TOO_LARGE']
     })]));
     expect((await workflow.candidates(officialRequest, context)).body).toEqual(verified.body);
     expect((await workflow.candidates({ ...officialRequest, idempotencyKey: 'failure-extra-round' }, context)).status).toBe(409);

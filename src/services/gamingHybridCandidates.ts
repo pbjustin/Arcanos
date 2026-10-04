@@ -337,13 +337,12 @@ export async function evaluateGamingHybridCandidates(
       if (acquisitionSignal?.aborted) { reject('SOURCE_TIMEOUT'); continue; }
       if (error instanceof GamingDocumentAcquisitionError) {
         acquisitionDiagnostic = { ...error.acquisition };
-        // Public acquisition reasons are deliberately coarse. Preserve the internal
+        // Public acquisition reasons remain bounded. Preserve the internal
         // integrity/security distinction so an unavailable index cannot hide it.
         const unavailable = ['DNS_FAILED', 'FETCH_FAILED', 'DEADLINE_EXCEEDED', 'HTTP_RESPONSE_UNUSABLE', 'CONDITIONAL_CONTENT_UNAVAILABLE'];
         if (!unavailable.includes(error.acquisition.subreason) || error.status === 401 || error.status === 403)
           currentnessFailureBlocksAdvisory = true;
-        reject(v2 && error.acquisition.subreason === 'UNSUPPORTED_CONTENT_TYPE' ? 'UNSUPPORTED_SOURCE_FORMAT'
-          : v2 && error.acquisition.subreason === 'DOCUMENT_EXTRACTION_FAILED' ? 'EXTRACTION_INTEGRITY_FAILED' : error.code); continue;
+        reject(error.code); continue;
       }
       const status = (error as { response?: { status?: number } })?.response?.status;
       reject(status === 401 || status === 403 ? 'SOURCE_INACCESSIBLE' : status && [301, 302, 303, 307, 308].includes(status)
