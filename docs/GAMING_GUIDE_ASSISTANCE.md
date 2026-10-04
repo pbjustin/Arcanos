@@ -103,6 +103,21 @@ player edition never grants durable-source quality or storage consent. Unrecogni
 alternate edition labels remain unverified until a catalog policy establishes safe
 applicability; frontend labels cannot establish acquired scope.
 
+For a request naming the parent game Minecraft, closed acquired Java/Bedrock
+assertions establish source edition scope independently of game identity. Ordinary
+advice may use that guide transiently while visibly stating its acquired edition
+and that compatibility with other editions is unverified. Source scope never
+becomes a user edition choice or storage permission. Closed user phrases such as
+`in Minecraft Bedrock` or `Java Edition` can supply an explicit edition choice;
+mixed or negated choices remain unresolved. Explicit opposing request
+editions reject with `EDITION_CONFLICT`; independently game-verified source facts
+with an explicit edition-exclusive restriction, and current/latest requests with
+only one acquired edition, require a Java-versus-Bedrock clarification. Complete
+requested titles such as Minecraft Java remain distinct catalog identities;
+Minecraft Dungeons/Legends and sequels remain excluded from the parent game.
+Unproved or conflicting acquired scope stays conservative. Other games without a
+reviewed edition model do not receive Minecraft aliases or a new base-game default.
+
 `answerDepth` accepts `auto`, `concise`, `standard`, or `detailed`. Clear current
 question requests for brevity/detail take precedence over the structured depth.
 Auto uses concise guidance for next-step/location questions and standard depth

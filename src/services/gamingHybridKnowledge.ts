@@ -1,4 +1,4 @@
-import { normalizeGamingGameIdentity, resolveGamingRequestEdition, buildGamingSourceEditionQualification } from '@shared/gaming/gamingGameIdentity.js';
+import { normalizeGamingGameIdentity, resolveGamingRequestEdition, buildGamingSourceEditionQualification, normalizeGamingMinecraftEdition } from '@shared/gaming/gamingGameIdentity.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { getEnvBoolean } from '@platform/runtime/env.js';
 import { logger } from '@platform/logging/structuredLogging.js';
@@ -343,6 +343,14 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
       if (!workflow.pipeline.region && gamingApplicabilityScopeRequired(workflow.pipeline, 'region'))
         return { status: 200, body: { ...body, state: 'clarification_required', nextAction: 'clarify',
           reason: 'REGION_REQUIRED', clarification: 'Which region should the regional guidance cover?' } };
+      const minecraftEditionDecision = !workflow.pipeline.edition && normalizeGamingGameIdentity(input.game) === 'minecraft'
+        && (workflow.candidateDecisions?.some(candidate => candidate.reasonCodes.includes('EDITION_REQUIRED'))
+          || resolveGamingFreshnessDisposition(workflow.pipeline) === 'REQUIRED' && knowledge.sources.some(source =>
+            source.clearSourceAssessment?.gates.identity === 'verified' && normalizeGamingGameIdentity(source.game ?? '') === 'minecraft'
+            && normalizeGamingMinecraftEdition(source.edition ?? source.freshnessMetadata?.edition as string | undefined)));
+      if (minecraftEditionDecision)
+        return { status: 200, body: { ...body, state: 'clarification_required', nextAction: 'clarify',
+          reason: 'EDITION_REQUIRED', clarification: 'Should this Minecraft guidance cover Java Edition or Bedrock Edition?' } };
       // A requested expansion build is a scope decision; a factual question about
       // whether DLC is required does not create that same missing decision.
       const unspecifiedExpansionContent = !workflow.pipeline.edition && normalizeGamingGameIdentity(input.game) === 'elden-ring'

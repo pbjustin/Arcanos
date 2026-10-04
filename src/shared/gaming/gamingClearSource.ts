@@ -1,4 +1,5 @@
-import { resolveGamingRequestEdition, gamingEditionEvidenceMatchesRequest } from './gamingGameIdentity.js';
+import { resolveGamingRequestEdition, gamingEditionEvidenceMatchesRequest, readGamingMinecraftEditionScope, normalizeGamingMinecraftEdition } from './gamingGameIdentity.js';
+import { resolveGamingFreshnessDisposition } from './gamingFreshnessDisposition.js';
 import { detectGamingDocumentGame } from './gamingDocumentIngestionCore.js';
 import { normalizeGamingGameIdentity, normalizeGamingEditionIdentity, resolveGamingGuideIdentity } from './gamingGameIdentity.js';
 import { buildGamingRetrievalTerms, buildGamingRequestRequirements, hasGamingRelevantGuideContribution, gamingTermCoverage } from './gamingRetrievalPolicy.js';
@@ -13,7 +14,7 @@ import { detectGamingLeadingGameAlias } from '@services/gamingGameDetection.js';
 const containsIdentity = (text: string, expected: string): boolean => (`-${normalizeGamingGameIdentity(text)}-`)
   .includes(`-${normalizeGamingGameIdentity(expected)}-`);
 const DOCUMENT_LABEL = /^(?:(?:beginner|boss|build|class|combat|current|endgame|loadout|mechanics|patch|progression|pve|pvp|quest|raid|route|season|strategy|survival|synthetic)-){0,4}(?:guide|build|loadout|walkthrough|wiki|tips|patch-notes|release-notes|update-notes)$/u;
-const DISTINCT_SCOPE = /^(?:ii|iii|iv|\d+|nightreign|classic|remastered|remake|bedrock|java|shadow-of-the-erdtree|dlc|expansion)(?:-|$)/u;
+const DISTINCT_SCOPE = /^(?:ii|iii|iv|\d+|nightreign|classic|remastered|remake|bedrock|java|dungeons|legends|shadow-of-the-erdtree|dlc|expansion)(?:-|$)/u;
 
 /** Inspect bounded acquired scope clauses, preserving visibly quoted/reference context. */
 function acquiredBodySubjects(prose: string): string[] {
@@ -87,9 +88,16 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
   input = { ...input, edition: resolveGamingRequestEdition(input) };
   const expected = new Set([normalizeGamingGameIdentity(input.game), resolveGamingGuideIdentity(input.game, input.edition)]);
   let scoped = selectGamingEditionScopedEvidence(document, input);
+  const minecraftScope = readGamingMinecraftEditionScope(document, input.game);
+  const minecraft = normalizeGamingGameIdentity(input.game) === 'minecraft';
+  const minecraftIdentity = (value: string) => minecraft && /^minecraft-(?:java|bedrock)(?:-edition)?$/u.test(value);
+  const minecraftQualifier = (value: string) => {
+    const match = /^(?:java|bedrock)(?:-edition)?(?:-(.*))?$/u.exec(value);
+    return minecraft && Boolean(match) && !(match?.[1] && DISTINCT_SCOPE.test(match[1]));
+  };
   if (scoped.reasonCodes.includes('GAME_MISMATCH')) return { status: 'conflict', reasonCodes: ['GAME_MISMATCH'] };
   const labels = [...document.text.slice(0, 32_000).matchAll(/\bgame\s*:\s*(.{1,160}?)(?=\.(?:\s|$)|;|\||\n|\s+(?:Edition|Platform|Region|Patch|Build|Published at|Effective from)\s*:|$)/giu)];
-  if (labels.some(label => !expected.has(normalizeGamingGameIdentity(label[1])))) return { status: 'conflict', reasonCodes: ['GAME_MISMATCH'] };
+  if (labels.some(label => !expected.has(normalizeGamingGameIdentity(label[1])) && !minecraftIdentity(normalizeGamingGameIdentity(label[1])))) return { status: 'conflict', reasonCodes: ['GAME_MISMATCH'] };
   const metadata = [document.metadata.title, document.metadata.headings].filter((value): value is string => Boolean(value));
   let editionScopeConflict = false;
   for (const value of metadata) {
@@ -99,7 +107,7 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
       && ![...expected].some(full => full !== game && (identity === full || identity.startsWith(`${full}-`))))) {
       if (/^shadow-of-the-erdtree|^(?:dlc|expansion)(?:-|$)/u.test(identity.slice(normalizeGamingGameIdentity(input.game).length + 1)))
         editionScopeConflict = true;
-      else return { status: 'conflict', reasonCodes: ['GAME_MISMATCH'] };
+      else if (!(minecraftQualifier(identity.slice(normalizeGamingGameIdentity(input.game).length + 1)))) return { status: 'conflict', reasonCodes: ['GAME_MISMATCH'] };
     }
     // Acquired title and body can establish an explicit different subject even
     // outside the alias catalog. A URL label must not hide that contradiction.
@@ -136,7 +144,7 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
     })) {
       const qualifier = normalizeGamingGameIdentity(bodySubject).slice(normalizeGamingGameIdentity(input.game).length + 1);
       if (/^shadow-of-the-erdtree|^(?:dlc|expansion)(?:-|$)/u.test(qualifier)) editionScopeConflict = true;
-      else return { status: 'conflict', reasonCodes: ['GAME_MISMATCH'] };
+      else if (!(minecraftQualifier(qualifier))) return { status: 'conflict', reasonCodes: ['GAME_MISMATCH'] };
     }
   }
   const ordinaryTitle = metadata.some(value => [...expected].some(game => {
@@ -148,6 +156,15 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
   const reviewedAssociation = Boolean(policy.ruleId) && ['official', 'specialist', 'community'].includes(policy.authority);
   if (!(metadataAnchor && proseAnchor) && !(reviewedAssociation && metadataAnchor))
     return { status: 'unknown', reasonCodes: ['GAME_IDENTITY_UNVERIFIED'] };
+  // Parent Minecraft scope is acquired independently from a requested edition choice.
+  if (minecraftScope.status === 'conflict') return { status: 'conflict', reasonCodes: ['EDITION_CONFLICT'] };
+  if (minecraftScope.status === 'unverified') return { status: 'unknown', reasonCodes: ['EDITION_UNVERIFIED'] };
+  if (minecraftScope.status === 'verified') {
+    if (input.edition && normalizeGamingMinecraftEdition(input.edition) !== minecraftScope.edition)
+      return { status: 'conflict', reasonCodes: ['EDITION_CONFLICT'] };
+    if (!input.edition && (minecraftScope.exclusive || resolveGamingFreshnessDisposition(input) === 'REQUIRED'))
+      return { status: 'unknown', reasonCodes: ['EDITION_REQUIRED'] };
+  }
   const applicability = extractGamingFreshnessMetadata(document, input);
   const qualifiedSourceEdition = !input.edition && applicability.edition
     && gamingEditionEvidenceMatchesRequest(applicability.edition, undefined, input);
@@ -171,7 +188,7 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
     if (normalizeGamingEditionIdentity(input.edition) === 'base-game') {
       if (!gamingEditionEvidenceMatchesRequest(applicability.edition, input.edition))
         return { status: applicability.edition ? 'conflict' : 'unknown', reasonCodes: [applicability.edition ? 'EDITION_CONFLICT' : 'EDITION_UNVERIFIED'] };
-    } else if (!containsIdentity([document.metadata.title, document.metadata.headings, prose].join(' '), input.edition)) {
+    } else if (minecraftScope.status !== 'verified' && !containsIdentity([document.metadata.title, document.metadata.headings, prose].join(' '), input.edition)) {
       return { status: 'unknown', reasonCodes: ['EDITION_UNVERIFIED'] };
     }
   }

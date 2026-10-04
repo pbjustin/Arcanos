@@ -1,5 +1,5 @@
 import { gamingApplicabilityScopeRequired } from '@shared/gaming/gamingGuideApplicability.js';
-import { resolveGamingRequestEdition, gamingEditionEvidenceMatchesRequest } from '@shared/gaming/gamingGameIdentity.js';
+import { resolveGamingRequestEdition, gamingEditionEvidenceMatchesRequest, normalizeGamingMinecraftEdition } from '@shared/gaming/gamingGameIdentity.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { logger } from '@platform/logging/structuredLogging.js';
 import { normalizeGamingGameIdentity, resolveGamingGuideIdentity } from '@shared/gaming/gamingGameIdentity.js';
@@ -239,7 +239,8 @@ export async function evaluateGamingHybridCandidates(
       if (input.edition && !gamingEditionEvidenceMatchesRequest(freshness.edition, input.edition, input)) {
         reject(freshness.edition ? 'EDITION_CONFLICT' : 'EDITION_UNVERIFIED'); continue;
       }
-      if (!input.edition && freshness.edition && !gamingEditionEvidenceMatchesRequest(freshness.edition, undefined, input)) { reject('EDITION_UNVERIFIED'); continue; }
+      if (!input.edition && freshness.edition && !gamingEditionEvidenceMatchesRequest(freshness.edition, undefined, input)
+        && !(normalizeGamingGameIdentity(input.game) === 'minecraft' && normalizeGamingMinecraftEdition(freshness.edition))) { reject('EDITION_UNVERIFIED'); continue; }
       const applies = (values: string[] | undefined, wanted: string | undefined) => !values?.length
         || values.some(value => value.toLowerCase() === 'all' || value.toLowerCase() === wanted?.toLowerCase());
       if (!applies(freshness.platforms, input.platform) && (input.platform || gamingApplicabilityScopeRequired(input, 'platform')
@@ -271,9 +272,9 @@ export async function evaluateGamingHybridCandidates(
         elapsedMs: Date.now() - sourceStartedAt, budgetOutcome: 'within_existing_acquisition_budget' });
       const identityReasons = sourceAssessment.dimensionScores.alignment.reasonCodes;
       if (!['accept', 'partial'].includes(sourceAssessment.decision)
-        || identityReasons.some(reason => ['GAME_MISMATCH', 'GAME_IDENTITY_UNVERIFIED', 'EDITION_CONFLICT', 'EDITION_UNVERIFIED'].includes(reason))) {
+        || identityReasons.some(reason => ['GAME_MISMATCH', 'GAME_IDENTITY_UNVERIFIED', 'EDITION_CONFLICT', 'EDITION_UNVERIFIED', 'EDITION_REQUIRED'].includes(reason))) {
         reject(identityReasons.find(reason => ['GAME_MISMATCH', 'EDITION_CONFLICT'].includes(reason))
-          ?? identityReasons.find(reason => ['GAME_IDENTITY_UNVERIFIED', 'EDITION_UNVERIFIED'].includes(reason))
+          ?? identityReasons.find(reason => ['GAME_IDENTITY_UNVERIFIED', 'EDITION_UNVERIFIED', 'EDITION_REQUIRED'].includes(reason))
           ?? sourceAssessment.dimensionScores.leverage.reasonCodes.find(reason => reason === 'QUESTION_COVERAGE_INSUFFICIENT')
           ?? sourceAssessment.blockingFindings[0]?.code ?? 'GAMING_CLEAR_SOURCE_REJECTED'); continue;
       }
@@ -290,7 +291,7 @@ export async function evaluateGamingHybridCandidates(
         clearSourceAssessment: sourceAssessment,
         fetchedAt: now(), publishedAt: null, provenance: { resolverId: document.resolution.resolverId,
           resolverVersion: document.resolution.resolverVersion, resolutionStrategy: document.resolution.strategy,
-          gameName: input.game, edition: input.edition, gamingClear: sourceAssessment },
+          gameName: input.game, edition: freshness.edition ?? input.edition, gamingClear: sourceAssessment },
         relevance: Math.max(gamingTermCoverage(chunk.text, terms), v2 && (hasGamingRelevantGuideContribution(chunk.text, input)
           || buildGamingRequestRequirements(input).some(requirement => gamingTermCoverage(chunk.text, requirement.terms) === 1)) ? 0.25 : 0)
       })).filter(record => record.relevance >= 0.25);
@@ -408,7 +409,7 @@ export function selectGamingHybridAcceptedEvidence(input: GamingStoredKnowledgeI
   });
   const limits = hybridEvidenceLimits();
   const fullPool: GamingStoredKnowledgeContext = { context: '', sources: accepted.map(candidate => ({
-    sourceId: candidate.candidateId, game: candidate.sourceContext.game, edition: candidate.sourceContext.edition,
+    sourceId: candidate.candidateId, game: candidate.sourceContext.game, edition: candidate.freshness.edition ?? candidate.sourceContext.edition,
     url: candidate.publicUrl, sourceType: candidate.sourcePolicy.category, origin: 'live',
     fetchedAt: candidate.freshness.fetchedAt, snippet: '', clearSourceAssessment: candidate.sourceAssessment,
     freshnessMetadata: { ...candidate.freshness }
