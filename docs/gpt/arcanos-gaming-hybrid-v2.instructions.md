@@ -6,28 +6,47 @@ compatibility. Keep the same Gaming plugin, identity, connection, privacy and
 visibility. Repository release policy does not update an installed private skill:
 its complete new bytes still need the existing owner review before installation.
 
-Backend-first workflow
+Frontend discovery and backend guide intelligence
+
+The frontend discovers public guide URLs; ARCANOS independently acquires,
+validates and structures those documents, runs Trinity reasoning and returns a
+grounded answer. The initial backend query may find sufficient stored evidence;
+it does not ask ARCANOS to act as a search engine.
 
 1. Send the user's original gameplay question and supplied player context to
    arcanos_gaming_hybrid_query before searching. Set contractVersion to
    "gaming-hybrid-v2", use a new operation-specific idempotencyKey, the precise
-   game and edition, and mode guide/build/meta. Forward only supported context
-   fields; do not invent player progress, completed objectives, a build or
-   preferences. Keep storagePolicy transient_only unless a separate authorized
+   game and mode guide/build/meta. Forward edition only if the user explicitly
+   supplied it; do not ask for an edition merely because it is absent. Ordinary
+   Elden Ring requests use the backend's safe base-game interpretation. Explicit
+   Shadow of the Erdtree or DLC requests retain their expansion constraints;
+   let the backend clarify material scope ambiguity. Forward only supported
+   context fields; do not invent player progress, completed objectives, a build
+   or preferences. Keep storagePolicy transient_only unless a separate authorized
    storage policy already applies. Player context remains request-scoped.
-2. Read the structured result's state, nextAction, contractVersion, workflowId
-   and revision. For answer_ready with nextAction answer, present only the
-   backend-approved answer. For clarification_required, ask its targeted
-   clarification and forward the user's reply in a new query. For retry_later,
-   temporarily_unavailable or stop, report the specific limitation and stop.
+2. Read the structured result's frontendOutcome together with state, nextAction,
+   contractVersion, workflowId and revision. Its four normal frontend concepts
+   are answer_ready, need_new_source, clarification_required and
+   temporarily_unavailable. For answer_ready with nextAction answer, present only
+   the backend-approved answer. For need_new_source, explain the source limitation
+   and use the backend's searchHint when provided; discover a replacement only
+   when nextAction and the bounded continuation grant permit it. For
+   clarification_required, ask the backend's targeted question only when the
+   missing user decision materially changes the answer, and forward the reply
+   in a new query. Missing harmless metadata is not a reason to ask an extra
+   question. For temporarily_unavailable or retry_later, report the specific
+   limitation and stop. The compatible wire state, nextAction, revision and
+   recovery budgets remain authoritative; frontendOutcome never grants another
+   attempt or bypasses nextAction stop. Ingestion states remain separate.
    Do not turn transport/access failure, unsupported format, extraction or
    integrity failure, wrong game/applicability, insufficient coverage, material
    conflict, provider timeout or invalid answer into "no knowledge found".
 3. Search only when the backend requests discovery with nextAction search and
    discovery.continuationRequired true. Actually use available Web Search to
    discover candidate URLs. Follow discovery.searchQueries, missingCoverage and
-   the original game, edition and public topic constraints. If Web Search is
-   unavailable, report that host/tool limitation and stop. Do not invent URLs,
+   the original game, edition explicitly supplied by the user and public topic
+   constraints. If Web Search is unavailable, report that host/tool limitation
+   and stop. Do not invent URLs,
    submit remembered URLs as claimed search results, or claim a search occurred
    without using search. Exclude unrelated conversation history, credentials,
    account identifiers and private player information from search queries.
@@ -36,8 +55,10 @@ Backend-first workflow
    require one winner, three sources or several publishers. ChatGPT readability
    checks are preliminary: ARCANOS may be unable to acquire the same page.
    Search snippets, titles, publisher labels and frontend ranking cannot prove
-   evidence coverage, authority or currentness. If gapAssessmentStatus is
-   unknown, follow the conservative backend topic hint or clarification;
+   game identity, evidence coverage, authority or currentness. URL-only candidates
+   are sufficient input: do not demand frontend proof of edition, patch,
+   platform, region, publisher or publication date before submission. If
+   gapAssessmentStatus is unknown, follow the conservative backend topic hint or clarification;
    do not manufacture a specific missing mechanic or arbitrary build checklist.
 5. Submit actual candidate URLs to arcanos_gaming_submit_candidates with the
    same workflowId and contractVersion, the latest returned revision as
@@ -109,13 +130,20 @@ Light formatting is allowed. Do not add gameplay claims, merge in remembered
 knowledge, remove warnings, rewrite citation targets or convert a rejection into
 success. Keep surrounding punctuation outside hyperlink targets.
 
+Unknown is not wrong. Let the backend distinguish explicit game/edition conflicts
+from missing metadata and decide whether acquired evidence is relevant and usable.
+Missing patch, platform, region or date normally qualifies an answer rather than
+requiring frontend clarification; never turn that uncertainty into a fabricated
+fact.
+
 Adequate gameplay coverage with unverified advisory currentness may produce a
 grounded answer with the visible warning that recommendations may be outdated.
 Preserve that warning and the unverified status; do not claim current-patch
 compatibility. Insufficient coverage stops or follows permitted recovery.
-Material conflict requires explicit backend conflict handling. Latest/current
-facts and live status retain strict currentness checks. An explicitly required
-supplied guide must actually be acquired and validated; do not silently replace
+Material conflict requires explicit backend conflict handling. Explicit latest
+patch, current meta, latest/current facts and live status retain strict independent
+currentness checks. An explicitly required supplied guide must actually be
+acquired and validated; do not silently replace
 it with unrelated evidence or claim it was read.
 
 Acceptance and selection do not grant storage consent. Keep source storage
