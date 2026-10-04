@@ -1,6 +1,6 @@
-import { normalizeGamingGameIdentity } from './gamingGameIdentity.js';
+import { gamingEditionIdentitiesMatch, normalizeGamingEditionIdentity, normalizeGamingGameIdentity } from './gamingGameIdentity.js';
 import type { GamingEvidenceUnit } from './gamingEvidenceUnits.js';
-import { readGamingEvidenceUnits } from './gamingStructuralEvidence.js';
+import { readGamingEvidenceUnits, selectGamingEditionScopedEvidence } from './gamingStructuralEvidence.js';
 import { runGamingCurrentnessAdapter, combineGamingCurrentnessEvidence, GAMING_CURRENTNESS_ADAPTER_VERSION,
   type GamingCurrentnessAdapterResult, type GamingCurrentnessDocumentMetadata } from './gamingCurrentnessAdapters.js';
 import { evaluateGamingGuideApplicability, isGamingGameplayFreshnessEvidence, type GamingGuideApplicability } from './gamingGuideApplicability.js';
@@ -160,6 +160,8 @@ export function extractGamingFreshnessMetadata(document: { publicUrl: string; ca
   // Citation redaction may shorten a path; only the acquired identity grants publisher policy.
   const policy = assessGamingSourcePolicy(document.canonicalUrl ?? document.publicUrl, context.game, rules);
   const evidenceUnits = readGamingEvidenceUnits(document.evidenceUnits, undefined, document.text);
+  const editionScoped = context.edition && normalizeGamingEditionIdentity(context.edition) === 'base-game'
+    ? selectGamingEditionScopedEvidence(document, context) : undefined;
   let proseText = document.text;
   for (const unit of evidenceUnits) proseText = proseText.replace(unit.text, '');
   const metadataText = proseText.slice(0, GAMING_FRESHNESS_DEFAULTS.maxMetadataChars);
@@ -173,6 +175,9 @@ export function extractGamingFreshnessMetadata(document: { publicUrl: string; ca
   const structuralLabel = /^(?:Game|Edition|Platforms?|Regions?|Published at|Source updated at|Effective from|Effective until|Patch|Season|Current patch|Current build|Current season|Baseline valid for patches|Baseline valid for builds|Supersedes patches|Supersedes builds)$/iu;
   for (const unit of evidenceUnits) if (unit.integrity.status === 'complete') for (const field of unit.fields) {
     const leaf = field.label.split(/\s+\/\s+/u).at(-1)!;
+    // Independently scoped records keep their local editions. They do not turn
+    // a mixed page into contradictory document-wide edition assertions.
+    if (editionScoped?.status === 'verified' && /^Edition$/iu.test(leaf)) continue;
     if (structuralLabel.test(leaf) && lines.length < 500) lines.push(`${leaf}: ${field.value}`);
   }
   let conflict = false;
@@ -182,7 +187,8 @@ export function extractGamingFreshnessMetadata(document: { publicUrl: string; ca
     const claims = lines.flatMap(line => { const match = pattern.exec(line); return match ? [match[1].trim()] : []; });
     // A recognized but empty/overlong assertion is uncertainty, not an absent restriction.
     if (claims.some(value => value.length === 0 || value.length > max)) invalidMetadata = true;
-    const values = [...new Set(claims.filter(value => value.length > 0 && value.length <= max))];
+    const values = [...new Set(claims.filter(value => value.length > 0 && value.length <= max)
+      .map(value => name === 'Edition' && normalizeGamingEditionIdentity(value) === 'base-game' ? 'base-game' : value))];
     if (values.length > 1) conflict = true;
     return values.length === 1 ? values[0] : undefined;
   };
@@ -197,7 +203,7 @@ export function extractGamingFreshnessMetadata(document: { publicUrl: string; ca
     return values;
   };
   const game = label('Game', 160) ?? context.game;
-  const edition = label('Edition', 120);
+  let edition = label('Edition', 120);
   let platforms = boundedList(label('Platforms?', 256));
   let regions = boundedList(label('Regions?', 256));
   const rawPublishedAt = label('Published at');
@@ -231,6 +237,10 @@ export function extractGamingFreshnessMetadata(document: { publicUrl: string; ca
     const value = `${Number(match[2])}${unit}`;
     if (mechanicValues[key] !== undefined && mechanicValues[key] !== value) conflict = true;
     mechanicValues[key] = value;
+  }
+  if (!edition && !conflict && !invalidMetadata && editionScoped) {
+    if (editionScoped.status === 'verified') edition = 'base-game';
+    else if (editionScoped.status === 'conflict') conflict = true;
   }
   const rule = rules.find(item => item.id === policy.ruleId);
   const currentnessMetadata = rule && policy.authority === 'official' && (rule.metadataAdapter || rule.currentness === 'current_index')
@@ -348,7 +358,7 @@ export function evaluateGamingFreshness(input: GamingFreshnessEvaluationInput): 
   let conflictingOfficialCurrentness = false;
   const scoped = combineGamingCurrentnessEvidence(input.evidence, new Date(now)).filter(item => {
     if (normalizeGamingGameIdentity(item.game) !== normalizeGamingGameIdentity(input.game)) { reasons.add('GAME_MISMATCH'); return false; }
-    if (input.edition && !same(item.edition, input.edition)) { reasons.add('EDITION_UNVERIFIED_OR_MISMATCH'); return false; }
+    if (input.edition && !gamingEditionIdentitiesMatch(item.edition, input.edition)) { reasons.add('EDITION_UNVERIFIED_OR_MISMATCH'); return false; }
     if (!input.edition && item.edition) { reasons.add('EDITION_REQUIRED'); return false; }
     if (input.platform && item.platforms?.length && !item.platforms.some(platform => same(platform, input.platform) || same(platform, 'all'))) { reasons.add('PLATFORM_MISMATCH'); return false; }
     if (!input.platform && item.platforms?.length && !item.platforms.some(platform => same(platform, 'all'))) { reasons.add('PLATFORM_REQUIRED'); return false; }

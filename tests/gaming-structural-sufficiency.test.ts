@@ -4,7 +4,7 @@ import type { ResolvedGamingDocument } from '../src/services/gamingDocumentResol
 import { assessGamingClearSource, gamingClearIntactSourceText } from '../src/shared/gaming/gamingClearSource.js';
 import { assessGamingSourcePolicy, extractGamingFreshnessMetadata } from '../src/shared/gaming/gamingFreshnessCore.js';
 import { gamingClearHash } from '../src/shared/gaming/gamingClearPolicy.js';
-import { assessGamingStructuralUsability } from '../src/shared/gaming/gamingStructuralEvidence.js';
+import { assessGamingStructuralUsability, selectGamingEditionScopedEvidence } from '../src/shared/gaming/gamingStructuralEvidence.js';
 import { chunkGamingDocument } from '../src/services/gamingDurableDocumentChunks.js';
 import { formatStoredGamingEvidence, selectStoredGamingEvidence, type GamingStoredKnowledgeContext } from '../src/shared/gaming/gamingStoredEvidenceCore.js';
 import { assessGamingClearEvidence } from '../src/shared/gaming/gamingClearEvidence.js';
@@ -34,6 +34,82 @@ function mixedKnowledge(prose: string, units: GamingEvidenceUnit[]): GamingStore
     ...units.map((unit, index) => ({ sourceId: 'source', revisionId: 'revision', recordId: `row-${index}`, recordType: 'guide', publicUrl: url,
       text: unit.text, evidenceUnits: [unit], lexicalScore: 1, combinedScore: 1, provenance: { fetchedAt: now.toISOString() } }))] };
 }
+
+describe('independently acquired base-game scope', () => {
+  const input = { game: 'Elden Ring', edition: 'Base game', prompt: 'Explain the Samurai Uchigatana Unsheathe build', mode: 'build' as const };
+  function scopedUnit(id: string, fields: Record<string, string> = {}): GamingEvidenceUnit {
+    const unit = locationUnit({ Game: input.game, Build: 'Samurai', Item: 'Uchigatana', Skill: 'Unsheathe', Scope: 'Base game', ...fields });
+    return { ...unit, id, text: unit.text.replace('Testspace', input.game), context: { ...unit.context, heading: input.game } };
+  }
+  function scopedDocument(units: GamingEvidenceUnit[], prose = ''): ResolvedGamingDocument {
+    return { ...document(units[0] ?? scopedUnit('empty')), evidenceUnits: units,
+      metadata: { title: 'Elden Ring build', headings: 'Elden Ring' },
+      text: [prose, ...units.map(unit => unit.text)].filter(Boolean).join('\n\n') };
+  }
+  const assess = (doc: ResolvedGamingDocument) => selectGamingEditionScopedEvidence(doc, input);
+  const clear = (doc: ResolvedGamingDocument) => assessGamingClearSource(input, doc, {
+    subjectId: 'source', subjectHash: gamingClearHash(doc.text), actorScopeHash: gamingClearHash('caller'),
+    sourcePolicy: assessGamingSourcePolicy(url, input.game), freshness: extractGamingFreshnessMetadata(doc, input, now), now
+  });
+
+  it('finishes game inspection after an uncertain base record, including late records', () => {
+    const partial = { ...scopedUnit('partial'), integrity: { status: 'partial' as const, reasons: ['incomplete_record'] } };
+    const wrongGame = scopedUnit('wrong-game', { Game: 'Dark Souls III', Scope: 'Shadow of the Erdtree' });
+    const doc = scopedDocument([partial, wrongGame], 'An unrelated acquired paragraph. '.repeat(1_100));
+    expect(doc.text.indexOf(wrongGame.text)).toBeGreaterThan(32_000);
+    expect(assess(doc)).toMatchObject({ status: 'conflict', units: [], reasonCodes: ['GAME_MISMATCH'] });
+  });
+
+  it.each(['source binding', 'text binding', 'field serialization'])('rejects malformed %s instead of selecting a valid-looking subset', variant => {
+    const valid = scopedUnit('valid');
+    const invalid = variant === 'source binding'
+      ? { ...scopedUnit('invalid'), provenance: { ...valid.provenance, sourceUrl: 'https://other.example.org/source' } }
+      : variant === 'field serialization'
+        ? { ...scopedUnit('invalid'), fields: [...valid.fields, { label: 'Value', value: 'not present in acquired text' }] }
+        : { ...scopedUnit('invalid'), text: 'This serialized record was not acquired.' };
+    const doc = scopedDocument([valid, invalid]);
+    if (variant === 'text binding') doc.text = valid.text;
+    expect(assess(doc)).toMatchObject({ status: 'unverified', units: [], reasonCodes: ['EDITION_SCOPE_NOT_INTACT'] });
+  });
+
+  it('does not restore incompatible local records under an acquired global base-game label', () => {
+    const doc = scopedDocument([scopedUnit('dlc', { Scope: 'Shadow of the Erdtree' })], 'Edition: Base game.');
+    expect(assess(doc)).toMatchObject({ status: 'unverified', units: [], reasonCodes: ['EDITION_SCOPE_UNVERIFIED'] });
+    expect(clear(doc).decision).not.toBe('accept');
+    expect(clear(doc).decision).not.toBe('partial');
+  });
+
+  it('rejects conflicting edition and scope fields on the same record', () => {
+    const doc = scopedDocument([scopedUnit('conflict', { Edition: 'Shadow of the Erdtree' })]);
+    expect(assess(doc)).toMatchObject({ status: 'conflict', units: [], reasonCodes: ['CONFLICTING_EDITION_SCOPE'] });
+  });
+
+  it.each(['partial', 'ambiguous'] as const)('does not conceal a %s base fact by selecting a separate intact record', status => {
+    const uncertain = { ...scopedUnit('uncertain'), integrity: { status, reasons: ['contradictory_structural_records'] } };
+    const doc = scopedDocument([uncertain, scopedUnit('intact')], 'Edition: Base game.');
+    expect(assess(doc)).toMatchObject({ status: 'unverified', units: [], reasonCodes: ['EDITION_SCOPE_NOT_INTACT'] });
+    expect(clear(doc).decision).not.toBe('accept');
+    expect(clear(doc).decision).not.toBe('partial');
+  });
+
+  it('keeps only independently scoped facts from a shared source and excludes unrelated prose', () => {
+    const base = scopedUnit('base');
+    const dlc = scopedUnit('dlc', { Scope: 'Shadow of the Erdtree', Item: 'Star-Lined Sword' });
+    const prose = 'This unscoped paragraph recommends an incompatible expansion combat rotation.';
+    const result = assess(scopedDocument([base, dlc], prose));
+    expect(result).toMatchObject({ status: 'verified', units: [base], text: base.text });
+    expect(result.text).not.toContain(prose);
+    expect(result.text).not.toContain(dlc.text);
+    expect(result.units[0].provenance.sourceUrl).toBe(url);
+  });
+
+  it('does not infer base-game applicability from class, weapon and skill names without a scope assertion', () => {
+    const unit = scopedUnit('entities');
+    unit.fields = unit.fields.filter(field => field.label !== 'Scope');
+    unit.text = unit.text.replace(' | Scope: Base game', '');
+    expect(assess(scopedDocument([unit]))).toMatchObject({ status: 'unverified', units: [], reasonCodes: [] });
+  });
+});
 
 describe('structural evidence survives the existing CLEAR source gates', () => {
   it('admits a genuinely short labeled source report without a sentence-ending period', () => {

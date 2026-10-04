@@ -3,6 +3,7 @@ import { GAMING_EVIDENCE_UNIT_POLICY_VERSION } from './gamingEvidenceUnits.js';
 import { resolveGamingAnswerPolicy } from './gamingAnswerPolicy.js';
 import { buildGamingRetrievalTerms, gamingLexicalTokens, gamingTermCoverage } from './gamingRetrievalPolicy.js';
 import { GAMING_HYBRID_V2_LIMITS } from './gamingHybridContract.js';
+import { normalizeGamingGameIdentity, normalizeGamingEditionIdentity } from './gamingGameIdentity.js';
 
 export const GAMING_STRUCTURAL_SUFFICIENCY_VERSION = 'gaming-structural-sufficiency/v1';
 export const GAMING_STRUCTURAL_EVIDENCE_LIMITS = Object.freeze({ units: 2_048, unitChars: 4_096, usableUnitChars: 2_000, fields: 32, valueChars: 1_024 });
@@ -32,6 +33,50 @@ const aliases: Readonly<Record<string, string>> = Object.freeze({
   mechanic: 'mechanic', change: 'change', before: 'before', after: 'after', skill: 'skill', build: 'build'
 });
 const normal = (value: string) => value.normalize('NFKC').toLowerCase().replace(/\s+/gu, ' ').trim();
+
+/**
+ * Positive edition assertions belong to their intact records, not the whole page.
+ * Reuse the structural scope grammar; names, dates, titles and DLC silence are
+ * never provenance. A mixed page contributes only its independently scoped facts.
+ */
+export function selectGamingEditionScopedEvidence(document: {
+  text: string; publicUrl: string; evidenceUnits?: readonly GamingEvidenceUnit[];
+}, input: { game: string; edition?: string }): {
+  status: 'verified' | 'unverified' | 'conflict'; text: string; units: GamingEvidenceUnit[]; reasonCodes: string[];
+} {
+  const result = (status: 'verified' | 'unverified' | 'conflict', units: GamingEvidenceUnit[] = [], reasonCodes: string[] = []) =>
+    ({ status, units, text: units.map(unit => unit.text).join('\n\n'), reasonCodes });
+  if (!input.edition || normalizeGamingEditionIdentity(input.edition) !== 'base-game') return result('unverified');
+  const units = readGamingEvidenceUnits(document.evidenceUnits, document.publicUrl, document.text);
+  if (!document.evidenceUnits?.length) return result('unverified');
+  if (units.length !== document.evidenceUnits.length) return result('unverified', [], ['EDITION_SCOPE_NOT_INTACT']);
+  const selected: GamingEvidenceUnit[] = [];
+  let scopedRecords = false;
+  let uncertainBaseRecord = false;
+  for (const unit of units) {
+    const leaf = (label: string) => normal(label.split(/\s+\/\s+/u).at(-1)!);
+    // Even an excluded record cannot hide an explicit different game.
+    if (unit.fields.some(field => leaf(field.label) === 'game'
+      && normalizeGamingGameIdentity(field.value) !== normalizeGamingGameIdentity(input.game))) {
+      return result('conflict', [], ['GAME_MISMATCH']);
+    }
+    const scopes = unit.fields.filter(field => ['edition', 'scope', 'applicability'].includes(leaf(field.label)))
+      .map(field => normalizeGamingEditionIdentity(field.value));
+    scopedRecords ||= scopes.length > 0;
+    if (!scopes.includes('base-game')) continue;
+    if (scopes.some(scope => scope !== 'base-game')
+      || /\b(?:shadow[\s-]+of[\s-]+the[\s-]+erdtree|dlc|expansion|nightreign)\b/iu.test(
+        [unit.text, unit.context.heading, unit.context.caption, ...(unit.context.qualifiers ?? [])].join(' '))) {
+      return result('conflict', [], ['CONFLICTING_EDITION_SCOPE']);
+    }
+    // Do not hide a disputed base-game fact by dropping its ambiguous record.
+    if (unit.integrity.status !== 'complete') uncertainBaseRecord = true;
+    else selected.push(unit);
+  }
+  if (uncertainBaseRecord) return result('unverified', [], ['EDITION_SCOPE_NOT_INTACT']);
+  return selected.length ? result('verified', selected, ['INTACT_BASE_GAME_SCOPE'])
+    : result('unverified', [], scopedRecords ? ['EDITION_SCOPE_UNVERIFIED'] : []);
+}
 function mentionsValue(request: string, value: string): boolean {
   let index = request.indexOf(value);
   while (index >= 0) {

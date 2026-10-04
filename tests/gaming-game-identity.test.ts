@@ -1,4 +1,25 @@
-import { normalizeGamingGameIdentity, resolveGamingGuideIdentity } from '../src/shared/gaming/gamingGameIdentity.js';
+import { gamingEditionIdentitiesMatch, normalizeGamingEditionIdentity, normalizeGamingGameIdentity, resolveGamingGuideIdentity } from '../src/shared/gaming/gamingGameIdentity.js';
+
+describe('conservative edition normalization', () => {
+  test.each(['Base game', 'base game', 'base-game', ' BASE GAME '])('canonicalizes the explicit base-game alias %s', edition => {
+    expect(normalizeGamingEditionIdentity(edition)).toBe('base-game');
+    expect(gamingEditionIdentitiesMatch(edition, 'base-game')).toBe(true);
+  });
+
+  test.each(['base', 'base/game', 'base_game', 'base.game', 'base-game DLC', 'not base game', 'Base game and Shadow of the Erdtree'])(
+    'does not promote arbitrary or conflicting text %s to the base game', edition => {
+      expect(normalizeGamingEditionIdentity(edition)).not.toBe('base-game');
+      expect(gamingEditionIdentitiesMatch(edition, 'Base game')).toBe(false);
+    });
+
+  test('unknown editions retain conservative formatting equivalence and meaningful punctuation', () => {
+    expect(normalizeGamingEditionIdentity(' Ｒｅｆｏｒｇｅｄ  Edition ')).toBe('reforged edition');
+    expect(gamingEditionIdentitiesMatch('Reforged Edition', 'reforged-edition')).toBe(false);
+    expect(gamingEditionIdentitiesMatch(undefined, 'Base game')).toBe(false);
+    expect(gamingEditionIdentitiesMatch('', '')).toBe(false);
+    expect(gamingEditionIdentitiesMatch(' ', ' ')).toBe(false);
+  });
+});
 
 describe('stored game identity formatting', () => {
   test('an explicit edition narrows identity without repeating an existing title suffix', () => {

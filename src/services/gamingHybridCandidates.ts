@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { logger } from '@platform/logging/structuredLogging.js';
-import { normalizeGamingGameIdentity, resolveGamingGuideIdentity } from '@shared/gaming/gamingGameIdentity.js';
+import { normalizeGamingGameIdentity, gamingEditionIdentitiesMatch, resolveGamingGuideIdentity } from '@shared/gaming/gamingGameIdentity.js';
 import { classifyGamingDocumentQuality, selectGamingSourceAdmissionUrl } from '@shared/gaming/gamingDocumentIngestionCore.js';
 import { buildGamingRetrievalTerms, buildGamingRequestRequirements, gamingTermCoverage } from '@shared/gaming/gamingRetrievalPolicy.js';
 import {
@@ -22,7 +22,7 @@ import { assessGamingClearSource, gamingClearHistoricalSourceVerified, gamingCle
 import { GAMING_CLEAR_VERSION, gamingClearHash, type GamingClearAssessment } from '@shared/gaming/gamingClearPolicy.js';
 import { GAMING_HYBRID_LIMITS } from '@shared/gaming/gamingHybridContract.js';
 import { pickGamingPlayerContext } from '@shared/gaming/gamingPlayerContext.js';
-import { assessGamingStructuralUsability } from '@shared/gaming/gamingStructuralEvidence.js';
+import { assessGamingStructuralUsability, selectGamingEditionScopedEvidence } from '@shared/gaming/gamingStructuralEvidence.js';
 import type { GamingStructureDiagnostics } from '@shared/gaming/gamingEvidenceUnits.js';
 import { GAMING_CURRENTNESS_ADAPTER_VERSION } from '@shared/gaming/gamingCurrentnessAdapters.js';
 import { assessGamingClearEvidence, assessGamingRequestCoverage, gamingSelectedEvidenceIds, type GamingRequestCoverageAssessment } from '@shared/gaming/gamingClearEvidence.js';
@@ -226,7 +226,10 @@ export async function evaluateGamingHybridCandidates(
       }
       policy.autoStoreAllowed = policy.autoStoreAllowed && freshness.autoStoreAllowed;
       if (normalizeGamingGameIdentity(freshness.game) !== normalizeGamingGameIdentity(input.game)) { reject('GAME_MISMATCH'); continue; }
-      if (input.edition && normalizeGamingGameIdentity(freshness.edition ?? '') !== normalizeGamingGameIdentity(input.edition)) { reject('EDITION_UNVERIFIED_OR_MISMATCH'); continue; }
+      const scoped = selectGamingEditionScopedEvidence(document, input);
+      if (scoped.reasonCodes.includes('GAME_MISMATCH')) { reject('GAME_MISMATCH'); continue; }
+      if (scoped.status === 'conflict' || scoped.status === 'unverified' && scoped.reasonCodes.length
+        || input.edition && !gamingEditionIdentitiesMatch(freshness.edition, input.edition)) { reject('EDITION_UNVERIFIED_OR_MISMATCH'); continue; }
       if (!input.edition && freshness.edition) { reject('EDITION_REQUIRED'); continue; }
       const applies = (values: string[] | undefined, wanted: string | undefined) => !values?.length
         || values.some(value => value.toLowerCase() === 'all' || value.toLowerCase() === wanted?.toLowerCase());
@@ -263,7 +266,8 @@ export async function evaluateGamingHybridCandidates(
           ?? identityReasons.find(reason => ['GAME_IDENTITY_UNVERIFIED', 'EDITION_UNVERIFIED'].includes(reason))
           ?? sourceAssessment.blockingFindings[0]?.code ?? 'GAMING_CLEAR_SOURCE_REJECTED'); continue;
       }
-      const chunks = await chunkGamingDocument(intactText, { signal, evidenceUnits: document.evidenceUnits });
+      const chunks = await chunkGamingDocument(scoped.status === 'verified' ? scoped.text : intactText,
+        { signal, evidenceUnits: scoped.status === 'verified' ? scoped.units : document.evidenceUnits });
       callerSignal?.throwIfAborted();
       if (v2 && (acquisitionSignal?.aborted || Date.now() >= deadlineAt)) { reject('SOURCE_TIMEOUT'); continue; }
       const records = chunks.chunks.map(chunk => ({
