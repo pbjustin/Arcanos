@@ -88,6 +88,25 @@ describe('four guide frontend outcomes preserve workflow authority', () => {
   });
 
   it.each([
+    'Recommend a base game Samurai build without DLC.',
+    'Recommend a Samurai build excluding Shadow of the Erdtree.'
+  ])('retains explicit base scope for %s', async question => {
+    const result = await createGamingHybridWorkflow({ retrieve: async () => empty }).query({ ...query,
+      question, idempotencyKey: 'guide-outcome-base-scope' }, actor);
+    expect(result.body).toMatchObject({ frontendOutcome: 'need_new_source', nextAction: 'search' });
+    expect(result.body.clarification).toBeUndefined();
+  });
+
+  it.each([
+    'Recommend a base game build with Shadow of the Erdtree content.',
+    'Recommend a build without DLC, but include a DLC weapon build.'
+  ])('clarifies unresolved mixed expansion scope for %s', async question => {
+    const result = await createGamingHybridWorkflow({ retrieve: async () => empty }).query({ ...query,
+      question, idempotencyKey: 'guide-outcome-mixed-expansion' }, actor);
+    expect(result.body).toMatchObject({ frontendOutcome: 'clarification_required', nextAction: 'clarify', reason: 'EDITION_REQUIRED' });
+  });
+
+  it.each([
     ['Recommend a Samurai build for Shadow of the Erdtree.', {}],
     ['Recommend a Samurai DLC build.', { edition: 'Shadow of the Erdtree' }],
     ['Is DLC required to obtain the Uchigatana?', {}]

@@ -342,8 +342,7 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
       // A requested expansion build is a scope decision; a factual question about
       // whether DLC is required does not create that same missing decision.
       const unspecifiedExpansionContent = !workflow.pipeline.edition && normalizeGamingGameIdentity(input.game) === 'elden-ring'
-        && /\b(?:dlc|expansion)[\s-]+(?:builds?|guides?|content|weapons?|equipment|bosses?|quests?)\b/iu.test(input.question)
-        && !/\b(?:no|without|avoid(?:ing)?|excluding)[\s-]+(?:the\s+)?(?:dlc|expansion)\b/iu.test(input.question);
+        && /\b(?:(?:dlc|expansion)[\s-]+(?:builds?|guides?|content|weapons?|equipment|bosses?|quests?)|shadow[\s-]+of[\s-]+the[\s-]+erdtree)\b/iu.test(input.question);
       if (unspecifiedExpansionContent)
         return { status: 200, body: { ...body, state: 'clarification_required', nextAction: 'clarify',
           reason: 'EDITION_REQUIRED', clarification: 'Should this request use Shadow of the Erdtree content, or stay within the Elden Ring base game?' } };

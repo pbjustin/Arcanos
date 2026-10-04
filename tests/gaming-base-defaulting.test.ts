@@ -63,6 +63,13 @@ describe('ordinary base-game request interpretation', () => {
     expect(result.accepted[0].sourceAssessment.findings).toEqual(expect.arrayContaining([
       expect.objectContaining({ code: 'PUBLICATION_DATE_UNVERIFIED', severity: 'warning' })]));
   });
+  it('admits acquired base-game evidence for an explicitly DLC-free request', async () => {
+    const request = { ...input, prompt: 'Recommend a base game Samurai build without DLC.' };
+    const result = await acquire('Edition: Base game.', `${prose} This base-game Samurai build uses the starting weapons.`, undefined, request);
+    expect(result.accepted).toHaveLength(1);
+    expect(result.accepted[0].sourceContext.edition).toBe('base-game');
+    expect(result.decisions[0].reasonCodes).not.toContain('EDITION_UNVERIFIED');
+  });
   it('requires expansion evidence when the question explicitly names Shadow of the Erdtree', async () => {
     const request = { ...input, prompt: 'How do Samurai katana attacks work in Shadow of the Erdtree?' };
     expect(resolveGamingRequestEdition(request)).toBe('shadow of the erdtree');

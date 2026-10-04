@@ -81,8 +81,12 @@ conflict changes the answer. Source titles do not establish player state or posi
 and explicit precise game titles are preserved. Ordinary requests naming only
 Elden Ring use a backend-derived base-game request scope. An explicit Shadow of
 the Erdtree request selects that expansion; unspecified DLC/expansion requests
-retain their ambiguity. This request interpretation does not add an acquired
-Edition assertion. Explicit non-base edition display labels remain unchanged;
+retain their ambiguity. Exact base-game wording and closed `no`, `without` or
+`excluding` expansion clauses select base-game scope when no positive expansion
+request conflicts. Mixed base/expansion requests and necessity-only questions
+such as “Is DLC required to obtain Uchigatana?” remain unresolved; request parsing
+does not infer an item's availability. This request interpretation does not add an
+acquired Edition assertion. Explicit non-base edition display labels remain unchanged;
 identity comparisons use the existing normalized comparison helpers. Missing edition metadata on an ordinary base-game guide is
 not a contradiction; explicit incompatible source scope remains excluded.
 

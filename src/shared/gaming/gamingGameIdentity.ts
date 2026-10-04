@@ -36,9 +36,19 @@ export function resolveGamingRequestEdition(input: { game?: string; edition?: st
   if (input.edition) return normalizeGamingEditionIdentity(input.edition) === 'base-game' ? 'base-game' : input.edition;
   const question = input.prompt ?? input.question ?? '';
   if (normalizeGamingGameIdentity(input.game ?? '') !== 'elden-ring') return undefined;
-  if (/\bshadow[\s-]+of[\s-]+the[\s-]+erdtree\b/iu.test(question)) return 'shadow of the erdtree';
-  // An unspecified expansion decision can materially change the answer.
-  if (/\b(?:dlc|expansion)\b/iu.test(question)) return undefined;
+  const shadow = /\bshadow[\s-]+of[\s-]+the[\s-]+erdtree\b/iu;
+  const baseRequested = /\bbase[\s-]+game\b/iu.test(question);
+  // Closed negative clauses express base scope, rather than expansion intent.
+  // Keep double negations and mixed positive/negative scope unresolved.
+  const negativeScope = /\b(?:without|no|excluding)\s+(?:(?:any|the)\s+)?(?:dlcs?|expansions?(?:\s+content)?|shadow[\s-]+of[\s-]+the[\s-]+erdtree)\b/giu;
+  const remaining = question.replace(negativeScope, (clause: string, offset: number) =>
+    /\b(?:not|without|no)\s*$/iu.test(question.slice(0, offset)) ? clause : ' ');
+  const negativeRequested = remaining !== question;
+  const expansionRequested = /\b(?:dlcs?|expansions?)\b/iu.test(remaining) || shadow.test(remaining);
+  if (expansionRequested && (baseRequested || negativeRequested)) return undefined;
+  if (shadow.test(remaining)) return 'shadow of the erdtree';
+  // Unspecified expansion and necessity-only questions remain material ambiguity.
+  if (expansionRequested) return undefined;
   return 'base-game';
 }
 
