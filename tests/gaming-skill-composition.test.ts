@@ -59,7 +59,7 @@ function recoveryComposition(scenario = 'valid') {
   const code = `
     import {readFileSync} from 'node:fs';
     import {createHash} from 'node:crypto';
-    import {gamingRecoveryCompositionPatch,applyGamingRecoveryCompositionPatch,gamingRules}
+    import {gamingRecoveryCompositionPatch,applyGamingRecoveryCompositionPatch,legacyGamingRules as gamingRules}
       from ${JSON.stringify(pathToFileURL(script).href)};
     const hash = bytes => createHash('sha256').update(bytes).digest('hex');
     globalThis.fetch = () => { throw new Error('NETWORK_FORBIDDEN'); };
@@ -155,7 +155,7 @@ describe('Private Gaming source composition, separate from live acceptance', () 
   });
 
   it('provides an exact public v2 replacement recipe without composing or approving missing private inputs', () => {
-    const code = `const {gamingRecoveryCompositionPatch,gamingRules}=await import(${JSON.stringify(pathToFileURL(script).href)}); console.log(JSON.stringify({patch:await gamingRecoveryCompositionPatch(),rules:gamingRules}));`;
+    const code = `const {gamingRecoveryCompositionPatch,legacyGamingRules:gamingRules}=await import(${JSON.stringify(pathToFileURL(script).href)}); console.log(JSON.stringify({patch:await gamingRecoveryCompositionPatch(),rules:gamingRules}));`;
     const result = spawnSync(process.execPath, ['--input-type=module', '-e', code], { encoding: 'utf8' });
     expect(result.status).toBe(0);
     const { patch, rules } = JSON.parse(result.stdout);
@@ -163,8 +163,10 @@ describe('Private Gaming source composition, separate from live acceptance', () 
     expect(patch.approvedSkillBaseline).toEqual({ sizeBytes: 15_210,
       sha256: 'a2cd3cfb2eb677eaef47c7fc148b41565b58e051486a49b29df48ee53c048081' });
     const workflow = readFileSync(path.join(process.cwd(), patch.workflow.path));
-    expect(workflow.length).toBe(9_046);
-    expect(hash(workflow)).toBe('2f8f4d08442674d014a0e36a2dc1e19b6628092199697720355bd6a1ed98c6be');
+    expect(workflow.length).toBe(9_060);
+    expect(hash(workflow)).toBe('c0f730b31cf4f31e115c7df99534a34fd64ec2ccd39acb8db4b123192d34be8e');
+    expect(workflow.toString('utf8')).toContain('Released Gaming guide workflow: gaming-hybrid-v2.');
+    expect(workflow.toString('utf8')).not.toContain('Proposed MCP instruction revision');
     expect(patch.workflow.sizeBytes).toBe(workflow.length);
     expect(patch.workflow.sha256).toBe(hash(workflow));
     expect(patch.workflow.content).toBe(workflow.toString('utf8'));
@@ -196,9 +198,48 @@ describe('Private Gaming source composition, separate from live acceptance', () 
     const f = fixture();
     expect(compose(f).status).toBe(0);
     const legacy = readFileSync(path.join(f.inputRoot, 'mock-composed', skillPath), 'utf8');
-    expect(legacy).toContain('under gaming-hybrid-v1');
-    expect(legacy).toContain('Respect one gameplay round');
-    expect(legacy).not.toContain('gaming-hybrid-v2');
+    expect(legacy).toContain('under released gaming-hybrid-v2');
+    expect(legacy).toContain('expectedRevision');
+    expect(legacy).not.toContain('under gaming-hybrid-v1');
+  });
+
+  it('uses the released v2 default output without approving or installing the candidate', () => {
+    const f = fixture();
+    const result = spawnSync(process.execPath, [script, '--inputs', f.inputRoot, '--baseline', f.baselinePath], { encoding: 'utf8' });
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({ outputDirectory: 'composed-skill-v2', ownerArtifactReview: 'PENDING', releaseStatus: 'BLOCKED' });
+    const skill = readFileSync(path.join(f.inputRoot, 'composed-skill-v2', skillPath), 'utf8');
+    expect(skill).toContain('Set contractVersion to\n   "gaming-hybrid-v2"');
+    expect(skill).toContain('expectedRevision');
+  });
+
+  it('replaces the canonical legacy workflow while preserving unrelated source sections and approval boundaries', () => {
+    const publicV1 = readFileSync(path.join(process.cwd(), 'docs/gpt/arcanos-gaming-hybrid.instructions.md'), 'utf8');
+    const source = `${mockInstructions}\r\n\r\n${publicV1.replaceAll('\n', '\r\n')}\r\nRetained unrelated suffix π.`;
+    const f = fixture(source);
+    expect(compose(f).status).toBe(0);
+    const skill = readFileSync(path.join(f.inputRoot, 'mock-composed', skillPath), 'utf8');
+    const report = readJson(path.join(f.inputRoot, 'mock-composed/reconciliation-map.json'));
+    expect(report.contractVersion).toBe('gaming-hybrid-v2');
+    expect(report.sectionMap.map((item: Json) => item.sourceText).join('')).toBe(source);
+    expect(skill.split('WORKFLOW BEGIN gaming-hybrid-v2')).toHaveLength(2);
+    expect(skill).not.toContain('WORKFLOW BEGIN gaming-hybrid-v1');
+    expect(skill).toContain('Retained unrelated suffix π.');
+    expect(skill).toContain('latest returned revision as');
+    expect(skill).toContain('Never silently downgrade');
+    expect(report.compositionReview.approvedForRepository).toBe(false);
+    expect(report.acceptance.installedBehavior).toBe('NOT_STARTED');
+    const bytes = Buffer.from(skill);
+    for (const section of report.sectionMap) {
+      expect(bytes.subarray(section.outputStartByte, section.outputEndByte).toString('utf8')).toBe(section.transformedText);
+      expect(hash(section.sourceText)).toBe(section.sha256);
+    }
+  });
+
+  it.each(['gaming-hybrid-v1', 'WORKFLOW BEGIN gaming-hybrid-v2'])('rejects unmarked or mixed source protocol %s', declaration => {
+    const f = fixture(`${mockInstructions}\r\n\r\n${declaration}`);
+    expect(compose(f).status).toBe(1);
+    expect(readdirSync(f.inputRoot)).not.toContain('mock-composed');
   });
 
   it('binds approved source, preserves every UTF-8/CRLF section and produces deterministic private files', () => {
@@ -264,9 +305,9 @@ describe('Private Gaming source composition, separate from live acceptance', () 
     const skill = readFileSync(path.join(f.inputRoot, 'mock-composed', skillPath), 'utf8');
     for (const state of ['answer_ready', 'clarification_required', 'discovery_required', 'verify_currentness', 'ingestion_pending']) expect(skill).toContain(state);
     for (const text of ['sourceKnown, evidenceSelected, freshnessStatus and successful generation',
-      'HTTP 200 does not establish success', 'do not claim the guide was read', 'no guideUrls field',
-      'cannot silently substitute unrelated sources', 'general model knowledge', 'untrusted evidence',
-      'three source slots', 'three polls', 'operation-specific idempotency keys']) expect(skill).toContain(text);
+      'HTTP 200', 'do not claim the guide was read', 'schema fields',
+      'silently satisfy', 'general model knowledge', 'untrusted evidence',
+      'three source slots', 'three polls', 'operation-specific idempotency']) expect(skill).toContain(text);
     const report = readJson(path.join(f.inputRoot, 'mock-composed/reconciliation-map.json'));
     const matrix = readJson(path.join(process.cwd(), 'docs/chatgpt-migration/gaming/behavior-matrix.json'));
     expect(matrix.cases).toHaveLength(18);

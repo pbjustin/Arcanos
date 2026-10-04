@@ -2,7 +2,7 @@
 
 ## Gaming hybrid knowledge Actions
 
-The opt-in `gaming-hybrid-v1` and `gaming-hybrid-v2` contracts use the existing dedicated Gaming
+The released `gaming-hybrid-v2` and legacy-compatible `gaming-hybrid-v1` contracts use the existing dedicated Gaming
 source bearer credential, no-store/authentication boundary and 16 KiB JSON cap.
 The canonical [Gaming Action schema](../contracts/arcanos_gaming.openapi.v1.json)
 defines the complete closed request and response shapes. Legacy operations are
@@ -30,7 +30,7 @@ the state: `answer_ready`, `clarification_required`, `discovery_required`,
 it must not parse prose to decide whether to search. `answer` preserves backend
 citations and request provenance. Structured dates/patch/build and qualifications
 describe verified applicability. Gameplay discovery is capped at one round and
-three candidates for v1. V2 explicitly opts into at most two gameplay submissions
+three candidates for v1. Released v2 permits at most two gameplay submissions
 of three URLs each, six distinct URLs and 24 seconds cumulative acquisition,
 with at most 12 seconds per submission. Recovery requires the backend's
 `replacementAllowed`, `nextAction: search`, `continuationRequired: true` and
@@ -2294,13 +2294,13 @@ It exposes no general dispatcher, jobs, database or operator tools.
 Schemas live in `packages/protocol/schemas/v1/tools/arcanos-gaming/contract.schema.json`.
 Query input is the existing Gaming query payload, canary input is `{}`, status
 input is `{ingestionId}`, and hybrid inputs preserve `gaming-hybrid-v1` shapes
-alongside explicitly opted-in `gaming-hybrid-v2`. V2 uses the same dedicated
+alongside the normal released `gaming-hybrid-v2` workflow. V2 uses the same dedicated
 hybrid tools, requires `expectedRevision` on candidate submissions, and returns
 backend selection, coverage and bounded recovery diagnostics. It adds no tool,
 generic invocation path, scope or model selector. The
-[proposed frontend instructions](gpt/arcanos-gaming-hybrid-v2.instructions.md)
-require deployed-v2 verification and exact-content owner approval before updating
-the same private plugin; repository tests do not establish installed acceptance.
+[released frontend instructions](gpt/arcanos-gaming-hybrid-v2.instructions.md)
+select v2 for normal guide/build/meta traffic. Updating the same private plugin
+still requires deployed-v2 verification and exact-content owner approval; repository tests do not establish installed acceptance.
 Direct ingestion/refresh inputs are their existing payloads plus required
 `idempotencyKey`, `storagePolicy`, and literal `confirmStore: true`. Candidate
 ingestion likewise requires affirmative confirmation. Outputs are

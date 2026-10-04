@@ -3,7 +3,7 @@
   "info": {
     "title": "ARCANOS Gaming Custom GPT Action",
     "version": "1.5.0",
-    "description": "Builder contract for ARCANOS Gaming with compatible public gameplay/canary and authenticated source lifecycle. Hybrid knowledge operations opt in through gaming-hybrid-v1."
+    "description": "Builder contract for ARCANOS Gaming with compatible public gameplay/canary and authenticated source lifecycle. Normal hybrid guide/build/meta operations select released gaming-hybrid-v2; explicit gaming-hybrid-v1 remains supported for legacy compatibility."
   },
   "servers": [
     {
@@ -4280,7 +4280,7 @@
       }
     }
   },
-  "x-arcanos-gaming-hybrid-contract-version": "gaming-hybrid-v1",
+  "x-arcanos-gaming-hybrid-contract-version": "gaming-hybrid-v2",
   "x-arcanos-gaming-hybrid-supported-contract-versions": [
     "gaming-hybrid-v1",
     "gaming-hybrid-v2"

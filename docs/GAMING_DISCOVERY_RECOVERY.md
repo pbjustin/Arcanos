@@ -1,7 +1,8 @@
 # Gaming discovery and evidence recovery
 
-`gaming-hybrid-v2` extends the existing Gaming hybrid workflow. It is an explicit
-opt-in on the existing query and candidate tools. Repository fixtures establish
+`gaming-hybrid-v2` is the released normal guide/build/meta workflow on the
+existing query and candidate tools. Clients explicitly select v2; explicit v1
+remains supported for legacy compatibility. Repository fixtures establish
 local coordination behavior; they do not establish deployed v2 support,
 installed-client acceptance, live providers or private release readiness.
 
@@ -251,7 +252,7 @@ unselected conflicts vetoing generation, and selected-only citations. A real
 served MCP fixture acquires three initial sources and one granted replacement,
 returns the four-source grounded answer, and performs zero durable writes.
 
-[The proposed v2 MCP workflow](gpt/arcanos-gaming-hybrid-v2.instructions.md)
+[The released v2 MCP workflow](gpt/arcanos-gaming-hybrid-v2.instructions.md)
 uses the actual installed-tool names `arcanos_gaming_hybrid_query` and
 `arcanos_gaming_submit_candidates`. The
 [pinned v1 workflow](gpt/arcanos-gaming-hybrid.instructions.md) remains legacy
@@ -262,7 +263,11 @@ existing eight-tool catalog and query/write scopes remain unchanged.
 provides the exact public replacement workflow and explicit before/after
 revisions for existing composed safeguards. Pass that recipe and the verified
 private baseline bytes to the pure `applyGamingRecoveryCompositionPatch()`
-helper for local composition. The default composer still produces v1. Before
+helper for local composition. The default composer produces the released v2
+workflow and safeguards.
+It replaces a complete canonical marked legacy workflow and preserves unrelated
+source bytes; unknown or mixed version declarations fail closed. The separate
+pinned recipe remains available for historical private-baseline reconciliation. Before
 applying the canonical recipe, verify the actual approved skill is 15,210 bytes
 with SHA-256
 `a2cd3cfb2eb677eaef47c7fc148b41565b58e051486a49b29df48ee53c048081`.
@@ -292,11 +297,9 @@ were preserved, and reversing the recorded ranges recovered the original
 baseline. The candidate and exact diff remain private and pending owner review;
 this does not establish current installed identity or behavior.
 
-The public workflow replacement is 9,046 bytes, SHA-256
-`2f8f4d08442674d014a0e36a2dc1e19b6628092199697720355bd6a1ed98c6be`;
-the recipe is 17,658 bytes, SHA-256
-`8e26255da88cef187236c6e771886595d3c8c64936c292b106abf930464ea3fb`.
-These identify public patch bytes. The complete private candidate has its own
+The public recipe records the current workflow size and SHA-256 directly from
+the released instruction source. These identify public patch bytes. The complete
+private candidate has its own
 separately recorded hash and remains `PROPOSED_NOT_OWNER_APPROVED`; neither a
 public recipe hash nor historical baseline approval approves it. Historical
 approval records stay unchanged. Composition evidence and deterministic
@@ -311,7 +314,7 @@ Rollout requires separate authorization, in this order:
    recovery/coverage fields. Confirm the same eight Gaming tools and separate
    Gaming query/write scopes; local or sealed-preview schemas do not prove
    production support.
-3. Review the complete proposed frontend instruction artifact and approve its
+3. Review the complete private frontend instruction artifact and approve its
    exact private diff and new hash. Baseline approval is insufficient.
 4. Verify the existing private Gaming plugin identity, then update that **same**
    plugin with the owner-approved bytes through the guarded in-place update.

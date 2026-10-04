@@ -1,5 +1,9 @@
 # ARCANOS Gaming Custom GPT
 
+This document retains the legacy v1 Action compatibility workflow. Normal Gaming
+MCP guide/build/meta traffic uses the [released v2 workflow](gpt/arcanos-gaming-hybrid-v2.instructions.md).
+The repository does not update the installed private plugin or Builder configuration.
+
 This is the builder-facing configuration for the existing **Arcanos Gaming** Custom GPT. The opt-in hybrid workflow checks ARCANOS knowledge first, lets ChatGPT discover URLs when requested, and returns accepted evidence to Trinity. Repository implementation is not proof of backend deployment or live GPT activation.
 
 ## Action configuration

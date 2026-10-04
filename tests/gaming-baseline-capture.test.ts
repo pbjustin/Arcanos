@@ -71,6 +71,11 @@ describe('Gaming published baseline capture reuses the shared foundation', () =>
     expect(first.stdout).not.toContain('api_key_bearer');
   });
 
+  it.each(['gaming-hybrid-v1', 'gaming-hybrid-v2'])('captures the recognized protocol marker %s', protocol => {
+    const f = fixture(configuration => { configuration.actions[0].schema['x-arcanos-gaming-hybrid-contract-version'] = protocol; });
+    expect(capture(f.inputRoot).status).toBe(0);
+  });
+
   it.each(['none', 'api_key', 'api_key_basic', 'api_key_bearer', 'oauth'])('captures the stored auth type %s without inferring backend compatibility', authType => {
     const f = fixture(configuration => { configuration.actions[0].authType = authType; });
     expect(capture(f.inputRoot).status).toBe(0);
@@ -83,7 +88,7 @@ describe('Gaming published baseline capture reuses the shared foundation', () =>
       if (mode === 'name') configuration.displayName = 'Arcanos Tutor';
       if (mode === 'sharing') configuration.sharingStatus = 'Anyone with a link';
       if (mode === 'schema version') action.schema.info.version = '1.4.0';
-      if (mode === 'hybrid marker') action.schema = JSON.parse(JSON.stringify(action.schema).replaceAll('gaming-hybrid-v1', 'unrecognized-contract'));
+      if (mode === 'hybrid marker') action.schema['x-arcanos-gaming-hybrid-contract-version'] = 'unrecognized-contract';
       if (mode === 'missing root marker') delete action.schema['x-arcanos-gaming-hybrid-contract-version'];
       if (mode === 'missing action') configuration.actions = [];
       if (mode === 'missing schema') action.schema = null;

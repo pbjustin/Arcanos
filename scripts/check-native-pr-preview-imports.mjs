@@ -821,7 +821,7 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ['src/shared/chatgpt/gamingMcpPreviewFixture.ts', '4d3c65bf8110e14b0522b62f4197994d3432bef019f2b61a83fdc9833f16fedd'],
   ['src/shared/gpt/generativeModelPolicyCore.ts', 'c1e29caf983333a351e66e6141ef59758ee45a4a158bb28c6290d9d9887ba1d3'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/gpt/generativeModelPolicyPreviewFixture.ts', '82268c7fd04fb2b6a236f6bac72ccb5d08ed666cf497541634d96cc73f5c0d2c'], // gitleaks:allow -- public source semantic SHA-256
-  ['src/shared/chatgpt/gamingMcpContract.ts', '4dc286307966baaf2a9b43080ef566b6bf629556511d1f70476842d822e988e1'],
+  ['src/shared/chatgpt/gamingMcpContract.ts', '858637f089c1dad1b438cff4b1db4034818981788d07aa3c58a8690854323f5d'],
   ['packages/protocol/src/chatgptGaming.ts', '2e3c0e5476a9d0c7a1a0e582650b3adc041e37ea9012310891a6b2fa67d4bfd0'],
   ['scripts/tutor-package-core.mjs', '1aa853e7dcc157d863dfe6f506e6c8779cd4a1defbea70b453d7d2954cfce2d8'], // gitleaks:allow -- public source semantic SHA-256
   ['scripts/tutor-package-core.d.mts', '4b2596dbe443c4f26069252eee614b810977632ac606c6d12d9c273b1db8ccb8'], // gitleaks:allow -- public source semantic SHA-256
@@ -864,7 +864,7 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ['src/shared/gaming/gamingClearAnswerBinding.ts', '2f6d1353e2643ae471705f182415521b1a6548ca484c3e684d4920910f3d0f75'],
   ['src/shared/gaming/gamingHybridPolicyCore.ts', '62f48b2352ecced185574fcbbdc80a1bb76c17035fb5c78b42e2c4ad5c63c123'],
   ['src/shared/gaming/gamingHybridKnowledgePreviewFixture.ts', '360ad08fccaa0d38d78811ac6ebc1cc9566734bd06db1d4736ba2940fe29da26'],
-  ['src/shared/gaming/gamingHybridContract.ts', '72ddd45a9565ece5c7ad80d2bd22e420c2b748a8dc972e099b070f99cfa7e281'],
+  ['src/shared/gaming/gamingHybridContract.ts', '0d2dd6450e01ef00cd0e7deb3c66039ed4978bfac724d47d585788e55a8de317'],
   ['src/shared/gaming/gamingCurrentnessAdapters.ts', 'c2914e37a9bda5dbe1c9dae4e8cf20be4ce3cacdbe2ecbd64e0144d6af11999c'],
   ['src/shared/gaming/gamingGuideApplicability.ts', 'c65178c1c1d4a966e1ea8585fc4bcda495445431dc27261e35165c2ea2e40d58'],
   ['src/shared/gaming/gamingFreshnessCore.ts', 'bde9c5f0e91eecd6df15a95f8a6417ec2f380c6cc0a760e0ca68de15c9127a02'],

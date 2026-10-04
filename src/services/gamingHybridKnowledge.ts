@@ -3,7 +3,7 @@ import { getEnvBoolean } from '@platform/runtime/env.js';
 import { logger } from '@platform/logging/structuredLogging.js';
 import { redactString } from '@shared/redaction.js';
 import { GAMING_HYBRID_CONTRACT_VERSION, GAMING_HYBRID_V2_CONTRACT_VERSION, GAMING_HYBRID_V2_LIMITS, gamingHybridLimitsForVersion, GAMING_HYBRID_LIMITS as LIMITS,
-  gamingHybridQuerySchema, gamingHybridCandidatesSchema, gamingHybridIngestionSchema,
+  gamingHybridQuerySchema, gamingHybridCandidatesSchema, gamingHybridIngestionSchema, gamingHybridRequestedContractVersion,
   type GamingHybridQuery, type GamingHybridResponse } from '@shared/gaming/gamingHybridContract.js';
 import { resolveGamingPlayerContext, validateGamingPlayerContextInput } from '@shared/gaming/gamingPlayerContext.js';
 import { buildGamingRetrievalTerms } from '@shared/gaming/gamingRetrievalPolicy.js';
@@ -617,8 +617,8 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
   return {
     async query(payload: unknown, context: GamingHybridCallContext): Promise<GamingHybridResult> {
       const parsed = gamingHybridQuerySchema.safeParse(payload);
-      const denied = admit(context, parsed.success ? parsed.data.contractVersion : undefined); if (denied) return denied;
-      if (!parsed.success) return failure(context, 'INVALID_REQUEST', 400);
+      const denied = admit(context, parsed.success ? parsed.data.contractVersion : gamingHybridRequestedContractVersion(payload)); if (denied) return denied;
+      if (!parsed.success) return failure(context, 'INVALID_REQUEST', 400, undefined, gamingHybridRequestedContractVersion(payload));
       if (validateGamingPlayerContextInput(parsed.data)) return failure(context, 'INVALID_REQUEST', 400, undefined, parsed.data.contractVersion);
       const input = parsed.data;
       input.requestedVersion ??= input.version;
@@ -705,8 +705,8 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
     },
     async candidates(payload: unknown, context: GamingHybridCallContext): Promise<GamingHybridResult> {
       const parsed = gamingHybridCandidatesSchema.safeParse(payload);
-      const denied = admit(context, parsed.success ? parsed.data.contractVersion : undefined); if (denied) return denied;
-      if (!parsed.success) return failure(context, 'INVALID_REQUEST', 400);
+      const denied = admit(context, parsed.success ? parsed.data.contractVersion : gamingHybridRequestedContractVersion(payload)); if (denied) return denied;
+      if (!parsed.success) return failure(context, 'INVALID_REQUEST', 400, undefined, gamingHybridRequestedContractVersion(payload));
       const input = parsed.data;
       const workflow = own(input.workflowId, context);
       if (!workflow) return failure(context, 'WORKFLOW_UNAVAILABLE', 404, undefined, input.contractVersion);
@@ -842,8 +842,8 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
     },
     async ingest(payload: unknown, context: GamingHybridCallContext): Promise<GamingHybridResult> {
       const parsed = gamingHybridIngestionSchema.safeParse(payload);
-      const denied = admit(context, parsed.success ? parsed.data.contractVersion : undefined); if (denied) return denied;
-      if (!parsed.success) return failure(context, 'INVALID_REQUEST', 400);
+      const denied = admit(context, parsed.success ? parsed.data.contractVersion : gamingHybridRequestedContractVersion(payload)); if (denied) return denied;
+      if (!parsed.success) return failure(context, 'INVALID_REQUEST', 400, undefined, gamingHybridRequestedContractVersion(payload));
       const input = parsed.data;
       const workflow = own(input.workflowId, context);
       if (!workflow) return failure(context, 'WORKFLOW_UNAVAILABLE', 404, undefined, input.contractVersion);

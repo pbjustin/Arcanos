@@ -377,8 +377,9 @@ successful live generation for the retained production timeout case.
 
 ### Hybrid knowledge handoff (`gaming-hybrid-v1`)
 
-The original v1 one-round contract remains supported unchanged. Explicitly
-opted-in v2 reuses this workflow and adds one backend-granted gameplay recovery
+Normal guide/build/meta traffic uses released v2. The original v1 one-round
+contract remains supported for explicit legacy callers. V2 reuses this workflow
+and adds one backend-granted gameplay recovery
 round; see [Gaming discovery recovery](GAMING_DISCOVERY_RECOVERY.md) for version
 binding, selected evidence and coverage contracts, exact accounting, frontend
 instructions and separately authorized rollout. V2 does not change currentness

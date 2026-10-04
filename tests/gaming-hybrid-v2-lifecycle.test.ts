@@ -81,6 +81,21 @@ describe('v2 actor-bound recovery lifecycle', () => {
     expect(generate).not.toHaveBeenCalled();
   });
 
+  it('preserves a recognized v2 discriminator in validation failures instead of reporting v1', async () => {
+    const { workflow, evaluateCandidates } = setup();
+    expect((await workflow.query({ ...query, unsupportedHint: true }, context)).body)
+      .toMatchObject({ contractVersion, revision: 0, reason: 'INVALID_REQUEST', nextAction: 'stop' });
+    const first = await workflow.query(query, context);
+    const { expectedRevision: _revision, ...missingRevision } = submission(first.body.workflowId!, 0);
+    expect((await workflow.candidates(missingRevision, context)).body)
+      .toMatchObject({ contractVersion, revision: 0, reason: 'INVALID_REQUEST', nextAction: 'stop' });
+    expect(evaluateCandidates).not.toHaveBeenCalled();
+    const accepted = await workflow.candidates(submission(first.body.workflowId!, 0), context);
+    expect(accepted.body).toMatchObject({ contractVersion, revision: 1 });
+    expect((await workflow.candidates(submission(first.body.workflowId!, 0, 'stale-after-invalid'), context)).body)
+      .toMatchObject({ contractVersion, revision: 1, reason: 'STALE_WORKFLOW_REVISION' });
+  });
+
   it('rejects changed payload, stale revisions, cross-actor IDs and version upgrades', async () => {
     const { workflow, evaluateCandidates } = setup();
     const first = await workflow.query(query, context);

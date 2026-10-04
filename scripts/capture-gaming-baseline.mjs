@@ -28,7 +28,7 @@ function validateGamingConfiguration(configuration) {
     ['none', 'api_key', 'api_key_basic', 'api_key_bearer', 'oauth'].includes(action.authType), 'GAMING_ACTION_AUTH_TYPE_ONLY_REQUIRED');
   const schema = action.schema;
   requireCondition(schema.openapi === '3.1.0' && schema.info?.version === '1.5.0' &&
-    schema['x-arcanos-gaming-hybrid-contract-version'] === 'gaming-hybrid-v1', 'GAMING_ACTION_VERSION_INVALID');
+    ['gaming-hybrid-v1', 'gaming-hybrid-v2'].includes(schema['x-arcanos-gaming-hybrid-contract-version']), 'GAMING_ACTION_VERSION_INVALID');
   requireCondition(schema.paths && typeof schema.paths === 'object' && !Array.isArray(schema.paths) &&
     Object.keys(schema.paths).length === operations.length, 'GAMING_ACTION_CATALOG_INVALID');
   for (const [method, route, operationId] of operations) {

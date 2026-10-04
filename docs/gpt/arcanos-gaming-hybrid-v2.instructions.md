@@ -1,10 +1,10 @@
 <!-- ARCANOS:GAMING HYBRID WORKFLOW BEGIN gaming-hybrid-v2 -->
 
-Proposed MCP instruction revision. Use only after the deployed backend supports
-gaming-hybrid-v2 and the owner approves the complete private skill's exact new
-hash. Keep the same Gaming plugin, identity, connection, privacy and visibility.
-This source is a workflow replacement for local composition, not an approved
-private skill or an instruction to update the installed plugin.
+Released Gaming guide workflow: gaming-hybrid-v2. Normal guide/build/meta
+traffic selects this contract; explicit gaming-hybrid-v1 is retained for legacy
+compatibility. Keep the same Gaming plugin, identity, connection, privacy and
+visibility. Repository release policy does not update an installed private skill:
+its complete new bytes still need the existing owner review before installation.
 
 Backend-first workflow
 
