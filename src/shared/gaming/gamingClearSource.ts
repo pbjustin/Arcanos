@@ -1,7 +1,7 @@
 import { resolveGamingRequestEdition, gamingEditionEvidenceMatchesRequest } from './gamingGameIdentity.js';
 import { detectGamingDocumentGame } from './gamingDocumentIngestionCore.js';
 import { normalizeGamingGameIdentity, normalizeGamingEditionIdentity, resolveGamingGuideIdentity } from './gamingGameIdentity.js';
-import { buildGamingRetrievalTerms, buildGamingRequestRequirements, gamingTermCoverage } from './gamingRetrievalPolicy.js';
+import { buildGamingRetrievalTerms, buildGamingRequestRequirements, hasGamingRelevantGuideContribution, gamingTermCoverage } from './gamingRetrievalPolicy.js';
 import { assessGamingSourcePolicy, classifyGamingQuestionFreshness, extractGamingFreshnessMetadata, evaluateGamingFreshness, type GamingFreshnessEvidence, type GamingSourcePolicyAssessment } from './gamingFreshnessCore.js';
 import type { GamingStoredKnowledgeInput } from './gamingStoredEvidenceCore.js';
 import type { ResolvedGamingDocument } from '@services/gamingDocumentResolution.js';
@@ -166,9 +166,10 @@ export function assessGamingClearSource(input: GamingStoredKnowledgeInput & { re
   const usable = structural.hasIntactUsableUnit || intactText.trim().length >= 120;
   const partialTopic = options.allowPartialCoverage === true
     && buildGamingRequestRequirements(input).some(requirement => gamingTermCoverage(intactText, requirement.terms) === 1);
-  const partial = options.allowPartialCoverage === true && structural.hasIntactUsableUnit && (coverage >= 0.25 || partialTopic)
+  const contribution = options.allowPartialCoverage === true && hasGamingRelevantGuideContribution(intactText, input);
+  const partial = options.allowPartialCoverage === true && usable && (coverage >= 0.25 || partialTopic || contribution)
     && !structural.reasonCodes.includes('CONTRADICTORY_STRUCTURAL_RECORDS');
-  const relevant = supporting || (structuredClaim ? structural.claimSupported || independentProse || partial : coverage >= 0.25 || partialTopic);
+  const relevant = supporting || (structuredClaim ? structural.claimSupported || independentProse || partial : coverage >= 0.25 || partialTopic || contribution);
   const refs = [options.subjectId];
   const evaluated = (score: number, reasonCode: string) => ({ status: 'evaluated' as const, score,
     reasonCodes: [reasonCode], evidenceRefs: refs, unresolvedFacts: [] as string[] });

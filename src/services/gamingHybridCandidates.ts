@@ -4,7 +4,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { logger } from '@platform/logging/structuredLogging.js';
 import { normalizeGamingGameIdentity, resolveGamingGuideIdentity } from '@shared/gaming/gamingGameIdentity.js';
 import { classifyGamingDocumentQuality, selectGamingSourceAdmissionUrl } from '@shared/gaming/gamingDocumentIngestionCore.js';
-import { buildGamingRetrievalTerms, buildGamingRequestRequirements, gamingTermCoverage } from '@shared/gaming/gamingRetrievalPolicy.js';
+import { buildGamingRetrievalTerms, buildGamingRequestRequirements, hasGamingRelevantGuideContribution, gamingTermCoverage } from '@shared/gaming/gamingRetrievalPolicy.js';
 import {
   assessGamingSourcePolicy, extractGamingFreshnessMetadata, classifyGamingQuestionFreshness, gamingSeasonalPatchRequired,
   type GamingFreshnessEvidence
@@ -291,8 +291,8 @@ export async function evaluateGamingHybridCandidates(
         fetchedAt: now(), publishedAt: null, provenance: { resolverId: document.resolution.resolverId,
           resolverVersion: document.resolution.resolverVersion, resolutionStrategy: document.resolution.strategy,
           gameName: input.game, edition: input.edition, gamingClear: sourceAssessment },
-        relevance: Math.max(gamingTermCoverage(chunk.text, terms), v2 && buildGamingRequestRequirements(input)
-          .some(requirement => gamingTermCoverage(chunk.text, requirement.terms) === 1) ? 0.25 : 0)
+        relevance: Math.max(gamingTermCoverage(chunk.text, terms), v2 && (hasGamingRelevantGuideContribution(chunk.text, input)
+          || buildGamingRequestRequirements(input).some(requirement => gamingTermCoverage(chunk.text, requirement.terms) === 1)) ? 0.25 : 0)
       })).filter(record => record.relevance >= 0.25);
       // An official index/status page can verify applicability even when it does not cover the gameplay anchor.
       if (!records.length && !['current_index', 'live_status'].includes(policy.currentness)

@@ -812,6 +812,17 @@ private reasoning is added to the approval payload.
 
 ### Evidence and final-answer placement
 
+Released v2 source admission permits an intact, attributable guide contribution
+with a meaningful requested topic anchor, even when it covers less than the full
+question. Generic guide/build/facet labels alone are not topical evidence. A
+weapon passage can be admitted before stat, upgrade or combat coverage is
+complete. Candidate records retain that partial contribution within the same
+bounded selector; aggregate coverage and structural tuple support still decide
+whether generation may proceed. Complementary accepted sources can cover the
+question together. Explicit game/scope conflicts, source instructions, broken
+records and provenance failures remain blockers. Explicit v1 retains its legacy
+single-source admission floor.
+
 Source assessment precedes approved hybrid artifacts. Existing lexical search,
 complete-document chunk storage and retrieval budgets select relevant passages;
 the evidence profile evaluates the actual bounded selected set and its combined
