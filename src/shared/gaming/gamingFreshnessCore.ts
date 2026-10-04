@@ -1,4 +1,4 @@
-import { gamingEditionIdentitiesMatch, normalizeGamingEditionIdentity, normalizeGamingGameIdentity } from './gamingGameIdentity.js';
+import { resolveGamingRequestEdition, gamingEditionEvidenceMatchesRequest, normalizeGamingEditionIdentity, normalizeGamingGameIdentity } from './gamingGameIdentity.js';
 import type { GamingEvidenceUnit } from './gamingEvidenceUnits.js';
 import { isGamingDocumentMetadataUnit, readGamingEvidenceUnits, selectGamingEditionScopedEvidence } from './gamingStructuralEvidence.js';
 import { runGamingCurrentnessAdapter, combineGamingCurrentnessEvidence, GAMING_CURRENTNESS_ADAPTER_VERSION,
@@ -157,6 +157,7 @@ export function classifyGamingQuestionFreshness(input: { prompt: string; mode?: 
 export function extractGamingFreshnessMetadata(document: { publicUrl: string; canonicalUrl?: string; text: string; metadata?: { title?: string; headings?: string }; evidenceUnits?: readonly GamingEvidenceUnit[]; metrics?: { truncated?: boolean; instructionFiltered?: boolean }; currentnessDocument?: GamingCurrentnessDocumentMetadata },
   context: { game: string; edition?: string; platform?: string; region?: string }, now = new Date(),
   rules: readonly GamingReviewedSourceRule[] = REVIEWED_GAMING_SOURCE_RULES): GamingFreshnessEvidence {
+  context = { ...context, edition: resolveGamingRequestEdition(context) };
   // Citation redaction may shorten a path; only the acquired identity grants publisher policy.
   const policy = assessGamingSourcePolicy(document.canonicalUrl ?? document.publicUrl, context.game, rules);
   const evidenceUnits = readGamingEvidenceUnits(document.evidenceUnits, undefined, document.text);
@@ -348,6 +349,7 @@ export function gamingSeasonalPatchRequired(input: Pick<GamingFreshnessEvaluatio
 
 /** Freshness never substitutes for the caller's independent relevance/sufficiency selection. */
 export function evaluateGamingFreshness(input: GamingFreshnessEvaluationInput): GamingFreshnessEvaluation {
+  input = { ...input, edition: resolveGamingRequestEdition(input) };
   const classification = classifyGamingQuestionFreshness({ prompt: input.question, mode: input.mode, requestedVersion: input.requestedVersion });
   const seasonalPatchRequired = gamingSeasonalPatchRequired(input);
   const now = (input.now ?? new Date()).getTime();
@@ -374,7 +376,7 @@ export function evaluateGamingFreshness(input: GamingFreshnessEvaluationInput): 
   let conflictingOfficialCurrentness = false;
   const scoped = combineGamingCurrentnessEvidence(input.evidence, new Date(now)).filter(item => {
     if (normalizeGamingGameIdentity(item.game) !== normalizeGamingGameIdentity(input.game)) { reasons.add('GAME_MISMATCH'); return false; }
-    if (input.edition && !gamingEditionIdentitiesMatch(item.edition, input.edition)) { reasons.add('EDITION_UNVERIFIED_OR_MISMATCH'); return false; }
+    if (input.edition && !gamingEditionEvidenceMatchesRequest(item.edition, input.edition)) { reasons.add('EDITION_UNVERIFIED_OR_MISMATCH'); return false; }
     if (!input.edition && item.edition) { reasons.add('EDITION_REQUIRED'); return false; }
     if (input.platform && item.platforms?.length && !item.platforms.some(platform => same(platform, input.platform) || same(platform, 'all'))) { reasons.add('PLATFORM_MISMATCH'); return false; }
     if (!input.platform && item.platforms?.length && !item.platforms.some(platform => same(platform, 'all'))) { reasons.add('PLATFORM_REQUIRED'); return false; }

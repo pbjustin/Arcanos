@@ -1,3 +1,4 @@
+import { resolveGamingRequestEdition } from './gamingGameIdentity.js';
 import type { GamingEvidenceUnit } from './gamingEvidenceUnits.js';
 import { GAMING_EVIDENCE_UNIT_POLICY_VERSION } from './gamingEvidenceUnits.js';
 import { resolveGamingAnswerPolicy } from './gamingAnswerPolicy.js';
@@ -50,6 +51,7 @@ export function selectGamingEditionScopedEvidence(document: {
 }, input: { game: string; edition?: string }): {
   status: 'verified' | 'unverified' | 'conflict'; text: string; units: GamingEvidenceUnit[]; reasonCodes: string[];
 } {
+  input = { ...input, edition: resolveGamingRequestEdition(input) };
   const result = (status: 'verified' | 'unverified' | 'conflict', units: GamingEvidenceUnit[] = [], reasonCodes: string[] = []) =>
     ({ status, units, text: units.map(unit => unit.text).join('\n\n'), reasonCodes });
   if (!input.edition || normalizeGamingEditionIdentity(input.edition) !== 'base-game') return result('unverified');

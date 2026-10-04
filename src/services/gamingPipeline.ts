@@ -1,3 +1,4 @@
+import { resolveGamingRequestEdition } from '@shared/gaming/gamingGameIdentity.js';
 import { runTrinityWritingPipeline } from "@core/logic/trinityWritingPipeline.js";
 import { logger } from "@platform/logging/structuredLogging.js";
 import { createRuntimeBudgetWithLimit, getSafeRemainingMs, type RuntimeBudget } from "@platform/resilience/runtimeBudget.js";
@@ -634,6 +635,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
   if (params.mode === "guide" && !params.contextOrigins) {
     params = { ...params, ...resolveGamingPlayerContext(params, params.prompt) };
   }
+  params = { ...params, edition: resolveGamingRequestEdition(params) };
   const requestStartedAt = Date.now();
   const sourceEndpoint = `arcanos-gaming.${prepared && params.mode !== 'guide' ? 'hybrid-' : ''}${params.mode}`;
   const requestContext = getRequestAbortContext();

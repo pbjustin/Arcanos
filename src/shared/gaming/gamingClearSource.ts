@@ -1,5 +1,6 @@
+import { resolveGamingRequestEdition, gamingEditionEvidenceMatchesRequest } from './gamingGameIdentity.js';
 import { detectGamingDocumentGame } from './gamingDocumentIngestionCore.js';
-import { normalizeGamingGameIdentity, normalizeGamingEditionIdentity, gamingEditionIdentitiesMatch, resolveGamingGuideIdentity } from './gamingGameIdentity.js';
+import { normalizeGamingGameIdentity, normalizeGamingEditionIdentity, resolveGamingGuideIdentity } from './gamingGameIdentity.js';
 import { buildGamingRetrievalTerms, buildGamingRequestRequirements, gamingTermCoverage } from './gamingRetrievalPolicy.js';
 import { assessGamingSourcePolicy, classifyGamingQuestionFreshness, extractGamingFreshnessMetadata, evaluateGamingFreshness, type GamingFreshnessEvidence, type GamingSourcePolicyAssessment } from './gamingFreshnessCore.js';
 import type { GamingStoredKnowledgeInput } from './gamingStoredEvidenceCore.js';
@@ -54,6 +55,7 @@ export function gamingClearHistoricalSourceVerified(input: Pick<GamingStoredKnow
 export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDocument, 'text' | 'metadata' | 'publicUrl'> & Partial<Pick<ResolvedGamingDocument, 'evidenceUnits'>>,
   input: Pick<GamingStoredKnowledgeInput, 'game' | 'edition' | 'prompt' | 'mode'>,
   policy: GamingSourcePolicyAssessment, allowPartialCoverage = false): { status: 'verified' | 'unknown' | 'conflict'; reasonCodes: string[] } {
+  input = { ...input, edition: resolveGamingRequestEdition(input) };
   const expected = new Set([normalizeGamingGameIdentity(input.game), resolveGamingGuideIdentity(input.game, input.edition)]);
   const scoped = selectGamingEditionScopedEvidence(document, input);
   if (scoped.reasonCodes.includes('GAME_MISMATCH')) return { status: 'conflict', reasonCodes: ['GAME_MISMATCH'] };
@@ -112,13 +114,17 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
   const reviewedAssociation = Boolean(policy.ruleId) && ['official', 'specialist', 'community'].includes(policy.authority);
   if (!(metadataAnchor && proseAnchor && relevant) && !(reviewedAssociation && metadataAnchor))
     return { status: 'unknown', reasonCodes: ['GAME_IDENTITY_UNVERIFIED'] };
+  if (input.edition && normalizeGamingEditionIdentity(input.edition) === 'base-game'
+    && (metadata.some(value => /\bshadow[\s-]+of[\s-]+the[\s-]+erdtree\b/iu.test(value))
+      || scoped.status !== 'verified' && /\b(?:dlc|expansion)[ -]only\b|\b(?:requires?|exclusive to|only available in)\b[^.!?\n]{0,60}\b(?:shadow[\s-]+of[\s-]+the[\s-]+erdtree|dlc|expansion)\b/iu.test(document.text)))
+    return { status: 'conflict', reasonCodes: ['EDITION_UNVERIFIED'] };
   if (input.edition) {
-    // Game identity remains independently verified above. Base-game applicability
-    // needs an acquired assertion, never the title or an incidental entity name.
+    // Game identity is independently verified. An ordinary base-game request
+    // allows absent edition metadata; positive scope claims and conflicts still bind.
     if (normalizeGamingEditionIdentity(input.edition) === 'base-game') {
       const applicability = extractGamingFreshnessMetadata(document, input);
       if (applicability.metadataConflict) return { status: 'conflict', reasonCodes: ['EDITION_UNVERIFIED'] };
-      if (applicability.metadataUnverified || !gamingEditionIdentitiesMatch(applicability.edition, input.edition))
+      if (applicability.metadataUnverified || !gamingEditionEvidenceMatchesRequest(applicability.edition, input.edition))
         return { status: 'unknown', reasonCodes: ['EDITION_UNVERIFIED'] };
     } else if (!containsIdentity([document.metadata.title, document.metadata.headings, prose].join(' '), input.edition)) {
       return { status: 'unknown', reasonCodes: ['EDITION_UNVERIFIED'] };
@@ -139,6 +145,7 @@ export function gamingClearSourceRole(input: Pick<GamingStoredKnowledgeInput, 'm
 export function assessGamingClearSource(input: GamingStoredKnowledgeInput & { region?: string }, document: ResolvedGamingDocument,
   options: { subjectId: string; subjectHash: string; actorScopeHash: string; sourcePolicy: GamingSourcePolicyAssessment;
     freshness: GamingFreshnessEvidence; now: Date; allowPartialCoverage?: boolean }) {
+  input = { ...input, edition: resolveGamingRequestEdition(input) };
   const role = gamingClearSourceRole(input, options.sourcePolicy);
   const identity = assessGamingClearSourceIdentity(document, input, options.sourcePolicy, options.allowPartialCoverage);
   const scoped = selectGamingEditionScopedEvidence(document, input);

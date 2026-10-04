@@ -1,6 +1,7 @@
+import { resolveGamingRequestEdition, gamingEditionEvidenceMatchesRequest } from '@shared/gaming/gamingGameIdentity.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { logger } from '@platform/logging/structuredLogging.js';
-import { normalizeGamingGameIdentity, gamingEditionIdentitiesMatch, resolveGamingGuideIdentity } from '@shared/gaming/gamingGameIdentity.js';
+import { normalizeGamingGameIdentity, resolveGamingGuideIdentity } from '@shared/gaming/gamingGameIdentity.js';
 import { classifyGamingDocumentQuality, selectGamingSourceAdmissionUrl } from '@shared/gaming/gamingDocumentIngestionCore.js';
 import { buildGamingRetrievalTerms, buildGamingRequestRequirements, gamingTermCoverage } from '@shared/gaming/gamingRetrievalPolicy.js';
 import {
@@ -114,7 +115,8 @@ export async function evaluateGamingHybridCandidates(
   currentnessEvidence?: GamingFreshnessEvidence[]; currentnessFailureBlocksAdvisory?: boolean; acquisitionWorkMs?: number }> {
   // Keep discovery hints outside the evidence request. Acquisition alone establishes
   // document identity; no frontend label enters CLEAR, applicability or selection.
-  const { candidates: submittedCandidates, ...input } = submission;
+  const { candidates: submittedCandidates, ...request } = submission;
+  const input = { ...request, edition: resolveGamingRequestEdition(request) };
   if (!context.actorKey || submittedCandidates.length < 1 || submittedCandidates.length > GAMING_HYBRID_CANDIDATE_LIMITS.count) {
     throw Object.assign(new Error('Submit one to three candidate URLs within an authenticated workflow.'), { code: 'GAMING_HYBRID_CANDIDATE_LIMIT' });
   }
@@ -232,7 +234,7 @@ export async function evaluateGamingHybridCandidates(
       const scoped = selectGamingEditionScopedEvidence(document, input);
       if (scoped.reasonCodes.includes('GAME_MISMATCH')) { reject('GAME_MISMATCH'); continue; }
       if (scoped.status === 'conflict' || scoped.status === 'unverified' && scoped.reasonCodes.length
-        || input.edition && !gamingEditionIdentitiesMatch(freshness.edition, input.edition)) { reject('EDITION_UNVERIFIED_OR_MISMATCH'); continue; }
+        || input.edition && !gamingEditionEvidenceMatchesRequest(freshness.edition, input.edition)) { reject('EDITION_UNVERIFIED_OR_MISMATCH'); continue; }
       if (!input.edition && freshness.edition) { reject('EDITION_REQUIRED'); continue; }
       const applies = (values: string[] | undefined, wanted: string | undefined) => !values?.length
         || values.some(value => value.toLowerCase() === 'all' || value.toLowerCase() === wanted?.toLowerCase());

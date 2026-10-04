@@ -1,3 +1,4 @@
+import { resolveGamingRequestEdition } from '@shared/gaming/gamingGameIdentity.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { getEnvBoolean } from '@platform/runtime/env.js';
 import { logger } from '@platform/logging/structuredLogging.js';
@@ -683,7 +684,7 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
         revision: 0, acquisitionWorkMs: 0, submittedUrls: new Set(),
         round: 0, currentnessRound: 0, accepted: [], operations: new Map(),
         pipeline: { ...resolveGamingPlayerContext(input, input.question), game: input.game, prompt: input.question,
-          mode: input.mode, requestedVersion: input.requestedVersion, region: input.region,
+          mode: input.mode, requestedVersion: input.requestedVersion, region: input.region, edition: resolveGamingRequestEdition(input),
           guideUrls: input.contractVersion === GAMING_HYBRID_V2_CONTRACT_VERSION ? gamingHybridRequiredGuideUrls(input.question) : [], auditEnabled: false } };
       workflows.set(workflow.id, workflow);
       budgets.set(budgetKey, workflow.id);

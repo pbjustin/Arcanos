@@ -30,3 +30,20 @@ export function normalizeGamingEvidenceGameIdentity(game: string): string {
   const numerals: Record<string, string> = { ii: '2', iii: '3', iv: '4', v: '5', vi: '6', vii: '7', viii: '8', ix: '9', x: '10' };
   return normalizeGamingGameIdentity(game).split('-').map(part => numerals[part] ?? part).join('-');
 }
+
+/** Request interpretation only; never an assertion about acquired source metadata. */
+export function resolveGamingRequestEdition(input: { game?: string; edition?: string; prompt?: string; question?: string }): string | undefined {
+  if (input.edition) return normalizeGamingEditionIdentity(input.edition);
+  const question = input.prompt ?? input.question ?? '';
+  if (normalizeGamingGameIdentity(input.game ?? '') !== 'elden-ring') return undefined;
+  if (/\bshadow[\s-]+of[\s-]+the[\s-]+erdtree\b/iu.test(question)) return 'shadow of the erdtree';
+  // An unspecified expansion decision can materially change the answer.
+  if (/\b(?:dlc|expansion)\b/iu.test(question)) return undefined;
+  return 'base-game';
+}
+
+/** Unknown ordinary base-game metadata is not an explicit edition contradiction. */
+export function gamingEditionEvidenceMatchesRequest(sourceEdition: string | undefined, requestEdition: string | undefined): boolean {
+  return sourceEdition === undefined && (!requestEdition || normalizeGamingEditionIdentity(requestEdition) === 'base-game')
+    || gamingEditionIdentitiesMatch(sourceEdition, requestEdition);
+}

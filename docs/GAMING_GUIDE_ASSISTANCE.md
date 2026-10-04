@@ -77,8 +77,13 @@ tentative. Negated and hypothetical progress, a question about defeating a boss,
 and areas appearing only in sources do not establish completed objectives.
 Contradictory structured/current-question claims are recorded as conflicts;
 guidance must ask one targeted question or provide scoped alternatives when the
-conflict changes the answer. Source titles do not establish edition or player
-state, and explicit precise game titles are preserved.
+conflict changes the answer. Source titles do not establish player state or positive edition applicability,
+and explicit precise game titles are preserved. Ordinary requests naming only
+Elden Ring use a backend-derived base-game request scope. An explicit Shadow of
+the Erdtree request selects that expansion; unspecified DLC/expansion requests
+retain their ambiguity. This request interpretation does not add an acquired
+Edition assertion. Missing edition metadata on an ordinary base-game guide is
+not a contradiction; explicit incompatible source scope remains excluded.
 
 `answerDepth` accepts `auto`, `concise`, `standard`, or `detailed`. Clear current
 question requests for brevity/detail take precedence over the structured depth.
@@ -940,7 +945,7 @@ so otherwise relevant base-game records were rejected as
 `EDITION_UNVERIFIED_OR_MISMATCH`. Downstream edition comparisons also disagreed
 about spaces and hyphens.
 
-For an explicit base-game request, complete source-bound records with exact
+For a base-game request, complete source-bound records with exact
 base-game `Edition`, `Scope` or `Applicability` values can now establish
 applicability. Only those records contribute gameplay evidence in hybrid and
 supplied-guide retrieval; unscoped prose and DLC records from a mixed page are
