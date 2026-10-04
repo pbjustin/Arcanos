@@ -1,4 +1,5 @@
-import { resolveGamingRequestEdition, gamingEditionEvidenceMatchesRequest, normalizeGamingEditionIdentity, normalizeGamingGameIdentity } from './gamingGameIdentity.js';
+import { classifyGamingQuestionFreshness, type GamingQuestionFreshness } from './gamingQuestionFreshnessPolicy.js';
+import { resolveGamingRequestEdition, gamingEditionEvidenceMatchesRequest, canQualifyGamingUnrequestedEdition, normalizeGamingEditionIdentity, normalizeGamingGameIdentity, type GamingEditionRequestContext } from './gamingGameIdentity.js';
 import type { GamingEvidenceUnit } from './gamingEvidenceUnits.js';
 import { isGamingDocumentMetadataUnit, readGamingEvidenceUnits, selectGamingEditionScopedEvidence } from './gamingStructuralEvidence.js';
 import { runGamingCurrentnessAdapter, combineGamingCurrentnessEvidence, GAMING_CURRENTNESS_ADAPTER_VERSION,
@@ -22,7 +23,8 @@ export const GAMING_FRESHNESS_DEFAULTS = Object.freeze({
   maxMetadataChars: 32_000
 });
 
-export type GamingQuestionFreshness = 'stable' | 'patch_sensitive' | 'seasonal' | 'live_status';
+export type { GamingQuestionFreshness } from './gamingQuestionFreshnessPolicy.js';
+export { classifyGamingQuestionFreshness } from './gamingQuestionFreshnessPolicy.js';
 export type GamingFreshnessStatus = 'current' | 'stale' | 'unverified' | 'not_applicable' | 'conflicting';
 export interface GamingSourcePolicyAssessment {
   policyVersion: typeof GAMING_SOURCE_POLICY_VERSION;
@@ -131,41 +133,17 @@ const dateValue = (value: string | undefined): string | undefined => {
   return parsed === undefined ? undefined : new Date(parsed).toISOString();
 };
 
-/** Question policy is conservative even when an explicit client mode says "guide". */
-export function classifyGamingQuestionFreshness(input: { prompt: string; mode?: string; requestedVersion?: string }): GamingQuestionFreshness {
-  const prompt = input.prompt.slice(0, 8_000);
-  if (/\b(?:server\s+(?:status|outage|maintenance|down)|servers?\s+(?:are\s+)?(?:down|offline)|outage|login\s+(?:issues?|problems?)|maintenance\s+(?:now|today)|live\s+status|current\s+event\s+status)\b/iu.test(prompt)
-    || /\bmaintenance\b[^?!.\n]{0,40}\b(?:end(?:s|ed)?|start(?:s|ed)?|begin(?:s)?|finish(?:es|ed)?|scheduled)\b[^?!.\n]{0,30}\b(?:now|today|currently|tonight|tomorrow)\b/iu.test(prompt)
-    || /\b(?:is|are)\b.{0,100}\b(?:event|maintenance|servers?)\b.{0,60}\b(?:active|running|available|online|offline|down|live|over|ongoing|today|now)\b/iu.test(prompt)
-    || /\b(?:event|maintenance|servers?)\b.{0,40}\b(?:is|are|still)\s+(?:still\s+)?(?:active|running|available|online|offline|down|live|over|ongoing)\b/iu.test(prompt)
-    || /\b(?:event|maintenance)\b.{0,40}\b(?:has|have|is)\s+(?:already\s+|now\s+)?(?:end(?:ed)?|finish(?:ed)?|begun|started|cancelled|canceled|postponed)\b/iu.test(prompt)
-    || /\b(?:has|have|did)\b.{0,60}\b(?:event|maintenance)\b.{0,30}\b(?:end(?:ed)?|finish(?:ed)?|begun|started|cancelled|canceled|postponed)\b/iu.test(prompt)
-    || /\b(?:what|which)\b.{0,60}\bevent\b.{0,30}\b(?:current|active|running|live)\b/iu.test(prompt)) return 'live_status';
-  if (/\b(?:season|seasonal|battle\s+pass|current\s+league)\b/iu.test(prompt)) return 'seasonal';
-  // Strength questions occur in either order ("best build" / "which build is best").
-  // Keep ordinary routes and puzzles stable unless their own question needs freshness.
-  const combatSubject = /\b(?:weapons?|builds?|class(?:es)?|loadouts?|talents?|equipment|skills?|abilit(?:y|ies)|gear|armou?r|rotations?)\b/iu.test(prompt);
-  const effectivenessOrTime = /\b(?:best|better|strong(?:est|er)?|weak(?:est|er)?|effective(?:ness)?|powerful|optimal|viab(?:le|ility)|top|good|today|currently|now)\b/iu.test(prompt);
-  const recommendationIntent = /\b(?:recommend(?:ed|ation|ations)?|suggest(?:ed|ion|ions)?)\b|\bshould\b.{0,80}\b(?:choose|pick|select|use|equip|play)\b/iu.test(prompt);
-  if (input.requestedVersion || input.mode === 'meta' || input.mode === 'build' || (combatSubject && (effectivenessOrTime || recommendationIntent))
-    || /\bwhat\s+(?:changed|changes)\b[^?!.\n]{0,60}\b(?:today|now|currently)\b/iu.test(prompt)
-    || /\b(?:patch|hotfix|balance|nerf|buff|meta|viable|latest|current(?!\s+(?:area|checkpoint|location|objective|progress|quest)\b)|right\s+now|dps|damage\s+(?:value|number)|weapon\s+effectiveness|(?:best|strongest)\s+(?:weapon|build|class|loadout|talent|equipment))\b/iu.test(prompt)) return 'patch_sensitive';
-  return 'stable';
-}
-
 /**
  * Reads only fetched text. Dates from footers, HTTP Last-Modified, and frontend hints
  * cannot establish current applicability. Unsupported page layouts stay unverified.
  */
 export function extractGamingFreshnessMetadata(document: { publicUrl: string; canonicalUrl?: string; text: string; metadata?: { title?: string; headings?: string }; evidenceUnits?: readonly GamingEvidenceUnit[]; metrics?: { truncated?: boolean; instructionFiltered?: boolean }; currentnessDocument?: GamingCurrentnessDocumentMetadata },
-  context: { game: string; edition?: string; platform?: string; region?: string }, now = new Date(),
+  context: GamingEditionRequestContext & { game: string; platform?: string; region?: string }, now = new Date(),
   rules: readonly GamingReviewedSourceRule[] = REVIEWED_GAMING_SOURCE_RULES): GamingFreshnessEvidence {
   context = { ...context, edition: resolveGamingRequestEdition(context) };
   // Citation redaction may shorten a path; only the acquired identity grants publisher policy.
   const policy = assessGamingSourcePolicy(document.canonicalUrl ?? document.publicUrl, context.game, rules);
   const evidenceUnits = readGamingEvidenceUnits(document.evidenceUnits, undefined, document.text);
-  const editionScoped = context.edition && normalizeGamingEditionIdentity(context.edition) === 'base-game'
-    ? selectGamingEditionScopedEvidence(document, context) : undefined;
   let proseText = document.text;
   for (const unit of evidenceUnits) proseText = proseText.replace(unit.text, '');
   const metadataText = proseText.slice(0, GAMING_FRESHNESS_DEFAULTS.maxMetadataChars);
@@ -174,6 +152,15 @@ export function extractGamingFreshnessMetadata(document: { publicUrl: string; ca
   const labels = 'Game|Edition|Platforms?|Regions?|Published at|Source updated at|Effective from|Effective until|Patch|Build|Season|Current patch|Current build|Current season|Baseline valid for patches|Baseline valid for builds|Supersedes patches|Supersedes builds|Mechanic';
   const metadataLines = metadataText.replace(new RegExp(`(?:^|\\s)(${labels}):\\s*`, 'giu'), '\n$1: ').split(/\r?\n/u);
   const lines = metadataLines.slice(0, 500).map(line => line.split(/\.(?=\s+[A-Z])/u)[0].trim().replace(/\.$/u, ''));
+  // An acquired global base label can narrow inspected source records without
+  // creating a player edition. Local record labels cannot establish global scope.
+  const globalEditions = [...lines.flatMap(line => /^Edition:\s*(.*)$/iu.exec(line)?.slice(1) ?? []),
+    ...evidenceUnits.filter(isGamingDocumentMetadataUnit).flatMap(unit => unit.fields
+      .filter(field => /^Edition$/iu.test(field.label.split(/\s+\/\s+/u).at(-1)!)).map(field => field.value))];
+  const inspectionEdition = context.edition ?? (canQualifyGamingUnrequestedEdition(context)
+    && globalEditions.length > 0 && globalEditions.every(value => normalizeGamingEditionIdentity(value) === 'base-game') ? 'base-game' : undefined);
+  const editionScoped = inspectionEdition && normalizeGamingEditionIdentity(inspectionEdition) === 'base-game'
+    ? selectGamingEditionScopedEvidence(document, { game: context.game, edition: inspectionEdition }) : undefined;
   // Local edition proof must not hide global restrictions outside the metadata
   // parser's bounds. Such labels remain uncertainty, never additional proof.
   let invalidMetadata = false;
@@ -384,8 +371,8 @@ export function evaluateGamingFreshness(input: GamingFreshnessEvaluationInput): 
   let conflictingOfficialCurrentness = false;
   const scoped = combineGamingCurrentnessEvidence(input.evidence, new Date(now)).filter(item => {
     if (normalizeGamingGameIdentity(item.game) !== normalizeGamingGameIdentity(input.game)) { reasons.add('GAME_MISMATCH'); return false; }
-    if (input.edition && !gamingEditionEvidenceMatchesRequest(item.edition, input.edition)) { reasons.add(item.edition ? 'EDITION_CONFLICT' : 'EDITION_UNVERIFIED'); return false; }
-    if (!input.edition && item.edition) { reasons.add('EDITION_UNVERIFIED'); return false; }
+    if (input.edition && !gamingEditionEvidenceMatchesRequest(item.edition, input.edition, input)) { reasons.add(item.edition ? 'EDITION_CONFLICT' : 'EDITION_UNVERIFIED'); return false; }
+    if (!input.edition && item.edition && !gamingEditionEvidenceMatchesRequest(item.edition, undefined, input)) { reasons.add('EDITION_UNVERIFIED'); return false; }
     if (input.platform && item.platforms?.length && !item.platforms.some(platform => same(platform, input.platform) || same(platform, 'all'))) { reasons.add('PLATFORM_MISMATCH'); return false; }
     if (!input.platform && (gamingApplicabilityScopeRequired(input, 'platform') || !isGamingGameplayFreshnessEvidence(item)) && item.platforms?.length && !item.platforms.some(platform => same(platform, 'all'))) { reasons.add('PLATFORM_REQUIRED'); return false; }
     if (input.region && item.regions?.length && !item.regions.some(region => same(region, input.region) || same(region, 'all'))) { reasons.add('REGION_MISMATCH'); return false; }
@@ -476,7 +463,7 @@ export function evaluateGamingFreshness(input: GamingFreshnessEvaluationInput): 
     && (item.currentness === 'current_index' || (!patch || same(item.patch, patch))
       && (!build || same(item.build, build) || item.baselineForBuilds?.some(value => same(value, build)))));
   guideApplicability = gameplayEvidence.map(guide => {
-    const applicability = evaluateGamingGuideApplicability({ guide, game: input.game, question: input.question,
+    const applicability = evaluateGamingGuideApplicability({ guide, game: input.game, question: input.question, mode: input.mode, requestedVersion: input.requestedVersion,
       edition: input.edition, platform: input.platform, region: input.region, currentness: index,
       officialEvidence: currentOfficialEvidence, now: new Date(now) });
     // A matching version cannot restore an artifact excluded by source policy or scope.

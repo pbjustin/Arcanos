@@ -1,4 +1,4 @@
-import { normalizeGamingGameIdentity, resolveGamingRequestEdition } from '@shared/gaming/gamingGameIdentity.js';
+import { normalizeGamingGameIdentity, resolveGamingRequestEdition, buildGamingSourceEditionQualification } from '@shared/gaming/gamingGameIdentity.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { getEnvBoolean } from '@platform/runtime/env.js';
 import { logger } from '@platform/logging/structuredLogging.js';
@@ -493,7 +493,9 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
     const structuredReport = candidates.some(candidate => candidate.evidence.evidenceUnits?.length);
     const applicabilityUnverified = structuredReport && freshness.classification === 'stable'
       && !freshness.effectivePatch;
-    const qualification = [advisory ? advisory.qualification : freshness.qualification,
+    const sourceEditionQualifications = [...new Set(evidence.filter(item => selected.has(item.id))
+      .map(item => buildGamingSourceEditionQualification(item.edition, workflow.pipeline)).filter(Boolean))];
+    const qualification = [advisory ? advisory.qualification : freshness.qualification, ...sourceEditionQualifications,
       ...evidence.filter(item => selected.has(item.id)).slice(0, 3).flatMap(item => [
         !input.platform && item.platforms?.length && !item.platforms.some(value => value.toLowerCase() === 'all')
           ? `A cited guide reports platform scope ${JSON.stringify(item.platforms.slice(0, 2))}; applicability to other platforms was not independently verified.` : '',
@@ -648,6 +650,8 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
         && (source.sourceId === undefined || source.sourceId === selectedSource.sourceId))))
         return { status: 503, body: { ...body, nextAction: 'stop', reason: 'INVALID_GENERATED_CITATIONS' } };
       if (qualification && !response.includes(qualification) && advisoryAllowed && !response.includes(advisory!.qualification))
+        return { status: 503, body: { ...body, nextAction: 'stop', reason: 'REQUIRED_QUALIFICATION_MISSING' } };
+      if (sourceEditionQualifications.some(warning => !response.includes(warning)))
         return { status: 503, body: { ...body, nextAction: 'stop', reason: 'REQUIRED_QUALIFICATION_MISSING' } };
     }
     workflow.pendingDiscovery = undefined;

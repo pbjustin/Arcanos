@@ -48,6 +48,8 @@ export function evaluateGamingGuideApplicability(input: {
   guide: GamingApplicabilityEvidence;
   game: string;
   question?: string;
+  mode?: string;
+  requestedVersion?: string;
   edition?: string;
   platform?: string;
   region?: string;
@@ -65,8 +67,9 @@ export function evaluateGamingGuideApplicability(input: {
   });
   if (normalizeGamingGameIdentity(guide.game) !== normalizeGamingGameIdentity(input.game)) return result('conflicting', 'GAME_MISMATCH');
   if (guide.metadataConflict) return result('conflicting', 'CONTRADICTORY_SOURCE_METADATA');
-  if (input.edition && guide.edition && !gamingEditionEvidenceMatchesRequest(guide.edition, input.edition)) return result('conflicting', 'EDITION_CONFLICT');
-  if ((input.edition && !gamingEditionEvidenceMatchesRequest(guide.edition, input.edition)) || (!input.edition && guide.edition)) return result('unverified', 'EDITION_UNVERIFIED');
+  if (input.edition && guide.edition && !gamingEditionEvidenceMatchesRequest(guide.edition, input.edition, input)) return result('conflicting', 'EDITION_CONFLICT');
+  if ((input.edition && !gamingEditionEvidenceMatchesRequest(guide.edition, input.edition, input))
+    || (!input.edition && guide.edition && !gamingEditionEvidenceMatchesRequest(guide.edition, undefined, input))) return result('unverified', 'EDITION_UNVERIFIED');
   if (guide.metadataUnverified) return result('unverified', 'APPLICABILITY_METADATA_UNVERIFIED');
   for (const [values, wanted, field] of [[guide.platforms, input.platform, 'PLATFORM'], [guide.regions, input.region, 'REGION']] as const) {
     if (values?.length && !includes(values, 'all') && !includes(values, wanted)

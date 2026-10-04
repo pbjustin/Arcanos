@@ -1009,6 +1009,7 @@ describe('native PR preview import boundary', () => {
     'src/shared/gaming/gamingHybridContract.ts',
     'src/shared/gaming/gamingFreshnessCore.ts',
     'src/shared/gaming/gamingGameIdentity.ts',
+    'src/shared/gaming/gamingQuestionFreshnessPolicy.ts',
     'src/shared/gaming/gamingRecoveryResponse.ts',
     'src/shared/gaming/gamingGenerationBudgetCore.ts',
     'src/shared/gaming/gamingExecutionBudgetCore.ts',
@@ -1040,6 +1041,16 @@ describe('native PR preview import boundary', () => {
     ]) {
       expect(NATIVE_PR_PREVIEW_ALLOWED_GRAPH_FILES).not.toContain(forbidden);
     }
+  });
+
+  it.each(['node:fs', 'node:http', 'node:child_process'])('keeps the pure Gaming question policy isolated from %s independently of its semantic pin', async specifier => {
+    const filePath = 'src/shared/gaming/gamingQuestionFreshnessPolicy.ts';
+    const sourceText = await readNormalizedSource(new URL(`../${filePath}`, import.meta.url));
+    const violations = findUnsafeRuntimeSyntax(filePath, `import * as forbiddenEffect from '${specifier}';\n${sourceText}`);
+    // Import isolation is separate from the digest check: repinning changed source
+    // cannot grant an I/O capability to this pure dependency.
+    expect(violations.filter(violation => !violation.includes('critical entry file semantic digest')))
+      .toEqual(expect.arrayContaining([expect.stringContaining(`external runtime import "${specifier}"`)]));
   });
 
   it.each([

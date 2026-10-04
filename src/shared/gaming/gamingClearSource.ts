@@ -5,7 +5,7 @@ import { buildGamingRetrievalTerms, buildGamingRequestRequirements, hasGamingRel
 import { assessGamingSourcePolicy, classifyGamingQuestionFreshness, extractGamingFreshnessMetadata, evaluateGamingFreshness, type GamingFreshnessEvidence, type GamingSourcePolicyAssessment } from './gamingFreshnessCore.js';
 import type { GamingStoredKnowledgeInput } from './gamingStoredEvidenceCore.js';
 import type { ResolvedGamingDocument } from '@services/gamingDocumentResolution.js';
-import { assessGamingStructuralUsability, classifyGamingEditionRequirements, readGamingEvidenceUnits, selectGamingEditionScopedEvidence } from './gamingStructuralEvidence.js';
+import { assessGamingStructuralUsability, classifyGamingEditionRequirements, readGamingEvidenceUnits, selectGamingEditionScopedEvidence, selectGamingSourceEditionScopedEvidence } from './gamingStructuralEvidence.js';
 import { createGamingClearAssessment, classifyGamingClearQuestion, gamingClearContextFingerprint,
   type GamingClearSourceRole } from './gamingClearPolicy.js';
 import { detectGamingLeadingGameAlias } from '@services/gamingGameDetection.js';
@@ -82,11 +82,11 @@ export function gamingClearHistoricalSourceVerified(input: Pick<GamingStoredKnow
 
 /** Acquired labels are assertions, never independent proof. Complete names preserve edition distinctions. */
 export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDocument, 'text' | 'metadata' | 'publicUrl'> & Partial<Pick<ResolvedGamingDocument, 'evidenceUnits'>>,
-  input: Pick<GamingStoredKnowledgeInput, 'game' | 'edition' | 'prompt' | 'mode'>,
+  input: Pick<GamingStoredKnowledgeInput, 'game' | 'edition' | 'prompt' | 'mode' | 'requestedVersion'>,
   policy: GamingSourcePolicyAssessment, _allowPartialCoverage = false): { status: 'verified' | 'unknown' | 'conflict'; reasonCodes: string[] } {
   input = { ...input, edition: resolveGamingRequestEdition(input) };
   const expected = new Set([normalizeGamingGameIdentity(input.game), resolveGamingGuideIdentity(input.game, input.edition)]);
-  const scoped = selectGamingEditionScopedEvidence(document, input);
+  let scoped = selectGamingEditionScopedEvidence(document, input);
   if (scoped.reasonCodes.includes('GAME_MISMATCH')) return { status: 'conflict', reasonCodes: ['GAME_MISMATCH'] };
   const labels = [...document.text.slice(0, 32_000).matchAll(/\bgame\s*:\s*(.{1,160}?)(?=\.(?:\s|$)|;|\||\n|\s+(?:Edition|Platform|Region|Patch|Build|Published at|Effective from)\s*:|$)/giu)];
   if (labels.some(label => !expected.has(normalizeGamingGameIdentity(label[1])))) return { status: 'conflict', reasonCodes: ['GAME_MISMATCH'] };
@@ -148,9 +148,18 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
   const reviewedAssociation = Boolean(policy.ruleId) && ['official', 'specialist', 'community'].includes(policy.authority);
   if (!(metadataAnchor && proseAnchor) && !(reviewedAssociation && metadataAnchor))
     return { status: 'unknown', reasonCodes: ['GAME_IDENTITY_UNVERIFIED'] };
+  const applicability = extractGamingFreshnessMetadata(document, input);
+  const qualifiedSourceEdition = !input.edition && applicability.edition
+    && gamingEditionEvidenceMatchesRequest(applicability.edition, undefined, input);
+  if (!input.edition && applicability.edition && !qualifiedSourceEdition)
+    return { status: 'unknown', reasonCodes: ['EDITION_UNVERIFIED'] };
+  if (qualifiedSourceEdition) scoped = selectGamingSourceEditionScopedEvidence(document, input, applicability.edition);
+  if (scoped.reasonCodes.includes('GAME_MISMATCH')) return { status: 'conflict', reasonCodes: ['GAME_MISMATCH'] };
   // Evaluate game contradictions before reporting narrower edition scope.
   const baseRequest = input.edition && normalizeGamingEditionIdentity(input.edition) === 'base-game';
-  const requirements = baseRequest && scoped.status !== 'verified' ? classifyGamingEditionRequirements(document.text) : 'clear';
+  const requirements = qualifiedSourceEdition ? classifyGamingEditionRequirements(scoped.status === 'verified' || scoped.reasonCodes.length > 0
+    ? gamingClearIntactProseText({ ...document, metrics: { truncated: false } }) : document.text, false, true)
+    : baseRequest && scoped.status !== 'verified' ? classifyGamingEditionRequirements(document.text) : 'clear';
   if (editionScopeConflict || scoped.status === 'conflict' || requirements === 'conflict'
     || baseRequest && metadata.some(value => /\bshadow[\s-]+of[\s-]+the[\s-]+erdtree\b/iu.test(value)))
     return { status: 'conflict', reasonCodes: ['EDITION_CONFLICT'] };
@@ -160,7 +169,6 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
     // Game identity is independently verified. An ordinary base-game request
     // allows absent edition metadata; positive scope claims and conflicts still bind.
     if (normalizeGamingEditionIdentity(input.edition) === 'base-game') {
-      const applicability = extractGamingFreshnessMetadata(document, input);
       if (!gamingEditionEvidenceMatchesRequest(applicability.edition, input.edition))
         return { status: applicability.edition ? 'conflict' : 'unknown', reasonCodes: [applicability.edition ? 'EDITION_CONFLICT' : 'EDITION_UNVERIFIED'] };
     } else if (!containsIdentity([document.metadata.title, document.metadata.headings, prose].join(' '), input.edition)) {
@@ -187,7 +195,9 @@ export function assessGamingClearSource(input: GamingStoredKnowledgeInput & { re
   const identity = assessGamingClearSourceIdentity(document, input, options.sourcePolicy, options.allowPartialCoverage);
   const editionIssue = identity.reasonCodes.every(code => code.startsWith('EDITION_'));
   const gameIdentity = editionIssue ? 'verified' as const : identity.status;
-  const scoped = selectGamingEditionScopedEvidence(document, input);
+  const scoped = selectGamingSourceEditionScopedEvidence(document, input, options.freshness.edition);
+  const qualifiedSourceEdition = !input.edition && options.freshness.edition
+    && gamingEditionEvidenceMatchesRequest(options.freshness.edition, undefined, input);
   const evidenceDocument = scoped.status === 'verified' ? { ...document, text: scoped.text, evidenceUnits: scoped.units } : document;
   const supporting = ['patch_authority', 'currentness_index', 'live_status'].includes(role);
   const intactText = gamingClearIntactSourceText(evidenceDocument);
@@ -251,7 +261,7 @@ export function assessGamingClearSource(input: GamingStoredKnowledgeInput & { re
         reasonCodes: identity.reasonCodes, evidenceRefs: refs, unresolvedFacts: [editionIssue ? 'EDITION_APPLICABILITY' : 'GAME_IDENTITY'] },
       resilience: { ...evaluated(document.metrics.truncated ? 3 : 3.5, document.metrics.truncated ? 'EXTRACTION_PARTIAL' : 'TRACEABLE_ACQUIRED_DOCUMENT'),
         unresolvedFacts: ['INDEPENDENT_CORROBORATION_NOT_ESTABLISHED', ...(!stable && !historical && !combinedCurrent ? ['COMBINED_APPLICABILITY_REQUIRED'] : [])] }
-    }, findings: [...(options.freshness.metadataWarnings ?? []).map(code => ({ code, severity: 'warning' as const, evidenceRefs: refs })), ...(!supporting && structuredClaim && !structural.claimSupported && !independentProse && !partial ? structural.reasonCodes.map(code => ({ code, severity: 'blocking' as const, evidenceRefs: refs })) : []),
+    }, findings: [...(qualifiedSourceEdition ? [{ code: 'SOURCE_EDITION_QUALIFIED', severity: 'warning' as const, evidenceRefs: refs }] : []), ...(options.freshness.metadataWarnings ?? []).map(code => ({ code, severity: 'warning' as const, evidenceRefs: refs })), ...(!supporting && structuredClaim && !structural.claimSupported && !independentProse && !partial ? structural.reasonCodes.map(code => ({ code, severity: 'blocking' as const, evidenceRefs: refs })) : []),
       ...(future || expired || wrongPatch ? [{ code: future ? 'NOT_YET_EFFECTIVE' : expired ? 'NO_LONGER_EFFECTIVE' : 'PATCH_MISMATCH', severity: 'blocking' as const, evidenceRefs: refs }] : []),
       ...identity.reasonCodes.filter(() => identity.status !== 'verified').map(code => ({ code, severity: identity.status === 'conflict'
       ? 'blocking' as const : 'warning' as const, evidenceRefs: refs })), ...(document.metrics.truncated
@@ -259,5 +269,5 @@ export function assessGamingClearSource(input: GamingStoredKnowledgeInput & { re
   });
   // Applicability established for individual records cannot authorize storing the
   // original whole page as base-game content. The existing storage gate enforces this.
-  return scoped.status === 'verified' ? { ...assessment, qualityEligible: false } : assessment;
+  return scoped.status === 'verified' || qualifiedSourceEdition ? { ...assessment, qualityEligible: false } : assessment;
 }

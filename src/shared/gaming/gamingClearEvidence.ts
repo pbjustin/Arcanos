@@ -83,16 +83,18 @@ export function assessGamingClearEvidence(
     || (item.effectiveFrom && Date.parse(item.effectiveFrom) > evaluatedNow.getTime())
     || (item.publishedAt && Date.parse(item.publishedAt) > evaluatedNow.getTime())
     || (!historicalPatchVerified && !advisoryFreshness && item.effectiveUntil && Date.parse(item.effectiveUntil) <= evaluatedNow.getTime())
-    || (item.edition && !gamingEditionEvidenceMatchesRequest(item.edition, input.edition))
+    || (input.edition && item.edition && !gamingEditionEvidenceMatchesRequest(item.edition, input.edition, input))
     || (input.platform && item.platforms?.length && !item.platforms.some(platform => ['all', input.platform!.toLowerCase()].includes(platform.toLowerCase())))
     || (input.region && item.regions?.length && !item.regions.some(region => ['all', input.region!.toLowerCase()].includes(region.toLowerCase())))
     || (input.requestedVersion && item.patch && item.currentness !== 'current_index'
       && item.patch !== input.requestedVersion && !item.baselineForPatches?.includes(input.requestedVersion)))
-    || sources.some(source => source.edition && !gamingEditionEvidenceMatchesRequest(source.edition, input.edition));
+    || sources.some(source => input.edition && source.edition && !gamingEditionEvidenceMatchesRequest(source.edition, input.edition, input));
   const compatibilityUnknown = relevantMetadata.some(item => item.metadataUnverified
+    || (!input.edition && item.edition && !gamingEditionEvidenceMatchesRequest(item.edition, undefined, input))
     || (!input.platform && gamingApplicabilityScopeRequired(input, 'platform') && item.platforms?.length && !item.platforms.some(platform => platform.toLowerCase() === 'all'))
     || (!input.region && gamingApplicabilityScopeRequired(input, 'region') && item.regions?.length && !item.regions.some(region => region.toLowerCase() === 'all'))
     || [item.effectiveFrom, item.effectiveUntil, item.publishedAt].some(value => value && !Number.isFinite(Date.parse(value))))
+    || sources.some(source => !input.edition && source.edition && !gamingEditionEvidenceMatchesRequest(source.edition, undefined, input))
     || Boolean(input.edition && input.edition !== 'base-game' && sources.some(source => !source.edition
       && !relevantMetadata.some(item => (item.id === source.sourceId || item.url === source.url) && gamingEditionIdentitiesMatch(item.edition, input.edition))
       && normalizeGamingEvidenceGameIdentity(source.game ?? '') !== normalizeGamingEvidenceGameIdentity(resolveGamingGuideIdentity(input.game, input.edition))));

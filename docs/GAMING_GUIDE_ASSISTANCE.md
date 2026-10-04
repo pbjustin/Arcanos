@@ -92,6 +92,17 @@ This request interpretation does not add an acquired Edition assertion. Explicit
 identity comparisons use the existing normalized comparison helpers. Missing edition metadata on an ordinary base-game guide is
 not a contradiction; explicit incompatible source scope remains excluded.
 
+For other exact game titles, an independently acquired global `Edition: base game`
+label can qualify ordinary guide/build advice without filling the player's omitted
+edition. The answer visibly reports that acquired scope. This allowance requires
+independent game identity and intact relevant evidence, and excludes explicit
+edition/expansion decisions and strict current, live or historical requests.
+Acquired contradictions and uncertain DLC requirements still block the guide;
+mixed pages contribute only complete independently scoped base records. Missing
+player edition never grants durable-source quality or storage consent. Unrecognized
+alternate edition labels remain unverified until a catalog policy establishes safe
+applicability; frontend labels cannot establish acquired scope.
+
 `answerDepth` accepts `auto`, `concise`, `standard`, or `detailed`. Clear current
 question requests for brevity/detail take precedence over the structured depth.
 Auto uses concise guidance for next-step/location questions and standard depth

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-04T22:24:31.626Z",
+  "generatedAt": "2026-10-04T22:49:17.298Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -2828,6 +2828,9 @@
           "relativePath": "src/shared/gaming/gamingPromptCore.ts"
         },
         {
+          "relativePath": "src/shared/gaming/gamingQuestionFreshnessPolicy.ts"
+        },
+        {
           "relativePath": "src/shared/gaming/gamingRecoveryResponse.ts"
         },
         {
@@ -4544,6 +4547,9 @@
         },
         {
           "relativePath": "tests/gaming-trinity-generation-budget.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-unrequested-base-edition.test.ts"
         },
         {
           "relativePath": "tests/gaming-version.test.ts"

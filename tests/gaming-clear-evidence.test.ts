@@ -48,7 +48,10 @@ describe('Gaming CLEAR bounded evidence decisions', () => {
     expect(run(staticInput, data).decision).toBe('reject');
     const wrongEdition = knowledge(staticInput.game, ['Open the copper gate with the key from the hollow pedestal.']);
     wrongEdition.sources[0].edition = 'Unrelated remake';
-    expect(run(staticInput, wrongEdition).decision).toBe('reject');
+    expect(assessGamingClearEvidence({ ...staticInput, edition: 'Master Quest' }, wrongEdition, { now }))
+      .toMatchObject({ decision: 'reject', gates: { compatibility: 'conflict' } });
+    expect(run(staticInput, wrongEdition))
+      .toMatchObject({ decision: 'clarify', gates: { compatibility: 'unknown' } });
     const unspecified = knowledge(staticInput.game, ['Open the copper gate with the key from the hollow pedestal.']);
     expect(assessGamingClearEvidence({ ...staticInput, edition: 'Master Quest' }, unspecified, { now }))
       .toMatchObject({ gates: { compatibility: 'unknown' }, dimensionScores: { alignment: { score: null } } });

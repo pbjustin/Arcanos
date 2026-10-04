@@ -1,4 +1,4 @@
-import { resolveGamingRequestEdition } from './gamingGameIdentity.js';
+import { resolveGamingRequestEdition, gamingEditionEvidenceMatchesRequest, type GamingEditionRequestContext } from './gamingGameIdentity.js';
 import type { GamingEvidenceUnit } from './gamingEvidenceUnits.js';
 import { GAMING_EVIDENCE_UNIT_POLICY_VERSION } from './gamingEvidenceUnits.js';
 import { resolveGamingAnswerPolicy } from './gamingAnswerPolicy.js';
@@ -136,6 +136,15 @@ export function selectGamingEditionScopedEvidence(document: {
   return selected.length ? result('verified', selected, ['INTACT_BASE_GAME_SCOPE'])
     : explicitOtherEdition ? result('conflict', [], ['CONFLICTING_EDITION_SCOPE']) : result('unverified', [], scopedRecords ? ['EDITION_SCOPE_UNVERIFIED'] : []);
 }
+/** Source-scope inspection never fills a missing player edition. */
+export function selectGamingSourceEditionScopedEvidence(document: Parameters<typeof selectGamingEditionScopedEvidence>[0],
+  input: GamingEditionRequestContext & { game: string }, sourceEdition?: string) {
+  const requestEdition = resolveGamingRequestEdition(input);
+  const inspectionEdition = requestEdition ?? (sourceEdition && gamingEditionEvidenceMatchesRequest(sourceEdition, undefined, input)
+    ? sourceEdition : undefined);
+  return selectGamingEditionScopedEvidence(document, { game: input.game, edition: inspectionEdition });
+}
+
 function mentionsValue(request: string, value: string): boolean {
   let index = request.indexOf(value);
   while (index >= 0) {

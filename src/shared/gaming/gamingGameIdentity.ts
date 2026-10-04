@@ -1,3 +1,5 @@
+import { resolveGamingFreshnessDisposition } from './gamingQuestionFreshnessPolicy.js';
+
 /** Formatting equivalence only: edition, sequel, expansion and platform words remain identity. */
 export function normalizeGamingGameIdentity(game: string): string {
   return game.replace(/[™®©'’‘]/gu, '').normalize('NFKC').toLowerCase()
@@ -55,8 +57,35 @@ export function resolveGamingRequestEdition(input: { game?: string; edition?: st
   return 'base-game';
 }
 
+export interface GamingEditionRequestContext {
+  game?: string;
+  edition?: string;
+  prompt?: string;
+  question?: string;
+  mode?: string;
+  requestedVersion?: string;
+  version?: string;
+}
+
+/** Eligibility only: acquired identity, intact scope and source restrictions still need independent inspection. */
+export function canQualifyGamingUnrequestedEdition(input: GamingEditionRequestContext): boolean {
+  const prompt = input.prompt ?? input.question ?? '';
+  return !resolveGamingRequestEdition(input) && Boolean(input.game)
+    && !/\b(?:edition|dlcs?|expansions?|remaster(?:ed)?|remake|anniversary|definitive|java|bedrock)\b/iu.test(prompt)
+    && resolveGamingFreshnessDisposition({ prompt, mode: input.mode, requestedVersion: input.requestedVersion ?? input.version }) !== 'REQUIRED';
+}
+
 /** Unknown ordinary base-game metadata is not an explicit edition contradiction. */
-export function gamingEditionEvidenceMatchesRequest(sourceEdition: string | undefined, requestEdition: string | undefined): boolean {
+export function gamingEditionEvidenceMatchesRequest(sourceEdition: string | undefined, requestEdition: string | undefined,
+  context?: GamingEditionRequestContext): boolean {
   return sourceEdition === undefined && (!requestEdition || normalizeGamingEditionIdentity(requestEdition) === 'base-game')
-    || gamingEditionIdentitiesMatch(sourceEdition, requestEdition);
+    || gamingEditionIdentitiesMatch(sourceEdition, requestEdition)
+    || !requestEdition && sourceEdition !== undefined && normalizeGamingEditionIdentity(sourceEdition) === 'base-game'
+      && Boolean(context && canQualifyGamingUnrequestedEdition(context));
+}
+
+/** Retain the acquired scope as a source assertion; never fill the player's missing edition. */
+export function buildGamingSourceEditionQualification(sourceEdition: string | undefined, input: GamingEditionRequestContext): string {
+  return sourceEdition && !resolveGamingRequestEdition(input) && gamingEditionEvidenceMatchesRequest(sourceEdition, undefined, input)
+    ? `The cited guide reports edition: ${normalizeGamingEditionIdentity(sourceEdition)}. Your edition was not specified; advice is limited to that guide's reported scope. Compatibility with other editions was not independently verified.` : '';
 }

@@ -24,7 +24,7 @@ import { assessGamingClearSource, gamingClearHistoricalSourceVerified, gamingCle
 import { GAMING_CLEAR_VERSION, gamingClearHash, type GamingClearAssessment } from '@shared/gaming/gamingClearPolicy.js';
 import { GAMING_HYBRID_LIMITS } from '@shared/gaming/gamingHybridContract.js';
 import { pickGamingPlayerContext } from '@shared/gaming/gamingPlayerContext.js';
-import { assessGamingStructuralUsability, selectGamingEditionScopedEvidence } from '@shared/gaming/gamingStructuralEvidence.js';
+import { assessGamingStructuralUsability, selectGamingSourceEditionScopedEvidence } from '@shared/gaming/gamingStructuralEvidence.js';
 import type { GamingStructureDiagnostics } from '@shared/gaming/gamingEvidenceUnits.js';
 import { GAMING_CURRENTNESS_ADAPTER_VERSION } from '@shared/gaming/gamingCurrentnessAdapters.js';
 import { assessGamingClearEvidence, assessGamingRequestCoverage, gamingSelectedEvidenceIds, type GamingRequestCoverageAssessment } from '@shared/gaming/gamingClearEvidence.js';
@@ -232,14 +232,14 @@ export async function evaluateGamingHybridCandidates(
       }
       policy.autoStoreAllowed = policy.autoStoreAllowed && freshness.autoStoreAllowed;
       if (normalizeGamingGameIdentity(freshness.game) !== normalizeGamingGameIdentity(input.game)) { reject('GAME_MISMATCH'); continue; }
-      const scoped = selectGamingEditionScopedEvidence(document, input);
+      const scoped = selectGamingSourceEditionScopedEvidence(document, input, freshness.edition);
       if (scoped.reasonCodes.includes('GAME_MISMATCH')) { reject('GAME_MISMATCH'); continue; }
       if (scoped.status === 'conflict') { reject('EDITION_CONFLICT'); continue; }
       if (scoped.status === 'unverified' && scoped.reasonCodes.length) { reject('EDITION_UNVERIFIED'); continue; }
-      if (input.edition && !gamingEditionEvidenceMatchesRequest(freshness.edition, input.edition)) {
+      if (input.edition && !gamingEditionEvidenceMatchesRequest(freshness.edition, input.edition, input)) {
         reject(freshness.edition ? 'EDITION_CONFLICT' : 'EDITION_UNVERIFIED'); continue;
       }
-      if (!input.edition && freshness.edition) { reject('EDITION_UNVERIFIED'); continue; }
+      if (!input.edition && freshness.edition && !gamingEditionEvidenceMatchesRequest(freshness.edition, undefined, input)) { reject('EDITION_UNVERIFIED'); continue; }
       const applies = (values: string[] | undefined, wanted: string | undefined) => !values?.length
         || values.some(value => value.toLowerCase() === 'all' || value.toLowerCase() === wanted?.toLowerCase());
       if (!applies(freshness.platforms, input.platform) && (input.platform || gamingApplicabilityScopeRequired(input, 'platform')
