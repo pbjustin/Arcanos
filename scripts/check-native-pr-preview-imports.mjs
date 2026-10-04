@@ -818,7 +818,7 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ['scripts/skill-composition-core.d.mts', '08ca7185c7242734ab7015259990da9dd7eeec38432139a9eaecf03257c8810f'], // gitleaks:allow -- public source semantic SHA-256
   ['scripts/skill-composition-core.mjs', '669365ee5906d523ab1f841d4d25a5086ee8669f152eadfe01e466d939147982'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/chatgpt/gamingCompositionPreviewFixture.ts', '5c66dd4fb92143ea053c59663c845252324fd69e1c4709c47484eeb6e7bf7a45'], // gitleaks:allow -- public source semantic SHA-256
-  ['src/shared/chatgpt/gamingMcpPreviewFixture.ts', '4d3c65bf8110e14b0522b62f4197994d3432bef019f2b61a83fdc9833f16fedd'],
+  ['src/shared/chatgpt/gamingMcpPreviewFixture.ts', '6ba3e48181c75a0792951dcb548a96ce9aa0c7ff617848c5bee4d7463f3d25d3'],
   ['src/shared/gpt/generativeModelPolicyCore.ts', 'c1e29caf983333a351e66e6141ef59758ee45a4a158bb28c6290d9d9887ba1d3'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/gpt/generativeModelPolicyPreviewFixture.ts', '82268c7fd04fb2b6a236f6bac72ccb5d08ed666cf497541634d96cc73f5c0d2c'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/chatgpt/gamingMcpContract.ts', '858637f089c1dad1b438cff4b1db4034818981788d07aa3c58a8690854323f5d'],

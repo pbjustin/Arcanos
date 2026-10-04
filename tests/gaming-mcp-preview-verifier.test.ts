@@ -29,6 +29,23 @@ function fakeFetch(changedId: string, mutate: Mutation) {
 }
 
 describe('Gaming supplemental exact-head verifier fails closed', () => {
+  it('accepts the exact released catalog before verifying the fixed outputs and denied writes', async () => {
+    const result = await runGamingMcpPreviewE2e({ args, localGitState, fetchImpl: fakeFetch('unchanged', () => {}) });
+    expect(result.summary).toMatchObject({ status: 'PASS', requestsMade: plan.length });
+    expect(result.limits.maxResponseBytes).toBe(65_536);
+    expect(result.checks.find((check: { caseId: string }) => check.caseId === 'catalog')).toMatchObject({ httpStatus: 200 });
+  });
+  it.each(['description', 'outcome', 'scope'] as const)('rejects an unreviewed %s change to the released catalog', async field => {
+    const mutate: Mutation = body => {
+      const tools = (body.result as { tools: Array<Record<string, any>> }).tools;
+      if (field === 'description') tools[0].description += ' Unreviewed discovery authority.';
+      else if (field === 'outcome') tools.find(tool => tool.name === 'arcanos_gaming_hybrid_query')!
+        .outputSchema.$defs.GamingHybridResponse.properties.frontendOutcome.enum.push('unreviewed');
+      else tools[0].securitySchemes[0].scopes.push('arcanos:gaming:sources:write');
+    };
+    await expect(runGamingMcpPreviewE2e({ args, localGitState, fetchImpl: fakeFetch('catalog', mutate) }))
+      .rejects.toThrow('GAMING_PREVIEW_EXACT_CATALOG:catalog');
+  });
   it.each([
     ['query', (_body, headers) => { delete headers[gaming.proofHeader]; }, 'SUCCESS_PROOF'],
     ['hybrid', (_body, headers) => { delete headers[migration.proofHeader]; }, 'SUCCESS_PROOF'],
