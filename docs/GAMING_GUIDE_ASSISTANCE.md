@@ -912,7 +912,11 @@ continues to audit ledgers using its prior result/fallback semantics. The only
 shared provider change is an optional per-call zero-retry setting whose absent
 case retains existing behavior. Three existing pure Gaming fixture digests are
 updated for reviewed code changes; the sealed preview import boundary is retained
-without importing the Gaming scoring engine or adding effects.
+without importing the Gaming scoring engine or adding effects. The sealed CLEAR
+proof tests missing region against an explicit region-dependent question and
+separately admits ordinary advice with acquired regional metadata. All original
+identity, patch, currentness, extraction, security, structural and answer-binding
+mutation checks remain active.
 
 All Gaming guide/build/meta generation uses the existing audit-content redaction
 and optional-side-effect suppression flags. This keeps reasoning-ledger content

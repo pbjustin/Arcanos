@@ -44,6 +44,8 @@ describe('sealed Gaming CLEAR production-core fixture', () => {
       expect.objectContaining({ text: expect.stringContaining('Baseline valid for patches: 2.0') }), expect.objectContaining({ now: new Date('2026-09-09T12:00:00.000Z') }));
     expect(mockEvidence).toHaveBeenCalledWith(expect.objectContaining({ region: 'EU' }), expect.any(Object), expect.any(Object));
     expect(mockEvidence).toHaveBeenCalledWith(expect.objectContaining({ region: 'US' }), expect.any(Object), expect.any(Object));
+    expect(mockEvidence).toHaveBeenCalledWith(expect.objectContaining({ prompt: 'How do regional Intelligence, staves, and spell choices work?' }),
+      expect.any(Object), expect.any(Object));
     expect(mockCreate).toHaveBeenCalledWith(expect.objectContaining({ profile: 'answer', findings: [expect.objectContaining({ code: 'UNSUPPORTED_MECHANIC', severity: 'warning' })] }));
     expect(mockBinding).toHaveBeenCalledWith(expect.objectContaining({ response: expect.stringContaining('Guaranteed on every patch.') }));
     expect(mockEvidence).toHaveBeenCalledWith(expect.objectContaining({ prompt: 'What is Copperblade weight value and Silverblade weight value?' }),
@@ -51,6 +53,18 @@ describe('sealed Gaming CLEAR production-core fixture', () => {
       expect.objectContaining({ requireRequestCoverage: true }));
     expect(mockEvidence).toHaveBeenCalledWith(expect.any(Object), expect.objectContaining({ structuralConflictAssessmentUnavailable: true }),
       expect.objectContaining({ requireRequestCoverage: true }));
+  });
+
+  it('keeps ordinary regional metadata usable while missing material region remains unknown', () => {
+    runGamingClearPreview();
+    const regionalCalls = mockEvidence.mock.calls.map((args, index) => ({ args, result: mockEvidence.mock.results[index] }))
+      .filter(({ args }) => args[1].sources.some(source => Array.isArray(source.freshnessMetadata?.regions) && source.freshnessMetadata.regions.includes('EU'))
+        && !args[0].requestedVersion && !args[0].region);
+    const ordinary = regionalCalls.find(({ args }) => args[0].prompt === 'How do Intelligence, staves, and spell choices work?');
+    const material = regionalCalls.find(({ args }) => args[0].prompt === 'How do regional Intelligence, staves, and spell choices work?');
+    expect(ordinary?.result).toMatchObject({ type: 'return', value: { decision: 'accept', gates: { compatibility: 'verified' } } });
+    expect(material?.result).toMatchObject({ type: 'return', value: { gates: { compatibility: 'unknown' } } });
+    expect(material?.result.type === 'return' && material.result.value.decision).not.toBe('accept');
   });
 
   it.each(['valid baseline rejected', 'wrong patch admitted', 'wrong game admitted', 'filtered source admitted'])(
