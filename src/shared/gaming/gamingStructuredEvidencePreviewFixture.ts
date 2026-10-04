@@ -263,7 +263,9 @@ async function requireBaseGameScope(): Promise<void> {
   const unknown = doc(table('Topic', 'Samurai Uchigatana Unsheathe'));
   requireProof(scope(unknown).status === 'unverified' && !fresh(unknown).edition && source(unknown, input).decision !== 'accept');
   const incompatible = doc(table('Scope', 'Shadow of the Erdtree'), 'Edition: Base game.');
-  requireProof(scope(incompatible).status === 'unverified' && source(incompatible, input).decision !== 'accept');
+  const incompatibleScope = scope(incompatible);
+  requireProof(incompatibleScope.status === 'conflict' && incompatibleScope.reasonCodes.includes('CONFLICTING_EDITION_SCOPE')
+    && source(incompatible, input).decision === 'reject');
   const wrongGame = doc(table('Scope', 'base-game', fact, { Game: 'Dark Souls III' }));
   requireProof(scope(wrongGame).reasonCodes.includes('GAME_MISMATCH') && source(wrongGame, input).decision !== 'accept');
   const contradictory = doc(table('Scope', 'base-game', fact, { Edition: 'Shadow of the Erdtree' }));

@@ -75,6 +75,28 @@ describe('sealed Gaming structured evidence component proof', () => {
     await expect(runGamingStructuredEvidencePreview()).rejects.toThrow(FAILURE);
   });
 
+  it('keeps explicit DLC-only records conflicting despite a base-game prose label', async () => {
+    await runGamingStructuredEvidencePreview();
+    const index = editionScope.mock.calls.findIndex(([doc]) => doc.text.startsWith('Edition: Base game.')
+      && doc.evidenceUnits?.some(unit => unit.fields.some(field => field.label === 'Scope' && field.value === 'Shadow of the Erdtree')));
+    expect(index).toBeGreaterThanOrEqual(0);
+    expect(editionScope.mock.results[index].value).toMatchObject({ status: 'conflict', reasonCodes: ['CONFLICTING_EDITION_SCOPE'], units: [], text: '' });
+    const conflictingDocument = editionScope.mock.calls[index][0];
+    const assessmentIndex = source.mock.calls.findIndex(([, doc]) => doc === conflictingDocument);
+    expect(assessmentIndex).toBeGreaterThanOrEqual(0);
+    expect(source.mock.results[assessmentIndex].value).toMatchObject({ decision: 'reject', gates: { identity: 'verified', compatibility: 'conflict' },
+      dimensionScores: { alignment: { reasonCodes: ['EDITION_CONFLICT'] } } });
+  });
+
+  it('detects explicit edition conflicts downgraded to unknown scope', async () => {
+    editionScope.mockImplementation((doc, input) => {
+      const selected = actualStructural.selectGamingEditionScopedEvidence(doc, input);
+      return selected.status === 'conflict' && selected.reasonCodes.includes('CONFLICTING_EDITION_SCOPE')
+        ? { ...selected, status: 'unverified' } : selected;
+    });
+    await expect(runGamingStructuredEvidencePreview()).rejects.toThrow(FAILURE);
+  });
+
   it('detects names or unsupported scope values used as base-game proof', async () => {
     editionScope.mockImplementation((doc, input) => {
       const selected = actualStructural.selectGamingEditionScopedEvidence(doc, input);
