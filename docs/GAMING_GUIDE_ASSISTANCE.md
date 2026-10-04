@@ -7,6 +7,30 @@ deployment.
 
 ## Request flow
 
+For the released hybrid guide workflow, ChatGPT/the frontend discovers public
+guide URLs. ARCANOS does not search the web in that workflow: it reads its
+existing corpus, grants bounded candidate submissions, and evaluates the URLs
+actually submitted. A URL-only candidate is sufficient input:
+
+```json
+{
+  "contractVersion": "gaming-hybrid-v2",
+  "workflowId": "<returned workflowId>",
+  "expectedRevision": 0,
+  "idempotencyKey": "samurai-guides-1",
+  "discoveryType": "gameplay_evidence",
+  "candidates": [{ "url": "https://example.org/elden-ring-samurai-guide" }]
+}
+```
+
+The original query retains the game, question and supplied class/progress.
+Frontend title, game, publisher, patch and category hints are optional untrusted
+discovery data. They are excluded from the backend evidence request; the
+protected resolver acquires the document and establishes its public citation
+identity independently. CLEAR, applicability, structure, coverage, freshness,
+Trinity and final answer validation operate on acquired evidence. Acceptance
+grants no durable storage consent. Source instructions remain rejected.
+
 Previously, intent extraction recognized platform, version, class, role,
 difficulty, progress, constraints, and spoiler preferences, but
 `BackendQueryAgent.build()` did not forward them. Stored candidate acquisition

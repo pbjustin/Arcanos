@@ -106,13 +106,16 @@ function unsafeHints(candidate: GamingHybridCandidateInput): boolean {
 
 /** Safe acquisition happens once. Full documents stay internal; existing chunks and selection bound context. */
 export async function evaluateGamingHybridCandidates(
-  input: GamingStoredKnowledgeInput & { candidates: readonly GamingHybridCandidateInput[]; region?: string;
+  submission: GamingStoredKnowledgeInput & { candidates: readonly GamingHybridCandidateInput[]; region?: string;
     discoveryType?: 'gameplay_evidence' | 'currentness_verification'; protocolVersion?: 'gaming-hybrid-v1' | 'gaming-hybrid-v2' },
   context: { actorKey: string; requestId?: string; traceId?: string; workflowId?: string; signal?: AbortSignal; maxElapsedMs?: number },
   dependencies: GamingHybridCandidateDependencies = {}
 ): Promise<{ decisions: GamingHybridCandidateDecision[]; accepted: GamingHybridAcceptedCandidate[]; knowledge: GamingStoredKnowledgeContext;
   currentnessEvidence?: GamingFreshnessEvidence[]; currentnessFailureBlocksAdvisory?: boolean; acquisitionWorkMs?: number }> {
-  if (!context.actorKey || input.candidates.length < 1 || input.candidates.length > GAMING_HYBRID_CANDIDATE_LIMITS.count) {
+  // Keep discovery hints outside the evidence request. Acquisition alone establishes
+  // document identity; no frontend label enters CLEAR, applicability or selection.
+  const { candidates: submittedCandidates, ...input } = submission;
+  if (!context.actorKey || submittedCandidates.length < 1 || submittedCandidates.length > GAMING_HYBRID_CANDIDATE_LIMITS.count) {
     throw Object.assign(new Error('Submit one to three candidate URLs within an authenticated workflow.'), { code: 'GAMING_HYBRID_CANDIDATE_LIMIT' });
   }
   const now = dependencies.now ?? (() => new Date());
@@ -135,7 +138,7 @@ export async function evaluateGamingHybridCandidates(
   const allRecords: GamingStoredEvidenceRecord[] = [];
   const terms = buildGamingRetrievalTerms(input).focusTerms;
   const queue: Array<{ candidate: GamingHybridCandidateInput; submittedIndex: number; origin?: 'required_official_article' }> =
-    input.candidates.map((candidate, submittedIndex) => ({ candidate, submittedIndex }));
+    submittedCandidates.map((candidate, submittedIndex) => ({ candidate, submittedIndex }));
   for (const { candidate, submittedIndex, origin } of queue) {
     callerSignal?.throwIfAborted();
     let publicUrl: string | undefined;
@@ -349,7 +352,7 @@ export async function evaluateGamingHybridCandidates(
   const knowledge = formatStoredGamingEvidence(selected, input, limits);
   knowledge.context = knowledge.context.replaceAll('Origin: stored gaming knowledge;', 'Origin: backend-validated transient Gaming evidence;');
   logger.info('gaming.hybrid.candidates_evaluated', { requestId: context.requestId, traceId: context.traceId,
-    policyVersion: GAMING_HYBRID_CANDIDATE_POLICY_VERSION, candidateCount: input.candidates.length,
+    policyVersion: GAMING_HYBRID_CANDIDATE_POLICY_VERSION, candidateCount: submittedCandidates.length,
     evaluatedCandidateCount: queue.length, requiredArticleCount: queue.filter(item => item.origin === 'required_official_article').length,
     acceptedCount: accepted.length, rejectedCount: decisions.filter(decision => decision.decision === 'rejected').length,
     selectedChunkCount: knowledge.evidence?.length ?? 0, selectedContextChars: knowledge.context.length,
