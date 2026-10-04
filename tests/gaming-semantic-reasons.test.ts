@@ -37,6 +37,18 @@ describe('independent Gaming evidence failure semantics', () => {
     const wrong = document(prose.replace('Elden Ring', 'Diablo 4'), 'Diablo 4 guide');
     expect(assessGamingClearSourceIdentity(wrong, request, policy)).toEqual({ status: 'conflict', reasonCodes: ['GAME_MISMATCH'] });
   });
+  it('uses coupled acquired title and body proof for games outside the alias catalog', () => {
+    const wrong = document('Stardew Valley gameplay guide. Plant crops in the spring and water them each morning. This Stardew Valley guide covers copper tools and the first farm upgrade.', 'Stardew Valley guide');
+    expect(assessGamingClearSourceIdentity(wrong, request, policy)).toEqual({ status: 'conflict', reasonCodes: ['GAME_MISMATCH'] });
+    expect(assessment(wrong).gates.identity).toBe('conflict');
+  });
+  it('checks explicit wrong-game body before a same-title DLC scope conflict', () => {
+    const wrong = document('In Diablo 4, the barbarian build uses fury and shouts. This guide describes Diablo 4 equipment and class skills for a melee leveling route.', 'Elden Ring Shadow of the Erdtree guide');
+    const source = assessment(wrong);
+    expect(source.gates.identity).toBe('conflict');
+    expect(source.findings).toEqual(expect.arrayContaining([expect.objectContaining({ code: 'GAME_MISMATCH' })]));
+    expect(source.dimensionScores.alignment.reasonCodes).not.toContain('EDITION_CONFLICT');
+  });
   it('does not report date or patch metadata uncertainty as an edition problem', () => {
     const doc = document(`Effective until: malformed. ${prose}`);
     const source = assessment(doc);

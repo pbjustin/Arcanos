@@ -735,7 +735,7 @@ describe('Gaming hybrid durable lifecycle', () => {
     { name: 'matching patch but wrong build', labels: 'Patch: 1.17. Build: 1.16.',
       usable: false, reason: 'CURRENT_BUILD_COVERAGE_MISSING' },
     { name: 'date-only applicability after the official release', labels: 'Published at: 2026-09-09. Source updated at: 2026-09-09.',
-      usable: false, reason: 'APPLICABILITY_METADATA_UNVERIFIED' }
+      usable: false, reason: 'GUIDE_PATCH_UNSPECIFIED' }
   ])('checks $name through authenticated HTTP with inline platforms and an installed-version list', async ({ labels, usable, reason }) => {
     // Authored synthetic bytes exercise the observed DOM grammar; they do not attest any live guide or release.
     const { workflow, query, missing, verified, guideUrl, indexUrl, articleUrl } = await mageCurrentnessLifecycle(labels, {
@@ -1011,7 +1011,7 @@ describe('Gaming hybrid durable lifecycle', () => {
     useSparseTable();
     const edition = await evaluate({ prompt: locationQuestion, edition: 'Remastered' });
     expect(edition.accepted).toHaveLength(0);
-    expect(edition.decisions[0].reasonCodes).toContain('EDITION_UNVERIFIED_OR_MISMATCH');
+    expect(edition.decisions[0].reasonCodes).toContain('EDITION_UNVERIFIED');
   });
 
   it('keeps an undated structured community report transient on request and does not assert present availability', async () => {

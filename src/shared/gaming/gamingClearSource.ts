@@ -62,16 +62,21 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
   const labels = [...document.text.slice(0, 32_000).matchAll(/\bgame\s*:\s*(.{1,160}?)(?=\.(?:\s|$)|;|\||\n|\s+(?:Edition|Platform|Region|Patch|Build|Published at|Effective from)\s*:|$)/giu)];
   if (labels.some(label => !expected.has(normalizeGamingGameIdentity(label[1])))) return { status: 'conflict', reasonCodes: ['GAME_MISMATCH'] };
   const metadata = [document.metadata.title, document.metadata.headings].filter((value): value is string => Boolean(value));
+  let editionScopeConflict = false;
   for (const value of metadata) {
     const identity = normalizeGamingGameIdentity(value);
     // Explicit sequel/edition qualifiers cannot be erased by a broad franchise alias.
     if ([...expected].some(game => identity.startsWith(`${game}-`) && DISTINCT_SCOPE.test(identity.slice(game.length + 1))
       && ![...expected].some(full => full !== game && (identity === full || identity.startsWith(`${full}-`))))) {
-      return { status: 'conflict', reasonCodes: [/^shadow-of-the-erdtree|^(?:dlc|expansion)(?:-|$)/u.test(identity.slice(normalizeGamingGameIdentity(input.game).length + 1))
-        ? 'EDITION_CONFLICT' : 'GAME_MISMATCH'] };
+      if (/^shadow-of-the-erdtree|^(?:dlc|expansion)(?:-|$)/u.test(identity.slice(normalizeGamingGameIdentity(input.game).length + 1)))
+        editionScopeConflict = true;
+      else return { status: 'conflict', reasonCodes: ['GAME_MISMATCH'] };
     }
-    const detected = detectGamingDocumentGame({ canonicalUrl: document.publicUrl, pageTitle: value });
-    if (detected.game && detected.source === 'alias' && detected.confidence >= 0.8 && !expected.has(normalizeGamingGameIdentity(detected.game))
+    // Acquired title and body can establish an explicit different subject even
+    // outside the alias catalog. A URL label must not hide that contradiction.
+    const detected = detectGamingDocumentGame({ canonicalUrl: '', pageTitle: value });
+    const acquiredBody = document.text.replace(/\bgame\s*:[^.;|\n]{1,160}[.;]?/giu, '');
+    if (detected.game && (detected.source === 'alias' || containsIdentity(acquiredBody, detected.game)) && detected.confidence >= 0.8 && !expected.has(normalizeGamingGameIdentity(detected.game))
       && ![...expected].some(game => containsIdentity(value, game))) return { status: 'conflict', reasonCodes: ['GAME_MISMATCH'] };
 
   }
@@ -95,7 +100,11 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
       const bodyIdentity = normalizeGamingGameIdentity(bodySubject);
       return bodyIdentity.startsWith(`${game}-`) && DISTINCT_SCOPE.test(bodyIdentity.slice(game.length + 1))
         && ![...expected].some(full => full !== game && bodyIdentity.startsWith(`${full}-`));
-    })) return { status: 'conflict', reasonCodes: ['GAME_MISMATCH'] };
+    })) {
+      const qualifier = normalizeGamingGameIdentity(bodySubject).slice(normalizeGamingGameIdentity(input.game).length + 1);
+      if (/^shadow-of-the-erdtree|^(?:dlc|expansion)(?:-|$)/u.test(qualifier)) editionScopeConflict = true;
+      else return { status: 'conflict', reasonCodes: ['GAME_MISMATCH'] };
+    }
   }
   const ordinaryTitle = metadata.some(value => [...expected].some(game => {
     const identity = normalizeGamingGameIdentity(value);
@@ -106,7 +115,8 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
   const reviewedAssociation = Boolean(policy.ruleId) && ['official', 'specialist', 'community'].includes(policy.authority);
   if (!(metadataAnchor && proseAnchor) && !(reviewedAssociation && metadataAnchor))
     return { status: 'unknown', reasonCodes: ['GAME_IDENTITY_UNVERIFIED'] };
-  if (scoped.status === 'conflict') return { status: 'conflict', reasonCodes: ['EDITION_CONFLICT'] };
+  // Evaluate game contradictions before reporting narrower edition scope.
+  if (editionScopeConflict || scoped.status === 'conflict') return { status: 'conflict', reasonCodes: ['EDITION_CONFLICT'] };
   if (scoped.status === 'unverified' && scoped.reasonCodes.length) return { status: 'unknown', reasonCodes: ['EDITION_UNVERIFIED'] };
   if (input.edition && normalizeGamingEditionIdentity(input.edition) === 'base-game'
     && (metadata.some(value => /\bshadow[\s-]+of[\s-]+the[\s-]+erdtree\b/iu.test(value))
