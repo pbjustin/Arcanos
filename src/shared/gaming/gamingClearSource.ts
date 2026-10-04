@@ -101,10 +101,13 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
   let scoped = selectGamingEditionScopedEvidence(document, input);
   const minecraftScope = readGamingMinecraftEditionScope(document, input.game);
   const minecraft = normalizeGamingGameIdentity(input.game) === 'minecraft';
+  const minecraftFamily = /^minecraft(?:-(?:java|bedrock)(?:-edition)?)?$/u.test(normalizeGamingGameIdentity(input.game));
+  const distinctScope = (qualifier: string) => DISTINCT_SCOPE.test(qualifier)
+    || minecraftFamily && /^story-mode(?:-|$)/u.test(qualifier);
   const minecraftIdentity = (value: string) => minecraft && /^minecraft-(?:java|bedrock)(?:-edition)?$/u.test(value);
   const minecraftQualifier = (value: string) => {
     const match = /^(?:java|bedrock)(?:-edition)?(?:-(.*))?$/u.exec(value);
-    return minecraft && Boolean(match) && !(match?.[1] && DISTINCT_SCOPE.test(match[1]));
+    return minecraft && Boolean(match) && !(match?.[1] && distinctScope(match[1]));
   };
   if (scoped.reasonCodes.includes('GAME_MISMATCH')) return { status: 'conflict', reasonCodes: ['GAME_MISMATCH'] };
   const labels = [...document.text.slice(0, 32_000).matchAll(/\bgame\s*:\s*(.{1,160}?)(?=\.(?:\s|$)|;|\||\n|\s+(?:Edition|Platform|Region|Patch|Build|Published at|Effective from)\s*:|$)/giu)];
@@ -114,7 +117,7 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
   for (const value of metadata) {
     const identity = normalizeGamingGameIdentity(value);
     // Explicit sequel/edition qualifiers cannot be erased by a broad franchise alias.
-    if ([...expected].some(game => identity.startsWith(`${game}-`) && DISTINCT_SCOPE.test(identity.slice(game.length + 1))
+    if ([...expected].some(game => identity.startsWith(`${game}-`) && distinctScope(identity.slice(game.length + 1))
       && ![...expected].some(full => full !== game && (identity === full || identity.startsWith(`${full}-`))))) {
       if (/^shadow-of-the-erdtree|^(?:dlc|expansion)(?:-|$)/u.test(identity.slice(normalizeGamingGameIdentity(input.game).length + 1)))
         editionScopeConflict = true;
@@ -158,7 +161,7 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
       return { status: 'conflict', reasonCodes: ['GAME_MISMATCH'] };
     if ([...expected].some(game => {
       const bodyIdentity = normalizeGamingGameIdentity(bodySubject);
-      return bodyIdentity.startsWith(`${game}-`) && DISTINCT_SCOPE.test(bodyIdentity.slice(game.length + 1))
+      return bodyIdentity.startsWith(`${game}-`) && distinctScope(bodyIdentity.slice(game.length + 1))
         && ![...expected].some(full => full !== game && bodyIdentity.startsWith(`${full}-`));
     })) {
       const qualifier = normalizeGamingGameIdentity(bodySubject).slice(normalizeGamingGameIdentity(input.game).length + 1);

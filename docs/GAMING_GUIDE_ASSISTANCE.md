@@ -121,7 +121,9 @@ editions reject with `EDITION_CONFLICT`; independently game-verified source fact
 with an explicit edition-exclusive restriction, and current/latest requests with
 only one acquired edition, require a Java-versus-Bedrock clarification. Complete
 requested titles such as Minecraft Java remain distinct catalog identities;
-Minecraft Dungeons/Legends and sequels remain excluded from the parent game.
+Minecraft Dungeons/Legends, Story Mode and sequels remain excluded from the parent game.
+The Story Mode fence is confined to the Minecraft parent and Java/Bedrock identities;
+an explicitly requested complete Minecraft Story Mode title retains its own identity.
 Unproved or conflicting acquired scope stays conservative. Other games without a
 reviewed edition model do not receive Minecraft aliases or a new base-game default.
 
