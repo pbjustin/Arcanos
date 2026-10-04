@@ -7,7 +7,9 @@ export type GamingFreshnessDisposition = 'NOT_REQUIRED' | 'ADVISORY' | 'REQUIRED
 
 /** Current-state facts need proof; recommendation usefulness and freshness are separate. */
 export function resolveGamingFreshnessDisposition(input: { prompt: string; mode?: string; requestedVersion?: string }): GamingFreshnessDisposition {
-  const prompt = input.prompt.slice(0, 8_000).replace(/\bcurrent\s*\/\s*latest\b/giu, 'latest');
+  const prompt = input.prompt.slice(0, 8_000).replace(/\bcurrent\s*\/\s*latest\b/giu, 'latest')
+    .replace(/\bcurrent\s+(area|checkpoint|location|objective|progress|quest)\b/giu, '$1')
+    .replace(/\bmy\s+current\s+(build|loadout|class|weapon|gear)\b/giu, 'my existing $1');
   const classification = classifyGamingQuestionFreshness({ ...input, prompt });
   const identityQuestion = /\b(?:what|which)(?:\s+(?:is|are)|['’]s)?\s+(?:the\s+)?(?:current|latest|newest|active)\s+([^?!.\n]{0,80}?)\b(?:patch|hotfix|update|release|version|build|season|league|event)\b/iu.exec(prompt);
   const asksIdentity = Boolean(identityQuestion && !/\b(?:best|build|loadout|strategy|guide|weapon|class|meta)\b/iu.test(identityQuestion[1]));
@@ -17,19 +19,25 @@ export function resolveGamingFreshnessDisposition(input: { prompt: string; mode?
     && /\b(?:current|latest|active|live|running|now|today)\b/iu.test(identityStatePredicate)
     && !/\b(?:best|better|good|viable|effective|optimal|works?|recommended|should)\b/iu.test(identityBeforeState[1] + identityStatePredicate));
   const currentRelease = /\b(?:current|latest|newest|active)\b[^?!.\n]{0,80}\b(?:patch|hotfix|update|release|version)\b/iu.test(prompt);
+  const explicitCurrentRecommendation = /\b(?:current|latest|newest)\b[^?!.\n]{0,80}\b(?:meta|builds?|loadouts?|strateg(?:y|ies)|weapons?|class(?:es)?|recommendations?)\b/iu.test(prompt)
+    || /\b(?:meta|builds?|loadouts?|strateg(?:y|ies)|weapons?|class(?:es)?)\b[^?!.\n]{0,80}\b(?:currently|right\s+now|current\s+meta)\b/iu.test(prompt)
+    || /\b(?:today|now|currently)\b/iu.test(prompt) && /\b(?:best|strongest|optimal|meta)\b/iu.test(prompt)
+      && /\b(?:weapons?|builds?|class(?:es)?|loadouts?|strateg(?:y|ies))\b/iu.test(prompt);
   const currentStateRequest = prompt.split(/[?!.;\n]|\b(?:and|but|then)\b/iu).some(clause => {
     const object = /\b(?:tell\s+me|show\s+me|identify|list|summarize|describe|explain|report)\s+(?:the\s+)?((?:current|latest|newest|active)\b.{0,120})/iu.exec(clause)?.[1] ?? '';
     return /\b(?:patch|hotfix|update|release)\s+(?:notes|changes|details|number|version|identity)\b/iu.test(object)
       || /\b(?:patch|hotfix|update|release|version|season|league|event)\b/iu.test(object)
       && !/\b(?:build|loadout|strategy|guide|weapons?|class|meta|recommend(?:ation|ations)?|tactics?)\b/iu.test(object);
   });
-  if (classification === 'live_status'
+  if (input.requestedVersion
+    || classification === 'live_status'
+    || currentRelease
+    || explicitCurrentRecommendation
+    || /\bwhat\s+(?:changed|changes)\b[^?!.\n]{0,60}\b(?:today|now|currently)\b/iu.test(prompt)
     || /\b(?:as\s+of|historical|previous\s+patch|old\s+patch)\b/iu.test(prompt)
     || asksIdentity
     || asksActiveIdentity
     || currentStateRequest
-    || currentRelease && !/\b(?:build|loadout|strategy|guide|weapons?|class|meta|recommend(?:ation|ations)?|tactics?)\b/iu.test(prompt)
-    || currentRelease && /\b(?:tell\s+me|show\s+me|identify|list)\s+(?:the\s+)?(?:current|latest|newest|active)\b|\bwhat\s+(?:changed|changes)\b|\bpatch\s+(?:number|version)\b/iu.test(prompt)
     || /\b(?:current|latest)\b[^?!.\n]{0,80}\bbuild\s+(?:number|version)\b/iu.test(prompt)
     || /\b(?:what|which)\b.{0,60}\b(?:season|event)\b.{0,30}\b(?:current|active|running|live)\b/iu.test(prompt)
     || /\b(?:is|are)\b.{0,100}\b(?:event|maintenance|servers?)\b.{0,60}\b(?:active|running|available|online|offline|down|live|over|ongoing|today|now)\b/iu.test(prompt)

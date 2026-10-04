@@ -376,10 +376,14 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
     const disposition = resolveGamingFreshnessDisposition(workflow.pipeline);
     const advisory = disposition === 'ADVISORY' && !freshness.usable
       ? selectGamingAdvisoryGameplayEvidence({ game: input.game, freshness, evidence, now: new Date(deps.now()) }) : undefined;
+    // Ordinary v2 guides can qualify unknown compatibility immediately. An
+    // attempted official check still cannot hide security or material conflicts;
+    // explicit v1 retains its bounded currentness continuation.
     const advisoryAllowed = Boolean(advisory && !advisory.conflict
-      && workflow.currentnessRound >= LIMITS.currentnessRounds
-      && workflow.currentnessSubmission && !workflow.currentnessSubmission.currentnessFailureBlocksAdvisory
-      && isGamingAdvisoryCurrentnessOperation({ decisions: workflow.currentnessSubmission.decisions ?? [] })
+      && (v2 && workflow.currentnessRound === 0 && !workflow.currentnessSubmission
+        || workflow.currentnessRound >= LIMITS.currentnessRounds
+          && workflow.currentnessSubmission && !workflow.currentnessSubmission.currentnessFailureBlocksAdvisory
+          && isGamingAdvisoryCurrentnessOperation({ decisions: workflow.currentnessSubmission.decisions ?? [] }))
       && !freshness.reasons.some(reason => ['REQUESTED_PATCH_NOT_CURRENT', 'HISTORICAL_AS_OF_UNSUPPORTED',
         'EVIDENCE_LIMIT_EXCEEDED', 'INVALID_VERIFICATION_TIME'].includes(reason)));
     const selected = new Set(freshness.selectedEvidenceIds);

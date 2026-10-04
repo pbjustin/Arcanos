@@ -148,6 +148,7 @@ export function classifyGamingQuestionFreshness(input: { prompt: string; mode?: 
   const effectivenessOrTime = /\b(?:best|better|strong(?:est|er)?|weak(?:est|er)?|effective(?:ness)?|powerful|optimal|viab(?:le|ility)|top|good|today|currently|now)\b/iu.test(prompt);
   const recommendationIntent = /\b(?:recommend(?:ed|ation|ations)?|suggest(?:ed|ion|ions)?)\b|\bshould\b.{0,80}\b(?:choose|pick|select|use|equip|play)\b/iu.test(prompt);
   if (input.requestedVersion || input.mode === 'meta' || input.mode === 'build' || (combatSubject && (effectivenessOrTime || recommendationIntent))
+    || /\bwhat\s+(?:changed|changes)\b[^?!.\n]{0,60}\b(?:today|now|currently)\b/iu.test(prompt)
     || /\b(?:patch|hotfix|balance|nerf|buff|meta|viable|latest|current(?!\s+(?:area|checkpoint|location|objective|progress|quest)\b)|right\s+now|dps|damage\s+(?:value|number)|weapon\s+effectiveness|(?:best|strongest)\s+(?:weapon|build|class|loadout|talent|equipment))\b/iu.test(prompt)) return 'patch_sensitive';
   return 'stable';
 }

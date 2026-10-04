@@ -374,6 +374,65 @@ describe('Gaming hybrid durable lifecycle', () => {
     };
   }
 
+  it.each([
+    { name: 'unknown patch', labels: '', status: 'unverified' },
+    { name: 'older published guide', labels: 'Published at: 2025-01-01.', status: 'unverified' }
+  ])('generates a qualified ordinary v2 build from $name without an official discovery round', async fixture => {
+    setClock('2026-10-04T12:00:00.000Z');
+    const game = 'Lantern Voyage';
+    const guideUrl = 'https://guides.example.org/lantern-voyage-mage';
+    const guide = 'In Lantern Voyage, an early-game mage build uses the copper staff and Intelligence for spell damage. Allocate vigor for survival and mind for casting. Upgrade the copper staff before increasing spell variety. Open combat from range with a spell, then recover stamina before casting again. This early-game mage build favors safe positioning over trading hits.';
+    documentGame = game;
+    documentText = `${fixture.labels} ${guide}`;
+    mockTrinity.mockImplementation(async (request: any) => {
+      const result = `${guide} [Source 1]`;
+      const { assessment } = await request.context.runOptions.gamingClearAnswerAudit(result, {});
+      return { result, gamingClearAudit: assessment, meta: { provider: { finishReason: 'stop' } } };
+    });
+    const workflow = createGamingHybridWorkflow();
+    const queried = await workflow.query({ contractVersion: 'gaming-hybrid-v2', idempotencyKey: 'v2-advisory-query',
+      game, mode: 'build', class: 'Mage', question: 'Recommend an early-game mage build', storagePolicy: 'transient_only' }, context);
+    const submission = { contractVersion: 'gaming-hybrid-v2', workflowId: queried.body.workflowId,
+      expectedRevision: queried.body.revision, idempotencyKey: 'v2-advisory-guide', candidates: [{ url: guideUrl }] };
+    const result = await workflow.candidates(submission, context);
+    expect(result).toMatchObject({ status: 200, body: { state: 'answer_ready', nextAction: 'answer',
+      freshnessStatus: fixture.status, evidenceSelected: true, coverageSatisfied: true } });
+    expect(result.body.answer?.response).toContain('Current patch compatibility could not be verified');
+    expect(result.body.answer?.response).toContain('[Source 1]');
+    if (fixture.labels) expect(result.body.qualification).toContain('Guide publication date: 2025-01-01');
+    expect(result.body.answer?.sources.map(source => source.url)).toEqual([guideUrl]);
+    expect(result.body.effectivePatch).toBeUndefined();
+    expect(mockHttp).toHaveBeenCalledTimes(1);
+    expect(mockTrinity).toHaveBeenCalledTimes(1);
+    expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
+    const auditInput = JSON.parse((mockAuditCompletion.mock.calls[0][1] as any).messages[1].content);
+    expect(auditInput.verifiedEvidenceGates.freshness).toBe('unknown');
+    expect(auditInput.answer).toContain(result.body.qualification);
+    expect(jest.mocked(logger.info).mock.calls.filter(([event]) => event === 'gaming.currentness.operation_started')).toHaveLength(0);
+    expect(await workflow.candidates(submission, context)).toEqual(result);
+    expect(mockTrinity).toHaveBeenCalledTimes(1);
+    expect(jobs.size).toBe(0);
+    expect(database.records).toHaveLength(0);
+    expect(database.queries.some(sql => /^(?:INSERT|UPDATE|DELETE|CREATE|ALTER|DROP)\b/iu.test(sql))).toBe(false);
+  });
+
+  it('requires independently verified currentness for an explicit latest-patch v2 build', async () => {
+    setClock('2026-10-04T12:00:00.000Z');
+    documentGame = 'Lantern Voyage';
+    documentText = 'In Lantern Voyage, a mage build uses the copper staff and Intelligence for spells. Allocate vigor for survival and mind for casting. Upgrade the copper staff early and open combat from range with a spell. Recover stamina before casting again. This guide recommends the best mage build for its recorded patch, but does not identify the patch. This mage build favors safe positioning over trading hits.';
+    const workflow = createGamingHybridWorkflow();
+    const queried = await workflow.query({ contractVersion: 'gaming-hybrid-v2', idempotencyKey: 'v2-latest-build-query',
+      game: documentGame, mode: 'build', class: 'Mage', question: 'Recommend the best mage build on the latest patch' }, context);
+    const found = await workflow.candidates({ contractVersion: 'gaming-hybrid-v2', workflowId: queried.body.workflowId,
+      expectedRevision: queried.body.revision, idempotencyKey: 'v2-latest-build-guide',
+      candidates: [{ url: 'https://guides.example.org/lantern-voyage-mage' }] }, context);
+    expect(found.body).toMatchObject({ nextAction: 'verify_currentness', evidenceSelected: false,
+      freshnessStatus: 'unverified', acceptedGameplayCandidateCount: 1 });
+    expect(found.body.answer).toBeUndefined();
+    expect(mockTrinity).not.toHaveBeenCalled();
+    expect(mockAuditCompletion).not.toHaveBeenCalled();
+  });
+
   /** Synthetic publisher/guide content; no assertion about the live incident's guide title. */
   async function mageCurrentnessLifecycle(guideLabels = 'Patch: 1.10. Build: 1.10.1.', options: {
     http?: boolean; indexLabels?: string; articleLabels?: string; targetedPlatforms?: string | null;

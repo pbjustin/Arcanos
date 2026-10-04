@@ -195,7 +195,9 @@ describe('Gaming CLEAR bounded evidence decisions', () => {
     expect(JSON.stringify(data)).toBe(before);
   });
 
-  test.each(['Are the servers down now?', 'What is the latest Elden Ring patch?'])('an advisory flag cannot waive requested current-state proof: %s', prompt => {
+  test.each(['Are the servers down now?', 'What is the latest Elden Ring patch?',
+    'Recommend the best mage build on the latest patch', 'Which current copper staff build is best?',
+    'What is the current meta?'])('an advisory flag cannot waive requested current-state proof: %s', prompt => {
     const input = { game: 'Elden Ring', mode: 'guide' as const, prompt };
     const data = knowledge(input.game, [`Elden Ring gameplay guide: ${prompt} The synthetic old source discusses servers and patch 1.0.`]);
     expect(assessGamingClearEvidence(input, data, { now, allowAdvisoryFreshness: true }).decision).not.toBe('accept');

@@ -543,8 +543,8 @@ policy uses the requested fact, not game or publisher identity:
 | Disposition | Request | Behavior |
 | --- | --- | --- |
 | `NOT_REQUIRED` | Stable gameplay facts with no current-state or patch-sensitive recommendation requirement | Coverage, compatibility and CLEAR still apply; no current-patch claim is implied. |
-| `ADVISORY` | Ordinary guide, build, loadout, strategy, class/weapon and meta-style recommendations, including patch-sensitive recommendations | Attempt the requested bounded official verification first. If it cannot verify freshness without a material conflict, retain adequate gameplay evidence and generate once with a visible freshness warning. |
-| `REQUIRED` | Server/outage/maintenance or live-event status, the latest/current patch or build itself, other explicit real-time state facts, and historical/as-of patch facts | Unavailable or unverified currentness blocks a current-state answer; historical facts require acquired matching patch applicability. Stale gameplay material cannot replace that proof. |
+| `ADVISORY` | Ordinary guide, build, loadout, strategy, class/weapon and meta-style recommendations without an explicit currentness request | In v2, adequate gameplay evidence can generate once immediately with a visible freshness warning when patch compatibility is unknown. Explicit v1 retains its bounded official verification round before qualified generation. |
+| `REQUIRED` | Explicit latest/current-patch recommendations, current meta, current seasonal strategies, server/outage/maintenance or live-event status, other explicit real-time state facts, and requested historical/numbered patch facts | Unavailable or unverified currentness blocks a current-state answer; historical facts require acquired matching patch applicability. Stale gameplay material cannot replace that proof. |
 
 An applicable official current-update index and compatible gameplay material are
 needed to describe recommendations as verified current. Newly fetched old patch
@@ -597,7 +597,15 @@ currentness claim without verification. An explicit historical patch can use
 matching patch evidence among active records; date-only historical mapping and
 searching inactive historical source revisions remain unsupported.
 
-After the one official-currentness operation is consumed, insufficient extraction,
+For ordinary v2 recommendations, missing current-patch verification qualifies
+the answer instead of requiring an official discovery round. CLEAR, gameplay
+coverage and grounded generation must still pass. If an official operation was
+requested, it cannot be bypassed after a security or material conflict failure.
+Explicit latest/current-patch and current-meta requests always retain strict
+verification. A player's current area or existing build is request context,
+not an explicit request for current-patch compatibility.
+
+For explicit v1 recommendations, after the one official-currentness operation is consumed, insufficient extraction,
 an unavailable official index, incomplete currentness metadata or unavailable
 revalidation can produce an advisory `answer_ready` only if independent gameplay
 coverage and CLEAR pass and grounded generation succeeds. The response retains
