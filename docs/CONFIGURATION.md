@@ -2079,3 +2079,14 @@ Rollback: set `CHATGPT_MCP_ENABLED=false` in the separately authorized target
 and restart/redeploy through its approved process. No database migration or
 legacy route removal is required. Existing Action routes and operator MCP keep
 their own configuration and credentials. This PR changes no deployed settings.
+
+## Separate live PR preview lane
+
+[Live PR preview testing](LIVE_PR_PREVIEW.md) is default-off and absent from the
+normal application launcher. Only its independently trusted supervisor reads
+`ARCANOS_LIVE_PREVIEW_OPENAI_API_KEY`, after signed approval tied to the exact PR
+SHA, isolated deployment, explicit limits and a durable single-use claim. Never
+configure this dedicated preview provider key on a PR service or PR CI runner.
+The isolated child receives ephemeral broker/test bearers in a private handoff,
+a closed identity environment, and no provider, database or OAuth credentials.
+This does not enable test authentication in production or the sealed preview.

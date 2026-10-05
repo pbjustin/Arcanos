@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-05T02:50:44.283Z",
+  "generatedAt": "2026-10-05T06:51:40.434Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -762,6 +762,12 @@
         },
         {
           "relativePath": "src/lib/tokenStore.ts"
+        },
+        {
+          "relativePath": "src/livePrPreviewApplication.ts"
+        },
+        {
+          "relativePath": "src/livePrPreviewGamingAdapter.ts"
         },
         {
           "relativePath": "src/mcp/arcanos-core-advisory-stdio.ts"
@@ -4435,6 +4441,9 @@
           "relativePath": "tests/gaming-large-guide-rag.integration.test.ts"
         },
         {
+          "relativePath": "tests/gaming-live-runtime.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-location-scope.test.ts"
         },
         {
@@ -4991,6 +5000,9 @@
         },
         {
           "relativePath": "tests/legacy-root-route-compat.test.ts"
+        },
+        {
+          "relativePath": "tests/live-pr-preview-application.test.ts"
         },
         {
           "relativePath": "tests/local-agent-device-policy.test.ts"

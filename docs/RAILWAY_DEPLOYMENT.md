@@ -3,6 +3,14 @@
 ## Overview
 This runbook documents the repository-tracked Railway configuration and release safeguards for Arcanos. Tracked files do not prove the current live project linkage, environment state, or service topology.
 
+[Isolated live PR preview testing](LIVE_PR_PREVIEW.md) uses a separate default-off
+private service and trusted credential broker. It cannot run inside the sealed
+preview's empty-variable/import contract. The existing lifecycle workflows and
+sealed start overrides remain unchanged; setting a flag does not create a live
+environment or enable test authentication in production. Live provisioning,
+settings, exact-SHA operator approval, limits and paid execution are separate
+authorized steps.
+
 ## Prerequisites
 - Approved Railway account and project access.
 - A confirmed project, environment, and service target.
