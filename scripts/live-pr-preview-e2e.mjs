@@ -176,10 +176,21 @@ export async function runLivePreviewE2e(argv, dependencies = {}) {
     return { executed: false, mode: LIVE_PREVIEW_MODE, moduleId: args.moduleId, sourceCommit: args.commitSha, evidence,
       suite: verifyLivePreviewSuite(evidence, expectedIdentity), evidenceOrigin: 'operator_saved_observations_unattested' };
   }
-  if (!args.execute) return { executed: false, mode: LIVE_PREVIEW_MODE, sourceCommit: args.commitSha,
-    moduleId: args.moduleId, prNumber: args.prNumber, caseIds: args.caseId ? [args.caseId] : [...CASES.keys()],
-    maxHttpRequests: MAX_REQUESTS, requestTimeoutMs: args.requestTimeoutMs, totalTimeoutMs: args.totalTimeoutMs,
-    verification: { syntheticPreview: 'unverified', liveBackend: 'unverified', installedPluginOAuth: 'unverified' } };
+  if (!args.execute) {
+    let scenarioCaseIds;
+    if (args.scenarioFile) {
+      const scenarios = readJson(args.scenarioFile);
+      // Reuse execution validation without reading admission/session files or making requests.
+      readScenarios(scenarios, args.caseId ?? scenarios?.cases?.[0]?.caseId, args.moduleId);
+      scenarioCaseIds = args.caseId ? [args.caseId] : scenarios.cases.map(entry => entry.caseId);
+      for (const caseId of scenarioCaseIds.slice(1)) readScenarios(scenarios, caseId, args.moduleId);
+    }
+    return { executed: false, mode: LIVE_PREVIEW_MODE, sourceCommit: args.commitSha,
+      moduleId: args.moduleId, prNumber: args.prNumber, caseIds: args.caseId ? [args.caseId] : [...CASES.keys()],
+      ...(scenarioCaseIds ? { scenarioCaseIds } : {}),
+      maxHttpRequests: MAX_REQUESTS, requestTimeoutMs: args.requestTimeoutMs, totalTimeoutMs: args.totalTimeoutMs,
+      verification: { syntheticPreview: 'unverified', liveBackend: 'unverified', installedPluginOAuth: 'unverified' } };
+  }
 
   const now = dependencies.now ?? Date.now;
   const startedAtMs = now();

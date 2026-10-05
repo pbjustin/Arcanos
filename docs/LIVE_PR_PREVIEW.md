@@ -65,6 +65,17 @@ clean PR SHA without credentials, and independently attest its actual deployment
 and built artifacts through the trusted platform controller. Runtime environment
 strings and HTTP identity echoes alone do not prove platform ownership.
 
+The tracked Railway/Docker configuration starts the normal application, not this
+live lane. A live deployment needs a separate runtime bootstrap, a trusted
+supervisor checkout including `.git`, a supervisor-only persistent claims volume,
+private TLS gateways for the loopback listeners, and protected session-file
+handoff to the exact immutable deployment. Railway private networking alone does
+not establish TLS or outbound restrictions. Verify the actual egress controls
+before signing `egressRestricted: true`; endpoint names, static outbound IPs and
+IPv6 settings are not such evidence. Connected Railway OAuth tooling can report
+an existing provider variable's name while withholding its value; reuse then
+requires a secure credential binding to the supervisor.
+
 ## Approval and configuration contracts
 
 The operator creates an Ed25519-signed approval **after reviewing the exact PR
@@ -170,6 +181,13 @@ adapter input and public source URLs; the generic runner never requires Gaming
 input fields. Its default invocation is a dry run. Execution requires explicit
 network opt-in and the approved signed inputs/session. Use its tested CLI argument
 contract and the fixed case manifest in `scripts/live-pr-preview-verifier.mjs`.
+Real public-source candidate scenarios and an offline validation example are in
+[`examples/live-pr-preview/`](../examples/live-pr-preview/README.md). With
+`--scenario-file`, a dry run validates the selected case or every case in that
+manifest using the execution parser, without reading approval/session inputs or
+making requests. `scenarioCaseIds` reports the cases validated; it does not
+establish source availability, backend outcomes or live acceptance. Copy reviewed
+scenario data to an owner-only operator file outside the checkout before use.
 For an authorized single case, its complete invocation is:
 
 ```text

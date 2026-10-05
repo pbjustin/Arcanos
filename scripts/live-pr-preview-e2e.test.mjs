@@ -121,6 +121,45 @@ test('default mode does not read sessions, credentials or perform network reques
   assert.deepEqual(result.verification, { syntheticPreview: 'unverified', liveBackend: 'unverified', installedPluginOAuth: 'unverified' });
 });
 
+test('dry run validates every supplied scenario without admission, credentials or network access', async () => {
+  const f = fixture();
+  f.files.scenario.cases.push({ ...f.files.scenario.cases[0], caseId: 'unauthorized_test_identity' });
+  const args = ['--commit-sha', SHA, '--pr-number', '42', '--backend-base-url', BACKEND,
+    '--module-id', 'gaming', '--scenario-file', 'scenario'];
+  const dependencies = {
+    readOperatorFile: file => { assert.equal(file, 'scenario'); return JSON.stringify(f.files.scenario); },
+    readGitState: () => { assert.fail('scenario validation needs no trusted checkout'); },
+    fetch: () => { assert.fail('scenario validation must not perform network calls'); },
+  };
+  const result = await runLivePreviewE2e(args, dependencies);
+  assert.deepEqual(result.scenarioCaseIds, ['useful_grounded_guide', 'unauthorized_test_identity']);
+  assert.equal(result.verification.liveBackend, 'unverified');
+  assert.equal(result.executed, false);
+  f.files.scenario.cases[1].sourceUrls = [];
+  await assert.rejects(runLivePreviewE2e(args, dependencies), /SCENARIO_INVALID/u);
+  const selected = await runLivePreviewE2e(args.concat('--case-id', 'useful_grounded_guide'), dependencies);
+  assert.deepEqual(selected.scenarioCaseIds, ['useful_grounded_guide']);
+  await assert.rejects(runLivePreviewE2e(args.concat('--case-id', 'audit_timeout'), dependencies), /SCENARIO_INVALID/u);
+});
+
+test('dry run rejects malformed scenario contracts and oversized inputs before execution', async () => {
+  for (const mutate of [
+    scenario => { scenario.cases = []; },
+    scenario => { scenario.cases.push(scenario.cases[0]); },
+    scenario => { scenario.moduleId = 'research'; },
+    scenario => { scenario.cases[0].sourceUrls = ['not a URL']; },
+    scenario => { scenario.cases[0].input.prompt = 'x'.repeat(32 * 1024); },
+  ]) {
+    const f = fixture(); mutate(f.files.scenario);
+    const args = ['--commit-sha', SHA, '--pr-number', '42', '--backend-base-url', BACKEND,
+      '--module-id', 'gaming', '--scenario-file', 'scenario'];
+    await assert.rejects(runLivePreviewE2e(args, {
+      readOperatorFile: () => JSON.stringify(f.files.scenario),
+      fetch: () => { assert.fail('invalid scenarios must fail before requests'); },
+    }), /SCENARIO_INVALID|REQUEST_LIMIT/u);
+  }
+});
+
 test('both explicit execution flags, complete inputs and finite HTTP limits are required', () => {
   const f = fixture();
   assert.throws(() => parseLivePreviewE2eArguments(f.args.filter(value => value !== '--allow-network')), /EXECUTION_FLAGS_REQUIRED/u);
