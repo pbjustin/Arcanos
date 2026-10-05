@@ -5,6 +5,8 @@ import { spawnSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { gamingHybridCandidatesSchema, gamingHybridQuerySchema } from '../src/shared/gaming/gamingHybridContract.js';
+import { resolveGamingRequestEdition } from '../src/shared/gaming/gamingGameIdentity.js';
 
 type Json = ReturnType<typeof JSON.parse>;
 const roots: string[] = [];
@@ -59,7 +61,7 @@ function recoveryComposition(scenario = 'valid') {
   const code = `
     import {readFileSync} from 'node:fs';
     import {createHash} from 'node:crypto';
-    import {gamingRecoveryCompositionPatch,applyGamingRecoveryCompositionPatch,gamingRules}
+    import {gamingRecoveryCompositionPatch,applyGamingRecoveryCompositionPatch,legacyGamingRules as gamingRules}
       from ${JSON.stringify(pathToFileURL(script).href)};
     const hash = bytes => createHash('sha256').update(bytes).digest('hex');
     globalThis.fetch = () => { throw new Error('NETWORK_FORBIDDEN'); };
@@ -155,7 +157,7 @@ describe('Private Gaming source composition, separate from live acceptance', () 
   });
 
   it('provides an exact public v2 replacement recipe without composing or approving missing private inputs', () => {
-    const code = `const {gamingRecoveryCompositionPatch,gamingRules}=await import(${JSON.stringify(pathToFileURL(script).href)}); console.log(JSON.stringify({patch:await gamingRecoveryCompositionPatch(),rules:gamingRules}));`;
+    const code = `const {gamingRecoveryCompositionPatch,legacyGamingRules:gamingRules}=await import(${JSON.stringify(pathToFileURL(script).href)}); console.log(JSON.stringify({patch:await gamingRecoveryCompositionPatch(),rules:gamingRules}));`;
     const result = spawnSync(process.execPath, ['--input-type=module', '-e', code], { encoding: 'utf8' });
     expect(result.status).toBe(0);
     const { patch, rules } = JSON.parse(result.stdout);
@@ -163,8 +165,10 @@ describe('Private Gaming source composition, separate from live acceptance', () 
     expect(patch.approvedSkillBaseline).toEqual({ sizeBytes: 15_210,
       sha256: 'a2cd3cfb2eb677eaef47c7fc148b41565b58e051486a49b29df48ee53c048081' });
     const workflow = readFileSync(path.join(process.cwd(), patch.workflow.path));
-    expect(workflow.length).toBe(9_046);
-    expect(hash(workflow)).toBe('2f8f4d08442674d014a0e36a2dc1e19b6628092199697720355bd6a1ed98c6be');
+    expect(workflow.length).toBe(10_982);
+    expect(hash(workflow)).toBe('1a16c07bafd15bd3ba91a9226c7598d7e51439bb747ebeed47d33119adbe698a');
+    expect(workflow.toString('utf8')).toContain('Released Gaming guide workflow: gaming-hybrid-v2.');
+    expect(workflow.toString('utf8')).not.toContain('Proposed MCP instruction revision');
     expect(patch.workflow.sizeBytes).toBe(workflow.length);
     expect(patch.workflow.sha256).toBe(hash(workflow));
     expect(patch.workflow.content).toBe(workflow.toString('utf8'));
@@ -196,9 +200,103 @@ describe('Private Gaming source composition, separate from live acceptance', () 
     const f = fixture();
     expect(compose(f).status).toBe(0);
     const legacy = readFileSync(path.join(f.inputRoot, 'mock-composed', skillPath), 'utf8');
-    expect(legacy).toContain('under gaming-hybrid-v1');
-    expect(legacy).toContain('Respect one gameplay round');
-    expect(legacy).not.toContain('gaming-hybrid-v2');
+    expect(legacy).toContain('under released gaming-hybrid-v2');
+    expect(legacy).toContain('expectedRevision');
+    expect(legacy).not.toContain('under gaming-hybrid-v1');
+  });
+
+  it('uses the released v2 default output without approving or installing the candidate', () => {
+    const f = fixture();
+    const result = spawnSync(process.execPath, [script, '--inputs', f.inputRoot, '--baseline', f.baselinePath], { encoding: 'utf8' });
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({ outputDirectory: 'composed-skill-v2', ownerArtifactReview: 'PENDING', releaseStatus: 'BLOCKED' });
+    const skill = readFileSync(path.join(f.inputRoot, 'composed-skill-v2', skillPath), 'utf8');
+    expect(skill).toContain('Set contractVersion to\n   "gaming-hybrid-v2"');
+    expect(skill).toContain('expectedRevision');
+  });
+
+  it('composes released URL-only discovery without demanding harmless edition or source metadata', () => {
+    const f = fixture();
+    expect(compose(f).status).toBe(0);
+    const skill = readFileSync(path.join(f.inputRoot, 'mock-composed', skillPath), 'utf8').replace(/\s+/gu, ' ');
+    for (const text of [
+      'The frontend discovers public guide URLs; ARCANOS independently acquires, validates and structures those documents',
+      'Forward edition only if the user explicitly supplied it; do not ask for an edition merely because it is absent.',
+      "Ordinary Elden Ring requests use the backend's safe base-game interpretation.",
+      'Explicit Shadow of the Erdtree or DLC requests retain their expansion constraints',
+      'URL-only candidates are sufficient input',
+      'do not demand frontend proof of edition, patch, platform, region, publisher or publication date',
+      'Unknown is not wrong.',
+      'Missing patch, platform, region or date normally qualifies an answer',
+      'never turn that uncertainty into a fabricated fact.',
+      'strict independent currentness checks'
+    ]) expect(skill).toContain(text);
+    expect(skill).not.toContain('the precise game and edition');
+    const query = gamingHybridQuerySchema.parse({ contractVersion: 'gaming-hybrid-v2',
+      idempotencyKey: 'released-samurai-query', game: 'Elden Ring', mode: 'build', question: 'Build an early-game Samurai blade build.' });
+    expect(query.edition).toBeUndefined();
+    expect(resolveGamingRequestEdition(query)).toBe('base-game');
+    expect(resolveGamingRequestEdition({ ...query, question: 'Build a Shadow of the Erdtree Samurai build.' })).toBe('shadow of the erdtree');
+    expect(resolveGamingRequestEdition({ ...query, question: 'Build a DLC Samurai build.' })).toBeUndefined();
+    const submission = gamingHybridCandidatesSchema.parse({ contractVersion: query.contractVersion,
+      workflowId: '20000000-0000-4000-8000-000000000020', expectedRevision: 1,
+      idempotencyKey: 'released-guide-submission', candidates: [{ url: 'https://guides.example.org/early-samurai' }] });
+    expect(submission.candidates).toEqual([{ url: 'https://guides.example.org/early-samurai' }]);
+  });
+
+  it('composes four frontend outcomes while retaining authoritative actions, revisions, budgets and approval boundaries', () => {
+    const f = fixture();
+    const source = readFileSync(path.join(f.inputRoot, 'published-gpt.json'));
+    expect(compose(f).status).toBe(0);
+    const skill = readFileSync(path.join(f.inputRoot, 'mock-composed', skillPath), 'utf8').replace(/\s+/gu, ' ');
+    expect(skill).toContain("Read the structured result's frontendOutcome together with state, nextAction, contractVersion, workflowId and revision.");
+    expect(skill).toContain('Its four normal frontend concepts are answer_ready, need_new_source, clarification_required and temporarily_unavailable.');
+    for (const text of [
+      "use the backend's searchHint when provided",
+      'discover a replacement only when nextAction and the bounded continuation grant permit it',
+      'the missing user decision materially changes the answer',
+      'Missing harmless metadata is not a reason to ask an extra question',
+      'The compatible wire state, nextAction, revision and recovery budgets remain authoritative',
+      'frontendOutcome never grants another attempt or bypasses nextAction stop',
+      'latest returned revision as expectedRevision',
+      'remainingCandidateUrls and remainingTotalAcquisitionMs permit it',
+      'Never silently downgrade failed v2 to a new v1 workflow',
+      'Keep source storage separate and transient_only by default',
+      'dedicated write scope, client confirmation and server-side eligibility checks remain intact'
+    ]) expect(skill).toContain(text);
+    const report = readJson(path.join(f.inputRoot, 'mock-composed/reconciliation-map.json'));
+    expect(report.compositionReview).toEqual({ status: 'PENDING', approvedForRepository: false });
+    expect(report.acceptance.installedBehavior).toBe('NOT_STARTED');
+    expect(readFileSync(path.join(f.inputRoot, 'published-gpt.json'))).toEqual(source);
+  });
+
+  it('replaces the canonical legacy workflow while preserving unrelated source sections and approval boundaries', () => {
+    const publicV1 = readFileSync(path.join(process.cwd(), 'docs/gpt/arcanos-gaming-hybrid.instructions.md'), 'utf8');
+    const source = `${mockInstructions}\r\n\r\n${publicV1.replaceAll('\n', '\r\n')}\r\nRetained unrelated suffix π.`;
+    const f = fixture(source);
+    expect(compose(f).status).toBe(0);
+    const skill = readFileSync(path.join(f.inputRoot, 'mock-composed', skillPath), 'utf8');
+    const report = readJson(path.join(f.inputRoot, 'mock-composed/reconciliation-map.json'));
+    expect(report.contractVersion).toBe('gaming-hybrid-v2');
+    expect(report.sectionMap.map((item: Json) => item.sourceText).join('')).toBe(source);
+    expect(skill.split('WORKFLOW BEGIN gaming-hybrid-v2')).toHaveLength(2);
+    expect(skill).not.toContain('WORKFLOW BEGIN gaming-hybrid-v1');
+    expect(skill).toContain('Retained unrelated suffix π.');
+    expect(skill).toContain('latest returned revision as');
+    expect(skill).toContain('Never silently downgrade');
+    expect(report.compositionReview.approvedForRepository).toBe(false);
+    expect(report.acceptance.installedBehavior).toBe('NOT_STARTED');
+    const bytes = Buffer.from(skill);
+    for (const section of report.sectionMap) {
+      expect(bytes.subarray(section.outputStartByte, section.outputEndByte).toString('utf8')).toBe(section.transformedText);
+      expect(hash(section.sourceText)).toBe(section.sha256);
+    }
+  });
+
+  it.each(['gaming-hybrid-v1', 'WORKFLOW BEGIN gaming-hybrid-v2'])('rejects unmarked or mixed source protocol %s', declaration => {
+    const f = fixture(`${mockInstructions}\r\n\r\n${declaration}`);
+    expect(compose(f).status).toBe(1);
+    expect(readdirSync(f.inputRoot)).not.toContain('mock-composed');
   });
 
   it('binds approved source, preserves every UTF-8/CRLF section and produces deterministic private files', () => {
@@ -264,9 +362,9 @@ describe('Private Gaming source composition, separate from live acceptance', () 
     const skill = readFileSync(path.join(f.inputRoot, 'mock-composed', skillPath), 'utf8');
     for (const state of ['answer_ready', 'clarification_required', 'discovery_required', 'verify_currentness', 'ingestion_pending']) expect(skill).toContain(state);
     for (const text of ['sourceKnown, evidenceSelected, freshnessStatus and successful generation',
-      'HTTP 200 does not establish success', 'do not claim the guide was read', 'no guideUrls field',
-      'cannot silently substitute unrelated sources', 'general model knowledge', 'untrusted evidence',
-      'three source slots', 'three polls', 'operation-specific idempotency keys']) expect(skill).toContain(text);
+      'HTTP 200', 'do not claim the guide was read', 'schema fields',
+      'silently satisfy', 'general model knowledge', 'untrusted evidence',
+      'three source slots', 'three polls', 'operation-specific idempotency']) expect(skill).toContain(text);
     const report = readJson(path.join(f.inputRoot, 'mock-composed/reconciliation-map.json'));
     const matrix = readJson(path.join(process.cwd(), 'docs/chatgpt-migration/gaming/behavior-matrix.json'));
     expect(matrix.cases).toHaveLength(18);

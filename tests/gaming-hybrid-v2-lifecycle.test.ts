@@ -81,6 +81,21 @@ describe('v2 actor-bound recovery lifecycle', () => {
     expect(generate).not.toHaveBeenCalled();
   });
 
+  it('preserves a recognized v2 discriminator in validation failures instead of reporting v1', async () => {
+    const { workflow, evaluateCandidates } = setup();
+    expect((await workflow.query({ ...query, unsupportedHint: true }, context)).body)
+      .toMatchObject({ contractVersion, revision: 0, reason: 'INVALID_REQUEST', nextAction: 'stop' });
+    const first = await workflow.query(query, context);
+    const { expectedRevision: _revision, ...missingRevision } = submission(first.body.workflowId!, 0);
+    expect((await workflow.candidates(missingRevision, context)).body)
+      .toMatchObject({ contractVersion, revision: 0, reason: 'INVALID_REQUEST', nextAction: 'stop' });
+    expect(evaluateCandidates).not.toHaveBeenCalled();
+    const accepted = await workflow.candidates(submission(first.body.workflowId!, 0), context);
+    expect(accepted.body).toMatchObject({ contractVersion, revision: 1 });
+    expect((await workflow.candidates(submission(first.body.workflowId!, 0, 'stale-after-invalid'), context)).body)
+      .toMatchObject({ contractVersion, revision: 1, reason: 'STALE_WORKFLOW_REVISION' });
+  });
+
   it('rejects changed payload, stale revisions, cross-actor IDs and version upgrades', async () => {
     const { workflow, evaluateCandidates } = setup();
     const first = await workflow.query(query, context);
@@ -186,7 +201,8 @@ describe('v2 actor-bound recovery lifecycle', () => {
     // injected document resolution supplies the failure without network access.
     expect(resolveDocument).toHaveBeenCalledTimes(2);
     expect(resolveDocument.mock.calls.map(([url]) => url)).toEqual([failedUrl, allowedUrl]);
-    expect(recovery.body.candidates).toEqual([expect.objectContaining({ url: allowedUrl, reasonCodes: ['SOURCE_FETCH_FAILED'] }),
+    expect(recovery.body.candidates).toEqual([expect.objectContaining({ url: failedUrl, reasonCodes: ['SOURCE_FETCH_FAILED'] }),
+      expect.objectContaining({ url: allowedUrl, reasonCodes: ['SOURCE_FETCH_FAILED'] }),
       expect.objectContaining({ decision: 'rejected', reasonCodes: ['URL_BLOCKED'] })]);
     expect(recovery.body.discovery!.acquisitionHints).toEqual([expect.objectContaining({ scope: 'url', target: allowedUrl,
       reasonCode: 'SOURCE_FETCH_FAILED' })]);

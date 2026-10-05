@@ -70,6 +70,16 @@ function canonicalAlias(value: string): string | undefined {
   return OPTIONAL_GAME_ALIASES.find((entry) => entry.pattern.test(value))?.name;
 }
 
+/** An acquired scope clause names its subject first; later comparisons cannot select it. */
+export function detectGamingLeadingGameAlias(value: string, wholeNameOnly = false): GamingGameDetection {
+  const subject = value.trim();
+  const alias = OPTIONAL_GAME_ALIASES.find(entry => {
+    const match = entry.pattern.exec(subject);
+    return match?.index === 0 && (!wholeNameOnly || match[0].length === subject.length);
+  });
+  return alias ? { game: alias.name, confidence: 0.88, source: 'alias' } : { confidence: 0, source: 'none' };
+}
+
 export function canonicalizeGamingGameName(value: string): string {
   const normalized = value.replace(/\s+/g, " ").trim();
   if (/^wow$/i.test(normalized)) {

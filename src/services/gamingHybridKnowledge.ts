@@ -1,18 +1,21 @@
+import { normalizeGamingGameIdentity, resolveGamingRequestEdition, buildGamingSourceEditionQualification, normalizeGamingMinecraftEdition } from '@shared/gaming/gamingGameIdentity.js';
+import { normalizeGamingPlatformIdentity } from '@shared/gaming/gamingPlatformIdentity.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { getEnvBoolean } from '@platform/runtime/env.js';
 import { logger } from '@platform/logging/structuredLogging.js';
 import { redactString } from '@shared/redaction.js';
 import { GAMING_HYBRID_CONTRACT_VERSION, GAMING_HYBRID_V2_CONTRACT_VERSION, GAMING_HYBRID_V2_LIMITS, gamingHybridLimitsForVersion, GAMING_HYBRID_LIMITS as LIMITS,
-  gamingHybridQuerySchema, gamingHybridCandidatesSchema, gamingHybridIngestionSchema,
+  gamingHybridQuerySchema, gamingHybridCandidatesSchema, gamingHybridIngestionSchema, gamingHybridRequestedContractVersion,
   type GamingHybridQuery, type GamingHybridResponse } from '@shared/gaming/gamingHybridContract.js';
-import { resolveGamingPlayerContext, validateGamingPlayerContextInput } from '@shared/gaming/gamingPlayerContext.js';
+import { resolveGamingPlayerContext, resolveGamingQuestionScope, validateGamingPlayerContextInput } from '@shared/gaming/gamingPlayerContext.js';
+import { gamingApplicabilityScopeRequired } from '@shared/gaming/gamingGuideApplicability.js';
 import { buildGamingRetrievalTerms } from '@shared/gaming/gamingRetrievalPolicy.js';
 import { assessGamingProgressionRequest } from '@shared/gaming/gamingProgressionPolicy.js';
 import { buildGamingRecoveryResponse, resolveGamingGenerationFailureReason } from '@shared/gaming/gamingRecoveryResponse.js';
 import { assessGamingSourcePolicy, classifyGamingQuestionFreshness, evaluateGamingFreshness, getGamingCurrentnessDiscoverySources, GAMING_FRESHNESS_DEFAULTS, type GamingFreshnessEvidence } from '@shared/gaming/gamingFreshnessCore.js';
 import { combineGamingCurrentnessEvidence, GAMING_CURRENTNESS_ADAPTER_VERSION } from '@shared/gaming/gamingCurrentnessAdapters.js';
 import { resolveGamingHybridCandidateAttempt, resolveGamingHybridCurrentnessReason, projectGamingHybridCandidateRetention,
-  projectGamingHybridCandidateEvidence, normalizeGamingHybridCandidateUrl, gamingHybridRequiredGuideUrls, gamingHybridCitationTargets, projectGamingHybridSuppliedGuides } from '@shared/gaming/gamingHybridPolicyCore.js';
+  projectGamingHybridCandidateEvidence, normalizeGamingHybridCandidateUrl, gamingHybridRequiredGuideUrls, gamingHybridCitationTargets, projectGamingHybridSuppliedGuides, projectGamingGuideOutcome, gamingGuideSearchHint } from '@shared/gaming/gamingHybridPolicyCore.js';
 import { assessGamingClearEvidence } from '@shared/gaming/gamingClearEvidence.js';
 import { GAMING_CLEAR_APPROVED_ANSWER, hasBoundGamingClearAnswer, type GamingClearAnswerCarrier } from '@shared/gaming/gamingClearAnswerBinding.js';
 import { gamingClearHash } from '@shared/gaming/gamingClearPolicy.js';
@@ -53,6 +56,7 @@ type Workflow = {
   knowledge?: GamingStoredKnowledgeContext;
   candidateOperationKey?: string;
   candidateSubmission?: CandidateSubmission;
+  candidateDecisions?: NonNullable<GamingHybridResponse['candidates']>;
   currentnessOperationKey?: string;
   currentnessSubmission?: CandidateSubmission;
   answer?: GamingHybridResponse['answer'];
@@ -64,7 +68,12 @@ const normalizedBudgetValue = (value: unknown): unknown => typeof value === 'str
   ? value.normalize('NFKC').trim().replace(/\s+/gu, ' ').toLowerCase()
   : Array.isArray(value) ? value.map(normalizedBudgetValue) : value;
 function queryBudgetKey(actor: string, input: GamingHybridQuery): string {
-  return hash([actor, Object.entries(input).filter(([key]) => !['idempotencyKey', 'storagePolicy', 'version',
+  const edition = input.contractVersion === GAMING_HYBRID_V2_CONTRACT_VERSION ? resolveGamingRequestEdition(input) : undefined;
+  // Equivalent v2 request interpretations share acquisition limits. Keep the
+  // actual query input untouched so operation idempotency remains payload-bound.
+  const budgetInput = input.contractVersion === GAMING_HYBRID_V2_CONTRACT_VERSION ? { ...input,
+    ...(edition ? { edition } : {}), ...(input.platform ? { platform: normalizeGamingPlatformIdentity(input.platform) } : {}) } : input;
+  return hash([actor, Object.entries(budgetInput).filter(([key]) => !['idempotencyKey', 'storagePolicy', 'version',
     'answerDepth', 'spoilerTolerance', 'mode'].includes(key))
     .sort(([left], [right]) => left.localeCompare(right)).map(([key, value]) => [key, normalizedBudgetValue(value)])]);
 }
@@ -117,7 +126,8 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
       reason: 'SERVICE_UNAVAILABLE', sourceKnown: false, evidenceSelected: false, freshnessStatus: 'unverified' };
   }
   function failure(context: GamingHybridCallContext, reason: string, status: number, workflow?: Workflow, requestedContractVersion?: GamingHybridQuery['contractVersion']): GamingHybridResult {
-    return { status, body: { ...base(context, workflow, requestedContractVersion), reason, nextAction: status >= 500 || status === 429 ? 'retry_later' : 'stop' } };
+    const body: GamingHybridResponse = { ...base(context, workflow, requestedContractVersion), reason, nextAction: status >= 500 || status === 429 ? 'retry_later' : 'stop' };
+    return { status, body: { ...body, ...projectGamingGuideOutcome(body) } };
   }
   function currentResponse(context: GamingHybridCallContext, workflow: Workflow, result: GamingHybridResult): GamingHybridResult {
     if (result.body.answer && workflow.evidenceExpiresAt !== undefined && deps.now() >= workflow.evidenceExpiresAt) {
@@ -126,7 +136,9 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
       expired.body.sourceKnown = result.body.sourceKnown;
       return expired;
     }
-    return result;
+    const outcome = projectGamingGuideOutcome(result.body);
+    return { ...result, body: { ...result.body, ...outcome, ...(outcome.frontendOutcome === 'need_new_source'
+      ? { searchHint: gamingGuideSearchHint({ ...workflow.input, game: redactString(workflow.input.game) }) } : {}) } };
   }
   function admit(context: GamingHybridCallContext, requestedContractVersion?: GamingHybridQuery['contractVersion']): GamingHybridResult | undefined {
     prune();
@@ -263,6 +275,30 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
     }
     if (!result.body.answer && !result.body.evidenceSelected && decisions?.length
       && decisions.every(item => item.decision === 'rejected')) {
+      const reasons = [...new Set(decisions.flatMap(item => item.reasonCodes))];
+      const labels: Record<string, string> = {
+        SOURCE_TOO_LARGE: 'source too large', SOURCE_FETCH_FAILED: 'source acquisition failed', SOURCE_INACCESSIBLE: 'source inaccessible',
+        SOURCE_TIMEOUT: 'source timed out', SOURCE_EXTRACTION_FAILED: 'source extraction failed', INSUFFICIENT_EXTRACTION: 'source extraction insufficient',
+        UNSUPPORTED_SOURCE_FORMAT: 'unsupported source format', URL_BLOCKED: 'URL blocked', GAME_MISMATCH: 'wrong-game source',
+        GAME_IDENTITY_UNVERIFIED: 'source game identity unverified', EDITION_REQUIRED: 'source edition scope unresolved',
+        EDITION_CONFLICT: 'source edition conflicts with the request', EDITION_UNVERIFIED: 'source edition unverified',
+        QUESTION_COVERAGE_INSUFFICIENT: 'source insufficiently relevant', SOURCE_INSTRUCTIONS_REJECTED: 'source instructions rejected'
+      };
+      if (reasons.length > 1 && !['CONTRADICTORY_EVIDENCE', 'CONFLICTING_CURRENTNESS', 'APPLICABILITY_CONFLICT'].includes(result.body.reason)) {
+        const counts = new Map<string, number>();
+        for (const decision of decisions) {
+          const label = labels[decision.reasonCodes[0]] ?? 'source could not be validated';
+          counts.set(label, (counts.get(label) ?? 0) + 1);
+        }
+        result.body.reason = 'CANDIDATE_SOURCES_REJECTED';
+        result.body.qualification = `Submitted guide outcomes: ${[...counts].map(([label, count]) => `${count} ${label}`).join('; ')}. Another relevant public guide is needed. These outcomes do not establish that public evidence does not exist.`;
+        return result;
+      }
+      if (reasons.length === 1 && ['SOURCE_TOO_LARGE', 'SOURCE_EXTRACTION_FAILED', 'UNSUPPORTED_SOURCE_FORMAT'].includes(reasons[0])) {
+        result.body.reason = reasons[0];
+        result.body.qualification = 'The submitted guide could not provide usable evidence. Submit a different readable public guide; this does not establish that public evidence does not exist.';
+        return result;
+      }
       if (decisions.every(item => item.reasonCodes.includes('INSUFFICIENT_EXTRACTION'))) {
         result.body.reason = 'SOURCE_EXTRACTION_INSUFFICIENT';
         result.body.qualification = 'Could not extract intact usable evidence from the supplied sources. This does not establish that no public guide or location exists.';
@@ -303,6 +339,27 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
     const requiredSourceIds = acceptedCandidates.filter(candidate => (workflow.pipeline.guideUrls ?? []).some(url =>
       normalizeGamingHybridCandidateUrl(candidate.document.requestedUrl) === normalizeGamingHybridCandidateUrl(url))).map(candidate => candidate.candidateId);
     if (v2) {
+      if (!workflow.pipeline.platform && gamingApplicabilityScopeRequired(workflow.pipeline, 'platform'))
+        return { status: 200, body: { ...body, state: 'clarification_required', nextAction: 'clarify',
+          reason: 'PLATFORM_REQUIRED', clarification: 'Which platform should the controls or platform-specific guidance cover?' } };
+      if (!workflow.pipeline.region && gamingApplicabilityScopeRequired(workflow.pipeline, 'region'))
+        return { status: 200, body: { ...body, state: 'clarification_required', nextAction: 'clarify',
+          reason: 'REGION_REQUIRED', clarification: 'Which region should the regional guidance cover?' } };
+      const minecraftEditionDecision = !workflow.pipeline.edition && normalizeGamingGameIdentity(input.game) === 'minecraft'
+        && (workflow.candidateDecisions?.some(candidate => candidate.reasonCodes.includes('EDITION_REQUIRED'))
+          || resolveGamingFreshnessDisposition(workflow.pipeline) === 'REQUIRED' && knowledge.sources.some(source =>
+            source.clearSourceAssessment?.gates.identity === 'verified' && normalizeGamingGameIdentity(source.game ?? '') === 'minecraft'
+            && normalizeGamingMinecraftEdition(source.edition ?? source.freshnessMetadata?.edition as string | undefined)));
+      if (minecraftEditionDecision)
+        return { status: 200, body: { ...body, state: 'clarification_required', nextAction: 'clarify',
+          reason: 'EDITION_REQUIRED', clarification: 'Should this Minecraft guidance cover Java Edition or Bedrock Edition?' } };
+      // A requested expansion build is a scope decision; a factual question about
+      // whether DLC is required does not create that same missing decision.
+      const unspecifiedExpansionContent = !workflow.pipeline.edition && normalizeGamingGameIdentity(input.game) === 'elden-ring'
+        && /\b(?:(?:dlc|expansion)[\s-]+(?:builds?|guides?|content|weapons?|equipment|bosses?|quests?)|shadow[\s-]+of[\s-]+the[\s-]+erdtree)\b/iu.test(input.question);
+      if (unspecifiedExpansionContent)
+        return { status: 200, body: { ...body, state: 'clarification_required', nextAction: 'clarify',
+          reason: 'EDITION_REQUIRED', clarification: 'Should this request use Shadow of the Erdtree content, or stay within the Elden Ring base game?' } };
       const genericBuildTerms = new Set(['give', 'make', 'recommend', 'suggest', 'provide', 'best', 'good', 'some', 'build', 'character']);
       if ((input.mode === 'build' || /\bbuild\b/iu.test(input.question)) && !input.class && !input.role && !input.constraints?.length
         && !buildGamingRetrievalTerms(workflow.pipeline).requestTerms.some(term => !genericBuildTerms.has(term)))
@@ -375,10 +432,14 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
     const disposition = resolveGamingFreshnessDisposition(workflow.pipeline);
     const advisory = disposition === 'ADVISORY' && !freshness.usable
       ? selectGamingAdvisoryGameplayEvidence({ game: input.game, freshness, evidence, now: new Date(deps.now()) }) : undefined;
+    // Ordinary v2 guides can qualify unknown compatibility immediately. An
+    // attempted official check still cannot hide security or material conflicts;
+    // explicit v1 retains its bounded currentness continuation.
     const advisoryAllowed = Boolean(advisory && !advisory.conflict
-      && workflow.currentnessRound >= LIMITS.currentnessRounds
-      && workflow.currentnessSubmission && !workflow.currentnessSubmission.currentnessFailureBlocksAdvisory
-      && isGamingAdvisoryCurrentnessOperation({ decisions: workflow.currentnessSubmission.decisions ?? [] })
+      && (v2 && workflow.currentnessRound === 0 && !workflow.currentnessSubmission
+        || workflow.currentnessRound >= LIMITS.currentnessRounds
+          && workflow.currentnessSubmission && !workflow.currentnessSubmission.currentnessFailureBlocksAdvisory
+          && isGamingAdvisoryCurrentnessOperation({ decisions: workflow.currentnessSubmission.decisions ?? [] }))
       && !freshness.reasons.some(reason => ['REQUESTED_PATCH_NOT_CURRENT', 'HISTORICAL_AS_OF_UNSUPPORTED',
         'EVIDENCE_LIMIT_EXCEEDED', 'INVALID_VERIFICATION_TIME'].includes(reason)));
     const selected = new Set(freshness.selectedEvidenceIds);
@@ -442,7 +503,17 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
     const structuredReport = candidates.some(candidate => candidate.evidence.evidenceUnits?.length);
     const applicabilityUnverified = structuredReport && freshness.classification === 'stable'
       && !freshness.effectivePatch;
-    const qualification = [advisory ? advisory.qualification : freshness.qualification,
+    const sourceEditionQualifications = [...new Set(evidence.filter(item => selected.has(item.id))
+      .map(item => buildGamingSourceEditionQualification(item.edition, workflow.pipeline)).filter(Boolean))];
+    const qualification = [advisory ? advisory.qualification : freshness.qualification, ...sourceEditionQualifications,
+      ...evidence.filter(item => selected.has(item.id)).slice(0, 3).flatMap(item => [
+        !input.platform && item.platforms?.length && !item.platforms.some(value => value.toLowerCase() === 'all')
+          ? `A cited guide reports platform scope ${JSON.stringify(item.platforms.slice(0, 2))}; applicability to other platforms was not independently verified.` : '',
+        !input.region && item.regions?.length && !item.regions.some(value => value.toLowerCase() === 'all')
+          ? `A cited guide reports region scope ${JSON.stringify(item.regions.slice(0, 2))}; applicability to other regions was not independently verified.` : '',
+        item.metadataWarnings?.includes('PUBLICATION_DATE_UNVERIFIED')
+          ? 'A cited guide reports an unusable publication or update date; that date was not used as freshness proof.' : ''
+      ]),
       structuredReport ? 'Structured records are source reports. Preserve their qualifiers and attribution; they do not establish independent in-game observation.' : '',
       applicabilityUnverified ? 'Current in-game applicability is unverified. A recent source fetch verifies acquisition only.' : '',
       knowledge.sources.some(source => source.clearSourceAssessment?.findings.some(finding => finding.code === 'EXTRACTION_PARTIAL'))
@@ -590,6 +661,8 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
         return { status: 503, body: { ...body, nextAction: 'stop', reason: 'INVALID_GENERATED_CITATIONS' } };
       if (qualification && !response.includes(qualification) && advisoryAllowed && !response.includes(advisory!.qualification))
         return { status: 503, body: { ...body, nextAction: 'stop', reason: 'REQUIRED_QUALIFICATION_MISSING' } };
+      if (sourceEditionQualifications.some(warning => !response.includes(warning)))
+        return { status: 503, body: { ...body, nextAction: 'stop', reason: 'REQUIRED_QUALIFICATION_MISSING' } };
     }
     workflow.pendingDiscovery = undefined;
     return { status: 200, body: { ...body, state: 'answer_ready', nextAction: 'answer', reason: 'ACCEPTED_EVIDENCE',
@@ -617,10 +690,18 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
   return {
     async query(payload: unknown, context: GamingHybridCallContext): Promise<GamingHybridResult> {
       const parsed = gamingHybridQuerySchema.safeParse(payload);
-      const denied = admit(context, parsed.success ? parsed.data.contractVersion : undefined); if (denied) return denied;
-      if (!parsed.success) return failure(context, 'INVALID_REQUEST', 400);
+      const denied = admit(context, parsed.success ? parsed.data.contractVersion : gamingHybridRequestedContractVersion(payload)); if (denied) return denied;
+      if (!parsed.success) return failure(context, 'INVALID_REQUEST', 400, undefined, gamingHybridRequestedContractVersion(payload));
       if (validateGamingPlayerContextInput(parsed.data)) return failure(context, 'INVALID_REQUEST', 400, undefined, parsed.data.contractVersion);
-      const input = parsed.data;
+      const questionScope = parsed.data.contractVersion === GAMING_HYBRID_V2_CONTRACT_VERSION
+        ? resolveGamingQuestionScope(parsed.data.question) : {};
+      // Canonicalize the effective request before idempotency and budget identity;
+      // equivalent explicit fields and unambiguous question scope share the fences.
+      const input = parsed.data.contractVersion === GAMING_HYBRID_V2_CONTRACT_VERSION
+        ? gamingHybridQuerySchema.parse({ ...parsed.data,
+          ...(!parsed.data.platform && questionScope.platform ? { platform: questionScope.platform } : {}),
+          ...(!parsed.data.region && questionScope.region ? { region: questionScope.region } : {}) }) : parsed.data;
+      if (validateGamingPlayerContextInput(input)) return failure(context, 'INVALID_REQUEST', 400, undefined, input.contractVersion);
       input.requestedVersion ??= input.version;
       if (input.version && input.requestedVersion !== input.version) return failure(context, 'VERSION_CONTEXT_CONFLICT', 400, undefined, input.contractVersion);
       const key = hash([context.actorKey, input.idempotencyKey]);
@@ -679,11 +760,14 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
       }
       if (workflows.size >= LIMITS.workflows || [...workflows.values()].filter(item => item.actor === actor).length >= LIMITS.workflowsPerActor)
         return failure(context, 'WORKFLOW_CAPACITY_REACHED', 429, undefined, input.contractVersion);
+      const playerContext = resolveGamingPlayerContext(input, input.question);
+      if (!parsed.data.platform && questionScope.platform)
+        playerContext.contextOrigins = { ...playerContext.contextOrigins, platform: 'question' };
       const workflow: Workflow = { id: randomUUID(), actor, budgetKey, createdAt: deps.now(), input,
         revision: 0, acquisitionWorkMs: 0, submittedUrls: new Set(),
         round: 0, currentnessRound: 0, accepted: [], operations: new Map(),
-        pipeline: { ...resolveGamingPlayerContext(input, input.question), game: input.game, prompt: input.question,
-          mode: input.mode, requestedVersion: input.requestedVersion, region: input.region,
+        pipeline: { ...playerContext, game: input.game, prompt: input.question,
+          mode: input.mode, requestedVersion: input.requestedVersion, region: input.region, edition: resolveGamingRequestEdition(input),
           guideUrls: input.contractVersion === GAMING_HYBRID_V2_CONTRACT_VERSION ? gamingHybridRequiredGuideUrls(input.question) : [], auditEnabled: false } };
       workflows.set(workflow.id, workflow);
       budgets.set(budgetKey, workflow.id);
@@ -705,8 +789,8 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
     },
     async candidates(payload: unknown, context: GamingHybridCallContext): Promise<GamingHybridResult> {
       const parsed = gamingHybridCandidatesSchema.safeParse(payload);
-      const denied = admit(context, parsed.success ? parsed.data.contractVersion : undefined); if (denied) return denied;
-      if (!parsed.success) return failure(context, 'INVALID_REQUEST', 400);
+      const denied = admit(context, parsed.success ? parsed.data.contractVersion : gamingHybridRequestedContractVersion(payload)); if (denied) return denied;
+      if (!parsed.success) return failure(context, 'INVALID_REQUEST', 400, undefined, gamingHybridRequestedContractVersion(payload));
       const input = parsed.data;
       const workflow = own(input.workflowId, context);
       if (!workflow) return failure(context, 'WORKFLOW_UNAVAILABLE', 404, undefined, input.contractVersion);
@@ -817,12 +901,14 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
           combined.sources = [...retained.sources, ...combined.sources.filter(source => !retainedSourceIds.has(source.sourceId))];
           combined.evidence = [...(retained.evidence ?? []), ...(combined.evidence ?? []).filter(chunk => !retainedSourceIds.has(chunk.sourceId))];
         }
-        const nextSubmission = { key: input.idempotencyKey, knowledge: combined, decisions, freshness: candidateFreshness,
+        if (v2 && !currentness) workflow.candidateDecisions = [...(workflow.candidateDecisions ?? []), ...decisions].slice(0, GAMING_HYBRID_V2_LIMITS.totalCandidateUrls);
+        const publicDecisions = v2 && !currentness ? workflow.candidateDecisions! : decisions;
+        const nextSubmission = { key: input.idempotencyKey, knowledge: combined, decisions: publicDecisions, freshness: candidateFreshness,
           ...(evaluated.currentnessFailureBlocksAdvisory ? { currentnessFailureBlocksAdvisory: true } : {}) };
         if (currentness) workflow.currentnessSubmission = nextSubmission;
         else workflow.candidateSubmission = nextSubmission;
         const result = await answer(context, workflow, combined, candidateFreshness, artifacts);
-        result.body.candidates = decisions;
+        result.body.candidates = publicDecisions;
         if (v2 && !retainArtifacts && result.body.discovery && result.body.nextAction !== 'stop') {
           workflow.pendingDiscovery = undefined;
           result.body.nextAction = 'stop'; result.body.reason = 'ARTIFACT_CAPACITY_REACHED';
@@ -837,13 +923,13 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
             expiresAt: new Date(workflow.createdAt + Math.min(LIMITS.workflowTtlMs,
               GAMING_FRESHNESS_DEFAULTS[classifyGamingQuestionFreshness(workflow.pipeline)])).toISOString() }));
         }
-        return candidateAcquisitionOutcome(result, decisions);
+        return candidateAcquisitionOutcome(result, publicDecisions);
       }).finally(() => { if (reservedOperation && workflow.activeOperationKey === operationKey) workflow.activeOperationKey = undefined; });
     },
     async ingest(payload: unknown, context: GamingHybridCallContext): Promise<GamingHybridResult> {
       const parsed = gamingHybridIngestionSchema.safeParse(payload);
-      const denied = admit(context, parsed.success ? parsed.data.contractVersion : undefined); if (denied) return denied;
-      if (!parsed.success) return failure(context, 'INVALID_REQUEST', 400);
+      const denied = admit(context, parsed.success ? parsed.data.contractVersion : gamingHybridRequestedContractVersion(payload)); if (denied) return denied;
+      if (!parsed.success) return failure(context, 'INVALID_REQUEST', 400, undefined, gamingHybridRequestedContractVersion(payload));
       const input = parsed.data;
       const workflow = own(input.workflowId, context);
       if (!workflow) return failure(context, 'WORKFLOW_UNAVAILABLE', 404, undefined, input.contractVersion);

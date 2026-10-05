@@ -1,8 +1,10 @@
+import { gamingApplicabilityScopeRequired } from '@shared/gaming/gamingGuideApplicability.js';
+import { resolveGamingRequestEdition, gamingEditionEvidenceMatchesRequest, normalizeGamingMinecraftEdition } from '@shared/gaming/gamingGameIdentity.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { logger } from '@platform/logging/structuredLogging.js';
-import { normalizeGamingGameIdentity, gamingEditionIdentitiesMatch, resolveGamingGuideIdentity } from '@shared/gaming/gamingGameIdentity.js';
+import { normalizeGamingGameIdentity, resolveGamingGuideIdentity } from '@shared/gaming/gamingGameIdentity.js';
 import { classifyGamingDocumentQuality, selectGamingSourceAdmissionUrl } from '@shared/gaming/gamingDocumentIngestionCore.js';
-import { buildGamingRetrievalTerms, buildGamingRequestRequirements, gamingTermCoverage } from '@shared/gaming/gamingRetrievalPolicy.js';
+import { buildGamingRetrievalTerms, buildGamingRequestRequirements, hasGamingRelevantGuideContribution, gamingTermCoverage } from '@shared/gaming/gamingRetrievalPolicy.js';
 import {
   assessGamingSourcePolicy, extractGamingFreshnessMetadata, classifyGamingQuestionFreshness, gamingSeasonalPatchRequired,
   type GamingFreshnessEvidence
@@ -22,7 +24,8 @@ import { assessGamingClearSource, gamingClearHistoricalSourceVerified, gamingCle
 import { GAMING_CLEAR_VERSION, gamingClearHash, type GamingClearAssessment } from '@shared/gaming/gamingClearPolicy.js';
 import { GAMING_HYBRID_LIMITS } from '@shared/gaming/gamingHybridContract.js';
 import { pickGamingPlayerContext } from '@shared/gaming/gamingPlayerContext.js';
-import { assessGamingStructuralUsability, selectGamingEditionScopedEvidence } from '@shared/gaming/gamingStructuralEvidence.js';
+import { gamingPlatformEvidenceMatchesRequest } from '@shared/gaming/gamingPlatformIdentity.js';
+import { assessGamingStructuralUsability, selectGamingSourceEditionScopedEvidence } from '@shared/gaming/gamingStructuralEvidence.js';
 import type { GamingStructureDiagnostics } from '@shared/gaming/gamingEvidenceUnits.js';
 import { GAMING_CURRENTNESS_ADAPTER_VERSION } from '@shared/gaming/gamingCurrentnessAdapters.js';
 import { assessGamingClearEvidence, assessGamingRequestCoverage, gamingSelectedEvidenceIds, type GamingRequestCoverageAssessment } from '@shared/gaming/gamingClearEvidence.js';
@@ -106,13 +109,17 @@ function unsafeHints(candidate: GamingHybridCandidateInput): boolean {
 
 /** Safe acquisition happens once. Full documents stay internal; existing chunks and selection bound context. */
 export async function evaluateGamingHybridCandidates(
-  input: GamingStoredKnowledgeInput & { candidates: readonly GamingHybridCandidateInput[]; region?: string;
+  submission: GamingStoredKnowledgeInput & { candidates: readonly GamingHybridCandidateInput[]; region?: string;
     discoveryType?: 'gameplay_evidence' | 'currentness_verification'; protocolVersion?: 'gaming-hybrid-v1' | 'gaming-hybrid-v2' },
   context: { actorKey: string; requestId?: string; traceId?: string; workflowId?: string; signal?: AbortSignal; maxElapsedMs?: number },
   dependencies: GamingHybridCandidateDependencies = {}
 ): Promise<{ decisions: GamingHybridCandidateDecision[]; accepted: GamingHybridAcceptedCandidate[]; knowledge: GamingStoredKnowledgeContext;
   currentnessEvidence?: GamingFreshnessEvidence[]; currentnessFailureBlocksAdvisory?: boolean; acquisitionWorkMs?: number }> {
-  if (!context.actorKey || input.candidates.length < 1 || input.candidates.length > GAMING_HYBRID_CANDIDATE_LIMITS.count) {
+  // Keep discovery hints outside the evidence request. Acquisition alone establishes
+  // document identity; no frontend label enters CLEAR, applicability or selection.
+  const { candidates: submittedCandidates, ...request } = submission;
+  const input = { ...request, edition: resolveGamingRequestEdition(request) };
+  if (!context.actorKey || submittedCandidates.length < 1 || submittedCandidates.length > GAMING_HYBRID_CANDIDATE_LIMITS.count) {
     throw Object.assign(new Error('Submit one to three candidate URLs within an authenticated workflow.'), { code: 'GAMING_HYBRID_CANDIDATE_LIMIT' });
   }
   const now = dependencies.now ?? (() => new Date());
@@ -135,7 +142,7 @@ export async function evaluateGamingHybridCandidates(
   const allRecords: GamingStoredEvidenceRecord[] = [];
   const terms = buildGamingRetrievalTerms(input).focusTerms;
   const queue: Array<{ candidate: GamingHybridCandidateInput; submittedIndex: number; origin?: 'required_official_article' }> =
-    input.candidates.map((candidate, submittedIndex) => ({ candidate, submittedIndex }));
+    submittedCandidates.map((candidate, submittedIndex) => ({ candidate, submittedIndex }));
   for (const { candidate, submittedIndex, origin } of queue) {
     callerSignal?.throwIfAborted();
     let publicUrl: string | undefined;
@@ -226,15 +233,21 @@ export async function evaluateGamingHybridCandidates(
       }
       policy.autoStoreAllowed = policy.autoStoreAllowed && freshness.autoStoreAllowed;
       if (normalizeGamingGameIdentity(freshness.game) !== normalizeGamingGameIdentity(input.game)) { reject('GAME_MISMATCH'); continue; }
-      const scoped = selectGamingEditionScopedEvidence(document, input);
+      const scoped = selectGamingSourceEditionScopedEvidence(document, input, freshness.edition);
       if (scoped.reasonCodes.includes('GAME_MISMATCH')) { reject('GAME_MISMATCH'); continue; }
-      if (scoped.status === 'conflict' || scoped.status === 'unverified' && scoped.reasonCodes.length
-        || input.edition && !gamingEditionIdentitiesMatch(freshness.edition, input.edition)) { reject('EDITION_UNVERIFIED_OR_MISMATCH'); continue; }
-      if (!input.edition && freshness.edition) { reject('EDITION_REQUIRED'); continue; }
+      if (scoped.status === 'conflict') { reject('EDITION_CONFLICT'); continue; }
+      if (scoped.status === 'unverified' && scoped.reasonCodes.length) { reject('EDITION_UNVERIFIED'); continue; }
+      if (input.edition && !gamingEditionEvidenceMatchesRequest(freshness.edition, input.edition, input)) {
+        reject(freshness.edition ? 'EDITION_CONFLICT' : 'EDITION_UNVERIFIED'); continue;
+      }
+      if (!input.edition && freshness.edition && !gamingEditionEvidenceMatchesRequest(freshness.edition, undefined, input)
+        && !(normalizeGamingGameIdentity(input.game) === 'minecraft' && normalizeGamingMinecraftEdition(freshness.edition))) { reject('EDITION_UNVERIFIED'); continue; }
       const applies = (values: string[] | undefined, wanted: string | undefined) => !values?.length
         || values.some(value => value.toLowerCase() === 'all' || value.toLowerCase() === wanted?.toLowerCase());
-      if (!applies(freshness.platforms, input.platform)) { reject(input.platform ? 'PLATFORM_MISMATCH' : 'PLATFORM_REQUIRED'); continue; }
-      if (!applies(freshness.regions, input.region)) { reject(input.region ? 'REGION_MISMATCH' : 'REGION_REQUIRED'); continue; }
+      if (freshness.platforms?.length && !gamingPlatformEvidenceMatchesRequest(freshness.platforms, input.platform) && (input.platform || gamingApplicabilityScopeRequired(input, 'platform')
+        || input.discoveryType === 'currentness_verification')) { reject(input.platform ? 'PLATFORM_MISMATCH' : 'PLATFORM_UNVERIFIED'); continue; }
+      if (!applies(freshness.regions, input.region) && (input.region || gamingApplicabilityScopeRequired(input, 'region')
+        || input.discoveryType === 'currentness_verification')) { reject(input.region ? 'REGION_MISMATCH' : 'REGION_UNVERIFIED'); continue; }
       if (freshness.metadataConflict) {
         // A rejected, scoped official contradiction remains negative evidence. Dropping
         // it would let another accepted index falsely appear unanimous.
@@ -260,10 +273,10 @@ export async function evaluateGamingHybridCandidates(
         elapsedMs: Date.now() - sourceStartedAt, budgetOutcome: 'within_existing_acquisition_budget' });
       const identityReasons = sourceAssessment.dimensionScores.alignment.reasonCodes;
       if (!['accept', 'partial'].includes(sourceAssessment.decision)
-        || identityReasons.some(reason => ['GAME_MISMATCH', 'GAME_IDENTITY_UNVERIFIED', 'EDITION_UNVERIFIED'].includes(reason))) {
-        reject(identityReasons.find(reason => reason === 'GAME_MISMATCH')
+        || identityReasons.some(reason => ['GAME_MISMATCH', 'GAME_IDENTITY_UNVERIFIED', 'EDITION_CONFLICT', 'EDITION_UNVERIFIED', 'EDITION_REQUIRED'].includes(reason))) {
+        reject(identityReasons.find(reason => ['GAME_MISMATCH', 'EDITION_CONFLICT'].includes(reason))
+          ?? identityReasons.find(reason => ['GAME_IDENTITY_UNVERIFIED', 'EDITION_UNVERIFIED', 'EDITION_REQUIRED'].includes(reason))
           ?? sourceAssessment.dimensionScores.leverage.reasonCodes.find(reason => reason === 'QUESTION_COVERAGE_INSUFFICIENT')
-          ?? identityReasons.find(reason => ['GAME_IDENTITY_UNVERIFIED', 'EDITION_UNVERIFIED'].includes(reason))
           ?? sourceAssessment.blockingFindings[0]?.code ?? 'GAMING_CLEAR_SOURCE_REJECTED'); continue;
       }
       const chunks = await chunkGamingDocument(scoped.status === 'verified' ? scoped.text : intactText,
@@ -279,9 +292,9 @@ export async function evaluateGamingHybridCandidates(
         clearSourceAssessment: sourceAssessment,
         fetchedAt: now(), publishedAt: null, provenance: { resolverId: document.resolution.resolverId,
           resolverVersion: document.resolution.resolverVersion, resolutionStrategy: document.resolution.strategy,
-          gameName: input.game, edition: input.edition, gamingClear: sourceAssessment },
-        relevance: Math.max(gamingTermCoverage(chunk.text, terms), v2 && buildGamingRequestRequirements(input)
-          .some(requirement => gamingTermCoverage(chunk.text, requirement.terms) === 1) ? 0.25 : 0)
+          gameName: input.game, edition: freshness.edition ?? input.edition, gamingClear: sourceAssessment },
+        relevance: Math.max(gamingTermCoverage(chunk.text, terms), v2 && (hasGamingRelevantGuideContribution(chunk.text, input)
+          || buildGamingRequestRequirements(input).some(requirement => gamingTermCoverage(chunk.text, requirement.terms) === 1)) ? 0.25 : 0)
       })).filter(record => record.relevance >= 0.25);
       // An official index/status page can verify applicability even when it does not cover the gameplay anchor.
       if (!records.length && !['current_index', 'live_status'].includes(policy.currentness)
@@ -326,13 +339,12 @@ export async function evaluateGamingHybridCandidates(
       if (acquisitionSignal?.aborted) { reject('SOURCE_TIMEOUT'); continue; }
       if (error instanceof GamingDocumentAcquisitionError) {
         acquisitionDiagnostic = { ...error.acquisition };
-        // Public acquisition reasons are deliberately coarse. Preserve the internal
+        // Public acquisition reasons remain bounded. Preserve the internal
         // integrity/security distinction so an unavailable index cannot hide it.
         const unavailable = ['DNS_FAILED', 'FETCH_FAILED', 'DEADLINE_EXCEEDED', 'HTTP_RESPONSE_UNUSABLE', 'CONDITIONAL_CONTENT_UNAVAILABLE'];
         if (!unavailable.includes(error.acquisition.subreason) || error.status === 401 || error.status === 403)
           currentnessFailureBlocksAdvisory = true;
-        reject(v2 && error.acquisition.subreason === 'UNSUPPORTED_CONTENT_TYPE' ? 'UNSUPPORTED_SOURCE_FORMAT'
-          : v2 && error.acquisition.subreason === 'DOCUMENT_EXTRACTION_FAILED' ? 'EXTRACTION_INTEGRITY_FAILED' : error.code); continue;
+        reject(error.code); continue;
       }
       const status = (error as { response?: { status?: number } })?.response?.status;
       reject(status === 401 || status === 403 ? 'SOURCE_INACCESSIBLE' : status && [301, 302, 303, 307, 308].includes(status)
@@ -349,7 +361,7 @@ export async function evaluateGamingHybridCandidates(
   const knowledge = formatStoredGamingEvidence(selected, input, limits);
   knowledge.context = knowledge.context.replaceAll('Origin: stored gaming knowledge;', 'Origin: backend-validated transient Gaming evidence;');
   logger.info('gaming.hybrid.candidates_evaluated', { requestId: context.requestId, traceId: context.traceId,
-    policyVersion: GAMING_HYBRID_CANDIDATE_POLICY_VERSION, candidateCount: input.candidates.length,
+    policyVersion: GAMING_HYBRID_CANDIDATE_POLICY_VERSION, candidateCount: submittedCandidates.length,
     evaluatedCandidateCount: queue.length, requiredArticleCount: queue.filter(item => item.origin === 'required_official_article').length,
     acceptedCount: accepted.length, rejectedCount: decisions.filter(decision => decision.decision === 'rejected').length,
     selectedChunkCount: knowledge.evidence?.length ?? 0, selectedContextChars: knowledge.context.length,
@@ -398,7 +410,7 @@ export function selectGamingHybridAcceptedEvidence(input: GamingStoredKnowledgeI
   });
   const limits = hybridEvidenceLimits();
   const fullPool: GamingStoredKnowledgeContext = { context: '', sources: accepted.map(candidate => ({
-    sourceId: candidate.candidateId, game: candidate.sourceContext.game, edition: candidate.sourceContext.edition,
+    sourceId: candidate.candidateId, game: candidate.sourceContext.game, edition: candidate.freshness.edition ?? candidate.sourceContext.edition,
     url: candidate.publicUrl, sourceType: candidate.sourcePolicy.category, origin: 'live',
     fetchedAt: candidate.freshness.fetchedAt, snippet: '', clearSourceAssessment: candidate.sourceAssessment,
     freshnessMetadata: { ...candidate.freshness }

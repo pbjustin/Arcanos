@@ -487,7 +487,7 @@ describe('v2 independently acquired bound artifacts and failure work accounting'
       page(descriptions.map(description => mechanicRow(description)).join(''), { mechanics: true });
       const evaluated = await evaluate();
       expect(evaluated.accepted).toHaveLength(1);
-      expect(evaluated.decisions[0].reasonCodes).not.toContain('EDITION_UNVERIFIED_OR_MISMATCH');
+      expect(evaluated.decisions[0].reasonCodes).not.toContain('EDITION_CONFLICT');
       const retained = selectGamingHybridAcceptedEvidence(request, evaluated.accepted, actor);
       expect(() => assertGamingHybridEvidenceMembership(retained, evaluated.accepted, actor)).not.toThrow();
       const selected = selectGamingHybridEvidence(request, retained);
@@ -512,7 +512,7 @@ describe('v2 independently acquired bound artifacts and failure work accounting'
       page(descriptions.map(description => row(description, 'Shadow of the Erdtree')).join(''),
         { before: '<p>Edition: Shadow of the Erdtree.</p>' });
       const evaluated = await evaluate();
-      expect(evaluated.decisions).toMatchObject([{ decision: 'rejected', reasonCodes: ['EDITION_UNVERIFIED_OR_MISMATCH'] }]);
+      expect(evaluated.decisions).toMatchObject([{ decision: 'rejected', reasonCodes: ['EDITION_CONFLICT'] }]);
       expect(evaluated.accepted).toEqual([]);
     });
 
@@ -520,7 +520,7 @@ describe('v2 independently acquired bound artifacts and failure work accounting'
       page(descriptions.map(description => row(description, 'unverified')).join(''),
         { before: '<p>Published at: 2023-01-01</p>' });
       const evaluated = await evaluate();
-      expect(evaluated.decisions).toMatchObject([{ decision: 'rejected', reasonCodes: ['EDITION_UNVERIFIED_OR_MISMATCH'] }]);
+      expect(evaluated.decisions).toMatchObject([{ decision: 'rejected', reasonCodes: ['EDITION_UNVERIFIED'] }]);
       expect(evaluated.accepted).toEqual([]);
       expect(evaluated.knowledge.evidence ?? []).toEqual([]);
     });
@@ -561,14 +561,14 @@ describe('v2 independently acquired bound artifacts and failure work accounting'
       page(descriptions.map(description => mechanicRow(description, 'Shadow of the Erdtree')).join(''),
         { scopeLabel, mechanics: true, before: '<p>Edition: Base game.</p>' });
       const evaluated = await evaluate();
-      expect(evaluated.decisions).toMatchObject([{ decision: 'rejected', reasonCodes: ['EDITION_UNVERIFIED_OR_MISMATCH'] }]);
+      expect(evaluated.decisions).toMatchObject([{ decision: 'rejected', reasonCodes: ['EDITION_CONFLICT'] }]);
       expect(evaluated.accepted).toEqual([]);
     });
 
     it('rejects a base-game record whose own facts contain incompatible DLC qualifiers', async () => {
       page(row(`${descriptions[2]} This setup requires Shadow of the Erdtree expansion equipment.`));
       const evaluated = await evaluate();
-      expect(evaluated.decisions).toMatchObject([{ decision: 'rejected', reasonCodes: ['EDITION_UNVERIFIED_OR_MISMATCH'] }]);
+      expect(evaluated.decisions).toMatchObject([{ decision: 'rejected', reasonCodes: ['EDITION_CONFLICT'] }]);
       expect(evaluated.accepted).toEqual([]);
     });
   });

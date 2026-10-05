@@ -38,6 +38,29 @@ describe('sealed Gaming MCP protocol and production pure-core fixture', () => {
     expect(listed.gamingVerified).toBeUndefined();
     expect(listed.migrationVerified).toBeUndefined();
   });
+  it('pins the released eight-tool catalog, bounded additive outcomes and unchanged OAuth authority', () => {
+    const serialized = JSON.stringify(gamingMcpTools);
+    expect(gamingMcpTools).toHaveLength(8);
+    expect(Buffer.byteLength(serialized, 'utf8')).toBe(64_494);
+    expect(Buffer.byteLength(JSON.stringify({ jsonrpc: '2.0', id: 'gaming-preview', result: { tools: gamingMcpTools } }), 'utf8'))
+      .toBeLessThanOrEqual(65_536);
+    expect(createHash('sha256').update(serialized).digest('hex')).toBe(contract.catalogSha256);
+    const writes = new Set(['arcanos_gaming_ingest_sources', 'arcanos_gaming_refresh_sources', 'arcanos_gaming_ingest_candidates']);
+    for (const tool of gamingMcpTools) {
+      const expected = [{ type: 'oauth2', scopes: writes.has(tool.name)
+        ? ['arcanos:gaming:query', 'arcanos:gaming:sources:write'] : ['arcanos:gaming:query'] }];
+      expect(tool.securitySchemes).toEqual(expected);
+      expect(tool._meta.securitySchemes).toEqual(expected);
+    }
+    const hybrid = gamingMcpTools.find(tool => tool.name === 'arcanos_gaming_hybrid_query')!;
+    const candidates = gamingMcpTools.find(tool => tool.name === 'arcanos_gaming_submit_candidates')!;
+    expect(hybrid.description).toContain('released gaming-hybrid-v2');
+    expect(candidates.description).toContain('expectedRevision');
+    const output = hybrid.outputSchema as { $defs: { GamingHybridResponse: { properties: Record<string, unknown> } } };
+    expect(output.$defs.GamingHybridResponse.properties.frontendOutcome).toEqual({ type: 'string', enum: [
+      'answer_ready', 'need_new_source', 'clarification_required', 'temporarily_unavailable' ] });
+    expect(output.$defs.GamingHybridResponse.properties.searchHint).toMatchObject({ maxLength: 350 });
+  });
   it.each([
     ['arcanos_gaming_query', contract.queryInput, contract.queryOutput],
     ['arcanos_gaming_hybrid_query', contract.hybridInput, contract.hybridOutput],

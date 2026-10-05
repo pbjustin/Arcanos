@@ -3,12 +3,14 @@ name: PR CI
 on:
   pull_request:
     branches: [ "main" ]
+    types: [opened, reopened, synchronize, labeled, ready_for_review]
 
 permissions:
   contents: read
 
 jobs:
   build-test:
+    if: github.event.action == 'opened' || github.event.action == 'reopened' || github.event.action == 'synchronize'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -54,3 +56,161 @@ jobs:
 
       - name: Native PR preview containment contract
         run: npm run test:native-pr-preview-e2e
+
+  native-pr-preview-head-e2e:
+    name: Railway PR Preview Exact Head
+    if: >-
+      github.repository == 'pbjustin/Arcanos'
+      && github.event.pull_request.state == 'open'
+      && github.event.pull_request.draft == false
+      && github.event.pull_request.base.ref == 'main'
+      && github.event.pull_request.base.repo.full_name == github.repository
+      && github.event.pull_request.head.repo.full_name == github.repository
+      && contains(github.event.pull_request.labels.*.name, 'railway-preview')
+      && (github.event.action != 'labeled' || github.event.label.name == 'railway-preview')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Set up pinned Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.18.1'
+
+      # This reviewed bootstrap performs only bounded GitHub reads. It runs
+      # before checkout; the PR verifier never receives this API credential.
+      - name: Wait for trusted exact-head preview
+        id: trusted-preview
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { appendFileSync, writeFileSync } from 'node:fs';
+          import path from 'node:path';
+          const repository = 'pbjustin/Arcanos';
+          const context = 'Railway PR Preview E2E';
+          const environmentPrefix = 'pr-676861-';
+          const prNumber = process.env.PR_NUMBER;
+          const headSha = process.env.HEAD_SHA;
+          const deadline = Date.now() + 12 * 60_000;
+          const fail = code => { throw new Error(code); };
+          function requireAdmittedPull(pull) {
+            if (pull.number !== Number(prNumber) || pull.state !== 'open' || pull.draft !== false
+              || pull.head?.sha !== headSha || pull.head?.repo?.full_name !== repository
+              || pull.base?.repo?.full_name !== repository || pull.base?.ref !== 'main'
+              || !pull.labels?.some(label => label.name === 'railway-preview'))
+              fail('NATIVE_PR_PREVIEW_TRUSTED_PR_DRIFT');
+          }
+          async function readGithub(suffix) {
+            const remaining = deadline - Date.now();
+            if (remaining < 1) fail('NATIVE_PR_PREVIEW_TRUSTED_STATUS_TIMEOUT');
+            const response = await fetch(`https://api.github.com/repos/${repository}/${suffix}`, {
+              headers: { accept: 'application/vnd.github+json', authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
+                'x-github-api-version': '2022-11-28' },
+              redirect: 'error', signal: AbortSignal.timeout(Math.min(10_000, remaining)),
+            });
+            if (!response.ok) fail('NATIVE_PR_PREVIEW_TRUSTED_API_REJECTED');
+            const reader = response.body.getReader();
+            const chunks = [];
+            let bytes = 0;
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              bytes += value.byteLength;
+              if (bytes > 512 * 1024) {
+                await reader.cancel();
+                fail('NATIVE_PR_PREVIEW_TRUSTED_API_RESPONSE_LIMIT');
+              }
+              chunks.push(Buffer.from(value));
+            }
+            return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+          }
+          async function verifyTrustedPreview() {
+            if (process.env.GITHUB_REPOSITORY !== repository || !/^[1-9]\d*$/.test(prNumber ?? '')
+              || !/^[a-f0-9]{40}$/.test(headSha ?? '') || !process.env.GITHUB_TOKEN)
+              fail('NATIVE_PR_PREVIEW_TRUSTED_EVENT_INVALID');
+            for (let attempt = 0; attempt < 48; attempt += 1) {
+              requireAdmittedPull(await readGithub(`pulls/${prNumber}`));
+              const combined = await readGithub(`commits/${headSha}/status?per_page=100`);
+              if (combined.sha !== headSha || !Array.isArray(combined.statuses))
+                fail('NATIVE_PR_PREVIEW_TRUSTED_STATUS_IDENTITY_INVALID');
+              const matching = combined.statuses.filter(status => status.context === context);
+              if (matching.length > 1) fail('NATIVE_PR_PREVIEW_TRUSTED_STATUS_AMBIGUOUS');
+              const status = matching[0];
+              if (status && !['pending', 'success'].includes(status.state))
+                fail('NATIVE_PR_PREVIEW_TRUSTED_STATUS_FAILED');
+              if (status?.state === 'success') {
+                if (!/^https:\/\/github\.com\/pbjustin\/Arcanos\/actions\/runs\/[1-9]\d*$/.test(status.target_url ?? ''))
+                  fail('NATIVE_PR_PREVIEW_TRUSTED_RUN_LINK_INVALID');
+                requireAdmittedPull(await readGithub(`pulls/${prNumber}`));
+                const webBaseUrl = `https://arcanos-v2-${environmentPrefix}${prNumber}.up.railway.app`;
+                const workerBaseUrl = `https://arcanos-worker-${environmentPrefix}${prNumber}.up.railway.app`;
+                const evidence = { repository, prNumber: Number(prNumber), commitSha: headSha, context,
+                  trustedRunUrl: status.target_url, webBaseUrl, workerBaseUrl,
+                  scope: 'trusted-commit-status-and-served-public-identity', controlPlaneProvenanceAsserted: false };
+                writeFileSync(path.join(process.env.RUNNER_TEMP, 'native-pr-preview-trusted-context.json'),
+                  JSON.stringify(evidence, null, 2) + '\n');
+                appendFileSync(process.env.GITHUB_OUTPUT,
+                  `pr_number=${prNumber}\nhead_sha=${headSha}\nweb_base_url=${webBaseUrl}\nworker_base_url=${workerBaseUrl}\ntrusted_run_url=${status.target_url}\n`);
+                console.log('Trusted exact-head preview context verified.');
+                return;
+              }
+              if (attempt < 47) await new Promise(resolve => setTimeout(resolve, Math.min(15_000, Math.max(0, deadline - Date.now()))));
+            }
+            fail('NATIVE_PR_PREVIEW_TRUSTED_STATUS_TIMEOUT');
+          }
+          try { await verifyTrustedPreview(); }
+          catch (error) {
+            console.error(/^NATIVE_PR_PREVIEW_[A-Z_]+$/.test(error?.message ?? '')
+              ? error.message : 'NATIVE_PR_PREVIEW_TRUSTED_API_UNAVAILABLE');
+            process.exitCode = 1;
+          }
+          NODE
+
+      - name: Check out exact opted-in PR head
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          repository: pbjustin/Arcanos
+          ref: ${{ steps.trusted-preview.outputs.head_sha }}
+          persist-credentials: false
+
+      - name: Execute credential-free PR-head preview verifier
+        env:
+          PR_NUMBER: ${{ steps.trusted-preview.outputs.pr_number }}
+          HEAD_SHA: ${{ steps.trusted-preview.outputs.head_sha }}
+          WEB_BASE_URL: ${{ steps.trusted-preview.outputs.web_base_url }}
+          WORKER_BASE_URL: ${{ steps.trusted-preview.outputs.worker_base_url }}
+        run: |
+          env -i PATH="$PATH" LANG=C LC_ALL=C node "$GITHUB_WORKSPACE/scripts/native-pr-preview-e2e.mjs" \
+            --git-evidence-root "$GITHUB_WORKSPACE" --pr-number "$PR_NUMBER" --commit-sha "$HEAD_SHA" \
+            --web-base-url "$WEB_BASE_URL" --worker-base-url "$WORKER_BASE_URL" --execute --allow-network \
+            > "$RUNNER_TEMP/native-pr-preview-head-result.json" 2> "$RUNNER_TEMP/native-pr-preview-head-result.err"
+          env -i PATH="$PATH" LANG=C LC_ALL=C node --input-type=module - "$RUNNER_TEMP/native-pr-preview-head-result.json" "$HEAD_SHA" <<'NODE'
+          import { readFileSync } from 'node:fs';
+          const result = JSON.parse(readFileSync(process.argv[2], 'utf8'));
+          if (result.executed !== true || result.summary?.status !== 'PASS' || result.target?.commitSha !== process.argv[3])
+            throw new Error('NATIVE_PR_PREVIEW_EXECUTED_RESULT_INVALID');
+          const guide = result.checks?.find(check => check.caseId === 'gaming-query-guide');
+          console.log(JSON.stringify({ target: result.target, executed: result.executed,
+            summary: result.summary, limits: result.limits,
+            gamingEditionContextRegressions: { verified: guide?.gamingEditionContextRegressionsVerified,
+              proofVersion: guide?.gamingEditionContextRegressionsProofVersion,
+              proofScope: guide?.gamingEditionContextRegressionsProofScope,
+              cases: guide?.gamingEditionContextRegressionsCases } }, null, 2));
+          NODE
+
+      - name: Upload exact-head preview evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: native-pr-preview-exact-head-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
+          path: |
+            ${{ runner.temp }}/native-pr-preview-trusted-context.json
+            ${{ runner.temp }}/native-pr-preview-head-result.json
+            ${{ runner.temp }}/native-pr-preview-head-result.err
+          retention-days: 14
+          if-no-files-found: warn

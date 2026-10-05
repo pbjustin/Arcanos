@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { Readable } from 'node:stream';
+import { brotliCompressSync, deflateSync, gzipSync } from 'node:zlib';
 import { gamingAcquisitionAxios } from './testUtils/gamingAcquisitionFixtures.js';
 import {
   gamingArchiveGuideText, gamingArchiveGuideUrl, gamingArchiveMetadata, gamingArchiveStorageHost
@@ -25,8 +27,10 @@ function response(data: string, contentType: string) {
 
 describe('shared Gaming document acquisition contract', () => {
   let previousTimeout: string | undefined;
+  let previousByteLimit: string | undefined;
   beforeEach(() => {
     previousTimeout = process.env.WEB_FETCH_TIMEOUT_MS;
+    previousByteLimit = process.env.WEB_FETCH_MAX_BYTES;
     delete process.env.WEB_FETCH_TIMEOUT_MS;
     jest.resetAllMocks();
     mockResolve4.mockResolvedValue(['93.184.216.34']);
@@ -37,6 +41,52 @@ describe('shared Gaming document acquisition contract', () => {
     jest.restoreAllMocks();
     if (previousTimeout === undefined) delete process.env.WEB_FETCH_TIMEOUT_MS;
     else process.env.WEB_FETCH_TIMEOUT_MS = previousTimeout;
+    if (previousByteLimit === undefined) delete process.env.WEB_FETCH_MAX_BYTES;
+    else process.env.WEB_FETCH_MAX_BYTES = previousByteLimit;
+  });
+
+  it.each([
+    ['gzip', gzipSync], ['deflate', deflateSync], ['br', brotliCompressSync]
+  ] as const)('reports %s decoded overflow without accepting or extracting the compressed document', async (encoding, compress) => {
+    process.env.WEB_FETCH_MAX_BYTES = '128';
+    const compressed = compress(Buffer.from('x'.repeat(4096)));
+    expect(compressed.length).toBeLessThan(128);
+    const data = Object.assign(Readable.from([compressed]), {
+      rawHeaders: ['content-type', 'text/plain', 'content-encoding', encoding]
+    });
+    mockAxiosGet.mockResolvedValue({ status: 200, data,
+      headers: { 'content-type': 'text/plain', 'content-encoding': encoding } });
+    await expect(resolveGamingDocument('https://example.org/oversized'))
+      .rejects.toMatchObject({ code: 'SOURCE_TOO_LARGE', acquisition: { stage: 'transport', subreason: 'DECODED_LIMIT' } });
+    expect(mockAxiosGet).toHaveBeenCalledTimes(1);
+    expect(mockAxiosGet.mock.calls[0][1]).toMatchObject({ decompress: false, maxRedirects: 0, proxy: false });
+  });
+
+  it('reports transferred overflow without widening the byte ceiling or following a redirect', async () => {
+    process.env.WEB_FETCH_MAX_BYTES = '128';
+    mockAxiosGet.mockResolvedValue({ status: 302, data: 'x'.repeat(129),
+      headers: { location: '/next', 'content-length': '129' } });
+    await expect(resolveGamingDocument('https://example.org/oversized'))
+      .rejects.toMatchObject({ code: 'SOURCE_TOO_LARGE', acquisition: { subreason: 'TRANSFER_LIMIT' } });
+    expect(mockAxiosGet).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['application/pdf', undefined, 'UNSUPPORTED_CONTENT_TYPE'],
+    ['text/plain', 'unsupported-fixture-encoding', 'UNSUPPORTED_ENCODING']
+  ])('distinguishes unsupported format %s/%s from acquisition failure', async (contentType, encoding, subreason) => {
+    mockAxiosGet.mockResolvedValue({ status: 200, data: 'synthetic unsupported content',
+      headers: { 'content-type': contentType, ...(encoding ? { 'content-encoding': encoding } : {}) } });
+    await expect(resolveGamingDocument('https://example.org/unsupported'))
+      .rejects.toMatchObject({ code: 'UNSUPPORTED_SOURCE_FORMAT', acquisition: { subreason } });
+    expect(mockAxiosGet).toHaveBeenCalledTimes(1);
+  });
+
+  it('distinguishes failed extraction from unsupported response format', async () => {
+    mockAxiosGet.mockResolvedValue(response('\u0000'.repeat(256), 'text/plain'));
+    await expect(resolveGamingDocument('https://example.org/corrupt'))
+      .rejects.toMatchObject({ code: 'SOURCE_EXTRACTION_FAILED', acquisition: { stage: 'extraction', subreason: 'DOCUMENT_EXTRACTION_FAILED' } });
+    expect(mockAxiosGet).toHaveBeenCalledTimes(1);
   });
 
   it('resolves Archive OCR once and exposes only canonical public item provenance', async () => {

@@ -168,6 +168,32 @@ Launcher behavior:
   [PostgreSQL 18 suite](../tests/integration/gaming-durable-rag.pg18.integration.test.ts)
   supplies separate real storage, search, and revision evidence; a skipped
   database run does not establish those properties.
+- The same sealed guide request proves six request/source context regressions:
+  an ordinary Samurai request without an edition, source-attributed edition
+  text, negated named expansions, equipment versus online maintenance,
+  acquired `available only in` DLC restrictions, and closed platform aliases.
+  The exact-head verifier requires
+  `x-arcanos-preview-gaming-edition-context-version: gaming-edition-context-regressions/v1`
+  and reports the named cases under scope
+  `pure-request-source-identity-applicability`. Every assertion must pass before
+  any Gaming success marker is emitted; the existing response body stays
+  compatible with the trusted lifecycle verifier. These synthetic fixtures
+  execute the deployed production identity, CLEAR evidence, freshness and
+  applicability cores. They do not prove acquisition, model generation,
+  persistence or cumulative workflow budgets. The separate
+  [served Samurai workflow integration](../tests/gaming-samurai-guide-workflow.integration.test.ts)
+  exercises authenticated query-to-candidates-to-Trinity composition with
+  publisher, generation, semantic-audit and persistence substitutes; the
+  [platform alias tests](../tests/gaming-platform-aliases.test.ts) cover shared
+  workflow budgets and strict raw-payload idempotency.
+  Opted-in PR CI also runs the PR-head verifier after the trusted
+  `Railway PR Preview E2E` status succeeds for the same commit. Its separate job
+  rejects PR identity or opt-in drift, checks out the exact head without
+  persisted Git credentials, and executes the bounded verifier with an empty
+  environment except the runtime path and locale. It has no Railway credential
+  and uploads the executed JSON evidence as a workflow artifact. This provides
+  supplemental assertions when the trusted lifecycle verifier predates a new
+  proof; Railway ownership remains the trusted controller's responsibility.
 - The sealed Gaming guide request also executes the production progression,
   retrieval, game-identity, and recovery policies over fixed synthetic cases.
   It distinguishes an unknown progress point from a named gameplay target,

@@ -473,7 +473,7 @@ describe('current patch, hotfix, baseline, and rollout applicability', () => {
   });
 
   test('unknown edition, platform, and region are not silently assumed compatible', () => {
-    expect(evaluate([index(), source('guide')], { edition: 'Reforged' }).reasons).toContain('EDITION_UNVERIFIED_OR_MISMATCH');
+    expect(evaluate([index(), source('guide')], { edition: 'Reforged' }).reasons).toContain('EDITION_UNVERIFIED');
     expect(evaluate([index(), source('guide')], { platform: 'PC' }).reasons).toContain('CURRENT_OFFICIAL_INDEX_REQUIRED');
     expect(evaluate([index({ platforms: ['Console'] }), source('guide', { platforms: ['Console'] })], { platform: 'PC' }).reasons).toContain('PLATFORM_MISMATCH');
     expect(evaluate([index({ regions: ['EU'] }), source('guide', { regions: ['EU'] })], { region: 'NA' }).reasons).toContain('REGION_MISMATCH');
@@ -482,7 +482,7 @@ describe('current patch, hotfix, baseline, and rollout applicability', () => {
 
   test('a patch in another sequel or edition never establishes the requested game', () => {
     expect(evaluate([index({ game: 'Prism Siege 2' }), source('other-guide', { game: 'Prism Siege 2' })])).toMatchObject({ status: 'not_applicable', reasons: ['GAME_MISMATCH'] });
-    expect(evaluate([index({ edition: 'Reforged' }), source('guide', { edition: 'Reforged' })]).reasons).toContain('EDITION_REQUIRED');
+    expect(evaluate([index({ edition: 'Reforged' }), source('guide', { edition: 'Reforged' })]).reasons).toContain('EDITION_UNVERIFIED');
   });
 
   test('index verification expires independently of a recently fetched guide', () => {

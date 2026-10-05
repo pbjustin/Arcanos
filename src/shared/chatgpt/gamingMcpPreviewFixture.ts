@@ -42,7 +42,8 @@ function requireProof(value: unknown): asserts value { if (!value) throw new Err
 export function assertGamingMcpPreviewFixture(): void {
   requireProof(JSON.stringify(gamingMcpTools.map(tool => tool.name)) === JSON.stringify(expectedNames));
   requireProof(gamingMcpTools.filter(tool => isGamingMcpWrite(tool.name)).length === 3);
-  requireProof(Buffer.byteLength(JSON.stringify(gamingMcpTools), 'utf8') < 64_000);
+  // Exact reviewed catalog size; the unchanged HTTP/verifier cap remains 65,536 bytes.
+  requireProof(Buffer.byteLength(JSON.stringify(gamingMcpTools), 'utf8') === 64_494);
   for (const tool of gamingMcpTools) {
     const write = isGamingMcpWrite(tool.name);
     requireProof(tool.inputSchema.type === 'object' && tool.outputSchema.type === 'object');

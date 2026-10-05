@@ -82,6 +82,41 @@ function read(values: Record<string, unknown>, key: string): string | undefined 
   return owns(values, key) && typeof values[key] === 'string' && values[key].trim() ? clean(values[key]) : undefined;
 }
 
+const QUESTION_PLATFORMS: Readonly<Record<string, string>> = {
+  pc: 'PC', 'playstation 5': 'PlayStation 5', ps5: 'PlayStation 5'
+};
+const QUESTION_REGIONS: Readonly<Record<string, string>> = {
+  europe: 'Europe', 'north america': 'North America', 'south america': 'South America',
+  asia: 'Asia', oceania: 'Oceania', australia: 'Australia', japan: 'Japan',
+  'united states': 'United States', 'united kingdom': 'United Kingdom'
+};
+
+function questionScope(prompt: string, preposition: 'on' | 'in', values: Readonly<Record<string, string>>,
+  alternatives: string): string | undefined {
+  const names = Object.keys(values).map(value => value.replace(/ /gu, '\\s+')).join('|');
+  const mentions = new Set([...prompt.matchAll(new RegExp(`\\b(?:${names}|${alternatives})\\b`, 'giu'))]
+    .map(match => values[clean(match[0]).toLowerCase()] ?? 'unknown'));
+  if (mentions.size !== 1 || mentions.has('unknown')) return undefined;
+  const targets = [...prompt.matchAll(new RegExp(`\\b${preposition}\\s+(${names})\\b`, 'giu'))];
+  if (!targets.length || targets.some(match => /^\s*(?:[/&]|[(,]?\s*(?:and|or|versus|vs)\b)/iu
+    .test(prompt.slice((match.index ?? 0) + match[0].length)))) return undefined;
+  return values[clean(targets[0][1]).toLowerCase()];
+}
+
+/** Narrow user-request scope only. Source claims and acquired metadata never enter this parser. */
+export function resolveGamingQuestionScope(prompt: string): { platform?: string; region?: string } {
+  const question = prompt.replace(/https?:\/\/\S+/giu, '');
+  // Comparisons, hypothetical/negative claims and quoted/source-attributed text
+  // do not identify one safe request target. Leave them for material clarification.
+  if (/["`“”]|(?:^|\s)'[^']+'/u.test(question) || /\b(?:if|suppose|imagine|hypothetical|not|never|without|except|excluding|avoid(?:ing)?|other\s+than|neither|nor|instead|rather|compare|versus|vs|no\s+longer|used\s+to|(?:don|doesn|didn|isn|aren|wasn|weren|won|can)['’]?t)\b/iu.test(question)
+    || /\b(?:guide|source|article|page|snippet|title)\s+(?:is|says|states|claims|mentions|describes|reports|lists|contains|includes)\b|\baccording\s+to\b/iu.test(question)) return {};
+  const platform = questionScope(question, 'on', QUESTION_PLATFORMS,
+    'ps[1-5]|playstation(?:\\s+\\d)?|xbox(?:\\s+(?:one|series\\s+[xs]))?|nintendo(?:\\s+switch)?|switch|steam\\s+deck|linux|windows|mac(?:os)?|console|mobile');
+  const region = questionScope(question, 'in', QUESTION_REGIONS,
+    'latin\\s+america|middle\\s+east|africa|china|korea|us(?=\\s+(?:servers?|regions?|release))|usa|uk|eu|apac|emea|na|sa|oce');
+  return { ...(platform ? { platform } : {}), ...(region ? { region } : {}) };
+}
+
 /** Only direct first-person affirmative clauses may establish progression claims. */
 function questionProgress(prompt: string, game?: string): Partial<GamingPlayerContext> {
   const result: Partial<GamingPlayerContext> = {};

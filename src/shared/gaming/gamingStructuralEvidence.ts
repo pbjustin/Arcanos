@@ -1,3 +1,4 @@
+import { resolveGamingRequestEdition, gamingEditionEvidenceMatchesRequest, type GamingEditionRequestContext } from './gamingGameIdentity.js';
 import type { GamingEvidenceUnit } from './gamingEvidenceUnits.js';
 import { GAMING_EVIDENCE_UNIT_POLICY_VERSION } from './gamingEvidenceUnits.js';
 import { resolveGamingAnswerPolicy } from './gamingAnswerPolicy.js';
@@ -41,6 +42,39 @@ export function isGamingDocumentMetadataUnit(unit: GamingEvidenceUnit): boolean 
 }
 
 /**
+ * Only a closed declarative negative requirement can neutralize a DLC mention.
+ * This text is for contradiction detection only; it never becomes answer evidence
+ * or overrides independently asserted scope fields. Conditions, double negatives,
+ * extra clauses and incomplete prose retain the original conservative checks.
+ */
+export function gamingEditionConflictText(text: string, completeRecord = false): string {
+  const requirements = text.replace(/(?:^|(?<=[.!?\n|]))\s*(?:(?:Notes?|Requirements?|Compatibility|Description)\s*:\s*)?([\p{L}\p{N}'’() \t-]{1,120}?)\s+(?:(?:do(?:es)?\s+not|do(?:es)?n['’]t)\s+(?:require|need)|(?:requires?|needs?)\s+no)\s+(?:(?:the|an?)\s+)?(?:shadow[\s-]+of[\s-]+the[\s-]+erdtree|dlc|expansion)\s*([.!](?=\s|$)|(?=[\n|]|$))/giu,
+    (statement: string, subject: string, ending: string) => {
+      const uncertainSubject = /\b(?:not|no|never|false|untrue|incorrect|deny|denies|denied|claim|claims|claimed|say|says|said|if|unless|whether|when|until|except|although|despite|that|is|are|was|were|may|might|can|could|must|should|would|dlc|expansion|nightreign)\b|\bshadow[\s-]+of[\s-]+the[\s-]+erdtree\b/iu;
+      return (!ending && !completeRecord) || uncertainSubject.test(subject) ? statement : ' ';
+    });
+  // Expansion-first declarations have no arbitrary subject or trailing clause.
+  return requirements.replace(/(?:^|(?<=[.!?\n|]))\s*(?:(?:Notes?|Requirements?|Compatibility|Description)\s*:\s*)?(?:(?:(?:the|an?)\s+)?(?:shadow[\s-]+of[\s-]+the[\s-]+erdtree|dlc|expansion)\s+(?:is\s+not|are\s+not|isn['’]t|aren['’]t)|no\s+(?:shadow[\s-]+of[\s-]+the[\s-]+erdtree|dlc|expansion)\s+(?:is|are))\s+(?:required|needed|necessary)\s*([.!](?=\s|$)|(?=[\n|]|$))/giu,
+    (statement: string, ending: string) => (!ending && !completeRecord) ? statement : ' ');
+}
+
+/** Unknown signed requirements never become positive scope contradictions. */
+export function classifyGamingEditionRequirements(text: string, completeRecord = false, unverifiedMentions = false): 'clear' | 'unverified' | 'conflict' {
+  const inspected = gamingEditionConflictText(text, completeRecord);
+  let unverified = false;
+  for (const match of inspected.matchAll(/[^.!?\n|;]+[.!?\n|;]?/gu)) {
+    const clause = match[0];
+    if (!/\b(?:shadow[\s-]+of[\s-]+the[\s-]+erdtree|dlc|expansion)\b/iu.test(clause)) continue;
+    const requirement = /\b(?:dlc|expansion)[ -]only\b|\b(?:requires?|needs?|exclusive to|(?:only\s+available|available\s+only)\s+in)\b[^.!?\n]{0,60}\b(?:shadow[\s-]+of[\s-]+the[\s-]+erdtree|dlc|expansion)\b|\b(?:shadow[\s-]+of[\s-]+the[\s-]+erdtree|dlc|expansion)\s+(?:is|are|isn['’]t|aren['’]t|may|might|can|could|would|should|must)\s+(?:not\s+)?(?:be\s+)?(?:required|needed|necessary)\b/iu;
+    if (!requirement.test(clause)) { unverified ||= unverifiedMentions; continue; }
+    const uncertain = /\?|\b(?:if|unless|except|when|until|whether|not|no|never|false|untrue|incorrect|deny|denies|denied|claim|claims|claimed|may|might|can|could|would|should|must)\b|\b(?:isn|aren|doesn|don)['’]t\b/iu;
+    if (uncertain.test(clause)) unverified = true;
+    else return 'conflict';
+  }
+  return unverified ? 'unverified' : 'clear';
+}
+
+/**
  * Positive edition assertions belong to their intact records, not the whole page.
  * Reuse the structural scope grammar; names, dates, titles and DLC silence are
  * never provenance. A mixed page contributes only its independently scoped facts.
@@ -50,6 +84,7 @@ export function selectGamingEditionScopedEvidence(document: {
 }, input: { game: string; edition?: string }): {
   status: 'verified' | 'unverified' | 'conflict'; text: string; units: GamingEvidenceUnit[]; reasonCodes: string[];
 } {
+  input = { ...input, edition: resolveGamingRequestEdition(input) };
   const result = (status: 'verified' | 'unverified' | 'conflict', units: GamingEvidenceUnit[] = [], reasonCodes: string[] = []) =>
     ({ status, units, text: units.map(unit => unit.text).join('\n\n'), reasonCodes });
   if (!input.edition || normalizeGamingEditionIdentity(input.edition) !== 'base-game') return result('unverified');
@@ -59,6 +94,8 @@ export function selectGamingEditionScopedEvidence(document: {
   const selected: GamingEvidenceUnit[] = [];
   let scopedRecords = false;
   let uncertainBaseRecord = false;
+  let uncertainBaseScope = false;
+  let explicitOtherEdition = false;
   for (const unit of units) {
     const leaf = (label: string) => normal(label.split(/\s+\/\s+/u).at(-1)!);
     // Even an excluded record cannot hide an explicit different game.
@@ -70,20 +107,44 @@ export function selectGamingEditionScopedEvidence(document: {
     const scopes = unit.fields.filter(field => ['edition', 'scope', 'applicability'].includes(leaf(field.label)))
       .map(field => normalizeGamingEditionIdentity(field.value));
     scopedRecords ||= !metadataOnly && scopes.length > 0;
-    if (!scopes.includes('base-game')) continue;
+    if (!scopes.includes('base-game')) {
+      explicitOtherEdition ||= !metadataOnly && scopes.some(scope => /^(?:shadow of the erdtree|dlc|expansion)$/u.test(scope));
+      continue;
+    }
+    // A parser-owned field boundary closes a declaration even when serialization
+    // adds semicolons around it. Inspect the rest of the record and its context.
+    const scopeText = unit.fields.reduce((text, field) => text.split(field.value)
+      .join(gamingEditionConflictText(field.value, unit.integrity.status === 'complete')), unit.text);
+    const scopeContext = [scopeText, unit.context.heading, unit.context.caption, ...(unit.context.qualifiers ?? [])]
+      .filter(Boolean).join('\n');
+    // A named acquired heading/caption is independent edition context, not an
+    // uncertain requirement sentence. Negative notes cannot erase that label.
+    const contextEditionConflict = [unit.context.heading, unit.context.caption].some(value => value
+      && /^(?:shadow[\s-]+of[\s-]+the[\s-]+erdtree|dlc|expansion)$/iu.test(value.trim()));
+    const requirements = classifyGamingEditionRequirements(scopeContext, unit.integrity.status === 'complete', true);
     if (scopes.some(scope => scope !== 'base-game')
-      || /\b(?:shadow[\s-]+of[\s-]+the[\s-]+erdtree|dlc|expansion|nightreign)\b/iu.test(
-        [unit.text, unit.context.heading, unit.context.caption, ...(unit.context.qualifiers ?? [])].join(' '))) {
+      || contextEditionConflict || /\bnightreign\b/iu.test(scopeContext) || requirements === 'conflict') {
       return result('conflict', [], ['CONFLICTING_EDITION_SCOPE']);
     }
+    uncertainBaseScope ||= requirements === 'unverified';
     // Do not hide a disputed base-game fact by dropping its ambiguous record.
     if (unit.integrity.status !== 'complete') uncertainBaseRecord = true;
     else if (!metadataOnly) selected.push(unit);
   }
   if (uncertainBaseRecord) return result('unverified', [], ['EDITION_SCOPE_NOT_INTACT']);
+  if (uncertainBaseScope) return result('unverified', [], ['EDITION_SCOPE_UNVERIFIED']);
   return selected.length ? result('verified', selected, ['INTACT_BASE_GAME_SCOPE'])
-    : result('unverified', [], scopedRecords ? ['EDITION_SCOPE_UNVERIFIED'] : []);
+    : explicitOtherEdition ? result('conflict', [], ['CONFLICTING_EDITION_SCOPE']) : result('unverified', [], scopedRecords ? ['EDITION_SCOPE_UNVERIFIED'] : []);
 }
+/** Source-scope inspection never fills a missing player edition. */
+export function selectGamingSourceEditionScopedEvidence(document: Parameters<typeof selectGamingEditionScopedEvidence>[0],
+  input: GamingEditionRequestContext & { game: string }, sourceEdition?: string) {
+  const requestEdition = resolveGamingRequestEdition(input);
+  const inspectionEdition = requestEdition ?? (sourceEdition && gamingEditionEvidenceMatchesRequest(sourceEdition, undefined, input)
+    ? sourceEdition : undefined);
+  return selectGamingEditionScopedEvidence(document, { game: input.game, edition: inspectionEdition });
+}
+
 function mentionsValue(request: string, value: string): boolean {
   let index = request.indexOf(value);
   while (index >= 0) {

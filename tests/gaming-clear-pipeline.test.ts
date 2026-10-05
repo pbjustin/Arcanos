@@ -62,7 +62,7 @@ describe('Gaming CLEAR real pipeline delivery decisions', () => {
     evidence.sources[0].freshnessMetadata = { id: 'source-1', game: input.game, url: evidence.sources[0].url,
       regions: ['EU'], fetchedAt: evidence.sources[0].fetchedAt, verifiedAt: evidence.sources[0].fetchedAt,
       metadataConfidence: 'content_extracted' };
-    const result = await runGameplayPipeline({ ...input, ...(region ? { region } : {}) },
+    const result = await runGameplayPipeline({ ...input, prompt: 'Region-specific: How do I open the return route?', ...(region ? { region } : {}) },
       { knowledge: evidence, current: true, qualification: '' });
     if (region === 'EU') {
       expect(result.data.response).toBe(answer);
@@ -75,6 +75,20 @@ describe('Gaming CLEAR real pipeline delivery decisions', () => {
       expect(runTrinityWritingPipeline).not.toHaveBeenCalled();
       expect(createSingleChatCompletion).not.toHaveBeenCalled();
     }
+  });
+
+  it('allows harmless acquired regional metadata and retains it in semantic review', async () => {
+    const evidence: GamingStoredKnowledgeContext = knowledge();
+    evidence.sources[0].freshnessMetadata = { id: 'source-1', game: input.game, url: evidence.sources[0].url,
+      regions: ['EU'], fetchedAt: evidence.sources[0].fetchedAt, verifiedAt: evidence.sources[0].fetchedAt,
+      metadataConfidence: 'content_extracted' };
+    const result = await run({}, evidence);
+    expect(result.data.response).toBe(answer);
+    expect(result.data.fallbackReason).toBeUndefined();
+    expect(runTrinityWritingPipeline).toHaveBeenCalledTimes(1);
+    expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
+    const params = createSingleChatCompletion.mock.calls[0][1] as { messages: Array<{ content: string }> };
+    expect(JSON.parse(params.messages[1].content)).toMatchObject({ applicability: [{ regions: ['EU'] }] });
   });
 
   it('blocks a high-scoring material defect even with auditEnabled false and no retry/repair', async () => {

@@ -54,7 +54,18 @@ document-type, domain deny, and configured allowlist restrictions remain.
 Archive's recognized item/derivative rules remain specialized; sensitive material
 is rejected before canonical item selection.
 
-Public consumers retain coarse reason codes. Operator diagnostics add finite
+Public consumers receive bounded acquisition reason codes. `SOURCE_TOO_LARGE`
+identifies transferred or decoded-byte overflow; `UNSUPPORTED_SOURCE_FORMAT`
+identifies unsupported content types or encodings; `SOURCE_EXTRACTION_FAILED`
+identifies corrupt or unusable extraction. Existing `SOURCE_INACCESSIBLE`,
+`SOURCE_TIMEOUT`, `URL_BLOCKED`, and `REDIRECT_NOT_ALLOWED` retain their access,
+deadline, admission, and redirect meanings. Unclassified connection/DNS failures
+retain `SOURCE_FETCH_FAILED` for compatibility with existing bounded retrieval
+fallbacks. These classes expose no transport address, response body, or native
+error. The compressed and decoded byte ceilings still reject the entire source;
+an oversized response cannot become partially admitted evidence.
+
+Operator diagnostics add finite
 security/source-policy categories, admission rule identifiers, acquisition stage,
 opaque candidate reference, submitted index, workflow/request correlation,
 redirect count, zero-based failing hop, numeric HTTP status and status category, policy version,
@@ -65,8 +76,8 @@ addresses, client configurations, bodies, cookies, or credentials.
 between 100 and 599. It distinguishes access denial (401/403), a missing page
 (404), and rate limiting (429) without copying response text or headers into
 logs. A DNS or connection failure without a response has no HTTP status. The
-existing public rejection reason, retry limits, and source-safety policy remain
-unchanged; a numeric status is diagnostic evidence, not permission to retry or
+retry limits and source-safety policy remain unchanged; a numeric status is
+diagnostic evidence, not permission to retry or
 bypass a source restriction.
 
 ## Explicit HTTPS redirect policy

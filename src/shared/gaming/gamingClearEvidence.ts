@@ -1,3 +1,6 @@
+import { gamingApplicabilityScopeRequired } from './gamingGuideApplicability.js';
+import { gamingPlatformEvidenceMatchesRequest } from './gamingPlatformIdentity.js';
+import { resolveGamingRequestEdition, gamingEditionEvidenceMatchesRequest } from './gamingGameIdentity.js';
 import { createGamingClearAssessment, classifyGamingClearQuestion, gamingClearContextFingerprint, gamingClearHash,
   type GamingClearAssessment } from './gamingClearPolicy.js';
 import { gamingEditionIdentitiesMatch, normalizeGamingEvidenceGameIdentity, resolveGamingGuideIdentity } from './gamingGameIdentity.js';
@@ -45,6 +48,7 @@ export function assessGamingClearEvidence(
   knowledge: GamingStoredKnowledgeContext,
   options: GamingClearEvidenceOptions = {}
 ): GamingClearAssessment {
+  input = { ...input, edition: resolveGamingRequestEdition(input) };
   const chunks = knowledge.evidence ?? [];
   const bounded = chunks.length <= 8 && knowledge.sources.length <= 8
     && chunks.every(chunk => chunk.text.length <= 8_000) && knowledge.context.length <= 32_000;
@@ -80,17 +84,19 @@ export function assessGamingClearEvidence(
     || (item.effectiveFrom && Date.parse(item.effectiveFrom) > evaluatedNow.getTime())
     || (item.publishedAt && Date.parse(item.publishedAt) > evaluatedNow.getTime())
     || (!historicalPatchVerified && !advisoryFreshness && item.effectiveUntil && Date.parse(item.effectiveUntil) <= evaluatedNow.getTime())
-    || (item.edition && !gamingEditionIdentitiesMatch(item.edition, input.edition))
-    || (input.platform && item.platforms?.length && !item.platforms.some(platform => ['all', input.platform!.toLowerCase()].includes(platform.toLowerCase())))
+    || (input.edition && item.edition && !gamingEditionEvidenceMatchesRequest(item.edition, input.edition, input))
+    || (input.platform && item.platforms?.length && !gamingPlatformEvidenceMatchesRequest(item.platforms, input.platform))
     || (input.region && item.regions?.length && !item.regions.some(region => ['all', input.region!.toLowerCase()].includes(region.toLowerCase())))
     || (input.requestedVersion && item.patch && item.currentness !== 'current_index'
       && item.patch !== input.requestedVersion && !item.baselineForPatches?.includes(input.requestedVersion)))
-    || sources.some(source => source.edition && !gamingEditionIdentitiesMatch(source.edition, input.edition));
+    || sources.some(source => input.edition && source.edition && !gamingEditionEvidenceMatchesRequest(source.edition, input.edition, input));
   const compatibilityUnknown = relevantMetadata.some(item => item.metadataUnverified
-    || (!input.platform && item.platforms?.length && !item.platforms.some(platform => platform.toLowerCase() === 'all'))
-    || (!input.region && item.regions?.length && !item.regions.some(region => region.toLowerCase() === 'all'))
+    || (!input.edition && item.edition && !gamingEditionEvidenceMatchesRequest(item.edition, undefined, input))
+    || (!input.platform && gamingApplicabilityScopeRequired(input, 'platform') && item.platforms?.length && !gamingPlatformEvidenceMatchesRequest(item.platforms))
+    || (!input.region && gamingApplicabilityScopeRequired(input, 'region') && item.regions?.length && !item.regions.some(region => region.toLowerCase() === 'all'))
     || [item.effectiveFrom, item.effectiveUntil, item.publishedAt].some(value => value && !Number.isFinite(Date.parse(value))))
-    || Boolean(input.edition && sources.some(source => !source.edition
+    || sources.some(source => !input.edition && source.edition && !gamingEditionEvidenceMatchesRequest(source.edition, undefined, input))
+    || Boolean(input.edition && input.edition !== 'base-game' && sources.some(source => !source.edition
       && !relevantMetadata.some(item => (item.id === source.sourceId || item.url === source.url) && gamingEditionIdentitiesMatch(item.edition, input.edition))
       && normalizeGamingEvidenceGameIdentity(source.game ?? '') !== normalizeGamingEvidenceGameIdentity(resolveGamingGuideIdentity(input.game, input.edition))));
   const identityVerified = !identityConflict && (options.identityVerified === true

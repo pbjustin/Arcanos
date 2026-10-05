@@ -64,11 +64,15 @@ Git bytes locally before this byte-level check; do not weaken the hash check.
 With the approved baseline and its owner-review binding present locally:
 
 ```powershell
-npm run compose:gaming-skill -- --inputs .local-migration/arcanos-gaming --owner-review owner-baseline-review.json --output composed-skill-v1
-npm run compose:gaming-skill -- --inputs .local-migration/arcanos-gaming --owner-review owner-baseline-review.json --output composed-skill-v1 --inspect
+npm run compose:gaming-skill -- --inputs .local-migration/arcanos-gaming --owner-review owner-baseline-review.json --output composed-skill-v2
+npm run compose:gaming-skill -- --inputs .local-migration/arcanos-gaming --owner-review owner-baseline-review.json --output composed-skill-v2 --inspect
 ```
 
-The candidate is written beneath `.local-migration/arcanos-gaming/composed-skill-v1/`:
+The default composer selects the released `gaming-hybrid-v2` workflow and keeps
+explicit v1 only for legacy callers. This does not update the installed private
+plugin or approve new private instruction bytes.
+
+The candidate is written beneath `.local-migration/arcanos-gaming/composed-skill-v2/`:
 `skills/arcanos-gaming/SKILL.md`, `reconciliation-map.json`, `review-summary.md`
 and `candidate-manifest.json`. Preserve baseline bytes and prior evidence.
 The full source-to-skill map and review report stay private; tracked metadata
@@ -81,7 +85,7 @@ source binding before owner review. Owner approval of the baseline is not
 approval of the new skill: review the complete local skill at its recorded hash.
 That approval does not authorize registration, backend changes or migration.
 
-The current exact-content approval is recorded in `connection.requirements.json`
+The historical v1 exact-content approval is recorded in `connection.requirements.json`
 and the [migration checkpoint](../../docs/chatgpt-migration/gaming/README.md).
 The private `owner-skill-review-a2cd3cfb.json` binds that approval to the complete
 skill hash. Candidate bytes and generation-time pending review reports are

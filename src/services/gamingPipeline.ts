@@ -1,3 +1,4 @@
+import { resolveGamingRequestEdition, buildGamingSourceEditionQualification } from '@shared/gaming/gamingGameIdentity.js';
 import { runTrinityWritingPipeline } from "@core/logic/trinityWritingPipeline.js";
 import { logger } from "@platform/logging/structuredLogging.js";
 import { createRuntimeBudgetWithLimit, getSafeRemainingMs, type RuntimeBudget } from "@platform/resilience/runtimeBudget.js";
@@ -634,6 +635,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
   if (params.mode === "guide" && !params.contextOrigins) {
     params = { ...params, ...resolveGamingPlayerContext(params, params.prompt) };
   }
+  params = { ...params, edition: resolveGamingRequestEdition(params) };
   const requestStartedAt = Date.now();
   const sourceEndpoint = `arcanos-gaming.${prepared && params.mode !== 'guide' ? 'hybrid-' : ''}${params.mode}`;
   const requestContext = getRequestAbortContext();
@@ -1084,10 +1086,14 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
   const allowAdvisoryFreshness = prepared?.advisoryFreshnessAllowed === true
     && prepared.qualification.trim().length > 0
     && resolveGamingFreshnessDisposition(resolvedParams) === 'ADVISORY';
+  const sourceEditionQualification = [...new Set(clearKnowledge.sources.map(source =>
+    buildGamingSourceEditionQualification(typeof source.freshnessMetadata?.edition === 'string'
+      ? source.freshnessMetadata.edition : undefined, resolvedParams)).filter(Boolean))].join(' ');
+  const answerQualification = allowAdvisoryFreshness && prepared ? prepared.qualification : sourceEditionQualification;
   // Audit and publish the same deterministically qualified text, even when the
   // provider omits the required warning from its candidate answer.
-  const qualifyAdvisoryAnswer = (answer: string): string => allowAdvisoryFreshness && prepared
-    && !answer.includes(prepared.qualification) ? `${prepared.qualification}\n\n${answer}` : answer;
+  const qualifyAdvisoryAnswer = (answer: string): string => answerQualification
+    && !answer.includes(answerQualification) ? `${answerQualification}\n\n${answer}` : answer;
   if (freshnessSensitive && !currentEvidenceAvailable && !allowAdvisoryFreshness) {
     const currentEvidenceFallbackReason: GamingFallbackReason = "CURRENT_EVIDENCE_UNAVAILABLE";
     logger.warn("gaming.fallback.used", {

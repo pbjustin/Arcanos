@@ -2,7 +2,7 @@ import { truncateTextByCharacters } from '@shared/http/clientResponseCommon.js';
 import { selectGamingDocumentExcerpt } from '@services/gamingDocumentChunks.js';
 import { filterGamingDocumentInstructions } from '@services/gamingDocumentExtraction.js';
 import type { GamingPlayerContext } from './gamingPlayerContext.js';
-import { buildGamingRetrievalTerms, buildGamingRequestRequirements, gamingTermCoverage, safeGamingEvidenceMetadata, scopeGamingEvidenceParagraphs } from './gamingRetrievalPolicy.js';
+import { buildGamingRetrievalTerms, hasGamingRelevantGuideContribution, buildGamingRequestRequirements, gamingTermCoverage, safeGamingEvidenceMetadata, scopeGamingEvidenceParagraphs } from './gamingRetrievalPolicy.js';
 import { normalizeGamingEvidenceGameIdentity, resolveGamingGuideIdentity } from './gamingGameIdentity.js';
 import type { GamingClearAssessment } from './gamingClearPolicy.js';
 import type { GamingEvidenceUnit } from './gamingEvidenceUnits.js';
@@ -208,7 +208,8 @@ function projectCandidate<RecordType extends GamingStoredEvidenceRecord>(record:
   const contentTokens = new Set(tokens(text));
   const coverage = terms.filter(term => contentTokens.has(term)).length / Math.max(1, terms.length);
   if (!text || coverage < MIN_QUERY_COVERAGE && !(input.requireRequestCoverage
-    && buildGamingRequestRequirements(input).some(requirement => gamingTermCoverage(text, requirement.terms) === 1))) return null;
+    && (hasGamingRelevantGuideContribution(text, input)
+      || buildGamingRequestRequirements(input).some(requirement => gamingTermCoverage(text, requirement.terms) === 1)))) return null;
   const patch = resolvePatch(record);
   if (input.requestedVersion && patch && patch !== input.requestedVersion) return null;
   const provenance = record.provenance ?? {};

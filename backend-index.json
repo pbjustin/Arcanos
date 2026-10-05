@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-04T06:02:39.231Z",
+  "generatedAt": "2026-10-05T02:50:44.283Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -2816,6 +2816,9 @@
           "relativePath": "src/shared/gaming/gamingHybridPolicyCore.ts"
         },
         {
+          "relativePath": "src/shared/gaming/gamingPlatformIdentity.ts"
+        },
+        {
           "relativePath": "src/shared/gaming/gamingPlayerContext.ts"
         },
         {
@@ -2826,6 +2829,9 @@
         },
         {
           "relativePath": "src/shared/gaming/gamingPromptCore.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingQuestionFreshnessPolicy.ts"
         },
         {
           "relativePath": "src/shared/gaming/gamingRecoveryResponse.ts"
@@ -4240,6 +4246,9 @@
           "relativePath": "tests/fixtures/session-context-e2e.ts"
         },
         {
+          "relativePath": "tests/gaming-acquired-topic-identity.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-advisory-strictness.test.ts"
         },
         {
@@ -4264,7 +4273,13 @@
           "relativePath": "tests/gaming-archive-resources.test.ts"
         },
         {
+          "relativePath": "tests/gaming-base-defaulting.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-baseline-capture.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-body-identity.test.ts"
         },
         {
           "relativePath": "tests/gaming-clear-answer-audit.test.ts"
@@ -4345,6 +4360,9 @@
           "relativePath": "tests/gaming-freshness.test.ts"
         },
         {
+          "relativePath": "tests/gaming-frontend-guide-contract.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-game-identity.test.ts"
         },
         {
@@ -4372,6 +4390,9 @@
           "relativePath": "tests/gaming-guide-intake-core.test.ts"
         },
         {
+          "relativePath": "tests/gaming-guide-outcomes.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-guide-response-preview-failure.test.ts"
         },
         {
@@ -4379,6 +4400,9 @@
         },
         {
           "relativePath": "tests/gaming-html-evidence.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-hybrid-edition-budget.test.ts"
         },
         {
           "relativePath": "tests/gaming-hybrid-evidence-selection.test.ts"
@@ -4411,6 +4435,9 @@
           "relativePath": "tests/gaming-large-guide-rag.integration.test.ts"
         },
         {
+          "relativePath": "tests/gaming-location-scope.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-mcp-preview-fixture.test.ts"
         },
         {
@@ -4418,6 +4445,21 @@
         },
         {
           "relativePath": "tests/gaming-mcp-preview.integration.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-minecraft-child-isolation.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-minecraft-edition-scope.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-mixed-candidate-failures.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-partial-guide-admission.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-platform-aliases.test.ts"
         },
         {
           "relativePath": "tests/gaming-player-context.e2e.test.ts"
@@ -4450,13 +4492,28 @@
           "relativePath": "tests/gaming-rag-local-fetch.integration.test.ts"
         },
         {
+          "relativePath": "tests/gaming-request-scope-necessity.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-request-scope-negation.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-request-scope.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-resolved-source-ingestion.integration.test.ts"
         },
         {
           "relativePath": "tests/gaming-retrieval-policy.test.ts"
         },
         {
+          "relativePath": "tests/gaming-samurai-guide-workflow.integration.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-search-discovery.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-semantic-reasons.test.ts"
         },
         {
           "relativePath": "tests/gaming-skill-composition.test.ts"
@@ -4483,6 +4540,9 @@
           "relativePath": "tests/gaming-source-schema-parity.test.ts"
         },
         {
+          "relativePath": "tests/gaming-source-scope-negation.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-stored-knowledge.test.ts"
         },
         {
@@ -4505,6 +4565,9 @@
         },
         {
           "relativePath": "tests/gaming-trinity-generation-budget.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-unrequested-base-edition.test.ts"
         },
         {
           "relativePath": "tests/gaming-version.test.ts"

@@ -16,6 +16,10 @@ bodies. It preserves the existing response and request matrix, and emits
 `gaming-structured-evidence/v1` only after the complete fixture succeeds. The
 PR-head verifier requires that marker; missing or changed markers fail the probe.
 Fixture failures return a fixed error and withhold every Gaming success marker.
+The base-game scope proof distinguishes missing scope from an explicit edition
+conflict. A DLC-only record remains conflicting even when accompanying prose
+labels the page as base game; it cannot supply accepted base-game evidence.
+Mutation checks reject downgrading that conflict to unverified scope.
 
 This is deployed component evidence with in-memory records and a passive worker.
 It does not execute the normal secure fetch/resolver/hybrid wrappers, SQL writes,

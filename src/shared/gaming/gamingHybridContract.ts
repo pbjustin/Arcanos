@@ -1,8 +1,16 @@
 import { z } from 'zod';
 
-/** Additive opt-in contract; legacy Gaming dispatch and source Actions keep their shapes. */
+/** Explicit protocol binding; legacy Gaming dispatch and source Actions keep their shapes. */
 export const GAMING_HYBRID_CONTRACT_VERSION = 'gaming-hybrid-v1' as const;
 export const GAMING_HYBRID_V2_CONTRACT_VERSION = 'gaming-hybrid-v2' as const;
+/** Normal released guide/build/meta traffic selects v2; explicit v1 remains compatible. */
+export const GAMING_HYBRID_RELEASED_CONTRACT_VERSION = GAMING_HYBRID_V2_CONTRACT_VERSION;
+/** Recover a recognized discriminator for validation errors without changing workflow protocol. */
+export function gamingHybridRequestedContractVersion(payload: unknown): GamingHybridContractVersion | undefined {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return undefined;
+  const requested = (payload as { contractVersion?: unknown }).contractVersion;
+  return requested === GAMING_HYBRID_CONTRACT_VERSION || requested === GAMING_HYBRID_V2_CONTRACT_VERSION ? requested : undefined;
+}
 export type GamingHybridContractVersion = typeof GAMING_HYBRID_CONTRACT_VERSION | typeof GAMING_HYBRID_V2_CONTRACT_VERSION;
 export const GAMING_HYBRID_LIMITS = {
   // Gameplay discovery and official corroboration are distinct, non-renewable operations.
@@ -60,7 +68,11 @@ export const gamingHybridIngestionSchema = z.object({
 }).strict();
 export type GamingHybridQuery = z.infer<typeof gamingHybridQuerySchema>;
 export type GamingHybridState = 'answer_ready' | 'clarification_required' | 'discovery_required' | 'temporarily_unavailable' | 'ingestion_pending';
+export type GamingGuideOutcome = 'answer_ready' | 'need_new_source' | 'clarification_required' | 'temporarily_unavailable';
 export interface GamingHybridResponse {
+  /** Additive frontend projection; legacy state/nextAction still govern authority and budgets. */
+  frontendOutcome?: GamingGuideOutcome;
+  searchHint?: string;
   contractVersion: GamingHybridContractVersion;
   requestId: string;
   revision?: number;

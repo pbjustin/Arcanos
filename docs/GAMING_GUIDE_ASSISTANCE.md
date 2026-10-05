@@ -7,6 +7,30 @@ deployment.
 
 ## Request flow
 
+For the released hybrid guide workflow, ChatGPT/the frontend discovers public
+guide URLs. ARCANOS does not search the web in that workflow: it reads its
+existing corpus, grants bounded candidate submissions, and evaluates the URLs
+actually submitted. A URL-only candidate is sufficient input:
+
+```json
+{
+  "contractVersion": "gaming-hybrid-v2",
+  "workflowId": "<returned workflowId>",
+  "expectedRevision": 0,
+  "idempotencyKey": "samurai-guides-1",
+  "discoveryType": "gameplay_evidence",
+  "candidates": [{ "url": "https://example.org/elden-ring-samurai-guide" }]
+}
+```
+
+The original query retains the game, question and supplied class/progress.
+Frontend title, game, publisher, patch and category hints are optional untrusted
+discovery data. They are excluded from the backend evidence request; the
+protected resolver acquires the document and establishes its public citation
+identity independently. CLEAR, applicability, structure, coverage, freshness,
+Trinity and final answer validation operate on acquired evidence. Acceptance
+grants no durable storage consent. Source instructions remain rejected.
+
 Previously, intent extraction recognized platform, version, class, role,
 difficulty, progress, constraints, and spoiler preferences, but
 `BackendQueryAgent.build()` did not forward them. Stored candidate acquisition
@@ -53,8 +77,60 @@ tentative. Negated and hypothetical progress, a question about defeating a boss,
 and areas appearing only in sources do not establish completed objectives.
 Contradictory structured/current-question claims are recorded as conflicts;
 guidance must ask one targeted question or provide scoped alternatives when the
-conflict changes the answer. Source titles do not establish edition or player
-state, and explicit precise game titles are preserved.
+conflict changes the answer. Source titles do not establish player state or positive edition applicability,
+and explicit precise game titles are preserved. Ordinary requests naming only
+Elden Ring use a backend-derived base-game request scope. An explicit Shadow of
+the Erdtree request selects that expansion; source-attributed titles and descriptions
+do not select the player's edition, while affirmative quoted expansion requests
+remain explicit choices. Unspecified DLC/expansion requests
+retain their ambiguity. Exact base-game wording and closed `no`, `without` or
+`excluding` expansion clauses select base-game scope when no positive expansion
+request conflicts. Bounded named negatives such as “do not use Shadow of the
+Erdtree” remain unresolved instead of selecting affirmative expansion scope;
+double negatives and mixed positive/negative requests also remain unresolved.
+The closed generic question pattern “Is DLC required/needed/
+necessary to obtain …?” allows ordinary base-game evidence unless other positive
+expansion scope remains. Acquired evidence must prove the availability fact;
+request parsing never infers it. Named expansion questions, mixed base/expansion
+requests and unrecognized expansion language retain their existing strict scope.
+This request interpretation does not add an acquired Edition assertion. Explicit non-base edition display labels remain unchanged;
+identity comparisons use the existing normalized comparison helpers. Missing edition metadata on an ordinary base-game guide is
+not a contradiction; explicit incompatible source scope remains excluded.
+
+A closed acquired Samurai/katana/blade topic heading is not a game-name claim,
+even when extraction repeats it in the body. Such a guide still requires an
+affirmative acquired body declaration naming the requested catalog game; topic
+matches, quoted references and frontend metadata cannot supply that identity.
+Explicit acquired game labels, other game titles, sequels and expansion conflicts
+continue to bind before the source is admitted.
+
+For other exact game titles, an independently acquired global `Edition: base game`
+label can qualify ordinary guide/build advice without filling the player's omitted
+edition. The answer visibly reports that acquired scope. This allowance requires
+independent game identity and intact relevant evidence, and excludes explicit
+edition/expansion decisions and strict current, live or historical requests.
+Acquired contradictions and uncertain DLC requirements still block the guide;
+mixed pages contribute only complete independently scoped base records. Missing
+player edition never grants durable-source quality or storage consent. Unrecognized
+alternate edition labels remain unverified until a catalog policy establishes safe
+applicability; frontend labels cannot establish acquired scope.
+
+For a request naming the parent game Minecraft, closed acquired Java/Bedrock
+assertions establish source edition scope independently of game identity. Ordinary
+advice may use that guide transiently while visibly stating its acquired edition
+and that compatibility with other editions is unverified. Source scope never
+becomes a user edition choice or storage permission. Closed user phrases such as
+`in Minecraft Bedrock` or `Java Edition` can supply an explicit edition choice;
+mixed or negated choices remain unresolved. Explicit opposing request
+editions reject with `EDITION_CONFLICT`; independently game-verified source facts
+with an explicit edition-exclusive restriction, and current/latest requests with
+only one acquired edition, require a Java-versus-Bedrock clarification. Complete
+requested titles such as Minecraft Java remain distinct catalog identities;
+Minecraft Dungeons/Legends, Story Mode and sequels remain excluded from the parent game.
+The Story Mode fence is confined to the Minecraft parent and Java/Bedrock identities;
+an explicitly requested complete Minecraft Story Mode title retains its own identity.
+Unproved or conflicting acquired scope stays conservative. Other games without a
+reviewed edition model do not receive Minecraft aliases or a new base-game default.
 
 `answerDepth` accepts `auto`, `concise`, `standard`, or `detailed`. Clear current
 question requests for brevity/detail take precedence over the structured depth.
@@ -377,8 +453,9 @@ successful live generation for the retained production timeout case.
 
 ### Hybrid knowledge handoff (`gaming-hybrid-v1`)
 
-The original v1 one-round contract remains supported unchanged. Explicitly
-opted-in v2 reuses this workflow and adds one backend-granted gameplay recovery
+Normal guide/build/meta traffic uses released v2. The original v1 one-round
+contract remains supported for explicit legacy callers. V2 reuses this workflow
+and adds one backend-granted gameplay recovery
 round; see [Gaming discovery recovery](GAMING_DISCOVERY_RECOVERY.md) for version
 binding, selected evidence and coverage contracts, exact accounting, frontend
 instructions and separately authorized rollout. V2 does not change currentness
@@ -513,8 +590,8 @@ policy uses the requested fact, not game or publisher identity:
 | Disposition | Request | Behavior |
 | --- | --- | --- |
 | `NOT_REQUIRED` | Stable gameplay facts with no current-state or patch-sensitive recommendation requirement | Coverage, compatibility and CLEAR still apply; no current-patch claim is implied. |
-| `ADVISORY` | Ordinary guide, build, loadout, strategy, class/weapon and meta-style recommendations, including patch-sensitive recommendations | Attempt the requested bounded official verification first. If it cannot verify freshness without a material conflict, retain adequate gameplay evidence and generate once with a visible freshness warning. |
-| `REQUIRED` | Server/outage/maintenance or live-event status, the latest/current patch or build itself, other explicit real-time state facts, and historical/as-of patch facts | Unavailable or unverified currentness blocks a current-state answer; historical facts require acquired matching patch applicability. Stale gameplay material cannot replace that proof. |
+| `ADVISORY` | Ordinary guide, build, loadout, strategy, class/weapon and meta-style recommendations without an explicit currentness request | In v2, adequate gameplay evidence can generate once immediately with a visible freshness warning when patch compatibility is unknown. Explicit v1 retains its bounded official verification round before qualified generation. |
+| `REQUIRED` | Explicit latest/current-patch recommendations, current meta, current seasonal strategies, server/outage/maintenance or live-event status, other explicit real-time state facts, and requested historical/numbered patch facts | Unavailable or unverified currentness blocks a current-state answer; historical facts require acquired matching patch applicability. Stale gameplay material cannot replace that proof. |
 
 An applicable official current-update index and compatible gameplay material are
 needed to describe recommendations as verified current. Newly fetched old patch
@@ -567,7 +644,15 @@ currentness claim without verification. An explicit historical patch can use
 matching patch evidence among active records; date-only historical mapping and
 searching inactive historical source revisions remain unsupported.
 
-After the one official-currentness operation is consumed, insufficient extraction,
+For ordinary v2 recommendations, missing current-patch verification qualifies
+the answer instead of requiring an official discovery round. CLEAR, gameplay
+coverage and grounded generation must still pass. If an official operation was
+requested, it cannot be bypassed after a security or material conflict failure.
+Explicit latest/current-patch and current-meta requests always retain strict
+verification. A player's current area or existing build is request context,
+not an explicit request for current-patch compatibility.
+
+For explicit v1 recommendations, after the one official-currentness operation is consumed, insufficient extraction,
 an unavailable official index, incomplete currentness metadata or unavailable
 revalidation can produce an advisory `answer_ready` only if independent gameplay
 coverage and CLEAR pass and grounded generation succeeds. The response retains
@@ -739,6 +824,58 @@ anchors can establish identity without requiring a particular guide-title shape;
 a frontend label or a source's `Game:` label alone cannot establish identity.
 Broad franchise overlap and explicit incompatible editions remain blocked.
 
+Game identity and topic coverage are evaluated independently. Acquired game
+anchors can verify Elden Ring even when a guide does not cover Samurai advice;
+that guide fails with `QUESTION_COVERAGE_INSUFFICIENT`, not
+`GAME_IDENTITY_UNVERIFIED`. Missing game proof remains unverified, while explicit
+wrong-game evidence remains `GAME_MISMATCH`. Edition uncertainty uses
+`EDITION_UNVERIFIED`; explicit incompatible edition scope uses `EDITION_CONFLICT`
+and blocks compatibility without claiming a different game. The bounded acquired
+body scan checks each affirmative game scope independently: a matching heading
+or earlier matching scope cannot hide later conflicting gameplay instructions.
+Known game names at the start of a scope clause determine its subject even when
+a later comparison mentions the requested game. Comparative, negative and
+visibly quoted passages remain references; a quoted game or edition name in an
+affirmative scope remains a scope claim. Bare location instructions such as
+`In Stormveil Castle guide your Samurai` or `In Nyx System build a safe route`
+do not turn their location names into games. Known game aliases and explicit
+`this guide covers`, `this guide is for`, and `in the game` declarations still
+bind independently. Currentness
+uncertainty, platform uncertainty and region uncertainty remain distinct from
+explicit applicability contradictions. Ordinary gameplay evidence may retain an
+acquired platform or region scope when the question does not depend on that
+scope; the answer qualification reports the source restriction and leaves other
+scopes unverified. Explicit incompatible requested scopes still block. Questions
+about keybindings, controls, crossplay or regional/server behavior require the
+corresponding material user scope. Server or online-service maintenance requires
+region scope; ordinary weapon or equipment maintenance does not. V2 can resolve
+a narrowly recognized explicit
+question target such as `on PC`, `on PlayStation 5`, or `in Europe` when the
+structured field is absent. Comparisons, competing targets, negative or
+hypothetical claims, quoted source claims and URL text do not establish that
+scope. Structured request fields retain precedence. The effective request is
+canonicalized before idempotency and acquisition-budget binding and is passed
+unchanged to acquisition evaluation, applicability and freshness; question-derived
+platform provenance remains `question`. This is user context, never verification
+of a source's platform or region. Closed publisher aliases such as `PS5` and
+`PlayStation 5`, `PS4` and `PlayStation 4`, and `Steam` and `PC` compare as the same
+platform across acquired evidence and share the v2 acquisition budget. Source
+labels stay intact; unknown labels and different console generations remain
+distinct. Operation payload idempotency remains strict. Explicit v1 retains its
+existing request interpretation.
+Invalid publication/update dates alone warn
+for gameplay guides; malformed effective intervals and official currentness
+metadata remain blockers.
+
+Closed acquired statements such as “This base-game weapon does not require DLC”,
+“DLC is not required”, or “No DLC is needed” are negative requirements, not
+edition conflicts. CLEAR and intact structured
+records share this bounded interpretation. Original source text remains evidence;
+conditional, modal, questioned, double-negated, or clipped requirements remain
+`EDITION_UNVERIFIED` when their applicability materially affects the evidence.
+Explicit positive and mixed positive restrictions remain `EDITION_CONFLICT`;
+negative prose cannot override an explicit DLC title or scope field.
+
 Source roles are `gameplay_guide`, `build_analysis`, `patch_authority`,
 `currentness_index`, `live_status`, `community_observation`, and `corroboration`.
 Role-appropriate contribution is scored once; publisher reputation, fetch time
@@ -764,6 +901,17 @@ interval exceptions require verified matching patch evidence; no raw question or
 private reasoning is added to the approval payload.
 
 ### Evidence and final-answer placement
+
+Released v2 source admission permits an intact, attributable guide contribution
+with a meaningful requested topic anchor, even when it covers less than the full
+question. Generic guide/build/facet labels alone are not topical evidence. A
+weapon passage can be admitted before stat, upgrade or combat coverage is
+complete. Candidate records retain that partial contribution within the same
+bounded selector; aggregate coverage and structural tuple support still decide
+whether generation may proceed. Complementary accepted sources can cover the
+question together. Explicit game/scope conflicts, source instructions, broken
+records and provenance failures remain blockers. Explicit v1 retains its legacy
+single-source admission floor.
 
 Source assessment precedes approved hybrid artifacts. Existing lexical search,
 complete-document chunk storage and retrieval budgets select relevant passages;
@@ -841,7 +989,11 @@ continues to audit ledgers using its prior result/fallback semantics. The only
 shared provider change is an optional per-call zero-retry setting whose absent
 case retains existing behavior. Three existing pure Gaming fixture digests are
 updated for reviewed code changes; the sealed preview import boundary is retained
-without importing the Gaming scoring engine or adding effects.
+without importing the Gaming scoring engine or adding effects. The sealed CLEAR
+proof tests missing region against an explicit region-dependent question and
+separately admits ordinary advice with acquired regional metadata. All original
+identity, patch, currentness, extraction, security, structural and answer-binding
+mutation checks remain active.
 
 All Gaming guide/build/meta generation uses the existing audit-content redaction
 and optional-side-effect suppression flags. This keeps reasoning-ledger content
@@ -906,6 +1058,10 @@ separate checks. See [Gaming structured source evidence](GAMING_STRUCTURED_EVIDE
 for exact format/resource bounds, integrity and provenance rules, refresh
 behavior, synthetic regression mapping and live-evidence limits.
 
+Affirmative source restrictions such as “only available in Shadow of the Erdtree”
+and “available only in Shadow of the Erdtree” both conflict with base-game scope.
+Negated, conditional and uncertain forms remain unresolved.
+
 Base-game applicability uses the exact edition aliases `Base game`, `base game`
 and `base-game`, canonicalized to `base-game`. Previously, hybrid candidate
 admission required an acquired `Edition:` assertion and CLEAR independently
@@ -915,7 +1071,7 @@ so otherwise relevant base-game records were rejected as
 `EDITION_UNVERIFIED_OR_MISMATCH`. Downstream edition comparisons also disagreed
 about spaces and hyphens.
 
-For an explicit base-game request, complete source-bound records with exact
+For a base-game request, complete source-bound records with exact
 base-game `Edition`, `Scope` or `Applicability` values can now establish
 applicability. Only those records contribute gameplay evidence in hybrid and
 supplied-guide retrieval; unscoped prose and DLC records from a mixed page are

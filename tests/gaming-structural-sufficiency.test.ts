@@ -74,7 +74,7 @@ describe('independently acquired base-game scope', () => {
 
   it('does not restore incompatible local records under an acquired global base-game label', () => {
     const doc = scopedDocument([scopedUnit('dlc', { Scope: 'Shadow of the Erdtree' })], 'Edition: Base game.');
-    expect(assess(doc)).toMatchObject({ status: 'unverified', units: [], reasonCodes: ['EDITION_SCOPE_UNVERIFIED'] });
+    expect(assess(doc)).toMatchObject({ status: 'conflict', units: [], reasonCodes: ['CONFLICTING_EDITION_SCOPE'] });
     expect(clear(doc).decision).not.toBe('accept');
     expect(clear(doc).decision).not.toBe('partial');
   });

@@ -4,6 +4,10 @@ import request from 'supertest';
 const actualPolicy = await import('../src/shared/gaming/gamingHybridPolicyCore.js');
 const actualFreshness = await import('../src/shared/gaming/gamingFreshnessCore.js');
 const actualContract = await import('../src/shared/gaming/gamingHybridContract.js');
+const actualIdentity = await import('../src/shared/gaming/gamingGameIdentity.js');
+const actualApplicability = await import('../src/shared/gaming/gamingGuideApplicability.js');
+const actualStructural = await import('../src/shared/gaming/gamingStructuralEvidence.js');
+const actualPlatform = await import('../src/shared/gaming/gamingPlatformIdentity.js');
 const mockAttempt = jest.fn(actualPolicy.resolveGamingHybridCandidateAttempt);
 const mockRetention = jest.fn(actualPolicy.projectGamingHybridCandidateRetention);
 const mockApproval = jest.fn(actualPolicy.isGamingApprovedArtifactCurrent);
@@ -11,6 +15,10 @@ const mockFreshness = jest.fn(actualFreshness.evaluateGamingFreshness);
 const mockExtract = jest.fn(actualFreshness.extractGamingFreshnessMetadata);
 const mockSuppliedGuides = jest.fn(actualPolicy.projectGamingHybridSuppliedGuides);
 const mockCandidatesSafeParse = jest.fn((input: unknown) => actualContract.gamingHybridCandidatesSchema.safeParse(input));
+const mockEdition = jest.fn(actualIdentity.resolveGamingRequestEdition);
+const mockScopeRequired = jest.fn(actualApplicability.gamingApplicabilityScopeRequired);
+const mockEditionRequirements = jest.fn(actualStructural.classifyGamingEditionRequirements);
+const mockPlatformMatches = jest.fn(actualPlatform.gamingPlatformEvidenceMatchesRequest);
 jest.unstable_mockModule('../src/shared/gaming/gamingHybridPolicyCore.js', () => ({
   ...actualPolicy, resolveGamingHybridCandidateAttempt: mockAttempt,
   projectGamingHybridCandidateRetention: mockRetention, isGamingApprovedArtifactCurrent: mockApproval,
@@ -21,6 +29,14 @@ jest.unstable_mockModule('../src/shared/gaming/gamingHybridContract.js', () => (
 jest.unstable_mockModule('../src/shared/gaming/gamingFreshnessCore.js', () => ({
   ...actualFreshness, evaluateGamingFreshness: mockFreshness, extractGamingFreshnessMetadata: mockExtract
 }));
+jest.unstable_mockModule('../src/shared/gaming/gamingGameIdentity.js', () => ({ ...actualIdentity,
+  resolveGamingRequestEdition: mockEdition }));
+jest.unstable_mockModule('../src/shared/gaming/gamingGuideApplicability.js', () => ({ ...actualApplicability,
+  gamingApplicabilityScopeRequired: mockScopeRequired }));
+jest.unstable_mockModule('../src/shared/gaming/gamingStructuralEvidence.js', () => ({ ...actualStructural,
+  classifyGamingEditionRequirements: mockEditionRequirements }));
+jest.unstable_mockModule('../src/shared/gaming/gamingPlatformIdentity.js', () => ({ ...actualPlatform,
+  gamingPlatformEvidenceMatchesRequest: mockPlatformMatches }));
 const { createNativePrPreviewApplication, createNativePrPreviewReadinessState } = await import('../src/nativePrPreviewApplication.js');
 const { NATIVE_PR_PREVIEW_GAMING_CONTRACT: contract, NATIVE_PR_PREVIEW_SYNTHETIC_RESPONSE_HEADER } = await import('../src/nativePrPreviewContract.js');
 
@@ -30,6 +46,7 @@ const proofPairs = () => [
   [contract.guideAssistanceProofHeader, contract.guideAssistanceProofVersion],
   [contract.progressRecoveryProofHeader, contract.progressRecoveryProofVersion],
   [contract.hybridKnowledgeProofHeader, contract.hybridKnowledgeProofVersion],
+  [contract.editionContextRegressionsProofHeader, contract.editionContextRegressionsProofVersion],
   [contract.discoveryRecoveryProtocolProofHeader, contract.discoveryRecoveryProtocolProofVersion],
   [contract.discoveryRecoveryEvidenceProofHeader, contract.discoveryRecoveryEvidenceProofVersion],
   [contract.clearProofHeader, contract.clearProofVersion],
@@ -61,6 +78,10 @@ describe('served Gaming hybrid component-proof boundary', () => {
     mockExtract.mockReset().mockImplementation(actualFreshness.extractGamingFreshnessMetadata);
     mockSuppliedGuides.mockReset().mockImplementation(actualPolicy.projectGamingHybridSuppliedGuides);
     mockCandidatesSafeParse.mockReset().mockImplementation(input => actualContract.gamingHybridCandidatesSchema.safeParse(input));
+    mockEdition.mockReset().mockImplementation(actualIdentity.resolveGamingRequestEdition);
+    mockScopeRequired.mockReset().mockImplementation(actualApplicability.gamingApplicabilityScopeRequired);
+    mockEditionRequirements.mockReset().mockImplementation(actualStructural.classifyGamingEditionRequirements);
+    mockPlatformMatches.mockReset().mockImplementation(actualPlatform.gamingPlatformEvidenceMatchesRequest);
   });
 
   it('keeps the trusted response body compatible and reports every production-core proof', async () => {
@@ -75,7 +96,9 @@ describe('served Gaming hybrid component-proof boundary', () => {
 
   it.each(['missing v2 revision', 'v1 revision upgrade', 'second recovery revoked', 'third recovery allowed',
     'supplied guide actor bypass', 'supplied guide workflow bypass', 'supplied guide expiry bypass', 'supplied guide evidence bypass',
-    'retry limit bypass', 'capacity handle leak', 'partial artifact accepted', 'freshness bypass', 'public identity promotion', 'private identity leak', 'unexpected failure'])(
+    'retry limit bypass', 'capacity handle leak', 'partial artifact accepted', 'freshness bypass', 'public identity promotion', 'private identity leak',
+    'ordinary no-edition Samurai denied', 'attributed title chooses edition', 'negated expansion accepted',
+    'equipment maintenance requires region', 'available-only DLC restriction ignored', 'platform alias denied', 'unexpected failure'])(
     'withholds every Gaming proof and the success body after %s', async scenario => {
       if (scenario === 'missing v2 revision' || scenario === 'v1 revision upgrade') mockCandidatesSafeParse.mockImplementation(input => {
         const result = actualContract.gamingHybridCandidatesSchema.safeParse(input);
@@ -116,6 +139,24 @@ describe('served Gaming hybrid component-proof boundary', () => {
         ...actualFreshness.extractGamingFreshnessMetadata(document, ...args),
         ...(document.canonicalUrl ? { url: document.canonicalUrl } : {})
       }));
+      else if (scenario === 'ordinary no-edition Samurai denied') mockEdition.mockImplementation(input =>
+        input.prompt === 'Recommend an early-game Samurai blade build after leaving the tutorial.'
+          ? undefined : actualIdentity.resolveGamingRequestEdition(input));
+      else if (scenario === 'attributed title chooses edition') mockEdition.mockImplementation(input =>
+        input.prompt?.startsWith('The submitted guide is titled "Elden Ring Shadow of the Erdtree".')
+          ? 'shadow of the erdtree' : actualIdentity.resolveGamingRequestEdition(input));
+      else if (scenario === 'negated expansion accepted') mockEdition.mockImplementation(input =>
+        input.prompt?.startsWith('Do not use Shadow of the Erdtree gear.')
+          ? 'shadow of the erdtree' : actualIdentity.resolveGamingRequestEdition(input));
+      else if (scenario === 'equipment maintenance requires region') mockScopeRequired.mockImplementation((input, scope) =>
+        input.question === 'How do I keep up maintenance on my sword?' && scope === 'region'
+          ? true : actualApplicability.gamingApplicabilityScopeRequired(input, scope));
+      else if (scenario === 'available-only DLC restriction ignored') mockEditionRequirements.mockImplementation(text =>
+        text === 'This weapon is available only in Shadow of the Erdtree.'
+          ? 'clear' : actualStructural.classifyGamingEditionRequirements(text));
+      else if (scenario === 'platform alias denied') mockPlatformMatches.mockImplementation((evidence, platform) =>
+        evidence?.[0] === 'PlayStation 5' && platform === 'PS5'
+          ? false : actualPlatform.gamingPlatformEvidenceMatchesRequest(evidence, platform));
       else mockAttempt.mockImplementation(() => { throw new Error('private-hybrid-preview-sentinel'); });
       const response = await queryGuide();
       expect(response.status).toBe(500);

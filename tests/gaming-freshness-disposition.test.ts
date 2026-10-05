@@ -1,5 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
 import { resolveGamingFreshnessDisposition, isGamingAdvisoryCurrentnessOperation } from '../src/shared/gaming/gamingFreshnessDisposition.js';
+import { classifyGamingQuestionFreshness } from '../src/shared/gaming/gamingFreshnessCore.js';
 
 describe('semantic Gaming freshness disposition', () => {
   it.each([
@@ -7,17 +8,28 @@ describe('semantic Gaming freshness disposition', () => {
     ['Recommend a route through the dungeon', 'guide', 'NOT_REQUIRED'],
     ['Suggest a way to solve the bell puzzle', 'guide', 'NOT_REQUIRED'],
     ['bleed Samurai build', 'build', 'ADVISORY'],
-    ['What is the best current bleed build?', 'meta', 'ADVISORY'],
-    ['Recommend weapons for the latest patch', 'guide', 'ADVISORY'],
+    ['What is the best current bleed build?', 'meta', 'REQUIRED'],
+    ['Recommend weapons for the latest patch', 'guide', 'REQUIRED'],
     ['Recommend a weapon for Samurai', 'guide', 'ADVISORY'],
     ['Which class should I choose?', 'guide', 'ADVISORY'],
     ['Suggest talents for a healer', 'guide', 'ADVISORY'],
     ['Which weapon should I equip?', 'guide', 'ADVISORY'],
-    ['Tell me a good bleed build for the current patch', 'build', 'ADVISORY'],
-    ['What build works in the current patch?', 'build', 'ADVISORY'],
-    ['Which build is best on the current patch?', 'build', 'ADVISORY'],
-    ['Explain the current patch Samurai build', 'build', 'ADVISORY'],
-    ['Describe the current season healer strategy', 'guide', 'ADVISORY'],
+    ['Tell me a good bleed build for the current patch', 'build', 'REQUIRED'],
+    ['What build works in the current patch?', 'build', 'REQUIRED'],
+    ['Which build is best on the current patch?', 'build', 'REQUIRED'],
+    ['Explain the current patch Samurai build', 'build', 'REQUIRED'],
+    ['Describe the current season healer strategy', 'guide', 'REQUIRED'],
+    ['What is the current meta?', 'meta', 'REQUIRED'],
+    ['Which weapon is strongest currently?', 'build', 'REQUIRED'],
+    ['Which class is best today?', 'guide', 'REQUIRED'],
+    ['Recommend the latest build for a healer', 'build', 'REQUIRED'],
+    ['What changed today?', 'guide', 'REQUIRED'],
+    ['Suggest an early-game mage build', 'build', 'ADVISORY'],
+    ['How do I find the academy staff?', 'guide', 'NOT_REQUIRED'],
+    ['What are basic stamina mechanics?', 'guide', 'NOT_REQUIRED'],
+    ['Suggest a mage strategy', 'meta', 'ADVISORY'],
+    ['Recommend a build for my current area', 'build', 'ADVISORY'],
+    ['Help improve my current build', 'build', 'ADVISORY'],
     ['Explain weapon maintenance mechanics for a build I can use today.', 'build', 'ADVISORY'],
     ['Are servers down now?', 'build', 'REQUIRED'],
     ['What is the current Elden Ring patch?', 'guide', 'REQUIRED'],
@@ -47,6 +59,12 @@ describe('semantic Gaming freshness disposition', () => {
     ['Explain this build as of historical patch 1.09', 'build', 'REQUIRED']
   ])('%s is %s', (prompt, mode, expected) => {
     expect(resolveGamingFreshnessDisposition({ prompt, mode })).toBe(expected);
+  });
+  it('requires compatibility evidence for an explicitly requested patch', () => {
+    expect(resolveGamingFreshnessDisposition({ prompt: 'Recommend a mage build', mode: 'build', requestedVersion: '2.1' })).toBe('REQUIRED');
+  });
+  it('does not treat a request for today\'s changes as stable evidence', () => {
+    expect(classifyGamingQuestionFreshness({ prompt: 'What changed today?', mode: 'guide' })).toBe('patch_sensitive');
   });
   it.each(['SOURCE_INACCESSIBLE', 'SOURCE_INSTRUCTIONS_REJECTED', 'URL_BLOCKED', 'CONTRADICTORY_SOURCE_METADATA', 'UNKNOWN_FAILURE'])('keeps %s strict', reason => {
     expect(isGamingAdvisoryCurrentnessOperation({ decisions: [{ decision: 'rejected', reasonCodes: [reason] }] })).toBe(false);

@@ -130,6 +130,35 @@ async function discoverCurrent(mode: 'build' | 'meta', extras: Record<string, un
  * This is not PostgreSQL FTS evidence or proof of ChatGPT's real web-tool sequencing.
  */
 describe('Gaming hybrid durable lifecycle', () => {
+  it.each(['gaming-hybrid-v1', 'gaming-hybrid-v2'] as const)('returns a sanitized oversized-source decision under %s while the decoded limit still fires', async protocolVersion => {
+    const previousByteLimit = process.env.WEB_FETCH_MAX_BYTES;
+    process.env.WEB_FETCH_MAX_BYTES = '128';
+    try {
+      const compressed = gzipSync('x'.repeat(4096));
+      expect(compressed.length).toBeLessThan(128);
+      const data = Object.assign(Readable.from([compressed]), {
+        rawHeaders: ['content-type', 'text/html', 'content-encoding', 'gzip']
+      });
+      mockHttp.mockResolvedValue({ status: 200, data, headers: { 'content-type': 'text/html', 'content-encoding': 'gzip' } });
+      const evaluated = await evaluate({ protocolVersion });
+      expect(evaluated.decisions).toEqual([{ submittedIndex: 0, url: URL, decision: 'rejected', reasonCodes: ['SOURCE_TOO_LARGE'] }]);
+      expect(evaluated.accepted).toEqual([]);
+      expect(evaluated.knowledge.evidence ?? []).toEqual([]);
+      expect(evaluated.currentnessFailureBlocksAdvisory).toBe(true);
+      expect(JSON.stringify(evaluated)).not.toMatch(/DECODED_LIMIT|93\.184\.216\.34|rawHeaders|content-encoding/iu);
+      expect(jest.mocked(logger.info).mock.calls).toEqual(expect.arrayContaining([
+        ['gaming.clear.source.not_run', expect.objectContaining({ acquisition: expect.objectContaining({ subreason: 'DECODED_LIMIT' }),
+          reasonCodes: ['SOURCE_TOO_LARGE'] })]
+      ]));
+      expect(mockHttp).toHaveBeenCalledTimes(1);
+      expect(mockTrinity).not.toHaveBeenCalled();
+      expect(jobs.size).toBe(0);
+    } finally {
+      if (previousByteLimit === undefined) delete process.env.WEB_FETCH_MAX_BYTES;
+      else process.env.WEB_FETCH_MAX_BYTES = previousByteLimit;
+    }
+  });
+
   it('keeps planner payloads out of acquisition failure decisions', async () => {
     const publicUrl = 'https://guides.example.org/build-planner';
     const payload = '{private-failed-build-fixture';
@@ -373,6 +402,65 @@ describe('Gaming hybrid durable lifecycle', () => {
       ingest: (body: unknown, _context: typeof context) => invoke('ingestions', body), trace
     };
   }
+
+  it.each([
+    { name: 'unknown patch', labels: '', status: 'unverified' },
+    { name: 'older published guide', labels: 'Published at: 2025-01-01.', status: 'unverified' }
+  ])('generates a qualified ordinary v2 build from $name without an official discovery round', async fixture => {
+    setClock('2026-10-04T12:00:00.000Z');
+    const game = 'Lantern Voyage';
+    const guideUrl = 'https://guides.example.org/lantern-voyage-mage';
+    const guide = 'In Lantern Voyage, an early-game mage build uses the copper staff and Intelligence for spell damage. Allocate vigor for survival and mind for casting. Upgrade the copper staff before increasing spell variety. Open combat from range with a spell, then recover stamina before casting again. This early-game mage build favors safe positioning over trading hits.';
+    documentGame = game;
+    documentText = `${fixture.labels} ${guide}`;
+    mockTrinity.mockImplementation(async (request: any) => {
+      const result = `${guide} [Source 1]`;
+      const { assessment } = await request.context.runOptions.gamingClearAnswerAudit(result, {});
+      return { result, gamingClearAudit: assessment, meta: { provider: { finishReason: 'stop' } } };
+    });
+    const workflow = createGamingHybridWorkflow();
+    const queried = await workflow.query({ contractVersion: 'gaming-hybrid-v2', idempotencyKey: 'v2-advisory-query',
+      game, mode: 'build', class: 'Mage', question: 'Recommend an early-game mage build', storagePolicy: 'transient_only' }, context);
+    const submission = { contractVersion: 'gaming-hybrid-v2', workflowId: queried.body.workflowId,
+      expectedRevision: queried.body.revision, idempotencyKey: 'v2-advisory-guide', candidates: [{ url: guideUrl }] };
+    const result = await workflow.candidates(submission, context);
+    expect(result).toMatchObject({ status: 200, body: { state: 'answer_ready', nextAction: 'answer',
+      freshnessStatus: fixture.status, evidenceSelected: true, coverageSatisfied: true } });
+    expect(result.body.answer?.response).toContain('Current patch compatibility could not be verified');
+    expect(result.body.answer?.response).toContain('[Source 1]');
+    if (fixture.labels) expect(result.body.qualification).toContain('Guide publication date: 2025-01-01');
+    expect(result.body.answer?.sources.map(source => source.url)).toEqual([guideUrl]);
+    expect(result.body.effectivePatch).toBeUndefined();
+    expect(mockHttp).toHaveBeenCalledTimes(1);
+    expect(mockTrinity).toHaveBeenCalledTimes(1);
+    expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
+    const auditInput = JSON.parse((mockAuditCompletion.mock.calls[0][1] as any).messages[1].content);
+    expect(auditInput.verifiedEvidenceGates.freshness).toBe('unknown');
+    expect(auditInput.answer).toContain(result.body.qualification);
+    expect(jest.mocked(logger.info).mock.calls.filter(([event]) => event === 'gaming.currentness.operation_started')).toHaveLength(0);
+    expect(await workflow.candidates(submission, context)).toEqual(result);
+    expect(mockTrinity).toHaveBeenCalledTimes(1);
+    expect(jobs.size).toBe(0);
+    expect(database.records).toHaveLength(0);
+    expect(database.queries.some(sql => /^(?:INSERT|UPDATE|DELETE|CREATE|ALTER|DROP)\b/iu.test(sql))).toBe(false);
+  });
+
+  it('requires independently verified currentness for an explicit latest-patch v2 build', async () => {
+    setClock('2026-10-04T12:00:00.000Z');
+    documentGame = 'Lantern Voyage';
+    documentText = 'In Lantern Voyage, a mage build uses the copper staff and Intelligence for spells. Allocate vigor for survival and mind for casting. Upgrade the copper staff early and open combat from range with a spell. Recover stamina before casting again. This guide recommends the best mage build for its recorded patch, but does not identify the patch. This mage build favors safe positioning over trading hits.';
+    const workflow = createGamingHybridWorkflow();
+    const queried = await workflow.query({ contractVersion: 'gaming-hybrid-v2', idempotencyKey: 'v2-latest-build-query',
+      game: documentGame, mode: 'build', class: 'Mage', question: 'Recommend the best mage build on the latest patch' }, context);
+    const found = await workflow.candidates({ contractVersion: 'gaming-hybrid-v2', workflowId: queried.body.workflowId,
+      expectedRevision: queried.body.revision, idempotencyKey: 'v2-latest-build-guide',
+      candidates: [{ url: 'https://guides.example.org/lantern-voyage-mage' }] }, context);
+    expect(found.body).toMatchObject({ nextAction: 'verify_currentness', evidenceSelected: false,
+      freshnessStatus: 'unverified', acceptedGameplayCandidateCount: 1 });
+    expect(found.body.answer).toBeUndefined();
+    expect(mockTrinity).not.toHaveBeenCalled();
+    expect(mockAuditCompletion).not.toHaveBeenCalled();
+  });
 
   /** Synthetic publisher/guide content; no assertion about the live incident's guide title. */
   async function mageCurrentnessLifecycle(guideLabels = 'Patch: 1.10. Build: 1.10.1.', options: {
@@ -682,7 +770,7 @@ describe('Gaming hybrid durable lifecycle', () => {
     expect(verified.body.answer).toBeUndefined();
     expect(verified.body.candidates).toEqual(expect.arrayContaining([expect.objectContaining({
       origin: 'required_official_article', decision: 'rejected',
-      reasonCodes: [articleFailure === 'forbidden' ? 'SOURCE_INACCESSIBLE' : 'SOURCE_FETCH_FAILED']
+      reasonCodes: [articleFailure === 'forbidden' ? 'SOURCE_INACCESSIBLE' : 'SOURCE_TOO_LARGE']
     })]));
     expect((await workflow.candidates(officialRequest, context)).body).toEqual(verified.body);
     expect((await workflow.candidates({ ...officialRequest, idempotencyKey: 'failure-extra-round' }, context)).status).toBe(409);
@@ -735,7 +823,7 @@ describe('Gaming hybrid durable lifecycle', () => {
     { name: 'matching patch but wrong build', labels: 'Patch: 1.17. Build: 1.16.',
       usable: false, reason: 'CURRENT_BUILD_COVERAGE_MISSING' },
     { name: 'date-only applicability after the official release', labels: 'Published at: 2026-09-09. Source updated at: 2026-09-09.',
-      usable: false, reason: 'APPLICABILITY_METADATA_UNVERIFIED' }
+      usable: false, reason: 'GUIDE_PATCH_UNSPECIFIED' }
   ])('checks $name through authenticated HTTP with inline platforms and an installed-version list', async ({ labels, usable, reason }) => {
     // Authored synthetic bytes exercise the observed DOM grammar; they do not attest any live guide or release.
     const { workflow, query, missing, verified, guideUrl, indexUrl, articleUrl } = await mageCurrentnessLifecycle(labels, {
@@ -1011,7 +1099,7 @@ describe('Gaming hybrid durable lifecycle', () => {
     useSparseTable();
     const edition = await evaluate({ prompt: locationQuestion, edition: 'Remastered' });
     expect(edition.accepted).toHaveLength(0);
-    expect(edition.decisions[0].reasonCodes).toContain('EDITION_UNVERIFIED_OR_MISMATCH');
+    expect(edition.decisions[0].reasonCodes).toContain('EDITION_UNVERIFIED');
   });
 
   it('keeps an undated structured community report transient on request and does not assert present availability', async () => {

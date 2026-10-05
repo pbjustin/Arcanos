@@ -6,6 +6,7 @@ import { buildGamingDiscoveryQuery } from '../../src/services/gamingSourceDiscov
 import { GAMING_RESPONSE_MAX_CHARACTERS } from '../../src/shared/http/clientResponseCommon.js';
 import {
   GAMING_HYBRID_CONTRACT_VERSION,
+  GAMING_HYBRID_RELEASED_CONTRACT_VERSION,
   GAMING_HYBRID_LIMITS,
   gamingHybridCandidatesSchema,
   gamingHybridIngestionSchema,
@@ -685,7 +686,7 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
 
   it('adds authenticated hybrid operations without weakening durable-write confirmation', () => {
     const contract = loadContract();
-    expect(contract['x-arcanos-gaming-hybrid-contract-version']).toBe(GAMING_HYBRID_CONTRACT_VERSION);
+    expect(contract['x-arcanos-gaming-hybrid-contract-version']).toBe(GAMING_HYBRID_RELEASED_CONTRACT_VERSION);
     for (const [suffix, operationId, schema, consequential] of [
       ['query', 'queryGamingHybridKnowledge', 'GamingHybridQueryRequest', false],
       ['candidates', 'submitGamingHybridCandidates', 'GamingHybridCandidatesRequest', false],

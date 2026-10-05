@@ -105,9 +105,12 @@ function requireEvidenceApplicability(): GamingClearAssessment {
   wrongGame.sources[0].game = 'Diablo 4';
   requireProof(assess(INPUT, wrongGame).decision === 'reject');
   const regional = knowledge([document(`Regions: EU\n${PROSE}`)]);
-  const matched = assess({ ...INPUT, region: 'EU' }, regional);
-  const missing = assess(INPUT, regional);
-  const conflicting = assess({ ...INPUT, region: 'US' }, regional);
+  const regionalInput = { ...INPUT, prompt: 'How do regional Intelligence, staves, and spell choices work?' };
+  const ordinary = assess(INPUT, regional);
+  requireProof(ordinary.decision === 'accept' && ordinary.gates.compatibility === 'verified');
+  const matched = assess({ ...regionalInput, region: 'EU' }, regional);
+  const missing = assess(regionalInput, regional);
+  const conflicting = assess({ ...regionalInput, region: 'US' }, regional);
   requireProof(matched.decision === 'accept' && matched.gates.compatibility === 'verified');
   requireProof(missing.decision !== 'accept' && missing.gates.compatibility === 'unknown');
   requireProof(conflicting.decision === 'reject' && conflicting.gates.compatibility === 'conflict');

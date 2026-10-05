@@ -575,7 +575,7 @@ describe('backend-authoritative Gaming discovery recovery through served MCP', (
     expect(mockTrinity).toHaveBeenCalledTimes(1); expect(mockIngest).not.toHaveBeenCalled();
   });
 
-  it('retains the visible advisory warning after the separate official extraction operation fails', async () => {
+  it('answers ordinary v2 build advice with a visible advisory warning without an official extraction operation', async () => {
     const mageGame = 'Elden Ring'; const guide = 'https://guides.example.org/mage-staff';
     const official = 'https://en.bandainamcoent.eu/elden-ring/elden-ring/news';
     const mageText = 'In Elden Ring, a good mage build uses the academy staff and Intelligence for sorcery. Allocate vigor for survival and mind for casting. Use a ranged spell to open combat, then recover stamina before casting again. Upgrade the staff before increasing spell variety. This mage build favors safe positioning and spell efficiency over trading hits.';
@@ -583,17 +583,19 @@ describe('backend-authoritative Gaming discovery recovery through served MCP', (
     addPage(official, '', '', mageGame, { html: '<html><title>Elden Ring news</title><body><h1>Latest News on ELDEN RING</h1><div>Patch Notes</div></body></html>' });
     const run = harness(); const initial = await run.query({ game: mageGame, mode: 'build', question: 'What is a good mage build now?', platform: 'PC' });
     const gameplay = await run.submit(initial.result, [guide]);
-    expect(gameplay.result).toMatchObject({ nextAction: 'verify_currentness', coverageSatisfied: true,
-      discovery: { type: 'currentness_verification', maxRounds: 1 } });
-    expect(mockTrinity).not.toHaveBeenCalled();
-    const final = await run.submit(gameplay.result, [official], 'official-extraction-operation');
-    expect(final.result).toMatchObject({ state: 'answer_ready', freshnessStatus: 'unverified', applicabilityStatus: 'unverified' });
-    expect(final.result.answer!.response).toContain('Current patch compatibility could not be verified');
-    expect(final.result.answer!.response).toContain('may be outdated');
-    expect(final.result.answer!.sources.map(source => source.url)).toEqual([guide]);
+    expect(gameplay.result).toMatchObject({ contractVersion: v2, nextAction: 'answer', coverageSatisfied: true,
+      state: 'answer_ready', freshnessStatus: 'unverified', applicabilityStatus: 'unverified', evidenceSelected: true });
+    expect(gameplay.result.answer!.response).toContain('Current patch compatibility could not be verified');
+    expect(gameplay.result.answer!.response).toContain('may be outdated');
+    expect(gameplay.result.answer!.sources.map(source => source.url)).toEqual([guide]);
     const audited = JSON.parse((mockAuditCompletion.mock.calls[0][1] as any).messages[1].content);
     expect(audited.answer).toContain('may be outdated'); expect(audited.verifiedEvidenceGates.freshness).toBe('unknown');
-    expect(mockHttp).toHaveBeenCalledTimes(2); expect(mockTrinity).toHaveBeenCalledTimes(1);
+    expect(await run.submit(initial.result, [guide])).toEqual(gameplay);
+    const closed = await run.submit(gameplay.result, [official], 'unnecessary-official-operation', { discoveryType: 'currentness_verification' });
+    expect(closed).toMatchObject({ statusCode: 409, result: { reason: 'WORKFLOW_CLOSED' } });
+    expect(mockHttp).toHaveBeenCalledTimes(1); expect(mockTrinity).toHaveBeenCalledTimes(1);
+    expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
+    expect(jest.mocked(logger.info).mock.calls.some(([event]) => event === 'gaming.currentness.operation_started')).toBe(false);
     expect(mockIngest).not.toHaveBeenCalled();
   });
 

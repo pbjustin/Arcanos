@@ -1,3 +1,4 @@
+import type { GamingHybridResponse, GamingGuideOutcome } from './gamingHybridContract.js';
 import type { GamingFreshnessEvidence } from './gamingFreshnessCore.js';
 import type { GamingStoredKnowledgeContext } from './gamingStoredEvidenceCore.js';
 
@@ -125,4 +126,24 @@ export function projectGamingHybridSuppliedGuides(input: {
     && input.knowledge.sources.some(source => source.sourceId === candidate.candidateId && source.url === candidate.publicUrl)
     && input.knowledge.evidence?.some(chunk => chunk.sourceId === candidate.candidateId && chunk.publicUrl === candidate.publicUrl && chunk.text.trim()))
     .map(candidate => ({ requestedUrl: candidate.document.requestedUrl, sourceId: candidate.candidateId, publicUrl: candidate.publicUrl }));
+}
+
+/** Product outcomes never grant another acquisition, retry, or storage operation. */
+export function projectGamingGuideOutcome(body: GamingHybridResponse): { frontendOutcome?: GamingGuideOutcome; searchHint?: string } {
+  if (body.state === 'ingestion_pending') return {};
+  const frontendOutcome: GamingGuideOutcome = body.state === 'answer_ready' && body.answer && body.nextAction === 'answer'
+    ? 'answer_ready' : body.state === 'clarification_required' && body.nextAction === 'clarify'
+      ? 'clarification_required' : body.state === 'discovery_required' ? 'need_new_source' : 'temporarily_unavailable';
+  return { frontendOutcome };
+}
+
+/** Only public catalog topic words may enter a hint; arbitrary player/account fields are excluded. */
+export function gamingGuideSearchHint(input: { game: string; question: string; class?: string }): string {
+  const game = input.game.replace(/https?:\/\/\S+|\S+@\S+|\b\d{7,}\b/giu, ' ')
+    .replace(/[^\p{L}\p{N} .:'-]/gu, ' ').replace(/\s+/gu, ' ').trim().slice(0, 120);
+  const topics = ['early game', 'beginner', 'Samurai', 'katana', 'Uchigatana', 'blade', 'weapon', 'stats', 'armor',
+    'skills', 'strategy', 'boss', 'quest', 'location', 'mechanics', 'build', 'upgrade', 'progression'];
+  const publicTopic = `${input.question} ${input.class ?? ''}`.replace(/-/gu, ' ');
+  const selected = topics.filter(topic => new RegExp(`\\b${topic}\\b`, 'iu').test(publicTopic));
+  return `${game} ${selected.join(' ')} guide`.replace(/\s+/gu, ' ').trim().slice(0, 350);
 }

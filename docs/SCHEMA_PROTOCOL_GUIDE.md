@@ -11,12 +11,22 @@ Its bundle stays in a dedicated subdirectory; the daemon's flat tool discovery
 continues to load only the existing input/output schema pairs.
 See [Gaming resource behavior](API.md#private-chatgpt-gaming-resource).
 
+The sealed Gaming MCP preview pins the full released eight-tool catalog at
+64,494 JSON bytes and its exact SHA-256. The reviewed changes are v2 release and
+revision guidance plus bounded additive frontend recovery fields; tool names,
+query/write OAuth scopes and consent checks retain their existing authority.
+The complete catalog and JSON-RPC envelope fit the unchanged 65,536-byte served
+and verifier response caps. Catalog description, schema or scope drift still
+fails verification; the preview does not truncate schemas or prove production
+activation, installed-client behavior or an OAuth grant.
+
 The Gaming hybrid Action contract is an additive module HTTP contract in
 [`contracts/arcanos_gaming.openapi.v1.json`](../contracts/arcanos_gaming.openapi.v1.json),
 with runtime request schemas/types in
 [`src/shared/gaming/gamingHybridContract.ts`](../src/shared/gaming/gamingHybridContract.ts).
-It explicitly opts in through `contractVersion: gaming-hybrid-v1` or
-`gaming-hybrid-v2`; the selected version is bound at workflow creation. V1 keeps
+Normal guide/build/meta traffic explicitly selects the released
+`contractVersion: gaming-hybrid-v2`. Explicit `gaming-hybrid-v1` remains supported
+for legacy compatibility; the selected version is bound at workflow creation. V1 keeps
 its one-round behavior. V2 candidate continuations require `expectedRevision`
 matching the backend response `revision` and permit one bounded gameplay
 recovery round. Version changes, stale revisions and closed-workflow continuations

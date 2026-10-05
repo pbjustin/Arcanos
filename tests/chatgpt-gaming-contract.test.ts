@@ -2,11 +2,25 @@ import { readFileSync } from 'node:fs';
 import { chatGptGamingSchemas, CHATGPT_GAMING_TOOL_NAMES } from '@arcanos/protocol/chatgptGaming';
 import { isGamingMcpInput, isGamingMcpOutput, gamingMcpTools } from '../src/shared/chatgpt/gamingMcpContract.js';
 
-import { GAMING_HYBRID_LIMITS, GAMING_HYBRID_V2_LIMITS, gamingHybridQuerySchema, gamingHybridCandidatesSchema } from '../src/shared/gaming/gamingHybridContract.js';
+import { GAMING_HYBRID_LIMITS, GAMING_HYBRID_V2_LIMITS, GAMING_HYBRID_RELEASED_CONTRACT_VERSION, gamingHybridQuerySchema, gamingHybridCandidatesSchema } from '../src/shared/gaming/gamingHybridContract.js';
 
 const openapi = JSON.parse(readFileSync(new URL('../contracts/arcanos_gaming.openapi.v1.json', import.meta.url), 'utf8'));
 const contract = JSON.parse(readFileSync(new URL('../packages/protocol/schemas/v1/tools/arcanos-gaming/contract.schema.json', import.meta.url), 'utf8'));
 describe('Gaming MCP contracts preserve the service contract', () => {
+  it('selects released v2 for normal traffic while explicitly retaining legacy v1', () => {
+    expect(GAMING_HYBRID_RELEASED_CONTRACT_VERSION).toBe('gaming-hybrid-v2');
+    expect(openapi['x-arcanos-gaming-hybrid-contract-version']).toBe(GAMING_HYBRID_RELEASED_CONTRACT_VERSION);
+    expect(gamingMcpTools.find(tool => tool.name === 'arcanos_gaming_hybrid_query')?.description)
+      .toContain('Normal guide/build/meta traffic selects released gaming-hybrid-v2');
+    for (const contractVersion of ['gaming-hybrid-v1', GAMING_HYBRID_RELEASED_CONTRACT_VERSION]) {
+      expect(gamingHybridQuerySchema.safeParse({ contractVersion, game: 'Elden Ring',
+        mode: 'build', question: 'Samurai build', idempotencyKey: 'released-contract-fixture' }).success).toBe(true);
+    }
+    const instructions = readFileSync('docs/gpt/arcanos-gaming-hybrid-v2.instructions.md', 'utf8');
+    expect(instructions).toContain('Released Gaming guide workflow: gaming-hybrid-v2.');
+    expect(instructions).not.toMatch(/Proposed MCP instruction revision|Use only after the deployed backend supports/u);
+    expect(instructions).toContain('Never silently downgrade failed v2');
+  });
   it('keeps shared source definitions equal to Action 1.5.0, with local schema references', () => {
     expect(openapi.info.version).toBe('1.5.0');
     for (const [name, schema] of Object.entries(contract.$defs)) {

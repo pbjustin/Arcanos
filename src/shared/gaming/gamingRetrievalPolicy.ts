@@ -55,6 +55,13 @@ export function gamingTermCoverage(text: string, terms: readonly string[]): numb
   return terms.length ? terms.filter(term => available.has(term)).length / terms.length : 0;
 }
 
+/** Source admission asks for a useful contribution; aggregate answer coverage remains separate. */
+export function hasGamingRelevantGuideContribution(text: string, input: GamingRetrievalPolicyInput): boolean {
+  const generic = new Set('create provide focusing focus recommend recommended recommendation recommendations best good guide build builds early game latest current beginner general advice weapon weapons stat stats armor armour route location configuration allocation'.split(' '));
+  const anchors = buildGamingRetrievalTerms(input).focusTerms.filter(term => !generic.has(term));
+  return anchors.length > 0 && gamingTermCoverage(text, anchors) > 0;
+}
+
 /** Prefer explicit paragraphs; flattened documents reuse the existing sentence boundary convention. */
 export function scopeGamingEvidenceParagraphs(text: string, input: GamingRetrievalPolicyInput): string {
   if (input.mode !== 'guide' || input.spoilerMode === 'full') return text;
