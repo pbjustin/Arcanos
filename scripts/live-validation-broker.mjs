@@ -81,7 +81,7 @@ export function createLiveValidationBroker({ admission, budget, resolveCredentia
         limits: { ...limits }, models: structuredClone(target.models) });
       registered = true;
       credential = await resolveCredential();
-      requireBroker(typeof credential === 'string' && credential.length >= 16 && /^sk-[A-Za-z0-9_-]+$/u.test(credential)
+      requireBroker(typeof credential === 'string' && credential.length >= 32 && credential.length <= 4096 && /^sk-[A-Za-z0-9_-]+$/u.test(credential)
         && !/^sk-(?:test|mock|example|placeholder|change[-_]?me|replace)(?:[-_]|$)/iu.test(credential),
       'LIVE_VALIDATION_CREDENTIAL_INVALID');
       fresh();

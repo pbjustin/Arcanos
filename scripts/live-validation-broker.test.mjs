@@ -89,6 +89,15 @@ test('invalid credential fails after durable claim and cannot be retried with th
   await assert.rejects(f.broker.authorizeRun(), { code: 'LIVE_VALIDATION_RUN_REPLAY' });
 });
 
+test('credential length remains bounded before any provider request', async t => {
+  for (const credential of ['sk-' + 'a'.repeat(20), 'sk-' + 'a'.repeat(4094)]) {
+    const f = fixture(t, { credential });
+    await assert.rejects(f.broker.authorizeRun(), { code: 'LIVE_VALIDATION_CREDENTIAL_INVALID' });
+    assert.equal(f.counts().providerCalls, 0);
+    assert.equal(f.persisted().status, 'stopped');
+  }
+});
+
 test('positive real-budget lifecycle records generation and mandatory audit before the zero-provider negative case', async t => {
   const f = fixture(t); const session = await f.broker.authorizeRun();
   f.broker.beginWorkflow(positive); await f.invoke(session); await f.invoke(session, 'answer_audit');
