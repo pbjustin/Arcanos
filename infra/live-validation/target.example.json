@@ -1,0 +1,26 @@
+{
+  "version": "arcanos-live-validation-target/v1",
+  "repository": "pbjustin/Arcanos",
+  "projectId": "7faf44e5-519c-4e73-8d7a-da9f389e6187",
+  "environmentId": null,
+  "environmentName": "live-validation",
+  "runtimeServiceId": null,
+  "supervisorServiceId": null,
+  "privateOrigins": {
+    "runtime": "https://live-validation-runtime.railway.internal:8443",
+    "supervisor": "https://live-validation-supervisor.railway.internal:8443"
+  },
+  "mtlsPeers": {
+    "runtime": { "dns": "live-validation-runtime.railway.internal", "sha256": null },
+    "supervisor": { "dns": "live-validation-supervisor.railway.internal", "sha256": null },
+    "verifier": { "dns": "live-validation-verifier.railway.internal", "sha256": null }
+  },
+  "trustedSupervisorSha": null,
+  "limits": { "maxSpendMicroUsd": 2000000, "maxRequests": 32, "maxWorkflows": 2, "durationMs": 600000 },
+  "models": [
+    { "id": null, "inputMicroUsdPerToken": null, "outputMicroUsdPerToken": null },
+    { "id": "gpt-6-luna", "inputMicroUsdPerToken": null, "outputMicroUsdPerToken": null },
+    { "id": "gpt-6.1-sol", "inputMicroUsdPerToken": null, "outputMicroUsdPerToken": null }
+  ],
+  "writes": false
+}
