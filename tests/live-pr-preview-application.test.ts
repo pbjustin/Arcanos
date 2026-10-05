@@ -254,6 +254,7 @@ describe('private live PR preview HTTP admission and evidence', () => {
     expect(keyResolver).not.toHaveBeenCalled();
   });
 
+  // The repository-wide AST scan needs a bounded allowance for coverage instrumentation and CI contention.
   it('has no live authentication or route in the production or sealed application import graphs', async () => {
     const root = path.resolve('src');
     const queued = ['app.ts', 'start-server.ts', 'nativePrPreviewApplication.ts', 'start-native-pr-preview.ts']
@@ -286,5 +287,5 @@ describe('private live PR preview HTTP admission and evidence', () => {
       walk(parsed);
     }
     expect(visited.size).toBeGreaterThan(100);
-  });
+  }, 30_000);
 });
