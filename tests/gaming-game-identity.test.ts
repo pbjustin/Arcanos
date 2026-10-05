@@ -53,6 +53,23 @@ describe('stored game identity formatting', () => {
 
 
 describe('request edition display identity', () => {
+  test.each([
+    'The submitted guide is titled "Elden Ring Shadow of the Erdtree". How do Samurai katana attacks work?',
+    "The cited source is about 'Shadow of the Erdtree'. How do Samurai katana attacks work?",
+    'This guide covers Shadow of the Erdtree. How do Samurai katana attacks work?'
+  ])('does not infer player expansion scope from an attributed source description: %s', prompt => {
+    expect(resolveGamingRequestEdition({ game: 'Elden Ring', prompt })).toBe('base-game');
+  });
+  test.each([
+    'How do Samurai katana attacks work in "Shadow of the Erdtree"?',
+    'The submitted guide is titled "Elden Ring Samurai guide". Recommend a build for "Shadow of the Erdtree".'
+  ])('preserves an affirmative quoted expansion request: %s', prompt => {
+    expect(resolveGamingRequestEdition({ game: 'Elden Ring', prompt })).toBe('shadow of the erdtree');
+  });
+  test('preserves explicit edition precedence over an attributed source description', () => {
+    expect(resolveGamingRequestEdition({ game: 'Elden Ring', edition: 'Shadow of the Erdtree',
+      prompt: 'The submitted guide is titled "Elden Ring Base game". How do Samurai attacks work?' })).toBe('Shadow of the Erdtree');
+  });
   test.each(['Remastered', 'Shadow of the Erdtree', 'Reforged Edition'])('preserves explicit non-base edition display label %s', edition => {
     expect(resolveGamingRequestEdition({ game: 'Amber Pilgrim', edition })).toBe(edition);
     expect(gamingEditionIdentitiesMatch(resolveGamingRequestEdition({ game: 'Amber Pilgrim', edition }), edition.toLowerCase())).toBe(true);

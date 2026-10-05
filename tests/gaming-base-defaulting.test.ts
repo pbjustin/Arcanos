@@ -94,6 +94,18 @@ describe('ordinary base-game request interpretation', () => {
       'Elden Ring Shadow of the Erdtree Samurai katana guide', request);
     expect(dlc.accepted).toHaveLength(1);
   });
+  it('does not let an attributed expansion title select the player edition during acquisition', async () => {
+    const request = { ...input,
+      prompt: 'The submitted guide is titled "Elden Ring Shadow of the Erdtree". How do Samurai katana attacks work?' };
+    const base = await acquire('Edition: Base game.', prose, undefined, request);
+    expect(base.accepted).toHaveLength(1);
+    expect(base.accepted[0].sourceContext.edition).toBe('base-game');
+    const expansion = await acquire('Edition: Shadow of the Erdtree.',
+      `${prose} In Shadow of the Erdtree, Samurai katana attacks require expansion access.`,
+      'Elden Ring Shadow of the Erdtree Samurai katana guide', request);
+    expect(expansion.accepted).toEqual([]);
+    expect(expansion.decisions[0].reasonCodes).toContain('EDITION_CONFLICT');
+  });
   it('preserves explicit editions and leaves materially unspecified expansion requests unresolved', () => {
     expect(resolveGamingRequestEdition({ ...input, edition: 'Base game' })).toBe('base-game');
     expect(resolveGamingRequestEdition({ ...input, edition: 'Remastered' })).toBe('Remastered');

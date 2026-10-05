@@ -34,17 +34,17 @@ export function normalizeGamingEvidenceGameIdentity(game: string): string {
 }
 
 /** Source-attributed title descriptions never choose a player's edition. */
-function minecraftRequestScopeText(question: string): string {
+function gamingRequestScopeText(question: string): string {
   return question.replace(/(?:^|[.!?]\s+)(?:(?:the|this|that)\s+)?(?:(?:submitted|cited)\s+)?(?:guide|source)\s+(?:is\s+|was\s+)?(?:titled|named|for|about|reports?|says?|covers?)\b[^.!?\n]{0,240}(?=[.!?]|$)/giu, ' ');
 }
 
 /** Request interpretation only; never an assertion about acquired source metadata. */
 export function resolveGamingRequestEdition(input: { game?: string; edition?: string; prompt?: string; question?: string }): string | undefined {
   if (input.edition) return normalizeGamingEditionIdentity(input.edition) === 'base-game' ? 'base-game' : input.edition;
-  const question = input.prompt ?? input.question ?? '';
+  const question = gamingRequestScopeText(input.prompt ?? input.question ?? '');
   const gameIdentity = normalizeGamingGameIdentity(input.game ?? '');
   if (gameIdentity === 'minecraft') {
-    const requestText = minecraftRequestScopeText(question).replace(/"[^"]*"|“[^”]*”|`[^`]*`|'[^']*'|‘[^’]*’/gu, ' ');
+    const requestText = question.replace(/"[^"]*"|“[^”]*”|`[^`]*`|'[^']*'|‘[^’]*’/gu, ' ');
     const matches = [...requestText.matchAll(/\bminecraft[\s-]+(java|bedrock)(?: edition)?\b|\b(java|bedrock) edition\b/giu)];
     if (matches.some(match => /\b(?:not(?:\s+(?:use|apply|include|for)){0,2}|no|without|excluding)\s*$/iu.test(requestText.slice(0, match.index)))) return undefined;
     const editions = matches.filter(match => {
@@ -89,7 +89,7 @@ export interface GamingEditionRequestContext {
 /** Eligibility only: acquired identity, intact scope and source restrictions still need independent inspection. */
 export function canQualifyGamingUnrequestedEdition(input: GamingEditionRequestContext): boolean {
   const prompt = input.prompt ?? input.question ?? '';
-  const scopePrompt = normalizeGamingGameIdentity(input.game ?? '') === 'minecraft' ? minecraftRequestScopeText(prompt) : prompt;
+  const scopePrompt = normalizeGamingGameIdentity(input.game ?? '') === 'minecraft' ? gamingRequestScopeText(prompt) : prompt;
   return !resolveGamingRequestEdition(input) && Boolean(input.game)
     && !/\b(?:edition|dlcs?|expansions?|remaster(?:ed)?|remake|anniversary|definitive|java|bedrock)\b/iu.test(scopePrompt)
     && resolveGamingFreshnessDisposition({ prompt, mode: input.mode, requestedVersion: input.requestedVersion ?? input.version }) !== 'REQUIRED';

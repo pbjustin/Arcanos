@@ -80,7 +80,9 @@ guidance must ask one targeted question or provide scoped alternatives when the
 conflict changes the answer. Source titles do not establish player state or positive edition applicability,
 and explicit precise game titles are preserved. Ordinary requests naming only
 Elden Ring use a backend-derived base-game request scope. An explicit Shadow of
-the Erdtree request selects that expansion; unspecified DLC/expansion requests
+the Erdtree request selects that expansion; source-attributed titles and descriptions
+do not select the player's edition, while affirmative quoted expansion requests
+remain explicit choices. Unspecified DLC/expansion requests
 retain their ambiguity. Exact base-game wording and closed `no`, `without` or
 `excluding` expansion clauses select base-game scope when no positive expansion
 request conflicts. The closed generic question pattern “Is DLC required/needed/
