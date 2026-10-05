@@ -43,3 +43,5 @@ db4d8428b19e41bca572397d707e8cd461e31c3c:clients/ios/ArcanosKit/Sources/ArcanosK
 758d9f1dd9d7aaa9e58dbacd98200fec3a3fb478:scripts/check-native-pr-preview-imports.mjs:generic-api-key:757
 # Fixed synthetic preview idempotency key; no credential. Retain only its exact historical finding.
 a54255d85f50473a14413b36a6a0118232fdcf1a:src/shared/gaming/gamingHybridKnowledgePreviewFixture.ts:generic-api-key:129
+# Fixed synthetic idempotency key in mocked source-size regression coverage; no credential. Retain only its exact historical finding.
+bc0ba6310a49b4082b0bfbc46deea5b9e7929f10:tests/gaming-mixed-candidate-failures.test.ts:generic-api-key:62
