@@ -186,6 +186,14 @@ Launcher behavior:
   publisher, generation, semantic-audit and persistence substitutes; the
   [platform alias tests](../tests/gaming-platform-aliases.test.ts) cover shared
   workflow budgets and strict raw-payload idempotency.
+  Opted-in PR CI also runs the PR-head verifier after the trusted
+  `Railway PR Preview E2E` status succeeds for the same commit. Its separate job
+  rejects PR identity or opt-in drift, checks out the exact head without
+  persisted Git credentials, and executes the bounded verifier with an empty
+  environment except the runtime path and locale. It has no Railway credential
+  and uploads the executed JSON evidence as a workflow artifact. This provides
+  supplemental assertions when the trusted lifecycle verifier predates a new
+  proof; Railway ownership remains the trusted controller's responsibility.
 - The sealed Gaming guide request also executes the production progression,
   retrieval, game-identity, and recovery policies over fixed synthetic cases.
   It distinguishes an unknown progress point from a named gameplay target,
