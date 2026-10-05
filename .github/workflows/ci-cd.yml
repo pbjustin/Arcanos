@@ -140,6 +140,9 @@ jobs:
         if: matrix.test-type == 'unit'
         run: npm test
 
+      - name: Offline live validation security contracts
+        run: npm run test:live-pr-preview:offline && npm run test:live-validation:offline
+
       - name: 📊 Upload Node coverage to Codecov
         if: matrix.test-type == 'unit'
         uses: codecov/codecov-action@v5

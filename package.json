@@ -83,6 +83,7 @@
     "test:worker-diagnostics-preview": "node scripts/run-jest.mjs --runTestsByPath tests/worker-diagnostics-preview-fixture.test.js tests/worker-diagnostics-preview-e2e.test.js tests/worker-diagnostics-preview-cleanup-workflow.test.js --coverage=false",
     "test:native-pr-preview-e2e": "node --test scripts/native-pr-preview-e2e.test.mjs",
     "test:live-pr-preview:offline": "node --test scripts/live-pr-preview-policy.test.mjs scripts/live-pr-preview-broker.test.mjs scripts/live-pr-preview-run.test.mjs scripts/live-pr-preview-verifier.test.mjs scripts/start-live-pr-preview.test.mjs scripts/live-pr-preview-e2e.test.mjs",
+    "test:live-validation:offline": "node --test scripts/live-validation-*.test.mjs",
     "railway:alert:timeouts": "node scripts/check-railway-timeout-regressions.js",
     "railway:alert:budget-abort": "node scripts/check-railway-timeout-regressions.js --since 15m --lines 500 --fail-on-budget-abort",
     "audit": "node scripts/continuous-audit.js",
