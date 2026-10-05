@@ -113,6 +113,26 @@ test('both Dockerfiles reject malformed build SHAs before their first Git invoca
   }
 });
 
+test('final image stages copy a read-only checked-out tree only after manifest creation and Git history removal', () => {
+  for (const role of ['runtime', 'supervisor']) {
+    const dockerfile = readFileSync(new URL(`../infra/live-validation/${role}.Dockerfile`, import.meta.url), 'utf8');
+    const stages = dockerfile.split(/^FROM /gmu).slice(1);
+    assert.equal(stages.length, 2);
+    const [build, final] = stages;
+    assert.match(build, /^node:24\.18\.1-alpine AS build\n/u);
+    const manifest = build.indexOf(`node scripts/live-validation-build.mjs "$RAILWAY_GIT_COMMIT_SHA" ${role} /opt/validation/build.json`);
+    assert.ok(manifest >= 0 && build.indexOf('rm -rf /app/.git') > manifest);
+    assert.match(final, /^node:24\.18\.1-alpine\n/u);
+    assert.match(final, /COPY --from=build --chown=root:root \/app \/app/u);
+    assert.match(final, /COPY --from=build --chown=root:root \/opt\/validation\/build.json \/opt\/validation\/build.json/u);
+    assert.match(final, /test ! -e \/app\/\.git && chmod -R a-w \/app \/opt\/validation/u);
+    assert.match(final, /RUN apk add --no-cache openssl python3 py3-jsonschema\n/u);
+    assert.doesNotMatch(final, /\b(?:git (?:clone|fetch|checkout)|apk add[^\n]*\sgit(?:\s|$))/u);
+    assert.doesNotMatch(final, /COPY[^\n]*\.git/u);
+    assert.match(final, role === 'runtime' ? /\nUSER node\n/u : /\nUSER root\n/u);
+  }
+});
+
 test('compiled digest cannot traverse symbolic links', () => {
   const directory = mkdtempSync(path.join(tmpdir(), 'arcanos-validation-hash-'));
   try { symlinkSync('/etc/passwd', path.join(directory, 'escape')); assert.throws(() => validationDirectoryHash(directory), { code: 'DEPLOYMENT_BUILD_SYMLINK_FORBIDDEN' }); }
