@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { buildGamingGuideIntakeContract, GAMING_HYBRID_INTAKE } from '../src/shared/gaming/gamingGuideIntakeCore.js';
 import { createGamingClearAssessment, gamingClearContextFingerprint, gamingClearHash } from '../src/shared/gaming/gamingClearPolicy.js';
-import type { TrinityRunOptions } from '../src/core/logic/trinityTypes.js';
+import type { TrinityRunOptions, TrinityStageObservation } from '../src/core/logic/trinityTypes.js';
 
 const responsesCreate = jest.fn();
 const runStructuredReasoning = jest.fn();
@@ -190,6 +190,45 @@ describe('Gaming compact Trinity intake through the real Responses adapter', () 
     expect(result.fallbackFlag).toBe(false);
     expect(storePattern).not.toHaveBeenCalled();
     expect(recordFeedback).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])('observes actual model stages without changing delivery when observer throws=%s', async throws => {
+    responsesCreate.mockResolvedValueOnce(response('Compact task card.'))
+      .mockResolvedValueOnce(response(finalAnswer, false, authorityModel));
+    const input = request();
+    const events: TrinityStageObservation[] = [];
+    (input.context.runOptions as TrinityRunOptions).onStage = event => {
+      expect(Object.isFrozen(event)).toBe(true);
+      events.push({ ...event });
+      if (throws) throw new Error('PRIVATE observer diagnostic');
+    };
+    const result = await runTrinityWritingPipeline(input);
+    expect(result.result).toBe(finalAnswer);
+    expect(result.fallbackFlag).toBe(false);
+    expect(events.map(event => [event.stage, event.phase])).toEqual([
+      ['intake', 'started'], ['intake', 'completed'], ['reasoning', 'started'],
+      ['reasoning', 'completed'], ['final', 'started'], ['final', 'completed']
+    ]);
+    for (const event of events) {
+      expect(event.elapsedMs).toBeGreaterThanOrEqual(0);
+      expect(event.remainingBudgetMs).toBeGreaterThan(0);
+      expect(Object.keys(event).sort()).toEqual(['elapsedMs', 'phase', 'remainingBudgetMs', 'requestRemainingMs', 'stage']);
+    }
+    expect(responsesCreate).toHaveBeenCalledTimes(2);
+    expect(storePattern).not.toHaveBeenCalled();
+    expect(recordFeedback).not.toHaveBeenCalled();
+  });
+
+  it('observes a failed intake without reporting later stages or leaking provider diagnostics', async () => {
+    responsesCreate.mockResolvedValue(response('PRIVATE partial output', true));
+    const input = request();
+    const events: TrinityStageObservation[] = [];
+    (input.context.runOptions as TrinityRunOptions).onStage = event => { events.push({ ...event }); };
+    await expect(runTrinityWritingPipeline(input)).rejects.toMatchObject({ code: 'OPENAI_COMPLETION_INCOMPLETE' });
+    expect(events.map(event => [event.stage, event.phase])).toEqual([['intake', 'started'], ['intake', 'failed']]);
+    expect(events[1].elapsedMs).toBeGreaterThanOrEqual(0);
+    expect(JSON.stringify(events)).not.toContain('PRIVATE');
+    expect(runStructuredReasoning).not.toHaveBeenCalled();
   });
 
   it.each(['build', 'meta'])('forwards original scoped hybrid %s evidence through the full Trinity writing facade', async mode => {

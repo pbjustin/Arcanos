@@ -633,6 +633,16 @@ export interface GamingPreparedEvidence {
   suppliedGuides?: Array<{ requestedUrl: string; sourceId: string; publicUrl: string }>;
 }
 
+/** Timing-only server observation; no prompts, evidence passages or answers. */
+export interface GamingPipelineStageObservation {
+  stage: 'selection' | 'intake' | 'reasoning' | 'final' | 'answer_audit';
+  phase: 'started' | 'completed' | 'failed';
+  elapsedMs?: number;
+  remainingBudgetMs?: number | null;
+  requestRemainingMs?: number | null;
+  timedOut?: boolean;
+}
+
 /** Server-owned transient execution dependencies; never accepted from a public request body. */
 export interface GamingPipelineRuntime {
   client: OpenAI;
@@ -642,6 +652,15 @@ export interface GamingPipelineRuntime {
   onEvidenceAssessment?: (assessment: GamingClearAssessment) => void;
   onAnswerAuditStart?: () => void;
   onAnswerAudit?: (result: Awaited<ReturnType<typeof runGamingClearAnswerAudit>>) => void;
+  onStage?: (event: Readonly<GamingPipelineStageObservation>) => void;
+}
+
+function observeGamingPipelineStage(runtime: GamingPipelineRuntime | undefined, event: GamingPipelineStageObservation): void {
+  try {
+    runtime?.onStage?.(Object.freeze({ ...event }));
+  } catch {
+    logger.warn('Gaming stage observer failed.', { module: 'ARCANOS:GAMING', stage: event.stage });
+  }
 }
 
 export async function runGameplayPipeline(params: GamingPipelineInput, prepared?: GamingPreparedEvidence,
@@ -1153,7 +1172,10 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
   clearKnowledge = { ...clearKnowledge, context: webContext };
   const auditContext = { actorScopeHash: prepared?.actorScopeHash, allowAdvisoryFreshness,
     requireRequestCoverage: prepared?.requireRequestCoverage === true };
+  const selectionStartedAt = Date.now();
+  observeGamingPipelineStage(runtime, { stage: 'selection', phase: 'started', elapsedMs: 0 });
   const evidenceAssessment = assessGamingClearEvidence({ ...resolvedParams, game: resolvedParams.game ?? '' }, clearKnowledge, auditContext);
+  observeGamingPipelineStage(runtime, { stage: 'selection', phase: 'completed', elapsedMs: Date.now() - selectionStartedAt });
   runtime?.onEvidenceAssessment?.(structuredClone(evidenceAssessment));
   logger.info('gaming.clear.evidence.completed', {
     ...baseLogContext, rubricVersion: evidenceAssessment.rubricVersion, profile: evidenceAssessment.profile,
@@ -1297,14 +1319,39 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
             ),
             runOptions: {
               ...buildGamingRunOptions(params.mode, guideUrls.length > 0 && retrievalHadUsableSources),
+              ...(runtime?.onStage ? { onStage: (event: import('@core/logic/trinityTypes.js').TrinityStageObservation) => {
+                if (event.stage === 'intake' || event.stage === 'reasoning' || event.stage === 'final') {
+                  observeGamingPipelineStage(runtime, { ...event, stage: event.stage });
+                }
+              } } : {}),
               gamingClearAnswerAudit: async (answer, runtimeBudget) => {
+                const auditStartedAt = Date.now();
+                observeGamingPipelineStage(runtime, {
+                  stage: 'answer_audit', phase: 'started', elapsedMs: 0,
+                  remainingBudgetMs: getSafeRemainingMs(runtimeBudget), requestRemainingMs: getRequestRemainingMs() ?? null
+                });
                 runtime?.onAnswerAuditStart?.();
-                const result = await runGamingClearAnswerAudit(client, {
-                  ...resolvedParams, game: resolvedParams.game ?? '', answer: qualifyAdvisoryAnswer(answer), knowledge: clearKnowledge,
-                  evidenceAssessment: assessGamingClearEvidence({ ...resolvedParams, game: resolvedParams.game ?? '' }, clearKnowledge, auditContext), requestId
-                }, runtimeBudget);
-                runtime?.onAnswerAudit?.(structuredClone(result));
-                return result;
+                try {
+                  const result = await runGamingClearAnswerAudit(client, {
+                    ...resolvedParams, game: resolvedParams.game ?? '', answer: qualifyAdvisoryAnswer(answer), knowledge: clearKnowledge,
+                    evidenceAssessment: assessGamingClearEvidence({ ...resolvedParams, game: resolvedParams.game ?? '' }, clearKnowledge, auditContext), requestId
+                  }, runtimeBudget);
+                  observeGamingPipelineStage(runtime, {
+                    stage: 'answer_audit', phase: result.assessment.assessmentStatus === 'completed' ? 'completed' : 'failed',
+                    elapsedMs: Date.now() - auditStartedAt, remainingBudgetMs: getSafeRemainingMs(runtimeBudget),
+                    requestRemainingMs: getRequestRemainingMs() ?? null,
+                    ...(result.assessment.findings.some(finding => finding.code === 'AUDIT_TIMEOUT') ? { timedOut: true } : {})
+                  });
+                  runtime?.onAnswerAudit?.(structuredClone(result));
+                  return result;
+                } catch (error) {
+                  observeGamingPipelineStage(runtime, {
+                    stage: 'answer_audit', phase: 'failed', elapsedMs: Date.now() - auditStartedAt,
+                    remainingBudgetMs: getSafeRemainingMs(runtimeBudget), requestRemainingMs: getRequestRemainingMs() ?? null,
+                    ...(isAbortError(error) ? { timedOut: true } : {})
+                  });
+                  throw error;
+                }
               },
               ...(prepared ? { disableOptionalSideEffects: true, redactAuditContent: true, gamingGuideIntakePolicy: 'compact-v1' as const } : {}),
               ...(runtime ? { disableOptionalSideEffects: true, redactAuditContent: true, disableMemoryAccess: true } : {}),
