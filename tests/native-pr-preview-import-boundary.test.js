@@ -1009,6 +1009,7 @@ describe('native PR preview import boundary', () => {
     'src/shared/gaming/gamingHybridContract.ts',
     'src/shared/gaming/gamingFreshnessCore.ts',
     'src/shared/gaming/gamingGameIdentity.ts',
+    'src/shared/gaming/gamingPlatformIdentity.ts',
     'src/shared/gaming/gamingQuestionFreshnessPolicy.ts',
     'src/shared/gaming/gamingRecoveryResponse.ts',
     'src/shared/gaming/gamingGenerationBudgetCore.ts',
@@ -1043,8 +1044,9 @@ describe('native PR preview import boundary', () => {
     }
   });
 
-  it.each(['node:fs', 'node:http', 'node:child_process'])('keeps the pure Gaming question policy isolated from %s independently of its semantic pin', async specifier => {
-    const filePath = 'src/shared/gaming/gamingQuestionFreshnessPolicy.ts';
+  it.each(['src/shared/gaming/gamingQuestionFreshnessPolicy.ts', 'src/shared/gaming/gamingPlatformIdentity.ts']
+    .flatMap(filePath => ['node:fs', 'node:http', 'node:child_process'].map(specifier => [filePath, specifier])))
+  ('keeps the pure Gaming policy %s isolated from %s independently of its semantic pin', async (filePath, specifier) => {
     const sourceText = await readNormalizedSource(new URL(`../${filePath}`, import.meta.url));
     const violations = findUnsafeRuntimeSyntax(filePath, `import * as forbiddenEffect from '${specifier}';\n${sourceText}`);
     // Import isolation is separate from the digest check: repinning changed source

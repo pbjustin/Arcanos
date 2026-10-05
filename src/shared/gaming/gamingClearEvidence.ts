@@ -1,4 +1,5 @@
 import { gamingApplicabilityScopeRequired } from './gamingGuideApplicability.js';
+import { gamingPlatformEvidenceMatchesRequest } from './gamingPlatformIdentity.js';
 import { resolveGamingRequestEdition, gamingEditionEvidenceMatchesRequest } from './gamingGameIdentity.js';
 import { createGamingClearAssessment, classifyGamingClearQuestion, gamingClearContextFingerprint, gamingClearHash,
   type GamingClearAssessment } from './gamingClearPolicy.js';
@@ -84,14 +85,14 @@ export function assessGamingClearEvidence(
     || (item.publishedAt && Date.parse(item.publishedAt) > evaluatedNow.getTime())
     || (!historicalPatchVerified && !advisoryFreshness && item.effectiveUntil && Date.parse(item.effectiveUntil) <= evaluatedNow.getTime())
     || (input.edition && item.edition && !gamingEditionEvidenceMatchesRequest(item.edition, input.edition, input))
-    || (input.platform && item.platforms?.length && !item.platforms.some(platform => ['all', input.platform!.toLowerCase()].includes(platform.toLowerCase())))
+    || (input.platform && item.platforms?.length && !gamingPlatformEvidenceMatchesRequest(item.platforms, input.platform))
     || (input.region && item.regions?.length && !item.regions.some(region => ['all', input.region!.toLowerCase()].includes(region.toLowerCase())))
     || (input.requestedVersion && item.patch && item.currentness !== 'current_index'
       && item.patch !== input.requestedVersion && !item.baselineForPatches?.includes(input.requestedVersion)))
     || sources.some(source => input.edition && source.edition && !gamingEditionEvidenceMatchesRequest(source.edition, input.edition, input));
   const compatibilityUnknown = relevantMetadata.some(item => item.metadataUnverified
     || (!input.edition && item.edition && !gamingEditionEvidenceMatchesRequest(item.edition, undefined, input))
-    || (!input.platform && gamingApplicabilityScopeRequired(input, 'platform') && item.platforms?.length && !item.platforms.some(platform => platform.toLowerCase() === 'all'))
+    || (!input.platform && gamingApplicabilityScopeRequired(input, 'platform') && item.platforms?.length && !gamingPlatformEvidenceMatchesRequest(item.platforms))
     || (!input.region && gamingApplicabilityScopeRequired(input, 'region') && item.regions?.length && !item.regions.some(region => region.toLowerCase() === 'all'))
     || [item.effectiveFrom, item.effectiveUntil, item.publishedAt].some(value => value && !Number.isFinite(Date.parse(value))))
     || sources.some(source => !input.edition && source.edition && !gamingEditionEvidenceMatchesRequest(source.edition, undefined, input))

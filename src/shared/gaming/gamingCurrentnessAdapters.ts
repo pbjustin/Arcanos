@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { normalizeGamingGameIdentity } from './gamingGameIdentity.js';
+import { normalizeGamingPlatformIdentity } from './gamingPlatformIdentity.js';
 import type { GamingEvidenceUnit } from './gamingEvidenceUnits.js';
 import type { GamingCurrentnessAdapterId, GamingCurrentnessAdapterConfig, GamingReleaseTitleConfig } from './gamingCurrentnessRegistry.js';
 export type { GamingCurrentnessAdapterId } from './gamingCurrentnessRegistry.js';
@@ -110,11 +111,7 @@ function intersectScope(left: string[] | undefined, right: string[] | undefined,
   if (!right?.length) return { values: left, conflicting: false };
   if (left.some(value => same(value, 'all'))) return { values: right, conflicting: false };
   if (right.some(value => same(value, 'all'))) return { values: left, conflicting: false };
-  const identity = (value: string): string => {
-    const key = normalize(value).toLowerCase();
-    // These are the same explicit publisher aliases emitted by the article adapter.
-    return platform ? ({ steam: 'pc', 'playstation 4': 'ps4', 'playstation 5': 'ps5' } as Record<string, string>)[key] ?? key : key;
-  };
+  const identity = (value: string): string => platform ? normalizeGamingPlatformIdentity(value) : normalize(value).toLowerCase();
   const identities = new Set(left.map(identity));
   const values = right.filter(value => identities.has(identity(value)));
   return { values: values.length ? values : undefined, conflicting: !values.length };

@@ -1,4 +1,5 @@
 import { resolveGamingRequestEdition, gamingEditionEvidenceMatchesRequest, normalizeGamingGameIdentity } from './gamingGameIdentity.js';
+import { gamingPlatformEvidenceMatchesRequest } from './gamingPlatformIdentity.js';
 import type { GamingCurrentnessEvidenceShape } from './gamingCurrentnessAdapters.js';
 
 /** Minimal structural contract keeps the applicability comparator independent of policy orchestration. */
@@ -72,7 +73,8 @@ export function evaluateGamingGuideApplicability(input: {
     || (!input.edition && guide.edition && !gamingEditionEvidenceMatchesRequest(guide.edition, undefined, input))) return result('unverified', 'EDITION_UNVERIFIED');
   if (guide.metadataUnverified) return result('unverified', 'APPLICABILITY_METADATA_UNVERIFIED');
   for (const [values, wanted, field] of [[guide.platforms, input.platform, 'PLATFORM'], [guide.regions, input.region, 'REGION']] as const) {
-    if (values?.length && !includes(values, 'all') && !includes(values, wanted)
+    const matches = field === 'PLATFORM' ? gamingPlatformEvidenceMatchesRequest(values, wanted) : includes(values, 'all') || includes(values, wanted);
+    if (values?.length && !matches
       && (wanted || gamingApplicabilityScopeRequired(input, field.toLowerCase() as 'platform' | 'region'))) return result(wanted ? 'conflicting' : 'unverified', `${field}_${wanted ? 'CONFLICT' : 'UNVERIFIED'}`);
     if (wanted && !values?.length) return result('unverified', `${field}_UNVERIFIED`);
   }

@@ -857,7 +857,12 @@ scope. Structured request fields retain precedence. The effective request is
 canonicalized before idempotency and acquisition-budget binding and is passed
 unchanged to acquisition evaluation, applicability and freshness; question-derived
 platform provenance remains `question`. This is user context, never verification
-of a source's platform or region. Explicit v1 retains its existing behavior.
+of a source's platform or region. Closed publisher aliases such as `PS5` and
+`PlayStation 5`, `PS4` and `PlayStation 4`, and `Steam` and `PC` compare as the same
+platform across acquired evidence and share the v2 acquisition budget. Source
+labels stay intact; unknown labels and different console generations remain
+distinct. Operation payload idempotency remains strict. Explicit v1 retains its
+existing request interpretation.
 Invalid publication/update dates alone warn
 for gameplay guides; malformed effective intervals and official currentness
 metadata remain blockers.

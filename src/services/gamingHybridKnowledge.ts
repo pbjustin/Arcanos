@@ -1,4 +1,5 @@
 import { normalizeGamingGameIdentity, resolveGamingRequestEdition, buildGamingSourceEditionQualification, normalizeGamingMinecraftEdition } from '@shared/gaming/gamingGameIdentity.js';
+import { normalizeGamingPlatformIdentity } from '@shared/gaming/gamingPlatformIdentity.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { getEnvBoolean } from '@platform/runtime/env.js';
 import { logger } from '@platform/logging/structuredLogging.js';
@@ -70,7 +71,8 @@ function queryBudgetKey(actor: string, input: GamingHybridQuery): string {
   const edition = input.contractVersion === GAMING_HYBRID_V2_CONTRACT_VERSION ? resolveGamingRequestEdition(input) : undefined;
   // Equivalent v2 request interpretations share acquisition limits. Keep the
   // actual query input untouched so operation idempotency remains payload-bound.
-  const budgetInput = edition ? { ...input, edition } : input;
+  const budgetInput = input.contractVersion === GAMING_HYBRID_V2_CONTRACT_VERSION ? { ...input,
+    ...(edition ? { edition } : {}), ...(input.platform ? { platform: normalizeGamingPlatformIdentity(input.platform) } : {}) } : input;
   return hash([actor, Object.entries(budgetInput).filter(([key]) => !['idempotencyKey', 'storagePolicy', 'version',
     'answerDepth', 'spoilerTolerance', 'mode'].includes(key))
     .sort(([left], [right]) => left.localeCompare(right)).map(([key, value]) => [key, normalizedBudgetValue(value)])]);

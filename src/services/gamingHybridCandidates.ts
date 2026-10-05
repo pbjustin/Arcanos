@@ -24,6 +24,7 @@ import { assessGamingClearSource, gamingClearHistoricalSourceVerified, gamingCle
 import { GAMING_CLEAR_VERSION, gamingClearHash, type GamingClearAssessment } from '@shared/gaming/gamingClearPolicy.js';
 import { GAMING_HYBRID_LIMITS } from '@shared/gaming/gamingHybridContract.js';
 import { pickGamingPlayerContext } from '@shared/gaming/gamingPlayerContext.js';
+import { gamingPlatformEvidenceMatchesRequest } from '@shared/gaming/gamingPlatformIdentity.js';
 import { assessGamingStructuralUsability, selectGamingSourceEditionScopedEvidence } from '@shared/gaming/gamingStructuralEvidence.js';
 import type { GamingStructureDiagnostics } from '@shared/gaming/gamingEvidenceUnits.js';
 import { GAMING_CURRENTNESS_ADAPTER_VERSION } from '@shared/gaming/gamingCurrentnessAdapters.js';
@@ -243,7 +244,7 @@ export async function evaluateGamingHybridCandidates(
         && !(normalizeGamingGameIdentity(input.game) === 'minecraft' && normalizeGamingMinecraftEdition(freshness.edition))) { reject('EDITION_UNVERIFIED'); continue; }
       const applies = (values: string[] | undefined, wanted: string | undefined) => !values?.length
         || values.some(value => value.toLowerCase() === 'all' || value.toLowerCase() === wanted?.toLowerCase());
-      if (!applies(freshness.platforms, input.platform) && (input.platform || gamingApplicabilityScopeRequired(input, 'platform')
+      if (freshness.platforms?.length && !gamingPlatformEvidenceMatchesRequest(freshness.platforms, input.platform) && (input.platform || gamingApplicabilityScopeRequired(input, 'platform')
         || input.discoveryType === 'currentness_verification')) { reject(input.platform ? 'PLATFORM_MISMATCH' : 'PLATFORM_UNVERIFIED'); continue; }
       if (!applies(freshness.regions, input.region) && (input.region || gamingApplicabilityScopeRequired(input, 'region')
         || input.discoveryType === 'currentness_verification')) { reject(input.region ? 'REGION_MISMATCH' : 'REGION_UNVERIFIED'); continue; }

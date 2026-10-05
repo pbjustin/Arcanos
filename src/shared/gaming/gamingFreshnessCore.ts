@@ -1,4 +1,5 @@
 import { classifyGamingQuestionFreshness, type GamingQuestionFreshness } from './gamingQuestionFreshnessPolicy.js';
+import { gamingPlatformEvidenceMatchesRequest } from './gamingPlatformIdentity.js';
 import { resolveGamingRequestEdition, gamingEditionEvidenceMatchesRequest, canQualifyGamingUnrequestedEdition, normalizeGamingEditionIdentity, normalizeGamingGameIdentity, readGamingMinecraftEditionScope, normalizeGamingMinecraftEdition, type GamingEditionRequestContext } from './gamingGameIdentity.js';
 import type { GamingEvidenceUnit } from './gamingEvidenceUnits.js';
 import { isGamingDocumentMetadataUnit, readGamingEvidenceUnits, selectGamingEditionScopedEvidence } from './gamingStructuralEvidence.js';
@@ -381,8 +382,8 @@ export function evaluateGamingFreshness(input: GamingFreshnessEvaluationInput): 
     if (normalizeGamingGameIdentity(item.game) !== normalizeGamingGameIdentity(input.game)) { reasons.add('GAME_MISMATCH'); return false; }
     if (input.edition && !gamingEditionEvidenceMatchesRequest(item.edition, input.edition, input)) { reasons.add(item.edition ? 'EDITION_CONFLICT' : 'EDITION_UNVERIFIED'); return false; }
     if (!input.edition && item.edition && !gamingEditionEvidenceMatchesRequest(item.edition, undefined, input)) { reasons.add('EDITION_UNVERIFIED'); return false; }
-    if (input.platform && item.platforms?.length && !item.platforms.some(platform => same(platform, input.platform) || same(platform, 'all'))) { reasons.add('PLATFORM_MISMATCH'); return false; }
-    if (!input.platform && (gamingApplicabilityScopeRequired(input, 'platform') || !isGamingGameplayFreshnessEvidence(item)) && item.platforms?.length && !item.platforms.some(platform => same(platform, 'all'))) { reasons.add('PLATFORM_REQUIRED'); return false; }
+    if (input.platform && item.platforms?.length && !gamingPlatformEvidenceMatchesRequest(item.platforms, input.platform)) { reasons.add('PLATFORM_MISMATCH'); return false; }
+    if (!input.platform && (gamingApplicabilityScopeRequired(input, 'platform') || !isGamingGameplayFreshnessEvidence(item)) && item.platforms?.length && !gamingPlatformEvidenceMatchesRequest(item.platforms)) { reasons.add('PLATFORM_REQUIRED'); return false; }
     if (input.region && item.regions?.length && !item.regions.some(region => same(region, input.region) || same(region, 'all'))) { reasons.add('REGION_MISMATCH'); return false; }
     if (!input.region && (gamingApplicabilityScopeRequired(input, 'region') || !isGamingGameplayFreshnessEvidence(item)) && item.regions?.length && !item.regions.some(region => same(region, 'all'))) { reasons.add('REGION_REQUIRED'); return false; }
     const from = timestamp(item.effectiveFrom);
@@ -417,7 +418,7 @@ export function evaluateGamingFreshness(input: GamingFreshnessEvaluationInput): 
       && item.metadataConfidence === 'content_extracted' && same(item.patch, input.requestedVersion)
       && timestamp(item.verifiedAt) !== undefined && timestamp(item.verifiedAt)! <= now
       && timestamp(item.fetchedAt) !== undefined && timestamp(item.fetchedAt)! <= timestamp(item.verifiedAt)!
-      && (!input.platform || item.platforms?.some(platform => same(platform, input.platform) || same(platform, 'all')))
+      && (!input.platform || gamingPlatformEvidenceMatchesRequest(item.platforms, input.platform))
       && (!input.region || item.regions?.some(region => same(region, input.region) || same(region, 'all'))));
     if (!matching.length) return result('unverified', [...reasons, 'HISTORICAL_PATCH_COVERAGE_MISSING']);
     if (new Set(matching.flatMap(item => item.build ? [normalized(item.build)] : [])).size > 1)
@@ -450,7 +451,7 @@ export function evaluateGamingFreshness(input: GamingFreshnessEvaluationInput): 
     && (!item.currentnessMetadata || item.currentnessMetadata.status === 'verified'
       && item.currentnessMetadata.adapterVersion === GAMING_CURRENTNESS_ADAPTER_VERSION)
     && item.metadataConfidence === 'content_extracted' && recent(item, GAMING_FRESHNESS_DEFAULTS[classification])
-    && (!input.platform || item.platforms?.some(platform => same(platform, input.platform) || same(platform, 'all')))
+    && (!input.platform || gamingPlatformEvidenceMatchesRequest(item.platforms, input.platform))
     && (!input.region || item.regions?.some(region => same(region, input.region) || same(region, 'all')))
     && timestamp(item.effectiveFrom) !== undefined && (classification === 'seasonal' ? item.currentSeason : item.currentPatch)
     && (!seasonalPatchRequired || item.currentPatch));
@@ -484,7 +485,7 @@ export function evaluateGamingFreshness(input: GamingFreshnessEvaluationInput): 
   const matching = scoped.filter(item => {
     if (item.currentness === 'current_index') return false;
     if (isGamingGameplayFreshnessEvidence(item)) return guideApplicability!.some(guide => guide.evidenceId === item.id && guide.status === 'verified_current');
-    if (input.platform && !item.platforms?.some(platform => same(platform, input.platform) || same(platform, 'all'))) return false;
+    if (input.platform && !gamingPlatformEvidenceMatchesRequest(item.platforms, input.platform)) return false;
     if (input.region && !item.regions?.some(region => same(region, input.region) || same(region, 'all'))) return false;
     if (build && !same(item.build, build) && !item.baselineForBuilds?.some(value => same(value, build))) return false;
     return item.metadataConfidence === 'content_extracted' && (!season || same(item.season, season))
