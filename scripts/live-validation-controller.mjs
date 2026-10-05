@@ -21,6 +21,8 @@ export const LIVE_VALIDATION_OPERATOR_GATE_IDS = Object.freeze(['type-check', 'l
 const SUMMARY_VERSION = 'arcanos-live-validation-evidence/v1';
 const STATE_VERSION = 'arcanos-live-validation-controller-state/v1';
 const MAX_JSON = 2 * 1024 * 1024;
+export const LIVE_VALIDATION_ACCEPTANCE_TRANSPORT_TIMEOUT_MS = 315_000;
+const CONTROL_TIMEOUT_MS = 60_000;
 const digest = value => createHash('sha256').update(value).digest('hex');
 const canonicalHash = value => digest(canonicalLiveValidationJson(value));
 const record = value => value && typeof value === 'object' && !Array.isArray(value);
@@ -389,7 +391,7 @@ function assertReady(value, target, role, commitSha, deploymentId) {
   return identityFields(value);
 }
 async function privateJson(client, route, options = {}) {
-  const result = await client.requestJSON(route, options);
+  const result = await client.requestJSON(route, { timeoutMs: CONTROL_TIMEOUT_MS, ...options });
   requireController(result.status === 200 && record(result.body), 'LIVE_VALIDATION_PRIVATE_REQUEST_FAILED');
   return result.body;
 }
@@ -543,7 +545,8 @@ export async function runLiveValidationController(argv, dependencies = {}) {
     origin: target.privateOrigins[role], serverIdentity: { role, dnsName: target.mtlsPeers[role].dns,
       fingerprintSha256: target.mtlsPeers[role].sha256 }, repositoryRoot: root,
     tlsFiles: { certFile: environment.LIVE_VALIDATION_MTLS_CERT_FILE, keyFile: environment.LIVE_VALIDATION_MTLS_KEY_FILE,
-      caFile: environment.LIVE_VALIDATION_MTLS_CA_FILE }, timeoutMs: 60_000 });
+      caFile: environment.LIVE_VALIDATION_MTLS_CA_FILE }, timeoutMs: role === 'runtime'
+        ? LIVE_VALIDATION_ACCEPTANCE_TRANSPORT_TIMEOUT_MS : CONTROL_TIMEOUT_MS });
   if (args.command === 'cleanup') {
     if (!existsSync(stateFile)) {
       const summary = { version: SUMMARY_VERSION, status: 'PASS', code: 'LIVE_VALIDATION_CLEANUP_NO_RUN',
@@ -588,6 +591,10 @@ export async function runLiveValidationController(argv, dependencies = {}) {
   writeState(state);
   const started = now(); const deadline = started + args.limits.durationMs;
   const checkDeadline = () => requireController(now() < deadline && !dependencies.signal?.aborted, 'LIVE_VALIDATION_DEADLINE_EXCEEDED');
+  const runJson = (client, route, options = {}) => {
+    checkDeadline();
+    return privateJson(client, route, { ...options, timeoutMs: Math.min(options.timeoutMs ?? CONTROL_TIMEOUT_MS, deadline - now()) });
+  };
   let summary; let cleanup; let runtimeIdentity; let supervisorIdentity; let plan; let actualUsage;
   const cases = []; const sessionSecrets = [];
   try {
@@ -630,10 +637,10 @@ export async function runLiveValidationController(argv, dependencies = {}) {
       requireController(instance.activeDeployments?.length === 1
         && instance.activeDeployments[0].id === state[`${role}DeploymentId`], 'LIVE_VALIDATION_ACTIVE_DEPLOYMENT_MISMATCH');
     }
-    runtimeIdentity = assertReady(await privateJson(runtime, '/ready'), target, 'runtime', args.commitSha, state.runtimeDeploymentId);
-    supervisorIdentity = assertReady(await privateJson(supervisor, '/ready'), target, 'supervisor', target.trustedSupervisorSha, state.supervisorDeploymentId);
+    runtimeIdentity = assertReady(await runJson(runtime, '/ready'), target, 'runtime', args.commitSha, state.runtimeDeploymentId);
+    supervisorIdentity = assertReady(await runJson(supervisor, '/ready'), target, 'supervisor', target.trustedSupervisorSha, state.supervisorDeploymentId);
     const challenge = (dependencies.randomBytes ?? randomBytes)(16).toString('hex');
-    const handshake = await privateJson(runtime, '/handshake', { method: 'POST', body: { challenge } });
+    const handshake = await runJson(runtime, '/handshake', { method: 'POST', body: { challenge } });
     requireController(handshake.challenge === challenge && handshake.channel === 'mtls-private' && handshake.verified === true
       && canonicalHash(identityFields(handshake.runtime)) === canonicalHash(runtimeIdentity)
       && canonicalHash(identityFields(handshake.supervisor)) === canonicalHash(supervisorIdentity), 'LIVE_VALIDATION_PRIVATE_HANDSHAKE_FAILED');
@@ -653,20 +660,20 @@ export async function runLiveValidationController(argv, dependencies = {}) {
     const signedPlan = signLiveValidationPlan(plan, signingKey);
     // Persist the run ID before admission, so a partially delivered admission can still be revoked in cleanup.
     state.session = { runId: state.runId, brokerBearer: null, testBearer: null, expiresAtMs: deadline }; writeState(state);
-    const session = await privateJson(supervisor, '/runs', { method: 'POST', body: signedPlan });
+    const session = await runJson(supervisor, '/runs', { method: 'POST', body: signedPlan });
     assertSession(session, plan); sessionSecrets.push(session.brokerBearer, session.testBearer);
     state.session = session; writeState(state);
-    const admitted = await privateJson(runtime, '/admit', { method: 'POST', body: { signedPlan, session } });
+    const admitted = await runJson(runtime, '/admit', { method: 'POST', body: { signedPlan, session } });
     requireController(admitted.admitted === true && admitted.runId === state.runId, 'LIVE_VALIDATION_RUNTIME_ADMISSION_FAILED');
-    let priorUsage = sanitizeLiveValidationUsage(await privateJson(supervisor, `/runs/${state.runId}/usage`), { plan, target });
+    let priorUsage = sanitizeLiveValidationUsage(await runJson(supervisor, `/runs/${state.runId}/usage`), { plan, target });
     actualUsage = priorUsage;
     for (const entry of profiles.profiles) {
       checkDeadline();
-      await privateJson(supervisor, `/runs/${state.runId}/workflows/${entry.id}/begin`, { method: 'POST', body: {} });
+      await runJson(supervisor, `/runs/${state.runId}/workflows/${entry.id}/begin`, { method: 'POST', body: {} });
       let response; let requestError; let observed;
       try {
-        response = await privateJson(runtime, '/acceptance', { method: 'POST', body: { runId: state.runId, caseId: entry.id, input: entry.input },
-          headers: authHeaders(session, runtimeIdentity), signal: dependencies.signal });
+        response = await runJson(runtime, '/acceptance', { method: 'POST', body: { runId: state.runId, caseId: entry.id, input: entry.input },
+          headers: authHeaders(session, runtimeIdentity), signal: dependencies.signal, timeoutMs: LIVE_VALIDATION_ACCEPTANCE_TRANSPORT_TIMEOUT_MS });
         // Record only trusted projections before ending the workflow or applying acceptance assertions.
         observed = { caseId: entry.id, status: 'FAILED', runtimeClaimedPass: response.profilePassed === true };
         cases.push(observed);
@@ -679,7 +686,7 @@ export async function runLiveValidationController(argv, dependencies = {}) {
           moduleId: 'gaming', mode: 'live-backend-v1' });
       } catch (error) { requestError = error; }
       try {
-        await privateJson(supervisor, `/runs/${state.runId}/workflows/${entry.id}/end`, { method: 'POST', body: {} });
+        await runJson(supervisor, `/runs/${state.runId}/workflows/${entry.id}/end`, { method: 'POST', body: {} });
         if (observed) observed.workflowClosure = 'PASS';
       } catch (error) {
         if (observed) observed.workflowClosure = 'FAILED';
@@ -699,7 +706,7 @@ export async function runLiveValidationController(argv, dependencies = {}) {
           && approvedSources.includes(source.documentUrlSha256)), 'LIVE_VALIDATION_SUPPLIED_SOURCE_BINDING_FAILED');
       }
       assertProfileObservation(observed.observation, entry.expected);
-      const usage = sanitizeLiveValidationUsage(await privateJson(supervisor, `/runs/${state.runId}/usage`), { plan, target });
+      const usage = sanitizeLiveValidationUsage(await runJson(supervisor, `/runs/${state.runId}/usage`), { plan, target });
       const providerDelta = usage.providerCalls - priorUsage.providerCalls;
       const generationDelta = usage.generationCalls - priorUsage.generationCalls; const auditDelta = usage.auditCalls - priorUsage.auditCalls;
       requireController(providerDelta >= 0 && generationDelta >= 0 && auditDelta >= 0

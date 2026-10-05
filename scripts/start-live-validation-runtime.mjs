@@ -3,7 +3,8 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { assertValidationRoleCredentials, materializeValidationTls, readValidationJson, requireValidation,
   startValidationHealth, validationHash, validationIdentity, validationJson, validationOpaqueEqual } from './live-validation-bootstrap.mjs';
-import { createLiveValidationMtlsServer, createLiveValidationPrivateClient, listenLiveValidationMtlsServer } from './live-validation-transport.mjs';
+import { createLiveValidationMtlsServer, createLiveValidationPrivateClient, listenLiveValidationMtlsServer,
+  LIVE_VALIDATION_PRIVATE_MAX_TIMEOUT_MS } from './live-validation-transport.mjs';
 import { validateLiveValidationTarget } from './live-validation-target.mjs';
 import { createLiveValidationSourceGuard } from './live-validation-egress.mjs';
 import { createLivePreviewProviderFetch, resolveLivePreviewModels } from './start-live-pr-preview.mjs';
@@ -11,6 +12,9 @@ import { createLivePreviewEvidence, LIVE_PREVIEW_MODE, verifyLivePreviewEvidence
 import { sanitizeLivePreviewEvidence } from './live-pr-preview-e2e.mjs';
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
+export const LIVE_VALIDATION_ACCEPTANCE_WORK_TIMEOUT_MS = 300_000;
+export const LIVE_VALIDATION_ACCEPTANCE_RESPONSE_GRACE_MS = 10_000;
+const BROKER_METADATA_TIMEOUT_MS = 5_000;
 const peer = (target, role) => ({ role, dnsName: target.mtlsPeers[role].dns, fingerprintSha256: target.mtlsPeers[role].sha256 });
 const sessionHeaders = (session, identity) => ({ authorization: 'Bearer ' + session.brokerBearer,
   'x-arcanos-source-commit': identity.sourceCommit, 'x-arcanos-deployment-id': identity.deploymentId,
@@ -84,6 +88,10 @@ export function createValidationRuntimeApplication({ target, identity, profiles,
       }
       requireValidation(request.method === 'POST' && request.url === '/acceptance' && admitted,
         'LIVE_VALIDATION_ROUTE_DENIED');
+      // Initial usage I/O and adapter work share one absolute deadline. Reserve post-work usage and response time.
+      const acceptanceDeadline = Math.min(now() + LIVE_VALIDATION_ACCEPTANCE_WORK_TIMEOUT_MS,
+        admitted.session.expiresAtMs - LIVE_VALIDATION_ACCEPTANCE_RESPONSE_GRACE_MS);
+      requireValidation(acceptanceDeadline > now(), 'LIVE_VALIDATION_ACCEPTANCE_DEADLINE_EXCEEDED');
       const body = await readValidationJson(request, 32_768);
       const profile = profiles.profiles.find(item => item.id === body.caseId);
       requireValidation(profile && body.runId === admitted.session.runId && !completed.has(profile.id)
@@ -91,16 +99,20 @@ export function createValidationRuntimeApplication({ target, identity, profiles,
       'LIVE_VALIDATION_PROFILE_OR_REPLAY_DENIED');
       const parsed = admitted.adapter.validateInput(body.input); requireValidation(parsed.ok, 'LIVE_VALIDATION_PROFILE_INVALID');
       active = true; ownsExecution = true; completed.add(profile.id); admitted.observation.stage = 'generation';
-      const brokerRead = async () => {
+      const brokerRead = async deadline => {
+        const timeoutMs = Math.min(BROKER_METADATA_TIMEOUT_MS, deadline - now());
+        requireValidation(timeoutMs > 0, 'LIVE_VALIDATION_ACCEPTANCE_DEADLINE_EXCEEDED');
         const result = await supervisorClient.requestJSON('/runs/' + admitted.session.runId + '/usage', {
-          headers: sessionHeaders(admitted.session, identity), timeoutMs: 5_000 });
+          headers: sessionHeaders(admitted.session, identity), timeoutMs });
         requireValidation(result.status === 200 && result.body.commitSha === identity.sourceCommit
           && result.body.runtimeDeploymentId === identity.deploymentId, 'LIVE_VALIDATION_USAGE_IDENTITY_MISMATCH');
         return result.body;
       };
       let moduleResult; const stages = { source_acquisition: 'not_run', source_validation: 'not_run' };
-      const before = await brokerRead();
-      moduleResult = await runRequest({ timeoutMs: Math.min(120_000, admitted.session.expiresAtMs - now()),
+      const before = await brokerRead(acceptanceDeadline);
+      const workTimeoutMs = acceptanceDeadline - now();
+      requireValidation(workTimeoutMs > 0, 'LIVE_VALIDATION_ACCEPTANCE_DEADLINE_EXCEEDED');
+      moduleResult = await runRequest({ timeoutMs: workTimeoutMs,
           abortMessage: 'Live validation request deadline exceeded.' }, () => {
           executionSettled = false;
           const execution = Promise.resolve().then(() => admitted.adapter.execute(parsed.input, {
@@ -112,7 +124,8 @@ export function createValidationRuntimeApplication({ target, identity, profiles,
           void execution.then(settle, settle);
           return execution;
         });
-      const after = await brokerRead();
+      const after = await brokerRead(Math.min(acceptanceDeadline + LIVE_VALIDATION_ACCEPTANCE_RESPONSE_GRACE_MS,
+        admitted.session.expiresAtMs));
       const delta = Object.fromEntries(['providerCalls', 'generationCalls', 'auditCalls'].map(key => [key, after.usage[key] - before.usage[key]]));
       const observation = admitted.adapter.getLastObservation(); const constructionStarted = now();
       const semanticPass = validationProfilePassed(profile, moduleResult, observation, delta);
@@ -185,7 +198,8 @@ export async function startValidationRuntime(environment = process.env) {
   const { runWithRequestAbortTimeout } = await import('@arcanos/runtime');
   const application = createValidationRuntimeApplication({ target, identity, profiles, supervisorClient,
     createAdapter: realGamingAdapter, runRequest: runWithRequestAbortTimeout });
-  const privateServer = createLiveValidationMtlsServer({ tlsFiles, peers: [peer(target, 'verifier')], ...application });
+  const privateServer = createLiveValidationMtlsServer({ tlsFiles, peers: [peer(target, 'verifier')], ...application,
+    timeoutMs: LIVE_VALIDATION_PRIVATE_MAX_TIMEOUT_MS });
   const health = await startValidationHealth(environment.PORT ?? '8080', 'runtime');
   try { await listenLiveValidationMtlsServer(privateServer); }
   catch (error) { privateServer.closeAllConnections(); privateServer.close(); health.close(); throw error; }

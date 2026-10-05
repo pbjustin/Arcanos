@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { parseLiveValidationControllerArguments, runLiveValidationController, validateLiveValidationArtifact,
   normalizeLiveValidationInventory, assertLiveValidationDeployment, createLiveValidationRailwayApi,
   cleanupLiveValidationRun, sanitizeLiveValidationUsage, validateLiveValidationOperatorArtifact,
-  LIVE_VALIDATION_OPERATOR_GATE_IDS } from './live-validation-controller.mjs';
+  LIVE_VALIDATION_OPERATOR_GATE_IDS, LIVE_VALIDATION_ACCEPTANCE_TRANSPORT_TIMEOUT_MS } from './live-validation-controller.mjs';
 import { LIVE_VALIDATION_PROJECT_ID, LIVE_VALIDATION_HARD_LIMITS, LIVE_VALIDATION_PRODUCTION_ENVIRONMENT_ID,
   LIVE_VALIDATION_QUOTA_LEDGER_MOUNT } from './live-validation-target.mjs';
 import { liveValidationTargetSha256, canonicalLiveValidationJson } from './live-validation-policy.mjs';
@@ -293,6 +293,31 @@ test('complete mocked live flow checks both cases, real supervisor usage, source
   const cleaned = await runLiveValidationController(['cleanup', ...f.argv.filter((_, index) => ![2, 3].includes(index))], mock.dependencies);
   assert.equal(cleaned.status, 'PASS');
   assert.ok(mock.calls.filter(call => call === 'inventory').length > inventoryReads, 'Repeated cleanup needs fresh scoped platform readback');
+});
+test('only acceptance gets the larger transport ceiling and every live request is capped by the remaining signed run', async t => {
+  for (const elapsedAfterAdmission of [0, 400_000]) {
+    const f = fixture(t); const mock = executionFixture(f); let clock = 1_000;
+    mock.dependencies.now = () => clock;
+    const createPrivate = mock.dependencies.createPrivateClient; const requests = []; const ceilings = [];
+    mock.dependencies.createPrivateClient = options => {
+      ceilings.push({ role: options.serverIdentity.role, timeoutMs: options.timeoutMs });
+      const client = createPrivate(options);
+      return { async requestJSON(route, request = {}) {
+        requests.push({ route, timeoutMs: request.timeoutMs, remainingMs: 601_000 - clock });
+        const result = await client.requestJSON(route, request);
+        if (route === '/admit') clock += elapsedAfterAdmission;
+        return result;
+      } };
+    };
+    const result = await runLiveValidationController([...f.argv, '--execute', '--allow-paid-provider'], mock.dependencies);
+    assert.equal(result.status, 'PASS');
+    assert.deepEqual(ceilings, [{ role: 'supervisor', timeoutMs: 60_000 },
+      { role: 'runtime', timeoutMs: LIVE_VALIDATION_ACCEPTANCE_TRANSPORT_TIMEOUT_MS }]);
+    const acceptance = requests.filter(request => request.route === '/acceptance'); assert.equal(acceptance.length, 2);
+    assert.ok(acceptance.every(request => request.timeoutMs === Math.min(315_000, request.remainingMs)));
+    assert.ok(requests.filter(request => request.route !== '/acceptance').every(request => request.timeoutMs <= 60_000));
+    assert.ok(requests.every(request => request.timeoutMs <= request.remainingMs));
+  }
 });
 test('forged runtime PASS cannot replace bound answer audit, approved document digest or actual negative-case zero-provider usage', async t => {
   for (const options of [{ unboundAudit: true }, { wrongSource: true }, { negativeProvider: true }]) {

@@ -9,7 +9,8 @@ const REPOSITORY_ROOT = fileURLToPath(new URL('../', import.meta.url));
 const MAX_TLS_FILE_BYTES = 64 * 1024;
 const MAX_REQUEST_BYTES = 64 * 1024;
 const MAX_RESPONSE_BYTES = 1024 * 1024;
-const MAX_TIMEOUT_MS = 120_000;
+export const LIVE_VALIDATION_PRIVATE_DEFAULT_TIMEOUT_MS = 120_000;
+export const LIVE_VALIDATION_PRIVATE_MAX_TIMEOUT_MS = 600_000;
 const PRIVATE_HOST = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.railway\.internal$/u;
 
 export class LiveValidationTransportError extends Error {
@@ -145,13 +146,13 @@ async function requestBody(body, maxBytes, abortSignal) {
 
 /** No ambient CA override, retry, proxy, redirect, or second destination exists in this client. */
 export function createLiveValidationPrivateClient({ origin, serverIdentity, tlsFiles,
-  timeoutMs = MAX_TIMEOUT_MS, maxRequestBytes = MAX_REQUEST_BYTES, maxResponseBytes = MAX_RESPONSE_BYTES,
+  timeoutMs = LIVE_VALIDATION_PRIVATE_DEFAULT_TIMEOUT_MS, maxRequestBytes = MAX_REQUEST_BYTES, maxResponseBytes = MAX_RESPONSE_BYTES,
   repositoryRoot = REPOSITORY_ROOT, requestImplementation = httpsRequest } = {}) {
   origin = validateLiveValidationPrivateOrigin(origin);
   const peer = identity(serverIdentity);
   requireTransport(peer.dnsName === new URL(origin).hostname, 'LIVE_VALIDATION_TLS_IDENTITY_INVALID');
   const tls = readLiveValidationTlsFiles(tlsFiles, repositoryRoot);
-  bound(timeoutMs, MAX_TIMEOUT_MS, 'LIVE_VALIDATION_REQUEST_DEADLINE_INVALID');
+  bound(timeoutMs, LIVE_VALIDATION_PRIVATE_MAX_TIMEOUT_MS, 'LIVE_VALIDATION_REQUEST_DEADLINE_INVALID');
   bound(maxRequestBytes, MAX_REQUEST_BYTES, 'LIVE_VALIDATION_REQUEST_LIMIT_INVALID');
   bound(maxResponseBytes, MAX_RESPONSE_BYTES, 'LIVE_VALIDATION_RESPONSE_LIMIT_INVALID');
   requireTransport(typeof requestImplementation === 'function', 'LIVE_VALIDATION_TRANSPORT_INVALID');
@@ -252,14 +253,14 @@ function rejectRequest(response, code) {
 
 /** TLS authenticates first; the operator route policy binds each approved certificate to its role. */
 export function createLiveValidationMtlsServer({ tlsFiles, peers, authorizeRequest, handler,
-  repositoryRoot = REPOSITORY_ROOT, timeoutMs = MAX_TIMEOUT_MS } = {}) {
+  repositoryRoot = REPOSITORY_ROOT, timeoutMs = LIVE_VALIDATION_PRIVATE_DEFAULT_TIMEOUT_MS } = {}) {
   const tls = readLiveValidationTlsFiles(tlsFiles, repositoryRoot);
   requireTransport(Array.isArray(peers) && peers.length > 0 && peers.length <= 16, 'LIVE_VALIDATION_TLS_IDENTITY_INVALID');
   const identities = peers.map(peer => identity(peer, ['runtime', 'verifier', 'supervisor']));
   requireTransport(new Set(identities.map(peer => peer.fingerprintSha256)).size === identities.length,
     'LIVE_VALIDATION_TLS_IDENTITY_INVALID');
   requireTransport(typeof authorizeRequest === 'function' && typeof handler === 'function', 'LIVE_VALIDATION_ROUTE_POLICY_REQUIRED');
-  bound(timeoutMs, MAX_TIMEOUT_MS, 'LIVE_VALIDATION_REQUEST_DEADLINE_INVALID');
+  bound(timeoutMs, LIVE_VALIDATION_PRIVATE_MAX_TIMEOUT_MS, 'LIVE_VALIDATION_REQUEST_DEADLINE_INVALID');
   const server = createServer({ ...tls, requestCert: true, rejectUnauthorized: true, minVersion: 'TLSv1.2',
     maxHeaderSize: 16 * 1024, requestTimeout: timeoutMs, headersTimeout: Math.min(5_000, timeoutMs),
     keepAliveTimeout: 1_000,

@@ -8,7 +8,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, before, test } from 'node:test';
 import { createLiveValidationMtlsServer, createLiveValidationPrivateClient, listenLiveValidationMtlsServer,
-  readLiveValidationTlsFiles, validateLiveValidationPrivateOrigin } from './live-validation-transport.mjs';
+  readLiveValidationTlsFiles, validateLiveValidationPrivateOrigin, LIVE_VALIDATION_PRIVATE_DEFAULT_TIMEOUT_MS,
+  LIVE_VALIDATION_PRIVATE_MAX_TIMEOUT_MS } from './live-validation-transport.mjs';
 
 const ORIGIN = 'https://supervisor.railway.internal:8443';
 let directory;
@@ -205,6 +206,41 @@ test('absolute request deadline bounds a stalled response body and caller cancel
   clearTimeout(timer);
   assert.equal(f.requestCount(), 2);
   await assert.rejects(client.requestJSON('/session', { timeoutMs: 51 }), { code: 'LIVE_VALIDATION_REQUEST_DEADLINE_INVALID' });
+});
+
+test('explicit acceptance transport can return after the former 60-second verifier deadline without widening default requests', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let calls = 0;
+  const delayedRequest = (_url, options, callback) => {
+    calls++;
+    const request = new EventEmitter(); request.destroy = () => {};
+    options.signal.addEventListener('abort', () => request.emit('error', new Error('offline-aborted')));
+    request.end = () => setTimeout(() => {
+      const response = new EventEmitter(); response.statusCode = 200; response.headers = {}; response.destroy = () => {};
+      callback(response); response.emit('data', Buffer.from('{"audit":"completed"}')); response.emit('end');
+    }, 61_000);
+    return request;
+  };
+  const configuration = { origin: ORIGIN, serverIdentity: identities.server, tlsFiles: files.verifier,
+    requestImplementation: delayedRequest };
+  const extended = createLiveValidationPrivateClient({ ...configuration, timeoutMs: 315_000 });
+  const result = extended.requestJSON('/session', { timeoutMs: 315_000 });
+  await new Promise(resolve => setImmediate(resolve));
+  t.mock.timers.tick(61_000);
+  assert.deepEqual(await result, { status: 200, body: { audit: 'completed' } });
+  const normal = createLiveValidationPrivateClient(configuration);
+  await assert.rejects(normal.requestJSON('/session', { timeoutMs: 315_000 }), { code: 'LIVE_VALIDATION_REQUEST_DEADLINE_INVALID' });
+  assert.equal(calls, 1); assert.equal(LIVE_VALIDATION_PRIVATE_DEFAULT_TIMEOUT_MS, 120_000);
+  assert.equal(LIVE_VALIDATION_PRIVATE_MAX_TIMEOUT_MS, 600_000);
+});
+
+test('long private deadlines remain capped at ten minutes and runtime server idle can cover bounded acceptance', async t => {
+  const f = await fixture(t, { timeoutMs: 600_000 });
+  assert.equal(f.server.timeout, 600_000); assert.equal(f.server.requestTimeout, 600_000);
+  assert.equal(f.server.headersTimeout, 5_000);
+  assert.throws(() => f.client('verifier', { timeoutMs: 600_001 }), { code: 'LIVE_VALIDATION_REQUEST_DEADLINE_INVALID' });
+  assert.throws(() => createLiveValidationMtlsServer({ tlsFiles: files.server, peers: peers(), authorizeRequest: authorizer,
+    handler() {}, timeoutMs: 600_001 }), { code: 'LIVE_VALIDATION_REQUEST_DEADLINE_INVALID' });
 });
 
 test('Fetch Request bodies are bounded incrementally and deadline cancels a stalled body before networking', async t => {

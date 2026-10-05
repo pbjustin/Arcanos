@@ -7,7 +7,8 @@ import { Readable } from 'node:stream';
 import test from 'node:test';
 import OpenAI from 'openai';
 import { getRequestAbortSignal, runWithRequestAbortTimeout } from '@arcanos/runtime';
-import { createValidationRuntimeApplication } from './start-live-validation-runtime.mjs';
+import { createValidationRuntimeApplication, LIVE_VALIDATION_ACCEPTANCE_WORK_TIMEOUT_MS,
+  LIVE_VALIDATION_ACCEPTANCE_RESPONSE_GRACE_MS } from './start-live-validation-runtime.mjs';
 import { createValidationSupervisorApplication } from './start-live-validation-supervisor.mjs';
 import { createLivePreviewProviderFetch } from './start-live-pr-preview.mjs';
 import { assertValidationRoleCredentials, validationHash } from './live-validation-bootstrap.mjs';
@@ -246,6 +247,50 @@ test('metered provider observations cannot qualify a positive result whose final
   const result = await f.acceptance(POSITIVE); assert.equal(result.status, 200);
   assert.equal(result.body.profilePassed, false); assert.equal(result.body.verification.status, 'FAIL');
   assert.equal(result.body.evidence.audit.boundToFinalAnswer, false); assert.equal(f.counts().providerCalls, 3);
+});
+
+test('initial usage and adapter work share an absolute acceptance budget, leaving time for final usage and audit evidence', async t => {
+  let f; let workTimeout;
+  f = fixture(t, { runRequest: async (options, work) => {
+    workTimeout = options.timeoutMs; f.advance(295_000); return work();
+  } });
+  await f.admit(); await f.workflow(POSITIVE, 'begin');
+  const initialNow = f.plan.issuedAtMs; const requestJSON = f.supervisorClient.requestJSON; const readTimeouts = [];
+  f.supervisorClient.requestJSON = async (route, options) => {
+    const result = await requestJSON(route, options);
+    if (route.endsWith('/usage')) { readTimeouts.push(options.timeoutMs); f.advance(4_900); }
+    return result;
+  };
+  const result = await f.acceptance(POSITIVE);
+  assert.equal(result.status, 200); assert.equal(result.body.profilePassed, true);
+  assert.equal(result.body.evidence.audit.assessmentStatus, 'completed'); assert.equal(result.body.evidence.audit.boundToFinalAnswer, true);
+  assert.equal(workTimeout, 295_100); assert.deepEqual(readTimeouts, [5_000, 5_000]);
+  assert.equal(f.counts().providerCalls, 3);
+  assert.ok(initialNow + 304_800 < f.session().expiresAtMs);
+  assert.equal(LIVE_VALIDATION_ACCEPTANCE_WORK_TIMEOUT_MS, 300_000);
+  assert.equal(LIVE_VALIDATION_ACCEPTANCE_RESPONSE_GRACE_MS, 10_000);
+});
+
+test('near run expiry the runtime reserves response grace and caps work and usage reads at the signed deadline', async t => {
+  let f; let workTimeout;
+  f = fixture(t, { runRequest: async (options, work) => { workTimeout = options.timeoutMs; return work(); } });
+  await f.admit(); await f.workflow(NEGATIVE, 'begin'); f.advance(570_000);
+  const requestJSON = f.supervisorClient.requestJSON; const readTimeouts = [];
+  f.supervisorClient.requestJSON = async (route, options) => {
+    if (route.endsWith('/usage')) readTimeouts.push(options.timeoutMs);
+    return requestJSON(route, options);
+  };
+  const result = await f.acceptance(NEGATIVE);
+  assert.equal(result.status, 200); assert.equal(result.body.profilePassed, true);
+  assert.equal(workTimeout, 20_000); assert.deepEqual(readTimeouts, [5_000, 5_000]);
+  assert.equal(f.counts().providerCalls, 0);
+});
+
+test('insufficient signed-run response grace denies acceptance before adapter or provider work', async t => {
+  const f = fixture(t); await f.admit(); await f.workflow(POSITIVE, 'begin'); f.advance(590_001);
+  const result = await f.acceptance(POSITIVE);
+  assert.equal(result.status, 403); assert.equal(result.body.error.code, 'LIVE_VALIDATION_ACCEPTANCE_DEADLINE_EXCEEDED');
+  assert.equal(f.counts().adapterExecutes, 0); assert.equal(f.counts().providerCalls, 0);
 });
 
 test('a real broker provider failure remains terminal and its private diagnostics never enter the runtime response', async t => {
