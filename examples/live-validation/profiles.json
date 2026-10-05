@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "sourceReachability": "unverified",
+  "profiles": [
+    {
+      "id": "gaming-guide-positive",
+      "scenarioId": "elden-ring-early-samurai",
+      "caseId": "useful_grounded_guide",
+      "moduleId": "gaming",
+      "input": {
+        "query": {
+          "contractVersion": "gaming-hybrid-v2",
+          "game": "Elden Ring",
+          "mode": "build",
+          "class": "Samurai",
+          "progressPoint": "just left the tutorial",
+          "question": "I'm at the beginning of Elden Ring. I'm a Samurai. I just got out of the tutorial area. I want a Samurai blade build using the starting Uchigatana and a normal early blade path. Guide: https://fextralife.com/elden-ring-samurai-build-guide/",
+          "idempotencyKey": "live-validation-samurai-positive",
+          "storagePolicy": "transient_only"
+        },
+        "candidateUrls": ["https://fextralife.com/elden-ring-samurai-build-guide/"]
+      },
+      "expected": { "outcome": "accepted", "semanticGap": "NONCRITICAL_GAP", "qualifiedUnknownPatch": true }
+    },
+    {
+      "id": "gaming-guide-negative",
+      "scenarioId": "elden-ring-wrong-game-source",
+      "caseId": "incompatible_source",
+      "moduleId": "gaming",
+      "input": {
+        "query": {
+          "contractVersion": "gaming-hybrid-v2",
+          "game": "Elden Ring",
+          "mode": "build",
+          "class": "Samurai",
+          "progressPoint": "just left the tutorial",
+          "question": "I'm at the beginning of Elden Ring. I'm a Samurai. I just got out of the tutorial area. I want a Samurai blade build using the starting Uchigatana and a normal early blade path. Guide: https://sekiroshadowsdietwice.wiki.fextralife.com/Combat",
+          "idempotencyKey": "live-validation-samurai-wrong-game",
+          "storagePolicy": "transient_only"
+        },
+        "candidateUrls": ["https://sekiroshadowsdietwice.wiki.fextralife.com/Combat"]
+      },
+      "expected": { "outcome": "need_new_source", "semanticGap": "CONFLICT", "providerCalls": 0 }
+    }
+  ]
+}

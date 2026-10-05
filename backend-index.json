@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-05T06:51:40.434Z",
+  "generatedAt": "2026-10-05T21:58:48.222Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -768,6 +768,9 @@
         },
         {
           "relativePath": "src/livePrPreviewGamingAdapter.ts"
+        },
+        {
+          "relativePath": "src/liveValidationGamingAdapter.ts"
         },
         {
           "relativePath": "src/mcp/arcanos-core-advisory-stdio.ts"
@@ -2859,6 +2862,9 @@
         },
         {
           "relativePath": "src/shared/gaming/gamingStructuredEvidencePreviewFixture.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/liveValidationObservation.ts"
         },
         {
           "relativePath": "src/shared/gpt/asyncGptJob.ts"
@@ -5003,6 +5009,12 @@
         },
         {
           "relativePath": "tests/live-pr-preview-application.test.ts"
+        },
+        {
+          "relativePath": "tests/live-validation-gaming-adapter.test.ts"
+        },
+        {
+          "relativePath": "tests/live-validation-source-guard.test.ts"
         },
         {
           "relativePath": "tests/local-agent-device-policy.test.ts"
