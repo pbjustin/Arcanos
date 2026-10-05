@@ -14,9 +14,17 @@ import {
   projectGamingHybridSuppliedGuides
 } from './gamingHybridPolicyCore.js';
 import type { GamingStoredKnowledgeContext } from './gamingStoredEvidenceCore.js';
+import { resolveGamingRequestEdition, buildGamingSourceEditionQualification } from './gamingGameIdentity.js';
+import { assessGamingClearSourceIdentity } from './gamingClearSource.js';
+import { assessGamingClearEvidence } from './gamingClearEvidence.js';
+import { gamingApplicabilityScopeRequired, evaluateGamingGuideApplicability } from './gamingGuideApplicability.js';
+import { resolveGamingQuestionScope } from './gamingPlayerContext.js';
+import { classifyGamingEditionRequirements } from './gamingStructuralEvidence.js';
+import { gamingPlatformEvidenceMatchesRequest, normalizeGamingPlatformIdentity } from './gamingPlatformIdentity.js';
 
 export const GAMING_HYBRID_KNOWLEDGE_PREVIEW_VERSION = 'gaming-hybrid-knowledge/v1';
 export const GAMING_DISCOVERY_RECOVERY_PROTOCOL_PREVIEW_VERSION = 'gaming-discovery-recovery-protocol/v1';
+export const GAMING_EDITION_CONTEXT_REGRESSIONS_PREVIEW_VERSION = 'gaming-edition-context-regressions/v1';
 const FAILURE = 'PREVIEW_GAMING_HYBRID_KNOWLEDGE_CONTRACT_INVALID';
 const GAME = 'Prism Siege';
 const NOW = new Date('2026-09-09T12:00:00.000Z');
@@ -288,6 +296,144 @@ function requireLifecycleRepairs(): void {
   requireProof(!isGamingApprovedArtifactCurrent({ ...approved, truncated: true }));
 }
 
+const SAMURAI_GAME = 'Elden Ring';
+const SAMURAI_URL = 'https://context-preview.example/guides/samurai';
+const SAMURAI_PROSE = 'In Elden Ring, this early-game Samurai blade build uses the starting Uchigatana katana. '
+  + 'Keep the Uchigatana and its Unsheathe skill after leaving the tutorial for Limgrave. '
+  + 'Use Unsheathe after an enemy misses, then recover stamina before attacking again. '
+  + 'Prioritize Vigor toward 20 for early survival and Dexterity toward 20 for later blade investment. '
+  + 'Collect ordinary Smithing Stones in Limgrave and upgrade the Uchigatana at a blacksmith. '
+  + 'Keep a medium equipment load and practice careful dodges before moving deeper into the game.';
+const SAMURAI_RULES: readonly GamingReviewedSourceRule[] = [
+  { id: 'synthetic-context-guide', game: SAMURAI_GAME, hosts: ['context-preview.example'], path: '/guides/',
+    pathMatch: 'prefix', category: 'specialist_guide', currentness: 'none', durableAllowed: true, autoStoreAllowed: false }
+];
+
+function contextDocument(text = SAMURAI_PROSE, title = 'Early-game Samurai blade build guide') {
+  return { publicUrl: SAMURAI_URL, text, metadata: { title } };
+}
+
+function contextKnowledge(document: ReturnType<typeof contextDocument>, freshness: GamingFreshnessEvidence): GamingStoredKnowledgeContext {
+  return { context: document.text, sources: [{ sourceId: freshness.id, url: document.publicUrl, game: freshness.game,
+    sourceType: 'supplied', fetchedAt: NOW.toISOString(), snippet: document.text, freshnessMetadata: { ...freshness } }],
+    evidence: [{ sourceId: freshness.id, revisionId: 'synthetic-context-revision', recordId: 'synthetic-context-record',
+      recordType: 'guide', publicUrl: document.publicUrl, text: document.text, lexicalScore: 1, combinedScore: 1,
+      provenance: { fetchedAt: NOW.toISOString() } }] };
+}
+
+function requireOrdinarySamuraiContext(): void {
+  const input = { game: SAMURAI_GAME, mode: 'build' as const, class: 'Samurai', progressPoint: 'just left the tutorial',
+    prompt: 'Recommend an early-game Samurai blade build after leaving the tutorial.' };
+  const original = JSON.stringify(input);
+  requireProof(resolveGamingRequestEdition(input) === 'base-game' && !('edition' in input));
+  for (const labels of ['', 'Edition: Base game.\n']) {
+    const document = contextDocument(`${labels}${SAMURAI_PROSE}`);
+    const policy = assessGamingSourcePolicy(document.publicUrl, input.game, SAMURAI_RULES);
+    const identity = assessGamingClearSourceIdentity(document, input, policy);
+    requireProof(identity.status === 'verified' && identity.reasonCodes.includes('ACQUIRED_BODY_SCOPE_IDENTITY'));
+    const freshness = extractGamingFreshnessMetadata(document, input, NOW, SAMURAI_RULES);
+    requireProof(freshness.edition === (labels ? 'base-game' : undefined));
+    const evaluated = evaluateGamingFreshness({ game: input.game, mode: input.mode, question: input.prompt,
+      evidence: [freshness], now: NOW });
+    // Ordinary recommendations may use grounded guidance with advisory freshness;
+    // source identity does not establish current-patch compatibility.
+    requireProof(!evaluated.usable && evaluated.reasons.includes('CURRENT_OFFICIAL_INDEX_REQUIRED'));
+    const evidence = assessGamingClearEvidence(input, contextKnowledge(document, freshness), {
+      now: NOW, identityVerified: true, allowAdvisoryFreshness: true, requireRequestCoverage: true });
+    requireProof(evidence.decision === 'accept' && evidence.gates.compatibility === 'verified');
+    requireProof(!JSON.stringify(evidence).includes('EDITION_REQUIRED'));
+  }
+  const document = contextDocument(SAMURAI_PROSE.replace('In Elden Ring, ', ''));
+  requireProof(assessGamingClearSourceIdentity(document, input, assessGamingSourcePolicy(SAMURAI_URL, SAMURAI_GAME)).status === 'unknown');
+  const wrongGame = contextDocument(SAMURAI_PROSE.replace('In Elden Ring, ', 'In Diablo 4, '));
+  requireProof(assessGamingClearSourceIdentity(wrongGame, input,
+    assessGamingSourcePolicy(SAMURAI_URL, SAMURAI_GAME)).reasonCodes.includes('GAME_MISMATCH'));
+  requireProof(JSON.stringify(input) === original);
+}
+
+function requireAttributedAndNegativeEditionContext(): void {
+  const input = { game: SAMURAI_GAME, mode: 'guide' as const,
+    prompt: 'The submitted guide is titled "Elden Ring Shadow of the Erdtree". How do Samurai katana attacks work?' };
+  const document = contextDocument('Edition: Base game.\n' + SAMURAI_PROSE, 'Elden Ring Samurai katana guide');
+  const policy = assessGamingSourcePolicy(SAMURAI_URL, SAMURAI_GAME, SAMURAI_RULES);
+  requireProof(resolveGamingRequestEdition(input) === 'base-game');
+  requireProof(assessGamingClearSourceIdentity(document, input, policy).status === 'verified');
+  const expansion = contextDocument('Edition: Shadow of the Erdtree.\n' + SAMURAI_PROSE,
+    'Elden Ring Shadow of the Erdtree Samurai katana guide');
+  requireProof(assessGamingClearSourceIdentity(expansion, input, policy).reasonCodes.includes('EDITION_CONFLICT'));
+  for (const prompt of ['Do not use Shadow of the Erdtree gear. How do Samurai katana attacks work?',
+    'Recommend a base game Samurai build with Shadow of the Erdtree gear.']) {
+    const negative = { ...input, prompt };
+    requireProof(resolveGamingRequestEdition(negative) === undefined);
+    requireProof(assessGamingClearSourceIdentity(expansion, negative, policy).status !== 'verified');
+  }
+  requireProof(resolveGamingRequestEdition({ ...input, prompt: 'How do Samurai katana attacks work in Shadow of the Erdtree?' })
+    === 'shadow of the erdtree');
+  const minecraft = { game: 'Minecraft', mode: 'guide' as const,
+    prompt: 'The submitted guide is titled "Minecraft Java". How do I craft a crafting table?' };
+  requireProof(resolveGamingRequestEdition(minecraft) === undefined);
+  const qualification = buildGamingSourceEditionQualification('Java', minecraft);
+  requireProof(qualification.includes('guide reports edition: java') && qualification.includes('Your edition was not specified'));
+  requireProof(buildGamingSourceEditionQualification('Java', { ...minecraft, edition: 'Java' }) === '');
+  requireProof(buildGamingSourceEditionQualification('Java', { ...minecraft, prompt: 'How do I craft a crafting table on the latest patch?' }) === '');
+}
+
+function requireMaintenanceAndAcquiredRestrictions(): void {
+  const input = { game: SAMURAI_GAME, mode: 'guide' as const, prompt: 'How do Samurai katana attacks work?' };
+  const document = contextDocument('Regions: North America.\n' + SAMURAI_PROSE, 'Elden Ring Samurai katana guide');
+  const freshness = extractGamingFreshnessMetadata(document, input, NOW, SAMURAI_RULES);
+  for (const question of ['How do I keep up maintenance on my sword?',
+    'How does weapon maintenance work in Kingdom Come Deliverance 2?']) {
+    requireProof(!gamingApplicabilityScopeRequired({ question }, 'region'));
+    const evaluated = evaluateGamingFreshness({ question, game: SAMURAI_GAME, mode: 'guide', evidence: [freshness], now: NOW });
+    requireProof(evaluated.usable && !evaluated.reasons.includes('REGION_REQUIRED'));
+  }
+  for (const question of ['When does server maintenance end today?', 'What is the online service maintenance schedule?'])
+    requireProof(gamingApplicabilityScopeRequired({ question }, 'region'));
+  requireProof(gamingApplicabilityScopeRequired({ question: 'What is the server status?' }, 'region'));
+  for (const requirement of ['This weapon is only available in Shadow of the Erdtree.',
+    'This weapon is available only in Shadow of the Erdtree.']) {
+    requireProof(classifyGamingEditionRequirements(requirement) === 'conflict');
+    const restricted = contextDocument(`${SAMURAI_PROSE} ${requirement}`, 'Elden Ring Samurai katana guide');
+    requireProof(assessGamingClearSourceIdentity(restricted, input,
+      assessGamingSourcePolicy(SAMURAI_URL, SAMURAI_GAME, SAMURAI_RULES)).reasonCodes.includes('EDITION_CONFLICT'));
+  }
+  for (const requirement of ['This weapon may be available only in Shadow of the Erdtree.',
+    'Is this weapon available only in Shadow of the Erdtree?',
+    'This weapon is not available only in Shadow of the Erdtree.',
+    'This weapon is available only in Shadow of the Erdtree if you use the advanced skill.'])
+    requireProof(classifyGamingEditionRequirements(requirement) === 'unverified');
+  requireProof(classifyGamingEditionRequirements('This weapon does not require DLC.') === 'clear');
+  requireProof(classifyGamingEditionRequirements('This weapon does not require DLC. The recommended skill requires DLC.') === 'conflict');
+}
+
+function requirePlatformAliasContext(): void {
+  const question = 'What are the controls on PS5?';
+  const platform = resolveGamingQuestionScope(question).platform;
+  requireProof(platform === 'PlayStation 5');
+  for (const [left, right] of [['PlayStation 5', 'PS5'], ['PlayStation 4', 'PS4'], ['Steam', 'PC'],
+    ['  PlayStation\u00a0 5 ', 'ps5'], ['Prism Device', 'prism device']]) {
+    requireProof(normalizeGamingPlatformIdentity(left) === normalizeGamingPlatformIdentity(right));
+    requireProof(gamingPlatformEvidenceMatchesRequest([left], right));
+  }
+  for (const [left, right] of [['PS4', 'PS5'], ['Nintendo Switch', 'Nintendo Switch 2'], ['PC', 'Steam Deck'],
+    ['Xbox', 'Xbox Series X'], ['Prism Device', 'Prism Device 2'], ['constructor', 'PS5'], ['__proto__', 'PS5']])
+    requireProof(!gamingPlatformEvidenceMatchesRequest([left], right));
+  const document = contextDocument('Edition: Base game.\nPlatforms: PS5.\nPatch: 2.1.\n' + SAMURAI_PROSE,
+    'Elden Ring Samurai katana guide');
+  const guide = extractGamingFreshnessMetadata(document, { game: SAMURAI_GAME }, NOW, SAMURAI_RULES);
+  const currentness: GamingFreshnessEvidence = { ...guide, id: 'synthetic-context-current-index', authority: 'official',
+    category: 'official_updates', currentness: 'current_index', currentPatch: '2.1' };
+  requireProof(evaluateGamingGuideApplicability({ guide, currentness, game: SAMURAI_GAME, question, platform, now: NOW }).status
+    === 'verified_current');
+  requireProof(evaluateGamingFreshness({ game: SAMURAI_GAME, question, mode: 'guide', platform, evidence: [guide], now: NOW }).usable);
+  requireProof(evaluateGamingGuideApplicability({ guide: { ...guide, platforms: ['PS4'] }, currentness,
+    game: SAMURAI_GAME, question, platform, now: NOW }).reasons.includes('PLATFORM_CONFLICT'));
+  for (const prompt of ['What are the controls on PS5 or PC?', 'What are the controls on PS5 or PlayStation 5?',
+    'What are the controls on an unknown platform?']) requireProof(resolveGamingQuestionScope(prompt).platform === undefined);
+  requireProof(!gamingPlatformEvidenceMatchesRequest(guide.platforms));
+}
+
 /** Fixed production-core proof only: no workflow cache, queue, SQL, fetch, provider, or live worker execution. */
 export function runGamingHybridKnowledgePreview(): void {
   try {
@@ -299,6 +445,10 @@ export function runGamingHybridKnowledgePreview(): void {
     requireSeasonalAndScopeRepairs();
     requireMechanicConflictRepair();
     requireLifecycleRepairs();
+    requireOrdinarySamuraiContext();
+    requireAttributedAndNegativeEditionContext();
+    requireMaintenanceAndAcquiredRestrictions();
+    requirePlatformAliasContext();
   } catch {
     throw new Error(FAILURE);
   }

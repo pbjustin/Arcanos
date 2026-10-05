@@ -257,6 +257,8 @@ function responseHeadersForCase(
             NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.progressRecoveryProofVersion,
           [NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.hybridKnowledgeProofHeader]:
             NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.hybridKnowledgeProofVersion,
+          [NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.editionContextRegressionsProofHeader]:
+            NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.editionContextRegressionsProofVersion,
           [NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.discoveryRecoveryProtocolProofHeader]:
             NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.discoveryRecoveryProtocolProofVersion,
           [NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.discoveryRecoveryEvidenceProofHeader]:
@@ -3567,6 +3569,57 @@ test('readiness component proofs do not override an unavailable or unready appli
           ? 'NATIVE_PR_PREVIEW_HTTP_STATUS_MISMATCH' : 'NATIVE_PR_PREVIEW_BODY_MISMATCH')
         && error.caseId === caseId);
     }
+  }
+});
+
+test('requires edition-context regression proof only on the fixed guide selector within unchanged bounds', async () => {
+  const requestPlan = buildNativePrPreviewRequestPlan();
+  const contract = NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming;
+  const run = mock => runNativePrPreviewE2e({
+    args: validArguments('--execute', '--allow-network'),
+    expectedBackstageBookerOpenApiDocument: EXPECTED_BACKSTAGE_BOOKER_OPENAPI_DOCUMENT,
+    fetchImpl: mock.fetchImpl, localGitState: LOCAL_GIT_STATE,
+    monotonicNow: mock.monotonicNow,
+  });
+  const result = await run(buildMockFetch(requestPlan));
+  const editionChecks = result.checks.filter(check => check.gamingEditionContextRegressionsVerified);
+  assert.equal(editionChecks.length, 1);
+  assert.equal(editionChecks[0].caseId, 'gaming-query-guide');
+  assert.equal(editionChecks[0].gamingEditionContextRegressionsProofVersion,
+    'gaming-edition-context-regressions/v1');
+  assert.equal(editionChecks[0].gamingEditionContextRegressionsProofScope,
+    'pure-request-source-identity-applicability');
+  assert.deepEqual(editionChecks[0].gamingEditionContextRegressionsCases, [
+    'ordinary-no-edition-samurai', 'attributed-source-edition', 'negated-named-expansion',
+    'equipment-vs-online-maintenance', 'acquired-available-only-dlc', 'platform-alias-applicability',
+  ]);
+  assert.equal(editionChecks[0].gamingHybridKnowledgeVerified, true);
+  assert.equal(result.summary.requestsMade, 171);
+  assert.equal(result.limits.maxRequests, 171);
+  assert.equal(result.limits.maxResponseBytes, 65_536);
+  assert.equal(result.limits.maxAggregateResponseBytes, 524_288);
+  assert.equal(result.limits.totalTimeoutMs, 60_000);
+  const controls = [
+    ...[undefined, 'gaming-edition-context-regressions/v0', 'gaming-edition-context-regressions/unknown']
+      .map(proof => ({ caseId: 'gaming-query-guide', proof })),
+    ...['gaming-query-build', 'gaming-query-meta', 'gaming-query-mode-required',
+      'gaming-query-operational-guard', 'worker-gaming-canary-denied', 'web-readiness-initial']
+      .map(caseId => ({ caseId, proof: contract.editionContextRegressionsProofVersion })),
+  ];
+  for (const control of controls) {
+    const mock = buildMockFetch(requestPlan, requestCase => {
+      if (requestCase.caseId !== control.caseId) return undefined;
+      const body = responseBodyForCase(requestCase);
+      const headers = responseHeadersForCase(requestCase, Buffer.byteLength(body));
+      if (control.proof === undefined) delete headers[contract.editionContextRegressionsProofHeader];
+      else headers[contract.editionContextRegressionsProofHeader] = control.proof;
+      const response = new Response(body, { headers, status: requestCase.expectedStatus });
+      Object.defineProperty(response, 'url', { value: `${requestCase.role === 'worker' ? WORKER_BASE_URL : WEB_BASE_URL}${requestCase.path}` });
+      return response;
+    });
+    await assert.rejects(run(mock), error => error instanceof NativePrPreviewE2eError
+      && error.code === 'NATIVE_PR_PREVIEW_GAMING_EDITION_CONTEXT_REGRESSIONS_PROOF_INVALID'
+      && error.caseId === control.caseId);
   }
 });
 

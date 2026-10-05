@@ -287,6 +287,17 @@ export interface NativePrPreviewE2eContract {
     progressRecoveryProofVersion: 'gaming-progress-recovery/v1';
     hybridKnowledgeProofHeader: 'x-arcanos-preview-gaming-hybrid-knowledge-version';
     hybridKnowledgeProofVersion: 'gaming-hybrid-knowledge/v1';
+    editionContextRegressionsProofHeader: 'x-arcanos-preview-gaming-edition-context-version';
+    editionContextRegressionsProofVersion: 'gaming-edition-context-regressions/v1';
+    editionContextRegressionsProofScope: 'pure-request-source-identity-applicability';
+    editionContextRegressionsCases: readonly [
+      'ordinary-no-edition-samurai',
+      'attributed-source-edition',
+      'negated-named-expansion',
+      'equipment-vs-online-maintenance',
+      'acquired-available-only-dlc',
+      'platform-alias-applicability',
+    ];
     discoveryRecoveryProtocolProofHeader: 'x-arcanos-preview-gaming-discovery-recovery-protocol-version';
     discoveryRecoveryProtocolProofVersion: 'gaming-discovery-recovery-protocol/v1';
     discoveryRecoveryEvidenceProofHeader: 'x-arcanos-preview-gaming-discovery-recovery-evidence-version';
