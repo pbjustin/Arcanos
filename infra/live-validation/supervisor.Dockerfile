@@ -5,8 +5,9 @@ RUN apk add --no-cache git openssl python3 py3-jsonschema
 ARG RAILWAY_GIT_COMMIT_SHA
 RUN test "${#RAILWAY_GIT_COMMIT_SHA}" = 40 && \
     case "$RAILWAY_GIT_COMMIT_SHA" in *[!0-9a-f]*) exit 1 ;; esac && \
-    git clone --no-checkout https://github.com/pbjustin/Arcanos.git /app && \
-    git -C /app fetch origin "$RAILWAY_GIT_COMMIT_SHA" && \
+    git init /app && \
+    git -C /app remote add origin https://github.com/pbjustin/Arcanos.git && \
+    git -C /app fetch --depth=1 --no-tags origin "$RAILWAY_GIT_COMMIT_SHA" && \
     git -C /app checkout --detach "$RAILWAY_GIT_COMMIT_SHA" && \
     test "$(git -C /app rev-parse HEAD)" = "$RAILWAY_GIT_COMMIT_SHA"
 WORKDIR /app
@@ -15,7 +16,7 @@ RUN CI=true npm ci --include=dev --no-audit --no-fund && npm run build && \
     node scripts/live-validation-build.mjs "$RAILWAY_GIT_COMMIT_SHA" supervisor /opt/validation/build.json && \
     rm -rf /app/.git
 
-# Historical objects stay in the build stage and are absent from every final image layer.
+# Only the shallow checked-out tree and build proof enter the final image, never Git objects.
 FROM node:24.18.1-alpine
 RUN test "$(node -p 'process.versions.node')" = "24.18.1" && test "$(npm --version)" = "11.16.0"
 RUN apk add --no-cache openssl python3 py3-jsonschema

@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Readable } from 'node:stream';
 import { test } from 'node:test';
+import { pathToFileURL } from 'node:url';
 import { assertValidationRoleCredentials, createValidationBuildManifest, materializeValidationTls,
   readValidationJson, startValidationHealth, validationDirectoryHash, validationIdentity, validationOpaqueEqual } from './live-validation-bootstrap.mjs';
 import { startValidationRuntime } from './start-live-validation-runtime.mjs';
@@ -101,7 +102,7 @@ test('actual production or mismatched Railway identity rejects before any ledger
 test('both Dockerfiles reject malformed build SHAs before their first Git invocation', () => {
   for (const role of ['runtime', 'supervisor']) {
     const dockerfile = readFileSync(new URL(`../infra/live-validation/${role}.Dockerfile`, import.meta.url), 'utf8');
-    const validation = /RUN (test "\$\{#RAILWAY_GIT_COMMIT_SHA\}"[\s\S]*?)git clone/u.exec(dockerfile)?.[1]
+    const validation = /RUN (test "\$\{#RAILWAY_GIT_COMMIT_SHA\}"[\s\S]*?)git init/u.exec(dockerfile)?.[1]
       .replace(/\\\n/gu, '').trim().replace(/&&\s*$/u, '');
     assert.ok(validation, 'Expected SHA validation before Git checkout');
     for (const [sha, expected] of [['a'.repeat(40), 0], ['a'.repeat(39), 1], ['a'.repeat(41), 1],
@@ -111,6 +112,50 @@ test('both Dockerfiles reject malformed build SHAs before their first Git invoca
       assert.equal(result.status, expected, result.stderr);
     }
   }
+});
+
+test('build checkout fetches only the exact shallow SHA without tags or historical objects', () => {
+  const directory = mkdtempSync(path.join(tmpdir(), 'arcanos-validation-shallow-build-'));
+  const source = path.join(directory, 'origin'); mkdirSync(source);
+  const git = (cwd, args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  try {
+    git(source, ['init']);
+    writeFileSync(path.join(source, '.gitignore'), 'dist/\n');
+    writeFileSync(path.join(source, 'historical-fixture.txt'), 'Benign historical fixture, never a credential.\n');
+    git(source, ['add', '.']);
+    const commit = () => git(source, ['-c', 'user.name=Validation fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-m', 'test fixture']);
+    commit(); const ancestor = git(source, ['rev-parse', 'HEAD']); git(source, ['tag', 'historical-fixture']);
+    const historicalBlob = git(source, ['rev-parse', 'HEAD:historical-fixture.txt']);
+    rmSync(path.join(source, 'historical-fixture.txt')); writeFileSync(path.join(source, 'source.ts'), 'export const x=1;');
+    git(source, ['add', '-A']); commit(); const sha = git(source, ['rev-parse', 'HEAD']); git(source, ['tag', 'current-fixture']);
+    for (const role of ['runtime', 'supervisor']) {
+      const dockerfile = readFileSync(new URL(`../infra/live-validation/${role}.Dockerfile`, import.meta.url), 'utf8');
+      const checkout = /RUN (test "\$\{#RAILWAY_GIT_COMMIT_SHA\}"[\s\S]*?)\nWORKDIR \/app/u.exec(dockerfile)?.[1];
+      assert.ok(checkout);
+      assert.match(checkout, /git init \/app/u);
+      assert.match(checkout, /git -C \/app remote add origin https:\/\/github\.com\/pbjustin\/Arcanos\.git/u);
+      assert.match(checkout, /git -C \/app fetch --depth=1 --no-tags origin "\$RAILWAY_GIT_COMMIT_SHA"/u);
+      assert.equal((checkout.match(/\bgit\b[^\n]*\bfetch\b/gu) ?? []).length, 1);
+      assert.doesNotMatch(dockerfile, /\bgit clone\b/u);
+      const worktree = path.join(directory, role);
+      // Execute the real Docker checkout block with only its public origin/path replaced by local fixtures.
+      const quote = value => "'" + value.replaceAll("'", "'\\''") + "'";
+      const localCheckout = checkout.replaceAll('https://github.com/pbjustin/Arcanos.git', quote(pathToFileURL(source).href))
+        .replaceAll('/app', quote(worktree));
+      const result = spawnSync('sh', ['-c', localCheckout], { encoding: 'utf8', timeout: 5_000,
+        env: { PATH: process.env.PATH, RAILWAY_GIT_COMMIT_SHA: sha } });
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(git(worktree, ['rev-parse', 'HEAD']), sha);
+      assert.equal(git(worktree, ['rev-list', '--all', '--count']), '1');
+      assert.equal(readFileSync(path.join(worktree, '.git', 'shallow'), 'utf8').trim(), sha);
+      assert.ok(spawnSync('git', ['cat-file', '-e', ancestor + '^{commit}'], { cwd: worktree, stdio: 'ignore' }).status > 0);
+      assert.ok(spawnSync('git', ['cat-file', '-e', historicalBlob], { cwd: worktree, stdio: 'ignore' }).status > 0);
+      assert.equal(spawnSync('git', ['show-ref', '--tags'], { cwd: worktree, stdio: 'ignore' }).status, 1);
+      git(worktree, ['remote', 'set-url', 'origin', 'https://github.com/pbjustin/Arcanos.git']);
+      mkdirSync(path.join(worktree, 'dist')); writeFileSync(path.join(worktree, 'dist', 'app.js'), 'export const x=1;');
+      assert.equal(createValidationBuildManifest(worktree, sha, role).sourceCommit, sha);
+    }
+  } finally { rmSync(directory, { recursive: true, force: true }); }
 });
 
 test('final image stages copy a read-only checked-out tree only after manifest creation and Git history removal', () => {

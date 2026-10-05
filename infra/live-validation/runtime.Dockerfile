@@ -5,8 +5,9 @@ RUN apk add --no-cache git openssl python3 py3-jsonschema
 ARG RAILWAY_GIT_COMMIT_SHA
 RUN test "${#RAILWAY_GIT_COMMIT_SHA}" = 40 && \
     case "$RAILWAY_GIT_COMMIT_SHA" in *[!0-9a-f]*) exit 1 ;; esac && \
-    git clone --no-checkout https://github.com/pbjustin/Arcanos.git /app && \
-    git -C /app fetch origin "$RAILWAY_GIT_COMMIT_SHA" && \
+    git init /app && \
+    git -C /app remote add origin https://github.com/pbjustin/Arcanos.git && \
+    git -C /app fetch --depth=1 --no-tags origin "$RAILWAY_GIT_COMMIT_SHA" && \
     git -C /app checkout --detach "$RAILWAY_GIT_COMMIT_SHA" && \
     test "$(git -C /app rev-parse HEAD)" = "$RAILWAY_GIT_COMMIT_SHA"
 WORKDIR /app
