@@ -135,6 +135,45 @@ describe('Gaming compact Trinity intake through the real Responses adapter', () 
     if (decision !== 'accept') expect(result.auditSafe.auditFlags).toContain('GAMING_FINAL_ANSWER_NOT_ACCEPTED');
   });
 
+  it('keeps malformed hybrid build output terminal after one audit without direct-answer continuation or regeneration', async () => {
+    const malformedAnswer = '1. Turn the west valve.\n\n2. Follow the lit corridor.\n\n3. Use the';
+    responsesCreate.mockResolvedValueOnce(response('Compact task card.'))
+      .mockResolvedValueOnce(response(malformedAnswer, false, authorityModel));
+    const input = request();
+    input.input.sourceEndpoint = 'arcanos-gaming.hybrid-build';
+    input.input.body = { ...input.input.body, mode: 'build', [GAMING_HYBRID_INTAKE]: true } as typeof input.input.body;
+    const options = input.context.runOptions as TrinityRunOptions;
+    options.answerMode = 'direct';
+    options.disableMemoryAccess = true;
+    // These are the server-owned options supplied by the transient validation Gaming pipeline.
+    expect(options).toMatchObject({ gamingGuideIntakePolicy: 'compact-v1', disableOptionalSideEffects: true,
+      redactAuditContent: true, disableMemoryAccess: true });
+    expect(options.directAnswerIntegrityRepair).toBeUndefined();
+    const audit = jest.fn(async (text: string) => ({ assessment: createGamingClearAssessment({
+      profile: 'answer', questionProfile: 'walkthrough', subjectId: 'answer-test', subjectHash: gamingClearHash(text),
+      contextFingerprint: gamingClearContextFingerprint('gaming-test'), evidenceRefs: ['record-6'],
+      gates: { identity: 'verified', security: 'verified', compatibility: 'verified', provenance: 'verified', claimSupport: 'verified', freshness: 'not_applicable' },
+      assessmentStatus: 'completed',
+      dimensions: Object.fromEntries(['clarity', 'leverage', 'efficiency', 'alignment', 'resilience'].map(name => [name,
+        { status: 'evaluated', score: 4.5, reasonCodes: ['SUPPORTED'], evidenceRefs: ['record-6'], unresolvedFacts: [] }
+      ])) as Parameters<typeof createGamingClearAssessment>[0]['dimensions'],
+      findings: [{ code: 'INCOMPLETE_GAMEPLAY_STEPS', severity: 'blocking', evidenceRefs: ['record-6'] }]
+    }) }));
+    options.gamingClearAnswerAudit = audit;
+    const controller = new AbortController();
+    const result = await runWithRequestAbortContext({ controller, signal: controller.signal,
+      deadlineAt: Date.now() + 60_000, timeoutMs: 60_000 }, () => runTrinityWritingPipeline(input));
+    expect(responsesCreate).toHaveBeenCalledTimes(2); // One intake and one final provider request.
+    expect(runStructuredReasoning).toHaveBeenCalledTimes(1);
+    expect(audit).toHaveBeenCalledTimes(1);
+    expect(audit.mock.calls[0][0]).toBe(result.result);
+    expect(result.gamingClearAudit?.decision).toBe('reject');
+    expect(result.auditSafe.auditFlags).toContain('GAMING_FINAL_ANSWER_NOT_ACCEPTED');
+    expect(createGPT5Reasoning).not.toHaveBeenCalled();
+    expect(result.routingStages?.some(stage => /DIRECT_ANSWER|INTEGRITY_REPAIR/u.test(stage))).toBe(false);
+    expect(result.meta.integrityRecovery).toBeUndefined();
+  });
+
   it('forwards Gaming-only zero transport retries without changing ordinary provider defaults', async () => {
     const { createSingleChatCompletion } = await import('../src/services/openai/chatFallbacks.js');
     responsesCreate.mockResolvedValue(response('{}'));

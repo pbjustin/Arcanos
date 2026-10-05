@@ -485,6 +485,13 @@ target requires matching reviewed workflow or operator CLI arguments.
 Unknown model prices, missing/unsafe ledgers, replayed run claims, interrupted
 pending reservations, clock problems or exhaustion close admission.
 
+The prepared compact Gaming route excludes direct-answer continuation and
+does not grant an integrity-repair allowance. A malformed final answer still
+receives one mandatory audit and stops on rejection; it cannot start a repair
+loop. A critical-complexity request may include one optional reflection call,
+which consumes the same durable request and spend caps. Reflection does not
+replace the answer audit. Provider failures stop execution without retry.
+
 Acceptance transport has a longer, explicitly scoped deadline so a completed
 generation and its mandatory audit can return sanitized stage evidence. The
 runtime captures one absolute deadline before the initial supervisor usage
