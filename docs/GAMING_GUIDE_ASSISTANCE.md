@@ -844,7 +844,9 @@ acquired platform or region scope when the question does not depend on that
 scope; the answer qualification reports the source restriction and leaves other
 scopes unverified. Explicit incompatible requested scopes still block. Questions
 about keybindings, controls, crossplay or regional/server behavior require the
-corresponding material user scope. V2 can resolve a narrowly recognized explicit
+corresponding material user scope. Server or online-service maintenance requires
+region scope; ordinary weapon or equipment maintenance does not. V2 can resolve
+a narrowly recognized explicit
 question target such as `on PC`, `on PlayStation 5`, or `in Europe` when the
 structured field is absent. Comparisons, competing targets, negative or
 hypothetical claims, quoted source claims and URL text do not establish that

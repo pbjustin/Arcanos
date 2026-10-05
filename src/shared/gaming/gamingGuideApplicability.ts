@@ -30,7 +30,7 @@ export function gamingApplicabilityScopeRequired(input: { prompt?: string; quest
   const question = (input.prompt ?? input.question ?? '').slice(0, 8_000);
   return field === 'platform'
     ? /\b(?:keybindings?|controls|control schemes?|button prompts?|cross[ -]?(?:play|save)|platform[ -]specific|console[ -]exclusive|keyboard|controller|save transfer|system requirements)\b/iu.test(question)
-    : /\b(?:region[ -]specific|regional|server shards?|regional prices?|release times?|maintenance|server status)\b/iu.test(question);
+    : /\b(?:region[ -]specific|regional|server shards?|regional prices?|release times?|(?:servers?|(?:online[ -])?service)[ -]maintenance|server status)\b/iu.test(question);
 }
 
 /** Authority records contribute currentness; they are not complete gameplay recommendations. */

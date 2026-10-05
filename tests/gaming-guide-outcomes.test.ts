@@ -58,10 +58,24 @@ describe('four guide frontend outcomes preserve workflow authority', () => {
   });
 
   it.each([
+    'How does weapon maintenance work in Kingdom Come Deliverance 2?',
+    'How do I keep up maintenance on my sword?'
+  ])('does not require a region for ordinary equipment maintenance in %s', async question => {
+    const result = await createGamingHybridWorkflow({ retrieve: async () => empty }).query({
+      contractVersion: 'gaming-hybrid-v2', game: 'Kingdom Come Deliverance 2', mode: 'guide',
+      question, idempotencyKey: 'guide-outcome-equipment-maintenance'
+    }, actor);
+    expect(result.body).toMatchObject({ frontendOutcome: 'need_new_source', nextAction: 'search' });
+    expect(result.body.clarification).toBeUndefined();
+  });
+
+  it.each([
     ['What keybindings should I use for Unsheathe?', 'PLATFORM_REQUIRED'],
     ['What are the keyboard controls for a Samurai?', 'PLATFORM_REQUIRED'],
     ['Which control scheme should I use?', 'PLATFORM_REQUIRED'],
-    ['What is the regional release time?', 'REGION_REQUIRED']
+    ['What is the regional release time?', 'REGION_REQUIRED'],
+    ['When does server maintenance end today?', 'REGION_REQUIRED'],
+    ['What is the online service maintenance schedule?', 'REGION_REQUIRED']
   ] as const)('clarifies only the missing material scope in %s', async (question, reason) => {
     const result = await createGamingHybridWorkflow({ retrieve: async () => empty }).query({ ...query,
       mode: 'guide', question, idempotencyKey: 'guide-outcome-material-scope' }, actor);
