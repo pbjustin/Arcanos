@@ -80,7 +80,7 @@ let previousEnv: Record<string, string | undefined>;
 const query = {
   contractVersion: 'gaming-hybrid-v2' as const, game: 'Elden Ring', mode: 'build' as const,
   class: 'Samurai', progressPoint: 'just left the tutorial', question,
-  idempotencyKey: 'live-validation-samurai-001', storagePolicy: 'transient_only' as const
+  idempotencyKey: 'test-fixture', storagePolicy: 'transient_only' as const
 };
 const advance = (ms: number) => { clock += ms; jest.setSystemTime(clock); };
 
