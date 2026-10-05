@@ -154,7 +154,7 @@ function runPreviewBootstrap(fixture = {}) {
     const metrics = { pulls: 0, statuses: 0, waits: 0 };
     globalThis.setTimeout = resolve => { metrics.waits += 1; resolve(); return 0; };
     globalThis.fetch = async (url, options) => {
-      if (options.redirect !== 'error' || options.headers.authorization !== 'Bearer synthetic-read-token'
+      if (options.redirect !== 'error' || options.headers.authorization !== 'Bearer mock-read-token'
         || !options.signal || !url.startsWith('https://api.github.com/repos/pbjustin/Arcanos/'))
         throw new Error('unexpected credential or transport boundary');
       if (fixture.networkError) throw new Error('synthetic-private-network-sentinel');
@@ -178,7 +178,7 @@ function runPreviewBootstrap(fixture = {}) {
   try {
     const result = spawnSync(process.execPath, ['--input-type=module'], {
       input: prelude + source, encoding: 'utf8', timeout: 5_000,
-      env: { PATH: process.env.PATH, LANG: 'C', LC_ALL: 'C', GITHUB_TOKEN: 'synthetic-read-token',
+      env: { PATH: process.env.PATH, LANG: 'C', LC_ALL: 'C', GITHUB_TOKEN: 'mock-read-token',
         GITHUB_REPOSITORY: 'pbjustin/Arcanos', PR_NUMBER: '1526', HEAD_SHA: previewHeadSha,
         RUNNER_TEMP: directory, GITHUB_OUTPUT: outputPath, ...fixture.eventEnvironment },
     });
@@ -265,7 +265,7 @@ describe('supplemental exact-head preview workflow', () => {
       workerBaseUrl: 'https://arcanos-worker-pr-676861-1526.up.railway.app',
       scope: 'trusted-commit-status-and-served-public-identity', controlPlaneProvenanceAsserted: false });
     expect(result.outputs).toContain(`head_sha=${previewHeadSha}\n`);
-    expect(result.stdout + result.stderr).not.toContain('synthetic-read-token');
+    expect(result.stdout + result.stderr).not.toContain('mock-read-token');
   });
 
   it.each([
@@ -321,7 +321,7 @@ describe('supplemental exact-head preview workflow', () => {
     expect(result.status).toBe(1);
     expect(result.stderr).toContain(`NATIVE_PR_PREVIEW_TRUSTED_${code}`);
     expect(result.stdout + result.stderr).not.toContain('synthetic-private-network-sentinel');
-    expect(result.stdout + result.stderr).not.toContain('synthetic-read-token');
+    expect(result.stdout + result.stderr).not.toContain('mock-read-token');
     expect(result.evidence).toBeNull();
   });
 
