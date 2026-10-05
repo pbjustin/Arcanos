@@ -106,6 +106,14 @@ describe('ordinary base-game request interpretation', () => {
     expect(expansion.accepted).toEqual([]);
     expect(expansion.decisions[0].reasonCodes).toContain('EDITION_CONFLICT');
   });
+  it('does not admit expansion evidence by treating a negative named request as expansion scope', async () => {
+    const request = { ...input, prompt: 'Do not use Shadow of the Erdtree gear. How do Samurai katana attacks work?' };
+    expect(resolveGamingRequestEdition(request)).toBeUndefined();
+    const expansion = await acquire('Edition: Shadow of the Erdtree.',
+      `${prose} In Shadow of the Erdtree, Samurai katana attacks require expansion access.`,
+      'Elden Ring Shadow of the Erdtree Samurai katana guide', request);
+    expect(expansion.accepted).toEqual([]);
+  });
   it('preserves explicit editions and leaves materially unspecified expansion requests unresolved', () => {
     expect(resolveGamingRequestEdition({ ...input, edition: 'Base game' })).toBe('base-game');
     expect(resolveGamingRequestEdition({ ...input, edition: 'Remastered' })).toBe('Remastered');

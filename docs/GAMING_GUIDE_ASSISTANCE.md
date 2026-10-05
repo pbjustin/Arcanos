@@ -85,7 +85,10 @@ do not select the player's edition, while affirmative quoted expansion requests
 remain explicit choices. Unspecified DLC/expansion requests
 retain their ambiguity. Exact base-game wording and closed `no`, `without` or
 `excluding` expansion clauses select base-game scope when no positive expansion
-request conflicts. The closed generic question pattern “Is DLC required/needed/
+request conflicts. Bounded named negatives such as “do not use Shadow of the
+Erdtree” remain unresolved instead of selecting affirmative expansion scope;
+double negatives and mixed positive/negative requests also remain unresolved.
+The closed generic question pattern “Is DLC required/needed/
 necessary to obtain …?” allows ordinary base-game evidence unless other positive
 expansion scope remains. Acquired evidence must prove the availability fact;
 request parsing never infers it. Named expansion questions, mixed base/expansion

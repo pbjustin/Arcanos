@@ -70,6 +70,13 @@ export function resolveGamingRequestEdition(input: { game?: string; edition?: st
   const negativeRequested = remaining !== withoutNecessity;
   const expansionRequested = /\b(?:dlcs?|expansions?)\b/iu.test(remaining) || shadow.test(remaining);
   if (expansionRequested && (baseRequested || negativeRequested)) return undefined;
+  // A named edition in a bounded negative request is not affirmative scope.
+  // Unrecognized and double-negated wording stays unresolved instead of
+  // choosing either the expansion or a new base-game default.
+  for (const match of remaining.matchAll(new RegExp(shadow.source, 'giu'))) {
+    const before = remaining.slice(Math.max(0, match.index - 120), match.index);
+    if (/\b(?:not(?:\s+(?:use|include|equip|have|own|need|require|for|in|from|with)){0,2}|(?:don|doesn|didn|isn|aren)['’]t(?:\s+(?:use|include|equip|have|own|need|require|for|in|from|with)){0,2}|never\s+(?:use|include|equip)|no|without|excluding)\s*(?:(?:the|any)\s+)?["“‘'`]*\s*$/iu.test(before)) return undefined;
+  }
   if (shadow.test(remaining)) return 'shadow of the erdtree';
   // Unspecified expansion requests and unrecognized language remain unresolved.
   if (expansionRequested) return undefined;
