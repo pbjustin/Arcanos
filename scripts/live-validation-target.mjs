@@ -7,7 +7,12 @@ export const LIVE_VALIDATION_PROTECTED_RESOURCE_IDS = Object.freeze([
   'c4ade025-3f13-4fca-9309-5d0dd81396fe', // Production web.
   '1765befb-b805-4051-9af9-28634e986886', // Production worker.
   '6647b5b1-d796-4783-b5f0-b8e356019ca6', // Production PostgreSQL.
-  '81e4a1cf-7ae4-48bf-8321-23641bb23c0e' // Production Redis.
+  '81e4a1cf-7ae4-48bf-8321-23641bb23c0e', // Production Redis.
+  '12780efb-f40b-4625-9ec6-d26f2170dbd4', // Unattached production Redis volume.
+  '6cabb50f-cb69-4938-98b7-73edc06a29b5', // Production Redis volume.
+  '5be976c8-e700-4d10-8528-4f0263ff98a0', // Production PostgreSQL volume.
+  '398546f6-fe53-4e94-b375-66366b8a1a5a', // Production web data volume.
+  'dcf7e127-fa4f-42b1-acf0-c8030789d321' // Unattached production PostgreSQL volume.
 ]);
 export const LIVE_VALIDATION_QUOTA_LEDGER_MOUNT = '/var/lib/arcanos-live-validation';
 // These are the existing fixed helper roles in APPLICATION_CONSTANTS, not configurable roles.

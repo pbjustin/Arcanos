@@ -199,6 +199,17 @@ test('production or additional services cannot be hidden in the environment inve
   rejected(() => assertLiveValidationInventory(targetFixture(), missing), 'LIVE_VALIDATION_INVENTORY_SERVICES_INVALID');
 });
 
+test('production data volumes cannot be relabeled as a validation quota ledger', () => {
+  for (const id of ['12780efb-f40b-4625-9ec6-d26f2170dbd4', '6cabb50f-cb69-4938-98b7-73edc06a29b5',
+    '5be976c8-e700-4d10-8528-4f0263ff98a0', '398546f6-fe53-4e94-b375-66366b8a1a5a',
+    'dcf7e127-fa4f-42b1-acf0-c8030789d321']) {
+    const inventory = inventoryFixture({ ledger: true });
+    inventory.volumes[0].id = id;
+    inventory.services[1].volumeMounts[0].id = id;
+    rejected(() => assertLiveValidationInventory(targetFixture(), inventory), 'LIVE_VALIDATION_INVENTORY_VOLUME_FORBIDDEN');
+  }
+});
+
 test('provider credentials and controller public keys belong only to supervisor, with no management or data credentials', () => {
   for (const name of ['ARCANOS_LIVE_PREVIEW_OPENAI_API_KEY', 'ARCANOS_LIVE_VALIDATION_CONTROLLER_PUBLIC_KEY_PEM']) {
     const inventory = inventoryFixture(); inventory.services[0].variableNames.push(name);

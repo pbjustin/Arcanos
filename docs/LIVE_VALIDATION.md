@@ -602,7 +602,8 @@ Railway deployment identity, provider acceptance or cleanup on the real platform
 The latest local implementation validation completed with 862 passed and 13
 skipped Jest suites, containing 16,393 passed and 167 skipped tests. The legacy
 offline script suite passed 118 tests and the persistent validation script suite
-passed 161 tests, including the bounded acceptance-deadline and shallow-build checks. Type
+passed 162 tests, including bounded acceptance deadlines, shallow builds and
+production-volume exclusion. Type
 checking, build and static Railway validation passed;
 lint reported zero errors and 76 existing warnings. These are local checkout
 results with the implementation changes included, not deployed or paid proof.
