@@ -65,7 +65,7 @@ export function classifyGamingEditionRequirements(text: string, completeRecord =
   for (const match of inspected.matchAll(/[^.!?\n|;]+[.!?\n|;]?/gu)) {
     const clause = match[0];
     if (!/\b(?:shadow[\s-]+of[\s-]+the[\s-]+erdtree|dlc|expansion)\b/iu.test(clause)) continue;
-    const requirement = /\b(?:dlc|expansion)[ -]only\b|\b(?:requires?|needs?|exclusive to|only available in)\b[^.!?\n]{0,60}\b(?:shadow[\s-]+of[\s-]+the[\s-]+erdtree|dlc|expansion)\b|\b(?:shadow[\s-]+of[\s-]+the[\s-]+erdtree|dlc|expansion)\s+(?:is|are|isn['’]t|aren['’]t|may|might|can|could|would|should|must)\s+(?:not\s+)?(?:be\s+)?(?:required|needed|necessary)\b/iu;
+    const requirement = /\b(?:dlc|expansion)[ -]only\b|\b(?:requires?|needs?|exclusive to|(?:only\s+available|available\s+only)\s+in)\b[^.!?\n]{0,60}\b(?:shadow[\s-]+of[\s-]+the[\s-]+erdtree|dlc|expansion)\b|\b(?:shadow[\s-]+of[\s-]+the[\s-]+erdtree|dlc|expansion)\s+(?:is|are|isn['’]t|aren['’]t|may|might|can|could|would|should|must)\s+(?:not\s+)?(?:be\s+)?(?:required|needed|necessary)\b/iu;
     if (!requirement.test(clause)) { unverified ||= unverifiedMentions; continue; }
     const uncertain = /\?|\b(?:if|unless|except|when|until|whether|not|no|never|false|untrue|incorrect|deny|denies|denied|claim|claims|claimed|may|might|can|could|would|should|must)\b|\b(?:isn|aren|doesn|don)['’]t\b/iu;
     if (uncertain.test(clause)) unverified = true;

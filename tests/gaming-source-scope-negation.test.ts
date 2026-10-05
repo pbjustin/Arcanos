@@ -50,6 +50,7 @@ describe.each(['prose', 'table'] as const)('independently acquired %s source sco
       }
     });
   it.each(['This weapon requires DLC.', 'This weapon is exclusive to Shadow of the Erdtree.',
+    'This weapon is only available in Shadow of the Erdtree.', 'This weapon is available only in Shadow of the Erdtree.',
     'This is a DLC-only guide.',
     'This weapon does not require DLC; the recommended skill requires DLC.',
     'This weapon does not require DLC. The recommended skill requires DLC.',
@@ -71,6 +72,9 @@ describe.each(['prose', 'table'] as const)('independently acquired %s source sco
     'No DLC is needed if you use the basic skill.', 'It is not true that DLC is not required.',
     'No DLC is not required.', 'DLC is not required?', 'This weapon does not require DLC unless',
     'This weapon may require DLC.', 'DLC might be required.', 'DLC may not be needed.', 'DLC must be required.',
+    'This weapon may be available only in Shadow of the Erdtree.', 'Is this weapon available only in Shadow of the Erdtree?',
+    'This weapon is not available only in Shadow of the Erdtree.',
+    'This weapon is available only in Shadow of the Erdtree if you use the advanced skill.',
     'DLC is required if you use the advanced skill.', 'Does this weapon need DLC?'])
     ('retains uncertain scope without claiming a contradiction: %s', async requirement => {
       const result = await acquire(representation, requirement);

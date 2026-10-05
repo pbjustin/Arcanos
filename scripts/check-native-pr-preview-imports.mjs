@@ -888,7 +888,7 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ['src/shared/gaming/gamingDocumentProjectionCore.ts', 'c403ed2f5627abfc8b23f8750deb8f77573942abd8bec8d3403616edc66ea014'],
   ['src/shared/gaming/gamingDocumentIngestionCore.ts', '1a9bb865e100882384df9d864d2f3be380ec9fa481a10e9539294102c743b398'],
   ['src/shared/gaming/gamingEvidenceUnits.ts', 'adddd31db84f73d67f9be61fd5bc51aae8d9385622c7587e1a150fe1dbbbf8b9'],
-  ['src/shared/gaming/gamingStructuralEvidence.ts', '69d56487251482082030bf2401e888ba0d1d00baa8240723e913cc3a2325c8e3'],
+  ['src/shared/gaming/gamingStructuralEvidence.ts', '396f6ac94625faa74d52e2c6e1f693969b078b3425ce63da83881cce49633e41'],
   ['src/shared/gaming/gamingDocumentIngestionPreviewFixture.ts', 'bf530a9fe88a67fdb7a217828d2b68122b2180e9f4fbff2ef6b1c1fb17f81b84'],
   [
     'src/shared/gaming/gamingGuideResponsePreviewFixture.ts',

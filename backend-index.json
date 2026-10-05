@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-05T01:22:17.781Z",
+  "generatedAt": "2026-10-05T01:23:00.647Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -4454,6 +4454,9 @@
         },
         {
           "relativePath": "tests/gaming-partial-guide-admission.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-platform-aliases.test.ts"
         },
         {
           "relativePath": "tests/gaming-player-context.e2e.test.ts"

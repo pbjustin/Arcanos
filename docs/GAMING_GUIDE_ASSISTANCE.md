@@ -1053,6 +1053,10 @@ separate checks. See [Gaming structured source evidence](GAMING_STRUCTURED_EVIDE
 for exact format/resource bounds, integrity and provenance rules, refresh
 behavior, synthetic regression mapping and live-evidence limits.
 
+Affirmative source restrictions such as “only available in Shadow of the Erdtree”
+and “available only in Shadow of the Erdtree” both conflict with base-game scope.
+Negated, conditional and uncertain forms remain unresolved.
+
 Base-game applicability uses the exact edition aliases `Base game`, `base game`
 and `base-game`, canonicalized to `base-game`. Previously, hybrid candidate
 admission required an acquired `Edition:` assertion and CLEAR independently
