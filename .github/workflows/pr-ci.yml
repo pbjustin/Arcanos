@@ -57,6 +57,9 @@ jobs:
       - name: Native PR preview containment contract
         run: npm run test:native-pr-preview-e2e
 
+      - name: Offline live-preview approval and containment
+        run: npm run test:live-pr-preview:offline
+
   native-pr-preview-head-e2e:
     name: Railway PR Preview Exact Head
     if: >-

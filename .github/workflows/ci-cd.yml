@@ -223,6 +223,9 @@ jobs:
       - name: 🧪 Verify native PR preview containment contract
         run: npm run test:native-pr-preview-e2e
 
+      - name: 🧪 Verify offline live-preview approval and containment
+        run: npm run test:live-pr-preview:offline
+
       - name: 📥 Download build artifacts
         uses: actions/download-artifact@v4
         with:

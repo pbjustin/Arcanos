@@ -2380,3 +2380,18 @@ identifier. Fixed error codes do not contain internal exceptions; callers must
 not automatically retry generation after timeouts. See the
 [migration decision](chatgpt-migration/ARCHITECTURE.md) and
 [authentication contract](chatgpt-migration/AUTHENTICATION.md).
+
+## Private live PR backend test endpoint
+
+The separate, default-off [live preview runtime](LIVE_PR_PREVIEW.md) exposes
+`POST /__preview/live/<moduleId>` only through an isolated private listener. It is
+not registered by the production application or sealed preview. Authentication
+uses an expiring exact-run test bearer before a 32 KiB JSON parser. The body
+contains a fixed `caseId` and adapter-validated `input`. Module scope must match
+the signed approval and reviewed registry. Gaming is the first concrete adapter
+and uses normal Gaming input with supplied public guide URLs. The route returns
+sanitized test evidence, not an OAuth principal
+or storage permission. Normal Gaming OAuth rejects these opaque preview
+credentials even if a preview flag is accidentally enabled. Production route
+absence, auth rejection and wrong-deployment rejection have local regressions;
+platform isolation and deployed acceptance require separate verification.
