@@ -239,6 +239,32 @@ test('source requires pinned repository revisions, disabled auto deployment and 
   rejected(() => assertLiveValidationInventory(targetFixture(), untrusted), 'LIVE_VALIDATION_INVENTORY_SOURCE_INVALID');
 });
 
+test('only explicit trusted predeploy phase permits fresh services with no observed deployed revision', () => {
+  const fresh = inventoryFixture(); fresh.services.forEach(service => { service.source.commitSha = null; });
+  assert.deepEqual(assertLiveValidationInventory(targetFixture(), fresh, { phase: 'predeploy' }), fresh);
+  rejected(() => assertLiveValidationInventory(targetFixture(), fresh), 'LIVE_VALIDATION_INVENTORY_SOURCE_INVALID');
+  rejected(() => assertLiveValidationInventory(targetFixture(), fresh, { phase: 'paid' }), 'LIVE_VALIDATION_INVENTORY_SOURCE_INVALID');
+  const existing = inventoryFixture(); existing.services[1].source.commitSha = 'c'.repeat(40);
+  assert.deepEqual(assertLiveValidationInventory(targetFixture(), existing, { phase: 'predeploy' }), existing);
+  rejected(() => assertLiveValidationInventory(targetFixture(), existing), 'LIVE_VALIDATION_INVENTORY_SOURCE_INVALID');
+  for (const role of [0, 1]) {
+    for (const value of [undefined, '', 'main', '0'.repeat(40)]) {
+      const invalid = inventoryFixture(); invalid.services[role].source.commitSha = value;
+      assert.throws(() => assertLiveValidationInventory(targetFixture(), invalid, { phase: 'predeploy' }));
+    }
+    for (const [field, value] of [['autoDeploy', true], ['repository', 'other/Arcanos']]) {
+      const invalid = structuredClone(fresh); invalid.services[role].source[field] = value;
+      rejected(() => assertLiveValidationInventory(targetFixture(), invalid, { phase: 'predeploy' }),
+        'LIVE_VALIDATION_INVENTORY_SOURCE_INVALID');
+    }
+  }
+  const counterfeit = structuredClone(fresh); counterfeit.phase = 'predeploy';
+  rejected(() => assertLiveValidationInventory(targetFixture(), counterfeit), 'LIVE_VALIDATION_INVENTORY_TARGET_MISMATCH');
+  for (const options of [{ phase: 'unknown' }, { phase: false }, { phase: null }, { phase: 'predeploy', extra: true }]) {
+    rejected(() => assertLiveValidationInventory(targetFixture(), fresh, options), 'LIVE_VALIDATION_INVENTORY_PHASE_INVALID');
+  }
+});
+
 test('runtime volumes, production resource volumes, data volumes and unmounted volumes reject', () => {
   const runtimeMount = inventoryFixture({ ledger: true }); runtimeMount.services[0].volumeMounts = runtimeMount.services[1].volumeMounts;
   rejected(() => assertLiveValidationInventory(targetFixture(), runtimeMount), 'LIVE_VALIDATION_INVENTORY_VOLUME_FORBIDDEN');

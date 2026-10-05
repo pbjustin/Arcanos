@@ -149,10 +149,18 @@ function quotaVolume(volume, supervisorServiceId, includeServiceId) {
  * Schema: {projectId,environmentId,environmentName,sharedVariableNames,privateNetworkEnabled,volumes,
  * services:[{id,role,variableNames,publicDomains,tcpProxyDomains,volumeMounts,
  * source:{repository,commitSha,autoDeploy}}]}.
+ * commitSha is the observed deployment.meta.commitHash, or null when no revision has deployed.
+ * A trusted controller may use the explicit predeploy phase to inspect fresh services; the default
+ * paid phase still requires deployment revisions, including the exact trusted supervisor SHA.
  * Private networking metadata is necessary isolation evidence, not certificate/admission attestation.
  */
-export function assertLiveValidationInventory(input, actualEnv) {
+export function assertLiveValidationInventory(input, actualEnv, options = {}) {
   const target = validateLiveValidationTarget(input);
+  const configuration = jsonCopy(options, 'LIVE_VALIDATION_INVENTORY_PHASE_INVALID');
+  requireTarget(exactKeys(configuration, []) || exactKeys(configuration, ['phase']),
+    'LIVE_VALIDATION_INVENTORY_PHASE_INVALID');
+  const phase = Object.hasOwn(configuration, 'phase') ? configuration.phase : 'paid';
+  requireTarget(['predeploy', 'paid'].includes(phase), 'LIVE_VALIDATION_INVENTORY_PHASE_INVALID');
   const inventory = jsonCopy(actualEnv, 'LIVE_VALIDATION_INVENTORY_INVALID');
   requireTarget(exactKeys(inventory, ['projectId', 'environmentId', 'environmentName', 'sharedVariableNames',
     'privateNetworkEnabled', 'volumes', 'services']) && inventory.projectId === target.projectId
@@ -174,9 +182,10 @@ export function assertLiveValidationInventory(input, actualEnv) {
       && Array.isArray(service.tcpProxyDomains) && service.tcpProxyDomains.length === 0,
     'LIVE_VALIDATION_INVENTORY_PUBLIC_ROUTE_FORBIDDEN');
     requireTarget(exactKeys(service.source, ['repository', 'commitSha', 'autoDeploy'])
-      && service.source.repository === target.repository && sourceSha(service.source.commitSha)
+      && service.source.repository === target.repository
+      && (sourceSha(service.source.commitSha) || phase === 'predeploy' && service.source.commitSha === null)
       && service.source.autoDeploy === false
-      && (role !== 'supervisor' || service.source.commitSha === target.trustedSupervisorSha),
+      && (phase === 'predeploy' || role !== 'supervisor' || service.source.commitSha === target.trustedSupervisorSha),
     'LIVE_VALIDATION_INVENTORY_SOURCE_INVALID');
     requireTarget(Array.isArray(service.volumeMounts) && (role === 'runtime' ? service.volumeMounts.length === 0
       : service.volumeMounts.length <= 1 && service.volumeMounts.every(volume => quotaVolume(volume, service.id, false))),
