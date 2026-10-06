@@ -234,6 +234,34 @@ test('final image copies a read-only checked-out tree after build proof and excl
   assert.doesNotMatch(final, /(?:8443|supervisor|TLS_(?:CA|CERT|KEY))/u);
 });
 
+test('build proxy trust is removed from both Alpine CA paths without replacing their symlink', () => {
+  const blocks = dockerfile().match(/RUN --mount=type=secret,id=proxy_ca \\\n\s+cp [\s\S]*?rm \/tmp\/validation-public-ca\.pem/gu);
+  assert.equal(blocks?.length, 2);
+  for (const block of blocks) {
+    const directory = mkdtempSync(path.join(tmpdir(), 'arcanos-validation-ca-'));
+    try {
+      const bundle = path.join(directory, 'ca-certificates.crt');
+      const link = path.join(directory, 'cert.pem');
+      const backup = path.join(directory, 'public-ca.pem');
+      const proxy = path.join(directory, 'proxy-ca.pem');
+      writeFileSync(bundle, 'public-root-fixture\n'); symlinkSync(bundle, link);
+      writeFileSync(proxy, 'session-proxy-test-fixture\n');
+      const quote = value => "'" + value.replaceAll("'", "'\\''") + "'";
+      const script = block.replace(/^RUN[^\n]*\n/u, '')
+        .replaceAll('/etc/ssl/cert.pem', quote(link))
+        .replaceAll('/tmp/validation-public-ca.pem', quote(backup))
+        .replaceAll('/run/secrets/proxy_ca', quote(proxy))
+        .replace(/apk add --no-cache [a-z0-9 -]+/u, 'true');
+      const result = spawnSync('sh', ['-c', script], { encoding: 'utf8', timeout: 5_000 });
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(fs.lstatSync(link).isSymbolicLink(), true);
+      assert.equal(readFileSync(link, 'utf8'), 'public-root-fixture\n');
+      assert.equal(readFileSync(bundle, 'utf8'), 'public-root-fixture\n');
+      assert.equal(fs.existsSync(backup), false);
+    } finally { rmSync(directory, { recursive: true, force: true }); }
+  }
+});
+
 test('compiled digest binds file paths and bytes and cannot traverse symbolic links', () => {
   const directory = mkdtempSync(path.join(tmpdir(), 'arcanos-validation-hash-'));
   try {

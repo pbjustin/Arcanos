@@ -6,7 +6,8 @@ RUN --mount=type=secret,id=proxy_ca \
     cp /etc/ssl/cert.pem /tmp/validation-public-ca.pem && \
     if test -f /run/secrets/proxy_ca; then cat /run/secrets/proxy_ca >> /etc/ssl/cert.pem; fi && \
     apk add --no-cache git python3 py3-jsonschema && \
-    mv /tmp/validation-public-ca.pem /etc/ssl/cert.pem
+    cat /tmp/validation-public-ca.pem > /etc/ssl/cert.pem && \
+    rm /tmp/validation-public-ca.pem
 ARG RAILWAY_GIT_COMMIT_SHA
 RUN --mount=type=secret,id=proxy_ca \
     if test -f /run/secrets/proxy_ca; then export GIT_SSL_CAINFO=/run/secrets/proxy_ca; fi; \
@@ -32,7 +33,8 @@ RUN --mount=type=secret,id=proxy_ca \
     cp /etc/ssl/cert.pem /tmp/validation-public-ca.pem && \
     if test -f /run/secrets/proxy_ca; then cat /run/secrets/proxy_ca >> /etc/ssl/cert.pem; fi && \
     apk add --no-cache python3 py3-jsonschema && \
-    mv /tmp/validation-public-ca.pem /etc/ssl/cert.pem
+    cat /tmp/validation-public-ca.pem > /etc/ssl/cert.pem && \
+    rm /tmp/validation-public-ca.pem
 COPY --from=build --chown=root:root /app /app
 COPY --from=build --chown=root:root /opt/validation/build.json /opt/validation/build.json
 RUN test ! -e /app/.git && chmod -R a-w /app /opt/validation && \
