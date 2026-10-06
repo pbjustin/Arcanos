@@ -483,6 +483,13 @@ missing factual support still requires new evidence, and genuine conflicts stay
 blocked. Generic Samurai advice needs no preference question, and unknown patch
 compatibility retains its explicit qualification.
 
+V2 allows at most eight clarification operations separately from the existing six
+acquisition/storage operations per workflow. This bounded clarification allowance
+keeps missing-context and preference answers from consuming an authorized source
+recovery or storage operation. Gameplay/currentness round limits, admitted URLs,
+acquisition time, actor rate limits and workflow expiry remain unchanged. V1 keeps
+its existing six-operation limit.
+
 The additive authenticated Gaming hybrid Actions reuse stored lexical retrieval,
 the shared document resolver, existing ingestion jobs, source revisions and chunks,
 and the normal Gaming Trinity pipeline. Older gameplay and source Actions retain

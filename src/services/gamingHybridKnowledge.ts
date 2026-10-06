@@ -692,7 +692,14 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
     const existing = workflow.operations.get(key);
     if (existing?.hash !== undefined && existing.hash !== digest) return Promise.resolve(failure(context, 'IDEMPOTENCY_CONFLICT', 409, workflow));
     if (existing && !existing.retryable) return existing.promise.then(result => currentResponse(context, workflow, result));
-    if (workflow.operations.size >= 6) return Promise.resolve(failure(context, 'SUBMISSION_LIMIT_REACHED', 429, workflow));
+    const v2 = workflow.input.contractVersion === GAMING_HYBRID_V2_CONTRACT_VERSION;
+    const clarificationOperations = v2
+      ? [...workflow.operations.keys()].filter(operationKey => operationKey.startsWith('clarify:')).length : 0;
+    const clarificationOperation = v2 && key.startsWith('clarify:');
+    // Five material context decisions and three supported preferences have their
+    // own bounded allowance, preserving the existing acquisition/storage ceiling.
+    if (clarificationOperation ? clarificationOperations >= 8 : workflow.operations.size - clarificationOperations >= 6)
+      return Promise.resolve(failure(context, 'SUBMISSION_LIMIT_REACHED', 429, workflow));
     const promise = Promise.resolve().then(() => protect(context, workflow, work)).then(result => {
       if (workflow.input.contractVersion !== GAMING_HYBRID_V2_CONTRACT_VERSION && (result.status >= 500 || result.status === 429)) {
         const operation = workflow.operations.get(key);

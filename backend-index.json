@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-06T21:16:43.427Z",
+  "generatedAt": "2026-10-06T21:39:19.200Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -4283,6 +4283,9 @@
         },
         {
           "relativePath": "tests/gaming-clarification-context.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-clarification-operation-budget.test.ts"
         },
         {
           "relativePath": "tests/gaming-clarification-workflow.test.ts"
