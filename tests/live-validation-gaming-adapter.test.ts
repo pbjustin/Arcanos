@@ -291,21 +291,36 @@ describe('private Gaming live-validation adapter through the real transient v2 w
     expect(mockTrinity).toHaveBeenCalledTimes(1); expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps a model timeout distinct from an answer audit that never ran', async () => {
+  it.each(['intake', 'reasoning', 'final'] as const)('preserves an observed %s timeout when upstream cancellation reaches the provider first', async stage => {
     mockTrinity.mockImplementationOnce(async (request: TrinityWritingPipelineRequest) => {
       const budget = { remainingBudgetMs: getSafeRemainingMs(request.context.runtimeBudget!), requestRemainingMs: getRequestRemainingMs() ?? null };
-      request.context.runOptions?.onStage?.({ stage: 'intake', phase: 'started', elapsedMs: 0, ...budget });
+      request.context.runOptions?.onStage?.({ stage, phase: 'started', elapsedMs: 0, ...budget });
       advance(23);
-      request.context.runOptions?.onStage?.({ stage: 'intake', phase: 'failed', elapsedMs: 23, timedOut: true, ...budget });
-      throw Object.assign(new Error('Sealed model timeout.'), { name: 'AbortError', timeoutPhase: 'provider' });
+      request.context.runOptions?.onStage?.({ stage, phase: 'failed', elapsedMs: 23, timedOut: true, ...budget });
+      throw Object.assign(new Error('Sealed upstream stage cancellation.'), { name: 'AbortError', code: 'LIVE_VALIDATION_PROVIDER_CANCELLED' });
     });
     const run = harness(); const output = await run.run();
+    expect(output.failureCode).toBe('MODEL_TIMEOUT');
+    expect(run.observer.onFailure).toHaveBeenCalledWith('MODEL_TIMEOUT');
     expect(output.accepted).toBe(false); expect(mockAuditCompletion).not.toHaveBeenCalled();
     expect(run.observer.onAnswerAuditStart).not.toHaveBeenCalled();
     const observation = run.adapter.getLastObservation()!;
-    expect(observation.stages.intake).toEqual({ status: 'timed_out', elapsedMs: 23 });
+    expect(observation.stages[stage]).toEqual({ status: 'timed_out', elapsedMs: 23 });
+    expect(observation.stages.generation).toEqual({ status: 'timed_out', elapsedMs: 23 });
     expect(observation.stages.answer_audit).toEqual({ status: 'not_run', elapsedMs: null });
     expect(observation.auditStartBudget).toEqual({ runtimeRemainingMs: null, requestRemainingMs: null });
+  });
+
+  it('does not infer a model timeout from an unobserved cancellation or elapsed time', async () => {
+    mockTrinity.mockImplementationOnce(async () => {
+      advance(23);
+      throw Object.assign(new Error('Sealed generic cancellation.'), { name: 'AbortError', code: 'LIVE_VALIDATION_PROVIDER_CANCELLED' });
+    });
+    const run = harness(); const output = await run.run();
+    expect(output.accepted).toBe(false); expect(output.failureCode).toBeUndefined();
+    expect(run.observer.onFailure).not.toHaveBeenCalledWith('MODEL_TIMEOUT');
+    expect(run.adapter.getLastObservation()?.stages.generation).toEqual({ status: 'failed', elapsedMs: 23 });
+    expect(mockAuditCompletion).not.toHaveBeenCalled();
   });
 
   it('leaves unobserved model timings null and does not infer them from request elapsed time', async () => {

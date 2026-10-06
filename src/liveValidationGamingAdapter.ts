@@ -85,6 +85,10 @@ export function createLiveValidationGamingAdapter(execute: LiveValidationGamingE
         } else {
           stages[event.stage] = { status: event.phase === 'completed' ? 'passed' : event.timedOut ? 'timed_out' : 'failed',
             elapsedMs: liveValidationDuration(event.elapsedMs) ?? (started.has(event.stage) ? Math.max(0, now() - started.get(event.stage)!) : null) };
+          if (event.phase === 'failed' && event.timedOut && ['intake', 'reasoning', 'final'].includes(event.stage)) {
+            fail('MODEL_TIMEOUT');
+            onStage({ stage: 'generation', phase: 'failed', timedOut: true });
+          }
         }
       };
       let result: GamingSuccessEnvelope | undefined;
@@ -153,7 +157,7 @@ export function createLiveValidationGamingAdapter(execute: LiveValidationGamingE
             }
             });
           } catch (error) {
-            if (stages.generation.status === 'started') onStage({ stage: 'generation', phase: 'failed', timedOut: context.signal?.aborted });
+            if (stages.generation.status === 'started') onStage({ stage: 'generation', phase: 'failed' });
             throw error;
           }
           if (stages.generation.status === 'started') onStage({ stage: 'generation', phase: result.data.fallbackReason ? 'failed' : 'completed' });
