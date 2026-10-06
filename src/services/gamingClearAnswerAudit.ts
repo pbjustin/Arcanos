@@ -66,14 +66,14 @@ export function gamingClearAnswerMatches(assessment: GamingClearAssessment | und
 
 /** One stateless semantic review replaces Gaming's ledger review. No model tools, retries or repairs. */
 export async function runGamingClearAnswerAudit(client: OpenAI, input: GamingClearAnswerInput,
-  runtimeBudget: RuntimeBudget, modelLane: 'routine' | 'escalation' = 'routine'
+  runtimeBudget: RuntimeBudget, modelLane: 'routine' | 'escalation' = 'routine', remainingWatchdogMs?: number
 ): Promise<{ assessment: GamingClearAssessment; usage?: TrinityMetaTokens }> {
   const startedAt = Date.now();
   let modelCallStarted = false;
   let auditBudget: {
     configuredTimeoutMs: number; effectiveTimeoutMs: number; hardMaximumMs: number;
     pipelineBudgetAtDispatchMs: number; safePipelineRemainingMs: number;
-    requestBudgetAtDispatchMs: number | null; terminalReserveMs: number;
+    requestBudgetAtDispatchMs: number | null; watchdogBudgetAtDispatchMs: number | null; terminalReserveMs: number;
   } | undefined;
   const base = baseAssessment(input);
   const unavailable = (code: string) => createGamingClearAssessment({ ...base,
@@ -142,14 +142,17 @@ export async function runGamingClearAnswerAudit(client: OpenAI, input: GamingCle
   const configuredTimeoutMs = Number.isFinite(configured) && configured > 0
     ? configured : GAMING_CLEAR_ANSWER_BUDGET.maxTimeoutMs;
   const pipelineBudgetAtDispatchMs = getSafeRemainingMs(runtimeBudget);
+  const watchdogBudgetAtDispatchMs = remainingWatchdogMs === undefined ? null
+    : Number.isFinite(remainingWatchdogMs) ? Math.max(0, Math.floor(remainingWatchdogMs)) : 0;
   // Generation retains terminal time; the audit must leave it available too.
-  const safePipelineRemainingMs = Math.max(0, pipelineBudgetAtDispatchMs - GAMING_GENERATION_TERMINAL_HEADROOM_MS);
+  const safePipelineRemainingMs = Math.max(0, Math.min(pipelineBudgetAtDispatchMs,
+    watchdogBudgetAtDispatchMs ?? Number.POSITIVE_INFINITY) - GAMING_GENERATION_TERMINAL_HEADROOM_MS);
   const requestBudgetAtDispatchMs = getRequestRemainingMs();
   const timeoutMs = Math.floor(Math.min(configuredTimeoutMs, safePipelineRemainingMs,
     requestBudgetAtDispatchMs ?? Number.POSITIVE_INFINITY, GAMING_CLEAR_ANSWER_BUDGET.maxTimeoutMs));
   auditBudget = { configuredTimeoutMs, effectiveTimeoutMs: timeoutMs,
     hardMaximumMs: GAMING_CLEAR_ANSWER_BUDGET.maxTimeoutMs, pipelineBudgetAtDispatchMs, safePipelineRemainingMs,
-    requestBudgetAtDispatchMs, terminalReserveMs: GAMING_GENERATION_TERMINAL_HEADROOM_MS };
+    requestBudgetAtDispatchMs, watchdogBudgetAtDispatchMs, terminalReserveMs: GAMING_GENERATION_TERMINAL_HEADROOM_MS };
   if (timeoutMs <= 0) return finish(unavailable('AUDIT_BUDGET_EXHAUSTED'));
   const instructions = [
     'Audit the actual Gaming player-facing ANSWER against the supplied passages. Do not audit an internal reasoning ledger.',

@@ -99,6 +99,27 @@ describe('Gaming final-answer CLEAR assessment', () => {
 
   describe.each(auditLanes)('%s audit deadline clamps', lane => {
     it.each([
+      { remainingWatchdogMs: 2_500, expected: 1_500 },
+      { remainingWatchdogMs: 1_000, expected: 0 },
+      { remainingWatchdogMs: -1, expected: 0 },
+      { remainingWatchdogMs: Number.NaN, expected: 0 },
+      { remainingWatchdogMs: Number.POSITIVE_INFINITY, expected: 0 }
+    ])('retains terminal reserve under watchdog budget $remainingWatchdogMs', async ({ remainingWatchdogMs, expected }) => {
+      const result = await runGamingClearAnswerAudit({} as never, input, createRuntimeBudgetWithLimit(30_000, 500), lane, remainingWatchdogMs);
+      if (expected > 0) {
+        expect(result.assessment).toMatchObject({ assessmentStatus: 'completed', decision: 'accept' });
+        expect(createSingleChatCompletion.mock.calls[0][1]).toMatchObject({ timeoutMs: expected, maxRetries: 0 });
+      } else {
+        expect(result.assessment).toMatchObject({ assessmentStatus: 'unavailable', decision: 'unavailable',
+          findings: [expect.objectContaining({ code: 'AUDIT_BUDGET_EXHAUSTED' })] });
+        expect(createSingleChatCompletion).not.toHaveBeenCalled();
+      }
+      expect(logger.info).toHaveBeenCalledWith(`gaming.clear.answer.${expected > 0 ? 'completed' : 'unavailable'}`,
+        expect.objectContaining({ effectiveTimeoutMs: expected, terminalReserveMs: 1_000,
+          watchdogBudgetAtDispatchMs: Number.isFinite(remainingWatchdogMs) ? Math.max(0, remainingWatchdogMs) : 0 }));
+    });
+
+    it.each([
       { name: 'enforces the hard maximum', configured: '25000', pipeline: 30_000, safety: 500, request: 30_000, expected: 12_000 },
       { name: 'honors a smaller configured timeout', configured: '1500', pipeline: 30_000, safety: 500, request: 30_000, expected: 1_500 },
       { name: 'preserves pipeline safety and terminal reserve', configured: '10000', pipeline: 5_000, safety: 500, request: 30_000, expected: 3_500 },

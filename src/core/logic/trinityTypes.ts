@@ -252,7 +252,8 @@ export interface TrinityRunOptions {
   /** Server-owned Gaming audit of the composed final text; never read from request JSON. */
   gamingClearAnswerAudit?: (
     text: string,
-    runtimeBudget: import('@platform/resilience/runtimeBudget.js').RuntimeBudget
+    runtimeBudget: import('@platform/resilience/runtimeBudget.js').RuntimeBudget,
+    remainingWatchdogMs?: number
   ) => Promise<{
     assessment: import('@shared/gaming/gamingClearPolicy.js').GamingClearAssessment;
     usage?: TrinityMetaTokens;

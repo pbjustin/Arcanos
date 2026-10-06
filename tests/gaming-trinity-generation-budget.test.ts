@@ -44,14 +44,14 @@ const response = (text: string, model = 'gpt-6-luna') => ({ id: 'budget-syntheti
 
 function startGeneration(configuredStageTimeoutMs?: number, watchdogTimeoutMs = 35_000,
   generationPrompt = prompt, gamingClearAnswerAudit?: TrinityRunOptions['gamingClearAnswerAudit'],
-  executionBudget?: ReturnType<typeof resolveGamingExecutionBudget>, compactIntake = true) {
+  executionBudget?: ReturnType<typeof resolveGamingExecutionBudget>, compactIntake = true, directAnswer = false) {
   const pipelineTimeoutMs = executionBudget?.pipelineTimeoutMs ?? 35_000;
   const runtimeBudget = createRuntimeBudgetWithLimit(pipelineTimeoutMs, 500);
   const allocations: { stage: string; timeoutMs: number; elapsedMs: number; additionalDownstreamReserveMs: number }[] = [];
   const stageBudgets: ({ stage: string } & ReturnType<typeof resolveGamingGenerationBudget>)[] = [];
   const runOptions: TrinityRunOptions = {
     ...(compactIntake ? { gamingGuideIntakePolicy: 'compact-v1' as const } : {}),
-    intentMode: 'EXECUTE_TASK', answerMode: 'explained',
+    intentMode: 'EXECUTE_TASK', answerMode: directAnswer ? 'direct' : 'explained',
     disableOptionalSideEffects: true, redactAuditContent: true, watchdogModelTimeoutMs: watchdogTimeoutMs,
     modelStageTimeoutMs: 12_000, toolBackedCapabilities: { verifyProvidedData: true },
     ...(gamingClearAnswerAudit ? { gamingClearAnswerAudit } : {}),
@@ -171,6 +171,61 @@ describe('Gaming allocation through the real Trinity stage dispatch', () => {
     await jest.advanceTimersByTimeAsync(6_000);
     await failure;
     expect(runStructuredReasoning).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    { path: 'compact hybrid', compactIntake: true, directAnswer: false, watchdogTimeoutMs: 20_000 },
+    { path: 'ordinary Gaming', compactIntake: false, directAnswer: false, watchdogTimeoutMs: 20_000 },
+    { path: 'direct Gaming', compactIntake: false, directAnswer: true, watchdogTimeoutMs: 20_000 },
+    { path: 'compact hybrid', compactIntake: true, directAnswer: false, watchdogTimeoutMs: 35_000 },
+    { path: 'ordinary Gaming', compactIntake: false, directAnswer: false, watchdogTimeoutMs: 35_000 },
+    { path: 'direct Gaming', compactIntake: false, directAnswer: true, watchdogTimeoutMs: 35_000 }
+  ])('respects a $watchdogTimeoutMs ms watchdog during mandatory $path answer audit', async ({ compactIntake, directAnswer, watchdogTimeoutMs }) => {
+    const startedAt = Date.now();
+    const evidenceRefs = ['record-1'];
+    const dimensions = Object.fromEntries(['clarity', 'leverage', 'efficiency', 'alignment', 'resilience'].map(name => [name,
+      { status: 'evaluated', score: 5, reasonCodes: ['SUPPORTED'], evidenceRefs, unresolvedFacts: [] }
+    ])) as Parameters<typeof createGamingClearAssessment>[0]['dimensions'];
+    const evidenceAssessment = createGamingClearAssessment({
+      profile: 'evidence', questionProfile: 'walkthrough', subjectId: 'selected-evidence', subjectHash: gamingClearHash(prompt),
+      contextFingerprint: gamingClearContextFingerprint('selected-evidence'), evidenceRefs,
+      gates: { identity: 'verified', security: 'verified', compatibility: 'verified', provenance: 'verified',
+        claimSupport: 'verified', freshness: 'not_applicable' }, dimensions, findings: []
+    });
+    const knowledge = { context: prompt,
+      sources: [{ sourceId: 'source-1', url: 'https://example.com/starter-guide', sourceType: 'guide',
+        game: 'Fixture Quest', fetchedAt: '2026-10-04T00:00:00.000Z', snippet: 'Use the supported starter equipment.' }],
+      evidence: [{ sourceId: 'source-1', revisionId: 'revision-1', recordId: 'record-1', recordType: 'guide' as const,
+        publicUrl: 'https://example.com/starter-guide', text: 'Use the supported starter equipment.', lexicalScore: 1, combinedScore: 1,
+        provenance: { fetchedAt: '2026-10-04T00:00:00.000Z' } }] };
+    if (directAnswer) responsesCreate
+      .mockImplementationOnce(() => new Promise(resolve => setTimeout(() => resolve(response(answer, authorityModel)), 15_500)));
+    else responsesCreate
+      .mockImplementationOnce(() => new Promise(resolve => setTimeout(() => resolve(response('Question: build. Evidence [1].')), 3_000)))
+      .mockImplementationOnce(() => new Promise(resolve => setTimeout(() => resolve(response(answer, authorityModel)), 5_500)));
+    responsesCreate.mockImplementationOnce((_payload: unknown, options: { signal: AbortSignal }) => new Promise((resolve, reject) => {
+        const timer = setTimeout(() => resolve(response(JSON.stringify({ dimensions, findings: [] }))), 5_000);
+        options.signal.addEventListener('abort', () => {
+          clearTimeout(timer);
+          reject(options.signal.reason);
+        }, { once: true });
+      }));
+    runStructuredReasoning.mockImplementationOnce(() => new Promise(resolve => setTimeout(() => resolve(reasoning), 7_000)));
+    const audit = jest.fn((text: string, runtimeBudget: Parameters<typeof runGamingClearAnswerAudit>[2], remainingWatchdogMs?: number) =>
+      runGamingClearAnswerAudit(client, { game: 'Fixture Quest', prompt: 'How do I use the supported starter equipment?',
+        mode: 'guide', answer: text, knowledge, evidenceAssessment }, runtimeBudget, 'routine', remainingWatchdogMs));
+    const { operation } = startGeneration(undefined, watchdogTimeoutMs, prompt, audit, undefined, compactIntake, directAnswer);
+    await jest.advanceTimersByTimeAsync(20_500);
+    const result = await operation;
+    expect(result.gamingClearAudit).toMatchObject(watchdogTimeoutMs === 20_000
+      ? { assessmentStatus: 'unavailable', decision: 'unavailable', findings: [expect.objectContaining({ code: 'AUDIT_TIMEOUT' })] }
+      : { assessmentStatus: 'completed', decision: 'accept' });
+    expect(result.guardInfo).toMatchObject({ effectiveLimit: Math.min(watchdogTimeoutMs, 34_500),
+      elapsedMs: watchdogTimeoutMs === 20_000 ? 19_000 : 20_500 });
+    expect(audit).toHaveBeenCalledTimes(1);
+    expect(responsesCreate).toHaveBeenCalledTimes(directAnswer ? 2 : 3);
+    expect(responsesCreate.mock.calls[directAnswer ? 1 : 2][1]).toMatchObject({ timeout: watchdogTimeoutMs === 20_000 ? 3_500 : 12_000, maxRetries: 0 });
+    expect(startedAt + result.guardInfo!.elapsedMs).toBeLessThan(startedAt + watchdogTimeoutMs);
   });
 
   it('completes the live 17,317ms reasoning shape and a 12-second final with bounded answer audit', async () => {

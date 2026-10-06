@@ -1281,10 +1281,10 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
             ),
             runOptions: {
               ...buildGamingRunOptions(params.mode, guideUrls.length > 0 && retrievalHadUsableSources),
-              gamingClearAnswerAudit: (answer, runtimeBudget) => runGamingClearAnswerAudit(client, {
+              gamingClearAnswerAudit: (answer, runtimeBudget, remainingWatchdogMs) => runGamingClearAnswerAudit(client, {
                 ...resolvedParams, game: resolvedParams.game ?? '', answer: qualifyAdvisoryAnswer(answer), knowledge: clearKnowledge,
                 evidenceAssessment: assessGamingClearEvidence({ ...resolvedParams, game: resolvedParams.game ?? '' }, clearKnowledge, auditContext), requestId
-              }, runtimeBudget),
+              }, runtimeBudget, 'routine', remainingWatchdogMs),
               ...(prepared ? { disableOptionalSideEffects: true, redactAuditContent: true, gamingGuideIntakePolicy: 'compact-v1' as const } : {}),
               ...(params.mode === "guide" ? { trustedPolicyPrompt: resolvedParams.prompt, internalMode: false } : {}),
               intentMode: "EXECUTE_TASK",
