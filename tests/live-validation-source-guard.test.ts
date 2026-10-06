@@ -4,7 +4,7 @@ import { gamingAcquisitionAxios } from './testUtils/gamingAcquisitionFixtures.js
 import { gamingArchiveDerivativePath, gamingArchiveGuideUrl, gamingArchiveMetadata,
   gamingArchiveStorageHost } from './testUtils/gamingArchiveFixtures.js';
 import type { LiveValidationGamingExecutor } from '../src/liveValidationGamingAdapter.js';
-import type { LivePrPreviewModuleObserver } from '../src/livePrPreviewApplication.js';
+import type { LivePrPreviewModuleObserver } from '../src/liveValidationGamingAdapter.js';
 
 const mockHttp = jest.fn();
 const resolve4 = jest.fn<(hostname: string) => Promise<string[]>>();

@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals
 import { gamingAcquisitionAxios } from './testUtils/gamingAcquisitionFixtures.js';
 import type { TrinityWritingPipelineRequest } from '../src/core/logic/trinityWritingPipeline.js';
 import type { GamingSuccessEnvelope } from '../src/services/gamingModes.js';
-import type { LivePrPreviewModuleObserver } from '../src/livePrPreviewApplication.js';
+import type { LivePrPreviewModuleObserver } from '../src/liveValidationGamingAdapter.js';
 import type { LiveValidationGamingExecutor } from '../src/liveValidationGamingAdapter.js';
 import type { GamingHybridResponse } from '../src/shared/gaming/gamingHybridContract.js';
 import { GAMING_CLEAR_DIMENSIONS, gamingClearHash } from '../src/shared/gaming/gamingClearPolicy.js';
@@ -228,6 +228,19 @@ describe('private Gaming live-validation adapter through the real transient v2 w
     expect(observation.candidates).toEqual([expect.objectContaining({ decision: 'rejected', reasonCodes: expect.arrayContaining([reason]) })]);
     expect(observation.outcome).toBe('need_new_source'); expect(observation.audit).toBeNull();
     expect(observation.stages.answer_audit).toEqual({ status: 'not_run', elapsedMs: null });
+  });
+
+  it('records failed acquisition when every public source transport fails before evidence selection', async () => {
+    mockHttp.mockImplementationOnce(async () => {
+      advance(25);
+      return { status: 503, headers: { 'content-type': 'text/plain' }, data: Readable.from(['Unavailable']) };
+    });
+    const run = harness(); const output = await run.run();
+    expect(output.accepted).toBe(false); expect(output.failureCode).toBe('ACQUISITION_FAILURE');
+    expect(run.observer.onSourceAcquisition).toHaveBeenCalledWith('failed');
+    expect(run.adapter.getLastObservation()?.stages.acquisition).toEqual({ status: 'failed', elapsedMs: 25 });
+    expect(run.execute).not.toHaveBeenCalled(); expect(mockTrinity).not.toHaveBeenCalled();
+    expect(mockAuditCompletion).not.toHaveBeenCalled();
   });
 
   it.each(['missing binding', 'fallback', 'post-audit mutation'] as const)('withholds acceptance after %s', async scenario => {

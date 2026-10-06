@@ -197,3 +197,65 @@ export function verifyLivePreviewSuite(evidence, expectedIdentity) {
     cases, verification: { syntheticPreview: 'unverified', liveBackend: 'unverified', installedPluginOAuth: 'unverified' },
     remainingGaps: [...REMAINING_GAPS] };
 }
+
+/** Projection deliberately retains no answer prose, source paths, errors, credentials, or arbitrary keys. */
+export function sanitizeLivePreviewEvidence(value) {
+  const record = isRecord;
+  const requireE2e = (condition) => { if (!condition) throw new Error('LIVE_PREVIEW_EVIDENCE_INVALID'); };
+  const safeCount = count;
+  const safeBoolean = item => typeof item === 'boolean' ? item : null;
+  const safeEnum = (item, allowed) => allowed.includes(item) ? item : 'unobserved';
+  const CASES = MANIFEST;
+  const STAGES = STAGE_NAMES;
+  const COUNTS = COUNT_FIELDS;
+  const LIMITS = [...LIMIT_FIELDS, 'maxConcurrency', 'maxRetries'];
+  requireE2e(record(value) && record(value.identity) && record(value.result) && record(value.audit)
+    && record(value.stages) && record(value.usage), 'LIVE_PREVIEW_EVIDENCE_INVALID');
+  const identity = value.identity;
+  requireE2e(/^[0-9a-f]{40}$/u.test(identity.sourceCommit ?? '') && identity.sourceCommit === identity.approvedSourceCommit
+    && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(identity.deploymentId ?? '')
+    && identity.mode === LIVE_PREVIEW_MODE && /^[a-z][a-z0-9_-]{0,63}$/u.test(identity.moduleId ?? '')
+    && value.acceptanceProfile === LIVE_PREVIEW_ACCEPTANCE_PROFILE && CASES.has(value.caseId), 'LIVE_PREVIEW_EVIDENCE_INVALID');
+  const result = value.result;
+  requireE2e(Array.isArray(result.sources) && result.sources.length <= 8
+    && Array.isArray(result.citationIndices) && result.citationIndices.length <= 32,
+  'LIVE_PREVIEW_EVIDENCE_INVALID');
+  const grounding = record(result.grounding) ? result.grounding : {};
+  const audit = value.audit;
+  const usage = value.usage;
+  const sources = result.sources.map(source => {
+    let origin = null;
+    if (record(source) && typeof source.url === 'string' && source.url.length <= 2_048) {
+      try {
+        const url = new URL(source.url);
+        if (['https:', 'http:'].includes(url.protocol) && !url.username && !url.password
+          && !isIP(url.hostname.replace(/^\[|\]$/gu, '')) && url.hostname.includes('.')
+          && !/(?:^|\.)(?:localhost|local|internal|invalid|test)$/u.test(url.hostname) && !url.hostname.endsWith('.home.arpa')) {
+          origin = url.origin + '/';
+        }
+      } catch { /* Invalid source identities remain unusable. */ }
+    }
+    return { index: safeCount(source?.index), url: origin,
+      ...(typeof source?.documentUrlSha256 === 'string' && /^[0-9a-f]{64}$/u.test(source.documentUrlSha256)
+        ? { documentUrlSha256: source.documentUrlSha256 } : {}), usable: safeBoolean(source?.usable) };
+  });
+  return { schemaVersion: value.schemaVersion === 1 ? 1 : null, acceptanceProfile: LIVE_PREVIEW_ACCEPTANCE_PROFILE,
+    identity: { sourceCommit: identity.sourceCommit, approvedSourceCommit: identity.approvedSourceCommit,
+      deploymentId: identity.deploymentId, moduleId: identity.moduleId, mode: LIVE_PREVIEW_MODE }, caseId: value.caseId,
+    failureCode: value.failureCode === null ? null : safeEnum(value.failureCode, LIVE_PREVIEW_CASE_MANIFEST.map(entry => entry.failureCode)),
+    stages: Object.fromEntries(STAGES.map(key => [key, STAGE_STATUSES.has(value.stages[key]) ? value.stages[key] : 'unobserved'])),
+    result: { ...Object.fromEntries(['ok', 'answerPresent', 'fallback', 'dryRun', 'incomplete', 'citationsResolved', 'acceptedAnswer']
+      .map(key => [key, safeBoolean(result[key])])),
+      grounding: { status: safeEnum(grounding.status, ['grounded', 'insufficient_evidence', 'unavailable']),
+        groundedInSuppliedEvidence: safeBoolean(grounding.groundedInSuppliedEvidence),
+        ...Object.fromEntries(['fetchedSuppliedSourceCount', 'usableSourceCount', 'citableSourceCount', 'selectedChunkCount', 'suppliedEvidenceSourceCount']
+          .map(key => [key, safeCount(grounding[key])])) }, sources,
+      citationIndices: result.citationIndices.map(safeCount) },
+    audit: { assessmentStatus: safeEnum(audit.assessmentStatus, ['completed', 'unavailable', 'not_run']),
+      decision: safeEnum(audit.decision, ['accept', 'partial', 'reject', 'clarify', 'unavailable']), boundToFinalAnswer: safeBoolean(audit.boundToFinalAnswer) },
+    usage: { ...Object.fromEntries(COUNTS.map(key => [key, safeCount(usage[key])])),
+      limits: Object.fromEntries(LIMITS.map(key => [key, safeCount(usage.limits?.[key])])) },
+    verification: { syntheticPreview: 'unverified', liveBackend: 'unverified', installedPluginOAuth: 'unverified' },
+    remainingGaps: ['installed_plugin_oauth_unverified', 'installed_plugin_acceptance_unverified', 'chatgpt_consent_unverified',
+      'chatgpt_refresh_unverified', 'provider_billing_reconciliation_unverified', 'trusted_live_execution_provenance_required'] };
+}

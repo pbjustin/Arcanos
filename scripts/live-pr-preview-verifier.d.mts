@@ -15,7 +15,7 @@ export interface LivePreviewIdentity {
   mode: 'live-backend-v1';
 }
 export interface LivePreviewUsage {
-  /** Cumulative broker reservations and observed billing for the run. */
+  /** Cumulative provider reservations and observed billing for the run. */
   requests: number;
   reservedInputTokens: number;
   reservedOutputTokens: number;
@@ -124,3 +124,6 @@ export function verifyLivePreviewSuite(evidence: unknown, expectedIdentity: Live
   verification: { syntheticPreview: 'unverified'; liveBackend: 'unverified'; installedPluginOAuth: 'unverified' };
   remainingGaps: string[];
 };
+
+/** Closed projection of saved evidence; never retains raw payloads or source paths. */
+export function sanitizeLivePreviewEvidence(evidence: unknown): unknown;

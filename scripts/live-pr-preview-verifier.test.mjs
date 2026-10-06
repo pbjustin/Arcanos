@@ -6,6 +6,7 @@ import {
   LIVE_PREVIEW_ACCEPTANCE_PROFILE,
   LIVE_PREVIEW_MODE,
   createLivePreviewEvidence,
+  sanitizeLivePreviewEvidence,
   verifyLivePreviewEvidence,
   verifyLivePreviewSuite,
 } from './live-pr-preview-verifier.mjs';
@@ -264,5 +265,30 @@ test('missing or malformed evidence fails with fixed safe codes', () => {
     assert.equal(result.status, 'FAIL');
     assert.equal(result.code, 'LIVE_PREVIEW_CASE_FAILED');
     assert.equal(JSON.stringify(result).includes('private-sentinel'), false);
+  }
+});
+
+
+test('saved-evidence sanitization retains only bounded verification fields and source origins', () => {
+  const evidence = makeEvidence();
+  evidence.secret = 'test-private-validation-token';
+  evidence.audit.providerBody = 'private-provider-body';
+  evidence.result.response = 'private-answer';
+  evidence.result.sources[0].url = 'https://guides.example.com/private/path?token=private-secret';
+  const safe = sanitizeLivePreviewEvidence(evidence);
+  assert.equal(safe.result.sources[0].url, 'https://guides.example.com/');
+  assert.match(safe.result.sources[0].documentUrlSha256, /^[a-f0-9]{64}$/u);
+  for (const secret of ['test-private-validation-token', 'private-provider-body', 'private-answer', '/private/path', 'private-secret'])
+    assert.ok(!JSON.stringify(safe).includes(secret));
+  assert.equal(verifyLivePreviewEvidence(safe, identity).status, 'PASS');
+});
+
+test('saved-evidence sanitization refuses ambiguous identity and oversized source/citation arrays', () => {
+  const wrong = makeEvidence(); wrong.identity.sourceCommit = 'b'.repeat(40);
+  assert.throws(() => sanitizeLivePreviewEvidence(wrong), /LIVE_PREVIEW_EVIDENCE_INVALID/u);
+  for (const mutate of [value => { value.result.sources = Array(9).fill(value.result.sources[0]); },
+    value => { value.result.citationIndices = Array(33).fill(1); }]) {
+    const evidence = makeEvidence(); mutate(evidence);
+    assert.throws(() => sanitizeLivePreviewEvidence(evidence), /LIVE_PREVIEW_EVIDENCE_INVALID/u);
   }
 });

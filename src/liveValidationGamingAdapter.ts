@@ -10,8 +10,28 @@ import { hasBoundGamingClearAnswer } from './shared/gaming/gamingClearAnswerBind
 import { gamingClearHash, type GamingClearAssessment } from './shared/gaming/gamingClearPolicy.js';
 import { createLiveValidationObservation, emptyLiveValidationStages, liveValidationDuration,
   type LiveValidationObservation, type LiveValidationStageEvent } from './shared/gaming/liveValidationObservation.js';
-import type { LivePrPreviewAudit, LivePrPreviewModuleAdapter } from './livePrPreviewApplication.js';
+import type { LivePreviewEvidenceInput } from '../scripts/live-pr-preview-verifier.mjs';
 import type { LivePreviewFailureCode } from '../scripts/live-pr-preview-verifier.mjs';
+
+export type LivePrPreviewAudit = NonNullable<LivePreviewEvidenceInput['audit']>;
+export interface LivePrPreviewModuleObserver {
+  onSourceAcquisition(status: 'passed' | 'failed'): void;
+  onSourceValidation(status: 'passed' | 'rejected'): void;
+  onAnswerAuditStart(): void;
+  onAudit(audit: LivePrPreviewAudit): void;
+  onFailure(code: LivePreviewFailureCode): void;
+}
+export interface LivePrPreviewModuleResult {
+  result?: unknown;
+  accepted: boolean;
+  audit?: LivePrPreviewAudit;
+  failureCode?: LivePreviewFailureCode;
+}
+export interface LivePrPreviewModuleAdapter {
+  moduleId: string;
+  validateInput(value: unknown): { ok: true; input: unknown } | { ok: false };
+  execute(input: unknown, observer: LivePrPreviewModuleObserver): Promise<LivePrPreviewModuleResult>;
+}
 
 export interface LiveValidationGamingInput { query: GamingHybridQuery; candidateUrls: string[] }
 export type LiveValidationGamingHooks = Pick<GamingPipelineRuntime,
@@ -25,7 +45,7 @@ const sourceFailureCodes = new Set(['SOURCE_FETCH_FAILED', 'SOURCE_TIMEOUT', 'SO
   'RESOLVED_SOURCE_IDENTITY_MISMATCH', 'FETCH_BUDGET_EXHAUSTED', 'INVALID_URL', 'UNSUPPORTED_SOURCE_FORMAT',
   'UNTRUSTED_METADATA_INVALID', 'REVIEWED_OFFICIAL_CURRENTNESS_SOURCE_REQUIRED', 'DUPLICATE_URL']);
 
-/** Private admission calls the real v2 workflow with transient external-effect dependencies. */
+/** The isolated validation service calls the real v2 workflow with transient dependencies. */
 export function createLiveValidationGamingAdapter(execute: LiveValidationGamingExecutor,
   options: { now?: () => number; sourceGuard?: (url: string) => void } = {}): LiveValidationGamingAdapter {
   const now = options.now ?? Date.now;
@@ -95,7 +115,8 @@ export function createLiveValidationGamingAdapter(execute: LiveValidationGamingE
             observer.onSourceValidation(usable && !incompatible ? 'passed' : 'rejected');
             if (incompatible) fail('INCOMPATIBLE_SOURCE');
             else if (!usable) fail(acquired ? 'INSUFFICIENT_EVIDENCE' : 'ACQUISITION_FAILURE');
-            onStage({ stage: 'acquisition', phase: 'completed' });
+            onStage({ stage: 'acquisition', phase: acquired ? 'completed' : 'failed',
+              ...(!acquired && codes.includes('SOURCE_TIMEOUT') ? { timedOut: true } : {}) });
             return evaluation;
           } catch (error) {
             observer.onSourceAcquisition('failed'); fail('ACQUISITION_FAILURE');
