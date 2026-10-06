@@ -47,6 +47,8 @@ Apply and read back the environment-scoped profile in
 and readiness health check. Disable automatic source deployments. Repository
 connection alone does not prove an exact deployed revision. A JSON file in Git
 alone does not prove that a new Railway service applied those settings.
+The controller reads back and requires one replica and `NEVER` restart policy
+before deployment and paid admission, since provider quotas are process-local.
 
 Fill [target.example.json](../infra/live-validation/target.example.json) with the
 real validation environment/service IDs, public HTTPS origin, existing Gaming
@@ -238,9 +240,13 @@ node scripts/live-validation-controller.mjs cleanup \
   --profile gaming-guide --evidence-dir /operator/live-validation/evidence
 ```
 
-It reads back and stops only the exact deployment recorded as created by this
-run. It retains the service/environment and provider binding. Preserve protected
-state until cleanup succeeds; never publish `controller-state.private.json`.
+It verifies ownership and source identity for the exact deployment recorded as
+created by this run, cancels queued/building deployments, and stops running
+deployments. Cleanup waits for bounded termination readback. Inventory drift
+still blocks a clean verdict, but does not prevent cleanup of the independently
+verified owned deployment. It retains the service/environment and provider
+binding. Preserve protected state until cleanup succeeds; never publish
+`controller-state.private.json`.
 
 ## Paid-call limits
 
@@ -250,6 +256,7 @@ state until cleanup succeeds; never publish `controller-state.private.json`.
 | Provider requests | 32, including charged metadata operations. |
 | Workflows | 2: one positive, one negative. |
 | Concurrent provider requests | 1. |
+| Output tokens per provider request | 4,096, including Trinity reasoning. |
 | Total test duration | 600,000 ms / 10 minutes. |
 | Automatic retries | 0. |
 
@@ -262,6 +269,11 @@ violations fail closed. Failed or uncertain operations do not refund reservation
 No direct-answer regeneration or integrity-repair loop bypasses the quota.
 Mandatory answer auditing and source/citation verification remain required even
 when the remaining budget is small.
+
+The dedicated launcher sets `TRINITY_REASONING_MAX_OUTPUT_TOKENS` to the same
+4,096-token provider ceiling before loading the Gaming pipeline. This keeps
+the normal reasoning stage within the validation guard without changing the
+production default or increasing the paid limit.
 
 The provider path permits the reviewed textual Responses operations and model
 metadata at fixed OpenAI endpoints, with storage/streaming/tools disabled,
@@ -305,6 +317,8 @@ private-network rejection, redirect policy, wire/decoded/text bounds, source-use
 restrictions, instruction filtering, source compatibility, currentness, mandatory
 audit and citation integrity stay enforced. Validation guards additionally deny
 production/provider/internal destinations in the actual acquisition transport.
+Inaccessible HTTP responses, rejected redirects and source-size failures remain
+acquisition failures; they cannot establish successful document acquisition.
 These are application controls. **No Railway-native domain egress ACL is claimed.**
 Normal Railway HTTPS networking is used; there is no runtime-to-supervisor hop,
 custom CA, certificate issuance, peer pin, signed supervisor session or private
@@ -318,6 +332,9 @@ and final stages retain individual timing hooks where available. Evidence record
 bounded timings, stage statuses, selected counts, semantic conflict/currentness
 flags, audit completion/decision and final-answer fingerprint binding.
 Unobserved stages remain unobserved; timing is never inferred from total latency.
+An observed intake, reasoning or final timeout remains `MODEL_TIMEOUT` with
+generation marked `timed_out`, even if upstream cancellation reaches the provider
+before its own timer. Generic cancellation alone does not establish a timeout.
 
 The known production regression completed Trinity generation before the mandatory
 Gaming answer audit timed out. A validation result must preserve that sequence:
@@ -361,6 +378,7 @@ npm run test:live-validation:offline
 node scripts/run-jest.mjs --runTestsByPath \
   tests/live-validation-gaming-adapter.test.ts tests/live-validation-source-guard.test.ts \
   tests/live-validation-isolation.test.ts tests/gaming-live-runtime.test.ts \
+  tests/live-validation-provider-reasoning.test.ts \
   tests/trinity-gaming-intake.test.ts \
   tests/trinity-integrity-recovery.test.ts --coverage=false
 npm run type-check
