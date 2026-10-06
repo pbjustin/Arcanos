@@ -3,6 +3,7 @@ import { runWithRequestAbortContext, createAbortError } from '@arcanos/runtime';
 import { createGamingClearAssessment, gamingClearContextFingerprint, gamingClearHash, parseGamingClearAssessment } from '../src/shared/gaming/gamingClearPolicy.js';
 import { GAMING_UNVERIFIED_GUIDE_WARNING } from '../src/shared/gaming/gamingFreshnessDisposition.js';
 import { createRuntimeBudgetWithLimit } from '../src/platform/resilience/runtimeBudget.js';
+import { logger } from '../src/platform/logging/structuredLogging.js';
 import { GAMING_CLEAR_APPROVED_ANSWER, hasBoundGamingClearAnswer } from '../src/shared/gaming/gamingClearAnswerBinding.js';
 
 const createSingleChatCompletion = jest.fn();
@@ -10,7 +11,7 @@ jest.unstable_mockModule('@services/openai/chatFallbacks.js', () => ({ createSin
 jest.unstable_mockModule('@services/openai/credentialProvider.js', () => ({
   getClearAuditModel: () => 'gpt-6-luna', getClearAuditEscalationModel: () => 'gpt-6.1-sol'
 }));
-const { runGamingClearAnswerAudit, gamingClearAnswerMatches } = await import('../src/services/gamingClearAnswerAudit.js');
+const { runGamingClearAnswerAudit, gamingClearAnswerMatches, GAMING_CLEAR_ANSWER_BUDGET } = await import('../src/services/gamingClearAnswerAudit.js');
 
 const text = 'Lantern Vale: after restoring the Tide Hall pump, turn the west valve to open the return route.';
 const refs = ['source-1', 'revision-1', 'chunk-1'];
@@ -34,11 +35,128 @@ const completion = (body: unknown = { dimensions: dimensions(), findings: [] }) 
   choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(body) } }],
   usage: { prompt_tokens: 900, completion_tokens: 200, total_tokens: 1_100 }
 });
-const run = (overrides = {}) => runGamingClearAnswerAudit({} as never, { ...input, ...overrides }, createRuntimeBudgetWithLimit(10_000, 0));
+const run = (overrides = {}) => runGamingClearAnswerAudit({} as never, { ...input, ...overrides }, createRuntimeBudgetWithLimit(20_000, 0));
+const originalAuditTimeout = process.env.TRINITY_CLEAR_AUDIT_TIMEOUT_MS;
+const auditLanes = ['routine', 'escalation'] as const;
+const useTimedCompletion = (durationMs: number) => {
+  createSingleChatCompletion.mockImplementation((_client, options) => new Promise((resolve, reject) => {
+    const { timeoutMs } = options as { timeoutMs: number };
+    const completionTimer = setTimeout(() => {
+      clearTimeout(timeoutTimer);
+      resolve(completion());
+    }, durationMs);
+    const timeoutTimer = setTimeout(() => {
+      clearTimeout(completionTimer);
+      reject(createAbortError('synthetic audit timeout'));
+    }, timeoutMs);
+  }));
+};
 
 describe('Gaming final-answer CLEAR assessment', () => {
-  afterEach(() => jest.useRealTimers());
-  beforeEach(() => { jest.clearAllMocks(); createSingleChatCompletion.mockResolvedValue(completion()); });
+  afterEach(() => {
+    jest.useRealTimers();
+    if (originalAuditTimeout === undefined) delete process.env.TRINITY_CLEAR_AUDIT_TIMEOUT_MS;
+    else process.env.TRINITY_CLEAR_AUDIT_TIMEOUT_MS = originalAuditTimeout;
+  });
+  beforeEach(() => {
+    delete process.env.TRINITY_CLEAR_AUDIT_TIMEOUT_MS;
+    jest.clearAllMocks();
+    jest.spyOn(logger, 'info').mockImplementation(() => undefined);
+    createSingleChatCompletion.mockResolvedValue(completion());
+  });
+
+  it.each(auditLanes)('allows a five-second %s audit to finish with configured and authoritative deadlines above three seconds', async lane => {
+    jest.useFakeTimers();
+    jest.setSystemTime(1_000);
+    process.env.TRINITY_CLEAR_AUDIT_TIMEOUT_MS = '10000';
+    useTimedCompletion(5_000);
+    const controller = new AbortController();
+    const pendingAudit = runWithRequestAbortContext({ controller, signal: controller.signal,
+      deadlineAt: 21_000, timeoutMs: 20_000 }, () =>
+      runGamingClearAnswerAudit({} as never, input, createRuntimeBudgetWithLimit(20_000, 1_000), lane));
+
+    await jest.advanceTimersByTimeAsync(5_000);
+    const result = await pendingAudit;
+    expect(result.assessment).toMatchObject({ assessmentStatus: 'completed', decision: 'accept' });
+    expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
+    expect(createSingleChatCompletion.mock.calls[0][1]).toMatchObject({ timeoutMs: 10_000, maxRetries: 0 });
+    expect(logger.info).toHaveBeenCalledWith('gaming.clear.answer.dispatch', expect.objectContaining({
+      configuredTimeoutMs: 10_000, effectiveTimeoutMs: 10_000, hardMaximumMs: 12_000,
+      pipelineBudgetAtDispatchMs: 19_000, safePipelineRemainingMs: 18_000,
+      requestBudgetAtDispatchMs: 20_000, terminalReserveMs: 1_000
+    }));
+    expect(logger.info).toHaveBeenCalledWith('gaming.clear.answer.completed', expect.objectContaining({
+      elapsedMs: 5_000, auditResult: 'accept', effectiveTimeoutMs: 10_000,
+      modelCallsUsed: 1, modelCallLimit: 1, repairAttempts: 0
+    }));
+    const telemetry = JSON.stringify(jest.mocked(logger.info).mock.calls);
+    for (const sensitiveContent of [input.answer, input.prompt, text]) expect(telemetry).not.toContain(sensitiveContent);
+  });
+
+  it('retains a finite hard ceiling and one model call with no repairs', () => {
+    expect(GAMING_CLEAR_ANSWER_BUDGET).toMatchObject({ maxTimeoutMs: 12_000, maxCalls: 1, maxRepairs: 0 });
+  });
+
+  describe.each(auditLanes)('%s audit deadline clamps', lane => {
+    it.each([
+      { name: 'enforces the hard maximum', configured: '25000', pipeline: 30_000, safety: 500, request: 30_000, expected: 12_000 },
+      { name: 'honors a smaller configured timeout', configured: '1500', pipeline: 30_000, safety: 500, request: 30_000, expected: 1_500 },
+      { name: 'preserves pipeline safety and terminal reserve', configured: '10000', pipeline: 5_000, safety: 500, request: 30_000, expected: 3_500 },
+      { name: 'honors the request deadline', configured: '10000', pipeline: 30_000, safety: 500, request: 3_500, expected: 3_500 }
+    ])('$name', async ({ configured, pipeline, safety, request, expected }) => {
+      jest.useFakeTimers();
+      jest.setSystemTime(1_000);
+      process.env.TRINITY_CLEAR_AUDIT_TIMEOUT_MS = configured;
+      const controller = new AbortController();
+      const result = await runWithRequestAbortContext({ controller, signal: controller.signal,
+        deadlineAt: 1_000 + request, timeoutMs: request }, () =>
+        runGamingClearAnswerAudit({} as never, input, createRuntimeBudgetWithLimit(pipeline, safety), lane));
+      expect(result.assessment).toMatchObject({ assessmentStatus: 'completed', decision: 'accept' });
+      expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
+      expect(createSingleChatCompletion.mock.calls[0][1]).toMatchObject({ timeoutMs: expected, maxRetries: 0 });
+      expect(expected).toBeLessThanOrEqual(pipeline - safety - 1_000);
+      expect(expected).toBeLessThanOrEqual(request);
+    });
+
+    it.each([
+      { name: 'the terminal reserve consumes the remaining pipeline budget', pipeline: 1_500, safety: 500, request: 30_000 },
+      { name: 'the request deadline is exhausted', pipeline: 30_000, safety: 500, request: 0 }
+    ])('fails closed without a model call when $name', async ({ pipeline, safety, request }) => {
+      jest.useFakeTimers();
+      jest.setSystemTime(1_000);
+      process.env.TRINITY_CLEAR_AUDIT_TIMEOUT_MS = '10000';
+      const controller = new AbortController();
+      const result = await runWithRequestAbortContext({ controller, signal: controller.signal,
+        deadlineAt: 1_000 + request, timeoutMs: request }, () =>
+        runGamingClearAnswerAudit({} as never, input, createRuntimeBudgetWithLimit(pipeline, safety), lane));
+      expect(result.assessment).toMatchObject({ assessmentStatus: 'unavailable', decision: 'unavailable', overall: null });
+      expect(result.assessment.findings.map(finding => finding.code)).toContain('AUDIT_BUDGET_EXHAUSTED');
+      expect(gamingClearAnswerMatches(result.assessment, input.answer)).toBe(false);
+      expect(createSingleChatCompletion).not.toHaveBeenCalled();
+      expect(logger.info).toHaveBeenCalledWith('gaming.clear.answer.unavailable', expect.objectContaining({
+        effectiveTimeoutMs: 0, modelCallsUsed: 0, repairAttempts: 0,
+        reasonCodes: ['AUDIT_BUDGET_EXHAUSTED'], auditResult: 'unavailable'
+      }));
+    });
+
+    it('times out once and never approves or repairs an unfinished answer', async () => {
+      jest.useFakeTimers();
+      jest.setSystemTime(1_000);
+      process.env.TRINITY_CLEAR_AUDIT_TIMEOUT_MS = '2000';
+      useTimedCompletion(5_000);
+      const pendingAudit = runGamingClearAnswerAudit({} as never, input, createRuntimeBudgetWithLimit(20_000, 0), lane);
+      await jest.advanceTimersByTimeAsync(5_000);
+      const result = await pendingAudit;
+      expect(result.assessment).toMatchObject({ assessmentStatus: 'unavailable', decision: 'unavailable', overall: null });
+      expect(result.assessment.findings.map(finding => finding.code)).toContain('AUDIT_TIMEOUT');
+      expect(gamingClearAnswerMatches(result.assessment, input.answer)).toBe(false);
+      expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
+      expect(logger.info).toHaveBeenCalledWith('gaming.clear.answer.unavailable', expect.objectContaining({
+        elapsedMs: 2_000, effectiveTimeoutMs: 2_000, modelCallsUsed: 1, repairAttempts: 0,
+        reasonCodes: ['AUDIT_TIMEOUT'], auditResult: 'unavailable'
+      }));
+    });
+  });
 
   it('audits the actual answer and exact passages once with bounded stateless configured-model execution', async () => {
     const result = await run();
@@ -47,7 +165,7 @@ describe('Gaming final-answer CLEAR assessment', () => {
     expect(result.usage?.total_tokens).toBe(1_100);
     expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
     const params = createSingleChatCompletion.mock.calls[0][1] as Record<string, unknown>;
-    expect(params).toMatchObject({ model: 'gpt-6-luna', max_completion_tokens: 1_024, timeoutMs: 3_000,
+    expect(params).toMatchObject({ model: 'gpt-6-luna', max_completion_tokens: 1_024, timeoutMs: 12_000,
       maxRetries: 0, redactErrorDetails: true, reasoning_effort: 'none', response_format: { type: 'json_object' } });
     expect(params.tools).toBeUndefined();
     expect(params.tool_choice).toBeUndefined();
@@ -112,11 +230,11 @@ describe('Gaming final-answer CLEAR assessment', () => {
   });
 
   it('uses the explicit escalation lane for one bounded audit call without a retry or repair', async () => {
-    const result = await runGamingClearAnswerAudit({} as never, input, createRuntimeBudgetWithLimit(10_000, 0), 'escalation');
+    const result = await runGamingClearAnswerAudit({} as never, input, createRuntimeBudgetWithLimit(20_000, 0), 'escalation');
     expect(result.assessment).toMatchObject({ assessmentStatus: 'completed', decision: 'accept' });
     expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
     expect(createSingleChatCompletion.mock.calls[0][1]).toMatchObject({
-      model: 'gpt-6.1-sol', reasoning_effort: 'low', max_completion_tokens: 1_024, timeoutMs: 3_000, maxRetries: 0
+      model: 'gpt-6.1-sol', reasoning_effort: 'low', max_completion_tokens: 1_024, timeoutMs: 12_000, maxRetries: 0
     });
   });
 
@@ -137,7 +255,7 @@ describe('Gaming final-answer CLEAR assessment', () => {
   it('clamps either lane to the remaining aggregate budget and skips an exhausted budget', async () => {
     jest.useFakeTimers();
     jest.setSystemTime(1_000);
-    await runGamingClearAnswerAudit({} as never, input, createRuntimeBudgetWithLimit(150, 0), 'escalation');
+    await runGamingClearAnswerAudit({} as never, input, createRuntimeBudgetWithLimit(1_150, 0), 'escalation');
     expect(createSingleChatCompletion.mock.calls[0][1]).toMatchObject({ timeoutMs: 150 });
     createSingleChatCompletion.mockClear();
     const budget = createRuntimeBudgetWithLimit(150, 0);

@@ -30,6 +30,7 @@ const { runTrinityWritingPipeline } = await import('../src/core/logic/trinityWri
 const { detectTier } = await import('../src/core/logic/trinityTier.js');
 const { createRuntimeBudgetWithLimit, getSafeRemainingMs } = await import('../src/platform/resilience/runtimeBudget.js');
 const { createAbortError, getRequestAbortSignal, runWithRequestAbortTimeout } = await import('@arcanos/runtime');
+const { runGamingClearAnswerAudit } = await import('../src/services/gamingClearAnswerAudit.js');
 const client = { models: { retrieve: modelsRetrieve },
   responses: { create: responsesCreate } } as never;
 const prompt = 'Give a grounded build using <untrusted_evidence>Guide [1]: use the supported starter equipment.</untrusted_evidence>';
@@ -251,6 +252,55 @@ describe('Gaming allocation through the real Trinity stage dispatch', () => {
     expect(responsesCreate).toHaveBeenCalledTimes(1);
     expect(runStructuredReasoning).toHaveBeenCalledTimes(1);
     expect(audit).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { path: 'compact hybrid', compactIntake: true, failure: 'timeout' },
+    { path: 'compact hybrid', compactIntake: true, failure: 'rejection' },
+    { path: 'ordinary Gaming', compactIntake: false, failure: 'timeout' },
+    { path: 'ordinary Gaming', compactIntake: false, failure: 'rejection' }
+  ])('does not rerun $path generation or repair after mandatory answer-audit $failure', async ({ compactIntake, failure }) => {
+    const evidenceRefs = ['record-1'];
+    const dimensions = Object.fromEntries(['clarity', 'leverage', 'efficiency', 'alignment', 'resilience'].map(name => [name,
+      { status: 'evaluated', score: 5, reasonCodes: ['SUPPORTED'], evidenceRefs, unresolvedFacts: [] }
+    ])) as Parameters<typeof createGamingClearAssessment>[0]['dimensions'];
+    const evidenceAssessment = createGamingClearAssessment({
+      profile: 'evidence', questionProfile: 'walkthrough', subjectId: 'selected-evidence', subjectHash: gamingClearHash(prompt),
+      contextFingerprint: gamingClearContextFingerprint('selected-evidence'), evidenceRefs,
+      gates: { identity: 'verified', security: 'verified', compatibility: 'verified', provenance: 'verified',
+        claimSupport: 'verified', freshness: 'not_applicable' }, dimensions, findings: []
+    });
+    const knowledge = { context: prompt,
+      sources: [{ sourceId: 'source-1', url: 'https://example.com/starter-guide', sourceType: 'guide',
+        game: 'Fixture Quest', fetchedAt: '2026-10-04T00:00:00.000Z', snippet: 'Use the supported starter equipment.' }],
+      evidence: [{ sourceId: 'source-1', revisionId: 'revision-1', recordId: 'record-1', recordType: 'guide' as const,
+        publicUrl: 'https://example.com/starter-guide', text: 'Use the supported starter equipment.', lexicalScore: 1, combinedScore: 1,
+        provenance: { fetchedAt: '2026-10-04T00:00:00.000Z' } }] };
+    responsesCreate.mockResolvedValueOnce(response('Question: build. Evidence [1].'))
+      .mockResolvedValueOnce(response(answer, authorityModel));
+    runStructuredReasoning.mockResolvedValueOnce(reasoning);
+    if (failure === 'timeout') responsesCreate.mockRejectedValueOnce(createAbortError('synthetic answer-audit timeout'));
+    else responsesCreate.mockResolvedValueOnce(response(JSON.stringify({ dimensions,
+      findings: [{ code: 'UNSUPPORTED_MECHANIC', severity: 'blocking', evidenceRefs }] })));
+    const audit = jest.fn((text: string, runtimeBudget: Parameters<typeof runGamingClearAnswerAudit>[2]) =>
+      runGamingClearAnswerAudit(client, { game: 'Fixture Quest', prompt: 'How do I use the supported starter equipment?',
+        mode: 'guide', answer: text, knowledge, evidenceAssessment }, runtimeBudget));
+    const { operation, allocations } = startGeneration(undefined, 35_000, prompt, audit, undefined, compactIntake);
+    await jest.advanceTimersByTimeAsync(0);
+    const result = await operation;
+    expect(result.result).toBe(audit.mock.calls[0][0]);
+    expect(result.result.replace(/\s+/gu, ' ')).toBe(answer);
+    expect(result.fallbackFlag).toBe(false);
+    expect(result.gamingClearAudit).toMatchObject(failure === 'timeout'
+      ? { assessmentStatus: 'unavailable', findings: [expect.objectContaining({ code: 'AUDIT_TIMEOUT' })] }
+      : { assessmentStatus: 'completed', decision: 'reject', findings: [expect.objectContaining({ code: 'UNSUPPORTED_MECHANIC' })] });
+    expect(audit).toHaveBeenCalledTimes(1);
+    expect(runStructuredReasoning).toHaveBeenCalledTimes(1);
+    expect(responsesCreate).toHaveBeenCalledTimes(3); // One intake, one final, one audit.
+    expect(responsesCreate.mock.calls[2][1]).toMatchObject({ maxRetries: 0 });
+    expect(reflectionMock).not.toHaveBeenCalled(); // The legacy ledger audit cannot replace the failed answer audit.
+    expect(allocations.filter(entry => entry.stage === 'final')).toHaveLength(1);
+    expect(allocations.some(entry => entry.stage === 'direct-answer')).toBe(false);
   });
 
   it.each([

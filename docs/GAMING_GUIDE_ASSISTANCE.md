@@ -201,6 +201,16 @@ retain audit and terminal reserves without reserving an unused final stage.
 Insufficient usable budget stops model dispatch; it never disables a timeout or
 extends a parent deadline.
 
+The 3,000 ms answer-audit reservation is a minimum downstream allowance, not
+the audit's ceiling. Mandatory final-answer CLEAR now defaults/caps at 12,000 ms
+and honors a smaller positive `TRINITY_CLEAR_AUDIT_TIMEOUT_MS`. Its effective
+timeout is the floor of the minimum of configured timeout, 12,000 ms, safe
+remaining runtime/pipeline time minus 1,000 ms terminal headroom, and remaining
+request time. Exhausted budget, timeout and rejection remain fail closed. One
+audit call, zero retries and zero repairs remain enforced. Sanitized dispatch and
+completion telemetry records configured/effective/hard timeouts, pipeline and
+request budgets, terminal reserve, elapsed time, result and reason codes.
+
 `resolveGamingExecutionBudget` owns the enclosing MCP/module/pipeline relationship;
 `resolveGamingGenerationBudget` owns the dynamic stage allocation. The invariants
 are operation timeout >= pipeline timeout + outer headroom, and stage timeout
@@ -978,8 +988,9 @@ budget counts intake/reasoning, not all auxiliary calls; Gaming uses a separate
 explicit single-call audit slot and records its tokens in aggregate totals.
 Full Gaming guide generation replaces its old ledger audit with this call.
 Paths that previously omitted an audit, including direct/hybrid paths, add at most
-one call. There is no additional concurrency fan-out, retrieval round, repair,
-provider fallback expansion or timeout increase.
+one call. There is no additional concurrency fan-out, retrieval round, repair
+or provider fallback expansion. The bounded answer-audit timeout allocation is
+described above; pipeline and request deadlines remain unchanged.
 
 `GAMING_ANSWER_AUDIT_UNAVAILABLE` and `GAMING_ANSWER_REJECTED` are additive bounded
 fallback reason values; genuine provider failures retain their existing reasons.

@@ -451,6 +451,12 @@ No public request field or environment switch enables automatic escalation, and
 no retry, recursion or repair loop is added. Gaming retains at most one audit,
 no tools, the 1024 output-token ceiling, aggregate runtime budget, strict result
 validation, citation/evidence binding and fail-closed unavailable outcomes.
+Its mandatory answer audit defaults to a bounded 12,000 ms maximum. A positive
+`TRINITY_CLEAR_AUDIT_TIMEOUT_MS` is honored below that maximum and clamped above
+it. The effective timeout is the floor of the minimum of configured timeout,
+12,000 ms, safe remaining pipeline time minus 1,000 ms terminal headroom, and
+remaining request time. Runtime safety and parent cancellation remain active;
+zero usable time stops dispatch. This increases no pipeline or request deadline.
 General CLEAR retains its zero-score unavailable result and timeout behavior.
 GPT-6 audit requests explicitly use Luna none or Sol low reasoning within the
 existing output caps.
@@ -1958,6 +1964,7 @@ This table mirrors high-impact runtime keys and active operator controls in `.en
 | `ARCANOS_GAMING_GUIDE_PIPELINE_TIMEOUT_MS` | `50000` (commented) | Guide pipeline cap overriding the generic value. `ARCANOS_GAMING_BUILD_PIPELINE_TIMEOUT_MS` and `ARCANOS_GAMING_META_PIPELINE_TIMEOUT_MS` follow the same precedence and parent bounds. |
 | `ARCANOS_GAMING_STAGE_TIMEOUT_MS` | unset (`12000` commented override example) | Explicit generic Gaming model-stage cap. When unset, intake retains its 12s build/meta or 24s guide cap; reasoning/final budgets adapt to remaining time and downstream reserves. |
 | `ARCANOS_GAMING_GUIDE_STAGE_TIMEOUT_MS` | unset (`24000` commented override example) | Explicit guide model-stage cap, taking precedence over the generic stage override. Every explicit cap remains authoritative within the safe remaining deadline. |
+| `TRINITY_CLEAR_AUDIT_TIMEOUT_MS` | unset (`12000` commented example) | Mandatory Gaming answer audit defaults/caps at 12s, honors smaller positive configured values, and clamps to safe pipeline time minus 1s terminal headroom and remaining request time. No usable budget fails closed. General Trinity ledger CLEAR retains its existing 3s unset default. |
 | `ARCANOS_GAMING_WEB_CONTEXT_CHARS` | `5000` (commented) | Per-guide snippet size used by Gaming guide URL enrichment. |
 | `ARCANOS_GAMING_WEB_CONTEXT_MAX_URLS` | `15` (commented) | Maximum user-provided guide URLs fetched concurrently for Gaming guide enrichment. |
 | `RESEARCH_WORKFLOW_TIMEOUT_MS` | `60000` (commented) | Service-owned aggregate Research deadline in milliseconds. Missing, blank, nonnumeric, or sub-1 values use the 60,000 ms default; values above 300,000 are capped. One effective deadline and cancellation signal cover DNS/fetch, every Trinity/model stage, and persistence; a shorter caller deadline caps this value. |

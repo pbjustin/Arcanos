@@ -8,6 +8,7 @@ import { getRequestAbortSignal, getRequestRemainingMs, isAbortError, throwIfRequ
 import { classifyWorkerAiBudgetError, normalizeWorkerAiBudgetError } from '@core/adapters/openai.adapter.js';
 import type { TrinityMetaTokens } from '@core/logic/trinityTypes.js';
 import { logger } from '@platform/logging/structuredLogging.js';
+import { GAMING_GENERATION_TERMINAL_HEADROOM_MS } from '@shared/gaming/gamingGenerationBudgetCore.js';
 import { getTokenParameter } from '@shared/tokenParameterHelper.js';
 import {
   GAMING_CLEAR_RUBRIC, classifyGamingClearQuestion, createGamingClearAssessment,
@@ -19,7 +20,7 @@ import { GAMING_STALE_GUIDE_WARNING, GAMING_UNVERIFIED_GUIDE_WARNING, gamingAnsw
   resolveGamingFreshnessDisposition } from '@shared/gaming/gamingFreshnessDisposition.js';
 
 export const GAMING_CLEAR_ANSWER_BUDGET = Object.freeze({ maxCalls: 1, maxRepairs: 0, maxOutputTokens: 1_024,
-  maxInputChars: 32_000, maxTotalPromptChars: 38_000, maxAnswerChars: 12_000, maxTimeoutMs: 3_000 });
+  maxInputChars: 32_000, maxTotalPromptChars: 38_000, maxAnswerChars: 12_000, maxTimeoutMs: 12_000 });
 
 export interface GamingClearAnswerInput extends GamingPlayerContext {
   game: string;
@@ -69,6 +70,11 @@ export async function runGamingClearAnswerAudit(client: OpenAI, input: GamingCle
 ): Promise<{ assessment: GamingClearAssessment; usage?: TrinityMetaTokens }> {
   const startedAt = Date.now();
   let modelCallStarted = false;
+  let auditBudget: {
+    configuredTimeoutMs: number; effectiveTimeoutMs: number; hardMaximumMs: number;
+    pipelineBudgetAtDispatchMs: number; safePipelineRemainingMs: number;
+    requestBudgetAtDispatchMs: number | null; terminalReserveMs: number;
+  } | undefined;
   const base = baseAssessment(input);
   const unavailable = (code: string) => createGamingClearAssessment({ ...base,
     assessmentMethod: 'model_assisted', assessmentStatus: 'unavailable', dimensions: unknownDimensions(),
@@ -81,7 +87,8 @@ export async function runGamingClearAnswerAudit(client: OpenAI, input: GamingCle
       dimensionScores: assessment.dimensionScores, overall: assessment.overall, decision: assessment.decision,
       reasonCodes: assessment.findings.map(finding => finding.code), blockingFindingCount: assessment.blockingFindings.length,
       elapsedMs: Date.now() - startedAt, budgetOutcome: assessment.assessmentStatus === 'completed' ? 'completed' : 'unavailable',
-      modelCallsUsed: modelCallStarted ? 1 : 0, modelCallLimit: 1, repairAttempts: 0
+      modelCallsUsed: modelCallStarted ? 1 : 0, modelCallLimit: 1, repairAttempts: 0,
+      ...auditBudget, auditResult: assessment.decision
     });
     return { assessment, ...(usage ? { usage } : {}) };
   };
@@ -132,9 +139,17 @@ export async function runGamingClearAnswerAudit(client: OpenAI, input: GamingCle
     return finish(unavailable('AUDIT_INPUT_UNAVAILABLE'));
   }
   const configured = Number(getEnv('TRINITY_CLEAR_AUDIT_TIMEOUT_MS'));
-  const timeoutMs = Math.floor(Math.min(GAMING_CLEAR_ANSWER_BUDGET.maxTimeoutMs,
-    Number.isFinite(configured) && configured > 0 ? configured : GAMING_CLEAR_ANSWER_BUDGET.maxTimeoutMs,
-    getSafeRemainingMs(runtimeBudget), getRequestRemainingMs() ?? Number.POSITIVE_INFINITY));
+  const configuredTimeoutMs = Number.isFinite(configured) && configured > 0
+    ? configured : GAMING_CLEAR_ANSWER_BUDGET.maxTimeoutMs;
+  const pipelineBudgetAtDispatchMs = getSafeRemainingMs(runtimeBudget);
+  // Generation retains terminal time; the audit must leave it available too.
+  const safePipelineRemainingMs = Math.max(0, pipelineBudgetAtDispatchMs - GAMING_GENERATION_TERMINAL_HEADROOM_MS);
+  const requestBudgetAtDispatchMs = getRequestRemainingMs();
+  const timeoutMs = Math.floor(Math.min(configuredTimeoutMs, safePipelineRemainingMs,
+    requestBudgetAtDispatchMs ?? Number.POSITIVE_INFINITY, GAMING_CLEAR_ANSWER_BUDGET.maxTimeoutMs));
+  auditBudget = { configuredTimeoutMs, effectiveTimeoutMs: timeoutMs,
+    hardMaximumMs: GAMING_CLEAR_ANSWER_BUDGET.maxTimeoutMs, pipelineBudgetAtDispatchMs, safePipelineRemainingMs,
+    requestBudgetAtDispatchMs, terminalReserveMs: GAMING_GENERATION_TERMINAL_HEADROOM_MS };
   if (timeoutMs <= 0) return finish(unavailable('AUDIT_BUDGET_EXHAUSTED'));
   const instructions = [
     'Audit the actual Gaming player-facing ANSWER against the supplied passages. Do not audit an internal reasoning ledger.',
@@ -161,6 +176,7 @@ export async function runGamingClearAnswerAudit(client: OpenAI, input: GamingCle
     const reasoningEffort = resolveOpenAIModelCapabilities(model).normalizeReasoningRequests
       ? normalizeOpenAIModelReasoningEffort(model, 'none') : undefined;
     modelCallStarted = true;
+    logger.info('gaming.clear.answer.dispatch', { module: 'ARCANOS:GAMING', requestId: input.requestId, ...auditBudget });
     const response = await createSingleChatCompletion(client, {
       model, ...getTokenParameter(model, GAMING_CLEAR_ANSWER_BUDGET.maxOutputTokens),
       ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
