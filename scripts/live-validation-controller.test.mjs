@@ -28,7 +28,13 @@ function targetFixture() {
 }
 function deployment(target, stopped = false) {
   return { id: runtimeDeploymentId, projectId: target.projectId, environmentId: target.environmentId, serviceId: target.runtimeServiceId,
-    status: 'SUCCESS', deploymentStopped: stopped, meta: { repo: target.repository, commitHash: sha } };
+    status: 'SUCCESS', deploymentStopped: stopped, meta: { repo: target.repository, commitHash: sha,
+      serviceManifest: { deploy: { restartPolicyType: 'NEVER', numReplicas: 1, multiRegionConfig: { 'us-west2': { numReplicas: 1 } } } } } };
+}
+function cleanupState(target, overrides = {}) {
+  return { version: 'arcanos-live-validation-controller-state/v1', targetHash: validationHash(target), prNumber: 1528,
+    commitSha: sha, runId: 'a'.repeat(32), runtimeDeploymentId, runtimeCreated: true, runStarted: false,
+    completed: false, cleanupComplete: false, ...overrides };
 }
 const connection = items => ({ pageInfo: { hasNextPage: false }, edges: items.map(node => ({ node })) });
 function inventory(target, active = false, stopped = false) {
@@ -36,6 +42,7 @@ function inventory(target, active = false, stopped = false) {
     environment: { id: target.environmentId, projectId: target.projectId, name: 'live-validation', deletedAt: null,
       config: { privateNetworkDisabled: false, services: { [target.runtimeServiceId]: { source: { repo: target.repository, branch: 'main' }, variables: {} } }, sharedVariables: {} },
       serviceInstances: connection([{ id: target.runtimeServiceId, serviceId: target.runtimeServiceId, environmentId: target.environmentId, deletedAt: null,
+        restartPolicyType: 'NEVER', numReplicas: 1,
         latestDeployment: active ? deployment(target, stopped) : null,
         domains: { serviceDomains: [{ domain: new URL(target.publicOrigin).hostname }], customDomains: [] },
         activeDeployments: active && !stopped ? [deployment(target)] : [] }]),
@@ -202,11 +209,30 @@ test('inventory rejects production, extra services, shared credentials, volumes,
     const value = inventory(f.target); mutate(value); assert.throws(() => normalizeLiveValidationInventory(f.target, value, { phase: 'predeploy' }));
   }
 });
+test('inventory rejects replica or automatic restart settings that could reset process-local paid quotas', () => {
+  const target = targetFixture();
+  for (const changes of [{ restartPolicyType: 'ALWAYS' }, { restartPolicyType: 'ON_FAILURE' }, { numReplicas: 2 },
+    { numReplicas: null }, { restartPolicyType: null }]) {
+    const raw = inventory(target); Object.assign(raw.environment.serviceInstances.edges[0].node, changes);
+    assert.throws(() => normalizeLiveValidationInventory(target, raw, { phase: 'predeploy' }), { code: 'LIVE_VALIDATION_RUNTIME_POLICY_INVALID' });
+  }
+});
 test('deployment proof uses observed exact commit metadata and rejects branch labels and foreign IDs', t => {
   const f = fixture(t); assert.doesNotThrow(() => assertLiveValidationDeployment(deployment(f.target), f.target, 'runtime', sha));
   for (const value of [{ ...deployment(f.target), environmentId: LIVE_VALIDATION_PRODUCTION_ENVIRONMENT_ID },
     { ...deployment(f.target), meta: { repo: f.target.repository, branch: sha } }, { ...deployment(f.target), serviceId: runtimeDeploymentId }])
     assert.throws(() => assertLiveValidationDeployment(value, f.target, 'runtime', sha));
+});
+test('paid deployment proof rejects effective restart, replica and multi-region overrides', () => {
+  const target = targetFixture();
+  for (const change of [deploy => { deploy.restartPolicyType = 'ON_FAILURE'; }, deploy => { deploy.numReplicas = 2; },
+    deploy => { deploy.multiRegionConfig['us-east4'] = { numReplicas: 1 }; },
+    deploy => { deploy.multiRegionConfig['us-west2'].numReplicas = 2; }]) {
+    const value = deployment(target); change(value.meta.serviceManifest.deploy);
+    assert.throws(() => assertLiveValidationDeployment(value, target, 'runtime', sha), { code: 'LIVE_VALIDATION_RUNTIME_POLICY_INVALID' });
+    const raw = inventory(target, true); raw.environment.serviceInstances.edges[0].node.latestDeployment = value;
+    assert.throws(() => normalizeLiveValidationInventory(target, raw), { code: 'LIVE_VALIDATION_RUNTIME_POLICY_INVALID' });
+  }
 });
 test('one-service mocked flow binds ephemeral token before exact deploy, proves manifest, runs both profiles and stops only its deployment', async t => {
   const f = fixture(t); const e = executionFixture(f, { longDeploy: true }); const result = await execute(f, e);
@@ -238,22 +264,125 @@ test('observations retain bounded semantic codes and timings while dropping arbi
   const sanitized = sanitizeLiveValidationObservation(value); assert.equal(sanitized.reason, 'GAME_MISMATCH');
   assert.deepEqual(sanitized.candidates[1], { decision: 'unobserved', reasonCodes: ['CONFLICT'] }); assert.doesNotMatch(JSON.stringify(sanitized), /private/);
 });
-test('cleanup refuses target-swapped deployment state before any stop operation', async t => {
-  const f = fixture(t); const state = { version: 'arcanos-live-validation-controller-state/v1', targetHash: validationHash(f.target), prNumber: 1528,
-    commitSha: sha, runId: 'a'.repeat(32), runtimeDeploymentId, runtimeCreated: true, runStarted: false, completed: false, cleanupComplete: false };
-  let stops = 0; const railway = { async inventory() { return inventory(f.target); }, async deployment() { return { ...deployment(f.target), serviceId: runtimeDeploymentId }; }, async stop() { stops++; } };
-  const result = await cleanupLiveValidationRun({ target: f.target, args: { prNumber: 1528, commitSha: sha }, state, railway, writeState: () => {} });
-  assert.equal(result.status, 'FAIL'); assert.equal(stops, 0);
+test('cleanup refuses mismatched deployment ID, project, environment, service or source before any mutation', async t => {
+  const target = targetFixture();
+  for (const changes of [{ id: runtimeId }, { projectId: envId }, { environmentId: runtimeId },
+    { serviceId: runtimeDeploymentId }, { meta: { repo: target.repository, commitHash: trustedSha } }]) {
+    await t.test(JSON.stringify(changes), async () => {
+      const state = cleanupState(target); const mutations = [];
+      const railway = { async inventory() { return inventory(target); },
+        async deployment() { return { ...deployment(target), ...changes }; },
+        async stop(id) { mutations.push(['stop', id]); }, async cancel(id) { mutations.push(['cancel', id]); } };
+      const result = await cleanupLiveValidationRun({ target, args: { prNumber: 1528, commitSha: sha }, state, railway, writeState: () => {} });
+      assert.equal(result.status, 'FAIL'); assert.equal(state.cleanupComplete, false); assert.deepEqual(mutations, []);
+    });
+  }
+});
+test('cleanup cancels interrupted queued and building deployments and verifies exact-owned terminal readback', async t => {
+  const target = targetFixture();
+  for (const status of ['QUEUED', 'BUILDING']) await t.test(status, async () => {
+    const state = cleanupState(target); let cancelled = false; const mutations = [];
+    const railway = { async inventory() { return inventory(target); },
+      async deployment(id) { assert.equal(id, runtimeDeploymentId); return { ...deployment(target), status: cancelled ? 'REMOVED' : status }; },
+      async cancel(id) { mutations.push(['cancel', id]); cancelled = true; }, async stop(id) { mutations.push(['stop', id]); } };
+    const result = await cleanupLiveValidationRun({ target, args: { prNumber: 1528, commitSha: sha }, state, railway, writeState: () => {} });
+    assert.equal(result.status, 'PASS'); assert.equal(result.runtimeDeploymentStopped, true); assert.equal(result.runClosed, true);
+    assert.equal(state.cleanupComplete, true); assert.deepEqual(mutations, [['cancel', runtimeDeploymentId]]);
+  });
+});
+test('cleanup stops its verified deployment despite inventory drift or metadata unavailability and reports failure', async t => {
+  const target = targetFixture();
+  for (const drift of ['shared-variable', 'overlap', 'unavailable']) await t.test(drift, async () => {
+    const state = cleanupState(target, { runStarted: true }); let stopped = false; const mutations = [];
+    const railway = { async inventory() {
+      if (drift === 'unavailable') throw new Error('metadata unavailable');
+      const raw = inventory(target, true, stopped);
+      if (drift === 'shared-variable') raw.environment.config.sharedVariables.OPENAI_API_KEY = {};
+      if (drift === 'overlap') raw.environment.serviceInstances.edges[0].node.activeDeployments.push({ ...deployment(target), id: runtimeId });
+      return raw;
+    }, async deployment(id) { assert.equal(id, runtimeDeploymentId); return deployment(target, stopped); },
+    async stop(id) { mutations.push(['stop', id]); stopped = true; }, async cancel(id) { mutations.push(['cancel', id]); } };
+    const result = await cleanupLiveValidationRun({ target, args: { prNumber: 1528, commitSha: sha }, state, railway, writeState: () => {} });
+    assert.equal(result.status, 'FAIL'); assert.equal(result.runtimeDeploymentStopped, true); assert.equal(result.runClosed, true);
+    assert.equal(state.cleanupComplete, false); assert.equal(result.definitionsRetained, false);
+    assert.ok(result.failures.length > 0); assert.deepEqual(mutations, [['stop', runtimeDeploymentId]]);
+  });
+});
+test('cleanup rejects mismatched or unterminated cancellation readback', async t => {
+  const target = targetFixture();
+  for (const changes of [{ id: runtimeId }, { status: 'BUILDING' }]) await t.test(JSON.stringify(changes), async () => {
+    let reads = 0; let cancellations = 0; let clock = 1_000_000;
+    const state = cleanupState(target);
+    const railway = { async inventory() { return inventory(target); },
+      async deployment() { return { ...deployment(target), status: ++reads === 1 ? 'BUILDING' : 'REMOVED', ...(reads > 1 ? changes : {}) }; },
+      async cancel() { cancellations++; }, async stop() { assert.fail('must cancel a build'); } };
+    const result = await cleanupLiveValidationRun({ target, args: { prNumber: 1528, commitSha: sha }, state, railway,
+      writeState: () => {}, now: () => clock, sleep: async ms => { clock += ms; } });
+    assert.equal(result.status, 'FAIL'); assert.equal(result.runtimeDeploymentStopped, false); assert.equal(cancellations, 1);
+    assert.ok(clock <= 1_060_000);
+  });
+});
+test('cleanup waits for asynchronous removal and rechecks ownership on each readback', async t => {
+  const target = targetFixture();
+  for (const swapped of [false, true]) await t.test(String(swapped), async () => {
+    let reads = 0; let polls = 0; let clock = 1_000_000;
+    const state = cleanupState(target);
+    const railway = { async inventory() { return inventory(target); }, async cancel(id) { assert.equal(id, runtimeDeploymentId); },
+      async deployment() { return { ...deployment(target), status: ++reads < 3 ? 'BUILDING' : 'REMOVED',
+        ...(swapped && reads === 3 ? { id: runtimeId } : {}) }; }, async stop() { assert.fail('must cancel a build'); } };
+    const result = await cleanupLiveValidationRun({ target, args: { prNumber: 1528, commitSha: sha }, state, railway,
+      writeState: () => {}, now: () => clock, sleep: async ms => { clock += ms; polls++; } });
+    assert.equal(result.status, swapped ? 'FAIL' : 'PASS'); assert.equal(polls, 1); assert.equal(reads, 3);
+    assert.equal(result.runtimeDeploymentStopped, !swapped);
+  });
+});
+test('cleanup changes a rejected build cancellation to stop only after verifying a running owned deployment', async t => {
+  const target = targetFixture();
+  for (const readback of ['running', 'foreign', 'unchanged', 'unavailable']) await t.test(readback, async () => {
+    let reads = 0; let stopped = false; const mutations = [];
+    const state = cleanupState(target);
+    const railway = { async inventory() { return inventory(target); }, async deployment() {
+      reads++;
+      if (reads > 1 && readback === 'unavailable') throw new Error('metadata unavailable');
+      return { ...deployment(target, stopped), status: reads === 1 || readback === 'unchanged' ? 'BUILDING' : 'SUCCESS',
+        ...(reads > 1 && readback === 'foreign' ? { id: runtimeId } : {}) };
+    }, async cancel(id) { mutations.push(['cancel', id]); throw Object.assign(new Error('not building'), { code: 'LIVE_VALIDATION_CLEANUP_CANCEL_FAILED' }); },
+    async stop(id) { mutations.push(['stop', id]); stopped = true; } };
+    const result = await cleanupLiveValidationRun({ target, args: { prNumber: 1528, commitSha: sha }, state, railway, writeState: () => {} });
+    assert.equal(result.status, readback === 'running' ? 'PASS' : 'FAIL');
+    assert.equal(result.runtimeDeploymentStopped, readback === 'running');
+    assert.deepEqual(mutations, [['cancel', runtimeDeploymentId], ...(readback === 'running' ? [['stop', runtimeDeploymentId]] : [])]);
+    if (readback === 'unchanged' || readback === 'unavailable') assert.ok(result.failures.includes('LIVE_VALIDATION_CLEANUP_CANCEL_FAILED'));
+  });
+});
+test('crashed cleanup requires stopped readback unless effective deployment policy proves NEVER restart', async t => {
+  const target = targetFixture();
+  for (const restartPolicyType of ['NEVER', 'ALWAYS']) await t.test(restartPolicyType, async () => {
+    const state = cleanupState(target); let stopped = false; let stops = 0;
+    const railway = { async inventory() {
+      const raw = inventory(target); raw.environment.serviceInstances.edges[0].node.restartPolicyType = restartPolicyType; return raw;
+    }, async deployment() { const value = { ...deployment(target, stopped), status: 'CRASHED' };
+      value.meta.serviceManifest.deploy.restartPolicyType = restartPolicyType; return value; },
+    async stop(id) { assert.equal(id, runtimeDeploymentId); stopped = true; stops++; }, async cancel() { assert.fail('must not cancel a crashed runtime'); } };
+    const result = await cleanupLiveValidationRun({ target, args: { prNumber: 1528, commitSha: sha }, state, railway, writeState: () => {} });
+    assert.equal(result.status, restartPolicyType === 'NEVER' ? 'PASS' : 'FAIL');
+    assert.equal(result.runtimeDeploymentStopped, true); assert.equal(stops, restartPolicyType === 'NEVER' ? 0 : 1);
+  });
 });
 test('Railway API requests only variable names and explicitly pinned deploy and token binding mutations', async t => {
   const f = fixture(t); const calls = []; const client = createLiveValidationRailwayApi({ token: 'fixture-test-scoped-token', fetchImplementation: async (_url, init) => {
     const request = JSON.parse(init.body); calls.push(request);
-    const data = request.query.includes('variableUpsert') ? { variableUpsert: true } : { serviceInstanceDeployV2: runtimeDeploymentId };
+    const data = request.query.includes('variableUpsert') ? { variableUpsert: true }
+      : request.query.includes('deploymentCancel') ? { deploymentCancel: true }
+        : request.query.includes('deploymentStop') ? { deploymentStop: true } : { serviceInstanceDeployV2: runtimeDeploymentId };
     return new Response(JSON.stringify({ data }), { status: 200 });
   } });
   await client.bindTestToken(f.target, 'a'.repeat(64)); await client.deploy(f.target, 'runtime', sha); await client.inventory(f.target);
   assert.equal(calls[0].variables.input.skipDeploys, true); assert.equal(calls[0].variables.input.name, 'ARCANOS_LIVE_VALIDATION_TEST_TOKEN');
   assert.equal(calls[1].variables.commitSha, sha); assert.match(calls[2].query, /decryptVariables:false/); assert.doesNotMatch(calls[2].query, /variablesForServiceDeployment|node\{name.*value/);
+  await client.cancel(runtimeDeploymentId); await client.stop(runtimeDeploymentId);
+  assert.match(calls[3].query, /deploymentCancel\(id:\$id\)/); assert.equal(calls[3].variables.id, runtimeDeploymentId);
+  assert.match(calls[4].query, /deploymentStop\(id:\$id\)/); assert.equal(calls[4].variables.id, runtimeDeploymentId);
 });
 test('normal HTTPS service client rejects aliases/redirects and never sends bearer to an arbitrary route', async () => {
   let calls = 0; const client = createLiveValidationServiceClient({ origin: targetFixture().publicOrigin, token: 'a'.repeat(64), fetchImplementation: async (_url, init) => {

@@ -27,7 +27,8 @@ function targetFixture() {
 }
 function deployment(target, stopped = false) {
   return { id: runtimeDeploymentId, projectId: target.projectId, environmentId: target.environmentId, serviceId: target.runtimeServiceId,
-    status: 'SUCCESS', deploymentStopped: stopped, meta: { repo: target.repository, commitHash: sha } };
+    status: 'SUCCESS', deploymentStopped: stopped, meta: { repo: target.repository, commitHash: sha,
+      serviceManifest: { deploy: { restartPolicyType: 'NEVER', numReplicas: 1, multiRegionConfig: { 'us-west2': { numReplicas: 1 } } } } } };
 }
 const connection = items => ({ pageInfo: { hasNextPage: false }, edges: items.map(node => ({ node })) });
 function inventory(target, active = false, stopped = false) {
@@ -35,6 +36,7 @@ function inventory(target, active = false, stopped = false) {
     environment: { id: target.environmentId, projectId: target.projectId, name: 'live-validation', deletedAt: null,
       config: { privateNetworkDisabled: false, services: { [target.runtimeServiceId]: { source: { repo: target.repository, branch: 'main' }, variables: {} } }, sharedVariables: {} },
       serviceInstances: connection([{ id: target.runtimeServiceId, serviceId: target.runtimeServiceId, environmentId: target.environmentId, deletedAt: null,
+        restartPolicyType: 'NEVER', numReplicas: 1,
         latestDeployment: active ? deployment(target, stopped) : null,
         domains: { serviceDomains: [{ domain: new URL(target.publicOrigin).hostname }], customDomains: [] },
         activeDeployments: active && !stopped ? [deployment(target)] : [] }]),

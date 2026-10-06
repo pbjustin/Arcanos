@@ -22,6 +22,7 @@ const STATE_VERSION = 'arcanos-live-validation-controller-state/v1';
 const MAX_JSON = 2 * 1024 * 1024;
 export const LIVE_VALIDATION_ACCEPTANCE_TRANSPORT_TIMEOUT_MS = 315_000;
 const CONTROL_TIMEOUT_MS = 60_000;
+const CLEANUP_CONFIRMATION_TIMEOUT_MS = 60_000;
 const digest = value => createHash('sha256').update(value).digest('hex');
 const canonicalHash = value => digest(canonicalLiveValidationJson(value));
 const record = value => value && typeof value === 'object' && !Array.isArray(value);
@@ -284,7 +285,7 @@ export async function assertLiveValidationGitHubGate({ github, args, artifact, e
 const INVENTORY_QUERY = `query LiveValidationInventory($environmentId:String!,$runtimeServiceId:String!){
  projectToken{projectId environmentId}
  environment(id:$environmentId){id name projectId deletedAt config(decryptVariables:false)
-  serviceInstances(first:100){pageInfo{hasNextPage} edges{node{id serviceId environmentId deletedAt source{repo image}
+  serviceInstances(first:100){pageInfo{hasNextPage} edges{node{id serviceId environmentId deletedAt restartPolicyType numReplicas source{repo image}
    latestDeployment{id projectId environmentId serviceId status deploymentStopped meta}
    activeDeployments{id projectId environmentId serviceId status deploymentStopped meta}
    domains{serviceDomains{id domain deletedAt} customDomains{id domain deletedAt}}}}}
@@ -329,6 +330,11 @@ export function createLiveValidationRailwayApi({ token, fetchImplementation = gl
       requireController(UUID.test(id), 'LIVE_VALIDATION_DEPLOYMENT_ID_INVALID');
       const result = await graphql('mutation LiveValidationStop($id:String!){deploymentStop(id:$id)}', { id });
       requireController(result.deploymentStop === true, 'LIVE_VALIDATION_CLEANUP_STOP_FAILED');
+    },
+    async cancel(id) {
+      requireController(UUID.test(id), 'LIVE_VALIDATION_DEPLOYMENT_ID_INVALID');
+      const result = await graphql('mutation LiveValidationCancel($id:String!){deploymentCancel(id:$id)}', { id });
+      requireController(result.deploymentCancel === true, 'LIVE_VALIDATION_CLEANUP_CANCEL_FAILED');
     }
   });
 }
@@ -339,6 +345,14 @@ function nodes(connection) {
   return connection.edges.map(edge => edge.node);
 }
 function metadata(value) { return typeof value === 'string' ? json(value, 'LIVE_VALIDATION_DEPLOYMENT_METADATA_INVALID') : value; }
+function assertLiveValidationRuntimePolicy(deployment) {
+  const deploy = metadata(deployment.meta)?.serviceManifest?.deploy;
+  const regions = deploy?.multiRegionConfig;
+  requireController(record(deploy) && deploy.restartPolicyType === 'NEVER' && deploy.numReplicas === 1
+    && (regions === undefined || regions === null || record(regions) && Object.keys(regions).length === 1
+      && Object.values(regions).every(region => record(region) && region.numReplicas === 1)),
+  'LIVE_VALIDATION_RUNTIME_POLICY_INVALID');
+}
 export function normalizeLiveValidationInventory(target, raw, { phase = 'paid' } = {}) {
   const env = raw.environment;
   requireController(raw.projectToken?.projectId === target.projectId && raw.projectToken?.environmentId === target.environmentId,
@@ -359,6 +373,8 @@ export function normalizeLiveValidationInventory(target, raw, { phase = 'paid' }
   requireController(Object.keys(config.services).length === 1
     && Object.keys(config.services)[0] === target.runtimeServiceId,
     'LIVE_VALIDATION_INVENTORY_SERVICES_INVALID');
+  requireController(instances.every(instance => instance.restartPolicyType === 'NEVER' && instance.numReplicas === 1),
+    'LIVE_VALIDATION_RUNTIME_POLICY_INVALID');
   const networks = raw.privateNetworks;
   requireController(Array.isArray(networks) && networks.length === 1 && !networks[0].deletedAt
     && networks[0].environmentId === target.environmentId && networks[0].projectId === target.projectId,
@@ -378,6 +394,10 @@ export function normalizeLiveValidationInventory(target, raw, { phase = 'paid' }
       && latest.serviceId === instance.serviceId && UUID.test(latest.id ?? ''), 'LIVE_VALIDATION_DEPLOYMENT_TARGET_MISMATCH');
     const observedCommitSha = latest ? metadata(latest.meta)?.commitHash : null;
     requireController(!latest || SHA.test(observedCommitSha ?? ''), 'LIVE_VALIDATION_DEPLOYMENT_SHA_MISMATCH');
+    if (phase === 'paid') {
+      if (latest) assertLiveValidationRuntimePolicy(latest);
+      instance.activeDeployments.forEach(assertLiveValidationRuntimePolicy);
+    }
     return { id: instance.serviceId, role,
       variableNames: [...new Set([...variables.filter(item => item.serviceId === instance.serviceId).map(item => item.name),
         ...Object.keys(service.variables ?? {})])],
@@ -400,8 +420,11 @@ export function assertLiveValidationDeployment(deployment, target, role, commitS
   const meta = metadata(deployment.meta);
   requireController(record(meta) && meta.commitHash === commitSha && meta.repo === target.repository,
     'LIVE_VALIDATION_DEPLOYMENT_SHA_MISMATCH');
-  if (successful) requireController(deployment.status === 'SUCCESS' && deployment.deploymentStopped === false,
-    'LIVE_VALIDATION_DEPLOYMENT_NOT_READY');
+  if (successful) {
+    requireController(deployment.status === 'SUCCESS' && deployment.deploymentStopped === false,
+      'LIVE_VALIDATION_DEPLOYMENT_NOT_READY');
+    assertLiveValidationRuntimePolicy(deployment);
+  }
   return deployment;
 }
 function identityFields(value) {
@@ -544,15 +567,38 @@ function validateState(state, { target, args }) {
 }
 
 /** Stop only the deployment created by this run; retain the reusable environment and service. */
-export async function cleanupLiveValidationRun({ target, args, state, railway, runtime, writeState }) {
+export async function cleanupLiveValidationRun({ target, args, state, railway, runtime, writeState,
+  now = Date.now, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) }) {
   validateState(state, { target, args });
   const failures = []; let stopped = !state.runtimeCreated; let runClosed = !state.runStarted;
+  const inspectInventory = async () => {
+    try { normalizeLiveValidationInventory(target, await railway.inventory(target), { phase: 'predeploy' }); }
+    catch (error) { failures.push(safeCode(error)); }
+  };
+  const ownedDeployment = deployment => {
+    assertLiveValidationDeployment(deployment, target, 'runtime', args.commitSha, { successful: false });
+    requireController(deployment.id === state.runtimeDeploymentId, 'LIVE_VALIDATION_DEPLOYMENT_TARGET_MISMATCH');
+    return deployment;
+  };
+  const terminated = deployment => {
+    if (deployment.deploymentStopped === true || ['REMOVED', 'FAILED', 'SKIPPED'].includes(deployment.status)) return true;
+    if (deployment.status === 'CRASHED') {
+      try { assertLiveValidationRuntimePolicy(deployment); return true; } catch { /* Stop a crash that could restart. */ }
+    }
+    return false;
+  };
+  const terminationOperation = deployment => {
+    if (['QUEUED', 'BUILDING', 'INITIALIZING', 'WAITING', 'NEEDS_APPROVAL'].includes(deployment.status)) return 'cancel';
+    requireController(['DEPLOYING', 'SUCCESS', 'SLEEPING', 'CRASHED', 'REMOVING'].includes(deployment.status),
+      'LIVE_VALIDATION_CLEANUP_DEPLOYMENT_STATUS_INVALID');
+    return 'stop';
+  };
+  // Inventory drift still blocks a clean verdict, but cannot prevent closing an independently verified owned deployment.
+  await inspectInventory();
   try {
-    normalizeLiveValidationInventory(target, await railway.inventory(target), { phase: 'predeploy' });
     if (state.runtimeCreated) {
-      const deployment = await railway.deployment(state.runtimeDeploymentId);
-      assertLiveValidationDeployment(deployment, target, 'runtime', args.commitSha, { successful: false });
-      if (!deployment.deploymentStopped && state.runStarted && runtime) {
+      let deployment = ownedDeployment(await railway.deployment(state.runtimeDeploymentId));
+      if (!terminated(deployment) && state.runStarted && runtime) {
         try {
           const result = await serviceJson(runtime, '/stop', { method: 'POST', body: { runId: state.runId },
             headers: { 'x-arcanos-source-commit': args.commitSha, 'x-arcanos-deployment-id': state.runtimeDeploymentId } });
@@ -560,14 +606,34 @@ export async function cleanupLiveValidationRun({ target, args, state, railway, r
           runClosed = true;
         } catch { /* Stopping the exact deployment below closes all model execution even if the runtime is unavailable. */ }
       }
-      if (!deployment.deploymentStopped) await railway.stop(state.runtimeDeploymentId);
-      const after = await railway.deployment(state.runtimeDeploymentId);
-      assertLiveValidationDeployment(after, target, 'runtime', args.commitSha, { successful: false });
-      requireController(after.deploymentStopped === true, 'LIVE_VALIDATION_CLEANUP_STOP_READBACK_FAILED');
+      const confirmationDeadline = now() + CLEANUP_CONFIRMATION_TIMEOUT_MS;
+      const requested = new Set();
+      while (true) {
+        let operation; let rejection;
+        if (!terminated(deployment)) {
+          requireController(now() < confirmationDeadline, 'LIVE_VALIDATION_CLEANUP_STOP_READBACK_FAILED');
+          operation = terminationOperation(deployment);
+          if (!requested.has(operation)) {
+            requested.add(operation);
+            try { await railway[operation](state.runtimeDeploymentId); }
+            catch (error) { rejection = error; }
+          }
+        }
+        let after;
+        try { after = ownedDeployment(await railway.deployment(state.runtimeDeploymentId)); }
+        catch (error) { throw rejection ?? error; }
+        if (terminated(after)) break;
+        // A build may become running while cancellation is in flight. Change operation once, without retrying a rejection.
+        if (rejection && terminationOperation(after) === operation) throw rejection;
+        deployment = after;
+        requireController(now() < confirmationDeadline, 'LIVE_VALIDATION_CLEANUP_STOP_READBACK_FAILED');
+        if (rejection) continue;
+        await sleep(Math.min(1_000, confirmationDeadline - now()));
+      }
       stopped = true; runClosed = true;
     }
-    normalizeLiveValidationInventory(target, await railway.inventory(target), { phase: 'predeploy' });
   } catch (error) { failures.push(safeCode(error)); }
+  await inspectInventory();
   state.cleanupComplete = stopped && runClosed && failures.length === 0; writeState(state);
   return { version: SUMMARY_VERSION, status: state.cleanupComplete ? 'PASS' : 'FAIL',
     code: state.cleanupComplete ? 'LIVE_VALIDATION_CLEANUP_PASS' : 'LIVE_VALIDATION_CLEANUP_BLOCKED',
@@ -603,7 +669,7 @@ export async function runLiveValidationController(argv, dependencies = {}) {
     }
     const state = validateState(json(read(stateFile, root), 'LIVE_VALIDATION_CLEANUP_STATE_INVALID'), { target, args });
     const summary = await cleanupLiveValidationRun({ target, args, state, railway: createRailway(), runtime: undefined,
-      writeState: value => protectedWrite(stateFile, value) });
+      writeState: value => protectedWrite(stateFile, value), now, sleep });
     protectedWrite(path.join(directory, 'cleanup-summary.json'), summary); return summary;
   }
   const artifactRaw = read(args.artifactFile, root); const binding = json(artifactRaw, 'LIVE_VALIDATION_ARTIFACT_INVALID');
@@ -697,7 +763,7 @@ export async function runLiveValidationController(argv, dependencies = {}) {
       runId: state.runId, prNumber: args.prNumber, elapsedMs: Math.max(0, now() - started), observedCases: cases,
       ...(runtimeIdentity ? { runtimeIdentity } : {}), ...(actualUsage ? { actualUsage } : {}), usageReadback };
   } finally {
-    cleanup = await cleanupLiveValidationRun({ target, args, state, railway, runtime, writeState });
+    cleanup = await cleanupLiveValidationRun({ target, args, state, railway, runtime, writeState, now, sleep });
     protectedWrite(path.join(directory, 'cleanup-summary.json'), cleanup);
   }
   if (cleanup.status !== 'PASS' && summary.status === 'PASS') { summary.status = 'BLOCKED'; summary.code = 'LIVE_VALIDATION_CLEANUP_BLOCKED'; }
