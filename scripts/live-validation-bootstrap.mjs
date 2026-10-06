@@ -1,11 +1,8 @@
-/** Shared bootstrap for the separate validation services. Never imported by production. */
+/** Single validation-service bootstrap. Never imported by production. */
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { constants, closeSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync,
-  readdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { lstatSync, readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
-import { createServer } from 'node:http';
-import { canonicalLivePreviewJson } from './live-pr-preview-policy.mjs';
 import { validateLiveValidationTarget } from './live-validation-target.mjs';
 
 export class LiveValidationBootstrapError extends Error {
@@ -14,7 +11,29 @@ export class LiveValidationBootstrapError extends Error {
 export const requireValidation = (condition, code) => {
   if (!condition) throw new LiveValidationBootstrapError(code);
 };
-export const validationHash = value => createHash('sha256').update(canonicalLivePreviewJson(value)).digest('hex');
+/** Canonical bounded JSON without evaluating getters or custom serialization. */
+export function canonicalLiveValidationJson(value, depth = 0, budget = { nodes: 0 }) {
+  requireValidation(depth <= 16 && ++budget.nodes <= 4096, 'LIVE_VALIDATION_JSON_INVALID');
+  if (value === null || typeof value === 'boolean' || typeof value === 'string') return JSON.stringify(value);
+  if (typeof value === 'number') { requireValidation(Number.isFinite(value), 'LIVE_VALIDATION_JSON_INVALID'); return JSON.stringify(value); }
+  requireValidation(value && typeof value === 'object' && (Array.isArray(value) || Object.getPrototypeOf(value) === Object.prototype), 'LIVE_VALIDATION_JSON_INVALID');
+  const descriptors = Object.getOwnPropertyDescriptors(value); const keys = Reflect.ownKeys(descriptors);
+  requireValidation(keys.length <= 1025 && keys.every(key => typeof key === 'string'), 'LIVE_VALIDATION_JSON_INVALID');
+  if (Array.isArray(value)) {
+    const length = descriptors.length?.value;
+    requireValidation(Number.isSafeInteger(length) && length >= 0 && length <= 1024 && keys.length === length + 1, 'LIVE_VALIDATION_JSON_INVALID');
+    return '[' + Array.from({ length }, (_, index) => {
+      const item = descriptors[index]; requireValidation(item?.enumerable && Object.hasOwn(item, 'value'), 'LIVE_VALIDATION_JSON_INVALID');
+      return canonicalLiveValidationJson(item.value, depth + 1, budget);
+    }).join(',') + ']';
+  }
+  return '{' + keys.sort().map(key => {
+    const item = descriptors[key];
+    requireValidation(item.enumerable && Object.hasOwn(item, 'value') && !['__proto__', 'constructor', 'prototype'].includes(key), 'LIVE_VALIDATION_JSON_INVALID');
+    return JSON.stringify(key) + ':' + canonicalLiveValidationJson(item.value, depth + 1, budget);
+  }).join(',') + '}';
+}
+export const validationHash = value => createHash('sha256').update(canonicalLiveValidationJson(value)).digest('hex');
 export function validationOpaqueEqual(left, right) {
   if (typeof left !== 'string' || typeof right !== 'string') return false;
   const a = Buffer.from(left); const b = Buffer.from(right);
@@ -41,7 +60,7 @@ export function validationDirectoryHash(directory) {
 
 /** Called during a credential-empty image build on an independent exact public Git checkout. */
 export function createValidationBuildManifest(repositoryRoot, expectedSha, role) {
-  requireValidation(/^[0-9a-f]{40}$/u.test(expectedSha) && ['runtime', 'supervisor'].includes(role), 'DEPLOYMENT_BUILD_SHA_INVALID');
+  requireValidation(/^[0-9a-f]{40}$/u.test(expectedSha) && role === 'runtime', 'DEPLOYMENT_BUILD_SHA_INVALID');
   const git = args => execFileSync('git', ['-c', 'core.fsmonitor=false', ...args], {
     cwd: repositoryRoot, encoding: 'utf8', env: { PATH: process.env.PATH }, timeout: 10_000,
   }).trim();
@@ -54,6 +73,8 @@ export function createValidationBuildManifest(repositoryRoot, expectedSha, role)
 
 export function validationIdentity({ target, role, environment, manifest, repositoryRoot }) {
   target = validateLiveValidationTarget(target);
+  requireValidation(role === 'runtime', 'DEPLOYMENT_IDENTITY_MISMATCH');
+  canonicalLiveValidationJson(manifest);
   requireValidation(manifest?.version === 1 && manifest.repository === target.repository && manifest.role === role
     && /^[0-9a-f]{40}$/u.test(manifest.sourceCommit ?? '') && /^[0-9a-f]{40}$/u.test(manifest.treeSha ?? '')
     && /^[0-9a-f]{64}$/u.test(manifest.compiledSha256 ?? ''), 'DEPLOYMENT_BUILD_MANIFEST_INVALID');
@@ -61,35 +82,12 @@ export function validationIdentity({ target, role, environment, manifest, reposi
     && environment.RAILWAY_ENVIRONMENT_ID === target.environmentId && environment.RAILWAY_ENVIRONMENT_NAME === 'live-validation'
     && environment.RAILWAY_SERVICE_ID === target[`${role}ServiceId`]
     && environment.RAILWAY_GIT_COMMIT_SHA === manifest.sourceCommit
-    && /^[0-9a-f-]{36}$/u.test(environment.RAILWAY_DEPLOYMENT_ID ?? '')
-    && (role !== 'supervisor' || manifest.sourceCommit === target.trustedSupervisorSha), 'DEPLOYMENT_IDENTITY_MISMATCH');
+    && /^[0-9a-f-]{36}$/u.test(environment.RAILWAY_DEPLOYMENT_ID ?? ''), 'DEPLOYMENT_IDENTITY_MISMATCH');
   requireValidation(validationDirectoryHash(path.join(repositoryRoot, 'dist')) === manifest.compiledSha256,
     'DEPLOYMENT_COMPILED_CONTENT_MISMATCH');
   return Object.freeze({ role, sourceCommit: manifest.sourceCommit, projectId: target.projectId,
     environmentId: target.environmentId, serviceId: target[`${role}ServiceId`],
     deploymentId: environment.RAILWAY_DEPLOYMENT_ID, buildManifestSha256: validationHash(manifest) });
-}
-
-/** Variables are securely delivered by Railway; materialization emits no PEM/key values. */
-export function materializeValidationTls(environment, directory, repositoryRoot) {
-  requireValidation(path.isAbsolute(directory), 'TLS_IDENTITY_FILE_PATH_INVALID');
-  mkdirSync(directory, { recursive: true, mode: 0o700 });
-  const stat = lstatSync(directory); const resolved = realpathSync(directory);
-  const relative = path.relative(realpathSync(repositoryRoot), resolved);
-  requireValidation(!stat.isSymbolicLink() && stat.isDirectory() && (stat.mode & 0o077) === 0
-    && stat.uid === process.getuid() && (relative.startsWith('../') || path.isAbsolute(relative)), 'TLS_IDENTITY_FILE_PATH_INVALID');
-  const files = {};
-  for (const [property, suffix] of [['caFile', 'CA'], ['certFile', 'CERT'], ['keyFile', 'KEY']]) {
-    const variable = `ARCANOS_LIVE_VALIDATION_TLS_${suffix}_PEM`; const value = environment[variable];
-    requireValidation(typeof value === 'string' && value.length > 0 && value.length <= 65_536,
-      'TLS_IDENTITY_BINDING_BLOCKED');
-    const filename = path.join(resolved, suffix.toLowerCase() + '.pem');
-    const fd = openSync(filename, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
-    try { writeFileSync(fd, value); fsyncSync(fd); } finally { closeSync(fd); }
-    files[property] = filename;
-    delete environment[variable];
-  }
-  return files;
 }
 
 export async function readValidationJson(request, maximumBytes = 65_536) {
@@ -106,24 +104,13 @@ export function validationJson(response, value, status = 200) {
   response.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
   response.end(JSON.stringify(value));
 }
-export async function startValidationHealth(port, role) {
-  requireValidation(/^[1-9][0-9]{0,4}$/u.test(String(port)) && Number(port) <= 65_535 && Number(port) !== 8443,
-    'LIVE_VALIDATION_HEALTH_PORT_INVALID');
-  const server = createServer((request, response) => {
-    validationJson(response, request.method === 'GET' && request.url === '/healthz'
-      ? { ok: true, role, providerCallsEnabled: false } : { code: 'NOT_FOUND' }, request.url === '/healthz' ? 200 : 404);
-  });
-  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(Number(port), '::', resolve); });
-  return server;
-}
-
-/** The candidate never receives a production/provider/lifecycle credential. */
+/** The service receives only its validation key and test token; production/data/lifecycle credentials fail closed. */
 export function assertValidationRoleCredentials(role, environment) {
-  const forbidden = /(?:API_KEY|DATABASE|POSTGRES|^PG(?:HOST|USER|PORT|DATABASE|PASSWORD|SSLMODE)$|REDIS|NOTION|OAUTH|TOKEN|SECRET|REGISTER_KEY)/u;
+  const forbidden = /(?:API_KEY|DATABASE|POSTGRES|^PG(?:HOST|USER|PORT|DATABASE|PASSWORD|SSLMODE)$|REDIS|NOTION|OAUTH|TOKEN|SECRET|REGISTER_KEY|PRIVATE_KEY|_KEY_PEM|^ARCANOS_LIVE_VALIDATION_(?:TLS|CONTROLLER)_)/u;
   for (const name of Object.keys(environment)) {
-    if (role === 'supervisor' && name === 'ARCANOS_LIVE_PREVIEW_OPENAI_API_KEY') continue;
+    if (role === 'runtime' && ['ARCANOS_LIVE_PREVIEW_OPENAI_API_KEY', 'ARCANOS_LIVE_VALIDATION_TEST_TOKEN'].includes(name)) continue;
     requireValidation(!forbidden.test(name), 'LIVE_VALIDATION_UNRELATED_CREDENTIAL_FORBIDDEN');
   }
-  requireValidation(!['NODE_TLS_REJECT_UNAUTHORIZED', 'NODE_EXTRA_CA_CERTS', 'OPENAI_BASE_URL'].some(name => Object.hasOwn(environment, name)),
+  requireValidation(!['NODE_OPTIONS', 'NODE_TLS_REJECT_UNAUTHORIZED', 'NODE_EXTRA_CA_CERTS', 'OPENAI_BASE_URL'].some(name => Object.hasOwn(environment, name)),
     'EGRESS_POLICY_AMBIENT_OVERRIDE_FORBIDDEN');
 }

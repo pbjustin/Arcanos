@@ -2,52 +2,35 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import {
-  assertLiveValidationInventory, validateLiveValidationTarget, LiveValidationTargetError,
-  LIVE_VALIDATION_HARD_LIMITS, LIVE_VALIDATION_HELPER_MODEL_IDS, LIVE_VALIDATION_PROJECT_ID,
+  assertLiveValidationInventory, validateLiveValidationPublicOrigin, validateLiveValidationTarget,
+  LiveValidationTargetError, LIVE_VALIDATION_TARGET_VERSION, LIVE_VALIDATION_HARD_LIMITS,
+  LIVE_VALIDATION_HELPER_MODEL_IDS, LIVE_VALIDATION_PROJECT_ID,
   LIVE_VALIDATION_PRODUCTION_ENVIRONMENT_ID, LIVE_VALIDATION_PROTECTED_RESOURCE_IDS,
-  LIVE_VALIDATION_QUOTA_LEDGER_MOUNT, LIVE_VALIDATION_RUNTIME_VARIABLE_NAMES,
-  LIVE_VALIDATION_SUPERVISOR_VARIABLE_NAMES
+  LIVE_VALIDATION_RUNTIME_VARIABLE_NAMES
 } from './live-validation-target.mjs';
 
 const environmentId = '11111111-1111-4111-8111-111111111111';
 const runtimeServiceId = '22222222-2222-4222-8222-222222222222';
-const supervisorServiceId = '33333333-3333-4333-8333-333333333333';
-const ledgerId = '44444444-4444-4444-8444-444444444444';
-const trustedSupervisorSha = 'a'.repeat(40);
+const unrelatedId = '33333333-3333-4333-8333-333333333333';
+const publicOrigin = 'https://arcanos-v2-validation.up.railway.app';
 function targetFixture() {
   return {
-    version: 'arcanos-live-validation-target/v1', repository: 'pbjustin/Arcanos',
+    version: LIVE_VALIDATION_TARGET_VERSION, repository: 'pbjustin/Arcanos',
     projectId: LIVE_VALIDATION_PROJECT_ID, environmentId, environmentName: 'live-validation',
-    runtimeServiceId, supervisorServiceId,
-    privateOrigins: { runtime: 'https://live-validation-runtime.railway.internal:8443',
-      supervisor: 'https://live-validation-supervisor.railway.internal:8443' },
-    mtlsPeers: {
-      runtime: { dns: 'live-validation-runtime.railway.internal', sha256: 'a'.repeat(64) },
-      supervisor: { dns: 'live-validation-supervisor.railway.internal', sha256: 'b'.repeat(64) },
-      verifier: { dns: 'live-validation-verifier.railway.internal', sha256: 'c'.repeat(64) }
-    },
-    trustedSupervisorSha, limits: { ...LIVE_VALIDATION_HARD_LIMITS },
+    runtimeServiceId, publicOrigin, limits: { ...LIVE_VALIDATION_HARD_LIMITS },
     models: ['ft:gpt-4.1:arcanos:authority:fixture', ...LIVE_VALIDATION_HELPER_MODEL_IDS].map(id => ({
       id, inputMicroUsdPerToken: 1.25, outputMicroUsdPerToken: 5
     })), writes: false
   };
 }
-function inventoryFixture({ ledger = false } = {}) {
+function inventoryFixture() {
   return {
     projectId: LIVE_VALIDATION_PROJECT_ID, environmentId, environmentName: 'live-validation',
-    sharedVariableNames: [], privateNetworkEnabled: true,
-    volumes: ledger ? [{ id: ledgerId, serviceId: supervisorServiceId,
-      mountPath: LIVE_VALIDATION_QUOTA_LEDGER_MOUNT, purpose: 'quota_ledger' }] : [],
-    services: ['runtime', 'supervisor'].map(role => ({
-      id: role === 'runtime' ? runtimeServiceId : supervisorServiceId, role,
-      variableNames: role === 'runtime' ? [...LIVE_VALIDATION_RUNTIME_VARIABLE_NAMES]
-        : [...LIVE_VALIDATION_SUPERVISOR_VARIABLE_NAMES],
-      publicDomains: [], tcpProxyDomains: [],
-      volumeMounts: role === 'supervisor' && ledger ? [{ id: ledgerId,
-        mountPath: LIVE_VALIDATION_QUOTA_LEDGER_MOUNT, purpose: 'quota_ledger' }] : [],
-      source: { repository: 'pbjustin/Arcanos', commitSha: role === 'runtime' ? 'b'.repeat(40) : trustedSupervisorSha,
-        autoDeploy: false }
-    }))
+    sharedVariableNames: [], privateNetworkEnabled: true, volumes: [],
+    services: [{ id: runtimeServiceId, role: 'runtime',
+      variableNames: [...LIVE_VALIDATION_RUNTIME_VARIABLE_NAMES],
+      publicDomains: [new URL(publicOrigin).hostname], tcpProxyDomains: [], volumeMounts: [],
+      source: { repository: 'pbjustin/Arcanos', commitSha: 'b'.repeat(40), autoDeploy: false } }]
   };
 }
 function rejected(callback, code) {
@@ -55,42 +38,48 @@ function rejected(callback, code) {
     && error.message === code);
 }
 
-test('bound target is an independent deeply frozen JSON snapshot', () => {
-  const source = targetFixture();
-  const target = validateLiveValidationTarget(source);
+test('bound v2 target is an independent deeply frozen single-service JSON snapshot', () => {
+  const source = targetFixture(); const target = validateLiveValidationTarget(source);
   assert.deepEqual(target, source);
   assert.ok(Object.isFrozen(target) && Object.isFrozen(target.models) && Object.isFrozen(target.models[0])
-    && Object.isFrozen(target.mtlsPeers.verifier) && Object.isFrozen(target.limits));
+    && Object.isFrozen(target.limits));
   source.models[0].id = 'ft:changed';
   assert.equal(target.models[0].id, 'ft:gpt-4.1:arcanos:authority:fixture');
   assert.ok(!Object.isFrozen(source));
 });
 
-test('unbound example rejects before it can authorize an environment', () => {
+test('unbound example cannot authorize an environment', () => {
   const example = JSON.parse(readFileSync(new URL('../infra/live-validation/target.example.json', import.meta.url), 'utf8'));
   rejected(() => validateLiveValidationTarget(example), 'LIVE_VALIDATION_TARGET_PROTECTED');
 });
 
-test('production environment and each production resource are denied in every target ID slot', () => {
+test('production environment and every protected resource are denied in both target ID slots', () => {
   for (const id of [LIVE_VALIDATION_PRODUCTION_ENVIRONMENT_ID, ...LIVE_VALIDATION_PROTECTED_RESOURCE_IDS]) {
-    for (const field of ['environmentId', 'runtimeServiceId', 'supervisorServiceId']) {
+    for (const field of ['environmentId', 'runtimeServiceId']) {
       const target = targetFixture(); target[field] = id;
       rejected(() => validateLiveValidationTarget(target), 'LIVE_VALIDATION_TARGET_PROTECTED');
     }
   }
+  const duplicate = targetFixture(); duplicate.runtimeServiceId = duplicate.environmentId;
+  rejected(() => validateLiveValidationTarget(duplicate), 'LIVE_VALIDATION_TARGET_PROTECTED');
 });
 
-test('persistent authorization is restricted to the repository, project, environment name and read-only mode', () => {
-  for (const [field, value] of [['version', 'arcanos-live-pr-preview/v1'], ['repository', 'other/Arcanos'],
+test('authorization fixes repository, project, environment and transient mode and rejects old topology fields', () => {
+  for (const [field, value] of [['version', 'arcanos-live-validation-target/v1'], ['repository', 'other/Arcanos'],
     ['projectId', environmentId], ['environmentName', 'production'], ['writes', true]]) {
     const target = targetFixture(); target[field] = value;
     rejected(() => validateLiveValidationTarget(target), 'LIVE_VALIDATION_TARGET_INVALID');
   }
-  const target = targetFixture(); target.runtimeServiceId = target.supervisorServiceId;
-  rejected(() => validateLiveValidationTarget(target), 'LIVE_VALIDATION_TARGET_PROTECTED');
+  for (const field of ['supervisorServiceId', 'privateOrigins', 'mtlsPeers', 'trustedSupervisorSha']) {
+    const target = targetFixture(); target[field] = 'fixture';
+    rejected(() => validateLiveValidationTarget(target), 'LIVE_VALIDATION_TARGET_INVALID');
+  }
 });
 
 test('every budget cap can tighten but cannot be omitted, widened, fractional or zero', () => {
+  assert.deepEqual(LIVE_VALIDATION_HARD_LIMITS, {
+    maxSpendMicroUsd: 2_000_000, maxRequests: 32, maxWorkflows: 2, durationMs: 600_000
+  });
   const tighter = targetFixture(); tighter.limits = Object.fromEntries(Object.keys(LIVE_VALIDATION_HARD_LIMITS).map(key => [key, 1]));
   assert.deepEqual(validateLiveValidationTarget(tighter).limits, tighter.limits);
   for (const [key, cap] of Object.entries(LIVE_VALIDATION_HARD_LIMITS)) {
@@ -103,79 +92,73 @@ test('every budget cap can tighten but cannot be omitted, widened, fractional or
   }
 });
 
-test('trusted supervisor revision requires an exact nonzero lowercase Git SHA', () => {
-  for (const value of [null, 'main', 'a'.repeat(39), 'A'.repeat(40), '0'.repeat(40)]) {
-    const target = targetFixture(); target.trustedSupervisorSha = value;
-    rejected(() => validateLiveValidationTarget(target), 'LIVE_VALIDATION_SUPERVISOR_SHA_INVALID');
+test('origin is exact normal Railway HTTPS without ports, paths, credentials or normalization', () => {
+  assert.equal(validateLiveValidationPublicOrigin(publicOrigin), true);
+  for (const value of [null, 'https://example.com', 'http://arcanos-v2-validation.up.railway.app',
+    'https://arcanos-v2-validation.railway.internal:8443', publicOrigin + ':443', publicOrigin + ':8443',
+    publicOrigin + '/', 'https://ARCANOS-v2-validation.up.railway.app',
+    'https://user@arcanos-v2-validation.up.railway.app', publicOrigin + '/path', publicOrigin + '?secret=x',
+    publicOrigin + '#x', 'https://nested.arcanos-v2-validation.up.railway.app']) {
+    assert.equal(validateLiveValidationPublicOrigin(value), false, String(value));
+    const target = targetFixture(); target.publicOrigin = value;
+    rejected(() => validateLiveValidationTarget(target), 'LIVE_VALIDATION_PUBLIC_TARGET_INVALID');
   }
 });
 
-test('private origins exclude public, plain HTTP, alternate ports, credentials, paths and normalization', () => {
-  for (const value of ['https://example.com:8443', 'http://live-validation-runtime.railway.internal:8443',
-    'https://live-validation-runtime.railway.internal', 'https://live-validation-runtime.railway.internal:443',
-    'https://live-validation-runtime.railway.internal:8443/', 'https://LIVE-validation-runtime.railway.internal:8443',
-    'https://user@live-validation-runtime.railway.internal:8443', 'https://live-validation-runtime.railway.internal:8443/path',
-    'https://live-validation-runtime.railway.internal:8443?secret=x', 'https://live-validation-runtime.railway.internal:8443#x']) {
-    const target = targetFixture(); target.privateOrigins.runtime = value;
-    rejected(() => validateLiveValidationTarget(target), 'LIVE_VALIDATION_PRIVATE_TARGET_INVALID');
-  }
-});
-
-test('each mTLS role requires its own exact DNS and certificate SHA256 identity', () => {
-  for (const role of ['runtime', 'supervisor', 'verifier']) {
-    for (const value of [null, '0'.repeat(64), 'A'.repeat(64), 'a'.repeat(63)]) {
-      const target = targetFixture(); target.mtlsPeers[role].sha256 = value;
-      rejected(() => validateLiveValidationTarget(target), 'LIVE_VALIDATION_MTLS_PEER_INVALID');
-    }
-  }
-  const target = targetFixture(); target.mtlsPeers.verifier = { ...target.mtlsPeers.runtime };
-  rejected(() => validateLiveValidationTarget(target), 'LIVE_VALIDATION_MTLS_PEER_INVALID');
-  const mismatch = targetFixture(); mismatch.mtlsPeers.runtime.dns = 'another.railway.internal';
-  rejected(() => validateLiveValidationTarget(mismatch), 'LIVE_VALIDATION_PRIVATE_TARGET_INVALID');
-});
-
-test('model contract preserves one fine-tune authority and both existing helper roles with positive prices', () => {
+test('model contract fixes one fine-tune and both helper roles with bounded positive prices', () => {
   for (const id of ['gpt-4.1', 'ft:', 'ft:with spaces', 'gpt-6-luna']) {
     const target = targetFixture(); target.models[0].id = id;
     rejected(() => validateLiveValidationTarget(target), 'LIVE_VALIDATION_TARGET_MODELS_INVALID');
   }
-  for (const value of [0, -1, null, 100_001]) {
-    const target = targetFixture(); target.models[0].inputMicroUsdPerToken = value;
-    rejected(() => validateLiveValidationTarget(target), 'LIVE_VALIDATION_TARGET_MODELS_INVALID');
+  for (const field of ['inputMicroUsdPerToken', 'outputMicroUsdPerToken']) {
+    for (const value of [0, -1, null, 100_001, Infinity, NaN]) {
+      const target = targetFixture(); target.models[0][field] = value;
+      rejected(() => validateLiveValidationTarget(target), Number.isFinite(value) || value === null
+        ? 'LIVE_VALIDATION_TARGET_MODELS_INVALID' : 'LIVE_VALIDATION_TARGET_INVALID');
+    }
+    const maximum = targetFixture(); maximum.models[0][field] = 100_000;
+    assert.doesNotThrow(() => validateLiveValidationTarget(maximum));
   }
   const extra = targetFixture(); extra.models.push({ id: 'gpt-4.1', inputMicroUsdPerToken: 1, outputMicroUsdPerToken: 1 });
   rejected(() => validateLiveValidationTarget(extra), 'LIVE_VALIDATION_TARGET_MODELS_INVALID');
+  for (const helper of [1, 2]) {
+    const replaced = targetFixture(); replaced.models[helper].id = 'gpt-4.1';
+    rejected(() => validateLiveValidationTarget(replaced), 'LIVE_VALIDATION_TARGET_MODELS_INVALID');
+  }
   const constants = readFileSync(new URL('../src/shared/constants.ts', import.meta.url), 'utf8');
   assert.match(constants, /MODEL_GPT_6_LUNA:\s*'gpt-6-luna'/u);
   assert.match(constants, /MODEL_GPT_6_1_SOL:\s*'gpt-6\.1-sol'/u);
 });
 
-test('JSON boundary rejects unknown fields, inherited records, accessors, sparse arrays and cycles without executing code', () => {
+test('target JSON rejects unknown fields, prototypes, getters, serialization hooks, sparse arrays and cycles', () => {
   const unknown = targetFixture(); unknown.providerKey = 'fixture';
   rejected(() => validateLiveValidationTarget(unknown), 'LIVE_VALIDATION_TARGET_INVALID');
-  const inherited = Object.create(targetFixture());
-  rejected(() => validateLiveValidationTarget(inherited), 'LIVE_VALIDATION_TARGET_INVALID');
+  rejected(() => validateLiveValidationTarget(Object.create(targetFixture())), 'LIVE_VALIDATION_TARGET_INVALID');
   const getter = targetFixture(); let called = false;
   Object.defineProperty(getter, 'repository', { enumerable: true, get() { called = true; return 'pbjustin/Arcanos'; } });
   rejected(() => validateLiveValidationTarget(getter), 'LIVE_VALIDATION_TARGET_INVALID');
+  assert.equal(called, false);
+  const serializer = targetFixture(); serializer.toJSON = () => { called = true; return targetFixture(); };
+  rejected(() => validateLiveValidationTarget(serializer), 'LIVE_VALIDATION_TARGET_INVALID');
   assert.equal(called, false);
   const sparse = targetFixture(); delete sparse.models[1];
   rejected(() => validateLiveValidationTarget(sparse), 'LIVE_VALIDATION_TARGET_INVALID');
   const cyclic = targetFixture(); cyclic.models.push(cyclic);
   rejected(() => validateLiveValidationTarget(cyclic), 'LIVE_VALIDATION_TARGET_INVALID');
+  const poisoned = targetFixture(); Object.defineProperty(poisoned, '__proto__', { enumerable: true, value: {} });
+  rejected(() => validateLiveValidationTarget(poisoned), 'LIVE_VALIDATION_TARGET_INVALID');
+  const symbol = targetFixture(); symbol[Symbol('hidden')] = 'fixture';
+  rejected(() => validateLiveValidationTarget(symbol), 'LIVE_VALIDATION_TARGET_INVALID');
 });
 
-test('inventory accepts only the two private roles and an optional single isolated quota ledger', () => {
-  for (const ledger of [false, true]) {
-    const source = inventoryFixture({ ledger });
-    const inventory = assertLiveValidationInventory(targetFixture(), source);
-    assert.deepEqual(inventory, source);
-    assert.ok(Object.isFrozen(inventory) && Object.isFrozen(inventory.services[0].source));
-    assert.ok(!Object.isFrozen(source));
-  }
+test('inventory accepts exactly one service with its public origin and no storage', () => {
+  const source = inventoryFixture(); const inventory = assertLiveValidationInventory(targetFixture(), source);
+  assert.deepEqual(inventory, source);
+  assert.ok(Object.isFrozen(inventory) && Object.isFrozen(inventory.services[0].source));
+  assert.ok(!Object.isFrozen(source));
 });
 
-test('inventory must prove exact environment ownership and private networking with no shared variables', () => {
+test('inventory proves environment ownership and isolated networking without shared variables', () => {
   for (const [field, value] of [['projectId', environmentId], ['environmentId', LIVE_VALIDATION_PRODUCTION_ENVIRONMENT_ID],
     ['environmentName', 'production']]) {
     const inventory = inventoryFixture(); inventory[field] = value;
@@ -188,40 +171,40 @@ test('inventory must prove exact environment ownership and private networking wi
   }
 });
 
-test('production or additional services cannot be hidden in the environment inventory', () => {
-  for (const id of LIVE_VALIDATION_PROTECTED_RESOURCE_IDS) {
+test('production IDs, wrong roles, missing services and any extra service are denied', () => {
+  for (const id of [LIVE_VALIDATION_PRODUCTION_ENVIRONMENT_ID, ...LIVE_VALIDATION_PROTECTED_RESOURCE_IDS, unrelatedId]) {
     const inventory = inventoryFixture(); inventory.services[0].id = id;
     rejected(() => assertLiveValidationInventory(targetFixture(), inventory), 'LIVE_VALIDATION_INVENTORY_SERVICES_INVALID');
   }
-  const extra = inventoryFixture(); extra.services.push({ ...extra.services[0], id: ledgerId });
+  for (const role of ['supervisor', 'postgres', 'redis']) {
+    const inventory = inventoryFixture(); inventory.services[0].role = role;
+    rejected(() => assertLiveValidationInventory(targetFixture(), inventory), 'LIVE_VALIDATION_INVENTORY_SERVICES_INVALID');
+  }
+  const extra = inventoryFixture(); extra.services.push({ ...extra.services[0], id: unrelatedId });
   rejected(() => assertLiveValidationInventory(targetFixture(), extra), 'LIVE_VALIDATION_INVENTORY_SERVICES_INVALID');
-  const missing = inventoryFixture(); missing.services.pop();
+  const missing = inventoryFixture(); missing.services = [];
   rejected(() => assertLiveValidationInventory(targetFixture(), missing), 'LIVE_VALIDATION_INVENTORY_SERVICES_INVALID');
 });
 
-test('production data volumes cannot be relabeled as a validation quota ledger', () => {
-  for (const id of ['12780efb-f40b-4625-9ec6-d26f2170dbd4', '6cabb50f-cb69-4938-98b7-73edc06a29b5',
-    '5be976c8-e700-4d10-8528-4f0263ff98a0', '398546f6-fe53-4e94-b375-66366b8a1a5a',
-    'dcf7e127-fa4f-42b1-acf0-c8030789d321']) {
-    const inventory = inventoryFixture({ ledger: true });
-    inventory.volumes[0].id = id;
-    inventory.services[1].volumeMounts[0].id = id;
-    rejected(() => assertLiveValidationInventory(targetFixture(), inventory), 'LIVE_VALIDATION_INVENTORY_VOLUME_FORBIDDEN');
+test('all volumes and service mounts are forbidden including production volumes and quota ledgers', () => {
+  for (const id of [unrelatedId, ...LIVE_VALIDATION_PROTECTED_RESOURCE_IDS]) {
+    for (const field of ['volumes', 'volumeMounts']) {
+      const inventory = inventoryFixture(); const owner = field === 'volumes' ? inventory : inventory.services[0];
+      owner[field] = [{ id, serviceId: runtimeServiceId, mountPath: '/var/lib/validation', purpose: 'quota_ledger' }];
+      rejected(() => assertLiveValidationInventory(targetFixture(), inventory), 'LIVE_VALIDATION_INVENTORY_VOLUME_FORBIDDEN');
+    }
   }
 });
 
-test('provider credentials and controller public keys belong only to supervisor, with no management or data credentials', () => {
-  for (const name of ['ARCANOS_LIVE_PREVIEW_OPENAI_API_KEY', 'ARCANOS_LIVE_VALIDATION_CONTROLLER_PUBLIC_KEY_PEM']) {
+test('validation key and test token are the only credential exceptions; values and ambient overrides are denied', () => {
+  assert.ok(LIVE_VALIDATION_RUNTIME_VARIABLE_NAMES.includes('ARCANOS_LIVE_PREVIEW_OPENAI_API_KEY'));
+  assert.ok(LIVE_VALIDATION_RUNTIME_VARIABLE_NAMES.includes('ARCANOS_LIVE_VALIDATION_TEST_TOKEN'));
+  for (const name of ['OPENAI_API_KEY', 'DATABASE_URL', 'REDIS_URL', 'PGPASSWORD', 'RAILWAY_TOKEN',
+    'RAILWAY_API_TOKEN', 'NODE_OPTIONS', 'NODE_TLS_REJECT_UNAUTHORIZED', 'NODE_EXTRA_CA_CERTS', 'OPENAI_BASE_URL',
+    'ARCANOS_LIVE_VALIDATION_CONTROLLER_PRIVATE_KEY_PEM', 'ARCANOS_LIVE_VALIDATION_CONTROLLER_PUBLIC_KEY_PEM',
+    'ARCANOS_LIVE_VALIDATION_TLS_CERT_PEM']) {
     const inventory = inventoryFixture(); inventory.services[0].variableNames.push(name);
     rejected(() => assertLiveValidationInventory(targetFixture(), inventory), 'LIVE_VALIDATION_INVENTORY_VARIABLE_FORBIDDEN');
-  }
-  for (const name of ['OPENAI_API_KEY', 'DATABASE_URL', 'REDIS_URL', 'PGPASSWORD', 'RAILWAY_TOKEN',
-    'RAILWAY_API_TOKEN', 'NODE_OPTIONS', 'NODE_TLS_REJECT_UNAUTHORIZED',
-    'ARCANOS_LIVE_VALIDATION_CONTROLLER_PRIVATE_KEY_PEM']) {
-    for (const role of [0, 1]) {
-      const inventory = inventoryFixture(); inventory.services[role].variableNames.push(name);
-      rejected(() => assertLiveValidationInventory(targetFixture(), inventory), 'LIVE_VALIDATION_INVENTORY_VARIABLE_FORBIDDEN');
-    }
   }
   const duplicate = inventoryFixture(); duplicate.services[0].variableNames.push('PORT');
   rejected(() => assertLiveValidationInventory(targetFixture(), duplicate), 'LIVE_VALIDATION_INVENTORY_VARIABLE_FORBIDDEN');
@@ -229,46 +212,38 @@ test('provider credentials and controller public keys belong only to supervisor,
   rejected(() => assertLiveValidationInventory(targetFixture(), values), 'LIVE_VALIDATION_INVENTORY_SERVICES_INVALID');
 });
 
-test('neither private service admits public HTTPS domains or TCP proxies', () => {
-  for (const role of [0, 1]) {
-    for (const field of ['publicDomains', 'tcpProxyDomains']) {
-      const inventory = inventoryFixture(); inventory.services[role][field] = ['unexpected.example'];
-      rejected(() => assertLiveValidationInventory(targetFixture(), inventory), 'LIVE_VALIDATION_INVENTORY_PUBLIC_ROUTE_FORBIDDEN');
-    }
+test('inventory admits only target hostname and no TCP proxies or second public routes', () => {
+  for (const domains of [[], ['unexpected.up.railway.app'], [new URL(publicOrigin).hostname, 'other.example'], [publicOrigin]]) {
+    const inventory = inventoryFixture(); inventory.services[0].publicDomains = domains;
+    rejected(() => assertLiveValidationInventory(targetFixture(), inventory), 'LIVE_VALIDATION_INVENTORY_PUBLIC_ROUTE_FORBIDDEN');
+  }
+  const tcp = inventoryFixture(); tcp.services[0].tcpProxyDomains = ['unexpected.example'];
+  rejected(() => assertLiveValidationInventory(targetFixture(), tcp), 'LIVE_VALIDATION_INVENTORY_PUBLIC_ROUTE_FORBIDDEN');
+});
+
+test('source requires exact lowercase nonzero repository revision and disabled automatic deployment', () => {
+  for (const [field, value] of [['autoDeploy', true], ['autoDeploy', null], ['repository', 'other/Arcanos'],
+    ['commitSha', 'main'], ['commitSha', '0'.repeat(40)], ['commitSha', 'A'.repeat(40)], ['commitSha', 'b'.repeat(39)]]) {
+    const inventory = inventoryFixture(); inventory.services[0].source[field] = value;
+    rejected(() => assertLiveValidationInventory(targetFixture(), inventory), 'LIVE_VALIDATION_INVENTORY_SOURCE_INVALID');
   }
 });
 
-test('source requires pinned repository revisions, disabled auto deployment and exact trusted supervisor revision', () => {
-  for (const role of [0, 1]) {
-    for (const [field, value] of [['autoDeploy', true], ['autoDeploy', null], ['repository', 'other/Arcanos'],
-      ['commitSha', 'main'], ['commitSha', '0'.repeat(40)]]) {
-      const inventory = inventoryFixture(); inventory.services[role].source[field] = value;
-      rejected(() => assertLiveValidationInventory(targetFixture(), inventory), 'LIVE_VALIDATION_INVENTORY_SOURCE_INVALID');
-    }
-  }
-  const untrusted = inventoryFixture(); untrusted.services[1].source.commitSha = 'c'.repeat(40);
-  rejected(() => assertLiveValidationInventory(targetFixture(), untrusted), 'LIVE_VALIDATION_INVENTORY_SOURCE_INVALID');
-});
-
-test('only explicit trusted predeploy phase permits fresh services with no observed deployed revision', () => {
-  const fresh = inventoryFixture(); fresh.services.forEach(service => { service.source.commitSha = null; });
+test('only explicit predeploy permits missing deployed revision without relaxing isolation or source configuration', () => {
+  const fresh = inventoryFixture(); fresh.services[0].source.commitSha = null;
   assert.deepEqual(assertLiveValidationInventory(targetFixture(), fresh, { phase: 'predeploy' }), fresh);
   rejected(() => assertLiveValidationInventory(targetFixture(), fresh), 'LIVE_VALIDATION_INVENTORY_SOURCE_INVALID');
   rejected(() => assertLiveValidationInventory(targetFixture(), fresh, { phase: 'paid' }), 'LIVE_VALIDATION_INVENTORY_SOURCE_INVALID');
-  const existing = inventoryFixture(); existing.services[1].source.commitSha = 'c'.repeat(40);
-  assert.deepEqual(assertLiveValidationInventory(targetFixture(), existing, { phase: 'predeploy' }), existing);
-  rejected(() => assertLiveValidationInventory(targetFixture(), existing), 'LIVE_VALIDATION_INVENTORY_SOURCE_INVALID');
-  for (const role of [0, 1]) {
-    for (const value of [undefined, '', 'main', '0'.repeat(40)]) {
-      const invalid = inventoryFixture(); invalid.services[role].source.commitSha = value;
-      assert.throws(() => assertLiveValidationInventory(targetFixture(), invalid, { phase: 'predeploy' }));
-    }
-    for (const [field, value] of [['autoDeploy', true], ['repository', 'other/Arcanos']]) {
-      const invalid = structuredClone(fresh); invalid.services[role].source[field] = value;
-      rejected(() => assertLiveValidationInventory(targetFixture(), invalid, { phase: 'predeploy' }),
-        'LIVE_VALIDATION_INVENTORY_SOURCE_INVALID');
-    }
+  for (const value of [undefined, '', 'main', '0'.repeat(40)]) {
+    const invalid = inventoryFixture(); invalid.services[0].source.commitSha = value;
+    assert.throws(() => assertLiveValidationInventory(targetFixture(), invalid, { phase: 'predeploy' }));
   }
+  for (const [field, value] of [['autoDeploy', true], ['repository', 'other/Arcanos']]) {
+    const invalid = structuredClone(fresh); invalid.services[0].source[field] = value;
+    rejected(() => assertLiveValidationInventory(targetFixture(), invalid, { phase: 'predeploy' }), 'LIVE_VALIDATION_INVENTORY_SOURCE_INVALID');
+  }
+  const shared = structuredClone(fresh); shared.sharedVariableNames = ['DATABASE_URL'];
+  rejected(() => assertLiveValidationInventory(targetFixture(), shared, { phase: 'predeploy' }), 'LIVE_VALIDATION_INVENTORY_ISOLATION_INVALID');
   const counterfeit = structuredClone(fresh); counterfeit.phase = 'predeploy';
   rejected(() => assertLiveValidationInventory(targetFixture(), counterfeit), 'LIVE_VALIDATION_INVENTORY_TARGET_MISMATCH');
   for (const options of [{ phase: 'unknown' }, { phase: false }, { phase: null }, { phase: 'predeploy', extra: true }]) {
@@ -276,36 +251,27 @@ test('only explicit trusted predeploy phase permits fresh services with no obser
   }
 });
 
-test('runtime volumes, production resource volumes, data volumes and unmounted volumes reject', () => {
-  const runtimeMount = inventoryFixture({ ledger: true }); runtimeMount.services[0].volumeMounts = runtimeMount.services[1].volumeMounts;
-  rejected(() => assertLiveValidationInventory(targetFixture(), runtimeMount), 'LIVE_VALIDATION_INVENTORY_VOLUME_FORBIDDEN');
-  for (const id of LIVE_VALIDATION_PROTECTED_RESOURCE_IDS) {
-    const production = inventoryFixture({ ledger: true });
-    production.volumes[0].id = id; production.services[1].volumeMounts[0].id = id;
-    rejected(() => assertLiveValidationInventory(targetFixture(), production), 'LIVE_VALIDATION_INVENTORY_VOLUME_FORBIDDEN');
-  }
-  for (const [field, value] of [['purpose', 'database'], ['mountPath', '/var/lib/postgresql'], ['serviceId', runtimeServiceId]]) {
-    const inventory = inventoryFixture({ ledger: true }); inventory.volumes[0][field] = value;
-    rejected(() => assertLiveValidationInventory(targetFixture(), inventory), 'LIVE_VALIDATION_INVENTORY_VOLUME_FORBIDDEN');
-  }
-  const unmounted = inventoryFixture({ ledger: true }); unmounted.services[1].volumeMounts = [];
-  rejected(() => assertLiveValidationInventory(targetFixture(), unmounted), 'LIVE_VALIDATION_INVENTORY_VOLUME_FORBIDDEN');
-  const omitted = inventoryFixture({ ledger: true }); omitted.volumes = [];
-  rejected(() => assertLiveValidationInventory(targetFixture(), omitted), 'LIVE_VALIDATION_INVENTORY_VOLUME_FORBIDDEN');
-  const second = inventoryFixture({ ledger: true }); second.volumes.push({ ...second.volumes[0], id: environmentId });
-  rejected(() => assertLiveValidationInventory(targetFixture(), second), 'LIVE_VALIDATION_INVENTORY_VOLUME_FORBIDDEN');
+test('inventory and phase JSON reject getters and inherited records without evaluating them', () => {
+  let called = false; const inventory = inventoryFixture();
+  Object.defineProperty(inventory.services[0], 'variableNames', { enumerable: true,
+    get() { called = true; return ['PORT']; } });
+  rejected(() => assertLiveValidationInventory(targetFixture(), inventory), 'LIVE_VALIDATION_INVENTORY_INVALID');
+  assert.equal(called, false);
+  rejected(() => assertLiveValidationInventory(targetFixture(), Object.create(inventoryFixture())), 'LIVE_VALIDATION_INVENTORY_INVALID');
+  const options = {}; Object.defineProperty(options, 'phase', { enumerable: true,
+    get() { called = true; return 'predeploy'; } });
+  rejected(() => assertLiveValidationInventory(targetFixture(), inventoryFixture(), options), 'LIVE_VALIDATION_INVENTORY_PHASE_INVALID');
+  assert.equal(called, false);
 });
 
-test('persistent Railway profiles use dedicated launchers, health checks, one replica and no restart/migrations', () => {
-  for (const role of ['runtime', 'supervisor']) {
-    const config = JSON.parse(readFileSync(new URL(`../infra/live-validation/${role}.railway.json`, import.meta.url), 'utf8'));
-    assert.equal(config.build.builder, 'DOCKERFILE');
-    assert.equal(config.build.dockerfilePath, `infra/live-validation/${role}.Dockerfile`);
-    assert.equal(config.deploy.startCommand, `node /app/scripts/start-live-validation-${role}.mjs`);
-    assert.equal(config.deploy.healthcheckPath, '/healthz');
-    assert.equal(config.deploy.restartPolicyType, 'NEVER');
-    assert.equal(config.deploy.numReplicas, 1);
-    assert.equal(config.deploy.preDeployCommand, undefined);
-    assert.equal(config.deploy.cronSchedule, undefined);
-  }
+test('Railway profile uses one dedicated launcher and replica with health checks and no restart or migrations', () => {
+  const config = JSON.parse(readFileSync(new URL('../infra/live-validation/runtime.railway.json', import.meta.url), 'utf8'));
+  assert.equal(config.build.builder, 'DOCKERFILE');
+  assert.equal(config.build.dockerfilePath, 'infra/live-validation/runtime.Dockerfile');
+  assert.equal(config.deploy.startCommand, 'node /app/scripts/start-live-validation-runtime.mjs');
+  assert.equal(config.deploy.healthcheckPath, '/healthz');
+  assert.equal(config.deploy.restartPolicyType, 'NEVER');
+  assert.equal(config.deploy.numReplicas, 1);
+  assert.equal(config.deploy.preDeployCommand, undefined);
+  assert.equal(config.deploy.cronSchedule, undefined);
 });
