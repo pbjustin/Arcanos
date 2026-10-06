@@ -3,19 +3,19 @@ import { Readable } from 'node:stream';
 import { test } from 'node:test';
 import { assertRuntimeSourceEgressUrl, createLiveValidationProviderTransport, createLiveValidationSourceGuard,
   getLiveValidationEgressPolicySummary, LIVE_VALIDATION_MODEL_URL_PREFIX, LIVE_VALIDATION_RESPONSES_URL,
-  LiveValidationEgressError, validateSupervisorEgressRequest } from './live-validation-egress.mjs';
+  LiveValidationEgressError, validateLiveValidationProviderRequest } from './live-validation-egress.mjs';
 
 const approvedModels = [{ id: 'approved:model-1' }];
 const body = { model: approvedModels[0].id, input: 'Explain the supplied public guide.', max_output_tokens: 100,
   store: false, stream: false, parallel_tool_calls: false };
 const headers = { authorization: 'Bearer test-placeholder', 'content-type': 'application/json' };
-const validate = request => validateSupervisorEgressRequest(request, { approvedModels });
+const validate = request => validateLiveValidationProviderRequest(request, { approvedModels });
 const code = expected => error => error instanceof LiveValidationEgressError && error.code === expected;
 function response(payload = { id: 'response', model: approvedModels[0].id }, status = 200) {
   return { status, body: Readable.from([Buffer.from(JSON.stringify(payload))]) };
 }
 
-test('supervisor accepts only Responses POST and canonical approved-model metadata GET', () => {
+test('provider accepts only Responses POST and canonical approved-model metadata GET', () => {
   assert.deepEqual(validate({ url: LIVE_VALIDATION_RESPONSES_URL, body }), { url: LIVE_VALIDATION_RESPONSES_URL, method: 'POST' });
   const url = LIVE_VALIDATION_MODEL_URL_PREFIX + encodeURIComponent(approvedModels[0].id);
   assert.deepEqual(validate({ url, method: 'GET' }), { url, method: 'GET' });
@@ -129,7 +129,7 @@ test('provider failures and redirect responses never retry or expose error respo
   }
 });
 
-test('broker abort bounds fetch and response readers that ignore AbortSignal', async () => {
+test('paid guard abort bounds fetch and response readers that ignore AbortSignal', async () => {
   for (const stage of ['fetch', 'body']) {
     const controller = new AbortController(); let calls = 0; let returned = false;
     const transport = createLiveValidationProviderTransport({ approvedModels, fetchImplementation: () => {
@@ -195,6 +195,6 @@ test('summary states application enforcement and keeps DNS/IP safety delegated t
   assert.equal(summary.runtimeSources.publisherAllowlist, false);
   assert.equal(summary.runtimeSources.requiresProtectedSourceTransport, true);
   assert.equal(summary.runtimeSources.guardEveryRedirectHop, true);
-  assert.equal(summary.supervisor.tls, 'default-public-verification');
-  assert.ok(Object.isFrozen(summary) && Object.isFrozen(summary.supervisor) && Object.isFrozen(summary.runtimeSources));
+  assert.equal(summary.provider.tls, 'default-public-verification');
+  assert.ok(Object.isFrozen(summary) && Object.isFrozen(summary.provider) && Object.isFrozen(summary.runtimeSources));
 });

@@ -55,8 +55,8 @@ function textualInput(value) {
       && ['system', 'developer', 'user', 'assistant'].includes(item.role) && textualContent(item.content));
 }
 
-/** Budget/pricing and complete provider semantics remain the broker's responsibility. */
-export function validateSupervisorEgressRequest({ url, method = 'POST', body } = {}, { approvedModels } = {}) {
+/** Budget/pricing and response semantics remain the process-local paid guard's responsibility. */
+export function validateLiveValidationProviderRequest({ url, method = 'POST', body } = {}, { approvedModels } = {}) {
   const models = approvedModelIds(approvedModels);
   requireEgress(typeof url === 'string', 'LIVE_VALIDATION_PROVIDER_URL_FORBIDDEN');
   if (method === 'GET') {
@@ -96,7 +96,7 @@ export function createLiveValidationProviderTransport({ approvedModels, fetchImp
   const models = [...approvedModelIds(approvedModels)];
   requireEgress(typeof fetchImplementation === 'function', 'LIVE_VALIDATION_PROVIDER_TRANSPORT_INVALID');
   return async ({ url, method = 'POST', headers, body, signal } = {}) => {
-    validateSupervisorEgressRequest({ url, method, body }, { approvedModels: models });
+    validateLiveValidationProviderRequest({ url, method, body }, { approvedModels: models });
     const requestHeaders = providerHeaders(headers, method);
     requireEgress(!signal?.aborted, 'LIVE_VALIDATION_PROVIDER_CANCELLED');
     let abortHandler; let iterator; let complete = false;
@@ -105,7 +105,7 @@ export function createLiveValidationProviderTransport({ approvedModels, fetchImp
       signal?.addEventListener('abort', abortHandler, { once: true });
     });
     try {
-      // The broker's deadline also bounds injected transports and body readers that ignore AbortSignal.
+      // The paid guard's deadline also bounds transports and body readers that ignore AbortSignal.
       const result = await Promise.race([fetchImplementation(url, { method, headers: requestHeaders,
         ...(method === 'POST' ? { body: JSON.stringify(body) } : {}), signal, redirect: 'error' }), interrupted]);
       requireEgress(result && !result.redirected && result.status >= 200 && result.status < 300,
@@ -128,7 +128,7 @@ export function createLiveValidationProviderTransport({ approvedModels, fetchImp
       return { status: result.status, body: parsed };
     } finally {
       signal?.removeEventListener('abort', abortHandler);
-      // A reader ignoring cancellation must not delay the broker's timeout result.
+      // A reader ignoring cancellation must not delay the paid guard's timeout result.
       if (!complete && typeof iterator?.return === 'function') {
         try { Promise.resolve(iterator.return()).catch(() => {}); } catch { /* Best-effort stream cancellation. */ }
       }
@@ -185,7 +185,7 @@ export function createLiveValidationSourceGuard(policy = {}) {
 
 export function getLiveValidationEgressPolicySummary() {
   return Object.freeze({ enforcement: 'application', platformDomainAcl: false,
-    supervisor: Object.freeze({ origin: 'https://api.openai.com', responseMethod: 'POST', metadataMethod: 'GET',
+    provider: Object.freeze({ origin: 'https://api.openai.com', responseMethod: 'POST', metadataMethod: 'GET',
       approvedModelsOnly: true, redirects: false, retries: 0, tls: 'default-public-verification' }),
     runtimeSources: Object.freeze({ publisherAllowlist: false, requiresProtectedSourceTransport: true,
       guardEveryRedirectHop: true, dnsAndIpPinning: 'existing-protected-source-transport',
