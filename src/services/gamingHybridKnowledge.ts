@@ -754,7 +754,9 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
         const pipeline = { ...workflow.pipeline, ...playerContext, edition: resolveGamingRequestEdition(input),
           region: input.region, requestedVersion: input.requestedVersion };
         const pendingDecision = resolveGamingUserDecisionGap(workflow.pipeline).clarification;
-        if (pendingDecision && pendingDecision === resolveGamingUserDecisionGap(pipeline).clarification)
+        if (pendingDecision && workflow.last.reason === 'REQUEST_CLARIFICATION_REQUIRED'
+          && workflow.last.clarification === pendingDecision
+          && pendingDecision === resolveGamingUserDecisionGap(pipeline).clarification)
           return failure(context, 'CLARIFICATION_UNRESOLVED', 409, workflow);
         const operationKey = `clarify:${input.idempotencyKey}`;
         workflow.activeOperationKey = operationKey;
