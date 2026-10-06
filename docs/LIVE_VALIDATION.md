@@ -302,7 +302,7 @@ execution. No local fixture or anonymous URL check proves live acceptance.
 
 | Profile | Required observations |
 | --- | --- |
-| `gaming-guide-positive` | Elden Ring, Samurai, immediately after tutorial, starting Uchigatana/early blade path, no explicit edition and ordinary advisory freshness. Real public acquisition succeeds; usable evidence is selected; meaningful coverage and any required clarification are recorded. Passing answer acceptance requires real Trinity execution, completed mandatory CLEAR audit, final `answer_ready`, admitted acquired-source citations, no durable source writes and no player persistence. |
+| `gaming-guide-positive` | Elden Ring, Samurai, immediately after tutorial, starting Uchigatana/early blade path, no explicit edition and ordinary advisory freshness. Missing PC context and three preferences are resolved in one workflow. Public fixture acquisition happens once; the three later replies retain selected evidence and acquisition allowances. Passing acceptance requires measured intake, reasoning and final stages, completed mandatory CLEAR audit, final `answer_ready`, admitted acquired-source citations, no durable source writes and no player persistence. |
 | `gaming-guide-negative` | The Elden Ring request supplies an explicitly wrong-game Sekiro guide. The source is rejected/excluded, conflict reason is preserved, unsupported generation is withheld and durable writes remain zero. |
 
 The adapter calls the existing v2 Gaming workflow. It forces `transient_only`,
@@ -311,6 +311,14 @@ not initialize a production database, persist player progress, launch workers or
 invent a separate Gaming engine. A clarification is preserved as an observed
 result; it is not misreported as a generated audited answer. Missing noncritical
 patch knowledge retains the ordinary visible freshness qualification.
+
+The canonical profiles use immutable public GitHub URLs for the reviewed
+synthetic PC Samurai and wrong-game fixtures. Live execution proves the deployed
+pipeline over real HTTPS fixture acquisition and the configured provider; it does
+not certify external-publisher reachability or current patch compatibility.
+Optional `clarificationReplies` is bounded to eight cumulative context patches.
+The adapter generates continuation identity/revision/idempotency fields and
+submits one candidate batch; normal service refinement fences still apply.
 
 Existing HTTPS-only public-source acquisition, DNS/IP-pinned SSRF protection,
 private-network rejection, redirect policy, wire/decoded/text bounds, source-use
@@ -328,10 +336,18 @@ verifier tunnel to provision.
 
 Each live result distinguishes measured source acquisition, evidence selection,
 generation, mandatory answer audit and response construction. Intake, reasoning
-and final stages retain individual timing hooks where available. Evidence records
+and final stages retain individual timing hooks. Positive acceptance requires
+measured completed acquisition, selection, generation, answer-audit and response
+stages, plus at least one observed completed model stage. The canonical positive
+profile requires all three model stages. A completed label without a bounded
+elapsed timing is insufficient. Evidence records
 bounded timings, stage statuses, selected counts, semantic conflict/currentness
 flags, audit completion/decision and final-answer fingerprint binding.
 Unobserved stages remain unobserved; timing is never inferred from total latency.
+Required clarification proof records only bounded reply/acquisition counts and
+same-workflow, advancing-revision, retained-evidence and preserved-budget flags.
+The controller independently rejects missing, malformed or incomplete proof;
+raw workflow IDs, replies and evidence text are excluded.
 An observed intake, reasoning or final timeout remains `MODEL_TIMEOUT` with
 generation marked `timed_out`, even if upstream cancellation reaches the provider
 before its own timer. Generic cancellation alone does not establish a timeout.

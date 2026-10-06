@@ -6,10 +6,11 @@ import { resolveGamingDocument } from './services/gamingDocumentResolution.js';
 import type { GamingPipelineInput, GamingPipelineRuntime, GamingPreparedEvidence } from './services/gamingPipeline.js';
 import type { GamingSuccessEnvelope } from './services/gamingModes.js';
 import { gamingHybridQuerySchema, type GamingHybridQuery } from './shared/gaming/gamingHybridContract.js';
+import { validateGamingPlayerContextInput } from './shared/gaming/gamingPlayerContext.js';
 import { hasBoundGamingClearAnswer } from './shared/gaming/gamingClearAnswerBinding.js';
 import { gamingClearHash, type GamingClearAssessment } from './shared/gaming/gamingClearPolicy.js';
 import { createLiveValidationObservation, emptyLiveValidationStages, liveValidationDuration,
-  type LiveValidationObservation, type LiveValidationStageEvent } from './shared/gaming/liveValidationObservation.js';
+  type LiveValidationObservation, type LiveValidationStageEvent, type LiveValidationClarification } from './shared/gaming/liveValidationObservation.js';
 import type { LivePreviewEvidenceInput } from '../scripts/live-pr-preview-verifier.mjs';
 import type { LivePreviewFailureCode } from '../scripts/live-pr-preview-verifier.mjs';
 
@@ -33,7 +34,14 @@ export interface LivePrPreviewModuleAdapter {
   execute(input: unknown, observer: LivePrPreviewModuleObserver): Promise<LivePrPreviewModuleResult>;
 }
 
-export interface LiveValidationGamingInput { query: GamingHybridQuery; candidateUrls: string[] }
+const clarificationFields = ['platform', 'region', 'edition', 'currentArea', 'lastCompletedObjective', 'progressPoint',
+  'class', 'role', 'constraints'] as const;
+export type LiveValidationGamingClarificationReply = Partial<Pick<GamingHybridQuery, typeof clarificationFields[number]>>;
+export interface LiveValidationGamingInput {
+  query: GamingHybridQuery;
+  candidateUrls: string[];
+  clarificationReplies?: LiveValidationGamingClarificationReply[];
+}
 export type LiveValidationGamingHooks = Pick<GamingPipelineRuntime,
   'onEvidenceAssessment' | 'onAnswerAuditStart' | 'onAnswerAudit'> & { onStage: (event: LiveValidationStageEvent) => void };
 export type LiveValidationGamingExecutor = (input: GamingPipelineInput, prepared: GamingPreparedEvidence,
@@ -57,16 +65,34 @@ export function createLiveValidationGamingAdapter(execute: LiveValidationGamingE
     validateInput(value) {
       if (!value || typeof value !== 'object' || Array.isArray(value)) return { ok: false };
       const record = value as Record<string, unknown>;
-      if (Object.keys(record).some(key => !['query', 'candidateUrls'].includes(key))) return { ok: false };
+      if (Object.keys(record).some(key => !['query', 'candidateUrls', 'clarificationReplies'].includes(key))) return { ok: false };
       const parsed = gamingHybridQuerySchema.safeParse(record.query);
       if (!parsed.success || parsed.data.contractVersion !== 'gaming-hybrid-v2'
+        || parsed.data.workflowId !== undefined || parsed.data.expectedRevision !== undefined
+        || validateGamingPlayerContextInput(parsed.data)
         || parsed.data.storagePolicy !== 'transient_only' || !Array.isArray(record.candidateUrls)
         || record.candidateUrls.length > 3 || new Set(record.candidateUrls).size !== record.candidateUrls.length
         || record.candidateUrls.some(value => {
           if (typeof value !== 'string' || value.length > 2_048) return true;
           try { const url = new URL(value); return url.protocol !== 'https:' || Boolean(url.username || url.password); } catch { return true; }
         })) return { ok: false };
-      return { ok: true, input: { query: parsed.data, candidateUrls: [...record.candidateUrls] } as LiveValidationGamingInput };
+      const replies: LiveValidationGamingClarificationReply[] = [];
+      let refined = parsed.data;
+      if (record.clarificationReplies !== undefined) {
+        if (!Array.isArray(record.clarificationReplies) || record.clarificationReplies.length > 8) return { ok: false };
+        for (const reply of record.clarificationReplies) {
+          if (!reply || typeof reply !== 'object' || Array.isArray(reply) || !Object.keys(reply).length
+            || Object.keys(reply).some(key => !clarificationFields.includes(key as typeof clarificationFields[number]))) return { ok: false };
+          const updated = { ...refined, ...reply };
+          const validated = gamingHybridQuerySchema.safeParse(updated);
+          if (!validated.success || validated.data.contractVersion !== 'gaming-hybrid-v2'
+            || validateGamingPlayerContextInput(updated)) return { ok: false };
+          replies.push(Object.fromEntries(Object.keys(reply).map(key => [key, validated.data[key as typeof clarificationFields[number]]])));
+          refined = validated.data;
+        }
+      }
+      return { ok: true, input: { query: parsed.data, candidateUrls: [...record.candidateUrls],
+        ...(record.clarificationReplies !== undefined ? { clarificationReplies: replies } : {}) } as LiveValidationGamingInput };
     },
     async execute(value, observer) {
       const input = value as LiveValidationGamingInput;
@@ -97,6 +123,13 @@ export function createLiveValidationGamingAdapter(execute: LiveValidationGamingE
       let final: GamingHybridResult | undefined;
       let failureCode: LivePreviewFailureCode | undefined;
       let acquired = false;
+      const clarification: LiveValidationClarification = { version: 1, submittedCount: 0, completedCount: 0,
+        postAcquisitionCount: 0, sameWorkflow: false, revisionsAdvanced: false, retainedEvidence: false,
+        budgetsPreserved: false, acquisitionCount: 0 };
+      let sameWorkflow = true;
+      let revisionsAdvanced = true;
+      let retainedEvidence = true;
+      let budgetsPreserved = true;
       const fail = (code: LivePreviewFailureCode) => { failureCode = code; observer.onFailure(code); };
       const scope = randomUUID();
       const context = { actorKey: 'live-validation:' + scope, requestId: 'live-validation:' + scope,
@@ -105,6 +138,7 @@ export function createLiveValidationGamingAdapter(execute: LiveValidationGamingE
         retrieve: async () => ({ context: '', sources: [], evidence: [], sourceKnown: false }),
         ingest: async () => { throw new Error('LIVE_VALIDATION_STORAGE_DENIED'); },
         evaluateCandidates: async (submission, actorContext) => {
+          clarification.acquisitionCount += 1;
           onStage({ stage: 'acquisition', phase: 'started' });
           try {
             const evaluation = await evaluateGamingHybridCandidates(submission, actorContext, {
@@ -165,14 +199,57 @@ export function createLiveValidationGamingAdapter(execute: LiveValidationGamingE
         }
       });
       try {
-        final = await workflow.query(input.query, context);
-        if (final.body.nextAction === 'search' && final.body.workflowId && input.candidateUrls.length) {
-          final = await workflow.candidates({ contractVersion: 'gaming-hybrid-v2', workflowId: final.body.workflowId,
-            expectedRevision: final.body.revision, discoveryType: final.body.discovery?.type ?? 'gameplay_evidence',
-            idempotencyKey: 'live-validation-candidates', candidates: input.candidateUrls.map(url => ({ url })) }, context);
+        let query = input.query;
+        let nextReply = 0;
+        let submittedCandidates = false;
+        final = await workflow.query(query, context);
+        while (final.body.workflowId) {
+          if (final.body.nextAction === 'clarify' && input.clarificationReplies?.[nextReply]) {
+            const prior = final.body;
+            const acquisitionCount = clarification.acquisitionCount;
+            query = gamingHybridQuerySchema.parse({ ...query, ...input.clarificationReplies[nextReply],
+              workflowId: prior.workflowId, expectedRevision: prior.revision,
+              idempotencyKey: `live-validation-clarification-${nextReply + 1}` });
+            nextReply += 1;
+            clarification.submittedCount += 1;
+            final = await workflow.query(query, context);
+            if (final.status === 200) {
+              clarification.completedCount += 1;
+              sameWorkflow &&= final.body.workflowId === prior.workflowId;
+              revisionsAdvanced &&= typeof prior.revision === 'number' && final.body.revision === prior.revision + 1;
+              if (acquisitionCount > 0) {
+                clarification.postAcquisitionCount += 1;
+                const sameIds = (left?: string[], right?: string[]) => Boolean(left?.length && right?.length
+                  && left.length === right.length && left.every(id => right.includes(id)));
+                retainedEvidence &&= sameIds(prior.selectedCandidateIds, final.body.selectedCandidateIds)
+                  && sameIds(prior.selectedEvidenceIds, final.body.selectedEvidenceIds);
+                const allowanceFields = ['type', 'round', 'maxRounds', 'recoveryRemaining', 'remainingCandidateUrls', 'remainingTotalAcquisitionMs'] as const;
+                budgetsPreserved &&= clarification.acquisitionCount === acquisitionCount && Boolean(prior.discovery)
+                  && (final.body.discovery ? allowanceFields.every(field => prior.discovery?.[field] === final?.body.discovery?.[field])
+                    : final.body.nextAction === 'answer');
+              }
+            }
+            continue;
+          }
+          if (final.body.nextAction === 'search' && !submittedCandidates && input.candidateUrls.length) {
+            submittedCandidates = true;
+            final = await workflow.candidates({ contractVersion: 'gaming-hybrid-v2', workflowId: final.body.workflowId,
+              expectedRevision: final.body.revision, discoveryType: final.body.discovery?.type ?? 'gameplay_evidence',
+              idempotencyKey: 'live-validation-candidates', candidates: input.candidateUrls.map(url => ({ url })) }, context);
+            continue;
+          }
+          break;
         }
       } catch { /* Failure observations never grant acceptance. */ }
+      clarification.sameWorkflow = clarification.completedCount > 0 && sameWorkflow;
+      clarification.revisionsAdvanced = clarification.completedCount > 0 && revisionsAdvanced;
+      clarification.retainedEvidence = clarification.postAcquisitionCount > 0 && retainedEvidence;
+      clarification.budgetsPreserved = clarification.postAcquisitionCount > 0 && budgetsPreserved;
       const accepted = Boolean(acquired && result && !failureCode && !result.data.fallbackReason
+        && clarification.submittedCount === (input.clarificationReplies?.length ?? 0)
+        && clarification.completedCount === clarification.submittedCount
+        && (!clarification.submittedCount || clarification.sameWorkflow && clarification.revisionsAdvanced)
+        && (!clarification.postAcquisitionCount || clarification.retainedEvidence && clarification.budgetsPreserved)
         && evidenceAssessment?.decision === 'accept' && hasBoundGamingClearAnswer(result.data)
         && answerAssessment?.profile === 'answer' && answerAssessment.assessmentStatus === 'completed' && answerAssessment.decision === 'accept'
         && answerAssessment?.subjectHash === gamingClearHash(result.data.response)
@@ -181,7 +258,8 @@ export function createLiveValidationGamingAdapter(execute: LiveValidationGamingE
         && final.body.answer?.response === result.data.response);
       const audit: LivePrPreviewAudit | undefined = answerAssessment ? { assessmentStatus: answerAssessment.assessmentStatus,
         decision: answerAssessment.decision, boundToFinalAnswer: accepted } : undefined;
-      lastObservation = createLiveValidationObservation({ body: final?.body, accepted, audit, stages, auditStartBudget });
+      lastObservation = createLiveValidationObservation({ body: final?.body, accepted, audit, stages, auditStartBudget,
+        ...(input.clarificationReplies?.length ? { clarification } : {}) });
       return { result, accepted, audit, failureCode };
     }
   };

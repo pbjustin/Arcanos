@@ -19,6 +19,18 @@ const envId = '11111111-1111-4111-8111-111111111111'; const runtimeId = '2222222
 const runtimeDeploymentId = '55555555-5555-4555-8555-555555555555';
 const hash = value => createHash('sha256').update(value).digest('hex');
 const profiles = JSON.parse(readFileSync(path.join(ROOT, 'examples/live-validation/profiles.json'), 'utf8'));
+function profileFixture() {
+  const value = structuredClone(profiles);
+  for (const entry of value.profiles) {
+    delete entry.expected.clarification;
+    delete entry.expected.requiredModelStages;
+  }
+  return value;
+}
+function clarificationFixture() {
+  return { version: 1, submittedCount: 4, completedCount: 4, postAcquisitionCount: 3,
+    sameWorkflow: true, revisionsAdvanced: true, retainedEvidence: true, budgetsPreserved: true, acquisitionCount: 1 };
+}
 const git = { head: trustedSha, clean: true, repository: 'pbjustin/Arcanos' };
 function targetFixture() {
   return { version: 'arcanos-live-validation-target/v2', repository: 'pbjustin/Arcanos', projectId: LIVE_VALIDATION_PROJECT_ID,
@@ -121,6 +133,7 @@ function observation(positive) {
       .map(stage => [stage, { status: positive || ['acquisition', 'selection', 'response'].includes(stage) ? 'passed' : 'not_run', elapsedMs: positive ? 10 : null }])) };
 }
 function executionFixture(f, options = {}) {
+  const executionProfiles = options.profiles ?? profileFixture();
   let active = false; let stopped = false; let bound = false; let admitted = false; let workflows = 0; let clock = 1000000;
   const seen = []; let token;
   const usage = plan => ({ ...plan, status: 'active', counts: { workflows }, limits: { ...f.target.limits, maxConcurrency: 1, maxRetries: 0 },
@@ -144,9 +157,10 @@ function executionFixture(f, options = {}) {
     if (route === '/usage') return { status: 200, body: usage(plan) };
     if (route === '/stop') return { status: 200, body: { stopped: true, runId: plan.runId } };
     if (route === '/acceptance') {
-      workflows++; const entry = profiles.profiles.find(value => value.id === request.body.caseId); const positive = entry.id.endsWith('positive');
+      workflows++; const entry = executionProfiles.profiles.find(value => value.id === request.body.caseId); const positive = entry.id.endsWith('positive');
       const evidence = evidenceFor(entry); if (options.unboundAudit && positive) evidence.audit.boundToFinalAnswer = false;
       const projected = observation(positive); if (options.lostConflict && !positive) projected.candidates = [];
+      if (positive) options.mutateObservation?.(projected);
       if (options.leakToken && positive) evidence.result.sources[0].url = 'https://' + token + '.example.org';
       return { status: 200, body: { identity: identity(f.target), caseId: entry.id, evidence, observation: projected,
         profilePassed: true, durableWrites: 0, productionChanged: false } };
@@ -154,6 +168,7 @@ function executionFixture(f, options = {}) {
     throw new Error('Unexpected service route');
   } };
   const dependencies = { environment: f.environment, readGitState: () => git, createGitHubApi: () => ghFixture(f, options),
+    readProfiles: () => executionProfiles,
     createRailwayApi: () => railway, createServiceClient: input => { assert.equal(input.token, token); return service; }, now: () => clock,
     randomBytes: () => Buffer.alloc(32, 17), sleep: async () => {} };
   return { dependencies, seen, railway, service, admitted: () => admitted, stopped: () => stopped, plan: () => plan };
@@ -263,6 +278,91 @@ test('observations retain bounded semantic codes and timings while dropping arbi
   const value = observation(false); value.candidates.push({ decision: 'secret text', reasonCodes: ['private prompt', 'CONFLICT'], source: 'private URL' });
   const sanitized = sanitizeLiveValidationObservation(value); assert.equal(sanitized.reason, 'GAME_MISMATCH');
   assert.deepEqual(sanitized.candidates[1], { decision: 'unobserved', reasonCodes: ['CONFLICT'] }); assert.doesNotMatch(JSON.stringify(sanitized), /private/);
+});
+test('optional clarification observations expose only bounded counts and invariants', () => {
+  const value = observation(true);
+  assert.equal(Object.hasOwn(sanitizeLiveValidationObservation(value), 'clarification'), false);
+  value.clarification = { ...clarificationFixture(), workflowId: 'private-workflow', sessionId: 'private-session',
+    replies: [{ question: 'private reply' }], selectedEvidenceIds: ['private-evidence'] };
+  const sanitized = sanitizeLiveValidationObservation(value);
+  assert.deepEqual(sanitized.clarification, clarificationFixture());
+  assert.doesNotMatch(JSON.stringify(sanitized), /private/);
+  for (const mutation of [{ version: 2 }, { submittedCount: 9 }, { completedCount: 5 }, { postAcquisitionCount: 5 },
+    { completedCount: -1 }, { submittedCount: 4.5 }, { sameWorkflow: 'true' }, { acquisitionCount: 2 }]) {
+    value.clarification = { ...clarificationFixture(), ...mutation };
+    assert.equal(Object.hasOwn(sanitizeLiveValidationObservation(value), 'clarification'), false);
+  }
+});
+test('required clarification proof passes only with exact counts and retained single-workflow evidence', async t => {
+  const requiredProfiles = profileFixture();
+  requiredProfiles.profiles[0].expected.clarification = { completedCount: 4, postAcquisitionCount: 3 };
+  requiredProfiles.profiles[0].expected.requiredModelStages = ['intake', 'reasoning', 'final'];
+  const f = fixture(t); const e = executionFixture(f, { profiles: requiredProfiles,
+    mutateObservation: value => { value.clarification = clarificationFixture(); } });
+  const result = await execute(f, e);
+  assert.equal(result.status, 'PASS'); assert.equal(e.stopped(), true);
+  assert.deepEqual(result.cases[0].observation.clarification, clarificationFixture());
+});
+test('runtime claimed PASS cannot replace missing, malformed or contradictory clarification proof', async t => {
+  const mutations = [undefined, { version: 2 }, { submittedCount: 9 }, { completedCount: 5 }, { postAcquisitionCount: 5 },
+    { submittedCount: 5 }, { completedCount: 3, postAcquisitionCount: 3 }, { postAcquisitionCount: 2 },
+    { sameWorkflow: false }, { revisionsAdvanced: false }, { retainedEvidence: false }, { budgetsPreserved: false },
+    { acquisitionCount: 0 }, { acquisitionCount: 2 }, { revisionsAdvanced: 'true' }];
+  for (const mutation of mutations) await t.test(JSON.stringify(mutation) ?? 'absent', async child => {
+    const requiredProfiles = profileFixture();
+    requiredProfiles.profiles[0].expected.clarification = { completedCount: 4, postAcquisitionCount: 3 };
+    const f = fixture(child); const e = executionFixture(f, { profiles: requiredProfiles,
+      mutateObservation: value => { if (mutation) value.clarification = { ...clarificationFixture(), ...mutation }; } });
+    const result = await execute(f, e);
+    assert.equal(result.status, 'FAILED'); assert.equal(result.code, 'LIVE_VALIDATION_PROFILE_CLARIFICATION_FAILED');
+    assert.equal(result.observedCases[0].runtimeClaimedPass, true); assert.equal(e.stopped(), true);
+  });
+});
+test('legacy profiles allow no clarification proof and direct paths require one observed model stage', async t => {
+  const f = fixture(t); const e = executionFixture(f, { mutateObservation: value => {
+    value.stages.intake = { status: 'not_run', elapsedMs: null };
+    value.stages.reasoning = { status: 'not_run', elapsedMs: null };
+  } });
+  const result = await execute(f, e);
+  assert.equal(result.status, 'PASS'); assert.equal(Object.hasOwn(result.cases[0].observation, 'clarification'), false);
+  assert.equal(result.cases[0].observation.stages.final.status, 'passed');
+});
+test('positive proof rejects failed or unobserved model execution despite aggregate provider calls', async t => {
+  for (const status of ['not_run', 'started', 'failed', 'timed_out', 'passed']) await t.test(status, async child => {
+    const f = fixture(child); const e = executionFixture(f, { mutateObservation: value => {
+      for (const stage of ['intake', 'reasoning', 'final']) value.stages[stage] = { status, elapsedMs: null };
+    } });
+    const result = await execute(f, e);
+    assert.equal(result.status, 'FAILED'); assert.equal(result.code, 'LIVE_VALIDATION_PROFILE_STAGE_FAILED');
+    assert.equal(result.actualUsage.generationCalls, 1); assert.equal(result.actualUsage.auditCalls, 1);
+    assert.equal(e.stopped(), true);
+  });
+});
+test('required model stages and positive acquisition/audit/response stages must complete with timing evidence', async t => {
+  for (const stage of ['acquisition', 'selection', 'generation', 'intake', 'reasoning', 'final', 'answer_audit', 'response']) {
+    for (const status of ['not_run', 'failed', 'timed_out', 'passed']) await t.test(`${stage} ${status}`, async child => {
+      const requiredProfiles = profileFixture();
+      requiredProfiles.profiles[0].expected.requiredModelStages = ['intake', 'reasoning', 'final'];
+      const f = fixture(child); const e = executionFixture(f, { profiles: requiredProfiles, mutateObservation: value => {
+        value.stages[stage] = { status, elapsedMs: status === 'passed' ? null : 10 };
+      } });
+      const result = await execute(f, e);
+      assert.equal(result.status, 'FAILED'); assert.equal(result.code, 'LIVE_VALIDATION_PROFILE_STAGE_FAILED');
+      assert.equal(e.stopped(), true);
+    });
+  }
+});
+test('malformed bounded clarification or model-stage requirements fail before deployment or paid admission', async t => {
+  const requirements = [{ clarification: null }, { clarification: { completedCount: 0, postAcquisitionCount: 0 } },
+    { clarification: { completedCount: 9, postAcquisitionCount: 3 } }, { clarification: { completedCount: 4, postAcquisitionCount: 5 } },
+    { clarification: { completedCount: 4, postAcquisitionCount: 3, workflowId: 'private' } },
+    { requiredModelStages: [] }, { requiredModelStages: ['final', 'final'] }, { requiredModelStages: ['generation'] },
+    { requiredModelStages: ['private prompt'] }, { requiredModelStages: 'final' }];
+  for (const requirement of requirements) await t.test(JSON.stringify(requirement), async child => {
+    const requiredProfiles = profileFixture(); Object.assign(requiredProfiles.profiles[0].expected, requirement);
+    const f = fixture(child); const e = executionFixture(f, { profiles: requiredProfiles });
+    await assert.rejects(execute(f, e), { code: 'LIVE_VALIDATION_PROFILE_INVALID' }); assert.deepEqual(e.seen, []);
+  });
 });
 test('cleanup refuses mismatched deployment ID, project, environment, service or source before any mutation', async t => {
   const target = targetFixture();

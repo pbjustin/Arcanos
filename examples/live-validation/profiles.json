@@ -14,13 +14,51 @@
           "mode": "build",
           "class": "Samurai",
           "progressPoint": "just left the tutorial",
-          "question": "I'm at the beginning of Elden Ring. I'm a Samurai. I just got out of the tutorial area. I want a Samurai blade build using the starting Uchigatana and a normal early blade path. Guide: https://fextralife.com/elden-ring-samurai-build-guide/",
+          "question": "I'm at the beginning of Elden Ring. I'm a Samurai. I just got out of the tutorial area. I want a Samurai blade build using the starting Uchigatana and a normal early blade path. Include controls. I'm undecided between bleed and pure Dexterity. I'm undecided between single katana and dual wield. I'm undecided between aggressive and defensive. Guide: https://raw.githubusercontent.com/pbjustin/Arcanos/62fe94af217e375cd6a5a77d834f4dffd7c49675/tests/fixtures/gaming-samurai-pc-clarification-guide.html",
           "idempotencyKey": "live-validation-samurai-positive",
           "storagePolicy": "transient_only"
         },
-        "candidateUrls": ["https://fextralife.com/elden-ring-samurai-build-guide/"]
+        "candidateUrls": [
+          "https://raw.githubusercontent.com/pbjustin/Arcanos/62fe94af217e375cd6a5a77d834f4dffd7c49675/tests/fixtures/gaming-samurai-pc-clarification-guide.html"
+        ],
+        "clarificationReplies": [
+          {
+            "platform": "PC"
+          },
+          {
+            "constraints": [
+              "pure Dexterity"
+            ]
+          },
+          {
+            "constraints": [
+              "pure Dexterity",
+              "single katana"
+            ]
+          },
+          {
+            "constraints": [
+              "pure Dexterity",
+              "single katana",
+              "defensive"
+            ]
+          }
+        ]
       },
-      "expected": { "outcome": "accepted", "semanticGap": "NONCRITICAL_GAP", "qualifiedUnknownPatch": true }
+      "expected": {
+        "outcome": "accepted",
+        "semanticGap": "NONCRITICAL_GAP",
+        "qualifiedUnknownPatch": true,
+        "clarification": {
+          "completedCount": 4,
+          "postAcquisitionCount": 3
+        },
+        "requiredModelStages": [
+          "intake",
+          "reasoning",
+          "final"
+        ]
+      }
     },
     {
       "id": "gaming-guide-negative",
@@ -34,13 +72,19 @@
           "mode": "build",
           "class": "Samurai",
           "progressPoint": "just left the tutorial",
-          "question": "I'm at the beginning of Elden Ring. I'm a Samurai. I just got out of the tutorial area. I want a Samurai blade build using the starting Uchigatana and a normal early blade path. Guide: https://sekiroshadowsdietwice.wiki.fextralife.com/Combat",
+          "question": "I'm at the beginning of Elden Ring. I'm a Samurai. I just got out of the tutorial area. I want a Samurai blade build using the starting Uchigatana and a normal early blade path. Guide: https://raw.githubusercontent.com/pbjustin/Arcanos/62fe94af217e375cd6a5a77d834f4dffd7c49675/tests/fixtures/gaming-sekiro-conflict-guide.html",
           "idempotencyKey": "live-validation-samurai-wrong-game",
           "storagePolicy": "transient_only"
         },
-        "candidateUrls": ["https://sekiroshadowsdietwice.wiki.fextralife.com/Combat"]
+        "candidateUrls": [
+          "https://raw.githubusercontent.com/pbjustin/Arcanos/62fe94af217e375cd6a5a77d834f4dffd7c49675/tests/fixtures/gaming-sekiro-conflict-guide.html"
+        ]
       },
-      "expected": { "outcome": "need_new_source", "semanticGap": "CONFLICT", "providerCalls": 0 }
+      "expected": {
+        "outcome": "need_new_source",
+        "semanticGap": "CONFLICT",
+        "providerCalls": 0
+      }
     }
   ]
 }
