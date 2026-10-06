@@ -71,7 +71,7 @@ function fixture(t, overrides = {}) {
         return { accepted: false, failureCode: 'INCOMPATIBLE_SOURCE' };
       }
       observer.onSourceValidation('passed');
-      const client = new OpenAI({ apiKey: 'validation-provider-placeholder', maxRetries: 0,
+      const client = new OpenAI({ apiKey: 'validation-provider-placeholder', baseURL: 'https://api.openai.com/v1', maxRetries: 0,
         fetch: context.provider.fetch });
       await client.models.retrieve(MODEL);
       await client.responses.create({ model: MODEL, input: PRIVATE_PROMPT, max_output_tokens: 100 });

@@ -115,7 +115,7 @@ test('controller uses its real service client, runtime HTTP auth and direct SDK 
             usage: { input_tokens: 2, output_tokens: 1, total_tokens: 3 } }), { status: 200, headers: { 'content-type': 'application/json' } });
         } }),
         createAdapter: async ({ provider, observation: getStage }) => {
-          const client = new OpenAI({ apiKey: 'validation-provider-placeholder', maxRetries: 0, fetch: provider.fetch });
+          const client = new OpenAI({ apiKey: 'validation-provider-placeholder', baseURL: 'https://api.openai.com/v1', maxRetries: 0, fetch: provider.fetch });
           return { validateInput: input => ({ ok: true, input }), getLastObservation: () => structuredClone(lastObservation),
             execute: async (input, hooks) => {
               const entry = profiles.profiles.find(item => item.input.query.idempotencyKey === input.query.idempotencyKey);
