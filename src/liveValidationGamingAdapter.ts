@@ -41,7 +41,8 @@ export type LiveValidationGamingExecutor = (input: GamingPipelineInput, prepared
 export interface LiveValidationGamingAdapter extends LivePrPreviewModuleAdapter {
   getLastObservation(): LiveValidationObservation | undefined;
 }
-const sourceFailureCodes = new Set(['SOURCE_FETCH_FAILED', 'SOURCE_TIMEOUT', 'SOURCE_EXTRACTION_FAILED', 'URL_BLOCKED',
+const sourceFailureCodes = new Set(['SOURCE_FETCH_FAILED', 'SOURCE_TIMEOUT', 'SOURCE_EXTRACTION_FAILED', 'SOURCE_INACCESSIBLE',
+  'REDIRECT_NOT_ALLOWED', 'SOURCE_TOO_LARGE', 'URL_BLOCKED',
   'RESOLVED_SOURCE_IDENTITY_MISMATCH', 'FETCH_BUDGET_EXHAUSTED', 'INVALID_URL', 'UNSUPPORTED_SOURCE_FORMAT',
   'UNTRUSTED_METADATA_INVALID', 'REVIEWED_OFFICIAL_CURRENTNESS_SOURCE_REQUIRED', 'DUPLICATE_URL']);
 

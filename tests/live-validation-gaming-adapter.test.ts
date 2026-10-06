@@ -243,6 +243,28 @@ describe('private Gaming live-validation adapter through the real transient v2 w
     expect(mockAuditCompletion).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['HTTP 401', 401, { 'content-type': 'text/plain' }, 'SOURCE_INACCESSIBLE'],
+    ['HTTP 403', 403, { 'content-type': 'text/plain' }, 'SOURCE_INACCESSIBLE'],
+    ['invalid redirect', 302, { 'content-type': 'text/plain' }, 'REDIRECT_NOT_ALLOWED'],
+    ['oversized response', 200, { 'content-type': 'text/plain', 'content-length': '999999999' }, 'SOURCE_TOO_LARGE']
+  ] as const)('records %s as failed acquisition without acquiring a guide', async (_name, status, headers, reason) => {
+    mockHttp.mockImplementationOnce(async () => {
+      advance(25);
+      return { status, headers, data: 'Guide unavailable' };
+    });
+    const run = harness(); const output = await run.run();
+    expect(output.accepted).toBe(false); expect(output.failureCode).toBe('ACQUISITION_FAILURE');
+    expect(run.observer.onSourceAcquisition).toHaveBeenCalledWith('failed');
+    expect(run.adapter.getLastObservation()).toMatchObject({
+      stages: { acquisition: { status: 'failed', elapsedMs: 25 } },
+      candidates: [expect.objectContaining({ decision: 'rejected', reasonCodes: [reason] })],
+      selectedEvidenceCount: 0
+    });
+    expect(run.execute).not.toHaveBeenCalled(); expect(mockTrinity).not.toHaveBeenCalled();
+    expect(mockAuditCompletion).not.toHaveBeenCalled();
+  });
+
   it.each(['missing binding', 'fallback', 'post-audit mutation'] as const)('withholds acceptance after %s', async scenario => {
     const run = harness(value => {
       if (scenario === 'missing binding') return { ...value, data: { ...value.data } };
