@@ -55,7 +55,10 @@ export function buildGamingRetrievalTerms(input: GamingRetrievalPolicyInput): Ga
     .filter(term => !STOP_WORDS.has(term) && !gameTerms.has(term)))];
   // Share the progression filter so a polite task remains the topical anchor
   // while non-affirmative location/completion claims remain generation context.
-  const question = filterGamingNonAffirmativeStateClauses(resolveGamingUserDecisionGap(input).prompt)
+  // Required-guide identity is enforced separately; host/path tokens are not
+  // gameplay topics. Remove URLs before sentence filtering splits their dots.
+  const question = filterGamingNonAffirmativeStateClauses(resolveGamingUserDecisionGap(input).prompt
+    .replace(/https?:\/\/[^\s)]+/giu, ''))
     .replace(/\b(?:no|without|avoid|light|full)\s+spoilers?\b/giu, '')
     .replace(/\bspoilers?\s+(?:are\s+)?(?:allowed|ok|okay|fine|permitted)\b/giu, '')
     .replace(/\b(?:keep|make)\s+it\s+(?:short|brief|concise|detailed)\b/giu, '')

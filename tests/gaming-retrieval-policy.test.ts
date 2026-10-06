@@ -1,6 +1,30 @@
-import { buildGamingRetrievalTerms, safeGamingEvidenceMetadata, scopeGamingEvidenceParagraphs } from '../src/shared/gaming/gamingRetrievalPolicy.js';
+import { buildGamingRetrievalTerms, gamingTermCoverage, safeGamingEvidenceMetadata, scopeGamingEvidenceParagraphs } from '../src/shared/gaming/gamingRetrievalPolicy.js';
 
 describe('request-scoped Gaming lexical retrieval policy', () => {
+  const requiredGuideUrl = 'https://raw.githubusercontent.com/pbjustin/Arcanos/62fe94af217e375cd6a5a77d834f4dffd7c49675/tests/fixtures/gaming-samurai-pc-clarification-guide.html';
+  test.each([
+    (question: string) => `${requiredGuideUrl} ${question}`,
+    (question: string) => `${question} Guide: ${requiredGuideUrl}`,
+    (question: string) => `[Guide](${requiredGuideUrl}) ${question}`,
+    (question: string) => `${question} [Source](${requiredGuideUrl})`,
+    (question: string) => `<${requiredGuideUrl}> ${question}`
+  ])('source URL placement/wrapping cannot replace a gameplay topic', withGuide => {
+    const question = 'How do I beat the Glass Warden?';
+    const input = { prompt: withGuide(question), currentArea: 'Copper Quay' };
+    const originalPrompt = input.prompt;
+    expect(buildGamingRetrievalTerms(input)).toEqual(buildGamingRetrievalTerms({ ...input, prompt: question }));
+    expect(input.prompt).toBe(originalPrompt);
+  });
+
+  test('a supplied guide URL neither establishes unrelated coverage nor suppresses named topic terms', () => {
+    const input = { prompt: `Where is the Zephyrglass Compass? Guide: ${requiredGuideUrl}`, game: 'Lantern Voyage' };
+    expect(buildGamingRetrievalTerms(input).focusTerms).toEqual(['zephyrglass', 'compass']);
+    expect(gamingTermCoverage('The Samurai keeps one upgraded Uchigatana and invests in Dexterity.',
+      buildGamingRetrievalTerms(input).focusTerms)).toBe(0);
+    expect(buildGamingRetrievalTerms({ prompt: 'How do I beat the Githubusercontent Warden?' }).focusTerms)
+      .toEqual(['githubusercontent', 'warden']);
+  });
+
   test.each(['What am I supposed to do now?', 'I’m stuck.', 'Where should I go next?'])('generic progression wording %s is not a lexical anchor', prompt => {
     expect(buildGamingRetrievalTerms({ prompt, game: 'Lantern Voyage' }).focusTerms).toEqual([]);
     expect(buildGamingRetrievalTerms({ prompt, currentArea: 'Copper Quay' }).focusTerms).toEqual(['copper', 'quay']);
