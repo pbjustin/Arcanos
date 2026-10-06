@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-05T21:58:48.222Z",
+  "generatedAt": "2026-10-06T00:09:13.335Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -762,12 +762,6 @@
         },
         {
           "relativePath": "src/lib/tokenStore.ts"
-        },
-        {
-          "relativePath": "src/livePrPreviewApplication.ts"
-        },
-        {
-          "relativePath": "src/livePrPreviewGamingAdapter.ts"
         },
         {
           "relativePath": "src/liveValidationGamingAdapter.ts"
@@ -5008,10 +5002,10 @@
           "relativePath": "tests/legacy-root-route-compat.test.ts"
         },
         {
-          "relativePath": "tests/live-pr-preview-application.test.ts"
+          "relativePath": "tests/live-validation-gaming-adapter.test.ts"
         },
         {
-          "relativePath": "tests/live-validation-gaming-adapter.test.ts"
+          "relativePath": "tests/live-validation-isolation.test.ts"
         },
         {
           "relativePath": "tests/live-validation-source-guard.test.ts"

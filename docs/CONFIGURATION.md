@@ -2080,13 +2080,17 @@ and restart/redeploy through its approved process. No database migration or
 legacy route removal is required. Existing Action routes and operator MCP keep
 their own configuration and credentials. This PR changes no deployed settings.
 
-## Separate live PR preview lane
+## Isolated live validation service
 
-[Live PR preview testing](LIVE_PR_PREVIEW.md) is default-off and absent from the
-normal application launcher. Only its independently trusted supervisor reads
-`ARCANOS_LIVE_PREVIEW_OPENAI_API_KEY`, after signed approval tied to the exact PR
-SHA, isolated deployment, explicit limits and a durable single-use claim. Never
-configure this dedicated preview provider key on a PR service or PR CI runner.
-The isolated child receives ephemeral broker/test bearers in a private handoff,
-a closed identity environment, and no provider, database or OAuth credentials.
-This does not enable test authentication in production or the sealed preview.
+[Live PR validation](LIVE_VALIDATION.md) uses one dedicated **ARCANOS V2
+Validation** service in the existing project's `live-validation` environment.
+Its separate launcher requires the exact deployed source/build identity, validated
+target/model prices and validation-only test bearer before accepting bounded paid
+Gaming runs. Bind `ARCANOS_LIVE_PREVIEW_OPENAI_API_KEY` once through the Railway
+UI/CLI to this service; the binding persists for future deployments. The controller generates and binds `ARCANOS_LIVE_VALIDATION_TEST_TOKEN` outside
+Git for each exact deployment; no separate manual bearer binding is required.
+Never place secret values in Git, workflow inputs, evidence, logs or shared
+production variables. No production database, Redis, OAuth or player-persistence
+credential belongs in this service. The normal production launcher does not
+register these endpoints. See the runbook for the closed variable allowlist,
+one-run deployment boundary and exact-SHA proof.

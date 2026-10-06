@@ -2381,17 +2381,17 @@ not automatically retry generation after timeouts. See the
 [migration decision](chatgpt-migration/ARCHITECTURE.md) and
 [authentication contract](chatgpt-migration/AUTHENTICATION.md).
 
-## Private live PR backend test endpoint
+## Isolated live validation endpoints
 
-The separate, default-off [live preview runtime](LIVE_PR_PREVIEW.md) exposes
-`POST /__preview/live/<moduleId>` only through an isolated private listener. It is
-not registered by the production application or sealed preview. Authentication
-uses an expiring exact-run test bearer before a 32 KiB JSON parser. The body
-contains a fixed `caseId` and adapter-validated `input`. Module scope must match
-the signed approval and reviewed registry. Gaming is the first concrete adapter
-and uses normal Gaming input with supplied public guide URLs. The route returns
-sanitized test evidence, not an OAuth principal
-or storage permission. Normal Gaming OAuth rejects these opaque preview
-credentials even if a preview flag is accidentally enabled. Production route
-absence, auth rejection and wrong-deployment rejection have local regressions;
-platform isolation and deployed acceptance require separate verification.
+The dedicated [live validation launcher](LIVE_VALIDATION.md) exposes `/ready`,
+`/runs`, `/acceptance`, `/usage` and `/stop` on the validation service's ordinary
+Railway HTTPS origin. It is separate from the production and sealed-preview
+launchers. Authenticated test execution uses the validation-only bearer configured
+as `ARCANOS_LIVE_VALIDATION_TEST_TOKEN`; it grants no OAuth or storage permission.
+Authenticated readiness reports the exact source SHA, startup-verified build
+manifest and its hash; the controller compares its tree/compiled digests with
+the independent offline attestation. Run admission
+binds the requested SHA and deployment before paid work. Acceptance executes
+reviewed Gaming profiles through the real transient v2 acquisition, Trinity and
+mandatory CLEAR answer audit paths, returning sanitized evidence. A completed
+generation followed by an audit timeout remains a failed acceptance result.

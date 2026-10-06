@@ -104,8 +104,8 @@ both be installed as `arcanos`; their guides explain unambiguous invocation.
 | [Local-agent preview E2E report](PREVIEW_E2E_REPORT.md) | Historical | Dated isolated-preview deployment, security, test, confirmation, and teardown evidence. |
 | [PR 1408 merge readiness](MERGE_READINESS.md) | Historical | Consolidated seven-reviewer production-readiness decision, validation evidence, residual risks, and merge recommendation. |
 | [Railway Redis lifecycle preview](RAILWAY_REDIS_LIFECYCLE_PREVIEW.md) | Design-only / approval-gated | Isolated preview proof procedure; not routine validation or deployment authority. |
-| [Isolated live PR preview testing](LIVE_PR_PREVIEW.md) | Companion / approval-gated | Separate default-off exact-SHA backend tests, signed limits, private test authentication and trusted provider broker; not deployed or OAuth acceptance. |
-| [Persistent live validation](LIVE_VALIDATION.md) | Companion / deployment-gated | Same-project runtime and supervisor facility, private mTLS, exact-SHA manual acceptance, durable paid quotas, transient Gaming profiles, and explicit bootstrap blockers. |
+| [Live PR validation](LIVE_VALIDATION.md) | Companion / deployment-gated | Single isolated Railway service, exact-SHA build/readiness proof, transient Gaming, mandatory answer audit, bounded paid calls and one-time validation key binding. |
+| [PR 1528 simplification audit](LIVE_VALIDATION_PR1528_AUDIT.md) | Audit | Complete original-diff classification, deliberately removed supervisor/mTLS path, preserved controls and redacted historical scanner triage. |
 
 Operational prose does not authorize live probes, deployments, restarts,
 variable changes, database access, or provider calls.
