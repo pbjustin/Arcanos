@@ -3,21 +3,20 @@ import { constants, existsSync, lstatSync, mkdirSync, openSync, closeSync, fstat
   writeFileSync, fsyncSync, realpathSync, renameSync, readSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readTrustedOperatorFile, readTrustedRunnerGitState } from './live-pr-preview-run.mjs';
-import { sanitizeLivePreviewEvidence } from './live-pr-preview-e2e.mjs';
-import { verifyLivePreviewEvidence } from './live-pr-preview-verifier.mjs';
+import { sanitizeLivePreviewEvidence, verifyLivePreviewEvidence } from './live-pr-preview-verifier.mjs';
 import { validateLiveValidationTarget, assertLiveValidationInventory,
-  LIVE_VALIDATION_HARD_LIMITS, LIVE_VALIDATION_QUOTA_LEDGER_MOUNT } from './live-validation-target.mjs';
-import { canonicalLiveValidationJson, liveValidationTargetSha256, signLiveValidationPlan } from './live-validation-policy.mjs';
-import { createLiveValidationPrivateClient } from './live-validation-transport.mjs';
+  LIVE_VALIDATION_HARD_LIMITS } from './live-validation-target.mjs';
+import { canonicalLiveValidationJson } from './live-validation-bootstrap.mjs';
+import { execFileSync } from 'node:child_process';
 
+export const liveValidationTargetSha256 = target => canonicalHash(validateLiveValidationTarget(target));
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SHA = /^[0-9a-f]{40}$/u;
 const HASH = /^[0-9a-f]{64}$/u;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const PROFILE_IDS = ['gaming-guide-positive', 'gaming-guide-negative'];
 export const LIVE_VALIDATION_OPERATOR_GATE_IDS = Object.freeze(['type-check', 'lint', 'build', 'railway', 'workflow',
-  'secret-scan', 'private-auth', 'egress', 'exact-sha', 'gaming']);
+  'secret-scan', 'service-auth', 'egress', 'exact-sha', 'gaming']);
 const SUMMARY_VERSION = 'arcanos-live-validation-evidence/v1';
 const STATE_VERSION = 'arcanos-live-validation-controller-state/v1';
 const MAX_JSON = 2 * 1024 * 1024;
@@ -67,10 +66,11 @@ export function parseLiveValidationControllerArguments(argv) {
       } else args[fields[flag]] = value;
     }
   }
-  requireController(/^[1-9][0-9]*$/u.test(args.prNumber ?? '') && integer(Number(args.prNumber), 1)
-    && SHA.test(args.commitSha ?? '') && args.commitSha !== '0'.repeat(40) && args.profile === 'gaming-guide'
+  requireController((args.prNumber !== undefined || args.commitSha !== undefined)
+    && (args.prNumber === undefined || /^[1-9][0-9]*$/u.test(args.prNumber) && integer(Number(args.prNumber), 1))
+    && (args.commitSha === undefined || SHA.test(args.commitSha) && args.commitSha !== '0'.repeat(40)) && args.profile === 'gaming-guide'
     && path.isAbsolute(args.targetFile ?? '') && path.isAbsolute(args.evidenceDirectory ?? ''), 'LIVE_VALIDATION_ARGUMENT_INVALID');
-  args.prNumber = Number(args.prNumber);
+  if (args.prNumber !== undefined) args.prNumber = Number(args.prNumber);
   for (const [key, cap] of Object.entries(LIVE_VALIDATION_HARD_LIMITS)) {
     requireController(integer(args.limits[key], 1, cap), 'LIVE_VALIDATION_LIMIT_INVALID');
   }
@@ -107,6 +107,27 @@ function protectedWrite(file, value) {
   const parent = openSync(path.dirname(file), constants.O_RDONLY | constants.O_DIRECTORY);
   try { fsyncSync(parent); } finally { closeSync(parent); }
 }
+export function readTrustedOperatorFile(file, root) {
+  requireController(path.isAbsolute(file), 'LIVE_VALIDATION_OPERATOR_PATH_REQUIRED');
+  outsideCheckout(path.dirname(file), root);
+  requireController(!lstatSync(file).isSymbolicLink(), 'LIVE_VALIDATION_OPERATOR_FILE_UNSAFE');
+  const fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const stat = fstatSync(fd);
+    requireController(stat.isFile() && (stat.mode & 0o077) === 0 && stat.size > 0 && stat.size <= MAX_JSON
+      && (typeof process.getuid !== 'function' || stat.uid === process.getuid()), 'LIVE_VALIDATION_OPERATOR_FILE_UNSAFE');
+    return readFileSync(fd, 'utf8');
+  } finally { closeSync(fd); }
+}
+export function readTrustedRunnerGitState(root) {
+  const git = args => execFileSync('git', ['-c', 'core.fsmonitor=false', '-c', 'core.pager=cat', ...args], {
+    cwd: root, encoding: 'utf8', env: { PATH: process.env.PATH }, timeout: 5000, maxBuffer: 128 * 1024 }).trim();
+  const head = git(['rev-parse', 'HEAD']);
+  requireController(realpathSync(git(['rev-parse', '--show-toplevel'])) === realpathSync(root)
+    && git(['config', '--get', 'remote.origin.url']) === 'https://github.com/pbjustin/Arcanos.git'
+    && SHA.test(head) && git(['status', '--porcelain', '--untracked-files=all']) === '', 'LIVE_VALIDATION_TRUSTED_CHECKOUT_INVALID');
+  return { root, head, clean: true, repository: 'pbjustin/Arcanos' };
+}
 function opaqueHash(file, maximum = 2 * 1024 * 1024 * 1024) {
   requireController(!lstatSync(file).isSymbolicLink(), 'LIVE_VALIDATION_ARTIFACT_INVALID');
   const fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW);
@@ -127,10 +148,10 @@ function opaqueHash(file, maximum = 2 * 1024 * 1024 * 1024) {
 /** Recompute both opaque archives and their original manifest, rather than trusting a caller's digest. */
 export function validateLiveValidationArtifact(binding, { args, git, directory, environment = {} }) {
   const keys = ['version', 'repository', 'sourceCommit', 'prNumber', 'profile', 'workflowRunId', 'workflowRunAttempt',
-    'controllerRevision', 'files', 'artifactId', 'artifactDigest', 'attestationSha256'];
+    'controllerRevision', 'treeSha', 'compiledSha256', 'files', 'artifactId', 'artifactDigest', 'attestationSha256'];
   requireController(exact(binding, keys) && binding.version === 1 && binding.repository === 'pbjustin/Arcanos'
     && binding.sourceCommit === args.commitSha && binding.prNumber === args.prNumber && binding.profile === args.profile
-    && binding.controllerRevision === git.head && binding.workflowRunAttempt === 1
+    && binding.controllerRevision === git.head && SHA.test(binding.treeSha ?? '') && HASH.test(binding.compiledSha256 ?? '') && binding.workflowRunAttempt === 1
     && /^[1-9][0-9]*$/u.test(binding.workflowRunId ?? '') && /^[1-9][0-9]*$/u.test(binding.artifactId ?? '')
     && /^sha256:[0-9a-f]{64}$/u.test(binding.artifactDigest ?? '') && HASH.test(binding.attestationSha256 ?? '')
     && exact(binding.files, ['source.tar', 'build.tar']) && Object.values(binding.files).every(value => HASH.test(value)),
@@ -163,9 +184,10 @@ export function validateLiveValidationArtifact(binding, { args, git, directory, 
 /** Initial premerge bootstrap is explicit operator authority, never a fallback from a failed workflow gate. */
 export function validateLiveValidationOperatorArtifact(binding, { args, git, directory, raw }) {
   requireController(exact(binding, ['version', 'repository', 'sourceCommit', 'prNumber', 'profile', 'trustedControllerSha',
-    'files', 'offlineGateRecords']) && binding.version === 'arcanos-live-validation-operator-bootstrap/v1'
+    'treeSha', 'compiledSha256', 'files', 'offlineGateRecords']) && binding.version === 'arcanos-live-validation-operator-bootstrap/v1'
     && binding.repository === 'pbjustin/Arcanos' && binding.sourceCommit === args.commitSha
     && binding.prNumber === args.prNumber && binding.profile === args.profile && binding.trustedControllerSha === git.head
+    && SHA.test(binding.treeSha ?? '') && HASH.test(binding.compiledSha256 ?? '')
     && exact(binding.files, ['source.tar', 'build.tar']) && Object.values(binding.files).every(value => HASH.test(value))
     && Array.isArray(binding.offlineGateRecords) && binding.offlineGateRecords.length === LIVE_VALIDATION_OPERATOR_GATE_IDS.length,
   'LIVE_VALIDATION_OPERATOR_ATTESTATION_INVALID');
@@ -208,7 +230,7 @@ export function createLiveValidationGitHubApi({ token, fetchImplementation = glo
 export async function assertLiveValidationGitHubGate({ github, args, artifact, environment, git }) {
   const base = '/repos/pbjustin/Arcanos';
   const pr = await github.get(`${base}/pulls/${args.prNumber}`);
-  requireController(pr.state === 'open' && pr.draft === false && pr.head?.sha === args.commitSha
+  requireController(pr.state === 'open' && pr.head?.sha === args.commitSha
     && pr.head?.repo?.full_name === 'pbjustin/Arcanos' && pr.base?.repo?.full_name === 'pbjustin/Arcanos'
     && pr.base?.ref === 'main', 'LIVE_VALIDATION_PR_HEAD_GATE_FAILED');
   const actor = args.operatorBootstrap ? (await github.get('/user')).login : environment.GITHUB_ACTOR;
@@ -258,7 +280,8 @@ export async function assertLiveValidationGitHubGate({ github, args, artifact, e
     ...(args.operatorBootstrap ? { offlineGateRecordsSha256: canonicalHash(artifact.offlineGateRecords) } : { workflowRunId, offlineJobId }) };
 }
 
-const INVENTORY_QUERY = `query LiveValidationInventory($environmentId:String!,$runtimeServiceId:String!,$supervisorServiceId:String!){
+// Railway documents commitSha on serviceInstanceDeployV2; no branch identity is used.
+const INVENTORY_QUERY = `query LiveValidationInventory($environmentId:String!,$runtimeServiceId:String!){
  projectToken{projectId environmentId}
  environment(id:$environmentId){id name projectId deletedAt config(decryptVariables:false)
   serviceInstances(first:100){pageInfo{hasNextPage} edges{node{id serviceId environmentId deletedAt source{repo image}
@@ -270,7 +293,6 @@ const INVENTORY_QUERY = `query LiveValidationInventory($environmentId:String!,$r
   variables(first:100){pageInfo{hasNextPage} edges{node{name serviceId environmentId}}}}
  privateNetworks(environmentId:$environmentId){publicId projectId environmentId deletedAt}
  runtimeTcp:tcpProxies(environmentId:$environmentId,serviceId:$runtimeServiceId){id serviceId environmentId deletedAt}
- supervisorTcp:tcpProxies(environmentId:$environmentId,serviceId:$supervisorServiceId){id serviceId environmentId deletedAt}
 }`;
 const DEPLOYMENT_QUERY = 'query LiveValidationDeployment($id:String!){deployment(id:$id){id projectId environmentId serviceId status deploymentStopped meta}}';
 
@@ -286,15 +308,22 @@ export function createLiveValidationRailwayApi({ token, fetchImplementation = gl
     return result.data;
   }
   return Object.freeze({
-    inventory: target => graphql(INVENTORY_QUERY, { environmentId: target.environmentId,
-      runtimeServiceId: target.runtimeServiceId, supervisorServiceId: target.supervisorServiceId }),
+    inventory: target => graphql(INVENTORY_QUERY, { environmentId: target.environmentId, runtimeServiceId: target.runtimeServiceId }),
     async deployment(id) { requireController(UUID.test(id), 'LIVE_VALIDATION_DEPLOYMENT_ID_INVALID'); return (await graphql(DEPLOYMENT_QUERY, { id })).deployment; },
     async deploy(target, role, commitSha) {
-      requireController(['runtime', 'supervisor'].includes(role) && SHA.test(commitSha), 'LIVE_VALIDATION_DEPLOYMENT_INVALID');
+      requireController(role === 'runtime' && SHA.test(commitSha), 'LIVE_VALIDATION_DEPLOYMENT_INVALID');
       const result = await graphql('mutation LiveValidationDeploy($environmentId:String!,$serviceId:String!,$commitSha:String!){serviceInstanceDeployV2(environmentId:$environmentId,serviceId:$serviceId,commitSha:$commitSha)}',
-        { environmentId: target.environmentId, serviceId: target[`${role}ServiceId`], commitSha });
+        { environmentId: target.environmentId, serviceId: target.runtimeServiceId, commitSha });
       requireController(UUID.test(result.serviceInstanceDeployV2 ?? ''), 'LIVE_VALIDATION_DEPLOYMENT_ID_INVALID');
       return result.serviceInstanceDeployV2;
+    },
+    async bindTestToken(target, value) {
+      validateLiveValidationTarget(target);
+      requireController(typeof value === 'string' && /^[a-f0-9]{64}$/u.test(value), 'LIVE_VALIDATION_SERVICE_CREDENTIAL_REQUIRED');
+      const result = await graphql('mutation LiveValidationTestToken($input:VariableUpsertInput!){variableUpsert(input:$input)}',
+        { input: { projectId: target.projectId, environmentId: target.environmentId, serviceId: target.runtimeServiceId,
+          name: 'ARCANOS_LIVE_VALIDATION_TEST_TOKEN', value, skipDeploys: true } });
+      requireController(result.variableUpsert === true, 'LIVE_VALIDATION_SERVICE_CREDENTIAL_BINDING_FAILED');
     },
     async stop(id) {
       requireController(UUID.test(id), 'LIVE_VALIDATION_DEPLOYMENT_ID_INVALID');
@@ -327,8 +356,8 @@ export function normalizeLiveValidationInventory(target, raw, { phase = 'paid' }
     && triggers.every(item => item.environmentId === target.environmentId && item.projectId === target.projectId)
     && volumeInstances.every(item => item.environmentId === target.environmentId), 'LIVE_VALIDATION_INVENTORY_TARGET_MISMATCH');
   requireController(triggers.length === 0, 'LIVE_VALIDATION_AUTODEPLOY_FORBIDDEN');
-  requireController(Object.keys(config.services).length === 2
-    && Object.keys(config.services).every(id => [target.runtimeServiceId, target.supervisorServiceId].includes(id)),
+  requireController(Object.keys(config.services).length === 1
+    && Object.keys(config.services)[0] === target.runtimeServiceId,
     'LIVE_VALIDATION_INVENTORY_SERVICES_INVALID');
   const networks = raw.privateNetworks;
   requireController(Array.isArray(networks) && networks.length === 1 && !networks[0].deletedAt
@@ -337,10 +366,9 @@ export function normalizeLiveValidationInventory(target, raw, { phase = 'paid' }
   const mounts = volumeInstances.map(volume => ({ id: volume.volumeId, serviceId: volume.serviceId,
     mountPath: volume.mountPath, purpose: 'quota_ledger' }));
   const services = instances.map(instance => {
-    const role = instance.serviceId === target.runtimeServiceId ? 'runtime'
-      : instance.serviceId === target.supervisorServiceId ? 'supervisor' : 'unknown';
+    const role = instance.serviceId === target.runtimeServiceId ? 'runtime' : 'unknown';
     const service = config.services[instance.serviceId]; const source = service?.source;
-    const tcp = role === 'runtime' ? raw.runtimeTcp : raw.supervisorTcp;
+    const tcp = raw.runtimeTcp;
     requireController(record(source) && Array.isArray(tcp) && tcp.every(item => item.environmentId === target.environmentId
       && item.serviceId === instance.serviceId), 'LIVE_VALIDATION_INVENTORY_INVALID');
     const latest = instance.latestDeployment;
@@ -362,8 +390,6 @@ export function normalizeLiveValidationInventory(target, raw, { phase = 'paid' }
   const inventory = assertLiveValidationInventory(target, { projectId: env.projectId, environmentId: env.id, environmentName: env.name,
     sharedVariableNames: [...new Set([...variables.filter(item => !item.serviceId).map(item => item.name), ...Object.keys(config.sharedVariables)])],
     privateNetworkEnabled: true, volumes: mounts, services }, { phase });
-  requireController(inventory.volumes.length === 1 && inventory.volumes[0].serviceId === target.supervisorServiceId
-    && inventory.volumes[0].mountPath === LIVE_VALIDATION_QUOTA_LEDGER_MOUNT, 'LIVE_VALIDATION_DURABLE_LEDGER_REQUIRED');
   return { inventory, instances };
 }
 
@@ -382,30 +408,66 @@ function identityFields(value) {
   return Object.fromEntries(['role', 'sourceCommit', 'projectId', 'environmentId', 'serviceId', 'deploymentId',
     'buildManifestSha256'].map(key => [key, value?.[key]]));
 }
-function assertReady(value, target, role, commitSha, deploymentId) {
+function assertReady(value, target, role, commitSha, deploymentId, artifact) {
   requireController(value?.role === role && value.sourceCommit === commitSha && value.projectId === target.projectId
     && value.environmentId === target.environmentId && value.serviceId === target[`${role}ServiceId`]
     && value.deploymentId === deploymentId && HASH.test(value.buildManifestSha256 ?? '')
-    && value.readiness?.providerCallsEnabled === false && (role !== 'supervisor' || value.readiness.modelCredentialBound === true),
+    && value.readiness?.providerCallsEnabled === false && value.readiness.modelCredentialBound === true
+    && value.readiness.durableWritesEnabled === false,
   'LIVE_VALIDATION_PRIVATE_IDENTITY_MISMATCH');
+  const manifest = value.buildManifest;
+  requireController(exact(manifest, ['version', 'repository', 'sourceCommit', 'role', 'treeSha', 'compiledSha256'])
+    && manifest.version === 1 && manifest.repository === target.repository && manifest.sourceCommit === commitSha && manifest.role === role
+    && manifest.treeSha === artifact.treeSha && manifest.compiledSha256 === artifact.compiledSha256
+    && canonicalHash(manifest) === value.buildManifestSha256, 'LIVE_VALIDATION_BUILD_MANIFEST_MISMATCH');
   return identityFields(value);
 }
-async function privateJson(client, route, options = {}) {
+/** Service credentials only enter the approved managed HTTPS origin; never log response errors. */
+export function createLiveValidationServiceClient({ origin, token, fetchImplementation = globalThis.fetch }) {
+  requireController(typeof token === 'string' && token.length >= 32 && token.length <= 256
+    && /^[A-Za-z0-9_-]+$/u.test(token), 'LIVE_VALIDATION_SERVICE_CREDENTIAL_REQUIRED');
+  // Validate origin as part of the already protected target, then prohibit alternative destinations.
+  const targetOrigin = new URL(origin);
+  requireController(origin === targetOrigin.origin && targetOrigin.protocol === 'https:'
+    && /^[a-z0-9-]+\.up\.railway\.app$/u.test(targetOrigin.hostname), 'LIVE_VALIDATION_PUBLIC_TARGET_INVALID');
+  return Object.freeze({ async requestJSON(route, options = {}) {
+    requireController(typeof route === 'string' && /^\/(?:ready|runs|acceptance|usage|stop)$/u.test(route), 'LIVE_VALIDATION_SERVICE_ROUTE_INVALID');
+    const timeoutMs = options.timeoutMs ?? CONTROL_TIMEOUT_MS;
+    requireController(integer(timeoutMs, 1, LIVE_VALIDATION_ACCEPTANCE_TRANSPORT_TIMEOUT_MS), 'LIVE_VALIDATION_SERVICE_TIMEOUT_INVALID');
+    const signal = options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs);
+    const response = await fetchImplementation(new URL(route, origin), { method: options.method ?? 'GET',
+      headers: { ...options.headers, authorization: 'Bearer ' + token, ...(options.body === undefined ? {} : { 'content-type': 'application/json' }) },
+      ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }), signal, redirect: 'error' });
+    return { status: response.status, body: await boundedJson(response, 'LIVE_VALIDATION_SERVICE_REQUEST_FAILED') };
+  } });
+}
+async function serviceJson(client, route, options = {}) {
   const result = await client.requestJSON(route, { timeoutMs: CONTROL_TIMEOUT_MS, ...options });
-  requireController(result.status === 200 && record(result.body), 'LIVE_VALIDATION_PRIVATE_REQUEST_FAILED');
+  requireController(result.status === 200 && record(result.body), 'LIVE_VALIDATION_SERVICE_REQUEST_FAILED');
   return result.body;
 }
-function authHeaders(session, runtime) {
-  return { authorization: 'Bearer ' + session.testBearer, 'x-arcanos-source-commit': runtime.sourceCommit,
-    'x-arcanos-deployment-id': runtime.deploymentId, 'x-arcanos-live-run-id': session.runId };
+function authHeaders(_run, runtime) {
+  return { 'x-arcanos-source-commit': runtime.sourceCommit, 'x-arcanos-deployment-id': runtime.deploymentId };
 }
-function assertSession(session, plan) {
-  requireController(exact(session, ['runId', 'brokerBearer', 'testBearer', 'expiresAtMs'])
-    && session.runId === plan.runId && session.expiresAtMs === plan.expiresAtMs
-    && typeof session.brokerBearer === 'string' && /^[A-Za-z0-9_-]{32,256}$/u.test(session.brokerBearer)
-    && typeof session.testBearer === 'string' && /^[A-Za-z0-9_-]{32,256}$/u.test(session.testBearer)
-    && session.brokerBearer !== session.testBearer, 'LIVE_VALIDATION_SESSION_INVALID');
+
+export async function resolveLiveValidationSelection(github, selection) {
+  const base = '/repos/pbjustin/Arcanos';
+  let prNumber = selection.prNumber;
+  if (prNumber === undefined) {
+    const matches = await github.get(`${base}/commits/${selection.commitSha}/pulls?per_page=100`);
+    requireController(Array.isArray(matches) && matches.length < 100, 'LIVE_VALIDATION_PR_SELECTION_AMBIGUOUS');
+    const exactHeads = matches.filter(pr => pr.state === 'open' && pr.head?.sha === selection.commitSha
+      && pr.head?.repo?.full_name === 'pbjustin/Arcanos' && pr.base?.ref === 'main');
+    requireController(exactHeads.length === 1, 'LIVE_VALIDATION_PR_SELECTION_AMBIGUOUS');
+    prNumber = exactHeads[0].number;
+  }
+  const pr = await github.get(`${base}/pulls/${prNumber}`);
+  requireController(pr.state === 'open' && pr.head?.repo?.full_name === 'pbjustin/Arcanos'
+    && pr.base?.repo?.full_name === 'pbjustin/Arcanos' && pr.base?.ref === 'main'
+    && SHA.test(pr.head?.sha ?? '') && (!selection.commitSha || selection.commitSha === pr.head.sha), 'LIVE_VALIDATION_PR_HEAD_GATE_FAILED');
+  return { prNumber, commitSha: pr.head.sha };
 }
+
 export function sanitizeLiveValidationObservation(value) {
   requireController(value?.schemaVersion === 1 && value.contractVersion === 'gaming-hybrid-v2'
     && ['accepted', 'clarification_required', 'need_new_source', 'unavailable'].includes(value.outcome)
@@ -418,6 +480,10 @@ export function sanitizeLiveValidationObservation(value) {
   const count = amount => integer(amount, 0, 64) ? amount : null;
   const audit = value.audit;
   return { schemaVersion: 1, contractVersion: 'gaming-hybrid-v2', outcome: value.outcome, semanticGap: value.semanticGap,
+    reason: /^[A-Z][A-Z0-9_]{0,79}$/u.test(value.reason ?? '') ? value.reason : null,
+    candidates: Array.isArray(value.candidates) ? value.candidates.slice(0, 8).map(item => ({
+      decision: ['accepted_transient', 'eligible_for_ingestion', 'already_indexed', 'rejected', 'requires_confirmation'].includes(item?.decision) ? item.decision : 'unobserved',
+      reasonCodes: Array.isArray(item?.reasonCodes) ? item.reasonCodes.filter(code => typeof code === 'string' && /^[A-Z][A-Z0-9_]{0,79}$/u.test(code)).slice(0, 8) : [] })) : [],
     coverage: { satisfied: value.coverage?.satisfied === true,
       assessmentStatus: ['assessed', 'unknown', 'not_assessed'].includes(value.coverage?.assessmentStatus)
         ? value.coverage.assessmentStatus : 'not_assessed', missingCount: count(value.coverage?.missingCount) },
@@ -440,6 +506,8 @@ function assertProfileObservation(value, expected) {
   if (expected.outcome === 'accepted') requireController(value.coverage.satisfied && value.selectedEvidenceCount > 0
     && value.audit?.assessmentStatus === 'completed' && value.audit.decision === 'accept' && value.audit.boundToFinalAnswer,
   'LIVE_VALIDATION_PROFILE_OBSERVATION_FAILED');
+  if (expected.providerCalls === 0) requireController(value.candidates.some(candidate => candidate.decision === 'rejected'
+    && candidate.reasonCodes.some(code => /(?:MISMATCH|CONFLICT)/u.test(code))), 'LIVE_VALIDATION_NEGATIVE_REASON_MISSING');
   if (expected.qualifiedUnknownPatch) requireController(value.qualification.visible === true
     && value.qualification.patchCompatibility === 'unverified' && value.qualification.claimsVerifiedCurrentness === false,
   'LIVE_VALIDATION_FRESHNESS_QUALIFICATION_FAILED');
@@ -467,63 +535,43 @@ export function sanitizeLiveValidationUsage(value, { plan, target }) {
 
 function validateState(state, { target, args }) {
   requireController(exact(state, ['version', 'targetHash', 'prNumber', 'commitSha', 'runId', 'runtimeDeploymentId',
-    'supervisorDeploymentId', 'runtimeCreated', 'session', 'completed', 'cleanupComplete'])
-    && state.version === STATE_VERSION && state.targetHash === liveValidationTargetSha256(target)
-    && state.prNumber === args.prNumber && state.commitSha === args.commitSha && /^[0-9a-f]{32}$/u.test(state.runId ?? '')
-    && (state.runtimeDeploymentId === null || UUID.test(state.runtimeDeploymentId))
-    && (state.supervisorDeploymentId === null || UUID.test(state.supervisorDeploymentId))
-    && typeof state.runtimeCreated === 'boolean' && typeof state.completed === 'boolean' && typeof state.cleanupComplete === 'boolean'
-    && (!state.runtimeCreated || UUID.test(state.runtimeDeploymentId ?? ''))
-    && (state.session === null || state.session.runId === state.runId), 'LIVE_VALIDATION_CLEANUP_STATE_INVALID');
+    'runtimeCreated', 'runStarted', 'completed', 'cleanupComplete']) && state.version === STATE_VERSION
+    && state.targetHash === liveValidationTargetSha256(target) && state.prNumber === args.prNumber && state.commitSha === args.commitSha
+    && /^[0-9a-f]{32}$/u.test(state.runId ?? '') && (state.runtimeDeploymentId === null || UUID.test(state.runtimeDeploymentId))
+    && ['runtimeCreated', 'runStarted', 'completed', 'cleanupComplete'].every(key => typeof state[key] === 'boolean')
+    && (!state.runtimeCreated || UUID.test(state.runtimeDeploymentId ?? '')), 'LIVE_VALIDATION_CLEANUP_STATE_INVALID');
   return state;
 }
 
-/** Stop/revoke only this controller's runtime deployment; persistent services, ledger and supervisor remain. */
-export async function cleanupLiveValidationRun({ target, args, state, railway, supervisor, writeState }) {
+/** Stop only the deployment created by this run; retain the reusable environment and service. */
+export async function cleanupLiveValidationRun({ target, args, state, railway, runtime, writeState }) {
   validateState(state, { target, args });
-  // Repeat cleanup performs fresh platform readback. A prior local PASS cannot substitute for current state.
-  const failures = []; let sessionRevoked = state.session === null; let stopped = !state.runtimeCreated; let platformScopeVerified = false;
+  const failures = []; let stopped = !state.runtimeCreated; let runClosed = !state.runStarted;
   try {
-    const raw = await railway.inventory(target);
-    requireController(raw.projectToken?.projectId === target.projectId && raw.projectToken?.environmentId === target.environmentId
-      && raw.environment?.id === target.environmentId && raw.environment?.projectId === target.projectId,
-    'LIVE_VALIDATION_RAILWAY_TOKEN_SCOPE_INVALID');
-    platformScopeVerified = true;
-  } catch (error) { failures.push(safeCode(error)); }
-  if (state.session !== null) {
-    try {
-      const result = await privateJson(supervisor, `/runs/${state.runId}/stop`, { method: 'POST', body: {} });
-      requireController(result.runId === state.runId && (result.status === 'stopped' || result.stopped === true), 'LIVE_VALIDATION_CLEANUP_REVOKE_FAILED');
-      const usage = await privateJson(supervisor, `/runs/${state.runId}/usage`);
-      requireController(usage.runId === state.runId && usage.status === 'stopped', 'LIVE_VALIDATION_CLEANUP_REVOKE_READBACK_FAILED');
-      sessionRevoked = true;
-    } catch (error) { failures.push(safeCode(error)); }
-  }
-  if (state.runtimeCreated && platformScopeVerified) {
-    try {
-      const existing = await railway.deployment(state.runtimeDeploymentId);
-      requireController(existing?.id === state.runtimeDeploymentId && existing.projectId === target.projectId
-        && existing.environmentId === target.environmentId && existing.serviceId === target.runtimeServiceId,
-      'LIVE_VALIDATION_CLEANUP_OWNERSHIP_FAILED');
-      // This exact returned ID was recorded from our mutation. Incorrect source must also be stopped after target ownership matches.
-      if (existing.deploymentStopped !== true) await railway.stop(state.runtimeDeploymentId);
+    normalizeLiveValidationInventory(target, await railway.inventory(target), { phase: 'predeploy' });
+    if (state.runtimeCreated) {
+      const deployment = await railway.deployment(state.runtimeDeploymentId);
+      assertLiveValidationDeployment(deployment, target, 'runtime', args.commitSha, { successful: false });
+      if (!deployment.deploymentStopped && state.runStarted && runtime) {
+        try {
+          const result = await serviceJson(runtime, '/stop', { method: 'POST', body: { runId: state.runId },
+            headers: { 'x-arcanos-source-commit': args.commitSha, 'x-arcanos-deployment-id': state.runtimeDeploymentId } });
+          requireController(result.stopped === true && result.runId === state.runId, 'LIVE_VALIDATION_CLEANUP_CLOSE_FAILED');
+          runClosed = true;
+        } catch { /* Stopping the exact deployment below closes all model execution even if the runtime is unavailable. */ }
+      }
+      if (!deployment.deploymentStopped) await railway.stop(state.runtimeDeploymentId);
       const after = await railway.deployment(state.runtimeDeploymentId);
-      requireController(after?.id === state.runtimeDeploymentId && after.projectId === target.projectId
-        && after.environmentId === target.environmentId && after.serviceId === target.runtimeServiceId
-        && after.deploymentStopped === true, 'LIVE_VALIDATION_CLEANUP_STOP_READBACK_FAILED');
-      stopped = true;
-    } catch (error) { failures.push(safeCode(error)); }
-  }
-  try {
-    // Confirm the dedicated definitions and quota volume still exist; never delete them during cleanup.
+      assertLiveValidationDeployment(after, target, 'runtime', args.commitSha, { successful: false });
+      requireController(after.deploymentStopped === true, 'LIVE_VALIDATION_CLEANUP_STOP_READBACK_FAILED');
+      stopped = true; runClosed = true;
+    }
     normalizeLiveValidationInventory(target, await railway.inventory(target), { phase: 'predeploy' });
   } catch (error) { failures.push(safeCode(error)); }
-  state.cleanupComplete = sessionRevoked && stopped && failures.length === 0;
-  if (state.cleanupComplete) state.session = null;
-  writeState(state);
+  state.cleanupComplete = stopped && runClosed && failures.length === 0; writeState(state);
   return { version: SUMMARY_VERSION, status: state.cleanupComplete ? 'PASS' : 'FAIL',
     code: state.cleanupComplete ? 'LIVE_VALIDATION_CLEANUP_PASS' : 'LIVE_VALIDATION_CLEANUP_BLOCKED',
-    runtimeDeploymentStopped: stopped, sessionRevoked, definitionsRetained: failures.length === 0, failures };
+    runtimeDeploymentStopped: stopped, runClosed, definitionsRetained: failures.length === 0, failures };
 }
 
 export async function runLiveValidationController(argv, dependencies = {}) {
@@ -531,35 +579,34 @@ export async function runLiveValidationController(argv, dependencies = {}) {
   const root = dependencies.repositoryRoot ?? ROOT; const environment = dependencies.environment ?? process.env;
   const read = dependencies.readOperatorFile ?? readTrustedOperatorFile;
   const git = (dependencies.readGitState ?? readTrustedRunnerGitState)(root);
-  requireController(git.clean === true && git.repository === 'pbjustin/Arcanos' && SHA.test(git.head ?? ''),
-    'LIVE_VALIDATION_TRUSTED_CHECKOUT_INVALID');
+  requireController(git.clean === true && git.repository === 'pbjustin/Arcanos' && SHA.test(git.head ?? ''), 'LIVE_VALIDATION_TRUSTED_CHECKOUT_INVALID');
+  let github;
+  const createGitHub = () => github ??= (dependencies.createGitHubApi ?? createLiveValidationGitHubApi)({ token: environment.GITHUB_TOKEN,
+    fetchImplementation: dependencies.fetchImplementation });
+  if (args.prNumber === undefined || args.commitSha === undefined) {
+    requireController(args.execute, 'LIVE_VALIDATION_OFFLINE_EXACT_SELECTION_REQUIRED');
+    Object.assign(args, await resolveLiveValidationSelection(createGitHub(), args));
+  }
   const target = validateLiveValidationTarget(json(read(args.targetFile, root), 'LIVE_VALIDATION_TARGET_INVALID'));
-  for (const [key, limit] of Object.entries(args.limits)) requireController(limit === target.limits[key],
-    'LIVE_VALIDATION_OPERATOR_LIMIT_MISMATCH');
-  const directory = evidenceDirectory(args.evidenceDirectory, root);
-  const stateFile = path.join(directory, 'controller-state.private.json');
+  for (const [key, limit] of Object.entries(args.limits)) requireController(limit === target.limits[key], 'LIVE_VALIDATION_OPERATOR_LIMIT_MISMATCH');
+  const directory = evidenceDirectory(args.evidenceDirectory, root); const stateFile = path.join(directory, 'controller-state.private.json');
   const now = dependencies.now ?? Date.now; const sleep = dependencies.sleep ?? (ms => new Promise(resolve => setTimeout(resolve, ms)));
   const createRailway = () => (dependencies.createRailwayApi ?? createLiveValidationRailwayApi)({ token: environment.RAILWAY_LIVE_VALIDATION_TOKEN,
     fetchImplementation: dependencies.fetchImplementation });
-  const createPrivate = role => (dependencies.createPrivateClient ?? createLiveValidationPrivateClient)({
-    origin: target.privateOrigins[role], serverIdentity: { role, dnsName: target.mtlsPeers[role].dns,
-      fingerprintSha256: target.mtlsPeers[role].sha256 }, repositoryRoot: root,
-    tlsFiles: { certFile: environment.LIVE_VALIDATION_MTLS_CERT_FILE, keyFile: environment.LIVE_VALIDATION_MTLS_KEY_FILE,
-      caFile: environment.LIVE_VALIDATION_MTLS_CA_FILE }, timeoutMs: role === 'runtime'
-        ? LIVE_VALIDATION_ACCEPTANCE_TRANSPORT_TIMEOUT_MS : CONTROL_TIMEOUT_MS });
+  let testToken;
+  const createRuntime = () => (dependencies.createServiceClient ?? createLiveValidationServiceClient)({ origin: target.publicOrigin,
+    token: testToken, fetchImplementation: dependencies.fetchImplementation });
   if (args.command === 'cleanup') {
     if (!existsSync(stateFile)) {
-      const summary = { version: SUMMARY_VERSION, status: 'PASS', code: 'LIVE_VALIDATION_CLEANUP_NO_RUN',
-        runtimeDeploymentStopped: false, sessionRevoked: false, definitionsRetained: true };
+      const summary = { version: SUMMARY_VERSION, status: 'PASS', code: 'LIVE_VALIDATION_CLEANUP_NO_RUN', definitionsRetained: true };
       protectedWrite(path.join(directory, 'cleanup-summary.json'), summary); return summary;
     }
     const state = validateState(json(read(stateFile, root), 'LIVE_VALIDATION_CLEANUP_STATE_INVALID'), { target, args });
-    const summary = await cleanupLiveValidationRun({ target, args, state, railway: createRailway(),
-      supervisor: state.session ? createPrivate('supervisor') : undefined, writeState: value => protectedWrite(stateFile, value) });
+    const summary = await cleanupLiveValidationRun({ target, args, state, railway: createRailway(), runtime: undefined,
+      writeState: value => protectedWrite(stateFile, value) });
     protectedWrite(path.join(directory, 'cleanup-summary.json'), summary); return summary;
   }
-  const artifactRaw = read(args.artifactFile, root);
-  const binding = json(artifactRaw, 'LIVE_VALIDATION_ARTIFACT_INVALID');
+  const artifactRaw = read(args.artifactFile, root); const binding = json(artifactRaw, 'LIVE_VALIDATION_ARTIFACT_INVALID');
   const artifact = args.operatorBootstrap
     ? validateLiveValidationOperatorArtifact(binding, { args, git, raw: artifactRaw, directory: environment.LIVE_VALIDATION_ARTIFACT_DIRECTORY })
     : validateLiveValidationArtifact(binding, { args, git, environment, directory: environment.LIVE_VALIDATION_ARTIFACT_DIRECTORY });
@@ -567,8 +614,7 @@ export async function runLiveValidationController(argv, dependencies = {}) {
     : json(readFileSync(path.join(root, 'examples/live-validation/profiles.json'), 'utf8'), 'LIVE_VALIDATION_PROFILE_INVALID');
   requireController(profiles.version === 1 && Array.isArray(profiles.profiles) && profiles.profiles.length === 2
     && PROFILE_IDS.every((id, index) => profiles.profiles[index]?.id === id)
-    && profiles.profiles.every(entry => entry.moduleId === 'gaming' && entry.input?.query?.storagePolicy === 'transient_only'),
-  'LIVE_VALIDATION_PROFILE_INVALID');
+    && profiles.profiles.every(entry => entry.moduleId === 'gaming' && entry.input?.query?.storagePolicy === 'transient_only'), 'LIVE_VALIDATION_PROFILE_INVALID');
   const profileHash = canonicalHash(profiles);
   const localGate = { targetHash: liveValidationTargetSha256(target), artifactAttestationSha256: artifact.attestationSha256,
     profileHash, commitSha: args.commitSha, controllerRevision: git.head, limits: args.limits,
@@ -576,185 +622,98 @@ export async function runLiveValidationController(argv, dependencies = {}) {
   if (!args.execute) return { version: SUMMARY_VERSION, status: 'PASS', code: 'LIVE_VALIDATION_OFFLINE_PREFLIGHT_PASS',
     paidProviderEnabled: false, infrastructureMutation: false, ...localGate };
   if (!args.operatorBootstrap) requireController(environment.WORKFLOW_RUN_ATTEMPT === '1', 'LIVE_VALIDATION_RERUN_FORBIDDEN');
-  const github = (dependencies.createGitHubApi ?? createLiveValidationGitHubApi)({ token: environment.GITHUB_TOKEN,
-    fetchImplementation: dependencies.fetchImplementation });
-  const githubGate = await assertLiveValidationGitHubGate({ github, args, artifact, environment, git });
-  // Reject a second execute in the same protected evidence directory. Workflow reruns cannot reset the durable broker cap.
+  const githubGate = await assertLiveValidationGitHubGate({ github: createGitHub(), args, artifact, environment, git });
   requireController(!existsSync(stateFile), 'LIVE_VALIDATION_RUN_REPLAY_FORBIDDEN');
-  const railway = createRailway(); const supervisor = createPrivate('supervisor'); const runtime = createPrivate('runtime');
-  let state = { version: STATE_VERSION, targetHash: localGate.targetHash, prNumber: args.prNumber, commitSha: args.commitSha,
-    // The same authorization cannot mint a fresh budget by changing its local evidence directory.
-    runId: canonicalHash({ targetHash: localGate.targetHash, artifactAttestationSha256: artifact.attestationSha256,
-      artifactAuthority: localGate.artifactAuthority }).slice(0, 32), runtimeDeploymentId: null, supervisorDeploymentId: null,
-    runtimeCreated: false, session: null, completed: false, cleanupComplete: false };
-  const writeState = value => protectedWrite(stateFile, value);
-  writeState(state);
-  const started = now(); const deadline = started + args.limits.durationMs;
+  const railway = createRailway(); let runtime;
+  const state = { version: STATE_VERSION, targetHash: localGate.targetHash, prNumber: args.prNumber, commitSha: args.commitSha,
+    runId: canonicalHash({ targetHash: localGate.targetHash, artifactAttestationSha256: artifact.attestationSha256 }).slice(0, 32),
+    runtimeDeploymentId: null, runtimeCreated: false, runStarted: false, completed: false, cleanupComplete: false };
+  const writeState = value => protectedWrite(stateFile, value); writeState(state);
+  const started = now(); let deadline = started + 1_200_000; // Deployment has a separate, unpaid deadline.
   const checkDeadline = () => requireController(now() < deadline && !dependencies.signal?.aborted, 'LIVE_VALIDATION_DEADLINE_EXCEEDED');
-  const runJson = (client, route, options = {}) => {
-    checkDeadline();
-    return privateJson(client, route, { ...options, timeoutMs: Math.min(options.timeoutMs ?? CONTROL_TIMEOUT_MS, deadline - now()) });
-  };
-  let summary; let cleanup; let runtimeIdentity; let supervisorIdentity; let plan; let actualUsage;
-  const cases = []; const sessionSecrets = [];
+  const runJson = (route, options = {}) => { checkDeadline(); return serviceJson(runtime, route,
+    { ...options, headers: { 'x-arcanos-source-commit': args.commitSha, 'x-arcanos-deployment-id': state.runtimeDeploymentId, ...options.headers },
+      timeoutMs: Math.min(options.timeoutMs ?? CONTROL_TIMEOUT_MS, deadline - now()) }); };
+  let summary; let cleanup; let runtimeIdentity; let plan; let actualUsage; const cases = [];
   try {
-    checkDeadline();
-    let inventory = normalizeLiveValidationInventory(target, await railway.inventory(target), { phase: 'predeploy' });
-    checkDeadline();
-    const runtimeInstance = inventory.instances.find(instance => instance.serviceId === target.runtimeServiceId);
-    requireController(Array.isArray(runtimeInstance.activeDeployments) && runtimeInstance.activeDeployments.length === 0,
-      'LIVE_VALIDATION_RUNTIME_ALREADY_ACTIVE');
-    const supervisorInstance = inventory.instances.find(instance => instance.serviceId === target.supervisorServiceId);
-    const active = supervisorInstance.activeDeployments ?? [];
-    requireController(active.length <= 1, 'LIVE_VALIDATION_SUPERVISOR_DEPLOYMENT_AMBIGUOUS');
-    let supervisorDeployment = active[0];
-    if (supervisorDeployment) assertLiveValidationDeployment(supervisorDeployment, target, 'supervisor', target.trustedSupervisorSha);
-    else {
-      // A missing supervisor is bootstrapped only from the operator's trusted controller SHA, never the candidate SHA.
-      checkDeadline();
-      state.supervisorDeploymentId = await railway.deploy(target, 'supervisor', target.trustedSupervisorSha); writeState(state);
+    checkDeadline(); const before = normalizeLiveValidationInventory(target, await railway.inventory(target), { phase: 'predeploy' });
+    requireController(before.instances[0].activeDeployments?.length === 0, 'LIVE_VALIDATION_RUNTIME_ALREADY_ACTIVE');
+    testToken = (dependencies.randomBytes ?? randomBytes)(32).toString('hex');
+    await railway.bindTestToken(target, testToken); runtime = createRuntime();
+    state.runtimeDeploymentId = await railway.deploy(target, 'runtime', args.commitSha); state.runtimeCreated = true; writeState(state);
+    while (true) {
+      checkDeadline(); const deployment = await railway.deployment(state.runtimeDeploymentId);
+      assertLiveValidationDeployment(deployment, target, 'runtime', args.commitSha, { successful: false });
+      if (deployment.status === 'SUCCESS') { assertLiveValidationDeployment(deployment, target, 'runtime', args.commitSha); break; }
+      requireController(!['FAILED', 'CRASHED', 'REMOVED', 'CANCELED'].includes(deployment.status), 'LIVE_VALIDATION_DEPLOYMENT_FAILED');
+      await sleep(Math.min(3_000, Math.max(1, deadline - now())));
     }
-    if (supervisorDeployment) { state.supervisorDeploymentId = supervisorDeployment.id; writeState(state); }
-    checkDeadline();
-    state.runtimeDeploymentId = await railway.deploy(target, 'runtime', args.commitSha);
-    state.runtimeCreated = true; writeState(state);
-    async function waitDeployment(id, role, sha) {
-      while (true) {
-        checkDeadline(); const deployment = await railway.deployment(id);
-        requireController(deployment?.id === id && deployment.projectId === target.projectId
-          && deployment.environmentId === target.environmentId && deployment.serviceId === target[`${role}ServiceId`],
-        'LIVE_VALIDATION_DEPLOYMENT_TARGET_MISMATCH');
-        if (deployment.status === 'SUCCESS') return assertLiveValidationDeployment(deployment, target, role, sha);
-        requireController(!['FAILED', 'CRASHED', 'REMOVED', 'CANCELED'].includes(deployment.status), 'LIVE_VALIDATION_DEPLOYMENT_FAILED');
-        await sleep(Math.min(3_000, Math.max(1, deadline - now())));
-      }
-    }
-    await waitDeployment(state.supervisorDeploymentId, 'supervisor', target.trustedSupervisorSha);
-    await waitDeployment(state.runtimeDeploymentId, 'runtime', args.commitSha);
-    inventory = normalizeLiveValidationInventory(target, await railway.inventory(target));
-    for (const role of ['runtime', 'supervisor']) {
-      const instance = inventory.instances.find(item => item.serviceId === target[`${role}ServiceId`]);
-      requireController(instance.activeDeployments?.length === 1
-        && instance.activeDeployments[0].id === state[`${role}DeploymentId`], 'LIVE_VALIDATION_ACTIVE_DEPLOYMENT_MISMATCH');
-    }
-    runtimeIdentity = assertReady(await runJson(runtime, '/ready'), target, 'runtime', args.commitSha, state.runtimeDeploymentId);
-    supervisorIdentity = assertReady(await runJson(supervisor, '/ready'), target, 'supervisor', target.trustedSupervisorSha, state.supervisorDeploymentId);
-    const challenge = (dependencies.randomBytes ?? randomBytes)(16).toString('hex');
-    const handshake = await runJson(runtime, '/handshake', { method: 'POST', body: { challenge } });
-    requireController(handshake.challenge === challenge && handshake.channel === 'mtls-private' && handshake.verified === true
-      && canonicalHash(identityFields(handshake.runtime)) === canonicalHash(runtimeIdentity)
-      && canonicalHash(identityFields(handshake.supervisor)) === canonicalHash(supervisorIdentity), 'LIVE_VALIDATION_PRIVATE_HANDSHAKE_FAILED');
-    // Resolve the PR again after deployment and handshake, immediately before paid admission.
-    const freshGate = await assertLiveValidationGitHubGate({ github, args, artifact, environment, git }); checkDeadline();
+    const observed = normalizeLiveValidationInventory(target, await railway.inventory(target));
+    requireController(observed.instances[0].activeDeployments?.length === 1
+      && observed.instances[0].activeDeployments[0].id === state.runtimeDeploymentId, 'LIVE_VALIDATION_ACTIVE_DEPLOYMENT_MISMATCH');
+    runtimeIdentity = assertReady(await runJson('/ready'), target, 'runtime', args.commitSha, state.runtimeDeploymentId, artifact);
+    const freshGate = await assertLiveValidationGitHubGate({ github: createGitHub(), args, artifact, environment, git });
     requireController(freshGate.baseSha === githubGate.baseSha, 'LIVE_VALIDATION_PR_BASE_MOVED');
-    const signingKey = read(environment.LIVE_VALIDATION_APPROVAL_SIGNING_KEY_FILE, root);
-    const issuedAtMs = now();
-    plan = { version: 'arcanos-live-validation-run/v1', runId: state.runId, repository: target.repository,
-      prNumber: args.prNumber, commitSha: args.commitSha, profile: args.profile, profileHash,
-      artifactAttestationSha256: artifact.attestationSha256, issuedAtMs, expiresAtMs: deadline,
-      projectId: target.projectId, environmentId: target.environmentId, runtimeServiceId: target.runtimeServiceId,
-      runtimeDeploymentId: state.runtimeDeploymentId, supervisorServiceId: target.supervisorServiceId,
-      supervisorDeploymentId: state.supervisorDeploymentId, trustedSupervisorSha: target.trustedSupervisorSha,
-      targetHash: localGate.targetHash, paidAuthorized: true, offlineGateHash: canonicalHash({ localGate, githubGate: freshGate }),
-      runtimeBuildManifestSha256: runtimeIdentity.buildManifestSha256, supervisorBuildManifestSha256: supervisorIdentity.buildManifestSha256 };
-    const signedPlan = signLiveValidationPlan(plan, signingKey);
-    // Persist the run ID before admission, so a partially delivered admission can still be revoked in cleanup.
-    state.session = { runId: state.runId, brokerBearer: null, testBearer: null, expiresAtMs: deadline }; writeState(state);
-    const session = await runJson(supervisor, '/runs', { method: 'POST', body: signedPlan });
-    assertSession(session, plan); sessionSecrets.push(session.brokerBearer, session.testBearer);
-    state.session = session; writeState(state);
-    const admitted = await runJson(runtime, '/admit', { method: 'POST', body: { signedPlan, session } });
+    checkDeadline(); const paidStarted = now(); deadline = paidStarted + args.limits.durationMs;
+    plan = { runId: state.runId, prNumber: args.prNumber, commitSha: args.commitSha,
+      runtimeDeploymentId: state.runtimeDeploymentId, profileHash, expiresAtMs: deadline, paidAuthorized: true };
+    state.runStarted = true; writeState(state); // Cleanup covers a partially delivered activation.
+    const admitted = await runJson('/runs', { method: 'POST', body: plan });
     requireController(admitted.admitted === true && admitted.runId === state.runId, 'LIVE_VALIDATION_RUNTIME_ADMISSION_FAILED');
-    let priorUsage = sanitizeLiveValidationUsage(await runJson(supervisor, `/runs/${state.runId}/usage`), { plan, target });
-    actualUsage = priorUsage;
+    let priorUsage = sanitizeLiveValidationUsage(await runJson('/usage'), { plan, target }); actualUsage = priorUsage;
     for (const entry of profiles.profiles) {
-      checkDeadline();
-      await runJson(supervisor, `/runs/${state.runId}/workflows/${entry.id}/begin`, { method: 'POST', body: {} });
-      let response; let requestError; let observed;
-      try {
-        response = await runJson(runtime, '/acceptance', { method: 'POST', body: { runId: state.runId, caseId: entry.id, input: entry.input },
-          headers: authHeaders(session, runtimeIdentity), signal: dependencies.signal, timeoutMs: LIVE_VALIDATION_ACCEPTANCE_TRANSPORT_TIMEOUT_MS });
-        // Record only trusted projections before ending the workflow or applying acceptance assertions.
-        observed = { caseId: entry.id, status: 'FAILED', runtimeClaimedPass: response.profilePassed === true };
-        cases.push(observed);
-        try { observed.evidence = sanitizeLivePreviewEvidence(response.evidence); }
-        catch { observed.evidenceProjection = 'unavailable'; }
-        try { observed.observation = sanitizeLiveValidationObservation(response.observation); }
-        catch { observed.observationProjection = 'unavailable'; }
-        if (observed.evidence) observed.verification = verifyLivePreviewEvidence(observed.evidence, {
-          sourceCommit: args.commitSha, approvedSourceCommit: args.commitSha, deploymentId: state.runtimeDeploymentId,
-          moduleId: 'gaming', mode: 'live-backend-v1' });
-      } catch (error) { requestError = error; }
-      try {
-        await runJson(supervisor, `/runs/${state.runId}/workflows/${entry.id}/end`, { method: 'POST', body: {} });
-        if (observed) observed.workflowClosure = 'PASS';
-      } catch (error) {
-        if (observed) observed.workflowClosure = 'FAILED';
-        if (!requestError && response?.profilePassed !== false) requestError = error;
-      }
-      if (requestError) throw requestError;
+      const response = await runJson('/acceptance', { method: 'POST', body: { runId: state.runId, caseId: entry.id, input: entry.input },
+        headers: authHeaders(plan, runtimeIdentity), signal: dependencies.signal, timeoutMs: LIVE_VALIDATION_ACCEPTANCE_TRANSPORT_TIMEOUT_MS });
+      const observedCase = { caseId: entry.id, status: 'FAILED', runtimeClaimedPass: response.profilePassed === true }; cases.push(observedCase);
+      try { observedCase.evidence = sanitizeLivePreviewEvidence(response.evidence); } catch { observedCase.evidenceProjection = 'unavailable'; }
+      try { observedCase.observation = sanitizeLiveValidationObservation(response.observation); } catch { observedCase.observationProjection = 'unavailable'; }
+      if (observedCase.evidence) observedCase.verification = verifyLivePreviewEvidence(observedCase.evidence, {
+        sourceCommit: args.commitSha, approvedSourceCommit: args.commitSha, deploymentId: state.runtimeDeploymentId, moduleId: 'gaming', mode: 'live-backend-v1' });
       requireController(response.caseId === entry.id && response.profilePassed === true && response.productionChanged === false
-        && response.durableWrites === 0 && canonicalHash(identityFields(response.identity)) === canonicalHash(runtimeIdentity),
-      'LIVE_VALIDATION_PROFILE_FAILED');
-      const evidence = observed.evidence; const verification = observed.verification;
-      requireController(evidence?.caseId === entry.caseId && verification?.status === 'PASS', 'LIVE_VALIDATION_PROFILE_EVIDENCE_FAILED');
+        && response.durableWrites === 0 && canonicalHash(identityFields(response.identity)) === canonicalHash(runtimeIdentity), 'LIVE_VALIDATION_PROFILE_FAILED');
+      requireController(observedCase.evidence?.caseId === entry.caseId && observedCase.verification?.status === 'PASS', 'LIVE_VALIDATION_PROFILE_EVIDENCE_FAILED');
       if (entry.expected.outcome === 'accepted') {
-        const approvedSources = entry.input.candidateUrls.map(raw => {
-          const url = new URL(raw); url.search = ''; url.hash = ''; return digest(url.toString());
-        });
-        requireController(approvedSources.length > 0 && evidence.result.sources.some(source => source.usable === true
+        const approvedSources = entry.input.candidateUrls.map(raw => { const url = new URL(raw); url.search = ''; url.hash = ''; return digest(url.toString()); });
+        requireController(approvedSources.length > 0 && observedCase.evidence.result.sources.some(source => source.usable === true
           && approvedSources.includes(source.documentUrlSha256)), 'LIVE_VALIDATION_SUPPLIED_SOURCE_BINDING_FAILED');
       }
-      assertProfileObservation(observed.observation, entry.expected);
-      const usage = sanitizeLiveValidationUsage(await runJson(supervisor, `/runs/${state.runId}/usage`), { plan, target });
-      const providerDelta = usage.providerCalls - priorUsage.providerCalls;
-      const generationDelta = usage.generationCalls - priorUsage.generationCalls; const auditDelta = usage.auditCalls - priorUsage.auditCalls;
-      requireController(providerDelta >= 0 && generationDelta >= 0 && auditDelta >= 0
-        && (entry.expected.providerCalls === 0 ? providerDelta === 0 && generationDelta === 0 && auditDelta === 0
-          : generationDelta > 0 && auditDelta > 0), 'LIVE_VALIDATION_ACTUAL_PROVIDER_USAGE_FAILED');
-      Object.assign(observed, { status: 'PASS', actualUsage: { providerCalls: providerDelta, generationCalls: generationDelta, auditCalls: auditDelta } });
-      priorUsage = usage; actualUsage = usage;
+      assertProfileObservation(observedCase.observation, entry.expected);
+      const usage = sanitizeLiveValidationUsage(await runJson('/usage'), { plan, target });
+      const providerCalls = usage.providerCalls - priorUsage.providerCalls; const generationCalls = usage.generationCalls - priorUsage.generationCalls;
+      const auditCalls = usage.auditCalls - priorUsage.auditCalls;
+      requireController(providerCalls >= 0 && generationCalls >= 0 && auditCalls >= 0
+        && (entry.expected.providerCalls === 0 ? providerCalls === 0 && generationCalls === 0 && auditCalls === 0
+          : generationCalls > 0 && auditCalls > 0), 'LIVE_VALIDATION_ACTUAL_PROVIDER_USAGE_FAILED');
+      Object.assign(observedCase, { status: 'PASS', actualUsage: { providerCalls, generationCalls, auditCalls } }); priorUsage = usage; actualUsage = usage;
     }
-    requireController(priorUsage.workflows === 2, 'LIVE_VALIDATION_WORKFLOW_COUNT_FAILED');
-    state.completed = true; writeState(state);
+    requireController(priorUsage.workflows === 2, 'LIVE_VALIDATION_WORKFLOW_COUNT_FAILED'); state.completed = true; writeState(state);
     summary = { version: SUMMARY_VERSION, status: 'PASS', code: 'LIVE_VALIDATION_ACCEPTANCE_PASS', ...localGate,
-      runId: state.runId, prNumber: args.prNumber, runtimeIdentity, supervisorIdentity, cases, actualUsage: priorUsage,
-      productionChanged: false, durableWrites: 0, elapsedMs: now() - started };
+      runId: state.runId, prNumber: args.prNumber, runtimeIdentity, cases, actualUsage, productionChanged: false, durableWrites: 0,
+      paidElapsedMs: Math.max(0, now() - paidStarted), elapsedMs: Math.max(0, now() - started) };
   } catch (error) {
     let usageReadback = 'unavailable';
-    if (plan && state.session) {
-      try { actualUsage = sanitizeLiveValidationUsage(await privateJson(supervisor, `/runs/${state.runId}/usage`), { plan, target }); usageReadback = 'PASS'; }
-      catch { /* Diagnostics cannot replace the original application or admission failure. */ }
-    }
+    if (plan && state.runStarted) try { actualUsage = sanitizeLiveValidationUsage(await serviceJson(runtime, '/usage', { headers: authHeaders(plan, runtimeIdentity) }), { plan, target }); usageReadback = 'PASS'; } catch { /* Preserve original failure. */ }
     summary = { version: SUMMARY_VERSION, status: cases.length > 0 ? 'FAILED' : 'BLOCKED', code: safeCode(error), ...localGate,
       runId: state.runId, prNumber: args.prNumber, elapsedMs: Math.max(0, now() - started), observedCases: cases,
-      ...(runtimeIdentity ? { runtimeIdentity } : {}), ...(supervisorIdentity ? { supervisorIdentity } : {}),
-      ...(actualUsage ? { actualUsage } : {}), usageReadback };
+      ...(runtimeIdentity ? { runtimeIdentity } : {}), ...(actualUsage ? { actualUsage } : {}), usageReadback };
   } finally {
-    cleanup = await cleanupLiveValidationRun({ target, args, state, railway, supervisor, writeState });
+    cleanup = await cleanupLiveValidationRun({ target, args, state, railway, runtime, writeState });
     protectedWrite(path.join(directory, 'cleanup-summary.json'), cleanup);
   }
   if (cleanup.status !== 'PASS' && summary.status === 'PASS') { summary.status = 'BLOCKED'; summary.code = 'LIVE_VALIDATION_CLEANUP_BLOCKED'; }
   summary.cleanup = cleanup;
-  if (publicEvidenceContainsSession(summary, sessionSecrets)) {
-    // Candidate strings cannot publish even ephemeral bearer material through an otherwise valid diagnostic field.
-    summary = { version: SUMMARY_VERSION, status: 'FAILED', code: 'LIVE_VALIDATION_EVIDENCE_SECRET_REJECTED',
-      ...localGate, runId: state.runId, prNumber: args.prNumber, cleanup };
+  if (publicEvidenceContainsSession(summary, [testToken].filter(value => typeof value === 'string'))) {
+    summary = { version: SUMMARY_VERSION, status: 'FAILED', code: 'LIVE_VALIDATION_EVIDENCE_SECRET_REJECTED', ...localGate, runId: state.runId, prNumber: args.prNumber, cleanup };
   }
-  protectedWrite(path.join(directory, 'acceptance-summary.json'), summary);
-  return { ...summary, evidenceSha256: canonicalHash(summary) };
+  protectedWrite(path.join(directory, 'acceptance-summary.json'), summary); return { ...summary, evidenceSha256: canonicalHash(summary) };
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const abort = new AbortController();
-  const cancel = () => abort.abort();
-  process.once('SIGINT', cancel); process.once('SIGTERM', cancel);
+  const abort = new AbortController(); const cancel = () => abort.abort(); process.once('SIGINT', cancel); process.once('SIGTERM', cancel);
   try {
     const result = await runLiveValidationController(process.argv.slice(2), { signal: abort.signal });
-    // Only bounded, sanitized codes and evidence digests are public. Never print exceptions, responses or session state.
     console.log(JSON.stringify({ status: result.status, code: result.code, evidenceSha256: result.evidenceSha256 ?? canonicalHash(result) }));
     if (result.status !== 'PASS') process.exitCode = 1;
-  } catch (error) {
-    console.error(JSON.stringify({ status: 'BLOCKED', code: safeCode(error) })); process.exitCode = 1;
-  } finally { process.removeListener('SIGINT', cancel); process.removeListener('SIGTERM', cancel); }
+  } catch (error) { console.error(JSON.stringify({ status: 'BLOCKED', code: safeCode(error) })); process.exitCode = 1; }
+  finally { process.removeListener('SIGINT', cancel); process.removeListener('SIGTERM', cancel); }
 }

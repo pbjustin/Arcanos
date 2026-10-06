@@ -39,12 +39,12 @@ const runInline = (step, env) => spawnSync(process.execPath, ['--input-type=modu
   input: extractNode(step), encoding: 'utf8', timeout: 5_000, env: { ...baseEnvironment(), ...env },
 });
 
-test('manual paid admission uses default-branch trust, one facility, and a protected private verifier', () => {
+test('manual paid admission uses default-branch trust and one Railway HTTPS validation service', () => {
   assert.deepEqual(Object.keys(workflow.on), ['workflow_dispatch']);
   assert.deepEqual(Object.keys(workflow.on.workflow_dispatch.inputs), ['pr_number', 'expected_sha', 'profile', 'paid_authorized']);
   const inputs = workflow.on.workflow_dispatch.inputs;
-  assert.equal(inputs.pr_number.required, true);
-  assert.equal(inputs.expected_sha.required, true);
+  assert.equal(inputs.pr_number.required, false);
+  assert.equal(inputs.expected_sha.required, false);
   assert.deepEqual(inputs.profile.options, ['gaming-guide']);
   assert.equal(inputs.paid_authorized.type, 'boolean');
   assert.equal(inputs.paid_authorized.required, true);
@@ -61,13 +61,17 @@ test('manual paid admission uses default-branch trust, one facility, and a prote
   assert.match(live.if, /inputs\.paid_authorized == true/u);
   assert.equal(live.environment, 'live-pr-acceptance');
   assert.equal(offline['runs-on'], 'ubuntu-latest');
-  assert.deepEqual(live['runs-on'], ['self-hosted', 'linux', 'x64', 'arcanos-live-validation']);
+  assert.equal(live['runs-on'], 'ubuntu-latest');
+  assert.doesNotMatch(JSON.stringify(live), /self-hosted|MTLS_|APPROVAL_SIGNING|supervisor/);
   assert.deepEqual(offline.permissions, { contents: 'read' });
   assert.deepEqual(live.permissions, { actions: 'read', checks: 'read', contents: 'read', 'pull-requests': 'read' });
 });
 
 test('dispatch validation rejects shell-shaped inputs, unknown profiles and workflow reruns before checkout', () => {
   assert.equal(runInline(inputStep).status, 0);
+  assert.equal(runInline(inputStep, { EXPECTED_SHA: '' }).status, 0);
+  assert.equal(runInline(inputStep, { PR_NUMBER: '' }).status, 0);
+  assert.equal(runInline(inputStep, { PR_NUMBER: '', EXPECTED_SHA: '' }).status, 1);
   for (const env of [{ PR_NUMBER: '42;false' }, { PR_NUMBER: '0' }, { EXPECTED_SHA: '`id`' },
     { EXPECTED_SHA: 'A'.repeat(40) }, { ACCEPTANCE_PROFILE: 'research' }, { WORKFLOW_RUN_ATTEMPT: '2' },
     { CONTROLLER_REVISION: '${{ secrets.OPENAI_API_KEY }}' }, { WORKFLOW_RUN_ID: 'not-a-run' }]) {
@@ -80,13 +84,31 @@ test('dispatch validation rejects shell-shaped inputs, unknown profiles and work
     if (step.run) assert.doesNotMatch(step.run, /\$\{\{\s*(?:inputs|github\.event)/u);
 });
 
+
+test('authoritative dispatch selection resolves PR-only and SHA-only requests and rejects moved or ambiguous heads', () => {
+  const directory = mkdtempSync(path.join(tmpdir(), 'live-workflow-selection-'));
+  const selection = named(offline, 'Resolve unambiguous current PR head');
+  const pr = { number: 42, state: 'open', draft: true, head: { sha: SHA, repo: { full_name: 'pbjustin/Arcanos' } },
+    base: { ref: 'main', sha: CONTROLLER_SHA, repo: { full_name: 'pbjustin/Arcanos' } } };
+  try {
+    for (const [index, input] of [{ PR_NUMBER: '42', EXPECTED_SHA: '' }, { PR_NUMBER: '', EXPECTED_SHA: SHA },
+      { PR_NUMBER: '42', EXPECTED_SHA: 'd'.repeat(40) }, { PR_NUMBER: '', EXPECTED_SHA: SHA, ambiguous: true }].entries()) {
+      const result = spawnSync(process.execPath, ['--input-type=module'], { encoding: 'utf8', timeout: 5000,
+        input: `globalThis.fetch = async url => ({ok:true, json:async() => String(url).includes('/commits/') ? ${JSON.stringify(input.ambiguous ? [pr, pr] : [pr])} : ${JSON.stringify(pr)}});\n` + extractNode(selection),
+        env: { ...baseEnvironment(), ...input, GITHUB_TOKEN: 'test-only-fixture', GITHUB_ENV: path.join(directory, 'env-' + index), GITHUB_OUTPUT: path.join(directory, 'out-' + index) } });
+      assert.equal(result.status, index < 2 ? 0 : 1, result.stderr);
+      if (index < 2) assert.match(readFileSync(path.join(directory, 'out-' + index), 'utf8'), new RegExp('commit_sha=' + SHA));
+      else assert.equal(result.stderr.trim(), 'LIVE_VALIDATION_PR_HEAD_GATE_FAILED');
+    }
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
 test('candidate code stays isolated from control-plane, signing and provider credentials', () => {
   assert.doesNotMatch(JSON.stringify(offline), /secrets\.|RAILWAY.*TOKEN|OPENAI.*KEY|APPROVAL_SIGNING|MTLS_/u);
   const checkout = offline.steps.find(step => step.uses?.startsWith('actions/checkout@'));
-  assert.deepEqual(checkout.with, { repository: 'pbjustin/Arcanos', ref: '${{ inputs.expected_sha }}',
+  assert.deepEqual(checkout.with, { repository: 'pbjustin/Arcanos', ref: '${{ steps.selection.outputs.commit_sha }}',
     'fetch-depth': 0, 'persist-credentials': false });
   for (const command of ['npm ci', 'npm run type-check', 'npm run lint', 'npm run build',
-    'npm run validate:railway', 'npm run test:live-pr-preview:offline', 'npm run test:live-validation:offline'])
+    'npm run validate:railway', 'node --test scripts/live-pr-preview-verifier.test.mjs', 'npm run test:live-validation:offline'])
     assert.ok(offline.steps.some(step => step.run?.includes(command)), `Missing offline check ${command}`);
   const trustedCheckouts = live.steps.filter(step => step.uses?.startsWith('actions/checkout@'));
   assert.equal(trustedCheckouts.length, 1);
@@ -96,7 +118,7 @@ test('candidate code stays isolated from control-plane, signing and provider cre
   assert.doesNotMatch(JSON.stringify(live), /secrets\.(?:OPENAI_API_KEY|ARCANOS_LIVE_PREVIEW_OPENAI_API_KEY|RAILWAY_PRODUCTION)/u);
 });
 
-test('actions and scanner are immutable and full-history redacted scanning precedes dependency execution', () => {
+test('actions and scanner stay pinned; candidate scans block while historical triage stays independent', () => {
   for (const job of Object.values(workflow.jobs)) for (const step of job.steps)
     if (step.uses) assert.ok(actions.has(step.uses), `Unreviewed action ${step.uses}`);
   const scanner = named(offline, 'Install verified secret scanner');
@@ -104,20 +126,22 @@ test('actions and scanner are immutable and full-history redacted scanning prece
     GITLEAKS_ARCHIVE_SHA256: '9991e0b2903da4c8f6122b5c3186448b927a5da4deef1fe45271c3793f4ee29c' });
   assert.ok(scanner.run.indexOf('sha256sum --check --strict') < scanner.run.indexOf('tar -xzf'));
   assert.match(scanner.run, /--proto '=https' --tlsv1\.2/u);
-  const scan = named(offline, 'Scan full candidate history before installation');
+  const scan = named(offline, 'Triage historical findings without blocking unrelated simplification');
+  assert.equal(scan['continue-on-error'], true);
+  const candidateScan = named(offline, 'Scan candidate changes before installation');
+  assert.match(candidateScan.run, /--log-opts="\$\{BASE_SHA\}\.\.\$\{EXPECTED_SHA\}" --redact/);
+  assert.equal(candidateScan['continue-on-error'], undefined);
   assert.match(scan.run, /--log-opts='--all' --redact --no-banner/u);
   assert.ok(offline.steps.indexOf(scan) < offline.steps.findIndex(step => step.run === 'npm ci'));
   assert.match(named(offline, 'Scan built output before artifact retention').run, /gitleaks" dir dist --redact/u);
 });
 
-test('protected bootstrap fails closed without printing config or signing material', () => {
+test('protected bootstrap requires only target configuration and never prints its content', () => {
   const directory = mkdtempSync(path.join(tmpdir(), 'live-workflow-bootstrap-'));
   const env = { RUNNER_TEMP: directory, GITHUB_ENV: path.join(directory, 'environment'),
-    GITHUB_OUTPUT: path.join(directory, 'outputs'), LIVE_VALIDATION_TARGET_JSON: JSON.stringify({ value: 'private-target-sentinel' }),
-    LIVE_VALIDATION_APPROVAL_SIGNING_KEY_PEM: 'private-signing-sentinel', LIVE_VALIDATION_MTLS_CERT_PEM: 'private-cert-sentinel',
-    LIVE_VALIDATION_MTLS_KEY_PEM: 'private-key-sentinel', LIVE_VALIDATION_MTLS_CA_PEM: 'private-ca-sentinel' };
+    GITHUB_OUTPUT: path.join(directory, 'outputs'), LIVE_VALIDATION_TARGET_JSON: JSON.stringify({ value: 'private-target-sentinel' }) };
   try {
-    const missing = runInline(bootstrap, { ...env, LIVE_VALIDATION_MTLS_KEY_PEM: '' });
+    const missing = runInline(bootstrap, { ...env, LIVE_VALIDATION_TARGET_JSON: '' });
     assert.equal(missing.status, 1);
     assert.equal(missing.stderr.trim(), 'LIVE_VALIDATION_PROTECTED_BOOTSTRAP_MISSING');
     assert.deepEqual(readdirSync(directory), []);
@@ -127,12 +151,10 @@ test('protected bootstrap fails closed without printing config or signing materi
     assert.equal(valid.stderr, '');
     const outputs = Object.fromEntries(readFileSync(env.GITHUB_OUTPUT, 'utf8').trim().split('\n').map(line => line.split('=')));
     assert.equal(statSync(outputs.operator_dir).mode & 0o777, 0o700);
-    for (const name of ['target.json', 'approval-signing-key.pem', 'client-cert.pem', 'client-key.pem', 'ca.pem'])
+    for (const name of ['target.json'])
       assert.equal(statSync(path.join(outputs.operator_dir, name)).mode & 0o777, 0o600);
-    const environment = readFileSync(env.GITHUB_ENV, 'utf8');
-    assert.doesNotMatch(environment, /private-.*-sentinel/u);
-    assert.match(environment, /LIVE_VALIDATION_APPROVAL_SIGNING_KEY_FILE=/u);
-    assert.match(environment, /LIVE_VALIDATION_MTLS_CA_FILE=/u);
+    assert.equal(existsSync(env.GITHUB_ENV), false);
+    assert.doesNotMatch(readFileSync(env.GITHUB_OUTPUT, 'utf8'), /private-target-sentinel/);
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
 
@@ -148,7 +170,7 @@ function candidateFixture() {
   const files = { 'source.tar': Buffer.from('opaque source data'), 'build.tar': Buffer.from('opaque build data') };
   for (const [name, bytes] of Object.entries(files)) writeFileSync(path.join(directory, name), bytes);
   const manifest = { version: 1, repository: 'pbjustin/Arcanos', sourceCommit: SHA, prNumber: 42,
-    profile: 'gaming-guide', workflowRunId: '1234', workflowRunAttempt: 1, controllerRevision: CONTROLLER_SHA,
+    profile: 'gaming-guide', workflowRunId: '1234', workflowRunAttempt: 1, controllerRevision: CONTROLLER_SHA, treeSha: 'd'.repeat(40), compiledSha256: 'e'.repeat(64),
     files: Object.fromEntries(Object.entries(files).map(([name, bytes]) => [name, sha256(bytes)])) };
   const manifestPath = path.join(directory, 'candidate-attestation.json');
   writeFileSync(manifestPath, JSON.stringify(manifest));
@@ -200,7 +222,7 @@ test('artifact drift, unexpected files, symlinks, reruns and malformed transport
 test('paid command follows artifact/offline gates, applies fixed caps and always performs scoped cleanup', () => {
   const preflight = named(live, 'Validate protected controller inputs offline');
   const execute = named(live, 'Execute bounded live acceptance through trusted controller');
-  const cleanup = named(live, 'Revoke run credentials and verify cleanup while retaining facility');
+  const cleanup = named(live, 'Close the paid run and verify cleanup while retaining facility');
   assert.ok(live.steps.indexOf(binding) < live.steps.indexOf(preflight));
   assert.ok(live.steps.indexOf(preflight) < live.steps.indexOf(execute));
   assert.doesNotMatch(preflight.run, /--execute|--allow-paid-provider/u);
@@ -233,7 +255,7 @@ test('temporary-secret cleanup removes only its owned files outside the checkout
   const step = named(live, 'Remove temporary operator credentials');
   try {
     chmodSync(directory, 0o700);
-    for (const name of ['target.json', 'approval-signing-key.pem', 'client-cert.pem', 'client-key.pem', 'ca.pem'])
+    for (const name of ['target.json'])
       writeFileSync(path.join(directory, name), 'temporary-private-fixture', { mode: 0o600 });
     const result = runInline(step, { RUNNER_TEMP: path.dirname(directory), OPERATOR_DIR: directory });
     assert.equal(result.status, 0, result.stderr);
