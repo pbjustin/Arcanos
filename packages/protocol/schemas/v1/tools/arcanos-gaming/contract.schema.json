@@ -839,6 +839,32 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 64
+        },
+        "workflowId": {
+          "type": "string",
+          "format": "uuid",
+          "description": "V2 clarification continuation only; reuse the returned owned workflow ID."
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000,
+          "description": "V2 clarification continuation only; pair with workflowId and the returned revision."
+        }
+      },
+      "dependencies": {
+        "workflowId": ["expectedRevision"],
+        "expectedRevision": ["workflowId"]
+      },
+      "if": {
+        "properties": {
+          "contractVersion": { "enum": ["gaming-hybrid-v1"] }
+        }
+      },
+      "then": {
+        "properties": {
+          "workflowId": false,
+          "expectedRevision": false
         }
       }
     },

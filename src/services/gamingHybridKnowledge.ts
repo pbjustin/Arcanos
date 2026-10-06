@@ -9,7 +9,7 @@ import { GAMING_HYBRID_CONTRACT_VERSION, GAMING_HYBRID_V2_CONTRACT_VERSION, GAMI
   type GamingHybridQuery, type GamingHybridResponse } from '@shared/gaming/gamingHybridContract.js';
 import { resolveGamingPlayerContext, resolveGamingQuestionScope, validateGamingPlayerContextInput } from '@shared/gaming/gamingPlayerContext.js';
 import { gamingApplicabilityScopeRequired } from '@shared/gaming/gamingGuideApplicability.js';
-import { buildGamingRetrievalTerms } from '@shared/gaming/gamingRetrievalPolicy.js';
+import { buildGamingRetrievalTerms, resolveGamingUserDecisionGap } from '@shared/gaming/gamingRetrievalPolicy.js';
 import { assessGamingProgressionRequest } from '@shared/gaming/gamingProgressionPolicy.js';
 import { buildGamingRecoveryResponse, resolveGamingGenerationFailureReason } from '@shared/gaming/gamingRecoveryResponse.js';
 import { assessGamingSourcePolicy, classifyGamingQuestionFreshness, evaluateGamingFreshness, getGamingCurrentnessDiscoverySources, GAMING_FRESHNESS_DEFAULTS, type GamingFreshnessEvidence } from '@shared/gaming/gamingFreshnessCore.js';
@@ -164,7 +164,7 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
         ? failure(context, 'WORKFLOW_EXPIRED', 409, workflow) : outcome);
       if (workflow.input.contractVersion === GAMING_HYBRID_V2_CONTRACT_VERSION) {
         result.body.revision = workflow.revision;
-        if (['answer', 'stop', 'clarify'].includes(result.body.nextAction)) workflow.closed = true;
+        if (['answer', 'stop'].includes(result.body.nextAction)) workflow.closed = true;
       }
       workflow.last = result.body;
       if (result.body.answer) workflow.answer = result.body.answer;
@@ -309,6 +309,18 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
     }
     return result;
   }
+  function clarification(workflow: Workflow, body: GamingHybridResponse, question: string): GamingHybridResult {
+    workflow.pendingDiscovery = undefined;
+    return { status: 200, body: { ...body, evidenceSelected: (body.selectedEvidenceIds?.length ?? 0) > 0,
+      state: 'clarification_required', nextAction: 'clarify', reason: 'REQUEST_CLARIFICATION_REQUIRED', clarification: question,
+      discovery: { type: 'gameplay_evidence', round: workflow.round, maxRounds: GAMING_HYBRID_V2_LIMITS.discoveryRounds,
+        maxCandidates: LIMITS.candidates, searchQueries: [], continuationRequired: false, replacementAllowed: false,
+        recoveryRemaining: Math.max(0, GAMING_HYBRID_V2_LIMITS.discoveryRounds - Math.max(1, workflow.round)),
+        nextSubmissionCandidateLimit: 0,
+        ...(workflow.last?.discovery?.acquisitionHints ? { acquisitionHints: workflow.last.discovery.acquisitionHints } : {}),
+        remainingTotalAcquisitionMs: Math.max(0, GAMING_HYBRID_V2_LIMITS.totalCandidateTimeoutMs - workflow.acquisitionWorkMs),
+        remainingCandidateUrls: Math.max(0, GAMING_HYBRID_V2_LIMITS.totalCandidateUrls - workflow.submittedUrls.size) } } };
+  }
   async function answer(context: GamingHybridCallContext, workflow: Workflow, knowledge: GamingStoredKnowledgeContext,
     candidateFreshness: GamingFreshnessEvidence[] = [], acceptedCandidates: readonly GamingHybridAcceptedCandidate[] = workflow.accepted): Promise<GamingHybridResult> {
     const evaluationStartedAt = deps.now();
@@ -333,6 +345,7 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
     }).map(source => source.sourceId));
     const hasGameplayEvidence = (knowledge.evidence ?? []).some(chunk => gameplayIds.has(chunk.sourceId));
     let body: GamingHybridResponse = { ...base(context, workflow), sourceKnown: knowledge.sourceKnown === true || knowledge.sources.length > 0 };
+    let pendingClarification: string | undefined;
     if (assessGamingProgressionRequest(workflow.pipeline).clarificationNeeded) return { status: 200, body: { ...body,
       state: 'clarification_required', nextAction: 'clarify', reason: 'PROGRESS_POINT_REQUIRED',
       clarification: buildGamingRecoveryResponse({ ...workflow.pipeline, evidenceSelected: false, sourceKnown: body.sourceKnown }).slice(0, 1_000) } };
@@ -379,8 +392,10 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
         coverageSatisfied: false, reason: 'STRUCTURAL_CONFLICT_ASSESSMENT_UNVERIFIED' });
       if (selection.materialConflict) return discovery(context, workflow, { ...body, evidenceSelected: false,
         coverageSatisfied: false, reason: 'CONTRADICTORY_EVIDENCE' });
-      if ('clarification' in selection && selection.clarification) return { status: 200, body: { ...body, state: 'clarification_required',
-        nextAction: 'clarify', reason: 'REQUEST_CLARIFICATION_REQUIRED', clarification: selection.clarification } };
+      if (selection.clarification) {
+        if (!selection.coverageSatisfied) return clarification(workflow, body, selection.clarification);
+        pendingClarification = selection.clarification;
+      }
       if (!selection.coverageSatisfied) return discovery(context, workflow, { ...body,
         evidenceSelected: selection.selectedEvidenceIds.length > 0, reason: 'QUESTION_COVERAGE_INSUFFICIENT' });
     }
@@ -614,6 +629,7 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
     if (clearEvidenceAssessment.decision !== 'accept') return discovery(context, workflow, {
       ...body, evidenceSelected: false, reason: clearEvidenceAssessment.blockingFindings[0]?.code ?? 'COVERAGE_INSUFFICIENT'
     });
+    if (pendingClarification) return clarification(workflow, body, pendingClarification);
     if (!freshness.usable && !advisoryAllowed) return discovery(context, workflow,
       { ...body, evidenceSelected: false, reason: currentnessReason ?? freshness.reasons[0] ?? 'CURRENT_APPLICABILITY_UNVERIFIED' }, hasGameplayEvidence);
     if (v2 && (workflow.pipeline.guideUrls ?? []).some(url => !acceptedCandidates.some(candidate =>
@@ -708,6 +724,62 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
       if (input.contractVersion === GAMING_HYBRID_V2_CONTRACT_VERSION && expiredQueries.has(key))
         return failure(context, 'WORKFLOW_EXPIRED', 409, undefined, input.contractVersion);
       const prior = queries.get(key);
+      if (input.contractVersion === GAMING_HYBRID_V2_CONTRACT_VERSION && input.workflowId) {
+        const workflow = own(input.workflowId, context);
+        if (!workflow) return failure(context, 'WORKFLOW_UNAVAILABLE', 404, undefined, input.contractVersion);
+        if (workflow.input.contractVersion !== input.contractVersion) return failure(context, 'PROTOCOL_VERSION_MISMATCH', 409, workflow);
+        if (prior) {
+          if (prior.workflowId !== workflow.id || prior.operation.hash !== hash(input)) return failure(context, 'IDEMPOTENCY_CONFLICT', 409, workflow);
+          return prior.operation.promise.then(result => currentResponse(context, workflow, result));
+        }
+        if (workflow.closed) return failure(context, 'WORKFLOW_CLOSED', 409, workflow);
+        if (workflow.activeOperationKey) return failure(context, 'SUBMISSION_IN_PROGRESS', 409, workflow);
+        if (input.expectedRevision !== workflow.revision) return failure(context, 'STALE_WORKFLOW_REVISION', 409, workflow);
+        if (workflow.last?.nextAction !== 'clarify') return failure(context, 'CLARIFICATION_NOT_PENDING', 409, workflow);
+        const fields: Record<string, string[]> = {
+          PLATFORM_REQUIRED: ['platform'], REGION_REQUIRED: ['region'], EDITION_REQUIRED: ['edition'],
+          PROGRESS_POINT_REQUIRED: ['progressPoint', 'currentArea', 'lastCompletedObjective'],
+          BUILD_GOAL_REQUIRED: ['class', 'role', 'constraints'], REQUEST_CLARIFICATION_REQUIRED: ['role', 'constraints']
+        };
+        const allowed = fields[workflow.last.reason] ?? [];
+        const immutable = (value: GamingHybridQuery) => Object.entries(value)
+          .filter(([field]) => !['idempotencyKey', 'workflowId', 'expectedRevision', ...allowed].includes(field))
+          .sort(([left], [right]) => left.localeCompare(right));
+        if (hash(immutable(input)) !== hash(immutable(workflow.input))
+          || allowed.some(field => field !== 'constraints' && workflow.input[field as keyof GamingHybridQuery] !== undefined
+            && input[field as keyof GamingHybridQuery] !== workflow.input[field as keyof GamingHybridQuery])
+          || workflow.input.constraints?.some((constraint, index) => input.constraints?.[index] !== constraint))
+          return failure(context, 'QUERY_CONTEXT_CONFLICT', 409, workflow);
+        const playerContext = resolveGamingPlayerContext(input, input.question);
+        const pipeline = { ...workflow.pipeline, ...playerContext, edition: resolveGamingRequestEdition(input),
+          region: input.region, requestedVersion: input.requestedVersion };
+        const pendingDecision = resolveGamingUserDecisionGap(workflow.pipeline).clarification;
+        if (pendingDecision && pendingDecision === resolveGamingUserDecisionGap(pipeline).clarification)
+          return failure(context, 'CLARIFICATION_UNRESOLVED', 409, workflow);
+        const operationKey = `clarify:${input.idempotencyKey}`;
+        workflow.activeOperationKey = operationKey;
+        const promise = runOnce(workflow, operationKey, input, context, async () => {
+          workflow.revision += 1;
+          workflow.input = input;
+          workflow.pipeline = pipeline;
+          const retained = workflow.currentnessSubmission ?? workflow.candidateSubmission;
+          let knowledge = retained?.knowledge ?? workflow.knowledge;
+          if (!knowledge) return failure(context, 'EVIDENCE_REVALIDATION_REQUIRED', 409, workflow);
+          if (workflow.accepted.length) {
+            const selected = selectGamingHybridAcceptedEvidence({ ...workflow.pipeline, game: workflow.input.game }, workflow.accepted,
+              { actorKey: context.actorKey, workflowId: workflow.id, now: deps.now() });
+            const acceptedIds = new Set(workflow.accepted.map(candidate => candidate.candidateId));
+            knowledge = { ...knowledge, ...selected, sourceKnown: knowledge.sourceKnown,
+              sources: [...selected.sources, ...knowledge.sources.filter(source => !acceptedIds.has(source.sourceId))],
+              evidence: [...(selected.evidence ?? []), ...(knowledge.evidence ?? []).filter(chunk => !acceptedIds.has(chunk.sourceId))] };
+          }
+          const result = await answer(context, workflow, knowledge, retained?.freshness);
+          result.body.candidates ??= workflow.candidateDecisions ?? workflow.last?.candidates;
+          return result;
+        }).finally(() => { if (workflow.activeOperationKey === operationKey) workflow.activeOperationKey = undefined; });
+        queries.set(key, { workflowId: workflow.id, operation: { hash: hash(input), promise } });
+        return promise;
+      }
       if (prior) {
         if (prior.operation.hash !== hash(input)) return failure(context, 'IDEMPOTENCY_CONFLICT', 409, undefined, input.contractVersion);
         if (input.contractVersion === GAMING_HYBRID_V2_CONTRACT_VERSION || !prior.operation.retryable) return prior.operation.promise.then(result => {

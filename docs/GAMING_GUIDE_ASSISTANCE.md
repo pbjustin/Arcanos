@@ -471,6 +471,18 @@ binding, selected evidence and coverage contracts, exact accounting, frontend
 instructions and separately authorized rollout. V2 does not change currentness
 qualifications or generation deadlines described here.
 
+V2 clarification keeps the workflow open and retains accepted artifacts, selected
+evidence, admitted URLs, coverage and remaining discovery/acquisition allowances.
+Repeat the original query with the returned `workflowId`, `expectedRevision`, a
+new `idempotencyKey`, and the requested context or affirmative preference in
+`role`/`constraints`. The same actor and revision are required; game, question,
+version, storage policy and unrelated context cannot change. Continuation selects
+from retained artifacts and rechecks applicability and evidence binding without
+fetching again or renewing budgets. Unresolved choices ask one targeted question;
+missing factual support still requires new evidence, and genuine conflicts stay
+blocked. Generic Samurai advice needs no preference question, and unknown patch
+compatibility retains its explicit qualification.
+
 The additive authenticated Gaming hybrid Actions reuse stored lexical retrieval,
 the shared document resolver, existing ingestion jobs, source revisions and chunks,
 and the normal Gaming Trinity pipeline. Older gameplay and source Actions retain
@@ -480,7 +492,7 @@ backend invoke ChatGPT's web-search tool.
 1. `queryGamingHybridKnowledge` receives the question, precise game/edition,
    available player context and storage policy. It checks active stored records.
 2. `answer_ready` carries a grounded Trinity answer, citations and request ID;
-   `clarification_required` carries one progress question. Neither requires search.
+   `clarification_required` carries one targeted context or preference question. Neither requires search.
 3. `discovery_required` carries bounded queries and limits. The GPT searches and
    calls `submitGamingHybridCandidates` with actual URLs and its workflow ID.
 4. ARCANOS independently fetches, validates, extracts, checks applicability and

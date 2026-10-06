@@ -12,8 +12,9 @@ continues to load only the existing input/output schema pairs.
 See [Gaming resource behavior](API.md#private-chatgpt-gaming-resource).
 
 The sealed Gaming MCP preview pins the full released eight-tool catalog at
-64,494 JSON bytes and its exact SHA-256. The reviewed changes are v2 release and
-revision guidance plus bounded additive frontend recovery fields; tool names,
+65,103 JSON bytes and its exact SHA-256. The reviewed changes are v2 release and
+revision guidance, bounded additive frontend recovery fields and paired v2
+query clarification continuation fields; tool names,
 query/write OAuth scopes and consent checks retain their existing authority.
 The complete catalog and JSON-RPC envelope fit the unchanged 65,536-byte served
 and verifier response caps. Catalog description, schema or scope drift still
@@ -37,6 +38,11 @@ both maintained contracts. Structured MCP `result` values must validate against
 their declared output schemas; tool annotations do not replace server checks.
 See [Gaming discovery recovery](GAMING_DISCOVERY_RECOVERY.md). Legacy
 Gaming gameplay/source contracts and canary schema identity remain unchanged.
+V2 query clarification continuations pair optional `workflowId` and
+`expectedRevision`, preserve the original request, and add only the requested
+missing context under a new operation key. Both fields are rejected for v1.
+Clarification retains the original workflow, accepted artifacts and budgets;
+actor ownership, revision, expiry, immutable scope and idempotency remain checked.
 It adds no command-envelope ID, ActionPlan shape, Python-owned protocol or
 schema-catalog family. Query, transient candidate validation, and consequential
 durable ingestion are separate operations. See [Gaming API](API.md#gaming-hybrid-knowledge-actions).

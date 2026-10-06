@@ -165,8 +165,10 @@ describe('Private Gaming source composition, separate from live acceptance', () 
     expect(patch.approvedSkillBaseline).toEqual({ sizeBytes: 15_210,
       sha256: 'a2cd3cfb2eb677eaef47c7fc148b41565b58e051486a49b29df48ee53c048081' });
     const workflow = readFileSync(path.join(process.cwd(), patch.workflow.path));
-    expect(workflow.length).toBe(10_982);
-    expect(hash(workflow)).toBe('1a16c07bafd15bd3ba91a9226c7598d7e51439bb747ebeed47d33119adbe698a');
+    expect(workflow.length).toBe(11_314);
+    expect(hash(workflow)).toBe('c20289819f4ac70e2fa96385a17ecdc780db44b2b3707182780dfed39f1f3edb');
+    expect(workflow.toString('utf8')).toContain('revision as expectedRevision');
+    expect(workflow.toString('utf8')).toContain('do not restart acquisition');
     expect(workflow.toString('utf8')).toContain('Released Gaming guide workflow: gaming-hybrid-v2.');
     expect(workflow.toString('utf8')).not.toContain('Proposed MCP instruction revision');
     expect(patch.workflow.sizeBytes).toBe(workflow.length);

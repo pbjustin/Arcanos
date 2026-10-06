@@ -41,7 +41,7 @@ describe('sealed Gaming MCP protocol and production pure-core fixture', () => {
   it('pins the released eight-tool catalog, bounded additive outcomes and unchanged OAuth authority', () => {
     const serialized = JSON.stringify(gamingMcpTools);
     expect(gamingMcpTools).toHaveLength(8);
-    expect(Buffer.byteLength(serialized, 'utf8')).toBe(64_494);
+    expect(Buffer.byteLength(serialized, 'utf8')).toBe(65_103);
     expect(Buffer.byteLength(JSON.stringify({ jsonrpc: '2.0', id: 'gaming-preview', result: { tools: gamingMcpTools } }), 'utf8'))
       .toBeLessThanOrEqual(65_536);
     expect(createHash('sha256').update(serialized).digest('hex')).toBe(contract.catalogSha256);

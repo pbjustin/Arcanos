@@ -1,9 +1,11 @@
 import { describe, expect, it } from '@jest/globals';
+import { readFileSync } from 'node:fs';
+import Ajv2020 from 'ajv/dist/2020.js';
 import { createGamingHybridWorkflow } from '../src/services/gamingHybridKnowledge.js';
 import { gamingGuideSearchHint, projectGamingGuideOutcome } from '../src/shared/gaming/gamingHybridPolicyCore.js';
-import { isGamingMcpOutput } from '../src/shared/chatgpt/gamingMcpContract.js';
+import { isGamingMcpInput, isGamingMcpOutput } from '../src/shared/chatgpt/gamingMcpContract.js';
 import { gamingApplicabilityScopeRequired } from '../src/shared/gaming/gamingGuideApplicability.js';
-import type { GamingHybridResponse } from '../src/shared/gaming/gamingHybridContract.js';
+import { gamingHybridQuerySchema, type GamingHybridResponse } from '../src/shared/gaming/gamingHybridContract.js';
 
 const base: GamingHybridResponse = { contractVersion: 'gaming-hybrid-v1', requestId: 'guide-outcome-fixture',
   state: 'discovery_required', nextAction: 'search', reason: 'COVERAGE_INSUFFICIENT', sourceKnown: false,
@@ -13,6 +15,45 @@ const query = { contractVersion: 'gaming-hybrid-v2', idempotencyKey: 'guide-outc
   question: 'Build an early-game Samurai katana build.', mode: 'build', class: 'Samurai',
   progressPoint: 'just left the tutorial' };
 const actor = { actorKey: 'guide-outcome-reader' };
+
+describe('Gaming clarification query continuation contracts', () => {
+  const workflowId = '4517e693-b592-43c8-a827-d4b74168c429';
+  const openapi = JSON.parse(readFileSync('contracts/arcanos_gaming.openapi.v1.json', 'utf8'));
+  const ajv = new Ajv2020({ strict: true });
+  ajv.addFormat('uuid', /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu);
+  const validateAction = ajv.compile(openapi.components.schemas.GamingHybridQueryRequest);
+  const valid = (input: unknown) => [gamingHybridQuerySchema.safeParse(input).success,
+    isGamingMcpInput('arcanos_gaming_hybrid_query', input), validateAction(input)];
+
+  it.each([0, 1, 1_000_000])('accepts a v2 clarification continuation at revision %s in every public contract', expectedRevision => {
+    expect(valid({ ...query, workflowId, expectedRevision, idempotencyKey: 'guide-outcome-clarification',
+      constraints: ['Prefer pure Dexterity and a single katana.'] })).toEqual([true, true, true]);
+  });
+
+  it.each(['gaming-hybrid-v1', 'gaming-hybrid-v2'])('preserves initial %s queries without continuation fields', contractVersion => {
+    expect(valid({ ...query, contractVersion })).toEqual([true, true, true]);
+  });
+
+  it.each([{ workflowId }, { expectedRevision: 1 }])('requires continuation identifiers together: %j', continuation => {
+    expect(valid({ ...query, ...continuation })).toEqual([false, false, false]);
+  });
+
+  it.each([{ workflowId }, { expectedRevision: 1 }, { workflowId, expectedRevision: 1 }])
+  ('rejects v1 continuation fields: %j', continuation => {
+    expect(valid({ ...query, contractVersion: 'gaming-hybrid-v1', ...continuation })).toEqual([false, false, false]);
+  });
+
+  it.each([-1, 1_000_001, 1.5, '1', null])('rejects invalid continuation revision %j', expectedRevision => {
+    expect(valid({ ...query, workflowId, expectedRevision })).toEqual([false, false, false]);
+  });
+
+  it('rejects invalid workflow IDs and client supplied workflow authority', () => {
+    expect(valid({ ...query, workflowId: 'not-a-workflow-uuid', expectedRevision: 1 })).toEqual([false, false, false]);
+    for (const field of ['selectedCandidateIds', 'selectedEvidenceIds', 'coverageSatisfied', 'recoveryRemaining', 'actorKey']) {
+      expect(valid({ ...query, workflowId, expectedRevision: 1, [field]: true })).toEqual([false, false, false]);
+    }
+  });
+});
 
 describe('four guide frontend outcomes preserve workflow authority', () => {
   it.each(['SOURCE_TOO_LARGE', 'SOURCE_INACCESSIBLE', 'SOURCE_TIMEOUT', 'SOURCE_EXTRACTION_FAILED',

@@ -18,6 +18,32 @@ export interface GamingRetrievalTerms {
   focusTerms: string[];
 }
 
+/** Explicit unresolved choices are player decisions, never missing source facts. */
+export function resolveGamingUserDecisionGap(input: GamingRetrievalPolicyInput): { prompt: string; clarification?: string } {
+  if (/\b(?:compare|comparison|differences?|pros and cons)\b/iu.test(input.prompt)) return { prompt: input.prompt };
+  const choices = [
+    { first: 'bleed', second: 'pure\\s+(?:dex(?:terity)?)', question: 'Do you prefer bleed or pure Dexterity?' },
+    { first: 'single\\s+katana', second: 'dual[\\s-]+wield(?:ing)?', question: 'Do you prefer a single katana or dual wielding?' },
+    { first: 'aggressive', second: 'defensive', question: 'Do you prefer an aggressive or defensive playstyle?' }
+  ];
+  const marker = "(?:I(?:'m| am)?\\s+)?(?:undecided\\s+(?:between|about)|(?:am\\s+)?(?:unsure|not sure)\\s+(?:whether|between)|haven't decided\\s+(?:between|whether)|(?:can't|cannot) decide\\s+between|should I (?:choose|use|play))\\s+";
+  let prompt = input.prompt;
+  let clarification: string | undefined;
+  for (const choice of choices) {
+    const alternatives = `(?:${choice.first})\\s+(?:or|versus|vs\\.?|and)\\s+(?:${choice.second})|(?:${choice.second})\\s+(?:or|versus|vs\\.?|and)\\s+(?:${choice.first})`;
+    const pattern = new RegExp(`\\b${marker}(?:${alternatives})`, 'iu');
+    const match = pattern.exec(input.prompt);
+    if (!match) continue;
+    const preferences = [input.role, ...(input.constraints ?? [])].filter((value): value is string => Boolean(value));
+    const affirmative = (option: string) => new RegExp(`^(?:(?:I\\s+)?(?:prefer|choose|want|use)\\s+)?(?:a\\s+|an\\s+)?${option}(?:\\s+(?:build|playstyle|style))?[.!]?$`, 'iu');
+    const first = preferences.some(value => affirmative(choice.first).test(value.trim()));
+    const second = preferences.some(value => affirmative(choice.second).test(value.trim()));
+    prompt = prompt.replace(pattern, '');
+    if (first === second) clarification ??= choice.question;
+  }
+  return { prompt, ...(clarification ? { clarification } : {}) };
+}
+
 export function gamingLexicalTokens(text: string): string[] {
   return text.normalize('NFKC').toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
 }
@@ -29,7 +55,7 @@ export function buildGamingRetrievalTerms(input: GamingRetrievalPolicyInput): Ga
     .filter(term => !STOP_WORDS.has(term) && !gameTerms.has(term)))];
   // Share the progression filter so a polite task remains the topical anchor
   // while non-affirmative location/completion claims remain generation context.
-  const question = filterGamingNonAffirmativeStateClauses(input.prompt)
+  const question = filterGamingNonAffirmativeStateClauses(resolveGamingUserDecisionGap(input).prompt)
     .replace(/\b(?:no|without|avoid|light|full)\s+spoilers?\b/giu, '')
     .replace(/\bspoilers?\s+(?:are\s+)?(?:allowed|ok|okay|fine|permitted)\b/giu, '')
     .replace(/\b(?:keep|make)\s+it\s+(?:short|brief|concise|detailed)\b/giu, '')
@@ -112,7 +138,7 @@ export interface GamingRequestRequirement { requirement: string; terms: string[]
  * universal build checklist. This bounded lexical adapter makes no semantic claim.
  */
 function gamingRequestClauses(input: GamingRetrievalPolicyInput): string[] {
-  const question = input.prompt.slice(0, 8_000)
+  const question = resolveGamingUserDecisionGap(input).prompt.slice(0, 8_000)
     .replace(/https?:\/\/[^\s)]+/giu, '')
     // Required-guide identity is enforced separately by backend intake. A
     // source-selection preamble is not an independent gameplay requirement.
