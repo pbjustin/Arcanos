@@ -7,6 +7,7 @@ import { assertValidationRoleCredentials, readValidationJson, requireValidation,
 import { validateLiveValidationTarget } from './live-validation-target.mjs';
 import { createLiveValidationSourceGuard } from './live-validation-egress.mjs';
 import { createLiveValidationProvider } from './live-validation-provider.mjs';
+import { LIVE_VALIDATION_TOKEN_LIMITS } from './live-validation-budget.mjs';
 import { createLivePreviewEvidence, LIVE_PREVIEW_MODE, verifyLivePreviewEvidence } from './live-pr-preview-verifier.mjs';
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
@@ -188,11 +189,18 @@ export function createValidationRuntimeApplication({ target, identity, profiles,
   return { authorizeRequest, handler, close: () => admitted?.provider.close() };
 }
 
+/** Match the real Trinity allocation to the paid guard before importing its consumers. */
+export function configureLiveValidationModelRuntime(authority, writeRuntimeEnv) {
+  writeRuntimeEnv('AI_MODEL', authority);
+  writeRuntimeEnv('TRINITY_REASONING_MAX_OUTPUT_TOKENS', String(LIVE_VALIDATION_TOKEN_LIMITS.maxOutputTokensPerRequest));
+}
+
 async function realGamingAdapter({ target, provider, observation }) {
   const { APPLICATION_CONSTANTS } = await import('../dist/shared/constants.js');
   const authority = resolveLiveValidationModels(target.models, APPLICATION_CONSTANTS);
   const { writeRuntimeEnv } = await import('../dist/platform/runtime/env.js');
-  for (const [name, value] of [['RUN_WORKERS', 'false'], ['ALLOW_MOCK_OPENAI', 'false'], ['AI_MODEL', authority],
+  configureLiveValidationModelRuntime(authority, writeRuntimeEnv);
+  for (const [name, value] of [['RUN_WORKERS', 'false'], ['ALLOW_MOCK_OPENAI', 'false'],
     ['ARCANOS_GAMING_DISCOVERY_ENABLED', 'false'], ['LOG_LEVEL', 'error']]) writeRuntimeEnv(name, value);
   const { createOpenAIAdapter } = await import('../dist/core/adapters/openai.adapter.js');
   const { runGameplayPipeline } = await import('../dist/services/gamingPipeline.js');

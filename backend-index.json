@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-06T00:09:13.335Z",
+  "generatedAt": "2026-10-06T04:44:45.292Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -5006,6 +5006,9 @@
         },
         {
           "relativePath": "tests/live-validation-isolation.test.ts"
+        },
+        {
+          "relativePath": "tests/live-validation-provider-reasoning.test.ts"
         },
         {
           "relativePath": "tests/live-validation-source-guard.test.ts"
