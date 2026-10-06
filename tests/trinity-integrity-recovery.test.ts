@@ -58,6 +58,10 @@ function decide(overrides: Partial<Parameters<
 }
 
 describe('Trinity bounded integrity recovery', () => {
+  it('disables automatic continuation when no server-owned repair allowance is supplied', () => {
+    expect(decide({ options: undefined })).toEqual({ eligible: false, reason: 'disabled' });
+  });
+
   it('reserves one bounded repair stage without exceeding runtime or model caps', () => {
     const runtimeBudget = createRuntimeBudgetWithLimit(170_000, 0);
     const watchdog = createTrinityWatchdog(

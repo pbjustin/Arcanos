@@ -152,7 +152,7 @@ export interface ProtectedDocumentFetchSession {
  * Both the session and legacy Axios fetch disable automatic redirects and environment proxies.
  */
 export function createProtectedDocumentFetchSession(
-  options: Pick<FetchAndCleanOptions, 'signal' | 'deadlineAt' | 'timeoutMs'> = {}
+  options: Pick<FetchAndCleanOptions, 'signal' | 'deadlineAt' | 'timeoutMs' | 'onRequestUrl'> = {}
 ): ProtectedDocumentFetchSession {
   const timeoutMs = Math.min(
     HARD_MAX_FETCH_TIMEOUT_MS,
@@ -213,6 +213,7 @@ export function createProtectedDocumentFetchSession(
         } catch {
           throw new ProtectedDocumentFetchError('INVALID_TARGET');
         }
+        assertRequestUrlAllowed(parsed.href, options.onRequestUrl);
         let target: ResolvedFetchTarget;
         try {
           target = await resolveFetchTarget(parsed.href, {
@@ -335,6 +336,8 @@ export function createProtectedDocumentFetchSession(
 }
 
 export interface FetchAndCleanOptions {
+  /** Server-owned denial hook for each logical request URL, before DNS/network acquisition. */
+  readonly onRequestUrl?: (url: string) => void;
   signal?: AbortSignal;
   deadlineAt?: number;
   timeoutMs?: number;
@@ -349,6 +352,15 @@ export interface FetchAndCleanOptions {
   onExtraction?: (metrics: FetchAndCleanExtractionMetrics) => void;
   rawDocumentMaxChars?: number;
   onRawDocument?: (document: FetchAndCleanRawDocument) => void;
+}
+
+function assertRequestUrlAllowed(url: string, guard: FetchAndCleanOptions['onRequestUrl']): void {
+  try {
+    guard?.(url);
+  } catch {
+    // Guard diagnostics may contain URLs or other private data. Keep the existing bounded transport error.
+    throw new ProtectedDocumentFetchError('NETWORK_DESTINATION_BLOCKED');
+  }
 }
 
 function createFetchAbortError(message: string): Error {
@@ -607,6 +619,7 @@ export async function fetchAndCleanDocument(
   options: FetchAndCleanOptions = {}
 ): Promise<FetchAndCleanDocument> {
   throwIfFetchCancelled(options);
+  if (options.onRequestUrl) assertRequestUrlAllowed(assertHttpUrl(url).href, options.onRequestUrl);
   const fetchStartedAt = Date.now();
   const target = await resolveFetchTarget(url, options);
   throwIfFetchCancelled(options);

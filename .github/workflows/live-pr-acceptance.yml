@@ -1,0 +1,416 @@
+name: Live PR Acceptance
+run-name: Live PR acceptance for PR ${{ inputs.pr_number }} at ${{ inputs.expected_sha }}
+
+# GitHub must see this definition on the default branch before workflow_dispatch
+# works on any ref. The first premerge rehearsal uses the reviewed CLI controller.
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Same-repository PR number reviewed for this run
+        required: false
+        type: string
+      expected_sha:
+        description: Exact reviewed 40-character PR head SHA
+        required: false
+        type: string
+      profile:
+        description: Gaming guide positive and negative acceptance suite
+        required: true
+        type: choice
+        options:
+          - gaming-guide
+        default: gaming-guide
+      paid_authorized:
+        description: Authorize the bounded paid run after offline validation
+        required: true
+        type: boolean
+        default: false
+
+permissions: {}
+
+concurrency:
+  group: persistent-live-validation-facility
+  cancel-in-progress: false
+
+jobs:
+  candidate-offline:
+    name: Validate exact candidate without live credentials
+    if: >-
+      github.repository == 'pbjustin/Arcanos'
+      && github.event_name == 'workflow_dispatch'
+      && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      commit_sha: ${{ steps.selection.outputs.commit_sha }}
+      pr_number: ${{ steps.selection.outputs.pr_number }}
+      artifact_id: ${{ steps.artifact.outputs.artifact-id }}
+      artifact_digest: ${{ steps.artifact.outputs.artifact-digest }}
+    env:
+      PR_NUMBER: ${{ inputs.pr_number }}
+      EXPECTED_SHA: ${{ inputs.expected_sha }}
+      ACCEPTANCE_PROFILE: ${{ inputs.profile }}
+      WORKFLOW_RUN_ID: ${{ github.run_id }}
+      WORKFLOW_RUN_ATTEMPT: ${{ github.run_attempt }}
+      CONTROLLER_REVISION: ${{ github.workflow_sha }}
+
+    steps:
+      - name: Set up pinned Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.18.1'
+
+      - name: Validate dispatch inputs before candidate checkout
+        run: |
+          node --input-type=module <<'NODE'
+          const e = process.env;
+          if ((!e.PR_NUMBER && !e.EXPECTED_SHA)
+            || (e.PR_NUMBER && !/^[1-9][0-9]{0,8}$/.test(e.PR_NUMBER))
+            || (e.EXPECTED_SHA && !/^[0-9a-f]{40}$/.test(e.EXPECTED_SHA))
+            || !/^[0-9a-f]{40}$/.test(e.CONTROLLER_REVISION ?? '')
+            || !/^[1-9][0-9]*$/.test(e.WORKFLOW_RUN_ID ?? '')
+            || e.WORKFLOW_RUN_ATTEMPT !== '1' || e.ACCEPTANCE_PROFILE !== 'gaming-guide') {
+            console.error('LIVE_VALIDATION_DISPATCH_INVALID');
+            process.exitCode = 1;
+          }
+          NODE
+
+      - name: Resolve unambiguous current PR head
+        id: selection
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { appendFileSync } from 'node:fs';
+          const e = process.env;
+          try {
+            const get = async route => {
+              const response = await fetch('https://api.github.com/repos/pbjustin/Arcanos' + route, {
+                headers: { authorization: 'Bearer ' + e.GITHUB_TOKEN, accept: 'application/vnd.github+json' },
+                redirect: 'error', signal: AbortSignal.timeout(20000) });
+              if (!response.ok) throw new Error('metadata unavailable');
+              return response.json();
+            };
+            let number = e.PR_NUMBER;
+            if (!number) {
+              const pulls = await get('/commits/' + e.EXPECTED_SHA + '/pulls?per_page=100');
+              if (!Array.isArray(pulls) || pulls.length >= 100) throw new Error('ambiguous selection');
+              const exact = pulls.filter(pr => pr.state === 'open' && pr.head?.sha === e.EXPECTED_SHA
+                && pr.head?.repo?.full_name === 'pbjustin/Arcanos' && pr.base?.ref === 'main');
+              if (exact.length !== 1) throw new Error('ambiguous selection');
+              number = String(exact[0].number);
+            }
+            const pr = await get('/pulls/' + number);
+            if (pr.state !== 'open' || pr.head?.repo?.full_name !== 'pbjustin/Arcanos'
+              || pr.base?.repo?.full_name !== 'pbjustin/Arcanos' || pr.base?.ref !== 'main'
+              || !/^[0-9a-f]{40}$/.test(pr.head?.sha ?? '') || !/^[0-9a-f]{40}$/.test(pr.base?.sha ?? '')
+              || (e.EXPECTED_SHA && e.EXPECTED_SHA !== pr.head.sha)) throw new Error('moved head');
+            appendFileSync(e.GITHUB_ENV, `EXPECTED_SHA=${pr.head.sha}\nPR_NUMBER=${number}\nBASE_SHA=${pr.base.sha}\n`);
+            appendFileSync(e.GITHUB_OUTPUT, `commit_sha=${pr.head.sha}\npr_number=${number}\n`);
+          } catch { console.error('LIVE_VALIDATION_PR_HEAD_GATE_FAILED'); process.exitCode = 1; }
+          NODE
+
+      - name: Check out exact candidate for credential-free validation
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          repository: pbjustin/Arcanos
+          ref: ${{ steps.selection.outputs.commit_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify candidate checkout identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${EXPECTED_SHA}"
+          test -z "$(git status --porcelain --untracked-files=all)"
+
+      - name: Install verified secret scanner
+        shell: bash
+        env:
+          GITLEAKS_VERSION: '8.24.3'
+          GITLEAKS_ARCHIVE_SHA256: 9991e0b2903da4c8f6122b5c3186448b927a5da4deef1fe45271c3793f4ee29c
+        run: |
+          set -euo pipefail
+          scanner_archive="${RUNNER_TEMP}/gitleaks.tar.gz"
+          scanner_bin="${RUNNER_TEMP}/live-validation-scanner"
+          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            --output "${scanner_archive}"
+          printf '%s  %s\n' "${GITLEAKS_ARCHIVE_SHA256}" "${scanner_archive}" | sha256sum --check --strict
+          mkdir -m 700 "${scanner_bin}"
+          tar -xzf "${scanner_archive}" -C "${scanner_bin}" gitleaks
+          test "$("${scanner_bin}/gitleaks" version)" = "${GITLEAKS_VERSION}"
+
+      - name: Triage historical findings without blocking unrelated simplification
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          "${RUNNER_TEMP}/live-validation-scanner/gitleaks" git . --log-opts='--all' --redact --no-banner
+
+      - name: Scan candidate changes before installation
+        shell: bash
+        run: |
+          set -euo pipefail
+          "${RUNNER_TEMP}/live-validation-scanner/gitleaks" git . --log-opts="${BASE_SHA}..${EXPECTED_SHA}" --redact --no-banner
+
+      - name: Install candidate dependencies without live credentials
+        run: npm ci
+
+      - name: Validate candidate build and static contracts
+        run: |
+          npm run type-check
+          npm run lint
+          npm run build
+          npm run validate:railway
+
+      - name: Run offline positive and negative acceptance regressions
+        run: node --test scripts/live-pr-preview-verifier.test.mjs
+
+      - name: Validate persistent acceptance controls offline
+        run: npm run test:live-validation:offline
+
+      - name: Validate Gaming acceptance adapter offline
+        run: >-
+          node scripts/run-jest.mjs --runTestsByPath
+          tests/live-validation-gaming-adapter.test.ts tests/trinity-gaming-intake.test.ts --coverage=false
+
+      - name: Scan built output before artifact retention
+        shell: bash
+        run: |
+          set -euo pipefail
+          "${RUNNER_TEMP}/live-validation-scanner/gitleaks" dir dist --redact --no-banner
+
+      - name: Record candidate source and build hashes
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${EXPECTED_SHA}"
+          candidate_artifact="${RUNNER_TEMP}/live-validation-candidate"
+          mkdir -m 700 "${candidate_artifact}"
+          git archive --format=tar "${EXPECTED_SHA}" > "${candidate_artifact}/source.tar"
+          tar -cf "${candidate_artifact}/build.tar" dist packages/protocol/dist packages/cli/dist \
+            packages/arcanos-runtime/dist packages/arcanos-openai/dist workers/dist
+          node --input-type=module <<'NODE'
+          import { createHash } from 'node:crypto';
+          import { readFileSync, writeFileSync } from 'node:fs';
+          import path from 'node:path';
+          import { execFileSync } from 'node:child_process';
+          import { validationDirectoryHash } from './scripts/live-validation-bootstrap.mjs';
+          const e = process.env;
+          const directory = path.join(e.RUNNER_TEMP, 'live-validation-candidate');
+          const sha256 = name => createHash('sha256').update(readFileSync(path.join(directory, name))).digest('hex');
+          const attestation = { version: 1, repository: 'pbjustin/Arcanos', sourceCommit: e.EXPECTED_SHA,
+            prNumber: Number(e.PR_NUMBER), profile: e.ACCEPTANCE_PROFILE,
+            workflowRunId: e.WORKFLOW_RUN_ID, workflowRunAttempt: Number(e.WORKFLOW_RUN_ATTEMPT),
+            controllerRevision: e.CONTROLLER_REVISION,
+            treeSha: execFileSync('git', ['rev-parse', 'HEAD^{tree}'], { encoding: 'utf8' }).trim(),
+            compiledSha256: validationDirectoryHash('dist'),
+            files: { 'source.tar': sha256('source.tar'), 'build.tar': sha256('build.tar') } };
+          writeFileSync(path.join(directory, 'candidate-attestation.json'), JSON.stringify(attestation) + '\n',
+            { mode: 0o600, flag: 'wx' });
+          NODE
+
+      - name: Retain exact candidate evidence
+        id: artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: live-validation-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/live-validation-candidate/candidate-attestation.json
+            ${{ runner.temp }}/live-validation-candidate/source.tar
+            ${{ runner.temp }}/live-validation-candidate/build.tar
+          if-no-files-found: error
+          retention-days: 7
+
+  live-acceptance:
+    name: Accept reviewed PR in persistent live validation
+    needs: candidate-offline
+    if: >-
+      needs.candidate-offline.result == 'success'
+      && inputs.paid_authorized == true
+      && github.repository == 'pbjustin/Arcanos'
+      && github.event_name == 'workflow_dispatch'
+      && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    # Railway terminates normal public HTTPS; only reviewed controller code runs here.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: live-pr-acceptance
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+      pull-requests: read
+    env:
+      PR_NUMBER: ${{ needs.candidate-offline.outputs.pr_number }}
+      EXPECTED_SHA: ${{ needs.candidate-offline.outputs.commit_sha }}
+      ACCEPTANCE_PROFILE: ${{ inputs.profile }}
+      WORKFLOW_RUN_ID: ${{ github.run_id }}
+      WORKFLOW_RUN_ATTEMPT: ${{ github.run_attempt }}
+      CONTROLLER_REVISION: ${{ github.workflow_sha }}
+
+    steps:
+      # This checkout and every executable below come from the trusted default
+      # branch workflow revision. Candidate artifacts are opaque data only.
+      - name: Check out trusted default-branch controller
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+
+      - name: Set up pinned Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.18.1'
+
+      - name: Download candidate evidence without extracting candidate code
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          artifact-ids: ${{ needs.candidate-offline.outputs.artifact_id }}
+          path: ${{ runner.temp }}/live-validation-candidate
+          merge-multiple: true
+
+      - name: Materialize protected operator configuration
+        id: bootstrap
+        env:
+          LIVE_VALIDATION_TARGET_JSON: ${{ vars.LIVE_VALIDATION_TARGET_JSON }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { mkdtempSync, writeFileSync, appendFileSync } from 'node:fs';
+          import path from 'node:path';
+          const e = process.env;
+          try {
+            const target = JSON.parse(e.LIVE_VALIDATION_TARGET_JSON);
+            if (!target || typeof target !== 'object' || Array.isArray(target)) throw new Error('invalid target');
+            const directory = mkdtempSync(path.join(e.RUNNER_TEMP, 'live-validation-operator-'));
+            const targetFile = path.join(directory, 'target.json');
+            writeFileSync(targetFile, JSON.stringify(target) + '\n', { mode: 0o600, flag: 'wx' });
+            appendFileSync(e.GITHUB_OUTPUT, `operator_dir=${directory}\ntarget_file=${targetFile}\n`);
+          } catch { console.error('LIVE_VALIDATION_PROTECTED_BOOTSTRAP_MISSING'); process.exitCode = 1; }
+          NODE
+
+      - name: Bind reviewed SHA to independently hashed candidate artifacts
+        id: binding
+        env:
+          OPERATOR_DIR: ${{ steps.bootstrap.outputs.operator_dir }}
+          ARTIFACT_ID: ${{ needs.candidate-offline.outputs.artifact_id }}
+          ARTIFACT_DIGEST: ${{ needs.candidate-offline.outputs.artifact_digest }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { createHash } from 'node:crypto';
+          import { lstatSync, readFileSync, readdirSync, writeFileSync, appendFileSync } from 'node:fs';
+          import path from 'node:path';
+          const e = process.env;
+          try {
+            const directory = path.join(e.RUNNER_TEMP, 'live-validation-candidate');
+            const names = ['build.tar', 'candidate-attestation.json', 'source.tar'];
+            if (JSON.stringify(readdirSync(directory).sort()) !== JSON.stringify(names)
+              || !/^[1-9][0-9]*$/.test(e.ARTIFACT_ID ?? '')
+              || !/^[0-9a-f]{64}$/.test(e.ARTIFACT_DIGEST ?? '')) throw new Error('artifact identity');
+            for (const name of names) {
+              const stat = lstatSync(path.join(directory, name));
+              if (!stat.isFile() || stat.isSymbolicLink() || stat.size < 1
+                || stat.size > (name.endsWith('.json') ? 16_384 : 128 * 1024 * 1024)) throw new Error('artifact bounds');
+            }
+            const manifest = JSON.parse(readFileSync(path.join(directory, 'candidate-attestation.json'), 'utf8'));
+            const keys = ['version', 'repository', 'sourceCommit', 'prNumber', 'profile', 'workflowRunId',
+              'workflowRunAttempt', 'controllerRevision', 'treeSha', 'compiledSha256', 'files'];
+            if (!manifest || Object.keys(manifest).length !== keys.length || keys.some(key => !Object.hasOwn(manifest, key))
+              || manifest.version !== 1 || manifest.repository !== 'pbjustin/Arcanos'
+              || manifest.sourceCommit !== e.EXPECTED_SHA || manifest.prNumber !== Number(e.PR_NUMBER)
+              || manifest.profile !== 'gaming-guide' || manifest.profile !== e.ACCEPTANCE_PROFILE
+              || manifest.workflowRunId !== e.WORKFLOW_RUN_ID || manifest.workflowRunAttempt !== 1
+              || e.WORKFLOW_RUN_ATTEMPT !== '1' || manifest.controllerRevision !== e.CONTROLLER_REVISION
+              || !/^[0-9a-f]{40}$/.test(manifest.treeSha ?? '') || !/^[0-9a-f]{64}$/.test(manifest.compiledSha256 ?? '')
+              || !manifest.files || Object.keys(manifest.files).sort().join(',') !== 'build.tar,source.tar')
+              throw new Error('artifact binding');
+            const hash = name => createHash('sha256').update(readFileSync(path.join(directory, name))).digest('hex');
+            const files = Object.fromEntries(['source.tar', 'build.tar'].map(name => [name, hash(name)]));
+            if (Object.entries(files).some(([name, digest]) => manifest.files[name] !== digest)) throw new Error('artifact digest');
+            const binding = { ...manifest, artifactId: e.ARTIFACT_ID, artifactDigest: 'sha256:' + e.ARTIFACT_DIGEST,
+              files, attestationSha256: hash('candidate-attestation.json') };
+            const output = path.join(e.OPERATOR_DIR, 'artifact-attestation.json');
+            writeFileSync(output, JSON.stringify(binding) + '\n', { mode: 0o600, flag: 'wx' });
+            appendFileSync(e.GITHUB_OUTPUT, `artifact_file=${output}\n`);
+          } catch {
+            console.error('LIVE_VALIDATION_CANDIDATE_ARTIFACT_INVALID');
+            process.exitCode = 1;
+          }
+          NODE
+
+      - name: Validate protected controller inputs offline
+        env:
+          TARGET_FILE: ${{ steps.bootstrap.outputs.target_file }}
+          ARTIFACT_FILE: ${{ steps.binding.outputs.artifact_file }}
+          LIVE_VALIDATION_ARTIFACT_DIRECTORY: ${{ runner.temp }}/live-validation-candidate
+        run: >-
+          node scripts/live-validation-controller.mjs
+          --target-file "${TARGET_FILE}" --artifact-attestation-file "${ARTIFACT_FILE}"
+          --pr-number "${PR_NUMBER}" --commit-sha "${EXPECTED_SHA}" --profile "${ACCEPTANCE_PROFILE}"
+          --max-spend-micro-usd 2000000 --max-provider-requests 32 --max-workflows 2 --duration-ms 600000
+          --evidence-dir "${RUNNER_TEMP}/live-validation-evidence"
+
+      - name: Execute bounded live acceptance through trusted controller
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RAILWAY_LIVE_VALIDATION_TOKEN: ${{ secrets.RAILWAY_LIVE_VALIDATION_TOKEN }}
+          TARGET_FILE: ${{ steps.bootstrap.outputs.target_file }}
+          ARTIFACT_FILE: ${{ steps.binding.outputs.artifact_file }}
+          LIVE_VALIDATION_ARTIFACT_DIRECTORY: ${{ runner.temp }}/live-validation-candidate
+        run: >-
+          node scripts/live-validation-controller.mjs
+          --target-file "${TARGET_FILE}" --artifact-attestation-file "${ARTIFACT_FILE}"
+          --pr-number "${PR_NUMBER}" --commit-sha "${EXPECTED_SHA}" --profile "${ACCEPTANCE_PROFILE}"
+          --execute --allow-paid-provider
+          --max-spend-micro-usd 2000000 --max-provider-requests 32 --max-workflows 2 --duration-ms 600000
+          --evidence-dir "${RUNNER_TEMP}/live-validation-evidence"
+
+      - name: Close the paid run and verify cleanup while retaining facility
+        if: always() && steps.bootstrap.outcome == 'success'
+        timeout-minutes: 5
+        env:
+          RAILWAY_LIVE_VALIDATION_TOKEN: ${{ secrets.RAILWAY_LIVE_VALIDATION_TOKEN }}
+          TARGET_FILE: ${{ steps.bootstrap.outputs.target_file }}
+        run: >-
+          node scripts/live-validation-controller.mjs cleanup
+          --target-file "${TARGET_FILE}"
+          --pr-number "${PR_NUMBER}" --commit-sha "${EXPECTED_SHA}" --profile "${ACCEPTANCE_PROFILE}"
+          --evidence-dir "${RUNNER_TEMP}/live-validation-evidence"
+
+      # Only the controller's reviewed sanitized projections are retained.
+      # Operator configuration, service credentials, candidate stderr and
+      # provider responses must never enter this artifact.
+      - name: Retain sanitized acceptance and cleanup evidence
+        if: always() && steps.bootstrap.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: live-validation-result-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/live-validation-evidence/acceptance-summary.json
+            ${{ runner.temp }}/live-validation-evidence/cleanup-summary.json
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Remove temporary operator credentials
+        if: always() && steps.bootstrap.outcome == 'success'
+        env:
+          OPERATOR_DIR: ${{ steps.bootstrap.outputs.operator_dir }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { lstatSync, unlinkSync, rmdirSync } from 'node:fs';
+          import path from 'node:path';
+          const directory = process.env.OPERATOR_DIR;
+          const relative = path.relative(process.env.RUNNER_TEMP, directory);
+          if (!/^live-validation-operator-[A-Za-z0-9]+$/.test(relative)
+            || !lstatSync(directory).isDirectory() || lstatSync(directory).isSymbolicLink())
+            throw new Error('LIVE_VALIDATION_OPERATOR_CLEANUP_INVALID');
+          for (const name of ['target.json', 'artifact-attestation.json']) {
+            try { unlinkSync(path.join(directory, name)); }
+            catch (error) { if (error.code !== 'ENOENT') throw new Error('LIVE_VALIDATION_OPERATOR_CLEANUP_FAILED'); }
+          }
+          rmdirSync(directory);
+          NODE

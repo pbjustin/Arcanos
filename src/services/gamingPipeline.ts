@@ -1,4 +1,5 @@
 import { resolveGamingRequestEdition, buildGamingSourceEditionQualification } from '@shared/gaming/gamingGameIdentity.js';
+import type OpenAI from 'openai';
 import { runTrinityWritingPipeline } from "@core/logic/trinityWritingPipeline.js";
 import { logger } from "@platform/logging/structuredLogging.js";
 import { createRuntimeBudgetWithLimit, getSafeRemainingMs, type RuntimeBudget } from "@platform/resilience/runtimeBudget.js";
@@ -50,7 +51,8 @@ import {
   buildGamingRagContext,
   collectGamingGuideUrls,
   isGamingFreshnessSensitive,
-  isCitableGamingWebSource
+  isCitableGamingWebSource,
+  type GamingRagContext
 } from "@services/gamingWebContext.js";
 import {
   buildStoredGamingKnowledgeContext,
@@ -631,7 +633,38 @@ export interface GamingPreparedEvidence {
   suppliedGuides?: Array<{ requestedUrl: string; sourceId: string; publicUrl: string }>;
 }
 
-export async function runGameplayPipeline(params: GamingPipelineInput, prepared?: GamingPreparedEvidence): Promise<GamingSuccessEnvelope> {
+/** Timing-only server observation; no prompts, evidence passages or answers. */
+export interface GamingPipelineStageObservation {
+  stage: 'selection' | 'intake' | 'reasoning' | 'final' | 'answer_audit';
+  phase: 'started' | 'completed' | 'failed';
+  elapsedMs?: number;
+  remainingBudgetMs?: number | null;
+  requestRemainingMs?: number | null;
+  timedOut?: boolean;
+}
+
+/** Server-owned transient execution dependencies; never accepted from a public request body. */
+export interface GamingPipelineRuntime {
+  client: OpenAI;
+  /** This isolated lane acquires live documents without reading durable backend data. */
+  skipStoredRetrieval: true;
+  onRetrieval?: (result: GamingRagContext) => void;
+  onEvidenceAssessment?: (assessment: GamingClearAssessment) => void;
+  onAnswerAuditStart?: () => void;
+  onAnswerAudit?: (result: Awaited<ReturnType<typeof runGamingClearAnswerAudit>>) => void;
+  onStage?: (event: Readonly<GamingPipelineStageObservation>) => void;
+}
+
+function observeGamingPipelineStage(runtime: GamingPipelineRuntime | undefined, event: GamingPipelineStageObservation): void {
+  try {
+    runtime?.onStage?.(Object.freeze({ ...event }));
+  } catch {
+    logger.warn('Gaming stage observer failed.', { module: 'ARCANOS:GAMING', stage: event.stage });
+  }
+}
+
+export async function runGameplayPipeline(params: GamingPipelineInput, prepared?: GamingPreparedEvidence,
+  runtime?: GamingPipelineRuntime): Promise<GamingSuccessEnvelope> {
   if (params.mode === "guide" && !params.contextOrigins) {
     params = { ...params, ...resolveGamingPlayerContext(params, params.prompt) };
   }
@@ -745,6 +778,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
     }
   } else try {
     const webContextResult = await buildGamingRagContext(params, baseLogContext, getRequestAbortSignal());
+    runtime?.onRetrieval?.(structuredClone(webContextResult));
     clearKnowledge = webContextResult.clearKnowledge ?? { context: '', sources: [], evidence: [] };
     webContext = webContextResult.context;
     sources = webContextResult.sources;
@@ -869,7 +903,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
   }
 
   const resolvedGame = resolvedParams.game;
-  if (resolvedGame && !prepared) {
+  if (resolvedGame && !prepared && !runtime?.skipStoredRetrieval) {
     const storedRetrievalStartedAt = Date.now();
     const storedRetrievalTimeoutMs = getGamingStoredRetrievalTimeoutMs();
     const liveEvidenceContext = omitGamingDiagnosticContextBlocks(webContext, sources);
@@ -1138,7 +1172,11 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
   clearKnowledge = { ...clearKnowledge, context: webContext };
   const auditContext = { actorScopeHash: prepared?.actorScopeHash, allowAdvisoryFreshness,
     requireRequestCoverage: prepared?.requireRequestCoverage === true };
+  const selectionStartedAt = Date.now();
+  observeGamingPipelineStage(runtime, { stage: 'selection', phase: 'started', elapsedMs: 0 });
   const evidenceAssessment = assessGamingClearEvidence({ ...resolvedParams, game: resolvedParams.game ?? '' }, clearKnowledge, auditContext);
+  observeGamingPipelineStage(runtime, { stage: 'selection', phase: 'completed', elapsedMs: Date.now() - selectionStartedAt });
+  runtime?.onEvidenceAssessment?.(structuredClone(evidenceAssessment));
   logger.info('gaming.clear.evidence.completed', {
     ...baseLogContext, rubricVersion: evidenceAssessment.rubricVersion, profile: evidenceAssessment.profile,
     policyProfile: evidenceAssessment.policyProfile, subjectHash: evidenceAssessment.subjectHash,
@@ -1157,7 +1195,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
       retrievedSourceCount, omittedSourceCount, fallbackReason: reason, discoveryReason, discoveryFailureReason,
       ...(reason === 'CURRENT_EVIDENCE_UNAVAILABLE' ? { evidenceRequest: buildFrontendGamingEvidenceRequest(resolvedParams) } : {}) });
   }
-  const { client } = getOpenAIClientOrAdapter();
+  const client = runtime ? runtime.client : getOpenAIClientOrAdapter().client;
 
   if (!client) {
     logger.warn("gaming.provider.unavailable", {
@@ -1281,11 +1319,42 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
             ),
             runOptions: {
               ...buildGamingRunOptions(params.mode, guideUrls.length > 0 && retrievalHadUsableSources),
-              gamingClearAnswerAudit: (answer, runtimeBudget, remainingWatchdogMs) => runGamingClearAnswerAudit(client, {
-                ...resolvedParams, game: resolvedParams.game ?? '', answer: qualifyAdvisoryAnswer(answer), knowledge: clearKnowledge,
-                evidenceAssessment: assessGamingClearEvidence({ ...resolvedParams, game: resolvedParams.game ?? '' }, clearKnowledge, auditContext), requestId
-              }, runtimeBudget, 'routine', remainingWatchdogMs),
+              ...(runtime?.onStage ? { onStage: (event: import('@core/logic/trinityTypes.js').TrinityStageObservation) => {
+                if (event.stage === 'intake' || event.stage === 'reasoning' || event.stage === 'final') {
+                  observeGamingPipelineStage(runtime, { ...event, stage: event.stage });
+                }
+              } } : {}),
+              gamingClearAnswerAudit: async (answer, runtimeBudget, remainingWatchdogMs) => {
+                const auditStartedAt = Date.now();
+                observeGamingPipelineStage(runtime, {
+                  stage: 'answer_audit', phase: 'started', elapsedMs: 0,
+                  remainingBudgetMs: getSafeRemainingMs(runtimeBudget), requestRemainingMs: getRequestRemainingMs() ?? null
+                });
+                runtime?.onAnswerAuditStart?.();
+                try {
+                  const result = await runGamingClearAnswerAudit(client, {
+                    ...resolvedParams, game: resolvedParams.game ?? '', answer: qualifyAdvisoryAnswer(answer), knowledge: clearKnowledge,
+                    evidenceAssessment: assessGamingClearEvidence({ ...resolvedParams, game: resolvedParams.game ?? '' }, clearKnowledge, auditContext), requestId
+                  }, runtimeBudget, 'routine', remainingWatchdogMs);
+                  observeGamingPipelineStage(runtime, {
+                    stage: 'answer_audit', phase: result.assessment.assessmentStatus === 'completed' ? 'completed' : 'failed',
+                    elapsedMs: Date.now() - auditStartedAt, remainingBudgetMs: getSafeRemainingMs(runtimeBudget),
+                    requestRemainingMs: getRequestRemainingMs() ?? null,
+                    ...(result.assessment.findings.some(finding => finding.code === 'AUDIT_TIMEOUT') ? { timedOut: true } : {})
+                  });
+                  runtime?.onAnswerAudit?.(structuredClone(result));
+                  return result;
+                } catch (error) {
+                  observeGamingPipelineStage(runtime, {
+                    stage: 'answer_audit', phase: 'failed', elapsedMs: Date.now() - auditStartedAt,
+                    remainingBudgetMs: getSafeRemainingMs(runtimeBudget), requestRemainingMs: getRequestRemainingMs() ?? null,
+                    ...(isAbortError(error) ? { timedOut: true } : {})
+                  });
+                  throw error;
+                }
+              },
               ...(prepared ? { disableOptionalSideEffects: true, redactAuditContent: true, gamingGuideIntakePolicy: 'compact-v1' as const } : {}),
+              ...(runtime ? { disableOptionalSideEffects: true, redactAuditContent: true, disableMemoryAccess: true } : {}),
               ...(params.mode === "guide" ? { trustedPolicyPrompt: resolvedParams.prompt, internalMode: false } : {}),
               intentMode: "EXECUTE_TASK",
               ...(retrievalHadUsableSources

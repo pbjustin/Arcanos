@@ -248,7 +248,19 @@ export interface TrinityResult {
   bypassedSubsystems?: string[];
 }
 
+/** Timing-only server observation; contains no model input, output or reasoning. */
+export interface TrinityStageObservation {
+  stage: string;
+  phase: 'started' | 'completed' | 'failed';
+  elapsedMs: number;
+  remainingBudgetMs: number;
+  requestRemainingMs: number | null;
+  timedOut?: boolean;
+}
+
 export interface TrinityRunOptions {
+  /** Optional diagnostic observer for the intake, reasoning and final stages. */
+  onStage?: (event: Readonly<TrinityStageObservation>) => void;
   /** Server-owned Gaming audit of the composed final text; never read from request JSON. */
   gamingClearAnswerAudit?: (
     text: string,

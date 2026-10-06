@@ -135,6 +135,9 @@ const runTrinityWritingPipelineMock = jest.fn(async () => ({
   activeModel: 'test-model',
   routingStages: [],
 }));
+const writePublicHealthResponseMock = jest.fn(async (_req: Request, res: Response) => {
+  res.status(200).json({ status: 'ok' });
+});
 let unsafeExecutionDenied = false;
 const unsafeExecutionGateMock = jest.fn(
   (_req: Request, res: Response, next: NextFunction) => {
@@ -179,9 +182,7 @@ jest.unstable_mockModule('@core/init-openai.js', () => ({
 }));
 jest.unstable_mockModule('@core/diagnostics.js', () => ({
   setupDiagnostics: jest.fn(),
-  writePublicHealthResponse: jest.fn(async (_req: Request, res: Response) => {
-    res.status(200).json({ status: 'ok' });
-  }),
+  writePublicHealthResponse: writePublicHealthResponseMock,
 }));
 jest.unstable_mockModule('@services/runtimeDiagnosticsService.js', () => ({
   runtimeDiagnosticsService: {
@@ -212,6 +213,28 @@ function addRotatedCallerMetadata(
 }
 
 describe('public provider admission in the production application composition', () => {
+  it.each([
+    ['::ffff:10.0.0.0/8', false],
+    ['::/1', false],
+    ['127.0.0.0/8', true],
+    ['::ffff:127.0.0.0/104', true],
+    ['loopback', true],
+  ] as const)('uses compiled proxy trust %s without trusting unrelated IPv4 peers', async (trust, trusted) => {
+    const app = createApp();
+    app.set('trust proxy', trust);
+    writePublicHealthResponseMock.mockImplementationOnce(async (req: Request, res: Response) => {
+      res.status(200).json({ ip: req.ip, ips: req.ips, peer: req.socket.remoteAddress });
+    });
+
+    const forwardedIp = '198.51.100.23';
+    const response = await request(app).get('/healthz').set('x-forwarded-for', forwardedIp);
+
+    expect(response.status).toBe(200);
+    expect(['127.0.0.1', '::ffff:127.0.0.1']).toContain(response.body.peer);
+    expect(response.body.ip).toBe(trusted ? forwardedIp : response.body.peer);
+    expect(response.body.ips).toEqual(trusted ? [forwardedIp] : []);
+  });
+
   it('places the dispatch GPT identifier boundary before admission and the GPT leaf', () => {
     const appSource = readFileSync(new URL('../src/app.ts', import.meta.url), 'utf8');
     const broadParserIndex = appSource.indexOf('app.use(express.json');

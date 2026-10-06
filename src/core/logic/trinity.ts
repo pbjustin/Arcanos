@@ -467,12 +467,31 @@ async function runLoggedStage<T>(params: {
   sourceEndpoint?: string;
   preserveAggregateAbortContext?: boolean;
   redactErrorDetails?: boolean;
+  onStage?: TrinityRunOptions['onStage'];
 }): Promise<T> {
   throwIfRequestAborted();
   const preserveAggregateAbortContext =
     params.preserveAggregateAbortContext === true && getRequestAbortSignal() !== undefined;
   const startedAt = Date.now();
   const remainingBudgetAtStartMs = getSafeRemainingMs(params.runtimeBudget);
+  const observeStage = (phase: 'started' | 'completed' | 'failed', timedOut?: boolean) => {
+    if (!params.onStage) return;
+    try {
+      params.onStage(Object.freeze({
+        stage: params.stage,
+        phase,
+        elapsedMs: Date.now() - startedAt,
+        remainingBudgetMs: getSafeRemainingMs(params.runtimeBudget),
+        requestRemainingMs: getRequestRemainingMs() ?? null,
+        ...(timedOut ? { timedOut: true } : {})
+      }));
+    } catch {
+      logger.warn('Trinity stage observer failed.', {
+        module: 'ARCANOS:CORE', requestId: params.requestId, stage: params.stage
+      });
+    }
+  };
+  observeStage('started');
   logCoreExecution(`before ${params.stage}`, {
     requestId: params.requestId,
     timeoutMs: params.timeoutMs,
@@ -519,6 +538,7 @@ async function runLoggedStage<T>(params: {
       runtimeBudget: params.runtimeBudget,
       timeoutMs: params.timeoutMs
     });
+    observeStage('completed');
     return result;
   } catch (error) {
     const durationMs = Date.now() - startedAt;
@@ -552,6 +572,7 @@ async function runLoggedStage<T>(params: {
       error: diagnosticError,
       level: 'warn'
     });
+    observeStage('failed', isAbortError(error));
     throw error;
   }
 }
@@ -1673,6 +1694,7 @@ export async function runThroughBrain(
         requestId,
         stage: 'intake',
         runtimeBudget,
+        onStage: options.onStage,
         sourceEndpoint: options.sourceEndpoint,
         ...(options.resolveModelStageTimeoutMs ? { timeoutMs: intakeTimeoutMs } : {}),
         operation: () =>
@@ -1740,6 +1762,7 @@ export async function runThroughBrain(
         requestId,
         stage: 'reasoning',
         runtimeBudget,
+        onStage: options.onStage,
         sourceEndpoint: options.sourceEndpoint,
         ...(options.resolveModelStageTimeoutMs ? { timeoutMs: reasoningTimeoutMs } : {}),
         operation: () =>
@@ -1967,6 +1990,7 @@ export async function runThroughBrain(
           requestId,
           stage: 'final',
           runtimeBudget,
+          onStage: options.onStage,
           sourceEndpoint: options.sourceEndpoint,
           ...(options.resolveModelStageTimeoutMs ? { timeoutMs: finalTimeoutMs } : {}),
           operation: () =>

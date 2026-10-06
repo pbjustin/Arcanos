@@ -2391,3 +2391,18 @@ identifier. Fixed error codes do not contain internal exceptions; callers must
 not automatically retry generation after timeouts. See the
 [migration decision](chatgpt-migration/ARCHITECTURE.md) and
 [authentication contract](chatgpt-migration/AUTHENTICATION.md).
+
+## Isolated live validation endpoints
+
+The dedicated [live validation launcher](LIVE_VALIDATION.md) exposes `/ready`,
+`/runs`, `/acceptance`, `/usage` and `/stop` on the validation service's ordinary
+Railway HTTPS origin. It is separate from the production and sealed-preview
+launchers. Authenticated test execution uses the validation-only bearer configured
+as `ARCANOS_LIVE_VALIDATION_TEST_TOKEN`; it grants no OAuth or storage permission.
+Authenticated readiness reports the exact source SHA, startup-verified build
+manifest and its hash; the controller compares its tree/compiled digests with
+the independent offline attestation. Run admission
+binds the requested SHA and deployment before paid work. Acceptance executes
+reviewed Gaming profiles through the real transient v2 acquisition, Trinity and
+mandatory CLEAR answer audit paths, returning sanitized evidence. A completed
+generation followed by an audit timeout remains a failed acceptance result.
