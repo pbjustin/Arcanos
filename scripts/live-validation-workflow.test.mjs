@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync,
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync,
   symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -134,6 +134,56 @@ test('actions and scanner stay pinned; candidate scans block while historical tr
   assert.match(scan.run, /--log-opts='--all' --redact --no-banner/u);
   assert.ok(offline.steps.indexOf(scan) < offline.steps.findIndex(step => step.run === 'npm ci'));
   assert.match(named(offline, 'Scan built output before artifact retention').run, /gitleaks" dir dist --redact/u);
+});
+
+test('required CI scans every exact PR commit beyond the first API page and blocks invalid refs or findings', () => {
+  const ci = yaml.load(readFileSync(new URL('../.github/workflows/ci-cd.yml', import.meta.url), 'utf8'));
+  const security = ci.jobs['security-audit'];
+  const action = named(security, '🔍 Run gitleaks secret scan');
+  const scan = named(security, 'Scan complete exact PR commit range');
+  assert.equal(action.uses, 'gitleaks/gitleaks-action@v2');
+  assert.deepEqual(action.env, { GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}' });
+  assert.equal(scan.if, "github.event_name == 'pull_request'");
+  assert.equal(scan.shell, 'bash');
+  assert.equal(scan['continue-on-error'], undefined);
+  assert.deepEqual(scan.env, { PR_BASE_SHA: '${{ github.event.pull_request.base.sha }}',
+    PR_HEAD_SHA: '${{ github.event.pull_request.head.sha }}' });
+  assert.ok(security.steps.indexOf(action) < security.steps.indexOf(scan));
+  assert.equal(security.steps.find(step => step.uses?.startsWith('actions/checkout@')).with['fetch-depth'], 0);
+
+  const directory = mkdtempSync(path.join(tmpdir(), 'full-pr-secret-range-'));
+  const binaryDirectory = path.join(directory, 'bin');
+  const argsFile = path.join(directory, 'scan-args.json');
+  const git = args => execFileSync('git', args, { cwd: directory, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  const commit = () => git(['-c', 'user.name=Workflow fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-m', 'fixture']);
+  try {
+    git(['init']);
+    writeFileSync(path.join(directory, 'source.txt'), 'base fixture\n'); git(['add', 'source.txt']); commit();
+    const base = git(['rev-parse', 'HEAD']);
+    for (let index = 1; index <= 34; index++) {
+      writeFileSync(path.join(directory, 'source.txt'), `PR fixture ${index}\n`); git(['add', 'source.txt']); commit();
+    }
+    const head = git(['rev-parse', 'HEAD']);
+    mkdirSync(binaryDirectory);
+    writeFileSync(path.join(binaryDirectory, 'gitleaks'), '#!/usr/bin/env node\n'
+      + "require('node:fs').writeFileSync(process.env.SCAN_ARGS_FILE, JSON.stringify(process.argv.slice(2)));\n"
+      + 'process.exit(Number(process.env.SCAN_EXIT_CODE || 0));\n', { mode: 0o700 });
+    const run = env => spawnSync('bash', ['-c', scan.run], { cwd: directory, encoding: 'utf8', timeout: 5_000,
+      env: { PATH: binaryDirectory + path.delimiter + process.env.PATH, PR_BASE_SHA: base, PR_HEAD_SHA: head,
+        SCAN_ARGS_FILE: argsFile, ...env } });
+    const successful = run({});
+    assert.equal(successful.status, 0, successful.stderr);
+    const args = JSON.parse(readFileSync(argsFile, 'utf8'));
+    assert.deepEqual(args, ['git', '.', `--log-opts=${base}..${head}`, '--redact', '--no-banner']);
+    const scanned = git(['rev-list', args[2].slice('--log-opts='.length)]).split('\n');
+    assert.equal(scanned.length, 34); assert.ok(scanned.includes(head)); assert.ok(!scanned.includes(base));
+    rmSync(argsFile);
+    for (const env of [{ PR_HEAD_SHA: 'A'.repeat(40) }, { PR_BASE_SHA: 'not-a-sha' },
+      { PR_HEAD_SHA: '0'.repeat(40) }, { PR_HEAD_SHA: '$(false)' }]) {
+      assert.notEqual(run(env).status, 0); assert.equal(existsSync(argsFile), false);
+    }
+    assert.equal(run({ SCAN_EXIT_CODE: '2' }).status, 2);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
 });
 
 test('protected bootstrap requires only target configuration and never prints its content', () => {
