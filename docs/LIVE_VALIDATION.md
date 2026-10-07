@@ -258,6 +258,13 @@ verified owned deployment. It retains the service/environment and provider
 binding. Preserve protected state until cleanup succeeds; never publish
 `controller-state.private.json`.
 
+The controller records deployment-attempt intent before sending the Railway
+request. If that request loses its response, cleanup remains blocked even when
+an inventory snapshot is empty: a delayed deployment may still appear. Cleanup
+never adopts or stops a deployment whose ID was not returned to this run. A
+clean verdict requires authoritative inventory with no active deployments and,
+for a known owned deployment, verified terminal status.
+
 ## Paid-call limits
 
 | Limit | Default hard maximum |
