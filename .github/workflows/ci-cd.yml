@@ -278,10 +278,40 @@ jobs:
       - name: 📦 Install dependencies
         run: npm ci
 
+      - name: Verify manual candidate secret-scan guards
+        run: node --test scripts/ci-gitleaks-range.test.mjs
+
       - name: 🔍 Run gitleaks secret scan
+        if: github.event_name != 'workflow_dispatch' || github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install verified manual candidate secret scanner
+        if: github.event_name == 'workflow_dispatch' && github.ref != format('refs/heads/{0}', github.event.repository.default_branch)
+        shell: bash
+        env:
+          GITLEAKS_VERSION: '8.24.3'
+          GITLEAKS_ARCHIVE_SHA256: 9991e0b2903da4c8f6122b5c3186448b927a5da4deef1fe45271c3793f4ee29c
+        run: |
+          set -euo pipefail
+          scanner_archive="${RUNNER_TEMP}/ci-gitleaks.tar.gz"
+          scanner_bin="${RUNNER_TEMP}/ci-gitleaks"
+          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            --output "${scanner_archive}"
+          printf '%s  %s\n' "${GITLEAKS_ARCHIVE_SHA256}" "${scanner_archive}" | sha256sum --check --strict
+          mkdir -m 700 "${scanner_bin}"
+          tar -xzf "${scanner_archive}" -C "${scanner_bin}" gitleaks
+          test "$("${scanner_bin}/gitleaks" version)" = "${GITLEAKS_VERSION}"
+
+      - name: Scan complete exact manual candidate commit range
+        if: github.event_name == 'workflow_dispatch' && github.ref != format('refs/heads/{0}', github.event.repository.default_branch)
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          GITLEAKS_BIN: ${{ runner.temp }}/ci-gitleaks/gitleaks
+        run: node scripts/ci-gitleaks-range.mjs
 
       # The action's PR API request reads only its first 30 commits. Its installed
       # scanner also checks the complete immutable event range, with the same defaults.

@@ -58,6 +58,18 @@ PRs longer than the action's first 30-commit API page, validates both commit
 identities, redacts output, and uses the same scanner configuration and ignores.
 Push and full-history scanning policy remains unchanged.
 
+Manual CI on a feature branch validates its exact event SHA against the current
+same-repository branch tip and captures the protected default-branch SHA through
+the read-only GitHub API. The checkout must match the event SHA and contain that
+base as an ancestor. A checksum-verified Gitleaks 8.24.3 then scans the complete
+base-to-candidate range, including first-parent merge diffs, without a commit
+page limit. Invalid identity, missing protection, stale refs, unrelated history
+or scanner findings fail the job. The scanner uses the existing configuration
+and ignores; PR/push action scanning and default-branch manual full-history
+scanning remain intact. Historical findings outside the candidate range require
+separate triage and are not declared safe by a passing candidate scan. Run the
+guard fixtures with `node --test scripts/ci-gitleaks-range.test.mjs`.
+
 Documentation automation boundaries:
 
 - The `docs:check` job in `.github/workflows/doc-audit.yml` is the stable
