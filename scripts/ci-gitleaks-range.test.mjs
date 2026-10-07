@@ -15,11 +15,11 @@ function fixture({ longHistory = false, scannerVersion = '8.24.3' } = {}) {
   const directory = mkdtempSync(path.join(tmpdir(), 'ci-gitleaks-range-'));
   const cwd = path.join(directory, 'checkout');
   mkdirSync(cwd);
-  const git = (...args) => execFileSync('git', ['-c', 'core.hooksPath=/dev/null', ...args], {
+  const git = (...args) => execFileSync('git', ['-c', 'core.hooksPath=/dev/null',
+    '-c', 'user.name=CI fixture', '-c', 'user.email=fixture@example.invalid', ...args], {
     cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe']
   }).trim();
-  const commit = () => git('-c', 'user.name=CI fixture', '-c', 'user.email=fixture@example.invalid',
-    'commit', '-m', 'offline fixture');
+  const commit = () => git('commit', '-m', 'offline fixture');
   git('init', '--initial-branch=main');
   git('remote', 'add', 'origin', origin);
   writeFileSync(path.join(cwd, 'baseline.txt'), 'BASELINE_ONLY_FIXTURE\n');
