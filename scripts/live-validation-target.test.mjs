@@ -267,7 +267,7 @@ test('inventory and phase JSON reject getters and inherited records without eval
 test('Railway profile uses one dedicated launcher and replica with health checks and no restart or migrations', () => {
   const config = JSON.parse(readFileSync(new URL('../infra/live-validation/runtime.railway.json', import.meta.url), 'utf8'));
   assert.equal(config.build.builder, 'DOCKERFILE');
-  assert.equal(config.build.dockerfilePath, 'infra/live-validation/runtime.Dockerfile');
+  assert.equal(config.build.dockerfilePath, 'infra/live-validation/runtime.railway.Dockerfile');
   assert.equal(config.deploy.startCommand, 'node /app/scripts/start-live-validation-runtime.mjs');
   assert.equal(config.deploy.healthcheckPath, '/healthz');
   assert.equal(config.deploy.restartPolicyType, 'NEVER');

@@ -42,13 +42,20 @@ does not grant test access or establish source/deployment identity.
 
 Apply and read back the environment-scoped profile in
 [runtime.railway.json](../infra/live-validation/runtime.railway.json): the
-[runtime Dockerfile](../infra/live-validation/runtime.Dockerfile), dedicated
+[Railway runtime Dockerfile](../infra/live-validation/runtime.railway.Dockerfile), dedicated
 `start-live-validation-runtime.mjs` launcher, one replica, `NEVER` restart policy
 and readiness health check. Disable automatic source deployments. Repository
 connection alone does not prove an exact deployed revision. A JSON file in Git
 alone does not prove that a new Railway service applied those settings.
 The controller reads back and requires one replica and `NEVER` restart policy
 before deployment and paid admission, since provider quotas are process-local.
+
+Railway V3 uses the public CA bundle and does not support BuildKit secret mounts.
+For local cloud builds behind an injected proxy CA, use the separate
+[proxy-capable runtime Dockerfile](../infra/live-validation/runtime.Dockerfile)
+with its mounted `proxy_ca` secret. Both paths independently fetch the exact
+public commit, produce the same build-manifest contract, remove Git history
+before the final image and run against read-only source as a nonroot user.
 
 Fill [target.example.json](../infra/live-validation/target.example.json) with the
 real validation environment/service IDs, public HTTPS origin, existing Gaming
