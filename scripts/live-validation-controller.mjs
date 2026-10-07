@@ -593,12 +593,16 @@ export function sanitizeLiveValidationUsage(value, { plan, target }) {
 }
 
 function validateState(state, { target, args }) {
-  requireController(exact(state, ['version', 'targetHash', 'prNumber', 'commitSha', 'runId', 'runtimeDeploymentId',
-    'runtimeCreated', 'runStarted', 'completed', 'cleanupComplete']) && state.version === STATE_VERSION
+  const keys = ['version', 'targetHash', 'prNumber', 'commitSha', 'runId', 'runtimeDeploymentId',
+    'runtimeCreated', 'runStarted', 'completed', 'cleanupComplete'];
+  requireController((exact(state, keys) || exact(state, [...keys, 'runtimeDeployAttempted'])) && state.version === STATE_VERSION
     && state.targetHash === liveValidationTargetSha256(target) && state.prNumber === args.prNumber && state.commitSha === args.commitSha
     && /^[0-9a-f]{32}$/u.test(state.runId ?? '') && (state.runtimeDeploymentId === null || UUID.test(state.runtimeDeploymentId))
     && ['runtimeCreated', 'runStarted', 'completed', 'cleanupComplete'].every(key => typeof state[key] === 'boolean')
-    && (!state.runtimeCreated || UUID.test(state.runtimeDeploymentId ?? '')), 'LIVE_VALIDATION_CLEANUP_STATE_INVALID');
+    && (!state.runtimeCreated || UUID.test(state.runtimeDeploymentId ?? ''))
+    && (!Object.hasOwn(state, 'runtimeDeployAttempted') || typeof state.runtimeDeployAttempted === 'boolean'
+      && (state.runtimeDeployAttempted || !state.runtimeCreated && state.runtimeDeploymentId === null && !state.runStarted)),
+  'LIVE_VALIDATION_CLEANUP_STATE_INVALID');
   return state;
 }
 
@@ -606,9 +610,14 @@ function validateState(state, { target, args }) {
 export async function cleanupLiveValidationRun({ target, args, state, railway, runtime, writeState,
   now = Date.now, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) }) {
   validateState(state, { target, args });
-  const failures = []; let stopped = !state.runtimeCreated; let runClosed = !state.runStarted;
-  const inspectInventory = async () => {
-    try { normalizeLiveValidationInventory(target, await railway.inventory(target), { phase: 'predeploy' }); }
+  const failures = []; let stopped = false; let runClosed = !state.runStarted;
+  const inspectInventory = async ({ requireAbsent = false } = {}) => {
+    try {
+      const observed = normalizeLiveValidationInventory(target, await railway.inventory(target), { phase: 'predeploy' });
+      if (requireAbsent) requireController(observed.instances.every(instance => instance.activeDeployments.length === 0),
+        'LIVE_VALIDATION_CLEANUP_ACTIVE_DEPLOYMENT_REMAINS');
+      return observed;
+    }
     catch (error) { failures.push(safeCode(error)); }
   };
   const ownedDeployment = deployment => {
@@ -630,7 +639,11 @@ export async function cleanupLiveValidationRun({ target, args, state, railway, r
     return 'stop';
   };
   // Inventory drift still blocks a clean verdict, but cannot prevent closing an independently verified owned deployment.
-  await inspectInventory();
+  await inspectInventory({ requireAbsent: !state.runtimeCreated });
+  // A lost deployment response can create a runtime after an empty snapshot. Do not adopt an unacknowledged ID.
+  // Legacy no-ID states lack pre-request intent, so their deployment outcome is also unknown.
+  if (!state.runtimeCreated && state.runtimeDeployAttempted !== false)
+    failures.push('LIVE_VALIDATION_CLEANUP_DEPLOYMENT_OUTCOME_UNKNOWN');
   try {
     if (state.runtimeCreated) {
       let deployment = ownedDeployment(await railway.deployment(state.runtimeDeploymentId));
@@ -669,7 +682,8 @@ export async function cleanupLiveValidationRun({ target, args, state, railway, r
       stopped = true; runClosed = true;
     }
   } catch (error) { failures.push(safeCode(error)); }
-  await inspectInventory();
+  const finalInventory = await inspectInventory({ requireAbsent: true });
+  if (!state.runtimeCreated && state.runtimeDeployAttempted === false && finalInventory) stopped = true;
   state.cleanupComplete = stopped && runClosed && failures.length === 0; writeState(state);
   return { version: SUMMARY_VERSION, status: state.cleanupComplete ? 'PASS' : 'FAIL',
     code: state.cleanupComplete ? 'LIVE_VALIDATION_CLEANUP_PASS' : 'LIVE_VALIDATION_CLEANUP_BLOCKED',
@@ -730,7 +744,8 @@ export async function runLiveValidationController(argv, dependencies = {}) {
   const railway = createRailway(); let runtime;
   const state = { version: STATE_VERSION, targetHash: localGate.targetHash, prNumber: args.prNumber, commitSha: args.commitSha,
     runId: canonicalHash({ targetHash: localGate.targetHash, artifactAttestationSha256: artifact.attestationSha256 }).slice(0, 32),
-    runtimeDeploymentId: null, runtimeCreated: false, runStarted: false, completed: false, cleanupComplete: false };
+    runtimeDeploymentId: null, runtimeCreated: false, runtimeDeployAttempted: false,
+    runStarted: false, completed: false, cleanupComplete: false };
   const writeState = value => protectedWrite(stateFile, value); writeState(state);
   const started = now(); let deadline = started + 1_200_000; // Deployment has a separate, unpaid deadline.
   const checkDeadline = () => requireController(now() < deadline && !dependencies.signal?.aborted, 'LIVE_VALIDATION_DEADLINE_EXCEEDED');
@@ -743,6 +758,7 @@ export async function runLiveValidationController(argv, dependencies = {}) {
     requireController(before.instances[0].activeDeployments?.length === 0, 'LIVE_VALIDATION_RUNTIME_ALREADY_ACTIVE');
     testToken = (dependencies.randomBytes ?? randomBytes)(32).toString('hex');
     await railway.bindTestToken(target, testToken); runtime = createRuntime();
+    state.runtimeDeployAttempted = true; writeState(state); // Record intent before a request whose response can be lost.
     state.runtimeDeploymentId = await railway.deploy(target, 'runtime', args.commitSha); state.runtimeCreated = true; writeState(state);
     while (true) {
       checkDeadline(); const deployment = await railway.deployment(state.runtimeDeploymentId);

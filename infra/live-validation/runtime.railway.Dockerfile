@@ -19,6 +19,7 @@ RUN CI=true npm ci --include=dev --no-audit --no-fund && npm run build && \
     node scripts/live-validation-build.mjs "$RAILWAY_GIT_COMMIT_SHA" runtime /opt/validation/build.json && \
     rm -rf /app/.git
 
+# Only the checked-out tree and its build proof enter the final image, never Git history layers.
 FROM node:24.18.1-alpine
 RUN test "$(node -p 'process.versions.node')" = "24.18.1" && test "$(npm --version)" = "11.16.0"
 RUN apk add --no-cache python3 py3-jsonschema

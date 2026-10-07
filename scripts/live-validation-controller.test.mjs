@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -143,7 +143,10 @@ function executionFixture(f, options = {}) {
   let plan;
   const railway = { async inventory() { return inventory(f.target, active, stopped); },
     async bindTestToken(target, value) { assert.equal(target.runtimeServiceId, runtimeId); assert.match(value, /^[a-f0-9]{64}$/u); token = value; bound = true; seen.push('bind'); },
-    async deploy(target, role, sourceCommit) { assert.equal(bound, true); assert.equal(sourceCommit, sha); assert.equal(role, 'runtime'); active = true; seen.push('deploy'); if (options.longDeploy) clock += 700000; return runtimeDeploymentId; },
+    async deploy(target, role, sourceCommit) { assert.equal(bound, true); assert.equal(sourceCommit, sha); assert.equal(role, 'runtime');
+      options.onDeploy?.(); active = true; seen.push('deploy'); if (options.longDeploy) clock += 700000;
+      if (options.lostDeployResponse) throw Object.assign(new Error('fixture lost deployment response'), { code: 'LIVE_VALIDATION_RAILWAY_REQUEST_FAILED' });
+      return runtimeDeploymentId; },
     async deployment() { return deployment(f.target, stopped); }, async stop() { stopped = true; seen.push('stop'); } };
   const service = { async requestJSON(route, request = {}) {
     seen.push(route);
@@ -189,6 +192,28 @@ test('default preflight validates exact opaque artifacts without network, creden
   const result = await runLiveValidationController(f.argv, { environment: f.environment, readGitState: () => git,
     createGitHubApi: () => { throw new Error('must remain offline'); }, createRailwayApi: () => { throw new Error('must remain offline'); } });
   assert.equal(result.status, 'PASS'); assert.equal(result.infrastructureMutation, false); assert.equal(result.paidProviderEnabled, false);
+});
+test('tightened target limits require exact CLI agreement before preflight, execution or cleanup I/O', async t => {
+  const f = fixture(t);
+  f.target.limits = { maxSpendMicroUsd: 1_000_000, maxRequests: 31, maxWorkflows: 1, durationMs: 300_000 };
+  writeFileSync(f.targetFile, JSON.stringify(f.target));
+  const calls = [];
+  const dependencies = { environment: f.environment, readGitState: () => git,
+    createGitHubApi: () => { calls.push('github'); throw new Error('must remain offline'); },
+    createRailwayApi: () => { calls.push('railway'); throw new Error('must remain offline'); },
+    createServiceClient: () => { calls.push('service'); throw new Error('must remain offline'); } };
+  for (const argv of [f.argv, [...f.argv, '--execute', '--allow-paid-provider'], ['cleanup', ...f.argv]]) {
+    await assert.rejects(runLiveValidationController(argv, dependencies), { code: 'LIVE_VALIDATION_OPERATOR_LIMIT_MISMATCH' });
+    assert.deepEqual(calls, []);
+    assert.equal(existsSync(path.join(f.directory, 'evidence')), false);
+  }
+  const caps = ['--max-spend-micro-usd', '1000000', '--max-provider-requests', '31',
+    '--max-workflows', '1', '--duration-ms', '300000'];
+  const preflight = await runLiveValidationController([...f.argv, ...caps], dependencies);
+  assert.equal(preflight.status, 'PASS'); assert.deepEqual(preflight.limits, f.target.limits);
+  const cleanup = await runLiveValidationController(['cleanup', ...f.argv, ...caps], dependencies);
+  assert.equal(cleanup.status, 'PASS'); assert.equal(cleanup.code, 'LIVE_VALIDATION_CLEANUP_NO_RUN');
+  assert.deepEqual(calls, []);
 });
 test('PR resolution allows the authorized draft, rejects moved heads and ambiguous SHA selection', async t => {
   const f = fixture(t); const github = ghFixture(f);
@@ -257,6 +282,64 @@ test('one-service mocked flow binds ephemeral token before exact deploy, proves 
   assert.equal(result.cases[1].observation.candidates[0].reasonCodes[0], 'GAME_MISMATCH');
   assert.equal(JSON.stringify(result).includes(Buffer.alloc(32, 17).toString('hex')), false);
 });
+test('accepted deployment with a lost response preserves intent and blocks cleanup without provider admission or guessed stop', async t => {
+  const f = fixture(t); let persistedBeforeDeploy;
+  const e = executionFixture(f, { lostDeployResponse: true, onDeploy: () => {
+    persistedBeforeDeploy = JSON.parse(readFileSync(path.join(f.directory, 'evidence', 'controller-state.private.json'), 'utf8'));
+  } });
+  const result = await execute(f, e);
+  assert.equal(result.status, 'BLOCKED'); assert.equal(result.code, 'LIVE_VALIDATION_RAILWAY_REQUEST_FAILED');
+  assert.equal(result.cleanup.status, 'FAIL'); assert.equal(result.cleanup.code, 'LIVE_VALIDATION_CLEANUP_BLOCKED');
+  assert.equal(result.cleanup.runtimeDeploymentStopped, false); assert.equal(result.cleanup.runClosed, true);
+  assert.ok(result.cleanup.failures.includes('LIVE_VALIDATION_CLEANUP_DEPLOYMENT_OUTCOME_UNKNOWN'));
+  assert.equal(persistedBeforeDeploy.runtimeDeployAttempted, true);
+  assert.equal(persistedBeforeDeploy.runtimeCreated, false); assert.equal(persistedBeforeDeploy.runtimeDeploymentId, null);
+  const state = JSON.parse(readFileSync(path.join(f.directory, 'evidence', 'controller-state.private.json'), 'utf8'));
+  assert.equal(state.runtimeDeployAttempted, true); assert.equal(state.runtimeCreated, false);
+  assert.equal(state.runtimeDeploymentId, null); assert.equal(state.cleanupComplete, false);
+  assert.equal(e.admitted(), false); assert.equal(e.stopped(), false);
+  assert.deepEqual(e.seen, ['bind', 'deploy']);
+  const cleanup = await runLiveValidationController(['cleanup', ...f.argv], e.dependencies);
+  assert.equal(cleanup.status, 'FAIL'); assert.equal(cleanup.runtimeDeploymentStopped, false);
+  assert.equal(e.stopped(), false); assert.deepEqual(e.seen, ['bind', 'deploy']);
+});
+test('unknown deployment outcomes cannot claim cleanup from an empty snapshot or adopt an active deployment', async t => {
+  for (const [label, intent, active, pass] of [
+    ['no attempt, absent', false, false, true], ['no attempt, active', false, true, false],
+    ['attempt, absent', true, false, false], ['attempt, active', true, true, false],
+    ['legacy unknown, absent', undefined, false, false], ['legacy unknown, active', undefined, true, false],
+  ]) await t.test(label, async () => {
+    const target = targetFixture(); const calls = [];
+    const state = cleanupState(target, { runtimeCreated: false, runtimeDeploymentId: null,
+      ...(intent === undefined ? {} : { runtimeDeployAttempted: intent }) });
+    const result = await cleanupLiveValidationRun({ target, args: { prNumber: 1528, commitSha: sha }, state,
+      railway: { inventory: async () => { calls.push('inventory'); return inventory(target, active); },
+        deployment: async () => { throw new Error('must not adopt deployment'); },
+        stop: async () => { throw new Error('must not stop ambiguous deployment'); } },
+      writeState: () => calls.push('writeState') });
+    assert.equal(result.status, pass ? 'PASS' : 'FAIL');
+    assert.equal(result.runtimeDeploymentStopped, pass); assert.equal(state.cleanupComplete, pass);
+    assert.deepEqual(calls, ['inventory', 'inventory', 'writeState']);
+    if (intent !== false) assert.ok(result.failures.includes('LIVE_VALIDATION_CLEANUP_DEPLOYMENT_OUTCOME_UNKNOWN'));
+  });
+});
+test('deployment intent schema rejects contradictory and nonboolean states before cleanup I/O', async () => {
+  const target = targetFixture(); let calls = 0;
+  for (const intent of [false, null, 'true', 1]) await assert.rejects(cleanupLiveValidationRun({ target,
+    args: { prNumber: 1528, commitSha: sha }, state: cleanupState(target, { runtimeDeployAttempted: intent }),
+    railway: { inventory: async () => { calls++; throw new Error('must not run'); } }, writeState: () => calls++ }),
+  { code: 'LIVE_VALIDATION_CLEANUP_STATE_INVALID' });
+  assert.equal(calls, 0);
+});
+test('owned terminal readback still blocks a clean verdict if authoritative inventory retains an active deployment', async () => {
+  const target = targetFixture(); const state = cleanupState(target); let mutations = 0;
+  const result = await cleanupLiveValidationRun({ target, args: { prNumber: 1528, commitSha: sha }, state,
+    railway: { inventory: async () => inventory(target, true), deployment: async () => deployment(target, true),
+      stop: async () => { mutations++; } }, writeState: () => {} });
+  assert.equal(result.status, 'FAIL'); assert.equal(state.cleanupComplete, false);
+  assert.ok(result.failures.includes('LIVE_VALIDATION_CLEANUP_ACTIVE_DEPLOYMENT_REMAINS'));
+  assert.equal(mutations, 0);
+});
 test('moved PR after deployment, missing key and mismatched compiled manifest block paid admission and stop exact deployment', async t => {
   for (const options of [{ moveHead: true }, { missingKey: true }, { wrongManifest: true }, { wrongCompiled: true }]) await t.test(JSON.stringify(options), async child => {
     const f = fixture(child); const e = executionFixture(f, options); const result = await execute(f, e);
@@ -303,6 +386,20 @@ test('required clarification proof passes only with exact counts and retained si
   assert.equal(result.status, 'PASS'); assert.equal(e.stopped(), true);
   assert.deepEqual(result.cases[0].observation.clarification, clarificationFixture());
 });
+test('valid clarification proof cannot replace a required model stage and still cleans up only the owned deployment', async t => {
+  const requiredProfiles = profileFixture();
+  requiredProfiles.profiles[0].expected.clarification = { completedCount: 4, postAcquisitionCount: 3 };
+  requiredProfiles.profiles[0].expected.requiredModelStages = ['intake', 'reasoning', 'final'];
+  const f = fixture(t); const e = executionFixture(f, { profiles: requiredProfiles, mutateObservation: value => {
+    value.clarification = clarificationFixture(); value.stages.reasoning = { status: 'not_run', elapsedMs: null };
+  } });
+  const result = await execute(f, e);
+  assert.equal(result.status, 'FAILED'); assert.equal(result.code, 'LIVE_VALIDATION_PROFILE_STAGE_FAILED');
+  assert.deepEqual(result.observedCases[0].observation.clarification, clarificationFixture());
+  assert.equal(result.cleanup.status, 'PASS'); assert.equal(e.stopped(), true);
+  const state = JSON.parse(readFileSync(path.join(f.directory, 'evidence', 'controller-state.private.json'), 'utf8'));
+  assert.equal(state.runtimeDeployAttempted, true); assert.equal(state.cleanupComplete, true);
+});
 test('runtime claimed PASS cannot replace missing, malformed or contradictory clarification proof', async t => {
   const mutations = [undefined, { version: 2 }, { submittedCount: 9 }, { completedCount: 5 }, { postAcquisitionCount: 5 },
     { submittedCount: 5 }, { completedCount: 3, postAcquisitionCount: 3 }, { postAcquisitionCount: 2 },
@@ -337,6 +434,14 @@ test('positive proof rejects failed or unobserved model execution despite aggreg
     assert.equal(result.actualUsage.generationCalls, 1); assert.equal(result.actualUsage.auditCalls, 1);
     assert.equal(e.stopped(), true);
   });
+});
+test('profiles can require all measured model stages without requiring clarification proof', async t => {
+  const requiredProfiles = profileFixture();
+  requiredProfiles.profiles[0].expected.requiredModelStages = ['intake', 'reasoning', 'final'];
+  const f = fixture(t); const e = executionFixture(f, { profiles: requiredProfiles });
+  const result = await execute(f, e);
+  assert.equal(result.status, 'PASS');
+  assert.equal(Object.hasOwn(result.cases[0].observation, 'clarification'), false);
 });
 test('required model stages and positive acquisition/audit/response stages must complete with timing evidence', async t => {
   for (const stage of ['acquisition', 'selection', 'generation', 'intake', 'reasoning', 'final', 'answer_audit', 'response']) {

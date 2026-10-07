@@ -244,7 +244,10 @@ Cleanup uses the same protected target/evidence and resolved identities:
 node scripts/live-validation-controller.mjs cleanup \
   --target-file /operator/live-validation/target.json \
   --pr-number 1528 --commit-sha "$LIVE_VALIDATION_REVIEWED_SHA" \
-  --profile gaming-guide --evidence-dir /operator/live-validation/evidence
+  --profile gaming-guide \
+  --max-spend-micro-usd 2000000 --max-provider-requests 32 \
+  --max-workflows 2 --duration-ms 600000 \
+  --evidence-dir /operator/live-validation/evidence
 ```
 
 It verifies ownership and source identity for the exact deployment recorded as
@@ -254,6 +257,13 @@ still blocks a clean verdict, but does not prevent cleanup of the independently
 verified owned deployment. It retains the service/environment and provider
 binding. Preserve protected state until cleanup succeeds; never publish
 `controller-state.private.json`.
+
+The controller records deployment-attempt intent before sending the Railway
+request. If that request loses its response, cleanup remains blocked even when
+an inventory snapshot is empty: a delayed deployment may still appear. Cleanup
+never adopts or stops a deployment whose ID was not returned to this run. A
+clean verdict requires authoritative inventory with no active deployments and,
+for a known owned deployment, verified terminal status.
 
 ## Paid-call limits
 
@@ -267,7 +277,11 @@ binding. Preserve protected state until cleanup succeeds; never publish
 | Total test duration | 600,000 ms / 10 minutes. |
 | Automatic retries | 0. |
 
-Targets may tighten these limits. Provider admission reserves conservative input
+Targets may tighten these limits. The hosted workflow validates the protected
+target and uses its four numeric limits for preflight, execution and cleanup.
+Operator invocations must also pass the exact target limits, replacing the
+default example values above when the reviewed target is stricter.
+Provider admission reserves conservative input
 and output token costs before each operation at the reviewed model price ceilings,
 including every Trinity/audit stage. The USD 2 cap applies to those reservations;
 understated ceilings cannot prove actual billed spend. Unknown model prices,
@@ -345,9 +359,10 @@ Each live result distinguishes measured source acquisition, evidence selection,
 generation, mandatory answer audit and response construction. Intake, reasoning
 and final stages retain individual timing hooks. Positive acceptance requires
 measured completed acquisition, selection, generation, answer-audit and response
-stages, plus at least one observed completed model stage. The canonical positive
-profile requires all three model stages. A completed label without a bounded
-elapsed timing is insufficient. Evidence records
+stages, plus at least one observed completed model stage. A profile may require
+specific `intake`, `reasoning` and `final` stages through bounded, unique
+`requiredModelStages`; the canonical positive profile requires all three. A
+completed label without bounded elapsed timing is insufficient. Evidence records
 bounded timings, stage statuses, selected counts, semantic conflict/currentness
 flags, audit completion/decision and final-answer fingerprint binding.
 Unobserved stages remain unobserved; timing is never inferred from total latency.

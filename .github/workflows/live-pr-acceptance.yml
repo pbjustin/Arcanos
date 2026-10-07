@@ -282,13 +282,17 @@ jobs:
           node --input-type=module <<'NODE'
           import { mkdtempSync, writeFileSync, appendFileSync } from 'node:fs';
           import path from 'node:path';
+          import { validateLiveValidationTarget } from './scripts/live-validation-target.mjs';
           const e = process.env;
           try {
-            const target = JSON.parse(e.LIVE_VALIDATION_TARGET_JSON);
-            if (!target || typeof target !== 'object' || Array.isArray(target)) throw new Error('invalid target');
+            const target = validateLiveValidationTarget(JSON.parse(e.LIVE_VALIDATION_TARGET_JSON));
             const directory = mkdtempSync(path.join(e.RUNNER_TEMP, 'live-validation-operator-'));
             const targetFile = path.join(directory, 'target.json');
             writeFileSync(targetFile, JSON.stringify(target) + '\n', { mode: 0o600, flag: 'wx' });
+            appendFileSync(e.GITHUB_ENV, `LIVE_VALIDATION_MAX_SPEND_MICRO_USD=${target.limits.maxSpendMicroUsd}\n`
+              + `LIVE_VALIDATION_MAX_PROVIDER_REQUESTS=${target.limits.maxRequests}\n`
+              + `LIVE_VALIDATION_MAX_WORKFLOWS=${target.limits.maxWorkflows}\n`
+              + `LIVE_VALIDATION_DURATION_MS=${target.limits.durationMs}\n`);
             appendFileSync(e.GITHUB_OUTPUT, `operator_dir=${directory}\ntarget_file=${targetFile}\n`);
           } catch { console.error('LIVE_VALIDATION_PROTECTED_BOOTSTRAP_MISSING'); process.exitCode = 1; }
           NODE
@@ -351,7 +355,9 @@ jobs:
           node scripts/live-validation-controller.mjs
           --target-file "${TARGET_FILE}" --artifact-attestation-file "${ARTIFACT_FILE}"
           --pr-number "${PR_NUMBER}" --commit-sha "${EXPECTED_SHA}" --profile "${ACCEPTANCE_PROFILE}"
-          --max-spend-micro-usd 2000000 --max-provider-requests 32 --max-workflows 2 --duration-ms 600000
+          --max-spend-micro-usd "${LIVE_VALIDATION_MAX_SPEND_MICRO_USD}"
+          --max-provider-requests "${LIVE_VALIDATION_MAX_PROVIDER_REQUESTS}"
+          --max-workflows "${LIVE_VALIDATION_MAX_WORKFLOWS}" --duration-ms "${LIVE_VALIDATION_DURATION_MS}"
           --evidence-dir "${RUNNER_TEMP}/live-validation-evidence"
 
       - name: Execute bounded live acceptance through trusted controller
@@ -366,7 +372,9 @@ jobs:
           --target-file "${TARGET_FILE}" --artifact-attestation-file "${ARTIFACT_FILE}"
           --pr-number "${PR_NUMBER}" --commit-sha "${EXPECTED_SHA}" --profile "${ACCEPTANCE_PROFILE}"
           --execute --allow-paid-provider
-          --max-spend-micro-usd 2000000 --max-provider-requests 32 --max-workflows 2 --duration-ms 600000
+          --max-spend-micro-usd "${LIVE_VALIDATION_MAX_SPEND_MICRO_USD}"
+          --max-provider-requests "${LIVE_VALIDATION_MAX_PROVIDER_REQUESTS}"
+          --max-workflows "${LIVE_VALIDATION_MAX_WORKFLOWS}" --duration-ms "${LIVE_VALIDATION_DURATION_MS}"
           --evidence-dir "${RUNNER_TEMP}/live-validation-evidence"
 
       - name: Close the paid run and verify cleanup while retaining facility
@@ -379,6 +387,9 @@ jobs:
           node scripts/live-validation-controller.mjs cleanup
           --target-file "${TARGET_FILE}"
           --pr-number "${PR_NUMBER}" --commit-sha "${EXPECTED_SHA}" --profile "${ACCEPTANCE_PROFILE}"
+          --max-spend-micro-usd "${LIVE_VALIDATION_MAX_SPEND_MICRO_USD}"
+          --max-provider-requests "${LIVE_VALIDATION_MAX_PROVIDER_REQUESTS}"
+          --max-workflows "${LIVE_VALIDATION_MAX_WORKFLOWS}" --duration-ms "${LIVE_VALIDATION_DURATION_MS}"
           --evidence-dir "${RUNNER_TEMP}/live-validation-evidence"
 
       # Only the controller's reviewed sanitized projections are retained.
