@@ -15,6 +15,7 @@ const SHA = /^[0-9a-f]{40}$/u;
 const HASH = /^[0-9a-f]{64}$/u;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const PROFILE_IDS = ['gaming-guide-positive', 'gaming-guide-negative'];
+const MODEL_STAGES = ['intake', 'reasoning', 'final'];
 export const LIVE_VALIDATION_OPERATOR_GATE_IDS = Object.freeze(['type-check', 'lint', 'build', 'railway', 'workflow',
   'secret-scan', 'service-auth', 'egress', 'exact-sha', 'gaming']);
 const SUMMARY_VERSION = 'arcanos-live-validation-evidence/v1';
@@ -523,12 +524,24 @@ export function sanitizeLiveValidationObservation(value) {
       requestRemainingMs: budget(value.auditStartBudget?.requestRemainingMs) },
     stages: Object.fromEntries(stages.map(stage => [stage, { status: value.stages[stage].status, elapsedMs: value.stages[stage].elapsedMs }])) };
 }
+function assertProfileRequirements(expected) {
+  requireController(record(expected), 'LIVE_VALIDATION_PROFILE_INVALID');
+  if (Object.hasOwn(expected, 'requiredModelStages')) requireController(Array.isArray(expected.requiredModelStages)
+    && expected.requiredModelStages.length > 0 && expected.requiredModelStages.length <= MODEL_STAGES.length
+    && new Set(expected.requiredModelStages).size === expected.requiredModelStages.length
+    && expected.requiredModelStages.every(stage => MODEL_STAGES.includes(stage)), 'LIVE_VALIDATION_PROFILE_INVALID');
+}
 function assertProfileObservation(value, expected) {
   requireController(value?.outcome === expected.outcome && value.semanticGap === expected.semanticGap,
     'LIVE_VALIDATION_PROFILE_OBSERVATION_FAILED');
   if (expected.outcome === 'accepted') requireController(value.coverage.satisfied && value.selectedEvidenceCount > 0
     && value.audit?.assessmentStatus === 'completed' && value.audit.decision === 'accept' && value.audit.boundToFinalAnswer,
   'LIVE_VALIDATION_PROFILE_OBSERVATION_FAILED');
+  const completed = stage => value.stages[stage]?.status === 'passed' && value.stages[stage].elapsedMs !== null;
+  if (expected.outcome === 'accepted') requireController(['acquisition', 'selection', 'generation', 'answer_audit', 'response'].every(completed)
+    && MODEL_STAGES.some(completed), 'LIVE_VALIDATION_PROFILE_STAGE_FAILED');
+  if (Object.hasOwn(expected, 'requiredModelStages')) requireController(expected.requiredModelStages.every(completed),
+    'LIVE_VALIDATION_PROFILE_STAGE_FAILED');
   if (expected.providerCalls === 0) requireController(value.candidates.some(candidate => candidate.decision === 'rejected'
     && candidate.reasonCodes.some(code => /(?:MISMATCH|CONFLICT)/u.test(code))), 'LIVE_VALIDATION_NEGATIVE_REASON_MISSING');
   if (expected.qualifiedUnknownPatch) requireController(value.qualification.visible === true
@@ -681,6 +694,7 @@ export async function runLiveValidationController(argv, dependencies = {}) {
   requireController(profiles.version === 1 && Array.isArray(profiles.profiles) && profiles.profiles.length === 2
     && PROFILE_IDS.every((id, index) => profiles.profiles[index]?.id === id)
     && profiles.profiles.every(entry => entry.moduleId === 'gaming' && entry.input?.query?.storagePolicy === 'transient_only'), 'LIVE_VALIDATION_PROFILE_INVALID');
+  profiles.profiles.forEach(entry => assertProfileRequirements(entry.expected));
   const profileHash = canonicalHash(profiles);
   const localGate = { targetHash: liveValidationTargetSha256(target), artifactAttestationSha256: artifact.attestationSha256,
     profileHash, commitSha: args.commitSha, controllerRevision: git.head, limits: args.limits,

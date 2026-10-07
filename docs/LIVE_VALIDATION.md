@@ -42,13 +42,20 @@ does not grant test access or establish source/deployment identity.
 
 Apply and read back the environment-scoped profile in
 [runtime.railway.json](../infra/live-validation/runtime.railway.json): the
-[runtime Dockerfile](../infra/live-validation/runtime.Dockerfile), dedicated
+[Railway runtime Dockerfile](../infra/live-validation/runtime.railway.Dockerfile), dedicated
 `start-live-validation-runtime.mjs` launcher, one replica, `NEVER` restart policy
 and readiness health check. Disable automatic source deployments. Repository
 connection alone does not prove an exact deployed revision. A JSON file in Git
 alone does not prove that a new Railway service applied those settings.
 The controller reads back and requires one replica and `NEVER` restart policy
 before deployment and paid admission, since provider quotas are process-local.
+
+Railway V3 uses the public CA bundle and does not support BuildKit secret mounts.
+For local cloud builds behind an injected proxy CA, use the separate
+[proxy-capable runtime Dockerfile](../infra/live-validation/runtime.Dockerfile)
+with its mounted `proxy_ca` secret. Both paths independently fetch the exact
+public commit, produce the same build-manifest contract, remove Git history
+before the final image and run against read-only source as a nonroot user.
 
 Fill [target.example.json](../infra/live-validation/target.example.json) with the
 real validation environment/service IDs, public HTTPS origin, existing Gaming
@@ -237,7 +244,10 @@ Cleanup uses the same protected target/evidence and resolved identities:
 node scripts/live-validation-controller.mjs cleanup \
   --target-file /operator/live-validation/target.json \
   --pr-number 1528 --commit-sha "$LIVE_VALIDATION_REVIEWED_SHA" \
-  --profile gaming-guide --evidence-dir /operator/live-validation/evidence
+  --profile gaming-guide \
+  --max-spend-micro-usd 2000000 --max-provider-requests 32 \
+  --max-workflows 2 --duration-ms 600000 \
+  --evidence-dir /operator/live-validation/evidence
 ```
 
 It verifies ownership and source identity for the exact deployment recorded as
@@ -260,7 +270,11 @@ binding. Preserve protected state until cleanup succeeds; never publish
 | Total test duration | 600,000 ms / 10 minutes. |
 | Automatic retries | 0. |
 
-Targets may tighten these limits. Provider admission reserves conservative input
+Targets may tighten these limits. The hosted workflow validates the protected
+target and uses its four numeric limits for preflight, execution and cleanup.
+Operator invocations must also pass the exact target limits, replacing the
+default example values above when the reviewed target is stricter.
+Provider admission reserves conservative input
 and output token costs before each operation at the reviewed model price ceilings,
 including every Trinity/audit stage. The USD 2 cap applies to those reservations;
 understated ceilings cannot prove actual billed spend. Unknown model prices,
@@ -328,7 +342,12 @@ verifier tunnel to provision.
 
 Each live result distinguishes measured source acquisition, evidence selection,
 generation, mandatory answer audit and response construction. Intake, reasoning
-and final stages retain individual timing hooks where available. Evidence records
+and final stages retain individual timing hooks. Positive acceptance requires
+measured completed acquisition, selection, generation, answer-audit and response
+stages, plus at least one observed completed model stage. A profile may require
+specific `intake`, `reasoning` and `final` stages through bounded, unique
+`requiredModelStages`; a completed label without bounded elapsed timing is
+insufficient. Evidence records
 bounded timings, stage statuses, selected counts, semantic conflict/currentness
 flags, audit completion/decision and final-answer fingerprint binding.
 Unobserved stages remain unobserved; timing is never inferred from total latency.

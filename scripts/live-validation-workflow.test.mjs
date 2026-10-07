@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import yaml from 'js-yaml';
+import { parseLiveValidationControllerArguments } from './live-validation-controller.mjs';
 
 const workflow = yaml.load(readFileSync(new URL('../.github/workflows/live-pr-acceptance.yml', import.meta.url), 'utf8'));
 const SHA = 'a'.repeat(40);
@@ -38,6 +39,17 @@ const baseEnvironment = () => ({ PATH: process.env.PATH, LANG: 'C', LC_ALL: 'C',
 const runInline = (step, env) => spawnSync(process.execPath, ['--input-type=module'], {
   input: extractNode(step), encoding: 'utf8', timeout: 5_000, env: { ...baseEnvironment(), ...env },
 });
+function targetFixture() {
+  return { version: 'arcanos-live-validation-target/v2', repository: 'pbjustin/Arcanos',
+    projectId: '7faf44e5-519c-4e73-8d7a-da9f389e6187',
+    environmentId: '11111111-1111-4111-8111-111111111111', environmentName: 'live-validation',
+    runtimeServiceId: '22222222-2222-4222-8222-222222222222',
+    publicOrigin: 'https://private-target-sentinel.up.railway.app',
+    limits: { maxSpendMicroUsd: 2_000_000, maxRequests: 32, maxWorkflows: 2, durationMs: 600_000 },
+    models: ['ft:private-target-sentinel', 'gpt-6-luna', 'gpt-6.1-sol'].map(id => ({
+      id, inputMicroUsdPerToken: 1.25, outputMicroUsdPerToken: 5 })), writes: false };
+}
+const readEnvironment = file => Object.fromEntries(readFileSync(file, 'utf8').trim().split('\n').map(line => line.split('=')));
 
 test('manual paid admission uses default-branch trust and one Railway HTTPS validation service', () => {
   assert.deepEqual(Object.keys(workflow.on), ['workflow_dispatch']);
@@ -103,7 +115,7 @@ test('authoritative dispatch selection resolves PR-only and SHA-only requests an
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
 test('candidate code stays isolated from control-plane, signing and provider credentials', () => {
-  assert.doesNotMatch(JSON.stringify(offline), /secrets\.|RAILWAY.*TOKEN|OPENAI.*KEY|APPROVAL_SIGNING|MTLS_/u);
+  assert.doesNotMatch(JSON.stringify({ env: workflow.env, offline }), /secrets\.|vars\.|RAILWAY.*TOKEN|OPENAI.*KEY|LIVE_VALIDATION_TARGET_JSON|LIVE_VALIDATION_(?:MAX_|DURATION_MS)|APPROVAL_SIGNING|MTLS_/u);
   const checkout = offline.steps.find(step => step.uses?.startsWith('actions/checkout@'));
   assert.deepEqual(checkout.with, { repository: 'pbjustin/Arcanos', ref: '${{ steps.selection.outputs.commit_sha }}',
     'fetch-depth': 0, 'persist-credentials': false });
@@ -186,25 +198,95 @@ test('required CI scans every exact PR commit beyond the first API page and bloc
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
 
-test('protected bootstrap requires only target configuration and never prints its content', () => {
+test('protected bootstrap validates target configuration and exposes only bounded numeric limits', () => {
   const directory = mkdtempSync(path.join(tmpdir(), 'live-workflow-bootstrap-'));
   const env = { RUNNER_TEMP: directory, GITHUB_ENV: path.join(directory, 'environment'),
-    GITHUB_OUTPUT: path.join(directory, 'outputs'), LIVE_VALIDATION_TARGET_JSON: JSON.stringify({ value: 'private-target-sentinel' }) };
+    GITHUB_OUTPUT: path.join(directory, 'outputs'), LIVE_VALIDATION_TARGET_JSON: JSON.stringify(targetFixture()) };
   try {
     const missing = runInline(bootstrap, { ...env, LIVE_VALIDATION_TARGET_JSON: '' });
     assert.equal(missing.status, 1);
     assert.equal(missing.stderr.trim(), 'LIVE_VALIDATION_PROTECTED_BOOTSTRAP_MISSING');
     assert.deepEqual(readdirSync(directory), []);
     const valid = runInline(bootstrap, env);
-    assert.equal(valid.status, 0);
+    assert.equal(valid.status, 0, valid.stderr);
     assert.equal(valid.stdout, '');
     assert.equal(valid.stderr, '');
-    const outputs = Object.fromEntries(readFileSync(env.GITHUB_OUTPUT, 'utf8').trim().split('\n').map(line => line.split('=')));
+    const outputs = readEnvironment(env.GITHUB_OUTPUT);
     assert.equal(statSync(outputs.operator_dir).mode & 0o777, 0o700);
     for (const name of ['target.json'])
       assert.equal(statSync(path.join(outputs.operator_dir, name)).mode & 0o777, 0o600);
-    assert.equal(existsSync(env.GITHUB_ENV), false);
+    assert.deepEqual(readEnvironment(env.GITHUB_ENV), { LIVE_VALIDATION_MAX_SPEND_MICRO_USD: '2000000',
+      LIVE_VALIDATION_MAX_PROVIDER_REQUESTS: '32', LIVE_VALIDATION_MAX_WORKFLOWS: '2',
+      LIVE_VALIDATION_DURATION_MS: '600000' });
+    assert.deepEqual(JSON.parse(readFileSync(outputs.target_file, 'utf8')), targetFixture());
+    assert.deepEqual(bootstrap.env, { LIVE_VALIDATION_TARGET_JSON: '${{ vars.LIVE_VALIDATION_TARGET_JSON }}' });
     assert.doesNotMatch(readFileSync(env.GITHUB_OUTPUT, 'utf8'), /private-target-sentinel/);
+    assert.doesNotMatch(readFileSync(env.GITHUB_ENV, 'utf8'), /private-target-sentinel/);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test('malformed protected targets cannot create operator files or inject workflow environment outputs', () => {
+  const invalid = [{ value: 'private-target-sentinel' }, null, [], ...[
+    target => { target.limits.maxRequests = '31\nRAILWAY_LIVE_VALIDATION_TOKEN=private-target-sentinel'; },
+    target => { target.limits.maxRequests = 33; },
+    target => { target.limits.maxSpendMicroUsd = 2_000_001; },
+    target => { target.limits.maxWorkflows = 3; },
+    target => { target.limits.durationMs = 600_001; },
+    target => { target.limits.maxRequests = 0; },
+    target => { target.limits.maxRequests = 1.5; },
+    target => { target.limits.maxRequests = true; },
+    target => { delete target.limits.durationMs; },
+    target => { target.environmentName = 'production'; },
+    target => { target.environmentId = 'fb583147-6c39-4343-9267-500f357d25ab'; },
+    target => { target.extra = 'private-target-sentinel'; },
+    target => { target.publicOrigin = 'https://private-target-sentinel.up.railway.app/path'; },
+  ].map(mutate => { const target = targetFixture(); mutate(target); return target; })];
+  for (const target of invalid) {
+    const directory = mkdtempSync(path.join(tmpdir(), 'live-workflow-bootstrap-invalid-'));
+    try {
+      const result = runInline(bootstrap, { RUNNER_TEMP: directory, GITHUB_ENV: path.join(directory, 'environment'),
+        GITHUB_OUTPUT: path.join(directory, 'outputs'), LIVE_VALIDATION_TARGET_JSON: JSON.stringify(target) });
+      assert.equal(result.status, 1);
+      assert.equal(result.stdout, '');
+      assert.equal(result.stderr.trim(), 'LIVE_VALIDATION_PROTECTED_BOOTSTRAP_MISSING');
+      assert.deepEqual(readdirSync(directory), []);
+    } finally { rmSync(directory, { recursive: true, force: true }); }
+  }
+});
+
+test('validated tightened target limits reach preflight, paid execution and cleanup without defaulting', () => {
+  const target = targetFixture();
+  target.limits = { maxSpendMicroUsd: 1_000_000, maxRequests: 31, maxWorkflows: 1, durationMs: 300_000 };
+  const directory = mkdtempSync(path.join(tmpdir(), 'live-workflow-tightened-limits-'));
+  const envFile = path.join(directory, 'environment'); const outputsFile = path.join(directory, 'outputs');
+  const argsFile = path.join(directory, 'args.json'); const bin = path.join(directory, 'bin');
+  try {
+    const result = runInline(bootstrap, { RUNNER_TEMP: directory, GITHUB_ENV: envFile, GITHUB_OUTPUT: outputsFile,
+      LIVE_VALIDATION_TARGET_JSON: JSON.stringify(target) });
+    assert.equal(result.status, 0, result.stderr);
+    const limits = readEnvironment(envFile); const outputs = readEnvironment(outputsFile);
+    assert.deepEqual(limits, { LIVE_VALIDATION_MAX_SPEND_MICRO_USD: '1000000',
+      LIVE_VALIDATION_MAX_PROVIDER_REQUESTS: '31', LIVE_VALIDATION_MAX_WORKFLOWS: '1',
+      LIVE_VALIDATION_DURATION_MS: '300000' });
+    mkdirSync(bin);
+    // Capture the actual shell arguments without invoking a controller or provider.
+    writeFileSync(path.join(bin, 'node'), '#!' + process.execPath + '\n'
+      + "require('node:fs').writeFileSync(process.env.ARGS_FILE, JSON.stringify(process.argv.slice(2)));\n", { mode: 0o700 });
+    for (const name of ['Validate protected controller inputs offline',
+      'Execute bounded live acceptance through trusted controller',
+      'Close the paid run and verify cleanup while retaining facility']) {
+      const step = named(live, name);
+      const run = spawnSync('bash', ['-c', step.run], { encoding: 'utf8', timeout: 5_000,
+        env: { ...baseEnvironment(), ...limits, PATH: bin + path.delimiter + process.env.PATH,
+          RUNNER_TEMP: directory, TARGET_FILE: outputs.target_file, ARTIFACT_FILE: path.join(directory, 'artifact.json'), ARGS_FILE: argsFile } });
+      assert.equal(run.status, 0, run.stderr);
+      const args = JSON.parse(readFileSync(argsFile, 'utf8'));
+      assert.equal(args[0], 'scripts/live-validation-controller.mjs');
+      const parsed = parseLiveValidationControllerArguments(args.slice(1));
+      assert.deepEqual(parsed.limits, target.limits, name);
+      assert.equal(parsed.command, name.startsWith('Close') ? 'cleanup' : 'run');
+      assert.equal(parsed.execute, name.startsWith('Execute'));
+    }
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
 
@@ -269,7 +351,7 @@ test('artifact drift, unexpected files, symlinks, reruns and malformed transport
   }
 });
 
-test('paid command follows artifact/offline gates, applies fixed caps and always performs scoped cleanup', () => {
+test('paid command follows artifact/offline gates, applies validated target caps and always performs scoped cleanup', () => {
   const preflight = named(live, 'Validate protected controller inputs offline');
   const execute = named(live, 'Execute bounded live acceptance through trusted controller');
   const cleanup = named(live, 'Close the paid run and verify cleanup while retaining facility');
@@ -283,7 +365,12 @@ test('paid command follows artifact/offline gates, applies fixed caps and always
   for (const step of [preflight, execute]) {
     assert.equal(step.env.LIVE_VALIDATION_ARTIFACT_DIRECTORY, '${{ runner.temp }}/live-validation-candidate');
     assert.match(step.run, /--artifact-attestation-file "\$\{ARTIFACT_FILE\}"/u);
-    assert.match(step.run, /--max-spend-micro-usd 2000000 --max-provider-requests 32 --max-workflows 2 --duration-ms 600000/u);
+  }
+  for (const step of [preflight, execute, cleanup]) {
+    assert.match(step.run, /--max-spend-micro-usd "\$\{LIVE_VALIDATION_MAX_SPEND_MICRO_USD\}"/u);
+    assert.match(step.run, /--max-provider-requests "\$\{LIVE_VALIDATION_MAX_PROVIDER_REQUESTS\}"/u);
+    assert.match(step.run, /--max-workflows "\$\{LIVE_VALIDATION_MAX_WORKFLOWS\}"/u);
+    assert.match(step.run, /--duration-ms "\$\{LIVE_VALIDATION_DURATION_MS\}"/u);
   }
   assert.match(named(offline, 'Validate Gaming acceptance adapter offline').run,
     /--runTestsByPath.*tests\/live-validation-gaming-adapter\.test\.ts.*tests\/trinity-gaming-intake\.test\.ts --coverage=false/u);

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -121,6 +121,7 @@ function observation(positive) {
       .map(stage => [stage, { status: positive || ['acquisition', 'selection', 'response'].includes(stage) ? 'passed' : 'not_run', elapsedMs: positive ? 10 : null }])) };
 }
 function executionFixture(f, options = {}) {
+  const executionProfiles = options.profiles ?? profiles;
   let active = false; let stopped = false; let bound = false; let admitted = false; let workflows = 0; let clock = 1000000;
   const seen = []; let token;
   const usage = plan => ({ ...plan, status: 'active', counts: { workflows }, limits: { ...f.target.limits, maxConcurrency: 1, maxRetries: 0 },
@@ -144,9 +145,10 @@ function executionFixture(f, options = {}) {
     if (route === '/usage') return { status: 200, body: usage(plan) };
     if (route === '/stop') return { status: 200, body: { stopped: true, runId: plan.runId } };
     if (route === '/acceptance') {
-      workflows++; const entry = profiles.profiles.find(value => value.id === request.body.caseId); const positive = entry.id.endsWith('positive');
+      workflows++; const entry = executionProfiles.profiles.find(value => value.id === request.body.caseId); const positive = entry.id.endsWith('positive');
       const evidence = evidenceFor(entry); if (options.unboundAudit && positive) evidence.audit.boundToFinalAnswer = false;
       const projected = observation(positive); if (options.lostConflict && !positive) projected.candidates = [];
+      if (positive) options.mutateObservation?.(projected);
       if (options.leakToken && positive) evidence.result.sources[0].url = 'https://' + token + '.example.org';
       return { status: 200, body: { identity: identity(f.target), caseId: entry.id, evidence, observation: projected,
         profilePassed: true, durableWrites: 0, productionChanged: false } };
@@ -154,6 +156,7 @@ function executionFixture(f, options = {}) {
     throw new Error('Unexpected service route');
   } };
   const dependencies = { environment: f.environment, readGitState: () => git, createGitHubApi: () => ghFixture(f, options),
+    readProfiles: () => executionProfiles,
     createRailwayApi: () => railway, createServiceClient: input => { assert.equal(input.token, token); return service; }, now: () => clock,
     randomBytes: () => Buffer.alloc(32, 17), sleep: async () => {} };
   return { dependencies, seen, railway, service, admitted: () => admitted, stopped: () => stopped, plan: () => plan };
@@ -174,6 +177,28 @@ test('default preflight validates exact opaque artifacts without network, creden
   const result = await runLiveValidationController(f.argv, { environment: f.environment, readGitState: () => git,
     createGitHubApi: () => { throw new Error('must remain offline'); }, createRailwayApi: () => { throw new Error('must remain offline'); } });
   assert.equal(result.status, 'PASS'); assert.equal(result.infrastructureMutation, false); assert.equal(result.paidProviderEnabled, false);
+});
+test('tightened target limits require exact CLI agreement before preflight, execution or cleanup I/O', async t => {
+  const f = fixture(t);
+  f.target.limits = { maxSpendMicroUsd: 1_000_000, maxRequests: 31, maxWorkflows: 1, durationMs: 300_000 };
+  writeFileSync(f.targetFile, JSON.stringify(f.target));
+  const calls = [];
+  const dependencies = { environment: f.environment, readGitState: () => git,
+    createGitHubApi: () => { calls.push('github'); throw new Error('must remain offline'); },
+    createRailwayApi: () => { calls.push('railway'); throw new Error('must remain offline'); },
+    createServiceClient: () => { calls.push('service'); throw new Error('must remain offline'); } };
+  for (const argv of [f.argv, [...f.argv, '--execute', '--allow-paid-provider'], ['cleanup', ...f.argv]]) {
+    await assert.rejects(runLiveValidationController(argv, dependencies), { code: 'LIVE_VALIDATION_OPERATOR_LIMIT_MISMATCH' });
+    assert.deepEqual(calls, []);
+    assert.equal(existsSync(path.join(f.directory, 'evidence')), false);
+  }
+  const caps = ['--max-spend-micro-usd', '1000000', '--max-provider-requests', '31',
+    '--max-workflows', '1', '--duration-ms', '300000'];
+  const preflight = await runLiveValidationController([...f.argv, ...caps], dependencies);
+  assert.equal(preflight.status, 'PASS'); assert.deepEqual(preflight.limits, f.target.limits);
+  const cleanup = await runLiveValidationController(['cleanup', ...f.argv, ...caps], dependencies);
+  assert.equal(cleanup.status, 'PASS'); assert.equal(cleanup.code, 'LIVE_VALIDATION_CLEANUP_NO_RUN');
+  assert.deepEqual(calls, []);
 });
 test('PR resolution allows the authorized draft, rejects moved heads and ambiguous SHA selection', async t => {
   const f = fixture(t); const github = ghFixture(f);
@@ -263,6 +288,54 @@ test('observations retain bounded semantic codes and timings while dropping arbi
   const value = observation(false); value.candidates.push({ decision: 'secret text', reasonCodes: ['private prompt', 'CONFLICT'], source: 'private URL' });
   const sanitized = sanitizeLiveValidationObservation(value); assert.equal(sanitized.reason, 'GAME_MISMATCH');
   assert.deepEqual(sanitized.candidates[1], { decision: 'unobserved', reasonCodes: ['CONFLICT'] }); assert.doesNotMatch(JSON.stringify(sanitized), /private/);
+});
+test('direct-path acceptance requires one measured completed model stage', async t => {
+  const f = fixture(t); const e = executionFixture(f, { mutateObservation: value => {
+    value.stages.intake = { status: 'not_run', elapsedMs: null };
+    value.stages.reasoning = { status: 'not_run', elapsedMs: null };
+  } });
+  const result = await execute(f, e);
+  assert.equal(result.status, 'PASS'); assert.equal(result.cases[0].observation.stages.final.status, 'passed');
+});
+test('aggregate provider calls cannot establish failed or unobserved model execution', async t => {
+  for (const status of ['not_run', 'started', 'failed', 'timed_out', 'passed']) await t.test(status, async child => {
+    const f = fixture(child); const e = executionFixture(f, { mutateObservation: value => {
+      for (const stage of ['intake', 'reasoning', 'final']) value.stages[stage] = { status, elapsedMs: null };
+    } });
+    const result = await execute(f, e);
+    assert.equal(result.status, 'FAILED'); assert.equal(result.code, 'LIVE_VALIDATION_PROFILE_STAGE_FAILED');
+    assert.equal(result.actualUsage.generationCalls, 1); assert.equal(result.actualUsage.auditCalls, 1);
+    assert.equal(e.stopped(), true);
+  });
+});
+test('profiles can require all measured model stages without changing direct-path defaults', async t => {
+  const requiredProfiles = structuredClone(profiles);
+  requiredProfiles.profiles[0].expected.requiredModelStages = ['intake', 'reasoning', 'final'];
+  const f = fixture(t); const e = executionFixture(f, { profiles: requiredProfiles });
+  assert.equal((await execute(f, e)).status, 'PASS');
+});
+test('required model stages and acquisition/audit/response proof must complete with measured timings', async t => {
+  for (const stage of ['acquisition', 'selection', 'generation', 'intake', 'reasoning', 'final', 'answer_audit', 'response']) {
+    for (const status of ['not_run', 'failed', 'timed_out', 'passed']) await t.test(`${stage} ${status}`, async child => {
+      const requiredProfiles = structuredClone(profiles);
+      requiredProfiles.profiles[0].expected.requiredModelStages = ['intake', 'reasoning', 'final'];
+      const f = fixture(child); const e = executionFixture(f, { profiles: requiredProfiles, mutateObservation: value => {
+        value.stages[stage] = { status, elapsedMs: status === 'passed' ? null : 10 };
+      } });
+      const result = await execute(f, e);
+      assert.equal(result.status, 'FAILED'); assert.equal(result.code, 'LIVE_VALIDATION_PROFILE_STAGE_FAILED');
+      assert.equal(e.stopped(), true);
+    });
+  }
+});
+test('malformed model-stage requirements fail before deployment or paid admission', async t => {
+  for (const requiredModelStages of [[], ['final', 'final'], ['generation'], ['private prompt'], 'final']) {
+    await t.test(JSON.stringify(requiredModelStages), async child => {
+      const requiredProfiles = structuredClone(profiles); requiredProfiles.profiles[0].expected.requiredModelStages = requiredModelStages;
+      const f = fixture(child); const e = executionFixture(f, { profiles: requiredProfiles });
+      await assert.rejects(execute(f, e), { code: 'LIVE_VALIDATION_PROFILE_INVALID' }); assert.deepEqual(e.seen, []);
+    });
+  }
 });
 test('cleanup refuses mismatched deployment ID, project, environment, service or source before any mutation', async t => {
   const target = targetFixture();
