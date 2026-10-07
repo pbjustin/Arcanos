@@ -2,7 +2,7 @@
   "$schema": "https://railway.com/railway.schema.json",
   "build": {
     "builder": "DOCKERFILE",
-    "dockerfilePath": "infra/live-validation/runtime.Dockerfile"
+    "dockerfilePath": "infra/live-validation/runtime.railway.Dockerfile"
   },
   "deploy": {
     "startCommand": "node /app/scripts/start-live-validation-runtime.mjs",
