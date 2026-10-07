@@ -33,7 +33,11 @@ it does not ask ARCANOS to act as a search engine.
    when nextAction and the bounded continuation grant permit it. For
    clarification_required, ask the backend's targeted question only when the
    missing user decision materially changes the answer, and forward the reply
-   in a new query. Missing harmless metadata is not a reason to ask an extra
+   in the same workflow using a new query key, returned workflowId and latest
+   revision as expectedRevision. Keep the original question and context, filling
+   only the requested missing field or appending the affirmative playstyle option
+   to constraints. Retain accepted evidence and remaining recovery allowances;
+   do not restart acquisition. Missing harmless metadata is not a reason to ask an extra
    question. For temporarily_unavailable or retry_later, report the specific
    limitation and stop. The compatible wire state, nextAction, revision and
    recovery budgets remain authoritative; frontendOutcome never grants another

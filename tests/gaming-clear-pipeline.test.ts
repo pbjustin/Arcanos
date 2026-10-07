@@ -3,6 +3,7 @@ import { createGamingClearAssessment } from '../src/shared/gaming/gamingClearPol
 import { GAMING_SOURCE_POLICY_VERSION, GAMING_FRESHNESS_DEFAULTS } from '../src/shared/gaming/gamingFreshnessCore.js';
 import type { GamingStoredKnowledgeContext } from '../src/shared/gaming/gamingStoredEvidenceCore.js';
 import { GAMING_UNVERIFIED_GUIDE_WARNING } from '../src/shared/gaming/gamingFreshnessDisposition.js';
+import { hasBoundGamingClearAnswer } from '../src/shared/gaming/gamingClearAnswerBinding.js';
 const runTrinityWritingPipeline = jest.fn();
 const createSingleChatCompletion = jest.fn();
 jest.unstable_mockModule('@core/logic/trinityWritingPipeline.js', () => ({ runTrinityWritingPipeline }));
@@ -14,6 +15,7 @@ jest.unstable_mockModule('@services/openai/credentialProvider.js', () => ({
 jest.unstable_mockModule('@services/gamingSourceIngestion.js', () => ({ buildStoredGamingKnowledgeContext: jest.fn() }));
 const { runGameplayPipeline } = await import('../src/services/gamingPipeline.js');
 const { ResponseComposerAgent } = await import('../src/services/gamingAgents.js');
+const { logger } = await import('../src/platform/logging/structuredLogging.js');
 
 const text = 'Lantern Vale guide: after restoring the Tide Hall pump, turn the west valve to open the return route. The valve is beside the pump.';
 const answer = '**Open the return route.**\n\nTurn the west valve beside the pump. [Source 1]';
@@ -92,22 +94,34 @@ describe('Gaming CLEAR real pipeline delivery decisions', () => {
   });
 
   it('blocks a high-scoring material defect even with auditEnabled false and no retry/repair', async () => {
+    const auditTelemetry = jest.spyOn(logger, 'info');
     findings = [{ code: 'UNSUPPORTED_MECHANIC', severity: 'blocking', evidenceRefs: ['chunk-1'] }];
     const result = await run();
     expect(result.data.response).not.toContain('west valve');
     expect(result.data.fallbackReason).toBe('GAMING_ANSWER_REJECTED');
     expect(result.data.grounding?.groundedInSuppliedEvidence).toBe(false);
+    expect(hasBoundGamingClearAnswer(result.data)).toBe(false);
     expect(runTrinityWritingPipeline).toHaveBeenCalledTimes(1);
     expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
+    expect(createSingleChatCompletion.mock.calls[0][1]).toMatchObject({ maxRetries: 0 });
+    expect(auditTelemetry.mock.calls).toContainEqual(['gaming.clear.answer.completed', expect.objectContaining({
+      decision: 'reject', modelCallsUsed: 1, modelCallLimit: 1, repairAttempts: 0
+    })]);
   });
 
   it('uses honest recovery on unavailable audit while provider completion remains independently recorded', async () => {
+    const auditTelemetry = jest.spyOn(logger, 'info');
     createSingleChatCompletion.mockRejectedValue(Object.assign(new Error('synthetic timeout'), { name: 'AbortError' }));
     const result = await run();
     expect(result.data.response).toContain('couldn’t complete a reliable answer');
     expect(result.data.fallbackReason).toBe('GAMING_ANSWER_AUDIT_UNAVAILABLE');
+    expect(hasBoundGamingClearAnswer(result.data)).toBe(false);
     expect(runTrinityWritingPipeline).toHaveBeenCalledTimes(1);
     expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
+    expect(createSingleChatCompletion.mock.calls[0][1]).toMatchObject({ maxRetries: 0 });
+    expect(auditTelemetry.mock.calls).toContainEqual(['gaming.clear.answer.unavailable', expect.objectContaining({
+      reasonCodes: ['AUDIT_TIMEOUT'], modelCallsUsed: 1, modelCallLimit: 1, repairAttempts: 0
+    })]);
   });
 
   it('invalidates a pass when returned substantive text changes after the callback', async () => {

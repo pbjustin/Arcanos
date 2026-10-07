@@ -503,6 +503,16 @@ export function sanitizeLiveValidationObservation(value) {
   const budget = amount => integer(amount, 0, LIVE_VALIDATION_HARD_LIMITS.durationMs) ? amount : null;
   const count = amount => integer(amount, 0, 64) ? amount : null;
   const audit = value.audit;
+  const trace = value.clarification;
+  const clarification = record(trace) && trace.version === 1
+    && ['submittedCount', 'completedCount', 'postAcquisitionCount'].every(key => integer(trace[key], 0, 8))
+    && trace.completedCount <= trace.submittedCount && trace.postAcquisitionCount <= trace.completedCount
+    && integer(trace.acquisitionCount, 0, 1)
+    && ['sameWorkflow', 'revisionsAdvanced', 'retainedEvidence', 'budgetsPreserved'].every(key => typeof trace[key] === 'boolean')
+    ? { version: 1, submittedCount: trace.submittedCount, completedCount: trace.completedCount,
+      postAcquisitionCount: trace.postAcquisitionCount, sameWorkflow: trace.sameWorkflow,
+      revisionsAdvanced: trace.revisionsAdvanced, retainedEvidence: trace.retainedEvidence,
+      budgetsPreserved: trace.budgetsPreserved, acquisitionCount: trace.acquisitionCount } : undefined;
   return { schemaVersion: 1, contractVersion: 'gaming-hybrid-v2', outcome: value.outcome, semanticGap: value.semanticGap,
     reason: /^[A-Z][A-Z0-9_]{0,79}$/u.test(value.reason ?? '') ? value.reason : null,
     candidates: Array.isArray(value.candidates) ? value.candidates.slice(0, 8).map(item => ({
@@ -520,6 +530,7 @@ export function sanitizeLiveValidationObservation(value) {
       assessmentStatus: ['completed', 'not_run', 'unavailable'].includes(audit.assessmentStatus) ? audit.assessmentStatus : 'unobserved',
       decision: ['accept', 'reject', 'partial', 'unavailable'].includes(audit.decision) ? audit.decision : 'unobserved',
       boundToFinalAnswer: audit.boundToFinalAnswer === true },
+    ...(clarification ? { clarification } : {}),
     auditStartBudget: { runtimeRemainingMs: budget(value.auditStartBudget?.runtimeRemainingMs),
       requestRemainingMs: budget(value.auditStartBudget?.requestRemainingMs) },
     stages: Object.fromEntries(stages.map(stage => [stage, { status: value.stages[stage].status, elapsedMs: value.stages[stage].elapsedMs }])) };
@@ -530,6 +541,9 @@ function assertProfileRequirements(expected) {
     && expected.requiredModelStages.length > 0 && expected.requiredModelStages.length <= MODEL_STAGES.length
     && new Set(expected.requiredModelStages).size === expected.requiredModelStages.length
     && expected.requiredModelStages.every(stage => MODEL_STAGES.includes(stage)), 'LIVE_VALIDATION_PROFILE_INVALID');
+  if (Object.hasOwn(expected, 'clarification')) requireController(exact(expected.clarification, ['completedCount', 'postAcquisitionCount'])
+    && integer(expected.clarification.completedCount, 1, 8)
+    && integer(expected.clarification.postAcquisitionCount, 0, expected.clarification.completedCount), 'LIVE_VALIDATION_PROFILE_INVALID');
 }
 function assertProfileObservation(value, expected) {
   requireController(value?.outcome === expected.outcome && value.semanticGap === expected.semanticGap,
@@ -540,8 +554,17 @@ function assertProfileObservation(value, expected) {
   const completed = stage => value.stages[stage]?.status === 'passed' && value.stages[stage].elapsedMs !== null;
   if (expected.outcome === 'accepted') requireController(['acquisition', 'selection', 'generation', 'answer_audit', 'response'].every(completed)
     && MODEL_STAGES.some(completed), 'LIVE_VALIDATION_PROFILE_STAGE_FAILED');
-  if (Object.hasOwn(expected, 'requiredModelStages')) requireController(expected.requiredModelStages.every(completed),
-    'LIVE_VALIDATION_PROFILE_STAGE_FAILED');
+  if (Object.hasOwn(expected, 'requiredModelStages')) {
+    requireController(expected.requiredModelStages.every(completed), 'LIVE_VALIDATION_PROFILE_STAGE_FAILED');
+  }
+  if (Object.hasOwn(expected, 'clarification')) {
+    const required = expected.clarification;
+    const trace = value.clarification;
+    requireController(trace?.submittedCount === required.completedCount && trace.completedCount === required.completedCount
+      && trace.postAcquisitionCount === required.postAcquisitionCount && trace.sameWorkflow && trace.revisionsAdvanced
+      && trace.acquisitionCount === 1 && (required.postAcquisitionCount === 0 || trace.retainedEvidence && trace.budgetsPreserved),
+    'LIVE_VALIDATION_PROFILE_CLARIFICATION_FAILED');
+  }
   if (expected.providerCalls === 0) requireController(value.candidates.some(candidate => candidate.decision === 'rejected'
     && candidate.reasonCodes.some(code => /(?:MISMATCH|CONFLICT)/u.test(code))), 'LIVE_VALIDATION_NEGATIVE_REASON_MISSING');
   if (expected.qualifiedUnknownPatch) requireController(value.qualification.visible === true

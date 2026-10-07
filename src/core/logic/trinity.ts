@@ -1478,7 +1478,8 @@ export async function runThroughBrain(
         && !directAnswerOutput.provider?.truncated && !directAnswerOutput.provider?.contentFiltered) {
         checkWatchdog();
         gamingAuxiliaryAuditBudget.increment();
-        gamingDirectAudit = await gamingAnswerAudit(finalText, runtimeBudget);
+        gamingDirectAudit = await gamingAnswerAudit(finalText, runtimeBudget,
+          Math.max(0, effectiveLimit - watchdog.elapsed()));
         if (gamingDirectAudit.assessment.assessmentStatus !== 'completed' || gamingDirectAudit.assessment.decision !== 'accept') {
           auditFlags.push('GAMING_FINAL_ANSWER_NOT_ACCEPTED');
         }
@@ -2062,7 +2063,8 @@ export async function runThroughBrain(
       && !finalOutput.provider?.incomplete && !finalOutput.provider?.truncated && !finalOutput.provider?.contentFiltered) {
       checkWatchdog();
       gamingAuxiliaryAuditBudget.increment();
-      gamingAuditResult = await gamingAnswerAudit(finalText, runtimeBudget);
+      gamingAuditResult = await gamingAnswerAudit(finalText, runtimeBudget,
+        Math.max(0, effectiveLimit - watchdog.elapsed()));
       if (gamingAuditResult.assessment.assessmentStatus !== 'completed'
         || gamingAuditResult.assessment.decision !== 'accept') {
         auditFlags.push('GAMING_FINAL_ANSWER_NOT_ACCEPTED');

@@ -1324,7 +1324,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
                   observeGamingPipelineStage(runtime, { ...event, stage: event.stage });
                 }
               } } : {}),
-              gamingClearAnswerAudit: async (answer, runtimeBudget) => {
+              gamingClearAnswerAudit: async (answer, runtimeBudget, remainingWatchdogMs) => {
                 const auditStartedAt = Date.now();
                 observeGamingPipelineStage(runtime, {
                   stage: 'answer_audit', phase: 'started', elapsedMs: 0,
@@ -1335,7 +1335,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput, prepared?
                   const result = await runGamingClearAnswerAudit(client, {
                     ...resolvedParams, game: resolvedParams.game ?? '', answer: qualifyAdvisoryAnswer(answer), knowledge: clearKnowledge,
                     evidenceAssessment: assessGamingClearEvidence({ ...resolvedParams, game: resolvedParams.game ?? '' }, clearKnowledge, auditContext), requestId
-                  }, runtimeBudget);
+                  }, runtimeBudget, 'routine', remainingWatchdogMs);
                   observeGamingPipelineStage(runtime, {
                     stage: 'answer_audit', phase: result.assessment.assessmentStatus === 'completed' ? 'completed' : 'failed',
                     elapsedMs: Date.now() - auditStartedAt, remainingBudgetMs: getSafeRemainingMs(runtimeBudget),

@@ -561,7 +561,7 @@
       "post": {
         "operationId": "queryGamingHybridKnowledge",
         "summary": "Check Gaming knowledge",
-        "description": "Check stored gameplay evidence and freshness. Follow nextAction: verify_currentness is a required continuation even when freshness is unverified or stale. Submit official candidates in the same workflow before reporting a terminal verification result. Does not store sources.",
+        "description": "Check Gaming evidence. For v2 clarify, repeat the original query with resolved context, returned workflowId and expectedRevision, and a new operation key. Follow nextAction: verify_currentness requires official candidates in the same workflow before a terminal result. Does not store.",
         "x-openai-isConsequential": false,
         "security": [
           {
@@ -2768,6 +2768,32 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 64
+          },
+          "workflowId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "V2 clarification continuation only; reuse the returned owned workflow ID."
+          },
+          "expectedRevision": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000,
+            "description": "V2 clarification continuation only; pair with workflowId and the returned revision."
+          }
+        },
+        "dependencies": {
+          "workflowId": ["expectedRevision"],
+          "expectedRevision": ["workflowId"]
+        },
+        "if": {
+          "properties": {
+            "contractVersion": { "enum": ["gaming-hybrid-v1"] }
+          }
+        },
+        "then": {
+          "properties": {
+            "workflowId": false,
+            "expectedRevision": false
           }
         }
       },

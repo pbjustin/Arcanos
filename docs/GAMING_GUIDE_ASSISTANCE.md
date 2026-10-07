@@ -201,6 +201,16 @@ retain audit and terminal reserves without reserving an unused final stage.
 Insufficient usable budget stops model dispatch; it never disables a timeout or
 extends a parent deadline.
 
+The 3,000 ms answer-audit reservation is a minimum downstream allowance, not
+the audit's ceiling. Mandatory final-answer CLEAR now defaults/caps at 12,000 ms
+and honors a smaller positive `TRINITY_CLEAR_AUDIT_TIMEOUT_MS`. Its effective
+timeout is the floor of the minimum of configured timeout, 12,000 ms, safe
+remaining runtime/pipeline/watchdog time minus 1,000 ms terminal headroom, and remaining
+request time. Exhausted budget, timeout and rejection remain fail closed. One
+audit call, zero retries and zero repairs remain enforced. Sanitized dispatch and
+completion telemetry records configured/effective/hard timeouts, pipeline,
+watchdog and request budgets, terminal reserve, elapsed time, result and reason codes.
+
 `resolveGamingExecutionBudget` owns the enclosing MCP/module/pipeline relationship;
 `resolveGamingGenerationBudget` owns the dynamic stage allocation. The invariants
 are operation timeout >= pipeline timeout + outer headroom, and stage timeout
@@ -461,6 +471,25 @@ binding, selected evidence and coverage contracts, exact accounting, frontend
 instructions and separately authorized rollout. V2 does not change currentness
 qualifications or generation deadlines described here.
 
+V2 clarification keeps the workflow open and retains accepted artifacts, selected
+evidence, admitted URLs, coverage and remaining discovery/acquisition allowances.
+Repeat the original query with the returned `workflowId`, `expectedRevision`, a
+new `idempotencyKey`, and the requested context or affirmative preference in
+`role`/`constraints`. The same actor and revision are required; game, question,
+version, storage policy and unrelated context cannot change. Continuation selects
+from retained artifacts and rechecks applicability and evidence binding without
+fetching again or renewing budgets. Unresolved choices ask one targeted question;
+missing factual support still requires new evidence, and genuine conflicts stay
+blocked. Generic Samurai advice needs no preference question, and unknown patch
+compatibility retains its explicit qualification.
+
+V2 allows at most eight clarification operations separately from the existing six
+acquisition/storage operations per workflow. This bounded clarification allowance
+keeps missing-context and preference answers from consuming an authorized source
+recovery or storage operation. Gameplay/currentness round limits, admitted URLs,
+acquisition time, actor rate limits and workflow expiry remain unchanged. V1 keeps
+its existing six-operation limit.
+
 The additive authenticated Gaming hybrid Actions reuse stored lexical retrieval,
 the shared document resolver, existing ingestion jobs, source revisions and chunks,
 and the normal Gaming Trinity pipeline. Older gameplay and source Actions retain
@@ -470,7 +499,7 @@ backend invoke ChatGPT's web-search tool.
 1. `queryGamingHybridKnowledge` receives the question, precise game/edition,
    available player context and storage policy. It checks active stored records.
 2. `answer_ready` carries a grounded Trinity answer, citations and request ID;
-   `clarification_required` carries one progress question. Neither requires search.
+   `clarification_required` carries one targeted context or preference question. Neither requires search.
 3. `discovery_required` carries bounded queries and limits. The GPT searches and
    calls `submitGamingHybridCandidates` with actual URLs and its workflow ID.
 4. ARCANOS independently fetches, validates, extracts, checks applicability and
@@ -971,15 +1000,17 @@ model calls or resetting the discovery round.
 
 The one audit call has **1,024 maximum output tokens**, **32,000 maximum data
 characters**, **38,000 maximum total prompt characters** including trusted rubric,
-**12,000 maximum answer characters**, and a **3,000 ms ceiling** clamped to existing
-configuration and remaining runtime/request time. Over-budget input is unavailable
-rather than silently truncated or approved. The historical main Trinity invocation
-budget counts intake/reasoning, not all auxiliary calls; Gaming uses a separate
+**12,000 maximum answer characters**, and a **12,000 ms ceiling** clamped to existing
+configuration and remaining runtime/watchdog/request time while retaining terminal
+headroom. Over-budget input is unavailable rather than silently truncated or
+approved. The historical main Trinity invocation budget counts intake/reasoning,
+not all auxiliary calls; Gaming uses a separate
 explicit single-call audit slot and records its tokens in aggregate totals.
 Full Gaming guide generation replaces its old ledger audit with this call.
 Paths that previously omitted an audit, including direct/hybrid paths, add at most
-one call. There is no additional concurrency fan-out, retrieval round, repair,
-provider fallback expansion or timeout increase.
+one call. There is no additional concurrency fan-out, retrieval round, repair
+or provider fallback expansion. The bounded answer-audit timeout allocation is
+described above; pipeline and request deadlines remain unchanged.
 
 `GAMING_ANSWER_AUDIT_UNAVAILABLE` and `GAMING_ANSWER_REJECTED` are additive bounded
 fallback reason values; genuine provider failures retain their existing reasons.

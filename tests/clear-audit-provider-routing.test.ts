@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { runClearAudit } from '../src/core/audit/runClearAudit.js';
-import { runGamingClearAnswerAudit, type GamingClearAnswerInput } from '../src/services/gamingClearAnswerAudit.js';
+import { GAMING_CLEAR_ANSWER_BUDGET, runGamingClearAnswerAudit, type GamingClearAnswerInput } from '../src/services/gamingClearAnswerAudit.js';
 import { createGamingClearAssessment, gamingClearContextFingerprint, gamingClearHash } from '../src/shared/gaming/gamingClearPolicy.js';
 import { createRuntimeBudgetWithLimit } from '../src/platform/resilience/runtimeBudget.js';
 import type { ReasoningLedger } from '../src/core/logic/trinityTypes.js';
@@ -53,7 +53,8 @@ function expectSingleBoundedRequest(model: string, gaming = false): void {
   expect(options.signal).toBeInstanceOf(AbortSignal);
   if (gaming) {
     expect(options.timeout).toBeGreaterThan(0);
-    expect(options.timeout).toBeLessThanOrEqual(3_000);
+    expect(options.timeout).toBeLessThanOrEqual(GAMING_CLEAR_ANSWER_BUDGET.maxTimeoutMs);
+    expect(options.timeout).toBeLessThanOrEqual(9_000);
     expect(options.maxRetries).toBe(0);
     expect(payload.store).toBe(false);
     expect(payload.text).toMatchObject({ format: { type: 'json_object' } });

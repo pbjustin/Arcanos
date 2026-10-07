@@ -23,6 +23,18 @@ export interface LiveValidationAudit {
   decision: GamingClearAssessment['decision'];
   boundToFinalAnswer: boolean;
 }
+/** Counts and invariants only; workflow IDs, context replies and evidence text stay private. */
+export interface LiveValidationClarification {
+  version: 1;
+  submittedCount: number;
+  completedCount: number;
+  postAcquisitionCount: number;
+  sameWorkflow: boolean;
+  revisionsAdvanced: boolean;
+  retainedEvidence: boolean;
+  budgetsPreserved: boolean;
+  acquisitionCount: number;
+}
 export interface LiveValidationObservation {
   schemaVersion: 1;
   contractVersion: 'gaming-hybrid-v2';
@@ -36,6 +48,7 @@ export interface LiveValidationObservation {
   qualification: { patchCompatibility: 'unverified' | 'stale' | 'not_required' | 'verified' | 'unobserved';
     visible: boolean; claimsVerifiedCurrentness: boolean };
   audit: LiveValidationAudit | null;
+  clarification?: LiveValidationClarification;
   stages: Record<LiveValidationStage, LiveValidationStageTiming>;
   auditStartBudget: { runtimeRemainingMs: number | null; requestRemainingMs: number | null };
 }
@@ -46,11 +59,24 @@ export function emptyLiveValidationStages(): LiveValidationObservation['stages']
   return Object.fromEntries(LIVE_VALIDATION_STAGES.map(stage => [stage, { status: 'not_run', elapsedMs: null }])) as LiveValidationObservation['stages'];
 }
 
+function clarificationProjection(value: LiveValidationClarification | undefined): LiveValidationClarification | undefined {
+  if (!value || value.version !== 1
+    || ![value.submittedCount, value.completedCount, value.postAcquisitionCount].every(count => Number.isSafeInteger(count) && count >= 0 && count <= 8)
+    || value.completedCount > value.submittedCount || value.postAcquisitionCount > value.completedCount
+    || !Number.isSafeInteger(value.acquisitionCount) || value.acquisitionCount < 0 || value.acquisitionCount > 1
+    || ![value.sameWorkflow, value.revisionsAdvanced, value.retainedEvidence, value.budgetsPreserved].every(flag => typeof flag === 'boolean')) return undefined;
+  return { version: 1, submittedCount: value.submittedCount, completedCount: value.completedCount,
+    postAcquisitionCount: value.postAcquisitionCount, sameWorkflow: value.sameWorkflow,
+    revisionsAdvanced: value.revisionsAdvanced, retainedEvidence: value.retainedEvidence,
+    budgetsPreserved: value.budgetsPreserved, acquisitionCount: value.acquisitionCount };
+}
+
 /** Diagnostic projection of existing policy outcomes; it never grants acceptance or changes CLEAR. */
 export function createLiveValidationObservation(input: {
   body?: GamingHybridResponse;
   accepted: boolean;
   audit?: LiveValidationAudit;
+  clarification?: LiveValidationClarification;
   stages: LiveValidationObservation['stages'];
   auditStartBudget: LiveValidationObservation['auditStartBudget'];
 }): LiveValidationObservation {
@@ -75,10 +101,12 @@ export function createLiveValidationObservation(input: {
   const semanticGap = conflict ? 'CONFLICT' : outcome === 'clarification_required' ? 'USER_DECISION_GAP'
     : accepted && qualification.visible && ['unverified', 'stale'].includes(qualification.patchCompatibility) ? 'NONCRITICAL_GAP'
       : accepted ? 'NONE' : outcome === 'need_new_source' ? 'EVIDENCE_GAP' : 'UNOBSERVED';
+  const clarification = clarificationProjection(input.clarification);
   return { schemaVersion: 1, contractVersion: 'gaming-hybrid-v2', outcome, reason, semanticGap,
     coverage: { satisfied: body?.coverageSatisfied === true,
       assessmentStatus: body?.gapAssessmentStatus ?? 'not_assessed', missingCount: Math.min(body?.missingCoverage?.length ?? 0, 64) },
     selectedCandidateCount: body?.selectedCandidateIds?.length ?? 0, selectedEvidenceCount: body?.selectedEvidenceIds?.length ?? 0,
     candidates, qualification, audit: input.audit ? { ...input.audit } : null,
+    ...(clarification ? { clarification } : {}),
     stages: structuredClone(input.stages), auditStartBudget: { ...input.auditStartBudget } };
 }

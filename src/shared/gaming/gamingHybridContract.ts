@@ -43,8 +43,15 @@ const gamingHybridQueryFields = {
 };
 export const gamingHybridQuerySchema = z.discriminatedUnion('contractVersion', [
   z.object({ contractVersion: z.literal(GAMING_HYBRID_CONTRACT_VERSION), ...gamingHybridQueryFields }).strict(),
-  z.object({ contractVersion: z.literal(GAMING_HYBRID_V2_CONTRACT_VERSION), ...gamingHybridQueryFields }).strict()
-]);
+  z.object({ contractVersion: z.literal(GAMING_HYBRID_V2_CONTRACT_VERSION), ...gamingHybridQueryFields,
+    workflowId: z.string().uuid().optional(), expectedRevision: z.number().int().min(0).max(1_000_000).optional() }).strict()
+]).superRefine((query, context) => {
+  if (query.contractVersion === GAMING_HYBRID_V2_CONTRACT_VERSION
+    && (query.workflowId === undefined) !== (query.expectedRevision === undefined)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: 'workflowId and expectedRevision are required together',
+      path: [query.workflowId === undefined ? 'workflowId' : 'expectedRevision'] });
+  }
+});
 export const gamingHybridCandidateSchema = z.object({
   url: z.string().min(1).max(2_048), title: z.string().max(240).optional(),
   discoveredAt: z.string().max(64).optional(), discoveryMethod: z.string().max(64).optional(),

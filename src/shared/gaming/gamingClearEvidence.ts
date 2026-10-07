@@ -5,7 +5,7 @@ import { createGamingClearAssessment, classifyGamingClearQuestion, gamingClearCo
   type GamingClearAssessment } from './gamingClearPolicy.js';
 import { gamingEditionIdentitiesMatch, normalizeGamingEvidenceGameIdentity, resolveGamingGuideIdentity } from './gamingGameIdentity.js';
 import { assessGamingProgressionRequest } from './gamingProgressionPolicy.js';
-import { buildGamingRetrievalTerms, buildGamingRequestRequirements, gamingRequestRequirementLimitExceeded, gamingTermCoverage, type GamingRetrievalPolicyInput } from './gamingRetrievalPolicy.js';
+import { buildGamingRetrievalTerms, buildGamingRequestRequirements, gamingRequestRequirementLimitExceeded, gamingTermCoverage, resolveGamingUserDecisionGap, type GamingRetrievalPolicyInput } from './gamingRetrievalPolicy.js';
 import { classifyGamingQuestionFreshness, evaluateGamingFreshness, type GamingFreshnessEvaluation, type GamingFreshnessEvidence } from './gamingFreshnessCore.js';
 import type { GamingStoredKnowledgeContext, GamingStoredKnowledgeSource } from './gamingStoredEvidenceCore.js';
 import { assessGamingStructuralUsability, gamingCrossSourceStructuralConflict } from './gamingStructuralEvidence.js';
@@ -270,6 +270,8 @@ export function assessGamingRequestCoverage(input: GamingRetrievalPolicyInput,
   // With no explicit independently assessable request clauses, a lexical miss is
   // not proof of a particular missing mechanic. Keep the gap explicitly unknown.
   return { coverageSatisfied, missingCoverage, gapAssessmentStatus: coverageSatisfied || requirements.length ? 'assessed' : 'unknown',
+    ...(coverageSatisfied && resolveGamingUserDecisionGap(input).clarification
+      ? { clarification: resolveGamingUserDecisionGap(input).clarification } : {}),
     ...(requirementUnitSupport.length ? { requirementUnitSupport } : {}),
     requirementSupport: support.length ? support : coverageSatisfied ? [{ requirement: 'requested topic',
       candidateIds: [...new Set(chunks.filter(chunk => knowledge.sources.some(source => source.sourceId === chunk.sourceId && source.origin === 'live')).map(chunk => chunk.sourceId))],

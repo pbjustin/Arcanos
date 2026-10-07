@@ -93,6 +93,8 @@ function observation(positive) {
     candidates: positive ? [] : [{ decision: 'rejected', reasonCodes: ['GAME_MISMATCH'] }],
     qualification: { visible: positive, patchCompatibility: 'unverified', claimsVerifiedCurrentness: false },
     audit: positive ? { assessmentStatus: 'completed', decision: 'accept', boundToFinalAnswer: true } : null,
+    ...(positive ? { clarification: { version: 1, submittedCount: 4, completedCount: 4, postAcquisitionCount: 3,
+      sameWorkflow: true, revisionsAdvanced: true, retainedEvidence: true, budgetsPreserved: true, acquisitionCount: 1 } } : {}),
     auditStartBudget: { runtimeRemainingMs: 120000, requestRemainingMs: 120000 },
     stages: Object.fromEntries(['acquisition', 'selection', 'generation', 'intake', 'reasoning', 'final', 'answer_audit', 'response']
       .map(stage => [stage, { status: positive || ['acquisition', 'selection', 'response'].includes(stage) ? 'passed' : 'not_run', elapsedMs: positive ? 10 : null }])) };

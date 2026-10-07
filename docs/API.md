@@ -24,6 +24,17 @@ logical key and URLs, optionally naming `discoveryType: gameplay_evidence` or
 within that workflow. Ingestion selects `candidateIds`, the matching storage
 policy, logical key and `confirmStore` for conversational approval when required.
 
+V2 clarification continues through the same query endpoint with the returned
+`workflowId` and `expectedRevision` together, a new `idempotencyKey`, and the
+original question and context plus the requested missing field. For a pending
+playstyle choice, append an affirmative option to `constraints` (for example,
+`pure Dexterity`); existing constraints remain intact. The server permits only
+the requested context refinement, retains accepted documents, selected evidence,
+URLs and acquisition/recovery allowances, and increments the revision. It
+reassesses the retained artifacts before generation without repeating acquisition.
+Clarification leaves the workflow open; answer, stop, cancellation and expiry
+remain terminal. V1 rejects these continuation fields.
+
 Responses separate `sourceKnown`, `evidenceSelected` and `freshnessStatus` from
 the state: `answer_ready`, `clarification_required`, `discovery_required`,
 `temporarily_unavailable`, or `ingestion_pending`. `nextAction` directs the GPT;

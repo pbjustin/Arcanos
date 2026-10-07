@@ -1320,6 +1320,48 @@ describe('Gaming hybrid durable lifecycle', () => {
     expect(jobs.size).toBe(0);
   });
 
+  it.each(['timeout', 'rejection'] as const)('withholds v2 answer_ready after successful generation and mandatory answer-audit %s', async failure => {
+    mockTrinity.mockImplementation(async (providerRequest: any) => {
+      const result = `${PASSAGE} [Source 1]`;
+      const { assessment } = await providerRequest.context.runOptions.gamingClearAnswerAudit(result, providerRequest.context.runtimeBudget);
+      return { result, gamingClearAudit: assessment, fallbackFlag: false, dryRun: false,
+        meta: { provider: { finishReason: 'stop', responseStatus: 'completed' } } };
+    });
+    if (failure === 'timeout') mockAuditCompletion.mockRejectedValueOnce(Object.assign(new Error('synthetic mandatory audit timeout'), { name: 'AbortError' }));
+    else mockAuditCompletion.mockImplementationOnce(async (_client: unknown, params: any) => {
+      const data = JSON.parse(params.messages[1].content);
+      const evidenceRefs = [data.evidence[0].chunkId];
+      return { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify({
+        dimensions: Object.fromEntries(GAMING_CLEAR_DIMENSIONS.map(name => [name, { status: 'evaluated', score: 4,
+          reasonCodes: ['SUPPORTED_FIXTURE'], evidenceRefs, unresolvedFacts: [] }])),
+        findings: [{ code: 'UNSUPPORTED_MECHANIC', severity: 'blocking', evidenceRefs }]
+      }) } }] };
+    });
+    const workflow = createGamingHybridWorkflow();
+    const queried = await workflow.query({ contractVersion: 'gaming-hybrid-v2', idempotencyKey: 'v2-audit-failure-query',
+      game: input.game, mode: 'guide', question: input.prompt, currentArea: 'obsidian observatory',
+      spoilerTolerance: 'none', storagePolicy: 'transient_only' }, context);
+    const submission = { contractVersion: 'gaming-hybrid-v2', workflowId: queried.body.workflowId,
+      expectedRevision: queried.body.revision, idempotencyKey: 'v2-audit-failure-candidate', candidates: [{ url: URL }] };
+    const result = await workflow.candidates(submission, context);
+    expect(result).toMatchObject({ status: 503, body: { state: 'temporarily_unavailable',
+      frontendOutcome: 'temporarily_unavailable', nextAction: 'stop', sourceKnown: true, evidenceSelected: true } });
+    expect(result.body.answer).toBeUndefined();
+    expect(mockTrinity).toHaveBeenCalledTimes(1);
+    expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
+    expect(mockAuditCompletion.mock.calls[0][1]).toMatchObject({ maxRetries: 0 });
+    expect(jest.mocked(logger.info).mock.calls).toContainEqual([
+      failure === 'timeout' ? 'gaming.clear.answer.unavailable' : 'gaming.clear.answer.completed',
+      expect.objectContaining({ modelCallsUsed: 1, modelCallLimit: 1, repairAttempts: 0,
+        reasonCodes: [failure === 'timeout' ? 'AUDIT_TIMEOUT' : 'UNSUPPORTED_MECHANIC'] })
+    ]);
+    // Replaying the completed logical operation must not dispatch another generation or audit.
+    expect(await workflow.candidates(submission, context)).toEqual(result);
+    expect(mockTrinity).toHaveBeenCalledTimes(1);
+    expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
+    expect(jobs.size).toBe(0);
+  });
+
   it('preserves an independently grounded answer when enqueue fails and safely retries the same storage operation', async () => {
     const { workflow, found, missing, patchUrl } = await discoverCurrent('build');
     expect(found.body.state).toBe('answer_ready');
