@@ -54,6 +54,9 @@ jobs:
       - name: Tests
         run: npm test
 
+      - name: Offline live validation security contracts
+        run: npm run test:live-pr-preview:offline && npm run test:live-validation:offline
+
       - name: Native PR preview containment contract
         run: npm run test:native-pr-preview-e2e
 

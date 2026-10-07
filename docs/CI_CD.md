@@ -52,6 +52,12 @@ Environment separation guidance:
 - Keep production and development secrets separate in both Railway and GitHub.
 - Restrict deployment-triggering workflows to protected branches.
 
+PR secret scanning keeps the existing Gitleaks action and adds a blocking scan
+of the immutable event base-to-head commit range. The additional scan covers
+PRs longer than the action's first 30-commit API page, validates both commit
+identities, redacts output, and uses the same scanner configuration and ignores.
+Push and full-history scanning policy remains unchanged.
+
 Documentation automation boundaries:
 
 - The `docs:check` job in `.github/workflows/doc-audit.yml` is the stable

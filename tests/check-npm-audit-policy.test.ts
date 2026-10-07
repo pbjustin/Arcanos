@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 import { ipKeyGenerator } from 'express-rate-limit';
 import { Address4, Address6 } from 'ip-address';
+import express from 'express';
 import { Agent, fetch as undiciFetch } from 'undici';
 
 type Severity = 'info' | 'low' | 'moderate' | 'high' | 'critical';
@@ -347,6 +348,12 @@ describe('npm audit policy', () => {
       integrity:
         'sha512-fkOHat/7xtPQRrpGGvW5ua3EeevYbTiV3GSIhUdL5ocT+sNZu374dFCheYnSzk/EqpYN5SY9my8bSRBGoISxVA==',
     };
+    const proxyAddrArtifact = {
+      version: '2.0.8',
+      resolved: 'https://registry.npmjs.org/proxy-addr/-/proxy-addr-2.0.8.tgz',
+      integrity:
+        'sha512-5nnx0yGyVUcY6t9RnWcARWtwT9F1D8O9rt08htPvnd49W1IgZtmLkhu9WfMzQj1cFxjHIO6connUNVW5k7AVyQ==',
+    };
 
     expect(rootPackage.overrides).toMatchObject({
       'express-rate-limit': '8.3.0',
@@ -362,6 +369,12 @@ describe('npm audit policy', () => {
     expect(vendorPackage.dependencies['brace-expansion']).toBe('5.0.12');
 
     const expectedLockIdentities = {
+      'node_modules/@modelcontextprotocol/sdk': {
+        version: '1.31.0',
+        resolved: 'https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.31.0.tgz',
+        integrity:
+          'sha512-UvTMgnNlnIBO/22ob2RcVGDlcvOslQs8T59+FTGdA0L27a39fdGF/EDETNtDVK4DZGpwomlsYpRdA8UXcVL/pw==',
+      },
       'vendor/minimatch-9.0.7/node_modules/brace-expansion': {
         version: '5.0.12',
         resolved:
@@ -392,18 +405,19 @@ describe('npm audit policy', () => {
           'sha512-RYONW2MeafgYlkVOKYKkA/Ag7BmXqgIWCa8t1m0JcxrQg9pI9lEqRhAOruOBCbAohOa/gkCF+iPi9hrgvTzu6Q==',
       },
       'node_modules/qs': qsArtifact,
+      'node_modules/proxy-addr': proxyAddrArtifact,
     };
     for (const [node, identity] of Object.entries(expectedLockIdentities)) {
       expect(packageLock.packages[node]).toMatchObject(identity);
     }
 
-    expect(packageLock.packages['node_modules/@modelcontextprotocol/sdk'].version).toBe(
-      '1.30.0',
-    );
     expect(packageLock.packages['node_modules/ajv'].version).toBe('8.18.0');
     expect(packageLock.packages['node_modules/cheerio'].version).toBe('1.1.2');
     expect(runtimePackageLock.packages['node_modules/qs']).toMatchObject(
       qsArtifact,
+    );
+    expect(runtimePackageLock.packages['node_modules/proxy-addr']).toMatchObject(
+      proxyAddrArtifact,
     );
     expect(runtimePackageLock.packages['node_modules/express'].version).toBe(
       '4.22.2',
@@ -411,6 +425,24 @@ describe('npm audit policy', () => {
     expect(runtimePackageLock.packages['node_modules/body-parser'].version).toBe(
       '1.20.6',
     );
+  });
+
+  it('rejects spoofed forwarding trust from short IPv4-mapped IPv6 subnets', () => {
+    const app = express();
+    app.set('trust proxy', ['::ffff:10.0.0.0/8']);
+    const shortPrefixTrust = app.get('trust proxy fn') as (address: string) => boolean;
+
+    expect(shortPrefixTrust('203.0.113.9')).toBe(false);
+    expect(shortPrefixTrust('::ffff:203.0.113.9')).toBe(false);
+    expect(shortPrefixTrust('10.0.0.1')).toBe(false);
+
+    app.set('trust proxy', ['::ffff:10.0.0.0/104']);
+    const mappedTrust = app.get('trust proxy fn') as (address: string) => boolean;
+
+    expect(mappedTrust('10.0.0.1')).toBe(true);
+    expect(mappedTrust('::ffff:10.0.0.1')).toBe(true);
+    expect(mappedTrust('203.0.113.9')).toBe(false);
+    expect(mappedTrust('::ffff:203.0.113.9')).toBe(false);
   });
 
   it('preserves mapped IPv4 identities and IPv6 subnet grouping', () => {

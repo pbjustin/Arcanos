@@ -2079,3 +2079,18 @@ Rollback: set `CHATGPT_MCP_ENABLED=false` in the separately authorized target
 and restart/redeploy through its approved process. No database migration or
 legacy route removal is required. Existing Action routes and operator MCP keep
 their own configuration and credentials. This PR changes no deployed settings.
+
+## Isolated live validation service
+
+[Live PR validation](LIVE_VALIDATION.md) uses one dedicated **ARCANOS V2
+Validation** service in the existing project's `live-validation` environment.
+Its separate launcher requires the exact deployed source/build identity, validated
+target/model prices and validation-only test bearer before accepting bounded paid
+Gaming runs. Bind `ARCANOS_LIVE_PREVIEW_OPENAI_API_KEY` once through the Railway
+UI/CLI to this service; the binding persists for future deployments. The controller generates and binds `ARCANOS_LIVE_VALIDATION_TEST_TOKEN` outside
+Git for each exact deployment; no separate manual bearer binding is required.
+Never place secret values in Git, workflow inputs, evidence, logs or shared
+production variables. No production database, Redis, OAuth or player-persistence
+credential belongs in this service. The normal production launcher does not
+register these endpoints. See the runbook for the closed variable allowlist,
+one-run deployment boundary and exact-SHA proof.

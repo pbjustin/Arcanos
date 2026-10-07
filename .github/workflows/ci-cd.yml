@@ -140,6 +140,9 @@ jobs:
         if: matrix.test-type == 'unit'
         run: npm test
 
+      - name: Offline live validation security contracts
+        run: npm run test:live-pr-preview:offline && npm run test:live-validation:offline
+
       - name: 📊 Upload Node coverage to Codecov
         if: matrix.test-type == 'unit'
         uses: codecov/codecov-action@v5
@@ -279,6 +282,24 @@ jobs:
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # The action's PR API request reads only its first 30 commits. Its installed
+      # scanner also checks the complete immutable event range, with the same defaults.
+      - name: Scan complete exact PR commit range
+        if: github.event_name == 'pull_request'
+        shell: bash
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${PR_BASE_SHA}" =~ ^[0-9a-f]{40}$ || ! "${PR_HEAD_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo 'GITLEAKS_PR_RANGE_INVALID' >&2
+            exit 1
+          fi
+          git cat-file -e "${PR_BASE_SHA}^{commit}"
+          git cat-file -e "${PR_HEAD_SHA}^{commit}"
+          gitleaks git . --log-opts="${PR_BASE_SHA}..${PR_HEAD_SHA}" --redact --no-banner
 
       - name: 🔒 Run npm security audit
         shell: bash

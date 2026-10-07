@@ -82,6 +82,8 @@
     "test:preview-e2e": "node --test scripts/preview-e2e.test.mjs",
     "test:worker-diagnostics-preview": "node scripts/run-jest.mjs --runTestsByPath tests/worker-diagnostics-preview-fixture.test.js tests/worker-diagnostics-preview-e2e.test.js tests/worker-diagnostics-preview-cleanup-workflow.test.js --coverage=false",
     "test:native-pr-preview-e2e": "node --test scripts/native-pr-preview-e2e.test.mjs",
+    "test:live-pr-preview:offline": "node --test scripts/live-pr-preview-verifier.test.mjs",
+    "test:live-validation:offline": "node --test scripts/live-validation-*.test.mjs",
     "railway:alert:timeouts": "node scripts/check-railway-timeout-regressions.js",
     "railway:alert:budget-abort": "node scripts/check-railway-timeout-regressions.js --since 15m --lines 500 --fail-on-budget-abort",
     "audit": "node scripts/continuous-audit.js",
@@ -243,7 +245,7 @@
   "author": "Justin",
   "license": "MIT",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.30.0",
+    "@modelcontextprotocol/sdk": "1.31.0",
     "@prisma/client": "^5.22.0",
     "@types/pg": "^8.15.5",
     "ajv": "^8.18.0",

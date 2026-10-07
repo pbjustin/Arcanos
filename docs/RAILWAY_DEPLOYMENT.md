@@ -3,6 +3,16 @@
 ## Overview
 This runbook documents the repository-tracked Railway configuration and release safeguards for Arcanos. Tracked files do not prove the current live project linkage, environment state, or service topology.
 
+[Isolated live PR validation](LIVE_VALIDATION.md) uses a dedicated **ARCANOS V2
+Validation** service in `live-validation`, with Railway HTTPS, a validation-only
+provider key and test bearer, exact-SHA source/build/readiness proof, transient
+Gaming and bounded paid calls. It requires an empty isolated environment with no
+production Postgres, Redis, shared credentials or traffic. Railway environment
+isolation and existing application acquisition guards supply the boundary;
+custom mTLS and a supervisor are unnecessary for this one-service path. No
+Railway-native domain egress filtering is claimed. The service is separate from
+the sealed preview's empty-variable/import contract and production launchers.
+
 ## Prerequisites
 - Approved Railway account and project access.
 - A confirmed project, environment, and service target.

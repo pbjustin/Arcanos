@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-05T02:50:44.283Z",
+  "generatedAt": "2026-10-06T04:44:45.292Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -762,6 +762,9 @@
         },
         {
           "relativePath": "src/lib/tokenStore.ts"
+        },
+        {
+          "relativePath": "src/liveValidationGamingAdapter.ts"
         },
         {
           "relativePath": "src/mcp/arcanos-core-advisory-stdio.ts"
@@ -2855,6 +2858,9 @@
           "relativePath": "src/shared/gaming/gamingStructuredEvidencePreviewFixture.ts"
         },
         {
+          "relativePath": "src/shared/gaming/liveValidationObservation.ts"
+        },
+        {
           "relativePath": "src/shared/gpt/asyncGptJob.ts"
         },
         {
@@ -4435,6 +4441,9 @@
           "relativePath": "tests/gaming-large-guide-rag.integration.test.ts"
         },
         {
+          "relativePath": "tests/gaming-live-runtime.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-location-scope.test.ts"
         },
         {
@@ -4991,6 +5000,18 @@
         },
         {
           "relativePath": "tests/legacy-root-route-compat.test.ts"
+        },
+        {
+          "relativePath": "tests/live-validation-gaming-adapter.test.ts"
+        },
+        {
+          "relativePath": "tests/live-validation-isolation.test.ts"
+        },
+        {
+          "relativePath": "tests/live-validation-provider-reasoning.test.ts"
+        },
+        {
+          "relativePath": "tests/live-validation-source-guard.test.ts"
         },
         {
           "relativePath": "tests/local-agent-device-policy.test.ts"

@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "fixtureOrigin": "https://live-validation.example.org",
+  "profiles": [
+    {
+      "id": "gaming-guide-positive",
+      "scenarioId": "elden-ring-early-samurai",
+      "caseId": "useful_grounded_guide",
+      "moduleId": "gaming",
+      "input": {
+        "query": {
+          "contractVersion": "gaming-hybrid-v2",
+          "game": "Elden Ring",
+          "mode": "build",
+          "class": "Samurai",
+          "progressPoint": "just left the tutorial",
+          "question": "I'm at the beginning of Elden Ring. I'm a Samurai. I just got out of the tutorial area. I want a Samurai blade build. Guide: https://live-validation.example.org/fixtures/elden-ring-early-samurai.html",
+          "idempotencyKey": "live-validation-samurai-positive",
+          "storagePolicy": "transient_only"
+        },
+        "candidateUrls": ["https://live-validation.example.org/fixtures/elden-ring-early-samurai.html"]
+      },
+      "expected": { "outcome": "accepted", "semanticGap": "NONCRITICAL_GAP", "qualifiedUnknownPatch": true }
+    },
+    {
+      "id": "gaming-guide-negative",
+      "scenarioId": "elden-ring-wrong-game-source",
+      "caseId": "incompatible_source",
+      "moduleId": "gaming",
+      "input": {
+        "query": {
+          "contractVersion": "gaming-hybrid-v2",
+          "game": "Elden Ring",
+          "mode": "build",
+          "class": "Samurai",
+          "progressPoint": "just left the tutorial",
+          "question": "I'm at the beginning of Elden Ring. I'm a Samurai. I just got out of the tutorial area. I want a Samurai blade build. Guide: https://live-validation.example.org/fixtures/sekiro-samurai.html",
+          "idempotencyKey": "live-validation-samurai-wrong-game",
+          "storagePolicy": "transient_only"
+        },
+        "candidateUrls": ["https://live-validation.example.org/fixtures/sekiro-samurai.html"]
+      },
+      "expected": { "outcome": "need_new_source", "semanticGap": "CONFLICT", "providerCalls": 0 }
+    }
+  ]
+}

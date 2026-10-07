@@ -1,0 +1,33 @@
+{
+  "version": "arcanos-live-validation-target/v2",
+  "repository": "pbjustin/Arcanos",
+  "projectId": "7faf44e5-519c-4e73-8d7a-da9f389e6187",
+  "environmentId": null,
+  "environmentName": "live-validation",
+  "runtimeServiceId": null,
+  "limits": {
+    "maxSpendMicroUsd": 2000000,
+    "maxRequests": 32,
+    "maxWorkflows": 2,
+    "durationMs": 600000
+  },
+  "models": [
+    {
+      "id": null,
+      "inputMicroUsdPerToken": null,
+      "outputMicroUsdPerToken": null
+    },
+    {
+      "id": "gpt-6-luna",
+      "inputMicroUsdPerToken": null,
+      "outputMicroUsdPerToken": null
+    },
+    {
+      "id": "gpt-6.1-sol",
+      "inputMicroUsdPerToken": null,
+      "outputMicroUsdPerToken": null
+    }
+  ],
+  "writes": false,
+  "publicOrigin": "https://arcanos-v2-validation.up.railway.app"
+}
