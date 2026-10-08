@@ -1,5 +1,40 @@
 import type { FetchAndCleanOptions } from "@shared/webFetcher.js";
 
+/** Preserve the existing tag-budget scan, advancing past each complete span without backtracking. */
+export function countGamingHtmlElements(body: string, maxElements: number): number {
+  const starts = /<[A-Za-z]/g;
+  let count = 0;
+  for (let match = starts.exec(body); match; match = starts.exec(body)) {
+    const end = body.indexOf('>', starts.lastIndex);
+    if (end < 0) break;
+    if (++count > maxElements) return maxElements + 1;
+    starts.lastIndex = end + 1;
+  }
+  return count;
+}
+
+/** Preserve each old <...> replacement, including malformed spans and unclosed trailing text. */
+export function stripGamingHtmlTags(body: string): string {
+  const batches: string[] = [];
+  let parts: string[] = [];
+  let cursor = 0;
+  for (;;) {
+    const start = body.indexOf('<', cursor);
+    if (start < 0) break;
+    const end = body.indexOf('>', start + 1);
+    if (end < 0) break;
+    parts.push(body.slice(cursor, start), ' ');
+    if (parts.length >= 4_096) {
+      batches.push(parts.join(''));
+      parts = [];
+    }
+    cursor = end + 1;
+  }
+  parts.push(body.slice(cursor));
+  batches.push(parts.join(''));
+  return batches.join('');
+}
+
 const GENERIC_CONTENT_SELECTORS = [
   "main",
   "article",

@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { load } from 'cheerio';
 import { assessGamingSourcePolicy, REVIEWED_GAMING_SOURCE_RULES, type GamingReviewedSourceRule } from '@shared/gaming/gamingFreshnessCore.js';
 import { parseGamingCurrentnessDate, type GamingCurrentnessDocumentIndex, type GamingCurrentnessDocumentMetadata } from '@shared/gaming/gamingCurrentnessAdapters.js';
-import { filterGamingDocumentInstructions } from './gamingDocumentExtraction.js';
+import { countGamingHtmlElements, filterGamingDocumentInstructions } from './gamingDocumentExtraction.js';
 
 const escape = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
 /** Parse only safely acquired raw HTML with a reviewed extraction contract. Links are candidates; there is no follow-on fetch. */
@@ -18,7 +18,7 @@ export function extractGamingCurrentnessDocument(sourceUrl: string, raw: { body:
     ? { ruleId: rule.id, adapterId: 'patch-article-v1', platformText: '', rawContentHash, status: 'incomplete' }
     : { ruleId: rule.id, adapterId: 'article-index-v1', categoryCount: 0, cards: [], rawContentHash, status: 'incomplete' };
   // These fixed parser bounds cannot be changed by registry data.
-  if (raw.truncated || raw.body.length > 1_500_000 || (raw.body.match(/<[a-zA-Z][^>]*>/gu)?.length ?? 0) > 30_000) return incomplete;
+  if (raw.truncated || raw.body.length > 1_500_000 || countGamingHtmlElements(raw.body, 30_000) > 30_000) return incomplete;
   const $ = load(raw.body);
   $('script,style,noscript,template,nav,footer,aside,form,[hidden],[aria-hidden="true"]').remove();
   if (config.kind === 'patch-article') {

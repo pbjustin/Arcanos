@@ -154,6 +154,13 @@ and character budgets. Exceeding transferred or decoded bytes rejects the whole
 response; an arbitrary downloaded prefix never becomes a complete document.
 Text, structure, or chunk truncation retains explicit partial-coverage semantics.
 
+HTML element-budget and source-use scans advance through complete spans without
+backtracking. Unterminated markup cannot make these scans grow quadratically.
+Deadline checks also cover documents with no supported records; exhaustion stays
+explicit, and source-use restrictions are still checked across the entire bounded
+body. A synthetic malformed-body regression runs in a disposable Node child with
+an independent process deadline.
+
 Resolver revision `gaming-document-v3` identifies this acquisition/extraction
 policy for both live evaluation and durable source revisions. Numeric diagnostics
 distinguish declared length rejection, measured transferred overflow, and decoded

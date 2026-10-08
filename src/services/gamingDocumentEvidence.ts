@@ -1,6 +1,6 @@
 import { GAMING_EVIDENCE_UNIT_POLICY_VERSION, type GamingEvidenceExtractionInput,
   type GamingEvidenceUnit, type GamingStructureDiagnostics } from '@shared/gaming/gamingEvidenceUnits.js';
-import { filterGamingDocumentInstructions } from './gamingDocumentExtraction.js';
+import { filterGamingDocumentInstructions, stripGamingHtmlTags } from './gamingDocumentExtraction.js';
 import { extractGamingHtmlEvidence } from './gamingHtmlEvidence.js';
 import { extractGamingJsonEvidence } from './gamingJsonEvidence.js';
 import { markGamingEvidenceUnitConflicts } from '@shared/gaming/gamingStructuralEvidence.js';
@@ -43,7 +43,7 @@ export function extractGamingDocumentEvidence(input: GamingEvidenceExtractionInp
   if (capped && !subreasons.includes('extraction_budget_exhausted')) subreasons.push('extraction_budget_exhausted');
   // Inert JSON-only content is never indexed by falling back to its entire state blob.
   const proseBody = input.contentType === 'application/json' ? '' : html.proseBody ?? input.body;
-  const sourceUseRestricted = SOURCE_USE_RESTRICTION.test(input.body.replace(/<[^>]*>/gu, ' '));
+  const sourceUseRestricted = SOURCE_USE_RESTRICTION.test(stripGamingHtmlTags(input.body));
   const truncated = html.truncated || json.truncated || capped;
   return { units, proseBody, instructionFiltered, sourceUseRestricted, diagnostics: {
     policyVersion: GAMING_EVIDENCE_UNIT_POLICY_VERSION,
