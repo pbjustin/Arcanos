@@ -9,7 +9,7 @@ import {
 } from '@shared/gaming/gamingEvidenceUnits.js';
 
 export const GAMING_JSON_EVIDENCE_LIMITS = Object.freeze({
-  inputChars: 5_000_000, htmlChars: 1_500_000, htmlElements: 30_000,
+  inputChars: 5_000_000, htmlChars: 5_000_000, htmlElements: 30_000,
   jsonBytes: 262_144, totalJsonBytes: 524_288, scripts: 16,
   depth: 12, objectKeys: 64, totalKeys: 4_096, arrayItems: 256, stringChars: 4_096,
   records: 256, fields: 32, fieldChars: 1_000, labelChars: 160, qualifiers: 16, qualifierChars: 400,

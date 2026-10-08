@@ -10,7 +10,7 @@ const normalize = (value: string) => value.normalize('NFKC').replace(/\s+/gu, ' 
 
 /** One accepted response; no network, query, model or publisher trust enters extraction. */
 export function extractGamingDocumentEvidence(input: GamingEvidenceExtractionInput & {
-  receivedBytes?: number; acceptedBytes?: number;
+  receivedBytes?: number; acceptedBytes?: number; declaredBytes?: number;
 }): { units: GamingEvidenceUnit[]; proseBody: string; instructionFiltered: boolean;
   sourceUseRestricted: boolean; diagnostics: GamingStructureDiagnostics } {
   const startedAt = Date.now();
@@ -50,6 +50,7 @@ export function extractGamingDocumentEvidence(input: GamingEvidenceExtractionInp
     strategies: [...new Set(['prose', ...html.attempts, ...json.attempts])].slice(0, 8),
     contentType: input.contentType || 'unknown',
     ...(input.receivedBytes === undefined ? {} : { receivedBytes: input.receivedBytes }),
+    ...(input.declaredBytes === undefined ? {} : { declaredBytes: input.declaredBytes }),
     acceptedBytes: input.acceptedBytes ?? Buffer.byteLength(input.body, 'utf8'),
     rawChars: input.body.length, extractedChars: outputChars,
     unitKinds: [...new Set(units.map(unit => unit.kind))], selectedUnits: units.length,

@@ -116,13 +116,28 @@ export interface FetchAndCleanRawDocument {
 }
 
 export type ProtectedDocumentFetchFailureCode =
-  | 'INVALID_TARGET' | 'NETWORK_DESTINATION_BLOCKED' | 'DNS_FAILED' | 'FETCH_FAILED'
+  | 'INVALID_TARGET' | 'NETWORK_DESTINATION_BLOCKED' | 'DNS_FAILED' | 'FETCH_FAILED' | 'CONNECTION_FAILED' | 'TLS_FAILED'
   | 'REDIRECT_LOCATION_INVALID' | 'TRANSFER_LIMIT' | 'DECODED_LIMIT'
-  | 'UNSUPPORTED_ENCODING' | 'DEADLINE_EXCEEDED' | 'CANCELLED';
+  | 'UNSUPPORTED_ENCODING' | 'INVALID_CONTENT_LENGTH' | 'DEADLINE_EXCEEDED' | 'CANCELLED';
+
+/** Internal policy only: callers cannot grant a larger allowance than the shared hard ceiling. */
+export interface ProtectedDocumentFetchByteLimits {
+  maxTransferredBytes: number;
+  maxDecodedBytes: number;
+}
+
+/** Numeric acquisition facts only; no transport identity, headers or source content. */
+export interface ProtectedDocumentFetchByteDiagnostics extends ProtectedDocumentFetchByteLimits {
+  limitStage: 'declared_length' | 'transferred_bytes' | 'decoded_bytes';
+  declaredBytes?: number;
+  transferredBytes: number;
+  decodedBytes: number;
+}
 
 /** Only bounded codes/status leave the protected transport; native errors can contain target data. */
 export class ProtectedDocumentFetchError extends Error {
-  constructor(readonly code: ProtectedDocumentFetchFailureCode, readonly status?: number) {
+  constructor(readonly code: ProtectedDocumentFetchFailureCode, readonly status?: number,
+    readonly byteDiagnostics?: ProtectedDocumentFetchByteDiagnostics) {
     super(`Public document acquisition failed: ${code}`);
     this.name = 'ProtectedDocumentFetchError';
   }
@@ -137,6 +152,7 @@ export interface ProtectedDocumentFetchResponse {
   /** Per-response bytes measured by the protected wire/decode meters. */
   receivedBytes?: number;
   acceptedBytes?: number;
+  declaredBytes?: number;
 }
 
 export interface ProtectedDocumentFetchSession {
@@ -152,7 +168,8 @@ export interface ProtectedDocumentFetchSession {
  * Both the session and legacy Axios fetch disable automatic redirects and environment proxies.
  */
 export function createProtectedDocumentFetchSession(
-  options: Pick<FetchAndCleanOptions, 'signal' | 'deadlineAt' | 'timeoutMs' | 'onRequestUrl'> = {}
+  options: Pick<FetchAndCleanOptions, 'signal' | 'deadlineAt' | 'timeoutMs' | 'onRequestUrl'> = {},
+  byteLimits?: Readonly<ProtectedDocumentFetchByteLimits>
 ): ProtectedDocumentFetchSession {
   const timeoutMs = Math.min(
     HARD_MAX_FETCH_TIMEOUT_MS,
@@ -165,7 +182,13 @@ export function createProtectedDocumentFetchSession(
   const controller = new AbortController();
   // A fresh core client inherits neither global defaults nor interceptors/auth/transforms.
   const client = new axios.Axios({ adapter: axios.getAdapter('http') });
-  const maxBytes = getConfiguredMaxFetchBytes();
+  // The ordinary shared default stays unchanged. An explicit operator setting remains
+  // a cap even when a reviewed consumer supplies its own server-owned policy.
+  const operatorCap = getEnv('WEB_FETCH_MAX_BYTES') === undefined ? HARD_MAX_FETCH_BYTES : getConfiguredMaxFetchBytes();
+  const boundedBytes = (value: number | undefined): number => Number.isFinite(value)
+    ? Math.min(operatorCap, Math.max(1, Math.trunc(value!))) : getConfiguredMaxFetchBytes();
+  const maxTransferredBytes = boundedBytes(byteLimits?.maxTransferredBytes);
+  const maxDecodedBytes = boundedBytes(byteLimits?.maxDecodedBytes);
   let wireBytes = 0;
   let decodedBytes = 0;
   let disposed = false;
@@ -193,6 +216,10 @@ export function createProtectedDocumentFetchSession(
       inFlight = true;
       const responseWireStart = wireBytes;
       const responseDecodedStart = decodedBytes;
+      let declaredBytes: number | undefined;
+      const limitError = (code: 'TRANSFER_LIMIT' | 'DECODED_LIMIT', limitStage: ProtectedDocumentFetchByteDiagnostics['limitStage'], status: number) =>
+        new ProtectedDocumentFetchError(code, status, { limitStage, ...(declaredBytes === undefined ? {} : { declaredBytes }),
+          transferredBytes: wireBytes, decodedBytes, maxTransferredBytes, maxDecodedBytes });
       let agent: HttpsAgent | undefined;
       let response: IncomingMessage | undefined;
       let responseStatus: number | undefined;
@@ -234,7 +261,7 @@ export function createProtectedDocumentFetchSession(
           signal: controller.signal,
           // The two streaming meters below own this aggregate bound, including decompression.
           maxContentLength: -1,
-          maxBodyLength: maxBytes - wireBytes,
+          maxBodyLength: maxTransferredBytes - wireBytes,
           maxRedirects: 0,
           proxy: false,
           responseType: 'stream',
@@ -274,13 +301,17 @@ export function createProtectedDocumentFetchSession(
           throw new ProtectedDocumentFetchError('UNSUPPORTED_ENCODING', status);
         }
         const contentLength = result.headers['content-length'];
-        if (contentLength !== undefined && (!/^\d+$/u.test(String(contentLength)) || Number(contentLength) > maxBytes - wireBytes)) {
-          throw new ProtectedDocumentFetchError('TRANSFER_LIMIT', status);
+        if (contentLength !== undefined) {
+          if (!/^\d+$/u.test(String(contentLength)) || !Number.isSafeInteger(Number(contentLength))) {
+            throw new ProtectedDocumentFetchError('INVALID_CONTENT_LENGTH', status);
+          }
+          declaredBytes = Number(contentLength);
+          if (declaredBytes > maxTransferredBytes - wireBytes) throw limitError('TRANSFER_LIMIT', 'declared_length', status);
         }
         const wireMeter = new Transform({
           transform(chunk: Buffer, _encoding, callback) {
             wireBytes += chunk.length;
-            callback(wireBytes > maxBytes ? new ProtectedDocumentFetchError('TRANSFER_LIMIT', status) : null, chunk);
+            callback(wireBytes > maxTransferredBytes ? limitError('TRANSFER_LIMIT', 'transferred_bytes', status) : null, chunk);
           }
         });
         const decoder = encoding === 'gzip' ? createGunzip()
@@ -289,7 +320,7 @@ export function createProtectedDocumentFetchSession(
         const decodedMeter = new Transform({
           transform(chunk: Buffer, _encoding, callback) {
             decodedBytes += chunk.length;
-            callback(decodedBytes > maxBytes ? new ProtectedDocumentFetchError('DECODED_LIMIT', status) : null, chunk);
+            callback(decodedBytes > maxDecodedBytes ? limitError('DECODED_LIMIT', 'decoded_bytes', status) : null, chunk);
           }
         });
         streams.push(wireMeter, decoder, decodedMeter);
@@ -311,11 +342,22 @@ export function createProtectedDocumentFetchSession(
           contentType: String(result.headers['content-type'] ?? '').split(';', 1)[0].trim().toLowerCase(),
           publicUrl: target.parsedUrl.href,
           receivedBytes: wireBytes - responseWireStart,
-          acceptedBytes: decodedBytes - responseDecodedStart
+          acceptedBytes: decodedBytes - responseDecodedStart,
+          ...(declaredBytes === undefined ? {} : { declaredBytes })
         };
       } catch (error) {
         assertActive();
         if (error instanceof ProtectedDocumentFetchError) throw error;
+        const transportCode = (error as { code?: unknown })?.code;
+        if (typeof transportCode === 'string') {
+          if (['ECONNREFUSED', 'ECONNRESET', 'EHOSTUNREACH', 'ENETUNREACH', 'EPIPE'].includes(transportCode)) {
+            throw new ProtectedDocumentFetchError('CONNECTION_FAILED', responseStatus);
+          }
+          if (['ERR_TLS_CERT_ALTNAME_INVALID', 'CERT_HAS_EXPIRED', 'DEPTH_ZERO_SELF_SIGNED_CERT',
+            'SELF_SIGNED_CERT_IN_CHAIN', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'UNABLE_TO_GET_ISSUER_CERT_LOCALLY'].includes(transportCode)) {
+            throw new ProtectedDocumentFetchError('TLS_FAILED', responseStatus);
+          }
+        }
         throw new ProtectedDocumentFetchError('FETCH_FAILED', responseStatus);
       } finally {
         controller.signal.removeEventListener('abort', stopTransfer);

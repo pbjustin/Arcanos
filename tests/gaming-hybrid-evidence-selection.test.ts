@@ -31,6 +31,14 @@ function knowledge(texts: string[], game = 'Lantern Voyage'): GamingStoredKnowle
     text, lexicalScore: 1, combinedScore: 1, provenance: { fetchedAt } })) };
 }
 
+function longGuideKnowledge(texts: string[]): GamingStoredKnowledgeContext {
+  const data = knowledge(texts);
+  const source = data.sources[0];
+  data.sources = [source];
+  for (const chunk of data.evidence!) Object.assign(chunk, { sourceId: source.sourceId, publicUrl: source.url, revisionId: 'long-guide-revision' });
+  return data;
+}
+
 const input = { game: 'Lantern Voyage', mode: 'guide' as const,
   prompt: 'How do I activate amber gate and cross crystal bridge?' };
 
@@ -51,6 +59,55 @@ describe('v2 existing backend evidence selection and request coverage', () => {
     const limits = { chunkChars: 1600, maxChunks: 8, maxSources: 3, maxContextChars: 5000, structuredEvidenceChars: 8000 };
     expect(selectGamingCoverageEvidence(candidates, { ...input, requireRequestCoverage: true }, limits)).toEqual([]);
     expect(selectGamingCoverageEvidence(candidates, { ...input, requireRequestCoverage: true }, limits, assessGamingRequestCoverage)).toHaveLength(1);
+  });
+
+  it.each([false, true])('assesses late supporting evidence before reducing a long guide: complete=%s', complete => {
+    const passages = Array.from({ length: 24 }, (_unused, index) =>
+      `Activate amber gate using the copper switch beside lantern ${index}.`);
+    const late = complete ? 'Activate amber gate using the copper switch. Cross crystal bridge following the blue lanterns.'
+      : 'Cross crystal bridge following the blue lanterns past the entrance.';
+    const data = longGuideKnowledge([...passages, late]);
+    const selected = selectGamingHybridEvidence(input, data);
+    expect(selected).toMatchObject({ coverageSatisfied: true, missingCoverage: [] });
+    expect(selected.selectedEvidenceIds).toContain('record-24');
+    expect(selected.selectedEvidenceIds).toHaveLength(complete ? 1 : 2);
+    expect(selected.knowledge.context.length).toBeLessThanOrEqual(12_000);
+    expect(selected.knowledge.sources).toHaveLength(1);
+    expect(selected.knowledge.evidence!.every(chunk => chunk.revisionId === 'long-guide-revision')).toBe(true);
+    expect(selectGamingHybridEvidence(input, longGuideKnowledge(passages))).toMatchObject({ coverageSatisfied: false,
+      missingCoverage: ['requested topic 2'] });
+  });
+
+  it('inspects the final record of the bounded accepted pool and rejects an oversized pool', () => {
+    const data = longGuideKnowledge(Array.from({ length: 4500 }, (_unused, index) => index === 4499
+      ? 'Activate amber gate using the copper switch. Cross crystal bridge following the blue lanterns.'
+      : 'Activate amber gate using the copper switch beside the lantern.'));
+    const candidates = data.evidence!.map(evidence => ({ evidence, source: data.sources[0] }));
+    const assess = jest.fn(assessGamingRequestCoverage);
+    const limits = { chunkChars: 1600, maxChunks: 8, maxSources: 3, maxContextChars: 5000, structuredEvidenceChars: 8000 };
+    const selected = selectGamingCoverageEvidence(candidates, { ...input, requireRequestCoverage: true }, limits, assess);
+    expect(selected.map(candidate => candidate.evidence.recordId)).toEqual(['record-4499']);
+    expect(assess.mock.calls.length).toBeLessThan(4600);
+    expect(selectGamingCoverageEvidence([...candidates, candidates[0]], { ...input, requireRequestCoverage: true }, limits, assess)).toEqual([]);
+    const controller = new AbortController(); controller.abort(new Error('cancel complete-pool inspection'));
+    expect(() => selectGamingCoverageEvidence(candidates, { ...input, signal: controller.signal }, limits, assess)).toThrow('cancel complete-pool inspection');
+  });
+
+  it.each([true, false])('preserves cheaper late complementary evidence within context: explicit clauses=%s', explicit => {
+    const background = 'This section describes timing beside the quiet cabinet. '.repeat(13);
+    const gate = `${explicit ? 'Activate amber gate using the copper switch beside the lantern.'
+      : 'Copperstaff rests beside the quiet eastern lantern.'} ${background}`;
+    const bridge = explicit ? 'Cross crystal bridge following the blue lanterns past the entrance.'
+      : 'Zephyrglass rests beside the quiet eastern lantern.';
+    const data = longGuideKnowledge([...Array<string>(21).fill(gate), `${bridge} ${background}`, bridge]);
+    data.evidence![22].combinedScore = 0.1;
+    data.evidence![22].lexicalScore = 0.1;
+    const selected = selectGamingHybridEvidence({ ...input,
+      prompt: explicit ? input.prompt : 'Explain Copperstaff Zephyrglass Sunspire Moonvault', maxContextChars: 1500 }, data);
+    expect(selected).toMatchObject({ coverageSatisfied: true, missingCoverage: [] });
+    expect(selected.selectedEvidenceIds).toContain('record-22');
+    expect(selected.knowledge.evidence).toHaveLength(2);
+    expect(selected.knowledge.context.length).toBeLessThanOrEqual(1500);
   });
 
   it('prunes a twenty-passage prose pool that cannot cover a single requested topic', () => {
@@ -578,6 +635,26 @@ describe('v2 independently acquired bound artifacts and failure work accounting'
         This guide explains safe amber gate activation in Lantern Voyage and gives intact steps for using the switch.
         Further bridge mechanics are described in a separate guide.</article></body></html>` }));
   }
+  it('retains acquired complete evidence after twenty-four relevant but incomplete records', async () => {
+    mockHttp.mockImplementation(async () => ({ status: 200, headers: { 'content-type': 'text/html' },
+      data: `<html><title>Lantern Voyage guide</title><body><article><p>Lantern Voyage guide. Activate amber gate using the copper switch beside the lantern.
+        This guide explains safe amber gate activation and gives intact steps for using the switch before entering the gate.</p>
+        <table><tr><th>Mechanic</th><th>Scope</th><th>Description</th></tr>
+        ${Array.from({ length: 24 }, (_unused, index) => `<tr><td>Activate amber gate</td><td>base</td><td>Use the copper switch beside lantern ${index}.
+          This guide explains safe amber gate activation and gives intact steps before entering the gate.</td></tr>`).join('')}
+        <tr><td>Activate amber gate and cross crystal bridge</td><td>base</td><td>Use the copper switch to activate amber gate, then cross crystal bridge following the blue lanterns.
+          LATE_COMPLETE_SUPPORT preserves both required instructions.</td></tr></table></article></body></html>` }));
+    const evaluated = await evaluateGamingHybridCandidates({ ...input, protocolVersion: 'gaming-hybrid-v2', candidates: [{ url }] }, actor);
+    expect(evaluated.accepted).toHaveLength(1);
+    const records = evaluated.accepted[0].evidenceRecords!;
+    expect(records.findIndex(record => record.searchText.includes('LATE_COMPLETE_SUPPORT'))).toBeGreaterThan(20);
+    const retained = selectGamingHybridAcceptedEvidence(input, evaluated.accepted, actor);
+    expect(() => assertGamingHybridEvidenceMembership(retained, evaluated.accepted, actor)).not.toThrow();
+    const selected = selectGamingHybridEvidence(input, retained);
+    expect(selected).toMatchObject({ coverageSatisfied: true, missingCoverage: [], materialConflict: false });
+    expect(selected.knowledge.context).toContain('LATE_COMPLETE_SUPPORT');
+    expect(selected.knowledge.evidence).toHaveLength(1);
+  });
   it('retains a valid incomplete acquired document and enforces actor/workflow/content membership', async () => {
     readableDocument();
     const evaluated = await evaluateGamingHybridCandidates({ ...input, protocolVersion: 'gaming-hybrid-v2', candidates: [{ url }] }, actor);

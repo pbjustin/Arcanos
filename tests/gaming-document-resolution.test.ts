@@ -17,7 +17,8 @@ jest.unstable_mockModule('node:dns/promises', () => ({
     cancel() {}
   }
 }));
-const { describeGamingDocumentSource, resolveGamingDocument, isResolvedGamingDocumentIdentityVerified } = await import('../src/services/gamingDocumentResolution.js');
+const { describeGamingDocumentSource, resolveGamingDocument, isResolvedGamingDocumentIdentityVerified,
+  GAMING_DOCUMENT_ACQUISITION_LIMITS } = await import('../src/services/gamingDocumentResolution.js');
 const { sanitizeGamingDiscoveryCandidateUrl, sanitizeGamingStructuredDocumentUrl } = await import('../src/services/gamingSourceDiscovery.js');
 const { GAMING_BUILD_RESOURCE_HARD_LIMITS } = await import('../src/services/gamingBuildResources.js');
 
@@ -32,6 +33,7 @@ describe('shared Gaming document acquisition contract', () => {
     previousTimeout = process.env.WEB_FETCH_TIMEOUT_MS;
     previousByteLimit = process.env.WEB_FETCH_MAX_BYTES;
     delete process.env.WEB_FETCH_TIMEOUT_MS;
+    delete process.env.WEB_FETCH_MAX_BYTES;
     jest.resetAllMocks();
     mockResolve4.mockResolvedValue(['93.184.216.34']);
     mockResolve6.mockResolvedValue([]);
@@ -68,6 +70,83 @@ describe('shared Gaming document acquisition contract', () => {
       headers: { location: '/next', 'content-length': '129' } });
     await expect(resolveGamingDocument('https://example.org/oversized'))
       .rejects.toMatchObject({ code: 'SOURCE_TOO_LARGE', acquisition: { subreason: 'TRANSFER_LIMIT' } });
+    expect(mockAxiosGet).toHaveBeenCalledTimes(1);
+  });
+
+  it('distinguishes malformed declared length from an actual size limit', async () => {
+    mockAxiosGet.mockResolvedValue({ status: 200, data: 'Small synthetic document',
+      headers: { 'content-type': 'text/plain', 'content-length': 'not-a-length' } });
+    await expect(resolveGamingDocument('https://example.org/malformed'))
+      .rejects.toMatchObject({ code: 'SOURCE_FETCH_FAILED', acquisition: {
+        stage: 'transport', subreason: 'INVALID_CONTENT_LENGTH', httpStatus: 200
+      } });
+    expect(mockAxiosGet).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['ECONNREFUSED', 'CONNECTION_FAILED'], ['ECONNRESET', 'CONNECTION_FAILED'],
+    ['EHOSTUNREACH', 'CONNECTION_FAILED'], ['ENETUNREACH', 'CONNECTION_FAILED'], ['EPIPE', 'CONNECTION_FAILED'],
+    ['ERR_TLS_CERT_ALTNAME_INVALID', 'TLS_FAILED'], ['CERT_HAS_EXPIRED', 'TLS_FAILED'],
+    ['DEPTH_ZERO_SELF_SIGNED_CERT', 'TLS_FAILED'], ['UNKNOWN_NATIVE_ERROR', 'FETCH_FAILED']
+  ])('retains a bounded %s transport category without leaking the native error', async (nativeCode, subreason) => {
+    mockAxiosGet.mockRejectedValue(Object.assign(new Error('Native private response body and transport address'), {
+      code: nativeCode, config: { headers: { Cookie: 'synthetic-private-cookie' } }
+    }));
+    const error = await resolveGamingDocument('https://example.org/unavailable').catch(error => error);
+    expect(error).toMatchObject({ code: 'SOURCE_FETCH_FAILED', acquisition: { stage: 'transport', subreason } });
+    expect(error.acquisition.httpStatus).toBeUndefined();
+    expect(JSON.stringify(error)).not.toMatch(/Native private|transport address|synthetic-private-cookie|UNKNOWN_NATIVE_ERROR/iu);
+    expect(mockAxiosGet).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    [401, 'SOURCE_INACCESSIBLE'], [403, 'SOURCE_INACCESSIBLE'], [404, 'SOURCE_FETCH_FAILED'],
+    [410, 'SOURCE_FETCH_FAILED'], [429, 'SOURCE_FETCH_FAILED'], [503, 'SOURCE_FETCH_FAILED']
+  ])('preserves the observed HTTP %i without inferring an external access cause', async (status, code) => {
+    mockAxiosGet.mockResolvedValue({ status, data: 'Synthetic response body withheld from diagnostics',
+      headers: { 'content-type': 'text/plain' } });
+    const error = await resolveGamingDocument('https://example.org/unavailable').catch(error => error);
+    expect(error).toMatchObject({ code, acquisition: { stage: 'transport', subreason: 'HTTP_RESPONSE_UNUSABLE', httpStatus: status } });
+    expect(JSON.stringify(error)).not.toMatch(/Synthetic response|93\.184\.216\.34|cookies?|captcha|robots/iu);
+    expect(mockAxiosGet).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses the same bounded large-HTML acquisition policy for live and durable resolution', async () => {
+    const html = `<html><head><title>Lantern route guide</title><script>${'x'.repeat(2_000_000)}</script></head><body><article>${gamingArchiveGuideText}</article></body></html>`;
+    const declaredBytes = Buffer.byteLength(html);
+    expect(declaredBytes).toBeGreaterThan(1_500_000);
+    expect(declaredBytes).toBeLessThan(GAMING_DOCUMENT_ACQUISITION_LIMITS.maxTransferredBytes);
+    mockAxiosGet.mockResolvedValue({ data: html, headers: { 'content-type': 'text/html', 'content-length': String(declaredBytes) } });
+    const live = await resolveGamingDocument('https://example.org/large-guide');
+    const durable = await resolveGamingDocument('https://example.org/large-guide', 1_000_000, { documentPurpose: 'durable' });
+    for (const document of [live, durable]) {
+      expect(document.text).toContain('lantern checkpoint');
+      expect(document.text.length).toBeLessThan(5_000);
+      expect(document.metrics.truncated).toBe(false);
+      expect(document.structureDiagnostics).toMatchObject({ receivedBytes: declaredBytes, acceptedBytes: declaredBytes,
+        rawChars: html.length, truncationStages: ['raw_preview'], budgetOutcome: 'within_budget' });
+      expect(document.rawDocument?.truncated).toBe(true);
+      expect(document.rawDocument!.body.length).toBeLessThanOrEqual(GAMING_BUILD_RESOURCE_HARD_LIMITS.maxHtmlChars);
+    }
+    expect(live.text).toBe(durable.text);
+    expect(mockAxiosGet.mock.calls.every(call => call[1].maxBodyLength === GAMING_DOCUMENT_ACQUISITION_LIMITS.maxTransferredBytes)).toBe(true);
+  });
+
+  it.each(['declared', 'chunked'])('rejects %s overflow of the final Gaming transport limit without extracting a prefix', async framing => {
+    const size = GAMING_DOCUMENT_ACQUISITION_LIMITS.maxTransferredBytes + 1;
+    const body = 'x'.repeat(size);
+    const onRawDocument = jest.fn();
+    const onExtraction = jest.fn();
+    mockAxiosGet.mockResolvedValue({ status: 200, data: body, headers: { 'content-type': 'text/plain',
+      ...(framing === 'declared' ? { 'content-length': String(size) } : {}) } });
+    await expect(resolveGamingDocument('https://example.org/oversized', 100_000, { onRawDocument, onExtraction }))
+      .rejects.toMatchObject({ code: 'SOURCE_TOO_LARGE', acquisition: { subreason: 'TRANSFER_LIMIT', byteDiagnostics: {
+        limitStage: framing === 'declared' ? 'declared_length' : 'transferred_bytes',
+        maxTransferredBytes: GAMING_DOCUMENT_ACQUISITION_LIMITS.maxTransferredBytes,
+        maxDecodedBytes: GAMING_DOCUMENT_ACQUISITION_LIMITS.maxDecodedBytes
+      } } });
+    expect(onRawDocument).not.toHaveBeenCalled();
+    expect(onExtraction).not.toHaveBeenCalled();
     expect(mockAxiosGet).toHaveBeenCalledTimes(1);
   });
 
@@ -162,7 +241,7 @@ describe('shared Gaming document acquisition contract', () => {
     expect(document.rawDocument?.truncated).toBe(false);
   });
 
-  it.each(['text/plain', 'text/html'])('durable %s resolution retains late text while default and transport bounds remain unchanged', async (contentType) => {
+  it.each(['text/plain', 'text/html'])('durable %s resolution retains late text within the shared Gaming acquisition policy', async (contentType) => {
     const guide = 'Synthetic route checkpoint: save progress and check the lantern before crossing the courtyard. '.repeat(6_400)
       + 'Synthetic near-end violet astrolabe: turn the copper dial twice.';
     const body = contentType === 'text/html' ? `<html><body><article>${guide}</article></body></html>` : guide;
@@ -176,7 +255,8 @@ describe('shared Gaming document acquisition contract', () => {
     expect(durable.metrics.truncated).toBe(false);
     expect(mockAxiosGet.mock.calls[1][1]).toMatchObject({
       // Streaming transfer/decode meters enforce the shared byte limit; Axios must not preempt 3xx handling.
-      maxRedirects: 0, proxy: false, responseType: 'stream', decompress: false, maxBodyLength: 1_500_000
+      maxRedirects: 0, proxy: false, responseType: 'stream', decompress: false,
+      maxBodyLength: GAMING_DOCUMENT_ACQUISITION_LIMITS.maxTransferredBytes
     });
   });
 

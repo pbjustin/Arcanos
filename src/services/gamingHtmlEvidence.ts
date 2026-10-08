@@ -10,7 +10,7 @@ import {
 
 /** Separate from transport limits: no caller can enlarge structural parsing work. */
 export const GAMING_HTML_EVIDENCE_LIMITS = Object.freeze({
-  htmlChars: 1_500_000, elements: 30_000, tables: 128, rowsPerTable: 1_024,
+  htmlChars: 5_000_000, elements: 30_000, tables: 128, rowsPerTable: 1_024,
   columns: 32, span: 64, expandedCells: 32_768, lists: 256, units: 2_048,
   fields: 32, fieldChars: 1_024, contextChars: 512, unitChars: 4_096, outputChars: 1_000_000
 });

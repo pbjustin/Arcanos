@@ -7,8 +7,13 @@ import { normalizeGamingEvidenceGameIdentity, resolveGamingGuideIdentity } from 
 import type { GamingClearAssessment } from './gamingClearPolicy.js';
 import type { GamingEvidenceUnit } from './gamingEvidenceUnits.js';
 import { assessGamingStructuralUsability, readGamingEvidenceUnits, GAMING_STRUCTURAL_EVIDENCE_LIMITS } from './gamingStructuralEvidence.js';
+import { GAMING_HYBRID_V2_LIMITS } from './gamingHybridContract.js';
 
 export const MAX_STORED_GAMING_CANDIDATES = 20;
+// Six gameplay and three currentness artifacts, each with at most 500 indexed
+// chunks. This inspection bound is separate from the top-20 combination search.
+const MAX_GAMING_EVIDENCE_POOL_CANDIDATES = (GAMING_HYBRID_V2_LIMITS.totalCandidateUrls
+  + GAMING_HYBRID_V2_LIMITS.currentnessRounds * GAMING_HYBRID_V2_LIMITS.candidates) * 500;
 const MIN_QUERY_COVERAGE = 0.25;
 const STOP_WORDS = new Set('a an and are as at be by can do does for from how i in is it me my of on or should that the this to was what when where which who why with you about after before finishing completing get go help please tell use using want would guide'.split(' '));
 
@@ -261,11 +266,11 @@ function redundancy(left: GamingStoredEvidenceChunk, right: GamingStoredEvidence
 export function projectStoredGamingEvidenceCandidates<RecordType extends GamingStoredEvidenceRecord>(records: readonly RecordType[], input: GamingStoredKnowledgeInput,
   limits: GamingStoredEvidenceLimits, resolvePatch: GamingStoredPatchResolver<RecordType> = () => undefined): GamingStoredEvidenceCandidate[] {
   const { terms } = buildStoredGamingLexicalQuery(input.prompt, input.game, input.mode === 'guide' ? input : undefined);
-  if (!terms.length) return [];
+  if (!terms.length || records.length > MAX_GAMING_EVIDENCE_POOL_CANDIDATES) return [];
   const excluded = new Set(input.excludePublicUrls ?? []);
   const byRecord = new Map<string, GamingStoredEvidenceCandidate>();
-  // Preserve one highest-ranked record for each required source inside the
-  // unchanged top-20 bound; redundant records cannot crowd its identity out.
+  // Legacy selection retains its existing database-sized bound. V2 projects the
+  // complete accepted pool before coverage ranking reduces the search space.
   const requiredRecords = (input.requiredSourceIds ?? []).flatMap(sourceId => {
     const record = records.filter(entry => entry.sourceId === sourceId)
       .sort((left, right) => right.relevance - left.relevance || left.recordId.localeCompare(right.recordId))[0];
@@ -273,7 +278,8 @@ export function projectStoredGamingEvidenceCandidates<RecordType extends GamingS
   });
   const requiredRecordIds = new Set(requiredRecords.map(record => record.recordId));
   const boundedRecords = requiredRecords.length ? [...requiredRecords, ...records.filter(record => !requiredRecordIds.has(record.recordId))] : records;
-  for (const record of boundedRecords.slice(0, MAX_STORED_GAMING_CANDIDATES)) {
+  const projectionRecords = input.requireRequestCoverage ? boundedRecords : boundedRecords.slice(0, MAX_STORED_GAMING_CANDIDATES);
+  for (const record of projectionRecords) {
     input.signal?.throwIfAborted();
     if (excluded.has(record.publicUrl)) continue;
     const candidate = projectCandidate(record, terms, input, limits, resolvePatch);
@@ -331,7 +337,8 @@ export function selectGamingCoverageEvidence(candidates: readonly GamingStoredEv
   const limit = Math.min(8, limits.maxChunks, boundedInteger(input.limit, limits.maxChunks, 0, 8));
   const budget = boundedInteger(input.maxContextChars, limits.maxContextChars, 0, limits.maxContextChars);
   const requiredIds = [...new Set(input.requiredSourceIds ?? [])];
-  if (!assessCoverage || !Number.isFinite(limit) || limit <= 0 || budget <= 0 || requiredIds.length > limit) return [];
+  if (!assessCoverage || !Number.isFinite(limit) || limit <= 0 || budget <= 0 || requiredIds.length > limit
+    || candidates.length > MAX_GAMING_EVIDENCE_POOL_CANDIDATES) return [];
   const identity = (candidate: GamingStoredEvidenceCandidate) =>
     `${candidate.evidence.recordId}\u0000${candidate.evidence.sourceId}\u0000${candidate.evidence.revisionId}`;
   const compareIds = (left: string, right: string) => left < right ? -1 : left > right ? 1 : 0;
@@ -343,7 +350,7 @@ export function selectGamingCoverageEvidence(candidates: readonly GamingStoredEv
   const prioritized = [...mandatory, ...candidates.filter(candidate => !mandatoryIds.has(identity(candidate)))];
   const unique = new Map<string, GamingStoredEvidenceCandidate>();
   for (const candidate of prioritized) if (!unique.has(identity(candidate))) unique.set(identity(candidate), candidate);
-  const pool = [...unique.values()].slice(0, MAX_STORED_GAMING_CANDIDATES);
+  const pool = [...unique.values()];
   if (requiredIds.some(id => !pool.some(candidate => candidate.source.sourceId === id))) return [];
   const requirements = buildGamingRequestRequirements(input);
   // Clarification gates depend on the request, so no subset can bypass them.
@@ -359,7 +366,7 @@ export function selectGamingCoverageEvidence(candidates: readonly GamingStoredEv
   // Format once per possible source number with an inspection-only ceiling.
   // Selection below still uses the caller's unchanged context budget.
   const unboundedLimits = { maxContextChars: Number.MAX_SAFE_INTEGER };
-  const entries = pool.map(candidate => {
+  const assessedEntries = pool.map(candidate => {
     input.signal?.throwIfAborted();
     const knowledge = formatStoredGamingEvidence([candidate], { ...input, maxContextChars: Number.MAX_SAFE_INTEGER }, unboundedLimits);
     const support = assessCoverage(input, knowledge);
@@ -384,6 +391,35 @@ export function selectGamingCoverageEvidence(candidates: readonly GamingStoredEv
       costs, minimumCost: Math.min(...costs), id: identity(candidate) };
   }).filter(entry => Number.isFinite(entry.minimumCost) && entry.minimumCost <= budget)
     .sort((left, right) => left.minimumCost - right.minimumCost || Number(right.complete) - Number(left.complete) || compareIds(left.id, right.id));
+  // Every admitted passage has now been assessed. Reserve complete support and
+  // complementary requirements before reducing the unchanged bounded search.
+  // Pure lexical frequency cannot crowd a late supporting passage out.
+  const rankedEntries = [...assessedEntries].sort((left, right) => Number(right.complete) - Number(left.complete)
+    || Number(right.structuralSupport) - Number(left.structuralSupport)
+    || right.candidate.evidence.combinedScore - left.candidate.evidence.combinedScore
+    || left.minimumCost - right.minimumCost || compareIds(left.id, right.id));
+  const reserved = new Map<string, typeof assessedEntries[number]>();
+  const reserve = (entry: typeof assessedEntries[number] | undefined) => {
+    if (entry && reserved.size < MAX_STORED_GAMING_CANDIDATES) reserved.set(entry.id, entry);
+  };
+  // Cheapest representatives keep complementary coverage feasible within the
+  // formatted context budget; retain preferred alternatives when room remains.
+  for (const id of requiredIds) reserve(assessedEntries.find(entry => entry.candidate.source.sourceId === id));
+  reserve(assessedEntries.find(entry => entry.complete));
+  for (let index = 0; index < requirements.length; index += 1)
+    reserve(assessedEntries.find(entry => entry.coverageMask & (1 << index)));
+  reserve(assessedEntries.find(entry => entry.structuralSupport));
+  // Requests without explicit clauses can still need complementary prose.
+  if (!requirements.length) for (let index = 0; index < focusTerms.length; index += 1)
+    reserve(assessedEntries.find(entry => entry.focusMask & (1 << index)));
+  for (let index = 0; index < requirements.length; index += 1)
+    reserve(rankedEntries.find(entry => entry.coverageMask & (1 << index)));
+  for (const id of requiredIds) reserve(rankedEntries.find(entry => entry.candidate.source.sourceId === id));
+  for (let index = 0; index < focusTerms.length; index += 1)
+    reserve(rankedEntries.find(entry => entry.focusMask & (1 << index)));
+  for (const entry of rankedEntries) reserve(entry);
+  const entries = [...reserved.values()].sort((left, right) => left.minimumCost - right.minimumCost
+    || Number(right.complete) - Number(left.complete) || compareIds(left.id, right.id));
   const structuredEntries = entries.filter(entry => entry.hasUnits);
   // A supported tuple contains the fields that trigger its own claim shape.
   // Additional anchors and conflicts cannot make an unsupported unit support it.
