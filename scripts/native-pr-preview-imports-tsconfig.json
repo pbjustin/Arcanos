@@ -46,6 +46,9 @@
       "@services/gamingDocumentEvidence.js": [
         "src/services/gamingDocumentEvidence.ts"
       ],
+      "@services/gamingHtmlEvidence.js": [
+        "src/services/gamingHtmlEvidence.ts"
+      ],
       "@services/gamingGameDetection.js": [
         "src/services/gamingGameDetection.ts"
       ],

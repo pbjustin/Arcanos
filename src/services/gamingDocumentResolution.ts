@@ -1,8 +1,9 @@
 import {
-  GamingDocumentAcquisitionError, GAMING_DOCUMENT_ACQUISITION_POLICY_VERSION, isGamingDocumentRedirectStatus,
+  GamingDocumentAcquisitionError, GAMING_DOCUMENT_ACQUISITION_POLICY_VERSION, GAMING_DOCUMENT_ACQUISITION_LIMITS,
+  isGamingDocumentRedirectStatus,
   requireGamingHttpsSourceAdmission, resolveGamingDocumentRedirect, type GamingDocumentAcquisition
 } from "@shared/gaming/gamingSourceAcquisitionCore.js";
-export { GamingDocumentAcquisitionError, GAMING_DOCUMENT_ACQUISITION_POLICY_VERSION }
+export { GamingDocumentAcquisitionError, GAMING_DOCUMENT_ACQUISITION_POLICY_VERSION, GAMING_DOCUMENT_ACQUISITION_LIMITS }
   from "@shared/gaming/gamingSourceAcquisitionCore.js";
 export type { GamingDocumentAcquisition } from "@shared/gaming/gamingSourceAcquisitionCore.js";
 import { createHash } from "node:crypto";
@@ -32,10 +33,6 @@ import { extractGamingCurrentnessDocument } from './gamingCurrentnessDocument.js
 import type { GamingCurrentnessDocumentMetadata } from '@shared/gaming/gamingCurrentnessAdapters.js';
 
 export const GAMING_DOCUMENT_RESOLVER_VERSION = "gaming-document-v3";
-/** Public guides can contain multi-megabyte page shells. Text/context limits remain independent. */
-export const GAMING_DOCUMENT_ACQUISITION_LIMITS = Object.freeze({
-  maxTransferredBytes: 5_000_000, maxDecodedBytes: 5_000_000
-});
 const acquisitionAttestations = new WeakMap<GamingDocumentAcquisition, string>();
 const documentBinding = (document: ResolvedGamingDocument): string => createHash("sha256")
   .update(JSON.stringify({ requestedUrl: document.requestedUrl, canonicalUrl: document.canonicalUrl,

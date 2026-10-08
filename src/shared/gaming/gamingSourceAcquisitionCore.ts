@@ -1,6 +1,11 @@
 import { isIP } from "node:net";
 import { redactString } from "@arcanos/runtime/redaction";
 
+/** Public guides can contain multi-megabyte page shells. Text/context limits remain independent. */
+export const GAMING_DOCUMENT_ACQUISITION_LIMITS = Object.freeze({
+  maxTransferredBytes: 5_000_000, maxDecodedBytes: 5_000_000
+});
+
 /** Configuration belongs to production wrappers; this shared policy never reads the environment. */
 export interface GamingSourceDomainPolicy {
   allowlist?: readonly string[];

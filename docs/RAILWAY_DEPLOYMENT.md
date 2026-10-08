@@ -430,10 +430,33 @@ Launcher behavior:
   withholds all Gaming headers and the success body. The reviewed PR-head
   verifier requires both markers on the guide selector and rejects them on
   unrelated routes and passive-worker denials. Its original safe response body
-  and 171-request bound remain unchanged. These pure production-core fixtures
+  remains unchanged. These pure production-core fixtures
   do not execute normal workflow state, acquisition, model or database services;
   the served coordination and gateway regressions cover those mocked seams
   separately. See [Gaming discovery recovery](GAMING_DISCOVERY_RECOVERY.md).
+- The same guide selector executes thirteen fixed large-source cases before
+  emitting `x-arcanos-preview-gaming-large-source-version: gaming-large-source/v1`.
+  They cover a synthetic HTML page larger than 2 MB with intact article-table
+  evidence and excluded navigation; independently bounded text, index and
+  context; the production-shared 5 MB transfer/decoded admission policy and
+  oversized structural/archive rejection; complete-pool late retrieval; early
+  and late Samurai multi-topic coverage within six chunks; insufficient coverage
+  and context; wrong game, edition and DLC; partial/conflicting records;
+  unsupported currentness; and transient artifact ownership, expiry and content
+  binding. The byte policy is a pure semantic-digest-pinned module also used by
+  the protected transport; admitting it does not admit the fetcher. Failure
+  withholds every Gaming proof header and the success body. The exact-head
+  verifier requires the marker only on the guide selector, reports each case
+  and its `pure-synthetic-large-source-selection-coverage-artifact` scope, and
+  adds closed-schema and unsupported-action HTTP denials for a total of 173
+  requests within the existing time and aggregate-response limits. The trusted
+  base verifier remains compatible with the unchanged success response.
+  These hosted assertions do not execute protected DNS/TLS, stream cancellation,
+  durable writes, PostgreSQL, or Trinity. Focused protected-transport and hybrid
+  workflow tests establish cancellation and pre-effect rejection separately;
+  disposable PostgreSQL tests establish the real SQL boundary. Protected
+  publisher acquisition and real provider acceptance require separate execution
+  evidence and must remain blocked when their prerequisites are unavailable.
 - The sealed Gaming guide request also evaluates fixed synthetic official
   index/article evidence and guide applicability through the production
   currentness and freshness cores. It keeps application and regulation versions

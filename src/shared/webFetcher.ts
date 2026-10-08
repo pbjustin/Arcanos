@@ -7,6 +7,13 @@ import { isIP } from 'node:net';
 import { PassThrough, Transform, type Readable } from 'node:stream';
 import { createBrotliDecompress, createGunzip, createInflate } from 'node:zlib';
 import { getEnv, getEnvIntegerAtLeast } from '@platform/runtime/env.js';
+import {
+  getProtectedDocumentByteBudgetFailure,
+  type ProtectedDocumentFetchByteDiagnostics,
+  type ProtectedDocumentFetchByteLimits
+} from './protectedDocumentByteBudget.js';
+
+export type { ProtectedDocumentFetchByteDiagnostics, ProtectedDocumentFetchByteLimits } from './protectedDocumentByteBudget.js';
 
 const DEFAULT_MAX_CHARS = 12000;
 const LOCALHOST_FETCH_FLAG = 'ARCANOS_ALLOW_LOCALHOST_FETCH';
@@ -120,20 +127,6 @@ export type ProtectedDocumentFetchFailureCode =
   | 'REDIRECT_LOCATION_INVALID' | 'TRANSFER_LIMIT' | 'DECODED_LIMIT'
   | 'UNSUPPORTED_ENCODING' | 'INVALID_CONTENT_LENGTH' | 'DEADLINE_EXCEEDED' | 'CANCELLED';
 
-/** Internal policy only: callers cannot grant a larger allowance than the shared hard ceiling. */
-export interface ProtectedDocumentFetchByteLimits {
-  maxTransferredBytes: number;
-  maxDecodedBytes: number;
-}
-
-/** Numeric acquisition facts only; no transport identity, headers or source content. */
-export interface ProtectedDocumentFetchByteDiagnostics extends ProtectedDocumentFetchByteLimits {
-  limitStage: 'declared_length' | 'transferred_bytes' | 'decoded_bytes';
-  declaredBytes?: number;
-  transferredBytes: number;
-  decodedBytes: number;
-}
-
 /** Only bounded codes/status leave the protected transport; native errors can contain target data. */
 export class ProtectedDocumentFetchError extends Error {
   constructor(readonly code: ProtectedDocumentFetchFailureCode, readonly status?: number,
@@ -217,9 +210,12 @@ export function createProtectedDocumentFetchSession(
       const responseWireStart = wireBytes;
       const responseDecodedStart = decodedBytes;
       let declaredBytes: number | undefined;
-      const limitError = (code: 'TRANSFER_LIMIT' | 'DECODED_LIMIT', limitStage: ProtectedDocumentFetchByteDiagnostics['limitStage'], status: number) =>
-        new ProtectedDocumentFetchError(code, status, { limitStage, ...(declaredBytes === undefined ? {} : { declaredBytes }),
-          transferredBytes: wireBytes, decodedBytes, maxTransferredBytes, maxDecodedBytes });
+      const limitError = (limitStage: ProtectedDocumentFetchByteDiagnostics['limitStage'], status: number): ProtectedDocumentFetchError | null => {
+        const failure = getProtectedDocumentByteBudgetFailure(limitStage, {
+          declaredBytes, transferredBytes: wireBytes, decodedBytes, maxTransferredBytes, maxDecodedBytes
+        });
+        return failure ? new ProtectedDocumentFetchError(failure.code, status, failure.byteDiagnostics) : null;
+      };
       let agent: HttpsAgent | undefined;
       let response: IncomingMessage | undefined;
       let responseStatus: number | undefined;
@@ -306,12 +302,13 @@ export function createProtectedDocumentFetchSession(
             throw new ProtectedDocumentFetchError('INVALID_CONTENT_LENGTH', status);
           }
           declaredBytes = Number(contentLength);
-          if (declaredBytes > maxTransferredBytes - wireBytes) throw limitError('TRANSFER_LIMIT', 'declared_length', status);
+          const error = limitError('declared_length', status);
+          if (error) throw error;
         }
         const wireMeter = new Transform({
           transform(chunk: Buffer, _encoding, callback) {
             wireBytes += chunk.length;
-            callback(wireBytes > maxTransferredBytes ? limitError('TRANSFER_LIMIT', 'transferred_bytes', status) : null, chunk);
+            callback(limitError('transferred_bytes', status), chunk);
           }
         });
         const decoder = encoding === 'gzip' ? createGunzip()
@@ -320,7 +317,7 @@ export function createProtectedDocumentFetchSession(
         const decodedMeter = new Transform({
           transform(chunk: Buffer, _encoding, callback) {
             decodedBytes += chunk.length;
-            callback(decodedBytes > maxDecodedBytes ? limitError('DECODED_LIMIT', 'decoded_bytes', status) : null, chunk);
+            callback(limitError('decoded_bytes', status), chunk);
           }
         });
         streams.push(wireMeter, decoder, decodedMeter);
