@@ -58,7 +58,9 @@ V2 selection projects and assesses the complete bounded accepted pool (at most
 4,500 indexed records) before reducing the subset-search candidates to 20.
 Complete support, complementary requested facts, and mandatory sources are
 considered before that reduction; late passages cannot be excluded solely by
-their original document order. Final source/chunk/context budgets remain intact.
+their original document order. Preferred alternatives rank support for multiple
+requested topics before lexical score, preserving combined passages needed to
+cover the request within the chunk allowance. Final source/chunk/context budgets remain intact.
 The full-pool conflict veto still precedes reduction. Stored SQL retrieval retains
 its existing ranked 20-record query bound, and legacy selection retains its bound.
 Public diagnostic fields do not expose source passages, private context or

@@ -110,6 +110,29 @@ describe('v2 existing backend evidence selection and request coverage', () => {
     expect(selected.knowledge.context.length).toBeLessThanOrEqual(1500);
   });
 
+  it.each([
+    { explicit: true, late: false }, { explicit: true, late: true },
+    { explicit: false, late: false }, { explicit: false, late: true }
+  ])('retains multi-topic evidence within six chunks despite higher-scored singleton alternatives: explicit=$explicit late=$late', ({ explicit, late }) => {
+    const topics = ['Copperstaff', 'Zephyrglass', 'Sunspire', 'Moonvault', 'Amberstone', 'Crystalleaf', 'Ironthorn', 'Silverpine',
+      ...(!explicit ? ['Cloudstone', 'Flamepetal', 'Mistbloom', 'Riverjade', 'Stormleaf', 'Dawncrystal', 'Duskthorn', 'Frostglass'] : [])];
+    const combined = `${topics.slice(0, 3).join(' ')} rest beside the eastern lantern. ${'The route leads safely through the quiet cabinet. '.repeat(2)}`;
+    const singletons = [...topics.slice(3).map(topic => `${topic} rests beside the eastern lantern.`),
+      ...Array<string>(14).fill('Moonvault rests beside the eastern lantern.'),
+      ...Array.from({ length: 24 }, (_unused, index) => `${topics[index % 3]} rests beside the eastern lantern.`)];
+    const data = longGuideKnowledge(late ? [...singletons, combined] : [combined, ...singletons]);
+    const combinedIndex = late ? singletons.length : 0;
+    data.evidence![combinedIndex].combinedScore = 0.1;
+    data.evidence![combinedIndex].lexicalScore = 0.1;
+    const request = { ...input, prompt: `Explain ${topics.join(explicit ? '; ' : ' ')}`, limit: 6 };
+    expect(buildGamingRequestRequirements(request)).toHaveLength(explicit ? 8 : 0);
+    const selected = selectGamingHybridEvidence(request, data);
+    expect(selected).toMatchObject({ coverageSatisfied: true, missingCoverage: [] });
+    expect(selected.selectedEvidenceIds).toContain(`record-${combinedIndex}`);
+    expect(selected.selectedEvidenceIds).toHaveLength(6);
+    expect(selected.knowledge.context.length).toBeLessThanOrEqual(5000);
+  });
+
   it('prunes a twenty-passage prose pool that cannot cover a single requested topic', () => {
     const request = { ...input, prompt: 'Explain Copperstaff Zephyrglass Sunspire Moonvault' };
     expect(buildGamingRequestRequirements(request)).toEqual([]);

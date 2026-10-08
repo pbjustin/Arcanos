@@ -342,6 +342,11 @@ export function selectGamingCoverageEvidence(candidates: readonly GamingStoredEv
   const identity = (candidate: GamingStoredEvidenceCandidate) =>
     `${candidate.evidence.recordId}\u0000${candidate.evidence.sourceId}\u0000${candidate.evidence.revisionId}`;
   const compareIds = (left: string, right: string) => left < right ? -1 : left > right ? 1 : 0;
+  const countBits = (mask: number) => {
+    let count = 0;
+    while (mask) { mask &= mask - 1; count += 1; }
+    return count;
+  };
   const mandatory = requiredIds.flatMap(id => {
     const candidate = candidates.find(entry => entry.source.sourceId === id);
     return candidate ? [candidate] : [];
@@ -396,6 +401,10 @@ export function selectGamingCoverageEvidence(candidates: readonly GamingStoredEv
   // Pure lexical frequency cannot crowd a late supporting passage out.
   const rankedEntries = [...assessedEntries].sort((left, right) => Number(right.complete) - Number(left.complete)
     || Number(right.structuralSupport) - Number(left.structuralSupport)
+    // Several supported topics in one passage can make a cover fit the chunk
+    // limit; higher-scored singleton alternatives must not displace that row.
+    || countBits(requirements.length ? right.coverageMask : right.focusMask)
+      - countBits(requirements.length ? left.coverageMask : left.focusMask)
     || right.candidate.evidence.combinedScore - left.candidate.evidence.combinedScore
     || left.minimumCost - right.minimumCost || compareIds(left.id, right.id));
   const reserved = new Map<string, typeof assessedEntries[number]>();
@@ -448,11 +457,6 @@ export function selectGamingCoverageEvidence(candidates: readonly GamingStoredEv
         && chunk.sourceId === candidate.evidence.sourceId && chunk.text === candidate.evidence.text)) ? formatted : undefined;
   };
   const preservesRequired = (knowledge: GamingStoredKnowledgeContext) => requiredIds.every(id => knowledge.sources.some(source => source.sourceId === id));
-  const countBits = (mask: number) => {
-    let count = 0;
-    while (mask) { mask &= mask - 1; count += 1; }
-    return count;
-  };
   // A complete singleton supplies a feasible cost bound before any combination.
   for (const entry of entries.filter(item => item.complete)) {
     const knowledge = intact([entry.candidate]);
