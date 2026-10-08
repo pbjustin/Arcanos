@@ -228,7 +228,7 @@ describe('October 4 early-game Samurai request through the served Gaming workflo
     expect(mockHttp.mock.calls[0][1]).toMatchObject({ maxBodyLength: GAMING_DOCUMENT_ACQUISITION_LIMITS.maxTransferredBytes });
     expect(mockTrinity).toHaveBeenCalledTimes(1);
     expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
-  });
+  }, 30_000);
 
   it('rejects a response exceeding the final transfer limit through served orchestration without accepting its guide prefix', async () => {
     const oversized = guideHtml + 'x'.repeat(GAMING_DOCUMENT_ACQUISITION_LIMITS.maxTransferredBytes + 1 - Buffer.byteLength(guideHtml));

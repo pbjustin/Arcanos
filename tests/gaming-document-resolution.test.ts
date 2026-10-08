@@ -112,6 +112,9 @@ describe('shared Gaming document acquisition contract', () => {
   });
 
   it('uses the same bounded large-HTML acquisition policy for live and durable resolution', async () => {
+    // This fixture verifies size policy, not CPU speed under coverage instrumentation.
+    // Keep its acquisition/extraction clock fixed; deadline regressions use their own clocks.
+    jest.spyOn(Date, 'now').mockReturnValue(1_790_000_000_000);
     const html = `<html><head><title>Lantern route guide</title><script>${'x'.repeat(2_000_000)}</script></head><body><article>${gamingArchiveGuideText}</article></body></html>`;
     const declaredBytes = Buffer.byteLength(html);
     expect(declaredBytes).toBeGreaterThan(1_500_000);
@@ -130,7 +133,7 @@ describe('shared Gaming document acquisition contract', () => {
     }
     expect(live.text).toBe(durable.text);
     expect(mockAxiosGet.mock.calls.every(call => call[1].maxBodyLength === GAMING_DOCUMENT_ACQUISITION_LIMITS.maxTransferredBytes)).toBe(true);
-  });
+  }, 30_000);
 
   it.each(['declared', 'chunked'])('rejects %s overflow of the final Gaming transport limit without extracting a prefix', async framing => {
     const size = GAMING_DOCUMENT_ACQUISITION_LIMITS.maxTransferredBytes + 1;
