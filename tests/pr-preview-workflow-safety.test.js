@@ -380,6 +380,8 @@ describe('native PR workflow safety', () => {
       const excessiveJobPermissions = Object.entries(workflow.jobs ?? {})
         .filter(([jobId, job]) => path === '.github/workflows/pr-ci.yml' && jobId === 'native-pr-preview-head-e2e'
           ? !hasAllowedSupplementalPreviewPermissions(job.permissions)
+          : path === '.github/workflows/ci-cd.yml' && jobId === 'all-checks-complete'
+            ? JSON.stringify(job.permissions) !== JSON.stringify({ contents: 'read', actions: 'read' })
           : !hasAllowedOrdinaryPrJobPermissions(job.permissions))
         .map(([jobId, job]) => ({ jobId, permissions: job.permissions }));
 
@@ -418,9 +420,21 @@ describe('native PR workflow safety', () => {
     expect(aggregate?.name).toBe('All Checks Complete');
     expect(aggregate?.if).toBe('${{ always() }}');
     expect(aggregate?.needs).toEqual(requiredCiJobIds);
-    expect(aggregate?.permissions).toEqual({ contents: 'read' });
+    expect(aggregate?.permissions).toEqual({ contents: 'read', actions: 'read' });
     expect(verifier?.env?.ARCANOS_REQUIRED_CI_RESULTS_JSON).toBe('${{ toJSON(needs) }}');
     expect(verifier?.run).toBe('node scripts/verify-required-ci-results.mjs');
+    expect(verifier?.id).toBe('required-results');
+    const receipt = aggregate.steps.find(step => step.name === 'Write sanitized per-SHA CI receipts');
+    const upload = aggregate.steps.find(step => step.name === 'Retain per-SHA CI verification receipts');
+    const receiptGate = "${{ always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}";
+    expect(receipt.if).toBe(receiptGate);
+    expect(upload.if).toBe(receiptGate);
+    expect(receipt.env.ARCANOS_CI_RECEIPTS_ENABLED).toBe('true');
+    expect(receipt.env.ARCANOS_CI_VERIFIER_STEP_OUTCOME).toBe('${{ steps.required-results.outcome }}');
+    expect(receipt.env.GITHUB_TOKEN).toBe('${{ github.token }}');
+    expect(upload.uses).toBe('actions/upload-artifact@v4');
+    expect(upload.with['retention-days']).toBe(30);
+    expect(upload.with['if-no-files-found']).toBe('error');
   });
 
   it('generates a masked per-run job-read signing fixture for documentation analysis', () => {
