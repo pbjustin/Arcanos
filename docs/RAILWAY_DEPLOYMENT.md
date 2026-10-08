@@ -436,8 +436,10 @@ Launcher behavior:
   separately. See [Gaming discovery recovery](GAMING_DISCOVERY_RECOVERY.md).
 - The same guide selector executes thirteen fixed large-source cases before
   emitting `x-arcanos-preview-gaming-large-source-version: gaming-large-source/v1`.
-  They cover a synthetic HTML page larger than 2 MB with intact article-table
-  evidence and excluded navigation; independently bounded text, index and
+  They exercise the production HTML extraction core directly over a synthetic
+  page larger than 2 MB in UTF-8 response bytes, with a separately bounded
+  character count, intact article-table evidence and excluded navigation;
+  independently bounded text, index and
   context; the production-shared 5 MB transfer/decoded admission policy and
   oversized structural/archive rejection; complete-pool late retrieval; early
   and late Samurai multi-topic coverage within six chunks; insufficient coverage
@@ -451,6 +453,10 @@ Launcher behavior:
   adds closed-schema and unsupported-action HTTP denials for a total of 173
   requests within the existing time and aggregate-response limits. The trusted
   base verifier remains compatible with the unchanged success response.
+  The large HTML assertion does not attest completion of the optional JSON scan:
+  that scan retains its independent production deadline. Combined document
+  extraction still runs for the small conflicting records and oversized-input
+  rejection, and the existing structured-evidence proof covers accepted JSON.
   These hosted assertions do not execute protected DNS/TLS, stream cancellation,
   durable writes, PostgreSQL, or Trinity. Focused protected-transport and hybrid
   workflow tests establish cancellation and pre-effect rejection separately;

@@ -2,12 +2,14 @@ import { jest } from '@jest/globals';
 
 const actualEvidence = await import('../src/shared/gaming/gamingStoredEvidenceCore.js');
 const actualExtraction = await import('../src/services/gamingDocumentEvidence.js');
+const actualHtml = await import('../src/services/gamingHtmlEvidence.js');
 const actualProjection = await import('../src/shared/gaming/gamingDocumentProjectionCore.js');
 const actualCoverage = await import('../src/shared/gaming/gamingClearEvidence.js');
 const actualPolicy = await import('../src/shared/gaming/gamingHybridPolicyCore.js');
 const actualByteBudget = await import('../src/shared/protectedDocumentByteBudget.js');
 const mockSelect = jest.fn(actualEvidence.selectStoredGamingEvidence);
 const mockExtract = jest.fn(actualExtraction.extractGamingDocumentEvidence);
+const mockHtml = jest.fn(actualHtml.extractGamingHtmlEvidence);
 const mockProjection = jest.fn(actualProjection.projectGamingDocumentText);
 const mockCoverage = jest.fn(actualCoverage.assessGamingRequestCoverage);
 const mockArtifact = jest.fn(actualPolicy.isGamingApprovedArtifactCurrent);
@@ -18,6 +20,9 @@ jest.unstable_mockModule('../src/shared/gaming/gamingStoredEvidenceCore.js', () 
 }));
 jest.unstable_mockModule('../src/services/gamingDocumentEvidence.js', () => ({
   ...actualExtraction, extractGamingDocumentEvidence: mockExtract
+}));
+jest.unstable_mockModule('../src/services/gamingHtmlEvidence.js', () => ({
+  ...actualHtml, extractGamingHtmlEvidence: mockHtml
 }));
 jest.unstable_mockModule('../src/shared/gaming/gamingDocumentProjectionCore.js', () => ({
   ...actualProjection, projectGamingDocumentText: mockProjection
@@ -39,6 +44,7 @@ describe('additional sealed Gaming large-source component proof', () => {
   beforeEach(() => {
     mockSelect.mockReset().mockImplementation(actualEvidence.selectStoredGamingEvidence);
     mockExtract.mockReset().mockImplementation(actualExtraction.extractGamingDocumentEvidence);
+    mockHtml.mockReset().mockImplementation(actualHtml.extractGamingHtmlEvidence);
     mockProjection.mockReset().mockImplementation(actualProjection.projectGamingDocumentText);
     mockCoverage.mockReset().mockImplementation(actualCoverage.assessGamingRequestCoverage);
     mockArtifact.mockReset().mockImplementation(actualPolicy.isGamingApprovedArtifactCurrent);
@@ -50,7 +56,11 @@ describe('additional sealed Gaming large-source component proof', () => {
     await runGamingLargeSourcePreview();
     expect(GAMING_LARGE_SOURCE_PREVIEW_VERSION).toBe('gaming-large-source/v1');
     expect(GAMING_LARGE_SOURCE_PREVIEW_CASES).toContain('samurai-multi-topic-late');
-    expect(mockExtract.mock.calls[0][0].body.length).toBeGreaterThan(2_000_000);
+    expect(Buffer.byteLength(mockHtml.mock.calls[0][0].body, 'utf8')).toBeGreaterThan(2_000_000);
+    expect(mockExtract.mock.calls.some(([input]) => {
+      const bytes = Buffer.byteLength(input.body, 'utf8');
+      return bytes > 2_000_000 && bytes <= 5_000_000;
+    })).toBe(false);
     expect(mockSelect).toHaveBeenCalledWith(expect.arrayContaining([expect.objectContaining({ recordId: 'pool-record-24' })]),
       expect.objectContaining({ requireRequestCoverage: true }), expect.anything(), undefined, expect.any(Function));
     const samuraiCalls = mockSelect.mock.calls.filter(call => call[1].class === 'Samurai' && call[0].length > 20);
@@ -59,6 +69,12 @@ describe('additional sealed Gaming large-source component proof', () => {
     expect(mockSupplied).toHaveBeenCalledWith(expect.objectContaining({
       accepted: [expect.objectContaining({ candidateId: 'another-workflow-source' })]
     }));
+  });
+
+  it('keeps the HTML structural proof independent of the optional JSON wall-clock budget', async () => {
+    let elapsed = 0;
+    const clock = jest.spyOn(Date, 'now').mockImplementation(() => { elapsed += 1_100; return elapsed; });
+    try { await runGamingLargeSourcePreview(); } finally { clock.mockRestore(); }
   });
 
   it('fails closed when selection only inspects the original twenty-row prefix', async () => {
@@ -77,8 +93,8 @@ describe('additional sealed Gaming large-source component proof', () => {
   });
 
   it('fails closed when extracted structural provenance changes', async () => {
-    mockExtract.mockImplementation(input => {
-      const result = actualExtraction.extractGamingDocumentEvidence(input);
+    mockHtml.mockImplementation(input => {
+      const result = actualHtml.extractGamingHtmlEvidence(input);
       return { ...result, units: result.units.map(unit => ({ ...unit,
         provenance: { ...unit.provenance, sourceUrl: 'https://other.example/synthetic' } })) };
     });
@@ -86,9 +102,9 @@ describe('additional sealed Gaming large-source component proof', () => {
   });
 
   it('fails closed when navigation records contaminate article evidence', async () => {
-    mockExtract.mockImplementation(input => {
-      const result = actualExtraction.extractGamingDocumentEvidence(input);
-      return input.body.length > 2_000_000 && result.units.length ? { ...result,
+    mockHtml.mockImplementation(input => {
+      const result = actualHtml.extractGamingHtmlEvidence(input);
+      return Buffer.byteLength(input.body, 'utf8') > 2_000_000 && result.units.length ? { ...result,
         units: [...result.units, { ...result.units[0], id: 'navigation-sentinel', text: 'Navigation Sentinel' }] } : result;
     });
     await expect(runGamingLargeSourcePreview()).rejects.toThrow(FAILURE);
@@ -137,7 +153,7 @@ describe('additional sealed Gaming large-source component proof', () => {
   });
 
   it('replaces dependency errors with a fixed cause-free error', async () => {
-    mockExtract.mockImplementation(() => { throw new Error('private-fixture-sentinel'); });
+    mockHtml.mockImplementation(() => { throw new Error('private-fixture-sentinel'); });
     let caught: unknown;
     try { await runGamingLargeSourcePreview(); } catch (error) { caught = error; }
     expect(caught).toBeInstanceOf(Error);

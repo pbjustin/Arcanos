@@ -16,7 +16,7 @@ import {
   type GamingStoredKnowledgeInput
 } from './gamingStoredEvidenceCore.js';
 import { extractGamingDocumentEvidence } from '@services/gamingDocumentEvidence.js';
-import { GAMING_HTML_EVIDENCE_LIMITS } from '@services/gamingHtmlEvidence.js';
+import { extractGamingHtmlEvidence, GAMING_HTML_EVIDENCE_LIMITS } from '@services/gamingHtmlEvidence.js';
 import { projectGamingDocumentText } from './gamingDocumentProjectionCore.js';
 import { assessGamingRequestCoverage } from './gamingClearEvidence.js';
 import { assessGamingClearSourceIdentity } from './gamingClearSource.js';
@@ -317,16 +317,16 @@ function requireLargeHtmlExtraction(): ReturnType<typeof extractGamingDocumentEv
     + `<nav><table>${irrelevant}</table></nav><main><article><h1>Elden Ring Samurai guide</h1>`
     + `<section><h2>Base-game Samurai build</h2><table>${columns}${record}</table></section>`
     + '</article></main><aside>Unrelated Sidebar Sentinel</aside><script type="application/javascript">'
-    + JSON.stringify({ inertPageShell: 'x'.repeat(2_100_000) }) + '</script></body></html>';
+    + JSON.stringify({ inertPageShell: '道'.repeat(700_000) }) + '</script></body></html>';
   const bytes = Buffer.byteLength(html, 'utf8');
-  requireProof(bytes > 2_000_000 && bytes < GAMING_HTML_EVIDENCE_LIMITS.htmlChars);
+  requireProof(bytes > 2_000_000 && html.length < GAMING_HTML_EVIDENCE_LIMITS.htmlChars);
   const acceptedBudget = { ...GAMING_DOCUMENT_ACQUISITION_LIMITS, declaredBytes: bytes, transferredBytes: bytes, decodedBytes: bytes };
   requireProof(getProtectedDocumentByteBudgetFailure('transferred_bytes', acceptedBudget) === undefined
     && getProtectedDocumentByteBudgetFailure('decoded_bytes', acceptedBudget) === undefined);
-  const extracted = extractGamingDocumentEvidence({ body: html, sourceUrl: SAMURAI_URL, contentType: 'text/html',
-    transportTruncated: false, receivedBytes: bytes, acceptedBytes: bytes, declaredBytes: bytes });
-  requireProof(extracted.diagnostics.rawChars === html.length && extracted.diagnostics.budgetOutcome === 'within_budget');
-  requireProof(extracted.units.length === 1 && extracted.diagnostics.completeUnits === 1);
+  // This proves the HTML structural component independently of the optional JSON extractor's real-time budget.
+  const extracted = extractGamingHtmlEvidence({ body: html, sourceUrl: SAMURAI_URL, contentType: 'text/html', transportTruncated: false });
+  requireProof(extracted.inputBytes === bytes && !extracted.truncated && extracted.subreasons.length === 0);
+  requireProof(extracted.units.length === 1 && extracted.outputChars === extracted.units[0].text.length);
   const unit = extracted.units[0];
   requireProof(unit.integrity.status === 'complete' && unit.integrity.reasons.length === 0);
   requireProof(unit.text.includes(SAMURAI_COMBINED) && !unit.text.includes('Sentinel') && !unit.text.includes('inertPageShell'));
