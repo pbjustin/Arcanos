@@ -151,7 +151,7 @@ export async function evaluateGamingHybridCandidates(
     const candidateReference = randomUUID();
     let extractionDiagnostic: GamingStructureDiagnostics | undefined;
     let missingClaimFields: string[] = [];
-    let acquisitionDiagnostic: Record<string, string | number> = {
+    let acquisitionDiagnostic: Record<string, unknown> = {
       stage: 'admission', policyVersion: GAMING_DOCUMENT_ACQUISITION_POLICY_VERSION, redirectCount: 0, failingHop: 0
     };
     const reject = (reason: string) => {
@@ -341,7 +341,7 @@ export async function evaluateGamingHybridCandidates(
         acquisitionDiagnostic = { ...error.acquisition };
         // Public acquisition reasons remain bounded. Preserve the internal
         // integrity/security distinction so an unavailable index cannot hide it.
-        const unavailable = ['DNS_FAILED', 'FETCH_FAILED', 'DEADLINE_EXCEEDED', 'HTTP_RESPONSE_UNUSABLE', 'CONDITIONAL_CONTENT_UNAVAILABLE'];
+        const unavailable = ['DNS_FAILED', 'FETCH_FAILED', 'CONNECTION_FAILED', 'DEADLINE_EXCEEDED', 'HTTP_RESPONSE_UNUSABLE', 'CONDITIONAL_CONTENT_UNAVAILABLE'];
         if (!unavailable.includes(error.acquisition.subreason) || error.status === 401 || error.status === 403)
           currentnessFailureBlocksAdvisory = true;
         reject(error.code); continue;

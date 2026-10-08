@@ -254,6 +254,14 @@ describe('bounded Gaming inert JSON evidence', () => {
     }
   });
 
+  it('marks expired empty or malformed HTML extraction as partial without requiring a script record', () => {
+    for (const body of ['<main><p>No structured records.</p></main>', '<a'.repeat(50_000), script(JSON.stringify(location))]) {
+      const result = extract(body, 'text/html', { deadlineAt: Date.now() - 1 });
+      expect(result).toMatchObject({ units: [], outputChars: 0, truncated: true,
+        subreasons: ['extraction_budget_exhausted'] });
+    }
+  });
+
   it('has no query input and stable IDs/text for unchanged source evidence and policy', () => {
     const first = json(location);
     expect(json(location)).toEqual(first);

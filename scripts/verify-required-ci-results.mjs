@@ -72,17 +72,40 @@ export function verifyRequiredCiResults(rawResults) {
   );
 }
 
+/** Project finite dependency results only; never retain needs.outputs or errors. */
+export function summarizeRequiredCiResults(rawResults) {
+  let parsed;
+  try { parsed = JSON.parse(rawResults); } catch { parsed = {}; }
+  const admitted = new Set(['success', 'failure', 'cancelled', 'skipped']);
+  const requiredDependencies = REQUIRED_CI_JOB_IDS.map(jobId => ({ jobId,
+    result: admitted.has(parsed?.[jobId]?.result) ? parsed[jobId].result : 'UNKNOWN' }));
+  let dependencyVerdict = 'FAIL';
+  try { verifyRequiredCiResults(rawResults); dependencyVerdict = 'PASS'; } catch { /* Preserve the strict verdict without copying its error. */ }
+  return { dependencyVerdict, requiredDependencies };
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
-    const results = verifyRequiredCiResults(
-      process.env.ARCANOS_REQUIRED_CI_RESULTS_JSON
-    );
-    process.stdout.write(
-      `Verified ${results.length} required CI job results as success.\n`
-    );
+    if (process.argv.includes('--write-receipts')) {
+      const { writeCiVerificationReceipts } = await import('./ci-verification-receipt.mjs');
+      const count = await writeCiVerificationReceipts(process.env, summarizeRequiredCiResults(process.env.ARCANOS_REQUIRED_CI_RESULTS_JSON));
+      process.stdout.write(`Wrote ${count} sanitized per-SHA CI receipts; this does not attest aggregate completion.\n`);
+    } else {
+      const results = verifyRequiredCiResults(
+        process.env.ARCANOS_REQUIRED_CI_RESULTS_JSON
+      );
+      process.stdout.write(
+        `Verified ${results.length} required CI job results as success.\n`
+      );
+    }
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    process.stderr.write(`Required CI result verification failed: ${message}\n`);
-    process.exitCode = 1;
+    if (process.argv.includes('--write-receipts')) {
+      process.stderr.write('CI receipt generation unavailable.\n');
+      process.exitCode = 1;
+    } else {
+      const message = error instanceof Error ? error.message : String(error);
+      process.stderr.write(`Required CI result verification failed: ${message}\n`);
+      process.exitCode = 1;
+    }
   }
 }

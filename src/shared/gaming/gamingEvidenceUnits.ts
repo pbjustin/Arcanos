@@ -50,6 +50,7 @@ export interface GamingStructureDiagnostics {
   strategies: string[];
   contentType: string;
   receivedBytes?: number;
+  declaredBytes?: number;
   acceptedBytes: number;
   rawChars: number;
   extractedChars: number;

@@ -59,8 +59,9 @@ describe('protected Gaming document single-hop transport', () => {
   const dials: ConnectionOptions[] = [];
   const sessions: ReturnType<typeof createProtectedDocumentFetchSession>[] = [];
   const originalCreateConnection = HttpsAgent.prototype.createConnection;
-  const session = (options: Parameters<typeof createProtectedDocumentFetchSession>[0] = {}) => {
-    const value = createProtectedDocumentFetchSession(options);
+  const session = (options: Parameters<typeof createProtectedDocumentFetchSession>[0] = {},
+    byteLimits?: Parameters<typeof createProtectedDocumentFetchSession>[1]) => {
+    const value = createProtectedDocumentFetchSession(options, byteLimits);
     sessions.push(value);
     return value;
   };
@@ -87,6 +88,7 @@ describe('protected Gaming document single-hop transport', () => {
     resolve6.mockReset().mockResolvedValue(['2606:4700:4700::1111']);
     cancelDns.mockReset();
     previousByteLimit = process.env.WEB_FETCH_MAX_BYTES;
+    delete process.env.WEB_FETCH_MAX_BYTES;
     handler = (_request, response) => {
       response.writeHead(200, { 'Content-Type': 'text/html' });
       response.end('<article><h1>Fixture RPG guide</h1><p>Cross the bridge to reach the observatory.</p></article>');
@@ -139,7 +141,7 @@ describe('protected Gaming document single-hop transport', () => {
   });
 
   it('retains normal TLS certificate hostname verification', async () => {
-    await expect(session().fetch('https://wrong-publisher.example.com/guide')).rejects.toMatchObject({ code: 'FETCH_FAILED' });
+    await expect(session().fetch('https://wrong-publisher.example.com/guide')).rejects.toMatchObject({ code: 'TLS_FAILED' });
     expect(dials).toHaveLength(1);
     expect(dials[0].servername).toBe('wrong-publisher.example.com');
     expect(requests).toHaveLength(0);
@@ -280,11 +282,92 @@ describe('protected Gaming document single-hop transport', () => {
 
   it('rejects compressed expansion within the aggregate decoded allowance', async () => {
     process.env.WEB_FETCH_MAX_BYTES = '128';
-    handler = (_request, response) => {
+    let closed!: () => void;
+    const socketClosed = new Promise<void>((resolve) => { closed = resolve; });
+    handler = (request, response) => {
+      request.socket.once('close', closed);
       response.writeHead(200, { 'Content-Encoding': 'gzip', 'Content-Type': 'text/plain' });
       response.end(gzipSync('x'.repeat(4096)));
     };
-    await expect(session().fetch('https://fixture.example.com/compressed')).rejects.toMatchObject({ code: 'DECODED_LIMIT' });
+    await expect(session().fetch('https://fixture.example.com/compressed')).rejects.toMatchObject({ code: 'DECODED_LIMIT',
+      byteDiagnostics: { limitStage: 'decoded_bytes', maxTransferredBytes: 128, maxDecodedBytes: 128 } });
+    await socketClosed;
+  });
+
+  it('meters declared, transferred and decoded bytes independently of Unicode character count', async () => {
+    const body = 'é'.repeat(300);
+    const compressed = gzipSync(body);
+    const decodedBytes = Buffer.byteLength(body);
+    handler = (_request, response) => {
+      response.writeHead(200, { 'Content-Encoding': 'gzip', 'Content-Type': 'text/plain', 'Content-Length': compressed.length });
+      response.end(compressed);
+    };
+    const acquired = await session({}, { maxTransferredBytes: compressed.length, maxDecodedBytes: decodedBytes })
+      .fetch('https://fixture.example.com/compressed');
+    expect(acquired).toMatchObject({ body, declaredBytes: compressed.length,
+      receivedBytes: compressed.length, acceptedBytes: decodedBytes });
+    expect(acquired.acceptedBytes).toBeGreaterThan(acquired.body.length);
+  });
+
+  it('does not replace the independent aggregate decoded ceiling with the wire ceiling across hops', async () => {
+    handler = (_request, response) => { response.writeHead(302, { Location: '/final' }); response.end('x'.repeat(80)); };
+    const acquisition = session({}, { maxTransferredBytes: 256, maxDecodedBytes: 120 });
+    await acquisition.fetch('https://fixture.example.com/start');
+    handler = (_request, response) => {
+      response.writeHead(200, { 'Content-Encoding': 'gzip' }); response.end(gzipSync('y'.repeat(41)));
+    };
+    await expect(acquisition.fetch('https://fixture.example.com/final')).rejects.toMatchObject({ code: 'DECODED_LIMIT',
+      byteDiagnostics: { limitStage: 'decoded_bytes', decodedBytes: 121, maxTransferredBytes: 256, maxDecodedBytes: 120 } });
+    expect(requests).toHaveLength(2);
+  });
+
+  it('rejects actual chunked transfer overflow and closes the unfinished upstream response', async () => {
+    let closed!: () => void;
+    const socketClosed = new Promise<void>((resolve) => { closed = resolve; });
+    handler = (request, response) => {
+      request.socket.once('close', closed);
+      response.writeHead(200, { 'Content-Type': 'text/plain' }); response.write('x'.repeat(129));
+    };
+    await expect(session({}, { maxTransferredBytes: 128, maxDecodedBytes: 256 }).fetch('https://fixture.example.com/large'))
+      .rejects.toMatchObject({ code: 'TRANSFER_LIMIT', byteDiagnostics: { limitStage: 'transferred_bytes',
+        transferredBytes: 129, maxTransferredBytes: 128, maxDecodedBytes: 256 } });
+    await socketClosed;
+    expect(requests).toHaveLength(1);
+  });
+
+  it('keeps the default shared ceiling while permitting only the bounded server-owned opt-in', async () => {
+    handler = (_request, response) => {
+      response.writeHead(200, { 'Content-Type': 'text/plain', 'Content-Length': 1_500_001 });
+      response.end('x'.repeat(1_500_001));
+    };
+    await expect(session().fetch('https://fixture.example.com/large')).rejects.toMatchObject({ code: 'TRANSFER_LIMIT',
+      byteDiagnostics: { limitStage: 'declared_length', declaredBytes: 1_500_001, maxTransferredBytes: 1_500_000 } });
+    await expect(session({}, { maxTransferredBytes: 5_000_000, maxDecodedBytes: 5_000_000 })
+      .fetch('https://fixture.example.com/large')).resolves.toMatchObject({ receivedBytes: 1_500_001, acceptedBytes: 1_500_001 });
+    process.env.WEB_FETCH_MAX_BYTES = '128';
+    await expect(session({}, { maxTransferredBytes: 5_000_000, maxDecodedBytes: 5_000_000 })
+      .fetch('https://fixture.example.com/large')).rejects.toMatchObject({ code: 'TRANSFER_LIMIT',
+        byteDiagnostics: { maxTransferredBytes: 128, maxDecodedBytes: 128 } });
+  });
+
+  it('clamps server-owned byte allowances at the final hard ceiling', async () => {
+    handler = (_request, response) => {
+      response.writeHead(200, { 'Content-Length': 5_000_001 }); response.end();
+    };
+    await expect(session({}, { maxTransferredBytes: 50_000_000, maxDecodedBytes: 50_000_000 })
+      .fetch('https://fixture.example.com/large')).rejects.toMatchObject({ code: 'TRANSFER_LIMIT',
+        byteDiagnostics: { declaredBytes: 5_000_001, maxTransferredBytes: 5_000_000, maxDecodedBytes: 5_000_000 } });
+  });
+
+  it('rejects unsupported compression and closes the upstream response', async () => {
+    let closed!: () => void;
+    const socketClosed = new Promise<void>((resolve) => { closed = resolve; });
+    handler = (request, response) => {
+      request.socket.once('close', closed);
+      response.writeHead(200, { 'Content-Encoding': 'gzip, br' }); response.write('unsupported fixture');
+    };
+    await expect(session().fetch('https://fixture.example.com/unsupported')).rejects.toMatchObject({ code: 'UNSUPPORTED_ENCODING', status: 200 });
+    await socketClosed;
   });
 
   it('rejects malformed gzip and closes the upstream socket without another request', async () => {
@@ -302,8 +385,15 @@ describe('protected Gaming document single-hop transport', () => {
 
   it('rejects a large redirect body before another request', async () => {
     process.env.WEB_FETCH_MAX_BYTES = '128';
-    handler = (_request, response) => { response.writeHead(302, { Location: '/final', 'Content-Length': '5000' }); response.end('x'.repeat(5000)); };
-    await expect(session().fetch('https://fixture.example.com/start')).rejects.toMatchObject({ code: 'TRANSFER_LIMIT' });
+    let closed!: () => void;
+    const socketClosed = new Promise<void>((resolve) => { closed = resolve; });
+    handler = (request, response) => {
+      request.socket.once('close', closed);
+      response.writeHead(302, { Location: '/final', 'Content-Length': '5000' }); response.write('x');
+    };
+    await expect(session().fetch('https://fixture.example.com/start')).rejects.toMatchObject({ code: 'TRANSFER_LIMIT',
+      byteDiagnostics: { limitStage: 'declared_length', declaredBytes: 5000, transferredBytes: 0, decodedBytes: 0 } });
+    await socketClosed;
     expect(requests).toHaveLength(1);
   });
 
@@ -358,6 +448,19 @@ describe('protected Gaming document single-hop transport', () => {
     };
     await expect(session({ signal: controller.signal }).fetch('https://fixture.example.com/slow')).rejects.toMatchObject({ code: 'CANCELLED' });
     await socketClosed;
+  });
+
+  it('enforces the absolute deadline during a stalled body and closes its TLS socket', async () => {
+    let closed!: () => void;
+    const socketClosed = new Promise<void>((resolve) => { closed = resolve; });
+    handler = (request, response) => {
+      request.socket.once('close', closed);
+      response.writeHead(200, { 'Content-Type': 'text/plain' }); response.write('unfinished document');
+    };
+    await expect(session({ timeoutMs: 100 }).fetch('https://fixture.example.com/slow'))
+      .rejects.toMatchObject({ code: 'DEADLINE_EXCEEDED' });
+    await socketClosed;
+    expect(requests).toHaveLength(1);
   });
 
   it('cancels a redirect body and prevents the next request', async () => {

@@ -1,6 +1,6 @@
 import { GAMING_EVIDENCE_UNIT_POLICY_VERSION, type GamingEvidenceExtractionInput,
   type GamingEvidenceUnit, type GamingStructureDiagnostics } from '@shared/gaming/gamingEvidenceUnits.js';
-import { filterGamingDocumentInstructions } from './gamingDocumentExtraction.js';
+import { filterGamingDocumentInstructions, stripGamingHtmlTags } from './gamingDocumentExtraction.js';
 import { extractGamingHtmlEvidence } from './gamingHtmlEvidence.js';
 import { extractGamingJsonEvidence } from './gamingJsonEvidence.js';
 import { markGamingEvidenceUnitConflicts } from '@shared/gaming/gamingStructuralEvidence.js';
@@ -10,7 +10,7 @@ const normalize = (value: string) => value.normalize('NFKC').replace(/\s+/gu, ' 
 
 /** One accepted response; no network, query, model or publisher trust enters extraction. */
 export function extractGamingDocumentEvidence(input: GamingEvidenceExtractionInput & {
-  receivedBytes?: number; acceptedBytes?: number;
+  receivedBytes?: number; acceptedBytes?: number; declaredBytes?: number;
 }): { units: GamingEvidenceUnit[]; proseBody: string; instructionFiltered: boolean;
   sourceUseRestricted: boolean; diagnostics: GamingStructureDiagnostics } {
   const startedAt = Date.now();
@@ -43,13 +43,14 @@ export function extractGamingDocumentEvidence(input: GamingEvidenceExtractionInp
   if (capped && !subreasons.includes('extraction_budget_exhausted')) subreasons.push('extraction_budget_exhausted');
   // Inert JSON-only content is never indexed by falling back to its entire state blob.
   const proseBody = input.contentType === 'application/json' ? '' : html.proseBody ?? input.body;
-  const sourceUseRestricted = SOURCE_USE_RESTRICTION.test(input.body.replace(/<[^>]*>/gu, ' '));
+  const sourceUseRestricted = SOURCE_USE_RESTRICTION.test(stripGamingHtmlTags(input.body));
   const truncated = html.truncated || json.truncated || capped;
   return { units, proseBody, instructionFiltered, sourceUseRestricted, diagnostics: {
     policyVersion: GAMING_EVIDENCE_UNIT_POLICY_VERSION,
     strategies: [...new Set(['prose', ...html.attempts, ...json.attempts])].slice(0, 8),
     contentType: input.contentType || 'unknown',
     ...(input.receivedBytes === undefined ? {} : { receivedBytes: input.receivedBytes }),
+    ...(input.declaredBytes === undefined ? {} : { declaredBytes: input.declaredBytes }),
     acceptedBytes: input.acceptedBytes ?? Buffer.byteLength(input.body, 'utf8'),
     rawChars: input.body.length, extractedChars: outputChars,
     unitKinds: [...new Set(units.map(unit => unit.kind))], selectedUnits: units.length,

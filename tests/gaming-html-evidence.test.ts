@@ -14,6 +14,7 @@ jest.unstable_mockModule('node:dns/promises', () => ({
 }));
 const { resolveGamingDocument } = await import('../src/services/gamingDocumentResolution.js');
 const { extractGamingHtmlEvidence, GAMING_HTML_EVIDENCE_LIMITS } = await import('../src/services/gamingHtmlEvidence.js');
+const { extractGamingDocumentEvidence } = await import('../src/services/gamingDocumentEvidence.js');
 const { assessGamingStructuralUsability } = await import('../src/shared/gaming/gamingStructuralEvidence.js');
 
 const sparseTable = '<table><caption>TEST SPACE resource reports</caption><tr><th>System</th><th>Body</th><th>Site</th><th>Resource</th></tr><tr><td>TEST-ORION-01</td><td>B 2</td><td>PML 7</td><td>Platinum</td></tr></table>';
@@ -251,6 +252,27 @@ describe('Gaming structural HTML evidence', () => {
     const field = extract(sparseTable.replace('Platinum', 'x'.repeat(GAMING_HTML_EVIDENCE_LIMITS.fieldChars + 1))).units[0];
     expect(field.integrity.status).toBe('partial');
     expect(field.text.length).toBeLessThanOrEqual(GAMING_HTML_EVIDENCE_LIMITS.unitChars);
+  });
+
+  it('marks already expired extraction as partial even when malformed HTML has no records', () => {
+    for (const body of ['<main><p>No structured records.</p></main>', '<a'.repeat(50_000), sparseTable]) {
+      const result = extractGamingHtmlEvidence({ body, contentType: 'text/html', sourceUrl: 'https://example.org/report',
+        deadlineAt: Date.now() - 1 });
+      expect(result).toMatchObject({ units: [], outputChars: 0, proseBody: '', truncated: true,
+        subreasons: ['extraction_budget_exhausted'] });
+    }
+  });
+
+  it('still checks the complete source-use restriction after structural or deadline exhaustion', () => {
+    for (const input of [
+      { body: '<i>'.repeat(30_001) + '<p>No automated use.</p>' },
+      { body: '<article><p>Guide prose.</p></article><unfinished No automated use.', deadlineAt: Date.now() - 1 }
+    ]) {
+      const result = extractGamingDocumentEvidence({ ...input, contentType: 'text/html', sourceUrl: 'https://example.org/report' });
+      expect(result).toMatchObject({ units: [], sourceUseRestricted: true, diagnostics: {
+        budgetOutcome: 'exhausted', truncationStages: ['extraction'], subreasons: expect.arrayContaining(['extraction_budget_exhausted'])
+      } });
+    }
   });
 
   it('does not promote prompt injections, image shells, login forms, or execution-only pages', () => {

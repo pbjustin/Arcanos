@@ -15,7 +15,7 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 5_000;
 const DEFAULT_TOTAL_TIMEOUT_MS = 60_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 64 * 1024;
 const MAX_AGGREGATE_RESPONSE_BYTES = 512 * 1024;
-const MAX_REQUESTS = 171;
+const MAX_REQUESTS = 173;
 const MAX_BACKSTAGE_BOOKER_OPENAPI_SOURCE_BYTES = 128 * 1024;
 const BACKSTAGE_BOOKER_OPENAPI_GIT_PATH =
   'contracts/backstage_booker.openapi.v1.json';
@@ -1222,6 +1222,24 @@ export function buildNativePrPreviewRequestPlan() {
       'gaming-query',
       { gamingMode: mode }
     ))),
+    gamingCase(
+      'gaming-query-closed-schema',
+      gamingQueryBody('guide', NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.fixtures.guide,
+        { unexpected: true }),
+      400,
+      'gaming-query-validation',
+      { validation: { code: 'BAD_REQUEST',
+        message: 'Gaming query request exceeds the published field limits.' } }
+    ),
+    gamingCase(
+      'gaming-query-unsupported-action',
+      { ...gamingQueryBody('guide', NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.fixtures.guide),
+        action: 'refresh' },
+      400,
+      'gaming-query-validation',
+      { validation: { code: 'BAD_REQUEST',
+        message: "Gaming requests require action 'query'." } }
+    ),
     gamingCase(
       'gaming-query-mode-required',
       {
@@ -4761,6 +4779,9 @@ async function executeRequestCase(
   }
   const gamingExecutionBudgetContract = NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming;
   for (const [proofHeader, proofVersion, proofCode] of [
+    [gamingExecutionBudgetContract.largeSourceProofHeader,
+      gamingExecutionBudgetContract.largeSourceProofVersion,
+      'NATIVE_PR_PREVIEW_GAMING_LARGE_SOURCE_PROOF_INVALID'],
     [gamingExecutionBudgetContract.baseGameScopeProofHeader,
       gamingExecutionBudgetContract.baseGameScopeProofVersion,
       'NATIVE_PR_PREVIEW_GAMING_BASE_GAME_SCOPE_PROOF_INVALID'],
@@ -5146,6 +5167,10 @@ async function executeRequestCase(
           gamingGuideResponseVerified: true,
           gamingDocumentIngestionVerified: true,
           gamingDurableRagVerified: true,
+          gamingLargeSourceVerified: true,
+          gamingLargeSourceProofVersion: NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.largeSourceProofVersion,
+          gamingLargeSourceProofScope: NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.largeSourceProofScope,
+          gamingLargeSourceCases: [...NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.largeSourceCases],
           gamingGuideAssistanceVerified: true,
           gamingProgressRecoveryVerified: true,
           gamingHybridKnowledgeVerified: true,

@@ -12,6 +12,7 @@ import { assertPluginMigrationPreviewFixture } from '../src/shared/chatgpt/plugi
 import { assertGamingCompositionPreviewFixture } from '../src/shared/chatgpt/gamingCompositionPreviewFixture.js';
 import * as trinityReasoningPolicy from '../src/shared/gpt/trinityReasoningPolicy.js';
 import * as heartbeatBoundary from '../src/services/controlPlane/heartbeatHttpBoundary.js';
+import * as gamingDurableRagFixture from '../src/shared/gaming/gamingDurableRagPreviewFixture.js';
 import {
   NATIVE_PR_PREVIEW_BACKSTAGE_BOOKER_OPENAPI_CONTRACT,
   NATIVE_PR_PREVIEW_CHATGPT_TUTOR_CONTRACT,
@@ -63,6 +64,11 @@ jest.unstable_mockModule('../src/shared/chatgpt/pluginMigrationPreviewFixture.js
 const assertGamingCompositionFixture = jest.fn(assertGamingCompositionPreviewFixture);
 jest.unstable_mockModule('../src/shared/chatgpt/gamingCompositionPreviewFixture.js', () => ({
   assertGamingCompositionPreviewFixture: assertGamingCompositionFixture,
+}));
+const runGamingLargeSourceFixture = jest.fn(gamingDurableRagFixture.runGamingLargeSourcePreview);
+jest.unstable_mockModule('../src/shared/gaming/gamingDurableRagPreviewFixture.js', () => ({
+  ...gamingDurableRagFixture,
+  runGamingLargeSourcePreview: runGamingLargeSourceFixture,
 }));
 const normalizeModelReasoningEffort = jest.fn(trinityReasoningPolicy.normalizeOpenAIModelReasoningEffort);
 const resolveModelCapabilities = jest.fn(trinityReasoningPolicy.resolveOpenAIModelCapabilities);
@@ -3483,6 +3489,7 @@ describe('native PR contained application', () => {
 
   it('serves closed, correlated, bounded public Gaming fixtures without provider execution', async () => {
     const { app } = buildApplication();
+    runGamingLargeSourceFixture.mockClear();
     const canaryRequestId = 'req-preview-gaming-canary';
     const canaryTraceId = 'trace-preview-gaming-canary';
     const canary = await request(app)
@@ -3578,6 +3585,9 @@ describe('native PR contained application', () => {
       expect(response.headers[NATIVE_PR_PREVIEW_GAMING_CONTRACT.documentProofHeader]).toBe(
         mode === 'guide' ? NATIVE_PR_PREVIEW_GAMING_CONTRACT.documentProofVersion : undefined
       );
+      expect(response.headers[NATIVE_PR_PREVIEW_GAMING_CONTRACT.largeSourceProofHeader]).toBe(
+        mode === 'guide' ? NATIVE_PR_PREVIEW_GAMING_CONTRACT.largeSourceProofVersion : undefined
+      );
       expect(response.headers[NATIVE_PR_PREVIEW_GAMING_CONTRACT.guideAssistanceProofHeader]).toBe(
         mode === 'guide' ? NATIVE_PR_PREVIEW_GAMING_CONTRACT.guideAssistanceProofVersion : undefined
       );
@@ -3597,6 +3607,7 @@ describe('native PR contained application', () => {
         mode === 'guide' ? NATIVE_PR_PREVIEW_GAMING_CONTRACT.discoveryRecoveryEvidenceProofVersion : undefined
       );
     }
+    expect(runGamingLargeSourceFixture).toHaveBeenCalledTimes(1);
 
     const invalidCanary = await request(app)
       .post(NATIVE_PR_PREVIEW_GAMING_CONTRACT.canaryPath)
@@ -3665,6 +3676,55 @@ describe('native PR contained application', () => {
       'trace-preview-operational',
       true
     );
+  });
+
+  it('withholds every Gaming proof and success output when the large-source assertions fail and recovers on a later request', async () => {
+    const { app } = buildApplication();
+    const body = {
+      action: 'query',
+      payload: { mode: 'guide', game: NATIVE_PR_PREVIEW_GAMING_CONTRACT.game,
+        prompt: NATIVE_PR_PREVIEW_GAMING_CONTRACT.fixtures.guide },
+    };
+    runGamingLargeSourceFixture.mockImplementationOnce(async () => {
+      throw new Error('Private large-source fixture failure must not be reflected.');
+    });
+    const failed = await request(app).post(NATIVE_PR_PREVIEW_GAMING_CONTRACT.queryPath).send(body);
+    expect(failed.status).toBe(500);
+    expect(failed.body).toEqual({ error: 'PREVIEW_GAMING_LARGE_SOURCE_CONTRACT_INVALID' });
+    expect(JSON.stringify(failed.body)).not.toContain('Private');
+    for (const [key, header] of Object.entries(NATIVE_PR_PREVIEW_GAMING_CONTRACT)) {
+      if ((key === 'proofHeader' || key.endsWith('ProofHeader')) && typeof header === 'string') {
+        expect(failed.headers[header]).toBeUndefined();
+      }
+    }
+    expect(failed.headers[NATIVE_PR_PREVIEW_SYNTHETIC_RESPONSE_HEADER.name])
+      .toBe(NATIVE_PR_PREVIEW_SYNTHETIC_RESPONSE_HEADER.value);
+    expectNoStore(failed);
+    const recovered = await request(app).post(NATIVE_PR_PREVIEW_GAMING_CONTRACT.queryPath).send(body);
+    expect(recovered.status).toBe(200);
+    expect(recovered.body.result.data).toEqual({ response: 'Sealed preview guide response.', sources: [] });
+    expect(recovered.headers[NATIVE_PR_PREVIEW_GAMING_CONTRACT.largeSourceProofHeader])
+      .toBe('gaming-large-source/v1');
+  });
+
+  it.each([
+    ['closed payload', { action: 'query', payload: { mode: 'guide',
+      game: NATIVE_PR_PREVIEW_GAMING_CONTRACT.game,
+      prompt: NATIVE_PR_PREVIEW_GAMING_CONTRACT.fixtures.guide, unexpected: true } },
+    'Gaming query request exceeds the published field limits.'],
+    ['unsupported action', { action: 'refresh', payload: { mode: 'guide',
+      game: NATIVE_PR_PREVIEW_GAMING_CONTRACT.game,
+      prompt: NATIVE_PR_PREVIEW_GAMING_CONTRACT.fixtures.guide } },
+    "Gaming requests require action 'query'."],
+  ] as const)('rejects %s before large-source assertions or success proof', async (_name, body, message) => {
+    const { app } = buildApplication();
+    runGamingLargeSourceFixture.mockClear();
+    const response = await request(app).post(NATIVE_PR_PREVIEW_GAMING_CONTRACT.queryPath).send(body);
+    expect(response.status).toBe(400);
+    expect(response.body.error).toEqual({ code: 'BAD_REQUEST', message });
+    expect(runGamingLargeSourceFixture).not.toHaveBeenCalled();
+    expect(response.headers[NATIVE_PR_PREVIEW_GAMING_CONTRACT.largeSourceProofHeader]).toBeUndefined();
+    expectNoStore(response);
   });
 
   it('keeps exact Gaming-source paths closed with production-shaped unauthenticated responses', async () => {

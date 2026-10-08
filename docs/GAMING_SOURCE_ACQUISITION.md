@@ -133,15 +133,50 @@ at most twelve requests if time remains. There is no redirect fan-out. The
 existing ingestion source count and surrounding concurrency admission remain.
 
 One absolute deadline spans DNS, connection/TLS, redirect bodies, final transfer,
-decompression, and extraction. Every response shares the existing byte allowance
-(default 1,500,000 bytes, configured hard ceiling 5,000,000); both aggregate wire
-and decoded bytes are metered separately against that same allowance. Redirect
-bodies consume it too. Headers and Location are bounded. Synchronous extraction
+decompression, and extraction. Gaming's HTTPS resolver supplies independent
+server-owned ceilings of 5,000,000 transferred bytes and 5,000,000 decoded bytes
+per acquisition session. Redirect bodies consume both aggregate allowances.
+An explicit `WEB_FETCH_MAX_BYTES` setting still caps both allowances; a caller
+cannot enlarge them. Other shared fetcher consumers retain their 1,500,000-byte
+default and 5,000,000-byte hard ceiling. Headers and Location are bounded. Synchronous extraction
 is bounded by document size and checked against the same deadline before/after
 processing; expiration does not admit late evidence. Live text remains capped at
 100,000 characters and durable text at 1,000,000, with explicit partial coverage.
 Cancellation stops the DNS resolver and active streams. Bodies, decoder/meter
 streams, agents/sockets, listeners, and timers are released on every exit.
+
+The HTML parsing envelope is independently limited to 5,000,000 characters and
+30,000 elements. Structured JSON retains its 262,144-byte per-script and
+524,288-byte aggregate bounds; structured output remains at most 1,000,000
+characters and 2,048 units. Existing indexed-document limits retain at most 500
+chunks. Selected generation context continues to use the existing source, chunk,
+and character budgets. Exceeding transferred or decoded bytes rejects the whole
+response; an arbitrary downloaded prefix never becomes a complete document.
+Text, structure, or chunk truncation retains explicit partial-coverage semantics.
+
+HTML element-budget and source-use scans advance through complete spans without
+backtracking. Unterminated markup cannot make these scans grow quadratically.
+Deadline checks also cover documents with no supported records; exhaustion stays
+explicit, and source-use restrictions are still checked across the entire bounded
+body. A synthetic malformed-body regression runs in a disposable Node child with
+an independent process deadline.
+
+Resolver revision `gaming-document-v3` identifies this acquisition/extraction
+policy for both live evaluation and durable source revisions. Numeric diagnostics
+distinguish declared length rejection, measured transferred overflow, and decoded
+overflow, including their independently enforced limits. Malformed length is a
+transport failure, not evidence of size overflow. Known connection and TLS
+failures have finite internal subreasons without exposing native errors.
+
+On October 8, 2026, bounded supplemental acquisition through a managed HTTP proxy
+returned HTTP 200 for the four reported Elden Ring URLs. GamesRadar transferred
+435,054 compressed bytes and decoded to 2,233,809 bytes; PC Gamer transferred
+433,312 and decoded to 2,093,075. These decoded sizes exceed the shared default.
+Mobalytics and Dot Esports decoded below that default. These measurements support
+the bounded Gaming allowance but do not establish protected backend acquisition,
+publisher behavior during the incident, or the historical access-failure causes.
+Protected-path attempts in that environment received no HTTP response. Live
+acquisition and Trinity generation require separate isolated validation.
 
 ## Provenance, approval, and durable identity
 

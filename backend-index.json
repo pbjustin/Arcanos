@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-06T23:24:01.893Z",
+  "generatedAt": "2026-10-08T20:00:54.345Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -3062,6 +3062,9 @@
           "relativePath": "src/shared/promptUtils.ts"
         },
         {
+          "relativePath": "src/shared/protectedDocumentByteBudget.ts"
+        },
+        {
           "relativePath": "src/shared/redaction.ts"
         },
         {
@@ -4420,6 +4423,9 @@
           "relativePath": "tests/gaming-html-evidence.test.ts"
         },
         {
+          "relativePath": "tests/gaming-html-scan.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-hybrid-edition-budget.test.ts"
         },
         {
@@ -4451,6 +4457,9 @@
         },
         {
           "relativePath": "tests/gaming-large-guide-rag.integration.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-large-source-preview.test.ts"
         },
         {
           "relativePath": "tests/gaming-live-runtime.test.ts"
@@ -5324,6 +5333,9 @@
         },
         {
           "relativePath": "tests/protected-config-digests.test.ts"
+        },
+        {
+          "relativePath": "tests/protected-document-byte-budget.test.ts"
         },
         {
           "relativePath": "tests/public-gaming-canary.test.ts"

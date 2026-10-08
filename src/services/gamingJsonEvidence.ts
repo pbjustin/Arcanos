@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { load } from 'cheerio';
-import { filterGamingDocumentInstructions } from '@services/gamingDocumentExtraction.js';
+import { countGamingHtmlElements, filterGamingDocumentInstructions } from '@services/gamingDocumentExtraction.js';
 import {
   GAMING_EVIDENCE_UNIT_POLICY_VERSION,
   type GamingEvidenceExtractionInput,
@@ -9,7 +9,7 @@ import {
 } from '@shared/gaming/gamingEvidenceUnits.js';
 
 export const GAMING_JSON_EVIDENCE_LIMITS = Object.freeze({
-  inputChars: 5_000_000, htmlChars: 1_500_000, htmlElements: 30_000,
+  inputChars: 5_000_000, htmlChars: 5_000_000, htmlElements: 30_000,
   jsonBytes: 262_144, totalJsonBytes: 524_288, scripts: 16,
   depth: 12, objectKeys: 64, totalKeys: 4_096, arrayItems: 256, stringChars: 4_096,
   records: 256, fields: 32, fieldChars: 1_000, labelChars: 160, qualifiers: 16, qualifierChars: 400,
@@ -318,6 +318,13 @@ export function extractGamingJsonEvidence(input: GamingEvidenceExtractionInput):
   };
   const reason = (value: string): void => { if (!result.subreasons.includes(value)) result.subreasons.push(value); };
   const deadline = Math.min(Date.now() + LIMITS.elapsedMs, input.deadlineAt ?? Infinity);
+  const deadlineExpired = () => {
+    if (Date.now() < deadline) return false;
+    result.truncated = true;
+    reason('extraction_budget_exhausted');
+    return true;
+  };
+  if (deadlineExpired()) return result;
   let bytes = 0;
   const parse = (text: string, strategy: 'json_ld' | 'application_json', scope: string, context?: ScopeContext): void => {
     result.attempts.push(strategy);
@@ -344,16 +351,15 @@ export function extractGamingJsonEvidence(input: GamingEvidenceExtractionInput):
     if (input.body.length > LIMITS.htmlChars) {
       result.truncated = true; reason('extraction_budget_exhausted'); return result;
     }
-    let elementCount = 0;
-    for (const _element of input.body.matchAll(/<[a-zA-Z][^>]*>/gu)) {
-      if (++elementCount > LIMITS.htmlElements) {
-        result.truncated = true; reason('extraction_budget_exhausted'); return result;
-      }
+    if (countGamingHtmlElements(input.body, LIMITS.htmlElements) > LIMITS.htmlElements) {
+      result.truncated = true; reason('extraction_budget_exhausted'); return result;
     }
+    if (deadlineExpired()) return result;
     // Parse actual DOM scripts, never script-looking text inside comments, templates, or assignment strings.
     // The installed parser supports source locations; the repository also includes older ambient Cheerio types.
     const parserOptions = { xmlMode: false, sourceCodeLocationInfo: true };
     const $ = load(input.body, parserOptions);
+    if (deadlineExpired()) return result;
     $('template, noscript').remove();
     const scripts = $('script');
     let inertScripts = 0;
@@ -425,6 +431,7 @@ export function extractGamingJsonEvidence(input: GamingEvidenceExtractionInput):
     }
     if (input.transportTruncated) { result.truncated = true; reason('content_truncated'); }
   }
+  if (deadlineExpired()) return result;
   if (!result.units.length && !result.subreasons.length) reason('no_supported_structured_records');
   return result;
 }

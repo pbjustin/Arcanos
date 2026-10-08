@@ -37,6 +37,10 @@ describe('reviewed official DOM currentness references', () => {
     expect(parse(INDEX, indexHtml() + indexHtml())?.status).toBe('incomplete');
     expect(parse(INDEX, indexHtml().replace('class="search__section"', 'class="other"'))?.status).toBe('incomplete');
   });
+  test('malformed unclosed markup cannot establish an official currentness reference', () => {
+    expect(parse(INDEX, '<a'.repeat(50_000))).toMatchObject({ status: 'incomplete', categoryCount: 0, cards: [] });
+    expect(parse(ARTICLE, '<a'.repeat(50_000))).toMatchObject({ status: 'incomplete', platformText: '' });
+  });
   test('complete platform paragraph rejects qualified or unsupported rollout tails', () => {
     expect(metadata().platforms).toEqual(['Steam', 'PC']);
     expect(metadata().currentnessMetadata?.releaseActive).toBe(true);

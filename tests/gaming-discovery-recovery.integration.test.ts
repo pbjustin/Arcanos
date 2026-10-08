@@ -196,6 +196,48 @@ describe('backend-authoritative Gaming discovery recovery through served MCP', (
     expect(mockAuditCompletion).toHaveBeenCalledTimes(1); expect(mockIngest).not.toHaveBeenCalled();
   });
 
+  it('answers from late complete evidence in a long acquired guide through served MCP without storing it', async () => {
+    const url = 'https://guides.example.org/late-complete-route';
+    const complete = `${gateText} ${bridgeText}`;
+    addPage(url, complete, complete, game, {
+      html: `<html><title>${game} guide</title><body><article><p>${game} gameplay reference.</p>
+        ${Array.from({ length: 24 }, (_unused, index) => `<p>${gateText} Lantern marker ${index}.
+          ${'This section describes safe timing beside the quiet cabinet. '.repeat(30)}</p>`).join('')}
+        <p>${complete} LATE_ROUTE_SUPPORT.</p></article></body></html>`
+    });
+    const run = harness(); const initial = await run.query();
+    const answer = await run.submit(initial.result, [url]);
+    expect(answer.result).toMatchObject({ state: 'answer_ready', nextAction: 'answer', coverageSatisfied: true, missingCoverage: [] });
+    expect(answer.result.selectedEvidenceIds!.some(id => Number(id.split(':').at(-1)) > 20)).toBe(true);
+    expect(answer.result.answer!.sources.map(source => source.url)).toEqual([url]);
+    expect(answer.result.answer!.response).toContain('[Source 1]');
+    const audited = JSON.parse((mockAuditCompletion.mock.calls[0][1] as any).messages[1].content);
+    expect(audited.evidence).toHaveLength(1);
+    expect(audited.evidence[0].text).toContain(gateText);
+    expect(audited.evidence[0].text).toContain(bridgeText);
+    expect(String((mockTrinity.mock.calls[0][0] as any).input.prompt).length).toBeLessThan(16_000);
+    expect(mockHttp).toHaveBeenCalledTimes(1); expect(mockTrinity).toHaveBeenCalledTimes(1);
+    expect(mockIngest).not.toHaveBeenCalled();
+  });
+
+  it('preserves a conflicting source after more than twenty accepted passages and stops before generation', async () => {
+    const longUrl = 'https://guides.example.org/long-copperblade-stats';
+    const conflictUrl = 'https://different.example.org/late-copperblade-conflict';
+    addPage(longUrl, 'Copperblade weight value is 10 points in base scope.', undefined, game, {
+      html: `<html><title>${game} guide</title><body><article><p>${game} gameplay reference.</p>
+        <table><tr><th>Item</th><th>Stat</th><th>Value</th><th>Unit</th><th>Scope</th><th>Note</th></tr>
+        ${Array.from({ length: 24 }, (_unused, index) => `<tr><td>Copperblade</td><td>weight</td><td>10</td><td>points</td><td>base</td><td>entry ${index}</td></tr>`).join('')}
+        </table></article></body></html>`
+    });
+    addStatPage(conflictUrl, 'Copperblade', 99);
+    const run = harness(); const initial = await run.query({ question: 'What is Copperblade weight value?' });
+    const answer = await run.submit(initial.result, [longUrl, conflictUrl]);
+    expect(answer.result).toMatchObject({ nextAction: 'stop', coverageSatisfied: false, reason: 'CONTRADICTORY_EVIDENCE' });
+    expect(answer.result.answer).toBeUndefined();
+    expect(mockHttp).toHaveBeenCalledTimes(2); expect(mockTrinity).not.toHaveBeenCalled();
+    expect(mockAuditCompletion).not.toHaveBeenCalled(); expect(mockIngest).not.toHaveBeenCalled();
+  });
+
   it('selects a compact complete source from three accepted candidates and drops redundant coverage', async () => {
     sources(); const run = harness(); const initial = await run.query();
     const answer = await run.submit(initial.result, [gateUrl, bridgeUrl, completeUrl]);

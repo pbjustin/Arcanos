@@ -1,8 +1,9 @@
 import {
-  GamingDocumentAcquisitionError, GAMING_DOCUMENT_ACQUISITION_POLICY_VERSION, isGamingDocumentRedirectStatus,
+  GamingDocumentAcquisitionError, GAMING_DOCUMENT_ACQUISITION_POLICY_VERSION, GAMING_DOCUMENT_ACQUISITION_LIMITS,
+  isGamingDocumentRedirectStatus,
   requireGamingHttpsSourceAdmission, resolveGamingDocumentRedirect, type GamingDocumentAcquisition
 } from "@shared/gaming/gamingSourceAcquisitionCore.js";
-export { GamingDocumentAcquisitionError, GAMING_DOCUMENT_ACQUISITION_POLICY_VERSION }
+export { GamingDocumentAcquisitionError, GAMING_DOCUMENT_ACQUISITION_POLICY_VERSION, GAMING_DOCUMENT_ACQUISITION_LIMITS }
   from "@shared/gaming/gamingSourceAcquisitionCore.js";
 export type { GamingDocumentAcquisition } from "@shared/gaming/gamingSourceAcquisitionCore.js";
 import { createHash } from "node:crypto";
@@ -31,7 +32,7 @@ import { extractGamingDocumentEvidence } from './gamingDocumentEvidence.js';
 import { extractGamingCurrentnessDocument } from './gamingCurrentnessDocument.js';
 import type { GamingCurrentnessDocumentMetadata } from '@shared/gaming/gamingCurrentnessAdapters.js';
 
-export const GAMING_DOCUMENT_RESOLVER_VERSION = "gaming-document-v2";
+export const GAMING_DOCUMENT_RESOLVER_VERSION = "gaming-document-v3";
 const acquisitionAttestations = new WeakMap<GamingDocumentAcquisition, string>();
 const documentBinding = (document: ResolvedGamingDocument): string => createHash("sha256")
   .update(JSON.stringify({ requestedUrl: document.requestedUrl, canonicalUrl: document.canonicalUrl,
@@ -65,7 +66,7 @@ export function isResolvedGamingDocumentIdentityVerified(document: ResolvedGamin
   } catch { return false; }
 }
 export const GAMING_DOCUMENT_LIMITS = Object.freeze({ textChars: 100_000, timeoutMs: 30_000 });
-// Matches the existing revision ceiling and stays within the unchanged 1.5 MB default fetch budget for ASCII prose.
+// Matches the existing revision ceiling; article text is independent of the page's byte allowance.
 export const GAMING_DURABLE_DOCUMENT_MAX_CHARS = 1_000_000;
 export interface GamingDocumentResolutionOptions extends FetchAndCleanOptions {
   documentPurpose?: 'durable';
@@ -218,7 +219,7 @@ async function acquireGenericGamingDocument(url: string, maxChars: number, optio
   let currentUrl = admitGenericGamingUrl(url, 0, true);
   const seen = new Set([currentUrl]);
   const transitions: GamingDocumentAcquisition["transitions"][number][] = [];
-  const session = webFetcher.createProtectedDocumentFetchSession(options);
+  const session = webFetcher.createProtectedDocumentFetchSession(options, GAMING_DOCUMENT_ACQUISITION_LIMITS);
   const startedAt = Date.now();
   try {
     for (;;) {
@@ -238,7 +239,7 @@ async function acquireGenericGamingDocument(url: string, maxChars: number, optio
           webFetcher.assertSupportedFetchAndCleanBody(response.body, response.contentType);
           structure = extractGamingDocumentEvidence({ body: response.body, contentType: response.contentType,
             sourceUrl: projectGamingDocumentPublicUrl(currentUrl), deadlineAt: options.deadlineAt,
-            receivedBytes: response.receivedBytes, acceptedBytes: response.acceptedBytes });
+            receivedBytes: response.receivedBytes, acceptedBytes: response.acceptedBytes, declaredBytes: response.declaredBytes });
           // Raw diagnostic/build preview describes the original response, not the
           // structural projection. Extraction sees the entire accepted body above.
           const rawLimit = Math.min(options.rawDocumentMaxChars ?? GAMING_BUILD_RESOURCE_HARD_LIMITS.maxHtmlChars,
@@ -269,7 +270,7 @@ async function acquireGenericGamingDocument(url: string, maxChars: number, optio
           : error.code === "DEADLINE_EXCEEDED" ? "SOURCE_TIMEOUT"
             : error.code === "TRANSFER_LIMIT" || error.code === "DECODED_LIMIT" ? "SOURCE_TOO_LARGE"
               : error.code === "UNSUPPORTED_ENCODING" ? "UNSUPPORTED_SOURCE_FORMAT" : "SOURCE_FETCH_FAILED",
-      "transport", error.code, transitions.length, error.status);
+      "transport", error.code, transitions.length, error.status, undefined, error.byteDiagnostics);
     throw error;
   } finally { session.dispose(); }
 }

@@ -614,6 +614,7 @@ jobs:
     needs: [lint-and-typecheck, build, test, validate-railway-compatibility, validate-deployment-readiness, security-audit, sdk-compliance-audit, python-cli-windows, local-agent-sandbox-linux, local-agent-postgres-concurrency, runtime-redis-admission]
     permissions:
       contents: read
+      actions: read
     timeout-minutes: 5
     
     steps:
@@ -628,9 +629,28 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
 
       - name: 🧾 Verify every required job result
+        id: required-results
         env:
           ARCANOS_REQUIRED_CI_RESULTS_JSON: ${{ toJSON(needs) }}
         run: node scripts/verify-required-ci-results.mjs
+
+      - name: Write sanitized per-SHA CI receipts
+        if: ${{ always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
+        env:
+          ARCANOS_CI_RECEIPTS_ENABLED: 'true'
+          ARCANOS_CI_VERIFIER_STEP_OUTCOME: ${{ steps.required-results.outcome }}
+          ARCANOS_REQUIRED_CI_RESULTS_JSON: ${{ toJSON(needs) }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/verify-required-ci-results.mjs --write-receipts
+
+      - name: Retain per-SHA CI verification receipts
+        if: ${{ always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-verification-receipts-${{ github.event.pull_request.head.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/arcanos-ci-verification-receipts/*.json
+          if-no-files-found: error
+          retention-days: 30
 
       - name: ✅ All checks passed
         run: |

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { load } from 'cheerio';
-import { filterGamingDocumentInstructions } from '@services/gamingDocumentExtraction.js';
+import { countGamingHtmlElements, filterGamingDocumentInstructions } from '@services/gamingDocumentExtraction.js';
 import {
   GAMING_EVIDENCE_UNIT_POLICY_VERSION,
   type GamingEvidenceExtractionInput,
@@ -10,7 +10,7 @@ import {
 
 /** Separate from transport limits: no caller can enlarge structural parsing work. */
 export const GAMING_HTML_EVIDENCE_LIMITS = Object.freeze({
-  htmlChars: 1_500_000, elements: 30_000, tables: 128, rowsPerTable: 1_024,
+  htmlChars: 5_000_000, elements: 30_000, tables: 128, rowsPerTable: 1_024,
   columns: 32, span: 64, expandedCells: 32_768, lists: 256, units: 2_048,
   fields: 32, fieldChars: 1_024, contextChars: 512, unitChars: 4_096, outputChars: 1_000_000
 });
@@ -71,15 +71,25 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
   if (!['text/html', 'application/xhtml+xml'].includes(input.contentType)) return result;
   const limit = GAMING_HTML_EVIDENCE_LIMITS;
   const fail = (reason: string) => { if (!result.subreasons.includes(reason)) result.subreasons.push(reason); };
-  if (input.body.length > limit.htmlChars || (input.body.match(/<[a-zA-Z][^>]*>/g)?.length ?? 0) > limit.elements) {
+  const deadlineExpired = () => {
+    if (input.deadlineAt === undefined || Date.now() < input.deadlineAt) return false;
+    result.truncated = true; result.proseBody = '';
+    fail('extraction_budget_exhausted');
+    return true;
+  };
+  if (deadlineExpired()) return result;
+  if (input.body.length > limit.htmlChars || countGamingHtmlElements(input.body, limit.elements) > limit.elements) {
     result.truncated = true; result.proseBody = ''; fail('extraction_budget_exhausted'); return result;
   }
+  if (deadlineExpired()) return result;
   // Runtime Cheerio uses parse5; the repository's legacy ambient types omit its location option.
   const parseOptions = { sourceCodeLocationInfo: true };
   const $ = load(input.body, parseOptions as Parameters<typeof load>[1]);
+  if (deadlineExpired()) return result;
   const visibleBody = $('body').clone();
   visibleBody.find('script,style,template,noscript').remove();
   const visibleText = text(visibleBody.text());
+  if (deadlineExpired()) return result;
   if (visibleText.length <= 300 && /\b(?:verify (?:that )?you are human|checking your browser|enable javascript and cookies to continue|sign in to continue|log in to continue)\b/iu.test(visibleText)) {
     result.proseBody = ''; fail('access_challenge'); return result;
   }
@@ -361,6 +371,7 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
   }
   for (const element of removedProseElements) $(element).remove();
   result.proseBody = $.html();
+  if (deadlineExpired()) return result;
   if (!result.units.length) fail('no_supported_structured_records');
   return result;
 }

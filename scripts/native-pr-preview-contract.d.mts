@@ -281,6 +281,24 @@ export interface NativePrPreviewE2eContract {
     documentProofVersion: 'gaming-document-ingestion/v1';
     durableRagProofHeader: 'x-arcanos-preview-gaming-durable-rag-version';
     durableRagProofVersion: 'gaming-durable-rag/v1';
+    largeSourceProofHeader: 'x-arcanos-preview-gaming-large-source-version';
+    largeSourceProofVersion: 'gaming-large-source/v1';
+    largeSourceProofScope: 'pure-synthetic-large-source-selection-coverage-artifact';
+    largeSourceCases: readonly [
+      'large-html-structural-extraction',
+      'independent-text-index-context-bounds',
+      'protected-transfer-decoded-byte-admission',
+      'oversized-structural-input-rejection',
+      'archive-decoded-byte-rejection',
+      'late-complete-passage-pool',
+      'samurai-multi-topic-early',
+      'samurai-multi-topic-late',
+      'insufficient-coverage-budget',
+      'wrong-game-edition-dlc',
+      'partial-conflicting-structural-records',
+      'unsupported-currentness',
+      'transient-artifact-scope-expiry-content-binding',
+    ];
     guideAssistanceProofHeader: 'x-arcanos-preview-gaming-guide-assistance-version';
     guideAssistanceProofVersion: 'gaming-guide-assistance/v1';
     progressRecoveryProofHeader: 'x-arcanos-preview-gaming-progress-recovery-version';

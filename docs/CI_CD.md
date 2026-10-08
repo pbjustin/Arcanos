@@ -221,6 +221,27 @@ the aggregate fail. Its success means the tracked required CI jobs reported
 success; production promotion and live readiness remain separate rollout
 decisions.
 
+For same-repository PRs, that aggregate job also uploads sanitized per-SHA CI
+receipts for 30 days. Only this job adds `actions: read` to inspect its own PR's
+bounded Actions metadata; other validation jobs retain their existing scopes.
+The receipt collector admits the immutable run SHA, PR number, run ID and
+attempt, rather than treating GitHub's mutable PR association as the tested
+commit. It retains the current head and at most three prior linear ancestors,
+four runs per SHA and three attempts per run, within a 60-second API budget.
+Failed, cancelled and skipped attempts remain distinct. Missing or bounded-out
+history is explicitly unavailable or incomplete.
+
+Receipts contain finite job/step outcomes and identifiers, not logs, response
+bodies, dependency outputs or credentials. The current aggregate's checkout and
+observed Node/npm versions are separate from the PR head/base and from unknown
+dependency checkouts. A selective retry does not prove that reused jobs executed
+again. Local checks and direct PostgreSQL results belong in the PR evidence;
+Actions job logs supply actual commands and test counts. At receipt capture the
+aggregate, workflow and upload are unfinished, so the receipt reports only the
+required-dependency verdict and does not claim final workflow success. Inspect
+the completed run and artifact upload separately. Fork PRs do not collect or
+upload these receipts.
+
 ## Deploy (Railway)
 Deployment workflows are repository-specific; verify current trigger and required
 secrets in each workflow file before enabling auto-deploy.
