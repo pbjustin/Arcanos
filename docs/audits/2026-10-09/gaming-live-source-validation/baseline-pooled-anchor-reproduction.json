@@ -1,0 +1,35 @@
+{
+  "baselineSHA": "0ec167654fa3970c818b2e2721c044dd79b77189",
+  "archivePath": "/tmp/arcanos-gaming-baseline-extraction-sj4kMG",
+  "sourceMutation": false,
+  "node": "24.18.1",
+  "npm": "11.16.0",
+  "command": "node scripts/run-jest.mjs --runTestsByPath tests/gaming-final-review-probe.test.ts --testNamePattern \"(requires positive game proof|requires non-base edition proof)\" --coverage=false --runInBand --json",
+  "executed": 2,
+  "assertionFailures": 2,
+  "passed": 0,
+  "intentionallyUnselected": 4,
+  "importOrBuildFailure": false,
+  "outcome": "EXPECTED_FAIL",
+  "cases": [
+    {
+      "category": "positive_game_anchor",
+      "uncontaminatedControl": "unknown",
+      "contaminatedObserved": "verified",
+      "rulePath": "gamingClearSource metadataAnchor reads pooled metadata.headings",
+      "expected": "unknown"
+    },
+    {
+      "category": "positive_non_base_edition_anchor",
+      "uncontaminatedControl": "unknown",
+      "contaminatedObserved": "verified",
+      "rulePath": "gamingClearSource non-base edition positive scope includes pooled metadata.headings",
+      "expected": "unknown"
+    }
+  ],
+  "attribution": "Both failures are present on the exact production baseline; these probes do not establish that production accepted either document.",
+  "evidenceFiles": [
+    "/tmp/arcanos-gaming-baseline-pooled-anchor-reproduction.json",
+    "/tmp/arcanos-gaming-baseline-pooled-anchor-reproduction.log"
+  ]
+}

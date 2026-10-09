@@ -253,6 +253,8 @@ function responseHeadersForCase(
             NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.durableRagProofVersion,
           [NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.largeSourceProofHeader]:
             NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.largeSourceProofVersion,
+          [NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.liveSourceValidationProofHeader]:
+            NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.liveSourceValidationProofVersion,
           [NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.guideAssistanceProofHeader]:
             NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.guideAssistanceProofVersion,
           [NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.progressRecoveryProofHeader]:
@@ -3709,6 +3711,45 @@ test('requires large-source execution proof only on the fixed guide selector wit
     });
     await assert.rejects(run(mock), error => error instanceof NativePrPreviewE2eError
       && error.code === 'NATIVE_PR_PREVIEW_GAMING_LARGE_SOURCE_PROOF_INVALID'
+      && error.caseId === control.caseId);
+    assert.equal(mock.requestCount, requestPlan.findIndex(item => item.caseId === control.caseId) + 1);
+  }
+});
+
+test('requires live-source regression execution proof only on the fixed guide selector', async () => {
+  const requestPlan = buildNativePrPreviewRequestPlan();
+  const contract = NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming;
+  const run = mock => runNativePrPreviewE2e({
+    args: validArguments('--execute', '--allow-network'),
+    expectedBackstageBookerOpenApiDocument: EXPECTED_BACKSTAGE_BOOKER_OPENAPI_DOCUMENT,
+    fetchImpl: mock.fetchImpl, localGitState: LOCAL_GIT_STATE, monotonicNow: mock.monotonicNow,
+  });
+  const result = await run(buildMockFetch(requestPlan));
+  const guide = result.checks.find(check => check.caseId === 'gaming-query-guide');
+  assert.equal(guide.gamingLiveSourceValidationVerified, true);
+  assert.equal(guide.gamingLiveSourceValidationProofVersion, 'gaming-live-source-validation/v1');
+  assert.equal(guide.gamingLiveSourceValidationProofScope, 'pure-synthetic-identity-structural-extraction');
+  assert.deepEqual(guide.gamingLiveSourceValidationCases, [...contract.liveSourceValidationCases]);
+  assert.equal(result.checks.filter(check => check.gamingLiveSourceValidationVerified).length, 1);
+  const controls = [
+    ...[undefined, 'gaming-live-source-validation/v0', 'gaming-live-source-validation/unknown']
+      .map(proof => ({ caseId: 'gaming-query-guide', proof })),
+    ...['gaming-query-build', 'gaming-query-meta', 'worker-gaming-canary-denied', 'web-readiness-initial']
+      .map(caseId => ({ caseId, proof: contract.liveSourceValidationProofVersion })),
+  ];
+  for (const control of controls) {
+    const mock = buildMockFetch(requestPlan, requestCase => {
+      if (requestCase.caseId !== control.caseId) return undefined;
+      const body = responseBodyForCase(requestCase);
+      const headers = responseHeadersForCase(requestCase, Buffer.byteLength(body));
+      if (control.proof === undefined) delete headers[contract.liveSourceValidationProofHeader];
+      else headers[contract.liveSourceValidationProofHeader] = control.proof;
+      const response = new Response(body, { headers, status: requestCase.expectedStatus });
+      Object.defineProperty(response, 'url', { value: `${requestCase.role === 'worker' ? WORKER_BASE_URL : WEB_BASE_URL}${requestCase.path}` });
+      return response;
+    });
+    await assert.rejects(run(mock), error => error instanceof NativePrPreviewE2eError
+      && error.code === 'NATIVE_PR_PREVIEW_GAMING_LIVE_SOURCE_VALIDATION_PROOF_INVALID'
       && error.caseId === control.caseId);
     assert.equal(mock.requestCount, requestPlan.findIndex(item => item.caseId === control.caseId) + 1);
   }

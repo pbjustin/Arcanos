@@ -381,6 +381,8 @@ export interface FetchAndCleanOptions {
   deadlineAt?: number;
   timeoutMs?: number;
   preferredContentSelectors?: readonly string[];
+  /** Opt-in article containers take precedence over generic cards when independently readable. */
+  primaryContentSelectors?: readonly string[];
   preferredContentTerms?: readonly string[];
   removeSelectors?: readonly string[];
   includeLinks?: boolean;
@@ -493,6 +495,7 @@ interface ScoredExtractionCandidate {
   navigationPenalty: number;
   navigationDensity: number;
   linkDensity: number;
+  primaryContent?: boolean;
 }
 
 function scoreExtractionCandidate(
@@ -789,7 +792,10 @@ export function extractFetchAndCleanDocument(
       };
   const candidates: ScoredExtractionCandidate[] = [];
   const seenCandidateElements = new Set<cheerio.Element>();
-  for (const selector of (options.preferredContentSelectors ?? []).slice(0, MAX_EXTRACTION_SELECTORS)) {
+  const primarySelectors = (options.primaryContentSelectors ?? []).slice(0, MAX_EXTRACTION_SELECTORS);
+  const selectionSelectors = [...new Set([...primarySelectors, ...(options.preferredContentSelectors ?? []).slice(0, MAX_EXTRACTION_SELECTORS)])]
+    .slice(0, MAX_EXTRACTION_SELECTORS);
+  for (const selector of selectionSelectors) {
     if (candidates.length >= MAX_EXTRACTION_CANDIDATES) {
       break;
     }
@@ -802,19 +808,25 @@ export function extractFetchAndCleanDocument(
           return;
         }
         seenCandidateElements.add(element);
-        candidates.push(scoreExtractionCandidate(
+        const candidate = scoreExtractionCandidate(
           $,
           element,
           selector,
           options.preferredContentTerms ?? []
-        ));
+        );
+        candidate.primaryContent = primarySelectors.includes(selector);
+        candidates.push(candidate);
       });
     } catch {
       // Invalid optional selectors degrade to the next selector and then the generic body.
     }
   }
 
-  const bestPreferredCandidate = candidates.reduce<ScoredExtractionCandidate | undefined>((best, candidate) => {
+  const minimumUsefulLength = bodyText.length < 120 ? 1 : 80;
+  const usablePrimaryCandidates = candidates.filter(candidate => candidate.primaryContent
+    && candidate.text.length >= minimumUsefulLength && candidate.qualityScore >= MIN_PREFERRED_CONTAINER_SCORE);
+  const bestPreferredCandidate = (usablePrimaryCandidates.length ? usablePrimaryCandidates : candidates)
+    .reduce<ScoredExtractionCandidate | undefined>((best, candidate) => {
     if (!best || candidate.qualityScore > best.qualityScore) {
       return candidate;
     }
@@ -830,7 +842,6 @@ export function extractFetchAndCleanDocument(
     }
     return best;
   }, undefined);
-  const minimumUsefulLength = bodyText.length < 120 ? 1 : 80;
   const selectedCandidate = bestPreferredCandidate &&
     bestPreferredCandidate.text.length >= minimumUsefulLength &&
     bestPreferredCandidate.qualityScore >= MIN_PREFERRED_CONTAINER_SCORE

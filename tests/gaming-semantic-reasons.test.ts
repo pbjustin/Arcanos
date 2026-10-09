@@ -33,13 +33,15 @@ describe('independent Gaming evidence failure semantics', () => {
   });
   it('separates unproved game identity from explicit wrong-game evidence', () => {
     const unknown = document(prose.replace('In Elden Ring, ', ''), 'Unidentified notebook guide');
-    expect(assessGamingClearSourceIdentity(unknown, request, policy)).toEqual({ status: 'unknown', reasonCodes: ['GAME_IDENTITY_UNVERIFIED'] });
+    expect(assessGamingClearSourceIdentity(unknown, request, policy)).toEqual({ status: 'unknown', reasonCodes: ['GAME_IDENTITY_UNVERIFIED'],
+      diagnostic: { ruleId: 'gaming.identity.independent_anchor_required', evidenceCategory: 'acquired_anchors' } });
     const wrong = document(prose.replace('Elden Ring', 'Diablo 4'), 'Diablo 4 guide');
-    expect(assessGamingClearSourceIdentity(wrong, request, policy)).toEqual({ status: 'conflict', reasonCodes: ['GAME_MISMATCH'] });
+    expect(assessGamingClearSourceIdentity(wrong, request, policy)).toEqual({ status: 'conflict', reasonCodes: ['GAME_MISMATCH'],
+      diagnostic: { ruleId: 'gaming.identity.acquired_title_conflict', evidenceCategory: 'document_title' } });
   });
   it('uses coupled acquired title and body proof for games outside the alias catalog', () => {
     const wrong = document('Stardew Valley gameplay guide. Plant crops in the spring and water them each morning. This Stardew Valley guide covers copper tools and the first farm upgrade.', 'Stardew Valley guide');
-    expect(assessGamingClearSourceIdentity(wrong, request, policy)).toEqual({ status: 'conflict', reasonCodes: ['GAME_MISMATCH'] });
+    expect(assessGamingClearSourceIdentity(wrong, request, policy)).toMatchObject({ status: 'conflict', reasonCodes: ['GAME_MISMATCH'] });
     expect(assessment(wrong).gates.identity).toBe('conflict');
   });
   it('checks explicit wrong-game body before a same-title DLC scope conflict', () => {
@@ -63,7 +65,7 @@ describe('independent Gaming evidence failure semantics', () => {
     expect(evaluateGamingGuideApplicability({ guide: guide(), game: request.game, edition: 'Shadow of the Erdtree', now }))
       .toMatchObject({ status: 'unverified', reasons: ['EDITION_UNVERIFIED'] });
     expect(assessGamingClearSourceIdentity(document(`This DLC-only guide requires Shadow of the Erdtree. ${prose}`), request, policy))
-      .toEqual({ status: 'conflict', reasonCodes: ['EDITION_CONFLICT'] });
+      .toMatchObject({ status: 'conflict', reasonCodes: ['EDITION_CONFLICT'] });
   });
   it.each(['Elden Ring Shadow of the Erdtree guide', 'Elden Ring DLC guide'])('keeps same-game scope conflict separate from game identity: %s', title => {
     expect(assessment(document(prose, title))).toMatchObject({ decision: 'reject', gates: { identity: 'verified', compatibility: 'conflict' },

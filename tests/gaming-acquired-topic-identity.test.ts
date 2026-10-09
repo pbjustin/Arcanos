@@ -19,6 +19,7 @@ const { assessGamingClearSourceIdentity } = await import('../src/shared/gaming/g
 const { assessGamingSourcePolicy } = await import('../src/shared/gaming/gamingFreshnessCore.js');
 const { evaluateGamingHybridCandidates } = await import('../src/services/gamingHybridCandidates.js');
 const { createGamingHybridWorkflow } = await import('../src/services/gamingHybridKnowledge.js');
+const { logger } = await import('../src/platform/logging/structuredLogging.js');
 const url = 'https://guides.example.org/public-guide';
 const actor = { actorKey: 'topic-identity-fixture', workflowId: 'topic-identity-workflow', requestId: 'topic-identity-request' };
 const input = { game: 'Elden Ring', mode: 'build' as const,
@@ -60,7 +61,7 @@ afterEach(() => {
 });
 
 describe('acquired generic Samurai topic identity', () => {
-  it.each([namedTitle, genericTitle])('proves source game independently for the acquired title %s', title => {
+  it.each([namedTitle, genericTitle, 'Dexterity build guide', 'Early Game Samurai Build'])('proves source game independently for the acquired title %s', title => {
     expect(assess(title)).toMatchObject({ status: 'verified' });
   });
   it.each([namedTitle, genericTitle])('admits the same independently acquired evidence under title %s', async title => {
@@ -102,7 +103,7 @@ describe('acquired generic Samurai topic identity', () => {
   });
   it('keeps generic colon headings separate from affirmative game declarations', () => {
     expect(assess(genericTitle, `${genericTitle}: starting gear. ${prose}`)).toMatchObject({ status: 'verified' });
-    expect(assess(genericTitle, `This guide covers Samurai Blade build guide. ${prose}`))
+    expect(assess(genericTitle, `This guide covers Copper Vale build guide. ${prose}`))
       .toMatchObject({ status: 'conflict', reasonCodes: ['GAME_MISMATCH'] });
   });
   it.each([
@@ -140,6 +141,71 @@ describe('acquired generic Samurai topic identity', () => {
     expect(result.accepted).toEqual([]);
     expect(result.decisions[0].reasonCodes).toContain(reason);
     expect(trinity).not.toHaveBeenCalled();
+  });
+
+  it('emits bounded identity rule diagnostics with candidate and request correlation', async () => {
+    const log = jest.spyOn(logger, 'info').mockImplementation(() => undefined);
+    try {
+      serve(genericTitle, `${prose} In Diablo IV, use the blade.`);
+      await evaluateGamingHybridCandidates(input, { ...actor, traceId: 'topic-identity-trace' });
+      const event = log.mock.calls.find(call => call[0] === 'gaming.clear.source.completed');
+      expect(event?.[1]).toMatchObject({ requestId: actor.requestId, traceId: 'topic-identity-trace',
+        workflowId: actor.workflowId, submittedIndex: 0, candidateReference: expect.any(String),
+        identity: { ruleId: 'gaming.identity.affirmative_body_scope_conflict', evidenceCategory: 'body_scope' } });
+      expect(JSON.stringify(event?.[1])).not.toContain(prose);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it('reports the edition identity rule when applicability rejects before CLEAR assessment', async () => {
+    const log = jest.spyOn(logger, 'info').mockImplementation(() => undefined);
+    try {
+      serve(genericTitle, `${prose} Edition: Shadow of the Erdtree.`);
+      const result = await evaluateGamingHybridCandidates(input, { ...actor, traceId: 'topic-edition-trace' });
+      expect(result.accepted).toEqual([]);
+      expect(result.decisions[0].reasonCodes).toEqual(['EDITION_CONFLICT']);
+      const event = log.mock.calls.find(call => call[0] === 'gaming.clear.source.not_run');
+      expect(event?.[1]).toMatchObject({ requestId: actor.requestId, traceId: 'topic-edition-trace',
+        workflowId: actor.workflowId, submittedIndex: 0, candidateReference: expect.any(String),
+        identity: { ruleId: 'gaming.identity.edition_applicability', evidenceCategory: 'edition_scope' } });
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it('reports the actual freshness game mismatch after acquisition without generation or transient source storage', async () => {
+    const plaintext = 'Game: Elden Ring base-game. Edition: base-game. In Elden Ring, Samurai attacks use the starting Uchigatana. Raise Vigor and Dexterity for early combat, and preserve stamina for dodging after each katana attack. Upgrade the starting katana with Smithing Stones before advancing beyond Limgrave.';
+    fetch.mockResolvedValue({ status: 200, headers: { 'content-type': 'text/plain' }, data: plaintext });
+    const log = jest.spyOn(logger, 'info').mockImplementation(() => undefined);
+    const ingest = jest.fn<any>(async () => { throw new Error('Transient source storage is forbidden in this fixture.'); });
+    const generate = jest.fn<any>(async () => { throw new Error('Rejected source evidence cannot trigger generation.'); });
+    const workflow = createGamingHybridWorkflow({ retrieve: async () => ({ context: '', sources: [], evidence: [], sourceKnown: false }),
+      ingest, generate });
+    const context = { actorKey: actor.actorKey, requestId: actor.requestId, traceId: 'freshness-game-conflict-trace' };
+    try {
+      const initial = await workflow.query({ game: input.game, question: input.prompt, mode: input.mode,
+        contractVersion: 'gaming-hybrid-v2', idempotencyKey: 'freshness-game-query', storagePolicy: 'transient_only' }, context);
+      const result = await workflow.candidates({ contractVersion: 'gaming-hybrid-v2', workflowId: initial.body.workflowId,
+        expectedRevision: initial.body.revision, idempotencyKey: 'freshness-game-source', candidates: input.candidates }, context);
+      expect(result.body.candidates![0]).toMatchObject({ decision: 'rejected', reasonCodes: ['GAME_MISMATCH'] });
+      expect(result.body).toMatchObject({ nextAction: 'search', frontendOutcome: 'need_new_source',
+        selectedCandidateIds: [], selectedEvidenceIds: [] });
+      expect(result.body.answer).toBeUndefined();
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(generate).not.toHaveBeenCalled(); expect(trinity).not.toHaveBeenCalled(); expect(audit).not.toHaveBeenCalled();
+      expect(ingest).not.toHaveBeenCalled();
+      const event = log.mock.calls.find(call => call[0] === 'gaming.clear.source.not_run');
+      expect(event?.[1]).toMatchObject({ requestId: context.requestId, traceId: context.traceId,
+        workflowId: initial.body.workflowId, submittedIndex: 0, candidateReference: expect.any(String),
+        assessmentStatus: 'not_run', reasonCodes: ['GAME_MISMATCH'], acquisition: { stage: 'extraction' },
+        identity: { ruleId: 'gaming.identity.freshness_game_conflict', evidenceCategory: 'acquired_anchors' } });
+      expect(log.mock.calls.some(call => call[0] === 'gaming.clear.source.completed')).toBe(false);
+      expect(JSON.stringify(event?.[1])).not.toContain(plaintext);
+      expect(JSON.stringify(event?.[1])).not.toContain(input.prompt);
+    } finally {
+      log.mockRestore();
+    }
   });
 
 });

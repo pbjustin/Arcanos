@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { load } from 'cheerio';
-import { countGamingHtmlElements, filterGamingDocumentInstructions } from '@services/gamingDocumentExtraction.js';
+import { countGamingHtmlElements, filterGamingDocumentInstructions, GAMING_DOCUMENT_FURNITURE_SELECTOR } from '@services/gamingDocumentExtraction.js';
 import {
   GAMING_EVIDENCE_UNIT_POLICY_VERSION,
   type GamingEvidenceExtractionInput,
@@ -23,11 +23,12 @@ export interface GamingHtmlEvidenceExtractionResult extends GamingEvidenceExtrac
   /** Original accepted HTML with structural candidates removed from the prose fallback. */
   proseBody?: string;
 }
-const EXCLUDED = 'nav,footer,aside,form,template,[hidden],[aria-hidden="true"],[role="navigation"],[role="menu"],[role="dialog"],.sidebar,#sidebar';
+const EXCLUDED = `aside,[role="menu"],${GAMING_DOCUMENT_FURNITURE_SELECTOR}`;
 const DISCUSSION = '[itemtype="https://schema.org/DiscussionForumPosting"],[itemtype="http://schema.org/DiscussionForumPosting"]';
 const UNRELATED_DISCUSSION = '.comments,#comments,[class*="comment-list"],[itemtype="https://schema.org/Comment"],[itemtype="http://schema.org/Comment"]';
 const QUALIFIER = /\b(?:not|no longer|deplet\w*|unconfirmed|old patch|example only|correction|corrected|outdated|unavailable|obsolete|previously|before|after|patch|version)\b/i;
 const LABELLED_FIELD = /^([^:;|\n]{1,80}):\s*(.+)$/;
+const PARAGRAPH_IDENTITY_FIELD = /^(Game|Edition)\s*:\s*([^;.!?\n]*?)(?=\s+(?:Game|Edition)\s*:|[;.!?]|$)/iu;
 
 function text(value: string): string {
   return value.normalize('NFKC').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff]/g, ' ').replace(/\s+/g, ' ').trim();
@@ -118,6 +119,7 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
     return stopped;
   };
   const identities = new Set<string>();
+  const qualifierValues = new Map<Element, string>();
   function context(element: Element, scope: string, caption?: string): GamingEvidenceUnit['context'] {
     const node = $(element);
     let heading: string | undefined;
@@ -131,26 +133,42 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
     const post = node.closest(DISCUSSION).first();
     const container = node.closest('section,article,main,figure').first();
     const ancestors = node.parents().toArray();
+    // The nearest whole-article scope already supplies its bounded notes below.
+    // Plain publisher wrappers do not imply that an unseen semantic scope exists.
+    const wholeArticleContext = container.is('article,main') && !node.parents('section,figure').length;
+    if (!heading && wholeArticleContext) heading = text(container.children('h1,h2,h3,h4,h5,h6')
+      .add(container.children('header').find('h1,h2,h3,h4,h5,h6')).first().text()) || undefined;
     let relevant = node.prevAll('p,aside,div,small').slice(0, 2).add(node.nextAll('p,aside,div,small').slice(0, 2));
     let ancestor = node.parent();
     for (let depth = 0; depth < 6 && ancestor.length && !ancestor.is('html'); depth++, ancestor = ancestor.parent()) {
       relevant = relevant.add(ancestor.children('p,figcaption,small,[role="note"]'))
         .add(ancestor.prevAll('p,aside,div,small').slice(0, 2)).add(ancestor.nextAll('p,aside,div,small').slice(0, 2));
     }
-    if (ancestor.length && !ancestor.is('html')) markContext(scope, 'required_context_missing');
+    if (ancestor.length && !ancestor.is('html') && wholeArticleContext) {
+      const enclosingScopes = container.parents('article,main');
+      if (enclosingScopes.length > 6) markContext(scope, 'required_context_missing');
+      relevant = relevant.add(enclosingScopes.slice(0, 6).children('p,figcaption,small,[role="note"]'));
+    }
+    if (ancestor.length && !ancestor.is('html') && !wholeArticleContext) markContext(scope, 'required_context_missing');
     if (container.length) relevant = relevant.add(container.find('p,figcaption,small,[role="note"]'));
-    if (relevant.length > 64) markContext(scope, 'required_context_missing');
-    relevant.slice(0, 64).each((_, sibling) => {
+    let qualifierElements = 0;
+    relevant.each((_, sibling) => {
+      if (deadlineExpired()) { markContext(scope, 'required_context_missing'); return false; }
       const selected = $(sibling);
-      if (selected.closest('nav,footer,form,template,[hidden],[aria-hidden="true"],[role="navigation"],blockquote,table,ul,ol,dl').length) return;
+      if (selected.closest(`${GAMING_DOCUMENT_FURNITURE_SELECTOR},blockquote,table:not([role="presentation"]),ul,ol,dl`).length) return;
       const candidateScope = selected.closest('section,article,main,figure').get(0);
       if (candidateScope && candidateScope !== container.get(0) && !ancestors.includes(candidateScope)) return;
       if (selected.closest(UNRELATED_DISCUSSION).length && (!post.length || selected.closest(DISCUSSION).get(0) !== post.get(0))) return;
       // Container wrappers must not import a sibling record or a quoted correction.
-      const copy = selected.clone();
-      copy.find(`script,style,template,table,ul,ol,dl,blockquote,section,article,main,figure,nav,footer,form,[hidden],[aria-hidden="true"],${UNRELATED_DISCUSSION}`).remove();
-      const value = text(copy.text());
+      let value = qualifierValues.get(sibling);
+      if (value === undefined) {
+        const copy = selected.clone();
+        copy.find(`script,style,template,table,ul,ol,dl,blockquote,section,article,main,figure,${GAMING_DOCUMENT_FURNITURE_SELECTOR},${UNRELATED_DISCUSSION}`).remove();
+        value = text(copy.text());
+        qualifierValues.set(sibling, value);
+      }
       if (QUALIFIER.test(value)) {
+        if (++qualifierElements > 64) { markContext(scope, 'required_context_missing'); return false; }
         qualifiers.push(value);
         if (!closed(sibling)) markContext(scope, 'content_truncated');
       }
@@ -197,9 +215,35 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
     for (const reason of integrityReasons) fail(reason);
   }
 
+  // DOM block boundaries survive text flattening through parser-owned metadata.
+  // These paragraph units never establish gameplay facts or structural support.
+  for (const [index, paragraph] of $('p').toArray().entries()) {
+    if (exhausted()) break;
+    if (!eligible($, paragraph) || $(paragraph).closest('table:not([role="presentation"]),ul,ol,dl').length) continue;
+    const paragraphText = cleanElementText($, paragraph);
+    if (!PARAGRAPH_IDENTITY_FIELD.test(paragraphText)) continue;
+    if (filterGamingDocumentInstructions(paragraphText) !== paragraphText) { fail('source_instruction_filtered'); continue; }
+    const fields: Fields = [];
+    let remaining = paragraphText;
+    while (fields.length <= limit.fields) {
+      const declaration = remaining.match(PARAGRAPH_IDENTITY_FIELD);
+      if (!declaration) break;
+      fields.push({ label: declaration[1], value: declaration[2].trim() });
+      remaining = remaining.slice(declaration[0].length).replace(/^\s*;\s*/u, '').trimStart();
+    }
+    const reasons = !closed(paragraph) || !intactTransportScope(paragraph) ? ['content_truncated'] : [];
+    if ($(paragraph).find('table,ul,ol,dl,blockquote').length) reasons.push('required_context_missing');
+    addUnit('paragraph', fields, paragraph, 'prose',
+      { scope: `paragraph:${index}` }, reasons);
+  }
+
   result.attempts.push('html_table');
   const tables = $('table').toArray();
-  for (const table of tables) removedProseElements.add(table);
+  for (const table of tables) {
+    // Explicit layout tables may wrap primary prose. Their nested data tables
+    // still follow the normal record-removal and integrity policy.
+    if ($(table).attr('role') !== 'presentation' || !closed(table) || !intactTransportScope(table)) removedProseElements.add(table);
+  }
   if (tables.length > limit.tables) { result.truncated = true; fail('extraction_budget_exhausted'); }
   let expandedCells = 0;
   for (const [tableIndex, table] of tables.slice(0, limit.tables).entries()) {
@@ -310,7 +354,7 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
   }
   for (const [listIndex, list] of lists.slice(0, limit.lists).entries()) {
     if (exhausted()) break;
-    if (!eligible($, list) || $(list).closest('table').length || consumedNestedLists.has(list)) continue;
+    if (!eligible($, list) || $(list).closest('table:not([role="presentation"])').length || consumedNestedLists.has(list)) continue;
     const scope = `list:${listIndex}`;
     const unitContext = context(list, scope);
     if ($(list).is('dl')) {
@@ -370,6 +414,33 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
     }
   }
   for (const element of removedProseElements) $(element).remove();
+  // Layout cells themselves cannot be laundered into unstructured assertions.
+  // Retain authored prose blocks, not bare tabular values or column headings.
+  if (deadlineExpired()) return result;
+  const visitedLayoutNodes = new Set<unknown>();
+  $('table[role="presentation"] td,table[role="presentation"] th').each((_, cell) => {
+    if (deadlineExpired()) return false;
+    if (visitedLayoutNodes.has(cell)) return;
+    visitedLayoutNodes.add(cell);
+    $(cell).find('*').addBack().contents().each((__, child) => {
+      if (deadlineExpired()) return false;
+      if (visitedLayoutNodes.has(child)) return;
+      visitedLayoutNodes.add(child);
+      if (child.type === 'text' && !$(child).parent().closest('p,h1,h2,h3,h4,h5,h6,li,dt,dd,blockquote').length) $(child).remove();
+    });
+  });
+  if (deadlineExpired()) return result;
+  $(EXCLUDED).remove();
+  $(UNRELATED_DISCUSSION).each((_, node) => {
+    if (deadlineExpired()) return false;
+    if ($(node).is(DISCUSSION)) return;
+    const primaryPosts = $(node).find(DISCUSSION).filter((__, post) => eligible($, post));
+    if (!primaryPosts.length) { $(node).remove(); return; }
+    // A recognized primary post does not grant its surrounding comments trust.
+    // Keep outermost eligible posts once, excluding every unrelated sibling.
+    const selected = new Set(primaryPosts.toArray());
+    $(node).replaceWith(primaryPosts.filter((__, post) => !$(post).parents().toArray().some(parent => selected.has(parent))));
+  });
   result.proseBody = $.html();
   if (deadlineExpired()) return result;
   if (!result.units.length) fail('no_supported_structured_records');

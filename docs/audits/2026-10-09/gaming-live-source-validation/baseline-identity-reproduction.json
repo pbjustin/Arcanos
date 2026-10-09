@@ -1,0 +1,76 @@
+{
+  "baselineSha": "0ec167654fa3970c818b2e2721c044dd79b77189",
+  "archivePath": "/tmp/arcanos-gaming-baseline-extraction-sj4kMG",
+  "toolchain": {
+    "node": "v24.18.1",
+    "npm": "11.16.0"
+  },
+  "outcome": "EXPECTED_ASSERTION_FAILURE_WITH_PASSING_NEGATIVE_CONTROLS",
+  "failedTests": 8,
+  "passedNegativeControls": 5,
+  "deliberatelyUnselectedTests": 35,
+  "sourceMatches": {
+    "src/shared/gaming/gamingClearSource.ts": {
+      "expectedBlob": "3ada6c2783a09017c1cdb5ba9431108d0dcf300e",
+      "archiveBlob": "3ada6c2783a09017c1cdb5ba9431108d0dcf300e",
+      "matches": true
+    },
+    "src/shared/gaming/gamingFreshnessCore.ts": {
+      "expectedBlob": "af0e4f703c28c699dc48eed3bb9aa27c4420d3cb",
+      "archiveBlob": "af0e4f703c28c699dc48eed3bb9aa27c4420d3cb",
+      "matches": true
+    },
+    "src/services/gamingGameDetection.ts": {
+      "expectedBlob": "827bd7b080511403655313faef7f8c48a1cc6c13",
+      "archiveBlob": "827bd7b080511403655313faef7f8c48a1cc6c13",
+      "matches": true
+    }
+  },
+  "copiedTestSha256": "04625979f7d2b77ef1703ecf7303a3a5274b4249599a33ae92908b956256ca75",
+  "positiveFailures": [
+    {
+      "test": "live source identity failure regressions (synthetic publisher-shaped documents) does not interpret gameplay wording early game: as a Game metadata field",
+      "failureClass": "Jest assertion failure"
+    },
+    {
+      "test": "live source identity failure regressions (synthetic publisher-shaped documents) does not interpret gameplay wording mid game: as a Game metadata field",
+      "failureClass": "Jest assertion failure"
+    },
+    {
+      "test": "live source identity failure regressions (synthetic publisher-shaped documents) does not interpret gameplay wording late game: as a Game metadata field",
+      "failureClass": "Jest assertion failure"
+    },
+    {
+      "test": "live source identity failure regressions (synthetic publisher-shaped documents) does not interpret gameplay wording end game: as a Game metadata field",
+      "failureClass": "Jest assertion failure"
+    },
+    {
+      "test": "live source identity failure regressions (synthetic publisher-shaped documents) does not invent a game from the acquired topic heading Dexterity build guide",
+      "failureClass": "Jest assertion failure"
+    },
+    {
+      "test": "live source identity failure regressions (synthetic publisher-shaped documents) does not invent a game from the acquired topic heading Samurai Blade Build Guide",
+      "failureClass": "Jest assertion failure"
+    },
+    {
+      "test": "live source identity failure regressions (synthetic publisher-shaped documents) does not invent a game from the acquired topic heading Early Game Samurai Build",
+      "failureClass": "Jest assertion failure"
+    },
+    {
+      "test": "live source identity failure regressions (synthetic publisher-shaped documents) keeps unrelated pooled recommendation headings and comparison prose separate from game declarations",
+      "failureClass": "Jest assertion failure"
+    }
+  ],
+  "passedNegativeControlsInventory": [
+    "Gaming CLEAR acquired source assessment vetoes an explicit wrong body subject even with a misleading title and Game label",
+    "Gaming CLEAR acquired source assessment does not confuse the base game with explicitly distinct scope Elden Ring Nightreign",
+    "Gaming CLEAR acquired source assessment does not confuse the base game with explicitly distinct scope Elden Ring 2",
+    "Gaming CLEAR acquired source assessment does not confuse the base game with explicitly distinct scope Elden Ring Remastered",
+    "Gaming CLEAR acquired source assessment separates same-game expansion scope from a different game"
+  ],
+  "attributionLimit": "Recommended-heading fixture also contains early-game wording; this baseline failure alone does not isolate the heading rule. No particular historical publisher span is attributed.",
+  "artifacts": {
+    "json": "/tmp/arcanos-gaming-baseline-identity-reproduction.json",
+    "log": "/tmp/arcanos-gaming-baseline-identity-reproduction.log"
+  }
+}

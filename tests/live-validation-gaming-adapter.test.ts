@@ -330,7 +330,13 @@ describe('private Gaming live-validation adapter through the real transient v2 w
       expect(mockTrinity).toHaveBeenCalledTimes(1); expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
       expect(output.audit?.boundToFinalAnswer).toBe(true);
     } else {
-      expect(output.failureCode).toBe('INCOMPATIBLE_SOURCE');
+      // The immutable raw-GitHub fixture is plain text, so Gaming does not grant
+      // HTML paragraph-field provenance. Generic cleanup flattens the heading
+      // before Game: Sekiro; that uncatalogued title alone cannot prove identity.
+      expect(output.failureCode).toBe('INSUFFICIENT_EVIDENCE');
+      expect(candidateHandoffs[0].result.body.candidates).toEqual([expect.objectContaining({ decision: 'rejected',
+        reasonCodes: ['GAME_IDENTITY_UNVERIFIED'] })]);
+      expect(output.result).toBeUndefined(); expect(run.execute).not.toHaveBeenCalled();
       expect(mockTrinity).not.toHaveBeenCalled(); expect(mockAuditCompletion).not.toHaveBeenCalled();
     }
   });
@@ -372,6 +378,19 @@ describe('private Gaming live-validation adapter through the real transient v2 w
     expect(observation.candidates).toEqual([expect.objectContaining({ decision: 'rejected', reasonCodes: expect.arrayContaining([reason]) })]);
     expect(observation.outcome).toBe('need_new_source'); expect(observation.audit).toBeNull();
     expect(observation.stages.answer_audit).toEqual({ status: 'not_run', elapsedMs: null });
+  });
+
+  it('rejects genuine wrong-game plaintext declarations before generation or source storage', async () => {
+    sourceContentType = 'text/plain; charset=utf-8';
+    sourceHtml = 'Game: Sekiro. In Sekiro, the protagonist fights with the invented practice sword. This synthetic guide describes sword combat and posture attacks after the tutorial. Learn parries and deflections before advancing, then practice the sword timing before fighting the next enemy.';
+    const run = harness(); const output = await run.run();
+    expect(output.accepted).toBe(false); expect(output.result).toBeUndefined();
+    expect(output.failureCode).toBe('INCOMPATIBLE_SOURCE');
+    expect(run.adapter.getLastObservation()?.candidates).toEqual([expect.objectContaining({ decision: 'rejected',
+      reasonCodes: ['GAME_MISMATCH'] })]);
+    expect(mockHttp).toHaveBeenCalledTimes(1); expect(run.execute).not.toHaveBeenCalled();
+    expect(mockTrinity).not.toHaveBeenCalled(); expect(mockAuditCompletion).not.toHaveBeenCalled();
+    expect(mockIngestion).not.toHaveBeenCalled(); expect(mockDatabaseAccess).not.toHaveBeenCalled();
   });
 
   it('records failed acquisition when every public source transport fails before evidence selection', async () => {

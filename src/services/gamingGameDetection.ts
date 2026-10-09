@@ -56,6 +56,19 @@ const NON_GAME_ENTITY_WORDS = new Set([
   "steam", "support", "switch", "tank", "ultimate", "veteran", "warlock", "warrior", "xbox"
 ]);
 
+const ACQUIRED_TOPIC_WORDS = new Set([
+  ...NON_GAME_ENTITY_WORDS, ...GAME_TRAILING_TERMS, 'and', 'of', 'the', 'samurai', 'katana', 'katanas', 'blade', 'blades',
+  'bleed', 'blood', 'dexterity', 'strength', 'intelligence', 'faith', 'arcane', 'vigor', 'endurance', 'weapon', 'weapons',
+  'beginner', 'beginners', 'starting', 'equipment', 'skills', 'talents'
+]);
+
+/** A closed gameplay topic does not invent an uncatalogued game identity. */
+export function isGamingAcquiredTopicTitle(value: string): boolean {
+  const words = value.normalize('NFKC').toLowerCase().trim().split(/[\s-]+/u);
+  return words.length > 0 && words.length <= 12 && words.every(word => ACQUIRED_TOPIC_WORDS.has(word))
+    && words.some(word => ['build', 'builds', 'guide', 'guides', 'loadout', 'walkthrough', 'tips'].includes(word));
+}
+
 const GENERIC_HOST_LABELS = new Set([
   "app", "community", "forum", "forums", "game", "games", "gaming", "guide", "guides", "help", "news", "official",
   "site", "support", "wiki", "www"
@@ -124,6 +137,7 @@ function normalizeCandidate(rawValue: string): string | undefined {
   if (!normalized) {
     return undefined;
   }
+  if (isGamingAcquiredTopicTitle(normalized)) return undefined;
   if (/^(?:the\s+)?(?:game|title|one)(?:\s+(?:i|you|we))?\s+(?:mentioned|named|provided|linked|shown|above|earlier|before)\b/i.test(normalized)) {
     return undefined;
   }
@@ -147,7 +161,7 @@ function normalizeCandidate(rawValue: string): string | undefined {
     lowerWords.some((word) => !word)
     || (lowerWords.length === 1 && lowerWords[0] === "the")
     || INVALID_GAME_WORDS.has(lowerWords[0])
-    || lowerWords.every((word) => NON_GAME_ENTITY_WORDS.has(word) || INVALID_GAME_WORDS.has(word))
+    || lowerWords.every((word) => ACQUIRED_TOPIC_WORDS.has(word) || INVALID_GAME_WORDS.has(word))
     || lowerWords.every((word) => word === "the" || INVALID_GAME_WORDS.has(word) || GAME_TRAILING_TERMS.has(word))
     || !words.some((word) => /[a-z]/i.test(word))
   ) {

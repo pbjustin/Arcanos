@@ -80,60 +80,61 @@ describe('closed acquired Minecraft edition scope', () => {
   });
   it('retains uncertainty when only the title asserts an edition', () => {
     expect(identity(document(java.replaceAll('Minecraft Java', 'Minecraft'))))
-      .toEqual({ status: 'unknown', reasonCodes: ['EDITION_UNVERIFIED'] });
+      .toEqual({ status: 'unknown', reasonCodes: ['EDITION_UNVERIFIED'],
+        diagnostic: { ruleId: 'gaming.identity.edition_scope_unverified', evidenceCategory: 'edition_scope' } });
   });
   it('normalizes a closed acquired edition alias without changing an explicit user label', () => {
     expect(identity(document(`Edition: Java Edition. ${java}`), { edition: 'Java Edition' }).status).toBe('verified');
     expect(extractGamingFreshnessMetadata(document(`Edition: Java Edition. ${java}`), input).edition).toBe('Java');
   });
   it('classifies an explicit Bedrock request versus acquired Java as edition conflict', () => {
-    expect(identity(document(), { edition: 'Bedrock' })).toEqual({ status: 'conflict', reasonCodes: ['EDITION_CONFLICT'] });
+    expect(identity(document(), { edition: 'Bedrock' })).toMatchObject({ status: 'conflict', reasonCodes: ['EDITION_CONFLICT'] });
   });
   it.each(['Minecraft Dungeons', 'Minecraft Legends', 'Minecraft 2', 'Minecraft Java 2', 'Minecraft Java Remastered'])('keeps the separate game %s excluded', game => {
     expect(identity(document(java.replaceAll('Minecraft Java', game), `${game} crafting guide`)))
-      .toEqual({ status: 'conflict', reasonCodes: ['GAME_MISMATCH'] });
+      .toMatchObject({ status: 'conflict', reasonCodes: ['GAME_MISMATCH'] });
   });
   it('preserves complete requested Java and Bedrock identities', () => {
     expect(identity(document(), { game: 'Minecraft Java' }).status).toBe('verified');
-    expect(identity(document(), { game: 'Minecraft Bedrock' })).toEqual({ status: 'conflict', reasonCodes: ['GAME_MISMATCH'] });
+    expect(identity(document(), { game: 'Minecraft Bedrock' })).toMatchObject({ status: 'conflict', reasonCodes: ['GAME_MISMATCH'] });
   });
   it.each(['As in Minecraft Bedrock, crafting uses a grid.', 'Like in Minecraft Bedrock, crafting uses a grid.', 'These recommendations do not apply in Minecraft Bedrock.'])('preserves a source comparison or negated other-edition scope: %s', reference => {
     expect(identity(document(`Edition: Java. ${java} ${reference}`), { edition: 'Java' }).status).toBe('verified');
   });
   it('does not turn an unrecognized acquired edition label into a conflict', () => {
     const doc = document(`Edition: Unidentified variant. ${java}`);
-    expect(identity(doc)).toEqual({ status: 'unknown', reasonCodes: ['EDITION_UNVERIFIED'] });
+    expect(identity(doc)).toMatchObject({ status: 'unknown', reasonCodes: ['EDITION_UNVERIFIED'] });
     expect(extractGamingFreshnessMetadata(doc, input).metadataConflict).toBeUndefined();
   });
   it('does not mislabel separate described editions as a game or edition contradiction', () => {
     expect(identity(document(`${java} In Minecraft Bedrock, the guide separately documents the crafting grid.`, 'Minecraft crafting guide')))
-      .toEqual({ status: 'unknown', reasonCodes: ['EDITION_UNVERIFIED'] });
+      .toMatchObject({ status: 'unknown', reasonCodes: ['EDITION_UNVERIFIED'] });
   });
   it('requires a choice for source-proven edition-specific behavior comparisons', () => {
     expect(identity(document(`${java} Unlike Bedrock Edition, this circuit has different redstone behavior.`)))
-      .toEqual({ status: 'unknown', reasonCodes: ['EDITION_REQUIRED'] });
+      .toMatchObject({ status: 'unknown', reasonCodes: ['EDITION_REQUIRED'] });
   });
   it.each(["This recipe isn't Java-only; it works in both editions.", 'This recipe isn’t Java-only; it works in both editions.', "This recipe doesn't require Minecraft Java.", 'This recipe doesn’t require Minecraft Java.'])('does not turn a closed negative edition restriction into a requirement: %s', restriction => {
     expect(identity(document(`${java} ${restriction}`)).status).toBe('verified');
   });
   it('requires an edition choice for an acquired title that explicitly excludes the other edition', () => {
     expect(identity(document(java, 'Minecraft Java-only crafting guide')))
-      .toEqual({ status: 'unknown', reasonCodes: ['EDITION_REQUIRED'] });
+      .toMatchObject({ status: 'unknown', reasonCodes: ['EDITION_REQUIRED'] });
   });
   it('requires an edition choice for a source with an explicit edition-exclusive mechanic', () => {
     expect(identity(document(`${java} This mechanic is Java-only.`)))
-      .toEqual({ status: 'unknown', reasonCodes: ['EDITION_REQUIRED'] });
+      .toMatchObject({ status: 'unknown', reasonCodes: ['EDITION_REQUIRED'] });
   });
   it('requires an edition decision before interpreting current Minecraft evidence', () => {
     expect(identity(document(), { prompt: 'What is the latest patch version?' }))
-      .toEqual({ status: 'unknown', reasonCodes: ['EDITION_REQUIRED'] });
+      .toMatchObject({ status: 'unknown', reasonCodes: ['EDITION_REQUIRED'] });
   });
   it('does not let edition-exclusive text hide a wrong acquired game', () => {
     expect(identity(document(`In Diablo 4, crafting uses materials from enemies. This mechanic is Java-only. ${java}`, 'Minecraft Java crafting guide')))
-      .toEqual({ status: 'conflict', reasonCodes: ['GAME_MISMATCH'] });
+      .toMatchObject({ status: 'conflict', reasonCodes: ['GAME_MISMATCH'] });
   });
   it('does not derive Java scope from title alone over an explicit conflicting Edition assertion', () => {
-    expect(identity(document(`Edition: Bedrock. ${java}`))).toEqual({ status: 'conflict', reasonCodes: ['EDITION_CONFLICT'] });
+    expect(identity(document(`Edition: Bedrock. ${java}`))).toMatchObject({ status: 'conflict', reasonCodes: ['EDITION_CONFLICT'] });
   });
 });
 

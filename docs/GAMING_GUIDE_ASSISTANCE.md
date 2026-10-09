@@ -97,7 +97,7 @@ This request interpretation does not add an acquired Edition assertion. Explicit
 identity comparisons use the existing normalized comparison helpers. Missing edition metadata on an ordinary base-game guide is
 not a contradiction; explicit incompatible source scope remains excluded.
 
-A closed acquired Samurai/katana/blade topic heading is not a game-name claim,
+A closed acquired gameplay topic heading, such as Dexterity or Samurai/katana/blade build advice, is not a game-name claim,
 even when extraction repeats it in the body. Such a guide still requires an
 affirmative acquired body declaration naming the requested catalog game; topic
 matches, quoted references and frontend metadata cannot supply that identity.

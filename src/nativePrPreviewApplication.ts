@@ -11,6 +11,8 @@ import { runGamingGuideResponsePreview } from './shared/gaming/gamingGuideRespon
 import { runGamingDocumentIngestionPreview } from './shared/gaming/gamingDocumentIngestionPreviewFixture.js';
 import { GAMING_LARGE_SOURCE_PREVIEW_CASES, GAMING_LARGE_SOURCE_PREVIEW_VERSION, runGamingDurableRagPreview,
   runGamingLargeSourcePreview } from './shared/gaming/gamingDurableRagPreviewFixture.js';
+import { GAMING_LIVE_SOURCE_VALIDATION_PREVIEW_CASES, GAMING_LIVE_SOURCE_VALIDATION_PREVIEW_VERSION,
+  runGamingLiveSourceValidationPreview } from './shared/gaming/gamingLiveSourceValidationPreviewFixture.js';
 import { runGamingHybridKnowledgePreview, GAMING_DISCOVERY_RECOVERY_PROTOCOL_PREVIEW_VERSION,
   GAMING_EDITION_CONTEXT_REGRESSIONS_PREVIEW_VERSION } from './shared/gaming/gamingHybridKnowledgePreviewFixture.js';
 import { runGamingClearPreview, GAMING_DISCOVERY_RECOVERY_EVIDENCE_PREVIEW_VERSION } from './shared/gaming/gamingClearPreviewFixture.js';
@@ -10078,6 +10080,26 @@ export function createNativePrPreviewApplication(
             return;
           }
           try {
+            if (GAMING_LIVE_SOURCE_VALIDATION_PREVIEW_VERSION !== NATIVE_PR_PREVIEW_GAMING_CONTRACT.liveSourceValidationProofVersion
+              || GAMING_LIVE_SOURCE_VALIDATION_PREVIEW_CASES.length !== NATIVE_PR_PREVIEW_GAMING_CONTRACT.liveSourceValidationCases.length
+              || GAMING_LIVE_SOURCE_VALIDATION_PREVIEW_CASES.some((name, index) => name !== NATIVE_PR_PREVIEW_GAMING_CONTRACT.liveSourceValidationCases[index])) {
+              throw new Error('PREVIEW_GAMING_LIVE_SOURCE_VALIDATION_CONTRACT_INVALID');
+            }
+            runGamingLiveSourceValidationPreview();
+          } catch {
+            sendBoundedJsonResponse(
+              request,
+              response,
+              { error: 'PREVIEW_GAMING_LIVE_SOURCE_VALIDATION_CONTRACT_INVALID' },
+              {
+                logEvent: 'native_pr_preview.gaming_live_source_validation_invalid',
+                maxBytes: MAX_GAMING_QUERY_RESPONSE_BYTES,
+                statusCode: 500,
+              }
+            );
+            return;
+          }
+          try {
             runGamingClearPreview();
           } catch {
             sendBoundedJsonResponse(
@@ -10211,6 +10233,10 @@ export function createNativePrPreviewApplication(
           response.setHeader(
             NATIVE_PR_PREVIEW_GAMING_CONTRACT.largeSourceProofHeader,
             GAMING_LARGE_SOURCE_PREVIEW_VERSION
+          );
+          response.setHeader(
+            NATIVE_PR_PREVIEW_GAMING_CONTRACT.liveSourceValidationProofHeader,
+            GAMING_LIVE_SOURCE_VALIDATION_PREVIEW_VERSION
           );
           response.setHeader(
             NATIVE_PR_PREVIEW_GAMING_CONTRACT.guideAssistanceProofHeader,

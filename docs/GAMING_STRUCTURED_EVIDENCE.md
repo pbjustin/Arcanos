@@ -74,12 +74,29 @@ supply missing fields for each other.
 Qualifier discovery includes bounded ancestor context around wrapped structures.
 Nested content that cannot retain its field association makes the affected record
 insufficient; removing a nested correction cannot leave an affirmative record.
+Ordinary prose does not consume the 64 relevant-qualifier allowance. A known
+whole-article scope supplies its notes and heading across plain layout wrappers;
+an unseen enclosing semantic scope still makes the record partial. Explicit
+presentation tables preserve authored prose blocks while removing bare cell
+values and handling nested data records independently.
+
+Paragraph-leading `Game:` and `Edition:` declarations retain parser-owned block
+boundaries as metadata-only paragraph units. Closed source elements are required
+for complete status, and the whole paragraph remains subject to instruction
+filtering. These units cannot establish structural gameplay support.
 
 Community selection uses explicit `DiscussionForumPosting` markup together with
 its article/main containment. It preserves available author attribution while
 keeping quoted claims and unrelated comments out of affirmative record evidence.
 Markup is a selection hint, not an authority credential. This is deliberately
 narrower than support for arbitrary forum layouts.
+When a comments wrapper contains a recognized primary post, only eligible
+primary post subtrees survive in prose. Structural HTML and embedded JSON use
+the same explicit furniture exclusions as article extraction, including sidebar,
+complementary-role and recommendation containers. These containers cannot return
+through record fields or surrounding qualifications. Ordinary adjacent aside
+corrections remain qualifications, and full-response source-use restrictions
+remain enforced even when their container is excluded from evidence.
 
 Inert JSON accepts strict flat gameplay records or explicit `records`,
 `locations`, `equipmentStats`, and `patchChanges` groups. Embedded JSON-LD supports
@@ -111,11 +128,11 @@ article/section remains partial because a trailing qualifier could be missing.
 | HTML units/output and merged extraction | 2,048 units; 1,000,000 output characters |
 | Conflict comparison before selection | At most 4,096 validated candidate units across strategies; final output remains capped at 2,048 and omitted conflicts still invalidate retained assertions |
 | HTML fields/context | 32 fields/unit; 1,024 characters/value; 512 characters/context value; 4,096 characters/unit |
-| HTML surrounding context | Six ancestor levels; at most 64 candidate context elements; omitted context makes the record partial |
+| HTML surrounding context | Six ancestor levels; at most 64 relevant qualifier elements; known whole-article scopes supply wrapper context without another ancestor walk; omitted qualifications make the record partial |
 | JSON parsing | 262,144 bytes/payload; 524,288 cumulative JSON bytes; 16 inert scripts; depth 12 |
 | JSON containers | 64 keys/object; 4,096 total keys; 256 array entries; 4,096 characters/parsed string |
 | JSON records/output | 256 records; 32 fields/record; 160 characters/label; 1,000 characters/value; 16 qualifiers of 400 characters; 4,096 characters/unit; 200,000 output characters |
-| Embedded visible context | Six ancestor levels; two nearby siblings per direction; at most 64 scope paragraphs plus 64 ancestor candidates; 160 characters/attribution |
+| Embedded visible context | Six ancestor levels; two nearby siblings per direction; at most 64 relevant qualifier elements; ordinary prose does not displace late qualifications; 160 characters/attribution |
 | JSON work deadline | At most 1,000 ms, additionally bounded by the caller's earlier deadline; DOM input is independently bounded |
 | Selected document text | Ordinary live projection 100,000 characters; durable/hybrid accepted projection up to 1,000,000 |
 | Durable chunks | Existing 500 chunks; target 1,800 characters; maximum 2,000; prose overlap at most 240; revision preview 16,000 |

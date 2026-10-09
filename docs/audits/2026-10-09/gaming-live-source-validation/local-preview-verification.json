@@ -1,0 +1,90 @@
+{
+  "executedAt": "2026-10-09T03:07:15.608Z",
+  "checkoutSha": "0ec167654fa3970c818b2e2721c044dd79b77189",
+  "scope": "latest pooled-anchor correction; precommit synthetic local component checks; no hosted execution",
+  "node": "v24.18.1",
+  "npm": "11.16.0",
+  "sourceImports": true,
+  "pinsUnchanged": true,
+  "pure": {
+    "success": true,
+    "passed": 9,
+    "failed": 0,
+    "skipped": 0,
+    "suites": 1
+  },
+  "localServedHttp": {
+    "success": true,
+    "passed": 2,
+    "failed": 0,
+    "skipped": 69,
+    "suites": 1
+  },
+  "verifierUnits": {
+    "passed": 38,
+    "failed": 0,
+    "skipped": 0,
+    "network": "mocked fetch"
+  },
+  "compiledImports": {
+    "success": true,
+    "exitCode": 0,
+    "executedAt": "2026-10-09T03:16:21.195Z",
+    "afterRootBuildArtifact": "/tmp/arcanos-gaming-release-build.log",
+    "logArtifact": "/tmp/arcanos-gaming-preview-final/pooled-anchors/compiled-import-check.log",
+    "logSha256": "3ccddae1f39435e8d1a1f6deae194425ba1400efe26f18a5878777e8df35b38f",
+    "result": "check:native-pr-preview-dist-imports passed: emitted preview imports match the reviewed runtime, honesty and migration-package core graphs."
+  },
+  "hosted": "BLOCKED: draft PR excluded by trusted preview admission",
+  "productionChanged": false,
+  "workingTree": "Uncommitted mission corrections at the baseline checkout; source fingerprints bind these precommit checks.",
+  "sourcePins": [
+    {
+      "file": "src/services/gamingDocumentExtraction.ts",
+      "semanticSha256": "4ddd1f0f9bec5c961ad0befa1b801549e06e9cfbedc0df55f149680cf65bbe04",
+      "sourceSha256": "355d2538624e66b37ffcb003a1a43549a5b1b2efd77adce5b540014201f993a1"
+    },
+    {
+      "file": "src/services/gamingGameDetection.ts",
+      "semanticSha256": "4fd5b7983ae652c20495fed77b8ca58985c7035cd6cc2c872ee26da1b2cc8bf0",
+      "sourceSha256": "ba09dbc0d9c64271537b7619fdd6a4557a05ab7bd275b670af0b9365896d1f5a"
+    },
+    {
+      "file": "src/services/gamingHtmlEvidence.ts",
+      "semanticSha256": "88ef52555d3e6178d3e8a119de7d5bdbcf19df81516433489bf4a270d806322f",
+      "sourceSha256": "f4ba145acd33c5117a6d7268970dec872e4dc038430c9f0975ae56e9068bddf2"
+    },
+    {
+      "file": "src/services/gamingJsonEvidence.ts",
+      "semanticSha256": "918cc8bdf0f1feede42a409538ff7abf73a32c55c4b3fa2631fcc47b9ef2a6c2",
+      "sourceSha256": "b72faa7b413a80fd0f298584a12e438361c784ce73b1ec5c6f9945e884a8cc03"
+    },
+    {
+      "file": "src/shared/gaming/gamingClearSource.ts",
+      "semanticSha256": "5aec48268091321845030d6a7af7d2712681e34334b86ec25c740084f93b6d7a",
+      "sourceSha256": "f443ef76afcda8fa94a7742640c81e894a532e43c3a641be581b53b8590ce0ce"
+    },
+    {
+      "file": "src/shared/gaming/gamingFreshnessCore.ts",
+      "semanticSha256": "1a436adedd832082aa6c99822f0e2628e08a9f0c56845763caaed3c2f8ebd343",
+      "sourceSha256": "ebd8867e5ae139a6547991ab332410d7897e2b2d1ed70d4ad3632906b854f1e2"
+    },
+    {
+      "file": "src/shared/gaming/gamingGameDeclaration.ts",
+      "semanticSha256": "305d3e072b842cba314386db5d95ed6e67beeedc369ed4c761f3890a42eea2f3",
+      "sourceSha256": "bdde544998fe599fea725d809415d7dc0915a1b826b204fb1be6761274db043c"
+    },
+    {
+      "file": "src/shared/gaming/gamingLiveSourceValidationPreviewFixture.ts",
+      "semanticSha256": "3fe306adc8ad4f0540672e0293ac17f7f92b1fb70a26f12b079f777072d04baf",
+      "sourceSha256": "5eb7cd4a8ad0e35fea78d36bb6d927d633d987747f58d9630072549d9b120829"
+    }
+  ],
+  "evidenceArtifacts": {
+    "pure": "/tmp/arcanos-gaming-preview-final/pooled-anchors/pure-fixture.json",
+    "localServedHttp": "/tmp/arcanos-gaming-preview-final/pooled-anchors/local-served-http.json",
+    "verifierUnits": "/tmp/arcanos-gaming-preview-final/pooled-anchors/verifier-unit.log",
+    "sourceImports": "/tmp/arcanos-gaming-preview-final/source-import-check.log",
+    "reproducedFailure": "/tmp/arcanos-gaming-preview-final/recommendation-before-fix.log"
+  }
+}

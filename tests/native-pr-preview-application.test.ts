@@ -13,6 +13,7 @@ import { assertGamingCompositionPreviewFixture } from '../src/shared/chatgpt/gam
 import * as trinityReasoningPolicy from '../src/shared/gpt/trinityReasoningPolicy.js';
 import * as heartbeatBoundary from '../src/services/controlPlane/heartbeatHttpBoundary.js';
 import * as gamingDurableRagFixture from '../src/shared/gaming/gamingDurableRagPreviewFixture.js';
+import * as gamingLiveSourceValidationFixture from '../src/shared/gaming/gamingLiveSourceValidationPreviewFixture.js';
 import {
   NATIVE_PR_PREVIEW_BACKSTAGE_BOOKER_OPENAPI_CONTRACT,
   NATIVE_PR_PREVIEW_CHATGPT_TUTOR_CONTRACT,
@@ -69,6 +70,11 @@ const runGamingLargeSourceFixture = jest.fn(gamingDurableRagFixture.runGamingLar
 jest.unstable_mockModule('../src/shared/gaming/gamingDurableRagPreviewFixture.js', () => ({
   ...gamingDurableRagFixture,
   runGamingLargeSourcePreview: runGamingLargeSourceFixture,
+}));
+const runGamingLiveSourceValidationFixture = jest.fn(gamingLiveSourceValidationFixture.runGamingLiveSourceValidationPreview);
+jest.unstable_mockModule('../src/shared/gaming/gamingLiveSourceValidationPreviewFixture.js', () => ({
+  ...gamingLiveSourceValidationFixture,
+  runGamingLiveSourceValidationPreview: runGamingLiveSourceValidationFixture,
 }));
 const normalizeModelReasoningEffort = jest.fn(trinityReasoningPolicy.normalizeOpenAIModelReasoningEffort);
 const resolveModelCapabilities = jest.fn(trinityReasoningPolicy.resolveOpenAIModelCapabilities);
@@ -3588,6 +3594,9 @@ describe('native PR contained application', () => {
       expect(response.headers[NATIVE_PR_PREVIEW_GAMING_CONTRACT.largeSourceProofHeader]).toBe(
         mode === 'guide' ? NATIVE_PR_PREVIEW_GAMING_CONTRACT.largeSourceProofVersion : undefined
       );
+      expect(response.headers[NATIVE_PR_PREVIEW_GAMING_CONTRACT.liveSourceValidationProofHeader]).toBe(
+        mode === 'guide' ? NATIVE_PR_PREVIEW_GAMING_CONTRACT.liveSourceValidationProofVersion : undefined
+      );
       expect(response.headers[NATIVE_PR_PREVIEW_GAMING_CONTRACT.guideAssistanceProofHeader]).toBe(
         mode === 'guide' ? NATIVE_PR_PREVIEW_GAMING_CONTRACT.guideAssistanceProofVersion : undefined
       );
@@ -3676,6 +3685,25 @@ describe('native PR contained application', () => {
       'trace-preview-operational',
       true
     );
+  });
+
+  it('withholds every Gaming proof and success output when live-source assertions fail', async () => {
+    const { app } = buildApplication();
+    runGamingLiveSourceValidationFixture.mockImplementationOnce(() => {
+      throw new Error('Private fixture failure must not be reflected.');
+    });
+    const failed = await request(app).post(NATIVE_PR_PREVIEW_GAMING_CONTRACT.queryPath).send({
+      action: 'query', payload: { mode: 'guide', game: NATIVE_PR_PREVIEW_GAMING_CONTRACT.game,
+        prompt: NATIVE_PR_PREVIEW_GAMING_CONTRACT.fixtures.guide },
+    });
+    expect(failed.status).toBe(500);
+    expect(failed.body).toEqual({ error: 'PREVIEW_GAMING_LIVE_SOURCE_VALIDATION_CONTRACT_INVALID' });
+    for (const [key, header] of Object.entries(NATIVE_PR_PREVIEW_GAMING_CONTRACT)) {
+      if ((key === 'proofHeader' || key.endsWith('ProofHeader')) && typeof header === 'string') {
+        expect(failed.headers[header]).toBeUndefined();
+      }
+    }
+    expectNoStore(failed);
   });
 
   it('withholds every Gaming proof and success output when the large-source assertions fail and recovers on a later request', async () => {

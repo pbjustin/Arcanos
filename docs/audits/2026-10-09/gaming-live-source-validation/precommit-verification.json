@@ -1,0 +1,370 @@
+{
+  "scope": "Final frozen precommit working tree; exact committed checkout and independent CI are recorded in the PR after publication",
+  "baselineSha": "0ec167654fa3970c818b2e2721c044dd79b77189",
+  "initialWorkingTreeClean": true,
+  "branch": "fix/gaming-live-source-validation",
+  "node": "v24.18.1",
+  "npm": "11.16.0",
+  "powershell": "7.6.6",
+  "productionChanged": false,
+  "sourceFingerprints": [
+    {
+      "path": "scripts/check-native-pr-preview-imports.mjs",
+      "sha256": "8360b08c72d6f73febff185b18b727c3bbd28096990b858713768cd6e06d03da"
+    },
+    {
+      "path": "scripts/native-pr-preview-contract.d.mts",
+      "sha256": "c8e520d63220f15f81654e72cca92bf2d6e20eef1393d3d9f45a036b201e677e"
+    },
+    {
+      "path": "scripts/native-pr-preview-contract.mjs",
+      "sha256": "a5fbe8ccb0665620b3315ede76db6f26e5519d606714955bd1b6f8742b14be62"
+    },
+    {
+      "path": "scripts/native-pr-preview-e2e.mjs",
+      "sha256": "016d5697fbbfd310dc3129060160272330b917dbe9c550cc146022e50de87a55"
+    },
+    {
+      "path": "scripts/native-pr-preview-e2e.test.mjs",
+      "sha256": "67bc3ca1284c32ba68768ded4db110cae7b3d796a6b8cda785aeaf7eaf4bc3cb"
+    },
+    {
+      "path": "src/nativePrPreviewApplication.ts",
+      "sha256": "12f382eeeddeb5dcb702e5b201b2d0998b69d633cd80d0f4e56157c85cb84041"
+    },
+    {
+      "path": "src/services/gamingDocumentExtraction.ts",
+      "sha256": "355d2538624e66b37ffcb003a1a43549a5b1b2efd77adce5b540014201f993a1"
+    },
+    {
+      "path": "src/services/gamingGameDetection.ts",
+      "sha256": "ba09dbc0d9c64271537b7619fdd6a4557a05ab7bd275b670af0b9365896d1f5a"
+    },
+    {
+      "path": "src/services/gamingHtmlEvidence.ts",
+      "sha256": "f4ba145acd33c5117a6d7268970dec872e4dc038430c9f0975ae56e9068bddf2"
+    },
+    {
+      "path": "src/services/gamingHybridCandidates.ts",
+      "sha256": "712f6eda719e2aedf402e783a0985cb39d18dcc3d420dd67fe206ca913e7a99d"
+    },
+    {
+      "path": "src/services/gamingJsonEvidence.ts",
+      "sha256": "b72faa7b413a80fd0f298584a12e438361c784ce73b1ec5c6f9945e884a8cc03"
+    },
+    {
+      "path": "src/shared/gaming/gamingClearSource.ts",
+      "sha256": "f443ef76afcda8fa94a7742640c81e894a532e43c3a641be581b53b8590ce0ce"
+    },
+    {
+      "path": "src/shared/gaming/gamingFreshnessCore.ts",
+      "sha256": "ebd8867e5ae139a6547991ab332410d7897e2b2d1ed70d4ad3632906b854f1e2"
+    },
+    {
+      "path": "src/shared/gaming/gamingGameDeclaration.ts",
+      "sha256": "bdde544998fe599fea725d809415d7dc0915a1b826b204fb1be6761274db043c"
+    },
+    {
+      "path": "src/shared/gaming/gamingLiveSourceValidationPreviewFixture.ts",
+      "sha256": "5eb7cd4a8ad0e35fea78d36bb6d927d633d987747f58d9630072549d9b120829"
+    },
+    {
+      "path": "src/shared/webFetcher.ts",
+      "sha256": "5cefa075fa060a9e19a34db3354e4679ddbfdba974b685549cd0a1420defdcba"
+    },
+    {
+      "path": "tests/gaming-acquired-topic-identity.test.ts",
+      "sha256": "1f878c0b794a782576cb31db1888116ac3403996e3b7e11c8202b578f0ed61f8"
+    },
+    {
+      "path": "tests/gaming-html-evidence.test.ts",
+      "sha256": "256a3320b3f9db243cce958eb1720d568af13c68ce57ee7ff821bef51f1df270"
+    },
+    {
+      "path": "tests/gaming-live-source-candidate-regressions.test.ts",
+      "sha256": "4f336adb430f5e4c69682cc8495a09b5c10229abfda166ecefe64490ea663051"
+    },
+    {
+      "path": "tests/gaming-live-source-identity-regressions.test.ts",
+      "sha256": "3759a62fe13168f5c0699a267ce2802dbd9962b857ed6dc268248076437b5ec5"
+    },
+    {
+      "path": "tests/gaming-live-source-validation-preview.test.ts",
+      "sha256": "ae49e8a2e6ae4930ac513ac007dc6065a7d19838a81091c2bd073a9cb393b866"
+    },
+    {
+      "path": "tests/gaming-minecraft-child-isolation.test.ts",
+      "sha256": "225263f1cde2907c4b1af217595f9305244dda1bd5e9f6509461ba1e517452ad"
+    },
+    {
+      "path": "tests/gaming-minecraft-edition-scope.test.ts",
+      "sha256": "08af2d6a44343a82c62a418f1b3adffc6489212eb6f5ad872c1ae2185c61c99c"
+    },
+    {
+      "path": "tests/gaming-publisher-extraction-regressions.test.ts",
+      "sha256": "b066672109c14fbcdf0a6dc78431979536baee5c5ed266c79f7125caef27341d"
+    },
+    {
+      "path": "tests/gaming-semantic-reasons.test.ts",
+      "sha256": "8fdb1cc3e36bbe91f4d1ccbac20792d2d33f631407148d34575d8b204925a1a5"
+    },
+    {
+      "path": "tests/gaming-unrequested-base-edition.test.ts",
+      "sha256": "929c79d76c76980826421a8483ed94a6dabb31ef52bdf53605520803bac48de9"
+    },
+    {
+      "path": "tests/live-validation-gaming-adapter.test.ts",
+      "sha256": "8cf027540fe572819027b822693eb82d2662c23b5670a4f8e2e47ecebdf84ac5"
+    },
+    {
+      "path": "tests/native-pr-preview-application.test.ts",
+      "sha256": "8248553ff9f79992923087a34adc20f7e8aa5cc85127594015ef75c746010955"
+    }
+  ],
+  "checks": [
+    {
+      "command": "npm run type-check",
+      "exitCode": 0,
+      "artifact": "/tmp/arcanos-gaming-final-candidate-type-check.log",
+      "artifactSha256": "82c45ad386f9769567052c6ed1b2b78434ef817bfe3d475c3cc908cb0dbfe9ec"
+    },
+    {
+      "command": "npm run lint",
+      "exitCode": 0,
+      "artifact": "/tmp/arcanos-gaming-final-candidate-lint.log",
+      "artifactSha256": "7790d5ac6b7fb00ff4a462554d686d4cad2a9af62bc377d1525f0e7f367ddd97"
+    },
+    {
+      "command": "npm run build",
+      "exitCode": 0,
+      "artifact": "/tmp/arcanos-gaming-final-candidate-build-confirmed.log",
+      "artifactSha256": "0b9afde20b4001fa6f14c45f89648647add898ab097eef004c1070426e29e4aa"
+    },
+    {
+      "command": "npm run docs:check",
+      "exitCode": 0,
+      "artifact": "/tmp/arcanos-gaming-final-candidate-docs.log",
+      "artifactSha256": "3af8c43303cb4f93221a0b121316976a2e1b52db8dce2a269fef92f636a322f0"
+    },
+    {
+      "command": "npm run docs:links -- --local-only",
+      "exitCode": 0,
+      "artifact": "/tmp/arcanos-gaming-final-candidate-doc-links.log",
+      "artifactSha256": "0eb3c85fbcab943c4cd1a4b67691f8ec879982b045959f2d2684eca4b0ecabaa"
+    },
+    {
+      "command": "npm run guard:commit",
+      "exitCode": 0,
+      "artifact": "/tmp/arcanos-gaming-final-candidate-commit-guard.log",
+      "artifactSha256": "a10dff3db0f2ce256d003ada48d0ae0642f41e9088ec83bf5de6850f3fdef8a3"
+    }
+  ],
+  "focused": {
+    "artifact": "/tmp/arcanos-gaming-final-freshness-diagnostic-focused.json",
+    "artifactSha256": "898b2e3c989d7347f9095f79a4241b29c8f913004a4f4907b5bd92eb645c09de",
+    "success": true,
+    "suitesPassed": 5,
+    "suitesFailed": 0,
+    "testsPassed": 150,
+    "testsFailed": 0,
+    "testsSkipped": 0,
+    "failedSuites": []
+  },
+  "fullRootFinal": {
+    "command": "npm test -- --coverage=false --maxWorkers=4 --workerIdleMemoryLimit=768MB --json --outputFile=/tmp/arcanos-gaming-final-candidate-root-tests.json",
+    "coverage": false,
+    "artifact": "/tmp/arcanos-gaming-final-candidate-root-tests.json",
+    "artifactSha256": "f016f0e2bec735c6eb80a08db369f714c1be7aa5e0edccac36c265e92f96d556",
+    "success": true,
+    "startTime": "2026-10-09T03:28:06.804000+00:00",
+    "suitesPassed": 874,
+    "suitesFailed": 0,
+    "suitesSkipped": 13,
+    "testsPassed": 16678,
+    "testsFailed": 0,
+    "testsSkipped": 167,
+    "skipBoundary": "Default full-root execution has no database/Redis/device target; guarded SQL coverage is recorded separately, and two existing Windows-only cases skip on Linux. No negative test was removed or guard changed.",
+    "skippedCasesBySuite": [
+      {
+        "path": "tests/integration/action-plan-execution-migration.pg18.integration.test.ts",
+        "count": 1
+      },
+      {
+        "path": "tests/integration/backstage-notion-partition-storage.pg18.integration.test.ts",
+        "count": 17
+      },
+      {
+        "path": "tests/integration/non-gpt-terminal-retention.pg18.integration.test.ts",
+        "count": 10
+      },
+      {
+        "path": "tests/integration/ios-device-gateway.e2e.integration.test.ts",
+        "count": 3
+      },
+      {
+        "path": "tests/integration/backstage-notion-rag-candidate-search.pg18.integration.test.ts",
+        "count": 8
+      },
+      {
+        "path": "tests/integration/local-agent-hardening.pg.integration.test.ts",
+        "count": 6
+      },
+      {
+        "path": "tests/integration/gpt-access-device-auth.pg18.integration.test.ts",
+        "count": 8
+      },
+      {
+        "path": "tests/integration/action-plan-execution-migration.integration.test.ts",
+        "count": 1
+      },
+      {
+        "path": "tests/codebase-api.test.ts",
+        "count": 3
+      },
+      {
+        "path": "tests/integration/session-system.integration.test.ts",
+        "count": 1
+      },
+      {
+        "path": "tests/integration/dag-token-accounting.pg18.integration.test.ts",
+        "count": 4
+      },
+      {
+        "path": "tests/integration/backstage-notion-authority-http.pg18.integration.test.ts",
+        "count": 1
+      },
+      {
+        "path": "tests/gate-r2-projector-session.test.js",
+        "count": 1
+      },
+      {
+        "path": "tests/gate-r1-projector-session.test.js",
+        "count": 1
+      },
+      {
+        "path": "tests/integration/gaming-durable-rag.pg18.integration.test.ts",
+        "count": 9
+      },
+      {
+        "path": "tests/integration/job-claim-fencing.pg18.integration.test.ts",
+        "count": 11
+      },
+      {
+        "path": "tests/integration/public-provider-rate-limit-redis.integration.test.ts",
+        "count": 4
+      },
+      {
+        "path": "tests/integration/backstage-canon-storyline.pg18.integration.test.ts",
+        "count": 11
+      },
+      {
+        "path": "tests/integration/backstage-storyline-atomicity.pg18.integration.test.ts",
+        "count": 21
+      },
+      {
+        "path": "tests/integration/backstage-roster-atomicity.pg18.integration.test.ts",
+        "count": 4
+      },
+      {
+        "path": "tests/integration/job-stale-recovery-batching.pg18.integration.test.ts",
+        "count": 3
+      },
+      {
+        "path": "tests/integration/dag-snapshot-generation.pg18.integration.test.ts",
+        "count": 10
+      },
+      {
+        "path": "tests/integration/job-worker-budget-identity.pg18.integration.test.ts",
+        "count": 29
+      }
+    ]
+  },
+  "earlierFrozenFullRoot": {
+    "qualification": "PASS before the final logging-only diagnostic correction; not claimed as final-tree proof",
+    "artifact": "/tmp/arcanos-gaming-release-root-tests.json",
+    "artifactSha256": "40ec9d4c5a9b4b40696a51219366ecfa6da64079ef82926861b2a4210b3b6fbe",
+    "success": true,
+    "suitesPassed": 874,
+    "suitesFailed": 0,
+    "testsPassed": 16677,
+    "testsFailed": 0,
+    "testsSkipped": 167,
+    "failedSuites": []
+  },
+  "preservedHistoricalFailures": [
+    {
+      "qualification": "Precommit failure, corrected in this working tree; no commit existed",
+      "artifact": "/tmp/arcanos-gaming-frozen-tests.json",
+      "artifactSha256": "2d9f93f0840f6925c946bca2ba29551b8f4e8a8d11e480d69626c786c21c09e1",
+      "success": false,
+      "suitesPassed": 124,
+      "suitesFailed": 4,
+      "testsPassed": 4031,
+      "testsFailed": 28,
+      "testsSkipped": 0,
+      "failedSuites": [
+        "gaming-minecraft-edition-scope.test.ts",
+        "gaming-unrequested-base-edition.test.ts",
+        "gaming-semantic-reasons.test.ts",
+        "gaming-minecraft-child-isolation.test.ts"
+      ]
+    },
+    {
+      "qualification": "Earlier broad precommit run: adapter reason expectation and unavailable PowerShell; corrected without changing rejection/skip guards",
+      "artifact": "/tmp/arcanos-gaming-final-root-tests.json",
+      "artifactSha256": "be1813089c81638496c59896a92a7ef5f493b1f7a0153095a10e3fb557f87756",
+      "success": false,
+      "suitesPassed": 871,
+      "suitesFailed": 3,
+      "testsPassed": 16626,
+      "testsFailed": 45,
+      "testsSkipped": 167,
+      "failedSuites": [
+        "live-validation-gaming-adapter.test.ts",
+        "gate-r2-projector-session.test.js",
+        "gate-r1-projector-session.test.js"
+      ]
+    },
+    {
+      "qualification": "Actual final-review probe exposed an early freshness classifier rejection reporting a later identity rule; corrected with a new protected acquisition/workflow regression",
+      "artifact": "/tmp/arcanos-gaming-freshness-diagnostic-actual-review.json",
+      "artifactSha256": "5985a31ffa5a32cd95b73010d42b601a5ffbe117ffb45fb4ba427712e37998d1",
+      "success": false,
+      "suitesPassed": 0,
+      "suitesFailed": 1,
+      "testsPassed": 0,
+      "testsFailed": 1,
+      "testsSkipped": 0,
+      "failedSuites": [
+        "gaming-final-freshness-diagnostic-probe.test.ts"
+      ]
+    }
+  ],
+  "reviewArtifact": "/tmp/arcanos-gaming-integrated-diff-review.json",
+  "historicalCiRuns": "No new commit or GitHub CI run existed during these working-tree executions. Failed historical local artifacts are retained; independent per-commit CI is recorded in the PR.",
+  "lintWarnings": 76,
+  "lintErrors": 0,
+  "independentReview": {
+    "reviewedAtUTC": "2026-10-09T03:26:27.852377+00:00",
+    "scope": "read-only integrated working-tree diff and new-file review",
+    "reviewedFileCount": 41,
+    "remainingActionableFindings": [],
+    "probes": {
+      "artifact": "/tmp/arcanos-gaming-independent-final-diagnostic-review.json",
+      "artifactSha256": "4e30e3e36afd2387068c0ce4ded6675dfaea367dc9e804f99b9ea132ef3327f2",
+      "success": true,
+      "suitesPassed": 2,
+      "testsPassed": 7,
+      "testsFailed": 0,
+      "testsSkipped": 0
+    }
+  },
+  "finalSourceFingerprintsUnchanged": true,
+  "completedAtUTC": "2026-10-09T03:32:23.128596+00:00",
+  "commitPreflight": {
+    "baselineConfirmed": "0ec167654fa3970c818b2e2721c044dd79b77189",
+    "reviewedFilesStaged": 42,
+    "unrelatedWorkingTreeChanges": 0,
+    "diffCheckExitCode": 0
+  }
+}

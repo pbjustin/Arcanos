@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { load } from 'cheerio';
-import { countGamingHtmlElements, filterGamingDocumentInstructions } from '@services/gamingDocumentExtraction.js';
+import { countGamingHtmlElements, filterGamingDocumentInstructions, GAMING_DOCUMENT_FURNITURE_SELECTOR } from '@services/gamingDocumentExtraction.js';
 import {
   GAMING_EVIDENCE_UNIT_POLICY_VERSION,
   type GamingEvidenceExtractionInput,
@@ -362,6 +362,7 @@ export function extractGamingJsonEvidence(input: GamingEvidenceExtractionInput):
     if (deadlineExpired()) return result;
     $('template, noscript').remove();
     const scripts = $('script');
+    const qualifierValues = new Map<cheerio.Element, string>();
     let inertScripts = 0;
     for (const [index, element] of scripts.toArray().entries()) {
       if (Date.now() >= deadline) { result.truncated = true; reason('extraction_budget_exhausted'); break; }
@@ -378,7 +379,7 @@ export function extractGamingJsonEvidence(input: GamingEvidenceExtractionInput):
       if (type !== 'application/json' && type !== 'application/ld+json') continue;
       if (++inertScripts > LIMITS.scripts) { result.truncated = true; reason('extraction_budget_exhausted'); break; }
       const node = $(element);
-      if (node.closest('nav,footer,aside,form,template,[hidden],[aria-hidden="true"],[role="navigation"],blockquote').length) continue;
+      if (node.closest(`aside,blockquote,[role="menu"],${GAMING_DOCUMENT_FURNITURE_SELECTOR}`).length) continue;
       const post = node.closest(DISCUSSION).first();
       const unrelated = node.closest(UNRELATED_DISCUSSION).first();
       if (unrelated.length && (!post.length || !post.is('article') && !post.closest('main,[role="main"]').length
@@ -395,25 +396,30 @@ export function extractGamingJsonEvidence(input: GamingEvidenceExtractionInput):
         relevant = relevant.add(ancestor.children('p,figcaption,small,[role="note"]'))
           .add(ancestor.prevAll('p,aside,div,small').slice(0, 2)).add(ancestor.nextAll('p,aside,div,small').slice(0, 2));
       }
-      if (container.length) {
-        const paragraphs = container.find('p,figcaption,small,[role="note"]');
-        if (paragraphs.length > 64 || relevant.length > 64) {
-          visibleContext.integrityReasons!.push('required_context_missing'); reason('required_context_missing');
+      if (container.length) relevant = relevant.add(container.find('p,figcaption,small,[role="note"]'));
+      const ancestors = node.parents().toArray();
+      let qualifierElements = 0;
+      relevant.each((_, candidate) => {
+        if (deadlineExpired()) return false;
+        const selected = $(candidate);
+        if (selected.closest(`${GAMING_DOCUMENT_FURNITURE_SELECTOR},blockquote`).length) return;
+        if (selected.closest(UNRELATED_DISCUSSION).length && (!post.length || selected.closest(DISCUSSION).get(0) !== post.get(0))) return;
+        const candidateScope = selected.closest('section,article,main,figure').get(0);
+        if (candidateScope && candidateScope !== container.get(0) && !ancestors.includes(candidateScope)) return;
+        let text = qualifierValues.get(candidate);
+        if (text === undefined) {
+          const copy = selected.clone(); copy.find(`script,style,table,ul,ol,dl,blockquote,section,article,main,figure,${GAMING_DOCUMENT_FURNITURE_SELECTOR},${UNRELATED_DISCUSSION}`).remove();
+          text = copy.text().normalize('NFKC').replace(/\s+/gu, ' ').trim();
+          qualifierValues.set(candidate, text);
         }
-        relevant.slice(0, 64).add(paragraphs.slice(0, 64)).each((_, candidate) => {
-          const selected = $(candidate);
-          if (selected.closest('nav,footer,form,template,[hidden],[aria-hidden="true"],blockquote,.comments,#comments').length) return;
-          const candidateScope = selected.closest('section,article,main,figure').get(0);
-          if (candidateScope && candidateScope !== container.get(0) && !node.parents().toArray().includes(candidateScope)) return;
-          const copy = selected.clone(); copy.find('script,style,table,ul,ol,dl,blockquote').remove();
-          const text = copy.text().normalize('NFKC').replace(/\s+/gu, ' ').trim();
-          if (VISIBLE_QUALIFIER.test(text)) visibleContext.qualifiers.push(text);
-        });
-      } else relevant.slice(0, 64).each((_, candidate) => {
-        const copy = $(candidate).clone(); copy.find('script,style,table,ul,ol,dl,blockquote').remove();
-        const text = copy.text().normalize('NFKC').replace(/\s+/gu, ' ').trim();
-        if (VISIBLE_QUALIFIER.test(text)) visibleContext.qualifiers.push(text);
+        if (VISIBLE_QUALIFIER.test(text)) {
+          if (++qualifierElements > 64) {
+            visibleContext.integrityReasons!.push('required_context_missing'); reason('required_context_missing'); return false;
+          }
+          visibleContext.qualifiers.push(text);
+        }
       });
+      if (deadlineExpired()) return result;
       let headingNode = node.prevAll('h1,h2,h3,h4,h5,h6').first();
       if (!headingNode.length && container.length) headingNode = container.children('h1,h2,h3,h4,h5,h6').first();
       const heading = headingNode.text().normalize('NFKC').replace(/\s+/gu, ' ').trim();

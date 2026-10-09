@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-08T20:00:54.345Z",
+  "generatedAt": "2026-10-09T02:24:36.762Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -2783,6 +2783,9 @@
           "relativePath": "src/shared/gaming/gamingFreshnessDisposition.ts"
         },
         {
+          "relativePath": "src/shared/gaming/gamingGameDeclaration.ts"
+        },
+        {
           "relativePath": "src/shared/gaming/gamingGameIdentity.ts"
         },
         {
@@ -2817,6 +2820,9 @@
         },
         {
           "relativePath": "src/shared/gaming/gamingHybridPolicyCore.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingLiveSourceValidationPreviewFixture.ts"
         },
         {
           "relativePath": "src/shared/gaming/gamingPlatformIdentity.ts"
@@ -4465,6 +4471,15 @@
           "relativePath": "tests/gaming-live-runtime.test.ts"
         },
         {
+          "relativePath": "tests/gaming-live-source-candidate-regressions.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-live-source-identity-regressions.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-live-source-validation-preview.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-location-scope.test.ts"
         },
         {
@@ -4517,6 +4532,9 @@
         },
         {
           "relativePath": "tests/gaming-public-dispatcher.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-publisher-extraction-regressions.test.ts"
         },
         {
           "relativePath": "tests/gaming-rag-local-fetch.integration.test.ts"

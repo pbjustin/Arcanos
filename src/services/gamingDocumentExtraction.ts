@@ -53,6 +53,11 @@ const GENERIC_CONTENT_SELECTORS = [
   ".content"
 ] as const;
 
+const PRIMARY_CONTENT_SELECTORS = [
+  '#article-body', '.article-content', '.article-body', "[class*='article-content']", "[class*='article-body']",
+  '.entry-content', '.post-content', '.mw-parser-output', 'article', 'main', "[role='main']"
+] as const;
+
 const COMMON_JUNK_SELECTORS = [
   "nav",
   "header",
@@ -97,6 +102,13 @@ const COMMON_JUNK_SELECTORS = [
   "[class*='advertisement']",
   "[class*='ad-container']"
 ] as const;
+
+/** Shared furniture denial for structural candidates and surrounding notes.
+ * Article headers, ordinary adjacent aside notes and primary community posts
+ * retain their separately scoped extraction rules. */
+export const GAMING_DOCUMENT_FURNITURE_SELECTOR = COMMON_JUNK_SELECTORS
+  .filter(selector => !['header', 'aside', '.comments', '#comments', "[class*='comment-list']"].includes(selector))
+  .join(',');
 
 const SOURCE_EXTRACTION_PROFILES: Array<{
   domains: string[];
@@ -158,6 +170,7 @@ export function gamingDocumentFetchOptions(url: string, options: FetchAndCleanOp
     preferredContentSelectors: options.preferredContentSelectors ?? [
       ...(profile?.contentSelectors ?? []), ...GENERIC_CONTENT_SELECTORS
     ],
+    primaryContentSelectors: options.primaryContentSelectors ?? [...(profile?.contentSelectors ?? []), ...PRIMARY_CONTENT_SELECTORS],
     removeSelectors: options.removeSelectors ?? [...COMMON_JUNK_SELECTORS, ...(profile?.removeSelectors ?? [])]
   };
 }

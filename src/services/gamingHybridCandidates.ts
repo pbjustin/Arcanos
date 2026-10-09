@@ -20,7 +20,8 @@ import { chunkGamingDocument, GAMING_DURABLE_DOCUMENT_LIMITS } from './gamingDur
 import { sanitizeGamingDiscoveryCandidateUrl } from './gamingSourceDiscovery.js';
 import { getGamingRagChunkChars, getGamingRagMaxChunks, getGamingRagMaxSources, getGamingWebContextMaxChars, getGamingWebContextFetchTimeoutMs } from './gamingConfig.js';
 import { createApprovedGamingSourceIngestion, hashGamingApprovedDocument, type GamingSourceGatewayContext } from './gamingSourceIngestion.js';
-import { assessGamingClearSource, gamingClearHistoricalSourceVerified, gamingClearIntactSourceText } from '@shared/gaming/gamingClearSource.js';
+import { assessGamingClearSource, gamingClearHistoricalSourceVerified, gamingClearIntactSourceText,
+  type GamingSourceIdentityDiagnostic } from '@shared/gaming/gamingClearSource.js';
 import { GAMING_CLEAR_VERSION, gamingClearHash, type GamingClearAssessment } from '@shared/gaming/gamingClearPolicy.js';
 import { GAMING_HYBRID_LIMITS } from '@shared/gaming/gamingHybridContract.js';
 import { pickGamingPlayerContext } from '@shared/gaming/gamingPlayerContext.js';
@@ -151,6 +152,7 @@ export async function evaluateGamingHybridCandidates(
     const candidateReference = randomUUID();
     let extractionDiagnostic: GamingStructureDiagnostics | undefined;
     let missingClaimFields: string[] = [];
+    let identityDiagnostic: GamingSourceIdentityDiagnostic | undefined;
     let acquisitionDiagnostic: Record<string, unknown> = {
       stage: 'admission', policyVersion: GAMING_DOCUMENT_ACQUISITION_POLICY_VERSION, redirectCount: 0, failingHop: 0
     };
@@ -158,7 +160,7 @@ export async function evaluateGamingHybridCandidates(
       if (!sourceAssessed) logger.info('gaming.clear.source.not_run', { requestId: context.requestId, traceId: context.traceId,
         workflowId: context.workflowId, submittedIndex, origin: origin ?? 'submitted', candidateReference, acquisition: acquisitionDiagnostic,
         rubricVersion: GAMING_CLEAR_VERSION, profile: 'source', assessmentStatus: 'not_run', reasonCodes: [reason],
-        extraction: extractionDiagnostic, missingClaimFields,
+        extraction: extractionDiagnostic, missingClaimFields, identity: identityDiagnostic,
         elapsedMs: Date.now() - sourceStartedAt });
       decisions.push({ submittedIndex, ...(origin ? { origin } : {}), ...(publicUrl ? { url: projectGamingDocumentPublicUrl(publicUrl) } : {}), decision: 'rejected', reasonCodes: [reason] });
     };
@@ -232,16 +234,32 @@ export async function evaluateGamingHybridCandidates(
         });
       }
       policy.autoStoreAllowed = policy.autoStoreAllowed && freshness.autoStoreAllowed;
-      if (normalizeGamingGameIdentity(freshness.game) !== normalizeGamingGameIdentity(input.game)) { reject('GAME_MISMATCH'); continue; }
+      if (normalizeGamingGameIdentity(freshness.game) !== normalizeGamingGameIdentity(input.game)) {
+        identityDiagnostic = { ruleId: 'gaming.identity.freshness_game_conflict', evidenceCategory: 'acquired_anchors' };
+        reject('GAME_MISMATCH'); continue;
+      }
       const scoped = selectGamingSourceEditionScopedEvidence(document, input, freshness.edition);
-      if (scoped.reasonCodes.includes('GAME_MISMATCH')) { reject('GAME_MISMATCH'); continue; }
-      if (scoped.status === 'conflict') { reject('EDITION_CONFLICT'); continue; }
-      if (scoped.status === 'unverified' && scoped.reasonCodes.length) { reject('EDITION_UNVERIFIED'); continue; }
+      if (scoped.reasonCodes.includes('GAME_MISMATCH')) {
+        identityDiagnostic = { ruleId: 'gaming.identity.structured_game_conflict', evidenceCategory: 'structured_field' };
+        reject('GAME_MISMATCH'); continue;
+      }
+      if (scoped.status === 'conflict') {
+        identityDiagnostic = { ruleId: 'gaming.identity.edition_scope_conflict', evidenceCategory: 'edition_scope' };
+        reject('EDITION_CONFLICT'); continue;
+      }
+      if (scoped.status === 'unverified' && scoped.reasonCodes.length) {
+        identityDiagnostic = { ruleId: 'gaming.identity.edition_scope_unverified', evidenceCategory: 'edition_scope' };
+        reject('EDITION_UNVERIFIED'); continue;
+      }
       if (input.edition && !gamingEditionEvidenceMatchesRequest(freshness.edition, input.edition, input)) {
+        identityDiagnostic = { ruleId: 'gaming.identity.edition_applicability', evidenceCategory: 'edition_scope' };
         reject(freshness.edition ? 'EDITION_CONFLICT' : 'EDITION_UNVERIFIED'); continue;
       }
       if (!input.edition && freshness.edition && !gamingEditionEvidenceMatchesRequest(freshness.edition, undefined, input)
-        && !(normalizeGamingGameIdentity(input.game) === 'minecraft' && normalizeGamingMinecraftEdition(freshness.edition))) { reject('EDITION_UNVERIFIED'); continue; }
+        && !(normalizeGamingGameIdentity(input.game) === 'minecraft' && normalizeGamingMinecraftEdition(freshness.edition))) {
+        identityDiagnostic = { ruleId: 'gaming.identity.edition_scope_unverified', evidenceCategory: 'edition_scope' };
+        reject('EDITION_UNVERIFIED'); continue;
+      }
       const applies = (values: string[] | undefined, wanted: string | undefined) => !values?.length
         || values.some(value => value.toLowerCase() === 'all' || value.toLowerCase() === wanted?.toLowerCase());
       if (freshness.platforms?.length && !gamingPlatformEvidenceMatchesRequest(freshness.platforms, input.platform) && (input.platform || gamingApplicabilityScopeRequired(input, 'platform')
@@ -261,12 +279,13 @@ export async function evaluateGamingHybridCandidates(
       const candidateId = randomUUID();
       freshness.id = candidateId;
       const sourceAssessment = assessGamingClearSource(input, document, { subjectId: candidateId, subjectHash: contentHash,
-        actorScopeHash: actorHash(context.actorKey), sourcePolicy: policy, freshness, now: now(), ...(v2 ? { allowPartialCoverage: true } : {}) });
+        actorScopeHash: actorHash(context.actorKey), sourcePolicy: policy, freshness, now: now(),
+        onIdentityAssessment: identity => { identityDiagnostic = identity.diagnostic; }, ...(v2 ? { allowPartialCoverage: true } : {}) });
       sourceAssessed = true;
       logger.info('gaming.clear.source.completed', { requestId: context.requestId, traceId: context.traceId,
         rubricVersion: sourceAssessment.rubricVersion, profile: sourceAssessment.profile, policyProfile: sourceAssessment.policyProfile,
         workflowId: context.workflowId, submittedIndex, candidateReference, acquisition: acquisitionDiagnostic,
-        extraction: extractionDiagnostic, missingClaimFields,
+        extraction: extractionDiagnostic, missingClaimFields, identity: identityDiagnostic,
         sourceRole: sourceAssessment.sourceRole, subjectHash: contentHash, assessmentMethod: sourceAssessment.assessmentMethod,
         assessmentStatus: sourceAssessment.assessmentStatus, dimensionScores: sourceAssessment.dimensionScores,
         overall: sourceAssessment.overall, decision: sourceAssessment.decision, blockingFindingCount: sourceAssessment.blockingFindings.length,
