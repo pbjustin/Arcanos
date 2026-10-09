@@ -97,6 +97,8 @@ describe('Gaming agent routing model', () => {
     ['Hollow Knight boss guide', 'guide', 'Hollow Knight'],
     ['Caves of Qud build request', 'build', 'Caves of Qud'],
     ['Vintage Story class meta', 'meta', 'Vintage Story'],
+    ['Vigor beginner guide', 'guide', 'Vigor'],
+    ['Blood build request', 'build', 'Blood'],
   ])('detects an unregistered game from an anchored request: %s', (prompt, mode, game) => {
     const intent = IntentRouterAgent.classify({ prompt });
 

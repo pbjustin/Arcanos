@@ -739,6 +739,24 @@ describe('gaming source ingestion', () => {
     expect(persistGamingSourceRevisionMock).not.toHaveBeenCalled();
   });
 
+  it.each(['Dexterity build guide', 'Samurai Blade Build Guide', 'Early Game Samurai Build', 'Dexterity build guide | Independent News',
+    'Samurai Blade Build Guide – Independent News', 'Samurai Blade Build Guide — Independent News'])(
+    'keeps durable ingestion of the acquired generic topic title %s', async title => {
+      const url = 'https://example.com/generic-guide';
+      const text = 'In Elden Ring, the Samurai begins with Uchigatana. Raise Vigor and Dexterity before upgrading the starting katana. '.repeat(5);
+      resolveGamingDocumentMock.mockResolvedValueOnce(resolvedDocument(url, text, { metadata: { title, headings: title } }));
+      ingestGamingBuildResourceMock.mockResolvedValueOnce(genericNormalizedGamingSource(text));
+      const result = await executeQueuedGamingSourceIngestion('019fe3cd-8c01-7f01-8d2d-caa951bc4b9b', {
+        action: 'ingest', schemaVersion: '1', submittedCount: 1, rejectedSources: [],
+        sources: [{ submittedIndex: 0, canonicalUrl: url, game: 'Elden Ring', gameKey: 'elden-ring', origin: 'user_supplied' }]
+      });
+      expect(result.output.sources[0].status).toBe('stored');
+      expect(persistGamingSourceRevisionMock).toHaveBeenCalledWith(expect.objectContaining({
+        gameKey: 'elden-ring', cleanedContent: text.trim()
+      }));
+    }
+  );
+
   it.each([false, true])('reports prose document quality independently of build fields (truncated=%s)', async (truncated) => {
     const text = 'Borderlands 4 progression guide. Cross the canyon and activate the tower to open the eastern route. '.repeat(30);
     resolveGamingDocumentMock.mockResolvedValueOnce(resolvedDocument(

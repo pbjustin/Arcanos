@@ -8,12 +8,17 @@ coverage alongside these positive regressions.
 | --- | --- |
 | Ordinary `early game:` prose is not a game declaration | `gaming-live-source-identity-regressions.test.ts`, `gaming-publisher-extraction-regressions.test.ts` |
 | Generic Samurai, Dexterity and gameplay headings do not invent identities | `gaming-acquired-topic-identity.test.ts`, `gaming-live-source-identity-regressions.test.ts` |
+| Acquired topic vocabulary does not suppress real Vigor or Blood requests or contradictory acquired game scopes | `gaming-agents.routing.test.ts`, `gaming-live-source-identity-regressions.test.ts` |
 | Verified article survives unrelated recommendations, comments and sidebar qualifications | `gaming-live-source-identity-regressions.test.ts`, `gaming-publisher-extraction-regressions.test.ts` |
 | Full primary prose survives card competition and presentation tables | `gaming-publisher-extraction-regressions.test.ts` |
+| Supported main/page content containers retain full guides ahead of unrelated article cards | `gaming-publisher-extraction-regressions.test.ts` |
 | Closed independent records retain fields, source identity and qualifications through long prose and layout wrappers | `gaming-publisher-extraction-regressions.test.ts`, `gaming-html-evidence.test.ts` |
+| Enclosing article/main corrections survive plain wrappers; sibling semantic scopes remain independent and qualifier overflow stays partial | `gaming-publisher-extraction-regressions.test.ts` |
 | Relevant late evidence is selected from the full accepted pool | `gaming-live-source-candidate-regressions.test.ts`, `gaming-large-guide-rag.integration.test.ts` |
 | Complementary Samurai bleed topics retain each passage's citation provenance | `gaming-live-source-candidate-regressions.test.ts` |
 | Genuine different-game and Nightreign subjects, including an actual leading heading behind a misleading SEO title, remain distinct | `gaming-live-source-identity-regressions.test.ts`, `gaming-body-identity.test.ts`, `gaming-game-identity.test.ts` |
+| Contradictory primary headings retain authority after bounded publisher date/byline prefixes; comparisons and clipped headings retain their limits | `gaming-primary-heading-preface.test.ts` |
+| Standalone Game/Edition div/span metadata cannot lose declarations through whitespace normalization | `gaming-publisher-extraction-regressions.test.ts`, `gaming-live-source-identity-regressions.test.ts` |
 | Best/The best prefixed primary Nightreign subjects and DLC scope cannot hide behind a matching base-game SEO title; normal prefixed base-game guides and unrelated comparisons remain applicable | `gaming-acquired-topic-identity.test.ts`, `gaming-live-source-validation-preview.test.ts` |
 | DLC-only instructions and contradictory records fail closed | `gaming-live-source-identity-regressions.test.ts`, `gaming-unrequested-base-edition.test.ts`, `gaming-structural-sufficiency.test.ts` |
 | Truncated, malformed or qualification-incomplete records cannot establish unqualified facts | `gaming-publisher-extraction-regressions.test.ts`, `gaming-html-evidence.test.ts`, `gaming-partial-guide-admission.test.ts` |

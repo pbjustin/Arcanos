@@ -76,14 +76,20 @@ Nested content that cannot retain its field association makes the affected recor
 insufficient; removing a nested correction cannot leave an affirmative record.
 Ordinary prose does not consume the 64 relevant-qualifier allowance. A known
 whole-article scope supplies its notes and heading across plain layout wrappers;
-an unseen enclosing semantic scope still makes the record partial. Explicit
+enclosing article/main notes also survive those wrappers, while independent
+sibling sections and articles cannot qualify the record. An unseen enclosing
+semantic scope still makes the record partial. Explicit
 presentation tables preserve authored prose blocks while removing bare cell
 values and handling nested data records independently.
 
-Paragraph-leading `Game:` and `Edition:` declarations retain parser-owned block
-boundaries as metadata-only paragraph units. Closed source elements are required
+Block-leading `Game:` and `Edition:` declarations in paragraphs and standalone
+text-only div/span elements retain parser-owned boundaries as metadata-only
+paragraph units. Closed source elements are required
 for complete status, and the whole paragraph remains subject to instruction
 filtering. These units cannot establish structural gameplay support.
+Primary article selection recognizes `.main-content`, `#main-content`, and
+`.page-content` alongside article containers, so unrelated article cards cannot
+displace a higher-scoring full guide in those supported containers.
 
 Community selection uses explicit `DiscussionForumPosting` markup together with
 its article/main containment. It preserves available author attribution while

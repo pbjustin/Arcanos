@@ -147,7 +147,9 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
     if (ancestor.length && !ancestor.is('html') && wholeArticleContext) {
       const enclosingScopes = container.parents('article,main');
       if (enclosingScopes.length > 6) markContext(scope, 'required_context_missing');
-      relevant = relevant.add(enclosingScopes.slice(0, 6).children('p,figcaption,small,[role="note"]'));
+      // Plain wrappers must not hide notes in an enclosing article/main scope.
+      // The candidate-scope check below still excludes independent sibling scopes.
+      relevant = relevant.add(enclosingScopes.slice(0, 6).find('p,figcaption,small,[role="note"]'));
     }
     if (ancestor.length && !ancestor.is('html') && !wholeArticleContext) markContext(scope, 'required_context_missing');
     if (container.length) relevant = relevant.add(container.find('p,figcaption,small,[role="note"]'));
@@ -217,9 +219,30 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
 
   // DOM block boundaries survive text flattening through parser-owned metadata.
   // These paragraph units never establish gameplay facts or structural support.
-  for (const [index, paragraph] of $('p').toArray().entries()) {
+  const standaloneMetadataSpans = new Map<Element, Set<Element>>();
+  function standaloneSpan(element: Element): boolean {
+    const parent = $(element).parent();
+    if (!parent.is('body,main,article,section,div')) return false;
+    const parentElement = parent.get(0)!;
+    let spans = standaloneMetadataSpans.get(parentElement);
+    if (!spans) {
+      spans = new Set<Element>();
+      const siblings = parent.contents().toArray().filter(sibling => sibling.type !== 'comment'
+        && (sibling.type !== 'text' || text($(sibling).text())));
+      const boundary = (sibling: Element | undefined) => !sibling
+        || $(sibling).is('p,div,main,article,section,h1,h2,h3,h4,h5,h6');
+      for (const [index, sibling] of siblings.entries()) {
+        if ($(sibling).is('span') && boundary(siblings[index - 1]) && boundary(siblings[index + 1])) spans.add(sibling);
+      }
+      standaloneMetadataSpans.set(parentElement, spans);
+    }
+    return spans.has(element);
+  }
+  for (const [index, paragraph] of $('p,div,span').toArray().entries()) {
     if (exhausted()) break;
     if (!eligible($, paragraph) || $(paragraph).closest('table:not([role="presentation"]),ul,ol,dl').length) continue;
+    // Leaf metadata containers cannot import nested records or inline prose.
+    if (!$(paragraph).is('p') && ($(paragraph).children().length || $(paragraph).is('span') && !standaloneSpan(paragraph))) continue;
     const paragraphText = cleanElementText($, paragraph);
     if (!PARAGRAPH_IDENTITY_FIELD.test(paragraphText)) continue;
     if (filterGamingDocumentInstructions(paragraphText) !== paragraphText) { fail('source_instruction_filtered'); continue; }

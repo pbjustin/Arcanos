@@ -31,11 +31,25 @@ describe('live source identity failure regressions (synthetic publisher-shaped d
     expect(extractGamingFreshnessMetadata(doc, input).game).toBe('Elden Ring');
   });
 
-  it.each(['Dexterity build guide', 'Samurai Blade Build Guide', 'Early Game Samurai Build'])('does not invent a game from the acquired topic heading %s', title => {
+  it.each(['Dexterity build guide', 'Samurai Blade Build Guide', 'Early Game Samurai Build', 'Dexterity build guide | Independent News',
+    'Samurai Blade Build Guide – Independent News', 'Samurai Blade Build Guide — Independent News'])('does not invent a game from the acquired topic heading %s', title => {
     expect(detectGamingDocumentGame({ canonicalUrl: '', pageTitle: title }).game).toBeUndefined();
     expect(assessGamingClearSourceIdentity(document(title), input, policy)).toMatchObject({ status: 'verified',
       reasonCodes: ['ACQUIRED_BODY_SCOPE_IDENTITY'] });
     expect(assessGamingClearSourceIdentity(document(title, prose.replace('In Elden Ring, ', '')), input, policy).status).toBe('unknown');
+  });
+
+  it.each(['Vigor', 'Blood'])('preserves an acquired affirmative %s scope despite topic vocabulary', game => {
+    expect(assessGamingClearSourceIdentity(document(`${game} beginner guide`,
+      `In the game ${game}, collect equipment before starting the combat route. ${prose}`), input, policy))
+      .toMatchObject({ status: 'conflict', reasonCodes: ['GAME_MISMATCH'],
+        diagnostic: { evidenceCategory: 'body_scope' } });
+  });
+
+  it('keeps an acquired generic topic clause separate from a named game assertion', () => {
+    expect(assessGamingClearSourceIdentity(document('Samurai Blade Build Guide',
+      `This guide covers Samurai Blade build guide. ${prose}`), input, policy)).toMatchObject({ status: 'verified',
+      reasonCodes: ['ACQUIRED_BODY_SCOPE_IDENTITY'] });
   });
 
   it('keeps unrelated pooled recommendation headings and comparison prose separate from game declarations', () => {
@@ -159,6 +173,14 @@ describe('live source identity failure regressions (synthetic publisher-shaped d
   it('keeps DLC-only instructions incompatible with an acquired base-game title', () => {
     const doc = document(undefined, `${prose} This blade requires Shadow of the Erdtree.`);
     expect(assessGamingClearSourceIdentity(doc, input, policy)).toMatchObject({ status: 'conflict', reasonCodes: ['EDITION_CONFLICT'] });
+  });
+
+  it.each(['div', 'span'])('preserves contradictory acquired Game metadata in a native %s block', tag => {
+    const doc = nativeDocument(`<html><title>Elden Ring Samurai build guide</title><body><article><h1>Elden Ring Samurai build guide</h1>
+      <${tag}>Game: Diablo IV.</${tag}><p>${prose}</p></article></body></html>`);
+    expect(assessGamingClearSourceIdentity(doc, input, policy)).toMatchObject({ status: 'conflict',
+      reasonCodes: ['GAME_MISMATCH'], diagnostic: { evidenceCategory: 'structured_field' } });
+    expect(extractGamingFreshnessMetadata(doc, input).game).toBe('Diablo IV');
   });
 
   it('checks parser-owned Game fields independently of prose metadata and the requested edition', () => {

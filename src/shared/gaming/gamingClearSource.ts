@@ -16,6 +16,26 @@ const containsIdentity = (text: string, expected: string): boolean => (`-${norma
   .includes(`-${normalizeGamingGameIdentity(expected)}-`);
 const DOCUMENT_LABEL = /^(?:(?:beginner|boss|build|class|combat|current|endgame|loadout|mechanics|patch|progression|pve|pvp|quest|raid|route|season|strategy|survival|synthetic)-){0,4}(?:guide|build|loadout|walkthrough|wiki|tips|patch-notes|release-notes|update-notes)$/u;
 const DISTINCT_SCOPE = /^(?:ii|iii|iv|\d+|nightreign|classic|remastered|remake|bedrock|java|dungeons|legends|shadow-of-the-erdtree|dlc|expansion)(?:-|$)/u;
+const PUBLISHER_DATE_PREFACE = /\b(?:last\s+)?(?:updated|published)(?:\s+on)?\s+(?:(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2}(?:,\s*|\s+)\d{4}|\d{4}-\d{2}-\d{2})(?=\s|[.|•–—]|$)/iu;
+const PUBLISHER_BYLINE_PREFACE = /^(?:written\s+)?by\s+[\p{L}][\p{L}'’.-]*(?:\s+[\p{L}][\p{L}'’.-]*){0,5}$/iu;
+
+/** Only bounded publisher metadata may precede the independently acquired first heading. */
+function acquiredHeadingStart(acquiredStart: string, firstHeading: string | undefined): string {
+  if (!firstHeading || acquiredStart.startsWith(firstHeading)) return acquiredStart;
+  const offset = acquiredStart.indexOf(firstHeading);
+  if (offset < 1 || offset > 160 || !/[\s.!|•–—]$/u.test(acquiredStart.slice(0, offset))) return acquiredStart;
+  const preface = acquiredStart.slice(0, offset).trim();
+  // A byline-shaped reference or recommendation remains prose, not a subject boundary.
+  if (/\b(?:unlike|compared|comparison|contrast|rather|instead|like|not|recommended|related|read|next|in|game|guide|build|covers|for|only)\b/iu.test(preface)) return acquiredStart;
+  const date = PUBLISHER_DATE_PREFACE.exec(preface);
+  const beforeDate = date ? preface.slice(0, date.index).replace(/^[.!|•–—\s]+|[.!|•–—\s]+$/gu, '') : '';
+  const afterDate = date ? preface.slice(date.index + date[0].length).replace(/^[.!|•–—\s]+|[.!|•–—\s]+$/gu, '') : '';
+  // Date and author are separate metadata clauses; do not splice a date out of prose.
+  if (date && beforeDate && afterDate) return acquiredStart;
+  const byline = (date ? beforeDate || afterDate : preface).replace(/^[.!|•–—\s]+|[.!|•–—\s]+$/gu, '');
+  return (date || byline) && (!byline || PUBLISHER_BYLINE_PREFACE.test(byline))
+    ? acquiredStart.slice(offset) : acquiredStart;
+}
 
 export interface GamingSourceIdentityDiagnostic {
   ruleId: string;
@@ -29,19 +49,21 @@ export interface GamingSourceIdentityAssessment {
 }
 
 /** Inspect bounded acquired scope clauses, preserving visibly quoted/reference context. */
-function acquiredBodySubjects(prose: string): Array<{ text: string; explicitGameScope: boolean }> {
+function acquiredBodySubjects(prose: string): Array<{ text: string; explicitGameScope: boolean; namedGameScope: boolean }> {
   const unquoted = prose.replace(/"[^"]*"|“[^”]*”|`[^`]*`|(?:^|\s)'(?:[^']|(?<=\w)'(?=\w))*'|‘[^’]*’/gu,
     (quote, offset: number) => {
       const name = quote.replace(/^[\s"“`'‘]+|[\s"”`'’]+$/gu, '');
       // Quoting a game name does not turn an affirmative scope into a quoted passage.
       const scopeName = /\b(?:this (?:guide|build|walkthrough) (?:covers|is for)|in(?: the game)?)\s*$/iu.test(prose.slice(0, offset));
+      const namedGameScope = /\bin the game\s*$/iu.test(prose.slice(0, offset));
       const titleSuffix = prose.slice(offset + quote.length).match(/^\s+(?:guide|build|loadout|meta|walkthrough|wiki|tips?)\b/iu)?.[0] ?? '';
-      const namedSubject = detectGamingDocumentGame({ canonicalUrl: '', pageTitle: `${name}${titleSuffix}` });
+      const namedSubject = detectGamingDocumentGame({ canonicalUrl: '', pageTitle: `${name}${titleSuffix || (namedGameScope ? ' guide' : '')}`,
+        allowAcquiredTopicIdentity: namedGameScope });
       return detectGamingLeadingGameAlias(name, true).game || (scopeName && (detectGamingLeadingGameAlias(name).game
         || namedSubject.source === 'page_metadata' && namedSubject.confidence >= 0.8))
         ? quote.replace(/^[\s"“`'‘]+|[\s"”`'’]+$/gu, boundary => ' '.repeat(boundary.length)) : ' '.repeat(quote.length);
     });
-  const subjects: Array<{ text: string; explicitGameScope: boolean }> = [];
+  const subjects: Array<{ text: string; explicitGameScope: boolean; namedGameScope: boolean }> = [];
   for (const match of unquoted.matchAll(/\b(?:this (?:guide|build|walkthrough) (?:covers|is for)|in(?: the game)?)\s+/giu)) {
     const before = unquoted.slice(0, match.index);
     const prefix = before.slice(Math.max(...['.', '!', '?', ';', ',', '\n'].map(boundary => before.lastIndexOf(boundary))) + 1);
@@ -51,7 +73,8 @@ function acquiredBodySubjects(prose: string): Array<{ text: string; explicitGame
     if (/\b(?:unlike|compared(?:\s+to)?|comparison(?:\s+with)?|contrast(?:\s+to)?|similar(?:ly)?|rather\s+than|instead\s+of|as(?:\s+is\s+the\s+case)?|like)\s*$/iu.test(prefix)
       || /\b(?:not(?:\s+(?:apply|applicable|valid|available|supported|used|found|present|exist|included|be|for)){0,4}|(?:doesn|isn|aren|don|didn)['’]?t(?:\s+(?:apply|exist|work))?|without|except|excluding|unavailable|unsupported)\s*$/iu.test(prefix)
       || /^(?:contrast|comparison|case|addition|particular)\b/iu.test(subject)) continue;
-    if (subject) subjects.push({ text: subject, explicitGameScope: /^(?:this|in the game)\b/iu.test(match[0]) });
+    if (subject) subjects.push({ text: subject, explicitGameScope: /^(?:this|in the game)\b/iu.test(match[0]),
+      namedGameScope: /^in the game\b/iu.test(match[0]) });
   }
   return subjects;
 }
@@ -127,12 +150,13 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
   let editionScopeConflict = false;
   // Pooled section headings can include related links or comparisons. Only the
   // acquired title or a first heading independently repeated at the bounded start
-  // of acquired prose asserts the article's subject. Later pooled headings do not.
+  // of acquired prose, after an optional publisher preface, asserts the article's
+  // subject. Later pooled headings do not.
   const firstHeading = document.metadata.headings?.split(/\s+\|\s+/u, 1)[0]?.trim();
-  const acquiredStart = document.text.slice(0, 512).normalize('NFKC').trimStart();
+  const acquiredStart = acquiredHeadingStart(document.text.slice(0, 512).normalize('NFKC').trimStart(), firstHeading);
   const clippedPrimaryHeading = firstHeading && firstHeading.length >= 240 && acquiredStart.startsWith(firstHeading);
   // HTML block boundaries become whitespace in the common instruction filter.
-  // Parser-derived headings still need an exact acquired prefix and a lexical
+  // Parser-derived headings still need an exact acquired heading prefix and a lexical
   // boundary; a metadata cap cannot manufacture the end of a longer heading.
   const leadingHeading = firstHeading && firstHeading.length < 240 && acquiredStart.startsWith(firstHeading)
     && /^(?:\s|[.!?:;]|$)/u.test(acquiredStart.slice(firstHeading.length))
@@ -184,12 +208,14 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
   }
   // Every affirmative acquired subject binds; matching titles and earlier
   // requested-game subjects cannot hide a later different gameplay scope.
-  for (const { text: bodySubject, explicitGameScope } of acquiredBodySubjects(prose)) {
+  for (const { text: bodySubject, explicitGameScope, namedGameScope } of acquiredBodySubjects(prose)) {
     const leading = detectGamingLeadingGameAlias(bodySubject);
-    const metadataSubject = detectGamingDocumentGame({ canonicalUrl: '', pageTitle: bodySubject });
+    const firstInstructionMarker = /\b(?:guide|build|loadout|meta|walkthrough|wiki|tips?|tier(?:\s+list)?|patch\s+notes)\b/iu.exec(bodySubject);
+    const metadataSubject = detectGamingDocumentGame({ canonicalUrl: '',
+      pageTitle: namedGameScope && !firstInstructionMarker ? `${bodySubject} guide` : bodySubject,
+      allowAcquiredTopicIdentity: namedGameScope });
     // Bare location clauses can use guide/build as imperative verbs. Their
     // objects do not declare a new game; explicit game scopes and aliases do.
-    const firstInstructionMarker = /\b(?:guide|build|loadout|meta|walkthrough|wiki|tips?|tier(?:\s+list)?|patch\s+notes)\b/iu.exec(bodySubject);
     const instructionalClause = !explicitGameScope && Boolean(firstInstructionMarker
       && /^(?:guide|build)$/iu.test(firstInstructionMarker[0])
       && /^\s+(?:a|an|the|your|our|their|my|his|her|its|them|him|us|me)\b/iu.test(

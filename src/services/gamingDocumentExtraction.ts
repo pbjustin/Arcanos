@@ -55,7 +55,8 @@ const GENERIC_CONTENT_SELECTORS = [
 
 const PRIMARY_CONTENT_SELECTORS = [
   '#article-body', '.article-content', '.article-body', "[class*='article-content']", "[class*='article-body']",
-  '.entry-content', '.post-content', '.mw-parser-output', 'article', 'main', "[role='main']"
+  '.entry-content', '.post-content', '.mw-parser-output', '.main-content', '#main-content', '.page-content',
+  'article', 'main', "[role='main']"
 ] as const;
 
 const COMMON_JUNK_SELECTORS = [

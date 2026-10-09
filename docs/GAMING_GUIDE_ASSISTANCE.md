@@ -103,6 +103,8 @@ affirmative acquired body declaration naming the requested catalog game; topic
 matches, quoted references and frontend metadata cannot supply that identity.
 Explicit acquired game labels, other game titles, sequels and expansion conflicts
 continue to bind before the source is admitted.
+The acquired-topic filter does not discard real game names from player requests;
+names such as Vigor and Blood retain ordinary game detection.
 
 For other exact game titles, an independently acquired global `Edition: base game`
 label can qualify ordinary guide/build advice without filling the player's omitted
