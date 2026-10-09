@@ -28,6 +28,9 @@ const DISCUSSION = '[itemtype="https://schema.org/DiscussionForumPosting"],[item
 const UNRELATED_DISCUSSION = '.comments,#comments,[class*="comment-list"],[itemtype="https://schema.org/Comment"],[itemtype="http://schema.org/Comment"]';
 const QUALIFIER = /\b(?:not|no longer|deplet\w*|unconfirmed|old patch|example only|correction|corrected|outdated|unavailable|obsolete|previously|before|after|patch|version)\b/i;
 const COMPARISON_PROSE = /^(?:unlike|compare(?:d)?|(?:for\s+)?comparison|contrast|rather\s+than|instead\s+of)\b/iu;
+// A comparison lead-in cannot erase an explicit qualification of the primary
+// record. Compared equipment alone remains unrelated context.
+const PRIMARY_RECORD_QUALIFICATION = /\b(?:this|these|the)\s+(?:records?|equipment|builds?|sources?|entry|entries|sites?|statistics?|resources?|weapons?|items?|stats?|routes?)\s+(?:(?:(?:is|are|was|were|remains?|may|might|can|could|would|should|must|will|be|been|being|has|have|had|now|still|also|already|yet|perhaps|requires?|needs?|a)|[\p{L}-]+ly)\s+)*(?:not|no longer|deplet\w*|unconfirmed|old patch|example only|outdated|unavailable|obsolete|correction|corrected)\b/iu;
 const LABELLED_FIELD = /^([^:;|\n]{1,80}):\s*(.+)$/;
 const PARAGRAPH_IDENTITY_FIELD = /^(Game|Edition)\s*:\s*([^;.!?\n]*?)(?=\s+(?:Game|Edition)\s*:|[;.!?]|$)/iu;
 
@@ -148,11 +151,13 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
     const cached = formattedQualifierBlocks.get(element);
     if (cached !== undefined) return cached;
     const node = $(element);
-    const formatted = node.is('div,span') && !node.closest('aside').length && node.children().length > 0
+    const inlineOnly = node.is('div,span') && !node.closest('aside').length && node.children().length > 0
       && (!node.is('span') || standaloneSpan(element))
       && node.children().toArray().every(child => $(child).is(inlineQualifierSelector))
-      && node.find('*').toArray().every(child => $(child).is(inlineQualifierSelector))
-      && QUALIFIER.exec(text(node.text()))?.index === 0;
+      && node.find('*').toArray().every(child => $(child).is(inlineQualifierSelector));
+    const value = inlineOnly ? text(node.text()) : '';
+    const formatted = inlineOnly && (QUALIFIER.exec(value)?.index === 0
+      || COMPARISON_PROSE.test(value) && PRIMARY_RECORD_QUALIFICATION.test(value));
     formattedQualifierBlocks.set(element, formatted);
     return formatted;
   }
@@ -221,7 +226,7 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
         qualifierValues.set(sibling, value);
       }
       // Nearby wrappers must obey the same comparison boundary as discovered blocks.
-      if (selected.is('div,span') && COMPARISON_PROSE.test(value)) return;
+      if (selected.is('div,span') && COMPARISON_PROSE.test(value) && !PRIMARY_RECORD_QUALIFICATION.test(value)) return;
       if (QUALIFIER.test(value)) {
         if (++qualifierElements > 64) { markContext(scope, 'required_context_missing'); return false; }
         qualifiers.push(value);

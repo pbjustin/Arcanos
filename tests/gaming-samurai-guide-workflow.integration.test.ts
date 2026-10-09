@@ -263,15 +263,25 @@ describe('October 4 early-game Samurai request through the served Gaming workflo
     expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
   }, 30_000);
 
-  it('acquires the full primary guide over HTTP, selects late complementary topics and retains revision and citation provenance', async () => {
+  // Build this shared publisher document outside either timed assertion group.
+  // Each test still acquires and processes its complete large response over HTTP.
+  const fullPrimaryGuide = (() => {
     const bleed = 'In Elden Ring, the base-game solo PvE Samurai Uchigatana bleed setup uses the starting katana and Unsheathe. Repeated attacks build bleed only against vulnerable enemies; preserve stamina to dodge safely.';
     const stats = 'For Elden Ring base-game Samurai solo PvE, Vigor allocation through level 50 prioritizes survival before Dexterity. This allocation assumes the starting Uchigatana requirements are already met.';
     const upgrades = 'The Elden Ring base-game Smithing Stones upgrade route starts in Limgrave tunnels. Use ordinary Smithing Stones for the starting Uchigatana. This route does not require Shadow of the Erdtree.';
     const background = Array.from({ length: 100 }, (_, index) => `<p>Samurai practice note ${index}: retain Uchigatana and Unsheathe for this early-game blade build. Carefully observe an enemy attack before approaching with the katana. Study spacing, recover stamina after attacking, and retreat when the enemy begins another swing. Repeat the safe practice exercise near the starting area to become comfortable with the weapon.</p>`).join('');
-    const html = `<html><head><title>Samurai Blade Build Guide</title><link rel="canonical" href="https://unrelated.example.org/copied-guide"><script>${'x'.repeat(2_000_000)}</script></head><body><div class="main-content"><h1>Samurai Blade Build Guide</h1><p>Game: Elden Ring. Edition: base game.</p><p>${bleed}</p>${background}<h2>Vigor allocation through level 50</h2><p>${stats}</p><h2>Smithing Stones upgrade route</h2><p>${upgrades}</p><aside><h2>Diablo IV review</h2><p>In Diablo IV, this unrelated recommendation describes another character.</p></aside></div><article><h2>Publisher community spotlight</h2><p>Read the latest community news from our publisher. Explore recent events and upcoming competitions. Join friends to celebrate achievements and discover ideas for a new adventure.</p></article></body></html>`;
+    // UTF-8 publisher script padding keeps decoded/transport bytes above 2MB
+    // without doubling this test's already independently covered ASCII scan.
+    const html = `<html><head><title>Samurai Blade Build Guide</title><link rel="canonical" href="https://unrelated.example.org/copied-guide"><script>${'界'.repeat(700_000)}</script></head><body><div class="main-content"><h1>Samurai Blade Build Guide</h1><p>Game: Elden Ring. Edition: base game.</p><p>${bleed}</p>${background}<h2>Vigor allocation through level 50</h2><p>${stats}</p><h2>Smithing Stones upgrade route</h2><p>${upgrades}</p><aside><h2>Diablo IV review</h2><p>In Diablo IV, this unrelated recommendation describes another character.</p></aside></div><article><h2>Publisher community spotlight</h2><p>Read the latest community news from our publisher. Explore recent events and upcoming competitions. Join friends to celebrate achievements and discover ideas for a new adventure.</p></article></body></html>`;
+    return { bleed, stats, upgrades, html,
+      prompt: 'Explain Uchigatana bleed setup; Vigor allocation through level 50; Smithing Stones upgrade route.' };
+  })();
+
+  it('acquires the full primary guide over HTTP, selects late complementary topics and retains revision and citation provenance', async () => {
+    const { bleed, stats, upgrades, html, prompt } = fullPrimaryGuide;
     expect(Buffer.byteLength(html)).toBeGreaterThan(2_000_000);
+    expect(html.length).toBeGreaterThan(700_000);
     expect(html.indexOf(stats) - html.indexOf(bleed)).toBeGreaterThan(30_000);
-    const prompt = 'Explain Uchigatana bleed setup; Vigor allocation through level 50; Smithing Stones upgrade route.';
     const input = { game: 'Elden Ring', edition: 'base-game', mode: 'build' as const, class: 'Samurai',
       prompt, protocolVersion: v2, candidates: [{ url: guideUrl }] };
     const context = { actorKey: 'samurai-local-http-proof', workflowId: 'samurai-local-http-workflow',
@@ -282,9 +292,11 @@ describe('October 4 early-game Samurai request through the served Gaming workflo
     const artifact = acquired.accepted[0];
     expect(artifact.document).toMatchObject({ requestedUrl: guideUrl, canonicalUrl: guideUrl,
       publicUrl: guideUrl, host: 'guides.example.org', metrics: { truncated: false, instructionFiltered: false } });
+    expect(artifact.document.structureDiagnostics).toMatchObject({ receivedBytes: Buffer.byteLength(html),
+      acceptedBytes: Buffer.byteLength(html), rawChars: html.length });
     expect(artifact.document.text).toContain(stats);
     expect(artifact.document.text).toContain(upgrades);
-    expect(artifact.document.text).not.toMatch(/community spotlight|Diablo IV|copied-guide|x{100}/iu);
+    expect(artifact.document.text).not.toMatch(/community spotlight|Diablo IV|copied-guide|界{100}/iu);
     expect(artifact.document.extraction.selectedContainer).toBe('.main-content');
     expect(artifact.contentHash).toMatch(/^[a-f0-9]{64}$/u);
     expect(artifact.evidenceRecords!.length).toBeGreaterThan(20);
@@ -308,6 +320,19 @@ describe('October 4 early-game Samurai request through the served Gaming workflo
         resolverVersion: artifact.document.resolution.resolverVersion, resolutionStrategy: artifact.document.resolution.strategy });
       expect(record.searchText).toContain(chunk.text);
     }
+    expect(publisherRequests).toEqual([{ path: '/elden-ring/early-samurai',
+      host: 'guides.example.org', method: 'GET' }]);
+    expect(mockHttp).toHaveBeenCalledTimes(1);
+    expect(mockTrinity).not.toHaveBeenCalled();
+    expect(mockAuditCompletion).not.toHaveBeenCalled();
+  });
+
+  it('grounds the full primary guide through authenticated HTTP orchestration with late topics and bound citations', async () => {
+    const { bleed, stats, upgrades, html, prompt } = fullPrimaryGuide;
+    expect(Buffer.byteLength(html)).toBeGreaterThan(2_000_000);
+    expect(html.length).toBeGreaterThan(700_000);
+    expect(html.indexOf(stats) - html.indexOf(bleed)).toBeGreaterThan(30_000);
+    pages.set(guideUrl, { html, answer: `${bleed} ${stats} ${upgrades}` });
     const run = harness();
     const initial = await run.query({ question: prompt, edition: 'base-game' });
     const final = await run.submit(initial.result, guideUrl);
@@ -321,14 +346,17 @@ describe('October 4 early-game Samurai request through the served Gaming workflo
     const provider = mockTrinity.mock.calls[0][0] as any;
     expect(provider.input.prompt).toContain(stats);
     expect(provider.input.prompt).toContain(upgrades);
-    expect(provider.input.prompt).not.toMatch(/community spotlight|Diablo IV|copied-guide|x{100}/iu);
+    expect(provider.input.prompt).not.toMatch(/community spotlight|Diablo IV|copied-guide|界{100}/iu);
+    const acquisition = (logger.info as jest.Mock).mock.calls.find(call => call[0] === 'gaming.clear.source.completed')?.[1] as any;
+    expect(acquisition.extraction).toMatchObject({ receivedBytes: Buffer.byteLength(html),
+      acceptedBytes: Buffer.byteLength(html), rawChars: html.length });
     const audited = JSON.parse((mockAuditCompletion.mock.calls[0][1] as any).messages[1].content);
     expect(audited.evidence.every((chunk: any) => final.result.selectedCandidateIds!.includes(chunk.sourceId))).toBe(true);
     expect(JSON.stringify(audited.evidence)).toContain(stats);
     expect(JSON.stringify(audited.evidence)).toContain(upgrades);
-    expect(publisherRequests).toEqual(Array.from({ length: 2 }, () => ({ path: '/elden-ring/early-samurai',
-      host: 'guides.example.org', method: 'GET' })));
-    expect(mockHttp).toHaveBeenCalledTimes(2);
+    expect(publisherRequests).toEqual([{ path: '/elden-ring/early-samurai',
+      host: 'guides.example.org', method: 'GET' }]);
+    expect(mockHttp).toHaveBeenCalledTimes(1);
     expect(mockTrinity).toHaveBeenCalledTimes(1);
     expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
   });
@@ -474,6 +502,53 @@ describe('October 4 early-game Samurai request through the served Gaming workflo
     expect(mockTrinity).toHaveBeenCalledTimes(1);
     expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
   });
+
+  const primaryQualifiedRecords = [
+    ['statistic', '<div>Unlike earlier versions, this record is unconfirmed on the current patch.</div>',
+      { game: 'Elden Ring', item: 'Uchigatana', stat: 'bleed', value: 45, unit: 'buildup', scope: 'base-game' },
+      'What is the Uchigatana bleed statistic?',
+      'The Elden Ring base-game Uchigatana bleed statistic is 45 buildup.'],
+    ['location', '<span>Compare earlier versions: this equipment is no longer available.</span>',
+      { game: 'Elden Ring', system: 'Lands Between', body: 'Limgrave', site: 'Deathtouched Catacombs', resource: 'Uchigatana', scope: 'base-game' },
+      'Where is Uchigatana?',
+      'The Elden Ring base-game Uchigatana location is Deathtouched Catacombs in Limgrave.']
+  ] as const;
+  it.each(primaryQualifiedRecords.flatMap(([kind, qualifier, record, prompt, answer]) =>
+    ['dom', 'json'].flatMap(representation => [false, true].map(qualified =>
+      [`${kind}/${representation}/${qualified ? 'qualified' : 'unqualified'}`, qualifier, record, prompt, answer, representation, qualified] as const))))
+  ('keeps primary qualification on an acquired %s record through authenticated HTTP orchestration',
+    async (_kind, qualifier, record, prompt, answer, representation, qualified) => {
+      const tuple = representation === 'json'
+        ? `<script type="application/json">${JSON.stringify({ records: [record] })}</script>`
+        : `<dl>${Object.entries(record).map(([key, value]) => `<dt>${key}</dt><dd>${value}</dd>`).join('')}</dl>`;
+      const html = `<html><title>Elden Ring Samurai Uchigatana guide</title><body><article>`
+        + '<h1>Elden Ring Samurai Uchigatana guide</h1><p>Game: Elden Ring. Edition: base game.</p>'
+        + (qualified ? qualifier : '') + '<div>'.repeat(7) + tuple + '</div>'.repeat(7)
+        + '</article></body></html>';
+      pages.set(guideUrl, { html, answer });
+      const run = harness();
+      const initial = await run.query({ mode: 'guide', class: undefined, progressPoint: undefined,
+        question: prompt, edition: 'base-game' });
+      const final = await run.submit(initial.result, guideUrl);
+      expect(publisherRequests).toEqual([{ path: '/elden-ring/early-samurai',
+        host: 'guides.example.org', method: 'GET' }]);
+      expect(mockHttp).toHaveBeenCalledTimes(1);
+      if (qualified) {
+        expect(final.result.answer).toBeUndefined();
+        expect(final.result.nextAction).not.toBe('answer');
+        expect(mockTrinity).not.toHaveBeenCalled();
+        expect(mockAuditCompletion).not.toHaveBeenCalled();
+      } else {
+        expect(final.result).toMatchObject({ state: 'answer_ready', nextAction: 'answer',
+          coverageSatisfied: true, answer: { provenance: 'arcanos-trinity' } });
+        expect(final.result.answer!.response).toContain(answer);
+        expect(final.result.answer!.response).toContain('[Source 1]');
+        expect(final.result.answer!.sources).toEqual([expect.objectContaining({ url: guideUrl,
+          sourceId: final.result.candidates![0].candidateId })]);
+        expect(mockTrinity).toHaveBeenCalledTimes(1);
+        expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
+      }
+    });
 
   it('rejects a response exceeding the final transfer limit through served orchestration without accepting its guide prefix', async () => {
     const oversized = guideHtml + 'x'.repeat(GAMING_DOCUMENT_ACQUISITION_LIMITS.maxTransferredBytes + 1 - Buffer.byteLength(guideHtml));

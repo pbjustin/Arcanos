@@ -21,6 +21,9 @@ const SENSITIVE_VALUE = /(?:\b(?:password|secret|token|api[_ -]?key|authorizatio
 const SENSITIVE_KEY = /(?:password|secret|token|apikey|authorization|cookie|session|analytics|tracking)/iu;
 const VISIBLE_QUALIFIER = /\b(?:not|no longer|deplet\w*|unconfirmed|old patch|example only|correction|corrected|outdated|unavailable|obsolete|previously|before|after|patch|version)\b/iu;
 const COMPARISON_PROSE = /^(?:unlike|compare(?:d)?|(?:for\s+)?comparison|contrast|rather\s+than|instead\s+of)\b/iu;
+// A comparison lead-in cannot erase an explicit qualification of the primary
+// record. Compared equipment alone remains unrelated context.
+const PRIMARY_RECORD_QUALIFICATION = /\b(?:this|these|the)\s+(?:records?|equipment|builds?|sources?|entry|entries|sites?|statistics?|resources?|weapons?|items?|stats?|routes?)\s+(?:(?:(?:is|are|was|were|remains?|may|might|can|could|would|should|must|will|be|been|being|has|have|had|now|still|also|already|yet|perhaps|requires?|needs?|a)|[\p{L}-]+ly)\s+)*(?:not|no longer|deplet\w*|unconfirmed|old patch|example only|outdated|unavailable|obsolete|correction|corrected)\b/iu;
 const DISCUSSION = '[itemtype="https://schema.org/DiscussionForumPosting"],[itemtype="http://schema.org/DiscussionForumPosting"]';
 const UNRELATED_DISCUSSION = '.comments,#comments,[class*="comment-list"],[itemtype="https://schema.org/Comment"],[itemtype="http://schema.org/Comment"]';
 const QUALIFIER_KEYS = new Set(['qualifier', 'qualifiers', 'note', 'notes', 'status', 'correction', 'availability']);
@@ -391,11 +394,13 @@ export function extractGamingJsonEvidence(input: GamingEvidenceExtractionInput):
       const cached = formattedQualifierBlocks.get(element);
       if (cached !== undefined) return cached;
       const node = $(element);
-      const formatted = node.is('div,span') && !node.closest('aside').length && node.children().length > 0
+      const inlineOnly = node.is('div,span') && !node.closest('aside').length && node.children().length > 0
         && (!node.is('span') || standaloneSpan(element))
         && node.children().toArray().every(child => $(child).is(inlineQualifierSelector))
-        && node.find('*').toArray().every(child => $(child).is(inlineQualifierSelector))
-        && VISIBLE_QUALIFIER.exec(node.text().normalize('NFKC').replace(/\s+/gu, ' ').trim())?.index === 0;
+        && node.find('*').toArray().every(child => $(child).is(inlineQualifierSelector));
+      const value = inlineOnly ? node.text().normalize('NFKC').replace(/\s+/gu, ' ').trim() : '';
+      const formatted = inlineOnly && (VISIBLE_QUALIFIER.exec(value)?.index === 0
+        || COMPARISON_PROSE.test(value) && PRIMARY_RECORD_QUALIFICATION.test(value));
       formattedQualifierBlocks.set(element, formatted);
       return formatted;
     }
@@ -472,7 +477,7 @@ export function extractGamingJsonEvidence(input: GamingEvidenceExtractionInput):
           qualifierValues.set(candidate, text);
         }
         // Nearby wrappers must obey the same comparison boundary as discovered blocks.
-        if (selected.is('div,span') && COMPARISON_PROSE.test(text)) return;
+        if (selected.is('div,span') && COMPARISON_PROSE.test(text) && !PRIMARY_RECORD_QUALIFICATION.test(text)) return;
         if (VISIBLE_QUALIFIER.test(text)) {
           if (++qualifierElements > 64) {
             visibleContext.integrityReasons!.push('required_context_missing'); reason('required_context_missing'); return false;

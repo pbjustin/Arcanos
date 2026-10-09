@@ -96,8 +96,13 @@ filtering. These units cannot establish structural gameplay support.
 Standalone div and standalone span corrections participate in that bounded
 context discovery for HTML and embedded JSON records. Harmless inline formatting
 is allowed when the block begins with a recognized qualification. Inline
-comparisons and layout wrappers do not duplicate qualifications; incomplete or
-instruction-like qualifications cannot leave a record complete.
+comparisons and layout wrappers do not duplicate qualifications. A comparison
+prefix does not discard an explicit primary-record qualification such as
+`Unlike earlier versions, this record is unconfirmed on the current patch.` or
+`Compare earlier versions: this equipment is no longer available.` These notes
+remain attached in both HTML and embedded JSON and cannot support an affirmative
+claim. Incomplete or instruction-like qualifications cannot leave a record
+complete.
 Primary article selection recognizes `.main-content`, `#main-content`, and
 `.page-content` alongside publisher article-body selectors. A usable specific
 publisher container takes precedence over enclosing article/main shells at the

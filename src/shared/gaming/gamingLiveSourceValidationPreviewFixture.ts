@@ -254,6 +254,49 @@ function extract(body: string) {
   return extractGamingDocumentEvidence({ body, sourceUrl: SOURCE_URL, contentType: 'text/html', transportTruncated: false });
 }
 
+function requirePrimaryQualifiedClaims(proof: PreviewReport): void {
+  const { requireProof } = proof;
+  const prompt = 'Where is Copper? Give system, body, site and resource.';
+  const records = [
+    { id: 'deep-independent-structured-records', body: '<ul><li>Game: Elden Ring; System: SYNTHETIC-ORION-01; Body: B 2; Site: PML 7; Resource: Copper; Scope: base game</li></ul>' },
+    { id: 'embedded-json-late-qualification', body: `<script type="application/json">${JSON.stringify({ records: [{ game: 'Elden Ring',
+      system: 'SYNTHETIC-ORION-01', body: 'B 2', site: 'PML 7', resource: 'Copper', scope: 'base game' }] })}</script>` }
+  ];
+  const qualifications = [
+    { value: 'Unlike earlier versions, this record is unconfirmed on the current patch.',
+      formatted: 'Unlike earlier versions, <strong>this record is unconfirmed on the current patch.</strong>',
+      observation: 'primaryUnconfirmedRetained' },
+    { value: 'Unlike earlier versions, this equipment is no longer available.',
+      formatted: 'Unlike earlier versions, <strong>this equipment is no longer available.</strong>',
+      observation: 'primaryUnavailableRetained' }
+  ];
+  for (const record of records) {
+    const baseline = extract(`<article><h1>Elden Ring Samurai guide</h1>${record.body}</article>`);
+    const baselineSupport = assessGamingStructuralUsability({ units: baseline.units, prompt, game: INPUT.game, mode: 'guide' });
+    requireProof(baseline.units.length === 1 && baseline.units[0].integrity.status === 'complete'
+      && baselineSupport.claimShape === 'location' && baselineSupport.claimSupported, record.id,
+    { unqualifiedClaimSupported: baselineSupport.claimSupported });
+    let primaryQualifierVariants = 0;
+    for (const qualification of qualifications) {
+      for (const tag of ['div', 'span']) {
+        for (const note of [qualification.value, qualification.formatted]) {
+          const qualified = extract(`<article><h1>Elden Ring Samurai guide</h1><${tag}>${note}</${tag}>`
+            + '<div>'.repeat(7) + record.body + '</div>'.repeat(7) + '</article>');
+          const support = assessGamingStructuralUsability({ units: qualified.units, prompt, game: INPUT.game, mode: 'guide' });
+          const retained = Boolean(qualified.units[0]?.context.qualifiers?.includes(qualification.value));
+          primaryQualifierVariants += 1;
+          requireProof(qualified.units.length === 1 && qualified.units[0].integrity.status === 'complete'
+            && retained && support.hasIntactUsableUnit && support.hasRelevantClaimUnit && support.claimShape === 'location'
+            && !support.claimSupported && support.reasonCodes.length === 1
+            && support.reasonCodes[0] === 'QUALIFIED_RECORD_NOT_AFFIRMATIVE', record.id,
+          { primaryQualifierVariants, [qualification.observation]: retained, qualifiedClaimSupported: support.claimSupported,
+            qualifiedReason: support.reasonCodes[0] });
+        }
+      }
+    }
+  }
+}
+
 function requireExtraction(proof: PreviewReport): void {
   const { requireProof } = proof;
   const note = 'Inspect the invented practice sign and record the harmless fictional weapon route as the next exercise. ';
@@ -323,5 +366,6 @@ export function runGamingLiveSourceValidationPreview(): GamingPreviewCaseReport 
   requireIdentity(proof);
   requireExtraction(proof);
   requireFurnitureAndEmbeddedRecords(proof);
+  requirePrimaryQualifiedClaims(proof);
   return proof.finish();
 }

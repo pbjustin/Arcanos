@@ -440,6 +440,10 @@ Launcher behavior:
   the actual executed assertion counts and scalar observations for all thirteen
   cases. `x-arcanos-preview-gaming-live-source-validation-report` does the same
   for all fourteen `gaming-live-source-validation/v1` identity/extraction cases.
+  The current fourteen-case contract requires 76 executed assertions, including
+  plain and formatted primary-record unconfirmed/unavailable qualifications;
+  a comparison prefix cannot turn those records into affirmative evidence.
+  The thirteen-case large-source contract requires 72 executed assertions.
   Each report is bounded to 4,096 ASCII characters, includes the served PR/SHA,
   and preserves the fixed success JSON and 173-request plan. Both the native app
   and exact-head verifier enforce complete ordered inventories, exact assertion

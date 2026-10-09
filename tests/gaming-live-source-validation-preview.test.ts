@@ -3,13 +3,18 @@ import { jest } from '@jest/globals';
 
 const actualSource = await import('../src/shared/gaming/gamingClearSource.js');
 const actualExtraction = await import('../src/services/gamingDocumentEvidence.js');
+const actualStructural = await import('../src/shared/gaming/gamingStructuralEvidence.js');
 const mockIdentity = jest.fn(actualSource.assessGamingClearSourceIdentity);
 const mockExtract = jest.fn(actualExtraction.extractGamingDocumentEvidence);
+const mockUsability = jest.fn(actualStructural.assessGamingStructuralUsability);
 jest.unstable_mockModule('../src/shared/gaming/gamingClearSource.js', () => ({
   ...actualSource, assessGamingClearSourceIdentity: mockIdentity
 }));
 jest.unstable_mockModule('../src/services/gamingDocumentEvidence.js', () => ({
   ...actualExtraction, extractGamingDocumentEvidence: mockExtract
+}));
+jest.unstable_mockModule('../src/shared/gaming/gamingStructuralEvidence.js', () => ({
+  ...actualStructural, assessGamingStructuralUsability: mockUsability
 }));
 const { runGamingLiveSourceValidationPreview, GAMING_LIVE_SOURCE_VALIDATION_PREVIEW_CASES } =
   await import('../src/shared/gaming/gamingLiveSourceValidationPreviewFixture.js');
@@ -19,6 +24,7 @@ describe('sealed synthetic live-source identity and extraction proof', () => {
   beforeEach(() => {
     mockIdentity.mockReset().mockImplementation(actualSource.assessGamingClearSourceIdentity);
     mockExtract.mockReset().mockImplementation(actualExtraction.extractGamingDocumentEvidence);
+    mockUsability.mockReset().mockImplementation(actualStructural.assessGamingStructuralUsability);
   });
 
   it('executes identity, long prose, independent structural integrity and rejection assertions', () => {
@@ -36,6 +42,35 @@ describe('sealed synthetic live-source identity and extraction proof', () => {
     expect(mockExtract).toHaveBeenCalledWith(expect.objectContaining({
       contentType: 'text/html', sourceUrl: 'https://live-source-preview.example/elden-ring/samurai', transportTruncated: false
     }));
+  });
+
+  it('executes primary qualification rejection against supported structural tuples', () => {
+    const report = runGamingLiveSourceValidationPreview();
+    for (const id of ['deep-independent-structured-records', 'embedded-json-late-qualification']) {
+      expect(report.cases.find(entry => entry.id === id)?.values).toEqual(expect.objectContaining({
+        unqualifiedClaimSupported: true, primaryQualifierVariants: 8,
+        primaryUnconfirmedRetained: true, primaryUnavailableRetained: true,
+        qualifiedClaimSupported: false, qualifiedReason: 'QUALIFIED_RECORD_NOT_AFFIRMATIVE'
+      }));
+    }
+  });
+
+  it('fails closed when primary qualifications disappear from comparison-shaped prose', () => {
+    mockExtract.mockImplementation(input => {
+      const result = actualExtraction.extractGamingDocumentEvidence(input);
+      return input.body.includes('Unlike earlier versions,') ? { ...result,
+        units: result.units.map(unit => ({ ...unit, context: { ...unit.context, qualifiers: [] } })) } : result;
+    });
+    expect(runGamingLiveSourceValidationPreview).toThrow(FAILURE);
+  });
+
+  it('fails closed when primary qualified tuples receive affirmative structural support', () => {
+    mockUsability.mockImplementation(input => {
+      const result = actualStructural.assessGamingStructuralUsability(input);
+      return input.units?.some(unit => unit.context.qualifiers?.some(value => value.startsWith('Unlike earlier versions,')))
+        ? { ...result, claimSupported: true, reasonCodes: ['INTACT_RECORD_CLAIM_SUPPORTED'] } : result;
+    });
+    expect(runGamingLiveSourceValidationPreview).toThrow(FAILURE);
   });
 
   it('fails closed when ordinary gameplay is classified as a conflicting game', () => {
