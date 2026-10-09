@@ -147,7 +147,10 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
   // to both admission and contradiction checks.
   const metadata = subjects.map(subject => subject.value);
   for (const { value, category } of subjects) {
-    const identity = normalizeGamingGameIdentity(value);
+    // Closed editorial framing does not erase a sequel/edition subject. This
+    // normalization is only for contradiction checks; full acquired names still
+    // supply the independent positive anchors below.
+    const identity = normalizeGamingGameIdentity(value).replace(/^(?:the-)?best-/u, '');
     // Explicit sequel/edition qualifiers cannot be erased by a broad franchise alias.
     if ([...expected].some(game => identity.startsWith(`${game}-`) && distinctScope(identity.slice(game.length + 1))
       && ![...expected].some(full => full !== game && (identity === full || identity.startsWith(`${full}-`))))) {

@@ -866,7 +866,7 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ['src/shared/gaming/gamingSourceAcquisitionPreviewFixture.ts', '1c943c7e72b7919ca99db84126517518898e414f1117873eb903f56cb52614a4'],
   ['src/shared/gaming/gamingClearPreviewFixture.ts', '47d59048ec4f2c9e3163b6fcd2c7517ef72d39bd0571e412c5d4d18e3a8b5252'],
   ['src/shared/gaming/gamingClearPolicy.ts', 'df077132e5325ead7d428a83c10091410ac8bdf2f7a8b6c572d7f6e87c4ec51a'],
-  ['src/shared/gaming/gamingClearSource.ts', '5aec48268091321845030d6a7af7d2712681e34334b86ec25c740084f93b6d7a'],
+  ['src/shared/gaming/gamingClearSource.ts', 'e92d43ba473f18b3397b2723abe404d9cd21f11094fee33afc14ddb228deaf34'],
   ['src/shared/gaming/gamingClearEvidence.ts', '4789a36b98f66b1b7072b2b47fe8829f75b6c38c14ec0316950c4abf036e4a94'],
   ['src/shared/gaming/gamingClearAnswerBinding.ts', '2f6d1353e2643ae471705f182415521b1a6548ca484c3e684d4920910f3d0f75'],
   ['src/shared/gaming/gamingHybridPolicyCore.ts', '53b988c723f94cfdf4fbff1b24d827eb791afe32c0f7cfdd466317317c2241b0'],
@@ -890,7 +890,7 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ['src/services/gamingDurableDocumentChunks.ts', '8a6da8f48f8ee94cd61eb4e90fa2ae51b22c83d5041e8c40ea07227b5d8af0f2'],
   ['src/shared/gaming/gamingStoredEvidenceCore.ts', '6d741e6529590d9788d2b439f27f6d634f59a1c642c59e7bbe3f467c0954773b'],
   ['src/shared/gaming/gamingDurableRagPreviewFixture.ts', 'aa5127614e1645044b5714dadd7ebc45bfb4dc246cada2a0a624a27db725510c'],
-  ['src/shared/gaming/gamingLiveSourceValidationPreviewFixture.ts', '3fe306adc8ad4f0540672e0293ac17f7f92b1fb70a26f12b079f777072d04baf'], // gitleaks:allow -- public source semantic SHA-256
+  ['src/shared/gaming/gamingLiveSourceValidationPreviewFixture.ts', 'ae978d9474b25f7900e400d24195d33c809161978283b64a44b2d5ea65714807'], // gitleaks:allow -- public source semantic SHA-256
   ['src/services/gamingGameDetection.ts', '4fd5b7983ae652c20495fed77b8ca58985c7035cd6cc2c872ee26da1b2cc8bf0'],
   ['src/shared/gaming/gamingDocumentProjectionCore.ts', 'c403ed2f5627abfc8b23f8750deb8f77573942abd8bec8d3403616edc66ea014'],
   ['src/shared/gaming/gamingDocumentIngestionCore.ts', '1a9bb865e100882384df9d864d2f3be380ec9fa481a10e9539294102c743b398'],

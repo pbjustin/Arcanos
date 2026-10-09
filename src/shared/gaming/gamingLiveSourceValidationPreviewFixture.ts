@@ -70,15 +70,24 @@ function requireIdentity(): void {
   }
   requireProof(assessGamingClearSourceIdentity(document(`${PROSE}\nGame: Diablo IV.\nGame: Elden Ring.`), INPUT, POLICY)
     .status === 'conflict', 'explicit-contradictory-declarations');
-  const heading = 'Elden Ring Nightreign Samurai guide';
-  const acquired = extract(`<article><h1>${heading}</h1><p>Use the invented practice route. ${PROSE}</p></article>`);
-  const flattened = stripGamingHtmlTags(acquired.proseBody).replace(/\s+/gu, ' ').trim();
-  const primaryHeading = { ...document(flattened), metadata: {
-    title: 'Elden Ring Samurai bleed build guide', headings: `${heading} | Recommended: Elden Ring Samurai build guide`
-  } };
-  const headingIdentity = assessGamingClearSourceIdentity(primaryHeading, INPUT, POLICY);
-  requireProof(headingIdentity.status === 'conflict' && headingIdentity.diagnostic.evidenceCategory === 'body_heading',
-    'primary-heading-game-conflict');
+  for (const prefix of ['', 'Best ', 'The best ']) {
+    const heading = `${prefix}Elden Ring Nightreign Samurai guide`;
+    const acquired = extract(`<article><h1>${heading}</h1><p>Use the invented practice route. ${PROSE}</p></article>`);
+    const flattened = stripGamingHtmlTags(acquired.proseBody).replace(/\s+/gu, ' ').trim();
+    const primaryHeading = { ...document(flattened), metadata: {
+      title: 'Elden Ring Samurai bleed build guide', headings: `${heading} | Recommended: Elden Ring Samurai build guide`
+    } };
+    const headingIdentity = assessGamingClearSourceIdentity(primaryHeading, INPUT, POLICY);
+    requireProof(headingIdentity.status === 'conflict' && headingIdentity.diagnostic.evidenceCategory === 'body_heading',
+      'primary-heading-game-conflict');
+    if (prefix) {
+      const titleIdentity = assessGamingClearSourceIdentity(document(PROSE, heading), INPUT, POLICY);
+      requireProof(titleIdentity.status === 'conflict' && titleIdentity.diagnostic.evidenceCategory === 'document_title',
+        'primary-heading-game-conflict');
+      requireProof(assessGamingClearSourceIdentity(document(PROSE, `${prefix}Elden Ring Samurai bleed build guide`), INPUT, POLICY)
+        .status === 'verified', 'primary-heading-game-conflict');
+    }
+  }
 }
 
 function requireFurnitureAndEmbeddedRecords(): void {

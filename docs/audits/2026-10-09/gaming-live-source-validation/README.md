@@ -70,6 +70,11 @@ No new production query or independent publisher reacquisition was performed.
   subject identity, including after HTML whitespace normalization. Pooled
   recommended headings cannot assert a conflicting subject or supply positive
   game/edition proof that is absent from the article itself.
+  Closed `Best` / `The best` editorial framing is normalized only for distinct
+  acquired title/primary-heading contradictions, retaining full names for
+  positive anchors. Protected acquisition tests exposed two pre-existing false
+  Nightreign admissions on both the production baseline and the first PR head;
+  the successor rejects them and retains ordinary prefixed Elden Ring positives.
 - Add deterministic identity rule/category diagnostics through existing structured
   source logs, preserving workflow, request, trace and candidate correlation.
   Diagnostics contain no source text or user prompt. An early freshness game
@@ -117,6 +122,8 @@ false mismatch classes.
 [Regression inventory](regression-inventory.md) maps requirements to executable
 fixtures and retained negative coverage.
 [Pre-commit verification](precommit-verification.json),
+[successor verification](successor-precommit-verification.json),
+[prefixed Nightreign reproduction](prefixed-nightreign-reproduction.json),
 [disposable PostgreSQL verification](postgres-verification.json), and
 [local preview verification](local-preview-verification.json) record executed
 checks and their source fingerprints. Independent GitHub results and the exact

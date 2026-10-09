@@ -1,0 +1,86 @@
+{
+  "scope": "Synthetic actual protected resolver/candidate acquisition; no live source/provider/storage operation",
+  "baselineSha": "0ec167654fa3970c818b2e2721c044dd79b77189",
+  "firstPublishedHeadSha": "a99aec996872603421defa81626ba018a7961e1d",
+  "cause": "Best/The best editorial framing hid the prefix-only distinct subject check; the alias guard treated the parent Elden Ring title inside Nightreign as matching identity.",
+  "baseline": {
+    "artifact": "/tmp/arcanos-gaming-baseline-adjective-heading-review.json",
+    "artifactSha256": "eec3d9061a56831d93f3906a22b703a16507a008bf4b5cee77319893673b36d6",
+    "success": false,
+    "suitesPassed": 0,
+    "suitesFailed": 1,
+    "testsPassed": 1,
+    "testsFailed": 2,
+    "testsSkipped": 0,
+    "assertions": [
+      {
+        "name": "synthetic actual protected adjective-prefixed distinct identity probe unprefixed primary control retains a strict distinct-game rejection",
+        "status": "passed"
+      },
+      {
+        "name": "synthetic actual protected adjective-prefixed distinct identity probe adjective-prefixed primary retains a strict distinct-game rejection",
+        "status": "failed"
+      },
+      {
+        "name": "synthetic actual protected adjective-prefixed distinct identity probe adjective-prefixed document title retains a strict distinct-game rejection",
+        "status": "failed"
+      }
+    ]
+  },
+  "firstPublishedHead": {
+    "artifact": "/tmp/arcanos-gaming-adjective-heading-review.json",
+    "artifactSha256": "96cea04780272bb51d2316446ce38cdeab49b1f6a8255d9b6b5b8514d9275c45",
+    "success": false,
+    "suitesPassed": 0,
+    "suitesFailed": 1,
+    "testsPassed": 1,
+    "testsFailed": 2,
+    "testsSkipped": 0,
+    "assertions": [
+      {
+        "name": "synthetic actual protected adjective-prefixed distinct identity probe unprefixed primary control retains a strict distinct-game rejection",
+        "status": "passed"
+      },
+      {
+        "name": "synthetic actual protected adjective-prefixed distinct identity probe adjective-prefixed primary retains a strict distinct-game rejection",
+        "status": "failed"
+      },
+      {
+        "name": "synthetic actual protected adjective-prefixed distinct identity probe adjective-prefixed document title retains a strict distinct-game rejection",
+        "status": "failed"
+      }
+    ]
+  },
+  "successorWorkingTree": {
+    "artifact": "/tmp/arcanos-gaming-adjective-heading-successor-review.json",
+    "artifactSha256": "db0f86695edbf225521aa3cdd6a2f9221d9e9e54e63a7e4569c1a45ec5ac4563",
+    "success": true,
+    "suitesPassed": 1,
+    "suitesFailed": 0,
+    "testsPassed": 3,
+    "testsFailed": 0,
+    "testsSkipped": 0,
+    "assertions": [
+      {
+        "name": "synthetic actual protected adjective-prefixed distinct identity probe unprefixed primary control retains a strict distinct-game rejection",
+        "status": "passed"
+      },
+      {
+        "name": "synthetic actual protected adjective-prefixed distinct identity probe adjective-prefixed primary retains a strict distinct-game rejection",
+        "status": "passed"
+      },
+      {
+        "name": "synthetic actual protected adjective-prefixed distinct identity probe adjective-prefixed document title retains a strict distinct-game rejection",
+        "status": "passed"
+      }
+    ]
+  },
+  "observedFalseAcceptance": {
+    "decision": "accepted_transient",
+    "identity": "verified",
+    "compatibility": "verified",
+    "selectedEvidenceRecords": 1
+  },
+  "unprefixedControl": "GAME_MISMATCH; rejected",
+  "correction": "Normalize one closed Best/The best prefix only for acquired subject contradiction checks. Positive anchors keep full acquired names; furniture and comparison handling remain unchanged."
+}

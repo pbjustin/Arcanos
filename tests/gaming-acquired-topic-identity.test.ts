@@ -16,6 +16,7 @@ jest.unstable_mockModule('@core/logic/trinityWritingPipeline.js', () => ({ runTr
 jest.unstable_mockModule('@services/openai/chatFallbacks.js', () => ({ createSingleChatCompletion: audit,
   createChatCompletionWithFallback: jest.fn(), ensureModelMatchesExpectation: jest.fn() }));
 const { assessGamingClearSourceIdentity } = await import('../src/shared/gaming/gamingClearSource.js');
+const { resolveGamingDocument } = await import('../src/services/gamingDocumentResolution.js');
 const { assessGamingSourcePolicy } = await import('../src/shared/gaming/gamingFreshnessCore.js');
 const { evaluateGamingHybridCandidates } = await import('../src/services/gamingHybridCandidates.js');
 const { createGamingHybridWorkflow } = await import('../src/services/gamingHybridKnowledge.js');
@@ -206,6 +207,45 @@ describe('acquired generic Samurai topic identity', () => {
     } finally {
       log.mockRestore();
     }
+  });
+
+  it.each([
+    ['unprefixed primary control', namedTitle, 'Elden Ring Nightreign Samurai Build Guide', 'GAME_MISMATCH', 'body_heading'],
+    ['Best primary heading', namedTitle, 'Best Elden Ring Nightreign Samurai Build Guide', 'GAME_MISMATCH', 'body_heading'],
+    ['The best primary heading', namedTitle, 'The Best Elden Ring Nightreign Samurai Build Guide', 'GAME_MISMATCH', 'body_heading'],
+    ['Best document title', 'Best Elden Ring Nightreign Samurai Build Guide', 'Best Elden Ring Nightreign Samurai Build Guide', 'GAME_MISMATCH', 'document_title'],
+    ['The best document title', 'The Best Elden Ring Nightreign Samurai Build Guide', 'The Best Elden Ring Nightreign Samurai Build Guide', 'GAME_MISMATCH', 'document_title'],
+    ['Best primary expansion', namedTitle, 'Best Elden Ring Shadow of the Erdtree Samurai Build Guide', 'EDITION_CONFLICT', 'edition_scope'],
+    ['Best expansion title', 'Best Elden Ring Shadow of the Erdtree Samurai Build Guide', 'Best Elden Ring Shadow of the Erdtree Samurai Build Guide', 'EDITION_CONFLICT', 'edition_scope']
+  ])('rejects acquired %s through protected resolution and candidate CLEAR despite matching base labels', async (_caseName, title, heading, reason, category) => {
+    fetch.mockResolvedValue({ status: 200, headers: { 'content-type': 'text/html' },
+      data: `<html><title>${title}</title><body><article><h1>${heading}</h1>
+        <p>Game: Elden Ring.</p><p>Edition: base-game.</p><p>${prose}</p></article></body></html>` });
+    const doc = await resolveGamingDocument(url);
+    expect(doc.metadata.title).toBe(title); expect(doc.metadata.headings).toBe(heading);
+    expect(doc.text.startsWith(heading)).toBe(true);
+    expect(assessGamingClearSourceIdentity(doc, input, assessGamingSourcePolicy(url, input.game)))
+      .toMatchObject({ status: 'conflict', reasonCodes: [reason], diagnostic: { evidenceCategory: category } });
+    const result = await evaluateGamingHybridCandidates(input, actor);
+    expect(result.accepted).toEqual([]); expect(result.knowledge.sources).toEqual([]);
+    expect(result.decisions[0]).toMatchObject({ decision: 'rejected', reasonCodes: [reason] });
+    expect(trinity).not.toHaveBeenCalled(); expect(audit).not.toHaveBeenCalled();
+  });
+
+  it.each(['Best Elden Ring Samurai Build Guide', 'The Best Elden Ring Samurai Build Guide'])
+  ('preserves an applicable acquired %s and unrelated comparisons/recommendations', async title => {
+    fetch.mockResolvedValue({ status: 200, headers: { 'content-type': 'text/html' },
+      data: `<html><title>${title}</title><body><article><h1>${title}</h1>
+        <p>Game: Elden Ring.</p><p>Edition: base-game.</p><p>${prose}</p>
+        <p>Unlike in Elden Ring Nightreign, Elden Ring uses the described Samurai weapon.</p>
+        <aside><h2>Best Elden Ring Nightreign Samurai Build Guide</h2><p>In Elden Ring Nightreign, use an unrelated invented skill.</p></aside>
+        <div class="related-content"><h2>Best Elden Ring Shadow of the Erdtree guide</h2></div></article></body></html>` });
+    const result = await evaluateGamingHybridCandidates(input, actor);
+    expect(result.accepted).toHaveLength(1);
+    expect(result.accepted[0].document.metadata.title).toBe(title);
+    expect(result.accepted[0].sourceAssessment.gates.identity).toBe('verified');
+    expect(result.accepted[0].sourceAssessment.gates.compatibility).toBe('verified');
+    expect(trinity).not.toHaveBeenCalled(); expect(audit).not.toHaveBeenCalled();
   });
 
 });

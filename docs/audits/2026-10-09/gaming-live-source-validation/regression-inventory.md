@@ -14,6 +14,7 @@ coverage alongside these positive regressions.
 | Relevant late evidence is selected from the full accepted pool | `gaming-live-source-candidate-regressions.test.ts`, `gaming-large-guide-rag.integration.test.ts` |
 | Complementary Samurai bleed topics retain each passage's citation provenance | `gaming-live-source-candidate-regressions.test.ts` |
 | Genuine different-game and Nightreign subjects, including an actual leading heading behind a misleading SEO title, remain distinct | `gaming-live-source-identity-regressions.test.ts`, `gaming-body-identity.test.ts`, `gaming-game-identity.test.ts` |
+| Best/The best prefixed primary Nightreign subjects and DLC scope cannot hide behind a matching base-game SEO title; normal prefixed base-game guides and unrelated comparisons remain applicable | `gaming-acquired-topic-identity.test.ts`, `gaming-live-source-validation-preview.test.ts` |
 | DLC-only instructions and contradictory records fail closed | `gaming-live-source-identity-regressions.test.ts`, `gaming-unrequested-base-edition.test.ts`, `gaming-structural-sufficiency.test.ts` |
 | Truncated, malformed or qualification-incomplete records cannot establish unqualified facts | `gaming-publisher-extraction-regressions.test.ts`, `gaming-html-evidence.test.ts`, `gaming-partial-guide-admission.test.ts` |
 | Missing or mismatched provenance and unsupported currentness remain rejected | `gaming-live-source-candidate-regressions.test.ts`, `gaming-currentness-candidates.test.ts`, `gaming-freshness.test.ts` |
