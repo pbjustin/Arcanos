@@ -168,6 +168,7 @@ export function gamingDocumentFetchOptions(url: string, options: FetchAndCleanOp
   return {
     ...options,
     includeLinks: false,
+    preservePrimaryContentHeading: options.preservePrimaryContentHeading ?? true,
     preferredContentSelectors: options.preferredContentSelectors ?? [
       ...(profile?.contentSelectors ?? []), ...GENERIC_CONTENT_SELECTORS
     ],

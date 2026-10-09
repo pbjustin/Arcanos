@@ -1,3 +1,4 @@
+import { createGamingPreviewCaseReport, type GamingPreviewAssertion, type GamingPreviewCaseReport } from './gamingLiveSourceValidationPreviewFixture.js';
 import {
   chunkGamingDocument,
   hashGamingDocumentRevision,
@@ -308,7 +309,8 @@ function largeSourceRow(id: string, text: string, ordinal: number, game = SAMURA
     relevance: 1 };
 }
 
-function requireLargeHtmlExtraction(): ReturnType<typeof extractGamingDocumentEvidence>['units'][number] {
+function requireLargeHtmlExtraction(proof: ReturnType<typeof createGamingPreviewCaseReport>): ReturnType<typeof extractGamingDocumentEvidence>['units'][number] {
+  let requireProof: GamingPreviewAssertion = proof.forCase('large-html-structural-extraction');
   const columns = '<tr><th>Game</th><th>Build</th><th>Item</th><th>Skill</th><th>Scope</th><th>Description</th></tr>';
   const record = `<tr><td>Elden Ring</td><td>Samurai</td><td>Uchigatana</td><td>Unsheathe</td><td>Base game</td><td>${SAMURAI_COMBINED}</td></tr>`;
   const irrelevant = columns + '<tr><td>Navigation Sentinel</td><td>Menu</td><td>Irrelevant</td><td>None</td><td>All</td><td>Unrelated page material.</td></tr>';
@@ -319,38 +321,44 @@ function requireLargeHtmlExtraction(): ReturnType<typeof extractGamingDocumentEv
     + '</article></main><aside>Unrelated Sidebar Sentinel</aside><script type="application/javascript">'
     + JSON.stringify({ inertPageShell: '道'.repeat(700_000) }) + '</script></body></html>';
   const bytes = Buffer.byteLength(html, 'utf8');
-  requireProof(bytes > 2_000_000 && html.length < GAMING_HTML_EVIDENCE_LIMITS.htmlChars);
+  requireProof(bytes > 2_000_000 && html.length < GAMING_HTML_EVIDENCE_LIMITS.htmlChars, { bytes, chars: html.length });
+  requireProof = proof.forCase('protected-transfer-decoded-byte-admission');
   const acceptedBudget = { ...GAMING_DOCUMENT_ACQUISITION_LIMITS, declaredBytes: bytes, transferredBytes: bytes, decodedBytes: bytes };
   requireProof(getProtectedDocumentByteBudgetFailure('transferred_bytes', acceptedBudget) === undefined
-    && getProtectedDocumentByteBudgetFailure('decoded_bytes', acceptedBudget) === undefined);
+    && getProtectedDocumentByteBudgetFailure('decoded_bytes', acceptedBudget) === undefined, { transferredBytes: bytes, decodedBytes: bytes });
+  requireProof = proof.forCase('large-html-structural-extraction');
   // This proves the HTML structural component independently of the optional JSON extractor's real-time budget.
   const extracted = extractGamingHtmlEvidence({ body: html, sourceUrl: SAMURAI_URL, contentType: 'text/html', transportTruncated: false });
   requireProof(extracted.inputBytes === bytes && !extracted.truncated && extracted.subreasons.length === 0);
-  requireProof(extracted.units.length === 1 && extracted.outputChars === extracted.units[0].text.length);
+  requireProof(extracted.units.length === 1 && extracted.outputChars === extracted.units[0].text.length,
+    { units: extracted.units.length, outputChars: extracted.outputChars, truncated: extracted.truncated });
   const unit = extracted.units[0];
   requireProof(unit.integrity.status === 'complete' && unit.integrity.reasons.length === 0);
   requireProof(unit.text.includes(SAMURAI_COMBINED) && !unit.text.includes('Sentinel') && !unit.text.includes('inertPageShell'));
   requireProof(unit.fields.some(field => field.label === 'Item' && field.value === 'Uchigatana'));
   requireProof(unit.provenance.sourceUrl === SAMURAI_URL && unit.provenance.strategy === 'html_table'
     && unit.provenance.representation === 'html_dom' && unit.provenance.locator.startsWith('html_table:element:'));
+  requireProof = proof.forCase('independent-text-index-context-bounds');
   const projection = projectGamingDocumentText({ acquiredText: '', selectedTextLength: 0, maxChars: 1_000_000, evidenceUnits: [unit] });
   requireProof(projection.text === unit.text && !projection.truncated && projection.cleanedTextLength < 1_000);
   const search = buildGamingDocumentSearchText({ cleanedText: projection.text, game: SAMURAI_INPUT.game,
     normalizedEvidence: 'Synthetic index metadata. '.repeat(100), maxChars: 1_000 });
-  requireProof(search.length === 1_000 && search.startsWith(unit.text));
+  requireProof(search.length === 1_000 && search.startsWith(unit.text), { indexChars: search.length, projectionChars: projection.text.length });
   const context = formatStoredGamingEvidence([{ evidence: { sourceId: 'synthetic-html-source', revisionId: 'synthetic-html-revision',
     recordId: `synthetic-html-record-${unit.id}`, recordType: 'guide', publicUrl: SAMURAI_URL, text: unit.text,
     evidenceUnits: [unit], lexicalScore: 1, combinedScore: 1, provenance: { fetchedAt: FETCHED_AT.toISOString() } },
   source: { sourceId: 'synthetic-html-source', url: SAMURAI_URL, sourceType: 'supplied', fetchedAt: FETCHED_AT.toISOString(), snippet: unit.text } }],
   { maxContextChars: 1_200, sourceIndexOffset: 2 }, LIMITS);
-  requireProof(context.context.length <= 1_200 && context.context.includes(unit.text) && context.context.includes('[Source 3]'));
+  requireProof(context.context.length <= 1_200 && context.context.includes(unit.text) && context.context.includes('[Source 3]'),
+    { contextChars: context.context.length, citation: context.context.includes('[Source 3]') });
   const bounded = projectGamingDocumentText({ acquiredText: 'Synthetic guide prose. '.repeat(50_000),
     selectedTextLength: 1_100_000, maxChars: 1_000_000 });
   requireProof(bounded.text.length <= 1_000_000 && bounded.truncated);
   return unit;
 }
 
-async function requireOversizedPureBoundaries(): Promise<void> {
+async function requireOversizedPureBoundaries(proof: ReturnType<typeof createGamingPreviewCaseReport>): Promise<void> {
+  let requireProof: GamingPreviewAssertion = proof.forCase('protected-transfer-decoded-byte-admission');
   // Production-owned allowances and admission policy; this seam never starts a transport.
   const { maxTransferredBytes, maxDecodedBytes } = GAMING_DOCUMENT_ACQUISITION_LIMITS;
   for (const stage of ['declared_length', 'transferred_bytes', 'decoded_bytes'] as const) {
@@ -362,7 +370,8 @@ async function requireOversizedPureBoundaries(): Promise<void> {
       ...(stage === 'declared_length' ? { declaredBytes: maxTransferredBytes + 1 }
         : stage === 'transferred_bytes' ? { transferredBytes: maxTransferredBytes + 1 } : { decodedBytes: maxDecodedBytes + 1 }) };
     const failure = getProtectedDocumentByteBudgetFailure(stage, excess);
-    requireProof(failure?.code === (stage === 'decoded_bytes' ? 'DECODED_LIMIT' : 'TRANSFER_LIMIT'));
+    requireProof(failure?.code === (stage === 'decoded_bytes' ? 'DECODED_LIMIT' : 'TRANSFER_LIMIT'),
+      { [stage]: failure?.code ?? '' });
     requireProof(failure.byteDiagnostics.limitStage === stage && failure.byteDiagnostics.maxTransferredBytes === maxTransferredBytes
       && failure.byteDiagnostics.maxDecodedBytes === maxDecodedBytes);
     requireProof(failure.byteDiagnostics.transferredBytes === excess.transferredBytes
@@ -372,19 +381,23 @@ async function requireOversizedPureBoundaries(): Promise<void> {
     maxTransferredBytes, maxDecodedBytes, transferredBytes: 10, decodedBytes: 10, declaredBytes: maxTransferredBytes - 9
   });
   requireProof(aggregate?.code === 'TRANSFER_LIMIT' && aggregate.byteDiagnostics.limitStage === 'declared_length');
+  requireProof = proof.forCase('oversized-structural-input-rejection');
   const extracted = extractGamingDocumentEvidence({ body: 'x'.repeat(GAMING_HTML_EVIDENCE_LIMITS.htmlChars + 1),
     sourceUrl: SAMURAI_URL, contentType: 'text/html', transportTruncated: false });
-  requireProof(extracted.units.length === 0 && extracted.proseBody === '' && extracted.diagnostics.budgetOutcome === 'exhausted');
+  requireProof(extracted.units.length === 0 && extracted.proseBody === '' && extracted.diagnostics.budgetOutcome === 'exhausted',
+    { units: extracted.units.length, proseChars: extracted.proseBody.length, budget: extracted.diagnostics.budgetOutcome });
   requireProof(extracted.diagnostics.subreasons.includes('extraction_budget_exhausted')
     && extracted.diagnostics.truncationStages.includes('extraction'));
+  requireProof = proof.forCase('archive-decoded-byte-rejection');
   const reads: string[] = [];
   let rejected = false;
   try { await acquireArchive('道'.repeat(340_000), 1_000_000, 1_000_000, reads, 1_000); }
   catch (error) { rejected = error instanceof GamingArchiveResolutionError && error.reason === 'DOCUMENT_TOO_LARGE'; }
-  requireProof(rejected && reads.length === 2);
+  requireProof(rejected && reads.length === 2, { rejected, reads: reads.length });
 }
 
-function requireCompleteCandidatePool(): void {
+function requireCompleteCandidatePool(proof: ReturnType<typeof createGamingPreviewCaseReport>): void {
+  const requireProof: GamingPreviewAssertion = proof.forCase('late-complete-passage-pool');
   const input: GamingStoredKnowledgeInput = { game: 'Synthetic Lantern Quest', mode: 'guide', requireRequestCoverage: true,
     prompt: 'How do I activate amber gate and cross crystal bridge?' };
   const incomplete = Array.from({ length: 24 }, (_unused, index) => largeSourceRow(`pool-record-${index}`,
@@ -393,7 +406,8 @@ function requireCompleteCandidatePool(): void {
     'Activate amber gate using the copper switch. Cross crystal bridge following the blue lanterns.', 24, input.game);
   const selected = selectStoredGamingEvidence([...incomplete, supporting], input, LIMITS, undefined, assessGamingRequestCoverage);
   const knowledge = formatStoredGamingEvidence(selected, input, LIMITS);
-  requireProof(selected.length === 1 && selected[0].evidence.recordId === supporting.recordId);
+  requireProof(selected.length === 1 && selected[0].evidence.recordId === supporting.recordId,
+    { pool: incomplete.length + 1, selected: selected.length, ordinal: selected[0].evidence.ordinal ?? -1 });
   requireProof(assessGamingRequestCoverage(input, knowledge).coverageSatisfied && knowledge.context.includes(supporting.searchText));
   requireProof(knowledge.evidence?.[0].sourceId === supporting.sourceId && knowledge.evidence[0].revisionId === supporting.revisionId
     && knowledge.evidence[0].publicUrl === supporting.publicUrl && knowledge.evidence[0].ordinal === 24);
@@ -403,7 +417,8 @@ function requireCompleteCandidatePool(): void {
   requireProof(!assessGamingRequestCoverage(input, partial).coverageSatisfied);
 }
 
-function requireSamuraiMultiTopic(late: boolean): void {
+function requireSamuraiMultiTopic(late: boolean, proof: ReturnType<typeof createGamingPreviewCaseReport>): void {
+  let requireProof: GamingPreviewAssertion = proof.forCase(late ? 'samurai-multi-topic-late' : 'samurai-multi-topic-early');
   requireProof(buildGamingRequestRequirements(SAMURAI_INPUT).length === 8);
   const singletons = [...SAMURAI_TOPICS.slice(3),
     ...Array.from({ length: 36 }, (_unused, index) => SAMURAI_TOPICS[index % 3])];
@@ -417,30 +432,37 @@ function requireSamuraiMultiTopic(late: boolean): void {
   requireProof(selected.some(candidate => candidate.evidence.recordId === rows[combinedIndex].recordId));
   requireProof(knowledge.context.includes(SAMURAI_COMBINED) && knowledge.sources.length === 1);
   const coverage = assessGamingRequestCoverage(SAMURAI_INPUT, knowledge);
-  requireProof(coverage.coverageSatisfied && coverage.missingCoverage.length === 0 && coverage.requirementSupport.length === 8);
+  requireProof(coverage.coverageSatisfied && coverage.missingCoverage.length === 0 && coverage.requirementSupport.length === 8,
+    { pool: rows.length, selected: selected.length, support: coverage.requirementSupport.length, missing: coverage.missingCoverage.length, covered: coverage.coverageSatisfied });
   requireProof(coverage.requirementSupport.slice(0, 3).every(support => support.evidenceIds.includes(rows[combinedIndex].recordId)));
   requireProof(knowledge.evidence.every(chunk => chunk.sourceId === 'synthetic-samurai-source'
     && chunk.revisionId === 'synthetic-samurai-revision' && chunk.publicUrl === SAMURAI_URL));
   const missing = formatStoredGamingEvidence(selectStoredGamingEvidence(rows.filter(row => !row.searchText.includes('Healing flasks')),
     SAMURAI_INPUT, LIMITS, undefined, assessGamingRequestCoverage), SAMURAI_INPUT, LIMITS);
   requireProof(!assessGamingRequestCoverage(SAMURAI_INPUT, missing).coverageSatisfied);
+  requireProof = proof.forCase('insufficient-coverage-budget');
   const tooSmall = { ...SAMURAI_INPUT, maxContextChars: 100 };
   const bounded = formatStoredGamingEvidence(selectStoredGamingEvidence(rows, tooSmall, LIMITS, undefined,
     assessGamingRequestCoverage), tooSmall, LIMITS);
-  requireProof(bounded.context.length <= 100 && !assessGamingRequestCoverage(tooSmall, bounded).coverageSatisfied);
+  const boundedCoverage = assessGamingRequestCoverage(tooSmall, bounded);
+  requireProof(bounded.context.length <= 100 && !boundedCoverage.coverageSatisfied,
+    { contextChars: bounded.context.length, covered: boundedCoverage.coverageSatisfied });
 }
 
-function requireNegativeEvidence(unit: ReturnType<typeof requireLargeHtmlExtraction>): void {
+function requireNegativeEvidence(unit: ReturnType<typeof requireLargeHtmlExtraction>, proof: ReturnType<typeof createGamingPreviewCaseReport>): void {
+  let requireProof: GamingPreviewAssertion = proof.forCase('wrong-game-edition-dlc');
   const narrow = { ...SAMURAI_INPUT, prompt: 'Explain Samurai Uchigatana Unsheathe', requireRequestCoverage: false };
   requireProof(selectStoredGamingEvidence([largeSourceRow('wrong-game', SAMURAI_COMBINED, 0, 'Dark Souls III')], narrow, LIMITS).length === 0);
   const policy = assessGamingSourcePolicy(SAMURAI_URL, SAMURAI_INPUT.game);
   const document = { publicUrl: SAMURAI_URL, metadata: { title: 'Elden Ring Samurai guide' }, text: SAMURAI_COMBINED };
   const wrongEdition = { ...document, metadata: { title: 'Elden Ring Shadow of the Erdtree Samurai guide' },
     text: `Edition: Shadow of the Erdtree. ${SAMURAI_COMBINED}` };
-  requireProof(assessGamingClearSourceIdentity(wrongEdition, SAMURAI_INPUT, policy).status === 'conflict');
+  const editionIdentity = assessGamingClearSourceIdentity(wrongEdition, SAMURAI_INPUT, policy);
+  requireProof(editionIdentity.status === 'conflict', { identity: editionIdentity.status });
   const dlc = 'This weapon is only available in Shadow of the Erdtree.';
   requireProof(classifyGamingEditionRequirements(dlc) === 'conflict');
   requireProof(assessGamingClearSourceIdentity({ ...document, text: `${SAMURAI_COMBINED} ${dlc}` }, SAMURAI_INPUT, policy).status === 'conflict');
+  requireProof = proof.forCase('partial-conflicting-structural-records');
   const partial = { ...unit, integrity: { status: 'partial' as const, reasons: ['incomplete_record'] } };
   const row = largeSourceRow('partial-structural', partial.text, 0);
   row.normalized = { ...row.normalized, evidenceUnits: [partial] };
@@ -450,21 +472,24 @@ function requireNegativeEvidence(unit: ReturnType<typeof requireLargeHtmlExtract
     + '<tr><td>Uchigatana</td><td>bleed buildup</td><td>45</td><td>points</td><td>Base game</td></tr>'
     + '<tr><td>Uchigatana</td><td>bleed buildup</td><td>99</td><td>points</td><td>Base game</td></tr></table></article></body></html>';
   const conflicting = extractGamingDocumentEvidence({ body: conflictHtml, sourceUrl: SAMURAI_URL, contentType: 'text/html' });
-  requireProof(conflicting.units.length === 2 && conflicting.units.every(entry => entry.integrity.status !== 'complete'));
+  requireProof(conflicting.units.length === 2 && conflicting.units.every(entry => entry.integrity.status !== 'complete'),
+    { units: conflicting.units.length, complete: conflicting.units.filter(entry => entry.integrity.status === 'complete').length });
   const conflictingRows = conflicting.units.map((entry, index) => {
     const candidate = largeSourceRow(`conflicting-stat-${index}`, entry.text, index);
     candidate.normalized = { ...candidate.normalized, evidenceUnits: [entry] };
     return candidate;
   });
   requireProof(selectStoredGamingEvidence(conflictingRows, { ...narrow, prompt: 'What is Uchigatana bleed buildup value?' }, LIMITS).length === 0);
+  requireProof = proof.forCase('unsupported-currentness');
   const freshness = extractGamingFreshnessMetadata({ ...document, text: `${SAMURAI_COMBINED} This is the latest current-patch build.` },
     SAMURAI_INPUT, FETCHED_AT);
   const evaluated = evaluateGamingFreshness({ game: SAMURAI_INPUT.game, question: 'What is the current best Samurai bleed build?',
     mode: 'build', evidence: [freshness], now: FETCHED_AT });
-  requireProof(!evaluated.usable && evaluated.status === 'unverified');
+  requireProof(!evaluated.usable && evaluated.status === 'unverified', { usable: evaluated.usable, status: evaluated.status });
 }
 
-function requireTransientArtifactBindings(): void {
+function requireTransientArtifactBindings(proof: ReturnType<typeof createGamingPreviewCaseReport>): void {
+  const requireProof: GamingPreviewAssertion = proof.forCase('transient-artifact-scope-expiry-content-binding');
   const workflowId = '10000000-0000-4000-8000-000000000001';
   const actorScopeHash = 'a'.repeat(64);
   const now = FETCHED_AT.getTime();
@@ -488,20 +513,25 @@ function requireTransientArtifactBindings(): void {
   requireProof(!isGamingApprovedArtifactCurrent({ ...approved, instructionFiltered: true }));
   const query = { contractVersion: GAMING_HYBRID_V2_CONTRACT_VERSION, idempotencyKey: 'large-source-transient-fixture',
     game: SAMURAI_INPUT.game, question: SAMURAI_INPUT.prompt };
-  requireProof(gamingHybridQuerySchema.parse(query).storagePolicy === 'transient_only');
+  const parsed = gamingHybridQuerySchema.parse(query);
+  requireProof(parsed.storagePolicy === 'transient_only', { policy: parsed.storagePolicy, accepted: projectGamingHybridSuppliedGuides(input).length });
   requireProof(!gamingHybridQuerySchema.safeParse({ ...query, canStore: true }).success);
 }
 
 /** Additional fixed component proof; transport cancellation, durable writes and provider invocation are separate gates. */
-export async function runGamingLargeSourcePreview(): Promise<void> {
+export async function runGamingLargeSourcePreview(): Promise<GamingPreviewCaseReport> {
   try {
-    const unit = requireLargeHtmlExtraction();
-    await requireOversizedPureBoundaries();
-    requireCompleteCandidatePool();
-    requireSamuraiMultiTopic(false);
-    requireSamuraiMultiTopic(true);
-    requireNegativeEvidence(unit);
-    requireTransientArtifactBindings();
+    const proof = createGamingPreviewCaseReport(GAMING_LARGE_SOURCE_PREVIEW_VERSION,
+      'pure-synthetic-large-source-selection-coverage-artifact', GAMING_LARGE_SOURCE_PREVIEW_CASES,
+      'PREVIEW_GAMING_LARGE_SOURCE_CONTRACT_INVALID');
+    const unit = requireLargeHtmlExtraction(proof);
+    await requireOversizedPureBoundaries(proof);
+    requireCompleteCandidatePool(proof);
+    requireSamuraiMultiTopic(false, proof);
+    requireSamuraiMultiTopic(true, proof);
+    requireNegativeEvidence(unit, proof);
+    requireTransientArtifactBindings(proof);
+    return proof.finish();
   } catch {
     throw new Error('PREVIEW_GAMING_LARGE_SOURCE_CONTRACT_INVALID');
   }

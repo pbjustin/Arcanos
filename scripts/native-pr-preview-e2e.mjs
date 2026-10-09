@@ -4447,6 +4447,45 @@ async function readBoundedResponseBody(
   return Buffer.concat(chunks, responseBytes);
 }
 
+function readGamingCaseReport(response, requestCase, options, prefix) {
+  const contract = NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming;
+  const code = prefix === 'largeSource' ? 'NATIVE_PR_PREVIEW_GAMING_LARGE_SOURCE_REPORT_INVALID'
+    : 'NATIVE_PR_PREVIEW_GAMING_LIVE_SOURCE_VALIDATION_REPORT_INVALID';
+  const raw = response.headers.get(contract[`${prefix}ReportHeader`]);
+  if (requestCase.caseId !== 'gaming-query-guide') {
+    if (raw !== null) fail(code, requestCase.caseId);
+    return null;
+  }
+  if (!raw || raw.length > contract.caseReportMaxChars || /[^\x20-\x7e]/u.test(raw)) fail(code, requestCase.caseId);
+  let report;
+  try { report = JSON.parse(raw); } catch { fail(code, requestCase.caseId); }
+  if (JSON.stringify(report) !== raw) fail(code, requestCase.caseId);
+  const exactKeys = (value, keys) => value !== null && typeof value === 'object' && !Array.isArray(value)
+    && Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
+  const ids = contract[`${prefix}Cases`];
+  const rules = contract[`${prefix}ReportValues`];
+  const checks = contract[`${prefix}ReportChecks`];
+  if (!exactKeys(report, ['version', 'scope', 'cases', 'prNumber', 'sourceCommit'])
+    || report.version !== contract[`${prefix}ProofVersion`] || report.scope !== contract[`${prefix}ProofScope`]
+    || report.prNumber !== options.prNumber || report.sourceCommit !== options.commitSha
+    || response.headers.get(contract[`${prefix}ProofHeader`]) !== report.version
+    || !Array.isArray(report.cases) || report.cases.length !== ids.length || rules.length !== ids.length || checks.length !== ids.length) {
+    fail(code, requestCase.caseId);
+  }
+  for (const [index, entry] of report.cases.entries()) {
+    const expected = rules[index];
+    if (!exactKeys(entry, ['id', 'checks', 'passed', 'values']) || entry.id !== ids[index]
+      || !Number.isSafeInteger(entry.checks) || entry.checks < 1 || entry.checks !== checks[index] || entry.passed !== entry.checks
+      || !exactKeys(entry.values, Object.keys(expected))) fail(code, requestCase.caseId);
+    for (const [name, rule] of Object.entries(expected)) {
+      const observed = entry.values[name];
+      if (Array.isArray(rule) ? !Number.isSafeInteger(observed) || observed < rule[0] || observed > rule[1]
+        : observed !== rule) fail(code, requestCase.caseId);
+    }
+  }
+  return { ...report, headerSha256: createHash('sha256').update(raw).digest('hex'), headerChars: raw.length };
+}
+
 async function executeRequestCase(
   requestCase,
   options,
@@ -4804,6 +4843,8 @@ async function executeRequestCase(
       fail(proofCode, requestCase.caseId);
     }
   }
+  const gamingLargeSourceReport = readGamingCaseReport(response, requestCase, options, 'largeSource');
+  const gamingLiveSourceValidationReport = readGamingCaseReport(response, requestCase, options, 'liveSourceValidation');
   if (requestCase.caseId === 'gaming-query-guide'
     ? response.headers.get(gamingExecutionBudgetContract.executionBudgetProofHeader)
       !== gamingExecutionBudgetContract.executionBudgetProofVersion
@@ -5173,11 +5214,13 @@ async function executeRequestCase(
           gamingLargeSourceVerified: true,
           gamingLargeSourceProofVersion: NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.largeSourceProofVersion,
           gamingLargeSourceProofScope: NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.largeSourceProofScope,
-          gamingLargeSourceCases: [...NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.largeSourceCases],
+          gamingLargeSourceCases: gamingLargeSourceReport.cases.map(entry => entry.id),
+          gamingLargeSourceReport,
           gamingLiveSourceValidationVerified: true,
           gamingLiveSourceValidationProofVersion: NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.liveSourceValidationProofVersion,
           gamingLiveSourceValidationProofScope: NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.liveSourceValidationProofScope,
-          gamingLiveSourceValidationCases: [...NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.liveSourceValidationCases],
+          gamingLiveSourceValidationCases: gamingLiveSourceValidationReport.cases.map(entry => entry.id),
+          gamingLiveSourceValidationReport,
           gamingGuideAssistanceVerified: true,
           gamingProgressRecoveryVerified: true,
           gamingHybridKnowledgeVerified: true,

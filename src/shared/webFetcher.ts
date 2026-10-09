@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { load } from 'cheerio';
+import { contains, load } from 'cheerio';
 import { Resolver } from 'node:dns/promises';
 import { Agent as HttpsAgent } from 'node:https';
 import type { IncomingMessage } from 'node:http';
@@ -383,6 +383,8 @@ export interface FetchAndCleanOptions {
   preferredContentSelectors?: readonly string[];
   /** Opt-in article containers take precedence over generic cards when independently readable. */
   primaryContentSelectors?: readonly string[];
+  /** Gaming keeps an acquired enclosing article/main subject when selecting its inner prose body. */
+  preservePrimaryContentHeading?: boolean;
   preferredContentTerms?: readonly string[];
   removeSelectors?: readonly string[];
   includeLinks?: boolean;
@@ -764,15 +766,36 @@ export function extractFetchAndCleanDocument(
 
   throwIfFetchCancelled(options);
   const extractionStartedAt = Date.now();
-  const $ = load(responseText);
+  const parserOptions = options.preservePrimaryContentHeading ? { sourceCodeLocationInfo: true } : undefined;
+  const $ = load(responseText, parserOptions as Parameters<typeof load>[1]);
   $('script, style, noscript').remove();
   const rawTextLength = normalizeExtractedText($('body').text()).length;
-  for (const selector of (options.removeSelectors ?? []).slice(0, MAX_EXTRACTION_SELECTORS * 4)) {
+  const removeSelectors = (options.removeSelectors ?? []).slice(0, MAX_EXTRACTION_SELECTORS * 4);
+  const headingDenied = (element: cheerio.Element): boolean => {
+    if ($(element).closest('blockquote,[role="menu"]').length) return true;
+    return removeSelectors.some(selector => {
+      if (selector === 'header') return false;
+      try { return Boolean($(element).closest(selector).length); } catch { return false; }
+    });
+  };
+  for (const selector of removeSelectors) {
     try {
-      $(selector).remove();
+      if (options.preservePrimaryContentHeading && selector === 'header') {
+        $(selector).each((_, header) => {
+          throwIfFetchCancelled(options);
+          const node = $(header);
+          const scope = node.parent();
+          const heading = scope.is('article,main,[role="main"]') && !headingDenied(header)
+            ? node.find('h1').slice(0, 6).filter((__, element) => !headingDenied(element)
+              && $(element).closest('article,main,[role="main"]').get(0) === scope.get(0)).first() : undefined;
+          if (heading?.length) node.replaceWith(heading);
+          else node.remove();
+        });
+      } else $(selector).remove();
     } catch {
       // Optional caller-owned extraction selectors must never break the generic body fallback.
     }
+    throwIfFetchCancelled(options);
   }
   $('br').replaceWith(' ');
   $('p, h1, h2, h3, h4, h5, h6, li, dt, dd, div, section, article, tr, td').append(' ');
@@ -825,7 +848,20 @@ export function extractFetchAndCleanDocument(
   const minimumUsefulLength = bodyText.length < 120 ? 1 : 80;
   const usablePrimaryCandidates = candidates.filter(candidate => candidate.primaryContent
     && candidate.text.length >= minimumUsefulLength && candidate.qualityScore >= MIN_PREFERRED_CONTAINER_SCORE);
-  const bestPreferredCandidate = (usablePrimaryCandidates.length ? usablePrimaryCandidates : candidates)
+  // Prefer a usable publisher article body over its article/main shell. A class
+  // name alone must not let a smaller, weaker sibling card displace the guide.
+  // Keep the existing bounded scores and ignore ancestors/descendants here.
+  const specificPrimaryCandidates = usablePrimaryCandidates.filter(candidate =>
+    !/^(?:article|main|\.article|#main|\[role=(?:'main'|"main"|main)\])$/u.test(candidate.selector)
+    && !candidate.selector.includes('*=')
+    && candidate.element && !$(candidate.element).is(NAVIGATION_CONTAINER_SELECTOR)
+    && !usablePrimaryCandidates.some(other => other.element
+      && other.text.length > candidate.text.length
+      && other.qualityScore > candidate.qualityScore
+      && !contains(other.element, candidate.element!)
+      && !contains(candidate.element!, other.element)));
+  const primaryCandidates = specificPrimaryCandidates.length ? specificPrimaryCandidates : usablePrimaryCandidates;
+  const bestPreferredCandidate = (primaryCandidates.length ? primaryCandidates : candidates)
     .reduce<ScoredExtractionCandidate | undefined>((best, candidate) => {
     if (!best || candidate.qualityScore > best.qualityScore) {
       return candidate;
@@ -848,9 +884,35 @@ export function extractFetchAndCleanDocument(
     ? bestPreferredCandidate
     : bodyCandidate;
   // Keep only the winning element, not full document copies for every scoring candidate.
-  const selectedText = options.retainFullSelectedText && selectedCandidate.element
+  let selectedText = options.retainFullSelectedText && selectedCandidate.element
     ? normalizeExtractedText($(selectedCandidate.element).text())
     : selectedCandidate.text;
+  let headingText = selectedCandidate.headingText;
+  if (options.preservePrimaryContentHeading && selectedCandidate.element) {
+    const selectedElement = selectedCandidate.element;
+    type LocatedElement = cheerio.Element & { sourceCodeLocation?: { startOffset: number; endTag?: unknown } };
+    const selectedLocation = (selectedElement as LocatedElement).sourceCodeLocation;
+    let scope = $(selectedElement).closest('article,main,[role="main"]');
+    // Search nearest scopes only; an independent article's own subject wins.
+    for (let depth = 0; depth < 6 && scope.length; depth++, scope = scope.parent().closest('article,main,[role="main"]')) {
+      throwIfFetchCancelled(options);
+      const heading = scope.children('h1').slice(0, 6).filter((_, element) => !headingDenied(element)).first();
+      if (!heading.length) continue;
+      const headingElement = heading.get(0)!;
+      if (headingElement === selectedElement || contains(selectedElement, headingElement)) break;
+      const location = (headingElement as LocatedElement).sourceCodeLocation;
+      // A later recommendation cannot become the acquired article opening.
+      if (!location || !selectedLocation || location.startOffset >= selectedLocation.startOffset) break;
+      if (!location.endTag || contains(headingElement, selectedElement)) throw new Error('Incomplete primary article heading');
+      const acquiredHeading = boundExtractionMetadata(heading.text());
+      if (acquiredHeading) {
+        selectedText = `${acquiredHeading} ${selectedText}`;
+        if (!options.retainFullSelectedText) selectedText = selectedText.slice(0, MAX_CANDIDATE_SCORE_CHARS);
+        headingText = boundExtractionMetadata([acquiredHeading, headingText].filter(Boolean).join(' | '));
+      }
+      break;
+    }
+  }
   const cleanedText = options.retainFullSelectedText ? selectedText.slice(0, boundedMaxChars) : selectedText;
   const extractionStrategy = selectedCandidate.selector;
   const documentTitle = boundExtractionMetadata($('title').first().text());
@@ -868,7 +930,7 @@ export function extractFetchAndCleanDocument(
     linkDensity: roundUnitMetric(selectedCandidate.linkDensity),
     candidateCount: candidates.length,
     ...(documentTitle ? { documentTitle } : {}),
-    ...(selectedCandidate.headingText ? { headingText: selectedCandidate.headingText } : {})
+    ...(headingText ? { headingText } : {})
   });
 
   const seenLinks = new Set<string>();

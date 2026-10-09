@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-09T15:09:39.667Z",
+  "generatedAt": "2026-10-09T19:45:43.870Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -4261,6 +4261,9 @@
           "relativePath": "tests/fixtures/session-context-e2e.ts"
         },
         {
+          "relativePath": "tests/gaming-acquired-primary-heading.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-acquired-topic-identity.test.ts"
         },
         {
@@ -4286,6 +4289,9 @@
         },
         {
           "relativePath": "tests/gaming-archive-resources.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-article-container-regression.test.ts"
         },
         {
           "relativePath": "tests/gaming-base-defaulting.test.ts"
@@ -4426,6 +4432,9 @@
           "relativePath": "tests/gaming-guide-response-preview.test.ts"
         },
         {
+          "relativePath": "tests/gaming-hosted-mission-extraction.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-html-evidence.test.ts"
         },
         {
@@ -4496,6 +4505,9 @@
         },
         {
           "relativePath": "tests/gaming-minecraft-edition-scope.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-mission-acquisition.integration.test.ts"
         },
         {
           "relativePath": "tests/gaming-mixed-candidate-failures.test.ts"

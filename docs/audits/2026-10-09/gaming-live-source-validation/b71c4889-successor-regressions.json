@@ -1,0 +1,238 @@
+{
+  "schemaVersion": 1,
+  "repository": "pbjustin/Arcanos",
+  "prNumber": 1531,
+  "parentHeadSha": "b71c48890377eed768b63aa66a3a77d2f9a5d5c2",
+  "binding": "Frozen successor source hashes; final commit and hosted proof published on PR. This file is local/controlled integration evidence, not publisher or provider acceptance.",
+  "nodeVersion": "24.18.1",
+  "npmVersion": "11.16.0",
+  "sourceSha256": {
+    "src/shared/webFetcher.ts": "b3d8029fc2636986a3eeb2fa49d73ea96a80971d2d964e278fa07c26e8071a8e",
+    "src/services/gamingDocumentExtraction.ts": "83ecd7f99f12ac697c3aa866e6bced2629b30106baf7893537b5e2f1505b05c1",
+    "src/services/gamingHtmlEvidence.ts": "cfb6fcd2f1eb4e5e92f9b5856bbe6046bda268ae84d357ea111aa9743f24b956",
+    "src/services/gamingJsonEvidence.ts": "1601ed9b65c3a6746b00892b2eafd81f609cacf56d772bdcb6b2cfca3eaa9877",
+    "src/nativePrPreviewApplication.ts": "79ed991701b6411037b99dff2a6476aef06ae0804a7bf4e3f819269c2396cc60",
+    "src/shared/gaming/gamingLiveSourceValidationPreviewFixture.ts": "e0b31261b5093752641ed45a2d2f6c2444c4d4f74dbcb1cfd8c756d63948cf82",
+    "src/shared/gaming/gamingDurableRagPreviewFixture.ts": "acf78551a219d10cb470c2cb64de2a3938241ab6d3564cf86cbadf563ea88f80",
+    "scripts/native-pr-preview-contract.mjs": "5fffee84f88db5cb235d0c9c0e6a57480f0dcd5c77aa4d1de9be019bc800334f",
+    "scripts/native-pr-preview-e2e.mjs": "e33dbbd296d96987820bdd33d5d0fa43c53d0f9cd7df2186af0589c8e2fd16a2",
+    "tests/gaming-acquired-primary-heading.test.ts": "644dd475755d763ac9b216c772f71072b5c6ff6771a190fd76444dd8953c8a18",
+    "tests/gaming-article-container-regression.test.ts": "3fe614fed53071df2126f09d87bd3368b220ac471494ddabe234ea97bcaa0341",
+    "tests/gaming-hosted-mission-extraction.test.ts": "569bd1716a1d8ee8ce1c901d12d068576b32ae0e1e6f7afaa2f4a8678d66a2d1",
+    "tests/gaming-mission-acquisition.integration.test.ts": "2f3cd1cf78a71130d33f153d959d062e4ecbacb7258c2236a6653fbeff91333d",
+    "tests/gaming-samurai-guide-workflow.integration.test.ts": "624285b36a09c599fbe6ba29988b885851e3a976442c9871341e0c657cfdfa65"
+  },
+  "semanticPins": [
+    {
+      "path": "src/services/gamingHtmlEvidence.ts",
+      "digest": "14eb8e54ee31563248c34fa2f8f28b027cfaed5571d17240d85da1157068b7fa",
+      "rawSha256": "cfb6fcd2f1eb4e5e92f9b5856bbe6046bda268ae84d357ea111aa9743f24b956"
+    },
+    {
+      "path": "src/services/gamingJsonEvidence.ts",
+      "digest": "a071aab05dcf7a711c43a60f19615fe7851df44d7b0d8c2a71bbe92716fbad75",
+      "rawSha256": "1601ed9b65c3a6746b00892b2eafd81f609cacf56d772bdcb6b2cfca3eaa9877"
+    },
+    {
+      "path": "src/services/gamingDocumentExtraction.ts",
+      "digest": "312e6da6e082b44ba16626ae76e5f81a6272ee278b82e1a121bb7201bd3cc863",
+      "rawSha256": "83ecd7f99f12ac697c3aa866e6bced2629b30106baf7893537b5e2f1505b05c1"
+    },
+    {
+      "path": "src/shared/gaming/gamingLiveSourceValidationPreviewFixture.ts",
+      "digest": "6c5b23d1c9b8cd62abd84c83ae779030d65befd4518035d320bf9d2ba6dd5835",
+      "rawSha256": "e0b31261b5093752641ed45a2d2f6c2444c4d4f74dbcb1cfd8c756d63948cf82"
+    },
+    {
+      "path": "src/shared/gaming/gamingDurableRagPreviewFixture.ts",
+      "digest": "047d6610dd24fd8dfcadf302b4d0c8eb9bce815cecb80410e10af6ac04132fbc",
+      "rawSha256": "acf78551a219d10cb470c2cb64de2a3938241ab6d3564cf86cbadf563ea88f80"
+    }
+  ],
+  "initiallyFailingRegressions": [
+    {
+      "scope": "Pristine published b71: original extraction/acquisition fixtures",
+      "artifactSha256": "798261e44f2850fb4d03afa013cfe2b9cbe48dd90083fa47dfeb809e0aa76ea8",
+      "success": false,
+      "passed": 6,
+      "failed": 26,
+      "skipped": 0,
+      "suites": 2,
+      "failedCases": [
+        "hosted mission extraction edge regressions outside the sealed graph retains the explicit guide article when a linked guide competes with a semantic article card",
+        "hosted mission extraction edge regressions outside the sealed graph preserves a standalone div correction behind deep plain wrappers",
+        "hosted mission extraction edge regressions outside the sealed graph preserves a standalone span correction behind deep plain wrappers",
+        "hosted mission extraction edge regressions outside the sealed graph preserves a standalone div correction around an embedded JSON record",
+        "hosted mission extraction edge regressions outside the sealed graph preserves a standalone span correction around an embedded JSON record",
+        "hosted mission extraction edge regressions outside the sealed graph retains an enclosing main correction for an embedded JSON record inside a deeply wrapped article",
+        "hosted mission extraction edge regressions outside the sealed graph does not import furniture, quoted or independent-scope leaf qualifiers into DOM list",
+        "hosted mission extraction edge regressions outside the sealed graph does not import furniture, quoted or independent-scope leaf qualifiers into embedded JSON",
+        "hosted mission extraction edge regressions outside the sealed graph counts actual leaf qualifications without duplicate plain wrapper pollution in DOM list",
+        "hosted mission extraction edge regressions outside the sealed graph counts actual leaf qualifications without duplicate plain wrapper pollution in embedded JSON",
+        "hosted mission extraction edge regressions outside the sealed graph counts direct article qualifications once despite neighboring plain wrappers in DOM list",
+        "hosted mission extraction edge regressions outside the sealed graph counts direct article qualifications once despite neighboring plain wrappers in embedded JSON",
+        "hosted mission extraction edge regressions outside the sealed graph retains the qualifier cap for excessive standalone corrections in DOM list",
+        "hosted mission extraction edge regressions outside the sealed graph retains the qualifier cap for excessive standalone corrections in embedded JSON",
+        "hosted mission extraction edge regressions outside the sealed graph rejects a record whose standalone source qualification includes prompt injection in DOM list",
+        "hosted mission extraction edge regressions outside the sealed graph rejects a record whose standalone source qualification includes prompt injection in embedded JSON",
+        "hosted mission extraction edge regressions outside the sealed graph does not promote an embedded JSON record with an unclosed inherited qualification",
+        "hosted mission extraction edge regressions outside the sealed graph rejects a contradictory standalone metadata block with inline label formatting",
+        "hosted mission extraction edge regressions outside the sealed graph preserves one complete formatted div metadata block <b>Game:</b> Elden Ring",
+        "hosted mission extraction edge regressions outside the sealed graph preserves one complete formatted div metadata block <span>Game:</span> <strong>Diablo IV</strong>",
+        "hosted mission extraction edge regressions outside the sealed graph preserves one complete formatted span metadata block <em>Edition:</em> Shadow of the Erdtree",
+        "hosted mission extraction edge regressions outside the sealed graph preserves one complete formatted span metadata block <small>Game:</small> <i>Elden Ring</i>",
+        "hosted mission extraction edge regressions outside the sealed graph keeps a formatted declaration with an unclosed inline value partial",
+        "hosted mission extraction edge regressions outside the sealed graph rejects instruction-bearing formatted identity metadata without salvaging its fields",
+        "Gaming mission protected HTTP acquisition with controlled streaming responses preserves full guide, late evidence, qualifiers and provenance from a large chunked response",
+        "Gaming mission protected HTTP acquisition with controlled streaming responses preserves full guide, late evidence, qualifiers and provenance from a large gzip response"
+      ]
+    },
+    {
+      "manifestSha256": "9e72d678fc7ef44ca3de7078d32c8fac54b531e47b278992d32b5baefe3832ac",
+      "scope": "Pristine published b71 primary-heading replay: 13 failures, 9 passing controls"
+    },
+    {
+      "scope": "Earlier uncommitted mission proposal: linked and ordinary exact article-content cards",
+      "artifactSha256": "bd8effe014a88cf0e17562edc73d1084c15decf24dfaad3ec2212644b8c5fb06",
+      "success": false,
+      "passed": 0,
+      "failed": 2,
+      "skipped": 0,
+      "suites": 1,
+      "failedCases": [
+        "Gaming named article containers competing with ordinary cards keeps the full guide beside an exact article-content card (linked=true)",
+        "Gaming named article containers competing with ordinary cards keeps the full guide beside an exact article-content card (linked=false)"
+      ]
+    },
+    {
+      "scope": "Earlier uncommitted mission proposal: four selected formatted qualifier cases; other tests intentionally nonselected",
+      "artifactSha256": "27e8fca3b931f80f9c0b6d6d42ffa8329e46d6f642981d2d9b2dfe6253e4bfca",
+      "success": false,
+      "passed": 0,
+      "failed": 4,
+      "skipped": 32,
+      "suites": 1,
+      "failedCases": [
+        "hosted mission extraction edge regressions outside the sealed graph preserves one formatted standalone DOM list div correction behind deep wrappers",
+        "hosted mission extraction edge regressions outside the sealed graph preserves one formatted standalone DOM list span correction behind deep wrappers",
+        "hosted mission extraction edge regressions outside the sealed graph preserves one formatted standalone embedded JSON div correction behind deep wrappers",
+        "hosted mission extraction edge regressions outside the sealed graph preserves one formatted standalone embedded JSON span correction behind deep wrappers"
+      ]
+    },
+    {
+      "scope": "Earlier uncommitted mission proposal: four selected adjacent comparison cases; other tests intentionally nonselected",
+      "artifactSha256": "3bf215cc90ab4597363bed01403b1bedad94c3430082db0db584e691965c5674",
+      "success": false,
+      "passed": 0,
+      "failed": 4,
+      "skipped": 52,
+      "suites": 1,
+      "failedCases": [
+        "hosted mission extraction edge regressions outside the sealed graph excludes adjacent DOM list plain inline comparisons from record edition assessment",
+        "hosted mission extraction edge regressions outside the sealed graph excludes adjacent DOM list formatted inline comparisons from record edition assessment",
+        "hosted mission extraction edge regressions outside the sealed graph excludes adjacent embedded JSON plain inline comparisons from record edition assessment",
+        "hosted mission extraction edge regressions outside the sealed graph excludes adjacent embedded JSON formatted inline comparisons from record edition assessment"
+      ]
+    },
+    {
+      "scope": "Actual deterministic loopback HTTP before primary-heading correction; six false acceptances",
+      "artifactSha256": "4e3127becaeb5c47617ac1b33a71c07394cb6ab5ad2215644fbfd2cd130a96e8",
+      "success": false,
+      "passed": 3,
+      "failed": 6,
+      "skipped": 26,
+      "suites": 1,
+      "failedCases": [
+        "October 4 early-game Samurai request through the served Gaming workflow rejects enclosing article primary H1 (header=false): Elden Ring Nightreign Samurai Build Guide despite a generic selected article body",
+        "October 4 early-game Samurai request through the served Gaming workflow rejects enclosing article primary H1 (header=false): Elden Ring Shadow of the Erdtree Samurai Build Guide despite a generic selected article body",
+        "October 4 early-game Samurai request through the served Gaming workflow rejects enclosing article primary H1 (header=true): Elden Ring Nightreign Samurai Build Guide despite a generic selected article body",
+        "October 4 early-game Samurai request through the served Gaming workflow rejects enclosing article primary H1 (header=true): Elden Ring Shadow of the Erdtree Samurai Build Guide despite a generic selected article body",
+        "October 4 early-game Samurai request through the served Gaming workflow rejects enclosing main primary H1 (header=false): Elden Ring Nightreign Samurai Build Guide despite a generic selected article body",
+        "October 4 early-game Samurai request through the served Gaming workflow rejects enclosing main primary H1 (header=false): Elden Ring Shadow of the Erdtree Samurai Build Guide despite a generic selected article body"
+      ]
+    }
+  ],
+  "finalFrozenValidation": {
+    "focused": {
+      "scope": "15 combined affected suites on frozen production sources",
+      "artifactSha256": "1808df35c3cba6a71b52e87075835ea13c1fb7fa70f99e80aab375d696853b64",
+      "success": true,
+      "passed": 388,
+      "failed": 0,
+      "skipped": 0,
+      "suites": 15,
+      "failedCases": []
+    },
+    "previewImportBoundary": {
+      "scope": "Preview graph/semantic negative controls",
+      "artifactSha256": "93ebafdbcd916b2346489da49fc74df826438b4618511ec40f84e09295c24033",
+      "success": true,
+      "passed": 390,
+      "failed": 0,
+      "skipped": 0,
+      "suites": 1,
+      "failedCases": []
+    },
+    "verifierTests": {
+      "passed": 40,
+      "failed": 0,
+      "skipped": 0,
+      "logSha256": "80baf2b0c1ef554cd1e9a84a4f836c109fab07cec91d78d12ab2f1d1615cc03c"
+    },
+    "postgres": {
+      "numTotalTestSuites": 2,
+      "numPassedTestSuites": 2,
+      "numFailedTestSuites": 0,
+      "numPendingTestSuites": 0,
+      "numTotalTests": 13,
+      "numPassedTests": 13,
+      "numFailedTests": 0,
+      "numPendingTests": 0,
+      "numTodoTests": 0,
+      "success": true
+    },
+    "postgresResultSha256": "55c46047dd9b5b6a02f660731b1b65467bbf387a19016202d68fdf0d4faccbb9",
+    "postgresLogSha256": "7c0fdfbd77db71f1ff291f06215a9750f5161bd66c6ad989ec6fda3ac1904c99",
+    "postgresCleanup": "Owned tmpfs-only PostgreSQL 18.6 container removed; inspected cleanup summary",
+    "gates": {
+      "typeCheck": {
+        "result": "PASS",
+        "logSha256": "82c45ad386f9769567052c6ed1b2b78434ef817bfe3d475c3cc908cb0dbfe9ec"
+      },
+      "lint": {
+        "result": "PASS",
+        "logSha256": "1ebaf5056c393adc86625b9d5d694510feb175d279abe1b45c70c60a9189ea7c"
+      },
+      "buildIncludingEmittedPreviewGraph": {
+        "result": "PASS",
+        "logSha256": "0b9afde20b4001fa6f14c45f89648647add898ab097eef004c1070426e29e4aa"
+      },
+      "docsAndIndexes": {
+        "result": "PASS",
+        "logSha256": "b040033608cacc8d4bccc9cdfe6e9d2403c4d15475c18592b4c399f4c57120c3"
+      }
+    }
+  },
+  "contract": {
+    "hostedHttpRequests": 173,
+    "liveSourceVersion": "gaming-live-source-validation/v1",
+    "liveSourceCases": 14,
+    "liveSourceExecutedAssertions": 58,
+    "largeSourceVersion": "gaming-large-source/v1",
+    "largeSourceCases": 13,
+    "largeSourceExecutedAssertions": 72,
+    "caseReportMaxAsciiChars": 4096
+  },
+  "boundaries": {
+    "hostedFinalSuccessClaimed": false,
+    "realPublisherAcquisition": "NOT TESTED",
+    "liveTrinityAnswer": "NOT TESTED",
+    "productionChanged": false
+  },
+  "historicalUnpublishedCommit": {
+    "sha": "aa909cce239fc06ff1d6ee253b7e249262a105ae",
+    "pushLimitation": "GH007",
+    "independentGitHubCi": "NOT TESTED",
+    "actionsRunsObserved": 0
+  }
+}

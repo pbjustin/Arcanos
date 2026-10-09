@@ -27,6 +27,7 @@ const EXCLUDED = `aside,[role="menu"],${GAMING_DOCUMENT_FURNITURE_SELECTOR}`;
 const DISCUSSION = '[itemtype="https://schema.org/DiscussionForumPosting"],[itemtype="http://schema.org/DiscussionForumPosting"]';
 const UNRELATED_DISCUSSION = '.comments,#comments,[class*="comment-list"],[itemtype="https://schema.org/Comment"],[itemtype="http://schema.org/Comment"]';
 const QUALIFIER = /\b(?:not|no longer|deplet\w*|unconfirmed|old patch|example only|correction|corrected|outdated|unavailable|obsolete|previously|before|after|patch|version)\b/i;
+const COMPARISON_PROSE = /^(?:unlike|compare(?:d)?|(?:for\s+)?comparison|contrast|rather\s+than|instead\s+of)\b/iu;
 const LABELLED_FIELD = /^([^:;|\n]{1,80}):\s*(.+)$/;
 const PARAGRAPH_IDENTITY_FIELD = /^(Game|Edition)\s*:\s*([^;.!?\n]*?)(?=\s+(?:Game|Edition)\s*:|[;.!?]|$)/iu;
 
@@ -120,6 +121,54 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
   };
   const identities = new Set<string>();
   const qualifierValues = new Map<Element, string>();
+  const qualifierSelector = 'p,figcaption,small,[role="note"],div,span';
+  const standaloneSpans = new Map<Element, Set<Element>>();
+  function standaloneSpan(element: Element): boolean {
+    const parent = $(element).parent();
+    if (!parent.is('body,main,article,section,div')) return false;
+    const parentElement = parent.get(0)!;
+    let spans = standaloneSpans.get(parentElement);
+    if (!spans) {
+      spans = new Set<Element>();
+      const siblings = parent.contents().toArray().filter(sibling => sibling.type !== 'comment'
+        && (sibling.type !== 'text' || text($(sibling).text())));
+      const boundary = (sibling: Element | undefined) => !sibling
+        || $(sibling).is('p,div,main,article,section,figure,table,ul,ol,dl,h1,h2,h3,h4,h5,h6,script');
+      for (const [index, sibling] of siblings.entries()) {
+        if ($(sibling).is('span') && boundary(siblings[index - 1]) && boundary(siblings[index + 1])) spans.add(sibling);
+      }
+      standaloneSpans.set(parentElement, spans);
+    }
+    return spans.has(element);
+  }
+  const qualifierBlockEligibility = new Map<Element, boolean>();
+  const formattedQualifierBlocks = new Map<Element, boolean>();
+  const inlineQualifierSelector = 'span,b,strong,em,i,small,br';
+  function formattedQualifierBlock(element: Element): boolean {
+    const cached = formattedQualifierBlocks.get(element);
+    if (cached !== undefined) return cached;
+    const node = $(element);
+    const formatted = node.is('div,span') && !node.closest('aside').length && node.children().length > 0
+      && (!node.is('span') || standaloneSpan(element))
+      && node.children().toArray().every(child => $(child).is(inlineQualifierSelector))
+      && node.find('*').toArray().every(child => $(child).is(inlineQualifierSelector))
+      && QUALIFIER.exec(text(node.text()))?.index === 0;
+    formattedQualifierBlocks.set(element, formatted);
+    return formatted;
+  }
+  const qualifierBlock = (_: number, element: Element) => {
+    const cached = qualifierBlockEligibility.get(element);
+    if (cached !== undefined) return cached;
+    const eligible = !$(element).parents('div,span').toArray().some(formattedQualifierBlock)
+      && (!$(element).is('div,span') || $(element).is('[role="note"]') || formattedQualifierBlock(element)
+        || !$(element).closest('aside').length && !$(element).children().length && (!$(element).is('span') || standaloneSpan(element)));
+    qualifierBlockEligibility.set(element, eligible);
+    return eligible;
+  };
+  function nearbyQualifiers(node: cheerio.Cheerio): cheerio.Cheerio {
+    const nearby = node.prevAll('p,aside,div,span,small').slice(0, 2).add(node.nextAll('p,aside,div,span,small').slice(0, 2));
+    return nearby.add(nearby.find(qualifierSelector).filter(qualifierBlock));
+  }
   function context(element: Element, scope: string, caption?: string): GamingEvidenceUnit['context'] {
     const node = $(element);
     let heading: string | undefined;
@@ -138,25 +187,25 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
     const wholeArticleContext = container.is('article,main') && !node.parents('section,figure').length;
     if (!heading && wholeArticleContext) heading = text(container.children('h1,h2,h3,h4,h5,h6')
       .add(container.children('header').find('h1,h2,h3,h4,h5,h6')).first().text()) || undefined;
-    let relevant = node.prevAll('p,aside,div,small').slice(0, 2).add(node.nextAll('p,aside,div,small').slice(0, 2));
+    let relevant = nearbyQualifiers(node);
     let ancestor = node.parent();
     for (let depth = 0; depth < 6 && ancestor.length && !ancestor.is('html'); depth++, ancestor = ancestor.parent()) {
-      relevant = relevant.add(ancestor.children('p,figcaption,small,[role="note"]'))
-        .add(ancestor.prevAll('p,aside,div,small').slice(0, 2)).add(ancestor.nextAll('p,aside,div,small').slice(0, 2));
+      relevant = relevant.add(ancestor.children(qualifierSelector).filter(qualifierBlock)).add(nearbyQualifiers(ancestor));
     }
     if (ancestor.length && !ancestor.is('html') && wholeArticleContext) {
       const enclosingScopes = container.parents('article,main');
       if (enclosingScopes.length > 6) markContext(scope, 'required_context_missing');
       // Plain wrappers must not hide notes in an enclosing article/main scope.
       // The candidate-scope check below still excludes independent sibling scopes.
-      relevant = relevant.add(enclosingScopes.slice(0, 6).find('p,figcaption,small,[role="note"]'));
+      relevant = relevant.add(enclosingScopes.slice(0, 6).find(qualifierSelector).filter(qualifierBlock));
     }
     if (ancestor.length && !ancestor.is('html') && !wholeArticleContext) markContext(scope, 'required_context_missing');
-    if (container.length) relevant = relevant.add(container.find('p,figcaption,small,[role="note"]'));
+    if (container.length) relevant = relevant.add(container.find(qualifierSelector).filter(qualifierBlock));
     let qualifierElements = 0;
     relevant.each((_, sibling) => {
       if (deadlineExpired()) { markContext(scope, 'required_context_missing'); return false; }
       const selected = $(sibling);
+      if (selected.is('span') && !qualifierBlock(0, sibling)) return;
       if (selected.closest(`${GAMING_DOCUMENT_FURNITURE_SELECTOR},blockquote,table:not([role="presentation"]),ul,ol,dl`).length) return;
       const candidateScope = selected.closest('section,article,main,figure').get(0);
       if (candidateScope && candidateScope !== container.get(0) && !ancestors.includes(candidateScope)) return;
@@ -165,14 +214,19 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
       let value = qualifierValues.get(sibling);
       if (value === undefined) {
         const copy = selected.clone();
+        // Nested blocks are discovered separately; plain wrappers must not count them again.
+        copy.find(qualifierSelector).filter(qualifierBlock).remove();
         copy.find(`script,style,template,table,ul,ol,dl,blockquote,section,article,main,figure,${GAMING_DOCUMENT_FURNITURE_SELECTOR},${UNRELATED_DISCUSSION}`).remove();
         value = text(copy.text());
         qualifierValues.set(sibling, value);
       }
+      // Nearby wrappers must obey the same comparison boundary as discovered blocks.
+      if (selected.is('div,span') && COMPARISON_PROSE.test(value)) return;
       if (QUALIFIER.test(value)) {
         if (++qualifierElements > 64) { markContext(scope, 'required_context_missing'); return false; }
         qualifiers.push(value);
-        if (!closed(sibling)) markContext(scope, 'content_truncated');
+        if (!closed(sibling) || formattedQualifierBlock(sibling)
+          && selected.find('*').toArray().some(child => !$(child).is('br') && !closed(child))) markContext(scope, 'content_truncated');
       }
     });
     const attribution = post.length
@@ -219,30 +273,17 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
 
   // DOM block boundaries survive text flattening through parser-owned metadata.
   // These paragraph units never establish gameplay facts or structural support.
-  const standaloneMetadataSpans = new Map<Element, Set<Element>>();
-  function standaloneSpan(element: Element): boolean {
-    const parent = $(element).parent();
-    if (!parent.is('body,main,article,section,div')) return false;
-    const parentElement = parent.get(0)!;
-    let spans = standaloneMetadataSpans.get(parentElement);
-    if (!spans) {
-      spans = new Set<Element>();
-      const siblings = parent.contents().toArray().filter(sibling => sibling.type !== 'comment'
-        && (sibling.type !== 'text' || text($(sibling).text())));
-      const boundary = (sibling: Element | undefined) => !sibling
-        || $(sibling).is('p,div,main,article,section,h1,h2,h3,h4,h5,h6');
-      for (const [index, sibling] of siblings.entries()) {
-        if ($(sibling).is('span') && boundary(siblings[index - 1]) && boundary(siblings[index + 1])) spans.add(sibling);
-      }
-      standaloneMetadataSpans.set(parentElement, spans);
-    }
-    return spans.has(element);
-  }
   for (const [index, paragraph] of $('p,div,span').toArray().entries()) {
     if (exhausted()) break;
     if (!eligible($, paragraph) || $(paragraph).closest('table:not([role="presentation"]),ul,ol,dl').length) continue;
-    // Leaf metadata containers cannot import nested records or inline prose.
-    if (!$(paragraph).is('p') && ($(paragraph).children().length || $(paragraph).is('span') && !standaloneSpan(paragraph))) continue;
+    const metadataBlock = !$(paragraph).is('p');
+    const inlineSelector = 'span,b,strong,em,i,small,br';
+    if (metadataBlock && ($(paragraph).children().toArray().some(element => !$(element).is(inlineSelector))
+      || $(paragraph).is('span') && !standaloneSpan(paragraph))) continue;
+    const inlineMetadata = metadataBlock ? $(paragraph).find('*').toArray() : [];
+    // Only harmless inline formatting can extend a metadata block; records and wrappers cannot.
+    if (metadataBlock && (inlineMetadata.some(element => !$(element).is(inlineSelector))
+      || $(paragraph).find(GAMING_DOCUMENT_FURNITURE_SELECTOR).length)) continue;
     const paragraphText = cleanElementText($, paragraph);
     if (!PARAGRAPH_IDENTITY_FIELD.test(paragraphText)) continue;
     if (filterGamingDocumentInstructions(paragraphText) !== paragraphText) { fail('source_instruction_filtered'); continue; }
@@ -255,6 +296,7 @@ export function extractGamingHtmlEvidence(input: GamingEvidenceExtractionInput):
       remaining = remaining.slice(declaration[0].length).replace(/^\s*;\s*/u, '').trimStart();
     }
     const reasons = !closed(paragraph) || !intactTransportScope(paragraph) ? ['content_truncated'] : [];
+    if (inlineMetadata.some(element => !$(element).is('br') && !closed(element))) reasons.push('content_truncated');
     if ($(paragraph).find('table,ul,ol,dl,blockquote').length) reasons.push('required_context_missing');
     addUnit('paragraph', fields, paragraph, 'prose',
       { scope: `paragraph:${index}` }, reasons);

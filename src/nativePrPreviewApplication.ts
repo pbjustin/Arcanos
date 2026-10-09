@@ -12,7 +12,7 @@ import { runGamingDocumentIngestionPreview } from './shared/gaming/gamingDocumen
 import { GAMING_LARGE_SOURCE_PREVIEW_CASES, GAMING_LARGE_SOURCE_PREVIEW_VERSION, runGamingDurableRagPreview,
   runGamingLargeSourcePreview } from './shared/gaming/gamingDurableRagPreviewFixture.js';
 import { GAMING_LIVE_SOURCE_VALIDATION_PREVIEW_CASES, GAMING_LIVE_SOURCE_VALIDATION_PREVIEW_VERSION,
-  runGamingLiveSourceValidationPreview } from './shared/gaming/gamingLiveSourceValidationPreviewFixture.js';
+  runGamingLiveSourceValidationPreview, validateGamingPreviewCaseReport } from './shared/gaming/gamingLiveSourceValidationPreviewFixture.js';
 import { runGamingHybridKnowledgePreview, GAMING_DISCOVERY_RECOVERY_PROTOCOL_PREVIEW_VERSION,
   GAMING_EDITION_CONTEXT_REGRESSIONS_PREVIEW_VERSION } from './shared/gaming/gamingHybridKnowledgePreviewFixture.js';
 import { runGamingClearPreview, GAMING_DISCOVERY_RECOVERY_EVIDENCE_PREVIEW_VERSION } from './shared/gaming/gamingClearPreviewFixture.js';
@@ -9984,6 +9984,8 @@ export function createNativePrPreviewApplication(
       const fixture = resolveGamingQueryFixture(request.body);
       if (fixture.kind === 'success') {
         if (fixture.mode === 'guide') {
+          let largeSourceReportHeader = '';
+          let liveSourceReportHeader = '';
           try {
             await runGamingArchiveGroundingPreview();
           } catch {
@@ -10065,7 +10067,18 @@ export function createNativePrPreviewApplication(
               || GAMING_LARGE_SOURCE_PREVIEW_CASES.some((name, index) => name !== NATIVE_PR_PREVIEW_GAMING_CONTRACT.largeSourceCases[index])) {
               throw new Error('PREVIEW_GAMING_LARGE_SOURCE_CONTRACT_INVALID');
             }
-            await runGamingLargeSourcePreview();
+            const report = await runGamingLargeSourcePreview();
+            validateGamingPreviewCaseReport(report, {
+              version: NATIVE_PR_PREVIEW_GAMING_CONTRACT.largeSourceProofVersion,
+              scope: NATIVE_PR_PREVIEW_GAMING_CONTRACT.largeSourceProofScope,
+              ids: NATIVE_PR_PREVIEW_GAMING_CONTRACT.largeSourceCases,
+              checks: NATIVE_PR_PREVIEW_GAMING_CONTRACT.largeSourceReportChecks,
+              values: NATIVE_PR_PREVIEW_GAMING_CONTRACT.largeSourceReportValues
+            }, 'PREVIEW_GAMING_LARGE_SOURCE_CONTRACT_INVALID');
+            largeSourceReportHeader = JSON.stringify({ ...report,
+              prNumber: options.identity.prNumber, sourceCommit: options.identity.sourceCommit });
+            if (largeSourceReportHeader.length > NATIVE_PR_PREVIEW_GAMING_CONTRACT.caseReportMaxChars)
+              throw new Error('PREVIEW_GAMING_LARGE_SOURCE_CONTRACT_INVALID');
           } catch {
             sendBoundedJsonResponse(
               request,
@@ -10085,7 +10098,18 @@ export function createNativePrPreviewApplication(
               || GAMING_LIVE_SOURCE_VALIDATION_PREVIEW_CASES.some((name, index) => name !== NATIVE_PR_PREVIEW_GAMING_CONTRACT.liveSourceValidationCases[index])) {
               throw new Error('PREVIEW_GAMING_LIVE_SOURCE_VALIDATION_CONTRACT_INVALID');
             }
-            runGamingLiveSourceValidationPreview();
+            const report = runGamingLiveSourceValidationPreview();
+            validateGamingPreviewCaseReport(report, {
+              version: NATIVE_PR_PREVIEW_GAMING_CONTRACT.liveSourceValidationProofVersion,
+              scope: NATIVE_PR_PREVIEW_GAMING_CONTRACT.liveSourceValidationProofScope,
+              ids: NATIVE_PR_PREVIEW_GAMING_CONTRACT.liveSourceValidationCases,
+              checks: NATIVE_PR_PREVIEW_GAMING_CONTRACT.liveSourceValidationReportChecks,
+              values: NATIVE_PR_PREVIEW_GAMING_CONTRACT.liveSourceValidationReportValues
+            }, 'PREVIEW_GAMING_LIVE_SOURCE_VALIDATION_CONTRACT_INVALID');
+            liveSourceReportHeader = JSON.stringify({ ...report,
+              prNumber: options.identity.prNumber, sourceCommit: options.identity.sourceCommit });
+            if (liveSourceReportHeader.length > NATIVE_PR_PREVIEW_GAMING_CONTRACT.caseReportMaxChars)
+              throw new Error('PREVIEW_GAMING_LIVE_SOURCE_VALIDATION_CONTRACT_INVALID');
           } catch {
             sendBoundedJsonResponse(
               request,
@@ -10230,6 +10254,8 @@ export function createNativePrPreviewApplication(
             NATIVE_PR_PREVIEW_GAMING_CONTRACT.durableRagProofHeader,
             NATIVE_PR_PREVIEW_GAMING_CONTRACT.durableRagProofVersion
           );
+          response.setHeader(NATIVE_PR_PREVIEW_GAMING_CONTRACT.largeSourceReportHeader, largeSourceReportHeader);
+          response.setHeader(NATIVE_PR_PREVIEW_GAMING_CONTRACT.liveSourceValidationReportHeader, liveSourceReportHeader);
           response.setHeader(
             NATIVE_PR_PREVIEW_GAMING_CONTRACT.largeSourceProofHeader,
             GAMING_LARGE_SOURCE_PREVIEW_VERSION

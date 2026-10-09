@@ -152,6 +152,16 @@ function expectedResearchCancellationPayload() {
   };
 }
 
+function gamingCaseReportHeader(prefix) {
+  const contract = NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming;
+  return JSON.stringify({ version: contract[`${prefix}ProofVersion`], scope: contract[`${prefix}ProofScope`],
+    prNumber: PR_NUMBER, sourceCommit: COMMIT_SHA,
+    cases: contract[`${prefix}Cases`].map((id, index) => ({ id,
+      checks: contract[`${prefix}ReportChecks`][index], passed: contract[`${prefix}ReportChecks`][index],
+      values: Object.fromEntries(Object.entries(contract[`${prefix}ReportValues`][index])
+        .map(([name, value]) => [name, Array.isArray(value) ? value[0] : value])) })) });
+}
+
 function responseHeadersForCase(
   requestCase,
   bodyBytes,
@@ -251,6 +261,8 @@ function responseHeadersForCase(
             NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.documentProofVersion,
           [NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.durableRagProofHeader]:
             NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.durableRagProofVersion,
+          [NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.largeSourceReportHeader]: gamingCaseReportHeader('largeSource'),
+          [NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.liveSourceValidationReportHeader]: gamingCaseReportHeader('liveSourceValidation'),
           [NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.largeSourceProofHeader]:
             NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.largeSourceProofVersion,
           [NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.liveSourceValidationProofHeader]:
@@ -503,6 +515,15 @@ function buildMockFetch(
       bodyBytes,
       responseHeaderOverrides?.(requestCase)
     );
+    if (requestCase.caseId === 'gaming-query-guide' && expectedResponseOptions?.commitSha) {
+      for (const prefix of ['largeSource', 'liveSourceValidation']) {
+        const header = NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming[`${prefix}ReportHeader`];
+        const report = JSON.parse(headers[header]);
+        report.sourceCommit = expectedResponseOptions.commitSha;
+        report.prNumber = expectedResponseOptions.prNumber ?? PR_NUMBER;
+        headers[header] = JSON.stringify(report);
+      }
+    }
     const response = new Response(body, {
       headers,
       status: requestCase.expectedStatus,
@@ -4850,4 +4871,52 @@ test('rejects session-scope responses over 4096 bytes even with valid JSON and d
     code: 'NATIVE_PR_PREVIEW_BOUNDED_RESPONSE_INVALID',
     changeHeaders(headers) { headers['x-response-bytes'] = '1'; },
   });
+});
+
+
+test('rejects Gaming success markers without the actual served case reports', async () => {
+  for (const [header, code] of [
+    ['x-arcanos-preview-gaming-live-source-validation-report', 'NATIVE_PR_PREVIEW_GAMING_LIVE_SOURCE_VALIDATION_REPORT_INVALID'],
+    ['x-arcanos-preview-gaming-large-source-report', 'NATIVE_PR_PREVIEW_GAMING_LARGE_SOURCE_REPORT_INVALID'],
+  ]) {
+    await assertSessionScopeVerifierRejects({ caseId: 'gaming-query-guide', code,
+      changeHeaders(headers) { delete headers[header]; } });
+  }
+});
+
+
+test('rejects missing, corrupt, skipped, mismatched or inconsistent served Gaming reports', async () => {
+  const contract = NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming;
+  for (const prefix of ['largeSource', 'liveSourceValidation']) {
+    const header = contract[`${prefix}ReportHeader`];
+    const code = prefix === 'largeSource' ? 'NATIVE_PR_PREVIEW_GAMING_LARGE_SOURCE_REPORT_INVALID'
+      : 'NATIVE_PR_PREVIEW_GAMING_LIVE_SOURCE_VALIDATION_REPORT_INVALID';
+    const mutations = [
+      report => { report.version = 'drifted/v1'; }, report => { report.scope = 'live-provider'; },
+      report => { report.prNumber += 1; }, report => { report.sourceCommit = 'b'.repeat(40); },
+      report => { report.cases.pop(); }, report => { report.cases.push(report.cases[0]); },
+      report => { report.cases[1] = report.cases[0]; }, report => { report.cases.reverse(); },
+      report => { report.cases[0].checks = 0; report.cases[0].passed = 0; },
+      report => { report.cases[0].checks -= 1; report.cases[0].passed -= 1; },
+      report => { report.cases[0].checks += 1; report.cases[0].passed += 1; },
+      report => { report.cases[0].passed -= 1; }, report => { report.cases[0].skipped = true; },
+      report => { report.cases[0].values = { unrelated: true }; },
+      report => { delete report.cases[0].values[Object.keys(report.cases[0].values)[0]]; },
+      report => { report.cases[0].values[Object.keys(report.cases[0].values)[0]] = false; },
+    ];
+    for (const mutate of mutations) {
+      await assertSessionScopeVerifierRejects({ caseId: 'gaming-query-guide', code, changeHeaders(headers) {
+        const report = JSON.parse(headers[header]); mutate(report); headers[header] = JSON.stringify(report);
+      } });
+    }
+    for (const raw of ['{invalid', ' '.repeat(contract.caseReportMaxChars + 1), '{"cases":[]}',
+      gamingCaseReportHeader(prefix).replace('{', '{"version":"duplicate",')]) {
+      await assertSessionScopeVerifierRejects({ caseId: 'gaming-query-guide', code,
+        changeHeaders(headers) { headers[header] = raw; } });
+    }
+    for (const caseId of ['gaming-query-build', 'gaming-query-meta', 'web-readiness-initial', 'worker-gaming-canary-denied']) {
+      await assertSessionScopeVerifierRejects({ caseId, code,
+        changeHeaders(headers) { headers[header] = gamingCaseReportHeader(prefix); } });
+    }
+  }
 });

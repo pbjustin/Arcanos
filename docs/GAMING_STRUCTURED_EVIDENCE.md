@@ -16,6 +16,11 @@ bodies. It preserves the existing response and request matrix, and emits
 `gaming-structured-evidence/v1` only after the complete fixture succeeds. The
 PR-head verifier requires that marker; missing or changed markers fail the probe.
 Fixture failures return a fixed error and withhold every Gaming success marker.
+The large-source and live-source-validation report headers also return actual
+per-case assertion counts and scalar observations, bound to the served PR/SHA.
+The app and exact-head verifier enforce their complete inventories and value
+schemas; version markers alone are insufficient. Each report retains its
+4,096-character bound and the existing fixed response body and request limits.
 The base-game scope proof distinguishes missing scope from an explicit edition
 conflict. A DLC-only record remains conflicting even when accompanying prose
 labels the page as base game; it cannot supply accepted base-game evidence.
@@ -83,13 +88,33 @@ presentation tables preserve authored prose blocks while removing bare cell
 values and handling nested data records independently.
 
 Block-leading `Game:` and `Edition:` declarations in paragraphs and standalone
-text-only div/span elements retain parser-owned boundaries as metadata-only
-paragraph units. Closed source elements are required
+div/span elements retain parser-owned boundaries as metadata-only paragraph
+units, including closed harmless inline formatting of a label and value.
+Nested block/record content and inline comparisons remain excluded. Closed source elements are required
 for complete status, and the whole paragraph remains subject to instruction
 filtering. These units cannot establish structural gameplay support.
+Standalone div and standalone span corrections participate in that bounded
+context discovery for HTML and embedded JSON records. Harmless inline formatting
+is allowed when the block begins with a recognized qualification. Inline
+comparisons and layout wrappers do not duplicate qualifications; incomplete or
+instruction-like qualifications cannot leave a record complete.
 Primary article selection recognizes `.main-content`, `#main-content`, and
-`.page-content` alongside article containers, so unrelated article cards cannot
-displace a higher-scoring full guide in those supported containers.
+`.page-content` alongside publisher article-body selectors. A usable specific
+publisher container takes precedence over enclosing article/main shells at the
+existing admission score. A longer, stronger disjoint primary article prevents a
+smaller named card from gaining that preference. Ancestors and descendants do
+not compete for this exclusion. Unusable specific containers retain the normal
+fallback scoring and resource limits. Wildcard class matches, broad publisher
+shells and semantically classified navigation containers do not gain that
+specific-container preference.
+Gaming also preserves a preceding primary H1 from the nearest enclosing
+article/main scope when selecting an inner prose body. An authored article
+header contributes only its eligible H1; publisher bylines and furniture stay
+excluded. The heading remains at the acquired text opening and first in bounded
+metadata, so existing identity corroboration can reject a Nightreign or DLC
+subject behind a misleading SEO title. Later recommendations and independent
+sibling headings cannot become the primary subject. The existing 240-character
+heading fence and selected-text limits remain in force.
 
 Community selection uses explicit `DiscussionForumPosting` markup together with
 its article/main containment. It preserves available author attribution while

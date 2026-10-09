@@ -1,3 +1,4 @@
+import { NATIVE_PR_PREVIEW_E2E_CONTRACT } from '../scripts/native-pr-preview-contract.mjs';
 import { jest } from '@jest/globals';
 
 const actualEvidence = await import('../src/shared/gaming/gamingStoredEvidenceCore.js');
@@ -53,7 +54,13 @@ describe('additional sealed Gaming large-source component proof', () => {
   });
 
   it('executes fixed HTML, full-pool, Samurai, negative and artifact assertions through production pure cores', async () => {
-    await runGamingLargeSourcePreview();
+    const report = await runGamingLargeSourcePreview();
+    expect(report).toEqual(expect.objectContaining({ version: 'gaming-large-source/v1',
+      scope: 'pure-synthetic-large-source-selection-coverage-artifact', cases: expect.any(Array) }));
+    expect(report.cases.map(entry => entry.id)).toEqual([...GAMING_LARGE_SOURCE_PREVIEW_CASES]);
+    expect(report.cases.map(entry => entry.checks)).toEqual([...NATIVE_PR_PREVIEW_E2E_CONTRACT.gaming.largeSourceReportChecks]);
+    expect(report.cases.every(entry => entry.checks > 0 && entry.passed === entry.checks
+      && Object.keys(entry.values).length > 0)).toBe(true);
     expect(GAMING_LARGE_SOURCE_PREVIEW_VERSION).toBe('gaming-large-source/v1');
     expect(GAMING_LARGE_SOURCE_PREVIEW_CASES).toContain('samurai-multi-topic-late');
     expect(Buffer.byteLength(mockHtml.mock.calls[0][0].body, 'utf8')).toBeGreaterThan(2_000_000);

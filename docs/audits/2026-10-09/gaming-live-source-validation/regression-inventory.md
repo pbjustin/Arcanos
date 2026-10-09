@@ -28,6 +28,14 @@ coverage alongside these positive regressions.
 | New served proof cannot be omitted or replaced with a success label | `gaming-live-source-validation-preview.test.ts`, `native-pr-preview-application.test.ts`, `scripts/native-pr-preview-e2e.test.mjs` |
 | Early freshness game rejection reports the actual failed rule with redacted request/trace/workflow/candidate correlation and no generation/storage | `gaming-acquired-topic-identity.test.ts` |
 | Embedded JSON retains a late qualification after 107 ordinary paragraphs; genuine qualifier overflow remains partial | `gaming-publisher-extraction-regressions.test.ts`, `gaming-live-source-validation-preview.test.ts` |
+| Linked publisher article-body prose survives higher-scoring unrelated article cards without relaxing admission | `gaming-hosted-mission-extraction.test.ts`, `gaming-mission-acquisition.integration.test.ts` |
+| Wildcard article-card classes, broad publisher shells and navigation cards cannot gain specific-container priority over the actual guide | `gaming-hosted-mission-extraction.test.ts` |
+| Exact `.article-content` linked and ordinary cards cannot displace a longer, stronger independent guide | `gaming-article-container-regression.test.ts` |
+| Preceding enclosing article/main and authored-header primary H1 reaches acquired text and metadata when an inner body is selected; Nightreign/DLC conflicts remain rejected and later, unrelated, clipped or incomplete headings stay bounded | `gaming-acquired-primary-heading.test.ts`, `gaming-samurai-guide-workflow.integration.test.ts` |
+| Standalone div/span and enclosing main qualifications survive deeply wrapped HTML and embedded JSON records; injected, clipped and overflowing context remains insufficient | `gaming-hosted-mission-extraction.test.ts`, `gaming-mission-acquisition.integration.test.ts` |
+| Formatted standalone corrections retain qualifications in HTML and embedded JSON; inline comparisons, furniture, clipped formatting, duplicate labels and excessive notes retain their exclusions and limits | `gaming-hosted-mission-extraction.test.ts`, `gaming-live-source-validation-preview.test.ts` |
+| Authenticated hybrid workflow uses deterministic HTTP publisher responses, preserves identity/provenance and avoids durable writes under transient-only policy | `gaming-samurai-guide-workflow.integration.test.ts` |
+| Served reports require executed assertions, complete ordered case inventories, scalar observations and exact PR/SHA binding; missing/skipped/corrupted reports withhold success | `gaming-live-source-validation-preview.test.ts`, `gaming-large-source-preview.test.ts`, `native-pr-preview-application.test.ts`, `scripts/native-pr-preview-e2e.test.mjs` |
 
 The former generic-topic mismatch expectation is replaced with a precise
 different-game title/body case. Tests for actual qualifier overflow and omitted
@@ -35,6 +43,11 @@ semantic scope replace an expectation that ordinary paragraph count alone makes
 all records incomplete. Existing explicit declarations, wrong-game, edition,
 currentness, unsafe transport, injection and partial-record negatives remain.
 
-The complete command manifest, executed totals, toolchain and source fingerprints
-are recorded in the PR's verification evidence. Local served HTTP is separate
-from trusted hosted verification, which is blocked by non-draft preview admission.
+The [frozen successor regression receipt](b71c4889-successor-regressions.json)
+records initial failures, executed local totals, toolchain and source hashes.
+Final commit CI and hosted results are recorded in the PR's verification evidence. The original draft audit could
+not enter the hosted preview. The subsequent authorized hosted mission uses the
+existing controller with a temporary opt-in label and publishes exact-head
+trusted and independent results on PR #1531. Local stub HTTP and sealed hosted
+HTTP remain separate evidence scopes; neither proves live publisher/provider
+acceptance or production recovery.
