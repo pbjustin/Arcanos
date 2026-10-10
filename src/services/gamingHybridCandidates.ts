@@ -279,8 +279,7 @@ export async function evaluateGamingHybridCandidates(
       };
       const contentHash = hashGamingApprovedDocument(document);
       // Inspect the original acquired source before narrower applicability exits.
-      // The identity helper establishes game contradictions before edition scope;
-      // edition-only outcomes retain its existing independent game proof.
+      // Edition outcomes retain only explicit independent acquired game proof.
       const acquiredIdentity = assessGamingClearSourceIdentity(document, input, policy, v2);
       identityDiagnostic = acquiredIdentity.diagnostic;
       const editionOnlyIdentityOutcome = acquiredIdentity.reasonCodes.length > 0
@@ -290,9 +289,15 @@ export async function evaluateGamingHybridCandidates(
         reject(acquiredIdentity.reasonCodes.includes('GAME_MISMATCH') ? 'GAME_MISMATCH' : 'GAME_IDENTITY_UNVERIFIED');
         continue;
       }
-      updateGamingSourceEvaluation(evaluation, 'identity', 'passed', 'ACQUIRED_IDENTITY_VERIFIED', {
+      const gameIdentityVerified = acquiredIdentity.status === 'verified' || acquiredIdentity.gameIdentityVerified === true;
+      updateGamingSourceEvaluation(evaluation, 'identity', gameIdentityVerified ? 'passed' : 'unknown',
+        gameIdentityVerified ? 'ACQUIRED_IDENTITY_VERIFIED' : 'GAME_IDENTITY_UNVERIFIED', {
         identityRuleId: identityDiagnostic.ruleId, identityCategory: identityDiagnostic.evidenceCategory, contentHash
       });
+      if (editionOnlyIdentityOutcome && acquiredIdentity.status === 'conflict') {
+        retainOfficialMetadataConflict();
+        reject('EDITION_CONFLICT'); continue;
+      }
       if (normalizeGamingGameIdentity(freshness.game) !== normalizeGamingGameIdentity(input.game)) {
         identityDiagnostic = { ruleId: 'gaming.identity.freshness_game_conflict', evidenceCategory: 'acquired_anchors' };
         reject('GAME_MISMATCH'); continue;

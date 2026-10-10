@@ -7,7 +7,7 @@ import { assessGamingStructuralUsability, readGamingEvidenceUnits, readGamingStr
 import { filterGamingDocumentInstructions } from '@services/gamingDocumentExtraction.js';
 import { GAMING_SOURCE_FAMILY_DATA, type GamingSourceFamilyRegistry } from './gamingSourceFamilyData.js';
 
-export const GAMING_CLAIM_CORROBORATION_VERSION = 'gaming-claim-corroboration/v1';
+export const GAMING_CLAIM_CORROBORATION_VERSION = 'gaming-claim-corroboration/v2';
 const MAX_SOURCES = GAMING_HYBRID_V2_LIMITS.totalCandidateUrls
   + GAMING_HYBRID_V2_LIMITS.currentnessRounds * GAMING_HYBRID_V2_LIMITS.candidates + 8;
 const MAX_CLAIMS = 128;
@@ -15,6 +15,14 @@ const MAX_REFS = 8;
 const normalized = (value: string): string => value.normalize('NFKC').toLowerCase().replace(/\s+/gu, ' ').trim();
 const hash = (value: unknown): string => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const safeId = (value: unknown): value is string => typeof value === 'string' && /^[a-zA-Z0-9._:-]{1,240}$/u.test(value);
+
+/** Presentation headings, captions, bylines and column order cannot turn copied
+ * parser-owned records into independent reports. Preserve every field and local
+ * qualifier; acquisition provenance and scope are checked separately below. */
+function parserOwnedRecordFingerprint(unit: GamingEvidenceUnit): string {
+  return hash({ fields: unit.fields.map(field => JSON.stringify([normalized(field.label), normalized(field.value)])).sort(),
+    qualifiers: (unit.context.qualifiers ?? []).map(normalized).sort() });
+}
 
 export interface GamingClaimCorroborationSource {
   sourceId: string;
@@ -94,7 +102,7 @@ export function assessGamingClaimCorroboration(input: {
   if (input.sources.length > MAX_SOURCES) return unavailable('CORROBORATION_BUDGET_EXCEEDED');
   if (!input.game || input.game.length > 120 || (input.prompt?.length ?? 0) > 8_000) return unavailable('CORROBORATION_SCOPE_UNVERIFIED');
   const sources = new Map<string, string>();
-  type Report = { sourceId: string; unitId: string; value: string; textHash: string;
+  type Report = { sourceId: string; unitId: string; value: string; recordHash: string;
     supported: boolean; family: { key: string; reviewed: boolean } };
   const claims = new Map<string, { kind: GamingClaimCorroborationSummary['claims'][number]['kind']; reports: Report[] }>();
   const reasons = new Set<string>();
@@ -135,7 +143,8 @@ export function assessGamingClaimCorroboration(input: {
       const safeText = filterGamingDocumentInstructions(unit.text) === unit.text.normalize('NFKC').replace(/\s+/gu, ' ').trim();
       const supported = sourceSupported && safeText && support.claimSupported;
       if (!supported) reasons.add('CLAIM_SCOPE_OR_SUPPORT_UNVERIFIED');
-      entry.reports.push({ sourceId: source.sourceId, unitId: unit.id, value: hash(assertion.value), textHash: hash(normalized(unit.text)), supported, family });
+      entry.reports.push({ sourceId: source.sourceId, unitId: unit.id, value: hash(assertion.value),
+        recordHash: parserOwnedRecordFingerprint(unit), supported, family });
       claims.set(identity, entry);
     }
   }
@@ -143,10 +152,10 @@ export function assessGamingClaimCorroboration(input: {
   for (const [claimId, entry] of claims) {
     const supported = entry.reports.filter(report => report.supported);
     const values = new Set(supported.map(report => report.value));
-    const textFamilies = new Map<string, Set<string>>();
+    const recordFamilies = new Map<string, Set<string>>();
     for (const report of supported) {
-      const families = textFamilies.get(report.textHash) ?? new Set<string>();
-      families.add(report.family.key); textFamilies.set(report.textHash, families);
+      const families = recordFamilies.get(report.recordHash) ?? new Set<string>();
+      families.add(report.family.key); recordFamilies.set(report.recordHash, families);
     }
     // Copies connect publication lineages transitively. An unknown family may
     // connect copies, but cannot create an additional independent family.
@@ -156,12 +165,12 @@ export function assessGamingClaimCorroboration(input: {
       while (parents.get(current) !== current) current = parents.get(current)!;
       return current;
     };
-    for (const families of textFamilies.values()) {
+    for (const families of recordFamilies.values()) {
       const first = [...families][0];
       for (const family of families) parents.set(root(family), root(first));
     }
     const independentFamilies = new Set(supported.filter(report => report.family.reviewed).map(report => root(report.family.key)));
-    if (supported.length > new Set(supported.map(report => report.textHash)).size) reasons.add('DUPLICATED_CLAIM_REPORTS');
+    if (supported.length > new Set(supported.map(report => report.recordHash)).size) reasons.add('DUPLICATED_CLAIM_REPORTS');
     const status = values.size > 1 ? 'conflicting' : !supported.length ? 'unverified'
       : independentFamilies.size > 1 ? 'independently_corroborated' : 'single_source';
     summaries.push({ claimId, kind: entry.kind, status,
