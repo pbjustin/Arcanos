@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-10T16:43:10.466Z",
+  "generatedAt": "2026-10-10T17:14:46.641Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -4442,6 +4442,9 @@
         },
         {
           "relativePath": "tests/gaming-generation-budget.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-generic-late-applicability.test.ts"
         },
         {
           "relativePath": "tests/gaming-generic-late-source-scope.test.ts"
