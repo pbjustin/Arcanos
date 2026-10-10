@@ -128,7 +128,7 @@ independent body identity anchor. These are confirmed synthetic regressions,
 not established causes of the six production failures.
 
 `selectGamingGameScopedDocument` in
-`src/shared/gaming/gamingStructuralEvidence.ts:89` introduces the bounded
+`src/shared/gaming/gamingStructuralEvidence.ts:90` introduces the bounded
 `gaming-game-source-scope/v1` projection. Exact parser-bound complete gameplay
 records may be excluded when they explicitly name a different game. Global
 metadata declarations, incomplete or ambiguous records, source-wide guide
@@ -137,7 +137,7 @@ edition retain conservative conflict or unverified outcomes. A projection never
 changes the acquired artifact, hash, or provenance. Whole-page storage remains
 ineligible when only projected evidence is accepted.
 
-`withoutBoundedGamingReferences` at line 70 removes only complete, explicitly
+`withoutBoundedGamingReferences` at line 71 removes only complete, explicitly
 qualified historical or related/recommended reference sentences, with bounded
 counts and closed reasons. These references cannot supply positive identity or
 selected gameplay support. An affirmative guide identity following a reference
@@ -148,7 +148,7 @@ checks; this change does not infer scope from arbitrary past-tense prose.
 `src/shared/gaming/gamingClearSource.ts:125` now consumes registry relationships
 and the same evidence projection. `acquiredBodySubjects` at line 53 recognizes
 explicit game declarations independently of alias catalog membership. The
-positive-anchor logic at line 281 requires acquired body identity, a complete
+positive-anchor logic at line 305 requires acquired body identity, a complete
 relevant gameplay record with its own Game field, or a complete relevant record
 bound by an acquired global Game declaration or parser-owned game context.
 Repeated article h1 text such as `GAME guide` cannot become a second anchor
@@ -163,7 +163,7 @@ integrity failure reason.
 Regression order is recorded in the task validation evidence. Initial local
 record fixtures failed before the projection; historical/reference cases then
 failed 5 of 17 before bounded projection; the acquired-caption regression
-failed 1 of 19 before the compatibility repair. The latest focused run passes
+failed 1 of 19 before the compatibility repair. An earlier focused run passed
 252 tests across generic scope, live-source identity regressions, source
 negation, structural sufficiency, structured supplied RAG, and the immutable
 generic benchmark. An independent security review additionally reproduced
@@ -182,3 +182,29 @@ The full suite,
 PostgreSQL, exact-head CI, sealed preview, private identity, and production
 readiness remain separate report gates. Synthetic tests do not establish live
 publisher acquisition or Trinity generation.
+
+The required full suite subsequently identified two confirmed migration
+regressions. Removing a named related-title regex had omitted genuine
+parser-owned adjacent corrections from edition inspection (six unchanged
+hosted extraction cases). The generic unknown-title detector also classified
+an explicit expansion-only declaration as a new game, yielding `GAME_MISMATCH`
+instead of `EDITION_CONFLICT`. Before repair, the existing hosted suite plus
+new generic corrections and expansion cases failed 11 of 171 tests.
+
+`hasGamingRelatedRecordScopeConflict` in
+`src/shared/gaming/gamingStructuralEvidence.ts:154` now reads reviewed related
+titles and parent-relative names from `gamingRegistryRelatedScopeNames`.
+Only parser-owned headings, captions, direct qualifications, and closed scope
+fields can bind a correction; comparison/reference controls remain unchanged.
+Expansion-only primary declarations use registry-owned names and closed
+generic edition nouns before unknown-game inference. A definitive acquired
+edition contradiction remains terminal after game contradiction inspection,
+even when positive game identity would remain unverified. Arbitrary trailing
+subjects cannot hide behind a matching expansion prefix.
+
+The follow-up focused run passed all hosted extraction, source-scope, identity,
+negation, Samurai workflow, and benchmark cases. Its sole failure was a live
+adapter expectation loaded concurrently with its owner changing the fixture to
+the stronger acquired wrong-game rejection; that test requires a stable rerun.
+Final pinned dependency, full-suite, commit, CI, and preview results are reported
+in the central validation report, rather than inferred from this evolving tree.

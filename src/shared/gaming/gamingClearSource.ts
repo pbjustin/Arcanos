@@ -227,6 +227,26 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
   // Every affirmative acquired subject binds; matching titles and earlier
   // requested-game subjects cannot hide a later different gameplay scope.
   for (const { text: bodySubject, explicitGameScope, namedGameScope } of acquiredBodySubjects(prose)) {
+    // A primary declaration can name content applicability rather than a new
+    // game. Registry-owned expansion names and closed generic edition nouns
+    // retain their own conflict category; they never prove the source's game.
+    const editionSubject = normalizeGamingGameIdentity(bodySubject).replace(/^(?:(?:only|the)-){1,2}/u, '');
+    const expansionPrefix = explicitGameScope && gamingRegistryExpansionNames(input.game)
+      .find(name => editionSubject === normalizeGamingGameIdentity(name)
+        || editionSubject.startsWith(`${normalizeGamingGameIdentity(name)}-`));
+    const expansionSuffix = expansionPrefix ? editionSubject.slice(normalizeGamingGameIdentity(expansionPrefix).length) : '';
+    const declaredExpansion = expansionPrefix && (!expansionSuffix
+      || /^(?:-(?:dlc|expansion|content|guide|build|walkthrough)){1,3}$/u.test(expansionSuffix)) ? expansionPrefix : undefined;
+    if (expansionPrefix && !declaredExpansion)
+      return result('conflict', 'EDITION_CONFLICT', 'gaming.identity.edition_declaration_boundary_conflict', 'edition_scope');
+    const genericExpansionSubject = explicitGameScope && /^(?:dlc|expansion)(?:-(?:content|guide|build|walkthrough)){0,2}$/u.test(editionSubject);
+    if (declaredExpansion || genericExpansionSubject) {
+      const sameRequestedExpansion = input.edition && declaredExpansion
+        && normalizeGamingRegistryEdition(input.game, input.edition) === normalizeGamingRegistryEdition(input.game, declaredExpansion);
+      editionScopeConflict ||= Boolean(input.edition && !sameRequestedExpansion
+        && (declaredExpansion || normalizeGamingEditionIdentity(input.edition) === 'base-game'));
+      continue;
+    }
     const leading = detectGamingLeadingGameAlias(bodySubject);
     const firstInstructionMarker = /\b(?:guide|build|loadout|meta|walkthrough|wiki|tips?|tier(?:\s+list)?|patch\s+notes)\b/iu.exec(bodySubject);
     const metadataSubject = detectGamingDocumentGame({ canonicalUrl: '',
@@ -254,6 +274,10 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
       else if (!(editionQualifier(qualifier))) return result('conflict', 'GAME_MISMATCH', 'gaming.identity.distinct_body_scope', 'body_scope');
     }
   }
+  // A definitive acquired applicability contradiction remains terminal even
+  // when independently acquired game identity would otherwise stay unknown.
+  if (editionScopeConflict)
+    return result('conflict', 'EDITION_CONFLICT', 'gaming.identity.edition_scope_conflict', 'edition_scope');
   const ordinaryTitle = metadata.some(value => [...expected].some(game => {
     const identity = normalizeGamingGameIdentity(value);
     return identity === game || identity.startsWith(`${game}-`) && DOCUMENT_LABEL.test(identity.slice(game.length + 1));

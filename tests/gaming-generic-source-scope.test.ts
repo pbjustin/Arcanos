@@ -5,6 +5,7 @@ import { selectGamingEditionScopedEvidence } from '../src/shared/gaming/gamingSt
 import { extractGamingDocumentEvidence } from '../src/services/gamingDocumentEvidence.js';
 import { gamingDocumentFetchOptions } from '../src/services/gamingDocumentExtraction.js';
 import { extractFetchAndCleanDocument } from '../src/shared/webFetcher.js';
+import { GAMING_GAME_REGISTRY } from '../src/shared/gaming/gamingGameRegistry.js';
 
 const url = 'https://independent.example/guides/equipment';
 const input = { game: 'Portal 2', edition: 'base-game', mode: 'build' as const,
@@ -162,6 +163,52 @@ describe('generic acquired local gameplay record scope', () => {
     const doc = document(table(row(input.game, 'Expansion')));
     expect(identity(doc).status).not.toBe('verified');
     expect(selectGamingEditionScopedEvidence(doc, input).status).toBe('conflict');
+  });
+
+  it.each(['div', 'p', 'aside'])('preserves a parser-owned related-title correction in a %s wrapper', tag => {
+    const game = 'Minecraft';
+    const body = `<article><h1>${game} equipment guide</h1><${tag}>Correction: Dungeons equipment is no longer available.</${tag}>`
+      + '<ul><li>Game: Minecraft; Build: Practice; Item: Practice item; Skill: Practice skill; Scope: Base game</li></ul></article>';
+    const extracted = extractGamingDocumentEvidence({ body, contentType: 'text/html', sourceUrl: url });
+    expect(extracted.units[0].context.qualifiers).toContain('Correction: Dungeons equipment is no longer available.');
+    expect(selectGamingEditionScopedEvidence({ publicUrl: url, text: extracted.units.map(unit => unit.text).join('\n'), evidenceUnits: extracted.units },
+      { game, edition: 'base-game' })).toMatchObject({ status: 'conflict', reasonCodes: ['CONFLICTING_EDITION_SCOPE'] });
+  });
+
+  it('does not import a related-title comparison as a direct-record correction', () => {
+    const body = '<article><h1>Minecraft equipment guide</h1><div>Unlike Correction: Dungeons equipment is no longer available, this compares an unrelated route.</div>'
+      + '<ul><li>Game: Minecraft; Build: Practice; Item: Practice item; Skill: Practice skill; Scope: Base game</li></ul></article>';
+    const extracted = extractGamingDocumentEvidence({ body, contentType: 'text/html', sourceUrl: url });
+    expect(extracted.units[0].context.qualifiers).toBeUndefined();
+    expect(selectGamingEditionScopedEvidence({ publicUrl: url, text: extracted.units.map(unit => unit.text).join('\n'), evidenceUnits: extracted.units },
+      { game: 'Minecraft', edition: 'base-game' })).toMatchObject({ status: 'verified', reasonCodes: ['INTACT_BASE_GAME_SCOPE'] });
+  });
+
+  it('reports edition conflict for an expansion-only primary declaration without inventing a new game identity', () => {
+    const base = 'Portal 2';
+    const sourceTitle = `${base} expansion equipment guide`;
+    const doc = { publicUrl: url, metadata: { title: sourceTitle }, text: `Game: ${base}. Edition: Expansion. `
+      + 'This guide covers only expansion content. In Portal 2, the synthetic expansion equipment differs from the base game.' };
+    expect(assessGamingClearSourceIdentity(doc, input, assessGamingSourcePolicy(url, base)))
+      .toMatchObject({ status: 'conflict', reasonCodes: ['EDITION_CONFLICT'] });
+  });
+
+  it.each(GAMING_GAME_REGISTRY.games.flatMap(game => game.editions.filter(edition => edition.kind === 'expansion' || edition.kind === 'dlc')
+    .map(edition => ({ game: game.name, edition: edition.name }))))
+  ('reports registered expansion-only scope as an applicability conflict: $game / $edition', ({ game, edition }) => {
+    const doc = { publicUrl: url, metadata: { title: `${game} ${edition} guide` }, text: `Game: ${game}. Edition: ${edition}. `
+      + `This guide covers only ${edition} expansion content. In ${game}, this synthetic expansion equipment differs from the base game.` };
+    expect(assessGamingClearSourceIdentity(doc, { ...input, game }, assessGamingSourcePolicy(url, game)))
+      .toMatchObject({ status: 'conflict', reasonCodes: ['EDITION_CONFLICT'] });
+  });
+
+  it.each(GAMING_GAME_REGISTRY.games.flatMap(game => game.editions.filter(edition => edition.kind === 'expansion' || edition.kind === 'dlc')
+    .map(edition => ({ game: game.name, edition: edition.name }))))
+  ('cannot launder a second primary game behind a matching expansion prefix: $game / $edition', ({ game, edition }) => {
+    const doc = { publicUrl: url, metadata: { title: `${game} ${edition} guide` }, text: `Game: ${game}. Edition: ${edition}. `
+      + `This guide covers only ${edition} expansion content and Lantern Vale. In ${game}, this synthetic equipment differs.` };
+    expect(assessGamingClearSourceIdentity(doc, { ...input, game, edition }, assessGamingSourcePolicy(url, game)).status)
+      .toBe('conflict');
   });
 
   it('does not classify a lone foreign Game and item label as independently usable gameplay', () => {

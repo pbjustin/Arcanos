@@ -267,7 +267,13 @@ async function requireBaseGameScope(): Promise<void> {
   requireProof(incompatibleScope.status === 'conflict' && incompatibleScope.reasonCodes.includes('CONFLICTING_EDITION_SCOPE')
     && source(incompatible, input).decision === 'reject');
   const wrongGame = doc(table('Scope', 'base-game', fact, { Game: 'Dark Souls III' }));
-  requireProof(scope(wrongGame).reasonCodes.includes('GAME_MISMATCH') && source(wrongGame, input).decision !== 'accept');
+  // A complete local record can name a different game without contradicting
+  // primary identity. It supplies no target-game evidence or storage eligibility.
+  const foreignScope = scope(wrongGame);
+  const foreignAssessment = source(wrongGame, input);
+  requireProof(foreignScope.status === 'unverified' && foreignScope.units.length === 0 && foreignScope.text === ''
+    && foreignAssessment.decision === 'reject' && !foreignAssessment.qualityEligible
+    && foreignAssessment.gates.claimSupport === 'unknown');
   const contradictory = doc(table('Scope', 'base-game', fact, { Edition: 'Shadow of the Erdtree' }));
   requireProof(scope(contradictory).status === 'conflict' && source(contradictory, input).decision !== 'accept');
 

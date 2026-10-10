@@ -118,6 +118,26 @@ export function gamingRegistryExpansionNames(game?: string, registry = GAMING_GA
     : registry.games).flatMap(entry => entry.editions.filter(edition => ['expansion', 'dlc'].includes(edition.kind))
       .flatMap(edition => [edition.name, ...edition.aliases])))];
 }
+/** Reviewed related titles and parent-relative names are recognition data only.
+ * Callers must independently establish whether a mention owns a gameplay record. */
+export function gamingRegistryRelatedScopeNames(game: string, registry = GAMING_GAME_REGISTRY): readonly string[] {
+  const entry = resolveGamingRegistryGame(game, registry)
+    ?? registry.games.find(candidate => gamingRegistrySourceGameMatchesRequest(game, candidate.name, registry));
+  if (!entry) return [];
+  const names = new Set<string>();
+  for (const relation of entry.related) {
+    const related = registry.games.find(candidate => candidate.id === relation.id);
+    if (!related) continue;
+    for (const title of [related.name, ...related.aliases]) {
+      names.add(title);
+      for (const parent of [entry.name, ...entry.aliases]) {
+        const relative = new RegExp(`^${gamingRegistryLiteralPattern(parent)}[\\s:–—-]+(.+)$`, 'iu').exec(title)?.[1];
+        if (relative) names.add(relative.trim());
+      }
+    }
+  }
+  return [...names];
+}
 export function gamingRegistrySourceGameMatchesRequest(sourceGame: string, requestGame: string,
   registry = GAMING_GAME_REGISTRY): boolean {
   const wanted = resolveGamingRegistryGame(requestGame, registry);

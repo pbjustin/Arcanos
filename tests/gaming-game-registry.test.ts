@@ -1,7 +1,7 @@
 import { describe, expect, it } from '@jest/globals';
 import { GAMING_GAME_REGISTRY, validateGamingGameRegistry, resolveGamingRegistryGame,
   detectGamingRegistryAlias, normalizeGamingRegistryEdition, gamingRegistrySourceGameMatchesRequest,
-  gamingRegistryDistinctScopeQualifier, readGamingRegistryEditionScope } from '../src/shared/gaming/gamingGameRegistry.js';
+  gamingRegistryDistinctScopeQualifier, gamingRegistryRelatedScopeNames, readGamingRegistryEditionScope } from '../src/shared/gaming/gamingGameRegistry.js';
 
 describe('versioned game recognition is independent of acquired proof', () => {
   it('keeps stable identifiers, edition relationships and provenance in reviewed data', () => {
@@ -25,6 +25,12 @@ describe('versioned game recognition is independent of acquired proof', () => {
     expect(gamingRegistryDistinctScopeQualifier('Minecraft', 'story-mode-guide')).toBe(true);
     expect(gamingRegistryDistinctScopeQualifier('Elden Ring', 'shadow-of-the-erdtree-guide')).toBe(true);
     expect(normalizeGamingRegistryEdition('Minecraft', 'Java Edition unsupported')).toBeUndefined();
+  });
+  it('uses related-title data for direct scope qualifiers without inventing relations', () => {
+    expect(gamingRegistryRelatedScopeNames('Minecraft')).toEqual(expect.arrayContaining(['Minecraft Dungeons', 'Dungeons', 'Minecraft Story Mode', 'Story Mode']));
+    expect(gamingRegistryRelatedScopeNames('Elden Ring')).toEqual(expect.arrayContaining(['Elden Ring Nightreign', 'Nightreign']));
+    expect(gamingRegistryRelatedScopeNames('Lantern Vale')).toEqual([]);
+    expect(gamingRegistryRelatedScopeNames('Portal 2')).toEqual([]);
   });
   it.each(['Lantern Vale', 'Orbit Orchard'])('leaves unknown title %s unregistered', title => {
     expect(resolveGamingRegistryGame(title)).toBeUndefined();

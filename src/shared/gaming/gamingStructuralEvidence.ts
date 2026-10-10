@@ -5,7 +5,8 @@ import { resolveGamingAnswerPolicy } from './gamingAnswerPolicy.js';
 import { buildGamingRetrievalTerms, gamingLexicalTokens, gamingTermCoverage } from './gamingRetrievalPolicy.js';
 import { GAMING_HYBRID_V2_LIMITS } from './gamingHybridContract.js';
 import { normalizeGamingEditionIdentity } from './gamingGameIdentity.js';
-import { gamingRegistryEditionKind, gamingRegistryExpansionNames, gamingRegistryLiteralPattern, gamingRegistrySourceGameMatchesRequest } from './gamingGameRegistry.js';
+import { gamingRegistryEditionKind, gamingRegistryExpansionNames, gamingRegistryLiteralPattern, gamingRegistryRelatedScopeNames,
+  gamingRegistrySourceGameMatchesRequest } from './gamingGameRegistry.js';
 
 export const GAMING_STRUCTURAL_SUFFICIENCY_VERSION = 'gaming-structural-sufficiency/v1';
 export const GAMING_STRUCTURAL_EVIDENCE_LIMITS = Object.freeze({ units: 2_048, unitChars: 4_096, usableUnitChars: 2_000, fields: 32, valueChars: 1_024 });
@@ -148,6 +149,18 @@ function gamingExpansionScopePattern(): string {
     .sort((left, right) => right.length - left.length).map(gamingRegistryLiteralPattern).join('|');
 }
 
+/** Parser-owned direct scope corrections bind their record. Relationship names
+ * come from reviewed registry data; comparison/reference prose is not scope. */
+function hasGamingRelatedRecordScopeConflict(unit: GamingEvidenceUnit, game: string): boolean {
+  const names = gamingRegistryRelatedScopeNames(game);
+  if (!names.length) return false;
+  const subject = new RegExp(`^(?:(?:correction|notes?|scope|edition|applicability|requirements?|compatibility|description)\\s*:\\s*){0,2}(?:(?:this|the)\\s+)?(?:${names.map(gamingRegistryLiteralPattern).join('|')})(?=$|[^\\p{L}\\p{N}])`, 'iu');
+  const context = [unit.context.heading, unit.context.caption, ...(unit.context.qualifiers ?? []),
+    ...unit.fields.filter(field => /^(?:notes?|scope|edition|applicability|requirements?|compatibility|description)$/iu
+      .test(field.label.split(/\s+\/\s+/u).at(-1)!)).map(field => field.value)];
+  return context.some(value => value !== undefined && subject.test(value.trim()));
+}
+
 /** Unknown signed requirements never become positive scope contradictions. */
 export function classifyGamingEditionRequirements(text: string, completeRecord = false, unverifiedMentions = false): 'clear' | 'unverified' | 'conflict' {
   const inspected = gamingEditionConflictText(text, completeRecord);
@@ -220,7 +233,7 @@ export function selectGamingEditionScopedEvidence(document: {
       && new RegExp(`^(?:${gamingExpansionScopePattern()})$`, 'iu').test(value.trim()));
     const requirements = classifyGamingEditionRequirements(scopeContext, unit.integrity.status === 'complete', true);
     if (scopes.some(scope => scope !== 'base-game')
-      || contextEditionConflict || requirements === 'conflict') {
+      || contextEditionConflict || hasGamingRelatedRecordScopeConflict(unit, input.game) || requirements === 'conflict') {
       return result('conflict', [], ['CONFLICTING_EDITION_SCOPE']);
     }
     uncertainBaseScope ||= requirements === 'unverified';
