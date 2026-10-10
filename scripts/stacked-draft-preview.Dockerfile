@@ -48,13 +48,16 @@ ENV NODE_ENV=production
 # Baked into the digest-bound image; never inferred from a moving Git branch.
 ENV RAILWAY_GIT_COMMIT_SHA=${CANDIDATE_SHA}
 WORKDIR /app
+# Host umask must not make trusted scaffolding unreadable to USER node. Keep
+# root ownership so candidate code cannot rewrite the launcher or lease proof.
+RUN install -d -o root -g root -m 0755 /opt/stacked-preview
 # Preserve pristine source; only compiled files and pruned dependencies come
 # from the candidate build. No .git, build credentials or provider keys exist.
 COPY --chown=node:node candidate/ ./
 COPY --from=build --chown=node:node /app/node_modules ./node_modules
 COPY --from=compiled --chown=node:node /compiled/ ./
-COPY --from=attest /opt/stacked-preview/compiled.json /opt/stacked-preview/compiled.json
-COPY runtime.mjs /opt/stacked-preview/runtime.mjs
+COPY --from=attest --chmod=0444 /opt/stacked-preview/compiled.json /opt/stacked-preview/compiled.json
+COPY --chmod=0444 runtime.mjs /opt/stacked-preview/runtime.mjs
 USER node
 EXPOSE 8080
 CMD ["node", "/opt/stacked-preview/runtime.mjs"]

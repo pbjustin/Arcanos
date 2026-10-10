@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -108,5 +108,49 @@ test('production inventory works with distinct empty configs under pinned npm wi
     assert.equal(result.status, 0, result.stderr);
     assert.equal(JSON.parse(result.stdout).name, 'inventory-regression-fixture');
     assert.throws(() => productionInventoryArguments('/dev/null'), /NPM_CONFIGURATION_INVALID/u);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('restrictive host umask cannot remove nonroot read access to root-owned runtime scaffolding', () => {
+  const root = fixture();
+  try {
+    const git = args => {
+      const result = spawnSync('git', args, { cwd: root, encoding: 'utf8', timeout: 10_000,
+        env: { ...process.env, GIT_AUTHOR_NAME: 'Preview regression', GIT_AUTHOR_EMAIL: 'preview@example.invalid',
+          GIT_COMMITTER_NAME: 'Preview regression', GIT_COMMITTER_EMAIL: 'preview@example.invalid' } });
+      assert.equal(result.status, 0, result.stderr);
+      return result.stdout.trim();
+    };
+    git(['init', '-q']);
+    git(['add', '.']);
+    git(['-c', 'core.hooksPath=/dev/null', 'commit', '-qm', 'Fixture source']);
+    const candidateSha = git(['rev-parse', 'HEAD']);
+    const archive = spawnSync('git', ['archive', '--format=tar', candidateSha], { cwd: root, timeout: 10_000 });
+    assert.equal(archive.status, 0);
+    const authorizationFile = path.join(root, 'authorization.json');
+    writeFileSync(authorizationFile, JSON.stringify({ ...authorization, sourceArchiveSha256: sha256(archive.stdout),
+      stack: [{ headSha: candidateSha, treeSha: git(['rev-parse', 'HEAD^{tree}']) }] }));
+    const commands = path.join(root, 'commands');
+    mkdirSync(commands);
+    const docker = path.join(commands, 'docker');
+    writeFileSync(docker, '#!/bin/sh\nexit 1\n');
+    chmodSync(docker, 0o700);
+    const output = path.join(root, 'output');
+    const helper = new URL('./stacked-draft-preview-build.mjs', import.meta.url);
+    const program = 'process.umask(0o077); process.argv = [process.execPath, ' + JSON.stringify(helper.pathname) + ', "build", ' +
+      JSON.stringify(authorizationFile) + ', ' + JSON.stringify(output) + ']; await import(' + JSON.stringify(helper.href) + ');';
+    const result = spawnSync(process.execPath, ['--input-type=module', '--eval', program], { cwd: root,
+      encoding: 'utf8', timeout: 10_000, env: { ...process.env, PATH: `${commands}:${process.env.PATH}`, GITHUB_TOKEN: '' } });
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stderr, /STACKED_BUILD_COMMAND_FAILED/u);
+    // The real context helper reproduces the original 0600 source; Docker must
+    // normalize final metadata, rather than relying on an ambient runner umask.
+    assert.equal(statSync(path.join(output, 'context/runtime.mjs')).mode & 0o777, 0o600);
+    const finalStage = readFileSync(path.join(output, 'context/Dockerfile'), 'utf8').split(/^FROM /mu).at(-1);
+    assert.match(finalStage, /^RUN install -d -o root -g root -m 0755 \/opt\/stacked-preview$/mu);
+    assert.match(finalStage, /^COPY --from=attest --chmod=0444 \/opt\/stacked-preview\/compiled\.json \/opt\/stacked-preview\/compiled\.json$/mu);
+    assert.match(finalStage, /^COPY --chmod=0444 runtime\.mjs \/opt\/stacked-preview\/runtime\.mjs$/mu);
+    assert.doesNotMatch(finalStage, /(?:COPY[^\n]*--chown|chown|chmod[^\n]*[67][0-7][0-7])[^\n]*\/opt\/stacked-preview/u);
+    assert.match(finalStage, /^USER node\nEXPOSE 8080\nCMD \["node", "\/opt\/stacked-preview\/runtime\.mjs"\]$/mu);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

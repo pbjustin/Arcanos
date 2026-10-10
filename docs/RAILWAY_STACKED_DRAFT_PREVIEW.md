@@ -124,7 +124,10 @@ and authority:
    [runtime wrapper](../scripts/stacked-draft-preview-runtime.mjs) independently
    expires the digest-bound lease, strips secrets, `NODE_OPTIONS` and loader
    configuration before the integrity launcher, and permits at most two hours
-   remaining. That lease stops workload execution; it does not prove resource
+   remaining. The final image keeps its launcher and compiled manifest
+   root-owned with mode `0444` beneath a root-owned `0755` directory, so the
+   nonroot runtime can read them regardless of build-host umask and cannot
+   rewrite them. That lease stops workload execution; it does not prove resource
    deletion. A clone left before the durable ownership patch can be recovered
    only through the same trusted run's bound create receipt while it remains
    idle. An unproved clone is preserved for owner inspection, not automatically
