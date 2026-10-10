@@ -193,6 +193,17 @@ describe('generic acquired local gameplay record scope', () => {
       .toMatchObject({ status: 'conflict', reasonCodes: ['EDITION_CONFLICT'] });
   });
 
+  it.each(GAMING_GAME_REGISTRY.games.flatMap(game => game.editions.filter(edition => edition.kind === 'base')
+    .map(edition => ({ game: game.name, edition: edition.name }))))
+  ('recognizes an exact requested game-and-base-edition body scope: $game / $edition', ({ game, edition }) => {
+    const sourceTitle = `${game} equipment build guide`;
+    const doc = { publicUrl: url, metadata: { title: sourceTitle, headings: sourceTitle },
+      text: `${sourceTitle}. In ${game} ${edition}, the synthetic practice build combines a practice item with a practice skill. `
+        + 'Use the practice item carefully and preserve movement space while choosing the practice skill.' };
+    expect(assessGamingClearSourceIdentity(doc, { ...input, game, edition }, assessGamingSourcePolicy(url, game)).status)
+      .toBe('verified');
+  });
+
   it.each(GAMING_GAME_REGISTRY.games.flatMap(game => game.editions.filter(edition => edition.kind === 'expansion' || edition.kind === 'dlc')
     .map(edition => ({ game: game.name, edition: edition.name }))))
   ('reports registered expansion-only scope as an applicability conflict: $game / $edition', ({ game, edition }) => {

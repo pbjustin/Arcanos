@@ -267,7 +267,7 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
     if ([...expected].some(game => {
       const bodyIdentity = normalizeGamingGameIdentity(bodySubject);
       return bodyIdentity.startsWith(`${game}-`) && distinctScope(bodyIdentity.slice(game.length + 1))
-        && ![...expected].some(full => full !== game && bodyIdentity.startsWith(`${full}-`));
+        && ![...expected].some(full => full !== game && (bodyIdentity === full || bodyIdentity.startsWith(`${full}-`)));
     })) {
       const qualifier = normalizeGamingGameIdentity(bodySubject).slice(normalizeGamingGameIdentity(input.game).length + 1);
       if (expansionQualifier(qualifier)) editionScopeConflict = true;

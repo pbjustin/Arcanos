@@ -208,3 +208,16 @@ adapter expectation loaded concurrently with its owner changing the fixture to
 the stronger acquired wrong-game rejection; that test requires a stable rerun.
 Final pinned dependency, full-suite, commit, CI, and preview results are reported
 in the central validation report, rather than inferred from this evolving tree.
+
+Integration CI also confirmed an exact-boundary migration defect: acquired
+`In GAME base-game, ...` was rejected because the body-scope exception accepted
+only a full requested game/edition identity followed by another word, while
+title inspection correctly accepted the exact identity. The unchanged large
+chunked/gzip acquisition fixtures and a new registry-driven base-edition case
+failed 3 of 44 focused tests before repair. The body check now applies the same
+exact-or-qualified identity boundary as the title check. Incompatible edition,
+related-title, foreign primary, historical/reference, and injection controls are
+preserved. Verification after repair passed all 341 tests across six focused
+suites, including actual controlled streaming acquisition and the immutable
+cross-game benchmark; scoped ESLint also passed. Final CI commit provenance
+remains part of the central validation report.
