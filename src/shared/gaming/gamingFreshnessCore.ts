@@ -1,8 +1,9 @@
 import { classifyGamingQuestionFreshness, type GamingQuestionFreshness } from './gamingQuestionFreshnessPolicy.js';
-import { gamingPlatformEvidenceMatchesRequest } from './gamingPlatformIdentity.js';
+import { gamingPlatformEvidenceMatchesRequest, normalizeGamingPlatformIdentity } from './gamingPlatformIdentity.js';
 import { gamingAcquiredGameDeclarationPattern } from './gamingGameDeclaration.js';
 import { resolveGamingRequestEdition, gamingEditionEvidenceMatchesRequest, canQualifyGamingUnrequestedEdition, normalizeGamingEditionIdentity, normalizeGamingGameIdentity, type GamingEditionRequestContext } from './gamingGameIdentity.js';
-import { readGamingRegistryEditionScope, normalizeGamingRegistryEdition, gamingRegistrySourceGameMatchesRequest } from './gamingGameRegistry.js';
+import { readGamingRegistryEditionScope, normalizeGamingRegistryEdition, gamingRegistrySourceGameMatchesRequest,
+  gamingApplicabilityAssertionText, gamingApplicabilityAssertionContext } from './gamingGameRegistry.js';
 import type { GamingEvidenceUnit } from './gamingEvidenceUnits.js';
 import { isGamingDocumentMetadataUnit, readGamingEvidenceUnits, selectGamingEditionScopedEvidence, selectGamingGameScopedDocument } from './gamingStructuralEvidence.js';
 import { runGamingCurrentnessAdapter, combineGamingCurrentnessEvidence, GAMING_CURRENTNESS_ADAPTER_VERSION,
@@ -152,12 +153,17 @@ export function extractGamingFreshnessMetadata(document: { publicUrl: string; ca
   let proseText = document.text;
   // Shared label prefixes must not leave gameplay record fragments in prose.
   for (const unit of [...evidenceUnits].sort((left, right) => right.text.length - left.text.length)) proseText = proseText.replace(unit.text, '');
-  const metadataText = proseText.slice(0, GAMING_FRESHNESS_DEFAULTS.maxMetadataChars);
+  const applicabilityScope = gamingApplicabilityAssertionText(proseText, context.game);
+  const metadataText = applicabilityScope.text.slice(0, GAMING_FRESHNESS_DEFAULTS.maxMetadataChars);
   // The shared document instruction filter normalizes whitespace. Recover only
   // this closed label grammar; do not infer metadata from arbitrary date mentions.
   const labels = 'Edition|Platforms?|Regions?|Published at|Source updated at|Effective from|Effective until|Patch|Build|Season|Current patch|Current build|Current season|Baseline valid for patches|Baseline valid for builds|Supersedes patches|Supersedes builds|Mechanic';
   const metadataLines = metadataText.replace(gamingAcquiredGameDeclarationPattern(), '\nGame: $1\n')
-    .replace(new RegExp(`(?:^|\\s)(${labels}):\\s*`, 'giu'), '\n$1: ').split(/\r?\n/u);
+    .replace(new RegExp(`(?:^|\\s)(${labels}):\\s*`, 'giu'), (assertion: string, name: string, index: number, source: string) => {
+      const local = gamingApplicabilityAssertionContext(source, index);
+      if (!local.complete) applicabilityScope.complete = false;
+      return local.reference || !local.complete ? ' '.repeat(assertion.length) : `\n${name}: `;
+    }).split(/\r?\n/u);
   const lines = metadataLines.slice(0, 500).map(line => line.split(/\.(?=\s+[A-Z])/u)[0].trim().replace(/\.$/u, ''));
   // An acquired global base label can narrow inspected source records without
   // creating a player edition. Local record labels cannot establish global scope.
@@ -170,18 +176,25 @@ export function extractGamingFreshnessMetadata(document: { publicUrl: string; ca
     ? selectGamingEditionScopedEvidence(document, { game: context.game, edition: inspectionEdition }) : undefined;
   // Local edition proof must not hide global restrictions outside the metadata
   // parser's bounds. Such labels remain uncertainty, never additional proof.
-  let invalidMetadata = false;
+  let invalidMetadata = !applicabilityScope.complete;
   if (editionScoped?.status === 'verified') {
-    const assertions = [...proseText.matchAll(new RegExp(`(?:^|\\s)(?:${labels}):\\s*`, 'giu')),
-      ...Array.from(proseText.matchAll(gamingAcquiredGameDeclarationPattern()), match => ({
-        index: match.index, 0: /^[\s\S]*?\bgame\s*:\s*/iu.exec(match[0])![0]
-      }))].sort((left, right) => left.index - right.index);
-    invalidMetadata = assertions.some((assertion, index) => {
-      const valueStart = assertion.index + assertion[0].length;
-      const value = proseText.slice(valueStart, assertions[index + 1]?.index ?? proseText.length);
-      const end = valueStart + (/\r?\n|\.(?=\s+[A-Z])/u.exec(value)?.index ?? value.length);
-      return end > GAMING_FRESHNESS_DEFAULTS.maxMetadataChars;
-    }) || metadataLines.slice(500).some(line => new RegExp(`^\\s*(?:Game|${labels}):`, 'iu').test(line))
+    // Inspect bounded local values rather than repeatedly slicing the remaining
+    // document. The full negative field scan below retains actual conflicts.
+    let assertions = 0;
+    for (const pattern of [new RegExp(`(?:^|\\s)(?:${labels}):\\s*`, 'giu'), gamingAcquiredGameDeclarationPattern()]) {
+      for (const assertion of applicabilityScope.text.matchAll(pattern)) {
+        if (++assertions > 1_024) { invalidMetadata = true; break; }
+        const local = gamingApplicabilityAssertionContext(applicabilityScope.text, assertion.index);
+        if (!local.complete) { invalidMetadata = true; continue; }
+        if (local.reference) continue;
+        const valueStart = assertion.index + assertion[0].length;
+        const window = applicabilityScope.text.slice(valueStart, valueStart + 513);
+        const boundary = /\r?\n|\.(?=\s+[A-Z])/u.exec(window)?.index;
+        if (valueStart + (boundary ?? window.length) > GAMING_FRESHNESS_DEFAULTS.maxMetadataChars) invalidMetadata = true;
+      }
+      if (assertions > 1_024) break;
+    }
+    invalidMetadata ||= metadataLines.slice(500).some(line => new RegExp(`^\\s*(?:Game|${labels}):`, 'iu').test(line))
       || evidenceUnits.some(unit => isGamingDocumentMetadataUnit(unit) && unit.integrity.status !== 'complete');
   }
   // Read explicit fields as individual source assertions. Record labels such as
@@ -194,7 +207,7 @@ export function extractGamingFreshnessMetadata(document: { publicUrl: string; ca
     // Excluded gameplay records cannot supply selected facts' applicability.
     // Metadata-only records retain the same global assertion semantics as prose.
     if (structuralLabel.test(leaf)) {
-      if (lines.length < 500) lines.push(`${leaf}: ${field.value}`);
+      if (lines.length < 500) lines.push(gamingApplicabilityAssertionText(`${leaf}: ${field.value}`, context.game).text);
       else if (editionScoped?.status === 'verified') invalidMetadata = true;
     }
   }
@@ -210,6 +223,59 @@ export function extractGamingFreshnessMetadata(document: { publicUrl: string; ca
     if (values.length > 1) conflict = true;
     return values.length === 1 ? values[0] : undefined;
   };
+  // Inspect every supported global field for contradictions without acquiring
+  // late positive proof. Complete local gameplay records were removed above;
+  // source-global parser metadata remains an assertion even after line limits.
+  const fieldName = (name: string) => name.toLowerCase().replace(/^platforms?$/u, 'platform').replace(/^regions?$/u, 'region');
+  const fieldValue = (name: string, value: string) => name === 'edition'
+    ? normalizeGamingRegistryEdition(context.game, value) ?? normalizeGamingEditionIdentity(value)
+    : name === 'platform' ? [...new Set(value.split(',').map(normalizeGamingPlatformIdentity))].sort().join(',')
+      : name === 'game' && gamingRegistrySourceGameMatchesRequest(value, context.game) ? normalizeGamingGameIdentity(context.game)
+      : value.normalize('NFKC').trim().toLowerCase().replace(/\s+/gu, ' ');
+  const boundedFields = new Map<string, Set<string>>();
+  for (const line of lines) {
+    const match = new RegExp(`^(Game|${labels}):\\s*(.*)$`, 'iu').exec(line);
+    if (!match) continue;
+    const name = fieldName(match[1]);
+    const key = name === 'mechanic' ? `${name}:${match[2].split('=', 1)[0].trim().toLowerCase()}` : name;
+    const values = boundedFields.get(key) ?? new Set<string>();
+    values.add(fieldValue(name, match[2])); boundedFields.set(key, values);
+  }
+  let inspectedApplicabilityFields = 0;
+  const inspectField = (name: string, value: string) => {
+    if (++inspectedApplicabilityFields > 1_024) { invalidMetadata = true; return false; }
+    name = fieldName(name);
+    const key = name === 'mechanic' ? `${name}:${value.split('=', 1)[0].trim().toLowerCase()}` : name;
+    const bounded = boundedFields.get(key);
+    const maximum = ['platform', 'region', 'baseline valid for patches', 'baseline valid for builds', 'supersedes patches', 'supersedes builds'].includes(name) ? 256
+      : name === 'edition' ? 120 : name === 'game' ? 160 : name === 'mechanic' ? 120 : 80;
+    if (!value || value.length > maximum || !bounded?.size) invalidMetadata = true;
+    else if (!bounded.has(fieldValue(name, value))) conflict = true;
+    return true;
+  };
+  const fullFields = new RegExp(`(?:^|\\s)(${labels}):\\s*`, 'giu');
+  const fieldBoundary = new RegExp(`\\r?\\n|\\.(?=\\s+[A-Z]|$)|;|\\||\\s+(?:Game|${labels}):\\s*`, 'iu');
+  for (const match of applicabilityScope.text.matchAll(fullFields)) {
+    const local = gamingApplicabilityAssertionContext(applicabilityScope.text, match.index);
+    if (!local.complete) { invalidMetadata = true; continue; }
+    if (local.reference) continue;
+    const start = match.index + match[0].length;
+    const window = applicabilityScope.text.slice(start, start + 513);
+    const boundary = fieldBoundary.exec(window)?.index;
+    if (boundary === undefined && start + window.length < applicabilityScope.text.length) { invalidMetadata = true; break; }
+    if (!inspectField(match[1], window.slice(0, boundary).trim().replace(/\.$/u, ''))) break;
+  }
+  // Keep the closed Game-label grammar: phrases such as "early game:" are not fields.
+  for (const match of applicabilityScope.text.matchAll(gamingAcquiredGameDeclarationPattern())) {
+    const local = gamingApplicabilityAssertionContext(applicabilityScope.text, match.index);
+    if (!local.complete) { invalidMetadata = true; continue; }
+    if (!local.reference && !inspectField('Game', match[1])) break;
+  }
+  for (const unit of evidenceUnits.filter(isGamingDocumentMetadataUnit)) for (const field of unit.fields) {
+    const leaf = field.label.split(/\s+\/\s+/u).at(-1)!;
+    if (new RegExp(`^(?:Game|${labels})$`, 'iu').test(leaf)
+      && !inspectField(leaf, gamingApplicabilityAssertionText(`${leaf}: ${field.value}`, context.game).text.slice(leaf.length + 1).trim())) break;
+  }
   const boundedList = (value: string | undefined): string[] | undefined => {
     if (value === undefined) return undefined;
     const values = value.split(',').map(item => item.trim());
