@@ -34,7 +34,7 @@ The managed Docker daemon was checked through its local Unix socket with inherit
 | Database | `arcanos_audit_pg18_20260727` |
 | Required sentinel | `ARCANOS_POSTGRES_TESTS_REQUIRE_DATABASE=1` |
 | Connection scope | Dedicated `*_TEST_DATABASE_URL` variables only; never `DATABASE_URL` |
-| Preparation result | Container healthy; SQL over container-local socket and host loopback both report exact disposable database and `server_version_num=180006` (PostgreSQL 18.6). No candidate tests ran. |
+| Initial preparation result | Container healthy; SQL over container-local socket and host loopback both report exact disposable database and `server_version_num=180006` (PostgreSQL 18.6). Execution and final cleanup results are recorded below. |
 
 The database guard in `tests/integration/postgresTestDatabase.ts` requires a loopback host, explicit port, exact disposable database name, credentials, no query/fragment, and PostgreSQL 18. Missing URLs fail under the required sentinel. Gaming's durable suite reads `JOB_CLAIM_FENCING_TEST_DATABASE_URL`. Its repository transactions, JSONB, ranking, and revision behavior execute in PostgreSQL; acquisition/provider seams are mocked. Each suite owns and drops its random test schema.
 
@@ -79,7 +79,7 @@ Existing offline preview contracts and source/compiled import gates can still ru
 
 ## Candidate result ledger
 
-No candidate immutable commit has been tested yet. Initial local PostgreSQL execution used Node `24.18.1`, npm `11.16.0`, PostgreSQL `18.6`, and required sentinel `1`. A separate safe runtime check after loading `scripts/test-env.mjs` verified all eleven dedicated bindings target the owned disposable database and production `DATABASE_URL` is empty.
+Initial precommit results are preserved below; subsequent immutable PostgreSQL checks establish the published P0 head separately. Local PostgreSQL execution used Node `24.18.1`, npm `11.16.0`, PostgreSQL `18.6`, and required sentinel `1`. A separate safe runtime check after loading `scripts/test-env.mjs` verified all eleven dedicated bindings target the owned disposable database and production `DATABASE_URL` is empty.
 
 | Initial integration-tree check | Actual result |
 | --- | --- |
@@ -91,8 +91,62 @@ No candidate immutable commit has been tested yet. Initial local PostgreSQL exec
 | Focused Gaming SQL revalidation after sparse exact-game-heading correction | **PASS**: 1 suite / 9 tests, 0 failures, skips, or TODOs. The existing SQL fixture was preserved. A parser-owned exact bare-game heading can scope an intact relevant tuple; a generic guide h1 or prose body still cannot self-corroborate. The 111-file fingerprint set was unchanged throughout execution, aggregate `1228b1e43ab1f5b1b05d82fc905e1836ded1b3817fe60f8c5a9c3ef590d349dc`. This resolves the observed candidate regression on the uncommitted integration tree; it is not an immutable-head full SQL rerun. |
 | Working-tree binding | HEAD remained baseline `200463b3aac65eb494f71d842c1e2b0378530bfb` plus uncommitted candidate edits. A 111-file Gaming/SQL fingerprint aggregate changed from `2285c76527c9a906be8424fb548f26378a63382fc7822cf61ad69f1ae6d02719` before execution to `6bbf1f623033ffec799389c4d3692433b1d9829cfc01beeb1aa11860d0877826` afterward. `gamingGameRegistry.ts` and `gamingStructuralEvidence.ts` changed during integration. The run therefore does not attest a fixed candidate tree. |
 | Local result artifacts | Bounded Jest JSON and file hashes reside outside the repository under `/workspace/task-tools/gaming-generic-validation/`; raw test console logs are not included in this audit. |
-| Cleanup | Container retained for authorized follow-up tests. Final exact-ID ownership and absence checks remain pending. |
+| Cleanup | Initially retained for authorized follow-up tests; final scoped removal and absence are recorded below. |
 
-Benchmark results, local broad checks, exact-head CI run links, the candidate immutable SHA, full immutable-head SQL validation, and final cleanup must be recorded before a candidate readiness claim. Any precommit check must identify its included working tree and must not be presented as immutable-commit evidence. The unrelated Backstage SQL microbenchmarks emitted during fencing tests do not measure Gaming evidence acceptance.
+## Immutable PostgreSQL results and cleanup
 
-Production readiness remains **NOT READY** pending candidate gates, independent benchmark qualification, and review. Production promotion and merge remain unauthorized even if checks pass.
+The earlier frozen, unpublished foundation commit `17e8f98d366f9d68b9f27e40dcd1be07fecde6db`, tree `0806ee0acb9fe2a619934f08bb58b86352d06965`, passed all sixteen required PostgreSQL suites and 208 tests with zero failures, skips, or TODOs. Its HEAD, tree, and 2,227 relevant source/test fingerprints stayed unchanged throughout execution. That result remains historical local evidence; later identity corrections required a new run rather than reusing the earlier tree's result.
+
+The published P0 runtime checkpoint below was tested in stationary detached checkout `/workspace/gaming-foundation-validation`. Its tracked source was clean; its sole untracked entry was the inspected `node_modules` dependency symlink to the task's installed dependencies. Direct Jest commands performed no build, source edit, or Git transition. Later quotation-boundary corrections require fresh exact-head CI; this checkpoint must not be relabeled as their immutable-head result.
+
+| Published checkpoint SQL evidence | Observed result |
+| --- | --- |
+| Tested published commit | `0d3e1d7f2ddde12fb081946ab318c7609366a7e9` |
+| Tested Git tree | `3dcb1a56eb2bca553458a19ff760f0294622ae62` |
+| Toolchain and database | Node `24.18.1`, npm `11.16.0`, PostgreSQL `18.6` / `server_version_num=180006` |
+| Test isolation | Required sentinel `1`; eleven dedicated URLs verified against the owned loopback disposable database after test-environment loading; production `DATABASE_URL` empty |
+| `test:local-agent-postgres` | **PASS**: 1 suite / 6 tests; 0 failures, skips, or TODOs |
+| `test:postgres-fencing` | **PASS**: 15 suites / 202 tests; 0 failures, skips, or TODOs; includes all 9 durable Gaming SQL tests |
+| Combined required SQL set | **PASS**: 16 suites / 208 tests; 0 failures, skips, or TODOs |
+| Source integrity | HEAD and tree unchanged before/after; all 2,227 tracked relevant files unchanged; SHA256 aggregate `a6870bf15b129ab3543cf429e7e792e28ecfef593712b37ba683cb3b3784e42d` |
+| Artifacts | Sanitized result proof and bounded Jest JSON outside the repository in `/workspace/task-tools/gaming-generic-validation/published-foundation-pg18-proof.json` and the two `published-foundation-*-pg18.json` result files |
+| Post-test database | Exact disposable database/version reverified; zero remaining test schemas before shutdown |
+| Cleanup authorization and identity | Task-owned exact container ID `f805a0e8790ced2944abd477a0d452186c3b00c828aa7f54cd9ec7d7eb6c6507`, name `arcanos-gaming-generic-pg18-1532`, both ownership labels, tmpfs, and automatic removal reverified before the authorized exact-ID stop |
+| Verified absence | At `2026-10-10 15:29:28 UTC`, stop returned exit 0; exact-name inventory was empty; exact-ID inspection returned `No such object`; loopback port 55433 was absent. No unrelated or production resource changed. |
+
+These local SQL results do not claim the separate real Swift/device E2E, Redis admission, live publisher acquisition, Trinity/provider generation, hosted sealed preview, or terminal CI aggregate. Their independently executed evidence belongs in the final release ledger. No source/runtime change occurred as a side effect of SQL validation or cleanup.
+
+Benchmark results, local broad checks, and exact-head CI run links must be recorded before a candidate readiness claim. Any precommit check must identify its included working tree and must not be presented as immutable-commit evidence. The unrelated Backstage SQL microbenchmarks emitted during fencing tests do not measure Gaming evidence acceptance.
+
+## Canonical local checks and environment findings
+
+The immutable integrated runtime checkpoint `07f56f41bf5fc3aa3f43a0ea76edb30ef7c6d5de` was checked with the pinned Node/npm toolchain. Subsequent runtime repairs and their final validation are recorded separately; a checkpoint success is not a final-head claim.
+
+| Check | Checkpoint result and scope |
+| --- | --- |
+| `npm run type-check` | **PASS**, including source boundaries and shared-package builds |
+| `npm run lint` | **PASS**, zero errors and 77 warnings; warnings were not suppressed |
+| `npm run build` | **PASS**, including emitted aliases and reviewed compiled preview import graph |
+| `npm run validate:railway` | **PASS**, static local compatibility only; no deployment |
+| `npm run validate:backend-cli:contract` | **PASS** |
+| `npm run validate:backend-cli:offline` | Initially failed at import because the system Python lacked `openai`; subsequently **PASS** in task-private CPython 3.11.16, using the existing script, synthetic mock credentials, disabled dotenv hydration and a socket audit guard; zero network attempts |
+| Focused Python contracts | **PASS**, 84/84 tests, zero skips; five existing mocked/shared-contract files, task-private hash-pinned CI dependency subset within `pyproject.toml` bounds; `pip check` passes |
+| Production npm audit policy | **PASS**, raw audit exit zero; policy report `ignored=[]`, `actionable=[]` |
+| Documentation and generated indexes | **PASS**, documentation audit and `reindex:check`; local links 696/696, zero failures; 104 external URLs intentionally not checked over the network |
+| Completed broad root Jest checkpoint | **FAIL**, 878 passed / 9 failed / 13 skipped suites; 17,044 passed / 16 failed / 167 skipped tests, 822.951 s. Runtime/source remained at `07f56f41`; report-only edits occurred during execution. Final revalidation must be bound separately. |
+
+The preloaded `node_modules` did not match the lockfile: it contained `proxy-addr` 2.0.7 while the lock requires 2.0.8. IPv4-mapped-address security failures were reproduced on pristine baseline source before a canonical pinned-toolchain `CI=true npm ci --no-fund` restored the locked dependencies. The lockfile and security assertions were not changed. Missing PowerShell also caused local projector tests to fail; task-private PowerShell 7.6.6 was installed from the official release with its published SHA-256 verified. Four affected environment/security suites then passed 100 tests with two platform-specific skips. An earlier moving-tree full Jest attempt was aborted and is not a completed full-suite result.
+
+The existing device expiry fixture reads `Date.now()` separately for issuance and expiry. A deterministic invocation of the real validator shows a gap above 1 ms produces a lifetime above the allowed hour and correctly returns `DEVICE_AUTH_INVALID` before expiry validation. Seven relevant authentication/test files are byte-identical to baseline. Focused current and pristine-baseline runs each passed the selected test (289 unrelated tests intentionally skipped). The actual clock gap in the failed broad run was not captured; its precise trigger remains a hypothesis. No authentication policy or fixture was weakened.
+
+The completed broad run also exposed a confirmed single-quote scope regression, stale expectations for early identity diagnostics, an incorrectly rebound synthetic DLC record, and the native scanner child's inability to resolve the newly separated TypeScript profile-data alias. These receive generic runtime or narrowly scoped test-harness corrections; no rejected source is admitted to make a test pass. Five preview-related suites also exceeded existing timeouts under four workers on a two-CPU cgroup; contention is a hypothesis until lower-concurrency revalidation. Timeout limits remain unchanged.
+
+The superseded foundation exact-head CI [run 38063303896](https://github.com/pbjustin/Arcanos/actions/runs/38063303896) checked out `0d3e1d7f2ddde12fb081946ab318c7609366a7e9`: ten jobs succeeded, unit and aggregate failed, and readiness was skipped. Unit results were 880 passed / 4 failed / 13 skipped suites and 17,026 passed / 6 failed / 167 skipped tests. The four failing suites correspond to quotation, early-diagnostic/test binding and native scanner harness corrections. The aggregate correctly refused the failed test dependency. PostgreSQL, real device E2E, security, build, lint/type, Redis, Python Windows, convergence and static compatibility succeeded on this checkpoint; they do not attest subsequent repairs.
+
+## Review and release boundaries
+
+The stack stops at open draft PRs, with foundation A+B first, optional corroboration D second, and benchmark/audit F last. Grouping C/E into reuse and data/versioning changes avoids unmeasured adapters or duplicate cache/recovery infrastructure. Current publication heads and terminal exact-head workflow outcomes are recorded in each draft PR description and the final handoff; those remote facts must be refreshed before any later release review.
+
+The main branch-protection endpoint returned HTTP 403 to the installed integration. Repository ruleset listing returned an empty list, which does not establish absence of branch protection or satisfy unknown approval requirements. Required owner approvals therefore remain unverified. No merge-ready claim follows from green CI.
+
+Production readiness remains **NOT READY** pending independent benchmark qualification, publisher-family provenance review, supported hosted preview and separately authorized live acquisition/generation validation. Production promotion and merge remain unauthorized even if checks pass.

@@ -100,7 +100,7 @@ The pristine baseline uses archived source commit
 Node 24.18.1, and npm 11.16.0. The machine-readable result in
 [benchmark-baseline.json](benchmark-baseline.json) records the corpus SHA-256.
 
-| Measure | Pristine baseline | Integrated working tree |
+| Measure | Pristine baseline | Integrated commit |
 | --- | --- | --- |
 | Valid accepted | 40/45 (88.89%) | 45/45 (100%) |
 | Invalid rejected | 85/95 (89.47%) | 95/95 (100%) |
@@ -117,16 +117,25 @@ an H1 and provide no independently named game in gameplay prose; the duplicate
 heading is not independent body identity. Nominal Wilson intervals are
 76.50–95.16% for valid acceptance and 81.70–94.18% for invalid rejection.
 
-The integrated working tree passes all five benchmark tests on 2026-10-10 using
-the same pinned toolchain, unchanged labels, and identical corpus. Valid
+The immutable implementation commit
+`07f56f41bf5fc3aa3f43a0ea76edb30ef7c6d5de` passes all five benchmark tests on
+2026-10-10 using the same pinned Node 24.18.1 and npm 11.16.0 toolchain,
+PowerShell 7.6.6, unchanged labels, and identical corpus. Valid
 acceptance improves by 11.11 percentage points and invalid rejection by 10.53
 points. Integrated nominal Wilson intervals are 92.13–100% and 96.11–100%,
 respectively. [benchmark-integrated.json](benchmark-integrated.json) records the
-checkout base, dirty-state qualification, corpus hash, and changed source-file
-hashes. The checkout base is still
-`200463b3aac65eb494f71d842c1e2b0378530bfb`; these results include uncommitted
-implementation changes. Validation against the exact implementation commit
-remains pending and must be recorded before release review.
+exact implementation SHA, source tree, corpus hash, changed source-file hashes,
+and immutable validation proof. HEAD remained identical before and after the
+run; the source tree was `8eb981dea8abf0380855d32a8ae92e39f08ddc71`.
+
+All 2,429 tracked files in `src`, `tests`, `packages`, `workers`,
+`arcanos-ai-runtime/src`, and `scripts` retained identical SHA-256 fingerprints.
+The sorted fingerprint manifest hash remained
+`38a9a17dd5186519389decb8cebfc8d70001250f330d75963df57aa5872d5914`.
+The corpus hash remained
+`319d39bea80fa09911514e63e78d3fc0ed066a44ea9dfb2eee1e4e31fcb27968`.
+This direct Jest run performed no shared-package builds or source writes;
+the later documentation update changes only this report and its result JSON.
 
 The benchmark cannot verify publisher accessibility, paywalls or robots policy
 across live publishers, parser robustness across the web, acquired factual truth,

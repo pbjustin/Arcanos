@@ -41,7 +41,7 @@ The corroboration summary adds CLEAR warnings only. It changes no score, accepta
 
 ## Evidence and remaining release gaps
 
-[The benchmark report](benchmark.md) defines 140 fixed candidate evaluations: 45 valid and 95 invalid, across three unrelated known games, two unregistered invented games, and multiple layout shapes. On the integrated working tree, valid acceptance is 45/45 and invalid rejection is 95/95; false-negative and false-positive rates are each 0%, structured coverage is 140/140, and security-critical invalid admissions/foreign-record sentinels are zero. The pristine baseline is 40/45 valid accepted and 85/95 invalid rejected. Labels were specified and separately reviewed internally, not through a blinded external study.
+[The benchmark report](benchmark.md) defines 140 fixed candidate evaluations: 45 valid and 95 invalid, across three unrelated known games, two unregistered invented games, and multiple layout shapes. The immutable candidate recorded there accepts 45/45 valid cases and rejects 95/95 invalid cases; false-negative and false-positive rates are each 0%, structured coverage is 140/140, and security-critical invalid admissions/foreign-record sentinels are zero. The pristine baseline is 40/45 valid accepted and 85/95 invalid rejected. Labels were specified and separately reviewed internally, not through a blinded external study.
 
 These are finite correlated synthetic observations. Nominal 95% Wilson lower bounds are 92.13% for acceptance and 96.11% for rejection, so this corpus does not establish population targets of 95% and 99%. Representative independent labels, broader source layouts, live access and generation evidence remain separate gaps. Candidate-only diagnostic coverage explicitly leaves generation unevaluated.
 
