@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-10T17:14:46.641Z",
+  "generatedAt": "2026-10-10T18:52:53.672Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -4511,6 +4511,9 @@
         },
         {
           "relativePath": "tests/gaming-ingress-audit.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-json-evidence-preflight.test.ts"
         },
         {
           "relativePath": "tests/gaming-json-evidence-resolution.test.ts"
