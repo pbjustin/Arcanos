@@ -164,6 +164,8 @@ The superseded foundation [495d22ba run 38064866765](https://github.com/pbjustin
 
 Full unit runs intentionally omit optional SQL, Redis and real-device environments; actual PostgreSQL, Redis and device evidence belongs to the separately enabled CI jobs, not skipped unit cases. Python's offline contract used mocks and a zero-network guard. The final publication record must preserve remaining platform/environment skips, any actual failures, and unsupported hosted/live paths.
 
+The superseded corroboration [4a7fe5f2 run 38065016784](https://github.com/pbjustin/Arcanos/actions/runs/38065016784) also finished with ten successful jobs, failed unit/aggregate, and skipped readiness. Its exact-head unit run had 884 passed / 2 failed / 13 skipped suites (899 total) and 17,065 passed / 2 failed / 167 skipped tests (17,234 total). Actual logs identify only the same strict identity-proof expectations; this failure is not an additional production or runtime root cause.
+
 ## Review and release boundaries
 
 The stack stops at open draft PRs, with foundation A+B first, optional corroboration D second, and benchmark/audit F last. Grouping C/E into reuse and data/versioning changes avoids unmeasured adapters or duplicate cache/recovery infrastructure. Current publication heads and terminal exact-head workflow outcomes are recorded in each draft PR description and the final handoff; those remote facts must be refreshed before any later release review.

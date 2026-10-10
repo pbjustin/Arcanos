@@ -23,6 +23,11 @@ about real game mechanics. Unknown titles require acquired title and independent
 body or intact gameplay-record agreement. A submitted name, URL, or publisher
 claim provides no independent identity evidence.
 
+The fixture's known/unknown label is a corpus designation, not an assertion of
+registry membership. Both invented titles are unregistered at the tested
+implementation. Future corpus review must recheck that invariant independently
+of the unchanged source-admission labels.
+
 The fixture author specified labels and rationales before corresponding algorithm
 repairs; the separate source-scope audit and root agent reviewed the primary and
 local ownership rules. Labels derive from
@@ -50,6 +55,9 @@ completed generated answer. Diagnostic coverage means an internal versioned
 evaluation includes all nine stages, valid explicit statuses, stable reason
 codes, a terminal candidate outcome, rejection reasons, and recovery eligibility.
 Generation remains explicitly unevaluated in this candidate-only benchmark.
+This shape/status/code coverage does not exhaustively test diagnostic privacy,
+metadata bounds or every failure mode; the separate evaluation-contract and
+security regressions remain required.
 Known expired-applicability fixtures additionally require a freshness-stage
 rejection with `NO_LONGER_EFFECTIVE`, so a generic selection rejection does not
 satisfy their diagnostic coverage.
