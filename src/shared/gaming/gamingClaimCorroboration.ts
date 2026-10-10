@@ -18,10 +18,18 @@ const safeId = (value: unknown): value is string => typeof value === 'string' &&
 
 /** Presentation headings, captions, bylines and column order cannot turn copied
  * parser-owned records into independent reports. Canonical label aliases retain
- * the same structural field identity. Preserve every field and local
+ * the same structural field identity; game/edition/platform formatting and exact
+ * plural metadata labels reuse the existing scope grammar. Preserve every semantic value and local
  * qualifier; acquisition provenance and scope are checked separately below. */
 function parserOwnedRecordFingerprint(unit: GamingEvidenceUnit): string {
-  return hash({ fields: unit.fields.map(field => JSON.stringify([normalizeGamingStructuralFieldLabel(field.label), normalized(field.value)])).sort(),
+  return hash({ fields: unit.fields.map(field => {
+    const label = normalizeGamingStructuralFieldLabel(field.label);
+    const key = label === 'platforms' ? 'platform' : label === 'regions' ? 'region' : label;
+    const value = key === 'game' ? normalizeGamingEvidenceGameIdentity(field.value)
+      : key === 'scope' ? normalizeGamingEditionIdentity(field.value)
+        : key === 'platform' ? normalizeGamingPlatformIdentity(field.value) : normalized(field.value);
+    return JSON.stringify([key, value]);
+  }).sort(),
     qualifiers: (unit.context.qualifiers ?? []).map(normalized).sort() });
 }
 
