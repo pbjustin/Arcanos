@@ -205,7 +205,9 @@ subjects cannot hide behind a matching expansion prefix.
 The follow-up focused run passed all hosted extraction, source-scope, identity,
 negation, Samurai workflow, and benchmark cases. Its sole failure was a live
 adapter expectation loaded concurrently with its owner changing the fixture to
-the stronger acquired wrong-game rejection; that test requires a stable rerun.
+the stronger acquired wrong-game rejection. The subsequent frozen `e57c58f4`
+full run passed `live-validation-gaming-adapter.test.ts`; that historical
+concurrent-tree failure is closed by the stable rerun.
 Final pinned dependency, full-suite, commit, CI, and preview results are reported
 in the central validation report, rather than inferred from this evolving tree.
 

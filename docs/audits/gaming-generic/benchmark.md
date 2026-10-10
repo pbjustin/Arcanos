@@ -118,7 +118,7 @@ heading is not independent body identity. Nominal Wilson intervals are
 76.50–95.16% for valid acceptance and 81.70–94.18% for invalid rejection.
 
 The immutable implementation commit
-`07f56f41bf5fc3aa3f43a0ea76edb30ef7c6d5de` passes all five benchmark tests on
+`3e4def255c61222a1f8a0b2eba694ab912719a55` passes all five benchmark tests on
 2026-10-10 using the same pinned Node 24.18.1 and npm 11.16.0 toolchain,
 PowerShell 7.6.6, unchanged labels, and identical corpus. Valid
 acceptance improves by 11.11 percentage points and invalid rejection by 10.53
@@ -126,19 +126,29 @@ points. Integrated nominal Wilson intervals are 92.13–100% and 96.11–100%,
 respectively. [benchmark-integrated.json](benchmark-integrated.json) records the
 exact implementation SHA, source tree, corpus hash, changed source-file hashes,
 and immutable validation proof. HEAD remained identical before and after the
-run; the source tree was `8eb981dea8abf0380855d32a8ae92e39f08ddc71`.
+run; the source tree was `d45f6cd62b971604a0536f08a02557f8980923d6`.
 
 All 2,429 tracked files in `src`, `tests`, `packages`, `workers`,
 `arcanos-ai-runtime/src`, and `scripts` retained identical SHA-256 fingerprints.
 The sorted fingerprint manifest hash remained
-`38a9a17dd5186519389decb8cebfc8d70001250f330d75963df57aa5872d5914`.
+`9d7734a805f8e86b0ae74f8d8230630e33d1255584ef37ab77dd8fb1b512fd8f`.
 The corpus hash remained
 `319d39bea80fa09911514e63e78d3fc0ed066a44ea9dfb2eee1e4e31fcb27968`.
 This direct Jest run performed no shared-package builds or source writes;
 the later documentation update changes only this report and its result JSON.
+The evaluated stack includes foundation commit
+`59fa73d41e6423fc0b0fa4b060e5fd1bae2d1c3c` and corroboration/recovery commit
+`4de3925af3c6bee495f56bf758022d3c0c5cb61d`. Production runtime remains identical
+to the previously validated benchmark commit
+`e57c58f4ccffb5760a87980efa42b2eb394fa1c6`; only three strict-object assertions in
+two other regression test files changed. The frozen benchmark tests,
+fixtures and labels remained unchanged. Full-suite and CI outcomes are recorded
+separately in the validation ledger.
 
 The benchmark cannot verify publisher accessibility, paywalls or robots policy
 across live publishers, parser robustness across the web, acquired factual truth,
 Trinity generation, full workflow recovery budgets, PostgreSQL storage behavior,
-or production readiness. Existing focused transport, workflow, private-plugin,
+or production readiness. Passing this fixed corpus does not establish coverage
+of all security cases; additional source-security regressions remain separate
+required evidence. Existing focused transport, workflow, private-plugin,
 durable-storage, and generation tests remain separate required evidence.
