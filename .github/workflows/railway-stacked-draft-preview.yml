@@ -184,6 +184,39 @@ jobs:
           GITHUB_TOKEN: ''
         run: node scripts/stacked-draft-preview-build.mjs build .stacked-preview/authorization.json .stacked-preview
 
+      - name: Collect bounded secretless build diagnostics
+        if: always()
+        env:
+          GITHUB_TOKEN: ''
+        run: |
+          node --input-type=module <<'NODE'
+          import { copyFileSync, lstatSync, mkdirSync } from 'node:fs';
+          // command() bounds each stdout/stderr stream to 8 MiB. Admit only
+          // these two combined diagnostic logs, never source or input receipts.
+          const maxBytes = 16 * 1024 * 1024 + 2;
+          for (const name of ['builder-create.log', 'build.log']) {
+            const source = `.stacked-preview/${name}`;
+            let stat;
+            try { stat = lstatSync(source); }
+            catch (error) { if (error.code === 'ENOENT') continue; throw error; }
+            if (!stat.isFile() || stat.size > maxBytes) throw new Error('STACKED_PREVIEW_BUILD_DIAGNOSTICS_INVALID');
+            mkdirSync('.stacked-preview/build-diagnostics', { recursive: true });
+            copyFileSync(source, `.stacked-preview/build-diagnostics/${name}`);
+          }
+          NODE
+
+      - name: Retain secretless build diagnostics after failure
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: stacked-preview-build-diagnostics
+          path: |
+            .stacked-preview/build-diagnostics/builder-create.log
+            .stacked-preview/build-diagnostics/build.log
+          if-no-files-found: warn
+          include-hidden-files: true
+          retention-days: 10
+
       - name: Retain immutable image and build receipt
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

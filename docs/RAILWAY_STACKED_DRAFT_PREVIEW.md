@@ -88,6 +88,14 @@ and authority:
    read-back on 2026-10-10 observed `Memory: 2147483648`, `CpuQuota: 200000`
    and `CpuPeriod: 100000`. This proves that builder's configured limits;
    final build execution and hosted runtime limits need separate receipts.
+   The workflow retains the secretless `builder-create.log` and `build.log`
+   after success, failure or cancellation while the runner remains available.
+   Only those two regular files are copied to the diagnostics artifact; each is
+   limited to 16 MiB plus two separator bytes, matching the helper's 8 MiB bound
+   for each stdout/stderr stream. Missing logs are permitted before builder
+   startup; symlinks and oversized logs fail closed. Source archives,
+   authorization inputs and credential-bearing job logs are excluded. These
+   diagnostics expire after ten days. Hard runner loss can prevent upload.
    The trusted install disables lifecycle scripts, includes all six workspace
    manifests, and copies the checked-in `vendor/minimatch-9.0.7` JavaScript
    while excluding ambient `node_modules` and Git metadata. Attestation uses

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -165,6 +165,47 @@ test('candidate build and evidence verification stay separate from Railway and r
   assert.match(probe.run, /--git-evidence-root "\$GITHUB_WORKSPACE\/head-evidence"/u);
   assert.match(probe.run, /--execute --allow-network/u);
   assert.ok(verify.steps.indexOf(recheck) < verify.steps.indexOf(probe));
+});
+
+test('failed builds retain only bounded regular-file diagnostics without widening image publication', () => {
+  const build = workflow.jobs.build;
+  const collect = named(build, 'Collect bounded secretless build diagnostics');
+  const retain = named(build, 'Retain secretless build diagnostics after failure');
+  const image = named(build, 'Retain immutable image and build receipt');
+  assert.equal(collect.if, 'always()');
+  assert.deepEqual(collect.env, { GITHUB_TOKEN: '' });
+  assert.equal(retain.if, 'always()');
+  assert.equal(retain.with.name, 'stacked-preview-build-diagnostics');
+  assert.deepEqual(retain.with.path.trim().split('\n'), [
+    '.stacked-preview/build-diagnostics/builder-create.log', '.stacked-preview/build-diagnostics/build.log',
+  ]);
+  assert.equal(retain.with['if-no-files-found'], 'warn');
+  assert.equal(image.if, undefined);
+  assert.ok(build.steps.indexOf(collect) < build.steps.indexOf(retain));
+  assert.ok(build.steps.indexOf(retain) < build.steps.indexOf(image));
+  for (const variant of ['missing', 'valid', 'symlink', 'oversized']) {
+    const directory = mkdtempSync(path.join(tmpdir(), 'stacked-workflow-build-diagnostics-'));
+    try {
+      const root = path.join(directory, '.stacked-preview');
+      mkdirSync(root);
+      for (const name of ['authorization.json', 'published.json', 'source.tar'])
+        writeFileSync(path.join(root, name), 'must never enter diagnostic artifact');
+      if (variant === 'valid') {
+        writeFileSync(path.join(root, 'builder-create.log'), 'bounded builder creation evidence\n');
+        writeFileSync(path.join(root, 'build.log'), 'registry HTTP 503 failure evidence\n');
+      } else if (variant === 'symlink') symlinkSync(path.join(root, 'authorization.json'), path.join(root, 'build.log'));
+      else if (variant === 'oversized') writeFileSync(path.join(root, 'build.log'), Buffer.alloc(16 * 1024 * 1024 + 3));
+      const result = runInline(collect, directory);
+      assert.equal(result.status, ['missing', 'valid'].includes(variant) ? 0 : 1, result.stderr);
+      const output = path.join(root, 'build-diagnostics');
+      for (const name of ['authorization.json', 'published.json', 'source.tar'])
+        assert.equal(existsSync(path.join(output, name)), false);
+      if (variant === 'valid') for (const name of ['builder-create.log', 'build.log'])
+        assert.equal(readFileSync(path.join(output, name), 'utf8'), readFileSync(path.join(root, name), 'utf8'));
+      else assert.equal(existsSync(path.join(output, 'build.log')), false);
+      if (['symlink', 'oversized'].includes(variant)) assert.match(result.stderr, /STACKED_PREVIEW_BUILD_DIAGNOSTICS_INVALID/u);
+    } finally { rmSync(directory, { recursive: true, force: true }); }
+  }
 });
 
 test('publisher verifies image before credentials and binds publication to digest and build receipt', () => {
