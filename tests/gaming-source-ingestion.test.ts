@@ -16,12 +16,12 @@ const resolveGamingDocumentMock = jest.fn();
 const planAutonomousWorkerJobMock = jest.fn();
 const ingestGamingBuildResourceMock = jest.fn();
 
-function sourceApproval(subjectHash: string) {
+function sourceApproval(subjectHash: string, freshness: 'verified' | 'not_applicable' = 'verified') {
   const dimension = { status: 'evaluated' as const, score: 4.5, reasonCodes: ['SYNTHETIC_SUPPORTED_SOURCE'],
     evidenceRefs: ['synthetic-source'], unresolvedFacts: [] };
   return createGamingClearAssessment({ profile: 'source', questionProfile: 'walkthrough', sourceRole: 'gameplay_guide',
     subjectId: 'synthetic-source', subjectHash, contextFingerprint: gamingClearHash('synthetic-context'), evidenceRefs: ['synthetic-source'],
-    gates: { identity: 'verified', compatibility: 'verified', claimSupport: 'verified', freshness: 'verified', provenance: 'verified', security: 'verified' },
+    gates: { identity: 'verified', compatibility: 'verified', claimSupport: 'verified', freshness, provenance: 'verified', security: 'verified' },
     dimensions: { clarity: dimension, leverage: dimension, efficiency: dimension, alignment: dimension, resilience: dimension } });
 }
 
@@ -304,6 +304,91 @@ describe('gaming source ingestion', () => {
     expect(JSON.stringify(persisted.records)).not.toContain('Test Weapon');
     expect(persisted.records.every((record: any) => !record.normalized.structuredEvidence && !record.normalized.equipment)).toBe(true);
     expect(persisted.records[0].searchText).toContain('equipment skills rotation');
+  });
+
+  it.each(['base-game', 'Shadow of the Erdtree'])('captures canonical acquired game scope for approved compound edition identity: %s', async edition => {
+    const { createApprovedGamingSourceIngestion, hashGamingApprovedDocument } = await import('../src/services/gamingSourceIngestion.js');
+    const { extractGamingFreshnessMetadata } = await import('../src/shared/gaming/gamingFreshnessCore.js');
+    const url = 'https://example.com/elden-ring-route-guide';
+    const game = 'Elden Ring';
+    const text = `Game: ${game}\nEdition: ${edition}\n` + 'In Elden Ring, follow the checkpoint route and turn the copper lever to open the gate. '.repeat(8);
+    const acquired = resolvedDocument(url, text, { metadata: { title: 'Elden Ring route guide', headings: 'Elden Ring route guide' } });
+    const contentHash = hashGamingApprovedDocument(acquired as any);
+    const sourceAssessment = sourceApproval(contentHash, 'not_applicable');
+    const freshness = extractGamingFreshnessMetadata(acquired as any, { game, edition }, new Date(), []);
+    const actorKey = 'approved-edition-scope-actor';
+    const queued = await createApprovedGamingSourceIngestion([{
+      url, game: `${game} ${edition}`, contentHash, actorScopeHash: createHash('sha256').update(actorKey).digest('hex'),
+      policyVersion: 'gaming-hybrid-candidates/v1', sourceTrustType: 'supplied', freshness: { ...freshness }, sourceAssessment,
+      applicabilityContext: { game, edition, mode: 'guide', classification: 'stable', historical: false,
+        seasonalPatchRequired: false, contextFingerprint: sourceAssessment.contextFingerprint }
+    }], 'approved-edition-scope-1', { actorKey, canStore: true });
+    expect(queued.statusCode).toBe(202);
+    resolveGamingDocumentMock.mockResolvedValue(acquired);
+    const queuedBody = (findOrCreateGptJobMock.mock.calls[0][0] as any).input.body;
+    const result = await executeQueuedGamingSourceIngestion('019fe3cd-8c01-7f01-8d2d-caa951bc4b9b', queuedBody);
+    expect(result.output.sources[0].status).toBe('stored');
+    const persisted = persistGamingSourceRevisionMock.mock.calls[0][0] as any;
+    expect(persisted.gameName).toBe(`${game} ${edition}`);
+    expect(persisted.provenance.hybridFreshness).toEqual(freshness);
+    expect(persisted.provenance.acquiredApplicability).toMatchObject({ contentHash: persisted.contentHash, game, edition });
+    expect(persisted.provenance.acquiredApplicability.metadataConflict).toBeUndefined();
+    expect(persisted.provenance.acquiredApplicability.metadataUnverified).toBeUndefined();
+  });
+
+  it.each([
+    { label: 'Platform', own: 'PS5', foreign: 'PC', matching: { platform: 'PS5' }, incompatible: { platform: 'PC' } },
+    { label: 'Region', own: 'EU', foreign: 'US', matching: { region: 'EU' }, incompatible: { region: 'US' } }
+  ].flatMap(restriction => ['local', 'global'].map(location => ({ ...restriction, location }))))
+  ('preserves directly ingested mixed-source provenance and $location $label restrictions during stored retrieval', async restriction => {
+    const { hashGamingApprovedDocument } = await import('../src/services/gamingSourceIngestion.js');
+    const { extractGamingDocumentEvidence } = await import('../src/services/gamingDocumentEvidence.js');
+    const { selectStoredGamingEvidence, formatStoredGamingEvidence } = await import('../src/shared/gaming/gamingStoredEvidenceCore.js');
+    const { assessGamingClearEvidence } = await import('../src/shared/gaming/gamingClearEvidence.js');
+    const url = 'https://example.com/portal-2-statistics-guide';
+    const game = 'Portal 2';
+    const body = '<article><h1>Portal 2 statistics guide</h1><table><caption>Independently scoped synthetic statistics</caption>'
+      + `<tr><th>Game</th><th>Item</th><th>Stat</th><th>Value</th><th>Unit</th><th>Scope</th>${restriction.location === 'local' ? `<th>${restriction.label}</th>` : ''}</tr>`
+      + `<tr><td>Portal 2</td><td>Testing Wand</td><td>Damage</td><td>42</td><td>points</td><td>base-game</td>${restriction.location === 'local' ? `<td>${restriction.own}</td>` : ''}</tr>`
+      + `<tr><td>Hades</td><td>Practice Blade</td><td>Damage</td><td>77</td><td>points</td><td>base-game</td>${restriction.location === 'local' ? `<td>${restriction.foreign}</td>` : ''}</tr></table></article>`;
+    const evidenceUnits = extractGamingDocumentEvidence({ body, contentType: 'text/html', sourceUrl: url }).units;
+    const text = `${restriction.location === 'global' ? `${restriction.label}: ${restriction.own}\n` : ''}In ${game}, inspect these independently scoped synthetic statistics.\n${evidenceUnits.map(unit => unit.text).join('\n')}`;
+    const acquired = resolvedDocument(url, text, { metadata: { title: 'Portal 2 statistics guide', headings: 'Portal 2 statistics guide' }, evidenceUnits });
+    const acquiredHash = hashGamingApprovedDocument(acquired as any);
+    const queued = await createGamingSourceIngestion({ action: 'ingest', payload: {
+      game, sourceUrls: [url], origin: 'user_supplied', idempotencyKey: 'direct-mixed-game-scope-1'
+    } }, { actorKey: 'direct-mixed-game-scope-actor' });
+    expect(queued.statusCode).toBe(202);
+    resolveGamingDocumentMock.mockResolvedValue(acquired);
+    const queuedBody = (findOrCreateGptJobMock.mock.calls[0][0] as any).input.body;
+    const result = await executeQueuedGamingSourceIngestion('019fe3cd-8c01-7f01-8d2d-caa951bc4b9b', queuedBody);
+    expect(result.output.sources[0].status).toBe('stored');
+    const persisted = persistGamingSourceRevisionMock.mock.calls[0][0] as any;
+    expect(persisted.contentHash).toMatch(/^[a-f0-9]{64}$/u);
+    expect(persisted.cleanedContent).toContain('Hades');
+    expect(persisted.provenance).toMatchObject({ origin: 'user_supplied', requestedUrl: url, finalPublicUrl: url });
+    expect(persisted.provenance.acquiredApplicability).toMatchObject({ contentHash: persisted.contentHash,
+      [restriction.label === 'Platform' ? 'platforms' : 'regions']: [restriction.own] });
+    expect(persisted.provenance.acquiredApplicability).not.toHaveProperty('authority');
+    expect(persisted.provenance.acquiredApplicability).not.toHaveProperty('verifiedAt');
+    expect(hashGamingApprovedDocument(acquired as any)).toBe(acquiredHash);
+    expect(JSON.stringify(persisted.records)).toContain('Hades');
+    const records = persisted.records.map((stored: any, index: number) => ({
+      ...stored, contentHash: persisted.contentHash, recordId: `stored-record-${index}`, gameName: game, sourceId: 'stored-source', publicUrl: url,
+      sourceType: 'supplied', revisionId: 'stored-revision', fetchedAt: new Date(), publishedAt: null,
+      provenance: persisted.provenance, relevance: 1
+    }));
+    const limits = { chunkChars: 2_000, maxChunks: 6, maxSources: 3, maxContextChars: 8_000, structuredEvidenceChars: 8_000 };
+    expect(selectStoredGamingEvidence(records, { game, mode: 'guide', prompt: 'What is Practice Blade damage?' }, limits))
+      .toEqual([]);
+    expect(selectStoredGamingEvidence(records, { game, mode: 'guide', prompt: 'What is Testing Wand damage?', ...restriction.incompatible }, limits))
+      .toEqual([]);
+    const selected = selectStoredGamingEvidence(records, { game, mode: 'guide', prompt: 'What is Testing Wand damage?', ...restriction.matching }, limits);
+    expect(selected).toHaveLength(1);
+    expect(selected[0].evidence.text).toContain('Testing Wand');
+    expect(selected[0].evidence.text).not.toContain('Hades');
+    expect(assessGamingClearEvidence({ game, mode: 'guide', prompt: 'What is Testing Wand damage?', ...restriction.matching },
+      formatStoredGamingEvidence(selected, { game }, limits))).toMatchObject({ decision: 'accept', gates: { compatibility: 'verified' } });
   });
 
   it('reports legacy queued hybrid approval as requiring reassessment without fabricating a pass or invoking acquisition', async () => {

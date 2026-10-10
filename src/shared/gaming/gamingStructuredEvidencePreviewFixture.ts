@@ -8,7 +8,7 @@ import { buildGamingDocumentSearchText, classifyGamingDocumentQuality } from './
 import { assessGamingClearSource, gamingClearIntactSourceText } from './gamingClearSource.js';
 import { assessGamingClearEvidence } from './gamingClearEvidence.js';
 import { gamingClearHash } from './gamingClearPolicy.js';
-import { assessGamingSourcePolicy, evaluateGamingFreshness, extractGamingFreshnessMetadata, GAMING_FRESHNESS_DEFAULTS,
+import { assessGamingSourcePolicy, evaluateGamingFreshness, extractGamingFreshnessMetadata, GAMING_FRESHNESS_DEFAULTS, GAMING_FRESHNESS_POLICY_VERSION,
   type GamingFreshnessEvidence, type GamingReviewedSourceRule } from './gamingFreshnessCore.js';
 import { formatStoredGamingEvidence, selectStoredGamingEvidence,
   type GamingStoredEvidenceRecord, type GamingStoredKnowledgeInput } from './gamingStoredEvidenceCore.js';
@@ -85,12 +85,20 @@ async function requireStoredLifecycle(doc: ResolvedGamingDocument, input = INPUT
   requireProof(chunk.text === chunked.text.slice(chunk.startChar, chunk.endChar));
   const searchText = buildGamingDocumentSearchText({ cleanedText: chunk.text, title: doc.metadata.title,
     game: input.game, normalizedEvidence: '', maxChars: 2_000 });
+  const contentHash = hashGamingDocumentRevision(doc.text, JSON.stringify({ evidenceUnits: doc.evidenceUnits }));
+  const applicability = extractGamingFreshnessMetadata(doc, input, NOW, []);
   const row: GamingStoredEvidenceRecord = { gameName: input.game, recordId: 'synthetic-structured-record', recordType: 'guide',
     title: doc.metadata.title ?? null, searchText, sourceId: 'synthetic-structured-source', publicUrl: URL,
-    sourceType: 'specialist_guide', revisionId: 'synthetic-structured-revision', fetchedAt: NOW, publishedAt: null, relevance: 1,
+    sourceType: 'specialist_guide', revisionId: 'synthetic-structured-revision', contentHash, fetchedAt: NOW, publishedAt: null, relevance: 1,
     normalized: { text: chunk.text, evidenceUnits: chunk.evidenceUnits,
       chunk: { ordinal: chunk.ordinal, totalChunks: chunk.totalChunks, startChar: chunk.startChar, endChar: chunk.endChar } },
-    provenance: { resolverId: 'generic-web', resolverVersion: 'gaming-document-v2', resolutionStrategy: 'article' },
+    provenance: { resolverId: 'generic-web', resolverVersion: 'gaming-document-v2', resolutionStrategy: 'article',
+      acquiredApplicability: { extractorVersion: GAMING_FRESHNESS_POLICY_VERSION, contentHash, game: applicability.game,
+        ...(applicability.edition ? { edition: applicability.edition } : {}),
+        ...(applicability.platforms?.length ? { platforms: applicability.platforms } : {}),
+        ...(applicability.regions?.length ? { regions: applicability.regions } : {}),
+        ...(applicability.metadataConflict ? { metadataConflict: true } : {}),
+        ...(applicability.metadataUnverified ? { metadataUnverified: true } : {}) } },
     clearSourceAssessment: assessment };
   // Already acquired candidate, not a SQL/ranking simulation. The later question carries no URL.
   requireProof(!input.prompt.includes(URL));

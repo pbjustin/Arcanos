@@ -869,7 +869,7 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ['src/services/gamingDocumentEvidence.ts', '8a99087b1da1a216bcc79a5cde523f44b0b03b8a7f788356193eda7889fac32f'],
   ['src/services/gamingHtmlEvidence.ts', '8c1c29fac345651743731f9dc31a57841fbf1e163425730bbe97329a9beabd65'],
   ['src/services/gamingJsonEvidence.ts', 'd4d9fc0cd6a4c205098655a02f545630315a49e77a9d41d2d0c6237a88d6e7c0'],
-  ['src/shared/gaming/gamingStructuredEvidencePreviewFixture.ts', 'c4615ccc24aa43dfa79cb34513193d0104e5eda7dd19032a98a21fd65dc8910e'],
+  ['src/shared/gaming/gamingStructuredEvidencePreviewFixture.ts', 'e57aa16792bea77861013dc3408958b97818842866c805286aab73b89eec5a23'],
   ['src/shared/gaming/gamingSourceAcquisitionCore.ts', 'a2e1951b25ef9d40fabd4f96a233d30129a088d7b4eff99195c438536e49d86f'],
   ['src/shared/protectedDocumentByteBudget.ts', 'a4021d978ded2f16d446b3a11c58b567c6466acdf346556d34a4b91ebbf33f78'], // gitleaks:allow -- public source semantic SHA-256
   ['src/shared/gaming/gamingCurrentnessPreviewFixture.ts', '29763e7240d1e670fc4d78bdd336965fb410ce91ee7052dc7bb28c0cae21a854'],
@@ -898,7 +898,7 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ['src/services/gamingDocumentExtraction.ts', '6e92b6514484cb858aeb4e352380fc1b9c72f1be8a925ac2f78248adc14c016c'],
   ['src/services/gamingDocumentChunks.ts', 'a758af0d49a08a3d81ac6d6191c437d4080ba481c158169a535f091d8e279815'],
   ['src/services/gamingDurableDocumentChunks.ts', '8a6da8f48f8ee94cd61eb4e90fa2ae51b22c83d5041e8c40ea07227b5d8af0f2'],
-  ['src/shared/gaming/gamingStoredEvidenceCore.ts', '6d741e6529590d9788d2b439f27f6d634f59a1c642c59e7bbe3f467c0954773b'],
+  ['src/shared/gaming/gamingStoredEvidenceCore.ts', '56ce7ea9004a7327ef7c4f8df91eb263563239c4a875f584a491e7744cf68f30'],
   ['src/shared/gaming/gamingDurableRagPreviewFixture.ts', '047d6610dd24fd8dfcadf302b4d0c8eb9bce815cecb80410e10af6ac04132fbc'],
   ['src/shared/gaming/gamingLiveSourceValidationPreviewFixture.ts', 'ee48374f834a0b2109244b4677ee86391db2b11a7d7655cabb5c42d199dc8e2e'], // gitleaks:allow -- public source semantic SHA-256
   ['src/services/gamingGameDetection.ts', '3c4a01eb985a16fa85680db537db0227ad0f3008eb5eeb98ab254e0040cf0a7f'],
