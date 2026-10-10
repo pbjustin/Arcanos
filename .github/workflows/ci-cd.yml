@@ -226,6 +226,9 @@ jobs:
       - name: 🧪 Verify native PR preview containment contract
         run: npm run test:native-pr-preview-e2e
 
+      - name: 🧪 Verify stacked draft preview authorization and isolation
+        run: npm run test:stacked-draft-preview
+
       - name: 📥 Download build artifacts
         uses: actions/download-artifact@v4
         with:
