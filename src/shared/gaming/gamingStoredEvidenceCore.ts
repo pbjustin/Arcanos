@@ -7,7 +7,10 @@ import { normalizeGamingEvidenceGameIdentity, resolveGamingGuideIdentity } from 
 import type { GamingClearAssessment } from './gamingClearPolicy.js';
 import type { GamingClaimCorroborationSummary } from './gamingClaimCorroboration.js';
 import type { GamingEvidenceUnit } from './gamingEvidenceUnits.js';
-import { assessGamingStructuralUsability, readGamingEvidenceUnits, GAMING_STRUCTURAL_EVIDENCE_LIMITS } from './gamingStructuralEvidence.js';
+import { extractGamingFreshnessMetadata, GAMING_FRESHNESS_POLICY_VERSION, GAMING_SOURCE_POLICY_VERSION } from './gamingFreshnessCore.js';
+import { gamingPlatformEvidenceMatchesRequest } from './gamingPlatformIdentity.js';
+import { assessGamingStructuralUsability, readGamingEvidenceUnits, selectGamingGameScopedDocument,
+  selectGamingSourceEditionScopedEvidence, GAMING_STRUCTURAL_EVIDENCE_LIMITS } from './gamingStructuralEvidence.js';
 import { GAMING_HYBRID_V2_LIMITS } from './gamingHybridContract.js';
 
 export const MAX_STORED_GAMING_CANDIDATES = 20;
@@ -42,6 +45,7 @@ export interface GamingStoredEvidenceRecord {
   publicUrl: string;
   sourceType: string;
   revisionId: string;
+  contentHash?: string;
   fetchedAt: Date;
   publishedAt: Date | null;
   provenance: Record<string, unknown>;
@@ -62,6 +66,7 @@ export interface GamingStoredKnowledgeInput extends GamingPlayerContext {
   game: string;
   prompt: string;
   mode: 'guide' | 'build' | 'meta';
+  region?: string;
   limit?: number;
   sourceIndexOffset?: number;
   maxContextChars?: number;
@@ -190,20 +195,74 @@ function projectCandidate<RecordType extends GamingStoredEvidenceRecord>(record:
   if (record.gameName && ![input.game, resolveGamingGuideIdentity(input.game, input.edition)].map(normalizeGamingEvidenceGameIdentity)
     .includes(normalizeGamingEvidenceGameIdentity(record.gameName))) return null;
   const normalized = record.normalized ?? {};
+  const provenance = record.provenance ?? {};
   const metadata = chunkMetadata(normalized);
   if (!metadata) return null;
   if (normalized.chunk !== undefined && typeof normalized.text !== 'string') return null;
-  const evidenceUnits = readGamingEvidenceUnits(normalized.evidenceUnits, record.publicUrl,
-    typeof normalized.text === 'string' ? normalized.text : record.searchText);
+  const documentText = typeof normalized.text === 'string' ? normalized.text : record.searchText;
+  let evidenceUnits = readGamingEvidenceUnits(normalized.evidenceUnits, record.publicUrl, documentText);
   // A malformed structural record must never fall through to legacy flattened prose.
-  if (normalized.evidenceUnits !== undefined && (!evidenceUnits.length
+  if (normalized.evidenceUnits !== undefined && (!Array.isArray(normalized.evidenceUnits)
+    || evidenceUnits.length !== normalized.evidenceUnits.length || !evidenceUnits.length
     || evidenceUnits.some(unit => unit.integrity.status !== 'complete' || unit.integrity.reasons.length))) return null;
+  // Durable revisions preserve the acquired source, including independently
+  // scoped records excluded from a transient request. Catalog identity belongs
+  // to the source; it cannot turn a foreign gameplay row into requested evidence.
+  const gameScoped = selectGamingGameScopedDocument({ text: documentText, publicUrl: record.publicUrl, evidenceUnits }, input.game);
+  if (gameScoped.status === 'conflict' || gameScoped.status === 'unverified') return null;
+  const freshnessMetadata = provenance.hybridFreshness && typeof provenance.hybridFreshness === 'object'
+    && !Array.isArray(provenance.hybridFreshness) ? provenance.hybridFreshness as Record<string, unknown> : undefined;
+  const acquiredMetadata = provenance.acquiredApplicability && typeof provenance.acquiredApplicability === 'object'
+    && !Array.isArray(provenance.acquiredApplicability) ? provenance.acquiredApplicability as Record<string, unknown> : undefined;
+  const validScopeList = (value: unknown) => value === undefined || Array.isArray(value) && value.length <= 8
+    && value.every(item => typeof item === 'string' && item.trim().length > 0 && item.length <= 80);
+  const acquiredApplicability = acquiredMetadata?.extractorVersion === GAMING_FRESHNESS_POLICY_VERSION
+    && Object.keys(acquiredMetadata).every(key => ['extractorVersion', 'contentHash', 'game', 'edition', 'platforms',
+      'regions', 'metadataConflict', 'metadataUnverified'].includes(key))
+    && typeof record.contentHash === 'string' && /^[a-f0-9]{64}$/u.test(record.contentHash) && acquiredMetadata.contentHash === record.contentHash
+    && typeof acquiredMetadata.game === 'string' && acquiredMetadata.game.trim().length > 0 && acquiredMetadata.game.length <= 160
+    && (acquiredMetadata.edition === undefined || typeof acquiredMetadata.edition === 'string'
+      && acquiredMetadata.edition.trim().length > 0 && acquiredMetadata.edition.length <= 120)
+    && [acquiredMetadata.metadataConflict, acquiredMetadata.metadataUnverified].every(value => value === undefined || typeof value === 'boolean')
+    && validScopeList(acquiredMetadata.platforms) && validScopeList(acquiredMetadata.regions) ? acquiredMetadata : undefined;
+  const existingHybridScope = freshnessMetadata && typeof freshnessMetadata.game === 'string'
+    && (provenance.acquiredApplicability === undefined || acquiredApplicability !== undefined)
+    && freshnessMetadata.game.trim().length > 0 && freshnessMetadata.game.length <= 160
+    && typeof freshnessMetadata.id === 'string' && freshnessMetadata.id.length > 0 && freshnessMetadata.id.length <= 2_048
+    && freshnessMetadata.policyVersion === GAMING_SOURCE_POLICY_VERSION
+    && validScopeList(freshnessMetadata.platforms) && validScopeList(freshnessMetadata.regions)
+    && record.clearSourceAssessment?.profile === 'source'
+    && record.clearSourceAssessment.subjectHash === provenance.approvedContentHash;
+  const compatibleScope = (scope: { platforms?: readonly string[]; regions?: readonly string[];
+    metadataConflict?: unknown; metadataUnverified?: unknown }) => !scope.metadataConflict && !scope.metadataUnverified
+    && (!scope.platforms?.length || !input.platform
+      || gamingPlatformEvidenceMatchesRequest(scope.platforms, input.platform))
+    && (!scope.regions?.length || !input.region
+      || scope.regions.some(region => ['all', input.region?.toLowerCase()].includes(region.toLowerCase())));
+  if (acquiredApplicability && !compatibleScope(acquiredApplicability as {
+    platforms?: string[]; regions?: string[]; metadataConflict?: boolean; metadataUnverified?: boolean })) return null;
+  const sourceEdition = typeof provenance.edition === 'string' ? provenance.edition
+    : typeof freshnessMetadata?.edition === 'string' ? freshnessMetadata.edition
+      : typeof acquiredApplicability?.edition === 'string' ? acquiredApplicability.edition : undefined;
+  const editionScoped = selectGamingSourceEditionScopedEvidence(gameScoped.document, input, sourceEdition);
+  if (editionScoped.status === 'conflict' || editionScoped.status === 'unverified' && editionScoped.reasonCodes.length) return null;
+  evidenceUnits = editionScoped.status === 'verified' ? editionScoped.units : [...gameScoped.document.evidenceUnits];
+  // An excluded structural record never falls back as flattened source prose.
+  if (normalized.evidenceUnits !== undefined && !evidenceUnits.length) return null;
+  if (gameScoped.document.evidenceUnits.some(unit => unit.fields.some(field => /^(?:platforms?|regions?)$/iu
+    .test(field.label.split(/\s+\/\s+/u).at(-1)!))) || /(?:^|\s)(?:Platforms?|Regions?):\s*/iu.test(gameScoped.document.text)) {
+    // Inspect acquired restrictions with no publisher/currentness authority and
+    // the original fetch time. Preserve global metadata outside selected rows.
+    const applicability = extractGamingFreshnessMetadata(gameScoped.document,
+      { ...input, ...(editionScoped.status === 'verified' ? { edition: 'base-game' } : {}) }, record.fetchedAt, []);
+    if (!compatibleScope(applicability)) return null;
+  }
   const structural = assessGamingStructuralUsability({ units: evidenceUnits, ...input });
   if (evidenceUnits.length && structural.claimShape !== 'none' && !structural.claimSupported
     && !(input.requireRequestCoverage && structural.hasIntactUsableUnit
       && !structural.reasonCodes.includes('CONTRADICTORY_STRUCTURAL_RECORDS'))) return null;
   // Historical lexical-only records remain readable through passage selection.
-  const body = [typeof normalized.text === 'string' ? normalized.text : record.searchText,
+  const body = [editionScoped.status === 'verified' ? editionScoped.text : gameScoped.document.text,
     typeof normalized.structuredEvidence === 'string'
       ? normalized.structuredEvidence.slice(0, limits.structuredEvidenceChars) : ''].filter(Boolean).join('\n\n');
   const structuralText = evidenceUnits.map(unit => unit.text).join('\n\n');
@@ -220,7 +279,6 @@ function projectCandidate<RecordType extends GamingStoredEvidenceRecord>(record:
       || buildGamingRequestRequirements(input).some(requirement => gamingTermCoverage(text, requirement.terms) === 1)))) return null;
   const patch = resolvePatch(record);
   if (input.requestedVersion && patch && patch !== input.requestedVersion) return null;
-  const provenance = record.provenance ?? {};
   const title = record.title ? safeGamingEvidenceMetadata(record.title, input, 240) : '';
   return {
     evidence: {
@@ -241,8 +299,11 @@ function projectCandidate<RecordType extends GamingStoredEvidenceRecord>(record:
       ...(typeof provenance.edition === 'string' ? { edition: provenance.edition.slice(0, 120) } : {}),
       ...(record.clearSourceAssessment ? { clearSourceAssessment: record.clearSourceAssessment } : {}),
       ...(typeof provenance.approvedContentHash === 'string' ? { approvedContentHash: provenance.approvedContentHash } : {}),
-      ...(provenance.hybridFreshness && typeof provenance.hybridFreshness === 'object' && !Array.isArray(provenance.hybridFreshness)
-        ? { freshnessMetadata: provenance.hybridFreshness as Record<string, unknown> } : {}),
+      // Legacy context remains readable, but missing whole-source scope cannot
+      // become verified compatibility merely because one selected row is intact.
+      freshnessMetadata: existingHybridScope ? freshnessMetadata : {
+        id: record.sourceId, url: record.publicUrl, game: record.gameName ?? input.game,
+        ...(acquiredApplicability ?? { metadataUnverified: true }) },
       sourceId: record.sourceId, url: record.publicUrl, ...(title ? { title } : {}), sourceType: record.sourceType,
       ...(patch ? { patchVersion: patch, verifiedPatchVersion: patch } : {}),
       fetchedAt: record.fetchedAt.toISOString(), ...(record.publishedAt ? { publishedAt: record.publishedAt.toISOString() } : {}),
