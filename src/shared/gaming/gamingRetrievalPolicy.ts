@@ -1,6 +1,7 @@
 import { filterGamingDocumentInstructions } from '@services/gamingDocumentExtraction.js';
 import type { GamingPlayerContext } from './gamingPlayerContext.js';
 import { assessGamingProgressionRequest, filterGamingNonAffirmativeStateClauses, hasUsefulGamingProgressValue } from './gamingProgressionPolicy.js';
+import { GAMING_PLAYER_DECISION_CHOICES } from './gamingPreferenceData.js';
 
 export const GAMING_RETRIEVAL_POLICY_VERSION = 'gaming-player-retrieval/v1';
 const STOP_WORDS = new Set('a an and are as at be by can do does for from how i in is it me my of on or should that the this to was what when where which who why with you about after before finishing completing completed finished defeated get go help please tell use using want would guide next now then need proceed continue current objective checkpoint step steps walkthrough explain detailed detail concise briefly spoiler spoilers spoilerfree beat defeat boss strategy game look up newly released beginner route supplied source opening simple summary summarize overview linked guides direct answer both am im m supposed stuck has have user major first'.split(' '));
@@ -21,15 +22,10 @@ export interface GamingRetrievalTerms {
 /** Explicit unresolved choices are player decisions, never missing source facts. */
 export function resolveGamingUserDecisionGap(input: GamingRetrievalPolicyInput): { prompt: string; clarification?: string } {
   if (/\b(?:compare|comparison|differences?|pros and cons)\b/iu.test(input.prompt)) return { prompt: input.prompt };
-  const choices = [
-    { first: 'bleed', second: 'pure\\s+(?:dex(?:terity)?)', question: 'Do you prefer bleed or pure Dexterity?' },
-    { first: 'single\\s+katana', second: 'dual[\\s-]+wield(?:ing)?', question: 'Do you prefer a single katana or dual wielding?' },
-    { first: 'aggressive', second: 'defensive', question: 'Do you prefer an aggressive or defensive playstyle?' }
-  ];
   const marker = "(?:I(?:'m| am)?\\s+)?(?:undecided\\s+(?:between|about)|(?:am\\s+)?(?:unsure|not sure)\\s+(?:whether|between)|haven't decided\\s+(?:between|whether)|(?:can't|cannot) decide\\s+between|should I (?:choose|use|play))\\s+";
   let prompt = input.prompt;
   let clarification: string | undefined;
-  for (const choice of choices) {
+  for (const choice of GAMING_PLAYER_DECISION_CHOICES) {
     const alternatives = `(?:${choice.first})\\s+(?:or|versus|vs\\.?|and)\\s+(?:${choice.second})|(?:${choice.second})\\s+(?:or|versus|vs\\.?|and)\\s+(?:${choice.first})`;
     const pattern = new RegExp(`\\b${marker}(?:${alternatives})`, 'iu');
     const match = pattern.exec(input.prompt);

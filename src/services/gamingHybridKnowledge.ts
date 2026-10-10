@@ -1,4 +1,7 @@
-import { normalizeGamingGameIdentity, resolveGamingRequestEdition, buildGamingSourceEditionQualification, normalizeGamingMinecraftEdition } from '@shared/gaming/gamingGameIdentity.js';
+import { normalizeGamingGameIdentity, resolveGamingRequestEdition, buildGamingSourceEditionQualification } from '@shared/gaming/gamingGameIdentity.js';
+import { normalizeGamingRegistryEdition, gamingRegistryEditionChoices, gamingRegistrySourceGameMatchesRequest,
+  resolveGamingRegistryGame, gamingRegistryLiteralPattern, GAMING_GAME_REGISTRY } from '@shared/gaming/gamingGameRegistry.js';
+import { createGamingSourceEvaluation, GAMING_SOURCE_EVALUATION_VERSION, GAMING_SOURCE_EVALUATION_RULE_VERSION } from '@shared/gaming/gamingSourceEvaluation.js';
 import { normalizeGamingPlatformIdentity } from '@shared/gaming/gamingPlatformIdentity.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { getEnvBoolean } from '@platform/runtime/env.js';
@@ -127,6 +130,14 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
   }
   function failure(context: GamingHybridCallContext, reason: string, status: number, workflow?: Workflow, requestedContractVersion?: GamingHybridQuery['contractVersion']): GamingHybridResult {
     const body: GamingHybridResponse = { ...base(context, workflow, requestedContractVersion), reason, nextAction: status >= 500 || status === 429 ? 'retry_later' : 'stop' };
+    const correlations = createGamingSourceEvaluation({ submittedIndex: 0, requestId: body.requestId,
+      traceId: context.traceId, workflowId: workflow?.id });
+    logger.info('gaming.hybrid.validation_failure', { requestId: correlations.requestId, traceId: correlations.traceId,
+      workflowId: correlations.workflowId, contractVersion: GAMING_SOURCE_EVALUATION_VERSION,
+      ruleVersion: GAMING_SOURCE_EVALUATION_RULE_VERSION, registryVersion: GAMING_GAME_REGISTRY.version,
+      registryRevision: GAMING_GAME_REGISTRY.revision, revision: workflow?.revision, state: body.state,
+      nextAction: body.nextAction, reasonCode: /^[A-Z][A-Z0-9_]{0,79}$/u.test(reason) ? reason : 'SERVICE_UNAVAILABLE',
+      terminal: body.nextAction === 'stop', generationReady: false, recoveryGranted: false });
     return { status, body: { ...body, ...projectGamingGuideOutcome(body) } };
   }
   function currentResponse(context: GamingHybridCallContext, workflow: Workflow, result: GamingHybridResult): GamingHybridResult {
@@ -137,6 +148,17 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
       return expired;
     }
     const outcome = projectGamingGuideOutcome(result.body);
+    const correlations = createGamingSourceEvaluation({ submittedIndex: 0, requestId: context.requestId,
+      traceId: context.traceId, workflowId: workflow.id });
+    logger.info('gaming.hybrid.validation_outcome', { requestId: correlations.requestId, traceId: correlations.traceId,
+      workflowId: correlations.workflowId, contractVersion: GAMING_SOURCE_EVALUATION_VERSION,
+      ruleVersion: GAMING_SOURCE_EVALUATION_RULE_VERSION, registryVersion: GAMING_GAME_REGISTRY.version,
+      registryRevision: GAMING_GAME_REGISTRY.revision, protocolVersion: workflow.input.contractVersion,
+      revision: workflow.revision, state: result.body.state, nextAction: result.body.nextAction,
+      reasonCode: /^[A-Z][A-Z0-9_]{0,79}$/u.test(result.body.reason ?? '') ? result.body.reason : undefined,
+      terminal: ['answer', 'stop'].includes(result.body.nextAction), generationReady: result.body.state === 'answer_ready',
+      selectedEvidenceCount: Math.min(2048, result.body.selectedEvidenceIds?.length ?? 0),
+      recoveryGranted: result.body.nextAction === 'search' && result.body.discovery?.continuationRequired === true });
     return { ...result, body: { ...result.body, ...outcome, ...(outcome.frontendOutcome === 'need_new_source'
       ? { searchHint: gamingGuideSearchHint({ ...workflow.input, game: redactString(workflow.input.game) }) } : {}) } };
   }
@@ -358,21 +380,24 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
       if (!workflow.pipeline.region && gamingApplicabilityScopeRequired(workflow.pipeline, 'region'))
         return { status: 200, body: { ...body, state: 'clarification_required', nextAction: 'clarify',
           reason: 'REGION_REQUIRED', clarification: 'Which region should the regional guidance cover?' } };
-      const minecraftEditionDecision = !workflow.pipeline.edition && normalizeGamingGameIdentity(input.game) === 'minecraft'
+      const editionChoices = gamingRegistryEditionChoices(input.game);
+      const editionDecision = !workflow.pipeline.edition && editionChoices.length > 1
         && (workflow.candidateDecisions?.some(candidate => candidate.reasonCodes.includes('EDITION_REQUIRED'))
           || resolveGamingFreshnessDisposition(workflow.pipeline) === 'REQUIRED' && knowledge.sources.some(source =>
-            source.clearSourceAssessment?.gates.identity === 'verified' && normalizeGamingGameIdentity(source.game ?? '') === 'minecraft'
-            && normalizeGamingMinecraftEdition(source.edition ?? source.freshnessMetadata?.edition as string | undefined)));
-      if (minecraftEditionDecision)
+            source.clearSourceAssessment?.gates.identity === 'verified' && gamingRegistrySourceGameMatchesRequest(source.game ?? '', input.game)
+            && normalizeGamingRegistryEdition(input.game, source.edition ?? source.freshnessMetadata?.edition as string | undefined)));
+      if (editionDecision)
         return { status: 200, body: { ...body, state: 'clarification_required', nextAction: 'clarify',
-          reason: 'EDITION_REQUIRED', clarification: 'Should this Minecraft guidance cover Java Edition or Bedrock Edition?' } };
+          reason: 'EDITION_REQUIRED', clarification: `Should this ${input.game} guidance cover ${editionChoices.map(choice => /\bedition\b/iu.test(choice) ? choice : `${choice} Edition`).join(' or ')}?` } };
       // A requested expansion build is a scope decision; a factual question about
       // whether DLC is required does not create that same missing decision.
-      const unspecifiedExpansionContent = !workflow.pipeline.edition && normalizeGamingGameIdentity(input.game) === 'elden-ring'
-        && /\b(?:(?:dlc|expansion)[\s-]+(?:builds?|guides?|content|weapons?|equipment|bosses?|quests?)|shadow[\s-]+of[\s-]+the[\s-]+erdtree)\b/iu.test(input.question);
+      const expansionEditions = resolveGamingRegistryGame(input.game)?.editions.filter(edition => ['expansion', 'dlc'].includes(edition.kind)) ?? [];
+      const expansionPattern = expansionEditions.flatMap(edition => [edition.name, ...edition.aliases]).map(gamingRegistryLiteralPattern).join('|');
+      const unspecifiedExpansionContent = !workflow.pipeline.edition && expansionEditions.length > 0
+        && new RegExp(`\\b(?:(?:dlc|expansion)[\\s-]+(?:builds?|guides?|content|weapons?|equipment|bosses?|quests?)|${expansionPattern})\\b`, 'iu').test(input.question);
       if (unspecifiedExpansionContent)
         return { status: 200, body: { ...body, state: 'clarification_required', nextAction: 'clarify',
-          reason: 'EDITION_REQUIRED', clarification: 'Should this request use Shadow of the Erdtree content, or stay within the Elden Ring base game?' } };
+          reason: 'EDITION_REQUIRED', clarification: `Should this request use ${expansionEditions.map(edition => edition.aliases[0] ?? edition.name).join(' or ')} content, or stay within the ${input.game} base game?` } };
       const genericBuildTerms = new Set(['give', 'make', 'recommend', 'suggest', 'provide', 'best', 'good', 'some', 'build', 'character']);
       if ((input.mode === 'build' || /\bbuild\b/iu.test(input.question)) && !input.class && !input.role && !input.constraints?.length
         && !buildGamingRetrievalTerms(workflow.pipeline).requestTerms.some(term => !genericBuildTerms.has(term)))
