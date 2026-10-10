@@ -1,9 +1,10 @@
 import { classifyGamingQuestionFreshness, type GamingQuestionFreshness } from './gamingQuestionFreshnessPolicy.js';
 import { gamingPlatformEvidenceMatchesRequest } from './gamingPlatformIdentity.js';
 import { gamingAcquiredGameDeclarationPattern } from './gamingGameDeclaration.js';
-import { resolveGamingRequestEdition, gamingEditionEvidenceMatchesRequest, canQualifyGamingUnrequestedEdition, normalizeGamingEditionIdentity, normalizeGamingGameIdentity, readGamingMinecraftEditionScope, normalizeGamingMinecraftEdition, type GamingEditionRequestContext } from './gamingGameIdentity.js';
+import { resolveGamingRequestEdition, gamingEditionEvidenceMatchesRequest, canQualifyGamingUnrequestedEdition, normalizeGamingEditionIdentity, normalizeGamingGameIdentity, type GamingEditionRequestContext } from './gamingGameIdentity.js';
+import { readGamingRegistryEditionScope, normalizeGamingRegistryEdition, gamingRegistrySourceGameMatchesRequest } from './gamingGameRegistry.js';
 import type { GamingEvidenceUnit } from './gamingEvidenceUnits.js';
-import { isGamingDocumentMetadataUnit, readGamingEvidenceUnits, selectGamingEditionScopedEvidence } from './gamingStructuralEvidence.js';
+import { isGamingDocumentMetadataUnit, readGamingEvidenceUnits, selectGamingEditionScopedEvidence, selectGamingGameScopedDocument } from './gamingStructuralEvidence.js';
 import { runGamingCurrentnessAdapter, combineGamingCurrentnessEvidence, GAMING_CURRENTNESS_ADAPTER_VERSION,
   type GamingCurrentnessAdapterResult, type GamingCurrentnessDocumentMetadata } from './gamingCurrentnessAdapters.js';
 import { gamingApplicabilityScopeRequired, evaluateGamingGuideApplicability, isGamingGameplayFreshnessEvidence, type GamingGuideApplicability } from './gamingGuideApplicability.js';
@@ -143,6 +144,8 @@ export function extractGamingFreshnessMetadata(document: { publicUrl: string; ca
   context: GamingEditionRequestContext & { game: string; platform?: string; region?: string }, now = new Date(),
   rules: readonly GamingReviewedSourceRule[] = REVIEWED_GAMING_SOURCE_RULES): GamingFreshnessEvidence {
   context = { ...context, edition: resolveGamingRequestEdition(context) };
+  const gameScoped = selectGamingGameScopedDocument(document, context.game);
+  document = gameScoped.document;
   // Citation redaction may shorten a path; only the acquired identity grants publisher policy.
   const policy = assessGamingSourcePolicy(document.canonicalUrl ?? document.publicUrl, context.game, rules);
   const evidenceUnits = readGamingEvidenceUnits(document.evidenceUnits, undefined, document.text);
@@ -195,7 +198,8 @@ export function extractGamingFreshnessMetadata(document: { publicUrl: string; ca
       else if (editionScoped?.status === 'verified') invalidMetadata = true;
     }
   }
-  let conflict = false;
+  let conflict = gameScoped.status === 'conflict';
+  invalidMetadata ||= gameScoped.status === 'unverified';
   const label = (name: string, max = 80): string | undefined => {
     const pattern = new RegExp(`^\\s*(?:${name}):\\s*([^\\r\\n]*)$`, 'iu');
     const claims = lines.flatMap(line => { const match = pattern.exec(line); return match ? [match[1].trim()] : []; });
@@ -218,14 +222,13 @@ export function extractGamingFreshnessMetadata(document: { publicUrl: string; ca
   };
   let game = label('Game', 160) ?? context.game;
   let edition = label('Edition', 120);
-  const minecraftScope = readGamingMinecraftEditionScope(document, context.game);
-  if (minecraftScope.status === 'conflict') conflict = true;
-  if (minecraftScope.status === 'verified') {
-    if (edition && normalizeGamingMinecraftEdition(edition) !== minecraftScope.edition) conflict = true;
-    else edition = minecraftScope.edition;
+  const acquiredEditionScope = readGamingRegistryEditionScope(document, context.game);
+  if (acquiredEditionScope.status === 'conflict') conflict = true;
+  if (acquiredEditionScope.status === 'verified') {
+    if (edition && normalizeGamingRegistryEdition(context.game, edition) !== acquiredEditionScope.edition) conflict = true;
+    else edition = acquiredEditionScope.edition;
   }
-  if (normalizeGamingGameIdentity(context.game) === 'minecraft'
-    && /^minecraft-(?:java|bedrock)(?:-edition)?$/u.test(normalizeGamingGameIdentity(game))) game = 'Minecraft';
+  if (gamingRegistrySourceGameMatchesRequest(game, context.game)) game = context.game;
   let platforms = boundedList(label('Platforms?', 256));
   let regions = boundedList(label('Regions?', 256));
   const rawPublishedAt = label('Published at');

@@ -1,9 +1,11 @@
 import { resolveGamingFreshnessDisposition } from './gamingQuestionFreshnessPolicy.js';
+import { normalizeGamingRegistryIdentity, resolveGamingRegistryGame, gamingRegistryLiteralPattern,
+  normalizeGamingRegistryEdition, readGamingRegistryEditionScope } from './gamingGameRegistry.js';
+import { GAMING_LEGACY_EDITION_GAME } from './gamingGameRegistryData.js';
 
 /** Formatting equivalence only: edition, sequel, expansion and platform words remain identity. */
 export function normalizeGamingGameIdentity(game: string): string {
-  return game.replace(/[™®©'’‘]/gu, '').normalize('NFKC').toLowerCase()
-    .replace(/[^\p{L}\p{N}+]+/gu, '-').replace(/^-+|-+$/gu, '');
+  return normalizeGamingRegistryIdentity(game);
 }
 
 /** Closed edition aliases: punctuation and arbitrary qualifiers never become a recognized edition. */
@@ -42,45 +44,51 @@ function gamingRequestScopeText(question: string): string {
 export function resolveGamingRequestEdition(input: { game?: string; edition?: string; prompt?: string; question?: string }): string | undefined {
   if (input.edition) return normalizeGamingEditionIdentity(input.edition) === 'base-game' ? 'base-game' : input.edition;
   const question = gamingRequestScopeText(input.prompt ?? input.question ?? '');
-  const gameIdentity = normalizeGamingGameIdentity(input.game ?? '');
-  if (gameIdentity === 'minecraft') {
+  const entry = resolveGamingRegistryGame(input.game ?? '');
+  if (!entry) return undefined;
+  const independentEditions = entry.editions.filter(edition => edition.kind === 'edition');
+  if (independentEditions.length) {
     const requestText = question.replace(/"[^"]*"|“[^”]*”|`[^`]*`|'[^']*'|‘[^’]*’/gu, ' ');
-    const matches = [...requestText.matchAll(/\bminecraft[\s-]+(java|bedrock)(?: edition)?\b|\b(java|bedrock) edition\b/giu)];
+    const gamePattern = [entry.name, ...entry.aliases].map(gamingRegistryLiteralPattern).join('|');
+    const editionPattern = independentEditions.flatMap(edition => [edition.name, ...edition.aliases])
+      .sort((left, right) => right.length - left.length).map(gamingRegistryLiteralPattern).join('|');
+    const fullEditions = independentEditions.flatMap(edition => edition.aliases.filter(alias => /\bedition\b/iu.test(alias)))
+      .map(gamingRegistryLiteralPattern).join('|');
+    const matches = [...requestText.matchAll(new RegExp(`\\b(?:${gamePattern})[\\s-]+(${editionPattern})(?=$|[^\\p{L}\\p{N}])${fullEditions ? `|\\b(${fullEditions})(?=$|[^\\p{L}\\p{N}])` : ''}`, 'giu'))];
     if (matches.some(match => /\b(?:not(?:\s+(?:use|apply|include|for)){0,2}|no|without|excluding)\s*$/iu.test(requestText.slice(0, match.index)))) return undefined;
     const editions = matches.filter(match => {
       const before = requestText.slice(0, match.index).split(/[.!?\n]/u).at(-1) ?? '';
       const requestingGuide = /^\s*(?:give me|build me|i (?:need|want))\b/iu.test(before);
       return /\b(?:in|on|for)\s*$/iu.test(before)
         && (!/\b(?:guide|source|article|title)\b/iu.test(before) || requestingGuide);
-    }).map(match => normalizeGamingMinecraftEdition(match[1] ?? match[2]));
+    }).map(match => normalizeGamingRegistryEdition(entry.name, match[1] ?? match[2]));
     const choices = [...new Set(editions)];
     return choices.length === 1 ? choices[0] : undefined;
   }
-  if (gameIdentity !== 'elden-ring') return undefined;
-  const shadow = /\bshadow[\s-]+of[\s-]+the[\s-]+erdtree\b/iu;
+  const defaultEdition = entry.editions.find(edition => edition.id === entry.defaultEdition)?.name;
+  if (!defaultEdition) return undefined;
+  const expansionNames = entry.editions.filter(edition => ['expansion', 'dlc'].includes(edition.kind))
+    .flatMap(edition => [edition.name, ...edition.aliases]);
+  const named = expansionNames.length ? new RegExp(`\\b(?:${[...new Set(expansionNames)].map(gamingRegistryLiteralPattern).join('|')})\\b`, 'iu') : undefined;
   const baseRequested = /\bbase[\s-]+game\b/iu.test(question);
-  // A closed generic necessity question requests a fact; acquired evidence must
-  // prove availability. Never remove named or remaining positive expansion scope.
+  // A necessity question asks for evidence; it does not itself choose an expansion.
   const withoutNecessity = question.replace(/\bis\s+dlc\s+(?:required|needed|necessary)\s+to\s+obtain\b/giu, ' ');
-  // Closed negative clauses express base scope, rather than expansion intent.
-  // Keep double negations and mixed positive/negative scope unresolved.
-  const negativeScope = /\b(?:without|no|excluding)\s+(?:(?:any|the)\s+)?(?:dlcs?|expansions?(?:\s+content)?|shadow[\s-]+of[\s-]+the[\s-]+erdtree)\b/giu;
+  const expansionPattern = ['dlcs?', 'expansions?(?:\\s+content)?', ...expansionNames.map(gamingRegistryLiteralPattern)].join('|');
+  const negativeScope = new RegExp(`\\b(?:without|no|excluding)\\s+(?:(?:any|the)\\s+)?(?:${expansionPattern})\\b`, 'giu');
   const remaining = withoutNecessity.replace(negativeScope, (clause: string, offset: number) =>
     /\b(?:not|without|no)\s*$/iu.test(withoutNecessity.slice(0, offset)) ? clause : ' ');
   const negativeRequested = remaining !== withoutNecessity;
-  const expansionRequested = /\b(?:dlcs?|expansions?)\b/iu.test(remaining) || shadow.test(remaining);
+  const expansionRequested = /\b(?:dlcs?|expansions?)\b/iu.test(remaining) || Boolean(named?.test(remaining));
   if (expansionRequested && (baseRequested || negativeRequested)) return undefined;
-  // A named edition in a bounded negative request is not affirmative scope.
-  // Unrecognized and double-negated wording stays unresolved instead of
-  // choosing either the expansion or a new base-game default.
-  for (const match of remaining.matchAll(new RegExp(shadow.source, 'giu'))) {
+  if (named) for (const match of remaining.matchAll(new RegExp(named.source, 'giu'))) {
     const before = remaining.slice(Math.max(0, match.index - 120), match.index);
     if (/\b(?:not(?:\s+(?:use|include|equip|have|own|need|require|for|in|from|with)){0,2}|(?:don|doesn|didn|isn|aren)['’]t(?:\s+(?:use|include|equip|have|own|need|require|for|in|from|with)){0,2}|never\s+(?:use|include|equip)|no|without|excluding)\s*(?:(?:the|any)\s+)?["“‘'`]*\s*$/iu.test(before)) return undefined;
   }
-  if (shadow.test(remaining)) return 'shadow of the erdtree';
-  // Unspecified expansion requests and unrecognized language remain unresolved.
+  const requested = entry.editions.filter(edition => ['expansion', 'dlc'].includes(edition.kind)
+    && [edition.name, ...edition.aliases].some(alias => new RegExp(`\\b${gamingRegistryLiteralPattern(alias)}\\b`, 'iu').test(remaining)));
+  if (requested.length === 1) return requested[0].name;
   if (expansionRequested) return undefined;
-  return 'base-game';
+  return defaultEdition;
 }
 
 export interface GamingEditionRequestContext {
@@ -96,18 +104,20 @@ export interface GamingEditionRequestContext {
 /** Eligibility only: acquired identity, intact scope and source restrictions still need independent inspection. */
 export function canQualifyGamingUnrequestedEdition(input: GamingEditionRequestContext): boolean {
   const prompt = input.prompt ?? input.question ?? '';
-  const scopePrompt = normalizeGamingGameIdentity(input.game ?? '') === 'minecraft' ? gamingRequestScopeText(prompt) : prompt;
+  const scopePrompt = gamingRequestScopeText(prompt);
+  const namedEdition = resolveGamingRegistryGame(input.game ?? '')?.editions.some(edition => edition.kind !== 'base'
+    && [edition.name, ...edition.aliases].some(alias => new RegExp(`\\b${gamingRegistryLiteralPattern(alias)}\\b`, 'iu').test(scopePrompt)));
   return !resolveGamingRequestEdition(input) && Boolean(input.game)
-    && !/\b(?:edition|dlcs?|expansions?|remaster(?:ed)?|remake|anniversary|definitive|java|bedrock)\b/iu.test(scopePrompt)
+    && !namedEdition && !/\b(?:edition|dlcs?|expansions?|remaster(?:ed)?|remake|anniversary|definitive)\b/iu.test(scopePrompt)
     && resolveGamingFreshnessDisposition({ prompt, mode: input.mode, requestedVersion: input.requestedVersion ?? input.version }) !== 'REQUIRED';
 }
 
 /** Unknown ordinary base-game metadata is not an explicit edition contradiction. */
 export function gamingEditionEvidenceMatchesRequest(sourceEdition: string | undefined, requestEdition: string | undefined,
   context?: GamingEditionRequestContext): boolean {
-  if (normalizeGamingGameIdentity(context?.game ?? '') === 'minecraft') {
-    const acquired = normalizeGamingMinecraftEdition(sourceEdition);
-    if (acquired) return requestEdition ? acquired === normalizeGamingMinecraftEdition(requestEdition)
+  if (resolveGamingRegistryGame(context?.game ?? '')?.editions.some(edition => edition.kind === 'edition')) {
+    const acquired = normalizeGamingRegistryEdition(context?.game ?? '', sourceEdition);
+    if (acquired) return requestEdition ? acquired === normalizeGamingRegistryEdition(context?.game ?? '', requestEdition)
       : Boolean(context && canQualifyGamingUnrequestedEdition(context));
   }
   return sourceEdition === undefined && (!requestEdition || normalizeGamingEditionIdentity(requestEdition) === 'base-game')
@@ -122,52 +132,14 @@ export function buildGamingSourceEditionQualification(sourceEdition: string | un
     ? `The cited guide reports edition: ${normalizeGamingEditionIdentity(sourceEdition)}. Your edition was not specified; advice is limited to that guide's reported scope. Compatibility with other editions was not independently verified.` : '';
 }
 
-/** Closed editions of the parent game; complete requested game titles remain distinct. */
+/** @deprecated Compatibility alias; edition recognition is configured in the generic registry. */
 export function normalizeGamingMinecraftEdition(value?: string): 'Java' | 'Bedrock' | undefined {
-  if (typeof value !== 'string') return undefined;
-  const match = /^(java|bedrock)(?: edition)?$/iu.exec(value.normalize('NFKC').trim());
-  return match ? match[1].toLowerCase() === 'java' ? 'Java' : 'Bedrock' : undefined;
+  return normalizeGamingRegistryEdition(GAMING_LEGACY_EDITION_GAME, value) as 'Java' | 'Bedrock' | undefined;
 }
 
-/** Acquired source assertions only, never frontend labels or a derived user choice. */
+/** @deprecated Compatibility alias; acquired-source scope is evaluated by generic rules. */
 export function readGamingMinecraftEditionScope(document: { text: string; metadata?: { title?: string; headings?: string } }, game: string): {
   status: 'none' | 'verified' | 'unverified' | 'conflict'; edition?: 'Java' | 'Bedrock'; exclusive: boolean;
 } {
-  if (normalizeGamingGameIdentity(game) !== 'minecraft') return { status: 'none', exclusive: false };
-  const metadata = [document.metadata?.title, document.metadata?.headings].flatMap(value => {
-    const match = /^minecraft[\s-]+(java|bedrock)(?:[\s-]+edition)?(?=$|[\s:.,;!?-])/iu.exec(value?.trim() ?? '');
-    return match ? [normalizeGamingMinecraftEdition(match[1])!] : [];
-  });
-  const text = document.text.slice(0, 32_000);
-  const assertions: Array<'Java' | 'Bedrock'> = [];
-  const unquoted = text.replace(/"[^"]*"|“[^”]*”|`[^`]*`|'[^']*'|‘[^’]*’/gu, quote => ' '.repeat(quote.length));
-  for (const match of unquoted.matchAll(/\b(?:in(?: the game)?|this (?:guide|build|walkthrough) (?:covers|is for))\s+minecraft[\s-]+(java|bedrock)(?:[\s-]+edition)?\b/giu)) {
-    const before = unquoted.slice(0, match.index).split(/[.!?;,\n]/u).at(-1) ?? '';
-    if (/\b(?:unlike|compared(?:\s+to)?|comparison(?:\s+with)?|contrast(?:\s+to)?|similar(?:ly)?|rather\s+than|instead\s+of|as(?:\s+is\s+the\s+case)?|like)\s*$/iu.test(before)
-      || /\b(?:not(?:\s+(?:apply|applicable|valid|available|supported|used|found|present|exist|included|be|for)){0,4}|(?:doesn|isn|aren|don|didn)['’]?t(?:\s+(?:apply|exist|work))?|without|except|excluding|unavailable|unsupported)\s*$/iu.test(before)) continue;
-    assertions.push(normalizeGamingMinecraftEdition(match[1])!);
-  }
-  const declared: Array<'Java' | 'Bedrock'> = [];
-  for (const match of text.matchAll(/\b(?:edition\s*:\s*|game\s*:\s*minecraft[\s-]+)(java|bedrock)(?:[\s-]+edition)?(?=\s*[.;|\n]|$)/giu)) {
-    declared.push(normalizeGamingMinecraftEdition(match[1])!);
-    assertions.push(normalizeGamingMinecraftEdition(match[1])!);
-  }
-  let exclusive = false;
-  const scopeText = [document.metadata?.title, document.metadata?.headings, text].filter(Boolean).join('\n');
-  for (const match of scopeText.matchAll(/\b(java|bedrock)[ -]only\b|\b(?:requires?|only (?:works|is available) (?:in|on))\s+(?:minecraft\s+)?(java|bedrock)(?: edition)?\b/giu)) {
-    if (/\b(?:not|never|without|isn['’]?t|doesn['’]?t|aren['’]?t|don['’]?t)\s*$/iu.test(scopeText.slice(Math.max(0, match.index - 32), match.index))) continue;
-    assertions.push(normalizeGamingMinecraftEdition(match[1] ?? match[2])!);
-    exclusive = true;
-  }
-  const unspecifiedEdition = [...text.matchAll(/\bedition\s*:\s*([^.;|\n]{1,120})(?=\s*[.;|\n]|$)/giu)]
-    .some(match => !normalizeGamingMinecraftEdition(match[1]));
-  const editions = [...new Set(assertions)];
-  const titleEditions = [...new Set(metadata)];
-  if (new Set(declared).size > 1 || declared.length && editions.some(value => value !== declared[0])
-    || editions.length === 1 && titleEditions.some(value => value !== editions[0])) return { status: 'conflict', exclusive };
-  // Multiple separately described editions are scope uncertainty, not a contradiction.
-  if (unspecifiedEdition || editions.length > 1 || titleEditions.length > 1) return { status: 'unverified', exclusive };
-  exclusive ||= /\b(?:unlike|differs? from|different from)\b[^.!?\n]{0,80}\b(?:java|bedrock)(?: edition)?\b/iu.test(text);
-  if (editions.length === 1) return { status: 'verified', edition: editions[0], exclusive };
-  return { status: titleEditions.length ? 'unverified' : 'none', exclusive };
+  return readGamingRegistryEditionScope(document, game) as ReturnType<typeof readGamingMinecraftEditionScope>;
 }

@@ -30,6 +30,7 @@ import { assessGamingStructuralUsability } from '@shared/gaming/gamingStructural
 import { GAMING_EVIDENCE_UNIT_POLICY_VERSION } from '@shared/gaming/gamingEvidenceUnits.js';
 import { isGamingApprovedArtifactCurrent } from '@shared/gaming/gamingHybridPolicyCore.js';
 import { GAMING_CLEAR_VERSION, GAMING_CLEAR_POLICY_VERSION, parseGamingClearAssessment, type GamingClearAssessment } from '@shared/gaming/gamingClearPolicy.js';
+import { GAMING_GAME_REGISTRY } from '@shared/gaming/gamingGameRegistry.js';
 import { truncateTextByCharacters } from '@shared/http/clientResponseCommon.js';
 import { planAutonomousWorkerJob } from '@services/workerAutonomyService.js';
 
@@ -1340,6 +1341,9 @@ async function ingestOneSource(
       resolverId: document.resolution.resolverId,
       resolverVersion: document.resolution.resolverVersion,
       documentResolverVersion: GAMING_DOCUMENT_RESOLVER_VERSION,
+      gameRegistryVersion: GAMING_GAME_REGISTRY.version,
+      gameRegistryRevision: GAMING_GAME_REGISTRY.revision,
+      gameRegistryHash: sha256(stableJson(GAMING_GAME_REGISTRY)),
       acquisition: document.acquisition ?? null,
       finalSourcePolicy: finalPolicy,
       chunkingVersion: GAMING_DOCUMENT_CHUNKING_VERSION,

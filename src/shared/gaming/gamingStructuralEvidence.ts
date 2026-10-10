@@ -4,7 +4,8 @@ import { GAMING_EVIDENCE_UNIT_POLICY_VERSION } from './gamingEvidenceUnits.js';
 import { resolveGamingAnswerPolicy } from './gamingAnswerPolicy.js';
 import { buildGamingRetrievalTerms, gamingLexicalTokens, gamingTermCoverage } from './gamingRetrievalPolicy.js';
 import { GAMING_HYBRID_V2_LIMITS } from './gamingHybridContract.js';
-import { normalizeGamingGameIdentity, normalizeGamingEditionIdentity } from './gamingGameIdentity.js';
+import { normalizeGamingEditionIdentity } from './gamingGameIdentity.js';
+import { gamingRegistryEditionKind, gamingRegistryExpansionNames, gamingRegistryLiteralPattern, gamingRegistrySourceGameMatchesRequest } from './gamingGameRegistry.js';
 
 export const GAMING_STRUCTURAL_SUFFICIENCY_VERSION = 'gaming-structural-sufficiency/v1';
 export const GAMING_STRUCTURAL_EVIDENCE_LIMITS = Object.freeze({ units: 2_048, unitChars: 4_096, usableUnitChars: 2_000, fields: 32, valueChars: 1_024 });
@@ -41,6 +42,88 @@ export function isGamingDocumentMetadataUnit(unit: GamingEvidenceUnit): boolean 
   return unit.fields.length > 0 && unit.fields.every(field => documentMetadataLabel.test(normal(field.label.split(/\s+\/\s+/u).at(-1)!)));
 }
 
+export const GAMING_GAME_SCOPE_POLICY_VERSION = 'gaming-game-source-scope/v1';
+export interface GamingGameScopedDocument<T> {
+  document: T;
+  status: 'unchanged' | 'projected' | 'unverified' | 'conflict';
+  excludedUnitIds: string[];
+  excludedReferenceCount: number;
+  reasonCodes: string[];
+}
+
+/** One closed source-global declaration grammar is shared by scope protection
+ * and primary-identity inspection; record placement cannot narrow its meaning. */
+export function gamingPrimarySourceDeclarationPattern(): RegExp {
+  return /\bthis\s+(?:guide|build|walkthrough|article|source|page|document)\s+(?:covers|is\s+(?:for|about))\s+/giu;
+}
+
+/** A complete quoted passage is a reference. Quoting only the subject name
+ * leaves the affirmative declaration outside that quotation and still binding. */
+function hasUnquotedPrimarySourceDeclaration(text: string): boolean {
+  const passages = [...text.matchAll(/"[^"]*"|“[^”]*”|`[^`]*`|(?:^|\s)'(?:[^']|(?<=\w)'(?=\w))*'|‘[^’]*’/gu)];
+  return [...text.matchAll(gamingPrimarySourceDeclarationPattern())].some(declaration => !passages.some(passage =>
+    declaration.index >= passage.index && declaration.index + declaration[0].length <= passage.index + passage[0].length));
+}
+
+/** Explicit sentence-local references cannot become primary identity or selected
+ * gameplay evidence. Incomplete references and global scope claims stay intact. */
+function withoutBoundedGamingReferences(text: string, units: readonly GamingEvidenceUnit[] = []): {
+  text: string; excludedReferenceCount: number;
+} {
+  let excludedReferenceCount = 0;
+  const projected = text.replace(/(?:^|(?<=[.!?])\s+)(?:(?:historically|previously)[,:]?\s+in(?:\s+the\s+game)?\s+|(?:historical references?|related articles?|recommended(?:\s+(?:articles?|guides?|reading))?|read next|references?)\s*:\s*)[^.!?\n]{1,512}[.!?](?=\s|$)/giu,
+    reference => {
+      if (hasUnquotedPrimarySourceDeclaration(reference) || /\bgame\s*:/iu.test(reference)
+        || units.some(unit => unit.text.includes(reference.trim()))) return reference;
+      excludedReferenceCount++;
+      return ' ';
+    });
+  return { text: projected, excludedReferenceCount };
+}
+
+/**
+ * An explicit Game field belongs to its complete gameplay record. Metadata-only
+ * declarations and source-wide guide claims remain global assertions. Preserve
+ * the acquired document for hashes/attestations; this is an evidence projection.
+ */
+export function selectGamingGameScopedDocument<T extends {
+  text: string; publicUrl: string; evidenceUnits?: readonly GamingEvidenceUnit[];
+}>(document: T, game: string): GamingGameScopedDocument<T> {
+  const references = withoutBoundedGamingReferences(document.text, document.evidenceUnits);
+  const result = (status: GamingGameScopedDocument<T>['status'], reasonCodes: string[] = [],
+    excluded: GamingEvidenceUnit[] = []): GamingGameScopedDocument<T> => ({
+    document: status !== 'conflict' && status !== 'unverified' && (excluded.length || references.excludedReferenceCount) ? { ...document,
+      text: excluded.reduce((text, unit) => text.split(unit.text).join(' '), references.text),
+      evidenceUnits: document.evidenceUnits?.filter(unit => !excluded.includes(unit)) } : document,
+    status, excludedUnitIds: excluded.map(unit => unit.id),
+    excludedReferenceCount: status === 'conflict' || status === 'unverified' ? 0 : references.excludedReferenceCount, reasonCodes
+  });
+  const referenceReasons = references.excludedReferenceCount ? ['BOUNDED_REFERENCE_CONTENT_EXCLUDED'] : [];
+  if (!document.evidenceUnits?.length) return result(references.excludedReferenceCount ? 'projected' : 'unchanged', referenceReasons);
+  const units = readGamingEvidenceUnits(document.evidenceUnits, document.publicUrl, document.text);
+  if (units.length !== document.evidenceUnits.length) return result('unverified', ['LOCAL_GAME_SCOPE_NOT_INTACT']);
+  const foreign: GamingEvidenceUnit[] = [];
+  for (const unit of units) {
+    const games = unit.fields.filter(field => normal(field.label.split(/\s+\/\s+/u).at(-1)!) === 'game');
+    if (!games.some(field => !gamingRegistrySourceGameMatchesRequest(field.value, game))) continue;
+    if (isGamingDocumentMetadataUnit(unit)) return result('conflict', ['GAME_MISMATCH']);
+    // A foreign game paired with the requested game's specifically registered
+    // edition is internally contradictory, rather than an unrelated record.
+    const foreignGame = games.find(field => !gamingRegistrySourceGameMatchesRequest(field.value, game))!.value;
+    if (unit.fields.some(field => /^(?:edition|scope|applicability)$/iu.test(field.label.split(/\s+\/\s+/u).at(-1)!)
+      && gamingRegistryEditionKind(game, field.value) !== undefined
+      && gamingRegistryEditionKind(game, field.value) !== 'base'
+      && gamingRegistryEditionKind(foreignGame, field.value) === undefined)) return result('conflict', ['GAME_MISMATCH']);
+    // A malformed/contradictory record cannot be discarded to make another fact
+    // appear trustworthy. Scope must come from the exact parser-owned record.
+    if (games.length !== 1 || !intact(unit) || hasUnquotedPrimarySourceDeclaration(unit.text))
+      return result('unverified', ['LOCAL_GAME_SCOPE_NOT_INTACT']);
+    foreign.push(unit);
+  }
+  return foreign.length || references.excludedReferenceCount ? result('projected',
+    [...(foreign.length ? ['UNRELATED_LOCAL_GAME_RECORDS_EXCLUDED'] : []), ...referenceReasons], foreign) : result('unchanged');
+}
+
 /**
  * Only a closed declarative negative requirement can neutralize a DLC mention.
  * This text is for contradiction detection only; it never becomes answer evidence
@@ -48,24 +131,32 @@ export function isGamingDocumentMetadataUnit(unit: GamingEvidenceUnit): boolean 
  * extra clauses and incomplete prose retain the original conservative checks.
  */
 export function gamingEditionConflictText(text: string, completeRecord = false): string {
-  const requirements = text.replace(/(?:^|(?<=[.!?\n|]))\s*(?:(?:Notes?|Requirements?|Compatibility|Description)\s*:\s*)?([\p{L}\p{N}'’() \t-]{1,120}?)\s+(?:(?:do(?:es)?\s+not|do(?:es)?n['’]t)\s+(?:require|need)|(?:requires?|needs?)\s+no)\s+(?:(?:the|an?)\s+)?(?:shadow[\s-]+of[\s-]+the[\s-]+erdtree|dlc|expansion)\s*([.!](?=\s|$)|(?=[\n|]|$))/giu,
+  const expansion = gamingExpansionScopePattern();
+  const requirements = text.replace(new RegExp(`(?:^|(?<=[.!?\\n|]))\\s*(?:(?:Notes?|Requirements?|Compatibility|Description)\\s*:\\s*)?([\\p{L}\\p{N}'’() \\t-]{1,120}?)\\s+(?:(?:do(?:es)?\\s+not|do(?:es)?n['’]t)\\s+(?:require|need)|(?:requires?|needs?)\\s+no)\\s+(?:(?:the|an?)\\s+)?(?:${expansion})\\s*([.!](?=\\s|$)|(?=[\\n|]|$))`, 'giu'),
     (statement: string, subject: string, ending: string) => {
-      const uncertainSubject = /\b(?:not|no|never|false|untrue|incorrect|deny|denies|denied|claim|claims|claimed|say|says|said|if|unless|whether|when|until|except|although|despite|that|is|are|was|were|may|might|can|could|must|should|would|dlc|expansion|nightreign)\b|\bshadow[\s-]+of[\s-]+the[\s-]+erdtree\b/iu;
+      const uncertainSubject = new RegExp(`\\b(?:not|no|never|false|untrue|incorrect|deny|denies|denied|claim|claims|claimed|say|says|said|if|unless|whether|when|until|except|although|despite|that|is|are|was|were|may|might|can|could|must|should|would|${expansion})\\b`, 'iu');
       return (!ending && !completeRecord) || uncertainSubject.test(subject) ? statement : ' ';
     });
   // Expansion-first declarations have no arbitrary subject or trailing clause.
-  return requirements.replace(/(?:^|(?<=[.!?\n|]))\s*(?:(?:Notes?|Requirements?|Compatibility|Description)\s*:\s*)?(?:(?:(?:the|an?)\s+)?(?:shadow[\s-]+of[\s-]+the[\s-]+erdtree|dlc|expansion)\s+(?:is\s+not|are\s+not|isn['’]t|aren['’]t)|no\s+(?:shadow[\s-]+of[\s-]+the[\s-]+erdtree|dlc|expansion)\s+(?:is|are))\s+(?:required|needed|necessary)\s*([.!](?=\s|$)|(?=[\n|]|$))/giu,
+  return requirements.replace(new RegExp(`(?:^|(?<=[.!?\\n|]))\\s*(?:(?:Notes?|Requirements?|Compatibility|Description)\\s*:\\s*)?(?:(?:(?:the|an?)\\s+)?(?:${expansion})\\s+(?:is\\s+not|are\\s+not|isn['’]t|aren['’]t)|no\\s+(?:${expansion})\\s+(?:is|are))\\s+(?:required|needed|necessary)\\s*([.!](?=\\s|$)|(?=[\\n|]|$))`, 'giu'),
     (statement: string, ending: string) => (!ending && !completeRecord) ? statement : ' ');
+}
+
+/** Literal registry data supplies names; requirement grammar remains game-independent. */
+function gamingExpansionScopePattern(): string {
+  return [...new Set([...gamingRegistryExpansionNames(), 'dlc', 'expansion'])]
+    .sort((left, right) => right.length - left.length).map(gamingRegistryLiteralPattern).join('|');
 }
 
 /** Unknown signed requirements never become positive scope contradictions. */
 export function classifyGamingEditionRequirements(text: string, completeRecord = false, unverifiedMentions = false): 'clear' | 'unverified' | 'conflict' {
   const inspected = gamingEditionConflictText(text, completeRecord);
+  const expansion = gamingExpansionScopePattern();
   let unverified = false;
   for (const match of inspected.matchAll(/[^.!?\n|;]+[.!?\n|;]?/gu)) {
     const clause = match[0];
-    if (!/\b(?:shadow[\s-]+of[\s-]+the[\s-]+erdtree|dlc|expansion)\b/iu.test(clause)) continue;
-    const requirement = /\b(?:dlc|expansion)[ -]only\b|\b(?:requires?|needs?|exclusive to|(?:only\s+available|available\s+only)\s+in)\b[^.!?\n]{0,60}\b(?:shadow[\s-]+of[\s-]+the[\s-]+erdtree|dlc|expansion)\b|\b(?:shadow[\s-]+of[\s-]+the[\s-]+erdtree|dlc|expansion)\s+(?:is|are|isn['’]t|aren['’]t|may|might|can|could|would|should|must)\s+(?:not\s+)?(?:be\s+)?(?:required|needed|necessary)\b/iu;
+    if (!new RegExp(`\\b(?:${expansion})\\b`, 'iu').test(clause)) continue;
+    const requirement = new RegExp(`\\b(?:dlc|expansion)[ -]only\\b|\\b(?:requires?|needs?|exclusive to|(?:only\\s+available|available\\s+only)\\s+in)\\b[^.!?\\n]{0,60}\\b(?:${expansion})\\b|\\b(?:${expansion})\\s+(?:is|are|isn['’]t|aren['’]t|may|might|can|could|would|should|must)\\s+(?:not\\s+)?(?:be\\s+)?(?:required|needed|necessary)\\b`, 'iu');
     if (!requirement.test(clause)) { unverified ||= unverifiedMentions; continue; }
     const uncertain = /\?|\b(?:if|unless|except|when|until|whether|not|no|never|false|untrue|incorrect|deny|denies|denied|claim|claims|claimed|may|might|can|could|would|should|must)\b|\b(?:isn|aren|doesn|don)['’]t\b/iu;
     if (uncertain.test(clause)) unverified = true;
@@ -87,6 +178,12 @@ export function selectGamingEditionScopedEvidence(document: {
   input = { ...input, edition: resolveGamingRequestEdition(input) };
   const result = (status: 'verified' | 'unverified' | 'conflict', units: GamingEvidenceUnit[] = [], reasonCodes: string[] = []) =>
     ({ status, units, text: units.map(unit => unit.text).join('\n\n'), reasonCodes });
+  const gameScoped = selectGamingGameScopedDocument(document, input.game);
+  if (gameScoped.status === 'conflict') return result('conflict', [], gameScoped.reasonCodes);
+  // Keep the existing edition selector's public reason contract. The independent
+  // game-scope stage retains its more specific LOCAL_GAME_SCOPE_NOT_INTACT trace.
+  if (gameScoped.status === 'unverified') return result('unverified', [], ['EDITION_SCOPE_NOT_INTACT']);
+  document = gameScoped.document;
   if (!input.edition || normalizeGamingEditionIdentity(input.edition) !== 'base-game') return result('unverified');
   const units = readGamingEvidenceUnits(document.evidenceUnits, document.publicUrl, document.text);
   if (!document.evidenceUnits?.length) return result('unverified');
@@ -100,7 +197,7 @@ export function selectGamingEditionScopedEvidence(document: {
     const leaf = (label: string) => normal(label.split(/\s+\/\s+/u).at(-1)!);
     // Even an excluded record cannot hide an explicit different game.
     if (unit.fields.some(field => leaf(field.label) === 'game'
-      && normalizeGamingGameIdentity(field.value) !== normalizeGamingGameIdentity(input.game))) {
+      && !gamingRegistrySourceGameMatchesRequest(field.value, input.game))) {
       return result('conflict', [], ['GAME_MISMATCH']);
     }
     const metadataOnly = isGamingDocumentMetadataUnit(unit);
@@ -108,7 +205,7 @@ export function selectGamingEditionScopedEvidence(document: {
       .map(field => normalizeGamingEditionIdentity(field.value));
     scopedRecords ||= !metadataOnly && scopes.length > 0;
     if (!scopes.includes('base-game')) {
-      explicitOtherEdition ||= !metadataOnly && scopes.some(scope => /^(?:shadow of the erdtree|dlc|expansion)$/u.test(scope));
+      explicitOtherEdition ||= !metadataOnly && scopes.some(scope => new RegExp(`^(?:${gamingExpansionScopePattern()})$`, 'iu').test(scope));
       continue;
     }
     // A parser-owned field boundary closes a declaration even when serialization
@@ -120,10 +217,10 @@ export function selectGamingEditionScopedEvidence(document: {
     // A named acquired heading/caption is independent edition context, not an
     // uncertain requirement sentence. Negative notes cannot erase that label.
     const contextEditionConflict = [unit.context.heading, unit.context.caption].some(value => value
-      && /^(?:shadow[\s-]+of[\s-]+the[\s-]+erdtree|dlc|expansion)$/iu.test(value.trim()));
+      && new RegExp(`^(?:${gamingExpansionScopePattern()})$`, 'iu').test(value.trim()));
     const requirements = classifyGamingEditionRequirements(scopeContext, unit.integrity.status === 'complete', true);
     if (scopes.some(scope => scope !== 'base-game')
-      || contextEditionConflict || /\bnightreign\b/iu.test(scopeContext) || requirements === 'conflict') {
+      || contextEditionConflict || requirements === 'conflict') {
       return result('conflict', [], ['CONFLICTING_EDITION_SCOPE']);
     }
     uncertainBaseScope ||= requirements === 'unverified';
@@ -262,6 +359,35 @@ function conflictingUnits(units: readonly GamingEvidenceUnit[], claimShape: Gami
   return new Set([...assertions.values()].filter(entry => entry.values.size > 1).flatMap(entry => entry.units));
 }
 
+/** Internal normalized tuple projection for optional corroboration. The caller must
+ * independently establish source identity/applicability and request claim support.
+ * Values never become diagnostics; they are compared and hashed by the consumer. */
+export function readGamingStructuralClaimAssertion(unit: GamingEvidenceUnit): {
+  kind: Exclude<GamingStructuralClaimShape, 'none'>;
+  identity: string[];
+  value: string[];
+  game?: string;
+  edition?: string;
+  patch?: string;
+} | undefined {
+  if (readGamingEvidenceUnits([unit]).length !== 1 || !intact(unit)) return undefined;
+  const fields = new Map(unit.fields.map(field => [fieldKey(field.label), normal(field.value)]));
+  const kind = ['system', 'body', 'site', 'resource'].every(key => fields.has(key)) ? 'location'
+    : ['item', 'stat', 'value', 'unit'].every(key => fields.has(key)) ? 'statistic'
+      : fields.has('mechanic') && (fields.has('change') || fields.has('before') && fields.has('after')) ? 'patch_change'
+        : ['build', 'item', 'skill'].every(key => fields.has(key)) ? 'build' : undefined;
+  if (!kind || requiredFields(kind, fields).some(key => !fields.get(key))) return undefined;
+  const identityKeys = kind === 'location' ? ['system', 'body', 'site']
+    : kind === 'statistic' ? ['item', 'stat'] : kind === 'patch_change' ? ['mechanic'] : ['build'];
+  const valueKeys = kind === 'location' ? ['resource'] : kind === 'statistic' ? ['value', 'unit']
+    : kind === 'patch_change' ? ['change', 'before', 'after'] : ['item', 'skill'];
+  return { kind, identity: identityKeys.map(key => fields.get(key)!),
+    value: [...valueKeys.map(key => fields.get(key) ?? ''), ...(unit.context.qualifiers ?? []).map(normal).sort()],
+    ...(fields.get('game') ? { game: fields.get('game') } : {}),
+    ...(fields.get('scope') ? { edition: fields.get('scope') } : {}),
+    ...(fields.get('patch') ? { patch: fields.get('patch') } : {}) };
+}
+
 /** Compare full source batches while preserving each document's validation cap. */
 export function gamingCrossSourceStructuralConflict(input: {
   sources: readonly { sourceUrl: string; units: readonly GamingEvidenceUnit[] }[];
@@ -307,6 +433,10 @@ export function markGamingEvidenceUnitConflicts(input: readonly GamingEvidenceUn
 export function assessGamingStructuralUsability(input: {
   units?: readonly GamingEvidenceUnit[]; prompt?: string; game?: string; mode?: 'guide' | 'build' | 'meta'; proseText?: string; compareAcrossSources?: boolean;
 }): GamingStructuralUsability {
+  // Required-source identities are handled separately. Apply the existing
+  // retrieval URL boundary before binding in-game labels and opaque identifiers.
+  // The caller retains the original question and source URLs for provenance.
+  input = { ...input, prompt: input.prompt?.replace(/https?:\/\/[^\s)]+/giu, '') };
   const units = readGamingEvidenceUnits(input.units);
   const usable = units.filter(intact);
   const claimShape = shape(input, units);

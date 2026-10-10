@@ -798,7 +798,7 @@ automatically false; fetching an old document does not make its facts current.
 
 ### Server-owned policy and decisions
 
-`gaming-clear-policy/v1` separates audit profile, question profile and source
+`gaming-clear-policy/v2` separates audit profile, question profile and source
 role. Requests and source text cannot supply policy weights, floors or approval.
 These initial hypotheses are conservative rubric judgments, not calibrated
 probabilities or accuracy percentages.
@@ -1125,3 +1125,36 @@ Unsheathe: their names alone, titles, snippets, publication dates, frontend
 labels and expansion-label absence remain insufficient. Pages without positive
 applicability evidence still fail closed; historical URLs have not been
 reacquired or asserted to be acceptable.
+
+### Gaming identity registry and decision invalidation
+
+The private backend recognizes names through the literal, versioned registry in
+`src/shared/gaming/gamingGameRegistryData.ts`. Its schema is
+`gaming-game-registry/v1`; data revisions are distinct from the schema version.
+Names, aliases, related titles, editions, expansions, DLC, remasters, platform
+labels and review provenance are configuration. Generic algorithms consume that
+data. Recognition never grants publisher authority, storage rights, acquired
+identity or edition applicability. Unknown games can satisfy the same acquired
+title/body evidence rules; request names, URLs and registry aliases alone are
+insufficient proof. Missing anchors remain unverified.
+
+New entries and alias/relationship changes require a reviewed repository change,
+provenance and a data-revision increment. Review ambiguous aliases, sequel and
+edition boundaries, and add generic regression fixtures. Publisher authority,
+currentness adapters and durable storage eligibility require their separate
+existing source-policy review. Runtime submissions cannot mutate the registry.
+
+CLEAR policy v2 preserves the public `gaming-clear/v1` rubric and wire shape,
+while rejecting persisted v1 policy assessments until sources are reassessed.
+Context fingerprints bind the registry schema, revision and a hash of its exact
+reviewed data. Existing bounded extraction caches can reuse acquired bytes, but
+validation decisions must be recomputed under the current rules. Approved hybrid durable Gaming
+revision metadata already includes the CLEAR policy version, so old and new
+policy assessments cannot silently share an approved revision. This adds no storage
+infrastructure and does not change transient-only or source licensing policy.
+
+Rollback must use a reviewed private release and invalidate reusable decision
+artifacts or force reassessment. An old binary may recognize historical v1
+assessments; restoring it is not evidence that those assessments satisfy the
+current identity rules. Existing workflow IDs, TTLs, idempotency, authentication,
+source authority and release gates remain in force.

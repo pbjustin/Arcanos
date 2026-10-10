@@ -204,7 +204,7 @@ describe('Gaming final-answer CLEAR assessment', () => {
     const result = await run({ mode: 'build', prompt: 'Which return route strategy should I use?', evidenceAssessment: advisory,
       answer: `${GAMING_UNVERIFIED_GUIDE_WARNING}\n\n${input.answer}` });
     expect(result.assessment).toMatchObject({ decision: 'accept', gates: { freshness: 'unknown' },
-      policyProfile: 'gaming-clear-policy/v1:advisory_recommendation:answer' });
+      policyProfile: 'gaming-clear-policy/v2:advisory_recommendation:answer' });
     expect(parseGamingClearAssessment(result.assessment)).toEqual(result.assessment);
     expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
   });
