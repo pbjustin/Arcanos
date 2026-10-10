@@ -24,7 +24,7 @@ import {
   selectGamingSourcePublicUrl
 } from '@shared/gaming/gamingDocumentIngestionCore.js';
 import { normalizeGamingGameIdentity } from '@shared/gaming/gamingGameIdentity.js';
-import { assessGamingSourcePolicy, evaluateGamingFreshness, GAMING_FRESHNESS_POLICY_VERSION, GAMING_SOURCE_POLICY_VERSION, type GamingFreshnessEvidence } from '@shared/gaming/gamingFreshnessCore.js';
+import { assessGamingSourcePolicy, evaluateGamingFreshness, extractGamingFreshnessMetadata, GAMING_FRESHNESS_POLICY_VERSION, GAMING_SOURCE_POLICY_VERSION, type GamingFreshnessEvidence } from '@shared/gaming/gamingFreshnessCore.js';
 import { gamingClearHistoricalSourceVerified } from '@shared/gaming/gamingClearSource.js';
 import { assessGamingStructuralUsability } from '@shared/gaming/gamingStructuralEvidence.js';
 import { GAMING_EVIDENCE_UNIT_POLICY_VERSION } from '@shared/gaming/gamingEvidenceUnits.js';
@@ -1332,6 +1332,18 @@ async function ingestOneSource(
     }
     const contentHash = hashGamingDocumentRevision(cleanedText, stableJson({ ...normalizedData,
       ...(document.evidenceUnits?.length ? { evidenceUnits: document.evidenceUnits, evidenceUnitPolicyVersion: GAMING_EVIDENCE_UNIT_POLICY_VERSION } : {}) }));
+    // Bind whole-source applicability before chunking can separate global labels
+    // from selected rows. This carries restrictions, never execution authority.
+    const applicability = extractGamingFreshnessMetadata(document, { game: policyGame,
+      ...(source.hybridApproval?.applicabilityContext?.edition ? { edition: source.hybridApproval.applicabilityContext.edition } : {}) }, new Date(fetchedAt), []);
+    const acquiredApplicability = {
+      extractorVersion: GAMING_FRESHNESS_POLICY_VERSION, contentHash, game: applicability.game,
+      ...(applicability.edition ? { edition: applicability.edition } : {}),
+      ...(applicability.platforms?.length ? { platforms: applicability.platforms } : {}),
+      ...(applicability.regions?.length ? { regions: applicability.regions } : {}),
+      ...(applicability.metadataConflict ? { metadataConflict: true } : {}),
+      ...(applicability.metadataUnverified || documentTruncated || document.metrics.instructionFiltered ? { metadataUnverified: true } : {})
+    };
     const recordType = source.hybridApproval?.recordType ?? sourceTypeToRecordType(sourceType);
     // Revision identity includes acquisition policy so refreshing an older
     // extraction can replace stale provenance/quality even if its prose matches.
@@ -1341,6 +1353,7 @@ async function ingestOneSource(
       resolverId: document.resolution.resolverId,
       resolverVersion: document.resolution.resolverVersion,
       documentResolverVersion: GAMING_DOCUMENT_RESOLVER_VERSION,
+      acquiredApplicabilityVersion: GAMING_FRESHNESS_POLICY_VERSION,
       gameRegistryVersion: GAMING_GAME_REGISTRY.version,
       gameRegistryRevision: GAMING_GAME_REGISTRY.revision,
       gameRegistryHash: sha256(stableJson(GAMING_GAME_REGISTRY)),
@@ -1421,6 +1434,7 @@ async function ingestOneSource(
         patchVerificationMethod: patchVerification?.method ?? null,
         structuredExtractorVersion: normalized.adapterVersion,
         documentResolverVersion: GAMING_DOCUMENT_RESOLVER_VERSION,
+        acquiredApplicability,
         ...(source.hybridApproval ? { hybridFreshness: source.hybridApproval.freshness,
           hybridPolicyVersion: source.hybridApproval.policyVersion,
           gamingClear: source.hybridApproval.gamingClear,

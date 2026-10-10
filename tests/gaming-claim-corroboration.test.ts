@@ -21,11 +21,18 @@ const request = { game: 'Copper Vale', edition: 'base-game', platform: 'PC', mod
 const firstReport = { description: 'Measured staff damage against the tutorial practice target.' };
 const secondReport = { description: 'Field notes record damage before adding equipment bonuses.' };
 function source(host: string, heading: string, overrides: Partial<GamingClaimCorroborationSource> = {}, value = '20',
-  record: { description?: string; caption?: string; reverseColumns?: boolean; qualifier?: string } = {}):
+  record: { description?: string; caption?: string; reverseColumns?: boolean; qualifier?: string; aliasLabels?: boolean;
+    scopeValue?: string; gameValue?: string; platformValue?: string; platformLabel?: string; regionLabel?: string } = {}):
   GamingClaimCorroborationSource {
   const sourceUrl = `https://${host}/guide`;
-  const fields = [['Game', 'Copper Vale'], ['Item', 'Copper Staff'], ['Stat', 'damage'], ['Value', value],
-    ['Unit', 'HP'], ['Scope', 'base-game'], ...(record.description ? [['Description', record.description]] : [])];
+  const fields = [['Game', record.gameValue ?? 'Copper Vale'], ['Item', 'Copper Staff'], ['Stat', 'damage'], ['Value', value],
+    ['Unit', 'HP'], ['Scope', record.scopeValue ?? 'base-game'], ...(record.description ? [['Description', record.description]] : []),
+    ...(record.platformValue ? [[record.platformLabel ?? 'Platform', record.platformValue]] : []),
+    ...(record.regionLabel ? [[record.regionLabel, 'Global']] : [])];
+  if (record.aliasLabels) {
+    const aliases: Record<string, string> = { Item: 'Equipment', Stat: 'Statistic', Unit: 'Units', Scope: 'Edition' };
+    for (const field of fields) field[0] = aliases[field[0]] ?? field[0];
+  }
   if (record.reverseColumns) fields.reverse();
   const body = `<article><h1>${heading}</h1><table>${record.caption ? `<caption>${record.caption}</caption>` : ''}<tr>${fields.map(([label]) => `<th>${label}</th>`).join('')}</tr><tr>${fields.map(([, fieldValue]) => `<td>${fieldValue}</td>`).join('')}</tr></table>${record.qualifier ? `<p>${record.qualifier}</p>` : ''}</article>`;
   return { sourceId: host, sourceUrl, game: 'Copper Vale', edition: 'base-game', platforms: ['PC'],
@@ -44,7 +51,7 @@ describe('Gaming optional structured claim corroboration', () => {
   test('distinct reviewed publisher families can report the same intact scoped claim', () => {
     const result = evaluate([source('a.example', 'Copper Vale equipment report', {}, '20', firstReport),
       source('b.example', 'Copper Vale staff statistics', {}, '20', secondReport)]);
-    expect(result.policyVersion).toBe('gaming-claim-corroboration/v2');
+    expect(result.policyVersion).toBe('gaming-claim-corroboration/v3');
     expect(result.claims).toHaveLength(1);
     expect(result.claims[0]).toMatchObject({ status: 'independently_corroborated', reviewedIndependentFamilyCount: 2 });
     expect(result.claims[0].sourceIds).toEqual(['a.example', 'b.example']);
@@ -69,6 +76,59 @@ describe('Gaming optional structured claim corroboration', () => {
       { caption: 'Equipment statistics', reverseColumns });
     expect(first.evidenceUnits![0].text).not.toEqual(second.evidenceUnits![0].text);
     const result = evaluate([first, second]);
+    expect(result.claims).toHaveLength(1);
+    expect(result.claims[0]).toMatchObject({ status: 'single_source', reviewedIndependentFamilyCount: 1 });
+    expect(result.reasonCodes).toContain('DUPLICATED_CLAIM_REPORTS');
+  });
+
+  test.each([false, true])('copied gameplay fields retain one lineage across canonical label aliases and column order: %s', reverseColumns => {
+    const first = source('a.example', 'Copper Vale equipment report');
+    const second = source('b.example', 'Copper Vale staff statistics', {}, '20', { aliasLabels: true, reverseColumns });
+    expect(first.evidenceUnits![0].fields).not.toEqual(second.evidenceUnits![0].fields);
+    for (const report of [first, second]) {
+      expect(assessGamingStructuralUsability({ ...request, units: report.evidenceUnits }).claimSupported).toBe(true);
+    }
+    const result = evaluate([first, second]);
+    expect(result.claims).toHaveLength(1);
+    expect(result.claims[0]).toMatchObject({ status: 'single_source', reviewedIndependentFamilyCount: 1 });
+    expect(result.reasonCodes).toContain('DUPLICATED_CLAIM_REPORTS');
+  });
+
+  test.each(['Base game', 'BASE GAME'])('copied gameplay fields retain one lineage across equivalent edition spelling: %s', scopeValue => {
+    const first = source('a.example', 'Copper Vale equipment report');
+    const second = source('b.example', 'Copper Vale staff statistics', {}, '20', { scopeValue });
+    const result = evaluate([first, second]);
+    expect(result.claims).toHaveLength(1);
+    expect(result.claims[0]).toMatchObject({ status: 'single_source', reviewedIndependentFamilyCount: 1 });
+    expect(result.reasonCodes).toContain('DUPLICATED_CLAIM_REPORTS');
+  });
+
+  test.each(['Copper-Vale', 'Copper_Vale'])('copied gameplay fields retain one lineage across equivalent game formatting: %s', gameValue => {
+    const first = source('a.example', 'Copper Vale equipment report');
+    const second = source('b.example', 'Copper Vale staff statistics', {}, '20', { gameValue });
+    const result = evaluate([first, second]);
+    expect(result.claims).toHaveLength(1);
+    expect(result.claims[0]).toMatchObject({ status: 'single_source', reviewedIndependentFamilyCount: 1 });
+    expect(result.reasonCodes).toContain('DUPLICATED_CLAIM_REPORTS');
+  });
+
+  test.each([{ gameValue: 'Copper Vale II' }, { scopeValue: 'Copper Vale remastered' }])(
+    'distinct game or edition fields never become corroborating reports: %j', record => {
+      const result = evaluate([source('a.example', 'Copper Vale equipment report'),
+        source('b.example', 'Copper Vale staff statistics', {}, '20', record)]);
+      expect(result.claims).toHaveLength(2);
+      expect(result.claims.map(claim => claim.status).sort()).toEqual(['single_source', 'unverified']);
+      expect(result.claims.every(claim => claim.reviewedIndependentFamilyCount <= 1)).toBe(true);
+      expect(result.reasonCodes).toContain('CLAIM_SCOPE_OR_SUPPORT_UNVERIFIED');
+    });
+
+  test.each([
+    { first: { platformValue: 'PC' }, second: { platformValue: 'Steam' } },
+    { first: { platformValue: 'PC' }, second: { platformValue: 'PC', platformLabel: 'Platforms' } },
+    { first: { regionLabel: 'Region' }, second: { regionLabel: 'Regions' } }
+  ])('copied gameplay fields retain one lineage across closed metadata aliases: %j', ({ first, second }) => {
+    const result = evaluate([source('a.example', 'Copper Vale equipment report', {}, '20', first),
+      source('b.example', 'Copper Vale staff statistics', {}, '20', second)]);
     expect(result.claims).toHaveLength(1);
     expect(result.claims[0]).toMatchObject({ status: 'single_source', reviewedIndependentFamilyCount: 1 });
     expect(result.reasonCodes).toContain('DUPLICATED_CLAIM_REPORTS');
