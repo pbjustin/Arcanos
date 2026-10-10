@@ -359,6 +359,15 @@ export function extractGamingJsonEvidence(input: GamingEvidenceExtractionInput):
       result.truncated = true; reason('extraction_budget_exhausted'); return result;
     }
     if (deadlineExpired()) return result;
+    // Without a script opener the DOM cannot contain embedded JSON. Retain
+    // the independent admission bounds above, and parse every possible opener
+    // below so comments, templates, casing and malformed markup stay DOM-owned.
+    if (!/<script/iu.test(input.body)) {
+      if (input.transportTruncated) { result.truncated = true; reason('content_truncated'); }
+      if (deadlineExpired()) return result;
+      if (!result.subreasons.length) reason('no_supported_structured_records');
+      return result;
+    }
     // Parse actual DOM scripts, never script-looking text inside comments, templates, or assignment strings.
     // The installed parser supports source locations; the repository also includes older ambient Cheerio types.
     const parserOptions = { xmlMode: false, sourceCodeLocationInfo: true };
