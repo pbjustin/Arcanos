@@ -1,0 +1,444 @@
+{
+  "schemaVersion": 1,
+  "repository": "pbjustin/Arcanos",
+  "prNumber": 1531,
+  "startingPublishedHead": "b71c48890377eed768b63aa66a3a77d2f9a5d5c2",
+  "parentHeadSha": "8a316476a4256f6aa89b9a06daff1fa3beb5604d",
+  "binding": "Frozen second-successor source hashes; exact new commit and final CI/hosted proof will be published on PR. No final hosted or publisher/provider acceptance is claimed here.",
+  "nodeVersion": "24.18.1",
+  "npmVersion": "11.16.0",
+  "sourceSha256": {
+    "src/services/gamingHtmlEvidence.ts": "0c7657f13d655925f0b4028eb554f07404de2ec394b4b95daf02a6925e38b5f0",
+    "src/services/gamingJsonEvidence.ts": "df0adccb6fb7b39c6a8c1bfbc17841abb94557ff97db9448f1e309547369d1b1",
+    "src/shared/gaming/gamingLiveSourceValidationPreviewFixture.ts": "f2bc53ed5ff4d807e7676b67ca9f849ce8bac46801f9abfac8239bc12de12226",
+    "tests/gaming-hosted-mission-extraction.test.ts": "9204a99557db978ca677b78210d7f361a7f7475f5b1bb496c61b4a1890ab4f44",
+    "tests/gaming-samurai-guide-workflow.integration.test.ts": "f7fcdb215fd86ef728bba30e49352ffc2c297e94bd5d85a0485173b78855ab7d",
+    "tests/gaming-live-source-validation-preview.test.ts": "e59f339ddc589f69f81f5f16dcf3de853e2af0b915c03bb98d230ce83fe4d637",
+    "scripts/native-pr-preview-contract.mjs": "12e10aba3c487404e18c5327cac481a3247d09f98c307a7d58a557f03c72290b",
+    "scripts/check-native-pr-preview-imports.mjs": "fe51d3975176d05789d8b17c1845d24ce7c7def5b044fb067b57c1e21e5ad4c9"
+  },
+  "semanticPins": [
+    {
+      "path": "src/services/gamingHtmlEvidence.ts",
+      "digest": "8c1c29fac345651743731f9dc31a57841fbf1e163425730bbe97329a9beabd65",
+      "rawSha256": "0c7657f13d655925f0b4028eb554f07404de2ec394b4b95daf02a6925e38b5f0"
+    },
+    {
+      "path": "src/services/gamingJsonEvidence.ts",
+      "digest": "596c855aacfd6105a7074accbf89c78c0271d550ffbe48ea1867726b9af642d4",
+      "rawSha256": "df0adccb6fb7b39c6a8c1bfbc17841abb94557ff97db9448f1e309547369d1b1"
+    },
+    {
+      "path": "src/shared/gaming/gamingLiveSourceValidationPreviewFixture.ts",
+      "digest": "ee48374f834a0b2109244b4677ee86391db2b11a7d7655cabb5c42d199dc8e2e",
+      "rawSha256": "f2bc53ed5ff4d807e7676b67ca9f849ce8bac46801f9abfac8239bc12de12226"
+    }
+  ],
+  "peerReviewSha256": "e39849eacf64def8c0646de3496eb4a43d2e99ba5cd1dbc2fe68c19bf40e3f28",
+  "defects": [
+    {
+      "path": "src/services/gamingHtmlEvidence.ts and src/services/gamingJsonEvidence.ts",
+      "problem": "A comparison prefix discarded explicit primary-record negatives, producing affirmative structural support and normal-route answers.",
+      "correction": "Retain primary-subject negative qualification across auxiliaries, modals and adverbs; unrelated comparison content cannot cross that grammatical boundary. Existing scope, format, closure, instruction and resource limits remain."
+    },
+    {
+      "path": "tests/gaming-samurai-guide-workflow.integration.test.ts",
+      "problem": "Two independently complete large HTTP acquisitions in one five-second test failed all three full GitHub test jobs.",
+      "correction": "Split acquisition/selection/provenance and authenticated orchestration into separate complete tests; prebuild a greater-than-2MB UTF-8 document with greater-than-700K characters. Preserve actual HTTP, late passage distance greater than30K, pool greater than20, topics, provenance and assertions; no timeout or threshold changes."
+    }
+  ],
+  "initiallyFailingRegressions": [
+    {
+      "scope": "Exact8a production, original102-case qualifier corpus",
+      "artifactSha256": "d017a8d0858e06c3aed764a2d2b9e3a9c87b2c7aefc4247815eacf9705f9ffc2",
+      "success": false,
+      "passed": 68,
+      "failed": 34,
+      "skippedOrFiltered": 0,
+      "suites": 1,
+      "failedCases": [
+        "hosted mission extraction edge regressions outside the sealed graph retains the plain div primary unconfirmed qualification for DOM list",
+        "hosted mission extraction edge regressions outside the sealed graph retains the formatted div primary unconfirmed qualification for DOM list",
+        "hosted mission extraction edge regressions outside the sealed graph retains the plain span primary unconfirmed qualification for DOM list",
+        "hosted mission extraction edge regressions outside the sealed graph retains the formatted span primary unconfirmed qualification for DOM list",
+        "hosted mission extraction edge regressions outside the sealed graph retains the plain div primary unavailable qualification for DOM list",
+        "hosted mission extraction edge regressions outside the sealed graph retains the formatted div primary unavailable qualification for DOM list",
+        "hosted mission extraction edge regressions outside the sealed graph retains the plain span primary unavailable qualification for DOM list",
+        "hosted mission extraction edge regressions outside the sealed graph retains the formatted span primary unavailable qualification for DOM list",
+        "hosted mission extraction edge regressions outside the sealed graph retains the plain div primary unconfirmed qualification for embedded JSON",
+        "hosted mission extraction edge regressions outside the sealed graph retains the formatted div primary unconfirmed qualification for embedded JSON",
+        "hosted mission extraction edge regressions outside the sealed graph retains the plain span primary unconfirmed qualification for embedded JSON",
+        "hosted mission extraction edge regressions outside the sealed graph retains the formatted span primary unconfirmed qualification for embedded JSON",
+        "hosted mission extraction edge regressions outside the sealed graph retains the plain div primary unavailable qualification for embedded JSON",
+        "hosted mission extraction edge regressions outside the sealed graph retains the formatted div primary unavailable qualification for embedded JSON",
+        "hosted mission extraction edge regressions outside the sealed graph retains the plain span primary unavailable qualification for embedded JSON",
+        "hosted mission extraction edge regressions outside the sealed graph retains the formatted span primary unavailable qualification for embedded JSON",
+        "hosted mission extraction edge regressions outside the sealed graph retains a mixed comparison primary qualification in DOM list div: Unlike Nightreign, this record is unconfirmed on the current patch.",
+        "hosted mission extraction edge regressions outside the sealed graph retains a mixed comparison primary qualification in DOM list div: Compare earlier versions: this equipment is no longer available.",
+        "hosted mission extraction edge regressions outside the sealed graph retains a mixed comparison primary qualification in DOM list span: Unlike Nightreign, this record is unconfirmed on the current patch.",
+        "hosted mission extraction edge regressions outside the sealed graph retains a mixed comparison primary qualification in DOM list span: Compare earlier versions: this equipment is no longer available.",
+        "hosted mission extraction edge regressions outside the sealed graph retains a mixed comparison primary qualification in embedded JSON div: Unlike Nightreign, this record is unconfirmed on the current patch.",
+        "hosted mission extraction edge regressions outside the sealed graph retains a mixed comparison primary qualification in embedded JSON div: Compare earlier versions: this equipment is no longer available.",
+        "hosted mission extraction edge regressions outside the sealed graph retains a mixed comparison primary qualification in embedded JSON span: Unlike Nightreign, this record is unconfirmed on the current patch.",
+        "hosted mission extraction edge regressions outside the sealed graph retains a mixed comparison primary qualification in embedded JSON span: Compare earlier versions: this equipment is no longer available.",
+        "hosted mission extraction edge regressions outside the sealed graph does not affirm an unconfirmed DOM list div build or statistic",
+        "hosted mission extraction edge regressions outside the sealed graph does not affirm an unconfirmed DOM list span build or statistic",
+        "hosted mission extraction edge regressions outside the sealed graph does not affirm an unconfirmed embedded JSON div build or statistic",
+        "hosted mission extraction edge regressions outside the sealed graph does not affirm an unconfirmed embedded JSON span build or statistic",
+        "hosted mission extraction edge regressions outside the sealed graph rejects instruction-bearing primary comparison qualifications for DOM list",
+        "hosted mission extraction edge regressions outside the sealed graph rejects instruction-bearing primary comparison qualifications for embedded JSON",
+        "hosted mission extraction edge regressions outside the sealed graph keeps unclosed formatted primary comparison qualifications partial for DOM list",
+        "hosted mission extraction edge regressions outside the sealed graph keeps unclosed formatted primary comparison qualifications partial for embedded JSON",
+        "hosted mission extraction edge regressions outside the sealed graph preserves qualifier resource limits for primary comparisons in DOM list",
+        "hosted mission extraction edge regressions outside the sealed graph preserves qualifier resource limits for primary comparisons in embedded JSON"
+      ]
+    },
+    {
+      "scope": "First uncommitted correction: full134-case corpus exposes modal/adverb loss",
+      "artifactSha256": "5154cc449f2aa1099d9507cdc929325ead93a73478d4cc83762b82da96266832",
+      "success": false,
+      "passed": 118,
+      "failed": 16,
+      "skippedOrFiltered": 0,
+      "suites": 1,
+      "failedCases": [
+        "hosted mission extraction edge regressions outside the sealed graph retains the plain div primary modal unconfirmed qualification for DOM list",
+        "hosted mission extraction edge regressions outside the sealed graph retains the formatted div primary modal unconfirmed qualification for DOM list",
+        "hosted mission extraction edge regressions outside the sealed graph retains the plain span primary modal unconfirmed qualification for DOM list",
+        "hosted mission extraction edge regressions outside the sealed graph retains the formatted span primary modal unconfirmed qualification for DOM list",
+        "hosted mission extraction edge regressions outside the sealed graph retains the plain div primary adverb unconfirmed qualification for DOM list",
+        "hosted mission extraction edge regressions outside the sealed graph retains the formatted div primary adverb unconfirmed qualification for DOM list",
+        "hosted mission extraction edge regressions outside the sealed graph retains the plain span primary adverb unconfirmed qualification for DOM list",
+        "hosted mission extraction edge regressions outside the sealed graph retains the formatted span primary adverb unconfirmed qualification for DOM list",
+        "hosted mission extraction edge regressions outside the sealed graph retains the plain div primary modal unconfirmed qualification for embedded JSON",
+        "hosted mission extraction edge regressions outside the sealed graph retains the formatted div primary modal unconfirmed qualification for embedded JSON",
+        "hosted mission extraction edge regressions outside the sealed graph retains the plain span primary modal unconfirmed qualification for embedded JSON",
+        "hosted mission extraction edge regressions outside the sealed graph retains the formatted span primary modal unconfirmed qualification for embedded JSON",
+        "hosted mission extraction edge regressions outside the sealed graph retains the plain div primary adverb unconfirmed qualification for embedded JSON",
+        "hosted mission extraction edge regressions outside the sealed graph retains the formatted div primary adverb unconfirmed qualification for embedded JSON",
+        "hosted mission extraction edge regressions outside the sealed graph retains the plain span primary adverb unconfirmed qualification for embedded JSON",
+        "hosted mission extraction edge regressions outside the sealed graph retains the formatted span primary adverb unconfirmed qualification for embedded JSON"
+      ]
+    },
+    {
+      "scope": "Exact8a production with copied final loopback HTTP regression; four qualified negatives fail and four unqualified controls pass",
+      "artifactSha256": "a4924745c5175f023c4719d5e42e9a5688ea4e133fae929bfd928818b91d9e32",
+      "success": false,
+      "passed": 4,
+      "failed": 4,
+      "skippedOrFiltered": 36,
+      "suites": 1,
+      "failedCases": [
+        "October 4 early-game Samurai request through the served Gaming workflow keeps primary qualification on an acquired statistic/dom/qualified record through authenticated HTTP orchestration",
+        "October 4 early-game Samurai request through the served Gaming workflow keeps primary qualification on an acquired statistic/json/qualified record through authenticated HTTP orchestration",
+        "October 4 early-game Samurai request through the served Gaming workflow keeps primary qualification on an acquired location/dom/qualified record through authenticated HTTP orchestration",
+        "October 4 early-game Samurai request through the served Gaming workflow keeps primary qualification on an acquired location/json/qualified record through authenticated HTTP orchestration"
+      ]
+    },
+    {
+      "scope": "Exact8a production: selected newly authored hosted assertions fail; unselected tests are recorded",
+      "artifactSha256": "e882fe5d1791c82903021fe830617aa54297f7c8ad7cf250ea1d4d21c7e3a4b9",
+      "success": false,
+      "passed": 0,
+      "failed": 1,
+      "skippedOrFiltered": 14,
+      "suites": 1,
+      "failedCases": [
+        "sealed synthetic live-source identity and extraction proof executes primary qualification rejection against supported structural tuples"
+      ]
+    }
+  ],
+  "modalReplay": {
+    "total": 126,
+    "passed": 8,
+    "failed": 16,
+    "filtered_or_skipped": 102,
+    "suites": 1,
+    "duration_ms": 1476,
+    "replay": true,
+    "scratch_archive": "/tmp/arcanos-pr1531-modal-replay",
+    "archive_revision": "8a316476a4256f6aa89b9a06daff1fa3beb5604d",
+    "source_hashes": {
+      "src/services/gamingHtmlEvidence.ts": "756532049786721b63dbec81dcb7833f0b31f4a82deed20f5cafed7e96c7f193",
+      "src/services/gamingJsonEvidence.ts": "25750fe3a70b953372dca2db178af96689e04d3aa2c08b1413ef515532c5da54",
+      "tests/gaming-hosted-mission-extraction.test.ts": "e237b71f6d440dee197e56c89835adcfca0d3b7bd9851719a06bab43fa4a18f2"
+    },
+    "note": "Original filtered modal output filenames were overwritten by the full134case red run. This selected24case reproduction was replayed from exact first-correction source hashes and126case test snapshot; historical full134red preserved."
+  },
+  "coverageTimeoutHistory": {
+    "directHeadCi": {
+      "runId": 37983084947,
+      "jobId": 113998901038,
+      "result": "FAIL",
+      "summarySha256": "717cd08a2dbe50b8dac6394a554ddacb1eda3d3f96669d04fd3102182ebc0546"
+    },
+    "syntheticMergeCi": {
+      "runId": 37983019921,
+      "jobId": 113998643635,
+      "result": "FAIL",
+      "summarySha256": "0008582472e00e0e21916ffaa71003896c461c71df49d0b6dbcd61adf0b3a50b"
+    },
+    "prCi": {
+      "runId": 37983019894,
+      "jobId": 113997987197,
+      "result": "FAIL",
+      "summarySha256": "e5cdc1cf1fdb4b6c0bc1b2a3e1785ac6905593711a6e3ac01054cc8d24637e76"
+    },
+    "localInitial": {
+      "scope": "Selected original large HTTP case under unchanged V8 coverage: timeout reproduced; unrelated global coverage floors remain",
+      "artifactSha256": "9ca945e989bbcbf4042d2a53a9de00b450246352238e381baef2056996744ccc",
+      "success": false,
+      "passed": 0,
+      "failed": 1,
+      "skippedOrFiltered": 34,
+      "suites": 1,
+      "failedCases": [
+        "October 4 early-game Samurai request through the served Gaming workflow acquires the full primary guide over HTTP, selects late complementary topics and retains revision and citation provenance"
+      ]
+    },
+    "localFinal": {
+      "scope": "44 focused assertion cases under unchanged default V8 coverage; command fails only unchanged global floors for unselected suites",
+      "artifactSha256": "e84f88403b0c7c5f87f375ae3f31eccebd5bee8e0c101304744658dd6cda7fd0",
+      "success": false,
+      "passed": 44,
+      "failed": 0,
+      "skippedOrFiltered": 0,
+      "suites": 1,
+      "failedCases": []
+    },
+    "finalFocused": {
+      "scope": "44-case focused green gate with coverage collection disabled; full CI remains separately required",
+      "artifactSha256": "8bbee59e1463e1199d911ffed14dce10b8c63462ba6f9730727cf95ce0df95fb",
+      "success": true,
+      "passed": 44,
+      "failed": 0,
+      "skippedOrFiltered": 0,
+      "suites": 1,
+      "failedCases": []
+    },
+    "unchangedTestTimeoutMs": 5000
+  },
+  "finalFrozenValidation": {
+    "focused": {
+      "scope": "15 affected suites on frozen second-successor sources",
+      "artifactSha256": "7c8d4bb8c9ab43fc66c9faeb2c4626128471e4455c1d3792441ef18b3fd8adde",
+      "success": true,
+      "passed": 478,
+      "failed": 0,
+      "skippedOrFiltered": 0,
+      "suites": 15,
+      "failedCases": []
+    },
+    "previewImportBoundary": {
+      "scope": "Sealed preview import/semantic negative controls",
+      "artifactSha256": "aba47c78197a6fd5af7e5347f87c9d3294f54a53f163c122d1f96696beabd3ea",
+      "success": true,
+      "passed": 390,
+      "failed": 0,
+      "skippedOrFiltered": 0,
+      "suites": 1,
+      "failedCases": []
+    },
+    "gates": {
+      "type-check": {
+        "command": [
+          "npm",
+          "run",
+          "type-check"
+        ],
+        "exitCode": 0,
+        "durationSeconds": 36.983,
+        "nodeVersion": "v24.18.1",
+        "npmVersion": "11.16.0",
+        "logSha256": "82c45ad386f9769567052c6ed1b2b78434ef817bfe3d475c3cc908cb0dbfe9ec",
+        "environmentVariableNames": [
+          "CI",
+          "HTTPS_PROXY",
+          "HTTP_PROXY",
+          "LANG",
+          "LC_ALL",
+          "NODE_EXTRA_CA_CERTS",
+          "NODE_USE_ENV_PROXY",
+          "NO_PROXY",
+          "PATH",
+          "SSL_CERT_FILE"
+        ]
+      },
+      "lint": {
+        "command": [
+          "npm",
+          "run",
+          "lint"
+        ],
+        "exitCode": 0,
+        "durationSeconds": 29.357,
+        "nodeVersion": "v24.18.1",
+        "npmVersion": "11.16.0",
+        "logSha256": "1ebaf5056c393adc86625b9d5d694510feb175d279abe1b45c70c60a9189ea7c",
+        "environmentVariableNames": [
+          "CI",
+          "HTTPS_PROXY",
+          "HTTP_PROXY",
+          "LANG",
+          "LC_ALL",
+          "NODE_EXTRA_CA_CERTS",
+          "NODE_USE_ENV_PROXY",
+          "NO_PROXY",
+          "PATH",
+          "SSL_CERT_FILE"
+        ]
+      },
+      "build": {
+        "command": [
+          "npm",
+          "run",
+          "build"
+        ],
+        "exitCode": 0,
+        "durationSeconds": 41.186,
+        "nodeVersion": "v24.18.1",
+        "npmVersion": "11.16.0",
+        "logSha256": "0b9afde20b4001fa6f14c45f89648647add898ab097eef004c1070426e29e4aa",
+        "environmentVariableNames": [
+          "CI",
+          "HTTPS_PROXY",
+          "HTTP_PROXY",
+          "LANG",
+          "LC_ALL",
+          "NODE_EXTRA_CA_CERTS",
+          "NODE_USE_ENV_PROXY",
+          "NO_PROXY",
+          "PATH",
+          "SSL_CERT_FILE"
+        ]
+      },
+      "verifier": {
+        "command": [
+          "node",
+          "--test",
+          "scripts/native-pr-preview-e2e.test.mjs"
+        ],
+        "exitCode": 0,
+        "durationSeconds": 4.708,
+        "nodeVersion": "v24.18.1",
+        "npmVersion": "11.16.0",
+        "logSha256": "ad30ed23fbd19ffefe2b977f043593230e244065f17b42d51fc72796b9a6dae4",
+        "environmentVariableNames": [
+          "CI",
+          "HTTPS_PROXY",
+          "HTTP_PROXY",
+          "LANG",
+          "LC_ALL",
+          "NODE_EXTRA_CA_CERTS",
+          "NODE_USE_ENV_PROXY",
+          "NO_PROXY",
+          "PATH",
+          "SSL_CERT_FILE"
+        ]
+      }
+    },
+    "verifierTests": {
+      "passed": 40,
+      "failed": 0,
+      "skipped": 0
+    },
+    "postgres": {
+      "numTotalTestSuites": 2,
+      "numPassedTestSuites": 2,
+      "numFailedTestSuites": 0,
+      "numPendingTestSuites": 0,
+      "numTotalTests": 13,
+      "numPassedTests": 13,
+      "numFailedTests": 0,
+      "numPendingTests": 0,
+      "numTodoTests": 0,
+      "success": true
+    },
+    "postgresSourceAggregateSha256": "57372c922b0db62f7a7a0fd9286605cde8a4406b757ba31032d9045703378b7a",
+    "postgresResultSha256": "c3b5110194b62e666aade5904d2b90c16319315842f84e42b77d416992c48362",
+    "postgresCleanup": "Exact owned tmpfs-only PostgreSQL18.6 container removed and inspected absent",
+    "documentationGates": {
+      "docs-check": {
+        "command": [
+          "npm",
+          "run",
+          "docs:check"
+        ],
+        "exitCode": 0,
+        "durationSeconds": 0.893,
+        "nodeVersion": "v24.18.1",
+        "npmVersion": "11.16.0",
+        "logSha256": "4fcb16dae581ae3238ed1fda078dfcadd1ba0897079090c487b205bb69991898",
+        "environmentVariableNames": [
+          "CI",
+          "HTTPS_PROXY",
+          "HTTP_PROXY",
+          "LANG",
+          "LC_ALL",
+          "NODE_EXTRA_CA_CERTS",
+          "NODE_USE_ENV_PROXY",
+          "NO_PROXY",
+          "PATH",
+          "SSL_CERT_FILE"
+        ]
+      },
+      "docs-links": {
+        "command": [
+          "node",
+          "scripts/check-documentation-links.mjs",
+          "--local-only"
+        ],
+        "exitCode": 0,
+        "durationSeconds": 0.541,
+        "nodeVersion": "v24.18.1",
+        "npmVersion": "11.16.0",
+        "logSha256": "664faa93681040e7b69b30f49b76f2e76eee3cc8f58d7ba0bb91b77d1b420b4a",
+        "environmentVariableNames": [
+          "CI",
+          "HTTPS_PROXY",
+          "HTTP_PROXY",
+          "LANG",
+          "LC_ALL",
+          "NODE_EXTRA_CA_CERTS",
+          "NODE_USE_ENV_PROXY",
+          "NO_PROXY",
+          "PATH",
+          "SSL_CERT_FILE"
+        ]
+      }
+    }
+  },
+  "historicalParentHosted": {
+    "trustedRun": 37983017868,
+    "executedRequests": 173,
+    "passed": 173,
+    "revision": "8a316476a4256f6aa89b9a06daff1fa3beb5604d",
+    "independentLocalResultSha256": "969a3ecbca92b94a7d15ef9772d78725d4527185720038bc2cc37b3d0aa8edd5",
+    "independentActionsAttempt1": "FAIL before checkout/HTTP, NATIVE_PR_PREVIEW_TRUSTED_API_UNAVAILABLE, zero requests; no old-head retry performed after defects discovered",
+    "finalAcceptance": "FAIL due CI and newly reproduced qualifier defect; old hosted proof does not establish successor correctness"
+  },
+  "contract": {
+    "hostedHttpRequests": 173,
+    "liveSourceVersion": "gaming-live-source-validation/v1",
+    "liveSourceCases": 14,
+    "liveSourceExecutedAssertions": 76,
+    "largeSourceVersion": "gaming-large-source/v1",
+    "largeSourceCases": 13,
+    "largeSourceExecutedAssertions": 72,
+    "caseReportMaxAsciiChars": 4096
+  },
+  "boundaries": {
+    "realPublisherAcquisition": "NOT TESTED",
+    "liveTrinityAnswer": "NOT TESTED",
+    "productionChanged": false,
+    "finalHostedSuccessClaimed": false
+  },
+  "preservedFailedInvocations": [
+    {
+      "code": "wrong containment test suffix .ts; actual maintained file is .js",
+      "executedTests": 0,
+      "logSha256": "2449f43f9f4ffcfdcbcb27b5a2f5e56edba95fc95bee301389a4388d2726c0a4",
+      "countedAsPass": false
+    }
+  ]
+}

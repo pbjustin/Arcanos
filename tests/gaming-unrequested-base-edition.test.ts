@@ -17,7 +17,7 @@ jest.unstable_mockModule('@services/openai/chatFallbacks.js', () => ({ createSin
   createChatCompletionWithFallback: jest.fn(), ensureModelMatchesExpectation: jest.fn() }));
 const { resolveGamingDocument } = await import('../src/services/gamingDocumentResolution.js');
 const { selectGamingSourceEditionScopedEvidence } = await import('../src/shared/gaming/gamingStructuralEvidence.js');
-const { assessGamingClearSourceIdentity } = await import('../src/shared/gaming/gamingClearSource.js');
+const { assessGamingClearSourceIdentity, gamingClearIntactProseText } = await import('../src/shared/gaming/gamingClearSource.js');
 const { assessGamingSourcePolicy } = await import('../src/shared/gaming/gamingFreshnessCore.js');
 const { evaluateGamingHybridCandidates } = await import('../src/services/gamingHybridCandidates.js');
 const { createGamingHybridWorkflow } = await import('../src/services/gamingHybridKnowledge.js');
@@ -92,7 +92,17 @@ describe('unrequested benign acquired edition metadata', () => {
     return resolveGamingDocument(input.candidates[0].url);
   }
   it('admits only intact base records from a mixed acquired source, with no inferred request scope', async () => {
-    await mixedDocument();
+    const doc = await mixedDocument();
+    const shortMetadata = doc.evidenceUnits!.find(unit => unit.kind === 'paragraph')!;
+    const dlcRecord = doc.evidenceUnits!.find(unit => unit.fields.some(field => field.value === 'DLC'))!;
+    expect(shortMetadata.text).toBe('Game: Diablo 4');
+    expect(dlcRecord.text).toContain(shortMetadata.text);
+    // Overlapping metadata prefixes must not leave an excluded record fragment
+    // behind as intact prose after longer serializations are removed.
+    const intactProse = gamingClearIntactProseText(doc);
+    expect(intactProse).toContain(prose);
+    expect(intactProse).not.toContain('Expansion-only blink');
+    expect(intactProse).not.toContain('This movement skill requires DLC.');
     const result = await evaluateGamingHybridCandidates(input, actor);
     expect(result.accepted).toHaveLength(1);
     expect(result.accepted[0].freshness.edition).toBe('base-game');

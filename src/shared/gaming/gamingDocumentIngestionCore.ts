@@ -26,11 +26,14 @@ export function detectGamingDocumentGame(input: {
   canonicalUrl: string;
   pageTitle?: string;
   pageHeadings?: string;
+  /** Explicit acquired scope clauses use the request grammar for contradiction checks. */
+  allowAcquiredTopicIdentity?: boolean;
 }): GamingGameDetection {
   return detectGamingGame({
     urls: [input.canonicalUrl],
     pageTitle: input.pageTitle,
-    pageHeadings: input.pageHeadings
+    pageHeadings: input.pageHeadings,
+    excludeAcquiredTopicIdentities: !input.allowAcquiredTopicIdentity
   });
 }
 

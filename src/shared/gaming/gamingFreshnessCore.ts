@@ -1,5 +1,6 @@
 import { classifyGamingQuestionFreshness, type GamingQuestionFreshness } from './gamingQuestionFreshnessPolicy.js';
 import { gamingPlatformEvidenceMatchesRequest } from './gamingPlatformIdentity.js';
+import { gamingAcquiredGameDeclarationPattern } from './gamingGameDeclaration.js';
 import { resolveGamingRequestEdition, gamingEditionEvidenceMatchesRequest, canQualifyGamingUnrequestedEdition, normalizeGamingEditionIdentity, normalizeGamingGameIdentity, readGamingMinecraftEditionScope, normalizeGamingMinecraftEdition, type GamingEditionRequestContext } from './gamingGameIdentity.js';
 import type { GamingEvidenceUnit } from './gamingEvidenceUnits.js';
 import { isGamingDocumentMetadataUnit, readGamingEvidenceUnits, selectGamingEditionScopedEvidence } from './gamingStructuralEvidence.js';
@@ -146,12 +147,14 @@ export function extractGamingFreshnessMetadata(document: { publicUrl: string; ca
   const policy = assessGamingSourcePolicy(document.canonicalUrl ?? document.publicUrl, context.game, rules);
   const evidenceUnits = readGamingEvidenceUnits(document.evidenceUnits, undefined, document.text);
   let proseText = document.text;
-  for (const unit of evidenceUnits) proseText = proseText.replace(unit.text, '');
+  // Shared label prefixes must not leave gameplay record fragments in prose.
+  for (const unit of [...evidenceUnits].sort((left, right) => right.text.length - left.text.length)) proseText = proseText.replace(unit.text, '');
   const metadataText = proseText.slice(0, GAMING_FRESHNESS_DEFAULTS.maxMetadataChars);
   // The shared document instruction filter normalizes whitespace. Recover only
   // this closed label grammar; do not infer metadata from arbitrary date mentions.
-  const labels = 'Game|Edition|Platforms?|Regions?|Published at|Source updated at|Effective from|Effective until|Patch|Build|Season|Current patch|Current build|Current season|Baseline valid for patches|Baseline valid for builds|Supersedes patches|Supersedes builds|Mechanic';
-  const metadataLines = metadataText.replace(new RegExp(`(?:^|\\s)(${labels}):\\s*`, 'giu'), '\n$1: ').split(/\r?\n/u);
+  const labels = 'Edition|Platforms?|Regions?|Published at|Source updated at|Effective from|Effective until|Patch|Build|Season|Current patch|Current build|Current season|Baseline valid for patches|Baseline valid for builds|Supersedes patches|Supersedes builds|Mechanic';
+  const metadataLines = metadataText.replace(gamingAcquiredGameDeclarationPattern(), '\nGame: $1\n')
+    .replace(new RegExp(`(?:^|\\s)(${labels}):\\s*`, 'giu'), '\n$1: ').split(/\r?\n/u);
   const lines = metadataLines.slice(0, 500).map(line => line.split(/\.(?=\s+[A-Z])/u)[0].trim().replace(/\.$/u, ''));
   // An acquired global base label can narrow inspected source records without
   // creating a player edition. Local record labels cannot establish global scope.
@@ -166,13 +169,16 @@ export function extractGamingFreshnessMetadata(document: { publicUrl: string; ca
   // parser's bounds. Such labels remain uncertainty, never additional proof.
   let invalidMetadata = false;
   if (editionScoped?.status === 'verified') {
-    const assertions = [...proseText.matchAll(new RegExp(`(?:^|\\s)(?:${labels}):\\s*`, 'giu'))];
+    const assertions = [...proseText.matchAll(new RegExp(`(?:^|\\s)(?:${labels}):\\s*`, 'giu')),
+      ...Array.from(proseText.matchAll(gamingAcquiredGameDeclarationPattern()), match => ({
+        index: match.index, 0: /^[\s\S]*?\bgame\s*:\s*/iu.exec(match[0])![0]
+      }))].sort((left, right) => left.index - right.index);
     invalidMetadata = assertions.some((assertion, index) => {
       const valueStart = assertion.index + assertion[0].length;
       const value = proseText.slice(valueStart, assertions[index + 1]?.index ?? proseText.length);
       const end = valueStart + (/\r?\n|\.(?=\s+[A-Z])/u.exec(value)?.index ?? value.length);
       return end > GAMING_FRESHNESS_DEFAULTS.maxMetadataChars;
-    }) || metadataLines.slice(500).some(line => new RegExp(`^\\s*(?:${labels}):`, 'iu').test(line))
+    }) || metadataLines.slice(500).some(line => new RegExp(`^\\s*(?:Game|${labels}):`, 'iu').test(line))
       || evidenceUnits.some(unit => isGamingDocumentMetadataUnit(unit) && unit.integrity.status !== 'complete');
   }
   // Read explicit fields as individual source assertions. Record labels such as

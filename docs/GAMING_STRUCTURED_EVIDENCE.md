@@ -16,6 +16,11 @@ bodies. It preserves the existing response and request matrix, and emits
 `gaming-structured-evidence/v1` only after the complete fixture succeeds. The
 PR-head verifier requires that marker; missing or changed markers fail the probe.
 Fixture failures return a fixed error and withhold every Gaming success marker.
+The large-source and live-source-validation report headers also return actual
+per-case assertion counts and scalar observations, bound to the served PR/SHA.
+The app and exact-head verifier enforce their complete inventories and value
+schemas; version markers alone are insufficient. Each report retains its
+4,096-character bound and the existing fixed response body and request limits.
 The base-game scope proof distinguishes missing scope from an explicit edition
 conflict. A DLC-only record remains conflicting even when accompanying prose
 labels the page as base game; it cannot supply accepted base-game evidence.
@@ -74,12 +79,60 @@ supply missing fields for each other.
 Qualifier discovery includes bounded ancestor context around wrapped structures.
 Nested content that cannot retain its field association makes the affected record
 insufficient; removing a nested correction cannot leave an affirmative record.
+Ordinary prose does not consume the 64 relevant-qualifier allowance. A known
+whole-article scope supplies its notes and heading across plain layout wrappers;
+enclosing article/main notes also survive those wrappers, while independent
+sibling sections and articles cannot qualify the record. An unseen enclosing
+semantic scope still makes the record partial. Explicit
+presentation tables preserve authored prose blocks while removing bare cell
+values and handling nested data records independently.
+
+Block-leading `Game:` and `Edition:` declarations in paragraphs and standalone
+div/span elements retain parser-owned boundaries as metadata-only paragraph
+units, including closed harmless inline formatting of a label and value.
+Nested block/record content and inline comparisons remain excluded. Closed source elements are required
+for complete status, and the whole paragraph remains subject to instruction
+filtering. These units cannot establish structural gameplay support.
+Standalone div and standalone span corrections participate in that bounded
+context discovery for HTML and embedded JSON records. Harmless inline formatting
+is allowed when the block begins with a recognized qualification. Inline
+comparisons and layout wrappers do not duplicate qualifications. A comparison
+prefix does not discard an explicit primary-record qualification such as
+`Unlike earlier versions, this record is unconfirmed on the current patch.` or
+`Compare earlier versions: this equipment is no longer available.` These notes
+remain attached in both HTML and embedded JSON and cannot support an affirmative
+claim. Incomplete or instruction-like qualifications cannot leave a record
+complete.
+Primary article selection recognizes `.main-content`, `#main-content`, and
+`.page-content` alongside publisher article-body selectors. A usable specific
+publisher container takes precedence over enclosing article/main shells at the
+existing admission score. A longer, stronger disjoint primary article prevents a
+smaller named card from gaining that preference. Ancestors and descendants do
+not compete for this exclusion. Unusable specific containers retain the normal
+fallback scoring and resource limits. Wildcard class matches, broad publisher
+shells and semantically classified navigation containers do not gain that
+specific-container preference.
+Gaming also preserves a preceding primary H1 from the nearest enclosing
+article/main scope when selecting an inner prose body. An authored article
+header contributes only its eligible H1; publisher bylines and furniture stay
+excluded. The heading remains at the acquired text opening and first in bounded
+metadata, so existing identity corroboration can reject a Nightreign or DLC
+subject behind a misleading SEO title. Later recommendations and independent
+sibling headings cannot become the primary subject. The existing 240-character
+heading fence and selected-text limits remain in force.
 
 Community selection uses explicit `DiscussionForumPosting` markup together with
 its article/main containment. It preserves available author attribution while
 keeping quoted claims and unrelated comments out of affirmative record evidence.
 Markup is a selection hint, not an authority credential. This is deliberately
 narrower than support for arbitrary forum layouts.
+When a comments wrapper contains a recognized primary post, only eligible
+primary post subtrees survive in prose. Structural HTML and embedded JSON use
+the same explicit furniture exclusions as article extraction, including sidebar,
+complementary-role and recommendation containers. These containers cannot return
+through record fields or surrounding qualifications. Ordinary adjacent aside
+corrections remain qualifications, and full-response source-use restrictions
+remain enforced even when their container is excluded from evidence.
 
 Inert JSON accepts strict flat gameplay records or explicit `records`,
 `locations`, `equipmentStats`, and `patchChanges` groups. Embedded JSON-LD supports
@@ -111,11 +164,11 @@ article/section remains partial because a trailing qualifier could be missing.
 | HTML units/output and merged extraction | 2,048 units; 1,000,000 output characters |
 | Conflict comparison before selection | At most 4,096 validated candidate units across strategies; final output remains capped at 2,048 and omitted conflicts still invalidate retained assertions |
 | HTML fields/context | 32 fields/unit; 1,024 characters/value; 512 characters/context value; 4,096 characters/unit |
-| HTML surrounding context | Six ancestor levels; at most 64 candidate context elements; omitted context makes the record partial |
+| HTML surrounding context | Six ancestor levels; at most 64 relevant qualifier elements; known whole-article scopes supply wrapper context without another ancestor walk; omitted qualifications make the record partial |
 | JSON parsing | 262,144 bytes/payload; 524,288 cumulative JSON bytes; 16 inert scripts; depth 12 |
 | JSON containers | 64 keys/object; 4,096 total keys; 256 array entries; 4,096 characters/parsed string |
 | JSON records/output | 256 records; 32 fields/record; 160 characters/label; 1,000 characters/value; 16 qualifiers of 400 characters; 4,096 characters/unit; 200,000 output characters |
-| Embedded visible context | Six ancestor levels; two nearby siblings per direction; at most 64 scope paragraphs plus 64 ancestor candidates; 160 characters/attribution |
+| Embedded visible context | Six ancestor levels; two nearby siblings per direction; at most 64 relevant qualifier elements; ordinary prose does not displace late qualifications; 160 characters/attribution |
 | JSON work deadline | At most 1,000 ms, additionally bounded by the caller's earlier deadline; DOM input is independently bounded |
 | Selected document text | Ordinary live projection 100,000 characters; durable/hybrid accepted projection up to 1,000,000 |
 | Durable chunks | Existing 500 chunks; target 1,800 characters; maximum 2,000; prose overlap at most 240; revision preview 16,000 |

@@ -16,9 +16,11 @@ jest.unstable_mockModule('@core/logic/trinityWritingPipeline.js', () => ({ runTr
 jest.unstable_mockModule('@services/openai/chatFallbacks.js', () => ({ createSingleChatCompletion: audit,
   createChatCompletionWithFallback: jest.fn(), ensureModelMatchesExpectation: jest.fn() }));
 const { assessGamingClearSourceIdentity } = await import('../src/shared/gaming/gamingClearSource.js');
+const { resolveGamingDocument } = await import('../src/services/gamingDocumentResolution.js');
 const { assessGamingSourcePolicy } = await import('../src/shared/gaming/gamingFreshnessCore.js');
 const { evaluateGamingHybridCandidates } = await import('../src/services/gamingHybridCandidates.js');
 const { createGamingHybridWorkflow } = await import('../src/services/gamingHybridKnowledge.js');
+const { logger } = await import('../src/platform/logging/structuredLogging.js');
 const url = 'https://guides.example.org/public-guide';
 const actor = { actorKey: 'topic-identity-fixture', workflowId: 'topic-identity-workflow', requestId: 'topic-identity-request' };
 const input = { game: 'Elden Ring', mode: 'build' as const,
@@ -60,7 +62,7 @@ afterEach(() => {
 });
 
 describe('acquired generic Samurai topic identity', () => {
-  it.each([namedTitle, genericTitle])('proves source game independently for the acquired title %s', title => {
+  it.each([namedTitle, genericTitle, 'Dexterity build guide', 'Early Game Samurai Build'])('proves source game independently for the acquired title %s', title => {
     expect(assess(title)).toMatchObject({ status: 'verified' });
   });
   it.each([namedTitle, genericTitle])('admits the same independently acquired evidence under title %s', async title => {
@@ -102,7 +104,7 @@ describe('acquired generic Samurai topic identity', () => {
   });
   it('keeps generic colon headings separate from affirmative game declarations', () => {
     expect(assess(genericTitle, `${genericTitle}: starting gear. ${prose}`)).toMatchObject({ status: 'verified' });
-    expect(assess(genericTitle, `This guide covers Samurai Blade build guide. ${prose}`))
+    expect(assess(genericTitle, `This guide covers Copper Vale build guide. ${prose}`))
       .toMatchObject({ status: 'conflict', reasonCodes: ['GAME_MISMATCH'] });
   });
   it.each([
@@ -140,6 +142,110 @@ describe('acquired generic Samurai topic identity', () => {
     expect(result.accepted).toEqual([]);
     expect(result.decisions[0].reasonCodes).toContain(reason);
     expect(trinity).not.toHaveBeenCalled();
+  });
+
+  it('emits bounded identity rule diagnostics with candidate and request correlation', async () => {
+    const log = jest.spyOn(logger, 'info').mockImplementation(() => undefined);
+    try {
+      serve(genericTitle, `${prose} In Diablo IV, use the blade.`);
+      await evaluateGamingHybridCandidates(input, { ...actor, traceId: 'topic-identity-trace' });
+      const event = log.mock.calls.find(call => call[0] === 'gaming.clear.source.completed');
+      expect(event?.[1]).toMatchObject({ requestId: actor.requestId, traceId: 'topic-identity-trace',
+        workflowId: actor.workflowId, submittedIndex: 0, candidateReference: expect.any(String),
+        identity: { ruleId: 'gaming.identity.affirmative_body_scope_conflict', evidenceCategory: 'body_scope' } });
+      expect(JSON.stringify(event?.[1])).not.toContain(prose);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it('reports the edition identity rule when applicability rejects before CLEAR assessment', async () => {
+    const log = jest.spyOn(logger, 'info').mockImplementation(() => undefined);
+    try {
+      serve(genericTitle, `${prose} Edition: Shadow of the Erdtree.`);
+      const result = await evaluateGamingHybridCandidates(input, { ...actor, traceId: 'topic-edition-trace' });
+      expect(result.accepted).toEqual([]);
+      expect(result.decisions[0].reasonCodes).toEqual(['EDITION_CONFLICT']);
+      const event = log.mock.calls.find(call => call[0] === 'gaming.clear.source.not_run');
+      expect(event?.[1]).toMatchObject({ requestId: actor.requestId, traceId: 'topic-edition-trace',
+        workflowId: actor.workflowId, submittedIndex: 0, candidateReference: expect.any(String),
+        identity: { ruleId: 'gaming.identity.edition_applicability', evidenceCategory: 'edition_scope' } });
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it('reports the actual freshness game mismatch after acquisition without generation or transient source storage', async () => {
+    const plaintext = 'Game: Elden Ring base-game. Edition: base-game. In Elden Ring, Samurai attacks use the starting Uchigatana. Raise Vigor and Dexterity for early combat, and preserve stamina for dodging after each katana attack. Upgrade the starting katana with Smithing Stones before advancing beyond Limgrave.';
+    fetch.mockResolvedValue({ status: 200, headers: { 'content-type': 'text/plain' }, data: plaintext });
+    const log = jest.spyOn(logger, 'info').mockImplementation(() => undefined);
+    const ingest = jest.fn<any>(async () => { throw new Error('Transient source storage is forbidden in this fixture.'); });
+    const generate = jest.fn<any>(async () => { throw new Error('Rejected source evidence cannot trigger generation.'); });
+    const workflow = createGamingHybridWorkflow({ retrieve: async () => ({ context: '', sources: [], evidence: [], sourceKnown: false }),
+      ingest, generate });
+    const context = { actorKey: actor.actorKey, requestId: actor.requestId, traceId: 'freshness-game-conflict-trace' };
+    try {
+      const initial = await workflow.query({ game: input.game, question: input.prompt, mode: input.mode,
+        contractVersion: 'gaming-hybrid-v2', idempotencyKey: 'freshness-game-query', storagePolicy: 'transient_only' }, context);
+      const result = await workflow.candidates({ contractVersion: 'gaming-hybrid-v2', workflowId: initial.body.workflowId,
+        expectedRevision: initial.body.revision, idempotencyKey: 'freshness-game-source', candidates: input.candidates }, context);
+      expect(result.body.candidates![0]).toMatchObject({ decision: 'rejected', reasonCodes: ['GAME_MISMATCH'] });
+      expect(result.body).toMatchObject({ nextAction: 'search', frontendOutcome: 'need_new_source',
+        selectedCandidateIds: [], selectedEvidenceIds: [] });
+      expect(result.body.answer).toBeUndefined();
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(generate).not.toHaveBeenCalled(); expect(trinity).not.toHaveBeenCalled(); expect(audit).not.toHaveBeenCalled();
+      expect(ingest).not.toHaveBeenCalled();
+      const event = log.mock.calls.find(call => call[0] === 'gaming.clear.source.not_run');
+      expect(event?.[1]).toMatchObject({ requestId: context.requestId, traceId: context.traceId,
+        workflowId: initial.body.workflowId, submittedIndex: 0, candidateReference: expect.any(String),
+        assessmentStatus: 'not_run', reasonCodes: ['GAME_MISMATCH'], acquisition: { stage: 'extraction' },
+        identity: { ruleId: 'gaming.identity.freshness_game_conflict', evidenceCategory: 'acquired_anchors' } });
+      expect(log.mock.calls.some(call => call[0] === 'gaming.clear.source.completed')).toBe(false);
+      expect(JSON.stringify(event?.[1])).not.toContain(plaintext);
+      expect(JSON.stringify(event?.[1])).not.toContain(input.prompt);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it.each([
+    ['unprefixed primary control', namedTitle, 'Elden Ring Nightreign Samurai Build Guide', 'GAME_MISMATCH', 'body_heading'],
+    ['Best primary heading', namedTitle, 'Best Elden Ring Nightreign Samurai Build Guide', 'GAME_MISMATCH', 'body_heading'],
+    ['The best primary heading', namedTitle, 'The Best Elden Ring Nightreign Samurai Build Guide', 'GAME_MISMATCH', 'body_heading'],
+    ['Best document title', 'Best Elden Ring Nightreign Samurai Build Guide', 'Best Elden Ring Nightreign Samurai Build Guide', 'GAME_MISMATCH', 'document_title'],
+    ['The best document title', 'The Best Elden Ring Nightreign Samurai Build Guide', 'The Best Elden Ring Nightreign Samurai Build Guide', 'GAME_MISMATCH', 'document_title'],
+    ['Best primary expansion', namedTitle, 'Best Elden Ring Shadow of the Erdtree Samurai Build Guide', 'EDITION_CONFLICT', 'edition_scope'],
+    ['Best expansion title', 'Best Elden Ring Shadow of the Erdtree Samurai Build Guide', 'Best Elden Ring Shadow of the Erdtree Samurai Build Guide', 'EDITION_CONFLICT', 'edition_scope']
+  ])('rejects acquired %s through protected resolution and candidate CLEAR despite matching base labels', async (_caseName, title, heading, reason, category) => {
+    fetch.mockResolvedValue({ status: 200, headers: { 'content-type': 'text/html' },
+      data: `<html><title>${title}</title><body><article><h1>${heading}</h1>
+        <p>Game: Elden Ring.</p><p>Edition: base-game.</p><p>${prose}</p></article></body></html>` });
+    const doc = await resolveGamingDocument(url);
+    expect(doc.metadata.title).toBe(title); expect(doc.metadata.headings).toBe(heading);
+    expect(doc.text.startsWith(heading)).toBe(true);
+    expect(assessGamingClearSourceIdentity(doc, input, assessGamingSourcePolicy(url, input.game)))
+      .toMatchObject({ status: 'conflict', reasonCodes: [reason], diagnostic: { evidenceCategory: category } });
+    const result = await evaluateGamingHybridCandidates(input, actor);
+    expect(result.accepted).toEqual([]); expect(result.knowledge.sources).toEqual([]);
+    expect(result.decisions[0]).toMatchObject({ decision: 'rejected', reasonCodes: [reason] });
+    expect(trinity).not.toHaveBeenCalled(); expect(audit).not.toHaveBeenCalled();
+  });
+
+  it.each(['Best Elden Ring Samurai Build Guide', 'The Best Elden Ring Samurai Build Guide'])
+  ('preserves an applicable acquired %s and unrelated comparisons/recommendations', async title => {
+    fetch.mockResolvedValue({ status: 200, headers: { 'content-type': 'text/html' },
+      data: `<html><title>${title}</title><body><article><h1>${title}</h1>
+        <p>Game: Elden Ring.</p><p>Edition: base-game.</p><p>${prose}</p>
+        <p>Unlike in Elden Ring Nightreign, Elden Ring uses the described Samurai weapon.</p>
+        <aside><h2>Best Elden Ring Nightreign Samurai Build Guide</h2><p>In Elden Ring Nightreign, use an unrelated invented skill.</p></aside>
+        <div class="related-content"><h2>Best Elden Ring Shadow of the Erdtree guide</h2></div></article></body></html>` });
+    const result = await evaluateGamingHybridCandidates(input, actor);
+    expect(result.accepted).toHaveLength(1);
+    expect(result.accepted[0].document.metadata.title).toBe(title);
+    expect(result.accepted[0].sourceAssessment.gates.identity).toBe('verified');
+    expect(result.accepted[0].sourceAssessment.gates.compatibility).toBe('verified');
+    expect(trinity).not.toHaveBeenCalled(); expect(audit).not.toHaveBeenCalled();
   });
 
 });

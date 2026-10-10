@@ -149,9 +149,15 @@ describe('Gaming structural HTML evidence', () => {
     const tooLong = extract(`<article><p>Example only ${'x'.repeat(GAMING_HTML_EVIDENCE_LIMITS.contextChars)}</p><div>${sparseTable}</div></article>`);
     expect(tooLong.units[0].integrity.status).toBe('partial');
     expect(tooLong.units[0].context.qualifiers?.[0].length).toBeLessThanOrEqual(GAMING_HTML_EVIDENCE_LIMITS.contextChars);
-    const tooMany = extract(`<article>${'<p>Ordinary context.</p>'.repeat(65)}<div>${sparseTable}</div><p>Example only.</p></article>`);
+    const ordinary = extract(`<article>${'<p>Ordinary context.</p>'.repeat(65)}<div>${sparseTable}</div><p>Example only.</p></article>`);
+    expect(ordinary.units[0].integrity.status).toBe('complete');
+    expect(ordinary.units[0].context.qualifiers).toContain('Example only.');
+    const tooMany = extract(`<article>${'<p>Example only; unconfirmed.</p>'.repeat(65)}<div>${sparseTable}</div></article>`);
     expect(tooMany.units[0].integrity).toMatchObject({ status: 'partial', reasons: ['required_context_missing'] });
-    const tooDeep = extract(`<article><p>Example only.</p>${'<div>'.repeat(7)}${sparseTable}${'</div>'.repeat(7)}</article>`);
+    const wrappedArticle = extract(`<article><p>Example only.</p>${'<div>'.repeat(7)}${sparseTable}${'</div>'.repeat(7)}</article>`);
+    expect(wrappedArticle.units[0].integrity.status).toBe('complete');
+    expect(wrappedArticle.units[0].context.qualifiers).toContain('Example only.');
+    const tooDeep = extract(`<article><p>Example only.</p><section>${'<div>'.repeat(7)}${sparseTable}${'</div>'.repeat(7)}</section></article>`);
     expect(tooDeep.units[0].integrity).toMatchObject({ status: 'partial', reasons: ['required_context_missing'] });
   });
 

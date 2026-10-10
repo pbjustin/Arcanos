@@ -833,6 +833,20 @@ describe('gaming RAG snippet quality', () => {
     expect(result.context).toContain('Dread Delusion');
   });
 
+  it.each(['Samurai Blade Build Guide', 'Dexterity build guide', 'Samurai Blade Build Guide | Publisher',
+    'Samurai Blade Build Guide – Publisher', 'Samurai Blade Build Guide — Publisher'])(
+    'does not infer a different game from the acquired generic topic title %s', async title => {
+      const url = 'https://independent.example/article/samurai';
+      const text = 'In Elden Ring, the Samurai uses the starting Uchigatana for katana attacks. Raise Vigor and Dexterity for the early build, upgrade the katana with Smithing Stones, and preserve stamina for dodging after each attack.';
+      mockFetchedHtml({ title, text });
+      const result = await buildGamingRagContext({ mode: 'guide', game: 'Elden Ring',
+        prompt: 'How do Samurai katana attacks work?', guideUrl: url, guideUrls: [] });
+      expect(result.sources.some(isCitableGamingWebSource)).toBe(true);
+      expect(result.context).toContain('Uchigatana');
+      expect(result.detectedGame).toBe('Elden Ring');
+    }
+  );
+
   it('does not expose supplied evidence when page metadata identifies a different game', async () => {
     const url = 'https://independent.example/article/123';
     mockFetchAndClean.mockImplementation(async (_url: string, _maxChars: number, options?: { onExtraction?: (metrics: Record<string, unknown>) => void }) => {

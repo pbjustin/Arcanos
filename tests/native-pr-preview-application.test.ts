@@ -13,6 +13,7 @@ import { assertGamingCompositionPreviewFixture } from '../src/shared/chatgpt/gam
 import * as trinityReasoningPolicy from '../src/shared/gpt/trinityReasoningPolicy.js';
 import * as heartbeatBoundary from '../src/services/controlPlane/heartbeatHttpBoundary.js';
 import * as gamingDurableRagFixture from '../src/shared/gaming/gamingDurableRagPreviewFixture.js';
+import * as gamingLiveSourceValidationFixture from '../src/shared/gaming/gamingLiveSourceValidationPreviewFixture.js';
 import {
   NATIVE_PR_PREVIEW_BACKSTAGE_BOOKER_OPENAPI_CONTRACT,
   NATIVE_PR_PREVIEW_CHATGPT_TUTOR_CONTRACT,
@@ -69,6 +70,11 @@ const runGamingLargeSourceFixture = jest.fn(gamingDurableRagFixture.runGamingLar
 jest.unstable_mockModule('../src/shared/gaming/gamingDurableRagPreviewFixture.js', () => ({
   ...gamingDurableRagFixture,
   runGamingLargeSourcePreview: runGamingLargeSourceFixture,
+}));
+const runGamingLiveSourceValidationFixture = jest.fn(gamingLiveSourceValidationFixture.runGamingLiveSourceValidationPreview);
+jest.unstable_mockModule('../src/shared/gaming/gamingLiveSourceValidationPreviewFixture.js', () => ({
+  ...gamingLiveSourceValidationFixture,
+  runGamingLiveSourceValidationPreview: runGamingLiveSourceValidationFixture,
 }));
 const normalizeModelReasoningEffort = jest.fn(trinityReasoningPolicy.normalizeOpenAIModelReasoningEffort);
 const resolveModelCapabilities = jest.fn(trinityReasoningPolicy.resolveOpenAIModelCapabilities);
@@ -3588,6 +3594,25 @@ describe('native PR contained application', () => {
       expect(response.headers[NATIVE_PR_PREVIEW_GAMING_CONTRACT.largeSourceProofHeader]).toBe(
         mode === 'guide' ? NATIVE_PR_PREVIEW_GAMING_CONTRACT.largeSourceProofVersion : undefined
       );
+      expect(response.headers[NATIVE_PR_PREVIEW_GAMING_CONTRACT.liveSourceValidationProofHeader]).toBe(
+        mode === 'guide' ? NATIVE_PR_PREVIEW_GAMING_CONTRACT.liveSourceValidationProofVersion : undefined
+      );
+      for (const prefix of ['largeSource', 'liveSourceValidation'] as const) {
+        const contract = NATIVE_PR_PREVIEW_GAMING_CONTRACT;
+        const raw = response.headers[contract[`${prefix}ReportHeader`]];
+        if (mode !== 'guide') {
+          expect(raw).toBeUndefined();
+          continue;
+        }
+        expect(raw.length).toBeLessThanOrEqual(contract.caseReportMaxChars);
+        const report = JSON.parse(raw);
+        expect(report).toEqual(expect.objectContaining({ version: contract[`${prefix}ProofVersion`],
+          scope: contract[`${prefix}ProofScope`], prNumber: identity.prNumber, sourceCommit: identity.sourceCommit }));
+        expect(report.cases.map((entry: { id: string }) => entry.id)).toEqual([...contract[`${prefix}Cases`]]);
+        expect(report.cases.map((entry: { checks: number }) => entry.checks)).toEqual([...contract[`${prefix}ReportChecks`]]);
+        expect(report.cases.every((entry: { checks: number; passed: number; values: object }) =>
+          entry.passed === entry.checks && Object.keys(entry.values).length > 0)).toBe(true);
+      }
       expect(response.headers[NATIVE_PR_PREVIEW_GAMING_CONTRACT.guideAssistanceProofHeader]).toBe(
         mode === 'guide' ? NATIVE_PR_PREVIEW_GAMING_CONTRACT.guideAssistanceProofVersion : undefined
       );
@@ -3678,6 +3703,50 @@ describe('native PR contained application', () => {
     );
   });
 
+  it('withholds every Gaming proof and success output when live-source assertions fail', async () => {
+    const { app } = buildApplication();
+    runGamingLiveSourceValidationFixture.mockImplementationOnce(() => {
+      throw new Error('Private fixture failure must not be reflected.');
+    });
+    const failed = await request(app).post(NATIVE_PR_PREVIEW_GAMING_CONTRACT.queryPath).send({
+      action: 'query', payload: { mode: 'guide', game: NATIVE_PR_PREVIEW_GAMING_CONTRACT.game,
+        prompt: NATIVE_PR_PREVIEW_GAMING_CONTRACT.fixtures.guide },
+    });
+    expect(failed.status).toBe(500);
+    expect(failed.body).toEqual({ error: 'PREVIEW_GAMING_LIVE_SOURCE_VALIDATION_CONTRACT_INVALID' });
+    for (const [key, header] of Object.entries(NATIVE_PR_PREVIEW_GAMING_CONTRACT)) {
+      if ((key === 'proofHeader' || key.endsWith('ProofHeader') || key.endsWith('ReportHeader')) && typeof header === 'string') {
+        expect(failed.headers[header]).toBeUndefined();
+      }
+    }
+    expectNoStore(failed);
+  });
+
+  it.each(['omitted assertion', 'missing case', 'duplicate case', 'failed check', 'missing values', 'false value', 'wrong scope', 'wrong version'])
+  ('withholds Gaming success when a returned report has %s', async mutation => {
+    const { app } = buildApplication();
+    runGamingLiveSourceValidationFixture.mockImplementationOnce(() => {
+      const report = gamingLiveSourceValidationFixture.runGamingLiveSourceValidationPreview();
+      if (mutation === 'omitted assertion') { report.cases[0].checks -= 1; report.cases[0].passed -= 1; }
+      if (mutation === 'missing case') report.cases.pop();
+      if (mutation === 'duplicate case') report.cases[1] = report.cases[0];
+      if (mutation === 'failed check') report.cases[0].passed -= 1;
+      if (mutation === 'missing values') report.cases[0].values = {};
+      if (mutation === 'false value') report.cases[0].values.identity = 'conflict';
+      if (mutation === 'wrong scope') report.scope = 'live-provider';
+      if (mutation === 'wrong version') report.version = 'gaming-live-source-validation/v0';
+      return report;
+    });
+    const failed = await request(app).post(NATIVE_PR_PREVIEW_GAMING_CONTRACT.queryPath).send({ action: 'query',
+      payload: { mode: 'guide', game: NATIVE_PR_PREVIEW_GAMING_CONTRACT.game,
+        prompt: NATIVE_PR_PREVIEW_GAMING_CONTRACT.fixtures.guide } });
+    expect(failed.status).toBe(500);
+    expect(failed.body).toEqual({ error: 'PREVIEW_GAMING_LIVE_SOURCE_VALIDATION_CONTRACT_INVALID' });
+    expect(failed.headers[NATIVE_PR_PREVIEW_GAMING_CONTRACT.liveSourceValidationReportHeader]).toBeUndefined();
+    expect(failed.headers[NATIVE_PR_PREVIEW_GAMING_CONTRACT.largeSourceReportHeader]).toBeUndefined();
+    expect(failed.headers[NATIVE_PR_PREVIEW_GAMING_CONTRACT.proofHeader]).toBeUndefined();
+  });
+
   it('withholds every Gaming proof and success output when the large-source assertions fail and recovers on a later request', async () => {
     const { app } = buildApplication();
     const body = {
@@ -3693,7 +3762,7 @@ describe('native PR contained application', () => {
     expect(failed.body).toEqual({ error: 'PREVIEW_GAMING_LARGE_SOURCE_CONTRACT_INVALID' });
     expect(JSON.stringify(failed.body)).not.toContain('Private');
     for (const [key, header] of Object.entries(NATIVE_PR_PREVIEW_GAMING_CONTRACT)) {
-      if ((key === 'proofHeader' || key.endsWith('ProofHeader')) && typeof header === 'string') {
+      if ((key === 'proofHeader' || key.endsWith('ProofHeader') || key.endsWith('ReportHeader')) && typeof header === 'string') {
         expect(failed.headers[header]).toBeUndefined();
       }
     }

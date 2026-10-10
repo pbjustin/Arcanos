@@ -283,6 +283,19 @@ export interface NativePrPreviewE2eContract {
     durableRagProofVersion: 'gaming-durable-rag/v1';
     largeSourceProofHeader: 'x-arcanos-preview-gaming-large-source-version';
     largeSourceProofVersion: 'gaming-large-source/v1';
+    largeSourceReportHeader: 'x-arcanos-preview-gaming-large-source-report';
+    liveSourceValidationProofHeader: 'x-arcanos-preview-gaming-live-source-validation-version';
+    liveSourceValidationProofVersion: 'gaming-live-source-validation/v1';
+    liveSourceValidationReportHeader: 'x-arcanos-preview-gaming-live-source-validation-report';
+    caseReportMaxChars: 4096;
+    liveSourceValidationProofScope: 'pure-synthetic-identity-structural-extraction';
+    liveSourceValidationCases: readonly [
+      'ordinary-early-game-declaration', 'generic-samurai-topic-heading', 'unrelated-recommended-heading',
+      'long-prose-preservation', 'deep-independent-structured-records', 'independent-complete-and-partial-records',
+      'wrong-game-nightreign-dlc', 'explicit-contradictory-declarations', 'truncated-record-and-prose',
+      'missing-structural-provenance', 'source-instruction-rejection', 'primary-heading-game-conflict',
+      'html-furniture-and-community-scope', 'embedded-json-late-qualification',
+    ];
     largeSourceProofScope: 'pure-synthetic-large-source-selection-coverage-artifact';
     largeSourceCases: readonly [
       'large-html-structural-extraction',
@@ -299,6 +312,10 @@ export interface NativePrPreviewE2eContract {
       'unsupported-currentness',
       'transient-artifact-scope-expiry-content-binding',
     ];
+    liveSourceValidationReportChecks: readonly number[];
+    largeSourceReportChecks: readonly number[];
+    liveSourceValidationReportValues: readonly Readonly<Record<string, string | number | boolean | readonly number[]>>[];
+    largeSourceReportValues: readonly Readonly<Record<string, string | number | boolean | readonly number[]>>[];
     guideAssistanceProofHeader: 'x-arcanos-preview-gaming-guide-assistance-version';
     guideAssistanceProofVersion: 'gaming-guide-assistance/v1';
     progressRecoveryProofHeader: 'x-arcanos-preview-gaming-progress-recovery-version';

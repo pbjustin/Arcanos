@@ -1,0 +1,797 @@
+{
+  "baseline": "0ec167654fa3970c818b2e2721c044dd79b77189",
+  "projectId": "7faf44e5-519c-4e73-8d7a-da9f389e6187",
+  "environmentId": "fb583147-6c39-4343-9267-500f357d25ab",
+  "webDeployment": "19425909-ec6f-46c1-a42e-a5b913fe2f32",
+  "workerDeployment": "b046e807-81b2-4e72-aa6a-75e03c4c013d",
+  "window": {
+    "start": "2026-10-09T01:10:30Z",
+    "end": "2026-10-09T01:13:30Z"
+  },
+  "events": [
+    {
+      "timestamp": "2026-10-09T01:11:21.552Z",
+      "event": "gaming.hybrid.handoff",
+      "context": {
+        "module": "core",
+        "requestId": "req_1791508281422_9pzj9e",
+        "workflowId": "c3910525-ba66-4a0f-bc4d-786057d0ee8a",
+        "state": "discovery_required",
+        "nextAction": "search",
+        "pendingDiscovery": "gameplay_evidence",
+        "reason": "QUESTION_COVERAGE_INSUFFICIENT",
+        "freshnessStatus": "unverified",
+        "sourceKnown": false,
+        "evidenceSelected": false,
+        "round": 0,
+        "currentnessRound": 0,
+        "candidateCount": 0,
+        "protocolVersion": "gaming-hybrid-v2",
+        "revision": 0,
+        "selectedCandidateCount": 0,
+        "selectedEvidenceCount": 0,
+        "coverageSatisfied": false,
+        "recoveryRemaining": 1,
+        "outcome": "search",
+        "acquisitionWorkMs": 0,
+        "submittedCandidateUrlCount": 0,
+        "elapsedMs": 108
+      }
+    },
+    {
+      "timestamp": "2026-10-09T01:11:49.050Z",
+      "event": "gaming.clear.source.completed",
+      "context": {
+        "module": "core",
+        "requestId": "req_1791508306329_3k8afw",
+        "traceId": "trace_1791508306330_pcefss",
+        "rubricVersion": "gaming-clear/v1",
+        "profile": "source",
+        "policyProfile": "gaming-clear-policy/v1:current_build:source",
+        "workflowId": "c3910525-ba66-4a0f-bc4d-786057d0ee8a",
+        "submittedIndex": 1,
+        "candidateReference": "68df12d7-7218-4efd-8693-a8de0f88d320",
+        "acquisition": {
+          "stage": "extraction",
+          "policyVersion": "gaming-https-acquisition-v1",
+          "redirectCount": 0,
+          "failingHop": 0
+        },
+        "extraction": {
+          "policyVersion": "gaming-evidence-units/v1",
+          "strategies": [
+            "prose",
+            "html_table",
+            "html_list",
+            "html_definition",
+            "json_ld",
+            "application_json"
+          ],
+          "contentType": "text/html",
+          "receivedBytes": 375544,
+          "declaredBytes": 375544,
+          "acceptedBytes": 2096257,
+          "rawChars": 2096257,
+          "extractedChars": 285320,
+          "unitKinds": [
+            "list_item"
+          ],
+          "selectedUnits": 101,
+          "completeUnits": 9,
+          "partialUnits": 92,
+          "ambiguousUnits": 0,
+          "truncationStages": [
+            "raw_preview"
+          ],
+          "subreasons": [
+            "required_context_missing",
+            "content_truncated",
+            "incomplete_record"
+          ],
+          "elapsedMs": 1323,
+          "budgetOutcome": "within_budget"
+        },
+        "missingClaimFields": [
+          "build",
+          "skill",
+          "scope"
+        ],
+        "sourceRole": "build_analysis",
+        "subjectHash": "f3d7612d3e9a2d45eec5599c0f69cde18c38f909ab8b32ec54072c55ce9b14c7",
+        "assessmentMethod": "deterministic",
+        "assessmentStatus": "completed",
+        "dimensionScores": {
+          "clarity": {
+            "status": "evaluated",
+            "score": 4.5,
+            "reasonCodes": [
+              "INTELLIGIBLE_RELEVANT_EXTRACTION"
+            ],
+            "evidenceRefs": [
+              "63291571-fca9-4d82-853c-bc08aaae7e0e"
+            ],
+            "unresolvedFacts": []
+          },
+          "leverage": {
+            "status": "evaluated",
+            "score": 4.5,
+            "reasonCodes": [
+              "QUESTION_ANCHORS_PRESENT"
+            ],
+            "evidenceRefs": [
+              "63291571-fca9-4d82-853c-bc08aaae7e0e"
+            ],
+            "unresolvedFacts": []
+          },
+          "efficiency": {
+            "status": "evaluated",
+            "score": 4.5,
+            "reasonCodes": [
+              "BOUNDED_CHUNK_RETRIEVAL_AVAILABLE"
+            ],
+            "evidenceRefs": [
+              "63291571-fca9-4d82-853c-bc08aaae7e0e"
+            ],
+            "unresolvedFacts": []
+          },
+          "alignment": {
+            "status": "unknown",
+            "score": null,
+            "reasonCodes": [
+              "GAME_MISMATCH"
+            ],
+            "evidenceRefs": [
+              "63291571-fca9-4d82-853c-bc08aaae7e0e"
+            ],
+            "unresolvedFacts": [
+              "GAME_IDENTITY"
+            ]
+          },
+          "resilience": {
+            "status": "evaluated",
+            "score": 3.5,
+            "reasonCodes": [
+              "TRACEABLE_ACQUIRED_DOCUMENT"
+            ],
+            "evidenceRefs": [
+              "63291571-fca9-4d82-853c-bc08aaae7e0e"
+            ],
+            "unresolvedFacts": [
+              "INDEPENDENT_CORROBORATION_NOT_ESTABLISHED",
+              "COMBINED_APPLICABILITY_REQUIRED"
+            ]
+          }
+        },
+        "overall": null,
+        "decision": "reject",
+        "blockingFindingCount": 4,
+        "elapsedMs": 2636,
+        "budgetOutcome": "within_existing_acquisition_budget"
+      }
+    },
+    {
+      "timestamp": "2026-10-09T01:11:46.413Z",
+      "event": "gaming.clear.source.not_run",
+      "context": {
+        "module": "core",
+        "requestId": "req_1791508306329_3k8afw",
+        "traceId": "trace_1791508306330_pcefss",
+        "workflowId": "c3910525-ba66-4a0f-bc4d-786057d0ee8a",
+        "submittedIndex": 0,
+        "origin": "submitted",
+        "candidateReference": "e29855f2-7b0d-4970-bcdf-a1c0ad004dac",
+        "acquisition": {
+          "stage": "transport",
+          "subreason": "HTTP_RESPONSE_UNUSABLE",
+          "ruleId": "gaming.acquisition.http_response_unusable",
+          "policyVersion": "gaming-https-acquisition-v1",
+          "redirectCount": 0,
+          "failingHop": 0,
+          "httpStatus": 403,
+          "statusCategory": "4xx"
+        },
+        "rubricVersion": "gaming-clear/v1",
+        "profile": "source",
+        "assessmentStatus": "not_run",
+        "reasonCodes": [
+          "SOURCE_INACCESSIBLE"
+        ],
+        "missingClaimFields": [],
+        "elapsedMs": 66
+      }
+    },
+    {
+      "timestamp": "2026-10-09T01:11:50.135Z",
+      "event": "gaming.clear.source.not_run",
+      "context": {
+        "module": "core",
+        "requestId": "req_1791508306329_3k8afw",
+        "traceId": "trace_1791508306330_pcefss",
+        "workflowId": "c3910525-ba66-4a0f-bc4d-786057d0ee8a",
+        "submittedIndex": 2,
+        "origin": "submitted",
+        "candidateReference": "6e8d9a10-c931-418f-8676-d0327addb396",
+        "acquisition": {
+          "stage": "extraction",
+          "policyVersion": "gaming-https-acquisition-v1",
+          "redirectCount": 0,
+          "failingHop": 0
+        },
+        "rubricVersion": "gaming-clear/v1",
+        "profile": "source",
+        "assessmentStatus": "not_run",
+        "reasonCodes": [
+          "INSUFFICIENT_EXTRACTION"
+        ],
+        "extraction": {
+          "policyVersion": "gaming-evidence-units/v1",
+          "strategies": [
+            "prose",
+            "html_table",
+            "html_list",
+            "html_definition",
+            "json_ld",
+            "application_json"
+          ],
+          "contentType": "text/html",
+          "receivedBytes": 439943,
+          "declaredBytes": 439943,
+          "acceptedBytes": 2233809,
+          "rawChars": 2233809,
+          "extractedChars": 1057,
+          "unitKinds": [],
+          "selectedUnits": 0,
+          "completeUnits": 0,
+          "partialUnits": 0,
+          "ambiguousUnits": 0,
+          "truncationStages": [
+            "raw_preview"
+          ],
+          "subreasons": [
+            "required_context_missing",
+            "incomplete_record"
+          ],
+          "elapsedMs": 667,
+          "budgetOutcome": "within_budget"
+        },
+        "missingClaimFields": [],
+        "elapsedMs": 1084
+      }
+    },
+    {
+      "timestamp": "2026-10-09T01:11:50.151Z",
+      "event": "gaming.hybrid.handoff",
+      "context": {
+        "module": "core",
+        "requestId": "req_1791508306329_3k8afw",
+        "workflowId": "c3910525-ba66-4a0f-bc4d-786057d0ee8a",
+        "state": "discovery_required",
+        "nextAction": "search",
+        "pendingDiscovery": "gameplay_evidence",
+        "reason": "CANDIDATE_SOURCES_REJECTED",
+        "freshnessStatus": "unverified",
+        "sourceKnown": false,
+        "evidenceSelected": false,
+        "round": 1,
+        "currentnessRound": 0,
+        "candidateCount": 0,
+        "protocolVersion": "gaming-hybrid-v2",
+        "revision": 1,
+        "selectedCandidateCount": 0,
+        "selectedEvidenceCount": 0,
+        "coverageSatisfied": false,
+        "recoveryRemaining": 1,
+        "outcome": "search",
+        "acquisitionWorkMs": 3794,
+        "submittedCandidateUrlCount": 3,
+        "elapsedMs": 28707
+      }
+    },
+    {
+      "timestamp": "2026-10-09T01:12:13.318Z",
+      "event": "gaming.clear.source.completed",
+      "context": {
+        "module": "core",
+        "requestId": "req_1791508332075_sojg8g",
+        "traceId": "trace_1791508332075_3yg49c",
+        "rubricVersion": "gaming-clear/v1",
+        "profile": "source",
+        "policyProfile": "gaming-clear-policy/v1:current_build:source",
+        "workflowId": "c3910525-ba66-4a0f-bc4d-786057d0ee8a",
+        "submittedIndex": 0,
+        "candidateReference": "c2b16d80-3e56-4257-8a88-c87c6569d2e1",
+        "acquisition": {
+          "stage": "extraction",
+          "policyVersion": "gaming-https-acquisition-v1",
+          "redirectCount": 0,
+          "failingHop": 0
+        },
+        "extraction": {
+          "policyVersion": "gaming-evidence-units/v1",
+          "strategies": [
+            "prose",
+            "html_table",
+            "html_list",
+            "html_definition",
+            "json_ld"
+          ],
+          "contentType": "text/html",
+          "receivedBytes": 30625,
+          "acceptedBytes": 186249,
+          "rawChars": 186164,
+          "extractedChars": 89677,
+          "unitKinds": [
+            "table_row",
+            "list_item"
+          ],
+          "selectedUnits": 107,
+          "completeUnits": 0,
+          "partialUnits": 107,
+          "ambiguousUnits": 0,
+          "truncationStages": [],
+          "subreasons": [
+            "required_context_missing"
+          ],
+          "elapsedMs": 441,
+          "budgetOutcome": "within_budget"
+        },
+        "missingClaimFields": [
+          "build",
+          "skill",
+          "scope"
+        ],
+        "sourceRole": "build_analysis",
+        "subjectHash": "43a25ad511ceed43a548b3c9c3e38c3c2f2e32f65f518eeb47d655d27e9e59dd",
+        "assessmentMethod": "deterministic",
+        "assessmentStatus": "completed",
+        "dimensionScores": {
+          "clarity": {
+            "status": "evaluated",
+            "score": 4.5,
+            "reasonCodes": [
+              "INTELLIGIBLE_RELEVANT_EXTRACTION"
+            ],
+            "evidenceRefs": [
+              "43219ddd-6d60-4840-87d5-5c97ebc82d07"
+            ],
+            "unresolvedFacts": []
+          },
+          "leverage": {
+            "status": "evaluated",
+            "score": 4.5,
+            "reasonCodes": [
+              "QUESTION_ANCHORS_PRESENT"
+            ],
+            "evidenceRefs": [
+              "43219ddd-6d60-4840-87d5-5c97ebc82d07"
+            ],
+            "unresolvedFacts": []
+          },
+          "efficiency": {
+            "status": "evaluated",
+            "score": 4.5,
+            "reasonCodes": [
+              "BOUNDED_CHUNK_RETRIEVAL_AVAILABLE"
+            ],
+            "evidenceRefs": [
+              "43219ddd-6d60-4840-87d5-5c97ebc82d07"
+            ],
+            "unresolvedFacts": []
+          },
+          "alignment": {
+            "status": "unknown",
+            "score": null,
+            "reasonCodes": [
+              "GAME_MISMATCH"
+            ],
+            "evidenceRefs": [
+              "43219ddd-6d60-4840-87d5-5c97ebc82d07"
+            ],
+            "unresolvedFacts": [
+              "GAME_IDENTITY"
+            ]
+          },
+          "resilience": {
+            "status": "evaluated",
+            "score": 3.5,
+            "reasonCodes": [
+              "TRACEABLE_ACQUIRED_DOCUMENT"
+            ],
+            "evidenceRefs": [
+              "43219ddd-6d60-4840-87d5-5c97ebc82d07"
+            ],
+            "unresolvedFacts": [
+              "INDEPENDENT_CORROBORATION_NOT_ESTABLISHED",
+              "COMBINED_APPLICABILITY_REQUIRED"
+            ]
+          }
+        },
+        "overall": null,
+        "decision": "reject",
+        "blockingFindingCount": 4,
+        "elapsedMs": 1233,
+        "budgetOutcome": "within_existing_acquisition_budget"
+      }
+    },
+    {
+      "timestamp": "2026-10-09T01:12:13.546Z",
+      "event": "gaming.clear.source.completed",
+      "context": {
+        "module": "core",
+        "requestId": "req_1791508332075_sojg8g",
+        "traceId": "trace_1791508332075_3yg49c",
+        "rubricVersion": "gaming-clear/v1",
+        "profile": "source",
+        "policyProfile": "gaming-clear-policy/v1:current_build:source",
+        "workflowId": "c3910525-ba66-4a0f-bc4d-786057d0ee8a",
+        "submittedIndex": 1,
+        "candidateReference": "ebdc39f9-de31-4c67-a08a-5bdc02e58b93",
+        "acquisition": {
+          "stage": "extraction",
+          "policyVersion": "gaming-https-acquisition-v1",
+          "redirectCount": 0,
+          "failingHop": 0
+        },
+        "extraction": {
+          "policyVersion": "gaming-evidence-units/v1",
+          "strategies": [
+            "prose",
+            "html_table",
+            "html_list",
+            "html_definition"
+          ],
+          "contentType": "text/html",
+          "receivedBytes": 7780,
+          "acceptedBytes": 29521,
+          "rawChars": 29517,
+          "extractedChars": 8988,
+          "unitKinds": [
+            "list_item"
+          ],
+          "selectedUnits": 2,
+          "completeUnits": 0,
+          "partialUnits": 2,
+          "ambiguousUnits": 0,
+          "truncationStages": [],
+          "subreasons": [
+            "content_truncated"
+          ],
+          "elapsedMs": 36,
+          "budgetOutcome": "within_budget"
+        },
+        "missingClaimFields": [],
+        "sourceRole": "build_analysis",
+        "subjectHash": "982ece0d52163d33c064406aad69890fce83beacabc345759f9adfa43fcfdd21",
+        "assessmentMethod": "deterministic",
+        "assessmentStatus": "completed",
+        "dimensionScores": {
+          "clarity": {
+            "status": "evaluated",
+            "score": 4.5,
+            "reasonCodes": [
+              "INTELLIGIBLE_RELEVANT_EXTRACTION"
+            ],
+            "evidenceRefs": [
+              "b332193e-8a07-4817-9715-8ec12af755b5"
+            ],
+            "unresolvedFacts": []
+          },
+          "leverage": {
+            "status": "evaluated",
+            "score": 4.5,
+            "reasonCodes": [
+              "QUESTION_ANCHORS_PRESENT"
+            ],
+            "evidenceRefs": [
+              "b332193e-8a07-4817-9715-8ec12af755b5"
+            ],
+            "unresolvedFacts": []
+          },
+          "efficiency": {
+            "status": "evaluated",
+            "score": 4.5,
+            "reasonCodes": [
+              "BOUNDED_CHUNK_RETRIEVAL_AVAILABLE"
+            ],
+            "evidenceRefs": [
+              "b332193e-8a07-4817-9715-8ec12af755b5"
+            ],
+            "unresolvedFacts": []
+          },
+          "alignment": {
+            "status": "unknown",
+            "score": null,
+            "reasonCodes": [
+              "GAME_MISMATCH"
+            ],
+            "evidenceRefs": [
+              "b332193e-8a07-4817-9715-8ec12af755b5"
+            ],
+            "unresolvedFacts": [
+              "GAME_IDENTITY"
+            ]
+          },
+          "resilience": {
+            "status": "evaluated",
+            "score": 3.5,
+            "reasonCodes": [
+              "TRACEABLE_ACQUIRED_DOCUMENT"
+            ],
+            "evidenceRefs": [
+              "b332193e-8a07-4817-9715-8ec12af755b5"
+            ],
+            "unresolvedFacts": [
+              "INDEPENDENT_CORROBORATION_NOT_ESTABLISHED",
+              "COMBINED_APPLICABILITY_REQUIRED"
+            ]
+          }
+        },
+        "overall": null,
+        "decision": "reject",
+        "blockingFindingCount": 4,
+        "elapsedMs": 226,
+        "budgetOutcome": "within_existing_acquisition_budget"
+      }
+    },
+    {
+      "timestamp": "2026-10-09T01:12:13.589Z",
+      "event": "gaming.hybrid.handoff",
+      "context": {
+        "module": "core",
+        "requestId": "req_1791508332075_sojg8g",
+        "workflowId": "c3910525-ba66-4a0f-bc4d-786057d0ee8a",
+        "state": "discovery_required",
+        "nextAction": "stop",
+        "reason": "CANDIDATE_SOURCES_REJECTED",
+        "freshnessStatus": "unverified",
+        "sourceKnown": false,
+        "evidenceSelected": false,
+        "round": 2,
+        "currentnessRound": 0,
+        "candidateCount": 0,
+        "protocolVersion": "gaming-hybrid-v2",
+        "revision": 2,
+        "selectedCandidateCount": 0,
+        "selectedEvidenceCount": 0,
+        "coverageSatisfied": false,
+        "recoveryRemaining": 0,
+        "outcome": "stop",
+        "acquisitionWorkMs": 5282,
+        "submittedCandidateUrlCount": 6,
+        "elapsedMs": 52145
+      }
+    },
+    {
+      "timestamp": "2026-10-09T01:12:13.571Z",
+      "event": "gaming.clear.source.not_run",
+      "context": {
+        "module": "core",
+        "requestId": "req_1791508332075_sojg8g",
+        "traceId": "trace_1791508332075_3yg49c",
+        "workflowId": "c3910525-ba66-4a0f-bc4d-786057d0ee8a",
+        "submittedIndex": 2,
+        "origin": "submitted",
+        "candidateReference": "3afaebec-60e8-424c-bc3b-1346d4305f98",
+        "acquisition": {
+          "stage": "transport",
+          "subreason": "HTTP_RESPONSE_UNUSABLE",
+          "ruleId": "gaming.acquisition.http_response_unusable",
+          "policyVersion": "gaming-https-acquisition-v1",
+          "redirectCount": 0,
+          "failingHop": 0,
+          "httpStatus": 403,
+          "statusCategory": "4xx"
+        },
+        "rubricVersion": "gaming-clear/v1",
+        "profile": "source",
+        "assessmentStatus": "not_run",
+        "reasonCodes": [
+          "SOURCE_INACCESSIBLE"
+        ],
+        "missingClaimFields": [],
+        "elapsedMs": 24
+      }
+    }
+  ],
+  "http": [
+    {
+      "timestamp": "2026-10-09T01:11:21.401617667Z",
+      "method": "POST",
+      "path": "/chatgpt/gaming/mcp",
+      "httpStatus": 200,
+      "totalDuration": 149,
+      "upstreamErrors": ""
+    },
+    {
+      "timestamp": "2026-10-09T01:11:21.568730127Z",
+      "method": "POST",
+      "path": "/chatgpt/gaming/mcp",
+      "httpStatus": 200,
+      "totalDuration": 141,
+      "upstreamErrors": ""
+    },
+    {
+      "timestamp": "2026-10-09T01:11:50.158801604Z",
+      "method": "POST",
+      "path": "/chatgpt/gaming/mcp",
+      "httpStatus": 200,
+      "totalDuration": 3835,
+      "upstreamErrors": ""
+    },
+    {
+      "timestamp": "2026-10-09T01:12:13.592097568Z",
+      "method": "POST",
+      "path": "/chatgpt/gaming/mcp",
+      "httpStatus": 200,
+      "totalDuration": 1522,
+      "upstreamErrors": ""
+    }
+  ],
+  "dns": [
+    {
+      "timestamp": "2026-10-09T01:12:13.550277996Z",
+      "qname": "mobalytics.gg",
+      "qtype": "A",
+      "rcode": "NOERROR",
+      "cnameChain": [],
+      "deploymentId": "19425909-ec6f-46c1-a42e-a5b913fe2f32"
+    },
+    {
+      "timestamp": "2026-10-09T01:12:13.550219030Z",
+      "qname": "mobalytics.gg",
+      "qtype": "AAAA",
+      "rcode": "NOERROR",
+      "cnameChain": [],
+      "deploymentId": "19425909-ec6f-46c1-a42e-a5b913fe2f32"
+    },
+    {
+      "timestamp": "2026-10-09T01:12:13.384058980Z",
+      "qname": "togame.io",
+      "qtype": "A",
+      "rcode": "NOERROR",
+      "cnameChain": [],
+      "deploymentId": "19425909-ec6f-46c1-a42e-a5b913fe2f32"
+    },
+    {
+      "timestamp": "2026-10-09T01:12:13.328974535Z",
+      "qname": "togame.io",
+      "qtype": "AAAA",
+      "rcode": "NOERROR",
+      "cnameChain": [],
+      "deploymentId": "19425909-ec6f-46c1-a42e-a5b913fe2f32"
+    },
+    {
+      "timestamp": "2026-10-09T01:12:12.236083000Z",
+      "qname": "gameguide.guide",
+      "qtype": "A",
+      "rcode": "NOERROR",
+      "cnameChain": [],
+      "deploymentId": "19425909-ec6f-46c1-a42e-a5b913fe2f32"
+    },
+    {
+      "timestamp": "2026-10-09T01:12:12.095125172Z",
+      "qname": "gameguide.guide",
+      "qtype": "AAAA",
+      "rcode": "NOERROR",
+      "cnameChain": [],
+      "deploymentId": "19425909-ec6f-46c1-a42e-a5b913fe2f32"
+    },
+    {
+      "timestamp": "2026-10-09T01:11:49.058499774Z",
+      "qname": "www.gamesradar.com",
+      "qtype": "AAAA",
+      "rcode": "NOERROR",
+      "cnameChain": [
+        "g.sni.us-eu.fastly.net"
+      ],
+      "deploymentId": "19425909-ec6f-46c1-a42e-a5b913fe2f32"
+    },
+    {
+      "timestamp": "2026-10-09T01:11:49.054741168Z",
+      "qname": "www.gamesradar.com",
+      "qtype": "A",
+      "rcode": "NOERROR",
+      "cnameChain": [
+        "g.sni.us-eu.fastly.net"
+      ],
+      "deploymentId": "19425909-ec6f-46c1-a42e-a5b913fe2f32"
+    },
+    {
+      "timestamp": "2026-10-09T01:11:46.420372956Z",
+      "qname": "www.pcgamer.com",
+      "qtype": "A",
+      "rcode": "NOERROR",
+      "cnameChain": [
+        "g.sni.global.fastly.net"
+      ],
+      "deploymentId": "19425909-ec6f-46c1-a42e-a5b913fe2f32"
+    },
+    {
+      "timestamp": "2026-10-09T01:11:46.420018023Z",
+      "qname": "www.pcgamer.com",
+      "qtype": "AAAA",
+      "rcode": "NOERROR",
+      "cnameChain": [
+        "g.sni.global.fastly.net"
+      ],
+      "deploymentId": "19425909-ec6f-46c1-a42e-a5b913fe2f32"
+    },
+    {
+      "timestamp": "2026-10-09T01:11:46.366222961Z",
+      "qname": "mobalytics.gg",
+      "qtype": "A",
+      "rcode": "NOERROR",
+      "cnameChain": [],
+      "deploymentId": "19425909-ec6f-46c1-a42e-a5b913fe2f32"
+    },
+    {
+      "timestamp": "2026-10-09T01:11:46.365875885Z",
+      "qname": "mobalytics.gg",
+      "qtype": "AAAA",
+      "rcode": "NOERROR",
+      "cnameChain": [],
+      "deploymentId": "19425909-ec6f-46c1-a42e-a5b913fe2f32"
+    }
+  ],
+  "network": [
+    {
+      "captureStart": "2026-10-09T01:12:13.552856839Z",
+      "captureEnd": "2026-10-09T01:12:13.570615797Z",
+      "deploymentId": "19425909-ec6f-46c1-a42e-a5b913fe2f32",
+      "direction": "egress",
+      "byteCount": 2627,
+      "dropCause": null,
+      "flowState": "partial"
+    },
+    {
+      "captureStart": "2026-10-09T01:12:13.387120950Z",
+      "captureEnd": "2026-10-09T01:12:13.471622526Z",
+      "deploymentId": "19425909-ec6f-46c1-a42e-a5b913fe2f32",
+      "direction": "egress",
+      "byteCount": 2604,
+      "dropCause": null,
+      "flowState": "partial"
+    },
+    {
+      "captureStart": "2026-10-09T01:12:12.239604176Z",
+      "captureEnd": "2026-10-09T01:12:12.628772116Z",
+      "deploymentId": "19425909-ec6f-46c1-a42e-a5b913fe2f32",
+      "direction": "egress",
+      "byteCount": 3383,
+      "dropCause": null,
+      "flowState": "partial"
+    },
+    {
+      "captureStart": "2026-10-09T01:11:49.061859238Z",
+      "captureEnd": "2026-10-09T01:11:49.183405432Z",
+      "deploymentId": "19425909-ec6f-46c1-a42e-a5b913fe2f32",
+      "direction": "egress",
+      "byteCount": 7038,
+      "dropCause": null,
+      "flowState": "partial"
+    },
+    {
+      "captureStart": "2026-10-09T01:11:46.422997563Z",
+      "captureEnd": "2026-10-09T01:11:46.547569190Z",
+      "deploymentId": "19425909-ec6f-46c1-a42e-a5b913fe2f32",
+      "direction": "egress",
+      "byteCount": 3521,
+      "dropCause": null,
+      "flowState": "partial"
+    },
+    {
+      "captureStart": "2026-10-09T01:11:46.377536371Z",
+      "captureEnd": "2026-10-09T01:11:46.410885132Z",
+      "deploymentId": "19425909-ec6f-46c1-a42e-a5b913fe2f32",
+      "direction": "egress",
+      "byteCount": 2757,
+      "dropCause": null,
+      "flowState": "partial"
+    }
+  ],
+  "railwayDistributedTracing": {
+    "enabled": false,
+    "tracesInWindow": 0
+  },
+  "workerCorrelatedGamingEvents": 0
+}

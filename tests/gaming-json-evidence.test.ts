@@ -179,7 +179,7 @@ describe('bounded Gaming inert JSON evidence', () => {
   it('keeps closed JSON partial when a truncated surrounding article could lose a trailing qualifier', () => {
     const result = extract(`<article><h2>TEST SPACE</h2>${script(JSON.stringify(location), 'application/json')}<p>not`, 'text/html', { transportTruncated: true });
     expect(result.units).toHaveLength(1);
-    expect(result.units[0].integrity).toMatchObject({ status: 'partial', reasons: ['required_context_missing'] });
+    expect(result.units[0].integrity).toMatchObject({ status: 'partial', reasons: ['content_truncated', 'required_context_missing'] });
     expect(result.subreasons).toContain('required_context_missing');
   });
 

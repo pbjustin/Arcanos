@@ -12,6 +12,8 @@ type DetectionInput = {
   urls?: readonly string[];
   pageTitle?: string;
   pageHeadings?: string;
+  /** Acquired topic vocabulary must not select an inferred document game. */
+  excludeAcquiredTopicIdentities?: boolean;
 };
 
 const MAX_GAME_TITLE_CHARS = 120;
@@ -55,6 +57,19 @@ const NON_GAME_ENTITY_WORDS = new Set([
   "pc", "player", "priest", "ps4", "ps5", "ranged", "recommended", "rogue", "solo", "sorc", "sorcerer", "speedrun",
   "steam", "support", "switch", "tank", "ultimate", "veteran", "warlock", "warrior", "xbox"
 ]);
+
+const ACQUIRED_TOPIC_WORDS = new Set([
+  ...NON_GAME_ENTITY_WORDS, ...GAME_TRAILING_TERMS, 'and', 'of', 'the', 'samurai', 'katana', 'katanas', 'blade', 'blades',
+  'bleed', 'blood', 'dexterity', 'strength', 'intelligence', 'faith', 'arcane', 'vigor', 'endurance', 'weapon', 'weapons',
+  'beginner', 'beginners', 'starting', 'equipment', 'skills', 'talents'
+]);
+
+/** A closed gameplay topic does not invent an uncatalogued game identity. */
+export function isGamingAcquiredTopicTitle(value: string): boolean {
+  const words = value.normalize('NFKC').replace(/[|–—].*$/u, '').toLowerCase().trim().split(/[\s-]+/u);
+  return words.length > 0 && words.length <= 12 && words.every(word => ACQUIRED_TOPIC_WORDS.has(word))
+    && words.some(word => ['build', 'builds', 'guide', 'guides', 'loadout', 'walkthrough', 'tips'].includes(word));
+}
 
 const GENERIC_HOST_LABELS = new Set([
   "app", "community", "forum", "forums", "game", "games", "gaming", "guide", "guides", "help", "news", "official",
@@ -104,7 +119,7 @@ function displayCase(value: string): string {
   }).join(" ");
 }
 
-function normalizeCandidate(rawValue: string): string | undefined {
+function normalizeCandidate(rawValue: string, excludeAcquiredTopicIdentities = false): string | undefined {
   const alias = canonicalAlias(rawValue);
   if (alias) {
     return alias;
@@ -124,6 +139,7 @@ function normalizeCandidate(rawValue: string): string | undefined {
   if (!normalized) {
     return undefined;
   }
+  if (excludeAcquiredTopicIdentities && isGamingAcquiredTopicTitle(normalized)) return undefined;
   if (/^(?:the\s+)?(?:game|title|one)(?:\s+(?:i|you|we))?\s+(?:mentioned|named|provided|linked|shown|above|earlier|before)\b/i.test(normalized)) {
     return undefined;
   }
@@ -142,12 +158,13 @@ function normalizeCandidate(rawValue: string): string | undefined {
     return undefined;
   }
 
+  const nonGameEntities = excludeAcquiredTopicIdentities ? ACQUIRED_TOPIC_WORDS : NON_GAME_ENTITY_WORDS;
   const lowerWords = words.map((word) => word.toLowerCase().replace(/[^a-z0-9+']/g, ""));
   if (
     lowerWords.some((word) => !word)
     || (lowerWords.length === 1 && lowerWords[0] === "the")
     || INVALID_GAME_WORDS.has(lowerWords[0])
-    || lowerWords.every((word) => NON_GAME_ENTITY_WORDS.has(word) || INVALID_GAME_WORDS.has(word))
+    || lowerWords.every((word) => nonGameEntities.has(word) || INVALID_GAME_WORDS.has(word))
     || lowerWords.every((word) => word === "the" || INVALID_GAME_WORDS.has(word) || GAME_TRAILING_TERMS.has(word))
     || !words.some((word) => /[a-z]/i.test(word))
   ) {
@@ -168,7 +185,7 @@ function stripConversationalRequestPrefix(value: string): string {
     .trim();
 }
 
-function detectFromAnchoredText(value: string, source: "prompt" | "page_metadata"): GamingGameDetection {
+function detectFromAnchoredText(value: string, source: "prompt" | "page_metadata", excludeAcquiredTopicIdentities = false): GamingGameDetection {
   const normalizedText = stripConversationalRequestPrefix(value.replace(/\s+/g, " ").trim());
   const text = source === "prompt"
     ? normalizedText.replace(/^(?:please\s+)?(?:use|using|read|check|summarize)\s+(?:the\s+)?(?:supplied|linked|provided)\s+(?:article|guide|source|page)\s+(?:for|about)\s+/i, "")
@@ -189,7 +206,7 @@ function detectFromAnchoredText(value: string, source: "prompt" | "page_metadata
 
   for (const pattern of patterns) {
     const match = text.match(pattern);
-    const candidate = match?.[1] ? normalizeCandidate(match[1]) : undefined;
+    const candidate = match?.[1] ? normalizeCandidate(match[1], excludeAcquiredTopicIdentities) : undefined;
     if (candidate) {
       const aliasMatched = Boolean(match?.[1] && canonicalAlias(match[1]));
       return {
@@ -208,7 +225,7 @@ function detectFromAnchoredText(value: string, source: "prompt" | "page_metadata
   return { confidence: 0, source: "none" };
 }
 
-function detectFromUrl(rawUrl: string): GamingGameDetection {
+function detectFromUrl(rawUrl: string, excludeAcquiredTopicIdentities = false): GamingGameDetection {
   try {
     const parsedUrl = new URL(rawUrl);
     const decodedSegments = parsedUrl.pathname
@@ -227,7 +244,7 @@ function detectFromUrl(rawUrl: string): GamingGameDetection {
       if (!hasTopicAnchor) {
         continue;
       }
-      const candidate = GENERIC_PATH_SEGMENTS.has(segment.toLowerCase()) ? undefined : normalizeCandidate(segment);
+      const candidate = GENERIC_PATH_SEGMENTS.has(segment.toLowerCase()) ? undefined : normalizeCandidate(segment, excludeAcquiredTopicIdentities);
       if (candidate) {
         const previousSegment = decodedSegments[index - 1]?.toLowerCase();
         const structuredGamePath = previousSegment === "game" || previousSegment === "games" || previousSegment === "wiki";
@@ -237,7 +254,7 @@ function detectFromUrl(rawUrl: string): GamingGameDetection {
         const previousSegment = decodedSegments[index - 1];
         const previousCandidate = GENERIC_PATH_SEGMENTS.has(previousSegment.toLowerCase())
           ? undefined
-          : normalizeCandidate(previousSegment);
+          : normalizeCandidate(previousSegment, excludeAcquiredTopicIdentities);
         if (previousCandidate) {
           return { game: previousCandidate, confidence: 0.66, source: "url" };
         }
@@ -249,7 +266,7 @@ function detectFromUrl(rawUrl: string): GamingGameDetection {
     const hostHasWikiAnchor = rawHostWords.includes("wiki") || parsedUrl.hostname.toLowerCase().endsWith(".wiki");
     const hostWords = rawHostWords.filter((word) => !GENERIC_HOST_LABELS.has(word));
     if (hostWords.length > 0 && hostWords.length < 6 && hostWords.join("").length >= 4) {
-      const candidate = normalizeCandidate(hostWords.join(" "));
+      const candidate = normalizeCandidate(hostWords.join(" "), excludeAcquiredTopicIdentities);
       if (candidate) {
         return { game: candidate, confidence: hostHasWikiAnchor ? 0.74 : 0.64, source: "url" };
       }
@@ -271,13 +288,13 @@ export function detectGamingGame(input: DetectionInput): GamingGameDetection {
     };
   }
 
-  const promptDetection = detectFromAnchoredText(input.prompt ?? "", "prompt");
+  const promptDetection = detectFromAnchoredText(input.prompt ?? "", "prompt", input.excludeAcquiredTopicIdentities);
   if (promptDetection.game) {
     return promptDetection;
   }
 
   for (const url of input.urls ?? []) {
-    const urlDetection = detectFromUrl(url);
+    const urlDetection = detectFromUrl(url, input.excludeAcquiredTopicIdentities);
     if (urlDetection.game) {
       return urlDetection;
     }
@@ -285,7 +302,8 @@ export function detectGamingGame(input: DetectionInput): GamingGameDetection {
 
   const metadataDetection = detectFromAnchoredText(
     [input.pageTitle, input.pageHeadings].filter(Boolean).join(" | "),
-    "page_metadata"
+    "page_metadata",
+    input.excludeAcquiredTopicIdentities
   );
   if (metadataDetection.game) {
     return metadataDetection;

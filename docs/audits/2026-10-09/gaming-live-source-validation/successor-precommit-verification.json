@@ -1,0 +1,336 @@
+{
+  "baselineSha": "0ec167654fa3970c818b2e2721c044dd79b77189",
+  "parentSha": "a99aec996872603421defa81626ba018a7961e1d",
+  "scope": "Frozen successor working tree after pre-existing prefixed Nightreign false admissions; committed SHA and independent CI are recorded in the PR",
+  "node": "v24.18.1",
+  "npm": "11.16.0",
+  "sourceFingerprints": [
+    {
+      "path": "scripts/check-native-pr-preview-imports.mjs",
+      "sha256": "f470742ebdedf60dda2ceaac40a38bd349dd3afa8cda8a18d0611da490359ce2"
+    },
+    {
+      "path": "scripts/native-pr-preview-contract.d.mts",
+      "sha256": "c8e520d63220f15f81654e72cca92bf2d6e20eef1393d3d9f45a036b201e677e"
+    },
+    {
+      "path": "scripts/native-pr-preview-contract.mjs",
+      "sha256": "a5fbe8ccb0665620b3315ede76db6f26e5519d606714955bd1b6f8742b14be62"
+    },
+    {
+      "path": "scripts/native-pr-preview-e2e.mjs",
+      "sha256": "016d5697fbbfd310dc3129060160272330b917dbe9c550cc146022e50de87a55"
+    },
+    {
+      "path": "scripts/native-pr-preview-e2e.test.mjs",
+      "sha256": "67bc3ca1284c32ba68768ded4db110cae7b3d796a6b8cda785aeaf7eaf4bc3cb"
+    },
+    {
+      "path": "src/nativePrPreviewApplication.ts",
+      "sha256": "12f382eeeddeb5dcb702e5b201b2d0998b69d633cd80d0f4e56157c85cb84041"
+    },
+    {
+      "path": "src/services/gamingDocumentExtraction.ts",
+      "sha256": "355d2538624e66b37ffcb003a1a43549a5b1b2efd77adce5b540014201f993a1"
+    },
+    {
+      "path": "src/services/gamingGameDetection.ts",
+      "sha256": "ba09dbc0d9c64271537b7619fdd6a4557a05ab7bd275b670af0b9365896d1f5a"
+    },
+    {
+      "path": "src/services/gamingHtmlEvidence.ts",
+      "sha256": "f4ba145acd33c5117a6d7268970dec872e4dc038430c9f0975ae56e9068bddf2"
+    },
+    {
+      "path": "src/services/gamingHybridCandidates.ts",
+      "sha256": "712f6eda719e2aedf402e783a0985cb39d18dcc3d420dd67fe206ca913e7a99d"
+    },
+    {
+      "path": "src/services/gamingJsonEvidence.ts",
+      "sha256": "b72faa7b413a80fd0f298584a12e438361c784ce73b1ec5c6f9945e884a8cc03"
+    },
+    {
+      "path": "src/shared/gaming/gamingClearSource.ts",
+      "sha256": "24ec42d92d1eddb68a10154805eb6fa0315239d18bb13f1c821b7278f74bf456"
+    },
+    {
+      "path": "src/shared/gaming/gamingFreshnessCore.ts",
+      "sha256": "ebd8867e5ae139a6547991ab332410d7897e2b2d1ed70d4ad3632906b854f1e2"
+    },
+    {
+      "path": "src/shared/gaming/gamingGameDeclaration.ts",
+      "sha256": "bdde544998fe599fea725d809415d7dc0915a1b826b204fb1be6761274db043c"
+    },
+    {
+      "path": "src/shared/gaming/gamingLiveSourceValidationPreviewFixture.ts",
+      "sha256": "675e962830a6fda64a55d4ad1a858cba15a7e92953388a54d9f97c8fffb34b86"
+    },
+    {
+      "path": "src/shared/webFetcher.ts",
+      "sha256": "5cefa075fa060a9e19a34db3354e4679ddbfdba974b685549cd0a1420defdcba"
+    },
+    {
+      "path": "tests/gaming-acquired-topic-identity.test.ts",
+      "sha256": "19a9e8c28a99e4eb26ba88d419e38a298f5e23a4af931945a11428cbf075259b"
+    },
+    {
+      "path": "tests/gaming-html-evidence.test.ts",
+      "sha256": "256a3320b3f9db243cce958eb1720d568af13c68ce57ee7ff821bef51f1df270"
+    },
+    {
+      "path": "tests/gaming-live-source-candidate-regressions.test.ts",
+      "sha256": "4f336adb430f5e4c69682cc8495a09b5c10229abfda166ecefe64490ea663051"
+    },
+    {
+      "path": "tests/gaming-live-source-identity-regressions.test.ts",
+      "sha256": "3759a62fe13168f5c0699a267ce2802dbd9962b857ed6dc268248076437b5ec5"
+    },
+    {
+      "path": "tests/gaming-live-source-validation-preview.test.ts",
+      "sha256": "ae49e8a2e6ae4930ac513ac007dc6065a7d19838a81091c2bd073a9cb393b866"
+    },
+    {
+      "path": "tests/gaming-minecraft-child-isolation.test.ts",
+      "sha256": "225263f1cde2907c4b1af217595f9305244dda1bd5e9f6509461ba1e517452ad"
+    },
+    {
+      "path": "tests/gaming-minecraft-edition-scope.test.ts",
+      "sha256": "08af2d6a44343a82c62a418f1b3adffc6489212eb6f5ad872c1ae2185c61c99c"
+    },
+    {
+      "path": "tests/gaming-publisher-extraction-regressions.test.ts",
+      "sha256": "b066672109c14fbcdf0a6dc78431979536baee5c5ed266c79f7125caef27341d"
+    },
+    {
+      "path": "tests/gaming-semantic-reasons.test.ts",
+      "sha256": "8fdb1cc3e36bbe91f4d1ccbac20792d2d33f631407148d34575d8b204925a1a5"
+    },
+    {
+      "path": "tests/gaming-unrequested-base-edition.test.ts",
+      "sha256": "929c79d76c76980826421a8483ed94a6dabb31ef52bdf53605520803bac48de9"
+    },
+    {
+      "path": "tests/live-validation-gaming-adapter.test.ts",
+      "sha256": "8cf027540fe572819027b822693eb82d2662c23b5670a4f8e2e47ecebdf84ac5"
+    },
+    {
+      "path": "tests/native-pr-preview-application.test.ts",
+      "sha256": "8248553ff9f79992923087a34adc20f7e8aa5cc85127594015ef75c746010955"
+    }
+  ],
+  "focused": {
+    "artifact": "/tmp/arcanos-gaming-editorial-prefix-focused.json",
+    "success": true,
+    "suitesPassed": 9,
+    "testsPassed": 356,
+    "testsFailed": 0,
+    "testsSkipped": 0
+  },
+  "checks": [
+    {
+      "command": "npm run type-check",
+      "exitCode": 0,
+      "artifact": "/tmp/arcanos-gaming-successor-type-check.log",
+      "artifactSha256": "82c45ad386f9769567052c6ed1b2b78434ef817bfe3d475c3cc908cb0dbfe9ec"
+    },
+    {
+      "command": "npm run lint",
+      "exitCode": 0,
+      "artifact": "/tmp/arcanos-gaming-successor-lint.log",
+      "artifactSha256": "7790d5ac6b7fb00ff4a462554d686d4cad2a9af62bc377d1525f0e7f367ddd97"
+    },
+    {
+      "command": "npm run build",
+      "exitCode": 0,
+      "artifact": "/tmp/arcanos-gaming-successor-build.log",
+      "artifactSha256": "0b9afde20b4001fa6f14c45f89648647add898ab097eef004c1070426e29e4aa"
+    },
+    {
+      "command": "npm run docs:check",
+      "exitCode": 0,
+      "artifact": "/tmp/arcanos-gaming-successor-docs-check.log",
+      "artifactSha256": "b040033608cacc8d4bccc9cdfe6e9d2403c4d15475c18592b4c399f4c57120c3"
+    },
+    {
+      "command": "npm run docs:links -- --local-only",
+      "exitCode": 0,
+      "artifact": "/tmp/arcanos-gaming-successor-docs-links.log",
+      "artifactSha256": "0eb3c85fbcab943c4cd1a4b67691f8ec879982b045959f2d2684eca4b0ecabaa"
+    },
+    {
+      "command": "npm run guard:commit",
+      "exitCode": 0,
+      "artifact": "/tmp/arcanos-gaming-successor-commit-guard.log",
+      "artifactSha256": "a10dff3db0f2ce256d003ada48d0ae0642f41e9088ec83bf5de6850f3fdef8a3"
+    },
+    {
+      "command": "git diff --cached --check",
+      "exitCode": 0
+    }
+  ],
+  "fullRootFinal": {
+    "status": "PASS",
+    "command": "npm test -- --coverage=false --maxWorkers=4 --workerIdleMemoryLimit=768MB --json --outputFile=/tmp/arcanos-gaming-successor-root-tests.json",
+    "artifact": "/tmp/arcanos-gaming-successor-root-tests.json",
+    "artifactSha256": "0cd55040baf477efc3ee211a74a2ed20c183785ce1f8cd53e979910fbda0210b",
+    "suitesPassed": 874,
+    "suitesFailed": 0,
+    "suitesSkipped": 13,
+    "testsPassed": 16687,
+    "testsFailed": 0,
+    "testsSkipped": 167,
+    "skippedSuites": [
+      {
+        "path": "tests/integration/action-plan-execution-migration.pg18.integration.test.ts",
+        "skippedTests": [
+          "Phase 2E migration against explicitly configured PostgreSQL 18 applies, verifies, recovers a failed ledger, reruns, locks, drains, and compensates"
+        ]
+      },
+      {
+        "path": "tests/integration/backstage-notion-partition-storage.pg18.integration.test.ts",
+        "skippedTests": [
+          "Backstage Notion partition storage on PostgreSQL 18 applies migration and runtime DDL repeatedly with exact array storage",
+          "Backstage Notion partition storage on PostgreSQL 18 database-validates embedding shape, finiteness, non-zero norm, and tolerance",
+          "Backstage Notion partition storage on PostgreSQL 18 ranks exact immutable manifest candidates on stock PostgreSQL without loading embeddings",
+          "Backstage Notion partition storage on PostgreSQL 18 preserves per-shard semantic recall above 2,048 total chunks",
+          "Backstage Notion partition storage on PostgreSQL 18 fences scoped candidates before ranking and keyset-pages one immutable manifest",
+          "Backstage Notion partition storage on PostgreSQL 18 seals only exact rooted ancestor paths and exact occurrence dimensions",
+          "Backstage Notion partition storage on PostgreSQL 18 rejects shard-head publication when the durable Notion authority fence is inactive",
+          "Backstage Notion partition storage on PostgreSQL 18 seals immutable evidence, fences child mutations, and activates exact sealed heads",
+          "Backstage Notion partition storage on PostgreSQL 18 rotates an active shard atomically and reassigns roots without deleting LKG history",
+          "Backstage Notion partition storage on PostgreSQL 18 runs repository registration, leases, shard activation, and manifest publication as one real cycle",
+          "Backstage Notion partition storage on PostgreSQL 18 blocks a mixed-generation overlapping archive without exposing a partial manifest",
+          "Backstage Notion partition storage on PostgreSQL 18 keeps the previous manifest active when a changed optional definition is omitted",
+          "Backstage Notion partition storage on PostgreSQL 18 reuses unchanged material while keeping an incomplete archive manifest inactive",
+          "Backstage Notion partition storage on PostgreSQL 18 compares active monolith and partition heads with bounded identity-only samples",
+          "Backstage Notion partition storage on PostgreSQL 18 preserves repeated heading occurrences and resolves manifest scope without content loads",
+          "Backstage Notion partition storage on PostgreSQL 18 empty rollback succeeds and both migration paths reinstall cleanly",
+          "Backstage Notion partition storage on PostgreSQL 18 populated rollback refuses atomically and preserves the installed schema"
+        ]
+      },
+      {
+        "path": "tests/integration/non-gpt-terminal-retention.pg18.integration.test.ts",
+        "skippedTests": [
+          "non-GPT terminal retention on PostgreSQL 18 actual create, generic update, and claimed writers apply only non-GPT allowlisted fallbacks",
+          "non-GPT terminal retention on PostgreSQL 18 actual pending cancellation preserves persisted lifecycle before applying a fallback",
+          "non-GPT terminal retention on PostgreSQL 18 concurrent exact-key partition admission creates one durable job",
+          "non-GPT terminal retention on PostgreSQL 18 same target with different actor keys admits only one job",
+          "non-GPT terminal retention on PostgreSQL 18 capacity one never admits two disjoint targets concurrently",
+          "non-GPT terminal retention on PostgreSQL 18 same actor key with different fingerprints inserts once and conflicts once",
+          "non-GPT terminal retention on PostgreSQL 18 rolls back the job and first event when the second event write fails",
+          "non-GPT terminal retention on PostgreSQL 18 actual stale and stalled recovery writers retain allowlisted cancellations and exclude other types",
+          "non-GPT terminal retention on PostgreSQL 18 deletes only the oldest eligible allowlisted rows in bounded repeatable batches",
+          "non-GPT terminal retention on PostgreSQL 18 skips a row locked by another cleanup owner without exceeding the batch"
+        ]
+      },
+      {
+        "path": "tests/integration/ios-device-gateway.e2e.integration.test.ts",
+        "skippedTests": [
+          "Swift client through real device Gateway and PostgreSQL executes the Swift device flow and independently verifies durable ownership and terminal states",
+          "Swift client through real device Gateway and PostgreSQL reopens shipping receipts in fresh Swift processes after real Gateway and PostgreSQL completion",
+          "Swift client through real device Gateway and PostgreSQL isolates an explicit Local Agent idempotency key between requester devices in PostgreSQL"
+        ]
+      },
+      {
+        "path": "tests/integration/local-agent-hardening.pg.integration.test.ts",
+        "skippedTests": [
+          "local-agent hardening PostgreSQL concurrency the forward migration is repeatable",
+          "local-agent hardening PostgreSQL concurrency the verifier accepts the exact migrated binding schema",
+          "local-agent hardening PostgreSQL concurrency the verifier rejects malformed columns, constraints, and indexes",
+          "local-agent hardening PostgreSQL concurrency the verifier rejects binding-to-job drift and missing manual bindings",
+          "local-agent hardening PostgreSQL concurrency separate connections cannot commit duplicate logical bindings",
+          "local-agent hardening PostgreSQL concurrency the production timeline query isolates local-agent events by tenant"
+        ]
+      },
+      {
+        "path": "tests/integration/gpt-access-device-auth.pg18.integration.test.ts",
+        "skippedTests": [
+          "paired-device PostgreSQL transactions one concurrent pairing wins, another observes consumed challenge, one device persists",
+          "paired-device PostgreSQL transactions wrong-origin attempt rolls back without consuming challenge",
+          "paired-device PostgreSQL transactions pairing expiry while waiting on a row lock rolls back registration",
+          "paired-device PostgreSQL transactions concurrent rotation permits one replacement and invalidates the old digest",
+          "paired-device PostgreSQL transactions revocation that wins the row lock prevents credential rotation",
+          "paired-device PostgreSQL transactions credential expiry while waiting on a row lock prevents rotation",
+          "paired-device PostgreSQL transactions database constraints reject wildcard grant and wrong audience",
+          "paired-device PostgreSQL transactions rollback removes the new tables and forward migration can recreate them"
+        ]
+      },
+      {
+        "path": "tests/integration/backstage-notion-rag-candidate-search.pg18.integration.test.ts",
+        "skippedTests": [
+          "Backstage Notion candidate search on PostgreSQL 18 synchronizes database-parent authority through PostgreSQL activation and continuity",
+          "Backstage Notion candidate search on PostgreSQL 18 keeps rollback repeat-safe when the sidecar table is already absent",
+          "Backstage Notion candidate search on PostgreSQL 18 rejects a legacy canonical-only activation and retains the current head",
+          "Backstage Notion candidate search on PostgreSQL 18 rejects non-finite persisted embedding norms at the PostgreSQL boundary",
+          "Backstage Notion candidate search on PostgreSQL 18 fails closed when an idempotent backfill encounters mismatched derived material",
+          "Backstage Notion candidate search on PostgreSQL 18 rolls back a sidecar batch when its bounded statement deadline expires",
+          "Backstage Notion candidate search on PostgreSQL 18 does not report completion when the active authority head rotates at final verification",
+          "Backstage Notion candidate search on PostgreSQL 18 ranks exact 2,751 and 4,096 chunk corpora with bounded native search"
+        ]
+      },
+      {
+        "path": "tests/integration/action-plan-execution-migration.integration.test.ts",
+        "skippedTests": [
+          "Phase 2E migration against an explicit local ephemeral PostgreSQL database applies, verifies, reruns equivalently, preserves legacy rows, and compensates"
+        ]
+      },
+      {
+        "path": "tests/codebase-api.test.ts",
+        "skippedTests": [
+          "Codebase access API lists repository root contents",
+          "Codebase access API reads a repository file",
+          "Codebase access API prevents path traversal outside repository"
+        ]
+      },
+      {
+        "path": "tests/integration/session-system.integration.test.ts",
+        "skippedTests": [
+          "canonical session system integration saves, retrieves, lists, replays, and survives a restart with the exact stored token"
+        ]
+      },
+      {
+        "path": "tests/integration/dag-token-accounting.pg18.integration.test.ts",
+        "skippedTests": [
+          "DAG aggregate accounting across PostgreSQL 18 queue persistence round-trips aggregate 107 and public final usage 7, blocking descendants at cap 100",
+          "DAG aggregate accounting across PostgreSQL 18 queue persistence charges persisted failed and successful attempts 27 plus 43 exactly once before retry and descendant admission",
+          "DAG aggregate accounting across PostgreSQL 18 queue persistence preserves a malformed child usage failure and its non-retryable hint across JSONB and the result gateway",
+          "DAG aggregate accounting across PostgreSQL 18 queue persistence retains cancelled child usage and charges it once through repeated durable terminal observations"
+        ]
+      },
+      {
+        "path": "tests/integration/backstage-notion-authority-http.pg18.integration.test.ts",
+        "skippedTests": [
+          "Backstage Notion authority through authenticated HTTP and PostgreSQL 18 serves nested database inventory snapshots, contains failed refreshes, and recovers through the canonical route"
+        ]
+      },
+      {
+        "path": "tests/integration/gaming-durable-rag.pg18.integration.test.ts",
+        "skippedTests": [
+          "durable Gaming chunk storage and retrieval on PostgreSQL 18 acquires a short structured source, passes real source CLEAR, ingests, and retrieves without its URL",
+          "durable Gaming chunk storage and retrieval on PostgreSQL 18 persists acquired official currentness through SQL JSONB and reuses only bound, unexpired proof",
+          "durable Gaming chunk storage and retrieval on PostgreSQL 18 retains JSON record provenance beyond 100K and revisions a late change through actual SQL",
+          "durable Gaming chunk storage and retrieval on PostgreSQL 18 matches stored title formatting across three games without collapsing editions or reindexing historical keys",
+          "durable Gaming chunk storage and retrieval on PostgreSQL 18 a separate edition field selects the complete trusted identity and rejects a base-only catalog",
+          "durable Gaming chunk storage and retrieval on PostgreSQL 18 retrieves late and near-end facts through real indexed SQL and bounded evidence projection",
+          "durable Gaming chunk storage and retrieval on PostgreSQL 18 keeps unchanged revisions and supersedes or reactivates complete chunk generations after a deep edit",
+          "durable Gaming chunk storage and retrieval on PostgreSQL 18 advances unchanged hybrid resource verification monotonically without changing revision or active chunks",
+          "durable Gaming chunk storage and retrieval on PostgreSQL 18 rolls back a failed new revision after supersession and retains the prior usable evidence"
+        ]
+      }
+    ]
+  },
+  "providerCalls": false,
+  "productionChanged": false,
+  "historicalVerification": "Previous precommit-verification.json and every earlier failure are retained; first published head passed independent CI but failed the separate prefixed-Nightreign security probe.",
+  "sourceFingerprintsUnchangedAfterAllChecks": true,
+  "postgreSqlVerification": "postgres-verification.json: frozen-successor 9/9 executed, zero skipped; disposable PostgreSQL 18.6 removed",
+  "localServedPreviewVerification": "local-preview-verification.json: frozen-successor 2 HTTP tests, 69 explicit unrelated skips; hosted Railway verification blocked by draft admission guard",
+  "validatedAtUtc": "2026-10-09T04:08:40.412350+00:00",
+  "diffReviewScope": {
+    "changedPaths": 10,
+    "productionCodeChange": "Closed Best/The best prefix normalization for source-subject contradictions only",
+    "previewPins": "Reviewed ClearSource and pure fixture semantic digests only",
+    "securityFailuresPreserved": "baseline and first published head each 2 failed/1 passing protected acquisition probes; successor 3 passing probes"
+  },
+  "integratedReadOnlyReview": "No actionable successor code defect; corrected the audit skipped-suite enumeration from actual Jest status=skipped. All 28 hashes and root artifact fingerprint independently reviewed."
+}

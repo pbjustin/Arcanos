@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { load } from 'cheerio';
-import { countGamingHtmlElements, filterGamingDocumentInstructions } from '@services/gamingDocumentExtraction.js';
+import { countGamingHtmlElements, filterGamingDocumentInstructions, GAMING_DOCUMENT_FURNITURE_SELECTOR } from '@services/gamingDocumentExtraction.js';
 import {
   GAMING_EVIDENCE_UNIT_POLICY_VERSION,
   type GamingEvidenceExtractionInput,
@@ -20,6 +20,10 @@ const DANGEROUS_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
 const SENSITIVE_VALUE = /(?:\b(?:password|secret|token|api[_ -]?key|authorization|cookie)\s*[:=]|\bBearer\s+|\bsk-(?:proj-)?[a-z0-9_-]{8,}|\bgh[opusr]_[a-z0-9]{12,}|\beyJ[a-z0-9_-]+\.[a-z0-9_-]+\.[a-z0-9_-]+)/iu;
 const SENSITIVE_KEY = /(?:password|secret|token|apikey|authorization|cookie|session|analytics|tracking)/iu;
 const VISIBLE_QUALIFIER = /\b(?:not|no longer|deplet\w*|unconfirmed|old patch|example only|correction|corrected|outdated|unavailable|obsolete|previously|before|after|patch|version)\b/iu;
+const COMPARISON_PROSE = /^(?:unlike|compare(?:d)?|(?:for\s+)?comparison|contrast|rather\s+than|instead\s+of)\b/iu;
+// A comparison lead-in cannot erase an explicit qualification of the primary
+// record. Compared equipment alone remains unrelated context.
+const PRIMARY_RECORD_QUALIFICATION = /\b(?:this|these|the)\s+(?:records?|equipment|builds?|sources?|entry|entries|sites?|statistics?|resources?|weapons?|items?|stats?|routes?)\s+(?:(?:(?:is|are|was|were|remains?|may|might|can|could|would|should|must|will|be|been|being|has|have|had|now|still|also|already|yet|perhaps|requires?|needs?|a)|[\p{L}-]+ly)\s+)*(?:not|no longer|deplet\w*|unconfirmed|old patch|example only|outdated|unavailable|obsolete|correction|corrected)\b/iu;
 const DISCUSSION = '[itemtype="https://schema.org/DiscussionForumPosting"],[itemtype="http://schema.org/DiscussionForumPosting"]';
 const UNRELATED_DISCUSSION = '.comments,#comments,[class*="comment-list"],[itemtype="https://schema.org/Comment"],[itemtype="http://schema.org/Comment"]';
 const QUALIFIER_KEYS = new Set(['qualifier', 'qualifiers', 'note', 'notes', 'status', 'correction', 'availability']);
@@ -362,6 +366,57 @@ export function extractGamingJsonEvidence(input: GamingEvidenceExtractionInput):
     if (deadlineExpired()) return result;
     $('template, noscript').remove();
     const scripts = $('script');
+    const qualifierValues = new Map<cheerio.Element, string>();
+    const qualifierSelector = 'p,figcaption,small,[role="note"],div,span';
+    const standaloneSpans = new Map<cheerio.Element, Set<cheerio.Element>>();
+    function standaloneSpan(element: cheerio.Element): boolean {
+      const parent = $(element).parent();
+      if (!parent.is('body,main,article,section,div')) return false;
+      const parentElement = parent.get(0)!;
+      let spans = standaloneSpans.get(parentElement);
+      if (!spans) {
+        spans = new Set<cheerio.Element>();
+        const siblings = parent.contents().toArray().filter(sibling => sibling.type !== 'comment'
+          && (sibling.type !== 'text' || $(sibling).text().trim()));
+        const boundary = (sibling: cheerio.Element | undefined) => !sibling
+          || $(sibling).is('p,div,main,article,section,figure,table,ul,ol,dl,h1,h2,h3,h4,h5,h6,script');
+        for (const [index, sibling] of siblings.entries()) {
+          if ($(sibling).is('span') && boundary(siblings[index - 1]) && boundary(siblings[index + 1])) spans.add(sibling);
+        }
+        standaloneSpans.set(parentElement, spans);
+      }
+      return spans.has(element);
+    }
+    const qualifierBlockEligibility = new Map<cheerio.Element, boolean>();
+    const formattedQualifierBlocks = new Map<cheerio.Element, boolean>();
+    const inlineQualifierSelector = 'span,b,strong,em,i,small,br';
+    function formattedQualifierBlock(element: cheerio.Element): boolean {
+      const cached = formattedQualifierBlocks.get(element);
+      if (cached !== undefined) return cached;
+      const node = $(element);
+      const inlineOnly = node.is('div,span') && !node.closest('aside').length && node.children().length > 0
+        && (!node.is('span') || standaloneSpan(element))
+        && node.children().toArray().every(child => $(child).is(inlineQualifierSelector))
+        && node.find('*').toArray().every(child => $(child).is(inlineQualifierSelector));
+      const value = inlineOnly ? node.text().normalize('NFKC').replace(/\s+/gu, ' ').trim() : '';
+      const formatted = inlineOnly && (VISIBLE_QUALIFIER.exec(value)?.index === 0
+        || COMPARISON_PROSE.test(value) && PRIMARY_RECORD_QUALIFICATION.test(value));
+      formattedQualifierBlocks.set(element, formatted);
+      return formatted;
+    }
+    const qualifierBlock = (_: number, element: cheerio.Element) => {
+      const cached = qualifierBlockEligibility.get(element);
+      if (cached !== undefined) return cached;
+      const eligible = !$(element).parents('div,span').toArray().some(formattedQualifierBlock)
+        && (!$(element).is('div,span') || $(element).is('[role="note"]') || formattedQualifierBlock(element)
+          || !$(element).closest('aside').length && !$(element).children().length && (!$(element).is('span') || standaloneSpan(element)));
+      qualifierBlockEligibility.set(element, eligible);
+      return eligible;
+    };
+    function nearbyQualifiers(node: cheerio.Cheerio): cheerio.Cheerio {
+      const nearby = node.prevAll('p,aside,div,span,small').slice(0, 2).add(node.nextAll('p,aside,div,span,small').slice(0, 2));
+      return nearby.add(nearby.find(qualifierSelector).filter(qualifierBlock));
+    }
     let inertScripts = 0;
     for (const [index, element] of scripts.toArray().entries()) {
       if (Date.now() >= deadline) { result.truncated = true; reason('extraction_budget_exhausted'); break; }
@@ -378,7 +433,7 @@ export function extractGamingJsonEvidence(input: GamingEvidenceExtractionInput):
       if (type !== 'application/json' && type !== 'application/ld+json') continue;
       if (++inertScripts > LIMITS.scripts) { result.truncated = true; reason('extraction_budget_exhausted'); break; }
       const node = $(element);
-      if (node.closest('nav,footer,aside,form,template,[hidden],[aria-hidden="true"],[role="navigation"],blockquote').length) continue;
+      if (node.closest(`aside,blockquote,[role="menu"],${GAMING_DOCUMENT_FURNITURE_SELECTOR}`).length) continue;
       const post = node.closest(DISCUSSION).first();
       const unrelated = node.closest(UNRELATED_DISCUSSION).first();
       if (unrelated.length && (!post.length || !post.is('article') && !post.closest('main,[role="main"]').length
@@ -388,32 +443,54 @@ export function extractGamingJsonEvidence(input: GamingEvidenceExtractionInput):
       const attribution = post.length ? post.find('[itemprop="author"]').first().text().normalize('NFKC').replace(/\s+/gu, ' ').trim() : '';
       if (attribution) visibleContext.attribution = attribution;
       // Nearby visible qualifications belong to this source assertion even though its fields are JSON-only.
-      let relevant = node.prevAll('p,aside,div,small').slice(0, 2).add(node.nextAll('p,aside,div,small').slice(0, 2));
+      let relevant = nearbyQualifiers(node);
       // A containing section can inherit an article-level qualification without importing sibling sections.
       let ancestor = node.parent();
       for (let depth = 0; depth < 6 && ancestor.length && !ancestor.is('html'); depth++, ancestor = ancestor.parent()) {
-        relevant = relevant.add(ancestor.children('p,figcaption,small,[role="note"]'))
-          .add(ancestor.prevAll('p,aside,div,small').slice(0, 2)).add(ancestor.nextAll('p,aside,div,small').slice(0, 2));
+        relevant = relevant.add(ancestor.children(qualifierSelector).filter(qualifierBlock)).add(nearbyQualifiers(ancestor));
       }
-      if (container.length) {
-        const paragraphs = container.find('p,figcaption,small,[role="note"]');
-        if (paragraphs.length > 64 || relevant.length > 64) {
-          visibleContext.integrityReasons!.push('required_context_missing'); reason('required_context_missing');
+      const wholeArticleContext = container.is('article,main') && !node.parents('section,figure').length;
+      if (ancestor.length && !ancestor.is('html') && wholeArticleContext) {
+        const enclosingScopes = container.parents('article,main');
+        if (enclosingScopes.length > 6) visibleContext.integrityReasons!.push('required_context_missing');
+        // Plain wrappers must not hide an enclosing article/main qualification.
+        relevant = relevant.add(enclosingScopes.slice(0, 6).find(qualifierSelector).filter(qualifierBlock));
+      }
+      if (container.length) relevant = relevant.add(container.find(qualifierSelector).filter(qualifierBlock));
+      const ancestors = node.parents().toArray();
+      let qualifierElements = 0;
+      relevant.each((_, candidate) => {
+        if (deadlineExpired()) return false;
+        const selected = $(candidate);
+        if (selected.is('span') && !qualifierBlock(0, candidate)) return;
+        if (selected.closest(`${GAMING_DOCUMENT_FURNITURE_SELECTOR},blockquote,table:not([role="presentation"]),ul,ol,dl`).length) return;
+        if (selected.closest(UNRELATED_DISCUSSION).length && (!post.length || selected.closest(DISCUSSION).get(0) !== post.get(0))) return;
+        const candidateScope = selected.closest('section,article,main,figure').get(0);
+        if (candidateScope && candidateScope !== container.get(0) && !ancestors.includes(candidateScope)) return;
+        let text = qualifierValues.get(candidate);
+        if (text === undefined) {
+          const copy = selected.clone();
+          // Nested blocks are discovered separately; plain wrappers must not count them again.
+          copy.find(qualifierSelector).filter(qualifierBlock).remove();
+          copy.find(`script,style,table,ul,ol,dl,blockquote,section,article,main,figure,${GAMING_DOCUMENT_FURNITURE_SELECTOR},${UNRELATED_DISCUSSION}`).remove();
+          text = copy.text().normalize('NFKC').replace(/\s+/gu, ' ').trim();
+          qualifierValues.set(candidate, text);
         }
-        relevant.slice(0, 64).add(paragraphs.slice(0, 64)).each((_, candidate) => {
-          const selected = $(candidate);
-          if (selected.closest('nav,footer,form,template,[hidden],[aria-hidden="true"],blockquote,.comments,#comments').length) return;
-          const candidateScope = selected.closest('section,article,main,figure').get(0);
-          if (candidateScope && candidateScope !== container.get(0) && !node.parents().toArray().includes(candidateScope)) return;
-          const copy = selected.clone(); copy.find('script,style,table,ul,ol,dl,blockquote').remove();
-          const text = copy.text().normalize('NFKC').replace(/\s+/gu, ' ').trim();
-          if (VISIBLE_QUALIFIER.test(text)) visibleContext.qualifiers.push(text);
-        });
-      } else relevant.slice(0, 64).each((_, candidate) => {
-        const copy = $(candidate).clone(); copy.find('script,style,table,ul,ol,dl,blockquote').remove();
-        const text = copy.text().normalize('NFKC').replace(/\s+/gu, ' ').trim();
-        if (VISIBLE_QUALIFIER.test(text)) visibleContext.qualifiers.push(text);
+        // Nearby wrappers must obey the same comparison boundary as discovered blocks.
+        if (selected.is('div,span') && COMPARISON_PROSE.test(text) && !PRIMARY_RECORD_QUALIFICATION.test(text)) return;
+        if (VISIBLE_QUALIFIER.test(text)) {
+          if (++qualifierElements > 64) {
+            visibleContext.integrityReasons!.push('required_context_missing'); reason('required_context_missing'); return false;
+          }
+          visibleContext.qualifiers.push(text);
+          const closureNodes = formattedQualifierBlock(candidate) ? selected.find('*').add(selected).toArray() : [candidate];
+          if (closureNodes.some(child => !$(child).is('br')
+            && !(child as typeof child & { sourceCodeLocation?: { endTag?: unknown } }).sourceCodeLocation?.endTag)) {
+            visibleContext.integrityReasons!.push('content_truncated'); reason('content_truncated');
+          }
+        }
       });
+      if (deadlineExpired()) return result;
       let headingNode = node.prevAll('h1,h2,h3,h4,h5,h6').first();
       if (!headingNode.length && container.length) headingNode = container.children('h1,h2,h3,h4,h5,h6').first();
       const heading = headingNode.text().normalize('NFKC').replace(/\s+/gu, ' ').trim();

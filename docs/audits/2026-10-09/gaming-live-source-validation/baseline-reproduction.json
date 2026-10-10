@@ -1,0 +1,48 @@
+{
+  "baselineSha": "0ec167654fa3970c818b2e2721c044dd79b77189",
+  "archivePath": "/tmp/arcanos-gaming-baseline-extraction-sj4kMG",
+  "toolchain": {
+    "node": "v24.18.1",
+    "npm": "11.16.0"
+  },
+  "outcome": "EXPECTED_ASSERTION_FAILURE",
+  "failedTests": 3,
+  "passedTests": 0,
+  "deliberatelyUnselectedTests": 5,
+  "sourceMatches": {
+    "src/services/gamingHtmlEvidence.ts": {
+      "expectedBlob": "6f5782bc8fb2de71a7838c57391588cb8004c32c",
+      "archiveBlob": "6f5782bc8fb2de71a7838c57391588cb8004c32c",
+      "matches": true
+    },
+    "src/services/gamingDocumentExtraction.ts": {
+      "expectedBlob": "dad0b4d05c64945055ecd8884ce03ccfefae0741",
+      "archiveBlob": "dad0b4d05c64945055ecd8884ce03ccfefae0741",
+      "matches": true
+    },
+    "src/shared/webFetcher.ts": {
+      "expectedBlob": "5e0f33fb77ffe1c34ae6eec875eaa5cc0de7c594",
+      "archiveBlob": "5e0f33fb77ffe1c34ae6eec875eaa5cc0de7c594",
+      "matches": true
+    }
+  },
+  "copiedTestSha256": "2fa546d30b960080a655b0f9352fedb174e958c43bde525d634e6a67a0a3837e",
+  "failures": [
+    {
+      "test": "synthetic publisher-shaped Gaming extraction regressions keeps full primary article prose when a short generic content card scores higher",
+      "failureClass": "Jest assertion failure"
+    },
+    {
+      "test": "synthetic publisher-shaped Gaming extraction regressions keeps closed records complete through ordinary publisher wrappers and long ordinary prose",
+      "failureClass": "Jest assertion failure"
+    },
+    {
+      "test": "synthetic publisher-shaped Gaming extraction regressions preserves primary prose in presentation tables without restoring partial nested records",
+      "failureClass": "Jest assertion failure"
+    }
+  ],
+  "artifacts": {
+    "json": "/tmp/arcanos-gaming-baseline-extraction-reproduction.json",
+    "log": "/tmp/arcanos-gaming-baseline-extraction-reproduction.log"
+  }
+}

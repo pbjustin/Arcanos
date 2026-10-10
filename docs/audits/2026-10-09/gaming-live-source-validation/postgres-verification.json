@@ -1,0 +1,520 @@
+{
+  "classification": "Independent frozen successor precommit verification after primary Best/The best Nightreign contradiction correction; all ten PostgreSQL-relevant production module fingerprints and all 28 root-frozen successor fingerprints verified unchanged after execution; prior published-head candidate and metadata-only replacement results and cleanup history preserved",
+  "baselineSha": "0ec167654fa3970c818b2e2721c044dd79b77189",
+  "node": "24.18.1",
+  "npm": "11.16.0",
+  "postgresServerVersionNum": 180006,
+  "postgresImage": "postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873",
+  "postgresHost": "127.0.0.1",
+  "postgresPort": 55432,
+  "postgresDatabase": "arcanos_audit_pg18_20260727",
+  "requiredDatabaseSentinel": "ARCANOS_POSTGRES_TESTS_REQUIRE_DATABASE=1",
+  "sourceFingerprints": [
+    {
+      "path": "src/services/gamingDocumentExtraction.ts",
+      "sha256": "355d2538624e66b37ffcb003a1a43549a5b1b2efd77adce5b540014201f993a1"
+    },
+    {
+      "path": "src/services/gamingGameDetection.ts",
+      "sha256": "ba09dbc0d9c64271537b7619fdd6a4557a05ab7bd275b670af0b9365896d1f5a"
+    },
+    {
+      "path": "src/services/gamingHtmlEvidence.ts",
+      "sha256": "f4ba145acd33c5117a6d7268970dec872e4dc038430c9f0975ae56e9068bddf2"
+    },
+    {
+      "path": "src/services/gamingJsonEvidence.ts",
+      "sha256": "b72faa7b413a80fd0f298584a12e438361c784ce73b1ec5c6f9945e884a8cc03"
+    },
+    {
+      "path": "src/services/gamingHybridCandidates.ts",
+      "sha256": "712f6eda719e2aedf402e783a0985cb39d18dcc3d420dd67fe206ca913e7a99d"
+    },
+    {
+      "path": "src/shared/gaming/gamingClearSource.ts",
+      "sha256": "24ec42d92d1eddb68a10154805eb6fa0315239d18bb13f1c821b7278f74bf456"
+    },
+    {
+      "path": "src/shared/gaming/gamingFreshnessCore.ts",
+      "sha256": "ebd8867e5ae139a6547991ab332410d7897e2b2d1ed70d4ad3632906b854f1e2"
+    },
+    {
+      "path": "src/shared/gaming/gamingGameDeclaration.ts",
+      "sha256": "bdde544998fe599fea725d809415d7dc0915a1b826b204fb1be6761274db043c"
+    },
+    {
+      "path": "src/shared/gaming/gamingDocumentIngestionCore.ts",
+      "sha256": "f67dad29fb130cd38d65518b9d651e587b2613105d85897182891120ad5276ee"
+    },
+    {
+      "path": "src/shared/webFetcher.ts",
+      "sha256": "5cefa075fa060a9e19a34db3354e4679ddbfdba974b685549cd0a1420defdcba"
+    }
+  ],
+  "sourceFingerprintsUnchanged": true,
+  "gamingSchemasCleaned": true,
+  "productionOrRemoteDatabasesTouched": false,
+  "providerCalls": false,
+  "containerCleanup": {
+    "status": "PASS",
+    "containerName": "arcanos-gaming-disposable-pg18",
+    "containerId": "b3d1ec6282035cd476d2868ad2cbf5802203416001d1076f8b31a3c1840f04c8",
+    "ownershipLabel": "arcanos.mission=gaming-source-repair",
+    "startedAt": "2026-10-09T04:03:32Z",
+    "verifiedAbsentAt": "2026-10-09T04:03:40Z",
+    "stopCommand": "env -u DOCKER_HOST -u DOCKER_CONTEXT -u DOCKER_TLS -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH docker --host=unix:///var/run/docker.sock stop b3d1ec6282035cd476d2868ad2cbf5802203416001d1076f8b31a3c1840f04c8",
+    "stopResult": "b3d1ec6282035cd476d2868ad2cbf5802203416001d1076f8b31a3c1840f04c8",
+    "removalMechanism": "Docker --rm removed the stopped mission-owned container automatically",
+    "absenceCommand": "env -u DOCKER_HOST -u DOCKER_CONTEXT -u DOCKER_TLS -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH docker --host=unix:///var/run/docker.sock ps --all --filter 'name=^/arcanos-gaming-disposable-pg18$' --format '{{.ID}}'",
+    "absenceResult": "empty stdout; exit 0",
+    "inspectResult": {
+      "exitCode": 1,
+      "message": "Error: No such object: b3d1ec6282035cd476d2868ad2cbf5802203416001d1076f8b31a3c1840f04c8"
+    },
+    "unrelatedResourcesChanged": false,
+    "remoteOrProductionChanges": false
+  },
+  "command": "bash /tmp/arcanos-gaming-toolchain/run-postgres-checks.sh node scripts/run-jest.mjs --runTestsByPath tests/integration/gaming-durable-rag.pg18.integration.test.ts --coverage=false --runInBand --json --outputFile=/tmp/arcanos-gaming-toolchain/gaming-postgres-successor.json",
+  "result": {
+    "success": true,
+    "startTime": "2026-10-09T04:03:15.216Z",
+    "suitesPassed": 1,
+    "suitesFailed": 0,
+    "testsPassed": 9,
+    "testsFailed": 0,
+    "testsSkipped": 0,
+    "tests": [
+      {
+        "path": "tests/integration/gaming-durable-rag.pg18.integration.test.ts",
+        "status": "passed",
+        "startTime": "2026-10-09T04:03:15.442Z",
+        "endTime": "2026-10-09T04:03:18.186Z",
+        "cases": [
+          {
+            "title": "durable Gaming chunk storage and retrieval on PostgreSQL 18 acquires a short structured source, passes real source CLEAR, ingests, and retrieves without its URL",
+            "status": "passed",
+            "durationMs": 305
+          },
+          {
+            "title": "durable Gaming chunk storage and retrieval on PostgreSQL 18 persists acquired official currentness through SQL JSONB and reuses only bound, unexpired proof",
+            "status": "passed",
+            "durationMs": 289
+          },
+          {
+            "title": "durable Gaming chunk storage and retrieval on PostgreSQL 18 retains JSON record provenance beyond 100K and revisions a late change through actual SQL",
+            "status": "passed",
+            "durationMs": 129
+          },
+          {
+            "title": "durable Gaming chunk storage and retrieval on PostgreSQL 18 matches stored title formatting across three games without collapsing editions or reindexing historical keys",
+            "status": "passed",
+            "durationMs": 189
+          },
+          {
+            "title": "durable Gaming chunk storage and retrieval on PostgreSQL 18 a separate edition field selects the complete trusted identity and rejects a base-only catalog",
+            "status": "passed",
+            "durationMs": 12
+          },
+          {
+            "title": "durable Gaming chunk storage and retrieval on PostgreSQL 18 retrieves late and near-end facts through real indexed SQL and bounded evidence projection",
+            "status": "passed",
+            "durationMs": 474
+          },
+          {
+            "title": "durable Gaming chunk storage and retrieval on PostgreSQL 18 keeps unchanged revisions and supersedes or reactivates complete chunk generations after a deep edit",
+            "status": "passed",
+            "durationMs": 815
+          },
+          {
+            "title": "durable Gaming chunk storage and retrieval on PostgreSQL 18 advances unchanged hybrid resource verification monotonically without changing revision or active chunks",
+            "status": "passed",
+            "durationMs": 36
+          },
+          {
+            "title": "durable Gaming chunk storage and retrieval on PostgreSQL 18 rolls back a failed new revision after supersession and retains the prior usable evidence",
+            "status": "passed",
+            "durationMs": 21
+          }
+        ]
+      }
+    ]
+  },
+  "priorVerification": {
+    "summary": "/tmp/arcanos-gaming-toolchain/postgres-final-precommit-summary.json",
+    "status": "Retained; verified previous frozen source tree before subsequent identity/furniture refinements",
+    "fencing": {
+      "suites": 15,
+      "tests": 202,
+      "skips": 0,
+      "status": "PASS"
+    },
+    "guards": {
+      "suites": 3,
+      "tests": 22,
+      "skips": 0,
+      "status": "PASS"
+    }
+  },
+  "historicalSummaries": [
+    "/tmp/arcanos-gaming-toolchain/postgres-final-precommit-summary.json",
+    "/tmp/arcanos-gaming-toolchain/postgres-final-summary.json",
+    "/tmp/arcanos-gaming-toolchain/postgres-release-candidate-summary.json",
+    "/tmp/arcanos-gaming-toolchain/postgres-final-candidate-v2-summary.json",
+    "/tmp/arcanos-gaming-toolchain/postgres-public-identity-summary.json"
+  ],
+  "rootFrozenSnapshotVerification": {
+    "sourceFingerprintCount": 28,
+    "unchanged": true,
+    "checkedAt": "2026-10-09T04:03:32.765Z"
+  },
+  "previousCandidateVerification": {
+    "classification": "Frozen release-candidate production source verification after final positive-anchor isolation fix; all ten recorded production module SHA256 fingerprints verified unchanged after execution; previous history preserved",
+    "sourceFingerprints": [
+      {
+        "path": "src/services/gamingDocumentExtraction.ts",
+        "sha256": "355d2538624e66b37ffcb003a1a43549a5b1b2efd77adce5b540014201f993a1"
+      },
+      {
+        "path": "src/services/gamingGameDetection.ts",
+        "sha256": "ba09dbc0d9c64271537b7619fdd6a4557a05ab7bd275b670af0b9365896d1f5a"
+      },
+      {
+        "path": "src/services/gamingHtmlEvidence.ts",
+        "sha256": "f4ba145acd33c5117a6d7268970dec872e4dc038430c9f0975ae56e9068bddf2"
+      },
+      {
+        "path": "src/services/gamingJsonEvidence.ts",
+        "sha256": "b72faa7b413a80fd0f298584a12e438361c784ce73b1ec5c6f9945e884a8cc03"
+      },
+      {
+        "path": "src/services/gamingHybridCandidates.ts",
+        "sha256": "547b11b8e5a38dcd656bd6cc2862afe02fe8aa9c276aa388a2b71862ce8a8bd7"
+      },
+      {
+        "path": "src/shared/gaming/gamingClearSource.ts",
+        "sha256": "f443ef76afcda8fa94a7742640c81e894a532e43c3a641be581b53b8590ce0ce"
+      },
+      {
+        "path": "src/shared/gaming/gamingFreshnessCore.ts",
+        "sha256": "ebd8867e5ae139a6547991ab332410d7897e2b2d1ed70d4ad3632906b854f1e2"
+      },
+      {
+        "path": "src/shared/gaming/gamingGameDeclaration.ts",
+        "sha256": "bdde544998fe599fea725d809415d7dc0915a1b826b204fb1be6761274db043c"
+      },
+      {
+        "path": "src/shared/gaming/gamingDocumentIngestionCore.ts",
+        "sha256": "f67dad29fb130cd38d65518b9d651e587b2613105d85897182891120ad5276ee"
+      },
+      {
+        "path": "src/shared/webFetcher.ts",
+        "sha256": "5cefa075fa060a9e19a34db3354e4679ddbfdba974b685549cd0a1420defdcba"
+      }
+    ],
+    "result": {
+      "success": true,
+      "startTime": "2026-10-09T03:06:15.716Z",
+      "suitesPassed": 1,
+      "suitesFailed": 0,
+      "testsPassed": 9,
+      "testsFailed": 0,
+      "testsSkipped": 0,
+      "tests": [
+        {
+          "path": "tests/integration/gaming-durable-rag.pg18.integration.test.ts",
+          "status": "passed",
+          "startTime": "2026-10-09T03:06:15.945Z",
+          "endTime": "2026-10-09T03:06:18.486Z",
+          "cases": [
+            {
+              "title": "durable Gaming chunk storage and retrieval on PostgreSQL 18 acquires a short structured source, passes real source CLEAR, ingests, and retrieves without its URL",
+              "status": "passed",
+              "durationMs": 299
+            },
+            {
+              "title": "durable Gaming chunk storage and retrieval on PostgreSQL 18 persists acquired official currentness through SQL JSONB and reuses only bound, unexpired proof",
+              "status": "passed",
+              "durationMs": 257
+            },
+            {
+              "title": "durable Gaming chunk storage and retrieval on PostgreSQL 18 retains JSON record provenance beyond 100K and revisions a late change through actual SQL",
+              "status": "passed",
+              "durationMs": 103
+            },
+            {
+              "title": "durable Gaming chunk storage and retrieval on PostgreSQL 18 matches stored title formatting across three games without collapsing editions or reindexing historical keys",
+              "status": "passed",
+              "durationMs": 173
+            },
+            {
+              "title": "durable Gaming chunk storage and retrieval on PostgreSQL 18 a separate edition field selects the complete trusted identity and rejects a base-only catalog",
+              "status": "passed",
+              "durationMs": 16
+            },
+            {
+              "title": "durable Gaming chunk storage and retrieval on PostgreSQL 18 retrieves late and near-end facts through real indexed SQL and bounded evidence projection",
+              "status": "passed",
+              "durationMs": 464
+            },
+            {
+              "title": "durable Gaming chunk storage and retrieval on PostgreSQL 18 keeps unchanged revisions and supersedes or reactivates complete chunk generations after a deep edit",
+              "status": "passed",
+              "durationMs": 771
+            },
+            {
+              "title": "durable Gaming chunk storage and retrieval on PostgreSQL 18 advances unchanged hybrid resource verification monotonically without changing revision or active chunks",
+              "status": "passed",
+              "durationMs": 30
+            },
+            {
+              "title": "durable Gaming chunk storage and retrieval on PostgreSQL 18 rolls back a failed new revision after supersession and retains the prior usable evidence",
+              "status": "passed",
+              "durationMs": 22
+            }
+          ]
+        }
+      ]
+    },
+    "containerCleanup": {
+      "status": "PASS",
+      "containerName": "arcanos-gaming-disposable-pg18",
+      "containerId": "02ec9d709ce7ae518433a20a334c9f35d294532868bc1afea08d122d8408c8b2",
+      "ownershipLabel": "arcanos.mission=gaming-source-repair",
+      "startedAt": "2026-10-09T03:20:17Z",
+      "verifiedAbsentAt": "2026-10-09T03:20:36Z",
+      "stopCommand": "env -u DOCKER_HOST -u DOCKER_CONTEXT -u DOCKER_TLS -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH docker --host=unix:///var/run/docker.sock stop 02ec9d709ce7ae518433a20a334c9f35d294532868bc1afea08d122d8408c8b2",
+      "stopResult": "02ec9d709ce7ae518433a20a334c9f35d294532868bc1afea08d122d8408c8b2",
+      "removalMechanism": "Docker --rm removed the stopped mission-owned container automatically",
+      "absenceCommand": "env -u DOCKER_HOST -u DOCKER_CONTEXT -u DOCKER_TLS -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH docker --host=unix:///var/run/docker.sock ps --all --filter 'name=^/arcanos-gaming-disposable-pg18$' --format '{{.ID}}'",
+      "absenceResult": "empty stdout; exit 0",
+      "inspectResult": {
+        "exitCode": 1,
+        "message": "Error: No such object: 02ec9d709ce7ae518433a20a334c9f35d294532868bc1afea08d122d8408c8b2"
+      },
+      "initialAbsenceCheck": "A check immediately after stop briefly returned the container while automatic removal completed; retained its artifact and repeated verification successfully",
+      "unrelatedResourcesChanged": false,
+      "remoteOrProductionChanges": false
+    },
+    "fullLocalArtifact": "/tmp/arcanos-gaming-toolchain/postgres-tracked-prior-candidate.json"
+  },
+  "precommitParentSha": "a99aec996872603421defa81626ba018a7961e1d",
+  "previousPublishedHeadCandidateVerification": {
+    "sourceCandidateForPublishedHeadSha": "a99aec996872603421defa81626ba018a7961e1d",
+    "classification": "Final frozen candidate after freshness classifier diagnostic correction; all ten PostgreSQL-relevant production module SHA256 fingerprints and all 28 root-frozen candidate file fingerprints verified unchanged after execution; prior result and cleanup history preserved",
+    "sourceFingerprints": [
+      {
+        "path": "src/services/gamingDocumentExtraction.ts",
+        "sha256": "355d2538624e66b37ffcb003a1a43549a5b1b2efd77adce5b540014201f993a1"
+      },
+      {
+        "path": "src/services/gamingGameDetection.ts",
+        "sha256": "ba09dbc0d9c64271537b7619fdd6a4557a05ab7bd275b670af0b9365896d1f5a"
+      },
+      {
+        "path": "src/services/gamingHtmlEvidence.ts",
+        "sha256": "f4ba145acd33c5117a6d7268970dec872e4dc038430c9f0975ae56e9068bddf2"
+      },
+      {
+        "path": "src/services/gamingJsonEvidence.ts",
+        "sha256": "b72faa7b413a80fd0f298584a12e438361c784ce73b1ec5c6f9945e884a8cc03"
+      },
+      {
+        "path": "src/services/gamingHybridCandidates.ts",
+        "sha256": "712f6eda719e2aedf402e783a0985cb39d18dcc3d420dd67fe206ca913e7a99d"
+      },
+      {
+        "path": "src/shared/gaming/gamingClearSource.ts",
+        "sha256": "f443ef76afcda8fa94a7742640c81e894a532e43c3a641be581b53b8590ce0ce"
+      },
+      {
+        "path": "src/shared/gaming/gamingFreshnessCore.ts",
+        "sha256": "ebd8867e5ae139a6547991ab332410d7897e2b2d1ed70d4ad3632906b854f1e2"
+      },
+      {
+        "path": "src/shared/gaming/gamingGameDeclaration.ts",
+        "sha256": "bdde544998fe599fea725d809415d7dc0915a1b826b204fb1be6761274db043c"
+      },
+      {
+        "path": "src/shared/gaming/gamingDocumentIngestionCore.ts",
+        "sha256": "f67dad29fb130cd38d65518b9d651e587b2613105d85897182891120ad5276ee"
+      },
+      {
+        "path": "src/shared/webFetcher.ts",
+        "sha256": "5cefa075fa060a9e19a34db3354e4679ddbfdba974b685549cd0a1420defdcba"
+      }
+    ],
+    "result": {
+      "success": true,
+      "startTime": "2026-10-09T03:28:25.278Z",
+      "suitesPassed": 1,
+      "suitesFailed": 0,
+      "testsPassed": 9,
+      "testsFailed": 0,
+      "testsSkipped": 0,
+      "tests": [
+        {
+          "path": "tests/integration/gaming-durable-rag.pg18.integration.test.ts",
+          "status": "passed",
+          "startTime": "2026-10-09T03:28:25.462Z",
+          "endTime": "2026-10-09T03:28:28.065Z",
+          "cases": [
+            {
+              "title": "durable Gaming chunk storage and retrieval on PostgreSQL 18 acquires a short structured source, passes real source CLEAR, ingests, and retrieves without its URL",
+              "status": "passed",
+              "durationMs": 261
+            },
+            {
+              "title": "durable Gaming chunk storage and retrieval on PostgreSQL 18 persists acquired official currentness through SQL JSONB and reuses only bound, unexpired proof",
+              "status": "passed",
+              "durationMs": 272
+            },
+            {
+              "title": "durable Gaming chunk storage and retrieval on PostgreSQL 18 retains JSON record provenance beyond 100K and revisions a late change through actual SQL",
+              "status": "passed",
+              "durationMs": 102
+            },
+            {
+              "title": "durable Gaming chunk storage and retrieval on PostgreSQL 18 matches stored title formatting across three games without collapsing editions or reindexing historical keys",
+              "status": "passed",
+              "durationMs": 182
+            },
+            {
+              "title": "durable Gaming chunk storage and retrieval on PostgreSQL 18 a separate edition field selects the complete trusted identity and rejects a base-only catalog",
+              "status": "passed",
+              "durationMs": 14
+            },
+            {
+              "title": "durable Gaming chunk storage and retrieval on PostgreSQL 18 retrieves late and near-end facts through real indexed SQL and bounded evidence projection",
+              "status": "passed",
+              "durationMs": 420
+            },
+            {
+              "title": "durable Gaming chunk storage and retrieval on PostgreSQL 18 keeps unchanged revisions and supersedes or reactivates complete chunk generations after a deep edit",
+              "status": "passed",
+              "durationMs": 935
+            },
+            {
+              "title": "durable Gaming chunk storage and retrieval on PostgreSQL 18 advances unchanged hybrid resource verification monotonically without changing revision or active chunks",
+              "status": "passed",
+              "durationMs": 37
+            },
+            {
+              "title": "durable Gaming chunk storage and retrieval on PostgreSQL 18 rolls back a failed new revision after supersession and retains the prior usable evidence",
+              "status": "passed",
+              "durationMs": 21
+            }
+          ]
+        }
+      ]
+    },
+    "containerCleanup": {
+      "status": "PASS",
+      "containerName": "arcanos-gaming-disposable-pg18",
+      "containerId": "c79aa91ec17b064f7800d48dab44430c43802cd4edaa394688e451ae5e2ba415",
+      "ownershipLabel": "arcanos.mission=gaming-source-repair",
+      "startedAt": "2026-10-09T03:28:57Z",
+      "verifiedAbsentAt": "2026-10-09T03:29:10Z",
+      "stopCommand": "env -u DOCKER_HOST -u DOCKER_CONTEXT -u DOCKER_TLS -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH docker --host=unix:///var/run/docker.sock stop c79aa91ec17b064f7800d48dab44430c43802cd4edaa394688e451ae5e2ba415",
+      "stopResult": "c79aa91ec17b064f7800d48dab44430c43802cd4edaa394688e451ae5e2ba415",
+      "removalMechanism": "Docker --rm removed the stopped mission-owned container automatically",
+      "absenceCommand": "env -u DOCKER_HOST -u DOCKER_CONTEXT -u DOCKER_TLS -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH docker --host=unix:///var/run/docker.sock ps --all --filter 'name=^/arcanos-gaming-disposable-pg18$' --format '{{.ID}}'",
+      "absenceResult": "empty stdout; exit 0",
+      "inspectResult": {
+        "exitCode": 1,
+        "message": "Error: No such object: c79aa91ec17b064f7800d48dab44430c43802cd4edaa394688e451ae5e2ba415"
+      },
+      "unrelatedResourcesChanged": false,
+      "remoteOrProductionChanges": false
+    },
+    "fullLocalArtifact": "/tmp/arcanos-gaming-toolchain/successor-prior-postgres-tracked.json"
+  },
+  "priorPublicIdentityPrecommitVerification": {
+    "classification": "Independent local precommit PostgreSQL verification for public-identity metadata-only replacement candidate; source tree unchanged and all ten SQL-relevant production fingerprints plus all 28 root-frozen files verified unchanged; no tracked files edited",
+    "checkedOutCommitSha": "aa909cce239fc06ff1d6ee253b7e249262a105ae",
+    "testedCandidateTreeSha": "fa87ba728ea3bb14a4704fd1249b33c1ecc3140e",
+    "result": {
+      "success": true,
+      "startTime": "2026-10-09T03:37:08.732Z",
+      "suitesPassed": 1,
+      "suitesFailed": 0,
+      "testsPassed": 9,
+      "testsFailed": 0,
+      "testsSkipped": 0,
+      "tests": [
+        {
+          "path": "tests/integration/gaming-durable-rag.pg18.integration.test.ts",
+          "status": "passed",
+          "startTime": "2026-10-09T03:37:08.925Z",
+          "endTime": "2026-10-09T03:37:11.499Z",
+          "cases": [
+            {
+              "title": "durable Gaming chunk storage and retrieval on PostgreSQL 18 acquires a short structured source, passes real source CLEAR, ingests, and retrieves without its URL",
+              "status": "passed",
+              "durationMs": 326
+            },
+            {
+              "title": "durable Gaming chunk storage and retrieval on PostgreSQL 18 persists acquired official currentness through SQL JSONB and reuses only bound, unexpired proof",
+              "status": "passed",
+              "durationMs": 269
+            },
+            {
+              "title": "durable Gaming chunk storage and retrieval on PostgreSQL 18 retains JSON record provenance beyond 100K and revisions a late change through actual SQL",
+              "status": "passed",
+              "durationMs": 103
+            },
+            {
+              "title": "durable Gaming chunk storage and retrieval on PostgreSQL 18 matches stored title formatting across three games without collapsing editions or reindexing historical keys",
+              "status": "passed",
+              "durationMs": 164
+            },
+            {
+              "title": "durable Gaming chunk storage and retrieval on PostgreSQL 18 a separate edition field selects the complete trusted identity and rejects a base-only catalog",
+              "status": "passed",
+              "durationMs": 25
+            },
+            {
+              "title": "durable Gaming chunk storage and retrieval on PostgreSQL 18 retrieves late and near-end facts through real indexed SQL and bounded evidence projection",
+              "status": "passed",
+              "durationMs": 463
+            },
+            {
+              "title": "durable Gaming chunk storage and retrieval on PostgreSQL 18 keeps unchanged revisions and supersedes or reactivates complete chunk generations after a deep edit",
+              "status": "passed",
+              "durationMs": 775
+            },
+            {
+              "title": "durable Gaming chunk storage and retrieval on PostgreSQL 18 advances unchanged hybrid resource verification monotonically without changing revision or active chunks",
+              "status": "passed",
+              "durationMs": 30
+            },
+            {
+              "title": "durable Gaming chunk storage and retrieval on PostgreSQL 18 rolls back a failed new revision after supersession and retains the prior usable evidence",
+              "status": "passed",
+              "durationMs": 21
+            }
+          ]
+        }
+      ]
+    },
+    "containerCleanup": {
+      "status": "PASS",
+      "containerName": "arcanos-gaming-disposable-pg18",
+      "containerId": "9ba6ce14f2b86be442ece208277143563372e60115378b8a5d0bb74354863fcd",
+      "ownershipLabel": "arcanos.mission=gaming-source-repair",
+      "startedAt": "2026-10-09T03:37:26Z",
+      "verifiedAbsentAt": "2026-10-09T03:37:36Z",
+      "stopCommand": "env -u DOCKER_HOST -u DOCKER_CONTEXT -u DOCKER_TLS -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH docker --host=unix:///var/run/docker.sock stop 9ba6ce14f2b86be442ece208277143563372e60115378b8a5d0bb74354863fcd",
+      "stopResult": "9ba6ce14f2b86be442ece208277143563372e60115378b8a5d0bb74354863fcd",
+      "removalMechanism": "Docker --rm removed the stopped mission-owned container automatically",
+      "absenceCommand": "env -u DOCKER_HOST -u DOCKER_CONTEXT -u DOCKER_TLS -u DOCKER_TLS_VERIFY -u DOCKER_CERT_PATH docker --host=unix:///var/run/docker.sock ps --all --filter 'name=^/arcanos-gaming-disposable-pg18$' --format '{{.ID}}'",
+      "absenceResult": "empty stdout; exit 0",
+      "inspectResult": {
+        "exitCode": 1,
+        "message": "Error: No such object: 9ba6ce14f2b86be442ece208277143563372e60115378b8a5d0bb74354863fcd"
+      },
+      "unrelatedResourcesChanged": false,
+      "remoteOrProductionChanges": false
+    },
+    "fullLocalArtifact": "/tmp/arcanos-gaming-toolchain/postgres-public-identity-summary.json"
+  }
+}

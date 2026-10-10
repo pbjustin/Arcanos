@@ -1220,9 +1220,9 @@ function detectReliableDocumentGame(document: GamingFetchedDocument): string | u
   ) {
     return canonicalizeGamingGameName(structuredGame);
   }
-  const titleDetection = detectGamingGame({ pageTitle: document.extraction.documentTitle });
-  const headingDetection = detectGamingGame({ pageHeadings: document.extraction.headingText });
-  const urlDetection = detectGamingGame({ urls: [document.candidate.url] });
+  const titleDetection = detectGamingGame({ pageTitle: document.extraction.documentTitle, excludeAcquiredTopicIdentities: true });
+  const headingDetection = detectGamingGame({ pageHeadings: document.extraction.headingText, excludeAcquiredTopicIdentities: true });
+  const urlDetection = detectGamingGame({ urls: [document.candidate.url], excludeAcquiredTopicIdentities: true });
   const normalizedTitle = titleDetection.game ? canonicalizeGamingGameName(titleDetection.game) : undefined;
   const normalizedHeading = headingDetection.game ? canonicalizeGamingGameName(headingDetection.game) : undefined;
   const normalizedUrl = urlDetection.game ? canonicalizeGamingGameName(urlDetection.game) : undefined;
@@ -1284,7 +1284,7 @@ function detectGameFromDocumentIntro(
       }
     }
   }
-  const detection = detectGamingGame({ pageTitle: intro });
+  const detection = detectGamingGame({ pageTitle: intro, excludeAcquiredTopicIdentities: true });
   if (!detection.game || detection.confidence < 0.8) {
     return undefined;
   }
@@ -1401,7 +1401,8 @@ function fetchedDocumentCorroboratesGame(
   }
   const metadataDetection = detectGamingGame({
     pageTitle: extraction.documentTitle,
-    pageHeadings: extraction.headingText
+    pageHeadings: extraction.headingText,
+    excludeAcquiredTopicIdentities: true
   });
   return Boolean(
     metadataDetection.game
@@ -1421,7 +1422,8 @@ function untrustedDocumentCorroboratesGame(
   const canonicalGame = canonicalizeGamingGameName(game).toLowerCase();
   const metadataDetection = detectGamingGame({
     pageTitle: extraction.documentTitle,
-    pageHeadings: extraction.headingText
+    pageHeadings: extraction.headingText,
+    excludeAcquiredTopicIdentities: true
   });
   if (
     metadataDetection.game

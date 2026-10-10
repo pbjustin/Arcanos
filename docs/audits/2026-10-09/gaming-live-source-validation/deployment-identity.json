@@ -1,0 +1,100 @@
+{
+  "schema": "arcanos-gaming-deployment-identity-v1",
+  "scope": "read-only historical deploy reconstruction; no Gaming query, provider call, source storage, variable read, or production mutation",
+  "baselineSha": "0ec167654fa3970c818b2e2721c044dd79b77189",
+  "github": {
+    "repository": "pbjustin/Arcanos",
+    "prUrl": "https://github.com/pbjustin/Arcanos/pull/1530",
+    "runId": 37867543003,
+    "runUrl": "https://github.com/pbjustin/Arcanos/actions/runs/37867543003",
+    "jobId": 113617869732,
+    "jobUrl": "https://github.com/pbjustin/Arcanos/actions/runs/37867543003/job/113617869732",
+    "event": "workflow_dispatch",
+    "headSha": "0ec167654fa3970c818b2e2721c044dd79b77189",
+    "status": "completed",
+    "conclusion": "success",
+    "checkoutShaOutputAt": "2026-10-09T00:59:56.2522321Z",
+    "nodeVersion": "v24.18.1",
+    "npmVersion": "11.16.0",
+    "checkoutRef": "0ec167654fa3970c818b2e2721c044dd79b77189"
+  },
+  "railway": {
+    "projectId": "7faf44e5-519c-4e73-8d7a-da9f389e6187",
+    "environmentId": "fb583147-6c39-4343-9267-500f357d25ab",
+    "environmentName": "production",
+    "deployments": [
+      {
+        "role": "worker",
+        "serviceId": "1765befb-b805-4051-9af9-28634e986886",
+        "deploymentId": "b046e807-81b2-4e72-aa6a-75e03c4c013d",
+        "createdAt": "2026-10-09T01:00:07.575Z",
+        "updatedAt": "2026-10-09T01:03:24.481Z",
+        "status": "SUCCESS",
+        "githubQueuedOutputAt": "2026-10-09T01:00:10.1529810Z",
+        "githubVerifiedActiveSuccessOutputAt": "2026-10-09T01:03:28.6639481Z",
+        "imageDigest": "sha256:2de206141f8b9c31556f49f30221c5ee022ae7b96ee36f6ea31cd50c194ebb1b",
+        "imageDigestLogAt": "2026-10-09T01:02:34.571275628Z",
+        "imageConfigDigest": "sha256:cb8c879c053e2bc72a6ddba834d7c63c2bfae7f007cf2dfd31340eea3ec28faa"
+      },
+      {
+        "role": "web",
+        "serviceId": "c4ade025-3f13-4fca-9309-5d0dd81396fe",
+        "deploymentId": "19425909-ec6f-46c1-a42e-a5b913fe2f32",
+        "createdAt": "2026-10-09T01:03:29.086Z",
+        "updatedAt": "2026-10-09T01:07:13.599Z",
+        "status": "SUCCESS",
+        "githubQueuedOutputAt": "2026-10-09T01:03:30.2638644Z",
+        "githubVerifiedActivePairSuccessOutputAt": "2026-10-09T01:07:20.1141557Z",
+        "imageDigest": "sha256:26c769ec8063ad864038292a86c7591856cfc966854cddd5520f767e5e29ad15",
+        "imageDigestLogAt": "2026-10-09T01:06:13.865996772Z",
+        "imageConfigDigest": "sha256:821f103facb95bc163cdbdad31e1bb2bfb4127c5a128dfe1e678b01fb185df8e",
+        "runtimeStartupAt": "2026-10-09T01:07:07.360585828Z",
+        "runtimeGitCommit": "unknown",
+        "runtimeGitBranch": "unknown"
+      }
+    ],
+    "deploymentListMetaForBoth": {
+      "reason": "deploy"
+    },
+    "deploymentDiagnosisSourceContextForBoth": {
+      "repo": null,
+      "branch": null,
+      "commitHash": null,
+      "commitMessage": null,
+      "prNumber": null
+    }
+  },
+  "historicalObserverCommands": [
+    "node scripts/railway-auto-deploy-observer.mjs enqueue --project 7faf44e5-519c-4e73-8d7a-da9f389e6187 --service 1765befb-b805-4051-9af9-28634e986886 --environment production --deploy-ref 0ec167654fa3970c818b2e2721c044dd79b77189",
+    "node scripts/railway-auto-deploy-observer.mjs wait --deployment-id b046e807-81b2-4e72-aa6a-75e03c4c013d --service 1765befb-b805-4051-9af9-28634e986886 --environment production",
+    "node scripts/railway-auto-deploy-observer.mjs verify-active --deployment-id b046e807-81b2-4e72-aa6a-75e03c4c013d --service 1765befb-b805-4051-9af9-28634e986886 --environment production",
+    "node scripts/railway-auto-deploy-observer.mjs enqueue --project 7faf44e5-519c-4e73-8d7a-da9f389e6187 --service c4ade025-3f13-4fca-9309-5d0dd81396fe --environment production --deploy-ref 0ec167654fa3970c818b2e2721c044dd79b77189",
+    "node scripts/railway-auto-deploy-observer.mjs wait --deployment-id 19425909-ec6f-46c1-a42e-a5b913fe2f32 --service c4ade025-3f13-4fca-9309-5d0dd81396fe --environment production",
+    "node scripts/railway-auto-deploy-observer.mjs verify-active --deployment-id 19425909-ec6f-46c1-a42e-a5b913fe2f32 --service c4ade025-3f13-4fca-9309-5d0dd81396fe --environment production"
+  ],
+  "historicalEnqueueImplementation": {
+    "sourceUrl": "https://github.com/pbjustin/Arcanos/blob/0ec167654fa3970c818b2e2721c044dd79b77189/scripts/railway-auto-deploy-observer.mjs#L246",
+    "subprocessTemplate": "railway up --ci --detach --json --project <projectId> --environment <environmentName> --service <serviceId> --message 'GitHub auto deploy <deployRef>'",
+    "interpretation": "Uploads the current checkout working directory. The --deploy-ref is validated as a SHA string and used only in the deployment message, not as an independent Railway artifact identity assertion."
+  },
+  "workingTreeEvidence": {
+    "observedTrackedMutationBetweenCheckoutAndUploads": false,
+    "observedSteps": "Exact checkout and git default-tip read; setup-node; verified CLI installed under runner temp; config input validation; read-only compatibility validation; baseline/readiness reads; worker upload/wait/readiness/active reads; web upload/wait/readiness/active reads. No tracked-file edit or local build command appears in these job steps.",
+    "explicitPreUploadCleanlinessCheck": false,
+    "explicitUploadedTreeDigestOrSignature": false,
+    "limitation": "No git status/diff or tree digest is emitted immediately before either upload. The absence of a logged tracked mutation corroborates the source chain, but does not supply an independent immutable uploaded-tree attestation."
+  },
+  "healthRead": {
+    "method": "GET",
+    "url": "https://acranos-production.up.railway.app/api/health",
+    "executedAtResponseTimestamp": "2026-10-09T02:13:21.455Z",
+    "response": {
+      "status": "live",
+      "service": "ARCANOS",
+      "buildId": "19425909-ec6f-46c1-a42e-a5b913fe2f32",
+      "routeCount": 10
+    },
+    "interpretation": "Identity/liveness evidence for the currently serving web deployment ID only; neither source SHA attestation nor functional Gaming acceptance."
+  },
+  "conclusion": "Both specified deployment IDs are corroborated as uploads from the exact baseline GitHub checkout by the historical deploy-chain logs and exact-ID Railway build/runtime evidence. Railway commit metadata is absent and web runtime git=unknown. Strict independent artifact-to-SHA attestation remains unavailable; successful startup and health response do not establish Gaming functional acceptance."
+}

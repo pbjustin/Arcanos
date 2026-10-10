@@ -436,6 +436,21 @@ Launcher behavior:
   separately. See [Gaming discovery recovery](GAMING_DISCOVERY_RECOVERY.md).
 - The same guide selector executes thirteen fixed large-source cases before
   emitting `x-arcanos-preview-gaming-large-source-version: gaming-large-source/v1`.
+  Its additional `x-arcanos-preview-gaming-large-source-report` header carries
+  the actual executed assertion counts and scalar observations for all thirteen
+  cases. `x-arcanos-preview-gaming-live-source-validation-report` does the same
+  for all fourteen `gaming-live-source-validation/v1` identity/extraction cases.
+  The current fourteen-case contract requires 76 executed assertions, including
+  plain and formatted primary-record unconfirmed/unavailable qualifications;
+  a comparison prefix cannot turn those records into affirmative evidence.
+  The thirteen-case large-source contract requires 72 executed assertions.
+  Each report is bounded to 4,096 ASCII characters, includes the served PR/SHA,
+  and preserves the fixed success JSON and 173-request plan. Both the native app
+  and exact-head verifier enforce complete ordered inventories, exact assertion
+  totals, proof versions/scopes and observed-value schemas. Missing, changed,
+  skipped or malformed cases withhold success; the verifier reports inventories
+  read from HTTP and retains each report header's SHA256. These reports attest
+  synthetic component execution; they do not add acquisition or provider access.
   They exercise the production HTML extraction core directly over a synthetic
   page larger than 2 MB in UTF-8 response bytes, with a separately bounded
   character count, intact article-table evidence and excluded navigation;
