@@ -3,7 +3,8 @@ import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { assertNoInstalledDevDependencies, createCompiledManifest, hashCompiledArtifacts, sha256, validateBuildReceipt, validateReviewedTooling, verifyImageArchive } from './stacked-draft-preview-build.mjs';
+import { spawnSync } from 'node:child_process';
+import { assertNoInstalledDevDependencies, createCompiledManifest, hashCompiledArtifacts, productionInventoryArguments, sha256, validateBuildReceipt, validateReviewedTooling, verifyImageArchive } from './stacked-draft-preview-build.mjs';
 
 const authorization = { controllerSha: 'a'.repeat(40), sourceArchiveSha256: 'b'.repeat(64),
   stack: [{ headSha: 'c'.repeat(40), treeSha: 'd'.repeat(40) }] };
@@ -92,5 +93,20 @@ test('reviewed tool policy rejects modified checker bytes, extra paths and depen
     writeFileSync(path.join(root, files[0].path), 'return no violations;');
     assert.throws(() => validateReviewedTooling(root, policy), /REVIEWED_TOOL_DRIFT/u);
     assert.throws(() => validateReviewedTooling(root, { ...policy, files: [...files, files[0]] }), /TOOL_POLICY_INVALID/u);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('production inventory works with distinct empty configs under pinned npm without running lifecycle scripts', () => {
+  const root = fixture();
+  try {
+    const globalConfig = path.join(root, 'empty-global.npmrc');
+    writeFileSync(globalConfig, '');
+    writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'inventory-regression-fixture',
+      version: '1.0.0', scripts: { preinstall: 'exit 99' } }));
+    const result = spawnSync('npm', productionInventoryArguments(globalConfig).slice(1),
+      { cwd: root, encoding: 'utf8', timeout: 30_000 });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(JSON.parse(result.stdout).name, 'inventory-regression-fixture');
+    assert.throws(() => productionInventoryArguments('/dev/null'), /NPM_CONFIGURATION_INVALID/u);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

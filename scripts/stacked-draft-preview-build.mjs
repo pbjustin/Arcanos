@@ -152,13 +152,22 @@ export async function verifyReviewedPreviewTooling(root, policy, toolsRoot) {
   return digest;
 }
 
+export function productionInventoryArguments(globalConfig) {
+  requireCondition(path.isAbsolute(globalConfig) && globalConfig !== '/dev/null',
+    'STACKED_BUILD_NPM_CONFIGURATION_INVALID');
+  // npm 11 rejects loading the same pathname as both user and global config.
+  return ['/usr/local/lib/node_modules/npm/bin/npm-cli.js', 'ls', '--omit=dev', '--all', '--json',
+    '--ignore-scripts', '--userconfig=/dev/null', `--globalconfig=${globalConfig}`];
+}
+
 async function main() {
   const [mode, authorizationFile, outputDirectory, inputFile] = process.argv.slice(2);
   if (mode === 'compiled-manifest') {
     const authorization = readJson(authorizationFile);
+    const globalConfig = '/opt/verification-tools/empty-global.npmrc';
+    writeFileSync(globalConfig, '', { mode: 0o600, flag: 'wx' });
     const dependencies = JSON.parse(command('/usr/local/bin/node',
-      ['/usr/local/lib/node_modules/npm/bin/npm-cli.js', 'ls', '--omit=dev', '--all', '--json',
-        '--ignore-scripts', '--userconfig=/dev/null', '--globalconfig=/dev/null'],
+      productionInventoryArguments(globalConfig),
       { env: { PATH: '/usr/local/bin:/usr/bin:/bin', HOME: '/tmp', NODE_ENV: 'production' } }));
     const tools = readJson('/opt/verification-tools/trust.json');
     await verifyReviewedPreviewTooling(process.cwd(), tools, '/opt/verification-tools');
