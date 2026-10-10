@@ -877,7 +877,7 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ['src/shared/gaming/gamingClearPreviewFixture.ts', '47d59048ec4f2c9e3163b6fcd2c7517ef72d39bd0571e412c5d4d18e3a8b5252'],
   ['src/shared/gaming/gamingClearPolicy.ts', 'c972b96498c5dc253fe85e17d46e59634b8f0f48e0dfe826930281fc201e6ca3'],
   ['src/shared/gaming/gamingClearSource.ts', 'ceaeb5794704fab5cb7fc65c316d76627962fac25e29257fbf5bbd8870a6c45c'],
-  ['src/shared/gaming/gamingClearEvidence.ts', '4789a36b98f66b1b7072b2b47fe8829f75b6c38c14ec0316950c4abf036e4a94'],
+  ['src/shared/gaming/gamingClearEvidence.ts', 'bb6f1deab323fed85b06a2be79920ef01d77c57b8059ab1922ff03343368aaf0'],
   ['src/shared/gaming/gamingClearAnswerBinding.ts', '2f6d1353e2643ae471705f182415521b1a6548ca484c3e684d4920910f3d0f75'],
   ['src/shared/gaming/gamingHybridPolicyCore.ts', '85fd2d15e08f58a55f65e3bbabd53d56deb6d07a42f54e30eecd8c891150bdb5'],
   ['src/shared/gaming/gamingHybridKnowledgePreviewFixture.ts', 'bb6670ef4eccf7d833855add2c3889662b42b6b40d09e15f982746b30af95c56'],
@@ -898,7 +898,7 @@ const CRITICAL_ENTRY_FILE_DIGESTS = new Map([
   ['src/services/gamingDocumentExtraction.ts', '6e92b6514484cb858aeb4e352380fc1b9c72f1be8a925ac2f78248adc14c016c'],
   ['src/services/gamingDocumentChunks.ts', 'a758af0d49a08a3d81ac6d6191c437d4080ba481c158169a535f091d8e279815'],
   ['src/services/gamingDurableDocumentChunks.ts', '8a6da8f48f8ee94cd61eb4e90fa2ae51b22c83d5041e8c40ea07227b5d8af0f2'],
-  ['src/shared/gaming/gamingStoredEvidenceCore.ts', '6d741e6529590d9788d2b439f27f6d634f59a1c642c59e7bbe3f467c0954773b'],
+  ['src/shared/gaming/gamingStoredEvidenceCore.ts', '3edaecb0e43921b486e2663639e8a0dac712fea15894dd1d7a6cf1463bfa0938'],
   ['src/shared/gaming/gamingDurableRagPreviewFixture.ts', '047d6610dd24fd8dfcadf302b4d0c8eb9bce815cecb80410e10af6ac04132fbc'],
   ['src/shared/gaming/gamingLiveSourceValidationPreviewFixture.ts', 'ee48374f834a0b2109244b4677ee86391db2b11a7d7655cabb5c42d199dc8e2e'], // gitleaks:allow -- public source semantic SHA-256
   ['src/services/gamingGameDetection.ts', '3c4a01eb985a16fa85680db537db0227ad0f3008eb5eeb98ab254e0040cf0a7f'],
