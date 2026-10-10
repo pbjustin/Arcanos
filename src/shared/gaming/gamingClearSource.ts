@@ -44,6 +44,8 @@ export interface GamingSourceIdentityDiagnostic {
 }
 export interface GamingSourceIdentityAssessment {
   status: 'verified' | 'unknown' | 'conflict';
+  /** Independent acquired game proof; an edition-only reason never supplies it. */
+  gameIdentityVerified?: boolean;
   reasonCodes: string[];
   /** Closed server rule/category only; publisher content and request text stay private. */
   diagnostic: GamingSourceIdentityDiagnostic;
@@ -55,9 +57,13 @@ function acquiredBodySubjects(prose: string): Array<{ text: string; explicitGame
     (quote, offset: number) => {
       const name = quote.replace(/^[\s"“`'‘]+|[\s"”`'’]+$/gu, '');
       // Quoting a game name does not turn an affirmative scope into a quoted passage.
+      // The apostrophe-safe single-quote matcher consumes leading whitespace;
+      // retain that whitespace when reading the acquired scope introducer.
+      const quoteStart = offset + (quote.match(/^\s*/u)?.[0].length ?? 0);
+      const scopePrefix = prose.slice(0, quoteStart);
       const scopeName = new RegExp(`(?:${gamingPrimarySourceDeclarationPattern().source}|\\bin(?: the game)?\\s+)\\s*$`, 'iu')
-        .test(prose.slice(0, offset));
-      const namedGameScope = /\bin the game\s*$/iu.test(prose.slice(0, offset));
+        .test(scopePrefix);
+      const namedGameScope = /\bin the game\s*$/iu.test(scopePrefix);
       const titleSuffix = prose.slice(offset + quote.length).match(/^\s+(?:guide|build|loadout|meta|walkthrough|wiki|tips?)\b/iu)?.[0] ?? '';
       const namedSubject = detectGamingDocumentGame({ canonicalUrl: '', pageTitle: `${name}${titleSuffix || (scopeName ? ' guide' : '')}`,
         allowAcquiredTopicIdentity: namedGameScope });
@@ -125,9 +131,11 @@ export function gamingClearHistoricalSourceVerified(input: Pick<GamingStoredKnow
 export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDocument, 'text' | 'metadata' | 'publicUrl'> & Partial<Pick<ResolvedGamingDocument, 'evidenceUnits'>>,
   input: Pick<GamingStoredKnowledgeInput, 'game' | 'edition' | 'prompt' | 'mode' | 'requestedVersion'>,
   policy: GamingSourcePolicyAssessment, _allowPartialCoverage = false): GamingSourceIdentityAssessment {
+  let gameIdentityVerified = false;
   const result = (status: GamingSourceIdentityAssessment['status'], reason: string, ruleId: string,
     evidenceCategory: GamingSourceIdentityDiagnostic['evidenceCategory']): GamingSourceIdentityAssessment =>
-    ({ status, reasonCodes: [reason], diagnostic: { ruleId, evidenceCategory } });
+    ({ status, gameIdentityVerified: gameIdentityVerified && reason !== 'GAME_MISMATCH',
+      reasonCodes: [reason], diagnostic: { ruleId, evidenceCategory } });
   input = { ...input, edition: resolveGamingRequestEdition(input) };
   const gameScoped = selectGamingGameScopedDocument(document, input.game);
   if (gameScoped.status === 'conflict') return result('conflict', 'GAME_MISMATCH', 'gaming.identity.structured_game_conflict', 'structured_field');
@@ -274,10 +282,6 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
       else if (!(editionQualifier(qualifier))) return result('conflict', 'GAME_MISMATCH', 'gaming.identity.distinct_body_scope', 'body_scope');
     }
   }
-  // A definitive acquired applicability contradiction remains terminal even
-  // when independently acquired game identity would otherwise stay unknown.
-  if (editionScopeConflict)
-    return result('conflict', 'EDITION_CONFLICT', 'gaming.identity.edition_scope_conflict', 'edition_scope');
   const ordinaryTitle = metadata.some(value => [...expected].some(game => {
     const identity = normalizeGamingGameIdentity(value);
     return identity === game || identity.startsWith(`${game}-`) && DOCUMENT_LABEL.test(identity.slice(game.length + 1));
@@ -324,6 +328,12 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
     const declared = detectGamingLeadingGameAlias(subject);
     return declared.game && declared.confidence >= 0.8 && expected.has(normalizeGamingGameIdentity(declared.game));
   });
+  gameIdentityVerified = Boolean((metadataAnchor && proseAnchor || reviewedAssociation && metadataAnchor || acquiredBodyScope)
+    && !clippedPrimaryHeading);
+  // A definitive acquired applicability contradiction remains terminal without
+  // turning absent independent game proof into a verified identity outcome.
+  if (editionScopeConflict)
+    return result('conflict', 'EDITION_CONFLICT', 'gaming.identity.edition_scope_conflict', 'edition_scope');
   if (!(metadataAnchor && proseAnchor) && !(reviewedAssociation && metadataAnchor) && !acquiredBodyScope)
     return result('unknown', 'GAME_IDENTITY_UNVERIFIED', 'gaming.identity.independent_anchor_required', 'acquired_anchors');
   if (clippedPrimaryHeading)
@@ -384,7 +394,7 @@ export function assessGamingClearSource(input: GamingStoredKnowledgeInput & { re
   const identity = assessGamingClearSourceIdentity(document, input, options.sourcePolicy, options.allowPartialCoverage);
   options.onIdentityAssessment?.(identity);
   const editionIssue = identity.reasonCodes.every(code => code.startsWith('EDITION_'));
-  const gameIdentity = editionIssue ? 'verified' as const : identity.status;
+  const gameIdentity = editionIssue ? identity.gameIdentityVerified === true ? 'verified' as const : 'unknown' as const : identity.status;
   const gameScoped = selectGamingGameScopedDocument(document, input.game);
   const selectedDocument = gameScoped.status === 'projected' ? gameScoped.document : document;
   const scoped = selectGamingSourceEditionScopedEvidence(selectedDocument, input, options.freshness.edition);

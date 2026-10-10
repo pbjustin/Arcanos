@@ -66,6 +66,22 @@ describe('independent source identity before applicability rejection', () => {
     expect(result.evaluations[0].stages.applicability).toMatchObject({ status: 'rejected', reasonCode: 'PLATFORM_MISMATCH' });
   });
 
+  it.each([false, true])('keeps an edition conflict terminal with independently acquired game proof: %s', async hasIdentityProof => {
+    const genericProse = 'Use the practice item carefully. Inspect the practice equipment before starting, preserve room for movement, '
+      + 'and follow the practice route through the synthetic exercise.';
+    const result = await evaluate(article('', hasIdentityProof ? 'Portal 2 equipment guide' : 'Equipment reference',
+      `${hasIdentityProof ? prose : genericProse} This guide covers only expansion content.`));
+    expect(result.accepted).toHaveLength(0);
+    expect(result.knowledge.sources).toEqual([]);
+    expect(result.decisions[0].reasonCodes).toEqual(['EDITION_CONFLICT']);
+    expect(result.evaluations[0].stages.identity).toMatchObject(hasIdentityProof
+      ? { status: 'passed', reasonCode: 'ACQUIRED_IDENTITY_VERIFIED' }
+      : { status: 'unknown', reasonCode: 'GAME_IDENTITY_UNVERIFIED' });
+    expect(result.evaluations[0].stages.applicability).toMatchObject({ status: 'rejected', reasonCode: 'EDITION_CONFLICT' });
+    expect(result.evaluations[0].stages.generation.status).toBe('not_run');
+    expect(result.evaluations[0].outcome).toBe('rejected');
+  });
+
   it('retains scoped official metadata contradictions as negative currentness evidence', async () => {
     const game = 'Destiny 2';
     const body = article('<div>Game: Destiny 2.</div><div>Edition: Base game.</div><div>Platforms: PC.</div><div>Patch: 1.0.</div><div>Patch: 2.0.</div>',
