@@ -1,10 +1,10 @@
 {
   "version": 1,
-  "reviewedCandidateSha": "0aad0628897621440b59962603eecef3322861a7",
+  "reviewedCandidateSha": "f0331b6d0690b3d7ad7bc0cc91fb811d46acad47",
   "files": [
     {
       "path": "scripts/check-native-pr-preview-imports.mjs",
-      "sha256": "d09a3d1bad2a6fe3ecb7ca3cf5a2c7f4a1c905c55405d90a8ddf3ff06b402174"
+      "sha256": "79863ed63d7c2110ba3385d905dadad2c7f27f7832b88831096259b896a0d3cf"
     },
     {
       "path": "scripts/check-native-pr-preview-dist-imports.mjs",
