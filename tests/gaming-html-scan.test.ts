@@ -34,10 +34,20 @@ describe('linear Gaming HTML budget and source-use scans', () => {
   });
 
   it('bounds five-million-character unclosed and dense closed scans in a disposable Node child', () => {
-    // Native type stripping imports only this pure module; no app, DNS, HTTP or database starts.
+    // Native type stripping imports only extraction and its reviewed pure layout data.
+    // Resolve that single emitted dependency without admitting a general app/alias graph.
     // SIGKILL contains a regression even if a synchronous scan blocks JavaScript timers.
     const moduleUrl = new URL('../src/services/gamingDocumentExtraction.ts', import.meta.url).href;
-    const script = `const { countGamingHtmlElements, stripGamingHtmlTags } = await import(${JSON.stringify(moduleUrl)});
+    const profileDataUrl = new URL('../src/shared/gaming/gamingPublisherExtractionProfileData.ts', import.meta.url).href;
+    const script = `import { registerHooks } from 'node:module';
+      const extractionUrl = ${JSON.stringify(moduleUrl)};
+      registerHooks({ resolve(specifier, context, nextResolve) {
+        if (context.parentURL === extractionUrl && specifier === '@shared/gaming/gamingPublisherExtractionProfileData.js') {
+          return nextResolve(${JSON.stringify(profileDataUrl)}, context);
+        }
+        return nextResolve(specifier, context);
+      } });
+      const { countGamingHtmlElements, stripGamingHtmlTags } = await import(extractionUrl);
       const results = [];
       for (const closed of [false, true]) {
         const body = (closed ? '<>' : '<a').repeat(2_500_000);

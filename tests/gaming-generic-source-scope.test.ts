@@ -46,6 +46,13 @@ describe('generic acquired local gameplay record scope', () => {
     expect(assessGamingClearSourceIdentity(doc, input, assessGamingSourcePolicy(url, input.game)).status).toBe('unknown');
   });
 
+  it.each(["In the game 'Lantern Vale', use the practice item carefully.",
+    "This article covers 'Lantern Vale'.", "In 'Minecraft Java', use the practice item carefully."])
+  ('does not hide an affirmative foreign subject by single-quoting only its name: %s', declaration => {
+    expect(identity(document(`<p>${declaration}</p>`)))
+      .toMatchObject({ status: 'conflict', reasonCodes: ['GAME_MISMATCH'] });
+  });
+
   it('keeps a following affirmative guide identity terminal after a historical reference', () => {
     const doc = document('<p>Historically, in Hades, the practice skill behaved differently. This guide covers Lantern Vale.</p>');
     expect(identity(doc)).toMatchObject({ status: 'conflict', reasonCodes: ['GAME_MISMATCH'] });

@@ -80,7 +80,7 @@ describe('closed acquired Minecraft edition scope', () => {
   });
   it('retains uncertainty when only the title asserts an edition', () => {
     expect(identity(document(java.replaceAll('Minecraft Java', 'Minecraft'))))
-      .toEqual({ status: 'unknown', reasonCodes: ['EDITION_UNVERIFIED'],
+      .toEqual({ status: 'unknown', gameIdentityVerified: true, reasonCodes: ['EDITION_UNVERIFIED'],
         diagnostic: { ruleId: 'gaming.identity.edition_scope_unverified', evidenceCategory: 'edition_scope' } });
   });
   it('normalizes a closed acquired edition alias without changing an explicit user label', () => {
