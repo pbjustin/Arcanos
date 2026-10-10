@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "enabled": false,
+  "repository": "pbjustin/Arcanos",
+  "owner": "pbjustin",
+  "maxAuthorizationSeconds": 7200,
+  "environmentPrefix": "pr-1532aa-",
+  "imageRepository": "ghcr.io/pbjustin/arcanos-stacked-preview",
+  "forbiddenProjectIds": [
+    "7faf44e5-519c-4e73-8d7a-da9f389e6187",
+    "8e4cb1eb-1441-4e83-b434-15c06c676a5f"
+  ],
+  "stack": [
+    {
+      "prNumber": 1533,
+      "headRef": "codex/gaming-generic-foundation-1532",
+      "baseRef": "main"
+    },
+    {
+      "prNumber": 1534,
+      "headRef": "codex/gaming-claim-corroboration-1532",
+      "baseRef": "codex/gaming-generic-foundation-1532"
+    },
+    {
+      "prNumber": 1535,
+      "headRef": "codex/gaming-generic-benchmark-1532",
+      "baseRef": "codex/gaming-claim-corroboration-1532"
+    }
+  ],
+  "target": null
+}

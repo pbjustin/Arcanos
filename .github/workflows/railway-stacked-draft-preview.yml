@@ -1,0 +1,580 @@
+name: Railway Stacked Draft Preview
+run-name: Owner-authorized sealed Gaming stack preview
+
+# This is a separate manual lane. Existing PR admission and production
+# promotion workflows retain their original controls. Checked-in activation
+# remains disabled until the owner provisions and reviews an isolated target.
+on:
+  workflow_dispatch:
+    inputs:
+      authorization_json:
+        description: Expiring exact-controller, exact-main, exact-stack authorization JSON
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: railway-stacked-draft-preview-pbjustin-Arcanos-1533-1534-1535
+  cancel-in-progress: false
+
+env:
+  EVENT_REPOSITORY: ${{ github.repository }}
+  EVENT_ACTOR: ${{ github.actor }}
+  EVENT_SENDER: ${{ github.event.sender.login }}
+  EVENT_REF: ${{ github.ref }}
+  EVENT_WORKFLOW_REF: ${{ github.workflow_ref }}
+  CONTROLLER_SHA: ${{ github.workflow_sha }}
+  WORKFLOW_RUN_ID: ${{ github.run_id }}
+  WORKFLOW_RUN_ATTEMPT: ${{ github.run_attempt }}
+
+jobs:
+  authorize:
+    name: Authorize immutable allowlisted draft stack
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      && github.repository == 'pbjustin/Arcanos'
+      && github.actor == 'pbjustin'
+      && github.event.sender.login == 'pbjustin'
+      && github.ref == 'refs/heads/main'
+      && github.workflow_ref == 'pbjustin/Arcanos/.github/workflows/railway-stacked-draft-preview.yml@refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      checks: read
+      contents: read
+      pull-requests: read
+    outputs:
+      candidate_sha: ${{ steps.receipt.outputs.candidate_sha }}
+    steps:
+      - name: Validate owner dispatch before checkout
+        env:
+          AUTHORIZATION_JSON: ${{ inputs.authorization_json }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { writeFileSync } from 'node:fs';
+          const e = process.env;
+          try {
+            if (e.EVENT_REPOSITORY !== 'pbjustin/Arcanos' || e.EVENT_ACTOR !== 'pbjustin'
+              || e.EVENT_SENDER !== 'pbjustin' || e.EVENT_REF !== 'refs/heads/main'
+              || e.EVENT_WORKFLOW_REF !== 'pbjustin/Arcanos/.github/workflows/railway-stacked-draft-preview.yml@refs/heads/main'
+              || !/^[0-9a-f]{40}$/.test(e.CONTROLLER_SHA ?? '')
+              || !/^[1-9][0-9]*$/.test(e.WORKFLOW_RUN_ID ?? '') || e.WORKFLOW_RUN_ATTEMPT !== '1'
+              || typeof e.AUTHORIZATION_JSON !== 'string' || Buffer.byteLength(e.AUTHORIZATION_JSON) > 16384)
+              throw new Error('dispatch rejected');
+            const ownerInput = JSON.parse(e.AUTHORIZATION_JSON);
+            if (ownerInput?.version !== 1 || ownerInput.controllerSha !== e.CONTROLLER_SHA
+              || !/^[0-9a-f]{40}$/.test(ownerInput.mainSha ?? '')
+              || !/^[0-9a-f]{64}$/.test(ownerInput.sourceArchiveSha256 ?? '')
+              || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(ownerInput.expiresAt ?? '')
+              || !Array.isArray(ownerInput.stack) || ownerInput.stack.length !== 3
+              || !ownerInput.stack.every((entry, index) => entry?.prNumber === [1533, 1534, 1535][index]
+                && /^[0-9a-f]{40}$/.test(entry.headSha ?? '') && /^[0-9a-f]{40}$/.test(entry.treeSha ?? '')))
+              throw new Error('authorization rejected');
+            if (!e.RUNNER_TEMP) throw new Error('temporary directory unavailable');
+            writeFileSync(`${e.RUNNER_TEMP}/stacked-preview-authorization.json`, JSON.stringify(ownerInput) + '\n', { mode: 0o600, flag: 'wx' });
+          } catch { console.error('STACKED_PREVIEW_DISPATCH_INVALID'); process.exitCode = 1; }
+          NODE
+
+      - name: Check out immutable trusted controller
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up pinned Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.18.1'
+
+      - name: Materialize validated authorization after trusted checkout
+        run: |
+          node --input-type=module <<'NODE'
+          import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+          mkdirSync('.stacked-preview', { recursive: true });
+          writeFileSync('.stacked-preview/authorization.json', readFileSync(`${process.env.RUNNER_TEMP}/stacked-preview-authorization.json`), { mode: 0o600, flag: 'wx' });
+          NODE
+
+      - name: Verify owner, activation and current exact stack
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          node scripts/railway-stacked-draft-preview.mjs authorize
+          --authorization .stacked-preview/authorization.json
+          --output .stacked-preview/authorized.json
+
+      - name: Record authorized candidate identity
+        id: receipt
+        run: |
+          node --input-type=module <<'NODE'
+          import { appendFileSync, readFileSync } from 'node:fs';
+          const ownerInput = JSON.parse(readFileSync('.stacked-preview/authorization.json', 'utf8'));
+          const sha = ownerInput.stack.at(-1).headSha;
+          if (!/^[0-9a-f]{40}$/.test(sha)) throw new Error('STACKED_PREVIEW_HEAD_INVALID');
+          appendFileSync(process.env.GITHUB_OUTPUT, `candidate_sha=${sha}\n`);
+          NODE
+
+      - name: Retain authorization receipt
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: stacked-preview-authorization
+          path: |
+            .stacked-preview/authorization.json
+            .stacked-preview/authorized.json
+          if-no-files-found: warn
+          include-hidden-files: true
+          retention-days: 10
+
+  build:
+    name: Build exact candidate in secretless container
+    needs: authorize
+    if: needs.authorize.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - name: Verify trusted context before checkout
+        run: |
+          node --input-type=module <<'NODE'
+          const e = process.env;
+          if (e.EVENT_REPOSITORY !== 'pbjustin/Arcanos' || e.EVENT_ACTOR !== 'pbjustin' || e.EVENT_SENDER !== 'pbjustin'
+            || e.EVENT_REF !== 'refs/heads/main'
+            || e.EVENT_WORKFLOW_REF !== 'pbjustin/Arcanos/.github/workflows/railway-stacked-draft-preview.yml@refs/heads/main'
+            || !/^[0-9a-f]{40}$/.test(e.CONTROLLER_SHA ?? '') || e.WORKFLOW_RUN_ATTEMPT !== '1')
+            throw new Error('STACKED_PREVIEW_TRUST_CONTEXT_INVALID');
+          NODE
+
+      - name: Check out immutable trusted build tools
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up pinned Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.18.1'
+
+      - name: Download authorized immutable input
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: stacked-preview-authorization
+          path: .stacked-preview
+
+      - name: Fetch only authorized commit objects
+        env:
+          GITHUB_TOKEN: ''
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs';
+          import { execFileSync } from 'node:child_process';
+          const ownerInput = JSON.parse(readFileSync('.stacked-preview/authorization.json', 'utf8'));
+          for (const sha of [ownerInput.mainSha, ...ownerInput.stack.map(entry => entry.headSha)]) {
+            if (!/^[0-9a-f]{40}$/.test(sha)) throw new Error('STACKED_PREVIEW_HEAD_INVALID');
+            execFileSync('git', ['fetch', '--no-tags', 'origin', sha], { timeout: 60000, stdio: 'pipe' });
+          }
+          NODE
+
+      - name: Build immutable secretless candidate image
+        env:
+          GITHUB_TOKEN: ''
+        run: node scripts/stacked-draft-preview-build.mjs build .stacked-preview/authorization.json .stacked-preview
+
+      - name: Retain immutable image and build receipt
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: stacked-preview-image
+          path: |
+            .stacked-preview/image.tar
+            .stacked-preview/build.json
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 10
+
+  publish:
+    name: Publish verified image without executing candidate code
+    needs: [authorize, build]
+    if: needs.authorize.result == 'success' && needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: railway-stacked-draft-preview
+    permissions:
+      checks: read
+      contents: read
+      packages: write
+      pull-requests: read
+    steps:
+      - name: Verify trusted context before checkout
+        run: |
+          node --input-type=module <<'NODE'
+          const e = process.env;
+          if (e.EVENT_REPOSITORY !== 'pbjustin/Arcanos' || e.EVENT_ACTOR !== 'pbjustin' || e.EVENT_SENDER !== 'pbjustin'
+            || e.EVENT_REF !== 'refs/heads/main'
+            || e.EVENT_WORKFLOW_REF !== 'pbjustin/Arcanos/.github/workflows/railway-stacked-draft-preview.yml@refs/heads/main'
+            || !/^[0-9a-f]{40}$/.test(e.CONTROLLER_SHA ?? '') || e.WORKFLOW_RUN_ATTEMPT !== '1')
+            throw new Error('STACKED_PREVIEW_TRUST_CONTEXT_INVALID');
+          NODE
+
+      - name: Check out immutable trusted publisher
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up pinned Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.18.1'
+
+      - name: Download authorized immutable input
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: stacked-preview-authorization
+          path: .stacked-preview
+
+      - name: Download immutable image artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: stacked-preview-image
+          path: .stacked-preview
+
+      - name: Verify and load image before registry authentication
+        run: |
+          node scripts/stacked-draft-preview-build.mjs verify .stacked-preview/authorization.json .stacked-preview/build.json .stacked-preview/image.tar
+          node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs';
+          import { execFileSync } from 'node:child_process';
+          const receipt = JSON.parse(readFileSync('.stacked-preview/build.json', 'utf8'));
+          execFileSync('docker', ['load', '--input', '.stacked-preview/image.tar'], { timeout: 120000, stdio: 'pipe' });
+          const imageId = execFileSync('docker', ['image', 'inspect', '--format', '{{.Id}}', receipt.imageId], { encoding: 'utf8', timeout: 30000 }).trim();
+          if (imageId !== receipt.imageId) throw new Error('STACKED_PREVIEW_IMAGE_ID_MISMATCH');
+          NODE
+
+      - name: Revalidate owner and current exact stack before publication
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          node scripts/railway-stacked-draft-preview.mjs authorize
+          --authorization .stacked-preview/authorization.json
+          --output .stacked-preview/pre-publication-authorized.json
+
+      - name: Require preexisting private container package before publication
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { writeFileSync } from 'node:fs';
+          try {
+            const token = process.env.GITHUB_TOKEN;
+            if (typeof token !== 'string' || token.length < 20 || /[\r\n]/.test(token)) throw new Error('token unavailable');
+            const signal = AbortSignal.timeout(20000);
+            const response = await fetch('https://api.github.com/users/pbjustin/packages/container/arcanos-stacked-preview', {
+              method: 'GET', redirect: 'error', signal,
+              headers: { authorization: `Bearer ${token}`, accept: 'application/vnd.github+json',
+                'x-github-api-version': '2022-11-28', 'user-agent': 'arcanos-stacked-draft-preview/1' },
+            });
+            if (response.status !== 200 || response.redirected !== false
+              || !response.headers.get('content-type')?.startsWith('application/json')
+              || !response.body?.getReader) throw new Error('package unavailable');
+            const reader = response.body.getReader();
+            const chunks = []; let bytes = 0;
+            try {
+              while (true) {
+                signal.throwIfAborted();
+                const chunk = await reader.read();
+                if (chunk.done) break;
+                bytes += chunk.value.byteLength;
+                if (bytes > 16384) throw new Error('package response too large');
+                chunks.push(Buffer.from(chunk.value));
+              }
+            } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
+            const value = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+            if (value?.name !== 'arcanos-stacked-preview' || value.package_type !== 'container'
+              || value.visibility !== 'private' || value.owner?.login !== 'pbjustin'
+              || !Number.isSafeInteger(value.id) || value.id <= 0) throw new Error('private package required');
+            writeFileSync('.stacked-preview/registry-visibility.json', JSON.stringify({
+              owner: 'pbjustin', name: value.name, packageId: value.id, packageType: value.package_type,
+              visibility: value.visibility, checkedAt: new Date().toISOString(),
+            }) + '\n', { mode: 0o600, flag: 'wx' });
+          } catch { console.error('STACKED_PREVIEW_PRIVATE_REGISTRY_REQUIRED'); process.exitCode = 1; }
+          NODE
+
+      - name: Publish static image and record immutable registry digest
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync, writeFileSync } from 'node:fs';
+          import { createHash } from 'node:crypto';
+          import { execFileSync } from 'node:child_process';
+          const e = process.env;
+          if (!/^[1-9][0-9]*$/.test(e.WORKFLOW_RUN_ID ?? '') || e.WORKFLOW_RUN_ATTEMPT !== '1')
+            throw new Error('STACKED_PREVIEW_RUN_INVALID');
+          const bytes = readFileSync('.stacked-preview/build.json');
+          const receipt = JSON.parse(bytes);
+          const ownerInput = JSON.parse(readFileSync('.stacked-preview/authorization.json', 'utf8'));
+          if (ownerInput.controllerSha !== e.CONTROLLER_SHA
+            || !Number.isFinite(Date.parse(ownerInput.expiresAt)) || Date.parse(ownerInput.expiresAt) <= Date.now())
+            throw new Error('STACKED_PREVIEW_AUTHORIZATION_EXPIRED');
+          if (!/^sha256:[0-9a-f]{64}$/.test(receipt.imageId ?? '')) throw new Error('STACKED_PREVIEW_IMAGE_ID_INVALID');
+          const tag = `ghcr.io/pbjustin/arcanos-stacked-preview:run-${e.WORKFLOW_RUN_ID}-${e.WORKFLOW_RUN_ATTEMPT}`;
+          try {
+            execFileSync('docker', ['login', 'ghcr.io', '--username', 'pbjustin', '--password-stdin'],
+              { input: e.GHCR_TOKEN, stdio: ['pipe', 'pipe', 'pipe'], timeout: 30000 });
+            execFileSync('docker', ['tag', receipt.imageId, tag], { timeout: 30000, stdio: 'pipe' });
+            execFileSync('docker', ['push', tag], { timeout: 300000, stdio: 'pipe', maxBuffer: 4 * 1024 * 1024 });
+            const imageId = execFileSync('docker', ['image', 'inspect', '--format', '{{.Id}}', tag], { encoding: 'utf8', timeout: 30000 }).trim();
+            const digests = JSON.parse(execFileSync('docker', ['image', 'inspect', '--format', '{{json .RepoDigests}}', tag], { encoding: 'utf8', timeout: 30000 }));
+            const exact = digests.filter(value => /^ghcr\.io\/pbjustin\/arcanos-stacked-preview@sha256:[0-9a-f]{64}$/.test(value));
+            if (imageId !== receipt.imageId || exact.length !== 1) throw new Error('STACKED_PREVIEW_PUBLISH_MISMATCH');
+            writeFileSync('.stacked-preview/published.json', JSON.stringify({ image: exact[0], imageId,
+              buildReceiptSha256: createHash('sha256').update(bytes).digest('hex') }) + '\n', { flag: 'wx' });
+          } finally { execFileSync('docker', ['logout', 'ghcr.io'], { timeout: 30000, stdio: 'pipe' }); }
+          NODE
+
+      - name: Retain immutable publication receipt
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: stacked-preview-publication
+          path: |
+            .stacked-preview/build.json
+            .stacked-preview/published.json
+            .stacked-preview/pre-publication-authorized.json
+            .stacked-preview/registry-visibility.json
+          if-no-files-found: warn
+          include-hidden-files: true
+          retention-days: 10
+
+  deploy:
+    name: Revalidate and provision isolated sealed preview
+    needs: [authorize, publish]
+    if: needs.authorize.result == 'success' && needs.publish.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: railway-stacked-draft-preview
+    permissions:
+      checks: read
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Verify trusted context before checkout
+        run: |
+          node --input-type=module <<'NODE'
+          const e = process.env;
+          if (e.EVENT_REPOSITORY !== 'pbjustin/Arcanos' || e.EVENT_ACTOR !== 'pbjustin' || e.EVENT_SENDER !== 'pbjustin'
+            || e.EVENT_REF !== 'refs/heads/main'
+            || e.EVENT_WORKFLOW_REF !== 'pbjustin/Arcanos/.github/workflows/railway-stacked-draft-preview.yml@refs/heads/main'
+            || !/^[0-9a-f]{40}$/.test(e.CONTROLLER_SHA ?? '') || e.WORKFLOW_RUN_ATTEMPT !== '1')
+            throw new Error('STACKED_PREVIEW_TRUST_CONTEXT_INVALID');
+          NODE
+
+      - name: Check out immutable trusted deploy controller
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up pinned Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.18.1'
+
+      - name: Download authorized immutable input
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: stacked-preview-authorization
+          path: .stacked-preview
+
+      - name: Download immutable publication receipt
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: stacked-preview-publication
+          path: .stacked-preview
+
+      - name: Deploy through fail-closed trusted controller
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_STACKED_DRAFT_PREVIEW_API_TOKEN }}
+        run: >-
+          node scripts/railway-stacked-draft-preview.mjs deploy
+          --authorization .stacked-preview/authorization.json
+          --build-receipt .stacked-preview/build.json
+          --image .stacked-preview/published.json
+          --output .stacked-preview/deployment.json
+
+      - name: Retain deployment and isolation receipt
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: stacked-preview-deployment
+          path: .stacked-preview/deployment.json
+          if-no-files-found: warn
+          include-hidden-files: true
+          retention-days: 10
+
+  verify:
+    name: Verify hosted synthetic Gaming without provider credentials
+    needs: [authorize, deploy]
+    if: needs.authorize.result == 'success' && needs.deploy.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      checks: read
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Verify trusted context before checkout
+        run: |
+          node --input-type=module <<'NODE'
+          const e = process.env;
+          if (e.EVENT_REPOSITORY !== 'pbjustin/Arcanos' || e.EVENT_ACTOR !== 'pbjustin' || e.EVENT_SENDER !== 'pbjustin'
+            || e.EVENT_REF !== 'refs/heads/main'
+            || e.EVENT_WORKFLOW_REF !== 'pbjustin/Arcanos/.github/workflows/railway-stacked-draft-preview.yml@refs/heads/main'
+            || !/^[0-9a-f]{40}$/.test(e.CONTROLLER_SHA ?? '') || e.WORKFLOW_RUN_ATTEMPT !== '1')
+            throw new Error('STACKED_PREVIEW_TRUST_CONTEXT_INVALID');
+          NODE
+
+      - name: Check out immutable trusted synthetic verifier
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: trusted
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check out authorized exact head as Git evidence only
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          ref: ${{ needs.authorize.outputs.candidate_sha }}
+          path: head-evidence
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up pinned Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.18.1'
+
+      - name: Download authorized immutable input
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: stacked-preview-authorization
+          path: .stacked-preview
+
+      - name: Download deployment and isolation receipt
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: stacked-preview-deployment
+          path: .stacked-preview
+
+      - name: Revalidate owner and current exact stack immediately before probe
+        working-directory: trusted
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          node scripts/railway-stacked-draft-preview.mjs authorize
+          --authorization "$GITHUB_WORKSPACE/.stacked-preview/authorization.json"
+          --output "$GITHUB_WORKSPACE/.stacked-preview/pre-probe-authorized.json"
+
+      - name: Run closed synthetic matrix and passive worker denials
+        env:
+          GITHUB_TOKEN: ''
+        run: >-
+          node "$GITHUB_WORKSPACE/trusted/scripts/stacked-draft-preview-probe.mjs"
+          --authorization .stacked-preview/authorization.json
+          --deployment .stacked-preview/deployment.json
+          --git-evidence-root "$GITHUB_WORKSPACE/head-evidence"
+          --execute
+          --allow-network
+
+      - name: Retain synthetic verification receipt
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: stacked-preview-verification
+          path: .stacked-preview/verification.json
+          if-no-files-found: warn
+          include-hidden-files: true
+          retention-days: 10
+
+  cleanup:
+    name: Remove only the controller-owned ephemeral preview
+    needs: [authorize, publish, deploy, verify]
+    if: >-
+      always()
+      && needs.authorize.result == 'success'
+      && needs.publish.result == 'success'
+      && needs.deploy.result != 'skipped'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: railway-stacked-draft-preview
+    permissions:
+      contents: read
+    steps:
+      - name: Verify trusted context before checkout
+        run: |
+          node --input-type=module <<'NODE'
+          const e = process.env;
+          if (e.EVENT_REPOSITORY !== 'pbjustin/Arcanos' || e.EVENT_ACTOR !== 'pbjustin' || e.EVENT_SENDER !== 'pbjustin'
+            || e.EVENT_REF !== 'refs/heads/main'
+            || e.EVENT_WORKFLOW_REF !== 'pbjustin/Arcanos/.github/workflows/railway-stacked-draft-preview.yml@refs/heads/main'
+            || !/^[0-9a-f]{40}$/.test(e.CONTROLLER_SHA ?? '') || e.WORKFLOW_RUN_ATTEMPT !== '1')
+            throw new Error('STACKED_PREVIEW_TRUST_CONTEXT_INVALID');
+          NODE
+
+      - name: Check out immutable trusted cleanup controller
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+
+      - name: Set up pinned Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.18.1'
+
+      - name: Download authorized immutable input
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: stacked-preview-authorization
+          path: .stacked-preview
+
+      - name: Download immutable publication receipt
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: stacked-preview-publication
+          path: .stacked-preview
+
+      - name: Download controller ownership receipt
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: stacked-preview-deployment
+          path: .stacked-preview
+
+      - name: Clean owned preview even after authorization expiry
+        env:
+          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_STACKED_DRAFT_PREVIEW_API_TOKEN }}
+        run: >-
+          node scripts/railway-stacked-draft-preview.mjs cleanup
+          --authorization .stacked-preview/authorization.json
+          --build-receipt .stacked-preview/build.json
+          --image .stacked-preview/published.json
+          --deployment .stacked-preview/deployment.json
+          --output .stacked-preview/cleanup.json
+
+      - name: Retain cleanup receipt
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: stacked-preview-cleanup
+          path: .stacked-preview/cleanup.json
+          if-no-files-found: warn
+          include-hidden-files: true
+          retention-days: 10

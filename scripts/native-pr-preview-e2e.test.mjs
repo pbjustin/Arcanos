@@ -8,6 +8,7 @@ import { test } from 'node:test';
 import {
   NativePrPreviewE2eError,
   buildNativePrPreviewRequestPlan,
+  buildStackedDraftGamingRequestPlan,
   expectedNativePrPreviewContentType,
   expectedNativePrPreviewResponseBody,
   nativePrPreviewCaseCorrelation,
@@ -564,6 +565,40 @@ test('validates an exact native PR target without network access by default', as
     result.summary.plannedRequests,
     buildNativePrPreviewRequestPlan().length
   );
+});
+
+test('stacked draft scope executes Gaming and passive denials without the external Notion canary', async () => {
+  const full = buildNativePrPreviewRequestPlan();
+  const plan = buildStackedDraftGamingRequestPlan();
+  assert.ok(plan.some(item => item.caseId === 'gaming-query-guide'));
+  assert.ok(plan.some(item => item.caseId === 'gaming-source-ingestion-malformed-unauthorized'));
+  assert.ok(plan.some(item => item.caseId === 'worker-gaming-canary-denied'));
+  assert.ok(plan.every(item => item.caseId.includes('gaming')
+    || item.caseId.includes('readiness') || ['/health', '/healthz'].includes(item.path)));
+  assert.ok(!plan.some(item => item.caseId.includes('notion')));
+  assert.ok(full.some(item => item.caseId === 'backstage-generation-notion-authority-rag'));
+  const mock = buildMockFetch(plan);
+  const result = await runNativePrPreviewE2e({ args: validArguments('--execute', '--allow-network'),
+    requestScope: 'stacked-draft-gaming-synthetic', fetchImpl: mock.fetchImpl,
+    localGitState: LOCAL_GIT_STATE, expectedBackstageBookerOpenApiDocument: EXPECTED_BACKSTAGE_BOOKER_OPENAPI_DOCUMENT,
+    monotonicNow: mock.monotonicNow });
+  assert.equal(result.kind, 'stacked_draft_gaming_synthetic_e2e');
+  assert.equal(result.summary.requestsMade, plan.length);
+  assert.equal(result.summary.code, 'STACKED_DRAFT_GAMING_SYNTHETIC_E2E_PASS');
+  assert.equal(result.limits.requestTimeoutMs, 5000);
+  assert.equal(result.limits.effectivePerCaseMaxRequestTimeoutMs, 5000);
+});
+
+test('stacked scope preserves rejection assertions and rejects arbitrary scope overrides', async () => {
+  const plan = buildStackedDraftGamingRequestPlan();
+  const mock = buildMockFetch(plan, item => item.caseId === 'gaming-source-ingestion-unauthorized'
+    ? new Response('{}', { status: 200 }) : undefined);
+  await assert.rejects(runNativePrPreviewE2e({ args: validArguments('--execute', '--allow-network'),
+    requestScope: 'stacked-draft-gaming-synthetic', fetchImpl: mock.fetchImpl,
+    localGitState: LOCAL_GIT_STATE, expectedBackstageBookerOpenApiDocument: EXPECTED_BACKSTAGE_BOOKER_OPENAPI_DOCUMENT }),
+  error => error instanceof NativePrPreviewE2eError);
+  await assert.rejects(runNativePrPreviewE2e({ requestScope: 'skip-security' }),
+    error => error.code === 'NATIVE_PR_PREVIEW_REQUEST_SCOPE_INVALID');
 });
 
 test('requires paired execution and network opt-ins', () => {

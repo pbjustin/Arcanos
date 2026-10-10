@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "reviewedCandidateSha": "0aad0628897621440b59962603eecef3322861a7",
+  "files": [
+    {
+      "path": "scripts/check-native-pr-preview-imports.mjs",
+      "sha256": "d09a3d1bad2a6fe3ecb7ca3cf5a2c7f4a1c905c55405d90a8ddf3ff06b402174"
+    },
+    {
+      "path": "scripts/check-native-pr-preview-dist-imports.mjs",
+      "sha256": "41c8f359d09f34da1a7243e4f2e43c334c71b00127d1251f64b41e4b23892d5e"
+    },
+    {
+      "path": "scripts/native-pr-preview-imports-tsconfig.json",
+      "sha256": "f366cb5e2d277a3b451e390ec6b42973b846d05cb25222a42e45522fffe2e0c4"
+    },
+    {
+      "path": "package-lock.json",
+      "sha256": "9383d72991e92fba8ade515b30a077a157489c4403acd743660f150791c2751b"
+    }
+  ]
+}
