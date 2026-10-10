@@ -49,3 +49,25 @@ The registry types/data/core and generic identity/detection consumers are implem
 New registry tests ran red before the module existed, then passed. Nine focused identity/request/source suites passed 312 tests with the pinned Node/npm toolchain. The registry tests cover two unregistered titles and an independently configured synthetic game's editions through the same helper algorithms. This is regression evidence, not an estimate of live acquisition reliability.
 
 CLEAR policy v2 preserves the public rubric/wire version and rejects old policy assessments. Context fingerprints include registry schema, data revision and content hash. Two new decision-invalidation tests failed before the change and passed afterward; five focused policy/currentness/registry suites passed 193 tests. The maintained Gaming guide documents registration review, conservative unknown behavior, decision refresh and rollback precautions. No new cache infrastructure or production operations were introduced.
+
+## Platform availability constraint review
+
+**Missing capability:** current game/edition `platforms` arrays describe recognition
+labels and lack a reviewed exclusive-support declaration. The production path
+compares acquired platform claims with request scope; it does not independently
+prove which platforms actually ship a game or edition. A controlled Java/PS5
+source/request probe and its PC control both admitted internally consistent
+claims. Treating omitted descriptive labels as definitive incompatibility would
+turn incomplete catalog data into unsupported validation policy.
+
+A compatible future constraint schema can add an optional explicit exclusive
+mode, a bounded nonempty literal platform set and separate review provenance
+(references, review date/revision and applicability version/date). Loader
+validation must reject malformed or unreviewed constraints; revisions and
+fingerprints must invalidate prior decisions. A generic helper should distinguish
+not-configured, consistent, unsupported and unverified outcomes after acquired
+game/edition/platform proof, and preserve identity/security priority. Constraint
+membership alone cannot establish positive acquired evidence. Independently
+configured synthetic fixtures must cover aliases, unknowns, claimed all-platform
+scope, absent proof, DLC/related scope, contradictions and review invalidation.
+No exclusive real-game constraint or new trust exception is added in this task.
