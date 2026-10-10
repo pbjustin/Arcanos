@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-10T18:49:10.014Z",
+  "generatedAt": "2026-10-10T18:52:53.672Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -2729,6 +2729,9 @@
           "relativePath": "src/shared/gaming/gamingArchiveResourceCore.ts"
         },
         {
+          "relativePath": "src/shared/gaming/gamingClaimCorroboration.ts"
+        },
+        {
           "relativePath": "src/shared/gaming/gamingClearAnswerBinding.ts"
         },
         {
@@ -2874,6 +2877,9 @@
         },
         {
           "relativePath": "src/shared/gaming/gamingSourceEvaluation.ts"
+        },
+        {
+          "relativePath": "src/shared/gaming/gamingSourceFamilyData.ts"
         },
         {
           "relativePath": "src/shared/gaming/gamingSourceTransportData.ts"
@@ -4327,6 +4333,9 @@
           "relativePath": "tests/gaming-body-identity.test.ts"
         },
         {
+          "relativePath": "tests/gaming-claim-corroboration.test.ts"
+        },
+        {
           "relativePath": "tests/gaming-clarification-context.test.ts"
         },
         {
@@ -4475,6 +4484,9 @@
         },
         {
           "relativePath": "tests/gaming-html-scan.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming-hybrid-corroboration.test.ts"
         },
         {
           "relativePath": "tests/gaming-hybrid-edition-budget.test.ts"

@@ -5,6 +5,7 @@ import type { GamingPlayerContext } from './gamingPlayerContext.js';
 import { buildGamingRetrievalTerms, hasGamingRelevantGuideContribution, buildGamingRequestRequirements, gamingTermCoverage, safeGamingEvidenceMetadata, scopeGamingEvidenceParagraphs } from './gamingRetrievalPolicy.js';
 import { normalizeGamingEvidenceGameIdentity, resolveGamingGuideIdentity } from './gamingGameIdentity.js';
 import type { GamingClearAssessment } from './gamingClearPolicy.js';
+import type { GamingClaimCorroborationSummary } from './gamingClaimCorroboration.js';
 import type { GamingEvidenceUnit } from './gamingEvidenceUnits.js';
 import { assessGamingStructuralUsability, readGamingEvidenceUnits, GAMING_STRUCTURAL_EVIDENCE_LIMITS } from './gamingStructuralEvidence.js';
 import { GAMING_HYBRID_V2_LIMITS } from './gamingHybridContract.js';
@@ -121,6 +122,8 @@ export interface GamingStoredKnowledgeContext {
   sourceKnown?: boolean;
   /** Current request assessment; excluded from the public source contract. */
   clearEvidenceAssessment?: GamingClearAssessment;
+  /** Optional backend-computed source-report classification; never an authority grant. */
+  claimCorroboration?: GamingClaimCorroborationSummary;
   /** Backend-only full accepted-pool veto, assessed before bounded selection. */
   materialConflict?: boolean;
   /** Backend-only inability to inspect the complete source pool safely. */

@@ -20,6 +20,7 @@ import { combineGamingCurrentnessEvidence, GAMING_CURRENTNESS_ADAPTER_VERSION } 
 import { resolveGamingHybridCandidateAttempt, resolveGamingHybridCurrentnessReason, projectGamingHybridCandidateRetention,
   projectGamingHybridCandidateEvidence, normalizeGamingHybridCandidateUrl, gamingHybridRequiredGuideUrls, gamingHybridCitationTargets, projectGamingHybridSuppliedGuides, projectGamingGuideOutcome, gamingGuideSearchHint } from '@shared/gaming/gamingHybridPolicyCore.js';
 import { assessGamingClearEvidence } from '@shared/gaming/gamingClearEvidence.js';
+import { assessGamingClaimCorroboration } from '@shared/gaming/gamingClaimCorroboration.js';
 import { GAMING_CLEAR_APPROVED_ANSWER, hasBoundGamingClearAnswer, type GamingClearAnswerCarrier } from '@shared/gaming/gamingClearAnswerBinding.js';
 import { gamingClearHash } from '@shared/gaming/gamingClearPolicy.js';
 import { resolveGamingFreshnessDisposition, selectGamingAdvisoryGameplayEvidence, isGamingAdvisoryCurrentnessOperation,
@@ -637,6 +638,25 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
     // Quality of individual documents is insufficient: judge the actual retained
     // set after freshness exclusions and the existing context/chunk budgets.
     const clearStartedAt = deps.now();
+    usable.claimCorroboration = assessGamingClaimCorroboration({ game: input.game, edition: workflow.pipeline.edition,
+      platform: input.platform, requestedVersion: input.requestedVersion, prompt: workflow.pipeline.prompt, mode: input.mode,
+      sources: usable.sources.map(source => {
+        const acquired = evidence.find(item => item.url === source.url);
+        return { sourceId: source.sourceId, sourceUrl: source.url, game: acquired?.game ?? source.game,
+          edition: acquired?.edition ?? source.edition, patch: acquired?.patch ?? source.patchVersion,
+          platforms: acquired?.platforms, identityVerified: source.clearSourceAssessment?.gates.identity === 'verified',
+          applicabilityVerified: source.clearSourceAssessment?.gates.compatibility === 'verified',
+          evidenceUnits: usable.evidence?.filter(chunk => chunk.sourceId === source.sourceId).flatMap(chunk => chunk.evidenceUnits ?? []) };
+      }) });
+    const corroborationCorrelations = createGamingSourceEvaluation({ submittedIndex: 0, requestId: context.requestId,
+      traceId: context.traceId, workflowId: workflow.id });
+    logger.info('gaming.claim.corroboration', { requestId: corroborationCorrelations.requestId,
+      traceId: corroborationCorrelations.traceId, workflowId: corroborationCorrelations.workflowId,
+      policyVersion: usable.claimCorroboration.policyVersion, familyRegistryVersion: usable.claimCorroboration.familyRegistryVersion,
+      familyRegistryHash: usable.claimCorroboration.familyRegistryHash, status: usable.claimCorroboration.status,
+      reasonCodes: usable.claimCorroboration.reasonCodes, claimCount: usable.claimCorroboration.claims.length,
+      counts: Object.fromEntries(['independently_corroborated', 'single_source', 'conflicting', 'unverified'].map(status =>
+        [status, usable.claimCorroboration!.claims.filter(claim => claim.status === status).length])) });
     const clearEvidenceAssessment = assessGamingClearEvidence({ ...workflow.pipeline, game: input.game }, usable, {
       freshness, freshnessEvidence: evidence.filter(item => selected.has(item.id)),
       identityVerified: true, actorScopeHash: workflow.actor, now: new Date(deps.now()), allowAdvisoryFreshness: Boolean(advisory), ...(v2 ? { requireRequestCoverage: true } : {})
