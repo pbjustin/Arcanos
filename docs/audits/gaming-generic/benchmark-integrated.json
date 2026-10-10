@@ -33,16 +33,16 @@
   "contaminatedSelection": [],
   "falseNegatives": [],
   "falsePositives": [],
-  "sourceCommit": "3e4def255c61222a1f8a0b2eba694ab912719a55",
+  "sourceCommit": "d566c5ccb6dff14a70885be1d2d66a89fe242af7",
   "sourceState": "immutable implementation checkout; tracked source and test fingerprints unchanged before and after benchmark",
-  "sourceTree": "d45f6cd62b971604a0536f08a02557f8980923d6",
+  "sourceTree": "1e37f417aa907b9e9f9129264e03e3e895752a29",
   "runDate": "2026-10-10",
   "nodeVersion": "24.18.1",
   "npmVersion": "11.16.0",
   "powershellVersion": "7.6.6",
   "corpusSha256": "319d39bea80fa09911514e63e78d3fc0ed066a44ea9dfb2eee1e4e31fcb27968",
-  "foundationCommit": "59fa73d41e6423fc0b0fa4b060e5fd1bae2d1c3c",
-  "corroborationCommit": "4de3925af3c6bee495f56bf758022d3c0c5cb61d",
+  "foundationCommit": "11344a08973127fe99b6cf5fb17cd2c6f255b800",
+  "corroborationCommit": "c48c7e0093da72edbd388713b7e3a9ea952b1f6e",
   "sourceFileSha256": {
     "src/services/gamingDocumentExtraction.ts": "b3eb5e80a43bf4f8467423ada1e2d02bc1293f2622f65a31c1703bd27e1d190d",
     "src/services/gamingGameDetection.ts": "7e1079768a383b72899b55aea52bbc8e83a221b9633f743443a6e7087fdbae91",
@@ -53,11 +53,11 @@
     "src/shared/gaming/gamingClaimCorroboration.ts": "601aa06c962e84219f745e8f1810815e94f4018b8f287a12d46afd19e28195c5",
     "src/shared/gaming/gamingClearEvidence.ts": "1e3349b1706db09407aefd46e606a716151fd5735fcd9c2d660510f48d259397",
     "src/shared/gaming/gamingClearPolicy.ts": "df7b2848fdce21b27cc18832331cbf4ed1642e6333abd9fbb5bef30b5c990622",
-    "src/shared/gaming/gamingClearSource.ts": "43a546a7f47c5bafcc9f623c791a751f2dd9263ced23e683f1efe4e07aa10b85",
+    "src/shared/gaming/gamingClearSource.ts": "c34a3985a0d91fa809f77024dc4aaf387473df7ee27a8b54f381aa521b2a45ed",
     "src/shared/gaming/gamingCurrentnessPreviewFixture.ts": "2e776856eaaac13d0d177371272af2be8b635ba4fff4857019173853d5d5a341",
-    "src/shared/gaming/gamingFreshnessCore.ts": "7ef1022bbc8ab118552c51501c120683584c9f8a505b418353ab3a3f23cea288",
+    "src/shared/gaming/gamingFreshnessCore.ts": "b1ee265479622f3da7a26721cf0d549625b677ed2ff17aaae0f995f110ff823d",
     "src/shared/gaming/gamingGameIdentity.ts": "974ed789a5606ec0d8be596df6ca16e5a52a40817c6e3f80f8a2709efba4355a",
-    "src/shared/gaming/gamingGameRegistry.ts": "cb59c759e0f313a7fddf839d4ec7e1dcef061378b964bbc222da5e79e94613e7",
+    "src/shared/gaming/gamingGameRegistry.ts": "292f0df1f578adc257f8dce94d88e23af22158d24f6ce546b15ebf3dd83a3da8",
     "src/shared/gaming/gamingGameRegistryData.ts": "65150798e269837239685471b4801b5151146811d02181a1a10354be0b8d360d",
     "src/shared/gaming/gamingGameRegistryTypes.ts": "d4936756f0a33bbe49df9b6f78141b0732d06491d78e52cbcf34b913be772db0",
     "src/shared/gaming/gamingHybridPolicyCore.ts": "098298c55588e8fea2031fed1a227a3dfd8ea47a749c4461b5eadc09934073f0",
@@ -74,10 +74,10 @@
     "src/shared/gaming/gamingStructuredEvidencePreviewFixture.ts": "1ef8bddac6ad0f094a60c096966dedc88b3505d5e0d2c6e49159530bc5c3326e"
   },
   "immutableValidation": {
-    "headBefore": "3e4def255c61222a1f8a0b2eba694ab912719a55",
-    "headAfter": "3e4def255c61222a1f8a0b2eba694ab912719a55",
-    "treeBefore": "d45f6cd62b971604a0536f08a02557f8980923d6",
-    "treeAfter": "d45f6cd62b971604a0536f08a02557f8980923d6",
+    "headBefore": "d566c5ccb6dff14a70885be1d2d66a89fe242af7",
+    "headAfter": "d566c5ccb6dff14a70885be1d2d66a89fe242af7",
+    "treeBefore": "1e37f417aa907b9e9f9129264e03e3e895752a29",
+    "treeAfter": "1e37f417aa907b9e9f9129264e03e3e895752a29",
     "fingerprintScope": [
       "src",
       "tests",
@@ -86,27 +86,27 @@
       "arcanos-ai-runtime/src",
       "scripts"
     ],
-    "fileCount": 2429,
-    "manifestSha256Before": "9d7734a805f8e86b0ae74f8d8230630e33d1255584ef37ab77dd8fb1b512fd8f",
-    "manifestSha256After": "9d7734a805f8e86b0ae74f8d8230630e33d1255584ef37ab77dd8fb1b512fd8f",
+    "fileCount": 2431,
+    "manifestSha256Before": "2fdcda11cd876fb6cf42decef2a106cbe06ed29438fac1baf2cdd5742b879105",
+    "manifestSha256After": "2fdcda11cd876fb6cf42decef2a106cbe06ed29438fac1baf2cdd5742b879105",
     "fingerprintsUnchanged": true,
     "jestExitCode": 0,
     "sharedPackageBuildsPerformedByThisAgent": false,
     "command": "node scripts/run-jest.mjs --runTestsByPath tests/gaming-generic-benchmark.test.ts --coverage=false --runInBand",
     "testSuitesPassed": 1,
     "testsPassed": 5,
-    "proofPath": "/workspace/task-tools/gaming-generic-validation/benchmark-immutable-3e4def25-proof.json",
-    "logPath": "/workspace/task-tools/gaming-generic-validation/benchmark-immutable-3e4def25.log"
+    "proofPath": "/workspace/task-tools/gaming-generic-validation/benchmark-immutable-d566c5cc-proof.json",
+    "logPath": "/workspace/task-tools/gaming-generic-validation/benchmark-immutable-d566c5cc.log"
   },
-  "runtimeFoundationCommit": "495d22ba775b932feef160261f99bb6e56f57977",
-  "runtimeCorroborationCommit": "4a7fe5f2fb750e600bc5f06fef59e5d8ae3c2bd9",
   "runtimeBinding": {
-    "previousValidatedCommit": "e57c58f4ccffb5760a87980efa42b2eb394fa1c6",
-    "runtimeSourceUnchanged": true,
+    "previousValidatedCommit": "c406fcb5e1362a1dba850c6e18f59d87065a6711",
+    "runtimeSourceUnchanged": false,
     "changedFingerprintPaths": [
-      "tests/gaming-minecraft-child-isolation.test.ts",
-      "tests/gaming-semantic-reasons.test.ts"
+      "scripts/check-native-pr-preview-imports.mjs",
+      "src/shared/gaming/gamingFreshnessCore.ts",
+      "src/shared/gaming/gamingGameRegistry.ts",
+      "tests/gaming-generic-late-applicability.test.ts"
     ],
-    "changeScope": "Three strict-object test assertions updated; production source, frozen benchmark tests, fixtures and labels unchanged"
+    "changeScope": "Generic full-source applicability metadata inspection and registry applicability helpers, late-applicability security regressions and sealed source-graph pin; frozen benchmark tests, fixtures and labels unchanged"
   }
 }

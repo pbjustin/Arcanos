@@ -223,3 +223,76 @@ preserved. Verification after repair passed all 341 tests across six focused
 suites, including actual controlled streaming acquisition and the immutable
 cross-game benchmark; scoped ESLint also passed. Final CI commit provenance
 remains part of the central validation report.
+
+## Late source-global contradiction boundary
+
+**Confirmed defect:** at foundation checkpoint
+`59fa73d41e6423fc0b0fa4b060e5fd1bae2d1c3c`,
+`assessGamingClearSourceIdentity` inspected acquired Game labels at line 173
+and body clauses at line 223 only within 32,000 characters; guide-heading
+inspection at line 224 stopped after 128 sentences. Three red tests through
+the protected production candidate path admitted complete, untruncated
+synthetic sources containing a later foreign whole-guide assertion, prose-only
+Game declaration or guide heading. The wrong whole-guide assertion was acquired
+at offset 46,119 in a 46,153-character document; the heading occurred after
+more than 128 sentences. Early negative controls rejected and the large valid
+control accepted. A standalone late HTML Game paragraph was safely rejected
+by structured metadata extraction; the failing Game-label case deliberately
+used prose context that was not a structured declaration.
+
+This is source-global contradiction laundering through incomplete validation
+inspection. It is not evidence that the six historical live rejections share
+this cause. Foundation correction `b9c543ca0e1bffcb037d0b01d30d4bae31893586`
+inspects the full acquired contradiction text, preserving the original 32,000-character
+positive-anchor boundary. `acquiredBodySubjects` at `gamingClearSource.ts:59`
+masks complete quoted passages before label, heading and subject scans; a quoted
+name inside an unquoted declaration remains binding. Full-label inspection at
+line 203, heading inspection at line 258, and subject inspection at line 271
+retain global contradiction vetoes while respecting local reference context.
+
+Independent inspection is capped at the resolver's 1,000,000-character bound
+and 1,024 assertions per inspection category; prefix and subject windows are
+bounded. Excessive assertions, incomplete quote inspection or clipped explicit
+subjects yield `UNKNOWN`, proof false and stable rule
+`gaming.identity.source_scope_scan_incomplete` rather than admitting an
+uninspected suffix. Review also reproduced and repaired a positive-boundary
+ordering regression: the original 32,000-character cut precedes declaration
+removal (`gamingClearSource.ts:361`).
+
+The final focused run passed 15 suites / 561 tests with zero skips; its maintained
+late-source suite has 29 cases. Independent known/unknown-title quote and clipped
+subject probes passed 6/6. Pathological 240K–540K inputs returned UNKNOWN in
+4.23–90.00 ms locally; this is bounded synthetic timing, not a production SLA.
+TypeScript, scoped lint, staged guard and reviewed source import checks passed.
+The fixed 140-case benchmark and labels remain unchanged; the additional
+boundary regressions supply separate security coverage. Final immutable
+benchmark and exact-head CI evidence belong in the central validation ledger.
+
+## Late source-global applicability boundary
+
+**Confirmed defect:** at foundation checkpoint `b9c543ca0e1bffcb037d0b01d30d4bae31893586`, `readGamingRegistryEditionScope` and `extractGamingFreshnessMetadata` inspected positive and negative source assertions through the same 32,000-character / 500-line windows. Protected production-path tests admitted a late incompatible same-game edition and platform claim after early matching proof. Additional red controls reproduced ignored region, patch and effective-date conflicts. Complete extraction did not imply complete applicability inspection. These are synthetic generic defects, not established causes of the six live failures.
+
+Correction `11344a08973127fe99b6cf5fb17cd2c6f255b800` retains the original positive proof windows and inspects full bounded negative assertions. `gamingApplicabilityAssertionText` at `gamingGameRegistry.ts:174` preserves quoted field/name bindings while excluding whole quoted references; malformed explicit quote boundaries cannot reuse earlier positive proof. `gamingApplicabilityAssertionContext` at line 220 handles local comparisons and negations. `readGamingRegistryEditionScope` at line 229 separates bounded acquired edition proof from full negative scans. `extractGamingFreshnessMetadata` at `gamingFreshnessCore.ts:144`, with the negative-field comparator at line 245 and full scan at line 258, inspects supported source-global fields and parser-owned metadata without acquiring positive proof from later fields. The new full negative-field comparator uses the existing closed platform alias normalizer at line 232 and normalizes set order and duplicates. The unchanged bounded positive-label parser still compares raw declarations; this repair does not establish canonical equivalence for every legacy parser branch.
+
+Inspection remains bounded to 1,000,000 document characters, 1,024 assertions and 512-character local windows. Incomplete scope, malformed or unbounded fields and budget exhaustion remain UNVERIFIED; definitive identity/security conflicts still precede applicability. Complete local gameplay records remain locally scoped, while metadata-only records retain global semantics. No game-specific branch, availability deny-list or publisher exception was introduced.
+
+The maintained late-applicability suite has 51 cases: 48 protected candidate-path controls and three direct metadata/budget tests. Twelve focused suites passed 451 tests with zero skips; independent quote, configured-registry, comparison/negation, early/late field, alias and proof-window probes passed 64/64. TypeScript, scoped ESLint, staged guard and repinned source graph checks passed. A 180,030-character / 12,000-assertion synthetic input returned UNVERIFIED in 63.41 ms; this is a bounded local observation, not a production SLA. The unchanged 140-case corpus and final exact-head checks provide separate evidence.
+
+## Registry platform-constraint limit
+
+**Missing capability:** `GamingRegistryEdition.platforms` in
+`gamingGameRegistryTypes.ts:7` and game platforms at line 17 are descriptive
+recognition data. The closed schema has no exclusivity/constraint marker or
+separate independently reviewed platform-availability provenance. A controlled
+production-path probe accepted acquired Java/PS5 declarations for a matching
+request, as did its PC control. This confirms lack of a registry constraint veto;
+it does not establish unsupported-platform truth from descriptive arrays.
+
+The generic source/request platform check remains at
+`gamingHybridCandidates.ts:329`, with formatting equivalence in
+`gamingPlatformIdentity.ts`. Future stricter validation needs an explicit
+reviewed exclusive constraint, bounded values and provenance in the game/edition
+schema, followed by a generic acquired-scope constraint stage. Descriptive
+platform lists, unknown game titles and unreviewed publisher claims must never
+be converted automatically into authoritative availability policy. No exclusive
+real-game data or runtime exception is introduced by this candidate.
