@@ -3,11 +3,11 @@ import type { GamingEvidenceUnit } from './gamingEvidenceUnits.js';
 import { GAMING_HYBRID_V2_LIMITS } from './gamingHybridContract.js';
 import { normalizeGamingEvidenceGameIdentity, normalizeGamingEditionIdentity } from './gamingGameIdentity.js';
 import { gamingPlatformEvidenceMatchesRequest, normalizeGamingPlatformIdentity } from './gamingPlatformIdentity.js';
-import { assessGamingStructuralUsability, readGamingEvidenceUnits, readGamingStructuralClaimAssertion } from './gamingStructuralEvidence.js';
+import { assessGamingStructuralUsability, normalizeGamingStructuralFieldLabel, readGamingEvidenceUnits, readGamingStructuralClaimAssertion } from './gamingStructuralEvidence.js';
 import { filterGamingDocumentInstructions } from '@services/gamingDocumentExtraction.js';
 import { GAMING_SOURCE_FAMILY_DATA, type GamingSourceFamilyRegistry } from './gamingSourceFamilyData.js';
 
-export const GAMING_CLAIM_CORROBORATION_VERSION = 'gaming-claim-corroboration/v2';
+export const GAMING_CLAIM_CORROBORATION_VERSION = 'gaming-claim-corroboration/v3';
 const MAX_SOURCES = GAMING_HYBRID_V2_LIMITS.totalCandidateUrls
   + GAMING_HYBRID_V2_LIMITS.currentnessRounds * GAMING_HYBRID_V2_LIMITS.candidates + 8;
 const MAX_CLAIMS = 128;
@@ -17,10 +17,11 @@ const hash = (value: unknown): string => createHash('sha256').update(JSON.string
 const safeId = (value: unknown): value is string => typeof value === 'string' && /^[a-zA-Z0-9._:-]{1,240}$/u.test(value);
 
 /** Presentation headings, captions, bylines and column order cannot turn copied
- * parser-owned records into independent reports. Preserve every field and local
+ * parser-owned records into independent reports. Canonical label aliases retain
+ * the same structural field identity. Preserve every field and local
  * qualifier; acquisition provenance and scope are checked separately below. */
 function parserOwnedRecordFingerprint(unit: GamingEvidenceUnit): string {
-  return hash({ fields: unit.fields.map(field => JSON.stringify([normalized(field.label), normalized(field.value)])).sort(),
+  return hash({ fields: unit.fields.map(field => JSON.stringify([normalizeGamingStructuralFieldLabel(field.label), normalized(field.value)])).sort(),
     qualifiers: (unit.context.qualifiers ?? []).map(normalized).sort() });
 }
 

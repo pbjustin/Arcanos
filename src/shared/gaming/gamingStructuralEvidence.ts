@@ -267,6 +267,8 @@ function fieldKey(label: string): string {
   const normalized = normal(label);
   return aliases[normalized] ?? aliases[normalized.split(/\s+\/\s+/u).at(-1)!] ?? normalized;
 }
+/** Corroboration uses the same field identity as structural claim assessment. */
+export { fieldKey as normalizeGamingStructuralFieldLabel };
 const boundedString = (value: unknown, limit: number): value is string => typeof value === 'string' && value.length > 0 && value.length <= limit;
 
 /** Validate backend persisted metadata without inventing structural provenance for legacy records. */
