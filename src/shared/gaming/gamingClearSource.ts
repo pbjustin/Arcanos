@@ -226,6 +226,28 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
     ...(document.metadata.title ? [{ value: document.metadata.title, category: 'document_title' as const }] : []),
     ...(leadingHeading ? [{ value: leadingHeading, category: 'body_heading' as const }] : [])
   ];
+  // A named location or mechanic can own a guide without being a game title.
+  // Require an independent, affirmative acquired definition of that exact topic
+  // in the requested game. URL labels, loose game mentions and quoted references
+  // cannot supply this relationship; known game aliases remain binding below.
+  const topicProse = acquiredHeadingStart(bodyScopes.unquotedText.trimStart(), leadingHeading);
+  const topicDefinitions = leadingHeading && topicProse.startsWith(leadingHeading) ? topicProse.slice(leadingHeading.length) : topicProse;
+  const topicOffset = bodyScopes.unquotedText.length - topicDefinitions.length;
+  const acquiredTopicScopes = new Map<string, Array<{ game: string; index: number }>>();
+  let topicScopeCount = 0;
+  for (const definition of topicDefinitions.matchAll(/(?:^|[.!?\n])\s*([^.!?\n]{1,120}?)\s+is\s+(?:a|an)\s+(?:location|area|region|town|city|village|settlement|dungeon|weapon|item|spell|skill|mechanic)\s+in\s+([^.!?,;\n]{1,120})(?=[.!?,;\n]|$)/giu)) {
+    if (++topicScopeCount > IDENTITY_SCOPE_SCAN_LIMITS.assertions) { scopeScanComplete = false; break; }
+    const topic = normalizeGamingGameIdentity(definition[1]);
+    acquiredTopicScopes.set(topic, [...(acquiredTopicScopes.get(topic) ?? []),
+      { game: definition[2].trim(), index: topicOffset + definition.index }]);
+  }
+  const acquiredTopicSubject = (value: string): boolean => {
+    const detected = detectGamingDocumentGame({ canonicalUrl: '', pageTitle: value });
+    const subject = detected.game ?? value.replace(/\s+(?:guide|walkthrough|wiki|tips?)\s*$/iu, '');
+    const scopes = acquiredTopicScopes.get(normalizeGamingGameIdentity(subject));
+    return detected.source !== 'alias' && Boolean(scopes?.some(scope => scope.index < PRIMARY_IDENTITY_SCOPE_CHARS)
+      && scopes.every(scope => sourceGameMatches(scope.game)));
+  };
   // Pooled related headings can establish neither positive game identity nor
   // requested edition applicability. The same acquired subject boundary applies
   // to both admission and contradiction checks.
@@ -248,7 +270,7 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
     // outside the alias catalog. A URL label must not hide that contradiction.
     const detected = detectGamingDocumentGame({ canonicalUrl: '', pageTitle: value });
     const acquiredBody = withoutGamingAcquiredGameDeclarations(document.text);
-    if (detected.game && (detected.source === 'alias' || !isGamingAcquiredTopicTitle(value) && containsIdentity(acquiredBody, detected.game)) && detected.confidence >= 0.8 && !sourceGameMatches(detected.game)
+    if (detected.game && (detected.source === 'alias' || !isGamingAcquiredTopicTitle(value) && !acquiredTopicSubject(value) && containsIdentity(acquiredBody, detected.game)) && detected.confidence >= 0.8 && !sourceGameMatches(detected.game)
       && ![...expected].some(game => containsIdentity(value, game)))
       return result('conflict', 'GAME_MISMATCH', category === 'document_title'
         ? 'gaming.identity.acquired_title_conflict' : 'gaming.identity.acquired_primary_heading_conflict', category);
@@ -261,7 +283,8 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
     if (/^(?:unlike|compared(?:\s+(?:to|with))?|comparison(?:\s+(?:to|with))?|contrast(?:\s+(?:to|with))?|rather\s+than|instead\s+of|like|not)\b/iu.test(heading)) continue;
     // URL-first detection must not hide an explicit conflicting subject in acquired prose.
     const detected = detectGamingDocumentGame({ canonicalUrl: '', pageTitle: heading.slice(0, 240) });
-    if (detected.game && (detected.source === 'alias' || !isGamingAcquiredTopicTitle(heading.split(':')[0]))
+    if (detected.game && (detected.source === 'alias' || !isGamingAcquiredTopicTitle(heading.split(':')[0])
+      && !acquiredTopicSubject(heading.split(':')[0]))
       && detected.confidence >= 0.8 && !sourceGameMatches(detected.game)
       && ![...expected].some(game => containsIdentity(heading.split(':')[0], game)))
       return result('conflict', 'GAME_MISMATCH', 'gaming.identity.instruction_heading_conflict', 'body_heading');
@@ -304,6 +327,7 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
     const subjectIdentity = normalizeGamingGameIdentity(bodySubject);
     const expectedSubject = [...expected].some(game => subjectIdentity === game || subjectIdentity.startsWith(`${game}-`));
     if (detected.game && detected.confidence >= 0.8 && !sourceGameMatches(detected.game)
+      && !(detected.source !== 'alias' && !namedGameScope && acquiredTopicSubject(bodySubject))
       && !(leading.game ? expectedSubject : [...expected].some(game => containsIdentity(bodySubject, game))))
       return result('conflict', 'GAME_MISMATCH', 'gaming.identity.affirmative_body_scope_conflict', 'body_scope');
     if ([...expected].some(game => {
@@ -359,11 +383,11 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
   // declaration. Neither matching player/topic terms nor a reference mention
   // can supply that proof, and all acquired contradictions above still bind.
   const primaryProse = withoutGamingAcquiredGameDeclarations(document.text.slice(0, PRIMARY_IDENTITY_SCOPE_CHARS));
-  const acquiredBodyScope = !metadataAnchor && metadata.some(isGamingAcquiredTopicTitle)
+  const acquiredBodyScope = !metadataAnchor && (metadata.some(acquiredTopicSubject) || metadata.some(isGamingAcquiredTopicTitle)
     && acquiredBodySubjects(primaryProse).subjects.some(({ text: subject }) => {
     const declared = detectGamingLeadingGameAlias(subject);
     return declared.game && declared.confidence >= 0.8 && expected.has(normalizeGamingGameIdentity(declared.game));
-  });
+  }));
   gameIdentityVerified = Boolean(scopeScanComplete && (metadataAnchor && proseAnchor || reviewedAssociation && metadataAnchor || acquiredBodyScope)
     && !clippedPrimaryHeading);
   // A definitive acquired applicability contradiction remains terminal without
