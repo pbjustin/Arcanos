@@ -80,8 +80,8 @@ and authority:
    cannot replace that tooling. `reviewedCandidateSha` records the pin review's
    provenance; final candidate identity comes from the authorization receipt.
    Pins were independently refreshed for repaired #1535 commit
-   `b0e7c7f5346ff01a551f02020e1ad26fd2985e9c`, tree
-   `e9750ee962a0e330b3a7bfec354395474f1ea4dd`. Only the source checker's three
+   `dd8b4af2e837b0a222ed440f8e35091d709f11b0`, tree
+   `1953d1a39a80953253068444f0728aa20e8bbb45`. Only the source checker's three
    reviewed semantic-file digests changed; emitted checker, import config and
    dependency lock bytes remain unchanged.
    Checker or lock drift requires a separately reviewed policy update. The trusted

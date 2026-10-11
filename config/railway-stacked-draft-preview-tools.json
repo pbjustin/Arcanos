@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "reviewedCandidateSha": "b0e7c7f5346ff01a551f02020e1ad26fd2985e9c",
+  "reviewedCandidateSha": "dd8b4af2e837b0a222ed440f8e35091d709f11b0",
   "files": [
     {
       "path": "scripts/check-native-pr-preview-imports.mjs",
