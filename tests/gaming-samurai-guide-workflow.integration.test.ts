@@ -202,6 +202,69 @@ function harness() {
   return { workflow, retrieve, query, submit };
 }
 
+describe('ordinary gameplay requests through the served Gaming workflow', () => {
+  // Synthetic acquired articles exercise the reported questions; these are not
+  // captures of the production publishers or evidence of live acceptance.
+  it.each([
+    {
+      name: 'location guidance', mode: 'guide', currentArea: 'Church of Elleh',
+      question: 'What should I do at the Church of Elleh before moving on?',
+      title: 'Elden Ring Church of Elleh preparation',
+      text: 'Church of Elleh is a location in Elden Ring. Before moving on, rest at the Site of Grace at Church of Elleh and speak to the merchant Kale. Buy the Crafting Kit if you have enough runes. These immediate preparation steps can be done without fighting another enemy or leaving the church.',
+      answer: 'Before moving on from Church of Elleh, rest at its Site of Grace.',
+      searchTerms: ['church', 'elleh']
+    },
+    {
+      name: 'equipment-load mechanics', mode: 'guide',
+      question: 'How do I avoid heavy rolling in Elden Ring?',
+      title: 'Elden Ring heavy rolling and equipment load',
+      text: 'In Elden Ring, heavy rolling depends on equipment load. Avoid a heavy roll by keeping your equipped weight below 70 percent of your maximum equipment load. Unequip a heavy weapon or armor piece to lower the load. Inventory items that are not equipped do not add to equipped weight. Check the equipment screen after changing gear.',
+      answer: 'Keep your equipped weight below 70 percent of your maximum equipment load to avoid heavy rolling.',
+      searchTerms: ['heavy', 'rolling']
+    },
+    {
+      name: 'initial stat advice', mode: 'build', class: 'Samurai', currentArea: 'Limgrave',
+      question: 'Which stat should an early-game Samurai using an Uchigatana level first?',
+      title: 'Elden Ring early-game Samurai stat allocation',
+      text: 'In Elden Ring, an early-game Samurai using an Uchigatana can level Vigor first for more health. The starting Samurai already meets the Uchigatana requirements, so early stat allocation can focus on surviving mistakes in Limgrave. Raising Vigor before investing heavily in damage stats is a simple survival recommendation, not a claim about an optimal damage build.',
+      answer: 'For early survival with the Uchigatana, level Vigor first to increase health.',
+      searchTerms: ['samurai', 'uchigatana']
+    },
+    {
+      name: 'single safe preparation step with a location preamble', mode: 'guide',
+      question: 'At Church of Elleh in early Elden Ring, what is one safe preparation step before continuing? Avoid spoilers.',
+      title: 'Elden Ring Church of Elleh preparation',
+      text: 'Church of Elleh is a location in Elden Ring. Rest at the Site of Grace inside Church of Elleh to replenish your health and flask charges. The grace is inside the ruined building next to the merchant. You can reach it without fighting the mounted enemy patrolling the nearby road. Activate it as a nearby place to return after exploring Limgrave.',
+      answer: 'Rest at the Site of Grace inside Church of Elleh to replenish health and flask charges before continuing.',
+      searchTerms: ['church', 'elleh', 'preparation']
+    }
+  ])('answers $name only after acquiring and selecting cited evidence', async fixture => {
+    const url = 'https://guides.example.org/ordinary-gameplay';
+    pages.set(url, {
+      html: `<html><head><title>${fixture.title}</title></head><body><article><h1>${fixture.title}</h1><p>Game: Elden Ring.</p><p>${fixture.text}</p></article></body></html>`,
+      answer: fixture.answer
+    });
+    const run = harness();
+    const initial = await run.query({ question: fixture.question, mode: fixture.mode,
+      class: fixture.class, currentArea: fixture.currentArea,
+      progressPoint: undefined, spoilerTolerance: 'none' });
+    expect(initial.result).toMatchObject({ nextAction: 'search', state: 'discovery_required' });
+    for (const term of fixture.searchTerms) {
+      expect(initial.result.discovery!.searchQueries.join(' ').toLowerCase()).toContain(term);
+    }
+    expect(mockTrinity).not.toHaveBeenCalled();
+    const final = await run.submit(initial.result, url);
+    expect(final.result).toMatchObject({ state: 'answer_ready', nextAction: 'answer', coverageSatisfied: true });
+    expect(final.result.answer!.response).toContain(fixture.answer);
+    expect(final.result.answer!.response).toContain('[Source 1]');
+    expect(final.result.answer!.sources.map(source => source.url)).toEqual([url]);
+    expect(final.result.selectedCandidateIds).toHaveLength(1);
+    expect(mockHttp).toHaveBeenCalledTimes(1);
+    expect(mockTrinity).toHaveBeenCalledTimes(1);
+    expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('October 4 early-game Samurai request through the served Gaming workflow', () => {
   it('acquires a base-game guide without request edition, reaches Trinity and returns bound, qualified evidence', async () => {
     pages.set(guideUrl, { html: guideHtml, answer: groundedAnswer });
