@@ -5348,13 +5348,27 @@ async function executeRequestCase(
   };
 }
 
+// A closed subset reuses the full verifier's assertions without executing the
+// unrelated Notion edge canary or provider seams. The ordinary plan is intact.
+export function buildStackedDraftGamingRequestPlan() {
+  return buildNativePrPreviewRequestPlan().filter(requestCase =>
+    requestCase.caseId.includes('gaming')
+    || /^(?:web|worker)-readiness-(?:initial|final)$/u.test(requestCase.caseId)
+    || ['/health', '/healthz'].includes(requestCase.path)
+  );
+}
+
 export async function runNativePrPreviewE2e({
   args,
   expectedBackstageBookerOpenApiDocument = undefined,
   fetchImpl = globalThis.fetch,
   localGitState = undefined,
   monotonicNow = () => performance.now(),
+  requestScope = 'full',
 } = {}) {
+  if (!['full', 'stacked-draft-gaming-synthetic'].includes(requestScope)) {
+    fail('NATIVE_PR_PREVIEW_REQUEST_SCOPE_INVALID');
+  }
   const parsedOptions = parseNativePrPreviewE2eArguments(
     args ?? [],
     localGitState === undefined ? {} : { localGitState }
@@ -5368,7 +5382,9 @@ export async function runNativePrPreviewE2e({
           parsedOptions.commitSha
         ),
   };
-  const requestPlan = buildNativePrPreviewRequestPlan();
+  const requestPlan = requestScope === 'full'
+    ? buildNativePrPreviewRequestPlan()
+    : buildStackedDraftGamingRequestPlan();
   const target = {
     repository: options.repository,
     prNumber: options.prNumber,
@@ -5393,7 +5409,7 @@ export async function runNativePrPreviewE2e({
   if (!options.execute) {
     return {
       schemaVersion: 1,
-      kind: 'native_pr_preview_application_e2e',
+      kind: requestScope === 'full' ? 'native_pr_preview_application_e2e' : 'stacked_draft_gaming_synthetic_e2e',
       mode: 'DRY_RUN',
       executed: false,
       networkAttempted: false,
@@ -5428,6 +5444,7 @@ export async function runNativePrPreviewE2e({
   const deadlineMs = Date.now() + options.totalTimeoutMs;
   const initialIdentityHashes = new Map();
   for (const requestCase of requestPlan) {
+    const caseStartedAt = requestScope === 'full' ? null : monotonicNow();
     const check = await executeRequestCase(
       requestCase,
       options,
@@ -5436,7 +5453,7 @@ export async function runNativePrPreviewE2e({
       aggregateState,
       monotonicNow
     );
-    checks.push(check);
+    checks.push(caseStartedAt === null ? check : { ...check, elapsedMs: Math.max(0, monotonicNow() - caseStartedAt) });
     if (requestCase.caseId.endsWith('-readiness-initial')) {
       initialIdentityHashes.set(requestCase.role, check.bodySha256);
     }
@@ -5450,7 +5467,7 @@ export async function runNativePrPreviewE2e({
 
   return {
     schemaVersion: 1,
-    kind: 'native_pr_preview_application_e2e',
+    kind: requestScope === 'full' ? 'native_pr_preview_application_e2e' : 'stacked_draft_gaming_synthetic_e2e',
     mode: 'EXECUTE',
     executed: true,
     networkAttempted: true,
@@ -5466,7 +5483,7 @@ export async function runNativePrPreviewE2e({
     checks,
     summary: {
       status: 'PASS',
-      code: 'NATIVE_PR_PREVIEW_APPLICATION_E2E_PASS',
+      code: requestScope === 'full' ? 'NATIVE_PR_PREVIEW_APPLICATION_E2E_PASS' : 'STACKED_DRAFT_GAMING_SYNTHETIC_E2E_PASS',
       checksPassed: checks.length,
       plannedRequests: requestPlan.length,
       requestsMade: checks.length,
