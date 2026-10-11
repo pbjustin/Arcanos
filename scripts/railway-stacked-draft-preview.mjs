@@ -249,7 +249,14 @@ export async function deployStackedDraftPreview({ authorization, imageReceipt, r
   const deadline = now() + MAX_STARTUP_MS;
   const receipt = { schemaVersion: 1, status: 'NOT VERIFIED', ownership: null, patchId: null, deployments: {}, hosts: {}, cleanup: null };
   let ownershipCommitted = false;
-  const effect = async action => { requireCondition(now() < deadline, 'STACKED_PREVIEW_STARTUP_TIMEOUT'); await revalidate(); requireCondition(now() < deadline, 'STACKED_PREVIEW_STARTUP_TIMEOUT'); return action(); };
+  const effect = async action => {
+    requireCondition(now() < deadline, 'STACKED_PREVIEW_STARTUP_TIMEOUT');
+    await revalidate();
+    await railway.validateAuthority(target);
+    requireDeploymentActivation(authorization, { now: now() });
+    requireCondition(now() < deadline, 'STACKED_PREVIEW_STARTUP_TIMEOUT');
+    return action();
+  };
   try {
     await revalidate();
     await railway.validateAuthority(target);
@@ -265,6 +272,8 @@ export async function deployStackedDraftPreview({ authorization, imageReceipt, r
       requireCondition(await railway.stagedEmpty(target.baseEnvironmentId), 'STACKED_PREVIEW_BASE_STAGED_CHANGES');
       const current = await railway.listEnvironments(target.projectId);
       requireCondition(current.length === 1 && current[0].id === target.baseEnvironmentId, 'STACKED_PREVIEW_EXISTING_ENVIRONMENT');
+      requireDeploymentActivation(authorization, { now: now() });
+      requireCondition(now() < deadline, 'STACKED_PREVIEW_STARTUP_TIMEOUT');
       return railway.createEnvironment(target, 'pr-1532aa-1535');
     });
     requireCondition(UUID.test(created?.id) && created.projectId === target.projectId && created.isEphemeral === true

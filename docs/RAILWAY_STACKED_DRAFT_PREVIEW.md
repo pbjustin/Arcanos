@@ -60,6 +60,10 @@ no dependency commits are missing. A branch name or response header alone
 does not attest artifact bytes. Reread admission before publication,
 deployment, and final evidence; reject changed heads, bases, draft states,
 topology, ambiguous inventories, or incomplete pagination.
+Before every Railway mutation, reread the complete workspace and project
+authority inventory after fresh GitHub authorization. Broadened authority
+blocks the next mutation; failed cleanup retains ownership evidence for owner
+inspection instead of deleting under an unproved capability.
 
 The [built-in contract](../scripts/stacked-draft-preview-contract.mjs) and
 [controller](../scripts/railway-stacked-draft-preview.mjs) enforce the fixed

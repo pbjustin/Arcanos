@@ -12,13 +12,13 @@ const sha = character => character.repeat(40);
 const digest = character => character.repeat(64);
 const conn = nodes => ({ edges: nodes.map(node => ({ node })), pageInfo: { hasNextPage: false } });
 const image = `ghcr.io/pbjustin/arcanos-stacked-preview@sha256:${digest('f')}`;
-function fixture({ registryCredentials = null } = {}) {
+function fixture({ registryCredentials = null, authorizationSeconds = 7200 } = {}) {
   let clock = Date.now();
   const policy = structuredClone(DEFAULT_POLICY);
   policy.enabled = true;
   policy.target = { workspaceId: uuid(1), projectId: uuid(2), baseEnvironmentId: uuid(3), workerServiceId: uuid(4), webServiceId: uuid(5), region: 'us-east4-eqdc4a', cpuLimit: 1, memoryLimitGb: 1, imageRepository: policy.imageRepository };
   if (registryCredentials) policy.target.registryPullCredentialSha256 = createHash('sha256').update(JSON.stringify({ username: registryCredentials.username, password: registryCredentials.password })).digest('hex');
-  const raw = { version: 1, controllerSha: sha('1'), mainSha: sha('2'), expiresAt: new Date(clock + 7_200_000).toISOString(), stack: [1533, 1534, 1535].map((prNumber, index) => ({ prNumber, headSha: sha(String(index + 3)), treeSha: sha(String(index + 6)) })), sourceArchiveSha256: digest('a') };
+  const raw = { version: 1, controllerSha: sha('1'), mainSha: sha('2'), expiresAt: new Date(clock + authorizationSeconds * 1000).toISOString(), stack: [1533, 1534, 1535].map((prNumber, index) => ({ prNumber, headSha: sha(String(index + 3)), treeSha: sha(String(index + 6)) })), sourceArchiveSha256: digest('a') };
   const authorization = validateAuthorization({ authorization: raw, policy, actor: 'pbjustin', repository: 'pbjustin/Arcanos', controllerSha: raw.controllerSha, now: clock });
   const buildReceipt = { schemaVersion: 1, controllerSha: raw.controllerSha, candidateSha: raw.stack[2].headSha, treeSha: raw.stack[2].treeSha, sourceArchiveSha256: digest('a'), compiledSha256: digest('b'), compiledFiles: 20, compiledBytes: 1024, runtimeDependencyInventorySha256: digest('c'), expiresAt: raw.expiresAt, imageArchiveSha256: digest('d'), imageId: `sha256:${digest('e')}`, runtimeDevDependenciesPruned: true };
   const bytes = JSON.stringify(buildReceipt);
@@ -68,6 +68,7 @@ test('worker becomes ready before web starts, every mutation requires fresh auth
   for (const action of ['create', 'stage', 'commit', 'deploy-worker', 'deploy-web']) {
     const actionIndex = railway.events.indexOf(action);
     assert.ok(railway.events.slice(previous + 1, actionIndex).includes('fresh'));
+    assert.ok(railway.events.slice(previous + 1, actionIndex).includes('authority'));
     previous = actionIndex;
   }
   assert.equal(railway.environments.size, 2); assert.equal(receipt.ownership.runId, '123456'); assert.equal(receipt.hosts.web, 'https://web-pr-1532aa-1535.up.railway.app');
@@ -77,6 +78,65 @@ test('worker becomes ready before web starts, every mutation requires fresh auth
   assert.equal(cleanup.status, 'VERIFIED'); assert.equal(railway.environments.size, 1);
   assert.equal((await cleanupStackedDraftPreview({ policy: f.policy, railway, receipt, now: f.now })).alreadyAbsent, true);
 });
+for (const [afterMethod, blockedAction] of [
+  ['createEnvironment', 'stage'], ['stageConfig', 'commit'],
+  ['commitConfig', 'deploy-worker'], ['readReadiness', 'deploy-web'],
+]) {
+  test(`broadened Railway authority after ${afterMethod} blocks ${blockedAction} and preserves failed cleanup evidence`, async () => {
+    const f = fixture(); const railway = new MockRailway(f);
+    let broadened = false; let last;
+    const prior = railway[afterMethod].bind(railway);
+    railway[afterMethod] = async (...args) => {
+      const result = await prior(...args);
+      broadened = true;
+      return result;
+    };
+    railway.validateAuthority = async () => {
+      railway.events.push('authority');
+      if (broadened) throw Object.assign(new Error('authority broadened'), {
+        code: 'STACKED_PREVIEW_ISOLATED_AUTHORITY_UNPROVEN',
+      });
+    };
+    await assert.rejects(deploy(f, railway, { onReceipt: receipt => { last = structuredClone(receipt); } }),
+      error => error.code === 'STACKED_PREVIEW_ISOLATED_AUTHORITY_UNPROVEN');
+    assert.ok(!railway.events.includes(blockedAction));
+    assert.ok(!railway.events.includes('delete'));
+    assert.equal(railway.environments.size, 2);
+    assert.equal(last.status, 'NOT VERIFIED');
+    assert.equal(last.cleanup.status, 'BLOCKED');
+    assert.equal(last.cleanup.errorCode, 'STACKED_PREVIEW_ISOLATED_AUTHORITY_UNPROVEN');
+    assert.equal(last.ownership.environmentId, uuid(6));
+  });
+}
+test('authorization expiring during fresh Railway authority validation cannot create resources', async () => {
+  const f = fixture({ authorizationSeconds: 10 }); const railway = new MockRailway(f);
+  let authorityReads = 0;
+  railway.validateAuthority = async () => {
+    railway.events.push('authority');
+    if (++authorityReads === 2) f.advance(10_001);
+  };
+  await assert.rejects(deploy(f, railway), error => error.code === 'STACKED_PREVIEW_AUTHORIZATION_EXPIRED');
+  assert.ok(!railway.events.includes('create'));
+  assert.equal(railway.environments.size, 1);
+});
+for (const [authorizationSeconds, elapsedMs, errorCode] of [
+  [10, 10_001, 'STACKED_PREVIEW_AUTHORIZATION_EXPIRED'],
+  [7200, 20 * 60_000 + 1, 'STACKED_PREVIEW_STARTUP_TIMEOUT'],
+]) {
+  test(`${errorCode} during final clone inventory prevents resource creation`, async () => {
+    const f = fixture({ authorizationSeconds }); const railway = new MockRailway(f);
+    const list = railway.listEnvironments.bind(railway); let inventories = 0;
+    railway.listEnvironments = async (...args) => {
+      const result = await list(...args);
+      if (++inventories === 2) f.advance(elapsedMs);
+      return result;
+    };
+    await assert.rejects(deploy(f, railway), error => error.code === errorCode);
+    assert.equal(inventories, 2);
+    assert.ok(!railway.events.includes('create'));
+    assert.equal(railway.environments.size, 1);
+  });
+}
 test('private image pull uses only the exact owner-pinned platform credential and excludes its values from receipts', async () => {
   const credentials = { username: 'dedicated-preview-pull', password: 'mock-never-output-dedicated-read-only-registry-token' };
   const f = fixture({ registryCredentials: credentials }); const railway = new MockRailway(f); const receipt = await deploy(f, railway);
