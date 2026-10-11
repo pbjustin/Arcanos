@@ -42,6 +42,8 @@ ownership, lifecycle, consolidation, and validation rules.
 - [Architecture](ARCHITECTURE.md) — repository map, routing planes, jobs, and
   runtime topology.
 - [CI/CD](CI_CD.md) — required workflows and environment separation.
+- [Gaming exact-commit CI](GAMING_EXACT_COMMIT_CI.md) — companion contract for
+  owner-authorized mocked source verification and its isolation limits.
 - [Configuration](CONFIGURATION.md) — environment variables and defaults.
 - [Database and migrations](DATABASE_MIGRATIONS.md) — schema ownership and
   safe migration workflow.
