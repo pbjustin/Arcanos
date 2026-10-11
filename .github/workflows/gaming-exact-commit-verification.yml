@@ -1,0 +1,124 @@
+name: Gaming Exact Commit Mocked Verification
+
+# This additional receipt lane does not replace CI/CD or its required aggregate.
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Exact authorized Gaming commit (40 lowercase hexadecimal characters)
+        required: true
+        type: string
+      mocked:
+        description: Must be explicitly true; external networking is still denied by the sandbox
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: gaming-exact-commit-${{ inputs.source_sha }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Isolated exact-commit verification receipt
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      CONTROLLER_SHA: ${{ github.workflow_sha }}
+      NODE_VERSION: '24.18.1'
+      NODE_IMAGE: node:24.18.1-bookworm@sha256:87362b5d965240a1bc79f85cec63179d4ee853741413b274a4721f2742eb8393
+    steps:
+      - name: Reject untrusted dispatch context before checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_EVENT_NAME" = workflow_dispatch
+          test "$GITHUB_REPOSITORY" = pbjustin/Arcanos
+          test "$GITHUB_REF" = refs/heads/main
+          test "$GITHUB_ACTOR" = pbjustin
+          test "$GITHUB_TRIGGERING_ACTOR" = pbjustin
+          test "$GITHUB_RUN_ATTEMPT" = 1
+          test "$CONTROLLER_SHA" = "$GITHUB_SHA"
+
+      - name: Checkout trusted controller at the immutable workflow commit
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: controller
+          persist-credentials: false
+          fetch-depth: 1
+          submodules: false
+          lfs: false
+
+      - name: Setup pinned trusted Node runtime
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Validate the trusted dispatch and sandbox contract
+        run: node --test controller/scripts/gaming-exact-commit-verification.test.mjs controller/scripts/gaming-exact-commit-sandbox.test.mjs
+
+      - name: Validate exact inputs, protected controller and current draft source
+        id: admission
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node controller/scripts/gaming-exact-commit-verification.mjs admit
+
+      - name: Checkout the authorized source SHA without branch resolution
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: pbjustin/Arcanos
+          ref: ${{ steps.admission.outputs.source_sha }}
+          path: candidate
+          persist-credentials: false
+          fetch-depth: 1
+          submodules: false
+          lfs: false
+
+      - name: Verify HEAD and tree before executing candidate code
+        run: node controller/scripts/gaming-exact-commit-verification.mjs assert-source
+
+      - name: Prepare dependencies from trusted manifests with lifecycle scripts disabled
+        timeout-minutes: 12
+        run: node controller/scripts/gaming-exact-commit-verification.mjs prepare
+
+      - name: Resolve pinned public runner image to its immutable local identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker --host unix:///var/run/docker.sock pull "$NODE_IMAGE"
+          image_id=$(docker --host unix:///var/run/docker.sock image inspect --format '{{.Id}}' "$NODE_IMAGE")
+          [[ "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]]
+          printf 'GAMING_CI_IMAGE_ID=%s\n' "$image_id" >> "$GITHUB_ENV"
+
+      - name: Run candidate verification without credentials or external networking
+        id: sandbox
+        timeout-minutes: 35
+        run: node controller/scripts/gaming-exact-commit-verification.mjs run
+
+      - name: Recheck immutable source and draft status with the trusted controller
+        if: always() && steps.admission.outcome == 'success'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CANDIDATE_RESULT: ${{ steps.sandbox.outcome }}
+        run: node controller/scripts/gaming-exact-commit-verification.mjs finalize
+
+      - name: Retain trusted source and sandbox receipts plus bounded untrusted logs
+        if: always() && steps.admission.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: gaming-exact-commit-${{ steps.admission.outputs.source_sha }}-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/gaming-exact-commit/admission.json
+            ${{ runner.temp }}/gaming-exact-commit/checkout.json
+            ${{ runner.temp }}/gaming-exact-commit/preparation.json
+            ${{ runner.temp }}/gaming-exact-commit/sandbox-receipt.json
+            ${{ runner.temp }}/gaming-exact-commit/container-ownership.json
+            ${{ runner.temp }}/gaming-exact-commit/finalization.json
+            ${{ runner.temp }}/gaming-exact-commit/candidate-output.untrusted.log
+          if-no-files-found: error
+          retention-days: 10

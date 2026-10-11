@@ -17,6 +17,9 @@ Core workflows to review first:
   fixture. It builds `ArcanosDeviceE2E`, runs real HTTP/authentication/queue/SQL
   paths with synthetic provider/executor boundaries, and retains only the
   sanitized proof JSON after success. See the [fixture procedure](../clients/ios/README.md#device-gateway-and-postgresql-end-to-end-fixture).
+- [Gaming exact-commit mocked verification](GAMING_EXACT_COMMIT_CI.md): a separate
+  owner-dispatched, credential-free offline sandbox with explicit SHA inputs and
+  source/tree receipts. It does not replace full CI/CD or release admission.
 - [PR CI](../.github/workflows/pr-ci.yml): builds the backend before Jest so the
   compiled DAG metrics fixture exercises emitted runtime modules. To run this
   fixture locally, use `npm run build`, then
