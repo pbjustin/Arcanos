@@ -9,6 +9,8 @@ import { createHash } from "node:crypto";
 import { logger } from "@platform/logging/structuredLogging.js";
 import { getEnv } from "@platform/runtime/env.js";
 import { GAMING_BUILD_RESOURCE_HARD_LIMITS } from "@services/gamingBuildResourceSchema.js";
+import { buildGamingRetrievalTerms } from "@shared/gaming/gamingRetrievalPolicy.js";
+import type { GamingPlayerContext } from "@shared/gaming/gamingPlayerContext.js";
 import {
   getGamingDiscoveryBudgetMs,
   getGamingDiscoveryCacheMaxEntries,
@@ -73,11 +75,12 @@ export interface GamingDiscoveredCandidate extends GamingSearchResult {
   };
 }
 
-export interface GamingDiscoveryInput {
+export interface GamingDiscoveryInput extends Pick<GamingPlayerContext, "class" | "currentArea" | "constraints" | "edition"> {
   prompt: string;
   game?: string;
   mode: GamingMode;
   patchSensitive?: boolean;
+  requestedVersion?: string;
   signal?: AbortSignal;
   provider?: GamingSearchProvider;
 }
@@ -125,7 +128,7 @@ const MAX_SEARCH_QUERY_CHARS = 180;
 const MAX_SEARCH_RESULT_URL_CHARS = 2_048;
 const MAX_SEARCH_TITLE_CHARS = 240;
 const MAX_SEARCH_SNIPPET_CHARS = 500;
-const MAX_QUERY_TOPIC_TERMS = 7;
+const MAX_QUERY_TOPIC_TERMS = 12;
 const MAX_PROVIDER_RANK = 100;
 const SOURCE_INSTRUCTION_PATTERN = /(?:\b(?:(?:ignore|disregard|override)\s+(?:all\s+)?(?:previous|prior|system|developer|assistant|user)\s+(?:instructions?|messages?|prompts?)|forget\s+(?:everything|all)(?:\s+(?:written|said))?\s+(?:above|before)|you\s+are\s+now|(?:reveal|print|show|expose)\s+(?:the\s+)?(?:system|developer)\s+(?:prompt|message|instructions?)|(?:call|invoke)\s+(?:the\s+)?(?:tool|function)|(?:execute|run)\s+(?:this\s+)?(?:command|shell|powershell|bash))\b|(?:^|\s|\[|<\|)(?:system|developer|assistant|user)(?:\s*:|\]|\|>))/i;
 const QUERY_STOP_WORDS = new Set([
@@ -158,6 +161,12 @@ function stripUntrustedInstructions(value: string): string {
     .replace(/\b(?:postgres|postgresql|mysql|mongodb|redis):\/\/[^\s]+/gi, " ")
     .replace(/\beyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}(?:\.[A-Za-z0-9_-]{6,})?\b/g, " ")
     .replace(/\b(?:access[_-]?token|api[_-]?key|auth[_-]?token|cookie|credential|password|secret|session[_-]?id|token)\s*[:=]\s*[^\s,;]+/gi, " ")
+    // Discovery sends only gameplay intent to a search provider. Explicit personal
+    // asides and account/character identifiers are never useful search context.
+    .replace(/\b(?:my|our)\s+(?:(?:private|personal)\s+)?(?:account|character\s+(?:name|id|identifier)|address|apartment|email|phone)\b[^;.!?\n]*/giu, " ")
+    .replace(/\b(?:private|personal)\s+(?:character|account|address|apartment|email|phone)\b[^;.!?\n]*/giu, " ")
+    .replace(/\b(?:account|user|player|character)\s*(?:id|identifier|name)\s*[:=]\s*\S+/giu, " ")
+    .replace(/\b\d{7,}\b|\[[^\]]*REDACT[^\]]*\]/giu, " ")
     .split(/(?<=[.!?])\s+|[\r\n]+/)
     .filter((part) => !SOURCE_INSTRUCTION_PATTERN.test(part))
     .join(" ")
@@ -174,16 +183,20 @@ function safeSearchText(value: unknown, maxChars: number): string | undefined {
   return cleaned || undefined;
 }
 
-function buildQueryTopicTerms(prompt: string, game?: string): string[] {
-  const gameTerms = new Set(tokenize(game ?? ""));
-  return tokenize(stripUntrustedInstructions(prompt).slice(0, 1_000))
-    .filter((term) => !QUERY_STOP_WORDS.has(term) && !gameTerms.has(term))
-    .slice(0, MAX_QUERY_TOPIC_TERMS);
+function buildQueryTopicTerms(input: GamingDiscoveryInput): string[] {
+  const clean = (value: string | undefined) => value ? stripUntrustedInstructions(value).slice(0, 1_000) : undefined;
+  const terms = buildGamingRetrievalTerms({
+    game: clean(input.game), prompt: clean(input.prompt) ?? "", mode: input.mode,
+    class: clean(input.class), currentArea: clean(input.currentArea),
+    constraints: input.constraints?.map(value => clean(value) ?? "").filter(Boolean)
+  });
+  return Array.from(new Set([...terms.focusTerms, ...terms.contextTerms]))
+    .filter(term => !QUERY_STOP_WORDS.has(term)).slice(0, MAX_QUERY_TOPIC_TERMS);
 }
 
-export function buildGamingDiscoveryQuery(input: Pick<GamingDiscoveryInput, "prompt" | "game" | "mode" | "patchSensitive">): string {
+export function buildGamingDiscoveryQuery(input: GamingDiscoveryInput): string {
   const game = safeSearchText(input.game, 100);
-  const topicTerms = buildQueryTopicTerms(input.prompt, game);
+  const topicTerms = buildQueryTopicTerms({ ...input, game });
   const gameSegment = game
     ? (game.includes(" ") ? `"${game.replace(/[\"\\]/g, " ").replace(/\s+/g, " ").trim()}"` : game)
     : "";
@@ -195,7 +208,7 @@ export function buildGamingDiscoveryQuery(input: Pick<GamingDiscoveryInput, "pro
     modeSegment = "";
   }
 
-  return [gameSegment, topicText, modeSegment]
+  return [gameSegment, safeSearchText(input.edition, 40), safeSearchText(input.requestedVersion, 30), topicText, modeSegment]
     .filter(Boolean)
     .join(" ")
     .replace(/\s+/g, " ")
@@ -608,7 +621,7 @@ export async function discoverGamingSources(input: GamingDiscoveryInput): Promis
     version: provider.version,
     game: input.game?.trim().toLowerCase() ?? "",
     mode: input.mode,
-    topic: buildQueryTopicTerms(input.prompt, input.game).join(" "),
+    query,
     freshnessPreference
   })).digest("hex");
   const now = Date.now();
@@ -667,7 +680,7 @@ export async function discoverGamingSources(input: GamingDiscoveryInput): Promis
   }
 
   const rankingStartedAt = Date.now();
-  const topicTerms = buildQueryTopicTerms(input.prompt, input.game);
+  const topicTerms = buildQueryTopicTerms(input);
   const deduped = new Map<string, GamingSearchResult>();
   let rejectedCandidateCount = 0;
   for (const result of searchResults) {

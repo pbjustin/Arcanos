@@ -531,6 +531,41 @@ describe('backend-authoritative Gaming discovery recovery through served MCP', (
     expect(stopped.result.discovery!.acquisitionHints!.every(hint => Date.parse(hint.expiresAt) <= Date.parse('2026-10-03T12:10:00Z'))).toBe(true);
   });
 
+  it('does not reacquire an inaccessible canonical URL through harmless tracking aliases', async () => {
+    const blocked = 'https://failure.example.org/blocked-guide?article=early';
+    const independent = 'https://failure.example.org/blocked-guide?article=later';
+    addPage(blocked, 'Access denied', '', game, { status: 403 });
+    const run = harness(); const initial = await run.query();
+    const first = await run.submit(initial.result, [`${blocked}&utm_source=initial`]);
+    expect(first.result.discovery!.acquisitionHints).toEqual([
+      expect.objectContaining({ target: blocked, reasonCode: 'SOURCE_INACCESSIBLE' })
+    ]);
+    for (const [index, alias] of [blocked, `${blocked}&utm_source=recovery#section`].entries()) {
+      const repeated = await run.submit(first.result, [alias], `failed-tracking-alias-${index}`);
+      expect(repeated).toMatchObject({ statusCode: 409, result: { reason: 'CANDIDATE_URL_ALREADY_SUBMITTED', revision: 1 } });
+    }
+    expect(mockHttp).toHaveBeenCalledTimes(1);
+    // A meaningful article selector remains an independent resource and can use recovery.
+    const recovered = await run.submit(first.result, [independent], 'different-article-recovery');
+    expect(recovered.result).toMatchObject({ nextAction: 'stop', revision: 2,
+      discovery: { remainingCandidateUrls: 4, round: 2 } });
+    expect(mockHttp).toHaveBeenCalledTimes(2); expect(mockTrinity).not.toHaveBeenCalled();
+  });
+
+  it('does not erase sensitive tracking material while identifying previously failed URLs', async () => {
+    const blocked = 'https://failure.example.org/sensitive-alias-guide';
+    addPage(blocked, 'Access denied', '', game, { status: 403 });
+    const run = harness(); const initial = await run.query();
+    const first = await run.submit(initial.result, [blocked]);
+    const unsafe = await run.submit(first.result, [`${blocked}?utm_source=ghp_abcdefghijklmnop`], 'unsafe-tracking-alias');
+    expect(unsafe.result).toMatchObject({ nextAction: 'stop', revision: 2 });
+    expect(unsafe.result.candidates).toEqual(expect.arrayContaining([
+      expect.objectContaining({ decision: 'rejected', reasonCodes: ['URL_BLOCKED'] })
+    ]));
+    expect(mockHttp).toHaveBeenCalledTimes(1); expect(mockTrinity).not.toHaveBeenCalled();
+    expect(JSON.stringify(unsafe)).not.toContain('ghp_abcdefghijklmnop');
+  });
+
   it('keeps v1 one-round and terminal behavior and cannot upgrade it through continuation', async () => {
     sources(); const run = harness(); const initial = await run.query({ contractVersion: 'gaming-hybrid-v1' });
     const unsupported = await run.submit(initial.result, ['https://video.example.org/legacy.mp4']);

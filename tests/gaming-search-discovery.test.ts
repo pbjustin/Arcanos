@@ -224,10 +224,52 @@ describe('gaming open-web source discovery', () => {
     const first = buildGamingDiscoveryQuery(input);
     const second = buildGamingDiscoveryQuery(input);
 
-    expect(first).toBe('"Vintage Story" early progression contact or fetch guide');
+    expect(first).toBe('"Vintage Story" early progression contact fetch guide');
     expect(second).toBe(first);
     expect(first.length).toBeLessThanOrEqual(180);
     expect(first).not.toMatch(/ignore|system prompt|private@example|https?:\/\//i);
+  });
+
+  it.each([
+    { game: 'Elden Ring', mode: 'guide' as const, prompt: 'What should I do at the Church of Elleh before moving on?',
+      expected: ['church', 'elleh'] },
+    { game: 'Elden Ring', mode: 'guide' as const, prompt: 'How do I avoid heavy rolling in Elden Ring?',
+      expected: ['heavy', 'rolling'] },
+    { game: 'Elden Ring', mode: 'build' as const, prompt: 'Which stat should an early-game Samurai using an Uchigatana level first?',
+      expected: ['stat', 'early', 'samurai', 'uchigatana', 'level'] },
+    { game: 'Stardew Valley', mode: 'guide' as const, prompt: 'How do I repair the beach bridge without spoilers?',
+      expected: ['repair', 'beach', 'bridge'] },
+    { game: 'Monster Hunter Wilds', mode: 'build' as const, prompt: 'Explain great sword focus skill allocation.',
+      expected: ['great', 'sword', 'focus', 'skill', 'allocation'] }
+  ])('preserves ordinary gameplay intent for $game: $prompt', ({ expected, ...input }) => {
+    const query = buildGamingDiscoveryQuery(input);
+    expect(query).toContain(input.game);
+    for (const term of expected) expect(query).toContain(term);
+    expect(query).not.toMatch(/spoiler|should|which|without/iu);
+    expect(query.length).toBeLessThanOrEqual(180);
+  });
+
+  it('keeps edition, version and bounded gameplay context without private asides', () => {
+    const query = buildGamingDiscoveryQuery({ game: 'Minecraft', mode: 'guide', edition: 'Java Edition',
+      requestedVersion: '1.21', prompt: 'How do I craft a shield? My account 778899 and private apartment Orchard Terrace.',
+      currentArea: 'plains', class: 'survival', constraints: ['iron equipment', 'my email private@example.test'] });
+    expect(query).toMatch(/Minecraft Java Edition 1\.21 .*craft shield.*plains survival iron equipment/iu);
+    expect(query).not.toMatch(/private|Orchard|Terrace|account|778899|example/iu);
+    expect(query.length).toBeLessThanOrEqual(180);
+  });
+
+  it('ranks the requested mechanic over game-matching status and progression pages', async () => {
+    const { provider } = makeProvider(async () => [
+      makeResult({ url: 'https://eldenring.wiki.fextralife.com/Status+Effects', title: 'Elden Ring status effects guide',
+        snippet: 'Elden Ring bleed poison frost and other status effects explained.', providerRank: 1 }),
+      makeResult({ url: 'https://eldenring.wiki.fextralife.com/Game+Progress+Route', title: 'Elden Ring progression route guide',
+        snippet: 'Elden Ring walkthrough and game progression routes explained.', providerRank: 2 }),
+      makeResult({ url: 'https://guides.example/elden-ring/equipment-load', title: 'Elden Ring heavy rolling and equipment load',
+        snippet: 'Avoid heavy rolling by reducing equipped weight to medium equipment load.', providerRank: 3 })
+    ]);
+    const result = await discoverGamingSources({ game: 'Elden Ring', mode: 'guide',
+      prompt: 'How do I avoid heavy rolling in Elden Ring?', provider });
+    expect(result.candidates[0]?.url).toBe('https://guides.example/elden-ring/equipment-load');
   });
 
   it('redacts secret-like fragments before calling the provider', async () => {
