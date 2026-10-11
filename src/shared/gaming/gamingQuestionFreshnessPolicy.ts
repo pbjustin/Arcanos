@@ -19,13 +19,18 @@ export function classifyGamingQuestionFreshness(input: { prompt: string; mode?: 
     .replace(/\b(?:please\s+)?(?:no|without|avoid)[ -]+(?:story\s+)?spoilers?\b|\bspoiler[ -]?free\b/giu, '')
     .split(/[?!.;\n]|\b(?:and|but|then|also)\b/iu).map(clause => clause.trim()).filter(Boolean);
   const basicBuildQuestion = basicClauses.length > 0 && basicClauses.every(clause => {
+    // A comma or colon may join a mechanic question to a separate build request.
+    // Keep contextual build mentions basic, but do not waive a requested build.
+    const buildRequest = /(?:^|[,:—]|\bplease\b)\s*(?:(?:can|could|would)\s+you\s+)?(?:create|design|make|give|show|provide|assemble|plan)\b\s+(?!(?:(?:me|us)\s+)?(?:how|what|why|(?:(?:an?|the)\s+)?(?:explanation|description|details?|information|help|context))\b)(?:(?:me|us)\s+)?(?:[\p{L}\p{N}'’-]+\s+){0,6}(?:builds?|loadouts?|rotations?)\b/iu.test(clause)
+      || /\b(?:builds?|loadouts?|rotations?)\b.{0,80}\byou\s+(?:should|can|could|would)\s+(?:create|design|make|give|show|provide|assemble|plan)\b/iu.test(clause)
+      || /(?:^|[,:—])\s*(?:i|we)\s+(?:want|need|would\s+like)\s+(?!(?:to|(?:(?:an?|the)\s+)?(?:explanation|description|details?|information|help|context))\b)(?:[\p{L}\p{N}'’-]+\s+){0,6}(?:builds?|loadouts?|rotations?)\b/iu.test(clause);
     const attribute = /\b(?:stats?|attributes?|(?:stat|attribute)\s+points?)\b/iu.test(clause);
     const initialAllocation = attribute && /\b(?:level|raise|increase|allocate|spend|invest)\b/iu.test(clause)
       && /\b(?:first|initial|early[ -]game|starting|beginner)\b/iu.test(clause);
     const mechanic = attribute || /\b(?:equip(?:ment)?\s+load|encumbrance|carrying\s+capacity|stamina|roll(?:s|ing)?)\b/iu.test(clause);
     const explanation = /\b(?:how|what)\s+(?:does|do)(?!\s+(?:i|we)\b)\b.{0,160}\b(?:work|affect|mean|do)\b/iu.test(clause);
     const basicAction = /\bhow\s+(?:do|can|should)\s+i\s+(?:avoid|reduce|lower|manage)\b/iu.test(clause);
-    return initialAllocation || mechanic && (explanation || basicAction);
+    return !buildRequest && (initialAllocation || mechanic && (explanation || basicAction));
   });
   // Strength questions occur in either order ("best build" / "which build is best").
   // Keep ordinary routes and puzzles stable unless their own question needs freshness.
