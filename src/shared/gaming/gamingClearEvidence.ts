@@ -169,6 +169,11 @@ export function assessGamingClearEvidence(
     }
   }
   if (duplicate) finding('DUPLICATE_EVIDENCE', false);
+  if (knowledge.claimCorroboration?.status === 'unverified'
+    || knowledge.claimCorroboration?.claims.some(claim => claim.status === 'unverified')) finding('CLAIM_CORROBORATION_UNVERIFIED', false);
+  if (knowledge.claimCorroboration?.claims.some(claim => claim.status === 'single_source')) finding('SINGLE_SOURCE_CLAIMS', false);
+  // Optional reporting cannot override the existing full-pool conflict gate.
+  if (knowledge.claimCorroboration?.claims.some(claim => claim.status === 'conflicting')) finding('CONFLICTING_CLAIM_REPORTS', false);
   if (sources.some(source => !source.clearSourceAssessment)) finding('LEGACY_SOURCE_NOT_PREVIOUSLY_ASSESSED', false);
   const dimension = (score: number | null, code: string, unresolvedFacts: string[] = []) => ({
     status: score === null || refs.length === 0 ? 'unknown' as const : 'evaluated' as const, score: refs.length ? score : null,

@@ -101,12 +101,14 @@ describe('bounded stored Gaming chunk evidence', () => {
     expect(selectStoredGamingEvidence([record('legacy', text, { normalized: {} })], input)).toHaveLength(1);
   });
 
-  test('CLEAR retains legacy readability but rejects explicit mismatched catalog game identity before scoring', async () => {
+  test('CLEAR retains legacy readability while requiring whole-source applicability reassessment', async () => {
     const text = 'The Zephyrglass Compass opens the hidden route beyond the cobalt arch.';
     expect(selectStoredGamingEvidence([record('wrong-game', text, { gameName: 'Synthetic Quest 2' })], input)).toEqual([]);
     search.mockResolvedValue([record('legacy', text, { normalized: {} })]);
     const result = await retrieveStoredGamingKnowledge(input, { resolveVerifiedPatch: () => undefined });
-    expect(result.clearEvidenceAssessment).toMatchObject({ profile: 'evidence', assessmentStatus: 'completed', decision: 'accept' });
+    expect(result.evidence).toHaveLength(1);
+    expect(result.clearEvidenceAssessment).toMatchObject({ profile: 'evidence', assessmentStatus: 'completed', decision: 'clarify',
+      gates: { compatibility: 'unknown' } });
     expect(result.sources[0].clearSourceAssessment).toBeUndefined();
     expect(result.clearEvidenceAssessment?.findings.map(finding => finding.code)).toContain('LEGACY_SOURCE_NOT_PREVIOUSLY_ASSESSED');
   });

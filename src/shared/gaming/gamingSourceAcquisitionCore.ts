@@ -1,5 +1,7 @@
 import { isIP } from "node:net";
 import { redactString } from "@arcanos/runtime/redaction";
+import { GAMING_LOW_SIGNAL_DOMAINS, GAMING_REVIEWED_PUBLISHER_REDIRECT_PAIRS,
+  GAMING_SEARCH_ENGINE_DOMAINS, GAMING_URL_SHORTENER_DOMAINS } from './gamingSourceTransportData.js';
 
 /** Public guides can contain multi-megabyte page shells. Text/context limits remain independent. */
 export const GAMING_DOCUMENT_ACQUISITION_LIMITS = Object.freeze({
@@ -24,35 +26,6 @@ const SEARCH_QUERY_PARAM_PATTERN = /^(?:keyword|q|query|search|search_query)$/i;
 const SEARCH_QUERY_ENDPOINT_PATTERN = /^\/(?:index(?:\.(?:php|html?|aspx?))?)?\/?$/i;
 const RAW_URL_CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f-\u009f]/u;
 const CONTENT_FARM_DOMAIN_PATTERN = /(?:^|[.-])(?:clickbait|content-?farm|scraper|seo-?spam|spam)(?:[.-]|$)/i;
-const LOW_SIGNAL_DOMAINS = [
-  "facebook.com",
-  "instagram.com",
-  "pinterest.com",
-  "tiktok.com",
-  "twitter.com",
-  "x.com",
-  "youtube.com",
-  "youtu.be"
-];
-const URL_SHORTENER_DOMAINS = [
-  "bit.ly",
-  "buff.ly",
-  "cutt.ly",
-  "goo.gl",
-  "is.gd",
-  "ow.ly",
-  "rebrand.ly",
-  "shorturl.at",
-  "tinyurl.com",
-  "t.co"
-];
-const SEARCH_ENGINE_DOMAINS = [
-  "bing.com",
-  "duckduckgo.com",
-  "google.com",
-  "search.brave.com",
-  "search.yahoo.com"
-];
 
 export function normalizeGamingSourceDomain(hostname: string): string {
   return hostname.toLowerCase().replace(/^www\./, "").replace(/^\[|\]$/g, "").replace(/\.$/, "");
@@ -193,13 +166,13 @@ export function sanitizeGamingSourceUrl(rawUrl: string, maxUrlChars: number,
     if (allowlist.length > 0 && !allowlist.some((candidate) => gamingSourceDomainMatches(domain, candidate))) {
       return rejectGamingSourceUrl("source_policy", "outside_domain_allowlist");
     }
-    if (URL_SHORTENER_DOMAINS.some((candidate) => gamingSourceDomainMatches(domain, candidate))) {
+    if (GAMING_URL_SHORTENER_DOMAINS.some((candidate) => gamingSourceDomainMatches(domain, candidate))) {
       return rejectGamingSourceUrl("source_policy", "shortened_url");
     }
-    if (SEARCH_ENGINE_DOMAINS.some((candidate) => gamingSourceDomainMatches(domain, candidate))) {
+    if (GAMING_SEARCH_ENGINE_DOMAINS.some((candidate) => gamingSourceDomainMatches(domain, candidate))) {
       return rejectGamingSourceUrl("source_policy", "search_results");
     }
-    if (LOW_SIGNAL_DOMAINS.some((candidate) => gamingSourceDomainMatches(domain, candidate)) || CONTENT_FARM_DOMAIN_PATTERN.test(domain)) {
+    if (GAMING_LOW_SIGNAL_DOMAINS.some((candidate) => gamingSourceDomainMatches(domain, candidate)) || CONTENT_FARM_DOMAIN_PATTERN.test(domain)) {
       return rejectGamingSourceUrl("source_policy", "source_category_excluded");
     }
     if (ACCOUNT_PATH_PATTERN.test(policyPath)) return rejectGamingSourceUrl("source_policy", "account_path");
@@ -294,12 +267,10 @@ function redirectTransition(from: URL, to: URL): Pick<GamingDocumentAcquisition[
   if (from.origin === to.origin) return { classification: "same_origin", ruleId: "gaming.redirect.same_origin" };
   // These exact host/path pairs already have independently reviewed publisher entries in
   // REVIEWED_GAMING_SOURCE_RULES. A shared suffix or an arbitrary publisher subdomain grants nothing.
-  const pairs = [
-    { id: "wow-specialist-apex-www", hosts: ["icy-veins.com", "www.icy-veins.com"], path: (value: string) => value.startsWith("/wow/") },
-    { id: "swtor-patch-apex-www", hosts: ["swtor.com", "www.swtor.com"], path: (value: string) => value === "/patchnotes" || value.startsWith("/patchnotes/") }
-  ];
-  const rule = pairs.find(candidate => candidate.hosts.includes(from.hostname) && candidate.hosts.includes(to.hostname)
-    && candidate.path(from.pathname) && candidate.path(to.pathname));
+  const pathMatches = (value: string, candidate: typeof GAMING_REVIEWED_PUBLISHER_REDIRECT_PAIRS[number]) =>
+    candidate.exactPaths.some(path => value === path) || candidate.pathPrefixes.some(prefix => value.startsWith(prefix));
+  const rule = GAMING_REVIEWED_PUBLISHER_REDIRECT_PAIRS.find(candidate => candidate.hosts.some(host => host === from.hostname)
+    && candidate.hosts.some(host => host === to.hostname) && pathMatches(from.pathname, candidate) && pathMatches(to.pathname, candidate));
   return rule ? { classification: "reviewed_publisher_pair", ruleId: `gaming.redirect.${rule.id}` } : undefined;
 }
 

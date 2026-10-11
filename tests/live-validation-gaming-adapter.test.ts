@@ -330,12 +330,12 @@ describe('private Gaming live-validation adapter through the real transient v2 w
       expect(mockTrinity).toHaveBeenCalledTimes(1); expect(mockAuditCompletion).toHaveBeenCalledTimes(1);
       expect(output.audit?.boundToFinalAnswer).toBe(true);
     } else {
-      // The immutable raw-GitHub fixture is plain text, so Gaming does not grant
-      // HTML paragraph-field provenance. Generic cleanup flattens the heading
-      // before Game: Sekiro; that uncatalogued title alone cannot prove identity.
-      expect(output.failureCode).toBe('INSUFFICIENT_EVIDENCE');
+      // Plain transport grants no HTML field provenance. The independently
+      // acquired Game declaration and whole-source subject still conflict;
+      // unknown-title recognition does not require a registry entry.
+      expect(output.failureCode).toBe('INCOMPATIBLE_SOURCE');
       expect(candidateHandoffs[0].result.body.candidates).toEqual([expect.objectContaining({ decision: 'rejected',
-        reasonCodes: ['GAME_IDENTITY_UNVERIFIED'] })]);
+        reasonCodes: ['GAME_MISMATCH'] })]);
       expect(output.result).toBeUndefined(); expect(run.execute).not.toHaveBeenCalled();
       expect(mockTrinity).not.toHaveBeenCalled(); expect(mockAuditCompletion).not.toHaveBeenCalled();
     }

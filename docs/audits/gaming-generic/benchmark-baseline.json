@@ -1,0 +1,145 @@
+{
+  "benchmarkVersion": "gaming-generic-benchmark/v1",
+  "labelVersion": "source-ownership-labels/v1",
+  "samples": 140,
+  "valid": {
+    "denominator": 45,
+    "accepted": 40,
+    "rejected": 5,
+    "acceptanceRate": 0.8888888888888888,
+    "falseNegativeRate": 0.1111111111111111,
+    "acceptanceWilson95": [
+      0.7650090300423141,
+      0.9515952820543282
+    ]
+  },
+  "invalid": {
+    "denominator": 95,
+    "rejected": 85,
+    "accepted": 10,
+    "rejectionRate": 0.8947368421052632,
+    "falsePositiveRate": 0.10526315789473684,
+    "rejectionWilson95": [
+      0.8169794293520014,
+      0.9418114757484146
+    ]
+  },
+  "diagnostics": {
+    "denominator": 140,
+    "covered": 0,
+    "coverageRate": 0
+  },
+  "securityCriticalAccepted": [
+    "stardew-valley/whole-guide-conflict",
+    "stardew-valley/title-only-identity",
+    "portal-2/whole-guide-conflict",
+    "portal-2/title-only-identity",
+    "hades/whole-guide-conflict",
+    "hades/title-only-identity",
+    "lantern-vale/whole-guide-conflict",
+    "lantern-vale/title-only-identity",
+    "orbit-orchard/whole-guide-conflict",
+    "orbit-orchard/title-only-identity"
+  ],
+  "contaminatedSelection": [],
+  "falseNegatives": [
+    {
+      "id": "stardew-valley/local-mixed-game-records",
+      "reasonCodes": [
+        "GAME_MISMATCH"
+      ]
+    },
+    {
+      "id": "portal-2/local-mixed-game-records",
+      "reasonCodes": [
+        "GAME_MISMATCH"
+      ]
+    },
+    {
+      "id": "hades/local-mixed-game-records",
+      "reasonCodes": [
+        "GAME_MISMATCH"
+      ]
+    },
+    {
+      "id": "lantern-vale/local-mixed-game-records",
+      "reasonCodes": [
+        "GAME_MISMATCH"
+      ]
+    },
+    {
+      "id": "orbit-orchard/local-mixed-game-records",
+      "reasonCodes": [
+        "GAME_MISMATCH"
+      ]
+    }
+  ],
+  "falsePositives": [
+    {
+      "id": "stardew-valley/whole-guide-conflict",
+      "reasonCodes": [
+        "VALIDATED_RELEVANT_CONTENT"
+      ]
+    },
+    {
+      "id": "stardew-valley/title-only-identity",
+      "reasonCodes": [
+        "VALIDATED_RELEVANT_CONTENT"
+      ]
+    },
+    {
+      "id": "portal-2/whole-guide-conflict",
+      "reasonCodes": [
+        "VALIDATED_RELEVANT_CONTENT"
+      ]
+    },
+    {
+      "id": "portal-2/title-only-identity",
+      "reasonCodes": [
+        "VALIDATED_RELEVANT_CONTENT"
+      ]
+    },
+    {
+      "id": "hades/whole-guide-conflict",
+      "reasonCodes": [
+        "VALIDATED_RELEVANT_CONTENT"
+      ]
+    },
+    {
+      "id": "hades/title-only-identity",
+      "reasonCodes": [
+        "VALIDATED_RELEVANT_CONTENT"
+      ]
+    },
+    {
+      "id": "lantern-vale/whole-guide-conflict",
+      "reasonCodes": [
+        "VALIDATED_RELEVANT_CONTENT"
+      ]
+    },
+    {
+      "id": "lantern-vale/title-only-identity",
+      "reasonCodes": [
+        "VALIDATED_RELEVANT_CONTENT"
+      ]
+    },
+    {
+      "id": "orbit-orchard/whole-guide-conflict",
+      "reasonCodes": [
+        "VALIDATED_RELEVANT_CONTENT"
+      ]
+    },
+    {
+      "id": "orbit-orchard/title-only-identity",
+      "reasonCodes": [
+        "VALIDATED_RELEVANT_CONTENT"
+      ]
+    }
+  ],
+  "sourceCommit": "200463b3aac65eb494f71d842c1e2b0378530bfb",
+  "sourceState": "pristine git archive; only unchanged benchmark tests added",
+  "runDate": "2026-10-10",
+  "nodeVersion": "24.18.1",
+  "npmVersion": "11.16.0",
+  "corpusSha256": "319d39bea80fa09911514e63e78d3fc0ed066a44ea9dfb2eee1e4e31fcb27968"
+}

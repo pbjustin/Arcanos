@@ -181,7 +181,7 @@ describe('Gaming CLEAR bounded evidence decisions', () => {
     const data = knowledge(input.game, ['For the copper staff build, equip the copper staff before the shield.']);
     expect(run(input, data).decision).not.toBe('accept');
     const accepted = assessGamingClearEvidence(input, data, { now, allowAdvisoryFreshness: true });
-    expect(accepted).toMatchObject({ decision: 'accept', policyProfile: 'gaming-clear-policy/v1:advisory_recommendation:evidence',
+    expect(accepted).toMatchObject({ decision: 'accept', policyProfile: 'gaming-clear-policy/v2:advisory_recommendation:evidence',
       gates: { freshness: 'unknown', claimSupport: 'verified', provenance: 'verified' } });
     expect(accepted.findings).toContainEqual(expect.objectContaining({ code: 'ADVISORY_FRESHNESS_UNVERIFIED', severity: 'warning' }));
     expect(assessGamingClearEvidence({ ...input, prompt: 'Which sapphire wand build should I use?' }, data,

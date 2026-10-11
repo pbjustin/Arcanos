@@ -989,6 +989,11 @@ describe('native PR preview import boundary', () => {
   });
 
   it.each([
+    'src/shared/gaming/gamingGameRegistry.ts',
+    'src/shared/gaming/gamingGameRegistryData.ts',
+    'src/shared/gaming/gamingPreferenceData.ts',
+    'src/shared/gaming/gamingPublisherExtractionProfileData.ts',
+    'src/shared/gaming/gamingSourceTransportData.ts',
     'src/shared/gaming/gamingArchiveResourceCore.ts',
     'src/services/gamingDocumentExtraction.ts',
     'src/services/gamingDocumentChunks.ts',
@@ -1044,7 +1049,10 @@ describe('native PR preview import boundary', () => {
     }
   });
 
-  it.each(['src/shared/gaming/gamingQuestionFreshnessPolicy.ts', 'src/shared/gaming/gamingPlatformIdentity.ts']
+  it.each(['src/shared/gaming/gamingQuestionFreshnessPolicy.ts', 'src/shared/gaming/gamingPlatformIdentity.ts',
+    'src/shared/gaming/gamingGameRegistry.ts', 'src/shared/gaming/gamingGameRegistryData.ts',
+    'src/shared/gaming/gamingPreferenceData.ts', 'src/shared/gaming/gamingPublisherExtractionProfileData.ts',
+    'src/shared/gaming/gamingSourceTransportData.ts']
     .flatMap(filePath => ['node:fs', 'node:http', 'node:child_process'].map(specifier => [filePath, specifier])))
   ('keeps the pure Gaming policy %s isolated from %s independently of its semantic pin', async (filePath, specifier) => {
     const sourceText = await readNormalizedSource(new URL(`../${filePath}`, import.meta.url));

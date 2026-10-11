@@ -148,12 +148,19 @@ describe('acquired generic Samurai topic identity', () => {
     const log = jest.spyOn(logger, 'info').mockImplementation(() => undefined);
     try {
       serve(genericTitle, `${prose} In Diablo IV, use the blade.`);
-      await evaluateGamingHybridCandidates(input, { ...actor, traceId: 'topic-identity-trace' });
-      const event = log.mock.calls.find(call => call[0] === 'gaming.clear.source.completed');
+      const result = await evaluateGamingHybridCandidates(input, { ...actor, traceId: 'topic-identity-trace' });
+      expect(result.accepted).toEqual([]);
+      expect(result.decisions[0].reasonCodes).toEqual(['GAME_MISMATCH']);
+      // A definitive acquired identity conflict stops before the CLEAR assessment.
+      const event = log.mock.calls.find(call => call[0] === 'gaming.clear.source.not_run');
       expect(event?.[1]).toMatchObject({ requestId: actor.requestId, traceId: 'topic-identity-trace',
         workflowId: actor.workflowId, submittedIndex: 0, candidateReference: expect.any(String),
+        assessmentStatus: 'not_run', reasonCodes: ['GAME_MISMATCH'],
         identity: { ruleId: 'gaming.identity.affirmative_body_scope_conflict', evidenceCategory: 'body_scope' } });
+      expect(log.mock.calls.some(call => call[0] === 'gaming.clear.source.completed')).toBe(false);
+      expect(trinity).not.toHaveBeenCalled(); expect(audit).not.toHaveBeenCalled();
       expect(JSON.stringify(event?.[1])).not.toContain(prose);
+      expect(JSON.stringify(event?.[1])).not.toContain(input.prompt);
     } finally {
       log.mockRestore();
     }
@@ -175,7 +182,7 @@ describe('acquired generic Samurai topic identity', () => {
     }
   });
 
-  it('reports the actual freshness game mismatch after acquisition without generation or transient source storage', async () => {
+  it('reports unverified plaintext primary identity before freshness without generation or transient source storage', async () => {
     const plaintext = 'Game: Elden Ring base-game. Edition: base-game. In Elden Ring, Samurai attacks use the starting Uchigatana. Raise Vigor and Dexterity for early combat, and preserve stamina for dodging after each katana attack. Upgrade the starting katana with Smithing Stones before advancing beyond Limgrave.';
     fetch.mockResolvedValue({ status: 200, headers: { 'content-type': 'text/plain' }, data: plaintext });
     const log = jest.spyOn(logger, 'info').mockImplementation(() => undefined);
@@ -189,7 +196,9 @@ describe('acquired generic Samurai topic identity', () => {
         contractVersion: 'gaming-hybrid-v2', idempotencyKey: 'freshness-game-query', storagePolicy: 'transient_only' }, context);
       const result = await workflow.candidates({ contractVersion: 'gaming-hybrid-v2', workflowId: initial.body.workflowId,
         expectedRevision: initial.body.revision, idempotencyKey: 'freshness-game-source', candidates: input.candidates }, context);
-      expect(result.body.candidates![0]).toMatchObject({ decision: 'rejected', reasonCodes: ['GAME_MISMATCH'] });
+      // Plaintext supplies acquired labels and prose but no primary title or
+      // parser-owned gameplay record. Those labels cannot grant identity proof.
+      expect(result.body.candidates![0]).toMatchObject({ decision: 'rejected', reasonCodes: ['GAME_IDENTITY_UNVERIFIED'] });
       expect(result.body).toMatchObject({ nextAction: 'search', frontendOutcome: 'need_new_source',
         selectedCandidateIds: [], selectedEvidenceIds: [] });
       expect(result.body.answer).toBeUndefined();
@@ -199,8 +208,8 @@ describe('acquired generic Samurai topic identity', () => {
       const event = log.mock.calls.find(call => call[0] === 'gaming.clear.source.not_run');
       expect(event?.[1]).toMatchObject({ requestId: context.requestId, traceId: context.traceId,
         workflowId: initial.body.workflowId, submittedIndex: 0, candidateReference: expect.any(String),
-        assessmentStatus: 'not_run', reasonCodes: ['GAME_MISMATCH'], acquisition: { stage: 'extraction' },
-        identity: { ruleId: 'gaming.identity.freshness_game_conflict', evidenceCategory: 'acquired_anchors' } });
+        assessmentStatus: 'not_run', reasonCodes: ['GAME_IDENTITY_UNVERIFIED'], acquisition: { stage: 'extraction' },
+        identity: { ruleId: 'gaming.identity.independent_anchor_required', evidenceCategory: 'acquired_anchors' } });
       expect(log.mock.calls.some(call => call[0] === 'gaming.clear.source.completed')).toBe(false);
       expect(JSON.stringify(event?.[1])).not.toContain(plaintext);
       expect(JSON.stringify(event?.[1])).not.toContain(input.prompt);

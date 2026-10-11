@@ -1,11 +1,12 @@
 import { describe, expect, test } from '@jest/globals';
 import { readFileSync } from 'node:fs';
 import {
-  GAMING_CLEAR_DIMENSIONS, GAMING_CLEAR_RUBRIC, GAMING_CLEAR_WEIGHTS,
+  GAMING_CLEAR_DIMENSIONS, GAMING_CLEAR_RUBRIC, GAMING_CLEAR_WEIGHTS, GAMING_CLEAR_VERSION, GAMING_CLEAR_POLICY_VERSION,
   classifyGamingClearQuestion, createGamingClearAssessment, gamingClearContextFingerprint,
   gamingClearHash, parseGamingClearAssessment, parseGamingClearModelAssessment,
   type GamingClearAssessmentInput, type GamingClearDimensions, type GamingClearProfile
 } from '../src/shared/gaming/gamingClearPolicy.js';
+import { GAMING_GAME_REGISTRY } from '../src/shared/gaming/gamingGameRegistry.js';
 
 const dimensions = (score = 4): GamingClearDimensions => Object.fromEntries(GAMING_CLEAR_DIMENSIONS.map(name => [name, {
   status: 'evaluated', score, reasonCodes: ['FIXTURE_SUPPORT'], evidenceRefs: ['source:1:chunk:1'], unresolvedFacts: []
@@ -167,6 +168,23 @@ describe('Gaming CLEAR canonical policy and strict boundary', () => {
     expect(gamingClearContextFingerprint({ ...context, rubricVersion: 'future' })).not.toBe(original);
     expect(gamingClearHash('answer [1]')).not.toBe(gamingClearHash('changed answer [2]'));
     expect(gamingClearHash({ a: 1, b: 2 })).toBe(gamingClearHash({ b: 2, a: 1 }));
+  });
+  test('invalidates old policy decisions while preserving the public rubric contract', () => {
+    expect(GAMING_CLEAR_VERSION).toBe('gaming-clear/v1');
+    expect(GAMING_CLEAR_POLICY_VERSION).toBe('gaming-clear-policy/v2');
+    const assessment = createGamingClearAssessment(input());
+    expect(parseGamingClearAssessment(assessment)).toEqual(assessment);
+    expect(parseGamingClearAssessment({ ...assessment, policyProfile: 'gaming-clear-policy/v1:walkthrough:source' })).toBeNull();
+  });
+  test('binds assessment context to registry schema, revision and reviewed data content', () => {
+    const context = { game: 'Lantern Vale', prompt: 'Open the door' };
+    const identityRegistry = { version: GAMING_GAME_REGISTRY.version, revision: GAMING_GAME_REGISTRY.revision,
+      contentHash: gamingClearHash(GAMING_GAME_REGISTRY) };
+    expect(gamingClearContextFingerprint(context)).toBe(gamingClearHash({ rubricVersion: GAMING_CLEAR_VERSION,
+      policyVersion: GAMING_CLEAR_POLICY_VERSION, identityRegistry, context }));
+    for (const key of Object.keys(identityRegistry)) expect(gamingClearHash({ rubricVersion: GAMING_CLEAR_VERSION,
+      policyVersion: GAMING_CLEAR_POLICY_VERSION, identityRegistry: { ...identityRegistry, [key]: 'changed' }, context }))
+      .not.toBe(gamingClearContextFingerprint(context));
   });
   test('question text can raise applicability requirements despite frontend guide mode', () => {
     expect(classifyGamingClearQuestion({ prompt: 'Best current build', mode: 'guide' })).toBe('current_build');

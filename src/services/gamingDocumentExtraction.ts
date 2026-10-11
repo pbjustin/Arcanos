@@ -1,4 +1,5 @@
 import type { FetchAndCleanOptions } from "@shared/webFetcher.js";
+import { GAMING_PUBLISHER_EXTRACTION_PROFILES } from '@shared/gaming/gamingPublisherExtractionProfileData.js';
 
 /** Preserve the existing tag-budget scan, advancing past each complete span without backtracking. */
 export function countGamingHtmlElements(body: string, maxElements: number): number {
@@ -111,58 +112,12 @@ export const GAMING_DOCUMENT_FURNITURE_SELECTOR = COMMON_JUNK_SELECTORS
   .filter(selector => !['header', 'aside', '.comments', '#comments', "[class*='comment-list']"].includes(selector))
   .join(',');
 
-const SOURCE_EXTRACTION_PROFILES: Array<{
-  domains: string[];
-  contentSelectors: readonly string[];
-  removeSelectors: readonly string[];
-}> = [
-  {
-    domains: ["wiki.fextralife.com", "fextralife.com"],
-    contentSelectors: ["#wiki-content-block", ".wiki-content-block", "#main-content", ".page-content"],
-    removeSelectors: [
-      ".wiki-header-container",
-      ".wiki-menu-2-left",
-      ".wikiMenuMobile",
-      ".left-side-menu-container",
-      ".side-bar-right",
-      "#featured-wikis",
-      "#related-games-content",
-      "#disqus_thread"
-    ]
-  },
-  {
-    domains: ["bandainamcoent.com", "bandainamcoent.eu"],
-    contentSelectors: [".article__edito-content", ".article__content", ".article", "article"],
-    removeSelectors: [
-      ".article__sidebar",
-      ".article__share-social",
-      "[class*='read-next']",
-      ".age-gate"
-    ]
-  },
-  {
-    domains: ["worldofwarcraft.blizzard.com", "news.blizzard.com", "blizzard.com"],
-    contentSelectors: [".NewsBlog-content", ".Article-content", ".article-content", "#main", "article"],
-    removeSelectors: [".SiteNav", ".SocialLinks", ".CommentTotal"]
-  },
-  {
-    domains: ["icy-veins.com"],
-    contentSelectors: [".left-column-content", ".left-column-main", ".guide-page-content", "article"],
-    removeSelectors: [
-      ".guide-header__breadcrumbs",
-      ".content-toc",
-      ".table-of-contents",
-      ".left-column-sidebar"
-    ]
-  }
-];
-
 const SOURCE_INSTRUCTION_PATTERN = /\b(?:(?:ignore|disregard|override)\s+(?:all\s+)?(?:previous|prior|system|developer|assistant|user)\s+(?:instructions?|messages?|prompts?)|forget\s+(?:everything|all)\s+(?:above|before)|you\s+are\s+now|new\s+(?:system|developer|assistant)\s+(?:message|prompt|instructions?)|follow\s+(?:these|the\s+following)\s+instructions?|(?:system|developer|assistant)\s+(?:message|prompt|instructions?)|(?:reveal|print|show|expose|exfiltrate)\s+(?:the\s+)?(?:system|developer|secret|credential|token|api\s+key)\s*(?:prompt|message|instructions?|value)?|(?:call|invoke)\s+(?:the\s+)?(?:tool|function)|(?:execute|run)\s+(?:this\s+)?(?:command|shell|powershell|bash))\b/i;
 
 /** Shared acquisition profiles: downstream query ranking does not select a different document transport. */
 export function gamingDocumentFetchOptions(url: string, options: FetchAndCleanOptions = {}): FetchAndCleanOptions {
   const domain = new URL(url).hostname.toLowerCase();
-  const profile = SOURCE_EXTRACTION_PROFILES.find((entry) =>
+  const profile = GAMING_PUBLISHER_EXTRACTION_PROFILES.find((entry) =>
     entry.domains.some((candidate) => domain === candidate || domain.endsWith(`.${candidate}`))
   );
   return {

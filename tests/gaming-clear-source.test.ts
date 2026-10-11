@@ -35,6 +35,17 @@ describe('Gaming CLEAR acquired source assessment', () => {
     const doc = document('', 'Unidentified notebook', `Game: Elden Ring. ${'Compare staff requirements and Intelligence before choosing spells. '.repeat(4)}`);
     expect(assess(doc)).toMatchObject({ decision: 'clarify', overall: null, gates: { identity: 'unknown' } });
   });
+  it.each([false, true])('does not infer independent game identity from an edition conflict: proof %s', hasIdentityProof => {
+    const body = `${hasIdentityProof ? 'In Portal 2, ' : ''}inspect the practice equipment before starting and retain room for movement. `
+      + 'Follow the practice route carefully and check the practice item. This guide covers only expansion content.';
+    const doc = document('', hasIdentityProof ? 'Portal 2 equipment guide' : 'Equipment reference', body);
+    const input = { game: 'Portal 2', edition: 'base-game', mode: 'guide' as const, prompt: 'Explain the practice equipment route.' };
+    expect(assessGamingClearSourceIdentity(doc, input, assessGamingSourcePolicy(doc.publicUrl, input.game)))
+      .toMatchObject({ status: 'conflict', gameIdentityVerified: hasIdentityProof, reasonCodes: ['EDITION_CONFLICT'] });
+    expect(assess(doc, input)).toMatchObject({ decision: 'reject', qualityEligible: false,
+      gates: { identity: hasIdentityProof ? 'verified' : 'unknown', compatibility: 'conflict' },
+      blockingFindings: expect.arrayContaining([expect.objectContaining({ code: 'EDITION_CONFLICT' })]) });
+  });
   it('vetoes an explicit wrong body subject even with a misleading title and Game label', () => {
     const doc = document('Elden Ring', 'Elden Ring Mage Build', `Game: Elden Ring. In Diablo 4, Intelligence supports this spell setup. ${prose}`);
     expect(assess(doc).decision).toBe('reject');

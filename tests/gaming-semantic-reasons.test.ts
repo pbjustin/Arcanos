@@ -33,10 +33,10 @@ describe('independent Gaming evidence failure semantics', () => {
   });
   it('separates unproved game identity from explicit wrong-game evidence', () => {
     const unknown = document(prose.replace('In Elden Ring, ', ''), 'Unidentified notebook guide');
-    expect(assessGamingClearSourceIdentity(unknown, request, policy)).toEqual({ status: 'unknown', reasonCodes: ['GAME_IDENTITY_UNVERIFIED'],
+    expect(assessGamingClearSourceIdentity(unknown, request, policy)).toEqual({ status: 'unknown', gameIdentityVerified: false, reasonCodes: ['GAME_IDENTITY_UNVERIFIED'],
       diagnostic: { ruleId: 'gaming.identity.independent_anchor_required', evidenceCategory: 'acquired_anchors' } });
     const wrong = document(prose.replace('Elden Ring', 'Diablo 4'), 'Diablo 4 guide');
-    expect(assessGamingClearSourceIdentity(wrong, request, policy)).toEqual({ status: 'conflict', reasonCodes: ['GAME_MISMATCH'],
+    expect(assessGamingClearSourceIdentity(wrong, request, policy)).toEqual({ status: 'conflict', gameIdentityVerified: false, reasonCodes: ['GAME_MISMATCH'],
       diagnostic: { ruleId: 'gaming.identity.acquired_title_conflict', evidenceCategory: 'document_title' } });
   });
   it('uses coupled acquired title and body proof for games outside the alias catalog', () => {

@@ -2,9 +2,10 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { classifyGamingQuestionFreshness } from './gamingFreshnessCore.js';
 import { resolveGamingFreshnessDisposition } from './gamingFreshnessDisposition.js';
+import { GAMING_GAME_REGISTRY } from './gamingGameRegistry.js';
 
 export const GAMING_CLEAR_VERSION = 'gaming-clear/v1' as const;
-export const GAMING_CLEAR_POLICY_VERSION = 'gaming-clear-policy/v1' as const;
+export const GAMING_CLEAR_POLICY_VERSION = 'gaming-clear-policy/v2' as const;
 export const GAMING_CLEAR_DIMENSIONS = ['clarity', 'leverage', 'efficiency', 'alignment', 'resilience'] as const;
 export type GamingClearDimension = typeof GAMING_CLEAR_DIMENSIONS[number];
 export type GamingClearProfile = 'source' | 'evidence' | 'answer';
@@ -94,8 +95,12 @@ export function gamingClearHash(value: unknown): string {
       ? Object.fromEntries(Object.entries(item).sort(([left], [right]) => left.localeCompare(right)).map(([key, child]) => [key, stable(child)])) : item;
   return createHash('sha256').update(JSON.stringify(stable(value)) ?? 'undefined').digest('hex');
 }
+const identityRegistry = Object.freeze({ version: GAMING_GAME_REGISTRY.version, revision: GAMING_GAME_REGISTRY.revision,
+  contentHash: gamingClearHash(GAMING_GAME_REGISTRY) });
+
+/** Reusable decisions require both current validation rules and the exact reviewed recognition data. */
 export function gamingClearContextFingerprint(value: unknown): string {
-  return gamingClearHash({ rubricVersion: GAMING_CLEAR_VERSION, policyVersion: GAMING_CLEAR_POLICY_VERSION, context: value });
+  return gamingClearHash({ rubricVersion: GAMING_CLEAR_VERSION, policyVersion: GAMING_CLEAR_POLICY_VERSION, identityRegistry, context: value });
 }
 export function classifyGamingClearQuestion(input: { prompt: string; mode?: string; requestedVersion?: string; allowAdvisoryFreshness?: boolean }): GamingClearQuestionProfile {
   if (input.allowAdvisoryFreshness === true && resolveGamingFreshnessDisposition(input) === 'ADVISORY') return 'advisory_recommendation';

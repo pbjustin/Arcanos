@@ -1,4 +1,6 @@
-import { resolveGamingRequestEdition, gamingEditionEvidenceMatchesRequest, readGamingMinecraftEditionScope, normalizeGamingMinecraftEdition } from './gamingGameIdentity.js';
+import { resolveGamingRequestEdition, gamingEditionEvidenceMatchesRequest } from './gamingGameIdentity.js';
+import { gamingRegistryDistinctScopeQualifier, gamingRegistryExpansionNames, gamingRegistrySourceGameMatchesRequest,
+  normalizeGamingRegistryEdition, readGamingRegistryEditionScope, resolveGamingRegistryGame } from './gamingGameRegistry.js';
 import { resolveGamingFreshnessDisposition } from './gamingFreshnessDisposition.js';
 import { detectGamingDocumentGame } from './gamingDocumentIngestionCore.js';
 import { normalizeGamingGameIdentity, normalizeGamingEditionIdentity, resolveGamingGuideIdentity } from './gamingGameIdentity.js';
@@ -6,7 +8,7 @@ import { buildGamingRetrievalTerms, buildGamingRequestRequirements, hasGamingRel
 import { assessGamingSourcePolicy, classifyGamingQuestionFreshness, extractGamingFreshnessMetadata, evaluateGamingFreshness, type GamingFreshnessEvidence, type GamingSourcePolicyAssessment } from './gamingFreshnessCore.js';
 import type { GamingStoredKnowledgeInput } from './gamingStoredEvidenceCore.js';
 import type { ResolvedGamingDocument } from '@services/gamingDocumentResolution.js';
-import { assessGamingStructuralUsability, classifyGamingEditionRequirements, readGamingEvidenceUnits, selectGamingEditionScopedEvidence, selectGamingSourceEditionScopedEvidence } from './gamingStructuralEvidence.js';
+import { assessGamingStructuralUsability, classifyGamingEditionRequirements, readGamingEvidenceUnits, selectGamingEditionScopedEvidence, selectGamingSourceEditionScopedEvidence, selectGamingGameScopedDocument, isGamingDocumentMetadataUnit, gamingPrimarySourceDeclarationPattern } from './gamingStructuralEvidence.js';
 import { createGamingClearAssessment, classifyGamingClearQuestion, gamingClearContextFingerprint,
   type GamingClearSourceRole } from './gamingClearPolicy.js';
 import { detectGamingLeadingGameAlias, isGamingAcquiredTopicTitle } from '@services/gamingGameDetection.js';
@@ -15,9 +17,12 @@ import { gamingAcquiredGameDeclarationPattern, withoutGamingAcquiredGameDeclarat
 const containsIdentity = (text: string, expected: string): boolean => (`-${normalizeGamingGameIdentity(text)}-`)
   .includes(`-${normalizeGamingGameIdentity(expected)}-`);
 const DOCUMENT_LABEL = /^(?:(?:beginner|boss|build|class|combat|current|endgame|loadout|mechanics|patch|progression|pve|pvp|quest|raid|route|season|strategy|survival|synthetic)-){0,4}(?:guide|build|loadout|walkthrough|wiki|tips|patch-notes|release-notes|update-notes)$/u;
-const DISTINCT_SCOPE = /^(?:ii|iii|iv|\d+|nightreign|classic|remastered|remake|bedrock|java|dungeons|legends|shadow-of-the-erdtree|dlc|expansion)(?:-|$)/u;
 const PUBLISHER_DATE_PREFACE = /\b(?:last\s+)?(?:updated|published)(?:\s+on)?\s+(?:(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2}(?:,\s*|\s+)\d{4}|\d{4}-\d{2}-\d{2})(?=\s|[.|•–—]|$)/iu;
 const PUBLISHER_BYLINE_PREFACE = /^(?:written\s+)?by\s+[\p{L}][\p{L}'’.-]*(?:\s+[\p{L}][\p{L}'’.-]*){0,5}$/iu;
+const PRIMARY_IDENTITY_SCOPE_CHARS = 32_000;
+// The resolver already bounds acquired documents. Independent limits make
+// incomplete contradiction inspection explicit rather than accepting a suffix.
+const IDENTITY_SCOPE_SCAN_LIMITS = Object.freeze({ documentChars: 1_000_000, assertions: 1_024, prefixChars: 512, subjectChars: 160 });
 
 /** Only bounded publisher metadata may precede the independently acquired first heading. */
 function acquiredHeadingStart(acquiredStart: string, firstHeading: string | undefined): string {
@@ -43,40 +48,67 @@ export interface GamingSourceIdentityDiagnostic {
 }
 export interface GamingSourceIdentityAssessment {
   status: 'verified' | 'unknown' | 'conflict';
+  /** Independent acquired game proof; an edition-only reason never supplies it. */
+  gameIdentityVerified?: boolean;
   reasonCodes: string[];
   /** Closed server rule/category only; publisher content and request text stay private. */
   diagnostic: GamingSourceIdentityDiagnostic;
 }
 
 /** Inspect bounded acquired scope clauses, preserving visibly quoted/reference context. */
-function acquiredBodySubjects(prose: string): Array<{ text: string; explicitGameScope: boolean; namedGameScope: boolean }> {
+function acquiredBodySubjects(prose: string): { subjects: Array<{ text: string; index: number; explicitGameScope: boolean; namedGameScope: boolean }>;
+  unquotedText: string; complete: boolean } {
+  let complete = true;
+  let quotedPassages = 0;
   const unquoted = prose.replace(/"[^"]*"|“[^”]*”|`[^`]*`|(?:^|\s)'(?:[^']|(?<=\w)'(?=\w))*'|‘[^’]*’/gu,
     (quote, offset: number) => {
+      if (++quotedPassages > IDENTITY_SCOPE_SCAN_LIMITS.assertions) {
+        complete = false;
+        return ' '.repeat(quote.length);
+      }
       const name = quote.replace(/^[\s"“`'‘]+|[\s"”`'’]+$/gu, '');
       // Quoting a game name does not turn an affirmative scope into a quoted passage.
-      const scopeName = /\b(?:this (?:guide|build|walkthrough) (?:covers|is for)|in(?: the game)?)\s*$/iu.test(prose.slice(0, offset));
-      const namedGameScope = /\bin the game\s*$/iu.test(prose.slice(0, offset));
-      const titleSuffix = prose.slice(offset + quote.length).match(/^\s+(?:guide|build|loadout|meta|walkthrough|wiki|tips?)\b/iu)?.[0] ?? '';
-      const namedSubject = detectGamingDocumentGame({ canonicalUrl: '', pageTitle: `${name}${titleSuffix || (namedGameScope ? ' guide' : '')}`,
+      // The apostrophe-safe single-quote matcher consumes leading whitespace;
+      // retain that whitespace when reading the acquired scope introducer.
+      const quoteStart = offset + (quote.match(/^\s*/u)?.[0].length ?? 0);
+      const scopePrefix = prose.slice(Math.max(0, quoteStart - IDENTITY_SCOPE_SCAN_LIMITS.prefixChars), quoteStart);
+      if (quoteStart > IDENTITY_SCOPE_SCAN_LIMITS.prefixChars && /^\s*$/u.test(scopePrefix)) complete = false;
+      const scopeName = new RegExp(`(?:${gamingPrimarySourceDeclarationPattern().source}|\\bin(?: the game)?\\s+)\\s*$`, 'iu')
+        .test(scopePrefix);
+      const declarationName = /\bgame\s*:\s*$/iu.test(scopePrefix);
+      const namedGameScope = /\bin the game\s*$/iu.test(scopePrefix);
+      const titleSuffix = prose.slice(offset + quote.length, offset + quote.length + IDENTITY_SCOPE_SCAN_LIMITS.prefixChars)
+        .match(/^\s+(?:guide|build|loadout|meta|walkthrough|wiki|tips?)\b/iu)?.[0] ?? '';
+      if ((scopeName || declarationName || titleSuffix) && name.length > IDENTITY_SCOPE_SCAN_LIMITS.prefixChars) {
+        complete = false;
+        return ' '.repeat(quote.length);
+      }
+      const namedSubject = detectGamingDocumentGame({ canonicalUrl: '', pageTitle: `${name}${titleSuffix || (scopeName || declarationName ? ' guide' : '')}`,
         allowAcquiredTopicIdentity: namedGameScope });
-      return detectGamingLeadingGameAlias(name, true).game || (scopeName && (detectGamingLeadingGameAlias(name).game
+      return detectGamingLeadingGameAlias(name, true).game || ((scopeName || declarationName || titleSuffix) && (detectGamingLeadingGameAlias(name).game
         || namedSubject.source === 'page_metadata' && namedSubject.confidence >= 0.8))
         ? quote.replace(/^[\s"“`'‘]+|[\s"”`'’]+$/gu, boundary => ' '.repeat(boundary.length)) : ' '.repeat(quote.length);
     });
-  const subjects: Array<{ text: string; explicitGameScope: boolean; namedGameScope: boolean }> = [];
-  for (const match of unquoted.matchAll(/\b(?:this (?:guide|build|walkthrough) (?:covers|is for)|in(?: the game)?)\s+/giu)) {
-    const before = unquoted.slice(0, match.index);
+  const subjects: Array<{ text: string; index: number; explicitGameScope: boolean; namedGameScope: boolean }> = [];
+  let acquiredScopes = 0;
+  for (const match of unquoted.matchAll(new RegExp(`(?:${gamingPrimarySourceDeclarationPattern().source}|\\bin(?: the game)?\\s+)`, 'giu'))) {
+    if (++acquiredScopes > IDENTITY_SCOPE_SCAN_LIMITS.assertions) { complete = false; break; }
+    const before = unquoted.slice(Math.max(0, match.index - IDENTITY_SCOPE_SCAN_LIMITS.prefixChars), match.index);
     const prefix = before.slice(Math.max(...['.', '!', '?', ';', ',', '\n'].map(boundary => before.lastIndexOf(boundary))) + 1);
-    const subject = unquoted.slice(match.index + match[0].length).split(/[,;.!?\n]/u, 1)[0].slice(0, 160).trim();
+    const subjectStart = match.index + match[0].length;
+    const subjectWindow = unquoted.slice(subjectStart, subjectStart + IDENTITY_SCOPE_SCAN_LIMITS.subjectChars);
+    const explicitGameScope = /^(?:this|in the game)\b/iu.test(match[0]);
+    if (explicitGameScope && subjectStart + subjectWindow.length < unquoted.length && !/[,;.!?\n]/u.test(subjectWindow)) complete = false;
+    const subject = subjectWindow.split(/[,;.!?\n]/u, 1)[0].trim();
     // Reference qualifiers apply locally, so a later affirmative clause after
     // a comma or sentence boundary is still independently inspected.
     if (/\b(?:unlike|compared(?:\s+to)?|comparison(?:\s+with)?|contrast(?:\s+to)?|similar(?:ly)?|rather\s+than|instead\s+of|as(?:\s+is\s+the\s+case)?|like)\s*$/iu.test(prefix)
       || /\b(?:not(?:\s+(?:apply|applicable|valid|available|supported|used|found|present|exist|included|be|for)){0,4}|(?:doesn|isn|aren|don|didn)['’]?t(?:\s+(?:apply|exist|work))?|without|except|excluding|unavailable|unsupported)\s*$/iu.test(prefix)
       || /^(?:contrast|comparison|case|addition|particular)\b/iu.test(subject)) continue;
-    if (subject) subjects.push({ text: subject, explicitGameScope: /^(?:this|in the game)\b/iu.test(match[0]),
+    if (subject) subjects.push({ text: subject, index: match.index, explicitGameScope,
       namedGameScope: /^in the game\b/iu.test(match[0]) });
   }
-  return subjects;
+  return { subjects, unquotedText: unquoted, complete };
 }
 
 /** Structural serialization never becomes fallback prose, even when repeated. */
@@ -123,30 +155,58 @@ export function gamingClearHistoricalSourceVerified(input: Pick<GamingStoredKnow
 export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDocument, 'text' | 'metadata' | 'publicUrl'> & Partial<Pick<ResolvedGamingDocument, 'evidenceUnits'>>,
   input: Pick<GamingStoredKnowledgeInput, 'game' | 'edition' | 'prompt' | 'mode' | 'requestedVersion'>,
   policy: GamingSourcePolicyAssessment, _allowPartialCoverage = false): GamingSourceIdentityAssessment {
+  let gameIdentityVerified = false;
   const result = (status: GamingSourceIdentityAssessment['status'], reason: string, ruleId: string,
     evidenceCategory: GamingSourceIdentityDiagnostic['evidenceCategory']): GamingSourceIdentityAssessment =>
-    ({ status, reasonCodes: [reason], diagnostic: { ruleId, evidenceCategory } });
+    ({ status, gameIdentityVerified: gameIdentityVerified && reason !== 'GAME_MISMATCH',
+      reasonCodes: [reason], diagnostic: { ruleId, evidenceCategory } });
+  if (document.text.length > IDENTITY_SCOPE_SCAN_LIMITS.documentChars)
+    return result('unknown', 'GAME_IDENTITY_UNVERIFIED', 'gaming.identity.source_scope_scan_incomplete', 'body_scope');
   input = { ...input, edition: resolveGamingRequestEdition(input) };
-  const expected = new Set([normalizeGamingGameIdentity(input.game), resolveGamingGuideIdentity(input.game, input.edition)]);
+  const gameScoped = selectGamingGameScopedDocument(document, input.game);
+  if (gameScoped.status === 'conflict') return result('conflict', 'GAME_MISMATCH', 'gaming.identity.structured_game_conflict', 'structured_field');
+  if (gameScoped.status === 'unverified') {
+    const unsafeForeignScope = readGamingEvidenceUnits(document.evidenceUnits, document.publicUrl, document.text)
+      .some(unit => unit.fields.some(field => /^game$/iu.test(field.label.split(/\s+\/\s+/u).at(-1)!)
+        && !gamingRegistrySourceGameMatchesRequest(field.value, input.game)));
+    return unsafeForeignScope ? result('conflict', 'GAME_MISMATCH', 'gaming.identity.structured_game_conflict', 'structured_field')
+      : result('unknown', 'GAME_IDENTITY_UNVERIFIED', 'gaming.identity.local_game_scope_not_intact', 'structured_field');
+  }
+  document = gameScoped.document;
+  const registryGame = resolveGamingRegistryGame(input.game);
+  const expected = new Set([input.game, ...(registryGame ? [registryGame.name, ...registryGame.aliases] : []),
+    resolveGamingGuideIdentity(input.game, input.edition)].map(normalizeGamingGameIdentity));
   let scoped = selectGamingEditionScopedEvidence(document, input);
-  const minecraftScope = readGamingMinecraftEditionScope(document, input.game);
-  const minecraft = normalizeGamingGameIdentity(input.game) === 'minecraft';
-  const minecraftFamily = /^minecraft(?:-(?:java|bedrock)(?:-edition)?)?$/u.test(normalizeGamingGameIdentity(input.game));
-  const distinctScope = (qualifier: string) => DISTINCT_SCOPE.test(qualifier)
-    || minecraftFamily && /^story-mode(?:-|$)/u.test(qualifier);
-  const minecraftIdentity = (value: string) => minecraft && /^minecraft-(?:java|bedrock)(?:-edition)?$/u.test(value);
-  const minecraftQualifier = (value: string) => {
-    const match = /^(?:java|bedrock)(?:-edition)?(?:-(.*))?$/u.exec(value);
-    return minecraft && Boolean(match) && !(match?.[1] && distinctScope(match[1]));
-  };
+  const editionScope = readGamingRegistryEditionScope(document, input.game);
+  const distinctScope = (qualifier: string) => gamingRegistryDistinctScopeQualifier(input.game, qualifier);
+  const sourceGameMatches = (value: string) => expected.has(normalizeGamingGameIdentity(value))
+    || gamingRegistrySourceGameMatchesRequest(value, input.game);
+  const editionQualifier = (value: string) => registryGame?.editions.filter(edition => edition.kind === 'edition')
+    .some(edition => [edition.name, ...edition.aliases].some(alias => {
+      const identity = normalizeGamingGameIdentity(alias);
+      return value === identity || value.startsWith(`${identity}-`) && !distinctScope(value.slice(identity.length + 1));
+    })) ?? false;
+  const expansionQualifier = (value: string) => /^(?:dlc|expansion)(?:-|$)/u.test(value)
+    || gamingRegistryExpansionNames(input.game).some(name => {
+      const identity = normalizeGamingGameIdentity(name);
+      return value === identity || value.startsWith(`${identity}-`);
+    });
   if (scoped.reasonCodes.includes('GAME_MISMATCH')) return result('conflict', 'GAME_MISMATCH', 'gaming.identity.structured_game_conflict', 'structured_field');
   const units = readGamingEvidenceUnits(document.evidenceUnits, document.publicUrl, document.text);
   if (units.some(unit => unit.fields.some(field => /^game$/iu.test(field.label.split(/\s+\/\s+/u).at(-1)!)
-    && !expected.has(normalizeGamingGameIdentity(field.value)) && !minecraftIdentity(normalizeGamingGameIdentity(field.value)))))
+    && !sourceGameMatches(field.value))))
     return result('conflict', 'GAME_MISMATCH', 'gaming.identity.structured_game_conflict', 'structured_field');
-  const labels = [...document.text.slice(0, 32_000).matchAll(gamingAcquiredGameDeclarationPattern())];
-  if (labels.some(label => !expected.has(normalizeGamingGameIdentity(label[1])) && !minecraftIdentity(normalizeGamingGameIdentity(label[1]))))
-    return result('conflict', 'GAME_MISMATCH', 'gaming.identity.acquired_game_label_conflict', 'prose_metadata');
+  const bodyScopes = acquiredBodySubjects(document.text);
+  const labels: RegExpExecArray[] = [];
+  let scopeScanComplete = bodyScopes.complete;
+  let acquiredLabels = 0;
+  for (const label of bodyScopes.unquotedText.matchAll(gamingAcquiredGameDeclarationPattern())) {
+    if (++acquiredLabels > IDENTITY_SCOPE_SCAN_LIMITS.assertions) { scopeScanComplete = false; break; }
+    if (!sourceGameMatches(label[1]))
+      return result('conflict', 'GAME_MISMATCH', 'gaming.identity.acquired_game_label_conflict', 'prose_metadata');
+    // Full-source contradiction checks never widen the existing positive anchor.
+    if (label.index < PRIMARY_IDENTITY_SCOPE_CHARS) labels.push(label);
+  }
   let editionScopeConflict = false;
   // Pooled section headings can include related links or comparisons. Only the
   // acquired title or a first heading independently repeated at the bounded start
@@ -178,9 +238,9 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
     // Explicit sequel/edition qualifiers cannot be erased by a broad franchise alias.
     if ([...expected].some(game => identity.startsWith(`${game}-`) && distinctScope(identity.slice(game.length + 1))
       && ![...expected].some(full => full !== game && (identity === full || identity.startsWith(`${full}-`))))) {
-      if (/^shadow-of-the-erdtree|^(?:dlc|expansion)(?:-|$)/u.test(identity.slice(normalizeGamingGameIdentity(input.game).length + 1)))
+      if (expansionQualifier(identity.slice(normalizeGamingGameIdentity(input.game).length + 1)))
         editionScopeConflict = true;
-      else if (!(minecraftQualifier(identity.slice(normalizeGamingGameIdentity(input.game).length + 1))))
+      else if (!(editionQualifier(identity.slice(normalizeGamingGameIdentity(input.game).length + 1))))
         return result('conflict', 'GAME_MISMATCH', category === 'document_title'
           ? 'gaming.identity.distinct_title_scope' : 'gaming.identity.distinct_primary_heading_scope', category);
     }
@@ -188,31 +248,51 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
     // outside the alias catalog. A URL label must not hide that contradiction.
     const detected = detectGamingDocumentGame({ canonicalUrl: '', pageTitle: value });
     const acquiredBody = withoutGamingAcquiredGameDeclarations(document.text);
-    if (detected.game && (detected.source === 'alias' || !isGamingAcquiredTopicTitle(value) && containsIdentity(acquiredBody, detected.game)) && detected.confidence >= 0.8 && !expected.has(normalizeGamingGameIdentity(detected.game))
+    if (detected.game && (detected.source === 'alias' || !isGamingAcquiredTopicTitle(value) && containsIdentity(acquiredBody, detected.game)) && detected.confidence >= 0.8 && !sourceGameMatches(detected.game)
       && ![...expected].some(game => containsIdentity(value, game)))
       return result('conflict', 'GAME_MISMATCH', category === 'document_title'
         ? 'gaming.identity.acquired_title_conflict' : 'gaming.identity.acquired_primary_heading_conflict', category);
 
   }
-  const prose = withoutGamingAcquiredGameDeclarations(document.text.slice(0, 32_000));
-  const bodyHeadings = prose.split(/\n+|(?<=[.!?])\s+/u).slice(0, 128)
-    .filter(unit => /^[^.!?\n]{2,160}\b(?:guide|build|walkthrough)\s*:/iu.test(unit));
-  for (const heading of bodyHeadings) {
+  let acquiredHeadings = 0;
+  for (const heading of withoutGamingAcquiredGameDeclarations(bodyScopes.unquotedText).split(/\n+|(?<=[.!?])\s+/u)) {
+    if (!/^[^.!?\n]{2,160}\b(?:guide|build|walkthrough)\s*:/iu.test(heading)) continue;
+    if (++acquiredHeadings > IDENTITY_SCOPE_SCAN_LIMITS.assertions) { scopeScanComplete = false; break; }
     if (/^(?:unlike|compared(?:\s+(?:to|with))?|comparison(?:\s+(?:to|with))?|contrast(?:\s+(?:to|with))?|rather\s+than|instead\s+of|like|not)\b/iu.test(heading)) continue;
     // URL-first detection must not hide an explicit conflicting subject in acquired prose.
     const detected = detectGamingDocumentGame({ canonicalUrl: '', pageTitle: heading.slice(0, 240) });
     if (detected.game && (detected.source === 'alias' || !isGamingAcquiredTopicTitle(heading.split(':')[0]))
-      && detected.confidence >= 0.8 && !expected.has(normalizeGamingGameIdentity(detected.game))
+      && detected.confidence >= 0.8 && !sourceGameMatches(detected.game)
       && ![...expected].some(game => containsIdentity(heading.split(':')[0], game)))
       return result('conflict', 'GAME_MISMATCH', 'gaming.identity.instruction_heading_conflict', 'body_heading');
   }
   // Every affirmative acquired subject binds; matching titles and earlier
   // requested-game subjects cannot hide a later different gameplay scope.
-  for (const { text: bodySubject, explicitGameScope, namedGameScope } of acquiredBodySubjects(prose)) {
+  for (const { text: bodySubject, explicitGameScope, namedGameScope } of bodyScopes.subjects) {
+    // A primary declaration can name content applicability rather than a new
+    // game. Registry-owned expansion names and closed generic edition nouns
+    // retain their own conflict category; they never prove the source's game.
+    const editionSubject = normalizeGamingGameIdentity(bodySubject).replace(/^(?:(?:only|the)-){1,2}/u, '');
+    const expansionPrefix = explicitGameScope && gamingRegistryExpansionNames(input.game)
+      .find(name => editionSubject === normalizeGamingGameIdentity(name)
+        || editionSubject.startsWith(`${normalizeGamingGameIdentity(name)}-`));
+    const expansionSuffix = expansionPrefix ? editionSubject.slice(normalizeGamingGameIdentity(expansionPrefix).length) : '';
+    const declaredExpansion = expansionPrefix && (!expansionSuffix
+      || /^(?:-(?:dlc|expansion|content|guide|build|walkthrough)){1,3}$/u.test(expansionSuffix)) ? expansionPrefix : undefined;
+    if (expansionPrefix && !declaredExpansion)
+      return result('conflict', 'EDITION_CONFLICT', 'gaming.identity.edition_declaration_boundary_conflict', 'edition_scope');
+    const genericExpansionSubject = explicitGameScope && /^(?:dlc|expansion)(?:-(?:content|guide|build|walkthrough)){0,2}$/u.test(editionSubject);
+    if (declaredExpansion || genericExpansionSubject) {
+      const sameRequestedExpansion = input.edition && declaredExpansion
+        && normalizeGamingRegistryEdition(input.game, input.edition) === normalizeGamingRegistryEdition(input.game, declaredExpansion);
+      editionScopeConflict ||= Boolean(input.edition && !sameRequestedExpansion
+        && (declaredExpansion || normalizeGamingEditionIdentity(input.edition) === 'base-game'));
+      continue;
+    }
     const leading = detectGamingLeadingGameAlias(bodySubject);
     const firstInstructionMarker = /\b(?:guide|build|loadout|meta|walkthrough|wiki|tips?|tier(?:\s+list)?|patch\s+notes)\b/iu.exec(bodySubject);
     const metadataSubject = detectGamingDocumentGame({ canonicalUrl: '',
-      pageTitle: namedGameScope && !firstInstructionMarker ? `${bodySubject} guide` : bodySubject,
+      pageTitle: explicitGameScope && !firstInstructionMarker ? `${bodySubject} guide` : bodySubject,
       allowAcquiredTopicIdentity: namedGameScope });
     // Bare location clauses can use guide/build as imperative verbs. Their
     // objects do not declare a new game; explicit game scopes and aliases do.
@@ -223,17 +303,17 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
     const detected = leading.game ? leading : metadataSubject.source !== 'alias' && !instructionalClause ? metadataSubject : leading;
     const subjectIdentity = normalizeGamingGameIdentity(bodySubject);
     const expectedSubject = [...expected].some(game => subjectIdentity === game || subjectIdentity.startsWith(`${game}-`));
-    if (detected.game && detected.confidence >= 0.8 && !expected.has(normalizeGamingGameIdentity(detected.game))
+    if (detected.game && detected.confidence >= 0.8 && !sourceGameMatches(detected.game)
       && !(leading.game ? expectedSubject : [...expected].some(game => containsIdentity(bodySubject, game))))
       return result('conflict', 'GAME_MISMATCH', 'gaming.identity.affirmative_body_scope_conflict', 'body_scope');
     if ([...expected].some(game => {
       const bodyIdentity = normalizeGamingGameIdentity(bodySubject);
       return bodyIdentity.startsWith(`${game}-`) && distinctScope(bodyIdentity.slice(game.length + 1))
-        && ![...expected].some(full => full !== game && bodyIdentity.startsWith(`${full}-`));
+        && ![...expected].some(full => full !== game && (bodyIdentity === full || bodyIdentity.startsWith(`${full}-`)));
     })) {
       const qualifier = normalizeGamingGameIdentity(bodySubject).slice(normalizeGamingGameIdentity(input.game).length + 1);
-      if (/^shadow-of-the-erdtree|^(?:dlc|expansion)(?:-|$)/u.test(qualifier)) editionScopeConflict = true;
-      else if (!(minecraftQualifier(qualifier))) return result('conflict', 'GAME_MISMATCH', 'gaming.identity.distinct_body_scope', 'body_scope');
+      if (expansionQualifier(qualifier)) editionScopeConflict = true;
+      else if (!(editionQualifier(qualifier))) return result('conflict', 'GAME_MISMATCH', 'gaming.identity.distinct_body_scope', 'body_scope');
     }
   }
   const ordinaryTitle = metadata.some(value => [...expected].some(game => {
@@ -241,26 +321,68 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
     return identity === game || identity.startsWith(`${game}-`) && DOCUMENT_LABEL.test(identity.slice(game.length + 1));
   }));
   const metadataAnchor = metadata.some(value => [...expected].some(game => containsIdentity(value, game)));
-  const proseAnchor = [...expected].some(game => containsIdentity(withoutGamingAcquiredGameDeclarations(document.text), game));
+  // The primary heading is acquired article metadata even when the extractor
+  // repeats it in prose. It cannot corroborate itself or become a second anchor
+  // through an inherited structural record heading.
+  let identityProse = gamingClearIntactProseText({ ...document, metrics: { truncated: false } });
+  if (leadingHeading) {
+    const headingOffset = identityProse.indexOf(leadingHeading);
+    const remainder = headingOffset >= 0 ? identityProse.slice(headingOffset + leadingHeading.length) : '';
+    // Legacy normalized documents may expose a bare game heading while prose
+    // starts with the longer guide label. That prefix is not the whole heading.
+    const continuation = remainder.match(/^\s+([^.!?\n:;]{1,80})(?=[.!?\n:;]|$)/u)?.[1];
+    if (headingOffset >= 0 && !(continuation && DOCUMENT_LABEL.test(normalizeGamingGameIdentity(continuation))))
+      identityProse = identityProse.slice(0, headingOffset) + remainder;
+  }
+  const acquiredGlobalGame = labels.some(label => sourceGameMatches(label[1]));
+  const contextGameMatches = (value: string) => sourceGameMatches(value) || [...expected].some(game => {
+    const identity = normalizeGamingGameIdentity(value);
+    const suffix = identity.startsWith(`${game}-`) ? identity.slice(game.length + 1) : '';
+    return DOCUMENT_LABEL.test(suffix) || /^(?:resources?|records?|resource-records|equipment|statistics)$/u.test(suffix);
+  });
+  const localRecordAnchor = units.some(unit => {
+    if (isGamingDocumentMetadataUnit(unit)) return false;
+    const usable = assessGamingStructuralUsability({ units: [unit], prompt: input.prompt, game: input.game, mode: input.mode });
+    if (!usable.hasIntactUsableUnit || !usable.hasRelevantClaimUnit) return false;
+    const declaredGame = unit.fields.some(field => /^game$/iu.test(field.label.split(/\s+\/\s+/u).at(-1)!) && sourceGameMatches(field.value));
+    const acquiredCaption = unit.context.caption && contextGameMatches(unit.context.caption) && unit.text.includes(unit.context.caption);
+    // An exact game-valued section heading binds its complete gameplay tuple.
+    // Generic article titles such as GAME guide remain primary metadata and
+    // cannot provide this ownership merely through inherited row context.
+    const acquiredRecordHeading = unit.context.heading && sourceGameMatches(unit.context.heading)
+      && unit.text.includes(unit.context.heading);
+    return declaredGame || acquiredGlobalGame || acquiredCaption || acquiredRecordHeading;
+  });
+  const proseAnchor = localRecordAnchor || [...expected].some(game => containsIdentity(withoutGamingAcquiredGameDeclarations(identityProse), game));
   const reviewedAssociation = Boolean(policy.ruleId) && ['official', 'specialist', 'community'].includes(policy.authority);
   // A generic acquired topic title still needs an affirmative acquired game
   // declaration. Neither matching player/topic terms nor a reference mention
   // can supply that proof, and all acquired contradictions above still bind.
-  const acquiredBodyScope = !metadataAnchor && metadata.some(isGamingAcquiredTopicTitle) && acquiredBodySubjects(prose).some(({ text: subject }) => {
+  const primaryProse = withoutGamingAcquiredGameDeclarations(document.text.slice(0, PRIMARY_IDENTITY_SCOPE_CHARS));
+  const acquiredBodyScope = !metadataAnchor && metadata.some(isGamingAcquiredTopicTitle)
+    && acquiredBodySubjects(primaryProse).subjects.some(({ text: subject }) => {
     const declared = detectGamingLeadingGameAlias(subject);
     return declared.game && declared.confidence >= 0.8 && expected.has(normalizeGamingGameIdentity(declared.game));
   });
+  gameIdentityVerified = Boolean(scopeScanComplete && (metadataAnchor && proseAnchor || reviewedAssociation && metadataAnchor || acquiredBodyScope)
+    && !clippedPrimaryHeading);
+  // A definitive acquired applicability contradiction remains terminal without
+  // turning absent independent game proof into a verified identity outcome.
+  if (editionScopeConflict)
+    return result('conflict', 'EDITION_CONFLICT', 'gaming.identity.edition_scope_conflict', 'edition_scope');
+  if (!scopeScanComplete)
+    return result('unknown', 'GAME_IDENTITY_UNVERIFIED', 'gaming.identity.source_scope_scan_incomplete', 'body_scope');
   if (!(metadataAnchor && proseAnchor) && !(reviewedAssociation && metadataAnchor) && !acquiredBodyScope)
     return result('unknown', 'GAME_IDENTITY_UNVERIFIED', 'gaming.identity.independent_anchor_required', 'acquired_anchors');
   if (clippedPrimaryHeading)
     return result('unknown', 'GAME_IDENTITY_UNVERIFIED', 'gaming.identity.primary_heading_boundary_unverified', 'body_heading');
-  // Parent Minecraft scope is acquired independently from a requested edition choice.
-  if (minecraftScope.status === 'conflict') return result('conflict', 'EDITION_CONFLICT', 'gaming.identity.edition_scope_conflict', 'edition_scope');
-  if (minecraftScope.status === 'unverified') return result('unknown', 'EDITION_UNVERIFIED', 'gaming.identity.edition_scope_unverified', 'edition_scope');
-  if (minecraftScope.status === 'verified') {
-    if (input.edition && normalizeGamingMinecraftEdition(input.edition) !== minecraftScope.edition)
+  // Registry edition scope is acquired independently from a requested edition choice.
+  if (editionScope.status === 'conflict') return result('conflict', 'EDITION_CONFLICT', 'gaming.identity.edition_scope_conflict', 'edition_scope');
+  if (editionScope.status === 'unverified') return result('unknown', 'EDITION_UNVERIFIED', 'gaming.identity.edition_scope_unverified', 'edition_scope');
+  if (editionScope.status === 'verified') {
+    if (input.edition && normalizeGamingRegistryEdition(input.game, input.edition) !== editionScope.edition)
       return result('conflict', 'EDITION_CONFLICT', 'gaming.identity.edition_scope_conflict', 'edition_scope');
-    if (!input.edition && (minecraftScope.exclusive || resolveGamingFreshnessDisposition(input) === 'REQUIRED'))
+    if (!input.edition && (editionScope.exclusive || resolveGamingFreshnessDisposition(input) === 'REQUIRED'))
       return result('unknown', 'EDITION_REQUIRED', 'gaming.identity.edition_choice_required', 'edition_scope');
   }
   const applicability = extractGamingFreshnessMetadata(document, input);
@@ -276,7 +398,7 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
     ? gamingClearIntactProseText({ ...document, metrics: { truncated: false } }) : document.text, false, true)
     : baseRequest && scoped.status !== 'verified' ? classifyGamingEditionRequirements(document.text) : 'clear';
   if (editionScopeConflict || scoped.status === 'conflict' || requirements === 'conflict'
-    || baseRequest && /\bshadow[\s-]+of[\s-]+the[\s-]+erdtree\b/iu.test(document.metadata.title ?? ''))
+    || baseRequest && gamingRegistryExpansionNames(input.game).some(name => containsIdentity(document.metadata.title ?? '', name)))
     return result('conflict', 'EDITION_CONFLICT', 'gaming.identity.edition_scope_conflict', 'edition_scope');
   if (requirements === 'unverified' || scoped.status === 'unverified' && scoped.reasonCodes.length)
     return result('unknown', 'EDITION_UNVERIFIED', 'gaming.identity.edition_scope_unverified', 'edition_scope');
@@ -286,7 +408,7 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
     if (normalizeGamingEditionIdentity(input.edition) === 'base-game') {
       if (!gamingEditionEvidenceMatchesRequest(applicability.edition, input.edition))
         return result(applicability.edition ? 'conflict' : 'unknown', applicability.edition ? 'EDITION_CONFLICT' : 'EDITION_UNVERIFIED', 'gaming.identity.edition_applicability', 'edition_scope');
-    } else if (minecraftScope.status !== 'verified' && !containsIdentity([...metadata, prose].join(' '), input.edition)) {
+    } else if (editionScope.status !== 'verified' && !containsIdentity([...metadata, primaryProse].join(' '), input.edition)) {
       return result('unknown', 'EDITION_UNVERIFIED', 'gaming.identity.edition_scope_unverified', 'edition_scope');
     }
   }
@@ -310,11 +432,13 @@ export function assessGamingClearSource(input: GamingStoredKnowledgeInput & { re
   const identity = assessGamingClearSourceIdentity(document, input, options.sourcePolicy, options.allowPartialCoverage);
   options.onIdentityAssessment?.(identity);
   const editionIssue = identity.reasonCodes.every(code => code.startsWith('EDITION_'));
-  const gameIdentity = editionIssue ? 'verified' as const : identity.status;
-  const scoped = selectGamingSourceEditionScopedEvidence(document, input, options.freshness.edition);
+  const gameIdentity = editionIssue ? identity.gameIdentityVerified === true ? 'verified' as const : 'unknown' as const : identity.status;
+  const gameScoped = selectGamingGameScopedDocument(document, input.game);
+  const selectedDocument = gameScoped.status === 'projected' ? gameScoped.document : document;
+  const scoped = selectGamingSourceEditionScopedEvidence(selectedDocument, input, options.freshness.edition);
   const qualifiedSourceEdition = !input.edition && options.freshness.edition
     && gamingEditionEvidenceMatchesRequest(options.freshness.edition, undefined, input);
-  const evidenceDocument = scoped.status === 'verified' ? { ...document, text: scoped.text, evidenceUnits: scoped.units } : document;
+  const evidenceDocument = scoped.status === 'verified' ? { ...selectedDocument, text: scoped.text, evidenceUnits: scoped.units } : selectedDocument;
   const supporting = ['patch_authority', 'currentness_index', 'live_status'].includes(role);
   const intactText = gamingClearIntactSourceText(evidenceDocument);
   const coverage = gamingTermCoverage(intactText, buildGamingRetrievalTerms(input).focusTerms);
@@ -385,5 +509,5 @@ export function assessGamingClearSource(input: GamingStoredKnowledgeInput & { re
   });
   // Applicability established for individual records cannot authorize storing the
   // original whole page as base-game content. The existing storage gate enforces this.
-  return scoped.status === 'verified' || qualifiedSourceEdition ? { ...assessment, qualityEligible: false } : assessment;
+  return gameScoped.status === 'projected' || scoped.status === 'verified' || qualifiedSourceEdition ? { ...assessment, qualityEligible: false } : assessment;
 }

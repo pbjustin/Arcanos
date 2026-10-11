@@ -1,6 +1,7 @@
 import type { GamingHybridResponse, GamingGuideOutcome } from './gamingHybridContract.js';
 import type { GamingFreshnessEvidence } from './gamingFreshnessCore.js';
 import type { GamingStoredKnowledgeContext } from './gamingStoredEvidenceCore.js';
+import { GAMING_GUIDE_PUBLIC_TOPIC_LEXEMES } from './gamingPreferenceData.js';
 
 /** These pure decisions are shared by normal services and the sealed preview. */
 export const GAMING_HYBRID_RETAINED_ARTIFACT_CHARS = 12_000_000;
@@ -141,9 +142,7 @@ export function projectGamingGuideOutcome(body: GamingHybridResponse): { fronten
 export function gamingGuideSearchHint(input: { game: string; question: string; class?: string }): string {
   const game = input.game.replace(/https?:\/\/\S+|\S+@\S+|\b\d{7,}\b/giu, ' ')
     .replace(/[^\p{L}\p{N} .:'-]/gu, ' ').replace(/\s+/gu, ' ').trim().slice(0, 120);
-  const topics = ['early game', 'beginner', 'Samurai', 'katana', 'Uchigatana', 'blade', 'weapon', 'stats', 'armor',
-    'skills', 'strategy', 'boss', 'quest', 'location', 'mechanics', 'build', 'upgrade', 'progression'];
   const publicTopic = `${input.question} ${input.class ?? ''}`.replace(/-/gu, ' ');
-  const selected = topics.filter(topic => new RegExp(`\\b${topic}\\b`, 'iu').test(publicTopic));
+  const selected = GAMING_GUIDE_PUBLIC_TOPIC_LEXEMES.filter(topic => new RegExp(`\\b${topic}\\b`, 'iu').test(publicTopic));
   return `${game} ${selected.join(' ')} guide`.replace(/\s+/gu, ' ').trim().slice(0, 350);
 }

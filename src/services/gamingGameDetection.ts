@@ -1,3 +1,5 @@
+import { detectGamingRegistryAlias, resolveGamingRegistryGame, GAMING_GAME_REGISTRY } from '@shared/gaming/gamingGameRegistry.js';
+
 export type GamingGameDetectionSource = "explicit" | "alias" | "prompt" | "url" | "page_metadata" | "none";
 
 export type GamingGameDetection = {
@@ -17,24 +19,6 @@ type DetectionInput = {
 };
 
 const MAX_GAME_TITLE_CHARS = 120;
-
-const OPTIONAL_GAME_ALIASES: Array<{ pattern: RegExp; name: string }> = [
-  { pattern: /\b(?:star\s+wars:\s*)?the\s+old\s+republic\b|\bswtor\b/i, name: "Star Wars: The Old Republic" },
-  { pattern: /\bworld\s+of\s+warcraft\b/i, name: "World of Warcraft" },
-  { pattern: /\b(?:WoW|WOW)\b/, name: "World of Warcraft" },
-  { pattern: /\belden\s+ring\s+nightreign\b/i, name: "Elden Ring Nightreign" },
-  { pattern: /\belden\s+ring\b/i, name: "Elden Ring" },
-  { pattern: /\bdestiny\s+2\b/i, name: "Destiny 2" },
-  { pattern: /\bdiablo\s+(?:4|iv)\b/i, name: "Diablo 4" },
-  { pattern: /\bpath\s+of\s+exile\s+2\b/i, name: "Path of Exile 2" },
-  { pattern: /\bpath\s+of\s+exile\b/i, name: "Path of Exile" },
-  { pattern: /\bbaldur'?s\s+gate\s+3\b/i, name: "Baldur's Gate 3" },
-  { pattern: /\bminecraft\b/i, name: "Minecraft" },
-  { pattern: /\bleague\s+of\s+legends\b/i, name: "League of Legends" },
-  { pattern: /\b(?:LoL|LOL)\b/, name: "League of Legends" },
-  { pattern: /\boverwatch\s+2\b/i, name: "Overwatch 2" },
-  { pattern: /\bfortnite\b/i, name: "Fortnite" }
-];
 
 const GAME_TRAILING_TERMS = new Set([
   "action", "beginner", "beginners", "boss", "class", "combat", "community", "current", "early", "first",
@@ -59,9 +43,8 @@ const NON_GAME_ENTITY_WORDS = new Set([
 ]);
 
 const ACQUIRED_TOPIC_WORDS = new Set([
-  ...NON_GAME_ENTITY_WORDS, ...GAME_TRAILING_TERMS, 'and', 'of', 'the', 'samurai', 'katana', 'katanas', 'blade', 'blades',
-  'bleed', 'blood', 'dexterity', 'strength', 'intelligence', 'faith', 'arcane', 'vigor', 'endurance', 'weapon', 'weapons',
-  'beginner', 'beginners', 'starting', 'equipment', 'skills', 'talents'
+  ...NON_GAME_ENTITY_WORDS, ...GAME_TRAILING_TERMS, 'and', 'of', 'the',
+  ...(GAMING_GAME_REGISTRY.topicVocabulary ?? [])
 ]);
 
 /** A closed gameplay topic does not invent an uncatalogued game identity. */
@@ -82,28 +65,18 @@ const GENERIC_PATH_SEGMENTS = new Set([
 ]);
 
 function canonicalAlias(value: string): string | undefined {
-  return OPTIONAL_GAME_ALIASES.find((entry) => entry.pattern.test(value))?.name;
+  return detectGamingRegistryAlias(value)?.name;
 }
 
 /** An acquired scope clause names its subject first; later comparisons cannot select it. */
 export function detectGamingLeadingGameAlias(value: string, wholeNameOnly = false): GamingGameDetection {
-  const subject = value.trim();
-  const alias = OPTIONAL_GAME_ALIASES.find(entry => {
-    const match = entry.pattern.exec(subject);
-    return match?.index === 0 && (!wholeNameOnly || match[0].length === subject.length);
-  });
+  const alias = detectGamingRegistryAlias(value, true, wholeNameOnly);
   return alias ? { game: alias.name, confidence: 0.88, source: 'alias' } : { confidence: 0, source: 'none' };
 }
 
 export function canonicalizeGamingGameName(value: string): string {
   const normalized = value.replace(/\s+/g, " ").trim();
-  if (/^wow$/i.test(normalized)) {
-    return "World of Warcraft";
-  }
-  if (/^lol$/i.test(normalized)) {
-    return "League of Legends";
-  }
-  return canonicalAlias(normalized) ?? normalized;
+  return resolveGamingRegistryGame(normalized)?.name ?? canonicalAlias(normalized) ?? normalized;
 }
 
 function displayCase(value: string): string {

@@ -2,10 +2,10 @@ import { describe, expect, it } from '@jest/globals';
 import type { GamingEvidenceUnit } from '../src/shared/gaming/gamingEvidenceUnits.js';
 import type { ResolvedGamingDocument } from '../src/services/gamingDocumentResolution.js';
 import { assessGamingClearSource, gamingClearIntactSourceText } from '../src/shared/gaming/gamingClearSource.js';
-import { assessGamingSourcePolicy, extractGamingFreshnessMetadata } from '../src/shared/gaming/gamingFreshnessCore.js';
+import { assessGamingSourcePolicy, extractGamingFreshnessMetadata, GAMING_FRESHNESS_POLICY_VERSION } from '../src/shared/gaming/gamingFreshnessCore.js';
 import { gamingClearHash } from '../src/shared/gaming/gamingClearPolicy.js';
 import { assessGamingStructuralUsability, selectGamingEditionScopedEvidence } from '../src/shared/gaming/gamingStructuralEvidence.js';
-import { chunkGamingDocument } from '../src/services/gamingDurableDocumentChunks.js';
+import { chunkGamingDocument, hashGamingDocumentRevision } from '../src/services/gamingDurableDocumentChunks.js';
 import { formatStoredGamingEvidence, selectStoredGamingEvidence, type GamingStoredKnowledgeContext } from '../src/shared/gaming/gamingStoredEvidenceCore.js';
 import { assessGamingClearEvidence } from '../src/shared/gaming/gamingClearEvidence.js';
 
@@ -256,9 +256,17 @@ describe('claim-specific structural scope and ordinary retrieval', () => {
     const input = { game: 'Testspace', prompt, mode: 'guide' as const, spoilerMode: 'none' as const };
     const limits = { chunkChars: 2_000, maxChunks: 8, maxSources: 3, maxContextChars: 8_000, structuredEvidenceChars: 8_000 };
     const chunk = chunks.chunks[0];
+    const contentHash = hashGamingDocumentRevision(doc.text, JSON.stringify({ evidenceUnits: doc.evidenceUnits }));
+    const applicability = extractGamingFreshnessMetadata(doc, input, now, []);
+    expect(applicability.metadataUnverified).toBeUndefined();
     const candidates = selectStoredGamingEvidence([{ gameName: 'Testspace', recordId: 'record', recordType: 'guide', title: 'Testspace', searchText: chunk.text,
       normalized: { text: chunk.text, evidenceUnits: chunk.evidenceUnits, chunk: { ordinal: 0, totalChunks: 1, startChar: 0, endChar: chunk.text.length } },
-      sourceId: 'source', publicUrl: url, sourceType: 'unreviewed', revisionId: 'revision', fetchedAt: now, publishedAt: null, provenance: {}, relevance: 1 }], input, limits);
+      sourceId: 'source', publicUrl: url, sourceType: 'unreviewed', revisionId: 'revision', contentHash, fetchedAt: now, publishedAt: null,
+      provenance: { acquiredApplicability: { extractorVersion: GAMING_FRESHNESS_POLICY_VERSION, contentHash, game: applicability.game,
+        ...(applicability.edition ? { edition: applicability.edition } : {}),
+        ...(applicability.platforms?.length ? { platforms: applicability.platforms } : {}),
+        ...(applicability.regions?.length ? { regions: applicability.regions } : {}),
+        ...(applicability.metadataConflict ? { metadataConflict: true } : {}) } }, relevance: 1 }], input, limits);
     const knowledge = formatStoredGamingEvidence(candidates, input, limits);
     expect(knowledge.evidence?.[0]).toMatchObject({ text: unit.text, evidenceUnits: [unit] });
     expect(knowledge.context).toContain('source location: table[0]/tr[1]');
