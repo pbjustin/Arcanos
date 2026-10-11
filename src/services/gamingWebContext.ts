@@ -2995,7 +2995,7 @@ export async function buildGamingRagContext(
     const discoveryResult = await discoverGamingSources({
       prompt: input.prompt,
       currentArea: input.currentArea, class: input.class, constraints: input.constraints,
-      edition: input.edition, requestedVersion: input.requestedVersion,
+      edition: input.edition, platform: input.platform, requestedVersion: input.requestedVersion,
       game,
       mode: input.mode,
       patchSensitive,

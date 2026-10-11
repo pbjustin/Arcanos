@@ -247,6 +247,14 @@ describe('v2 actor-bound recovery lifecycle', () => {
     expect(searches).not.toMatch(/QuietCobaltOwner|778899|Orchard|Terrace|private|account/iu);
   });
 
+  it('preserves explicit platform-only context in gameplay discovery hints', async () => {
+    const { workflow } = setup();
+    const result = await workflow.query({ ...query, game: 'Minecraft', edition: 'Bedrock Edition', platform: 'PC',
+      question: 'How do I equip a shield?' }, context);
+    expect(result.body.nextAction).toBe('search');
+    expect(result.body.discovery!.searchQueries.every(search => /Bedrock Edition PC/u.test(search))).toBe(true);
+  });
+
   it.each([
     ['Elden Ring', 'What should I do at the Church of Elleh before moving on?', ['church', 'elleh']],
     ['Elden Ring', 'How do I avoid heavy rolling in Elden Ring?', ['heavy', 'rolling']],

@@ -574,6 +574,21 @@ describe('gaming open-web source discovery', () => {
     expect(secondProvider.search).toHaveBeenCalledTimes(1);
   });
 
+  it('preserves explicit platform scope and separates cached searches across platforms', async () => {
+    const { provider, search } = makeProvider(async () => []);
+    const input = guideInput({ game: 'Minecraft', edition: 'Bedrock Edition',
+      prompt: 'How do I equip a shield?', provider, platform: 'PC' });
+    const first = await discoverGamingSources(input);
+    const repeat = await discoverGamingSources(input);
+    const consoleResult = await discoverGamingSources({ ...input, platform: 'Xbox Series X' });
+    expect(search).toHaveBeenCalledTimes(2);
+    expect(search.mock.calls[0][0].query).toMatch(/Minecraft Bedrock Edition PC .*equip shield/u);
+    expect(search.mock.calls[1][0].query).toMatch(/Minecraft Bedrock Edition Xbox Series X .*equip shield/u);
+    expect(first.discoveryCacheHit).toBe(false);
+    expect(repeat.discoveryCacheHit).toBe(true);
+    expect(consoleResult.discoveryCacheHit).toBe(false);
+  });
+
   it('evicts the oldest query-cache entry when the configured bound is reached', async () => {
     process.env.ARCANOS_GAMING_DISCOVERY_CACHE_MAX_ENTRIES = '2';
     const { provider, search } = makeProvider(async () => []);

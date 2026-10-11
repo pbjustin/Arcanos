@@ -75,7 +75,7 @@ export interface GamingDiscoveredCandidate extends GamingSearchResult {
   };
 }
 
-export interface GamingDiscoveryInput extends Pick<GamingPlayerContext, "class" | "currentArea" | "constraints" | "edition"> {
+export interface GamingDiscoveryInput extends Pick<GamingPlayerContext, "class" | "currentArea" | "constraints" | "edition" | "platform"> {
   prompt: string;
   game?: string;
   mode: GamingMode;
@@ -208,7 +208,8 @@ export function buildGamingDiscoveryQuery(input: GamingDiscoveryInput): string {
     modeSegment = "";
   }
 
-  return [gameSegment, safeSearchText(input.edition, 40), safeSearchText(input.requestedVersion, 30), topicText, modeSegment]
+  return [gameSegment, safeSearchText(input.edition, 40), safeSearchText(input.platform, 40),
+    safeSearchText(input.requestedVersion, 30), topicText, modeSegment]
     .filter(Boolean)
     .join(" ")
     .replace(/\s+/g, " ")

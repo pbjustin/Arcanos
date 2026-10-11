@@ -248,12 +248,12 @@ export function createGamingHybridWorkflow(overrides: Partial<GamingHybridDepend
     // Public gap labels are intentionally generic diagnostics. They cannot replace
     // the requested location/mechanic as search intent, even on a recovery round.
     const query = buildGamingDiscoveryQuery({ game: clean(input.game), prompt: redactString(input.question),
-      mode: workflow.pipeline.mode, edition: input.edition, requestedVersion: input.requestedVersion,
+      mode: workflow.pipeline.mode, edition: input.edition, platform: input.platform, requestedVersion: input.requestedVersion,
       currentArea: workflow.pipeline.currentArea, class: workflow.pipeline.class, constraints: workflow.pipeline.constraints });
     const focus = query.replace(/\s+(?:guide|build)$/u, '');
     const gapFocus = gapAssessmentStatus === 'assessed' ? gaps.filter(gap => !/^requested topic\b/iu.test(gap)).join(' ') : '';
     const secondary = buildGamingDiscoveryQuery({ game: clean(input.game), mode: 'guide',
-      prompt: `${gapFocus} ${focus}`, edition: input.edition, requestedVersion: input.requestedVersion });
+      prompt: `${gapFocus} ${focus}`, edition: input.edition, platform: input.platform, requestedVersion: input.requestedVersion });
     return Array.from(new Set([query, secondary]));
   }
   function discovery(context: GamingHybridCallContext, workflow: Workflow, body: GamingHybridResponse,
