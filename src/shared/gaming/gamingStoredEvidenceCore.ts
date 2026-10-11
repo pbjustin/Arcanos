@@ -227,6 +227,7 @@ function projectCandidate<RecordType extends GamingStoredEvidenceRecord>(record:
     && validScopeList(acquiredMetadata.platforms) && validScopeList(acquiredMetadata.regions) ? acquiredMetadata : undefined;
   const existingHybridScope = freshnessMetadata && typeof freshnessMetadata.game === 'string'
     && (provenance.acquiredApplicability === undefined || acquiredApplicability !== undefined)
+    && acquiredApplicability?.metadataUnverified !== true
     && freshnessMetadata.game.trim().length > 0 && freshnessMetadata.game.length <= 160
     && typeof freshnessMetadata.id === 'string' && freshnessMetadata.id.length > 0 && freshnessMetadata.id.length <= 2_048
     && freshnessMetadata.policyVersion === GAMING_SOURCE_POLICY_VERSION
@@ -234,13 +235,15 @@ function projectCandidate<RecordType extends GamingStoredEvidenceRecord>(record:
     && record.clearSourceAssessment?.profile === 'source'
     && record.clearSourceAssessment.subjectHash === provenance.approvedContentHash;
   const compatibleScope = (scope: { platforms?: readonly string[]; regions?: readonly string[];
-    metadataConflict?: unknown; metadataUnverified?: unknown }) => !scope.metadataConflict && !scope.metadataUnverified
+    metadataConflict?: unknown; metadataUnverified?: unknown }) => !scope.metadataConflict
     && (!scope.platforms?.length || !input.platform
       || gamingPlatformEvidenceMatchesRequest(scope.platforms, input.platform))
     && (!scope.regions?.length || !input.region
       || scope.regions.some(region => ['all', input.region?.toLowerCase()].includes(region.toLowerCase())));
   if (acquiredApplicability && !compatibleScope(acquiredApplicability as {
     platforms?: string[]; regions?: string[]; metadataConflict?: boolean; metadataUnverified?: boolean })) return null;
+  // Complete-source uncertainty keeps context readable, but its unverified flag
+  // must reach CLEAR and cannot be replaced by an older hybrid scope snapshot.
   const sourceEdition = typeof provenance.edition === 'string' ? provenance.edition
     : typeof freshnessMetadata?.edition === 'string' ? freshnessMetadata.edition
       : typeof acquiredApplicability?.edition === 'string' ? acquiredApplicability.edition : undefined;
@@ -255,7 +258,7 @@ function projectCandidate<RecordType extends GamingStoredEvidenceRecord>(record:
     // the original fetch time. Preserve global metadata outside selected rows.
     const applicability = extractGamingFreshnessMetadata(gameScoped.document,
       { ...input, ...(editionScoped.status === 'verified' ? { edition: 'base-game' } : {}) }, record.fetchedAt, []);
-    if (!compatibleScope(applicability)) return null;
+    if (applicability.metadataUnverified || !compatibleScope(applicability)) return null;
   }
   const structural = assessGamingStructuralUsability({ units: evidenceUnits, ...input });
   if (evidenceUnits.length && structural.claimShape !== 'none' && !structural.claimSupported
