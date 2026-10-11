@@ -9,7 +9,8 @@ jest.unstable_mockModule('node:dns/promises', () => ({ Resolver: class {
   async resolve6() { return []; }
   cancel() {}
 } }));
-const { evaluateGamingHybridCandidates, assertGamingHybridEvidenceMembership } = await import('../src/services/gamingHybridCandidates.js');
+const { evaluateGamingHybridCandidates, assertGamingHybridEvidenceMembership, selectGamingHybridAcceptedEvidence,
+  selectGamingHybridEvidence } = await import('../src/services/gamingHybridCandidates.js');
 const { assessGamingClearEvidence } = await import('../src/shared/gaming/gamingClearEvidence.js');
 const { evaluateGamingFreshness } = await import('../src/shared/gaming/gamingFreshnessCore.js');
 const actor = { actorKey: 'base-default-test', workflowId: 'base-default-workflow', requestId: 'base-default-request' };
@@ -50,9 +51,23 @@ describe('ordinary base-game request interpretation', () => {
     const result = await acquire('Platforms: PC. Regions: North America.');
     expect(result.accepted).toHaveLength(1);
     expect(result.accepted[0].freshness).toMatchObject({ platforms: ['PC'], regions: ['North America'] });
+    const candidate = result.accepted[0];
+    expect(candidate.evidenceRecords?.[0]).toMatchObject({ contentHash: candidate.contentHash,
+      clearSourceAssessment: { subjectHash: candidate.contentHash }, provenance: {
+        approvedContentHash: candidate.contentHash, hybridFreshness: { id: candidate.candidateId,
+          platforms: ['PC'], regions: ['North America'] } } });
+    expect(result.knowledge.sources[0].freshnessMetadata).toMatchObject({ id: candidate.candidateId,
+      platforms: ['PC'], regions: ['North America'] });
     expect(evaluateGamingFreshness({ question: input.prompt, game: input.game, mode: input.mode,
       evidence: result.accepted.map(item => item.freshness) }).usable).toBe(true);
     expect(assessGamingClearEvidence(input, result.knowledge, { identityVerified: true, requireRequestCoverage: true }).decision).toBe('accept');
+    const selected = selectGamingHybridAcceptedEvidence(input, result.accepted, actor);
+    const compact = selectGamingHybridEvidence(input, selected).knowledge;
+    expect(compact.sources[0].freshnessMetadata).toMatchObject({ id: candidate.candidateId,
+      platforms: ['PC'], regions: ['North America'] });
+    expect(assessGamingClearEvidence(input, compact, { identityVerified: true, requireRequestCoverage: true }).decision).toBe('accept');
+    const changed = { ...candidate, freshness: { ...candidate.freshness, platforms: ['PS5'] } };
+    expect(() => selectGamingHybridAcceptedEvidence(input, [changed], actor)).toThrow('Accepted evidence does not belong');
     expect((await acquire('Platforms: PC.', prose, undefined, { ...input, platform: 'PS5' } as typeof input)).accepted).toEqual([]);
   });
   it('qualifies an invalid publication date without treating it as an unknown edition or applicability interval', async () => {
