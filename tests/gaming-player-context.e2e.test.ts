@@ -104,6 +104,8 @@ const { default: requestContext } = await import('../src/middleware/requestConte
 const { default: gptRouter } = await import('../src/routes/gptRouter.js');
 const { default: errorHandler } = await import('../src/transport/http/middleware/errorHandler.js');
 const { logger } = await import('../src/platform/logging/structuredLogging.js');
+const { hashGamingDocumentRevision } = await import('../src/services/gamingDurableDocumentChunks.js');
+const { extractGamingFreshnessMetadata, GAMING_FRESHNESS_POLICY_VERSION } = await import('../src/shared/gaming/gamingFreshnessCore.js');
 const logInfo = jest.fn();
 const corpus = JSON.parse(readFileSync(new URL('./fixtures/gaming-guide-assistance.json', import.meta.url), 'utf8')) as {
   cases: Array<{ id: string; request: Record<string, unknown>; evidence: string; referenceAnswer: string; excludedFuture?: string }>
@@ -138,18 +140,29 @@ const cases = [...corpus.cases, ...[
 function record(fixture: typeof corpus.cases[number], text = fixture.evidence, id = fixture.id) {
   const game = fixture.request.game as string;
   const sourceGameName = fixture.request.edition ? `${game} ${fixture.request.edition}` : game;
+  const fetchedAt = new Date('2026-09-01T00:00:00Z');
+  // This complete synthetic source is the supplied fixture text. Large/late
+  // document coverage has its own acquisition and durable revision suites.
+  const contentHash = hashGamingDocumentRevision(text, JSON.stringify({ game: sourceGameName, title: 'Synthetic gameplay guide' }));
+  const applicability = extractGamingFreshnessMetadata({ text, publicUrl: 'https://example.com/guide' }, { game }, fetchedAt, []);
+  expect(applicability.metadataUnverified).toBeUndefined();
   return {
     recordId: id, recordType: 'guide', semanticKey: id, payloadHash: 'a'.repeat(64),
     title: 'Synthetic gameplay guide', patch: fixture.request.version ?? null, searchText: text,
-    normalized: { text, chunk: { ordinal: 399, totalChunks: 400, startChar: 590000, endChar: 590000 + text.length } },
+    normalized: { text, chunk: { ordinal: 0, totalChunks: 1, startChar: 0, endChar: text.length } },
     recordCreatedAt: new Date('2026-09-01T00:00:00Z'), sourceId: 'synthetic-source',
     gameKey: sourceGameName.toLowerCase().replace(/[^a-z0-9]+/gu, '-'), gameName: sourceGameName,
     canonicalUrl: 'https://example.com/guide', publicUrl: 'https://example.com/guide',
     canonicalUrlHash: 'b'.repeat(64), host: 'example.com', sourceType: 'supplied', trustScore: 0.8,
-    revisionId: 'synthetic-active-revision', contentHash: 'c'.repeat(64),
-    fetchedAt: new Date('2026-09-01T00:00:00Z'), publishedAt: null, revisionPatch: null,
+    revisionId: 'synthetic-active-revision', contentHash,
+    fetchedAt, publishedAt: null, revisionPatch: null,
     extractor: 'synthetic', extractorVersion: 'fixture-v1', normalizerSchemaVersion: 'gaming-document-chunks-v1',
-    provenance: fixture.request.version ? { patchVerificationMethod: 'extractor', verifiedPatchVersion: fixture.request.version } : {},
+    provenance: { ...(fixture.request.version ? { patchVerificationMethod: 'extractor', verifiedPatchVersion: fixture.request.version } : {}),
+      acquiredApplicability: { extractorVersion: GAMING_FRESHNESS_POLICY_VERSION, contentHash, game: applicability.game,
+        ...(applicability.edition ? { edition: applicability.edition } : {}),
+        ...(applicability.platforms?.length ? { platforms: applicability.platforms } : {}),
+        ...(applicability.regions?.length ? { regions: applicability.regions } : {}),
+        ...(applicability.metadataConflict ? { metadataConflict: true } : {}) } },
     extractionMetrics: {}, relevance: 0.9
   };
 }
@@ -225,7 +238,7 @@ describe('public Gaming player context to selected evidence and normal Trinity r
     const reasoning = runStructuredReasoning.mock.calls[0]?.[2] as string;
     expect(reasoning).toContain(fixture.evidence);
     expect(reasoning).toContain('[Source 1]');
-    expect(reasoning).toContain('Passage: 400');
+    expect(reasoning).toContain('Passage: 1');
     expect(logInfo).toHaveBeenCalledWith('gaming.stored_evidence.selected', expect.objectContaining({
       chunks: [expect.objectContaining({ sourceIndex: 1, sourceId: 'synthetic-source', revisionId: 'synthetic-active-revision', recordId: fixture.id })]
     }));
@@ -258,6 +271,17 @@ describe('public Gaming player context to selected evidence and normal Trinity r
     expect(searchActiveGamingKnowledge).toHaveBeenCalledTimes(2);
     expect(responsesCreate).toHaveBeenCalledTimes(2);
     expect(runStructuredReasoning).not.toHaveBeenCalled();
+  });
+
+  it('withholds generation for readable legacy evidence without complete-source applicability proof', async () => {
+    const fixture = corpus.cases[0]!;
+    searchActiveGamingKnowledge.mockResolvedValue([{ ...record(fixture), provenance: {} }]);
+    const result = await publicQuery(fixture.request);
+    expect(result.data.fallbackReason).toBe('INTAKE_RETRIEVAL_FAILED');
+    expect(result.data.grounding?.groundedInSuppliedEvidence).toBe(false);
+    expect(responsesCreate).not.toHaveBeenCalled();
+    expect(runStructuredReasoning).not.toHaveBeenCalled();
+    expect(forbiddenWrite).not.toHaveBeenCalled();
   });
 
   it.each(['Lumen Voyage', 'Cinder Cartographer', 'Vector Harbor'])('clarifies %s through the real public HTTP path before any model call', async game => {
