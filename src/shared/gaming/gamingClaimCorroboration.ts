@@ -7,7 +7,7 @@ import { assessGamingStructuralUsability, normalizeGamingStructuralFieldLabel, r
 import { filterGamingDocumentInstructions } from '@services/gamingDocumentExtraction.js';
 import { GAMING_SOURCE_FAMILY_DATA, type GamingSourceFamilyRegistry } from './gamingSourceFamilyData.js';
 
-export const GAMING_CLAIM_CORROBORATION_VERSION = 'gaming-claim-corroboration/v3';
+export const GAMING_CLAIM_CORROBORATION_VERSION = 'gaming-claim-corroboration/v4';
 const MAX_SOURCES = GAMING_HYBRID_V2_LIMITS.totalCandidateUrls
   + GAMING_HYBRID_V2_LIMITS.currentnessRounds * GAMING_HYBRID_V2_LIMITS.candidates + 8;
 const MAX_CLAIMS = 128;
@@ -15,6 +15,14 @@ const MAX_REFS = 8;
 const normalized = (value: string): string => value.normalize('NFKC').toLowerCase().replace(/\s+/gu, ' ').trim();
 const hash = (value: unknown): string => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const safeId = (value: unknown): value is string => typeof value === 'string' && /^[a-zA-Z0-9._:-]{1,240}$/u.test(value);
+
+/** Match extractGamingFreshnessMetadata's bounded comma-list grammar only.
+ * Invalid/incomplete restrictions remain opaque rather than losing fields. */
+function scopeListFingerprint(value: string, itemIdentity: (item: string) => string): string[] | string {
+  const items = value.split(',').map(item => item.trim());
+  return value.length <= 256 && items.length <= 8 && items.every(item => item.length > 0 && item.length <= 80)
+    ? [...new Set(items.map(itemIdentity))].sort() : value;
+}
 
 /** Presentation headings, captions, bylines and column order cannot turn copied
  * parser-owned records into independent reports. Canonical label aliases retain
@@ -27,7 +35,8 @@ function parserOwnedRecordFingerprint(unit: GamingEvidenceUnit): string {
     const key = label === 'platforms' ? 'platform' : label === 'regions' ? 'region' : label;
     const value = key === 'game' ? normalizeGamingEvidenceGameIdentity(field.value)
       : key === 'scope' ? normalizeGamingEditionIdentity(field.value)
-        : key === 'platform' ? normalizeGamingPlatformIdentity(field.value) : normalized(field.value);
+        : key === 'platform' ? scopeListFingerprint(field.value, normalizeGamingPlatformIdentity)
+          : key === 'region' ? scopeListFingerprint(field.value, normalized) : normalized(field.value);
     return JSON.stringify([key, value]);
   }).sort(),
     qualifiers: (unit.context.qualifiers ?? []).map(normalized).sort() });

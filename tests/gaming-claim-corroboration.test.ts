@@ -22,13 +22,13 @@ const firstReport = { description: 'Measured staff damage against the tutorial p
 const secondReport = { description: 'Field notes record damage before adding equipment bonuses.' };
 function source(host: string, heading: string, overrides: Partial<GamingClaimCorroborationSource> = {}, value = '20',
   record: { description?: string; caption?: string; reverseColumns?: boolean; qualifier?: string; aliasLabels?: boolean;
-    scopeValue?: string; gameValue?: string; platformValue?: string; platformLabel?: string; regionLabel?: string } = {}):
+    scopeValue?: string; gameValue?: string; platformValue?: string; platformLabel?: string; regionLabel?: string; regionValue?: string } = {}):
   GamingClaimCorroborationSource {
   const sourceUrl = `https://${host}/guide`;
   const fields = [['Game', record.gameValue ?? 'Copper Vale'], ['Item', 'Copper Staff'], ['Stat', 'damage'], ['Value', value],
     ['Unit', 'HP'], ['Scope', record.scopeValue ?? 'base-game'], ...(record.description ? [['Description', record.description]] : []),
     ...(record.platformValue ? [[record.platformLabel ?? 'Platform', record.platformValue]] : []),
-    ...(record.regionLabel ? [[record.regionLabel, 'Global']] : [])];
+    ...(record.regionLabel || record.regionValue ? [[record.regionLabel ?? 'Region', record.regionValue ?? 'Global']] : [])];
   if (record.aliasLabels) {
     const aliases: Record<string, string> = { Item: 'Equipment', Stat: 'Statistic', Unit: 'Units', Scope: 'Edition' };
     for (const field of fields) field[0] = aliases[field[0]] ?? field[0];
@@ -51,7 +51,7 @@ describe('Gaming optional structured claim corroboration', () => {
   test('distinct reviewed publisher families can report the same intact scoped claim', () => {
     const result = evaluate([source('a.example', 'Copper Vale equipment report', {}, '20', firstReport),
       source('b.example', 'Copper Vale staff statistics', {}, '20', secondReport)]);
-    expect(result.policyVersion).toBe('gaming-claim-corroboration/v3');
+    expect(result.policyVersion).toBe('gaming-claim-corroboration/v4');
     expect(result.claims).toHaveLength(1);
     expect(result.claims[0]).toMatchObject({ status: 'independently_corroborated', reviewedIndependentFamilyCount: 2 });
     expect(result.claims[0].sourceIds).toEqual(['a.example', 'b.example']);
@@ -132,6 +132,30 @@ describe('Gaming optional structured claim corroboration', () => {
     expect(result.claims).toHaveLength(1);
     expect(result.claims[0]).toMatchObject({ status: 'single_source', reviewedIndependentFamilyCount: 1 });
     expect(result.reasonCodes).toContain('DUPLICATED_CLAIM_REPORTS');
+  });
+
+  test.each([
+    { first: { platformValue: 'PC, PS5' }, second: { platformValue: 'PS5, PC' } },
+    { first: { platformValue: 'PC, PS5' }, second: { platformValue: 'Steam, PS5' } },
+    { first: { platformValue: 'PC, PS5' }, second: { platformValue: 'PS5, PC, Steam' } },
+    { first: { regionValue: 'EU, US' }, second: { regionValue: 'US, EU' } }
+  ])('copied gameplay fields retain one lineage across accepted scope list equivalence: %j', ({ first, second }) => {
+    const reports = [source('a.example', 'Copper Vale equipment report', { platforms: ['PC', 'PS5'] }, '20', first),
+      source('b.example', 'Copper Vale staff statistics', { platforms: ['PC', 'PS5'] }, '20', second)];
+    for (const report of reports) {
+      expect(assessGamingStructuralUsability({ ...request, units: report.evidenceUnits }).claimSupported).toBe(true);
+    }
+    const result = evaluate(reports);
+    expect(result.claims).toHaveLength(1);
+    expect(result.claims[0]).toMatchObject({ status: 'single_source', reviewedIndependentFamilyCount: 1 });
+    expect(result.reasonCodes).toContain('DUPLICATED_CLAIM_REPORTS');
+  });
+
+  test('numeric claim values preserve material raw differences despite equivalent scope lists', () => {
+    const result = evaluate([source('a.example', 'Copper Vale equipment report', {}, '20', { platformValue: 'PC, PS5' }),
+      source('b.example', 'Copper Vale staff statistics', {}, '20.0', { platformValue: 'PS5, PC' })]);
+    expect(result.claims).toHaveLength(1);
+    expect(result.claims[0].status).toBe('conflicting');
   });
 
   test('local qualifier differences remain material rather than being discarded with presentation', () => {
