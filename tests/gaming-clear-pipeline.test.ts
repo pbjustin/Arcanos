@@ -154,6 +154,23 @@ describe('Gaming CLEAR real pipeline delivery decisions', () => {
     expect(createSingleChatCompletion).not.toHaveBeenCalled();
   });
 
+  it('admits grounded early stat guidance in build mode without an advisory grant or current-patch claim', async () => {
+    const passage = 'Lantern Vale starting Sentinel stat guidance: raise the Endurance attribute first for a larger stamina reserve. This initial stat allocation supports blocking while learning the starting area.';
+    const evidence = knowledge();
+    evidence.context = `[Source 1]\n${passage}`;
+    evidence.sources[0].snippet = passage;
+    evidence.evidence[0].text = passage;
+    candidateAnswer = 'Raise Endurance first for a larger stamina reserve when blocking. [Source 1]';
+    const result = await runGameplayPipeline({ ...input, mode: 'build', currentArea: undefined,
+      lastCompletedObjective: undefined, prompt: 'Which attribute should a starting Sentinel raise first?' },
+    { knowledge: evidence, current: false, qualification: '' });
+    expect(result.data.fallbackReason).toBeUndefined();
+    expect(result.data.response).toBe(candidateAnswer);
+    expect(runTrinityWritingPipeline).toHaveBeenCalledTimes(1);
+    expect(createSingleChatCompletion).toHaveBeenCalledTimes(1);
+    expect(hasBoundGamingClearAnswer(result.data)).toBe(true);
+  });
+
   it('generates once from internally authorized advisory gameplay and binds the visible warning to the audited answer', async () => {
     const result = await runGameplayPipeline({ ...input, prompt: 'Which return route strategy should I use?', mode: 'build' },
       { knowledge: knowledge(), current: false, advisoryFreshnessAllowed: true, qualification: GAMING_UNVERIFIED_GUIDE_WARNING });

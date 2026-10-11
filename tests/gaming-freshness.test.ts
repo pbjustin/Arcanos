@@ -217,6 +217,48 @@ describe('Gaming question freshness is separate from relevance and source age', 
     expect(classifyGamingQuestionFreshness({ prompt: 'Beam rotation', mode: 'build' })).toBe('patch_sensitive');
   });
 
+  test.each([
+    ['Elden Ring', 'Which stat should an early-game Samurai using an Uchigatana level first?'],
+    ['Lantern Vale', 'Which attribute should a starting Sentinel raise first?'],
+    ['Prism Siege', 'How does equipment load affect rolling for this build?'],
+    ['Lantern Vale', 'What does the Endurance attribute do?'],
+    ['Elden Ring', 'How do I avoid heavy rolling in Elden Ring?'],
+    ['Lantern Vale', 'Which attribute should a starting Sentinel raise first? Avoid spoilers.'],
+    ['Prism Siege', 'How does equipment load work and how do I avoid heavy rolls?']
+  ])('basic gameplay in build mode does not need an official patch index: %s — %s', (game, prompt) => {
+    expect(classifyGamingQuestionFreshness({ prompt, mode: 'build' })).toBe('stable');
+    const guide = source('basic-gameplay', { game, patch: undefined, category: 'specialist_guide', authority: 'specialist', currentness: 'none' });
+    expect(evaluate([guide], { game, question: prompt, mode: 'build' })).toMatchObject({
+      classification: 'stable', usable: true, selectedEvidenceIds: ['basic-gameplay'], reasons: ['STABLE_EVIDENCE_CHECKED']
+    });
+  });
+
+  test.each([
+    'Which stat should an early-game Sentinel level first after the latest balance patch?',
+    'Which stat gives the best early-game damage?',
+    'How does equipment load work after the recent nerf?',
+    'What does Endurance do in the current meta?',
+    'Which attribute should I raise first for optimal damage?',
+    'How does equipment load work and recommend the strongest weapon?',
+    'How does equipment load work and give me a bleed build?',
+    'How does equipment load work? Show me a bleed build.',
+    'How does equipment load work? Give me a rotation.',
+    'How does this build work?',
+    'What does the Endurance attribute do? Create a loadout for me.',
+    'Which attribute should I raise first and explain a rotation?',
+    'What does the Endurance attribute do as of historical patch 1.0?',
+    'What does the Endurance attribute do as of last year?'
+  ])('basic wording cannot waive version-sensitive facts: %s', prompt => {
+    expect(classifyGamingQuestionFreshness({ prompt, mode: 'build' })).toBe('patch_sensitive');
+    expect(evaluate([source('unversioned', { patch: undefined })], { question: prompt, mode: 'build' }).usable).toBe(false);
+  });
+
+  test('basic build questions retain explicit version, season and operational scopes', () => {
+    expect(classifyGamingQuestionFreshness({ prompt: 'What does Endurance do?', mode: 'build', requestedVersion: '1.0' })).toBe('patch_sensitive');
+    expect(classifyGamingQuestionFreshness({ prompt: 'How does equipment load work this season?', mode: 'build' })).toBe('seasonal');
+    expect(classifyGamingQuestionFreshness({ prompt: 'How does equipment load work and are servers down now?', mode: 'build' })).toBe('live_status');
+  });
+
   test('a stable adventure question can use old publication with recent independent checking', () => {
     const result = evaluate([source('lantern', { game: 'Lantern Vault', publishedAt: '2002-01-01', patch: undefined })],
       { game: 'Lantern Vault', question: 'How do I open the Azure Gate?' });

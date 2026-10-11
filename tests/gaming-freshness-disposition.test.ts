@@ -25,6 +25,12 @@ describe('semantic Gaming freshness disposition', () => {
     ['Recommend the latest build for a healer', 'build', 'REQUIRED'],
     ['What changed today?', 'guide', 'REQUIRED'],
     ['Suggest an early-game mage build', 'build', 'ADVISORY'],
+    ['Which stat should an early-game Samurai using an Uchigatana level first?', 'build', 'NOT_REQUIRED'],
+    ['Which attribute should a starting Sentinel raise first?', 'build', 'NOT_REQUIRED'],
+    ['How does equipment load affect rolling for this build?', 'build', 'NOT_REQUIRED'],
+    ['What does the Endurance attribute do?', 'build', 'NOT_REQUIRED'],
+    ['How do I avoid heavy rolling in Elden Ring?', 'build', 'NOT_REQUIRED'],
+    ['Which stat should an early-game Samurai level first in the latest patch?', 'build', 'REQUIRED'],
     ['How do I find the academy staff?', 'guide', 'NOT_REQUIRED'],
     ['What are basic stamina mechanics?', 'guide', 'NOT_REQUIRED'],
     ['Suggest a mage strategy', 'meta', 'ADVISORY'],
@@ -62,6 +68,16 @@ describe('semantic Gaming freshness disposition', () => {
   });
   it('requires compatibility evidence for an explicitly requested patch', () => {
     expect(resolveGamingFreshnessDisposition({ prompt: 'Recommend a mage build', mode: 'build', requestedVersion: '2.1' })).toBe('REQUIRED');
+  });
+  it.each([
+    'Keep it brief.', 'Keep it concise.', 'Keep it short.', 'Keep it detailed.',
+    'Make it brief.', 'Make it concise.', 'Make it short.', 'Make it detailed.',
+    'Please keep it spoiler-free.', 'Please make it spoiler free.', 'No-spoilers.'
+  ])('presentation instruction %s does not change basic build freshness', instruction => {
+    const input = { prompt: `How does equipment load work? ${instruction}`, mode: 'build' };
+    expect(classifyGamingQuestionFreshness(input)).toBe('stable');
+    expect(resolveGamingFreshnessDisposition(input)).toBe('NOT_REQUIRED');
+    expect(resolveGamingFreshnessDisposition({ ...input, prompt: `${input.prompt} Explain the latest patch changes.` })).toBe('REQUIRED');
   });
   it('does not treat a request for today\'s changes as stable evidence', () => {
     expect(classifyGamingQuestionFreshness({ prompt: 'What changed today?', mode: 'guide' })).toBe('patch_sensitive');
