@@ -70,6 +70,16 @@ describe('independently acquired named location and mechanic headings', () => {
     expect(assess(title, `${location} Church of Elleh is a location in Copper Vale.`).status).not.toBe('verified');
   });
 
+  it.each([',', ';'])('inspects contradictory topic ownership after a %s boundary', boundary => {
+    expect(assess('Church of Elleh guide', `Church of Elleh is a location in Elden Ring${boundary} Church of Elleh is a location in Copper Vale. Rest at the church and check supplies before continuing.`).status)
+      .not.toBe('verified');
+  });
+
+  it.each([',', ';'])('inspects contradictory topic ownership after an intervening clause with %s boundaries', boundary => {
+    expect(assess('Church of Elleh guide', `Church of Elleh is a location in Elden Ring${boundary} note${boundary} Church of Elleh is a location in Copper Vale. Rest at the church and check supplies before continuing.`).status)
+      .not.toBe('verified');
+  });
+
   it('does not use a definition beyond the bounded primary identity scope', () => {
     expect(assess('Church of Elleh guide', `${'Review supplies before continuing. '.repeat(1_000)} ${location}`).status)
       .not.toBe('verified');

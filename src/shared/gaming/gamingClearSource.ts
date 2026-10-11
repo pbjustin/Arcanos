@@ -235,7 +235,7 @@ export function assessGamingClearSourceIdentity(document: Pick<ResolvedGamingDoc
   const topicOffset = bodyScopes.unquotedText.length - topicDefinitions.length;
   const acquiredTopicScopes = new Map<string, Array<{ game: string; index: number }>>();
   let topicScopeCount = 0;
-  for (const definition of topicDefinitions.matchAll(/(?:^|[.!?\n])\s*([^.!?\n]{1,120}?)\s+is\s+(?:a|an)\s+(?:location|area|region|town|city|village|settlement|dungeon|weapon|item|spell|skill|mechanic)\s+in\s+([^.!?,;\n]{1,120})(?=[.!?,;\n]|$)/giu)) {
+  for (const definition of topicDefinitions.matchAll(/(?:^|[.!?,;\n])\s*([^.!?,;\n]{1,120}?)\s+is\s+(?:a|an)\s+(?:location|area|region|town|city|village|settlement|dungeon|weapon|item|spell|skill|mechanic)\s+in\s+([^.!?,;\n]{1,120})(?=[.!?,;\n]|$)/giu)) {
     if (++topicScopeCount > IDENTITY_SCOPE_SCAN_LIMITS.assertions) { scopeScanComplete = false; break; }
     const topic = normalizeGamingGameIdentity(definition[1]);
     acquiredTopicScopes.set(topic, [...(acquiredTopicScopes.get(topic) ?? []),
