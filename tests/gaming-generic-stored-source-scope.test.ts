@@ -2,6 +2,8 @@ import { describe, expect, it } from '@jest/globals';
 import { extractGamingDocumentEvidence } from '../src/services/gamingDocumentEvidence.js';
 import { selectStoredGamingEvidence, formatStoredGamingEvidence, type GamingStoredEvidenceRecord } from '../src/shared/gaming/gamingStoredEvidenceCore.js';
 import { assessGamingClearEvidence } from '../src/shared/gaming/gamingClearEvidence.js';
+import { createGamingClearAssessment, gamingClearHash } from '../src/shared/gaming/gamingClearPolicy.js';
+import { extractGamingFreshnessMetadata, GAMING_FRESHNESS_POLICY_VERSION } from '../src/shared/gaming/gamingFreshnessCore.js';
 
 const url = 'https://guides.example.org/mixed-game-statistics';
 const input = { game: 'Portal 2', edition: 'base-game', mode: 'guide' as const, prompt: 'What is Practice Blade damage?' };
@@ -143,6 +145,35 @@ describe('generic stored source scope after durable ingestion', () => {
     expect(selected).toHaveLength(1);
     expect(assessGamingClearEvidence(input, formatStoredGamingEvidence(selected, input, limits)))
       .toMatchObject({ decision: 'clarify', gates: { compatibility: 'unknown' } });
+  });
+
+  it.each([false, true])('retains bounded acquired uncertainty without granting CLEAR acceptance or reusing older hybrid scope: %s', hybrid => {
+    const stored = record(input.game);
+    const document = { publicUrl: url, text: `${'A synthetic route follows the copper gate. '.repeat(850)}\nPlatform: PS5\n${stored.normalized.text}`,
+      evidenceUnits: stored.normalized.evidenceUnits as any[] };
+    const applicability = extractGamingFreshnessMetadata(document, input, stored.fetchedAt, []);
+    expect(applicability.metadataUnverified).toBe(true);
+    expect(applicability.metadataConflict).toBeUndefined();
+    stored.contentHash = gamingClearHash(document);
+    stored.provenance.acquiredApplicability = { extractorVersion: GAMING_FRESHNESS_POLICY_VERSION,
+      contentHash: stored.contentHash, game: applicability.game, metadataUnverified: true };
+    if (hybrid) {
+      const dimension = { status: 'evaluated' as const, score: 4.5, reasonCodes: ['SYNTHETIC_PRIOR_ASSESSMENT'],
+        evidenceRefs: ['stored-source'], unresolvedFacts: [] };
+      stored.provenance.approvedContentHash = stored.contentHash;
+      stored.clearSourceAssessment = createGamingClearAssessment({ profile: 'source', questionProfile: 'walkthrough', sourceRole: 'gameplay_guide',
+        subjectId: 'stored-source', subjectHash: stored.contentHash, contextFingerprint: gamingClearHash(input), evidenceRefs: ['stored-source'],
+        gates: { identity: 'verified', compatibility: 'verified', claimSupport: 'verified', freshness: 'not_applicable', provenance: 'verified', security: 'verified' },
+        dimensions: { clarity: dimension, leverage: dimension, efficiency: dimension, alignment: dimension, resilience: dimension } });
+      stored.provenance.hybridFreshness = extractGamingFreshnessMetadata({ publicUrl: url, text: stored.normalized.text as string,
+        evidenceUnits: stored.normalized.evidenceUnits as any[] }, input, stored.fetchedAt, []);
+    }
+    const selected = selectStoredGamingEvidence([stored], input, limits);
+    expect(selected).toHaveLength(1);
+    const knowledge = formatStoredGamingEvidence(selected, input, limits);
+    expect(knowledge.context).toContain('Practice Blade');
+    expect(knowledge.sources[0].freshnessMetadata).toMatchObject({ metadataUnverified: true });
+    expect(assessGamingClearEvidence(input, knowledge)).toMatchObject({ decision: 'clarify', gates: { compatibility: 'unknown' } });
   });
 
   it.each([
