@@ -3,6 +3,10 @@
 ## Overview
 This runbook documents the repository-tracked Railway configuration and release safeguards for Arcanos. Tracked files do not prove the current live project linkage, environment state, or service topology.
 
+Owner-authorized stacked draft previews use the separate, disabled-by-default
+[stacked draft preview contract](RAILWAY_STACKED_DRAFT_PREVIEW.md). That lane does
+not change the existing native preview eligibility or production promotion gates.
+
 [Isolated live PR validation](LIVE_VALIDATION.md) uses a dedicated **ARCANOS V2
 Validation** service in `live-validation`, with Railway HTTPS, a validation-only
 provider key and test bearer, exact-SHA source/build/readiness proof, transient
