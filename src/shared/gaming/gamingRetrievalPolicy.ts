@@ -171,7 +171,11 @@ function gamingRequestClauses(input: GamingRetrievalPolicyInput): { clauses: str
   const requestBoundaries = [...STOP_WORDS, 'also', 'find', 'locate', 'obtain', 'acquire', 'equip', 'craft', 'buy',
     'upgrade', 'repair', 'activate', 'unlock', 'open', 'allocate', 'improve', 'describe', 'recommend', 'show', 'list'];
   const targetWord = String.raw`(?!(?:${requestBoundaries.join('|')})\b)\p{L}[\p{L}\p{N}'’\-]*`;
-  const coordinatedTitle = new RegExp(`(?:${targetWord}\\s+){1,4}of\\s+(?:${targetWord}\\s+){1,4}and\\s+${targetWord}(?:\\s+${targetWord}){0,3}`, 'giu');
+  // Generic relationship heads describe separate subjects, not a named object:
+  // "effects of poison and bleeding" can be supported by two intact passages.
+  const relationshipHeads = String.raw`effects?|locations?|stats?|attributes?|strengths?|weakness(?:es)?|resistances?|requirements?|costs?|propert(?:y|ies)`;
+  const targetHeadWord = String.raw`(?!(?:${relationshipHeads})\b)${targetWord}`;
+  const coordinatedTitle = new RegExp(`(?<![\\p{L}\\p{N}'’\\-])(?:${targetWord}\\s+){0,3}${targetHeadWord}\\s+of\\s+(?:${targetWord}\\s+){1,4}and\\s+${targetWord}(?:\\s+${targetWord}){0,3}`, 'giu');
   const topicalQuestion = question.replace(coordinatedTitle, target => {
     hasCoordinatedTarget = true;
     return target.replace(/\s+and\s+/giu, ' ');

@@ -117,6 +117,22 @@ describe('ordinary gameplay request coverage', () => {
       .toMatchObject({ coverageSatisfied: true, missingCoverage: [] });
   });
 
+  test.each([
+    { game, prompt: 'Explain the effects of poison and bleeding.',
+      passages: ['The effects of poison are gradual damage over time.',
+        'Bleeding causes a burst of damage when the buildup meter fills.'] },
+    { game: 'Lantern Voyage', prompt: 'Explain the location of amber gate and copper bridge.',
+      passages: ['The location of the amber gate is at the north end of the village.',
+        'The copper bridge connects the harbor with the forest.'] }
+  ])('keeps independent subjects after a generic relationship in $game', ({ game: requestedGame, prompt, passages }) => {
+    const input = { game: requestedGame, prompt, mode: 'guide' as const };
+    expect(buildGamingRequestRequirements(input)).toHaveLength(2);
+    expect(assessGamingRequestCoverage(input, knowledge(passages, requestedGame)))
+      .toMatchObject({ coverageSatisfied: true, missingCoverage: [] });
+    expect(assessGamingRequestCoverage(input, knowledge(passages.slice(0, 1), requestedGame)))
+      .toMatchObject({ coverageSatisfied: false, missingCoverage: ['requested topic 2'] });
+  });
+
   test('keeps safe objects and material before/after objectives as gameplay terms', () => {
     expect(buildGamingRetrievalTerms({ game: 'Lantern Voyage', prompt: 'Where is the copper safe code?' }).focusTerms)
       .toEqual(['copper', 'safe', 'code']);
