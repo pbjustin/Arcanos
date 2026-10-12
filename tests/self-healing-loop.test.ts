@@ -204,7 +204,7 @@ function createWorkerHealth(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function createTrinityStatus(activeAction: string | null = null) {
+function createTrinityStatus(activeAction: string | null = null, expiresAtMs: number | null = null) {
   return {
     enabled: true,
     config: {
@@ -218,7 +218,7 @@ function createTrinityStatus(activeAction: string | null = null) {
     },
     snapshot: {
       intake: { activeAction: null },
-      reasoning: { activeAction },
+      reasoning: { activeAction, expiresAtMs },
       final: { activeAction: null }
     }
   };
@@ -418,6 +418,7 @@ describe('selfHealingLoop', () => {
   ] as const;
   const originalEnv = new Map<string, string | undefined>();
   let trinityActiveAction: string | null;
+  let trinityExpiresAtMs: number | null;
   let promptRouteMitigationActive: boolean;
   let promptRouteMitigationMode: 'reduced_latency' | 'degraded_response' | null;
   let promptRouteMitigationReason: string | null;
@@ -429,6 +430,7 @@ describe('selfHealingLoop', () => {
   beforeEach(() => {
     jest.useFakeTimers().setSystemTime(new Date('2026-03-25T12:00:00.000Z'));
     trinityActiveAction = null;
+    trinityExpiresAtMs = null;
     promptRouteMitigationActive = false;
     promptRouteMitigationMode = null;
     promptRouteMitigationReason = null;
@@ -550,7 +552,7 @@ describe('selfHealingLoop', () => {
         activeAction: null
       }
     });
-    getTrinitySelfHealingStatusMock.mockImplementation(() => createTrinityStatus(trinityActiveAction));
+    getTrinitySelfHealingStatusMock.mockImplementation(() => createTrinityStatus(trinityActiveAction, trinityExpiresAtMs));
     getPromptRouteMitigationStateMock.mockImplementation(() => ({
       active: promptRouteMitigationActive,
       mode: promptRouteMitigationActive ? promptRouteMitigationMode : null,
@@ -577,6 +579,7 @@ describe('selfHealingLoop', () => {
     }));
     activateTrinitySelfHealingMitigationMock.mockImplementation(() => {
       trinityActiveAction = 'enable_degraded_mode';
+      trinityExpiresAtMs = Date.now() + 600000;
       return {
         applied: true,
         rolledBack: false,
@@ -585,11 +588,12 @@ describe('selfHealingLoop', () => {
         reason: 'applied',
         activeAction: 'enable_degraded_mode',
         verified: false,
-        expiresAtMs: Date.now() + 600000
+        expiresAtMs: trinityExpiresAtMs
       };
     });
     rollbackTrinitySelfHealingMitigationMock.mockImplementation(() => {
       trinityActiveAction = null;
+      trinityExpiresAtMs = null;
       return {
         applied: false,
         rolledBack: true,
@@ -2046,6 +2050,114 @@ describe('selfHealingLoop', () => {
     expect(runPredictiveHealingFromLoopMock).toHaveBeenCalledTimes(1);
     expect(predictiveEvents).toHaveLength(1);
     expect(runSelfImproveCycleMock).not.toHaveBeenCalled();
+  });
+
+  it.each(['TTL expiry', 'explicit operator rollback'])(
+    'releases deferred Trinity verification after %s so another incident can be repaired',
+    async (termination) => {
+      getRollingRequestWindowMock.mockReturnValueOnce(createRequestWindow({
+        requestCount: 20,
+        errorCount: 5,
+        serverErrorCount: 5,
+        errorRate: 0.25,
+        timeoutCount: 4,
+        timeoutRate: 0.2,
+        slowRequestCount: 8,
+        avgLatencyMs: 3200,
+        p95LatencyMs: 6200,
+        maxLatencyMs: 8000
+      }));
+      await runSelfHealingLoop({ trigger: 'interval' });
+      expect(activateTrinitySelfHealingMitigationMock).toHaveBeenCalledTimes(1);
+      await jest.advanceTimersByTimeAsync(termination === 'TTL expiry' ? 600001 : 1000);
+      trinityActiveAction = null;
+      trinityExpiresAtMs = null;
+      getWorkerControlHealthMock.mockResolvedValue(createWorkerHealth({
+        overallStatus: 'unhealthy',
+        queueSummary: { stalledRunning: 1, pending: 1 }
+      }));
+      const result = await runSelfHealingLoop({ trigger: 'interval' });
+
+      expect(recoverStaleJobsMock).toHaveBeenCalledTimes(1);
+      expect(result.action).toBe('recoverStaleJobs:recovered=0:failed=0');
+      expect(result.verificationResult).toBeNull();
+      expect(rollbackTrinitySelfHealingMitigationMock).not.toHaveBeenCalled();
+      expect(getSelfHealingLoopStatus().lastVerificationResult).toBeNull();
+      expect(buildSelfHealEventsSnapshot(100).events).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'noop',
+          trigger: 'verification',
+          reason: 'Trinity mitigation verification invalidated because its command is no longer active'
+        })
+      ]));
+    }
+  );
+
+  it('does not verify a vanished Trinity command from later healthy requests', async () => {
+    getRollingRequestWindowMock.mockReturnValueOnce(createRequestWindow({
+      requestCount: 20,
+      errorCount: 5,
+      serverErrorCount: 5,
+      errorRate: 0.25,
+      timeoutCount: 4,
+      timeoutRate: 0.2,
+      slowRequestCount: 8,
+      avgLatencyMs: 3200,
+      p95LatencyMs: 6200,
+      maxLatencyMs: 8000
+    }));
+    await runSelfHealingLoop({ trigger: 'interval' });
+    trinityActiveAction = null;
+    trinityExpiresAtMs = null;
+    getRequestWindowSinceMock.mockReturnValue(createRequestWindow({
+      requestCount: 3,
+      p95LatencyMs: 100,
+      maxLatencyMs: 150
+    }));
+    await jest.advanceTimersByTimeAsync(90001);
+
+    const result = await runSelfHealingLoop({ trigger: 'interval' });
+
+    expect(result.verificationResult).toBeNull();
+    expect(rollbackTrinitySelfHealingMitigationMock).not.toHaveBeenCalled();
+    expect(getSelfHealingLoopStatus().lastVerificationResult).toBeNull();
+    expect(buildSelfHealEventsSnapshot(100).events.some((event) => (
+      event.kind === 'success' && event.trigger === 'verification'
+    ))).toBe(false);
+  });
+
+  it('does not roll back a replacement activation of the same Trinity action', async () => {
+    getRollingRequestWindowMock.mockReturnValueOnce(createRequestWindow({
+      requestCount: 20,
+      errorCount: 5,
+      serverErrorCount: 5,
+      errorRate: 0.25,
+      timeoutCount: 4,
+      timeoutRate: 0.2,
+      slowRequestCount: 8,
+      avgLatencyMs: 3200,
+      p95LatencyMs: 6200,
+      maxLatencyMs: 8000
+    }));
+    await runSelfHealingLoop({ trigger: 'interval' });
+    await jest.advanceTimersByTimeAsync(600001);
+    trinityExpiresAtMs = Date.now() + 600000;
+    getRequestWindowSinceMock.mockReturnValue(createRequestWindow({
+      requestCount: 18,
+      errorRate: 0.5,
+      timeoutCount: 9,
+      timeoutRate: 0.5,
+      p95LatencyMs: 10000,
+      maxLatencyMs: 15000
+    }));
+
+    const result = await runSelfHealingLoop({ trigger: 'interval' });
+
+    expect(result.verificationResult).toBeNull();
+    expect(rollbackTrinitySelfHealingMitigationMock).not.toHaveBeenCalled();
+    expect(trinityActiveAction).toBe('enable_degraded_mode');
+    expect(getSelfHealingLoopStatus().activeMitigation).toBe('reasoning:enable_degraded_mode');
+    expect(getSelfHealingLoopStatus().lastVerificationResult).toBeNull();
   });
 
   it('rolls back an ineffective prompt-route mitigation after verification', async () => {

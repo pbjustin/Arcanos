@@ -346,6 +346,7 @@ type PendingVerification = {
         kind: 'trinity';
         stage: TrinitySelfHealingStage;
         action: TrinitySelfHealingAction;
+        expiresAtMs: number | null;
         reason: string;
       }
     | {
@@ -2702,6 +2703,7 @@ function beginVerification(
         kind: 'trinity';
         stage: TrinitySelfHealingStage;
         action: TrinitySelfHealingAction;
+        expiresAtMs: number | null;
         reason: string;
       }
     | {
@@ -2919,6 +2921,37 @@ function maybeVerifyPendingAction(
       verificationResult: null,
       followUpAction: null
     };
+  }
+
+  if (pending.rollback?.kind === 'trinity') {
+    const command = pending.rollback;
+    const activeStage = observation.trinityStatus.snapshot[command.stage];
+    if (
+      activeStage.activeAction !== command.action ||
+      activeStage.expiresAtMs !== command.expiresAtMs ||
+      (command.expiresAtMs !== null && command.expiresAtMs <= Date.now())
+    ) {
+      runtime.pendingVerification = null;
+      recordSelfHealEvent({
+        kind: 'noop',
+        source: 'self_heal_loop',
+        trigger: 'verification',
+        reason: 'Trinity mitigation verification invalidated because its command is no longer active',
+        actionTaken: pending.action,
+        healedComponent: inferSelfHealComponentFromAction(pending.action),
+        details: {
+          stage: command.stage,
+          expectedAction: command.action,
+          expectedExpiresAtMs: command.expiresAtMs,
+          activeAction: activeStage.activeAction,
+          activeExpiresAtMs: activeStage.expiresAtMs
+        }
+      });
+      return {
+        verificationResult: null,
+        followUpAction: null
+      };
+    }
   }
 
   if (Date.now() - Date.parse(pending.startedAt) < pending.verifyAfterMs) {
@@ -3565,6 +3598,7 @@ async function executeActionPlan(
           kind: 'trinity',
           stage: actionPlan.stage,
           action: actionPlan.trinityAction,
+          expiresAtMs: mitigationResult.expiresAtMs,
           reason: 'self_heal_verification_failed'
         })
       };

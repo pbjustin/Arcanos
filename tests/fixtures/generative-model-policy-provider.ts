@@ -9,6 +9,7 @@ export interface GenerativeModelPolicyProviderRequest {
   body: Record<string, unknown>;
   authorizationAccepted: boolean;
   streamClosed: boolean;
+  timeoutBackstopFired: boolean;
 }
 
 export type GenerativeModelPolicyProviderReply =
@@ -131,7 +132,8 @@ export async function startGenerativeModelPolicyProvider({
       const request: GenerativeModelPolicyProviderRequest = {
         method, path, model, body,
         authorizationAccepted: incoming.headers.authorization === `Bearer ${SYNTHETIC_API_KEY}`,
-        streamClosed: false
+        streamClosed: false,
+        timeoutBackstopFired: false
       };
       const requestIndex = requests.push(request) - 1;
       if (requests.length > maxRequests || !request.authorizationAccepted || !allowedModels.has(model)) {
@@ -162,6 +164,7 @@ export async function startGenerativeModelPolicyProvider({
         streamClosures.set(requestIndex, new Promise<void>(resolve => { resolveClosed = resolve; }));
         const backstop = setTimeout(() => {
           timeoutBackstops.delete(backstop);
+          request.timeoutBackstopFired = true;
           response.destroy();
         }, reply.holdForMs);
         timeoutBackstops.add(backstop);

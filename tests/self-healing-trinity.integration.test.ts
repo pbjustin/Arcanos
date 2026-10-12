@@ -226,7 +226,7 @@ describe('canonical self-healing owner through the real Trinity consumer', () =>
     const attempts = fixture.requests.filter(request => request.method === 'POST');
     expect(attempts.map(request => request.model)).toEqual(['gpt-6-luna', authorityModel]);
     await fixture.waitForStreamClose(fixture.requests.indexOf(attempts[0]));
-    expect(attempts[0].streamClosed).toBe(true);
+    expect(attempts[0]).toMatchObject({ streamClosed: true, timeoutBackstopFired: false });
     expect(healing.getTrinitySelfHealingSnapshot().intake).toMatchObject({
       observations: [clockMs], attempts: 0, activeAction: null
     });
@@ -237,6 +237,19 @@ describe('canonical self-healing owner through the real Trinity consumer', () =>
     expect(fixture.requests.filter(request => request.method === 'POST')).toHaveLength(6);
     expect(healing.getTrinitySelfHealingSnapshot().intake.attempts).toBe(0);
     expect(resilience.getCircuitBreakerSnapshot()).toMatchObject({ state: 'CLOSED', failureCount: 0 });
+  });
+
+  it('labels a finite timeout backstop separately from client-driven transport cancellation', async () => {
+    fixture.enqueue({ kind: 'timeout', holdForMs: 10 });
+    await expect(fixture.fetch(`${fixture.baseURL}/responses`, {
+      method: 'POST', headers: {
+        authorization: `Bearer ${fixture.apiKey}`, 'content-type': 'application/json'
+      },
+      body: JSON.stringify({ model: authorityModel, input: prompt })
+    })).rejects.toThrow();
+    expect(fixture.requests).toHaveLength(1);
+    await fixture.waitForStreamClose(0);
+    expect(fixture.requests[0]).toMatchObject({ streamClosed: true, timeoutBackstopFired: true });
   });
 
   it('bounds sustained real provider failures at the authorized model and fails closed before recovery', async () => {
