@@ -1,4 +1,5 @@
 import { getEnvNumber } from '@platform/runtime/env.js';
+import { logger } from '@platform/logging/structuredLogging.js';
 
 export type PromptRouteMitigationMode = 'reduced_latency' | 'degraded_response' | null;
 
@@ -8,6 +9,8 @@ export interface PromptRouteMitigationState {
   route: '/api/openai/prompt';
   activatedAt: string | null;
   updatedAt: string | null;
+  mitigationId: number | null;
+  expiresAtMs: number | null;
   reason: string | null;
   recentTimeoutCount: number;
   timeoutWindowStartedAt: string | null;
@@ -51,6 +54,8 @@ const PROMPT_ROUTE_PROVIDER_HEADROOM_MS = 250;
 const DEFAULT_FAST_TRIP_TIMEOUT_WINDOW_MS = 60_000;
 const DEFAULT_FAST_TRIP_TIMEOUT_THRESHOLD = 2;
 const DEFAULT_FAST_TRIP_COOLDOWN_MS = 120_000;
+const DEFAULT_MITIGATION_TTL_MS = 10 * 60_000;
+let nextMitigationId = 0;
 
 function resolvePromptRoutePipelineTimeoutMs(): number {
   return Math.max(1_000, getEnvNumber('PROMPT_ROUTE_PIPELINE_TIMEOUT_MS', DEFAULT_PROMPT_ROUTE_PIPELINE_TIMEOUT_MS));
@@ -117,6 +122,8 @@ function createInitialState(): PromptRouteMitigationState {
     route: '/api/openai/prompt',
     activatedAt: null,
     updatedAt: null,
+    mitigationId: null,
+    expiresAtMs: null,
     reason: null,
     recentTimeoutCount: 0,
     timeoutWindowStartedAt: null,
@@ -138,7 +145,30 @@ function getMutableState(): PromptRouteMitigationState {
     runtime[GLOBAL_KEY] = createInitialState();
   }
 
-  return runtime[GLOBAL_KEY];
+  const state = runtime[GLOBAL_KEY];
+  if (state.active && state.expiresAtMs !== null && state.expiresAtMs <= Date.now()) {
+    logger.info('self_heal.prompt_route.action_expired', {
+      module: 'self_heal.prompt_route', mode: state.mode, mitigationId: state.mitigationId
+    });
+    clearActiveState(state, 'mitigation_ttl_expired');
+  }
+  return state;
+}
+
+function clearActiveState(state: PromptRouteMitigationState, reason: string): void {
+  state.active = false;
+  state.mode = null;
+  state.activatedAt = null;
+  state.updatedAt = new Date().toISOString();
+  state.mitigationId = null;
+  state.expiresAtMs = null;
+  state.reason = reason;
+  state.pipelineTimeoutMs = null;
+  state.providerTimeoutMs = null;
+  state.maxRetries = null;
+  state.maxTokens = null;
+  state.fallbackModel = false;
+  state.bypassedSubsystems = [];
 }
 
 export function getPromptRouteMitigationState(): PromptRouteMitigationState {
@@ -163,6 +193,8 @@ export function activatePromptRouteDegradedMode(reason: string): PromptRouteMiti
   state.mode = 'degraded_response';
   state.activatedAt = state.activatedAt ?? now;
   state.updatedAt = now;
+  state.mitigationId = ++nextMitigationId;
+  state.expiresAtMs = Date.now() + DEFAULT_MITIGATION_TTL_MS;
   state.reason = reason;
   state.lastAutoActivationAt = now;
   state.lastAutoActivationReason = reason;
@@ -198,6 +230,8 @@ export function activatePromptRouteReducedLatencyMode(reason: string, defaultTok
   state.mode = 'reduced_latency';
   state.activatedAt = state.activatedAt ?? now;
   state.updatedAt = now;
+  state.mitigationId = ++nextMitigationId;
+  state.expiresAtMs = Date.now() + DEFAULT_MITIGATION_TTL_MS;
   state.reason = reason;
   state.lastAutoActivationAt = now;
   state.lastAutoActivationReason = reason;
@@ -216,7 +250,10 @@ export function activatePromptRouteReducedLatencyMode(reason: string, defaultTok
   };
 }
 
-export function rollbackPromptRouteMitigation(reason: string): PromptRouteMitigationResult {
+export function rollbackPromptRouteMitigation(
+  reason: string,
+  expectedMitigationId?: number | null
+): PromptRouteMitigationResult {
   const state = getMutableState();
   if (!state.active) {
     return {
@@ -227,17 +264,12 @@ export function rollbackPromptRouteMitigation(reason: string): PromptRouteMitiga
     };
   }
 
-  state.active = false;
-  state.mode = null;
-  state.activatedAt = null;
-  state.updatedAt = new Date().toISOString();
-  state.reason = reason;
-  state.pipelineTimeoutMs = null;
-  state.providerTimeoutMs = null;
-  state.maxRetries = null;
-  state.maxTokens = null;
-  state.fallbackModel = false;
-  state.bypassedSubsystems = [];
+  if (expectedMitigationId !== undefined && state.mitigationId !== expectedMitigationId) {
+    return {
+      applied: false, rolledBack: false, state: { ...state }, reason: 'mitigation_id_mismatch'
+    };
+  }
+  clearActiveState(state, reason);
 
   return {
     applied: false,

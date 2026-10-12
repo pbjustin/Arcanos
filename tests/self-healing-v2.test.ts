@@ -289,4 +289,41 @@ describe('selfHealingV2', () => {
       activeAction: null, bypassFinalStage: false, verified: false
     });
   });
+
+  it('does not attribute an older request outcome to a replacement of the same action', () => {
+    const first = activateTrinitySelfHealingMitigation({
+      stage: 'reasoning', action: 'enable_degraded_mode', reason: 'first command'
+    });
+    jest.setSystemTime(first.expiresAtMs!);
+    const replacement = activateTrinitySelfHealingMitigation({
+      stage: 'reasoning', action: 'enable_degraded_mode', reason: 'replacement command'
+    });
+    expect(replacement.applied).toBe(true);
+
+    for (const outcome of ['success', 'failure'] as const) {
+      noteTrinityMitigationOutcome({
+        stage: 'reasoning', action: 'enable_degraded_mode', outcome,
+        requestId: `old-${outcome}`, mitigationId: first.mitigationId
+      });
+    }
+    expect(getTrinitySelfHealingSnapshot().reasoning).toMatchObject({
+      activeAction: 'enable_degraded_mode', verificationSuccesses: 0, verificationFailures: 0
+    });
+    expect(rollbackTrinitySelfHealingMitigation({
+      stage: 'reasoning', action: 'enable_degraded_mode', reason: 'old verification',
+      mitigationId: first.mitigationId
+    })).toMatchObject({ rolledBack: false, reason: 'mitigation_id_mismatch' });
+    expect(getTrinitySelfHealingSnapshot().reasoning.activeAction).toBe('enable_degraded_mode');
+  });
+
+  it('bounds repeated failure observations after the action budget is exhausted', () => {
+    jest.spyOn(console, 'log').mockImplementation(() => undefined);
+    for (let index = 0; index < 1_000; index += 1) {
+      recordTrinityStageFailure({
+        stage: 'intake', error: 'Request was aborted.', requestId: `sustained-${index}`
+      });
+    }
+    expect(getTrinitySelfHealingSnapshot().intake.observations.length).toBeLessThanOrEqual(3);
+    expect(getTrinitySelfHealingSnapshot().intake.attempts).toBe(1);
+  });
 });

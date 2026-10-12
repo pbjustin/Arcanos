@@ -1447,6 +1447,25 @@ Target resolution does not authorize a deployment or establish preview
 isolation. A denied preflight is not an executed repair; dispatched failures
 consume the coordinator's cooldown and per-diagnosis attempt budget.
 
+### Self-healing mitigation lifecycle
+
+Mitigation state remains process-local and is lost on restart. Trinity commands
+and prompt-route policies use generation identities so an older consumer or
+verification cycle cannot clear or verify a replacement. Prompt policies expire
+after ten minutes at the next state or policy read without requiring a controller
+tick or a new environment variable.
+
+Trinity and provider recovery require sufficient fresh traffic on the affected
+baseline consumer route (three samples by default). Unrelated health requests
+and missing attribution cannot verify recovery. Trinity also requires actual
+matching-command consumer successes; provider reloads require fresh non-cached
+provider success receipts in the existing bounded telemetry buffer. Diagnostic
+pings cannot replace those receipts. Evidence-starved verification
+expires at the configured incident-window boundary and records failure with an
+ineffective-action cooldown. Worker repair verification requires measurable
+worker or queue improvement. These rules do not establish state delivery between
+separate Railway services or persistence across restarts.
+
 ### PostgreSQL candidate limitation
 
 `src/core/db/client.ts:resolveDatabaseConnectionCandidates` currently returns

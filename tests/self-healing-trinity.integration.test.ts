@@ -10,11 +10,22 @@ const prompt = 'Assess the supplied launch outline and its stated limitations.';
 const answer = 'The supplied outline describes a staged release.';
 const scores = { clarity: 5, leverage: 5, efficiency: 5, alignment: 5, resilience: 5, overall: 5 };
 const noEffect = jest.fn(async () => { throw new Error('Offline fixture forbids persistence and runtime effects.'); });
+const runSelfImproveCycle = jest.fn(async () => ({
+  id: 'synthetic-noop-audit', decision: 'NOOP', autonomyLevel: 3,
+  frozen: false, drift: { kind: 'none' }, evidencePath: 'synthetic:no-filesystem-write'
+}));
 const getRollingRequestWindow = jest.fn();
 const getRequestWindowSince = jest.fn();
 const runPredictiveHealingFromLoop = jest.fn(async () => {
   throw new Error('Offline fixture: predictive advisor unavailable.');
 });
+const providerReload = jest.fn(async () => ({
+  ok: true, skipped: false, reloaded: true, reason: null, runtime: {}
+}));
+const providerTraceEvents: {
+  id: string; timestamp: string; name: string; attributes: Record<string, unknown>
+}[] = [];
+let captureProviderReceipts = false;
 let clockMs: number;
 
 function isolatedEnvironment(): NodeJS.ProcessEnv {
@@ -42,23 +53,32 @@ function isolatedEnvironment(): NodeJS.ProcessEnv {
   };
 }
 
-function requestWindow(degraded = true) {
+function requestWindow(degraded = true, requestCount = 12) {
   return {
     generatedAt: new Date(clockMs).toISOString(), windowMs: 300_000,
-    requestCount: 12, errorCount: 0, clientErrorCount: 0, serverErrorCount: 0,
+    requestCount, errorCount: 0, clientErrorCount: 0, serverErrorCount: 0,
     errorRate: 0, timeoutCount: 0, timeoutRate: 0,
     pipelineTimeoutCount: 0, providerTimeoutCount: 0, workerTimeoutCount: 0,
     budgetAbortCount: 0, degradedCount: 0, degradedReasons: [], bypassedSubsystems: [],
-    slowRequestCount: degraded ? 12 : 0,
+    slowRequestCount: degraded ? requestCount : 0,
     avgLatencyMs: degraded ? 8_000 : 100,
     p95LatencyMs: degraded ? 14_000 : 100,
-    maxLatencyMs: degraded ? 20_000 : 100, routes: []
+    maxLatencyMs: degraded ? 20_000 : 100,
+    routes: [{
+      route: '/api/arcanos/ask', requestCount, errorCount: 0, timeoutCount: 0,
+      pipelineTimeoutCount: 0, providerTimeoutCount: 0, workerTimeoutCount: 0,
+      budgetAbortCount: 0, degradedCount: 0, slowRequestCount: degraded ? requestCount : 0,
+      avgLatencyMs: degraded ? 8_000 : 100, p95LatencyMs: degraded ? 14_000 : 100,
+      maxLatencyMs: degraded ? 20_000 : 100
+    }]
   };
 }
 
 jest.unstable_mockModule('@services/memoryAware.js', () => ({ getMemoryContext: noEffect, storePattern: noEffect }));
 jest.unstable_mockModule('@services/judgedResponseFeedback.js', () => ({ processJudgedResponseFeedback: noEffect }));
-jest.unstable_mockModule('@services/selfImprove/controller.js', () => ({ runSelfImproveCycle: noEffect }));
+// The optional proposal controller writes evidence; its no-drift NOOP is a
+// deterministic persistence seam. Detection/authorization/actuation stay real.
+jest.unstable_mockModule('@services/selfImprove/controller.js', () => ({ runSelfImproveCycle }));
 jest.unstable_mockModule('@core/db/repositories/jobEventRepository.js', () => ({ recordJobEvent: noEffect }));
 jest.unstable_mockModule('@core/db/repositories/workerBudgetRepository.js', () => ({
   reserveWorkerAiProviderAttempt: noEffect, WORKER_BUDGET_NON_JOB_SUBJECT_ID: 'synthetic-non-job'
@@ -83,13 +103,22 @@ jest.unstable_mockModule('@services/runtimeDiagnosticsService.js', () => ({
   runtimeDiagnosticsService: { getRollingRequestWindow, getRequestWindowSince }
 }));
 jest.unstable_mockModule('@platform/logging/telemetry.js', () => ({
-  getTelemetrySnapshot: () => ({ traces: { recentEvents: [], recentLogs: [] } }),
-  recordLogEvent: jest.fn(), recordTraceEvent: jest.fn(), markOperation: jest.fn(),
+  getTelemetrySnapshot: () => ({ traces: { recentEvents: providerTraceEvents, recentLogs: [] } }),
+  recordLogEvent: jest.fn(), recordTraceEvent: jest.fn((name: string, attributes: Record<string, unknown> = {}) => {
+    if (captureProviderReceipts) {
+      providerTraceEvents.push({
+        id: `synthetic-trace-${providerTraceEvents.length}`, timestamp: new Date().toISOString(), name, attributes
+      });
+      if (providerTraceEvents.length > 256) throw new Error('Synthetic provider trace bound exceeded.');
+    }
+  }), markOperation: jest.fn(),
   onTelemetry: jest.fn(), resetTelemetry: jest.fn()
 }));
 jest.unstable_mockModule('@services/openai/serviceHealth.js', () => ({
   getOpenAIServiceHealth: () => ({ circuitBreaker: { state: 'CLOSED' }, providerRuntime: {} }),
-  reinitializeOpenAIProvider: noEffect
+  // Reload acknowledgement is a synthetic external-runtime seam. Provider
+  // success evidence below is emitted by the actual resilience/SDK consumer.
+  reinitializeOpenAIProvider: providerReload
 }));
 jest.unstable_mockModule('@services/selfImprove/predictiveHealingService.js', () => ({ runPredictiveHealingFromLoop }));
 jest.unstable_mockModule('@services/selfImprove/selfHealTelemetry.js', () => ({
@@ -107,10 +136,15 @@ let coordinator: typeof import('../src/services/selfImprove/selfHealingLoop.js')
 let legacy: typeof import('../src/services/selfImprove/controlLoop.js');
 let completions: typeof import('../src/services/openai/chatFallbacks.js');
 let resilience: typeof import('../src/services/openai/resilience.js');
+let requestAbortContext: typeof import('@arcanos/runtime');
 let fixture: Awaited<ReturnType<typeof startGenerativeModelPolicyProvider>>;
+let interceptResponse: (() => Promise<void>) | null;
+let interceptRequest: (() => void) | null;
 
 beforeAll(async () => {
   process.env = isolatedEnvironment();
+  providerTraceEvents.length = 0;
+  captureProviderReceipts = false;
   const actualAuditSafe = await import('../src/services/auditSafe.js');
   jest.unstable_mockModule('@services/auditSafe.js', () => ({ ...actualAuditSafe, logAITaskLineage: jest.fn() }));
   pipeline = await import('../src/core/logic/trinityWritingPipeline.js');
@@ -122,10 +156,13 @@ beforeAll(async () => {
   legacy = await import('../src/services/selfImprove/controlLoop.js');
   completions = await import('../src/services/openai/chatFallbacks.js');
   resilience = await import('../src/services/openai/resilience.js');
+  requestAbortContext = await import('@arcanos/runtime');
 });
 
 beforeEach(async () => {
   process.env = isolatedEnvironment();
+  providerTraceEvents.length = 0;
+  captureProviderReceipts = false;
   clockMs = Date.parse('2026-10-12T09:00:00.000Z');
   // Keep native socket/timer behavior while fixing both Date.now and new Date.
   jest.useFakeTimers({ doNotFake: [
@@ -145,9 +182,16 @@ beforeEach(async () => {
   legacy.stopSelfHealingControlLoopForTests();
   getRollingRequestWindow.mockImplementation(() => requestWindow());
   getRequestWindowSince.mockImplementation(() => requestWindow());
+  interceptResponse = null;
+  interceptRequest = null;
   adapter.getOpenAIAdapter({
     apiKey: fixture.apiKey, baseURL: fixture.baseURL, defaultModel: authorityModel,
-    timeout: 2_000, maxRetries: 0, fetch: fixture.fetch
+    timeout: 2_000, maxRetries: 0, fetch: async (input, init) => {
+      if (init?.method === 'POST' && interceptRequest) interceptRequest();
+      const response = await fixture.fetch(input, init);
+      if (init?.method === 'POST' && interceptResponse) await interceptResponse();
+      return response;
+    }
   });
 });
 
@@ -180,11 +224,11 @@ function enqueueNormal(tier: 'simple' | 'complex' = 'simple') {
   );
 }
 
-async function runTrinity(complex = false, runOptions: TrinityRunOptions = {}) {
-  const userPrompt = complex ? 'Explain the architecture of the supplied launch outline.' : prompt;
+async function runTrinity(complex = false, runOptions: TrinityRunOptions = {}, promptSuffix = '') {
+  const userPrompt = (complex ? 'Explain the architecture of the supplied launch outline.' : prompt) + promptSuffix;
   return pipeline.runTrinityWritingPipeline({
     input: {
-      prompt: userPrompt, moduleId: 'ARCANOS:CORE', sourceEndpoint: 'self-healing.local-fixture',
+      prompt: userPrompt, moduleId: 'ARCANOS:CORE', sourceEndpoint: '/api/arcanos/ask',
       requestedAction: 'query', body: { prompt: userPrompt }, executionMode: 'request'
     },
     context: {
@@ -195,6 +239,72 @@ async function runTrinity(complex = false, runOptions: TrinityRunOptions = {}) {
 }
 
 describe('canonical self-healing owner through the real Trinity consumer', () => {
+  it('does not verify a replacement command with the older consumer request completion', async () => {
+    const first = healing.activateTrinitySelfHealingMitigation({
+      stage: 'reasoning', action: 'enable_degraded_mode', reason: 'first synthetic incident'
+    });
+    clockMs = first.expiresAtMs! - 1;
+    jest.setSystemTime(clockMs);
+    let arrived!: () => void;
+    let release!: () => void;
+    const responseArrived = new Promise<void>(resolve => { arrived = resolve; });
+    const responseRelease = new Promise<void>(resolve => { release = resolve; });
+    interceptResponse = async () => {
+      interceptResponse = null;
+      arrived();
+      await responseRelease;
+    };
+    fixture.enqueue({ kind: 'completion', text: answer });
+    const olderRequest = runTrinity();
+    await responseArrived;
+    clockMs += 1;
+    jest.setSystemTime(clockMs);
+    const replacement = healing.activateTrinitySelfHealingMitigation({
+      stage: 'reasoning', action: 'enable_degraded_mode', reason: 'replacement synthetic incident'
+    });
+    expect(replacement.applied).toBe(true);
+    release();
+    const completed = await olderRequest;
+    expect(completed.routingStages).toContain('ARCANOS-DIRECT-ANSWER');
+    expect(fixture.requests.filter(request => request.method === 'POST')).toHaveLength(1);
+    expect(healing.getTrinitySelfHealingSnapshot().reasoning).toMatchObject({
+      activeAction: 'enable_degraded_mode', verificationSuccesses: 0, verificationFailures: 0
+    });
+  });
+
+  it('does not credit a replacement when an older architectural intake times out into fallback', async () => {
+    const first = healing.activateTrinitySelfHealingMitigation({
+      stage: 'intake', action: 'enable_degraded_mode', reason: 'first synthetic intake incident'
+    });
+    clockMs = first.expiresAtMs! - 1;
+    jest.setSystemTime(clockMs);
+    let requestStarted!: () => void;
+    const requestSent = new Promise<void>(resolve => { requestStarted = resolve; });
+    interceptRequest = () => {
+      interceptRequest = null;
+      requestStarted();
+    };
+    // The SDK fetch-entry gate captures the old request before native transport
+    // starts. Its promise continuation runs after that synchronous fetch entry,
+    // so replacement is acknowledged before the bounded one-second stage abort.
+    fixture.enqueue({ kind: 'timeout', holdForMs: 2_000 }, { kind: 'completion', text: answer });
+    const olderRequest = runTrinity(false, {
+      internalMode: true, resolveModelStageTimeoutMs: stage => stage === 'intake' ? 1_000 : 2_000
+    });
+    await requestSent;
+    clockMs += 1;
+    jest.setSystemTime(clockMs);
+    const replacement = healing.activateTrinitySelfHealingMitigation({
+      stage: 'intake', action: 'enable_degraded_mode', reason: 'replacement synthetic intake incident'
+    });
+    expect(replacement.applied).toBe(true);
+    expect((await olderRequest).routingStages).toContain('ARCANOS-DIRECT-ANSWER');
+    expect(fixture.requests.filter(request => request.method === 'POST')).toHaveLength(2);
+    expect(healing.getTrinitySelfHealingSnapshot().intake).toMatchObject({
+      mitigationId: replacement.mitigationId, verificationSuccesses: 0, verificationFailures: 0
+    });
+  });
+
   it('keeps a healthy real consumer on its normal path without an unnecessary mitigation', async () => {
     getRollingRequestWindow.mockImplementation(() => requestWindow(false));
     getRequestWindowSince.mockImplementation(() => requestWindow(false));
@@ -328,6 +438,227 @@ describe('canonical self-healing owner through the real Trinity consumer', () =>
     expect(healing.getTrinitySelfHealingSnapshot().reasoning.activeAction).toBeNull();
   });
 
+  it('completes actual controller activation, three consumer executions, fresh recovery and expiry', async () => {
+    getRollingRequestWindow.mockImplementation(() => requestWindow(false));
+    getRequestWindowSince.mockImplementation(() => requestWindow(false));
+    expect((await coordinator.runSelfHealingLoop({ trigger: 'interval' })).diagnosis).toBe('healthy');
+    enqueueNormal();
+    expect((await runTrinity()).routingStages).toContain('GPT5-REASONING');
+
+    getRollingRequestWindow.mockImplementation(() => requestWindow());
+    const incident = await coordinator.runSelfHealingLoop({ trigger: 'interval' });
+    expect(incident).toMatchObject({
+      action: 'activateTrinityMitigation:reasoning:enable_degraded_mode'
+    });
+    const command = healing.getTrinitySelfHealingSnapshot().reasoning;
+    const initialRequestCount = fixture.requests.filter(request => request.method === 'POST').length;
+    for (let index = 0; index < 3; index += 1) {
+      clockMs += 1;
+      jest.setSystemTime(clockMs);
+      fixture.enqueue({ kind: 'completion', text: answer });
+      const result = await runTrinity();
+      expect(result.routingStages).toContain('ARCANOS-DIRECT-ANSWER');
+      expect(result.routingStages).not.toContain('GPT5-REASONING');
+    }
+    expect(fixture.requests.filter(request => request.method === 'POST').length - initialRequestCount).toBe(3);
+    expect(healing.getTrinitySelfHealingSnapshot().reasoning).toMatchObject({
+      verificationSuccesses: 3, verificationFailures: 0, mitigationId: command.mitigationId
+    });
+    expect(healing.getTrinitySelfHealingSnapshot().reasoning.verifiedAtMs).not.toBeNull();
+
+    clockMs += 90_000;
+    jest.setSystemTime(clockMs);
+    const recoveredTraffic = requestWindow(false, 3);
+    getRollingRequestWindow.mockReturnValue(recoveredTraffic);
+    getRequestWindowSince.mockReturnValue(recoveredTraffic);
+    await coordinator.runSelfHealingLoop({ trigger: 'interval' });
+    expect(coordinator.getSelfHealingLoopStatus().lastVerificationResult).toMatchObject({ outcome: 'improved' });
+    expect(healing.getTrinitySelfHealingSnapshot().reasoning.activeAction).toBe('enable_degraded_mode');
+
+    clockMs = command.expiresAtMs!;
+    jest.setSystemTime(clockMs);
+    enqueueNormal();
+    expect((await runTrinity()).routingStages).toContain('GPT5-REASONING');
+    expect(healing.getTrinitySelfHealingSnapshot().reasoning.activeAction).toBeNull();
+    expect((await coordinator.runSelfHealingLoop({ trigger: 'interval' })).action).toBeNull();
+  });
+
+  it('verifies a synthetic provider reload only after actual SDK consumer success receipts and fresh route traffic', async () => {
+    captureProviderReceipts = true;
+    fixture.enqueue(...Array.from({ length: 3 }, () => ({ kind: 'error' as const, status: 503 as const })));
+    for (let failure = 0; failure < 3; failure += 1) {
+      await expect(completions.createSingleChatCompletion(adapter.getOpenAIAdapter(), {
+        messages: [{ role: 'user', content: `${prompt} Synthetic failure ${failure}.` }],
+        max_tokens: 64, maxRetries: 0, timeoutMs: 2_000
+      })).rejects.toThrow('Synthetic bounded provider rejection.');
+    }
+    expect(providerTraceEvents.filter(event => event.name === 'openai.resilience.failure')).toHaveLength(3);
+    const failedTraffic = requestWindow();
+    failedTraffic.errorCount = failedTraffic.requestCount;
+    failedTraffic.serverErrorCount = failedTraffic.requestCount;
+    failedTraffic.errorRate = 1;
+    failedTraffic.routes[0].errorCount = failedTraffic.requestCount;
+    getRollingRequestWindow.mockReturnValue(failedTraffic);
+    getRequestWindowSince.mockReturnValue(failedTraffic);
+    const dispatched = await coordinator.runSelfHealingLoop({ trigger: 'interval' });
+    expect(dispatched.action).toContain('reinitializeOpenAIProvider:reloaded=true:ok=true');
+    expect(providerReload).toHaveBeenCalledTimes(1);
+    const reloadStartedAt = coordinator.getSelfHealingLoopStatus().lastActionAt!;
+    expect(providerTraceEvents.filter(event => event.name === 'openai.resilience.success')).toHaveLength(0);
+
+    const postsBeforeRecovery = fixture.requests.filter(request => request.method === 'POST').length;
+    for (let recovery = 0; recovery < 3; recovery += 1) {
+      clockMs += 1;
+      jest.setSystemTime(clockMs);
+      enqueueNormal();
+      expect((await runTrinity(false, {}, ` Synthetic recovery ${recovery}.`)).routingStages).toContain('GPT5-REASONING');
+    }
+    const successReceipts = providerTraceEvents.filter(event => event.name === 'openai.resilience.success');
+    expect(successReceipts.length).toBeGreaterThanOrEqual(3);
+    expect(successReceipts.every(event => Date.parse(event.timestamp) > Date.parse(reloadStartedAt))).toBe(true);
+    expect(fixture.requests.filter(request => request.method === 'POST').length - postsBeforeRecovery).toBe(12);
+    expect(resilience.getCircuitBreakerSnapshot()).toMatchObject({ state: 'CLOSED', failureCount: 0 });
+
+    clockMs += 90_000;
+    jest.setSystemTime(clockMs);
+    getRollingRequestWindow.mockReturnValue(requestWindow(false, 3));
+    getRequestWindowSince.mockReturnValue(requestWindow(false, 3));
+    const verified = await coordinator.runSelfHealingLoop({ trigger: 'interval' });
+    expect(verified.verificationResult).toMatchObject({ action: 'reinitializeOpenAIProvider', outcome: 'improved' });
+    expect(providerReload).toHaveBeenCalledTimes(1);
+    expect(healing.getTrinitySelfHealingSnapshot().reasoning.activeAction).toBeNull();
+  });
+
+  it('isolates simultaneous stage commands and consumes final bypass after intake rollback', async () => {
+    const intake = healing.activateTrinitySelfHealingMitigation({
+      stage: 'intake', action: 'enable_degraded_mode', reason: 'synthetic intake incident'
+    });
+    const final = healing.activateTrinitySelfHealingMitigation({
+      stage: 'final', action: 'bypass_final_stage', reason: 'synthetic final incident'
+    });
+    expect(intake.applied && final.applied).toBe(true);
+    fixture.enqueue({ kind: 'completion', text: answer });
+    expect((await runTrinity()).routingStages).toContain('ARCANOS-DIRECT-ANSWER');
+    expect(healing.getTrinitySelfHealingSnapshot().intake.verificationSuccesses).toBe(1);
+    expect(healing.getTrinitySelfHealingSnapshot().final.verificationSuccesses).toBe(0);
+    expect(healing.rollbackTrinitySelfHealingMitigation({
+      stage: 'intake', action: 'enable_degraded_mode', mitigationId: intake.mitigationId,
+      reason: 'clear only intake incident'
+    }).rolledBack).toBe(true);
+    expect(healing.getTrinitySelfHealingSnapshot().final.mitigationId).toBe(final.mitigationId);
+
+    const beforeFinal = fixture.requests.filter(request => request.method === 'POST').length;
+    fixture.enqueue(
+      { kind: 'completion', text: 'Assess only the supplied launch outline.' },
+      { kind: 'completion', text: JSON.stringify({
+        response_mode: 'answer', achievable_subtasks: ['Assess the supplied outline'],
+        blocked_subtasks: [], user_visible_caveats: [], claim_tags: [], final_answer: answer
+      }) },
+      { kind: 'completion', text: answer }
+    );
+    const result = await runTrinity();
+    expect(result.auditSafe.auditFlags).toContain('SELF_HEAL_V2_FINAL_BYPASS');
+    const posts = fixture.requests.filter(request => request.method === 'POST').slice(beforeFinal);
+    expect(posts).toHaveLength(3);
+    expect(posts.at(-1)?.model).toBe(authorityModel);
+    expect(healing.getTrinitySelfHealingSnapshot().final).toMatchObject({
+      activeAction: 'bypass_final_stage', verificationSuccesses: 1, mitigationId: final.mitigationId
+    });
+    expect(healing.getTrinitySelfHealingSnapshot().intake.activeAction).toBeNull();
+    expect(healing.rollbackTrinitySelfHealingMitigation({
+      stage: 'final', action: 'bypass_final_stage', mitigationId: final.mitigationId,
+      reason: 'clear final incident'
+    }).rolledBack).toBe(true);
+    enqueueNormal();
+    expect((await runTrinity()).auditSafe.auditFlags).not.toContain('SELF_HEAL_V2_FINAL_BYPASS');
+  });
+
+  it('attributes final bypass to its own command when architectural mode suppresses intake degradation', async () => {
+    healing.activateTrinitySelfHealingMitigation({
+      stage: 'intake', action: 'enable_degraded_mode', reason: 'concurrent intake incident'
+    });
+    const final = healing.activateTrinitySelfHealingMitigation({
+      stage: 'final', action: 'bypass_final_stage', reason: 'concurrent final incident'
+    });
+    fixture.enqueue(
+      { kind: 'completion', text: 'Assess only the supplied launch outline.' },
+      { kind: 'completion', text: JSON.stringify({
+        response_mode: 'answer', achievable_subtasks: ['Assess the supplied outline'],
+        blocked_subtasks: [], user_visible_caveats: [], claim_tags: [], final_answer: answer
+      }) },
+      { kind: 'completion', text: answer }
+    );
+    const result = await runTrinity(false, { internalMode: true });
+    expect(result.auditSafe.auditFlags).toContain('SELF_HEAL_V2_FINAL_BYPASS');
+    expect(result.routingStages).not.toContain('ARCANOS-DIRECT-ANSWER');
+    expect(fixture.requests.filter(request => request.method === 'POST')).toHaveLength(3);
+    expect(healing.getTrinitySelfHealingSnapshot().intake.verificationSuccesses).toBe(0);
+    expect(healing.getTrinitySelfHealingSnapshot().final).toMatchObject({
+      mitigationId: final.mitigationId, verificationSuccesses: 1
+    });
+  });
+
+  it.each([
+    ['reasoning', 'enable_degraded_mode'], ['final', 'bypass_final_stage']
+  ] as const)('rolls back %s mitigation after two failures in its actual consumer', async (stage, action) => {
+    healing.activateTrinitySelfHealingMitigation({ stage, action, reason: 'ineffective synthetic mitigation' });
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      if (stage === 'final') {
+        fixture.enqueue(
+          { kind: 'completion', text: 'Assess only the supplied launch outline.' },
+          { kind: 'completion', text: JSON.stringify({
+            response_mode: 'answer', achievable_subtasks: ['Assess the supplied outline'],
+            blocked_subtasks: [], user_visible_caveats: [], claim_tags: [], final_answer: answer
+          }) }
+        );
+      }
+      fixture.enqueue({ kind: 'error', status: 503 });
+      await expect(runTrinity()).rejects.toThrow('Synthetic bounded provider rejection.');
+      if (attempt === 0) {
+        expect(healing.getTrinitySelfHealingSnapshot()[stage]).toMatchObject({
+          activeAction: action, verificationFailures: 1
+        });
+      }
+    }
+    const failed = healing.getTrinitySelfHealingSnapshot()[stage];
+    expect(failed).toMatchObject({ activeAction: null, attempts: 1, failedActions: [action] });
+    expect(failed.cooldownUntilMs).toBeGreaterThan(clockMs);
+    expect(fixture.requests.filter(request => request.method === 'POST')).toHaveLength(stage === 'final' ? 6 : 2);
+    enqueueNormal();
+    expect((await runTrinity()).routingStages).toContain('GPT5-REASONING');
+    expect(healing.getTrinitySelfHealingSnapshot()[stage].attempts).toBe(1);
+  });
+
+  it('does not classify a caller cancellation as an ineffective mitigation', async () => {
+    const command = healing.activateTrinitySelfHealingMitigation({
+      stage: 'reasoning', action: 'enable_degraded_mode', reason: 'bounded caller cancellation fixture'
+    });
+    let arrived!: () => void;
+    let release!: () => void;
+    const responseArrived = new Promise<void>(resolve => { arrived = resolve; });
+    const responseRelease = new Promise<void>(resolve => { release = resolve; });
+    interceptResponse = async () => {
+      interceptResponse = null;
+      arrived();
+      await responseRelease;
+    };
+    fixture.enqueue({ kind: 'completion', text: answer });
+    const controller = new AbortController();
+    const operation = requestAbortContext.runWithRequestAbortContext({
+      requestId: 'synthetic-caller-cancellation', controller, signal: controller.signal,
+      deadlineAt: clockMs + 20_000, timeoutMs: 20_000
+    }, () => runTrinity());
+    await responseArrived;
+    controller.abort(new Error('synthetic caller cancellation'));
+    release();
+    await expect(operation).rejects.toThrow();
+    expect(fixture.requests.filter(request => request.method === 'POST')).toHaveLength(1);
+    expect(healing.getTrinitySelfHealingSnapshot().reasoning).toMatchObject({
+      mitigationId: command.mitigationId, activeAction: 'enable_degraded_mode',
+      verificationSuccesses: 0, verificationFailures: 0
+    });
+  });
+
   it('rolls back ineffective mitigation before another advisor call and restores the normal decision', async () => {
     expect((await coordinator.runSelfHealingLoop({ trigger: 'interval' })).action).toContain('activateTrinityMitigation:');
     const advisorCalls = runPredictiveHealingFromLoop.mock.calls.length;
@@ -340,7 +671,9 @@ describe('canonical self-healing owner through the real Trinity consumer', () =>
     expect(rollback.action).toBe('rollbackTrinityMitigation:reasoning:enable_degraded_mode');
     expect(runPredictiveHealingFromLoop).toHaveBeenCalledTimes(advisorCalls);
     expect(healing.getTrinitySelfHealingSnapshot().reasoning.activeAction).toBeNull();
-    expect(getRequestWindowSince).toHaveBeenCalledWith(actionStartedAt, 300_000);
+    expect(getRequestWindowSince).toHaveBeenCalledWith(
+      new Date(Date.parse(actionStartedAt!) + 1).toISOString(), 300_000, '/api/arcanos/ask'
+    );
     enqueueNormal();
     expect((await runTrinity()).routingStages).toContain('GPT5-REASONING');
   });

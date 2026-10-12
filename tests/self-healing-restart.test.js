@@ -7,7 +7,7 @@ import { describe, expect, it } from '@jest/globals';
 
 const repositoryRoot = fileURLToPath(new URL('../', import.meta.url));
 
-// Two genuine Node processes load current source without a server, worker,
+// Genuine Node processes load current source without a server, worker,
 // provider or persistence adapter. Only this reviewed config/logging graph is
 // admitted; its sole dotenv read is confined to a new empty working directory.
 const reviewedSourceFiles = [
@@ -26,7 +26,7 @@ const reviewedSourceFiles = [
   'packages/arcanos-runtime/src/redaction.ts'
 ];
 
-function runFreshProcess(cwd, activate) {
+function runFreshProcess(cwd, activate, options = {}) {
   const program = `
     import { registerHooks } from 'node:module';
     import { readFileSync } from 'node:fs';
@@ -74,7 +74,7 @@ function runFreshProcess(cwd, activate) {
     const healing = await import(pathToFileURL(path.join(root, 'src/services/selfImprove/selfHealingV2.ts')).href);
     const before = healing.getTrinitySelfHealingSnapshot();
     if (${JSON.stringify(activate)}) {
-      for (let index = 0; index < 3; index += 1) {
+      for (let index = 0; index < ${JSON.stringify(options.failures ?? 3)}; index += 1) {
         healing.recordTrinityStageFailure({ stage: 'reasoning', error: 'synthetic local abort', requestId: 'restart-' + index });
       }
     }
@@ -89,7 +89,7 @@ function runFreshProcess(cwd, activate) {
   // database/Redis URLs or webhook configuration can reach either process.
   const env = {
     NODE_ENV: 'test', LOG_LEVEL: 'error', DOTENV_CONFIG_QUIET: 'true',
-    ARCANOS_PROCESS_KIND: 'worker', RUN_WORKERS: 'false',
+    ARCANOS_PROCESS_KIND: options.processKind ?? 'worker', RUN_WORKERS: 'false',
     FINETUNED_MODEL_ID: 'ft:gpt-4.1:synthetic:restart-consumer',
     OPENAI_API_KEY: 'test-self-healing-restart-api-key',
     SELF_IMPROVE_ENABLED: 'true', SELF_IMPROVE_ACTUATOR_MODE: 'daemon',
@@ -126,6 +126,32 @@ describe('self-healing restart isolation', () => {
       }
       expect(restartedProcess.consumer).toMatchObject({
         activeAction: null, forceDirectAnswer: false, bypassFinalStage: false, verified: false
+      });
+
+      // A fresh failure after restart cannot replay the former actuator or its
+      // incident threshold: it must build a new three-observation incident.
+      const belowThresholdProcess = runFreshProcess(cwd, true, { failures: 1 });
+      expect(belowThresholdProcess.pid).not.toBe(restartedProcess.pid);
+      expect(belowThresholdProcess.after.reasoning).toMatchObject({
+        attempts: 0, activeAction: null
+      });
+      expect(belowThresholdProcess.after.reasoning.observations).toHaveLength(1);
+      expect(belowThresholdProcess.consumer.forceDirectAnswer).toBe(false);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps automatic request-failure actuators suppressed in a real web-role process', () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), 'arcanos-self-heal-role-'));
+    try {
+      const webProcess = runFreshProcess(cwd, true, { processKind: 'web', failures: 12 });
+      expect(webProcess.enabled).toBe(true);
+      expect(webProcess.after.reasoning).toMatchObject({
+        observations: [], attempts: 0, activeAction: null
+      });
+      expect(webProcess.consumer).toMatchObject({
+        activeAction: null, forceDirectAnswer: false, bypassFinalStage: false
       });
     } finally {
       rmSync(cwd, { recursive: true, force: true });

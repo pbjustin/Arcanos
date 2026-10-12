@@ -204,7 +204,7 @@ function createWorkerHealth(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function createTrinityStatus(activeAction: string | null = null, expiresAtMs: number | null = null) {
+function createTrinityStatus(activeAction: string | null = null, expiresAtMs: number | null = null, verificationSuccesses = 0) {
   return {
     enabled: true,
     config: {
@@ -218,14 +218,14 @@ function createTrinityStatus(activeAction: string | null = null, expiresAtMs: nu
     },
     snapshot: {
       intake: { activeAction: null },
-      reasoning: { activeAction, expiresAtMs },
+      reasoning: { activeAction, expiresAtMs, verificationSuccesses, verifiedAtMs: verificationSuccesses >= 3 ? Date.now() : null },
       final: { activeAction: null }
     }
   };
 }
 
 function createRequestWindow(overrides: Record<string, unknown> = {}) {
-  return {
+  const window = {
     generatedAt: '2026-03-25T12:00:00.000Z',
     windowMs: 300000,
     requestCount: 0,
@@ -249,6 +249,17 @@ function createRequestWindow(overrides: Record<string, unknown> = {}) {
     routes: [],
     ...overrides
   };
+  if (overrides.routes === undefined && Number(window.requestCount) > 0) {
+    window.routes = [{
+      route: '/api/arcanos/ask', requestCount: window.requestCount,
+      errorCount: window.errorCount, timeoutCount: window.timeoutCount,
+      pipelineTimeoutCount: window.pipelineTimeoutCount, providerTimeoutCount: window.providerTimeoutCount,
+      workerTimeoutCount: window.workerTimeoutCount, budgetAbortCount: window.budgetAbortCount,
+      degradedCount: window.degradedCount, slowRequestCount: window.slowRequestCount,
+      avgLatencyMs: window.avgLatencyMs, p95LatencyMs: window.p95LatencyMs, maxLatencyMs: window.maxLatencyMs
+    }];
+  }
+  return window;
 }
 
 function createTelemetrySnapshot(eventNames: string[] = []) {
@@ -419,6 +430,7 @@ describe('selfHealingLoop', () => {
   const originalEnv = new Map<string, string | undefined>();
   let trinityActiveAction: string | null;
   let trinityExpiresAtMs: number | null;
+  let trinityVerificationSuccesses: number;
   let promptRouteMitigationActive: boolean;
   let promptRouteMitigationMode: 'reduced_latency' | 'degraded_response' | null;
   let promptRouteMitigationReason: string | null;
@@ -431,6 +443,7 @@ describe('selfHealingLoop', () => {
     jest.useFakeTimers().setSystemTime(new Date('2026-03-25T12:00:00.000Z'));
     trinityActiveAction = null;
     trinityExpiresAtMs = null;
+    trinityVerificationSuccesses = 0;
     promptRouteMitigationActive = false;
     promptRouteMitigationMode = null;
     promptRouteMitigationReason = null;
@@ -552,7 +565,7 @@ describe('selfHealingLoop', () => {
         activeAction: null
       }
     });
-    getTrinitySelfHealingStatusMock.mockImplementation(() => createTrinityStatus(trinityActiveAction, trinityExpiresAtMs));
+    getTrinitySelfHealingStatusMock.mockImplementation(() => createTrinityStatus(trinityActiveAction, trinityExpiresAtMs, trinityVerificationSuccesses));
     getPromptRouteMitigationStateMock.mockImplementation(() => ({
       active: promptRouteMitigationActive,
       mode: promptRouteMitigationActive ? promptRouteMitigationMode : null,
@@ -1934,6 +1947,7 @@ describe('selfHealingLoop', () => {
       maxLatencyMs: 8000
     }));
     await runSelfHealingLoop({ trigger: 'interval' });
+    trinityVerificationSuccesses = 3;
     await jest.advanceTimersByTimeAsync(31000);
     getRequestWindowSinceMock.mockReturnValue(createRequestWindow({
       generatedAt: new Date().toISOString(),
@@ -1945,7 +1959,7 @@ describe('selfHealingLoop', () => {
 
     const result = await runSelfHealingLoop({ trigger: 'interval' });
 
-    expect(getRequestWindowSinceMock).toHaveBeenCalledWith('2026-03-25T12:00:00.000Z', 300000);
+    expect(getRequestWindowSinceMock).toHaveBeenCalledWith('2026-03-25T12:00:00.001Z', 300000, '/api/arcanos/ask');
     expect(result.verificationResult).toEqual(expect.objectContaining({
       outcome: 'improved',
       current: expect.objectContaining({ errorRate: 0, timeoutCount: 0, p95LatencyMs: 100 })
@@ -2234,7 +2248,7 @@ describe('selfHealingLoop', () => {
     await jest.advanceTimersByTimeAsync(31000);
     const result = await runSelfHealingLoop({ trigger: 'interval' });
 
-    expect(rollbackPromptRouteMitigationMock).toHaveBeenCalledWith('self_heal_verification_failed');
+    expect(rollbackPromptRouteMitigationMock).toHaveBeenCalledWith('self_heal_verification_failed', null);
     expect(result.verificationResult).toEqual(expect.objectContaining({
       outcome: 'unchanged',
       action: 'activatePromptRouteMitigation:reduced_latency'
